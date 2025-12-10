@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Bookshell</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+  <!-- iOS PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Bookshell" />
+
+  <link rel="stylesheet" href="styles/mainstyles.css" />
+  <link rel="stylesheet" href="styles/mainpage.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="header-title">Bookshell</div>
+    </header>
+
+    <main class="app-main">
+      <!-- Vista LIBROS -->
+      <section id="view-books" class="view view-active">
+        <div class="books-toolbar">
+          <button id="btn-add-book" class="btn primary">+ Añadir libro</button>
+        </div>
+
+        <div id="books-list" class="books-list">
+          <!-- Se rellenan las tarjetas por JS -->
+        </div>
+
+        <div id="books-empty" class="empty-state">
+          Aún no has añadido ningún libro.
+        </div>
+      </section>
+
+      <!-- Vista ESTADÍSTICAS -->
+      <section id="view-stats" class="view">
+        <div class="stats-wrapper">
+          <div class="stats-cards">
+            <div class="stat-card">
+              <div class="stat-label">Racha actual</div>
+              <div id="stat-streak-current" class="stat-value">0</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Mejor racha</div>
+              <div id="stat-streak-best" class="stat-value">0</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Páginas hoy</div>
+              <div id="stat-today-pages" class="stat-value">0</div>
+            </div>
+          </div>
+
+          <div class="calendar-section">
+            <div class="calendar-header">
+              <button id="cal-prev" class="icon-btn">&lt;</button>
+              <div id="cal-label" class="cal-label"></div>
+              <button id="cal-next" class="icon-btn">&gt;</button>
+            </div>
+            <div class="calendar-grid" id="calendar-grid">
+              <!-- Calendario por JS -->
+            </div>
+            <div class="calendar-legend">
+              <span class="dot dot-normal"></span> Páginas leídas
+              <span class="dot dot-streak"></span> Día de racha
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button class="nav-btn nav-btn-active" data-view="view-books">Libros</button>
+      <button class="nav-btn" data-view="view-stats">Estadísticas</button>
+    </nav>
+  </div>
+
+  <!-- MODAL LIBRO -->
+  <div id="book-modal-backdrop" class="modal-backdrop hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <div id="book-modal-title" class="modal-title">Nuevo libro</div>
+        <button id="book-modal-close" class="icon-btn">✕</button>
+      </div>
+
+      <form id="book-form" class="modal-body">
+        <input type="hidden" id="book-id" />
+
+        <label class="field">
+          <span>Título</span>
+          <input id="book-title" type="text" required />
+        </label>
+
+        <label class="field">
+          <span>Autor</span>
+          <input id="book-author" type="text" />
+        </label>
+
+        <label class="field">
+          <span>Año</span>
+          <input id="book-year" type="number" inputmode="numeric" />
+        </label>
+
+        <label class="field">
+          <span>N.º páginas</span>
+          <input id="book-pages" type="number" inputmode="numeric" min="1" required />
+        </label>
+
+        <label class="field">
+          <span>Página actual</span>
+          <input id="book-current-page" type="number" inputmode="numeric" min="0" value="0" />
+        </label>
+
+        <label class="field">
+          <span>Género</span>
+          <input id="book-genre" type="text" />
+        </label>
+
+        <label class="field">
+          <span>Idioma</span>
+          <input id="book-language" type="text" />
+        </label>
+
+        <label class="field">
+          <span>Estado</span>
+          <select id="book-status">
+            <option value="reading">Leyendo</option>
+            <option value="planned">Pendiente</option>
+            <option value="finished">Terminado</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>PDF (opcional)</span>
+          <input id="book-pdf" type="file" accept="application/pdf" />
+        </label>
+
+        <div class="modal-footer">
+          <button type="button" id="book-modal-cancel" class="btn ghost">Cancelar</button>
+          <button type="submit" class="btn primary">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="scripts/main.js"></script>
+</body>
+</html>

@@ -12,6 +12,7 @@
 
   <link rel="stylesheet" href="styles/mainstyles.css" />
   <link rel="stylesheet" href="styles/mainpage.css" />
+<link rel="stylesheet" href="videos.css" />
 </head>
 <body>
   <div class="app-shell">
@@ -69,12 +70,69 @@
           </div>
         </div>
       </section>
+      <section id="view-videos" class="view">
+  <div class="videos-wrapper">
+    
+    <!-- STATS -->
+    <div class="video-stats-cards">
+      <div class="video-stat-card">
+        <div class="video-stat-label">Vídeos publicados</div>
+        <div id="video-stat-count" class="video-stat-value">0</div>
+      </div>
+      <div class="video-stat-card">
+        <div class="video-stat-label">Racha días</div>
+        <div id="video-stat-streak" class="video-stat-value">0</div>
+      </div>
+      <div class="video-stat-card">
+        <div class="video-stat-label">Palabras totales</div>
+        <div id="video-stat-words" class="video-stat-value">0</div>
+      </div>
+      <div class="video-stat-card">
+        <div class="video-stat-label">Tiempo trabajado</div>
+        <div id="video-stat-time" class="video-stat-value">0</div>
+      </div>
+    </div>
+
+    <!-- CALENDARIO -->
+    <div class="video-calendar-section">
+      <div class="video-calendar-header">
+        <button id="video-cal-prev" class="icon-btn">&lt;</button>
+        <div id="video-cal-label" class="video-cal-label"></div>
+        <button id="video-cal-next" class="icon-btn">&gt;</button>
+      </div>
+
+      <div id="video-calendar-grid" class="video-calendar-grid">
+        <!-- Rellenado por JS -->
+      </div>
+
+      <div class="video-calendar-legend">
+        <span class="video-dot video-dot-work"></span> Trabajo ese día
+        <span class="video-dot video-dot-streak"></span> Día en racha
+        <span class="video-dot video-dot-publish"></span> Fecha propuesta de publicación
+      </div>
+    </div>
+
+    <!-- TOOLBAR + LISTA -->
+    <div class="videos-toolbar">
+      <button id="btn-add-video" class="btn primary">+ Añadir vídeo</button>
+    </div>
+
+    <div id="videos-list" class="videos-list">
+      <!-- Tarjetas de vídeos por JS -->
+    </div>
+
+    <div id="videos-empty" class="videos-empty">
+      Aún no has añadido ningún vídeo.
+    </div>
+  </div>
+</section>
     </main>
 
-    <nav class="bottom-nav">
-      <button class="nav-btn nav-btn-active" data-view="view-books">Libros</button>
-      <button class="nav-btn" data-view="view-stats">Estadísticas</button>
-    </nav>
+  <nav class="bottom-nav">
+  <button class="nav-btn nav-btn-active" data-view="view-books">Libros</button>
+  <button class="nav-btn" data-view="view-videos">Vídeos</button>
+  <button class="nav-btn" data-view="view-stats">Estadísticas</button>
+</nav>
   </div>
 
   <!-- MODAL LIBRO -->
@@ -144,7 +202,65 @@
       </form>
     </div>
   </div>
+<!-- MODAL VÍDEO -->
+<div id="video-modal-backdrop" class="modal-backdrop hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <div id="video-modal-title" class="modal-title">Nuevo vídeo</div>
+      <button id="video-modal-close" class="icon-btn">✕</button>
+    </div>
 
+    <form id="video-form" class="modal-body">
+      <input type="hidden" id="video-id" />
+
+      <label class="field">
+        <span>Título</span>
+        <input id="video-title" type="text" required />
+      </label>
+
+      <label class="field">
+        <span>Palabras de guion (objetivo 2000)</span>
+        <input id="video-script-words" type="number" min="0" inputmode="numeric" value="0" />
+      </label>
+
+      <label class="field">
+        <span>Duración total (minutos y segundos)</span>
+        <div style="display:flex; gap:6px;">
+          <input id="video-duration-min" type="number" min="0" inputmode="numeric" placeholder="min" />
+          <input id="video-duration-sec" type="number" min="0" max="59" inputmode="numeric" placeholder="seg" />
+        </div>
+      </label>
+
+      <label class="field">
+        <span>Parte editada (minutos y segundos)</span>
+        <div style="display:flex; gap:6px;">
+          <input id="video-edited-min" type="number" min="0" inputmode="numeric" placeholder="min" />
+          <input id="video-edited-sec" type="number" min="0" max="59" inputmode="numeric" placeholder="seg" />
+        </div>
+      </label>
+
+      <label class="field">
+        <span>Fecha propuesta de publicación</span>
+        <input id="video-publish-date" type="date" />
+      </label>
+
+      <label class="field">
+        <span>Estado</span>
+        <select id="video-status">
+          <option value="in_progress">En curso</option>
+          <option value="planned">Planificado</option>
+          <option value="published">Publicado</option>
+        </select>
+      </label>
+
+      <div class="modal-footer">
+        <button type="button" id="video-modal-cancel" class="btn ghost">Cancelar</button>
+        <button type="submit" class="btn primary">Guardar</button>
+      </div>
+    </form>
+  </div>
+</div>
   <script type="module" src="scripts/main.js"></script>
+  <script type="module" src="videos.js"></script>
 </body>
 </html>

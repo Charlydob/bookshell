@@ -1,0 +1,310 @@
+/* videos.css */
+/* Vista de vídeos YouTube – tarjetas + stats + calendario */
+
+:root {
+  --video-accent: #ff6b9a;
+  --video-accent-soft: rgba(255, 107, 154, 0.3);
+}
+
+/* CONTENEDOR PRINCIPAL */
+
+.videos-wrapper {
+  padding: 6px 4px 60px;
+}
+
+/* STATS */
+
+.video-stats-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.video-stat-card {
+  border-radius: 18px;
+  padding: 8px 10px;
+  background: radial-gradient(circle at top, var(--video-accent-soft), transparent),
+    rgba(9, 11, 20, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.video-stat-label {
+  font-size: 11px;
+  color: var(--txt-soft);
+}
+
+.video-stat-value {
+  margin-top: 4px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+/* CALENDARIO */
+
+.video-calendar-section {
+  margin-bottom: 10px;
+  border-radius: 20px;
+  padding: 10px 8px 12px;
+  background: rgba(9, 11, 20, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.video-calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 6px;
+}
+
+.video-cal-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.video-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  font-size: 11px;
+}
+
+.video-cal-cell {
+  min-height: 36px;
+  border-radius: 12px;
+  padding: 2px 3px;
+  background: rgba(13, 15, 24, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.video-cal-cell-empty {
+  background: transparent;
+  border-color: transparent;
+}
+
+.video-cal-day-number {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.video-cal-metrics {
+  margin-top: 2px;
+  font-size: 9px;
+  color: var(--txt-soft);
+  line-height: 1.25;
+}
+
+.video-cal-has-work {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: radial-gradient(circle at top, rgba(255, 255, 255, 0.04), #151521);
+}
+
+.video-cal-streak {
+  border-color: rgba(255, 234, 140, 0.9);
+  background: radial-gradient(circle at top, rgba(255, 234, 140, 0.25), #17131d);
+}
+
+.video-cal-publish {
+  box-shadow: 0 0 0 1px var(--video-accent);
+}
+
+.video-calendar-legend {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--txt-soft);
+}
+
+.video-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.video-dot-work {
+  background: var(--video-accent);
+}
+
+.video-dot-streak {
+  background: #ffd75b;
+}
+
+.video-dot-publish {
+  background: transparent;
+  border-radius: 50%;
+  border: 2px solid var(--video-accent);
+}
+
+/* TOOLBAR Y LISTA */
+
+.videos-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 4px 8px;
+}
+
+.videos-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 64px;
+}
+
+.videos-empty {
+  margin: 16px 4px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.02), transparent),
+    rgba(10, 10, 18, 0.96);
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  color: var(--txt-soft);
+  font-size: 14px;
+}
+
+/* TARJETA VIDEO */
+
+.video-card {
+  border-radius: 22px;
+  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.02), transparent),
+    rgba(9, 11, 20, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 12px 12px 10px;
+  display: flex;
+  gap: 10px;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.6);
+}
+
+.video-progress {
+  flex: 0 0 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-progress-ring {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at center, #080910 45%, transparent 47%),
+    conic-gradient(
+      var(--video-accent) calc(var(--p) * 1%),
+      rgba(255, 255, 255, 0.06) 0
+    );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-progress-inner {
+  font-size: 13px;
+  color: var(--txt-soft);
+}
+
+.video-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.video-title-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.video-title {
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-status-pill {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(10, 12, 20, 0.9);
+  color: var(--txt-soft);
+}
+
+.video-meta {
+  font-size: 12px;
+  color: var(--txt-soft);
+}
+
+.video-meta span + span::before {
+  content: " • ";
+  opacity: 0.7;
+}
+
+.video-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--txt-soft);
+}
+
+.video-bar-line {
+  display: flex;
+  justify-content: space-between;
+}
+
+.video-remaining {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--txt-soft);
+}
+
+/* INPUTS TARJETA */
+
+.video-actions {
+  margin-top: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+
+.video-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--txt-soft);
+}
+
+.video-input-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.video-input-row input {
+  width: 54px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(5, 6, 12, 0.95);
+  color: var(--txt);
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+.video-card-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

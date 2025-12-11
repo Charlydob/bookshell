@@ -113,7 +113,12 @@
 }
 
 .video-cal-publish {
-  box-shadow: 0 0 0 1px var(--video-accent);
+  box-shadow: 0 0 0 2px var(--video-accent);
+}
+
+.video-cal-publish-done {
+  box-shadow: 0 0 0 2px #18c48b;
+  border-color: rgba(24, 196, 139, 0.9);
 }
 
 .video-calendar-legend {

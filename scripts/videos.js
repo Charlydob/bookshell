@@ -588,6 +588,21 @@ function computeVideoStreak(totals) {
     if ($videoStatWords) $videoStatWords.textContent = totalWords;
     if ($videoStatTime) $videoStatTime.textContent = formatWorkTime(totalSeconds);
   }
+function isVideoFullyDone(v) {
+  const scriptTarget = v.scriptTarget || 2000;
+  const scriptWords = Math.max(0, Number(v.scriptWords) || 0);
+  const durationSec = v.durationSeconds || 0;
+  const editedSec = Math.max(0, Number(v.editedSeconds) || 0);
+
+  const scriptPct =
+    scriptTarget > 0 ? Math.min(100, Math.round((scriptWords / scriptTarget) * 100)) : 0;
+  const editPct =
+    durationSec > 0 ? Math.min(100, Math.round((editedSec / durationSec) * 100)) : 0;
+
+  const totalPct = Math.round((scriptPct + editPct) / 2);
+
+  return totalPct >= 100 || v.status === "published";
+}
 
   // === Calendario ===
 function renderVideoCalendar() {
@@ -606,10 +621,18 @@ function renderVideoCalendar() {
   const streakInfo = computeVideoStreak(totals);
   const streakSet = new Set(streakInfo.streakDays || []);
 
-  // Fechas de publicación desde los datos de vídeo (YYYY-MM-DD)
-  const publishSet = new Set();
+  // info de publicación por fecha: { any: bool, done: bool (todos los vídeos de ese día al 100%) }
+  const publishInfo = {};
   Object.values(videos || {}).forEach((v) => {
-    if (v.publishDate) publishSet.add(v.publishDate);
+    if (!v.publishDate) return;
+    const date = v.publishDate;
+    const done = isVideoFullyDone(v);
+    if (!publishInfo[date]) {
+      publishInfo[date] = { any: true, done };
+    } else {
+      // el día solo se considera "done" si TODOS los vídeos de esa fecha lo están
+      publishInfo[date].done = publishInfo[date].done && done;
+    }
   });
 
   const firstDay = new Date(videoCalYear, videoCalMonth, 1).getDay();
@@ -633,14 +656,21 @@ function renderVideoCalendar() {
 
       const t = totals[key] || { words: 0, seconds: 0 };
       const hasWork = (t.words || 0) > 0 || (t.seconds || 0) > 0;
-      const isPublish = publishSet.has(key);
+
+      const pub = publishInfo[key];
+      const isPublish = !!(pub && pub.any);
+      const publishDone = !!(pub && pub.done);
       const isStreak = streakSet.has(key);
 
       cell.className = "video-cal-cell";
 
       // PRIORIDAD: publicación > racha > trabajo
       if (isPublish) {
-        cell.classList.add("video-cal-publish");
+        if (publishDone) {
+          cell.classList.add("video-cal-publish-done");
+        } else {
+          cell.classList.add("video-cal-publish");
+        }
       } else {
         if (hasWork) cell.classList.add("video-cal-has-work");
         if (isStreak) cell.classList.add("video-cal-streak");
@@ -679,6 +709,7 @@ function renderVideoCalendar() {
   $videoCalGrid.innerHTML = "";
   $videoCalGrid.appendChild(frag);
 }
+
 
 
 

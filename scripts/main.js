@@ -1,5 +1,10 @@
 // main.js
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+// main.js
+import {
+  initializeApp,
+  getApps,
+  getApp
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
   getDatabase,
   ref,
@@ -27,7 +32,7 @@ const firebaseConfig = {
   appId: "1:554557230752:web:37c24e287210433cf883c5"
 };
 
-const app = initializeApp(firebaseConfig);
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const db = getDatabase(app);
 const storage = getStorage(app);
 

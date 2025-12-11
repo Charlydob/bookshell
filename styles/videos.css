@@ -13,31 +13,35 @@
 }
 
 /* STATS */
-
 .video-stats-cards {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  display: flex;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 .video-stat-card {
+  flex: 1;
   border-radius: 18px;
   padding: 8px 10px;
-  background: radial-gradient(circle at top, var(--video-accent-soft), transparent),
+  background: radial-gradient(circle at top, rgba(127, 93, 255, 0.16), transparent),
     rgba(9, 11, 20, 0.96);
   border: 1px solid rgba(255, 255, 255, 0.12);
+
+  display: flex;             /* ← clave */
+  flex-direction: column;    /* título arriba, número abajo */
 }
 
 .video-stat-label {
   font-size: 11px;
   color: var(--txt-soft);
+  text-align: center;
 }
 
 .video-stat-value {
-  margin-top: 4px;
-  font-size: 17px;
+  margin-top: auto;          /* ← empuja el número al fondo de la tarjeta */
+  font-size: 18px;
   font-weight: 600;
+  text-align: center;
 }
 
 /* CALENDARIO */

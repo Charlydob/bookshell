@@ -43,7 +43,10 @@ let videoCalMonth;
 // Utils fecha
 function todayKey() {
   const d = new Date();
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`; // YYYY-MM-DD local
 }
 
 function formatMonthLabel(year, month) {
@@ -59,8 +62,10 @@ function getDaysInMonth(year, month) {
 }
 
 function parseDateKey(key) {
-  return new Date(key + "T00:00:00");
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d);
 }
+
 
 // Utils tiempo edición
 function toSeconds(min, sec) {
@@ -86,6 +91,16 @@ function formatWorkTime(totalSeconds) {
   }
   const d = (s / 86400).toFixed(1);
   return `${d} d`;
+}
+function normalizeNumberField(el, max = null) {
+  if (!el) return;
+  el.addEventListener("input", () => {
+    let v = (el.value || "").replace(/\D+/g, "");
+    if (v === "") v = "0";
+    let num = Number(v);
+    if (max != null && num > max) num = max;
+    el.value = String(num);
+  });
 }
 
 // === DOM refs (solo si existe la pestaña) ===
@@ -120,6 +135,11 @@ if ($viewVideos) {
   const $videoDurationSec = document.getElementById("video-duration-sec");
   const $videoEditedMin = document.getElementById("video-edited-min");
   const $videoEditedSec = document.getElementById("video-edited-sec");
+  normalizeNumberField($videoDurationMin);
+normalizeNumberField($videoDurationSec, 59);
+normalizeNumberField($videoEditedMin);
+normalizeNumberField($videoEditedSec, 59);
+
   const $videoPublishDate = document.getElementById("video-publish-date");
   const $videoStatus = document.getElementById("video-status");
 
@@ -362,6 +382,8 @@ if ($viewVideos) {
       `;
 
       const [inputWords, inputMin, inputSec] = inputGroup.querySelectorAll("input");
+normalizeNumberField(inputMin);
+normalizeNumberField(inputSec, 59);
 
       inputWords.addEventListener("change", () => {
         const newWords = Math.max(0, Number(inputWords.value) || 0);
@@ -487,51 +509,56 @@ if ($viewVideos) {
     return totals;
   }
 
-  function computeVideoStreak(totals) {
-    const days = Object.keys(totals).filter(
-      (d) => (totals[d].words || 0) > 0 || (totals[d].seconds || 0) > 0
-    );
-    if (!days.length) return { current: 0, best: 0, streakDays: [] };
-    days.sort();
+function computeVideoStreak(totals) {
+  const days = Object.keys(totals).filter(
+    (d) => (totals[d].words || 0) > 0 || (totals[d].seconds || 0) > 0
+  );
+  if (!days.length) return { current: 0, best: 0, streakDays: [] };
+  days.sort();
 
-    let best = 1;
-    let current = 1;
-    let bestRun = [days[0]];
-    let currentRun = [days[0]];
+  let best = 1;
+  let current = 1;
+  let bestRun = [days[0]];
+  let currentRun = [days[0]];
 
-    for (let i = 1; i < days.length; i++) {
-      const prev = parseDateKey(days[i - 1]);
-      const curr = parseDateKey(days[i]);
-      const diff = (curr - prev) / (1000 * 60 * 60 * 24);
-      if (diff === 1) {
-        current += 1;
-        currentRun.push(days[i]);
-      } else {
-        if (currentRun.length > bestRun.length) bestRun = currentRun.slice();
-        current = 1;
-        currentRun = [days[i]];
-      }
-      if (current > best) best = current;
+  for (let i = 1; i < days.length; i++) {
+    const prev = parseDateKey(days[i - 1]);
+    const currDate = parseDateKey(days[i]);
+    const diff = (currDate - prev) / (1000 * 60 * 60 * 24);
+    if (diff === 1) {
+      current += 1;
+      currentRun.push(days[i]);
+    } else {
+      if (currentRun.length > bestRun.length) bestRun = currentRun.slice();
+      current = 1;
+      currentRun = [days[i]];
     }
-    if (currentRun.length > bestRun.length) bestRun = currentRun.slice();
-
-    const latestDay = days[days.length - 1];
-    const today = todayKey();
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yKey = yesterday.toISOString().slice(0, 10);
-
-    let currentStreak = current;
-    let activeRun = currentRun.slice();
-
-    if (latestDay !== today && latestDay !== yKey) {
-      currentStreak = 0;
-      activeRun = [];
-    }
-
-    const streakDays = (activeRun.length ? activeRun : bestRun).slice();
-    return { current: currentStreak, best, streakDays };
+    if (current > best) best = current;
   }
+  if (currentRun.length > bestRun.length) bestRun = currentRun.slice();
+
+  const latestDay = days[days.length - 1];
+  const today = todayKey();
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yKey =
+    `${yesterday.getFullYear()}-` +
+    String(yesterday.getMonth() + 1).padStart(2, "0") + "-" +
+    String(yesterday.getDate()).padStart(2, "0");
+
+  let currentStreak = current;
+  let activeRun = currentRun.slice();
+
+  if (latestDay !== today && latestDay !== yKey) {
+    currentStreak = 0;
+    activeRun = [];
+  }
+
+  const streakDays = (activeRun.length ? activeRun : bestRun).slice();
+  return { current: currentStreak, best, streakDays };
+}
+
+
 
   function renderVideoStats() {
     const totals = computeVideoDayTotals();
@@ -555,77 +582,97 @@ if ($viewVideos) {
   }
 
   // === Calendario ===
-  function renderVideoCalendar() {
-    if (!$videoCalGrid) return;
-    const now = new Date();
-    if (videoCalYear == null) {
-      videoCalYear = now.getFullYear();
-      videoCalMonth = now.getMonth();
-    }
+function renderVideoCalendar() {
+  if (!$videoCalGrid) return;
+  const now = new Date();
+  if (videoCalYear == null) {
+    videoCalYear = now.getFullYear();
+    videoCalMonth = now.getMonth();
+  }
 
-    if ($videoCalLabel) {
-      $videoCalLabel.textContent = formatMonthLabel(videoCalYear, videoCalMonth);
-    }
+  if ($videoCalLabel) {
+    $videoCalLabel.textContent = formatMonthLabel(videoCalYear, videoCalMonth);
+  }
 
-    const totals = computeVideoDayTotals();
-    const streakInfo = computeVideoStreak(totals);
-    const streakSet = new Set(streakInfo.streakDays || []);
+  const totals = computeVideoDayTotals();
+  const streakInfo = computeVideoStreak(totals);
+  const streakSet = new Set(streakInfo.streakDays || []);
 
-    // mapa de fechas de publicación
-    const publishSet = new Set();
-    Object.values(videos || {}).forEach((v) => {
-      if (v.publishDate) publishSet.add(v.publishDate);
-    });
+  // Fechas de publicación desde los datos de vídeo (YYYY-MM-DD)
+  const publishSet = new Set();
+  Object.values(videos || {}).forEach((v) => {
+    if (v.publishDate) publishSet.add(v.publishDate);
+  });
 
-    const firstDay = new Date(videoCalYear, videoCalMonth, 1).getDay();
-    const offset = (firstDay + 6) % 7; // lunes=0
-    const daysInMonth = getDaysInMonth(videoCalYear, videoCalMonth);
+  const firstDay = new Date(videoCalYear, videoCalMonth, 1).getDay();
+  const offset = (firstDay + 6) % 7; // lunes = 0
+  const daysInMonth = getDaysInMonth(videoCalYear, videoCalMonth);
 
-    const frag = document.createDocumentFragment();
-    const totalCells = offset + daysInMonth;
+  const frag = document.createDocumentFragment();
+  const totalCells = offset + daysInMonth;
 
-    for (let i = 0; i < totalCells; i++) {
-      const cell = document.createElement("div");
+  for (let i = 0; i < totalCells; i++) {
+    const cell = document.createElement("div");
 
-      if (i < offset) {
-        cell.className = "video-cal-cell video-cal-cell-empty";
+    if (i < offset) {
+      cell.className = "video-cal-cell video-cal-cell-empty";
+    } else {
+      const dayNum = i - offset + 1;
+      const key =
+        `${videoCalYear}-` +
+        String(videoCalMonth + 1).padStart(2, "0") + "-" +
+        String(dayNum).padStart(2, "0");
+
+      const t = totals[key] || { words: 0, seconds: 0 };
+      const hasWork = (t.words || 0) > 0 || (t.seconds || 0) > 0;
+      const isPublish = publishSet.has(key);
+      const isStreak = streakSet.has(key);
+
+      cell.className = "video-cal-cell";
+
+      // PRIORIDAD: publicación > racha > trabajo
+      if (isPublish) {
+        cell.classList.add("video-cal-publish");
       } else {
-        const dayNum = i - offset + 1;
-        const d = new Date(videoCalYear, videoCalMonth, dayNum);
-        const key = d.toISOString().slice(0, 10);
-        const t = totals[key] || { words: 0, seconds: 0 };
-
-        cell.className = "video-cal-cell";
-        const hasWork = (t.words || 0) > 0 || (t.seconds || 0) > 0;
         if (hasWork) cell.classList.add("video-cal-has-work");
-        if (streakSet.has(key)) cell.classList.add("video-cal-streak");
-        if (publishSet.has(key)) cell.classList.add("video-cal-publish");
-
-        const num = document.createElement("div");
-        num.className = "video-cal-day-number";
-        num.textContent = String(dayNum);
-
-        const metrics = document.createElement("div");
-        metrics.className = "video-cal-metrics";
-        if (hasWork) {
-          const timeStr = t.seconds ? formatWorkTime(t.seconds) : "";
-          metrics.textContent = `${t.words || 0} w${timeStr ? " · " + timeStr : ""}`;
-        } else if (publishSet.has(key)) {
-          metrics.textContent = "📤 subida";
-        } else {
-          metrics.textContent = "";
-        }
-
-        cell.appendChild(num);
-        cell.appendChild(metrics);
+        if (isStreak) cell.classList.add("video-cal-streak");
       }
 
-      frag.appendChild(cell);
+      const num = document.createElement("div");
+      num.className = "video-cal-day-number";
+      num.textContent = String(dayNum);
+
+      const metrics = document.createElement("div");
+      metrics.className = "video-cal-metrics";
+
+      if (isPublish && hasWork) {
+        const timeStr = t.seconds ? formatWorkTime(t.seconds) : "";
+        metrics.textContent =
+          `📤 subida · ${t.words || 0} w` +
+          (timeStr ? " · " + timeStr : "");
+      } else if (isPublish) {
+        metrics.textContent = "📤 subida";
+      } else if (hasWork) {
+        const timeStr = t.seconds ? formatWorkTime(t.seconds) : "";
+        metrics.textContent =
+          `${t.words || 0} w` +
+          (timeStr ? " · " + timeStr : "");
+      } else {
+        metrics.textContent = "";
+      }
+
+      cell.appendChild(num);
+      cell.appendChild(metrics);
     }
 
-    $videoCalGrid.innerHTML = "";
-    $videoCalGrid.appendChild(frag);
+    frag.appendChild(cell);
   }
+
+  $videoCalGrid.innerHTML = "";
+  $videoCalGrid.appendChild(frag);
+}
+
+
 
   // Nav calendario
   if ($videoCalPrev) {

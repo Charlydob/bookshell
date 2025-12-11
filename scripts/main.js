@@ -96,6 +96,8 @@ const $bookPdf = document.getElementById("book-pdf");
 const $statStreakCurrent = document.getElementById("stat-streak-current");
 const $statStreakBest = document.getElementById("stat-streak-best");
 const $statTodayPages = document.getElementById("stat-today-pages");
+const $statPagesTotal = document.getElementById("stat-pages-total");
+
 
 // Calendario
 const $calPrev = document.getElementById("cal-prev");
@@ -113,12 +115,13 @@ $navButtons.forEach(btn => {
     $navButtons.forEach(b => b.classList.remove("nav-btn-active"));
     btn.classList.add("nav-btn-active");
 
-    if (viewId === "view-stats") {
+    if (viewId === "view-books") {
       renderStats();
       renderCalendar();
     }
   });
 });
+
 
 // === Modal libro ===
 function openBookModal(bookId = null) {
@@ -222,10 +225,9 @@ onValue(ref(db, BOOKS_PATH), (snap) => {
 onValue(ref(db, READING_LOG_PATH), (snap) => {
   readingLog = snap.val() || {};
   renderStats();
-  if (document.getElementById("view-stats").classList.contains("view-active")) {
-    renderCalendar();
-  }
+  renderCalendar();
 });
+
 
 // === Render libros ===
 function renderBooks() {
@@ -459,12 +461,22 @@ function renderStats() {
   const totals = computeDailyTotals();
   const today = todayKey();
   const todayPages = totals[today] || 0;
+
+  let totalAll = 0;
+  Object.values(totals).forEach((n) => {
+    totalAll += Number(n) || 0;
+  });
+
   const { current, best } = computeStreaks();
 
   $statTodayPages.textContent = todayPages;
   $statStreakCurrent.textContent = current;
   $statStreakBest.textContent = best;
+  if ($statPagesTotal) {
+    $statPagesTotal.textContent = totalAll;
+  }
 }
+
 
 // === Calendario ===
 function renderCalendar() {

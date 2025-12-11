@@ -1,14 +1,15 @@
 .books-toolbar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   padding: 4px 4px 8px;
+  margin-bottom: 6px;
 }
 
 .books-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-bottom: 64px;
+  gap: 8px;
+  padding-bottom: 6px;
 }
 
 /* Tarjeta libro */
@@ -103,16 +104,17 @@
 .book-actions {
   margin-top: 6px;
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
   gap: 6px;
+  font-size: 8px;
 }
 
 .book-page-input {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 10px;
   color: var(--txt-soft);
 }
 
@@ -129,12 +131,18 @@
 .book-card-buttons {
   display: flex;
   gap: 6px;
+  padding: 0px;
+  font-size: 8px;
+}
+.btn{
+  padding: 6px;
 }
 
 /* Stats */
 
 .stats-wrapper {
-  padding: 6px 4px 60px;
+  padding: 6px 4px 8px;
+
 }
 
 .stats-cards {
@@ -150,18 +158,24 @@
   background: radial-gradient(circle at top, rgba(127, 93, 255, 0.16), transparent),
     rgba(9, 11, 20, 0.96);
   border: 1px solid rgba(255, 255, 255, 0.12);
+
+  display: flex;          /* ← tarjeta en flex */
+  flex-direction: column; /* ← título arriba, número abajo */
 }
 
 .stat-label {
   font-size: 11px;
   color: var(--txt-soft);
+  text-align: center;
 }
 
 .stat-value {
-  margin-top: 4px;
+  margin-top: auto;       /* ← alinea todos los valores a la misma altura */
   font-size: 18px;
   font-weight: 600;
+  text-align: center;
 }
+
 
 /* Calendario */
 

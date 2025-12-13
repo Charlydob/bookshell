@@ -149,6 +149,7 @@
   display: flex;
   gap: 8px;
   margin-bottom: 14px;
+  flex-wrap: wrap;
 }
 
 .stat-card {
@@ -261,4 +262,49 @@
 
 .dot-streak {
   background: #ffd75b;
+}
+
+
+/* Libros leídos (selector rango) */
+.stat-card-clickable{
+  cursor: pointer;
+}
+
+.stat-label-row{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.stat-range-select{
+  font-size: 10px;
+  padding: 2px 0px;
+  border-radius: 999px;
+  border: 0px solid rgba(255, 255, 255, 0.16);
+  background: transparent;
+  color: var(--txt-soft);
+  outline: none;
+  width: 20px;
+}
+
+.stat-range-select:focus{
+  border-color: transparent;
+}
+
+/* Calendario: días con libro terminado */
+.cal-cell-finished{
+  border-color: rgba(61, 255, 133, 0.75);
+  background: radial-gradient(circle at top, rgba(61, 255, 133, 0.16), rgba(13, 15, 24, 0.85));
+}
+
+.cal-finished{
+  margin-top: 1px;
+  font-size: 10px;
+  color: rgba(61, 255, 133, 0.9);
+}
+
+.dot-finished{
+  background: rgba(61, 255, 133, 0.9);
 }

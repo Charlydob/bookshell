@@ -121,6 +121,20 @@
   border-color: rgba(24, 196, 139, 0.9);
 }
 
+
+
+.video-cal-today {
+  box-shadow: 0 0 0 2px rgba(58, 160, 255, 0.95);
+  border-color: rgba(58, 160, 255, 0.45);
+}
+
+.video-cal-publish.video-cal-today {
+  box-shadow: 0 0 0 2px var(--video-accent), 0 0 0 4px rgba(58, 160, 255, 0.95);
+}
+
+.video-cal-publish-done.video-cal-today {
+  box-shadow: 0 0 0 2px #18c48b, 0 0 0 4px rgba(58, 160, 255, 0.95);
+}
 .video-calendar-legend {
   margin-top: 8px;
   display: flex;

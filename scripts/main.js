@@ -53,6 +53,15 @@ function todayKey() {
   return d.toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
+function dateKeyFromTimestamp(ts) {
+  if (!ts) return null;
+  try {
+    return new Date(ts).toISOString().slice(0, 10);
+  } catch (_) {
+    return null;
+  }
+}
+
 function formatMonthLabel(year, month) {
   const names = [
     "enero","febrero","marzo","abril","mayo","junio",
@@ -98,12 +107,29 @@ const $statStreakBest = document.getElementById("stat-streak-best");
 const $statTodayPages = document.getElementById("stat-today-pages");
 const $statPagesTotal = document.getElementById("stat-pages-total");
 
+// Libros leídos
+const $statBooksRead = document.getElementById("stat-books-read");
+const $statBooksReadRange = document.getElementById("stat-books-read-range");
+const $statBooksReadCard = document.getElementById("stat-books-read-card");
+
 
 // Calendario
 const $calPrev = document.getElementById("cal-prev");
 const $calNext = document.getElementById("cal-next");
 const $calLabel = document.getElementById("cal-label");
 const $calGrid = document.getElementById("calendar-grid");
+
+// Selector rango libros leídos
+if ($statBooksReadRange) {
+  $statBooksReadRange.addEventListener("change", () => renderStats());
+}
+if ($statBooksReadCard && $statBooksReadRange) {
+  $statBooksReadCard.addEventListener("click", (e) => {
+    if (e.target === $statBooksReadRange) return;
+    $statBooksReadRange.focus();
+    try { $statBooksReadRange.click(); } catch (_) {}
+  });
+}
 
 // === Navegación ===
 $navButtons.forEach(btn => {
@@ -182,6 +208,14 @@ $bookForm.addEventListener("submit", async (e) => {
     status: $bookStatus.value || "reading",
     updatedAt: Date.now()
   };
+
+// Si pasa a terminado, guardamos el día (para calendario/estadísticas)
+const prevBook = id && books[id] ? books[id] : null;
+if (bookData.status === "finished" && (!prevBook || prevBook.status !== "finished")) {
+  bookData.finishedAt = Date.now();
+  bookData.finishedOn = todayKey();
+}
+
 
   // Opcional: subir PDF solo si el usuario selecciona archivo
   const file = $bookPdf.files[0];
@@ -370,10 +404,19 @@ async function updateBookProgress(bookId, newPage) {
   const safeNew = Math.max(0, Math.min(total, newPage));
 
   const diff = safeNew - oldPage;
-  const updates = {
-    currentPage: safeNew,
-    updatedAt: Date.now()
-  };
+  
+const updates = {
+  currentPage: safeNew,
+  updatedAt: Date.now()
+};
+
+const shouldFinish = total > 0 && safeNew >= total;
+if (shouldFinish && (book.status !== "finished" || !book.finishedOn)) {
+  updates.status = "finished";
+  updates.finishedAt = Date.now();
+  updates.finishedOn = book.finishedOn || todayKey();
+}
+
 
   try {
     await update(ref(db, `${BOOKS_PATH}/${bookId}`), updates);
@@ -396,17 +439,111 @@ async function markBookFinished(bookId) {
   const book = books[bookId];
   if (!book) return;
   try {
-    await update(ref(db, `${BOOKS_PATH}/${bookId}`), {
-      status: "finished",
-      currentPage: book.pages || book.currentPage || 0,
-      updatedAt: Date.now()
-    });
+    
+await update(ref(db, `${BOOKS_PATH}/${bookId}`), {
+  status: "finished",
+  currentPage: book.pages || book.currentPage || 0,
+  finishedAt: Date.now(),
+  finishedOn: book.finishedOn || todayKey(),
+  updatedAt: Date.now()
+});
   } catch (err) {
     console.error("Error marcando terminado", err);
   }
 }
 
 // === Stats + streak ===
+
+
+// === Libros terminados: fechas ===
+function getFinishDateForBook(bookId) {
+  const b = books?.[bookId];
+  if (!b) return null;
+
+  // preferimos fecha explícita
+  if (b.finishedOn) return b.finishedOn;
+
+  const total = Number(b.pages) || 0;
+  if (!total) return null;
+
+  // Inferimos: primer día en el que el acumulado alcanza el total
+  const days = Object.keys(readingLog || {}).sort();
+  let acc = 0;
+  for (const day of days) {
+    const perBook = readingLog?.[day] || {};
+    const n = Number(perBook?.[bookId]) || 0;
+    if (n > 0) {
+      acc += n;
+      if (acc >= total) return day;
+    }
+  }
+
+  // fallback suave
+  return dateKeyFromTimestamp(b.updatedAt) || null;
+}
+
+function computeFinishedByDay() {
+  const map = {}; // { YYYY-MM-DD: count }
+  Object.keys(books || {}).forEach((id) => {
+    const b = books[id];
+    const total = Number(b?.pages) || 0;
+    const current = Number(b?.currentPage) || 0;
+    const isFinished = b?.status === "finished" || (total > 0 && current >= total);
+    if (!isFinished) return;
+
+    const day = getFinishDateForBook(id);
+    if (!day) return;
+    map[day] = (map[day] || 0) + 1;
+  });
+  return map;
+}
+
+function getWeekBoundsKey(anchorDate = new Date()) {
+  const d = new Date(anchorDate);
+  const day = (d.getDay() + 6) % 7; // lunes=0
+  const monday = new Date(d);
+  monday.setDate(d.getDate() - day);
+  monday.setHours(0, 0, 0, 0);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+  return {
+    from: monday.toISOString().slice(0, 10),
+    to: sunday.toISOString().slice(0, 10)
+  };
+}
+
+function computeBooksReadCount(range = "total") {
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = String(today.getMonth() + 1).padStart(2, "0");
+  const prefixMonth = `${y}-${m}-`;
+  const prefixYear = `${y}-`;
+  const week = getWeekBoundsKey(today);
+
+  let count = 0;
+  Object.keys(books || {}).forEach((id) => {
+    const b = books[id];
+    const total = Number(b?.pages) || 0;
+    const current = Number(b?.currentPage) || 0;
+    const isFinished = b?.status === "finished" || (total > 0 && current >= total);
+    if (!isFinished) return;
+
+    const day = getFinishDateForBook(id);
+    if (!day) return;
+
+    if (range === "month") {
+      if (!day.startsWith(prefixMonth)) return;
+    } else if (range === "year") {
+      if (!day.startsWith(prefixYear)) return;
+    } else if (range === "week") {
+      if (day < week.from || day > week.to) return;
+    }
+
+    count += 1;
+  });
+  return count;
+}
 function computeDailyTotals() {
   const totals = {}; // { date: totalPages }
   Object.entries(readingLog || {}).forEach(([day, perBook]) => {
@@ -475,6 +612,12 @@ function renderStats() {
   if ($statPagesTotal) {
     $statPagesTotal.textContent = totalAll;
   }
+
+if ($statBooksRead) {
+  const range = $statBooksReadRange ? $statBooksReadRange.value : "total";
+  $statBooksRead.textContent = computeBooksReadCount(range);
+}
+
 }
 
 
@@ -489,6 +632,7 @@ function renderCalendar() {
   $calLabel.textContent = formatMonthLabel(currentCalYear, currentCalMonth);
 
   const totals = computeDailyTotals();
+  const finishedByDay = computeFinishedByDay();
 
   const firstDay = new Date(currentCalYear, currentCalMonth, 1).getDay(); // 0-6
   const offset = (firstDay + 6) % 7; // hacer lunes=0
@@ -512,6 +656,7 @@ function renderCalendar() {
       const d = new Date(currentCalYear, currentCalMonth, dayNum);
       const key = d.toISOString().slice(0, 10);
       const pages = totals[key] || 0;
+      const finishedCount = finishedByDay[key] || 0;
 
       cell.className = "cal-cell";
       if (pages > 0) {
@@ -519,6 +664,9 @@ function renderCalendar() {
       }
       if (streakDays.has(key)) {
         cell.classList.add("cal-cell-highlight");
+      }
+      if (finishedCount > 0) {
+        cell.classList.add("cal-cell-finished");
       }
 
       const num = document.createElement("div");
@@ -531,6 +679,13 @@ function renderCalendar() {
 
       cell.appendChild(num);
       cell.appendChild(p);
+
+      if (finishedCount > 0) {
+        const fin = document.createElement("div");
+        fin.className = "cal-finished";
+        fin.textContent = finishedCount === 1 ? "✅" : `✅ x${finishedCount}`;
+        cell.appendChild(fin);
+      }
     }
 
     frag.appendChild(cell);

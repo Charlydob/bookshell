@@ -49,6 +49,20 @@ function todayKey() {
   return `${y}-${m}-${day}`; // YYYY-MM-DD local
 }
 
+function normalizeDateKey(dateStr) {
+  if (!dateStr) return "";
+  // Si ya viene como YYYY-MM-DD, úsalo tal cual
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  // Intento best-effort (por si algún día guardas ISO completo)
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return String(dateStr);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+
 function formatMonthLabel(year, month) {
   const names = [
     "enero","febrero","marzo","abril","mayo","junio",
@@ -579,11 +593,14 @@ function computeVideoStreak(totals) {
     });
 
     const { current } = computeVideoStreak(totals);
-    const videosDone = Object.values(videos || {}).filter(
-      (v) => v.status === "published"
+
+    // "Publicado" = vídeo cuya fecha de publicación aparece en verde (ese día está "done")
+    const publishInfo = computePublishInfo();
+    const videosPublished = Object.values(videos || {}).filter(
+      (v) => v.publishDate && publishInfo[normalizeDateKey(v.publishDate)]?.done
     ).length;
 
-    if ($videoStatCount) $videoStatCount.textContent = videosDone;
+    if ($videoStatCount) $videoStatCount.textContent = videosPublished;
     if ($videoStatStreak) $videoStatStreak.textContent = current;
     if ($videoStatWords) $videoStatWords.textContent = totalWords;
     if ($videoStatTime) $videoStatTime.textContent = formatWorkTime(totalSeconds);
@@ -604,6 +621,24 @@ function isVideoFullyDone(v) {
   return totalPct >= 100 || v.status === "published";
 }
 
+function computePublishInfo() {
+  // mapa: YYYY-MM-DD -> { any: true, done: boolean }
+  const publishInfo = {};
+  Object.values(videos || {}).forEach((v) => {
+    if (!v.publishDate) return;
+    const date = normalizeDateKey(v.publishDate);
+    const done = isVideoFullyDone(v);
+    if (!publishInfo[date]) {
+      publishInfo[date] = { any: true, done };
+    } else {
+      // el día solo se considera "done" si TODOS los vídeos de esa fecha lo están
+      publishInfo[date].done = publishInfo[date].done && done;
+    }
+  });
+  return publishInfo;
+}
+
+
   // === Calendario ===
 function renderVideoCalendar() {
   if (!$videoCalGrid) return;
@@ -622,18 +657,7 @@ function renderVideoCalendar() {
   const streakSet = new Set(streakInfo.streakDays || []);
 
   // info de publicación por fecha: { any: bool, done: bool (todos los vídeos de ese día al 100%) }
-  const publishInfo = {};
-  Object.values(videos || {}).forEach((v) => {
-    if (!v.publishDate) return;
-    const date = v.publishDate;
-    const done = isVideoFullyDone(v);
-    if (!publishInfo[date]) {
-      publishInfo[date] = { any: true, done };
-    } else {
-      // el día solo se considera "done" si TODOS los vídeos de esa fecha lo están
-      publishInfo[date].done = publishInfo[date].done && done;
-    }
-  });
+  const publishInfo = computePublishInfo();
 
   const firstDay = new Date(videoCalYear, videoCalMonth, 1).getDay();
   const offset = (firstDay + 6) % 7; // lunes = 0
@@ -663,6 +687,8 @@ function renderVideoCalendar() {
       const isStreak = streakSet.has(key);
 
       cell.className = "video-cal-cell";
+
+      if (key === todayKey()) cell.classList.add("video-cal-today");
 
       // PRIORIDAD: publicación > racha > trabajo
       if (isPublish) {

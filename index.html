@@ -44,6 +44,19 @@
     <div class="stat-label">Páginas totales</div>
     <div id="stat-pages-total" class="stat-value">0</div>
   </div>
+
+  <div id="stat-books-read-card" class="stat-card stat-card-clickable">
+    <div class="stat-label stat-label-row">
+      <span>Libros leídos</span>
+      <select id="stat-books-read-range" class="stat-range-select" aria-label="Rango libros leídos">
+        <option value="total" selected>Total</option>
+        <option value="month">Mes</option>
+        <option value="year">Año</option>
+        <option value="week">Semana</option>
+      </select>
+    </div>
+    <div id="stat-books-read" class="stat-value">0</div>
+  </div>
 </div>
 
 
@@ -59,6 +72,7 @@
             <div class="calendar-legend">
               <span class="dot dot-normal"></span> Páginas leídas
               <span class="dot dot-streak"></span> Día de racha
+              <span class="dot dot-finished"></span> Libro terminado
             </div>
           </div>
         </div>

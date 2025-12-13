@@ -209,12 +209,22 @@ $bookForm.addEventListener("submit", async (e) => {
     updatedAt: Date.now()
   };
 
-// Si pasa a terminado, guardamos el día (para calendario/estadísticas)
-const prevBook = id && books[id] ? books[id] : null;
-if (bookData.status === "finished" && (!prevBook || prevBook.status !== "finished")) {
-  bookData.finishedAt = Date.now();
-  bookData.finishedOn = todayKey();
-}
+  // Gestión robusta de "terminado":
+  // - si pasa a finished => fijamos fecha
+  // - si sale de finished => borramos fecha (para que el calendario/contadores se corrijan)
+  const prevBook = id && books[id] ? books[id] : null;
+  const prevWasFinished = prevBook?.status === "finished" || ((Number(prevBook?.pages) || 0) > 0 && (Number(prevBook?.currentPage) || 0) >= (Number(prevBook?.pages) || 0));
+  const nowIsFinished = bookData.status === "finished" || (bookData.pages > 0 && bookData.currentPage >= bookData.pages);
+
+  if (nowIsFinished && !prevWasFinished) {
+    bookData.status = "finished";
+    bookData.finishedAt = Date.now();
+    bookData.finishedOn = todayKey();
+  } else if (!nowIsFinished && prevWasFinished) {
+    // RTDB: null => elimina la propiedad
+    bookData.finishedAt = null;
+    bookData.finishedOn = null;
+  }
 
 
   // Opcional: subir PDF solo si el usuario selecciona archivo
@@ -410,23 +420,33 @@ const updates = {
   updatedAt: Date.now()
 };
 
+// Auto-finish / auto-unfinish (para que el calendario/contadores se corrijan al editar)
 const shouldFinish = total > 0 && safeNew >= total;
-if (shouldFinish && (book.status !== "finished" || !book.finishedOn)) {
+const wasFinished = book.status === "finished" || (total > 0 && (Number(book.currentPage) || 0) >= total);
+
+if (shouldFinish && (!wasFinished || !book.finishedOn)) {
   updates.status = "finished";
   updates.finishedAt = Date.now();
   updates.finishedOn = book.finishedOn || todayKey();
+} else if (!shouldFinish && wasFinished) {
+  // Si bajamos por debajo del total, quitamos "terminado"
+  updates.status = "reading";
+  updates.finishedAt = null;
+  updates.finishedOn = null;
 }
 
 
   try {
     await update(ref(db, `${BOOKS_PATH}/${bookId}`), updates);
 
-    if (diff > 0) {
+    // Registramos páginas leídas del día como DELTA editable (si corriges, se corrige)
+    if (diff !== 0) {
       const day = todayKey();
       const logRef = ref(db, `${READING_LOG_PATH}/${day}/${bookId}`);
       await runTransaction(logRef, (current) => {
-        const prev = current || 0;
-        return prev + diff;
+        const prev = Number(current) || 0;
+        const next = Math.max(0, prev + diff);
+        return next === 0 ? null : next; // null => borra el nodo
       });
     }
   } catch (err) {

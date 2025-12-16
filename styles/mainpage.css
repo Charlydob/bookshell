@@ -308,3 +308,44 @@
 .dot-finished{
   background: rgba(61, 255, 133, 0.9);
 }
+.books-finished{
+  margin-top: 12px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.04);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.books-finished-summary{
+  list-style: none;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+
+.books-finished-summary::-webkit-details-marker{ display:none; }
+
+.books-finished-count{
+  opacity: .75;
+  font-size: 12px;
+}
+
+.books-list-finished{
+  padding: 8px 8px 10px;
+}
+
+.book-card-finished{
+  opacity: .72;
+  filter: saturate(.85);
+}
+
+.book-card-finished .progress-ring{
+  background: conic-gradient(#2eea7b calc(var(--p) * 1%), rgba(255,255,255,.12) 0);
+}
+
+.book-card-finished .progress-ring-inner{
+  opacity: .9;
+}

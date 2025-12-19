@@ -121,8 +121,6 @@
   border-color: rgba(24, 196, 139, 0.9);
 }
 
-
-
 .video-cal-today {
   box-shadow: 0 0 0 2px rgba(58, 160, 255, 0.95);
   border-color: rgba(58, 160, 255, 0.45);
@@ -330,4 +328,56 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* CRONÓMETRO */
+
+.video-timer-card{
+  margin-bottom: 10px;
+  border-radius: 20px;
+  padding: 12px 10px;
+  background: rgba(9, 11, 20, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.video-timer-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 10px;
+}
+
+.video-timer-label{
+  font-size: 12px;
+  color: var(--txt-soft);
+}
+
+.video-timer-time{
+  font-size: 26px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.5px;
+  padding: 6px 0 2px;
+}
+
+.video-timer-sub{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--txt-soft);
+}
+
+.video-timer-hint{
+  opacity: .75;
+  text-align: right;
+  white-space: nowrap;
+}
+
+#video-timer-toggle{
+  padding: 6px 10px;
+  border-radius: 14px;
+  font-size: 12px;
+  line-height: 1;
 }

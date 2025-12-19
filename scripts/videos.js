@@ -33,10 +33,12 @@ const db = getDatabase(app);
 // Rutas
 const VIDEOS_PATH = "videos";
 const VIDEO_LOG_PATH = "videoLog";
+const VIDEO_WORK_PATH = "videoWorkLog";
 
 // Estado
 let videos = {};
 let videoLog = {}; // { "YYYY-MM-DD": { videoId: { w, s } } }
+let videoWorkLog = {}; // { "YYYY-MM-DD": seconds }
 let videoCalYear;
 let videoCalMonth;
 
@@ -106,6 +108,22 @@ function formatWorkTime(totalSeconds) {
   const d = (s / 86400).toFixed(1);
   return `${d} d`;
 }
+
+function formatHHMMSS(totalSeconds) {
+  const s = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+function dateToKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function normalizeNumberField(el, max = null) {
   if (!el) return;
   el.addEventListener("input", () => {
@@ -130,6 +148,12 @@ if ($viewVideos) {
   const $videoStatWords = document.getElementById("video-stat-words");
   const $videoStatTime = document.getElementById("video-stat-time");
 
+  // Cronómetro
+  const $videoTimerToggle  = document.getElementById("video-timer-toggle");
+  const $videoTimerDisplay = document.getElementById("video-timer-display");
+  const $videoTimerToday   = document.getElementById("video-timer-today");
+  const $videoTimerHint    = document.getElementById("video-timer-hint");
+
   const $videoCalPrev = document.getElementById("video-cal-prev");
   const $videoCalNext = document.getElementById("video-cal-next");
   const $videoCalLabel = document.getElementById("video-cal-label");
@@ -150,9 +174,9 @@ if ($viewVideos) {
   const $videoEditedMin = document.getElementById("video-edited-min");
   const $videoEditedSec = document.getElementById("video-edited-sec");
   normalizeNumberField($videoDurationMin);
-normalizeNumberField($videoDurationSec, 59);
-normalizeNumberField($videoEditedMin);
-normalizeNumberField($videoEditedSec, 59);
+  normalizeNumberField($videoDurationSec, 59);
+  normalizeNumberField($videoEditedMin);
+  normalizeNumberField($videoEditedSec, 59);
 
   const $videoPublishDate = document.getElementById("video-publish-date");
   const $videoStatus = document.getElementById("video-status");
@@ -205,6 +229,159 @@ normalizeNumberField($videoEditedSec, 59);
       if (e.target === $videoModalBackdrop) closeVideoModal();
     });
   }
+
+
+  // === Cronómetro (tiempo real trabajado) ===
+  const TIMER_STATE_KEY = "bookshell_video_timer_state_v1";
+  let timerRunning = false;
+  let timerStartMs = 0;
+  let timerDayKey = "";
+  let timerInterval = null;
+
+  function loadTimerState() {
+    try {
+      const raw = localStorage.getItem(TIMER_STATE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function saveTimerState() {
+    try {
+      const payload = timerRunning
+        ? { running: true, startMs: timerStartMs, dayKey: timerDayKey }
+        : { running: false };
+      localStorage.setItem(TIMER_STATE_KEY, JSON.stringify(payload));
+    } catch (_) {}
+  }
+
+  async function addWorkSeconds(dayKey, seconds) {
+    const s = Math.max(0, Math.floor(Number(seconds) || 0));
+    if (!dayKey || s <= 0) return;
+    const r = ref(db, `${VIDEO_WORK_PATH}/${dayKey}`);
+    await runTransaction(r, (curr) => (Number(curr) || 0) + s);
+  }
+
+  async function flushTimerRollover() {
+    if (!timerRunning || !timerDayKey || !timerStartMs) return;
+    // Si ha pasado de día(s) mientras estaba corriendo, repartimos a cada fecha.
+    // (Ej: de 23:50 a 00:10 -> 10 min al día anterior y 10 al nuevo)
+    while (timerDayKey !== todayKey()) {
+      const d = parseDateKey(timerDayKey);
+      const endMs = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+      if (endMs <= timerStartMs) break;
+      const sliceSec = Math.floor((endMs - timerStartMs) / 1000);
+      await addWorkSeconds(timerDayKey, sliceSec);
+      timerStartMs = endMs;
+      timerDayKey = dateToKey(new Date(endMs));
+      saveTimerState();
+    }
+  }
+
+  function getSessionSeconds() {
+    if (!timerRunning || !timerStartMs) return 0;
+    return Math.max(0, Math.floor((Date.now() - timerStartMs) / 1000));
+  }
+
+  function getTodayWorkedSecondsLive() {
+    const day = todayKey();
+    const base = Math.max(0, Number(videoWorkLog?.[day]) || 0);
+    if (!timerRunning) return base;
+    // si el timer sigue en el mismo día, sumamos la sesión en vivo
+    if (timerDayKey === day) return base + getSessionSeconds();
+    return base;
+  }
+
+  function getTotalWorkedSecondsLive() {
+    let total = 0;
+    Object.values(videoWorkLog || {}).forEach((v) => (total += Math.max(0, Number(v) || 0)));
+    if (timerRunning) total += getSessionSeconds();
+    return total;
+  }
+
+  function renderVideoTimerUI() {
+    if (!$videoTimerDisplay || !$videoTimerToggle || !$videoTimerToday) return;
+
+    const session = getSessionSeconds();
+    $videoTimerDisplay.textContent = formatHHMMSS(session);
+    $videoTimerToday.textContent = formatWorkTime(getTodayWorkedSecondsLive());
+
+    $videoTimerToggle.textContent = timerRunning ? "Parar" : "Empezar";
+    if ($videoTimerHint) $videoTimerHint.textContent = timerRunning ? "🎧 en marcha" : "";
+  }
+
+  function startVideoTimer() {
+    if (timerRunning) return;
+    timerRunning = true;
+    timerStartMs = Date.now();
+    timerDayKey = todayKey();
+    saveTimerState();
+
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(async () => {
+      await flushTimerRollover();
+      renderVideoTimerUI();
+      renderVideoStats();
+      renderVideoCalendar();
+    }, 700);
+
+    renderVideoTimerUI();
+    renderVideoStats();
+    renderVideoCalendar();
+  }
+
+  async function stopVideoTimer() {
+    if (!timerRunning) return;
+
+    await flushTimerRollover();
+    const elapsed = getSessionSeconds();
+    await addWorkSeconds(timerDayKey || todayKey(), elapsed);
+
+    timerRunning = false;
+    timerStartMs = 0;
+    timerDayKey = "";
+    saveTimerState();
+
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+
+    renderVideoTimerUI();
+    renderVideoStats();
+    renderVideoCalendar();
+  }
+
+  // Botón del cronómetro
+  if ($videoTimerToggle) {
+    $videoTimerToggle.addEventListener("click", async () => {
+      if (timerRunning) await stopVideoTimer();
+      else startVideoTimer();
+    });
+  }
+
+  // Restaurar estado al cargar
+  (async () => {
+    const st = loadTimerState();
+    if (st?.running && st.startMs && st.dayKey) {
+      timerRunning = true;
+      timerStartMs = Number(st.startMs) || Date.now();
+      timerDayKey = st.dayKey || todayKey();
+      await flushTimerRollover();
+      saveTimerState();
+      // re-enganchar intervalo
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(async () => {
+        await flushTimerRollover();
+        renderVideoTimerUI();
+        renderVideoStats();
+        renderVideoCalendar();
+      }, 700);
+    }
+    renderVideoTimerUI();
+  })();
 
   // Guardar vídeo
   if ($videoForm) {
@@ -261,6 +438,13 @@ normalizeNumberField($videoEditedSec, 59);
     videoLog = snap.val() || {};
     renderVideoStats();
     renderVideoCalendar();
+  });
+
+  onValue(ref(db, VIDEO_WORK_PATH), (snap) => {
+    videoWorkLog = snap.val() || {};
+    renderVideoStats();
+    renderVideoCalendar();
+    renderVideoTimerUI();
   });
 
   // === Render tarjetas ===
@@ -396,8 +580,8 @@ normalizeNumberField($videoEditedSec, 59);
       `;
 
       const [inputWords, inputMin, inputSec] = inputGroup.querySelectorAll("input");
-normalizeNumberField(inputMin);
-normalizeNumberField(inputSec, 59);
+      normalizeNumberField(inputMin);
+      normalizeNumberField(inputSec, 59);
 
       inputWords.addEventListener("change", () => {
         const newWords = Math.max(0, Number(inputWords.value) || 0);
@@ -454,53 +638,53 @@ normalizeNumberField(inputSec, 59);
   }
 
   // Actualizar progreso + log diario
-async function updateVideoProgress(videoId, newWords, newEditedSeconds, oldWords, oldEditedSeconds) {
-  const v = videos[videoId];
-  if (!v) return;
+  async function updateVideoProgress(videoId, newWords, newEditedSeconds, oldWords, oldEditedSeconds) {
+    const v = videos[videoId];
+    if (!v) return;
 
-  const durationTotal = v.durationSeconds || 0;
+    const durationTotal = v.durationSeconds || 0;
 
-  const safeNewWords  = Math.max(0, Number(newWords) || 0);
-  const safeOldWords  = Math.max(0, Number(oldWords) || 0);
+    const safeNewWords  = Math.max(0, Number(newWords) || 0);
+    const safeOldWords  = Math.max(0, Number(oldWords) || 0);
 
-  const safeNewEdited = Math.max(0, Math.min(durationTotal, Number(newEditedSeconds) || 0));
-  const safeOldEdited = Math.max(0, Math.min(durationTotal, Number(oldEditedSeconds) || 0));
+    const safeNewEdited = Math.max(0, Math.min(durationTotal, Number(newEditedSeconds) || 0));
+    const safeOldEdited = Math.max(0, Math.min(durationTotal, Number(oldEditedSeconds) || 0));
 
-  const diffWords   = safeNewWords  - safeOldWords;
-  const diffSeconds = safeNewEdited - safeOldEdited;
+    const diffWords   = safeNewWords  - safeOldWords;
+    const diffSeconds = safeNewEdited - safeOldEdited;
 
-  const updates = {
-    scriptWords:  safeNewWords,
-    editedSeconds: safeNewEdited,
-    updatedAt: Date.now()
-  };
+    const updates = {
+      scriptWords:  safeNewWords,
+      editedSeconds: safeNewEdited,
+      updatedAt: Date.now()
+    };
 
-  try {
-    await update(ref(db, `${VIDEOS_PATH}/${videoId}`), updates);
+    try {
+      await update(ref(db, `${VIDEOS_PATH}/${videoId}`), updates);
 
-    // Aplicar también las RESTAS al registro diario (no solo las sumas)
-    if (diffWords !== 0 || diffSeconds !== 0) {
-      const day   = todayKey();
-      const logRef = ref(db, `${VIDEO_LOG_PATH}/${day}/${videoId}`);
+      // Aplicar también las RESTAS al registro diario (no solo las sumas)
+      if (diffWords !== 0 || diffSeconds !== 0) {
+        const day   = todayKey();
+        const logRef = ref(db, `${VIDEO_LOG_PATH}/${day}/${videoId}`);
 
-      await runTransaction(logRef, (current) => {
-        const prev = current || { w: 0, s: 0 };
-        let w = (prev.w || 0) + diffWords;
-        let s = (prev.s || 0) + diffSeconds;
+        await runTransaction(logRef, (current) => {
+          const prev = current || { w: 0, s: 0 };
+          let w = (prev.w || 0) + diffWords;
+          let s = (prev.s || 0) + diffSeconds;
 
-        // Nunca valores negativos en el log
-        if (w < 0) w = 0;
-        if (s < 0) s = 0;
+          // Nunca valores negativos en el log
+          if (w < 0) w = 0;
+          if (s < 0) s = 0;
 
-        // Si queda todo a 0, podemos devolver 0 para limpiar el nodo
-        if (w === 0 && s === 0) return { w: 0, s: 0 };
-        return { w, s };
-      });
+          // Si queda todo a 0, podemos devolver 0 para limpiar el nodo
+          if (w === 0 && s === 0) return { w: 0, s: 0 };
+          return { w, s };
+        });
+      }
+    } catch (err) {
+      console.error("Error actualizando vídeo", err);
     }
-  } catch (err) {
-    console.error("Error actualizando vídeo", err);
   }
-}
 
 
   async function markVideoPublished(videoId) {
@@ -531,68 +715,81 @@ async function updateVideoProgress(videoId, newWords, newEditedSeconds, oldWords
     return totals;
   }
 
-function computeVideoStreak(totals) {
-  const days = Object.keys(totals).filter(
-    (d) => (totals[d].words || 0) > 0 || (totals[d].seconds || 0) > 0
-  );
-  if (!days.length) return { current: 0, best: 0, streakDays: [] };
-  days.sort();
+  function mergeTotalsForStreak(totals) {
+    const merged = {};
+    const keys = new Set([
+      ...Object.keys(totals || {}),
+      ...Object.keys(videoWorkLog || {})
+    ]);
+    keys.forEach((k) => {
+      const t = totals?.[k] || { words: 0, seconds: 0 };
+      const extra = Math.max(0, Number(videoWorkLog?.[k]) || 0);
+      merged[k] = { words: t.words || 0, seconds: (t.seconds || 0) + extra };
+    });
+    return merged;
+  }
 
-  let best = 1;
-  let current = 1;
-  let bestRun = [days[0]];
-  let currentRun = [days[0]];
+  function computeVideoStreak(totals) {
+    const days = Object.keys(totals).filter(
+      (d) => (totals[d].words || 0) > 0 || (totals[d].seconds || 0) > 0
+    );
+    if (!days.length) return { current: 0, best: 0, streakDays: [] };
+    days.sort();
 
-  for (let i = 1; i < days.length; i++) {
-    const prev = parseDateKey(days[i - 1]);
-    const currDate = parseDateKey(days[i]);
-    const diff = (currDate - prev) / (1000 * 60 * 60 * 24);
-    if (diff === 1) {
-      current += 1;
-      currentRun.push(days[i]);
-    } else {
-      if (currentRun.length > bestRun.length) bestRun = currentRun.slice();
-      current = 1;
-      currentRun = [days[i]];
+    let best = 1;
+    let current = 1;
+    let bestRun = [days[0]];
+    let currentRun = [days[0]];
+
+    for (let i = 1; i < days.length; i++) {
+      const prev = parseDateKey(days[i - 1]);
+      const currDate = parseDateKey(days[i]);
+      const diff = (currDate - prev) / (1000 * 60 * 60 * 24);
+      if (diff === 1) {
+        current += 1;
+        currentRun.push(days[i]);
+      } else {
+        if (currentRun.length > bestRun.length) bestRun = currentRun.slice();
+        current = 1;
+        currentRun = [days[i]];
+      }
+      if (current > best) best = current;
     }
-    if (current > best) best = current;
+    if (currentRun.length > bestRun.length) bestRun = currentRun.slice();
+
+    const latestDay = days[days.length - 1];
+    const today = todayKey();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yKey =
+      `${yesterday.getFullYear()}-` +
+      String(yesterday.getMonth() + 1).padStart(2, "0") + "-" +
+      String(yesterday.getDate()).padStart(2, "0");
+
+    let currentStreak = current;
+    let activeRun = currentRun.slice();
+
+    if (latestDay !== today && latestDay !== yKey) {
+      currentStreak = 0;
+      activeRun = [];
+    }
+
+    const streakDays = (activeRun.length ? activeRun : bestRun).slice();
+    return { current: currentStreak, best, streakDays };
   }
-  if (currentRun.length > bestRun.length) bestRun = currentRun.slice();
-
-  const latestDay = days[days.length - 1];
-  const today = todayKey();
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yKey =
-    `${yesterday.getFullYear()}-` +
-    String(yesterday.getMonth() + 1).padStart(2, "0") + "-" +
-    String(yesterday.getDate()).padStart(2, "0");
-
-  let currentStreak = current;
-  let activeRun = currentRun.slice();
-
-  if (latestDay !== today && latestDay !== yKey) {
-    currentStreak = 0;
-    activeRun = [];
-  }
-
-  const streakDays = (activeRun.length ? activeRun : bestRun).slice();
-  return { current: currentStreak, best, streakDays };
-}
-
-
 
   function renderVideoStats() {
     const totals = computeVideoDayTotals();
-    let totalWords = 0;
-    let totalSeconds = 0;
+    const totalsForStreak = mergeTotalsForStreak(totals);
 
+    let totalWords = 0;
     Object.values(totals).forEach((t) => {
       totalWords += t.words || 0;
-      totalSeconds += t.seconds || 0;
     });
 
-    const { current } = computeVideoStreak(totals);
+    const { current } = computeVideoStreak(totalsForStreak);
+
+    const workedSeconds = getTotalWorkedSecondsLive();
 
     // "Publicado" = vídeo cuya fecha de publicación aparece en verde (ese día está "done")
     const publishInfo = computePublishInfo();
@@ -603,141 +800,135 @@ function computeVideoStreak(totals) {
     if ($videoStatCount) $videoStatCount.textContent = videosPublished;
     if ($videoStatStreak) $videoStatStreak.textContent = current;
     if ($videoStatWords) $videoStatWords.textContent = totalWords;
-    if ($videoStatTime) $videoStatTime.textContent = formatWorkTime(totalSeconds);
+    if ($videoStatTime) $videoStatTime.textContent = formatWorkTime(workedSeconds);
   }
-function isVideoFullyDone(v) {
-  const scriptTarget = v.scriptTarget || 2000;
-  const scriptWords = Math.max(0, Number(v.scriptWords) || 0);
-  const durationSec = v.durationSeconds || 0;
-  const editedSec = Math.max(0, Number(v.editedSeconds) || 0);
+  function isVideoFullyDone(v) {
+    const scriptTarget = v.scriptTarget || 2000;
+    const scriptWords = Math.max(0, Number(v.scriptWords) || 0);
+    const durationSec = v.durationSeconds || 0;
+    const editedSec = Math.max(0, Number(v.editedSeconds) || 0);
 
-  const scriptPct =
-    scriptTarget > 0 ? Math.min(100, Math.round((scriptWords / scriptTarget) * 100)) : 0;
-  const editPct =
-    durationSec > 0 ? Math.min(100, Math.round((editedSec / durationSec) * 100)) : 0;
+    const scriptPct =
+      scriptTarget > 0 ? Math.min(100, Math.round((scriptWords / scriptTarget) * 100)) : 0;
+    const editPct =
+      durationSec > 0 ? Math.min(100, Math.round((editedSec / durationSec) * 100)) : 0;
 
-  const totalPct = Math.round((scriptPct + editPct) / 2);
+    const totalPct = Math.round((scriptPct + editPct) / 2);
 
-  return totalPct >= 100 || v.status === "published";
-}
+    return totalPct >= 100 || v.status === "published";
+  }
 
-function computePublishInfo() {
-  // mapa: YYYY-MM-DD -> { any: true, done: boolean }
-  const publishInfo = {};
-  Object.values(videos || {}).forEach((v) => {
-    if (!v.publishDate) return;
-    const date = normalizeDateKey(v.publishDate);
-    const done = isVideoFullyDone(v);
-    if (!publishInfo[date]) {
-      publishInfo[date] = { any: true, done };
-    } else {
-      // el día solo se considera "done" si TODOS los vídeos de esa fecha lo están
-      publishInfo[date].done = publishInfo[date].done && done;
-    }
-  });
-  return publishInfo;
-}
+  function computePublishInfo() {
+    // mapa: YYYY-MM-DD -> { any: true, done: boolean }
+    const publishInfo = {};
+    Object.values(videos || {}).forEach((v) => {
+      if (!v.publishDate) return;
+      const date = normalizeDateKey(v.publishDate);
+      const done = isVideoFullyDone(v);
+      if (!publishInfo[date]) {
+        publishInfo[date] = { any: true, done };
+      } else {
+        // el día solo se considera "done" si TODOS los vídeos de esa fecha lo están
+        publishInfo[date].done = publishInfo[date].done && done;
+      }
+    });
+    return publishInfo;
+  }
 
 
   // === Calendario ===
-function renderVideoCalendar() {
-  if (!$videoCalGrid) return;
-  const now = new Date();
-  if (videoCalYear == null) {
-    videoCalYear = now.getFullYear();
-    videoCalMonth = now.getMonth();
-  }
-
-  if ($videoCalLabel) {
-    $videoCalLabel.textContent = formatMonthLabel(videoCalYear, videoCalMonth);
-  }
-
-  const totals = computeVideoDayTotals();
-  const streakInfo = computeVideoStreak(totals);
-  const streakSet = new Set(streakInfo.streakDays || []);
-
-  // info de publicación por fecha: { any: bool, done: bool (todos los vídeos de ese día al 100%) }
-  const publishInfo = computePublishInfo();
-
-  const firstDay = new Date(videoCalYear, videoCalMonth, 1).getDay();
-  const offset = (firstDay + 6) % 7; // lunes = 0
-  const daysInMonth = getDaysInMonth(videoCalYear, videoCalMonth);
-
-  const frag = document.createDocumentFragment();
-  const totalCells = offset + daysInMonth;
-
-  for (let i = 0; i < totalCells; i++) {
-    const cell = document.createElement("div");
-
-    if (i < offset) {
-      cell.className = "video-cal-cell video-cal-cell-empty";
-    } else {
-      const dayNum = i - offset + 1;
-      const key =
-        `${videoCalYear}-` +
-        String(videoCalMonth + 1).padStart(2, "0") + "-" +
-        String(dayNum).padStart(2, "0");
-
-      const t = totals[key] || { words: 0, seconds: 0 };
-      const hasWork = (t.words || 0) > 0 || (t.seconds || 0) > 0;
-
-      const pub = publishInfo[key];
-      const isPublish = !!(pub && pub.any);
-      const publishDone = !!(pub && pub.done);
-      const isStreak = streakSet.has(key);
-
-      cell.className = "video-cal-cell";
-
-      if (key === todayKey()) cell.classList.add("video-cal-today");
-
-      // PRIORIDAD: publicación > racha > trabajo
-      if (isPublish) {
-        if (publishDone) {
-          cell.classList.add("video-cal-publish-done");
-        } else {
-          cell.classList.add("video-cal-publish");
-        }
-      } else {
-        if (hasWork) cell.classList.add("video-cal-has-work");
-        if (isStreak) cell.classList.add("video-cal-streak");
-      }
-
-      const num = document.createElement("div");
-      num.className = "video-cal-day-number";
-      num.textContent = String(dayNum);
-
-      const metrics = document.createElement("div");
-      metrics.className = "video-cal-metrics";
-
-      if (isPublish && hasWork) {
-        const timeStr = t.seconds ? formatWorkTime(t.seconds) : "";
-        metrics.textContent =
-          `📤 subida · ${t.words || 0} w` +
-          (timeStr ? " · " + timeStr : "");
-      } else if (isPublish) {
-        metrics.textContent = "📤 subida";
-      } else if (hasWork) {
-        const timeStr = t.seconds ? formatWorkTime(t.seconds) : "";
-        metrics.textContent =
-          `${t.words || 0} w` +
-          (timeStr ? " · " + timeStr : "");
-      } else {
-        metrics.textContent = "";
-      }
-
-      cell.appendChild(num);
-      cell.appendChild(metrics);
+  function renderVideoCalendar() {
+    if (!$videoCalGrid) return;
+    const now = new Date();
+    if (videoCalYear == null) {
+      videoCalYear = now.getFullYear();
+      videoCalMonth = now.getMonth();
     }
 
-    frag.appendChild(cell);
+    if ($videoCalLabel) {
+      $videoCalLabel.textContent = formatMonthLabel(videoCalYear, videoCalMonth);
+    }
+
+    const totals = computeVideoDayTotals();
+    const totalsForStreak = mergeTotalsForStreak(totals);
+    const streakInfo = computeVideoStreak(totalsForStreak);
+    const streakSet = new Set(streakInfo.streakDays || []);
+
+    // info de publicación por fecha: { any: bool, done: bool (todos los vídeos de ese día al 100%) }
+    const publishInfo = computePublishInfo();
+
+    const firstDay = new Date(videoCalYear, videoCalMonth, 1).getDay();
+    const offset = (firstDay + 6) % 7; // lunes = 0
+    const daysInMonth = getDaysInMonth(videoCalYear, videoCalMonth);
+
+    const frag = document.createDocumentFragment();
+    const totalCells = offset + daysInMonth;
+
+    for (let i = 0; i < totalCells; i++) {
+      const cell = document.createElement("div");
+
+      if (i < offset) {
+        cell.className = "video-cal-cell video-cal-cell-empty";
+      } else {
+        const dayNum = i - offset + 1;
+        const key =
+          `${videoCalYear}-` +
+          String(videoCalMonth + 1).padStart(2, "0") + "-" +
+          String(dayNum).padStart(2, "0");
+
+        const t = totals[key] || { words: 0, seconds: 0 };
+        const workedSec = Math.max(0, Number(videoWorkLog?.[key]) || 0) + (timerRunning && timerDayKey === key ? getSessionSeconds() : 0);
+        const hasWork = (t.words || 0) > 0 || (t.seconds || 0) > 0 || workedSec > 0;
+
+        const pub = publishInfo[key];
+        const isPublish = !!(pub && pub.any);
+        const publishDone = !!(pub && pub.done);
+        const isStreak = streakSet.has(key);
+
+        cell.className = "video-cal-cell";
+
+        if (key === todayKey()) cell.classList.add("video-cal-today");
+
+        // PRIORIDAD: publicación > racha > trabajo
+        if (isPublish) {
+          if (publishDone) {
+            cell.classList.add("video-cal-publish-done");
+          } else {
+            cell.classList.add("video-cal-publish");
+          }
+        } else {
+          if (hasWork) cell.classList.add("video-cal-has-work");
+          if (isStreak) cell.classList.add("video-cal-streak");
+        }
+
+        const num = document.createElement("div");
+        num.className = "video-cal-day-number";
+        num.textContent = String(dayNum);
+
+        const metrics = document.createElement("div");
+        metrics.className = "video-cal-metrics";
+
+        const bits = [];
+        if ((t.words || 0) > 0) bits.push(`${t.words || 0} w`);
+        if (workedSec > 0) bits.push(`⏱ ${formatWorkTime(workedSec)}`);
+        if (workedSec <= 0 && (t.seconds || 0) > 0) bits.push(`🎞 ${formatWorkTime(t.seconds)}`);
+
+        if (isPublish) {
+          metrics.textContent = bits.length ? `📤 subida · ${bits.join(" · ")}` : "📤 subida";
+        } else {
+          metrics.textContent = bits.join(" · ");
+        }
+
+        cell.appendChild(num);
+        cell.appendChild(metrics);
+      }
+
+      frag.appendChild(cell);
+    }
+
+    $videoCalGrid.innerHTML = "";
+    $videoCalGrid.appendChild(frag);
   }
-
-  $videoCalGrid.innerHTML = "";
-  $videoCalGrid.appendChild(frag);
-}
-
-
-
 
   // Nav calendario
   if ($videoCalPrev) {

@@ -82,19 +82,9 @@
           <button id="btn-add-book" class="btn primary">+ Añadir libro</button>
         </div>
 
-    <div id="books-list-active" class="books-list">
-  <!-- Leyendo / Pendiente -->
-</div>
-
-<details id="books-finished-section" class="books-finished" style="display:none;">
-  <summary class="books-finished-summary">
-    <span>Terminados</span>
-    <span id="books-finished-count" class="books-finished-count">0</span>
-  </summary>
-  <div id="books-list-finished" class="books-list books-list-finished">
-    <!-- Terminados -->
-  </div>
-</details>
+        <div id="books-list" class="books-list">
+          <!-- Se rellenan las tarjetas por JS -->
+        </div>
 
         <div id="books-empty" class="empty-state">
           Aún no has añadido ningún libro.
@@ -121,6 +111,19 @@
             <div class="video-stat-card">
               <div class="video-stat-label">Tiempo trabajado</div>
               <div id="video-stat-time" class="video-stat-value">0</div>
+            </div>
+          </div>
+
+          <!-- CRONÓMETRO -->
+          <div class="video-timer-card">
+            <div class="video-timer-row">
+              <div class="video-timer-label">Cronómetro</div>
+              <button id="video-timer-toggle" class="btn primary">Empezar</button>
+            </div>
+            <div id="video-timer-display" class="video-timer-time">00:00:00</div>
+            <div class="video-timer-sub">
+              <span>Hoy: <b id="video-timer-today">0 min</b></span>
+              <span class="video-timer-hint" id="video-timer-hint"></span>
             </div>
           </div>
 

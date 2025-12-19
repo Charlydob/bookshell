@@ -230,160 +230,6 @@ if ($viewVideos) {
     });
   }
 
-<<<<<<< HEAD
-
-  // === Cronómetro (tiempo real trabajado) ===
-  const TIMER_STATE_KEY = "bookshell_video_timer_state_v1";
-  let timerRunning = false;
-  let timerStartMs = 0;
-  let timerDayKey = "";
-  let timerInterval = null;
-
-  function loadTimerState() {
-    try {
-      const raw = localStorage.getItem(TIMER_STATE_KEY);
-      if (!raw) return null;
-      return JSON.parse(raw);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function saveTimerState() {
-    try {
-      const payload = timerRunning
-        ? { running: true, startMs: timerStartMs, dayKey: timerDayKey }
-        : { running: false };
-      localStorage.setItem(TIMER_STATE_KEY, JSON.stringify(payload));
-    } catch (_) {}
-  }
-
-  async function addWorkSeconds(dayKey, seconds) {
-    const s = Math.max(0, Math.floor(Number(seconds) || 0));
-    if (!dayKey || s <= 0) return;
-    const r = ref(db, `${VIDEO_WORK_PATH}/${dayKey}`);
-    await runTransaction(r, (curr) => (Number(curr) || 0) + s);
-  }
-
-  async function flushTimerRollover() {
-    if (!timerRunning || !timerDayKey || !timerStartMs) return;
-    // Si ha pasado de día(s) mientras estaba corriendo, repartimos a cada fecha.
-    // (Ej: de 23:50 a 00:10 -> 10 min al día anterior y 10 al nuevo)
-    while (timerDayKey !== todayKey()) {
-      const d = parseDateKey(timerDayKey);
-      const endMs = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
-      if (endMs <= timerStartMs) break;
-      const sliceSec = Math.floor((endMs - timerStartMs) / 1000);
-      await addWorkSeconds(timerDayKey, sliceSec);
-      timerStartMs = endMs;
-      timerDayKey = dateToKey(new Date(endMs));
-      saveTimerState();
-    }
-  }
-
-  function getSessionSeconds() {
-    if (!timerRunning || !timerStartMs) return 0;
-    return Math.max(0, Math.floor((Date.now() - timerStartMs) / 1000));
-  }
-
-  function getTodayWorkedSecondsLive() {
-    const day = todayKey();
-    const base = Math.max(0, Number(videoWorkLog?.[day]) || 0);
-    if (!timerRunning) return base;
-    // si el timer sigue en el mismo día, sumamos la sesión en vivo
-    if (timerDayKey === day) return base + getSessionSeconds();
-    return base;
-  }
-
-  function getTotalWorkedSecondsLive() {
-    let total = 0;
-    Object.values(videoWorkLog || {}).forEach((v) => (total += Math.max(0, Number(v) || 0)));
-    if (timerRunning) total += getSessionSeconds();
-    return total;
-  }
-
-  function renderVideoTimerUI() {
-    if (!$videoTimerDisplay || !$videoTimerToggle || !$videoTimerToday) return;
-
-    const session = getSessionSeconds();
-    $videoTimerDisplay.textContent = formatHHMMSS(session);
-    $videoTimerToday.textContent = formatWorkTime(getTodayWorkedSecondsLive());
-
-    $videoTimerToggle.textContent = timerRunning ? "Parar" : "Empezar";
-    if ($videoTimerHint) $videoTimerHint.textContent = timerRunning ? "🎧 en marcha" : "";
-  }
-
-  function startVideoTimer() {
-    if (timerRunning) return;
-    timerRunning = true;
-    timerStartMs = Date.now();
-    timerDayKey = todayKey();
-    saveTimerState();
-
-    if (timerInterval) clearInterval(timerInterval);
-    timerInterval = setInterval(async () => {
-      await flushTimerRollover();
-      renderVideoTimerUI();
-      renderVideoStats();
-      renderVideoCalendar();
-    }, 700);
-
-    renderVideoTimerUI();
-    renderVideoStats();
-    renderVideoCalendar();
-  }
-
-  async function stopVideoTimer() {
-    if (!timerRunning) return;
-
-    await flushTimerRollover();
-    const elapsed = getSessionSeconds();
-    await addWorkSeconds(timerDayKey || todayKey(), elapsed);
-
-    timerRunning = false;
-    timerStartMs = 0;
-    timerDayKey = "";
-    saveTimerState();
-
-    if (timerInterval) {
-      clearInterval(timerInterval);
-      timerInterval = null;
-    }
-
-    renderVideoTimerUI();
-    renderVideoStats();
-    renderVideoCalendar();
-  }
-
-  // Botón del cronómetro
-  if ($videoTimerToggle) {
-    $videoTimerToggle.addEventListener("click", async () => {
-      if (timerRunning) await stopVideoTimer();
-      else startVideoTimer();
-    });
-  }
-
-  // Restaurar estado al cargar
-  (async () => {
-    const st = loadTimerState();
-    if (st?.running && st.startMs && st.dayKey) {
-      timerRunning = true;
-      timerStartMs = Number(st.startMs) || Date.now();
-      timerDayKey = st.dayKey || todayKey();
-      await flushTimerRollover();
-      saveTimerState();
-      // re-enganchar intervalo
-      if (timerInterval) clearInterval(timerInterval);
-      timerInterval = setInterval(async () => {
-        await flushTimerRollover();
-        renderVideoTimerUI();
-        renderVideoStats();
-        renderVideoCalendar();
-      }, 700);
-    }
-    renderVideoTimerUI();
-  })();
-=======
 // === Cronómetro (tiempo real trabajado) ===
 const TIMER_STATE_KEY = "bookshell_video_timer_state_v2";
 const AUTO_FLUSH_MS = 15000;
@@ -627,7 +473,6 @@ window.addEventListener("pagehide", () => {
   flushIfNeeded(true);
 });
 
->>>>>>> b9082ba36cf8d8018c20a28a84ddb5bd92e61ace
 
   // Guardar vídeo
   if ($videoForm) {
@@ -638,8 +483,11 @@ window.addEventListener("pagehide", () => {
       if (!title) return;
 
       const scriptWords = Math.max(0, Number($videoScriptWords.value) || 0);
-      const durationSec = toSeconds($videoDurationMin.value, $videoDurationSec.value);
-      const editedSec = Math.min(durationSec, toSeconds($videoEditedMin.value, $videoEditedSec.value));
+    let durationSec = toSeconds($videoDurationMin.value, $videoDurationSec.value);
+let editedSec   = toSeconds($videoEditedMin.value, $videoEditedSec.value);
+
+if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
+
       const publishDate = $videoPublishDate.value || null;
       const status = $videoStatus.value || "in_progress";
 
@@ -841,8 +689,9 @@ window.addEventListener("pagehide", () => {
         if (newSec > 59) newSec = 59;
         inputMin.value = newMin;
         inputSec.value = newSec;
-        const newEdited = Math.min(durationTotal, toSeconds(newMin, newSec));
-        updateVideoProgress(id, scriptWords, newEdited, scriptWords, editedSec);
+        const newEdited = toSeconds(newMin, newSec);
+updateVideoProgress(id, scriptWords, newEdited, scriptWords, editedSec);
+
       };
 
       inputMin.addEventListener("change", handleTimeChange);
@@ -888,22 +737,32 @@ window.addEventListener("pagehide", () => {
     const v = videos[videoId];
     if (!v) return;
 
-    const durationTotal = v.durationSeconds || 0;
+let durationTotal = Number(v.durationSeconds) || 0;
+
+const safeNewEditedRaw = Math.max(0, Number(newEditedSeconds) || 0);
+const safeOldEditedRaw = Math.max(0, Number(oldEditedSeconds) || 0);
+
+// si editado supera duración, ampliamos duración (para que no se “resetee”)
+if (safeNewEditedRaw > durationTotal) durationTotal = safeNewEditedRaw;
+
+const safeNewEdited = safeNewEditedRaw;
+const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
+
 
     const safeNewWords  = Math.max(0, Number(newWords) || 0);
     const safeOldWords  = Math.max(0, Number(oldWords) || 0);
 
-    const safeNewEdited = Math.max(0, Math.min(durationTotal, Number(newEditedSeconds) || 0));
-    const safeOldEdited = Math.max(0, Math.min(durationTotal, Number(oldEditedSeconds) || 0));
 
     const diffWords   = safeNewWords  - safeOldWords;
     const diffSeconds = safeNewEdited - safeOldEdited;
 
     const updates = {
-      scriptWords:  safeNewWords,
-      editedSeconds: safeNewEdited,
-      updatedAt: Date.now()
-    };
+  scriptWords: safeNewWords,
+  durationSeconds: durationTotal,
+  editedSeconds: safeNewEdited,
+  updatedAt: Date.now()
+};
+
 
     try {
       await update(ref(db, `${VIDEOS_PATH}/${videoId}`), updates);
@@ -1123,11 +982,7 @@ window.addEventListener("pagehide", () => {
           String(dayNum).padStart(2, "0");
 
         const t = totals[key] || { words: 0, seconds: 0 };
-<<<<<<< HEAD
-        const workedSec = Math.max(0, Number(videoWorkLog?.[key]) || 0) + (timerRunning && timerDayKey === key ? getSessionSeconds() : 0);
-=======
         const workedSec = Math.max(0, Number(videoWorkLog?.[key]) || 0) + (timerRunning && key === todayKey() ? getUnflushedSecondsToday() : 0);
->>>>>>> b9082ba36cf8d8018c20a28a84ddb5bd92e61ace
         const hasWork = (t.words || 0) > 0 || (t.seconds || 0) > 0 || workedSec > 0;
 
         const pub = publishInfo[key];

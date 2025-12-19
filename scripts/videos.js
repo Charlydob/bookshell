@@ -542,195 +542,258 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
   });
 
   // === Render tarjetas ===
-  function renderVideos() {
-    if (!$videosList) return;
-    const ids = Object.keys(videos || {});
-    if (!ids.length) {
-      $videosList.innerHTML = "";
-      if ($videosEmpty) $videosEmpty.style.display = "block";
-      return;
-    }
-    if ($videosEmpty) $videosEmpty.style.display = "none";
+function renderVideos() {
+  if (!$videosList) return;
 
-    ids.sort((a, b) => {
-      const ta = videos[a].updatedAt || 0;
-      const tb = videos[b].updatedAt || 0;
-      return tb - ta;
-    });
-
-    const frag = document.createDocumentFragment();
-
-    ids.forEach((id) => {
-      const v = videos[id];
-      const scriptTarget = v.scriptTarget || 2000;
-      const scriptWords = Math.max(0, Number(v.scriptWords) || 0);
-      const scriptPct = scriptTarget > 0 ? Math.min(100, Math.round((scriptWords / scriptTarget) * 100)) : 0;
-
-      const durationTotal = v.durationSeconds || 0;
-      const editedSec = Math.min(durationTotal, v.editedSeconds || 0);
-      const editPct = durationTotal > 0 ? Math.min(100, Math.round((editedSec / durationTotal) * 100)) : 0;
-
-      const totalPct = Math.round((scriptPct + editPct) / 2);
-
-      let daysRemainingText = "Sin fecha";
-      if (v.publishDate) {
-        const pub = parseDateKey(v.publishDate);
-        const today = parseDateKey(todayKey());
-        const diff = Math.round((pub - today) / (1000 * 60 * 60 * 24));
-        if (diff > 1) daysRemainingText = `${diff} días para publicar`;
-        else if (diff === 1) daysRemainingText = "Mañana";
-        else if (diff === 0) daysRemainingText = "Hoy";
-        else daysRemainingText = `${Math.abs(diff)} días desde publicación`;
-      }
-
-      const card = document.createElement("article");
-      card.className = "video-card";
-      card.dataset.id = id;
-
-      const prog = document.createElement("div");
-      prog.className = "video-progress";
-      prog.innerHTML = `
-        <div class="video-progress-ring" style="--p:${totalPct}">
-          <div class="video-progress-inner">${totalPct}%</div>
-        </div>
-      `;
-
-      const main = document.createElement("div");
-      main.className = "video-main";
-
-      const titleRow = document.createElement("div");
-      titleRow.className = "video-title-row";
-
-      const title = document.createElement("div");
-      title.className = "video-title";
-      title.textContent = v.title || "Sin título";
-
-      const status = document.createElement("span");
-      status.className = "video-status-pill";
-      status.textContent =
-        v.status === "published"
-          ? "Publicado"
-          : v.status === "in_progress"
-          ? "En curso"
-          : "Planificado";
-
-      titleRow.appendChild(title);
-      titleRow.appendChild(status);
-
-      const meta = document.createElement("div");
-      meta.className = "video-meta";
-
-      const metaBits = [];
-      if (v.publishDate) metaBits.push(`📅 ${v.publishDate}`);
-      const durSplit = splitSeconds(durationTotal);
-      if (durationTotal > 0) {
-        metaBits.push(`🎬 ${durSplit.min}m ${durSplit.sec}s`);
-      }
-      meta.innerHTML = metaBits.map((m) => `<span>${m}</span>`).join("");
-
-      const bars = document.createElement("div");
-      bars.className = "video-bars";
-
-      const barScript = document.createElement("div");
-      barScript.className = "video-bar-line";
-      barScript.innerHTML = `
-        <span>Guion</span>
-        <span>${scriptWords}/${scriptTarget} palabras · ${scriptPct}%</span>
-      `;
-
-      const barEdit = document.createElement("div");
-      barEdit.className = "video-bar-line";
-      const edSplit = splitSeconds(editedSec);
-      const durTotalSplit = splitSeconds(durationTotal);
-      barEdit.innerHTML = `
-        <span>Edición</span>
-        <span>${edSplit.min}m ${edSplit.sec}s / ${durTotalSplit.min}m ${durTotalSplit.sec}s · ${editPct}%</span>
-      `;
-
-      bars.appendChild(barScript);
-      bars.appendChild(barEdit);
-
-      const remaining = document.createElement("div");
-      remaining.className = "video-remaining";
-      remaining.textContent = daysRemainingText;
-
-      const actions = document.createElement("div");
-      actions.className = "video-actions";
-
-      const inputGroup = document.createElement("div");
-      inputGroup.className = "video-input-group";
-      inputGroup.innerHTML = `
-        <div>Actualizar progreso</div>
-        <div class="video-input-row">
-          <span>Palabras</span>
-          <input type="number" min="0" inputmode="numeric" value="${scriptWords}">
-        </div>
-        <div class="video-input-row">
-          <span>Min</span>
-          <input type="number" min="0" inputmode="numeric" value="${splitSeconds(editedSec).min}">
-          <span>Seg</span>
-          <input type="number" min="0" max="59" inputmode="numeric" value="${splitSeconds(editedSec).sec}">
-        </div>
-      `;
-
-      const [inputWords, inputMin, inputSec] = inputGroup.querySelectorAll("input");
-      normalizeNumberField(inputMin);
-      normalizeNumberField(inputSec, 59);
-
-      inputWords.addEventListener("change", () => {
-        const newWords = Math.max(0, Number(inputWords.value) || 0);
-        inputWords.value = newWords;
-        updateVideoProgress(id, newWords, editedSec, scriptWords, editedSec);
-      });
-
-      const handleTimeChange = () => {
-        let newMin = Math.max(0, Number(inputMin.value) || 0);
-        let newSec = Math.max(0, Number(inputSec.value) || 0);
-        if (newSec > 59) newSec = 59;
-        inputMin.value = newMin;
-        inputSec.value = newSec;
-        const newEdited = toSeconds(newMin, newSec);
-updateVideoProgress(id, scriptWords, newEdited, scriptWords, editedSec);
-
-      };
-
-      inputMin.addEventListener("change", handleTimeChange);
-      inputSec.addEventListener("change", handleTimeChange);
-
-      const buttons = document.createElement("div");
-      buttons.className = "video-card-buttons";
-
-      const btnEdit = document.createElement("button");
-      btnEdit.className = "btn";
-      btnEdit.textContent = "Editar";
-      btnEdit.addEventListener("click", () => openVideoModal(id));
-
-      const btnPublish = document.createElement("button");
-      btnPublish.className = "btn";
-      btnPublish.textContent = "Publicado";
-      btnPublish.addEventListener("click", () => markVideoPublished(id));
-
-      buttons.appendChild(btnEdit);
-      buttons.appendChild(btnPublish);
-
-      actions.appendChild(inputGroup);
-      actions.appendChild(buttons);
-
-      main.appendChild(titleRow);
-      main.appendChild(meta);
-      main.appendChild(bars);
-      main.appendChild(remaining);
-      main.appendChild(actions);
-
-      card.appendChild(prog);
-      card.appendChild(main);
-
-      frag.appendChild(card);
-    });
-
+  const idsAll = Object.keys(videos || {});
+  if (!idsAll.length) {
     $videosList.innerHTML = "";
-    $videosList.appendChild(frag);
+    if ($videosEmpty) $videosEmpty.style.display = "block";
+    return;
   }
+  if ($videosEmpty) $videosEmpty.style.display = "none";
+
+  const publishedIds = [];
+  const activeIds = [];
+
+  idsAll.forEach((id) => {
+    const v = videos[id] || {};
+    // Publicado = status published (simple y estable)
+    if (v.status === "published") publishedIds.push(id);
+    else activeIds.push(id);
+  });
+
+  // orden
+  activeIds.sort((a, b) => (videos[b].updatedAt || 0) - (videos[a].updatedAt || 0));
+  publishedIds.sort((a, b) => {
+    const va = videos[a] || {};
+    const vb = videos[b] || {};
+    const da = va.publishDate ? parseDateKey(va.publishDate).getTime() : (va.updatedAt || 0);
+    const db = vb.publishDate ? parseDateKey(vb.publishDate).getTime() : (vb.updatedAt || 0);
+    return db - da;
+  });
+
+  // helper: crea una tarjeta (es TU código tal cual, metido en función)
+  function createVideoCard(id) {
+    const v = videos[id];
+    if (!v) return document.createElement("div");
+
+    const scriptTarget = v.scriptTarget || 2000;
+    const scriptWords = Math.max(0, Number(v.scriptWords) || 0);
+    const scriptPct = scriptTarget > 0 ? Math.min(100, Math.round((scriptWords / scriptTarget) * 100)) : 0;
+
+    const durationTotal = Number(v.durationSeconds) || 0;
+    const editedSec = Math.max(0, Number(v.editedSeconds) || 0); // <- ya NO capamos
+    const editPct = durationTotal > 0 ? Math.min(100, Math.round((Math.min(editedSec, durationTotal) / durationTotal) * 100)) : 0;
+
+    const totalPct = Math.round((scriptPct + editPct) / 2);
+
+    let daysRemainingText = "Sin fecha";
+    if (v.publishDate) {
+      const pub = parseDateKey(v.publishDate);
+      const today = parseDateKey(todayKey());
+      const diff = Math.round((pub - today) / (1000 * 60 * 60 * 24));
+      if (diff > 1) daysRemainingText = `${diff} días para publicar`;
+      else if (diff === 1) daysRemainingText = "Mañana";
+      else if (diff === 0) daysRemainingText = "Hoy";
+      else daysRemainingText = `${Math.abs(diff)} días desde publicación`;
+    }
+
+    const card = document.createElement("article");
+    card.className = "video-card";
+    card.dataset.id = id;
+
+    const prog = document.createElement("div");
+    prog.className = "video-progress";
+    prog.innerHTML = `
+      <div class="video-progress-ring" style="--p:${totalPct}">
+        <div class="video-progress-inner">${totalPct}%</div>
+      </div>
+    `;
+
+    const main = document.createElement("div");
+    main.className = "video-main";
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "video-title-row";
+
+    const title = document.createElement("div");
+    title.className = "video-title";
+    title.textContent = v.title || "Sin título";
+
+    const status = document.createElement("span");
+    status.className = "video-status-pill";
+    status.textContent =
+      v.status === "published"
+        ? "Publicado"
+        : v.status === "in_progress"
+        ? "En curso"
+        : "Planificado";
+
+    titleRow.appendChild(title);
+    titleRow.appendChild(status);
+
+    const meta = document.createElement("div");
+    meta.className = "video-meta";
+
+    const metaBits = [];
+    if (v.publishDate) metaBits.push(`📅 ${v.publishDate}`);
+    const durSplit = splitSeconds(durationTotal);
+    if (durationTotal > 0) metaBits.push(`🎬 ${durSplit.min}m ${durSplit.sec}s`);
+    meta.innerHTML = metaBits.map((m) => `<span>${m}</span>`).join("");
+
+    const bars = document.createElement("div");
+    bars.className = "video-bars";
+
+    const barScript = document.createElement("div");
+    barScript.className = "video-bar-line";
+    barScript.innerHTML = `
+      <span>Guion</span>
+      <span>${scriptWords}/${scriptTarget} palabras · ${scriptPct}%</span>
+    `;
+
+    const barEdit = document.createElement("div");
+    barEdit.className = "video-bar-line";
+    const edSplit = splitSeconds(editedSec);
+    const durTotalSplit = splitSeconds(durationTotal);
+    barEdit.innerHTML = `
+      <span>Edición</span>
+      <span>${edSplit.min}m ${edSplit.sec}s / ${durTotalSplit.min}m ${durTotalSplit.sec}s · ${editPct}%</span>
+    `;
+
+    bars.appendChild(barScript);
+    bars.appendChild(barEdit);
+
+    const remaining = document.createElement("div");
+    remaining.className = "video-remaining";
+    remaining.textContent = daysRemainingText;
+
+    const actions = document.createElement("div");
+    actions.className = "video-actions";
+
+    const inputGroup = document.createElement("div");
+    inputGroup.className = "video-input-group";
+    inputGroup.innerHTML = `
+      <div>Actualizar progreso</div>
+      <div class="video-input-row">
+        <span>Palabras</span>
+        <input type="number" min="0" inputmode="numeric" value="${scriptWords}">
+      </div>
+      <div class="video-input-row">
+        <span>Min</span>
+        <input type="number" min="0" inputmode="numeric" value="${edSplit.min}">
+        <span>Seg</span>
+        <input type="number" min="0" max="59" inputmode="numeric" value="${edSplit.sec}">
+      </div>
+    `;
+
+    const [inputWords, inputMin, inputSec] = inputGroup.querySelectorAll("input");
+    normalizeNumberField(inputMin);
+    normalizeNumberField(inputSec, 59);
+
+    inputWords.addEventListener("change", () => {
+      const newWords = Math.max(0, Number(inputWords.value) || 0);
+      inputWords.value = newWords;
+      updateVideoProgress(id, newWords, editedSec, scriptWords, editedSec);
+    });
+
+    const handleTimeChange = () => {
+      let newMin = Math.max(0, Number(inputMin.value) || 0);
+      let newSec = Math.max(0, Number(inputSec.value) || 0);
+      if (newSec > 59) newSec = 59;
+      inputMin.value = newMin;
+      inputSec.value = newSec;
+
+      const newEdited = toSeconds(newMin, newSec); // <- NO capar
+      updateVideoProgress(id, scriptWords, newEdited, scriptWords, editedSec);
+    };
+
+    inputMin.addEventListener("change", handleTimeChange);
+    inputSec.addEventListener("change", handleTimeChange);
+
+    const buttons = document.createElement("div");
+    buttons.className = "video-card-buttons";
+
+    const btnEdit = document.createElement("button");
+    btnEdit.className = "btn";
+    btnEdit.textContent = "Editar";
+    btnEdit.addEventListener("click", () => openVideoModal(id));
+
+    const btnPublish = document.createElement("button");
+    btnPublish.className = "btn";
+    btnPublish.textContent = "Publicado";
+    btnPublish.addEventListener("click", () => markVideoPublished(id));
+
+    buttons.appendChild(btnEdit);
+    buttons.appendChild(btnPublish);
+
+    actions.appendChild(inputGroup);
+    actions.appendChild(buttons);
+
+    main.appendChild(titleRow);
+    main.appendChild(meta);
+    main.appendChild(bars);
+    main.appendChild(remaining);
+    main.appendChild(actions);
+
+    card.appendChild(prog);
+    card.appendChild(main);
+
+    return card;
+  }
+
+  const frag = document.createDocumentFragment();
+
+  // Activos arriba
+  activeIds.forEach((id) => frag.appendChild(createVideoCard(id)));
+
+  // Desplegable publicados al final
+  const FIN_KEY = "bookshell_videos_published_open_v1";
+  const details = document.createElement("details");
+  details.className = "video-finished";
+  details.open = localStorage.getItem(FIN_KEY) === "1";
+
+  details.addEventListener("toggle", () => {
+    localStorage.setItem(FIN_KEY, details.open ? "1" : "0");
+  });
+
+  const summary = document.createElement("summary");
+  summary.className = "video-finished-summary";
+  summary.innerHTML = `
+    <span>Publicados</span>
+    <span class="video-finished-count">${publishedIds.length}</span>
+  `;
+
+  const box = document.createElement("div");
+  box.className = "video-finished-list";
+
+  if (!publishedIds.length) {
+    const empty = document.createElement("div");
+    empty.className = "video-finished-empty";
+    empty.textContent = "Aún no hay vídeos publicados.";
+    box.appendChild(empty);
+  } else {
+    publishedIds.forEach((id) => {
+      const c = createVideoCard(id);
+      c.classList.add("video-card-finished");
+      box.appendChild(c);
+    });
+  }
+
+  details.appendChild(summary);
+  details.appendChild(box);
+
+  frag.appendChild(details);
+
+  $videosList.innerHTML = "";
+  $videosList.appendChild(frag);
+
+  // si no hay activos pero sí publicados, no mostramos “vacío”
+  if ($videosEmpty) {
+    $videosEmpty.style.display = (!activeIds.length && !publishedIds.length) ? "block" : "none";
+  }
+}
+
 
   // Actualizar progreso + log diario
   async function updateVideoProgress(videoId, newWords, newEditedSeconds, oldWords, oldEditedSeconds) {

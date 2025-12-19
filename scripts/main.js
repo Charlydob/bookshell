@@ -79,7 +79,10 @@ const $viewBooks = document.getElementById("view-books");
 const $viewStats = document.getElementById("view-stats");
 const $booksList = document.getElementById("books-list");
 const $booksEmpty = document.getElementById("books-empty");
-
+const $booksListActive = document.getElementById("books-list-active") || document.getElementById("books-list");
+const $booksFinishedSection = document.getElementById("books-finished-section");
+const $booksFinishedCount = document.getElementById("books-finished-count");
+const $booksListFinished = document.getElementById("books-list-finished");
 const $btnAddBook = document.getElementById("btn-add-book");
 
 const $navButtons = document.querySelectorAll(".nav-btn");
@@ -274,44 +277,66 @@ onValue(ref(db, READING_LOG_PATH), (snap) => {
 
 
 // === Render libros ===
+function isBookFinished(b) {
+  const total = Number(b?.pages) || 0;
+  const current = Number(b?.currentPage) || 0;
+  return b?.status === "finished" || (total > 0 && current >= total);
+}
+
 function renderBooks() {
-  const ids = Object.keys(books || {});
-  if (!ids.length) {
-    $booksList.innerHTML = "";
+  const idsAll = Object.keys(books || {});
+  const hasFinishedUI = !!($booksFinishedSection && $booksListFinished);
+
+  if (!idsAll.length) {
+    if ($booksListActive) $booksListActive.innerHTML = "";
+    if (hasFinishedUI) {
+      $booksListFinished.innerHTML = "";
+      $booksFinishedSection.style.display = "none";
+      if ($booksFinishedCount) $booksFinishedCount.textContent = "0";
+    }
     $booksEmpty.style.display = "block";
     return;
   }
-  $booksEmpty.style.display = "none";
 
-  // Orden: por updatedAt desc
-  ids.sort((a, b) => {
-    const ta = books[a].updatedAt || 0;
-    const tb = books[b].updatedAt || 0;
-    return tb - ta;
+  const activeIds = [];
+  const finishedIds = [];
+
+  idsAll.forEach((id) => {
+    const b = books[id];
+    (isBookFinished(b) ? finishedIds : activeIds).push(id);
   });
 
-  const frag = document.createDocumentFragment();
+  const sortByUpdatedDesc = (a, b) => (books[b]?.updatedAt || 0) - (books[a]?.updatedAt || 0);
+  const sortByFinishedDesc = (a, b) => {
+    const ta = books[a]?.finishedAt || books[a]?.updatedAt || 0;
+    const tb = books[b]?.finishedAt || books[b]?.updatedAt || 0;
+    return tb - ta;
+  };
 
-  ids.forEach((id) => {
+  activeIds.sort(sortByUpdatedDesc);
+  finishedIds.sort(sortByFinishedDesc);
+
+  $booksEmpty.style.display = (activeIds.length === 0 && finishedIds.length === 0) ? "block" : "none";
+
+  const buildCard = (id) => {
     const b = books[id];
-    const total = b.pages || 0;
-    const current = Math.min(total, b.currentPage || 0);
+    const total = Number(b?.pages) || 0;
+    const current = Math.min(total, Number(b?.currentPage) || 0);
     const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+    const finished = isBookFinished(b) || percent >= 100;
 
     const card = document.createElement("article");
-    card.className = "book-card";
+    card.className = "book-card" + (finished ? " book-card-finished" : "");
     card.dataset.id = id;
 
-    // Progreso
     const prog = document.createElement("div");
     prog.className = "book-progress";
     prog.innerHTML = `
-      <div class="progress-ring" style="--p:${percent}">
+      <div class="progress-ring${finished ? " is-finished" : ""}" style="--p:${percent}">
         <div class="progress-ring-inner">${percent}%</div>
       </div>
     `;
 
-    // Main
     const main = document.createElement("div");
     main.className = "book-main";
 
@@ -320,29 +345,24 @@ function renderBooks() {
 
     const titleEl = document.createElement("div");
     titleEl.className = "book-title";
-    titleEl.textContent = b.title || "Sin título";
+    titleEl.textContent = b?.title || "Sin título";
 
     const status = document.createElement("span");
     status.className = "book-status-pill";
     status.textContent =
-      b.status === "finished"
-        ? "Terminado"
-        : b.status === "planned"
-        ? "Pendiente"
-        : "Leyendo";
+      finished ? "Terminado" :
+      b?.status === "planned" ? "Pendiente" : "Leyendo";
 
     titleRow.appendChild(titleEl);
     titleRow.appendChild(status);
 
     const meta = document.createElement("div");
     meta.className = "book-meta";
-
     const metaBits = [];
-    if (b.author) metaBits.push(b.author);
-    if (b.year) metaBits.push(String(b.year));
-    if (b.genre) metaBits.push(b.genre);
-    if (b.language) metaBits.push(b.language);
-
+    if (b?.author) metaBits.push(b.author);
+    if (b?.year) metaBits.push(String(b.year));
+    if (b?.genre) metaBits.push(b.genre);
+    if (b?.language) metaBits.push(b.language);
     meta.innerHTML = metaBits.map((m) => `<span>${m}</span>`).join("");
 
     const pagesRow = document.createElement("div");
@@ -376,9 +396,8 @@ function renderBooks() {
     btnDone.addEventListener("click", () => markBookFinished(id));
 
     buttons.appendChild(btnEdit);
-    buttons.appendChild(btnDone);
+    if (!finished) buttons.appendChild(btnDone);
 
-    // Cambio de página actual
     const inputEl = pageInput.querySelector("input");
     inputEl.addEventListener("change", () => {
       const newVal = parseInt(inputEl.value, 10) || 0;
@@ -398,11 +417,33 @@ function renderBooks() {
     card.appendChild(prog);
     card.appendChild(main);
 
-    frag.appendChild(card);
-  });
+    return card;
+  };
 
-  $booksList.innerHTML = "";
-  $booksList.appendChild(frag);
+  // Render activos
+  if ($booksListActive) {
+    const fragA = document.createDocumentFragment();
+    activeIds.forEach((id) => fragA.appendChild(buildCard(id)));
+    $booksListActive.innerHTML = "";
+    $booksListActive.appendChild(fragA);
+  }
+
+  // Render terminados (plegable)
+  if (hasFinishedUI) {
+    if (finishedIds.length) {
+      $booksFinishedSection.style.display = "block";
+      if ($booksFinishedCount) $booksFinishedCount.textContent = String(finishedIds.length);
+
+      const fragF = document.createDocumentFragment();
+      finishedIds.forEach((id) => fragF.appendChild(buildCard(id)));
+      $booksListFinished.innerHTML = "";
+      $booksListFinished.appendChild(fragF);
+    } else {
+      $booksListFinished.innerHTML = "";
+      $booksFinishedSection.style.display = "none";
+      if ($booksFinishedCount) $booksFinishedCount.textContent = "0";
+    }
+  }
 }
 
 // === Actualizar progreso y log de lectura ===

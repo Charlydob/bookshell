@@ -230,6 +230,7 @@ if ($viewVideos) {
     });
   }
 
+<<<<<<< HEAD
 
   // === Cronómetro (tiempo real trabajado) ===
   const TIMER_STATE_KEY = "bookshell_video_timer_state_v1";
@@ -382,6 +383,251 @@ if ($viewVideos) {
     }
     renderVideoTimerUI();
   })();
+=======
+// === Cronómetro (tiempo real trabajado) ===
+const TIMER_STATE_KEY = "bookshell_video_timer_state_v2";
+const AUTO_FLUSH_MS = 15000;
+
+let timerRunning = false;
+let timerStartMs = 0;      // NO se reinicia nunca mientras esté corriendo
+let timerLastFlushMs = 0;  // para volcar a Firebase por “deltas”
+let timerInterval = null;
+
+function loadTimerState() {
+  try {
+    const raw = localStorage.getItem(TIMER_STATE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (_) { return null; }
+}
+
+function saveTimerState() {
+  try {
+    const payload = timerRunning
+      ? { running: true, startMs: timerStartMs, lastFlushMs: timerLastFlushMs }
+      : { running: false };
+    localStorage.setItem(TIMER_STATE_KEY, JSON.stringify(payload));
+  } catch (_) {}
+}
+
+async function addWorkSeconds(dayKey, seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (!dayKey || s <= 0) return;
+  const r = ref(db, `${VIDEO_WORK_PATH}/${dayKey}`);
+  await runTransaction(r, (curr) => (Number(curr) || 0) + s);
+}
+
+async function setWorkSeconds(dayKey, seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (!dayKey) return;
+  const r = ref(db, `${VIDEO_WORK_PATH}/${dayKey}`);
+  await runTransaction(r, () => s);
+}
+
+function dayStartMsFromKey(key) {
+  const d = parseDateKey(key);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+function dayKeyFromMs(ms) {
+  return dateToKey(new Date(ms));
+}
+
+function nextDayStartMs(ms) {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+}
+
+function getSessionSeconds() {
+  if (!timerRunning || !timerStartMs) return 0;
+  return Math.max(0, Math.floor((Date.now() - timerStartMs) / 1000));
+}
+
+function getUnflushedSecondsTotal() {
+  if (!timerRunning || !timerLastFlushMs) return 0;
+  return Math.max(0, Math.floor((Date.now() - timerLastFlushMs) / 1000));
+}
+
+function getUnflushedSecondsToday() {
+  if (!timerRunning || !timerLastFlushMs) return 0;
+  const now = Date.now();
+  const todayStart = dayStartMsFromKey(todayKey());
+  const from = Math.max(timerLastFlushMs, todayStart);
+  if (now <= from) return 0;
+  return Math.max(0, Math.floor((now - from) / 1000));
+}
+
+async function flushBetweenMs(fromMs, toMs) {
+  let a = Math.max(0, Number(fromMs) || 0);
+  const b = Math.max(0, Number(toMs) || 0);
+  if (b <= a) return;
+
+  while (a < b) {
+    const dayKey = dayKeyFromMs(a);
+    const end = Math.min(nextDayStartMs(a), b);
+    const sec = Math.floor((end - a) / 1000);
+    if (sec > 0) await addWorkSeconds(dayKey, sec);
+    a = end;
+  }
+}
+
+// vuelca a Firebase lo que falta desde el último flush
+async function flushIfNeeded(force = false) {
+  if (!timerRunning || !timerLastFlushMs) return;
+
+  const now = Date.now();
+  const elapsedMs = now - timerLastFlushMs;
+
+  if (!force && elapsedMs < AUTO_FLUSH_MS) return;
+
+  await flushBetweenMs(timerLastFlushMs, now);
+
+  timerLastFlushMs = now;
+  saveTimerState();
+}
+
+function getTodayWorkedSecondsLive() {
+  const base = Math.max(0, Number(videoWorkLog?.[todayKey()]) || 0);
+  return base + getUnflushedSecondsToday();
+}
+
+function getTotalWorkedSecondsLive() {
+  let total = 0;
+  Object.values(videoWorkLog || {}).forEach((v) => (total += Math.max(0, Number(v) || 0)));
+  return total + getUnflushedSecondsTotal();
+}
+
+function renderVideoTimerUI() {
+  if (!$videoTimerDisplay || !$videoTimerToggle || !$videoTimerToday) return;
+
+  $videoTimerDisplay.textContent = timerRunning ? formatHHMMSS(getSessionSeconds()) : "00:00:00";
+  $videoTimerToday.textContent = formatWorkTime(getTodayWorkedSecondsLive());
+
+  $videoTimerToggle.textContent = timerRunning ? "Parar" : "Empezar";
+  if ($videoTimerHint) $videoTimerHint.textContent = timerRunning ? "🎧 en marcha" : "";
+}
+
+function startVideoTimer() {
+  if (timerRunning) return;
+
+  const now = Date.now();
+  timerRunning = true;
+  timerStartMs = now;
+  timerLastFlushMs = now;
+  saveTimerState();
+
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = setInterval(async () => {
+    await flushIfNeeded(false);
+    renderVideoTimerUI();
+    renderVideoStats();
+    renderVideoCalendar();
+  }, 1000);
+
+  renderVideoTimerUI();
+  renderVideoStats();
+  renderVideoCalendar();
+}
+
+async function stopVideoTimer() {
+  if (!timerRunning) return;
+
+  await flushIfNeeded(true);
+
+  timerRunning = false;
+  timerStartMs = 0;
+  timerLastFlushMs = 0;
+  saveTimerState();
+
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+
+  renderVideoTimerUI();
+  renderVideoStats();
+  renderVideoCalendar();
+}
+
+// Botón start/stop
+if ($videoTimerToggle) {
+  $videoTimerToggle.addEventListener("click", async () => {
+    if (timerRunning) await stopVideoTimer();
+    else startVideoTimer();
+  });
+}
+
+// EDITAR TIEMPO “HOY” aunque NO esté cronometrando
+// Toca “Hoy: …” -> +15 / -10 / =120 (fija total) / 0 (pone a 0)
+if ($videoTimerToday) {
+  $videoTimerToday.style.cursor = "pointer";
+  $videoTimerToday.title = "Toca para ajustar tiempo (ej: +15, -10, =120, 0)";
+  $videoTimerToday.addEventListener("click", async () => {
+    const raw = prompt("Ajusta minutos: +15 / -10 / =120 (fijar total) / 0");
+    if (raw == null) return;
+
+    const s = String(raw).trim().replace(",", ".");
+    const key = todayKey();
+
+    // fijar total: "=120"
+    if (s.startsWith("=")) {
+      const mins = Number(s.slice(1));
+      if (!Number.isFinite(mins)) return;
+      await setWorkSeconds(key, mins * 60);
+    } else {
+      const mins = Number(s);
+      if (!Number.isFinite(mins)) return;
+      if (mins === 0) await setWorkSeconds(key, 0);
+      else await addWorkSeconds(key, mins * 60);
+    }
+
+    renderVideoTimerUI();
+    renderVideoStats();
+    renderVideoCalendar();
+  });
+}
+
+// Restaurar al abrir (NO reinicia startMs)
+(async () => {
+  const st = loadTimerState();
+  if (st?.running && st.startMs && st.lastFlushMs) {
+    timerRunning = true;
+    timerStartMs = Number(st.startMs) || Date.now();
+    timerLastFlushMs = Number(st.lastFlushMs) || timerStartMs;
+
+    // al abrir, volcamos lo acumulado mientras la app estuvo muerta
+    await flushIfNeeded(true);
+
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(async () => {
+      await flushIfNeeded(false);
+      renderVideoTimerUI();
+      renderVideoStats();
+      renderVideoCalendar();
+    }, 1000);
+  }
+  renderVideoTimerUI();
+})();
+
+// Eventos de vida: al ocultar, volcamos fuerte
+document.addEventListener("visibilitychange", () => {
+  if (!timerRunning) return;
+  if (document.hidden) flushIfNeeded(true);
+});
+
+window.addEventListener("focus", () => {
+  if (!timerRunning) return;
+  renderVideoTimerUI();
+  renderVideoStats();
+  renderVideoCalendar();
+});
+
+window.addEventListener("pagehide", () => {
+  if (!timerRunning) return;
+  flushIfNeeded(true);
+});
+
+>>>>>>> b9082ba36cf8d8018c20a28a84ddb5bd92e61ace
 
   // Guardar vídeo
   if ($videoForm) {
@@ -877,7 +1123,11 @@ if ($viewVideos) {
           String(dayNum).padStart(2, "0");
 
         const t = totals[key] || { words: 0, seconds: 0 };
+<<<<<<< HEAD
         const workedSec = Math.max(0, Number(videoWorkLog?.[key]) || 0) + (timerRunning && timerDayKey === key ? getSessionSeconds() : 0);
+=======
+        const workedSec = Math.max(0, Number(videoWorkLog?.[key]) || 0) + (timerRunning && key === todayKey() ? getUnflushedSecondsToday() : 0);
+>>>>>>> b9082ba36cf8d8018c20a28a84ddb5bd92e61ace
         const hasWork = (t.words || 0) > 0 || (t.seconds || 0) > 0 || workedSec > 0;
 
         const pub = publishInfo[key];

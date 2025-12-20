@@ -603,6 +603,7 @@ function renderVideos() {
     const card = document.createElement("article");
     card.className = "video-card";
     card.dataset.id = id;
+card.classList.add("is-collapsed");
 
     const prog = document.createElement("div");
     prog.className = "video-progress";
@@ -621,6 +622,10 @@ function renderVideos() {
     const title = document.createElement("div");
     title.className = "video-title";
     title.textContent = v.title || "Sin título";
+    title.classList.add("card-toggle");
+title.setAttribute("role", "button");
+title.tabIndex = 0;
+
 
     const status = document.createElement("span");
     status.className = "video-status-pill";
@@ -735,6 +740,14 @@ function renderVideos() {
     btnPublish.className = "btn";
     btnPublish.textContent = "Publicado";
     btnPublish.addEventListener("click", () => markVideoPublished(id));
+btnEdit.classList.add("btn-secondary-action");
+btnPublish.classList.add("btn-primary-action");
+
+if (v.status === "published") {
+  btnPublish.disabled = true;
+  btnPublish.style.opacity = "0.7";
+  btnPublish.style.pointerEvents = "none";
+}
 
     buttons.appendChild(btnEdit);
     if (!isPublished) buttons.appendChild(btnPublish);
@@ -750,6 +763,11 @@ function renderVideos() {
 
     card.appendChild(prog);
     card.appendChild(main);
+const toggle = () => card.classList.toggle("is-collapsed");
+title.addEventListener("click", toggle);
+title.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+});
 
     return card;
   }

@@ -328,6 +328,7 @@ function renderBooks() {
     const card = document.createElement("article");
     card.className = "book-card" + (finished ? " book-card-finished" : "");
     card.dataset.id = id;
+card.classList.add("is-collapsed"); // por defecto plegada
 
     const prog = document.createElement("div");
     prog.className = "book-progress";
@@ -346,6 +347,9 @@ function renderBooks() {
     const titleEl = document.createElement("div");
     titleEl.className = "book-title";
     titleEl.textContent = b?.title || "Sin título";
+titleEl.classList.add("card-toggle");
+titleEl.setAttribute("role", "button");
+titleEl.tabIndex = 0;
 
     const status = document.createElement("span");
     status.className = "book-status-pill";
@@ -388,8 +392,20 @@ function renderBooks() {
     btnDone.textContent = "Terminado";
     btnDone.addEventListener("click", () => markBookFinished(id));
 
-    buttons.appendChild(btnEdit);
-    if (!finished) buttons.appendChild(btnDone);
+btnEdit.classList.add("btn-secondary-action");
+btnDone.classList.add("btn-primary-action");
+
+buttons.appendChild(btnEdit);
+buttons.appendChild(btnDone);
+
+if (finished) {
+  btnDone.disabled = true;
+  btnDone.style.opacity = "0.7";
+  btnDone.style.pointerEvents = "none";
+} else {
+  btnDone.addEventListener("click", () => markBookFinished(id));
+}
+
 
     // Input de página SOLO si NO está terminado
     if (!finished) {
@@ -420,6 +436,11 @@ function renderBooks() {
 
     card.appendChild(prog);
     card.appendChild(main);
+const toggle = () => card.classList.toggle("is-collapsed");
+titleEl.addEventListener("click", toggle);
+titleEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+});
 
     return card;
   };

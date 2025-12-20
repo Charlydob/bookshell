@@ -82,6 +82,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  margin-left: 175px
 }
 
 .app-main {
@@ -496,4 +497,194 @@ body {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+}
+/* ===== Cards plegables ===== */
+.book-title.card-toggle,
+.video-title.card-toggle{
+  cursor: pointer;
+  position: relative;
+  padding-right: 18px;
+  user-select: none;
+}
+
+/* Chevron */
+.book-title.card-toggle::after,
+.video-title.card-toggle::after{
+  content: "▾";
+  position: absolute;
+  right: 0;
+  top: 0;
+  opacity: .55;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.book-card.is-collapsed .book-title.card-toggle::after,
+.video-card.is-collapsed .video-title.card-toggle::after{
+  content: "▸";
+}
+
+/* --- BOOK collapsed: deja solo progreso + título + botón Terminado --- */
+.book-card.is-collapsed .book-meta,
+.book-card.is-collapsed .book-pages-row,
+.book-card.is-collapsed .book-page-input{
+  display: none !important;
+}
+
+.book-card.is-collapsed .book-actions{
+  margin-top: 8px;
+}
+
+.book-card.is-collapsed .btn-secondary-action{
+  display: none !important; /* oculta Editar */
+}
+
+/* --- VIDEO collapsed: deja solo progreso + título + botón Publicado --- */
+.video-card.is-collapsed .video-meta,
+.video-card.is-collapsed .video-bars,
+.video-card.is-collapsed .video-remaining,
+.video-card.is-collapsed .video-input-group{
+  display: none !important;
+}
+
+.video-card.is-collapsed .video-actions{
+  margin-top: 8px;
+}
+
+.video-card.is-collapsed .btn-secondary-action{
+  display: none !important; /* oculta Editar */
+}
+/* ================================
+   COLLAPSED LAYOUT (BOOKS + VIDEOS)
+   progreso | título | botón
+================================ */
+
+/* BOOKS */
+.book-card.is-collapsed{
+  display: grid !important;
+  grid-template-columns: 56px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px !important;
+}
+
+.book-card.is-collapsed .progress-ring,
+.book-card.is-collapsed .book-progress,
+.book-card.is-collapsed .book-left{
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.book-card.is-collapsed .book-title{
+  grid-column: 2;
+  grid-row: 1;
+  margin: 0 !important;
+  align-self: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.book-card.is-collapsed .book-actions{
+  grid-column: 3;
+  grid-row: 1;
+  margin: 0 !important;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.book-card.is-collapsed .book-actions .btn-primary-action,
+.book-card.is-collapsed .book-actions button{
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+}
+
+/* Oculta extras en plegado */
+.book-card.is-collapsed .book-meta,
+.book-card.is-collapsed .book-pages-row,
+.book-card.is-collapsed .book-page-input,
+.book-card.is-collapsed .book-status-chip,
+.book-card.is-collapsed .badge,
+.book-card.is-collapsed .status-chip{
+  display: none !important;
+}
+
+
+/* VIDEOS */
+.video-card.is-collapsed{
+  display: grid !important;
+  grid-template-columns: 56px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px !important;
+}
+
+.video-card.is-collapsed .progress-ring,
+.video-card.is-collapsed .video-progress,
+.video-card.is-collapsed .video-left{
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.video-card.is-collapsed .video-title{
+  grid-column: 2;
+  grid-row: 1;
+  margin: 0 !important;
+  align-self: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.video-card.is-collapsed .video-actions{
+  grid-column: 3;
+  grid-row: 1;
+  margin: 0 !important;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.video-card.is-collapsed .video-actions .btn-primary-action,
+.video-card.is-collapsed .video-actions button{
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+}
+
+/* Oculta extras en plegado */
+.video-card.is-collapsed .video-meta,
+.video-card.is-collapsed .video-bars,
+.video-card.is-collapsed .video-remaining,
+.video-card.is-collapsed .video-input-group,
+.video-card.is-collapsed .video-status-chip,
+.video-card.is-collapsed .badge,
+.video-card.is-collapsed .status-chip{
+  display: none !important;
+}
+
+
+/* Afinado: que el chevron no rompa el truncado del título */
+.book-title.card-toggle,
+.video-title.card-toggle{
+  padding-right: 16px;
+}
+
+.book-title.card-toggle::after,
+.video-title.card-toggle::after{
+  right: -2px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+/* Oculta el plegable "Actualizar progreso" en tarjetas plegadas */
+.video-card.is-collapsed details,
+.video-card.is-collapsed summary,
+.video-card.is-collapsed .video-update,
+.video-card.is-collapsed .update-panel,
+.video-card.is-collapsed .update-toggle{
+  display: none !important;
 }

@@ -333,6 +333,29 @@
 </form>
     </div>
   </div>
+<!-- MODAL ASIGNAR TIEMPO A VÍDEO -->
+<div id="assign-work-backdrop" class="modal-backdrop hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">¿En qué vídeo has trabajado?</div>
+      <button id="assign-work-close" class="icon-btn">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div id="assign-work-summary" style="opacity:.75; margin-bottom:10px;"></div>
+
+      <label class="field">
+        <span>Vídeo</span>
+        <select id="assign-work-select"></select>
+      </label>
+    </div>
+
+    <div class="modal-footer">
+      <button type="button" id="assign-work-skip" class="btn ghost">No asignar</button>
+      <button type="button" id="assign-work-save" class="btn primary">Asignar</button>
+    </div>
+  </div>
+</div>
 
   <script type="module" src="scripts/main.js"></script>
   <script type="module" src="scripts/videos.js"></script>

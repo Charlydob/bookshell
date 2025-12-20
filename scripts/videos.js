@@ -165,6 +165,66 @@ if ($viewVideos) {
   const $videoModalClose = document.getElementById("video-modal-close");
   const $videoModalCancel = document.getElementById("video-modal-cancel");
   const $videoForm = document.getElementById("video-form");
+// Modal asignar tiempo a vídeo
+const $assignWorkBackdrop = document.getElementById("assign-work-backdrop");
+const $assignWorkClose    = document.getElementById("assign-work-close");
+const $assignWorkSelect   = document.getElementById("assign-work-select");
+const $assignWorkSummary  = document.getElementById("assign-work-summary");
+const $assignWorkSkip     = document.getElementById("assign-work-skip");
+const $assignWorkSave     = document.getElementById("assign-work-save");
+
+let assignWorkResolve = null;
+
+function getInProgressVideos() {
+  const arr = Object.entries(videos || {})
+    .filter(([, v]) => (v?.status || "in_progress") === "in_progress")
+    .map(([id, v]) => ({ id, title: v.title || "Sin título" }));
+
+  // orden: alfabético (cámbialo si prefieres por fecha)
+  arr.sort((a,b) => a.title.localeCompare(b.title, "es"));
+  return arr;
+}
+
+function closeAssignWorkModal(resultId = null) {
+  if ($assignWorkBackdrop) $assignWorkBackdrop.classList.add("hidden");
+  const r = assignWorkResolve;
+  assignWorkResolve = null;
+  if (r) r(resultId);
+}
+
+function openAssignWorkModal(seconds) {
+  return new Promise((resolve) => {
+    if (!$assignWorkBackdrop || !$assignWorkSelect) return resolve(null);
+
+    const list = getInProgressVideos();
+    if (list.length === 0) return resolve(null);
+
+    $assignWorkSelect.innerHTML = "";
+    list.forEach(({id, title}) => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = title;
+      $assignWorkSelect.appendChild(opt);
+    });
+
+    if ($assignWorkSummary) $assignWorkSummary.textContent = `Tiempo: ${formatHHMMSS(seconds)}`;
+    assignWorkResolve = resolve;
+    $assignWorkBackdrop.classList.remove("hidden");
+  });
+}
+
+async function addWorkedSecondsToVideo(videoId, seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (!videoId || s <= 0) return;
+
+  const r = ref(db, `${VIDEOS_PATH}/${videoId}/workedSec`);
+  await runTransaction(r, (curr) => (Number(curr) || 0) + s);
+
+  // update optimista local
+  if (videos && videos[videoId]) {
+    videos[videoId].workedSec = (Number(videos[videoId].workedSec) || 0) + s;
+  }
+}
 
   const $videoId = document.getElementById("video-id");
   const $videoTitle = document.getElementById("video-title");
@@ -377,7 +437,7 @@ function startVideoTimer() {
 
 async function stopVideoTimer() {
   if (!timerRunning) return;
-
+ const sessionSeconds = getSessionSeconds();
   await flushIfNeeded(true);
 
   timerRunning = false;
@@ -393,6 +453,14 @@ async function stopVideoTimer() {
   renderVideoTimerUI();
   renderVideoStats();
   renderVideoCalendar();
+
+   if (sessionSeconds >= 20) { // umbral anti-pesadez
+    const vid = await openAssignWorkModal(sessionSeconds);
+    if (vid) {
+      await addWorkedSecondsToVideo(vid, sessionSeconds);
+      renderVideos(); // refresca tarjetas para mostrar "Trabajo"
+    }
+  }
 }
 
 // Botón start/stop
@@ -473,6 +541,16 @@ window.addEventListener("pagehide", () => {
   flushIfNeeded(true);
 });
 
+if ($assignWorkClose) $assignWorkClose.addEventListener("click", () => closeAssignWorkModal(null));
+if ($assignWorkSkip)  $assignWorkSkip.addEventListener("click",  () => closeAssignWorkModal(null));
+if ($assignWorkSave)  $assignWorkSave.addEventListener("click",  () => closeAssignWorkModal($assignWorkSelect?.value || null));
+
+// click fuera para cerrar
+if ($assignWorkBackdrop) {
+  $assignWorkBackdrop.addEventListener("click", (e) => {
+    if (e.target === $assignWorkBackdrop) closeAssignWorkModal(null);
+  });
+}
 
   // Guardar vídeo
   if ($videoForm) {
@@ -588,6 +666,10 @@ function renderVideos() {
     const editPct = durationTotal > 0 ? Math.min(100, Math.round((Math.min(editedSec, durationTotal) / durationTotal) * 100)) : 0;
 
     const totalPct = Math.round((scriptPct + editPct) / 2);
+const worked = Number(v.workedSec) || 0;
+const workedEl = document.createElement("div");
+workedEl.className = "video-worked";
+workedEl.textContent = `Trabajo: ${formatWorkTime(worked)}`;
 
     let daysRemainingText = "Sin fecha";
     if (v.publishDate) {
@@ -758,6 +840,7 @@ if (v.status === "published") {
     main.appendChild(titleRow);
     main.appendChild(meta);
     main.appendChild(bars);
+    main.appendChild(workedEl);
     main.appendChild(remaining);
     main.appendChild(actions);
 

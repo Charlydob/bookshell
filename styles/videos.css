@@ -460,3 +460,8 @@
 .video-update summary::-webkit-details-marker{ display:none; }
 
 .video-update[open] summary{ margin-bottom: 8px; opacity: 1; }
+.video-worked{
+  margin-top: 6px;
+  font-size: 13px;
+  opacity: .8;
+}

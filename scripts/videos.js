@@ -576,6 +576,7 @@ function renderVideos() {
   // helper: crea una tarjeta (es TU código tal cual, metido en función)
   function createVideoCard(id) {
     const v = videos[id];
+    const isPublished = (v && v.status === "published");
     if (!v) return document.createElement("div");
 
     const scriptTarget = v.scriptTarget || 2000;
@@ -671,45 +672,56 @@ function renderVideos() {
     const actions = document.createElement("div");
     actions.className = "video-actions";
 
-    const inputGroup = document.createElement("div");
-    inputGroup.className = "video-input-group";
-    inputGroup.innerHTML = `
-      <div>Actualizar progreso</div>
-      <div class="video-input-row">
-        <span>Palabras</span>
-        <input type="number" min="0" inputmode="numeric" value="${scriptWords}">
-      </div>
-      <div class="video-input-row">
-        <span>Min</span>
-        <input type="number" min="0" inputmode="numeric" value="${edSplit.min}">
-        <span>Seg</span>
-        <input type="number" min="0" max="59" inputmode="numeric" value="${edSplit.sec}">
-      </div>
-    `;
+    let inputGroup = null;
 
-    const [inputWords, inputMin, inputSec] = inputGroup.querySelectorAll("input");
-    normalizeNumberField(inputMin);
-    normalizeNumberField(inputSec, 59);
+    if (!isPublished) {
+      const ig = document.createElement("div");
+          ig.className = "video-input-group";
+          ig.innerHTML = `
+            
+            <div class="video-input-row">
+              <span>Palabras</span>
+              <input type="number" min="0" inputmode="numeric" value="${scriptWords}">
+            </div>
+            <div class="video-input-row">
+              <span>Min</span>
+              <input type="number" min="0" inputmode="numeric" value="${edSplit.min}">
+              <span>Seg</span>
+              <input type="number" min="0" max="59" inputmode="numeric" value="${edSplit.sec}">
+            </div>
+          `;
+      
+          const upd = document.createElement("details");
+      upd.className = "video-update";
+      upd.innerHTML = `<summary>Actualizar progreso</summary>`;
+      upd.appendChild(ig);
 
-    inputWords.addEventListener("change", () => {
-      const newWords = Math.max(0, Number(inputWords.value) || 0);
-      inputWords.value = newWords;
-      updateVideoProgress(id, newWords, editedSec, scriptWords, editedSec);
-    });
-
-    const handleTimeChange = () => {
-      let newMin = Math.max(0, Number(inputMin.value) || 0);
-      let newSec = Math.max(0, Number(inputSec.value) || 0);
-      if (newSec > 59) newSec = 59;
-      inputMin.value = newMin;
-      inputSec.value = newSec;
-
-      const newEdited = toSeconds(newMin, newSec); // <- NO capar
-      updateVideoProgress(id, scriptWords, newEdited, scriptWords, editedSec);
-    };
-
-    inputMin.addEventListener("change", handleTimeChange);
-    inputSec.addEventListener("change", handleTimeChange);
+      const [inputWords, inputMin, inputSec] = ig.querySelectorAll("input");
+          normalizeNumberField(inputMin);
+          normalizeNumberField(inputSec, 59);
+      
+          inputWords.addEventListener("change", () => {
+            const newWords = Math.max(0, Number(inputWords.value) || 0);
+            inputWords.value = newWords;
+            updateVideoProgress(id, newWords, editedSec, scriptWords, editedSec);
+          });
+      
+          const handleTimeChange = () => {
+            let newMin = Math.max(0, Number(inputMin.value) || 0);
+            let newSec = Math.max(0, Number(inputSec.value) || 0);
+            if (newSec > 59) newSec = 59;
+            inputMin.value = newMin;
+            inputSec.value = newSec;
+      
+            const newEdited = toSeconds(newMin, newSec); // <- NO capar
+            updateVideoProgress(id, scriptWords, newEdited, scriptWords, editedSec);
+          };
+      
+          inputMin.addEventListener("change", handleTimeChange);
+          inputSec.addEventListener("change", handleTimeChange);
+      
+          inputGroup = upd;
+    }
 
     const buttons = document.createElement("div");
     buttons.className = "video-card-buttons";
@@ -725,9 +737,9 @@ function renderVideos() {
     btnPublish.addEventListener("click", () => markVideoPublished(id));
 
     buttons.appendChild(btnEdit);
-    buttons.appendChild(btnPublish);
+    if (!isPublished) buttons.appendChild(btnPublish);
 
-    actions.appendChild(inputGroup);
+    if (!isPublished) actions.appendChild(inputGroup);
     actions.appendChild(buttons);
 
     main.appendChild(titleRow);

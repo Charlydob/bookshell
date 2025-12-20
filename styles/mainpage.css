@@ -89,7 +89,7 @@
 }
 
 .book-meta span + span::before {
-  content: " • ";
+  content: " \00B7 ";
   opacity: 0.7;
 }
 
@@ -349,3 +349,12 @@
 .book-card-finished .progress-ring-inner{
   opacity: .9;
 }
+
+/* --- Compact tweak --- */
+.book-card{ padding: 12px 12px; }
+.book-main{ gap: 6px; }
+.book-actions{ gap: 10px; flex-wrap: wrap; }
+.book-card-buttons{ flex-wrap: wrap; gap: 10px; }
+.book-card-buttons .btn{ min-width: 112px; }
+.book-card.book-card-finished .book-page-input{ display:none; }
+.book-card.book-card-finished .book-pages-row{ opacity: 0.85; }

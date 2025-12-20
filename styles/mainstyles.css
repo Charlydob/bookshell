@@ -55,14 +55,25 @@ body {
   top: 0;
   z-index: 5;
   padding: 12px 16px 8px;
-  backdrop-filter: blur(16px) saturate(160%);
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  isolation: isolate;
+}
+
+.app-header::before{
+  content:"";
+  position:absolute;
+  inset:0;
   background: linear-gradient(
     to bottom,
-    rgba(8, 9, 15, 0.85),
+    rgba(8, 9, 15, 0.88),
     rgba(8, 9, 15, 0.35)
   );
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  z-index:-1;
 }
+
 
 .header-title {
   font-size: 20px;
@@ -262,4 +273,227 @@ body {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 6px;
+}
+
+
+
+/* Modal (bottom sheet override) */
+.modal-backdrop{
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px 10px calc(12px + env(safe-area-inset-bottom));
+}
+
+.modal{
+  width: 100%;
+  max-width: 560px;
+  border-radius: 22px 22px 18px 18px;
+  background: rgba(10, 11, 18, 0.92);
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: 0 18px 60px rgba(0,0,0,0.55);
+  overflow: hidden;
+}
+
+.modal-handle{
+  width: 44px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.22);
+  margin: 10px auto 6px;
+}
+
+.modal-form{
+  display:flex;
+  flex-direction:column;
+  max-height: 82vh;
+}
+
+.modal-scroll{
+  padding: 8px 12px 14px;
+  overflow:auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modal-footer{
+  display:flex;
+  gap: 10px;
+  justify-content:flex-end;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid rgba(255,255,255,0.08);
+  background: rgba(8, 9, 15, 0.65);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+.modal-body{ padding:0 !important; }
+/* ===== Modal / Bottom-sheet (estilo decente) ===== */
+.modal-backdrop{
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: end center;
+  padding: 14px;
+  background: rgba(0,0,0,.45);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  z-index: 9999;
+}
+
+.modal{
+  width: min(560px, 100%);
+  max-height: 86vh;
+  border-radius: 22px;
+  overflow: hidden;
+  background: rgba(14,16,22,.88);
+  border: 1px solid rgba(255,255,255,.08);
+  box-shadow: 0 20px 80px rgba(0,0,0,.55);
+}
+
+.modal-handle{
+  width: 64px;
+  height: 5px;
+  margin: 10px auto 6px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.14);
+}
+
+.modal-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}
+
+.modal-title{
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: .2px;
+}
+
+.icon-btn{
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.06);
+}
+
+.modal-form{
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.modal-scroll{
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sheet-body{
+  padding: 12px 14px 16px;
+}
+
+.sheet-section{
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.06);
+  background: rgba(255,255,255,.03);
+}
+
+.sheet-section + .sheet-section{
+  margin-top: 10px;
+}
+
+.sheet-section-title{
+  font-size: 12px;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  opacity: .75;
+  margin-bottom: 10px;
+}
+
+.field{
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.field + .field{
+  margin-top: 10px;
+}
+
+.field-label{
+  font-size: 13px;
+  opacity: .9;
+}
+
+.hint{
+  font-style: normal;
+  opacity: .65;
+  font-size: 12px;
+}
+
+.field input,
+.field select{
+  width: 100%;
+  height: 44px;
+  border-radius: 14px;
+  padding: 0 14px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.18);
+  color: inherit;
+  outline: none;
+}
+
+.field input:focus,
+.field select:focus{
+  border-color: rgba(160,120,255,.55);
+  box-shadow: 0 0 0 3px rgba(160,120,255,.18);
+}
+
+.form-grid{
+  display: grid;
+  gap: 10px;
+}
+
+.form-grid.row-2{ grid-template-columns: 1fr 1fr; }
+
+@media (max-width: 360px){
+  .form-grid.row-2{ grid-template-columns: 1fr; }
+}
+
+/* Time split */
+.time-split{
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.time-input{
+  text-align: center;
+  padding: 0 10px;
+}
+
+.time-sep{
+  opacity: .55;
+  font-weight: 700;
+}
+
+/* Footer sticky (se siente app, no webform) */
+.sheet-footer{
+  position: sticky;
+  bottom: 0;
+  padding: 12px 14px 14px;
+  background: linear-gradient(to bottom,
+    rgba(14,16,22,0),
+    rgba(14,16,22,.92) 35%,
+    rgba(14,16,22,.98)
+  );
+  border-top: 1px solid rgba(255,255,255,.07);
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
 }

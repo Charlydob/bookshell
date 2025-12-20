@@ -178,127 +178,159 @@
   <!-- MODAL LIBRO -->
   <div id="book-modal-backdrop" class="modal-backdrop hidden">
     <div class="modal">
+      <div class="modal-handle"></div>
       <div class="modal-header">
         <div id="book-modal-title" class="modal-title">Nuevo libro</div>
         <button id="book-modal-close" class="icon-btn">✕</button>
       </div>
 
-      <form id="book-form" class="modal-body">
-        <input type="hidden" id="book-id" />
+<form id="book-form" class="modal-form">
+  <input type="hidden" id="book-id" />
 
-        <label class="field">
-          <span>Título</span>
-          <input id="book-title" type="text" required />
-        </label>
+  <div class="modal-scroll sheet-body">
+    <div class="sheet-section">
+      <div class="sheet-section-title">Detalles</div>
 
+      <label class="field">
+        <span class="field-label">Título</span>
+        <input id="book-title" type="text" required />
+      </label>
+
+      <div class="form-grid row-2">
         <label class="field">
-          <span>Autor</span>
+          <span class="field-label">Autor</span>
           <input id="book-author" type="text" />
         </label>
 
         <label class="field">
-          <span>Año</span>
+          <span class="field-label">Año</span>
           <input id="book-year" type="number" inputmode="numeric" />
         </label>
+      </div>
 
+      <div class="form-grid row-2">
         <label class="field">
-          <span>N.º páginas</span>
-          <input id="book-pages" type="number" inputmode="numeric" min="1" required />
-        </label>
-
-        <label class="field">
-          <span>Página actual</span>
-          <input id="book-current-page" type="number" inputmode="numeric" min="0" value="0" />
-        </label>
-
-        <label class="field">
-          <span>Género</span>
+          <span class="field-label">Género</span>
           <input id="book-genre" type="text" />
         </label>
 
         <label class="field">
-          <span>Idioma</span>
+          <span class="field-label">Idioma</span>
           <input id="book-language" type="text" />
         </label>
+      </div>
+    </div>
 
+    <div class="sheet-section">
+      <div class="sheet-section-title">Progreso</div>
+
+      <div class="form-grid row-2">
         <label class="field">
-          <span>Estado</span>
-          <select id="book-status">
-            <option value="reading">Leyendo</option>
-            <option value="planned">Pendiente</option>
-            <option value="finished">Terminado</option>
-          </select>
+          <span class="field-label">N.º páginas</span>
+          <input id="book-pages" type="number" inputmode="numeric" min="1" required />
         </label>
 
         <label class="field">
-          <span>PDF (opcional)</span>
-          <input id="book-pdf" type="file" accept="application/pdf" />
+          <span class="field-label">Página actual</span>
+          <input id="book-current-page" type="number" inputmode="numeric" min="0" value="0" />
         </label>
+      </div>
 
-        <div class="modal-footer">
-          <button type="button" id="book-modal-cancel" class="btn ghost">Cancelar</button>
-          <button type="submit" class="btn primary">Guardar</button>
-        </div>
-      </form>
+      <label class="field">
+        <span class="field-label">Estado</span>
+        <select id="book-status">
+          <option value="reading">Leyendo</option>
+          <option value="planned">Pendiente</option>
+          <option value="finished">Terminado</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div class="modal-footer sheet-footer">
+    <button type="button" id="book-modal-cancel" class="btn ghost">Cancelar</button>
+    <button type="submit" class="btn primary">Guardar</button>
+  </div>
+</form>
     </div>
   </div>
 
   <!-- MODAL VÍDEO -->
   <div id="video-modal-backdrop" class="modal-backdrop hidden">
     <div class="modal">
+      <div class="modal-handle"></div>
       <div class="modal-header">
         <div id="video-modal-title" class="modal-title">Nuevo vídeo</div>
         <button id="video-modal-close" class="icon-btn">✕</button>
       </div>
+<form id="video-form" class="modal-form">
+  <input type="hidden" id="video-id" />
 
-      <form id="video-form" class="modal-body">
-        <input type="hidden" id="video-id" />
+  <div class="modal-scroll sheet-body">
+    <div class="sheet-section">
+      <div class="sheet-section-title">Básico</div>
 
+      <label class="field">
+        <span class="field-label">Título</span>
+        <input id="video-title" type="text" required />
+      </label>
+
+      <label class="field">
+        <span class="field-label">Palabras de guion <em class="hint">(objetivo 2000)</em></span>
+        <input id="video-script-words" type="number" min="0" inputmode="numeric" value="0" />
+      </label>
+    </div>
+
+    <div class="sheet-section">
+      <div class="sheet-section-title">Duración</div>
+
+      <div class="form-grid row-2">
         <label class="field">
-          <span>Título</span>
-          <input id="video-title" type="text" required />
-        </label>
-
-        <label class="field">
-          <span>Palabras de guion (objetivo 2000)</span>
-          <input id="video-script-words" type="number" min="0" inputmode="numeric" value="0" />
-        </label>
-
-        <label class="field">
-          <span>Duración total (minutos y segundos)</span>
-          <div style="display:flex; gap:6px;">
-            <input id="video-duration-min" type="number" min="0" inputmode="numeric" placeholder="min" />
-            <input id="video-duration-sec" type="number" min="0" max="59" inputmode="numeric" placeholder="seg" />
+          <span class="field-label">Total</span>
+          <div class="time-split">
+            <input id="video-duration-min" class="time-input" type="number" min="0" inputmode="numeric" placeholder="min" />
+            <span class="time-sep">:</span>
+            <input id="video-duration-sec" class="time-input" type="number" min="0" max="59" inputmode="numeric" placeholder="seg" />
           </div>
         </label>
 
         <label class="field">
-          <span>Parte editada (minutos y segundos)</span>
-          <div style="display:flex; gap:6px;">
-            <input id="video-edited-min" type="number" min="0" inputmode="numeric" placeholder="min" />
-            <input id="video-edited-sec" type="number" min="0" max="59" inputmode="numeric" placeholder="seg" />
+          <span class="field-label">Editado</span>
+          <div class="time-split">
+            <input id="video-edited-min" class="time-input" type="number" min="0" inputmode="numeric" placeholder="min" />
+            <span class="time-sep">:</span>
+            <input id="video-edited-sec" class="time-input" type="number" min="0" max="59" inputmode="numeric" placeholder="seg" />
           </div>
         </label>
+      </div>
+    </div>
 
+    <div class="sheet-section">
+      <div class="sheet-section-title">Plan</div>
+
+      <div class="form-grid row-2">
         <label class="field">
-          <span>Fecha propuesta de publicación</span>
+          <span class="field-label">Fecha propuesta</span>
           <input id="video-publish-date" type="date" />
         </label>
 
         <label class="field">
-          <span>Estado</span>
+          <span class="field-label">Estado</span>
           <select id="video-status">
             <option value="in_progress">En curso</option>
             <option value="planned">Planificado</option>
             <option value="published">Publicado</option>
           </select>
         </label>
+      </div>
+    </div>
+  </div>
 
-        <div class="modal-footer">
-          <button type="button" id="video-modal-cancel" class="btn ghost">Cancelar</button>
-          <button type="submit" class="btn primary">Guardar</button>
-        </div>
-      </form>
+  <div class="modal-footer sheet-footer">
+    <button type="button" id="video-modal-cancel" class="btn ghost">Cancelar</button>
+    <button type="submit" class="btn primary">Guardar</button>
+  </div>
+</form>
     </div>
   </div>
 

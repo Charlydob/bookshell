@@ -102,7 +102,7 @@ const $bookCurrentPage = document.getElementById("book-current-page");
 const $bookGenre = document.getElementById("book-genre");
 const $bookLanguage = document.getElementById("book-language");
 const $bookStatus = document.getElementById("book-status");
-const $bookPdf = document.getElementById("book-pdf");
+const $bookPdf = document.getElementById("book-pdf"); // puede ser null si no usamos PDF
 
 // Stats
 const $statStreakCurrent = document.getElementById("stat-streak-current");
@@ -173,7 +173,7 @@ function openBookModal(bookId = null) {
     $bookCurrentPage.value = 0;
     $bookStatus.value = "reading";
   }
-  $bookPdf.value = "";
+  if ($bookPdf) $bookPdf.value = "";
   $modalBackdrop.classList.remove("hidden");
 }
 
@@ -231,7 +231,7 @@ $bookForm.addEventListener("submit", async (e) => {
 
 
   // Opcional: subir PDF solo si el usuario selecciona archivo
-  const file = $bookPdf.files[0];
+  const file = ($bookPdf && $bookPdf.files) ? $bookPdf.files[0] : null;
   if (file) {
     try {
       const safeId = id || push(ref(db, "_tmp")).key;
@@ -375,13 +375,6 @@ function renderBooks() {
     const actions = document.createElement("div");
     actions.className = "book-actions";
 
-    const pageInput = document.createElement("div");
-    pageInput.className = "book-page-input";
-    pageInput.innerHTML = `
-      <span>Página actual</span>
-      <input type="number" min="0" inputmode="numeric" value="${current}" />
-    `;
-
     const buttons = document.createElement("div");
     buttons.className = "book-card-buttons";
 
@@ -398,15 +391,26 @@ function renderBooks() {
     buttons.appendChild(btnEdit);
     if (!finished) buttons.appendChild(btnDone);
 
-    const inputEl = pageInput.querySelector("input");
-    inputEl.addEventListener("change", () => {
-      const newVal = parseInt(inputEl.value, 10) || 0;
-      const safe = Math.max(0, Math.min(total, newVal));
-      inputEl.value = safe;
-      updateBookProgress(id, safe);
-    });
+    // Input de página SOLO si NO está terminado
+    if (!finished) {
+      const pageInput = document.createElement("div");
+      pageInput.className = "book-page-input";
+      pageInput.innerHTML = `
+        <span>Página actual</span>
+        <input type="number" min="0" inputmode="numeric" value="${current}" />
+      `;
 
-    actions.appendChild(pageInput);
+      const inputEl = pageInput.querySelector("input");
+      inputEl.addEventListener("change", () => {
+        const newVal = parseInt(inputEl.value, 10) || 0;
+        const safe = Math.max(0, Math.min(total, newVal));
+        inputEl.value = safe;
+        updateBookProgress(id, safe);
+      });
+
+      actions.appendChild(pageInput);
+    }
+
     actions.appendChild(buttons);
 
     main.appendChild(titleRow);

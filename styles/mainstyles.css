@@ -616,6 +616,11 @@ body {
   display: none !important;
 }
 
+.book-card.is-collapsed .book-status-pill,
+.book-card.is-collapsed .book-page-input span{
+  display: none;
+}
+
 .book-card.is-collapsed .book-actions:empty{
   display: none;
 }

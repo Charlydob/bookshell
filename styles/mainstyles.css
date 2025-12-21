@@ -536,9 +536,11 @@ body {
 .book-card.is-collapsed{
   display: grid !important;
   grid-template-columns: auto 1fr auto;
+  grid-template-rows: 1fr;
   align-items: center;
   gap: 10px;
   padding: 10px 12px !important;
+  min-height: 56px;
   background:
     linear-gradient(
       90deg,
@@ -556,6 +558,7 @@ body {
 .book-card.is-collapsed .progress-number{
   grid-column: 1;
   grid-row: 1;
+  align-self: center;
 }
 
 .book-card.is-collapsed .progress-ring,
@@ -572,6 +575,7 @@ body {
   grid-row: 1;
   align-items: center;
   gap: 8px;
+  align-self: center;
 }
 
 .book-card.is-collapsed .book-title{
@@ -589,6 +593,7 @@ body {
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+  align-self: center;
 }
 
 .book-card.is-collapsed .book-card-buttons{
@@ -604,7 +609,7 @@ body {
 
 .book-card.is-collapsed .book-page-input input{
   width: 82px;
-  height: 34px;
+  height: 32px;
   padding: 4px 10px;
 }
 

@@ -328,7 +328,6 @@ function renderBooks() {
     const card = document.createElement("article");
     card.className = "book-card" + (finished ? " book-card-finished" : "");
     card.dataset.id = id;
-    card.classList.add("is-collapsed"); // por defecto plegada
     card.style.setProperty("--p", percent);
     card.style.setProperty(
       "--progress-fill",
@@ -336,12 +335,13 @@ function renderBooks() {
     );
 
     const prog = document.createElement("div");
-    prog.className = "book-progress";
+    prog.className = "book-progress-line";
     prog.innerHTML = `
-      <div class="progress-ring${finished ? " is-finished" : ""}">
-        <div class="progress-ring-inner">${percent}%</div>
+      <span class="progress-value">${percent}%</span>
+      <div class="progress-bar">
+        <div class="progress-bar-fill${finished ? " is-finished" : ""}" style="width:${percent}%"></div>
       </div>
-      <div class="progress-number">${percent}%</div>
+      <span class="progress-pages">${current} / ${total}</span>
     `;
 
     const main = document.createElement("div");
@@ -442,11 +442,12 @@ function renderBooks() {
 
     card.appendChild(prog);
     card.appendChild(main);
-const toggle = () => card.classList.toggle("is-collapsed");
-titleEl.addEventListener("click", toggle);
-titleEl.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
-});
+
+    const toggle = () => card.classList.toggle("is-collapsed");
+    titleEl.addEventListener("click", toggle);
+    titleEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
 
     return card;
   };

@@ -328,14 +328,20 @@ function renderBooks() {
     const card = document.createElement("article");
     card.className = "book-card" + (finished ? " book-card-finished" : "");
     card.dataset.id = id;
-card.classList.add("is-collapsed"); // por defecto plegada
+    card.classList.add("is-collapsed"); // por defecto plegada
+    card.style.setProperty("--p", percent);
+    card.style.setProperty(
+      "--progress-fill",
+      finished ? "rgba(46, 234, 123, 0.28)" : "rgba(127, 93, 255, 0.24)"
+    );
 
     const prog = document.createElement("div");
     prog.className = "book-progress";
     prog.innerHTML = `
-      <div class="progress-ring${finished ? " is-finished" : ""}" style="--p:${percent}">
+      <div class="progress-ring${finished ? " is-finished" : ""}">
         <div class="progress-ring-inner">${percent}%</div>
       </div>
+      <div class="progress-number">${percent}%</div>
     `;
 
     const main = document.createElement("div");
@@ -347,9 +353,9 @@ card.classList.add("is-collapsed"); // por defecto plegada
     const titleEl = document.createElement("div");
     titleEl.className = "book-title";
     titleEl.textContent = b?.title || "Sin título";
-titleEl.classList.add("card-toggle");
-titleEl.setAttribute("role", "button");
-titleEl.tabIndex = 0;
+    titleEl.classList.add("card-toggle");
+    titleEl.setAttribute("role", "button");
+    titleEl.tabIndex = 0;
 
     const status = document.createElement("span");
     status.className = "book-status-pill";
@@ -392,19 +398,19 @@ titleEl.tabIndex = 0;
     btnDone.textContent = "Terminado";
     btnDone.addEventListener("click", () => markBookFinished(id));
 
-btnEdit.classList.add("btn-secondary-action");
-btnDone.classList.add("btn-primary-action");
+    btnEdit.classList.add("btn-secondary-action");
+    btnDone.classList.add("btn-primary-action");
 
-buttons.appendChild(btnEdit);
-buttons.appendChild(btnDone);
+    buttons.appendChild(btnEdit);
+    buttons.appendChild(btnDone);
 
-if (finished) {
-  btnDone.disabled = true;
-  btnDone.style.opacity = "0.7";
-  btnDone.style.pointerEvents = "none";
-} else {
-  btnDone.addEventListener("click", () => markBookFinished(id));
-}
+    if (finished) {
+      btnDone.disabled = true;
+      btnDone.style.opacity = "0.7";
+      btnDone.style.pointerEvents = "none";
+    } else {
+      btnDone.addEventListener("click", () => markBookFinished(id));
+    }
 
 
     // Input de página SOLO si NO está terminado

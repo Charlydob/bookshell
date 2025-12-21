@@ -443,6 +443,9 @@ function renderBooks() {
     card.appendChild(prog);
     card.appendChild(main);
 
+    // Vista inicial plegada
+    card.classList.add("is-collapsed");
+
     const toggle = () => card.classList.toggle("is-collapsed");
     titleEl.addEventListener("click", toggle);
     titleEl.addEventListener("keydown", (e) => {

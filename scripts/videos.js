@@ -398,9 +398,9 @@ function getTodayWorkedSecondsLive() {
 }
 
 function getTotalWorkedSecondsLive() {
-  let total = 0;
-  Object.values(videoWorkLog || {}).forEach((v) => (total += Math.max(0, Number(v) || 0)));
-  return total + getUnflushedSecondsTotal();
+  return Object.values(videos || {}).reduce((acc, v) => {
+    return acc + Math.max(0, Number(v?.workedSec) || 0);
+  }, 0);
 }
 
 function renderVideoTimerUI() {

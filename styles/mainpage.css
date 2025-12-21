@@ -254,8 +254,8 @@
 }
 
 .cal-cell-highlight {
-  border-color: rgba(255, 234, 140, 0.9);
-  background: radial-gradient(circle at top, rgba(255, 234, 140, 0.25), #17131d);
+  border-color: rgba(163, 64, 255, 0.345);
+  background: radial-gradient(circle at top, rgba(92, 4, 243, 0.468), #17131d);
 }
 
 .calendar-legend {

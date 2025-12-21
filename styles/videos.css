@@ -108,8 +108,8 @@
 }
 
 .video-cal-streak {
-  border-color: rgba(255, 234, 140, 0.9);
-  background: radial-gradient(circle at top, rgba(255, 234, 140, 0.25), #17131d);
+  border-color: rgba(255, 255, 255, 0.16);
+  background: radial-gradient(circle at top, rgba(81, 0, 255, 0.427), #17131d);
 }
 
 .video-cal-publish {

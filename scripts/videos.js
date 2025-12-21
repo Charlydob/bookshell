@@ -682,10 +682,12 @@ workedEl.textContent = `Trabajo: ${formatWorkTime(worked)}`;
       else daysRemainingText = `${Math.abs(diff)} días desde publicación`;
     }
 
-    const card = document.createElement("article");
-    card.className = "video-card";
-    card.dataset.id = id;
+const card = document.createElement("article");
+card.className = "video-card";
+card.dataset.id = id;
+card.style.setProperty("--p", totalPct); // para el “relleno” estilo libros
 card.classList.add("is-collapsed");
+
 
     const prog = document.createElement("div");
     prog.className = "video-progress";
@@ -715,11 +717,21 @@ title.tabIndex = 0;
       v.status === "published"
         ? "Publicado"
         : v.status === "in_progress"
-        ? "En curso"
+        ? "Curso"
         : "Planificado";
 
     titleRow.appendChild(title);
     titleRow.appendChild(status);
+const progLine = document.createElement("div");
+progLine.className = "video-progress-line";
+progLine.innerHTML = `
+  <span class="video-progress-value">${totalPct}%</span>
+  <div class="video-progress-bar">
+    <div class="video-progress-fill" style="width:${totalPct}%"></div>
+  </div>
+  <span class="video-progress-right">G ${scriptPct}% · E ${editPct}%</span>
+`;
+
 
     const meta = document.createElement("div");
     meta.className = "video-meta";
@@ -838,6 +850,8 @@ if (v.status === "published") {
     actions.appendChild(buttons);
 
     main.appendChild(titleRow);
+    main.appendChild(progLine);
+
     main.appendChild(meta);
     main.appendChild(bars);
     main.appendChild(workedEl);

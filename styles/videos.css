@@ -231,7 +231,8 @@
 
 .video-main {
   flex: 1;
-  min-width: 0;
+  min-width: 400px;
+  max-width: 400px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -464,4 +465,96 @@
   margin-top: 6px;
   font-size: 13px;
   opacity: .8;
+}
+/* --- VIDEO collapsed: título arriba + barra debajo (modo libros) --- */
+.video-progress-line{
+  display: none;
+  align-items: center;
+  gap: 10px;
+}
+
+.video-progress-value{
+  font-size: 12px;
+  color: var(--txt-soft);
+  width: 3.5ch;
+}
+
+.video-progress-bar{
+  flex: 1;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.10);
+}
+
+.video-progress-fill{
+  height: 100%;
+  border-radius: 999px;
+  background: var(--video-accent);
+}
+
+.video-progress-right{
+  font-size: 12px;
+  color: var(--txt-soft);
+  white-space: nowrap;
+}
+
+/* cuando está plegado: estructura como libros */
+.video-card.is-collapsed{
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  min-height: unset;
+}
+
+.video-card.is-collapsed .video-progress{ display: none; } /* fuera aro */
+.video-card.is-collapsed .video-progress-line{ display: flex; }
+
+/* en plegado: oculta lo “expandido” */
+.video-card.is-collapsed .video-meta,
+.video-card.is-collapsed .video-bars,
+.video-card.is-collapsed .video-worked,
+.video-card.is-collapsed .video-remaining,
+.video-card.is-collapsed .video-actions{
+  display: none !important;
+}
+/* =========================================
+   OVERRIDE: collapsed de VIDEOS como LIBROS
+   (mainstyles.css lo pisa con grid !important)
+========================================= */
+
+.video-card.is-collapsed{
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  padding: 10px 12px !important;
+  min-height: unset;
+
+  /* look tipo libros */
+  background:
+    linear-gradient(
+      90deg,
+      rgba(127, 93, 255, 0.24) 0%,
+      rgba(127, 93, 255, 0.24) calc(var(--p, 0) * 1%),
+      rgba(255, 255, 255, 0.05) calc(var(--p, 0) * 1%),
+      rgba(255, 255, 255, 0.03) 100%
+    ),
+    rgba(9, 11, 20, 0.96) !important;
+
+  border: 1px solid rgba(255,255,255,0.12) !important;
+  box-shadow: 0 10px 22px rgba(0,0,0,0.4) !important;
+}
+
+.video-card.is-collapsed .video-progress{ display:none !important; } /* fuera aro */
+.video-card.is-collapsed .video-progress-line{
+  display:flex !important;
+  width:100%;
+}
+.video-card.is-collapsed .video-meta,
+.video-card.is-collapsed .video-bars,
+.video-card.is-collapsed .video-worked,
+.video-card.is-collapsed .video-remaining,
+.video-card.is-collapsed .video-actions{
+  display:none !important;
 }

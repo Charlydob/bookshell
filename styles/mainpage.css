@@ -379,3 +379,37 @@
 .book-card-buttons .btn{ min-width: 112px; }
 .book-card.book-card-finished .book-page-input{ display:none; }
 .book-card.book-card-finished .book-pages-row{ opacity: 0.85; }
+.progress-pages{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.progress-pages-input{
+  width: 4ch;
+  max-width: 6ch;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  text-align: right;
+  appearance: textfield;
+}
+
+.progress-pages-input::-webkit-outer-spin-button,
+.progress-pages-input::-webkit-inner-spin-button{
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.progress-pages-input::placeholder{
+  color: inherit;
+  opacity: 1;
+}
+
+.progress-pages-input:focus{
+  border-bottom: 1px solid rgba(255,255,255,.22);
+}

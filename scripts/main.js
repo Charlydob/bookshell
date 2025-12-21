@@ -336,13 +336,57 @@ function renderBooks() {
 
     const prog = document.createElement("div");
     prog.className = "book-progress-line";
-    prog.innerHTML = `
-      <span class="progress-value">${percent}%</span>
-      <div class="progress-bar">
-        <div class="progress-bar-fill${finished ? " is-finished" : ""}" style="width:${percent}%"></div>
-      </div>
-      <span class="progress-pages">${current} / ${total}</span>
-    `;
+prog.innerHTML = `
+  <span class="progress-value">${percent}%</span>
+  <div class="progress-bar">
+    <div class="progress-bar-fill${finished ? " is-finished" : ""}" style="width:${percent}%"></div>
+  </div>
+  ${
+    finished
+      ? `<span class="progress-pages">${current} / ${total}</span>`
+      : `<span class="progress-pages">
+           <input
+             class="progress-pages-input"
+             type="number"
+             min="0"
+             inputmode="numeric"
+             placeholder="${current}"
+             aria-label="Página actual"
+           />
+           <span class="progress-pages-sep">/</span>
+           <span class="progress-pages-total">${total}</span>
+         </span>`
+  }
+`;
+const inlineInput = prog.querySelector(".progress-pages-input");
+if (inlineInput) {
+  const commit = () => {
+    const raw = inlineInput.value.trim();
+    if (!raw) return;
+
+    const newVal = parseInt(raw, 10);
+    if (Number.isNaN(newVal)) return;
+
+    const safe = Math.max(0, Math.min(total, newVal));
+    inlineInput.value = "";
+    updateBookProgress(id, safe);
+  };
+
+  inlineInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commit();
+      inlineInput.blur();
+    } else if (e.key === "Escape") {
+      inlineInput.value = "";
+      inlineInput.blur();
+    }
+  });
+
+  inlineInput.addEventListener("blur", commit);
+}
+
+
 
     const main = document.createElement("div");
     main.className = "book-main";

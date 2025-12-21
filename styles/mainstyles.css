@@ -561,6 +561,13 @@ body {
   justify-content: center;
 }
 
+.book-card.is-collapsed .book-main{
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .book-card.is-collapsed .progress-value{
   display: flex;
   align-items: center;

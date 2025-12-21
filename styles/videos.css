@@ -200,6 +200,7 @@
   display: flex;
   gap: 10px;
   box-shadow: 0 14px 28px rgba(0, 0, 0, 0.6);
+
 }
 
 .video-progress {
@@ -216,7 +217,7 @@
   background:
     radial-gradient(circle at center, #080910 45%, transparent 47%),
     conic-gradient(
-      var(--video-accent) calc(var(--p) * 1%),
+      red calc(var(--p) * 1%),
       rgba(255, 255, 255, 0.06) 0
     );
   display: flex;
@@ -231,8 +232,8 @@
 
 .video-main {
   flex: 1;
-  min-width: 400px;
-  max-width: 400px;
+  min-width: 75%;
+  max-width: 90px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -296,6 +297,7 @@
 .video-actions {
   margin-top: 6px;
   display: flex;
+  flex-direction: row;
   justify-content: space-between;
   align-items: center;
   gap: 6px;
@@ -327,7 +329,7 @@
 
 .video-card-buttons {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 4px;
 }
 
@@ -491,7 +493,7 @@
 .video-progress-fill{
   height: 100%;
   border-radius: 999px;
-  background: var(--video-accent);
+  background: rgb(255, 0, 0);
 }
 
 .video-progress-right{

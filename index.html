@@ -62,10 +62,17 @@
 
           <div class="calendar-section">
             <div class="calendar-header">
-              <button id="cal-prev" class="icon-btn">&lt;</button>
-              <div id="cal-label" class="cal-label"></div>
-              <button id="cal-next" class="icon-btn">&gt;</button>
+              <div class="calendar-nav">
+                <button id="cal-prev" class="icon-btn">&lt;</button>
+                <div id="cal-label" class="cal-label"></div>
+                <button id="cal-next" class="icon-btn">&gt;</button>
+              </div>
+              <select id="cal-view-mode" class="calendar-view-select" aria-label="Vista del calendario">
+                <option value="month" selected>Mes</option>
+                <option value="year">Año</option>
+              </select>
             </div>
+            <div id="calendar-summary" class="calendar-summary"></div>
             <div class="calendar-grid" id="calendar-grid">
               <!-- Calendario por JS -->
             </div>
@@ -137,10 +144,18 @@
           <!-- CALENDARIO -->
           <div class="video-calendar-section">
             <div class="video-calendar-header">
-              <button id="video-cal-prev" class="icon-btn">&lt;</button>
-              <div id="video-cal-label" class="video-cal-label"></div>
-              <button id="video-cal-next" class="icon-btn">&gt;</button>
+              <div class="video-calendar-nav">
+                <button id="video-cal-prev" class="icon-btn">&lt;</button>
+                <div id="video-cal-label" class="video-cal-label"></div>
+                <button id="video-cal-next" class="icon-btn">&gt;</button>
+              </div>
+              <select id="video-cal-view-mode" class="calendar-view-select" aria-label="Vista del calendario de vídeos">
+                <option value="month" selected>Mes</option>
+                <option value="year">Año</option>
+              </select>
             </div>
+
+            <div id="video-calendar-summary" class="calendar-summary"></div>
 
             <div id="video-calendar-grid" class="video-calendar-grid">
               <!-- Rellenado por JS -->

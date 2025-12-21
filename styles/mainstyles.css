@@ -524,19 +524,104 @@ body {
   content: "▸";
 }
 
-/* --- BOOK collapsed: deja solo progreso + título + botón Terminado --- */
-.book-card.is-collapsed .book-meta,
-.book-card.is-collapsed .book-pages-row,
-.book-card.is-collapsed .book-page-input{
-  display: none !important;
+/* --- BOOK collapsed: vista compacta con color de progreso --- */
+.progress-number{
+  display: none;
+  font-weight: 700;
+  font-size: 15px;
+  min-width: 48px;
+  text-align: center;
+}
+
+.book-card.is-collapsed{
+  display: grid !important;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px !important;
+  background:
+    linear-gradient(
+      90deg,
+      var(--progress-fill, rgba(127, 93, 255, 0.24)) 0%,
+      var(--progress-fill, rgba(127, 93, 255, 0.24)) calc(var(--p, 0) * 1%),
+      rgba(255, 255, 255, 0.05) calc(var(--p, 0) * 1%),
+      rgba(255, 255, 255, 0.03) 100%
+    ),
+    rgba(9, 11, 20, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.4);
+}
+
+.book-card.is-collapsed .book-progress,
+.book-card.is-collapsed .progress-number{
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.book-card.is-collapsed .progress-ring,
+.book-card.is-collapsed .book-left{
+  display: none;
+}
+
+.book-card.is-collapsed .progress-number{
+  display: block;
+}
+
+.book-card.is-collapsed .book-title-row{
+  grid-column: 2;
+  grid-row: 1;
+  align-items: center;
+  gap: 8px;
+}
+
+.book-card.is-collapsed .book-title{
+  margin: 0 !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .book-card.is-collapsed .book-actions{
-  margin-top: 8px;
+  grid-column: 3;
+  grid-row: 1;
+  margin: 0 !important;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
-.book-card.is-collapsed .btn-secondary-action{
-  display: none !important; /* oculta Editar */
+.book-card.is-collapsed .book-card-buttons{
+  display: none !important;
+}
+
+.book-card.is-collapsed .book-page-input{
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.book-card.is-collapsed .book-page-input input{
+  width: 82px;
+  height: 34px;
+  padding: 4px 10px;
+}
+
+.book-card.is-collapsed .book-meta,
+.book-card.is-collapsed .book-pages-row,
+.book-card.is-collapsed .book-status-chip,
+.book-card.is-collapsed .badge,
+.book-card.is-collapsed .status-chip{
+  display: none !important;
+}
+
+.book-card.is-collapsed .book-actions:empty{
+  display: none;
+}
+
+.book-card.book-card-finished.is-collapsed{
+  --progress-fill: rgba(46, 234, 123, 0.28);
 }
 
 /* --- VIDEO collapsed: deja solo progreso + título + botón Publicado --- */
@@ -560,57 +645,6 @@ body {
 ================================ */
 
 /* BOOKS */
-.book-card.is-collapsed{
-  display: grid !important;
-  grid-template-columns: 56px 1fr auto;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px !important;
-}
-
-.book-card.is-collapsed .progress-ring,
-.book-card.is-collapsed .book-progress,
-.book-card.is-collapsed .book-left{
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.book-card.is-collapsed .book-title{
-  grid-column: 2;
-  grid-row: 1;
-  margin: 0 !important;
-  align-self: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.book-card.is-collapsed .book-actions{
-  grid-column: 3;
-  grid-row: 1;
-  margin: 0 !important;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.book-card.is-collapsed .book-actions .btn-primary-action,
-.book-card.is-collapsed .book-actions button{
-  height: 36px;
-  padding: 0 14px;
-  border-radius: 999px;
-}
-
-/* Oculta extras en plegado */
-.book-card.is-collapsed .book-meta,
-.book-card.is-collapsed .book-pages-row,
-.book-card.is-collapsed .book-page-input,
-.book-card.is-collapsed .book-status-chip,
-.book-card.is-collapsed .badge,
-.book-card.is-collapsed .status-chip{
-  display: none !important;
-}
 
 
 /* VIDEOS */

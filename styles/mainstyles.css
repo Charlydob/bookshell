@@ -525,8 +525,10 @@ body {
 }
 
 /* --- BOOK collapsed: vista compacta con color de progreso --- */
-.progress-number{
-  display: none;
+.progress-value{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-weight: 700;
   font-size: 15px;
   min-width: 48px;
@@ -552,14 +554,14 @@ body {
   box-shadow: 0 10px 22px rgba(0, 0, 0, 0.4);
 }
 
-.book-card.is-collapsed .book-progress{
+.book-card.is-collapsed .book-progress-line{
   flex: 0 0 56px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.book-card.is-collapsed .progress-number{
+.book-card.is-collapsed .progress-value{
   display: flex;
   align-items: center;
   justify-content: center;
@@ -567,13 +569,10 @@ body {
   width: 100%;
 }
 
-.book-card.is-collapsed .progress-ring,
+.book-card.is-collapsed .progress-bar,
+.book-card.is-collapsed .progress-pages,
 .book-card.is-collapsed .book-left{
   display: none;
-}
-
-.book-card.is-collapsed .progress-number{
-  display: block;
 }
 
 .book-card.is-collapsed .book-title-row{

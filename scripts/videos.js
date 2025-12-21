@@ -41,6 +41,7 @@ let videoLog = {}; // { "YYYY-MM-DD": { videoId: { w, s } } }
 let videoWorkLog = {}; // { "YYYY-MM-DD": seconds }
 let videoCalYear;
 let videoCalMonth;
+let videoCalViewMode = "month";
 
 // Utils fecha
 function todayKey() {
@@ -158,6 +159,8 @@ if ($viewVideos) {
   const $videoCalNext = document.getElementById("video-cal-next");
   const $videoCalLabel = document.getElementById("video-cal-label");
   const $videoCalGrid = document.getElementById("video-calendar-grid");
+  const $videoCalViewMode = document.getElementById("video-cal-view-mode");
+  const $videoCalSummary = document.getElementById("video-calendar-summary");
 
   // Modal vídeo
   const $videoModalBackdrop = document.getElementById("video-modal-backdrop");
@@ -1140,8 +1143,8 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
       videoCalMonth = now.getMonth();
     }
 
-    if ($videoCalLabel) {
-      $videoCalLabel.textContent = formatMonthLabel(videoCalYear, videoCalMonth);
+    if ($videoCalViewMode) {
+      videoCalViewMode = $videoCalViewMode.value || "month";
     }
 
     const totals = computeVideoDayTotals();
@@ -1151,6 +1154,22 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
 
     // info de publicación por fecha: { any: bool, done: bool (todos los vídeos de ese día al 100%) }
     const publishInfo = computePublishInfo();
+
+    renderVideoCalendarSummary(totals);
+
+    if (videoCalViewMode === "year") {
+      if ($videoCalLabel) {
+        $videoCalLabel.textContent = `Año ${videoCalYear}`;
+      }
+      renderVideoCalendarYearGrid(totals, publishInfo);
+      return;
+    }
+
+    if ($videoCalLabel) {
+      $videoCalLabel.textContent = formatMonthLabel(videoCalYear, videoCalMonth);
+    }
+
+    $videoCalGrid.classList.remove("video-calendar-year-grid");
 
     const firstDay = new Date(videoCalYear, videoCalMonth, 1).getDay();
     const offset = (firstDay + 6) % 7; // lunes = 0
@@ -1172,7 +1191,9 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
           String(dayNum).padStart(2, "0");
 
         const t = totals[key] || { words: 0, seconds: 0 };
-        const workedSec = Math.max(0, Number(videoWorkLog?.[key]) || 0) + (timerRunning && key === todayKey() ? getUnflushedSecondsToday() : 0);
+        const workedSec =
+          Math.max(0, Number(videoWorkLog?.[key]) || 0) +
+          (timerRunning && key === todayKey() ? getUnflushedSecondsToday() : 0);
         const hasWork = (t.words || 0) > 0 || (t.seconds || 0) > 0 || workedSec > 0;
 
         const pub = publishInfo[key];
@@ -1225,10 +1246,132 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
     $videoCalGrid.appendChild(frag);
   }
 
+  function renderVideoCalendarYearGrid(totals) {
+    if (!$videoCalGrid) return;
+    $videoCalGrid.classList.add("video-calendar-year-grid");
+    const months = Array.from({ length: 12 }, () => ({ words: 0, seconds: 0, published: 0 }));
+
+    Object.entries(totals || {}).forEach(([day, info]) => {
+      const [year, month] = day.split("-");
+      if (Number(year) === videoCalYear) {
+        const idx = Number(month) - 1;
+        months[idx].words += Number(info?.words || 0);
+        months[idx].seconds += Math.max(0, Number(info?.seconds || 0));
+      }
+    });
+
+    Object.entries(videoWorkLog || {}).forEach(([day, sec]) => {
+      const [year, month] = day.split("-");
+      if (Number(year) === videoCalYear) {
+        const idx = Number(month) - 1;
+        months[idx].seconds += Math.max(0, Number(sec) || 0);
+      }
+    });
+
+    if (timerRunning) {
+      const today = todayKey();
+      const [y, m] = today.split("-");
+      if (Number(y) === videoCalYear) {
+        const idx = Number(m) - 1;
+        months[idx].seconds += getUnflushedSecondsToday();
+      }
+    }
+
+    Object.values(videos || {}).forEach((v) => {
+      if (!v.publishDate || !isVideoFullyDone(v)) return;
+      const [year, month] = normalizeDateKey(v.publishDate).split("-");
+      if (Number(year) === videoCalYear) {
+        const idx = Number(month) - 1;
+        months[idx].published += 1;
+      }
+    });
+
+    const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+    const frag = document.createDocumentFragment();
+
+    months.forEach((info, idx) => {
+      const cell = document.createElement("div");
+      cell.className = "video-cal-cell video-cal-cell-year";
+
+      const name = document.createElement("div");
+      name.className = "video-cal-month-name";
+      name.textContent = monthNames[idx];
+
+      const metrics = document.createElement("div");
+      metrics.className = "video-cal-month-metrics";
+      const bits = [
+        `${info.published || 0} 📤`,
+        `${info.words || 0} w`,
+        `⏱ ${formatWorkTime(info.seconds || 0)}`
+      ];
+      metrics.textContent = bits.join(" · ");
+
+      cell.appendChild(name);
+      cell.appendChild(metrics);
+
+      frag.appendChild(cell);
+    });
+
+    $videoCalGrid.innerHTML = "";
+    $videoCalGrid.appendChild(frag);
+  }
+
+  function renderVideoCalendarSummary(totals) {
+    if (!$videoCalSummary) return;
+    const prefix =
+      videoCalViewMode === "year"
+        ? `${videoCalYear}-`
+        : `${videoCalYear}-${String(videoCalMonth + 1).padStart(2, "0")}-`;
+
+    const aggregate = aggregateVideoMetrics(prefix, totals);
+    const scopeLabel = videoCalViewMode === "year" ? "año" : "mes";
+    $videoCalSummary.textContent =
+      `Resumen del ${scopeLabel}: ⏱ ${formatWorkTime(aggregate.seconds || 0)} · ${aggregate.words || 0} palabras · ${aggregate.published || 0} vídeos subidos`;
+  }
+
+  function aggregateVideoMetrics(prefix, totals) {
+    let words = 0;
+    let seconds = 0;
+
+    const keys = new Set([
+      ...Object.keys(totals || {}),
+      ...Object.keys(videoWorkLog || {})
+    ]);
+
+    keys.forEach((day) => {
+      if (!day.startsWith(prefix)) return;
+      words += Number(totals?.[day]?.words || 0);
+      seconds += Math.max(0, Number(totals?.[day]?.seconds || 0));
+      seconds += Math.max(0, Number(videoWorkLog?.[day]) || 0);
+    });
+
+    if (timerRunning && todayKey().startsWith(prefix)) {
+      seconds += getUnflushedSecondsToday();
+    }
+
+    return {
+      words,
+      seconds,
+      published: countVideosPublishedForPrefix(prefix)
+    };
+  }
+
+  function countVideosPublishedForPrefix(prefix) {
+    let count = 0;
+    Object.values(videos || {}).forEach((v) => {
+      if (!v.publishDate || !isVideoFullyDone(v)) return;
+      const key = normalizeDateKey(v.publishDate);
+      if (key && key.startsWith(prefix)) count += 1;
+    });
+    return count;
+  }
+
   // Nav calendario
   if ($videoCalPrev) {
     $videoCalPrev.addEventListener("click", () => {
-      if (videoCalMonth === 0) {
+      if (videoCalViewMode === "year") {
+        videoCalYear -= 1;
+      } else if (videoCalMonth === 0) {
         videoCalMonth = 11;
         videoCalYear -= 1;
       } else {
@@ -1240,12 +1383,21 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
 
   if ($videoCalNext) {
     $videoCalNext.addEventListener("click", () => {
-      if (videoCalMonth === 11) {
+      if (videoCalViewMode === "year") {
+        videoCalYear += 1;
+      } else if (videoCalMonth === 11) {
         videoCalMonth = 0;
         videoCalYear += 1;
       } else {
         videoCalMonth += 1;
       }
+      renderVideoCalendar();
+    });
+  }
+
+  if ($videoCalViewMode) {
+    $videoCalViewMode.addEventListener("change", () => {
+      videoCalViewMode = $videoCalViewMode.value || "month";
       renderVideoCalendar();
     });
   }

@@ -61,6 +61,12 @@
   padding: 0 4px 6px;
 }
 
+.video-calendar-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .video-cal-label {
   font-size: 13px;
   font-weight: 500;
@@ -71,6 +77,10 @@
   grid-template-columns: repeat(7, 1fr);
   gap: 4px;
   font-size: 11px;
+}
+
+.video-calendar-grid.video-calendar-year-grid {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .video-cal-cell {
@@ -100,6 +110,22 @@
   font-size: 9px;
   color: var(--txt-soft);
   line-height: 1.25;
+}
+
+.video-cal-cell-year {
+  min-height: 78px;
+}
+
+.video-cal-month-name {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.video-cal-month-metrics {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--txt-soft);
+  line-height: 1.3;
 }
 
 .video-cal-has-work {

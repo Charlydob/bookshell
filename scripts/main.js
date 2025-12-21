@@ -46,6 +46,7 @@ let readingLog = {}; // { "YYYY-MM-DD": { bookId: pages } }
 
 let currentCalYear;
 let currentCalMonth; // 0-11
+let calViewMode = "month";
 
 // === Utilidades fecha ===
 function todayKey() {
@@ -121,6 +122,8 @@ const $calPrev = document.getElementById("cal-prev");
 const $calNext = document.getElementById("cal-next");
 const $calLabel = document.getElementById("cal-label");
 const $calGrid = document.getElementById("calendar-grid");
+const $calViewMode = document.getElementById("cal-view-mode");
+const $calSummary = document.getElementById("calendar-summary");
 
 // Selector rango libros leídos
 if ($statBooksReadRange) {
@@ -769,10 +772,23 @@ function renderCalendar() {
     currentCalMonth = now.getMonth();
   }
 
-  $calLabel.textContent = formatMonthLabel(currentCalYear, currentCalMonth);
+  if ($calViewMode) {
+    calViewMode = $calViewMode.value || "month";
+  }
 
   const totals = computeDailyTotals();
   const finishedByDay = computeFinishedByDay();
+
+  renderCalendarSummary(totals, finishedByDay);
+
+  if (calViewMode === "year") {
+    $calLabel.textContent = `Año ${currentCalYear}`;
+    renderCalendarYearGrid(totals, finishedByDay);
+    return;
+  }
+
+  $calGrid.classList.remove("calendar-year-grid");
+  $calLabel.textContent = formatMonthLabel(currentCalYear, currentCalMonth);
 
   const firstDay = new Date(currentCalYear, currentCalMonth, 1).getDay(); // 0-6
   const offset = (firstDay + 6) % 7; // hacer lunes=0
@@ -835,6 +851,76 @@ function renderCalendar() {
   $calGrid.appendChild(frag);
 }
 
+function renderCalendarYearGrid(totals, finishedByDay) {
+  $calGrid.classList.add("calendar-year-grid");
+  const months = Array.from({ length: 12 }, () => ({ pages: 0, finished: 0 }));
+
+  Object.entries(totals || {}).forEach(([day, pages]) => {
+    const [year, month] = day.split("-");
+    if (Number(year) === currentCalYear) {
+      const idx = Number(month) - 1;
+      months[idx].pages += Number(pages) || 0;
+    }
+  });
+
+  Object.entries(finishedByDay || {}).forEach(([day, finished]) => {
+    const [year, month] = day.split("-");
+    if (Number(year) === currentCalYear) {
+      const idx = Number(month) - 1;
+      months[idx].finished += Number(finished) || 0;
+    }
+  });
+
+  const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+  const frag = document.createDocumentFragment();
+
+  months.forEach((info, idx) => {
+    const cell = document.createElement("div");
+    cell.className = "cal-cell cal-cell-year";
+
+    const name = document.createElement("div");
+    name.className = "cal-month-name";
+    name.textContent = monthNames[idx];
+
+    const metrics = document.createElement("div");
+    metrics.className = "cal-month-metrics";
+    metrics.textContent = `${info.pages || 0} pág · ${info.finished || 0} libros`;
+
+    cell.appendChild(name);
+    cell.appendChild(metrics);
+
+    frag.appendChild(cell);
+  });
+
+  $calGrid.innerHTML = "";
+  $calGrid.appendChild(frag);
+}
+
+function renderCalendarSummary(totals, finishedByDay) {
+  if (!$calSummary) return;
+  const prefix =
+    calViewMode === "year"
+      ? `${currentCalYear}-`
+      : `${currentCalYear}-${String(currentCalMonth + 1).padStart(2, "0")}-`;
+
+  let pages = 0;
+  Object.entries(totals || {}).forEach(([day, val]) => {
+    if (day.startsWith(prefix)) {
+      pages += Number(val) || 0;
+    }
+  });
+
+  let finished = 0;
+  Object.entries(finishedByDay || {}).forEach(([day, val]) => {
+    if (day.startsWith(prefix)) {
+      finished += Number(val) || 0;
+    }
+  });
+
+  const scopeLabel = calViewMode === "year" ? "año" : "mes";
+  $calSummary.textContent = `Resumen del ${scopeLabel}: ${pages} páginas · ${finished} libros terminados`;
+}
+
 // Devuelve lista de días que forman la racha (para pintar en amarillo)
 function computeStreakDates(totals) {
   const days = Object.keys(totals).filter((d) => totals[d] > 0);
@@ -891,22 +977,37 @@ function computeStreakDates(totals) {
 }
 
 // Navegación calendario
-$calPrev.addEventListener("click", () => {
-  if (currentCalMonth === 0) {
-    currentCalMonth = 11;
-    currentCalYear -= 1;
-  } else {
-    currentCalMonth -= 1;
-  }
-  renderCalendar();
-});
+if ($calPrev) {
+  $calPrev.addEventListener("click", () => {
+    if (calViewMode === "year") {
+      currentCalYear -= 1;
+    } else if (currentCalMonth === 0) {
+      currentCalMonth = 11;
+      currentCalYear -= 1;
+    } else {
+      currentCalMonth -= 1;
+    }
+    renderCalendar();
+  });
+}
 
-$calNext.addEventListener("click", () => {
-  if (currentCalMonth === 11) {
-    currentCalMonth = 0;
-    currentCalYear += 1;
-  } else {
-    currentCalMonth += 1;
-  }
-  renderCalendar();
-});
+if ($calNext) {
+  $calNext.addEventListener("click", () => {
+    if (calViewMode === "year") {
+      currentCalYear += 1;
+    } else if (currentCalMonth === 11) {
+      currentCalMonth = 0;
+      currentCalYear += 1;
+    } else {
+      currentCalMonth += 1;
+    }
+    renderCalendar();
+  });
+}
+
+if ($calViewMode) {
+  $calViewMode.addEventListener("change", () => {
+    calViewMode = $calViewMode.value || "month";
+    renderCalendar();
+  });
+}

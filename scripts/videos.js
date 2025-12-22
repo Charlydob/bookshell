@@ -41,7 +41,6 @@ let videoLog = {}; // { "YYYY-MM-DD": { videoId: { w, s } } }
 let videoWorkLog = {}; // { "YYYY-MM-DD": seconds }
 let videoCalYear;
 let videoCalMonth;
-let videoCalViewMode = "month";
 
 // Utils fecha
 function todayKey() {
@@ -159,8 +158,6 @@ if ($viewVideos) {
   const $videoCalNext = document.getElementById("video-cal-next");
   const $videoCalLabel = document.getElementById("video-cal-label");
   const $videoCalGrid = document.getElementById("video-calendar-grid");
-  const $videoCalViewMode = document.getElementById("video-cal-view-mode");
-  const $videoCalSummary = document.getElementById("video-calendar-summary");
 
   // Modal vídeo
   const $videoModalBackdrop = document.getElementById("video-modal-backdrop");
@@ -221,13 +218,15 @@ async function addWorkedSecondsToVideo(videoId, seconds) {
   if (!videoId || s <= 0) return;
 
   const r = ref(db, `${VIDEOS_PATH}/${videoId}/workedSec`);
-  await runTransaction(r, (curr) => (Number(curr) || 0) + s);
+  const res = await runTransaction(r, (curr) => (Number(curr) || 0) + s);
 
-  // update optimista local
-  if (videos && videos[videoId]) {
-    videos[videoId].workedSec = (Number(videos[videoId].workedSec) || 0) + s;
-  }
+  if (!res?.committed) return; // ✅ no toques el estado si no se aplicó
+
+  const finalVal = Number(res.snapshot.val()) || 0;
+  if (videos && videos[videoId]) videos[videoId].workedSec = finalVal;
 }
+
+
 
   const $videoId = document.getElementById("video-id");
   const $videoTitle = document.getElementById("video-title");
@@ -655,222 +654,233 @@ function renderVideos() {
   });
 
   // helper: crea una tarjeta (es TU código tal cual, metido en función)
-  function createVideoCard(id) {
-    const v = videos[id];
-    const isPublished = (v && v.status === "published");
-    if (!v) return document.createElement("div");
+function createVideoCard(id) {
+  const v = videos[id];
+  const isPublished = (v && v.status === "published");
+  if (!v) return document.createElement("div");
 
-    const scriptTarget = v.scriptTarget || 2000;
-    const scriptWords = Math.max(0, Number(v.scriptWords) || 0);
-    const scriptPct = scriptTarget > 0 ? Math.min(100, Math.round((scriptWords / scriptTarget) * 100)) : 0;
+  const scriptTarget = v.scriptTarget || 2000;
+  const scriptWords = Math.max(0, Number(v.scriptWords) || 0);
+  const scriptPct = scriptTarget > 0 ? Math.min(100, Math.round((scriptWords / scriptTarget) * 100)) : 0;
 
-    const durationTotal = Number(v.durationSeconds) || 0;
-    const editedSec = Math.max(0, Number(v.editedSeconds) || 0); // <- ya NO capamos
-    const editPct = durationTotal > 0 ? Math.min(100, Math.round((Math.min(editedSec, durationTotal) / durationTotal) * 100)) : 0;
+  const durationTotal = Number(v.durationSeconds) || 0;
+  const editedSec = Math.max(0, Number(v.editedSeconds) || 0); // <- ya NO capamos
+  const editPct = durationTotal > 0 ? Math.min(100, Math.round((Math.min(editedSec, durationTotal) / durationTotal) * 100)) : 0;
 
-    const totalPct = Math.round((scriptPct + editPct) / 2);
-const worked = Number(v.workedSec) || 0;
-const workedEl = document.createElement("div");
-workedEl.className = "video-worked";
-workedEl.textContent = `Trabajo: ${formatWorkTime(worked)}`;
+  const totalPct = Math.round((scriptPct + editPct) / 2);
 
-    let daysRemainingText = "Sin fecha";
-    if (v.publishDate) {
-      const pub = parseDateKey(v.publishDate);
-      const today = parseDateKey(todayKey());
-      const diff = Math.round((pub - today) / (1000 * 60 * 60 * 24));
-      if (diff > 1) daysRemainingText = `${diff} días para publicar`;
-      else if (diff === 1) daysRemainingText = "Mañana";
-      else if (diff === 0) daysRemainingText = "Hoy";
-      else daysRemainingText = `${Math.abs(diff)} días desde publicación`;
-    }
+  const worked = Number(v.workedSec) || 0;
+  const workedEl = document.createElement("div");
+  workedEl.className = "video-worked";
+  workedEl.textContent = `Trabajo: ${formatWorkTime(worked)}`;
 
-const card = document.createElement("article");
-card.className = "video-card";
-card.dataset.id = id;
-card.style.setProperty("--p", totalPct); // para el “relleno” estilo libros
-card.classList.add("is-collapsed");
+  let daysRemainingText = "Sin fecha";
+  if (v.publishDate) {
+    const pub = parseDateKey(v.publishDate);
+    const today = parseDateKey(todayKey());
+    const diff = Math.round((pub - today) / (1000 * 60 * 60 * 24));
+    if (diff > 1) daysRemainingText = `${diff} días para publicar`;
+    else if (diff === 1) daysRemainingText = "Mañana";
+    else if (diff === 0) daysRemainingText = "Hoy";
+    else daysRemainingText = `${Math.abs(diff)} días desde publicación`;
+  }
 
+  const card = document.createElement("article");
+  card.className = "video-card";
+  card.dataset.id = id;
+  card.style.setProperty("--p", totalPct); // para el “relleno” estilo libros
+  card.classList.add("is-collapsed");
 
-    const prog = document.createElement("div");
-    prog.className = "video-progress";
-    prog.innerHTML = `
-      <div class="video-progress-ring" style="--p:${totalPct}">
-        <div class="video-progress-inner">${totalPct}%</div>
+  const prog = document.createElement("div");
+  prog.className = "video-progress";
+  prog.innerHTML = `
+    <div class="video-progress-ring" style="--p:${totalPct}">
+      <div class="video-progress-inner">${totalPct}%</div>
+    </div>
+  `;
+
+  const main = document.createElement("div");
+  main.className = "video-main";
+
+  const titleRow = document.createElement("div");
+  titleRow.className = "video-title-row";
+
+  const title = document.createElement("div");
+  title.className = "video-title";
+  title.textContent = v.title || "Sin título";
+  title.classList.add("card-toggle");
+  title.setAttribute("role", "button");
+  title.tabIndex = 0;
+
+  const status = document.createElement("span");
+  status.className = "video-status-pill";
+  status.textContent =
+    v.status === "published"
+      ? "Publicado"
+      : v.status === "in_progress"
+      ? "Curso"
+      : "Planificado";
+
+  titleRow.appendChild(title);
+  titleRow.appendChild(status);
+
+  const progLine = document.createElement("div");
+  progLine.className = "video-progress-line";
+  progLine.innerHTML = `
+    <span class="video-progress-value">${totalPct}%</span>
+    <div class="video-progress-bar">
+      <div class="video-progress-fill" style="width:${totalPct}%"></div>
+    </div>
+    <span class="video-progress-right">G ${scriptPct}% · E ${editPct}%</span>
+  `;
+
+  const meta = document.createElement("div");
+  meta.className = "video-meta";
+
+  const metaBits = [];
+  if (v.publishDate) metaBits.push(`📅 ${v.publishDate}`);
+  const durSplit = splitSeconds(durationTotal);
+  if (durationTotal > 0) metaBits.push(`🎬 ${durSplit.min}m ${durSplit.sec}s`);
+  meta.innerHTML = metaBits.map((m) => `<span>${m}</span>`).join("");
+
+  const bars = document.createElement("div");
+  bars.className = "video-bars";
+
+  const barScript = document.createElement("div");
+  barScript.className = "video-bar-line";
+  barScript.innerHTML = `
+    <span>Guion</span>
+    <span>${scriptWords}/${scriptTarget} palabras · ${scriptPct}%</span>
+  `;
+
+  const barEdit = document.createElement("div");
+  barEdit.className = "video-bar-line";
+  const edSplit = splitSeconds(editedSec);
+  const durTotalSplit = splitSeconds(durationTotal);
+  barEdit.innerHTML = `
+    <span>Edición</span>
+    <span>${edSplit.min}m ${edSplit.sec}s / ${durTotalSplit.min}m ${durTotalSplit.sec}s · ${editPct}%</span>
+  `;
+
+  bars.appendChild(barScript);
+  bars.appendChild(barEdit);
+
+  const remaining = document.createElement("div");
+  remaining.className = "video-remaining";
+  remaining.textContent = daysRemainingText;
+
+  const actions = document.createElement("div");
+  actions.className = "video-actions";
+
+  let inputGroup = null;
+
+  // ✅ baseline mutable (evita valores “congelados”)
+  let currWords = scriptWords;
+  let currEdited = editedSec;
+
+  if (!isPublished) {
+    const ig = document.createElement("div");
+    ig.className = "video-input-group";
+    ig.innerHTML = `
+      <div class="video-input-row">
+        <span>Palabras</span>
+        <input type="number" min="0" inputmode="numeric" value="${scriptWords}">
+      </div>
+      <div class="video-input-row">
+        <span>Min</span>
+        <input type="number" min="0" inputmode="numeric" value="${edSplit.min}">
+        <span>Seg</span>
+        <input type="number" min="0" max="59" inputmode="numeric" value="${edSplit.sec}">
       </div>
     `;
 
-    const main = document.createElement("div");
-    main.className = "video-main";
+    const upd = document.createElement("details");
+    upd.className = "video-update";
+    upd.innerHTML = `<summary>Actualizar progreso</summary>`;
+    upd.appendChild(ig);
 
-    const titleRow = document.createElement("div");
-    titleRow.className = "video-title-row";
+    const [inputWords, inputMin, inputSec] = ig.querySelectorAll("input");
+    normalizeNumberField(inputMin);
+    normalizeNumberField(inputSec, 59);
 
-    const title = document.createElement("div");
-    title.className = "video-title";
-    title.textContent = v.title || "Sin título";
-    title.classList.add("card-toggle");
-title.setAttribute("role", "button");
-title.tabIndex = 0;
+    inputWords.addEventListener("change", async () => {
+      const newWords = Math.max(0, Number(inputWords.value) || 0);
+      inputWords.value = newWords;
 
+      await updateVideoProgress(id, newWords, currEdited, currWords, currEdited);
+      currWords = newWords; // ✅ actualiza baseline
+    });
 
-    const status = document.createElement("span");
-    status.className = "video-status-pill";
-    status.textContent =
-      v.status === "published"
-        ? "Publicado"
-        : v.status === "in_progress"
-        ? "Curso"
-        : "Planificado";
+    const handleTimeChange = async () => {
+      let newMin = Math.max(0, Number(inputMin.value) || 0);
+      let newSec = Math.max(0, Number(inputSec.value) || 0);
+      if (newSec > 59) newSec = 59;
+      inputMin.value = newMin;
+      inputSec.value = newSec;
 
-    titleRow.appendChild(title);
-    titleRow.appendChild(status);
-const progLine = document.createElement("div");
-progLine.className = "video-progress-line";
-progLine.innerHTML = `
-  <span class="video-progress-value">${totalPct}%</span>
-  <div class="video-progress-bar">
-    <div class="video-progress-fill" style="width:${totalPct}%"></div>
-  </div>
-  <span class="video-progress-right">G ${scriptPct}% · E ${editPct}%</span>
-`;
+      const newEdited = toSeconds(newMin, newSec); // <- NO capar
 
+      await updateVideoProgress(id, currWords, newEdited, currWords, currEdited);
+      currEdited = newEdited; // ✅ actualiza baseline
+    };
 
-    const meta = document.createElement("div");
-    meta.className = "video-meta";
+    inputMin.addEventListener("change", handleTimeChange);
+    inputSec.addEventListener("change", handleTimeChange);
 
-    const metaBits = [];
-    if (v.publishDate) metaBits.push(`📅 ${v.publishDate}`);
-    const durSplit = splitSeconds(durationTotal);
-    if (durationTotal > 0) metaBits.push(`🎬 ${durSplit.min}m ${durSplit.sec}s`);
-    meta.innerHTML = metaBits.map((m) => `<span>${m}</span>`).join("");
+    inputGroup = upd;
+  }
 
-    const bars = document.createElement("div");
-    bars.className = "video-bars";
+  const buttons = document.createElement("div");
+  buttons.className = "video-card-buttons";
 
-    const barScript = document.createElement("div");
-    barScript.className = "video-bar-line";
-    barScript.innerHTML = `
-      <span>Guion</span>
-      <span>${scriptWords}/${scriptTarget} palabras · ${scriptPct}%</span>
-    `;
+  const btnEdit = document.createElement("button");
+  btnEdit.className = "btn";
+  btnEdit.textContent = "Editar";
+  btnEdit.addEventListener("click", () => openVideoModal(id));
 
-    const barEdit = document.createElement("div");
-    barEdit.className = "video-bar-line";
-    const edSplit = splitSeconds(editedSec);
-    const durTotalSplit = splitSeconds(durationTotal);
-    barEdit.innerHTML = `
-      <span>Edición</span>
-      <span>${edSplit.min}m ${edSplit.sec}s / ${durTotalSplit.min}m ${durTotalSplit.sec}s · ${editPct}%</span>
-    `;
+  const btnPublish = document.createElement("button");
+  btnPublish.className = "btn";
+  btnPublish.textContent = "Publicado";
+  btnPublish.addEventListener("click", () => markVideoPublished(id));
 
-    bars.appendChild(barScript);
-    bars.appendChild(barEdit);
+  btnEdit.classList.add("btn-secondary-action");
+  btnPublish.classList.add("btn-primary-action");
 
-    const remaining = document.createElement("div");
-    remaining.className = "video-remaining";
-    remaining.textContent = daysRemainingText;
+  if (v.status === "published") {
+    btnPublish.disabled = true;
+    btnPublish.style.opacity = "0.7";
+    btnPublish.style.pointerEvents = "none";
+  }
 
-    const actions = document.createElement("div");
-    actions.className = "video-actions";
+  buttons.appendChild(btnEdit);
+  if (!isPublished) buttons.appendChild(btnPublish);
 
-    let inputGroup = null;
+  if (!isPublished) actions.appendChild(inputGroup);
+  actions.appendChild(buttons);
 
-    if (!isPublished) {
-      const ig = document.createElement("div");
-          ig.className = "video-input-group";
-          ig.innerHTML = `
-            
-            <div class="video-input-row">
-              <span>Palabras</span>
-              <input type="number" min="0" inputmode="numeric" value="${scriptWords}">
-            </div>
-            <div class="video-input-row">
-              <span>Min</span>
-              <input type="number" min="0" inputmode="numeric" value="${edSplit.min}">
-              <span>Seg</span>
-              <input type="number" min="0" max="59" inputmode="numeric" value="${edSplit.sec}">
-            </div>
-          `;
-      
-          const upd = document.createElement("details");
-      upd.className = "video-update";
-      upd.innerHTML = `<summary>Actualizar progreso</summary>`;
-      upd.appendChild(ig);
+  main.appendChild(titleRow);
+  main.appendChild(progLine);
+  main.appendChild(meta);
+  main.appendChild(bars);
+  main.appendChild(workedEl);
+  main.appendChild(remaining);
+  main.appendChild(actions);
 
-      const [inputWords, inputMin, inputSec] = ig.querySelectorAll("input");
-          normalizeNumberField(inputMin);
-          normalizeNumberField(inputSec, 59);
-      
-          inputWords.addEventListener("change", () => {
-            const newWords = Math.max(0, Number(inputWords.value) || 0);
-            inputWords.value = newWords;
-            updateVideoProgress(id, newWords, editedSec, scriptWords, editedSec);
-          });
-      
-          const handleTimeChange = () => {
-            let newMin = Math.max(0, Number(inputMin.value) || 0);
-            let newSec = Math.max(0, Number(inputSec.value) || 0);
-            if (newSec > 59) newSec = 59;
-            inputMin.value = newMin;
-            inputSec.value = newSec;
-      
-            const newEdited = toSeconds(newMin, newSec); // <- NO capar
-            updateVideoProgress(id, scriptWords, newEdited, scriptWords, editedSec);
-          };
-      
-          inputMin.addEventListener("change", handleTimeChange);
-          inputSec.addEventListener("change", handleTimeChange);
-      
-          inputGroup = upd;
+  card.appendChild(prog);
+  card.appendChild(main);
+
+  const toggle = () => card.classList.toggle("is-collapsed");
+  title.addEventListener("click", toggle);
+  title.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggle();
     }
+  });
 
-    const buttons = document.createElement("div");
-    buttons.className = "video-card-buttons";
-
-    const btnEdit = document.createElement("button");
-    btnEdit.className = "btn";
-    btnEdit.textContent = "Editar";
-    btnEdit.addEventListener("click", () => openVideoModal(id));
-
-    const btnPublish = document.createElement("button");
-    btnPublish.className = "btn";
-    btnPublish.textContent = "Publicado";
-    btnPublish.addEventListener("click", () => markVideoPublished(id));
-btnEdit.classList.add("btn-secondary-action");
-btnPublish.classList.add("btn-primary-action");
-
-if (v.status === "published") {
-  btnPublish.disabled = true;
-  btnPublish.style.opacity = "0.7";
-  btnPublish.style.pointerEvents = "none";
+  return card;
 }
 
-    buttons.appendChild(btnEdit);
-    if (!isPublished) buttons.appendChild(btnPublish);
-
-    if (!isPublished) actions.appendChild(inputGroup);
-    actions.appendChild(buttons);
-
-    main.appendChild(titleRow);
-    main.appendChild(progLine);
-
-    main.appendChild(meta);
-    main.appendChild(bars);
-    main.appendChild(workedEl);
-    main.appendChild(remaining);
-    main.appendChild(actions);
-
-    card.appendChild(prog);
-    card.appendChild(main);
-const toggle = () => card.classList.toggle("is-collapsed");
-title.addEventListener("click", toggle);
-title.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
-});
-
-    return card;
-  }
 
   const frag = document.createDocumentFragment();
 
@@ -1143,8 +1153,8 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
       videoCalMonth = now.getMonth();
     }
 
-    if ($videoCalViewMode) {
-      videoCalViewMode = $videoCalViewMode.value || "month";
+    if ($videoCalLabel) {
+      $videoCalLabel.textContent = formatMonthLabel(videoCalYear, videoCalMonth);
     }
 
     const totals = computeVideoDayTotals();
@@ -1154,22 +1164,6 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
 
     // info de publicación por fecha: { any: bool, done: bool (todos los vídeos de ese día al 100%) }
     const publishInfo = computePublishInfo();
-
-    renderVideoCalendarSummary(totals);
-
-    if (videoCalViewMode === "year") {
-      if ($videoCalLabel) {
-        $videoCalLabel.textContent = `Año ${videoCalYear}`;
-      }
-      renderVideoCalendarYearGrid(totals, publishInfo);
-      return;
-    }
-
-    if ($videoCalLabel) {
-      $videoCalLabel.textContent = formatMonthLabel(videoCalYear, videoCalMonth);
-    }
-
-    $videoCalGrid.classList.remove("video-calendar-year-grid");
 
     const firstDay = new Date(videoCalYear, videoCalMonth, 1).getDay();
     const offset = (firstDay + 6) % 7; // lunes = 0
@@ -1191,9 +1185,7 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
           String(dayNum).padStart(2, "0");
 
         const t = totals[key] || { words: 0, seconds: 0 };
-        const workedSec =
-          Math.max(0, Number(videoWorkLog?.[key]) || 0) +
-          (timerRunning && key === todayKey() ? getUnflushedSecondsToday() : 0);
+        const workedSec = Math.max(0, Number(videoWorkLog?.[key]) || 0) + (timerRunning && key === todayKey() ? getUnflushedSecondsToday() : 0);
         const hasWork = (t.words || 0) > 0 || (t.seconds || 0) > 0 || workedSec > 0;
 
         const pub = publishInfo[key];
@@ -1246,132 +1238,10 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
     $videoCalGrid.appendChild(frag);
   }
 
-  function renderVideoCalendarYearGrid(totals) {
-    if (!$videoCalGrid) return;
-    $videoCalGrid.classList.add("video-calendar-year-grid");
-    const months = Array.from({ length: 12 }, () => ({ words: 0, seconds: 0, published: 0 }));
-
-    Object.entries(totals || {}).forEach(([day, info]) => {
-      const [year, month] = day.split("-");
-      if (Number(year) === videoCalYear) {
-        const idx = Number(month) - 1;
-        months[idx].words += Number(info?.words || 0);
-        months[idx].seconds += Math.max(0, Number(info?.seconds || 0));
-      }
-    });
-
-    Object.entries(videoWorkLog || {}).forEach(([day, sec]) => {
-      const [year, month] = day.split("-");
-      if (Number(year) === videoCalYear) {
-        const idx = Number(month) - 1;
-        months[idx].seconds += Math.max(0, Number(sec) || 0);
-      }
-    });
-
-    if (timerRunning) {
-      const today = todayKey();
-      const [y, m] = today.split("-");
-      if (Number(y) === videoCalYear) {
-        const idx = Number(m) - 1;
-        months[idx].seconds += getUnflushedSecondsToday();
-      }
-    }
-
-    Object.values(videos || {}).forEach((v) => {
-      if (!v.publishDate || !isVideoFullyDone(v)) return;
-      const [year, month] = normalizeDateKey(v.publishDate).split("-");
-      if (Number(year) === videoCalYear) {
-        const idx = Number(month) - 1;
-        months[idx].published += 1;
-      }
-    });
-
-    const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-    const frag = document.createDocumentFragment();
-
-    months.forEach((info, idx) => {
-      const cell = document.createElement("div");
-      cell.className = "video-cal-cell video-cal-cell-year";
-
-      const name = document.createElement("div");
-      name.className = "video-cal-month-name";
-      name.textContent = monthNames[idx];
-
-      const metrics = document.createElement("div");
-      metrics.className = "video-cal-month-metrics";
-      const bits = [
-        `${info.published || 0} 📤`,
-        `${info.words || 0} w`,
-        `⏱ ${formatWorkTime(info.seconds || 0)}`
-      ];
-      metrics.textContent = bits.join(" · ");
-
-      cell.appendChild(name);
-      cell.appendChild(metrics);
-
-      frag.appendChild(cell);
-    });
-
-    $videoCalGrid.innerHTML = "";
-    $videoCalGrid.appendChild(frag);
-  }
-
-  function renderVideoCalendarSummary(totals) {
-    if (!$videoCalSummary) return;
-    const prefix =
-      videoCalViewMode === "year"
-        ? `${videoCalYear}-`
-        : `${videoCalYear}-${String(videoCalMonth + 1).padStart(2, "0")}-`;
-
-    const aggregate = aggregateVideoMetrics(prefix, totals);
-    const scopeLabel = videoCalViewMode === "year" ? "año" : "mes";
-    $videoCalSummary.textContent =
-      `Resumen del ${scopeLabel}: ⏱ ${formatWorkTime(aggregate.seconds || 0)} · ${aggregate.words || 0} palabras · ${aggregate.published || 0} vídeos subidos`;
-  }
-
-  function aggregateVideoMetrics(prefix, totals) {
-    let words = 0;
-    let seconds = 0;
-
-    const keys = new Set([
-      ...Object.keys(totals || {}),
-      ...Object.keys(videoWorkLog || {})
-    ]);
-
-    keys.forEach((day) => {
-      if (!day.startsWith(prefix)) return;
-      words += Number(totals?.[day]?.words || 0);
-      seconds += Math.max(0, Number(totals?.[day]?.seconds || 0));
-      seconds += Math.max(0, Number(videoWorkLog?.[day]) || 0);
-    });
-
-    if (timerRunning && todayKey().startsWith(prefix)) {
-      seconds += getUnflushedSecondsToday();
-    }
-
-    return {
-      words,
-      seconds,
-      published: countVideosPublishedForPrefix(prefix)
-    };
-  }
-
-  function countVideosPublishedForPrefix(prefix) {
-    let count = 0;
-    Object.values(videos || {}).forEach((v) => {
-      if (!v.publishDate || !isVideoFullyDone(v)) return;
-      const key = normalizeDateKey(v.publishDate);
-      if (key && key.startsWith(prefix)) count += 1;
-    });
-    return count;
-  }
-
   // Nav calendario
   if ($videoCalPrev) {
     $videoCalPrev.addEventListener("click", () => {
-      if (videoCalViewMode === "year") {
-        videoCalYear -= 1;
-      } else if (videoCalMonth === 0) {
+      if (videoCalMonth === 0) {
         videoCalMonth = 11;
         videoCalYear -= 1;
       } else {
@@ -1383,21 +1253,12 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
 
   if ($videoCalNext) {
     $videoCalNext.addEventListener("click", () => {
-      if (videoCalViewMode === "year") {
-        videoCalYear += 1;
-      } else if (videoCalMonth === 11) {
+      if (videoCalMonth === 11) {
         videoCalMonth = 0;
         videoCalYear += 1;
       } else {
         videoCalMonth += 1;
       }
-      renderVideoCalendar();
-    });
-  }
-
-  if ($videoCalViewMode) {
-    $videoCalViewMode.addEventListener("change", () => {
-      videoCalViewMode = $videoCalViewMode.value || "month";
       renderVideoCalendar();
     });
   }

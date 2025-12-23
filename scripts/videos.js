@@ -41,6 +41,7 @@ let videoLog = {}; // { "YYYY-MM-DD": { videoId: { w, s } } }
 let videoWorkLog = {}; // { "YYYY-MM-DD": seconds }
 let videoCalYear;
 let videoCalMonth;
+let videoCalViewMode = "month";
 
 // Utils fecha
 function todayKey() {
@@ -158,6 +159,8 @@ if ($viewVideos) {
   const $videoCalNext = document.getElementById("video-cal-next");
   const $videoCalLabel = document.getElementById("video-cal-label");
   const $videoCalGrid = document.getElementById("video-calendar-grid");
+  const $videoCalViewMode = document.getElementById("video-cal-view-mode");
+  const $videoCalendarSummary = document.getElementById("video-calendar-summary");
 
   // Modal vídeo
   const $videoModalBackdrop = document.getElementById("video-modal-backdrop");
@@ -1153,17 +1156,31 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
       videoCalMonth = now.getMonth();
     }
 
+    const totals = computeVideoDayTotals();
+    const totalsForStreak = mergeTotalsForStreak(totals);
+    const publishInfo = computePublishInfo();
+
+    if ($videoCalViewMode) {
+      videoCalViewMode = $videoCalViewMode.value || "month";
+    }
+
+    renderVideoCalendarSummary(totalsForStreak, publishInfo);
+
+    if (videoCalViewMode === "year") {
+      if ($videoCalLabel) $videoCalLabel.textContent = `Año ${videoCalYear}`;
+      renderVideoCalendarYearGrid(totalsForStreak, publishInfo);
+      return;
+    }
+
+    $videoCalGrid.classList.remove("video-calendar-year-grid");
     if ($videoCalLabel) {
       $videoCalLabel.textContent = formatMonthLabel(videoCalYear, videoCalMonth);
     }
 
-    const totals = computeVideoDayTotals();
-    const totalsForStreak = mergeTotalsForStreak(totals);
     const streakInfo = computeVideoStreak(totalsForStreak);
     const streakSet = new Set(streakInfo.streakDays || []);
 
     // info de publicación por fecha: { any: bool, done: bool (todos los vídeos de ese día al 100%) }
-    const publishInfo = computePublishInfo();
 
     const firstDay = new Date(videoCalYear, videoCalMonth, 1).getDay();
     const offset = (firstDay + 6) % 7; // lunes = 0
@@ -1185,8 +1202,12 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
           String(dayNum).padStart(2, "0");
 
         const t = totals[key] || { words: 0, seconds: 0 };
-        const workedSec = Math.max(0, Number(videoWorkLog?.[key]) || 0) + (timerRunning && key === todayKey() ? getUnflushedSecondsToday() : 0);
-        const hasWork = (t.words || 0) > 0 || (t.seconds || 0) > 0 || workedSec > 0;
+        const mergedSeconds =
+          Math.max(0, (totalsForStreak[key]?.seconds || 0)) +
+          (timerRunning && key === todayKey() ? getUnflushedSecondsToday() : 0);
+        const workedSec = Math.max(0, Number(videoWorkLog?.[key]) || 0) +
+          (timerRunning && key === todayKey() ? getUnflushedSecondsToday() : 0);
+        const hasWork = (t.words || 0) > 0 || mergedSeconds > 0;
 
         const pub = publishInfo[key];
         const isPublish = !!(pub && pub.any);
@@ -1238,10 +1259,92 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
     $videoCalGrid.appendChild(frag);
   }
 
+  function renderVideoCalendarYearGrid(totalsForStreak, publishInfo) {
+    $videoCalGrid.classList.add("video-calendar-year-grid");
+    const months = Array.from({ length: 12 }, () => ({
+      words: 0,
+      seconds: 0,
+      publish: 0,
+      publishDone: 0
+    }));
+
+    Object.entries(totalsForStreak || {}).forEach(([day, val]) => {
+      const [year, month] = day.split("-");
+      if (Number(year) === videoCalYear) {
+        const idx = Number(month) - 1;
+        months[idx].words += Number(val?.words) || 0;
+        months[idx].seconds += Number(val?.seconds) || 0;
+      }
+    });
+
+    Object.entries(publishInfo || {}).forEach(([day, info]) => {
+      const [year, month] = day.split("-");
+      if (Number(year) === videoCalYear) {
+        const idx = Number(month) - 1;
+        if (info?.any) months[idx].publish += 1;
+        if (info?.done) months[idx].publishDone += 1;
+      }
+    });
+
+    const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+    const frag = document.createDocumentFragment();
+
+    months.forEach((info, idx) => {
+      const cell = document.createElement("div");
+      cell.className = "video-cal-cell video-cal-cell-year";
+
+      const name = document.createElement("div");
+      name.className = "video-cal-month-name";
+      name.textContent = monthNames[idx];
+
+      const metrics = document.createElement("div");
+      metrics.className = "video-cal-month-metrics";
+      const publishLabel = info.publish ? ` · ${info.publish} publicaciones` : "";
+      metrics.textContent = `${info.words || 0} w · ${formatWorkTime(info.seconds)}${publishLabel}`;
+
+      cell.appendChild(name);
+      cell.appendChild(metrics);
+      frag.appendChild(cell);
+    });
+
+    $videoCalGrid.innerHTML = "";
+    $videoCalGrid.appendChild(frag);
+  }
+
+  function renderVideoCalendarSummary(totalsForStreak, publishInfo) {
+    if (!$videoCalendarSummary) return;
+    const prefix =
+      videoCalViewMode === "year"
+        ? `${videoCalYear}-`
+        : `${videoCalYear}-${String(videoCalMonth + 1).padStart(2, "0")}-`;
+
+    let totalWords = 0;
+    let totalSeconds = 0;
+    Object.entries(totalsForStreak || {}).forEach(([day, val]) => {
+      if (!day.startsWith(prefix)) return;
+      totalWords += Number(val?.words) || 0;
+      totalSeconds += Number(val?.seconds) || 0;
+    });
+    if (timerRunning && todayKey().startsWith(prefix)) {
+      totalSeconds += getUnflushedSecondsToday();
+    }
+
+    let publishCount = 0;
+    Object.entries(publishInfo || {}).forEach(([day, info]) => {
+      if (day.startsWith(prefix) && info?.any) publishCount += 1;
+    });
+
+    const scopeLabel = videoCalViewMode === "year" ? "año" : "mes";
+    $videoCalendarSummary.textContent =
+      `Resumen del ${scopeLabel}: ${totalWords.toLocaleString("es-ES")} palabras · ${formatWorkTime(totalSeconds)} · ${publishCount} días con publicación`;
+  }
+
   // Nav calendario
   if ($videoCalPrev) {
     $videoCalPrev.addEventListener("click", () => {
-      if (videoCalMonth === 0) {
+      if (videoCalViewMode === "year") {
+        videoCalYear -= 1;
+      } else if (videoCalMonth === 0) {
         videoCalMonth = 11;
         videoCalYear -= 1;
       } else {
@@ -1253,12 +1356,21 @@ const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
 
   if ($videoCalNext) {
     $videoCalNext.addEventListener("click", () => {
-      if (videoCalMonth === 11) {
+      if (videoCalViewMode === "year") {
+        videoCalYear += 1;
+      } else if (videoCalMonth === 11) {
         videoCalMonth = 0;
         videoCalYear += 1;
       } else {
         videoCalMonth += 1;
       }
+      renderVideoCalendar();
+    });
+  }
+
+  if ($videoCalViewMode) {
+    $videoCalViewMode.addEventListener("change", () => {
+      videoCalViewMode = $videoCalViewMode.value || "month";
       renderVideoCalendar();
     });
   }

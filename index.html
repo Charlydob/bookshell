@@ -97,6 +97,14 @@
     <span>Terminados</span>
     <span id="books-finished-count" class="books-finished-count">0</span>
   </summary>
+  <div class="books-shelf-toolbar">
+    <label class="field-label shelf-search-label" for="books-shelf-search">Buscar en la estantería</label>
+    <input id="books-shelf-search" class="shelf-search-input" type="search" placeholder="Título, autor, idioma, categoría..." />
+    <div id="books-shelf-results" class="books-shelf-results"></div>
+  </div>
+  <div id="books-shelf-empty" class="books-shelf-empty" style="display:none;">
+    No hay libros que coincidan con la búsqueda.
+  </div>
   <div id="books-list-finished" class="books-list-finished"></div>
 </details>
 
@@ -211,6 +219,12 @@
         <input id="book-title" type="text" required />
       </label>
 
+      <label class="favorite-toggle">
+        <input id="book-favorite" type="checkbox" />
+        <span class="favorite-icon" aria-hidden="true">★</span>
+        <span>Marcar como favorito</span>
+      </label>
+
       <div class="form-grid row-2">
         <label class="field">
           <span class="field-label">Autor</span>
@@ -267,6 +281,66 @@
     <button type="submit" class="btn primary">Guardar</button>
   </div>
 </form>
+    </div>
+  </div>
+
+  <!-- FICHA LIBRO -->
+  <div id="book-detail-backdrop" class="modal-backdrop hidden">
+    <div class="modal book-detail-modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <div id="book-detail-title" class="modal-title">Ficha del libro</div>
+        <button id="book-detail-close" class="icon-btn">✕</button>
+      </div>
+      <div class="modal-body book-detail-body">
+        <div class="book-detail-top">
+          <label class="favorite-toggle">
+            <input id="book-detail-favorite" type="checkbox" />
+            <span class="favorite-icon" aria-hidden="true">★</span>
+            <span>Favorito</span>
+          </label>
+          <div id="book-detail-status" class="book-detail-status"></div>
+        </div>
+
+        <div class="book-detail-grid">
+          <div>
+            <span class="book-detail-label">Autor</span>
+            <div id="book-detail-author" class="book-detail-value">—</div>
+          </div>
+          <div>
+            <span class="book-detail-label">Año</span>
+            <div id="book-detail-year" class="book-detail-value">—</div>
+          </div>
+          <div>
+            <span class="book-detail-label">Género</span>
+            <div id="book-detail-genre" class="book-detail-value">—</div>
+          </div>
+          <div>
+            <span class="book-detail-label">Idioma</span>
+            <div id="book-detail-language" class="book-detail-value">—</div>
+          </div>
+          <div>
+            <span class="book-detail-label">Páginas</span>
+            <div id="book-detail-pages" class="book-detail-value">—</div>
+          </div>
+          <div>
+            <span class="book-detail-label">Progreso</span>
+            <div id="book-detail-progress" class="book-detail-value">—</div>
+          </div>
+          <div>
+            <span class="book-detail-label">Finalizado</span>
+            <div id="book-detail-finished" class="book-detail-value">—</div>
+          </div>
+          <div>
+            <span class="book-detail-label">Notas</span>
+            <div id="book-detail-notes" class="book-detail-value">Sin notas</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer book-detail-footer">
+        <button type="button" id="book-detail-edit" class="btn ghost">Editar</button>
+        <button type="button" id="book-detail-close-btn" class="btn primary">Cerrar</button>
+      </div>
     </div>
   </div>
 

@@ -49,15 +49,21 @@ let currentCalMonth; // 0-11
 let calViewMode = "month";
 
 // === Utilidades fecha ===
+function dateKeyLocal(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function todayKey() {
-  const d = new Date();
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+  return dateKeyLocal(new Date());
 }
 
 function dateKeyFromTimestamp(ts) {
   if (!ts) return null;
   try {
-    return new Date(ts).toISOString().slice(0, 10);
+    return dateKeyLocal(new Date(ts));
   } catch (_) {
     return null;
   }
@@ -284,6 +290,51 @@ function isBookFinished(b) {
   const total = Number(b?.pages) || 0;
   const current = Number(b?.currentPage) || 0;
   return b?.status === "finished" || (total > 0 && current >= total);
+}
+
+const spinePalettes = [
+  ["#f7b500", "#ff6f61"],
+  ["#6dd5ed", "#2193b0"],
+  ["#8e2de2", "#4a00e0"],
+  ["#00b09b", "#96c93d"],
+  ["#ff758c", "#ff7eb3"],
+  ["#4158d0", "#c850c0"],
+  ["#f83600", "#fe8c00"],
+  ["#43cea2", "#185a9d"],
+  ["#ffd700", "#f37335"]
+];
+
+function pickSpinePalette(seed = "") {
+  const hash = Array.from(seed).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  return spinePalettes[hash % spinePalettes.length];
+}
+
+function buildFinishedSpine(id) {
+  const b = books[id] || {};
+  const title = b.title || "Sin título";
+  const total = Number(b.pages) || 0;
+  const finishDate = getFinishDateForBook(id);
+  const [c1, c2] = pickSpinePalette(title + id);
+
+  const spine = document.createElement("div");
+  const height = 110 + Math.min(90, Math.round((total || 120) / 4));
+  spine.className = "book-spine";
+  spine.style.setProperty("--spine-height", `${height}px`);
+  spine.style.setProperty("--spine-color-1", c1);
+  spine.style.setProperty("--spine-color-2", c2);
+  spine.title = `${title}${b.author ? ` · ${b.author}` : ""}${total ? ` · ${total} páginas` : ""}${finishDate ? ` · Terminado: ${finishDate}` : ""}`;
+
+  const t = document.createElement("span");
+  t.className = "book-spine-title";
+  t.textContent = title;
+
+  const meta = document.createElement("span");
+  meta.className = "book-spine-meta";
+  meta.textContent = total ? `${total} pág` : "Terminado";
+
+  spine.appendChild(t);
+  spine.appendChild(meta);
+  return spine;
 }
 
 function renderBooks() {
@@ -517,7 +568,16 @@ if (inlineInput) {
       if ($booksFinishedCount) $booksFinishedCount.textContent = String(finishedIds.length);
 
       const fragF = document.createDocumentFragment();
-      finishedIds.forEach((id) => fragF.appendChild(buildCard(id)));
+      let shelfRow = null;
+      const SHELF_SIZE = 9;
+      finishedIds.forEach((id, idx) => {
+        if (idx % SHELF_SIZE === 0) {
+          shelfRow = document.createElement("div");
+          shelfRow.className = "books-shelf-row";
+          fragF.appendChild(shelfRow);
+        }
+        shelfRow.appendChild(buildFinishedSpine(id));
+      });
       $booksListFinished.innerHTML = "";
       $booksListFinished.appendChild(fragF);
     } else {
@@ -651,8 +711,8 @@ function getWeekBoundsKey(anchorDate = new Date()) {
   sunday.setDate(monday.getDate() + 6);
   sunday.setHours(23, 59, 59, 999);
   return {
-    from: monday.toISOString().slice(0, 10),
-    to: sunday.toISOString().slice(0, 10)
+    from: dateKeyLocal(monday),
+    to: dateKeyLocal(sunday)
   };
 }
 
@@ -728,7 +788,7 @@ function computeStreaks() {
     // si el último día con lectura no es hoy, comprobamos si ayer fue
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    const yKey = yesterday.toISOString().slice(0, 10);
+    const yKey = dateKeyLocal(yesterday);
     if (latestDay !== yKey) {
       current = 0;
     }
@@ -810,7 +870,7 @@ function renderCalendar() {
     } else {
       const dayNum = i - offset + 1;
       const d = new Date(currentCalYear, currentCalMonth, dayNum);
-      const key = d.toISOString().slice(0, 10);
+      const key = dateKeyLocal(d);
       const pages = totals[key] || 0;
       const finishedCount = finishedByDay[key] || 0;
 
@@ -952,7 +1012,7 @@ function computeStreakDates(totals) {
   const today = todayKey();
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  const yKey = yesterday.toISOString().slice(0, 10);
+  const yKey = dateKeyLocal(yesterday);
 
   let activeRun = [];
   if (lastDay === today || lastDay === yKey) {

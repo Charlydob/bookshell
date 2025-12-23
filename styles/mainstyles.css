@@ -461,6 +461,27 @@ body {
 
 .form-grid.row-2{ grid-template-columns: 1fr 1fr; }
 
+.checkbox-field-row{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.checkbox-field-title{
+  font-weight: 600;
+}
+
+.checkbox-field-hint{
+  font-size: 12px;
+  opacity: .65;
+}
+
+.checkbox-field input[type="checkbox"]{
+  width: 22px;
+  height: 22px;
+}
+
 @media (max-width: 360px){
   .form-grid.row-2{ grid-template-columns: 1fr; }
 }

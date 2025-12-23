@@ -112,6 +112,8 @@ const $bookLanguage = document.getElementById("book-language");
 const $bookStatus = document.getElementById("book-status");
 const $bookPdf = document.getElementById("book-pdf"); // puede ser null si no usamos PDF
 const $bookFavorite = document.getElementById("book-favorite");
+const $bookFinishedPast = document.getElementById("book-finished-past");
+const $bookFinishedPast = document.getElementById("book-finished-past");
 
 const $booksShelfSearch = document.getElementById("books-shelf-search");
 const $booksShelfResults = document.getElementById("books-shelf-results");
@@ -252,8 +254,9 @@ if ($bookDetailBackdrop) {
 if ($bookDetailEdit) {
   $bookDetailEdit.addEventListener("click", () => {
     if (!bookDetailId) return;
+    const id = bookDetailId;
     closeBookDetail();
-    openBookModal(bookDetailId);
+    openBookModal(id);
   });
 }
 
@@ -273,6 +276,7 @@ function openBookModal(bookId = null) {
     $bookLanguage.value = b.language || "";
     $bookStatus.value = b.status || "reading";
     if ($bookFavorite) $bookFavorite.checked = !!b.favorite;
+    if ($bookFinishedPast) $bookFinishedPast.checked = !!b.finishedPast;
   } else {
     $modalTitle.textContent = "Nuevo libro";
     $bookId.value = "";
@@ -280,6 +284,7 @@ function openBookModal(bookId = null) {
     $bookCurrentPage.value = 0;
     $bookStatus.value = "reading";
     if ($bookFavorite) $bookFavorite.checked = false;
+    if ($bookFinishedPast) $bookFinishedPast.checked = false;
   }
   if ($bookPdf) $bookPdf.value = "";
   $modalBackdrop.classList.remove("hidden");
@@ -306,7 +311,13 @@ $bookForm.addEventListener("submit", async (e) => {
   if (!title) return;
 
   const pages = parseInt($bookPages.value, 10) || 0;
-  const currentPage = Math.max(0, Math.min(pages, parseInt($bookCurrentPage.value, 10) || 0));
+  const selectedStatus = $bookStatus.value || "reading";
+  const finishedPast = $bookFinishedPast ? !!$bookFinishedPast.checked : false;
+  let currentPage = Math.max(0, Math.min(pages, parseInt($bookCurrentPage.value, 10) || 0));
+
+  if (selectedStatus === "finished" && pages > 0) {
+    currentPage = pages;
+  }
 
   const bookData = {
     title,
@@ -316,8 +327,9 @@ $bookForm.addEventListener("submit", async (e) => {
     currentPage,
     genre: $bookGenre.value.trim() || null,
     language: $bookLanguage.value.trim() || null,
-    status: $bookStatus.value || "reading",
+    status: selectedStatus,
     favorite: $bookFavorite ? !!$bookFavorite.checked : false,
+    finishedPast: false,
     updatedAt: Date.now()
   };
 
@@ -328,14 +340,22 @@ $bookForm.addEventListener("submit", async (e) => {
   const prevWasFinished = prevBook?.status === "finished" || ((Number(prevBook?.pages) || 0) > 0 && (Number(prevBook?.currentPage) || 0) >= (Number(prevBook?.pages) || 0));
   const nowIsFinished = bookData.status === "finished" || (bookData.pages > 0 && bookData.currentPage >= bookData.pages);
 
-  if (nowIsFinished && !prevWasFinished) {
+  if (nowIsFinished) {
     bookData.status = "finished";
-    bookData.finishedAt = Date.now();
-    bookData.finishedOn = todayKey();
+    const keepPast = !!prevBook?.finishedPast && finishedPast;
+    bookData.finishedPast = finishedPast || keepPast;
+    if (finishedPast) {
+      bookData.finishedAt = null;
+      bookData.finishedOn = null;
+    } else if (!prevWasFinished || prevBook?.finishedPast) {
+      bookData.finishedAt = Date.now();
+      bookData.finishedOn = prevBook?.finishedOn || todayKey();
+    }
   } else if (!nowIsFinished && prevWasFinished) {
     // RTDB: null => elimina la propiedad
     bookData.finishedAt = null;
     bookData.finishedOn = null;
+    bookData.finishedPast = false;
   }
 
 
@@ -433,7 +453,8 @@ function buildFinishedSpine(id) {
   const [c1, c2] = favorite ? ["#f8e6aa", "#d3a74a"] : pickSpinePalette(title + id);
 
   const spine = document.createElement("div");
-  const height = 110 + Math.min(90, Math.round((total || 120) / 4));
+  const baseHeight = 110 + Math.min(90, Math.round((total || 120) / 4));
+  const height = favorite ? Math.min(baseHeight, 150) : baseHeight;
   spine.className = "book-spine";
   if (favorite) spine.classList.add("book-spine-favorite");
   spine.style.setProperty("--spine-height", `${height}px`);
@@ -795,6 +816,7 @@ const updates = {
 // Auto-finish / auto-unfinish (para que el calendario/contadores se corrijan al editar)
 const shouldFinish = total > 0 && safeNew >= total;
 const wasFinished = book.status === "finished" || (total > 0 && (Number(book.currentPage) || 0) >= total);
+updates.finishedPast = shouldFinish ? false : !!book.finishedPast;
 
 if (shouldFinish && (!wasFinished || !book.finishedOn)) {
   updates.status = "finished";
@@ -835,6 +857,7 @@ async function markBookFinished(bookId) {
 await update(ref(db, `${BOOKS_PATH}/${bookId}`), {
   status: "finished",
   currentPage: book.pages || book.currentPage || 0,
+  finishedPast: false,
   finishedAt: Date.now(),
   finishedOn: book.finishedOn || todayKey(),
   updatedAt: Date.now()
@@ -851,6 +874,7 @@ await update(ref(db, `${BOOKS_PATH}/${bookId}`), {
 function getFinishDateForBook(bookId) {
   const b = books?.[bookId];
   if (!b) return null;
+  if (b.finishedPast) return null;
 
   // preferimos fecha explícita
   if (b.finishedOn) return b.finishedOn;
@@ -878,6 +902,7 @@ function computeFinishedByDay() {
   const map = {}; // { YYYY-MM-DD: count }
   Object.keys(books || {}).forEach((id) => {
     const b = books[id];
+    if (b?.finishedPast) return;
     const total = Number(b?.pages) || 0;
     const current = Number(b?.currentPage) || 0;
     const isFinished = b?.status === "finished" || (total > 0 && current >= total);
@@ -920,6 +945,11 @@ function computeBooksReadCount(range = "total") {
     const current = Number(b?.currentPage) || 0;
     const isFinished = b?.status === "finished" || (total > 0 && current >= total);
     if (!isFinished) return;
+
+    if (b.finishedPast) {
+      if (range === "total") count += 1;
+      return;
+    }
 
     const day = getFinishDateForBook(id);
     if (!day) return;

@@ -113,7 +113,6 @@ const $bookStatus = document.getElementById("book-status");
 const $bookPdf = document.getElementById("book-pdf"); // puede ser null si no usamos PDF
 const $bookFavorite = document.getElementById("book-favorite");
 const $bookFinishedPast = document.getElementById("book-finished-past");
-const $bookFinishedPast = document.getElementById("book-finished-past");
 
 const $booksShelfSearch = document.getElementById("books-shelf-search");
 const $booksShelfResults = document.getElementById("books-shelf-results");

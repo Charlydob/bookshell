@@ -45,6 +45,15 @@ let books = {};
 let readingLog = {}; // { "YYYY-MM-DD": { bookId: pages } }
 let bookDetailId = null;
 
+// Categorías (género): opciones
+const META_GENRES_PATH = "meta/genres";
+const DEFAULT_GENRES = [
+  "Novela","Ensayo","Fantasía","Ciencia ficción","Terror",
+  "Historia","Biografía","Filosofía","Poesía","Misterio","Otros"
+];
+let genreOptions = [...DEFAULT_GENRES];
+
+
 let currentCalYear;
 let currentCalMonth; // 0-11
 let calViewMode = "month";
@@ -113,6 +122,16 @@ const $bookStatus = document.getElementById("book-status");
 const $bookPdf = document.getElementById("book-pdf"); // puede ser null si no usamos PDF
 const $bookFavorite = document.getElementById("book-favorite");
 const $bookFinishedPast = document.getElementById("book-finished-past");
+
+// Categorías (selector)
+const $genreAddBtn = document.getElementById("genre-add-btn");
+
+// Charts (donut)
+const $booksChartsSection = document.getElementById("books-charts-section");
+const $chartGenre = document.getElementById("chart-genre");
+const $chartAuthor = document.getElementById("chart-author");
+const $chartCentury = document.getElementById("chart-century");
+
 
 const $booksShelfSearch = document.getElementById("books-shelf-search");
 const $booksShelfResults = document.getElementById("books-shelf-results");
@@ -186,6 +205,74 @@ $navButtons.forEach(btn => {
 if ($booksShelfSearch) {
   $booksShelfSearch.addEventListener("input", () => renderBooks());
 }
+
+// === Categorías (selector) ===
+function escapeHtml(str) {
+  return String(str ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function normalizeLabel(v) {
+  return String(v ?? "").trim();
+}
+
+function parseGenresValue(val) {
+  if (!val) return null;
+  if (Array.isArray(val)) return val.filter(Boolean).map((x) => normalizeLabel(x)).filter(Boolean);
+  if (typeof val === "object") return Object.values(val).filter(Boolean).map((x) => normalizeLabel(x)).filter(Boolean);
+  return null;
+}
+
+function sortLabels(arr) {
+  return [...arr].sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+}
+
+function populateGenreSelect(selected = null) {
+  if (!$bookGenre) return;
+
+  const current = normalizeLabel(selected != null ? selected : $bookGenre.value);
+  const opts = sortLabels(genreOptions || []);
+
+  // Si llega un género antiguo que no está en la lista, lo metemos para no romper edición
+  if (current && !opts.some((o) => o.toLowerCase() === current.toLowerCase())) opts.unshift(current);
+
+  $bookGenre.innerHTML =
+    `<option value="">—</option>` +
+    opts.map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join("");
+
+  if (current) $bookGenre.value = current;
+}
+
+if ($genreAddBtn) {
+  $genreAddBtn.addEventListener("click", async () => {
+    const raw = prompt("Nueva categoría:");
+    const label = normalizeLabel(raw);
+    if (!label) return;
+
+    const exists = (genreOptions || []).some((o) => String(o).toLowerCase() === label.toLowerCase());
+    if (!exists) genreOptions = [...(genreOptions || []), label];
+
+    genreOptions = sortLabels(genreOptions);
+    populateGenreSelect(label);
+
+    try {
+      await set(ref(db, META_GENRES_PATH), genreOptions);
+    } catch (err) {
+      console.error("Error guardando categorías", err);
+    }
+  });
+}
+
+// Carga categorías desde Firebase (si existen)
+onValue(ref(db, META_GENRES_PATH), (snap) => {
+  const arr = parseGenresValue(snap.val());
+  if (arr && arr.length) genreOptions = sortLabels(arr);
+  populateGenreSelect();
+});
 
 function closeBookDetail() {
   bookDetailId = null;
@@ -271,7 +358,7 @@ function openBookModal(bookId = null) {
     $bookYear.value = b.year || "";
     $bookPages.value = b.pages || "";
     $bookCurrentPage.value = b.currentPage ?? 0;
-    $bookGenre.value = b.genre || "";
+    populateGenreSelect(b.genre || "");
     $bookLanguage.value = b.language || "";
     $bookStatus.value = b.status || "reading";
     if ($bookFavorite) $bookFavorite.checked = !!b.favorite;
@@ -281,6 +368,7 @@ function openBookModal(bookId = null) {
     $bookId.value = "";
     $bookForm.reset();
     $bookCurrentPage.value = 0;
+    populateGenreSelect("");
     $bookStatus.value = "reading";
     if ($bookFavorite) $bookFavorite.checked = false;
     if ($bookFinishedPast) $bookFinishedPast.checked = false;
@@ -480,6 +568,330 @@ function buildFinishedSpine(id) {
 
   spine.appendChild(t);
   spine.appendChild(meta);
+
+  const openDetail = () => openBookDetail(id);
+  spine.addEventListener("click", openDetail);
+  spine.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openDetail();
+    }
+  });
+
+  return spine;
+}
+
+// === Charts (donut “3D”) ===
+const donutPalette = [
+  "#8f7bff","#6dd5ed","#ff6f61","#2eea7b","#f7b500",
+  "#ff7eb3","#4158d0","#00b09b","#fe8c00","#43cea2"
+];
+
+function pickColor(seed = "") {
+  const s = String(seed);
+  const h = Array.from(s).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  return donutPalette[h % donutPalette.length];
+}
+
+function hexToRgb(hex) {
+  const h = String(hex || "").replace("#", "").trim();
+  if (h.length === 3) {
+    const r = parseInt(h[0] + h[0], 16);
+    const g = parseInt(h[1] + h[1], 16);
+    const b = parseInt(h[2] + h[2], 16);
+    return { r, g, b };
+  }
+  if (h.length === 6) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return { r, g, b };
+  }
+  return { r: 120, g: 120, b: 120 };
+}
+
+function darken(hex, k = 0.55) {
+  const { r, g, b } = hexToRgb(hex);
+  const rr = Math.max(0, Math.min(255, Math.round(r * k)));
+  const gg = Math.max(0, Math.min(255, Math.round(g * k)));
+  const bb = Math.max(0, Math.min(255, Math.round(b * k)));
+  return `rgb(${rr},${gg},${bb})`;
+}
+
+function toRoman(num) {
+  const n = Math.max(0, Math.floor(Number(num) || 0));
+  if (!n) return "—";
+  const map = [
+    [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"],
+    [100, "C"], [90, "XC"], [50, "L"], [40, "XL"],
+    [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]
+  ];
+  let x = n;
+  let out = "";
+  for (const [v, sym] of map) {
+    while (x >= v) { out += sym; x -= v; }
+  }
+  return out || "—";
+}
+
+function yearToCenturyLabel(year) {
+  const y = Number(year) || 0;
+  if (!y) return "Sin año";
+  const c = Math.floor((y - 1) / 100) + 1;
+  return `S. ${toRoman(c)}`;
+}
+
+function countBy(ids, getter) {
+  const m = new Map();
+  (ids || []).forEach((id) => {
+    const b = books?.[id];
+    const key = normalizeLabel(getter(b));
+    const label = key || "—";
+    m.set(label, (m.get(label) || 0) + 1);
+  });
+  return m;
+}
+
+function topNMap(m, maxSlices = 6) {
+  const arr = Array.from(m.entries()).map(([label, value]) => ({ label, value }));
+  arr.sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "es"));
+  if (arr.length <= maxSlices) return arr;
+
+  const head = arr.slice(0, maxSlices - 1);
+  const tail = arr.slice(maxSlices - 1);
+  const others = tail.reduce((acc, x) => acc + x.value, 0);
+  head.push({ label: "Otros", value: others });
+  return head;
+}
+
+function polar(cx, cy, r, deg) {
+  const a = (deg - 90) * Math.PI / 180;
+  return { x: cx + (r * Math.cos(a)), y: cy + (r * Math.sin(a)) };
+}
+
+function donutSlicePath(cx, cy, rOuter, rInner, startDeg, endDeg) {
+  // Evita 360 exactos (SVG se rompe)
+  const sweep = Math.max(0.001, endDeg - startDeg);
+  const e = startDeg + Math.min(359.999, sweep);
+
+  const p1 = polar(cx, cy, rOuter, startDeg);
+  const p2 = polar(cx, cy, rOuter, e);
+  const p3 = polar(cx, cy, rInner, e);
+  const p4 = polar(cx, cy, rInner, startDeg);
+
+  const large = (e - startDeg) > 180 ? 1 : 0;
+
+  return [
+    `M ${p1.x.toFixed(3)} ${p1.y.toFixed(3)}`,
+    `A ${rOuter} ${rOuter} 0 ${large} 1 ${p2.x.toFixed(3)} ${p2.y.toFixed(3)}`,
+    `L ${p3.x.toFixed(3)} ${p3.y.toFixed(3)}`,
+    `A ${rInner} ${rInner} 0 ${large} 0 ${p4.x.toFixed(3)} ${p4.y.toFixed(3)}`,
+    "Z"
+  ].join(" ");
+}
+
+function renderDonutChart($host, centerTitle, mapData) {
+  if (!$host) return;
+
+  const data = topNMap(mapData, 6);
+  const total = data.reduce((acc, d) => acc + d.value, 0);
+
+  if (!total) {
+    $host.innerHTML = `<div class="books-shelf-empty">Sin datos</div>`;
+    return;
+  }
+
+  const W = 360, H = 220;
+  const cx = 180, cy = 110;
+  const rOuter = 86, rInner = 52;
+  const thickness = 14; // “3D” hacia abajo
+
+  let a0 = 0;
+  const slices = data.map((d) => {
+    const frac = d.value / total;
+    const a1 = a0 + frac * 360;
+    const mid = (a0 + a1) / 2;
+    const color = pickColor(d.label);
+    const pct = Math.round(frac * 100);
+    const out = { ...d, frac, a0, a1, mid, color, pct };
+    a0 = a1;
+    return out;
+  });
+
+  const defs = `
+    <defs>
+      <filter id="ds" x="-50%" y="-50%" width="200%" height="200%">
+        <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="rgba(0,0,0,0.55)"/>
+      </filter>
+      <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+        <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="rgba(0,0,0,0.25)"/>
+      </filter>
+    </defs>
+  `;
+
+  const bottom = slices.map((s) => {
+    const d = donutSlicePath(cx, cy + thickness, rOuter, rInner, s.a0, s.a1);
+    return `<path d="${d}" fill="${darken(s.color, 0.55)}" opacity="0.95" />`;
+  }).join("");
+
+  const top = slices.map((s) => {
+    const d = donutSlicePath(cx, cy, rOuter, rInner, s.a0, s.a1);
+    return `<path d="${d}" fill="${s.color}" filter="url(#soft)" />`;
+  }).join("");
+
+  const pctText = slices.map((s) => {
+    // Si es muy pequeño, no pintes %
+    if (s.pct < 6) return "";
+    const p = polar(cx, cy, (rOuter + rInner) / 2, s.mid);
+    return `<text class="donut-pct" x="${p.x.toFixed(2)}" y="${(p.y + 3).toFixed(2)}" text-anchor="middle">${s.pct}%</text>`;
+  }).join("");
+
+  const callouts = slices.map((s) => {
+    const p1 = polar(cx, cy, rOuter + 2, s.mid);
+    const p2 = polar(cx, cy, rOuter + 18, s.mid);
+    const right = Math.cos((s.mid - 90) * Math.PI / 180) >= 0;
+    const x3 = right ? (p2.x + 30) : (p2.x - 30);
+    const y3 = p2.y;
+
+    const tx = right ? (x3 + 3) : (x3 - 3);
+    const anchor = right ? "start" : "end";
+
+    return `
+      <polyline class="donut-line" points="${p1.x.toFixed(2)},${p1.y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)} ${x3.toFixed(2)},${y3.toFixed(2)}" fill="none" />
+      <text class="donut-label" x="${tx.toFixed(2)}" y="${(y3 - 2).toFixed(2)}" text-anchor="${anchor}">
+        <tspan x="${tx.toFixed(2)}" dy="0">${escapeHtml(s.label)}</tspan>
+        <tspan x="${tx.toFixed(2)}" dy="12">${s.value}</tspan>
+      </text>
+    `;
+  }).join("");
+
+  const center = `
+    <text class="donut-center" x="${cx}" y="${cy - 2}" text-anchor="middle">${escapeHtml(centerTitle)}</text>
+    <text class="donut-center-sub" x="${cx}" y="${cy + 14}" text-anchor="middle">${total} libros</text>
+  `;
+
+  $host.innerHTML = `
+    <svg class="donut-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(centerTitle)}">
+      ${defs}
+      <g filter="url(#ds)">${bottom}</g>
+      <g>${top}</g>
+      <g>${pctText}</g>
+      <g>${callouts}</g>
+      <g>${center}</g>
+    </svg>
+  `;
+}
+
+function renderFinishedCharts(finishedIds) {
+  if (!$booksChartsSection) return;
+
+  const ids = finishedIds || [];
+  if (!ids.length) {
+    $booksChartsSection.style.display = "none";
+    return;
+  }
+  $booksChartsSection.style.display = "block";
+
+  const byGenre = countBy(ids, (b) => b?.genre || "Sin categoría");
+  const byAuthor = countBy(ids, (b) => b?.author || "Sin autor");
+  const byCentury = countBy(ids, (b) => yearToCenturyLabel(b?.year));
+
+  renderDonutChart($chartGenre, "Categoría", byGenre);
+  renderDonutChart($chartAuthor, "Autor", byAuthor);
+  renderDonutChart($chartCentury, "Siglo", byCentury);
+}
+
+
+
+function buildReadingSpine(id) {
+  const b = books[id] || {};
+  const title = b.title || "Sin título";
+  const total = Number(b.pages) || 0;
+  const current = Math.min(total || Infinity, Number(b.currentPage) || 0);
+  const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+  const favorite = !!b.favorite;
+  const [c1, c2] = favorite ? ["#f8e6aa", "#d3a74a"] : pickSpinePalette(title + id);
+
+  const spine = document.createElement("div");
+  const baseHeight = 118 + Math.min(90, Math.round((total || 120) / 4));
+  const height = Math.min(baseHeight, 170);
+  spine.className = "book-spine book-spine-reading";
+  if (favorite) spine.classList.add("book-spine-favorite");
+  spine.style.setProperty("--spine-height", `${height}px`);
+  spine.style.setProperty("--spine-color-1", c1);
+  spine.style.setProperty("--spine-color-2", c2);
+  spine.style.setProperty("--p", percent);
+  spine.title = `${title}${b.author ? ` · ${b.author}` : ""}${total ? ` · ${current}/${total} (${percent}%)` : ""}`;
+  spine.dataset.bookId = id;
+  spine.tabIndex = 0;
+
+  // Bookmark (SOLO input)
+  const bm = document.createElement("div");
+  bm.className = "book-bookmark";
+
+  const input = document.createElement("input");
+  input.className = "book-bookmark-input";
+  input.type = "number";
+  input.min = "0";
+  input.inputMode = "numeric";
+  input.placeholder = String(current);
+  input.setAttribute("aria-label", "Página actual");
+
+  const commit = () => {
+    const raw = (input.value || "").trim();
+    if (!raw) return;
+    const newVal = parseInt(raw, 10);
+    if (Number.isNaN(newVal)) return;
+    const safe = total > 0 ? Math.max(0, Math.min(total, newVal)) : Math.max(0, newVal);
+    input.value = "";
+    updateBookProgress(id, safe);
+  };
+
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      commit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      input.value = "";
+      input.blur();
+    }
+  });
+  input.addEventListener("blur", commit);
+
+  bm.appendChild(input);
+
+  if (favorite) {
+    const star = document.createElement("span");
+    star.className = "book-spine-star";
+    star.textContent = "★";
+    spine.appendChild(star);
+  }
+
+  const t = document.createElement("span");
+  t.className = "book-spine-title";
+  t.textContent = title;
+
+  const stats = document.createElement("div");
+  stats.className = "book-spine-stats";
+
+  const pages = document.createElement("span");
+  pages.className = "book-spine-meta";
+  pages.textContent = total ? String(total) : "—";
+
+  const pctEl = document.createElement("span");
+  pctEl.className = "book-spine-pct";
+  pctEl.textContent = `${percent}%`;
+
+  stats.appendChild(pages);
+  stats.appendChild(pctEl);
+
+  spine.appendChild(bm);
+  spine.appendChild(t);
+  spine.appendChild(stats);
 
   const openDetail = () => openBookDetail(id);
   spine.addEventListener("click", openDetail);
@@ -712,15 +1124,24 @@ if (inlineInput) {
     return card;
   };
 
-  // Render activos
+  // Render activos (estantería)
   if ($booksListActive) {
     const fragA = document.createDocumentFragment();
-    activeIds.forEach((id) => fragA.appendChild(buildCard(id)));
+    const SHELF_SIZE_ACTIVE = 7;
+
+    for (let i = 0; i < activeIds.length; i += SHELF_SIZE_ACTIVE) {
+      const row = document.createElement("div");
+      row.className = "books-shelf-row books-shelf-row-reading";
+      activeIds.slice(i, i + SHELF_SIZE_ACTIVE).forEach((bookId) => {
+        row.appendChild(buildReadingSpine(bookId));
+      });
+      fragA.appendChild(row);
+    }
+
     $booksListActive.innerHTML = "";
     $booksListActive.appendChild(fragA);
   }
-
-  // Render terminados (plegable)
+// Render terminados (plegable)
   if (hasFinishedUI) {
     const totalFinished = finishedIds.length;
     const favorites = [];
@@ -783,6 +1204,9 @@ if (inlineInput) {
       if ($booksShelfEmpty) $booksShelfEmpty.style.display = "none";
     }
   }
+
+  // Charts bajo “Terminados”
+  renderFinishedCharts(finishedIds);
 }
 
 // === Actualizar progreso y log de lectura ===

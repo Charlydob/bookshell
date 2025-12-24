@@ -106,7 +106,25 @@
     No hay libros que coincidan con la búsqueda.
   </div>
   <div id="books-list-finished" class="books-list-finished"></div>
+
+
 </details>
+<section id="books-charts-section" class="books-charts" style="display:none;">
+  <div class="books-charts-grid">
+    <div class="chart-card">
+      <div class="chart-card-title">Categoría</div>
+      <div id="chart-genre" class="donut-host"></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-title">Autor</div>
+      <div id="chart-author" class="donut-host"></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-title">Siglo</div>
+      <div id="chart-century" class="donut-host"></div>
+    </div>
+  </div>
+</section>
 
         <div id="books-empty" class="empty-state">
           Aún no has añadido ningún libro.
@@ -239,8 +257,13 @@
 
       <div class="form-grid row-2">
         <label class="field">
-          <span class="field-label">Género</span>
-          <input id="book-genre" type="text" />
+          <span class="field-label">Categoría</span>
+          <div class="field-inline">
+            <select id="book-genre" aria-label="Categoría">
+              <option value="">—</option>
+            </select>
+            <button type="button" id="genre-add-btn" class="icon-btn genre-add-btn" aria-label="Añadir categoría">+</button>
+          </div>
         </label>
 
         <label class="field">

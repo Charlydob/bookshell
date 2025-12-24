@@ -263,8 +263,18 @@
   <input type="hidden" id="book-id" />
 
   <div class="modal-scroll sheet-body">
-    <div class="sheet-section">
-      <div class="sheet-section-title">Detalles</div>
+      <div class="sheet-section">
+        <div class="sheet-section-title">Detalles</div>
+
+      <div class="field">
+        <span class="field-label">ISBN</span>
+        <div class="isbn-input-row">
+          <input id="book-isbn" type="text" inputmode="numeric" placeholder="978..." autocomplete="off" />
+          <button type="button" id="book-isbn-search" class="btn ghost btn-compact">Buscar</button>
+        </div>
+        <div id="book-isbn-status" class="isbn-status">Autocompleta título, autor, año y páginas.</div>
+        <div id="book-isbn-results" class="isbn-results" style="display:none;"></div>
+      </div>
 
       <label class="field">
         <span class="field-label">Título</span>

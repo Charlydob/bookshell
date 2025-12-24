@@ -114,6 +114,10 @@ const $bookId = document.getElementById("book-id");
 const $bookTitle = document.getElementById("book-title");
 const $bookAuthor = document.getElementById("book-author");
 const $bookYear = document.getElementById("book-year");
+const $bookIsbn = document.getElementById("book-isbn");
+const $bookIsbnSearch = document.getElementById("book-isbn-search");
+const $bookIsbnStatus = document.getElementById("book-isbn-status");
+const $bookIsbnResults = document.getElementById("book-isbn-results");
 const $bookPages = document.getElementById("book-pages");
 const $bookCurrentPage = document.getElementById("book-current-page");
 const $bookGenre = document.getElementById("book-genre");
@@ -371,6 +375,200 @@ onValue(ref(db, META_GENRES_PATH), (snap) => {
   populateGenreSelect();
 });
 
+// === ISBN autofill ===
+function normalizeIsbn(raw = "") {
+  return String(raw || "").replace(/[^0-9Xx]/g, "").toUpperCase();
+}
+
+function parsePublishYear(val) {
+  if (!val) return null;
+  const n = Number(val);
+  if (Number.isInteger(n) && n > 0) return n;
+  if (typeof val === "string" && val.length >= 4) {
+    const maybeYear = Number(val.slice(0, 4));
+    if (Number.isInteger(maybeYear)) return maybeYear;
+  }
+  return null;
+}
+
+function dedupeMatches(matches) {
+  const seen = new Set();
+  return (matches || []).filter((m) => {
+    const key = `${(m.title || "").toLowerCase()}|${(m.author || "").toLowerCase()}|${m.year || ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function fetchFromOpenLibrary(isbn) {
+  const res = await fetch(`https://openlibrary.org/search.json?isbn=${encodeURIComponent(isbn)}`, {
+    headers: { "Accept": "application/json" }
+  });
+  if (!res.ok) throw new Error("Open Library respondió con error");
+  const data = await res.json();
+  const docs = Array.isArray(data?.docs) ? data.docs : [];
+  const matches = docs.map((doc) => {
+    const title = doc?.title || doc?.title_suggest;
+    const author = Array.isArray(doc?.author_name) ? doc.author_name[0] : null;
+    const year = parsePublishYear(doc?.first_publish_year || (Array.isArray(doc?.publish_year) ? doc.publish_year[0] : null));
+    const pages = Number(doc?.number_of_pages_median || doc?.number_of_pages || 0) || null;
+    return {
+      title: title || null,
+      author: author || null,
+      year,
+      pages,
+      source: "openlibrary"
+    };
+  }).filter((m) => m.title);
+  return dedupeMatches(matches);
+}
+
+async function fetchFromGoogleBooks(isbn) {
+  const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${encodeURIComponent(isbn)}`);
+  if (!res.ok) throw new Error("Google Books respondió con error");
+  const data = await res.json();
+  const items = Array.isArray(data?.items) ? data.items : [];
+  const matches = items.map((item) => {
+    const info = item?.volumeInfo || {};
+    const title = info.title;
+    const authors = Array.isArray(info.authors) ? info.authors.join(", ") : null;
+    const year = parsePublishYear(info.publishedDate);
+    const pages = Number(info.pageCount || 0) || null;
+    return {
+      title: title || null,
+      author: authors,
+      year,
+      pages,
+      source: "google"
+    };
+  }).filter((m) => m.title);
+  return dedupeMatches(matches);
+}
+
+async function fetchBookByISBN(isbn) {
+  const normalized = normalizeIsbn(isbn);
+  if (!normalized) return { matches: [], source: null };
+
+  try {
+    const ol = await fetchFromOpenLibrary(normalized);
+    if (ol.length) return { matches: ol, source: "openlibrary" };
+  } catch (_) {}
+
+  try {
+    const gb = await fetchFromGoogleBooks(normalized);
+    if (gb.length) return { matches: gb, source: "google" };
+  } catch (_) {}
+
+  return { matches: [], source: null };
+}
+
+function setIsbnStatus(message, tone = "muted") {
+  if (!$bookIsbnStatus) return;
+  $bookIsbnStatus.textContent = message;
+  if (tone === "error") {
+    $bookIsbnStatus.dataset.tone = "error";
+  } else if (tone === "success") {
+    $bookIsbnStatus.dataset.tone = "success";
+  } else {
+    delete $bookIsbnStatus.dataset.tone;
+  }
+}
+
+function renderIsbnResults(matches) {
+  if (!$bookIsbnResults) return;
+  if (!matches || matches.length < 2) {
+    $bookIsbnResults.style.display = "none";
+    $bookIsbnResults.innerHTML = "";
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  const title = document.createElement("div");
+  title.className = "isbn-results-title";
+  title.textContent = "Posibles coincidencias";
+  frag.appendChild(title);
+
+  matches.slice(0, 6).forEach((match) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "isbn-result-item";
+    item.innerHTML = `
+      <div class="isbn-result-title">${escapeHtml(match.title || "Sin título")}</div>
+      <div class="isbn-result-meta">${escapeHtml([match.author, match.year, match.pages ? `${match.pages} pág` : ""].filter(Boolean).join(" · ") || "—")}</div>
+    `;
+    item.addEventListener("click", () => applyIsbnMatch(match));
+    frag.appendChild(item);
+  });
+
+  $bookIsbnResults.innerHTML = "";
+  $bookIsbnResults.appendChild(frag);
+  $bookIsbnResults.style.display = "flex";
+}
+
+function applyIsbnMatch(match) {
+  if (!match) return;
+  if ($bookTitle && match.title) $bookTitle.value = match.title;
+  if ($bookAuthor && match.author) $bookAuthor.value = match.author;
+  if ($bookYear && match.year) $bookYear.value = match.year;
+  if ($bookPages && match.pages) $bookPages.value = match.pages;
+  setIsbnStatus("Datos completados, puedes editarlos antes de guardar.", "success");
+}
+
+function resetIsbnUI() {
+  if ($bookIsbn) $bookIsbn.value = "";
+  setIsbnStatus("Autocompleta título, autor, año y páginas.");
+  renderIsbnResults([]);
+}
+
+async function handleIsbnLookup() {
+  if (!$bookIsbn) return;
+  const raw = $bookIsbn.value || "";
+  const isbn = normalizeIsbn(raw);
+  if (!isbn) {
+    setIsbnStatus("Introduce un ISBN válido para buscar.", "error");
+    renderIsbnResults([]);
+    return;
+  }
+
+  $bookIsbn.value = isbn;
+  if ($bookIsbnSearch) $bookIsbnSearch.disabled = true;
+  setIsbnStatus("Buscando en Open Library…");
+
+  try {
+    const { matches, source } = await fetchBookByISBN(isbn);
+    if (!matches || matches.length === 0) {
+      setIsbnStatus("No se encontraron resultados para este ISBN.", "error");
+      renderIsbnResults([]);
+      return;
+    }
+
+    applyIsbnMatch(matches[0]);
+    renderIsbnResults(matches);
+    const sourceLabel = source === "google" ? "Google Books" : "Open Library";
+    setIsbnStatus(`Información encontrada en ${sourceLabel}.`, "success");
+  } catch (err) {
+    console.error("Error buscando ISBN", err);
+    setIsbnStatus("Hubo un problema al buscar. Inténtalo de nuevo.", "error");
+    renderIsbnResults([]);
+  } finally {
+    if ($bookIsbnSearch) $bookIsbnSearch.disabled = false;
+  }
+}
+
+if ($bookIsbnSearch) {
+  $bookIsbnSearch.addEventListener("click", handleIsbnLookup);
+}
+
+if ($bookIsbn) {
+  $bookIsbn.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleIsbnLookup();
+    }
+  });
+}
+
 function closeBookDetail() {
   bookDetailId = null;
   if ($bookDetailBackdrop) $bookDetailBackdrop.classList.add("hidden");
@@ -450,6 +648,9 @@ function openBookModal(bookId = null) {
     const b = books[bookId];
     $modalTitle.textContent = "Editar libro";
     $bookId.value = bookId;
+    if ($bookIsbn) $bookIsbn.value = b.isbn || "";
+    setIsbnStatus("Autocompleta título, autor, año y páginas.");
+    renderIsbnResults([]);
     $bookTitle.value = b.title || "";
     $bookAuthor.value = b.author || "";
     $bookYear.value = b.year || "";
@@ -464,6 +665,7 @@ function openBookModal(bookId = null) {
     $modalTitle.textContent = "Nuevo libro";
     $bookId.value = "";
     $bookForm.reset();
+    resetIsbnUI();
     $bookCurrentPage.value = 0;
     populateGenreSelect("");
     $bookStatus.value = "reading";
@@ -507,6 +709,7 @@ $bookForm.addEventListener("submit", async (e) => {
     title,
     author: $bookAuthor.value.trim() || null,
     year: $bookYear.value ? parseInt($bookYear.value, 10) : null,
+    isbn: normalizeIsbn($bookIsbn ? $bookIsbn.value : "") || null,
     pages,
     currentPage,
     genre: $bookGenre.value.trim() || null,

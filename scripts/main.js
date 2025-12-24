@@ -43,20 +43,28 @@ const READING_LOG_PATH = "readingLog";
 // === Estado en memoria ===
 let books = {};
 let readingLog = {}; // { "YYYY-MM-DD": { bookId: pages } }
+let bookDetailId = null;
 
 let currentCalYear;
 let currentCalMonth; // 0-11
+let calViewMode = "month";
 
 // === Utilidades fecha ===
+function dateKeyLocal(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function todayKey() {
-  const d = new Date();
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+  return dateKeyLocal(new Date());
 }
 
 function dateKeyFromTimestamp(ts) {
   if (!ts) return null;
   try {
-    return new Date(ts).toISOString().slice(0, 10);
+    return dateKeyLocal(new Date(ts));
   } catch (_) {
     return null;
   }
@@ -103,6 +111,28 @@ const $bookGenre = document.getElementById("book-genre");
 const $bookLanguage = document.getElementById("book-language");
 const $bookStatus = document.getElementById("book-status");
 const $bookPdf = document.getElementById("book-pdf"); // puede ser null si no usamos PDF
+const $bookFavorite = document.getElementById("book-favorite");
+const $bookFinishedPast = document.getElementById("book-finished-past");
+
+const $booksShelfSearch = document.getElementById("books-shelf-search");
+const $booksShelfResults = document.getElementById("books-shelf-results");
+const $booksShelfEmpty = document.getElementById("books-shelf-empty");
+
+const $bookDetailBackdrop = document.getElementById("book-detail-backdrop");
+const $bookDetailTitle = document.getElementById("book-detail-title");
+const $bookDetailClose = document.getElementById("book-detail-close");
+const $bookDetailCloseBtn = document.getElementById("book-detail-close-btn");
+const $bookDetailFavorite = document.getElementById("book-detail-favorite");
+const $bookDetailStatus = document.getElementById("book-detail-status");
+const $bookDetailAuthor = document.getElementById("book-detail-author");
+const $bookDetailYear = document.getElementById("book-detail-year");
+const $bookDetailGenre = document.getElementById("book-detail-genre");
+const $bookDetailLanguage = document.getElementById("book-detail-language");
+const $bookDetailPages = document.getElementById("book-detail-pages");
+const $bookDetailProgress = document.getElementById("book-detail-progress");
+const $bookDetailFinished = document.getElementById("book-detail-finished");
+const $bookDetailNotes = document.getElementById("book-detail-notes");
+const $bookDetailEdit = document.getElementById("book-detail-edit");
 
 // Stats
 const $statStreakCurrent = document.getElementById("stat-streak-current");
@@ -121,6 +151,8 @@ const $calPrev = document.getElementById("cal-prev");
 const $calNext = document.getElementById("cal-next");
 const $calLabel = document.getElementById("cal-label");
 const $calGrid = document.getElementById("calendar-grid");
+const $calViewMode = document.getElementById("cal-view-mode");
+const $calSummary = document.getElementById("calendar-summary");
 
 // Selector rango libros leídos
 if ($statBooksReadRange) {
@@ -151,6 +183,82 @@ $navButtons.forEach(btn => {
   });
 });
 
+if ($booksShelfSearch) {
+  $booksShelfSearch.addEventListener("input", () => renderBooks());
+}
+
+function closeBookDetail() {
+  bookDetailId = null;
+  if ($bookDetailBackdrop) $bookDetailBackdrop.classList.add("hidden");
+}
+
+function fillDetail($el, value, fallback = "—") {
+  if ($el) $el.textContent = value || fallback;
+}
+
+function formatBookStatusLabel(b) {
+  if (!b) return "—";
+  if (isBookFinished(b)) return "Terminado";
+  if (b.status === "planned") return "Pendiente";
+  return "Leyendo";
+}
+
+async function handleFavoriteToggle(bookId, isFav) {
+  await updateBookFavorite(bookId, isFav);
+  if (books && books[bookId]) {
+    books[bookId].favorite = !!isFav;
+    renderBooks();
+  }
+}
+
+function openBookDetail(bookId) {
+  if (!$bookDetailBackdrop || !books?.[bookId]) return;
+  const b = books[bookId];
+  bookDetailId = bookId;
+
+  fillDetail($bookDetailTitle, b.title || "Sin título");
+  fillDetail($bookDetailAuthor, b.author || "—");
+  fillDetail($bookDetailYear, b.year ? String(b.year) : "—");
+  fillDetail($bookDetailGenre, b.genre || "—");
+  fillDetail($bookDetailLanguage, b.language || "—");
+  fillDetail($bookDetailPages, b.pages ? `${b.pages} pág` : "—");
+
+  const total = Number(b.pages) || 0;
+  const current = Number(b.currentPage) || 0;
+  const percent = total > 0 ? Math.round((Math.min(current, total) / total) * 100) : 0;
+  fillDetail($bookDetailProgress, total > 0 ? `${current} / ${total} (${percent}%)` : "—");
+
+  const finishDate = getFinishDateForBook(bookId);
+  fillDetail($bookDetailFinished, finishDate || "—");
+  fillDetail($bookDetailStatus, formatBookStatusLabel(b));
+
+  const notes = b.notes || b.description || "Sin notas";
+  fillDetail($bookDetailNotes, notes);
+
+  if ($bookDetailFavorite) {
+    $bookDetailFavorite.checked = !!b.favorite;
+    $bookDetailFavorite.onchange = () => handleFavoriteToggle(bookId, $bookDetailFavorite.checked);
+  }
+
+  $bookDetailBackdrop.classList.remove("hidden");
+}
+
+if ($bookDetailClose) $bookDetailClose.addEventListener("click", closeBookDetail);
+if ($bookDetailCloseBtn) $bookDetailCloseBtn.addEventListener("click", closeBookDetail);
+if ($bookDetailBackdrop) {
+  $bookDetailBackdrop.addEventListener("click", (e) => {
+    if (e.target === $bookDetailBackdrop) closeBookDetail();
+  });
+}
+if ($bookDetailEdit) {
+  $bookDetailEdit.addEventListener("click", () => {
+    if (!bookDetailId) return;
+    const id = bookDetailId;
+    closeBookDetail();
+    openBookModal(id);
+  });
+}
+
 
 // === Modal libro ===
 function openBookModal(bookId = null) {
@@ -166,12 +274,16 @@ function openBookModal(bookId = null) {
     $bookGenre.value = b.genre || "";
     $bookLanguage.value = b.language || "";
     $bookStatus.value = b.status || "reading";
+    if ($bookFavorite) $bookFavorite.checked = !!b.favorite;
+    if ($bookFinishedPast) $bookFinishedPast.checked = !!b.finishedPast;
   } else {
     $modalTitle.textContent = "Nuevo libro";
     $bookId.value = "";
     $bookForm.reset();
     $bookCurrentPage.value = 0;
     $bookStatus.value = "reading";
+    if ($bookFavorite) $bookFavorite.checked = false;
+    if ($bookFinishedPast) $bookFinishedPast.checked = false;
   }
   if ($bookPdf) $bookPdf.value = "";
   $modalBackdrop.classList.remove("hidden");
@@ -198,7 +310,13 @@ $bookForm.addEventListener("submit", async (e) => {
   if (!title) return;
 
   const pages = parseInt($bookPages.value, 10) || 0;
-  const currentPage = Math.max(0, Math.min(pages, parseInt($bookCurrentPage.value, 10) || 0));
+  const selectedStatus = $bookStatus.value || "reading";
+  const finishedPast = $bookFinishedPast ? !!$bookFinishedPast.checked : false;
+  let currentPage = Math.max(0, Math.min(pages, parseInt($bookCurrentPage.value, 10) || 0));
+
+  if (selectedStatus === "finished" && pages > 0) {
+    currentPage = pages;
+  }
 
   const bookData = {
     title,
@@ -208,7 +326,9 @@ $bookForm.addEventListener("submit", async (e) => {
     currentPage,
     genre: $bookGenre.value.trim() || null,
     language: $bookLanguage.value.trim() || null,
-    status: $bookStatus.value || "reading",
+    status: selectedStatus,
+    favorite: $bookFavorite ? !!$bookFavorite.checked : false,
+    finishedPast: false,
     updatedAt: Date.now()
   };
 
@@ -219,14 +339,22 @@ $bookForm.addEventListener("submit", async (e) => {
   const prevWasFinished = prevBook?.status === "finished" || ((Number(prevBook?.pages) || 0) > 0 && (Number(prevBook?.currentPage) || 0) >= (Number(prevBook?.pages) || 0));
   const nowIsFinished = bookData.status === "finished" || (bookData.pages > 0 && bookData.currentPage >= bookData.pages);
 
-  if (nowIsFinished && !prevWasFinished) {
+  if (nowIsFinished) {
     bookData.status = "finished";
-    bookData.finishedAt = Date.now();
-    bookData.finishedOn = todayKey();
+    const keepPast = !!prevBook?.finishedPast && finishedPast;
+    bookData.finishedPast = finishedPast || keepPast;
+    if (finishedPast) {
+      bookData.finishedAt = null;
+      bookData.finishedOn = null;
+    } else if (!prevWasFinished || prevBook?.finishedPast) {
+      bookData.finishedAt = Date.now();
+      bookData.finishedOn = prevBook?.finishedOn || todayKey();
+    }
   } else if (!nowIsFinished && prevWasFinished) {
     // RTDB: null => elimina la propiedad
     bookData.finishedAt = null;
     bookData.finishedOn = null;
+    bookData.finishedPast = false;
   }
 
 
@@ -283,9 +411,195 @@ function isBookFinished(b) {
   return b?.status === "finished" || (total > 0 && current >= total);
 }
 
+function matchesShelfQuery(book, query) {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  const fields = [
+    book?.title,
+    book?.author,
+    book?.genre,
+    book?.language,
+    book?.status,
+    book?.year,
+    book?.pages
+  ];
+  return fields.some((f) => String(f || "").toLowerCase().includes(q));
+}
+
+const spinePalettes = [
+  ["#f7b500", "#ff6f61"],
+  ["#6dd5ed", "#2193b0"],
+  ["#8e2de2", "#4a00e0"],
+  ["#00b09b", "#96c93d"],
+  ["#ff758c", "#ff7eb3"],
+  ["#4158d0", "#c850c0"],
+  ["#f83600", "#fe8c00"],
+  ["#43cea2", "#185a9d"],
+  ["#ffd700", "#f37335"]
+];
+
+function pickSpinePalette(seed = "") {
+  const hash = Array.from(seed).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  return spinePalettes[hash % spinePalettes.length];
+}
+
+function buildFinishedSpine(id) {
+  const b = books[id] || {};
+  const title = b.title || "Sin título";
+  const total = Number(b.pages) || 0;
+  const finishDate = getFinishDateForBook(id);
+  const favorite = !!b.favorite;
+  const [c1, c2] = favorite ? ["#f8e6aa", "#d3a74a"] : pickSpinePalette(title + id);
+
+  const spine = document.createElement("div");
+  const baseHeight = 110 + Math.min(90, Math.round((total || 120) / 4));
+  const height = favorite ? Math.min(baseHeight, 150) : baseHeight;
+  spine.className = "book-spine";
+  if (favorite) spine.classList.add("book-spine-favorite");
+  spine.style.setProperty("--spine-height", `${height}px`);
+  spine.style.setProperty("--spine-color-1", c1);
+  spine.style.setProperty("--spine-color-2", c2);
+  spine.title = `${title}${b.author ? ` · ${b.author}` : ""}${total ? ` · ${total} páginas` : ""}${finishDate ? ` · Terminado: ${finishDate}` : ""}`;
+  spine.dataset.bookId = id;
+  spine.tabIndex = 0;
+
+  const t = document.createElement("span");
+  t.className = "book-spine-title";
+  t.textContent = title;
+
+  const meta = document.createElement("span");
+  meta.className = "book-spine-meta";
+  meta.textContent = total ? `${total} pág` : "Terminado";
+
+  if (favorite) {
+    const star = document.createElement("span");
+    star.className = "book-spine-star";
+    star.textContent = "★";
+    spine.appendChild(star);
+  }
+
+  spine.appendChild(t);
+  spine.appendChild(meta);
+
+  const openDetail = () => openBookDetail(id);
+  spine.addEventListener("click", openDetail);
+  spine.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openDetail();
+    }
+  });
+
+  return spine;
+}
+
+
+function buildReadingSpine(id) {
+  const b = books[id] || {};
+  const title = b.title || "Sin título";
+  const total = Number(b.pages) || 0;
+  const current = Math.min(total || Infinity, Number(b.currentPage) || 0);
+  const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+  const favorite = !!b.favorite;
+  const [c1, c2] = favorite ? ["#f8e6aa", "#d3a74a"] : pickSpinePalette(title + id);
+
+  const spine = document.createElement("div");
+  const baseHeight = 118 + Math.min(90, Math.round((total || 120) / 4));
+  const height = Math.min(baseHeight, 170);
+  spine.className = "book-spine book-spine-reading";
+  if (favorite) spine.classList.add("book-spine-favorite");
+  spine.style.setProperty("--spine-height", `${height}px`);
+  spine.style.setProperty("--spine-color-1", c1);
+  spine.style.setProperty("--spine-color-2", c2);
+  spine.style.setProperty("--p", percent);
+  spine.title = `${title}${b.author ? ` · ${b.author}` : ""}${total ? ` · ${current}/${total} (${percent}%)` : ""}`;
+  spine.dataset.bookId = id;
+  spine.tabIndex = 0;
+
+  // Bookmark (SOLO input)
+  const bm = document.createElement("div");
+  bm.className = "book-bookmark";
+
+  const input = document.createElement("input");
+  input.className = "book-bookmark-input";
+  input.type = "number";
+  input.min = "0";
+  input.inputMode = "numeric";
+  input.placeholder = String(current);
+  input.setAttribute("aria-label", "Página actual");
+
+  const commit = () => {
+    const raw = (input.value || "").trim();
+    if (!raw) return;
+    const newVal = parseInt(raw, 10);
+    if (Number.isNaN(newVal)) return;
+    const safe = total > 0 ? Math.max(0, Math.min(total, newVal)) : Math.max(0, newVal);
+    input.value = "";
+    updateBookProgress(id, safe);
+  };
+
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      commit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      input.value = "";
+      input.blur();
+    }
+  });
+  input.addEventListener("blur", commit);
+
+  bm.appendChild(input);
+
+  if (favorite) {
+    const star = document.createElement("span");
+    star.className = "book-spine-star";
+    star.textContent = "★";
+    spine.appendChild(star);
+  }
+
+  const t = document.createElement("span");
+  t.className = "book-spine-title";
+  t.textContent = title;
+
+  const stats = document.createElement("div");
+  stats.className = "book-spine-stats";
+
+  const pages = document.createElement("span");
+  pages.className = "book-spine-meta";
+  pages.textContent = total ? String(total) : "—";
+
+  const pctEl = document.createElement("span");
+  pctEl.className = "book-spine-pct";
+  pctEl.textContent = `${percent}%`;
+
+  stats.appendChild(pages);
+  stats.appendChild(pctEl);
+
+  spine.appendChild(bm);
+  spine.appendChild(t);
+  spine.appendChild(stats);
+
+  const openDetail = () => openBookDetail(id);
+  spine.addEventListener("click", openDetail);
+  spine.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openDetail();
+    }
+  });
+
+  return spine;
+}
+
 function renderBooks() {
   const idsAll = Object.keys(books || {});
   const hasFinishedUI = !!($booksFinishedSection && $booksListFinished);
+  const searchQuery = ($booksShelfSearch?.value || "").trim().toLowerCase();
 
   if (!idsAll.length) {
     if ($booksListActive) $booksListActive.innerHTML = "";
@@ -294,6 +608,8 @@ function renderBooks() {
       $booksFinishedSection.style.display = "none";
       if ($booksFinishedCount) $booksFinishedCount.textContent = "0";
     }
+    if ($booksShelfResults) $booksShelfResults.textContent = "";
+    if ($booksShelfEmpty) $booksShelfEmpty.style.display = "none";
     $booksEmpty.style.display = "block";
     return;
   }
@@ -499,33 +815,101 @@ if (inlineInput) {
     return card;
   };
 
-  // Render activos
+  // Render activos (estantería)
   if ($booksListActive) {
     const fragA = document.createDocumentFragment();
-    activeIds.forEach((id) => fragA.appendChild(buildCard(id)));
+    const SHELF_SIZE_ACTIVE = 7;
+
+    for (let i = 0; i < activeIds.length; i += SHELF_SIZE_ACTIVE) {
+      const row = document.createElement("div");
+      row.className = "books-shelf-row books-shelf-row-reading";
+      activeIds.slice(i, i + SHELF_SIZE_ACTIVE).forEach((bookId) => {
+        row.appendChild(buildReadingSpine(bookId));
+      });
+      fragA.appendChild(row);
+    }
+
     $booksListActive.innerHTML = "";
     $booksListActive.appendChild(fragA);
   }
-
-  // Render terminados (plegable)
+// Render terminados (plegable)
   if (hasFinishedUI) {
-    if (finishedIds.length) {
-      $booksFinishedSection.style.display = "block";
-      if ($booksFinishedCount) $booksFinishedCount.textContent = String(finishedIds.length);
+    const totalFinished = finishedIds.length;
+    const favorites = [];
+    const regular = [];
 
+    finishedIds.forEach((id) => {
+      const book = books[id];
+      if (!matchesShelfQuery(book, searchQuery)) return;
+      (book?.favorite ? favorites : regular).push(id);
+    });
+
+    const visibleFinished = favorites.length + regular.length;
+
+    if ($booksFinishedCount) $booksFinishedCount.textContent = String(totalFinished);
+    if ($booksShelfResults) {
+      if (searchQuery) {
+        $booksShelfResults.textContent = `Mostrando ${visibleFinished} de ${totalFinished} libros terminados`;
+      } else {
+        $booksShelfResults.textContent = totalFinished ? `Libros terminados: ${totalFinished}` : "";
+      }
+    }
+    if ($booksShelfEmpty) {
+      $booksShelfEmpty.style.display = visibleFinished === 0 && totalFinished > 0 ? "block" : "none";
+    }
+
+    if (totalFinished) {
+      $booksFinishedSection.style.display = "block";
       const fragF = document.createDocumentFragment();
-      finishedIds.forEach((id) => fragF.appendChild(buildCard(id)));
+      const SHELF_SIZE = 9;
+
+      const appendShelves = (list, isFavorite = false) => {
+        if (!list.length) return;
+        if (isFavorite) {
+          const label = document.createElement("div");
+          label.className = "books-shelf-results shelf-favorites-label";
+          label.textContent = "⭐ Favoritos";
+          fragF.appendChild(label);
+        }
+        for (let i = 0; i < list.length; i += SHELF_SIZE) {
+          const row = document.createElement("div");
+          row.className = "books-shelf-row";
+          if (isFavorite) row.classList.add("books-shelf-row-favorites");
+          list.slice(i, i + SHELF_SIZE).forEach((bookId) => {
+            row.appendChild(buildFinishedSpine(bookId));
+          });
+          fragF.appendChild(row);
+        }
+      };
+
+      appendShelves(favorites, true);
+      appendShelves(regular, false);
+
       $booksListFinished.innerHTML = "";
       $booksListFinished.appendChild(fragF);
     } else {
       $booksListFinished.innerHTML = "";
       $booksFinishedSection.style.display = "none";
       if ($booksFinishedCount) $booksFinishedCount.textContent = "0";
+      if ($booksShelfResults) $booksShelfResults.textContent = "Libros terminados: 0";
+      if ($booksShelfEmpty) $booksShelfEmpty.style.display = "none";
     }
   }
 }
 
 // === Actualizar progreso y log de lectura ===
+async function updateBookFavorite(bookId, favorite) {
+  if (!bookId) return;
+  try {
+    await update(ref(db, `${BOOKS_PATH}/${bookId}`), {
+      favorite: !!favorite,
+      updatedAt: Date.now()
+    });
+  } catch (err) {
+    console.error("Error actualizando favorito", err);
+  }
+}
+
 async function updateBookProgress(bookId, newPage) {
   const book = books[bookId];
   if (!book) return;
@@ -543,6 +927,7 @@ const updates = {
 // Auto-finish / auto-unfinish (para que el calendario/contadores se corrijan al editar)
 const shouldFinish = total > 0 && safeNew >= total;
 const wasFinished = book.status === "finished" || (total > 0 && (Number(book.currentPage) || 0) >= total);
+updates.finishedPast = shouldFinish ? false : !!book.finishedPast;
 
 if (shouldFinish && (!wasFinished || !book.finishedOn)) {
   updates.status = "finished";
@@ -583,6 +968,7 @@ async function markBookFinished(bookId) {
 await update(ref(db, `${BOOKS_PATH}/${bookId}`), {
   status: "finished",
   currentPage: book.pages || book.currentPage || 0,
+  finishedPast: false,
   finishedAt: Date.now(),
   finishedOn: book.finishedOn || todayKey(),
   updatedAt: Date.now()
@@ -599,6 +985,7 @@ await update(ref(db, `${BOOKS_PATH}/${bookId}`), {
 function getFinishDateForBook(bookId) {
   const b = books?.[bookId];
   if (!b) return null;
+  if (b.finishedPast) return null;
 
   // preferimos fecha explícita
   if (b.finishedOn) return b.finishedOn;
@@ -626,6 +1013,7 @@ function computeFinishedByDay() {
   const map = {}; // { YYYY-MM-DD: count }
   Object.keys(books || {}).forEach((id) => {
     const b = books[id];
+    if (b?.finishedPast) return;
     const total = Number(b?.pages) || 0;
     const current = Number(b?.currentPage) || 0;
     const isFinished = b?.status === "finished" || (total > 0 && current >= total);
@@ -648,8 +1036,8 @@ function getWeekBoundsKey(anchorDate = new Date()) {
   sunday.setDate(monday.getDate() + 6);
   sunday.setHours(23, 59, 59, 999);
   return {
-    from: monday.toISOString().slice(0, 10),
-    to: sunday.toISOString().slice(0, 10)
+    from: dateKeyLocal(monday),
+    to: dateKeyLocal(sunday)
   };
 }
 
@@ -668,6 +1056,11 @@ function computeBooksReadCount(range = "total") {
     const current = Number(b?.currentPage) || 0;
     const isFinished = b?.status === "finished" || (total > 0 && current >= total);
     if (!isFinished) return;
+
+    if (b.finishedPast) {
+      if (range === "total") count += 1;
+      return;
+    }
 
     const day = getFinishDateForBook(id);
     if (!day) return;
@@ -694,6 +1087,16 @@ function computeDailyTotals() {
     totals[day] = sum;
   });
   return totals;
+}
+
+function computeFinishedPastPages() {
+  let pages = 0;
+  Object.values(books || {}).forEach((b) => {
+    if (!b?.finishedPast) return;
+    if (!isBookFinished(b)) return;
+    pages += Number(b.pages) || 0;
+  });
+  return pages;
 }
 
 function computeStreaks() {
@@ -725,7 +1128,7 @@ function computeStreaks() {
     // si el último día con lectura no es hoy, comprobamos si ayer fue
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    const yKey = yesterday.toISOString().slice(0, 10);
+    const yKey = dateKeyLocal(yesterday);
     if (latestDay !== yKey) {
       current = 0;
     }
@@ -743,6 +1146,7 @@ function renderStats() {
   Object.values(totals).forEach((n) => {
     totalAll += Number(n) || 0;
   });
+  totalAll += computeFinishedPastPages();
 
   const { current, best } = computeStreaks();
 
@@ -769,10 +1173,23 @@ function renderCalendar() {
     currentCalMonth = now.getMonth();
   }
 
-  $calLabel.textContent = formatMonthLabel(currentCalYear, currentCalMonth);
+  if ($calViewMode) {
+    calViewMode = $calViewMode.value || "month";
+  }
 
   const totals = computeDailyTotals();
   const finishedByDay = computeFinishedByDay();
+
+  renderCalendarSummary(totals, finishedByDay);
+
+  if (calViewMode === "year") {
+    $calLabel.textContent = `Año ${currentCalYear}`;
+    renderCalendarYearGrid(totals, finishedByDay);
+    return;
+  }
+
+  $calGrid.classList.remove("calendar-year-grid");
+  $calLabel.textContent = formatMonthLabel(currentCalYear, currentCalMonth);
 
   const firstDay = new Date(currentCalYear, currentCalMonth, 1).getDay(); // 0-6
   const offset = (firstDay + 6) % 7; // hacer lunes=0
@@ -794,7 +1211,7 @@ function renderCalendar() {
     } else {
       const dayNum = i - offset + 1;
       const d = new Date(currentCalYear, currentCalMonth, dayNum);
-      const key = d.toISOString().slice(0, 10);
+      const key = dateKeyLocal(d);
       const pages = totals[key] || 0;
       const finishedCount = finishedByDay[key] || 0;
 
@@ -835,6 +1252,76 @@ function renderCalendar() {
   $calGrid.appendChild(frag);
 }
 
+function renderCalendarYearGrid(totals, finishedByDay) {
+  $calGrid.classList.add("calendar-year-grid");
+  const months = Array.from({ length: 12 }, () => ({ pages: 0, finished: 0 }));
+
+  Object.entries(totals || {}).forEach(([day, pages]) => {
+    const [year, month] = day.split("-");
+    if (Number(year) === currentCalYear) {
+      const idx = Number(month) - 1;
+      months[idx].pages += Number(pages) || 0;
+    }
+  });
+
+  Object.entries(finishedByDay || {}).forEach(([day, finished]) => {
+    const [year, month] = day.split("-");
+    if (Number(year) === currentCalYear) {
+      const idx = Number(month) - 1;
+      months[idx].finished += Number(finished) || 0;
+    }
+  });
+
+  const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+  const frag = document.createDocumentFragment();
+
+  months.forEach((info, idx) => {
+    const cell = document.createElement("div");
+    cell.className = "cal-cell cal-cell-year";
+
+    const name = document.createElement("div");
+    name.className = "cal-month-name";
+    name.textContent = monthNames[idx];
+
+    const metrics = document.createElement("div");
+    metrics.className = "cal-month-metrics";
+    metrics.textContent = `${info.pages || 0} pág · ${info.finished || 0} libros`;
+
+    cell.appendChild(name);
+    cell.appendChild(metrics);
+
+    frag.appendChild(cell);
+  });
+
+  $calGrid.innerHTML = "";
+  $calGrid.appendChild(frag);
+}
+
+function renderCalendarSummary(totals, finishedByDay) {
+  if (!$calSummary) return;
+  const prefix =
+    calViewMode === "year"
+      ? `${currentCalYear}-`
+      : `${currentCalYear}-${String(currentCalMonth + 1).padStart(2, "0")}-`;
+
+  let pages = 0;
+  Object.entries(totals || {}).forEach(([day, val]) => {
+    if (day.startsWith(prefix)) {
+      pages += Number(val) || 0;
+    }
+  });
+
+  let finished = 0;
+  Object.entries(finishedByDay || {}).forEach(([day, val]) => {
+    if (day.startsWith(prefix)) {
+      finished += Number(val) || 0;
+    }
+  });
+
+  const scopeLabel = calViewMode === "year" ? "año" : "mes";
+  $calSummary.textContent = `Resumen del ${scopeLabel}: ${pages} páginas · ${finished} libros terminados`;
+}
+
 // Devuelve lista de días que forman la racha (para pintar en amarillo)
 function computeStreakDates(totals) {
   const days = Object.keys(totals).filter((d) => totals[d] > 0);
@@ -866,7 +1353,7 @@ function computeStreakDates(totals) {
   const today = todayKey();
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  const yKey = yesterday.toISOString().slice(0, 10);
+  const yKey = dateKeyLocal(yesterday);
 
   let activeRun = [];
   if (lastDay === today || lastDay === yKey) {
@@ -891,22 +1378,37 @@ function computeStreakDates(totals) {
 }
 
 // Navegación calendario
-$calPrev.addEventListener("click", () => {
-  if (currentCalMonth === 0) {
-    currentCalMonth = 11;
-    currentCalYear -= 1;
-  } else {
-    currentCalMonth -= 1;
-  }
-  renderCalendar();
-});
+if ($calPrev) {
+  $calPrev.addEventListener("click", () => {
+    if (calViewMode === "year") {
+      currentCalYear -= 1;
+    } else if (currentCalMonth === 0) {
+      currentCalMonth = 11;
+      currentCalYear -= 1;
+    } else {
+      currentCalMonth -= 1;
+    }
+    renderCalendar();
+  });
+}
 
-$calNext.addEventListener("click", () => {
-  if (currentCalMonth === 11) {
-    currentCalMonth = 0;
-    currentCalYear += 1;
-  } else {
-    currentCalMonth += 1;
-  }
-  renderCalendar();
-});
+if ($calNext) {
+  $calNext.addEventListener("click", () => {
+    if (calViewMode === "year") {
+      currentCalYear += 1;
+    } else if (currentCalMonth === 11) {
+      currentCalMonth = 0;
+      currentCalYear += 1;
+    } else {
+      currentCalMonth += 1;
+    }
+    renderCalendar();
+  });
+}
+
+if ($calViewMode) {
+  $calViewMode.addEventListener("change", () => {
+    calViewMode = $calViewMode.value || "month";
+    renderCalendar();
+  });
+}

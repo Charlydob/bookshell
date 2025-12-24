@@ -810,7 +810,7 @@ function createVideoCard(id) {
       const newWords = Math.max(0, Number(inputWords.value) || 0);
       inputWords.value = newWords;
 
-      await updateVideoProgress(id, newWords, currEdited, currWords, currEdited);
+      await updateVideoProgress(id, newWords, currEdited);
       currWords = newWords; // ✅ actualiza baseline
     });
 
@@ -823,7 +823,7 @@ function createVideoCard(id) {
 
       const newEdited = toSeconds(newMin, newSec); // <- NO capar
 
-      await updateVideoProgress(id, currWords, newEdited, currWords, currEdited);
+      await updateVideoProgress(id, currWords, newEdited);
       currEdited = newEdited; // ✅ actualiza baseline
     };
 
@@ -939,49 +939,49 @@ function createVideoCard(id) {
 
 
   // Actualizar progreso + log diario
-  async function updateVideoProgress(videoId, newWords, newEditedSeconds, oldWords, oldEditedSeconds) {
-    const v = videos[videoId];
-    if (!v) return;
-
-let durationTotal = Number(v.durationSeconds) || 0;
-
-const safeNewEditedRaw = Math.max(0, Number(newEditedSeconds) || 0);
-const safeOldEditedRaw = Math.max(0, Number(oldEditedSeconds) || 0);
-
-// si editado supera duración, ampliamos duración (para que no se “resetee”)
-if (safeNewEditedRaw > durationTotal) durationTotal = safeNewEditedRaw;
-
-const safeNewEdited = safeNewEditedRaw;
-const safeOldEdited = Math.min(durationTotal, safeOldEditedRaw);
-
-
-    const safeNewWords  = Math.max(0, Number(newWords) || 0);
-    const safeOldWords  = Math.max(0, Number(oldWords) || 0);
-
-
-    const diffWords   = safeNewWords  - safeOldWords;
-    const diffSeconds = safeNewEdited - safeOldEdited;
-
-    const updates = {
-  scriptWords: safeNewWords,
-  durationSeconds: durationTotal,
-  editedSeconds: safeNewEdited,
-  updatedAt: Date.now()
-};
-
+  async function updateVideoProgress(videoId, newWords, newEditedSeconds) {
+    let diffWords = 0;
+    let diffSeconds = 0;
 
     try {
-      await update(ref(db, `${VIDEOS_PATH}/${videoId}`), updates);
+      const videoRef = ref(db, `${VIDEOS_PATH}/${videoId}`);
+      const res = await runTransaction(videoRef, (video) => {
+        if (!video) return; // aborta si no existe
+
+        let durationTotal = Number(video.durationSeconds) || 0;
+
+        const safeNewEditedRaw = Math.max(0, Number(newEditedSeconds) || 0);
+        const safeNewEdited = safeNewEditedRaw;
+        if (safeNewEditedRaw > durationTotal) durationTotal = safeNewEditedRaw;
+
+        const safeNewWords = Math.max(0, Number(newWords) || 0);
+
+        const prevWords = Math.max(0, Number(video.scriptWords) || 0);
+        const prevEdited = Math.max(0, Number(video.editedSeconds) || 0);
+
+        const safeOldEdited = Math.min(durationTotal, prevEdited);
+
+        diffWords = safeNewWords - prevWords;
+        diffSeconds = safeNewEdited - safeOldEdited;
+
+        return {
+          ...video,
+          scriptWords: safeNewWords,
+          durationSeconds: durationTotal,
+          editedSeconds: safeNewEdited,
+          updatedAt: Date.now()
+        };
+      });
 
       // Aplicar también las RESTAS al registro diario (no solo las sumas)
-      if (diffWords !== 0 || diffSeconds !== 0) {
+      if (res?.committed && (diffWords !== 0 || diffSeconds !== 0)) {
         const day   = todayKey();
         const logRef = ref(db, `${VIDEO_LOG_PATH}/${day}/${videoId}`);
 
         await runTransaction(logRef, (current) => {
           const prev = current || { w: 0, s: 0 };
-          let w = (prev.w || 0) + diffWords;
-          let s = (prev.s || 0) + diffSeconds;
+          let w = (Number(prev.w) || 0) + diffWords;
+          let s = (Number(prev.s) || 0) + diffSeconds;
 
           // Nunca valores negativos en el log
           if (w < 0) w = 0;

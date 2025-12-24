@@ -96,15 +96,15 @@
               id="books-filter-search"
               class="filter-search-input"
               type="search"
-              placeholder="Título, autor o género"
+              placeholder="Título, autor, categoría, idioma o año"
               autocomplete="off"
               inputmode="search"
             />
           </div>
 
           <div class="filter-row">
-            <div class="filter-label">Géneros</div>
-            <div id="books-filter-chips" class="filter-chips" role="listbox" aria-label="Filtrar por género"></div>
+            <div class="filter-label">Filtros rápidos</div>
+            <div id="books-filter-chips" class="filter-chip-groups" aria-label="Filtros dinámicos"></div>
           </div>
 
           <div class="filter-row filter-toggles">
@@ -152,6 +152,10 @@
     <div class="chart-card">
       <div class="chart-card-title">Autor</div>
       <div id="chart-author" class="donut-host"></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-title">Idioma</div>
+      <div id="chart-language" class="donut-host"></div>
     </div>
     <div class="chart-card">
       <div class="chart-card-title">Siglo</div>

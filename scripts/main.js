@@ -1039,6 +1039,7 @@ let donutBackupAuthors = null;
 let donutBackupLanguages = null;
 let donutBackupCenturies = null;
 let donutActiveType = null;
+let donutActiveLabel = null;
 
 function toRoman(num) {
   const n = Math.max(0, Math.floor(Number(num) || 0));
@@ -1176,7 +1177,11 @@ function renderDonutChart($host, centerTitle, mapData, options = {}) {
   });
 
   const onSliceSelect = typeof options.onSliceSelect === "function" ? options.onSliceSelect : null;
-  let activeIdx = null;
+  const activeLabel = normalizeLabel(options.activeLabel || "").toLowerCase();
+  let activeIdx = activeLabel
+    ? slicesData.findIndex((s) => normalizeLabel(s.label).toLowerCase() === activeLabel)
+    : null;
+  if (activeIdx != null && activeIdx < 0) activeIdx = null;
   let applyActive = () => {};
 
   const renderWithWidth = (hostWidth) => {
@@ -1423,6 +1428,7 @@ function applyDonutFilter(selection, type = "search") {
       }
     }
     donutActiveType = null;
+    donutActiveLabel = null;
     donutBackupQuery = null;
     donutBackupGenres = null;
     donutBackupAuthors = null;
@@ -1438,30 +1444,35 @@ function applyDonutFilter(selection, type = "search") {
       donutBackupGenres = new Set(filterState.genres);
     }
     donutActiveType = "genre";
+    donutActiveLabel = label;
     filterState.genres = label ? new Set([label.toLowerCase()]) : new Set();
   } else if (type === "author") {
     if (donutActiveType !== "author") {
       donutBackupAuthors = new Set(filterState.authors);
     }
     donutActiveType = "author";
+    donutActiveLabel = label;
     filterState.authors = label ? new Set([label.toLowerCase()]) : new Set();
   } else if (type === "language") {
     if (donutActiveType !== "language") {
       donutBackupLanguages = new Set(filterState.languages);
     }
     donutActiveType = "language";
+    donutActiveLabel = label;
     filterState.languages = label ? new Set([label.toLowerCase()]) : new Set();
   } else if (type === "century") {
     if (donutActiveType !== "century") {
       donutBackupCenturies = new Set(filterState.centuries);
     }
     donutActiveType = "century";
+    donutActiveLabel = label;
     filterState.centuries = label ? new Set([label.toLowerCase()]) : new Set();
   } else {
     if (donutActiveType !== "search") {
       donutBackupQuery = filterState.query || "";
     }
     donutActiveType = "search";
+    donutActiveLabel = label;
     filterState.query = label;
     if ($booksFilterSearch) {
       $booksFilterSearch.value = label;
@@ -1489,16 +1500,20 @@ function renderFinishedCharts(finishedIds) {
   const byLanguage = countBy(ids, (b) => b?.language || "Sin idioma");
 
   renderDonutChart($chartGenre, "Categoría", byGenre, {
-    onSliceSelect: (selection) => applyDonutFilter(selection, "genre")
+    onSliceSelect: (selection) => applyDonutFilter(selection, "genre"),
+    activeLabel: donutActiveType === "genre" ? donutActiveLabel : null
   });
   renderDonutChart($chartAuthor, "Autor", byAuthor, {
-    onSliceSelect: (selection) => applyDonutFilter(selection, "author")
+    onSliceSelect: (selection) => applyDonutFilter(selection, "author"),
+    activeLabel: donutActiveType === "author" ? donutActiveLabel : null
   });
   renderDonutChart($chartCentury, "Siglo", byCentury, {
-    onSliceSelect: (selection) => applyDonutFilter(selection, "century")
+    onSliceSelect: (selection) => applyDonutFilter(selection, "century"),
+    activeLabel: donutActiveType === "century" ? donutActiveLabel : null
   });
   renderDonutChart($chartLanguage, "Idioma", byLanguage, {
-    onSliceSelect: (selection) => applyDonutFilter(selection, "language")
+    onSliceSelect: (selection) => applyDonutFilter(selection, "language"),
+    activeLabel: donutActiveType === "language" ? donutActiveLabel : null
   });
 }
 
@@ -1611,6 +1626,15 @@ function renderBooks() {
   const hasFinishedUI = !!($booksFinishedSection && $booksListFinished);
   const searchQuery = (filterState.query || "").trim().toLowerCase();
   renderFilterChips();
+
+  const finishedIdsAll = [];
+  idsAll.forEach((id) => {
+    const b = books[id];
+    const total = Number(b?.pages) || 0;
+    const current = Math.min(total || Infinity, Number(b?.currentPage) || 0);
+    const finished = isBookFinished(b) || (total > 0 && current >= total);
+    if (finished) finishedIdsAll.push(id);
+  });
 
   if (!idsAll.length) {
     if ($booksListActive) $booksListActive.innerHTML = "";
@@ -1916,7 +1940,7 @@ if (inlineInput) {
   }
 
   // Charts bajo “Terminados”
-  renderFinishedCharts(finishedIds);
+  renderFinishedCharts(finishedIdsAll);
 }
 
 // === Actualizar progreso y log de lectura ===

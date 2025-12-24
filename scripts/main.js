@@ -1626,41 +1626,46 @@ async function updateBookFavorite(bookId, favorite) {
 }
 
 async function updateBookProgress(bookId, newPage) {
-  const book = books[bookId];
-  if (!book) return;
-  const total = book.pages || 0;
-  const oldPage = Math.max(0, Math.min(total, book.currentPage || 0));
-  const safeNew = Math.max(0, Math.min(total, newPage));
-
-  const diff = safeNew - oldPage;
-  
-const updates = {
-  currentPage: safeNew,
-  updatedAt: Date.now()
-};
-
-// Auto-finish / auto-unfinish (para que el calendario/contadores se corrijan al editar)
-const shouldFinish = total > 0 && safeNew >= total;
-const wasFinished = book.status === "finished" || (total > 0 && (Number(book.currentPage) || 0) >= total);
-updates.finishedPast = shouldFinish ? false : !!book.finishedPast;
-
-if (shouldFinish && (!wasFinished || !book.finishedOn)) {
-  updates.status = "finished";
-  updates.finishedAt = Date.now();
-  updates.finishedOn = book.finishedOn || todayKey();
-} else if (!shouldFinish && wasFinished) {
-  // Si bajamos por debajo del total, quitamos "terminado"
-  updates.status = "reading";
-  updates.finishedAt = null;
-  updates.finishedOn = null;
-}
-
+  let diff = 0;
 
   try {
-    await update(ref(db, `${BOOKS_PATH}/${bookId}`), updates);
+    const bookRef = ref(db, `${BOOKS_PATH}/${bookId}`);
+    const res = await runTransaction(bookRef, (book) => {
+      if (!book) return; // aborta si no existe
+
+      const total = Number(book.pages) || 0;
+      const oldPage = Math.max(0, Math.min(total, Number(book.currentPage) || 0));
+      const safeNew = Math.max(0, Math.min(total, Number(newPage) || 0));
+      diff = safeNew - oldPage;
+
+      const updates = {
+        ...book,
+        currentPage: safeNew,
+        updatedAt: Date.now()
+      };
+
+      // Auto-finish / auto-unfinish (para que el calendario/contadores se corrijan al editar)
+      const shouldFinish = total > 0 && safeNew >= total;
+      const wasFinished =
+        book.status === "finished" || (total > 0 && (Number(book.currentPage) || 0) >= total);
+      updates.finishedPast = shouldFinish ? false : !!book.finishedPast;
+
+      if (shouldFinish && (!wasFinished || !book.finishedOn)) {
+        updates.status = "finished";
+        updates.finishedAt = Date.now();
+        updates.finishedOn = book.finishedOn || todayKey();
+      } else if (!shouldFinish && wasFinished) {
+        // Si bajamos por debajo del total, quitamos "terminado"
+        updates.status = "reading";
+        updates.finishedAt = null;
+        updates.finishedOn = null;
+      }
+
+      return updates;
+    });
 
     // Registramos páginas leídas del día como DELTA editable (si corriges, se corrige)
-    if (diff !== 0) {
+    if (res?.committed && diff !== 0) {
       const day = todayKey();
       const logRef = ref(db, `${READING_LOG_PATH}/${day}/${bookId}`);
       await runTransaction(logRef, (current) => {

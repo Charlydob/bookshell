@@ -1044,7 +1044,8 @@
 }
 .donut-svg{
   width: 100%;
-  max-width: 340px;
+  max-width: 520px;
+  min-width: 240px;
   height: auto;
   overflow: visible;
 }
@@ -1062,7 +1063,8 @@
 }
 .donut-slice:hover,
 .donut-slice:focus-visible{
-  stroke: rgba(255,255,255,0.32);
+  stroke: rgba(255,255,255,0.36);
+  filter: drop-shadow(0 0 0 2px rgba(245,230,166,0.22));
   outline: none;
 }
 .donut-slice.active{
@@ -1073,6 +1075,7 @@
 }
 .donut-callout{
   transition: color 120ms ease, fill 120ms ease, stroke 120ms ease;
+  cursor: pointer;
 }
 .donut-label{
   font-size: 10px;
@@ -1090,6 +1093,13 @@
 .donut-line{
   stroke: rgba(255,255,255,0.30);
   stroke-width: 1;
+}
+.donut-callout:focus-visible .donut-label,
+.donut-callout:focus-visible .donut-label-value{
+  fill: #fff7d1;
+}
+.donut-callout:focus-visible .donut-line{
+  stroke: rgba(245,230,166,0.9);
 }
 .donut-callout.active .donut-line{
   stroke: rgba(245,230,166,0.9);

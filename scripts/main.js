@@ -909,6 +909,10 @@ function buildFinishedSpine(id) {
 const donutActiveFill = "#f5e6a6";
 const donutActiveStroke = "#e3c45a";
 const donutSliceStroke = "rgba(255,255,255,0.22)";
+const donutFocusHint = "Toca o navega una sección";
+let donutBackupQuery = null;
+let donutBackupGenres = null;
+let donutActiveType = null;
 
 function toRoman(num) {
   const n = Math.max(0, Math.floor(Number(num) || 0));
@@ -988,8 +992,43 @@ function createSvgEl(tag, attrs = {}) {
   return el;
 }
 
-function renderDonutChart($host, centerTitle, mapData) {
+function getDonutGeometry(hostWidth = 360) {
+  const baseW = 360;
+  const baseH = 240;
+  const minW = 260;
+  const maxW = 520;
+  const width = Math.max(minW, Math.min(maxW, hostWidth || baseW));
+  const scale = width / baseW;
+  const height = baseH * scale;
+  const cx = width / 2;
+  const cy = height / 2;
+  const rOuter = 92 * scale;
+  const rInner = 60 * scale;
+
+  return {
+    width,
+    height,
+    cx,
+    cy,
+    rOuter,
+    rInner,
+    strokeWidth: rOuter - rInner,
+    calloutInnerGap: 2 * scale,
+    calloutOuterGap: 18 * scale,
+    labelOffset: 32 * scale,
+    centerYOffset: 4 * scale,
+    centerSubYOffset: 14 * scale,
+    focusYOffset: 34 * scale
+  };
+}
+
+function renderDonutChart($host, centerTitle, mapData, options = {}) {
   if (!$host) return;
+
+  if (typeof $host.__donutCleanup === "function") {
+    $host.__donutCleanup();
+    delete $host.__donutCleanup;
+  }
 
   const data = topNMap(mapData, 6);
   const total = data.reduce((acc, d) => acc + d.value, 0);
@@ -998,11 +1037,6 @@ function renderDonutChart($host, centerTitle, mapData) {
     $host.innerHTML = `<div class="books-shelf-empty">Sin datos</div>`;
     return;
   }
-
-  const W = 360, H = 240;
-  const cx = 180, cy = 120;
-  const rOuter = 92, rInner = 60;
-  const strokeWidth = rOuter - rInner;
 
   let a0 = 0;
   const slicesData = data.map((d) => {
@@ -1015,163 +1049,273 @@ function renderDonutChart($host, centerTitle, mapData) {
     return out;
   });
 
-  const svg = createSvgEl("svg", {
-    class: "donut-svg",
-    viewBox: `0 0 ${W} ${H}`,
-    role: "img",
-    "aria-label": escapeHtml(centerTitle)
-  });
+  const onSliceSelect = typeof options.onSliceSelect === "function" ? options.onSliceSelect : null;
+  let activeIdx = null;
+  let applyActive = () => {};
 
-  const defs = createSvgEl("defs");
-  const glow = createSvgEl("filter", {
-    id: "donut-glow",
-    x: "-50%",
-    y: "-50%",
-    width: "200%",
-    height: "200%"
-  });
-  glow.appendChild(createSvgEl("feDropShadow", {
-    dx: "0",
-    dy: "6",
-    stdDeviation: "8",
-    "flood-color": "rgba(245,230,166,0.45)"
-  }));
-  defs.appendChild(glow);
-  svg.appendChild(defs);
+  const renderWithWidth = (hostWidth) => {
+    const { svg, setActive } = buildDonutSvg(hostWidth);
+    applyActive = setActive;
+    $host.innerHTML = "";
+    $host.appendChild(svg);
+    applyActive(activeIdx);
+  };
 
-  const ring = createSvgEl("circle", {
-    class: "donut-ring-base",
-    cx,
-    cy,
-    r: (rOuter + rInner) / 2,
-    "stroke-width": strokeWidth
-  });
-  svg.appendChild(ring);
+  const handleSelect = (idx) => {
+    activeIdx = idx === activeIdx ? null : idx;
+    applyActive(activeIdx);
+    if (onSliceSelect) {
+      onSliceSelect(activeIdx != null ? slicesData[activeIdx] : null);
+    }
+  };
 
-  const slicesGroup = createSvgEl("g", { class: "donut-slices" });
-  const calloutsGroup = createSvgEl("g", { class: "donut-callouts" });
-  const centerGroup = createSvgEl("g", { class: "donut-center-group" });
+  function buildDonutSvg(hostWidth = 360) {
+    const {
+      width,
+      height,
+      cx,
+      cy,
+      rOuter,
+      rInner,
+      strokeWidth,
+      calloutInnerGap,
+      calloutOuterGap,
+      labelOffset,
+      centerYOffset,
+      centerSubYOffset,
+      focusYOffset
+    } = getDonutGeometry(hostWidth);
 
-  const centerMain = createSvgEl("text", {
-    class: "donut-center",
-    x: cx,
-    y: cy - 4,
-    "text-anchor": "middle"
-  });
-  centerMain.textContent = centerTitle;
-
-  const centerSub = createSvgEl("text", {
-    class: "donut-center-sub",
-    x: cx,
-    y: cy + 14,
-    "text-anchor": "middle"
-  });
-  centerSub.textContent = `${total} libros`;
-
-  const centerFocus = createSvgEl("text", {
-    class: "donut-center-focus",
-    x: cx,
-    y: cy + 34,
-    "text-anchor": "middle"
-  });
-  centerFocus.textContent = "Toca una sección";
-
-  centerGroup.appendChild(centerMain);
-  centerGroup.appendChild(centerSub);
-  centerGroup.appendChild(centerFocus);
-
-  const slicesEls = [];
-  const calloutEls = [];
-
-  slicesData.forEach((s, idx) => {
-    const path = createSvgEl("path", {
-      class: "donut-slice",
-      d: donutSlicePath(cx, cy, rOuter, rInner, s.a0, s.a1),
-      fill: "transparent",
-      stroke: donutSliceStroke,
-      "data-index": String(idx),
-      role: "button",
-      tabindex: "0",
-      "aria-label": `${s.label}: ${s.value} (${s.pct}%)`
+    const svg = createSvgEl("svg", {
+      class: "donut-svg",
+      viewBox: `0 0 ${width} ${height}`,
+      role: "img",
+      "aria-label": escapeHtml(centerTitle)
     });
-    path.dataset.label = s.label;
-    path.dataset.value = String(s.value);
-    path.dataset.pct = String(s.pct);
-    slicesGroup.appendChild(path);
-    slicesEls.push(path);
 
-    const p1 = polar(cx, cy, rOuter + 2, s.mid);
-    const p2 = polar(cx, cy, rOuter + 18, s.mid);
-    const right = Math.cos((s.mid - 90) * Math.PI / 180) >= 0;
-    const x3 = right ? (p2.x + 32) : (p2.x - 32);
-    const y3 = p2.y;
-    const tx = right ? (x3 + 3) : (x3 - 3);
-    const anchor = right ? "start" : "end";
-
-    const callout = createSvgEl("g", { class: "donut-callout", "data-index": String(idx) });
-    const line = createSvgEl("polyline", {
-      class: "donut-line",
-      points: `${p1.x.toFixed(2)},${p1.y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)} ${x3.toFixed(2)},${y3.toFixed(2)}`,
-      fill: "none"
+    const defs = createSvgEl("defs");
+    const glow = createSvgEl("filter", {
+      id: "donut-glow",
+      x: "-50%",
+      y: "-50%",
+      width: "200%",
+      height: "200%"
     });
-    const label = createSvgEl("text", {
-      class: "donut-label",
-      x: tx.toFixed(2),
-      y: (y3 - 2).toFixed(2),
-      "text-anchor": anchor
-    });
-    const t1 = createSvgEl("tspan", { x: tx.toFixed(2), dy: "0" });
-    t1.textContent = s.label;
-    const t2 = createSvgEl("tspan", {
-      class: "donut-label-value",
-      x: tx.toFixed(2),
-      dy: "12"
-    });
-    t2.textContent = `${s.value} · ${s.pct}%`;
-    label.appendChild(t1);
-    label.appendChild(t2);
+    glow.appendChild(createSvgEl("feDropShadow", {
+      dx: "0",
+      dy: "6",
+      stdDeviation: "8",
+      "flood-color": "rgba(245,230,166,0.45)"
+    }));
+    defs.appendChild(glow);
+    svg.appendChild(defs);
 
-    callout.appendChild(line);
-    callout.appendChild(label);
-    calloutsGroup.appendChild(callout);
-    calloutEls.push(callout);
+    const ring = createSvgEl("circle", {
+      class: "donut-ring-base",
+      cx,
+      cy,
+      r: (rOuter + rInner) / 2,
+      "stroke-width": strokeWidth
+    });
+    svg.appendChild(ring);
 
-    const activate = () => setActive(idx);
-    path.addEventListener("click", activate);
-    path.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        activate();
+    const slicesGroup = createSvgEl("g", { class: "donut-slices" });
+    const calloutsGroup = createSvgEl("g", { class: "donut-callouts" });
+    const centerGroup = createSvgEl("g", { class: "donut-center-group" });
+
+    const centerMain = createSvgEl("text", {
+      class: "donut-center",
+      x: cx,
+      y: cy - centerYOffset,
+      "text-anchor": "middle"
+    });
+    centerMain.textContent = centerTitle;
+
+    const centerSub = createSvgEl("text", {
+      class: "donut-center-sub",
+      x: cx,
+      y: cy + centerSubYOffset,
+      "text-anchor": "middle"
+    });
+    centerSub.textContent = `${total} libros`;
+
+    const centerFocus = createSvgEl("text", {
+      class: "donut-center-focus",
+      x: cx,
+      y: cy + focusYOffset,
+      "text-anchor": "middle"
+    });
+    centerFocus.textContent = donutFocusHint;
+
+    centerGroup.appendChild(centerMain);
+    centerGroup.appendChild(centerSub);
+    centerGroup.appendChild(centerFocus);
+
+    const slicesEls = [];
+    const calloutEls = [];
+
+    slicesData.forEach((s, idx) => {
+      const path = createSvgEl("path", {
+        class: "donut-slice",
+        d: donutSlicePath(cx, cy, rOuter, rInner, s.a0, s.a1),
+        fill: "transparent",
+        stroke: donutSliceStroke,
+        "data-index": String(idx),
+        role: "button",
+        tabindex: "0",
+        "aria-label": `${s.label}: ${s.value} (${s.pct}%)`
+      });
+      path.dataset.label = s.label;
+      path.dataset.value = String(s.value);
+      path.dataset.pct = String(s.pct);
+      slicesGroup.appendChild(path);
+      slicesEls.push(path);
+
+      const p1 = polar(cx, cy, rOuter + calloutInnerGap, s.mid);
+      const p2 = polar(cx, cy, rOuter + calloutOuterGap, s.mid);
+      const right = Math.cos((s.mid - 90) * Math.PI / 180) >= 0;
+      const x3 = right ? (p2.x + labelOffset) : (p2.x - labelOffset);
+      const y3 = p2.y;
+      const tx = right ? (x3 + 3) : (x3 - 3);
+      const anchor = right ? "start" : "end";
+
+      const callout = createSvgEl("g", {
+        class: "donut-callout",
+        "data-index": String(idx),
+        role: "button",
+        tabindex: "0",
+        "aria-label": `${s.label}: ${s.value} (${s.pct}%)`
+      });
+      const line = createSvgEl("polyline", {
+        class: "donut-line",
+        points: `${p1.x.toFixed(2)},${p1.y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)} ${x3.toFixed(2)},${y3.toFixed(2)}`,
+        fill: "none"
+      });
+      const label = createSvgEl("text", {
+        class: "donut-label",
+        x: tx.toFixed(2),
+        y: (y3 - 2).toFixed(2),
+        "text-anchor": anchor
+      });
+      const t1 = createSvgEl("tspan", { x: tx.toFixed(2), dy: "0" });
+      t1.textContent = s.label;
+      const t2 = createSvgEl("tspan", {
+        class: "donut-label-value",
+        x: tx.toFixed(2),
+        dy: "12"
+      });
+      t2.textContent = `${s.value} · ${s.pct}%`;
+      label.appendChild(t1);
+      label.appendChild(t2);
+
+      callout.appendChild(line);
+      callout.appendChild(label);
+      calloutsGroup.appendChild(callout);
+      calloutEls.push(callout);
+
+      const activate = () => handleSelect(idx);
+      const handleKey = (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          activate();
+        }
+      };
+
+      path.addEventListener("click", activate);
+      path.addEventListener("keydown", handleKey);
+      callout.addEventListener("click", activate);
+      callout.addEventListener("keydown", handleKey);
+    });
+
+    function setActive(idx = null) {
+      slicesEls.forEach((p, i) => {
+        const isActive = i === idx;
+        p.classList.toggle("active", isActive);
+        p.setAttribute("fill", isActive ? donutActiveFill : "transparent");
+        p.setAttribute("stroke", isActive ? donutActiveStroke : donutSliceStroke);
+        p.setAttribute("filter", isActive ? "url(#donut-glow)" : "");
+        p.setAttribute("aria-pressed", isActive ? "true" : "false");
+      });
+      calloutEls.forEach((c, i) => {
+        const isActive = i === idx;
+        c.classList.toggle("active", isActive);
+        c.setAttribute("aria-pressed", isActive ? "true" : "false");
+      });
+
+      if (idx == null) {
+        centerFocus.textContent = donutFocusHint;
+      } else {
+        const s = slicesData[idx];
+        centerFocus.textContent = `${s.label}: ${s.value} (${s.pct}%)`;
       }
-    });
-    callout.addEventListener("click", activate);
+    }
+
+    setActive(activeIdx);
+
+    svg.appendChild(slicesGroup);
+    svg.appendChild(calloutsGroup);
+    svg.appendChild(centerGroup);
+
+    return { svg, setActive };
+  }
+
+  const ro = new ResizeObserver((entries) => {
+    const width = Math.round(entries?.[0]?.contentRect?.width || $host.clientWidth || 360);
+    renderWithWidth(width);
   });
+  ro.observe($host);
+  $host.__donutCleanup = () => ro.disconnect();
+  renderWithWidth($host.clientWidth || 360);
+}
 
-  function setActive(idx = null) {
-    slicesEls.forEach((p, i) => {
-      const isActive = i === idx;
-      p.classList.toggle("active", isActive);
-      p.setAttribute("fill", isActive ? donutActiveFill : "transparent");
-      p.setAttribute("stroke", isActive ? donutActiveStroke : donutSliceStroke);
-      p.setAttribute("filter", isActive ? "url(#donut-glow)" : "");
-    });
-    calloutEls.forEach((c, i) => c.classList.toggle("active", i === idx));
+function applyDonutFilter(selection, type = "search") {
+  const label = normalizeLabel(selection?.label || "");
+  const isGenreFilter = type === "genre";
+  const isAggregated = label.toLowerCase() === "otros";
+  const previousType = donutActiveType;
+  if (selection && !isAggregated && previousType && previousType !== type) {
+    applyDonutFilter(null, previousType);
+  }
 
-    if (idx == null) {
-      centerFocus.textContent = "Toca una sección";
-    } else {
-      const s = slicesData[idx];
-      centerFocus.textContent = `${s.label}: ${s.value} (${s.pct}%)`;
+  if (!selection || isAggregated) {
+    if (donutActiveType === "genre") {
+      filterState.genres = donutBackupGenres ? new Set(donutBackupGenres) : new Set();
+      renderFilterChips();
+    }
+    if (donutActiveType === "search") {
+      const restored = donutBackupQuery ?? filterState.query ?? "";
+      filterState.query = restored;
+      if ($booksFilterSearch) {
+        $booksFilterSearch.value = restored;
+      }
+    }
+    donutActiveType = null;
+    donutBackupQuery = null;
+    donutBackupGenres = null;
+    renderBooks();
+    return;
+  }
+
+  if (isGenreFilter) {
+    if (donutActiveType !== "genre") {
+      donutBackupGenres = new Set(filterState.genres);
+    }
+    donutActiveType = "genre";
+    filterState.genres = label ? new Set([label.toLowerCase()]) : new Set();
+    renderFilterChips();
+  } else {
+    if (donutActiveType !== "search") {
+      donutBackupQuery = filterState.query || "";
+    }
+    donutActiveType = "search";
+    filterState.query = label;
+    if ($booksFilterSearch) {
+      $booksFilterSearch.value = label;
+      try { $booksFilterSearch.focus({ preventScroll: true }); } catch (_) {}
     }
   }
 
-  setActive(null);
-
-  svg.appendChild(slicesGroup);
-  svg.appendChild(calloutsGroup);
-  svg.appendChild(centerGroup);
-  $host.innerHTML = "";
-  $host.appendChild(svg);
+  renderBooks();
 }
 
 function renderFinishedCharts(finishedIds) {
@@ -1188,9 +1332,15 @@ function renderFinishedCharts(finishedIds) {
   const byAuthor = countBy(ids, (b) => b?.author || "Sin autor");
   const byCentury = countBy(ids, (b) => yearToCenturyLabel(b?.year));
 
-  renderDonutChart($chartGenre, "Categoría", byGenre);
-  renderDonutChart($chartAuthor, "Autor", byAuthor);
-  renderDonutChart($chartCentury, "Siglo", byCentury);
+  renderDonutChart($chartGenre, "Categoría", byGenre, {
+    onSliceSelect: (selection) => applyDonutFilter(selection, "genre")
+  });
+  renderDonutChart($chartAuthor, "Autor", byAuthor, {
+    onSliceSelect: (selection) => applyDonutFilter(selection, "search")
+  });
+  renderDonutChart($chartCentury, "Siglo", byCentury, {
+    onSliceSelect: (selection) => applyDonutFilter(selection, "search")
+  });
 }
 
 

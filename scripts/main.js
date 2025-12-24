@@ -977,6 +977,16 @@ function computeDailyTotals() {
   return totals;
 }
 
+function computeFinishedPastPages() {
+  let pages = 0;
+  Object.values(books || {}).forEach((b) => {
+    if (!b?.finishedPast) return;
+    if (!isBookFinished(b)) return;
+    pages += Number(b.pages) || 0;
+  });
+  return pages;
+}
+
 function computeStreaks() {
   const totals = computeDailyTotals();
   const days = Object.keys(totals).filter((d) => totals[d] > 0);
@@ -1024,6 +1034,7 @@ function renderStats() {
   Object.values(totals).forEach((n) => {
     totalAll += Number(n) || 0;
   });
+  totalAll += computeFinishedPastPages();
 
   const { current, best } = computeStreaks();
 

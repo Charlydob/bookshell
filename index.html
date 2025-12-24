@@ -89,8 +89,42 @@
           <button id="btn-add-book" class="btn primary">+ Añadir libro</button>
         </div>
 
+        <div class="books-filters" id="books-filters">
+          <div class="filter-row">
+            <label class="field-label" for="books-filter-search">Buscar</label>
+            <input
+              id="books-filter-search"
+              class="filter-search-input"
+              type="search"
+              placeholder="Título, autor o género"
+              autocomplete="off"
+              inputmode="search"
+            />
+          </div>
+
+          <div class="filter-row">
+            <div class="filter-label">Géneros</div>
+            <div id="books-filter-chips" class="filter-chips" role="listbox" aria-label="Filtrar por género"></div>
+          </div>
+
+          <div class="filter-row filter-toggles">
+            <label class="toggle-pill">
+              <input id="books-filter-pending" type="checkbox" />
+              <span>Solo pendientes</span>
+            </label>
+            <label class="toggle-pill">
+              <input id="books-filter-finished" type="checkbox" />
+              <span>Solo terminados</span>
+            </label>
+          </div>
+        </div>
+
         <div id="books-list" class="books-list">
           <!-- Se rellenan las tarjetas por JS -->
+        </div>
+
+        <div id="books-filter-empty" class="empty-state" style="display:none;">
+          No hay libros que coincidan con los filtros.
         </div>
 <details id="books-finished-section" class="books-finished" style="display:none;">
   <summary class="books-finished-summary">

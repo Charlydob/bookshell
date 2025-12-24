@@ -136,6 +136,7 @@ const $booksChartsSection = document.getElementById("books-charts-section");
 const $chartGenre = document.getElementById("chart-genre");
 const $chartAuthor = document.getElementById("chart-author");
 const $chartCentury = document.getElementById("chart-century");
+const $chartLanguage = document.getElementById("chart-language");
 
 
 const $booksShelfSearch = document.getElementById("books-shelf-search");
@@ -150,6 +151,10 @@ const $booksFilterEmpty = document.getElementById("books-filter-empty");
 const filterState = {
   query: "",
   genres: new Set(),
+  authors: new Set(),
+  years: new Set(),
+  languages: new Set(),
+  centuries: new Set(),
   showPending: false,
   showFinished: false
 };
@@ -236,36 +241,6 @@ if ($booksFilterSearch) {
   $booksFilterSearch.addEventListener("input", handleInput);
 }
 
-function renderFilterChips() {
-  if (!$booksFilterChips) return;
-  const opts = sortLabels(genreOptions || []);
-  const frag = document.createDocumentFragment();
-  opts.forEach((g) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "filter-chip";
-    btn.textContent = g;
-    btn.dataset.genre = g;
-    btn.setAttribute("role", "option");
-    btn.tabIndex = 0;
-    const isActive = filterState.genres.has(g.toLowerCase());
-    if (isActive) btn.classList.add("is-active");
-    btn.addEventListener("click", () => {
-      const key = g.toLowerCase();
-      if (filterState.genres.has(key)) {
-        filterState.genres.delete(key);
-      } else {
-        filterState.genres.add(key);
-      }
-      renderFilterChips();
-      renderBooks();
-    });
-    frag.appendChild(btn);
-  });
-  $booksFilterChips.innerHTML = "";
-  $booksFilterChips.appendChild(frag);
-}
-
 if ($booksFilterPending) {
   $booksFilterPending.addEventListener("change", (e) => {
     filterState.showPending = !!e.target.checked;
@@ -279,8 +254,6 @@ if ($booksFilterFinished) {
     renderBooks();
   });
 }
-
-renderFilterChips();
 
 // === Categorías (selector) ===
 function escapeHtml(str) {
@@ -305,6 +278,129 @@ function parseGenresValue(val) {
 
 function sortLabels(arr) {
   return [...arr].sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+}
+
+function compareYearLabels(a, b) {
+  const na = parseInt(a, 10);
+  const nb = parseInt(b, 10);
+  const aNum = Number.isNaN(na) ? null : na;
+  const bNum = Number.isNaN(nb) ? null : nb;
+  if (aNum != null && bNum != null && aNum !== bNum) return bNum - aNum;
+  if (aNum != null && bNum == null) return -1;
+  if (aNum == null && bNum != null) return 1;
+  return a.localeCompare(b, "es", { sensitivity: "base" });
+}
+
+function collectBookLabels(getter) {
+  const map = new Map();
+  Object.values(books || {}).forEach((b) => {
+    const label = normalizeLabel(getter(b));
+    if (!label) return;
+    const key = label.toLowerCase();
+    if (!map.has(key)) map.set(key, label);
+  });
+  return Array.from(map.values());
+}
+
+function mergeOptionsWithActive(baseLabels, activeSet, sorter = null) {
+  const map = new Map();
+  (baseLabels || []).forEach((label) => {
+    const norm = normalizeLabel(label);
+    if (!norm) return;
+    const key = norm.toLowerCase();
+    if (!map.has(key)) map.set(key, norm);
+  });
+  Array.from(activeSet || []).forEach((key) => {
+    if (!map.has(key)) map.set(key, key);
+  });
+  const arr = Array.from(map.entries()).map(([key, label]) => ({ key, label }));
+  arr.sort((a, b) => {
+    if (typeof sorter === "function") return sorter(a.label, b.label);
+    return a.label.localeCompare(b.label, "es", { sensitivity: "base" });
+  });
+  return arr;
+}
+
+function buildFilterOptionsFromBooks() {
+  const genreLabels = mergeOptionsWithActive(
+    [...(genreOptions || []), ...collectBookLabels((b) => b?.genre)],
+    new Set()
+  ).map((o) => o.label);
+  const authorOptions = sortLabels(collectBookLabels((b) => b?.author));
+  const yearOptions = collectBookLabels((b) => (b?.year != null ? String(b.year) : "")).sort(compareYearLabels);
+  const languageOptions = sortLabels(collectBookLabels((b) => b?.language));
+
+  return {
+    genres: genreLabels,
+    authors: authorOptions,
+    years: yearOptions,
+    languages: languageOptions
+  };
+}
+
+function renderFilterChips() {
+  if (!$booksFilterChips) return;
+  const { genres, authors, years, languages } = buildFilterOptionsFromBooks();
+
+  const groups = [
+    { key: "genres", title: "Categorías", options: mergeOptionsWithActive(genres, filterState.genres) },
+    { key: "authors", title: "Autores", options: mergeOptionsWithActive(authors, filterState.authors) },
+    { key: "years", title: "Años", options: mergeOptionsWithActive(years, filterState.years, compareYearLabels) },
+    { key: "languages", title: "Idiomas", options: mergeOptionsWithActive(languages, filterState.languages) }
+  ];
+
+  const frag = document.createDocumentFragment();
+
+  groups.forEach((group) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "filter-chip-group";
+    const title = document.createElement("div");
+    title.className = "filter-chip-group-title";
+    title.textContent = group.title;
+    wrapper.appendChild(title);
+
+    const row = document.createElement("div");
+    row.className = "filter-chips";
+    row.setAttribute("role", "listbox");
+    row.setAttribute("aria-label", `Filtrar por ${group.title.toLowerCase()}`);
+
+    if (!group.options.length) {
+      const empty = document.createElement("div");
+      empty.className = "filter-chip-empty";
+      empty.textContent = "Añade libros para ver opciones";
+      row.appendChild(empty);
+    } else {
+      group.options.forEach(({ label, key }) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "filter-chip";
+        btn.textContent = label;
+        const set = filterState[group.key] || new Set();
+        const active = set.has(key);
+        if (active) btn.classList.add("is-active");
+        btn.setAttribute("role", "option");
+        btn.setAttribute("aria-pressed", active ? "true" : "false");
+        btn.tabIndex = 0;
+        btn.addEventListener("click", () => {
+          if (set.has(key)) {
+            set.delete(key);
+          } else {
+            set.add(key);
+          }
+          filterState[group.key] = set;
+          renderFilterChips();
+          renderBooks();
+        });
+        row.appendChild(btn);
+      });
+    }
+
+    wrapper.appendChild(row);
+    frag.appendChild(wrapper);
+  });
+
+  $booksFilterChips.innerHTML = "";
+  $booksFilterChips.appendChild(frag);
 }
 
 function populateGenreSelect(selected = null) {
@@ -373,6 +469,7 @@ onValue(ref(db, META_GENRES_PATH), (snap) => {
     genreOptions = [...DEFAULT_GENRES];
   }
   populateGenreSelect();
+  renderFilterChips();
 });
 
 // === ISBN autofill ===
@@ -805,17 +902,23 @@ function matchesShelfQuery(book, query) {
   const fields = [
     book?.title,
     book?.author,
-    book?.genre
+    book?.genre,
+    book?.language,
+    book?.year
   ];
   return fields.some((f) => String(f || "").toLowerCase().includes(q));
 }
 
-function applyFilters(bookMap, query, activeGenres, statusFilter) {
+function applyFilters(bookMap, query, filters) {
   const ids = Object.keys(bookMap || {});
   const q = (query || "").trim().toLowerCase();
-  const genresSet = new Set(Array.from(activeGenres || []).map((g) => g.toLowerCase()));
-  const wantPending = !!statusFilter?.showPending;
-  const wantFinished = !!statusFilter?.showFinished;
+  const genresSet = new Set(Array.from(filters?.genres || []).map((g) => g.toLowerCase()));
+  const authorsSet = new Set(Array.from(filters?.authors || []).map((a) => a.toLowerCase()));
+  const yearsSet = new Set(Array.from(filters?.years || []).map((y) => String(y).toLowerCase()));
+  const languagesSet = new Set(Array.from(filters?.languages || []).map((l) => l.toLowerCase()));
+  const centuriesSet = new Set(Array.from(filters?.centuries || []).map((c) => c.toLowerCase()));
+  const wantPending = !!filters?.showPending;
+  const wantFinished = !!filters?.showFinished;
 
   return ids.filter((id) => {
     const b = bookMap[id];
@@ -830,6 +933,26 @@ function applyFilters(bookMap, query, activeGenres, statusFilter) {
     if (genresSet.size > 0) {
       const g = String(b?.genre || "").toLowerCase();
       if (!genresSet.has(g)) return false;
+    }
+
+    if (authorsSet.size > 0) {
+      const a = String(b?.author || "").toLowerCase();
+      if (!a || !authorsSet.has(a)) return false;
+    }
+
+    if (yearsSet.size > 0) {
+      const y = String(b?.year ?? "").trim().toLowerCase();
+      if (!y || !yearsSet.has(y)) return false;
+    }
+
+    if (languagesSet.size > 0) {
+      const l = String(b?.language || "").toLowerCase();
+      if (!l || !languagesSet.has(l)) return false;
+    }
+
+    if (centuriesSet.size > 0) {
+      const c = yearToCenturyLabel(b?.year).toLowerCase();
+      if (!centuriesSet.has(c)) return false;
     }
 
     if (q && !matchesShelfQuery(b, q)) return false;
@@ -912,6 +1035,9 @@ const donutSliceStroke = "rgba(255,255,255,0.22)";
 const donutFocusHint = "Toca o navega una sección";
 let donutBackupQuery = null;
 let donutBackupGenres = null;
+let donutBackupAuthors = null;
+let donutBackupLanguages = null;
+let donutBackupCenturies = null;
 let donutActiveType = null;
 
 function toRoman(num) {
@@ -1270,7 +1396,6 @@ function renderDonutChart($host, centerTitle, mapData, options = {}) {
 
 function applyDonutFilter(selection, type = "search") {
   const label = normalizeLabel(selection?.label || "");
-  const isGenreFilter = type === "genre";
   const isAggregated = label.toLowerCase() === "otros";
   const previousType = donutActiveType;
   if (selection && !isAggregated && previousType && previousType !== type) {
@@ -1280,7 +1405,15 @@ function applyDonutFilter(selection, type = "search") {
   if (!selection || isAggregated) {
     if (donutActiveType === "genre") {
       filterState.genres = donutBackupGenres ? new Set(donutBackupGenres) : new Set();
-      renderFilterChips();
+    }
+    if (donutActiveType === "author") {
+      filterState.authors = donutBackupAuthors ? new Set(donutBackupAuthors) : new Set();
+    }
+    if (donutActiveType === "language") {
+      filterState.languages = donutBackupLanguages ? new Set(donutBackupLanguages) : new Set();
+    }
+    if (donutActiveType === "century") {
+      filterState.centuries = donutBackupCenturies ? new Set(donutBackupCenturies) : new Set();
     }
     if (donutActiveType === "search") {
       const restored = donutBackupQuery ?? filterState.query ?? "";
@@ -1292,17 +1425,38 @@ function applyDonutFilter(selection, type = "search") {
     donutActiveType = null;
     donutBackupQuery = null;
     donutBackupGenres = null;
+    donutBackupAuthors = null;
+    donutBackupLanguages = null;
+    donutBackupCenturies = null;
+    renderFilterChips();
     renderBooks();
     return;
   }
 
-  if (isGenreFilter) {
+  if (type === "genre") {
     if (donutActiveType !== "genre") {
       donutBackupGenres = new Set(filterState.genres);
     }
     donutActiveType = "genre";
     filterState.genres = label ? new Set([label.toLowerCase()]) : new Set();
-    renderFilterChips();
+  } else if (type === "author") {
+    if (donutActiveType !== "author") {
+      donutBackupAuthors = new Set(filterState.authors);
+    }
+    donutActiveType = "author";
+    filterState.authors = label ? new Set([label.toLowerCase()]) : new Set();
+  } else if (type === "language") {
+    if (donutActiveType !== "language") {
+      donutBackupLanguages = new Set(filterState.languages);
+    }
+    donutActiveType = "language";
+    filterState.languages = label ? new Set([label.toLowerCase()]) : new Set();
+  } else if (type === "century") {
+    if (donutActiveType !== "century") {
+      donutBackupCenturies = new Set(filterState.centuries);
+    }
+    donutActiveType = "century";
+    filterState.centuries = label ? new Set([label.toLowerCase()]) : new Set();
   } else {
     if (donutActiveType !== "search") {
       donutBackupQuery = filterState.query || "";
@@ -1315,6 +1469,7 @@ function applyDonutFilter(selection, type = "search") {
     }
   }
 
+  renderFilterChips();
   renderBooks();
 }
 
@@ -1331,15 +1486,19 @@ function renderFinishedCharts(finishedIds) {
   const byGenre = countBy(ids, (b) => b?.genre || "Sin categoría");
   const byAuthor = countBy(ids, (b) => b?.author || "Sin autor");
   const byCentury = countBy(ids, (b) => yearToCenturyLabel(b?.year));
+  const byLanguage = countBy(ids, (b) => b?.language || "Sin idioma");
 
   renderDonutChart($chartGenre, "Categoría", byGenre, {
     onSliceSelect: (selection) => applyDonutFilter(selection, "genre")
   });
   renderDonutChart($chartAuthor, "Autor", byAuthor, {
-    onSliceSelect: (selection) => applyDonutFilter(selection, "search")
+    onSliceSelect: (selection) => applyDonutFilter(selection, "author")
   });
   renderDonutChart($chartCentury, "Siglo", byCentury, {
-    onSliceSelect: (selection) => applyDonutFilter(selection, "search")
+    onSliceSelect: (selection) => applyDonutFilter(selection, "century")
+  });
+  renderDonutChart($chartLanguage, "Idioma", byLanguage, {
+    onSliceSelect: (selection) => applyDonutFilter(selection, "language")
   });
 }
 
@@ -1451,6 +1610,7 @@ function renderBooks() {
   const idsAll = Object.keys(books || {});
   const hasFinishedUI = !!($booksFinishedSection && $booksListFinished);
   const searchQuery = (filterState.query || "").trim().toLowerCase();
+  renderFilterChips();
 
   if (!idsAll.length) {
     if ($booksListActive) $booksListActive.innerHTML = "";
@@ -1466,10 +1626,7 @@ function renderBooks() {
     return;
   }
 
-  const filteredIds = applyFilters(books, searchQuery, filterState.genres, {
-    showPending: filterState.showPending,
-    showFinished: filterState.showFinished
-  });
+  const filteredIds = applyFilters(books, searchQuery, filterState);
 
   const activeIds = [];
   const finishedIds = [];

@@ -137,12 +137,17 @@ const $chartGenre = document.getElementById("chart-genre");
 const $chartAuthor = document.getElementById("chart-author");
 const $chartCentury = document.getElementById("chart-century");
 const $chartLanguage = document.getElementById("chart-language");
+const $appMain = document.querySelector(".app-main");
 
 
 const $booksShelfSearch = document.getElementById("books-shelf-search");
 const $booksShelfResults = document.getElementById("books-shelf-results");
 const $booksShelfEmpty = document.getElementById("books-shelf-empty");
 const $booksFilterSearch = document.getElementById("books-filter-search");
+const $booksFilters = document.getElementById("books-filters");
+const $booksFiltersToggle = document.getElementById("books-filters-toggle");
+const $booksFiltersBody = document.getElementById("books-filters-body");
+const $booksFiltersHeader = document.getElementById("books-filters-header");
 const $booksFilterChips = document.getElementById("books-filter-chips");
 const $booksFilterPending = document.getElementById("books-filter-pending");
 const $booksFilterFinished = document.getElementById("books-filter-finished");
@@ -152,7 +157,6 @@ const filterState = {
   query: "",
   genres: new Set(),
   authors: new Set(),
-  years: new Set(),
   languages: new Set(),
   centuries: new Set(),
   showPending: false,
@@ -167,6 +171,7 @@ const $bookDetailFavorite = document.getElementById("book-detail-favorite");
 const $bookDetailStatus = document.getElementById("book-detail-status");
 const $bookDetailAuthor = document.getElementById("book-detail-author");
 const $bookDetailYear = document.getElementById("book-detail-year");
+const $bookDetailCentury = document.getElementById("book-detail-century");
 const $bookDetailGenre = document.getElementById("book-detail-genre");
 const $bookDetailLanguage = document.getElementById("book-detail-language");
 const $bookDetailPages = document.getElementById("book-detail-pages");
@@ -232,6 +237,17 @@ function debounce(fn, delay = 200) {
   };
 }
 
+function withStableMainScroll(renderFn) {
+  if (typeof renderFn !== "function") return;
+  const scroller = $appMain;
+  const prev = scroller ? scroller.scrollTop : null;
+  renderFn();
+  if (scroller != null && prev != null) {
+    const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    scroller.scrollTop = Math.min(max, prev);
+  }
+}
+
 if ($booksFilterSearch) {
   const handleInput = debounce((e) => {
     const value = e?.target?.value || "";
@@ -239,6 +255,44 @@ if ($booksFilterSearch) {
     renderBooks();
   }, 200);
   $booksFilterSearch.addEventListener("input", handleInput);
+}
+
+if ($booksFilters) {
+  const setFiltersCollapsed = (collapsed) => {
+    if (!$booksFilters) return;
+    if (collapsed) {
+      $booksFilters.classList.add("is-collapsed");
+    } else {
+      $booksFilters.classList.remove("is-collapsed");
+    }
+    if ($booksFiltersBody) {
+      $booksFiltersBody.hidden = collapsed;
+    }
+    if ($booksFiltersToggle) {
+      $booksFiltersToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      const text = $booksFiltersToggle.querySelector(".filters-toggle-text");
+      if (text) text.textContent = collapsed ? "Mostrar filtros" : "Ocultar filtros";
+    }
+  };
+
+  const toggleFilters = () => setFiltersCollapsed(!$booksFilters.classList.contains("is-collapsed"));
+
+  if ($booksFiltersToggle) {
+    $booksFiltersToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleFilters();
+    });
+  }
+  if ($booksFiltersHeader) {
+    $booksFiltersHeader.addEventListener("click", (e) => {
+      if (e.target.closest("input") || e.target.closest("button")) return;
+      toggleFilters();
+    });
+  }
+  if ($booksFilterSearch) {
+    $booksFilterSearch.addEventListener("focus", () => setFiltersCollapsed(false));
+  }
+  setFiltersCollapsed(true);
 }
 
 if ($booksFilterPending) {
@@ -280,17 +334,6 @@ function sortLabels(arr) {
   return [...arr].sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
 }
 
-function compareYearLabels(a, b) {
-  const na = parseInt(a, 10);
-  const nb = parseInt(b, 10);
-  const aNum = Number.isNaN(na) ? null : na;
-  const bNum = Number.isNaN(nb) ? null : nb;
-  if (aNum != null && bNum != null && aNum !== bNum) return bNum - aNum;
-  if (aNum != null && bNum == null) return -1;
-  if (aNum == null && bNum != null) return 1;
-  return a.localeCompare(b, "es", { sensitivity: "base" });
-}
-
 function collectBookLabels(getter) {
   const map = new Map();
   Object.values(books || {}).forEach((b) => {
@@ -327,25 +370,27 @@ function buildFilterOptionsFromBooks() {
     new Set()
   ).map((o) => o.label);
   const authorOptions = sortLabels(collectBookLabels((b) => b?.author));
-  const yearOptions = collectBookLabels((b) => (b?.year != null ? String(b.year) : "")).sort(compareYearLabels);
+  const centuryOptions = collectBookLabels((b) => yearToCenturyLabel(b?.year)).sort((a, b) =>
+    a.localeCompare(b, "es", { sensitivity: "base" })
+  );
   const languageOptions = sortLabels(collectBookLabels((b) => b?.language));
 
   return {
     genres: genreLabels,
     authors: authorOptions,
-    years: yearOptions,
+    centuries: centuryOptions,
     languages: languageOptions
   };
 }
 
 function renderFilterChips() {
   if (!$booksFilterChips) return;
-  const { genres, authors, years, languages } = buildFilterOptionsFromBooks();
+  const { genres, authors, centuries, languages } = buildFilterOptionsFromBooks();
 
   const groups = [
     { key: "genres", title: "Categorías", options: mergeOptionsWithActive(genres, filterState.genres) },
     { key: "authors", title: "Autores", options: mergeOptionsWithActive(authors, filterState.authors) },
-    { key: "years", title: "Años", options: mergeOptionsWithActive(years, filterState.years, compareYearLabels) },
+    { key: "centuries", title: "Siglos", options: mergeOptionsWithActive(centuries, filterState.centuries) },
     { key: "languages", title: "Idiomas", options: mergeOptionsWithActive(languages, filterState.languages) }
   ];
 
@@ -698,6 +743,7 @@ function openBookDetail(bookId) {
   fillDetail($bookDetailTitle, b.title || "Sin título");
   fillDetail($bookDetailAuthor, b.author || "—");
   fillDetail($bookDetailYear, b.year ? String(b.year) : "—");
+  fillDetail($bookDetailCentury, yearToCenturyLabel(b.year));
   fillDetail($bookDetailGenre, b.genre || "—");
   fillDetail($bookDetailLanguage, b.language || "—");
   fillDetail($bookDetailPages, b.pages ? `${b.pages} pág` : "—");
@@ -914,7 +960,6 @@ function applyFilters(bookMap, query, filters) {
   const q = (query || "").trim().toLowerCase();
   const genresSet = new Set(Array.from(filters?.genres || []).map((g) => g.toLowerCase()));
   const authorsSet = new Set(Array.from(filters?.authors || []).map((a) => a.toLowerCase()));
-  const yearsSet = new Set(Array.from(filters?.years || []).map((y) => String(y).toLowerCase()));
   const languagesSet = new Set(Array.from(filters?.languages || []).map((l) => l.toLowerCase()));
   const centuriesSet = new Set(Array.from(filters?.centuries || []).map((c) => c.toLowerCase()));
   const wantPending = !!filters?.showPending;
@@ -938,11 +983,6 @@ function applyFilters(bookMap, query, filters) {
     if (authorsSet.size > 0) {
       const a = String(b?.author || "").toLowerCase();
       if (!a || !authorsSet.has(a)) return false;
-    }
-
-    if (yearsSet.size > 0) {
-      const y = String(b?.year ?? "").trim().toLowerCase();
-      if (!y || !yearsSet.has(y)) return false;
     }
 
     if (languagesSet.size > 0) {
@@ -1434,8 +1474,10 @@ function applyDonutFilter(selection, type = "search") {
     donutBackupAuthors = null;
     donutBackupLanguages = null;
     donutBackupCenturies = null;
-    renderFilterChips();
-    renderBooks();
+    withStableMainScroll(() => {
+      renderFilterChips();
+      renderBooks();
+    });
     return;
   }
 
@@ -1476,12 +1518,13 @@ function applyDonutFilter(selection, type = "search") {
     filterState.query = label;
     if ($booksFilterSearch) {
       $booksFilterSearch.value = label;
-      try { $booksFilterSearch.focus({ preventScroll: true }); } catch (_) {}
     }
   }
 
-  renderFilterChips();
-  renderBooks();
+  withStableMainScroll(() => {
+    renderFilterChips();
+    renderBooks();
+  });
 }
 
 function renderFinishedCharts(finishedIds) {

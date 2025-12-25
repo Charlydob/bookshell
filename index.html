@@ -559,14 +559,6 @@
       <header class="modal-header book-detail-header">
         <div class="book-detail-header-main">
           <div id="book-detail-title" class="modal-title">Ficha del libro</div>
-          <div class="book-detail-chip-row">
-            <label class="favorite-toggle chip-tight">
-              <input id="book-detail-favorite" type="checkbox" />
-              <span class="favorite-icon" aria-hidden="true">★</span>
-              <span class="favorite-label">Favorito</span>
-            </label>
-            <div id="book-detail-status" class="book-detail-status">—</div>
-          </div>
         </div>
         <button id="book-detail-close" class="icon-btn icon-btn-ghost" aria-label="Cerrar">✕</button>
       </header>
@@ -577,6 +569,15 @@
               <div class="detail-title">Datos clave</div>
               <div class="detail-subtitle">Se usan para estadísticas y filtros</div>
             </div>
+          </div>
+
+          <div class="book-detail-chip-row">
+            <label class="favorite-toggle chip-tight">
+              <input id="book-detail-favorite" type="checkbox" />
+              <span class="favorite-icon" aria-hidden="true">★</span>
+              <span class="favorite-label">Favorito</span>
+            </label>
+            <div id="book-detail-status" class="book-detail-status">—</div>
           </div>
 
           <div class="book-detail-grid spec-grid">
@@ -867,19 +868,28 @@
         </div>
         <button id="recipe-detail-close" class="icon-btn icon-btn-large" aria-label="Cerrar">✕</button>
       </div>
-      <div id="recipe-detail-meta" class="recipe-detail-meta"></div>
     </header>
 
     <div class="recipe-detail-body">
-      <section class="recipe-detail-section">
-        <div class="section-heading">
-          <div class="section-title">Datos clave</div>
-          <div class="section-hint">Se usan para estadísticas y filtros</div>
+      <section class="recipe-detail-specs" aria-label="Datos rápidos de la receta">
+        <div class="specs-heading">
+          <div class="specs-title">Datos rápidos</div>
+          <div class="specs-subtitle">Incluye datos clave</div>
         </div>
-        <div id="recipe-detail-grid" class="recipe-detail-grid"></div>
+        <div id="recipe-detail-meta" class="specs-grid" aria-label="Estado y resumen"></div>
+        <div id="recipe-detail-grid" class="specs-grid" aria-label="Datos clave"></div>
       </section>
 
-      <section class="recipe-detail-section">
+      <div class="recipe-detail-tabs" id="recipe-detail-tabs" role="tablist" aria-label="Secciones de la receta">
+        <button type="button" class="tab-chip is-active" data-tab="ingredients" role="tab" aria-selected="true">
+          Ingredientes
+        </button>
+        <button type="button" class="tab-chip" data-tab="steps" role="tab" aria-selected="false">
+          Pasos
+        </button>
+      </div>
+
+      <section class="recipe-detail-section tab-panel is-active" data-tab-panel="ingredients" aria-label="Ingredientes">
         <div class="section-heading">
           <div class="section-title">Ingredientes</div>
           <div class="section-hint">Marca cada uno al prepararlo</div>
@@ -887,7 +897,7 @@
         <div id="recipe-detail-ingredients" class="recipe-detail-ingredients"></div>
       </section>
 
-      <section class="recipe-detail-section">
+      <section class="recipe-detail-section tab-panel" data-tab-panel="steps" aria-label="Pasos">
         <div class="section-heading">
           <div class="section-title">Pasos</div>
           <div class="section-hint">Título y descripción editables en el modal</div>

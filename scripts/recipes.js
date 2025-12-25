@@ -263,9 +263,11 @@ if ($viewRecipes) {
   const $recipeDetailSteps = document.getElementById("recipe-detail-steps");
   const $recipeDetailNotes = document.getElementById("recipe-detail-notes");
   const $recipeDetailNotesWrapper = document.getElementById("recipe-detail-notes-wrapper");
+  const $recipeDetailTabBar = document.getElementById("recipe-detail-tabs");
 
   let recipes = loadRecipes();
   let detailRecipeId = null;
+  let recipeDetailActiveTab = "ingredients";
 
   const filterState = {
     query: "",
@@ -1506,6 +1508,7 @@ if ($viewRecipes) {
     const recipe = recipes.find((r) => r.id === id);
     if (!recipe || !$recipeDetailBackdrop) return;
     detailRecipeId = id;
+    recipeDetailActiveTab = "ingredients";
     $recipeDetailBackdrop.classList.remove("hidden");
     renderRecipeDetail(id);
   }
@@ -1623,11 +1626,32 @@ if ($viewRecipes) {
       $recipeDetailNotesWrapper.style.display = hasNotes ? "block" : "none";
       $recipeDetailNotes.textContent = recipe.notes || "";
     }
+
+    applyRecipeDetailTab(recipeDetailActiveTab);
   }
 
   function closeRecipeDetail() {
     if ($recipeDetailBackdrop) $recipeDetailBackdrop.classList.add("hidden");
     detailRecipeId = null;
+  }
+
+  function applyRecipeDetailTab(tab) {
+    const tabs = $recipeDetailTabBar?.querySelectorAll(".tab-chip") || [];
+    const panels = document.querySelectorAll("[data-tab-panel]");
+    tabs.forEach((btn) => {
+      const isActive = btn.dataset.tab === tab;
+      btn.classList.toggle("is-active", isActive);
+      btn.setAttribute("aria-selected", String(isActive));
+    });
+    panels.forEach((panel) => {
+      const isActive = panel.dataset.tabPanel === tab;
+      panel.classList.toggle("is-active", isActive);
+      if (isActive) {
+        panel.removeAttribute("hidden");
+      } else {
+        panel.setAttribute("hidden", "true");
+      }
+    });
   }
 
   function toggleChecklistItem(recipeId, itemId, value, type) {
@@ -1731,6 +1755,12 @@ if ($viewRecipes) {
   });
   $recipeDetailDelete?.addEventListener("click", () => {
     if (detailRecipeId) deleteRecipe(detailRecipeId);
+  });
+  $recipeDetailTabBar?.addEventListener("click", (e) => {
+    const tab = e.target.closest(".tab-chip");
+    if (!tab || !tab.dataset.tab) return;
+    recipeDetailActiveTab = tab.dataset.tab;
+    applyRecipeDetailTab(recipeDetailActiveTab);
   });
 
   $calPrev?.addEventListener("click", () => {

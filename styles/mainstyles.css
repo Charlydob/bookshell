@@ -642,10 +642,10 @@ body {
 }
 .action-bar{
   display: flex;
-  gap: 10px;
+  gap: 8px;
   justify-content: flex-end;
   align-items: center;
-  padding: 12px 16px calc(14px + env(safe-area-inset-bottom));
+  padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
   background: linear-gradient(180deg, rgba(12,13,20,.72), rgba(12,13,20,.94));
   border-top: 1px solid rgba(255,255,255,.07);
   backdrop-filter: blur(16px);
@@ -655,8 +655,9 @@ body {
   z-index: 3;
 }
 .action-bar .btn{
-  min-height: 48px;
-  border-radius: 14px;
+  min-height: 44px;
+  border-radius: 12px;
+  padding-block: 10px;
   flex: 1;
 }
 /* ===== Cards plegables ===== */

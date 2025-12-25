@@ -1354,10 +1354,7 @@
 }
 .geo-map{
   width: 100%;
-  min-height: 260px;
-  max-height: 420px;
-  aspect-ratio: 2 / 1;
-  height: auto;
+  height: 260px;
   position: relative;
   border-radius: 16px;
   background: radial-gradient(circle at 20% 20%, rgba(245,230,166,0.08), transparent 40%),

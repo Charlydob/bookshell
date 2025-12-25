@@ -238,7 +238,10 @@ $navButtons.forEach(btn => {
     if (viewId === "view-books") {
       renderStats();
       renderCalendar();
+      renderBooksGeo(Object.keys(books || {}));
     }
+
+    document.dispatchEvent(new CustomEvent("view-changed", { detail: { viewId } }));
   });
 });
 

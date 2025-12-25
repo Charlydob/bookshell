@@ -1210,7 +1210,7 @@ if ($viewRecipes) {
     if (!$calGrid) return;
     const activity = buildActivityMap();
     if (calViewMode === "year") {
-      renderCalendarYear(activity);
+    renderCalendarYear(activity);
       return;
     }
     const first = new Date(calYear, calMonth, 1);
@@ -1258,6 +1258,12 @@ if ($viewRecipes) {
         : "Aún no hay cocinadas este mes";
     }
   }
+
+  document.addEventListener("view-changed", (event) => {
+    if (event?.detail?.viewId === "view-recipes") {
+      renderRecipeGeo();
+    }
+  });
 
   function renderCalendarYear(activity) {
     const fragment = document.createDocumentFragment();

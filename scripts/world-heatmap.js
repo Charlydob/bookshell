@@ -10,12 +10,12 @@ const WORLD_GEO_URLS = [
 
 const VIEWBOX_WIDTH = 1000;
 const VIEWBOX_HEIGHT = 520;
-const MIN_HOST_WIDTH = 220;
-const MIN_HOST_HEIGHT = 240;
+const MIN_HOST_WIDTH = 200;
+const MIN_HOST_HEIGHT = 200;
 const LABEL_FONT = "12px 'Inter', 'Inter var', system-ui, -apple-system, sans-serif";
-const LABEL_LIMIT_BASE = 12;
+const LABEL_LIMIT_BASE = 10;
 const LABEL_LIMIT_MID = 25;
-const ZOOM_THRESHOLD_MID = 1.7;
+const ZOOM_THRESHOLD_MID = 1.5;
 const ZOOM_THRESHOLD_HIGH = 3;
 
 let worldGeoPromise = null;
@@ -50,7 +50,7 @@ function loadWorldGeoJson() {
   return worldGeoPromise;
 }
 
-function waitForHostSize(host, token, minW = MIN_HOST_WIDTH, minH = MIN_HOST_HEIGHT) {
+function waitForSize(host, token, minW = MIN_HOST_WIDTH, minH = MIN_HOST_HEIGHT) {
   return new Promise((resolve) => {
     let attempts = 0;
     const check = () => {
@@ -64,14 +64,15 @@ function waitForHostSize(host, token, minW = MIN_HOST_WIDTH, minH = MIN_HOST_HEI
         return;
       }
       attempts += 1;
-      const delay = attempts > 60 ? 140 : 80;
-      setTimeout(() => {
-        if (typeof requestAnimationFrame === "function") {
-          requestAnimationFrame(check);
-        } else {
-          check();
-        }
-      }, delay);
+      if (attempts >= 60) {
+        resolve(null);
+        return;
+      }
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(check);
+      } else {
+        setTimeout(check, 16);
+      }
     };
     check();
   });
@@ -292,6 +293,7 @@ function cleanupState(host) {
   if (state.resizeObserver) state.resizeObserver.disconnect();
   if (typeof state.removeScrollGuards === "function") state.removeScrollGuards();
   if (state.svg) state.svg.remove();
+  if (state.host) state.host.style.touchAction = "";
   delete host.__geoState;
   delete host.__geoRenderToken;
   delete host.__geoCleanup;
@@ -300,8 +302,9 @@ function cleanupState(host) {
 function applyZoomState(state) {
   const t = state.transform || d3.zoomIdentity;
   state.root.attr("transform", `translate(${t.x},${t.y}) scale(${t.k})`);
-  state.lineLayer.selectAll("line").attr("stroke-width", 1.3 / Math.max(t.k, 1));
-  state.labelLayer.selectAll("text").style("font-size", `${12 / Math.max(t.k, 1)}px`);
+  const scale = Math.max(t.k, 1);
+  state.lineLayer.selectAll("line").attr("stroke-width", 1.3 / scale);
+  state.labelLayer.selectAll("text").style("font-size", `${12 / scale}px`);
 }
 
 function refreshLabels(state) {
@@ -320,7 +323,8 @@ function refreshLabels(state) {
     .attr("x1", (d) => d.anchor.x)
     .attr("y1", (d) => d.anchor.y)
     .attr("x2", (d) => d.mapX)
-    .attr("y2", (d) => d.mapY);
+    .attr("y2", (d) => d.mapY)
+    .attr("stroke-width", 1.3 / Math.max(transform.k || 1, 1));
   lines.exit().remove();
 
   const labels = state.labelLayer.selectAll("g.geo-label").data(nodes, (d) => d.key);
@@ -337,12 +341,14 @@ function refreshLabels(state) {
         .attr("text-anchor", isLeft ? "start" : "end")
         .attr("dominant-baseline", "central")
         .attr("x", isLeft ? 6 : -6)
+        .style("font-size", `${12 / Math.max(transform.k || 1, 1)}px`)
         .text(d.text);
     });
   labels.exit().remove();
 }
 
 function refreshMap(state) {
+  if (!state.geo) return;
   const features = state.geo?.features || [];
   const entryLookup = buildEntryLookup(state.entries);
   state.entryLookup = entryLookup;
@@ -373,6 +379,16 @@ function refreshMap(state) {
   refreshLabels(state);
 }
 
+function resizeMap(state) {
+  if (!state || !state.geo || !state.projection || !state.host) return;
+  const rect = state.host.getBoundingClientRect();
+  if (rect.width < MIN_HOST_WIDTH || rect.height < MIN_HOST_HEIGHT) return;
+  state.projection.fitSize([VIEWBOX_WIDTH, VIEWBOX_HEIGHT], state.geo);
+  state.path = d3.geoPath(state.projection);
+  refreshMap(state);
+  applyZoomState(state);
+}
+
 function initializeMap(host, state, geo) {
   const svg = d3
     .create("svg")
@@ -401,7 +417,7 @@ function initializeMap(host, state, geo) {
 
   const resizeObserver = new ResizeObserver(() => {
     if (host.__geoRenderToken !== state.renderToken) return;
-    requestAnimationFrame(() => refreshLabels(state));
+    requestAnimationFrame(() => resizeMap(state));
   });
   resizeObserver.observe(host);
 
@@ -419,9 +435,11 @@ function initializeMap(host, state, geo) {
   state.transform = d3.zoomIdentity;
   state.resizeObserver = resizeObserver;
   state.removeScrollGuards = removeScrollGuards;
+  state.host = host;
 
   host.appendChild(svg.node());
   host.__geoCleanup = () => cleanupState(host);
+  host.style.touchAction = "none";
   applyZoomState(state);
 }
 
@@ -446,11 +464,16 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
   state.renderToken = renderToken;
   state.entries = sanitized;
 
-  if (!state.ready && !host.querySelector(".geo-empty")) {
+  const isFirstRender = !state.ready;
+  const showInitialLoader = isFirstRender && !host.querySelector(".geo-empty");
+  if (showInitialLoader) {
     host.innerHTML = `<div class="geo-empty">Cargando mapa…</div>`;
   }
 
   const geo = await loadWorldGeoJson();
+  if (showInitialLoader && host.__geoRenderToken === renderToken) {
+    host.innerHTML = "";
+  }
   if (host.__geoRenderToken !== renderToken) return;
   if (!geo) {
     host.innerHTML = `<div class="geo-empty">No se pudo cargar el mapa mundial.</div>`;
@@ -458,7 +481,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
     return;
   }
 
-  const hostSize = await waitForHostSize(host, renderToken, MIN_HOST_WIDTH, MIN_HOST_HEIGHT);
+  const hostSize = await waitForSize(host, renderToken, MIN_HOST_WIDTH, MIN_HOST_HEIGHT);
   if (!hostSize || host.__geoRenderToken !== renderToken) return;
 
   if (!state.ready) {

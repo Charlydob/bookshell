@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="styles/mainpage.css" />
   <link rel="stylesheet" href="styles/videos.css" />
   <link rel="stylesheet" href="styles/recipes.css" />
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
   <div class="app-shell">
@@ -158,6 +159,21 @@
 
 
 </details>
+<section id="books-geo-section" class="geo-section" style="display:none;">
+  <div class="geo-card">
+    <div class="geo-header">
+      <div>
+        <div class="geo-title">Mapa de libros</div>
+        <div class="geo-subtitle">Intensidad según número de libros</div>
+      </div>
+    </div>
+    <div id="books-world-map" class="geo-map"></div>
+    <details id="books-country-panel" class="geo-list" aria-label="Listado de países (libros)">
+      <summary class="geo-list-summary">Países y número de libros</summary>
+      <div id="books-country-list" class="geo-list-body"></div>
+    </details>
+  </div>
+</section>
 <section id="books-charts-section" class="books-charts" style="display:none;">
   <div class="books-charts-grid">
     <div class="chart-card">
@@ -377,6 +393,22 @@
             </details>
           </div>
 
+          <section id="recipes-geo-section" class="geo-section" style="display:none;">
+            <div class="geo-card">
+              <div class="geo-header">
+                <div>
+                  <div class="geo-title">Mapa de recetas</div>
+                  <div class="geo-subtitle">Intensidad según número de platos</div>
+                </div>
+              </div>
+              <div id="recipes-world-map" class="geo-map"></div>
+              <details id="recipes-country-panel" class="geo-list" aria-label="Listado de países (recetas)">
+                <summary class="geo-list-summary">Países y número de platos</summary>
+                <div id="recipes-country-list" class="geo-list-body"></div>
+              </details>
+            </div>
+          </section>
+
           <section id="recipes-charts-section" class="books-charts">
             <div class="books-charts-grid">
               <div class="chart-card">
@@ -470,6 +502,10 @@
           <input id="book-language" type="text" />
         </label>
       </div>
+      <label class="field">
+        <span class="field-label">País / origen</span>
+        <input id="book-country" type="text" list="country-options" placeholder="España, México, Estados Unidos..." />
+      </label>
     </div>
 
     <div class="sheet-section">
@@ -553,6 +589,10 @@
           <div class="book-detail-item">
             <span class="book-detail-label">Idioma</span>
             <div id="book-detail-language" class="book-detail-value">—</div>
+          </div>
+          <div class="book-detail-item">
+            <span class="book-detail-label">País</span>
+            <div id="book-detail-country" class="book-detail-value">—</div>
           </div>
           <div class="book-detail-item">
             <span class="book-detail-label">Páginas</span>
@@ -727,6 +767,10 @@
             <span class="field-label">Etiquetas (separadas por coma)</span>
             <input id="recipe-tags" type="text" placeholder="rápida, horno, pasta..." />
           </label>
+          <label class="field">
+            <span class="field-label">País / origen</span>
+            <input id="recipe-country" type="text" list="country-options" placeholder="Italia, Perú, Estados Unidos..." />
+          </label>
 
           <div class="form-grid row-2">
             <label class="field">
@@ -855,5 +899,6 @@
   <script type="module" src="scripts/main.js"></script>
   <script type="module" src="scripts/videos.js"></script>
   <script type="module" src="scripts/recipes.js"></script>
+  <datalist id="country-options"></datalist>
 </body>
 </html>

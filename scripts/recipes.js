@@ -1,6 +1,13 @@
 // recipes.js
 // Pestaña de recetas con estética de estantería y gráficos adaptados
 
+import {
+  ensureCountryDatalist,
+  getCountryEnglishName,
+  normalizeCountryInput
+} from "./countries.js";
+import { renderCountryHeatmap, renderCountryList } from "./world-heatmap.js";
+
 const $viewRecipes = document.getElementById("view-recipes");
 if ($viewRecipes) {
   const STORAGE_KEY = "bookshell.recipes.v1";
@@ -24,6 +31,7 @@ if ($viewRecipes) {
       meal: "comida",
       health: "sana",
       tags: ["rápida", "huevo", "sartén"],
+      country: "IL",
       rating: 4.5,
       favorite: true,
       laura: true,
@@ -63,6 +71,7 @@ if ($viewRecipes) {
       meal: "cena",
       health: "sana",
       tags: ["sopa", "ligera", "verano"],
+      country: "ES",
       rating: 4,
       favorite: false,
       laura: false,
@@ -102,6 +111,7 @@ if ($viewRecipes) {
       meal: "comida",
       health: "equilibrada",
       tags: ["horno", "pasta", "finde"],
+      country: "IT",
       rating: 5,
       favorite: true,
       laura: true,
@@ -141,6 +151,7 @@ if ($viewRecipes) {
       meal: "desayuno",
       health: "insana",
       tags: ["dulce", "brunch"],
+      country: "FR",
       rating: 3.5,
       favorite: false,
       laura: true,
@@ -205,6 +216,9 @@ if ($viewRecipes) {
 
   const $chartMeal = document.getElementById("recipe-chart-meal");
   const $chartHealth = document.getElementById("recipe-chart-health");
+  const $recipesGeoSection = document.getElementById("recipes-geo-section");
+  const $recipesWorldMap = document.getElementById("recipes-world-map");
+  const $recipesCountryList = document.getElementById("recipes-country-list");
 
   const $calPrev = document.getElementById("recipe-cal-prev");
   const $calNext = document.getElementById("recipe-cal-next");
@@ -223,6 +237,7 @@ if ($viewRecipes) {
   const $recipeMeal = document.getElementById("recipe-meal");
   const $recipeHealth = document.getElementById("recipe-health");
   const $recipeTags = document.getElementById("recipe-tags");
+  const $recipeCountry = document.getElementById("recipe-country");
   const $recipeRating = document.getElementById("recipe-rating");
   const $recipeLastCooked = document.getElementById("recipe-last-cooked");
   const $recipeNotes = document.getElementById("recipe-notes");
@@ -258,6 +273,8 @@ if ($viewRecipes) {
     favoritesOnly: false,
     lauraOnly: false,
   };
+
+  ensureCountryDatalist();
 
   const today = new Date();
   let calYear = today.getFullYear();
@@ -298,7 +315,26 @@ if ($viewRecipes) {
     return "r-" + Date.now().toString(36);
   }
 
+  function normalizeRecipeCountry(value, label = "") {
+    const normalized = normalizeCountryInput(label || value);
+    if (normalized) {
+      const code = normalized.code || null;
+      return {
+        code,
+        label: normalized.name || label || value || code,
+        english: getCountryEnglishName(code) || normalized.name || code,
+      };
+    }
+    const fallback = String(label || value || "").trim();
+    if (fallback) {
+      const rawCode = String(value || "").trim().toUpperCase() || null;
+      return { code: rawCode, label: fallback, english: fallback };
+    }
+    return null;
+  }
+
   function normalizeRecipeFields(recipe) {
+    const country = normalizeRecipeCountry(recipe.country, recipe.countryLabel);
     const ingredients = Array.isArray(recipe.ingredients)
       ? recipe.ingredients.map((ing) => ({
           id: ing.id || generateId(),
@@ -316,6 +352,8 @@ if ($viewRecipes) {
       : [];
     return {
       ...recipe,
+      country: country?.code || null,
+      countryLabel: country?.label || recipe.countryLabel || recipe.country || null,
       ingredients,
       steps,
     };
@@ -441,6 +479,7 @@ if ($viewRecipes) {
           r.health,
           (r.tags || []).join(" "),
           r.notes || "",
+          r.countryLabel || r.country,
         ]
           .join(" ")
           .toLowerCase();
@@ -455,7 +494,9 @@ if ($viewRecipes) {
     const shelfQuery = (filterState.shelfQuery || "").trim().toLowerCase();
     const filtered = filterRecipes().filter((r) => {
       if (!shelfQuery) return true;
-      const text = [r.title, r.meal, r.health, (r.tags || []).join(" ")].join(" ").toLowerCase();
+      const text = [r.title, r.meal, r.health, (r.tags || []).join(" "), r.countryLabel || r.country]
+        .join(" ")
+        .toLowerCase();
       return text.includes(shelfQuery);
     });
 
@@ -607,9 +648,11 @@ if ($viewRecipes) {
 
       const meta = document.createElement("div");
       meta.className = "recipe-meta";
+      const countryLabel = recipe.countryLabel || recipe.country || "—";
       meta.innerHTML = `
         <div class="recipe-meta-item"><strong>Tipo</strong><br>${recipe.meal}</div>
         <div class="recipe-meta-item"><strong>Salud</strong><br>${recipe.health}</div>
+        <div class="recipe-meta-item"><strong>País</strong><br>${countryLabel}</div>
         <div class="recipe-meta-item"><strong>Última vez</strong><br>${recipe.lastCooked || "—"}</div>
         <div class="recipe-meta-item"><strong>Valoración</strong><br>${recipe.rating ?? 0} ★</div>
       `;
@@ -1066,7 +1109,48 @@ if ($viewRecipes) {
     renderCharts();
   }
 
+  function buildRecipeCountryStats() {
+    const m = new Map();
+    recipes.forEach((r) => {
+      const country = normalizeRecipeCountry(r?.country, r?.countryLabel);
+      if (!country || !country.label) return;
+      const key = country.code || country.label.toLowerCase();
+      const current = m.get(key) || { code: country.code, label: country.label, english: country.english, value: 0 };
+      current.value += 1;
+      m.set(key, current);
+    });
+    return Array.from(m.values()).sort(
+      (a, b) => b.value - a.value || a.label.localeCompare(b.label, "es", { sensitivity: "base" })
+    );
+  }
+
+  function renderRecipeGeo() {
+    if (!$recipesGeoSection) return;
+    const stats = buildRecipeCountryStats();
+    if (!stats.length) {
+      $recipesGeoSection.style.display = "none";
+      if ($recipesWorldMap) {
+        if (typeof $recipesWorldMap.__geoCleanup === "function") $recipesWorldMap.__geoCleanup();
+        $recipesWorldMap.innerHTML = "";
+      }
+      if ($recipesCountryList) $recipesCountryList.innerHTML = "";
+      return;
+    }
+    $recipesGeoSection.style.display = "block";
+    const mapData = stats
+      .filter((s) => s.code)
+      .map((s) => ({
+        code: s.code,
+        value: s.value,
+        label: s.label,
+        mapName: s.english,
+      }));
+    renderCountryHeatmap($recipesWorldMap, mapData, { emptyLabel: "Añade el país de cada receta" });
+    renderCountryList($recipesCountryList, stats, "plato");
+  }
+
   function renderCharts() {
+    renderRecipeGeo();
     const mealEntries = MEAL_TYPES.map((m) => ({
       label: m,
       value: recipes.filter((r) => r.meal === m).length,
@@ -1221,6 +1305,7 @@ if ($viewRecipes) {
       $recipeMeal.value = recipe.meal || "comida";
       $recipeHealth.value = recipe.health || "sana";
       $recipeTags.value = (recipe.tags || []).join(", ");
+      if ($recipeCountry) $recipeCountry.value = recipe.countryLabel || recipe.country || "";
       $recipeRating.value = recipe.rating ?? 0;
       $recipeLastCooked.value = recipe.lastCooked || "";
       $recipeNotes.value = recipe.notes || "";
@@ -1235,6 +1320,7 @@ if ($viewRecipes) {
       $recipeMeal.value = "comida";
       $recipeHealth.value = "sana";
       $recipeTags.value = "";
+      if ($recipeCountry) $recipeCountry.value = "";
       $recipeRating.value = "4";
       $recipeLastCooked.value = "";
       $recipeNotes.value = "";
@@ -1261,6 +1347,7 @@ if ($viewRecipes) {
     const id = $recipeId.value || generateId();
     const existing = recipes.find((r) => r.id === id);
     const cookedDates = [...(existing?.cookedDates || [])];
+    const countryInfo = normalizeRecipeCountry($recipeCountry?.value);
     const payload = {
       id,
       title: ($recipeName.value || "").trim(),
@@ -1275,6 +1362,8 @@ if ($viewRecipes) {
       notes: ($recipeNotes.value || "").trim(),
       favorite: $recipeFavorite.checked,
       laura: $recipeLaura.checked,
+      country: countryInfo?.code || null,
+      countryLabel: countryInfo?.label || null,
       cookedDates,
       ingredients: collectIngredientRows(),
       steps: collectStepRows(),
@@ -1285,10 +1374,12 @@ if ($viewRecipes) {
       payload.cookedDates.push(payload.lastCooked);
     }
 
+    const normalizedPayload = normalizeRecipeFields(payload);
+
     if (existing) {
-      recipes = recipes.map((r) => (r.id === id ? { ...r, ...payload } : r));
+      recipes = recipes.map((r) => (r.id === id ? { ...r, ...normalizedPayload } : r));
     } else {
-      recipes = [{ ...payload }, ...recipes];
+      recipes = [{ ...normalizedPayload }, ...recipes];
     }
     saveRecipes();
     closeRecipeModal();
@@ -1455,6 +1546,7 @@ if ($viewRecipes) {
       $recipeDetailGrid.innerHTML = "";
       const gridItems = [
         { label: "Tipo de comida", value: recipe.meal },
+        { label: "País / origen", value: recipe.countryLabel || recipe.country || "—" },
         { label: "Etiquetas", value: (recipe.tags || []).join(", ") || "—" },
         { label: "Notas", value: recipe.notes || "—" },
       ];

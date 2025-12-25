@@ -1130,15 +1130,6 @@ if ($viewRecipes) {
   function renderRecipeGeo() {
     if (!$recipesGeoSection) return;
     const stats = buildRecipeCountryStats();
-    if (!stats.length) {
-      $recipesGeoSection.style.display = "none";
-      if ($recipesWorldMap) {
-        if (typeof $recipesWorldMap.__geoCleanup === "function") $recipesWorldMap.__geoCleanup();
-        $recipesWorldMap.innerHTML = "";
-      }
-      if ($recipesCountryList) $recipesCountryList.innerHTML = "";
-      return;
-    }
     $recipesGeoSection.style.display = "block";
     const mapData = stats
       .filter((s) => s.code)
@@ -1148,7 +1139,9 @@ if ($viewRecipes) {
         label: s.label,
         mapName: s.english,
       }));
-    renderCountryHeatmap($recipesWorldMap, mapData, { emptyLabel: "Añade el país de cada receta" });
+    renderCountryHeatmap($recipesWorldMap, mapData, {
+      emptyLabel: "Añade el país de cada receta para ver el mapa",
+    });
     renderCountryList($recipesCountryList, stats, "plato");
   }
 

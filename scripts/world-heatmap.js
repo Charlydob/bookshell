@@ -6,12 +6,14 @@ const WORLD_GEO_URLS = [
   "https://echarts.apache.org/examples/data/asset/geo/world.json",
   "https://cdn.jsdelivr.net/npm/echarts@5/map/json/world.json",
   "https://cdn.jsdelivr.net/npm/echarts@3.6.0/map/json/world.json",
+  "./data/world-geo.json",
 ];
 
 const VIEWBOX_WIDTH = 1000;
 const VIEWBOX_HEIGHT = 520;
 const MIN_HOST_WIDTH = 200;
 const MIN_HOST_HEIGHT = 200;
+const WORLD_GEO_CACHE_KEY = "bookshell.worldGeo.v1";
 const LABEL_FONT = "12px 'Inter', 'Inter var', system-ui, -apple-system, sans-serif";
 const LABEL_LIMIT_BASE = 10;
 const LABEL_LIMIT_MID = 25;
@@ -31,20 +33,48 @@ async function fetchJson(url) {
 
 function loadWorldGeoJson() {
   if (worldGeoPromise) return worldGeoPromise;
+  const readCache = () => {
+    try {
+      const raw = typeof localStorage !== "undefined" ? localStorage.getItem(WORLD_GEO_CACHE_KEY) : null;
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      return null;
+    }
+  };
+  const cache = readCache();
 
-  worldGeoPromise = (async () => {
+  const fetchAndCache = async () => {
+    let lastError = null;
     for (const url of WORLD_GEO_URLS) {
       try {
-        return await fetchJson(url);
+        const geo = await fetchJson(url);
+        if (geo && typeof localStorage !== "undefined") {
+          try { localStorage.setItem(WORLD_GEO_CACHE_KEY, JSON.stringify(geo)); } catch (_) {}
+        }
+        return geo;
       } catch (e) {
+        lastError = e;
         // prueba la siguiente
       }
     }
-    throw new Error("No se pudo cargar ningún GeoJSON del mundo");
-  })().catch((err) => {
+    if (cache) return cache;
+    throw lastError || new Error("No se pudo cargar ningún GeoJSON del mundo");
+  };
+
+  if (cache) {
+    worldGeoPromise = Promise.resolve(cache);
+    fetchAndCache().then((geo) => {
+      if (geo) {
+        worldGeoPromise = Promise.resolve(geo);
+      }
+    }).catch(() => {});
+    return worldGeoPromise;
+  }
+
+  worldGeoPromise = fetchAndCache().catch((err) => {
     console.warn("No se pudo cargar el GeoJSON del mundo", err);
     worldGeoPromise = null;
-    return null;
+    return cache || null;
   });
 
   return worldGeoPromise;

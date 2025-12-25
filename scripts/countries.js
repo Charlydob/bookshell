@@ -11,9 +11,14 @@ const regionNamesEn = typeof Intl !== "undefined" && Intl.DisplayNames
 
 function getCountryCodes() {
   if (typeof Intl !== "undefined" && typeof Intl.supportedValuesOf === "function") {
-    const supported = Intl.supportedValuesOf("region") || [];
-    const codes = supported.filter((code) => /^[A-Z]{2}$/.test(code));
-    if (codes.length) return codes;
+    // Chrome no soporta "region" en supportedValuesOf -> RangeError
+    try {
+      const supported = Intl.supportedValuesOf("region") || [];
+      const codes = supported.filter((code) => /^[A-Z]{2}$/.test(code));
+      if (codes.length) return codes;
+    } catch (_) {
+      // fallback sin romper scripts
+   }
   }
   return FALLBACK_CODES;
 }

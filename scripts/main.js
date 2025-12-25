@@ -1615,11 +1615,9 @@ function renderFinishedCharts(finishedIds) {
   const ids = finishedIds || [];
   if (!ids.length) {
     $booksChartsSection.style.display = "none";
-    if ($booksGeoSection) $booksGeoSection.style.display = "none";
     return;
   }
   $booksChartsSection.style.display = "block";
-  renderBooksGeo(ids);
 
   const byGenre = countBy(ids, (b) => b?.genre || "Sin categoría");
   const byAuthor = countBy(ids, (b) => b?.author || "Sin autor");
@@ -2074,6 +2072,7 @@ if (inlineInput) {
   }
 
   // Charts bajo “Terminados”
+  renderBooksGeo(idsAll); // mapa con todos los libros que tengan país
   renderFinishedCharts(finishedIdsAll);
 }
 

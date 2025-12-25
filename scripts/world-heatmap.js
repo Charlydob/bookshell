@@ -1,22 +1,42 @@
+// world-heatmap.js
 import { getCountryEnglishName } from "./countries.js";
 
-const WORLD_GEO_URL = "https://fastly.jsdelivr.net/npm/echarts@5/examples/data/asset/world.geojson";
+const WORLD_GEO_URLS = [
+  "https://echarts.apache.org/examples/data/asset/geo/world.json",
+  "https://cdn.jsdelivr.net/npm/echarts@5/map/json/world.json",
+  "https://cdn.jsdelivr.net/npm/echarts@3.6.0/map/json/world.json"
+];
+
 let worldGeoPromise = null;
+
+async function fetchJson(url) {
+  const res = await fetch(url, { cache: "force-cache" });
+  if (!res.ok) throw new Error(`GeoJSON status ${res.status} @ ${url}`);
+  return res.json();
+}
 
 function loadWorldGeoJson() {
   if (worldGeoPromise) return worldGeoPromise;
-  worldGeoPromise = fetch(WORLD_GEO_URL)
-    .then((res) => {
-      if (!res.ok) throw new Error(`GeoJSON status ${res.status}`);
-      return res.json();
-    })
+
+  worldGeoPromise = (async () => {
+    for (const url of WORLD_GEO_URLS) {
+      try {
+        return await fetchJson(url);
+      } catch (e) {
+        // prueba la siguiente
+      }
+    }
+    throw new Error("No se pudo cargar ningún GeoJSON del mundo");
+  })()
     .catch((err) => {
       console.warn("No se pudo cargar el GeoJSON del mundo", err);
       worldGeoPromise = null;
       return null;
     });
+
   return worldGeoPromise;
 }
+
 
 function escapeHtml(str) {
   return String(str ?? "")

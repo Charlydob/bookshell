@@ -20,6 +20,12 @@ import {
   uploadBytes,
   getDownloadURL
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+import {
+  ensureCountryDatalist,
+  getCountryEnglishName,
+  normalizeCountryInput
+} from "./countries.js";
+import { renderCountryHeatmap, renderCountryList } from "./world-heatmap.js";
 
 // === Firebase ===
 const firebaseConfig = {
@@ -122,6 +128,7 @@ const $bookPages = document.getElementById("book-pages");
 const $bookCurrentPage = document.getElementById("book-current-page");
 const $bookGenre = document.getElementById("book-genre");
 const $bookLanguage = document.getElementById("book-language");
+const $bookCountry = document.getElementById("book-country");
 const $bookStatus = document.getElementById("book-status");
 const $bookPdf = document.getElementById("book-pdf"); // puede ser null si no usamos PDF
 const $bookFavorite = document.getElementById("book-favorite");
@@ -138,6 +145,9 @@ const $chartAuthor = document.getElementById("chart-author");
 const $chartCentury = document.getElementById("chart-century");
 const $chartLanguage = document.getElementById("chart-language");
 const $appMain = document.querySelector(".app-main");
+const $booksGeoSection = document.getElementById("books-geo-section");
+const $booksWorldMap = document.getElementById("books-world-map");
+const $booksCountryList = document.getElementById("books-country-list");
 
 
 const $booksShelfSearch = document.getElementById("books-shelf-search");
@@ -163,6 +173,8 @@ const filterState = {
   showFinished: false
 };
 
+ensureCountryDatalist();
+
 const $bookDetailBackdrop = document.getElementById("book-detail-backdrop");
 const $bookDetailTitle = document.getElementById("book-detail-title");
 const $bookDetailClose = document.getElementById("book-detail-close");
@@ -174,6 +186,7 @@ const $bookDetailYear = document.getElementById("book-detail-year");
 const $bookDetailCentury = document.getElementById("book-detail-century");
 const $bookDetailGenre = document.getElementById("book-detail-genre");
 const $bookDetailLanguage = document.getElementById("book-detail-language");
+const $bookDetailCountry = document.getElementById("book-detail-country");
 const $bookDetailPages = document.getElementById("book-detail-pages");
 const $bookDetailProgress = document.getElementById("book-detail-progress");
 const $bookDetailFinished = document.getElementById("book-detail-finished");
@@ -321,6 +334,25 @@ function escapeHtml(str) {
 
 function normalizeLabel(v) {
   return String(v ?? "").trim();
+}
+
+function normalizeCountryRecord(value, label = "") {
+  const candidate = label || value;
+  const normalized = normalizeCountryInput(candidate || value);
+  if (normalized) {
+    const code = normalized.code || null;
+    return {
+      code,
+      label: normalized.name || label || value || code,
+      english: getCountryEnglishName(code) || normalized.name || code
+    };
+  }
+  const fallbackLabel = normalizeLabel(candidate || value);
+  if (fallbackLabel) {
+    const rawCode = normalizeLabel(value || "").toUpperCase() || null;
+    return { code: rawCode, label: fallbackLabel, english: fallbackLabel };
+  }
+  return null;
 }
 
 function parseGenresValue(val) {
@@ -746,6 +778,8 @@ function openBookDetail(bookId) {
   fillDetail($bookDetailCentury, yearToCenturyLabel(b.year));
   fillDetail($bookDetailGenre, b.genre || "—");
   fillDetail($bookDetailLanguage, b.language || "—");
+  const countryInfo = normalizeCountryRecord(b.country, b.countryLabel);
+  fillDetail($bookDetailCountry, countryInfo?.label || "—");
   fillDetail($bookDetailPages, b.pages ? `${b.pages} pág` : "—");
 
   const total = Number(b.pages) || 0;
@@ -801,6 +835,7 @@ function openBookModal(bookId = null) {
     $bookCurrentPage.value = b.currentPage ?? 0;
     populateGenreSelect(b.genre || "");
     $bookLanguage.value = b.language || "";
+    if ($bookCountry) $bookCountry.value = b.countryLabel || b.country || "";
     $bookStatus.value = b.status || "reading";
     if ($bookFavorite) $bookFavorite.checked = !!b.favorite;
     if ($bookFinishedPast) $bookFinishedPast.checked = !!b.finishedPast;
@@ -811,6 +846,7 @@ function openBookModal(bookId = null) {
     resetIsbnUI();
     $bookCurrentPage.value = 0;
     populateGenreSelect("");
+    if ($bookCountry) $bookCountry.value = "";
     $bookStatus.value = "reading";
     if ($bookFavorite) $bookFavorite.checked = false;
     if ($bookFinishedPast) $bookFinishedPast.checked = false;
@@ -843,6 +879,7 @@ $bookForm.addEventListener("submit", async (e) => {
   const selectedStatus = $bookStatus.value || "reading";
   const finishedPast = $bookFinishedPast ? !!$bookFinishedPast.checked : false;
   let currentPage = Math.max(0, Math.min(pages, parseInt($bookCurrentPage.value, 10) || 0));
+  const countryInfo = normalizeCountryRecord($bookCountry?.value);
 
   if (selectedStatus === "finished" && pages > 0) {
     currentPage = pages;
@@ -857,6 +894,8 @@ $bookForm.addEventListener("submit", async (e) => {
     currentPage,
     genre: $bookGenre.value.trim() || null,
     language: $bookLanguage.value.trim() || null,
+    country: countryInfo?.code || null,
+    countryLabel: countryInfo?.label || null,
     status: selectedStatus,
     favorite: $bookFavorite ? !!$bookFavorite.checked : false,
     finishedPast: false,
@@ -950,7 +989,9 @@ function matchesShelfQuery(book, query) {
     book?.author,
     book?.genre,
     book?.language,
-    book?.year
+    book?.year,
+    book?.countryLabel,
+    book?.country
   ];
   return fields.some((f) => String(f || "").toLowerCase().includes(q));
 }
@@ -1527,15 +1568,58 @@ function applyDonutFilter(selection, type = "search") {
   });
 }
 
+function buildBookCountryStats(ids) {
+  const m = new Map();
+  (ids || []).forEach((id) => {
+    const b = books?.[id];
+    const country = normalizeCountryRecord(b?.country, b?.countryLabel);
+    if (!country || !country.label) return;
+    const key = country.code || country.label.toLowerCase();
+    const current = m.get(key) || { code: country.code, label: country.label, english: country.english, value: 0 };
+    current.value += 1;
+    m.set(key, current);
+  });
+  return Array.from(m.values()).sort(
+    (a, b) => b.value - a.value || a.label.localeCompare(b.label, "es", { sensitivity: "base" })
+  );
+}
+
+function renderBooksGeo(ids) {
+  if (!$booksGeoSection) return;
+  const stats = buildBookCountryStats(ids);
+  if (!stats.length) {
+    $booksGeoSection.style.display = "none";
+    if ($booksWorldMap) {
+      if (typeof $booksWorldMap.__geoCleanup === "function") $booksWorldMap.__geoCleanup();
+      $booksWorldMap.innerHTML = "";
+    }
+    if ($booksCountryList) $booksCountryList.innerHTML = "";
+    return;
+  }
+  $booksGeoSection.style.display = "block";
+  const mapData = stats
+    .filter((s) => s.code)
+    .map((s) => ({
+      code: s.code,
+      value: s.value,
+      label: s.label,
+      mapName: s.english
+    }));
+  renderCountryHeatmap($booksWorldMap, mapData, { emptyLabel: "Añade el país de tus libros" });
+  renderCountryList($booksCountryList, stats, "libro");
+}
+
 function renderFinishedCharts(finishedIds) {
   if (!$booksChartsSection) return;
 
   const ids = finishedIds || [];
   if (!ids.length) {
     $booksChartsSection.style.display = "none";
+    if ($booksGeoSection) $booksGeoSection.style.display = "none";
     return;
   }
   $booksChartsSection.style.display = "block";
+  renderBooksGeo(ids);
 
   const byGenre = countBy(ids, (b) => b?.genre || "Sin categoría");
   const byAuthor = countBy(ids, (b) => b?.author || "Sin autor");
@@ -1686,6 +1770,12 @@ function renderBooks() {
       $booksFinishedSection.style.display = "none";
       if ($booksFinishedCount) $booksFinishedCount.textContent = "0";
     }
+    if ($booksGeoSection) {
+      $booksGeoSection.style.display = "none";
+      if ($booksWorldMap) $booksWorldMap.innerHTML = "";
+      if ($booksCountryList) $booksCountryList.innerHTML = "";
+    }
+    if ($booksChartsSection) $booksChartsSection.style.display = "none";
     if ($booksShelfResults) $booksShelfResults.textContent = "";
     if ($booksShelfEmpty) $booksShelfEmpty.style.display = "none";
     if ($booksFilterEmpty) $booksFilterEmpty.style.display = "none";
@@ -1820,6 +1910,7 @@ if (inlineInput) {
     if (b?.year) metaBits.push(String(b.year));
     if (b?.genre) metaBits.push(b.genre);
     if (b?.language) metaBits.push(b.language);
+    if (b?.countryLabel || b?.country) metaBits.push(b.countryLabel || b.country);
     meta.innerHTML = metaBits.map((m) => `<span>${m}</span>`).join("");
 
     const pagesRow = document.createElement("div");

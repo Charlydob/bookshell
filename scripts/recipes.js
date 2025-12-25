@@ -133,6 +133,14 @@ if ($viewRecipes) {
   let calMonth = today.getMonth();
   let calViewMode = "month";
 
+  const recipeDonutActiveFill = "#f5e6a6";
+  const recipeDonutActiveStroke = "#e3c45a";
+  const recipeDonutSliceStroke = "rgba(255,255,255,0.22)";
+  const recipeDonutFocusHint = "Toca o navega una sección";
+  let recipeDonutActiveType = null;
+  let recipeDonutActiveLabel = null;
+  let recipeDonutBackupChips = null;
+
   function loadRecipes() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -174,6 +182,10 @@ if ($viewRecipes) {
     const value = Math.max(0, Math.round((Number(rating) || 0) * 2) / 2);
     const text = Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
     return `${text}★`;
+  }
+
+  function normalizeLabel(value) {
+    return String(value ?? "").trim();
   }
 
   function pickSpinePalette(seed = "") {
@@ -583,6 +595,17 @@ if ($viewRecipes) {
     };
   }
 
+  function topRecipeEntries(entries = [], maxSlices = 6) {
+    const arr = (entries || []).filter((e) => e && e.value > 0);
+    arr.sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "es"));
+    if (arr.length <= maxSlices) return arr;
+    const head = arr.slice(0, maxSlices - 1);
+    const tail = arr.slice(maxSlices - 1);
+    const others = tail.reduce((acc, e) => acc + e.value, 0);
+    head.push({ label: "Otros", value: others });
+    return head;
+  }
+
   function renderRecipeDonut(host, title, entries, options = {}) {
     if (!host) return;
 
@@ -591,25 +614,20 @@ if ($viewRecipes) {
       delete host.__recipeDonutCleanup;
     }
 
-    const valid = (entries || []).filter((e) => e.value > 0);
-    const total = valid.reduce((acc, e) => acc + e.value, 0);
+    const data = topRecipeEntries(entries, 6);
+    const total = data.reduce((acc, e) => acc + e.value, 0);
     if (!total) {
       host.innerHTML = `<div class="books-shelf-empty">Sin datos</div>`;
       return;
     }
 
-    const paletteRef = options.palette || palette;
-    const unitLabel = options.unitLabel || "recetas";
-    const focusLabel = options.focusLabel || "Distribución";
-
     let a0 = 0;
-    const slices = valid.map((entry, idx) => {
+    const slicesData = data.map((entry) => {
       const frac = entry.value / total;
       const a1 = a0 + frac * 360;
       const mid = (a0 + a1) / 2;
       const slice = {
         ...entry,
-        color: paletteRef[idx % paletteRef.length],
         a0,
         a1,
         mid,
@@ -619,9 +637,46 @@ if ($viewRecipes) {
       return slice;
     });
 
-    const render = () => {
-      const { width, height, cx, cy, rOuter, rInner, strokeWidth, calloutInnerGap, calloutOuterGap, labelOffset, centerYOffset, centerSubYOffset, focusYOffset } =
-        getRecipeDonutGeometry(host.clientWidth || 360);
+    const onSliceSelect = typeof options.onSliceSelect === "function" ? options.onSliceSelect : null;
+    const activeLabel = normalizeLabel(options.activeLabel || "").toLowerCase();
+    let activeIdx = activeLabel
+      ? slicesData.findIndex((s) => normalizeLabel(s.label).toLowerCase() === activeLabel)
+      : null;
+    if (activeIdx != null && activeIdx < 0) activeIdx = null;
+    let applyActive = () => {};
+
+    const renderWithWidth = (hostWidth) => {
+      const { svg, setActive } = buildDonutSvg(hostWidth);
+      applyActive = setActive;
+      host.innerHTML = "";
+      host.appendChild(svg);
+      applyActive(activeIdx);
+    };
+
+    const handleSelect = (idx) => {
+      activeIdx = idx === activeIdx ? null : idx;
+      applyActive(activeIdx);
+      if (onSliceSelect) {
+        onSliceSelect(activeIdx != null ? slicesData[activeIdx] : null);
+      }
+    };
+
+    function buildDonutSvg(hostWidth = 360) {
+      const {
+        width,
+        height,
+        cx,
+        cy,
+        rOuter,
+        rInner,
+        strokeWidth,
+        calloutInnerGap,
+        calloutOuterGap,
+        labelOffset,
+        centerYOffset,
+        centerSubYOffset,
+        focusYOffset,
+      } = getRecipeDonutGeometry(hostWidth);
 
       const svg = createRecipeSvgEl("svg", {
         class: "donut-svg",
@@ -629,6 +684,25 @@ if ($viewRecipes) {
         role: "img",
         "aria-label": title,
       });
+
+      const defs = createRecipeSvgEl("defs");
+      const glow = createRecipeSvgEl("filter", {
+        id: "donut-glow",
+        x: "-50%",
+        y: "-50%",
+        width: "200%",
+        height: "200%",
+      });
+      glow.appendChild(
+        createRecipeSvgEl("feDropShadow", {
+          dx: "0",
+          dy: "6",
+          stdDeviation: "8",
+          "flood-color": "rgba(245,230,166,0.45)",
+        })
+      );
+      defs.appendChild(glow);
+      svg.appendChild(defs);
 
       const ring = createRecipeSvgEl("circle", {
         class: "donut-ring-base",
@@ -640,50 +714,7 @@ if ($viewRecipes) {
 
       const slicesGroup = createRecipeSvgEl("g", { class: "donut-slices" });
       const calloutsGroup = createRecipeSvgEl("g", { class: "donut-callouts" });
-
-      slices.forEach((slice) => {
-        const path = createRecipeSvgEl("path", {
-          class: "donut-slice recipe-donut-slice",
-          d: recipeDonutSlicePath(cx, cy, rOuter, rInner, slice.a0, slice.a1),
-        });
-        path.setAttribute("fill", slice.color);
-        path.setAttribute("stroke", "rgba(0,0,0,0.16)");
-        path.setAttribute("stroke-width", "1.4");
-        slicesGroup.appendChild(path);
-
-        const inner = recipePolar(cx, cy, rOuter + calloutInnerGap, slice.mid);
-        const outer = recipePolar(cx, cy, rOuter + calloutOuterGap, slice.mid);
-        const anchor = slice.mid > 180 ? "end" : "start";
-        const textX = outer.x + (anchor === "end" ? -labelOffset : labelOffset);
-
-        const line = createRecipeSvgEl("line", {
-          class: "donut-line",
-          x1: inner.x,
-          y1: inner.y,
-          x2: outer.x,
-          y2: outer.y,
-        });
-
-        const label = createRecipeSvgEl("text", {
-          class: "donut-label",
-          x: textX,
-          y: outer.y - 4,
-          "text-anchor": anchor,
-        });
-        label.textContent = slice.label;
-
-        const value = createRecipeSvgEl("text", {
-          class: "donut-label-value",
-          x: textX,
-          y: outer.y + 10,
-          "text-anchor": anchor,
-        });
-        value.textContent = `${slice.value} · ${slice.pct}%`;
-
-        calloutsGroup.appendChild(line);
-        calloutsGroup.appendChild(label);
-        calloutsGroup.appendChild(value);
-      });
+      const centerGroup = createRecipeSvgEl("g", { class: "donut-center-group" });
 
       const centerMain = createRecipeSvgEl("text", {
         class: "donut-center",
@@ -699,7 +730,7 @@ if ($viewRecipes) {
         y: cy + centerSubYOffset,
         "text-anchor": "middle",
       });
-      centerSub.textContent = `${total} ${unitLabel}`;
+      centerSub.textContent = `${total} ${options.unitLabel || "recetas"}`;
 
       const centerFocus = createRecipeSvgEl("text", {
         class: "donut-center-focus",
@@ -707,23 +738,168 @@ if ($viewRecipes) {
         y: cy + focusYOffset,
         "text-anchor": "middle",
       });
-      centerFocus.textContent = focusLabel;
+      centerFocus.textContent = recipeDonutFocusHint;
 
-      svg.appendChild(ring);
+      centerGroup.appendChild(centerMain);
+      centerGroup.appendChild(centerSub);
+      centerGroup.appendChild(centerFocus);
+
+      const slicesEls = [];
+      const calloutEls = [];
+
+      slicesData.forEach((s, idx) => {
+        const path = createRecipeSvgEl("path", {
+          class: "donut-slice",
+          d: recipeDonutSlicePath(cx, cy, rOuter, rInner, s.a0, s.a1),
+          fill: "transparent",
+          stroke: recipeDonutSliceStroke,
+          "data-index": String(idx),
+          role: "button",
+          tabindex: "0",
+          "aria-label": `${s.label}: ${s.value} (${s.pct}%)`,
+        });
+        path.dataset.label = s.label;
+        path.dataset.value = String(s.value);
+        path.dataset.pct = String(s.pct);
+        slicesGroup.appendChild(path);
+        slicesEls.push(path);
+
+        const p1 = recipePolar(cx, cy, rOuter + calloutInnerGap, s.mid);
+        const p2 = recipePolar(cx, cy, rOuter + calloutOuterGap, s.mid);
+        const right = Math.cos((s.mid - 90) * (Math.PI / 180)) >= 0;
+        const x3 = right ? p2.x + labelOffset : p2.x - labelOffset;
+        const y3 = p2.y;
+        const tx = right ? x3 + 3 : x3 - 3;
+        const anchor = right ? "start" : "end";
+
+        const callout = createRecipeSvgEl("g", {
+          class: "donut-callout",
+          "data-index": String(idx),
+          role: "button",
+          tabindex: "0",
+          "aria-label": `${s.label}: ${s.value} (${s.pct}%)`,
+        });
+        const line = createRecipeSvgEl("polyline", {
+          class: "donut-line",
+          points: `${p1.x.toFixed(2)},${p1.y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)} ${x3.toFixed(2)},${y3.toFixed(2)}`,
+          fill: "none",
+        });
+        const label = createRecipeSvgEl("text", {
+          class: "donut-label",
+          x: tx.toFixed(2),
+          y: (y3 - 2).toFixed(2),
+          "text-anchor": anchor,
+        });
+        const t1 = createRecipeSvgEl("tspan", { x: tx.toFixed(2), dy: "0" });
+        t1.textContent = s.label;
+        const t2 = createRecipeSvgEl("tspan", {
+          class: "donut-label-value",
+          x: tx.toFixed(2),
+          dy: "12",
+        });
+        t2.textContent = `${s.value} · ${s.pct}%`;
+        label.appendChild(t1);
+        label.appendChild(t2);
+
+        callout.appendChild(line);
+        callout.appendChild(label);
+        calloutsGroup.appendChild(callout);
+        calloutEls.push(callout);
+
+        const activate = () => handleSelect(idx);
+        const handleKey = (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            activate();
+          }
+        };
+
+        path.addEventListener("click", activate);
+        path.addEventListener("keydown", handleKey);
+        callout.addEventListener("click", activate);
+        callout.addEventListener("keydown", handleKey);
+      });
+
+      function setActive(idx = null) {
+        slicesEls.forEach((p, i) => {
+          const isActive = i === idx;
+          p.classList.toggle("active", isActive);
+          p.setAttribute("fill", isActive ? recipeDonutActiveFill : "transparent");
+          p.setAttribute("stroke", isActive ? recipeDonutActiveStroke : recipeDonutSliceStroke);
+          p.setAttribute("filter", isActive ? "url(#donut-glow)" : "");
+          p.setAttribute("aria-pressed", isActive ? "true" : "false");
+        });
+        calloutEls.forEach((c, i) => {
+          const isActive = i === idx;
+          c.classList.toggle("active", isActive);
+          c.setAttribute("aria-pressed", isActive ? "true" : "false");
+        });
+
+        if (idx == null) {
+          centerFocus.textContent = recipeDonutFocusHint;
+        } else {
+          const s = slicesData[idx];
+          centerFocus.textContent = `${s.label}: ${s.value} (${s.pct}%)`;
+        }
+      }
+
+      setActive(activeIdx);
+
       svg.appendChild(slicesGroup);
       svg.appendChild(calloutsGroup);
-      svg.appendChild(centerMain);
-      svg.appendChild(centerSub);
-      svg.appendChild(centerFocus);
+      svg.appendChild(centerGroup);
 
-      host.innerHTML = "";
-      host.appendChild(svg);
-    };
+      return { svg, setActive };
+    }
 
-    render();
-    const ro = new ResizeObserver(() => render());
+    const ro = new ResizeObserver((entries) => {
+      const width = Math.round(entries?.[0]?.contentRect?.width || host.clientWidth || 360);
+      renderWithWidth(width);
+    });
     ro.observe(host);
     host.__recipeDonutCleanup = () => ro.disconnect();
+    renderWithWidth(host.clientWidth || 360);
+  }
+
+  function clearRecipeDonutSelection() {
+    recipeDonutActiveType = null;
+    recipeDonutActiveLabel = null;
+    recipeDonutBackupChips = null;
+  }
+
+  function applyRecipeDonutFilter(selection, type) {
+    const label = normalizeLabel(selection?.label || "");
+    const aggregated = label.toLowerCase() === "otros";
+    if (!selection || aggregated) {
+      if (recipeDonutBackupChips) {
+        filterState.chips = new Set(recipeDonutBackupChips);
+      }
+      clearRecipeDonutSelection();
+      renderChips();
+      renderShelf();
+      renderCharts();
+      return;
+    }
+
+    if (recipeDonutActiveType && recipeDonutActiveType !== type) {
+      applyRecipeDonutFilter(null, recipeDonutActiveType);
+    }
+
+    if (!recipeDonutBackupChips) {
+      recipeDonutBackupChips = new Set(filterState.chips);
+    }
+
+    recipeDonutActiveType = type;
+    recipeDonutActiveLabel = label;
+
+    const next = new Set();
+    if (type === "meal") next.add(`meal:${label.toLowerCase()}`);
+    if (type === "health") next.add(`health:${label.toLowerCase()}`);
+    filterState.chips = next;
+
+    renderChips();
+    renderShelf();
+    renderCharts();
   }
 
   function renderCharts() {
@@ -731,13 +907,37 @@ if ($viewRecipes) {
       label: m,
       value: recipes.filter((r) => r.meal === m).length,
     })).filter((m) => m.value > 0);
-    renderRecipeDonut($chartMeal, "Momento del día", mealEntries, { unitLabel: "recetas" });
+
+    if (recipeDonutActiveType === "meal") {
+      const hasActive = mealEntries.some(
+        (m) => normalizeLabel(m.label).toLowerCase() === normalizeLabel(recipeDonutActiveLabel).toLowerCase()
+      );
+      if (!hasActive) clearRecipeDonutSelection();
+    }
+
+    renderRecipeDonut($chartMeal, "Momento del día", mealEntries, {
+      unitLabel: "recetas",
+      onSliceSelect: (selection) => applyRecipeDonutFilter(selection, "meal"),
+      activeLabel: recipeDonutActiveType === "meal" ? recipeDonutActiveLabel : null,
+    });
 
     const healthEntries = HEALTH_TYPES.map((h) => ({
       label: h,
       value: recipes.filter((r) => r.health === h).length,
     })).filter((h) => h.value > 0);
-    renderRecipeDonut($chartHealth, "Salud", healthEntries, { unitLabel: "recetas" });
+
+    if (recipeDonutActiveType === "health") {
+      const hasActive = healthEntries.some(
+        (h) => normalizeLabel(h.label).toLowerCase() === normalizeLabel(recipeDonutActiveLabel).toLowerCase()
+      );
+      if (!hasActive) clearRecipeDonutSelection();
+    }
+
+    renderRecipeDonut($chartHealth, "Salud", healthEntries, {
+      unitLabel: "recetas",
+      onSliceSelect: (selection) => applyRecipeDonutFilter(selection, "health"),
+      activeLabel: recipeDonutActiveType === "health" ? recipeDonutActiveLabel : null,
+    });
   }
 
   function buildActivityMap() {

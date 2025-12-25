@@ -1130,6 +1130,15 @@ if ($viewRecipes) {
   function renderRecipeGeo() {
     if (!$recipesGeoSection) return;
     const stats = buildRecipeCountryStats();
+    if (!stats.length) {
+      $recipesGeoSection.style.display = "none";
+      if ($recipesWorldMap) {
+        if (typeof $recipesWorldMap.__geoCleanup === "function") $recipesWorldMap.__geoCleanup();
+        $recipesWorldMap.innerHTML = "";
+      }
+      if ($recipesCountryList) $recipesCountryList.innerHTML = "";
+      return;
+    }
     $recipesGeoSection.style.display = "block";
     const mapData = stats
       .filter((s) => s.code)
@@ -1139,9 +1148,7 @@ if ($viewRecipes) {
         label: s.label,
         mapName: s.english,
       }));
-    renderCountryHeatmap($recipesWorldMap, mapData, {
-      emptyLabel: "Añade el país de cada receta para ver el mapa",
-    });
+    renderCountryHeatmap($recipesWorldMap, mapData, { emptyLabel: "Añade el país de cada receta" });
     renderCountryList($recipesCountryList, stats, "plato");
   }
 
@@ -1203,7 +1210,7 @@ if ($viewRecipes) {
     if (!$calGrid) return;
     const activity = buildActivityMap();
     if (calViewMode === "year") {
-    renderCalendarYear(activity);
+      renderCalendarYear(activity);
       return;
     }
     const first = new Date(calYear, calMonth, 1);
@@ -1251,12 +1258,6 @@ if ($viewRecipes) {
         : "Aún no hay cocinadas este mes";
     }
   }
-
-  document.addEventListener("view-changed", (event) => {
-    if (event?.detail?.viewId === "view-recipes") {
-      renderRecipeGeo();
-    }
-  });
 
   function renderCalendarYear(activity) {
     const fragment = document.createDocumentFragment();

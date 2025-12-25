@@ -8,8 +8,6 @@ const WORLD_GEO_URLS = [
 ];
 
 let worldGeoPromise = null;
-const MIN_HOST_WIDTH = 200;
-const MIN_HOST_HEIGHT = 200;
 
 async function fetchJson(url) {
   const res = await fetch(url, { cache: "force-cache" });
@@ -49,50 +47,6 @@ function escapeHtml(str) {
     .replaceAll("'", "&#39;");
 }
 
-function waitForHostSize(host, token, minW = MIN_HOST_WIDTH, minH = MIN_HOST_HEIGHT) {
-  return new Promise((resolve) => {
-    let attempts = 0;
-    const check = () => {
-      if (!host || host.__geoRenderToken !== token) {
-        resolve(null);
-        return;
-      }
-      const rect = host.getBoundingClientRect();
-      if (rect.width >= minW && rect.height >= minH) {
-        resolve(rect);
-        return;
-      }
-      attempts += 1;
-      const delay = attempts > 60 ? 140 : 80;
-      setTimeout(() => {
-        if (typeof requestAnimationFrame === "function") {
-          requestAnimationFrame(check);
-        } else {
-          check();
-        }
-      }, delay);
-    };
-    check();
-  });
-}
-
-function preventScrollOutside(host) {
-  const wheelHandler = (e) => {
-    e.preventDefault();
-  };
-  const touchHandler = (e) => {
-    if (e.touches && e.touches.length > 1) {
-      e.preventDefault();
-    }
-  };
-  host.addEventListener("wheel", wheelHandler, { passive: false });
-  host.addEventListener("touchmove", touchHandler, { passive: false });
-  return () => {
-    host.removeEventListener("wheel", wheelHandler);
-    host.removeEventListener("touchmove", touchHandler);
-  };
-}
-
 export async function renderCountryHeatmap(host, entries = [], options = {}) {
   if (!host) return;
 
@@ -112,16 +66,12 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
     return;
   }
 
-  const renderToken = Symbol("geo-render");
-  host.__geoRenderToken = renderToken;
   host.innerHTML = "<div class=\"geo-empty\">Cargando mapa…</div>";
   const geo = await loadWorldGeoJson();
   if (!geo) {
     host.innerHTML = `<div class="geo-empty">No se pudo cargar el mapa mundial.</div>`;
-    delete host.__geoRenderToken;
     return;
   }
-  if (host.__geoRenderToken !== renderToken) return;
 
   if (!echartsLib.getMap("world")) {
     echartsLib.registerMap("world", geo);
@@ -135,13 +85,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
 
   const maxVal = Math.max(...data.map((d) => Number(d.value) || 0), 1);
 
-  const hostSize = await waitForHostSize(host, renderToken);
-  if (!hostSize || host.__geoRenderToken !== renderToken) {
-    delete host.__geoRenderToken;
-    return;
-  }
-
-  const chart = echartsLib.init(host, null, { renderer: "svg" });
+  const chart = echartsLib.init(host, null, { renderer: "canvas" });
   const option = {
     backgroundColor: "transparent",
     tooltip: {
@@ -174,12 +118,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
         type: "map",
         map: "world",
         nameProperty: "name",
-        roam: true,
-        scaleLimit: { min: 1, max: 6 },
-        left: 0,
-        right: 0,
-        top: 0,
-        bottom: 0,
+        roam: false,
         itemStyle: {
           areaColor: "rgba(255,255,255,0)",
           borderColor: "rgba(255,255,255,0.18)",
@@ -197,28 +136,12 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
   };
 
   chart.setOption(option);
-  chart.resize({ width: hostSize.width, height: hostSize.height });
 
-  const resize = () => {
-    if (host.__geoRenderToken !== renderToken) return;
-    const rect = host.getBoundingClientRect();
-    if (rect.width >= 40 && rect.height >= 40) {
-      chart.resize();
-    }
-  };
-  let resizeObserver = null;
-  if (typeof ResizeObserver === "function") {
-    resizeObserver = new ResizeObserver(() => requestAnimationFrame(resize));
-    resizeObserver.observe(host);
-  }
+  const resize = () => chart.resize();
   window.addEventListener("resize", resize);
-  const removeScrollGuards = preventScrollOutside(host);
   host.__geoCleanup = () => {
     window.removeEventListener("resize", resize);
-    if (resizeObserver) resizeObserver.disconnect();
-    removeScrollGuards();
     chart.dispose();
-    if (host.__geoRenderToken === renderToken) delete host.__geoRenderToken;
   };
 }
 

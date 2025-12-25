@@ -1354,16 +1354,13 @@
 }
 .geo-map{
   width: 100%;
-  min-height: 260px;
-  height: clamp(280px, 42vh, 420px);
-  position: relative;
+  height: 320px;
   border-radius: 16px;
   background: radial-gradient(circle at 20% 20%, rgba(245,230,166,0.08), transparent 40%),
     radial-gradient(circle at 80% 30%, rgba(127,93,255,0.06), transparent 45%),
     rgba(5, 7, 12, 0.7);
   border: 1px solid rgba(255,255,255,0.08);
   overflow: hidden;
-  touch-action: none;
 }
 .geo-empty{
   text-align: center;

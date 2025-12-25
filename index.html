@@ -695,7 +695,7 @@
 
       <div class="modal-scroll sheet-body">
         <div class="sheet-section">
-          <div class="sheet-section-title">Detalles</div>
+          <div class="sheet-section-title">Datos clave</div>
 
           <label class="field">
             <span class="field-label">Nombre del plato</span>
@@ -758,14 +758,98 @@
             </label>
           </div>
         </div>
+
+        <div class="sheet-section">
+          <div class="sheet-section-title">Receta editable</div>
+          <p class="section-hint">Organiza ingredientes y pasos para que aparezcan en el recetario a pantalla completa.</p>
+
+          <div class="recipe-builder-grid">
+            <div class="recipe-builder-column">
+              <div class="builder-header">
+                <div>
+                  <div class="builder-title">Ingredientes</div>
+                  <div class="builder-subtitle">Añade tantos como necesites</div>
+                </div>
+                <button type="button" id="recipe-add-ingredient" class="btn ghost btn-compact">+ Ingrediente</button>
+              </div>
+              <div id="recipe-ingredients-list" class="recipe-ingredients-list"></div>
+            </div>
+
+            <div class="recipe-builder-column">
+              <div class="builder-header">
+                <div>
+                  <div class="builder-title">Pasos</div>
+                  <div class="builder-subtitle">Título y descripción para cada paso</div>
+                </div>
+                <button type="button" id="recipe-add-step" class="btn ghost btn-compact">+ Paso</button>
+              </div>
+              <div id="recipe-steps-list" class="recipe-steps-list"></div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="modal-footer sheet-footer">
+        <button type="button" id="recipe-delete" class="btn ghost danger footer-start">Eliminar</button>
         <button type="button" id="recipe-modal-cancel" class="btn ghost">Cancelar</button>
         <button type="submit" class="btn primary">Guardar</button>
       </div>
     </form>
   </div>
+</div>
+
+<!-- RECETARIO A PANTALLA COMPLETA -->
+<div id="recipe-detail-backdrop" class="recipe-detail-backdrop hidden">
+  <article class="recipe-detail-card" role="dialog" aria-modal="true">
+    <header class="recipe-detail-header">
+      <div class="recipe-detail-top">
+        <div class="recipe-detail-headings">
+          <div id="recipe-detail-meal" class="recipe-detail-chip"></div>
+          <h2 id="recipe-detail-title" class="recipe-detail-title">Receta</h2>
+          <div id="recipe-detail-tags" class="recipe-detail-tags"></div>
+        </div>
+        <div class="recipe-detail-actions">
+          <button id="recipe-detail-delete" class="btn ghost danger">Eliminar</button>
+          <button id="recipe-detail-edit" class="btn primary btn-compact">Editar</button>
+          <button id="recipe-detail-close" class="icon-btn icon-btn-large" aria-label="Cerrar">✕</button>
+        </div>
+      </div>
+      <div id="recipe-detail-meta" class="recipe-detail-meta"></div>
+    </header>
+
+    <div class="recipe-detail-body">
+      <section class="recipe-detail-section">
+        <div class="section-heading">
+          <div class="section-title">Datos clave</div>
+          <div class="section-hint">Se usan para estadísticas y filtros</div>
+        </div>
+        <div id="recipe-detail-grid" class="recipe-detail-grid"></div>
+      </section>
+
+      <section class="recipe-detail-section">
+        <div class="section-heading">
+          <div class="section-title">Ingredientes</div>
+          <div class="section-hint">Marca cada uno al prepararlo</div>
+        </div>
+        <div id="recipe-detail-ingredients" class="recipe-detail-ingredients"></div>
+      </section>
+
+      <section class="recipe-detail-section">
+        <div class="section-heading">
+          <div class="section-title">Pasos</div>
+          <div class="section-hint">Título y descripción editables en el modal</div>
+        </div>
+        <div id="recipe-detail-steps" class="recipe-detail-steps"></div>
+      </section>
+
+      <section id="recipe-detail-notes-wrapper" class="recipe-detail-section" style="display:none;">
+        <div class="section-heading">
+          <div class="section-title">Notas</div>
+        </div>
+        <p id="recipe-detail-notes" class="recipe-detail-notes"></p>
+      </section>
+    </div>
+  </article>
 </div>
 
   <script type="module" src="scripts/main.js"></script>

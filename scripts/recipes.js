@@ -9,6 +9,13 @@ if ($viewRecipes) {
   const HEALTH_TYPES = ["sana", "equilibrada", "insana"];
   const palette = ["#f4d35e", "#9ad5ff", "#ff89c6", "#7dffb4", "#c8a4ff"];
   const LAURA_POSITIVE_THRESHOLD = 4;
+  const DEFAULT_INGREDIENT = () => ({ id: generateId(), text: "", done: false });
+  const DEFAULT_STEP = () => ({
+    id: generateId(),
+    title: "",
+    description: "",
+    done: false,
+  });
 
   const defaultRecipes = [
     {
@@ -23,6 +30,32 @@ if ($viewRecipes) {
       lastCooked: "2024-06-02",
       cookedDates: ["2024-05-19", "2024-06-02", "2024-06-10"],
       notes: "Sirve con pan crujiente y cilantro.",
+      ingredients: [
+        { id: "ing-r1-1", text: "1 cebolla morada en juliana", done: false },
+        { id: "ing-r1-2", text: "2 dientes de ajo picados", done: false },
+        { id: "ing-r1-3", text: "400g tomate triturado", done: false },
+        { id: "ing-r1-4", text: "4 huevos camperos", done: false },
+      ],
+      steps: [
+        {
+          id: "step-r1-1",
+          title: "Sofrito",
+          description: "Pocha la cebolla y el ajo con comino y pimentón.",
+          done: false,
+        },
+        {
+          id: "step-r1-2",
+          title: "Salsa",
+          description: "Añade tomate, reduce 12 minutos y corrige de sal.",
+          done: false,
+        },
+        {
+          id: "step-r1-3",
+          title: "Huevos",
+          description: "Haz 4 huecos y cocina los huevos tapados a fuego bajo.",
+          done: false,
+        },
+      ],
     },
     {
       id: "r2",
@@ -36,6 +69,32 @@ if ($viewRecipes) {
       lastCooked: "2024-05-28",
       cookedDates: ["2024-05-05", "2024-05-28"],
       notes: "Queda mejor con topping de semillas de sésamo.",
+      ingredients: [
+        { id: "ing-r2-1", text: "2 calabacines medianos", done: false },
+        { id: "ing-r2-2", text: "1 puerro", done: false },
+        { id: "ing-r2-3", text: "Caldo de verduras", done: false },
+        { id: "ing-r2-4", text: "Yogur griego o queso crema", done: false },
+      ],
+      steps: [
+        {
+          id: "step-r2-1",
+          title: "Rehogar",
+          description: "Sofríe el puerro y el calabacín 8 minutos.",
+          done: false,
+        },
+        {
+          id: "step-r2-2",
+          title: "Cocer",
+          description: "Cubre con caldo y cocina 12 minutos; enfría.",
+          done: false,
+        },
+        {
+          id: "step-r2-3",
+          title: "Triturar",
+          description: "Bate con yogur, sal y pimienta hasta cremoso.",
+          done: false,
+        },
+      ],
     },
     {
       id: "r3",
@@ -49,6 +108,32 @@ if ($viewRecipes) {
       lastCooked: "2024-04-14",
       cookedDates: ["2024-03-30", "2024-04-14"],
       notes: "Usar grana padano y bechamel ligera.",
+      ingredients: [
+        { id: "ing-r3-1", text: "Láminas de lasagna precocidas", done: false },
+        { id: "ing-r3-2", text: "500g setas variadas", done: false },
+        { id: "ing-r3-3", text: "400ml bechamel ligera", done: false },
+        { id: "ing-r3-4", text: "Queso rallado", done: false },
+      ],
+      steps: [
+        {
+          id: "step-r3-1",
+          title: "Saltear setas",
+          description: "Dora las setas con ajo y tomillo hasta dorar.",
+          done: false,
+        },
+        {
+          id: "step-r3-2",
+          title: "Montar",
+          description: "Alterna capas de pasta, setas y bechamel.",
+          done: false,
+        },
+        {
+          id: "step-r3-3",
+          title: "Hornear",
+          description: "180ºC durante 25-30 minutos hasta gratinar.",
+          done: false,
+        },
+      ],
     },
     {
       id: "r4",
@@ -62,6 +147,32 @@ if ($viewRecipes) {
       lastCooked: "2024-06-01",
       cookedDates: ["2024-05-12", "2024-06-01"],
       notes: "Añadir frutos rojos y un toque de ralladura de naranja.",
+      ingredients: [
+        { id: "ing-r4-1", text: "Pan brioche en rebanadas gruesas", done: false },
+        { id: "ing-r4-2", text: "2 huevos", done: false },
+        { id: "ing-r4-3", text: "Leche + vainilla", done: false },
+        { id: "ing-r4-4", text: "Mantequilla para la sartén", done: false },
+      ],
+      steps: [
+        {
+          id: "step-r4-1",
+          title: "Mezcla",
+          description: "Bate huevos, leche, vainilla y pizca de canela.",
+          done: false,
+        },
+        {
+          id: "step-r4-2",
+          title: "Remojar",
+          description: "Empapa el pan 20-30 segundos por lado.",
+          done: false,
+        },
+        {
+          id: "step-r4-3",
+          title: "Dorar",
+          description: "Cocina en mantequilla a fuego medio hasta dorar.",
+          done: false,
+        },
+      ],
     },
   ];
 
@@ -117,8 +228,28 @@ if ($viewRecipes) {
   const $recipeNotes = document.getElementById("recipe-notes");
   const $recipeFavorite = document.getElementById("recipe-favorite");
   const $recipeLaura = document.getElementById("recipe-laura");
+  const $recipeIngredientsList = document.getElementById("recipe-ingredients-list");
+  const $recipeStepsList = document.getElementById("recipe-steps-list");
+  const $recipeAddIngredient = document.getElementById("recipe-add-ingredient");
+  const $recipeAddStep = document.getElementById("recipe-add-step");
+  const $recipeDelete = document.getElementById("recipe-delete");
+
+  const $recipeDetailBackdrop = document.getElementById("recipe-detail-backdrop");
+  const $recipeDetailClose = document.getElementById("recipe-detail-close");
+  const $recipeDetailEdit = document.getElementById("recipe-detail-edit");
+  const $recipeDetailDelete = document.getElementById("recipe-detail-delete");
+  const $recipeDetailTitle = document.getElementById("recipe-detail-title");
+  const $recipeDetailTags = document.getElementById("recipe-detail-tags");
+  const $recipeDetailMeal = document.getElementById("recipe-detail-meal");
+  const $recipeDetailMeta = document.getElementById("recipe-detail-meta");
+  const $recipeDetailGrid = document.getElementById("recipe-detail-grid");
+  const $recipeDetailIngredients = document.getElementById("recipe-detail-ingredients");
+  const $recipeDetailSteps = document.getElementById("recipe-detail-steps");
+  const $recipeDetailNotes = document.getElementById("recipe-detail-notes");
+  const $recipeDetailNotesWrapper = document.getElementById("recipe-detail-notes-wrapper");
 
   let recipes = loadRecipes();
+  let detailRecipeId = null;
 
   const filterState = {
     query: "",
@@ -146,12 +277,12 @@ if ($viewRecipes) {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) return parsed.map(normalizeRecipeFields);
       }
     } catch (err) {
       console.warn("No se pudo leer recetas almacenadas", err);
     }
-    return defaultRecipes;
+    return defaultRecipes.map(normalizeRecipeFields);
   }
 
   function saveRecipes() {
@@ -165,6 +296,29 @@ if ($viewRecipes) {
   function generateId() {
     if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
     return "r-" + Date.now().toString(36);
+  }
+
+  function normalizeRecipeFields(recipe) {
+    const ingredients = Array.isArray(recipe.ingredients)
+      ? recipe.ingredients.map((ing) => ({
+          id: ing.id || generateId(),
+          text: String(ing.text || "").trim(),
+          done: !!ing.done,
+        }))
+      : [];
+    const steps = Array.isArray(recipe.steps)
+      ? recipe.steps.map((step) => ({
+          id: step.id || generateId(),
+          title: String(step.title || "").trim(),
+          description: String(step.description || "").trim(),
+          done: !!step.done,
+        }))
+      : [];
+    return {
+      ...recipe,
+      ingredients,
+      steps,
+    };
   }
 
   function normalizeDate(dateStr) {
@@ -382,11 +536,11 @@ if ($viewRecipes) {
 
     spine.appendChild(title);
     spine.appendChild(ratingBadge);
-    spine.addEventListener("click", () => openRecipeModal(recipe));
+    spine.addEventListener("click", () => openRecipeDetail(recipe.id));
     spine.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        openRecipeModal(recipe);
+        openRecipeDetail(recipe.id);
       }
     });
     spine.tabIndex = 0;
@@ -495,9 +649,19 @@ if ($viewRecipes) {
         openRecipeModal(recipe);
       });
 
+      const openBtn = document.createElement("button");
+      openBtn.className = "btn ghost btn-compact";
+      openBtn.type = "button";
+      openBtn.textContent = "Abrir";
+      openBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openRecipeDetail(recipe.id);
+      });
+
       actions.appendChild(lauraToggle);
       actions.appendChild(favToggle);
       actions.appendChild(editBtn);
+      actions.appendChild(openBtn);
 
       if (recipe.notes) {
         const notes = document.createElement("div");
@@ -1045,8 +1209,11 @@ if ($viewRecipes) {
 
   function openRecipeModal(recipe = null) {
     if (!$modalBackdrop) return;
+    closeRecipeDetail();
     $modalBackdrop.classList.remove("hidden");
     $modalBackdrop.focus?.();
+    const isEditing = !!recipe;
+    if ($recipeDelete) $recipeDelete.style.display = isEditing ? "inline-flex" : "none";
     if (recipe) {
       $recipeId.value = recipe.id;
       $modalTitle.textContent = "Editar receta";
@@ -1059,6 +1226,8 @@ if ($viewRecipes) {
       $recipeNotes.value = recipe.notes || "";
       $recipeFavorite.checked = !!recipe.favorite;
       $recipeLaura.checked = !!recipe.laura;
+      renderIngredientRows(recipe.ingredients && recipe.ingredients.length ? recipe.ingredients : [DEFAULT_INGREDIENT()]);
+      renderStepRows(recipe.steps && recipe.steps.length ? recipe.steps : [DEFAULT_STEP()]);
     } else {
       $modalTitle.textContent = "Nueva receta";
       $recipeId.value = "";
@@ -1071,6 +1240,8 @@ if ($viewRecipes) {
       $recipeNotes.value = "";
       $recipeFavorite.checked = false;
       $recipeLaura.checked = false;
+      renderIngredientRows([DEFAULT_INGREDIENT()]);
+      renderStepRows([DEFAULT_STEP()]);
     }
   }
 
@@ -1079,9 +1250,10 @@ if ($viewRecipes) {
   }
 
   function updateRecipe(id, patch) {
-    recipes = recipes.map((r) => (r.id === id ? { ...r, ...patch } : r));
+    recipes = recipes.map((r) => (r.id === id ? normalizeRecipeFields({ ...r, ...patch }) : r));
     saveRecipes();
     refreshUI();
+    if (detailRecipeId === id) renderRecipeDetail(id);
   }
 
   function upsertRecipeFromForm(evt) {
@@ -1104,6 +1276,8 @@ if ($viewRecipes) {
       favorite: $recipeFavorite.checked,
       laura: $recipeLaura.checked,
       cookedDates,
+      ingredients: collectIngredientRows(),
+      steps: collectStepRows(),
     };
 
     if (!payload.title) return;
@@ -1127,6 +1301,257 @@ if ($viewRecipes) {
     renderStats();
     renderCharts();
     renderCalendar();
+  }
+
+  function renderIngredientRows(list = []) {
+    if (!$recipeIngredientsList) return;
+    const frag = document.createDocumentFragment();
+    list.forEach((item) => frag.appendChild(buildIngredientRow(item)));
+    $recipeIngredientsList.innerHTML = "";
+    $recipeIngredientsList.appendChild(frag);
+  }
+
+  function renderStepRows(list = []) {
+    if (!$recipeStepsList) return;
+    const frag = document.createDocumentFragment();
+    list.forEach((item) => frag.appendChild(buildStepRow(item)));
+    $recipeStepsList.innerHTML = "";
+    $recipeStepsList.appendChild(frag);
+  }
+
+  function buildIngredientRow(item = DEFAULT_INGREDIENT()) {
+    const row = document.createElement("div");
+    row.className = "builder-row ingredient-row";
+    row.dataset.id = item.id || generateId();
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "builder-check";
+    checkbox.checked = !!item.done;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "Ingrediente";
+    input.value = item.text || "";
+    input.className = "builder-input";
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "icon-btn icon-btn-small";
+    remove.textContent = "✕";
+    remove.addEventListener("click", () => row.remove());
+
+    row.appendChild(checkbox);
+    row.appendChild(input);
+    row.appendChild(remove);
+    return row;
+  }
+
+  function buildStepRow(item = DEFAULT_STEP()) {
+    const row = document.createElement("div");
+    row.className = "builder-row step-row";
+    row.dataset.id = item.id || generateId();
+
+    const top = document.createElement("div");
+    top.className = "step-row-top";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "builder-check";
+    checkbox.checked = !!item.done;
+
+    const title = document.createElement("input");
+    title.type = "text";
+    title.placeholder = "Título del paso";
+    title.value = item.title || "";
+    title.className = "builder-input";
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "icon-btn icon-btn-small";
+    remove.textContent = "✕";
+    remove.addEventListener("click", () => row.remove());
+
+    top.appendChild(checkbox);
+    top.appendChild(title);
+    top.appendChild(remove);
+
+    const desc = document.createElement("textarea");
+    desc.rows = 2;
+    desc.placeholder = "Descripción del paso";
+    desc.value = item.description || "";
+    desc.className = "builder-textarea";
+
+    row.appendChild(top);
+    row.appendChild(desc);
+    return row;
+  }
+
+  function collectIngredientRows() {
+    if (!$recipeIngredientsList) return [];
+    return Array.from($recipeIngredientsList.querySelectorAll(".ingredient-row"))
+      .map((row) => ({
+        id: row.dataset.id || generateId(),
+        text: row.querySelector("input[type='text']")?.value.trim() || "",
+        done: row.querySelector("input[type='checkbox']")?.checked || false,
+      }))
+      .filter((ing) => ing.text);
+  }
+
+  function collectStepRows() {
+    if (!$recipeStepsList) return [];
+    return Array.from($recipeStepsList.querySelectorAll(".step-row"))
+      .map((row) => ({
+        id: row.dataset.id || generateId(),
+        title: row.querySelector("input[type='text']")?.value.trim() || "",
+        description: row.querySelector("textarea")?.value.trim() || "",
+        done: row.querySelector("input[type='checkbox']")?.checked || false,
+      }))
+      .filter((step) => step.title || step.description);
+  }
+
+  function openRecipeDetail(id) {
+    const recipe = recipes.find((r) => r.id === id);
+    if (!recipe || !$recipeDetailBackdrop) return;
+    detailRecipeId = id;
+    $recipeDetailBackdrop.classList.remove("hidden");
+    renderRecipeDetail(id);
+  }
+
+  function renderRecipeDetail(id) {
+    const recipe = recipes.find((r) => r.id === id);
+    if (!recipe || !$recipeDetailBackdrop) return;
+
+    if ($recipeDetailTitle) $recipeDetailTitle.textContent = recipe.title || "Receta";
+    if ($recipeDetailMeal) $recipeDetailMeal.textContent = recipe.meal || "";
+    if ($recipeDetailTags) {
+      $recipeDetailTags.innerHTML = "";
+      (recipe.tags || []).forEach((tag) => {
+        const chip = document.createElement("span");
+        chip.className = "recipe-detail-chip subtle";
+        chip.textContent = tag;
+        $recipeDetailTags.appendChild(chip);
+      });
+    }
+
+    if ($recipeDetailMeta) {
+      $recipeDetailMeta.innerHTML = "";
+      const items = [
+        { label: "Salud", value: recipe.health },
+        { label: "Valoración", value: `${recipe.rating ?? 0} ★` },
+        { label: "Última vez", value: recipe.lastCooked || "—" },
+        { label: "Favorita", value: recipe.favorite ? "Sí" : "No" },
+        { label: "Laura", value: recipe.laura ? "Sí" : "No" },
+      ];
+      items.forEach((item) => {
+        const block = document.createElement("div");
+        block.className = "recipe-detail-meta-item";
+        block.innerHTML = `<div class="meta-label">${item.label}</div><div class="meta-value">${item.value}</div>`;
+        $recipeDetailMeta.appendChild(block);
+      });
+    }
+
+    if ($recipeDetailGrid) {
+      $recipeDetailGrid.innerHTML = "";
+      const gridItems = [
+        { label: "Tipo de comida", value: recipe.meal },
+        { label: "Etiquetas", value: (recipe.tags || []).join(", ") || "—" },
+        { label: "Notas", value: recipe.notes || "—" },
+      ];
+      gridItems.forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "recipe-detail-grid-item";
+        row.innerHTML = `<div class="meta-label">${item.label}</div><div class="meta-value">${item.value}</div>`;
+        $recipeDetailGrid.appendChild(row);
+      });
+    }
+
+    if ($recipeDetailIngredients) {
+      $recipeDetailIngredients.innerHTML = "";
+      (recipe.ingredients && recipe.ingredients.length ? recipe.ingredients : [DEFAULT_INGREDIENT()]).forEach(
+        (ing) => {
+          const label = document.createElement("label");
+          label.className = "detail-check";
+          const check = document.createElement("input");
+          check.type = "checkbox";
+          check.checked = !!ing.done;
+          check.addEventListener("change", (e) =>
+            toggleChecklistItem(recipe.id, ing.id, e.target.checked, "ingredient")
+          );
+          const text = document.createElement("span");
+          text.textContent = ing.text || "Ingrediente";
+          label.appendChild(check);
+          label.appendChild(text);
+          $recipeDetailIngredients.appendChild(label);
+        }
+      );
+    }
+
+    if ($recipeDetailSteps) {
+      $recipeDetailSteps.innerHTML = "";
+      (recipe.steps && recipe.steps.length ? recipe.steps : [DEFAULT_STEP()]).forEach((step, idx) => {
+        const item = document.createElement("div");
+        item.className = "detail-step";
+        const header = document.createElement("div");
+        header.className = "detail-step-header";
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = !!step.done;
+        check.addEventListener("change", (e) =>
+          toggleChecklistItem(recipe.id, step.id, e.target.checked, "step")
+        );
+        const title = document.createElement("div");
+        title.className = "detail-step-title";
+        title.textContent = step.title || `Paso ${idx + 1}`;
+        header.appendChild(check);
+        header.appendChild(title);
+        const desc = document.createElement("div");
+        desc.className = "detail-step-desc";
+        desc.textContent = step.description || "Describe este paso";
+        item.appendChild(header);
+        item.appendChild(desc);
+        $recipeDetailSteps.appendChild(item);
+      });
+    }
+
+    if ($recipeDetailNotesWrapper && $recipeDetailNotes) {
+      const hasNotes = !!(recipe.notes || "").trim();
+      $recipeDetailNotesWrapper.style.display = hasNotes ? "block" : "none";
+      $recipeDetailNotes.textContent = recipe.notes || "";
+    }
+  }
+
+  function closeRecipeDetail() {
+    if ($recipeDetailBackdrop) $recipeDetailBackdrop.classList.add("hidden");
+    detailRecipeId = null;
+  }
+
+  function toggleChecklistItem(recipeId, itemId, value, type) {
+    const recipe = recipes.find((r) => r.id === recipeId);
+    if (!recipe) return;
+    if (type === "ingredient") {
+      const ingredients = (recipe.ingredients || []).map((ing) =>
+        ing.id === itemId ? { ...ing, done: value } : ing
+      );
+      updateRecipe(recipeId, { ingredients });
+    } else {
+      const steps = (recipe.steps || []).map((step) =>
+        step.id === itemId ? { ...step, done: value } : step
+      );
+      updateRecipe(recipeId, { steps });
+    }
+  }
+
+  function deleteRecipe(id) {
+    const recipe = recipes.find((r) => r.id === id);
+    if (!recipe) return;
+    const confirmed = window.confirm(`¿Eliminar la receta \"${recipe.title}\"?`);
+    if (!confirmed) return;
+    recipes = recipes.filter((r) => r.id !== id);
+    saveRecipes();
+    closeRecipeModal();
+    closeRecipeDetail();
+    refreshUI();
   }
 
   // Eventos
@@ -1181,6 +1606,27 @@ if ($viewRecipes) {
     if (e.target === $modalBackdrop) closeRecipeModal();
   });
   $recipeForm?.addEventListener("submit", upsertRecipeFromForm);
+  $recipeAddIngredient?.addEventListener("click", () =>
+    $recipeIngredientsList?.appendChild(buildIngredientRow())
+  );
+  $recipeAddStep?.addEventListener("click", () => $recipeStepsList?.appendChild(buildStepRow()));
+  $recipeDelete?.addEventListener("click", () => {
+    const id = $recipeId.value;
+    if (id) deleteRecipe(id);
+  });
+
+  $recipeDetailClose?.addEventListener("click", closeRecipeDetail);
+  $recipeDetailBackdrop?.addEventListener("click", (e) => {
+    if (e.target === $recipeDetailBackdrop) closeRecipeDetail();
+  });
+  $recipeDetailEdit?.addEventListener("click", () => {
+    if (!detailRecipeId) return;
+    const recipe = recipes.find((r) => r.id === detailRecipeId);
+    if (recipe) openRecipeModal(recipe);
+  });
+  $recipeDetailDelete?.addEventListener("click", () => {
+    if (detailRecipeId) deleteRecipe(detailRecipeId);
+  });
 
   $calPrev?.addEventListener("click", () => {
     if (calViewMode === "year") {

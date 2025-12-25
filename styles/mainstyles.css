@@ -126,6 +126,18 @@ body {
   box-shadow: 0 10px 25px rgba(127, 93, 255, 0.45);
 }
 
+.btn.danger {
+  background: linear-gradient(180deg, #ff7b7b, #d24f4f);
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(210, 79, 79, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.btn.ghost.danger {
+  border-color: rgba(255, 122, 122, 0.4);
+  color: #ff9d9d;
+}
+
 .btn.ghost {
   background: transparent;
   border-color: var(--stroke);
@@ -145,6 +157,23 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.icon-btn.icon-btn-small {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.icon-btn.icon-btn-large {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  font-size: 18px;
 }
 
 .icon-btn:active {
@@ -593,6 +622,9 @@ body {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+}
+.sheet-footer .footer-start{
+  margin-right: auto;
 }
 /* ===== Cards plegables ===== */
 .book-title.card-toggle,

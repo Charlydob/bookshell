@@ -256,6 +256,7 @@ if ($viewRecipes) {
   const $recipeDetailTitle = document.getElementById("recipe-detail-title");
   const $recipeDetailTags = document.getElementById("recipe-detail-tags");
   const $recipeDetailMeal = document.getElementById("recipe-detail-meal");
+  const $recipeDetailCloseBtn = document.getElementById("recipe-detail-close-btn");
   const $recipeDetailMeta = document.getElementById("recipe-detail-meta");
   const $recipeDetailGrid = document.getElementById("recipe-detail-grid");
   const $recipeDetailIngredients = document.getElementById("recipe-detail-ingredients");
@@ -1570,10 +1571,14 @@ if ($viewRecipes) {
           check.addEventListener("change", (e) =>
             toggleChecklistItem(recipe.id, ing.id, e.target.checked, "ingredient")
           );
+          const textWrapper = document.createElement("div");
+          textWrapper.className = "detail-check-text";
           const text = document.createElement("span");
+          text.className = "detail-check-title";
           text.textContent = ing.text || "Ingrediente";
+          textWrapper.appendChild(text);
           label.appendChild(check);
-          label.appendChild(text);
+          label.appendChild(textWrapper);
           $recipeDetailIngredients.appendChild(label);
         }
       );
@@ -1592,16 +1597,23 @@ if ($viewRecipes) {
         check.addEventListener("change", (e) =>
           toggleChecklistItem(recipe.id, step.id, e.target.checked, "step")
         );
+        const number = document.createElement("div");
+        number.className = "detail-step-index";
+        number.textContent = idx + 1;
+        const text = document.createElement("div");
+        text.className = "detail-step-text";
         const title = document.createElement("div");
         title.className = "detail-step-title";
         title.textContent = step.title || `Paso ${idx + 1}`;
-        header.appendChild(check);
-        header.appendChild(title);
         const desc = document.createElement("div");
         desc.className = "detail-step-desc";
-        desc.textContent = step.description || "Describe este paso";
+        desc.textContent = (step.description || "").trim() ? step.description : "Añade una descripción";
+        text.appendChild(title);
+        text.appendChild(desc);
+        header.appendChild(check);
+        header.appendChild(number);
+        header.appendChild(text);
         item.appendChild(header);
-        item.appendChild(desc);
         $recipeDetailSteps.appendChild(item);
       });
     }
@@ -1708,6 +1720,7 @@ if ($viewRecipes) {
   });
 
   $recipeDetailClose?.addEventListener("click", closeRecipeDetail);
+  $recipeDetailCloseBtn?.addEventListener("click", closeRecipeDetail);
   $recipeDetailBackdrop?.addEventListener("click", (e) => {
     if (e.target === $recipeDetailBackdrop) closeRecipeDetail();
   });

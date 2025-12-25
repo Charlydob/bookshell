@@ -482,8 +482,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
   }
 
   const hostSize = await waitForSize(host, renderToken, MIN_HOST_WIDTH, MIN_HOST_HEIGHT);
-  if (!hostSize || host.__geoRenderToken !== renderToken) return;
-
+  if (host.__geoRenderToken !== renderToken) return;
   if (!state.ready) {
     host.innerHTML = "";
     initializeMap(host, state, geo);
@@ -491,6 +490,14 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
   }
   state.geo = geo;
   refreshMap(state);
+
+  // Si el contenedor todavía no tiene tamaño, forzamos un reintento de resize
+  if (!hostSize) {
+    requestAnimationFrame(() => {
+      if (host.__geoRenderToken !== renderToken) return;
+      resizeMap(state);
+    });
+  }
 }
 
 export function renderCountryList(container, stats = [], noun = "elemento") {

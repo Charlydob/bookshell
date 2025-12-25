@@ -8,6 +8,7 @@ if ($viewRecipes) {
   const MEAL_TYPES = ["desayuno", "comida", "cena", "snack"];
   const HEALTH_TYPES = ["sana", "equilibrada", "insana"];
   const palette = ["#f4d35e", "#9ad5ff", "#ff89c6", "#7dffb4", "#c8a4ff"];
+  const LAURA_POSITIVE_THRESHOLD = 4;
 
   const defaultRecipes = [
     {
@@ -89,6 +90,7 @@ if ($viewRecipes) {
   const $statFavorites = document.getElementById("recipe-stat-favorites");
   const $statHealthy = document.getElementById("recipe-stat-healthy");
   const $statRating = document.getElementById("recipe-stat-rating");
+  const $statLauraPositive = document.getElementById("recipe-stat-laura-positive");
 
   const $chartMeal = document.getElementById("recipe-chart-meal");
   const $chartHealth = document.getElementById("recipe-chart-health");
@@ -166,6 +168,12 @@ if ($viewRecipes) {
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const dd = String(d.getDate()).padStart(2, "0");
     return `${y}-${m}-${dd}`;
+  }
+
+  function formatRatingStars(rating) {
+    const value = Math.max(0, Math.round((Number(rating) || 0) * 2) / 2);
+    const text = Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
+    return `${text}★`;
   }
 
   function pickSpinePalette(seed = "") {
@@ -322,17 +330,20 @@ if ($viewRecipes) {
     if ($shelfEmpty) {
       $shelfEmpty.style.display = filtered.length ? "none" : "block";
     }
+    if ($empty) {
+      $empty.style.display = recipes.length ? "none" : "block";
+    }
   }
 
   function buildSpine(recipe) {
     const spine = document.createElement("div");
     const [c1, c2] = recipe.favorite ? ["#f8e6aa", "#d3a74a"] : pickSpinePalette(recipe.title + recipe.id);
-    const height = 110 + (recipe.tags?.length || 0) * 6;
+    const height = 138;
     spine.className = "book-spine recipe-spine";
     spine.style.setProperty("--spine-color-1", c1);
     spine.style.setProperty("--spine-color-2", c2);
     spine.style.setProperty("--spine-height", `${Math.min(170, height)}px`);
-    spine.title = `${recipe.title} · ${recipe.meal}`;
+    spine.title = `${recipe.title} · ${formatRatingStars(recipe.rating)}`;
     if (recipe.favorite) spine.classList.add("book-spine-favorite", "recipe-spine-favorite");
     if (recipe.laura) spine.classList.add("recipe-spine-laura");
 
@@ -340,9 +351,9 @@ if ($viewRecipes) {
     title.className = "book-spine-title";
     title.textContent = recipe.title;
 
-    const meta = document.createElement("span");
-    meta.className = "book-spine-meta";
-    meta.textContent = `${recipe.meal} · ${recipe.health}`;
+    const ratingBadge = document.createElement("span");
+    ratingBadge.className = "recipe-spine-rating";
+    ratingBadge.textContent = formatRatingStars(recipe.rating);
 
     if (recipe.laura) {
       const badge = document.createElement("span");
@@ -358,7 +369,7 @@ if ($viewRecipes) {
     }
 
     spine.appendChild(title);
-    spine.appendChild(meta);
+    spine.appendChild(ratingBadge);
     spine.addEventListener("click", () => openRecipeModal(recipe));
     spine.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -508,71 +519,225 @@ if ($viewRecipes) {
     if ($statFavorites) $statFavorites.textContent = String(favorites);
     if ($statHealthy) $statHealthy.textContent = String(healthy);
     if ($statRating) $statRating.textContent = `${rating.toFixed(1)} ★`;
+    const lauraPositive = recipes.filter(
+      (r) => r.laura && (Number(r.rating) || 0) >= LAURA_POSITIVE_THRESHOLD
+    ).length;
+    if ($statLauraPositive) $statLauraPositive.textContent = String(lauraPositive);
   }
 
-  function renderDonut(host, title, entries) {
+  function recipePolar(cx, cy, r, deg) {
+    const a = (deg - 90) * (Math.PI / 180);
+    return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+  }
+
+  function recipeDonutSlicePath(cx, cy, rOuter, rInner, startDeg, endDeg) {
+    const sweep = Math.max(0.001, endDeg - startDeg);
+    const e = startDeg + Math.min(359.999, sweep);
+    const p1 = recipePolar(cx, cy, rOuter, startDeg);
+    const p2 = recipePolar(cx, cy, rOuter, e);
+    const p3 = recipePolar(cx, cy, rInner, e);
+    const p4 = recipePolar(cx, cy, rInner, startDeg);
+    const large = e - startDeg > 180 ? 1 : 0;
+    return [
+      `M ${p1.x.toFixed(3)} ${p1.y.toFixed(3)}`,
+      `A ${rOuter} ${rOuter} 0 ${large} 1 ${p2.x.toFixed(3)} ${p2.y.toFixed(3)}`,
+      `L ${p3.x.toFixed(3)} ${p3.y.toFixed(3)}`,
+      `A ${rInner} ${rInner} 0 ${large} 0 ${p4.x.toFixed(3)} ${p4.y.toFixed(3)}`,
+      "Z",
+    ].join(" ");
+  }
+
+  function createRecipeSvgEl(tag, attrs = {}) {
+    const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+    return el;
+  }
+
+  function getRecipeDonutGeometry(hostWidth = 360) {
+    const baseW = 360;
+    const baseH = 240;
+    const minW = 260;
+    const maxW = 520;
+    const width = Math.max(minW, Math.min(maxW, hostWidth || baseW));
+    const scale = width / baseW;
+    const height = baseH * scale;
+    const cx = width / 2;
+    const cy = height / 2;
+    const rOuter = 92 * scale;
+    const rInner = 60 * scale;
+
+    return {
+      width,
+      height,
+      cx,
+      cy,
+      rOuter,
+      rInner,
+      strokeWidth: rOuter - rInner,
+      calloutInnerGap: 2 * scale,
+      calloutOuterGap: 18 * scale,
+      labelOffset: 32 * scale,
+      centerYOffset: 4 * scale,
+      centerSubYOffset: 14 * scale,
+      focusYOffset: 32 * scale,
+    };
+  }
+
+  function renderRecipeDonut(host, title, entries, options = {}) {
     if (!host) return;
-    host.innerHTML = "";
-    const total = entries.reduce((acc, e) => acc + e.value, 0);
+
+    if (typeof host.__recipeDonutCleanup === "function") {
+      host.__recipeDonutCleanup();
+      delete host.__recipeDonutCleanup;
+    }
+
+    const valid = (entries || []).filter((e) => e.value > 0);
+    const total = valid.reduce((acc, e) => acc + e.value, 0);
     if (!total) {
       host.innerHTML = `<div class="books-shelf-empty">Sin datos</div>`;
       return;
     }
 
-    const donut = document.createElement("div");
-    donut.className = "recipes-donut";
-    const ring = document.createElement("div");
-    ring.className = "recipes-donut-ring";
-    const hole = document.createElement("div");
-    hole.className = "recipes-donut-hole";
-    hole.innerHTML = `<strong>${title}</strong><span>${total} total</span>`;
-    donut.appendChild(ring);
-    donut.appendChild(hole);
+    const paletteRef = options.palette || palette;
+    const unitLabel = options.unitLabel || "recetas";
+    const focusLabel = options.focusLabel || "Distribución";
 
-    let offset = 0;
-    const stops = entries.map((entry, idx) => {
-      const pct = (entry.value / total) * 100;
-      const start = offset;
-      const end = offset + pct;
-      offset = end;
-      return { ...entry, start, end, color: palette[idx % palette.length] };
+    let a0 = 0;
+    const slices = valid.map((entry, idx) => {
+      const frac = entry.value / total;
+      const a1 = a0 + frac * 360;
+      const mid = (a0 + a1) / 2;
+      const slice = {
+        ...entry,
+        color: paletteRef[idx % paletteRef.length],
+        a0,
+        a1,
+        mid,
+        pct: Math.round(frac * 100),
+      };
+      a0 = a1;
+      return slice;
     });
 
-    const gradient = stops
-      .map((s) => `${s.color} ${s.start.toFixed(2)}% ${s.end.toFixed(2)}%`)
-      .join(", ");
-    ring.style.background = `conic-gradient(${gradient})`;
+    const render = () => {
+      const { width, height, cx, cy, rOuter, rInner, strokeWidth, calloutInnerGap, calloutOuterGap, labelOffset, centerYOffset, centerSubYOffset, focusYOffset } =
+        getRecipeDonutGeometry(host.clientWidth || 360);
 
-    const legend = document.createElement("div");
-    legend.className = "recipes-donut-legend";
-    stops.forEach((s) => {
-      const row = document.createElement("div");
-      row.className = "recipes-donut-legend-row";
-      row.innerHTML = `
-        <span class="recipes-donut-color" style="background:${s.color}"></span>
-        <span>${s.label} · ${Math.round((s.value / total) * 100)}%</span>
-      `;
-      legend.appendChild(row);
-    });
+      const svg = createRecipeSvgEl("svg", {
+        class: "donut-svg",
+        viewBox: `0 0 ${width} ${height}`,
+        role: "img",
+        "aria-label": title,
+      });
 
-    host.appendChild(donut);
-    host.appendChild(legend);
+      const ring = createRecipeSvgEl("circle", {
+        class: "donut-ring-base",
+        cx,
+        cy,
+        r: (rOuter + rInner) / 2,
+        "stroke-width": strokeWidth,
+      });
+
+      const slicesGroup = createRecipeSvgEl("g", { class: "donut-slices" });
+      const calloutsGroup = createRecipeSvgEl("g", { class: "donut-callouts" });
+
+      slices.forEach((slice) => {
+        const path = createRecipeSvgEl("path", {
+          class: "donut-slice recipe-donut-slice",
+          d: recipeDonutSlicePath(cx, cy, rOuter, rInner, slice.a0, slice.a1),
+        });
+        path.setAttribute("fill", slice.color);
+        path.setAttribute("stroke", "rgba(0,0,0,0.16)");
+        path.setAttribute("stroke-width", "1.4");
+        slicesGroup.appendChild(path);
+
+        const inner = recipePolar(cx, cy, rOuter + calloutInnerGap, slice.mid);
+        const outer = recipePolar(cx, cy, rOuter + calloutOuterGap, slice.mid);
+        const anchor = slice.mid > 180 ? "end" : "start";
+        const textX = outer.x + (anchor === "end" ? -labelOffset : labelOffset);
+
+        const line = createRecipeSvgEl("line", {
+          class: "donut-line",
+          x1: inner.x,
+          y1: inner.y,
+          x2: outer.x,
+          y2: outer.y,
+        });
+
+        const label = createRecipeSvgEl("text", {
+          class: "donut-label",
+          x: textX,
+          y: outer.y - 4,
+          "text-anchor": anchor,
+        });
+        label.textContent = slice.label;
+
+        const value = createRecipeSvgEl("text", {
+          class: "donut-label-value",
+          x: textX,
+          y: outer.y + 10,
+          "text-anchor": anchor,
+        });
+        value.textContent = `${slice.value} · ${slice.pct}%`;
+
+        calloutsGroup.appendChild(line);
+        calloutsGroup.appendChild(label);
+        calloutsGroup.appendChild(value);
+      });
+
+      const centerMain = createRecipeSvgEl("text", {
+        class: "donut-center",
+        x: cx,
+        y: cy - centerYOffset,
+        "text-anchor": "middle",
+      });
+      centerMain.textContent = title;
+
+      const centerSub = createRecipeSvgEl("text", {
+        class: "donut-center-sub",
+        x: cx,
+        y: cy + centerSubYOffset,
+        "text-anchor": "middle",
+      });
+      centerSub.textContent = `${total} ${unitLabel}`;
+
+      const centerFocus = createRecipeSvgEl("text", {
+        class: "donut-center-focus",
+        x: cx,
+        y: cy + focusYOffset,
+        "text-anchor": "middle",
+      });
+      centerFocus.textContent = focusLabel;
+
+      svg.appendChild(ring);
+      svg.appendChild(slicesGroup);
+      svg.appendChild(calloutsGroup);
+      svg.appendChild(centerMain);
+      svg.appendChild(centerSub);
+      svg.appendChild(centerFocus);
+
+      host.innerHTML = "";
+      host.appendChild(svg);
+    };
+
+    render();
+    const ro = new ResizeObserver(() => render());
+    ro.observe(host);
+    host.__recipeDonutCleanup = () => ro.disconnect();
   }
 
   function renderCharts() {
-    const mealMap = [];
-    MEAL_TYPES.forEach((m) => {
-      const count = recipes.filter((r) => r.meal === m).length;
-      mealMap.push({ label: m, value: count });
-    });
-    renderDonut($chartMeal, "Momento del día", mealMap.filter((m) => m.value > 0));
+    const mealEntries = MEAL_TYPES.map((m) => ({
+      label: m,
+      value: recipes.filter((r) => r.meal === m).length,
+    })).filter((m) => m.value > 0);
+    renderRecipeDonut($chartMeal, "Momento del día", mealEntries, { unitLabel: "recetas" });
 
-    const healthMap = [];
-    HEALTH_TYPES.forEach((h) => {
-      const count = recipes.filter((r) => r.health === h).length;
-      healthMap.push({ label: h, value: count });
-    });
-    renderDonut($chartHealth, "Salud", healthMap.filter((h) => h.value > 0));
+    const healthEntries = HEALTH_TYPES.map((h) => ({
+      label: h,
+      value: recipes.filter((r) => r.health === h).length,
+    })).filter((h) => h.value > 0);
+    renderRecipeDonut($chartHealth, "Salud", healthEntries, { unitLabel: "recetas" });
   }
 
   function buildActivityMap() {
@@ -759,7 +924,6 @@ if ($viewRecipes) {
   function refreshUI() {
     renderChips();
     renderShelf();
-    renderCards();
     renderStats();
     renderCharts();
     renderCalendar();
@@ -778,7 +942,6 @@ if ($viewRecipes) {
   $filterSearch?.addEventListener("input", (e) => {
     filterState.query = e.target.value || "";
     renderShelf();
-    renderCards();
   });
 
   $shelfSearch?.addEventListener("input", (e) => {
@@ -808,7 +971,6 @@ if ($viewRecipes) {
       chip.classList.add("is-active");
     }
     renderShelf();
-    renderCards();
     renderCharts();
   });
 

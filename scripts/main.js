@@ -1590,15 +1590,6 @@ function buildBookCountryStats(ids) {
 function renderBooksGeo(ids) {
   if (!$booksGeoSection) return;
   const stats = buildBookCountryStats(ids);
-  if (!stats.length) {
-    $booksGeoSection.style.display = "none";
-    if ($booksWorldMap) {
-      if (typeof $booksWorldMap.__geoCleanup === "function") $booksWorldMap.__geoCleanup();
-      $booksWorldMap.innerHTML = "";
-    }
-    if ($booksCountryList) $booksCountryList.innerHTML = "";
-    return;
-  }
   $booksGeoSection.style.display = "block";
   const mapData = stats
     .filter((s) => s.code)
@@ -1608,7 +1599,9 @@ function renderBooksGeo(ids) {
       label: s.label,
       mapName: s.english
     }));
-  renderCountryHeatmap($booksWorldMap, mapData, { emptyLabel: "Añade el país de tus libros" });
+  renderCountryHeatmap($booksWorldMap, mapData, {
+    emptyLabel: "Añade el país de tus libros para ver el mapa"
+  });
   renderCountryList($booksCountryList, stats, "libro");
 }
 

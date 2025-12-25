@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="styles/mainstyles.css" />
   <link rel="stylesheet" href="styles/mainpage.css" />
   <link rel="stylesheet" href="styles/videos.css" />
+  <link rel="stylesheet" href="styles/recipes.css" />
 </head>
 <body>
   <div class="app-shell">
@@ -260,11 +261,144 @@
           </div>
         </div>
       </section>
+
+      <!-- Vista RECETAS -->
+      <section id="view-recipes" class="view">
+        <div class="recipes-wrapper">
+          <div class="recipes-top">
+            <div class="stats-cards recipes-stats-cards">
+              <div class="stat-card">
+                <div class="stat-label">Recetas totales</div>
+                <div id="recipe-stat-total" class="stat-value">0</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Favoritas</div>
+                <div id="recipe-stat-favorites" class="stat-value">0</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Saludables</div>
+                <div id="recipe-stat-healthy" class="stat-value">0</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Valoración media</div>
+                <div id="recipe-stat-rating" class="stat-value">0.0 ★</div>
+              </div>
+            </div>
+
+            <div class="calendar-section recipe-calendar">
+              <div class="calendar-header">
+                <div class="calendar-nav">
+                  <button id="recipe-cal-prev" class="icon-btn">&lt;</button>
+                  <div id="recipe-cal-label" class="cal-label"></div>
+                  <button id="recipe-cal-next" class="icon-btn">&gt;</button>
+                </div>
+                <select id="recipe-cal-view-mode" class="calendar-view-select" aria-label="Vista del calendario de recetas">
+                  <option value="month" selected>Mes</option>
+                  <option value="year">Año</option>
+                </select>
+              </div>
+              <div id="recipe-calendar-summary" class="calendar-summary"></div>
+              <div class="calendar-grid" id="recipe-calendar-grid"></div>
+              <div class="calendar-legend">
+                <span class="dot dot-normal"></span> Cocinada
+                <span class="dot dot-finished"></span> Favorita
+              </div>
+            </div>
+          </div>
+
+          <div class="recipes-toolbar">
+            <button id="btn-add-recipe" class="btn primary">+ Añadir receta</button>
+          </div>
+
+          <div class="books-filters is-collapsed" id="recipes-filters">
+            <div class="books-filters-header" id="recipes-filters-header">
+              <div class="filter-row filter-search-row">
+                <label class="field-label" for="recipes-filter-search">Buscar</label>
+                <input
+                  id="recipes-filter-search"
+                  class="filter-search-input"
+                  type="search"
+                  placeholder="Nombre del plato, etiquetas o tipo de comida"
+                  autocomplete="off"
+                  inputmode="search"
+                />
+              </div>
+              <button
+                type="button"
+                id="recipes-filters-toggle"
+                class="filters-toggle-btn"
+                aria-expanded="false"
+                aria-controls="recipes-filters-body"
+              >
+                <span class="filters-toggle-text">Mostrar filtros</span>
+                <span class="filters-toggle-icon" aria-hidden="true">⌄</span>
+              </button>
+            </div>
+
+            <div class="books-filters-body" id="recipes-filters-body">
+              <div class="filter-row">
+                <div class="filter-label">Filtros rápidos</div>
+                <div id="recipes-filter-chips" class="filter-chip-groups" aria-label="Filtros dinámicos"></div>
+              </div>
+
+              <div class="filter-row filter-toggles">
+                <label class="toggle-pill">
+                  <input id="recipes-filter-favorites" type="checkbox" />
+                  <span>Solo favoritas</span>
+                </label>
+                <label class="toggle-pill">
+                  <input id="recipes-filter-laura" type="checkbox" />
+                  <span>Con check de Laura</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="recipes-shelf-wrapper">
+            <div class="recipes-shelf-toolbar">
+              <label class="field-label shelf-search-label" for="recipes-shelf-search">Buscar en la estantería</label>
+              <input id="recipes-shelf-search" class="shelf-search-input" type="search" placeholder="Nombre, tipo, etiquetas..." />
+              <div id="recipes-shelf-results" class="books-shelf-results"></div>
+            </div>
+            <div id="recipes-shelf-empty" class="books-shelf-empty" style="display:none;">
+              No hay recetas que coincidan con la búsqueda.
+            </div>
+            <div id="recipes-list" class="books-list recipes-shelf"></div>
+            <details id="recipes-favorites-section" class="books-finished" style="display:none;">
+              <summary class="books-finished-summary">
+                <span>Favoritas</span>
+                <span id="recipes-favorites-count" class="books-finished-count">0</span>
+              </summary>
+              <div id="recipes-list-favorites" class="books-list-finished"></div>
+            </details>
+          </div>
+
+          <div class="recipes-cards" id="recipes-cards"></div>
+
+          <section id="recipes-charts-section" class="books-charts">
+            <div class="books-charts-grid">
+              <div class="chart-card">
+                <div class="chart-card-title">Tipo de comida</div>
+                <div id="recipe-chart-meal" class="donut-host"></div>
+              </div>
+              <div class="chart-card">
+                <div class="chart-card-title">Saludable/Insana</div>
+                <div id="recipe-chart-health" class="donut-host"></div>
+              </div>
+            </div>
+          </section>
+
+          <div id="recipes-empty" class="empty-state">
+            Aún no has añadido recetas.
+          </div>
+        </div>
+      </section>
     </main>
 
     <nav class="bottom-nav">
       <button class="nav-btn nav-btn-active" data-view="view-books">Libros</button>
       <button class="nav-btn" data-view="view-videos">Vídeos</button>
+      <button class="nav-btn" data-view="view-recipes">Recetas</button>
     </nav>
   </div>
 
@@ -545,7 +679,95 @@
   </div>
 </div>
 
+<!-- MODAL RECETA -->
+<div id="recipe-modal-backdrop" class="modal-backdrop hidden">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div id="recipe-modal-title" class="modal-title">Nueva receta</div>
+      <button id="recipe-modal-close" class="icon-btn">✕</button>
+    </div>
+
+    <form id="recipe-form" class="modal-form">
+      <input type="hidden" id="recipe-id" />
+
+      <div class="modal-scroll sheet-body">
+        <div class="sheet-section">
+          <div class="sheet-section-title">Detalles</div>
+
+          <label class="field">
+            <span class="field-label">Nombre del plato</span>
+            <input id="recipe-name" type="text" required />
+          </label>
+
+          <div class="form-grid row-2">
+            <label class="field">
+              <span class="field-label">Tipo de comida</span>
+              <select id="recipe-meal" required>
+                <option value="desayuno">Desayuno</option>
+                <option value="comida">Comida</option>
+                <option value="cena">Cena</option>
+                <option value="snack">Snack</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span class="field-label">Saludable</span>
+              <select id="recipe-health" required>
+                <option value="sana">Sana</option>
+                <option value="equilibrada">Equilibrada</option>
+                <option value="insana">Insana</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field">
+            <span class="field-label">Etiquetas (separadas por coma)</span>
+            <input id="recipe-tags" type="text" placeholder="rápida, horno, pasta..." />
+          </label>
+
+          <div class="form-grid row-2">
+            <label class="field">
+              <span class="field-label">Valoración</span>
+              <input id="recipe-rating" type="number" min="0" max="5" step="0.5" value="4" />
+            </label>
+            <label class="field">
+              <span class="field-label">Última vez cocinada</span>
+              <input id="recipe-last-cooked" type="date" />
+            </label>
+          </div>
+
+          <label class="field">
+            <span class="field-label">Notas</span>
+            <textarea id="recipe-notes" rows="3" placeholder="Notas rápidas, truco o acompañamiento..."></textarea>
+          </label>
+
+          <div class="form-grid row-2">
+            <label class="favorite-toggle">
+              <input id="recipe-favorite" type="checkbox" />
+              <span class="favorite-icon" aria-hidden="true">★</span>
+              <span>Marcar como favorita</span>
+            </label>
+
+            <label class="laura-check">
+              <input id="recipe-laura" type="checkbox" />
+              <span class="laura-check-mark" aria-hidden="true"></span>
+              <span>Aprobación de Laura</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer sheet-footer">
+        <button type="button" id="recipe-modal-cancel" class="btn ghost">Cancelar</button>
+        <button type="submit" class="btn primary">Guardar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
   <script type="module" src="scripts/main.js"></script>
   <script type="module" src="scripts/videos.js"></script>
+  <script type="module" src="scripts/recipes.js"></script>
 </body>
 </html>

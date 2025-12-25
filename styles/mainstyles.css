@@ -116,9 +116,26 @@ body {
   gap: 6px;
 }
 
+.btn.btn-compact{
+  padding: 8px 12px;
+  height: 40px;
+}
+
 .btn.primary {
   background: radial-gradient(circle at top left, #b39cff, var(--accent));
   box-shadow: 0 10px 25px rgba(127, 93, 255, 0.45);
+}
+
+.btn.danger {
+  background: linear-gradient(180deg, #ff7b7b, #d24f4f);
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(210, 79, 79, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.btn.ghost.danger {
+  border-color: rgba(255, 122, 122, 0.4);
+  color: #ff9d9d;
 }
 
 .btn.ghost {
@@ -140,6 +157,23 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.icon-btn.icon-btn-small {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.icon-btn.icon-btn-large {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  font-size: 18px;
 }
 
 .icon-btn:active {
@@ -461,6 +495,76 @@ body {
 
 .form-grid.row-2{ grid-template-columns: 1fr 1fr; }
 
+.isbn-input-row{
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.isbn-status{
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--txt-soft);
+}
+
+.isbn-status[data-tone="error"]{
+  color: #ff9da5;
+}
+
+.isbn-status[data-tone="success"]{
+  color: #9af5c4;
+}
+
+.isbn-results{
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.03);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.isbn-results-title{
+  font-size: 13px;
+  color: var(--txt);
+  font-weight: 600;
+}
+
+.isbn-result-item{
+  display: block;
+  width: 100%;
+  text-align: left;
+  color: var(--txt);
+  cursor: pointer;
+  border: none;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(0,0,0,.12);
+  transition: border-color .15s ease, transform .15s ease;
+}
+
+.isbn-result-item:hover,
+.isbn-result-item:focus-visible{
+  border-color: rgba(127,93,255,.6);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.isbn-result-title{
+  font-weight: 600;
+  color: var(--txt);
+  font-size: 14px;
+}
+
+.isbn-result-meta{
+  font-size: 12px;
+  color: var(--txt-soft);
+  margin-top: 2px;
+}
+
 .checkbox-field-row{
   display: flex;
   align-items: center;
@@ -518,6 +622,9 @@ body {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+}
+.sheet-footer .footer-start{
+  margin-right: auto;
 }
 /* ===== Cards plegables ===== */
 .book-title.card-toggle,

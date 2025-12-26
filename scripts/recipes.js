@@ -749,11 +749,9 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     const lauraChecksTotal = recipes.filter((r) => r.laura).length;
     const lauraChecksFavorites = recipes.filter((r) => r.laura && r.favorite).length;
     if ($statLauraPositive) {
-      $statLauraPositive.textContent = lauraChecksFavorites
-        ? `${lauraChecksTotal} · fav ${lauraChecksFavorites}`
-        : String(lauraChecksTotal);
-      $statLauraPositive.title = `Total con check de Laura: ${lauraChecksTotal}. Favoritas con check: ${lauraChecksFavorites}.`;
-    }
+  $statLauraPositive.textContent = String(lauraChecksTotal);
+  $statLauraPositive.title = `Total con check de Laura: ${lauraChecksTotal}.`;
+}
   }
 
   function recipePolar(cx, cy, r, deg) {

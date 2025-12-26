@@ -455,6 +455,9 @@
             <div class="habits-title">Hábitos</div>
             <button id="habit-add-btn" class="icon-btn icon-btn-large" aria-label="Añadir hábito">+</button>
           </header>
+          <div class="habit-quick-actions">
+            <button id="habit-add-time" class="btn ghost btn-compact">+ Añadir tiempo</button>
+          </div>
 
           <div class="habits-subtabs" role="tablist" aria-label="Vistas de hábitos">
             <button class="habit-subtab is-active" data-tab="today" role="tab" aria-selected="true">Hoy</button>
@@ -488,52 +491,62 @@
             </div>
 
             <div class="habits-panel" data-panel="reports">
-              <div class="habit-kpi-grid">
-                <div class="habit-kpi-card">
-                  <div class="habit-kpi-label">Completados hoy</div>
-                  <div id="habit-kpi-today" class="habit-kpi-value">0</div>
-                </div>
-                <div class="habit-kpi-card">
-                  <div class="habit-kpi-label">Racha más larga</div>
-                  <div id="habit-kpi-streak" class="habit-kpi-value">0</div>
-                  <div id="habit-kpi-streak-label" class="habit-kpi-sub">—</div>
-                </div>
-                <div class="habit-kpi-card">
-                  <div class="habit-kpi-label">Minutos esta semana</div>
-                  <div id="habit-kpi-minutes" class="habit-kpi-value">0</div>
-                </div>
-              </div>
-
-              <div class="habit-chart-card">
-                <div class="habit-card-head">
-                  <div>
-                    <div class="habit-card-title">Minutos por día</div>
-                    <div class="habit-card-sub">Últimos 7 días</div>
+              <div class="habit-reports">
+                <div class="habit-kpi-grid">
+                  <div class="habit-kpi-card">
+                    <div class="habit-kpi-label">Completados hoy</div>
+                    <div id="habit-kpi-today" class="habit-kpi-value">0</div>
+                  </div>
+                  <div class="habit-kpi-card">
+                    <div class="habit-kpi-label">Racha más larga</div>
+                    <div id="habit-kpi-streak" class="habit-kpi-value">0</div>
+                    <div id="habit-kpi-streak-label" class="habit-kpi-sub">—</div>
+                  </div>
+                  <div class="habit-kpi-card">
+                    <div class="habit-kpi-label">Minutos esta semana</div>
+                    <div id="habit-kpi-minutes" class="habit-kpi-value">0</div>
                   </div>
                 </div>
-                <div id="habit-minutes-bars" class="habit-bar-chart"></div>
-              </div>
 
-              <div class="habit-chart-card">
-                <div class="habit-card-head">
-                  <div>
-                    <div class="habit-card-title">Heatmap global</div>
-                    <div class="habit-card-sub">Últimos 90 días</div>
+                <div class="habit-chart-card">
+                  <div class="habit-card-head">
+                    <div>
+                      <div class="habit-card-title">Minutos por día</div>
+                      <div class="habit-card-sub">Últimos 7 días</div>
+                    </div>
+                  </div>
+                  <div id="habit-minutes-bars" class="habit-bar-chart"></div>
+                </div>
+
+                <div class="habit-chart-card">
+                  <div class="habit-card-head">
+                    <div>
+                      <div class="habit-card-title">Heatmap global</div>
+                      <div id="habit-heatmap-sub" class="habit-card-sub">Año actual</div>
+                    </div>
+                    <div class="habit-heatmap-year-switcher">
+                      <button id="habit-heatmap-prev" class="icon-btn" aria-label="Año anterior">‹</button>
+                      <div id="habit-heatmap-year" class="habit-year-label"></div>
+                      <button id="habit-heatmap-next" class="icon-btn" aria-label="Año siguiente">›</button>
+                    </div>
+                  </div>
+                  <div class="habit-heatmap-scroll">
+                    <div id="habit-global-heatmap" class="habit-annual-heatmap"></div>
                   </div>
                 </div>
-                <div id="habit-global-heatmap" class="habit-heatmap-grid"></div>
-              </div>
 
-              <div class="habit-ranking">
-                <div class="habit-ranking-block">
-                  <div class="habit-card-title">Top minutos (semana)</div>
-                  <div id="habit-ranking-week" class="habit-ranking-list"></div>
+                <div class="habit-top-grid">
+                  <div class="habit-chart-card">
+                    <div class="habit-card-title">Top minutos (semana)</div>
+                    <div id="habit-ranking-week" class="habit-ranking-list"></div>
+                  </div>
+                  <div class="habit-chart-card">
+                    <div class="habit-card-title">Top minutos (mes)</div>
+                    <div id="habit-ranking-month" class="habit-ranking-list"></div>
+                  </div>
                 </div>
-                <div class="habit-ranking-block">
-                  <div class="habit-card-title">Top minutos (mes)</div>
-                  <div id="habit-ranking-month" class="habit-ranking-list"></div>
-                </div>
-                <div class="habit-ranking-block">
+
+                <div class="habit-chart-card">
                   <div class="habit-card-title">Top consistencia</div>
                   <div id="habit-ranking-consistency" class="habit-ranking-list"></div>
                 </div>
@@ -1154,6 +1167,63 @@
     </div>
     <div class="modal-footer sheet-footer">
       <button id="habit-session-cancel" class="btn ghost">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL TIEMPO MANUAL -->
+<div id="habit-manual-modal" class="modal-backdrop hidden">
+  <div class="modal habit-modal">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">Añadir tiempo</div>
+      <button id="habit-manual-close" class="icon-btn">✕</button>
+    </div>
+    <form id="habit-manual-form" class="modal-form">
+      <div class="modal-scroll sheet-body">
+        <div class="sheet-section">
+          <div class="sheet-section-title">Sesión manual</div>
+
+          <label class="field">
+            <span class="field-label">Hábito</span>
+            <select id="habit-manual-habit" required></select>
+          </label>
+
+          <label class="field">
+            <span class="field-label">Minutos</span>
+            <input id="habit-manual-minutes" type="number" min="1" inputmode="numeric" placeholder="25" required />
+          </label>
+
+          <label class="field">
+            <span class="field-label">Fecha</span>
+            <input id="habit-manual-date" type="date" />
+          </label>
+        </div>
+      </div>
+
+      <div class="modal-footer sheet-footer">
+        <button type="button" id="habit-manual-cancel" class="btn ghost">Cancelar</button>
+        <button type="submit" class="btn primary">Guardar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- CONFIRMAR ELIMINACIÓN HÁBITO -->
+<div id="habit-delete-confirm" class="modal-backdrop hidden">
+  <div class="modal habit-modal">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">Eliminar hábito</div>
+      <button id="habit-delete-close" class="icon-btn">✕</button>
+    </div>
+    <div class="modal-body sheet-body">
+      <p>Vas a archivar el hábito <strong id="habit-delete-name"></strong>. Dejará de mostrarse y su actividad no contará en los reportes.</p>
+      <div class="warning-text">Esta acción se puede revertir editando el hábito más adelante.</div>
+    </div>
+    <div class="modal-footer sheet-footer">
+      <button type="button" id="habit-delete-cancel" class="btn ghost">Cancelar</button>
+      <button type="button" id="habit-delete-confirm-btn" class="btn danger">Eliminar</button>
     </div>
   </div>
 </div>

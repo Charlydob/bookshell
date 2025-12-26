@@ -136,21 +136,26 @@
           </div>
         </div>
 
-        <section id="books-watchlist" class="books-watchlist" style="display:none;">
-          <div class="watchlist-header">
+        <details id="books-watchlist" class="books-watchlist" style="display:none;">
+          <summary class="watchlist-summary">
             <div>
               <div class="watchlist-title">Watchlist</div>
               <div class="watchlist-subtitle">Libros pendientes por empezar</div>
             </div>
-            <span id="books-watchlist-count" class="watchlist-count">0</span>
-          </div>
+            <div class="watchlist-summary-meta">
+              <span id="books-watchlist-count" class="watchlist-count">0</span>
+              <span class="watchlist-caret" aria-hidden="true">⌄</span>
+            </div>
+          </summary>
 
-          <div id="books-watchlist-empty" class="watchlist-empty" style="display:none;">
-            No tienes libros pendientes ahora mismo.
-          </div>
+          <div class="watchlist-body">
+            <div id="books-watchlist-empty" class="watchlist-empty" style="display:none;">
+              No tienes libros pendientes ahora mismo.
+            </div>
 
-          <div id="books-watchlist-list" class="watchlist-list"></div>
-        </section>
+            <div id="books-watchlist-list" class="watchlist-list"></div>
+          </div>
+        </details>
 
         <div id="books-list" class="books-list">
           <!-- Se rellenan las tarjetas por JS -->

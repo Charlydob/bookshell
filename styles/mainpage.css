@@ -190,6 +190,18 @@
   gap: 10px;
 }
 
+.watchlist-summary{
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.watchlist-summary::-webkit-details-marker{ display: none; }
+
 .watchlist-header{
   display: flex;
   justify-content: space-between;
@@ -225,6 +237,27 @@
   background: rgba(255,255,255,0.03);
   color: var(--txt-soft);
   font-size: 14px;
+}
+
+.watchlist-summary-meta{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.watchlist-caret{
+  opacity: .7;
+  transition: transform .16s ease;
+}
+
+.books-watchlist[open] .watchlist-caret{
+  transform: rotate(-180deg);
+}
+
+.watchlist-body{
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .watchlist-list{

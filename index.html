@@ -494,18 +494,63 @@
               <div class="habit-reports">
                 <div class="habit-kpi-grid">
                   <div class="habit-kpi-card">
-                    <div class="habit-kpi-label">Completados hoy</div>
+                    <div class="habit-kpi-label">Hechos hoy</div>
                     <div id="habit-kpi-today" class="habit-kpi-value">0</div>
                   </div>
                   <div class="habit-kpi-card">
-                    <div class="habit-kpi-label">Racha más larga</div>
+                    <div class="habit-kpi-label">Min hoy</div>
+                    <div id="habit-kpi-minutes-today" class="habit-kpi-value">0m</div>
+                  </div>
+                  <div class="habit-kpi-card">
+                    <div class="habit-kpi-label">Min semana</div>
+                    <div id="habit-kpi-minutes-week" class="habit-kpi-value">0m</div>
+                  </div>
+                  <div class="habit-kpi-card">
+                    <div class="habit-kpi-label">Min mes</div>
+                    <div id="habit-kpi-minutes-month" class="habit-kpi-value">0m</div>
+                  </div>
+                  <div class="habit-kpi-card">
+                    <div class="habit-kpi-label">Min año</div>
+                    <div id="habit-kpi-minutes-year" class="habit-kpi-value">0m</div>
+                  </div>
+                  <div class="habit-kpi-card">
+                    <div class="habit-kpi-label">Tiempo total gastado</div>
+                    <div id="habit-kpi-total-time" class="habit-kpi-value">0m</div>
+                  </div>
+                  <div class="habit-kpi-card">
+                    <div class="habit-kpi-label">Días activos (año)</div>
+                    <div id="habit-kpi-active-days-year" class="habit-kpi-value">0</div>
+                  </div>
+                  <div class="habit-kpi-card">
+                    <div class="habit-kpi-label">Mejor racha</div>
                     <div id="habit-kpi-streak" class="habit-kpi-value">0</div>
                     <div id="habit-kpi-streak-label" class="habit-kpi-sub">—</div>
                   </div>
-                  <div class="habit-kpi-card">
-                    <div class="habit-kpi-label">Minutos esta semana</div>
-                    <div id="habit-kpi-minutes" class="habit-kpi-value">0</div>
+                </div>
+
+                <div class="habit-chart-card habit-donut-card">
+                  <div class="habit-card-head">
+                    <div>
+                      <div class="habit-card-title">Tiempo por hábito</div>
+                      <div id="habit-donut-sub" class="habit-card-sub">Distribución diaria</div>
+                    </div>
+                    <div class="habit-range-toggle" role="group" aria-label="Rango de tiempo">
+                      <button class="habit-range-btn is-active" data-range="day">Día</button>
+                      <button class="habit-range-btn" data-range="week">Semana</button>
+                      <button class="habit-range-btn" data-range="month">Mes</button>
+                      <button class="habit-range-btn" data-range="year">Año</button>
+                      <button class="habit-range-btn" data-range="total">Total</button>
+                    </div>
                   </div>
+                  <div class="habit-donut-body">
+                    <div id="habit-donut" class="habit-donut"></div>
+                    <div id="habit-donut-center" class="habit-donut-center">
+                      <div class="habit-donut-label">Tiempo</div>
+                      <div class="habit-donut-total">0m</div>
+                    </div>
+                  </div>
+                  <div id="habit-donut-empty" class="empty-state small" style="display:none;">No hay datos en este rango.</div>
+                  <div id="habit-donut-legend" class="habit-donut-legend"></div>
                 </div>
 
                 <div class="habit-chart-card">
@@ -535,21 +580,45 @@
                   </div>
                 </div>
 
-                <div class="habit-top-grid">
-                  <div class="habit-chart-card">
-                    <div class="habit-card-title">Top minutos (semana)</div>
+                <details class="habit-accordion" id="habit-acc-week">
+                  <summary>
+                    <div class="habit-accordion-title">Top minutos (semana)</div>
+                    <div id="habit-acc-week-meta" class="habit-accordion-meta">—</div>
+                  </summary>
+                  <div class="habit-accordion-body">
                     <div id="habit-ranking-week" class="habit-ranking-list"></div>
                   </div>
-                  <div class="habit-chart-card">
-                    <div class="habit-card-title">Top minutos (mes)</div>
+                </details>
+
+                <details class="habit-accordion" id="habit-acc-month">
+                  <summary>
+                    <div class="habit-accordion-title">Top minutos (mes)</div>
+                    <div id="habit-acc-month-meta" class="habit-accordion-meta">—</div>
+                  </summary>
+                  <div class="habit-accordion-body">
                     <div id="habit-ranking-month" class="habit-ranking-list"></div>
                   </div>
-                </div>
+                </details>
 
-                <div class="habit-chart-card">
-                  <div class="habit-card-title">Top consistencia</div>
-                  <div id="habit-ranking-consistency" class="habit-ranking-list"></div>
-                </div>
+                <details class="habit-accordion" id="habit-acc-total">
+                  <summary>
+                    <div class="habit-accordion-title">Totales por hábito</div>
+                    <div id="habit-acc-total-meta" class="habit-accordion-meta">—</div>
+                  </summary>
+                  <div class="habit-accordion-body">
+                    <div id="habit-totals-list" class="habit-ranking-list"></div>
+                  </div>
+                </details>
+
+                <details class="habit-accordion" id="habit-acc-consistency">
+                  <summary>
+                    <div class="habit-accordion-title">Consistencia</div>
+                    <div id="habit-acc-consistency-meta" class="habit-accordion-meta">—</div>
+                  </summary>
+                  <div class="habit-accordion-body">
+                    <div id="habit-ranking-consistency" class="habit-ranking-list"></div>
+                  </div>
+                </details>
               </div>
             </div>
           </div>

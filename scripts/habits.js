@@ -35,6 +35,8 @@ const HABIT_SESSIONS_PATH = "habitSessions";
 const STORAGE_KEY = "bookshell-habits-cache";
 const RUNNING_KEY = "bookshell-habit-running-session";
 const LAST_HABIT_KEY = "bookshell-habits-last-used";
+const HEATMAP_YEAR_STORAGE = "bookshell-habits-heatmap-year";
+const DEFAULT_COLOR = "#7f5dff";
 
 // Estado
 let habits = {}; // {id: habit}
@@ -46,6 +48,8 @@ let sessionInterval = null;
 let pendingSessionDuration = 0;
 let heatmapYear = new Date().getFullYear();
 let habitDeleteTarget = null;
+let habitToastEl = null;
+let habitToastTimeout = null;
 
 // Utilidades fecha
 function dateKeyLocal(date) {
@@ -80,8 +84,28 @@ function parseDateKey(key) {
   return new Date(y, m - 1, d);
 }
 
+function hexToRgb(hex) {
+  if (!hex) return { r: 127, g: 93, b: 255 };
+  const clean = hex.replace("#", "");
+  if (![3, 6].includes(clean.length)) return { r: 127, g: 93, b: 255 };
+  const normalized = clean.length === 3
+    ? clean.split("").map((c) => c + c).join("")
+    : clean;
+  const int = parseInt(normalized, 16);
+  return {
+    r: (int >> 16) & 255,
+    g: (int >> 8) & 255,
+    b: int & 255
+  };
+}
+
+function hexToRgbString(hex) {
+  const { r, g, b } = hexToRgb(hex);
+  return `${r}, ${g}, ${b}`;
+}
+
 function formatMinutes(min) {
-  if (!min) return "0";
+  if (!min) return "0m";
   if (min >= 60) {
     const hours = Math.floor(min / 60);
     const rest = min % 60;
@@ -105,6 +129,36 @@ function isSessionActive(session) {
 
 function minutesFromSession(session) {
   return Math.round((session?.durationSec || 0) / 60);
+}
+
+function resolveHabitColor(habit) {
+  return habit?.color || DEFAULT_COLOR;
+}
+
+function setHabitColorVars(el, habit) {
+  if (!el) return;
+  const color = resolveHabitColor(habit);
+  el.style.setProperty("--hclr", color);
+  el.style.setProperty("--hclr-rgb", hexToRgbString(color));
+}
+
+function ensureHabitToast() {
+  if (!habitToastEl) {
+    habitToastEl = document.createElement("div");
+    habitToastEl.className = "habit-toast hidden";
+    document.body.appendChild(habitToastEl);
+  }
+  return habitToastEl;
+}
+
+function showHabitToast(text) {
+  const toast = ensureHabitToast();
+  toast.textContent = text;
+  toast.classList.remove("hidden");
+  if (habitToastTimeout) clearTimeout(habitToastTimeout);
+  habitToastTimeout = setTimeout(() => {
+    toast.classList.add("hidden");
+  }, 2300);
 }
 
 function readCache() {
@@ -158,6 +212,25 @@ function loadRunningSession() {
   }
 }
 
+function loadHeatmapYear() {
+  try {
+    const stored = Number(localStorage.getItem(HEATMAP_YEAR_STORAGE));
+    if (stored) {
+      heatmapYear = stored;
+    }
+  } catch (err) {
+    console.warn("No se pudo leer año del heatmap", err);
+  }
+}
+
+function saveHeatmapYear() {
+  try {
+    localStorage.setItem(HEATMAP_YEAR_STORAGE, String(heatmapYear));
+  } catch (err) {
+    console.warn("No se pudo guardar año del heatmap", err);
+  }
+}
+
 function activeHabits() {
   return Object.values(habits).filter((h) => !h.archived);
 }
@@ -177,14 +250,20 @@ function hasSessionForHabitDate(habitId, dateKey) {
 }
 
 function isHabitCompletedOnDate(habit, dateKey) {
-  if (!habit || habit.archived) return false;
-  const checked = !!(habitChecks[habit.id] && habitChecks[habit.id][dateKey]);
-  if (checked) return true;
-  return hasSessionForHabitDate(habit.id, dateKey);
+  return getHabitDayScore(habit, dateKey).hasActivity;
 }
 
 function countCompletedHabitsForDate(dateKey) {
   return activeHabits().reduce((acc, habit) => (isHabitCompletedOnDate(habit, dateKey) ? acc + 1 : acc), 0);
+}
+
+function getHabitDayScore(habit, dateKey) {
+  if (!habit || habit.archived) return { score: 0, minutes: 0, checked: false, hasActivity: false };
+  const checked = !!(habitChecks[habit.id] && habitChecks[habit.id][dateKey]);
+  const minutes = getSessionsForHabitDate(habit.id, dateKey).reduce((acc, s) => acc + minutesFromSession(s), 0);
+  const timeScore = Math.min(3, Math.floor(minutes / 30));
+  const score = (checked ? 1 : 0) + timeScore;
+  return { score, minutes, checked, hasActivity: checked || minutes > 0 };
 }
 
 function getAvailableYears() {
@@ -205,16 +284,46 @@ function getAvailableYears() {
   return Array.from(years).sort((a, b) => b - a);
 }
 
-function getDayScore(dateKey) {
-  const totalMinutes = getSessionsForDate(dateKey).reduce((acc, s) => acc + minutesFromSession(s), 0);
-  const completedHabits = countCompletedHabitsForDate(dateKey);
-  const sessionActivity = totalMinutes > 0 ? 1 : 0;
-  const intensityBonus = Math.min(3, Math.floor(totalMinutes / 30));
-  return {
-    score: completedHabits + sessionActivity + intensityBonus,
-    completedHabits,
-    totalMinutes
-  };
+function buildYearCells(year) {
+  const start = new Date(year, 0, 1);
+  const end = new Date(year + 1, 0, 1);
+  const offset = (start.getDay() + 6) % 7; // lunes = 0
+  const cells = [];
+  for (let i = 0; i < offset; i++) {
+    cells.push({ out: true });
+  }
+  let cursor = new Date(start);
+  while (cursor < end) {
+    cells.push({ out: false, key: dateKeyLocal(cursor) });
+    cursor = addDays(cursor, 1);
+  }
+  const remainder = cells.length % 7;
+  if (remainder) {
+    for (let i = 0; i < 7 - remainder; i++) cells.push({ out: true });
+  }
+  return cells;
+}
+
+function getGlobalDayScore(dateKey) {
+  let score = 0;
+  let totalMinutes = 0;
+  let active = 0;
+  activeHabits()
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+    .forEach((habit) => {
+    const data = getHabitDayScore(habit, dateKey);
+    totalMinutes += data.minutes;
+    score += data.score;
+    if (data.hasActivity) active += 1;
+  });
+  return { score, totalMinutes, activeHabits: active };
+}
+
+function scoreToHeatLevel(score) {
+  if (score >= 8) return 4;
+  if (score >= 5) return 3;
+  if (score >= 2) return 2;
+  return score > 0 ? 1 : 0;
 }
 
 // UI refs
@@ -335,7 +444,7 @@ function openHabitModal(habit = null) {
   $habitModalTitle.textContent = habit ? "Editar hábito" : "Nuevo hábito";
   $habitName.value = habit ? habit.name || "" : "";
   $habitEmoji.value = habit ? habit.emoji || "" : "";
-  $habitColor.value = habit && habit.color ? habit.color : "#7f5dff";
+  $habitColor.value = habit && habit.color ? habit.color : DEFAULT_COLOR;
   $habitTargetMinutes.value = habit && habit.targetMinutes ? habit.targetMinutes : "";
   const goal = habit && habit.goal === "time" ? "time" : "check";
   $habitForm.querySelector(`input[name=\"habit-goal\"][value=\"${goal}\"]`).checked = true;
@@ -359,7 +468,7 @@ function gatherHabitPayload() {
   const id = $habitId.value || `h-${Date.now().toString(36)}`;
   const existing = habits[id];
   const emoji = ($habitEmoji.value || "").trim() || "🏷️";
-  const color = $habitColor.value || "#7f5dff";
+  const color = $habitColor.value || DEFAULT_COLOR;
   const goal = $habitForm.querySelector("input[name=\"habit-goal\"]:checked")?.value || "check";
   const scheduleType = $habitForm.querySelector("input[name=\"habit-schedule\"]:checked")?.value || "daily";
   const days = Array.from($habitDaysSelector.querySelectorAll("button.is-active")).map((b) => Number(b.dataset.day));
@@ -405,17 +514,7 @@ function createHabitActions(habit) {
     e.stopPropagation();
     openHabitModal(habit);
   });
-  const del = document.createElement("button");
-  del.type = "button";
-  del.className = "icon-btn";
-  del.title = "Eliminar";
-  del.textContent = "⋯";
-  del.addEventListener("click", (e) => {
-    e.stopPropagation();
-    openDeleteConfirm(habit.id);
-  });
   wrap.appendChild(edit);
-  wrap.appendChild(del);
   return wrap;
 }
 
@@ -440,7 +539,6 @@ function archiveHabit() {
     habit.archived = true;
     persistHabit(habit);
   }
-  delete habitChecks[habitDeleteTarget];
   saveCache();
   closeDeleteConfirm();
   closeHabitModal();
@@ -472,18 +570,23 @@ function renderToday() {
       const sessionsToday = getSessionsForHabitDate(habit.id, today);
       const minutesToday = sessionsToday.reduce((acc, s) => acc + minutesFromSession(s), 0);
       const hasActivity = doneCheck || minutesToday > 0;
+      const streak = computeHabitCurrentStreak(habit);
       const metaParts = [habit.schedule?.type === "days" ? formatDaysLabel(habit.schedule.days) : "Cada día"];
       if (habit.targetMinutes) metaParts.push(`Obj: ${habit.targetMinutes}m`);
       if (minutesToday) metaParts.push(`${minutesToday}m hoy`);
       const card = document.createElement("div");
       card.className = "habit-card";
+      setHabitColorVars(card, habit);
 
       const left = document.createElement("div");
       left.className = "habit-card-left";
       left.innerHTML = `
-        <div class="habit-emoji" style="background:${habit.color || "var(--glass)"}22">${habit.emoji || "🏷️"}</div>
+        <div class="habit-emoji">${habit.emoji || "🏷️"}</div>
         <div>
-          <div class="habit-name">${habit.name}</div>
+          <div class="habit-name-row">
+            <div class="habit-name">${habit.name}</div>
+            <div class="habit-streak" title="Racha actual">🔥 ${streak}</div>
+          </div>
           <div class="habit-meta">${metaParts.join(" · ")}</div>
         </div>
       `;
@@ -531,11 +634,12 @@ function renderWeek() {
       any = true;
       const card = document.createElement("div");
       card.className = "habit-week-card";
+      setHabitColorVars(card, habit);
       const header = document.createElement("div");
       header.className = "habit-week-header";
       header.innerHTML = `
         <div class="habit-card-left">
-          <div class="habit-emoji" style="background:${habit.color || "var(--glass)"}22">${habit.emoji || "🏷️"}</div>
+          <div class="habit-emoji">${habit.emoji || "🏷️"}</div>
           <div>
             <div class="habit-name">${habit.name}</div>
             <div class="habit-meta">${habit.schedule?.type === "days" ? formatDaysLabel(habit.schedule.days) : "Cada día"}</div>
@@ -570,38 +674,44 @@ function renderWeek() {
 function renderHistory() {
   $habitHistoryList.innerHTML = "";
   let any = false;
-  const days = 30;
-  const today = new Date();
-  activeHabits()
-    .forEach((habit) => {
-      any = true;
-      const card = document.createElement("div");
-      card.className = "habit-heatmap-card";
-      card.innerHTML = `
-        <div class="habit-heatmap-header">
-          <div class="habit-emoji" style="background:${habit.color || "var(--glass)"}22">${habit.emoji || "🏷️"}</div>
-          <div>
-            <div class="habit-name">${habit.name}</div>
-            <div class="habit-meta">Últimos ${days} días</div>
-          </div>
+  const year = heatmapYear;
+  const cells = buildYearCells(year);
+  activeHabits().forEach((habit) => {
+    any = true;
+    const card = document.createElement("div");
+    card.className = "habit-heatmap-card";
+    setHabitColorVars(card, habit);
+    card.innerHTML = `
+      <div class="habit-heatmap-header">
+        <div class="habit-emoji">${habit.emoji || "🏷️"}</div>
+        <div>
+          <div class="habit-name">${habit.name}</div>
+          <div class="habit-meta">Año ${year}</div>
         </div>
-      `;
-      card.querySelector(".habit-heatmap-header").appendChild(createHabitActions(habit));
-      const grid = document.createElement("div");
-      grid.className = "habit-heatmap-grid";
-      for (let i = days - 1; i >= 0; i--) {
-        const date = addDays(today, -i);
-        const dateKey = dateKeyLocal(date);
-        const dot = document.createElement("div");
-        dot.className = "habit-heatmap-dot";
-        if (isHabitCompletedOnDate(habit, dateKey)) {
-          dot.classList.add("on");
-        }
-        grid.appendChild(dot);
+      </div>
+    `;
+    card.querySelector(".habit-heatmap-header").appendChild(createHabitActions(habit));
+    const grid = document.createElement("div");
+    grid.className = "habit-annual-heatmap habit-annual-heatmap--dots";
+    cells.forEach((cellData) => {
+      const dot = document.createElement("div");
+      dot.className = "habit-heatmap-cell";
+      if (!cellData.key) {
+        dot.classList.add("is-out");
+      } else {
+        const dayData = getHabitDayScore(habit, cellData.key);
+        const level = Math.min(4, dayData.score);
+        if (level > 0) dot.classList.add(`heat-level-${level}`);
+        dot.title = `${cellData.key} · ${dayData.checked ? "Check" : "Sin check"} · ${formatMinutes(dayData.minutes)}`;
       }
-      card.appendChild(grid);
-      $habitHistoryList.appendChild(card);
+      grid.appendChild(dot);
     });
+    const scroll = document.createElement("div");
+    scroll.className = "habit-heatmap-scroll";
+    scroll.appendChild(grid);
+    card.appendChild(scroll);
+    $habitHistoryList.appendChild(card);
+  });
 
   $habitHistoryEmpty.style.display = any ? "none" : "block";
 }
@@ -609,72 +719,109 @@ function renderHistory() {
 function renderBars() {
   if (!$habitMinutesBars) return;
   $habitMinutesBars.innerHTML = "";
+  const habitsList = activeHabits().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   const today = new Date();
+  const daysData = [];
+  let maxMinutes = 0;
   for (let i = 6; i >= 0; i--) {
     const date = addDays(today, -i);
     const dateKey = dateKeyLocal(date);
-    const totalSec = Object.values(habitSessions).reduce((acc, session) => {
-      if (!isSessionActive(session)) return acc;
-      if (getSessionDateKey(session) === dateKey) return acc + (session.durationSec || 0);
-      return acc;
-    }, 0);
-    const minutes = Math.round(totalSec / 60);
-    const bar = document.createElement("div");
-    bar.className = "habit-bar";
-    bar.dataset.label = ["L", "M", "X", "J", "V", "S", "D"][date.getDay()];
-    const height = Math.min(120, minutes * 2);
-    bar.style.height = `${height}px`;
-    bar.title = `${minutes} min`;
-    $habitMinutesBars.appendChild(bar);
+    const perHabit = habitsList.map((habit) => {
+      const minutes = getSessionsForHabitDate(habit.id, dateKey).reduce((acc, s) => acc + minutesFromSession(s), 0);
+      return { habit, minutes };
+    }).filter((item) => item.minutes > 0);
+    const totalMinutes = perHabit.reduce((acc, item) => acc + item.minutes, 0);
+    maxMinutes = Math.max(maxMinutes, totalMinutes);
+    daysData.push({ date, dateKey, perHabit, totalMinutes });
   }
+  const scale = Math.max(maxMinutes, 30);
+  daysData.forEach((data) => {
+    const container = document.createElement("div");
+    container.className = "habit-bar";
+    const stack = document.createElement("div");
+    stack.className = "habit-bar-stack";
+
+    let totalSegHeight = 0;
+    if (data.perHabit.length) {
+      data.perHabit.forEach((item) => {
+        const seg = document.createElement("div");
+        seg.className = "habit-bar-seg";
+        setHabitColorVars(seg, item.habit);
+        const segHeight = Math.max(4, (item.minutes / scale) * 120);
+        seg.style.height = `${segHeight}px`;
+        seg.title = `${item.habit.name} · ${formatMinutes(item.minutes)}`;
+        totalSegHeight += segHeight;
+        stack.appendChild(seg);
+      });
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "habit-bar-seg is-empty";
+      empty.style.height = "6px";
+      totalSegHeight = 6;
+      stack.appendChild(empty);
+    }
+    const estimatedHeight = data.totalMinutes ? (data.totalMinutes / scale) * 120 : 0;
+    const stackHeight = Math.max(16, Math.max(totalSegHeight, estimatedHeight));
+    stack.style.height = `${stackHeight}px`;
+
+    const value = document.createElement("div");
+    value.className = "habit-bar-value";
+    value.textContent = formatMinutes(data.totalMinutes);
+
+    const dayLabel = document.createElement("div");
+    dayLabel.className = "habit-bar-day";
+    dayLabel.textContent = ["D", "L", "M", "X", "J", "V", "S"][data.date.getDay()];
+
+    const breakdown = data.perHabit.map((p) => `${p.habit.name} ${formatMinutes(p.minutes)}`).join(" · ");
+    const message = `${dayLabel.textContent}: ${formatMinutes(data.totalMinutes)} (total)` + (breakdown ? `\n${breakdown}` : "");
+    container.title = message.replace(/\n/g, " · ");
+    container.addEventListener("click", () => showHabitToast(message));
+
+    container.appendChild(stack);
+    container.appendChild(value);
+    container.appendChild(dayLabel);
+    $habitMinutesBars.appendChild(container);
+  });
 }
 
 function renderGlobalHeatmap() {
   $habitGlobalHeatmap.innerHTML = "";
-  const years = getAvailableYears();
-  if (!years.includes(heatmapYear) && years.length) {
-    heatmapYear = years[0];
-  }
-  const yearStart = new Date(heatmapYear, 0, 1);
-  let cursor = new Date(yearStart);
+  const cells = buildYearCells(heatmapYear);
   let activeDays = 0;
-  while (cursor.getFullYear() === heatmapYear) {
-    const key = dateKeyLocal(cursor);
-    const { score, completedHabits, totalMinutes } = getDayScore(key);
+  cells.forEach((cellData) => {
+    const key = cellData.key;
     const cell = document.createElement("div");
     cell.className = "habit-heatmap-cell";
-    const level = Math.min(4, score);
-    if (level > 0) {
-      cell.classList.add(`heat-level-${level}`);
-      activeDays += 1;
+    if (!key) {
+      cell.classList.add("is-out");
+    } else {
+      const { score, totalMinutes, activeHabits: active } = getGlobalDayScore(key);
+      const level = scoreToHeatLevel(score);
+      if (level > 0) {
+        cell.classList.add(`heat-level-${level}`);
+        activeDays += 1;
+      }
+      cell.title = `${key} · ${active} hábitos con actividad · ${formatMinutes(totalMinutes)}`;
     }
-    cell.title = `${key} · ${completedHabits} hábitos · ${totalMinutes}m`;
     $habitGlobalHeatmap.appendChild(cell);
-    cursor = addDays(cursor, 1);
-  }
+  });
   if ($habitHeatmapYear) $habitHeatmapYear.textContent = heatmapYear;
   if ($habitHeatmapSub) $habitHeatmapSub.textContent = `Año ${heatmapYear} · ${activeDays} días con actividad`;
-  updateHeatmapYearControls(years);
+  updateHeatmapYearControls();
+  saveHeatmapYear();
 }
 
-function updateHeatmapYearControls(years = getAvailableYears()) {
+function updateHeatmapYearControls() {
   if (!$habitHeatmapPrev || !$habitHeatmapNext) return;
-  if (!years.length) return;
-  const minYear = Math.min(...years);
-  const maxYear = Math.max(...years);
-  $habitHeatmapPrev.disabled = heatmapYear <= minYear;
-  $habitHeatmapNext.disabled = heatmapYear >= maxYear;
+  $habitHeatmapPrev.disabled = false;
+  $habitHeatmapNext.disabled = false;
 }
 
 function changeHeatmapYear(delta) {
-  const years = getAvailableYears();
-  if (!years.length) return;
-  const minYear = Math.min(...years);
-  const maxYear = Math.max(...years);
-  const nextYear = heatmapYear + delta;
-  if (nextYear < minYear || nextYear > maxYear) return;
-  heatmapYear = nextYear;
+  heatmapYear = heatmapYear + delta;
+  saveHeatmapYear();
   renderGlobalHeatmap();
+  renderHistory();
 }
 
 function renderRanking() {
@@ -735,10 +882,11 @@ function renderRankingList(container, items, unit) {
   items.forEach((item) => {
     const div = document.createElement("div");
     div.className = "habit-ranking-item";
+    setHabitColorVars(div, item.habit);
     const left = document.createElement("div");
     left.className = "habit-card-left";
     left.innerHTML = `
-      <div class="habit-emoji" style="background:${item.habit.color || "var(--glass)"}22">${item.habit.emoji || "🏷️"}</div>
+      <div class="habit-emoji">${item.habit.emoji || "🏷️"}</div>
       <div>
         <div class="habit-name">${item.habit.name}</div>
         <div class="habit-consistency">${unit === "%" ? "Consistencia" : "Minutos"}</div>
@@ -806,6 +954,22 @@ function computeHabitStreak(habit, daysRange = 60) {
     }
   }
   return { best };
+}
+
+function computeHabitCurrentStreak(habit, maxDays = 400) {
+  const today = new Date();
+  let streak = 0;
+  for (let i = 0; i < maxDays; i++) {
+    const date = addDays(today, -i);
+    const key = dateKeyLocal(date);
+    const { hasActivity } = getHabitDayScore(habit, key);
+    if (hasActivity) {
+      streak += 1;
+    } else {
+      break;
+    }
+  }
+  return streak;
 }
 
 function computeTotalStreak(daysRange = 60) {
@@ -924,6 +1088,7 @@ function renderSessionList() {
   if (lastHabit) {
     $habitSessionLast.style.display = "block";
     $habitSessionLast.textContent = `Asignar al último: ${lastHabit.emoji || "🏷️"} ${lastHabit.name}`;
+    setHabitColorVars($habitSessionLast, lastHabit);
     $habitSessionLast.onclick = () => assignSession(lastHabit.id);
   } else {
     $habitSessionLast.style.display = "none";
@@ -935,9 +1100,10 @@ function renderSessionList() {
     .forEach((habit) => {
       const item = document.createElement("div");
       item.className = "habit-session-item";
+      setHabitColorVars(item, habit);
       item.innerHTML = `
         <div class="habit-card-left">
-          <div class="habit-emoji" style="background:${habit.color || "var(--glass)"}22">${habit.emoji || "🏷️"}</div>
+          <div class="habit-emoji">${habit.emoji || "🏷️"}</div>
           <div>
             <div class="habit-name">${habit.name}</div>
             <div class="habit-meta">${habit.schedule?.type === "days" ? formatDaysLabel(habit.schedule.days) : "Cada día"}</div>
@@ -1118,6 +1284,7 @@ function listenRemote() {
 export function initHabits() {
   readCache();
   loadRunningSession();
+  loadHeatmapYear();
   bindEvents();
   attachNavHook();
   listenRemote();

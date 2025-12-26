@@ -419,6 +419,54 @@ body {
   justify-content: center;
   transition: background .15s ease, border-color .15s ease, transform .12s ease;
 }
+
+/* Compact spec blocks (libros + recetas) */
+.spec-block{
+  display: grid;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 14px;
+}
+.spec-block.compact{
+  background: rgba(255,255,255,0.015);
+}
+.spec-block-title{
+  font-size: 11px;
+  letter-spacing: .02em;
+  color: var(--txt-soft);
+  text-transform: uppercase;
+}
+.spec-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 6px 10px;
+  align-items: start;
+}
+.spec-grid-secondary{
+  opacity: .95;
+}
+.spec-item{
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.spec-label{
+  font-size: 10px;
+  letter-spacing: .01em;
+  color: var(--txt-soft);
+}
+.spec-value{
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #f3f1ff;
+  word-break: break-word;
+}
+.spec-notes .spec-value{
+  white-space: pre-wrap;
+}
 .icon-btn:focus-visible{
   outline: 2px solid rgba(127,93,255,.6);
   outline-offset: 2px;

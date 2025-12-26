@@ -268,6 +268,9 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   const $recipeDetailSteps = document.getElementById("recipe-detail-steps");
   const $recipeDetailNotes = document.getElementById("recipe-detail-notes");
   const $recipeDetailNotesWrapper = document.getElementById("recipe-detail-notes-wrapper");
+  const $recipeDetailTabs = document.querySelectorAll(".recipe-tab");
+  const $recipeDetailPanels = document.querySelectorAll(".recipe-detail-panel");
+  const $recipeDetailCloseBottom = document.getElementById("recipe-detail-close-bottom");
 
   let recipes = loadRecipes();
   let detailRecipeId = null;
@@ -1526,6 +1529,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
   function renderRecipeDetail(id) {
     const recipe = recipes.find((r) => r.id === id);
     if (!recipe || !$recipeDetailBackdrop) return;
+    setActiveRecipePanel("ingredients");
 
     if ($recipeDetailTitle) $recipeDetailTitle.textContent = recipe.title || "Receta";
     if ($recipeDetailMeal) $recipeDetailMeal.textContent = recipe.meal || "";
@@ -1550,8 +1554,8 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       ];
       items.forEach((item) => {
         const block = document.createElement("div");
-        block.className = "recipe-detail-meta-item";
-        block.innerHTML = `<div class="meta-label">${item.label}</div><div class="meta-value">${item.value}</div>`;
+        block.className = "spec-item";
+        block.innerHTML = `<div class="spec-label">${item.label}</div><div class="spec-value">${item.value}</div>`;
         $recipeDetailMeta.appendChild(block);
       });
     }
@@ -1566,8 +1570,8 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       ];
       gridItems.forEach((item) => {
         const row = document.createElement("div");
-        row.className = "recipe-detail-grid-item";
-        row.innerHTML = `<div class="meta-label">${item.label}</div><div class="meta-value">${item.value}</div>`;
+        row.className = "spec-item";
+        row.innerHTML = `<div class="spec-label">${item.label}</div><div class="spec-value">${item.value}</div>`;
         $recipeDetailGrid.appendChild(row);
       });
     }
@@ -1630,6 +1634,20 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
   function closeRecipeDetail() {
     if ($recipeDetailBackdrop) $recipeDetailBackdrop.classList.add("hidden");
     detailRecipeId = null;
+  }
+
+  function setActiveRecipePanel(target = "ingredients") {
+    $recipeDetailTabs?.forEach((tab) => {
+      const isActive = tab.dataset.target === target;
+      tab.classList.toggle("is-active", isActive);
+      tab.setAttribute("aria-selected", isActive ? "true" : "false");
+      tab.setAttribute("tabindex", isActive ? "0" : "-1");
+    });
+    $recipeDetailPanels?.forEach((panel) => {
+      const isActive = panel.dataset.panel === target;
+      panel.classList.toggle("is-active", isActive);
+      panel.setAttribute("aria-hidden", isActive ? "false" : "true");
+    });
   }
 
   function toggleChecklistItem(recipeId, itemId, value, type) {
@@ -1804,6 +1822,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   });
 
   $recipeDetailClose?.addEventListener("click", closeRecipeDetail);
+  $recipeDetailCloseBottom?.addEventListener("click", closeRecipeDetail);
   $recipeDetailBackdrop?.addEventListener("click", (e) => {
     if (e.target === $recipeDetailBackdrop) closeRecipeDetail();
   });
@@ -1814,6 +1833,9 @@ $recipeImportBtn?.addEventListener("click", () => {
   });
   $recipeDetailDelete?.addEventListener("click", () => {
     if (detailRecipeId) deleteRecipe(detailRecipeId);
+  });
+  $recipeDetailTabs?.forEach((tab) => {
+    tab.addEventListener("click", () => setActiveRecipePanel(tab.dataset.target || "ingredients"));
   });
 
   $calPrev?.addEventListener("click", () => {

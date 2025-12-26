@@ -1062,12 +1062,32 @@ function pickSpinePalette(seed = "") {
   return spinePalettes[hash % spinePalettes.length];
 }
 
+function hashSpineSeed(seed = "") {
+  return Array.from(seed).reduce((acc, ch) => ((acc << 5) - acc + ch.charCodeAt(0)) >>> 0, 0);
+}
+
+function computeSpineLayout(seed, title = "") {
+  const hash = hashSpineSeed(seed || title || "");
+  const width = 44 + (hash % 35); // 44–78 px
+  const variant = Math.floor(hash / 7) % 4;
+  const tight = width < 54 && (title || "").length > 14;
+  return { width, variant, tight };
+}
+
+function applySpineLayout(spine, layout) {
+  if (!spine || !layout) return;
+  spine.style.setProperty("--spine-w", `${layout.width}px`);
+  spine.dataset.variant = String(layout.variant);
+  if (layout.tight) spine.classList.add("spine-tight");
+}
+
 function buildFinishedSpine(id) {
   const b = books[id] || {};
   const title = b.title || "Sin título";
   const total = Number(b.pages) || 0;
   const finishDate = getFinishDateForBook(id);
   const favorite = !!b.favorite;
+  const layout = computeSpineLayout(id + title, title);
   const [c1, c2] = favorite ? ["#f8e6aa", "#d3a74a"] : pickSpinePalette(title + id);
 
   const spine = document.createElement("div");
@@ -1078,6 +1098,7 @@ function buildFinishedSpine(id) {
   spine.style.setProperty("--spine-height", `${height}px`);
   spine.style.setProperty("--spine-color-1", c1);
   spine.style.setProperty("--spine-color-2", c2);
+  applySpineLayout(spine, layout);
   spine.title = `${title}${b.author ? ` · ${b.author}` : ""}${total ? ` · ${total} páginas` : ""}${finishDate ? ` · Terminado: ${finishDate}` : ""}`;
   spine.dataset.bookId = id;
   spine.tabIndex = 0;
@@ -1626,6 +1647,7 @@ function buildWatchlistSpine(id) {
   const title = b.title || "Sin título";
   const total = Number(b.pages) || 0;
   const favorite = !!b.favorite;
+  const layout = computeSpineLayout(id + title, title);
   const [c1, c2] = favorite ? ["#f8e6aa", "#d3a74a"] : pickSpinePalette(title + id);
 
   const spine = document.createElement("div");
@@ -1636,6 +1658,7 @@ function buildWatchlistSpine(id) {
   spine.style.setProperty("--spine-height", `${height}px`);
   spine.style.setProperty("--spine-color-1", c1);
   spine.style.setProperty("--spine-color-2", c2);
+  applySpineLayout(spine, layout);
   spine.title = `${title}${b.author ? ` · ${b.author}` : ""}${total ? ` · ${total} páginas` : ""}`;
   spine.dataset.bookId = id;
   spine.tabIndex = 0;
@@ -1814,6 +1837,7 @@ function buildReadingSpine(id) {
   const current = Math.min(total || Infinity, Number(b.currentPage) || 0);
   const percent = total > 0 ? Math.round((current / total) * 100) : 0;
   const favorite = !!b.favorite;
+  const layout = computeSpineLayout(id + title, title);
   const [c1, c2] = favorite ? ["#f8e6aa", "#d3a74a"] : pickSpinePalette(title + id);
 
   const spine = document.createElement("div");
@@ -1825,6 +1849,7 @@ function buildReadingSpine(id) {
   spine.style.setProperty("--spine-color-1", c1);
   spine.style.setProperty("--spine-color-2", c2);
   spine.style.setProperty("--p", percent);
+  applySpineLayout(spine, layout);
   spine.title = `${title}${b.author ? ` · ${b.author}` : ""}${total ? ` · ${current}/${total} (${percent}%)` : ""}`;
   spine.dataset.bookId = id;
   spine.tabIndex = 0;

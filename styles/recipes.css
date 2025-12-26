@@ -516,6 +516,12 @@
 .recipe-detail-specs .spec-grid{
   grid-template-columns: repeat(auto-fit, minmax(94px, 1fr));
 }
+.recipe-detail-specs .spec-item-notes{
+  grid-column: 1 / -1;
+}
+.recipe-detail-specs .spec-item-notes .spec-value{
+  white-space: pre-wrap;
+}
 .recipe-detail-specs .spec-label{
   font-size: 9px;
 }

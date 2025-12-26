@@ -197,23 +197,20 @@
   </div>
 </section>
 <section id="books-charts-section" class="books-charts" style="display:none;">
-  <div class="books-charts-grid">
-    <div class="chart-card">
-      <div class="chart-card-title">Categoría</div>
-      <div id="chart-genre" class="donut-host"></div>
+  <div class="chart-card">
+    <div class="chart-card-header">
+      <div class="chart-card-title" id="books-chart-title">Categoría</div>
+      <label class="chart-selector" for="books-chart-selector">
+        <span>Ver por</span>
+        <select id="books-chart-selector" class="chart-selector-input">
+          <option value="genre" selected>Categoría</option>
+          <option value="author">Autor</option>
+          <option value="language">Idioma</option>
+          <option value="century">Siglo</option>
+        </select>
+      </label>
     </div>
-    <div class="chart-card">
-      <div class="chart-card-title">Autor</div>
-      <div id="chart-author" class="donut-host"></div>
-    </div>
-    <div class="chart-card">
-      <div class="chart-card-title">Idioma</div>
-      <div id="chart-language" class="donut-host"></div>
-    </div>
-    <div class="chart-card">
-      <div class="chart-card-title">Siglo</div>
-      <div id="chart-century" class="donut-host"></div>
-    </div>
+    <div id="chart-active" class="donut-host"></div>
   </div>
 </section>
 

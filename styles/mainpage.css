@@ -1281,10 +1281,36 @@
   border: 1px solid rgba(255,255,255,0.10);
 }
 .chart-card-title{
-  font-size: 12px;
-  color: var(--txt-soft);
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  text-align: left;
+}
+.chart-card-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   margin-bottom: 6px;
-  text-align: center;
+}
+.chart-selector{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--txt-soft);
+  font-size: 12px;
+}
+.chart-selector-input{
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.14);
+  color: #fff;
+  border-radius: 12px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.chart-selector-input:focus{
+  outline: 2px solid rgba(245,230,166,0.45);
+  outline-offset: 1px;
 }
 .donut-host{
   display:flex;

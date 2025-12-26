@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="styles/mainpage.css" />
   <link rel="stylesheet" href="styles/videos.css" />
   <link rel="stylesheet" href="styles/recipes.css" />
+  <link rel="stylesheet" href="styles/habits.css" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
@@ -446,12 +447,120 @@
           </div>
         </div>
       </section>
+
+      <!-- Vista HÁBITOS -->
+      <section id="view-habits" class="view">
+        <div class="habits-wrapper">
+          <header class="habits-header">
+            <div class="habits-title">Hábitos</div>
+            <button id="habit-add-btn" class="icon-btn icon-btn-large" aria-label="Añadir hábito">+</button>
+          </header>
+
+          <div class="habits-subtabs" role="tablist" aria-label="Vistas de hábitos">
+            <button class="habit-subtab is-active" data-tab="today" role="tab" aria-selected="true">Hoy</button>
+            <button class="habit-subtab" data-tab="week" role="tab" aria-selected="false">Semana</button>
+            <button class="habit-subtab" data-tab="history" role="tab" aria-selected="false">Historial</button>
+            <button class="habit-subtab" data-tab="reports" role="tab" aria-selected="false">Reportes</button>
+          </div>
+
+          <div class="habits-views">
+            <div class="habits-panel is-active" data-panel="today">
+              <div class="habits-today-group">
+                <div class="habits-group-title">Pendientes hoy</div>
+                <div id="habits-today-pending" class="habit-card-list"></div>
+                <div id="habits-today-empty" class="empty-state small">No tienes hábitos pendientes hoy.</div>
+              </div>
+              <div class="habits-today-group">
+                <div class="habits-group-title">Hechos hoy</div>
+                <div id="habits-today-done" class="habit-card-list"></div>
+                <div id="habits-today-done-empty" class="empty-state small">Aún no has completado ningún hábito hoy.</div>
+              </div>
+            </div>
+
+            <div class="habits-panel" data-panel="week">
+              <div class="habits-week-list" id="habits-week-list"></div>
+              <div id="habits-week-empty" class="empty-state small">Añade hábitos para empezar tu semana.</div>
+            </div>
+
+            <div class="habits-panel" data-panel="history">
+              <div id="habits-history-list" class="habit-heatmap-list"></div>
+              <div id="habits-history-empty" class="empty-state small">Sin historial aún.</div>
+            </div>
+
+            <div class="habits-panel" data-panel="reports">
+              <div class="habit-kpi-grid">
+                <div class="habit-kpi-card">
+                  <div class="habit-kpi-label">Completados hoy</div>
+                  <div id="habit-kpi-today" class="habit-kpi-value">0</div>
+                </div>
+                <div class="habit-kpi-card">
+                  <div class="habit-kpi-label">Racha más larga</div>
+                  <div id="habit-kpi-streak" class="habit-kpi-value">0</div>
+                  <div id="habit-kpi-streak-label" class="habit-kpi-sub">—</div>
+                </div>
+                <div class="habit-kpi-card">
+                  <div class="habit-kpi-label">Minutos esta semana</div>
+                  <div id="habit-kpi-minutes" class="habit-kpi-value">0</div>
+                </div>
+              </div>
+
+              <div class="habit-chart-card">
+                <div class="habit-card-head">
+                  <div>
+                    <div class="habit-card-title">Minutos por día</div>
+                    <div class="habit-card-sub">Últimos 7 días</div>
+                  </div>
+                </div>
+                <div id="habit-minutes-bars" class="habit-bar-chart"></div>
+              </div>
+
+              <div class="habit-chart-card">
+                <div class="habit-card-head">
+                  <div>
+                    <div class="habit-card-title">Heatmap global</div>
+                    <div class="habit-card-sub">Últimos 90 días</div>
+                  </div>
+                </div>
+                <div id="habit-global-heatmap" class="habit-heatmap-grid"></div>
+              </div>
+
+              <div class="habit-ranking">
+                <div class="habit-ranking-block">
+                  <div class="habit-card-title">Top minutos (semana)</div>
+                  <div id="habit-ranking-week" class="habit-ranking-list"></div>
+                </div>
+                <div class="habit-ranking-block">
+                  <div class="habit-card-title">Top minutos (mes)</div>
+                  <div id="habit-ranking-month" class="habit-ranking-list"></div>
+                </div>
+                <div class="habit-ranking-block">
+                  <div class="habit-card-title">Top consistencia</div>
+                  <div id="habit-ranking-consistency" class="habit-ranking-list"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <button id="habit-session-toggle" class="habit-fab">▶︎ Empezar sesión</button>
+
+        <div id="habit-session-overlay" class="habit-session-overlay hidden">
+          <div class="habit-session-pill">
+            <div>
+              <div class="habit-session-label">Sesión en curso</div>
+              <div id="habit-session-time" class="habit-session-time">00:00</div>
+            </div>
+            <button id="habit-session-stop" class="btn danger btn-compact">⏹ Parar</button>
+          </div>
+        </div>
+      </section>
     </main>
 
     <nav class="bottom-nav">
       <button class="nav-btn nav-btn-active" data-view="view-books">Libros</button>
       <button class="nav-btn" data-view="view-videos">Vídeos</button>
       <button class="nav-btn" data-view="view-recipes">Recetas</button>
+      <button class="nav-btn" data-view="view-habits">Hábitos</button>
     </nav>
   </div>
 
@@ -933,15 +1042,126 @@
 
     <div class="recipe-detail-actions-bar">
       <button id="recipe-detail-edit" class="btn primary btn-compact">Editar</button>
-      <button id="recipe-detail-delete" class="btn ghost danger btn-compact">Eliminar</button>
-      <button id="recipe-detail-close-bottom" class="btn ghost">Cerrar</button>
-    </div>
+  <button id="recipe-detail-delete" class="btn ghost danger btn-compact">Eliminar</button>
+  <button id="recipe-detail-close-bottom" class="btn ghost">Cerrar</button>
+</div>
   </article>
+</div>
+
+<!-- MODAL HÁBITO -->
+<div id="habit-modal-backdrop" class="modal-backdrop hidden">
+  <div class="modal habit-modal">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div id="habit-modal-title" class="modal-title">Nuevo hábito</div>
+      <button id="habit-modal-close" class="icon-btn">✕</button>
+    </div>
+
+    <form id="habit-form" class="modal-form">
+      <input type="hidden" id="habit-id" />
+
+      <div class="modal-scroll sheet-body">
+        <div class="sheet-section">
+          <div class="sheet-section-title">Detalles</div>
+
+          <label class="field">
+            <span class="field-label">Nombre</span>
+            <input id="habit-name" type="text" required />
+          </label>
+
+          <label class="field">
+            <span class="field-label">Emoji/Icono</span>
+            <input id="habit-emoji" type="text" inputmode="text" placeholder="💪" maxlength="4" />
+          </label>
+
+          <label class="field">
+            <span class="field-label">Color</span>
+            <input id="habit-color" type="color" value="#7f5dff" />
+          </label>
+        </div>
+
+        <div class="sheet-section">
+          <div class="sheet-section-title">Objetivo</div>
+          <div class="field">
+            <span class="field-label">Tipo</span>
+            <div class="pill-row">
+              <label class="toggle-pill">
+                <input type="radio" name="habit-goal" value="check" checked />
+                <span>Check</span>
+              </label>
+              <label class="toggle-pill">
+                <input type="radio" name="habit-goal" value="time" />
+                <span>Tiempo</span>
+              </label>
+            </div>
+          </div>
+
+          <label class="field">
+            <span class="field-label">Minutos objetivo (opcional)</span>
+            <input id="habit-target-minutes" type="number" min="0" placeholder="25" inputmode="numeric" />
+          </label>
+        </div>
+
+        <div class="sheet-section">
+          <div class="sheet-section-title">Frecuencia</div>
+          <div class="pill-row">
+            <label class="toggle-pill">
+              <input type="radio" name="habit-schedule" value="daily" checked />
+              <span>Cada día</span>
+            </label>
+            <label class="toggle-pill">
+              <input type="radio" name="habit-schedule" value="days" />
+              <span>Días concretos</span>
+            </label>
+          </div>
+
+          <div class="habit-days-selector" id="habit-days-selector">
+            <button type="button" data-day="1">L</button>
+            <button type="button" data-day="2">M</button>
+            <button type="button" data-day="3">X</button>
+            <button type="button" data-day="4">J</button>
+            <button type="button" data-day="5">V</button>
+            <button type="button" data-day="6">S</button>
+            <button type="button" data-day="0">D</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer sheet-footer">
+        <button type="button" id="habit-delete" class="btn ghost danger footer-start">Eliminar</button>
+        <button type="button" id="habit-modal-cancel" class="btn ghost">Cancelar</button>
+        <button type="submit" class="btn primary">Guardar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- MODAL ASIGNAR SESIÓN -->
+<div id="habit-session-modal" class="modal-backdrop hidden">
+  <div class="modal habit-session-modal">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">¿A qué hábito asignas esta sesión?</div>
+      <button id="habit-session-close" class="icon-btn">✕</button>
+    </div>
+    <div class="modal-scroll sheet-body">
+      <div class="field">
+        <span class="field-label">Buscar</span>
+        <input id="habit-session-search" type="search" placeholder="Nombre del hábito" />
+      </div>
+      <div id="habit-session-last" class="habit-session-last" style="display:none;"></div>
+      <div id="habit-session-list" class="habit-session-list"></div>
+    </div>
+    <div class="modal-footer sheet-footer">
+      <button id="habit-session-cancel" class="btn ghost">Cancelar</button>
+    </div>
+  </div>
 </div>
 
   <script type="module" src="scripts/main.js"></script>
   <script type="module" src="scripts/videos.js"></script>
   <script type="module" src="scripts/recipes.js"></script>
+  <script type="module" src="scripts/habits.js"></script>
   <datalist id="country-options"></datalist>
 </body>
 </html>

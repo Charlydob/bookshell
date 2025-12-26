@@ -2177,7 +2177,7 @@ if (inlineInput) {
   }
 
   // Charts bajo “Terminados”
-  renderBooksGeo(idsAll); // mapa con todos los libros que tengan país
+  renderBooksGeo(finishedIdsAll); // mapa con libros terminados que tengan país
   renderFinishedCharts(finishedIdsAll);
 }
 

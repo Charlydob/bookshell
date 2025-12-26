@@ -180,8 +180,9 @@
 
 .books-watchlist{
   margin: 10px 4px 2px;
-  padding: 12px 12px 10px;
+  padding: 2px 2px 1px;
   border-radius: 16px;
+  font-size: 12px;
   background: linear-gradient(180deg, rgba(18,16,26,0.92), rgba(9,10,16,0.94));
   border: 1px solid rgba(255,255,255,0.08);
   box-shadow: 0 14px 32px rgba(0,0,0,0.55);
@@ -198,6 +199,13 @@
   gap: 10px;
   cursor: pointer;
   user-select: none;
+  font-size: 12px;
+}
+.watchlist-title{
+  font-weight: 400;
+  color: #f7f7ff;
+  margin-left: 10px;
+  font-size: 16px;
 }
 
 .watchlist-summary::-webkit-details-marker{ display: none; }
@@ -209,11 +217,7 @@
   gap: 10px;
 }
 
-.watchlist-title{
-  font-weight: 700;
-  font-size: 16px;
-  color: #f7f7ff;
-}
+
 
 .watchlist-subtitle{
   font-size: 13px;
@@ -223,12 +227,10 @@
 .watchlist-count{
   min-width: 30px;
   text-align: center;
-  padding: 6px 10px;
+  padding: 8px 0px;
   border-radius: 999px;
-  background: rgba(127,93,255,0.18);
   color: #f3e6ff;
-  border: 1px solid rgba(127,93,255,0.45);
-  font-weight: 700;
+  font-weight: 400;
 }
 
 .watchlist-empty{
@@ -246,7 +248,7 @@
 }
 
 .watchlist-caret{
-  opacity: .7;
+  opacity: 0;
   transition: transform .16s ease;
 }
 
@@ -706,7 +708,7 @@
 .dot-finished{
   background: rgba(61, 255, 133, 0.9);
 }
-.books-finished{
+.books-finished, .books-watchlist{
   margin-top: 12px;
   border: 1px solid rgba(255,255,255,.10);
   background: rgba(255,255,255,.04);
@@ -714,7 +716,7 @@
   overflow: hidden;
 }
 
-.books-finished-summary{
+.books-finished-summary, .books-watchlist-summary{
   list-style: none;
   padding: 10px 12px;
   display: flex;
@@ -726,7 +728,7 @@
 
 .books-finished-summary::-webkit-details-marker{ display:none; }
 
-.books-finished-count{
+.books-finished-count, .books-watchlist-count{
   opacity: .75;
   font-size: 12px;
 }

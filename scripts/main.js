@@ -140,10 +140,9 @@ const $genreRemoveBtn = document.getElementById("genre-remove-btn");
 
 // Charts (donut)
 const $booksChartsSection = document.getElementById("books-charts-section");
-const $chartGenre = document.getElementById("chart-genre");
-const $chartAuthor = document.getElementById("chart-author");
-const $chartCentury = document.getElementById("chart-century");
-const $chartLanguage = document.getElementById("chart-language");
+const $chartSelector = document.getElementById("books-chart-selector");
+const $chartTitle = document.getElementById("books-chart-title");
+const $chartActive = document.getElementById("chart-active");
 const $appMain = document.querySelector(".app-main");
 const $booksGeoSection = document.getElementById("books-geo-section");
 const $booksWorldMap = document.getElementById("books-world-map");
@@ -1125,6 +1124,13 @@ let donutBackupLanguages = null;
 let donutBackupCenturies = null;
 let donutActiveType = null;
 let donutActiveLabel = null;
+let donutDataByType = null;
+const donutTitles = {
+  genre: "Categoría",
+  author: "Autor",
+  language: "Idioma",
+  century: "Siglo"
+};
 
 function toRoman(num) {
   const n = Math.max(0, Math.floor(Number(num) || 0));
@@ -1704,12 +1710,48 @@ function renderWatchlist(plannedIds) {
   }
 }
 
+function getSelectedDonutType() {
+  const value = $chartSelector?.value;
+  if (value && donutTitles[value]) return value;
+  return "genre";
+}
+
+function setSelectedDonutType(type) {
+  if (!$chartSelector) return;
+  const safe = donutTitles[type] ? type : "genre";
+  $chartSelector.value = safe;
+}
+
+function renderActiveDonutChart() {
+  if (!$chartActive || !$booksChartsSection || !$chartSelector || !donutDataByType) return;
+  const type = getSelectedDonutType();
+  const title = donutTitles[type] || "Categoría";
+  const dataset = donutDataByType[type] || new Map();
+
+  if ($chartTitle) {
+    $chartTitle.textContent = title;
+  }
+
+  renderDonutChart($chartActive, title, dataset, {
+    onSliceSelect: (selection) => applyDonutFilter(selection, type),
+    activeLabel: donutActiveType === type ? donutActiveLabel : null
+  });
+}
+
+if ($chartSelector) {
+  $chartSelector.addEventListener("change", () => {
+    renderActiveDonutChart();
+  });
+}
+
 function renderFinishedCharts(finishedIds) {
   if (!$booksChartsSection) return;
 
   const ids = finishedIds || [];
   if (!ids.length) {
     $booksChartsSection.style.display = "none";
+    donutDataByType = null;
+    if ($chartActive) $chartActive.innerHTML = "";
     return;
   }
   $booksChartsSection.style.display = "block";
@@ -1719,22 +1761,19 @@ function renderFinishedCharts(finishedIds) {
   const byCentury = countBy(ids, (b) => yearToCenturyLabel(b?.year));
   const byLanguage = countBy(ids, (b) => b?.language || "Sin idioma");
 
-  renderDonutChart($chartGenre, "Categoría", byGenre, {
-    onSliceSelect: (selection) => applyDonutFilter(selection, "genre"),
-    activeLabel: donutActiveType === "genre" ? donutActiveLabel : null
-  });
-  renderDonutChart($chartAuthor, "Autor", byAuthor, {
-    onSliceSelect: (selection) => applyDonutFilter(selection, "author"),
-    activeLabel: donutActiveType === "author" ? donutActiveLabel : null
-  });
-  renderDonutChart($chartCentury, "Siglo", byCentury, {
-    onSliceSelect: (selection) => applyDonutFilter(selection, "century"),
-    activeLabel: donutActiveType === "century" ? donutActiveLabel : null
-  });
-  renderDonutChart($chartLanguage, "Idioma", byLanguage, {
-    onSliceSelect: (selection) => applyDonutFilter(selection, "language"),
-    activeLabel: donutActiveType === "language" ? donutActiveLabel : null
-  });
+  donutDataByType = {
+    genre: byGenre,
+    author: byAuthor,
+    century: byCentury,
+    language: byLanguage
+  };
+
+  const selectedType = getSelectedDonutType();
+  if (!donutDataByType[selectedType]) {
+    setSelectedDonutType("genre");
+  }
+
+  renderActiveDonutChart();
 }
 
 

@@ -178,6 +178,113 @@
   padding-bottom: 6px;
 }
 
+.books-watchlist{
+  margin: 10px 4px 2px;
+  padding: 12px 12px 10px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(18,16,26,0.92), rgba(9,10,16,0.94));
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 14px 32px rgba(0,0,0,0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.watchlist-header{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.watchlist-title{
+  font-weight: 700;
+  font-size: 16px;
+  color: #f7f7ff;
+}
+
+.watchlist-subtitle{
+  font-size: 13px;
+  color: var(--txt-soft);
+}
+
+.watchlist-count{
+  min-width: 30px;
+  text-align: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(127,93,255,0.18);
+  color: #f3e6ff;
+  border: 1px solid rgba(127,93,255,0.45);
+  font-weight: 700;
+}
+
+.watchlist-empty{
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.03);
+  color: var(--txt-soft);
+  font-size: 14px;
+}
+
+.watchlist-list{
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.watch-card{
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  display: grid;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color .15s ease, transform .12s ease;
+}
+.watch-card:hover{
+  border-color: rgba(255,255,255,0.12);
+  transform: translateY(-1px);
+}
+.watch-card-title-row{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.watch-card-title{
+  font-weight: 700;
+  color: #fff;
+  font-size: 15px;
+}
+.watch-card-badge{
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 208, 85, 0.15);
+  color: #f8dd85;
+  border: 1px solid rgba(255,208,85,0.35);
+  font-size: 12px;
+  font-weight: 700;
+}
+.watch-card-meta{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--txt-soft);
+  font-size: 13px;
+}
+.watch-card-meta span{
+  padding: 4px 8px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.watch-card-actions{
+  display: flex;
+  gap: 8px;
+}
+
 /* Tarjeta libro */
 
 .book-card {

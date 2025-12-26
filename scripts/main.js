@@ -162,6 +162,10 @@ const $booksFilterChips = document.getElementById("books-filter-chips");
 const $booksFilterPending = document.getElementById("books-filter-pending");
 const $booksFilterFinished = document.getElementById("books-filter-finished");
 const $booksFilterEmpty = document.getElementById("books-filter-empty");
+const $booksWatchlist = document.getElementById("books-watchlist");
+const $booksWatchlistList = document.getElementById("books-watchlist-list");
+const $booksWatchlistEmpty = document.getElementById("books-watchlist-empty");
+const $booksWatchlistCount = document.getElementById("books-watchlist-count");
 
 const filterState = {
   query: "",
@@ -1611,6 +1615,90 @@ function renderBooksGeo(ids) {
   renderCountryList($booksCountryList, stats, "libro");
 }
 
+function buildWatchlistCard(id) {
+  const b = books?.[id] || {};
+  const total = Number(b.pages) || 0;
+  const card = document.createElement("article");
+  card.className = "watch-card";
+
+  const titleRow = document.createElement("div");
+  titleRow.className = "watch-card-title-row";
+
+  const title = document.createElement("div");
+  title.className = "watch-card-title";
+  title.textContent = b.title || "Sin título";
+  titleRow.appendChild(title);
+
+  const badge = document.createElement("span");
+  badge.className = "watch-card-badge";
+  badge.textContent = "Pendiente";
+  titleRow.appendChild(badge);
+
+  const meta = document.createElement("div");
+  meta.className = "watch-card-meta";
+  const metaBits = [];
+  if (b.author) metaBits.push(b.author);
+  if (b.year) metaBits.push(String(b.year));
+  if (b.genre) metaBits.push(b.genre);
+  if (b.language) metaBits.push(b.language);
+  if (total) metaBits.push(`${total} pág`);
+  meta.innerHTML = metaBits.map((m) => `<span>${escapeHtml(m)}</span>`).join("");
+
+  const actions = document.createElement("div");
+  actions.className = "watch-card-actions";
+
+  const btnStart = document.createElement("button");
+  btnStart.className = "btn primary btn-compact";
+  btnStart.textContent = "Empezar";
+  btnStart.addEventListener("click", () => startPlannedBook(id));
+
+  const btnEdit = document.createElement("button");
+  btnEdit.className = "btn ghost btn-compact";
+  btnEdit.textContent = "Editar";
+  btnEdit.addEventListener("click", () => openBookModal(id));
+
+  actions.appendChild(btnStart);
+  actions.appendChild(btnEdit);
+
+  card.appendChild(titleRow);
+  card.appendChild(meta);
+  card.appendChild(actions);
+
+  card.addEventListener("click", (e) => {
+    if (e.target.closest("button")) return;
+    openBookDetail(id);
+  });
+
+  return card;
+}
+
+function renderWatchlist(plannedIds) {
+  if (!$booksWatchlist) return;
+  const ids = plannedIds || [];
+  const count = ids.length;
+
+  if (!count) {
+    $booksWatchlist.style.display = "none";
+    if ($booksWatchlistList) $booksWatchlistList.innerHTML = "";
+    if ($booksWatchlistCount) $booksWatchlistCount.textContent = "0";
+    if ($booksWatchlistEmpty) $booksWatchlistEmpty.style.display = "none";
+    return;
+  }
+
+  $booksWatchlist.style.display = "block";
+  if ($booksWatchlistCount) $booksWatchlistCount.textContent = String(count);
+  if ($booksWatchlistEmpty) $booksWatchlistEmpty.style.display = count ? "none" : "block";
+
+  if ($booksWatchlistList) {
+    const frag = document.createDocumentFragment();
+    ids.forEach((bookId) => {
+      frag.appendChild(buildWatchlistCard(bookId));
+    });
+    $booksWatchlistList.innerHTML = "";
+    $booksWatchlistList.appendChild(frag);
+  }
+}
+
 function renderFinishedCharts(finishedIds) {
   if (!$booksChartsSection) return;
 
@@ -1787,10 +1875,17 @@ function renderBooks() {
 
   const activeIds = [];
   const finishedIds = [];
+  const plannedIds = [];
 
   filteredIds.forEach((id) => {
     const b = books[id];
-    (isBookFinished(b) ? finishedIds : activeIds).push(id);
+    if (isBookFinished(b)) {
+      finishedIds.push(id);
+    } else if (b?.status === "planned") {
+      plannedIds.push(id);
+    } else {
+      activeIds.push(id);
+    }
   });
 
   const sortByUpdatedDesc = (a, b) => (books[b]?.updatedAt || 0) - (books[a]?.updatedAt || 0);
@@ -1801,15 +1896,18 @@ function renderBooks() {
   };
 
   activeIds.sort(sortByUpdatedDesc);
+  plannedIds.sort(sortByUpdatedDesc);
   finishedIds.sort(sortByFinishedDesc);
 
-  const hasFilteredBooks = activeIds.length > 0 || finishedIds.length > 0;
+  const hasFilteredBooks = activeIds.length > 0 || finishedIds.length > 0 || plannedIds.length > 0;
   if ($booksEmpty) {
     $booksEmpty.style.display = "none";
   }
   if ($booksFilterEmpty) {
     $booksFilterEmpty.style.display = hasFilteredBooks ? "none" : "block";
   }
+
+  renderWatchlist(plannedIds);
 
   const buildCard = (id) => {
     const b = books[id];
@@ -2142,6 +2240,25 @@ async function updateBookProgress(bookId, newPage) {
     }
   } catch (err) {
     console.error("Error actualizando progreso", err);
+  }
+}
+
+async function startPlannedBook(bookId) {
+  const book = books?.[bookId];
+  if (!book) return;
+  try {
+    const total = Math.max(0, Number(book.pages) || 0);
+    const current = Math.max(0, Math.min(total, Number(book.currentPage) || 0));
+    await update(ref(db, `${BOOKS_PATH}/${bookId}`), {
+      status: "reading",
+      currentPage: current,
+      finishedAt: null,
+      finishedOn: null,
+      finishedPast: false,
+      updatedAt: Date.now()
+    });
+  } catch (err) {
+    console.error("Error pasando a lectura", err);
   }
 }
 

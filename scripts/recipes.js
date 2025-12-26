@@ -404,25 +404,6 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return palettes[hash % palettes.length];
   }
 
-  function hashSpineSeed(seed = "") {
-    return Array.from(seed).reduce((acc, ch) => ((acc << 5) - acc + ch.charCodeAt(0)) >>> 0, 0);
-  }
-
-  function computeSpineLayout(seed, title = "") {
-    const hash = hashSpineSeed(seed || title || "");
-    const width = 44 + (hash % 35); // 44–78 px
-    const variant = Math.floor(hash / 7) % 4;
-    const tight = width < 54 && (title || "").length > 14;
-    return { width, variant, tight };
-  }
-
-  function applySpineLayout(spine, layout) {
-    if (!spine || !layout) return;
-    spine.style.setProperty("--spine-w", `${layout.width}px`);
-    spine.dataset.variant = String(layout.variant);
-    if (layout.tight) spine.classList.add("spine-tight");
-  }
-
   function flattenTags() {
     const acc = new Set();
     recipes.forEach((r) => {
@@ -572,13 +553,11 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   function buildSpine(recipe) {
     const spine = document.createElement("div");
     const [c1, c2] = recipe.favorite ? ["#f8e6aa", "#d3a74a"] : pickSpinePalette(recipe.title + recipe.id);
-    const layout = computeSpineLayout(recipe.id + recipe.title, recipe.title);
     const height = 138;
     spine.className = "book-spine recipe-spine";
     spine.style.setProperty("--spine-color-1", c1);
     spine.style.setProperty("--spine-color-2", c2);
     spine.style.setProperty("--spine-height", `${Math.min(170, height)}px`);
-    applySpineLayout(spine, layout);
     spine.title = `${recipe.title} · ${formatRatingStars(recipe.rating)}`;
     if (recipe.favorite) spine.classList.add("book-spine-favorite", "recipe-spine-favorite");
     if (recipe.laura) spine.classList.add("recipe-spine-laura");

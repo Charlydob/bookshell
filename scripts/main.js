@@ -1656,7 +1656,7 @@ function buildWatchlistSpine(id) {
   t.textContent = title;
 
   const meta = document.createElement("span");
-  meta.className = "book-spine-meta";
+  meta.className = "book-spine-meta-pendiente";
   meta.textContent = b.author || (total ? `${total} pág` : "—");
 
   const actions = document.createElement("div");

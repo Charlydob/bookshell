@@ -208,8 +208,8 @@
   gap: 8px;
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 86, 102, 0.3);
-  background: rgba(255, 86, 102, 0.08);
+  border: 1px solid rgba(239, 239, 239, 0.3);
+  background: rgba(225, 225, 225, 0.08);
   color: var(--txt);
 }
 
@@ -222,8 +222,8 @@
   height: 22px;
   border-radius: 6px;
   position: relative;
-  border: 2px solid rgba(255, 86, 102, 0.7);
-  background: rgba(255, 86, 102, 0.12);
+  border: transparent;
+  background: rgba(255, 0, 25, 0);
 }
 
 .laura-check-mark::after {
@@ -232,13 +232,16 @@
   inset: 0;
   display: grid;
   place-items: center;
-  font-weight: 800;
-  color: #ff5666;
+  font-weight: 600;
+  color: #ffffff;
   letter-spacing: 0.01em;
 }
 
 .laura-check input:checked + .laura-check-mark {
-  box-shadow: 0 0 0 2px rgba(255, 86, 102, 0.35);
+  box-shadow: 0 0 0 2px rgba(255, 1, 26, 0.575);
+  background: rgba(255, 0, 0, 0.374);
+  color: #ff0000;
+
 }
 
 .recipe-actions {

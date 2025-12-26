@@ -882,15 +882,18 @@
   filter: drop-shadow(0 1px 1px rgba(0,0,0,.25));
 }
 
-.book-spine-title,
-.book-spine-meta{
+.book-spine-title{
   writing-mode: vertical-rl;
   transform: rotate(180deg);
   text-align: center;
   letter-spacing: 0.03em;
   line-height: 1.1;
 }
+.book-spine-meta-pendiente{
+  display:none;
+}
 .book-spine-pill{
+  display: none;
   margin-top: 6px;
   padding: 4px 8px;
   border-radius: 10px;
@@ -904,7 +907,7 @@
   transform: rotate(180deg);
 }
 .book-spine-actions{
-  display: flex;
+  display: none;
   flex-direction: column;
   gap: 6px;
   width: 100%;
@@ -955,11 +958,7 @@
   color: rgba(5,6,12,.9);
 }
 
-.book-spine-meta{
-  font-size: 10px;
-  opacity: .85;
-  color: rgba(5,6,12,.85);
-}
+
 .favorite-toggle{
   display: inline-flex;
   align-items: center;
@@ -1227,20 +1226,31 @@
 
 .book-spine-stats{
   display: flex;
-  flex-direction: row;      /* antes: column */
+  flex-direction: column;      /* antes: column */
   align-items: center;
   justify-content: center;
   gap: 0px;                 /* ajusta a gusto */
-  padding-bottom: 2px;
-  font-size: 8px;
+  padding: 0px;
+  font-size: 6px;
+  color: white;
   white-space: nowrap;      /* evita salto de línea */
+  margin: 0;
+  max-height: 10px;
+  min-height: 10px;
+
 }
 
 
-.book-spine-pct{
+.book-spine-pct, .book-spine-meta{
   writing-mode: vertical-rl;
-  transform: rotate(180deg);
+  transform: rotate(270deg);
   text-align: center;
+  color: white;
+  font-size: 8px;
+  padding: 0;
+  margin: 0;
+  gap: 0;
+  line-height: 0.9em;
 }
 
 .book-bookmark{

@@ -15,7 +15,6 @@ if ($viewRecipes) {
   const MEAL_TYPES = ["desayuno", "comida", "cena", "snack"];
   const HEALTH_TYPES = ["sana", "equilibrada", "insana"];
   const palette = ["#f4d35e", "#9ad5ff", "#ff89c6", "#7dffb4", "#c8a4ff"];
-  const LAURA_POSITIVE_THRESHOLD = 4;
   const DEFAULT_INGREDIENT = () => ({ id: generateId(), text: "", done: false });
   const DEFAULT_STEP = () => ({
     id: generateId(),
@@ -747,10 +746,14 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     if ($statFavorites) $statFavorites.textContent = String(favorites);
     if ($statHealthy) $statHealthy.textContent = String(healthy);
     if ($statRating) $statRating.textContent = `${rating.toFixed(1)} `;
-    const lauraPositive = recipes.filter(
-      (r) => r.laura && (Number(r.rating) || 0) >= LAURA_POSITIVE_THRESHOLD
-    ).length;
-    if ($statLauraPositive) $statLauraPositive.textContent = String(lauraPositive);
+    const lauraChecksTotal = recipes.filter((r) => r.laura).length;
+    const lauraChecksFavorites = recipes.filter((r) => r.laura && r.favorite).length;
+    if ($statLauraPositive) {
+      $statLauraPositive.textContent = lauraChecksFavorites
+        ? `${lauraChecksTotal} · fav ${lauraChecksFavorites}`
+        : String(lauraChecksTotal);
+      $statLauraPositive.title = `Total con check de Laura: ${lauraChecksTotal}. Favoritas con check: ${lauraChecksFavorites}.`;
+    }
   }
 
   function recipePolar(cx, cy, r, deg) {
@@ -1566,7 +1569,6 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
         { label: "Tipo de comida", value: recipe.meal },
         { label: "País / origen", value: recipe.countryLabel || recipe.country || "—" },
         { label: "Etiquetas", value: (recipe.tags || []).join(", ") || "—" },
-        { label: "Notas", value: recipe.notes || "—" },
       ];
       gridItems.forEach((item) => {
         const row = document.createElement("div");
@@ -1574,6 +1576,11 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
         row.innerHTML = `<div class="spec-label">${item.label}</div><div class="spec-value">${item.value}</div>`;
         $recipeDetailGrid.appendChild(row);
       });
+
+      const notesRow = document.createElement("div");
+      notesRow.className = "spec-item spec-item-notes spec-notes";
+      notesRow.innerHTML = `<div class="spec-label">Notas</div><div class="spec-value">${recipe.notes || "—"}</div>`;
+      $recipeDetailGrid.appendChild(notesRow);
     }
 
     if ($recipeDetailIngredients) {
@@ -1783,7 +1790,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
     // Ingredientes
     const ingRows = (data.ingredients || []).map((i) => {
-      const left = (i.amount || "").trim();
+      const left = [i.amount, i.unit].map((v) => (v || "").trim()).filter(Boolean).join(" ");
       const name = (i.name || "").trim();
       const note = (i.note || "").trim();
       const txt = [left, name].filter(Boolean).join(" ").trim() + (note ? ` (${note})` : "");
@@ -1873,48 +1880,86 @@ $recipeImportBtn?.addEventListener("click", () => {
   refreshUI();
 }
 function parseRecipeV1(raw){
-  const t = String(raw||"").replace(/\r/g,"").trim();
-  if(!t.includes("RECETA_V1") || !t.includes("FIN_RECETA")) throw new Error("Formato inválido");
+  const lines = String(raw || "").replace(/\r/g, "").split("\n");
+  const start = lines.findIndex((l) => l.trim().toUpperCase() === "RECETA_V1");
+  const end = lines.findIndex((l, idx) => idx > start && l.trim().toUpperCase() === "FIN_RECETA");
+  if (start === -1 || end === -1 || end <= start) throw new Error("Formato inválido");
 
-  const get = (key) => {
-    const m = t.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
-    return m ? m[1].trim() : "";
+  const collapseSpaces = (value = "") => value.replace(/\s+/g, " ").trim();
+  const scoped = lines.slice(start + 1, end);
+  const normalized = [];
+  scoped.forEach((rawLine) => {
+    const line = rawLine.trim();
+    const prev = normalized[normalized.length - 1];
+    if (!line && prev === "") return; // colapsa saltos múltiples
+    normalized.push(line);
+  });
+  while (normalized[0] === "") normalized.shift();
+  while (normalized[normalized.length - 1] === "") normalized.pop();
+
+  const headerRegex = /^\s*(TITULO|PAIS|CATEGORIAS|RACIONES|TIEMPO_MIN|DIFICULTAD|CALORIAS_KCAL|PROTEINA_G|CARBOHIDRATOS_G|GRASA_G|INGREDIENTES|PASOS|NOTAS)\s*:\s*(.*)$/i;
+  const sections = {};
+  let current = null;
+
+  normalized.forEach((line) => {
+    const headerMatch = line.match(headerRegex);
+    if (headerMatch) {
+      current = headerMatch[1].toUpperCase();
+      const inlineValue = headerMatch[2].trim();
+      sections[current] = sections[current] || [];
+      if (inlineValue) sections[current].push(inlineValue);
+      return;
+    }
+    if (current) {
+      sections[current].push(line);
+    }
+  });
+
+  const readScalar = (key) => (sections[key] || []).map(collapseSpaces).find(Boolean) || "";
+  const readBlock = (key) => (sections[key] || []).map((l) => l.trim()).filter((l) => l !== "");
+
+  const parseIngredientLine = (line) => {
+    const withoutBullet = line.replace(/^-+\s*/, "");
+    const cleanLine = collapseSpaces(withoutBullet);
+    if (!cleanLine) return null;
+    const parts = cleanLine.split("|").slice(0, 4).map(collapseSpaces);
+    if (cleanLine.includes("|") && parts.length >= 3 && parts[2]) {
+      const [amount = "", unit = "", name = "", note = ""] = [...parts, "", "", "", ""].slice(0, 4);
+      return { amount, unit, name, note };
+    }
+    return { amount: "", unit: "", name: cleanLine, note: "" };
   };
 
-  const block = (name) => {
-    const m = t.match(new RegExp(`${name}:\\n([\\s\\S]*?)(\\n[A-Z_]+:|\\nFIN_RECETA)`, "m"));
-    return m ? m[1].trim() : "";
-  };
+  const ingredients = readBlock("INGREDIENTES")
+    .map(parseIngredientLine)
+    .filter((ing) => ing && ing.name);
 
-  const ingLines = block("INGREDIENTES").split("\n").map(s=>s.trim()).filter(Boolean);
-  const ingredients = ingLines
-    .filter(l=>l.startsWith("-"))
-    .map(l=>l.replace(/^-+\s*/,""))
-    .map(l=>{
-      const [left, name, note] = l.split("|").map(x=>(x||"").trim());
-      return { amount: left, name, note };
-    })
-    .filter(i=>i.name);
-
-  const stepLines = block("PASOS").split("\n").map(s=>s.trim()).filter(Boolean);
-  const steps = stepLines
-    .map(l=>l.replace(/^\d+\)\s*/,""))
+  const steps = readBlock("PASOS")
+    .map((line) => collapseSpaces(line.replace(/^-+\s*/, "")))
+    .map((line) => line.replace(/^\d+\s*[\.\)]\s*/, ""))
     .filter(Boolean);
 
-  const notes = block("NOTAS").split("\n").map(s=>s.trim()).filter(Boolean).map(l=>l.replace(/^-+\s*/,""));
+  const notes = readBlock("NOTAS")
+    .map((line) => collapseSpaces(line.replace(/^-+\s*/, "")))
+    .filter(Boolean);
+
+  const categoriesText = (sections.CATEGORIAS || []).join(" ");
 
   return {
-    title: get("TITULO"),
-    servings: get("RACIONES"),
-    timeMin: get("TIEMPO_MIN"),
-    difficulty: get("DIFICULTAD"),
-    country: get("PAIS"),
-    categories: get("CATEGORIAS").split(",").map(s=>s.trim()).filter(Boolean),
+    title: readScalar("TITULO"),
+    servings: readScalar("RACIONES"),
+    timeMin: readScalar("TIEMPO_MIN"),
+    difficulty: readScalar("DIFICULTAD"),
+    country: readScalar("PAIS"),
+    categories: categoriesText
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
     macros: {
-      kcal: get("CALORIAS_KCAL"),
-      p: get("PROTEINA_G"),
-      c: get("CARBOHIDRATOS_G"),
-      f: get("GRASA_G"),
+      kcal: readScalar("CALORIAS_KCAL"),
+      p: readScalar("PROTEINA_G"),
+      c: readScalar("CARBOHIDRATOS_G"),
+      f: readScalar("GRASA_G"),
     },
     ingredients,
     steps,

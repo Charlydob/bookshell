@@ -248,6 +248,12 @@ if ($viewRecipes) {
   const $recipeAddIngredient = document.getElementById("recipe-add-ingredient");
   const $recipeAddStep = document.getElementById("recipe-add-step");
   const $recipeDelete = document.getElementById("recipe-delete");
+const $recipeImportToggle = document.getElementById("recipe-import-toggle");
+const $recipeImportBox = document.getElementById("recipe-import-box");
+const $recipeImportText = document.getElementById("recipe-import-text");
+const $recipeImportBtn = document.getElementById("recipe-import-btn");
+const $recipeImportClear = document.getElementById("recipe-import-clear");
+const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   const $recipeDetailBackdrop = document.getElementById("recipe-detail-backdrop");
   const $recipeDetailClose = document.getElementById("recipe-detail-close");
@@ -737,7 +743,7 @@ if ($viewRecipes) {
     if ($statTotal) $statTotal.textContent = String(total);
     if ($statFavorites) $statFavorites.textContent = String(favorites);
     if ($statHealthy) $statHealthy.textContent = String(healthy);
-    if ($statRating) $statRating.textContent = `${rating.toFixed(1)} ★`;
+    if ($statRating) $statRating.textContent = `${rating.toFixed(1)} `;
     const lauraPositive = recipes.filter(
       (r) => r.laura && (Number(r.rating) || 0) >= LAURA_POSITIVE_THRESHOLD
     ).length;
@@ -1297,6 +1303,11 @@ if ($viewRecipes) {
   function openRecipeModal(recipe = null) {
     if (!$modalBackdrop) return;
     closeRecipeDetail();
+    // reset import UI
+if ($recipeImportBox) $recipeImportBox.classList.add("hidden");
+if ($recipeImportText) $recipeImportText.value = "";
+if ($recipeImportStatus) $recipeImportStatus.textContent = "";
+
     $modalBackdrop.classList.remove("hidden");
     $modalBackdrop.focus?.();
     const isEditing = !!recipe;
@@ -1695,6 +1706,88 @@ if ($viewRecipes) {
   });
 
   $btnAddRecipe?.addEventListener("click", () => openRecipeModal());
+  function setImportStatus(msg){
+  if ($recipeImportStatus) $recipeImportStatus.textContent = msg || "";
+}
+
+function guessMealFromCategories(cats){
+  const s = (cats || []).join(",").toLowerCase();
+  if (s.includes("desay")) return "desayuno";
+  if (s.includes("cena")) return "cena";
+  if (s.includes("snack") || s.includes("merienda")) return "snack";
+  return "comida";
+}
+
+$recipeImportToggle?.addEventListener("click", () => {
+  if (!$recipeImportBox) return;
+  $recipeImportBox.classList.toggle("hidden");
+  setImportStatus("");
+});
+
+$recipeImportClear?.addEventListener("click", () => {
+  if ($recipeImportText) $recipeImportText.value = "";
+  setImportStatus("");
+});
+
+$recipeImportBtn?.addEventListener("click", () => {
+  try{
+    const raw = ($recipeImportText?.value || "").trim();
+    const data = parseRecipeV1(raw);
+
+    if (data.title) $recipeName.value = data.title;
+
+    if ($recipeCountry && data.country) $recipeCountry.value = data.country;
+
+    if (data.categories?.length){
+      $recipeTags.value = data.categories.join(", ");
+      $recipeMeal.value = guessMealFromCategories(data.categories);
+    }
+
+    // Notas: mete “datos” + notas extra
+    const meta = [];
+    if (data.servings) meta.push(`Raciones: ${data.servings}`);
+    if (data.timeMin) meta.push(`Tiempo: ${data.timeMin} min`);
+    if (data.difficulty) meta.push(`Dificultad: ${data.difficulty}`);
+    const kcal = data.macros?.kcal ? `Kcal: ${data.macros.kcal}` : "";
+    const p = data.macros?.p ? `P: ${data.macros.p}g` : "";
+    const c = data.macros?.c ? `C: ${data.macros.c}g` : "";
+    const f = data.macros?.f ? `G: ${data.macros.f}g` : "";
+    const macrosLine = [kcal,p,c,f].filter(Boolean).join(" · ");
+    if (macrosLine) meta.push(macrosLine);
+
+    const notesLines = (data.notes || []).filter(Boolean);
+    const mergedNotes = [
+      meta.length ? meta.join(" | ") : "",
+      ...notesLines
+    ].filter(Boolean).join("\n");
+
+    if (mergedNotes) $recipeNotes.value = mergedNotes;
+
+    // Ingredientes
+    const ingRows = (data.ingredients || []).map((i) => {
+      const left = (i.amount || "").trim();
+      const name = (i.name || "").trim();
+      const note = (i.note || "").trim();
+      const txt = [left, name].filter(Boolean).join(" ").trim() + (note ? ` (${note})` : "");
+      return { id: generateId(), text: txt, done: false };
+    });
+    renderIngredientRows(ingRows.length ? ingRows : [DEFAULT_INGREDIENT()]);
+
+    // Pasos
+    const stepRows = (data.steps || []).map((s, idx) => ({
+      id: generateId(),
+      title: `Paso ${idx + 1}`,
+      description: s,
+      done: false,
+    }));
+    renderStepRows(stepRows.length ? stepRows : [DEFAULT_STEP()]);
+
+    setImportStatus("Importado. Revisa y guarda ✅");
+  }catch(err){
+    setImportStatus(`No pude importar: ${err?.message || "formato inválido"}`);
+  }
+});
+
   $modalClose?.addEventListener("click", closeRecipeModal);
   $modalCancel?.addEventListener("click", closeRecipeModal);
   $modalBackdrop?.addEventListener("click", (e) => {
@@ -1756,4 +1849,53 @@ if ($viewRecipes) {
 
   // Inicial
   refreshUI();
+}
+function parseRecipeV1(raw){
+  const t = String(raw||"").replace(/\r/g,"").trim();
+  if(!t.includes("RECETA_V1") || !t.includes("FIN_RECETA")) throw new Error("Formato inválido");
+
+  const get = (key) => {
+    const m = t.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
+    return m ? m[1].trim() : "";
+  };
+
+  const block = (name) => {
+    const m = t.match(new RegExp(`${name}:\\n([\\s\\S]*?)(\\n[A-Z_]+:|\\nFIN_RECETA)`, "m"));
+    return m ? m[1].trim() : "";
+  };
+
+  const ingLines = block("INGREDIENTES").split("\n").map(s=>s.trim()).filter(Boolean);
+  const ingredients = ingLines
+    .filter(l=>l.startsWith("-"))
+    .map(l=>l.replace(/^-+\s*/,""))
+    .map(l=>{
+      const [left, name, note] = l.split("|").map(x=>(x||"").trim());
+      return { amount: left, name, note };
+    })
+    .filter(i=>i.name);
+
+  const stepLines = block("PASOS").split("\n").map(s=>s.trim()).filter(Boolean);
+  const steps = stepLines
+    .map(l=>l.replace(/^\d+\)\s*/,""))
+    .filter(Boolean);
+
+  const notes = block("NOTAS").split("\n").map(s=>s.trim()).filter(Boolean).map(l=>l.replace(/^-+\s*/,""));
+
+  return {
+    title: get("TITULO"),
+    servings: get("RACIONES"),
+    timeMin: get("TIEMPO_MIN"),
+    difficulty: get("DIFICULTAD"),
+    country: get("PAIS"),
+    categories: get("CATEGORIAS").split(",").map(s=>s.trim()).filter(Boolean),
+    macros: {
+      kcal: get("CALORIAS_KCAL"),
+      p: get("PROTEINA_G"),
+      c: get("CARBOHIDRATOS_G"),
+      f: get("GRASA_G"),
+    },
+    ingredients,
+    steps,
+    notes,
+  };
 }

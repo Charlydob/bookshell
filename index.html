@@ -285,7 +285,7 @@
           <div class="recipes-top">
             <div class="stats-cards recipes-stats-cards">
               <div class="stat-card">
-                <div class="stat-label">Recetas totales</div>
+                <div class="stat-label">Recetas</div>
                 <div id="recipe-stat-total" class="stat-value">0</div>
               </div>
               <div class="stat-card">
@@ -297,11 +297,11 @@
                 <div id="recipe-stat-healthy" class="stat-value">0</div>
               </div>
               <div class="stat-card">
-                <div class="stat-label">Valoración media</div>
-                <div id="recipe-stat-rating" class="stat-value">0.0 ★</div>
+                <div class="stat-label">⭐</div>
+                <div id="recipe-stat-rating" class="stat-value">0.0</div>
               </div>
               <div class="stat-card">
-                <div class="stat-label">Laura positivas</div>
+                <div class="stat-label">L. Check</div>
                 <div id="recipe-stat-laura-positive" class="stat-value">0</div>
               </div>
             </div>
@@ -556,78 +556,67 @@
   <div id="book-detail-backdrop" class="modal-backdrop hidden">
     <div class="modal book-detail-modal">
       <div class="modal-handle"></div>
-      <header class="modal-header book-detail-header">
-        <div class="book-detail-header-main">
-          <div id="book-detail-title" class="modal-title">Ficha del libro</div>
-        </div>
-        <button id="book-detail-close" class="icon-btn icon-btn-ghost" aria-label="Cerrar">✕</button>
-      </header>
-      <div class="modal-body book-detail-body">
-        <section class="detail-section book-detail-section">
-          <div class="detail-heading">
-            <div class="detail-heading-text">
-              <div class="detail-title">Datos clave</div>
-              <div class="detail-subtitle">Se usan para estadísticas y filtros</div>
-            </div>
-          </div>
-
-          <div class="book-detail-chip-row">
-            <label class="favorite-toggle chip-tight">
-              <input id="book-detail-favorite" type="checkbox" />
-              <span class="favorite-icon" aria-hidden="true">★</span>
-              <span class="favorite-label">Favorito</span>
-            </label>
-            <div id="book-detail-status" class="book-detail-status">—</div>
-          </div>
-
-          <div class="book-detail-grid spec-grid">
-            <div class="book-detail-item spec-card">
-              <span class="book-detail-label spec-label">Autor</span>
-              <div id="book-detail-author" class="book-detail-value spec-value">—</div>
-            </div>
-            <div class="book-detail-item spec-card">
-              <span class="book-detail-label spec-label">Año</span>
-              <div id="book-detail-year" class="book-detail-value spec-value">—</div>
-            </div>
-            <div class="book-detail-item spec-card">
-              <span class="book-detail-label spec-label">Siglo</span>
-              <div id="book-detail-century" class="book-detail-value spec-value">—</div>
-            </div>
-            <div class="book-detail-item spec-card">
-              <span class="book-detail-label spec-label">Género</span>
-              <div id="book-detail-genre" class="book-detail-value spec-value">—</div>
-            </div>
-            <div class="book-detail-item spec-card">
-              <span class="book-detail-label spec-label">Idioma</span>
-              <div id="book-detail-language" class="book-detail-value spec-value">—</div>
-            </div>
-            <div class="book-detail-item spec-card">
-              <span class="book-detail-label spec-label">País</span>
-              <div id="book-detail-country" class="book-detail-value spec-value">—</div>
-            </div>
-            <div class="book-detail-item spec-card">
-              <span class="book-detail-label spec-label">Páginas</span>
-              <div id="book-detail-pages" class="book-detail-value spec-value">—</div>
-            </div>
-            <div class="book-detail-item spec-card">
-              <span class="book-detail-label spec-label">Progreso</span>
-              <div id="book-detail-progress" class="book-detail-value spec-value">—</div>
-            </div>
-            <div class="book-detail-item spec-card">
-              <span class="book-detail-label spec-label">Finalizado</span>
-              <div id="book-detail-finished" class="book-detail-value spec-value">—</div>
-            </div>
-            <div class="book-detail-item spec-card spec-card-wide">
-              <span class="book-detail-label spec-label">Notas</span>
-              <div id="book-detail-notes" class="book-detail-value book-detail-notes spec-value">Sin notas</div>
-            </div>
-          </div>
-        </section>
+      <div class="modal-header">
+        <div id="book-detail-title" class="modal-title">Ficha del libro</div>
+        <button id="book-detail-close" class="icon-btn">✕</button>
       </div>
-      <footer class="modal-footer book-detail-footer action-bar">
-        <button type="button" id="book-detail-edit" class="btn primary">Editar</button>
-        <button type="button" id="book-detail-close-btn" class="btn ghost">Cerrar</button>
-      </footer>
+      <div class="modal-body book-detail-body">
+        <div class="book-detail-top">
+          <label class="favorite-toggle">
+            <input id="book-detail-favorite" type="checkbox" />
+            <span class="favorite-icon" aria-hidden="true">★</span>
+            <span>Favorito</span>
+          </label>
+          <div id="book-detail-status" class="book-detail-status"></div>
+        </div>
+
+        <div class="book-detail-grid">
+          <div class="book-detail-item">
+            <span class="book-detail-label">Autor</span>
+            <div id="book-detail-author" class="book-detail-value">—</div>
+          </div>
+          <div class="book-detail-item">
+            <span class="book-detail-label">Año</span>
+            <div id="book-detail-year" class="book-detail-value">—</div>
+          </div>
+          <div class="book-detail-item">
+            <span class="book-detail-label">Siglo</span>
+            <div id="book-detail-century" class="book-detail-value">—</div>
+          </div>
+          <div class="book-detail-item">
+            <span class="book-detail-label">Género</span>
+            <div id="book-detail-genre" class="book-detail-value">—</div>
+          </div>
+          <div class="book-detail-item">
+            <span class="book-detail-label">Idioma</span>
+            <div id="book-detail-language" class="book-detail-value">—</div>
+          </div>
+          <div class="book-detail-item">
+            <span class="book-detail-label">País</span>
+            <div id="book-detail-country" class="book-detail-value">—</div>
+          </div>
+          <div class="book-detail-item">
+            <span class="book-detail-label">Páginas</span>
+            <div id="book-detail-pages" class="book-detail-value">—</div>
+          </div>
+          <div class="book-detail-item">
+            <span class="book-detail-label">Progreso</span>
+            <div id="book-detail-progress" class="book-detail-value">—</div>
+          </div>
+          <div class="book-detail-item">
+            <span class="book-detail-label">Finalizado</span>
+            <div id="book-detail-finished" class="book-detail-value">—</div>
+          </div>
+          <div class="book-detail-item">
+            <span class="book-detail-label">Notas</span>
+            <div id="book-detail-notes" class="book-detail-value book-detail-notes">Sin notas</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer book-detail-footer">
+        <button type="button" id="book-detail-edit" class="btn ghost">Editar</button>
+        <button type="button" id="book-detail-close-btn" class="btn primary">Cerrar</button>
+      </div>
     </div>
   </div>
 
@@ -748,6 +737,25 @@
       <div class="modal-scroll sheet-body">
         <div class="sheet-section">
           <div class="sheet-section-title">Datos clave</div>
+<div class="recipe-import">
+  <button type="button" id="recipe-import-toggle" class="btn ghost btn-compact">
+    Importar
+  </button>
+
+  <div id="recipe-import-box" class="recipe-import-box hidden">
+    <textarea
+      id="recipe-import-text"
+      class="builder-textarea recipe-import-text"
+      rows="7"
+      placeholder="Pega aquí el bloque RECETA_V1… (desde ChatGPT)"></textarea>
+
+    <div class="recipe-import-actions">
+      <button type="button" id="recipe-import-btn" class="btn primary btn-compact">Aplicar</button>
+      <button type="button" id="recipe-import-clear" class="btn ghost btn-compact">Limpiar</button>
+      <div id="recipe-import-status" class="recipe-import-status"></div>
+    </div>
+  </div>
+</div>
 
           <label class="field">
             <span class="field-label">Nombre del plato</span>
@@ -860,36 +868,29 @@
     <header class="recipe-detail-header">
       <div class="recipe-detail-top">
         <div class="recipe-detail-headings">
+          <div id="recipe-detail-meal" class="recipe-detail-chip"></div>
           <h2 id="recipe-detail-title" class="recipe-detail-title">Receta</h2>
-          <div class="recipe-detail-chip-row">
-            <div id="recipe-detail-meal" class="recipe-detail-chip"></div>
-            <div id="recipe-detail-tags" class="recipe-detail-tags"></div>
-          </div>
+          <div id="recipe-detail-tags" class="recipe-detail-tags"></div>
         </div>
-        <button id="recipe-detail-close" class="icon-btn icon-btn-large" aria-label="Cerrar">✕</button>
+        <div class="recipe-detail-actions">
+          <button id="recipe-detail-delete" class="btn ghost danger">Eliminar</button>
+          <button id="recipe-detail-edit" class="btn primary btn-compact">Editar</button>
+          <button id="recipe-detail-close" class="icon-btn icon-btn-large" aria-label="Cerrar">✕</button>
+        </div>
       </div>
+      <div id="recipe-detail-meta" class="recipe-detail-meta"></div>
     </header>
 
     <div class="recipe-detail-body">
-      <section class="recipe-detail-specs" aria-label="Datos rápidos de la receta">
-        <div class="specs-heading">
-          <div class="specs-title">Datos rápidos</div>
-          <div class="specs-subtitle">Incluye datos clave</div>
+      <section class="recipe-detail-section">
+        <div class="section-heading">
+          <div class="section-title">Datos clave</div>
+          <div class="section-hint">Se usan para estadísticas y filtros</div>
         </div>
-        <div id="recipe-detail-meta" class="specs-grid" aria-label="Estado y resumen"></div>
-        <div id="recipe-detail-grid" class="specs-grid" aria-label="Datos clave"></div>
+        <div id="recipe-detail-grid" class="recipe-detail-grid"></div>
       </section>
 
-      <div class="recipe-detail-tabs" id="recipe-detail-tabs" role="tablist" aria-label="Secciones de la receta">
-        <button type="button" class="tab-chip is-active" data-tab="ingredients" role="tab" aria-selected="true">
-          Ingredientes
-        </button>
-        <button type="button" class="tab-chip" data-tab="steps" role="tab" aria-selected="false">
-          Pasos
-        </button>
-      </div>
-
-      <section class="recipe-detail-section tab-panel is-active" data-tab-panel="ingredients" aria-label="Ingredientes">
+      <section class="recipe-detail-section">
         <div class="section-heading">
           <div class="section-title">Ingredientes</div>
           <div class="section-hint">Marca cada uno al prepararlo</div>
@@ -897,7 +898,7 @@
         <div id="recipe-detail-ingredients" class="recipe-detail-ingredients"></div>
       </section>
 
-      <section class="recipe-detail-section tab-panel" data-tab-panel="steps" aria-label="Pasos">
+      <section class="recipe-detail-section">
         <div class="section-heading">
           <div class="section-title">Pasos</div>
           <div class="section-hint">Título y descripción editables en el modal</div>
@@ -912,14 +913,6 @@
         <p id="recipe-detail-notes" class="recipe-detail-notes"></p>
       </section>
     </div>
-
-    <footer class="recipe-detail-footer action-bar">
-      <div class="action-bar-main">
-        <button id="recipe-detail-edit" class="btn primary">Editar</button>
-        <button id="recipe-detail-delete" class="btn ghost danger">Eliminar</button>
-        <button id="recipe-detail-close-btn" class="btn ghost">Cerrar</button>
-      </div>
-    </footer>
   </article>
 </div>
 

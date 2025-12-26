@@ -1621,61 +1621,83 @@ function renderBooksGeo(ids) {
   renderCountryList($booksCountryList, stats, "libro");
 }
 
-function buildWatchlistCard(id) {
+function buildWatchlistSpine(id) {
   const b = books?.[id] || {};
+  const title = b.title || "Sin título";
   const total = Number(b.pages) || 0;
-  const card = document.createElement("article");
-  card.className = "watch-card";
+  const favorite = !!b.favorite;
+  const [c1, c2] = favorite ? ["#f8e6aa", "#d3a74a"] : pickSpinePalette(title + id);
 
-  const titleRow = document.createElement("div");
-  titleRow.className = "watch-card-title-row";
+  const spine = document.createElement("div");
+  const baseHeight = 120 + Math.min(90, Math.round((total || 120) / 4));
+  const height = Math.min(baseHeight, 165);
+  spine.className = "book-spine book-spine-planned";
+  if (favorite) spine.classList.add("book-spine-favorite");
+  spine.style.setProperty("--spine-height", `${height}px`);
+  spine.style.setProperty("--spine-color-1", c1);
+  spine.style.setProperty("--spine-color-2", c2);
+  spine.title = `${title}${b.author ? ` · ${b.author}` : ""}${total ? ` · ${total} páginas` : ""}`;
+  spine.dataset.bookId = id;
+  spine.tabIndex = 0;
 
-  const title = document.createElement("div");
-  title.className = "watch-card-title";
-  title.textContent = b.title || "Sin título";
-  titleRow.appendChild(title);
+  if (favorite) {
+    const star = document.createElement("span");
+    star.className = "book-spine-star";
+    star.textContent = "★";
+    spine.appendChild(star);
+  }
 
   const badge = document.createElement("span");
-  badge.className = "watch-card-badge";
+  badge.className = "book-spine-pill";
   badge.textContent = "Pendiente";
-  titleRow.appendChild(badge);
 
-  const meta = document.createElement("div");
-  meta.className = "watch-card-meta";
-  const metaBits = [];
-  if (b.author) metaBits.push(b.author);
-  if (b.year) metaBits.push(String(b.year));
-  if (b.genre) metaBits.push(b.genre);
-  if (b.language) metaBits.push(b.language);
-  if (total) metaBits.push(`${total} pág`);
-  meta.innerHTML = metaBits.map((m) => `<span>${escapeHtml(m)}</span>`).join("");
+  const t = document.createElement("span");
+  t.className = "book-spine-title";
+  t.textContent = title;
+
+  const meta = document.createElement("span");
+  meta.className = "book-spine-meta";
+  meta.textContent = b.author || (total ? `${total} pág` : "—");
 
   const actions = document.createElement("div");
-  actions.className = "watch-card-actions";
+  actions.className = "book-spine-actions";
 
   const btnStart = document.createElement("button");
-  btnStart.className = "btn primary btn-compact";
+  btnStart.type = "button";
+  btnStart.className = "book-spine-cta";
   btnStart.textContent = "Empezar";
-  btnStart.addEventListener("click", () => startPlannedBook(id));
+  btnStart.addEventListener("click", (e) => {
+    e.stopPropagation();
+    startPlannedBook(id);
+  });
 
   const btnEdit = document.createElement("button");
-  btnEdit.className = "btn ghost btn-compact";
+  btnEdit.type = "button";
+  btnEdit.className = "book-spine-cta book-spine-cta-secondary";
   btnEdit.textContent = "Editar";
-  btnEdit.addEventListener("click", () => openBookModal(id));
+  btnEdit.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openBookModal(id);
+  });
 
   actions.appendChild(btnStart);
   actions.appendChild(btnEdit);
 
-  card.appendChild(titleRow);
-  card.appendChild(meta);
-  card.appendChild(actions);
+  spine.appendChild(badge);
+  spine.appendChild(t);
+  spine.appendChild(meta);
+  spine.appendChild(actions);
 
-  card.addEventListener("click", (e) => {
-    if (e.target.closest("button")) return;
-    openBookDetail(id);
+  const openDetail = () => openBookDetail(id);
+  spine.addEventListener("click", openDetail);
+  spine.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openDetail();
+    }
   });
 
-  return card;
+  return spine;
 }
 
 function renderWatchlist(plannedIds) {
@@ -1702,9 +1724,16 @@ function renderWatchlist(plannedIds) {
 
   if ($booksWatchlistList) {
     const frag = document.createDocumentFragment();
-    ids.forEach((bookId) => {
-      frag.appendChild(buildWatchlistCard(bookId));
-    });
+    const SHELF_SIZE_WATCH = 9;
+
+    for (let i = 0; i < ids.length; i += SHELF_SIZE_WATCH) {
+      const row = document.createElement("div");
+      row.className = "books-shelf-row books-shelf-row-watchlist";
+      ids.slice(i, i + SHELF_SIZE_WATCH).forEach((bookId) => {
+        row.appendChild(buildWatchlistSpine(bookId));
+      });
+      frag.appendChild(row);
+    }
     $booksWatchlistList.innerHTML = "";
     $booksWatchlistList.appendChild(frag);
   }

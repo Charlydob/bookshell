@@ -1679,13 +1679,18 @@ function renderWatchlist(plannedIds) {
 
   if (!count) {
     $booksWatchlist.style.display = "none";
+    $booksWatchlist.removeAttribute("open");
     if ($booksWatchlistList) $booksWatchlistList.innerHTML = "";
     if ($booksWatchlistCount) $booksWatchlistCount.textContent = "0";
     if ($booksWatchlistEmpty) $booksWatchlistEmpty.style.display = "none";
     return;
   }
 
+  const wasHidden = $booksWatchlist.style.display === "none";
   $booksWatchlist.style.display = "block";
+  if (wasHidden) {
+    $booksWatchlist.removeAttribute("open");
+  }
   if ($booksWatchlistCount) $booksWatchlistCount.textContent = String(count);
   if ($booksWatchlistEmpty) $booksWatchlistEmpty.style.display = count ? "none" : "block";
 

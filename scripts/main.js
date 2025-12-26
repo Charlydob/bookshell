@@ -1113,7 +1113,7 @@ function buildFinishedSpine(id) {
 const donutActiveFill = "#f5e6a6";
 const donutActiveStroke = "#e3c45a";
 const donutSliceStroke = "rgba(255,255,255,0.22)";
-const donutFocusHint = "Toca o navega una sección";
+const donutFocusHint = "";
 let donutBackupQuery = null;
 let donutBackupGenres = null;
 let donutBackupAuthors = null;
@@ -1597,6 +1597,8 @@ function renderBooksGeo(ids) {
     return;
   }
   $booksGeoSection.style.display = "block";
+  requestAnimationFrame(() => $booksWorldMap?.__geoChart?.resize?.());
+
   const mapData = stats
     .filter((s) => s.code)
     .map((s) => ({

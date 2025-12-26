@@ -256,18 +256,15 @@ if ($viewRecipes) {
   const $recipeDetailTitle = document.getElementById("recipe-detail-title");
   const $recipeDetailTags = document.getElementById("recipe-detail-tags");
   const $recipeDetailMeal = document.getElementById("recipe-detail-meal");
-  const $recipeDetailCloseBtn = document.getElementById("recipe-detail-close-btn");
   const $recipeDetailMeta = document.getElementById("recipe-detail-meta");
   const $recipeDetailGrid = document.getElementById("recipe-detail-grid");
   const $recipeDetailIngredients = document.getElementById("recipe-detail-ingredients");
   const $recipeDetailSteps = document.getElementById("recipe-detail-steps");
   const $recipeDetailNotes = document.getElementById("recipe-detail-notes");
   const $recipeDetailNotesWrapper = document.getElementById("recipe-detail-notes-wrapper");
-  const $recipeDetailTabBar = document.getElementById("recipe-detail-tabs");
 
   let recipes = loadRecipes();
   let detailRecipeId = null;
-  let recipeDetailActiveTab = "ingredients";
 
   const filterState = {
     query: "",
@@ -287,7 +284,7 @@ if ($viewRecipes) {
   const recipeDonutActiveFill = "#f5e6a6";
   const recipeDonutActiveStroke = "#e3c45a";
   const recipeDonutSliceStroke = "rgba(255,255,255,0.22)";
-  const recipeDonutFocusHint = "Toca o navega una sección";
+  const recipeDonutFocusHint = "";
   let recipeDonutActiveType = null;
   let recipeDonutActiveLabel = null;
   let recipeDonutBackupChips = null;
@@ -1140,6 +1137,9 @@ if ($viewRecipes) {
       return;
     }
     $recipesGeoSection.style.display = "block";
+    requestAnimationFrame(() => $recipesWorldMap?.__geoChart?.resize?.());
+
+    
     const mapData = stats
       .filter((s) => s.code)
       .map((s) => ({
@@ -1508,7 +1508,6 @@ if ($viewRecipes) {
     const recipe = recipes.find((r) => r.id === id);
     if (!recipe || !$recipeDetailBackdrop) return;
     detailRecipeId = id;
-    recipeDetailActiveTab = "ingredients";
     $recipeDetailBackdrop.classList.remove("hidden");
     renderRecipeDetail(id);
   }
@@ -1574,14 +1573,10 @@ if ($viewRecipes) {
           check.addEventListener("change", (e) =>
             toggleChecklistItem(recipe.id, ing.id, e.target.checked, "ingredient")
           );
-          const textWrapper = document.createElement("div");
-          textWrapper.className = "detail-check-text";
           const text = document.createElement("span");
-          text.className = "detail-check-title";
           text.textContent = ing.text || "Ingrediente";
-          textWrapper.appendChild(text);
           label.appendChild(check);
-          label.appendChild(textWrapper);
+          label.appendChild(text);
           $recipeDetailIngredients.appendChild(label);
         }
       );
@@ -1600,23 +1595,16 @@ if ($viewRecipes) {
         check.addEventListener("change", (e) =>
           toggleChecklistItem(recipe.id, step.id, e.target.checked, "step")
         );
-        const number = document.createElement("div");
-        number.className = "detail-step-index";
-        number.textContent = idx + 1;
-        const text = document.createElement("div");
-        text.className = "detail-step-text";
         const title = document.createElement("div");
         title.className = "detail-step-title";
         title.textContent = step.title || `Paso ${idx + 1}`;
+        header.appendChild(check);
+        header.appendChild(title);
         const desc = document.createElement("div");
         desc.className = "detail-step-desc";
-        desc.textContent = (step.description || "").trim() ? step.description : "Añade una descripción";
-        text.appendChild(title);
-        text.appendChild(desc);
-        header.appendChild(check);
-        header.appendChild(number);
-        header.appendChild(text);
+        desc.textContent = step.description || "Describe este paso";
         item.appendChild(header);
+        item.appendChild(desc);
         $recipeDetailSteps.appendChild(item);
       });
     }
@@ -1626,32 +1614,11 @@ if ($viewRecipes) {
       $recipeDetailNotesWrapper.style.display = hasNotes ? "block" : "none";
       $recipeDetailNotes.textContent = recipe.notes || "";
     }
-
-    applyRecipeDetailTab(recipeDetailActiveTab);
   }
 
   function closeRecipeDetail() {
     if ($recipeDetailBackdrop) $recipeDetailBackdrop.classList.add("hidden");
     detailRecipeId = null;
-  }
-
-  function applyRecipeDetailTab(tab) {
-    const tabs = $recipeDetailTabBar?.querySelectorAll(".tab-chip") || [];
-    const panels = document.querySelectorAll("[data-tab-panel]");
-    tabs.forEach((btn) => {
-      const isActive = btn.dataset.tab === tab;
-      btn.classList.toggle("is-active", isActive);
-      btn.setAttribute("aria-selected", String(isActive));
-    });
-    panels.forEach((panel) => {
-      const isActive = panel.dataset.tabPanel === tab;
-      panel.classList.toggle("is-active", isActive);
-      if (isActive) {
-        panel.removeAttribute("hidden");
-      } else {
-        panel.setAttribute("hidden", "true");
-      }
-    });
   }
 
   function toggleChecklistItem(recipeId, itemId, value, type) {
@@ -1744,7 +1711,6 @@ if ($viewRecipes) {
   });
 
   $recipeDetailClose?.addEventListener("click", closeRecipeDetail);
-  $recipeDetailCloseBtn?.addEventListener("click", closeRecipeDetail);
   $recipeDetailBackdrop?.addEventListener("click", (e) => {
     if (e.target === $recipeDetailBackdrop) closeRecipeDetail();
   });
@@ -1755,12 +1721,6 @@ if ($viewRecipes) {
   });
   $recipeDetailDelete?.addEventListener("click", () => {
     if (detailRecipeId) deleteRecipe(detailRecipeId);
-  });
-  $recipeDetailTabBar?.addEventListener("click", (e) => {
-    const tab = e.target.closest(".tab-chip");
-    if (!tab || !tab.dataset.tab) return;
-    recipeDetailActiveTab = tab.dataset.tab;
-    applyRecipeDetailTab(recipeDetailActiveTab);
   });
 
   $calPrev?.addEventListener("click", () => {

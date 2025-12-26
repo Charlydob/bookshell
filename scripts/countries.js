@@ -118,3 +118,16 @@ export function getCountryNameEs(code) {
 }
 
 export { getCountryEnglishName };
+const CONTINENT_BY_CODE = {
+  ES:"Europa", FR:"Europa", DE:"Europa", IT:"Europa", PT:"Europa", GB:"Europa", IE:"Europa", NL:"Europa", BE:"Europa", CH:"Europa", AT:"Europa", PL:"Europa", CZ:"Europa", SE:"Europa", NO:"Europa", FI:"Europa", DK:"Europa", GR:"Europa", TR:"Asia",
+  US:"América del Norte", CA:"América del Norte", MX:"América del Norte",
+  AR:"América del Sur", CO:"América del Sur", BR:"América del Sur", CL:"América del Sur", PE:"América del Sur",
+  MA:"África", EG:"África", ZA:"África", NG:"África", KE:"África", DZ:"África", TN:"África",
+  JP:"Asia", CN:"Asia", KR:"Asia", IN:"Asia", IL:"Asia", SA:"Asia", AE:"Asia", ID:"Asia", TH:"Asia", PH:"Asia", VN:"Asia", SG:"Asia",
+  AU:"Oceanía", NZ:"Oceanía",
+};
+
+export function getCountryContinent(code) {
+  const c = String(code || "").toUpperCase();
+  return CONTINENT_BY_CODE[c] || "Otros";
+}

@@ -842,26 +842,11 @@ function formatShortDate(dateKey, withYear = false) {
   return date.toLocaleDateString("es-ES", opts).replace(".", "");
 }
 
-function buildSmoothPath(points) {
+function buildLinearPath(points) {
   if (!points.length) return "";
   if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
-  const smoothing = 0.18;
-  const command = (current, previous, next, prevPrev) => {
-    const p0 = prevPrev || previous;
-    const p1 = previous;
-    const p2 = current;
-    const p3 = next || current;
-    const cp1x = p1.x + (p2.x - p0.x) * smoothing;
-    const cp1y = p1.y + (p2.y - p0.y) * smoothing;
-    const cp2x = p2.x - (p3.x - p1.x) * smoothing;
-    const cp2y = p2.y - (p3.y - p1.y) * smoothing;
-    return `C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${p2.x} ${p2.y}`;
-  };
-  let d = `M ${points[0].x} ${points[0].y}`;
-  for (let i = 1; i < points.length; i++) {
-    d += ` ${command(points[i], points[i - 1], points[i + 1], points[i - 2])}`;
-  }
-  return d;
+  const coords = points.map((p) => `${p.x} ${p.y}`);
+  return `M ${coords.join(" L ")}`;
 }
 
 function getNeutralLineColor() {
@@ -955,42 +940,19 @@ function renderLineChart() {
 
   const plotPoints = points.map((p, idx) => {
     const x = padding + idx * step;
-    const y = padding + (1 - (p.minutes / maxScale || 0)) * usableHeight;
-    return { ...p, x, y };
+    const clampedValue = Math.max(0, p.minutes);
+    const y = padding + (1 - (clampedValue / maxScale || 0)) * usableHeight;
+    return { ...p, x, y, minutes: clampedValue };
   });
 
-  const gradientId = `habit-line-gradient-${habitLineHabit}-${habitLineRange}`;
   const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-  const gradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
-  gradient.setAttribute("id", gradientId);
-  gradient.setAttribute("x1", "0");
-  gradient.setAttribute("x2", "0");
-  gradient.setAttribute("y1", "0");
-  gradient.setAttribute("y2", "1");
-  const stop1 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
-  stop1.setAttribute("offset", "0%");
-  stop1.setAttribute("stop-color", lineColor);
-  stop1.setAttribute("stop-opacity", "0.35");
-  const stop2 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
-  stop2.setAttribute("offset", "100%");
-  stop2.setAttribute("stop-color", lineColor);
-  stop2.setAttribute("stop-opacity", "0");
-  gradient.appendChild(stop1);
-  gradient.appendChild(stop2);
   const filter = document.createElementNS("http://www.w3.org/2000/svg", "filter");
   filter.setAttribute("id", "habit-line-glow");
   filter.innerHTML = `<feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="${lineColor}" flood-opacity="0.25" />`;
-  defs.appendChild(gradient);
   defs.appendChild(filter);
   svg.appendChild(defs);
 
-  const smoothPath = buildSmoothPath(plotPoints);
-  // area
-  const area = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  area.setAttribute("d", `${smoothPath} L ${plotPoints[plotPoints.length - 1].x} ${height - padding} L ${plotPoints[0].x} ${height - padding} Z`);
-  area.setAttribute("fill", `url(#${gradientId})`);
-  area.setAttribute("stroke", "none");
-  svg.appendChild(area);
+  const smoothPath = buildLinearPath(plotPoints);
 
   // line
   const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -1004,17 +966,19 @@ function renderLineChart() {
   svg.appendChild(line);
 
   // axis labels
-  const labelIndexes = new Set([0, Math.floor(plotPoints.length / 2), plotPoints.length - 1]);
-  const labels = Array.from(labelIndexes).map((idx) => plotPoints[idx]).filter(Boolean);
-  labels.forEach((p) => {
-    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    text.setAttribute("x", p.x);
-    text.setAttribute("y", height - padding + 16);
-    text.setAttribute("text-anchor", "middle");
-    text.classList.add("habit-line-label");
-    text.textContent = formatShortDate(p.dateKey);
-    svg.appendChild(text);
-  });
+  if (habitLineRange !== "total" && plotPoints.length > 1) {
+    const labelIndexes = new Set([0, Math.floor(plotPoints.length / 2), plotPoints.length - 1]);
+    const labels = Array.from(labelIndexes).map((idx) => plotPoints[idx]).filter(Boolean);
+    labels.forEach((p) => {
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", p.x);
+      text.setAttribute("y", height - padding + 16);
+      text.setAttribute("text-anchor", "middle");
+      text.classList.add("habit-line-label");
+      text.textContent = formatShortDate(p.dateKey);
+      svg.appendChild(text);
+    });
+  }
 
   const lastPoint = plotPoints[plotPoints.length - 1];
   const lastDot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
@@ -1157,10 +1121,8 @@ function renderGlobalHeatmap() {
     } else {
       const { score, totalMinutes, activeHabits: active } = getGlobalDayScore(key);
       const level = scoreToHeatLevel(score);
-      if (level > 0) {
-        cell.classList.add(`heat-level-${level}`);
-        activeDays += 1;
-      }
+      cell.classList.add(`heat-level-${level}`);
+      if (level > 0) activeDays += 1;
       cell.title = `${key} · ${active} hábitos con actividad · ${formatMinutes(totalMinutes)}`;
     }
     $habitGlobalHeatmap.appendChild(cell);

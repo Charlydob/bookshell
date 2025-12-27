@@ -2793,13 +2793,15 @@ if ($calViewMode) {
   const view = url.searchParams.get("view");     // "habits"
   const tab  = url.searchParams.get("tab");      // "today" | "week" | "history"
   const start = url.searchParams.get("start");   // "1"
+const stop  = url.searchParams.get("stop");
 
-  if (!view && !tab && !start) return;
+if (!view && !tab && !start && !stop) return;
 
   const cleanup = () => {
     url.searchParams.delete("view");
     url.searchParams.delete("tab");
     url.searchParams.delete("start");
+    url.searchParams.delete("stop");
     history.replaceState({}, "", url.pathname + (url.searchParams.toString() ? "?" + url.searchParams.toString() : "") + url.hash);
   };
 
@@ -2814,11 +2816,12 @@ if ($calViewMode) {
     const api = window.__bookshellHabits;
     const habitsViewActive = document.getElementById("view-habits")?.classList.contains("view-active");
 
-    if (api && habitsViewActive) {
-      if (tab) api.goHabitSubtab(tab);
-      if (start === "1") api.startSession();
-      cleanup();
-      return;
+    if (tab) api.goHabitSubtab(tab);
+if (stop === "1") api.stopSession();
+else if (start === "1") api.startSession();
+cleanup();
+return;
+
     }
 
     if (tries > 0) setTimeout(() => tryRun(tries - 1), 100);

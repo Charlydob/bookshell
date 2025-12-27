@@ -28,6 +28,7 @@ const db = getDatabase(app);
 
 // Rutas
 const HABITS_PATH = "habits";
+const HABIT_COUNTS_PATH = "habitCounts";
 const HABIT_CHECKS_PATH = "habitChecks";
 const HABIT_SESSIONS_PATH = "habitSessions";
 
@@ -40,6 +41,7 @@ const DEFAULT_COLOR = "#7f5dff";
 
 // Estado
 let habits = {}; // {id: habit}
+let habitCounts = {}; // { habitId: { dateKey: countNumber } }
 let habitChecks = {}; // { habitId: { dateKey: true } }
 let habitSessions = {}; // { sessionId: {...} }
 let activeTab = "today";
@@ -204,22 +206,25 @@ function readCache() {
       habits = parsed.habits || {};
       habitChecks = parsed.habitChecks || {};
       habitSessions = parsed.habitSessions || {};
+      habitCounts = parsed.habitCounts || {};
     }
   } catch (err) {
     console.warn("No se pudo leer cache de hábitos", err);
   }
 }
 
+
 function saveCache() {
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ habits, habitChecks, habitSessions })
+      JSON.stringify({ habits, habitChecks, habitSessions, habitCounts })
     );
   } catch (err) {
     console.warn("No se pudo guardar cache de hábitos", err);
   }
 }
+
 
 function saveRunningSession() {
   if (!runningSession) {
@@ -308,15 +313,40 @@ function collectHabitActivityDatesSet(habit) {
 function countHabitActivityDays(habit) {
   return collectHabitActivityDatesSet(habit).size;
 }
-
 function getHabitDayScore(habit, dateKey) {
-  if (!habit || habit.archived) return { score: 0, minutes: 0, checked: false, hasActivity: false };
+  if (!habit || habit.archived) return { checked:false, minutes:0, count:0, hasActivity:false, score:0 };
+
   const checked = !!(habitChecks[habit.id] && habitChecks[habit.id][dateKey]);
-  const minutes = getSessionsForHabitDate(habit.id, dateKey).reduce((acc, s) => acc + minutesFromSession(s), 0);
-  const timeScore = Math.min(3, Math.floor(minutes / 30));
-  const score = (checked ? 1 : 0) + timeScore;
-  return { score, minutes, checked, hasActivity: checked || minutes > 0 };
+  const count = getHabitCount(habit.id, dateKey);
+
+  const minutes = getSessionsForHabitDate(habit.id, dateKey)
+    .reduce((acc, s) => acc + minutesFromSession(s), 0);
+
+  const hasActivity = checked || minutes > 0 || count > 0;
+
+  const countToLevel = (c) => {
+    if (c <= 0) return 0;
+    if (c === 1) return 1;
+    if (c <= 3) return 2;
+    if (c <= 6) return 3;
+    return 4;
+  };
+
+  const minutesToLevel = (m) => {
+    if (m <= 0) return 0;
+    const target = Math.max(1, Number(habit.targetMinutes) || 30);
+    const pct = Math.min(1, m / target);
+    return Math.min(4, Math.max(1, Math.round(pct * 4)));
+  };
+
+  let score = 0;
+  if ((habit.goal || "check") === "count") score = countToLevel(count);
+  else if (minutes > 0) score = minutesToLevel(minutes);
+  else if (checked) score = 1;
+
+  return { checked, minutes, count, hasActivity, score };
 }
+
 
 function getAvailableYears() {
   const years = new Set([new Date().getFullYear()]);
@@ -503,6 +533,36 @@ function toggleDay(habitId, dateKey) {
   persistHabitCheck(habitId, dateKey, !!habitChecks[habitId][dateKey]);
   renderHabits();
 }
+function getHabitCount(habitId, dateKey) {
+  return Math.max(0, Number(habitCounts?.[habitId]?.[dateKey] || 0) || 0);
+}
+
+function setHabitCount(habitId, dateKey, value) {
+  if (!habitId || !dateKey) return;
+  const v = Math.max(0, Math.round(Number(value) || 0));
+  habitCounts[habitId] = habitCounts[habitId] || {};
+
+  if (v <= 0) {
+    delete habitCounts[habitId][dateKey];
+    if (!Object.keys(habitCounts[habitId]).length) delete habitCounts[habitId];
+    saveCache();
+    try { remove(ref(db, `${HABIT_COUNTS_PATH}/${habitId}/${dateKey}`)); } catch (e) {}
+    return;
+  }
+
+  habitCounts[habitId][dateKey] = v;
+  saveCache();
+  try { set(ref(db, `${HABIT_COUNTS_PATH}/${habitId}/${dateKey}`), v); } catch (e) {}
+}
+
+function incHabitCount(habitId, dateKey, delta) {
+  setHabitCount(habitId, dateKey, getHabitCount(habitId, dateKey) + (Number(delta) || 0));
+}
+
+function countHabitTotalCount(habit) {
+  const dates = habitCounts?.[habit.id] || {};
+  return Object.values(dates).reduce((acc, v) => acc + (Number(v) || 0), 0);
+}
 
 function persistHabitCheck(habitId, dateKey, value) {
   try {
@@ -680,10 +740,15 @@ function renderToday() {
       fireBtn.setAttribute("aria-pressed", String(hasActivity));
       fireBtn.setAttribute("aria-label", doneCheck ? "Desmarcar como hecho hoy" : "Marcar como hecho hoy");
       fireBtn.title = doneCheck ? "Quitar hecho hoy" : "Marcar como hecho hoy";
-      fireBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        toggleDay(habit.id, today);
-      });
+  if ((habit.goal || "check") === "count") {
+  bindCountFireButton(fireBtn, habit.id, today);
+} else {
+  fireBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleDay(habit.id, today);
+  });
+}
+
       if (hasActivity) fireBtn.classList.add("is-done");
 
       card.addEventListener("click", () => openHabitModal(habit));
@@ -800,7 +865,17 @@ function renderHistory() {
         const level = Math.min(4, dayData.score);
         dot.dataset.level = String(level);
         dot.classList.add(`heat-level-${level}`);
-        dot.title = `${cellData.key} · ${dayData.checked ? "Check" : "Sin check"} · ${formatMinutes(dayData.minutes)}`;
+const parts = [cellData.key];
+if (dayData.checked) parts.push("Check");
+
+if ((habit.goal || "check") === "count") {
+  const c = dayData.count || 0;
+  parts.push(`${c} vez${c === 1 ? "" : "es"}`);
+} else {
+  parts.push(formatMinutes(dayData.minutes));
+}
+
+dot.title = parts.join(" · ");
       }
       grid.appendChild(dot);
     });
@@ -1748,14 +1823,32 @@ function assignSession(habitId) {
 
 function openManualTimeModal(dateKey = todayKey()) {
   if (!$habitManualModal) return;
+
+  const updateUI = () => {
+    const habitId = $habitManualHabit.value;
+    const goal = habits[habitId]?.goal || "check";
+    const field = $habitManualMinutes.closest(".field");
+    const label = field?.querySelector(".field-label");
+
+    if (goal === "count") {
+      if (label) label.textContent = "Veces";
+      $habitManualMinutes.placeholder = "1";
+    } else {
+      if (label) label.textContent = "Minutos";
+      $habitManualMinutes.placeholder = "25";
+    }
+  };
+
   $habitManualHabit.innerHTML = "";
   const list = activeHabits();
+
   list.forEach((habit) => {
     const option = document.createElement("option");
     option.value = habit.id;
     option.textContent = `${habit.emoji || "🏷️"} ${habit.name}`;
     $habitManualHabit.appendChild(option);
   });
+
   if (!list.length) {
     const option = document.createElement("option");
     option.textContent = "Crea un hábito para añadir tiempo";
@@ -1763,14 +1856,23 @@ function openManualTimeModal(dateKey = todayKey()) {
     option.selected = true;
     $habitManualHabit.appendChild(option);
   }
+
   const lastHabitId = localStorage.getItem(LAST_HABIT_KEY);
-  if (lastHabitId) {
+  if (lastHabitId && habits[lastHabitId] && !habits[lastHabitId].archived) {
     $habitManualHabit.value = lastHabitId;
   }
+
+  if (!$habitManualHabit.dataset.bound) {
+    $habitManualHabit.addEventListener("change", updateUI);
+    $habitManualHabit.dataset.bound = "1";
+  }
+
   $habitManualMinutes.value = "";
   $habitManualDate.value = dateKey;
+  updateUI();
   $habitManualModal.classList.remove("hidden");
 }
+
 
 function closeManualTimeModal() {
   $habitManualModal?.classList.add("hidden");
@@ -1778,29 +1880,80 @@ function closeManualTimeModal() {
 
 function handleManualSubmit(e) {
   e.preventDefault();
+
   const habitId = $habitManualHabit.value;
-  const minutes = Number($habitManualMinutes.value);
+  const raw = String($habitManualMinutes.value || "").replace(",", ".");
+  const amount = Number(raw);
   const dateKey = $habitManualDate.value || todayKey();
-  if (!habitId || !Number.isFinite(minutes) || minutes <= 0) return;
+
+  if (!habitId || !Number.isFinite(amount) || amount <= 0) return;
+
+  const goal = habits[habitId]?.goal || "check";
+
+  if (goal === "count") {
+    incHabitCount(habitId, dateKey, Math.round(amount));
+    localStorage.setItem(LAST_HABIT_KEY, habitId);
+    closeManualTimeModal();
+    renderHabits();
+    return;
+  }
+
   const sessionId = `s-${Date.now().toString(36)}`;
   const payload = {
     habitId,
-    durationSec: Math.round(minutes * 60),
+    durationSec: Math.round(amount * 60),
     dateKey,
     startTs: null,
     endTs: null,
     source: "manual"
   };
+
   habitSessions[sessionId] = payload;
   localStorage.setItem(LAST_HABIT_KEY, habitId);
   saveCache();
+
   try {
     set(ref(db, `${HABIT_SESSIONS_PATH}/${sessionId}`), payload);
   } catch (err) {
     console.warn("No se pudo guardar sesión manual", err);
   }
+
   closeManualTimeModal();
   renderHabits();
+}
+
+function bindCountFireButton(btn, habitId, dateKey) {
+  if (!btn) return;
+  btn.style.touchAction = "manipulation";
+  btn.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  let timer = null;
+  let longFired = false;
+
+  const clear = () => { if (timer) clearTimeout(timer); timer = null; };
+
+  btn.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    longFired = false;
+    clear();
+    timer = setTimeout(() => {
+      longFired = true;
+      incHabitCount(habitId, dateKey, -1);
+      renderHabits();
+    }, 450);
+  });
+
+  btn.addEventListener("pointerup", (e) => {
+    e.preventDefault();
+    clear();
+    if (!longFired) {
+      incHabitCount(habitId, dateKey, +1);
+      renderHabits();
+    }
+  });
+
+  btn.addEventListener("pointercancel", clear);
+  btn.addEventListener("pointerleave", clear);
 }
 
 // Eventos
@@ -1908,6 +2061,12 @@ function listenRemote() {
     saveCache();
     renderHabits();
   });
+  onValue(ref(db, HABIT_COUNTS_PATH), (snap) => {
+  habitCounts = snap.val() || {};
+  saveCache();
+  renderHabits();
+});
+
 }
 
 export function initHabits() {

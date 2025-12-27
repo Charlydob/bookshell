@@ -554,13 +554,26 @@
                 </div>
 
                 <div class="habit-chart-card">
-                  <div class="habit-card-head">
+                  <div class="habit-card-head habit-line-head">
                     <div>
-                      <div class="habit-card-title">Minutos por día</div>
-                      <div class="habit-card-sub">Últimos 7 días</div>
+                      <div class="habit-card-title">Evolución (min/día)</div>
+                      <div id="habit-line-sub" class="habit-card-sub">Últimos 7 días · Total</div>
+                    </div>
+                    <div class="habit-line-controls">
+                      <div class="habit-chip-group" id="habit-line-range">
+                        <button class="habit-chip habit-line-range-btn is-active" data-range="7d">7D</button>
+                        <button class="habit-chip habit-line-range-btn" data-range="30d">30D</button>
+                        <button class="habit-chip habit-line-range-btn" data-range="90d">90D</button>
+                        <button class="habit-chip habit-line-range-btn" data-range="year">Año</button>
+                        <button class="habit-chip habit-line-range-btn" data-range="total">Total</button>
+                      </div>
+                      <div class="habit-chip-group habit-chip-scroll" id="habit-line-habit-selector"></div>
                     </div>
                   </div>
-                  <div id="habit-minutes-bars" class="habit-bar-chart"></div>
+                  <div class="habit-line-body">
+                    <div id="habit-line-chart" class="habit-line-chart"></div>
+                    <div id="habit-line-empty" class="empty-state small" style="display:none;">No hay datos en este rango.</div>
+                  </div>
                 </div>
 
                 <div class="habit-chart-card">
@@ -607,6 +620,23 @@
                   </summary>
                   <div class="habit-accordion-body">
                     <div id="habit-totals-list" class="habit-ranking-list"></div>
+                  </div>
+                </details>
+
+                <details class="habit-accordion" id="habit-acc-days">
+                  <summary>
+                    <div class="habit-accordion-title">Días hechos</div>
+                    <div id="habit-acc-days-meta" class="habit-accordion-meta">—</div>
+                  </summary>
+                  <div class="habit-accordion-body">
+                    <div class="habit-range-toggle habit-days-range">
+                      <button class="habit-range-btn habit-days-range-btn is-active" data-range="day">Día</button>
+                      <button class="habit-range-btn habit-days-range-btn" data-range="week">Semana</button>
+                      <button class="habit-range-btn habit-days-range-btn" data-range="month">Mes</button>
+                      <button class="habit-range-btn habit-days-range-btn" data-range="year">Año</button>
+                      <button class="habit-range-btn habit-days-range-btn" data-range="total">Total</button>
+                    </div>
+                    <div id="habit-days-list" class="habit-ranking-list"></div>
                   </div>
                 </details>
 

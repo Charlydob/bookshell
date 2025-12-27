@@ -2788,3 +2788,46 @@ if ($calViewMode) {
     renderCalendar();
   });
 }
+(function applyShortcutDeepLink() {
+  const url = new URL(location.href);
+  const view = url.searchParams.get("view");     // "habits"
+  const tab  = url.searchParams.get("tab");      // "today" | "week" | "history"
+  const start = url.searchParams.get("start");   // "1"
+
+  if (!view && !tab && !start) return;
+
+  const cleanup = () => {
+    url.searchParams.delete("view");
+    url.searchParams.delete("tab");
+    url.searchParams.delete("start");
+    history.replaceState({}, "", url.pathname + (url.searchParams.toString() ? "?" + url.searchParams.toString() : "") + url.hash);
+  };
+
+  const clickNavTo = (viewId) => {
+    const btn = document.querySelector(`.nav-btn[data-view="${viewId}"]`);
+    if (btn) btn.click();
+  };
+
+  const tryRun = (tries = 40) => {
+    if (view === "habits" || tab || start) clickNavTo("view-habits");
+
+    const api = window.__bookshellHabits;
+    const habitsViewActive = document.getElementById("view-habits")?.classList.contains("view-active");
+
+    if (api && habitsViewActive) {
+      if (tab) api.goHabitSubtab(tab);
+      if (start === "1") api.startSession();
+      cleanup();
+      return;
+    }
+
+    if (tries > 0) setTimeout(() => tryRun(tries - 1), 100);
+    else cleanup();
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => tryRun());
+  } else {
+    tryRun();
+  }
+})();

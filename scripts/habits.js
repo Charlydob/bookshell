@@ -1909,7 +1909,25 @@ function listenRemote() {
     renderHabits();
   });
 }
+function goHabitSubtab(tab) {
+  const allowed = new Set(["today", "week", "history", "reports"]);
+  activeTab = allowed.has(tab) ? tab : "today";
+  renderHabits();
+}
 
+function toggleSession() {
+  if (runningSession) stopSession();
+  else startSession();
+}
+
+// API para Atajos (Shortcut -> URL params)
+window.__bookshellHabits = {
+  goHabitSubtab,
+  startSession,
+  stopSession,
+  toggleSession,
+  isRunning: () => !!runningSession
+};
 export function initHabits() {
   readCache();
   loadRunningSession();

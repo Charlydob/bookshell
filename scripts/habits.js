@@ -1193,7 +1193,7 @@ function renderKPIs() {
   if ($habitKpiActiveDaysYear) $habitKpiActiveDaysYear.textContent = countActiveDaysInYear();
   const streakData = computeBestStreak();
   $habitKpiStreak.textContent = streakData.best;
-  $habitKpiStreakLabel.textContent = streakData.label || "—";
+  $habitKpiStreakLabel.textContent = streakData.label ? `${streakData.best} · ${streakData.label}` : "—";
 }
 
 function computeBestStreak() {

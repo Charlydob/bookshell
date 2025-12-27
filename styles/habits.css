@@ -148,6 +148,10 @@
   margin-top: 2px;
 }
 
+.habit-days-done {
+  color: var(--txt-soft);
+}
+
 .habit-card-right {
   display: flex;
   align-items: center;
@@ -372,6 +376,93 @@
 .habit-card-sub {
   color: var(--txt-soft);
   font-size: 12px;
+}
+
+.habit-line-head {
+  gap: 10px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.habit-line-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  min-width: 200px;
+}
+
+.habit-chip-group {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  background: rgba(255,255,255,0.04);
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.habit-chip-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.habit-chip {
+  border-radius: var(--radius-pill);
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--txt);
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.habit-chip.is-active {
+  background: rgba(var(--hclr-rgb, 127, 93, 255), 0.2);
+  border-color: rgba(var(--hclr-rgb, 127, 93, 255), 0.6);
+  color: #fff;
+  box-shadow: 0 0 0 1px rgba(var(--hclr-rgb, 127, 93, 255), 0.25);
+}
+
+.habit-line-body {
+  position: relative;
+  min-height: 240px;
+}
+
+.habit-line-chart {
+  width: 100%;
+  height: 240px;
+}
+
+.habit-line-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.habit-line-label {
+  fill: var(--txt-soft);
+  font-size: 11px;
+}
+
+.habit-line-tooltip {
+  position: absolute;
+  background: rgba(0,0,0,0.8);
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  pointer-events: none;
+  transform: translate(-50%, -12px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+
+.habit-line-tooltip.hidden {
+  display: none;
+}
+
+.habit-days-range {
+  margin-bottom: 12px;
 }
 
 .habit-heatmap-year-switcher {

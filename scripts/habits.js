@@ -52,6 +52,10 @@ let habitToastEl = null;
 let habitToastTimeout = null;
 let habitDonutChart = null;
 let habitDonutRange = "day";
+let habitLineRange = "7d";
+let habitLineHabit = "total";
+let habitDaysRange = "day";
+let habitLineTooltip = null;
 
 // Utilidades fecha
 function dateKeyLocal(date) {
@@ -288,6 +292,23 @@ function countCompletedHabitsForDate(dateKey) {
   return activeHabits().reduce((acc, habit) => (isHabitCompletedOnDate(habit, dateKey) ? acc + 1 : acc), 0);
 }
 
+function collectHabitActivityDatesSet(habit) {
+  const dates = new Set();
+  if (!habit || habit.archived) return dates;
+  const checks = habitChecks[habit.id] || {};
+  Object.keys(checks).forEach((key) => dates.add(key));
+  Object.values(habitSessions).forEach((s) => {
+    if (!isSessionActive(s) || s.habitId !== habit.id) return;
+    const key = getSessionDateKey(s);
+    if (key) dates.add(key);
+  });
+  return dates;
+}
+
+function countHabitActivityDays(habit) {
+  return collectHabitActivityDatesSet(habit).size;
+}
+
 function getHabitDayScore(habit, dateKey) {
   if (!habit || habit.archived) return { score: 0, minutes: 0, checked: false, hasActivity: false };
   const checked = !!(habitChecks[habit.id] && habitChecks[habit.id][dateKey]);
@@ -379,7 +400,11 @@ const $habitKpiTotalTime = document.getElementById("habit-kpi-total-time");
 const $habitKpiActiveDaysYear = document.getElementById("habit-kpi-active-days-year");
 const $habitKpiStreak = document.getElementById("habit-kpi-streak");
 const $habitKpiStreakLabel = document.getElementById("habit-kpi-streak-label");
-const $habitMinutesBars = document.getElementById("habit-minutes-bars");
+const $habitLineChart = document.getElementById("habit-line-chart");
+const $habitLineEmpty = document.getElementById("habit-line-empty");
+const $habitLineSub = document.getElementById("habit-line-sub");
+const $habitLineHabitSelector = document.getElementById("habit-line-habit-selector");
+const $habitLineRangeButtons = document.querySelectorAll(".habit-line-range-btn");
 const $habitGlobalHeatmap = document.getElementById("habit-global-heatmap");
 const $habitHeatmapYear = document.getElementById("habit-heatmap-year");
 const $habitHeatmapSub = document.getElementById("habit-heatmap-sub");
@@ -393,6 +418,7 @@ const $habitAccWeekMeta = document.getElementById("habit-acc-week-meta");
 const $habitAccMonthMeta = document.getElementById("habit-acc-month-meta");
 const $habitAccTotalMeta = document.getElementById("habit-acc-total-meta");
 const $habitAccConsistencyMeta = document.getElementById("habit-acc-consistency-meta");
+const $habitAccDaysMeta = document.getElementById("habit-acc-days-meta");
 const $habitDonut = document.getElementById("habit-donut");
 const $habitDonutLegend = document.getElementById("habit-donut-legend");
 const $habitDonutCenter = document.getElementById("habit-donut-center");
@@ -400,10 +426,12 @@ const $habitDonutEmpty = document.getElementById("habit-donut-empty");
 const $habitDonutSub = document.getElementById("habit-donut-sub");
 const $habitDonutTotal = document.querySelector("#habit-donut-center .habit-donut-total");
 const $habitRangeButtons = document.querySelectorAll(".habit-range-btn");
+const $habitDaysRangeButtons = document.querySelectorAll(".habit-days-range-btn");
 const $habitFab = document.getElementById("habit-session-toggle");
 const $habitOverlay = document.getElementById("habit-session-overlay");
 const $habitOverlayTime = document.getElementById("habit-session-time");
 const $habitOverlayStop = document.getElementById("habit-session-stop");
+const $habitDaysList = document.getElementById("habit-days-list");
 
 // Modal refs
 const $habitModal = document.getElementById("habit-modal-backdrop");
@@ -619,6 +647,7 @@ function renderToday() {
       const minutesToday = sessionsToday.reduce((acc, s) => acc + minutesFromSession(s), 0);
       const hasActivity = doneCheck || minutesToday > 0;
       const streak = computeHabitCurrentStreak(habit);
+      const daysDone = countHabitActivityDays(habit);
       const scheduleLabel = habit.schedule?.type === "days" ? formatDaysLabel(habit.schedule.days) : "Cada día";
       const metaText = minutesToday ? `${scheduleLabel} · ${formatMinutes(minutesToday)} hoy` : scheduleLabel;
       const card = document.createElement("div");
@@ -638,6 +667,7 @@ function renderToday() {
             <div class="habit-meta">${metaText}</div>
             <div class="habit-streak" title="Racha actual">🔥 ${streak}</div>
           </div>
+          <div class="habit-meta habit-days-done">Hecho: ${daysDone} día${daysDone === 1 ? "" : "s"}</div>
         </div>
       `;
 
@@ -692,6 +722,7 @@ function renderWeek() {
     .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
     .forEach((habit) => {
       any = true;
+      const daysDone = countHabitActivityDays(habit);
       const card = document.createElement("div");
       card.className = "habit-week-card";
       setHabitColorVars(card, habit);
@@ -703,6 +734,7 @@ function renderWeek() {
           <div>
             <div class="habit-name">${habit.name}</div>
             <div class="habit-meta">${habit.schedule?.type === "days" ? formatDaysLabel(habit.schedule.days) : "Cada día"}</div>
+            <div class="habit-meta habit-days-done">Hecho: ${daysDone} día${daysDone === 1 ? "" : "s"}</div>
           </div>
         </div>
       `;
@@ -738,6 +770,7 @@ function renderHistory() {
   const cells = buildYearCells(year);
   activeHabits().forEach((habit) => {
     any = true;
+    const daysDone = countHabitActivityDays(habit);
     const card = document.createElement("div");
     card.className = "habit-heatmap-card";
     setHabitColorVars(card, habit);
@@ -746,7 +779,7 @@ function renderHistory() {
         <div class="habit-emoji">${habit.emoji || "🏷️"}</div>
         <div>
           <div class="habit-name">${habit.name}</div>
-          <div class="habit-meta">Año ${year}</div>
+          <div class="habit-meta">Año ${year} · Hecho: ${daysDone} día${daysDone === 1 ? "" : "s"}</div>
         </div>
       </div>
     `;
@@ -778,71 +811,236 @@ function renderHistory() {
   $habitHistoryEmpty.style.display = any ? "none" : "block";
 }
 
-function renderBars() {
-  if (!$habitMinutesBars) return;
-  $habitMinutesBars.innerHTML = "";
-  const habitsList = activeHabits().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-  const today = new Date();
-  const daysData = [];
-  let maxMinutes = 0;
-  for (let i = 6; i >= 0; i--) {
-    const date = addDays(today, -i);
-    const dateKey = dateKeyLocal(date);
-    const perHabit = habitsList.map((habit) => {
-      const minutes = getSessionsForHabitDate(habit.id, dateKey).reduce((acc, s) => acc + minutesFromSession(s), 0);
-      return { habit, minutes };
-    }).filter((item) => item.minutes > 0);
-    const totalMinutes = perHabit.reduce((acc, item) => acc + item.minutes, 0);
-    maxMinutes = Math.max(maxMinutes, totalMinutes);
-    daysData.push({ date, dateKey, perHabit, totalMinutes });
+function ensureHabitLineTooltip() {
+  if (!habitLineTooltip) {
+    habitLineTooltip = document.createElement("div");
+    habitLineTooltip.className = "habit-line-tooltip hidden";
+    $habitLineChart?.parentElement?.appendChild(habitLineTooltip);
   }
-  const scale = Math.max(maxMinutes, 30);
-  daysData.forEach((data) => {
-    const container = document.createElement("div");
-    container.className = "habit-bar";
-    const stack = document.createElement("div");
-    stack.className = "habit-bar-stack";
+  return habitLineTooltip;
+}
 
-    let totalSegHeight = 0;
-    if (data.perHabit.length) {
-      data.perHabit.forEach((item) => {
-        const seg = document.createElement("div");
-        seg.className = "habit-bar-seg";
-        setHabitColorVars(seg, item.habit);
-        const segHeight = Math.max(4, (item.minutes / scale) * 120);
-        seg.style.height = `${segHeight}px`;
-        seg.title = `${item.habit.name} · ${formatMinutes(item.minutes)}`;
-        totalSegHeight += segHeight;
-        stack.appendChild(seg);
-      });
-    } else {
-      const empty = document.createElement("div");
-      empty.className = "habit-bar-seg is-empty";
-      empty.style.height = "6px";
-      totalSegHeight = 6;
-      stack.appendChild(empty);
+function formatLineTooltip(point, isTotal) {
+  if (!point) return "";
+  const parts = [`${point.dateKey} · ${formatMinutes(point.minutes)}`];
+  if (isTotal && point.perHabit?.length) {
+    const tops = point.perHabit.slice(0, 2).map((p) => `${p.habit.name} ${formatMinutes(p.minutes)}`).join(" · ");
+    if (tops) parts.push(tops);
+  }
+  return parts.join(" · ");
+}
+
+function getNeutralLineColor() {
+  const style = getComputedStyle(document.documentElement);
+  return (style.getPropertyValue("--txt-soft") || "#a5afc7").trim();
+}
+
+function renderHabitLineSelector() {
+  if (!$habitLineHabitSelector) return;
+  $habitLineHabitSelector.innerHTML = "";
+  const addBtn = (id, label, color) => {
+    const btn = document.createElement("button");
+    btn.className = "habit-chip habit-line-habit-btn";
+    if (habitLineHabit === id) btn.classList.add("is-active");
+    btn.dataset.habitId = id;
+    btn.textContent = label;
+    if (color) {
+      btn.style.setProperty("--hclr", color);
+      btn.style.setProperty("--hclr-rgb", hexToRgbString(color));
     }
-    const estimatedHeight = data.totalMinutes ? (data.totalMinutes / scale) * 120 : 0;
-    const stackHeight = Math.max(16, Math.max(totalSegHeight, estimatedHeight));
-    stack.style.height = `${stackHeight}px`;
+    btn.addEventListener("click", () => {
+      habitLineHabit = id;
+      renderLineChart();
+    });
+    $habitLineHabitSelector.appendChild(btn);
+  };
+  addBtn("total", "Total (todos)", getNeutralLineColor());
+  activeHabits()
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+    .forEach((habit) => addBtn(habit.id, `${habit.emoji || "🏷️"} ${habit.name}`, resolveHabitColor(habit)));
+}
 
+function renderLineChart() {
+  if (!$habitLineChart) return;
+  renderHabitLineSelector();
+  const selectedHabit = habitLineHabit === "total" ? null : habits[habitLineHabit];
+  if (habitLineHabit !== "total" && (!selectedHabit || selectedHabit.archived)) {
+    habitLineHabit = "total";
+  }
+  const { points, maxValue } = buildLineSeries(habitLineHabit, habitLineRange);
+  const hasData = points.some((p) => p.minutes > 0);
+  const habitLabel = habitLineHabit === "total" ? "Total" : (selectedHabit?.name || "—");
+  const rangeLabel = (() => {
+    switch (habitLineRange) {
+      case "30d": return "Últimos 30 días";
+      case "90d": return "Últimos 90 días";
+      case "year": return `Año ${heatmapYear}`;
+      case "total": return "Total";
+      default: return "Últimos 7 días";
+    }
+  })();
+  if ($habitLineSub) $habitLineSub.textContent = `${rangeLabel} · ${habitLabel}`;
+
+  $habitLineChart.innerHTML = "";
+  if ($habitLineEmpty) $habitLineEmpty.style.display = hasData ? "none" : "block";
+  if (!points.length || !hasData) return;
+
+  const width = Math.max(260, $habitLineChart.clientWidth || 320);
+  const height = 220;
+  const padding = 24;
+  const usableWidth = width - padding * 2;
+  const usableHeight = height - padding * 2;
+  const step = points.length > 1 ? usableWidth / (points.length - 1) : 0;
+  const maxScale = Math.max(maxValue, 10);
+  const lineColor = habitLineHabit === "total" ? getNeutralLineColor() : resolveHabitColor(selectedHabit);
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.classList.add("habit-line-svg");
+
+  const plotPoints = points.map((p, idx) => {
+    const x = padding + idx * step;
+    const y = padding + (1 - (p.minutes / maxScale || 0)) * usableHeight;
+    return { ...p, x, y };
+  });
+
+  // area
+  const areaPath = plotPoints.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+  const area = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  area.setAttribute("d", `${areaPath} L ${plotPoints[plotPoints.length - 1].x} ${height - padding} L ${plotPoints[0].x} ${height - padding} Z`);
+  area.setAttribute("fill", lineColor + "33");
+  svg.appendChild(area);
+
+  // line
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  line.setAttribute("d", areaPath);
+  line.setAttribute("fill", "none");
+  line.setAttribute("stroke", lineColor);
+  line.setAttribute("stroke-width", 3);
+  line.setAttribute("stroke-linecap", "round");
+  svg.appendChild(line);
+
+  // axis labels
+  const labels = [plotPoints[0], plotPoints[Math.floor(plotPoints.length / 2)], plotPoints[plotPoints.length - 1]].filter(Boolean);
+  labels.forEach((p) => {
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", p.x);
+    text.setAttribute("y", height - padding + 16);
+    text.setAttribute("text-anchor", "middle");
+    text.classList.add("habit-line-label");
+    text.textContent = p.dateKey.slice(5);
+    svg.appendChild(text);
+  });
+
+  // points
+  plotPoints.forEach((p) => {
+    const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    dot.setAttribute("cx", p.x);
+    dot.setAttribute("cy", p.y);
+    dot.setAttribute("r", 4);
+    dot.setAttribute("fill", lineColor);
+    svg.appendChild(dot);
+  });
+
+  $habitLineChart.appendChild(svg);
+
+  const tooltip = ensureHabitLineTooltip();
+  const handlePointer = (evt) => {
+    const rect = svg.getBoundingClientRect();
+    const x = evt.clientX - rect.left;
+    let nearest = plotPoints[0];
+    plotPoints.forEach((p) => {
+      if (Math.abs(p.x - x) < Math.abs(nearest.x - x)) nearest = p;
+    });
+    tooltip.textContent = formatLineTooltip(nearest, habitLineHabit === "total");
+    const scaleX = rect.width / width;
+    const scaleY = rect.height / height;
+    tooltip.style.left = `${nearest.x * scaleX}px`;
+    tooltip.style.top = `${nearest.y * scaleY}px`;
+    tooltip.classList.remove("hidden");
+  };
+  svg.addEventListener("pointermove", handlePointer);
+  svg.addEventListener("pointerdown", handlePointer);
+  svg.addEventListener("pointerleave", () => {
+    tooltip.classList.add("hidden");
+  });
+}
+
+function getDaysRangeBounds(range) {
+  const today = new Date();
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+  switch (range) {
+    case "week":
+      return { start: addDays(end, -6), end };
+    case "month":
+      return { start: new Date(today.getFullYear(), today.getMonth(), 1), end };
+    case "year":
+      return { start: new Date(heatmapYear, 0, 1), end: new Date(heatmapYear, 11, 31, 23, 59, 59, 999) };
+    case "total":
+      return { start: new Date(0), end };
+    default:
+      return { start: new Date(today.getFullYear(), today.getMonth(), today.getDate()), end };
+  }
+}
+
+function daysRangeLabel(range) {
+  switch (range) {
+    case "week": return "Semana";
+    case "month": return "Mes";
+    case "year": return "Año";
+    case "total": return "Total";
+    default: return "Día";
+  }
+}
+
+function renderDaysAccordion() {
+  if (!$habitDaysList) return;
+  const { start, end } = getDaysRangeBounds(habitDaysRange);
+  const data = activeHabits()
+    .map((habit) => ({
+      habit,
+      days: collectHabitActiveDates(habit, start, end)
+    }))
+    .sort((a, b) => b.days - a.days);
+
+  $habitDaysList.innerHTML = "";
+  if ($habitAccDaysMeta) {
+    const totalDays = data.reduce((acc, item) => acc + item.days, 0);
+    $habitAccDaysMeta.textContent = `${daysRangeLabel(habitDaysRange)} · ${data.length} hábito${data.length === 1 ? "" : "s"} · ${totalDays} día${totalDays === 1 ? "" : "s"}`;
+  }
+
+  if (!data.length) {
+    const empty = document.createElement("div");
+    empty.className = "habit-ranking-empty";
+    empty.textContent = "Crea un hábito para ver datos";
+    $habitDaysList.appendChild(empty);
+    return;
+  }
+
+  data.forEach((item) => {
+    const div = document.createElement("div");
+    div.className = "habit-ranking-item";
+    setHabitColorVars(div, item.habit);
+    const left = document.createElement("div");
+    left.className = "habit-card-left";
+    left.innerHTML = `
+      <div class="habit-emoji">${item.habit.emoji || "🏷️"}</div>
+      <div>
+        <div class="habit-name">${item.habit.name}</div>
+        <div class="habit-consistency">Hecho: ${item.days} día${item.days === 1 ? "" : "s"}</div>
+      </div>
+    `;
     const value = document.createElement("div");
-    value.className = "habit-bar-value";
-    value.textContent = formatMinutes(data.totalMinutes);
-
-    const dayLabel = document.createElement("div");
-    dayLabel.className = "habit-bar-day";
-    dayLabel.textContent = ["D", "L", "M", "X", "J", "V", "S"][data.date.getDay()];
-
-    const breakdown = data.perHabit.map((p) => `${p.habit.name} ${formatMinutes(p.minutes)}`).join(" · ");
-    const message = `${dayLabel.textContent}: ${formatMinutes(data.totalMinutes)} (total)` + (breakdown ? `\n${breakdown}` : "");
-    container.title = message.replace(/\n/g, " · ");
-    container.addEventListener("click", () => showHabitToast(message));
-
-    container.appendChild(stack);
-    container.appendChild(value);
-    container.appendChild(dayLabel);
-    $habitMinutesBars.appendChild(container);
+    value.className = "habit-kpi-value";
+    value.textContent = `${item.days} día${item.days === 1 ? "" : "s"}`;
+    const right = document.createElement("div");
+    right.className = "habit-card-right";
+    right.appendChild(value);
+    right.appendChild(createHabitActions(item.habit));
+    div.appendChild(left);
+    div.appendChild(right);
+    $habitDaysList.appendChild(div);
   });
 }
 
@@ -884,6 +1082,8 @@ function changeHeatmapYear(delta) {
   saveHeatmapYear();
   renderGlobalHeatmap();
   renderHistory();
+  renderLineChart();
+  renderDaysAccordion();
 }
 
 function renderRanking() {
@@ -989,6 +1189,68 @@ function countActiveDaysInYear(year = new Date().getFullYear()) {
   return dates.size;
 }
 
+function getEarliestActivityDate() {
+  const today = new Date();
+  let earliest = today;
+  Object.entries(habitChecks).forEach(([habitId, entries]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    Object.keys(entries || {}).forEach((key) => {
+      const parsed = parseDateKey(key);
+      if (parsed && parsed < earliest) earliest = parsed;
+    });
+  });
+  Object.values(habitSessions).forEach((s) => {
+    if (!isSessionActive(s)) return;
+    const date = getSessionDate(s);
+    if (date && date < earliest) earliest = date;
+  });
+  return earliest;
+}
+
+function getLineRangeBounds(range) {
+  const today = new Date();
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+  switch (range) {
+    case "30d":
+      return { start: addDays(end, -29), end };
+    case "90d":
+      return { start: addDays(end, -89), end };
+    case "year":
+      return { start: new Date(heatmapYear, 0, 1), end: new Date(heatmapYear, 11, 31, 23, 59, 59, 999) };
+    case "total": {
+      const earliest = getEarliestActivityDate();
+      return { start: earliest, end };
+    }
+    default:
+      return { start: addDays(end, -6), end };
+  }
+}
+
+function buildLineSeries(habitId, range) {
+  const { start, end } = getLineRangeBounds(range);
+  const today = new Date();
+  const cappedEnd = end > today ? today : end;
+  const points = [];
+  const habitsList = activeHabits();
+  for (let d = new Date(start); d <= cappedEnd; d = addDays(d, 1)) {
+    const key = dateKeyLocal(d);
+    if (habitId === "total") {
+      const perHabit = habitsList.map((habit) => {
+        const minutes = getSessionsForHabitDate(habit.id, key).reduce((acc, s) => acc + minutesFromSession(s), 0);
+        return { habit, minutes };
+      }).filter((item) => item.minutes > 0).sort((a, b) => b.minutes - a.minutes);
+      const minutes = perHabit.reduce((acc, item) => acc + item.minutes, 0);
+      points.push({ dateKey: key, minutes, perHabit });
+    } else {
+      const minutes = getSessionsForHabitDate(habitId, key).reduce((acc, s) => acc + minutesFromSession(s), 0);
+      points.push({ dateKey: key, minutes, perHabit: [] });
+    }
+  }
+  const maxValue = points.reduce((acc, p) => Math.max(acc, p.minutes), 0);
+  return { points, maxValue };
+}
+
 function timeShareByHabit(range) {
   const { start, end } = getRangeBounds(range);
   return activeHabits()
@@ -1056,6 +1318,7 @@ function renderRankingList(container, items, unit) {
     const div = document.createElement("div");
     div.className = "habit-ranking-item";
     setHabitColorVars(div, item.habit);
+    const totalDays = countHabitActivityDays(item.habit);
     const left = document.createElement("div");
     left.className = "habit-card-left";
     left.innerHTML = `
@@ -1063,6 +1326,7 @@ function renderRankingList(container, items, unit) {
       <div>
         <div class="habit-name">${item.habit.name}</div>
         <div class="habit-consistency">${unit === "%" ? "Consistencia" : `Días activos: ${item.daysActive || 0}`}</div>
+        <div class="habit-meta habit-days-done">Hecho: ${totalDays} día${totalDays === 1 ? "" : "s"}</div>
       </div>
     `;
     const value = document.createElement("div");
@@ -1096,6 +1360,7 @@ function renderTotalsList() {
     const div = document.createElement("div");
     div.className = "habit-ranking-item habit-total-item";
     setHabitColorVars(div, item.habit);
+    const totalDays = countHabitActivityDays(item.habit);
     const left = document.createElement("div");
     left.className = "habit-card-left";
     left.innerHTML = `
@@ -1103,6 +1368,7 @@ function renderTotalsList() {
       <div>
         <div class="habit-name">${item.habit.name}</div>
         <div class="habit-consistency">Días hecho: ${item.daysActive}${item.streak ? ` · Racha: ${item.streak}` : ""}</div>
+        <div class="habit-meta habit-days-done">Total histórico: ${totalDays} día${totalDays === 1 ? "" : "s"}</div>
       </div>
     `;
     const value = document.createElement("div");
@@ -1275,9 +1541,10 @@ function renderHabits() {
   renderHistory();
   renderKPIs();
   renderDonut();
-  renderBars();
+  renderLineChart();
   renderGlobalHeatmap();
   renderRanking();
+  renderDaysAccordion();
   updateSessionUI();
 }
 
@@ -1522,6 +1789,24 @@ function bindEvents() {
       habitDonutRange = btn.dataset.range || "day";
       renderDonut();
       renderTotalsList();
+    });
+  });
+
+  $habitLineRangeButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      $habitLineRangeButtons.forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      habitLineRange = btn.dataset.range || "7d";
+      renderLineChart();
+    });
+  });
+
+  $habitDaysRangeButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      $habitDaysRangeButtons.forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      habitDaysRange = btn.dataset.range || "day";
+      renderDaysAccordion();
     });
   });
 }

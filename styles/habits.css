@@ -385,44 +385,15 @@
 }
 
 .habit-line-controls {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   align-items: flex-end;
-  min-width: 200px;
+  min-width: 240px;
 }
 
-.habit-chip-group {
-  display: inline-flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  background: rgba(255,255,255,0.04);
-  padding: 4px;
-  border-radius: var(--radius-pill);
-  border: 1px solid rgba(255,255,255,0.08);
-}
-
-.habit-chip-scroll {
-  max-width: 100%;
-  overflow-x: auto;
-}
-
-.habit-chip {
-  border-radius: var(--radius-pill);
-  padding: 6px 10px;
-  background: transparent;
-  border: 1px solid rgba(255,255,255,0.08);
-  color: var(--txt);
-  font-weight: 700;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.habit-chip.is-active {
-  background: rgba(var(--hclr-rgb, 127, 93, 255), 0.2);
-  border-color: rgba(var(--hclr-rgb, 127, 93, 255), 0.6);
-  color: #fff;
-  box-shadow: 0 0 0 1px rgba(var(--hclr-rgb, 127, 93, 255), 0.25);
+.habit-line-card {
+  gap: 12px;
 }
 
 .habit-line-body {
@@ -438,11 +409,20 @@
 .habit-line-svg {
   width: 100%;
   height: 100%;
+  filter: drop-shadow(0 10px 24px rgba(0,0,0,0.35));
 }
 
 .habit-line-label {
   fill: var(--txt-soft);
   font-size: 11px;
+}
+
+.habit-line-dot {
+  filter: drop-shadow(0 4px 12px rgba(0,0,0,0.4));
+}
+
+.habit-line-dot--cursor {
+  transition: opacity 0.12s ease;
 }
 
 .habit-line-tooltip {
@@ -459,6 +439,72 @@
 
 .habit-line-tooltip.hidden {
   display: none;
+}
+
+.habit-line-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.habit-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.habit-metric-label {
+  color: var(--txt-soft);
+  font-size: 12px;
+}
+
+.habit-metric-value {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--hclr, #fff);
+}
+
+.habit-metric-sub {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--txt-soft);
+}
+
+.habit-select {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--txt-soft);
+}
+
+.habit-select select {
+  width: 100%;
+  height: 44px;
+  border-radius: 14px;
+  padding: 0 14px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.18);
+  color: var(--txt);
+  outline: none;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.6) 50%), linear-gradient(135deg, rgba(255,255,255,0.6) 50%, transparent 50%);
+  background-position: calc(100% - 20px) 50%, calc(100% - 14px) 50%;
+  background-size: 7px 7px, 7px 7px;
+  background-repeat: no-repeat;
+}
+
+.habit-select select:focus {
+  border-color: rgba(160,120,255,.55);
+  box-shadow: 0 0 0 3px rgba(160,120,255,.18);
+}
+
+.habit-select-compact select {
+  height: 40px;
 }
 
 .habit-days-range {

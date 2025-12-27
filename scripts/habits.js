@@ -400,11 +400,14 @@ const $habitKpiTotalTime = document.getElementById("habit-kpi-total-time");
 const $habitKpiActiveDaysYear = document.getElementById("habit-kpi-active-days-year");
 const $habitKpiStreak = document.getElementById("habit-kpi-streak");
 const $habitKpiStreakLabel = document.getElementById("habit-kpi-streak-label");
+const $habitLineCard = document.getElementById("habit-line-card");
 const $habitLineChart = document.getElementById("habit-line-chart");
 const $habitLineEmpty = document.getElementById("habit-line-empty");
 const $habitLineSub = document.getElementById("habit-line-sub");
-const $habitLineHabitSelector = document.getElementById("habit-line-habit-selector");
-const $habitLineRangeButtons = document.querySelectorAll(".habit-line-range-btn");
+const $habitEvoSelect = document.getElementById("habit-evo-select");
+const $habitEvoRange = document.getElementById("habit-evo-range");
+const $habitLineTotal = document.getElementById("habit-line-total");
+const $habitLineDays = document.getElementById("habit-line-days");
 const $habitGlobalHeatmap = document.getElementById("habit-global-heatmap");
 const $habitHeatmapYear = document.getElementById("habit-heatmap-year");
 const $habitHeatmapSub = document.getElementById("habit-heatmap-sub");
@@ -822,12 +825,43 @@ function ensureHabitLineTooltip() {
 
 function formatLineTooltip(point, isTotal) {
   if (!point) return "";
-  const parts = [`${point.dateKey} · ${formatMinutes(point.minutes)}`];
+  const parts = [`${formatShortDate(point.dateKey, true)} · ${formatMinutes(point.minutes)}`];
   if (isTotal && point.perHabit?.length) {
     const tops = point.perHabit.slice(0, 2).map((p) => `${p.habit.name} ${formatMinutes(p.minutes)}`).join(" · ");
     if (tops) parts.push(tops);
   }
   return parts.join(" · ");
+}
+
+function formatShortDate(dateKey, withYear = false) {
+  if (!dateKey) return "";
+  const date = parseDateKey(dateKey);
+  if (!date) return dateKey;
+  const opts = { day: "numeric", month: "short" };
+  if (withYear) opts.year = "numeric";
+  return date.toLocaleDateString("es-ES", opts).replace(".", "");
+}
+
+function buildSmoothPath(points) {
+  if (!points.length) return "";
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+  const smoothing = 0.18;
+  const command = (current, previous, next, prevPrev) => {
+    const p0 = prevPrev || previous;
+    const p1 = previous;
+    const p2 = current;
+    const p3 = next || current;
+    const cp1x = p1.x + (p2.x - p0.x) * smoothing;
+    const cp1y = p1.y + (p2.y - p0.y) * smoothing;
+    const cp2x = p2.x - (p3.x - p1.x) * smoothing;
+    const cp2y = p2.y - (p3.y - p1.y) * smoothing;
+    return `C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${p2.x} ${p2.y}`;
+  };
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 1; i < points.length; i++) {
+    d += ` ${command(points[i], points[i - 1], points[i + 1], points[i - 2])}`;
+  }
+  return d;
 }
 
 function getNeutralLineColor() {
@@ -836,39 +870,40 @@ function getNeutralLineColor() {
 }
 
 function renderHabitLineSelector() {
-  if (!$habitLineHabitSelector) return;
-  $habitLineHabitSelector.innerHTML = "";
-  const addBtn = (id, label, color) => {
-    const btn = document.createElement("button");
-    btn.className = "habit-chip habit-line-habit-btn";
-    if (habitLineHabit === id) btn.classList.add("is-active");
-    btn.dataset.habitId = id;
-    btn.textContent = label;
-    if (color) {
-      btn.style.setProperty("--hclr", color);
-      btn.style.setProperty("--hclr-rgb", hexToRgbString(color));
-    }
-    btn.addEventListener("click", () => {
-      habitLineHabit = id;
-      renderLineChart();
-    });
-    $habitLineHabitSelector.appendChild(btn);
+  if (!$habitEvoSelect) return;
+  const previous = habitLineHabit || "total";
+  const selectedValue = $habitEvoSelect.value || previous;
+  $habitEvoSelect.innerHTML = "";
+
+  const addOption = (value, label, color) => {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    if (color) opt.dataset.color = color;
+    $habitEvoSelect.appendChild(opt);
   };
-  addBtn("total", "Total (todos)", getNeutralLineColor());
-  activeHabits()
-    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
-    .forEach((habit) => addBtn(habit.id, `${habit.emoji || "🏷️"} ${habit.name}`, resolveHabitColor(habit)));
+
+  addOption("total", "Total (todos)", getNeutralLineColor());
+  const active = activeHabits()
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  active.forEach((habit) => addOption(habit.id, `${habit.emoji || "🏷️"} ${habit.name}`, resolveHabitColor(habit)));
+
+  const exists = selectedValue === "total" || active.some((h) => h.id === selectedValue);
+  habitLineHabit = exists ? selectedValue : "total";
+  $habitEvoSelect.value = habitLineHabit;
 }
 
 function renderLineChart() {
   if (!$habitLineChart) return;
+  if ($habitEvoRange) $habitEvoRange.value = habitLineRange;
   renderHabitLineSelector();
   const selectedHabit = habitLineHabit === "total" ? null : habits[habitLineHabit];
   if (habitLineHabit !== "total" && (!selectedHabit || selectedHabit.archived)) {
     habitLineHabit = "total";
+    if ($habitEvoSelect) $habitEvoSelect.value = "total";
   }
   const { points, maxValue } = buildLineSeries(habitLineHabit, habitLineRange);
-  const hasData = points.some((p) => p.minutes > 0);
+  const hasData = points.some((p) => p.minutes > 0 || p.hasActivity);
   const habitLabel = habitLineHabit === "total" ? "Total" : (selectedHabit?.name || "—");
   const rangeLabel = (() => {
     switch (habitLineRange) {
@@ -880,7 +915,17 @@ function renderLineChart() {
     }
   })();
   if ($habitLineSub) $habitLineSub.textContent = `${rangeLabel} · ${habitLabel}`;
-
+  const totalMinutes = points.reduce((acc, p) => acc + p.minutes, 0);
+  const activeDays = points.filter((p) => p.hasActivity).length;
+  const totalDays = points.length;
+  if ($habitLineTotal) $habitLineTotal.textContent = formatMinutes(totalMinutes);
+  if ($habitLineDays) {
+    if (["7d", "30d", "90d"].includes(habitLineRange)) {
+      $habitLineDays.textContent = `${activeDays}/${totalDays} días`;
+    } else {
+      $habitLineDays.textContent = `${activeDays} día${activeDays === 1 ? "" : "s"}`;
+    }
+  }
   $habitLineChart.innerHTML = "";
   if ($habitLineEmpty) $habitLineEmpty.style.display = hasData ? "none" : "block";
   if (!points.length || !hasData) return;
@@ -893,6 +938,15 @@ function renderLineChart() {
   const step = points.length > 1 ? usableWidth / (points.length - 1) : 0;
   const maxScale = Math.max(maxValue, 10);
   const lineColor = habitLineHabit === "total" ? getNeutralLineColor() : resolveHabitColor(selectedHabit);
+  if ($habitLineCard) {
+    if (habitLineHabit === "total") {
+      const neutral = getNeutralLineColor();
+      $habitLineCard.style.setProperty("--hclr", neutral);
+      $habitLineCard.style.setProperty("--hclr-rgb", hexToRgbString(neutral));
+    } else {
+      setHabitColorVars($habitLineCard, selectedHabit);
+    }
+  }
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
@@ -905,43 +959,82 @@ function renderLineChart() {
     return { ...p, x, y };
   });
 
+  const gradientId = `habit-line-gradient-${habitLineHabit}-${habitLineRange}`;
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  const gradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+  gradient.setAttribute("id", gradientId);
+  gradient.setAttribute("x1", "0");
+  gradient.setAttribute("x2", "0");
+  gradient.setAttribute("y1", "0");
+  gradient.setAttribute("y2", "1");
+  const stop1 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+  stop1.setAttribute("offset", "0%");
+  stop1.setAttribute("stop-color", lineColor);
+  stop1.setAttribute("stop-opacity", "0.35");
+  const stop2 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+  stop2.setAttribute("offset", "100%");
+  stop2.setAttribute("stop-color", lineColor);
+  stop2.setAttribute("stop-opacity", "0");
+  gradient.appendChild(stop1);
+  gradient.appendChild(stop2);
+  const filter = document.createElementNS("http://www.w3.org/2000/svg", "filter");
+  filter.setAttribute("id", "habit-line-glow");
+  filter.innerHTML = `<feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="${lineColor}" flood-opacity="0.25" />`;
+  defs.appendChild(gradient);
+  defs.appendChild(filter);
+  svg.appendChild(defs);
+
+  const smoothPath = buildSmoothPath(plotPoints);
   // area
-  const areaPath = plotPoints.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
   const area = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  area.setAttribute("d", `${areaPath} L ${plotPoints[plotPoints.length - 1].x} ${height - padding} L ${plotPoints[0].x} ${height - padding} Z`);
-  area.setAttribute("fill", lineColor + "33");
+  area.setAttribute("d", `${smoothPath} L ${plotPoints[plotPoints.length - 1].x} ${height - padding} L ${plotPoints[0].x} ${height - padding} Z`);
+  area.setAttribute("fill", `url(#${gradientId})`);
+  area.setAttribute("stroke", "none");
   svg.appendChild(area);
 
   // line
   const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  line.setAttribute("d", areaPath);
+  line.setAttribute("d", smoothPath);
   line.setAttribute("fill", "none");
   line.setAttribute("stroke", lineColor);
   line.setAttribute("stroke-width", 3);
   line.setAttribute("stroke-linecap", "round");
+  line.setAttribute("stroke-linejoin", "round");
+  line.setAttribute("filter", "url(#habit-line-glow)");
   svg.appendChild(line);
 
   // axis labels
-  const labels = [plotPoints[0], plotPoints[Math.floor(plotPoints.length / 2)], plotPoints[plotPoints.length - 1]].filter(Boolean);
+  const labelIndexes = new Set([0, Math.floor(plotPoints.length / 2), plotPoints.length - 1]);
+  const labels = Array.from(labelIndexes).map((idx) => plotPoints[idx]).filter(Boolean);
   labels.forEach((p) => {
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
     text.setAttribute("x", p.x);
     text.setAttribute("y", height - padding + 16);
     text.setAttribute("text-anchor", "middle");
     text.classList.add("habit-line-label");
-    text.textContent = p.dateKey.slice(5);
+    text.textContent = formatShortDate(p.dateKey);
     svg.appendChild(text);
   });
 
-  // points
-  plotPoints.forEach((p) => {
-    const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    dot.setAttribute("cx", p.x);
-    dot.setAttribute("cy", p.y);
-    dot.setAttribute("r", 4);
-    dot.setAttribute("fill", lineColor);
-    svg.appendChild(dot);
-  });
+  const lastPoint = plotPoints[plotPoints.length - 1];
+  const lastDot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  lastDot.setAttribute("cx", lastPoint.x);
+  lastDot.setAttribute("cy", lastPoint.y);
+  lastDot.setAttribute("r", 5);
+  lastDot.classList.add("habit-line-dot");
+  lastDot.setAttribute("fill", lineColor);
+  lastDot.setAttribute("stroke", "#fff");
+  lastDot.setAttribute("stroke-width", 1.5);
+  svg.appendChild(lastDot);
+
+  const cursorDot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  cursorDot.setAttribute("r", 6);
+  cursorDot.classList.add("habit-line-dot", "habit-line-dot--cursor");
+  cursorDot.setAttribute("fill", lineColor);
+  cursorDot.setAttribute("stroke", "#fff");
+  cursorDot.setAttribute("stroke-width", 2);
+  cursorDot.style.opacity = "0";
+  svg.appendChild(cursorDot);
 
   $habitLineChart.appendChild(svg);
 
@@ -956,14 +1049,21 @@ function renderLineChart() {
     tooltip.textContent = formatLineTooltip(nearest, habitLineHabit === "total");
     const scaleX = rect.width / width;
     const scaleY = rect.height / height;
-    tooltip.style.left = `${nearest.x * scaleX}px`;
-    tooltip.style.top = `${nearest.y * scaleY}px`;
+    const left = nearest.x * scaleX;
+    const top = nearest.y * scaleY;
+    const clampedLeft = Math.max(10, Math.min(rect.width - 10, left));
+    tooltip.style.left = `${clampedLeft}px`;
+    tooltip.style.top = `${top - 10}px`;
     tooltip.classList.remove("hidden");
+    cursorDot.setAttribute("cx", nearest.x);
+    cursorDot.setAttribute("cy", nearest.y);
+    cursorDot.style.opacity = "1";
   };
   svg.addEventListener("pointermove", handlePointer);
   svg.addEventListener("pointerdown", handlePointer);
   svg.addEventListener("pointerleave", () => {
     tooltip.classList.add("hidden");
+    cursorDot.style.opacity = "0";
   });
 }
 
@@ -1235,16 +1335,20 @@ function buildLineSeries(habitId, range) {
   const habitsList = activeHabits();
   for (let d = new Date(start); d <= cappedEnd; d = addDays(d, 1)) {
     const key = dateKeyLocal(d);
+    const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
     if (habitId === "total") {
       const perHabit = habitsList.map((habit) => {
         const minutes = getSessionsForHabitDate(habit.id, key).reduce((acc, s) => acc + minutesFromSession(s), 0);
         return { habit, minutes };
       }).filter((item) => item.minutes > 0).sort((a, b) => b.minutes - a.minutes);
       const minutes = perHabit.reduce((acc, item) => acc + item.minutes, 0);
-      points.push({ dateKey: key, minutes, perHabit });
+      const hasActivity = habitsList.some((h) => getHabitDayScore(h, key).hasActivity);
+      points.push({ dateKey: key, date, minutes, perHabit, hasActivity });
     } else {
+      const habit = habits[habitId];
+      const dayScore = habit ? getHabitDayScore(habit, key) : { hasActivity: false, minutes: 0 };
       const minutes = getSessionsForHabitDate(habitId, key).reduce((acc, s) => acc + minutesFromSession(s), 0);
-      points.push({ dateKey: key, minutes, perHabit: [] });
+      points.push({ dateKey: key, date, minutes, perHabit: [], hasActivity: dayScore.hasActivity });
     }
   }
   const maxValue = points.reduce((acc, p) => Math.max(acc, p.minutes), 0);
@@ -1792,15 +1896,6 @@ function bindEvents() {
     });
   });
 
-  $habitLineRangeButtons.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      $habitLineRangeButtons.forEach((b) => b.classList.remove("is-active"));
-      btn.classList.add("is-active");
-      habitLineRange = btn.dataset.range || "7d";
-      renderLineChart();
-    });
-  });
-
   $habitDaysRangeButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
       $habitDaysRangeButtons.forEach((b) => b.classList.remove("is-active"));
@@ -1808,6 +1903,16 @@ function bindEvents() {
       habitDaysRange = btn.dataset.range || "day";
       renderDaysAccordion();
     });
+  });
+
+  $habitEvoSelect?.addEventListener("change", (e) => {
+    habitLineHabit = e.target.value || "total";
+    renderLineChart();
+  });
+
+  $habitEvoRange?.addEventListener("change", (e) => {
+    habitLineRange = e.target.value || "7d";
+    renderLineChart();
   });
 }
 

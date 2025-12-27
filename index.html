@@ -553,21 +553,37 @@
                   <div id="habit-donut-legend" class="habit-donut-legend"></div>
                 </div>
 
-                <div class="habit-chart-card">
+                <div class="habit-chart-card habit-line-card" id="habit-line-card">
                   <div class="habit-card-head habit-line-head">
                     <div>
                       <div class="habit-card-title">Evolución (min/día)</div>
                       <div id="habit-line-sub" class="habit-card-sub">Últimos 7 días · Total</div>
                     </div>
                     <div class="habit-line-controls">
-                      <div class="habit-chip-group" id="habit-line-range">
-                        <button class="habit-chip habit-line-range-btn is-active" data-range="7d">7D</button>
-                        <button class="habit-chip habit-line-range-btn" data-range="30d">30D</button>
-                        <button class="habit-chip habit-line-range-btn" data-range="90d">90D</button>
-                        <button class="habit-chip habit-line-range-btn" data-range="year">Año</button>
-                        <button class="habit-chip habit-line-range-btn" data-range="total">Total</button>
-                      </div>
-                      <div class="habit-chip-group habit-chip-scroll" id="habit-line-habit-selector"></div>
+                      <label class="habit-select" for="habit-evo-select">
+                        <span>Hábito</span>
+                        <select id="habit-evo-select" aria-label="Hábito para evolución"></select>
+                      </label>
+                      <label class="habit-select habit-select-compact" for="habit-evo-range">
+                        <span>Rango</span>
+                        <select id="habit-evo-range" aria-label="Rango evolución">
+                          <option value="7d" selected>7D</option>
+                          <option value="30d">30D</option>
+                          <option value="90d">90D</option>
+                          <option value="year">Año</option>
+                          <option value="total">Total</option>
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                  <div class="habit-line-metrics" id="habit-line-metrics">
+                    <div class="habit-metric">
+                      <div class="habit-metric-label">Tiempo total (rango)</div>
+                      <div id="habit-line-total" class="habit-metric-value">0m</div>
+                    </div>
+                    <div class="habit-metric">
+                      <div class="habit-metric-label">Días activos (rango)</div>
+                      <div id="habit-line-days" class="habit-metric-sub">0</div>
                     </div>
                   </div>
                   <div class="habit-line-body">

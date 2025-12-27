@@ -2790,19 +2790,25 @@ if ($calViewMode) {
 }
 (function applyShortcutDeepLink() {
   const url = new URL(location.href);
-  const view = url.searchParams.get("view");     // "habits"
-  const tab  = url.searchParams.get("tab");      // "today" | "week" | "history"
-  const start = url.searchParams.get("start");   // "1"
-const stop  = url.searchParams.get("stop");
+  const view  = url.searchParams.get("view");   // "habits"
+  const tab   = url.searchParams.get("tab");    // "today" | "week" | "history"
+  const start = url.searchParams.get("start");  // "1"
+  const stop  = url.searchParams.get("stop");   // "1"
 
-if (!view && !tab && !start && !stop) return;
+  if (!view && !tab && !start && !stop) return;
 
   const cleanup = () => {
     url.searchParams.delete("view");
     url.searchParams.delete("tab");
     url.searchParams.delete("start");
     url.searchParams.delete("stop");
-    history.replaceState({}, "", url.pathname + (url.searchParams.toString() ? "?" + url.searchParams.toString() : "") + url.hash);
+    history.replaceState(
+      {},
+      "",
+      url.pathname +
+        (url.searchParams.toString() ? "?" + url.searchParams.toString() : "") +
+        url.hash
+    );
   };
 
   const clickNavTo = (viewId) => {
@@ -2811,17 +2817,19 @@ if (!view && !tab && !start && !stop) return;
   };
 
   const tryRun = (tries = 40) => {
-    if (view === "habits" || tab || start) clickNavTo("view-habits");
+    if (view === "habits" || tab || start || stop) clickNavTo("view-habits");
 
     const api = window.__bookshellHabits;
-    const habitsViewActive = document.getElementById("view-habits")?.classList.contains("view-active");
+    const habitsViewActive = document
+      .getElementById("view-habits")
+      ?.classList.contains("view-active");
 
-    if (tab) api.goHabitSubtab(tab);
-if (stop === "1") api.stopSession();
-else if (start === "1") api.startSession();
-cleanup();
-return;
-
+    if (api && habitsViewActive) {
+      if (tab) api.goHabitSubtab(tab);
+      if (stop === "1") api.stopSession();
+      else if (start === "1") api.startSession();
+      cleanup();
+      return;
     }
 
     if (tries > 0) setTimeout(() => tryRun(tries - 1), 100);

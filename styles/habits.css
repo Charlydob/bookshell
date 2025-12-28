@@ -158,7 +158,12 @@
   gap: 8px;
   margin-left: auto;
 }
+.habit-card-tools{
+  display: flex;
+  flex-direction: row;
+  gap: 16px;
 
+}
 .habit-actions {
   display: inline-flex;
   gap: 4px;
@@ -733,7 +738,7 @@
 
 .habit-donut-legend {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
   gap: 8px;
   margin-top: 10px;
 }
@@ -830,8 +835,9 @@
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
-  background: rgba(0,0,0,0.8);
+  background: rgba(0, 0, 0, 0.14);
   border-radius: var(--radius-pill);
+  backdrop-filter: blur(8px);
   border: 1px solid rgba(255,255,255,0.1);
 }
 
@@ -935,4 +941,133 @@
 
 .habit-toast.hidden {
   display: none;
+}
+/* =============================
+   Editar registros (habit-entry)
+   ============================= */
+
+#habit-entry-modal-backdrop .modal { max-width: 520px; }
+
+#habit-entry-modal-backdrop .sheet-section-title{
+  letter-spacing:.08em; text-transform:uppercase; font-size:11px;
+  color:var(--txt-soft); opacity:.8;
+}
+
+/* Check como toggle (adiós al cubo blanco gigante) */
+#habit-entry-check-wrap{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+}
+
+#habit-entry-check{
+  appearance:none; -webkit-appearance:none;
+  width:54px; height:32px; border-radius:999px;
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.14);
+  position:relative; outline:none;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.25);
+}
+#habit-entry-check::after{
+  content:""; position:absolute; top:50%; left:6px; transform:translateY(-50%);
+  width:22px; height:22px; border-radius:50%;
+  background:rgba(255,255,255,.85);
+  box-shadow:0 8px 18px rgba(0,0,0,.35);
+  transition:left .16s ease, background .16s ease;
+}
+#habit-entry-check:checked{
+  background: rgba(var(--hclr-rgb,127,93,255),.28);
+  border-color: rgba(var(--hclr-rgb,127,93,255),.55);
+  box-shadow: 0 0 0 1px rgba(var(--hclr-rgb,127,93,255),.22),
+              inset 0 0 0 1px rgba(0,0,0,.25);
+}
+#habit-entry-check:checked::after{ left:26px; background:rgba(255,255,255,.95); }
+
+/* Conteo (+ / input / -) */
+.habit-count-row{
+  display:grid; grid-template-columns:44px 1fr 44px; gap:10px; align-items:center;
+}
+.habit-count-row input{
+  height:38px; border-radius:12px;
+  border:1px solid rgba(255,255,255,.10);
+  background:rgba(0,0,0,.18);
+  color:var(--txt); padding:0 12px; outline:none;
+  text-align:center; font-weight:800;
+}
+
+/* Lista de sesiones: compacta y alineada */
+.habit-entry-session-row{
+  display:grid;
+  grid-template-columns: 1fr 80px 44px 44px;
+  gap:10px; align-items:center;
+  padding:10px 10px;
+  border-radius:16px;
+  border:1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.04);
+}
+.habit-entry-session-label{
+  font-size:12px; color:var(--txt-soft); font-weight:700;
+}
+.habit-entry-minutes{
+  height:38px; border-radius:12px;
+  border:1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.18);
+  color: var(--txt);
+  padding:0 10px; outline:none;
+  text-align:center; font-weight:800;
+}
+.habit-entry-session-row .icon-btn{
+  width:44px; height:44px; padding:0;
+  display:grid; place-items:center;
+  border-radius:14px;
+  background: rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.10);
+}
+.habit-entry-session-row .icon-btn:hover{ background: rgba(255,255,255,.09); }
+
+/* =============================
+   Hoy: fuego + menú (…)
+   ============================= */
+
+.habit-card-right{ align-items:flex-start; }
+.habit-actions{ display:flex; flex-direction:column; gap:6px; }
+
+.habit-fire{
+  min-width:44px; min-height:44px;
+  border-radius:16px;
+}
+.habit-actions .icon-btn{
+  width:44px; height:44px; padding:0;
+  display:grid; place-items:center;
+  border-radius:16px;
+  background: rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.10);
+}
+.habit-card.is-done .habit-actions .icon-btn{
+  background: rgba(var(--hclr-rgb,127,93,255),.10);
+  border-color: rgba(var(--hclr-rgb,127,93,255),.22);
+}
+.icon-btn-add{
+  background-color: transparent;
+  color: white;
+  border-radius: 20px;
+  border-color: transparent;
+}
+.icon-btn-edit{
+  background-color: transparent;
+    border-color: transparent;
+  color: white;
+
+}
+.habit-card-tools .icon-btn-edit { order: 1; }
+.habit-card-tools .habit-fire    { order: 2; }
+.habit-card{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+
+.habit-card-tools{
+  margin-left:auto;          /* empuja tools al final */
+  display:flex;
+  align-items:center;
+  gap:16px;
 }

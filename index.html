@@ -628,7 +628,13 @@
                     <div id="habit-ranking-month" class="habit-ranking-list"></div>
                   </div>
                 </details>
-
+                    <div class="habit-range-toggle habit-days-range">
+                      <button class="habit-range-btn habit-days-range-btn is-active" data-range="day">Día</button>
+                      <button class="habit-range-btn habit-days-range-btn" data-range="week">Semana</button>
+                      <button class="habit-range-btn habit-days-range-btn" data-range="month">Mes</button>
+                      <button class="habit-range-btn habit-days-range-btn" data-range="year">Año</button>
+                      <button class="habit-range-btn habit-days-range-btn" data-range="total">Total</button>
+                    </div>
                 <details class="habit-accordion" id="habit-acc-total">
                   <summary>
                     <div class="habit-accordion-title">Totales por hábito</div>
@@ -645,13 +651,7 @@
                     <div id="habit-acc-days-meta" class="habit-accordion-meta">—</div>
                   </summary>
                   <div class="habit-accordion-body">
-                    <div class="habit-range-toggle habit-days-range">
-                      <button class="habit-range-btn habit-days-range-btn is-active" data-range="day">Día</button>
-                      <button class="habit-range-btn habit-days-range-btn" data-range="week">Semana</button>
-                      <button class="habit-range-btn habit-days-range-btn" data-range="month">Mes</button>
-                      <button class="habit-range-btn habit-days-range-btn" data-range="year">Año</button>
-                      <button class="habit-range-btn habit-days-range-btn" data-range="total">Total</button>
-                    </div>
+
                     <div id="habit-days-list" class="habit-ranking-list"></div>
                   </div>
                 </details>
@@ -1221,10 +1221,14 @@
                 <input type="radio" name="habit-goal" value="time" />
                 <span>Tiempo</span>
               </label>
+              <label class="toggle-pill">
+                <input type="radio" name="habit-goal" value="count" />
+                <span>Conteo</span>
+              </label>
             </div>
           </div>
 
-          <label class="field">
+          <label id="habit-target-minutes-wrap" class="field">
             <span class="field-label">Minutos objetivo (opcional)</span>
             <input id="habit-target-minutes" type="number" min="0" placeholder="25" inputmode="numeric" />
           </label>
@@ -1318,6 +1322,64 @@
 
       <div class="modal-footer sheet-footer">
         <button type="button" id="habit-manual-cancel" class="btn ghost">Cancelar</button>
+        <button type="submit" class="btn primary">Guardar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- MODAL EDITAR REGISTROS -->
+<div id="habit-entry-modal-backdrop" class="modal-backdrop hidden">
+  <div class="modal habit-modal">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">Editar registros</div>
+      <button id="habit-entry-close" class="icon-btn">✕</button>
+    </div>
+
+    <form id="habit-entry-form" class="modal-form">
+      <div class="modal-scroll sheet-body">
+        <div class="sheet-section">
+          <div class="sheet-section-title">Día</div>
+
+          <label class="field">
+            <span class="field-label">Hábito</span>
+            <select id="habit-entry-habit" required></select>
+          </label>
+
+          <label class="field">
+            <span class="field-label">Fecha</span>
+            <input id="habit-entry-date" type="date" required />
+          </label>
+
+          <div id="habit-entry-check-wrap">
+            <label class="field">
+              <span class="field-label">Check</span>
+              <input id="habit-entry-check" type="checkbox" />
+            </label>
+          </div>
+
+          <div id="habit-entry-count-wrap" style="display:none;">
+            <div class="field">
+              <span class="field-label">Conteo</span>
+              <div class="pill-row">
+                <button id="habit-entry-count-minus" type="button" class="icon-btn">−</button>
+                <input id="habit-entry-count" type="number" min="0" value="0" inputmode="numeric" />
+                <button id="habit-entry-count-plus" type="button" class="icon-btn">+</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sheet-section">
+          <div class="sheet-section-title">Sesiones (tiempo)</div>
+          <div id="habit-entry-sessions"></div>
+          <div class="hint">Puedes ajustar minutos o borrar sesiones. Para añadir una nueva, usa “Añadir tiempo”.</div>
+        </div>
+      </div>
+
+      <div class="modal-footer sheet-footer">
+        <button type="button" id="habit-entry-cancel" class="btn ghost">Cancelar</button>
         <button type="submit" class="btn primary">Guardar</button>
       </div>
     </form>

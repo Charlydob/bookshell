@@ -2540,6 +2540,33 @@ if ($statBooksRead) {
 
 }
 
+// rows: [{ name: "Kafka", value: 4 }, ...]
+function groupIntoOthers(rows, {
+  maxSlices = 10,        // máximo de porciones visibles (incluyendo "Otros")
+  minOthersItems = 4,    // mínimo de items para permitir "Otros"
+  minOthersShare = 0.12, // mínimo % del total para permitir "Otros"
+  othersLabel = "Otros",
+} = {}) {
+  const data = [...rows].filter(r => (r?.value ?? 0) > 0);
+  if (data.length <= maxSlices) return data;
+
+  const total = data.reduce((s, r) => s + r.value, 0) || 1;
+  data.sort((a, b) => b.value - a.value);
+
+  const top = data.slice(0, maxSlices - 1);
+  const rest = data.slice(maxSlices - 1);
+
+  const restValue = rest.reduce((s, r) => s + r.value, 0);
+  const restShare = restValue / total;
+
+  // 👉 NO agrupar si "Otros" serían pocos o insignificantes
+  if (rest.length < minOthersItems || restShare < minOthersShare) return data;
+
+  return [...top, { name: othersLabel, value: restValue, _children: rest }];
+}
+
+// Ejemplo de uso antes de setOption:
+const pieData = groupIntoOthers(authorCounts, { maxSlices: 12, minOthersItems: 4, minOthersShare: 0.15 });
 
 // === Calendario ===
 function renderCalendar() {

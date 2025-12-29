@@ -833,7 +833,7 @@
 .books-shelf-row{
   position: relative;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: flex-end;
   gap: 10px;
   padding-bottom: 16px;
@@ -874,8 +874,9 @@
     rgba(0,0,0,0.22) 100%
   );
   position: relative;
-  width: 46px;
-  min-width: 46px;
+  flex: 0 0 auto;                            /* FIX: no encoger */
+  width: var(--spine-width, 46px);           /* FIX */
+  min-width: var(--spine-width, 46px);       /* FIX */
   height: var(--spine-height);
   background:
     var(--spine-depth),
@@ -1609,3 +1610,51 @@
 
 .geo-header{display:flex;}
 .geo-map{flex:1 1 auto; min-width:0; width:100%; height:320px;}
+/* 1) Cada balda = 1 sola línea (sin wrap) */
+.books-shelf-row{
+  position: relative;
+  display: flex;
+  flex-wrap: nowrap;        /* <-- FIX */
+  align-items: flex-end;
+  gap: 10px;
+  padding-bottom: 16px;
+  overflow: visible;        /* sombras no se cortan dentro de la fila */
+}
+
+/* 2) Ancho variable por JS */
+.book-spine{
+  width: var(--spine-width, 46px);     /* <-- FIX */
+  min-width: var(--spine-width, 46px); /* <-- FIX */
+}
+
+/* 3) Evita recorte por la card contenedora */
+.books-finished, .books-watchlist{
+  overflow: visible;        /* <-- FIX (antes hidden) */
+}
+
+/* 4) Margen interior extra para que NUNCA roce el borde */
+.books-list-finished{
+  padding: 10px 24px 12px;  /* <-- FIX (antes 10px 12px 12px) */
+}
+
+/* Watchlist: dale el mismo aire lateral */
+.watchlist-body{
+  padding: 10px 24px 12px;  /* <-- NUEVO */
+}
+/* La fila ocupa exactamente el ancho útil del contenedor */
+.books-shelf-row{
+  position: relative;
+  display: flex;
+  flex-wrap: nowrap;         /* FIX */
+  width: 100%;               /* FIX */
+  box-sizing: border-box;    /* FIX */
+  align-items: flex-end;
+  gap: 10px;
+  padding-bottom: 16px;
+  overflow: visible;         /* FIX */
+}
+
+/* Un pelín de aire a la derecha para que jamás “muerda” el borde */
+.books-list-finished{
+  padding-right: 28px; /* antes 12px */
+}

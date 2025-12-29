@@ -694,3 +694,38 @@
   color: var(--txt-soft);
   opacity: .9;
 }
+.note-link{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:3px 8px;
+  border-radius:999px;
+  font-size:11px;
+  line-height:1;
+  text-decoration:none;
+  border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.06);
+  color:inherit;
+  vertical-align:middle;
+}
+
+.note-link:hover{
+  background:rgba(255,255,255,.10);
+  border-color:rgba(255,255,255,.18);
+}
+
+.note-link:active{
+  transform:translateY(1px);
+}
+
+.note-link::after{
+  content:"↗";
+  opacity:.65;
+  font-size:11px;
+  line-height:1;
+}
+.recipe-detail-chips{
+  display:flex;
+  gap:6px;
+  justify-content:center;
+}

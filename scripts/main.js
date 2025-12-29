@@ -227,6 +227,158 @@ if ($statBooksReadCard && $statBooksReadRange) {
     try { $statBooksReadRange.click(); } catch (_) {}
   });
 }
+const SHELF_GAP_PX = 10; // igual que el gap del CSS
+
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function getHostWidthPx(el) {
+  const w = el?.getBoundingClientRect?.().width || el?.clientWidth || 0;
+  return Math.max(260, w || 360);
+}
+
+// ancho basado en longitud del título (más letras => lomo más ancho)
+function estimateSpineWidthPx(title) {
+  const t = String(title || "").trim().replace(/\s+/g, "");
+  const len = t.length;
+  if (!len) return 46;
+  const w = 34 + Math.round(Math.sqrt(len) * 6);
+  return clamp(w, 38, 82);
+}
+
+function setSpineWidth(spineEl, title) {
+  const w = estimateSpineWidthPx(title);
+  spineEl.style.setProperty("--spine-width", `${w}px`);
+  spineEl.dataset.spineWidth = String(w);
+  return w;
+}
+
+// crea filas que SIEMPRE caben (sin wrap) => estante debajo de cada fila
+// === DEBUG SHELVES ===
+const SHELF_DEBUG = true;
+const SHELF_SAFE_RIGHT_PX = 40; // sube/baja 32–56 si hace falta
+
+function dbg(...args) {
+  if (SHELF_DEBUG) console.log("[SHELF]", ...args);
+}
+function dbgWarn(...args) {
+  if (SHELF_DEBUG) console.warn("[SHELF]", ...args);
+}
+const shelfLog = (...a) => dbg(...a);
+const shelfWarn = (...a) => dbgWarn(...a);
+
+function getShelfAvailWidthPx(hostEl) {
+  if (!hostEl) {
+    dbgWarn("getShelfAvailWidthPx: hostEl null -> 320");
+    return 320;
+  }
+
+  const cs = getComputedStyle(hostEl);
+  const pl = parseFloat(cs.paddingLeft) || 0;
+  const pr = parseFloat(cs.paddingRight) || 0;
+  const bl = parseFloat(cs.borderLeftWidth) || 0;
+  const br = parseFloat(cs.borderRightWidth) || 0;
+
+  const rectW = hostEl.getBoundingClientRect().width || 0;
+  const clientW = hostEl.clientWidth || 0;
+
+  const w = rectW - pl - pr - bl - br - SHELF_SAFE_RIGHT_PX;
+  const avail = Math.max(220, Math.floor(w));
+
+  dbg("availWidth",
+    { rectW: +rectW.toFixed(2), clientW, pl, pr, bl, br, safe: SHELF_SAFE_RIGHT_PX, avail }
+  );
+
+  return avail;
+}
+
+function buildShelfRowsByWidth(items, makeSpine, hostEl, rowClass = "books-shelf-row") {
+  const maxWidth = getShelfAvailWidthPx(hostEl);
+  const frag = document.createDocumentFragment();
+
+  let row = null;
+  let used = 0;
+  let rowIdx = -1;
+
+  const startRow = () => {
+    row = document.createElement("div");
+    row.className = rowClass;
+    used = 0;
+    rowIdx++;
+    dbg("startRow", { rowIdx, rowClass, maxWidth });
+  };
+
+  const flush = () => {
+    if (row && row.childNodes.length) {
+      frag.appendChild(row);
+      dbg("flushRow", { rowIdx, itemsInRow: row.childNodes.length, used, maxWidth, free: maxWidth - used });
+    }
+    row = null;
+    used = 0;
+  };
+
+  const arr = items || [];
+  dbg("buildShelfRowsByWidth: begin", { count: arr.length, rowClass, host: hostEl?.className || hostEl?.id || "?" });
+
+  arr.forEach((item, idx) => {
+    const spine = makeSpine(item);
+
+    // ancho: usa getBoundingClientRect si ya está medible; si no, dataset; si no, fallback
+    const rectW = spine?.getBoundingClientRect?.().width || 0;
+    const dsW = Number(spine?.dataset?.spineWidth) || 0;
+    const w = Math.ceil(rectW) || dsW || 46;
+
+    if (!row) startRow();
+
+    const needed = row.childNodes.length ? (SHELF_GAP_PX + w) : w;
+    const wouldBe = used + needed;
+
+    dbg("item",
+      {
+        idx,
+        title: item?.title || item?.name || item?.id || "?",
+        w,
+        rectW: +rectW.toFixed(2),
+        dsW,
+        used,
+        needed,
+        wouldBe,
+        maxWidth,
+        fits: wouldBe < (maxWidth - 2)
+      }
+    );
+
+    if (row.childNodes.length && wouldBe >= (maxWidth - 2)) {
+      dbgWarn("wrapToNextRow", { rowIdx, idx, used, needed, wouldBe, maxWidth });
+      flush();
+      startRow();
+      row.appendChild(spine);
+      used = w;
+    } else {
+      row.appendChild(spine);
+      used = wouldBe;
+    }
+  });
+
+  flush();
+  dbg("buildShelfRowsByWidth: end", { rows: rowIdx + 1 });
+
+  // Post-check: si host recorta por overflow, lo avisamos
+  try {
+    if (hostEl) {
+      const cs = getComputedStyle(hostEl);
+      if (cs.overflowX === "hidden" || cs.overflow === "hidden") {
+        dbgWarn("HOST HAS overflow hidden -> puede recortar", { overflow: cs.overflow, overflowX: cs.overflowX, host: hostEl.className || hostEl.id });
+      }
+    }
+  } catch {}
+
+  return frag;
+}
+
+
+
 
 // === Navegación ===
 $navButtons.forEach(btn => {
@@ -1062,6 +1214,7 @@ function pickSpinePalette(seed = "") {
   return spinePalettes[hash % spinePalettes.length];
 }
 
+
 function buildFinishedSpine(id) {
   const b = books[id] || {};
   const title = b.title || "Sin título";
@@ -1099,7 +1252,7 @@ function buildFinishedSpine(id) {
 
   spine.appendChild(t);
   spine.appendChild(meta);
-
+setSpineWidth(spine, title);
   const openDetail = () => openBookDetail(id);
   spine.addEventListener("click", openDetail);
   spine.addEventListener("keydown", (e) => {
@@ -1687,7 +1840,7 @@ function buildWatchlistSpine(id) {
   spine.appendChild(t);
   spine.appendChild(meta);
   spine.appendChild(actions);
-
+setSpineWidth(spine, title);
   const openDetail = () => openBookDetail(id);
   spine.addEventListener("click", openDetail);
   spine.addEventListener("keydown", (e) => {
@@ -1699,6 +1852,7 @@ function buildWatchlistSpine(id) {
 
   return spine;
 }
+
 
 function renderWatchlist(plannedIds) {
   if (!$booksWatchlist) return;
@@ -1722,21 +1876,14 @@ function renderWatchlist(plannedIds) {
   if ($booksWatchlistCount) $booksWatchlistCount.textContent = String(count);
   if ($booksWatchlistEmpty) $booksWatchlistEmpty.style.display = count ? "none" : "block";
 
-  if ($booksWatchlistList) {
-    const frag = document.createDocumentFragment();
-    const SHELF_SIZE_WATCH = 9;
+if ($booksWatchlistList) {
+  shelfLog("render:watchlist", { host: "#books-watchlist-list", count: ids.length });
+  $booksWatchlistList.innerHTML = "";
+  $booksWatchlistList.appendChild(
+    buildShelfRowsByWidth(ids, buildWatchlistSpine, $booksWatchlistList, "books-shelf-row books-shelf-row-watchlist")
+  );
+}
 
-    for (let i = 0; i < ids.length; i += SHELF_SIZE_WATCH) {
-      const row = document.createElement("div");
-      row.className = "books-shelf-row books-shelf-row-watchlist";
-      ids.slice(i, i + SHELF_SIZE_WATCH).forEach((bookId) => {
-        row.appendChild(buildWatchlistSpine(bookId));
-      });
-      frag.appendChild(row);
-    }
-    $booksWatchlistList.innerHTML = "";
-    $booksWatchlistList.appendChild(frag);
-  }
 }
 
 function getSelectedDonutType() {
@@ -1896,7 +2043,7 @@ function buildReadingSpine(id) {
   spine.appendChild(bm);
   spine.appendChild(t);
   spine.appendChild(stats);
-
+setSpineWidth(spine, title);
   const openDetail = () => openBookDetail(id);
   spine.addEventListener("click", openDetail);
   spine.addEventListener("keydown", (e) => {
@@ -2165,22 +2312,14 @@ if (inlineInput) {
   };
 
   // Render activos (estantería)
-  if ($booksListActive) {
-    const fragA = document.createDocumentFragment();
-    const SHELF_SIZE_ACTIVE = 7;
+if ($booksListActive) {
+  shelfLog("render:active", { host: "#books-list-active", count: activeIds.length });
+  $booksListActive.innerHTML = "";
+  $booksListActive.appendChild(
+    buildShelfRowsByWidth(activeIds, buildReadingSpine, $booksListActive, "books-shelf-row books-shelf-row-reading")
+  );
+}
 
-    for (let i = 0; i < activeIds.length; i += SHELF_SIZE_ACTIVE) {
-      const row = document.createElement("div");
-      row.className = "books-shelf-row books-shelf-row-reading";
-      activeIds.slice(i, i + SHELF_SIZE_ACTIVE).forEach((bookId) => {
-        row.appendChild(buildReadingSpine(bookId));
-      });
-      fragA.appendChild(row);
-    }
-
-    $booksListActive.innerHTML = "";
-    $booksListActive.appendChild(fragA);
-  }
 // Render terminados (plegable)
   if (hasFinishedUI) {
     const totalFinished = finishedIds.length;
@@ -2211,24 +2350,26 @@ if (inlineInput) {
       const fragF = document.createDocumentFragment();
       const SHELF_SIZE = 9;
 
-      const appendShelves = (list, isFavorite = false) => {
-        if (!list.length) return;
-        if (isFavorite) {
-          const label = document.createElement("div");
-          label.className = "books-shelf-results shelf-favorites-label";
-          label.textContent = "⭐ Favoritos";
-          fragF.appendChild(label);
-        }
-        for (let i = 0; i < list.length; i += SHELF_SIZE) {
-          const row = document.createElement("div");
-          row.className = "books-shelf-row";
-          if (isFavorite) row.classList.add("books-shelf-row-favorites");
-          list.slice(i, i + SHELF_SIZE).forEach((bookId) => {
-            row.appendChild(buildFinishedSpine(bookId));
-          });
-          fragF.appendChild(row);
-        }
-      };
+const appendShelves = (list, isFavorite = false) => {
+  if (!list.length) return;
+
+  if (isFavorite) {
+    const label = document.createElement("div");
+    label.className = "books-shelf-results shelf-favorites-label";
+    label.textContent = "⭐ Favoritos";
+    fragF.appendChild(label);
+  }
+
+  shelfLog("render:finished", { favorite: isFavorite, count: list.length });
+  fragF.appendChild(
+    buildShelfRowsByWidth(
+      list,
+      buildFinishedSpine,
+      $booksListFinished,
+      `books-shelf-row${isFavorite ? " books-shelf-row-favorites" : ""}`
+    )
+  );
+};
 
       appendShelves(favorites, true);
       appendShelves(regular, false);
@@ -2540,33 +2681,6 @@ if ($statBooksRead) {
 
 }
 
-// rows: [{ name: "Kafka", value: 4 }, ...]
-function groupIntoOthers(rows, {
-  maxSlices = 10,        // máximo de porciones visibles (incluyendo "Otros")
-  minOthersItems = 4,    // mínimo de items para permitir "Otros"
-  minOthersShare = 0.12, // mínimo % del total para permitir "Otros"
-  othersLabel = "Otros",
-} = {}) {
-  const data = [...rows].filter(r => (r?.value ?? 0) > 0);
-  if (data.length <= maxSlices) return data;
-
-  const total = data.reduce((s, r) => s + r.value, 0) || 1;
-  data.sort((a, b) => b.value - a.value);
-
-  const top = data.slice(0, maxSlices - 1);
-  const rest = data.slice(maxSlices - 1);
-
-  const restValue = rest.reduce((s, r) => s + r.value, 0);
-  const restShare = restValue / total;
-
-  // 👉 NO agrupar si "Otros" serían pocos o insignificantes
-  if (rest.length < minOthersItems || restShare < minOthersShare) return data;
-
-  return [...top, { name: othersLabel, value: restValue, _children: rest }];
-}
-
-// Ejemplo de uso antes de setOption:
-const pieData = groupIntoOthers(authorCounts, { maxSlices: 12, minOthersItems: 4, minOthersShare: 0.15 });
 
 // === Calendario ===
 function renderCalendar() {

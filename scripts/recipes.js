@@ -387,6 +387,95 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   function normalizeLabel(value) {
     return String(value ?? "").trim();
   }
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function escapeAttr(s) {
+  // suficiente para href
+  return escapeHtml(s).replaceAll("`", "&#96;");
+}
+
+function prettyHostLabel(href) {
+  try {
+    const u = new URL(href);
+    let host = (u.hostname || "").toLowerCase();
+
+    // quita www.
+    host = host.replace(/^www\./, "");
+
+    // pilla el “centro” típico: tiktok.com -> tiktok, recipes.my.site.es -> site
+    const parts = host.split(".").filter(Boolean);
+    if (!parts.length) return "Link";
+
+    // si hay 2+ partes, el “nombre” suele ser la penúltima (tiktok.com -> tiktok)
+    // pero si hay subdominio (m.youtube.com), sigue siendo youtube
+    const base =
+      parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+
+    // Title-case suave: "tiktok" -> "TikTok" (heurística simple)
+    const cleaned = base.replace(/[-_]+/g, " ").trim();
+    if (!cleaned) return "Link";
+
+    // Capitaliza palabras
+    const titled = cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
+
+    // “TikTok” y otras marcas con doble mayúscula: mini heurística
+    if (titled.toLowerCase() === "tiktok") return "TikTok";
+    if (titled.toLowerCase() === "youtube") return "YouTube";
+    if (titled.toLowerCase() === "instagram") return "Instagram";
+    if (titled.toLowerCase() === "facebook") return "Facebook";
+    if (titled.toLowerCase() === "twitter") return "X";
+    if (titled.toLowerCase() === "x") return "X";
+
+    return titled;
+  } catch {
+    return "Link";
+  }
+}
+
+function linkifyNotesHtml(input) {
+  const text = String(input ?? "");
+  if (!text) return "";
+
+  const re =
+    /\b(?:https?:\/\/|www\.)[^\s<>()]+|\b(?:[a-z0-9-]+\.)+(?:com|es|net|org|io|dev|info|me|co|eu|cat|fr|it|de|ch|uk|us)(?:\/[^\s<>()]*)?/gi;
+
+  let out = "";
+  let last = 0;
+
+  text.replace(re, (match, ...rest) => {
+    const offset = rest[rest.length - 2];
+    out += escapeHtml(text.slice(last, offset));
+
+    // quita puntuación pegada al final
+    let raw = match;
+    let trailing = "";
+    while (/[.,;:!?)\]]$/.test(raw)) {
+      trailing = raw.slice(-1) + trailing;
+      raw = raw.slice(0, -1);
+    }
+
+    let href = raw;
+    if (!/^https?:\/\//i.test(href)) href = "https://" + href.replace(/^www\./i, "www.");
+
+    const label = prettyHostLabel(href);
+
+    out += `<a class="note-link" href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer" title="${escapeAttr(href)}">${escapeHtml(label)}</a>${escapeHtml(trailing)}`;
+
+    last = offset + match.length;
+    return match;
+  });
+
+  out += escapeHtml(text.slice(last));
+  return out.replace(/\n/g, "<br>");
+}
+
 
   function pickSpinePalette(seed = "") {
     const palettes = [
@@ -717,7 +806,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       if (recipe.notes) {
         const notes = document.createElement("div");
         notes.className = "recipe-meta-item";
-        notes.innerHTML = `<strong>Notas</strong><br>${recipe.notes}`;
+notes.innerHTML = `<strong>Notas</strong><br>${linkifyNotesHtml(recipe.notes)}`;
         body.appendChild(notes);
       }
 
@@ -1577,7 +1666,9 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
 
       const notesRow = document.createElement("div");
       notesRow.className = "spec-item spec-item-notes spec-notes";
-      notesRow.innerHTML = `<div class="spec-label">Notas</div><div class="spec-value">${recipe.notes || "—"}</div>`;
+notesRow.innerHTML = `<div class="spec-label">Notas</div><div class="spec-value">${linkifyNotesHtml(
+  recipe.notes || "—"
+)}</div>`;
       $recipeDetailGrid.appendChild(notesRow);
     }
 
@@ -1632,7 +1723,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     if ($recipeDetailNotesWrapper && $recipeDetailNotes) {
       const hasNotes = !!(recipe.notes || "").trim();
       $recipeDetailNotesWrapper.style.display = hasNotes ? "block" : "none";
-      $recipeDetailNotes.textContent = recipe.notes || "";
+$recipeDetailNotes.innerHTML = linkifyNotesHtml(recipe.notes || "");
     }
   }
 

@@ -333,25 +333,7 @@
               </div>
             </div>
 
-            <div class="calendar-section recipe-calendar">
-              <div class="calendar-header">
-                <div class="calendar-nav">
-                  <button id="recipe-cal-prev" class="icon-btn">&lt;</button>
-                  <div id="recipe-cal-label" class="cal-label"></div>
-                  <button id="recipe-cal-next" class="icon-btn">&gt;</button>
-                </div>
-                <select id="recipe-cal-view-mode" class="calendar-view-select" aria-label="Vista del calendario de recetas">
-                  <option value="month" selected>Mes</option>
-                  <option value="year">Año</option>
-                </select>
-              </div>
-              <div id="recipe-calendar-summary" class="calendar-summary"></div>
-              <div class="calendar-grid" id="recipe-calendar-grid"></div>
-              <div class="calendar-legend">
-                <span class="dot dot-normal"></span> Cocinada
-                <span class="dot dot-finished"></span> Favorita
-              </div>
-            </div>
+
           </div>
 
           <div class="recipes-toolbar">
@@ -1135,8 +1117,10 @@
       <div class="recipe-detail-top">
         <div class="recipe-detail-headings">
           <h2 id="recipe-detail-title" class="recipe-detail-title">Receta</h2>
-          <div id="recipe-detail-meal" class="recipe-detail-chip"></div>
-          <div id="recipe-detail-tags" class="recipe-detail-tags"></div>
+          <div class="recipe-detail-chips">
+            <div id="recipe-detail-meal" class="recipe-detail-chip"></div>
+            <div id="recipe-detail-tags" class="recipe-detail-tags"></div>
+          </div>
         </div>
         <div class="recipe-detail-actions">
           <button id="recipe-detail-close" class="icon-btn icon-btn-large" aria-label="Cerrar">✕</button>

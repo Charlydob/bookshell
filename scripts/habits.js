@@ -1349,12 +1349,22 @@ function collectHabitActiveDates(habit, start, end) {
     const parsed = parseDateKey(key);
     if (parsed && isDateInRange(parsed, start, end)) dates.add(key);
   });
+
+  const counts = habitCounts[habit.id] || {};
+  Object.entries(counts).forEach(([key, raw]) => {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return;
+    const parsed = parseDateKey(key);
+    if (parsed && isDateInRange(parsed, start, end)) dates.add(key);
+  });
+
   Object.values(habitSessions).forEach((s) => {
     if (!isSessionActive(s) || s.habitId !== habit.id) return;
     const date = getSessionDate(s);
     const key = getSessionDateKey(s);
     if (date && key && isDateInRange(date, start, end)) dates.add(key);
   });
+
   return dates.size;
 }
 
@@ -1485,14 +1495,21 @@ function totalsByHabit(range) {
   const { start, end } = getRangeBounds(range);
   return activeHabits()
     .map((habit) => {
-      const minutes = minutesForHabitRange(habit, start, end);
+      const isCount = (habit.goal || "check") === "count";
+      const minutes = isCount ? 0 : minutesForHabitRange(habit, start, end);
+      const count = isCount ? countForHabitRange(habit, start, end) : 0;
       const daysActive = collectHabitActiveDates(habit, start, end);
       const streak = computeHabitCurrentStreak(habit);
-      return { habit, minutes, daysActive, streak };
+      return { habit, minutes, count, daysActive, streak };
     })
-    .filter((item) => item.minutes > 0 || item.daysActive > 0)
-    .sort((a, b) => b.minutes - a.minutes);
+    .filter((item) => item.minutes > 0 || item.count > 0 || item.daysActive > 0)
+    .sort((a, b) => {
+      const aVal = (a.habit.goal === "count") ? a.count : a.minutes;
+      const bVal = (b.habit.goal === "count") ? b.count : b.minutes;
+      return bVal - aVal;
+    });
 }
+
 
 function updateAccordionMeta(el, items, type = "minutes") {
   if (!el) return;
@@ -1504,9 +1521,17 @@ function updateAccordionMeta(el, items, type = "minutes") {
     el.textContent = `${items[0].value}% máx`;
     return;
   }
+
   const totalMinutes = items.reduce((acc, item) => acc + (item.value || item.minutes || 0), 0);
-  el.textContent = `${items.length} hábito${items.length !== 1 ? "s" : ""} · ${formatMinutes(totalMinutes)}`;
+  const totalCounts = items.reduce((acc, item) => acc + (item.count || 0), 0);
+
+  const parts = [`${items.length} hábito${items.length !== 1 ? "s" : ""}`];
+  if (totalMinutes > 0) parts.push(formatMinutes(totalMinutes));
+  if (totalCounts > 0) parts.push(`${totalCounts}×`);
+  el.textContent = parts.join(" · ");
 }
+
+
 
 function renderRankingList(container, items, unit) {
   if (!container) return;
@@ -1564,6 +1589,7 @@ function renderTotalsList() {
     const div = document.createElement("div");
     div.className = "habit-ranking-item habit-total-item";
     setHabitColorVars(div, item.habit);
+
     const totalDays = countHabitActivityDays(item.habit);
     const left = document.createElement("div");
     left.className = "habit-card-left";
@@ -1575,9 +1601,12 @@ function renderTotalsList() {
         <div class="habit-meta habit-days-done">Total histórico: ${totalDays} día${totalDays === 1 ? "" : "s"}</div>
       </div>
     `;
+
     const value = document.createElement("div");
     value.className = "habit-kpi-value";
-    value.textContent = formatMinutes(item.minutes);
+    value.textContent = (item.habit.goal === "count")
+      ? `${item.count || 0}×`
+      : formatMinutes(item.minutes);
 
     const right = document.createElement("div");
     right.className = "habit-card-right";
@@ -1589,7 +1618,6 @@ function renderTotalsList() {
     $habitTotalsList.appendChild(div);
   });
 }
-
 function renderDonut() {
   if (!$habitDonut || typeof echarts === "undefined") return;
   const data = timeShareByHabit(habitDonutRange);
@@ -2266,6 +2294,19 @@ export function initHabits() {
   window.addEventListener("resize", () => {
     if (habitDonutChart) habitDonutChart.resize();
   });
+}
+function countForHabitRange(habit, start, end) {
+  if (!habit || habit.archived) return 0;
+  if ((habit.goal || "check") !== "count") return 0;
+  const entries = habitCounts?.[habit.id] || {};
+  let total = 0;
+  Object.entries(entries).forEach(([key, raw]) => {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return;
+    const parsed = parseDateKey(key);
+    if (parsed && isDateInRange(parsed, start, end)) total += n;
+  });
+  return total;
 }
 
 // Autoinit

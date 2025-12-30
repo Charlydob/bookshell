@@ -10,12 +10,15 @@
 }
 
 .dash-title {
+        display: none;
+
   font-size: 16px;
   font-weight: 800;
   letter-spacing: 0.2px;
 }
 
 .dash-subtitle {
+    display: none;
   font-size: 11px;
   color: var(--txt-soft);
 }
@@ -85,6 +88,7 @@
 .dash-legend {
   display: grid;
   gap: 8px;
+  
 }
 
 .dash-legend-item {
@@ -110,6 +114,7 @@
   overflow:hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .dash-legend-meta {
+    
   font-size: 12px;
   color: var(--txt-soft);
   font-variant-numeric: tabular-nums;
@@ -135,7 +140,7 @@
   overflow:hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-.dash-actions { display:flex; gap: 8px; flex-wrap: wrap; justify-content:flex-end; }
+.dash-actions { display:flex; gap: 8px; flex-direction: row; flex-wrap: wrap; justify-content:flex-end; }
 .dash-btn {
   border: 1px solid var(--stroke);
   background: rgba(255,255,255,0.06);

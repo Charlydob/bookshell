@@ -1,6 +1,6 @@
 /* Media tab: lista virtual (sin tarjetas) + donut + mapa */
 
-.media-wrapper{padding:16px;display:flex;flex-direction:column;gap:12px}
+.media-wrapper{padding:16px;display:flex;flex-direction:column;gap:12px; margin-top:40px}
 
 .media-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
 .media-head-left{display:flex;flex-direction:column;gap:2px}
@@ -29,13 +29,19 @@
 
 /* Donut */
 .media-chart-card{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);border-radius:14px;padding:12px}
+
+
 .media-chart-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+
 .media-chart-title{font-size:13px;font-weight:650;opacity:.9}
 .media-chart-sub{font-size:12px;opacity:.65;margin-top:2px}
 .media-donut-host{height:240px}
 
 /* Lista virtual */
-.media-list-card{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);border-radius:14px;overflow:hidden}
+.media-list-card{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);border-radius:14px;overflow:hidden; max-height: 420px; min-height: 20px;}
+
+
+
 .media-list-head{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;justify-content:space-between;gap:10px}
 .media-list-title{font-size:13px;font-weight:650;opacity:.9}
 .media-list-meta{font-size:12px;opacity:.65;white-space:nowrap}
@@ -529,3 +535,32 @@
 }
 
 #view-media .geo-map{background: radial-gradient(120% 90% at 40% 10%, rgba(212,161,40,0.12), rgba(0,0,0,0) 55%), radial-gradient(90% 70% at 90% 20%, rgba(90,65,200,0.10), rgba(0,0,0,0) 60%);}
+.filters-fold {
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
+  background: rgba(255,255,255,0.04);
+  overflow: hidden;
+}
+
+.filters-fold > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: rgba(232,232,234,0.92);
+  font-weight: 650;
+}
+
+.filters-fold > summary::-webkit-details-marker { display: none; }
+
+.filters-fold .filters-body {
+  padding: 12px 14px 14px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+.filters-fold .chev { opacity: .7; transition: transform .18s ease; }
+.filters-fold[open] .chev { transform: rotate(180deg); }
+.media-modal-foot { display:flex; gap:10px; align-items:center; }
+.media-modal-foot-spacer { flex:1; }

@@ -3,6 +3,7 @@
   flex-direction: column;
   gap: 12px;
   padding-bottom: calc(32px + env(safe-area-inset-bottom) + 110px);
+  margin-top: 40px;
 }
 
 .habits-header {

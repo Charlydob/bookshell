@@ -268,49 +268,57 @@ function ensureInlineFilters() {
 
   // si ya existe nuestro bloque, no duplicar
   if (els.filtersHost.querySelector(".media-inline-filters")) return;
+const wrap = document.createElement("div");
+wrap.className = "media-inline-filters";
+wrap.innerHTML = `
+  <details class="filters-fold" id="media-filters">
+    <summary>
+      <span>Filtros</span>
+      <span class="chev">▾</span>
+    </summary>
 
-  const wrap = document.createElement("div");
-  wrap.className = "media-inline-filters";
-  wrap.innerHTML = `
-    <div class="media-inline-row">
-      <label class="media-mini">
-        <span>Tipo</span>
-        <select id="media-filter-type">
-          <option value="all">Todo</option>
-          <option value="movie">Peli</option>
-          <option value="series">Serie</option>
-          <option value="anime">Anime</option>
-        </select>
-      </label>
+    <div class="filters-body">
+      <div class="media-inline-row">
+        <label class="media-mini">
+          <span>Tipo</span>
+          <select id="media-filter-type">
+            <option value="all">Todo</option>
+            <option value="movie">Peli</option>
+            <option value="series">Serie</option>
+            <option value="anime">Anime</option>
+          </select>
+        </label>
 
-      <label class="media-mini">
-        <span>Estado</span>
-        <select id="media-filter-status">
-          <option value="all">Todo</option>
-          <option value="watched">Visto</option>
-          <option value="watchlist">Watchlist</option>
-        </select>
-      </label>
+        <label class="media-mini">
+          <span>Estado</span>
+          <select id="media-filter-status">
+            <option value="all">Todo</option>
+            <option value="watched">Visto</option>
+            <option value="watchlist">Watchlist</option>
+          </select>
+        </label>
 
-      <label class="media-mini">
-        <span>Laura</span>
-        <select id="media-filter-laura">
-          <option value="all">Todo</option>
-          <option value="with">Con Laura</option>
-          <option value="without">Sin Laura</option>
-        </select>
-      </label>
+        <label class="media-mini">
+          <span>Laura</span>
+          <select id="media-filter-laura">
+            <option value="all">Todo</option>
+            <option value="with">Con Laura</option>
+            <option value="without">Sin Laura</option>
+          </select>
+        </label>
 
-      <div class="media-range" role="group" aria-label="Rango">
-        <button class="media-range-btn" data-range="day" type="button">Día</button>
-        <button class="media-range-btn" data-range="week" type="button">Sem</button>
-        <button class="media-range-btn" data-range="month" type="button">Mes</button>
-        <button class="media-range-btn" data-range="year" type="button">Año</button>
-        <button class="media-range-btn is-active" data-range="total" type="button">Total</button>
+        <div class="media-range" role="group" aria-label="Rango">
+          <button class="media-range-btn" data-range="day" type="button">Día</button>
+          <button class="media-range-btn" data-range="week" type="button">Sem</button>
+          <button class="media-range-btn" data-range="month" type="button">Mes</button>
+          <button class="media-range-btn" data-range="year" type="button">Año</button>
+          <button class="media-range-btn is-active" data-range="total" type="button">Total</button>
+        </div>
       </div>
     </div>
-  `;
-  els.filtersHost.appendChild(wrap);
+  </details>
+`;
+els.filtersHost.appendChild(wrap);
 
   // bind
   const $type = qs("media-filter-type");
@@ -505,6 +513,7 @@ function deleteItem(id) {
 // --- Virtual list ---
 let pool = [];
 
+// 1) LISTA: deja solo ⭐ + Laura + Edit
 function ensurePool(n) {
   while (pool.length < n) {
     const row = document.createElement("div");
@@ -515,19 +524,16 @@ function ensurePool(n) {
         <div class="media-row-sub"></div>
       </div>
       <div class="media-row-tools">
-        <div class="media-rating" data-action="rate" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0">☆☆☆☆☆</div>
+        <div class="media-rating" data-action="rate" tabindex="0" role="slider"
+             aria-valuemin="0" aria-valuemax="5" aria-valuenow="0">☆☆☆☆☆</div>
         <button class="media-icon" data-action="laura" title="Laura">L</button>
-        <button class="media-icon" data-action="watch" title="Watchlist">⌛</button>
-        <button class="media-icon" data-action="prog" title="Progreso">S</button>
         <button class="media-icon" data-action="edit" title="Editar">✎</button>
-        <button class="media-icon danger" data-action="del" title="Borrar">🗑</button>
       </div>
     `;
     els.itemsHost?.appendChild(row);
     pool.push(row);
   }
 }
-
 function stars(n) {
   const r = Math.max(0, Math.min(5, Number(n) || 0));
   return "★★★★★☆☆☆☆☆".slice(5 - r, 10 - r); // truco: rellenas + vacías
@@ -999,6 +1005,8 @@ function ensureModal() {
       </div>
 
       <div class="media-modal-foot">
+        <button class="btn ghost danger" data-action="del" type="button">Borrar</button>
+        <div class="media-modal-foot-spacer"></div>
         <button class="btn ghost" data-action="close" type="button">Cancelar</button>
         <button class="btn primary" data-action="save" type="button">Guardar</button>
       </div>
@@ -1006,10 +1014,22 @@ function ensureModal() {
   `;
   document.body.appendChild(modal);
 
-  // close
+  // close / delete (delegación)
   modal.addEventListener("click", (e) => {
     const a = e.target?.closest?.("[data-action]")?.dataset?.action;
-    if (a === "close") hideModal();
+    if (!a) return;
+
+    if (a === "close") return hideModal();
+
+    if (a === "del") {
+      const id = modal.dataset.id;
+      if (!id) return hideModal();
+      // usa tu función real (ya la tienes en tu app)
+      deleteItem(id);
+      hideModal();
+      refresh();
+      return;
+    }
   });
 
   // save
@@ -1029,12 +1049,21 @@ function ensureModal() {
     const watchlist = !!qs("media-edit-watchlist")?.checked;
     const withLaura = !!qs("media-edit-laura")?.checked;
 
-    const patch = { title: title || it.title, type, rating, genres, country, countryLabel: (countryLabel || country || ""), watchlist, withLaura };
+    const patch = {
+      title: title || it.title,
+      type,
+      rating,
+      genres,
+      country,
+      countryLabel: (countryLabel || country || ""),
+      watchlist,
+      withLaura,
+    };
 
     if (type === "series" || type === "anime") {
       const s = Number(qs("media-edit-season")?.value) || 1;
-      const e = Number(qs("media-edit-episode")?.value) || 1;
-      patch.season = s; patch.episode = e;
+      const ep = Number(qs("media-edit-episode")?.value) || 1;
+      patch.season = s; patch.episode = ep;
     } else {
       patch.season = 0; patch.episode = 0;
     }
@@ -1051,8 +1080,22 @@ function ensureModal() {
   return modal;
 }
 
+function wireModalDeleteButton() {
+  const btn = qs("media-edit-del");
+  if (!btn) return;
+
+  btn.onclick = () => {
+    const id = modal?.dataset?.id;
+    if (!id) return;
+    // usa tu función real de borrado:
+    deleteItemById(id);       // <-- cámbiala por la tuya
+    modal.classList.add("hidden");
+    renderMedia?.();          // <-- o tu rerender real
+  };
+}
 function showModalForItem(it, titleText) {
   ensureModal();
+  wireModalDeleteButton();
   modal.dataset.id = it.id;
   qs("media-modal-title").textContent = titleText || "Editar";
 

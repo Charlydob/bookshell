@@ -42,7 +42,7 @@ const DEFAULT_COLOR = "#7f5dff";
 // Estado
 let habits = {}; // {id: habit}
 let habitChecks = {}; // { habitId: { dateKey: true } }
-let habitSessions = {}; // { sessionId: {...} }
+let habitSessions = {}; // { habitId: { dateKey: totalSec } }
 let habitCounts = {}; // { habitId: { dateKey: number } }
 let activeTab = "today";
 let runningSession = null; // { startTs }
@@ -138,6 +138,107 @@ function isSessionActive(session) {
 function minutesFromSession(session) {
   return Math.round((session?.durationSec || 0) / 60);
 }
+// === Sesiones v2 (ahorro de storage) ===
+// Antes (v1): habitSessions = { sessionId: {habitId, dateKey, durationSec, ...} }
+// Ahora  (v2): habitSessions = { habitId: { dateKey: totalSec } }
+// Migración automática: v1 -> v2 (sobrescribe nodo remoto para borrar sesiones antiguas)
+function normalizeSessionsStore(raw, persistRemote = false) {
+  const totals = {};
+  let changed = false;
+
+  const add = (habitId, dateKey, sec) => {
+    if (!habitId || !dateKey) return;
+    const n = Number(sec) || 0;
+    if (n <= 0) return;
+    if (!totals[habitId]) totals[habitId] = {};
+    totals[habitId][dateKey] = (Number(totals[habitId][dateKey]) || 0) + n;
+  };
+
+  Object.entries(raw || {}).forEach(([k, v]) => {
+    if (!v || typeof v !== "object") return;
+
+    // v1: cada key es sessionId y el value tiene habitId/durationSec
+    if (typeof v.habitId === "string" && (v.durationSec != null)) {
+      changed = true;
+      const dateKey = v.dateKey || (v.startTs ? dateKeyLocal(new Date(v.startTs)) : null);
+      add(v.habitId, dateKey, v.durationSec);
+      return;
+    }
+
+    // v2: key = habitId y value = {dateKey: totalSec}
+    const habitId = k;
+    Object.entries(v).forEach(([dateKey, val]) => {
+      if (!dateKey) return;
+      if (typeof val === "number") {
+        if (val > 0) add(habitId, dateKey, val);
+        if (val <= 0) changed = true;
+        return;
+      }
+      if (val && typeof val === "object") {
+        const sec = Number(val.totalSec) || 0;
+        if (sec > 0) add(habitId, dateKey, sec);
+        changed = true;
+      } else {
+        changed = true;
+      }
+    });
+  });
+
+  // Si no había nada, devolvemos objeto vacío estable
+  const normalized = totals;
+
+  if (persistRemote && changed) {
+    try {
+      set(ref(db, HABIT_SESSIONS_PATH), normalized);
+    } catch (err) {
+      console.warn("No se pudo migrar/normalizar sesiones en remoto", err);
+    }
+  }
+
+  return { normalized, changed };
+}
+
+function getHabitTotalSecForDate(habitId, dateKey) {
+  const byDate = habitSessions?.[habitId];
+  if (!byDate || typeof byDate !== "object") return 0;
+  const sec = Number(byDate[dateKey]) || 0;
+  return sec > 0 ? sec : 0;
+}
+
+function addHabitTimeSec(habitId, dateKey, secToAdd) {
+  if (!habitId || !dateKey) return 0;
+  const habit = habits[habitId];
+  if (!habit || habit.archived) return 0;
+  const addSec = Math.max(0, Math.round(Number(secToAdd) || 0));
+  if (!addSec) return getHabitTotalSecForDate(habitId, dateKey);
+  if (!habitSessions[habitId] || typeof habitSessions[habitId] !== "object") habitSessions[habitId] = {};
+  const next = (Number(habitSessions[habitId][dateKey]) || 0) + addSec;
+  habitSessions[habitId][dateKey] = next;
+  saveCache();
+  try {
+    set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), next);
+  } catch (err) {
+    console.warn("No se pudo guardar tiempo en remoto", err);
+  }
+  return next;
+}
+
+function setHabitTimeSec(habitId, dateKey, totalSec) {
+  if (!habitId || !dateKey) return;
+  const habit = habits[habitId];
+  if (!habit || habit.archived) return;
+  const sec = Math.max(0, Math.round(Number(totalSec) || 0));
+  if (!habitSessions[habitId] || typeof habitSessions[habitId] !== "object") habitSessions[habitId] = {};
+  if (sec > 0) habitSessions[habitId][dateKey] = sec;
+  else delete habitSessions[habitId][dateKey];
+  saveCache();
+  try {
+    set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), sec > 0 ? sec : null);
+  } catch (err) {
+    console.warn("No se pudo actualizar tiempo en remoto", err);
+  }
+}
+
 
 function getSessionDate(session) {
   if (!session) return null;
@@ -198,6 +299,7 @@ function showHabitToast(text) {
   }, 2300);
 }
 
+
 function readCache() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -207,6 +309,9 @@ function readCache() {
       habitChecks = parsed.habitChecks || {};
       habitSessions = parsed.habitSessions || {};
       habitCounts = parsed.habitCounts || {};
+      const norm = normalizeSessionsStore(habitSessions, false);
+      habitSessions = norm.normalized;
+      if (norm.changed) saveCache();
     }
   } catch (err) {
     console.warn("No se pudo leer cache de hábitos", err);
@@ -273,18 +378,29 @@ function activeHabits() {
   return Object.values(habits).filter((h) => !h.archived);
 }
 
+
 function getSessionsForDate(dateKey) {
-  return Object.values(habitSessions).filter((s) => isSessionActive(s) && getSessionDateKey(s) === dateKey);
+  const out = [];
+  if (!dateKey) return out;
+  Object.entries(habitSessions || {}).forEach(([habitId, byDate]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    if (!byDate || typeof byDate !== "object") return;
+    const sec = Number(byDate[dateKey]) || 0;
+    if (sec > 0) out.push({ habitId, dateKey, durationSec: sec, source: "total" });
+  });
+  return out;
 }
+
 
 function getSessionsForHabitDate(habitId, dateKey) {
-  return Object.values(habitSessions).filter(
-    (s) => isSessionActive(s) && s.habitId === habitId && getSessionDateKey(s) === dateKey
-  );
+  const sec = getHabitTotalSecForDate(habitId, dateKey);
+  return sec > 0 ? [{ habitId, dateKey, durationSec: sec, startTs: null, endTs: null, source: "total" }] : [];
 }
 
+
 function hasSessionForHabitDate(habitId, dateKey) {
-  return getSessionsForHabitDate(habitId, dateKey).length > 0;
+  return getHabitTotalSecForDate(habitId, dateKey) > 0;
 }
 
 function isHabitCompletedOnDate(habit, dateKey) {
@@ -295,20 +411,26 @@ function countCompletedHabitsForDate(dateKey) {
   return activeHabits().reduce((acc, habit) => (isHabitCompletedOnDate(habit, dateKey) ? acc + 1 : acc), 0);
 }
 
+
 function collectHabitActivityDatesSet(habit) {
   const dates = new Set();
   if (!habit || habit.archived) return dates;
+
   const checks = habitChecks[habit.id] || {};
   Object.keys(checks).forEach((key) => dates.add(key));
+
   const counts = habitCounts[habit.id] || {};
   Object.keys(counts).forEach((key) => {
     if (Number(counts[key]) > 0) dates.add(key);
   });
-  Object.values(habitSessions).forEach((s) => {
-    if (!isSessionActive(s) || s.habitId !== habit.id) return;
-    const key = getSessionDateKey(s);
-    if (key) dates.add(key);
-  });
+
+  const byDate = habitSessions?.[habit.id];
+  if (byDate && typeof byDate === "object") {
+    Object.keys(byDate).forEach((key) => {
+      if ((Number(byDate[key]) || 0) > 0) dates.add(key);
+    });
+  }
+
   return dates;
 }
 
@@ -331,8 +453,10 @@ function getHabitDayScore(habit, dateKey) {
   return { score, minutes, checked, count: 0, hasActivity: checked || minutes > 0 };
 }
 
+
 function getAvailableYears() {
   const years = new Set([new Date().getFullYear()]);
+
   Object.entries(habitChecks).forEach(([habitId, dates]) => {
     if (habits[habitId]?.archived) return;
     Object.keys(dates || {}).forEach((key) => {
@@ -340,6 +464,7 @@ function getAvailableYears() {
       if (parsed) years.add(parsed.getFullYear());
     });
   });
+
   Object.entries(habitCounts).forEach(([habitId, dates]) => {
     if (habits[habitId]?.archived) return;
     Object.keys(dates || {}).forEach((key) => {
@@ -347,12 +472,16 @@ function getAvailableYears() {
       if (parsed) years.add(parsed.getFullYear());
     });
   });
-  Object.values(habitSessions).forEach((s) => {
-    if (!isSessionActive(s)) return;
-    const key = getSessionDateKey(s);
-    const parsed = parseDateKey(key);
-    if (parsed) years.add(parsed.getFullYear());
+
+  Object.entries(habitSessions || {}).forEach(([habitId, byDate]) => {
+    if (habits[habitId]?.archived) return;
+    if (!byDate || typeof byDate !== "object") return;
+    Object.keys(byDate).forEach((key) => {
+      const parsed = parseDateKey(key);
+      if (parsed) years.add(parsed.getFullYear());
+    });
   });
+
   return Array.from(years).sort((a, b) => b - a);
 }
 
@@ -1332,18 +1461,28 @@ function minutesByHabitRange(range) {
   return filtered.sort((a, b) => b.value - a.value).slice(0, 5);
 }
 
+
 function minutesForHabitRange(habit, start, end) {
   let totalMinutes = 0;
-  Object.values(habitSessions).forEach((s) => {
-    if (!isSessionActive(s) || s.habitId !== habit.id) return;
-    const date = getSessionDate(s);
-    if (isDateInRange(date, start, end)) totalMinutes += minutesFromSession(s);
+  if (!habit || habit.archived) return 0;
+  const byDate = habitSessions?.[habit.id];
+  if (!byDate || typeof byDate !== "object") return 0;
+
+  Object.entries(byDate).forEach(([dateKey, sec]) => {
+    const parsed = parseDateKey(dateKey);
+    if (parsed && isDateInRange(parsed, start, end)) {
+      totalMinutes += Math.round((Number(sec) || 0) / 60);
+    }
   });
+
   return totalMinutes;
 }
 
+
 function collectHabitActiveDates(habit, start, end) {
   const dates = new Set();
+  if (!habit || habit.archived) return 0;
+
   const checks = habitChecks[habit.id] || {};
   Object.keys(checks).forEach((key) => {
     const parsed = parseDateKey(key);
@@ -1351,37 +1490,46 @@ function collectHabitActiveDates(habit, start, end) {
   });
 
   const counts = habitCounts[habit.id] || {};
-  Object.entries(counts).forEach(([key, raw]) => {
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n <= 0) return;
+  Object.keys(counts).forEach((key) => {
     const parsed = parseDateKey(key);
-    if (parsed && isDateInRange(parsed, start, end)) dates.add(key);
+    if (parsed && isDateInRange(parsed, start, end) && Number(counts[key]) > 0) dates.add(key);
   });
 
-  Object.values(habitSessions).forEach((s) => {
-    if (!isSessionActive(s) || s.habitId !== habit.id) return;
-    const date = getSessionDate(s);
-    const key = getSessionDateKey(s);
-    if (date && key && isDateInRange(date, start, end)) dates.add(key);
-  });
+  const byDate = habitSessions?.[habit.id];
+  if (byDate && typeof byDate === "object") {
+    Object.entries(byDate).forEach(([key, sec]) => {
+      const parsed = parseDateKey(key);
+      if (parsed && isDateInRange(parsed, start, end) && (Number(sec) || 0) > 0) dates.add(key);
+    });
+  }
 
   return dates.size;
 }
 
+
 function minutesForRange(range) {
   const { start, end } = getRangeBounds(range);
-  return Object.values(habitSessions).reduce((acc, s) => {
-    if (!isSessionActive(s)) return acc;
-    const date = getSessionDate(s);
-    if (isDateInRange(date, start, end)) return acc + minutesFromSession(s);
-    return acc;
-  }, 0);
+  let total = 0;
+  Object.entries(habitSessions || {}).forEach(([habitId, byDate]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    if (!byDate || typeof byDate !== "object") return;
+    Object.entries(byDate).forEach(([dateKey, sec]) => {
+      const parsed = parseDateKey(dateKey);
+      if (parsed && isDateInRange(parsed, start, end)) {
+        total += Math.round((Number(sec) || 0) / 60);
+      }
+    });
+  });
+  return total;
 }
+
 
 function countActiveDaysInYear(year = new Date().getFullYear()) {
   const start = new Date(year, 0, 1);
   const end = new Date(year, 11, 31, 23, 59, 59, 999);
   const dates = new Set();
+
   Object.entries(habitChecks).forEach(([habitId, entries]) => {
     const habit = habits[habitId];
     if (!habit || habit.archived) return;
@@ -1390,18 +1538,34 @@ function countActiveDaysInYear(year = new Date().getFullYear()) {
       if (parsed && isDateInRange(parsed, start, end)) dates.add(key);
     });
   });
-  Object.values(habitSessions).forEach((s) => {
-    if (!isSessionActive(s)) return;
-    const date = getSessionDate(s);
-    const key = getSessionDateKey(s);
-    if (date && key && isDateInRange(date, start, end)) dates.add(key);
+
+  Object.entries(habitCounts).forEach(([habitId, entries]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    Object.keys(entries || {}).forEach((key) => {
+      const parsed = parseDateKey(key);
+      if (parsed && isDateInRange(parsed, start, end) && Number(entries[key]) > 0) dates.add(key);
+    });
   });
+
+  Object.entries(habitSessions || {}).forEach(([habitId, byDate]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    if (!byDate || typeof byDate !== "object") return;
+    Object.entries(byDate).forEach(([key, sec]) => {
+      const parsed = parseDateKey(key);
+      if (parsed && isDateInRange(parsed, start, end) && (Number(sec) || 0) > 0) dates.add(key);
+    });
+  });
+
   return dates.size;
 }
+
 
 function getEarliestActivityDate() {
   const today = new Date();
   let earliest = today;
+
   Object.entries(habitChecks).forEach(([habitId, entries]) => {
     const habit = habits[habitId];
     if (!habit || habit.archived) return;
@@ -1410,11 +1574,28 @@ function getEarliestActivityDate() {
       if (parsed && parsed < earliest) earliest = parsed;
     });
   });
-  Object.values(habitSessions).forEach((s) => {
-    if (!isSessionActive(s)) return;
-    const date = getSessionDate(s);
-    if (date && date < earliest) earliest = date;
+
+  Object.entries(habitCounts).forEach(([habitId, entries]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    Object.keys(entries || {}).forEach((key) => {
+      const parsed = parseDateKey(key);
+      if (parsed && Number(entries[key]) > 0 && parsed < earliest) earliest = parsed;
+    });
   });
+
+  Object.entries(habitSessions || {}).forEach(([habitId, byDate]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    if (!byDate || typeof byDate !== "object") return;
+    Object.keys(byDate).forEach((key) => {
+      const sec = Number(byDate[key]) || 0;
+      if (sec <= 0) return;
+      const parsed = parseDateKey(key);
+      if (parsed && parsed < earliest) earliest = parsed;
+    });
+  });
+
   return earliest;
 }
 
@@ -1495,21 +1676,14 @@ function totalsByHabit(range) {
   const { start, end } = getRangeBounds(range);
   return activeHabits()
     .map((habit) => {
-      const isCount = (habit.goal || "check") === "count";
-      const minutes = isCount ? 0 : minutesForHabitRange(habit, start, end);
-      const count = isCount ? countForHabitRange(habit, start, end) : 0;
+      const minutes = minutesForHabitRange(habit, start, end);
       const daysActive = collectHabitActiveDates(habit, start, end);
       const streak = computeHabitCurrentStreak(habit);
-      return { habit, minutes, count, daysActive, streak };
+      return { habit, minutes, daysActive, streak };
     })
-    .filter((item) => item.minutes > 0 || item.count > 0 || item.daysActive > 0)
-    .sort((a, b) => {
-      const aVal = (a.habit.goal === "count") ? a.count : a.minutes;
-      const bVal = (b.habit.goal === "count") ? b.count : b.minutes;
-      return bVal - aVal;
-    });
+    .filter((item) => item.minutes > 0 || item.daysActive > 0)
+    .sort((a, b) => b.minutes - a.minutes);
 }
-
 
 function updateAccordionMeta(el, items, type = "minutes") {
   if (!el) return;
@@ -1521,17 +1695,9 @@ function updateAccordionMeta(el, items, type = "minutes") {
     el.textContent = `${items[0].value}% máx`;
     return;
   }
-
   const totalMinutes = items.reduce((acc, item) => acc + (item.value || item.minutes || 0), 0);
-  const totalCounts = items.reduce((acc, item) => acc + (item.count || 0), 0);
-
-  const parts = [`${items.length} hábito${items.length !== 1 ? "s" : ""}`];
-  if (totalMinutes > 0) parts.push(formatMinutes(totalMinutes));
-  if (totalCounts > 0) parts.push(`${totalCounts}×`);
-  el.textContent = parts.join(" · ");
+  el.textContent = `${items.length} hábito${items.length !== 1 ? "s" : ""} · ${formatMinutes(totalMinutes)}`;
 }
-
-
 
 function renderRankingList(container, items, unit) {
   if (!container) return;
@@ -1589,7 +1755,6 @@ function renderTotalsList() {
     const div = document.createElement("div");
     div.className = "habit-ranking-item habit-total-item";
     setHabitColorVars(div, item.habit);
-
     const totalDays = countHabitActivityDays(item.habit);
     const left = document.createElement("div");
     left.className = "habit-card-left";
@@ -1601,12 +1766,9 @@ function renderTotalsList() {
         <div class="habit-meta habit-days-done">Total histórico: ${totalDays} día${totalDays === 1 ? "" : "s"}</div>
       </div>
     `;
-
     const value = document.createElement("div");
     value.className = "habit-kpi-value";
-    value.textContent = (item.habit.goal === "count")
-      ? `${item.count || 0}×`
-      : formatMinutes(item.minutes);
+    value.textContent = formatMinutes(item.minutes);
 
     const right = document.createElement("div");
     right.className = "habit-card-right";
@@ -1618,6 +1780,7 @@ function renderTotalsList() {
     $habitTotalsList.appendChild(div);
   });
 }
+
 function renderDonut() {
   if (!$habitDonut || typeof echarts === "undefined") return;
   const data = timeShareByHabit(habitDonutRange);
@@ -1882,31 +2045,17 @@ function renderSessionList() {
     });
 }
 
+
 function assignSession(habitId) {
   if (!habitId || !pendingSessionDuration) {
     closeSessionModal();
     return;
   }
   const startTs = Date.now() - pendingSessionDuration * 1000;
-  const endTs = Date.now();
   const dateKey = dateKeyLocal(new Date(startTs));
-  const sessionId = `s-${Date.now().toString(36)}`;
-  const payload = {
-    habitId,
-    startTs,
-    endTs,
-    durationSec: pendingSessionDuration,
-    dateKey,
-    source: "timer"
-  };
-  habitSessions[sessionId] = payload;
+  addHabitTimeSec(habitId, dateKey, pendingSessionDuration);
+
   localStorage.setItem(LAST_HABIT_KEY, habitId);
-  saveCache();
-  try {
-    set(ref(db, `${HABIT_SESSIONS_PATH}/${sessionId}`), payload);
-  } catch (err) {
-    console.warn("No se pudo guardar sesión en remoto", err);
-  }
   pendingSessionDuration = 0;
   closeSessionModal();
   renderHabits();
@@ -1942,29 +2091,17 @@ function closeManualTimeModal() {
   $habitManualModal?.classList.add("hidden");
 }
 
+
 function handleManualSubmit(e) {
   e.preventDefault();
   const habitId = $habitManualHabit.value;
   const minutes = Number($habitManualMinutes.value);
   const dateKey = $habitManualDate.value || todayKey();
   if (!habitId || !Number.isFinite(minutes) || minutes <= 0) return;
-  const sessionId = `s-${Date.now().toString(36)}`;
-  const payload = {
-    habitId,
-    durationSec: Math.round(minutes * 60),
-    dateKey,
-    startTs: null,
-    endTs: null,
-    source: "manual"
-  };
-  habitSessions[sessionId] = payload;
+
+  addHabitTimeSec(habitId, dateKey, Math.round(minutes * 60));
   localStorage.setItem(LAST_HABIT_KEY, habitId);
-  saveCache();
-  try {
-    set(ref(db, `${HABIT_SESSIONS_PATH}/${sessionId}`), payload);
-  } catch (err) {
-    console.warn("No se pudo guardar sesión manual", err);
-  }
+
   closeManualTimeModal();
   renderHabits();
 }
@@ -2019,83 +2156,65 @@ function refreshEntryModal() {
   renderEntrySessions(habitId, dateKey);
 }
 
+
 function renderEntrySessions(habitId, dateKey) {
   if (!$habitEntrySessions) return;
   $habitEntrySessions.innerHTML = "";
-  const list = Object.entries(habitSessions || {})
-    .filter(([id, s]) => isSessionActive(s) && s.habitId === habitId && getSessionDateKey(s) === dateKey)
-    .map(([id, s]) => ({ id, s }));
 
-  if (!list.length) {
+  const totalSec = getHabitTotalSecForDate(habitId, dateKey);
+  const minutes = Math.round(totalSec / 60);
+
+  if (!minutes) {
     const empty = document.createElement("div");
     empty.className = "empty-state small";
-    empty.textContent = "No hay sesiones este día.";
+    empty.textContent = "No hay tiempo registrado este día.";
     $habitEntrySessions.appendChild(empty);
     return;
   }
 
-  list.forEach(({ id, s }) => {
-    const row = document.createElement("div");
-    row.className = "habit-entry-session-row";
+  const row = document.createElement("div");
+  row.className = "habit-entry-session-row";
 
-    const minutes = minutesFromSession(s);
-    const label = document.createElement("div");
-    label.className = "habit-entry-session-label";
-    label.textContent = `${formatShortDate(dateKey)} · ${s.source || "?"}`;
+  const label = document.createElement("div");
+  label.className = "habit-entry-session-label";
+  label.textContent = `${formatShortDate(dateKey)} · total`;
 
-    const minutesInput = document.createElement("input");
-    minutesInput.type = "number";
-    minutesInput.min = "1";
-    minutesInput.inputMode = "numeric";
-    minutesInput.value = String(minutes);
-    minutesInput.className = "habit-entry-minutes";
+  const minutesInput = document.createElement("input");
+  minutesInput.type = "number";
+  minutesInput.min = "1";
+  minutesInput.inputMode = "numeric";
+  minutesInput.value = String(minutes);
+  minutesInput.className = "habit-entry-minutes";
 
-    const saveBtn = document.createElement("button");
-    saveBtn.type = "button";
-    saveBtn.className = "icon-btn";
-    saveBtn.textContent = "✓";
-    saveBtn.title = "Guardar minutos";
-    saveBtn.addEventListener("click", () => {
-      const n = Number(minutesInput.value);
-      if (!Number.isFinite(n) || n <= 0) return;
-      const durationSec = Math.round(n * 60);
-      const updated = { ...s, durationSec };
-      if (updated.startTs) {
-        updated.endTs = updated.startTs + durationSec * 1000;
-      }
-      habitSessions[id] = updated;
-      saveCache();
-      try {
-        set(ref(db, `${HABIT_SESSIONS_PATH}/${id}`), updated);
-      } catch (err) {
-        console.warn("No se pudo actualizar sesión", err);
-      }
-      renderHabits();
-    });
-
-    const delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.className = "icon-btn";
-    delBtn.textContent = "🗑";
-    delBtn.title = "Borrar sesión";
-    delBtn.addEventListener("click", () => {
-      delete habitSessions[id];
-      saveCache();
-      try {
-        set(ref(db, `${HABIT_SESSIONS_PATH}/${id}`), null);
-      } catch (err) {
-        console.warn("No se pudo borrar sesión", err);
-      }
-      refreshEntryModal();
-      renderHabits();
-    });
-
-    row.appendChild(label);
-    row.appendChild(minutesInput);
-    row.appendChild(saveBtn);
-    row.appendChild(delBtn);
-    $habitEntrySessions.appendChild(row);
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "icon-btn";
+  saveBtn.textContent = "✓";
+  saveBtn.title = "Guardar minutos del día";
+  saveBtn.addEventListener("click", () => {
+    const n = Number(minutesInput.value);
+    if (!Number.isFinite(n) || n <= 0) return;
+    setHabitTimeSec(habitId, dateKey, Math.round(n * 60));
+    refreshEntryModal();
+    renderHabits();
   });
+
+  const delBtn = document.createElement("button");
+  delBtn.type = "button";
+  delBtn.className = "icon-btn";
+  delBtn.textContent = "🗑";
+  delBtn.title = "Borrar tiempo del día";
+  delBtn.addEventListener("click", () => {
+    setHabitTimeSec(habitId, dateKey, 0);
+    refreshEntryModal();
+    renderHabits();
+  });
+
+  row.appendChild(label);
+  row.appendChild(minutesInput);
+  row.appendChild(saveBtn);
+  row.appendChild(delBtn);
+  $habitEntrySessions.appendChild(row);
 }
 
 function handleEntrySubmit(e) {
@@ -2235,6 +2354,7 @@ function attachNavHook() {
 }
 
 // Firebase listeners
+
 function listenRemote() {
   onValue(ref(db, HABITS_PATH), (snap) => {
     const val = snap.val() || {};
@@ -2253,14 +2373,21 @@ function listenRemote() {
     habitCounts = snap.val() || {};
     saveCache();
     renderHabits();
+    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+    try { window.__bookshellDashboard?.render?.(); } catch (_) {}
   });
 
   onValue(ref(db, HABIT_SESSIONS_PATH), (snap) => {
-    habitSessions = snap.val() || {};
+    const raw = snap.val() || {};
+    const norm = normalizeSessionsStore(raw, true);
+    habitSessions = norm.normalized;
     saveCache();
     renderHabits();
+    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+    try { window.__bookshellDashboard?.render?.(); } catch (_) {}
   });
 }
+
 function goHabitSubtab(tab) {
   const allowed = new Set(["today", "week", "history", "reports"]);
   activeTab = allowed.has(tab) ? tab : "today";
@@ -2279,6 +2406,9 @@ window.__bookshellHabits = {
   stopSession,
   toggleSession,
   isRunning: () => !!runningSession
+,
+  getTimeShareByHabit: (range) => timeShareByHabit(range),
+  rangeLabel
 };
 export function initHabits() {
   readCache();
@@ -2294,19 +2424,6 @@ export function initHabits() {
   window.addEventListener("resize", () => {
     if (habitDonutChart) habitDonutChart.resize();
   });
-}
-function countForHabitRange(habit, start, end) {
-  if (!habit || habit.archived) return 0;
-  if ((habit.goal || "check") !== "count") return 0;
-  const entries = habitCounts?.[habit.id] || {};
-  let total = 0;
-  Object.entries(entries).forEach(([key, raw]) => {
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n <= 0) return;
-    const parsed = parseDateKey(key);
-    if (parsed && isDateInRange(parsed, start, end)) total += n;
-  });
-  return total;
 }
 
 // Autoinit

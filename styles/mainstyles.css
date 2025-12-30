@@ -19,6 +19,10 @@
   --radius-md: 12px;
   --radius-pill: 999px;
   --shadow-soft: 0 18px 40px rgba(0, 0, 0, 0.65);
+
+  --blur-header: 14px;
+  --blur-nav: 14px;
+  --blur-modal: 10px;
 }
 
 html,
@@ -49,8 +53,9 @@ body {
 }
 
 .app-header {
-  display: flex;
+  display: none;
   align-items: center;
+  justify-content: space-between;
   position: sticky;
   top: 0;
   z-index: 5;
@@ -64,25 +69,27 @@ body {
   content:"";
   position:absolute;
   inset:0;
-  background: linear-gradient(
-    to bottom,
-    rgba(8, 9, 15, 0.88),
-    rgba(8, 9, 15, 0.35)
-  );
-  -webkit-backdrop-filter: blur(16px) saturate(160%);
-  backdrop-filter: blur(16px) saturate(160%);
+  background: transparent;
+
+  -webkit-backdrop-filter: blur(var(--blur-header, 16px)) saturate(160%);
+  backdrop-filter: blur(var(--blur-header, 16px)) saturate(160%);
   z-index:-1;
 }
 
 
 .header-title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 120px); /* evita pisar botones laterales */
+  text-align: center;
   font-size: 20px;
   font-weight: 600;
   letter-spacing: 0.03em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-left: 175px
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
 }
 
 .app-main {
@@ -108,7 +115,7 @@ body {
   font-weight: 500;
   color: var(--txt);
   background: var(--glass-2);
-  backdrop-filter: blur(18px);
+  backdrop-filter: blur(var(--blur-nav, 18px));
   border: 1px solid rgba(255, 255, 255, 0.08);
   display: inline-flex;
   align-items: center;
@@ -205,7 +212,7 @@ body {
   padding: 6px;
   border-radius: 20px;
   background: rgba(5, 6, 12, 0.95);
-  backdrop-filter: blur(18px);
+  backdrop-filter: blur(var(--blur-nav, 18px));
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: var(--shadow-soft);
 }
@@ -232,30 +239,33 @@ body {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(3, 4, 8, 0.7);
-  backdrop-filter: blur(18px);
+  background: rgba(0,0,0,0.45);
+  -webkit-backdrop-filter: blur(var(--blur-modal, 10px));
+  backdrop-filter: blur(var(--blur-modal, 10px));
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 14px;
   z-index: 20;
 }
+
 
 .modal-backdrop.hidden {
   display: none;
 }
 
 .modal {
-  width: calc(100% - 32px);
-  max-width: 440px;
-  max-height: calc(100% - 80px);
-  border-radius: 24px;
-  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.03), transparent),
-    #090b12;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: var(--shadow-soft);
+  width: min(560px, 100%);
+  max-height: 86vh;
+  border-radius: 22px;
+  overflow: hidden;
+  background: rgba(10, 11, 18, 0.92);
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: 0 18px 60px rgba(0,0,0,0.55);
   display: flex;
   flex-direction: column;
 }
+
 
 .modal-header {
   padding: 12px 16px 8px;
@@ -303,39 +313,27 @@ body {
   box-shadow: 0 0 0 1px rgba(127, 93, 255, 0.4);
 }
 
-.modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 6px;
+/* Modal (responsive bottom-sheet) */
+@media (max-width: 560px){
+  .modal-backdrop{
+    align-items: flex-end;
+    justify-content: center;
+    padding: 12px 10px calc(12px + env(safe-area-inset-bottom));
+  }
+  .modal{
+    width: 100%;
+    max-width: 560px;
+    border-radius: 22px 22px 0 0;
+    max-height: calc(100vh - 16px);
+  }
+  .modal-handle{
+    display: block;
+  }
+}
+@media (min-width: 561px){
+  .modal-handle{ display: none; }
 }
 
-
-
-/* Modal (bottom sheet override) */
-.modal-backdrop{
-  align-items: flex-end;
-  justify-content: center;
-  padding: 12px 10px calc(12px + env(safe-area-inset-bottom));
-}
-
-.modal{
-  width: 100%;
-  max-width: 560px;
-  border-radius: 22px 22px 18px 18px;
-  background: rgba(10, 11, 18, 0.92);
-  border: 1px solid rgba(255,255,255,0.10);
-  box-shadow: 0 18px 60px rgba(0,0,0,0.55);
-  overflow: hidden;
-}
-
-.modal-handle{
-  width: 44px;
-  height: 5px;
-  border-radius: 999px;
-  background: rgba(255,255,255,0.22);
-  margin: 10px auto 6px;
-}
 
 .modal-form{
   display:flex;
@@ -358,66 +356,6 @@ body {
   background: rgba(8, 9, 15, 0.65);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
-}
-
-.modal-body{ padding:0 !important; }
-/* ===== Modal / Bottom-sheet (estilo decente) ===== */
-.modal-backdrop{
-  position: fixed;
-  inset: 0;
-  display: grid;
-  place-items: end center;
-  padding: 14px;
-  background: rgba(0,0,0,.45);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  z-index: 9999;
-}
-
-.modal{
-  width: min(560px, 100%);
-  max-height: 86vh;
-  border-radius: 22px;
-  overflow: hidden;
-  background: rgba(14,16,22,.88);
-  border: 1px solid rgba(255,255,255,.08);
-  box-shadow: 0 20px 80px rgba(0,0,0,.55);
-}
-
-.modal-handle{
-  width: 64px;
-  height: 5px;
-  margin: 10px auto 6px;
-  border-radius: 999px;
-  background: rgba(255,255,255,.14);
-}
-
-.modal-header{
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 14px 12px;
-  border-bottom: 1px solid rgba(255,255,255,.07);
-}
-
-.modal-title{
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: .2px;
-}
-
-.icon-btn{
-  width: 44px;
-  height: 44px;
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.08);
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background .15s ease, border-color .15s ease, transform .12s ease;
 }
 
 /* Compact spec blocks (libros + recetas) */
@@ -696,8 +634,8 @@ body {
   padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
   background: linear-gradient(180deg, rgba(12,13,20,.72), rgba(12,13,20,.94));
   border-top: 1px solid rgba(255,255,255,.07);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(var(--blur-header, 16px));
+  -webkit-backdrop-filter: blur(var(--blur-header, 16px));
   position: sticky;
   bottom: 0;
   z-index: 3;

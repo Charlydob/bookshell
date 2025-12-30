@@ -1,1406 +1,1416 @@
 <!DOCTYPE html>
+
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <title>Bookshell</title>
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta charset="utf-8"/>
+<title>Bookshell</title>
+<meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
+<!-- iOS PWA -->
+<meta content="yes" name="mobile-web-app-capable"/>
+<meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"/>
+<meta content="Bookshell" name="apple-mobile-web-app-title"/>
+<link href="styles/mainstyles.css" rel="stylesheet"/>
+<link href="styles/mainpage.css" rel="stylesheet"/><link href="styles/dashboard.css" rel="stylesheet"/>
+<link href="styles/videos.css" rel="stylesheet"/>
+<link href="styles/recipes.css" rel="stylesheet"/>
+<link href="styles/habits.css" rel="stylesheet"/>
+<link href="styles/media.css" rel="stylesheet"/>
 
-  <!-- iOS PWA -->
-<meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Bookshell" />
-
-  <link rel="stylesheet" href="styles/mainstyles.css" />
-  <link rel="stylesheet" href="styles/mainpage.css" />
-  <link rel="stylesheet" href="styles/videos.css" />
-  <link rel="stylesheet" href="styles/recipes.css" />
-  <link rel="stylesheet" href="styles/habits.css" />
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icons/favicon.ico">
-<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
-<link rel="apple-touch-icon" sizes="180x180" href="icons/icon-512.png">
-
-
-
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<link href="manifest.webmanifest" rel="manifest"/>
+<link href="icons/favicon.ico" rel="icon"/>
+<link href="icons/favicon-32.png" rel="icon" sizes="32x32" type="image/png"/>
+<link href="icons/favicon-16.png" rel="icon" sizes="16x16" type="image/png"/>
+<link href="icons/icon-512.png" rel="apple-touch-icon" sizes="180x180"/>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
-  <div class="app-shell">
-    <header class="app-header">
-      <div class="header-title">Bookshell</div>
-    </header>
-    
-
-    <main class="app-main">
-      <!-- Vista LIBROS -->
-      <section id="view-books" class="view view-active">
-
-        <!-- STATS + CALENDARIO DE LIBROS (ANTES ESTABA EN view-stats) -->
-        <div class="stats-wrapper">
-         <div class="stats-cards">
-  <div class="stat-card">
-    <div class="stat-label">Racha actual</div>
-    <div id="stat-streak-current" class="stat-value">0</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">Mejor racha</div>
-    <div id="stat-streak-best" class="stat-value">0</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">Páginas hoy</div>
-    <div id="stat-today-pages" class="stat-value">0</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">Páginas totales</div>
-    <div id="stat-pages-total" class="stat-value">0</div>
-  </div>
-
-  <div id="stat-books-read-card" class="stat-card stat-card-clickable">
-    <div class="stat-label stat-label-row">
-      <span>Libros leídos</span>
-      <select id="stat-books-read-range" class="stat-range-select" aria-label="Rango libros leídos">
-        <option value="total" selected>Total</option>
-        <option value="month">Mes</option>
-        <option value="year">Año</option>
-        <option value="week">Semana</option>
-      </select>
-    </div>
-    <div id="stat-books-read" class="stat-value">0</div>
-  </div>
+<div class="app-shell">
+<header class="app-header">
+<div class="header-title">Bookshell</div>
+</header>
+<main class="app-main">
+<!-- Vista LIBROS -->
+<section class="view view-active" id="view-main">
+<div class="dash-header">
+<div>
+<div class="dash-title">Hoy</div>
+<div class="dash-subtitle">Tu resumen, sin rodeos.</div>
+</div>
+</div>
+<div class="dash-grid">
+<div class="dash-card">
+<div class="dash-card-inner">
+<div class="dash-card-head">
+<div class="dash-card-title">Tiempo por hábito</div>
+<div class="dash-actions">
+<button class="dash-btn primary" id="dash-habit-session" type="button">Empezar sesión</button>
+<button class="dash-btn" id="dash-habit-open" type="button">Abrir Hábitos</button>
+</div>
+</div>
+<div aria-label="Rango" class="dash-chiprow" id="dash-range"></div>
+<div class="dash-donut-wrap">
+  <div class="dash-donut" id="dash-donut"></div>
+  <div class="dash-unit" id="dash-unit" aria-label="Unidad de tiempo"></div>
 </div>
 
+<details class="dash-accordion">
+  <summary>Desglose por hábito</summary>
+  <div class="dash-legend" id="dash-legend"></div>
+</details>
+</div>
+</div>
+<div class="dash-card dash-shelf-card">
+  <div class="dash-card-inner">
+    <div class="dash-card-head">
+      <div class="dash-card-title">En marcha</div>
+      <div class="dash-actions">
+        <button class="dash-btn" id="dash-shelf-open-books" type="button">Libros</button>
+        <button class="dash-btn" id="dash-shelf-open-recipes" type="button">Recetas</button>
+      </div>
+    </div>
 
-          <div class="calendar-section">
-            <div class="calendar-header">
-              <div class="calendar-nav">
-                <button id="cal-prev" class="icon-btn">&lt;</button>
-                <div id="cal-label" class="cal-label"></div>
-                <button id="cal-next" class="icon-btn">&gt;</button>
-              </div>
-              <select id="cal-view-mode" class="calendar-view-select" aria-label="Vista del calendario">
-                <option value="month" selected>Mes</option>
-                <option value="year">Año</option>
-              </select>
-            </div>
-            <div id="calendar-summary" class="calendar-summary"></div>
-            <div class="calendar-grid" id="calendar-grid">
-              <!-- Calendario por JS -->
-            </div>
-            <div class="calendar-legend">
-              <span class="dot dot-normal"></span> Páginas leídas
+    <div class="dash-shelf">
+      <div class="dash-shelf-side">
+        <div class="dash-shelf-label">Último libro</div>
+        <div class="dash-shelf-slot" id="dash-shelf-book"></div>
+      </div>
+
+      <div class="dash-shelf-pillar" aria-hidden="true"></div>
+
+      <div class="dash-shelf-side">
+        <div class="dash-shelf-label">Receta</div>
+        <div class="dash-shelf-slot" id="dash-shelf-recipe"></div>
+      </div>
+
+      <div class="dash-shelf-plank" aria-hidden="true"></div>
+    </div>
+  </div>
+</div>
+</div>
+<div class="dash-card">
+<div class="dash-card-inner">
+<div class="dash-card-head">
+<div class="dash-card-title">Último vídeo</div>
+<div class="dash-actions">
+<button class="dash-btn" id="dash-video-open" type="button">Editar</button>
+</div>
+</div>
+<div class="dash-row">
+<div class="dash-kpi">
+<div class="kpi-value" id="dash-video-title">—</div>
+<div class="kpi-label" id="dash-video-meta">—</div>
+</div>
+<div class="dash-actions">
+<button class="dash-btn primary" id="dash-video-timer" type="button">Empezar cronómetro</button>
+</div>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+</section><section class="view" id="view-books">
+<!-- STATS + CALENDARIO DE LIBROS (ANTES ESTABA EN view-stats) -->
+<div class="stats-wrapper">
+<div class="stats-cards">
+<div class="stat-card">
+<div class="stat-label">Racha actual</div>
+<div class="stat-value" id="stat-streak-current">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">Mejor racha</div>
+<div class="stat-value" id="stat-streak-best">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">Páginas hoy</div>
+<div class="stat-value" id="stat-today-pages">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">Páginas totales</div>
+<div class="stat-value" id="stat-pages-total">0</div>
+</div>
+<div class="stat-card stat-card-clickable" id="stat-books-read-card">
+<div class="stat-label stat-label-row">
+<span>Libros leídos</span>
+<select aria-label="Rango libros leídos" class="stat-range-select" id="stat-books-read-range">
+<option selected="" value="total">Total</option>
+<option value="month">Mes</option>
+<option value="year">Año</option>
+<option value="week">Semana</option>
+</select>
+</div>
+<div class="stat-value" id="stat-books-read">0</div>
+</div>
+</div>
+<div class="calendar-section">
+<div class="calendar-header">
+<div class="calendar-nav">
+<button class="icon-btn" id="cal-prev">&lt;</button>
+<div class="cal-label" id="cal-label"></div>
+<button class="icon-btn" id="cal-next">&gt;</button>
+</div>
+<select aria-label="Vista del calendario" class="calendar-view-select" id="cal-view-mode">
+<option selected="" value="month">Mes</option>
+<option value="year">Año</option>
+</select>
+</div>
+<div class="calendar-summary" id="calendar-summary"></div>
+<div class="calendar-grid" id="calendar-grid">
+<!-- Calendario por JS -->
+</div>
+<div class="calendar-legend">
+<span class="dot dot-normal"></span> Páginas leídas
               <span class="dot dot-streak"></span> Día de racha
               <span class="dot dot-finished"></span> Libro terminado
             </div>
-          </div>
-        </div>
-
-        <!-- TOOLBAR + LISTA LIBROS -->
-        <div class="books-toolbar">
-          <button id="btn-add-book" class="btn primary">+ Añadir libro</button>
-        </div>
-
-        <div class="books-filters is-collapsed" id="books-filters">
-          <div class="books-filters-header" id="books-filters-header">
-            <div class="filter-row filter-search-row">
-              <label class="field-label" for="books-filter-search">Buscar</label>
-              <input
-                id="books-filter-search"
-                class="filter-search-input"
-                type="search"
-                placeholder="Título, autor, categoría, idioma o siglo"
-                autocomplete="off"
-                inputmode="search"
-              />
-            </div>
-            <button
-              type="button"
-              id="books-filters-toggle"
-              class="filters-toggle-btn"
-              aria-expanded="false"
-              aria-controls="books-filters-body"
-            >
-              <span class="filters-toggle-text">Mostrar filtros</span>
-              <span class="filters-toggle-icon" aria-hidden="true">⌄</span>
-            </button>
-          </div>
-
-          <div class="books-filters-body" id="books-filters-body">
-            <div class="filter-row">
-              <div class="filter-label">Filtros rápidos</div>
-              <div id="books-filter-chips" class="filter-chip-groups" aria-label="Filtros dinámicos"></div>
-            </div>
-
-            <div class="filter-row filter-toggles">
-              <label class="toggle-pill">
-                <input id="books-filter-pending" type="checkbox" />
-                <span>Solo pendientes</span>
-              </label>
-              <label class="toggle-pill">
-                <input id="books-filter-finished" type="checkbox" />
-                <span>Solo terminados</span>
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <details id="books-watchlist" class="books-watchlist" style="display:none;">
-          <summary class="watchlist-summary">
-            <div>
-              <div class="watchlist-title">Watchlist</div>
-              <div class="watchlist-subtitle"></div>
-            </div>
-            <div class="watchlist-summary-meta">
-              <span id="books-watchlist-count" class="watchlist-count">0</span>
-              <span class="watchlist-caret" aria-hidden="true">⌄</span>
-            </div>
-          </summary>
-
-          <div class="watchlist-body">
-            <div id="books-watchlist-empty" class="watchlist-empty" style="display:none;">
+</div>
+</div>
+<!-- TOOLBAR + LISTA LIBROS -->
+<div class="books-toolbar">
+<button class="btn primary" id="btn-add-book">+ Añadir libro</button>
+</div>
+<div class="books-filters is-collapsed" id="books-filters">
+<div class="books-filters-header" id="books-filters-header">
+<div class="filter-row filter-search-row">
+<label class="field-label" for="books-filter-search">Buscar</label>
+<input autocomplete="off" class="filter-search-input" id="books-filter-search" inputmode="search" placeholder="Título, autor, categoría, idioma o siglo" type="search"/>
+</div>
+<button aria-controls="books-filters-body" aria-expanded="false" class="filters-toggle-btn" id="books-filters-toggle" type="button">
+<span class="filters-toggle-text">Mostrar filtros</span>
+<span aria-hidden="true" class="filters-toggle-icon">⌄</span>
+</button>
+</div>
+<div class="books-filters-body" id="books-filters-body">
+<div class="filter-row">
+<div class="filter-label">Filtros rápidos</div>
+<div aria-label="Filtros dinámicos" class="filter-chip-groups" id="books-filter-chips"></div>
+</div>
+<div class="filter-row filter-toggles">
+<label class="toggle-pill">
+<input id="books-filter-pending" type="checkbox"/>
+<span>Solo pendientes</span>
+</label>
+<label class="toggle-pill">
+<input id="books-filter-finished" type="checkbox"/>
+<span>Solo terminados</span>
+</label>
+</div>
+</div>
+</div>
+<details class="books-watchlist" id="books-watchlist" style="display:none;">
+<summary class="watchlist-summary">
+<div>
+<div class="watchlist-title">Watchlist</div>
+<div class="watchlist-subtitle"></div>
+</div>
+<div class="watchlist-summary-meta">
+<span class="watchlist-count" id="books-watchlist-count">0</span>
+<span aria-hidden="true" class="watchlist-caret">⌄</span>
+</div>
+</summary>
+<div class="watchlist-body">
+<div class="watchlist-empty" id="books-watchlist-empty" style="display:none;">
               No tienes libros pendientes ahora mismo.
             </div>
-
-            <div id="books-watchlist-list" class="watchlist-list"></div>
-          </div>
-        </details>
-
-        <div id="books-list" class="books-list">
-          <!-- Se rellenan las tarjetas por JS -->
-        </div>
-
-        <div id="books-filter-empty" class="empty-state" style="display:none;">
+<div class="watchlist-list" id="books-watchlist-list"></div>
+</div>
+</details>
+<div class="books-list" id="books-list">
+<!-- Se rellenan las tarjetas por JS -->
+</div>
+<div class="empty-state" id="books-filter-empty" style="display:none;">
           No hay libros que coincidan con los filtros.
         </div>
-<details id="books-finished-section" class="books-finished" style="display:none;">
-  <summary class="books-finished-summary">
-    <span>Terminados</span>
-    <span id="books-finished-count" class="books-finished-count">0</span>
-  </summary>
-  <div class="books-shelf-toolbar">
-    <label class="field-label shelf-search-label" for="books-shelf-search">Buscar en la estantería</label>
-    <input id="books-shelf-search" class="shelf-search-input" type="search" placeholder="Título, autor, idioma, categoría..." />
-    <div id="books-shelf-results" class="books-shelf-results"></div>
-  </div>
-  <div id="books-shelf-empty" class="books-shelf-empty" style="display:none;">
+<details class="books-finished" id="books-finished-section" style="display:none;">
+<summary class="books-finished-summary">
+<span>Terminados</span>
+<span class="books-finished-count" id="books-finished-count">0</span>
+</summary>
+<div class="books-shelf-toolbar">
+<label class="field-label shelf-search-label" for="books-shelf-search">Buscar en la estantería</label>
+<input class="shelf-search-input" id="books-shelf-search" placeholder="Título, autor, idioma, categoría..." type="search"/>
+<div class="books-shelf-results" id="books-shelf-results"></div>
+</div>
+<div class="books-shelf-empty" id="books-shelf-empty" style="display:none;">
     No hay libros que coincidan con la búsqueda.
   </div>
-  <div id="books-list-finished" class="books-list-finished"></div>
-
-
+<div class="books-list-finished" id="books-list-finished"></div>
 </details>
-<section id="books-geo-section" class="geo-section" style="display:none;">
-  <div class="geo-card">
-    <div class="geo-header">
-      <div>
-        <div class="geo-title">Mapa de libros</div>
-        <div class="geo-subtitle">Intensidad según número de libros</div>
-      </div>
-    </div>
-    <div id="books-world-map" class="geo-map"></div>
-    <details id="books-country-panel" class="geo-list" aria-label="Listado de países (libros)">
-      <summary class="geo-list-summary">Países y número de libros</summary>
-      <div id="books-country-list" class="geo-list-body"></div>
-    </details>
-  </div>
+<section class="geo-section" id="books-geo-section" style="display:none;">
+<div class="geo-card">
+<div class="geo-header">
+<div>
+<div class="geo-title">Mapa de libros</div>
+<div class="geo-subtitle">Intensidad según número de libros</div>
+</div>
+</div>
+<div class="geo-map" id="books-world-map"></div>
+<details aria-label="Listado de países (libros)" class="geo-list" id="books-country-panel">
+<summary class="geo-list-summary">Países y número de libros</summary>
+<div class="geo-list-body" id="books-country-list"></div>
+</details>
+</div>
 </section>
-<section id="books-charts-section" class="books-charts" style="display:none;">
-  <div class="chart-card">
-    <div class="chart-card-header">
-      <div class="chart-card-title" id="books-chart-title">Categoría</div>
-      <label class="chart-selector" for="books-chart-selector">
-        <span>Ver por</span>
-        <select id="books-chart-selector" class="chart-selector-input">
-          <option value="genre" selected>Categoría</option>
-          <option value="author">Autor</option>
-          <option value="language">Idioma</option>
-          <option value="century">Siglo</option>
-        </select>
-      </label>
-    </div>
-    <div id="chart-active" class="donut-host"></div>
-  </div>
+<section class="books-charts" id="books-charts-section" style="display:none;">
+<div class="chart-card">
+<div class="chart-card-header">
+<div class="chart-card-title" id="books-chart-title">Categoría</div>
+<label class="chart-selector" for="books-chart-selector">
+<span>Ver por</span>
+<select class="chart-selector-input" id="books-chart-selector">
+<option selected="" value="genre">Categoría</option>
+<option value="author">Autor</option>
+<option value="language">Idioma</option>
+<option value="century">Siglo</option>
+</select>
+</label>
+</div>
+<div class="donut-host" id="chart-active"></div>
+</div>
 </section>
-
-        <div id="books-empty" class="empty-state">
+<div class="empty-state" id="books-empty">
           Aún no has añadido ningún libro.
         </div>
-      </section>
-
-      <!-- Vista VÍDEOS -->
-      <section id="view-videos" class="view">
-        <div class="videos-wrapper">
-          <!-- STATS -->
-          <div class="video-stats-cards">
-            <div class="video-stat-card">
-              <div class="video-stat-label">Vídeos publicados</div>
-              <div id="video-stat-count" class="video-stat-value">0</div>
-            </div>
-            <div class="video-stat-card">
-              <div class="video-stat-label">Racha días</div>
-              <div id="video-stat-streak" class="video-stat-value">0</div>
-            </div>
-            <div class="video-stat-card">
-              <div class="video-stat-label">Palabras totales</div>
-              <div id="video-stat-words" class="video-stat-value">0</div>
-            </div>
-            <div class="video-stat-card">
-              <div class="video-stat-label">Tiempo trabajado</div>
-              <div id="video-stat-time" class="video-stat-value">0</div>
-            </div>
-          </div>
-
-          <!-- CRONÓMETRO -->
-          <div class="video-timer-card">
-            <div class="video-timer-row">
-              <div class="video-timer-label">Cronómetro</div>
-              <button id="video-timer-toggle" class="btn primary">Empezar</button>
-            </div>
-            <div id="video-timer-display" class="video-timer-time">00:00:00</div>
-            <div class="video-timer-sub">
-              <span>Hoy: <b id="video-timer-today">0 min</b></span>
-              <span class="video-timer-hint" id="video-timer-hint"></span>
-            </div>
-          </div>
-
-          <!-- CALENDARIO -->
-          <div class="video-calendar-section">
-            <div class="video-calendar-header">
-              <div class="video-calendar-nav">
-                <button id="video-cal-prev" class="icon-btn">&lt;</button>
-                <div id="video-cal-label" class="video-cal-label"></div>
-                <button id="video-cal-next" class="icon-btn">&gt;</button>
-              </div>
-              <select id="video-cal-view-mode" class="calendar-view-select" aria-label="Vista del calendario de vídeos">
-                <option value="month" selected>Mes</option>
-                <option value="year">Año</option>
-              </select>
-            </div>
-
-            <div id="video-calendar-summary" class="calendar-summary"></div>
-
-            <div id="video-calendar-grid" class="video-calendar-grid">
-              <!-- Rellenado por JS -->
-            </div>
-
-            <div class="video-calendar-legend">
-              <span class="video-dot video-dot-work"></span> Trabajo ese día
+</section>
+<!-- Vista VÍDEOS -->
+<section class="view" id="view-videos">
+<div class="videos-wrapper">
+<!-- STATS -->
+<div class="video-stats-cards">
+<div class="video-stat-card">
+<div class="video-stat-label">Vídeos publicados</div>
+<div class="video-stat-value" id="video-stat-count">0</div>
+</div>
+<div class="video-stat-card">
+<div class="video-stat-label">Racha días</div>
+<div class="video-stat-value" id="video-stat-streak">0</div>
+</div>
+<div class="video-stat-card">
+<div class="video-stat-label">Palabras totales</div>
+<div class="video-stat-value" id="video-stat-words">0</div>
+</div>
+<div class="video-stat-card">
+<div class="video-stat-label">Tiempo trabajado</div>
+<div class="video-stat-value" id="video-stat-time">0</div>
+</div>
+</div>
+<!-- CRONÓMETRO -->
+<div class="video-timer-card">
+<div class="video-timer-row">
+<div class="video-timer-label">Cronómetro</div>
+<button class="btn primary" id="video-timer-toggle">Empezar</button>
+</div>
+<div class="video-timer-time" id="video-timer-display">00:00:00</div>
+<div class="video-timer-sub">
+<span>Hoy: <b id="video-timer-today">0 min</b></span>
+<span class="video-timer-hint" id="video-timer-hint"></span>
+</div>
+</div>
+<!-- CALENDARIO -->
+<div class="video-calendar-section">
+<div class="video-calendar-header">
+<div class="video-calendar-nav">
+<button class="icon-btn" id="video-cal-prev">&lt;</button>
+<div class="video-cal-label" id="video-cal-label"></div>
+<button class="icon-btn" id="video-cal-next">&gt;</button>
+</div>
+<select aria-label="Vista del calendario de vídeos" class="calendar-view-select" id="video-cal-view-mode">
+<option selected="" value="month">Mes</option>
+<option value="year">Año</option>
+</select>
+</div>
+<div class="calendar-summary" id="video-calendar-summary"></div>
+<div class="video-calendar-grid" id="video-calendar-grid">
+<!-- Rellenado por JS -->
+</div>
+<div class="video-calendar-legend">
+<span class="video-dot video-dot-work"></span> Trabajo ese día
               <span class="video-dot video-dot-streak"></span> Día en racha
               <span class="video-dot video-dot-publish"></span> Fecha propuesta de publicación
             </div>
-          </div>
-
-          <!-- TOOLBAR + LISTA -->
-          <div class="videos-toolbar">
-            <button id="btn-add-video" class="btn primary">+ Añadir vídeo</button>
-          </div>
-
-          <div id="videos-list" class="videos-list">
-            <!-- Tarjetas de vídeos por JS -->
-          </div>
-
-          <div id="videos-empty" class="videos-empty">
+</div>
+<!-- TOOLBAR + LISTA -->
+<div class="videos-toolbar">
+<button class="btn primary" id="btn-add-video">+ Añadir vídeo</button>
+</div>
+<div class="videos-list" id="videos-list">
+<!-- Tarjetas de vídeos por JS -->
+</div>
+<div class="videos-empty" id="videos-empty">
             Aún no has añadido ningún vídeo.
           </div>
-        </div>
-      </section>
-
-      <!-- Vista RECETAS -->
-      <section id="view-recipes" class="view">
-        <div class="recipes-wrapper">
-          <div class="recipes-top">
-            <div class="stats-cards recipes-stats-cards">
-              <div class="stat-card">
-                <div class="stat-label">Recetas</div>
-                <div id="recipe-stat-total" class="stat-value">0</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-label">Favoritas</div>
-                <div id="recipe-stat-favorites" class="stat-value">0</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-label">Saludables</div>
-                <div id="recipe-stat-healthy" class="stat-value">0</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-label">⭐</div>
-                <div id="recipe-stat-rating" class="stat-value">0.0</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-label">L. Check</div>
-                <div id="recipe-stat-laura-positive" class="stat-value">0</div>
-              </div>
-            </div>
-
-
-          </div>
-
-          <div class="recipes-toolbar">
-            <button id="btn-add-recipe" class="btn primary">+ Añadir receta</button>
-          </div>
-
-          <div class="books-filters is-collapsed" id="recipes-filters">
-            <div class="books-filters-header" id="recipes-filters-header">
-              <div class="filter-row filter-search-row">
-                <label class="field-label" for="recipes-filter-search">Buscar</label>
-                <input
-                  id="recipes-filter-search"
-                  class="filter-search-input"
-                  type="search"
-                  placeholder="Nombre del plato, etiquetas o tipo de comida"
-                  autocomplete="off"
-                  inputmode="search"
-                />
-              </div>
-              <button
-                type="button"
-                id="recipes-filters-toggle"
-                class="filters-toggle-btn"
-                aria-expanded="false"
-                aria-controls="recipes-filters-body"
-              >
-                <span class="filters-toggle-text">Mostrar filtros</span>
-                <span class="filters-toggle-icon" aria-hidden="true">⌄</span>
-              </button>
-            </div>
-
-            <div class="books-filters-body" id="recipes-filters-body">
-              <div class="filter-row">
-                <div class="filter-label">Filtros rápidos</div>
-                <div id="recipes-filter-chips" class="filter-chip-groups" aria-label="Filtros dinámicos"></div>
-              </div>
-
-              <div class="filter-row filter-toggles">
-                <label class="toggle-pill">
-                  <input id="recipes-filter-favorites" type="checkbox" />
-                  <span>Solo favoritas</span>
-                </label>
-                <label class="toggle-pill">
-                  <input id="recipes-filter-laura" type="checkbox" />
-                  <span>Con check de Laura</span>
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div class="recipes-shelf-wrapper">
-            <div class="recipes-shelf-toolbar">
-              <label class="field-label shelf-search-label" for="recipes-shelf-search">Buscar en la estantería</label>
-              <input id="recipes-shelf-search" class="shelf-search-input" type="search" placeholder="Nombre, tipo, etiquetas..." />
-              <div id="recipes-shelf-results" class="books-shelf-results"></div>
-            </div>
-            <div id="recipes-shelf-empty" class="books-shelf-empty" style="display:none;">
+</div>
+</section>
+<!-- Vista RECETAS -->
+<section class="view" id="view-recipes">
+<div class="recipes-wrapper">
+<div class="recipes-top">
+<div class="stats-cards recipes-stats-cards">
+<div class="stat-card">
+<div class="stat-label">Recetas</div>
+<div class="stat-value" id="recipe-stat-total">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">Favoritas</div>
+<div class="stat-value" id="recipe-stat-favorites">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">Saludables</div>
+<div class="stat-value" id="recipe-stat-healthy">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">⭐</div>
+<div class="stat-value" id="recipe-stat-rating">0.0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">L. Check</div>
+<div class="stat-value" id="recipe-stat-laura-positive">0</div>
+</div>
+</div>
+</div>
+<div class="recipes-toolbar">
+<button class="btn primary" id="btn-add-recipe">+ Añadir receta</button>
+</div>
+<div class="books-filters is-collapsed" id="recipes-filters">
+<div class="books-filters-header" id="recipes-filters-header">
+<div class="filter-row filter-search-row">
+<label class="field-label" for="recipes-filter-search">Buscar</label>
+<input autocomplete="off" class="filter-search-input" id="recipes-filter-search" inputmode="search" placeholder="Nombre del plato, etiquetas o tipo de comida" type="search"/>
+</div>
+<button aria-controls="recipes-filters-body" aria-expanded="false" class="filters-toggle-btn" id="recipes-filters-toggle" type="button">
+<span class="filters-toggle-text">Mostrar filtros</span>
+<span aria-hidden="true" class="filters-toggle-icon">⌄</span>
+</button>
+</div>
+<div class="books-filters-body" id="recipes-filters-body">
+<div class="filter-row">
+<div class="filter-label">Filtros rápidos</div>
+<div aria-label="Filtros dinámicos" class="filter-chip-groups" id="recipes-filter-chips"></div>
+</div>
+<div class="filter-row filter-toggles">
+<label class="toggle-pill">
+<input id="recipes-filter-favorites" type="checkbox"/>
+<span>Solo favoritas</span>
+</label>
+<label class="toggle-pill">
+<input id="recipes-filter-laura" type="checkbox"/>
+<span>Con check de Laura</span>
+</label>
+</div>
+</div>
+</div>
+<div class="recipes-shelf-wrapper">
+<div class="recipes-shelf-toolbar">
+<label class="field-label shelf-search-label" for="recipes-shelf-search">Buscar en la estantería</label>
+<input class="shelf-search-input" id="recipes-shelf-search" placeholder="Nombre, tipo, etiquetas..." type="search"/>
+<div class="books-shelf-results" id="recipes-shelf-results"></div>
+</div>
+<div class="books-shelf-empty" id="recipes-shelf-empty" style="display:none;">
               No hay recetas que coincidan con la búsqueda.
             </div>
-            <div id="recipes-list" class="books-list recipes-shelf"></div>
-            <details id="recipes-favorites-section" class="books-finished" style="display:none;">
-              <summary class="books-finished-summary">
-                <span>Favoritas</span>
-                <span id="recipes-favorites-count" class="books-finished-count">0</span>
-              </summary>
-              <div id="recipes-list-favorites" class="books-list-finished"></div>
-            </details>
-          </div>
-
-          <section id="recipes-geo-section" class="geo-section" style="display:none;">
-            <div class="geo-card">
-              <div class="geo-header">
-                <div>
-                  <div class="geo-title">Mapa de recetas</div>
-                  <div class="geo-subtitle">Intensidad según número de platos</div>
-                </div>
-              </div>
-              <div id="recipes-world-map" class="geo-map"></div>
-              <details id="recipes-country-panel" class="geo-list" aria-label="Listado de países (recetas)">
-                <summary class="geo-list-summary">Países y número de platos</summary>
-                <div id="recipes-country-list" class="geo-list-body"></div>
-              </details>
-            </div>
-          </section>
-
-          <section id="recipes-charts-section" class="books-charts">
-            <div class="books-charts-grid">
-              <div class="chart-card">
-                <div class="chart-card-title">Tipo de comida</div>
-                <div id="recipe-chart-meal" class="donut-host"></div>
-              </div>
-              <div class="chart-card">
-                <div class="chart-card-title">Saludable/Insana</div>
-                <div id="recipe-chart-health" class="donut-host"></div>
-              </div>
-            </div>
-          </section>
-
-          <div id="recipes-empty" class="empty-state">
+<div class="books-list recipes-shelf" id="recipes-list"></div>
+<details class="books-finished" id="recipes-favorites-section" style="display:none;">
+<summary class="books-finished-summary">
+<span>Favoritas</span>
+<span class="books-finished-count" id="recipes-favorites-count">0</span>
+</summary>
+<div class="books-list-finished" id="recipes-list-favorites"></div>
+</details>
+</div>
+<section class="geo-section" id="recipes-geo-section" style="display:none;">
+<div class="geo-card">
+<div class="geo-header">
+<div>
+<div class="geo-title">Mapa de recetas</div>
+<div class="geo-subtitle">Intensidad según número de platos</div>
+</div>
+</div>
+<div class="geo-map" id="recipes-world-map"></div>
+<details aria-label="Listado de países (recetas)" class="geo-list" id="recipes-country-panel">
+<summary class="geo-list-summary">Países y número de platos</summary>
+<div class="geo-list-body" id="recipes-country-list"></div>
+</details>
+</div>
+</section>
+<section class="books-charts" id="recipes-charts-section">
+<div class="books-charts-grid">
+<div class="chart-card">
+<div class="chart-card-title">Tipo de comida</div>
+<div class="donut-host" id="recipe-chart-meal"></div>
+</div>
+<div class="chart-card">
+<div class="chart-card-title">Saludable/Insana</div>
+<div class="donut-host" id="recipe-chart-health"></div>
+</div>
+</div>
+</section>
+<div class="empty-state" id="recipes-empty">
             Aún no has añadido recetas.
           </div>
-        </div>
-      </section>
+</div>
+</section>
+<!-- Vista HÁBITOS -->
+<section class="view" id="view-habits">
+<div class="habits-wrapper">
+<header class="habits-header">
+<div class="habits-title">Hábitos</div>
+<button aria-label="Añadir hábito" class="icon-btn icon-btn-large" id="habit-add-btn">+</button>
+</header>
+<div class="habit-quick-actions">
+<button class="btn ghost btn-compact" id="habit-add-time">+ Añadir tiempo</button>
+</div>
+<div aria-label="Vistas de hábitos" class="habits-subtabs" role="tablist">
+<button aria-selected="true" class="habit-subtab is-active" data-tab="today" role="tab">Hoy</button>
+<button aria-selected="false" class="habit-subtab" data-tab="week" role="tab">Semana</button>
+<button aria-selected="false" class="habit-subtab" data-tab="history" role="tab">Historial</button>
+<button aria-selected="false" class="habit-subtab" data-tab="reports" role="tab">Reportes</button>
+</div>
+<div class="habits-views">
+<div class="habits-panel is-active" data-panel="today">
+<div class="habits-today-group">
+<div class="habits-group-title">Pendientes hoy</div>
+<div class="habit-card-list" id="habits-today-pending"></div>
+<div class="empty-state small" id="habits-today-empty">No tienes hábitos pendientes hoy.</div>
+</div>
+<div class="habits-today-group">
+<div class="habits-group-title">Hechos hoy</div>
+<div class="habit-card-list" id="habits-today-done"></div>
+<div class="empty-state small" id="habits-today-done-empty">Aún no has completado ningún hábito hoy.</div>
+</div>
+</div>
+<div class="habits-panel" data-panel="week">
+<div class="habits-week-list" id="habits-week-list"></div>
+<div class="empty-state small" id="habits-week-empty">Añade hábitos para empezar tu semana.</div>
+</div>
+<div class="habits-panel" data-panel="history">
+<div class="habit-heatmap-list" id="habits-history-list"></div>
+<div class="empty-state small" id="habits-history-empty">Sin historial aún.</div>
+</div>
+<div class="habits-panel" data-panel="reports">
+<div class="habit-reports">
+<div class="habit-kpi-grid">
+<div class="habit-kpi-card">
+<div class="habit-kpi-label">Hechos</div>
+<div class="habit-kpi-value" id="habit-kpi-today">0</div>
+</div>
+<div class="habit-kpi-card">
+<div class="habit-kpi-label">Min hoy</div>
+<div class="habit-kpi-value" id="habit-kpi-minutes-today">0m</div>
+</div>
+<div class="habit-kpi-card">
+<div class="habit-kpi-label">Sem</div>
+<div class="habit-kpi-value" id="habit-kpi-minutes-week">0m</div>
+</div>
+<div class="habit-kpi-card">
+<div class="habit-kpi-label">Mes</div>
+<div class="habit-kpi-value" id="habit-kpi-minutes-month">0m</div>
+</div>
+<div class="habit-kpi-card">
+<div class="habit-kpi-label">Año</div>
+<div class="habit-kpi-value" id="habit-kpi-minutes-year">0m</div>
+</div>
+<div class="habit-kpi-card">
+<div class="habit-kpi-label">Total</div>
+<div class="habit-kpi-value" id="habit-kpi-total-time">0m</div>
+</div>
+<div class="habit-kpi-card">
+<div class="habit-kpi-label">Días (año)</div>
+<div class="habit-kpi-value" id="habit-kpi-active-days-year">0</div>
+</div>
+<div class="habit-kpi-card">
+<div class="habit-kpi-label">Racha</div>
+<div class="habit-kpi-value" id="habit-kpi-streak">0</div>
+<div class="habit-kpi-sub" id="habit-kpi-streak-label">—</div>
+</div>
+</div>
+<div class="habit-chart-card habit-donut-card">
+<div class="habit-card-head">
+<div>
+<div class="habit-card-title">Tiempo por hábito</div>
+<div class="habit-card-sub" id="habit-donut-sub">Distribución diaria</div>
+</div>
+<div aria-label="Rango de tiempo" class="habit-range-toggle" role="group">
+<button class="habit-range-btn is-active" data-range="day">Día</button>
+<button class="habit-range-btn" data-range="week">Semana</button>
+<button class="habit-range-btn" data-range="month">Mes</button>
+<button class="habit-range-btn" data-range="year">Año</button>
+<button class="habit-range-btn" data-range="total">Total</button>
+</div>
+</div>
+<div class="habit-donut-body">
+<div class="habit-donut" id="habit-donut"></div>
+<div class="habit-donut-center" id="habit-donut-center">
+<div class="habit-donut-label">Tiempo</div>
+<div class="habit-donut-total" id="habit-donut-total">0m</div>
+<div class="habit-unit" id="habit-unit" aria-label="Unidad de tiempo"></div>
+</div>
+</div>
+<div class="empty-state small" id="habit-donut-empty" style="display:none;">No hay datos en este rango.</div>
+<div class="habit-donut-legend" id="habit-donut-legend"></div>
+</div>
+<div class="habit-chart-card habit-line-card" id="habit-line-card">
+<div class="habit-card-head habit-line-head">
+<div>
+<div class="habit-card-title">Evolución (min/día)</div>
+<div class="habit-card-sub" id="habit-line-sub">Últimos 7 días · Total</div>
+</div>
+<div class="habit-line-controls">
+<label class="habit-select" for="habit-evo-select">
+<span>Hábito</span>
+<select aria-label="Hábito para evolución" id="habit-evo-select"></select>
+</label>
+<label class="habit-select habit-select-compact" for="habit-evo-range">
+<span>Rango</span>
+<select aria-label="Rango evolución" id="habit-evo-range">
+<option selected="" value="7d">7D</option>
+<option value="30d">30D</option>
+<option value="90d">90D</option>
+<option value="year">Año</option>
+<option value="total">Total</option>
+</select>
+</label>
+</div>
+</div>
+<div class="habit-line-metrics" id="habit-line-metrics">
+<div class="habit-metric">
+<div class="habit-metric-label">Tiempo total (rango)</div>
+<div class="habit-metric-value" id="habit-line-total">0m</div>
+</div>
+<div class="habit-metric">
+<div class="habit-metric-label">Días activos (rango)</div>
+<div class="habit-metric-sub" id="habit-line-days">0</div>
+</div>
+</div>
+<div class="habit-line-body">
+<div class="habit-line-chart" id="habit-line-chart"></div>
+<div class="empty-state small" id="habit-line-empty" style="display:none;">No hay datos en este rango.</div>
+</div>
+</div>
+<div class="habit-chart-card">
+<div class="habit-card-head">
+<div>
+<div class="habit-card-title">Heatmap global</div>
+<div class="habit-card-sub" id="habit-heatmap-sub">Año actual</div>
+</div>
+<div class="habit-heatmap-year-switcher">
+<button aria-label="Año anterior" class="icon-btn" id="habit-heatmap-prev">‹</button>
+<div class="habit-year-label" id="habit-heatmap-year"></div>
+<button aria-label="Año siguiente" class="icon-btn" id="habit-heatmap-next">›</button>
+</div>
+</div>
+<div class="habit-heatmap-scroll">
+<div class="habit-annual-heatmap" id="habit-global-heatmap"></div>
+</div>
+</div>
+<details class="habit-accordion" id="habit-acc-week">
+<summary>
+<div class="habit-accordion-title">Top minutos (semana)</div>
+<div class="habit-accordion-meta" id="habit-acc-week-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-ranking-list" id="habit-ranking-week"></div>
+</div>
+</details>
+<details class="habit-accordion" id="habit-acc-month">
+<summary>
+<div class="habit-accordion-title">Top minutos (mes)</div>
+<div class="habit-accordion-meta" id="habit-acc-month-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-ranking-list" id="habit-ranking-month"></div>
+</div>
+</details>
+<div class="habit-range-toggle habit-days-range">
+<button class="habit-range-btn habit-days-range-btn is-active" data-range="day">Día</button>
+<button class="habit-range-btn habit-days-range-btn" data-range="week">Semana</button>
+<button class="habit-range-btn habit-days-range-btn" data-range="month">Mes</button>
+<button class="habit-range-btn habit-days-range-btn" data-range="year">Año</button>
+<button class="habit-range-btn habit-days-range-btn" data-range="total">Total</button>
+</div>
+<details class="habit-accordion" id="habit-acc-total">
+<summary>
+<div class="habit-accordion-title">Totales por hábito</div>
+<div class="habit-accordion-meta" id="habit-acc-total-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-ranking-list" id="habit-totals-list"></div>
+</div>
+</details>
+<details class="habit-accordion" id="habit-acc-days">
+<summary>
+<div class="habit-accordion-title">Días hechos</div>
+<div class="habit-accordion-meta" id="habit-acc-days-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-ranking-list" id="habit-days-list"></div>
+</div>
+</details>
+<details class="habit-accordion" id="habit-acc-consistency">
+<summary>
+<div class="habit-accordion-title">Consistencia</div>
+<div class="habit-accordion-meta" id="habit-acc-consistency-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-ranking-list" id="habit-ranking-consistency"></div>
+</div>
+</details>
+</div>
+</div>
+</div>
+</div>
+<button class="habit-fab" id="habit-session-toggle">▶︎ Empezar sesión</button>
+<div class="habit-session-overlay hidden" id="habit-session-overlay">
+<div class="habit-session-pill">
+<div>
+<div class="habit-session-label">Sesión en curso</div>
+<div class="habit-session-time" id="habit-session-time">00:00</div>
+</div>
+<button class="btn danger btn-compact" id="habit-session-stop">⏹ Parar</button>
+</div>
+</div>
+</section>
+<section class="view" id="view-media">
+  <div class="media-wrapper">
 
-      <!-- Vista HÁBITOS -->
-      <section id="view-habits" class="view">
-        <div class="habits-wrapper">
-          <header class="habits-header">
-            <div class="habits-title">Hábitos</div>
-            <button id="habit-add-btn" class="icon-btn icon-btn-large" aria-label="Añadir hábito">+</button>
-          </header>
-          <div class="habit-quick-actions">
-            <button id="habit-add-time" class="btn ghost btn-compact">+ Añadir tiempo</button>
-          </div>
-
-          <div class="habits-subtabs" role="tablist" aria-label="Vistas de hábitos">
-            <button class="habit-subtab is-active" data-tab="today" role="tab" aria-selected="true">Hoy</button>
-            <button class="habit-subtab" data-tab="week" role="tab" aria-selected="false">Semana</button>
-            <button class="habit-subtab" data-tab="history" role="tab" aria-selected="false">Historial</button>
-            <button class="habit-subtab" data-tab="reports" role="tab" aria-selected="false">Reportes</button>
-          </div>
-
-          <div class="habits-views">
-            <div class="habits-panel is-active" data-panel="today">
-              <div class="habits-today-group">
-                <div class="habits-group-title">Pendientes hoy</div>
-                <div id="habits-today-pending" class="habit-card-list"></div>
-                <div id="habits-today-empty" class="empty-state small">No tienes hábitos pendientes hoy.</div>
-              </div>
-              <div class="habits-today-group">
-                <div class="habits-group-title">Hechos hoy</div>
-                <div id="habits-today-done" class="habit-card-list"></div>
-                <div id="habits-today-done-empty" class="empty-state small">Aún no has completado ningún hábito hoy.</div>
-              </div>
-            </div>
-
-            <div class="habits-panel" data-panel="week">
-              <div class="habits-week-list" id="habits-week-list"></div>
-              <div id="habits-week-empty" class="empty-state small">Añade hábitos para empezar tu semana.</div>
-            </div>
-
-            <div class="habits-panel" data-panel="history">
-              <div id="habits-history-list" class="habit-heatmap-list"></div>
-              <div id="habits-history-empty" class="empty-state small">Sin historial aún.</div>
-            </div>
-
-            <div class="habits-panel" data-panel="reports">
-              <div class="habit-reports">
-                <div class="habit-kpi-grid">
-                  <div class="habit-kpi-card">
-                    <div class="habit-kpi-label">Hechos</div>
-                    <div id="habit-kpi-today" class="habit-kpi-value">0</div>
-                  </div>
-                  <div class="habit-kpi-card">
-                    <div class="habit-kpi-label">Min hoy</div>
-                    <div id="habit-kpi-minutes-today" class="habit-kpi-value">0m</div>
-                  </div>
-                  <div class="habit-kpi-card">
-                    <div class="habit-kpi-label">Sem</div>
-                    <div id="habit-kpi-minutes-week" class="habit-kpi-value">0m</div>
-                  </div>
-                  <div class="habit-kpi-card">
-                    <div class="habit-kpi-label">Mes</div>
-                    <div id="habit-kpi-minutes-month" class="habit-kpi-value">0m</div>
-                  </div>
-                  <div class="habit-kpi-card">
-                    <div class="habit-kpi-label">Año</div>
-                    <div id="habit-kpi-minutes-year" class="habit-kpi-value">0m</div>
-                  </div>
-                  <div class="habit-kpi-card">
-                    <div class="habit-kpi-label">Total</div>
-                    <div id="habit-kpi-total-time" class="habit-kpi-value">0m</div>
-                  </div>
-                  <div class="habit-kpi-card">
-                    <div class="habit-kpi-label">Días (año)</div>
-                    <div id="habit-kpi-active-days-year" class="habit-kpi-value">0</div>
-                  </div>
-                  <div class="habit-kpi-card">
-                    <div class="habit-kpi-label">Racha</div>
-                    <div id="habit-kpi-streak" class="habit-kpi-value">0</div>
-                    <div id="habit-kpi-streak-label" class="habit-kpi-sub">—</div>
-                  </div>
-                </div>
-
-                <div class="habit-chart-card habit-donut-card">
-                  <div class="habit-card-head">
-                    <div>
-                      <div class="habit-card-title">Tiempo por hábito</div>
-                      <div id="habit-donut-sub" class="habit-card-sub">Distribución diaria</div>
-                    </div>
-                    <div class="habit-range-toggle" role="group" aria-label="Rango de tiempo">
-                      <button class="habit-range-btn is-active" data-range="day">Día</button>
-                      <button class="habit-range-btn" data-range="week">Semana</button>
-                      <button class="habit-range-btn" data-range="month">Mes</button>
-                      <button class="habit-range-btn" data-range="year">Año</button>
-                      <button class="habit-range-btn" data-range="total">Total</button>
-                    </div>
-                  </div>
-                  <div class="habit-donut-body">
-                    <div id="habit-donut" class="habit-donut"></div>
-                    <div id="habit-donut-center" class="habit-donut-center">
-                      <div class="habit-donut-label">Tiempo</div>
-                      <div class="habit-donut-total">0m</div>
-                    </div>
-                  </div>
-                  <div id="habit-donut-empty" class="empty-state small" style="display:none;">No hay datos en este rango.</div>
-                  <div id="habit-donut-legend" class="habit-donut-legend"></div>
-                </div>
-
-                <div class="habit-chart-card habit-line-card" id="habit-line-card">
-                  <div class="habit-card-head habit-line-head">
-                    <div>
-                      <div class="habit-card-title">Evolución (min/día)</div>
-                      <div id="habit-line-sub" class="habit-card-sub">Últimos 7 días · Total</div>
-                    </div>
-                    <div class="habit-line-controls">
-                      <label class="habit-select" for="habit-evo-select">
-                        <span>Hábito</span>
-                        <select id="habit-evo-select" aria-label="Hábito para evolución"></select>
-                      </label>
-                      <label class="habit-select habit-select-compact" for="habit-evo-range">
-                        <span>Rango</span>
-                        <select id="habit-evo-range" aria-label="Rango evolución">
-                          <option value="7d" selected>7D</option>
-                          <option value="30d">30D</option>
-                          <option value="90d">90D</option>
-                          <option value="year">Año</option>
-                          <option value="total">Total</option>
-                        </select>
-                      </label>
-                    </div>
-                  </div>
-                  <div class="habit-line-metrics" id="habit-line-metrics">
-                    <div class="habit-metric">
-                      <div class="habit-metric-label">Tiempo total (rango)</div>
-                      <div id="habit-line-total" class="habit-metric-value">0m</div>
-                    </div>
-                    <div class="habit-metric">
-                      <div class="habit-metric-label">Días activos (rango)</div>
-                      <div id="habit-line-days" class="habit-metric-sub">0</div>
-                    </div>
-                  </div>
-                  <div class="habit-line-body">
-                    <div id="habit-line-chart" class="habit-line-chart"></div>
-                    <div id="habit-line-empty" class="empty-state small" style="display:none;">No hay datos en este rango.</div>
-                  </div>
-                </div>
-
-                <div class="habit-chart-card">
-                  <div class="habit-card-head">
-                    <div>
-                      <div class="habit-card-title">Heatmap global</div>
-                      <div id="habit-heatmap-sub" class="habit-card-sub">Año actual</div>
-                    </div>
-                    <div class="habit-heatmap-year-switcher">
-                      <button id="habit-heatmap-prev" class="icon-btn" aria-label="Año anterior">‹</button>
-                      <div id="habit-heatmap-year" class="habit-year-label"></div>
-                      <button id="habit-heatmap-next" class="icon-btn" aria-label="Año siguiente">›</button>
-                    </div>
-                  </div>
-                  <div class="habit-heatmap-scroll">
-                    <div id="habit-global-heatmap" class="habit-annual-heatmap"></div>
-                  </div>
-                </div>
-
-                <details class="habit-accordion" id="habit-acc-week">
-                  <summary>
-                    <div class="habit-accordion-title">Top minutos (semana)</div>
-                    <div id="habit-acc-week-meta" class="habit-accordion-meta">—</div>
-                  </summary>
-                  <div class="habit-accordion-body">
-                    <div id="habit-ranking-week" class="habit-ranking-list"></div>
-                  </div>
-                </details>
-
-                <details class="habit-accordion" id="habit-acc-month">
-                  <summary>
-                    <div class="habit-accordion-title">Top minutos (mes)</div>
-                    <div id="habit-acc-month-meta" class="habit-accordion-meta">—</div>
-                  </summary>
-                  <div class="habit-accordion-body">
-                    <div id="habit-ranking-month" class="habit-ranking-list"></div>
-                  </div>
-                </details>
-                    <div class="habit-range-toggle habit-days-range">
-                      <button class="habit-range-btn habit-days-range-btn is-active" data-range="day">Día</button>
-                      <button class="habit-range-btn habit-days-range-btn" data-range="week">Semana</button>
-                      <button class="habit-range-btn habit-days-range-btn" data-range="month">Mes</button>
-                      <button class="habit-range-btn habit-days-range-btn" data-range="year">Año</button>
-                      <button class="habit-range-btn habit-days-range-btn" data-range="total">Total</button>
-                    </div>
-                <details class="habit-accordion" id="habit-acc-total">
-                  <summary>
-                    <div class="habit-accordion-title">Totales por hábito</div>
-                    <div id="habit-acc-total-meta" class="habit-accordion-meta">—</div>
-                  </summary>
-                  <div class="habit-accordion-body">
-                    <div id="habit-totals-list" class="habit-ranking-list"></div>
-                  </div>
-                </details>
-
-                <details class="habit-accordion" id="habit-acc-days">
-                  <summary>
-                    <div class="habit-accordion-title">Días hechos</div>
-                    <div id="habit-acc-days-meta" class="habit-accordion-meta">—</div>
-                  </summary>
-                  <div class="habit-accordion-body">
-
-                    <div id="habit-days-list" class="habit-ranking-list"></div>
-                  </div>
-                </details>
-
-                <details class="habit-accordion" id="habit-acc-consistency">
-                  <summary>
-                    <div class="habit-accordion-title">Consistencia</div>
-                    <div id="habit-acc-consistency-meta" class="habit-accordion-meta">—</div>
-                  </summary>
-                  <div class="habit-accordion-body">
-                    <div id="habit-ranking-consistency" class="habit-ranking-list"></div>
-                  </div>
-                </details>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <button id="habit-session-toggle" class="habit-fab">▶︎ Empezar sesión</button>
-
-        <div id="habit-session-overlay" class="habit-session-overlay hidden">
-          <div class="habit-session-pill">
-            <div>
-              <div class="habit-session-label">Sesión en curso</div>
-              <div id="habit-session-time" class="habit-session-time">00:00</div>
-            </div>
-            <button id="habit-session-stop" class="btn danger btn-compact">⏹ Parar</button>
-          </div>
-        </div>
-      </section>
-    </main>
-
-    <nav class="bottom-nav">
-      <button class="nav-btn nav-btn-active" data-view="view-books">Libros</button>
-      <button class="nav-btn" data-view="view-videos">Vídeos</button>
-      <button class="nav-btn" data-view="view-recipes">Recetas</button>
-      <button class="nav-btn" data-view="view-habits">Hábitos</button>
-    </nav>
-  </div>
-
-  <!-- MODAL LIBRO -->
-  <div id="book-modal-backdrop" class="modal-backdrop hidden">
-    <div class="modal">
-      <div class="modal-handle"></div>
-      <div class="modal-header">
-        <div id="book-modal-title" class="modal-title">Nuevo libro</div>
-        <button id="book-modal-close" class="icon-btn">✕</button>
+    <div class="media-head">
+      <div class="media-head-left">
+        <div class="media-title">Pantalla</div>
+        <div class="media-sub">Miles de títulos, cero lag.</div>
       </div>
 
-<form id="book-form" class="modal-form">
-  <input type="hidden" id="book-id" />
-
-  <div class="modal-scroll sheet-body">
-      <div class="sheet-section">
-        <div class="sheet-section-title">Detalles</div>
-
-      <div class="field">
-        <span class="field-label">ISBN</span>
-        <div class="isbn-input-row">
-          <input id="book-isbn" type="text" inputmode="numeric" placeholder="978..." autocomplete="off" />
-          <button type="button" id="book-isbn-search" class="btn ghost btn-compact">Buscar</button>
-        </div>
-        <div id="book-isbn-status" class="isbn-status">Autocompleta título, autor, año y páginas.</div>
-        <div id="book-isbn-results" class="isbn-results" style="display:none;"></div>
+      <div class="media-viewbar" role="group" aria-label="Vista">
+        <button class="media-viewbtn is-active" data-media-view="list" type="button">Lista</button>
+        <button class="media-viewbtn" data-media-view="charts" type="button">Gráficos</button>
+        <button class="media-viewbtn" data-media-view="map" type="button">Mapa</button>
       </div>
-
-      <label class="field">
-        <span class="field-label">Título</span>
-        <input id="book-title" type="text" required />
-      </label>
-
-      <label class="favorite-toggle">
-        <input id="book-favorite" type="checkbox" />
-        <span class="favorite-icon" aria-hidden="true">★</span>
-        <span>Marcar como favorito</span>
-      </label>
-
-      <div class="form-grid row-2">
-        <label class="field">
-          <span class="field-label">Autor</span>
-          <input id="book-author" type="text" />
-        </label>
-
-        <label class="field">
-          <span class="field-label">Año</span>
-          <input id="book-year" type="number" inputmode="numeric" />
-        </label>
-      </div>
-
-          <div class="form-grid row-2">
-            <label class="field">
-              <span class="field-label">Categoría</span>
-              <div class="field-inline">
-                <select id="book-genre" aria-label="Categoría">
-                  <option value="">—</option>
-                </select>
-                <button type="button" id="genre-remove-btn" class="icon-btn genre-remove-btn" aria-label="Eliminar categoría">−</button>
-                <button type="button" id="genre-add-btn" class="icon-btn genre-add-btn" aria-label="Añadir categoría">+</button>
-              </div>
-            </label>
-
-        <label class="field">
-          <span class="field-label">Idioma</span>
-          <input id="book-language" type="text" />
-        </label>
-      </div>
-      <label class="field">
-        <span class="field-label">País / origen</span>
-        <input id="book-country" type="text" list="country-options" placeholder="España, México, Estados Unidos..." />
-      </label>
     </div>
 
-    <div class="sheet-section">
-      <div class="sheet-section-title">Progreso</div>
+    <div class="media-compose">
+      <input id="media-title" class="filter-search-input" placeholder="Añadir título…" autocomplete="off" />
+      <button class="btn primary" id="media-add" type="button">Añadir</button>
 
-      <div class="form-grid row-2">
-        <label class="field">
-          <span class="field-label">N.º páginas</span>
-          <input id="book-pages" type="number" inputmode="numeric" min="1" required />
-        </label>
-
-        <label class="field">
-          <span class="field-label">Página actual</span>
-          <input id="book-current-page" type="number" inputmode="numeric" min="0" value="0" />
-        </label>
-      </div>
-
-      <label class="field">
-        <span class="field-label">Estado</span>
-        <select id="book-status">
-          <option value="reading">Leyendo</option>
-          <option value="planned">Pendiente</option>
-          <option value="finished">Terminado</option>
+      <div class="media-compose-row">
+        <select id="media-type">
+          <option value="movie">Peli</option>
+          <option value="series">Serie</option>
+          <option value="anime">Anime</option>
         </select>
-      </label>
-      <label class="field checkbox-field">
-        <div class="checkbox-field-row">
-          <div>
-            <div class="checkbox-field-title">Leído en el pasado</div>
-            <div class="checkbox-field-hint">No registrará fecha de finalización</div>
-          </div>
-          <input id="book-finished-past" type="checkbox" />
-        </div>
-      </label>
-    </div>
-  </div>
 
-  <div class="modal-footer sheet-footer">
-    <button type="button" id="book-modal-cancel" class="btn ghost">Cancelar</button>
-    <button type="submit" class="btn primary">Guardar</button>
-  </div>
-</form>
-    </div>
-  </div>
-
-  <!-- FICHA LIBRO -->
-  <div id="book-detail-backdrop" class="modal-backdrop hidden">
-    <div class="modal book-detail-modal">
-      <div class="modal-handle"></div>
-      <div class="modal-header">
-        <div id="book-detail-title" class="modal-title">Ficha del libro</div>
-        <button id="book-detail-close" class="icon-btn">✕</button>
+        <input id="media-country" list="country-options" placeholder="Origen (opcional)" autocomplete="off" />
       </div>
-      <div class="modal-body book-detail-body">
-        <div class="book-detail-top">
-          <label class="favorite-toggle">
-            <input id="book-detail-favorite" type="checkbox" />
-            <span class="favorite-icon" aria-hidden="true">★</span>
-            <span>Favorito</span>
-          </label>
-          <div id="book-detail-status" class="book-detail-status"></div>
-        </div>
 
-        <div class="spec-block compact">
-          <div class="spec-block-title">Datos rápidos</div>
-          <div class="spec-grid">
-            <div class="spec-item">
-              <span class="spec-label">Autor</span>
-              <div id="book-detail-author" class="spec-value">—</div>
-            </div>
-            <div class="spec-item">
-              <span class="spec-label">Año</span>
-              <div id="book-detail-year" class="spec-value">—</div>
-            </div>
-            <div class="spec-item">
-              <span class="spec-label">Siglo</span>
-              <div id="book-detail-century" class="spec-value">—</div>
-            </div>
-            <div class="spec-item">
-              <span class="spec-label">Género</span>
-              <div id="book-detail-genre" class="spec-value">—</div>
-            </div>
-            <div class="spec-item">
-              <span class="spec-label">Idioma</span>
-              <div id="book-detail-language" class="spec-value">—</div>
-            </div>
-            <div class="spec-item">
-              <span class="spec-label">País</span>
-              <div id="book-detail-country" class="spec-value">—</div>
-            </div>
-            <div class="spec-item">
-              <span class="spec-label">Páginas</span>
-              <div id="book-detail-pages" class="spec-value">—</div>
-            </div>
-            <div class="spec-item">
-              <span class="spec-label">Progreso</span>
-              <div id="book-detail-progress" class="spec-value">—</div>
-            </div>
-            <div class="spec-item">
-              <span class="spec-label">Finalizado</span>
-              <div id="book-detail-finished" class="spec-value">—</div>
-            </div>
-            <div class="spec-item spec-notes">
-              <span class="spec-label">Notas</span>
-              <div id="book-detail-notes" class="spec-value">Sin notas</div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer book-detail-footer sticky-footer">
-        <button type="button" id="book-detail-edit" class="btn primary btn-compact">Editar</button>
-        <button type="button" id="book-detail-close-btn" class="btn ghost">Cerrar</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL VÍDEO -->
-  <div id="video-modal-backdrop" class="modal-backdrop hidden">
-    <div class="modal">
-      <div class="modal-handle"></div>
-      <div class="modal-header">
-        <div id="video-modal-title" class="modal-title">Nuevo vídeo</div>
-        <button id="video-modal-close" class="icon-btn">✕</button>
-      </div>
-<form id="video-form" class="modal-form">
-  <input type="hidden" id="video-id" />
-
-  <div class="modal-scroll sheet-body">
-    <div class="sheet-section">
-      <div class="sheet-section-title">Básico</div>
-
-      <label class="field">
-        <span class="field-label">Título</span>
-        <input id="video-title" type="text" required />
-      </label>
-
-      <label class="field">
-        <span class="field-label">Palabras de guion <em class="hint">(objetivo 2000)</em></span>
-        <input id="video-script-words" type="number" min="0" inputmode="numeric" value="0" />
-      </label>
+      <input id="media-genres" placeholder="Géneros (coma) · acción, drama…" autocomplete="off" />
     </div>
 
-    <div class="sheet-section">
-      <div class="sheet-section-title">Duración</div>
-
-      <div class="form-grid row-2">
-        <label class="field">
-          <span class="field-label">Total</span>
-          <div class="time-split">
-            <input id="video-duration-min" class="time-input" type="number" min="0" inputmode="numeric" placeholder="min" />
-            <span class="time-sep">:</span>
-            <input id="video-duration-sec" class="time-input" type="number" min="0" max="59" inputmode="numeric" placeholder="seg" />
-          </div>
-        </label>
-
-        <label class="field">
-          <span class="field-label">Editado</span>
-          <div class="time-split">
-            <input id="video-edited-min" class="time-input" type="number" min="0" inputmode="numeric" placeholder="min" />
-            <span class="time-sep">:</span>
-            <input id="video-edited-sec" class="time-input" type="number" min="0" max="59" inputmode="numeric" placeholder="seg" />
-          </div>
-        </label>
-      </div>
-    </div>
-
-    <div class="sheet-section">
-      <div class="sheet-section-title">Plan</div>
-
-      <div class="form-grid row-2">
-        <label class="field">
-          <span class="field-label">Fecha propuesta</span>
-          <input id="video-publish-date" type="date" />
-        </label>
-
-        <label class="field">
-          <span class="field-label">Estado</span>
-          <select id="video-status">
-            <option value="in_progress">Curso</option>
-            <option value="planned">Planificado</option>
-            <option value="published">Publicado</option>
+    <div class="media-filters">
+      <div class="media-filter-row">
+        <input class="filter-search-input" id="media-search" type="search" placeholder="Buscar…" />
+        <label class="habit-select habit-select-compact" style="min-width:160px">
+          <span>Donut</span>
+          <select id="media-chart-selector">
+            <option value="type">Tipo</option>
+            <option value="genre">Género</option>
           </select>
         </label>
       </div>
-    </div>
-  </div>
 
-  <div class="modal-footer sheet-footer">
-    <button type="button" id="video-modal-cancel" class="btn ghost">Cancelar</button>
-    <button type="submit" class="btn primary">Guardar</button>
-  </div>
-</form>
-    </div>
-  </div>
-<!-- MODAL ASIGNAR TIEMPO A VÍDEO -->
-<div id="assign-work-backdrop" class="modal-backdrop hidden">
-  <div class="modal">
-    <div class="modal-header">
-      <div class="modal-title">¿En qué vídeo has trabajado?</div>
-      <button id="assign-work-close" class="icon-btn">✕</button>
+      <div class="media-type-pills" id="media-type-pills">
+        <button class="media-pill is-active" data-type="all" type="button">Todo</button>
+        <button class="media-pill" data-type="movie" type="button">Pelis</button>
+        <button class="media-pill" data-type="series" type="button">Series</button>
+        <button class="media-pill" data-type="anime" type="button">Anime</button>
+      </div>
     </div>
 
-    <div class="modal-body">
-      <div id="assign-work-summary" style="opacity:.75; margin-bottom:10px;"></div>
+    <section id="media-charts" class="media-chart-card" style="display:none">
+      <div class="media-chart-head">
+        <div>
+          <div class="media-chart-title">Distribución</div>
+          <div class="media-chart-sub">Top 12 (sin “otros”).</div>
+        </div>
+      </div>
+      <div class="media-donut-host" id="media-donut"></div>
+    </section>
 
-      <label class="field">
-        <span>Vídeo</span>
-        <select id="assign-work-select"></select>
-      </label>
-    </div>
+    <section id="media-map" class="media-geo" style="display:none">
+      <div class="geo-header">
+        <div>
+          <div class="geo-title">Mapa de pantalla</div>
+          <div class="geo-subtitle">Intensidad según títulos</div>
+        </div>
+      </div>
+      <div class="geo-map" id="media-world-map"></div>
+      <details class="geo-list" id="media-country-panel">
+        <summary class="geo-list-summary">Países y número de títulos</summary>
+        <div class="geo-list-body" id="media-country-list"></div>
+      </details>
+      <div class="media-geo-hint" id="media-map-hint" style="display:none"></div>
+    </section>
 
-    <div class="modal-footer">
-      <button type="button" id="assign-work-skip" class="btn ghost">No asignar</button>
-      <button type="button" id="assign-work-save" class="btn primary">Asignar</button>
-    </div>
+    <section id="media-list-card" class="media-list-card">
+      <div class="media-list-head">
+        <div class="media-list-title">Listado</div>
+        <div class="media-list-meta" id="media-count">0</div>
+      </div>
+
+      <div class="media-list" id="media-list">
+        <div class="media-list-spacer" id="media-list-spacer"></div>
+        <div class="media-list-items" id="media-list-items"></div>
+      </div>
+    </section>
+
   </div>
+</section>
+
+</main>
+<nav class="bottom-nav"><button class="nav-btn nav-btn-active" data-view="view-main">Inicio</button>
+<button class="nav-btn" data-view="view-books">Libros</button>
+<button class="nav-btn" data-view="view-videos">Vídeos</button>
+<button class="nav-btn" data-view="view-recipes">Recetas</button>
+<button class="nav-btn" data-view="view-habits">Hábitos</button>
+<button class="nav-btn" data-view="view-media">Pantalla</button>
+
+</nav>
 </div>
-
+<!-- MODAL LIBRO -->
+<div class="modal-backdrop hidden" id="book-modal-backdrop">
+<div class="modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="book-modal-title">Nuevo libro</div>
+<button class="icon-btn" id="book-modal-close">✕</button>
+</div>
+<form class="modal-form" id="book-form">
+<input id="book-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Detalles</div>
+<div class="field">
+<span class="field-label">ISBN</span>
+<div class="isbn-input-row">
+<input autocomplete="off" id="book-isbn" inputmode="numeric" placeholder="978..." type="text"/>
+<button class="btn ghost btn-compact" id="book-isbn-search" type="button">Buscar</button>
+</div>
+<div class="isbn-status" id="book-isbn-status">Autocompleta título, autor, año y páginas.</div>
+<div class="isbn-results" id="book-isbn-results" style="display:none;"></div>
+</div>
+<label class="field">
+<span class="field-label">Título</span>
+<input id="book-title" required="" type="text"/>
+</label>
+<label class="favorite-toggle">
+<input id="book-favorite" type="checkbox"/>
+<span aria-hidden="true" class="favorite-icon">★</span>
+<span>Marcar como favorito</span>
+</label>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Autor</span>
+<input id="book-author" type="text"/>
+</label>
+<label class="field">
+<span class="field-label">Año</span>
+<input id="book-year" inputmode="numeric" type="number"/>
+</label>
+</div>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Categoría</span>
+<div class="field-inline">
+<select aria-label="Categoría" id="book-genre">
+<option value="">—</option>
+</select>
+<button aria-label="Eliminar categoría" class="icon-btn genre-remove-btn" id="genre-remove-btn" type="button">−</button>
+<button aria-label="Añadir categoría" class="icon-btn genre-add-btn" id="genre-add-btn" type="button">+</button>
+</div>
+</label>
+<label class="field">
+<span class="field-label">Idioma</span>
+<input id="book-language" type="text"/>
+</label>
+</div>
+<label class="field">
+<span class="field-label">País / origen</span>
+<input id="book-country" list="country-options" placeholder="España, México, Estados Unidos..." type="text"/>
+</label>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Progreso</div>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">N.º páginas</span>
+<input id="book-pages" inputmode="numeric" min="1" required="" type="number"/>
+</label>
+<label class="field">
+<span class="field-label">Página actual</span>
+<input id="book-current-page" inputmode="numeric" min="0" type="number" value="0"/>
+</label>
+</div>
+<label class="field">
+<span class="field-label">Estado</span>
+<select id="book-status">
+<option value="reading">Leyendo</option>
+<option value="planned">Pendiente</option>
+<option value="finished">Terminado</option>
+</select>
+</label>
+<label class="field checkbox-field">
+<div class="checkbox-field-row">
+<div>
+<div class="checkbox-field-title">Leído en el pasado</div>
+<div class="checkbox-field-hint">No registrará fecha de finalización</div>
+</div>
+<input id="book-finished-past" type="checkbox"/>
+</div>
+</label>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="book-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+<!-- FICHA LIBRO -->
+<div class="modal-backdrop hidden" id="book-detail-backdrop">
+<div class="modal book-detail-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="book-detail-title">Ficha del libro</div>
+<button class="icon-btn" id="book-detail-close">✕</button>
+</div>
+<div class="modal-body book-detail-body">
+<div class="book-detail-top">
+<label class="favorite-toggle">
+<input id="book-detail-favorite" type="checkbox"/>
+<span aria-hidden="true" class="favorite-icon">★</span>
+<span>Favorito</span>
+</label>
+<div class="book-detail-status" id="book-detail-status"></div>
+</div>
+<div class="spec-block compact">
+<div class="spec-block-title">Datos rápidos</div>
+<div class="spec-grid">
+<div class="spec-item">
+<span class="spec-label">Autor</span>
+<div class="spec-value" id="book-detail-author">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Año</span>
+<div class="spec-value" id="book-detail-year">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Siglo</span>
+<div class="spec-value" id="book-detail-century">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Género</span>
+<div class="spec-value" id="book-detail-genre">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Idioma</span>
+<div class="spec-value" id="book-detail-language">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">País</span>
+<div class="spec-value" id="book-detail-country">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Páginas</span>
+<div class="spec-value" id="book-detail-pages">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Progreso</span>
+<div class="spec-value" id="book-detail-progress">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Finalizado</span>
+<div class="spec-value" id="book-detail-finished">—</div>
+</div>
+<div class="spec-item spec-notes">
+<span class="spec-label">Notas</span>
+<div class="spec-value" id="book-detail-notes">Sin notas</div>
+</div>
+</div>
+</div>
+</div>
+<div class="modal-footer book-detail-footer sticky-footer">
+<button class="btn primary btn-compact" id="book-detail-edit" type="button">Editar</button>
+<button class="btn ghost" id="book-detail-close-btn" type="button">Cerrar</button>
+</div>
+</div>
+</div>
+<!-- MODAL VÍDEO -->
+<div class="modal-backdrop hidden" id="video-modal-backdrop">
+<div class="modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="video-modal-title">Nuevo vídeo</div>
+<button class="icon-btn" id="video-modal-close">✕</button>
+</div>
+<form class="modal-form" id="video-form">
+<input id="video-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Básico</div>
+<label class="field">
+<span class="field-label">Título</span>
+<input id="video-title" required="" type="text"/>
+</label>
+<label class="field">
+<span class="field-label">Palabras de guion <em class="hint">(objetivo 2000)</em></span>
+<input id="video-script-words" inputmode="numeric" min="0" type="number" value="0"/>
+</label>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Duración</div>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Total</span>
+<div class="time-split">
+<input class="time-input" id="video-duration-min" inputmode="numeric" min="0" placeholder="min" type="number"/>
+<span class="time-sep">:</span>
+<input class="time-input" id="video-duration-sec" inputmode="numeric" max="59" min="0" placeholder="seg" type="number"/>
+</div>
+</label>
+<label class="field">
+<span class="field-label">Editado</span>
+<div class="time-split">
+<input class="time-input" id="video-edited-min" inputmode="numeric" min="0" placeholder="min" type="number"/>
+<span class="time-sep">:</span>
+<input class="time-input" id="video-edited-sec" inputmode="numeric" max="59" min="0" placeholder="seg" type="number"/>
+</div>
+</label>
+</div>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Plan</div>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Fecha propuesta</span>
+<input id="video-publish-date" type="date"/>
+</label>
+<label class="field">
+<span class="field-label">Estado</span>
+<select id="video-status">
+<option value="in_progress">Curso</option>
+<option value="planned">Planificado</option>
+<option value="published">Publicado</option>
+</select>
+</label>
+</div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="video-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+<!-- MODAL ASIGNAR TIEMPO A VÍDEO -->
+<div class="modal-backdrop hidden" id="assign-work-backdrop">
+<div class="modal">
+<div class="modal-header">
+<div class="modal-title">¿En qué vídeo has trabajado?</div>
+<button class="icon-btn" id="assign-work-close">✕</button>
+</div>
+<div class="modal-body">
+<div id="assign-work-summary" style="opacity:.75; margin-bottom:10px;"></div>
+<label class="field">
+<span>Vídeo</span>
+<select id="assign-work-select"></select>
+</label>
+</div>
+<div class="modal-footer">
+<button class="btn ghost" id="assign-work-skip" type="button">No asignar</button>
+<button class="btn primary" id="assign-work-save" type="button">Asignar</button>
+</div>
+</div>
+</div>
 <!-- MODAL RECETA -->
-<div id="recipe-modal-backdrop" class="modal-backdrop hidden">
-  <div class="modal">
-    <div class="modal-handle"></div>
-    <div class="modal-header">
-      <div id="recipe-modal-title" class="modal-title">Nueva receta</div>
-      <button id="recipe-modal-close" class="icon-btn">✕</button>
-    </div>
-
-    <form id="recipe-form" class="modal-form">
-      <input type="hidden" id="recipe-id" />
-
-      <div class="modal-scroll sheet-body">
-        <div class="sheet-section">
-          <div class="sheet-section-title">Datos clave</div>
+<div class="modal-backdrop hidden" id="recipe-modal-backdrop">
+<div class="modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="recipe-modal-title">Nueva receta</div>
+<button class="icon-btn" id="recipe-modal-close">✕</button>
+</div>
+<form class="modal-form" id="recipe-form">
+<input id="recipe-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Datos clave</div>
 <div class="recipe-import">
-  <button type="button" id="recipe-import-toggle" class="btn ghost btn-compact">
+<button class="btn ghost btn-compact" id="recipe-import-toggle" type="button">
     Importar
   </button>
-
-  <div id="recipe-import-box" class="recipe-import-box hidden">
-    <textarea
-      id="recipe-import-text"
-      class="builder-textarea recipe-import-text"
-      rows="7"
-      placeholder="Pega aquí el bloque RECETA_V1… (desde ChatGPT)"></textarea>
-
-    <div class="recipe-import-actions">
-      <button type="button" id="recipe-import-btn" class="btn primary btn-compact">Aplicar</button>
-      <button type="button" id="recipe-import-clear" class="btn ghost btn-compact">Limpiar</button>
-      <div id="recipe-import-status" class="recipe-import-status"></div>
-    </div>
-  </div>
+<div class="recipe-import-box hidden" id="recipe-import-box">
+<textarea class="builder-textarea recipe-import-text" id="recipe-import-text" placeholder="Pega aquí el bloque RECETA_V1… (desde ChatGPT)" rows="7"></textarea>
+<div class="recipe-import-actions">
+<button class="btn primary btn-compact" id="recipe-import-btn" type="button">Aplicar</button>
+<button class="btn ghost btn-compact" id="recipe-import-clear" type="button">Limpiar</button>
+<div class="recipe-import-status" id="recipe-import-status"></div>
 </div>
-
-          <label class="field">
-            <span class="field-label">Nombre del plato</span>
-            <input id="recipe-name" type="text" required />
-          </label>
-
-          <div class="form-grid row-2">
-            <label class="field">
-              <span class="field-label">Tipo de comida</span>
-              <select id="recipe-meal" required>
-                <option value="desayuno">Desayuno</option>
-                <option value="comida">Comida</option>
-                <option value="cena">Cena</option>
-                <option value="snack">Snack</option>
-              </select>
-            </label>
-
-            <label class="field">
-              <span class="field-label">Saludable</span>
-              <select id="recipe-health" required>
-                <option value="sana">Sana</option>
-                <option value="equilibrada">Equilibrada</option>
-                <option value="insana">Insana</option>
-              </select>
-            </label>
-          </div>
-
-          <label class="field">
-            <span class="field-label">Etiquetas (separadas por coma)</span>
-            <input id="recipe-tags" type="text" placeholder="rápida, horno, pasta..." />
-          </label>
-          <label class="field">
-            <span class="field-label">País / origen</span>
-            <input id="recipe-country" type="text" list="country-options" placeholder="Italia, Perú, Estados Unidos..." />
-          </label>
-
-          <div class="form-grid row-2">
-            <label class="field">
-              <span class="field-label">Valoración</span>
-              <input id="recipe-rating" type="number" min="0" max="5" step="0.5" value="4" />
-            </label>
-            <label class="field">
-              <span class="field-label">Última vez cocinada</span>
-              <input id="recipe-last-cooked" type="date" />
-            </label>
-          </div>
-
-          <label class="field">
-            <span class="field-label">Notas</span>
-            <textarea id="recipe-notes" rows="3" placeholder="Notas rápidas, truco o acompañamiento..."></textarea>
-          </label>
-
-          <div class="form-grid row-2">
-            <label class="favorite-toggle">
-              <input id="recipe-favorite" type="checkbox" />
-              <span class="favorite-icon" aria-hidden="true">★</span>
-              <span>Marcar como favorita</span>
-            </label>
-
-            <label class="laura-check">
-              <input id="recipe-laura" type="checkbox" />
-              <span class="laura-check-mark" aria-hidden="true"></span>
-              <span>Aprobación de Laura</span>
-            </label>
-          </div>
-        </div>
-
-        <div class="sheet-section">
-          <div class="sheet-section-title">Receta editable</div>
-          <p class="section-hint">Organiza ingredientes y pasos para que aparezcan en el recetario a pantalla completa.</p>
-
-          <div class="recipe-builder-grid">
-            <div class="recipe-builder-column">
-              <div class="builder-header">
-                <div>
-                  <div class="builder-title">Ingredientes</div>
-                  <div class="builder-subtitle">Añade tantos como necesites</div>
-                </div>
-                <button type="button" id="recipe-add-ingredient" class="btn ghost btn-compact">+ Ingrediente</button>
-              </div>
-              <div id="recipe-ingredients-list" class="recipe-ingredients-list"></div>
-            </div>
-
-            <div class="recipe-builder-column">
-              <div class="builder-header">
-                <div>
-                  <div class="builder-title">Pasos</div>
-                  <div class="builder-subtitle">Título y descripción para cada paso</div>
-                </div>
-                <button type="button" id="recipe-add-step" class="btn ghost btn-compact">+ Paso</button>
-              </div>
-              <div id="recipe-steps-list" class="recipe-steps-list"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="modal-footer sheet-footer">
-        <button type="button" id="recipe-delete" class="btn ghost danger footer-start">Eliminar</button>
-        <button type="button" id="recipe-modal-cancel" class="btn ghost">Cancelar</button>
-        <button type="submit" class="btn primary">Guardar</button>
-      </div>
-    </form>
-  </div>
 </div>
-
+</div>
+<label class="field">
+<span class="field-label">Nombre del plato</span>
+<input id="recipe-name" required="" type="text"/>
+</label>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Tipo de comida</span>
+<select id="recipe-meal" required="">
+<option value="desayuno">Desayuno</option>
+<option value="comida">Comida</option>
+<option value="cena">Cena</option>
+<option value="snack">Snack</option>
+</select>
+</label>
+<label class="field">
+<span class="field-label">Saludable</span>
+<select id="recipe-health" required="">
+<option value="sana">Sana</option>
+<option value="equilibrada">Equilibrada</option>
+<option value="insana">Insana</option>
+</select>
+</label>
+</div>
+<label class="field">
+<span class="field-label">Etiquetas (separadas por coma)</span>
+<input id="recipe-tags" placeholder="rápida, horno, pasta..." type="text"/>
+</label>
+<label class="field">
+<span class="field-label">País / origen</span>
+<input id="recipe-country" list="country-options" placeholder="Italia, Perú, Estados Unidos..." type="text"/>
+</label>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Valoración</span>
+<input id="recipe-rating" max="5" min="0" step="0.5" type="number" value="4"/>
+</label>
+<label class="field">
+<span class="field-label">Última vez cocinada</span>
+<input id="recipe-last-cooked" type="date"/>
+</label>
+</div>
+<label class="field">
+<span class="field-label">Notas</span>
+<textarea id="recipe-notes" placeholder="Notas rápidas, truco o acompañamiento..." rows="3"></textarea>
+</label>
+<div class="form-grid row-2">
+<label class="favorite-toggle">
+<input id="recipe-favorite" type="checkbox"/>
+<span aria-hidden="true" class="favorite-icon">★</span>
+<span>Marcar como favorita</span>
+</label>
+<label class="laura-check">
+<input id="recipe-laura" type="checkbox"/>
+<span aria-hidden="true" class="laura-check-mark"></span>
+<span>Aprobación de Laura</span>
+</label>
+</div>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Receta editable</div>
+<p class="section-hint">Organiza ingredientes y pasos para que aparezcan en el recetario a pantalla completa.</p>
+<div class="recipe-builder-grid">
+<div class="recipe-builder-column">
+<div class="builder-header">
+<div>
+<div class="builder-title">Ingredientes</div>
+<div class="builder-subtitle">Añade tantos como necesites</div>
+</div>
+<button class="btn ghost btn-compact" id="recipe-add-ingredient" type="button">+ Ingrediente</button>
+</div>
+<div class="recipe-ingredients-list" id="recipe-ingredients-list"></div>
+</div>
+<div class="recipe-builder-column">
+<div class="builder-header">
+<div>
+<div class="builder-title">Pasos</div>
+<div class="builder-subtitle">Título y descripción para cada paso</div>
+</div>
+<button class="btn ghost btn-compact" id="recipe-add-step" type="button">+ Paso</button>
+</div>
+<div class="recipe-steps-list" id="recipe-steps-list"></div>
+</div>
+</div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost danger footer-start" id="recipe-delete" type="button">Eliminar</button>
+<button class="btn ghost" id="recipe-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
 <!-- RECETARIO A PANTALLA COMPLETA -->
-<div id="recipe-detail-backdrop" class="recipe-detail-backdrop hidden">
-  <article class="recipe-detail-card" role="dialog" aria-modal="true">
-    <header class="recipe-detail-header">
-      <div class="recipe-detail-top">
-        <div class="recipe-detail-headings">
-          <h2 id="recipe-detail-title" class="recipe-detail-title">Receta</h2>
-          <div class="recipe-detail-chips">
-            <div id="recipe-detail-meal" class="recipe-detail-chip"></div>
-            <div id="recipe-detail-tags" class="recipe-detail-tags"></div>
-          </div>
-        </div>
-        <div class="recipe-detail-actions">
-          <button id="recipe-detail-close" class="icon-btn icon-btn-large" aria-label="Cerrar">✕</button>
-        </div>
-      </div>
-      <div class="recipe-detail-specs">
-        <div class="spec-block">
-          <div class="spec-block-title">Datos rápidos</div>
-          <div id="recipe-detail-meta" class="spec-grid"></div>
-        </div>
-        <div class="spec-block">
-          <div class="spec-block-title">Datos clave</div>
-          <div id="recipe-detail-grid" class="spec-grid spec-grid-secondary"></div>
-        </div>
-      </div>
-    </header>
-
-    <div class="recipe-detail-body">
-      <div class="recipe-detail-tabbar" id="recipe-detail-tabbar" role="tablist" aria-label="Contenido de la receta">
-        <button type="button" class="recipe-tab is-active" data-target="ingredients" role="tab" aria-selected="true">Ingredientes</button>
-        <button type="button" class="recipe-tab" data-target="steps" role="tab" aria-selected="false">Pasos</button>
-      </div>
-
-      <section class="recipe-detail-section recipe-detail-panel is-active" data-panel="ingredients" role="tabpanel">
-        <div class="section-subtitle">Marca al preparar</div>
-        <div id="recipe-detail-ingredients" class="recipe-detail-ingredients"></div>
-      </section>
-
-      <section class="recipe-detail-section recipe-detail-panel" data-panel="steps" role="tabpanel" aria-hidden="true">
-        <div class="section-subtitle">Solo una lista visible</div>
-        <div id="recipe-detail-steps" class="recipe-detail-steps"></div>
-      </section>
-
-      <section id="recipe-detail-notes-wrapper" class="recipe-detail-section recipe-notes-section" style="display:none;">
-        <div class="spec-block-title">Notas</div>
-        <p id="recipe-detail-notes" class="recipe-detail-notes"></p>
-      </section>
-    </div>
-
-    <div class="recipe-detail-actions-bar">
-      <button id="recipe-detail-edit" class="btn primary btn-compact">Editar</button>
-  <button id="recipe-detail-delete" class="btn ghost danger btn-compact">Eliminar</button>
-  <button id="recipe-detail-close-bottom" class="btn ghost">Cerrar</button>
+<div class="recipe-detail-backdrop hidden" id="recipe-detail-backdrop">
+<article aria-modal="true" class="recipe-detail-card" role="dialog">
+<header class="recipe-detail-header">
+<div class="recipe-detail-top">
+<div class="recipe-detail-headings">
+<h2 class="recipe-detail-title" id="recipe-detail-title">Receta</h2>
+<div class="recipe-detail-chips">
+<div class="recipe-detail-chip" id="recipe-detail-meal"></div>
+<div class="recipe-detail-tags" id="recipe-detail-tags"></div>
 </div>
-  </article>
 </div>
-
+<div class="recipe-detail-actions">
+<button aria-label="Seguimiento" class="icon-btn icon-btn-large recipe-bookmark-btn" id="recipe-detail-bookmark">🔖</button>
+<button aria-label="Cerrar" class="icon-btn icon-btn-large" id="recipe-detail-close">✕</button>
+</div>
+</div>
+<div class="recipe-detail-specs">
+<div class="spec-block">
+<div class="spec-block-title">Datos rápidos</div>
+<div class="spec-grid" id="recipe-detail-meta"></div>
+</div>
+<div class="spec-block">
+<div class="spec-block-title">Datos clave</div>
+<div class="spec-grid spec-grid-secondary" id="recipe-detail-grid"></div>
+</div>
+</div>
+</header>
+<div class="recipe-detail-body">
+<div aria-label="Contenido de la receta" class="recipe-detail-tabbar" id="recipe-detail-tabbar" role="tablist">
+<button aria-selected="true" class="recipe-tab is-active" data-target="ingredients" role="tab" type="button">Ingredientes</button>
+<button aria-selected="false" class="recipe-tab" data-target="steps" role="tab" type="button">Pasos</button>
+</div>
+<section class="recipe-detail-section recipe-detail-panel is-active" data-panel="ingredients" role="tabpanel">
+<div class="section-subtitle">Marca al preparar</div>
+<div class="recipe-detail-ingredients" id="recipe-detail-ingredients"></div>
+</section>
+<section aria-hidden="true" class="recipe-detail-section recipe-detail-panel" data-panel="steps" role="tabpanel">
+<div class="section-subtitle">Solo una lista visible</div>
+<div class="recipe-detail-steps" id="recipe-detail-steps"></div>
+</section>
+<section class="recipe-detail-section recipe-notes-section" id="recipe-detail-notes-wrapper" style="display:none;">
+<div class="spec-block-title">Notas</div>
+<p class="recipe-detail-notes" id="recipe-detail-notes"></p>
+</section>
+</div>
+<div class="recipe-detail-actions-bar">
+<button class="btn primary btn-compact" id="recipe-detail-edit">Editar</button>
+<button class="btn ghost danger btn-compact" id="recipe-detail-delete">Eliminar</button>
+<button class="btn ghost" id="recipe-detail-close-bottom">Cerrar</button>
+</div>
+</article>
+</div>
 <!-- MODAL HÁBITO -->
-<div id="habit-modal-backdrop" class="modal-backdrop hidden">
-  <div class="modal habit-modal">
-    <div class="modal-handle"></div>
-    <div class="modal-header">
-      <div id="habit-modal-title" class="modal-title">Nuevo hábito</div>
-      <button id="habit-modal-close" class="icon-btn">✕</button>
-    </div>
-
-    <form id="habit-form" class="modal-form">
-      <input type="hidden" id="habit-id" />
-
-      <div class="modal-scroll sheet-body">
-        <div class="sheet-section">
-          <div class="sheet-section-title">Detalles</div>
-
-          <label class="field">
-            <span class="field-label">Nombre</span>
-            <input id="habit-name" type="text" required />
-          </label>
-
-          <label class="field">
-            <span class="field-label">Emoji/Icono</span>
-            <input id="habit-emoji" type="text" inputmode="text" placeholder="💪" maxlength="4" />
-          </label>
-
-          <label class="field">
-            <span class="field-label">Color</span>
-            <input id="habit-color" type="color" value="#7f5dff" />
-          </label>
-        </div>
-
-        <div class="sheet-section">
-          <div class="sheet-section-title">Objetivo</div>
-          <div class="field">
-            <span class="field-label">Tipo</span>
-            <div class="pill-row">
-              <label class="toggle-pill">
-                <input type="radio" name="habit-goal" value="check" checked />
-                <span>Check</span>
-              </label>
-              <label class="toggle-pill">
-                <input type="radio" name="habit-goal" value="time" />
-                <span>Tiempo</span>
-              </label>
-              <label class="toggle-pill">
-                <input type="radio" name="habit-goal" value="count" />
-                <span>Conteo</span>
-              </label>
-            </div>
-          </div>
-
-          <label id="habit-target-minutes-wrap" class="field">
-            <span class="field-label">Minutos objetivo (opcional)</span>
-            <input id="habit-target-minutes" type="number" min="0" placeholder="25" inputmode="numeric" />
-          </label>
-        </div>
-
-        <div class="sheet-section">
-          <div class="sheet-section-title">Frecuencia</div>
-          <div class="pill-row">
-            <label class="toggle-pill">
-              <input type="radio" name="habit-schedule" value="daily" checked />
-              <span>Cada día</span>
-            </label>
-            <label class="toggle-pill">
-              <input type="radio" name="habit-schedule" value="days" />
-              <span>Días concretos</span>
-            </label>
-          </div>
-
-          <div class="habit-days-selector" id="habit-days-selector">
-            <button type="button" data-day="1">L</button>
-            <button type="button" data-day="2">M</button>
-            <button type="button" data-day="3">X</button>
-            <button type="button" data-day="4">J</button>
-            <button type="button" data-day="5">V</button>
-            <button type="button" data-day="6">S</button>
-            <button type="button" data-day="0">D</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="modal-footer sheet-footer">
-        <button type="button" id="habit-delete" class="btn ghost danger footer-start">Eliminar hábito</button>
-        <button type="button" id="habit-modal-cancel" class="btn ghost">Cancelar</button>
-        <button type="submit" class="btn primary">Guardar</button>
-      </div>
-    </form>
-  </div>
+<div class="modal-backdrop hidden" id="habit-modal-backdrop">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="habit-modal-title">Nuevo hábito</div>
+<button class="icon-btn" id="habit-modal-close">✕</button>
 </div>
-
+<form class="modal-form" id="habit-form">
+<input id="habit-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Detalles</div>
+<label class="field">
+<span class="field-label">Nombre</span>
+<input id="habit-name" required="" type="text"/>
+</label>
+<label class="field">
+<span class="field-label">Emoji/Icono</span>
+<input id="habit-emoji" inputmode="text" maxlength="4" placeholder="💪" type="text"/>
+</label>
+<label class="field">
+<span class="field-label">Color</span>
+<input id="habit-color" type="color" value="#7f5dff"/>
+</label>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Objetivo</div>
+<div class="field">
+<span class="field-label">Tipo</span>
+<div class="pill-row">
+<label class="toggle-pill">
+<input checked="" name="habit-goal" type="radio" value="check"/>
+<span>Check</span>
+</label>
+<label class="toggle-pill">
+<input name="habit-goal" type="radio" value="time"/>
+<span>Tiempo</span>
+</label>
+<label class="toggle-pill">
+<input name="habit-goal" type="radio" value="count"/>
+<span>Conteo</span>
+</label>
+</div>
+</div>
+<label class="field" id="habit-target-minutes-wrap">
+<span class="field-label">Minutos objetivo (opcional)</span>
+<input id="habit-target-minutes" inputmode="numeric" min="0" placeholder="25" type="number"/>
+</label>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Frecuencia</div>
+<div class="pill-row">
+<label class="toggle-pill">
+<input checked="" name="habit-schedule" type="radio" value="daily"/>
+<span>Cada día</span>
+</label>
+<label class="toggle-pill">
+<input name="habit-schedule" type="radio" value="days"/>
+<span>Días concretos</span>
+</label>
+</div>
+<div class="habit-days-selector" id="habit-days-selector">
+<button data-day="1" type="button">L</button>
+<button data-day="2" type="button">M</button>
+<button data-day="3" type="button">X</button>
+<button data-day="4" type="button">J</button>
+<button data-day="5" type="button">V</button>
+<button data-day="6" type="button">S</button>
+<button data-day="0" type="button">D</button>
+</div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost danger footer-start" id="habit-delete" type="button">Eliminar hábito</button>
+<button class="btn ghost" id="habit-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
 <!-- MODAL ASIGNAR SESIÓN -->
-<div id="habit-session-modal" class="modal-backdrop hidden">
-  <div class="modal habit-session-modal">
-    <div class="modal-handle"></div>
-    <div class="modal-header">
-      <div class="modal-title">¿A qué hábito asignas esta sesión?</div>
-      <button id="habit-session-close" class="icon-btn">✕</button>
-    </div>
-    <div class="modal-scroll sheet-body">
-      <div class="field">
-        <span class="field-label">Buscar</span>
-        <input id="habit-session-search" type="search" placeholder="Nombre del hábito" />
-      </div>
-      <div id="habit-session-last" class="habit-session-last" style="display:none;"></div>
-      <div id="habit-session-list" class="habit-session-list"></div>
-    </div>
-    <div class="modal-footer sheet-footer">
-      <button id="habit-session-cancel" class="btn ghost">Cancelar</button>
-    </div>
-  </div>
+<div class="modal-backdrop hidden" id="habit-session-modal">
+<div class="modal habit-session-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title">¿A qué hábito asignas esta sesión?</div>
+<button class="icon-btn" id="habit-session-close">✕</button>
 </div>
-
+<div class="modal-scroll sheet-body">
+<div class="field">
+<span class="field-label">Buscar</span>
+<input id="habit-session-search" placeholder="Nombre del hábito" type="search"/>
+</div>
+<div class="habit-session-last" id="habit-session-last" style="display:none;"></div>
+<div class="habit-session-list" id="habit-session-list"></div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-session-cancel">Cancelar</button>
+</div>
+</div>
+</div>
 <!-- MODAL TIEMPO MANUAL -->
-<div id="habit-manual-modal" class="modal-backdrop hidden">
-  <div class="modal habit-modal">
-    <div class="modal-handle"></div>
-    <div class="modal-header">
-      <div class="modal-title">Añadir tiempo</div>
-      <button id="habit-manual-close" class="icon-btn">✕</button>
-    </div>
-    <form id="habit-manual-form" class="modal-form">
-      <div class="modal-scroll sheet-body">
-        <div class="sheet-section">
-          <div class="sheet-section-title">Sesión manual</div>
-
-          <label class="field">
-            <span class="field-label">Hábito</span>
-            <select id="habit-manual-habit" required></select>
-          </label>
-
-          <label class="field">
-            <span class="field-label">Minutos</span>
-            <input id="habit-manual-minutes" type="number" min="1" inputmode="numeric" placeholder="25" required />
-          </label>
-
-          <label class="field">
-            <span class="field-label">Fecha</span>
-            <input id="habit-manual-date" type="date" />
-          </label>
-        </div>
-      </div>
-
-      <div class="modal-footer sheet-footer">
-        <button type="button" id="habit-manual-cancel" class="btn ghost">Cancelar</button>
-        <button type="submit" class="btn primary">Guardar</button>
-      </div>
-    </form>
-  </div>
+<div class="modal-backdrop hidden" id="habit-manual-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title">Añadir tiempo</div>
+<button class="icon-btn" id="habit-manual-close">✕</button>
 </div>
-
+<form class="modal-form" id="habit-manual-form">
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Sesión manual</div>
+<label class="field">
+<span class="field-label">Hábito</span>
+<select id="habit-manual-habit" required=""></select>
+</label>
+<label class="field">
+<span class="field-label">Minutos</span>
+<input id="habit-manual-minutes" inputmode="numeric" min="1" placeholder="25" required="" type="number"/>
+</label>
+<label class="field">
+<span class="field-label">Fecha</span>
+<input id="habit-manual-date" type="date"/>
+</label>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-manual-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
 <!-- MODAL EDITAR REGISTROS -->
-<div id="habit-entry-modal-backdrop" class="modal-backdrop hidden">
-  <div class="modal habit-modal">
-    <div class="modal-handle"></div>
-    <div class="modal-header">
-      <div class="modal-title">Editar registros</div>
-      <button id="habit-entry-close" class="icon-btn">✕</button>
-    </div>
-
-    <form id="habit-entry-form" class="modal-form">
-      <div class="modal-scroll sheet-body">
-        <div class="sheet-section">
-          <div class="sheet-section-title">Día</div>
-
-          <label class="field">
-            <span class="field-label">Hábito</span>
-            <select id="habit-entry-habit" required></select>
-          </label>
-
-          <label class="field">
-            <span class="field-label">Fecha</span>
-            <input id="habit-entry-date" type="date" required />
-          </label>
-
-          <div id="habit-entry-check-wrap">
-            <label class="field">
-              <span class="field-label">Check</span>
-              <input id="habit-entry-check" type="checkbox" />
-            </label>
-          </div>
-
-          <div id="habit-entry-count-wrap" style="display:none;">
-            <div class="field">
-              <span class="field-label">Conteo</span>
-              <div class="pill-row">
-                <button id="habit-entry-count-minus" type="button" class="icon-btn">−</button>
-                <input id="habit-entry-count" type="number" min="0" value="0" inputmode="numeric" />
-                <button id="habit-entry-count-plus" type="button" class="icon-btn">+</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="sheet-section">
-          <div class="sheet-section-title">Sesiones (tiempo)</div>
-          <div id="habit-entry-sessions"></div>
-          <div class="hint">Puedes ajustar minutos o borrar sesiones. Para añadir una nueva, usa “Añadir tiempo”.</div>
-        </div>
-      </div>
-
-      <div class="modal-footer sheet-footer">
-        <button type="button" id="habit-entry-cancel" class="btn ghost">Cancelar</button>
-        <button type="submit" class="btn primary">Guardar</button>
-      </div>
-    </form>
-  </div>
+<div class="modal-backdrop hidden" id="habit-entry-modal-backdrop">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title">Editar registros</div>
+<button class="icon-btn" id="habit-entry-close">✕</button>
 </div>
-
+<form class="modal-form" id="habit-entry-form">
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Día</div>
+<label class="field">
+<span class="field-label">Hábito</span>
+<select id="habit-entry-habit" required=""></select>
+</label>
+<label class="field">
+<span class="field-label">Fecha</span>
+<input id="habit-entry-date" required="" type="date"/>
+</label>
+<div id="habit-entry-check-wrap">
+<label class="field">
+<span class="field-label">Check</span>
+<input id="habit-entry-check" type="checkbox"/>
+</label>
+</div>
+<div id="habit-entry-count-wrap" style="display:none;">
+<div class="field">
+<span class="field-label">Conteo</span>
+<div class="pill-row">
+<button class="icon-btn" id="habit-entry-count-minus" type="button">−</button>
+<input id="habit-entry-count" inputmode="numeric" min="0" type="number" value="0"/>
+<button class="icon-btn" id="habit-entry-count-plus" type="button">+</button>
+</div>
+</div>
+</div>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Sesiones (tiempo)</div>
+<div id="habit-entry-sessions"></div>
+<div class="hint">Puedes ajustar minutos o borrar sesiones. Para añadir una nueva, usa “Añadir tiempo”.</div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-entry-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
 <!-- CONFIRMAR ELIMINACIÓN HÁBITO -->
-<div id="habit-delete-confirm" class="modal-backdrop hidden">
-  <div class="modal habit-modal">
-    <div class="modal-handle"></div>
-    <div class="modal-header">
-      <div class="modal-title">Eliminar hábito</div>
-      <button id="habit-delete-close" class="icon-btn">✕</button>
-    </div>
-    <div class="modal-body sheet-body">
-      <p>Vas a archivar el hábito <strong id="habit-delete-name"></strong>. Dejará de mostrarse y su actividad no contará en los reportes.</p>
-      <div class="warning-text">Esta acción se puede revertir editando el hábito más adelante.</div>
-    </div>
-    <div class="modal-footer sheet-footer">
-      <button type="button" id="habit-delete-cancel" class="btn ghost">Cancelar</button>
-      <button type="button" id="habit-delete-confirm-btn" class="btn danger">Eliminar</button>
-    </div>
-  </div>
+<div class="modal-backdrop hidden" id="habit-delete-confirm">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title">Eliminar hábito</div>
+<button class="icon-btn" id="habit-delete-close">✕</button>
 </div>
+<div class="modal-body sheet-body">
+<p>Vas a archivar el hábito <strong id="habit-delete-name"></strong>. Dejará de mostrarse y su actividad no contará en los reportes.</p>
+<div class="warning-text">Esta acción se puede revertir editando el hábito más adelante.</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-delete-cancel" type="button">Cancelar</button>
+<button class="btn danger" id="habit-delete-confirm-btn" type="button">Eliminar</button>
+</div>
+</div>
+</div>
+<script src="scripts/main.js" type="module"></script>
+<script src="scripts/videos.js" type="module"></script>
+<script src="scripts/recipes.js" type="module"></script>
+<script src="scripts/habits.js" type="module"></script>
+<script src="scripts/dashboard.js" type="module"></script>
+<script src="scripts/media.js" type="module"></script>
 
-  <script type="module" src="scripts/main.js"></script>
-  <script type="module" src="scripts/videos.js"></script>
-  <script type="module" src="scripts/recipes.js"></script>
-  <script type="module" src="scripts/habits.js"></script>
-  <datalist id="country-options"></datalist>
+<datalist id="country-options"></datalist>
 </body>
 </html>

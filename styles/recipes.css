@@ -729,3 +729,13 @@
   gap:6px;
   justify-content:center;
 }
+
+/* === Recipe tracking bookmark (v3) === */
+.recipe-bookmark-btn{
+  opacity: .72;
+  transform: translateY(-1px);
+}
+.recipe-bookmark-btn.active{
+  opacity: 1;
+  filter: drop-shadow(0 10px 14px rgba(0,0,0,0.35));
+}

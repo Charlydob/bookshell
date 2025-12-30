@@ -251,7 +251,6 @@
 }
 
 
-
 .watchlist-subtitle{
   font-size: 13px;
   color: var(--txt-soft);
@@ -493,10 +492,7 @@
   padding: 0px;
   font-size: 8px;
 }
-.btn{
-  padding: 6px;
-}
-
+.book-card-buttons .btn{ padding: 6px; }
 /* Stats */
 
 .stats-wrapper {

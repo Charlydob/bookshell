@@ -270,6 +270,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   const $recipeDetailTabs = document.querySelectorAll(".recipe-tab");
   const $recipeDetailPanels = document.querySelectorAll(".recipe-detail-panel");
   const $recipeDetailCloseBottom = document.getElementById("recipe-detail-close-bottom");
+  const $recipeDetailBookmark = document.getElementById("recipe-detail-bookmark");
 
   let recipes = loadRecipes();
   let detailRecipeId = null;
@@ -1443,10 +1444,13 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
   }
 
   function updateRecipe(id, patch) {
-    recipes = recipes.map((r) => (r.id === id ? normalizeRecipeFields({ ...r, ...patch }) : r));
+    const ts = Date.now();
+    const mergedPatch = { ...(patch || {}), updatedAt: ts };
+    recipes = recipes.map((r) => (r.id === id ? normalizeRecipeFields({ ...r, ...mergedPatch }) : r));
     saveRecipes();
     refreshUI();
     if (detailRecipeId === id) renderRecipeDetail(id);
+    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
   }
 
   function upsertRecipeFromForm(evt) {
@@ -1467,6 +1471,9 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       rating: Number($recipeRating.value) || 0,
       lastCooked: normalizeDate($recipeLastCooked.value),
       notes: ($recipeNotes.value || "").trim(),
+      updatedAt: Date.now(),
+      tracking: !!existing?.tracking,
+      trackingAt: existing?.trackingAt || null,
       favorite: $recipeFavorite.checked,
       laura: $recipeLaura.checked,
       country: countryInfo?.code || null,
@@ -1612,8 +1619,11 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     const recipe = recipes.find((r) => r.id === id);
     if (!recipe || !$recipeDetailBackdrop) return;
     detailRecipeId = id;
+    try { localStorage.setItem("bookshell.lastRecipeId", String(id)); } catch (_) {}
+    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
     $recipeDetailBackdrop.classList.remove("hidden");
     renderRecipeDetail(id);
+    
   }
 
   function renderRecipeDetail(id) {
@@ -1623,6 +1633,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
 
     if ($recipeDetailTitle) $recipeDetailTitle.textContent = recipe.title || "Receta";
     if ($recipeDetailMeal) $recipeDetailMeal.textContent = recipe.meal || "";
+    syncRecipeBookmarkButton(recipe);
     if ($recipeDetailTags) {
       $recipeDetailTags.innerHTML = "";
       (recipe.tags || []).forEach((tag) => {
@@ -1746,21 +1757,77 @@ $recipeDetailNotes.innerHTML = linkifyNotesHtml(recipe.notes || "");
     });
   }
 
-  function toggleChecklistItem(recipeId, itemId, value, type) {
-    const recipe = recipes.find((r) => r.id === recipeId);
-    if (!recipe) return;
-    if (type === "ingredient") {
-      const ingredients = (recipe.ingredients || []).map((ing) =>
-        ing.id === itemId ? { ...ing, done: value } : ing
-      );
-      updateRecipe(recipeId, { ingredients });
-    } else {
-      const steps = (recipe.steps || []).map((step) =>
-        step.id === itemId ? { ...step, done: value } : step
-      );
-      updateRecipe(recipeId, { steps });
-    }
+
+  function setRecipeTracking(recipeId, shouldTrack) {
+    const ts = Date.now();
+    const idStr = String(recipeId);
+
+    recipes = (Array.isArray(recipes) ? recipes : []).map((r) => {
+      if (!r) return r;
+      const isTarget = String(r.id) === idStr;
+
+      // si activamos, quitamos tracking al resto (solo una en seguimiento)
+      if (shouldTrack && !isTarget) {
+        if (!r.tracking) return r;
+        return normalizeRecipeFields({ ...r, tracking: false, trackingAt: r.trackingAt || null, updatedAt: ts });
+      }
+
+      if (!isTarget) return r;
+
+      if (shouldTrack) {
+        return normalizeRecipeFields({ ...r, tracking: true, trackingAt: ts, updatedAt: ts });
+      }
+      return normalizeRecipeFields({ ...r, tracking: false, trackingAt: null, updatedAt: ts });
+    });
+
+    saveRecipes();
+    refreshUI();
+
+    try {
+      if (shouldTrack) {
+        localStorage.setItem("bookshell.trackedRecipeId", idStr);
+        localStorage.setItem("bookshell.trackedRecipeAt", String(ts));
+      } else {
+        const cur = localStorage.getItem("bookshell.trackedRecipeId");
+        if (cur && String(cur) === idStr) {
+          localStorage.removeItem("bookshell.trackedRecipeId");
+          localStorage.removeItem("bookshell.trackedRecipeAt");
+        }
+      }
+    } catch (_) {}
+
+    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+
+    if (detailRecipeId === recipeId) renderRecipeDetail(recipeId);
   }
+
+  function syncRecipeBookmarkButton(recipe) {
+    const btn = document.getElementById("recipe-detail-bookmark");
+    if (!btn) return;
+    const on = !!recipe?.tracking;
+    btn.classList.toggle("is-active", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    btn.title = on ? "En seguimiento" : "Marcar en seguimiento";
+  }
+
+function toggleChecklistItem(recipeId, itemId, value, type) {
+  const recipe = recipes.find((r) => r.id === recipeId);
+  if (!recipe) return;
+
+  const now = Date.now();
+
+  if (type === "ingredient") {
+    const ingredients = (recipe.ingredients || []).map((ing) =>
+      ing.id === itemId ? { ...ing, done: value } : ing
+    );
+    updateRecipe(recipeId, { ingredients, updatedAt: now });
+  } else {
+    const steps = (recipe.steps || []).map((step) =>
+      step.id === itemId ? { ...step, done: value } : step
+    );
+    updateRecipe(recipeId, { steps, updatedAt: now });
+  }
+}
 
   function deleteRecipe(id) {
     const recipe = recipes.find((r) => r.id === id);
@@ -1930,6 +1997,45 @@ $recipeImportBtn?.addEventListener("click", () => {
   $recipeDetailDelete?.addEventListener("click", () => {
     if (detailRecipeId) deleteRecipe(detailRecipeId);
   });
+
+  // Bookmark / seguimiento (Dashboard) — delegación (por si el botón se crea dinámicamente)
+  document.addEventListener("click", (e) => {
+    const btn = e.target?.closest?.("#recipe-detail-bookmark");
+    if (!btn) return;
+
+    try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+    if (!detailRecipeId) return;
+    const recipe = recipes.find((r) => String(r.id) === String(detailRecipeId));
+    if (!recipe) return;
+
+    const now = Date.now();
+    const next = !recipe.tracking;
+
+    recipe.tracking = next;
+    recipe.trackingAt = next ? now : 0;
+    recipe.updatedAt = now; // importante: "reciente" y refrescos
+
+    try {
+      const keyId = "bookshell.trackedRecipeId";
+      const keyAt = "bookshell.trackedRecipeAt";
+      if (next) {
+        localStorage.setItem(keyId, String(recipe.id));
+        localStorage.setItem(keyAt, String(now));
+      } else {
+        const storedId = localStorage.getItem(keyId);
+        if (storedId && String(storedId) === String(recipe.id)) {
+          localStorage.removeItem(keyId);
+          localStorage.removeItem(keyAt);
+        }
+      }
+    } catch (_) {}
+
+    saveRecipes();
+    try { syncRecipeBookmarkButton(recipe); } catch (_) {}
+    try { console.debug("[recipes] tracking", { id: recipe.id, tracking: recipe.tracking, trackingAt: recipe.trackingAt }); } catch (_) {}
+    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+  });;
+
   $recipeDetailTabs?.forEach((tab) => {
     tab.addEventListener("click", () => setActiveRecipePanel(tab.dataset.target || "ingredients"));
   });
@@ -2055,3 +2161,94 @@ function parseRecipeV1(raw){
     notes,
   };
 }
+
+// === API para Dashboard (Inicio) ===
+function getLastViewedRecipe() {
+  try {
+    const id = localStorage.getItem("bookshell.lastRecipeId");
+    if (!id) return null;
+    return (Array.isArray(recipes) ? recipes : []).find((r) => String(r.id) === String(id)) || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function getTrackedRecipe() {
+  try {
+    // Prefer la última receta marcada "en seguimiento" (bookmark)
+    const storedId = localStorage.getItem("bookshell.trackedRecipeId");
+    const storedAt = Number(localStorage.getItem("bookshell.trackedRecipeAt") || 0) || 0;
+
+    const list = Array.isArray(recipes) ? recipes : [];
+    let best = null;
+    let bestTs = -1;
+
+    list.forEach((r) => {
+      if (!r) return;
+      const isTracked = !!r.tracking || (storedId && String(r.id) === String(storedId));
+      if (!isTracked) return;
+      const ts = Number(r.trackingAt) || (storedId && String(r.id) === String(storedId) ? storedAt : 0) || 0;
+      if (ts > bestTs) {
+        bestTs = ts;
+        best = r;
+      }
+    });
+
+    // si hay id almacenado pero no trackingAt, devolvemos por id
+    if (!best && storedId) return list.find((r) => String(r.id) === String(storedId)) || null;
+
+    return best || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function recipeSortTs(r) {
+  if (!r) return 0;
+  const n = Number(r.updatedAt);
+  if (Number.isFinite(n) && n > 0) return n;
+  const t = Number(r.trackingAt);
+  if (Number.isFinite(t) && t > 0) return t;
+
+  const s = String(r.lastCooked || "");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(s + "T00:00:00");
+    const ms = d.getTime();
+    return Number.isFinite(ms) ? ms : 0;
+  }
+  return 0;
+}
+
+function getRecentRecipeFallback() {
+  try {
+    const list = Array.isArray(recipes) ? [...recipes] : [];
+
+    const withIngredientChecks = list.filter((r) =>
+      Array.isArray(r?.ingredients) && r.ingredients.some((ing) => !!ing?.done)
+    );
+
+    const pickFrom = withIngredientChecks.length ? withIngredientChecks : list;
+
+    pickFrom.sort((a, b) => {
+      const ta = Number(a?.updatedAt) || 0;
+      const tb = Number(b?.updatedAt) || 0;
+      return tb - ta;
+    });
+
+    return pickFrom[0] || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+
+try {
+  window.__bookshellRecipes = {
+    getTrackedRecipe,
+    getLastViewedRecipe,
+    getRecentRecipeFallback,
+    openRecipeDetail
+  };
+} catch (_) {}
+
+try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}

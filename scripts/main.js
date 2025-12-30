@@ -387,12 +387,18 @@ $navButtons.forEach(btn => {
     document.querySelectorAll(".view").forEach(v => v.classList.remove("view-active"));
     document.getElementById(viewId).classList.add("view-active");
 
+    try { if ($appMain) $appMain.scrollTop = 0; } catch (_) {}
+
     $navButtons.forEach(b => b.classList.remove("nav-btn-active"));
     btn.classList.add("nav-btn-active");
 
     if (viewId === "view-books") {
       renderStats();
       renderCalendar();
+    }
+
+    if (viewId === "view-main") {
+      try { window.__bookshellDashboard?.render?.(); } catch (_) {}
     }
   });
 });
@@ -1119,6 +1125,8 @@ $bookForm.addEventListener("submit", async (e) => {
 onValue(ref(db, BOOKS_PATH), (snap) => {
   books = snap.val() || {};
   renderBooks();
+  try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+  try { window.__bookshellDashboard?.render?.(); } catch (_) {}
 });
 
 // Escucha log lectura
@@ -2983,3 +2991,22 @@ if ($calViewMode) {
     tryRun();
   }
 })();
+
+// === API para Dashboard (Inicio) ===
+function getRecentBook() {
+  try {
+    const list = Object.entries(books || {}).map(([id, b]) => ({ id, ...(b || {}) }));
+    list.sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+    return list[0] || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+window.buildReadingSpine = buildReadingSpine;
+
+window.__bookshellBooks = {
+  getRecentBook,
+  openBookModal,
+  updateBookProgress
+};

@@ -609,6 +609,8 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
     renderVideos();
     renderVideoStats();
     renderVideoCalendar();
+    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+    try { window.__bookshellDashboard?.render?.(); } catch (_) {}
   });
 
   onValue(ref(db, VIDEO_LOG_PATH), (snap) => {
@@ -1374,4 +1376,26 @@ function createVideoCard(id) {
       renderVideoCalendar();
     });
   }
+
+  // === API para Dashboard (Inicio) ===
+  function getRecentVideo() {
+    try {
+      const list = Object.entries(videos || {}).map(([id, v]) => ({ id, ...(v || {}) }));
+      list.sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+      const top = list[0] || null;
+      if (!top) return null;
+      const statusLabel = top.status || top.stage || top.state || "";
+      return { ...top, statusLabel };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  window.__bookshellVideos = {
+    getRecentVideo,
+    openVideoModal,
+    startVideoTimer,
+    stopVideoTimer,
+    isTimerRunning: () => !!timerRunning
+  };
 }

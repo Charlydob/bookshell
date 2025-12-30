@@ -564,3 +564,9 @@
 .filters-fold[open] .chev { transform: rotate(180deg); }
 .media-modal-foot { display:flex; gap:10px; align-items:center; }
 .media-modal-foot-spacer { flex:1; }
+/* abrir/cerrar modal "Añadir" solo con CSS */
+.media-add-modal { display:none; }
+#media-add-toggle:checked ~ .media-add-modal { display:block; }
+
+/* el label-botón ocupa como el botón real */
+.media-compose .btn[for="media-add-toggle"]{ display:flex; align-items:center; justify-content:center; }

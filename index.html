@@ -685,22 +685,58 @@
       </div>
     </div>
 
-    <div class="media-compose">
-      <input id="media-title" class="filter-search-input" placeholder="Añadir título…" autocomplete="off" />
-      <button class="btn primary" id="media-add" type="button">Añadir</button>
+<!-- Botón que abre el modal (sin JS) -->
+<input type="checkbox" id="media-add-toggle" class="media-modal-toggle" hidden>
 
-      <div class="media-compose-row">
-        <select id="media-type">
-          <option value="movie">Peli</option>
-          <option value="series">Serie</option>
-          <option value="anime">Anime</option>
-        </select>
+<div class="media-compose">
+  <label class="btn primary" for="media-add-toggle" id="media-add" role="button">Añadir</label>
+</div>
 
-        <input id="media-country" list="country-options" placeholder="Origen (opcional)" autocomplete="off" />
+<!-- Modal "Añadir" -->
+<div class="media-modal media-add-modal">
+  <label class="media-modal-backdrop" for="media-add-toggle" aria-label="Cerrar"></label>
+
+  <div class="media-modal-sheet" role="dialog" aria-modal="true">
+    <div class="media-modal-head">
+      <div class="media-modal-title">Añadir</div>
+      <label class="media-icon" for="media-add-toggle" title="Cerrar" role="button">✕</label>
+    </div>
+
+    <div class="media-modal-body">
+      <label class="media-modal-field">
+        <span>Título</span>
+        <input id="media-title" class="filter-search-input" placeholder="Añadir título…" autocomplete="off" />
+      </label>
+
+      <div class="media-modal-grid">
+        <label class="media-modal-field">
+          <span>Tipo</span>
+          <select id="media-type">
+            <option value="movie">Peli</option>
+            <option value="series">Serie</option>
+            <option value="anime">Anime</option>
+          </select>
+        </label>
+
+        <label class="media-modal-field">
+          <span>Origen (opcional)</span>
+          <input id="media-country" list="country-options" placeholder="Origen (opcional)" autocomplete="off" />
+        </label>
       </div>
 
-      <input id="media-genres" placeholder="Géneros (coma) · acción, drama…" autocomplete="off" />
+      <label class="media-modal-field">
+        <span>Géneros (coma)</span>
+        <input id="media-genres" placeholder="Géneros (coma) · acción, drama…" autocomplete="off" />
+      </label>
     </div>
+
+    <div class="media-modal-foot">
+      <label class="btn ghost" for="media-add-toggle" role="button">Cancelar</label>
+      <button class="btn primary" type="button">Añadir</button>
+    </div>
+  </div>
+</div>
+
 
     <div class="media-filters">
       <div class="media-filter-row">

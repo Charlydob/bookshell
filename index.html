@@ -15,13 +15,20 @@
 <link href="styles/recipes.css" rel="stylesheet"/>
 <link href="styles/habits.css" rel="stylesheet"/>
 <link href="styles/media.css" rel="stylesheet"/>
-
+<link href="styles/world.css" rel="stylesheet"/>
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="icons/favicon.ico" rel="icon"/>
 <link href="icons/favicon-32.png" rel="icon" sizes="32x32" type="image/png"/>
 <link href="icons/favicon-16.png" rel="icon" sizes="16x16" type="image/png"/>
 <link href="icons/icon-512.png" rel="apple-touch-icon" sizes="180x180"/>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script><script src="https://cdn.jsdelivr.net/npm/echarts-gl@2/dist/echarts-gl.min.js"></script>
+
+<style>
+  /* Hard guarantee: solo una vista visible (evita que todo aparezca a la vez si falla JS/CSS) */
+  .view{display:none !important;}
+  .view.view-active{display:block !important;}
+</style>
+
 </head>
 <body>
 <div class="app-shell">
@@ -49,42 +56,37 @@
 </div>
 <div aria-label="Rango" class="dash-chiprow" id="dash-range"></div>
 <div class="dash-donut-wrap">
-  <div class="dash-donut" id="dash-donut"></div>
-  <div class="dash-unit" id="dash-unit" aria-label="Unidad de tiempo"></div>
+<div class="dash-donut" id="dash-donut"></div>
+<div aria-label="Unidad de tiempo" class="dash-unit" id="dash-unit"></div>
 </div>
-
 <details class="dash-accordion">
-  <summary>Desglose por hábito</summary>
-  <div class="dash-legend" id="dash-legend"></div>
+<summary>Desglose por hábito</summary>
+<div class="dash-legend" id="dash-legend"></div>
 </details>
 </div>
 </div>
 <div class="dash-card dash-shelf-card">
-  <div class="dash-card-inner">
-    <div class="dash-card-head">
-      <div class="dash-card-title">En marcha</div>
-      <div class="dash-actions">
-        <button class="dash-btn" id="dash-shelf-open-books" type="button">Libros</button>
-        <button class="dash-btn" id="dash-shelf-open-recipes" type="button">Recetas</button>
-      </div>
-    </div>
-
-    <div class="dash-shelf">
-      <div class="dash-shelf-side">
-        <div class="dash-shelf-label">Último libro</div>
-        <div class="dash-shelf-slot" id="dash-shelf-book"></div>
-      </div>
-
-      <div class="dash-shelf-pillar" aria-hidden="true"></div>
-
-      <div class="dash-shelf-side">
-        <div class="dash-shelf-label">Receta</div>
-        <div class="dash-shelf-slot" id="dash-shelf-recipe"></div>
-      </div>
-
-      <div class="dash-shelf-plank" aria-hidden="true"></div>
-    </div>
-  </div>
+<div class="dash-card-inner">
+<div class="dash-card-head">
+<div class="dash-card-title">En marcha</div>
+<div class="dash-actions">
+<button class="dash-btn" id="dash-shelf-open-books" type="button">Libros</button>
+<button class="dash-btn" id="dash-shelf-open-recipes" type="button">Recetas</button>
+</div>
+</div>
+<div class="dash-shelf">
+<div class="dash-shelf-side">
+<div class="dash-shelf-label">Último libro</div>
+<div class="dash-shelf-slot" id="dash-shelf-book"></div>
+</div>
+<div aria-hidden="true" class="dash-shelf-pillar"></div>
+<div class="dash-shelf-side">
+<div class="dash-shelf-label">Receta</div>
+<div class="dash-shelf-slot" id="dash-shelf-recipe"></div>
+</div>
+<div aria-hidden="true" class="dash-shelf-plank"></div>
+</div>
+</div>
 </div>
 </div>
 <div class="dash-card">
@@ -106,10 +108,9 @@
 </div>
 </div>
 </div>
+</section></main></div>
 
-</div>
-</div>
-</section><section class="view" id="view-books">
+<section class="view" id="view-books">
 <!-- STATS + CALENDARIO DE LIBROS (ANTES ESTABA EN view-stats) -->
 <div class="stats-wrapper">
 <div class="stats-cards">
@@ -467,16 +468,43 @@
 </div>
 <div class="habits-views">
 <div class="habits-panel is-active" data-panel="today">
-<div class="habits-today-group">
-<div class="habits-group-title">Pendientes hoy</div>
-<div class="habit-card-list" id="habits-today-pending"></div>
-<div class="empty-state small" id="habits-today-empty">No tienes hábitos pendientes hoy.</div>
+<details class="habit-accordion habit-today-accordion" id="habits-today-acc-count" open>
+<summary>
+<div class="habit-accordion-title">Contadores</div>
+<div class="habit-accordion-meta" id="habits-today-count-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habits-subgroup">
+<div class="habits-subgroup-title">Pendientes</div>
+<div class="habit-card-list" id="habits-today-count-pending"></div>
+<div class="empty-state small" id="habits-today-count-empty">No tienes contadores pendientes hoy.</div>
 </div>
-<div class="habits-today-group">
-<div class="habits-group-title">Hechos hoy</div>
-<div class="habit-card-list" id="habits-today-done"></div>
-<div class="empty-state small" id="habits-today-done-empty">Aún no has completado ningún hábito hoy.</div>
+<div class="habits-subgroup">
+<div class="habits-subgroup-title">Hechos</div>
+<div class="habit-card-list" id="habits-today-count-done"></div>
+<div class="empty-state small" id="habits-today-count-done-empty">Aún no has marcado ningún contador hoy.</div>
 </div>
+</div>
+</details>
+
+<details class="habit-accordion habit-today-accordion" id="habits-today-acc-time" open>
+<summary>
+<div class="habit-accordion-title">Por tiempo</div>
+<div class="habit-accordion-meta" id="habits-today-time-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habits-subgroup">
+<div class="habits-subgroup-title">Pendientes</div>
+<div class="habit-card-list" id="habits-today-time-pending"></div>
+<div class="empty-state small" id="habits-today-time-empty">No tienes hábitos pendientes hoy.</div>
+</div>
+<div class="habits-subgroup">
+<div class="habits-subgroup-title">Hechos</div>
+<div class="habit-card-list" id="habits-today-time-done"></div>
+<div class="empty-state small" id="habits-today-time-done-empty">Aún no has completado ningún hábito hoy.</div>
+</div>
+</div>
+</details>
 </div>
 <div class="habits-panel" data-panel="week">
 <div class="habits-week-list" id="habits-week-list"></div>
@@ -636,6 +664,15 @@
 <div class="habit-ranking-list" id="habit-totals-list"></div>
 </div>
 </details>
+<details class="habit-accordion" id="habit-acc-counts">
+<summary>
+<div class="habit-accordion-title">Contadores</div>
+<div class="habit-accordion-meta" id="habit-acc-counts-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-ranking-list" id="habit-counts-list"></div>
+</div>
+</details>
 <details class="habit-accordion" id="habit-acc-days">
 <summary>
 <div class="habit-accordion-title">Días hechos</div>
@@ -670,144 +707,179 @@
 </div>
 </section>
 <section class="view" id="view-media">
-  <div class="media-wrapper">
-
-    <div class="media-head">
-      <div class="media-head-left">
-        <div class="media-title">Pantalla</div>
-        <div class="media-sub">Miles de títulos, cero lag.</div>
-      </div>
-
-      <div class="media-viewbar" role="group" aria-label="Vista">
-        <button class="media-viewbtn is-active" data-media-view="list" type="button">Lista</button>
-        <button class="media-viewbtn" data-media-view="charts" type="button">Gráficos</button>
-        <button class="media-viewbtn" data-media-view="map" type="button">Mapa</button>
-      </div>
-    </div>
-
-<!-- Botón que abre el modal (sin JS) -->
-<input type="checkbox" id="media-add-toggle" class="media-modal-toggle" hidden>
-
-<div class="media-compose">
-  <label class="btn primary" for="media-add-toggle" id="media-add" role="button">Añadir</label>
+<div class="media-wrapper">
+<div class="media-head">
+<div class="media-head-left">
+<div class="media-title">Pantalla</div>
+<div class="media-sub">Miles de títulos, cero lag.</div>
 </div>
-
+<div aria-label="Vista" class="media-viewbar" role="group">
+<button class="media-viewbtn is-active" data-media-view="list" type="button">Lista</button>
+<button class="media-viewbtn" data-media-view="charts" type="button">Gráficos</button>
+<button class="media-viewbtn" data-media-view="map" type="button">Mapa</button>
+</div>
+</div>
+<!-- Botón que abre el modal (sin JS) -->
+<input class="media-modal-toggle" hidden="" id="media-add-toggle" type="checkbox"/>
+<div class="media-compose">
+<label class="btn primary" for="media-add-toggle" id="media-add" role="button">Añadir</label>
+</div>
 <!-- Modal "Añadir" -->
 <div class="media-modal media-add-modal">
-  <label class="media-modal-backdrop" for="media-add-toggle" aria-label="Cerrar"></label>
-
-  <div class="media-modal-sheet" role="dialog" aria-modal="true">
-    <div class="media-modal-head">
-      <div class="media-modal-title">Añadir</div>
-      <label class="media-icon" for="media-add-toggle" title="Cerrar" role="button">✕</label>
-    </div>
-
-    <div class="media-modal-body">
-      <label class="media-modal-field">
-        <span>Título</span>
-        <input id="media-title" class="filter-search-input" placeholder="Añadir título…" autocomplete="off" />
-      </label>
-
-      <div class="media-modal-grid">
-        <label class="media-modal-field">
-          <span>Tipo</span>
-          <select id="media-type">
-            <option value="movie">Peli</option>
-            <option value="series">Serie</option>
-            <option value="anime">Anime</option>
-          </select>
-        </label>
-
-        <label class="media-modal-field">
-          <span>Origen (opcional)</span>
-          <input id="media-country" list="country-options" placeholder="Origen (opcional)" autocomplete="off" />
-        </label>
-      </div>
-
-      <label class="media-modal-field">
-        <span>Géneros (coma)</span>
-        <input id="media-genres" placeholder="Géneros (coma) · acción, drama…" autocomplete="off" />
-      </label>
-    </div>
-
-    <div class="media-modal-foot">
-      <label class="btn ghost" for="media-add-toggle" role="button">Cancelar</label>
-      <button class="btn primary" type="button">Añadir</button>
-    </div>
-  </div>
+<label aria-label="Cerrar" class="media-modal-backdrop" for="media-add-toggle"></label>
+<div aria-modal="true" class="media-modal-sheet" role="dialog">
+<div class="media-modal-head">
+<div class="media-modal-title">Añadir</div>
+<label class="media-icon" for="media-add-toggle" role="button" title="Cerrar">✕</label>
 </div>
-
-
-    <div class="media-filters">
-      <div class="media-filter-row">
-        <input class="filter-search-input" id="media-search" type="search" placeholder="Buscar…" />
-        <label class="habit-select habit-select-compact" style="min-width:160px">
-          <span>Donut</span>
-          <select id="media-chart-selector">
-            <option value="type">Tipo</option>
-            <option value="genre">Género</option>
-          </select>
-        </label>
-      </div>
-
-      <div class="media-type-pills" id="media-type-pills">
-        <button class="media-pill is-active" data-type="all" type="button">Todo</button>
-        <button class="media-pill" data-type="movie" type="button">Pelis</button>
-        <button class="media-pill" data-type="series" type="button">Series</button>
-        <button class="media-pill" data-type="anime" type="button">Anime</button>
-      </div>
-    </div>
-
-    <section id="media-charts" class="media-chart-card" style="display:none">
-      <div class="media-chart-head">
-        <div>
-          <div class="media-chart-title">Distribución</div>
-          <div class="media-chart-sub">Top 12 (sin “otros”).</div>
-        </div>
-      </div>
-      <div class="media-donut-host" id="media-donut"></div>
-    </section>
-
-    <section id="media-map" class="media-geo" style="display:none">
-      <div class="geo-header">
-        <div>
-          <div class="geo-title">Mapa de pantalla</div>
-          <div class="geo-subtitle">Intensidad según títulos</div>
-        </div>
-      </div>
-      <div class="geo-map" id="media-world-map"></div>
-      <details class="geo-list" id="media-country-panel">
-        <summary class="geo-list-summary">Países y número de títulos</summary>
-        <div class="geo-list-body" id="media-country-list"></div>
-      </details>
-      <div class="media-geo-hint" id="media-map-hint" style="display:none"></div>
-    </section>
-
-    <section id="media-list-card" class="media-list-card">
-      <div class="media-list-head">
-        <div class="media-list-title">Listado</div>
-        <div class="media-list-meta" id="media-count">0</div>
-      </div>
-
-      <div class="media-list" id="media-list">
-        <div class="media-list-spacer" id="media-list-spacer"></div>
-        <div class="media-list-items" id="media-list-items"></div>
-      </div>
-    </section>
-
-  </div>
+<div class="media-modal-body">
+<label class="media-modal-field">
+<span>Título</span>
+<input autocomplete="off" class="filter-search-input" id="media-title" placeholder="Añadir título…">
+</input></label>
+<div class="media-modal-grid">
+<label class="media-modal-field">
+<span>Tipo</span>
+<select id="media-type">
+<option value="movie">Peli</option>
+<option value="series">Serie</option>
+<option value="anime">Anime</option>
+</select>
+</label>
+<label class="media-modal-field">
+<span>Origen (opcional)</span>
+<input autocomplete="off" id="media-country" list="country-options" placeholder="Origen (opcional)"/>
+</label>
+</div>
+<label class="media-modal-field">
+<span>Géneros (coma)</span>
+<input autocomplete="off" id="media-genres" placeholder="Géneros (coma) · acción, drama…"/>
+</label>
+</div>
+<div class="media-modal-foot">
+<label class="btn ghost" for="media-add-toggle" role="button">Cancelar</label>
+<button class="btn primary" type="button">Añadir</button>
+</div>
+</div>
+</div>
+<div class="media-filters">
+<div class="media-filter-row">
+<input class="filter-search-input" id="media-search" placeholder="Buscar…" type="search"/>
+<label class="habit-select habit-select-compact" style="min-width:160px">
+<span>Donut</span>
+<select id="media-chart-selector">
+<option value="type">Tipo</option>
+<option value="genre">Género</option>
+</select>
+</label>
+</div>
+<div class="media-type-pills" id="media-type-pills">
+<button class="media-pill is-active" data-type="all" type="button">Todo</button>
+<button class="media-pill" data-type="movie" type="button">Pelis</button>
+<button class="media-pill" data-type="series" type="button">Series</button>
+<button class="media-pill" data-type="anime" type="button">Anime</button>
+</div>
+</div>
+<section class="media-chart-card" id="media-charts" style="display:none">
+<div class="media-chart-head">
+<div>
+<div class="media-chart-title">Distribución</div>
+<div class="media-chart-sub">Top 12 (sin “otros”).</div>
+</div>
+</div>
+<div class="media-donut-host" id="media-donut"></div>
+</section>
+<section class="media-geo" id="media-map" style="display:none">
+<div class="geo-header">
+<div>
+<div class="geo-title">Mapa de pantalla</div>
+<div class="geo-subtitle">Intensidad según títulos</div>
+</div>
+</div>
+<div class="geo-map" id="media-world-map"></div>
+<details class="geo-list" id="media-country-panel">
+<summary class="geo-list-summary">Países y número de títulos</summary>
+<div class="geo-list-body" id="media-country-list"></div>
+</details>
+<div class="media-geo-hint" id="media-map-hint" style="display:none"></div>
+</section>
+<section class="media-list-card" id="media-list-card">
+<div class="media-list-head">
+<div class="media-list-title">Listado</div>
+<div class="media-list-meta" id="media-count">0</div>
+</div>
+<div class="media-list" id="media-list">
+<div class="media-list-spacer" id="media-list-spacer"></div>
+<div class="media-list-items" id="media-list-items"></div>
+</div>
+</section>
+</div>
+</section>
+<section class="view" id="view-world">
+<div class="world-header">
+<div class="world-kpis">
+<div class="world-kpi">
+<div class="label">Mundo visitado</div>
+<div class="value" id="world-pct">0.00%</div>
+</div>
+<div class="world-kpi">
+<div class="label">Países</div>
+<div class="value"><span id="world-countries">0</span><span class="sub">/ <span id="world-countries-total">0</span></span></div>
+</div>
+<div class="world-kpi">
+<div class="label">Lugares</div>
+<div class="value" id="world-places">0</div>
+</div>
+</div>
+<div class="world-controls">
+<select id="world-filter">
+<option value="day">Día</option>
+<option value="week">Semana</option>
+<option value="month">Mes</option>
+<option value="year">Año</option>
+<option selected="" value="total">Total</option>
+</select>
+<label class="btn primary" for="world-add-toggle">+ Añadir</label>
+</div>
+</div>
+<div class="world-map-wrap">
+<div id="world-map"></div>
+</div>
+<div class="world-bottom"><details class="world-card"><summary class="world-summary"><h3>Últimas visitas</h3><span class="world-count" id="world-visits-count">0</span></summary><div class="world-list" id="world-visits-list"></div></details><details class="world-card"><summary class="world-summary"><h3>Watchlist</h3><span class="world-count" id="world-watch-count">0</span></summary><div class="world-list"><div class="world-watch-row"><input autocomplete="off" id="world-watch-q" placeholder="Añadir país a watchlist…" type="search"/><button class="btn primary" id="world-watch-add" type="button">Añadir</button></div><div class="world-list" id="world-watch-list"></div></div></details></div>
+<!-- Modal toggle + modal -->
+<input class="world-modal-toggle" hidden="" id="world-add-toggle" type="checkbox"/>
+<div class="world-modal">
+<label class="world-modal-backdrop" for="world-add-toggle"></label>
+<div class="world-modal-sheet">
+<div class="world-modal-header">
+<div class="title">Añadir visita</div>
+<label class="btn" for="world-add-toggle">Cerrar</label>
+</div>
+<div class="world-modal-grid">
+<select id="world-kind">
+<option value="country">País</option>
+<option selected="" value="city">Ciudad</option>
+<option value="town">Pueblo</option>
+</select>
+<input autocomplete="off" id="world-place-q" placeholder="Buscar (usa el mapa del mundo real)..."/>
+<div class="world-list" id="world-place-results"></div>
+<div class="world-modal-actions">
+<button class="btn primary" id="world-place-save" type="button">Guardar</button>
+</div>
+</div>
+</div>
+</div>
 </section>
 
-</main>
 <nav class="bottom-nav"><button class="nav-btn nav-btn-active" data-view="view-main">Inicio</button>
 <button class="nav-btn" data-view="view-books">Libros</button>
 <button class="nav-btn" data-view="view-videos">Vídeos</button>
 <button class="nav-btn" data-view="view-recipes">Recetas</button>
 <button class="nav-btn" data-view="view-habits">Hábitos</button>
 <button class="nav-btn" data-view="view-media">Pantalla</button>
-
+<button class="nav-btn" data-view="view-world">Mundo</button>
 </nav>
-</div>
+
 <!-- MODAL LIBRO -->
 <div class="modal-backdrop hidden" id="book-modal-backdrop">
 <div class="modal">
@@ -1440,13 +1512,82 @@
 </div>
 </div>
 </div>
+
+<script>
+/* Bookshell BOOT: fallback de navegación + overlay de errores (no toca tus JS) */
+(() => {
+  const showOverlay = (msg) => {
+    try {
+      let ov = document.getElementById("boot-error-overlay");
+      if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "boot-error-overlay";
+        ov.style.cssText = [
+          "position:fixed","inset:0","z-index:999999",
+          "background:rgba(0,0,0,.92)","color:#fff",
+          "padding:14px","font:12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
+          "overflow:auto","white-space:pre-wrap"
+        ].join(";");
+        const head = document.createElement("div");
+        head.style.cssText = "display:flex;gap:10px;align-items:center;margin-bottom:10px;";
+        head.innerHTML = "<b style='font-size:13px'>⚠️ Error JS (BOOT)</b><span style='opacity:.75'>Toca para cerrar</span>";
+        ov.appendChild(head);
+        ov.addEventListener("click", () => ov.remove());
+        document.body.appendChild(ov);
+      }
+      ov.appendChild(document.createTextNode("\n" + msg + "\n"));
+      console.error(msg);
+    } catch {}
+  };
+
+  window.addEventListener("error", (e) => {
+    const msg = e?.error?.stack || `${e.message || "Error"} @ ${e.filename || ""}:${e.lineno || ""}:${e.colno || ""}`;
+    showOverlay(msg);
+  });
+
+  window.addEventListener("unhandledrejection", (e) => {
+    const r = e?.reason;
+    const msg = r?.stack || (typeof r === "string" ? r : JSON.stringify(r));
+    showOverlay("UnhandledPromiseRejection: " + msg);
+  });
+
+  const setView = (viewId) => {
+    const views = document.querySelectorAll(".view");
+    if (!views.length) return;
+    views.forEach(v => v.classList.toggle("view-active", v.id === viewId));
+    document.querySelectorAll(".bottom-nav .nav-btn").forEach(b => {
+      b.classList.toggle("nav-btn-active", b.dataset.view === viewId);
+      if (b.dataset.view === viewId) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current");
+    });
+    try { history.replaceState(null, "", "#" + viewId); } catch {}
+  };
+
+  // hash deep-link
+  const hash = (location.hash || "").replace("#", "");
+  if (hash && document.getElementById(hash)) setView(hash);
+
+  // click fallback (captura por si tu main.js muere)
+  document.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest(".bottom-nav .nav-btn[data-view]") : null;
+    if (!btn) return;
+    e.preventDefault();
+    setView(btn.dataset.view);
+  }, true);
+
+  // expone util por consola
+  window.__bookshellSetView = setView;
+
+  console.log("[BOOT] nav fallback listo");
+})();
+</script>
+
 <script src="scripts/main.js" type="module"></script>
 <script src="scripts/videos.js" type="module"></script>
 <script src="scripts/recipes.js" type="module"></script>
 <script src="scripts/habits.js" type="module"></script>
 <script src="scripts/dashboard.js" type="module"></script>
 <script src="scripts/media.js" type="module"></script>
-
+<script src="scripts/world.js" type="module"></script>
 <datalist id="country-options"></datalist>
 </body>
 </html>

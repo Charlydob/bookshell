@@ -1103,3 +1103,11 @@
   border-color: rgba(147, 110, 255, 0.40);
   color: #f5f7ff;
 }
+
+
+/* === Hoy: agrupación por tipo (contadores / tiempo) === */
+.habit-today-accordion { margin-bottom: 10px; }
+.habit-today-accordion .habit-accordion-body { padding-top: 8px; }
+.habits-subgroup { display: flex; flex-direction: column; gap: 8px; }
+.habits-subgroup + .habits-subgroup { margin-top: 12px; }
+.habits-subgroup-title { font-size: 12px; font-weight: 700; color: var(--txt-soft); margin: 2px 2px 0; }

@@ -143,6 +143,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
       orient: "horizontal",
       left: "center",
       bottom: 0,
+      seriesIndex: [0],
       inRange: {
         color: [
           "rgba(245,230,166,0.08)",

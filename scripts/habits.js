@@ -532,10 +532,18 @@ const $tabs = document.querySelectorAll(".habit-subtab");
 const $panels = document.querySelectorAll(".habits-panel");
 const $btnAddHabit = document.getElementById("habit-add-btn");
 const $btnAddTime = document.getElementById("habit-add-time");
-const $habitTodayPending = document.getElementById("habits-today-pending");
-const $habitTodayDone = document.getElementById("habits-today-done");
-const $habitTodayEmpty = document.getElementById("habits-today-empty");
-const $habitTodayDoneEmpty = document.getElementById("habits-today-done-empty");
+
+// Hoy (agrupado)
+const $habitTodayCountPending = document.getElementById("habits-today-count-pending");
+const $habitTodayCountDone = document.getElementById("habits-today-count-done");
+const $habitTodayCountEmpty = document.getElementById("habits-today-count-empty");
+const $habitTodayCountDoneEmpty = document.getElementById("habits-today-count-done-empty");
+const $habitTodayTimePending = document.getElementById("habits-today-time-pending");
+const $habitTodayTimeDone = document.getElementById("habits-today-time-done");
+const $habitTodayTimeEmpty = document.getElementById("habits-today-time-empty");
+const $habitTodayTimeDoneEmpty = document.getElementById("habits-today-time-done-empty");
+const $habitTodayCountMeta = document.getElementById("habits-today-count-meta");
+const $habitTodayTimeMeta = document.getElementById("habits-today-time-meta");
 const $habitWeekList = document.getElementById("habits-week-list");
 const $habitWeekEmpty = document.getElementById("habits-week-empty");
 const $habitHistoryList = document.getElementById("habits-history-list");
@@ -566,6 +574,9 @@ const $habitRankingWeek = document.getElementById("habit-ranking-week");
 const $habitRankingMonth = document.getElementById("habit-ranking-month");
 const $habitRankingConsistency = document.getElementById("habit-ranking-consistency");
 const $habitTotalsList = document.getElementById("habit-totals-list");
+const $habitAccCounts = document.getElementById("habit-acc-counts");
+const $habitAccCountsMeta = document.getElementById("habit-acc-counts-meta");
+const $habitCountsList = document.getElementById("habit-counts-list");
 const $habitAccWeekMeta = document.getElementById("habit-acc-week-meta");
 const $habitAccMonthMeta = document.getElementById("habit-acc-month-meta");
 const $habitAccTotalMeta = document.getElementById("habit-acc-total-meta");
@@ -847,16 +858,33 @@ function renderSubtabs() {
 
 function renderToday() {
   const today = todayKey();
-  $habitTodayPending.innerHTML = "";
-  $habitTodayDone.innerHTML = "";
-  let pendingCount = 0;
-  let doneCount = 0;
+
+  // clear
+  $habitTodayCountPending.innerHTML = "";
+  $habitTodayCountDone.innerHTML = "";
+  $habitTodayTimePending.innerHTML = "";
+  $habitTodayTimeDone.innerHTML = "";
+
+  let countTotal = 0;
+  let countDone = 0;
+  let timeTotal = 0;
+  let timeDone = 0;
+
   activeHabits()
     .filter((h) => isHabitScheduledForDate(h, new Date()))
     .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
     .forEach((habit) => {
       const dayData = getHabitDayScore(habit, today);
       const isCount = (habit.goal || "check") === "count";
+
+      if (isCount) {
+        countTotal += 1;
+        if (dayData.hasActivity) countDone += 1;
+      } else {
+        timeTotal += 1;
+        if (dayData.hasActivity) timeDone += 1;
+      }
+
       const streak = computeHabitCurrentStreak(habit);
       const daysDone = countHabitActivityDays(habit);
       const scheduleLabel = habit.schedule?.type === "days" ? formatDaysLabel(habit.schedule.days) : "Cada día";
@@ -944,6 +972,9 @@ function renderToday() {
       });
       tools.appendChild(editBtn);
 
+      card.appendChild(left);
+      card.appendChild(tools);
+
       card.addEventListener("click", () => openHabitModal(habit));
       card.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -952,20 +983,24 @@ function renderToday() {
         }
       });
 
-      card.appendChild(left);
-      card.appendChild(tools);
+      const targetList = isCount
+        ? (dayData.hasActivity ? $habitTodayCountDone : $habitTodayCountPending)
+        : (dayData.hasActivity ? $habitTodayTimeDone : $habitTodayTimePending);
 
-      if (dayData.hasActivity) {
-        doneCount += 1;
-        $habitTodayDone.appendChild(card);
-      } else {
-        pendingCount += 1;
-        $habitTodayPending.appendChild(card);
-      }
+      targetList.appendChild(card);
     });
 
-  $habitTodayEmpty.style.display = pendingCount ? "none" : "block";
-  $habitTodayDoneEmpty.style.display = doneCount ? "none" : "block";
+  // empties
+  const countPending = countTotal - countDone;
+  const timePending = timeTotal - timeDone;
+
+  $habitTodayCountEmpty.style.display = countPending ? "none" : "block";
+  $habitTodayCountDoneEmpty.style.display = countDone ? "none" : "block";
+  $habitTodayTimeEmpty.style.display = timePending ? "none" : "block";
+  $habitTodayTimeDoneEmpty.style.display = timeDone ? "none" : "block";
+
+  if ($habitTodayCountMeta) $habitTodayCountMeta.textContent = countTotal ? `${countDone}/${countTotal}` : "—";
+  if ($habitTodayTimeMeta) $habitTodayTimeMeta.textContent = timeTotal ? `${timeDone}/${timeTotal}` : "—";
 }
 
 function formatDaysLabel(days = []) {
@@ -1426,6 +1461,7 @@ function renderRanking() {
   updateAccordionMeta($habitAccMonthMeta, monthData);
   updateAccordionMeta($habitAccConsistencyMeta, consistency, "consistency");
   renderTotalsList();
+  renderCountsList();
 }
 
 function consistencyByHabit(daysRange) {
@@ -1675,15 +1711,42 @@ function rangeLabel(range) {
 function totalsByHabit(range) {
   const { start, end } = getRangeBounds(range);
   return activeHabits()
+    .filter((h) => (h.goal || "check") !== "count")
     .map((habit) => {
       const minutes = minutesForHabitRange(habit, start, end);
       const daysActive = collectHabitActiveDates(habit, start, end);
       const streak = computeHabitCurrentStreak(habit);
       return { habit, minutes, daysActive, streak };
     })
-    .filter((item) => item.minutes > 0 || item.daysActive > 0)
+    .filter((item) => item.minutes > 0)
     .sort((a, b) => b.minutes - a.minutes);
 }
+
+function countForHabitRange(habit, start, end) {
+  const startKey = dateKeyLocal(start);
+  const endKey = dateKeyLocal(end);
+  const store = habitCounts[habit.id] || {};
+  let total = 0;
+  Object.keys(store).forEach((key) => {
+    if (key >= startKey && key <= endKey) total += Number(store[key]) || 0;
+  });
+  return total;
+}
+
+function countsByHabit(range) {
+  const { start, end } = getRangeBounds(range);
+  return activeHabits()
+    .filter((h) => (h.goal || "check") === "count")
+    .map((habit) => {
+      const count = countForHabitRange(habit, start, end);
+      const daysActive = collectHabitActiveDates(habit, start, end);
+      const streak = computeHabitCurrentStreak(habit);
+      return { habit, count, daysActive, streak, value: count };
+    })
+    .filter((item) => item.count > 0 || item.daysActive > 0)
+    .sort((a, b) => b.count - a.count);
+}
+
 
 function updateAccordionMeta(el, items, type = "minutes") {
   if (!el) return;
@@ -1693,6 +1756,11 @@ function updateAccordionMeta(el, items, type = "minutes") {
   }
   if (type === "consistency") {
     el.textContent = `${items[0].value}% máx`;
+    return;
+  }
+  if (type === "count") {
+    const totalCount = items.reduce((acc, item) => acc + (item.value || item.count || 0), 0);
+    el.textContent = `${items.length} hábito${items.length !== 1 ? "s" : ""} · ${totalCount}×`;
     return;
   }
   const totalMinutes = items.reduce((acc, item) => acc + (item.value || item.minutes || 0), 0);
@@ -1780,6 +1848,50 @@ function renderTotalsList() {
     $habitTotalsList.appendChild(div);
   });
 }
+
+
+function renderCountsList() {
+  if (!$habitCountsList || !$habitAccCounts) return;
+  const data = countsByHabit(habitDonutRange);
+
+  // Mostrar/ocultar acordeón si no hay contadores
+  if (!data.length) {
+    $habitAccCounts.style.display = "none";
+    $habitCountsList.innerHTML = "";
+    return;
+  }
+  $habitAccCounts.style.display = "";
+  updateAccordionMeta($habitAccCountsMeta, data, "count");
+
+  $habitCountsList.innerHTML = "";
+  data.forEach((item) => {
+    const div = document.createElement("div");
+    div.className = "habit-ranking-item habit-count-item";
+    setHabitColorVars(div, item.habit);
+
+    const left = document.createElement("div");
+    left.className = "habit-ranking-left";
+    left.innerHTML = `
+      <div class="habit-emoji">${item.habit.emoji || "🏷️"}</div>
+      <div>
+        <div class="habit-name">${item.habit.name}</div>
+        <div class="habit-meta-row">
+          <div class="habit-meta">${item.daysActive} día${item.daysActive === 1 ? "" : "s"} · 🔥 ${item.streak}</div>
+        </div>
+      </div>
+    `;
+
+    const right = document.createElement("div");
+    right.className = "habit-ranking-right";
+    right.innerHTML = `<div class="habit-total-value">${item.count}×</div>`;
+    right.appendChild(createHabitActions(item.habit));
+
+    div.appendChild(left);
+    div.appendChild(right);
+    $habitCountsList.appendChild(div);
+  });
+}
+
 
 function renderDonut() {
   if (!$habitDonut || typeof echarts === "undefined") return;
@@ -2320,6 +2432,7 @@ function bindEvents() {
       habitDonutRange = btn.dataset.range || "day";
       renderDonut();
       renderTotalsList();
+      renderCountsList();
     });
   });
 

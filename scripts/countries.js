@@ -10,18 +10,39 @@ const regionNamesEn = typeof Intl !== "undefined" && Intl.DisplayNames
   : null;
 
 function getCountryCodes() {
+  // 1) Si el navegador lo soporta, es lo ideal.
   if (typeof Intl !== "undefined" && typeof Intl.supportedValuesOf === "function") {
-    // Chrome no soporta "region" en supportedValuesOf -> RangeError
     try {
       const supported = Intl.supportedValuesOf("region") || [];
       const codes = supported.filter((code) => /^[A-Z]{2}$/.test(code));
       if (codes.length) return codes;
     } catch (_) {
-      // fallback sin romper scripts
-   }
+      // algunos Chrome lanzan RangeError con "region"
+    }
   }
+
+  // 2) Fallback robusto: brute-force AA..ZZ usando Intl.DisplayNames.
+  const dn = regionNamesEn || regionNamesEs;
+  if (dn && typeof dn.of === "function") {
+    const out = [];
+    for (let a = 65; a <= 90; a++) {
+      for (let b = 65; b <= 90; b++) {
+        const code = String.fromCharCode(a) + String.fromCharCode(b);
+        let name = null;
+        try { name = dn.of(code); } catch (_) { name = null; }
+        if (!name || name === code) continue;
+        const low = String(name).toLowerCase();
+        if (low.includes("unknown") || low.includes("desconoc")) continue;
+        out.push(code);
+      }
+    }
+    if (out.length > 150) return out;
+  }
+
+  // 3) Último recurso
   return FALLBACK_CODES;
 }
+
 
 const COUNTRY_CODES = getCountryCodes();
 const COUNTRY_SET = new Set(COUNTRY_CODES);

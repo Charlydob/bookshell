@@ -544,6 +544,27 @@ const $habitTodayTimeEmpty = document.getElementById("habits-today-time-empty");
 const $habitTodayTimeDoneEmpty = document.getElementById("habits-today-time-done-empty");
 const $habitTodayCountMeta = document.getElementById("habits-today-count-meta");
 const $habitTodayTimeMeta = document.getElementById("habits-today-time-meta");
+
+// Hoy (grupos plegables)
+const $todayCountPendingPrivateWrap = document.getElementById("habits-today-count-pending-private-wrap");
+const $todayCountPendingPrivate = document.getElementById("habits-today-count-pending-private");
+const $todayCountPendingLowWrap = document.getElementById("habits-today-count-pending-low-wrap");
+const $todayCountPendingLow = document.getElementById("habits-today-count-pending-low");
+
+const $todayCountDonePrivateWrap = document.getElementById("habits-today-count-done-private-wrap");
+const $todayCountDonePrivate = document.getElementById("habits-today-count-done-private");
+const $todayCountDoneLowWrap = document.getElementById("habits-today-count-done-low-wrap");
+const $todayCountDoneLow = document.getElementById("habits-today-count-done-low");
+
+const $todayTimePendingPrivateWrap = document.getElementById("habits-today-time-pending-private-wrap");
+const $todayTimePendingPrivate = document.getElementById("habits-today-time-pending-private");
+const $todayTimePendingLowWrap = document.getElementById("habits-today-time-pending-low-wrap");
+const $todayTimePendingLow = document.getElementById("habits-today-time-pending-low");
+
+const $todayTimeDonePrivateWrap = document.getElementById("habits-today-time-done-private-wrap");
+const $todayTimeDonePrivate = document.getElementById("habits-today-time-done-private");
+const $todayTimeDoneLowWrap = document.getElementById("habits-today-time-done-low-wrap");
+const $todayTimeDoneLow = document.getElementById("habits-today-time-done-low");
 const $habitWeekList = document.getElementById("habits-week-list");
 const $habitWeekEmpty = document.getElementById("habits-week-empty");
 const $habitHistoryList = document.getElementById("habits-history-list");
@@ -609,7 +630,16 @@ const $habitEmoji = document.getElementById("habit-emoji");
 const $habitColor = document.getElementById("habit-color");
 const $habitTargetMinutes = document.getElementById("habit-target-minutes");
 const $habitTargetMinutesWrap = document.getElementById("habit-target-minutes-wrap");
+const $habitCountUnitMinutes = document.getElementById("habit-count-unit-minutes");
+const $habitCountUnitMinutesWrap = document.getElementById("habit-count-unit-minutes-wrap");
+const $habitQuickAddsWrap = document.getElementById("habit-quick-adds-wrap");
+const $habitQuick1Label = document.getElementById("habit-quick1-label");
+const $habitQuick1Minutes = document.getElementById("habit-quick1-minutes");
+const $habitQuick2Label = document.getElementById("habit-quick2-label");
+const $habitQuick2Minutes = document.getElementById("habit-quick2-minutes");
 const $habitDaysSelector = document.getElementById("habit-days-selector");
+const $habitGroupPrivate = document.getElementById("habit-group-private");
+const $habitGroupLowUse = document.getElementById("habit-group-lowuse");
 
 // Sesión modal
 const $habitSessionModal = document.getElementById("habit-session-modal");
@@ -702,12 +732,28 @@ function setHabitCount(habitId, dateKey, value) {
   if (!habitId || !dateKey) return;
   const habit = habits[habitId];
   if (!habit || habit.archived) return;
+
+  const prev = getHabitCount(habitId, dateKey);
+
   const n = Number(value);
   const safe = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+
   if (!habitCounts[habitId]) habitCounts[habitId] = {};
   if (safe > 0) habitCounts[habitId][dateKey] = safe;
   else delete habitCounts[habitId][dateKey];
-  saveCache();
+
+  // Si el contador tiene "minutos por vez", lo volcamos a tiempo total del día
+  const per = Math.round(Number(habit.countUnitMinutes) || 0);
+  if ((habit.goal || "check") === "count" && per > 0) {
+    const curTotal = getHabitTotalSecForDate(habitId, dateKey);
+    const prevSec = Math.round(prev * per * 60);
+    const baseSec = Math.max(0, curTotal - prevSec);
+    const nextSec = baseSec + Math.round(safe * per * 60);
+    setHabitTimeSec(habitId, dateKey, nextSec); // incluye save + remoto
+  } else {
+    saveCache();
+  }
+
   persistHabitCount(habitId, dateKey, safe > 0 ? safe : null);
   renderHabits();
 }
@@ -735,7 +781,15 @@ function openHabitModal(habit = null) {
   $habitName.value = habit ? habit.name || "" : "";
   $habitEmoji.value = habit ? habit.emoji || "" : "";
   $habitColor.value = habit && habit.color ? habit.color : DEFAULT_COLOR;
+  if ($habitGroupPrivate) $habitGroupPrivate.checked = !!(habit && habit.groupPrivate);
+  if ($habitGroupLowUse) $habitGroupLowUse.checked = !!(habit && habit.groupLowUse);
   $habitTargetMinutes.value = habit && habit.targetMinutes ? habit.targetMinutes : "";
+  if ($habitCountUnitMinutes) $habitCountUnitMinutes.value = habit && habit.countUnitMinutes ? habit.countUnitMinutes : "";
+  const qas = habit && Array.isArray(habit.quickAdds) ? habit.quickAdds : [];
+  if ($habitQuick1Label) $habitQuick1Label.value = qas[0]?.label || "";
+  if ($habitQuick1Minutes) $habitQuick1Minutes.value = qas[0]?.minutes ? String(qas[0].minutes) : "";
+  if ($habitQuick2Label) $habitQuick2Label.value = qas[1]?.label || "";
+  if ($habitQuick2Minutes) $habitQuick2Minutes.value = qas[1]?.minutes ? String(qas[1].minutes) : "";
   const goal = habit && (habit.goal === "time" || habit.goal === "count") ? habit.goal : "check";
   $habitForm.querySelector(`input[name=\"habit-goal\"][value=\"${goal}\"]`).checked = true;
   const scheduleType = habit && habit.schedule && habit.schedule.type === "days" ? "days" : "daily";
@@ -751,10 +805,18 @@ function openHabitModal(habit = null) {
 
 function updateHabitGoalUI() {
   const goal = $habitForm?.querySelector('input[name="habit-goal"]:checked')?.value || "check";
+
   if ($habitTargetMinutesWrap) {
     $habitTargetMinutesWrap.style.display = goal === "time" ? "block" : "none";
   }
+  if ($habitCountUnitMinutesWrap) {
+    $habitCountUnitMinutesWrap.style.display = goal === "count" ? "block" : "none";
+  }
+  if ($habitQuickAddsWrap) {
+    $habitQuickAddsWrap.style.display = goal === "time" ? "block" : "none";
+  }
 }
+
 
 
 function closeHabitModal() {
@@ -764,22 +826,46 @@ function closeHabitModal() {
 function gatherHabitPayload() {
   const name = ($habitName.value || "").trim();
   if (!name) return null;
+
   const id = $habitId.value || `h-${Date.now().toString(36)}`;
   const existing = habits[id];
+
   const emoji = ($habitEmoji.value || "").trim() || "🏷️";
   const color = $habitColor.value || DEFAULT_COLOR;
+
+  const groupPrivate = !!$habitGroupPrivate?.checked;
+  const groupLowUse = !!$habitGroupLowUse?.checked;
+
   const goal = $habitForm.querySelector("input[name=\"habit-goal\"]:checked")?.value || "check";
   const scheduleType = $habitForm.querySelector("input[name=\"habit-schedule\"]:checked")?.value || "daily";
   const days = Array.from($habitDaysSelector.querySelectorAll("button.is-active")).map((b) => Number(b.dataset.day));
+
   const targetMinutes = $habitTargetMinutes?.value ? Number($habitTargetMinutes.value) : null;
   const safeTargetMinutes = goal === "time" ? targetMinutes : null;
+
+  const unit = $habitCountUnitMinutes?.value ? Number($habitCountUnitMinutes.value) : null;
+  const safeUnit = goal === "count" ? unit : null;
+
+  const qa1m = $habitQuick1Minutes?.value ? Number($habitQuick1Minutes.value) : 0;
+  const qa2m = $habitQuick2Minutes?.value ? Number($habitQuick2Minutes.value) : 0;
+  const quickAdds = goal === "time"
+    ? [
+        ...(Number.isFinite(qa1m) && qa1m > 0 ? [{ label: ($habitQuick1Label?.value || "").trim(), minutes: Math.round(qa1m) }] : []),
+        ...(Number.isFinite(qa2m) && qa2m > 0 ? [{ label: ($habitQuick2Label?.value || "").trim(), minutes: Math.round(qa2m) }] : []),
+      ]
+    : [];
+
   return {
     id,
     name,
     emoji,
     color,
     goal,
+    groupPrivate,
+    groupLowUse,
     targetMinutes: Number.isFinite(safeTargetMinutes) && safeTargetMinutes > 0 ? safeTargetMinutes : null,
+    countUnitMinutes: Number.isFinite(safeUnit) && safeUnit > 0 ? Math.round(safeUnit) : null,
+    quickAdds,
     schedule: scheduleType === "days" ? { type: "days", days } : { type: "daily", days: [] },
     createdAt: existing?.createdAt || Date.now(),
     archived: existing?.archived || false
@@ -864,6 +950,24 @@ function renderToday() {
   $habitTodayCountDone.innerHTML = "";
   $habitTodayTimePending.innerHTML = "";
   $habitTodayTimeDone.innerHTML = "";
+
+  const resetGroup = (wrap, list) => {
+    if (list) list.innerHTML = "";
+    if (wrap) {
+      wrap.open = false; // siempre cerrado por defecto
+      wrap.style.display = "none";
+    }
+  };
+
+  resetGroup($todayCountPendingPrivateWrap, $todayCountPendingPrivate);
+  resetGroup($todayCountPendingLowWrap, $todayCountPendingLow);
+  resetGroup($todayCountDonePrivateWrap, $todayCountDonePrivate);
+  resetGroup($todayCountDoneLowWrap, $todayCountDoneLow);
+
+  resetGroup($todayTimePendingPrivateWrap, $todayTimePendingPrivate);
+  resetGroup($todayTimePendingLowWrap, $todayTimePendingLow);
+  resetGroup($todayTimeDonePrivateWrap, $todayTimeDonePrivate);
+  resetGroup($todayTimeDoneLowWrap, $todayTimeDoneLow);
 
   let countTotal = 0;
   let countDone = 0;
@@ -959,10 +1063,15 @@ function renderToday() {
         });
         if (dayData.hasActivity) fireBtn.classList.add("is-done");
         tools.appendChild(fireBtn);
+        if ((habit.goal || "check") === "time") {
+  appendTimeQuickControls(tools, habit, today);
+}
+      
       }
 
       const editBtn = document.createElement("button");
       editBtn.className = "icon-btn";
+      if ((habit.goal || "check") === "time") editBtn.classList.add("habit-time-btn");
       editBtn.type = "button";
       editBtn.textContent = "⋯";
       editBtn.title = "Editar registros";
@@ -983,9 +1092,17 @@ function renderToday() {
         }
       });
 
+      const groupKey = habit?.groupPrivate ? "private" : (habit?.groupLowUse ? "low" : "main");
+
+      const pick = (main, priv, low) => (groupKey === "private" ? priv : (groupKey === "low" ? low : main));
+
       const targetList = isCount
-        ? (dayData.hasActivity ? $habitTodayCountDone : $habitTodayCountPending)
-        : (dayData.hasActivity ? $habitTodayTimeDone : $habitTodayTimePending);
+        ? (dayData.hasActivity
+            ? pick($habitTodayCountDone, $todayCountDonePrivate, $todayCountDoneLow)
+            : pick($habitTodayCountPending, $todayCountPendingPrivate, $todayCountPendingLow))
+        : (dayData.hasActivity
+            ? pick($habitTodayTimeDone, $todayTimeDonePrivate, $todayTimeDoneLow)
+            : pick($habitTodayTimePending, $todayTimePendingPrivate, $todayTimePendingLow));
 
       targetList.appendChild(card);
     });
@@ -1001,6 +1118,23 @@ function renderToday() {
 
   if ($habitTodayCountMeta) $habitTodayCountMeta.textContent = countTotal ? `${countDone}/${countTotal}` : "—";
   if ($habitTodayTimeMeta) $habitTodayTimeMeta.textContent = timeTotal ? `${timeDone}/${timeTotal}` : "—";
+
+  const showGroup = (wrap, list) => {
+    if (!wrap || !list) return;
+    const has = list.childElementCount > 0;
+    wrap.style.display = has ? "" : "none";
+    wrap.open = false; // forzar siempre plegado
+  };
+
+  showGroup($todayCountPendingPrivateWrap, $todayCountPendingPrivate);
+  showGroup($todayCountPendingLowWrap, $todayCountPendingLow);
+  showGroup($todayCountDonePrivateWrap, $todayCountDonePrivate);
+  showGroup($todayCountDoneLowWrap, $todayCountDoneLow);
+
+  showGroup($todayTimePendingPrivateWrap, $todayTimePendingPrivate);
+  showGroup($todayTimePendingLowWrap, $todayTimePendingLow);
+  showGroup($todayTimeDonePrivateWrap, $todayTimeDonePrivate);
+  showGroup($todayTimeDoneLowWrap, $todayTimeDoneLow);
 }
 
 function formatDaysLabel(days = []) {
@@ -1409,6 +1543,80 @@ function renderDaysAccordion() {
     $habitDaysList.appendChild(div);
   });
 }
+function appendTimeQuickControls(tools, habit, today) {
+  // Columna a la derecha del 🔥 (no se solapa)
+  const col = document.createElement("div");
+  col.className = "habit-quick-col";
+  col.style.display = "flex";
+  col.style.flexDirection = "column";
+  col.style.gap = "2px";
+  col.style.alignItems = "stretch";
+  col.style.minWidth = "90px";   // ajusta si quieres
+  col.style.maxWidth = "90px";
+
+  // 1) Botones predefinidos (stack)
+  const qas = Array.isArray(habit.quickAdds) ? habit.quickAdds : [];
+  qas.slice(0, 2).forEach((qa) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "habit-quick-add habit-time-btn";
+    btn.style.width = "100%";
+    btn.textContent = qa.label || `+${qa.minutes} min`;
+    btn.title = "Añadir tiempo";
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const m = Math.round(Number(qa.minutes) || 0);
+      if (m > 0) addHabitTimeSec(habit.id, today, m * 60);
+      renderHabits();
+    });
+    col.appendChild(btn);
+  });
+
+  // 2) Input + botón “＋” en una fila (pero dentro de la columna)
+  const inline = document.createElement("div");
+  inline.className = "habit-quick-inline";
+  inline.style.display = "flex";
+  inline.style.gap = "1px";
+  inline.style.alignItems = "center";
+
+  const inp = document.createElement("input");
+  inp.type = "number";
+  inp.min = "1";
+  inp.inputMode = "numeric";
+  inp.placeholder = "+min";
+  inp.className = "habit-quick-input";
+  inp.style.flex = "1";
+  inp.addEventListener("click", (e) => e.stopPropagation());
+
+  const go = document.createElement("button");
+  go.type = "button";
+  go.className = "habit-quick-go habit-time-btn";
+  go.textContent = "＋";
+  go.title = "Sumar minutos";
+  go.style.flex = "0 0 auto";
+  go.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const n = Number(inp.value);
+    if (!Number.isFinite(n) || n <= 0) return;
+    addHabitTimeSec(habit.id, today, Math.round(n * 60));
+    inp.value = "";
+    renderHabits();
+  });
+
+  inp.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      go.click();
+    }
+  });
+
+  inline.appendChild(inp);
+  inline.appendChild(go);
+  col.appendChild(inline);
+
+  tools.appendChild(col);
+}
 
 function renderGlobalHeatmap() {
   $habitGlobalHeatmap.innerHTML = "";
@@ -1711,7 +1919,6 @@ function rangeLabel(range) {
 function totalsByHabit(range) {
   const { start, end } = getRangeBounds(range);
   return activeHabits()
-    .filter((h) => (h.goal || "check") !== "count")
     .map((habit) => {
       const minutes = minutesForHabitRange(habit, start, end);
       const daysActive = collectHabitActiveDates(habit, start, end);

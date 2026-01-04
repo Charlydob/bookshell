@@ -815,6 +815,19 @@
   padding: 0 12px 12px;
 }
 
+/* Subgrupos (Privados / Poco uso) dentro de Pendientes/Hechos */
+.habit-mini-group {
+  margin-top: 10px;
+}
+
+.habit-mini-group summary {
+  padding: 10px 32px 10px 10px;
+}
+
+.habit-mini-group .habit-accordion-meta {
+  display: none;
+}
+
 .habit-session-overlay {
   position: fixed;
   left: 0;
@@ -1070,7 +1083,7 @@
   margin-left:auto;          /* empuja tools al final */
   display:flex;
   align-items:center;
-  gap:16px;
+  gap:1px;
 }
 
 
@@ -1111,3 +1124,48 @@
 .habits-subgroup { display: flex; flex-direction: column; gap: 8px; }
 .habits-subgroup + .habits-subgroup { margin-top: 12px; }
 .habits-subgroup-title { font-size: 12px; font-weight: 700; color: var(--txt-soft); margin: 2px 2px 0; }
+
+
+/* --- Time habit quick buttons --- */
+.habit-time-btn { 
+  padding:0px;
+  
+  /* clase común para botones de hábitos de tiempo (excepto 🔥) */ }
+
+.habit-quick-add,
+.habit-quick-go{
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0);
+  background: rgba(var(--hclr-rgb, 127, 93, 255), 0.12);
+  color: var(--txt);
+  font-weight: 800;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.habit-quick-inline{
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.habit-quick-input{
+  width: 64px;
+  height: 34px;
+  border-radius: 12px;
+  padding: 0 10px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.18);
+  color: var(--txt);
+  outline: none;
+  min-width: none;
+  max-width: 60px;
+  font-size: 10px;
+}
+.habit-quick-col{
+  margin-right: 40px;
+  padding: 0px;
+  background-color: transparent;
+}

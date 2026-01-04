@@ -477,11 +477,53 @@
 <div class="habits-subgroup">
 <div class="habits-subgroup-title">Pendientes</div>
 <div class="habit-card-list" id="habits-today-count-pending"></div>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-count-pending-private-wrap">
+  <summary>
+    <div class="habit-accordion-title">Privados</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-count-pending-private"></div>
+  </div>
+</details>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-count-pending-low-wrap">
+  <summary>
+    <div class="habit-accordion-title">Poco uso</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-count-pending-low"></div>
+  </div>
+</details>
+
 <div class="empty-state small" id="habits-today-count-empty">No tienes contadores pendientes hoy.</div>
 </div>
 <div class="habits-subgroup">
 <div class="habits-subgroup-title">Hechos</div>
 <div class="habit-card-list" id="habits-today-count-done"></div>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-count-done-private-wrap">
+  <summary>
+    <div class="habit-accordion-title">Privados</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-count-done-private"></div>
+  </div>
+</details>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-count-done-low-wrap">
+  <summary>
+    <div class="habit-accordion-title">Poco uso</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-count-done-low"></div>
+  </div>
+</details>
+
 <div class="empty-state small" id="habits-today-count-done-empty">Aún no has marcado ningún contador hoy.</div>
 </div>
 </div>
@@ -496,11 +538,53 @@
 <div class="habits-subgroup">
 <div class="habits-subgroup-title">Pendientes</div>
 <div class="habit-card-list" id="habits-today-time-pending"></div>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-time-pending-private-wrap">
+  <summary>
+    <div class="habit-accordion-title">Privados</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-time-pending-private"></div>
+  </div>
+</details>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-time-pending-low-wrap">
+  <summary>
+    <div class="habit-accordion-title">Poco uso</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-time-pending-low"></div>
+  </div>
+</details>
+
 <div class="empty-state small" id="habits-today-time-empty">No tienes hábitos pendientes hoy.</div>
 </div>
 <div class="habits-subgroup">
 <div class="habits-subgroup-title">Hechos</div>
 <div class="habit-card-list" id="habits-today-time-done"></div>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-time-done-private-wrap">
+  <summary>
+    <div class="habit-accordion-title">Privados</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-time-done-private"></div>
+  </div>
+</details>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-time-done-low-wrap">
+  <summary>
+    <div class="habit-accordion-title">Poco uso</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-time-done-low"></div>
+  </div>
+</details>
+
 <div class="empty-state small" id="habits-today-time-done-empty">Aún no has completado ningún hábito hoy.</div>
 </div>
 </div>
@@ -1334,6 +1418,27 @@
 <span class="field-label">Color</span>
 <input id="habit-color" type="color" value="#7f5dff"/>
 </label>
+
+<label class="field checkbox-field">
+  <div class="checkbox-field-row">
+    <div>
+      <div class="checkbox-field-title">Agrupar en “Privados”</div>
+      <div class="checkbox-field-hint">Se mostrará en un desplegable cerrado por defecto (en Pendientes/Hechos).</div>
+    </div>
+    <input id="habit-group-private" type="checkbox"/>
+  </div>
+</label>
+
+<label class="field checkbox-field">
+  <div class="checkbox-field-row">
+    <div>
+      <div class="checkbox-field-title">Agrupar en “Poco uso”</div>
+      <div class="checkbox-field-hint">Se mostrará en un desplegable cerrado por defecto (en Pendientes/Hechos).</div>
+    </div>
+    <input id="habit-group-lowuse" type="checkbox"/>
+  </div>
+</label>
+
 </div>
 <div class="sheet-section">
 <div class="sheet-section-title">Objetivo</div>
@@ -1358,6 +1463,34 @@
 <span class="field-label">Minutos objetivo (opcional)</span>
 <input id="habit-target-minutes" inputmode="numeric" min="0" placeholder="25" type="number"/>
 </label>
+<label class="field" id="habit-count-unit-minutes-wrap" style="display:none">
+  <span class="field-label">Minutos por vez (opcional)</span>
+  <input id="habit-count-unit-minutes" inputmode="numeric" min="0" placeholder="8" type="number"/>
+  <div class="checkbox-field-hint">Si pones 8 y cuentas 2, se registran 16m ese día.</div>
+</label>
+
+<div class="sheet-subsection" id="habit-quick-adds-wrap" style="display:none">
+  <div class="sheet-section-title">Atajos</div>
+  <div class="quick-add-grid">
+    <label class="field">
+      <span class="field-label">Botón 1 (texto)</span>
+      <input id="habit-quick1-label" placeholder="+3 min" autocomplete="off"/>
+    </label>
+    <label class="field">
+      <span class="field-label">Botón 1 (min)</span>
+      <input id="habit-quick1-minutes" inputmode="numeric" min="0" placeholder="3" type="number"/>
+    </label>
+    <label class="field">
+      <span class="field-label">Botón 2 (texto)</span>
+      <input id="habit-quick2-label" placeholder="+1 h" autocomplete="off"/>
+    </label>
+    <label class="field">
+      <span class="field-label">Botón 2 (min)</span>
+      <input id="habit-quick2-minutes" inputmode="numeric" min="0" placeholder="60" type="number"/>
+    </label>
+  </div>
+</div>
+
 </div>
 <div class="sheet-section">
 <div class="sheet-section-title">Frecuencia</div>

@@ -1291,7 +1291,7 @@ function renderMap() {
         max,
         calculable: false,
         show: false,
-        inRange: { color: ["rgba(255,255,255,.08)", "rgba(255, 238, 0, 0.88)"] }
+        inRange: { color: ["rgba(238, 255, 0, 0.22)", "rgba(255, 238, 0, 0.88)"] }
       },
       series: [{
         type: "map",
@@ -1332,15 +1332,15 @@ function ensureEditModal() {
       <div class="media-modal-head">
         <div class="media-modal-headtext">
           <div class="media-modal-title">Editar título</div>
-          <div class="media-modal-sub">Aquí mandan los datos.</div>
+          <div class="media-modal-sub">Edita los detalles y guarda.</div>
         </div>
-        <button class="media-modal-close" data-action="close" type="button" title="Cerrar">✕</button>
+        <button class="media-modal-close" data-action="close" type="button" title="Cerrar" aria-label="Cerrar">✕</button>
       </div>
 
       <div class="media-modal-body">
         <label class="media-modal-field">
           <span>Título</span>
-          <input id="media-edit-title" class="media-input" />
+          <input id="media-edit-title" class="media-input" autocomplete="off" />
         </label>
 
         <div class="media-modal-grid">
@@ -1353,48 +1353,54 @@ function ensureEditModal() {
             </select>
           </label>
 
-          <label class="media-modal-field">
+          <div class="media-modal-field">
             <span>Rating</span>
-            <select id="media-edit-rating" class="media-input">
-              <option value="0">0</option><option value="1">1</option><option value="2">2</option>
-              <option value="3">3</option><option value="4">4</option><option value="5">5</option>
-            </select>
-          </label>
+            <input id="media-edit-rating" type="hidden" value="0" />
+            <div class="media-stars" id="media-edit-stars" tabindex="0" role="slider"
+                 aria-label="Rating" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0">
+              <button class="media-star" type="button" data-rate="1" aria-label="1 estrella">★</button>
+              <button class="media-star" type="button" data-rate="2" aria-label="2 estrellas">★</button>
+              <button class="media-star" type="button" data-rate="3" aria-label="3 estrellas">★</button>
+              <button class="media-star" type="button" data-rate="4" aria-label="4 estrellas">★</button>
+              <button class="media-star" type="button" data-rate="5" aria-label="5 estrellas">★</button>
+              <div class="media-stars-meta" id="media-edit-rating-label">0/5</div>
+            </div>
+          </div>
         </div>
 
         <div class="media-modal-grid">
           <label class="media-modal-field">
             <span>Año</span>
-            <input id="media-edit-year" class="media-input" type="number" inputmode="numeric" />
+            <input id="media-edit-year" class="media-input" type="number" inputmode="numeric" placeholder="Ej: 2017" />
           </label>
 
           <label class="media-modal-field">
             <span>Origen</span>
-            <input id="media-edit-country" class="media-input" list="country-options" />
+            <input id="media-edit-country" class="media-input" list="country-options" placeholder="País" autocomplete="off" />
           </label>
         </div>
 
         <label class="media-modal-field">
           <span>Géneros (coma)</span>
-          <input id="media-edit-genres" class="media-input" />
+          <input id="media-edit-genres" class="media-input" placeholder="Acción, Drama…" autocomplete="off" />
         </label>
 
         <label class="media-modal-field">
           <span>Director</span>
-          <input id="media-edit-director" class="media-input" />
+          <input id="media-edit-director" class="media-input" placeholder="Nombre" autocomplete="off" />
         </label>
 
         <label class="media-modal-field">
           <span>Reparto (coma)</span>
-          <input id="media-edit-cast" class="media-input" />
+          <input id="media-edit-cast" class="media-input" placeholder="Actores…" autocomplete="off" />
         </label>
 
         <div class="media-modal-toggles">
-          <label class="media-check">
+          <label class="media-toggle">
             <input id="media-edit-watchlist" type="checkbox" />
             <span>Watchlist</span>
           </label>
-          <label class="media-check">
+          <label class="media-toggle">
             <input id="media-edit-laura" type="checkbox" />
             <span>Laura</span>
           </label>
@@ -1413,7 +1419,7 @@ function ensureEditModal() {
       </div>
 
       <div class="media-modal-foot">
-        <button class="btn" data-action="delete" type="button">Borrar</button>
+        <button class="btn danger" data-action="delete" type="button">Borrar</button>
         <div style="flex:1"></div>
         <button class="btn ghost" data-action="close" type="button">Cancelar</button>
         <button class="btn primary" data-action="save" type="button">Guardar</button>
@@ -1431,11 +1437,27 @@ function ensureEditModal() {
 
   // esc
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !editModal.classList.contains("hidden")) hideEditModal();
+    if (e.key === "Escape" && editModal && !editModal.classList.contains("hidden")) hideEditModal();
   });
 
   // type -> season/ep
   editModal.querySelector("#media-edit-type")?.addEventListener("change", () => syncEditSeasonEp());
+
+  // rating stars
+  const stars = editModal.querySelector("#media-edit-stars");
+  stars?.addEventListener("click", (e) => {
+    const b = e.target?.closest?.("[data-rate]");
+    if (!b) return;
+    e.preventDefault();
+    setEditRating(Number(b.dataset.rate || 0));
+  });
+  stars?.addEventListener("keydown", (e) => {
+    const cur = clamp(Number(qs("media-edit-rating")?.value || 0), 0, 5);
+    if (e.key === "ArrowLeft") { e.preventDefault(); setEditRating(cur - 1); }
+    if (e.key === "ArrowRight") { e.preventDefault(); setEditRating(cur + 1); }
+    if (e.key === "Home") { e.preventDefault(); setEditRating(0); }
+    if (e.key === "End") { e.preventDefault(); setEditRating(5); }
+  });
 
   // delete
   editModal.querySelector("[data-action='delete']")?.addEventListener("click", () => {
@@ -1455,7 +1477,7 @@ function ensureEditModal() {
     if (!title) return;
 
     const type = qs("media-edit-type")?.value || "movie";
-    const rating = clamp(qs("media-edit-rating")?.value, 0, 5);
+    const rating = clamp(Number(qs("media-edit-rating")?.value || 0), 0, 5);
     const year = Number(qs("media-edit-year")?.value) || 0;
 
     const genres = parseCSV(qs("media-edit-genres")?.value);
@@ -1492,7 +1514,28 @@ function ensureEditModal() {
     hideEditModal();
   });
 
+  // init rating
+  setEditRating(0);
+
   return editModal;
+}
+
+function setEditRating(n) {
+  n = clamp(Number(n || 0), 0, 5);
+  const h = qs("media-edit-rating");
+  if (h) h.value = String(n);
+
+  const stars = editModal?.querySelectorAll?.(".media-star") || [];
+  stars.forEach((el) => {
+    const v = Number(el.dataset.rate || 0);
+    el.classList.toggle("is-on", v <= n);
+  });
+
+  const lab = qs("media-edit-rating-label");
+  if (lab) lab.textContent = `${n}/5`;
+
+  const wrap = qs("media-edit-stars");
+  if (wrap) wrap.setAttribute("aria-valuenow", String(n));
 }
 
 function syncEditSeasonEp() {
@@ -1511,7 +1554,7 @@ function openEditModal(id) {
 
   qs("media-edit-title").value = it.title || "";
   qs("media-edit-type").value = it.type || "movie";
-  qs("media-edit-rating").value = String(it.rating || 0);
+  setEditRating(it.rating || 0);
 
   qs("media-edit-year").value = it.year ? String(it.year) : "";
   qs("media-edit-country").value = it.countryLabel || "";
@@ -1536,7 +1579,6 @@ function hideEditModal() {
   editModal.classList.add("hidden");
   editModal.dataset.id = "";
 }
-
 /* ------------------------- Refresh ------------------------- */
 function refreshChartsMaybe() {
   if (state.view === "charts") renderDonut();

@@ -204,7 +204,7 @@ body {
   left: 50%;
   bottom: 10px;
   transform: translateX(-50%);
-  max-width: 480px;
+  max-width: 430px;
   width: calc(100% - 24px);
   z-index: 10;
   display: flex;
@@ -224,7 +224,6 @@ body {
   padding: 8px 6px;
   background: transparent;
   color: var(--txt-soft);
-  font-size: 13px;
   font-weight: 500;
 }
 

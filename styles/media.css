@@ -67,8 +67,8 @@
   background: var(--media-surface);
   border-radius: 16px;
 }
-.media-chart-card{ padding: 12px; }
-.media-geo{ padding: 12px; }
+.media-chart-card{ padding: 12px; margin-bottom: 200px; }
+.media-geo{ padding: 12px;  margin-bottom: 200px;}
 
 .media-chart-head{
   display:flex;
@@ -163,7 +163,10 @@
 }
 
 /* Lista virtual */
-.media-list-card{ overflow:hidden; }
+.media-list-card{ 
+  overflow:hidden;
+  margin-bottom: 200px;
+ }
 .media-list-head{
   padding: 10px 12px;
   border-bottom: 1px solid rgba(255,255,255,.06);

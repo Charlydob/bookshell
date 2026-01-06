@@ -248,7 +248,7 @@ if ($viewMain) {
 
   function loadDashMapKey() {
     const k = localStorage.getItem(LS_DASH_MAP);
-    return (k && DASH_MAPS[k]) ? k : "media";
+    return (k && DASH_MAPS[k]) ? k : "world";
   }
   function saveDashMapKey(k) {
     try { localStorage.setItem(LS_DASH_MAP, k); } catch (_) {}

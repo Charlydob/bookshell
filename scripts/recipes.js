@@ -1227,17 +1227,17 @@ notes.innerHTML = `<strong>Notas</strong><br>${linkifyNotesHtml(recipe.notes)}`;
   function renderRecipeGeo() {
     if (!$recipesGeoSection) return;
     const stats = buildRecipeCountryStats();
+      $recipesGeoSection.style.display = "block";
     if (!stats.length) {
-      $recipesGeoSection.style.display = "none";
-      if ($recipesWorldMap) {
-        if (typeof $recipesWorldMap.__geoCleanup === "function") $recipesWorldMap.__geoCleanup();
-        $recipesWorldMap.innerHTML = "";
-      }
       if ($recipesCountryList) $recipesCountryList.innerHTML = "";
+      if ($recipesWorldMap) {
+        // mostramos mapa aunque no haya países, con mensaje de ayuda
+        renderCountryHeatmap($recipesWorldMap, [], { emptyLabel: "Añade el país de cada receta" });
+      }
+      requestAnimationFrame(() => $recipesWorldMap?.__geoChart?.resize?.());
       return;
     }
-    $recipesGeoSection.style.display = "block";
-    requestAnimationFrame(() => $recipesWorldMap?.__geoChart?.resize?.());
+requestAnimationFrame(() => $recipesWorldMap?.__geoChart?.resize?.());
 
     
     const mapData = stats
@@ -1445,6 +1445,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
 
   function updateRecipe(id, patch) {
     const ts = Date.now();
+    try { localStorage.setItem("bookshell.lastRecipeId", String(id)); localStorage.setItem("bookshell.lastRecipeAt", String(ts)); } catch (_) {}
     const mergedPatch = { ...(patch || {}), updatedAt: ts };
     recipes = recipes.map((r) => (r.id === id ? normalizeRecipeFields({ ...r, ...mergedPatch }) : r));
     saveRecipes();
@@ -1625,6 +1626,86 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     renderRecipeDetail(id);
     
   }
+
+  // === API para Dashboard (Inicio) ===
+  function __dashGetLastViewedRecipe() {
+    try {
+      const id = localStorage.getItem("bookshell.lastRecipeId");
+      if (!id) return null;
+      return (Array.isArray(recipes) ? recipes : []).find((r) => String(r.id) === String(id)) || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function __dashGetTrackedRecipe() {
+    try {
+      const storedId = localStorage.getItem("bookshell.trackedRecipeId");
+      const storedAt = Number(localStorage.getItem("bookshell.trackedRecipeAt") || 0) || 0;
+
+      const list = Array.isArray(recipes) ? recipes : [];
+      let best = null;
+      let bestTs = -1;
+
+      list.forEach((r) => {
+        if (!r) return;
+        const isTracked = !!r.tracking || (storedId && String(r.id) === String(storedId));
+        if (!isTracked) return;
+        const ts = Number(r.trackingAt) || (storedId && String(r.id) === String(storedId) ? storedAt : 0) || 0;
+        if (ts > bestTs) {
+          bestTs = ts;
+          best = r;
+        }
+      });
+
+      if (!best && storedId) return list.find((r) => String(r.id) === String(storedId)) || null;
+      return best || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function __dashRecipeSortTs(r) {
+    if (!r) return 0;
+    const n = Number(r.updatedAt);
+    if (Number.isFinite(n) && n > 0) return n;
+    const t = Number(r.trackingAt);
+    if (Number.isFinite(t) && t > 0) return t;
+
+    const s = String(r.lastCooked || "");
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const d = new Date(s + "T00:00:00");
+      const ms = d.getTime();
+      return Number.isFinite(ms) ? ms : 0;
+    }
+    return 0;
+  }
+
+  function __dashGetRecentRecipeFallback() {
+    try {
+      const list = Array.isArray(recipes) ? [...recipes] : [];
+      const withChecks = list.filter((r) =>
+        Array.isArray(r?.ingredients) && r.ingredients.some((ing) => !!ing?.done)
+      );
+      const pickFrom = withChecks.length ? withChecks : list;
+      pickFrom.sort((a, b) => __dashRecipeSortTs(b) - __dashRecipeSortTs(a));
+      return pickFrom[0] || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  try {
+    window.__bookshellRecipes = {
+      getTrackedRecipe: __dashGetTrackedRecipe,
+      getLastViewedRecipe: __dashGetLastViewedRecipe,
+      getRecentRecipeFallback: __dashGetRecentRecipeFallback,
+      openRecipeDetail,
+    };
+  } catch (_) {}
+
+  try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+
 
   function renderRecipeDetail(id) {
     const recipe = recipes.find((r) => r.id === id);
@@ -2161,94 +2242,3 @@ function parseRecipeV1(raw){
     notes,
   };
 }
-
-// === API para Dashboard (Inicio) ===
-function getLastViewedRecipe() {
-  try {
-    const id = localStorage.getItem("bookshell.lastRecipeId");
-    if (!id) return null;
-    return (Array.isArray(recipes) ? recipes : []).find((r) => String(r.id) === String(id)) || null;
-  } catch (_) {
-    return null;
-  }
-}
-
-function getTrackedRecipe() {
-  try {
-    // Prefer la última receta marcada "en seguimiento" (bookmark)
-    const storedId = localStorage.getItem("bookshell.trackedRecipeId");
-    const storedAt = Number(localStorage.getItem("bookshell.trackedRecipeAt") || 0) || 0;
-
-    const list = Array.isArray(recipes) ? recipes : [];
-    let best = null;
-    let bestTs = -1;
-
-    list.forEach((r) => {
-      if (!r) return;
-      const isTracked = !!r.tracking || (storedId && String(r.id) === String(storedId));
-      if (!isTracked) return;
-      const ts = Number(r.trackingAt) || (storedId && String(r.id) === String(storedId) ? storedAt : 0) || 0;
-      if (ts > bestTs) {
-        bestTs = ts;
-        best = r;
-      }
-    });
-
-    // si hay id almacenado pero no trackingAt, devolvemos por id
-    if (!best && storedId) return list.find((r) => String(r.id) === String(storedId)) || null;
-
-    return best || null;
-  } catch (_) {
-    return null;
-  }
-}
-
-function recipeSortTs(r) {
-  if (!r) return 0;
-  const n = Number(r.updatedAt);
-  if (Number.isFinite(n) && n > 0) return n;
-  const t = Number(r.trackingAt);
-  if (Number.isFinite(t) && t > 0) return t;
-
-  const s = String(r.lastCooked || "");
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-    const d = new Date(s + "T00:00:00");
-    const ms = d.getTime();
-    return Number.isFinite(ms) ? ms : 0;
-  }
-  return 0;
-}
-
-function getRecentRecipeFallback() {
-  try {
-    const list = Array.isArray(recipes) ? [...recipes] : [];
-
-    const withIngredientChecks = list.filter((r) =>
-      Array.isArray(r?.ingredients) && r.ingredients.some((ing) => !!ing?.done)
-    );
-
-    const pickFrom = withIngredientChecks.length ? withIngredientChecks : list;
-
-    pickFrom.sort((a, b) => {
-      const ta = Number(a?.updatedAt) || 0;
-      const tb = Number(b?.updatedAt) || 0;
-      return tb - ta;
-    });
-
-    return pickFrom[0] || null;
-  } catch (_) {
-    return null;
-  }
-}
-
-
-try {
-  window.__bookshellRecipes = {
-    getTrackedRecipe,
-    getLastViewedRecipe,
-    getRecentRecipeFallback,
-    openRecipeDetail
-  };
-} catch (_) {}
-
-try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}

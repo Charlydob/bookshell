@@ -41,6 +41,341 @@ if ($viewMain) {
   let activeUnit = loadTimeUnit(); // h|m|s|d|w|mo
   let chart = null;
 
+  // --- Dashboard: Última receta revisada (tracking robusto) ---
+  const LS_LAST_RECIPE = "bookshell:lastRecipeViewed:v1";
+  function loadLastRecipeViewed() {
+    try {
+      const raw = localStorage.getItem(LS_LAST_RECIPE);
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      if (!obj || typeof obj !== "object") return null;
+      return obj;
+    } catch (_) {
+      return null;
+    }
+  }
+  function saveLastRecipeViewed(patch) {
+    try {
+      const prev = loadLastRecipeViewed() || {};
+      const next = { ...prev, ...patch, ts: Date.now() };
+      localStorage.setItem(LS_LAST_RECIPE, JSON.stringify(next));
+    } catch (_) {}
+  }
+  function patchRecipesApiForLastViewed() {
+    const api = window.__bookshellRecipes;
+    if (!api || api.__dashLastViewedPatched) return;
+    api.__dashLastViewedPatched = true;
+
+    const origOpen = api.openRecipeDetail;
+    if (typeof origOpen === "function") {
+      api.openRecipeDetail = function (id) {
+        if (id !== undefined && id !== null) {
+          saveLastRecipeViewed({ id: String(id) });
+          queueMicrotask(() => {
+            try {
+              const rec =
+                api.getRecipeById?.(id) ||
+                api.getRecipe?.(id) ||
+                api.getById?.(id) ||
+                null;
+              const t = rec?.title || rec?.name;
+              if (t) saveLastRecipeViewed({ title: String(t) });
+            } catch (_) {}
+          });
+          setTimeout(() => {
+            const t = document.getElementById("recipe-detail-title")?.textContent?.trim();
+            if (t) saveLastRecipeViewed({ title: t });
+          }, 250);
+        }
+        return origOpen.apply(this, arguments);
+      };
+    }
+  }
+  function getBestRecipeForShelf() {
+    const api = window.__bookshellRecipes;
+    const direct =
+      api?.getTrackedRecipe?.() ||
+      api?.getLastViewedRecipe?.() ||
+      api?.getRecentRecipeFallback?.() ||
+      null;
+    if (direct) return direct;
+
+    const last = loadLastRecipeViewed();
+    if (!last) return null;
+
+    const id = last.id ?? last.recipeId ?? null;
+    const title = last.title ?? last.name ?? null;
+
+    if (id && api) {
+      try {
+        const full =
+          api.getRecipeById?.(id) ||
+          api.getRecipe?.(id) ||
+          api.getById?.(id) ||
+          null;
+        if (full) return full;
+      } catch (_) {}
+      return { id, title: title || "Receta" };
+    }
+    if (title) return { title };
+    return null;
+  }
+
+  // --- Dashboard: mapa con selector (porta mapas existentes al Inicio) ---
+  const LS_DASH_MAP = "bookshell:dashMap:v1";
+  const $dashMapSelect = document.getElementById("dash-map-select");
+  const $dashMapHost = document.getElementById("dash-map-host");
+  const $dashMapEmpty = document.getElementById("dash-map-empty");
+
+  const DASH_MAPS = {
+    media: { id: "media-world-map", label: "Pantalla", view: "view-media", section: "media-map-card" },
+    books: { id: "books-world-map", label: "Libros", view: "view-books", section: "books-geo-section" },
+    recipes: { id: "recipes-world-map", label: "Recetas", view: "view-recipes", section: "recipes-geo-section" },
+    world: { id: "world-map", label: "Mundo", view: "view-world", section: null },
+  };
+
+  let _dashMountedMapKey = null;
+  const _dashMapPortals = Object.create(null); // key -> { el, parent, placeholder }
+
+  let _dashMapPriming = false;
+
+  function _dashActiveViewId() {
+    const b = document.querySelector(".bottom-nav .nav-btn.nav-btn-active");
+    return b?.dataset?.view || null;
+  }
+  function _dashClickNav(viewId) {
+    const btn = document.querySelector(`.bottom-nav .nav-btn[data-view="${viewId}"]`);
+    if (btn) btn.click();
+  }
+  function _dashNextFrame() {
+    return new Promise((res) => requestAnimationFrame(() => res()));
+  }
+  function _dashIsRendered(el) {
+    if (!el) return false;
+    if (el.__geoChart) return true;
+    try { if (window.echarts?.getInstanceByDom?.(el)) return true; } catch (_) {}
+    return false;
+  }
+
+  async function primeDashMap(key) {
+    const conf = DASH_MAPS[key];
+    const el = conf ? document.getElementById(conf.id) : null;
+    if (!conf || !el) return false;
+    if (_dashIsRendered(el)) return true;
+
+    // hacemos visible temporalmente la sección del mapa (si existe)
+    let sec = null;
+    let prevDisplay = null;
+    if (conf.section) {
+      sec = document.getElementById(conf.section);
+      if (sec) {
+        prevDisplay = sec.style.display;
+        sec.style.display = "block";
+      }
+    }
+
+    const prevView = _dashActiveViewId() || "view-main";
+
+    // ir a la vista del mapa para que su JS lo inicialice
+    if (conf.view && prevView !== conf.view) {
+      _dashClickNav(conf.view);
+      await _dashNextFrame();
+      await _dashNextFrame();
+    } else {
+      await _dashNextFrame();
+    }
+
+    // darle una oportunidad extra a echarts a medir tamaños
+    try { window.dispatchEvent(new Event("resize")); } catch (_) {}
+    await _dashNextFrame();
+
+    // volver a Inicio
+    if (prevView !== "view-main") {
+      _dashClickNav(prevView);
+      await _dashNextFrame();
+    } else if (conf.view && conf.view !== "view-main") {
+      _dashClickNav("view-main");
+      await _dashNextFrame();
+    }
+
+    // restaurar visibilidad de la sección
+    if (sec) sec.style.display = prevDisplay;
+
+    return _dashIsRendered(el);
+  }
+
+  async function ensureDashMapReadyAndMount(key) {
+    if (!isDashboardActive()) return;
+    const conf = DASH_MAPS[key];
+    const el = conf ? document.getElementById(conf.id) : null;
+    if (!conf || !el) {
+      if ($dashMapEmpty) {
+        $dashMapEmpty.textContent = "No hay mapa aún. Abre esa pestaña una vez para inicializarlo.";
+        $dashMapEmpty.style.display = "";
+      }
+      return;
+    }
+
+    if (_dashIsRendered(el)) {
+      mountDashMapNow(key);
+      return;
+    }
+
+    if (_dashMapPriming) return;
+    _dashMapPriming = true;
+
+    if ($dashMapEmpty) {
+      $dashMapEmpty.textContent = "Cargando mapa…";
+      $dashMapEmpty.style.display = "";
+    }
+
+    const ok = await primeDashMap(key);
+
+    _dashMapPriming = false;
+
+    if (!isDashboardActive()) return;
+    if (!ok) {
+      if ($dashMapEmpty) {
+        $dashMapEmpty.textContent = "No he podido inicializar ese mapa todavía. Entra una vez en esa pestaña y vuelve.";
+        $dashMapEmpty.style.display = "";
+      }
+      return;
+    }
+
+    mountDashMapNow(key);
+  }
+
+
+  function loadDashMapKey() {
+    const k = localStorage.getItem(LS_DASH_MAP);
+    return (k && DASH_MAPS[k]) ? k : "media";
+  }
+  function saveDashMapKey(k) {
+    try { localStorage.setItem(LS_DASH_MAP, k); } catch (_) {}
+  }
+  function isDashboardActive() {
+    const navActive = document.querySelector(".nav-btn.nav-btn-active")?.dataset?.view || "";
+    const mainActive = ($viewMain && $viewMain.classList.contains("view-active")) || navActive === "view-main";
+    return mainActive;
+  }
+  function resizeMaybe(el) {
+    try {
+      const inst = el.__geoChart || window.echarts?.getInstanceByDom?.(el) || null;
+      inst?.resize?.();
+    } catch (_) {}
+  }
+  function restoreAllDashMaps() {
+    Object.values(_dashMapPortals).forEach((p) => {
+      if (!p?.el || !p?.parent || !p?.placeholder) return;
+      if (p.el.parentElement === $dashMapHost) {
+        p.parent.insertBefore(p.el, p.placeholder);
+      }
+    });
+    _dashMountedMapKey = null;
+  }
+  function mountDashMapNow(key) {
+    if (!$dashMapHost) return;
+    const conf = DASH_MAPS[key];
+    if (!conf) return;
+
+    // si no estamos en Inicio, no tocamos nada
+    if (!isDashboardActive()) return;
+
+    // ya montado
+    if (_dashMountedMapKey === key && document.getElementById(conf.id)?.parentElement === $dashMapHost) {
+      resizeMaybe(document.getElementById(conf.id));
+      return;
+    }
+
+    restoreAllDashMaps();
+    _dashMountedMapKey = key;
+
+    const el = document.getElementById(conf.id);
+    if (!el || !el.parentElement) {
+      if ($dashMapEmpty) {
+        $dashMapEmpty.textContent = "No hay mapa aún. Abre esa pestaña una vez para inicializarlo.";
+        $dashMapEmpty.style.display = "";
+      }
+      return;
+    }
+
+    if ($dashMapEmpty) $dashMapEmpty.style.display = "none";
+
+    let portal = _dashMapPortals[key];
+    if (!portal) {
+      const placeholder = document.createElement("div");
+      placeholder.setAttribute("data-dash-map-placeholder", conf.id);
+      placeholder.style.display = "none";
+      el.parentElement.insertBefore(placeholder, el.nextSibling);
+      portal = _dashMapPortals[key] = { el, parent: el.parentElement, placeholder };
+    }
+
+    $dashMapHost.appendChild(el);
+    el.classList.add("dash-map-ported");
+
+    // resize (echarts) inmediato + un pelín después
+    resizeMaybe(el);
+    setTimeout(() => resizeMaybe(el), 120);
+  }
+
+  function mountDashMap(key) {
+    // wrapper: asegura init incluso si no has entrado antes a la pestaña
+    void ensureDashMapReadyAndMount(key);
+  }
+
+
+  function initDashMapPortal() {
+    if (!$dashMapSelect || !$dashMapHost) return;
+
+    const k = loadDashMapKey();
+    $dashMapSelect.value = k;
+    // asegura opciones (por si el HTML no se actualizó)
+    if ($dashMapSelect && !Array.from($dashMapSelect.options || []).some(o => o.value === "books")) {
+      const opt = document.createElement("option");
+      opt.value = "books";
+      opt.textContent = "Libros";
+      const before = Array.from($dashMapSelect.options || []).find(o => o.value === "recipes") || null;
+      $dashMapSelect.insertBefore(opt, before);
+    }
+
+
+    $dashMapSelect.addEventListener("change", () => {
+      const key = $dashMapSelect.value;
+      saveDashMapKey(key);
+      mountDashMap(key);
+    });
+
+    // nav clicks
+    document.addEventListener(
+      "click",
+      (e) => {
+        const btn = e.target?.closest?.(".bottom-nav .nav-btn");
+        if (!btn) return;
+        const view = btn.dataset.view;
+        if (view === "view-main") { if (!_dashMapPriming) queueMicrotask(() => mountDashMap($dashMapSelect.value || loadDashMapKey())); }
+        
+        else restoreAllDashMaps();
+      },
+      true
+    );
+
+    // si existe showView, lo parchamos para restaurar/montar
+    if (typeof window.showView === "function" && !window.__dashShowViewMapPatched) {
+      window.__dashShowViewMapPatched = true;
+      const orig = window.showView;
+      window.showView = function (viewId) {
+        if (viewId !== "view-main") restoreAllDashMaps();
+        const r = orig.apply(this, arguments);
+        if (viewId === "view-main") { if (!_dashMapPriming) queueMicrotask(() => mountDashMap($dashMapSelect.value || loadDashMapKey())); }
+        return r;
+      };
+    }
+
+    // primer mount
+    mountDashMap(k);
+  }
+
+
   const TIME_UNITS = [
     { key: "h", label: "Horas" },
     { key: "m", label: "Minutos" },
@@ -133,12 +468,15 @@ if ($viewMain) {
 
     if (recipe?.tracking) el.classList.add("tracking");
 
-    if (recipe) {
+    if (recipe?.id) {
       el.title = title;
       el.onclick = () => {
         clickNav("view-recipes");
         window.__bookshellRecipes?.openRecipeDetail?.(recipe.id);
       };
+    } else if (recipe) {
+      el.title = title;
+      el.classList.add("nolink");
     }
     return el;
   }
@@ -281,8 +619,8 @@ if ($viewMain) {
     // Receta
     if ($shelfRecipe) {
       $shelfRecipe.innerHTML = "";
-      const api = window.__bookshellRecipes;
-      const r = api?.getTrackedRecipe?.() || api?.getLastViewedRecipe?.() || api?.getRecentRecipeFallback?.() || null;
+      patchRecipesApiForLastViewed();
+      const r = getBestRecipeForShelf();
       $shelfRecipe.appendChild(createRecipeSpine(r));
     }
   }
@@ -344,6 +682,8 @@ if ($viewMain) {
   window.__bookshellDashboard = { render };
 
   bindButtons();
+  initDashMapPortal();
+  patchRecipesApiForLastViewed();
   window.addEventListener("resize", () => { try { chart?.resize(); } catch(_) {} });
 
   // Re-render cuando llegan datos

@@ -1169,3 +1169,9 @@
   padding: 0px;
   background-color: transparent;
 }
+.botones{
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;}

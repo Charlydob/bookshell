@@ -33,7 +33,7 @@
 <body>
 <div class="app-shell">
 <header class="app-header">
-<div class="header-title">Bookshell</div>
+<div class="header-title"></div>
 </header>
 <main class="app-main">
 <!-- Vista LIBROS -->
@@ -475,12 +475,14 @@
 <!-- Vista HÁBITOS -->
 <section class="view" id="view-habits">
 <div class="habits-wrapper">
-<header class="habits-header">
-<div class="habits-title">Hábitos</div>
-<button aria-label="Añadir hábito" class="icon-btn icon-btn-large" id="habit-add-btn">+</button>
-</header>
+  <div class="botones">
+  <header class="habits-header">
+  <div class="habits-title"></div>
+  <button aria-label="Añadir hábito" class="icon-btn icon-btn-large" id="habit-add-btn">+</button>
+  </header>
 <div class="habit-quick-actions">
 <button class="btn ghost btn-compact" id="habit-add-time">+ Añadir tiempo</button>
+</div>
 </div>
 <div aria-label="Vistas de hábitos" class="habits-subtabs" role="tablist">
 <button aria-selected="true" class="habit-subtab is-active" data-tab="today" role="tab">Hoy</button>
@@ -817,7 +819,7 @@
     <div class="media-head">
       <div class="media-head-left">
         <div class="media-title">Pantalla</div>
-        <div class="media-sub">Miles de títulos, cero lag.</div>
+        <div class="media-sub"></div>
       </div>
 
       <div class="media-viewbar" role="group" aria-label="Vista">
@@ -1073,7 +1075,7 @@
 <button class="nav-btn" data-view="view-videos">Vídeos</button>
 <button class="nav-btn" data-view="view-recipes">Recetas</button>
 <button class="nav-btn" data-view="view-habits">Hábitos</button>
-<button class="nav-btn" data-view="view-media">Pantalla</button>
+<button class="nav-btn" data-view="view-media">Media</button>
 <button class="nav-btn" data-view="view-world">Mundo</button>
 </nav>
 

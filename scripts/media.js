@@ -522,6 +522,7 @@ function bindDom() {
 
   // inline filters (si no existen, los inyectamos aquí para no tocar index)
   ensureInlineFilters();
+  bindCsvImport();
 
   // bind: search
   els.search?.addEventListener("input", () => {
@@ -708,6 +709,13 @@ function ensureInlineFilters() {
             <button class="media-range-btn is-active" data-range="total" type="button">Total</button>
           </div>
         </div>
+
+
+        <div class="media-inline-row media-import-row">
+          <button class="btn ghost btn-compact" id="media-import-csv-btn" type="button">Importar CSV (Letterboxd)</button>
+          <input id="media-import-csv" type="file" accept=".csv,text/csv" hidden />
+          <div class="media-import-hint">Date, Name, Year, link.</div>
+        </div>
       </div>
     </details>
   `;
@@ -725,6 +733,227 @@ function ensureInlineFilters() {
     rangeBtns.forEach(x => x.classList.toggle("is-active", x === b));
     refresh();
   }));
+}
+
+/* ------------------------- CSV import (Letterboxd) ------------------------- */
+let _mediaSubTimer = 0;
+function setMediaSub(msg, ms = 2500) {
+  const el = els.view?.querySelector?.(".media-sub");
+  if (!el) return;
+  if (_mediaSubTimer) { clearTimeout(_mediaSubTimer); _mediaSubTimer = 0; }
+  el.textContent = String(msg || "");
+  if (ms && ms > 0) {
+    _mediaSubTimer = setTimeout(() => { el.textContent = ""; _mediaSubTimer = 0; }, ms);
+  }
+}
+
+function parseCSVTable(text) {
+  text = String(text || "").replace(/^\uFEFF/, "");
+  const rows = [];
+  let row = [];
+  let cur = "";
+  let inQ = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inQ) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { cur += '"'; i++; }
+        else inQ = false;
+      } else cur += ch;
+      continue;
+    }
+
+    if (ch === '"') { inQ = true; continue; }
+    if (ch === ",") { row.push(cur); cur = ""; continue; }
+    if (ch === "\r") continue;
+    if (ch === "\n") { row.push(cur); rows.push(row); row = []; cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur.length || row.length) { row.push(cur); rows.push(row); }
+
+  return rows.map(r => r.map(v => norm(v)));
+}
+
+function findHeaderIdx(headers, keys) {
+  const h = (headers || []).map(x => foldKey(x));
+  for (let i = 0; i < h.length; i++) if (keys.includes(h[i])) return i;
+  return -1;
+}
+
+function parseLetterboxdCSV(text) {
+  const table = parseCSVTable(text);
+  if (!table.length) return [];
+
+  const head = table[0] || [];
+  const hasHeader = head.some(x => /name|title|year|date|letterboxd/i.test(String(x || "")));
+
+  const iDate = hasHeader ? findHeaderIdx(head, ["date", "watched date", "diary date"]) : 0;
+  const iTitle = hasHeader ? (findHeaderIdx(head, ["name", "title", "film", "film name"]) ) : 1;
+  const iYear = hasHeader ? findHeaderIdx(head, ["year"]) : 2;
+
+  const start = hasHeader ? 1 : 0;
+
+  const out = [];
+  for (let r = start; r < table.length; r++) {
+    const row = table[r] || [];
+    const title = norm(row[iTitle >= 0 ? iTitle : 1]);
+    if (!title) continue;
+
+    const year = Number.parseInt(row[iYear >= 0 ? iYear : 2], 10) || 0;
+
+    const dRaw = norm(row[iDate >= 0 ? iDate : 0]);
+    const dTs = dRaw ? (new Date(dRaw)).getTime() : 0;
+    const watchedAt = Number.isFinite(dTs) && dTs > 0 ? startOfDay(dTs) : 0;
+
+    out.push({ title, year, watchedAt });
+  }
+  return out;
+}
+
+function pushItemsQueue(arr) {
+  const q = Array.isArray(arr) ? arr.slice() : [];
+  const total = q.length;
+  if (!total) return;
+
+  let done = 0;
+  const step = () => {
+    const n = Math.min(60, q.length);
+    for (let i = 0; i < n; i++) {
+      const it = q.shift();
+      if (it) pushItemToFirebase(it);
+      done++;
+    }
+    if (q.length) {
+      setMediaSub(`Subiendo a Firebase… ${done}/${total}`, 0);
+      setTimeout(step, 0);
+    } else {
+      setMediaSub(`CSV listo · ${total.toLocaleString()} subidos`, 2200);
+    }
+  };
+  step();
+}
+
+function importLetterboxdRows(rows) {
+  const baseNow = nowTs();
+
+  // índice de existentes por (título|año)
+  const byKey = new Map();
+  for (const it of items) {
+    const k = `${foldKey(it.title)}|${Number(it.year) || 0}`;
+    byKey.set(k, it);
+  }
+
+  let added = 0, updated = 0, dup = 0, bad = 0;
+  const toAdd = [];
+  const toPush = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const title = norm(r?.title);
+    if (!title) { bad++; continue; }
+
+    const year = Number(r?.year) || 0;
+    const watchedAt = Number(r?.watchedAt) || 0;
+
+    const k = `${foldKey(title)}|${year}`;
+    if (byKey.has(k)) { dup++; continue; }
+
+    // si existe sin año y el CSV trae año => actualiza en vez de duplicar
+    if (year > 0) {
+      const k0 = `${foldKey(title)}|0`;
+      const ex0 = byKey.get(k0);
+      if (ex0 && !Number(ex0.year)) {
+        ex0.year = year;
+        ex0.updatedAt = baseNow + i;
+        if (watchedAt && !ex0.watchlist) ex0.watchedAt = watchedAt;
+        Object.assign(ex0, normalizeItem(ex0));
+        byKey.delete(k0);
+        byKey.set(k, ex0);
+        updated++;
+        toPush.push(ex0);
+        continue;
+      }
+    }
+
+    const it = normalizeItem({
+      id: uid(),
+      title,
+      type: "movie",
+      rating: 0,
+      year,
+      genres: [],
+      director: "",
+      cast: [],
+      countryCode: "",
+      countryEn: "",
+      countryLabel: "",
+      watchlist: false,
+      withLaura: false,
+      season: 0,
+      episode: 0,
+      watchedAt: watchedAt || baseNow,
+      createdAt: baseNow + i,
+      updatedAt: baseNow + i
+    });
+
+    toAdd.push(it);
+    toPush.push(it);
+    byKey.set(k, it);
+    added++;
+  }
+
+  if (!added && !updated) {
+    setMediaSub(`CSV: nada nuevo · dup ${dup.toLocaleString()} · inválidas ${bad.toLocaleString()}`, 4200);
+    return;
+  }
+
+  // añade de golpe
+  if (toAdd.length) items = toAdd.concat(items);
+
+  save();
+  refresh();
+
+  if (toPush.length) pushItemsQueue(toPush);
+
+  const msg = `CSV: +${added.toLocaleString()}${updated ? ` · año+${updated.toLocaleString()}` : ""}${dup ? ` · dup ${dup.toLocaleString()}` : ""}`;
+  setMediaSub(msg, 5200);
+}
+
+async function importLetterboxdCSVFile(file) {
+  try {
+    if (!file) return;
+    setMediaSub("Leyendo CSV…", 0);
+
+    const text = await file.text();
+    const rows = parseLetterboxdCSV(text);
+
+    if (!rows.length) {
+      setMediaSub("CSV vacío o no reconocido", 3200);
+      return;
+    }
+
+    setMediaSub(`Procesando… ${rows.length.toLocaleString()} filas`, 0);
+    importLetterboxdRows(rows);
+  } catch (e) {
+    console.warn("[media] csv import failed", e);
+    setMediaSub("CSV: error al importar", 3200);
+  }
+}
+
+function bindCsvImport() {
+  const btn = qs("media-import-csv-btn");
+  const inp = qs("media-import-csv");
+  if (!btn || !inp) return;
+
+  btn.addEventListener("click", () => inp.click());
+  inp.addEventListener("change", async () => {
+    const file = inp.files && inp.files[0];
+    inp.value = "";
+    if (!file) return;
+    await importLetterboxdCSVFile(file);
+  });
 }
 
 function bindTypePills() {

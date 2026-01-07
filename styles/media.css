@@ -549,3 +549,12 @@
 
 /* Hover/focus */
 .media-rating:focus{ outline: 2px solid rgba(167,139,250,.35); outline-offset: 4px; }
+
+
+/* CSV import */
+.media-import-row{ align-items:center; }
+.media-import-hint{
+  font-size: 11px;
+  opacity: .65;
+  max-width: 260px;
+}

@@ -247,6 +247,16 @@ if ($viewRecipes) {
   const $recipeAddIngredient = document.getElementById("recipe-add-ingredient");
   const $recipeAddStep = document.getElementById("recipe-add-step");
   const $recipeDelete = document.getElementById("recipe-delete");
+
+  const $recipeImageFile = document.getElementById("recipe-image-file");
+  const $recipeImagePreview = document.getElementById("recipe-image-preview");
+  const $recipeImageCamera = document.getElementById("recipe-image-camera");
+  const $recipeImageGallery = document.getElementById("recipe-image-gallery");
+  const $recipeImageRemove = document.getElementById("recipe-image-remove");
+  const $recipeImageStatus = document.getElementById("recipe-image-status");
+
+  const $recipeDetailHero = document.getElementById("recipe-detail-hero");
+  const $recipeDetailImage = document.getElementById("recipe-detail-image");
 const $recipeImportToggle = document.getElementById("recipe-import-toggle");
 const $recipeImportBox = document.getElementById("recipe-import-box");
 const $recipeImportText = document.getElementById("recipe-import-text");
@@ -298,6 +308,13 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   let recipeDonutActiveLabel = null;
   let recipeDonutBackupChips = null;
 
+  const RECIPE_PHOTO_PLACEHOLDER = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1b1622"/><stop offset="1" stop-color="#0b0c14"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#g)"/><text x="50%" y="50%" fill="rgba(255,255,255,0.55)" font-family="system-ui, -apple-system, Segoe UI, Roboto" font-size="42" text-anchor="middle" dominant-baseline="middle">Sin foto</text></svg>'
+  )}`;
+  let _recipePhotoRemove = false;
+  let _recipePhotoObjectUrl = null;
+
+
   function loadRecipes() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -316,6 +333,44 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       localStorage.setItem(STORAGE_KEY, JSON.stringify(recipes));
     } catch (err) {
       console.warn("No se pudo guardar recetas", err);
+    }
+  }
+
+
+  async function subirImagenACloudinarySafe(file) {
+    const fn =
+      typeof window !== "undefined" && window.subirImagenACloudinary
+        ? window.subirImagenACloudinary
+        : async (f) => {
+            const fd = new FormData();
+            fd.append("file", f);
+            fd.append("upload_preset", "publico");
+            const res = await fetch("https://api.cloudinary.com/v1_1/dgdavibcx/image/upload", {
+              method: "POST",
+              body: fd,
+            });
+            const data = await res.json();
+            return data.secure_url;
+          };
+
+    return fn(file);
+  }
+
+  function setRecipePhotoStatus(msg = "") {
+    if ($recipeImageStatus) $recipeImageStatus.textContent = msg || "";
+  }
+
+  function setRecipePhotoPreview(src) {
+    if (!$recipeImagePreview) return;
+    $recipeImagePreview.src = src || RECIPE_PHOTO_PLACEHOLDER;
+  }
+
+  function clearRecipePhotoObjectUrl() {
+    if (_recipePhotoObjectUrl) {
+      try {
+        URL.revokeObjectURL(_recipePhotoObjectUrl);
+      } catch (_) {}
+      _recipePhotoObjectUrl = null;
     }
   }
 
@@ -363,6 +418,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       ...recipe,
       country: country?.code || null,
       countryLabel: country?.label || recipe.countryLabel || recipe.country || null,
+      imageURL: recipe.imageURL || null,
       ingredients,
       steps,
     };
@@ -1404,6 +1460,13 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
 
     $modalBackdrop.classList.remove("hidden");
     $modalBackdrop.focus?.();
+
+    // foto
+    _recipePhotoRemove = false;
+    clearRecipePhotoObjectUrl();
+    if ($recipeImageFile) $recipeImageFile.value = "";
+    setRecipePhotoPreview(recipe?.imageURL || null);
+    setRecipePhotoStatus("");
     const isEditing = !!recipe;
     if ($recipeDelete) $recipeDelete.style.display = isEditing ? "inline-flex" : "none";
     if (recipe) {
@@ -1440,6 +1503,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
   }
 
   function closeRecipeModal() {
+    clearRecipePhotoObjectUrl();
     if ($modalBackdrop) $modalBackdrop.classList.add("hidden");
   }
 
@@ -1454,8 +1518,10 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
   }
 
-  function upsertRecipeFromForm(evt) {
+  async function upsertRecipeFromForm(evt) {
     evt.preventDefault();
+    const $submitBtn = $recipeForm?.querySelector?.("button[type='submit']");
+    const prevSubmitText = $submitBtn ? $submitBtn.textContent : "";
     const id = $recipeId.value || generateId();
     const existing = recipes.find((r) => r.id === id);
     const cookedDates = [...(existing?.cookedDates || [])];
@@ -1487,6 +1553,34 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     if (!payload.title) return;
     if (payload.lastCooked && !payload.cookedDates.includes(payload.lastCooked)) {
       payload.cookedDates.push(payload.lastCooked);
+    }
+
+    // foto (Cloudinary) — misma lógica que productos
+    const file = $recipeImageFile?.files?.[0] || null;
+    const previousUrl = existing?.imageURL || null;
+
+    if ($submitBtn) {
+      $submitBtn.disabled = true;
+      $submitBtn.textContent = file ? "Subiendo foto…" : "Guardando…";
+    }
+
+    try {
+      let nextUrl = previousUrl;
+
+      if (_recipePhotoRemove) nextUrl = null;
+
+      if (file) {
+        setRecipePhotoStatus("Subiendo foto…");
+        nextUrl = await subirImagenACloudinarySafe(file);
+        setRecipePhotoStatus("Foto subida ✅");
+      }
+
+      payload.imageURL = nextUrl;
+    } finally {
+      if ($submitBtn) {
+        $submitBtn.disabled = false;
+        $submitBtn.textContent = prevSubmitText || "Guardar";
+      }
     }
 
     const normalizedPayload = normalizeRecipeFields(payload);
@@ -1711,6 +1805,17 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     const recipe = recipes.find((r) => r.id === id);
     if (!recipe || !$recipeDetailBackdrop) return;
     setActiveRecipePanel("ingredients");
+
+    if ($recipeDetailHero && $recipeDetailImage) {
+      const url = recipe.imageURL || null;
+      if (url) {
+        $recipeDetailHero.style.display = "block";
+        $recipeDetailImage.src = url;
+      } else {
+        $recipeDetailHero.style.display = "none";
+        $recipeDetailImage.removeAttribute("src");
+      }
+    }
 
     if ($recipeDetailTitle) $recipeDetailTitle.textContent = recipe.title || "Receta";
     if ($recipeDetailMeal) $recipeDetailMeal.textContent = recipe.meal || "";
@@ -2064,6 +2169,43 @@ $recipeImportBtn?.addEventListener("click", () => {
     const id = $recipeId.value;
     if (id) deleteRecipe(id);
   });
+
+  // Foto (cámara / galería)
+  $recipeImageCamera?.addEventListener("click", () => {
+    if (!$recipeImageFile) return;
+    _recipePhotoRemove = false;
+    try { $recipeImageFile.setAttribute("capture", "environment"); } catch (_) {}
+    $recipeImageFile.click();
+  });
+
+  $recipeImageGallery?.addEventListener("click", () => {
+    if (!$recipeImageFile) return;
+    _recipePhotoRemove = false;
+    try { $recipeImageFile.removeAttribute("capture"); } catch (_) {}
+    $recipeImageFile.click();
+  });
+
+  $recipeImageFile?.addEventListener("change", () => {
+    const file = $recipeImageFile.files && $recipeImageFile.files[0];
+    clearRecipePhotoObjectUrl();
+    if (!file) {
+      setRecipePhotoPreview(null);
+      return;
+    }
+    _recipePhotoRemove = false;
+    _recipePhotoObjectUrl = URL.createObjectURL(file);
+    setRecipePhotoPreview(_recipePhotoObjectUrl);
+    setRecipePhotoStatus("Lista ✅ (se sube al guardar)");
+  });
+
+  $recipeImageRemove?.addEventListener("click", () => {
+    _recipePhotoRemove = true;
+    clearRecipePhotoObjectUrl();
+    if ($recipeImageFile) $recipeImageFile.value = "";
+    setRecipePhotoPreview(null);
+    setRecipePhotoStatus("Foto quitada (guarda para aplicar) ⚠️");
+  });
+
 
   $recipeDetailClose?.addEventListener("click", closeRecipeDetail);
   $recipeDetailCloseBottom?.addEventListener("click", closeRecipeDetail);

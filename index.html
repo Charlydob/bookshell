@@ -1393,6 +1393,20 @@
 <span class="field-label">País / origen</span>
 <input id="recipe-country" list="country-options" placeholder="Italia, Perú, Estados Unidos..." type="text"/>
 </label>
+<div class="field recipe-photo-field">
+  <span class="field-label">Foto</span>
+  <div class="recipe-photo-wrap">
+    <img id="recipe-image-preview" class="recipe-photo-preview" alt="Foto de la receta" />
+    <div class="recipe-photo-actions">
+      <button class="btn ghost btn-compact" id="recipe-image-camera" type="button">📷 Cámara</button>
+      <button class="btn ghost btn-compact" id="recipe-image-gallery" type="button">🖼️ Galería</button>
+      <button class="btn ghost danger btn-compact" id="recipe-image-remove" type="button">Quitar</button>
+    </div>
+    <div class="hint recipe-photo-status" id="recipe-image-status"></div>
+    <input id="recipe-image-file" type="file" accept="image/*" hidden />
+  </div>
+</div>
+
 <div class="form-grid row-2">
 <label class="field">
 <span class="field-label">Valoración</span>
@@ -1471,6 +1485,9 @@
 <button aria-label="Seguimiento" class="icon-btn icon-btn-large recipe-bookmark-btn" id="recipe-detail-bookmark">🔖</button>
 <button aria-label="Cerrar" class="icon-btn icon-btn-large" id="recipe-detail-close">✕</button>
 </div>
+</div>
+<div class="recipe-detail-hero" id="recipe-detail-hero" style="display:none;">
+  <img id="recipe-detail-image" alt="Foto de la receta" loading="lazy" />
 </div>
 <div class="recipe-detail-specs">
 <div class="spec-block">

@@ -39,6 +39,15 @@ const LAST_HABIT_KEY = "bookshell-habits-last-used";
 const HEATMAP_YEAR_STORAGE = "bookshell-habits-heatmap-year";
 const DEFAULT_COLOR = "#7f5dff";
 
+// Sistema: tiempo no asignado (24h - tiempo registrado)
+const DAY_SEC = 24 * 60 * 60;
+const UNKNOWN_HABIT_ID = "h-unknown";
+const UNKNOWN_HABIT_NAME = "Desconocido";
+const UNKNOWN_HABIT_EMOJI = "❓";
+const UNKNOWN_HABIT_COLOR = "#8b93a6"; // neutro
+let _pendingShortcutCmd = null;
+
+
 // Estado
 let habits = {}; // {id: habit}
 let habitChecks = {}; // { habitId: { dateKey: true } }
@@ -90,6 +99,32 @@ function parseDateKey(key) {
   const [y, m, d] = key.split("-").map(Number);
   if (!y || !m || !d) return null;
   return new Date(y, m - 1, d);
+}
+
+
+function foldKey(s) {
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function resolveHabitIdFromToken(token) {
+  const raw = String(token || "").trim();
+  if (!raw) return null;
+
+  // 1) id directo
+  if (habits && habits[raw] && !habits[raw].archived) return raw;
+
+  // 2) nombre exacto (normalizado)
+  const fk = foldKey(raw);
+  const found = Object.values(habits || {}).find((h) => {
+    if (!h || h.archived) return false;
+    return foldKey(h.name) === fk;
+  });
+  return found?.id || null;
 }
 
 function hexToRgb(hex) {
@@ -199,6 +234,21 @@ function normalizeSessionsStore(raw, persistRemote = false) {
 }
 
 function getHabitTotalSecForDate(habitId, dateKey) {
+  if (!habitId || !dateKey) return 0;
+
+  // Desconocido se calcula dinámicamente: 24h - tiempo asignado
+  if (habitId === UNKNOWN_HABIT_ID) {
+    ensureUnknownHabit(false);
+    const computed = computeUnknownSecForDate(dateKey);
+
+    // cache en memoria (sin machacar remoto)
+    if (!habitSessions[UNKNOWN_HABIT_ID] || typeof habitSessions[UNKNOWN_HABIT_ID] !== "object") {
+      habitSessions[UNKNOWN_HABIT_ID] = {};
+    }
+    habitSessions[UNKNOWN_HABIT_ID][dateKey] = computed;
+    return computed;
+  }
+
   const byDate = habitSessions?.[habitId];
   if (!byDate || typeof byDate !== "object") return 0;
   const sec = Number(byDate[dateKey]) || 0;
@@ -220,6 +270,12 @@ function addHabitTimeSec(habitId, dateKey, secToAdd) {
   } catch (err) {
     console.warn("No se pudo guardar tiempo en remoto", err);
   }
+
+  // recalcular Desconocido del día
+  if (habitId !== UNKNOWN_HABIT_ID) {
+    try { recomputeUnknownForDate(dateKey, true); } catch (_) {}
+  }
+
   return next;
 }
 
@@ -236,6 +292,11 @@ function setHabitTimeSec(habitId, dateKey, totalSec) {
     set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), sec > 0 ? sec : null);
   } catch (err) {
     console.warn("No se pudo actualizar tiempo en remoto", err);
+  }
+
+  // recalcular Desconocido del día
+  if (habitId !== UNKNOWN_HABIT_ID) {
+    try { recomputeUnknownForDate(dateKey, true); } catch (_) {}
   }
 }
 
@@ -374,8 +435,92 @@ function saveHeatmapYear() {
   }
 }
 
+function isSystemHabit(habit) {
+  return !!habit?.system;
+}
+
 function activeHabits() {
-  return Object.values(habits).filter((h) => !h.archived);
+  // Hábitos "del usuario" (excluye sistema, como Desconocido)
+  return Object.values(habits).filter((h) => h && !h.archived && !isSystemHabit(h));
+}
+
+function activeHabitsWithSystem() {
+  // Incluye sistema (p.ej. Desconocido) para métricas de tiempo
+  return Object.values(habits).filter((h) => h && !h.archived);
+}
+
+function ensureUnknownHabit(persistRemote = true) {
+  const existing = habits?.[UNKNOWN_HABIT_ID];
+  if (existing && !existing.archived) return existing;
+
+  const payload = {
+    id: UNKNOWN_HABIT_ID,
+    name: UNKNOWN_HABIT_NAME,
+    emoji: UNKNOWN_HABIT_EMOJI,
+    color: UNKNOWN_HABIT_COLOR,
+    goal: "time",
+    groupPrivate: false,
+    groupLowUse: true,
+    targetMinutes: null,
+    countUnitMinutes: null,
+    quickAdds: [],
+    schedule: { type: "daily", days: [] },
+    createdAt: existing?.createdAt || 0,
+    archived: false,
+    system: true
+  };
+
+  habits[UNKNOWN_HABIT_ID] = payload;
+  saveCache();
+  if (persistRemote) {
+    try { persistHabit(payload); } catch (_) {}
+  }
+  return payload;
+}
+
+function computeUnknownSecForDate(dateKey) {
+  if (!dateKey) return 0;
+
+  // suma de TODO el tiempo registrado (excepto Desconocido)
+  let assigned = 0;
+  Object.entries(habitSessions || {}).forEach(([hid, byDate]) => {
+    if (hid === UNKNOWN_HABIT_ID) return;
+    const h = habits?.[hid];
+    if (!h || h.archived) return;
+    const sec = Number(byDate?.[dateKey]) || 0;
+    if (sec > 0) assigned += sec;
+  });
+
+  assigned = Math.min(DAY_SEC, Math.max(0, Math.round(assigned)));
+  return Math.max(0, DAY_SEC - assigned);
+}
+
+function recomputeUnknownForDate(dateKey, persistRemote = false) {
+  if (!dateKey) return 0;
+  ensureUnknownHabit(false);
+
+  const next = computeUnknownSecForDate(dateKey);
+  const cur = Number(habitSessions?.[UNKNOWN_HABIT_ID]?.[dateKey]) || 0;
+
+  if (Math.abs((cur || 0) - next) < 1) return cur || 0;
+
+  if (!habitSessions[UNKNOWN_HABIT_ID] || typeof habitSessions[UNKNOWN_HABIT_ID] !== "object") {
+    habitSessions[UNKNOWN_HABIT_ID] = {};
+  }
+  if (next > 0) habitSessions[UNKNOWN_HABIT_ID][dateKey] = next;
+  else delete habitSessions[UNKNOWN_HABIT_ID][dateKey];
+
+  saveCache();
+
+  if (persistRemote) {
+    try {
+      set(ref(db, `${HABIT_SESSIONS_PATH}/${UNKNOWN_HABIT_ID}/${dateKey}`), next > 0 ? next : null);
+    } catch (err) {
+      console.warn("No se pudo guardar tiempo Desconocido en remoto", err);
+    }
+  }
+
+  return next;
 }
 
 
@@ -1305,7 +1450,7 @@ function renderHabitLineSelector() {
   };
 
   addOption("total", "Total (todos)", getNeutralLineColor());
-  const active = activeHabits()
+  const active = activeHabitsWithSystem()
     .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   active.forEach((habit) => addOption(habit.id, `${habit.emoji || "🏷️"} ${habit.name}`, resolveHabitColor(habit)));
 
@@ -1867,7 +2012,8 @@ function buildLineSeries(habitId, range) {
   const today = new Date();
   const cappedEnd = end > today ? today : end;
   const points = [];
-  const habitsList = activeHabits();
+  const habitsList = activeHabitsWithSystem();
+  const habitsUserList = activeHabits();
   for (let d = new Date(start); d <= cappedEnd; d = addDays(d, 1)) {
     const key = dateKeyLocal(d);
     const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -1877,7 +2023,7 @@ function buildLineSeries(habitId, range) {
         return { habit, minutes };
       }).filter((item) => item.minutes > 0).sort((a, b) => b.minutes - a.minutes);
       const minutes = perHabit.reduce((acc, item) => acc + item.minutes, 0);
-      const hasActivity = habitsList.some((h) => getHabitDayScore(h, key).hasActivity);
+      const hasActivity = habitsUserList.some((h) => getHabitDayScore(h, key).hasActivity);
       points.push({ dateKey: key, date, minutes, perHabit, hasActivity });
     } else {
       const habit = habits[habitId];
@@ -1892,7 +2038,7 @@ function buildLineSeries(habitId, range) {
 
 function timeShareByHabit(range) {
   const { start, end } = getRangeBounds(range);
-  return activeHabits()
+  return activeHabitsWithSystem()
     .map((habit) => ({
       habit,
       minutes: minutesForHabitRange(habit, start, end)
@@ -2280,22 +2426,54 @@ function deleteHabit() {
 }
 
 // Cronómetro
-function startSession() {
+function startSession(habitId = null) {
   if (runningSession) return;
-  runningSession = { startTs: Date.now() };
+
+  const targetHabitId = (typeof habitId === "string" && habits?.[habitId] && !habits[habitId]?.archived)
+    ? habitId
+    : null;
+
+  runningSession = { startTs: Date.now(), targetHabitId };
   saveRunningSession();
   updateSessionUI();
   sessionInterval = setInterval(updateSessionUI, 1000);
 }
 
-function stopSession() {
+function stopSession(assignHabitId = null, silent = false) {
+  // si viene como handler de click, el primer arg será un Event
+  if (assignHabitId && typeof assignHabitId === "object" && assignHabitId.type) {
+    assignHabitId = null;
+    silent = false;
+  }
+
   if (!runningSession) return;
+
   const duration = Math.max(1, Math.round((Date.now() - runningSession.startTs) / 1000));
+  const target = (typeof assignHabitId === "string" && assignHabitId)
+    ? assignHabitId
+    : (runningSession?.targetHabitId || null);
+
+  const startTs = runningSession.startTs;
+  const dateKey = dateKeyLocal(new Date(startTs));
+
   pendingSessionDuration = duration;
   runningSession = null;
   saveRunningSession();
   if (sessionInterval) clearInterval(sessionInterval);
   updateSessionUI();
+
+  // Auto-asignación (Shortcuts / enlace)
+  if (target && habits?.[target] && !habits[target]?.archived) {
+    addHabitTimeSec(target, dateKey, duration);
+    localStorage.setItem(LAST_HABIT_KEY, target);
+    pendingSessionDuration = 0;
+    if (!silent) showHabitToast(`Asignado: ${habits[target]?.name || "hábito"} · ${Math.round(duration / 60)}m`);
+    closeSessionModal?.();
+    renderHabits();
+    return;
+  }
+
+  // flujo normal: abrir selector
   openSessionModal();
 }
 
@@ -2330,7 +2508,7 @@ function closeSessionModal() {
 
 function renderSessionList() {
   $habitSessionList.innerHTML = "";
-  const habitsList = Object.values(habits).filter((h) => !h.archived);
+  const habitsList = activeHabits();
   const lastHabitId = localStorage.getItem(LAST_HABIT_KEY);
   const lastHabit = lastHabitId ? habits[lastHabitId] : null;
   if (lastHabit) {
@@ -2679,6 +2857,13 @@ function listenRemote() {
   onValue(ref(db, HABITS_PATH), (snap) => {
     const val = snap.val() || {};
     habits = val;
+    ensureUnknownHabit(true);
+    if (_pendingShortcutCmd) {
+      try {
+        const ok = executeShortcutCmd(_pendingShortcutCmd, { silent: true });
+        if (ok) _pendingShortcutCmd = null;
+      } catch (_) {}
+    }
     saveCache();
     renderHabits();
   });
@@ -2719,6 +2904,111 @@ function toggleSession() {
   else startSession();
 }
 
+
+
+function readShortcutCmdFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+
+    // params normales
+    const params = new URLSearchParams(url.search);
+
+    // params en hash tipo #view-habits?...
+    const hash = String(url.hash || "");
+    const qIdx = hash.indexOf("?");
+    if (qIdx >= 0) {
+      const hp = new URLSearchParams(hash.slice(qIdx + 1));
+      hp.forEach((v, k) => { if (!params.has(k)) params.set(k, v); });
+    }
+
+    const action = (params.get("hact") || params.get("action") || params.get("do") || "").trim();
+    const habitToken = (params.get("habit") || params.get("h") || params.get("habitName") || params.get("habitId") || "").trim();
+    const tab = (params.get("tab") || "").trim();
+
+    if (!action && !tab) return null;
+
+    return {
+      action: action ? action.toLowerCase() : "",
+      habitToken,
+      tab: tab ? tab.toLowerCase() : "",
+      _keys: ["hact","action","do","habit","h","habitName","habitId","tab","hb","habits","src"]
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function clearShortcutCmdFromUrl(cmd) {
+  try {
+    const url = new URL(window.location.href);
+    (cmd?._keys || []).forEach((k) => url.searchParams.delete(k));
+    if (url.hash && url.hash.includes("?")) url.hash = url.hash.split("?")[0];
+    history.replaceState({}, document.title, url.toString());
+  } catch (_) {}
+}
+
+function executeShortcutCmd(cmd, { silent = true } = {}) {
+  if (!cmd) return false;
+
+  // tab
+  if (cmd.tab) goHabitSubtab(cmd.tab);
+
+  // action
+  const action = cmd.action;
+  if (!action) return true;
+
+  const habitId = resolveHabitIdFromToken(cmd.habitToken);
+
+  if (action === "start" || action === "begin" || action === "on") {
+    // si viene por nombre y aún no está en cache/remoto, esperamos
+    if (cmd.habitToken && !habitId) return false;
+
+    if (habitId) startSession(habitId);
+    else startSession();
+
+    if (!silent) showHabitToast(habitId ? `▶︎ Sesión: ${habits[habitId]?.name || "—"}` : "▶︎ Sesión iniciada");
+    return true;
+  }
+
+  if (action === "stop" || action === "end" || action === "off") {
+    // si viene por nombre y aún no está en cache/remoto, esperamos
+    if (cmd.habitToken && !habitId) return false;
+
+    if (habitId) stopSession(habitId, true);
+    else stopSession(null, true);
+
+    return true;
+  }
+
+  if (action === "toggle") {
+    if (habitId) {
+      if (runningSession) stopSession(habitId, true);
+      else startSession(habitId);
+    } else {
+      toggleSession();
+    }
+    return true;
+  }
+
+  return false;
+}
+
+function handleShortcutUrlOnce() {
+  const cmd = readShortcutCmdFromUrl();
+  if (!cmd) return;
+
+  // intentamos ya (con cache). Si viene por nombre y no existe aún, quedará pendiente.
+  _pendingShortcutCmd = cmd;
+  const okNow = executeShortcutCmd(cmd, { silent: true });
+
+  // evitamos re-ejecución al recargar
+  clearShortcutCmdFromUrl(cmd);
+
+  if (!okNow) return; // esperamos a que llegue remoto (HABITS_PATH)
+
+  _pendingShortcutCmd = null;
+}
+
 // API para Atajos (Shortcut -> URL params)
 window.__bookshellHabits = {
   goHabitSubtab,
@@ -2734,6 +3024,8 @@ export function initHabits() {
   readCache();
   loadRunningSession();
   loadHeatmapYear();
+  ensureUnknownHabit(true);
+  handleShortcutUrlOnce();
   bindEvents();
   attachNavHook();
   listenRemote();

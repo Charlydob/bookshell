@@ -292,7 +292,6 @@ function getShelfAvailWidthPx(hostEl) {
 
   return avail;
 }
-
 function buildShelfRowsByWidth(items, makeSpine, hostEl, rowClass = "books-shelf-row") {
   const maxWidth = getShelfAvailWidthPx(hostEl);
   const frag = document.createDocumentFragment();
@@ -300,6 +299,17 @@ function buildShelfRowsByWidth(items, makeSpine, hostEl, rowClass = "books-shelf
   let row = null;
   let used = 0;
   let rowIdx = -1;
+
+  // Medidor oculto para poder medir el ancho real del lomo aunque aún no esté en el DOM visible
+  let measurer = hostEl && hostEl.__shelfMeasurer;
+  if (hostEl && !measurer) {
+    measurer = document.createElement("div");
+    measurer.className = "shelf-measurer";
+    measurer.style.cssText =
+      "position:absolute;left:-99999px;top:-99999px;visibility:hidden;pointer-events:none;contain:layout style;";
+    hostEl.appendChild(measurer);
+    hostEl.__shelfMeasurer = measurer;
+  }
 
   const startRow = () => {
     row = document.createElement("div");
@@ -319,35 +329,47 @@ function buildShelfRowsByWidth(items, makeSpine, hostEl, rowClass = "books-shelf
   };
 
   const arr = items || [];
-  dbg("buildShelfRowsByWidth: begin", { count: arr.length, rowClass, host: hostEl?.className || hostEl?.id || "?" });
+  dbg("buildShelfRowsByWidth: begin", {
+    count: arr.length,
+    rowClass,
+    maxWidth,
+    host: hostEl?.className || hostEl?.id || "?"
+  });
 
   arr.forEach((item, idx) => {
     const spine = makeSpine(item);
 
-    // ancho: usa getBoundingClientRect si ya está medible; si no, dataset; si no, fallback
-    const rectW = spine?.getBoundingClientRect?.().width || 0;
+    // ancho REAL del lomo: medir en measurer (si existe), si no dataset, si no fallback
+    let rectW = 0;
     const dsW = Number(spine?.dataset?.spineWidth) || 0;
-    const w = Math.ceil(rectW) || dsW || 46;
+
+    if (measurer && spine) {
+      measurer.appendChild(spine);
+      rectW = spine.getBoundingClientRect().width || 0;
+      measurer.removeChild(spine);
+    } else {
+      rectW = spine?.getBoundingClientRect?.().width || 0;
+    }
+
+    const w = Math.max(1, Math.ceil(rectW) || dsW || 46);
 
     if (!row) startRow();
 
     const needed = row.childNodes.length ? (SHELF_GAP_PX + w) : w;
     const wouldBe = used + needed;
 
-    dbg("item",
-      {
-        idx,
-        title: item?.title || item?.name || item?.id || "?",
-        w,
-        rectW: +rectW.toFixed(2),
-        dsW,
-        used,
-        needed,
-        wouldBe,
-        maxWidth,
-        fits: wouldBe < (maxWidth - 2)
-      }
-    );
+    dbg("item", {
+      idx,
+      title: item?.title || item?.name || item?.id || "?",
+      w,
+      rectW: +Number(rectW || 0).toFixed(2),
+      dsW,
+      used,
+      needed,
+      wouldBe,
+      maxWidth,
+      fits: wouldBe < (maxWidth - 2)
+    });
 
     if (row.childNodes.length && wouldBe >= (maxWidth - 2)) {
       dbgWarn("wrapToNextRow", { rowIdx, idx, used, needed, wouldBe, maxWidth });
@@ -369,7 +391,11 @@ function buildShelfRowsByWidth(items, makeSpine, hostEl, rowClass = "books-shelf
     if (hostEl) {
       const cs = getComputedStyle(hostEl);
       if (cs.overflowX === "hidden" || cs.overflow === "hidden") {
-        dbgWarn("HOST HAS overflow hidden -> puede recortar", { overflow: cs.overflow, overflowX: cs.overflowX, host: hostEl.className || hostEl.id });
+        dbgWarn("HOST HAS overflow hidden -> puede recortar", {
+          overflow: cs.overflow,
+          overflowX: cs.overflowX,
+          host: hostEl.className || hostEl.id
+        });
       }
     }
   } catch {}

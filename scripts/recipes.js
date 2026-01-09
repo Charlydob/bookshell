@@ -204,6 +204,8 @@ if ($viewRecipes) {
   const $shelfFavoritesSection = document.getElementById("recipes-favorites-section");
   const $shelfFavoritesCount = document.getElementById("recipes-favorites-count");
 
+  const RECIPE_SPINE_H = 138;
+
   const $cardsHost = document.getElementById("recipes-cards");
   const $empty = document.getElementById("recipes-empty");
 
@@ -663,6 +665,7 @@ function linkifyNotesHtml(input) {
       for (let i = 0; i < arr.length; i += SHELF_SIZE) {
         const row = document.createElement("div");
         row.className = "books-shelf-row";
+        row.style.setProperty("--recipes-spine-h", `${RECIPE_SPINE_H}px`);
         arr.slice(i, i + SHELF_SIZE).forEach((recipe) => row.appendChild(buildSpine(recipe)));
         frag.appendChild(row);
       }
@@ -699,7 +702,7 @@ function linkifyNotesHtml(input) {
   function buildSpine(recipe) {
     const spine = document.createElement("div");
     const [c1, c2] = recipe.favorite ? ["#f8e6aa", "#d3a74a"] : pickSpinePalette(recipe.title + recipe.id);
-    const height = 138;
+    const height = RECIPE_SPINE_H;
     spine.className = "book-spine recipe-spine";
     spine.style.setProperty("--spine-color-1", c1);
     spine.style.setProperty("--spine-color-2", c2);

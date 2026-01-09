@@ -826,7 +826,7 @@ margin-top: 40px;
 }
 
 /* Estantería de libros terminados */
-.books-shelf-row{
+.books-shelf-row {
   position: relative;
   display: flex;
   flex-wrap: nowrap;
@@ -1645,7 +1645,7 @@ margin-top: 40px;
   width: 100%;               /* FIX */
   box-sizing: border-box;    /* FIX */
   align-items: flex-end;
-  gap: 10px;
+  gap: 8px;
   padding-bottom: 16px;
   overflow: visible;         /* FIX */
 }

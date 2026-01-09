@@ -2146,13 +2146,13 @@ function renderDonut() {
 function renderDonutLegend(data, totalMinutes) {
   if (!$habitDonutLegend) return;
   $habitDonutLegend.innerHTML = "";
-  data.forEach((item) => {
-    const row = document.createElement("div");
+data.forEach((item, idx) => {
+      const row = document.createElement("div");
     row.className = "habit-donut-legend-item";
     setHabitColorVars(row, item.habit);
     const pct = totalMinutes ? Math.round((item.minutes / totalMinutes) * 100) : 0;
     row.innerHTML = `
-      <span class="legend-dot"></span>
+<span class="legend-dot">${idx + 1}º</span>
       <div class="legend-text">
         <div class="legend-name">${item.habit.name}</div>
         <div class="legend-meta">${pct}% · ${formatMinutes(item.minutes)}</div>

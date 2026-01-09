@@ -44,6 +44,49 @@
   gap: 10px;
 }
 
+/* --- Estantería: wrap real + barra por cada línea (sin ensanchar la app) --- */
+.recipes-shelf,
+#recipes-list,
+#recipes-list-favorites {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.recipes-shelf .books-shelf-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  white-space: normal;
+  align-content: flex-start;
+
+  /* barras de estante por cada “fila” que crea el wrap */
+  --recipes-spine-h: 138px;
+  --recipes-shelf-gap: 10px;
+  --recipes-shelf-bar: 6px;
+  --recipes-shelf-step: calc(var(--recipes-spine-h) + var(--recipes-shelf-gap));
+
+  padding-bottom: 12px;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--recipes-shelf-step) - var(--recipes-shelf-bar)),
+    rgba(255, 255, 255, 0.10) calc(var(--recipes-shelf-step) - var(--recipes-shelf-bar)),
+    rgba(255, 255, 255, 0.10) calc(var(--recipes-shelf-step) - 2px),
+    rgba(0, 0, 0, 0.35) calc(var(--recipes-shelf-step) - 2px),
+    rgba(0, 0, 0, 0.35) var(--recipes-shelf-step)
+  );
+  border-radius: 14px;
+}
+
+/* si el estilo base pintaba UNA sola barra con pseudo-elementos, lo apagamos */
+.recipes-shelf .books-shelf-row::before,
+.recipes-shelf .books-shelf-row::after {
+  content: none !important;
+}
+
 .recipe-spine {
   position: relative;
   background: linear-gradient(150deg, var(--spine-color-1), var(--spine-color-2));

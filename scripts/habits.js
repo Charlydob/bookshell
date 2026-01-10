@@ -2296,12 +2296,12 @@ data.forEach((item, idx) => {
       const row = document.createElement("div");
     row.className = "habit-donut-legend-item";
     setHabitColorVars(row, item.habit);
-    const pct = totalMinutes ? Math.round((item.minutes / totalMinutes) * 100) : 0;
+    const pct = totalMinutes ? ((item.minutes / totalMinutes) * 100) : 0;
     row.innerHTML = `
 <span class="legend-dot">${idx + 1}º</span>
       <div class="legend-text">
         <div class="legend-name">${item.habit.name}</div>
-        <div class="legend-meta">${pct}% · ${formatMinutes(item.minutes)}</div>
+<div class="legend-meta">${pct.toFixed(2)}% · ${formatMinutes(item.minutes)}</div>
       </div>
     `;
     $habitDonutLegend.appendChild(row);

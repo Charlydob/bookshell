@@ -67,81 +67,6 @@ let habitLineRange = "7d";
 let habitLineHabit = "total";
 let habitDaysRange = "day";
 let habitLineTooltip = null;
-let habitViewBy = "habits";
-
-const FACET_CONFIG = {
-  company: {
-    label: "Compañía",
-    values: { solo: "Solo", laura: "Con Laura", others: "Con otros" }
-  },
-  place: {
-    label: "Lugar",
-    values: { home: "Casa", away: "Fuera", mixed: "Mixto" }
-  },
-  mode: {
-    label: "Modo",
-    values: { obligation: "Obligación", hobby: "Hobby" }
-  },
-  impact: {
-    label: "Impacto",
-    values: { productive: "Productivo", leisure: "Ocio", selfcare: "Autocuidado" }
-  },
-  money: {
-    label: "Dinero",
-    values: { earns: "Genera", spends: "Gasta", neutral: "Neutro" }
-  }
-};
-
-const FACET_KEYS = Object.keys(FACET_CONFIG);
-const FACET_COLORS = [
-  "#7f5dff",
-  "#4bc0c0",
-  "#f5a524",
-  "#f87171",
-  "#38bdf8",
-  "#a3e635",
-  "#f472b6",
-  "#c084fc"
-];
-
-function normalizePlaceValue(value) {
-  if (value === true) return "home";
-  if (value === false) return "away";
-  if (value == null) return null;
-  if (typeof value !== "string") return value;
-  const clean = value.toLowerCase().trim();
-  if (["home", "casa", "hogar"].includes(clean)) return "home";
-  if (["away", "fuera", "out", "exterior"].includes(clean)) return "away";
-  if (["mixed", "mixto"].includes(clean)) return "mixed";
-  return value;
-}
-
-function normalizeHabitPlaceFacet(habit) {
-  if (!habit) return false;
-  const facets = habit.facets || {};
-  let rawPlace = facets.place;
-  let changed = false;
-  if (rawPlace == null && habit.place != null) {
-    rawPlace = habit.place;
-    changed = true;
-  }
-  const normalized = normalizePlaceValue(rawPlace);
-  if (!normalized) {
-    if ("place" in facets) {
-      delete facets.place;
-      changed = true;
-    }
-  } else if (normalized !== rawPlace) {
-    facets.place = normalized;
-    changed = true;
-  }
-  if (Object.keys(facets).length) habit.facets = facets;
-  if (habit.place != null) {
-    delete habit.place;
-    changed = true;
-  }
-  return changed;
-}
 
 // Utilidades fecha
 function dateKeyLocal(date) {
@@ -828,11 +753,7 @@ const $habitDonutLegend = document.getElementById("habit-donut-legend");
 const $habitDonutCenter = document.getElementById("habit-donut-center");
 const $habitDonutEmpty = document.getElementById("habit-donut-empty");
 const $habitDonutSub = document.getElementById("habit-donut-sub");
-const $habitDonutTitle = document.getElementById("habit-donut-title");
-const $habitDonutLabel = document.getElementById("habit-donut-label");
-const $habitViewBy = document.getElementById("habit-view-by");
 const $habitDonutTotal = document.querySelector("#habit-donut-center .habit-donut-total");
-const $habitUnit = document.getElementById("habit-unit");
 const $habitRangeButtons = document.querySelectorAll(".habit-range-btn");
 const $habitDaysRangeButtons = document.querySelectorAll(".habit-days-range-btn");
 const $habitFab = document.getElementById("habit-session-toggle");
@@ -840,7 +761,6 @@ const $habitOverlay = document.getElementById("habit-session-overlay");
 const $habitOverlayTime = document.getElementById("habit-session-time");
 const $habitOverlayStop = document.getElementById("habit-session-stop");
 const $habitDaysList = document.getElementById("habit-days-list");
-const $habitFacetChips = document.querySelectorAll(".habit-facet-chip");
 
 // Modal refs
 const $habitModal = document.getElementById("habit-modal-backdrop");
@@ -904,16 +824,7 @@ const $habitDeleteName = document.getElementById("habit-delete-name");
 const $habitDeleteClose = document.getElementById("habit-delete-close");
 const $habitDeleteCancel = document.getElementById("habit-delete-cancel");
 const $habitDeleteConfirmBtn = document.getElementById("habit-delete-confirm-btn");
-// FIX iOS/stacking: si un ancestro tiene overflow/transform, los modales se recortan.
-// Los movemos a <body> para que fixed sea realmente viewport.
-function hoistToBody(el) {
-  try {
-    if (!el) return;
-    if (el.parentElement !== document.body) document.body.appendChild(el);
-  } catch (_) {}
-}
 
-[ $habitModal, $habitSessionModal, $habitManualModal, $habitEntryModal, $habitDeleteConfirm ].forEach(hoistToBody);
 function isHabitScheduledForDate(habit, date) {
   if (!habit || habit.archived) return false;
   if (!habit.schedule || habit.schedule.type === "daily") return true;
@@ -1033,10 +944,6 @@ function openHabitModal(habit = null) {
     const active = scheduleType === "days" && habit && Array.isArray(habit.schedule?.days) && habit.schedule.days.includes(day);
     btn.classList.toggle("is-active", active);
   });
-  const facets = habit?.facets || {};
-  FACET_KEYS.forEach((key) => {
-    setFacetSelection(key, facets[key]);
-  });
   $habitDelete.style.display = habit ? "inline-flex" : "none";
   updateHabitGoalUI();
 }
@@ -1092,7 +999,6 @@ function gatherHabitPayload() {
         ...(Number.isFinite(qa2m) && qa2m > 0 ? [{ label: ($habitQuick2Label?.value || "").trim(), minutes: Math.round(qa2m) }] : []),
       ]
     : [];
-  const facets = readFacetSelections();
 
   return {
     id,
@@ -1105,7 +1011,6 @@ function gatherHabitPayload() {
     targetMinutes: Number.isFinite(safeTargetMinutes) && safeTargetMinutes > 0 ? safeTargetMinutes : null,
     countUnitMinutes: Number.isFinite(safeUnit) && safeUnit > 0 ? Math.round(safeUnit) : null,
     quickAdds,
-    facets,
     schedule: scheduleType === "days" ? { type: "days", days } : { type: "daily", days: [] },
     createdAt: existing?.createdAt || Date.now(),
     archived: existing?.archived || false
@@ -1382,31 +1287,6 @@ function formatDaysLabel(days = []) {
   const map = ["D", "L", "M", "X", "J", "V", "S"];
   const sorted = [...days].sort((a, b) => a - b);
   return sorted.map((d) => map[d]).join(", ");
-}
-
-function getFacetValueLabel(facetKey, value) {
-  if (!facetKey) return "Sin clasificar";
-  if (!value) return "Sin clasificar";
-  return FACET_CONFIG[facetKey]?.values?.[value] || value;
-}
-
-function setFacetSelection(facetKey, value) {
-  if (!facetKey) return;
-  $habitFacetChips.forEach((chip) => {
-    if (chip.dataset.facet !== facetKey) return;
-    chip.classList.toggle("is-active", chip.dataset.value === value);
-  });
-}
-
-function readFacetSelections() {
-  const facets = {};
-  FACET_KEYS.forEach((key) => {
-    const selected = Array.from($habitFacetChips).find(
-      (chip) => chip.dataset.facet === key && chip.classList.contains("is-active")
-    );
-    if (selected) facets[key] = selected.dataset.value;
-  });
-  return facets;
 }
 
 function renderWeek() {
@@ -2195,17 +2075,6 @@ function totalsByHabit(range) {
     .sort((a, b) => b.minutes - a.minutes);
 }
 
-function checkCountForHabitRange(habit, start, end) {
-  const store = habitChecks[habit.id] || {};
-  let total = 0;
-  Object.entries(store).forEach(([key, value]) => {
-    if (!value) return;
-    const parsed = parseDateKey(key);
-    if (parsed && isDateInRange(parsed, start, end)) total += 1;
-  });
-  return total;
-}
-
 function countForHabitRange(habit, start, end) {
   const startKey = dateKeyLocal(start);
   const endKey = dateKeyLocal(end);
@@ -2215,29 +2084,6 @@ function countForHabitRange(habit, start, end) {
     if (key >= startKey && key <= endKey) total += Number(store[key]) || 0;
   });
   return total;
-}
-
-function facetShareByRange(range, facetKey) {
-  const { start, end } = getRangeBounds(range);
-  const buckets = new Map();
-
-  const getBucket = (key, label) => {
-    if (!buckets.has(key)) buckets.set(key, { key, label, value: 0 });
-    return buckets.get(key);
-  };
-
-  activeHabitsWithSystem().forEach((habit) => {
-    if (!habit || habit.archived) return;
-    const value = minutesForHabitRange(habit, start, end);
-    if (!value) return;
-    const facetValue = habit?.facets?.[facetKey];
-    const bucketKey = facetValue || "unclassified";
-    const label = facetValue ? getFacetValueLabel(facetKey, facetValue) : "Sin clasificar";
-    const bucket = getBucket(bucketKey, label);
-    bucket.value += value;
-  });
-
-  return Array.from(buckets.values()).sort((a, b) => b.value - a.value);
 }
 
 function countsByHabit(range) {
@@ -2402,31 +2248,12 @@ function renderCountsList() {
 
 function renderDonut() {
   if (!$habitDonut || typeof echarts === "undefined") return;
-  const isHabitView = habitViewBy === "habits";
-  if ($habitViewBy) $habitViewBy.value = habitViewBy;
-  const subtitle = `Distribución ${rangeLabel(habitDonutRange)}${isHabitView ? "" : ` · ${FACET_CONFIG[habitViewBy]?.label || ""}`}`.trim();
+  const data = timeShareByHabit(habitDonutRange);
+  const totalMinutes = data.reduce((acc, item) => acc + item.minutes, 0);
+  const subtitle = `Distribución ${rangeLabel(habitDonutRange)}`;
   if ($habitDonutSub) $habitDonutSub.textContent = subtitle.charAt(0).toUpperCase() + subtitle.slice(1);
 
-  const rawItems = isHabitView ? timeShareByHabit(habitDonutRange) : facetShareByRange(habitDonutRange, habitViewBy);
-  const items = rawItems.map((item, idx) => {
-    if (isHabitView) {
-      return {
-        label: item.habit.name,
-        value: item.minutes,
-        habit: item.habit,
-        color: resolveHabitColor(item.habit)
-      };
-    }
-    return {
-      label: item.label,
-      value: item.value,
-      color: FACET_COLORS[idx % FACET_COLORS.length]
-    };
-  });
-  const totalValue = items.reduce((acc, item) => acc + item.value, 0);
-  const formatValue = formatMinutes;
-
-  if (!items.length || !totalValue) {
+  if (!data.length || !totalMinutes) {
     if (habitDonutChart) habitDonutChart.clear();
     $habitDonut.style.display = "none";
     if ($habitDonutCenter) $habitDonutCenter.style.display = "none";
@@ -2439,60 +2266,42 @@ function renderDonut() {
   $habitDonut.style.display = "block";
   if ($habitDonutCenter) $habitDonutCenter.style.display = "flex";
   if (!habitDonutChart) habitDonutChart = echarts.init($habitDonut);
-  if ($habitDonutTotal) $habitDonutTotal.textContent = formatValue(totalValue);
-  if ($habitDonutLabel) $habitDonutLabel.textContent = "Tiempo";
-  if ($habitUnit) $habitUnit.textContent = "";
-  if ($habitDonutTitle) {
-    $habitDonutTitle.textContent = isHabitView
-      ? "Tiempo por hábito"
-      : `Actividad por ${FACET_CONFIG[habitViewBy]?.label || "clasificación"}`;
-  }
+  if ($habitDonutTotal) $habitDonutTotal.textContent = formatMinutes(totalMinutes);
 
   const option = {
-    tooltip: {
-      trigger: "item",
-      formatter: (params) => {
-        const pct = totalValue ? ((params.value / totalValue) * 100) : 0;
-        return `${params.name}: ${formatValue(params.value)} (${pct.toFixed(1)}%)`;
-      }
-    },
-    color: items.map((item) => item.color),
+    tooltip: { trigger: "item", formatter: "{b}: {c}m ({d}%)" },
+    color: data.map((item) => resolveHabitColor(item.habit)),
     series: [
       {
         type: "pie",
         radius: ["60%", "82%"],
         itemStyle: { borderWidth: 2, borderColor: "rgba(0,0,0,0.2)" },
         label: { show: false },
-        data: items.map((item) => ({
-          name: item.label,
-          value: item.value
+        data: data.map((item) => ({
+          name: item.habit.name,
+          value: item.minutes
         }))
       }
     ]
   };
   habitDonutChart.setOption(option);
   habitDonutChart.resize();
-  renderDonutLegend(items, totalValue, formatValue);
+  renderDonutLegend(data, totalMinutes);
 }
 
-function renderDonutLegend(data, totalValue, formatValue) {
+function renderDonutLegend(data, totalMinutes) {
   if (!$habitDonutLegend) return;
   $habitDonutLegend.innerHTML = "";
-  data.forEach((item, idx) => {
+data.forEach((item, idx) => {
       const row = document.createElement("div");
     row.className = "habit-donut-legend-item";
-    if (item.color) {
-      row.style.setProperty("--hclr", item.color);
-      row.style.setProperty("--hclr-rgb", hexToRgbString(item.color));
-    } else if (item.habit) {
-      setHabitColorVars(row, item.habit);
-    }
-    const pct = totalValue ? ((item.value / totalValue) * 100) : 0;
+    setHabitColorVars(row, item.habit);
+    const pct = totalMinutes ? ((item.minutes / totalMinutes) * 100) : 0;
     row.innerHTML = `
 <span class="legend-dot">${idx + 1}º</span>
       <div class="legend-text">
-        <div class="legend-name">${item.label}</div>
-<div class="legend-meta">${formatValue(item.value)} · ${pct.toFixed(1)}%</div>
+        <div class="legend-name">${item.habit.name}</div>
+<div class="legend-meta">${pct.toFixed(2)}% · ${formatMinutes(item.minutes)}</div>
       </div>
     `;
     $habitDonutLegend.appendChild(row);
@@ -2779,15 +2588,6 @@ function closeManualTimeModal() {
   $habitManualModal?.classList.add("hidden");
 }
 
-function closeHabitUi() {
-  closeHabitModal();
-  closeSessionModal();
-  closeManualTimeModal();
-  closeEntryModal();
-  closeDeleteConfirm();
-  $habitOverlay?.classList.add("hidden");
-}
-
 
 function handleManualSubmit(e) {
   e.preventDefault();
@@ -2967,17 +2767,6 @@ function bindEvents() {
       btn.classList.toggle("is-active");
     });
   });
-  $habitFacetChips.forEach((chip) => {
-    chip.addEventListener("click", () => {
-      const facetKey = chip.dataset.facet;
-      if (!facetKey) return;
-      const isActive = chip.classList.contains("is-active");
-      $habitFacetChips.forEach((btn) => {
-        if (btn.dataset.facet === facetKey) btn.classList.remove("is-active");
-      });
-      if (!isActive) chip.classList.add("is-active");
-    });
-  });
 
   $habitFab.addEventListener("click", () => {
     if (runningSession) {
@@ -3031,10 +2820,6 @@ function bindEvents() {
       renderCountsList();
     });
   });
-  $habitViewBy?.addEventListener("change", (e) => {
-    habitViewBy = e.target.value || "habits";
-    renderDonut();
-  });
 
   $habitDaysRangeButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -3071,14 +2856,7 @@ function attachNavHook() {
 function listenRemote() {
   onValue(ref(db, HABITS_PATH), (snap) => {
     const val = snap.val() || {};
-    const normalized = [];
-    Object.values(val).forEach((habit) => {
-      if (normalizeHabitPlaceFacet(habit)) normalized.push(habit);
-    });
     habits = val;
-    if (normalized.length) {
-      normalized.forEach((habit) => persistHabit(habit));
-    }
     ensureUnknownHabit(true);
     if (_pendingShortcutCmd) {
       try {
@@ -3237,7 +3015,6 @@ window.__bookshellHabits = {
   startSession,
   stopSession,
   toggleSession,
-  closeUi: closeHabitUi,
   isRunning: () => !!runningSession
 ,
   getTimeShareByHabit: (range) => timeShareByHabit(range),

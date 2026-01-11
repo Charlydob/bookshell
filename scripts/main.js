@@ -418,10 +418,6 @@ $navButtons.forEach(btn => {
     $navButtons.forEach(b => b.classList.remove("nav-btn-active"));
     btn.classList.add("nav-btn-active");
 
-    if (viewId !== "view-habits") {
-      try { window.__bookshellHabits?.closeUi?.(); } catch (_) {}
-    }
-
     if (viewId === "view-books") {
       renderStats();
       renderCalendar();

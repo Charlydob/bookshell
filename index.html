@@ -662,21 +662,9 @@
 <div class="habit-chart-card habit-donut-card">
 <div class="habit-card-head">
 <div>
-<div class="habit-card-title" id="habit-donut-title">Tiempo por hábito</div>
+<div class="habit-card-title">Tiempo por hábito</div>
 <div class="habit-card-sub" id="habit-donut-sub">Distribución diaria</div>
 </div>
-<div class="habit-donut-controls">
-<label class="habit-select habit-select-compact" for="habit-view-by">
-<span>Ver por</span>
-<select aria-label="Ver por" id="habit-view-by">
-<option selected="" value="habits">Hábitos</option>
-<option value="company">Compañía</option>
-<option value="place">Lugar</option>
-<option value="mode">Modo</option>
-<option value="impact">Impacto</option>
-<option value="money">Dinero</option>
-</select>
-</label>
 <div aria-label="Rango de tiempo" class="habit-range-toggle" role="group">
 <button class="habit-range-btn is-active" data-range="day">Día</button>
 <button class="habit-range-btn" data-range="week">Semana</button>
@@ -685,11 +673,10 @@
 <button class="habit-range-btn" data-range="total">Total</button>
 </div>
 </div>
-</div>
 <div class="habit-donut-body">
 <div class="habit-donut" id="habit-donut"></div>
 <div class="habit-donut-center" id="habit-donut-center">
-<div class="habit-donut-label" id="habit-donut-label">Tiempo</div>
+<div class="habit-donut-label">Tiempo</div>
 <div class="habit-donut-total" id="habit-donut-total">0m</div>
 <div class="habit-unit" id="habit-unit" aria-label="Unidad de tiempo"></div>
 </div>
@@ -1658,53 +1645,6 @@
 <button data-day="6" type="button">S</button>
 <button data-day="0" type="button">D</button>
 </div>
-</div>
-<details class="habit-accordion habit-facets-accordion">
-<summary>
-<div class="habit-accordion-title">Clasificación</div>
-</summary>
-<div class="habit-accordion-body">
-<div class="habit-facet-row">
-<div class="habit-facet-label">Compañía</div>
-<div class="habit-facet-options">
-<button class="habit-facet-chip" data-facet="company" data-value="solo" type="button">Solo</button>
-<button class="habit-facet-chip" data-facet="company" data-value="laura" type="button">Con Laura</button>
-<button class="habit-facet-chip" data-facet="company" data-value="others" type="button">Con otros</button>
-</div>
-</div>
-<div class="habit-facet-row">
-<div class="habit-facet-label">Lugar</div>
-<div class="habit-facet-options">
-<button class="habit-facet-chip" data-facet="place" data-value="home" type="button">Casa</button>
-<button class="habit-facet-chip" data-facet="place" data-value="away" type="button">Fuera</button>
-<button class="habit-facet-chip" data-facet="place" data-value="mixed" type="button">Mixto</button>
-</div>
-</div>
-<div class="habit-facet-row">
-<div class="habit-facet-label">Modo</div>
-<div class="habit-facet-options">
-<button class="habit-facet-chip" data-facet="mode" data-value="obligation" type="button">Obligación</button>
-<button class="habit-facet-chip" data-facet="mode" data-value="hobby" type="button">Hobby</button>
-</div>
-</div>
-<div class="habit-facet-row">
-<div class="habit-facet-label">Impacto</div>
-<div class="habit-facet-options">
-<button class="habit-facet-chip" data-facet="impact" data-value="productive" type="button">Productivo</button>
-<button class="habit-facet-chip" data-facet="impact" data-value="leisure" type="button">Ocio</button>
-<button class="habit-facet-chip" data-facet="impact" data-value="selfcare" type="button">Autocuidado</button>
-</div>
-</div>
-<div class="habit-facet-row">
-<div class="habit-facet-label">Dinero</div>
-<div class="habit-facet-options">
-<button class="habit-facet-chip" data-facet="money" data-value="earns" type="button">Genera</button>
-<button class="habit-facet-chip" data-facet="money" data-value="spends" type="button">Gasta</button>
-<button class="habit-facet-chip" data-facet="money" data-value="neutral" type="button">Neutro</button>
-</div>
-</div>
-</div>
-</details>
 </div>
 </div>
 <div class="modal-footer sheet-footer">

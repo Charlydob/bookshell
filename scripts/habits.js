@@ -904,7 +904,16 @@ const $habitDeleteName = document.getElementById("habit-delete-name");
 const $habitDeleteClose = document.getElementById("habit-delete-close");
 const $habitDeleteCancel = document.getElementById("habit-delete-cancel");
 const $habitDeleteConfirmBtn = document.getElementById("habit-delete-confirm-btn");
+// FIX iOS/stacking: si un ancestro tiene overflow/transform, los modales se recortan.
+// Los movemos a <body> para que fixed sea realmente viewport.
+function hoistToBody(el) {
+  try {
+    if (!el) return;
+    if (el.parentElement !== document.body) document.body.appendChild(el);
+  } catch (_) {}
+}
 
+[ $habitModal, $habitSessionModal, $habitManualModal, $habitEntryModal, $habitDeleteConfirm ].forEach(hoistToBody);
 function isHabitScheduledForDate(habit, date) {
   if (!habit || habit.archived) return false;
   if (!habit.schedule || habit.schedule.type === "daily") return true;

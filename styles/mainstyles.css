@@ -236,7 +236,12 @@ body {
 
 .modal-backdrop {
   position: fixed;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 100vw;
+  height: 100dvh;
+  transform: translateX(-50%);
   background: rgba(0,0,0,0.45);
   -webkit-backdrop-filter: blur(var(--blur-modal, 10px));
   backdrop-filter: blur(var(--blur-modal, 10px));
@@ -257,6 +262,7 @@ body {
   width: min(560px, calc(100vw - 24px));
   max-width: 560px;
   max-height: 86vh;
+  margin: 0 auto;
   border-radius: 22px;
   overflow: hidden;
   background: rgba(10, 11, 18, 0.92);

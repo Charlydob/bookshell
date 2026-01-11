@@ -76,7 +76,7 @@ let habitToastEl = null;
 let habitToastTimeout = null;
 let habitDonutChart = null;
 let habitDonutRange = "day";
-let habitDonutGroupMode = "habit";
+let habitDonutGroupMode = { kind: "habit" };
 let habitLineRange = "7d";
 let habitLineHabit = "total";
 let habitDaysRange = "day";
@@ -481,9 +481,47 @@ function normalizeParamLabel(value) {
   return String(value || "").trim().replace(/\s+/g, " ");
 }
 
+function normalizeParamKey(value) {
+  return normalizeParamLabel(value).toLowerCase();
+}
+
+function parseParam(value) {
+  const raw = normalizeParamLabel(value);
+  if (!raw) return null;
+  const idx = raw.indexOf(":");
+  if (idx <= 0) return null;
+  const cat = normalizeParamKey(raw.slice(0, idx));
+  const val = normalizeParamKey(raw.slice(idx + 1));
+  if (!cat || !val) return null;
+  return { cat, val };
+}
+
 function getHabitParams(habit) {
   if (!habit || !Array.isArray(habit.params)) return [];
   return habit.params.map(normalizeParamLabel).filter(Boolean);
+}
+
+function collectCategories(habitsList) {
+  const set = new Set();
+  (habitsList || []).forEach((habit) => {
+    getHabitParams(habit).forEach((param) => {
+      const parsed = parseParam(param);
+      if (parsed?.cat) set.add(parsed.cat);
+    });
+  });
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
+}
+
+function collectValuesForCategory(habitsList, catName) {
+  const target = normalizeParamKey(catName);
+  const set = new Set();
+  (habitsList || []).forEach((habit) => {
+    getHabitParams(habit).forEach((param) => {
+      const parsed = parseParam(param);
+      if (parsed && parsed.cat === target && parsed.val) set.add(parsed.val);
+    });
+  });
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
 }
 
 function getAllHabitParams() {
@@ -2178,21 +2216,6 @@ function aggregateEntries(entries, mode = "habit") {
     const habit = entry.habit;
     const sec = Number(entry.totalSec) || 0;
     if (sec <= 0) return;
-    if (mode === "param") {
-      const params = getHabitParams(habit);
-      const keys = params.length ? params : [PARAM_EMPTY_LABEL];
-      keys.forEach((param) => {
-        const label = normalizeParamLabel(param) || PARAM_EMPTY_LABEL;
-        const key = `param:${foldKey(label) || "empty"}`;
-        if (!buckets.has(key)) {
-          buckets.set(key, { key, label, totalSec: 0, count: 0, color: resolveHabitColor(habit) });
-        }
-        const bucket = buckets.get(key);
-        bucket.totalSec += sec;
-        bucket.count += 1;
-      });
-      return;
-    }
     const key = habit?.id || "unknown";
     if (!buckets.has(key)) {
       buckets.set(key, { key, label: habit?.name || UNKNOWN_HABIT_NAME, totalSec: 0, count: 0, habit });
@@ -2208,6 +2231,68 @@ function aggregateEntries(entries, mode = "habit") {
     }))
     .sort((a, b) => b.totalSec - a.totalSec);
   return list;
+}
+
+function aggregateForCategory(entries, catName) {
+  const target = normalizeParamKey(catName);
+  const buckets = new Map();
+  entries.forEach((entry) => {
+    const habit = entry.habit;
+    const sec = Number(entry.totalSec) || 0;
+    if (sec <= 0) return;
+    const values = new Set(
+      getHabitParams(habit)
+        .map(parseParam)
+        .filter((parsed) => parsed && parsed.cat === target)
+        .map((parsed) => parsed.val)
+    );
+    if (!values.size) return;
+    // Regla: si hay varios valores para la misma categoría, suma el tiempo a cada valor.
+    values.forEach((val) => {
+      const key = `cat:${target}:${val}`;
+      if (!buckets.has(key)) {
+        buckets.set(key, { key, label: val, totalSec: 0, count: 0 });
+      }
+      const bucket = buckets.get(key);
+      bucket.totalSec += sec;
+      bucket.count += 1;
+    });
+  });
+  const totalSec = Array.from(buckets.values()).reduce((acc, item) => acc + (item.totalSec || 0), 0);
+  return Array.from(buckets.values())
+    .map((item) => ({
+      ...item,
+      percent: totalSec ? (item.totalSec / totalSec) * 100 : 0
+    }))
+    .sort((a, b) => b.totalSec - a.totalSec);
+}
+
+function renderDonutGroupOptions() {
+  if (!$habitDonutGroup) return;
+  const categories = collectCategories(activeHabits());
+  const current = habitDonutGroupMode.kind === "cat"
+    ? habitDonutGroupMode.cat
+    : null;
+  const hasCurrent = current && categories.includes(current);
+  if (habitDonutGroupMode.kind === "cat" && !hasCurrent) {
+    habitDonutGroupMode = { kind: "habit" };
+  }
+  $habitDonutGroup.innerHTML = "";
+  const habitOption = document.createElement("option");
+  habitOption.value = "habit";
+  habitOption.textContent = "Hábitos";
+  $habitDonutGroup.appendChild(habitOption);
+  categories.forEach((cat) => {
+    const option = document.createElement("option");
+    option.value = `cat:${cat}`;
+    option.textContent = cat;
+    $habitDonutGroup.appendChild(option);
+  });
+  if (habitDonutGroupMode.kind === "cat" && hasCurrent) {
+    $habitDonutGroup.value = `cat:${habitDonutGroupMode.cat}`;
+  } else {
+    $habitDonutGroup.value = "habit";
+  }
 }
 
 function rangeLabel(range) {
@@ -2411,13 +2496,18 @@ function renderCountsList() {
 
 function renderDonut() {
   if (!$habitDonut || typeof echarts === "undefined") return;
-  const data = aggregateEntries(buildTimeEntries(habitDonutRange), habitDonutGroupMode);
+  const entries = buildTimeEntries(habitDonutRange);
+  const data = habitDonutGroupMode.kind === "cat"
+    ? aggregateForCategory(entries, habitDonutGroupMode.cat)
+    : aggregateEntries(entries, "habit");
   const totalSec = data.reduce((acc, item) => acc + item.totalSec, 0);
   const totalMinutes = Math.round(totalSec / 60);
   const subtitle = `Distribución ${rangeLabel(habitDonutRange)}`;
   if ($habitDonutSub) $habitDonutSub.textContent = subtitle.charAt(0).toUpperCase() + subtitle.slice(1);
   if ($habitDonutTitle) {
-    $habitDonutTitle.textContent = habitDonutGroupMode === "param" ? "Tiempo por parámetro" : "Tiempo por hábito";
+    $habitDonutTitle.textContent = habitDonutGroupMode.kind === "cat"
+      ? `Tiempo por ${habitDonutGroupMode.cat}`
+      : "Tiempo por hábito";
   }
 
   if (!data.length || !totalMinutes) {
@@ -2567,6 +2657,7 @@ function renderHabits() {
   renderWeek();
   renderHistory();
   renderKPIs();
+  renderDonutGroupOptions();
   renderDonut();
   renderLineChart();
   renderGlobalHeatmap();
@@ -3007,7 +3098,12 @@ function bindEvents() {
     });
   });
   $habitDonutGroup?.addEventListener("change", (e) => {
-    habitDonutGroupMode = e.target.value === "param" ? "param" : "habit";
+    const value = e.target.value || "habit";
+    if (value.startsWith("cat:")) {
+      habitDonutGroupMode = { kind: "cat", cat: value.slice(4) };
+    } else {
+      habitDonutGroupMode = { kind: "habit" };
+    }
     renderDonut();
   });
 

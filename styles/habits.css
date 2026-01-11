@@ -1245,3 +1245,78 @@
   color: rgb(255, 255, 255);
   text-shadow: 2px 2px 2px rgb(0, 0, 0);
 }
+/* ==========================
+   FIX: Modal Hábitos (centrado + sin solapes)
+   ========================== */
+
+#habit-modal-backdrop,
+#habit-manual-modal,
+#habit-entry-modal-backdrop,
+#habit-session-modal,
+#habit-delete-confirm{
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: end center;
+  padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+}
+
+/* tu .hidden ya se usa para ocultar; esto garantiza que NO “reserve” layout */
+#habit-modal-backdrop.hidden,
+#habit-manual-modal.hidden,
+#habit-entry-modal-backdrop.hidden,
+#habit-session-modal.hidden,
+#habit-delete-confirm.hidden{
+  display: none;
+}
+
+/* El “sheet” real: ancho estable y centrado */
+#habit-modal-backdrop .modal,
+#habit-manual-modal .modal,
+#habit-entry-modal-backdrop .modal,
+#habit-session-modal .modal,
+#habit-delete-confirm .modal{
+  width: min(560px, calc(100vw - 24px));
+  max-height: min(86vh, 760px);
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+/* Evita que el form/scroll colapse */
+#habit-modal-backdrop .modal-form,
+#habit-manual-modal .modal-form,
+#habit-entry-modal-backdrop .modal-form{
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Scroll SOLO dentro del cuerpo (no pegado a la izquierda) */
+#habit-modal-backdrop .modal-scroll.sheet-body,
+#habit-manual-modal .modal-scroll.sheet-body,
+#habit-entry-modal-backdrop .modal-scroll.sheet-body,
+#habit-session-modal .modal-scroll.sheet-body{
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  width: 100%;
+  position: relative !important;
+  left: auto !important;
+  right: auto !important;
+}
+
+/* Footer dentro del modal (no a pantalla completa) */
+#habit-modal-backdrop .sheet-footer,
+#habit-manual-modal .sheet-footer,
+#habit-entry-modal-backdrop .sheet-footer,
+#habit-session-modal .sheet-footer,
+#habit-delete-confirm .sheet-footer{
+  flex: 0 0 auto;
+  width: 100%;
+  position: relative !important;
+  left: auto !important;
+  right: auto !important;
+}

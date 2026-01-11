@@ -1192,3 +1192,60 @@
   color: rgb(255, 255, 255);
   text-shadow: 2px 2px 2px rgb(0, 0, 0);
 }
+
+.habit-params-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.habit-params-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.habit-params-controls select,
+.habit-params-controls input {
+  width: 100%;
+  height: 34px;
+  border-radius: 12px;
+  padding: 0 12px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.18);
+  color: var(--txt);
+  outline: none;
+}
+
+.habit-param-new.hidden {
+  display: none;
+}
+
+.habit-param-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.habit-param-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  font-size: 12px;
+}
+
+.habit-param-remove {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255,255,255,0.15);
+  color: var(--txt);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}

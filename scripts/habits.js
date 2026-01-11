@@ -905,16 +905,70 @@ const $habitDeleteClose = document.getElementById("habit-delete-close");
 const $habitDeleteCancel = document.getElementById("habit-delete-cancel");
 const $habitDeleteConfirmBtn = document.getElementById("habit-delete-confirm-btn");
 
-// FIX iOS: si algún ancestro tiene transform/overflow, los modales (fixed) se recortan.
-// Los movemos a <body> para que fixed sea viewport real.
-function hoistToBody(el) {
-  try {
-    if (!el) return;
-    if (el.parentElement !== document.body) document.body.appendChild(el);
-  } catch (_) {}
+// --- Modal hard-fix (iOS + hidden roto) ---
+const __modalFix = {
+  body: null,
+  html: null,
+  bodyStyle: {},
+  htmlStyle: {}
+};
+
+function modalViewportFix(on) {
+  const body = document.body;
+  const html = document.documentElement;
+
+  if (on) {
+    if (!__modalFix.body) {
+      __modalFix.body = body;
+      __modalFix.html = html;
+      __modalFix.bodyStyle = {
+        transform: body.style.transform,
+        overflow: body.style.overflow,
+        filter: body.style.filter,
+        perspective: body.style.perspective,
+      };
+      __modalFix.htmlStyle = {
+        transform: html.style.transform,
+        overflow: html.style.overflow,
+        filter: html.style.filter,
+        perspective: html.style.perspective,
+      };
+    }
+    body.style.setProperty("transform", "none", "important");
+    body.style.setProperty("filter", "none", "important");
+    body.style.setProperty("perspective", "none", "important");
+    html.style.setProperty("transform", "none", "important");
+    html.style.setProperty("filter", "none", "important");
+    html.style.setProperty("perspective", "none", "important");
+    body.style.overflow = "hidden";
+  } else {
+    const b = __modalFix.body, h = __modalFix.html;
+    if (!b || !h) return;
+    b.style.transform = __modalFix.bodyStyle.transform || "";
+    b.style.filter = __modalFix.bodyStyle.filter || "";
+    b.style.perspective = __modalFix.bodyStyle.perspective || "";
+    b.style.overflow = __modalFix.bodyStyle.overflow || "";
+    h.style.transform = __modalFix.htmlStyle.transform || "";
+    h.style.filter = __modalFix.htmlStyle.filter || "";
+    h.style.perspective = __modalFix.htmlStyle.perspective || "";
+    h.style.overflow = __modalFix.htmlStyle.overflow || "";
+  }
 }
 
-[ $habitModal, $habitSessionModal, $habitManualModal, $habitEntryModal, $habitDeleteConfirm ].forEach(hoistToBody);
+function hideBackdrop(el) {
+  if (!el) return;
+  el.classList.add("hidden");
+  el.setAttribute("aria-hidden", "true");
+  // mata cualquier CSS que lo fuerce visible
+  el.style.setProperty("display", "none", "important");
+}
+
+function showBackdrop(el) {
+  if (!el) return;
+  el.classList.remove("hidden");
+  el.removeAttribute("aria-hidden");
+  el.style.removeProperty("display");
+}
 function isHabitScheduledForDate(habit, date) {
   if (!habit || habit.archived) return false;
   if (!habit.schedule || habit.schedule.type === "daily") return true;
@@ -1151,13 +1205,17 @@ function openDeleteConfirm(habitId) {
   if ($habitDeleteName) {
     $habitDeleteName.textContent = habits[habitId]?.name || "este hábito";
   }
-  $habitDeleteConfirm?.classList.remove("hidden");
+modalViewportFix(true);
+showBackdrop($habitDeleteConfirm);
 }
 
 function closeDeleteConfirm() {
   habitDeleteTarget = null;
-  $habitDeleteConfirm?.classList.add("hidden");
+  hideBackdrop($habitDeleteConfirm);
+  modalViewportFix(false);
 }
+hideBackdrop($habitDeleteConfirm);
+window.addEventListener("pageshow", () => hideBackdrop($habitDeleteConfirm));
 
 function archiveHabit() {
   if (!habitDeleteTarget) return;

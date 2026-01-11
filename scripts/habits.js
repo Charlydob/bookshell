@@ -496,6 +496,14 @@ function normalizeParamKey(value) {
   return normalizeParamLabel(value).toLowerCase();
 }
 
+function normalizeDonutGroupKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 function parseParam(value) {
   const raw = normalizeParamLabel(value);
   if (!raw) return null;
@@ -2598,7 +2606,7 @@ function renderCountsList() {
   });
 }
 
-function buildDonutOuterRuns(habitData, catName) {
+function buildDonutOuterRuns(habitData, catName, groupColorByKey = new Map()) {
   const runs = [];
   let current = null;
   habitData.forEach((item) => {
@@ -2614,7 +2622,10 @@ function buildDonutOuterRuns(habitData, catName) {
   });
   if (current) runs.push(current);
   return runs.map((run) => {
-    const color = run.key ? resolveParamKeyColor(run.key) : "transparent";
+    const normalizedKey = normalizeDonutGroupKey(run.key);
+    const color = run.key
+      ? groupColorByKey.get(normalizedKey) || "rgba(255,255,255,0.35)"
+      : "transparent";
     const borderWidth = run.key ? 6 : 0;
     const shadowBlur = run.key ? 14 : 0;
     return {
@@ -2672,18 +2683,31 @@ function renderDonut() {
   if (!habitDonutChart) habitDonutChart = echarts.init($habitDonut);
   if ($habitDonutTotal) $habitDonutTotal.textContent = formatMinutes(totalMinutes);
 
-  const baseSeriesData = data.map((item) => ({
+  const baseSeriesData = data.map((item, idx) => ({
     name: item.label,
-    value: Math.round(item.totalSec / 60)
+    value: Math.round(item.totalSec / 60),
+    itemStyle: {
+      color: resolveSeriesColor(item, idx)
+    }
   }));
   const startAngle = 90;
   const clockwise = true;
   const padAngle = 0;
   const innerRadius = isGrouped ? ["58%", "74%"] : ["60%", "82%"];
+  const groupColorByKey = new Map();
+  if (isGrouped && paramModel?.slices?.length) {
+    paramModel.slices.forEach((group, idx) => {
+      const normalized = normalizeDonutGroupKey(group.label || group.value);
+      if (!normalized) return;
+      if (!groupColorByKey.has(normalized)) {
+        const color = PARAM_COLOR_PALETTE[idx % PARAM_COLOR_PALETTE.length];
+        groupColorByKey.set(normalized, color);
+      }
+    });
+  }
 
   const option = {
     tooltip: { trigger: "item", formatter: "{b}: {c}m ({d}%)" },
-    color: data.map((item, idx) => resolveSeriesColor(item, idx)),
     series: [
       {
         type: "pie",
@@ -2699,22 +2723,7 @@ function renderDonut() {
     ]
   };
   if (isGrouped) {
-    const outerData = groupedModel.groups.map((group) => {
-      const color = resolveParamKeyColor(group.value);
-      return {
-        name: group.value || "",
-        value: Math.round(group.totalSec / 60),
-        itemStyle: {
-          color: "rgba(0,0,0,0)",
-          borderWidth: 6,
-          borderColor: color,
-          shadowBlur: 14,
-          shadowColor: color,
-          borderJoin: "round"
-        },
-        emphasis: { disabled: true }
-      };
-    });
+    const outerData = buildDonutOuterRuns(data, habitDonutGroupMode.cat, groupColorByKey);
     option.series.push({
       type: "pie",
       radius: ["74%", "82%"],
@@ -2734,10 +2743,10 @@ function renderDonut() {
   habitDonutChart.resize();
   const legendData = paramModel?.slices || data;
   const legendGroups = paramModel?.groups || null;
-  renderDonutLegend(legendData, totalSec, legendGroups);
+  renderDonutLegend(legendData, totalSec, legendGroups, groupColorByKey);
 }
 
-function renderDonutLegend(data, totalSec, groups = null) {
+function renderDonutLegend(data, totalSec, groups = null, groupColorByKey = null) {
   if (!$habitDonutLegend) return;
   $habitDonutLegend.innerHTML = "";
   const hasGroups = Array.isArray(groups) && groups.length > 0;
@@ -2748,8 +2757,10 @@ function renderDonutLegend(data, totalSec, groups = null) {
       const groupWrap = document.createElement("div");
       groupWrap.className = "param-group";
       groupWrap.dataset.value = group.value;
-      const color = resolveSeriesColor(data[idx], idx);
-      setSeriesColorVars(groupWrap, data[idx], idx);
+      const colorKey = normalizeDonutGroupKey(group.value);
+      const color = groupColorByKey?.get(colorKey) || "rgba(255,255,255,0.35)";
+      groupWrap.style.setProperty("--hclr", color);
+      groupWrap.style.setProperty("--hclr-rgb", hexToRgbString(color));
       groupWrap.style.setProperty("--group-color", color);
       groupWrap.style.setProperty("--group-color-rgb", hexToRgbString(color));
 

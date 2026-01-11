@@ -397,6 +397,17 @@
   width: 100%;
 }
 
+.habit-donut-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.habit-donut-controls .habit-select {
+  flex: 0 0 130px;
+}
+
 .habit-line-card {
   gap: 12px;
 }
@@ -882,6 +893,48 @@
 }
 
 .habit-days-selector button.is-active {
+  background: var(--accent-soft);
+  border-color: rgba(255,255,255,0.25);
+}
+
+.habit-facets-accordion {
+  margin-top: 12px;
+}
+
+.habit-facets-accordion .habit-accordion-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.habit-facet-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.habit-facet-label {
+  font-size: 12px;
+  color: var(--txt-soft);
+}
+
+.habit-facet-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.habit-facet-chip {
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(255,255,255,0.12);
+  background: var(--glass);
+  color: var(--txt);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.habit-facet-chip.is-active {
   background: var(--accent-soft);
   border-color: rgba(255,255,255,0.25);
 }

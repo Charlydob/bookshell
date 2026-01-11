@@ -2234,12 +2234,17 @@ function aggregateEntries(entries, mode = "habit") {
 }
 
 function aggregateForCategory(entries, catName) {
+  return buildParamDonutModel(entries, habits, catName).slices;
+}
+
+function buildParamDonutModel(entries, habitsById, catName) {
   const target = normalizeParamKey(catName);
   const buckets = new Map();
+
   entries.forEach((entry) => {
-    const habit = entry.habit;
+    const habit = entry.habit || habitsById?.[entry.habitId];
     const sec = Number(entry.totalSec) || 0;
-    if (sec <= 0) return;
+    if (!habit || sec <= 0) return;
     const values = new Set(
       getHabitParams(habit)
         .map(parseParam)
@@ -2247,24 +2252,51 @@ function aggregateForCategory(entries, catName) {
         .map((parsed) => parsed.val)
     );
     if (!values.size) return;
-    // Regla: si hay varios valores para la misma categoría, suma el tiempo a cada valor.
-    values.forEach((val) => {
-      const key = `cat:${target}:${val}`;
-      if (!buckets.has(key)) {
-        buckets.set(key, { key, label: val, totalSec: 0, count: 0 });
+    // Regla A: si hay varios valores para la misma categoría, el tiempo va a "mixto".
+    const valueList = values.size > 1 ? ["mixto"] : Array.from(values);
+    valueList.forEach((val) => {
+      if (!buckets.has(val)) {
+        buckets.set(val, { value: val, totalSec: 0, habits: new Map() });
       }
-      const bucket = buckets.get(key);
+      const bucket = buckets.get(val);
       bucket.totalSec += sec;
-      bucket.count += 1;
+      const habitId = habit?.id || "unknown";
+      const habitEntry = bucket.habits.get(habitId) || {
+        habitId,
+        habitName: habit?.name || UNKNOWN_HABIT_NAME,
+        sec: 0
+      };
+      habitEntry.sec += sec;
+      bucket.habits.set(habitId, habitEntry);
     });
   });
+
   const totalSec = Array.from(buckets.values()).reduce((acc, item) => acc + (item.totalSec || 0), 0);
-  return Array.from(buckets.values())
+  const slices = Array.from(buckets.values())
     .map((item) => ({
-      ...item,
+      label: item.value,
+      totalSec: item.totalSec,
       percent: totalSec ? (item.totalSec / totalSec) * 100 : 0
     }))
     .sort((a, b) => b.totalSec - a.totalSec);
+  const groups = slices.map((slice) => {
+    const bucket = buckets.get(slice.label);
+    const habitsList = Array.from(bucket?.habits?.values() || [])
+      .sort((a, b) => b.sec - a.sec)
+      .map((habitItem) => ({
+        habitId: habitItem.habitId,
+        habitName: habitItem.habitName,
+        sec: habitItem.sec,
+        percentWithinValue: bucket?.totalSec ? (habitItem.sec / bucket.totalSec) * 100 : 0
+      }));
+    return {
+      value: slice.label,
+      totalSec: bucket?.totalSec || 0,
+      percent: slice.percent,
+      habits: habitsList
+    };
+  });
+  return { slices, groups };
 }
 
 function renderDonutGroupOptions() {
@@ -2497,8 +2529,11 @@ function renderCountsList() {
 function renderDonut() {
   if (!$habitDonut || typeof echarts === "undefined") return;
   const entries = buildTimeEntries(habitDonutRange);
-  const data = habitDonutGroupMode.kind === "cat"
-    ? aggregateForCategory(entries, habitDonutGroupMode.cat)
+  const paramModel = habitDonutGroupMode.kind === "cat"
+    ? buildParamDonutModel(entries, habits, habitDonutGroupMode.cat)
+    : null;
+  const data = paramModel
+    ? paramModel.slices
     : aggregateEntries(entries, "habit");
   const totalSec = data.reduce((acc, item) => acc + item.totalSec, 0);
   const totalMinutes = Math.round(totalSec / 60);
@@ -2543,12 +2578,67 @@ function renderDonut() {
   };
   habitDonutChart.setOption(option);
   habitDonutChart.resize();
-  renderDonutLegend(data, totalSec);
+  renderDonutLegend(data, totalSec, paramModel?.groups || null);
 }
 
-function renderDonutLegend(data, totalSec) {
+function renderDonutLegend(data, totalSec, groups = null) {
   if (!$habitDonutLegend) return;
   $habitDonutLegend.innerHTML = "";
+  const hasGroups = Array.isArray(groups) && groups.length > 0;
+  $habitDonutLegend.classList.toggle("param-groups", hasGroups);
+
+  if (hasGroups) {
+    groups.forEach((group, idx) => {
+      const groupWrap = document.createElement("div");
+      groupWrap.className = "param-group";
+      groupWrap.dataset.value = group.value;
+      const color = resolveSeriesColor(data[idx], idx);
+      setSeriesColorVars(groupWrap, data[idx], idx);
+      groupWrap.style.setProperty("--group-color", color);
+      groupWrap.style.setProperty("--group-color-rgb", hexToRgbString(color));
+
+      const head = document.createElement("div");
+      head.className = "param-group-head";
+      head.innerHTML = `
+<span class="legend-dot">${idx + 1}º</span>
+        <div class="legend-text">
+          <div class="legend-name">${group.value}</div>
+          <div class="legend-meta">${group.percent.toFixed(2)}% · ${formatMinutes(Math.round(group.totalSec / 60))}</div>
+        </div>
+      `;
+
+      const body = document.createElement("div");
+      body.className = "param-group-body";
+      group.habits.forEach((habitItem) => {
+        const row = document.createElement("div");
+        row.className = "param-habit-row param-habit-glow";
+        row.dataset.habitId = habitItem.habitId;
+        row.innerHTML = `
+          <div class="habit-name">${habitItem.habitName}</div>
+          <div class="legend-meta">${formatMinutes(Math.round(habitItem.sec / 60))} · ${habitItem.percentWithinValue.toFixed(2)}%</div>
+        `;
+        const habitTarget = habits?.[habitItem.habitId];
+        if (habitTarget) {
+          row.setAttribute("role", "button");
+          row.setAttribute("tabindex", "0");
+          row.addEventListener("click", () => openHabitModal(habitTarget));
+          row.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              openHabitModal(habitTarget);
+            }
+          });
+        }
+        body.appendChild(row);
+      });
+
+      groupWrap.appendChild(head);
+      groupWrap.appendChild(body);
+      $habitDonutLegend.appendChild(groupWrap);
+    });
+    return;
+  }
+
   data.forEach((item, idx) => {
     const row = document.createElement("div");
     row.className = "habit-donut-legend-item";

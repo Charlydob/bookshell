@@ -38,6 +38,19 @@ const RUNNING_KEY = "bookshell-habit-running-session";
 const LAST_HABIT_KEY = "bookshell-habits-last-used";
 const HEATMAP_YEAR_STORAGE = "bookshell-habits-heatmap-year";
 const DEFAULT_COLOR = "#7f5dff";
+const PARAM_EMPTY_LABEL = "Sin parámetro";
+const PARAM_COLOR_PALETTE = [
+  "#7f5dff",
+  "#56b9ff",
+  "#f59e0b",
+  "#10b981",
+  "#ef4444",
+  "#c084fc",
+  "#f97316",
+  "#22d3ee",
+  "#a3e635",
+  "#f472b6"
+];
 
 // Sistema: tiempo no asignado (24h - tiempo registrado)
 const DAY_SEC = 24 * 60 * 60;
@@ -63,10 +76,12 @@ let habitToastEl = null;
 let habitToastTimeout = null;
 let habitDonutChart = null;
 let habitDonutRange = "day";
+let habitDonutGroupMode = "habit";
 let habitLineRange = "7d";
 let habitLineHabit = "total";
 let habitDaysRange = "day";
 let habitLineTooltip = null;
+let habitEditingParams = [];
 
 // Utilidades fecha
 function dateKeyLocal(date) {
@@ -341,6 +356,19 @@ function setHabitColorVars(el, habit) {
   el.style.setProperty("--hclr-rgb", hexToRgbString(color));
 }
 
+function resolveSeriesColor(item, idx = 0) {
+  if (item?.habit) return resolveHabitColor(item.habit);
+  if (item?.color) return item.color;
+  return PARAM_COLOR_PALETTE[idx % PARAM_COLOR_PALETTE.length];
+}
+
+function setSeriesColorVars(el, item, idx = 0) {
+  if (!el) return;
+  const color = resolveSeriesColor(item, idx);
+  el.style.setProperty("--hclr", color);
+  el.style.setProperty("--hclr-rgb", hexToRgbString(color));
+}
+
 function ensureHabitToast() {
   if (!habitToastEl) {
     habitToastEl = document.createElement("div");
@@ -449,6 +477,23 @@ function activeHabitsWithSystem() {
   return Object.values(habits).filter((h) => h && !h.archived);
 }
 
+function normalizeParamLabel(value) {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function getHabitParams(habit) {
+  if (!habit || !Array.isArray(habit.params)) return [];
+  return habit.params.map(normalizeParamLabel).filter(Boolean);
+}
+
+function getAllHabitParams() {
+  const set = new Set();
+  activeHabits().forEach((habit) => {
+    getHabitParams(habit).forEach((param) => set.add(param));
+  });
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
+}
+
 function ensureUnknownHabit(persistRemote = true) {
   const existing = habits?.[UNKNOWN_HABIT_ID];
   if (existing && !existing.archived) return existing;
@@ -464,6 +509,7 @@ function ensureUnknownHabit(persistRemote = true) {
     targetMinutes: null,
     countUnitMinutes: null,
     quickAdds: [],
+    params: [],
     schedule: { type: "daily", days: [] },
     createdAt: existing?.createdAt || 0,
     archived: false,
@@ -754,6 +800,8 @@ const $habitDonutCenter = document.getElementById("habit-donut-center");
 const $habitDonutEmpty = document.getElementById("habit-donut-empty");
 const $habitDonutSub = document.getElementById("habit-donut-sub");
 const $habitDonutTotal = document.querySelector("#habit-donut-center .habit-donut-total");
+const $habitDonutTitle = document.getElementById("habit-donut-title");
+const $habitDonutGroup = document.getElementById("habit-donut-group");
 const $habitRangeButtons = document.querySelectorAll(".habit-range-btn");
 const $habitDaysRangeButtons = document.querySelectorAll(".habit-days-range-btn");
 const $habitFab = document.getElementById("habit-session-toggle");
@@ -785,6 +833,12 @@ const $habitQuick2Minutes = document.getElementById("habit-quick2-minutes");
 const $habitDaysSelector = document.getElementById("habit-days-selector");
 const $habitGroupPrivate = document.getElementById("habit-group-private");
 const $habitGroupLowUse = document.getElementById("habit-group-lowuse");
+const $habitParamSelect = document.getElementById("habit-param-select");
+const $habitParamAdd = document.getElementById("habit-param-add");
+const $habitParamList = document.getElementById("habit-param-list");
+const $habitParamNewWrap = document.getElementById("habit-param-new-wrap");
+const $habitParamNew = document.getElementById("habit-param-new");
+const $habitParamCreate = document.getElementById("habit-param-create");
 
 // Sesión modal
 const $habitSessionModal = document.getElementById("habit-session-modal");
@@ -918,6 +972,59 @@ function persistHabitCount(habitId, dateKey, value) {
   }
 }
 
+function renderHabitParamChips() {
+  if (!$habitParamList) return;
+  $habitParamList.innerHTML = "";
+  habitEditingParams.forEach((param) => {
+    const chip = document.createElement("div");
+    chip.className = "habit-param-chip";
+    const label = document.createElement("span");
+    label.textContent = param;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "habit-param-remove";
+    remove.textContent = "×";
+    remove.addEventListener("click", () => {
+      habitEditingParams = habitEditingParams.filter((item) => item !== param);
+      renderHabitParamChips();
+    });
+    chip.appendChild(label);
+    chip.appendChild(remove);
+    $habitParamList.appendChild(chip);
+  });
+}
+
+function syncHabitParamSelectOptions() {
+  if (!$habitParamSelect) return;
+  const currentValues = new Set(Array.from($habitParamSelect.options).map((opt) => opt.value));
+  const dynamicValues = [...getAllHabitParams(), ...habitEditingParams]
+    .map(normalizeParamLabel)
+    .filter(Boolean);
+  const uniqueValues = Array.from(new Set(dynamicValues)).filter((value) => !currentValues.has(value));
+  const newMarker = Array.from($habitParamSelect.options).find((opt) => opt.value === "__new__") || null;
+  uniqueValues.forEach((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    $habitParamSelect.insertBefore(option, newMarker);
+  });
+}
+
+function addHabitParam(value) {
+  const clean = normalizeParamLabel(value);
+  if (!clean) return;
+  if (habitEditingParams.includes(clean)) return;
+  habitEditingParams = [...habitEditingParams, clean];
+  renderHabitParamChips();
+  syncHabitParamSelectOptions();
+}
+
+function toggleParamNewInput(show) {
+  if (!$habitParamNewWrap) return;
+  $habitParamNewWrap.classList.toggle("hidden", !show);
+  if (!show && $habitParamNew) $habitParamNew.value = "";
+}
+
 
 function openHabitModal(habit = null) {
   $habitModal.classList.remove("hidden");
@@ -935,6 +1042,11 @@ function openHabitModal(habit = null) {
   if ($habitQuick1Minutes) $habitQuick1Minutes.value = qas[0]?.minutes ? String(qas[0].minutes) : "";
   if ($habitQuick2Label) $habitQuick2Label.value = qas[1]?.label || "";
   if ($habitQuick2Minutes) $habitQuick2Minutes.value = qas[1]?.minutes ? String(qas[1].minutes) : "";
+  habitEditingParams = getHabitParams(habit);
+  renderHabitParamChips();
+  syncHabitParamSelectOptions();
+  if ($habitParamSelect) $habitParamSelect.value = "";
+  toggleParamNewInput(false);
   const goal = habit && (habit.goal === "time" || habit.goal === "count") ? habit.goal : "check";
   $habitForm.querySelector(`input[name=\"habit-goal\"][value=\"${goal}\"]`).checked = true;
   const scheduleType = habit && habit.schedule && habit.schedule.type === "days" ? "days" : "daily";
@@ -999,6 +1111,7 @@ function gatherHabitPayload() {
         ...(Number.isFinite(qa2m) && qa2m > 0 ? [{ label: ($habitQuick2Label?.value || "").trim(), minutes: Math.round(qa2m) }] : []),
       ]
     : [];
+  const params = Array.from(new Set(habitEditingParams.map(normalizeParamLabel).filter(Boolean)));
 
   return {
     id,
@@ -1008,6 +1121,7 @@ function gatherHabitPayload() {
     goal,
     groupPrivate,
     groupLowUse,
+    params,
     targetMinutes: Number.isFinite(safeTargetMinutes) && safeTargetMinutes > 0 ? safeTargetMinutes : null,
     countUnitMinutes: Number.isFinite(safeUnit) && safeUnit > 0 ? Math.round(safeUnit) : null,
     quickAdds,
@@ -2037,14 +2151,63 @@ function buildLineSeries(habitId, range) {
 }
 
 function timeShareByHabit(range) {
-  const { start, end } = getRangeBounds(range);
-  return activeHabitsWithSystem()
-    .map((habit) => ({
-      habit,
-      minutes: minutesForHabitRange(habit, start, end)
+  const entries = buildTimeEntries(range);
+  return aggregateEntries(entries, "habit")
+    .map((item) => ({
+      habit: item.habit,
+      minutes: Math.round(item.totalSec / 60)
     }))
     .filter((item) => item.minutes > 0)
     .sort((a, b) => b.minutes - a.minutes);
+}
+
+function buildTimeEntries(range) {
+  const { start, end } = getRangeBounds(range);
+  return activeHabitsWithSystem()
+    .map((habit) => {
+      const minutes = minutesForHabitRange(habit, start, end);
+      return { habit, totalSec: Math.round(minutes * 60) };
+    })
+    .filter((item) => item.totalSec > 0);
+}
+
+function aggregateEntries(entries, mode = "habit") {
+  const buckets = new Map();
+  const totalSec = entries.reduce((acc, item) => acc + (item.totalSec || 0), 0);
+  entries.forEach((entry) => {
+    const habit = entry.habit;
+    const sec = Number(entry.totalSec) || 0;
+    if (sec <= 0) return;
+    if (mode === "param") {
+      const params = getHabitParams(habit);
+      const keys = params.length ? params : [PARAM_EMPTY_LABEL];
+      keys.forEach((param) => {
+        const label = normalizeParamLabel(param) || PARAM_EMPTY_LABEL;
+        const key = `param:${foldKey(label) || "empty"}`;
+        if (!buckets.has(key)) {
+          buckets.set(key, { key, label, totalSec: 0, count: 0, color: resolveHabitColor(habit) });
+        }
+        const bucket = buckets.get(key);
+        bucket.totalSec += sec;
+        bucket.count += 1;
+      });
+      return;
+    }
+    const key = habit?.id || "unknown";
+    if (!buckets.has(key)) {
+      buckets.set(key, { key, label: habit?.name || UNKNOWN_HABIT_NAME, totalSec: 0, count: 0, habit });
+    }
+    const bucket = buckets.get(key);
+    bucket.totalSec += sec;
+    bucket.count += 1;
+  });
+  const list = Array.from(buckets.values())
+    .map((item) => ({
+      ...item,
+      percent: totalSec ? (item.totalSec / totalSec) * 100 : 0
+    }))
+    .sort((a, b) => b.totalSec - a.totalSec);
+  return list;
 }
 
 function rangeLabel(range) {
@@ -2248,10 +2411,14 @@ function renderCountsList() {
 
 function renderDonut() {
   if (!$habitDonut || typeof echarts === "undefined") return;
-  const data = timeShareByHabit(habitDonutRange);
-  const totalMinutes = data.reduce((acc, item) => acc + item.minutes, 0);
+  const data = aggregateEntries(buildTimeEntries(habitDonutRange), habitDonutGroupMode);
+  const totalSec = data.reduce((acc, item) => acc + item.totalSec, 0);
+  const totalMinutes = Math.round(totalSec / 60);
   const subtitle = `Distribución ${rangeLabel(habitDonutRange)}`;
   if ($habitDonutSub) $habitDonutSub.textContent = subtitle.charAt(0).toUpperCase() + subtitle.slice(1);
+  if ($habitDonutTitle) {
+    $habitDonutTitle.textContent = habitDonutGroupMode === "param" ? "Tiempo por parámetro" : "Tiempo por hábito";
+  }
 
   if (!data.length || !totalMinutes) {
     if (habitDonutChart) habitDonutChart.clear();
@@ -2270,7 +2437,7 @@ function renderDonut() {
 
   const option = {
     tooltip: { trigger: "item", formatter: "{b}: {c}m ({d}%)" },
-    color: data.map((item) => resolveHabitColor(item.habit)),
+    color: data.map((item, idx) => resolveSeriesColor(item, idx)),
     series: [
       {
         type: "pie",
@@ -2278,30 +2445,30 @@ function renderDonut() {
         itemStyle: { borderWidth: 2, borderColor: "rgba(0,0,0,0.2)" },
         label: { show: false },
         data: data.map((item) => ({
-          name: item.habit.name,
-          value: item.minutes
+          name: item.label,
+          value: Math.round(item.totalSec / 60)
         }))
       }
     ]
   };
   habitDonutChart.setOption(option);
   habitDonutChart.resize();
-  renderDonutLegend(data, totalMinutes);
+  renderDonutLegend(data, totalSec);
 }
 
-function renderDonutLegend(data, totalMinutes) {
+function renderDonutLegend(data, totalSec) {
   if (!$habitDonutLegend) return;
   $habitDonutLegend.innerHTML = "";
-data.forEach((item, idx) => {
-      const row = document.createElement("div");
+  data.forEach((item, idx) => {
+    const row = document.createElement("div");
     row.className = "habit-donut-legend-item";
-    setHabitColorVars(row, item.habit);
-    const pct = totalMinutes ? ((item.minutes / totalMinutes) * 100) : 0;
+    setSeriesColorVars(row, item, idx);
+    const pct = totalSec ? ((item.totalSec / totalSec) * 100) : 0;
     row.innerHTML = `
 <span class="legend-dot">${idx + 1}º</span>
       <div class="legend-text">
-        <div class="legend-name">${item.habit.name}</div>
-<div class="legend-meta">${pct.toFixed(2)}% · ${formatMinutes(item.minutes)}</div>
+        <div class="legend-name">${item.label}</div>
+<div class="legend-meta">${pct.toFixed(2)}% · ${formatMinutes(Math.round(item.totalSec / 60))}</div>
       </div>
     `;
     $habitDonutLegend.appendChild(row);
@@ -2754,6 +2921,25 @@ function bindEvents() {
   $habitForm?.querySelectorAll('input[name="habit-goal"]').forEach((r) => {
     r.addEventListener("change", updateHabitGoalUI);
   });
+  $habitParamSelect?.addEventListener("change", (e) => {
+    toggleParamNewInput(e.target.value === "__new__");
+  });
+  $habitParamAdd?.addEventListener("click", () => {
+    const value = $habitParamSelect?.value || "";
+    if (value === "__new__") {
+      toggleParamNewInput(true);
+      $habitParamNew?.focus();
+      return;
+    }
+    addHabitParam(value);
+    if ($habitParamSelect) $habitParamSelect.value = "";
+  });
+  $habitParamCreate?.addEventListener("click", () => {
+    const value = $habitParamNew?.value || "";
+    addHabitParam(value);
+    toggleParamNewInput(false);
+    if ($habitParamSelect) $habitParamSelect.value = "";
+  });
   $btnAddTime?.addEventListener("click", () => openManualTimeModal());
   $habitModalClose.addEventListener("click", closeHabitModal);
   $habitModalCancel.addEventListener("click", closeHabitModal);
@@ -2819,6 +3005,10 @@ function bindEvents() {
       renderTotalsList();
       renderCountsList();
     });
+  });
+  $habitDonutGroup?.addEventListener("change", (e) => {
+    habitDonutGroupMode = e.target.value === "param" ? "param" : "habit";
+    renderDonut();
   });
 
   $habitDaysRangeButtons.forEach((btn) => {

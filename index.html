@@ -662,9 +662,16 @@
 <div class="habit-chart-card habit-donut-card">
 <div class="habit-card-head">
 <div>
-<div class="habit-card-title">Tiempo por hábito</div>
+<div class="habit-card-title" id="habit-donut-title">Tiempo por hábito</div>
 <div class="habit-card-sub" id="habit-donut-sub">Distribución diaria</div>
 </div>
+<label class="habit-select habit-select-compact" for="habit-donut-group">
+<span>Agrupar por</span>
+<select aria-label="Agrupar por" id="habit-donut-group">
+<option value="habit">Hábito</option>
+<option value="param">Parámetro</option>
+</select>
+</label>
 <div aria-label="Rango de tiempo" class="habit-range-toggle" role="group">
 <button class="habit-range-btn is-active" data-range="day">Día</button>
 <button class="habit-range-btn" data-range="week">Semana</button>
@@ -1571,6 +1578,33 @@
   </div>
 </label>
 
+</div>
+<div class="sheet-section habit-params-section">
+<div class="sheet-section-title">Parámetros</div>
+<label class="field">
+<span class="field-label">Añadir parámetro</span>
+<div class="habit-params-controls">
+<select id="habit-param-select">
+  <option value="">Selecciona un parámetro</option>
+  <option value="Laura: Sí">Laura: Sí</option>
+  <option value="Laura: No">Laura: No</option>
+  <option value="Lugar: Dentro">Lugar: Dentro</option>
+  <option value="Lugar: Fuera">Lugar: Fuera</option>
+  <option value="Tipo: Productivo">Tipo: Productivo</option>
+  <option value="Tipo: No productivo">Tipo: No productivo</option>
+  <option value="__new__">Crear nuevo…</option>
+</select>
+<button class="btn ghost btn-compact" id="habit-param-add" type="button">Añadir</button>
+</div>
+</label>
+<label class="field habit-param-new hidden" id="habit-param-new-wrap">
+<span class="field-label">Nuevo parámetro</span>
+<div class="habit-params-controls">
+<input id="habit-param-new" placeholder="Ej: Lugar: Fuera" type="text"/>
+<button class="btn ghost btn-compact" id="habit-param-create" type="button">Crear</button>
+</div>
+</label>
+<div class="habit-param-chips" id="habit-param-list"></div>
 </div>
 <div class="sheet-section">
 <div class="sheet-section-title">Objetivo</div>

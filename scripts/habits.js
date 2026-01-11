@@ -904,8 +904,9 @@ const $habitDeleteName = document.getElementById("habit-delete-name");
 const $habitDeleteClose = document.getElementById("habit-delete-close");
 const $habitDeleteCancel = document.getElementById("habit-delete-cancel");
 const $habitDeleteConfirmBtn = document.getElementById("habit-delete-confirm-btn");
-// FIX iOS/stacking: si un ancestro tiene overflow/transform, los modales se recortan.
-// Los movemos a <body> para que fixed sea realmente viewport.
+
+// FIX iOS: si algún ancestro tiene transform/overflow, los modales (fixed) se recortan.
+// Los movemos a <body> para que fixed sea viewport real.
 function hoistToBody(el) {
   try {
     if (!el) return;

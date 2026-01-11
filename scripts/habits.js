@@ -2779,6 +2779,15 @@ function closeManualTimeModal() {
   $habitManualModal?.classList.add("hidden");
 }
 
+function closeHabitUi() {
+  closeHabitModal();
+  closeSessionModal();
+  closeManualTimeModal();
+  closeEntryModal();
+  closeDeleteConfirm();
+  $habitOverlay?.classList.add("hidden");
+}
+
 
 function handleManualSubmit(e) {
   e.preventDefault();
@@ -3228,6 +3237,7 @@ window.__bookshellHabits = {
   startSession,
   stopSession,
   toggleSession,
+  closeUi: closeHabitUi,
   isRunning: () => !!runningSession
 ,
   getTimeShareByHabit: (range) => timeShareByHabit(range),

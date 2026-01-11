@@ -362,6 +362,17 @@ function resolveSeriesColor(item, idx = 0) {
   return PARAM_COLOR_PALETTE[idx % PARAM_COLOR_PALETTE.length];
 }
 
+function resolveParamKeyColor(value) {
+  const clean = normalizeParamKey(value);
+  if (!clean) return "transparent";
+  let hash = 0;
+  for (let i = 0; i < clean.length; i += 1) {
+    hash = ((hash << 5) - hash + clean.charCodeAt(i)) | 0;
+  }
+  const idx = Math.abs(hash) % PARAM_COLOR_PALETTE.length;
+  return PARAM_COLOR_PALETTE[idx];
+}
+
 function setSeriesColorVars(el, item, idx = 0) {
   if (!el) return;
   const color = resolveSeriesColor(item, idx);
@@ -494,6 +505,21 @@ function parseParam(value) {
   const val = normalizeParamKey(raw.slice(idx + 1));
   if (!cat || !val) return null;
   return { cat, val };
+}
+
+function resolveHabitCategoryValue(habit, catName) {
+  if (!habit || !catName) return null;
+  const target = normalizeParamKey(catName);
+  if (!target) return null;
+  const values = new Set(
+    getHabitParams(habit)
+      .map(parseParam)
+      .filter((parsed) => parsed && parsed.cat === target)
+      .map((parsed) => parsed.val)
+  );
+  if (!values.size) return null;
+  if (values.size > 1) return "mixto";
+  return Array.from(values)[0];
 }
 
 function getHabitParams(habit) {
@@ -2525,6 +2551,41 @@ function renderCountsList() {
   });
 }
 
+function buildDonutOuterRuns(habitData, catName) {
+  const runs = [];
+  let current = null;
+  habitData.forEach((item) => {
+    const value = Math.round(item.totalSec / 60);
+    if (value <= 0) return;
+    const key = resolveHabitCategoryValue(item.habit, catName);
+    if (current && current.key === key) {
+      current.value += value;
+      return;
+    }
+    if (current) runs.push(current);
+    current = { key, value };
+  });
+  if (current) runs.push(current);
+  return runs.map((run) => {
+    const color = run.key ? resolveParamKeyColor(run.key) : "transparent";
+    const borderWidth = run.key ? 6 : 0;
+    const shadowBlur = run.key ? 14 : 0;
+    return {
+      name: run.key || "",
+      value: run.value,
+      itemStyle: {
+        color: "rgba(0,0,0,0)",
+        borderWidth,
+        borderColor: color,
+        shadowBlur,
+        shadowColor: color,
+        borderJoin: "round"
+      },
+      emphasis: { disabled: true }
+    };
+  });
+}
+
 
 function renderDonut() {
   if (!$habitDonut || typeof echarts === "undefined") return;
@@ -2532,9 +2593,7 @@ function renderDonut() {
   const paramModel = habitDonutGroupMode.kind === "cat"
     ? buildParamDonutModel(entries, habits, habitDonutGroupMode.cat)
     : null;
-  const data = paramModel
-    ? paramModel.slices
-    : aggregateEntries(entries, "habit");
+  const data = aggregateEntries(entries, "habit");
   const totalSec = data.reduce((acc, item) => acc + item.totalSec, 0);
   const totalMinutes = Math.round(totalSec / 60);
   const subtitle = `Distribución ${rangeLabel(habitDonutRange)}`;
@@ -2560,6 +2619,14 @@ function renderDonut() {
   if (!habitDonutChart) habitDonutChart = echarts.init($habitDonut);
   if ($habitDonutTotal) $habitDonutTotal.textContent = formatMinutes(totalMinutes);
 
+  const baseSeriesData = data.map((item) => ({
+    name: item.label,
+    value: Math.round(item.totalSec / 60)
+  }));
+  const startAngle = 90;
+  const clockwise = true;
+  const padAngle = 0;
+
   const option = {
     tooltip: { trigger: "item", formatter: "{b}: {c}m ({d}%)" },
     color: data.map((item, idx) => resolveSeriesColor(item, idx)),
@@ -2567,18 +2634,38 @@ function renderDonut() {
       {
         type: "pie",
         radius: ["60%", "82%"],
+        startAngle,
+        clockwise,
+        padAngle,
+        roseType: false,
         itemStyle: { borderWidth: 2, borderColor: "rgba(0,0,0,0.2)" },
         label: { show: false },
-        data: data.map((item) => ({
-          name: item.label,
-          value: Math.round(item.totalSec / 60)
-        }))
+        data: baseSeriesData
       }
     ]
   };
+  if (habitDonutGroupMode.kind === "cat" && habitDonutGroupMode.cat) {
+    const outerData = buildDonutOuterRuns(data, habitDonutGroupMode.cat);
+    option.series.push({
+      type: "pie",
+      radius: ["84%", "92%"],
+      startAngle,
+      clockwise,
+      padAngle,
+      roseType: false,
+      silent: true,
+      tooltip: { show: false },
+      label: { show: false },
+      labelLine: { show: false },
+      emphasis: { disabled: true },
+      data: outerData
+    });
+  }
   habitDonutChart.setOption(option);
   habitDonutChart.resize();
-  renderDonutLegend(data, totalSec, paramModel?.groups || null);
+  const legendData = paramModel?.slices || data;
+  const legendGroups = paramModel?.groups || null;
+  renderDonutLegend(legendData, totalSec, legendGroups);
 }
 
 function renderDonutLegend(data, totalSec, groups = null) {

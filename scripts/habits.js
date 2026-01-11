@@ -76,7 +76,7 @@ const FACET_CONFIG = {
   },
   place: {
     label: "Lugar",
-    values: { home: "Casa", out: "Fuera" }
+    values: { home: "Casa", away: "Fuera", mixed: "Mixto" }
   },
   mode: {
     label: "Modo",
@@ -103,6 +103,45 @@ const FACET_COLORS = [
   "#f472b6",
   "#c084fc"
 ];
+
+function normalizePlaceValue(value) {
+  if (value === true) return "home";
+  if (value === false) return "away";
+  if (value == null) return null;
+  if (typeof value !== "string") return value;
+  const clean = value.toLowerCase().trim();
+  if (["home", "casa", "hogar"].includes(clean)) return "home";
+  if (["away", "fuera", "out", "exterior"].includes(clean)) return "away";
+  if (["mixed", "mixto"].includes(clean)) return "mixed";
+  return value;
+}
+
+function normalizeHabitPlaceFacet(habit) {
+  if (!habit) return false;
+  const facets = habit.facets || {};
+  let rawPlace = facets.place;
+  let changed = false;
+  if (rawPlace == null && habit.place != null) {
+    rawPlace = habit.place;
+    changed = true;
+  }
+  const normalized = normalizePlaceValue(rawPlace);
+  if (!normalized) {
+    if ("place" in facets) {
+      delete facets.place;
+      changed = true;
+    }
+  } else if (normalized !== rawPlace) {
+    facets.place = normalized;
+    changed = true;
+  }
+  if (Object.keys(facets).length) habit.facets = facets;
+  if (habit.place != null) {
+    delete habit.place;
+    changed = true;
+  }
+  return changed;
+}
 
 // Utilidades fecha
 function dateKeyLocal(date) {
@@ -2180,11 +2219,7 @@ function facetShareByRange(range, facetKey) {
 
   activeHabitsWithSystem().forEach((habit) => {
     if (!habit || habit.archived) return;
-    const goal = habit.goal || "check";
-    let value = 0;
-    if (goal === "time") value = minutesForHabitRange(habit, start, end);
-    else if (goal === "count") value = countForHabitRange(habit, start, end);
-    else value = checkCountForHabitRange(habit, start, end);
+    const value = minutesForHabitRange(habit, start, end);
     if (!value) return;
     const facetValue = habit?.facets?.[facetKey];
     const bucketKey = facetValue || "unclassified";
@@ -2380,7 +2415,7 @@ function renderDonut() {
     };
   });
   const totalValue = items.reduce((acc, item) => acc + item.value, 0);
-  const formatValue = isHabitView ? formatMinutes : (value) => `${value}×`;
+  const formatValue = formatMinutes;
 
   if (!items.length || !totalValue) {
     if (habitDonutChart) habitDonutChart.clear();
@@ -2396,8 +2431,8 @@ function renderDonut() {
   if ($habitDonutCenter) $habitDonutCenter.style.display = "flex";
   if (!habitDonutChart) habitDonutChart = echarts.init($habitDonut);
   if ($habitDonutTotal) $habitDonutTotal.textContent = formatValue(totalValue);
-  if ($habitDonutLabel) $habitDonutLabel.textContent = isHabitView ? "Tiempo" : "Actividad";
-  if ($habitUnit) $habitUnit.textContent = isHabitView ? "min" : "×";
+  if ($habitDonutLabel) $habitDonutLabel.textContent = "Tiempo";
+  if ($habitUnit) $habitUnit.textContent = "";
   if ($habitDonutTitle) {
     $habitDonutTitle.textContent = isHabitView
       ? "Tiempo por hábito"
@@ -2405,7 +2440,13 @@ function renderDonut() {
   }
 
   const option = {
-    tooltip: { trigger: "item", formatter: isHabitView ? "{b}: {c}m ({d}%)" : "{b}: {c}× ({d}%)" },
+    tooltip: {
+      trigger: "item",
+      formatter: (params) => {
+        const pct = totalValue ? ((params.value / totalValue) * 100) : 0;
+        return `${params.name}: ${formatValue(params.value)} (${pct.toFixed(1)}%)`;
+      }
+    },
     color: items.map((item) => item.color),
     series: [
       {
@@ -2442,7 +2483,7 @@ function renderDonutLegend(data, totalValue, formatValue) {
 <span class="legend-dot">${idx + 1}º</span>
       <div class="legend-text">
         <div class="legend-name">${item.label}</div>
-<div class="legend-meta">${pct.toFixed(2)}% · ${formatValue(item.value)}</div>
+<div class="legend-meta">${formatValue(item.value)} · ${pct.toFixed(1)}%</div>
       </div>
     `;
     $habitDonutLegend.appendChild(row);
@@ -3012,7 +3053,14 @@ function attachNavHook() {
 function listenRemote() {
   onValue(ref(db, HABITS_PATH), (snap) => {
     const val = snap.val() || {};
+    const normalized = [];
+    Object.values(val).forEach((habit) => {
+      if (normalizeHabitPlaceFacet(habit)) normalized.push(habit);
+    });
     habits = val;
+    if (normalized.length) {
+      normalized.forEach((habit) => persistHabit(habit));
+    }
     ensureUnknownHabit(true);
     if (_pendingShortcutCmd) {
       try {

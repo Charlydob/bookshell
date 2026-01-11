@@ -244,6 +244,7 @@ body {
   align-items: center;
   justify-content: center;
   padding: 14px;
+  overflow-x: hidden;
   z-index: 20;
 }
 
@@ -253,7 +254,8 @@ body {
 }
 
 .modal {
-  width: min(560px, 100%);
+  width: min(560px, calc(100vw - 24px));
+  max-width: 560px;
   max-height: 86vh;
   border-radius: 22px;
   overflow: hidden;
@@ -320,7 +322,7 @@ body {
   }
   .modal{
     width: 100%;
-    max-width: 560px;
+    max-width: 100%;
     border-radius: 22px 22px 0 0;
     max-height: calc(100vh - 16px);
   }
@@ -343,6 +345,7 @@ body {
   padding: 8px 12px 14px;
   overflow:auto;
   -webkit-overflow-scrolling: touch;
+  overflow-x: hidden;
 }
 
 .modal-footer{

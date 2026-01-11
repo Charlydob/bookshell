@@ -1320,3 +1320,57 @@
   left: auto !important;
   right: auto !important;
 }
+#habit-modal-backdrop.modal-backdrop,
+#habit-session-modal.modal-backdrop,
+#habit-manual-modal.modal-backdrop,
+#habit-entry-modal-backdrop.modal-backdrop,
+#habit-delete-confirm.modal-backdrop{
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 9999 !important;
+  display: grid !important;
+  place-items: end center !important;
+  padding: 12px 12px calc(12px + env(safe-area-inset-bottom)) !important;
+  box-sizing: border-box !important;
+}
+
+#habit-modal-backdrop.hidden,
+#habit-session-modal.hidden,
+#habit-manual-modal.hidden,
+#habit-entry-modal-backdrop.hidden,
+#habit-delete-confirm.hidden{
+  display: none !important;
+}
+
+#habit-modal-backdrop .modal,
+#habit-session-modal .modal,
+#habit-manual-modal .modal,
+#habit-entry-modal-backdrop .modal,
+#habit-delete-confirm .modal{
+  width: min(560px, calc(100vw - 24px)) !important;
+  max-height: min(86vh, 760px) !important;
+  margin: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+#habit-modal-backdrop .modal-scroll,
+#habit-session-modal .modal-scroll,
+#habit-manual-modal .modal-scroll,
+#habit-entry-modal-backdrop .modal-scroll{
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow: auto !important;
+  width: 100% !important;
+}
+
+#habit-modal-backdrop .sheet-footer,
+#habit-session-modal .sheet-footer,
+#habit-manual-modal .sheet-footer,
+#habit-entry-modal-backdrop .sheet-footer,
+#habit-delete-confirm .sheet-footer{
+  width: 100% !important;
+  position: relative !important;
+}

@@ -2263,6 +2263,53 @@ function aggregateForCategory(entries, catName) {
   return buildParamDonutModel(entries, habits, catName).slices;
 }
 
+function buildGroupedHabitDonutModel(entries, catName) {
+  const buckets = new Map();
+
+  entries.forEach((entry) => {
+    const habit = entry.habit || habits?.[entry.habitId];
+    const sec = Number(entry.totalSec) || 0;
+    if (!habit || sec <= 0) return;
+    const value = resolveHabitCategoryValue(habit, catName);
+    if (!value) return;
+    if (!buckets.has(value)) {
+      buckets.set(value, { value, totalSec: 0, habits: [] });
+    }
+    const bucket = buckets.get(value);
+    bucket.totalSec += sec;
+    bucket.habits.push({
+      habit,
+      habitId: habit.id || "unknown",
+      label: habit?.name || UNKNOWN_HABIT_NAME,
+      totalSec: sec
+    });
+  });
+
+  const totalSec = Array.from(buckets.values()).reduce((acc, item) => acc + (item.totalSec || 0), 0);
+  const valuesOrder = collectValuesForCategory(activeHabits(), catName);
+  const orderedValues = valuesOrder.filter((value) => buckets.has(value));
+  Array.from(buckets.keys()).forEach((value) => {
+    if (!orderedValues.includes(value)) orderedValues.push(value);
+  });
+  const mixedIndex = orderedValues.indexOf("mixto");
+  if (mixedIndex !== -1) {
+    orderedValues.splice(mixedIndex, 1);
+    orderedValues.push("mixto");
+  }
+
+  const habits = [];
+  const groups = [];
+  orderedValues.forEach((value) => {
+    const bucket = buckets.get(value);
+    if (!bucket) return;
+    bucket.habits.sort((a, b) => b.totalSec - a.totalSec);
+    habits.push(...bucket.habits);
+    groups.push({ value, totalSec: bucket.totalSec });
+  });
+
+  return { totalSec, habits, groups };
+}
+
 function buildParamDonutModel(entries, habitsById, catName) {
   const target = normalizeParamKey(catName);
   const buckets = new Map();
@@ -2590,11 +2637,17 @@ function buildDonutOuterRuns(habitData, catName) {
 function renderDonut() {
   if (!$habitDonut || typeof echarts === "undefined") return;
   const entries = buildTimeEntries(habitDonutRange);
-  const paramModel = habitDonutGroupMode.kind === "cat"
+  const isGrouped = habitDonutGroupMode.kind === "cat" && habitDonutGroupMode.cat;
+  const paramModel = isGrouped
     ? buildParamDonutModel(entries, habits, habitDonutGroupMode.cat)
     : null;
-  const data = aggregateEntries(entries, "habit");
-  const totalSec = data.reduce((acc, item) => acc + item.totalSec, 0);
+  const groupedModel = isGrouped
+    ? buildGroupedHabitDonutModel(entries, habitDonutGroupMode.cat)
+    : null;
+  const data = isGrouped ? groupedModel.habits : aggregateEntries(entries, "habit");
+  const totalSec = isGrouped
+    ? groupedModel.totalSec
+    : data.reduce((acc, item) => acc + item.totalSec, 0);
   const totalMinutes = Math.round(totalSec / 60);
   const subtitle = `Distribución ${rangeLabel(habitDonutRange)}`;
   if ($habitDonutSub) $habitDonutSub.textContent = subtitle.charAt(0).toUpperCase() + subtitle.slice(1);
@@ -2626,6 +2679,7 @@ function renderDonut() {
   const startAngle = 90;
   const clockwise = true;
   const padAngle = 0;
+  const innerRadius = isGrouped ? ["58%", "74%"] : ["60%", "82%"];
 
   const option = {
     tooltip: { trigger: "item", formatter: "{b}: {c}m ({d}%)" },
@@ -2633,7 +2687,7 @@ function renderDonut() {
     series: [
       {
         type: "pie",
-        radius: ["60%", "82%"],
+        radius: innerRadius,
         startAngle,
         clockwise,
         padAngle,
@@ -2644,11 +2698,26 @@ function renderDonut() {
       }
     ]
   };
-  if (habitDonutGroupMode.kind === "cat" && habitDonutGroupMode.cat) {
-    const outerData = buildDonutOuterRuns(data, habitDonutGroupMode.cat);
+  if (isGrouped) {
+    const outerData = groupedModel.groups.map((group) => {
+      const color = resolveParamKeyColor(group.value);
+      return {
+        name: group.value || "",
+        value: Math.round(group.totalSec / 60),
+        itemStyle: {
+          color: "rgba(0,0,0,0)",
+          borderWidth: 6,
+          borderColor: color,
+          shadowBlur: 14,
+          shadowColor: color,
+          borderJoin: "round"
+        },
+        emphasis: { disabled: true }
+      };
+    });
     option.series.push({
       type: "pie",
-      radius: ["84%", "92%"],
+      radius: ["74%", "82%"],
       startAngle,
       clockwise,
       padAngle,

@@ -37,6 +37,7 @@ const STORAGE_KEY = "bookshell-habits-cache";
 const RUNNING_KEY = "bookshell-habit-running-session";
 const LAST_HABIT_KEY = "bookshell-habits-last-used";
 const HEATMAP_YEAR_STORAGE = "bookshell-habits-heatmap-year";
+const HISTORY_RANGE_STORAGE = "bookshell-habits-history-range:v1";
 const DEFAULT_COLOR = "#7f5dff";
 const PARAM_EMPTY_LABEL = "Sin parámetro";
 const PARAM_COLOR_PALETTE = [
@@ -71,6 +72,9 @@ let runningSession = null; // { startTs }
 let sessionInterval = null;
 let pendingSessionDuration = 0;
 let heatmapYear = new Date().getFullYear();
+let habitHistoryRange = "week";
+let habitHistoryMetric = "time";
+let habitHistoryGroupMode = { kind: "habit", cat: null };
 let habitDeleteTarget = null;
 let habitToastEl = null;
 let habitToastTimeout = null;
@@ -471,6 +475,24 @@ function saveHeatmapYear() {
     localStorage.setItem(HEATMAP_YEAR_STORAGE, String(heatmapYear));
   } catch (err) {
     console.warn("No se pudo guardar año del heatmap", err);
+  }
+}
+
+function loadHistoryRange() {
+  try {
+    const stored = String(localStorage.getItem(HISTORY_RANGE_STORAGE) || "");
+    const allowed = new Set(["week", "month", "year", "total"]);
+    if (allowed.has(stored)) habitHistoryRange = stored;
+  } catch (err) {
+    console.warn("No se pudo leer rango de historial", err);
+  }
+}
+
+function saveHistoryRange() {
+  try {
+    localStorage.setItem(HISTORY_RANGE_STORAGE, habitHistoryRange);
+  } catch (err) {
+    console.warn("No se pudo guardar rango de historial", err);
   }
 }
 
@@ -1531,54 +1553,811 @@ function renderWeek() {
   $habitWeekEmpty.style.display = any ? "none" : "block";
 }
 
-function renderHistory() {
-  $habitHistoryList.innerHTML = "";
-  let any = false;
-  const year = heatmapYear;
-  const cells = buildYearCells(year);
-  activeHabits().forEach((habit) => {
-    any = true;
-    const daysDone = countHabitActivityDays(habit);
-    const card = document.createElement("div");
-    card.className = "habit-heatmap-card";
-    setHabitColorVars(card, habit);
-    card.innerHTML = `
-      <div class="habit-heatmap-header">
-        <div class="habit-emoji">${habit.emoji || "🏷️"}</div>
-        <div>
-          <div class="habit-name">${habit.name}</div>
-          <div class="habit-meta">Año ${year} · Hecho: ${daysDone} día${daysDone === 1 ? "" : "s"}</div>
-        </div>
-      </div>
-    `;
-    card.querySelector(".habit-heatmap-header").appendChild(createHabitActions(habit));
-    const grid = document.createElement("div");
-    grid.className = "habit-annual-heatmap habit-annual-heatmap--dots";
-    cells.forEach((cellData) => {
-      const dot = document.createElement("div");
-      dot.className = "habit-heatmap-cell";
-      setHabitColorVars(dot, habit);
-      if (!cellData.key) {
-        dot.classList.add("is-out");
-      } else {
-        const dayData = getHabitDayScore(habit, cellData.key);
-        const level = Math.min(4, dayData.score);
-        dot.dataset.level = String(level);
-        dot.classList.add(`heat-level-${level}`);
-                dot.title = habit.goal === "count"
-          ? `${cellData.key} · Conteo: ${dayData.count || 0}`
-          : `${cellData.key} · ${dayData.checked ? "Check" : "Sin check"} · ${formatMinutes(dayData.minutes)}`;
-      }
-      grid.appendChild(dot);
+function getISOWeekNumber(date) {
+  const utc = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = utc.getUTCDay() || 7;
+  utc.setUTCDate(utc.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+  return Math.ceil((((utc - yearStart) / 86400000) + 1) / 7);
+}
+
+function isLeapYear(year) {
+  return new Date(year, 1, 29).getDate() === 29;
+}
+
+function formatHistoryRangeLabel(range) {
+  const today = new Date();
+  switch (range) {
+    case "week": {
+      const { start, end } = getDaysRangeBounds("week");
+      const week = getISOWeekNumber(end);
+      const startDay = String(start.getDate()).padStart(2, "0");
+      const endDay = String(end.getDate()).padStart(2, "0");
+      const monthLabel = end.toLocaleDateString("es-ES", { month: "short" }).replace(".", "");
+      return `Semana ${week} (${startDay}–${endDay} ${monthLabel} ${end.getFullYear()})`;
+    }
+    case "month": {
+      const { end } = getDaysRangeBounds("month");
+      const monthLabel = end.toLocaleDateString("es-ES", { month: "short" }).replace(".", "");
+      const totalDays = new Date(end.getFullYear(), end.getMonth() + 1, 0).getDate();
+      return `Mes ${monthLabel} ${end.getFullYear()} (${end.getDate()}/${totalDays})`;
+    }
+    case "year": {
+      const year = heatmapYear;
+      const start = new Date(year, 0, 1);
+      const end = new Date(year, 11, 31, 23, 59, 59, 999);
+      const cappedEnd = year === today.getFullYear() && end > today ? today : end;
+      const elapsed = Math.floor((cappedEnd - start) / 86400000) + 1;
+      const totalDays = isLeapYear(year) ? 366 : 365;
+      return `Año ${year} (${Math.min(elapsed, totalDays)}/${totalDays})`;
+    }
+    case "total": {
+      const hasAny = hasAnyHistoryDataInRange(new Date(0), today);
+      if (!hasAny) return "Total (sin datos)";
+      const earliest = getEarliestActivityDate();
+      return `Total (desde primer registro: ${dateKeyLocal(earliest)})`;
+    }
+    default:
+      return "Día";
+  }
+}
+
+function endOfDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+}
+
+function getHistoryRangeBounds(range) {
+  const today = new Date();
+  let { start, end } = getDaysRangeBounds(range);
+  if (range === "total") {
+    start = getEarliestActivityDate();
+  }
+  if (range === "year") {
+    start = new Date(heatmapYear, 0, 1);
+    end = new Date(heatmapYear, 11, 31, 23, 59, 59, 999);
+  }
+  if (end > today) end = endOfDay(today);
+  return { start, end };
+}
+
+function formatHistoryValue(value, metric) {
+  const safe = Math.round(Number(value) || 0);
+  if (metric === "time") return formatMinutes(safe);
+  return `${safe}×`;
+}
+
+function getHabitQuantityForDate(habit, dateKey) {
+  if (!habit || habit.archived) return 0;
+  if ((habit.goal || "check") === "count") {
+    return getHabitCount(habit.id, dateKey);
+  }
+  const dayData = getHabitDayScore(habit, dateKey);
+  return dayData.hasActivity ? 1 : 0;
+}
+
+function getHabitMetricForDate(habit, dateKey, metric) {
+  if (!habit || habit.archived) return 0;
+  if (metric === "time") {
+    return getSessionsForHabitDate(habit.id, dateKey).reduce((acc, s) => acc + minutesFromSession(s), 0);
+  }
+  return getHabitQuantityForDate(habit, dateKey);
+}
+
+function countForHabitRange(habit, start, end) {
+  let total = 0;
+  if (!habit || habit.archived) return 0;
+  for (let d = new Date(start); d <= end; d = addDays(d, 1)) {
+    const key = dateKeyLocal(d);
+    total += getHabitQuantityForDate(habit, key);
+  }
+  return total;
+}
+
+function getHabitMetricForRange(habit, start, end, metric) {
+  if (metric === "time") return minutesForHabitRange(habit, start, end);
+  return countForHabitRange(habit, start, end);
+}
+
+function hasAnyHistoryDataInRange(start, end) {
+  return activeHabits().some((habit) => {
+    const checks = habitChecks[habit.id] || {};
+    if (Object.keys(checks).some((key) => {
+      const parsed = parseDateKey(key);
+      return parsed && isDateInRange(parsed, start, end);
+    })) return true;
+    const counts = habitCounts[habit.id] || {};
+    if (Object.keys(counts).some((key) => {
+      const parsed = parseDateKey(key);
+      return parsed && isDateInRange(parsed, start, end) && Number(counts[key]) > 0;
+    })) return true;
+    const byDate = habitSessions?.[habit.id];
+    if (byDate && typeof byDate === "object") {
+      if (Object.keys(byDate).some((key) => {
+        const parsed = parseDateKey(key);
+        return parsed && isDateInRange(parsed, start, end) && (Number(byDate[key]) || 0) > 0;
+      })) return true;
+    }
+    return false;
+  });
+}
+
+function createHistorySection(title) {
+  const section = document.createElement("section");
+  section.className = "habits-history-section";
+  const header = document.createElement("div");
+  header.className = "habits-history-section-header";
+  const titleEl = document.createElement("div");
+  titleEl.className = "habits-history-section-title";
+  titleEl.textContent = title;
+  header.appendChild(titleEl);
+  const body = document.createElement("div");
+  body.className = "habits-history-section-body";
+  section.appendChild(header);
+  section.appendChild(body);
+  return { section, header, body };
+}
+
+function buildMonthlyTrendSeries(habitsList, metric, groupMode) {
+  const today = new Date();
+  const months = [];
+  for (let i = 11; i >= 0; i -= 1) {
+    const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    const label = date.toLocaleDateString("es-ES", { month: "short", year: "2-digit" }).replace(".", "");
+    months.push({
+      year: date.getFullYear(),
+      month: date.getMonth(),
+      label
     });
-    const scroll = document.createElement("div");
-    scroll.className = "habit-heatmap-scroll";
-    scroll.appendChild(grid);
-    card.appendChild(scroll);
-    $habitHistoryList.appendChild(card);
+  }
+
+  const groups = new Map();
+  const resolveGroup = (habit) => {
+    if (groupMode?.kind === "param") {
+      const cat = groupMode.cat;
+      if (!cat) return null;
+      const value = resolveHabitCategoryValue(habit, cat);
+      const label = value === "mixto" ? "mixto" : (value || PARAM_EMPTY_LABEL);
+      const key = normalizeParamKey(label) || PARAM_EMPTY_LABEL.toLowerCase();
+      return { key, label, color: resolveParamKeyColor(label) };
+    }
+    return { key: habit.id, label: habit.name, color: resolveHabitColor(habit) };
+  };
+
+  months.forEach((month, idx) => {
+    const start = new Date(month.year, month.month, 1);
+    const end = new Date(month.year, month.month + 1, 0, 23, 59, 59, 999);
+    habitsList.forEach((habit) => {
+      const group = resolveGroup(habit);
+      if (!group) return;
+      const value = getHabitMetricForRange(habit, start, end, metric);
+      if (!groups.has(group.key)) {
+        groups.set(group.key, {
+          key: group.key,
+          label: group.label,
+          color: group.color,
+          values: Array(months.length).fill(0),
+          total: 0
+        });
+      }
+      const target = groups.get(group.key);
+      target.values[idx] += value;
+      target.total += value;
+    });
   });
 
-  $habitHistoryEmpty.style.display = any ? "none" : "block";
+  const sorted = Array.from(groups.values()).filter((g) => g.total > 0).sort((a, b) => b.total - a.total);
+  const topGroups = sorted.slice(0, 8);
+  const otherGroups = sorted.slice(8);
+  const series = topGroups.map((g) => ({ key: g.key, label: g.label, color: g.color }));
+  if (otherGroups.length) {
+    series.push({ key: "__other__", label: "Otros", color: getNeutralLineColor() });
+  }
+
+  const rows = months.map((month, idx) => {
+    const values = {};
+    let total = 0;
+    sorted.forEach((g) => {
+      total += g.values[idx] || 0;
+    });
+    topGroups.forEach((g) => {
+      if (g.values[idx]) values[g.key] = g.values[idx];
+    });
+    if (otherGroups.length) {
+      const otherValue = otherGroups.reduce((acc, g) => acc + (g.values[idx] || 0), 0);
+      if (otherValue) values.__other__ = otherValue;
+    }
+    return { label: month.label, values, total };
+  });
+
+  return { rows, series };
+}
+
+function buildWeekComparison(habitsList, metric) {
+  const today = new Date();
+  const currentStart = startOfWeek(today);
+  const currentEnd = endOfDay(addDays(currentStart, 6));
+  const previousEnd = endOfDay(addDays(currentStart, -1));
+  const previousStart = startOfWeek(previousEnd);
+
+  const perHabit = habitsList.map((habit) => {
+    const current = getHabitMetricForRange(habit, currentStart, currentEnd, metric);
+    const previous = getHabitMetricForRange(habit, previousStart, previousEnd, metric);
+    return { habit, current, previous, delta: current - previous };
+  });
+  const currentTotal = perHabit.reduce((acc, item) => acc + item.current, 0);
+  const previousTotal = perHabit.reduce((acc, item) => acc + item.previous, 0);
+  const delta = currentTotal - previousTotal;
+  const deltaPercentLabel = previousTotal
+    ? `${Math.round((delta / previousTotal) * 100)}%`
+    : "—";
+  const topUp = perHabit.filter((item) => item.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 3);
+  const topDown = perHabit.filter((item) => item.delta < 0).sort((a, b) => a.delta - b.delta).slice(0, 3);
+  return { currentTotal, previousTotal, delta, deltaPercentLabel, topUp, topDown };
+}
+
+function buildWeekMoveList(title, items, metric) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "habits-history-week-list";
+  const heading = document.createElement("div");
+  heading.className = "habits-history-week-list-title";
+  heading.textContent = title;
+  wrapper.appendChild(heading);
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "habits-history-empty";
+    empty.textContent = "Sin cambios destacados.";
+    wrapper.appendChild(empty);
+    return wrapper;
+  }
+  const list = document.createElement("div");
+  list.className = "habits-history-list";
+  items.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "habits-history-list-row";
+    setHabitColorVars(row, item.habit);
+    const label = document.createElement("div");
+    label.className = "habits-history-list-title";
+    label.textContent = item.habit.name;
+    const value = document.createElement("div");
+    value.className = "habits-history-list-value";
+    const delta = item.delta;
+    value.textContent = `${delta >= 0 ? "+" : ""}${formatHistoryValue(Math.abs(delta), metric)}`;
+    row.appendChild(label);
+    row.appendChild(value);
+    list.appendChild(row);
+  });
+  wrapper.appendChild(list);
+  return wrapper;
+}
+
+function buildTopDays(habitsList, start, end, metric) {
+  const rows = [];
+  for (let d = new Date(start); d <= end; d = addDays(d, 1)) {
+    const key = dateKeyLocal(d);
+    const perHabit = [];
+    let total = 0;
+    habitsList.forEach((habit) => {
+      const value = getHabitMetricForDate(habit, key, metric);
+      if (value > 0) {
+        perHabit.push({ habit, value });
+        total += value;
+      }
+    });
+    if (total > 0) {
+      perHabit.sort((a, b) => b.value - a.value);
+      rows.push({
+        dateKey: key,
+        total,
+        topHabits: perHabit.slice(0, 2)
+      });
+    }
+  }
+  return rows.sort((a, b) => b.total - a.total).slice(0, 10);
+}
+
+function buildWeekdayDistribution(habitsList, start, end, metric) {
+  const labels = ["L", "M", "X", "J", "V", "S", "D"];
+  const totals = Array(7).fill(0);
+  for (let d = new Date(start); d <= end; d = addDays(d, 1)) {
+    const key = dateKeyLocal(d);
+    const total = habitsList.reduce((acc, habit) => acc + getHabitMetricForDate(habit, key, metric), 0);
+    if (total <= 0) continue;
+    const idx = (d.getDay() + 6) % 7;
+    totals[idx] += total;
+  }
+  const sum = totals.reduce((acc, v) => acc + v, 0);
+  const items = totals.map((total, idx) => ({
+    label: labels[idx],
+    total,
+    percent: sum ? Math.round((total / sum) * 100) : 0
+  }));
+  return { total: sum, items };
+}
+
+function buildBudgetSelect(options, selected) {
+  const labels = {
+    day: "Día",
+    week: "Semana",
+    month: "Mes",
+    time: "Tiempo",
+    count: "Cantidad"
+  };
+  const select = document.createElement("select");
+  select.className = "habits-history-select";
+  options.forEach((optValue) => {
+    const opt = document.createElement("option");
+    opt.value = optValue;
+    opt.textContent = labels[optValue] || optValue;
+    select.appendChild(opt);
+  });
+  select.value = selected;
+  return select;
+}
+
+function getBudgetPeriodBounds(period) {
+  const today = new Date();
+  switch (period) {
+    case "day": {
+      const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      return { start, end: endOfDay(today) };
+    }
+    case "month": {
+      const start = new Date(today.getFullYear(), today.getMonth(), 1);
+      const end = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+      return { start, end };
+    }
+    case "week":
+    default: {
+      const start = startOfWeek(today);
+      const end = endOfDay(addDays(start, 6));
+      return { start, end };
+    }
+  }
+}
+
+function buildBudgetProgress(habit) {
+  const budget = habit?.budget;
+  if (!budget) return { value: 0, target: 0, percent: 0, periodLabel: "—", metric: "time" };
+  const { start, end } = getBudgetPeriodBounds(budget.period || "week");
+  const metric = budget.metric || "time";
+  const value = getHabitMetricForRange(habit, start, end, metric);
+  const target = Number(budget.value) || 0;
+  const percent = target ? Math.round((value / target) * 100) : 0;
+  const periodLabel = budget.period === "day"
+    ? "Hoy"
+    : (budget.period === "month" ? "Mes actual" : "Semana actual");
+  return { value, target, percent, periodLabel, metric };
+}
+
+function isHabitBudgetCompleted(habit) {
+  if (!habit?.budget) return false;
+  const progress = buildBudgetProgress(habit);
+  return progress.target > 0 && progress.value >= progress.target;
+}
+
+function renderHistory() {
+  $habitHistoryList.innerHTML = "";
+
+  const habitsList = activeHabits();
+  const historyHeader = document.createElement("div");
+  historyHeader.className = "habits-history-header";
+  const controls = document.createElement("div");
+  controls.className = "habits-history-controls";
+  const ranges = [
+    { key: "week", label: "Semana" },
+    { key: "month", label: "Mes" },
+    { key: "year", label: "Año" },
+    { key: "total", label: "Total" }
+  ];
+  ranges.forEach((range) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "habits-history-range-btn";
+    if (habitHistoryRange === range.key) btn.classList.add("is-active");
+    btn.textContent = range.label;
+    btn.addEventListener("click", () => {
+      habitHistoryRange = range.key;
+      saveHistoryRange();
+      renderHistory();
+    });
+    controls.appendChild(btn);
+  });
+  const rangeLabel = document.createElement("div");
+  rangeLabel.className = "habits-history-range-label";
+  rangeLabel.textContent = formatHistoryRangeLabel(habitHistoryRange);
+  historyHeader.appendChild(controls);
+  historyHeader.appendChild(rangeLabel);
+  $habitHistoryList.appendChild(historyHeader);
+
+  const { start, end } = getHistoryRangeBounds(habitHistoryRange);
+  const hasHabits = habitsList.length > 0;
+  const hasData = hasHabits && hasAnyHistoryDataInRange(start, end);
+  if ($habitHistoryEmpty) {
+    $habitHistoryEmpty.textContent = hasHabits
+      ? "No hay datos en este rango todavía."
+      : "Crea un hábito para ver insights.";
+    $habitHistoryEmpty.style.display = hasData ? "none" : "block";
+  }
+  if (!hasData) return;
+
+  const insights = document.createElement("div");
+  insights.className = "habits-history-insights";
+
+  const trendSection = createHistorySection("Tendencia mensual");
+  const trendControls = document.createElement("div");
+  trendControls.className = "habits-history-section-controls";
+
+  const metricToggle = document.createElement("div");
+  metricToggle.className = "habits-history-toggle";
+  ["time", "count"].forEach((metric) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "habits-history-toggle-btn";
+    if (habitHistoryMetric === metric) btn.classList.add("is-active");
+    btn.textContent = metric === "time" ? "Tiempo" : "Cantidad";
+    btn.addEventListener("click", () => {
+      habitHistoryMetric = metric;
+      renderHistory();
+    });
+    metricToggle.appendChild(btn);
+  });
+  const groupToggleWrap = document.createElement("div");
+  groupToggleWrap.className = "habits-history-toggle";
+  const groupToggleBtn = document.createElement("button");
+  groupToggleBtn.type = "button";
+  groupToggleBtn.className = "habits-history-toggle-btn";
+  if (habitHistoryGroupMode.kind === "param") groupToggleBtn.classList.add("is-active");
+  groupToggleBtn.textContent = "Agrupar por parámetro";
+  groupToggleBtn.addEventListener("click", () => {
+    habitHistoryGroupMode = habitHistoryGroupMode.kind === "param"
+      ? { kind: "habit", cat: null }
+      : { kind: "param", cat: habitHistoryGroupMode.cat };
+    renderHistory();
+  });
+  groupToggleWrap.appendChild(groupToggleBtn);
+
+  const categorySelect = document.createElement("select");
+  categorySelect.className = "habits-history-select";
+  const categories = collectCategories(habitsList);
+  if (!categories.length && habitHistoryGroupMode.kind === "param") {
+    habitHistoryGroupMode = { kind: "habit", cat: null };
+  }
+  if (habitHistoryGroupMode.kind === "param" && categories.length && !habitHistoryGroupMode.cat) {
+    habitHistoryGroupMode = { kind: "param", cat: categories[0] };
+  }
+  if (!categories.length) {
+    const opt = document.createElement("option");
+    opt.textContent = "Sin parámetros";
+    opt.disabled = true;
+    opt.selected = true;
+    categorySelect.appendChild(opt);
+  } else {
+    categories.forEach((cat) => {
+      const opt = document.createElement("option");
+      opt.value = cat;
+      opt.textContent = cat;
+      categorySelect.appendChild(opt);
+    });
+    if (habitHistoryGroupMode.kind === "param" && habitHistoryGroupMode.cat) {
+      categorySelect.value = habitHistoryGroupMode.cat;
+    }
+  }
+  groupToggleBtn.disabled = !categories.length;
+  categorySelect.style.display = habitHistoryGroupMode.kind === "param" ? "" : "none";
+  categorySelect.addEventListener("change", (e) => {
+    const value = e.target.value || null;
+    habitHistoryGroupMode = { kind: "param", cat: value };
+    renderHistory();
+  });
+
+  trendControls.appendChild(metricToggle);
+  trendControls.appendChild(groupToggleWrap);
+  trendControls.appendChild(categorySelect);
+  trendSection.header.appendChild(trendControls);
+
+  const trendBody = document.createElement("div");
+  trendBody.className = "habits-history-trend";
+  const trendData = buildMonthlyTrendSeries(habitsList, habitHistoryMetric, habitHistoryGroupMode);
+  if (!trendData.rows.length || !trendData.series.length) {
+    const empty = document.createElement("div");
+    empty.className = "habits-history-empty";
+    empty.textContent = "No hay datos suficientes para mostrar tendencia.";
+    trendBody.appendChild(empty);
+  } else {
+    const legend = document.createElement("div");
+    legend.className = "habits-history-legend";
+    trendData.series.forEach((series) => {
+      const item = document.createElement("div");
+      item.className = "habits-history-legend-item";
+      const dot = document.createElement("span");
+      dot.className = "habits-history-legend-dot";
+      dot.style.background = series.color;
+      const label = document.createElement("span");
+      label.textContent = series.label;
+      item.appendChild(dot);
+      item.appendChild(label);
+      legend.appendChild(item);
+    });
+    trendBody.appendChild(legend);
+
+    trendData.rows.forEach((row) => {
+      const rowEl = document.createElement("div");
+      rowEl.className = "habits-history-trend-row";
+      const label = document.createElement("div");
+      label.className = "habits-history-trend-label";
+      label.textContent = row.label;
+      const bar = document.createElement("div");
+      bar.className = "habits-history-trend-bar";
+      const total = row.total || 0;
+      trendData.series.forEach((series) => {
+        const value = row.values[series.key] || 0;
+        if (!value) return;
+        const segment = document.createElement("div");
+        segment.className = "habits-history-trend-segment";
+        segment.style.background = series.color;
+        const pct = total ? (value / total) * 100 : 0;
+        segment.style.width = `${pct}%`;
+        segment.title = `${series.label}: ${formatHistoryValue(value, habitHistoryMetric)}`;
+        bar.appendChild(segment);
+      });
+      const totalLabel = document.createElement("div");
+      totalLabel.className = "habits-history-trend-total";
+      totalLabel.textContent = formatHistoryValue(total, habitHistoryMetric);
+      rowEl.appendChild(label);
+      rowEl.appendChild(bar);
+      rowEl.appendChild(totalLabel);
+      trendBody.appendChild(rowEl);
+    });
+  }
+  trendSection.body.appendChild(trendBody);
+  insights.appendChild(trendSection.section);
+
+  const weekSection = createHistorySection("Semana vs Semana");
+  const weekBody = document.createElement("div");
+  weekBody.className = "habits-history-week-compare";
+  const weekComparison = buildWeekComparison(habitsList, habitHistoryMetric);
+
+  const weekSummary = document.createElement("div");
+  weekSummary.className = "habits-history-week-summary";
+  weekSummary.innerHTML = `
+    <div>
+      <div class="habits-history-kpi-label">Semana actual</div>
+      <div class="habits-history-kpi-value">${formatHistoryValue(weekComparison.currentTotal, habitHistoryMetric)}</div>
+    </div>
+    <div>
+      <div class="habits-history-kpi-label">Semana anterior</div>
+      <div class="habits-history-kpi-value">${formatHistoryValue(weekComparison.previousTotal, habitHistoryMetric)}</div>
+    </div>
+    <div>
+      <div class="habits-history-kpi-label">Delta</div>
+      <div class="habits-history-kpi-value ${weekComparison.delta > 0 ? "is-up" : (weekComparison.delta < 0 ? "is-down" : "")}">
+        ${weekComparison.delta >= 0 ? "+" : ""}${formatHistoryValue(Math.abs(weekComparison.delta), habitHistoryMetric)}
+        <span class="habits-history-kpi-sub">${weekComparison.deltaPercentLabel}</span>
+      </div>
+    </div>
+  `;
+  weekBody.appendChild(weekSummary);
+
+  const weekMoves = document.createElement("div");
+  weekMoves.className = "habits-history-week-moves";
+  weekMoves.appendChild(buildWeekMoveList("Suben", weekComparison.topUp, habitHistoryMetric));
+  weekMoves.appendChild(buildWeekMoveList("Bajan", weekComparison.topDown, habitHistoryMetric));
+  weekBody.appendChild(weekMoves);
+  weekSection.body.appendChild(weekBody);
+  insights.appendChild(weekSection.section);
+
+  const topDaysSection = createHistorySection("Top días");
+  const topDaysBody = document.createElement("div");
+  topDaysBody.className = "habits-history-top-days";
+  const topDays = buildTopDays(habitsList, start, end, habitHistoryMetric);
+  if (!topDays.length) {
+    const empty = document.createElement("div");
+    empty.className = "habits-history-empty";
+    empty.textContent = "No hay días con actividad en este rango.";
+    topDaysBody.appendChild(empty);
+  } else {
+    const list = document.createElement("div");
+    list.className = "habits-history-list";
+    topDays.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "habits-history-list-row";
+      const label = document.createElement("div");
+      label.className = "habits-history-list-title";
+      label.textContent = formatShortDate(item.dateKey, true);
+      const meta = document.createElement("div");
+      meta.className = "habits-history-list-meta";
+      if (item.topHabits.length) {
+        const topNames = item.topHabits.map((h) => `${h.habit.name} ${formatHistoryValue(h.value, habitHistoryMetric)}`).join(" · ");
+        meta.textContent = topNames;
+      } else {
+        meta.textContent = "—";
+      }
+      const value = document.createElement("div");
+      value.className = "habits-history-list-value";
+      value.textContent = formatHistoryValue(item.total, habitHistoryMetric);
+      const left = document.createElement("div");
+      left.appendChild(label);
+      left.appendChild(meta);
+      row.appendChild(left);
+      row.appendChild(value);
+      list.appendChild(row);
+    });
+    topDaysBody.appendChild(list);
+  }
+  topDaysSection.body.appendChild(topDaysBody);
+  insights.appendChild(topDaysSection.section);
+
+  const distributionSection = createHistorySection("Distribución");
+  const distributionBody = document.createElement("div");
+  distributionBody.className = "habits-history-distribution";
+  const distribution = buildWeekdayDistribution(habitsList, start, end, habitHistoryMetric);
+  if (!distribution.total) {
+    const empty = document.createElement("div");
+    empty.className = "habits-history-empty";
+    empty.textContent = "No hay datos para distribuir.";
+    distributionBody.appendChild(empty);
+  } else {
+    const list = document.createElement("div");
+    list.className = "habits-history-list";
+    distribution.items.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "habits-history-list-row";
+      const label = document.createElement("div");
+      label.className = "habits-history-list-title";
+      label.textContent = item.label;
+      const meta = document.createElement("div");
+      meta.className = "habits-history-list-meta";
+      meta.textContent = `${item.percent}%`;
+      const value = document.createElement("div");
+      value.className = "habits-history-list-value";
+      value.textContent = formatHistoryValue(item.total, habitHistoryMetric);
+      const left = document.createElement("div");
+      left.appendChild(label);
+      left.appendChild(meta);
+      row.appendChild(left);
+      row.appendChild(value);
+      list.appendChild(row);
+    });
+    distributionBody.appendChild(list);
+  }
+  distributionSection.body.appendChild(distributionBody);
+  insights.appendChild(distributionSection.section);
+
+  const budgetSection = createHistorySection("Presupuestos");
+  const budgetBody = document.createElement("div");
+  budgetBody.className = "habits-history-budget";
+
+  const budgetedHabits = habitsList.filter((habit) => habit?.budget && Number(habit.budget.value) > 0);
+  const completedCount = budgetedHabits.filter((habit) => isHabitBudgetCompleted(habit)).length;
+  const summary = document.createElement("div");
+  summary.className = "habits-history-budget-summary";
+  summary.textContent = `Objetivos completados: ${completedCount}/${budgetedHabits.length || 0}`;
+  budgetBody.appendChild(summary);
+
+  const unbudgeted = habitsList.filter((habit) => !habit?.budget);
+  if (unbudgeted.length) {
+    const addRow = document.createElement("div");
+    addRow.className = "habits-history-budget-add";
+    addRow.innerHTML = `
+      <div class="habits-history-budget-add-title">Añadir presupuesto</div>
+    `;
+    const addControls = document.createElement("div");
+    addControls.className = "habits-history-budget-controls";
+    const habitSelect = document.createElement("select");
+    habitSelect.className = "habits-history-select";
+    unbudgeted.forEach((habit) => {
+      const opt = document.createElement("option");
+      opt.value = habit.id;
+      opt.textContent = `${habit.emoji || "🏷️"} ${habit.name}`;
+      habitSelect.appendChild(opt);
+    });
+    const periodSelect = buildBudgetSelect(["day", "week", "month"], "week");
+    const metricSelect = buildBudgetSelect(["time", "count"], "time");
+    const valueInput = document.createElement("input");
+    valueInput.type = "number";
+    valueInput.min = "1";
+    valueInput.inputMode = "numeric";
+    valueInput.value = "60";
+    valueInput.className = "habits-history-input";
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "habits-history-action-btn";
+    addBtn.textContent = "Crear";
+    addBtn.addEventListener("click", () => {
+      const habit = habits[habitSelect.value];
+      if (!habit) return;
+      const value = Number(valueInput.value);
+      if (!Number.isFinite(value) || value <= 0) return;
+      habit.budget = {
+        period: periodSelect.value || "week",
+        metric: metricSelect.value || "time",
+        value
+      };
+      saveCache();
+      persistHabit(habit);
+      renderHistory();
+    });
+    addControls.appendChild(habitSelect);
+    addControls.appendChild(periodSelect);
+    addControls.appendChild(metricSelect);
+    addControls.appendChild(valueInput);
+    addControls.appendChild(addBtn);
+    addRow.appendChild(addControls);
+    budgetBody.appendChild(addRow);
+  }
+
+  if (!budgetedHabits.length) {
+    const empty = document.createElement("div");
+    empty.className = "habits-history-empty";
+    empty.textContent = "No hay presupuestos todavía.";
+    budgetBody.appendChild(empty);
+  } else {
+    const list = document.createElement("div");
+    list.className = "habits-history-budget-list";
+    budgetedHabits.forEach((habit) => {
+      const item = document.createElement("div");
+      item.className = "habits-history-budget-item";
+      setHabitColorVars(item, habit);
+      const title = document.createElement("div");
+      title.className = "habits-history-budget-title";
+      title.textContent = `${habit.emoji || "🏷️"} ${habit.name}`;
+      const controls = document.createElement("div");
+      controls.className = "habits-history-budget-controls";
+      const periodSelect = buildBudgetSelect(["day", "week", "month"], habit.budget?.period || "week");
+      const metricSelect = buildBudgetSelect(["time", "count"], habit.budget?.metric || "time");
+      const valueInput = document.createElement("input");
+      valueInput.type = "number";
+      valueInput.min = "1";
+      valueInput.inputMode = "numeric";
+      valueInput.value = String(habit.budget?.value || 0);
+      valueInput.className = "habits-history-input";
+      const saveBtn = document.createElement("button");
+      saveBtn.type = "button";
+      saveBtn.className = "habits-history-action-btn";
+      saveBtn.textContent = "Guardar";
+      saveBtn.addEventListener("click", () => {
+        const value = Number(valueInput.value);
+        if (!Number.isFinite(value) || value <= 0) return;
+        habit.budget = {
+          period: periodSelect.value || "week",
+          metric: metricSelect.value || "time",
+          value
+        };
+        saveCache();
+        persistHabit(habit);
+        renderHistory();
+      });
+      controls.appendChild(periodSelect);
+      controls.appendChild(metricSelect);
+      controls.appendChild(valueInput);
+      controls.appendChild(saveBtn);
+
+      const progress = document.createElement("div");
+      progress.className = "habits-history-budget-progress";
+      const progressData = buildBudgetProgress(habit);
+      const progressLabel = document.createElement("div");
+      progressLabel.className = "habits-history-budget-progress-label";
+      progressLabel.textContent = `${formatHistoryValue(progressData.value, progressData.metric)}/${formatHistoryValue(progressData.target, progressData.metric)} (${progressData.percent}%) · ${progressData.periodLabel}`;
+      const bar = document.createElement("div");
+      bar.className = "habits-history-budget-bar";
+      const fill = document.createElement("div");
+      fill.className = "habits-history-budget-bar-fill";
+      fill.style.width = `${Math.min(100, progressData.percent)}%`;
+      bar.appendChild(fill);
+      progress.appendChild(progressLabel);
+      progress.appendChild(bar);
+
+      item.appendChild(title);
+      item.appendChild(controls);
+      item.appendChild(progress);
+      list.appendChild(item);
+    });
+    budgetBody.appendChild(list);
+  }
+  budgetSection.body.appendChild(budgetBody);
+  insights.appendChild(budgetSection.section);
+
+  $habitHistoryList.appendChild(insights);
 }
 
 function ensureHabitLineTooltip() {
@@ -3567,6 +4346,7 @@ export function initHabits() {
   readCache();
   loadRunningSession();
   loadHeatmapYear();
+  loadHistoryRange();
   ensureUnknownHabit(true);
   handleShortcutUrlOnce();
   bindEvents();

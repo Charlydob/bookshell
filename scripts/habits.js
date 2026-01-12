@@ -3215,7 +3215,7 @@ function totalsByHabit(range) {
     .sort((a, b) => b.minutes - a.minutes);
 }
 
-function countForHabitRange(habit, start, end) {
+function countForHabitRangeV2(habit, start, end) {
   const startKey = dateKeyLocal(start);
   const endKey = dateKeyLocal(end);
   const store = habitCounts[habit.id] || {};
@@ -3231,7 +3231,7 @@ function countsByHabit(range) {
   return activeHabits()
     .filter((h) => (h.goal || "check") === "count")
     .map((habit) => {
-      const count = countForHabitRange(habit, start, end);
+      const count = countForHabitRangeV2(habit, start, end);
       const daysActive = collectHabitActiveDates(habit, start, end);
       const streak = computeHabitCurrentStreak(habit);
       return { habit, count, daysActive, streak, value: count };

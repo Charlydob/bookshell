@@ -475,14 +475,13 @@
 <!-- Vista HÁBITOS -->
 <section class="view" id="view-habits">
 <div class="habits-wrapper">
-  <div class="botones">
   <header class="habits-header">
   <div class="habits-title"></div>
-  <button aria-label="Añadir hábito" class="icon-btn icon-btn-large" id="habit-add-btn">+</button>
   </header>
-<div class="habit-quick-actions">
+<div class="habit-quick-actions habit-quick-actions-bar">
 <button class="btn ghost btn-compact" id="habit-add-time">+ Añadir tiempo</button>
-</div>
+<button class="btn ghost btn-compact" id="habit-fab-add">+ Añadir hábito</button>
+<button class="btn ghost btn-compact" id="habit-session-toggle">▶︎ Empezar sesión</button>
 </div>
 <div aria-label="Vistas de hábitos" class="habits-subtabs" role="tablist">
 <button aria-selected="true" class="habit-subtab is-active" data-tab="today" role="tab">Hoy</button>
@@ -493,6 +492,7 @@
 <div class="habits-views">
 <div class="habits-panel is-active" data-panel="today">
 <div class="habit-week-timeline" id="habit-week-timeline" aria-label="Semana actual"></div>
+<div class="habit-custom-groups" id="habit-custom-groups"></div>
 <details class="habit-accordion habit-today-accordion" id="habits-today-acc-count" open>
 <summary>
 <div class="habit-accordion-title">Contadores</div>
@@ -627,37 +627,42 @@
 <div class="habit-reports">
 <div class="habit-kpi-grid">
 <div class="habit-kpi-card">
-<div class="habit-kpi-label">Hechos</div>
+<div class="habit-kpi-label">Hechos hoy</div>
 <div class="habit-kpi-value" id="habit-kpi-today">0</div>
 </div>
 <div class="habit-kpi-card">
-<div class="habit-kpi-label">Min hoy</div>
-<div class="habit-kpi-value" id="habit-kpi-minutes-today">0m</div>
+<div class="habit-kpi-label">Horas totales</div>
+<div class="habit-kpi-value" id="habit-kpi-total-hours">0h</div>
+<div class="habit-kpi-sub" id="habit-kpi-total-hours-range">—</div>
 </div>
 <div class="habit-kpi-card">
-<div class="habit-kpi-label">Sem</div>
-<div class="habit-kpi-value" id="habit-kpi-minutes-week">0m</div>
+<div class="habit-kpi-label">Días contabilizados total</div>
+<div class="habit-kpi-value" id="habit-kpi-active-days-total">0</div>
 </div>
 <div class="habit-kpi-card">
-<div class="habit-kpi-label">Mes</div>
-<div class="habit-kpi-value" id="habit-kpi-minutes-month">0m</div>
+<div class="habit-kpi-label">Racha total</div>
+<div class="habit-kpi-value" id="habit-kpi-streak-total">0</div>
+<div class="habit-kpi-sub" id="habit-kpi-streak-total-sub">—</div>
 </div>
-<div class="habit-kpi-card">
-<div class="habit-kpi-label">Año</div>
-<div class="habit-kpi-value" id="habit-kpi-minutes-year">0m</div>
 </div>
-<div class="habit-kpi-card">
-<div class="habit-kpi-label">Total</div>
-<div class="habit-kpi-value" id="habit-kpi-total-time">0m</div>
+<div class="habit-kpi-grid habit-pin-grid">
+<div class="habit-kpi-card habit-pin-card">
+<div class="habit-kpi-label">PIN 1 · Contador</div>
+<div class="habit-kpi-value" id="habit-pin-count-today">—</div>
+<div class="habit-kpi-sub" id="habit-pin-count-range">—</div>
+<label class="habit-pin-select">
+<span>Elegir</span>
+<select aria-label="Elegir contador para pin 1" id="habit-pin-count-select"></select>
+</label>
 </div>
-<div class="habit-kpi-card">
-<div class="habit-kpi-label">Días (año)</div>
-<div class="habit-kpi-value" id="habit-kpi-active-days-year">0</div>
-</div>
-<div class="habit-kpi-card">
-<div class="habit-kpi-label">Racha</div>
-<div class="habit-kpi-value" id="habit-kpi-streak">0</div>
-<div class="habit-kpi-sub" id="habit-kpi-streak-label">—</div>
+<div class="habit-kpi-card habit-pin-card">
+<div class="habit-kpi-label">PIN 2 · Tiempo</div>
+<div class="habit-kpi-value" id="habit-pin-time-today">—</div>
+<div class="habit-kpi-sub" id="habit-pin-time-range">—</div>
+<label class="habit-pin-select">
+<span>Elegir</span>
+<select aria-label="Elegir hábito de tiempo para pin 2" id="habit-pin-time-select"></select>
+</label>
 </div>
 </div>
 <div class="habit-chart-card habit-records-card">
@@ -842,10 +847,6 @@
 </div>
 </div>
 </div>
-</div>
-<div class="habit-fab-dock">
-<button class="habit-fab" id="habit-session-toggle">▶︎ Empezar sesión</button>
-<button class="habit-fab habit-fab-add" id="habit-fab-add">+ Añadir hábito</button>
 </div>
 <div class="habit-session-overlay hidden" id="habit-session-overlay">
 <div class="habit-session-pill">
@@ -1593,6 +1594,20 @@
 <span class="field-label">Color</span>
 <input id="habit-color" type="color" value="#7f5dff"/>
 </label>
+
+<label class="field">
+  <span class="field-label">Grupo</span>
+  <select id="habit-group-select"></select>
+</label>
+<div class="habit-group-manage">
+  <input id="habit-group-new" placeholder="Nuevo grupo" type="text"/>
+  <button class="btn ghost btn-compact" id="habit-group-create" type="button">Crear</button>
+</div>
+<div class="habit-group-manage">
+  <input id="habit-group-rename" placeholder="Renombrar grupo" type="text"/>
+  <button class="btn ghost btn-compact" id="habit-group-rename-btn" type="button">Renombrar</button>
+  <button class="btn ghost danger btn-compact" id="habit-group-delete-btn" type="button">Eliminar</button>
+</div>
 
 <label class="field checkbox-field">
   <div class="checkbox-field-row">

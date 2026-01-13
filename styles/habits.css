@@ -24,6 +24,12 @@
   justify-content: flex-end;
 }
 
+.habit-quick-actions-bar {
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .habits-subtabs {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -928,6 +934,7 @@
 }
 
 .habit-week-day {
+  --day-progress: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -953,8 +960,26 @@
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: rgba(255,255,255,0.08);
+  position: relative;
+  background: conic-gradient(
+    rgba(var(--hclr-rgb, 127, 93, 255), 0.9) calc(var(--day-progress) * 1%),
+    rgba(255,255,255,0.12) 0
+  );
   font-size: 13px;
+}
+
+.habit-week-day .day-number::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--glass);
+  z-index: 0;
+}
+
+.habit-week-day .day-number span {
+  position: relative;
+  z-index: 1;
 }
 
 .habit-week-day .day-meta {
@@ -970,12 +995,49 @@
 .habit-week-day.is-active .day-number {
   width: 42px;
   height: 42px;
-  background: rgba(var(--hclr-rgb, 127, 93, 255), 0.25);
   color: #fff;
+}
+
+.habit-week-day.is-active .day-number::before {
+  inset: 4px;
+  background: rgba(var(--hclr-rgb, 127, 93, 255), 0.25);
 }
 
 .habit-week-day.is-today .day-number {
   border: 1px solid rgba(var(--hclr-rgb, 127, 93, 255), 0.4);
+}
+
+.habit-custom-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.habit-custom-group {
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04);
+}
+
+.habit-custom-group summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.habit-custom-group .habit-accordion-title {
+  font-size: 14px;
+}
+
+.habit-custom-group .habit-accordion-meta {
+  font-size: 12px;
+  color: var(--txt-soft);
+}
+
+.habit-custom-group .habit-accordion-body {
+  padding: 0 12px 12px;
 }
 
 .habit-session-overlay {
@@ -1664,7 +1726,7 @@
   margin-bottom: 10px;
 }
 
-.habits-history-budget-add-title {
+.habits-history-budget-add .habits-history-budget-title {
   font-size: 12px;
   font-weight: 600;
   color: var(--txt-soft);
@@ -1684,8 +1746,28 @@
 }
 
 .habits-history-budget-title {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
   font-weight: 700;
   margin-bottom: 6px;
+}
+
+.habits-history-budget-edit {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.25s ease, opacity 0.25s ease;
+}
+
+.habits-history-budget-item.is-open .habits-history-budget-edit,
+.habits-history-budget-add.is-open .habits-history-budget-edit {
+  max-height: 260px;
+  opacity: 1;
 }
 
 .habits-history-budget-controls {
@@ -1715,4 +1797,43 @@
 .habits-history-budget-bar-fill {
   height: 100%;
   background: var(--hclr);
+}
+
+.habit-group-manage {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.habit-group-manage input {
+  flex: 1;
+}
+
+.habit-pin-grid {
+  margin-top: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.habit-pin-card {
+  position: relative;
+  gap: 6px;
+}
+
+.habit-pin-select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--txt-soft);
+  margin-top: 6px;
+}
+
+.habit-pin-select select {
+  background: var(--glass);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: var(--txt);
+  border-radius: 10px;
+  padding: 4px 8px;
+  font-size: 11px;
 }

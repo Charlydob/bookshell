@@ -31,6 +31,8 @@ const HABITS_PATH = "habits";
 const HABIT_CHECKS_PATH = "habitChecks";
 const HABIT_SESSIONS_PATH = "habitSessions";
 const HABIT_COUNTS_PATH = "habitCounts";
+const HABIT_GROUPS_PATH = "habitGroups";
+const HABIT_PREFS_PATH = "habitPrefs";
 
 // Storage keys
 const STORAGE_KEY = "bookshell-habits-cache";
@@ -67,6 +69,8 @@ let habits = {}; // {id: habit}
 let habitChecks = {}; // { habitId: { dateKey: true } }
 let habitSessions = {}; // { habitId: { dateKey: totalSec } }
 let habitCounts = {}; // { habitId: { dateKey: number } }
+let habitGroups = {}; // { groupId: { id, name, createdAt } }
+let habitPrefs = { pinCount: "", pinTime: "" };
 let activeTab = "today";
 let runningSession = null; // { startTs }
 let sessionInterval = null;
@@ -176,6 +180,15 @@ function formatMinutes(min) {
     return rest ? `${hours}h ${rest}m` : `${hours}h`;
   }
   return `${min}m`;
+}
+
+function formatHoursTotal(minutes) {
+  const total = Math.round(Number(minutes) || 0);
+  if (!total) return "0h";
+  const hours = Math.floor(total / 60);
+  const rest = total % 60;
+  if (!hours) return `0h ${rest}m`;
+  return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
 function getSessionDateKey(session) {
@@ -415,6 +428,8 @@ function readCache() {
       habitChecks = parsed.habitChecks || {};
       habitSessions = parsed.habitSessions || {};
       habitCounts = parsed.habitCounts || {};
+      habitGroups = parsed.habitGroups || {};
+      habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "" };
       const norm = normalizeSessionsStore(habitSessions, false);
       habitSessions = norm.normalized;
       if (norm.changed) saveCache();
@@ -428,7 +443,7 @@ function saveCache() {
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ habits, habitChecks, habitSessions, habitCounts })
+      JSON.stringify({ habits, habitChecks, habitSessions, habitCounts, habitGroups, habitPrefs })
     );
   } catch (err) {
     console.warn("No se pudo guardar cache de hábitos", err);
@@ -458,6 +473,39 @@ function loadRunningSession() {
     }
   } catch (err) {
     console.warn("No se pudo leer sesión activa", err);
+  }
+}
+
+function sortedHabitGroups() {
+  return Object.values(habitGroups || {})
+    .filter((group) => group && group.id && group.name)
+    .sort((a, b) => a.name.localeCompare(b.name, "es"));
+}
+
+function persistHabitGroup(group) {
+  if (!group?.id) return;
+  try {
+    set(ref(db, `${HABIT_GROUPS_PATH}/${group.id}`), group);
+  } catch (err) {
+    console.warn("No se pudo guardar grupo de hábitos", err);
+  }
+}
+
+function removeHabitGroupRemote(groupId) {
+  if (!groupId) return;
+  try {
+    set(ref(db, `${HABIT_GROUPS_PATH}/${groupId}`), null);
+  } catch (err) {
+    console.warn("No se pudo borrar grupo de hábitos", err);
+  }
+}
+
+function persistHabitPrefs() {
+  saveCache();
+  try {
+    set(ref(db, HABIT_PREFS_PATH), habitPrefs || {});
+  } catch (err) {
+    console.warn("No se pudo guardar preferencias de hábitos", err);
   }
 }
 
@@ -600,6 +648,7 @@ function ensureUnknownHabit(persistRemote = true) {
     emoji: UNKNOWN_HABIT_EMOJI,
     color: UNKNOWN_HABIT_COLOR,
     goal: "time",
+    groupId: "",
     groupPrivate: false,
     groupLowUse: true,
     targetMinutes: null,
@@ -817,10 +866,10 @@ function scoreToHeatLevel(score) {
 // UI refs
 const $tabs = document.querySelectorAll(".habit-subtab");
 const $panels = document.querySelectorAll(".habits-panel");
-const $btnAddHabit = document.getElementById("habit-add-btn");
 const $btnAddTime = document.getElementById("habit-add-time");
 const $habitWeekTimeline = document.getElementById("habit-week-timeline");
 const $habitFabAdd = document.getElementById("habit-fab-add");
+const $habitCustomGroups = document.getElementById("habit-custom-groups");
 
 // Hoy (agrupado)
 const $habitTodayCountPending = document.getElementById("habits-today-count-pending");
@@ -859,14 +908,17 @@ const $habitWeekEmpty = document.getElementById("habits-week-empty");
 const $habitHistoryList = document.getElementById("habits-history-list");
 const $habitHistoryEmpty = document.getElementById("habits-history-empty");
 const $habitKpiToday = document.getElementById("habit-kpi-today");
-const $habitKpiMinutesToday = document.getElementById("habit-kpi-minutes-today");
-const $habitKpiMinutesWeek = document.getElementById("habit-kpi-minutes-week");
-const $habitKpiMinutesMonth = document.getElementById("habit-kpi-minutes-month");
-const $habitKpiMinutesYear = document.getElementById("habit-kpi-minutes-year");
-const $habitKpiTotalTime = document.getElementById("habit-kpi-total-time");
-const $habitKpiActiveDaysYear = document.getElementById("habit-kpi-active-days-year");
-const $habitKpiStreak = document.getElementById("habit-kpi-streak");
-const $habitKpiStreakLabel = document.getElementById("habit-kpi-streak-label");
+const $habitKpiTotalHours = document.getElementById("habit-kpi-total-hours");
+const $habitKpiTotalHoursRange = document.getElementById("habit-kpi-total-hours-range");
+const $habitKpiActiveDaysTotal = document.getElementById("habit-kpi-active-days-total");
+const $habitKpiStreakTotal = document.getElementById("habit-kpi-streak-total");
+const $habitKpiStreakTotalSub = document.getElementById("habit-kpi-streak-total-sub");
+const $habitPinCountToday = document.getElementById("habit-pin-count-today");
+const $habitPinCountRange = document.getElementById("habit-pin-count-range");
+const $habitPinCountSelect = document.getElementById("habit-pin-count-select");
+const $habitPinTimeToday = document.getElementById("habit-pin-time-today");
+const $habitPinTimeRange = document.getElementById("habit-pin-time-range");
+const $habitPinTimeSelect = document.getElementById("habit-pin-time-select");
 const $habitRecordsSub = document.getElementById("habit-records-sub");
 const $habitRecordsCurrentStreak = document.getElementById("habit-records-current-streak");
 const $habitRecordsBestStreak = document.getElementById("habit-records-best-streak");
@@ -938,6 +990,12 @@ const $habitQuick2Minutes = document.getElementById("habit-quick2-minutes");
 const $habitDaysSelector = document.getElementById("habit-days-selector");
 const $habitGroupPrivate = document.getElementById("habit-group-private");
 const $habitGroupLowUse = document.getElementById("habit-group-lowuse");
+const $habitGroupSelect = document.getElementById("habit-group-select");
+const $habitGroupNew = document.getElementById("habit-group-new");
+const $habitGroupCreate = document.getElementById("habit-group-create");
+const $habitGroupRename = document.getElementById("habit-group-rename");
+const $habitGroupRenameBtn = document.getElementById("habit-group-rename-btn");
+const $habitGroupDeleteBtn = document.getElementById("habit-group-delete-btn");
 const $habitParamSelect = document.getElementById("habit-param-select");
 const $habitParamAdd = document.getElementById("habit-param-add");
 const $habitParamList = document.getElementById("habit-param-list");
@@ -1130,6 +1188,61 @@ function toggleParamNewInput(show) {
   if (!show && $habitParamNew) $habitParamNew.value = "";
 }
 
+function syncHabitGroupSelect(selectedId = "") {
+  if (!$habitGroupSelect) return;
+  $habitGroupSelect.innerHTML = "";
+  const noneOpt = document.createElement("option");
+  noneOpt.value = "";
+  noneOpt.textContent = "Sin grupo";
+  $habitGroupSelect.appendChild(noneOpt);
+  sortedHabitGroups().forEach((group) => {
+    const opt = document.createElement("option");
+    opt.value = group.id;
+    opt.textContent = group.name;
+    $habitGroupSelect.appendChild(opt);
+  });
+  $habitGroupSelect.value = selectedId || "";
+  if ($habitGroupRename) {
+    const current = habitGroups?.[selectedId];
+    $habitGroupRename.value = current?.name || "";
+  }
+}
+
+function createHabitGroup(name) {
+  const clean = String(name || "").trim();
+  if (!clean) return null;
+  const id = `g-${Date.now().toString(36)}`;
+  const group = { id, name: clean, createdAt: Date.now() };
+  habitGroups[id] = group;
+  saveCache();
+  persistHabitGroup(group);
+  return group;
+}
+
+function renameHabitGroup(groupId, nextName) {
+  const group = habitGroups?.[groupId];
+  const clean = String(nextName || "").trim();
+  if (!group || !clean) return false;
+  habitGroups[groupId] = { ...group, name: clean };
+  saveCache();
+  persistHabitGroup(habitGroups[groupId]);
+  return true;
+}
+
+function deleteHabitGroup(groupId) {
+  const group = habitGroups?.[groupId];
+  if (!group) return;
+  delete habitGroups[groupId];
+  Object.values(habits || {}).forEach((habit) => {
+    if (habit?.groupId === groupId) {
+      habit.groupId = "";
+      persistHabit(habit);
+    }
+  });
+  saveCache();
+  removeHabitGroupRemote(groupId);
+}
+
 
 function openHabitModal(habit = null) {
   $habitModal.classList.remove("hidden");
@@ -1138,6 +1251,7 @@ function openHabitModal(habit = null) {
   $habitName.value = habit ? habit.name || "" : "";
   $habitEmoji.value = habit ? habit.emoji || "" : "";
   $habitColor.value = habit && habit.color ? habit.color : DEFAULT_COLOR;
+  syncHabitGroupSelect(habit?.groupId || "");
   if ($habitGroupPrivate) $habitGroupPrivate.checked = !!(habit && habit.groupPrivate);
   if ($habitGroupLowUse) $habitGroupLowUse.checked = !!(habit && habit.groupLowUse);
   $habitTargetMinutes.value = habit && habit.targetMinutes ? habit.targetMinutes : "";
@@ -1197,6 +1311,8 @@ function gatherHabitPayload() {
 
   const groupPrivate = !!$habitGroupPrivate?.checked;
   const groupLowUse = !!$habitGroupLowUse?.checked;
+  const groupId = $habitGroupSelect?.value || "";
+  const safeGroupId = habitGroups?.[groupId] ? groupId : "";
 
   const goal = $habitForm.querySelector("input[name=\"habit-goal\"]:checked")?.value || "check";
   const scheduleType = $habitForm.querySelector("input[name=\"habit-schedule\"]:checked")?.value || "daily";
@@ -1224,6 +1340,7 @@ function gatherHabitPayload() {
     emoji,
     color,
     goal,
+    groupId: safeGroupId,
     groupPrivate,
     groupLowUse,
     params,
@@ -1316,16 +1433,25 @@ function renderWeekTimeline() {
   for (let i = 0; i < 7; i++) {
     const date = addDays(start, i);
     const dateKey = dateKeyLocal(date);
+    let scheduled = 0;
+    let completed = 0;
+    activeHabits().forEach((habit) => {
+      if (!isHabitScheduledForDate(habit, date)) return;
+      scheduled += 1;
+      if (isHabitCompletedOnDate(habit, dateKey)) completed += 1;
+    });
+    const percent = scheduled ? Math.round((completed / scheduled) * 100) : 0;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "habit-week-day";
+    btn.style.setProperty("--day-progress", String(percent));
     const isToday = dateKey === today;
     const isActive = dateKey === selectedDateKey;
     if (isToday) btn.classList.add("is-today");
     if (isActive) btn.classList.add("is-active");
     btn.innerHTML = `
       <div class="day-label">${labels[i]}</div>
-      <div class="day-number">${date.getDate()}</div>
+      <div class="day-number"><span>${date.getDate()}</span></div>
       <div class="day-meta">${isToday ? "Hoy" : ""}</div>
     `;
     btn.addEventListener("click", () => {
@@ -1334,6 +1460,106 @@ function renderWeekTimeline() {
     });
     $habitWeekTimeline.appendChild(btn);
   }
+}
+
+function buildTodayCard(habit, dateKey, dayData, metaText, streak, daysDone) {
+  const isCount = (habit.goal || "check") === "count";
+  const card = document.createElement("div");
+  card.className = "habit-card";
+  if (dayData.hasActivity) card.classList.add("is-done");
+  card.setAttribute("role", "button");
+  card.tabIndex = 0;
+  setHabitColorVars(card, habit);
+
+  const left = document.createElement("div");
+  left.className = "habit-card-left";
+  left.innerHTML = `
+        <div class="habit-emoji">${habit.emoji || "🏷️"}</div>
+        <div>
+          <div class="habit-name">${habit.name}</div>
+          <div class="habit-meta-row">
+            <div class="habit-meta">${metaText}</div>
+            <div class="habit-streak" title="Racha actual">🔥 ${streak}</div>
+          </div>
+          <div class="habit-meta habit-days-done">Hecho: ${daysDone} día${daysDone === 1 ? "" : "s"}</div>
+        </div>
+      `;
+
+  const tools = document.createElement("div");
+  tools.className = "habit-card-tools";
+
+  if (isCount) {
+    const minus = document.createElement("button");
+    minus.className = "icon-btn-add";
+    minus.type = "button";
+    minus.textContent = "−";
+    minus.title = "Restar";
+    minus.disabled = !dayData.count;
+    minus.addEventListener("click", (e) => {
+      e.stopPropagation();
+      adjustHabitCount(habit.id, dateKey, -1);
+    });
+
+    const val = document.createElement("div");
+    val.className = "habit-count-value";
+    val.textContent = String(dayData.count || 0);
+
+    const plus = document.createElement("button");
+    plus.className = "icon-btn-add";
+    plus.type = "button";
+    plus.textContent = "+";
+    plus.title = "Sumar";
+    plus.addEventListener("click", (e) => {
+      e.stopPropagation();
+      adjustHabitCount(habit.id, dateKey, +1);
+    });
+
+    tools.appendChild(minus);
+    tools.appendChild(val);
+    tools.appendChild(plus);
+  } else {
+    const doneCheck = !!(habitChecks[habit.id] && habitChecks[habit.id][dateKey]);
+    const fireBtn = document.createElement("button");
+    fireBtn.className = "habit-fire";
+    fireBtn.textContent = "🔥";
+    fireBtn.setAttribute("aria-pressed", String(dayData.hasActivity));
+    fireBtn.setAttribute("aria-label", doneCheck ? "Desmarcar como hecho" : "Marcar como hecho");
+    fireBtn.title = doneCheck ? "Quitar hecho" : "Marcar como hecho";
+    fireBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleDay(habit.id, dateKey);
+    });
+    if (dayData.hasActivity) fireBtn.classList.add("is-done");
+    tools.appendChild(fireBtn);
+    if ((habit.goal || "check") === "time") {
+      appendTimeQuickControls(tools, habit, dateKey);
+    }
+  }
+
+  const editBtn = document.createElement("button");
+  editBtn.className = "icon-btn";
+  if ((habit.goal || "check") === "time") editBtn.classList.add("habit-time-btn");
+  editBtn.type = "button";
+  editBtn.textContent = "⋯";
+  editBtn.title = "Editar registros";
+  editBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openEntryModal(habit.id, dateKey);
+  });
+  tools.appendChild(editBtn);
+
+  card.appendChild(left);
+  card.appendChild(tools);
+
+  card.addEventListener("click", () => openHabitModal(habit));
+  card.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openHabitModal(habit);
+    }
+  });
+
+  return card;
 }
 
 function renderToday() {
@@ -1349,6 +1575,7 @@ function renderToday() {
   $habitTodayCountDone.innerHTML = "";
   $habitTodayTimePending.innerHTML = "";
   $habitTodayTimeDone.innerHTML = "";
+  if ($habitCustomGroups) $habitCustomGroups.innerHTML = "";
 
   const resetGroup = (wrap, list) => {
     if (list) list.innerHTML = "";
@@ -1372,6 +1599,7 @@ function renderToday() {
   let countDone = 0;
   let timeTotal = 0;
   let timeDone = 0;
+  const groupedBuckets = new Map();
 
   activeHabits()
     .filter((h) => isHabitScheduledForDate(h, selectedDate))
@@ -1395,101 +1623,18 @@ function renderToday() {
         ? (dayData.count ? `${scheduleLabel} · ${dayData.count} hoy` : scheduleLabel)
         : (dayData.minutes ? `${scheduleLabel} · ${formatMinutes(dayData.minutes)} hoy` : scheduleLabel);
 
-      const card = document.createElement("div");
-      card.className = "habit-card";
-      if (dayData.hasActivity) card.classList.add("is-done");
-      card.setAttribute("role", "button");
-      card.tabIndex = 0;
-      setHabitColorVars(card, habit);
-
-      const left = document.createElement("div");
-      left.className = "habit-card-left";
-      left.innerHTML = `
-        <div class="habit-emoji">${habit.emoji || "🏷️"}</div>
-        <div>
-          <div class="habit-name">${habit.name}</div>
-          <div class="habit-meta-row">
-            <div class="habit-meta">${metaText}</div>
-            <div class="habit-streak" title="Racha actual">🔥 ${streak}</div>
-          </div>
-          <div class="habit-meta habit-days-done">Hecho: ${daysDone} día${daysDone === 1 ? "" : "s"}</div>
-        </div>
-      `;
-
-      const tools = document.createElement("div");
-      tools.className = "habit-card-tools";
-
-      if (isCount) {
-        const minus = document.createElement("button");
-        minus.className = "icon-btn-add";
-        minus.type = "button";
-        minus.textContent = "−";
-        minus.title = "Restar";
-        minus.disabled = !dayData.count;
-        minus.addEventListener("click", (e) => {
-          e.stopPropagation();
-          adjustHabitCount(habit.id, dateKey, -1);
-        });
-
-        const val = document.createElement("div");
-        val.className = "habit-count-value";
-        val.textContent = String(dayData.count || 0);
-
-        const plus = document.createElement("button");
-        plus.className = "icon-btn-add";
-        plus.type = "button";
-        plus.textContent = "+";
-        plus.title = "Sumar";
-        plus.addEventListener("click", (e) => {
-          e.stopPropagation();
-          adjustHabitCount(habit.id, dateKey, +1);
-        });
-
-        tools.appendChild(minus);
-        tools.appendChild(val);
-        tools.appendChild(plus);
-      } else {
-        const doneCheck = !!(habitChecks[habit.id] && habitChecks[habit.id][dateKey]);
-        const fireBtn = document.createElement("button");
-        fireBtn.className = "habit-fire";
-        fireBtn.textContent = "🔥";
-        fireBtn.setAttribute("aria-pressed", String(dayData.hasActivity));
-        fireBtn.setAttribute("aria-label", doneCheck ? "Desmarcar como hecho" : "Marcar como hecho");
-        fireBtn.title = doneCheck ? "Quitar hecho" : "Marcar como hecho";
-        fireBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          toggleDay(habit.id, dateKey);
-        });
-        if (dayData.hasActivity) fireBtn.classList.add("is-done");
-        tools.appendChild(fireBtn);
-        if ((habit.goal || "check") === "time") {
-  appendTimeQuickControls(tools, habit, dateKey);
-}
-      
-      }
-
-      const editBtn = document.createElement("button");
-      editBtn.className = "icon-btn";
-      if ((habit.goal || "check") === "time") editBtn.classList.add("habit-time-btn");
-      editBtn.type = "button";
-      editBtn.textContent = "⋯";
-      editBtn.title = "Editar registros";
-      editBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        openEntryModal(habit.id, dateKey);
-      });
-      tools.appendChild(editBtn);
-
-      card.appendChild(left);
-      card.appendChild(tools);
-
-      card.addEventListener("click", () => openHabitModal(habit));
-      card.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          openHabitModal(habit);
+      const card = buildTodayCard(habit, dateKey, dayData, metaText, streak, daysDone);
+      const groupId = habit?.groupId || "";
+      const group = groupId ? habitGroups?.[groupId] : null;
+      if (group) {
+        if (!groupedBuckets.has(groupId)) {
+          groupedBuckets.set(groupId, { group, pending: [], done: [] });
         }
-      });
+        const bucket = groupedBuckets.get(groupId);
+        if (dayData.hasActivity) bucket.done.push(card);
+        else bucket.pending.push(card);
+        return;
+      }
 
       const groupKey = habit?.groupPrivate ? "private" : (habit?.groupLowUse ? "low" : "main");
 
@@ -1505,6 +1650,53 @@ function renderToday() {
 
       targetList.appendChild(card);
     });
+
+  if ($habitCustomGroups) {
+    const groupsWithHabits = sortedHabitGroups().filter((group) => groupedBuckets.has(group.id));
+    if (!groupsWithHabits.length) {
+      $habitCustomGroups.style.display = "none";
+    } else {
+      $habitCustomGroups.style.display = "";
+      groupsWithHabits.forEach((group) => {
+        const bucket = groupedBuckets.get(group.id);
+        if (!bucket) return;
+        const details = document.createElement("details");
+        details.className = "habit-custom-group habit-accordion";
+        const pendingCount = bucket.pending.length;
+        const doneCount = bucket.done.length;
+        details.innerHTML = `
+          <summary>
+            <div class="habit-accordion-title">${group.name}</div>
+            <div class="habit-accordion-meta">Pend: ${pendingCount} · Hechos: ${doneCount}</div>
+          </summary>
+        `;
+        const body = document.createElement("div");
+        body.className = "habit-accordion-body";
+        if (pendingCount) {
+          const title = document.createElement("div");
+          title.className = "habits-subgroup-title";
+          title.textContent = "Pendientes";
+          const list = document.createElement("div");
+          list.className = "habit-card-list";
+          bucket.pending.forEach((card) => list.appendChild(card));
+          body.appendChild(title);
+          body.appendChild(list);
+        }
+        if (doneCount) {
+          const title = document.createElement("div");
+          title.className = "habits-subgroup-title";
+          title.textContent = "Hechos";
+          const list = document.createElement("div");
+          list.className = "habit-card-list";
+          bucket.done.forEach((card) => list.appendChild(card));
+          body.appendChild(title);
+          body.appendChild(list);
+        }
+        details.appendChild(body);
+        $habitCustomGroups.appendChild(details);
+      });
+    }
+  }
 
   // empties
   const countPending = countTotal - countDone;
@@ -2288,6 +2480,13 @@ function renderHistory() {
   const budgetSection = createHistorySection("Presupuestos");
   const budgetBody = document.createElement("div");
   budgetBody.className = "habits-history-budget";
+  const closeBudgetEdits = (keepEl = null) => {
+    budgetBody
+      .querySelectorAll(".habits-history-budget-item.is-open, .habits-history-budget-add.is-open")
+      .forEach((el) => {
+        if (el !== keepEl) el.classList.remove("is-open");
+      });
+  };
 
   const budgetedHabits = habitsList.filter((habit) => habit?.budget && Number(habit.budget.value) > 0);
   const completedCount = budgetedHabits.filter((habit) => isHabitBudgetCompleted(habit)).length;
@@ -2300,9 +2499,15 @@ function renderHistory() {
   if (unbudgeted.length) {
     const addRow = document.createElement("div");
     addRow.className = "habits-history-budget-add";
-    addRow.innerHTML = `
-      <div class="habits-history-budget-add-title">Añadir presupuesto</div>
-    `;
+    const addTitle = document.createElement("button");
+    addTitle.type = "button";
+    addTitle.className = "habits-history-budget-title";
+    addTitle.textContent = "Añadir presupuesto";
+    addTitle.addEventListener("click", () => {
+      const next = !addRow.classList.contains("is-open");
+      closeBudgetEdits(next ? addRow : null);
+      addRow.classList.toggle("is-open", next);
+    });
     const addControls = document.createElement("div");
     addControls.className = "habits-history-budget-controls";
     const habitSelect = document.createElement("select");
@@ -2344,7 +2549,11 @@ function renderHistory() {
     addControls.appendChild(metricSelect);
     addControls.appendChild(valueInput);
     addControls.appendChild(addBtn);
-    addRow.appendChild(addControls);
+    const addEditWrap = document.createElement("div");
+    addEditWrap.className = "habits-history-budget-edit";
+    addEditWrap.appendChild(addControls);
+    addRow.appendChild(addTitle);
+    addRow.appendChild(addEditWrap);
     budgetBody.appendChild(addRow);
   }
 
@@ -2360,9 +2569,15 @@ function renderHistory() {
       const item = document.createElement("div");
       item.className = "habits-history-budget-item";
       setHabitColorVars(item, habit);
-      const title = document.createElement("div");
+      const title = document.createElement("button");
+      title.type = "button";
       title.className = "habits-history-budget-title";
       title.textContent = `${habit.emoji || "🏷️"} ${habit.name}`;
+      title.addEventListener("click", () => {
+        const next = !item.classList.contains("is-open");
+        closeBudgetEdits(next ? item : null);
+        item.classList.toggle("is-open", next);
+      });
       const controls = document.createElement("div");
       controls.className = "habits-history-budget-controls";
       const periodSelect = buildBudgetSelect(["day", "week", "month"], habit.budget?.period || "week");
@@ -2393,6 +2608,9 @@ function renderHistory() {
       controls.appendChild(metricSelect);
       controls.appendChild(valueInput);
       controls.appendChild(saveBtn);
+      const editWrap = document.createElement("div");
+      editWrap.className = "habits-history-budget-edit";
+      editWrap.appendChild(controls);
 
       const progress = document.createElement("div");
       progress.className = "habits-history-budget-progress";
@@ -2410,7 +2628,7 @@ function renderHistory() {
       progress.appendChild(bar);
 
       item.appendChild(title);
-      item.appendChild(controls);
+      item.appendChild(editWrap);
       item.appendChild(progress);
       list.appendChild(item);
     });
@@ -2894,6 +3112,20 @@ function minutesForHabitRange(habit, start, end) {
   return totalMinutes;
 }
 
+function countsForHabitRange(habit, start, end) {
+  let total = 0;
+  if (!habit || habit.archived) return 0;
+  const byDate = habitCounts?.[habit.id];
+  if (!byDate || typeof byDate !== "object") return 0;
+  Object.entries(byDate).forEach(([dateKey, count]) => {
+    const parsed = parseDateKey(dateKey);
+    if (parsed && isDateInRange(parsed, start, end)) {
+      total += Number(count) || 0;
+    }
+  });
+  return total;
+}
+
 
 function collectHabitActiveDates(habit, start, end) {
   const dates = new Set();
@@ -2971,6 +3203,35 @@ function countActiveDaysInYear(year = new Date().getFullYear()) {
     Object.entries(byDate).forEach(([key, sec]) => {
       const parsed = parseDateKey(key);
       if (parsed && isDateInRange(parsed, start, end) && (Number(sec) || 0) > 0) dates.add(key);
+    });
+  });
+
+  return dates.size;
+}
+
+function countActiveDaysTotal() {
+  const dates = new Set();
+
+  Object.entries(habitChecks).forEach(([habitId, entries]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    Object.keys(entries || {}).forEach((key) => dates.add(key));
+  });
+
+  Object.entries(habitCounts).forEach(([habitId, entries]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    Object.keys(entries || {}).forEach((key) => {
+      if (Number(entries[key]) > 0) dates.add(key);
+    });
+  });
+
+  Object.entries(habitSessions || {}).forEach(([habitId, byDate]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    if (!byDate || typeof byDate !== "object") return;
+    Object.entries(byDate).forEach(([key, sec]) => {
+      if ((Number(sec) || 0) > 0) dates.add(key);
     });
   });
 
@@ -3666,15 +3927,75 @@ function renderDonutLegend(data, totalSec, groups = null, groupColorByKey = null
 function renderKPIs() {
   const today = todayKey();
   $habitKpiToday.textContent = countCompletedHabitsForDate(today);
-  if ($habitKpiMinutesToday) $habitKpiMinutesToday.textContent = formatMinutes(minutesForRange("day"));
-  if ($habitKpiMinutesWeek) $habitKpiMinutesWeek.textContent = formatMinutes(minutesForRange("week"));
-  if ($habitKpiMinutesMonth) $habitKpiMinutesMonth.textContent = formatMinutes(minutesForRange("month"));
-  if ($habitKpiMinutesYear) $habitKpiMinutesYear.textContent = formatMinutes(minutesForRange("year"));
-  if ($habitKpiTotalTime) $habitKpiTotalTime.textContent = formatMinutes(minutesForRange("total"));
-  if ($habitKpiActiveDaysYear) $habitKpiActiveDaysYear.textContent = countActiveDaysInYear();
-  const streakData = computeBestStreak();
-  $habitKpiStreak.textContent = streakData.best;
-  $habitKpiStreakLabel.textContent = streakData.label ? `${streakData.best} · ${streakData.label}` : "—";
+  if ($habitKpiTotalHours) {
+    $habitKpiTotalHours.textContent = formatHoursTotal(minutesForRange(habitDonutRange));
+  }
+  if ($habitKpiTotalHoursRange) {
+    $habitKpiTotalHoursRange.textContent = `Rango ${rangeLabel(habitDonutRange)}`;
+  }
+  if ($habitKpiActiveDaysTotal) {
+    $habitKpiActiveDaysTotal.textContent = countActiveDaysTotal();
+  }
+  if ($habitKpiStreakTotal) {
+    const current = computeTotalCurrentStreak();
+    const best = computeTotalStreak(365).best;
+    $habitKpiStreakTotal.textContent = current;
+    if ($habitKpiStreakTotalSub) {
+      $habitKpiStreakTotalSub.textContent = best ? `Mejor: ${best}` : "—";
+    }
+  }
+}
+
+function renderPins() {
+  const countHabits = activeHabits().filter((habit) => (habit.goal || "check") === "count");
+  const timeHabits = activeHabits().filter((habit) => (habit.goal || "check") === "time");
+  const fillSelect = (select, list, currentId) => {
+    if (!select) return;
+    select.innerHTML = "";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "Sin pin";
+    select.appendChild(none);
+    list.forEach((habit) => {
+      const opt = document.createElement("option");
+      opt.value = habit.id;
+      opt.textContent = `${habit.emoji || "🏷️"} ${habit.name}`;
+      select.appendChild(opt);
+    });
+    select.value = currentId && list.some((h) => h.id === currentId) ? currentId : "";
+  };
+
+  fillSelect($habitPinCountSelect, countHabits, habitPrefs?.pinCount);
+  fillSelect($habitPinTimeSelect, timeHabits, habitPrefs?.pinTime);
+
+  const dateKey = todayKey();
+  const { start, end } = getRangeBounds(habitDonutRange);
+
+  const countHabit = habitPrefs?.pinCount ? habits?.[habitPrefs.pinCount] : null;
+  if (countHabit && (countHabit.goal || "check") === "count") {
+    const todayValue = getHabitCount(countHabit.id, dateKey);
+    const rangeValue = countsForHabitRange(countHabit, start, end);
+    if ($habitPinCountToday) $habitPinCountToday.textContent = `Hoy: ${todayValue}`;
+    if ($habitPinCountRange) {
+      $habitPinCountRange.textContent = `Rango: ${rangeValue} · ${rangeLabel(habitDonutRange)}`;
+    }
+  } else {
+    if ($habitPinCountToday) $habitPinCountToday.textContent = "—";
+    if ($habitPinCountRange) $habitPinCountRange.textContent = "Selecciona un contador";
+  }
+
+  const timeHabit = habitPrefs?.pinTime ? habits?.[habitPrefs.pinTime] : null;
+  if (timeHabit && (timeHabit.goal || "check") === "time") {
+    const todayMinutes = getHabitDayScore(timeHabit, dateKey).minutes || 0;
+    const rangeMinutes = minutesForHabitRange(timeHabit, start, end);
+    if ($habitPinTimeToday) $habitPinTimeToday.textContent = `Hoy: ${formatMinutes(todayMinutes)}`;
+    if ($habitPinTimeRange) {
+      $habitPinTimeRange.textContent = `Rango: ${formatMinutes(rangeMinutes)} · ${rangeLabel(habitDonutRange)}`;
+    }
+  } else {
+    if ($habitPinTimeToday) $habitPinTimeToday.textContent = "—";
+    if ($habitPinTimeRange) $habitPinTimeRange.textContent = "Selecciona un hábito de tiempo";
+  }
 }
 
 function computeBestStreak() {
@@ -3807,6 +4128,7 @@ function renderHabits() {
   renderWeek();
   renderHistory();
   renderKPIs();
+  renderPins();
   renderRecordsCard();
   renderDonutGroupOptions();
   renderDonut();
@@ -4159,7 +4481,6 @@ function bindEvents() {
     });
   });
 
-  $btnAddHabit.addEventListener("click", () => openHabitModal());
   $habitFabAdd?.addEventListener("click", () => openHabitModal());
   $habitForm?.querySelectorAll('input[name="habit-goal"]').forEach((r) => {
     r.addEventListener("change", updateHabitGoalUI);
@@ -4182,6 +4503,34 @@ function bindEvents() {
     addHabitParam(value);
     toggleParamNewInput(false);
     if ($habitParamSelect) $habitParamSelect.value = "";
+  });
+  $habitGroupSelect?.addEventListener("change", (e) => {
+    if ($habitGroupRename) {
+      const group = habitGroups?.[e.target.value];
+      $habitGroupRename.value = group?.name || "";
+    }
+  });
+  $habitGroupCreate?.addEventListener("click", () => {
+    const group = createHabitGroup($habitGroupNew?.value || "");
+    if (!group) return;
+    if ($habitGroupNew) $habitGroupNew.value = "";
+    syncHabitGroupSelect(group.id);
+    renderToday();
+  });
+  $habitGroupRenameBtn?.addEventListener("click", () => {
+    const groupId = $habitGroupSelect?.value || "";
+    if (!groupId) return;
+    const ok = renameHabitGroup(groupId, $habitGroupRename?.value || "");
+    if (!ok) return;
+    syncHabitGroupSelect(groupId);
+    renderToday();
+  });
+  $habitGroupDeleteBtn?.addEventListener("click", () => {
+    const groupId = $habitGroupSelect?.value || "";
+    if (!groupId) return;
+    deleteHabitGroup(groupId);
+    syncHabitGroupSelect("");
+    renderToday();
   });
   $btnAddTime?.addEventListener("click", () => openManualTimeModal(selectedDateKey));
   $habitModalClose.addEventListener("click", closeHabitModal);
@@ -4247,7 +4596,19 @@ function bindEvents() {
       renderDonut();
       renderTotalsList();
       renderCountsList();
+      renderKPIs();
+      renderPins();
     });
+  });
+  $habitPinCountSelect?.addEventListener("change", (e) => {
+    habitPrefs = { ...habitPrefs, pinCount: e.target.value || "" };
+    persistHabitPrefs();
+    renderPins();
+  });
+  $habitPinTimeSelect?.addEventListener("change", (e) => {
+    habitPrefs = { ...habitPrefs, pinTime: e.target.value || "" };
+    persistHabitPrefs();
+    renderPins();
   });
   $habitDonutGroup?.addEventListener("change", (e) => {
     const value = e.target.value || "habit";
@@ -4313,6 +4674,18 @@ function listenRemote() {
     }
     saveCache();
     renderHabits();
+  });
+
+  onValue(ref(db, HABIT_GROUPS_PATH), (snap) => {
+    habitGroups = snap.val() || {};
+    saveCache();
+    renderHabits();
+  });
+
+  onValue(ref(db, HABIT_PREFS_PATH), (snap) => {
+    habitPrefs = snap.val() || { pinCount: "", pinTime: "" };
+    saveCache();
+    renderPins();
   });
 
   onValue(ref(db, HABIT_CHECKS_PATH), (snap) => {

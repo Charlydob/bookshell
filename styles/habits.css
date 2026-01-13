@@ -675,6 +675,50 @@
   box-shadow: var(--shadow-soft);
 }
 
+.habit-fab-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 86px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  z-index: 6;
+}
+
+.habit-fab-dock .habit-fab {
+  position: static;
+  right: auto;
+  bottom: auto;
+}
+
+.habit-fab-add {
+  background: rgba(255,255,255,0.12);
+  color: var(--txt);
+  border: 1px solid rgba(255,255,255,0.2);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.08);
+}
+
+.habit-records-card .habit-card-head {
+  align-items: center;
+}
+
+.habit-records-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.habit-record-card {
+  background: rgba(255,255,255,0.04);
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.08);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .habit-range-toggle {
   display: inline-flex;
   gap: 6px;
@@ -869,7 +913,69 @@
 }
 
 .habit-mini-group .habit-accordion-meta {
-  display: none;
+  display: block;
+}
+
+.habit-week-timeline {
+  --hclr-rgb: 127, 93, 255;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px 4px 4px;
+  background: rgba(255,255,255,0.03);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.habit-week-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: var(--glass);
+  color: var(--txt);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.habit-week-day .day-label {
+  font-size: 11px;
+  color: var(--txt-soft);
+  text-transform: uppercase;
+}
+
+.habit-week-day .day-number {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(255,255,255,0.08);
+  font-size: 13px;
+}
+
+.habit-week-day .day-meta {
+  font-size: 10px;
+  color: var(--txt-soft);
+}
+
+.habit-week-day.is-active {
+  border-color: rgba(var(--hclr-rgb, 127, 93, 255), 0.6);
+  box-shadow: 0 0 0 1px rgba(var(--hclr-rgb, 127, 93, 255), 0.35);
+}
+
+.habit-week-day.is-active .day-number {
+  width: 42px;
+  height: 42px;
+  background: rgba(var(--hclr-rgb, 127, 93, 255), 0.25);
+  color: #fff;
+}
+
+.habit-week-day.is-today .day-number {
+  border: 1px solid rgba(var(--hclr-rgb, 127, 93, 255), 0.4);
 }
 
 .habit-session-overlay {
@@ -972,7 +1078,8 @@
 }
 
 @media (min-width: 600px) {
-  .habit-fab {
+  .habit-fab,
+  .habit-fab-dock {
     bottom: 100px;
   }
 

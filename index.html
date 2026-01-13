@@ -492,6 +492,7 @@
 </div>
 <div class="habits-views">
 <div class="habits-panel is-active" data-panel="today">
+<div class="habit-week-timeline" id="habit-week-timeline" aria-label="Semana actual"></div>
 <details class="habit-accordion habit-today-accordion" id="habits-today-acc-count" open>
 <summary>
 <div class="habit-accordion-title">Contadores</div>
@@ -659,6 +660,38 @@
 <div class="habit-kpi-sub" id="habit-kpi-streak-label">—</div>
 </div>
 </div>
+<div class="habit-chart-card habit-records-card">
+<div class="habit-card-head">
+<div>
+<div class="habit-card-title">Récords</div>
+<div class="habit-card-sub" id="habit-records-sub">Últimos 30 días</div>
+</div>
+<div aria-label="Rango de récords" class="habit-range-toggle habit-records-range" role="group">
+<button class="habit-range-btn habit-records-range-btn" data-range="7">7D</button>
+<button class="habit-range-btn habit-records-range-btn is-active" data-range="30">30D</button>
+<button class="habit-range-btn habit-records-range-btn" data-range="90">90D</button>
+</div>
+</div>
+<div class="habit-records-grid">
+<div class="habit-record-card">
+<div class="habit-kpi-label">Racha actual (total)</div>
+<div class="habit-kpi-value" id="habit-records-current-streak">0</div>
+</div>
+<div class="habit-record-card">
+<div class="habit-kpi-label">Mejor racha (rango)</div>
+<div class="habit-kpi-value" id="habit-records-best-streak">0</div>
+</div>
+<div class="habit-record-card">
+<div class="habit-kpi-label">Completados</div>
+<div class="habit-kpi-value" id="habit-records-completed">0</div>
+<div class="habit-kpi-sub" id="habit-records-completed-sub">—</div>
+</div>
+<div class="habit-record-card">
+<div class="habit-kpi-label">% éxito</div>
+<div class="habit-kpi-value" id="habit-records-success">0%</div>
+</div>
+</div>
+</div>
 <div class="habit-chart-card habit-donut-card">
 <div class="habit-card-head">
 <div>
@@ -810,7 +843,10 @@
 </div>
 </div>
 </div>
+<div class="habit-fab-dock">
 <button class="habit-fab" id="habit-session-toggle">▶︎ Empezar sesión</button>
+<button class="habit-fab habit-fab-add" id="habit-fab-add">+ Añadir hábito</button>
+</div>
 <div class="habit-session-overlay hidden" id="habit-session-overlay">
 <div class="habit-session-pill">
 <div>

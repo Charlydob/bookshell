@@ -86,6 +86,8 @@ let habitLineHabit = "total";
 let habitDaysRange = "day";
 let habitLineTooltip = null;
 let habitEditingParams = [];
+let selectedDateKey = todayKey();
+let habitRecordsRangeDays = 30;
 
 // Utilidades fecha
 function dateKeyLocal(date) {
@@ -817,6 +819,8 @@ const $tabs = document.querySelectorAll(".habit-subtab");
 const $panels = document.querySelectorAll(".habits-panel");
 const $btnAddHabit = document.getElementById("habit-add-btn");
 const $btnAddTime = document.getElementById("habit-add-time");
+const $habitWeekTimeline = document.getElementById("habit-week-timeline");
+const $habitFabAdd = document.getElementById("habit-fab-add");
 
 // Hoy (agrupado)
 const $habitTodayCountPending = document.getElementById("habits-today-count-pending");
@@ -863,6 +867,13 @@ const $habitKpiTotalTime = document.getElementById("habit-kpi-total-time");
 const $habitKpiActiveDaysYear = document.getElementById("habit-kpi-active-days-year");
 const $habitKpiStreak = document.getElementById("habit-kpi-streak");
 const $habitKpiStreakLabel = document.getElementById("habit-kpi-streak-label");
+const $habitRecordsSub = document.getElementById("habit-records-sub");
+const $habitRecordsCurrentStreak = document.getElementById("habit-records-current-streak");
+const $habitRecordsBestStreak = document.getElementById("habit-records-best-streak");
+const $habitRecordsCompleted = document.getElementById("habit-records-completed");
+const $habitRecordsCompletedSub = document.getElementById("habit-records-completed-sub");
+const $habitRecordsSuccess = document.getElementById("habit-records-success");
+const $habitRecordsRangeButtons = document.querySelectorAll(".habit-records-range-btn");
 const $habitLineCard = document.getElementById("habit-line-card");
 const $habitLineChart = document.getElementById("habit-line-chart");
 const $habitLineEmpty = document.getElementById("habit-line-empty");
@@ -1295,8 +1306,43 @@ function renderSubtabs() {
   });
 }
 
-function renderToday() {
+function renderWeekTimeline() {
+  if (!$habitWeekTimeline) return;
+  const baseDate = parseDateKey(selectedDateKey) || new Date();
+  const start = startOfWeek(baseDate);
   const today = todayKey();
+  const labels = ["L", "M", "X", "J", "V", "S", "D"];
+  $habitWeekTimeline.innerHTML = "";
+  for (let i = 0; i < 7; i++) {
+    const date = addDays(start, i);
+    const dateKey = dateKeyLocal(date);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "habit-week-day";
+    const isToday = dateKey === today;
+    const isActive = dateKey === selectedDateKey;
+    if (isToday) btn.classList.add("is-today");
+    if (isActive) btn.classList.add("is-active");
+    btn.innerHTML = `
+      <div class="day-label">${labels[i]}</div>
+      <div class="day-number">${date.getDate()}</div>
+      <div class="day-meta">${isToday ? "Hoy" : ""}</div>
+    `;
+    btn.addEventListener("click", () => {
+      selectedDateKey = dateKey;
+      renderToday();
+    });
+    $habitWeekTimeline.appendChild(btn);
+  }
+}
+
+function renderToday() {
+  if (!parseDateKey(selectedDateKey)) {
+    selectedDateKey = todayKey();
+  }
+  renderWeekTimeline();
+  const selectedDate = parseDateKey(selectedDateKey) || new Date();
+  const dateKey = selectedDateKey || todayKey();
 
   // clear
   $habitTodayCountPending.innerHTML = "";
@@ -1328,10 +1374,10 @@ function renderToday() {
   let timeDone = 0;
 
   activeHabits()
-    .filter((h) => isHabitScheduledForDate(h, new Date()))
+    .filter((h) => isHabitScheduledForDate(h, selectedDate))
     .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
     .forEach((habit) => {
-      const dayData = getHabitDayScore(habit, today);
+      const dayData = getHabitDayScore(habit, dateKey);
       const isCount = (habit.goal || "check") === "count";
 
       if (isCount) {
@@ -1382,7 +1428,7 @@ function renderToday() {
         minus.disabled = !dayData.count;
         minus.addEventListener("click", (e) => {
           e.stopPropagation();
-          adjustHabitCount(habit.id, today, -1);
+          adjustHabitCount(habit.id, dateKey, -1);
         });
 
         const val = document.createElement("div");
@@ -1396,28 +1442,28 @@ function renderToday() {
         plus.title = "Sumar";
         plus.addEventListener("click", (e) => {
           e.stopPropagation();
-          adjustHabitCount(habit.id, today, +1);
+          adjustHabitCount(habit.id, dateKey, +1);
         });
 
         tools.appendChild(minus);
         tools.appendChild(val);
         tools.appendChild(plus);
       } else {
-        const doneCheck = !!(habitChecks[habit.id] && habitChecks[habit.id][today]);
+        const doneCheck = !!(habitChecks[habit.id] && habitChecks[habit.id][dateKey]);
         const fireBtn = document.createElement("button");
         fireBtn.className = "habit-fire";
         fireBtn.textContent = "🔥";
         fireBtn.setAttribute("aria-pressed", String(dayData.hasActivity));
-        fireBtn.setAttribute("aria-label", doneCheck ? "Desmarcar como hecho hoy" : "Marcar como hecho hoy");
-        fireBtn.title = doneCheck ? "Quitar hecho hoy" : "Marcar como hecho hoy";
+        fireBtn.setAttribute("aria-label", doneCheck ? "Desmarcar como hecho" : "Marcar como hecho");
+        fireBtn.title = doneCheck ? "Quitar hecho" : "Marcar como hecho";
         fireBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          toggleDay(habit.id, today);
+          toggleDay(habit.id, dateKey);
         });
         if (dayData.hasActivity) fireBtn.classList.add("is-done");
         tools.appendChild(fireBtn);
         if ((habit.goal || "check") === "time") {
-  appendTimeQuickControls(tools, habit, today);
+  appendTimeQuickControls(tools, habit, dateKey);
 }
       
       }
@@ -1430,7 +1476,7 @@ function renderToday() {
       editBtn.title = "Editar registros";
       editBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        openEntryModal(habit.id, today);
+        openEntryModal(habit.id, dateKey);
       });
       tools.appendChild(editBtn);
 
@@ -1469,14 +1515,21 @@ function renderToday() {
   $habitTodayTimeEmpty.style.display = timePending ? "none" : "block";
   $habitTodayTimeDoneEmpty.style.display = timeDone ? "none" : "block";
 
-  if ($habitTodayCountMeta) $habitTodayCountMeta.textContent = countTotal ? `${countDone}/${countTotal}` : "—";
-  if ($habitTodayTimeMeta) $habitTodayTimeMeta.textContent = timeTotal ? `${timeDone}/${timeTotal}` : "—";
+  if ($habitTodayCountMeta) $habitTodayCountMeta.textContent = countTotal ? `Pend: ${countPending} · Hechos: ${countDone}` : "—";
+  if ($habitTodayTimeMeta) $habitTodayTimeMeta.textContent = timeTotal ? `Pend: ${timePending} · Hechos: ${timeDone}` : "—";
 
   const showGroup = (wrap, list) => {
     if (!wrap || !list) return;
     const has = list.childElementCount > 0;
     wrap.style.display = has ? "" : "none";
     wrap.open = false; // forzar siempre plegado
+  };
+
+  const updateGroupMeta = (wrap, list) => {
+    const meta = wrap?.querySelector(".habit-accordion-meta");
+    if (!meta) return;
+    const count = list?.childElementCount || 0;
+    meta.textContent = count ? String(count) : "—";
   };
 
   showGroup($todayCountPendingPrivateWrap, $todayCountPendingPrivate);
@@ -1488,6 +1541,15 @@ function renderToday() {
   showGroup($todayTimePendingLowWrap, $todayTimePendingLow);
   showGroup($todayTimeDonePrivateWrap, $todayTimeDonePrivate);
   showGroup($todayTimeDoneLowWrap, $todayTimeDoneLow);
+
+  updateGroupMeta($todayCountPendingPrivateWrap, $todayCountPendingPrivate);
+  updateGroupMeta($todayCountPendingLowWrap, $todayCountPendingLow);
+  updateGroupMeta($todayCountDonePrivateWrap, $todayCountDonePrivate);
+  updateGroupMeta($todayCountDoneLowWrap, $todayCountDoneLow);
+  updateGroupMeta($todayTimePendingPrivateWrap, $todayTimePendingPrivate);
+  updateGroupMeta($todayTimePendingLowWrap, $todayTimePendingLow);
+  updateGroupMeta($todayTimeDonePrivateWrap, $todayTimeDonePrivate);
+  updateGroupMeta($todayTimeDoneLowWrap, $todayTimeDoneLow);
 }
 
 function formatDaysLabel(days = []) {
@@ -3687,12 +3749,65 @@ function computeTotalStreak(daysRange = 60) {
   return { best };
 }
 
+function computeTotalCurrentStreak(maxDays = 365) {
+  const today = new Date();
+  let streak = 0;
+  for (let i = 0; i < maxDays; i++) {
+    const date = addDays(today, -i);
+    const key = dateKeyLocal(date);
+    const scheduledAny = activeHabits().some((h) => isHabitScheduledForDate(h, date));
+    if (!scheduledAny) continue;
+    const doneAny = activeHabits().some((h) => isHabitCompletedOnDate(h, key));
+    if (doneAny) {
+      streak += 1;
+    } else {
+      break;
+    }
+  }
+  return streak;
+}
+
+function computeSuccessStats(daysRange = 30) {
+  const today = new Date();
+  const start = addDays(today, -daysRange + 1);
+  let scheduled = 0;
+  let completed = 0;
+  for (let i = 0; i < daysRange; i++) {
+    const date = addDays(start, i);
+    const key = dateKeyLocal(date);
+    activeHabits().forEach((habit) => {
+      if (isHabitScheduledForDate(habit, date)) {
+        scheduled += 1;
+        if (isHabitCompletedOnDate(habit, key)) completed += 1;
+      }
+    });
+  }
+  const successRatePct = scheduled ? Math.round((completed / scheduled) * 100) : 0;
+  return { scheduled, completed, successRatePct };
+}
+
+function renderRecordsCard() {
+  if (!$habitRecordsCurrentStreak) return;
+  const stats = computeSuccessStats(habitRecordsRangeDays);
+  const bestStreak = computeTotalStreak(habitRecordsRangeDays).best;
+  const currentStreak = computeTotalCurrentStreak();
+  if ($habitRecordsSub) $habitRecordsSub.textContent = `Últimos ${habitRecordsRangeDays} días`;
+  $habitRecordsCurrentStreak.textContent = currentStreak;
+  $habitRecordsBestStreak.textContent = bestStreak;
+  $habitRecordsCompleted.textContent = stats.completed;
+  if ($habitRecordsCompletedSub) {
+    $habitRecordsCompletedSub.textContent = stats.scheduled ? `${stats.completed}/${stats.scheduled}` : "—";
+  }
+  $habitRecordsSuccess.textContent = `${stats.successRatePct}%`;
+}
+
 function renderHabits() {
   renderSubtabs();
   renderToday();
   renderWeek();
   renderHistory();
   renderKPIs();
+  renderRecordsCard();
   renderDonutGroupOptions();
   renderDonut();
   renderLineChart();
@@ -4045,6 +4160,7 @@ function bindEvents() {
   });
 
   $btnAddHabit.addEventListener("click", () => openHabitModal());
+  $habitFabAdd?.addEventListener("click", () => openHabitModal());
   $habitForm?.querySelectorAll('input[name="habit-goal"]').forEach((r) => {
     r.addEventListener("change", updateHabitGoalUI);
   });
@@ -4067,7 +4183,7 @@ function bindEvents() {
     toggleParamNewInput(false);
     if ($habitParamSelect) $habitParamSelect.value = "";
   });
-  $btnAddTime?.addEventListener("click", () => openManualTimeModal());
+  $btnAddTime?.addEventListener("click", () => openManualTimeModal(selectedDateKey));
   $habitModalClose.addEventListener("click", closeHabitModal);
   $habitModalCancel.addEventListener("click", closeHabitModal);
   $habitForm.addEventListener("submit", handleHabitSubmit);
@@ -4160,6 +4276,15 @@ function bindEvents() {
   $habitEvoRange?.addEventListener("change", (e) => {
     habitLineRange = e.target.value || "7d";
     renderLineChart();
+  });
+
+  $habitRecordsRangeButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      $habitRecordsRangeButtons.forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      habitRecordsRangeDays = Number(btn.dataset.range) || 30;
+      renderRecordsCard();
+    });
   });
 }
 

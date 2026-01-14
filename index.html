@@ -877,6 +877,7 @@
 <div class="habit-detail-head-text">
 <div class="habit-detail-title" id="habit-detail-title">Hábito</div>
 <div class="habit-detail-sub" id="habit-detail-meta">—</div>
+<div class="habit-detail-total" id="habit-detail-total">Total: —</div>
 </div>
 </div>
 <div class="habit-detail-head-actions">
@@ -912,13 +913,19 @@
 <div class="habit-detail-chart" id="habit-detail-chart"></div>
 <div class="habit-detail-chart-meta" id="habit-detail-chart-meta"></div>
 </section>
-<section class="habit-detail-section">
+<details class="habit-detail-section habit-detail-records-wrap" id="habit-detail-records-wrap">
+<summary class="habit-detail-records-summary">
 <div class="habit-detail-section-head">
 <div class="habit-detail-section-title">Registros</div>
-<div class="habit-detail-section-sub" id="habit-detail-records-sub">—</div>
+<div class="habit-detail-section-sub" id="habit-detail-records-sub">Ver registros</div>
 </div>
+<span aria-hidden="true" class="habit-detail-records-chevron">⌄</span>
+</summary>
+<div class="habit-detail-records-body">
 <div class="habit-detail-records" id="habit-detail-records"></div>
-</section>
+<button class="btn ghost btn-compact habit-detail-records-more hidden" id="habit-detail-records-more" type="button">Ver más</button>
+</div>
+</details>
 <section class="habit-detail-section">
 <div class="habit-detail-section-head">
 <div class="habit-detail-section-title">Insights</div>

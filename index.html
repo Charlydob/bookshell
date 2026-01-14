@@ -858,6 +858,66 @@
 <button class="btn danger btn-compact" id="habit-session-stop">⏹ Parar</button>
 </div>
 </div>
+<div class="habit-detail-overlay hidden" id="habit-detail-overlay" role="dialog" aria-modal="true" aria-hidden="true">
+<div class="habit-detail-panel">
+<header class="habit-detail-header">
+<div class="habit-detail-head-main">
+<button class="habit-detail-emoji habit-icon" id="habit-detail-emoji" type="button" aria-label="Editar hábito">🏷️</button>
+<div class="habit-detail-head-text">
+<div class="habit-detail-title" id="habit-detail-title">Hábito</div>
+<div class="habit-detail-sub" id="habit-detail-meta">—</div>
+</div>
+</div>
+<div class="habit-detail-head-actions">
+<button class="btn ghost btn-compact" id="habit-detail-edit" type="button">Editar</button>
+<button class="icon-btn" id="habit-detail-close" type="button" aria-label="Cerrar">✕</button>
+</div>
+</header>
+<div class="habit-detail-body">
+<div class="habit-detail-summary">
+<div class="habit-detail-chip" id="habit-detail-status">Pendiente hoy</div>
+<div class="habit-detail-chip" id="habit-detail-streak">🔥 0</div>
+<div class="habit-detail-chip" id="habit-detail-goal">—</div>
+</div>
+<div class="habit-detail-actions" id="habit-detail-actions"></div>
+<div aria-label="Rango de hábito" class="habit-range-toggle habit-detail-range" role="group">
+<button class="habit-range-btn" data-range="week" type="button">Semana</button>
+<button class="habit-range-btn is-active" data-range="month" type="button">Mes</button>
+<button class="habit-range-btn" data-range="year" type="button">Año</button>
+<button class="habit-range-btn" data-range="total" type="button">Total</button>
+</div>
+<section class="habit-detail-section">
+<div class="habit-detail-section-head">
+<div class="habit-detail-section-title">Heatmap</div>
+<div class="habit-detail-section-sub" id="habit-detail-heatmap-sub">—</div>
+</div>
+<div class="habit-detail-heatmap" id="habit-detail-heatmap"></div>
+</section>
+<section class="habit-detail-section">
+<div class="habit-detail-section-head">
+<div class="habit-detail-section-title">Evolución</div>
+<div class="habit-detail-section-sub" id="habit-detail-chart-sub">—</div>
+</div>
+<div class="habit-detail-chart" id="habit-detail-chart"></div>
+<div class="habit-detail-chart-meta" id="habit-detail-chart-meta"></div>
+</section>
+<section class="habit-detail-section">
+<div class="habit-detail-section-head">
+<div class="habit-detail-section-title">Registros</div>
+<div class="habit-detail-section-sub" id="habit-detail-records-sub">—</div>
+</div>
+<div class="habit-detail-records" id="habit-detail-records"></div>
+</section>
+<section class="habit-detail-section">
+<div class="habit-detail-section-head">
+<div class="habit-detail-section-title">Insights</div>
+<div class="habit-detail-section-sub" id="habit-detail-insights-sub">—</div>
+</div>
+<div class="habit-detail-insights" id="habit-detail-insights"></div>
+</section>
+</div>
+</div>
+</div>
 </section>
 <section class="view" id="view-media">
   <div class="media-wrapper">

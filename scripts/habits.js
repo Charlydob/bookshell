@@ -83,7 +83,7 @@ let habitDeleteTarget = null;
 let habitToastEl = null;
 let habitToastTimeout = null;
 let habitDonutChart = null;
-let habitDonutRange = "day";
+let habitDonutRange = "total";
 let habitDonutGroupMode = { kind: "habit" };
 let habitLineRange = "7d";
 let habitLineHabit = "total";
@@ -91,7 +91,7 @@ let habitDaysRange = "day";
 let habitLineTooltip = null;
 let habitEditingParams = [];
 let selectedDateKey = todayKey();
-let habitRecordsRangeDays = 30;
+let habitRecordsRange = "month";
 
 // Utilidades fecha
 function dateKeyLocal(date) {
@@ -747,6 +747,82 @@ function countCompletedHabitsForDate(dateKey) {
   return activeHabits().reduce((acc, habit) => (isHabitCompletedOnDate(habit, dateKey) ? acc + 1 : acc), 0);
 }
 
+function collectDateKeysInRange(start, end) {
+  const keys = new Set();
+  Object.entries(habitChecks).forEach(([habitId, entries]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    Object.keys(entries || {}).forEach((key) => {
+      const parsed = parseDateKey(key);
+      if (parsed && isDateInRange(parsed, start, end)) keys.add(key);
+    });
+  });
+
+  Object.entries(habitCounts).forEach(([habitId, entries]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    Object.keys(entries || {}).forEach((key) => {
+      const parsed = parseDateKey(key);
+      if (parsed && isDateInRange(parsed, start, end)) keys.add(key);
+    });
+  });
+
+  Object.entries(habitSessions || {}).forEach(([habitId, byDate]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    if (!byDate || typeof byDate !== "object") return;
+    Object.keys(byDate).forEach((key) => {
+      const parsed = parseDateKey(key);
+      if (parsed && isDateInRange(parsed, start, end)) keys.add(key);
+    });
+  });
+
+  return keys;
+}
+
+function countCompletedHabitsForRange(start, end) {
+  const keys = collectDateKeysInRange(start, end);
+  let total = 0;
+  keys.forEach((key) => {
+    total += countCompletedHabitsForDate(key);
+  });
+  return total;
+}
+
+function countActiveDaysInRange(start, end) {
+  const dates = new Set();
+
+  Object.entries(habitChecks).forEach(([habitId, entries]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    Object.keys(entries || {}).forEach((key) => {
+      const parsed = parseDateKey(key);
+      if (parsed && isDateInRange(parsed, start, end)) dates.add(key);
+    });
+  });
+
+  Object.entries(habitCounts).forEach(([habitId, entries]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    Object.keys(entries || {}).forEach((key) => {
+      const parsed = parseDateKey(key);
+      if (parsed && isDateInRange(parsed, start, end) && Number(entries[key]) > 0) dates.add(key);
+    });
+  });
+
+  Object.entries(habitSessions || {}).forEach(([habitId, byDate]) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    if (!byDate || typeof byDate !== "object") return;
+    Object.entries(byDate).forEach(([key, sec]) => {
+      const parsed = parseDateKey(key);
+      if (parsed && isDateInRange(parsed, start, end) && (Number(sec) || 0) > 0) dates.add(key);
+    });
+  });
+
+  return dates.size;
+}
+
 
 function collectHabitActivityDatesSet(habit) {
   const dates = new Set();
@@ -911,6 +987,9 @@ const $habitKpiToday = document.getElementById("habit-kpi-today");
 const $habitKpiTotalHours = document.getElementById("habit-kpi-total-hours");
 const $habitKpiTotalHoursRange = document.getElementById("habit-kpi-total-hours-range");
 const $habitKpiActiveDaysTotal = document.getElementById("habit-kpi-active-days-total");
+const $habitKpiTodayLabel = document.getElementById("habit-kpi-today-label");
+const $habitKpiActiveDaysLabel = document.getElementById("habit-kpi-active-days-label");
+const $habitKpiStreakLabel = document.getElementById("habit-kpi-streak-label");
 const $habitKpiStreakTotal = document.getElementById("habit-kpi-streak-total");
 const $habitKpiStreakTotalSub = document.getElementById("habit-kpi-streak-total-sub");
 const $habitPinCountToday = document.getElementById("habit-pin-count-today");
@@ -959,7 +1038,7 @@ const $habitDonutSub = document.getElementById("habit-donut-sub");
 const $habitDonutTotal = document.querySelector("#habit-donut-center .habit-donut-total");
 const $habitDonutTitle = document.getElementById("habit-donut-title");
 const $habitDonutGroup = document.getElementById("habit-donut-group");
-const $habitRangeButtons = document.querySelectorAll(".habit-range-btn");
+const $habitRangeButtons = document.querySelectorAll(".habit-donut-card .habit-range-btn");
 const $habitDaysRangeButtons = document.querySelectorAll(".habit-days-range-btn");
 const $habitFab = document.getElementById("habit-session-toggle");
 const $habitOverlay = document.getElementById("habit-session-overlay");
@@ -1010,6 +1089,8 @@ const $habitSessionCancel = document.getElementById("habit-session-cancel");
 const $habitSessionSearch = document.getElementById("habit-session-search");
 const $habitSessionList = document.getElementById("habit-session-list");
 const $habitSessionLast = document.getElementById("habit-session-last");
+const $habitSessionScroll = $habitSessionModal?.querySelector(".modal-scroll");
+const $habitSessionSheet = $habitSessionModal?.querySelector(".modal");
 
 // Manual time modal
 const $habitManualModal = document.getElementById("habit-manual-modal");
@@ -3238,6 +3319,39 @@ function countActiveDaysTotal() {
   return dates.size;
 }
 
+function computeTotalStreakInRange(start, end) {
+  let best = 0;
+  let current = 0;
+  for (let date = new Date(start); date <= end; date = addDays(date, 1)) {
+    const key = dateKeyLocal(date);
+    const scheduledAny = activeHabits().some((h) => isHabitScheduledForDate(h, date));
+    const doneAny = activeHabits().some((h) => isHabitCompletedOnDate(h, key));
+    if (scheduledAny && doneAny) {
+      current += 1;
+      best = Math.max(best, current);
+    } else if (scheduledAny) {
+      current = 0;
+    }
+  }
+  return { best };
+}
+
+function computeCurrentStreakInRange(start, end) {
+  let streak = 0;
+  for (let date = new Date(end); date >= start; date = addDays(date, -1)) {
+    const key = dateKeyLocal(date);
+    const scheduledAny = activeHabits().some((h) => isHabitScheduledForDate(h, date));
+    if (!scheduledAny) continue;
+    const doneAny = activeHabits().some((h) => isHabitCompletedOnDate(h, key));
+    if (doneAny) {
+      streak += 1;
+    } else {
+      break;
+    }
+  }
+  return streak;
+}
+
 
 function getEarliestActivityDate() {
   const today = new Date();
@@ -3522,6 +3636,21 @@ function rangeLabel(range) {
       return "total";
     default:
       return "diaria";
+  }
+}
+
+function rangeLabelTitle(range) {
+  switch (range) {
+    case "week":
+      return "Semana";
+    case "month":
+      return "Mes";
+    case "year":
+      return "Año";
+    case "total":
+      return "Total";
+    default:
+      return "Día";
   }
 }
 
@@ -3926,22 +4055,58 @@ function renderDonutLegend(data, totalSec, groups = null, groupColorByKey = null
 
 function renderKPIs() {
   const today = todayKey();
-  $habitKpiToday.textContent = countCompletedHabitsForDate(today);
+  const { start, end } = getRangeBounds(habitDonutRange);
+  const isDayRange = habitDonutRange === "day";
+  const todayCount = countCompletedHabitsForDate(today);
+  const rangeCount = isDayRange ? todayCount : countCompletedHabitsForRange(start, end);
+  if ($habitKpiTodayLabel) {
+    $habitKpiTodayLabel.textContent = isDayRange ? "Hechos hoy" : "Hechos (rango)";
+  }
+  if ($habitKpiToday) {
+    if (isDayRange) {
+      $habitKpiToday.classList.remove("is-stacked");
+      $habitKpiToday.textContent = todayCount;
+    } else {
+      $habitKpiToday.classList.add("is-stacked");
+      $habitKpiToday.innerHTML = `
+        <span class="habit-kpi-value-line is-primary">Hoy: ${todayCount}</span>
+        <span class="habit-kpi-value-line">Rango: ${rangeCount}</span>
+      `;
+    }
+  }
   if ($habitKpiTotalHours) {
     $habitKpiTotalHours.textContent = formatHoursTotal(minutesForRange(habitDonutRange));
   }
   if ($habitKpiTotalHoursRange) {
-    $habitKpiTotalHoursRange.textContent = `Rango ${rangeLabel(habitDonutRange)}`;
+    $habitKpiTotalHoursRange.textContent = `Rango ${rangeLabelTitle(habitDonutRange)}`;
   }
   if ($habitKpiActiveDaysTotal) {
-    $habitKpiActiveDaysTotal.textContent = countActiveDaysTotal();
+    $habitKpiActiveDaysTotal.textContent = habitDonutRange === "total"
+      ? countActiveDaysTotal()
+      : countActiveDaysInRange(start, end);
+  }
+  if ($habitKpiActiveDaysLabel) {
+    $habitKpiActiveDaysLabel.textContent = habitDonutRange === "total"
+      ? "Días contabilizados total"
+      : "Días contabilizados (rango)";
   }
   if ($habitKpiStreakTotal) {
-    const current = computeTotalCurrentStreak();
-    const best = computeTotalStreak(365).best;
-    $habitKpiStreakTotal.textContent = current;
-    if ($habitKpiStreakTotalSub) {
-      $habitKpiStreakTotalSub.textContent = best ? `Mejor: ${best}` : "—";
+    if (habitDonutRange === "total") {
+      const current = computeTotalCurrentStreak();
+      const best = computeTotalStreak(365).best;
+      $habitKpiStreakTotal.textContent = current;
+      if ($habitKpiStreakTotalSub) {
+        $habitKpiStreakTotalSub.textContent = best ? `Mejor: ${best}` : "—";
+      }
+      if ($habitKpiStreakLabel) $habitKpiStreakLabel.textContent = "Racha total";
+    } else {
+      const bestRange = computeTotalStreakInRange(start, end).best;
+      const currentRange = computeCurrentStreakInRange(start, end);
+      $habitKpiStreakTotal.textContent = bestRange;
+      if ($habitKpiStreakTotalSub) {
+        $habitKpiStreakTotalSub.textContent = currentRange ? `Actual: ${currentRange}` : "—";
+      }
+      if ($habitKpiStreakLabel) $habitKpiStreakLabel.textContent = "Racha (rango)";
     }
   }
 }
@@ -3975,9 +4140,16 @@ function renderPins() {
   if (countHabit && (countHabit.goal || "check") === "count") {
     const todayValue = getHabitCount(countHabit.id, dateKey);
     const rangeValue = countsForHabitRange(countHabit, start, end);
-    if ($habitPinCountToday) $habitPinCountToday.textContent = `Hoy: ${todayValue}`;
-    if ($habitPinCountRange) {
-      $habitPinCountRange.textContent = `Rango: ${rangeValue} · ${rangeLabel(habitDonutRange)}`;
+    if (habitDonutRange === "day") {
+      if ($habitPinCountToday) $habitPinCountToday.textContent = `Hoy: ${todayValue}`;
+      if ($habitPinCountRange) {
+        $habitPinCountRange.textContent = `Rango: ${rangeValue} · ${rangeLabelTitle(habitDonutRange)}`;
+      }
+    } else {
+      if ($habitPinCountToday) {
+        $habitPinCountToday.textContent = `Rango: ${rangeValue} · ${rangeLabelTitle(habitDonutRange)}`;
+      }
+      if ($habitPinCountRange) $habitPinCountRange.textContent = `Hoy: ${todayValue}`;
     }
   } else {
     if ($habitPinCountToday) $habitPinCountToday.textContent = "—";
@@ -3988,9 +4160,16 @@ function renderPins() {
   if (timeHabit && (timeHabit.goal || "check") === "time") {
     const todayMinutes = getHabitDayScore(timeHabit, dateKey).minutes || 0;
     const rangeMinutes = minutesForHabitRange(timeHabit, start, end);
-    if ($habitPinTimeToday) $habitPinTimeToday.textContent = `Hoy: ${formatMinutes(todayMinutes)}`;
-    if ($habitPinTimeRange) {
-      $habitPinTimeRange.textContent = `Rango: ${formatMinutes(rangeMinutes)} · ${rangeLabel(habitDonutRange)}`;
+    if (habitDonutRange === "day") {
+      if ($habitPinTimeToday) $habitPinTimeToday.textContent = `Hoy: ${formatMinutes(todayMinutes)}`;
+      if ($habitPinTimeRange) {
+        $habitPinTimeRange.textContent = `Rango: ${formatMinutes(rangeMinutes)} · ${rangeLabelTitle(habitDonutRange)}`;
+      }
+    } else {
+      if ($habitPinTimeToday) {
+        $habitPinTimeToday.textContent = `Rango: ${formatMinutes(rangeMinutes)} · ${rangeLabelTitle(habitDonutRange)}`;
+      }
+      if ($habitPinTimeRange) $habitPinTimeRange.textContent = `Hoy: ${formatMinutes(todayMinutes)}`;
     }
   } else {
     if ($habitPinTimeToday) $habitPinTimeToday.textContent = "—";
@@ -4088,13 +4267,15 @@ function computeTotalCurrentStreak(maxDays = 365) {
   return streak;
 }
 
-function computeSuccessStats(daysRange = 30) {
-  const today = new Date();
-  const start = addDays(today, -daysRange + 1);
+function computeSuccessStatsForRange(range) {
+  let { start, end } = getRangeBounds(range);
+  if (range === "total") {
+    const earliest = getEarliestActivityDate();
+    if (earliest) start = earliest;
+  }
   let scheduled = 0;
   let completed = 0;
-  for (let i = 0; i < daysRange; i++) {
-    const date = addDays(start, i);
+  for (let date = new Date(start); date <= end; date = addDays(date, 1)) {
     const key = dateKeyLocal(date);
     activeHabits().forEach((habit) => {
       if (isHabitScheduledForDate(habit, date)) {
@@ -4104,15 +4285,15 @@ function computeSuccessStats(daysRange = 30) {
     });
   }
   const successRatePct = scheduled ? Math.round((completed / scheduled) * 100) : 0;
-  return { scheduled, completed, successRatePct };
+  return { scheduled, completed, successRatePct, start, end };
 }
 
 function renderRecordsCard() {
   if (!$habitRecordsCurrentStreak) return;
-  const stats = computeSuccessStats(habitRecordsRangeDays);
-  const bestStreak = computeTotalStreak(habitRecordsRangeDays).best;
+  const stats = computeSuccessStatsForRange(habitRecordsRange);
+  const bestStreak = computeTotalStreakInRange(stats.start, stats.end).best;
   const currentStreak = computeTotalCurrentStreak();
-  if ($habitRecordsSub) $habitRecordsSub.textContent = `Últimos ${habitRecordsRangeDays} días`;
+  if ($habitRecordsSub) $habitRecordsSub.textContent = rangeLabelTitle(habitRecordsRange);
   $habitRecordsCurrentStreak.textContent = currentStreak;
   $habitRecordsBestStreak.textContent = bestStreak;
   $habitRecordsCompleted.textContent = stats.completed;
@@ -4225,16 +4406,45 @@ function formatTimer(sec) {
   return `${m}:${s}`;
 }
 
+function updateSessionModalViewportPadding() {
+  if (!$habitSessionModal || !$habitSessionScroll) return;
+  if ($habitSessionModal.classList.contains("hidden")) return;
+  const viewport = window.visualViewport;
+  const viewportHeight = viewport?.height || window.innerHeight;
+  const keyboardOffset = Math.max(0, window.innerHeight - viewportHeight);
+  const basePadding = 16;
+  const padding = keyboardOffset ? keyboardOffset + basePadding : basePadding;
+  $habitSessionScroll.style.paddingBottom = `${padding}px`;
+  if ($habitSessionSheet) {
+    $habitSessionSheet.style.paddingBottom = keyboardOffset ? `${keyboardOffset}px` : "";
+  }
+}
+
+function resetSessionModalViewportPadding() {
+  if ($habitSessionScroll) $habitSessionScroll.style.paddingBottom = "";
+  if ($habitSessionSheet) $habitSessionSheet.style.paddingBottom = "";
+}
+
+function handleSessionModalFocus(event) {
+  const target = event.target;
+  if (!target || !(target instanceof HTMLElement)) return;
+  if (!["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName)) return;
+  updateSessionModalViewportPadding();
+  target.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
 function openSessionModal() {
   renderSessionList();
   $habitSessionModal.classList.remove("hidden");
   $habitSessionSearch.value = "";
   $habitSessionSearch.focus();
+  updateSessionModalViewportPadding();
 }
 
 function closeSessionModal() {
   $habitSessionModal.classList.add("hidden");
   pendingSessionDuration = 0;
+  resetSessionModalViewportPadding();
 }
 
 function renderSessionList() {
@@ -4558,6 +4768,9 @@ function bindEvents() {
   $habitSessionClose.addEventListener("click", closeSessionModal);
   $habitSessionCancel.addEventListener("click", closeSessionModal);
   $habitSessionSearch.addEventListener("input", renderSessionList);
+  $habitSessionModal?.addEventListener("focusin", handleSessionModalFocus);
+  window.visualViewport?.addEventListener("resize", updateSessionModalViewportPadding);
+  window.visualViewport?.addEventListener("scroll", updateSessionModalViewportPadding);
 
   $habitManualClose?.addEventListener("click", closeManualTimeModal);
   $habitManualCancel?.addEventListener("click", closeManualTimeModal);
@@ -4643,7 +4856,7 @@ function bindEvents() {
     btn.addEventListener("click", () => {
       $habitRecordsRangeButtons.forEach((b) => b.classList.remove("is-active"));
       btn.classList.add("is-active");
-      habitRecordsRangeDays = Number(btn.dataset.range) || 30;
+      habitRecordsRange = btn.dataset.range || "month";
       renderRecordsCard();
     });
   });

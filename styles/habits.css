@@ -27,7 +27,51 @@
 .habit-quick-actions-bar {
   justify-content: flex-start;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  align-items: center;
+  padding-bottom: 2px;
+}
+
+.habit-quick-actions-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.habit-quick-btn {
+  position: relative;
+  border-radius: var(--radius-pill);
+  padding: 8px 14px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background:
+    linear-gradient(120deg, rgba(140, 120, 255, 0.25), rgba(86, 185, 255, 0.18), rgba(245, 158, 11, 0.18));
+  color: #f5f7ff;
+  font-weight: 700;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow:
+    0 10px 24px rgba(20, 20, 40, 0.25),
+    0 0 0 1px rgba(255,255,255,0.1) inset;
+  white-space: nowrap;
+}
+
+.habit-quick-btn:hover {
+  border-color: rgba(160, 120, 255, 0.5);
+  box-shadow:
+    0 12px 26px rgba(20, 20, 40, 0.3),
+    0 0 12px rgba(127, 93, 255, 0.35);
+}
+
+.habit-quick-btn:active {
+  transform: translateY(1px);
+  box-shadow:
+    0 8px 18px rgba(20, 20, 40, 0.25),
+    0 0 0 1px rgba(255,255,255,0.2) inset;
+}
+
+.habit-quick-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .habits-subtabs {
@@ -316,6 +360,10 @@
   gap: 10px;
 }
 
+.habits-panel[data-panel="reports"] .habit-pin-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .habits-panel[data-panel="reports"] .habit-kpi-card {
   background: var(--glass-2);
   border-radius: 16px;
@@ -325,6 +373,8 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .habit-reports {
@@ -349,6 +399,8 @@
   font-weight: 800;
   letter-spacing: -0.5px;
   line-height: 1;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .habits-panel[data-panel="reports"] .habit-kpi-sub {
@@ -359,6 +411,56 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.habit-kpi-value.is-stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 16px;
+  line-height: 1.15;
+}
+
+.habit-kpi-value-line {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--txt);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.habit-kpi-value-line.is-primary {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.habit-pin-card {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.habit-pin-select {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.habit-pin-select span {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--txt-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.habit-pin-select select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .habit-chart-card {

@@ -4786,11 +4786,11 @@ function renderPins() {
     if (habitDonutRange === "day") {
       if ($habitPinCountToday) $habitPinCountToday.textContent = `Hoy: ${todayValue}`;
       if ($habitPinCountRange) {
-        $habitPinCountRange.textContent = `Rango: ${rangeValue} · ${rangeLabelTitle(habitDonutRange)}`;
+        $habitPinCountRange.textContent = ` ${rangeValue} · ${rangeLabelTitle(habitDonutRange)}`;
       }
     } else {
       if ($habitPinCountToday) {
-        $habitPinCountToday.textContent = `Rango: ${rangeValue} · ${rangeLabelTitle(habitDonutRange)}`;
+        $habitPinCountToday.textContent = ` ${rangeValue} · ${rangeLabelTitle(habitDonutRange)}`;
       }
       if ($habitPinCountRange) $habitPinCountRange.textContent = `Hoy: ${todayValue}`;
     }

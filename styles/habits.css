@@ -1933,6 +1933,15 @@
   align-items: center;
   gap: 6px;
   min-width: 12px;
+  height: 100%;
+}
+
+.habit-detail-bar-plot {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
 }
 
 .habit-detail-bar {

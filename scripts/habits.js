@@ -1814,6 +1814,8 @@ function renderHabitDetailChart(habit, rangeKey) {
   values.forEach((item) => {
     const barItem = document.createElement("div");
     barItem.className = "habit-detail-bar-item";
+    const plot = document.createElement("div");
+    plot.className = "habit-detail-bar-plot";
     const bar = document.createElement("button");
     bar.type = "button";
     const heightPct = scaleMax ? (item.value / scaleMax) * 100 : 0;
@@ -1837,18 +1839,20 @@ function renderHabitDetailChart(habit, rangeKey) {
     label.className = "habit-detail-bar-label";
     const labelDate = parseDateKey(item.key);
     label.textContent = labelDate ? String(labelDate.getDate()) : "—";
-    barItem.appendChild(bar);
+    plot.appendChild(bar);
+    barItem.appendChild(plot);
     barItem.appendChild(label);
     barsWrap.appendChild(barItem);
   });
 
   if (values.length) {
-    const samplePct = scaleMax ? (values[0].value / scaleMax) * 100 : 0;
+    const maxItem = values.reduce((acc, item) => (item.value > acc.value ? item : acc), values[0]);
+    const maxHeightPct = scaleMax ? (maxItem.value / scaleMax) * 100 : 0;
     console.debug("[habit-detail chart]", {
       values: values.map((item) => item.value),
       maxVal: maxValue,
       scaleMax,
-      sampleH: `${Math.max(0, samplePct).toFixed(2)}%`
+      sampleH: `${Math.max(0, maxHeightPct).toFixed(2)}%`
     });
   }
 

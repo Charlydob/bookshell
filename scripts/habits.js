@@ -1783,7 +1783,8 @@ function renderHabitDetailChart(habit, rangeKey) {
     total += value;
   }
 
-  const max = Math.max(0, ...values.map((item) => item.value));
+  const maxValue = Math.max(0, ...values.map((item) => item.value));
+  const scaleMax = maxValue > 0 ? maxValue * 1.1 : 0;
   $habitDetailChart.innerHTML = "";
   const formatTick = (value) => {
     if (goal === "time") return formatMinutes(Math.round(value));
@@ -1793,8 +1794,9 @@ function renderHabitDetailChart(habit, rangeKey) {
 
   const axis = document.createElement("div");
   axis.className = "habit-detail-chart-axis";
-  const half = max ? Math.round(max / 2) : 0;
-  [max, half, 0].forEach((tick) => {
+  const half = maxValue ? Math.ceil(maxValue / 2) : 0;
+  const ticks = maxValue ? [maxValue, half, 0] : [0, 0, 0];
+  ticks.forEach((tick) => {
     const tickEl = document.createElement("span");
     tickEl.textContent = formatTick(tick);
     axis.appendChild(tickEl);
@@ -1813,12 +1815,13 @@ function renderHabitDetailChart(habit, rangeKey) {
     barItem.className = "habit-detail-bar-item";
     const bar = document.createElement("button");
     bar.type = "button";
-    const pct = max ? Math.round((item.value / max) * 100) : 0;
+    const heightPct = scaleMax ? (item.value / scaleMax) * 100 : 0;
     bar.className = `habit-detail-bar${item.value ? "" : " is-empty"}`;
-    bar.style.height = `${Math.max(6, pct)}%`;
-    const labelValue = goal === "time"
-      ? `${item.value} min`
-      : (goal === "count" ? `${item.value}×` : item.value ? "✓" : "—");
+    bar.style.height = `${Math.max(0, heightPct)}%`;
+    const formattedValue = formatTick(item.value);
+    const labelValue = goal === "check"
+      ? (item.value ? "✓" : "—")
+      : formattedValue;
     bar.title = `${item.key} · ${labelValue}`;
     bar.setAttribute("aria-label", `${item.key} · ${labelValue}`);
     bar.addEventListener("click", () => {

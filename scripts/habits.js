@@ -1783,8 +1783,9 @@ function renderHabitDetailChart(habit, rangeKey) {
     total += value;
   }
 
-  const maxValue = Math.max(0, ...values.map((item) => item.value));
-  const scaleMax = maxValue > 0 ? maxValue * 1.1 : 0;
+  let maxValue = Math.max(0, ...values.map((item) => item.value));
+  if (maxValue <= 0) maxValue = 1;
+  const scaleMax = maxValue * 1.08;
   $habitDetailChart.innerHTML = "";
   const formatTick = (value) => {
     if (goal === "time") return formatMinutes(Math.round(value));
@@ -1794,8 +1795,8 @@ function renderHabitDetailChart(habit, rangeKey) {
 
   const axis = document.createElement("div");
   axis.className = "habit-detail-chart-axis";
-  const half = maxValue ? Math.ceil(maxValue / 2) : 0;
-  const ticks = maxValue ? [maxValue, half, 0] : [0, 0, 0];
+  const half = scaleMax / 2;
+  const ticks = [scaleMax, half, 0];
   ticks.forEach((tick) => {
     const tickEl = document.createElement("span");
     tickEl.textContent = formatTick(tick);
@@ -1817,7 +1818,7 @@ function renderHabitDetailChart(habit, rangeKey) {
     bar.type = "button";
     const heightPct = scaleMax ? (item.value / scaleMax) * 100 : 0;
     bar.className = `habit-detail-bar${item.value ? "" : " is-empty"}`;
-    bar.style.height = `${Math.max(0, heightPct)}%`;
+    bar.style.setProperty("--h", Math.max(0, heightPct).toFixed(2));
     const formattedValue = formatTick(item.value);
     const labelValue = goal === "check"
       ? (item.value ? "✓" : "—")
@@ -1840,6 +1841,16 @@ function renderHabitDetailChart(habit, rangeKey) {
     barItem.appendChild(label);
     barsWrap.appendChild(barItem);
   });
+
+  if (values.length) {
+    const samplePct = scaleMax ? (values[0].value / scaleMax) * 100 : 0;
+    console.debug("[habit-detail chart]", {
+      values: values.map((item) => item.value),
+      maxVal: maxValue,
+      scaleMax,
+      sampleH: `${Math.max(0, samplePct).toFixed(2)}%`
+    });
+  }
 
   $habitDetailChart.appendChild(axis);
   $habitDetailChart.appendChild(barsWrap);

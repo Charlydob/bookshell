@@ -492,11 +492,21 @@
 <div class="habits-views">
 <div class="habits-panel is-active" data-panel="today">
 <div class="habit-week-timeline" id="habit-week-timeline" aria-label="Semana actual"></div>
+<div class="habit-today-search" id="habit-today-search">
+  <span class="habit-search-icon" aria-hidden="true">🔍</span>
+  <input autocomplete="off" class="habit-search-input" id="habit-today-search-input" inputmode="search" placeholder="Buscar hábito…" type="search"/>
+  <button class="habit-search-clear" id="habit-today-search-clear" type="button" aria-label="Limpiar búsqueda">✕</button>
+</div>
+<div class="habit-search-empty" id="habit-today-search-empty" style="display:none;">
+  <div class="habit-search-empty-text">No hay hábitos que coincidan</div>
+  <button class="btn ghost btn-compact" id="habit-today-search-reset" type="button">Limpiar</button>
+</div>
 <div class="habit-custom-groups" id="habit-custom-groups"></div>
 <details class="habit-accordion habit-today-accordion" id="habits-today-acc-count" open>
 <summary>
 <div class="habit-accordion-title">Contadores</div>
 <div class="habit-accordion-meta" id="habits-today-count-meta">—</div>
+<div class="habit-accordion-preview" id="habits-today-count-preview">—</div>
 </summary>
 <div class="habit-accordion-body">
 <div class="habits-subgroup">
@@ -558,6 +568,7 @@
 <summary>
 <div class="habit-accordion-title">Por tiempo</div>
 <div class="habit-accordion-meta" id="habits-today-time-meta">—</div>
+<div class="habit-accordion-preview" id="habits-today-time-preview">—</div>
 </summary>
 <div class="habit-accordion-body">
 <div class="habits-subgroup">

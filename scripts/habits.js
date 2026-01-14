@@ -961,6 +961,12 @@ const $habitTodayTimeEmpty = document.getElementById("habits-today-time-empty");
 const $habitTodayTimeDoneEmpty = document.getElementById("habits-today-time-done-empty");
 const $habitTodayCountMeta = document.getElementById("habits-today-count-meta");
 const $habitTodayTimeMeta = document.getElementById("habits-today-time-meta");
+const $habitTodayCountPreview = document.getElementById("habits-today-count-preview");
+const $habitTodayTimePreview = document.getElementById("habits-today-time-preview");
+const $habitTodaySearchInput = document.getElementById("habit-today-search-input");
+const $habitTodaySearchClear = document.getElementById("habit-today-search-clear");
+const $habitTodaySearchEmpty = document.getElementById("habit-today-search-empty");
+const $habitTodaySearchReset = document.getElementById("habit-today-search-reset");
 
 // Hoy (grupos plegables)
 const $todayCountPendingPrivateWrap = document.getElementById("habits-today-count-pending-private-wrap");
@@ -2005,13 +2011,16 @@ function buildTodayCard(habit, dateKey, dayData, metaText, streak, daysDone) {
   card.setAttribute("role", "button");
   card.tabIndex = 0;
   setHabitColorVars(card, habit);
+  const habitName = habit.name || "Hábito";
+  card.dataset.habitName = habitName;
+  card.dataset.habitEmoji = habit.emoji || "";
 
   const left = document.createElement("div");
   left.className = "habit-card-left";
   left.innerHTML = `
         <button type="button" class="habit-emoji habit-icon" aria-label="Editar hábito">${habit.emoji || "🏷️"}</button>
         <div>
-          <div class="habit-name">${habit.name}</div>
+          <div class="habit-name">${habitName}</div>
           <div class="habit-meta-row">
             <div class="habit-meta">${metaText}</div>
             <div class="habit-streak" title="Racha actual">🔥 ${streak}</div>
@@ -2099,6 +2108,171 @@ function buildTodayCard(habit, dateKey, dayData, metaText, streak, daysDone) {
   });
 
   return card;
+}
+
+let todaySearchTimer = null;
+let todaySearchSnapshot = null;
+
+function normalizeSearchTerm(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function buildNormalizedMap(value) {
+  const raw = String(value || "");
+  let normalized = "";
+  const map = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    const chunk = raw[i].normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (!chunk) continue;
+    for (let j = 0; j < chunk.length; j += 1) {
+      normalized += chunk[j].toLowerCase();
+      map.push(i);
+    }
+  }
+  return { normalized, map };
+}
+
+function findNormalizedMatchRange(text, query) {
+  if (!query) return null;
+  const { normalized, map } = buildNormalizedMap(text);
+  const idx = normalized.indexOf(query);
+  if (idx === -1) return null;
+  const start = map[idx];
+  const end = map[idx + query.length - 1] + 1;
+  return { start, end };
+}
+
+function escapeHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;"
+  }[char]));
+}
+
+function applyHabitHighlight(card, query) {
+  const nameEl = card.querySelector(".habit-name");
+  if (!nameEl) return;
+  const original = card.dataset.habitName || nameEl.textContent || "";
+  if (!query) {
+    nameEl.textContent = original;
+    return;
+  }
+  const match = findNormalizedMatchRange(original, query);
+  if (!match) {
+    nameEl.textContent = original;
+    return;
+  }
+  const { start, end } = match;
+  nameEl.innerHTML = `${escapeHtml(original.slice(0, start))}<span class="habit-highlight">${escapeHtml(original.slice(start, end))}</span>${escapeHtml(original.slice(end))}`;
+}
+
+function updateTodaySummaryMeta(countPending, countDone, timePending, timeDone, isFiltered = false) {
+  const countTotal = countPending + countDone;
+  const timeTotal = timePending + timeDone;
+  const countText = countTotal ? `Pend: ${countPending} · Hechos: ${countDone}` : "—";
+  const timeText = timeTotal ? `Pend: ${timePending} · Hechos: ${timeDone}` : "—";
+  const countPreview = countTotal ? countText : "0 hábitos";
+  const timePreview = timeTotal ? timeText : "0 hábitos";
+
+  if ($habitTodayCountMeta) {
+    $habitTodayCountMeta.textContent = countText;
+    if (!isFiltered) $habitTodayCountMeta.dataset.full = countText;
+  }
+  if ($habitTodayTimeMeta) {
+    $habitTodayTimeMeta.textContent = timeText;
+    if (!isFiltered) $habitTodayTimeMeta.dataset.full = timeText;
+  }
+  if ($habitTodayCountPreview) {
+    $habitTodayCountPreview.textContent = countPreview;
+    if (!isFiltered) $habitTodayCountPreview.dataset.full = countPreview;
+  }
+  if ($habitTodayTimePreview) {
+    $habitTodayTimePreview.textContent = timePreview;
+    if (!isFiltered) $habitTodayTimePreview.dataset.full = timePreview;
+  }
+}
+
+function restoreTodaySummaryMeta() {
+  if ($habitTodayCountMeta?.dataset.full) $habitTodayCountMeta.textContent = $habitTodayCountMeta.dataset.full;
+  if ($habitTodayTimeMeta?.dataset.full) $habitTodayTimeMeta.textContent = $habitTodayTimeMeta.dataset.full;
+  if ($habitTodayCountPreview?.dataset.full) $habitTodayCountPreview.textContent = $habitTodayCountPreview.dataset.full;
+  if ($habitTodayTimePreview?.dataset.full) $habitTodayTimePreview.textContent = $habitTodayTimePreview.dataset.full;
+}
+
+function captureTodayDetailsSnapshot(panel) {
+  todaySearchSnapshot = Array.from(panel.querySelectorAll("details")).map((detail) => ({
+    detail,
+    open: detail.open,
+    display: detail.style.display
+  }));
+}
+
+function restoreTodayDetailsSnapshot() {
+  if (!todaySearchSnapshot) return;
+  todaySearchSnapshot.forEach(({ detail, open, display }) => {
+    detail.open = open;
+    detail.style.display = display;
+  });
+  todaySearchSnapshot = null;
+}
+
+function applyTodaySearch(value) {
+  const panel = document.querySelector('.habits-panel[data-panel="today"]');
+  if (!panel) return;
+  const raw = String(value || "").trim();
+  const normalizedQuery = normalizeSearchTerm(raw);
+  const hasQuery = raw.length > 0;
+
+  if (hasQuery && !todaySearchSnapshot) captureTodayDetailsSnapshot(panel);
+  if (!hasQuery) restoreTodayDetailsSnapshot();
+
+  if ($habitTodaySearchClear) {
+    $habitTodaySearchClear.classList.toggle("is-visible", hasQuery);
+  }
+
+  requestAnimationFrame(() => {
+    const cards = panel.querySelectorAll(".habit-card");
+    let visibleCount = 0;
+    cards.forEach((card) => {
+      const name = card.dataset.habitName || "";
+      const emoji = card.dataset.habitEmoji || "";
+      const matchesName = normalizedQuery && normalizeSearchTerm(name).includes(normalizedQuery);
+      const matchesEmoji = raw && emoji && emoji.includes(raw);
+      const matches = !hasQuery || matchesName || matchesEmoji;
+      card.style.display = matches ? "" : "none";
+      if (matches) visibleCount += 1;
+      applyHabitHighlight(card, matchesName ? normalizedQuery : "");
+    });
+
+    if (hasQuery) {
+      const details = panel.querySelectorAll("details");
+      details.forEach((detail) => {
+        const hasVisible = Array.from(detail.querySelectorAll(".habit-card")).some((card) => card.style.display !== "none");
+        detail.style.display = hasVisible ? "" : "none";
+        detail.open = hasVisible;
+      });
+    } else {
+      restoreTodaySummaryMeta();
+    }
+
+    if (hasQuery) {
+      const countPending = Array.from($habitTodayCountPending?.querySelectorAll(".habit-card") || []).filter((card) => card.style.display !== "none").length;
+      const countDone = Array.from($habitTodayCountDone?.querySelectorAll(".habit-card") || []).filter((card) => card.style.display !== "none").length;
+      const timePending = Array.from($habitTodayTimePending?.querySelectorAll(".habit-card") || []).filter((card) => card.style.display !== "none").length;
+      const timeDone = Array.from($habitTodayTimeDone?.querySelectorAll(".habit-card") || []).filter((card) => card.style.display !== "none").length;
+      updateTodaySummaryMeta(countPending, countDone, timePending, timeDone, true);
+    }
+
+    if ($habitTodaySearchEmpty) {
+      $habitTodaySearchEmpty.style.display = hasQuery && !visibleCount ? "flex" : "none";
+    }
+  });
 }
 
 function renderToday() {
@@ -2246,8 +2420,7 @@ function renderToday() {
   $habitTodayTimeEmpty.style.display = timePending ? "none" : "block";
   $habitTodayTimeDoneEmpty.style.display = timeDone ? "none" : "block";
 
-  if ($habitTodayCountMeta) $habitTodayCountMeta.textContent = countTotal ? `Pend: ${countPending} · Hechos: ${countDone}` : "—";
-  if ($habitTodayTimeMeta) $habitTodayTimeMeta.textContent = timeTotal ? `Pend: ${timePending} · Hechos: ${timeDone}` : "—";
+  updateTodaySummaryMeta(countPending, countDone, timePending, timeDone);
 
   const showGroup = (wrap, list) => {
     if (!wrap || !list) return;
@@ -2281,6 +2454,10 @@ function renderToday() {
   updateGroupMeta($todayTimePendingLowWrap, $todayTimePendingLow);
   updateGroupMeta($todayTimeDonePrivateWrap, $todayTimeDonePrivate);
   updateGroupMeta($todayTimeDoneLowWrap, $todayTimeDoneLow);
+
+  if ($habitTodaySearchInput?.value.trim()) {
+    applyTodaySearch($habitTodaySearchInput.value);
+  }
 }
 
 function formatDaysLabel(days = []) {
@@ -5266,6 +5443,28 @@ function bindEvents() {
   $habitSessionModal?.addEventListener("focusin", handleSessionModalFocus);
   window.visualViewport?.addEventListener("resize", updateSessionModalViewportPadding);
   window.visualViewport?.addEventListener("scroll", updateSessionModalViewportPadding);
+
+  const clearTodaySearch = () => {
+    if (!$habitTodaySearchInput) return;
+    $habitTodaySearchInput.value = "";
+    applyTodaySearch("");
+    $habitTodaySearchInput.focus();
+  };
+
+  $habitTodaySearchInput?.addEventListener("input", () => {
+    if (todaySearchTimer) window.clearTimeout(todaySearchTimer);
+    todaySearchTimer = window.setTimeout(() => {
+      applyTodaySearch($habitTodaySearchInput?.value || "");
+    }, 150);
+  });
+  $habitTodaySearchInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      clearTodaySearch();
+    }
+  });
+  $habitTodaySearchClear?.addEventListener("click", clearTodaySearch);
+  $habitTodaySearchReset?.addEventListener("click", clearTodaySearch);
 
   $habitManualClose?.addEventListener("click", closeManualTimeModal);
   $habitManualCancel?.addEventListener("click", closeManualTimeModal);

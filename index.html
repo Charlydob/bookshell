@@ -479,9 +479,9 @@
   <div class="habits-title"></div>
   </header>
 <div class="habit-quick-actions habit-quick-actions-bar">
-<button class="btn ghost btn-compact" id="habit-add-time">+ Añadir tiempo</button>
-<button class="btn ghost btn-compact" id="habit-fab-add">+ Añadir hábito</button>
-<button class="btn ghost btn-compact" id="habit-session-toggle">▶︎ Empezar sesión</button>
+<button class="btn ghost btn-compact habit-quick-btn" id="habit-add-time">+ Añadir tiempo</button>
+<button class="btn ghost btn-compact habit-quick-btn" id="habit-fab-add">+ Añadir hábito</button>
+<button class="btn ghost btn-compact habit-quick-btn" id="habit-session-toggle">▶︎ Empezar sesión</button>
 </div>
 <div aria-label="Vistas de hábitos" class="habits-subtabs" role="tablist">
 <button aria-selected="true" class="habit-subtab is-active" data-tab="today" role="tab">Hoy</button>
@@ -627,7 +627,7 @@
 <div class="habit-reports">
 <div class="habit-kpi-grid">
 <div class="habit-kpi-card">
-<div class="habit-kpi-label">Hechos hoy</div>
+<div class="habit-kpi-label" id="habit-kpi-today-label">Hechos hoy</div>
 <div class="habit-kpi-value" id="habit-kpi-today">0</div>
 </div>
 <div class="habit-kpi-card">
@@ -636,11 +636,11 @@
 <div class="habit-kpi-sub" id="habit-kpi-total-hours-range">—</div>
 </div>
 <div class="habit-kpi-card">
-<div class="habit-kpi-label">Días contabilizados total</div>
+<div class="habit-kpi-label" id="habit-kpi-active-days-label">Días contabilizados total</div>
 <div class="habit-kpi-value" id="habit-kpi-active-days-total">0</div>
 </div>
 <div class="habit-kpi-card">
-<div class="habit-kpi-label">Racha total</div>
+<div class="habit-kpi-label" id="habit-kpi-streak-label">Racha total</div>
 <div class="habit-kpi-value" id="habit-kpi-streak-total">0</div>
 <div class="habit-kpi-sub" id="habit-kpi-streak-total-sub">—</div>
 </div>
@@ -672,9 +672,10 @@
 <div class="habit-card-sub" id="habit-records-sub">Últimos 30 días</div>
 </div>
 <div aria-label="Rango de récords" class="habit-range-toggle habit-records-range" role="group">
-<button class="habit-range-btn habit-records-range-btn" data-range="7">7D</button>
-<button class="habit-range-btn habit-records-range-btn is-active" data-range="30">30D</button>
-<button class="habit-range-btn habit-records-range-btn" data-range="90">90D</button>
+<button class="habit-range-btn habit-records-range-btn" data-range="week">Semana</button>
+<button class="habit-range-btn habit-records-range-btn is-active" data-range="month">Mes</button>
+<button class="habit-range-btn habit-records-range-btn" data-range="year">Año</button>
+<button class="habit-range-btn habit-records-range-btn" data-range="total">Total</button>
 </div>
 </div>
 <div class="habit-records-grid">
@@ -711,11 +712,11 @@
 </select>
 </label>
 <div aria-label="Rango de tiempo" class="habit-range-toggle" role="group">
-<button class="habit-range-btn is-active" data-range="day">Día</button>
+<button class="habit-range-btn" data-range="day">Día</button>
 <button class="habit-range-btn" data-range="week">Semana</button>
 <button class="habit-range-btn" data-range="month">Mes</button>
 <button class="habit-range-btn" data-range="year">Año</button>
-<button class="habit-range-btn" data-range="total">Total</button>
+<button class="habit-range-btn is-active" data-range="total">Total</button>
 </div>
 </div>
 <div class="habit-donut-body">

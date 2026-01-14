@@ -99,7 +99,7 @@
 .habits-views {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .habits-panel {
@@ -108,6 +108,74 @@
 
 .habits-panel.is-active {
   display: block;
+}
+
+.habit-today-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.05);
+  box-shadow: 0 8px 20px rgba(20, 20, 40, 0.18);
+}
+
+.habit-search-icon {
+  font-size: 14px;
+  opacity: 0.7;
+}
+
+.habit-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--txt);
+  font-size: 14px;
+  outline: none;
+}
+
+.habit-search-input::placeholder {
+  color: var(--txt-soft);
+  opacity: 0.7;
+}
+
+.habit-search-clear {
+  border: none;
+  background: rgba(255,255,255,0.08);
+  color: var(--txt);
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.habit-search-clear.is-visible {
+  opacity: 0.9;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+.habit-search-empty {
+  margin-top: 6px;
+  padding: 14px 12px;
+  border-radius: 14px;
+  border: 1px dashed rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.04);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.habit-search-empty-text {
+  font-size: 13px;
+  color: var(--txt-soft);
 }
 
 .habit-card,
@@ -129,17 +197,17 @@
 .habit-card-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
 .habit-card {
   border-radius: var(--radius-md);
-  padding: 10px 12px;
+  padding: 12px 14px;
   background: var(--glass-2);
   border: 1px solid rgba(255,255,255,0.08);
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   cursor: pointer;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
@@ -190,6 +258,13 @@
   line-height: 1.1;
 }
 
+.habit-name .habit-highlight {
+  color: rgba(245, 181, 255, 0.95);
+  box-shadow: inset 0 -6px 0 rgba(140, 120, 255, 0.25);
+  border-radius: 6px;
+  padding: 0 2px;
+}
+
 .habit-streak {
   display: inline-flex;
   align-items: center;
@@ -201,12 +276,14 @@
   font-size: 12px;
   font-weight: 700;
   color: var(--txt);
+  opacity: 0.8;
 }
 
 .habit-meta {
   font-size: 12px;
   color: var(--txt-soft);
   line-height: 1.2;
+  opacity: 0.75;
 }
 
 .habit-meta-row {
@@ -270,7 +347,7 @@
 .habits-week-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
 .habit-week-card {
@@ -983,10 +1060,16 @@
 }
 
 .habit-accordion {
-  background: var(--glass-2);
+  background: rgba(255,255,255,0.04);
   border-radius: var(--radius-md);
   border: 1px solid rgba(255,255,255,0.08);
   overflow: hidden;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.habit-accordion[open] {
+  border-color: rgba(140, 120, 255, 0.35);
+  box-shadow: 0 8px 22px rgba(92, 72, 180, 0.25);
 }
 
 .habit-accordion summary {
@@ -995,16 +1078,18 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 32px 12px 12px;
+  padding: 12px 44px 12px 14px;
   cursor: pointer;
   position: relative;
+  min-height: 44px;
 }
 
 .habit-accordion summary::after {
   content: "⌄";
   position: absolute;
-  right: 12px;
+  right: 14px;
   color: var(--txt-soft);
+  font-size: 14px;
   transition: transform 0.2s ease;
 }
 
@@ -1023,19 +1108,49 @@
 .habit-accordion-meta {
   font-size: 12px;
   color: var(--txt-soft);
+  opacity: 0.75;
+  margin-left: auto;
+}
+
+.habit-accordion-preview {
+  font-size: 12px;
+  color: var(--txt-soft);
+  opacity: 0.6;
+  margin-left: auto;
+  display: none;
+}
+
+.habit-accordion:not([open]) .habit-accordion-meta {
+  display: none;
+}
+
+.habit-accordion:not([open]) .habit-accordion-preview {
+  display: block;
 }
 
 .habit-accordion-body {
-  padding: 0 12px 12px;
+  padding: 6px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: rgba(255,255,255,0.02);
 }
 
 /* Subgrupos (Privados / Poco uso) dentro de Pendientes/Hechos */
 .habit-mini-group {
-  margin-top: 10px;
+  margin-top: 12px;
+  background: rgba(255,255,255,0.02);
+  border-color: rgba(255,255,255,0.06);
 }
 
 .habit-mini-group summary {
-  padding: 10px 32px 10px 10px;
+  padding: 10px 36px 10px 12px;
+  min-height: 42px;
+}
+
+.habit-mini-group .habit-accordion-body {
+  padding: 8px 12px 12px;
+  background: transparent;
 }
 
 .habit-mini-group .habit-accordion-meta {
@@ -1047,7 +1162,7 @@
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
-  padding: 8px 4px 4px;
+  padding: 10px 6px 6px;
   background: rgba(255,255,255,0.03);
   border-radius: var(--radius-md);
   border: 1px solid rgba(255,255,255,0.08);
@@ -1130,21 +1245,22 @@
 .habit-custom-groups {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
 }
 
 .habit-custom-group {
   border-radius: var(--radius-md);
   border: 1px solid rgba(255,255,255,0.08);
-  background: rgba(255,255,255,0.04);
+  background: rgba(255,255,255,0.03);
 }
 
 .habit-custom-group summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 12px 14px;
   cursor: pointer;
+  min-height: 44px;
 }
 
 .habit-custom-group .habit-accordion-title {
@@ -1157,7 +1273,8 @@
 }
 
 .habit-custom-group .habit-accordion-body {
-  padding: 0 12px 12px;
+  padding: 6px 14px 14px;
+  background: rgba(255,255,255,0.02);
 }
 
 .habit-session-overlay {
@@ -1453,9 +1570,9 @@
 
 /* === Hoy: agrupación por tipo (contadores / tiempo) === */
 .habit-today-accordion { margin-bottom: 10px; }
-.habit-today-accordion .habit-accordion-body { padding-top: 8px; }
-.habits-subgroup { display: flex; flex-direction: column; gap: 8px; }
-.habits-subgroup + .habits-subgroup { margin-top: 12px; }
+.habit-today-accordion .habit-accordion-body { padding-top: 10px; }
+.habits-subgroup { display: flex; flex-direction: column; gap: 12px; }
+.habits-subgroup + .habits-subgroup { margin-top: 16px; }
 .habits-subgroup-title { font-size: 12px; font-weight: 700; color: var(--txt-soft); margin: 2px 2px 0; }
 
 

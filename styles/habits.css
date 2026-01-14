@@ -1920,9 +1920,9 @@
 .habit-detail-chart-bars {
   display: flex;
   align-items: flex-end;
-  gap: 4px;
+  gap: 8px;
   flex: 1;
-  min-height: 160px;
+  height: 180px;
   padding-bottom: 18px;
   overflow-x: auto;
 }
@@ -1937,6 +1937,7 @@
 
 .habit-detail-bar {
   width: 10px;
+  height: calc(var(--h, 0) * 1%);
   border-radius: 6px 6px 3px 3px;
   border: none;
   padding: 0;

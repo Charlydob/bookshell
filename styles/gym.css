@@ -669,3 +669,33 @@
     padding: 0 8px;
   }
 }
+/* 1) Que las celdas puedan encoger (CLAVE) */
+.gym-sets-row > *, .gym-sets-header > * { min-width: 0; }
+.gym-sets-row input { min-width: 0; box-sizing: border-box; }
+
+/* 2) Grid más flexible: no uses tantos px fijos */
+.gym-sets-header,
+.gym-sets-row{
+  display: grid;
+  grid-template-columns: 28px 52px 56px minmax(0, 1fr) 40px; /* Set, Max, Reps, Kg(+BW), ✓ */
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+
+/* 3) Inputs compactos */
+.gym-sets-row input{
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: 12px;
+}
+
+/* 4) La celda de KG (input + BW) también flexible */
+.gym-kg-cell{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px; /* input + BW */
+  gap: 6px;
+  align-items: center;
+}
+.gym-bw-toggle{ width: 40px; justify-self: end; }

@@ -8,16 +8,26 @@
 }
 
 .view-gym {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   padding-top: calc(12px + env(safe-area-inset-top));
   padding-bottom: calc(12px + var(--nav-h) + env(safe-area-inset-bottom));
 }
 
 .view-gym .scroll {
+  flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  max-height: 100dvh;
+  max-height: none;
   contain: content;
+}
+
+@supports (-webkit-touch-callout: none) {
+  .view-gym .scroll {
+    contain: initial;
+  }
 }
 
 .gym-wrap {
@@ -77,7 +87,7 @@
   border: 1px solid var(--gym-border);
   border-radius: 18px;
   padding: 14px;
-  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
 }
 
 .gym-placeholder {
@@ -340,6 +350,7 @@
   border: 1px solid var(--gym-border);
   border-radius: 18px;
   padding: 14px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -372,8 +383,8 @@
 .gym-sets-header,
 .gym-sets-row {
   display: grid;
-  grid-template-columns: 34px 70px 64px 70px 64px 44px;
-  gap: 10px;
+  grid-template-columns: 28px 56px 56px minmax(96px, 1fr) 56px 40px;
+  gap: 8px;
   align-items: center;
   font-size: 12px;
 }
@@ -388,7 +399,7 @@
 .gym-sets-row {
   background: rgba(255, 255, 255, 0.04);
   border-radius: 12px;
-  padding: 8px;
+  padding: 6px;
 }
 
 .gym-sets-row > * {
@@ -411,7 +422,7 @@
 
 .gym-kg-cell {
   display: grid;
-  grid-template-columns: 44px 1fr;
+  grid-template-columns: 38px 1fr;
   align-items: center;
   gap: 6px;
 }
@@ -425,7 +436,7 @@
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  width: 44px;
+  width: 38px;
   height: 28px;
   justify-self: center;
 }

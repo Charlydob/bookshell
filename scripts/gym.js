@@ -142,6 +142,7 @@ if ($viewGym) {
   let cardioResumeAt = null;
   let selectedMuscle = "All";
   let createMuscles = new Set(["Chest"]);
+  let pendingHomeRerender = false;
 
   init();
 
@@ -280,7 +281,7 @@ if ($viewGym) {
         if (!target.checked) {
           exercise.sets[setIndex].extraKg = null;
         }
-        renderWorkoutEditor();
+        updateSetRowForBodyweight(row, workout, exerciseId, setIndex);
       } else {
         const value = parseSetInput(field, target.value);
         exercise.sets[setIndex][field] = value;
@@ -398,8 +399,13 @@ if ($viewGym) {
     onValue(workoutsRef, (snap) => {
       workoutsByDate = snap.val() || {};
       syncCurrentWorkout();
-      renderHistory();
-      renderCalendar();
+      if (isHomeActive()) {
+        renderHistory();
+        renderCalendar();
+        pendingHomeRerender = false;
+      } else {
+        pendingHomeRerender = true;
+      }
       if (!workoutDraft) {
         renderWorkoutEditor();
       }
@@ -586,6 +592,15 @@ if ($viewGym) {
     } else {
       stopDurationTicker();
     }
+    if (name === "home" && pendingHomeRerender) {
+      renderHistory();
+      renderCalendar();
+      pendingHomeRerender = false;
+    }
+  }
+
+  function isHomeActive() {
+    return $gymHome.classList.contains("gym-screen-active");
   }
 
   function openExerciseModal() {
@@ -1097,6 +1112,23 @@ if ($viewGym) {
         `;
       })
       .join("");
+  }
+
+  function updateSetRowForBodyweight(row, workout, exerciseId, setIndex) {
+    if (!row || !workout?.exercises?.[exerciseId]) return;
+    const set = workout.exercises[exerciseId].sets?.[setIndex];
+    if (!set) return;
+    const isBw = Boolean(set.useBodyweight);
+    const statsMap = buildExerciseStatsMap(workout.id);
+    const lastSet = statsMap[exerciseId]?.lastSet || null;
+    const kgInput = row.querySelector(".gym-input.kg");
+    const toggleLabel = row.querySelector(".gym-bw-toggle");
+    if (!kgInput || !toggleLabel) return;
+    const kgField = isBw ? "extraKg" : "kg";
+    kgInput.dataset.field = kgField;
+    kgInput.placeholder = getKgPlaceholder(lastSet, isBw);
+    kgInput.value = isBw ? (set.extraKg ?? "") : (set.kg ?? "");
+    toggleLabel.classList.toggle("is-active", isBw);
   }
 
   function renderMetrics() {

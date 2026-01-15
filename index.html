@@ -16,6 +16,7 @@
 <link href="styles/habits.css" rel="stylesheet"/>
 <link href="styles/media.css" rel="stylesheet"/>
 <link href="styles/world.css" rel="stylesheet"/>
+<link href="styles/gym.css" rel="stylesheet"/>
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="icons/favicon.ico" rel="icon"/>
 <link href="icons/favicon-32.png" rel="icon" sizes="32x32" type="image/png"/>
@@ -1193,6 +1194,118 @@
 </div>
 </section>
 
+<section class="view" id="view-gym">
+<div class="gym-wrap">
+<div class="gym-screen gym-screen-active" id="gym-home">
+<div class="gym-hero">
+<div>
+<div class="gym-title">Gym</div>
+<div class="gym-subtitle">Planifica y guarda tus entrenos.</div>
+</div>
+</div>
+
+<div class="gym-section">
+<div class="gym-section-header">
+<div class="gym-section-title">Workouts</div>
+<select class="gym-select" id="gym-history-range">
+<option value="all">Todo el tiempo</option>
+</select>
+</div>
+<button class="gym-btn gym-btn-primary" id="gym-start-workout" type="button">Empezar un entrenamiento vacío</button>
+</div>
+
+<div class="gym-section">
+<div class="gym-section-title">Bodyweight</div>
+<div class="gym-card gym-placeholder">Pronto podrás registrar sesiones de peso corporal.</div>
+</div>
+
+<div class="gym-section">
+<div class="gym-section-header">
+<div class="gym-section-title">Historial</div>
+</div>
+<div class="gym-calendar">
+<div class="gym-calendar-header">
+<button class="icon-btn icon-btn-small" id="gym-cal-prev" type="button">‹</button>
+<div class="gym-calendar-title" id="gym-cal-label"></div>
+<button class="icon-btn icon-btn-small" id="gym-cal-next" type="button">›</button>
+</div>
+<div class="gym-calendar-grid" id="gym-calendar-grid"></div>
+</div>
+<div class="gym-history-list" id="gym-history-list"></div>
+<div class="gym-empty hidden" id="gym-history-empty">Aún no tienes entrenamientos registrados.</div>
+</div>
+</div>
+
+<div class="gym-screen" id="gym-workout">
+<div class="gym-workout-header">
+<button class="icon-btn icon-btn-small" id="gym-back" type="button">‹</button>
+<div class="gym-workout-title">
+<input id="gym-workout-name" placeholder="Nombre del entrenamiento" type="text"/>
+<input id="gym-workout-date" type="date"/>
+</div>
+<button class="gym-btn gym-btn-primary" id="gym-finish-workout" type="button">Finalizar</button>
+</div>
+<div class="gym-metrics">
+<div class="gym-metric">
+<div class="gym-metric-label">Duración</div>
+<div class="gym-metric-value" id="gym-metric-duration">0m</div>
+</div>
+<div class="gym-metric">
+<div class="gym-metric-label">Volumen</div>
+<div class="gym-metric-value" id="gym-metric-volume">0 kg</div>
+</div>
+<div class="gym-metric">
+<div class="gym-metric-label">Ejercicios</div>
+<div class="gym-metric-value" id="gym-metric-exercises">0</div>
+</div>
+</div>
+<div class="gym-exercise-list" id="gym-workout-exercises"></div>
+<div class="gym-workout-actions">
+<button class="gym-btn gym-btn-ghost" id="gym-discard-workout" type="button">Descartar</button>
+<button class="gym-btn gym-btn-primary" id="gym-add-exercise" type="button">+ Añadir ejercicios</button>
+</div>
+</div>
+</div>
+
+<div class="modal-backdrop hidden" id="gym-exercise-modal">
+<div class="modal gym-modal">
+<div class="modal-header">
+<div class="modal-title">Añadir ejercicios</div>
+<button class="icon-btn" id="gym-exercise-close" type="button">✕</button>
+</div>
+<div class="modal-scroll gym-modal-body">
+<input class="gym-search" id="gym-exercise-search" placeholder="Buscar ejercicio" type="search"/>
+<div class="gym-chip-row" id="gym-muscle-chips"></div>
+<div class="gym-exercise-list-modal" id="gym-exercise-list"></div>
+<div class="gym-create">
+<div class="gym-create-title">Crear ejercicio</div>
+<input id="gym-create-name" placeholder="Nombre del ejercicio" type="text"/>
+<div class="gym-chip-row" id="gym-create-muscle-chips"></div>
+<button class="gym-btn gym-btn-primary" id="gym-create-exercise" type="button">Crear</button>
+</div>
+</div>
+</div>
+</div>
+
+<div class="modal-backdrop hidden" id="gym-template-modal">
+<div class="modal gym-modal">
+<div class="modal-header">
+<div class="modal-title">Nuevo entrenamiento</div>
+<button class="icon-btn" id="gym-template-close" type="button">✕</button>
+</div>
+<div class="modal-scroll gym-modal-body">
+<label class="gym-field">
+<span>Nombre</span>
+<input id="gym-template-name" placeholder="Ej. Pierna" type="text"/>
+</label>
+<button class="gym-btn gym-btn-primary" id="gym-create-empty" type="button">Crear nuevo</button>
+<div class="gym-template-list" id="gym-template-list"></div>
+<div class="gym-empty hidden" id="gym-template-empty">No tienes plantillas guardadas.</div>
+</div>
+</div>
+</div>
+</section>
+
 <nav class="bottom-nav"><button class="nav-btn nav-btn-active" data-view="view-main">Inicio</button>
 <button class="nav-btn" data-view="view-books">Libros</button>
 <button class="nav-btn" data-view="view-videos">Vídeos</button>
@@ -1200,6 +1313,7 @@
 <button class="nav-btn" data-view="view-habits">Hábitos</button>
 <button class="nav-btn" data-view="view-media">Media</button>
 <button class="nav-btn" data-view="view-world">Mundo</button>
+<button class="nav-btn" data-view="view-gym">Gym</button>
 </nav>
 
 <!-- MODAL LIBRO -->
@@ -2017,6 +2131,7 @@
 <script src="scripts/dashboard.js" type="module"></script>
 <script src="scripts/media.js" type="module"></script>
 <script src="scripts/world.js" type="module"></script>
+<script src="scripts/gym.js" type="module"></script>
 <datalist id="country-options"></datalist>
 </body>
 </html>

@@ -1,9 +1,21 @@
-#view-gym {
+#view-gym,
+.view-gym {
   --gym-accent: #f5a623;
   --gym-accent-soft: rgba(245, 166, 35, 0.28);
   --gym-card: rgba(18, 20, 30, 0.9);
   --gym-border: rgba(255, 255, 255, 0.08);
   --gym-success: #22c55e;
+}
+
+.view-gym {
+  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-bottom: calc(12px + var(--nav-h) + env(safe-area-inset-bottom));
+}
+
+.view-gym .scroll {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  max-height: 100dvh;
 }
 
 .gym-wrap {
@@ -240,6 +252,26 @@
   padding: 0 4px;
 }
 
+.gym-header {
+  display: grid;
+  gap: 10px;
+}
+
+.gym-header .gym-title,
+.gym-header .gym-date {
+  width: min(92vw, 420px);
+  margin: 0 auto;
+  font-size: 14px;
+}
+
+.gym-header .gym-title {
+  height: 44px;
+}
+
+.gym-header .gym-date {
+  height: 44px;
+}
+
 .gym-workout-title {
   flex: 1;
   display: flex;
@@ -320,7 +352,7 @@
 .gym-sets-header,
 .gym-sets-row {
   display: grid;
-  grid-template-columns: 28px 1fr 60px 60px 54px 32px;
+  grid-template-columns: 28px 1fr 60px 80px 54px 32px;
   gap: 6px;
   align-items: center;
   font-size: 12px;
@@ -347,6 +379,46 @@
 .gym-input {
   padding: 6px 8px;
   text-align: center;
+}
+
+.gym-kg-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gym-bw-toggle {
+  border: 1px solid var(--gym-border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--txt-soft);
+  border-radius: 10px;
+  padding: 4px 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.gym-bw-toggle.is-active {
+  background: rgba(245, 166, 35, 0.2);
+  color: #fbead0;
+  border-color: rgba(245, 166, 35, 0.4);
+}
+
+.gym-bw-toggle input {
+  display: none;
+}
+
+.gym-unilateral-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #fbead0;
+  background: rgba(245, 166, 35, 0.18);
+  border: 1px solid rgba(245, 166, 35, 0.4);
+  border-radius: 999px;
+  padding: 3px 8px;
+  margin-top: 6px;
 }
 
 .gym-checkbox {
@@ -381,6 +453,10 @@
   background: rgba(10, 11, 18, 0.92);
 }
 
+.gym-modal-stacked {
+  z-index: 200;
+}
+
 .gym-modal-body {
   display: flex;
   flex-direction: column;
@@ -395,6 +471,15 @@
 
 .gym-create-toggle {
   align-self: flex-start;
+}
+
+.addex-actions {
+  position: sticky;
+  bottom: 0;
+  padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0));
+  display: flex;
+  justify-content: center;
 }
 
 .gym-empty button {
@@ -469,9 +554,64 @@
   font-weight: 600;
 }
 
+.gym-bodyweight-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.gym-body-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.gym-body-meta {
+  font-size: 12px;
+  color: var(--txt-soft);
+}
+
+.gym-cardio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gym-cardio-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--gym-border);
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.gym-cardio-title {
+  font-weight: 600;
+}
+
+.gym-cardio-meta {
+  font-size: 12px;
+  color: var(--txt-soft);
+  margin-top: 4px;
+}
+
+.gym-cardio-time {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.gym-cardio-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 @media (max-width: 380px) {
   .gym-sets-header,
   .gym-sets-row {
-    grid-template-columns: 24px 1fr 50px 50px 48px 28px;
+    grid-template-columns: 24px 1fr 50px 70px 48px 28px;
   }
 }

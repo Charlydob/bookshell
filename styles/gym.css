@@ -393,6 +393,14 @@
   gap: 10px;
 }
 
+.gym-create-toggle {
+  align-self: flex-start;
+}
+
+.gym-empty button {
+  margin-top: 8px;
+}
+
 .gym-exercise-row {
   display: flex;
   align-items: center;

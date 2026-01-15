@@ -64,6 +64,7 @@ if ($viewGym) {
   const $gymDiscardWorkout = document.getElementById("gym-discard-workout");
   const $gymAddExercise = document.getElementById("gym-add-exercise");
   const $gymBack = document.getElementById("gym-back");
+  const $gymWorkoutEmoji = document.getElementById("gym-workout-emoji");
   const $gymMetricDuration = document.getElementById("gym-metric-duration");
   const $gymMetricVolume = document.getElementById("gym-metric-volume");
   const $gymMetricExercises = document.getElementById("gym-metric-exercises");
@@ -236,6 +237,19 @@ if ($viewGym) {
         moveWorkoutDate(nextDate);
       }
     });
+
+    if ($gymWorkoutEmoji) {
+      $gymWorkoutEmoji.addEventListener("click", () => {
+        const workout = ensureWorkoutDraft();
+        if (!workout) return;
+        const nextEmoji = promptForEmoji(workout.emojiSnapshot);
+        if (nextEmoji === workout.emojiSnapshot) return;
+        workout.emojiSnapshot = nextEmoji;
+        scheduleWorkoutSave();
+        renderWorkoutEmoji(workout);
+        upsertTemplateFromWorkout(workout, { emoji: nextEmoji });
+      });
+    }
 
     $gymFinishWorkout.addEventListener("click", () => {
       finishWorkout();
@@ -613,6 +627,7 @@ if ($viewGym) {
       return;
     }
     $gymTemplateEmpty.classList.add("hidden");
+    const fragment = document.createDocumentFragment();
     list
       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
       .forEach((template) => {
@@ -628,8 +643,9 @@ if ($viewGym) {
           startWorkout({ name, templateId: template.id });
           closeTemplateModal();
         });
-        $gymTemplateList.appendChild(row);
+        fragment.appendChild(row);
       });
+    $gymTemplateList.appendChild(fragment);
   }
 
   function startWorkout({ name, templateId }) {
@@ -658,6 +674,7 @@ if ($viewGym) {
       startedAt: now,
       finishedAt: null,
       durationSec: 0,
+      emojiSnapshot: template?.emoji || null,
       exercises: exercisesData,
       totalReps: 0,
       totalVolumeKg: 0
@@ -677,6 +694,7 @@ if ($viewGym) {
       return;
     }
     $gymHistoryEmpty.classList.add("hidden");
+    const fragment = document.createDocumentFragment();
     workouts.forEach((workout) => {
       const exerciseNames = Object.values(workout.exercises || {}).map((ex) => ex.nameSnapshot);
       const chipList = exerciseNames.slice(0, 2);
@@ -701,8 +719,9 @@ if ($viewGym) {
       card.addEventListener("click", () => {
         openWorkout(workout.id);
       });
-      $gymHistoryList.appendChild(card);
+      fragment.appendChild(card);
     });
+    $gymHistoryList.appendChild(fragment);
   }
 
   function flattenCardioSessions() {
@@ -724,6 +743,7 @@ if ($viewGym) {
       return;
     }
     $gymCardioEmpty.classList.add("hidden");
+    const fragment = document.createDocumentFragment();
     sessions.forEach((session) => {
       const durationLabel = formatTimer(session.durationSec || 0);
       const distanceLabel = session.distanceKm ? `${formatKgValue(session.distanceKm)} km` : "Sin distancia";
@@ -739,8 +759,9 @@ if ($viewGym) {
       card.addEventListener("click", () => {
         openCardioModal(session);
       });
-      $gymCardioList.appendChild(card);
+      fragment.appendChild(card);
     });
+    $gymCardioList.appendChild(fragment);
   }
 
   function openCardioModal(session) {
@@ -958,14 +979,20 @@ if ($viewGym) {
     const startDay = (firstDay.getDay() + 6) % 7;
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const workoutDays = new Set(Object.keys(workoutsByDate || {}));
+    const workoutEmojiMap = buildWorkoutEmojiMap();
     const todayKey = dateKeyLocal(new Date());
     const labels = ["L", "M", "X", "J", "V", "S", "D"];
-    const cells = [];
+    const fragment = document.createDocumentFragment();
     labels.forEach((label) => {
-      cells.push(`<div class="gym-calendar-day is-header">${label}</div>`);
+      const cell = document.createElement("div");
+      cell.className = "gym-calendar-day is-header";
+      cell.textContent = label;
+      fragment.appendChild(cell);
     });
     for (let i = 0; i < startDay; i += 1) {
-      cells.push("<div class='gym-calendar-day'></div>");
+      const spacer = document.createElement("div");
+      spacer.className = "gym-calendar-day";
+      fragment.appendChild(spacer);
     }
     for (let day = 1; day <= daysInMonth; day += 1) {
       const dateKey = dateKeyLocal(new Date(year, month, day));
@@ -973,9 +1000,13 @@ if ($viewGym) {
       const classes = ["gym-calendar-day"];
       if (hasWorkout) classes.push("has-workout");
       if (dateKey === todayKey) classes.push("is-today");
-      cells.push(`<div class="${classes.join(" ")}">${day}</div>`);
+      const cell = document.createElement("div");
+      cell.className = classes.join(" ");
+      cell.textContent = getCalendarCellLabel(day, workoutEmojiMap[dateKey] || null);
+      fragment.appendChild(cell);
     }
-    $gymCalGrid.innerHTML = cells.join("");
+    $gymCalGrid.innerHTML = "";
+    $gymCalGrid.appendChild(fragment);
   }
 
   function openWorkout(workoutId) {
@@ -999,6 +1030,7 @@ if ($viewGym) {
     $gymWorkoutDate.value = workout.date || dateKeyLocal(new Date());
     $gymFinishWorkout.disabled = Boolean(workout.finishedAt);
     $gymDiscardWorkout.classList.toggle("hidden", Boolean(workout.finishedAt));
+    renderWorkoutEmoji(workout);
     renderMetrics();
     const statsMap = buildExerciseStatsMap(workout.id);
     const entries = Object.entries(workout.exercises || {});
@@ -1156,6 +1188,7 @@ if ($viewGym) {
       })
       .sort((a, b) => a.name.localeCompare(b.name));
     $gymExerciseList.innerHTML = "";
+    const fragment = document.createDocumentFragment();
     list.forEach((exercise) => {
       const muscleGroups = getExerciseMuscleGroups(exercise);
       const row = document.createElement("div");
@@ -1172,8 +1205,9 @@ if ($viewGym) {
         openExerciseForWorkout(exercise.id);
         closeExerciseModal();
       });
-      $gymExerciseList.appendChild(row);
+      fragment.appendChild(row);
     });
+    $gymExerciseList.appendChild(fragment);
     const hasResults = list.length > 0;
     const hasQuery = Boolean(query.trim());
     $gymExerciseEmpty.classList.toggle("hidden", !hasQuery || hasResults);
@@ -1331,14 +1365,16 @@ if ($viewGym) {
     showScreen("home");
   }
 
-  function upsertTemplateFromWorkout(workout) {
+  function upsertTemplateFromWorkout(workout, options = {}) {
     const name = (workout.name || "").trim();
     if (!name) return;
     const id = slugify(name);
     const exerciseIds = Object.keys(workout.exercises || {});
+    const emoji = options.emoji ?? workout.emojiSnapshot ?? templates?.[id]?.emoji ?? null;
     const payload = {
       id,
       name,
+      emoji,
       exerciseIds,
       updatedAt: Date.now()
     };
@@ -1385,7 +1421,7 @@ if ($viewGym) {
       if (currentWorkout && !currentWorkout.finishedAt) {
         $gymMetricDuration.textContent = formatDuration(getCurrentDuration());
       }
-    }, 1000);
+    }, 400);
   }
 
   function stopDurationTicker() {
@@ -1494,5 +1530,50 @@ if ($viewGym) {
   function formatMuscleGroupsLabel(groups) {
     const list = (groups || []).map((group) => translateMuscle(group));
     return list.length ? list.join(" · ") : translateMuscle("Other");
+  }
+
+  function promptForEmoji(current) {
+    const value = window.prompt("Elige un emoji para esta sesión:", current || "");
+    if (value === null) return current ?? null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    return Array.from(trimmed)[0] || null;
+  }
+
+  function renderWorkoutEmoji(workout) {
+    if (!$gymWorkoutEmoji) return;
+    $gymWorkoutEmoji.textContent = workout?.emojiSnapshot || "🙂";
+  }
+
+  function buildWorkoutEmojiMap() {
+    const map = {};
+    Object.entries(workoutsByDate || {}).forEach(([date, dayWorkouts]) => {
+      const values = Object.values(dayWorkouts || {});
+      if (!values.length) return;
+      const emojiSet = new Set();
+      let countWithEmoji = 0;
+      values.forEach((workout) => {
+        if (workout?.emojiSnapshot) {
+          emojiSet.add(workout.emojiSnapshot);
+          countWithEmoji += 1;
+        }
+      });
+      map[date] = { count: values.length, emojiSet, countWithEmoji };
+    });
+    return map;
+  }
+
+  function getCalendarCellLabel(dayNumber, entry) {
+    if (!entry || entry.count === 0) return String(dayNumber);
+    if (entry.count === 1) {
+      if (entry.countWithEmoji === 1 && entry.emojiSet.size === 1) {
+        return Array.from(entry.emojiSet)[0];
+      }
+      return String(dayNumber);
+    }
+    if (entry.countWithEmoji === entry.count && entry.emojiSet.size === 1) {
+      return Array.from(entry.emojiSet)[0];
+    }
+    return "🔥";
   }
 }

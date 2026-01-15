@@ -8,14 +8,16 @@
 }
 
 .view-gym {
+  overflow: hidden;
   padding-top: calc(12px + env(safe-area-inset-top));
   padding-bottom: calc(12px + var(--nav-h) + env(safe-area-inset-bottom));
 }
 
 .view-gym .scroll {
-  overflow: auto;
+  overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   max-height: 100dvh;
+  contain: content;
 }
 
 .gym-wrap {
@@ -279,6 +281,24 @@
   gap: 6px;
 }
 
+.gym-workout-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gym-emoji-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--gym-border);
+  background: rgba(255, 255, 255, 0.06);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
 .gym-metrics {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -352,8 +372,8 @@
 .gym-sets-header,
 .gym-sets-row {
   display: grid;
-  grid-template-columns: 28px 1fr 60px 80px 54px 32px;
-  gap: 6px;
+  grid-template-columns: 34px 70px 64px 70px 64px 44px;
+  gap: 10px;
   align-items: center;
   font-size: 12px;
 }
@@ -371,18 +391,27 @@
   padding: 8px;
 }
 
+.gym-sets-row > * {
+  min-width: 0;
+}
+
 .gym-set-previous {
   color: var(--txt-soft);
   font-size: 11px;
 }
 
 .gym-input {
-  padding: 6px 8px;
+  width: 100%;
+  max-width: 100%;
+  height: 36px;
+  padding: 0 10px;
   text-align: center;
+  box-sizing: border-box;
 }
 
 .gym-kg-cell {
-  display: flex;
+  display: grid;
+  grid-template-columns: 44px 1fr;
   align-items: center;
   gap: 6px;
 }
@@ -396,6 +425,9 @@
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
+  width: 44px;
+  height: 28px;
+  justify-self: center;
 }
 
 .gym-bw-toggle.is-active {
@@ -422,8 +454,8 @@
 }
 
 .gym-checkbox {
-  width: 20px;
-  height: 20px;
+  width: 44px;
+  height: 36px;
   border-radius: 6px;
   border: 1px solid var(--gym-border);
   appearance: none;
@@ -612,6 +644,13 @@
 @media (max-width: 380px) {
   .gym-sets-header,
   .gym-sets-row {
-    grid-template-columns: 24px 1fr 50px 70px 48px 28px;
+    grid-template-columns: 30px 62px 56px 62px 56px 40px;
+    gap: 8px;
+  }
+
+  .gym-input {
+    height: 34px;
+    border-radius: 11px;
+    padding: 0 8px;
   }
 }

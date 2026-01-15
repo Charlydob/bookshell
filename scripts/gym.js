@@ -1076,13 +1076,12 @@ if ($viewGym) {
               <span class="gym-set-previous">${prevText}</span>
               <input class="gym-input" data-field="reps" type="number" inputmode="numeric" placeholder="${repsPlaceholder}" value="${set.reps ?? ""}"/>
               <div class="gym-kg-cell">
-                <label class="gym-bw-toggle ${isBw ? "is-active" : ""}">
-                  <input data-field="useBodyweight" type="checkbox" ${isBw ? "checked" : ""}/>
-                  BW
-                </label>
-                <input class="gym-input kg" data-field="${kgField}" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholder}" value="${kgValue}"/>
-              </div>
-              <input class="gym-input" data-field="rpe" type="text" inputmode="decimal" placeholder="RPE" value="${set.rpe ?? ""}"/>
+  <input class="gym-input kg" data-field="${kgField}" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholder}" value="${kgValue}"/>
+  <label class="gym-bw-toggle ${isBw ? "is-active" : ""}">
+    <input data-field="useBodyweight" type="checkbox" ${isBw ? "checked" : ""}/>
+    BW
+  </label>
+</div>
               <input class="gym-checkbox" data-field="done" type="checkbox" ${set.done ? "checked" : ""}/>
             </div>
           `;
@@ -1099,11 +1098,10 @@ if ($viewGym) {
             <div class="gym-sets-table">
               <div class="gym-sets-header">
                 <span>Set</span>
-                <span>Previo</span>
-                <span>Reps</span>
-                <span>Kg</span>
-                <span>RPE</span>
-                <span>✔</span>
+<span>Max</span>
+<span>Reps</span>
+<span>Kg</span>
+<span>✔</span>
               </div>
               ${rows}
             </div>
@@ -1488,9 +1486,7 @@ if ($viewGym) {
     if (field === "extraKg") {
       return parseDecimalInput(value);
     }
-    if (field === "rpe") {
-      return parseDecimalInput(value);
-    }
+    
     const numeric = Number(value);
     return Number.isNaN(numeric) ? null : numeric;
   }
@@ -1513,14 +1509,18 @@ if ($viewGym) {
   }
 
   function formatMaxLabel(maxSet) {
-    if (!maxSet) return "Max: —";
-    if (maxSet.useBodyweight) {
-      const extra = Number(maxSet.extraKg) || 0;
-      const suffix = extra ? `+${formatKgValue(extra)}` : "";
-      return `Max: BW${suffix}`;
-    }
-    return `Max: ${formatKgValue(maxSet.kg)}`;
+  if (!maxSet) return "—";
+
+  if (maxSet.useBodyweight) {
+    const extra = Number(maxSet.extraKg) || 0;
+    const suffix = extra ? `+${formatKgValue(extra)}` : "";
+    return `BW${suffix} kg`;
   }
+
+  const v = formatKgValue(maxSet.kg);
+  if (v === "—") return "—";
+  return `${v} kg`;
+}
 
   function getKgPlaceholder(lastSet, isBw) {
     if (isBw) {

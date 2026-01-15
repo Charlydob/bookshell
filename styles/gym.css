@@ -384,12 +384,11 @@
 }
 
 .gym-sets-header,
-.gym-sets-row {
-  display: grid;
-  grid-template-columns: 28px 56px 56px minmax(96px, 1fr) 56px 40px;
-  gap: 8px;
-  align-items: center;
-  font-size: 12px;
+.gym-sets-row{
+  display:grid;
+  grid-template-columns: 34px 70px 64px 120px 44px; /* Set, Max, Reps, Kg(+BW), ✔ */
+  gap:10px;
+  align-items:center;
 }
 
 .gym-sets-header {
@@ -423,12 +422,13 @@
   box-sizing: border-box;
 }
 
-.gym-kg-cell {
+.gym-kg-cell{
   display: grid;
-  grid-template-columns: 38px 1fr;
+  grid-template-columns: 1fr 44px; /* input primero, BW a la derecha */
   align-items: center;
   gap: 6px;
 }
+.gym-bw-toggle{ justify-self: end; }
 
 .gym-bw-toggle {
   border: 1px solid var(--gym-border);
@@ -655,12 +655,13 @@
   flex-wrap: wrap;
 }
 
-@media (max-width: 380px) {
+@media (max-width: 380px){
   .gym-sets-header,
-  .gym-sets-row {
-    grid-template-columns: 30px 62px 56px 62px 56px 40px;
-    gap: 8px;
+  .gym-sets-row{
+    grid-template-columns: 30px 62px 56px 104px 40px;
+    gap:8px;
   }
+}
 
   .gym-input {
     height: 34px;

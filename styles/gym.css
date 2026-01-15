@@ -7,8 +7,9 @@
   --gym-success: #22c55e;
 }
 
-.view-gym {
+.view-gym{
   min-height: 100dvh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -16,13 +17,15 @@
   padding-bottom: calc(12px + var(--nav-h) + env(safe-area-inset-bottom));
 }
 
-.view-gym .scroll {
+.view-gym .scroll{
   flex: 1;
+  min-height: 0; /* CLAVE: sin esto, en iOS no scrollea en flex */
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   max-height: none;
-  contain: content;
+  contain: none; /* evita blanks/bugs iOS */
 }
+.view-gym{ overflow-y:auto; -webkit-overflow-scrolling:touch; }
 
 @supports (-webkit-touch-callout: none) {
   .view-gym .scroll {

@@ -201,19 +201,20 @@ body {
 
 .bottom-nav {
   position: fixed;
-  left: 50%;
-  bottom: 10px;
-  transform: translateX(-50%);
-  max-width: 430px;
-  width: calc(100% - 24px);
-  z-index: 10;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--nav-h) + env(safe-area-inset-bottom));
+  z-index: 50;
   display: flex;
-  padding: 6px;
-  border-radius: 20px;
+  align-items: center;
+  justify-content: space-around;
+  padding: 6px 12px calc(6px + env(safe-area-inset-bottom));
   background: rgba(5, 6, 12, 0.95);
   backdrop-filter: blur(var(--blur-nav, 18px));
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: var(--shadow-soft);
+  box-sizing: border-box;
 }
 
 .nav-btn {
@@ -241,10 +242,11 @@ body {
   -webkit-backdrop-filter: blur(var(--blur-modal, 10px));
   backdrop-filter: blur(var(--blur-modal, 10px));
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 14px;
-  z-index: 20;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 16px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 100;
 }
 
 
@@ -254,7 +256,7 @@ body {
 
 .modal {
   width: min(560px, 100%);
-  max-height: 86vh;
+  max-height: calc(100dvh - 32px - env(safe-area-inset-bottom));
   border-radius: 22px;
   overflow: hidden;
   background: rgba(10, 11, 18, 0.92);
@@ -802,16 +804,24 @@ html, body {
   background: #0b0c10; /* o tu --bg */
 }
 
+:root { --nav-h: 72px; }
+
 /* Tu app wrapper (ajusta selector si es otro) */
-#app, .app, main {
+#app, .app, .app-shell, main {
   min-height: 100dvh;
+  padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom));
   background: inherit;
 }
 
-/* Si tienes bottom-nav fija, evita que “corte” y que quede hueco raro */
-:root { --bottom-nav-h: 78px; } /* ajusta si tu nav mide otra cosa */
-.page, .tab, .tab-panel, .screen-page {
-  min-height: 100dvh;
-  padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom));
+.view-scroll,
+.view,
+.page,
+.tab,
+.tab-panel,
+.screen-page {
+  height: 100dvh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom));
   background: inherit;
 }

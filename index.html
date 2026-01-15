@@ -1277,7 +1277,14 @@
 <input class="gym-search" id="gym-exercise-search" placeholder="Buscar ejercicio" type="search"/>
 <div class="gym-chip-row" id="gym-muscle-chips"></div>
 <div class="gym-exercise-list-modal" id="gym-exercise-list"></div>
-<div class="gym-create">
+<div class="gym-empty hidden" id="gym-exercise-empty">
+<div>No encontramos ejercicios.</div>
+<button class="gym-btn gym-btn-primary" id="gym-create-cta" type="button">
+Crear “<span id="gym-create-cta-text"></span>”
+</button>
+</div>
+<button class="gym-btn gym-btn-ghost gym-create-toggle" id="gym-create-toggle" type="button">+ Crear nuevo ejercicio</button>
+<div class="gym-create hidden" id="gym-create-panel">
 <div class="gym-create-title">Crear ejercicio</div>
 <input id="gym-create-name" placeholder="Nombre del ejercicio" type="text"/>
 <div class="gym-chip-row" id="gym-create-muscle-chips"></div>

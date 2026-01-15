@@ -74,6 +74,11 @@ if ($viewGym) {
   const $gymExerciseSearch = document.getElementById("gym-exercise-search");
   const $gymMuscleChips = document.getElementById("gym-muscle-chips");
   const $gymExerciseList = document.getElementById("gym-exercise-list");
+  const $gymExerciseEmpty = document.getElementById("gym-exercise-empty");
+  const $gymCreateCta = document.getElementById("gym-create-cta");
+  const $gymCreateCtaText = document.getElementById("gym-create-cta-text");
+  const $gymCreateToggle = document.getElementById("gym-create-toggle");
+  const $gymCreatePanel = document.getElementById("gym-create-panel");
   const $gymCreateName = document.getElementById("gym-create-name");
   const $gymCreateMuscleChips = document.getElementById("gym-create-muscle-chips");
   const $gymCreateExercise = document.getElementById("gym-create-exercise");
@@ -95,11 +100,12 @@ if ($viewGym) {
   let templates = {};
   let workoutsByDate = {};
   let currentWorkout = null;
+  let workoutDraft = null;
   let currentMonth = new Date();
   let saveTimer = null;
   let durationTimer = null;
   let selectedMuscle = "All";
-  let createMuscle = "Chest";
+  let createMuscles = new Set(["Chest"]);
 
   init();
 
@@ -141,16 +147,18 @@ if ($viewGym) {
       const name = ($gymCreateName.value || "").trim();
       if (!name) return;
       const now = Date.now();
+      const muscleGroups = normalizeMuscleGroups(Array.from(createMuscles));
       const newRef = push(exercisesRef);
       const exercise = {
         id: newRef.key,
         name,
-        muscleGroup: createMuscle,
+        muscleGroups,
         createdAt: now,
         updatedAt: now
       };
       set(newRef, exercise);
       $gymCreateName.value = "";
+      $gymCreatePanel.classList.add("hidden");
       renderExerciseList();
     });
 
@@ -158,16 +166,38 @@ if ($viewGym) {
       renderExerciseList();
     });
 
+    $gymCreateToggle.addEventListener("click", () => {
+      $gymCreatePanel.classList.toggle("hidden");
+      if (!$gymCreatePanel.classList.contains("hidden")) {
+        $gymCreateName.focus();
+      }
+    });
+
+    $gymCreateCta.addEventListener("click", () => {
+      const query = ($gymExerciseSearch.value || "").trim();
+      if (query) {
+        $gymCreateName.value = query;
+      }
+      $gymCreatePanel.classList.remove("hidden");
+      $gymCreateName.focus();
+    });
+
     $gymWorkoutName.addEventListener("input", () => {
-      if (!currentWorkout) return;
-      currentWorkout.name = $gymWorkoutName.value;
+      const workout = ensureWorkoutDraft();
+      if (!workout) return;
+      workout.name = $gymWorkoutName.value;
       scheduleWorkoutSave();
     });
 
+    $gymWorkoutName.addEventListener("blur", () => {
+      flushWorkoutSave();
+    });
+
     $gymWorkoutDate.addEventListener("change", () => {
-      if (!currentWorkout) return;
+      const workout = ensureWorkoutDraft();
+      if (!workout) return;
       const nextDate = $gymWorkoutDate.value;
-      if (nextDate && nextDate !== currentWorkout.date) {
+      if (nextDate && nextDate !== workout.date) {
         moveWorkoutDate(nextDate);
       }
     });
@@ -191,17 +221,25 @@ if ($viewGym) {
       if (!exerciseId || Number.isNaN(setIndex)) return;
       const field = target.dataset.field;
       if (!field) return;
-      const exercise = currentWorkout?.exercises?.[exerciseId];
+      const workout = ensureWorkoutDraft();
+      const exercise = workout?.exercises?.[exerciseId];
       if (!exercise || !exercise.sets || !exercise.sets[setIndex]) return;
       if (field === "done") {
         exercise.sets[setIndex].done = target.checked;
       } else {
-        const value = target.value === "" ? null : Number(target.value);
-        exercise.sets[setIndex][field] = Number.isNaN(value) ? null : value;
+        const value = parseSetInput(field, target.value);
+        exercise.sets[setIndex][field] = value;
       }
       scheduleWorkoutSave();
       renderMetrics();
     });
+
+    $gymWorkoutExercises.addEventListener("blur", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      if (!target.closest(".gym-sets-row")) return;
+      flushWorkoutSave();
+    }, true);
 
     $gymWorkoutExercises.addEventListener("click", (event) => {
       const btn = event.target.closest("[data-action='add-set']");
@@ -240,7 +278,9 @@ if ($viewGym) {
       syncCurrentWorkout();
       renderHistory();
       renderCalendar();
-      renderWorkoutEditor();
+      if (!workoutDraft) {
+        renderWorkoutEditor();
+      }
     });
   }
 
@@ -350,6 +390,7 @@ if ($viewGym) {
   function openExerciseModal() {
     $gymExerciseModal.classList.remove("hidden");
     $gymExerciseSearch.value = "";
+    $gymCreatePanel.classList.add("hidden");
     renderExerciseList();
   }
 
@@ -404,6 +445,7 @@ if ($viewGym) {
     exerciseIds.forEach((exerciseId) => {
       const exercise = exercises[exerciseId];
       if (!exercise) return;
+      const muscleGroups = getExerciseMuscleGroups(exercise);
       const sets = lastWorkout?.exercises?.[exerciseId]?.sets
         ? lastWorkout.exercises[exerciseId].sets.map((set) => ({
           reps: set.reps ?? null,
@@ -414,7 +456,7 @@ if ($viewGym) {
         : buildSetsFromHistory(exerciseId);
       exercisesData[exerciseId] = {
         nameSnapshot: exercise.name,
-        muscleGroupSnapshot: exercise.muscleGroup,
+        muscleGroupsSnapshot: muscleGroups,
         sets
       };
     });
@@ -431,6 +473,7 @@ if ($viewGym) {
     };
     set(ref(db, `${basePath}/workouts/${date}/${workoutId}`), workout);
     currentWorkout = workout;
+    workoutDraft = cloneWorkout(workout);
     showScreen("workout");
     renderWorkoutEditor();
   }
@@ -503,6 +546,7 @@ if ($viewGym) {
     const workout = findWorkoutById(workoutId);
     if (!workout) return;
     currentWorkout = workout;
+    workoutDraft = cloneWorkout(workout);
     showScreen("workout");
     renderWorkoutEditor();
   }
@@ -513,14 +557,15 @@ if ($viewGym) {
   }
 
   function renderWorkoutEditor() {
-    if (!currentWorkout) return;
-    $gymWorkoutName.value = currentWorkout.name || "";
-    $gymWorkoutDate.value = currentWorkout.date || dateKeyLocal(new Date());
-    $gymFinishWorkout.disabled = Boolean(currentWorkout.finishedAt);
-    $gymDiscardWorkout.classList.toggle("hidden", Boolean(currentWorkout.finishedAt));
+    const workout = workoutDraft || currentWorkout;
+    if (!workout) return;
+    $gymWorkoutName.value = workout.name || "";
+    $gymWorkoutDate.value = workout.date || dateKeyLocal(new Date());
+    $gymFinishWorkout.disabled = Boolean(workout.finishedAt);
+    $gymDiscardWorkout.classList.toggle("hidden", Boolean(workout.finishedAt));
     renderMetrics();
-    const previousSetsMap = buildExerciseHistoryMap(currentWorkout.id);
-    const entries = Object.entries(currentWorkout.exercises || {});
+    const previousSetsMap = buildExerciseHistoryMap(workout.id);
+    const entries = Object.entries(workout.exercises || {});
     if (!entries.length) {
       $gymWorkoutExercises.innerHTML = `
         <div class="gym-empty">Añade ejercicios para empezar tu sesión.</div>
@@ -530,6 +575,8 @@ if ($viewGym) {
     $gymWorkoutExercises.innerHTML = entries
       .map(([exerciseId, exerciseData]) => {
         const previousSets = previousSetsMap[exerciseId] || [];
+        const muscleGroups = getWorkoutExerciseMuscles(exerciseData);
+        const muscleLabel = formatMuscleGroupsLabel(muscleGroups);
         const rows = (exerciseData.sets || []).map((set, index) => {
           const prev = previousSets[index];
           const prevText = prev ? `${prev.reps ?? "?"} x ${prev.kg ?? "?"}kg` : "—";
@@ -537,9 +584,9 @@ if ($viewGym) {
             <div class="gym-sets-row" data-set-index="${index}">
               <span>${index + 1}</span>
               <span class="gym-set-previous">${prevText}</span>
-              <input class="gym-input" data-field="reps" inputmode="numeric" placeholder="reps" value="${set.reps ?? ""}"/>
-              <input class="gym-input" data-field="kg" inputmode="decimal" placeholder="kg" value="${set.kg ?? ""}"/>
-              <input class="gym-input" data-field="rpe" inputmode="decimal" placeholder="RPE" value="${set.rpe ?? ""}"/>
+              <input class="gym-input" data-field="reps" type="number" inputmode="numeric" placeholder="reps" value="${set.reps ?? ""}"/>
+              <input class="gym-input kg" data-field="kg" type="text" inputmode="decimal" autocomplete="off" placeholder="kg" value="${set.kg ?? ""}"/>
+              <input class="gym-input" data-field="rpe" type="text" inputmode="decimal" placeholder="RPE" value="${set.rpe ?? ""}"/>
               <input class="gym-checkbox" data-field="done" type="checkbox" ${set.done ? "checked" : ""}/>
             </div>
           `;
@@ -549,7 +596,7 @@ if ($viewGym) {
             <div class="gym-exercise-head">
               <div>
                 <div class="gym-exercise-title">${exerciseData.nameSnapshot}</div>
-                <div class="gym-exercise-sub">${exerciseData.muscleGroupSnapshot || "Otro"}</div>
+                <div class="gym-exercise-sub">${muscleLabel}</div>
               </div>
             </div>
             <div class="gym-sets-table">
@@ -571,13 +618,14 @@ if ($viewGym) {
   }
 
   function renderMetrics() {
-    if (!currentWorkout) return;
-    const { totalReps, totalVolumeKg } = computeWorkoutTotals(currentWorkout);
-    $gymMetricExercises.textContent = Object.keys(currentWorkout.exercises || {}).length;
+    const workout = workoutDraft || currentWorkout;
+    if (!workout) return;
+    const { totalReps, totalVolumeKg } = computeWorkoutTotals(workout);
+    $gymMetricExercises.textContent = Object.keys(workout.exercises || {}).length;
     $gymMetricVolume.textContent = `${Math.round(totalVolumeKg)} kg`;
     $gymMetricDuration.textContent = formatDuration(getCurrentDuration());
-    currentWorkout.totalReps = totalReps;
-    currentWorkout.totalVolumeKg = totalVolumeKg;
+    workout.totalReps = totalReps;
+    workout.totalVolumeKg = totalVolumeKg;
   }
 
   function getCurrentDuration() {
@@ -604,9 +652,10 @@ if ($viewGym) {
   }
 
   function addSetToExercise(exerciseId) {
-    if (!currentWorkout?.exercises?.[exerciseId]) return;
-    currentWorkout.exercises[exerciseId].sets = currentWorkout.exercises[exerciseId].sets || [];
-    currentWorkout.exercises[exerciseId].sets.push({
+    const workout = ensureWorkoutDraft();
+    if (!workout?.exercises?.[exerciseId]) return;
+    workout.exercises[exerciseId].sets = workout.exercises[exerciseId].sets || [];
+    workout.exercises[exerciseId].sets.push({
       reps: null,
       kg: null,
       rpe: null,
@@ -617,15 +666,16 @@ if ($viewGym) {
   }
 
   function openExerciseForWorkout(exerciseId) {
-    if (!currentWorkout) return;
-    if (!currentWorkout.exercises) currentWorkout.exercises = {};
-    if (currentWorkout.exercises[exerciseId]) return;
+    const workout = ensureWorkoutDraft();
+    if (!workout) return;
+    if (!workout.exercises) workout.exercises = {};
+    if (workout.exercises[exerciseId]) return;
     const exercise = exercises[exerciseId];
     if (!exercise) return;
-    currentWorkout.exercises[exerciseId] = {
+    workout.exercises[exerciseId] = {
       nameSnapshot: exercise.name,
-      muscleGroupSnapshot: exercise.muscleGroup,
-      sets: buildSetsFromHistory(exerciseId, currentWorkout?.id)
+      muscleGroupsSnapshot: getExerciseMuscleGroups(exercise),
+      sets: buildSetsFromHistory(exerciseId, workout?.id)
     };
     scheduleWorkoutSave();
     renderWorkoutEditor();
@@ -640,23 +690,25 @@ if ($viewGym) {
     const list = Object.values(exercises || {})
       .filter((exercise) => {
         const matchesQuery = exercise.name.toLowerCase().includes(query);
+        const muscleGroups = getExerciseMuscleGroups(exercise);
         let matchesMuscle = true;
         if (selectedMuscle === "Recent") {
           matchesMuscle = recentIds.has(exercise.id);
         } else if (selectedMuscle !== "All") {
-          matchesMuscle = exercise.muscleGroup === selectedMuscle;
+          matchesMuscle = muscleGroups.includes(selectedMuscle);
         }
         return matchesQuery && matchesMuscle;
       })
       .sort((a, b) => a.name.localeCompare(b.name));
     $gymExerciseList.innerHTML = "";
     list.forEach((exercise) => {
+      const muscleGroups = getExerciseMuscleGroups(exercise);
       const row = document.createElement("div");
       row.className = "gym-exercise-row";
       row.innerHTML = `
         <div class="gym-exercise-row-info">
           <div class="gym-exercise-row-title">${exercise.name}</div>
-          <div class="gym-exercise-row-sub">${exercise.muscleGroup}</div>
+          <div class="gym-exercise-row-sub">${formatMuscleGroupsLabel(muscleGroups)}</div>
         </div>
         <button class="gym-btn gym-btn-primary" type="button">+</button>
       `;
@@ -667,6 +719,14 @@ if ($viewGym) {
       });
       $gymExerciseList.appendChild(row);
     });
+    const hasResults = list.length > 0;
+    const hasQuery = Boolean(query.trim());
+    $gymExerciseEmpty.classList.toggle("hidden", !hasQuery || hasResults);
+    if (hasQuery) {
+      const rawQuery = ($gymExerciseSearch.value || "").trim();
+      $gymCreateCtaText.textContent = rawQuery;
+      $gymCreateCta.disabled = rawQuery.length === 0;
+    }
   }
 
   function renderMuscleChips() {
@@ -676,6 +736,7 @@ if ($viewGym) {
       chip.type = "button";
       chip.className = "gym-chip";
       chip.textContent = translateMuscle(group);
+      chip.dataset.value = group;
       chip.addEventListener("click", () => {
         selectedMuscle = group;
         updateActiveChips($gymMuscleChips, group);
@@ -693,19 +754,29 @@ if ($viewGym) {
       chip.type = "button";
       chip.className = "gym-chip";
       chip.textContent = translateMuscle(group);
+      chip.dataset.value = group;
       chip.addEventListener("click", () => {
-        createMuscle = group;
-        updateActiveChips($gymCreateMuscleChips, group);
+        if (createMuscles.has(group)) {
+          createMuscles.delete(group);
+        } else {
+          createMuscles.add(group);
+        }
+        updateActiveChipsMulti($gymCreateMuscleChips, createMuscles);
       });
       $gymCreateMuscleChips.appendChild(chip);
     });
-    updateActiveChips($gymCreateMuscleChips, createMuscle);
+    updateActiveChipsMulti($gymCreateMuscleChips, createMuscles);
   }
 
   function updateActiveChips(container, value) {
     Array.from(container.children).forEach((chip) => {
-      const label = chip.textContent;
-      chip.classList.toggle("is-active", label === translateMuscle(value));
+      chip.classList.toggle("is-active", chip.dataset.value === value);
+    });
+  }
+
+  function updateActiveChipsMulti(container, selected) {
+    Array.from(container.children).forEach((chip) => {
+      chip.classList.toggle("is-active", selected.has(chip.dataset.value));
     });
   }
 
@@ -731,33 +802,44 @@ if ($viewGym) {
   }
 
   function scheduleWorkoutSave() {
-    if (!currentWorkout) return;
+    if (!workoutDraft && !currentWorkout) return;
     if (saveTimer) window.clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => {
       saveWorkout();
-    }, 400);
+    }, 750);
   }
 
   function saveWorkout() {
-    if (!currentWorkout) return;
-    const path = `${basePath}/workouts/${currentWorkout.date}/${currentWorkout.id}`;
-    const { totalReps, totalVolumeKg } = computeWorkoutTotals(currentWorkout);
-    currentWorkout.totalReps = totalReps;
-    currentWorkout.totalVolumeKg = totalVolumeKg;
-    update(ref(db, path), currentWorkout);
+    const workout = workoutDraft || currentWorkout;
+    if (!workout) return;
+    const path = `${basePath}/workouts/${workout.date}/${workout.id}`;
+    const { totalReps, totalVolumeKg } = computeWorkoutTotals(workout);
+    workout.totalReps = totalReps;
+    workout.totalVolumeKg = totalVolumeKg;
+    update(ref(db, path), workout);
+  }
+
+  function flushWorkoutSave() {
+    if (saveTimer) {
+      window.clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    saveWorkout();
   }
 
   function finishWorkout() {
-    if (!currentWorkout || currentWorkout.finishedAt) return;
+    const workout = workoutDraft || currentWorkout;
+    if (!workout || workout.finishedAt) return;
     const finishedAt = Date.now();
-    currentWorkout.finishedAt = finishedAt;
-    currentWorkout.durationSec = Math.floor((finishedAt - currentWorkout.startedAt) / 1000);
-    const { totalReps, totalVolumeKg } = computeWorkoutTotals(currentWorkout);
-    currentWorkout.totalReps = totalReps;
-    currentWorkout.totalVolumeKg = totalVolumeKg;
+    workout.finishedAt = finishedAt;
+    workout.durationSec = Math.floor((finishedAt - workout.startedAt) / 1000);
+    const { totalReps, totalVolumeKg } = computeWorkoutTotals(workout);
+    workout.totalReps = totalReps;
+    workout.totalVolumeKg = totalVolumeKg;
     saveWorkout();
-    upsertTemplateFromWorkout(currentWorkout);
+    upsertTemplateFromWorkout(workout);
     currentWorkout = null;
+    workoutDraft = null;
     showScreen("home");
   }
 
@@ -776,30 +858,36 @@ if ($viewGym) {
   }
 
   function discardWorkout() {
-    if (!currentWorkout || currentWorkout.finishedAt) return;
-    const path = `${basePath}/workouts/${currentWorkout.date}/${currentWorkout.id}`;
+    const workout = workoutDraft || currentWorkout;
+    if (!workout || workout.finishedAt) return;
+    const path = `${basePath}/workouts/${workout.date}/${workout.id}`;
     remove(ref(db, path));
     currentWorkout = null;
+    workoutDraft = null;
     showScreen("home");
   }
 
   function moveWorkoutDate(newDate) {
-    if (!currentWorkout) return;
-    const oldPath = `${basePath}/workouts/${currentWorkout.date}/${currentWorkout.id}`;
-    currentWorkout.date = newDate;
-    const newPath = `${basePath}/workouts/${newDate}/${currentWorkout.id}`;
-    set(ref(db, newPath), currentWorkout);
+    const workout = ensureWorkoutDraft();
+    if (!workout) return;
+    const oldPath = `${basePath}/workouts/${workout.date}/${workout.id}`;
+    workout.date = newDate;
+    const newPath = `${basePath}/workouts/${newDate}/${workout.id}`;
+    set(ref(db, newPath), workout);
     remove(ref(db, oldPath));
   }
 
   function syncCurrentWorkout() {
     if (!currentWorkout) return;
     const fresh = findWorkoutById(currentWorkout.id);
-    if (fresh) {
-      currentWorkout = fresh;
-    } else {
+    if (!fresh) {
       currentWorkout = null;
+      workoutDraft = null;
       showScreen("home");
+      return;
+    }
+    if (!workoutDraft) {
+      currentWorkout = fresh;
     }
   }
 
@@ -817,5 +905,57 @@ if ($viewGym) {
       window.clearInterval(durationTimer);
       durationTimer = null;
     }
+  }
+
+  function cloneWorkout(workout) {
+    if (!workout) return null;
+    return structuredClone(workout);
+  }
+
+  function ensureWorkoutDraft() {
+    if (workoutDraft) return workoutDraft;
+    if (!currentWorkout) return null;
+    workoutDraft = cloneWorkout(currentWorkout);
+    return workoutDraft;
+  }
+
+  function parseDecimalInput(value) {
+    const norm = value.replace(",", ".").replace(/[^\d.]/g, "");
+    return norm ? Number.parseFloat(norm) : null;
+  }
+
+  function parseSetInput(field, value) {
+    if (value === "") return null;
+    if (field === "kg") {
+      return parseDecimalInput(value);
+    }
+    if (field === "rpe") {
+      return parseDecimalInput(value);
+    }
+    const numeric = Number(value);
+    return Number.isNaN(numeric) ? null : numeric;
+  }
+
+  function normalizeMuscleGroups(groups) {
+    const cleaned = (groups || []).filter(Boolean);
+    return cleaned.length ? cleaned : ["Other"];
+  }
+
+  function getExerciseMuscleGroups(exercise) {
+    if (!exercise) return [];
+    const groups = exercise.muscleGroups ?? (exercise.muscleGroup ? [exercise.muscleGroup] : []);
+    return normalizeMuscleGroups(Array.isArray(groups) ? groups : []);
+  }
+
+  function getWorkoutExerciseMuscles(exerciseData) {
+    if (!exerciseData) return [];
+    const groups = exerciseData.muscleGroupsSnapshot
+      ?? (exerciseData.muscleGroupSnapshot ? [exerciseData.muscleGroupSnapshot] : []);
+    return normalizeMuscleGroups(Array.isArray(groups) ? groups : []);
+  }
+
+  function formatMuscleGroupsLabel(groups) {
+    const list = (groups || []).map((group) => translateMuscle(group));
+    return list.length ? list.join(" · ") : translateMuscle("Other");
   }
 }

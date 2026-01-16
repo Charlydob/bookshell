@@ -58,6 +58,7 @@
 .gym-title {
   font-size: 26px;
   font-weight: 700;
+  max-width: 285px;
 }
 
 .gym-subtitle {
@@ -91,6 +92,7 @@
   border-radius: 18px;
   padding: 14px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  margin-bottom: 10px;
 }
 
 .gym-placeholder {
@@ -120,7 +122,8 @@
 .gym-btn-primary {
   background: linear-gradient(135deg, #f7b541, var(--gym-accent));
   color: #1a1202;
-  box-shadow: 0 14px 28px rgba(245, 166, 35, 0.35);
+  box-shadow: 0 1px 24px rgba(245, 166, 35, 0.35);
+  max-width: 470px;
 }
 
 .gym-btn-ghost {
@@ -137,12 +140,12 @@
   border: 1px solid var(--gym-border);
   color: var(--txt);
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 0px 2px;
   font-size: 14px;
 }
 
 .gym-workout-title input {
-  width: 100%;
+  width: 10px;
 }
 
 .gym-select {
@@ -287,10 +290,14 @@
   height: 44px;
 }
 
+.gym-date {
+  max-width: 120px;
+}
+
 .gym-workout-title {
   flex: 1;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 6px;
 }
 
@@ -345,6 +352,7 @@
   flex-direction: column;
   gap: 14px;
   margin-top: 10px;
+  margin-bottom: 10px;
   padding: 0 4px;
 }
 
@@ -476,11 +484,14 @@
   display: grid;
   place-items: center;
   background: rgba(255, 255, 255, 0.06);
+  max-width: 38px;
+  
 }
 
 .gym-checkbox:checked {
   background: rgba(34, 197, 94, 0.2);
   border-color: rgba(34, 197, 94, 0.6);
+  
 }
 
 .gym-checkbox:checked::after {
@@ -493,10 +504,12 @@
   display: flex;
   gap: 10px;
   padding: 0 4px 10px;
+  justify-content: center;
 }
 
 .gym-modal .modal-header {
   background: rgba(10, 11, 18, 0.92);
+  padding-bottom: 0px;
 }
 
 .gym-modal-stacked {
@@ -507,6 +520,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding-bottom: 30px;
 }
 
 .gym-exercise-list-modal {
@@ -603,7 +617,9 @@
 .gym-bodyweight-card {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 2px;
+  margin-top: 10px;
+  margin-bottom: 10px;
 }
 
 .gym-body-grid {
@@ -668,7 +684,7 @@
     border-radius: 11px;
     padding: 0 8px;
   }
-}
+
 /* 1) Que las celdas puedan encoger (CLAVE) */
 .gym-sets-row > *, .gym-sets-header > * { min-width: 0; }
 .gym-sets-row input { min-width: 0; box-sizing: border-box; }
@@ -677,7 +693,7 @@
 .gym-sets-header,
 .gym-sets-row{
   display: grid;
-  grid-template-columns: 28px 52px 56px minmax(0, 1fr) 40px; /* Set, Max, Reps, Kg(+BW), ✓ */
+  grid-template-columns: 28px 52px 66px minmax(0, 1fr) 50px; /* Set, Max, Reps, Kg(+BW), ✓ */
   gap: 8px;
   align-items: center;
   width: 100%;
@@ -698,4 +714,11 @@
   gap: 6px;
   align-items: center;
 }
-.gym-bw-toggle{ width: 40px; justify-self: end; }
+.gym-bw-toggle{ width: 30px; justify-self: end; }
+.gym-kg-cell{
+  max-width: 150px;
+}
+.gym-input.kg {
+  max-width: 150px !important;
+}
+.gym-input[data-field="kg"]{ max-width: 150px; }

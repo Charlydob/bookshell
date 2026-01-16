@@ -3467,6 +3467,17 @@ function renderHistory() {
   }
   budgetSection.body.appendChild(budgetBody);
   insights.appendChild(budgetSection.section);
+const sectionMap = {
+  trend: trendSection.section,
+  week: weekSection.section,
+  topDays: topDaysSection.section,
+  distribution: distributionSection.section,
+  budget: budgetSection.section,
+};
+
+const order = ["trend", "budget", "week", "topDays", "distribution"]; // cambia aquí
+Object.values(sectionMap).forEach((el) => el.remove()); // por si ya están
+order.forEach((k) => insights.appendChild(sectionMap[k]));
 
   $habitHistoryList.appendChild(insights);
 }
@@ -4916,11 +4927,11 @@ function renderPins() {
     if (habitDonutRange === "day") {
       if ($habitPinTimeToday) $habitPinTimeToday.textContent = `Hoy: ${formatMinutes(todayMinutes)}`;
       if ($habitPinTimeRange) {
-        $habitPinTimeRange.textContent = `Rango: ${formatMinutes(rangeMinutes)} · ${rangeLabelTitle(habitDonutRange)}`;
+        $habitPinTimeRange.textContent = ` ${formatMinutes(rangeMinutes)} · ${rangeLabelTitle(habitDonutRange)}`;
       }
     } else {
       if ($habitPinTimeToday) {
-        $habitPinTimeToday.textContent = `Rango: ${formatMinutes(rangeMinutes)} · ${rangeLabelTitle(habitDonutRange)}`;
+        $habitPinTimeToday.textContent = ` ${formatMinutes(rangeMinutes)} · ${rangeLabelTitle(habitDonutRange)}`;
       }
       if ($habitPinTimeRange) $habitPinTimeRange.textContent = `Hoy: ${formatMinutes(todayMinutes)}`;
     }

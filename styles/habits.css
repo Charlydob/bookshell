@@ -119,6 +119,7 @@
   border: 1px solid rgba(255,255,255,0.08);
   background: rgba(255,255,255,0.05);
   box-shadow: 0 8px 20px rgba(20, 20, 40, 0.18);
+  margin-top: 10px;
 }
 
 .habit-search-icon {
@@ -1245,7 +1246,9 @@
 .habit-custom-groups {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
+  margin-bottom: 10px;
+  margin-top: 10px;
 }
 
 .habit-custom-group {

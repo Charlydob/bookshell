@@ -695,7 +695,8 @@
   display: flex;
   gap: 8px;
   justify-content: center;
-  padding: 10px 8px calc(10px + env(safe-area-inset-bottom));
+  padding: 10px 8px ;
+  margin-bottom: 20px;
   border-top: 1px solid rgba(255,255,255,0.08);
   background: rgba(6,7,12,0.88);
   backdrop-filter: blur(12px);

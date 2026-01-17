@@ -61,8 +61,8 @@
 
 #view-world .world-kpi .value{
   color: var(--w-txt);
-  font-size: 20px;
-  font-weight: 850;
+  font-size: 16px;
+  font-weight: 600;
   letter-spacing: .2px;
   line-height: 1.05;
 }
@@ -80,6 +80,7 @@
   align-items:center;
   justify-content:space-between;
   gap: 10px;
+  margin-bottom: 10px;
 }
 
 #view-world .world-controls select{
@@ -153,6 +154,7 @@
     radial-gradient(120% 120% at 70% 100%, rgba(79,208,255,.10), rgba(0,0,0,0) 60%),
     rgba(255,255,255,.02);
   box-shadow: var(--w-shadow);
+  margin-bottom: 10px;
 }
 
 #view-world #world-map{
@@ -387,6 +389,6 @@
 @media (max-width: 380px){
   #view-world .world-kpis{ gap: 8px; }
   #view-world .world-kpi{ padding: 9px 10px 8px; border-radius: 16px; }
-  #view-world .world-kpi .value{ font-size: 18px; }
+  #view-world .world-kpi .value{ font-size: 13px; }
   #view-world .world-controls select{ flex-basis: 140px; }
 }

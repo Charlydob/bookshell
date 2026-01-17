@@ -480,7 +480,10 @@
 .gym-bw-toggle input {
   display: none;
 }
-
+#gym-open-stats{
+  padding: 4px;
+  border: none;
+}
 .gym-unilateral-pill {
   display: inline-flex;
   align-items: center;

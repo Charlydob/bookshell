@@ -152,6 +152,18 @@
   padding: 8px 12px;
 }
 
+.gym-stats-chart {
+  width: 100%;
+  height: 260px;
+}
+
+.gym-stats-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .gym-calendar {
   background: rgba(9, 11, 18, 0.9);
   border-radius: 18px;

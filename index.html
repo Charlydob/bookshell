@@ -1201,6 +1201,9 @@
 <div class="gym-title">Gym</div>
 <div class="gym-subtitle">Planifica y guarda tus entrenos.</div>
 </div>
+<div>
+<button class="gym-btn gym-btn-ghost" id="gym-open-stats" type="button">Estadísticas</button>
+</div>
 </div>
 
 <div class="gym-section">
@@ -1291,6 +1294,32 @@
 <div class="gym-workout-actions">
 <button class="gym-btn gym-btn-ghost" id="gym-discard-workout" type="button">Descartar</button>
 <button class="gym-btn gym-btn-primary" id="gym-add-exercise" type="button">+ Añadir ejercicios</button>
+</div>
+</div>
+
+<div class="gym-screen" id="gym-stats">
+<div class="gym-workout-header gym-header">
+<button class="icon-btn icon-btn-small" id="gym-stats-back" type="button">‹</button>
+<div class="gym-workout-title">
+<div class="gym-title">Estadísticas</div>
+</div>
+</div>
+<div class="gym-section">
+<div class="gym-section-header">
+<label class="gym-field">
+<span>Sección</span>
+<select class="gym-select" id="gym-stats-kind">
+<option value="body">Peso corporal</option>
+<option value="cardio">Cardio</option>
+<option value="exercise">Ejercicio</option>
+</select>
+</label>
+</div>
+<div id="gym-stats-controls"></div>
+<div class="gym-card">
+<div class="gym-stats-chart" id="gym-stats-chart"></div>
+<div class="gym-empty hidden" id="gym-stats-empty">No hay datos suficientes para mostrar estadísticas.</div>
+</div>
 </div>
 </div>
 </div>

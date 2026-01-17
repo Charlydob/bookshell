@@ -7,10 +7,36 @@ import {
   normalizeCountryInput
 } from "./countries.js";
 import { renderCountryHeatmap, renderCountryList } from "./world-heatmap.js";
+import {
+  initializeApp,
+  getApps,
+  getApp
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {
+  getDatabase,
+  ref,
+  onValue,
+  set,
+  remove
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 const $viewRecipes = document.getElementById("view-recipes");
 if ($viewRecipes) {
   const STORAGE_KEY = "bookshell.recipes.v1";
+  const RECIPES_PATH = "recipes";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyC1oqRk7GpYX854RfcGrYHt6iRun5TfuYE",
+    authDomain: "bookshell-59703.firebaseapp.com",
+    databaseURL: "https://bookshell-59703-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "bookshell-59703",
+    storageBucket: "bookshell-59703.appspot.com",
+    messagingSenderId: "554557230752",
+    appId: "1:554557230752:web:37c24e287210433cf883c5"
+  };
+
+  const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+  const db = getDatabase(app);
 
   const MEAL_TYPES = ["desayuno", "comida", "cena", "snack"];
   const HEALTH_TYPES = ["sana", "equilibrada", "insana"];
@@ -336,6 +362,62 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     } catch (err) {
       console.warn("No se pudo guardar recetas", err);
     }
+  }
+
+  function serializeRecipes(list = []) {
+    return (list || []).reduce((acc, recipe) => {
+      if (!recipe || !recipe.id) return acc;
+      acc[recipe.id] = normalizeRecipeFields(recipe);
+      return acc;
+    }, {});
+  }
+
+  function persistRecipe(id, data) {
+    if (!id || !data) return;
+    try {
+      set(ref(db, `${RECIPES_PATH}/${id}`), normalizeRecipeFields(data));
+    } catch (err) {
+      console.warn("No se pudo sincronizar receta", err);
+    }
+  }
+
+  function removeRecipeRemote(id) {
+    if (!id) return;
+    try {
+      remove(ref(db, `${RECIPES_PATH}/${id}`));
+    } catch (err) {
+      console.warn("No se pudo borrar receta remota", err);
+    }
+  }
+
+  function listenRemoteRecipes() {
+    let bootstrapped = false;
+    onValue(
+      ref(db, RECIPES_PATH),
+      (snapshot) => {
+        const data = snapshot.val() || null;
+        const hasRemote = data && Object.keys(data).length;
+        if (!hasRemote && !bootstrapped) {
+          bootstrapped = true;
+          if (recipes.length) {
+            set(ref(db, RECIPES_PATH), serializeRecipes(recipes));
+          }
+          return;
+        }
+
+        bootstrapped = true;
+        const remoteList = hasRemote
+          ? Object.values(data).map(normalizeRecipeFields)
+          : [];
+        recipes = remoteList;
+        saveRecipes();
+        refreshUI();
+        if (detailRecipeId) renderRecipeDetail(detailRecipeId);
+      },
+      (err) => {
+        console.warn("No se pudo escuchar recetas remotas", err);
+      }
+    );
   }
 
 
@@ -1515,7 +1597,9 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     try { localStorage.setItem("bookshell.lastRecipeId", String(id)); localStorage.setItem("bookshell.lastRecipeAt", String(ts)); } catch (_) {}
     const mergedPatch = { ...(patch || {}), updatedAt: ts };
     recipes = recipes.map((r) => (r.id === id ? normalizeRecipeFields({ ...r, ...mergedPatch }) : r));
+    const updated = recipes.find((r) => r.id === id);
     saveRecipes();
+    if (updated) persistRecipe(id, updated);
     refreshUI();
     if (detailRecipeId === id) renderRecipeDetail(id);
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
@@ -1588,12 +1672,15 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
 
     const normalizedPayload = normalizeRecipeFields(payload);
 
+    let nextRecipe = normalizedPayload;
     if (existing) {
       recipes = recipes.map((r) => (r.id === id ? { ...r, ...normalizedPayload } : r));
+      nextRecipe = recipes.find((r) => r.id === id) || normalizedPayload;
     } else {
       recipes = [{ ...normalizedPayload }, ...recipes];
     }
     saveRecipes();
+    persistRecipe(id, nextRecipe);
     closeRecipeModal();
     refreshUI();
   }
@@ -1950,26 +2037,40 @@ $recipeDetailNotes.innerHTML = linkifyNotesHtml(recipe.notes || "");
   function setRecipeTracking(recipeId, shouldTrack) {
     const ts = Date.now();
     const idStr = String(recipeId);
+    const changed = [];
 
     recipes = (Array.isArray(recipes) ? recipes : []).map((r) => {
       if (!r) return r;
       const isTarget = String(r.id) === idStr;
+      let next = r;
 
       // si activamos, quitamos tracking al resto (solo una en seguimiento)
       if (shouldTrack && !isTarget) {
         if (!r.tracking) return r;
-        return normalizeRecipeFields({ ...r, tracking: false, trackingAt: r.trackingAt || null, updatedAt: ts });
+        next = normalizeRecipeFields({
+          ...r,
+          tracking: false,
+          trackingAt: r.trackingAt || null,
+          updatedAt: ts
+        });
+        changed.push(next);
+        return next;
       }
 
       if (!isTarget) return r;
 
       if (shouldTrack) {
-        return normalizeRecipeFields({ ...r, tracking: true, trackingAt: ts, updatedAt: ts });
+        next = normalizeRecipeFields({ ...r, tracking: true, trackingAt: ts, updatedAt: ts });
+        changed.push(next);
+        return next;
       }
-      return normalizeRecipeFields({ ...r, tracking: false, trackingAt: null, updatedAt: ts });
+      next = normalizeRecipeFields({ ...r, tracking: false, trackingAt: null, updatedAt: ts });
+      changed.push(next);
+      return next;
     });
 
     saveRecipes();
+    changed.forEach((recipe) => persistRecipe(recipe.id, recipe));
     refreshUI();
 
     try {
@@ -2025,6 +2126,7 @@ function toggleChecklistItem(recipeId, itemId, value, type) {
     if (!confirmed) return;
     recipes = recipes.filter((r) => r.id !== id);
     saveRecipes();
+    removeRecipeRemote(id);
     closeRecipeModal();
     closeRecipeDetail();
     refreshUI();
@@ -2257,6 +2359,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     } catch (_) {}
 
     saveRecipes();
+    persistRecipe(recipe.id, recipe);
     try { syncRecipeBookmarkButton(recipe); } catch (_) {}
     try { console.debug("[recipes] tracking", { id: recipe.id, tracking: recipe.tracking, trackingAt: recipe.trackingAt }); } catch (_) {}
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
@@ -2299,6 +2402,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   // Inicial
   refreshUI();
+  listenRemoteRecipes();
 }
 function parseRecipeV1(raw){
   const lines = String(raw || "").replace(/\r/g, "").split("\n");

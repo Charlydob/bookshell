@@ -429,11 +429,16 @@ if ($viewGym) {
     $gymWorkoutExercises.addEventListener("click", (event) => {
       const addBtn = event.target.closest("[data-action='add-set']");
       const statsBtn = event.target.closest("[data-action='exercise-stats']");
-      const btn = addBtn || statsBtn;
+      const removeBtn = event.target.closest("[data-action='exercise-remove']");
+      const btn = addBtn || statsBtn || removeBtn;
       if (!btn) return;
       const card = btn.closest(".gym-exercise-card");
       if (!card) return;
       const exerciseId = card.dataset.exerciseId;
+      if (removeBtn) {
+        removeExerciseFromWorkout(exerciseId);
+        return;
+      }
       if (statsBtn) {
         openExerciseDetailModal(exerciseId);
         return;
@@ -2113,6 +2118,7 @@ if ($viewGym) {
                 <input data-field="useBodyweight" type="checkbox" ${useBodyweight ? "checked" : ""}/>
                 BW
               </label>
+              <button class="icon-btn icon-btn-small" data-action="exercise-remove" type="button" aria-label="Quitar ejercicio">🗑️</button>
               <button class="icon-btn icon-btn-small gym-exercise-stats-btn" data-action="exercise-stats" type="button" aria-label="Ver estadísticas">📈</button>
             </div>
           </div>
@@ -2175,6 +2181,15 @@ if ($viewGym) {
       });
     });
     return { totalReps, totalVolumeKg };
+  }
+
+  function removeExerciseFromWorkout(exerciseId) {
+    const workout = ensureWorkoutDraft();
+    if (!workout?.exercises?.[exerciseId]) return;
+    delete workout.exercises[exerciseId];
+    scheduleWorkoutSave();
+    renderWorkoutEditor();
+    renderMetrics();
   }
 
   function addSetToExercise(exerciseId) {

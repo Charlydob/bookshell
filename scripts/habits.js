@@ -1185,7 +1185,7 @@ function toggleDay(habitId, dateKey) {
   }
   saveCache();
   persistHabitCheck(habitId, dateKey, !!habitChecks[habitId][dateKey]);
-  renderHabits();
+  renderHabitsPreservingUI();
 }
 
 function persistHabitCheck(habitId, dateKey, value) {
@@ -1233,7 +1233,7 @@ function setHabitCount(habitId, dateKey, value) {
   }
 
   persistHabitCount(habitId, dateKey, safe > 0 ? safe : null);
-  renderHabits();
+  renderHabitsPreservingUI();
 }
 
 function adjustHabitCount(habitId, dateKey, delta) {
@@ -1729,7 +1729,7 @@ function renderHabitDetailActions(habit, dateKey) {
         if (!Number.isFinite(n) || n <= 0) return;
         addHabitTimeSec(habit.id, dateKey, Math.round(n * 60));
         input.value = "";
-        renderHabits();
+        renderHabitsPreservingUI();
       }
     });
     quickWrap.appendChild(input);
@@ -3799,7 +3799,7 @@ function appendTimeQuickControls(tools, habit, today) {
       e.stopPropagation();
       const m = Math.round(Number(qa.minutes) || 0);
       if (m > 0) addHabitTimeSec(habit.id, today, m * 60);
-      renderHabits();
+      renderHabitsPreservingUI();
     });
     col.appendChild(btn);
   });
@@ -3832,7 +3832,7 @@ function appendTimeQuickControls(tools, habit, today) {
     if (!Number.isFinite(n) || n <= 0) return;
     addHabitTimeSec(habit.id, today, Math.round(n * 60));
     inp.value = "";
-    renderHabits();
+    renderHabitsPreservingUI();
   });
 
   inp.addEventListener("keydown", (e) => {
@@ -5065,6 +5065,29 @@ function renderRecordsCard() {
     $habitRecordsCompletedSub.textContent = stats.scheduled ? `${stats.completed}/${stats.scheduled}` : "—";
   }
   $habitRecordsSuccess.textContent = `${stats.successRatePct}%`;
+}
+
+function renderHabitsPreservingUI() {
+  const getActivePanel = () =>
+    document.querySelector(`.habits-panel[data-panel="${activeTab}"]`)
+    || document.querySelector(".habits-panel.is-active");
+  const panel = getActivePanel();
+  const openIds = panel
+    ? Array.from(panel.querySelectorAll("details[open]"))
+      .map((detail) => detail.id)
+      .filter(Boolean)
+    : [];
+  const scrollTop = panel ? panel.scrollTop : null;
+  renderHabits();
+  const nextPanel = getActivePanel();
+  if (nextPanel) {
+    openIds.forEach((id) => {
+      const selector = (window.CSS && CSS.escape) ? `#${CSS.escape(id)}` : `#${id}`;
+      const detail = nextPanel.querySelector(selector);
+      if (detail) detail.open = true;
+    });
+    if (scrollTop != null) nextPanel.scrollTop = scrollTop;
+  }
 }
 
 function renderHabits() {

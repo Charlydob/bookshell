@@ -38,6 +38,14 @@ const firebaseConfig = {
   appId: "1:554557230752:web:37c24e287210433cf883c5"
 };
 
+const LAST_VIEW_KEY = "bookshell:lastView";
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}
+
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const db = getDatabase(app);
 const storage = getStorage(app);
@@ -407,25 +415,41 @@ function buildShelfRowsByWidth(items, makeSpine, hostEl, rowClass = "books-shelf
 
 
 // === Navegación ===
+const activateView = (viewId, { persist = true, scroll = true } = {}) => {
+  if (!viewId || !document.getElementById(viewId)) return;
+  document.querySelectorAll(".view").forEach(v => v.classList.remove("view-active"));
+  document.getElementById(viewId).classList.add("view-active");
+
+  if (scroll) {
+    try { if ($appMain) $appMain.scrollTop = 0; } catch (_) {}
+  }
+
+  $navButtons.forEach(b => b.classList.remove("nav-btn-active"));
+  const activeBtn = document.querySelector(`.nav-btn[data-view="${viewId}"]`);
+  activeBtn?.classList.add("nav-btn-active");
+
+  if (persist) {
+    localStorage.setItem(LAST_VIEW_KEY, viewId);
+  }
+
+  if (viewId === "view-books") {
+    renderStats();
+    renderCalendar();
+  }
+
+  if (viewId === "view-main") {
+    try { window.__bookshellDashboard?.render?.(); } catch (_) {}
+  }
+};
+
+const storedView = !location.hash ? localStorage.getItem(LAST_VIEW_KEY) : null;
+if (storedView && document.getElementById(storedView)) {
+  activateView(storedView, { persist: false, scroll: false });
+}
+
 $navButtons.forEach(btn => {
   btn.addEventListener("click", () => {
-    const viewId = btn.dataset.view;
-    document.querySelectorAll(".view").forEach(v => v.classList.remove("view-active"));
-    document.getElementById(viewId).classList.add("view-active");
-
-    try { if ($appMain) $appMain.scrollTop = 0; } catch (_) {}
-
-    $navButtons.forEach(b => b.classList.remove("nav-btn-active"));
-    btn.classList.add("nav-btn-active");
-
-    if (viewId === "view-books") {
-      renderStats();
-      renderCalendar();
-    }
-
-    if (viewId === "view-main") {
-      try { window.__bookshellDashboard?.render?.(); } catch (_) {}
-    }
+    activateView(btn.dataset.view);
   });
 });
 

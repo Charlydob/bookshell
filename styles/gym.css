@@ -579,8 +579,8 @@
 
 .gym-exdetail-kpis {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px;
 }
 
 .gym-kpi-card {
@@ -601,6 +601,9 @@
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+#gym-create-name {
+  padding: 4px;;
 }
 
 .gym-exercise-list-modal {
@@ -667,7 +670,7 @@
 
 .gym-field {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 8px;
   font-size: 13px;
   color: var(--txt-soft);

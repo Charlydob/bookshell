@@ -30,6 +30,10 @@ if ($viewGym) {
   const db = getDatabase(app);
 
   const DEVICE_ID_KEY = "bookshell:gym:deviceId:v1";
+  const GYM_CACHE_KEY = "bookshell:gym:cache:v1";
+  const GYM_OUTBOX_KEY = "bookshell:gym:outbox:v1";
+  const GYM_LAST_SCREEN_KEY = "bookshell:gym:lastScreen";
+  const GYM_LAST_WORKOUT_KEY = "bookshell:gym:lastWorkout";
 
   const MUSCLE_GROUPS = [
     "All",
@@ -76,6 +80,17 @@ if ($viewGym) {
   const $gymStatsControls = document.getElementById("gym-stats-controls");
   const $gymStatsChartHost = document.getElementById("gym-stats-chart");
   const $gymStatsEmpty = document.getElementById("gym-stats-empty");
+  const $gymExDetailModal = document.getElementById("gym-exercise-detail-modal");
+  const $gymExDetailEmoji = document.getElementById("gym-exdetail-emoji");
+  const $gymExDetailTitle = document.getElementById("gym-exdetail-title");
+  const $gymExDetailSub = document.getElementById("gym-exdetail-sub");
+  const $gymExDetailEdit = document.getElementById("gym-exdetail-edit");
+  const $gymExDetailClose = document.getElementById("gym-exdetail-close");
+  const $gymExDetailKpis = document.getElementById("gym-exdetail-kpis");
+  const $gymExDetailControls = document.getElementById("gym-exdetail-controls");
+  const $gymExDetailChartHost = document.getElementById("gym-exdetail-chart");
+  const $gymExDetailEmpty = document.getElementById("gym-exdetail-empty");
+  const $gymExDetailDelete = document.getElementById("gym-exdetail-delete");
 
   const $gymBodyDate = document.getElementById("gym-body-date");
   const $gymBodyWeight = document.getElementById("gym-body-weight");
@@ -102,6 +117,7 @@ if ($viewGym) {
   const $gymCreateExercise = document.getElementById("gym-create-exercise");
   const $gymCreateUnilateral = document.getElementById("gym-create-unilateral");
   const $gymCreateType = document.getElementById("gym-create-type");
+  const $gymCreateTitle = $gymCreateModal?.querySelector(".modal-title");
 
   const $gymTemplateModal = document.getElementById("gym-template-modal");
   const $gymTemplateClose = document.getElementById("gym-template-close");
@@ -152,6 +168,7 @@ if ($viewGym) {
   let createMuscles = new Set(["Chest"]);
   let pendingHomeRerender = false;
   let gymStatsChart = null;
+  let gymExDetailChart = null;
   let gymStatsSelection = {
     kind: "body",
     cardioName: "",
@@ -159,17 +176,31 @@ if ($viewGym) {
     exerciseId: "",
     exerciseMetric: "maxKgEff"
   };
+  let gymExDetailSelection = {
+    exerciseId: "",
+    metric: "maxKgEff"
+  };
   let gymStatsReturnTo = "home";
   let currentGymScreen = "home";
+  let editingExerciseId = null;
+  let pendingResumeWorkout = null;
 
   init();
 
   function init() {
+    loadGymCache();
     renderMuscleChips();
     renderCreateMuscleChips();
     bindEvents();
+    restoreGymScreen();
     subscribeData();
     initBodyweightForm();
+    window.addEventListener("online", () => {
+      drainGymOutbox();
+    });
+    if (navigator.onLine) {
+      drainGymOutbox();
+    }
   }
 
   function bindEvents() {
@@ -213,6 +244,29 @@ if ($viewGym) {
       renderStatsChart();
     });
 
+    $gymExDetailControls?.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLSelectElement)) return;
+      if (target.id === "gym-exdetail-metric") {
+        gymExDetailSelection.metric = target.value;
+        renderExerciseDetailChart();
+      }
+    });
+
+    $gymExDetailClose?.addEventListener("click", () => {
+      closeExerciseDetailModal();
+    });
+
+    $gymExDetailEdit?.addEventListener("click", () => {
+      if (!gymExDetailSelection.exerciseId) return;
+      openEditExerciseModal(gymExDetailSelection.exerciseId);
+    });
+
+    $gymExDetailDelete?.addEventListener("click", () => {
+      if (!gymExDetailSelection.exerciseId) return;
+      deleteExercise(gymExDetailSelection.exerciseId);
+    });
+
     $gymAddExercise.addEventListener("click", () => {
       openExerciseModal();
     });
@@ -236,21 +290,38 @@ if ($viewGym) {
       if (!name) return;
       const now = Date.now();
       const muscleGroups = normalizeMuscleGroups(Array.from(createMuscles));
-      const newRef = push(exercisesRef);
-      const exercise = {
-        id: newRef.key,
+      const payload = {
         name,
         muscleGroups,
         type: $gymCreateType?.value || "reps",
         unilateral: Boolean($gymCreateUnilateral?.checked),
-        createdAt: now,
         updatedAt: now
       };
-      set(newRef, exercise);
+      if (editingExerciseId) {
+        const exerciseId = editingExerciseId;
+        const path = `${basePath}/exercises/${exerciseId}`;
+        exercises[exerciseId] = {
+          ...(exercises[exerciseId] || {}),
+          id: exerciseId,
+          ...payload
+        };
+        writeGymUpdate(path, payload);
+        editingExerciseId = null;
+      } else {
+        const newRef = push(exercisesRef);
+        const exercise = {
+          id: newRef.key,
+          createdAt: now,
+          ...payload
+        };
+        exercises[newRef.key] = exercise;
+        writeGymSet(`${basePath}/exercises/${newRef.key}`, exercise);
+      }
       $gymCreateName.value = "";
       $gymCreateUnilateral.checked = false;
       closeCreateExerciseModal();
       renderExerciseList();
+      refreshExerciseDetailIfOpen();
     });
 
     $gymExerciseSearch.addEventListener("input", () => {
@@ -336,6 +407,10 @@ if ($viewGym) {
       if (!exercise.sets || !exercise.sets[setIndex]) return;
       if (field === "done") {
         exercise.sets[setIndex].done = target.checked;
+      } else if (field === "timeText") {
+        const { sec, text } = parseMmSsFromDigits(target.value);
+        target.value = text;
+        exercise.sets[setIndex].timeSec = sec;
       } else {
         const value = parseSetInput(field, target.value);
         exercise.sets[setIndex][field] = value;
@@ -360,9 +435,9 @@ if ($viewGym) {
       if (!card) return;
       const exerciseId = card.dataset.exerciseId;
       if (statsBtn) {
-      openStatsScreen({ kind: "exercise", exerciseId, returnTo: "workout" });
-      return;
-    }
+        openExerciseDetailModal(exerciseId);
+        return;
+      }
       addSetToExercise(exerciseId);
     });
 
@@ -450,16 +525,20 @@ if ($viewGym) {
       renderExerciseList();
       renderWorkoutEditor();
       refreshStatsIfActive({ includeControls: gymStatsSelection.kind === "exercise" });
+      persistGymCache();
+      refreshExerciseDetailIfOpen();
     });
 
     onValue(templatesRef, (snap) => {
       templates = snap.val() || {};
       renderTemplates();
+      persistGymCache();
     });
 
     onValue(workoutsRef, (snap) => {
       workoutsByDate = snap.val() || {};
       syncCurrentWorkout();
+      attemptResumeWorkout();
       if (isHomeActive()) {
         renderHistory();
         renderCalendar();
@@ -471,6 +550,7 @@ if ($viewGym) {
         renderWorkoutEditor();
       }
       refreshStatsIfActive({ includeControls: gymStatsSelection.kind === "exercise" });
+      persistGymCache();
     });
 
     onValue(bodyweightRef, (snap) => {
@@ -478,6 +558,7 @@ if ($viewGym) {
       renderBodyweightForm();
       renderWorkoutEditor();
       refreshStatsIfActive();
+      persistGymCache();
     });
 
     onValue(cardioRef, (snap) => {
@@ -487,6 +568,7 @@ if ($viewGym) {
         syncCardioDraft();
       }
       refreshStatsIfActive({ includeControls: gymStatsSelection.kind === "cardio" });
+      persistGymCache();
     });
   }
 
@@ -496,6 +578,164 @@ if ($viewGym) {
     const id = crypto.randomUUID();
     localStorage.setItem(DEVICE_ID_KEY, id);
     return id;
+  }
+
+  function loadGymCache() {
+    const raw = localStorage.getItem(GYM_CACHE_KEY);
+    if (!raw) return;
+    try {
+      const cached = JSON.parse(raw);
+      exercises = cached.exercises || exercises || {};
+      templates = cached.templates || templates || {};
+      workoutsByDate = cached.workoutsByDate || workoutsByDate || {};
+      bodyweightByDate = cached.bodyweightByDate || bodyweightByDate || {};
+      cardioByDate = cached.cardioByDate || cardioByDate || {};
+      renderExerciseList();
+      renderTemplates();
+      renderHistory();
+      renderCalendar();
+      renderCardioList();
+      renderBodyweightForm();
+      renderWorkoutEditor();
+      refreshExerciseDetailIfOpen();
+    } catch (_) {}
+  }
+
+  function persistGymCache() {
+    const payload = {
+      exercises,
+      templates,
+      workoutsByDate,
+      bodyweightByDate,
+      cardioByDate,
+      ts: Date.now()
+    };
+    try {
+      localStorage.setItem(GYM_CACHE_KEY, JSON.stringify(payload));
+    } catch (_) {}
+  }
+
+  function getGymOutbox() {
+    const raw = localStorage.getItem(GYM_OUTBOX_KEY);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function setGymOutbox(list) {
+    try {
+      localStorage.setItem(GYM_OUTBOX_KEY, JSON.stringify(list));
+    } catch (_) {}
+  }
+
+  function enqueueGymOutbox(entry) {
+    const outbox = getGymOutbox();
+    outbox.push(entry);
+    setGymOutbox(outbox);
+  }
+
+  function writeGymSet(path, payload) {
+    return queueGymWrite("set", path, payload);
+  }
+
+  function writeGymUpdate(path, payload) {
+    return queueGymWrite("update", path, payload);
+  }
+
+  function writeGymRemove(path) {
+    return queueGymWrite("remove", path);
+  }
+
+  function queueGymWrite(op, path, payload) {
+    if (!path) return Promise.resolve();
+    if (!navigator.onLine) {
+      enqueueGymOutbox({ op, path, payload });
+      persistGymCache();
+      return Promise.resolve();
+    }
+    const action = op === "set"
+      ? set(ref(db, path), payload)
+      : op === "update"
+        ? update(ref(db, path), payload)
+        : remove(ref(db, path));
+    return action.catch(() => {
+      enqueueGymOutbox({ op, path, payload });
+      persistGymCache();
+    });
+  }
+
+  async function drainGymOutbox() {
+    if (!navigator.onLine) return;
+    const outbox = getGymOutbox();
+    if (!outbox.length) return;
+    const remaining = [];
+    for (const entry of outbox) {
+      try {
+        if (entry.op === "set") {
+          await set(ref(db, entry.path), entry.payload);
+        } else if (entry.op === "update") {
+          await update(ref(db, entry.path), entry.payload);
+        } else if (entry.op === "remove") {
+          await remove(ref(db, entry.path));
+        }
+      } catch (_) {
+        remaining.push(entry);
+        break;
+      }
+    }
+    setGymOutbox(remaining);
+  }
+
+  function persistGymScreen(name) {
+    if (!name || (name !== "home" && name !== "workout")) return;
+    localStorage.setItem(GYM_LAST_SCREEN_KEY, name);
+    if (name === "workout") {
+      const workout = workoutDraft || currentWorkout;
+      if (workout?.id && workout?.date) {
+        localStorage.setItem(GYM_LAST_WORKOUT_KEY, JSON.stringify({
+          id: workout.id,
+          date: workout.date
+        }));
+      }
+      return;
+    }
+    localStorage.removeItem(GYM_LAST_WORKOUT_KEY);
+  }
+
+  function restoreGymScreen() {
+    const lastScreen = localStorage.getItem(GYM_LAST_SCREEN_KEY);
+    const workoutRaw = localStorage.getItem(GYM_LAST_WORKOUT_KEY);
+    if (lastScreen === "workout" && workoutRaw) {
+      try {
+        pendingResumeWorkout = JSON.parse(workoutRaw);
+      } catch (_) {
+        pendingResumeWorkout = null;
+      }
+      showScreen("workout");
+      return;
+    }
+    showScreen("home");
+  }
+
+  function attemptResumeWorkout() {
+    if (!pendingResumeWorkout) return;
+    const { id, date } = pendingResumeWorkout || {};
+    const workout = workoutsByDate?.[date]?.[id];
+    if (workout) {
+      pendingResumeWorkout = null;
+      openWorkout(workout.id);
+      return;
+    }
+    if (Object.keys(workoutsByDate || {}).length) {
+      pendingResumeWorkout = null;
+      if (!currentWorkout) {
+        showScreen("home");
+      }
+    }
   }
 
   function slugify(value) {
@@ -567,6 +807,43 @@ if ($viewGym) {
       });
     });
     return list.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+  }
+
+  function upsertWorkoutLocal(workout) {
+    if (!workout?.id || !workout?.date) return;
+    if (!workoutsByDate[workout.date]) {
+      workoutsByDate[workout.date] = {};
+    }
+    workoutsByDate[workout.date][workout.id] = workout;
+  }
+
+  function removeWorkoutLocal(date, workoutId) {
+    if (!date || !workoutId || !workoutsByDate[date]) return;
+    delete workoutsByDate[date][workoutId];
+    if (!Object.keys(workoutsByDate[date]).length) {
+      delete workoutsByDate[date];
+    }
+  }
+
+  function upsertCardioLocal(session) {
+    if (!session?.id || !session?.date) return;
+    if (!cardioByDate[session.date]) {
+      cardioByDate[session.date] = {};
+    }
+    cardioByDate[session.date][session.id] = session;
+  }
+
+  function removeCardioLocal(date, sessionId) {
+    if (!date || !sessionId || !cardioByDate[date]) return;
+    delete cardioByDate[date][sessionId];
+    if (!Object.keys(cardioByDate[date]).length) {
+      delete cardioByDate[date];
+    }
+  }
+
+  function upsertTemplateLocal(template) {
+    if (!template?.id) return;
+    templates[template.id] = template;
   }
 
   function initBodyweightForm() {
@@ -677,6 +954,7 @@ if ($viewGym) {
     $gymWorkout.classList.toggle("gym-screen-active", name === "workout");
     $gymStats?.classList.toggle("gym-screen-active", name === "stats");
     currentGymScreen = name;
+    persistGymScreen(name);
     if (name === "workout") {
       startDurationTicker();
     } else {
@@ -975,10 +1253,14 @@ if ($viewGym) {
 
   function buildExerciseSeries() {
     const exerciseId = gymStatsSelection.exerciseId;
+    const metric = gymStatsSelection.exerciseMetric || "maxKgEff";
+    return buildExerciseSeriesFor(exerciseId, metric);
+  }
+
+  function buildExerciseSeriesFor(exerciseId, metric) {
     if (!exerciseId) {
       return { labels: [], values: [], yLabel: "" };
     }
-    const metric = gymStatsSelection.exerciseMetric || "maxKgEff";
     const entries = [];
     flattenWorkouts().forEach((workout) => {
       const exerciseData = workout.exercises?.[exerciseId];
@@ -1047,6 +1329,264 @@ if ($viewGym) {
     return { labels, values, yLabel: labelMap[metric] || "" };
   }
 
+  function initGymExDetailChart() {
+    if (gymExDetailChart || !$gymExDetailChartHost) return;
+    gymExDetailChart = echarts.init($gymExDetailChartHost);
+  }
+
+  function openExerciseDetailModal(exerciseId) {
+    const exercise = exercises?.[exerciseId];
+    if (!exercise || !$gymExDetailModal) return;
+    gymExDetailSelection.exerciseId = exerciseId;
+    const exerciseType = exercise.type || "reps";
+    const metricOptions = exerciseType === "time"
+      ? [
+        { value: "maxKgEff", label: "Máximo (kg)" },
+        { value: "loadTime", label: "Carga-tiempo" },
+        { value: "timeSec", label: "Tiempo (min)" }
+      ]
+      : [
+        { value: "maxKgEff", label: "Máximo (kg)" },
+        { value: "volumeKg", label: "Volumen (kg)" },
+        { value: "reps", label: "Repeticiones" }
+      ];
+    if (!metricOptions.some((metric) => metric.value === gymExDetailSelection.metric)) {
+      gymExDetailSelection.metric = metricOptions[0]?.value || "maxKgEff";
+    }
+    renderExerciseDetailHeader(exercise);
+    renderExerciseDetailKpis(exerciseId);
+    renderExerciseDetailControls(metricOptions);
+    renderExerciseDetailChart();
+    $gymExDetailModal.classList.remove("hidden");
+    requestAnimationFrame(() => {
+      gymExDetailChart?.resize();
+    });
+  }
+
+  function closeExerciseDetailModal() {
+    if (!$gymExDetailModal) return;
+    $gymExDetailModal.classList.add("hidden");
+  }
+
+  function renderExerciseDetailHeader(exercise) {
+    if (!exercise) return;
+    if ($gymExDetailEmoji) {
+      $gymExDetailEmoji.textContent = exercise.emoji || "💪";
+    }
+    if ($gymExDetailTitle) {
+      $gymExDetailTitle.textContent = exercise.name || "Ejercicio";
+    }
+    if ($gymExDetailSub) {
+      const muscleLabel = formatMuscleGroupsLabel(getExerciseMuscleGroups(exercise));
+      $gymExDetailSub.textContent = muscleLabel;
+    }
+  }
+
+  function renderExerciseDetailControls(metricOptions) {
+    if (!$gymExDetailControls) return;
+    $gymExDetailControls.innerHTML = "";
+    $gymExDetailControls.appendChild(buildSelectField({
+      id: "gym-exdetail-metric",
+      label: "Métrica",
+      options: metricOptions,
+      value: gymExDetailSelection.metric
+    }));
+  }
+
+  function renderExerciseDetailKpis(exerciseId) {
+    if (!$gymExDetailKpis) return;
+    const summary = buildExerciseDetailSummary(exerciseId);
+    if (!summary) {
+      $gymExDetailKpis.innerHTML = "";
+      return;
+    }
+    const timeLabel = summary.timeSecTotal ? formatTimer(summary.timeSecTotal) : "—";
+    const repsLabel = summary.repsTotal ? String(summary.repsTotal) : "0";
+    const volumeLabel = summary.volumeTotalKg ? `${Math.round(summary.volumeTotalKg)} kg` : "0 kg";
+    const maxKgLabel = summary.maxKgEff != null ? `${formatKgValue(summary.maxKgEff)} kg` : "—";
+    const avgKgLabel = summary.avgKgEff != null ? `${formatKgValue(summary.avgKgEff)} kg` : "—";
+    const activityLabel = summary.exerciseType === "time" ? timeLabel : repsLabel;
+    const activityTitle = summary.exerciseType === "time" ? "Tiempo total" : "Reps totales";
+    const kpis = [
+      { label: "Sets totales", value: String(summary.setsCount) },
+      { label: activityTitle, value: activityLabel },
+      { label: "Volumen total", value: volumeLabel },
+      { label: "Peso máximo", value: maxKgLabel },
+      { label: "Peso medio", value: avgKgLabel }
+    ];
+    $gymExDetailKpis.innerHTML = kpis.map((kpi) => `
+      <div class="gym-card gym-kpi-card">
+        <div class="gym-kpi-label">${kpi.label}</div>
+        <div class="gym-kpi-value">${kpi.value}</div>
+      </div>
+    `).join("");
+  }
+
+  function renderExerciseDetailChart() {
+    if (!$gymExDetailChartHost || !$gymExDetailEmpty) return;
+    initGymExDetailChart();
+    const { labels, values, yLabel } = buildExerciseSeriesFor(
+      gymExDetailSelection.exerciseId,
+      gymExDetailSelection.metric
+    );
+    const hasData = labels.length && values.length;
+    $gymExDetailEmpty.classList.toggle("hidden", hasData);
+    $gymExDetailChartHost.classList.toggle("hidden", !hasData);
+    if (!hasData) {
+      gymExDetailChart?.clear();
+      return;
+    }
+    gymExDetailChart.setOption({
+      grid: { left: 44, right: 18, top: 16, bottom: 32 },
+      tooltip: { trigger: "axis" },
+      xAxis: {
+        type: "category",
+        data: labels,
+        boundaryGap: false,
+        axisLabel: { color: "#9aa4b2" },
+        splitLine: { show: false }
+      },
+      yAxis: {
+        type: "value",
+        name: yLabel,
+        axisLabel: { color: "#9aa4b2" },
+        splitLine: { show: false }
+      },
+      series: [
+        {
+          type: "line",
+          smooth: true,
+          data: values,
+          lineStyle: { width: 2 },
+          symbol: "circle",
+          symbolSize: 6,
+          itemStyle: { color: "#f7b541" }
+        }
+      ]
+    });
+  }
+
+  function buildExerciseDetailSummary(exerciseId) {
+    const exercise = exercises?.[exerciseId];
+    if (!exercise) return null;
+    const exerciseType = exercise.type || "reps";
+    let setsCount = 0;
+    let repsTotal = 0;
+    let timeSecTotal = 0;
+    let volumeTotalKg = 0;
+    let maxKgEff = null;
+    let sumKgEff = 0;
+    let kgEffCount = 0;
+    flattenWorkouts().forEach((workout) => {
+      const exerciseData = workout.exercises?.[exerciseId];
+      if (!exerciseData?.sets?.length) return;
+      const type = getExerciseType(exerciseData, exerciseId);
+      const unilateral = getExerciseUnilateral(exerciseData, exerciseId);
+      const useBodyweight = getExerciseUseBodyweight(exerciseData);
+      exerciseData.sets.forEach((set) => {
+        if (!set?.done) return;
+        setsCount += 1;
+        const kgEff = getSetEffectiveKg(set, workout.date, useBodyweight);
+        if (kgEff != null) {
+          maxKgEff = maxKgEff === null ? kgEff : Math.max(maxKgEff, kgEff);
+          sumKgEff += kgEff;
+          kgEffCount += 1;
+        }
+        if (type === "time") {
+          const timeSec = Number(set.timeSec) || 0;
+          timeSecTotal += timeSec;
+          if (kgEff != null) {
+            volumeTotalKg += timeSec * kgEff;
+          }
+          return;
+        }
+        const repsValue = Number(set.reps) || 0;
+        const repsEff = unilateral ? repsValue * 2 : repsValue;
+        repsTotal += repsEff;
+        if (kgEff != null) {
+          volumeTotalKg += repsEff * kgEff;
+        }
+      });
+    });
+    const avgKgEff = kgEffCount ? (sumKgEff / kgEffCount) : null;
+    return {
+      exerciseType,
+      setsCount,
+      repsTotal,
+      timeSecTotal,
+      volumeTotalKg,
+      maxKgEff,
+      avgKgEff
+    };
+  }
+
+  function refreshExerciseDetailIfOpen() {
+    if (!$gymExDetailModal || $gymExDetailModal.classList.contains("hidden")) return;
+    const exerciseId = gymExDetailSelection.exerciseId;
+    const exercise = exercises?.[exerciseId];
+    if (!exercise) {
+      closeExerciseDetailModal();
+      return;
+    }
+    const metricOptions = exercise.type === "time"
+      ? [
+        { value: "maxKgEff", label: "Máximo (kg)" },
+        { value: "loadTime", label: "Carga-tiempo" },
+        { value: "timeSec", label: "Tiempo (min)" }
+      ]
+      : [
+        { value: "maxKgEff", label: "Máximo (kg)" },
+        { value: "volumeKg", label: "Volumen (kg)" },
+        { value: "reps", label: "Repeticiones" }
+      ];
+    if (!metricOptions.some((metric) => metric.value === gymExDetailSelection.metric)) {
+      gymExDetailSelection.metric = metricOptions[0]?.value || "maxKgEff";
+    }
+    renderExerciseDetailHeader(exercise);
+    renderExerciseDetailKpis(exerciseId);
+    renderExerciseDetailControls(metricOptions);
+    renderExerciseDetailChart();
+  }
+
+  function openEditExerciseModal(exerciseId) {
+    const exercise = exercises?.[exerciseId];
+    if (!exercise) return;
+    editingExerciseId = exerciseId;
+    createMuscles = new Set(getExerciseMuscleGroups(exercise));
+    $gymCreateName.value = exercise.name || "";
+    $gymCreateType.value = exercise.type || "reps";
+    $gymCreateUnilateral.checked = Boolean(exercise.unilateral);
+    updateActiveChipsMulti($gymCreateMuscleChips, createMuscles);
+    if ($gymCreateTitle) {
+      $gymCreateTitle.textContent = "Editar ejercicio";
+    }
+    $gymCreateExercise.textContent = "Guardar";
+    $gymCreateModal.classList.remove("hidden");
+  }
+
+  function deleteExercise(exerciseId) {
+    const exercise = exercises?.[exerciseId];
+    if (!exercise) return;
+    const confirmed = window.confirm(`¿Eliminar "${exercise.name}"?`);
+    if (!confirmed) return;
+    delete exercises[exerciseId];
+    writeGymRemove(`${basePath}/exercises/${exerciseId}`);
+    Object.values(templates || {}).forEach((template) => {
+      const nextIds = (template.exerciseIds || []).filter((id) => id !== exerciseId);
+      if (nextIds.length === (template.exerciseIds || []).length) return;
+      const payload = {
+        exerciseIds: nextIds,
+        updatedAt: Date.now()
+      };
+      templates[template.id] = { ...template, ...payload };
+      writeGymUpdate(`${basePath}/templates/${template.id}`, payload);
+    });
+    persistGymCache();
+    renderExerciseList();
+    renderTemplates();
+    closeExerciseDetailModal();
+  }
+
   function openExerciseModal() {
     $gymExerciseModal.classList.remove("hidden");
     $gymExerciseSearch.value = "";
@@ -1058,11 +1598,16 @@ if ($viewGym) {
   }
 
   function openCreateExerciseModal(prefillName = "") {
+    editingExerciseId = null;
     $gymCreateModal.classList.remove("hidden");
     $gymCreateName.value = prefillName;
     if ($gymCreateType) {
       $gymCreateType.value = "reps";
     }
+    if ($gymCreateTitle) {
+      $gymCreateTitle.textContent = "Crear ejercicio";
+    }
+    $gymCreateExercise.textContent = "Crear";
     $gymCreateName.focus();
   }
 
@@ -1073,6 +1618,11 @@ if ($viewGym) {
     if ($gymCreateType) {
       $gymCreateType.value = "reps";
     }
+    if ($gymCreateTitle) {
+      $gymCreateTitle.textContent = "Crear ejercicio";
+    }
+    $gymCreateExercise.textContent = "Crear";
+    editingExerciseId = null;
   }
 
   function openTemplateModal() {
@@ -1147,7 +1697,9 @@ if ($viewGym) {
       totalReps: 0,
       totalVolumeKg: 0
     };
-    set(ref(db, `${basePath}/workouts/${date}/${workoutId}`), workout);
+    upsertWorkoutLocal(workout);
+    writeGymSet(`${basePath}/workouts/${date}/${workoutId}`, workout);
+    persistGymCache();
     currentWorkout = workout;
     workoutDraft = cloneWorkout(workout);
     showScreen("workout");
@@ -1288,7 +1840,9 @@ if ($viewGym) {
       avgPaceSecPerKm: null,
       updatedAt: Date.now()
     };
-    set(ref(db, `${basePath}/cardio/${date}/${id}`), payload);
+    upsertCardioLocal(payload);
+    writeGymSet(`${basePath}/cardio/${date}/${id}`, payload);
+    persistGymCache();
     return payload;
   }
 
@@ -1416,16 +1970,21 @@ if ($viewGym) {
     updateCardioDerivedFields();
     cardioDraft.updatedAt = Date.now();
     const path = `${basePath}/cardio/${cardioDraft.date}/${cardioDraft.id}`;
-    update(ref(db, path), cardioDraft);
+    upsertCardioLocal(cardioDraft);
+    writeGymUpdate(path, cardioDraft);
+    persistGymCache();
   }
 
   function moveCardioDate(newDate) {
     if (!cardioDraft) return;
     const oldPath = `${basePath}/cardio/${cardioDraft.date}/${cardioDraft.id}`;
+    removeCardioLocal(cardioDraft.date, cardioDraft.id);
     cardioDraft.date = newDate;
+    upsertCardioLocal(cardioDraft);
     const newPath = `${basePath}/cardio/${newDate}/${cardioDraft.id}`;
-    set(ref(db, newPath), cardioDraft);
-    remove(ref(db, oldPath));
+    writeGymSet(newPath, cardioDraft);
+    writeGymRemove(oldPath);
+    persistGymCache();
   }
 
   function cloneCardioSession(session) {
@@ -1525,16 +2084,16 @@ if ($viewGym) {
         const rows = (exerciseData.sets || []).map((set, index) => {
           const prevText = prevLabel;
           const repsPlaceholder = lastDoneSet?.reps ?? "reps";
-          const timePlaceholder = formatTimeInput(lastDoneSet?.timeSec) || "mm:ss";
+          const timePlaceholder = formatMmSs(lastDoneSet?.timeSec) || "mm:ss";
           const kgPlaceholder = getKgPlaceholder(lastDoneSet, useBodyweight);
           const kgValue = set.kg ?? set.extraKg ?? "";
-          const timeValue = formatTimeInput(set.timeSec);
+          const timeValue = formatMmSs(set.timeSec);
           return `
             <div class="gym-sets-row" data-set-index="${index}">
               <span>${index + 1}</span>
               <span class="gym-set-previous">${prevText}</span>
               ${exerciseType === "time"
-    ? `<input class="gym-input" data-field="timeSec" type="text" inputmode="numeric" placeholder="${timePlaceholder}" value="${timeValue}"/>`
+    ? `<input class="gym-input gym-time-input" data-field="timeText" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="${timePlaceholder}" value="${timeValue}"/>`
     : `<input class="gym-input" data-field="reps" type="number" inputmode="numeric" placeholder="${repsPlaceholder}" value="${set.reps ?? ""}"/>`}
               <input class="gym-input kg" data-field="kg" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholder}" value="${kgValue}"/>
               <input class="gym-checkbox" data-field="done" type="checkbox" ${set.done ? "checked" : ""}/>
@@ -1783,6 +2342,10 @@ if ($viewGym) {
         if (useBodyweight && set?.kg == null && set?.extraKg != null) {
           set.kg = set.extraKg;
         }
+        if (set?.timeSec != null) {
+          const normalized = Number.isFinite(set.timeSec) ? set.timeSec : parseTimeInput(set.timeSec);
+          set.timeSec = Number.isFinite(normalized) ? normalized : null;
+        }
       });
       exercise.useBodyweight = useBodyweight;
     });
@@ -1850,7 +2413,9 @@ if ($viewGym) {
     const heightCm = parseDecimalInput($gymBodyHeight.value);
     const path = `${basePath}/body/${dateKey}`;
     if (weightKg === null && heightCm === null) {
-      remove(ref(db, path));
+      delete bodyweightByDate[dateKey];
+      writeGymRemove(path);
+      persistGymCache();
       return;
     }
     const payload = {
@@ -1858,7 +2423,9 @@ if ($viewGym) {
       heightCm: heightCm ?? null,
       updatedAt: Date.now()
     };
-    set(ref(db, path), payload);
+    bodyweightByDate[dateKey] = payload;
+    writeGymSet(path, payload);
+    persistGymCache();
   }
 
   function saveWorkout() {
@@ -1870,7 +2437,9 @@ if ($viewGym) {
     const { totalReps, totalVolumeKg } = computeWorkoutTotals(workout);
     workout.totalReps = totalReps;
     workout.totalVolumeKg = totalVolumeKg;
-    update(ref(db, path), workout);
+    upsertWorkoutLocal(workout);
+    writeGymUpdate(path, workout);
+    persistGymCache();
   }
 
   function flushWorkoutSave() {
@@ -1910,14 +2479,18 @@ if ($viewGym) {
       exerciseIds,
       updatedAt: Date.now()
     };
-    set(ref(db, `${basePath}/templates/${id}`), payload);
+    upsertTemplateLocal(payload);
+    writeGymSet(`${basePath}/templates/${id}`, payload);
+    persistGymCache();
   }
 
   function discardWorkout() {
     const workout = workoutDraft || currentWorkout;
     if (!workout || workout.finishedAt) return;
     const path = `${basePath}/workouts/${workout.date}/${workout.id}`;
-    remove(ref(db, path));
+    removeWorkoutLocal(workout.date, workout.id);
+    writeGymRemove(path);
+    persistGymCache();
     currentWorkout = null;
     workoutDraft = null;
     showScreen("home");
@@ -1927,10 +2500,13 @@ if ($viewGym) {
     const workout = ensureWorkoutDraft();
     if (!workout) return;
     const oldPath = `${basePath}/workouts/${workout.date}/${workout.id}`;
+    removeWorkoutLocal(workout.date, workout.id);
     workout.date = newDate;
+    upsertWorkoutLocal(workout);
     const newPath = `${basePath}/workouts/${newDate}/${workout.id}`;
-    set(ref(db, newPath), workout);
-    remove(ref(db, oldPath));
+    writeGymSet(newPath, workout);
+    writeGymRemove(oldPath);
+    persistGymCache();
   }
 
   function syncCurrentWorkout() {
@@ -1989,12 +2565,21 @@ if ($viewGym) {
     if (field === "extraKg") {
       return parseDecimalInput(value);
     }
-    if (field === "timeSec") {
-      return parseTimeInput(value);
-    }
-    
     const numeric = Number(value);
     return Number.isNaN(numeric) ? null : numeric;
+  }
+
+  function parseMmSsFromDigits(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    if (!digits) {
+      return { sec: null, text: "" };
+    }
+    const rawSeconds = Number(digits.slice(-2));
+    const mins = digits.length > 2 ? Number(digits.slice(0, -2)) : 0;
+    const secs = Math.min(59, Number.isFinite(rawSeconds) ? rawSeconds : 0);
+    const sec = mins * 60 + secs;
+    const text = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    return { sec, text };
   }
 
   function parseTimeInput(value) {
@@ -2008,18 +2593,21 @@ if ($viewGym) {
       const mins = Number(minsPart);
       const secs = Number(secsPart ?? 0);
       if (!Number.isFinite(mins) || !Number.isFinite(secs)) return null;
-      return mins * 60 + secs;
+      return mins * 60 + Math.min(59, secs);
+    }
+    if (/^\d+$/.test(trimmed)) {
+      return parseMmSsFromDigits(trimmed).sec;
     }
     const numeric = Number(trimmed);
     return Number.isFinite(numeric) ? numeric : null;
   }
 
-  function formatTimeInput(seconds) {
+  function formatMmSs(seconds) {
     if (!Number.isFinite(seconds)) return "";
     const total = Math.max(0, Math.floor(seconds));
     const mins = Math.floor(total / 60);
     const secs = total % 60;
-    return `${mins}:${String(secs).padStart(2, "0")}`;
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   }
 
   function formatKgValue(value) {
@@ -2060,7 +2648,7 @@ if ($viewGym) {
 
   function formatPreviousTimeLabel(lastSet, useBodyweight) {
     if (!lastSet) return "—";
-    const timeLabel = formatTimeInput(lastSet.timeSec);
+    const timeLabel = formatMmSs(lastSet.timeSec);
     if (!timeLabel) return "—";
     const kgLabel = formatSetKgLabel(lastSet, useBodyweight);
     return `${timeLabel} · ${kgLabel}`;

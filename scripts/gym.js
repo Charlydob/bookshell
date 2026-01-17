@@ -51,7 +51,9 @@ if ($viewGym) {
 
   const $gymHome = document.getElementById("gym-home");
   const $gymWorkout = document.getElementById("gym-workout");
+  const $gymStats = document.getElementById("gym-stats");
   const $gymStartWorkout = document.getElementById("gym-start-workout");
+  const $gymOpenStats = document.getElementById("gym-open-stats");
   const $gymHistoryList = document.getElementById("gym-history-list");
   const $gymHistoryEmpty = document.getElementById("gym-history-empty");
   const $gymCalPrev = document.getElementById("gym-cal-prev");
@@ -69,6 +71,11 @@ if ($viewGym) {
   const $gymMetricVolume = document.getElementById("gym-metric-volume");
   const $gymMetricExercises = document.getElementById("gym-metric-exercises");
   const $gymWorkoutExercises = document.getElementById("gym-workout-exercises");
+  const $gymStatsBack = document.getElementById("gym-stats-back");
+  const $gymStatsKind = document.getElementById("gym-stats-kind");
+  const $gymStatsControls = document.getElementById("gym-stats-controls");
+  const $gymStatsChartHost = document.getElementById("gym-stats-chart");
+  const $gymStatsEmpty = document.getElementById("gym-stats-empty");
 
   const $gymBodyDate = document.getElementById("gym-body-date");
   const $gymBodyWeight = document.getElementById("gym-body-weight");
@@ -143,6 +150,14 @@ if ($viewGym) {
   let selectedMuscle = "All";
   let createMuscles = new Set(["Chest"]);
   let pendingHomeRerender = false;
+  let gymStatsChart = null;
+  let gymStatsSelection = {
+    kind: "body",
+    cardioName: "",
+    cardioMetric: "distanceKm",
+    exerciseId: "",
+    exerciseMetric: "maxKgEff"
+  };
 
   init();
 
@@ -159,8 +174,40 @@ if ($viewGym) {
       openTemplateModal();
     });
 
+    $gymOpenStats?.addEventListener("click", () => {
+      openStatsScreen({ kind: gymStatsSelection.kind || "body" });
+    });
+
     $gymBack.addEventListener("click", () => {
       showScreen("home");
+    });
+
+    $gymStatsBack?.addEventListener("click", () => {
+      showScreen("home");
+    });
+
+    $gymStatsKind?.addEventListener("change", () => {
+      gymStatsSelection.kind = $gymStatsKind.value;
+      renderStatsControls();
+      renderStatsChart();
+    });
+
+    $gymStatsControls?.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLSelectElement)) return;
+      if (target.id === "gym-stats-cardio-name") {
+        gymStatsSelection.cardioName = target.value;
+      }
+      if (target.id === "gym-stats-cardio-metric") {
+        gymStatsSelection.cardioMetric = target.value;
+      }
+      if (target.id === "gym-stats-exercise-id") {
+        gymStatsSelection.exerciseId = target.value;
+      }
+      if (target.id === "gym-stats-exercise-metric") {
+        gymStatsSelection.exerciseMetric = target.value;
+      }
+      renderStatsChart();
     });
 
     $gymAddExercise.addEventListener("click", () => {
@@ -298,11 +345,17 @@ if ($viewGym) {
     }, true);
 
     $gymWorkoutExercises.addEventListener("click", (event) => {
-      const btn = event.target.closest("[data-action='add-set']");
+      const addBtn = event.target.closest("[data-action='add-set']");
+      const statsBtn = event.target.closest("[data-action='exercise-stats']");
+      const btn = addBtn || statsBtn;
       if (!btn) return;
       const card = btn.closest(".gym-exercise-card");
       if (!card) return;
       const exerciseId = card.dataset.exerciseId;
+      if (statsBtn) {
+        openStatsScreen({ kind: "exercise", exerciseId });
+        return;
+      }
       addSetToExercise(exerciseId);
     });
 
@@ -389,6 +442,7 @@ if ($viewGym) {
       exercises = snap.val() || {};
       renderExerciseList();
       renderWorkoutEditor();
+      refreshStatsIfActive({ includeControls: gymStatsSelection.kind === "exercise" });
     });
 
     onValue(templatesRef, (snap) => {
@@ -409,12 +463,14 @@ if ($viewGym) {
       if (!workoutDraft) {
         renderWorkoutEditor();
       }
+      refreshStatsIfActive({ includeControls: gymStatsSelection.kind === "exercise" });
     });
 
     onValue(bodyweightRef, (snap) => {
       bodyweightByDate = snap.val() || {};
       renderBodyweightForm();
       renderWorkoutEditor();
+      refreshStatsIfActive();
     });
 
     onValue(cardioRef, (snap) => {
@@ -423,6 +479,7 @@ if ($viewGym) {
       if (cardioDraft && !cardioRunning) {
         syncCardioDraft();
       }
+      refreshStatsIfActive({ includeControls: gymStatsSelection.kind === "cardio" });
     });
   }
 
@@ -459,6 +516,16 @@ if ($viewGym) {
       day: "numeric",
       month: "short",
       year: "numeric"
+    });
+  }
+
+  function formatChartDate(dateStr) {
+    if (!dateStr) return "";
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const date = new Date(y, m - 1, d);
+    return date.toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "short"
     });
   }
 
@@ -587,10 +654,16 @@ if ($viewGym) {
   function showScreen(name) {
     $gymHome.classList.toggle("gym-screen-active", name === "home");
     $gymWorkout.classList.toggle("gym-screen-active", name === "workout");
+    $gymStats?.classList.toggle("gym-screen-active", name === "stats");
     if (name === "workout") {
       startDurationTicker();
     } else {
       stopDurationTicker();
+    }
+    if (name === "stats") {
+      requestAnimationFrame(() => {
+        gymStatsChart?.resize();
+      });
     }
     if (name === "home" && pendingHomeRerender) {
       renderHistory();
@@ -601,6 +674,321 @@ if ($viewGym) {
 
   function isHomeActive() {
     return $gymHome.classList.contains("gym-screen-active");
+  }
+
+  function isStatsActive() {
+    return Boolean($gymStats?.classList.contains("gym-screen-active"));
+  }
+
+  function refreshStatsIfActive({ includeControls = false } = {}) {
+    if (!isStatsActive()) return;
+    if (includeControls) {
+      renderStatsControls();
+    }
+    renderStatsChart();
+  }
+
+  function openStatsScreen({ kind = "body", exerciseId = "" } = {}) {
+    gymStatsSelection.kind = kind || gymStatsSelection.kind || "body";
+    if (exerciseId) {
+      gymStatsSelection.exerciseId = exerciseId;
+    }
+    showScreen("stats");
+    initGymStatsChart();
+    renderStatsControls();
+    renderStatsChart();
+  }
+
+  function initGymStatsChart() {
+    if (gymStatsChart || !$gymStatsChartHost) return;
+    gymStatsChart = echarts.init($gymStatsChartHost);
+  }
+
+  function renderStatsControls() {
+    if (!$gymStatsControls || !$gymStatsKind) return;
+    const kind = gymStatsSelection.kind || "body";
+    $gymStatsKind.value = kind;
+    $gymStatsControls.innerHTML = "";
+    if (kind === "cardio") {
+      const names = getCardioNameOptions();
+      if (names.length && !names.includes(gymStatsSelection.cardioName)) {
+        gymStatsSelection.cardioName = names[0];
+      }
+      if (!gymStatsSelection.cardioName) {
+        gymStatsSelection.cardioName = names[0] || "";
+      }
+      const metrics = [
+        { value: "distanceKm", label: "Distancia (km)" },
+        { value: "durationSec", label: "Duración (min)" },
+        { value: "avgPaceSecPerKm", label: "Ritmo (min/km)" },
+        { value: "avgSpeedKmh", label: "Velocidad (km/h)" }
+      ];
+      if (!gymStatsSelection.cardioMetric) {
+        gymStatsSelection.cardioMetric = "distanceKm";
+      }
+      const row = document.createElement("div");
+      row.className = "gym-stats-row";
+      row.appendChild(buildSelectField({
+        id: "gym-stats-cardio-name",
+        label: "Actividad",
+        options: names.map((name) => ({ value: name, label: name })),
+        value: gymStatsSelection.cardioName,
+        disabled: !names.length,
+        emptyLabel: "Sin datos"
+      }));
+      row.appendChild(buildSelectField({
+        id: "gym-stats-cardio-metric",
+        label: "Métrica",
+        options: metrics,
+        value: gymStatsSelection.cardioMetric
+      }));
+      $gymStatsControls.appendChild(row);
+      return;
+    }
+    if (kind === "exercise") {
+      const exerciseOptions = getExerciseOptions();
+      const exerciseIds = exerciseOptions.map((option) => option.value);
+      if (exerciseIds.length && !exerciseIds.includes(gymStatsSelection.exerciseId)) {
+        gymStatsSelection.exerciseId = exerciseIds[0];
+      }
+      if (!gymStatsSelection.exerciseId) {
+        gymStatsSelection.exerciseId = exerciseIds[0] || "";
+      }
+      const metrics = [
+        { value: "maxKgEff", label: "Máximo (kg)" },
+        { value: "volumeKg", label: "Volumen (kg)" },
+        { value: "reps", label: "Repeticiones" }
+      ];
+      if (!gymStatsSelection.exerciseMetric) {
+        gymStatsSelection.exerciseMetric = "maxKgEff";
+      }
+      const row = document.createElement("div");
+      row.className = "gym-stats-row";
+      row.appendChild(buildSelectField({
+        id: "gym-stats-exercise-id",
+        label: "Ejercicio",
+        options: exerciseOptions,
+        value: gymStatsSelection.exerciseId,
+        disabled: !exerciseOptions.length,
+        emptyLabel: "Sin ejercicios"
+      }));
+      row.appendChild(buildSelectField({
+        id: "gym-stats-exercise-metric",
+        label: "Métrica",
+        options: metrics,
+        value: gymStatsSelection.exerciseMetric
+      }));
+      $gymStatsControls.appendChild(row);
+    }
+  }
+
+  function buildSelectField({ id, label, options, value, disabled = false, emptyLabel = "" }) {
+    const field = document.createElement("label");
+    field.className = "gym-field";
+    const span = document.createElement("span");
+    span.textContent = label;
+    const select = document.createElement("select");
+    select.className = "gym-select";
+    select.id = id;
+    if (!options.length && emptyLabel) {
+      const emptyOption = document.createElement("option");
+      emptyOption.value = "";
+      emptyOption.textContent = emptyLabel;
+      select.appendChild(emptyOption);
+    } else {
+      options.forEach((option) => {
+        const opt = document.createElement("option");
+        opt.value = option.value;
+        opt.textContent = option.label;
+        select.appendChild(opt);
+      });
+    }
+    if (value !== undefined) {
+      select.value = value;
+    }
+    if (disabled) {
+      select.disabled = true;
+    }
+    field.appendChild(span);
+    field.appendChild(select);
+    return field;
+  }
+
+  function getExerciseOptions() {
+    return Object.values(exercises || {})
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", "es"))
+      .map((exercise) => ({
+        value: exercise.id,
+        label: exercise.name || "Sin nombre"
+      }));
+  }
+
+  function getCardioNameOptions() {
+    const names = new Set();
+    flattenCardioSessions().forEach((session) => {
+      if (session?.name) {
+        names.add(session.name);
+      }
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b, "es"));
+  }
+
+  function renderStatsChart() {
+    if (!$gymStatsChartHost || !$gymStatsEmpty) return;
+    initGymStatsChart();
+    const { labels, values, yLabel } = buildStatsSeries();
+    const hasData = labels.length && values.length;
+    $gymStatsEmpty.classList.toggle("hidden", hasData);
+    $gymStatsChartHost.classList.toggle("hidden", !hasData);
+    if (!hasData) {
+      gymStatsChart?.clear();
+      return;
+    }
+    gymStatsChart.setOption({
+      grid: { left: 44, right: 18, top: 16, bottom: 32 },
+      tooltip: { trigger: "axis" },
+      xAxis: {
+        type: "category",
+        data: labels,
+        boundaryGap: false,
+        axisLabel: { color: "#9aa4b2" }
+      },
+      yAxis: {
+        type: "value",
+        name: yLabel,
+        axisLabel: { color: "#9aa4b2" }
+      },
+      series: [
+        {
+          type: "line",
+          smooth: true,
+          data: values,
+          lineStyle: { width: 2 },
+          symbol: "circle",
+          symbolSize: 6,
+          itemStyle: { color: "#f7b541" }
+        }
+      ]
+    });
+  }
+
+  function buildStatsSeries() {
+    const kind = gymStatsSelection.kind || "body";
+    if (kind === "cardio") {
+      return buildCardioSeries();
+    }
+    if (kind === "exercise") {
+      return buildExerciseSeries();
+    }
+    return buildBodyweightSeries();
+  }
+
+  function buildBodyweightSeries() {
+    const entries = Object.entries(bodyweightByDate || {})
+      .filter(([, entry]) => entry?.weightKg != null)
+      .sort(([a], [b]) => a.localeCompare(b));
+    const labels = [];
+    const values = [];
+    entries.forEach(([date, entry]) => {
+      labels.push(formatChartDate(date));
+      values.push(entry.weightKg);
+    });
+    return { labels, values, yLabel: "Peso (kg)" };
+  }
+
+  function buildCardioSeries() {
+    const metric = gymStatsSelection.cardioMetric || "distanceKm";
+    const selectedName = gymStatsSelection.cardioName;
+    const sessions = flattenCardioSessions()
+      .filter((session) => !selectedName || session.name === selectedName)
+      .map((session) => {
+        const value = getCardioMetricValue(session, metric);
+        return {
+          date: session.date,
+          value,
+          ts: session.startedAt || session.updatedAt || 0
+        };
+      })
+      .filter((entry) => entry.value != null);
+    sessions.sort((a, b) => a.date.localeCompare(b.date) || a.ts - b.ts);
+    const labels = [];
+    const values = [];
+    sessions.forEach((session) => {
+      labels.push(formatChartDate(session.date));
+      values.push(session.value);
+    });
+    const labelMap = {
+      distanceKm: "Distancia (km)",
+      durationSec: "Duración (min)",
+      avgPaceSecPerKm: "Ritmo (min/km)",
+      avgSpeedKmh: "Velocidad (km/h)"
+    };
+    return { labels, values, yLabel: labelMap[metric] || "" };
+  }
+
+  function getCardioMetricValue(session, metric) {
+    if (!session) return null;
+    if (metric === "durationSec") {
+      return session.durationSec != null ? session.durationSec / 60 : null;
+    }
+    if (metric === "avgPaceSecPerKm") {
+      return session.avgPaceSecPerKm != null ? session.avgPaceSecPerKm / 60 : null;
+    }
+    return session[metric] ?? null;
+  }
+
+  function buildExerciseSeries() {
+    const exerciseId = gymStatsSelection.exerciseId;
+    if (!exerciseId) {
+      return { labels: [], values: [], yLabel: "" };
+    }
+    const metric = gymStatsSelection.exerciseMetric || "maxKgEff";
+    const entries = [];
+    flattenWorkouts().forEach((workout) => {
+      const exerciseData = workout.exercises?.[exerciseId];
+      if (!exerciseData?.sets?.length) return;
+      const unilateral = getExerciseUnilateral(exerciseData, exerciseId);
+      let maxKgEff = null;
+      let volumeKg = 0;
+      let reps = 0;
+      let hasDone = false;
+      exerciseData.sets.forEach((set) => {
+        if (!set?.done) return;
+        const repsValue = Number(set.reps) || 0;
+        const repsEff = unilateral ? repsValue * 2 : repsValue;
+        const kgEff = getSetEffectiveKg(set, workout.date);
+        reps += repsEff;
+        if (kgEff != null) {
+          maxKgEff = maxKgEff === null ? kgEff : Math.max(maxKgEff, kgEff);
+          volumeKg += repsEff * kgEff;
+        }
+        hasDone = true;
+      });
+      if (!hasDone) return;
+      let value = null;
+      if (metric === "maxKgEff") value = maxKgEff;
+      if (metric === "volumeKg") value = volumeKg;
+      if (metric === "reps") value = reps;
+      if (value == null) return;
+      entries.push({
+        date: workout.date,
+        value,
+        ts: workout.startedAt || 0
+      });
+    });
+    entries.sort((a, b) => a.date.localeCompare(b.date) || a.ts - b.ts);
+    const labels = [];
+    const values = [];
+    entries.forEach((entry) => {
+      labels.push(formatChartDate(entry.date));
+      values.push(entry.value);
+    });
+    const labelMap = {
+      maxKgEff: "Máximo (kg)",
+      volumeKg: "Volumen (kg)",
+      reps: "Repeticiones"
+    };
+    return { labels, values, yLabel: labelMap[metric] || "" };
   }
 
   function openExerciseModal() {
@@ -1094,6 +1482,7 @@ if ($viewGym) {
               <div class="gym-exercise-sub">${muscleLabel}</div>
               ${unilateral ? "<span class=\"gym-unilateral-pill\">Unilateral</span>" : ""}
             </div>
+            <button class="icon-btn icon-btn-small gym-exercise-stats-btn" data-action="exercise-stats" type="button" aria-label="Ver estadísticas">📈</button>
           </div>
             <div class="gym-sets-table">
               <div class="gym-sets-header">

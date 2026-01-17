@@ -289,13 +289,14 @@
 
 .gym-header .gym-title,
 .gym-header .gym-date {
-  width: min(92vw, 420px);
+  width: min(50vw, 380px);
   margin: 0 auto;
   font-size: 14px;
 }
 
-.gym-header .gym-title {
+.gym-title {
   height: 44px;
+  width: 100px;
 }
 
 .gym-header .gym-date {
@@ -801,3 +802,10 @@
   max-width: 150px !important;
 }
 .gym-input[data-field="kg"]{ max-width: 150px; }
+#gym-finish-workout {
+  max-width: 90%;
+  min-width: 90%;
+  justify-content: center;
+  align-self: center;
+  justify-self: center;
+}

@@ -386,6 +386,12 @@
   gap: 8px;
 }
 
+.gym-exercise-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .gym-exercise-title {
   font-size: 16px;
   font-weight: 600;

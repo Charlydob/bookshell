@@ -98,6 +98,7 @@ let habitDetailDateKey = todayKey();
 let habitDetailRecordsEntries = [];
 let habitDetailRecordsPage = 1;
 const habitDetailRecordsPageSize = 10;
+let hasRenderedTodayOnce = false;
 
 // Utilidades fecha
 function dateKeyLocal(date) {
@@ -1185,7 +1186,7 @@ function toggleDay(habitId, dateKey) {
   }
   saveCache();
   persistHabitCheck(habitId, dateKey, !!habitChecks[habitId][dateKey]);
-  renderHabitsPreservingUI();
+  renderHabitsPreservingTodayUI();
 }
 
 function persistHabitCheck(habitId, dateKey, value) {
@@ -1233,7 +1234,7 @@ function setHabitCount(habitId, dateKey, value) {
   }
 
   persistHabitCount(habitId, dateKey, safe > 0 ? safe : null);
-  renderHabitsPreservingUI();
+  renderHabitsPreservingTodayUI();
 }
 
 function adjustHabitCount(habitId, dateKey, delta) {
@@ -1729,7 +1730,7 @@ function renderHabitDetailActions(habit, dateKey) {
         if (!Number.isFinite(n) || n <= 0) return;
         addHabitTimeSec(habit.id, dateKey, Math.round(n * 60));
         input.value = "";
-        renderHabitsPreservingUI();
+        renderHabitsPreservingTodayUI();
       }
     });
     quickWrap.appendChild(input);
@@ -2400,10 +2401,11 @@ function renderToday() {
   $habitTodayTimeDone.innerHTML = "";
   if ($habitCustomGroups) $habitCustomGroups.innerHTML = "";
 
+  const shouldCollapseDefaults = !hasRenderedTodayOnce;
   const resetGroup = (wrap, list) => {
     if (list) list.innerHTML = "";
     if (wrap) {
-      wrap.open = false; // siempre cerrado por defecto
+      if (shouldCollapseDefaults) wrap.open = false; // cerrado solo en primer render
       wrap.style.display = "none";
     }
   };
@@ -2485,6 +2487,7 @@ function renderToday() {
         if (!bucket) return;
         const details = document.createElement("details");
         details.className = "habit-custom-group habit-accordion";
+        details.dataset.groupId = group.id;
         const pendingCount = bucket.pending.length;
         const doneCount = bucket.done.length;
         details.innerHTML = `
@@ -2536,7 +2539,7 @@ function renderToday() {
     if (!wrap || !list) return;
     const has = list.childElementCount > 0;
     wrap.style.display = has ? "" : "none";
-    wrap.open = false; // forzar siempre plegado
+    if (shouldCollapseDefaults && has) wrap.open = false; // solo en primer render
   };
 
   const updateGroupMeta = (wrap, list) => {
@@ -2568,6 +2571,7 @@ function renderToday() {
   if ($habitTodaySearchInput?.value.trim()) {
     applyTodaySearch($habitTodaySearchInput.value);
   }
+  if (!hasRenderedTodayOnce) hasRenderedTodayOnce = true;
 }
 
 function formatDaysLabel(days = []) {
@@ -3799,7 +3803,7 @@ function appendTimeQuickControls(tools, habit, today) {
       e.stopPropagation();
       const m = Math.round(Number(qa.minutes) || 0);
       if (m > 0) addHabitTimeSec(habit.id, today, m * 60);
-      renderHabitsPreservingUI();
+      renderHabitsPreservingTodayUI();
     });
     col.appendChild(btn);
   });
@@ -3832,7 +3836,7 @@ function appendTimeQuickControls(tools, habit, today) {
     if (!Number.isFinite(n) || n <= 0) return;
     addHabitTimeSec(habit.id, today, Math.round(n * 60));
     inp.value = "";
-    renderHabitsPreservingUI();
+    renderHabitsPreservingTodayUI();
   });
 
   inp.addEventListener("keydown", (e) => {
@@ -5065,6 +5069,47 @@ function renderRecordsCard() {
     $habitRecordsCompletedSub.textContent = stats.scheduled ? `${stats.completed}/${stats.scheduled}` : "—";
   }
   $habitRecordsSuccess.textContent = `${stats.successRatePct}%`;
+}
+
+function getTodayPanelScrollContainer(panel) {
+  if (!panel) return document.scrollingElement;
+  const candidates = Array.from(panel.querySelectorAll("*"));
+  const scrollable = candidates.find((el) => el.scrollHeight > el.clientHeight);
+  return scrollable || document.scrollingElement;
+}
+
+function captureTodayUIState() {
+  const panel = document.querySelector('.habits-panel[data-panel="today"]');
+  const openIds = panel
+    ? Array.from(panel.querySelectorAll("details[open]")).map((detail) => detail.id || detail.dataset.groupId || "").filter(Boolean)
+    : [];
+  const scrollContainer = getTodayPanelScrollContainer(panel);
+  const scrollTop = scrollContainer ? scrollContainer.scrollTop : null;
+  return { openIds, scrollTop };
+}
+
+function restoreTodayUIState(state) {
+  if (!state) return;
+  const panel = document.querySelector('.habits-panel[data-panel="today"]');
+  if (panel) {
+    state.openIds.forEach((id) => {
+      const safeId = (window.CSS && CSS.escape) ? CSS.escape(id) : id;
+      const byId = panel.querySelector(`#${safeId}`);
+      const byGroup = panel.querySelector(`[data-group-id="${safeId}"]`);
+      const detail = byId || byGroup;
+      if (detail) detail.open = true;
+    });
+  }
+  const scrollContainer = getTodayPanelScrollContainer(panel);
+  if (scrollContainer && state.scrollTop != null) {
+    scrollContainer.scrollTop = state.scrollTop;
+  }
+}
+
+function renderHabitsPreservingTodayUI() {
+  const state = captureTodayUIState();
+  renderHabits();
+  restoreTodayUIState(state);
 }
 
 function renderHabitsPreservingUI() {

@@ -356,7 +356,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return defaultRecipes.map(normalizeRecipeFields);
   }
 
-  function saveRecipes() {
+  function cacheRecipes() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(recipes));
     } catch (err) {
@@ -379,6 +379,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     } catch (err) {
       console.warn("No se pudo sincronizar receta", err);
     }
+    cacheRecipes();
   }
 
   function removeRecipeRemote(id) {
@@ -388,6 +389,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     } catch (err) {
       console.warn("No se pudo borrar receta remota", err);
     }
+    cacheRecipes();
   }
 
   function listenRemoteRecipes() {
@@ -410,7 +412,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
           ? Object.values(data).map(normalizeRecipeFields)
           : [];
         recipes = remoteList;
-        saveRecipes();
+        cacheRecipes();
         refreshUI();
         if (detailRecipeId) renderRecipeDetail(detailRecipeId);
       },
@@ -1598,7 +1600,6 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     const mergedPatch = { ...(patch || {}), updatedAt: ts };
     recipes = recipes.map((r) => (r.id === id ? normalizeRecipeFields({ ...r, ...mergedPatch }) : r));
     const updated = recipes.find((r) => r.id === id);
-    saveRecipes();
     if (updated) persistRecipe(id, updated);
     refreshUI();
     if (detailRecipeId === id) renderRecipeDetail(id);
@@ -1679,7 +1680,6 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     } else {
       recipes = [{ ...normalizedPayload }, ...recipes];
     }
-    saveRecipes();
     persistRecipe(id, nextRecipe);
     closeRecipeModal();
     refreshUI();
@@ -2069,7 +2069,6 @@ $recipeDetailNotes.innerHTML = linkifyNotesHtml(recipe.notes || "");
       return next;
     });
 
-    saveRecipes();
     changed.forEach((recipe) => persistRecipe(recipe.id, recipe));
     refreshUI();
 
@@ -2125,7 +2124,6 @@ function toggleChecklistItem(recipeId, itemId, value, type) {
     const confirmed = window.confirm(`¿Eliminar la receta \"${recipe.title}\"?`);
     if (!confirmed) return;
     recipes = recipes.filter((r) => r.id !== id);
-    saveRecipes();
     removeRecipeRemote(id);
     closeRecipeModal();
     closeRecipeDetail();
@@ -2358,7 +2356,6 @@ $recipeImportBtn?.addEventListener("click", () => {
       }
     } catch (_) {}
 
-    saveRecipes();
     persistRecipe(recipe.id, recipe);
     try { syncRecipeBookmarkButton(recipe); } catch (_) {}
     try { console.debug("[recipes] tracking", { id: recipe.id, tracking: recipe.tracking, trackingAt: recipe.trackingAt }); } catch (_) {}

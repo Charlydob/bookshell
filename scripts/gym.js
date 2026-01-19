@@ -427,14 +427,22 @@ if ($viewGym) {
     }, true);
 
     $gymWorkoutExercises.addEventListener("click", (event) => {
+      const removeSetBtn = event.target.closest("[data-action='remove-set']");
       const addBtn = event.target.closest("[data-action='add-set']");
       const statsBtn = event.target.closest("[data-action='exercise-stats']");
       const removeBtn = event.target.closest("[data-action='exercise-remove']");
-      const btn = addBtn || statsBtn || removeBtn;
+      const btn = removeSetBtn || addBtn || statsBtn || removeBtn;
       if (!btn) return;
       const card = btn.closest(".gym-exercise-card");
       if (!card) return;
       const exerciseId = card.dataset.exerciseId;
+      if (removeSetBtn) {
+        const row = removeSetBtn.closest(".gym-sets-row");
+        if (!row) return;
+        const setIndex = Number(row.dataset.setIndex);
+        removeSetFromExercise(exerciseId, setIndex);
+        return;
+      }
       if (removeBtn) {
         removeExerciseFromWorkout(exerciseId);
         return;
@@ -2102,6 +2110,7 @@ if ($viewGym) {
     : `<input class="gym-input" data-field="reps" type="number" inputmode="numeric" placeholder="${repsPlaceholder}" value="${set.reps ?? ""}"/>`}
               <input class="gym-input kg" data-field="kg" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholder}" value="${kgValue}"/>
               <input class="gym-checkbox" data-field="done" type="checkbox" ${set.done ? "checked" : ""}/>
+              <button type="button" class="icon-btn icon-btn-small" data-action="remove-set" aria-label="Eliminar serie">✕</button>
             </div>
           `;
         }).join("");
@@ -2129,6 +2138,7 @@ if ($viewGym) {
 <span>${exerciseType === "time" ? "Tiempo" : "Reps"}</span>
 <span>Kg</span>
 <span>✔</span>
+<span></span>
               </div>
               ${rows}
             </div>
@@ -2220,6 +2230,17 @@ if ($viewGym) {
     exercise.sets.push(nextSet);
     scheduleWorkoutSave();
     renderWorkoutEditor();
+  }
+
+  function removeSetFromExercise(exerciseId, setIndex) {
+    const workout = ensureWorkoutDraft();
+    const exercise = workout?.exercises?.[exerciseId];
+    if (!exercise?.sets?.length) return;
+    if (!Number.isFinite(setIndex) || setIndex < 0) return;
+    exercise.sets.splice(setIndex, 1);
+    scheduleWorkoutSave();
+    renderWorkoutEditor();
+    renderMetrics();
   }
 
   function openExerciseForWorkout(exerciseId) {

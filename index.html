@@ -1225,11 +1225,11 @@
 <div class="gym-body-grid">
 <label class="gym-field">
 <span>Peso (kg)</span>
-<input id="gym-body-weight" inputmode="decimal" placeholder="Ej. 72.5" type="text"/>
+<input id="gym-body-weight" inputmode="decimal" placeholder="Ej: 72.5 Kg" type="text"/>
 </label>
 <label class="gym-field">
 <span>Altura (cm)</span>
-<input id="gym-body-height" inputmode="numeric" placeholder="Ej. 178" type="text"/>
+<input id="gym-body-height" inputmode="numeric" placeholder="Ej: 178 cm" type="text"/>
 </label>
 </div>
 <div class="gym-body-meta" id="gym-body-meta">Registra tu peso y altura para usarlo en los sets.</div>
@@ -1932,56 +1932,59 @@ Crear “<span id="gym-create-cta-text"></span>”
 <form class="modal-form" id="habit-form">
 <input id="habit-id" type="hidden"/>
 <div class="modal-scroll sheet-body">
-<div class="sheet-section">
-<div class="sheet-section-title">Detalles</div>
-<label class="field">
-<span class="field-label">Nombre</span>
-<input id="habit-name" required="" type="text"/>
-</label>
-<label class="field">
-<span class="field-label">Emoji/Icono</span>
-<input id="habit-emoji" inputmode="text" maxlength="4" placeholder="💪" type="text"/>
-</label>
-<label class="field">
-<span class="field-label">Color</span>
-<input id="habit-color" type="color" value="#7f5dff"/>
-</label>
+    <div class="sheet-section">
+    <div class="sheet-section-title">Detalles</div>
+        <div class="habits-details">
+          <label class="field">
+          <span class="field-label">Nombre</span>
+          <input id="habit-name" required="" type="text"/>
+          </label>
+          <label class="field">
+          <span class="field-label">Emoji/Icono</span>
+          <input id="habit-emoji" inputmode="text" maxlength="4" placeholder="💪" type="text"/>
+          </label>
+          <label class="field">
+          <span class="field-label">Color</span>
+          <input id="habit-color" type="color" value="#7f5dff"/>
+          </label>
 
-<label class="field">
-  <span class="field-label">Grupo</span>
-  <select id="habit-group-select"></select>
-</label>
-<div class="habit-group-manage">
-  <input id="habit-group-new" placeholder="Nuevo grupo" type="text"/>
-  <button class="btn ghost btn-compact" id="habit-group-create" type="button">Crear</button>
-</div>
-<div class="habit-group-manage">
-  <input id="habit-group-rename" placeholder="Renombrar grupo" type="text"/>
-  <button class="btn ghost btn-compact" id="habit-group-rename-btn" type="button">Renombrar</button>
-  <button class="btn ghost danger btn-compact" id="habit-group-delete-btn" type="button">Eliminar</button>
-</div>
+          <label class="field">
+            <span class="field-label">Grupo</span>
+            <select id="habit-group-select"></select>
+          </label>
+        </div>
 
-<label class="field checkbox-field">
-  <div class="checkbox-field-row">
-    <div>
-      <div class="checkbox-field-title">Agrupar en “Privados”</div>
-      <div class="checkbox-field-hint">Se mostrará en un desplegable cerrado por defecto (en Pendientes/Hechos).</div>
+    <div class="habit-group-manage">
+      <input id="habit-group-new" placeholder="Nuevo grupo" type="text"/>
+      <button class="btn ghost btn-compact" id="habit-group-create" type="button">Crear</button>
     </div>
-    <input id="habit-group-private" type="checkbox"/>
-  </div>
-</label>
-
-<label class="field checkbox-field">
-  <div class="checkbox-field-row">
-    <div>
-      <div class="checkbox-field-title">Agrupar en “Poco uso”</div>
-      <div class="checkbox-field-hint">Se mostrará en un desplegable cerrado por defecto (en Pendientes/Hechos).</div>
+    <div class="habit-group-manage">
+      <input id="habit-group-rename" placeholder="Renombrar grupo" type="text"/>
+      <button class="btn ghost btn-compact" id="habit-group-rename-btn" type="button">Renombrar</button>
+      <button class="btn ghost danger btn-compact" id="habit-group-delete-btn" type="button">Eliminar</button>
     </div>
-    <input id="habit-group-lowuse" type="checkbox"/>
-  </div>
-</label>
 
-</div>
+    <label class="field checkbox-field">
+      <div class="checkbox-field-row">
+        <div>
+          <div class="checkbox-field-title">Agrupar en “Privados”</div>
+          <div class="checkbox-field-hint">Se mostrará en un desplegable cerrado por defecto (en Pendientes/Hechos).</div>
+        </div>
+        <input id="habit-group-private" type="checkbox"/>
+      </div>
+    </label>
+
+    <label class="field checkbox-field">
+      <div class="checkbox-field-row">
+        <div>
+          <div class="checkbox-field-title">Agrupar en “Poco uso”</div>
+          <div class="checkbox-field-hint">Se mostrará en un desplegable cerrado por defecto (en Pendientes/Hechos).</div>
+        </div>
+        <input id="habit-group-lowuse" type="checkbox"/>
+      </div>
+    </label>
+
+    </div>
 <div class="sheet-section habit-params-section">
 <div class="sheet-section-title">Parámetros</div>
 <label class="field">

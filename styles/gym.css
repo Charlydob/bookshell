@@ -509,6 +509,10 @@
   max-width: 38px;
   
 }
+#gym-body-height, #gym-body-weight {
+  max-width:80px;
+  padding: 4px;
+}
 
 .gym-checkbox:checked {
   background: rgba(34, 197, 94, 0.2);
@@ -787,7 +791,7 @@
 
 /* 3) Inputs compactos */
 .gym-sets-row input{
-  width: 100%;
+  width: 100px;
   height: 34px;
   padding: 0 8px;
   border-radius: 12px;
@@ -815,3 +819,39 @@
   align-self: center;
   justify-self: center;
 }
+.gym-set-delete{
+  width: 92px;
+  border: none;
+  background: #ef4444;
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.gym-set-swipe { position: relative; overflow: hidden; border-radius: 12px; }
+
+.gym-set-swipe-under{
+  position: absolute;
+  inset: 0;
+  z-index: 0;          /* 👈 detrás */
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+}
+
+.gym-set-swipe-front{
+  position: relative;  /* 👈 crea capa */
+  z-index: 1;          /* 👈 delante */
+  transform: translateX(0); /* por si acaso */
+}
+.gym-set-swipe-under{
+  opacity: 0;
+  pointer-events: none;
+}
+
+.gym-set-swipe.is-open .gym-set-swipe-under,
+.gym-set-swipe.is-swiping .gym-set-swipe-under{
+  opacity: 1;
+  pointer-events: auto;
+}
+.gym-set-swipe-front{ position: relative; z-index: 1; width: 100%; }
+.gym-set-swipe-under{ position: absolute; inset: 0; z-index: 0; }

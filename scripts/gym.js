@@ -203,334 +203,447 @@ if ($viewGym) {
     }
   }
 
-  function bindEvents() {
-    $gymStartWorkout.addEventListener("click", () => {
-      openTemplateModal();
-    });
+function bindEvents() {
+  $gymStartWorkout.addEventListener("click", () => {
+    openTemplateModal();
+  });
 
-    $gymOpenStats?.addEventListener("click", () => {
-      openStatsScreen({ kind: gymStatsSelection.kind || "body" });
-    });
+  $gymOpenStats?.addEventListener("click", () => {
+    openStatsScreen({ kind: gymStatsSelection.kind || "body" });
+  });
 
-    $gymBack.addEventListener("click", () => {
-      showScreen("home");
-    });
+  $gymBack.addEventListener("click", () => {
+    showScreen("home");
+  });
 
-    $gymStatsBack?.addEventListener("click", () => {
-      showScreen(gymStatsReturnTo);
-    });
+  $gymStatsBack?.addEventListener("click", () => {
+    showScreen(gymStatsReturnTo);
+  });
 
-    $gymStatsKind?.addEventListener("change", () => {
-      gymStatsSelection.kind = $gymStatsKind.value;
-      renderStatsControls();
-      renderStatsChart();
-    });
+  $gymStatsKind?.addEventListener("change", () => {
+    gymStatsSelection.kind = $gymStatsKind.value;
+    renderStatsControls();
+    renderStatsChart();
+  });
 
-    $gymStatsControls?.addEventListener("change", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLSelectElement)) return;
-      if (target.id === "gym-stats-cardio-name") {
-        gymStatsSelection.cardioName = target.value;
-      }
-      if (target.id === "gym-stats-cardio-metric") {
-        gymStatsSelection.cardioMetric = target.value;
-      }
-      if (target.id === "gym-stats-exercise-id") {
-        gymStatsSelection.exerciseId = target.value;
-      }
-      if (target.id === "gym-stats-exercise-metric") {
-        gymStatsSelection.exerciseMetric = target.value;
-      }
-      renderStatsChart();
-    });
+  $gymStatsControls?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) return;
+    if (target.id === "gym-stats-cardio-name") gymStatsSelection.cardioName = target.value;
+    if (target.id === "gym-stats-cardio-metric") gymStatsSelection.cardioMetric = target.value;
+    if (target.id === "gym-stats-exercise-id") gymStatsSelection.exerciseId = target.value;
+    if (target.id === "gym-stats-exercise-metric") gymStatsSelection.exerciseMetric = target.value;
+    renderStatsChart();
+  });
 
-    $gymExDetailControls?.addEventListener("change", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLSelectElement)) return;
-      if (target.id === "gym-exdetail-metric") {
-        gymExDetailSelection.metric = target.value;
-        renderExerciseDetailChart();
-      }
-    });
+  $gymExDetailControls?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) return;
+    if (target.id === "gym-exdetail-metric") {
+      gymExDetailSelection.metric = target.value;
+      renderExerciseDetailChart();
+    }
+  });
 
-    $gymExDetailClose?.addEventListener("click", () => {
-      closeExerciseDetailModal();
-    });
+  $gymExDetailClose?.addEventListener("click", () => {
+    closeExerciseDetailModal();
+  });
 
-    $gymExDetailEdit?.addEventListener("click", () => {
-      if (!gymExDetailSelection.exerciseId) return;
-      openEditExerciseModal(gymExDetailSelection.exerciseId);
-    });
+  $gymExDetailEdit?.addEventListener("click", () => {
+    if (!gymExDetailSelection.exerciseId) return;
+    openEditExerciseModal(gymExDetailSelection.exerciseId);
+  });
 
-    $gymExDetailDelete?.addEventListener("click", () => {
-      if (!gymExDetailSelection.exerciseId) return;
-      deleteExercise(gymExDetailSelection.exerciseId);
-    });
+  $gymExDetailDelete?.addEventListener("click", () => {
+    if (!gymExDetailSelection.exerciseId) return;
+    deleteExercise(gymExDetailSelection.exerciseId);
+  });
 
-    $gymAddExercise.addEventListener("click", () => {
-      openExerciseModal();
-    });
+  $gymAddExercise.addEventListener("click", () => {
+    openExerciseModal();
+  });
 
-    $gymExerciseClose.addEventListener("click", () => {
-      closeExerciseModal();
-    });
+  $gymExerciseClose.addEventListener("click", () => {
+    closeExerciseModal();
+  });
 
-    $gymTemplateClose.addEventListener("click", () => {
-      closeTemplateModal();
-    });
+  $gymTemplateClose.addEventListener("click", () => {
+    closeTemplateModal();
+  });
 
-    $gymCreateEmpty.addEventListener("click", () => {
-      const name = ($gymTemplateName.value || "").trim() || "Entrenamiento";
-      startWorkout({ name, templateId: null });
-      closeTemplateModal();
-    });
+  $gymCreateEmpty.addEventListener("click", () => {
+    const name = ($gymTemplateName.value || "").trim() || "Entrenamiento";
+    startWorkout({ name, templateId: null });
+    closeTemplateModal();
+  });
 
-    $gymCreateExercise.addEventListener("click", () => {
-      const name = ($gymCreateName.value || "").trim();
-      if (!name) return;
-      const now = Date.now();
-      const muscleGroups = normalizeMuscleGroups(Array.from(createMuscles));
-      const payload = {
-        name,
-        muscleGroups,
-        type: $gymCreateType?.value || "reps",
-        unilateral: Boolean($gymCreateUnilateral?.checked),
-        updatedAt: now
-      };
-      if (editingExerciseId) {
-        const exerciseId = editingExerciseId;
-        const path = `${basePath}/exercises/${exerciseId}`;
-        exercises[exerciseId] = {
-          ...(exercises[exerciseId] || {}),
-          id: exerciseId,
-          ...payload
-        };
-        writeGymUpdate(path, payload);
-        editingExerciseId = null;
-      } else {
-        const newRef = push(exercisesRef);
-        const exercise = {
-          id: newRef.key,
-          createdAt: now,
-          ...payload
-        };
-        exercises[newRef.key] = exercise;
-        writeGymSet(`${basePath}/exercises/${newRef.key}`, exercise);
-      }
-      $gymCreateName.value = "";
-      $gymCreateUnilateral.checked = false;
-      closeCreateExerciseModal();
-      renderExerciseList();
-      refreshExerciseDetailIfOpen();
-    });
+  $gymCreateExercise.addEventListener("click", () => {
+    const name = ($gymCreateName.value || "").trim();
+    if (!name) return;
+    const now = Date.now();
+    const muscleGroups = normalizeMuscleGroups(Array.from(createMuscles));
+    const payload = {
+      name,
+      muscleGroups,
+      type: $gymCreateType?.value || "reps",
+      unilateral: Boolean($gymCreateUnilateral?.checked),
+      updatedAt: now
+    };
 
-    $gymExerciseSearch.addEventListener("input", () => {
-      renderExerciseList();
-    });
-
-    $gymCreateToggle.addEventListener("click", () => {
-      openCreateExerciseModal();
-    });
-
-    $gymCreateClose.addEventListener("click", () => {
-      closeCreateExerciseModal();
-    });
-
-    $gymCreateCta.addEventListener("click", () => {
-      const query = ($gymExerciseSearch.value || "").trim();
-      openCreateExerciseModal(query);
-    });
-
-    $gymWorkoutName.addEventListener("input", () => {
-      const workout = ensureWorkoutDraft();
-      if (!workout) return;
-      workout.name = $gymWorkoutName.value;
-      scheduleWorkoutSave();
-    });
-
-    $gymWorkoutName.addEventListener("blur", () => {
-      flushWorkoutSave();
-    });
-
-    $gymWorkoutDate.addEventListener("change", () => {
-      const workout = ensureWorkoutDraft();
-      if (!workout) return;
-      const nextDate = $gymWorkoutDate.value;
-      if (nextDate && nextDate !== workout.date) {
-        moveWorkoutDate(nextDate);
-      }
-    });
-
-    if ($gymWorkoutEmoji) {
-      $gymWorkoutEmoji.addEventListener("click", () => {
-        const workout = ensureWorkoutDraft();
-        if (!workout) return;
-        const nextEmoji = promptForEmoji(workout.emojiSnapshot);
-        if (nextEmoji === workout.emojiSnapshot) return;
-        workout.emojiSnapshot = nextEmoji;
-        scheduleWorkoutSave();
-        renderWorkoutEmoji(workout);
-        upsertTemplateFromWorkout(workout, { emoji: nextEmoji });
-      });
+    if (editingExerciseId) {
+      const exerciseId = editingExerciseId;
+      const path = `${basePath}/exercises/${exerciseId}`;
+      exercises[exerciseId] = { ...(exercises[exerciseId] || {}), id: exerciseId, ...payload };
+      writeGymUpdate(path, payload);
+      editingExerciseId = null;
+    } else {
+      const newRef = push(exercisesRef);
+      const exercise = { id: newRef.key, createdAt: now, ...payload };
+      exercises[newRef.key] = exercise;
+      writeGymSet(`${basePath}/exercises/${newRef.key}`, exercise);
     }
 
-    $gymFinishWorkout.addEventListener("click", () => {
-      finishWorkout();
-    });
+    $gymCreateName.value = "";
+    $gymCreateUnilateral.checked = false;
+    closeCreateExerciseModal();
+    renderExerciseList();
+    refreshExerciseDetailIfOpen();
+  });
 
-    $gymDiscardWorkout.addEventListener("click", () => {
-      discardWorkout();
-    });
+  $gymExerciseSearch.addEventListener("input", () => {
+    renderExerciseList();
+  });
 
-    $gymWorkoutExercises.addEventListener("input", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLInputElement)) return;
-      const card = target.closest(".gym-exercise-card");
-      const row = target.closest(".gym-sets-row");
-      if (!card) return;
-      const exerciseId = card.dataset.exerciseId;
-      if (!exerciseId) return;
-      const field = target.dataset.field;
-      if (!field) return;
+  $gymCreateToggle.addEventListener("click", () => {
+    openCreateExerciseModal();
+  });
+
+  $gymCreateClose.addEventListener("click", () => {
+    closeCreateExerciseModal();
+  });
+
+  $gymCreateCta.addEventListener("click", () => {
+    const query = ($gymExerciseSearch.value || "").trim();
+    openCreateExerciseModal(query);
+  });
+
+  $gymWorkoutName.addEventListener("input", () => {
+    const workout = ensureWorkoutDraft();
+    if (!workout) return;
+    workout.name = $gymWorkoutName.value;
+    scheduleWorkoutSave();
+  });
+
+  $gymWorkoutName.addEventListener("blur", () => {
+    flushWorkoutSave();
+  });
+
+  $gymWorkoutDate.addEventListener("change", () => {
+    const workout = ensureWorkoutDraft();
+    if (!workout) return;
+    const nextDate = $gymWorkoutDate.value;
+    if (nextDate && nextDate !== workout.date) moveWorkoutDate(nextDate);
+  });
+
+  if ($gymWorkoutEmoji) {
+    $gymWorkoutEmoji.addEventListener("click", () => {
       const workout = ensureWorkoutDraft();
-      const exercise = workout?.exercises?.[exerciseId];
-      if (!exercise) return;
-      if (field === "useBodyweight") {
-        exercise.useBodyweight = target.checked;
-        scheduleWorkoutSave();
-        renderWorkoutEditor();
-        renderMetrics();
-        return;
-      }
-      if (!row) return;
-      const setIndex = Number(row.dataset.setIndex);
-      if (!exercise.sets || !exercise.sets[setIndex]) return;
-      if (field === "done") {
-        exercise.sets[setIndex].done = target.checked;
-      } else if (field === "timeText") {
-        const { sec, text } = parseMmSsFromDigits(target.value);
-        target.value = text;
-        exercise.sets[setIndex].timeSec = sec;
-      } else {
-        const value = parseSetInput(field, target.value);
-        exercise.sets[setIndex][field] = value;
-      }
+      if (!workout) return;
+      const nextEmoji = promptForEmoji(workout.emojiSnapshot);
+      if (nextEmoji === workout.emojiSnapshot) return;
+      workout.emojiSnapshot = nextEmoji;
       scheduleWorkoutSave();
-      renderMetrics();
+      renderWorkoutEmoji(workout);
+      upsertTemplateFromWorkout(workout, { emoji: nextEmoji });
     });
+  }
 
-    $gymWorkoutExercises.addEventListener("blur", (event) => {
+  $gymFinishWorkout.addEventListener("click", () => {
+    finishWorkout();
+  });
+
+  $gymDiscardWorkout.addEventListener("click", () => {
+    discardWorkout();
+  });
+
+  $gymWorkoutExercises.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+
+    const card = target.closest(".gym-exercise-card");
+    const row = target.closest(".gym-sets-row");
+    if (!card) return;
+
+    const exerciseId = card.dataset.exerciseId;
+    if (!exerciseId) return;
+
+    const field = target.dataset.field;
+    if (!field) return;
+
+    const workout = ensureWorkoutDraft();
+    const exercise = workout?.exercises?.[exerciseId];
+    if (!exercise) return;
+
+    if (field === "useBodyweight") {
+      exercise.useBodyweight = target.checked;
+      scheduleWorkoutSave();
+      renderWorkoutEditor();
+      renderMetrics();
+      return;
+    }
+
+    if (!row) return;
+    const setIndex = Number(row.dataset.setIndex);
+    if (!exercise.sets || !exercise.sets[setIndex]) return;
+
+    if (field === "done") {
+      exercise.sets[setIndex].done = target.checked;
+    } else if (field === "timeText") {
+      const { sec, text } = parseMmSsFromDigits(target.value);
+      target.value = text;
+      exercise.sets[setIndex].timeSec = sec;
+    } else {
+      const value = parseSetInput(field, target.value);
+      exercise.sets[setIndex][field] = value;
+    }
+
+    scheduleWorkoutSave();
+    renderMetrics();
+  });
+
+  $gymWorkoutExercises.addEventListener(
+    "blur",
+    (event) => {
       const target = event.target;
       if (!(target instanceof HTMLInputElement)) return;
       if (!target.closest(".gym-sets-row")) return;
       flushWorkoutSave();
-    }, true);
+    },
+    true
+  );
 
-    $gymWorkoutExercises.addEventListener("click", (event) => {
-      const removeSetBtn = event.target.closest("[data-action='remove-set']");
-      const addBtn = event.target.closest("[data-action='add-set']");
-      const statsBtn = event.target.closest("[data-action='exercise-stats']");
-      const removeBtn = event.target.closest("[data-action='exercise-remove']");
-      const btn = removeSetBtn || addBtn || statsBtn || removeBtn;
-      if (!btn) return;
-      const card = btn.closest(".gym-exercise-card");
-      if (!card) return;
-      const exerciseId = card.dataset.exerciseId;
-      if (removeSetBtn) {
-        const row = removeSetBtn.closest(".gym-sets-row");
-        if (!row) return;
-        const setIndex = Number(row.dataset.setIndex);
-        removeSetFromExercise(exerciseId, setIndex);
-        return;
-      }
-      if (removeBtn) {
-        removeExerciseFromWorkout(exerciseId);
-        return;
-      }
-      if (statsBtn) {
-        openExerciseDetailModal(exerciseId);
-        return;
-      }
-      addSetToExercise(exerciseId);
-    });
+  // --- click actions (add/remove/stats) ---
+  $gymWorkoutExercises.addEventListener("click", (event) => {
+    const removeSetBtn = event.target.closest("[data-action='remove-set']");
+    const addBtn = event.target.closest("[data-action='add-set']");
+    const statsBtn = event.target.closest("[data-action='exercise-stats']");
+    const removeBtn = event.target.closest("[data-action='exercise-remove']");
+    const btn = removeSetBtn || addBtn || statsBtn || removeBtn;
+    if (!btn) return;
 
-    $gymCalPrev.addEventListener("click", () => {
-      currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
-      renderCalendar();
-    });
+    const card = btn.closest(".gym-exercise-card");
+    if (!card) return;
+    const exerciseId = card.dataset.exerciseId;
+    if (!exerciseId) return;
 
-    $gymCalNext.addEventListener("click", () => {
-      currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
-      renderCalendar();
-    });
+    if (removeSetBtn) {
+      const wrap = removeSetBtn.closest(".gym-set-swipe") || removeSetBtn.closest(".gym-sets-row");
+      if (!wrap) return;
+      const setIndex = Number(wrap.dataset.setIndex);
+      removeSetFromExercise(exerciseId, setIndex);
+      return;
+    }
 
-    $gymBodyDate.addEventListener("change", () => {
-      renderBodyweightForm();
-    });
+    if (removeBtn) {
+      removeExerciseFromWorkout(exerciseId);
+      return;
+    }
 
-    [$gymBodyWeight, $gymBodyHeight].forEach((input) => {
-      input.addEventListener("input", () => {
-        scheduleBodyweightSave();
-      });
-      input.addEventListener("blur", () => {
-        flushBodyweightSave();
-      });
-    });
+    if (statsBtn) {
+      openExerciseDetailModal(exerciseId);
+      return;
+    }
 
-    $gymCardioNew.addEventListener("click", () => {
-      const cardio = createCardioSession();
-      openCardioModal(cardio);
-    });
+    addSetToExercise(exerciseId);
+  });
 
-    $gymCardioClose.addEventListener("click", () => {
-      closeCardioModal();
-    });
+  // --- swipe to delete sets ---
+  let openSwipe = null;
+  let swipe = null;
 
-    $gymCardioName.addEventListener("input", () => {
-      if (!cardioDraft) return;
-      cardioDraft.name = $gymCardioName.value;
-      scheduleCardioSave();
-      renderCardioList();
-    });
+  const ACTION_W = 92;
 
-    $gymCardioDate.addEventListener("change", () => {
-      if (!cardioDraft) return;
-      const nextDate = $gymCardioDate.value;
-      if (nextDate && nextDate !== cardioDraft.date) {
-        moveCardioDate(nextDate);
-      }
-    });
-
-    $gymCardioTarget.addEventListener("input", () => {
-      if (!cardioDraft) return;
-      cardioDraft.targetDistanceKm = parseDecimalInput($gymCardioTarget.value);
-      scheduleCardioSave();
-      renderCardioSummary();
-    });
-
-    $gymCardioDistance.addEventListener("input", () => {
-      if (!cardioDraft) return;
-      cardioDraft.distanceKm = parseDecimalInput($gymCardioDistance.value);
-      scheduleCardioSave();
-      renderCardioSummary();
-    });
-
-    $gymCardioStart.addEventListener("click", () => {
-      startCardioTimer();
-    });
-
-    $gymCardioPause.addEventListener("click", () => {
-      pauseCardioTimer();
-    });
-
-    $gymCardioResume.addEventListener("click", () => {
-      resumeCardioTimer();
-    });
-
-    $gymCardioFinish.addEventListener("click", () => {
-      finishCardioSession();
-    });
+  function closeSwipe(el) {
+    if (!el) return;
+    el.classList.remove("is-open", "is-swiping");
+    const front = el.querySelector(".gym-set-swipe-front");
+    if (front) {
+      front.style.transition = "transform 180ms ease";
+      front.style.transform = "translateX(0px)";
+    }
   }
+
+  function openSwipeEl(el) {
+    if (!el) return;
+    el.classList.add("is-open");
+    el.classList.remove("is-swiping");
+    const front = el.querySelector(".gym-set-swipe-front");
+    if (front) {
+      front.style.transition = "transform 180ms ease";
+      front.style.transform = `translateX(-${ACTION_W}px)`;
+    }
+    openSwipe = el;
+  }
+
+  $gymWorkoutExercises.addEventListener(
+    "pointerdown",
+    (e) => {
+      const front = e.target.closest(".gym-set-swipe-front");
+      if (!front) return;
+      if (e.target.closest("input, button, select, textarea, label")) return;
+
+      const wrap = front.closest(".gym-set-swipe");
+      if (!wrap) return;
+
+      if (openSwipe && openSwipe !== wrap) closeSwipe(openSwipe);
+
+      swipe = {
+        wrap,
+        front,
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        base: wrap.classList.contains("is-open") ? -ACTION_W : 0,
+        locked: false,
+        horizontal: false,
+        captured: false,
+        x: wrap.classList.contains("is-open") ? -ACTION_W : 0
+      };
+
+      front.style.transition = "none";
+    },
+    { passive: true }
+  );
+
+  $gymWorkoutExercises.addEventListener(
+    "pointermove",
+    (e) => {
+      if (!swipe || e.pointerId !== swipe.pointerId) return;
+
+      const dx = e.clientX - swipe.startX;
+      const dy = e.clientY - swipe.startY;
+
+      if (!swipe.locked) {
+        const adx = Math.abs(dx);
+        const ady = Math.abs(dy);
+        if (adx < 6 && ady < 6) return;
+
+        swipe.locked = true;
+        swipe.horizontal = adx > ady;
+
+        if (!swipe.horizontal) {
+          swipe = null;
+          return;
+        }
+
+        swipe.wrap.classList.add("is-swiping");
+        if (!swipe.captured) {
+          swipe.front.setPointerCapture(e.pointerId);
+          swipe.captured = true;
+        }
+      }
+
+      e.preventDefault();
+
+      const next = Math.max(-ACTION_W, Math.min(0, swipe.base + dx));
+      swipe.x = next;
+      swipe.front.style.transform = `translateX(${next}px)`;
+    },
+    { passive: false }
+  );
+
+  function endSwipe(e) {
+    if (!swipe || e.pointerId !== swipe.pointerId) return;
+
+    const shouldOpen = swipe.x < -ACTION_W * 0.35;
+
+    if (shouldOpen) {
+      openSwipeEl(swipe.wrap);
+    } else {
+      closeSwipe(swipe.wrap);
+      if (openSwipe === swipe.wrap) openSwipe = null;
+    }
+
+    swipe = null;
+  }
+
+  $gymWorkoutExercises.addEventListener("pointerup", endSwipe, { passive: true });
+  $gymWorkoutExercises.addEventListener("pointercancel", endSwipe, { passive: true });
+
+  // tap fuera cierra
+  $gymWorkoutExercises.addEventListener(
+    "click",
+    (e) => {
+      if (!openSwipe) return;
+      if (e.target.closest(".gym-set-swipe") === openSwipe) return;
+      closeSwipe(openSwipe);
+      openSwipe = null;
+    },
+    true
+  );
+
+  // --- calendar/bodyweight/cardio ---
+  $gymCalPrev.addEventListener("click", () => {
+    currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
+    renderCalendar();
+  });
+
+  $gymCalNext.addEventListener("click", () => {
+    currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
+    renderCalendar();
+  });
+
+  $gymBodyDate.addEventListener("change", () => {
+    renderBodyweightForm();
+  });
+
+  [$gymBodyWeight, $gymBodyHeight].forEach((input) => {
+    input.addEventListener("input", () => scheduleBodyweightSave());
+    input.addEventListener("blur", () => flushBodyweightSave());
+  });
+
+  $gymCardioNew.addEventListener("click", () => {
+    const cardio = createCardioSession();
+    openCardioModal(cardio);
+  });
+
+  $gymCardioClose.addEventListener("click", () => {
+    closeCardioModal();
+  });
+
+  $gymCardioName.addEventListener("input", () => {
+    if (!cardioDraft) return;
+    cardioDraft.name = $gymCardioName.value;
+    scheduleCardioSave();
+    renderCardioList();
+  });
+
+  $gymCardioDate.addEventListener("change", () => {
+    if (!cardioDraft) return;
+    const nextDate = $gymCardioDate.value;
+    if (nextDate && nextDate !== cardioDraft.date) moveCardioDate(nextDate);
+  });
+
+  $gymCardioTarget.addEventListener("input", () => {
+    if (!cardioDraft) return;
+    cardioDraft.targetDistanceKm = parseDecimalInput($gymCardioTarget.value);
+    scheduleCardioSave();
+    renderCardioSummary();
+  });
+
+  $gymCardioDistance.addEventListener("input", () => {
+    if (!cardioDraft) return;
+    cardioDraft.distanceKm = parseDecimalInput($gymCardioDistance.value);
+    scheduleCardioSave();
+    renderCardioSummary();
+  });
+
+  $gymCardioStart.addEventListener("click", () => startCardioTimer());
+  $gymCardioPause.addEventListener("click", () => pauseCardioTimer());
+  $gymCardioResume.addEventListener("click", () => resumeCardioTimer());
+  $gymCardioFinish.addEventListener("click", () => finishCardioSession());
+}
+
 
   function subscribeData() {
     onValue(exercisesRef, (snap) => {
@@ -2102,17 +2215,25 @@ if ($viewGym) {
           const kgValue = set.kg ?? set.extraKg ?? "";
           const timeValue = formatMmSs(set.timeSec);
           return `
-            <div class="gym-sets-row" data-set-index="${index}">
-              <span>${index + 1}</span>
-              <span class="gym-set-previous">${prevText}</span>
-              ${exerciseType === "time"
-    ? `<input class="gym-input gym-time-input" data-field="timeText" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="${timePlaceholder}" value="${timeValue}"/>`
-    : `<input class="gym-input" data-field="reps" type="number" inputmode="numeric" placeholder="${repsPlaceholder}" value="${set.reps ?? ""}"/>`}
-              <input class="gym-input kg" data-field="kg" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholder}" value="${kgValue}"/>
-              <input class="gym-checkbox" data-field="done" type="checkbox" ${set.done ? "checked" : ""}/>
-              <button type="button" class="icon-btn icon-btn-small" data-action="remove-set" aria-label="Eliminar serie">✕</button>
-            </div>
-          `;
+  <div class="gym-set-swipe" data-set-index="${index}">
+    <div class="gym-set-swipe-under">
+      <button type="button" class="gym-set-delete" data-action="remove-set" aria-label="Eliminar serie">
+        Eliminar
+      </button>
+    </div>
+
+    <div class="gym-sets-row gym-set-swipe-front" data-set-index="${index}">
+      <span>${index + 1}</span>
+      <span class="gym-set-previous">${prevText}</span>
+      ${exerciseType === "time"
+        ? `<input class="gym-input gym-time-input" data-field="timeText" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="${timePlaceholder}" value="${timeValue}"/>`
+        : `<input class="gym-input" data-field="reps" type="number" inputmode="numeric" placeholder="${repsPlaceholder}" value="${set.reps ?? ""}"/>`}
+      <input class="gym-input kg" data-field="kg" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholder}" value="${kgValue}"/>
+      <input class="gym-checkbox" data-field="done" type="checkbox" ${set.done ? "checked" : ""}/>
+    </div>
+  </div>
+`;
+
         }).join("");
         return `
           <div class="gym-exercise-card" data-exercise-id="${exerciseId}">

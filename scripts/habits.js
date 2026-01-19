@@ -5780,9 +5780,10 @@ function attachNavHook() {
 // Firebase listeners
 
 function listenRemote() {
+  const rerender = () => renderHabitsPreservingTodayUI();
+
   onValue(ref(db, HABITS_PATH), (snap) => {
-    const val = snap.val() || {};
-    habits = val;
+    habits = snap.val() || {};
     ensureUnknownHabit(true);
     if (_pendingShortcutCmd) {
       try {
@@ -5791,13 +5792,13 @@ function listenRemote() {
       } catch (_) {}
     }
     saveCache();
-    renderHabits();
+    rerender();
   });
 
   onValue(ref(db, HABIT_GROUPS_PATH), (snap) => {
     habitGroups = snap.val() || {};
     saveCache();
-    renderHabits();
+    rerender();
   });
 
   onValue(ref(db, HABIT_PREFS_PATH), (snap) => {
@@ -5809,13 +5810,13 @@ function listenRemote() {
   onValue(ref(db, HABIT_CHECKS_PATH), (snap) => {
     habitChecks = snap.val() || {};
     saveCache();
-    renderHabits();
+    rerender();
   });
 
   onValue(ref(db, HABIT_COUNTS_PATH), (snap) => {
     habitCounts = snap.val() || {};
     saveCache();
-    renderHabits();
+    rerender();
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
     try { window.__bookshellDashboard?.render?.(); } catch (_) {}
   });
@@ -5825,11 +5826,13 @@ function listenRemote() {
     const norm = normalizeSessionsStore(raw, true);
     habitSessions = norm.normalized;
     saveCache();
-    renderHabits();
+    rerender();
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
     try { window.__bookshellDashboard?.render?.(); } catch (_) {}
   });
 }
+
+
 
 function goHabitSubtab(tab) {
   const allowed = new Set(["today", "week", "history", "reports"]);

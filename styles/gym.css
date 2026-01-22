@@ -831,11 +831,26 @@
 .gym-sets-header.is-unilateral,
 .gym-sets-row.is-unilateral{
   grid-template-columns:
-    34px 58px
-    44px minmax(56px, 1fr)
-    44px minmax(56px, 1fr)
+    34px 46px
+    44px 68px
+    44px 68px
     44px;
   gap: 6px;
+}
+
+.gym-sets-row.is-unilateral > *{
+  min-width: 0;
+}
+
+.gym-sets-row.is-unilateral input{
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.gym-sets-row.is-unilateral .gym-input-uni[data-field="kgR"],
+.gym-sets-row.is-unilateral .gym-input-uni[data-field="kgL"]{
+  max-width: 68px;
 }
 
 .gym-uni-label{

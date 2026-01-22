@@ -1025,6 +1025,7 @@ function bindEvents() {
           stats[exerciseId] = {
             maxSet: null,
             maxKgEff: null,
+            maxReps: null,
             lastSet: null,
             lastDoneSet: null
           };
@@ -1040,9 +1041,20 @@ function bindEvents() {
             }
           }
         }
+        const exerciseType = getExerciseType(data, exerciseId);
         const useBodyweight = getExerciseUseBodyweight(data);
         const unilateral = getExerciseUnilateral(data, exerciseId);
+        const useRepsForMax = useBodyweight && exerciseType !== "time";
         (data?.sets || []).forEach((set) => {
+          if (useRepsForMax) {
+            const repsValue = getSetTotalReps(set, unilateral);
+            if (repsValue == null) return;
+            if (stats[exerciseId].maxReps == null || repsValue > stats[exerciseId].maxReps) {
+              stats[exerciseId].maxReps = repsValue;
+              stats[exerciseId].maxSet = set;
+            }
+            return;
+          }
           if (unilateral) {
             const { kgR, kgL } = getUnilateralKg(set);
             const kgEffR = getSetEffectiveKg(set, workout.date, useBodyweight, kgR);
@@ -2275,7 +2287,7 @@ function bindEvents() {
         const exerciseType = getExerciseType(exerciseData, exerciseId);
         const useBodyweight = getExerciseUseBodyweight(exerciseData);
         const unilateral = getExerciseUnilateral(exerciseData, exerciseId);
-        const maxLabel = formatMaxLabel(stats.maxSet, useBodyweight, { unilateral });
+        const maxLabel = formatMaxLabel(stats.maxSet, useBodyweight, { unilateral, exerciseType });
         const prevLabel = exerciseType === "time"
           ? formatPreviousTimeLabel(lastDoneSet, useBodyweight)
           : maxLabel;
@@ -2370,7 +2382,7 @@ function bindEvents() {
                 BW
               </label>
               <button class="icon-btn icon-btn-small" data-action="exercise-remove" type="button" aria-label="Quitar ejercicio">🗑️</button>
-              <button class="icon-btn icon-btn-small gym-exercise-stats-btn" data-action="exercise-stats" type="button" aria-label="Ver estadísticas">📈</button>
+              <button class="icon-btn icon-btn-small gym-exercise-stats-btn gym-open-exercise-stats" data-action="exercise-stats" data-exercise-id="${exerciseId}" data-workout-id="${workout.id}" type="button" aria-label="Ver estadísticas">📈</button>
             </div>
           </div>
             <div class="gym-sets-table">
@@ -2959,6 +2971,18 @@ function bindEvents() {
     };
   }
 
+  function getSetTotalReps(set, unilateral = false) {
+    if (!set) return null;
+    if (unilateral) {
+      const { repsR, repsL } = getUnilateralReps(set);
+      if (repsR == null && repsL == null) return null;
+      return (repsR ?? 0) + (repsL ?? 0);
+    }
+    const repsValue = toNumber(set.reps);
+    if (repsValue == null) return null;
+    return repsValue;
+  }
+
   function getUnilateralKg(set) {
     const fallback = getSetSideValue(set?.kg, set?.extraKg);
     return {
@@ -3014,8 +3038,17 @@ function bindEvents() {
     return "—";
   }
 
-  function formatMaxLabel(maxSet, useBodyweight, { unilateral = false } = {}) {
+  function formatSetRepsLabel(set, { unilateral = false } = {}) {
+    const totalReps = getSetTotalReps(set, unilateral);
+    if (totalReps == null) return "—";
+    return `${totalReps} reps`;
+  }
+
+  function formatMaxLabel(maxSet, useBodyweight, { unilateral = false, exerciseType = "reps" } = {}) {
     if (!maxSet) return "—";
+    if (useBodyweight && exerciseType !== "time") {
+      return formatSetRepsLabel(maxSet, { unilateral });
+    }
     return formatSetKgLabel(maxSet, useBodyweight, { unilateral });
   }
 

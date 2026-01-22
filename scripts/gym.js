@@ -322,6 +322,10 @@ function bindEvents() {
     closeCreateExerciseModal();
   });
 
+  $gymCreateName?.addEventListener("focus", () => {
+    scrollFieldIntoModal($gymCreateName, $gymCreateModal);
+  });
+
   $gymCreateCta.addEventListener("click", () => {
     const query = ($gymExerciseSearch.value || "").trim();
     openCreateExerciseModal(query);
@@ -1037,7 +1041,23 @@ function bindEvents() {
           }
         }
         const useBodyweight = getExerciseUseBodyweight(data);
+        const unilateral = getExerciseUnilateral(data, exerciseId);
         (data?.sets || []).forEach((set) => {
+          if (unilateral) {
+            const { kgR, kgL } = getUnilateralKg(set);
+            const kgEffR = getSetEffectiveKg(set, workout.date, useBodyweight, kgR);
+            const kgEffL = getSetEffectiveKg(set, workout.date, useBodyweight, kgL);
+            const maxSide = Math.max(
+              kgEffR ?? Number.NEGATIVE_INFINITY,
+              kgEffL ?? Number.NEGATIVE_INFINITY
+            );
+            if (!Number.isFinite(maxSide)) return;
+            if (stats[exerciseId].maxKgEff === null || maxSide > stats[exerciseId].maxKgEff) {
+              stats[exerciseId].maxKgEff = maxSide;
+              stats[exerciseId].maxSet = set;
+            }
+            return;
+          }
           const kgEff = getSetEffectiveKg(set, workout.date, useBodyweight);
           if (kgEff === null) return;
           if (stats[exerciseId].maxKgEff === null || kgEff > stats[exerciseId].maxKgEff) {
@@ -1060,17 +1080,28 @@ function bindEvents() {
     return null;
   }
 
-  function buildSetsFromHistory(exerciseId, excludeId, exerciseType = "reps") {
+  function buildSetsFromHistory(exerciseId, excludeId, exerciseType = "reps", unilateral = false) {
     const lastSets = getLastExerciseSets(exerciseId, excludeId);
     if (!lastSets || !lastSets.length) {
-      return [createEmptySet(exerciseType)];
+      return [createEmptySet(exerciseType, { unilateral })];
     }
-    return lastSets.map(() => createEmptySet(exerciseType));
+    return lastSets.map(() => createEmptySet(exerciseType, { unilateral }));
   }
 
-  function createEmptySet(exerciseType) {
+  function createEmptySet(exerciseType, { unilateral = false } = {}) {
     if (exerciseType === "time") {
       return { timeSec: null, kg: null, extraKg: null, rpe: null, done: false };
+    }
+    if (unilateral) {
+      return {
+        repsR: null,
+        repsL: null,
+        kgR: null,
+        kgL: null,
+        extraKg: null,
+        rpe: null,
+        done: false
+      };
     }
     return { reps: null, kg: null, extraKg: null, rpe: null, done: false };
   }
@@ -1414,13 +1445,31 @@ function bindEvents() {
           hasDone = true;
           return;
         }
-        const repsValue = Number(set.reps) || 0;
-        const repsEff = unilateral ? repsValue * 2 : repsValue;
-        const kgEff = getSetEffectiveKg(set, workout.date, useBodyweight);
-        reps += repsEff;
-        if (kgEff != null) {
-          maxKgEff = maxKgEff === null ? kgEff : Math.max(maxKgEff, kgEff);
-          volumeKg += repsEff * kgEff;
+        if (unilateral) {
+          const { repsR, repsL } = getUnilateralReps(set);
+          const repsRight = repsR || 0;
+          const repsLeft = repsL || 0;
+          const { kgR, kgL } = getUnilateralKg(set);
+          const kgEffR = getSetEffectiveKg(set, workout.date, useBodyweight, kgR);
+          const kgEffL = getSetEffectiveKg(set, workout.date, useBodyweight, kgL);
+          reps += repsRight + repsLeft;
+          const maxSide = Math.max(
+            kgEffR ?? Number.NEGATIVE_INFINITY,
+            kgEffL ?? Number.NEGATIVE_INFINITY
+          );
+          if (Number.isFinite(maxSide)) {
+            maxKgEff = maxKgEff === null ? maxSide : Math.max(maxKgEff, maxSide);
+          }
+          if (kgEffR != null) volumeKg += repsRight * kgEffR;
+          if (kgEffL != null) volumeKg += repsLeft * kgEffL;
+        } else {
+          const repsValue = Number(set.reps) || 0;
+          const kgEff = getSetEffectiveKg(set, workout.date, useBodyweight);
+          reps += repsValue;
+          if (kgEff != null) {
+            maxKgEff = maxKgEff === null ? kgEff : Math.max(maxKgEff, kgEff);
+            volumeKg += repsValue * kgEff;
+          }
         }
         hasDone = true;
       });
@@ -1612,25 +1661,49 @@ function bindEvents() {
       exerciseData.sets.forEach((set) => {
         if (!set?.done) return;
         setsCount += 1;
+        if (type === "time") {
+          const kgEff = getSetEffectiveKg(set, workout.date, useBodyweight);
+          const timeSec = Number(set.timeSec) || 0;
+          timeSecTotal += timeSec;
+          if (kgEff != null) {
+            maxKgEff = maxKgEff === null ? kgEff : Math.max(maxKgEff, kgEff);
+            sumKgEff += kgEff;
+            kgEffCount += 1;
+            volumeTotalKg += timeSec * kgEff;
+          }
+          return;
+        }
+        if (unilateral) {
+          const { repsR, repsL } = getUnilateralReps(set);
+          const repsRight = repsR || 0;
+          const repsLeft = repsL || 0;
+          const { kgR, kgL } = getUnilateralKg(set);
+          const kgEffR = getSetEffectiveKg(set, workout.date, useBodyweight, kgR);
+          const kgEffL = getSetEffectiveKg(set, workout.date, useBodyweight, kgL);
+          repsTotal += repsRight + repsLeft;
+          if (kgEffR != null) volumeTotalKg += repsRight * kgEffR;
+          if (kgEffL != null) volumeTotalKg += repsLeft * kgEffL;
+          if (kgEffR != null || kgEffL != null) {
+            const maxSide = Math.max(
+              kgEffR ?? Number.NEGATIVE_INFINITY,
+              kgEffL ?? Number.NEGATIVE_INFINITY
+            );
+            maxKgEff = maxKgEff === null ? maxSide : Math.max(maxKgEff, maxSide);
+            sumKgEff += maxSide;
+            kgEffCount += 1;
+          }
+          return;
+        }
         const kgEff = getSetEffectiveKg(set, workout.date, useBodyweight);
         if (kgEff != null) {
           maxKgEff = maxKgEff === null ? kgEff : Math.max(maxKgEff, kgEff);
           sumKgEff += kgEff;
           kgEffCount += 1;
         }
-        if (type === "time") {
-          const timeSec = Number(set.timeSec) || 0;
-          timeSecTotal += timeSec;
-          if (kgEff != null) {
-            volumeTotalKg += timeSec * kgEff;
-          }
-          return;
-        }
         const repsValue = Number(set.reps) || 0;
-        const repsEff = unilateral ? repsValue * 2 : repsValue;
-        repsTotal += repsEff;
+        repsTotal += repsValue;
         if (kgEff != null) {
-          volumeTotalKg += repsEff * kgEff;
+          volumeTotalKg += repsValue * kgEff;
         }
       });
     });
@@ -1801,11 +1874,12 @@ function bindEvents() {
       if (!exercise) return;
       const muscleGroups = getExerciseMuscleGroups(exercise);
       const exerciseType = exercise.type || "reps";
-      const sets = buildSetsFromHistory(exerciseId, null, exerciseType);
+      const unilateral = Boolean(exercise.unilateral);
+      const sets = buildSetsFromHistory(exerciseId, null, exerciseType, unilateral);
       exercisesData[exerciseId] = {
         nameSnapshot: exercise.name,
         muscleGroupsSnapshot: muscleGroups,
-        unilateralSnapshot: Boolean(exercise.unilateral),
+        unilateralSnapshot: unilateral,
         typeSnapshot: exerciseType,
         useBodyweight: false,
         sets
@@ -2200,20 +2274,44 @@ function bindEvents() {
         const lastDoneSet = stats.lastDoneSet || null;
         const exerciseType = getExerciseType(exerciseData, exerciseId);
         const useBodyweight = getExerciseUseBodyweight(exerciseData);
-        const maxLabel = formatMaxLabel(stats.maxSet, useBodyweight);
+        const unilateral = getExerciseUnilateral(exerciseData, exerciseId);
+        const maxLabel = formatMaxLabel(stats.maxSet, useBodyweight, { unilateral });
         const prevLabel = exerciseType === "time"
           ? formatPreviousTimeLabel(lastDoneSet, useBodyweight)
           : maxLabel;
         const muscleGroups = getWorkoutExerciseMuscles(exerciseData);
         const muscleLabel = formatMuscleGroupsLabel(muscleGroups);
-        const unilateral = getExerciseUnilateral(exerciseData, exerciseId);
         const rows = (exerciseData.sets || []).map((set, index) => {
           const prevText = prevLabel;
-          const repsPlaceholder = lastDoneSet?.reps ?? "reps";
           const timePlaceholder = formatMmSs(lastDoneSet?.timeSec) || "mm:ss";
+          const repsPlaceholder = lastDoneSet?.reps ?? "reps";
+          const repsPlaceholderR = getRepsPlaceholderSide(lastDoneSet, "repsR", "R");
+          const repsPlaceholderL = getRepsPlaceholderSide(lastDoneSet, "repsL", "L");
           const kgPlaceholder = getKgPlaceholder(lastDoneSet, useBodyweight);
+          const kgPlaceholderR = getKgPlaceholderSide(lastDoneSet, useBodyweight, "kgR");
+          const kgPlaceholderL = getKgPlaceholderSide(lastDoneSet, useBodyweight, "kgL");
+          const repsRValue = getSetSideValue(set?.repsR, set?.reps);
+          const repsLValue = getSetSideValue(set?.repsL, set?.reps);
+          const kgRValue = getSetSideValue(set?.kgR, set?.kg ?? set?.extraKg);
+          const kgLValue = getSetSideValue(set?.kgL, set?.kg ?? set?.extraKg);
           const kgValue = set.kg ?? set.extraKg ?? "";
           const timeValue = formatMmSs(set.timeSec);
+          const repsInput = exerciseType === "time"
+            ? `<input class="gym-input gym-time-input" data-field="timeText" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="${timePlaceholder}" value="${timeValue}"/>`
+            : unilateral
+              ? `<div class="gym-dual">
+                  <input class="gym-input" data-field="repsR" type="number" inputmode="numeric" placeholder="${repsPlaceholderR}" value="${repsRValue ?? ""}" aria-label="Reps derecha"/>
+                  <input class="gym-input" data-field="repsL" type="number" inputmode="numeric" placeholder="${repsPlaceholderL}" value="${repsLValue ?? ""}" aria-label="Reps izquierda"/>
+                </div>`
+              : `<input class="gym-input" data-field="reps" type="number" inputmode="numeric" placeholder="${repsPlaceholder}" value="${set.reps ?? ""}"/>`;
+          const kgInput = exerciseType === "time"
+            ? `<input class="gym-input kg" data-field="kg" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholder}" value="${kgValue}"/>`
+            : unilateral
+              ? `<div class="gym-dual">
+                  <input class="gym-input kg" data-field="kgR" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholderR}" value="${kgRValue ?? ""}" aria-label="Kg derecha"/>
+                  <input class="gym-input kg" data-field="kgL" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholderL}" value="${kgLValue ?? ""}" aria-label="Kg izquierda"/>
+                </div>`
+              : `<input class="gym-input kg" data-field="kg" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholder}" value="${kgValue}"/>`;
           return `
   <div class="gym-set-swipe" data-set-index="${index}">
     <div class="gym-set-swipe-under">
@@ -2225,10 +2323,8 @@ function bindEvents() {
     <div class="gym-sets-row gym-set-swipe-front" data-set-index="${index}">
       <span>${index + 1}</span>
       <span class="gym-set-previous">${prevText}</span>
-      ${exerciseType === "time"
-        ? `<input class="gym-input gym-time-input" data-field="timeText" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="${timePlaceholder}" value="${timeValue}"/>`
-        : `<input class="gym-input" data-field="reps" type="number" inputmode="numeric" placeholder="${repsPlaceholder}" value="${set.reps ?? ""}"/>`}
-      <input class="gym-input kg" data-field="kg" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholder}" value="${kgValue}"/>
+      ${repsInput}
+      ${kgInput}
       <input class="gym-checkbox" data-field="done" type="checkbox" ${set.done ? "checked" : ""}/>
     </div>
   </div>
@@ -2302,12 +2398,21 @@ function bindEvents() {
           const timeSec = Number(set.timeSec) || 0;
           const kgEff = getSetEffectiveKg(set, workout.date, useBodyweight) || 0;
           totalVolumeKg += timeSec * kgEff;
+        } else if (unilateral) {
+          const { repsR, repsL } = getUnilateralReps(set);
+          const repsRight = repsR || 0;
+          const repsLeft = repsL || 0;
+          const { kgR, kgL } = getUnilateralKg(set);
+          const kgEffR = getSetEffectiveKg(set, workout.date, useBodyweight, kgR);
+          const kgEffL = getSetEffectiveKg(set, workout.date, useBodyweight, kgL);
+          totalReps += repsRight + repsLeft;
+          if (kgEffR != null) totalVolumeKg += repsRight * kgEffR;
+          if (kgEffL != null) totalVolumeKg += repsLeft * kgEffL;
         } else {
           const reps = Number(set.reps) || 0;
-          const repsEff = unilateral ? reps * 2 : reps;
           const kgEff = getSetEffectiveKg(set, workout.date, useBodyweight) || 0;
-          totalReps += repsEff;
-          totalVolumeKg += repsEff * kgEff;
+          totalReps += reps;
+          totalVolumeKg += reps * kgEff;
         }
       });
     });
@@ -2328,8 +2433,9 @@ function bindEvents() {
     if (!workout?.exercises?.[exerciseId]) return;
     const exercise = workout.exercises[exerciseId];
     const exerciseType = getExerciseType(exercise, exerciseId);
+    const unilateral = getExerciseUnilateral(exercise, exerciseId);
     exercise.sets = exercise.sets || [];
-    let nextSet = createEmptySet(exerciseType);
+    let nextSet = createEmptySet(exerciseType, { unilateral });
     if (exercise.sets.length) {
       const prevSet = exercise.sets[exercise.sets.length - 1];
       nextSet = exerciseType === "time"
@@ -2340,13 +2446,23 @@ function bindEvents() {
           rpe: null,
           done: false
         }
-        : {
-          reps: prevSet?.reps ?? null,
-          kg: prevSet?.kg ?? null,
-          extraKg: prevSet?.extraKg ?? null,
-          rpe: null,
-          done: false
-        };
+        : unilateral
+          ? {
+            repsR: getSetSideValue(prevSet?.repsR, prevSet?.reps),
+            repsL: getSetSideValue(prevSet?.repsL, prevSet?.reps),
+            kgR: getSetSideValue(prevSet?.kgR, prevSet?.kg ?? prevSet?.extraKg),
+            kgL: getSetSideValue(prevSet?.kgL, prevSet?.kg ?? prevSet?.extraKg),
+            extraKg: prevSet?.extraKg ?? null,
+            rpe: null,
+            done: false
+          }
+          : {
+            reps: prevSet?.reps ?? null,
+            kg: prevSet?.kg ?? null,
+            extraKg: prevSet?.extraKg ?? null,
+            rpe: null,
+            done: false
+          };
     }
     exercise.sets.push(nextSet);
     scheduleWorkoutSave();
@@ -2372,13 +2488,14 @@ function bindEvents() {
     const exercise = exercises[exerciseId];
     if (!exercise) return;
     const exerciseType = exercise.type || "reps";
+    const unilateral = Boolean(exercise.unilateral);
     workout.exercises[exerciseId] = {
       nameSnapshot: exercise.name,
       muscleGroupsSnapshot: getExerciseMuscleGroups(exercise),
-      unilateralSnapshot: Boolean(exercise.unilateral),
+      unilateralSnapshot: unilateral,
       typeSnapshot: exerciseType,
       useBodyweight: false,
-      sets: buildSetsFromHistory(exerciseId, workout?.id, exerciseType)
+      sets: buildSetsFromHistory(exerciseId, workout?.id, exerciseType, unilateral)
     };
     scheduleWorkoutSave();
     renderWorkoutEditor();
@@ -2487,17 +2604,34 @@ function bindEvents() {
 
   function migrateWorkoutExerciseData(workout) {
     if (!workout?.exercises) return;
-    Object.values(workout.exercises).forEach((exercise) => {
+    Object.entries(workout.exercises).forEach(([exerciseId, exercise]) => {
       let useBodyweight = Boolean(exercise.useBodyweight);
       if (!exercise.typeSnapshot) {
         exercise.typeSnapshot = "reps";
       }
+      const unilateral = getExerciseUnilateral(exercise, exerciseId);
       (exercise.sets || []).forEach((set) => {
         if (set?.useBodyweight || set?.bodyweight) {
           useBodyweight = true;
         }
         if (useBodyweight && set?.kg == null && set?.extraKg != null) {
           set.kg = set.extraKg;
+        }
+        if (unilateral) {
+          const repsFallback = toNumber(set?.reps);
+          if (set?.repsR == null && repsFallback != null) {
+            set.repsR = repsFallback;
+          }
+          if (set?.repsL == null && repsFallback != null) {
+            set.repsL = repsFallback;
+          }
+          const kgFallback = getSetSideValue(set?.kg, set?.extraKg);
+          if (set?.kgR == null && kgFallback != null) {
+            set.kgR = kgFallback;
+          }
+          if (set?.kgL == null && kgFallback != null) {
+            set.kgL = kgFallback;
+          }
         }
         if (set?.timeSec != null) {
           const normalized = Number.isFinite(set.timeSec) ? set.timeSec : parseTimeInput(set.timeSec);
@@ -2709,6 +2843,19 @@ function bindEvents() {
     return workoutDraft;
   }
 
+  function scrollFieldIntoModal(field, modal) {
+    if (!field || !modal) return;
+    const scrollHost = modal.querySelector(".modal-scroll");
+    if (!scrollHost) return;
+    window.setTimeout(() => {
+      const fieldRect = field.getBoundingClientRect();
+      const hostRect = scrollHost.getBoundingClientRect();
+      if (fieldRect.bottom <= hostRect.bottom && fieldRect.top >= hostRect.top) return;
+      const offset = fieldRect.top - hostRect.top;
+      scrollHost.scrollTop += offset - 12;
+    }, 200);
+  }
+
   function parseDecimalInput(value) {
     const norm = value.replace(",", ".").replace(/[^\d.]/g, "");
     return norm ? Number.parseFloat(norm) : null;
@@ -2716,7 +2863,7 @@ function bindEvents() {
 
   function parseSetInput(field, value) {
     if (value === "") return null;
-    if (field === "kg") {
+    if (field === "kg" || field === "kgR" || field === "kgL") {
       return parseDecimalInput(value);
     }
     if (field === "extraKg") {
@@ -2773,34 +2920,83 @@ function bindEvents() {
     return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1).replace(/\.0$/, "");
   }
 
-  function getSetEffectiveKg(set, dateKey, useBodyweight = false) {
+  function toNumber(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  function getSetSideValue(primary, fallback) {
+    const primaryValue = toNumber(primary);
+    if (primaryValue != null) return primaryValue;
+    return toNumber(fallback);
+  }
+
+  function getUnilateralReps(set) {
+    const fallback = toNumber(set?.reps);
+    return {
+      repsR: getSetSideValue(set?.repsR, fallback),
+      repsL: getSetSideValue(set?.repsL, fallback)
+    };
+  }
+
+  function getUnilateralKg(set) {
+    const fallback = getSetSideValue(set?.kg, set?.extraKg);
+    return {
+      kgR: getSetSideValue(set?.kgR, fallback),
+      kgL: getSetSideValue(set?.kgL, fallback)
+    };
+  }
+
+  function formatSideKgLabel(value, useBodyweight) {
+    if (value == null) return "";
+    if (useBodyweight) {
+      const extra = Number(value) || 0;
+      const suffix = extra ? `+${formatKgValue(extra)}` : "";
+      return `BW${suffix}`;
+    }
+    const label = formatKgValue(value);
+    return label === "—" ? "" : label;
+  }
+
+  function getSetEffectiveKg(set, dateKey, useBodyweight = false, kgOverride) {
     if (!set) return null;
     const extraKg = Number(set.extraKg) || 0;
-    const kgValue = Number(set.kg);
+    const kgValue = toNumber(kgOverride !== undefined ? kgOverride : set.kg);
     if (useBodyweight) {
       const baseKg = getBodyweightForDate(dateKey) ?? 0;
-      const loadKg = Number.isFinite(kgValue) ? kgValue : 0;
+      const loadKg = kgValue ?? 0;
       return baseKg + loadKg + extraKg;
     }
-    if (!Number.isFinite(kgValue)) return null;
+    if (kgValue == null) return null;
     return kgValue + extraKg;
   }
 
-  function formatSetKgLabel(set, useBodyweight) {
+  function formatSetKgLabel(set, useBodyweight, { unilateral = false } = {}) {
     if (!set) return "—";
-    if (useBodyweight) {
-      const extra = Number(set.kg ?? set.extraKg) || 0;
-      const suffix = extra ? `+${formatKgValue(extra)}` : "";
-      return `BW${suffix} kg`;
+    if (!unilateral) {
+      if (useBodyweight) {
+        const extra = Number(set.kg ?? set.extraKg) || 0;
+        const suffix = extra ? `+${formatKgValue(extra)}` : "";
+        return `BW${suffix} kg`;
+      }
+      const v = formatKgValue(set.kg ?? set.extraKg);
+      if (v === "—") return "—";
+      return `${v} kg`;
     }
-    const v = formatKgValue(set.kg ?? set.extraKg);
-    if (v === "—") return "—";
-    return `${v} kg`;
+
+    const kgR = getSetSideValue(set?.kgR, set?.kg ?? set?.extraKg);
+    const kgL = getSetSideValue(set?.kgL, set?.kg ?? set?.extraKg);
+    const labelR = formatSideKgLabel(kgR, useBodyweight);
+    const labelL = formatSideKgLabel(kgL, useBodyweight);
+    if (labelR && labelL) return `R ${labelR} / L ${labelL} kg`;
+    if (labelR) return `R ${labelR} kg`;
+    if (labelL) return `L ${labelL} kg`;
+    return "—";
   }
 
-  function formatMaxLabel(maxSet, useBodyweight) {
+  function formatMaxLabel(maxSet, useBodyweight, { unilateral = false } = {}) {
     if (!maxSet) return "—";
-    return formatSetKgLabel(maxSet, useBodyweight);
+    return formatSetKgLabel(maxSet, useBodyweight, { unilateral });
   }
 
   function formatPreviousTimeLabel(lastSet, useBodyweight) {
@@ -2818,6 +3014,21 @@ function bindEvents() {
     }
     const fallback = lastSet?.kg ?? lastSet?.extraKg ?? null;
     return fallback != null ? formatKgValue(fallback) : "kg";
+  }
+
+  function getKgPlaceholderSide(lastSet, useBodyweight, sideField) {
+    if (useBodyweight) {
+      const sideValue = getSetSideValue(lastSet?.[sideField], lastSet?.kg ?? lastSet?.extraKg);
+      const extra = Number(sideValue) || 0;
+      return extra ? `BW(+${formatKgValue(extra)})` : "BW(+kg)";
+    }
+    const fallback = getSetSideValue(lastSet?.[sideField], lastSet?.kg ?? lastSet?.extraKg);
+    return fallback != null ? formatKgValue(fallback) : "kg";
+  }
+
+  function getRepsPlaceholderSide(lastSet, sideField, fallbackLabel) {
+    const fallback = getSetSideValue(lastSet?.[sideField], lastSet?.reps);
+    return fallback != null ? String(fallback) : fallbackLabel;
   }
 
   function getExerciseType(exerciseData, exerciseId) {

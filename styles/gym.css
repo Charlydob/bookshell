@@ -431,6 +431,19 @@
   padding: 6px;
 }
 
+.gym-dual {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+}
+
+.gym-dual .gym-input {
+  min-width: 0;
+  height: 32px;
+  padding: 0 6px;
+}
+
 .gym-sets-row > * {
   min-width: 0;
 }
@@ -547,6 +560,24 @@
   flex-direction: column;
   gap: 12px;
   padding-bottom: 30px;
+  min-height: 0;
+}
+
+#gym-exercise-modal .modal,
+#gym-create-modal .modal {
+  max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px);
+  height: auto;
+}
+
+#gym-exercise-modal .modal-scroll,
+#gym-create-modal .modal-scroll {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  min-height: 0;
+}
+
+#gym-exercise-modal .gym-modal-body {
+  padding-bottom: calc(90px + env(safe-area-inset-bottom));
 }
 
 .gym-exdetail-head {

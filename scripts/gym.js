@@ -1208,7 +1208,7 @@ function bindEvents() {
       }));
       row.appendChild(buildSelectField({
         id: "gym-stats-cardio-metric",
-        label: "Métrica",
+        label: "",
         options: metrics,
         value: gymStatsSelection.cardioMetric
       }));
@@ -1251,7 +1251,7 @@ function bindEvents() {
       }));
       row.appendChild(buildSelectField({
         id: "gym-stats-exercise-metric",
-        label: "Métrica",
+        label: "",
         options: metrics,
         value: gymStatsSelection.exerciseMetric
       }));
@@ -1574,7 +1574,7 @@ function bindEvents() {
     $gymExDetailControls.innerHTML = "";
     $gymExDetailControls.appendChild(buildSelectField({
       id: "gym-exdetail-metric",
-      label: "Métrica",
+      label: "",
       options: metricOptions,
       value: gymExDetailSelection.metric
     }));
@@ -2563,7 +2563,7 @@ function bindEvents() {
           <div class="gym-exercise-row-title">${exercise.name}</div>
           <div class="gym-exercise-row-sub">${formatMuscleGroupsLabel(muscleGroups)}</div>
         </div>
-        <button class="gym-btn gym-btn-primary" type="button">+</button>
+        <button class="gym-btn gym-btn-primary-mas" type="button">+</button>
       `;
       const btn = row.querySelector("button");
       btn.addEventListener("click", () => {

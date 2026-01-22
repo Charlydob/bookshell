@@ -198,6 +198,15 @@ function formatHoursTotal(minutes) {
   return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
+function parseTimeToMinutes(v) {
+  const s = String(v || "").trim();
+  if (!s) return 0;
+  const [hh, mm] = s.split(":");
+  const h = Number(hh), m = Number(mm);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return 0;
+  return Math.max(0, Math.round(h * 60 + m));
+}
+
 function getSessionDateKey(session) {
   if (!session) return null;
   if (session.dateKey) return session.dateKey;
@@ -1720,16 +1729,16 @@ function renderHabitDetailActions(habit, dateKey) {
     const quickWrap = document.createElement("div");
     quickWrap.className = "habit-detail-action-inline";
     const input = document.createElement("input");
-    input.type = "number";
-    input.min = "1";
-    input.inputMode = "numeric";
-    input.placeholder = "+min";
+    input.type = "time";
+    input.step = "60";
+    input.min = "00:00";
+    input.placeholder = "00:12";
     const addBtn = buildHabitDetailActionButton("Añadir", {
       onClick: () => {
-        const n = Number(input.value);
-        if (!Number.isFinite(n) || n <= 0) return;
-        addHabitTimeSec(habit.id, dateKey, Math.round(n * 60));
-        input.value = "";
+        const minutes = parseTimeToMinutes(input.value);
+        if (minutes <= 0) return;
+        addHabitTimeSec(habit.id, dateKey, minutes * 60);
+        input.value = "00:00";
         renderHabitsPreservingTodayUI();
       }
     });
@@ -3816,10 +3825,10 @@ function appendTimeQuickControls(tools, habit, today) {
   inline.style.alignItems = "center";
 
   const inp = document.createElement("input");
-  inp.type = "number";
-  inp.min = "1";
-  inp.inputMode = "numeric";
-  inp.placeholder = "+min";
+  inp.type = "time";
+  inp.step = "60";
+  inp.min = "00:00";
+  inp.placeholder = "00:12";
   inp.className = "habit-quick-input";
   inp.style.flex = "1";
   inp.addEventListener("click", (e) => e.stopPropagation());
@@ -3832,10 +3841,10 @@ function appendTimeQuickControls(tools, habit, today) {
   go.style.flex = "0 0 auto";
   go.addEventListener("click", (e) => {
     e.stopPropagation();
-    const n = Number(inp.value);
-    if (!Number.isFinite(n) || n <= 0) return;
-    addHabitTimeSec(habit.id, today, Math.round(n * 60));
-    inp.value = "";
+    const minutes = parseTimeToMinutes(inp.value);
+    if (minutes <= 0) return;
+    addHabitTimeSec(habit.id, today, minutes * 60);
+    inp.value = "00:00";
     renderHabitsPreservingTodayUI();
   });
 
@@ -5374,11 +5383,11 @@ function closeManualTimeModal() {
 function handleManualSubmit(e) {
   e.preventDefault();
   const habitId = $habitManualHabit.value;
-  const minutes = Number($habitManualMinutes.value);
+  const minutes = parseTimeToMinutes($habitManualMinutes.value);
   const dateKey = $habitManualDate.value || todayKey();
-  if (!habitId || !Number.isFinite(minutes) || minutes <= 0) return;
+  if (!habitId || minutes <= 0) return;
 
-  addHabitTimeSec(habitId, dateKey, Math.round(minutes * 60));
+  addHabitTimeSec(habitId, dateKey, minutes * 60);
   localStorage.setItem(LAST_HABIT_KEY, habitId);
 
   closeManualTimeModal();

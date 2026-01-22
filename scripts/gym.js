@@ -2281,6 +2281,7 @@ function bindEvents() {
           : maxLabel;
         const muscleGroups = getWorkoutExerciseMuscles(exerciseData);
         const muscleLabel = formatMuscleGroupsLabel(muscleGroups);
+        const isUnilateralReps = unilateral && exerciseType !== "time";
         const rows = (exerciseData.sets || []).map((set, index) => {
           const prevText = prevLabel;
           const timePlaceholder = formatMmSs(lastDoneSet?.timeSec) || "mm:ss";
@@ -2312,6 +2313,13 @@ function bindEvents() {
                   <input class="gym-input kg" data-field="kgL" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholderL}" value="${kgLValue ?? ""}" aria-label="Kg izquierda"/>
                 </div>`
               : `<input class="gym-input kg" data-field="kg" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholder}" value="${kgValue}"/>`;
+          const unilateralInputs = `
+      <input class="gym-input gym-input-uni" data-field="repsR" type="number" inputmode="numeric" placeholder="${repsPlaceholderR}" value="${repsRValue ?? ""}" aria-label="Reps derecha"/>
+      <input class="gym-input gym-input-uni kg" data-field="kgR" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholderR}" value="${kgRValue ?? ""}" aria-label="Kg derecha"/>
+      <input class="gym-input gym-input-uni" data-field="repsL" type="number" inputmode="numeric" placeholder="${repsPlaceholderL}" value="${repsLValue ?? ""}" aria-label="Reps izquierda"/>
+      <input class="gym-input gym-input-uni kg" data-field="kgL" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholderL}" value="${kgLValue ?? ""}" aria-label="Kg izquierda"/>
+    `;
+          const setInputs = isUnilateralReps ? unilateralInputs : `${repsInput}${kgInput}`;
           return `
   <div class="gym-set-swipe" data-set-index="${index}">
     <div class="gym-set-swipe-under">
@@ -2320,17 +2328,34 @@ function bindEvents() {
       </button>
     </div>
 
-    <div class="gym-sets-row gym-set-swipe-front" data-set-index="${index}">
+    <div class="gym-sets-row gym-set-swipe-front${isUnilateralReps ? " is-unilateral" : ""}" data-set-index="${index}">
       <span>${index + 1}</span>
       <span class="gym-set-previous">${prevText}</span>
-      ${repsInput}
-      ${kgInput}
+      ${setInputs}
       <input class="gym-checkbox" data-field="done" type="checkbox" ${set.done ? "checked" : ""}/>
     </div>
   </div>
 `;
 
         }).join("");
+        const headerCells = isUnilateralReps
+          ? `
+                <span>Set</span>
+                <span>${exerciseType === "time" ? "Anterior" : "Max"}</span>
+                <span class="gym-uni-label"><span class="gym-uni-label-main">R</span><span class="gym-uni-label-sub">Reps</span></span>
+                <span class="gym-uni-label"><span class="gym-uni-label-main">R</span><span class="gym-uni-label-sub">Kg</span></span>
+                <span class="gym-uni-label"><span class="gym-uni-label-main">L</span><span class="gym-uni-label-sub">Reps</span></span>
+                <span class="gym-uni-label"><span class="gym-uni-label-main">L</span><span class="gym-uni-label-sub">Kg</span></span>
+                <span>✔</span>
+              `
+          : `
+                <span>Set</span>
+                <span>${exerciseType === "time" ? "Anterior" : "Max"}</span>
+                <span>${exerciseType === "time" ? "Tiempo" : "Reps"}</span>
+                <span>Kg</span>
+                <span>✔</span>
+                <span></span>
+              `;
         return `
           <div class="gym-exercise-card" data-exercise-id="${exerciseId}">
           <div class="gym-exercise-head">
@@ -2349,13 +2374,8 @@ function bindEvents() {
             </div>
           </div>
             <div class="gym-sets-table">
-              <div class="gym-sets-header">
-                <span>Set</span>
-<span>${exerciseType === "time" ? "Anterior" : "Max"}</span>
-<span>${exerciseType === "time" ? "Tiempo" : "Reps"}</span>
-<span>Kg</span>
-<span>✔</span>
-<span></span>
+              <div class="gym-sets-header${isUnilateralReps ? " is-unilateral" : ""}">
+                ${headerCells}
               </div>
               ${rows}
             </div>

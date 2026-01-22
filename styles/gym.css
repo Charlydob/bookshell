@@ -828,6 +828,35 @@
   border-radius: 12px;
 }
 
+.gym-sets-header.is-unilateral,
+.gym-sets-row.is-unilateral{
+  grid-template-columns:
+    34px 58px
+    44px minmax(56px, 1fr)
+    44px minmax(56px, 1fr)
+    44px;
+  gap: 6px;
+}
+
+.gym-uni-label{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.gym-uni-label-sub{
+  font-size: 9px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.gym-input-uni{
+  height: 34px;
+  padding: 0 6px;
+  font-size: 14px;
+}
+
 /* 4) La celda de KG (input + BW) también flexible */
 .gym-kg-cell{
   display: grid;

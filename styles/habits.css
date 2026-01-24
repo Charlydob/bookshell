@@ -180,6 +180,72 @@
   color: var(--txt-soft);
 }
 
+.habit-quick-sessions {
+  margin-top: 10px;
+}
+
+.habit-quick-sessions-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.habit-quick-sessions-controls select {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.08);
+  color: var(--txt);
+  font-size: 13px;
+  box-shadow: 0 8px 18px rgba(20, 20, 40, 0.16);
+  appearance: none;
+}
+
+.habit-quick-sessions-controls select:disabled {
+  opacity: 0.6;
+}
+
+.habit-quick-sessions-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 6px 2px;
+  margin-top: 8px;
+}
+
+.habit-quick-pill {
+  border-radius: 999px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: linear-gradient(130deg, rgba(var(--hclr-rgb, 127, 93, 255), 0.2), rgba(255,255,255,0.08));
+  box-shadow: 0 8px 18px rgba(20, 20, 40, 0.2);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  color: var(--txt);
+}
+
+.habit-quick-pill-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.habit-quick-pill-remove {
+  border: none;
+  background: rgba(255,255,255,0.18);
+  color: var(--txt);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  cursor: pointer;
+}
+
 .habit-card,
 .habit-week-card,
 .habit-heatmap-card,

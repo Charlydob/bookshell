@@ -70,7 +70,7 @@ let habitChecks = {}; // { habitId: { dateKey: true } }
 let habitSessions = {}; // { habitId: { dateKey: totalSec } }
 let habitCounts = {}; // { habitId: { dateKey: number } }
 let habitGroups = {}; // { groupId: { id, name, createdAt } }
-let habitPrefs = { pinCount: "", pinTime: "" };
+let habitPrefs = { pinCount: "", pinTime: "", quickSessions: [] };
 let activeTab = "today";
 let runningSession = null; // { startTs }
 let sessionInterval = null;
@@ -445,7 +445,8 @@ function readCache() {
       habitSessions = parsed.habitSessions || {};
       habitCounts = parsed.habitCounts || {};
       habitGroups = parsed.habitGroups || {};
-      habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "" };
+      habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "", quickSessions: [] };
+      if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
       const norm = normalizeSessionsStore(habitSessions, false);
       habitSessions = norm.normalized;
       if (norm.changed) saveCache();
@@ -980,6 +981,13 @@ const $habitTodaySearchInput = document.getElementById("habit-today-search-input
 const $habitTodaySearchClear = document.getElementById("habit-today-search-clear");
 const $habitTodaySearchEmpty = document.getElementById("habit-today-search-empty");
 const $habitTodaySearchReset = document.getElementById("habit-today-search-reset");
+const $habitQuickSessionsWrap = document.getElementById("habit-quick-sessions");
+const $habitQuickSessionsMeta = document.getElementById("habit-quick-sessions-meta");
+const $habitQuickSessionsPreview = document.getElementById("habit-quick-sessions-preview");
+const $habitQuickSessionsSelect = document.getElementById("habit-quick-sessions-select");
+const $habitQuickSessionsAdd = document.getElementById("habit-quick-sessions-add");
+const $habitQuickSessionsRow = document.getElementById("habit-quick-sessions-row");
+const $habitQuickSessionsEmpty = document.getElementById("habit-quick-sessions-empty");
 
 // Hoy (grupos plegables)
 const $todayCountPendingPrivateWrap = document.getElementById("habits-today-count-pending-private-wrap");
@@ -2326,7 +2334,7 @@ function restoreTodaySummaryMeta() {
 }
 
 function captureTodayDetailsSnapshot(panel) {
-  todaySearchSnapshot = Array.from(panel.querySelectorAll("details")).map((detail) => ({
+  todaySearchSnapshot = Array.from(panel.querySelectorAll('details:not([data-search-ignore="true"])')).map((detail) => ({
     detail,
     open: detail.open,
     display: detail.style.display
@@ -2371,7 +2379,7 @@ function applyTodaySearch(value) {
     });
 
     if (hasQuery) {
-      const details = panel.querySelectorAll("details");
+      const details = panel.querySelectorAll('details:not([data-search-ignore="true"])');
       details.forEach((detail) => {
         const hasVisible = Array.from(detail.querySelectorAll(".habit-card")).some((card) => card.style.display !== "none");
         detail.style.display = hasVisible ? "" : "none";
@@ -2576,6 +2584,8 @@ function renderToday() {
   updateGroupMeta($todayTimePendingLowWrap, $todayTimePendingLow);
   updateGroupMeta($todayTimeDonePrivateWrap, $todayTimeDonePrivate);
   updateGroupMeta($todayTimeDoneLowWrap, $todayTimeDoneLow);
+
+  renderQuickSessions();
 
   if ($habitTodaySearchInput?.value.trim()) {
     applyTodaySearch($habitTodaySearchInput.value);
@@ -4954,6 +4964,101 @@ function renderPins() {
   }
 }
 
+function renderQuickSessions() {
+  if (!$habitQuickSessionsWrap) return;
+  const timeHabits = activeHabits().filter((habit) => (habit.goal || "check") === "time");
+  const sortedTimeHabits = [...timeHabits].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  const timeHabitIds = new Set(sortedTimeHabits.map((habit) => habit.id));
+  const originalIds = Array.isArray(habitPrefs?.quickSessions)
+    ? habitPrefs.quickSessions.filter((id) => typeof id === "string")
+    : [];
+
+  const normalizedIds = [];
+  const seen = new Set();
+  originalIds.forEach((id) => {
+    if (!timeHabitIds.has(id) || seen.has(id)) return;
+    seen.add(id);
+    normalizedIds.push(id);
+  });
+
+  const normalizedChanged = normalizedIds.length !== originalIds.length
+    || normalizedIds.some((id, index) => id !== originalIds[index]);
+
+  if (normalizedChanged) {
+    habitPrefs = { ...habitPrefs, quickSessions: normalizedIds };
+    persistHabitPrefs();
+  }
+
+  if ($habitQuickSessionsSelect) {
+    $habitQuickSessionsSelect.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Selecciona hábito…";
+    $habitQuickSessionsSelect.appendChild(placeholder);
+    sortedTimeHabits.forEach((habit) => {
+      const opt = document.createElement("option");
+      opt.value = habit.id;
+      opt.textContent = `${habit.emoji || "🏷️"} ${habit.name}`;
+      $habitQuickSessionsSelect.appendChild(opt);
+    });
+    $habitQuickSessionsSelect.value = "";
+    $habitQuickSessionsSelect.disabled = sortedTimeHabits.length === 0;
+  }
+
+  if ($habitQuickSessionsAdd) {
+    $habitQuickSessionsAdd.disabled = sortedTimeHabits.length === 0;
+  }
+
+  if ($habitQuickSessionsRow) {
+    $habitQuickSessionsRow.innerHTML = "";
+    normalizedIds.forEach((id) => {
+      const habit = habits?.[id];
+      if (!habit) return;
+      const pill = document.createElement("button");
+      pill.type = "button";
+      pill.className = "habit-quick-pill";
+      setHabitColorVars(pill, habit);
+      const label = document.createElement("span");
+      label.className = "habit-quick-pill-label";
+      label.textContent = `${habit.emoji || "🏷️"} ${habit.name}`;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "habit-quick-pill-remove";
+      remove.textContent = "✕";
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        habitPrefs = { ...habitPrefs, quickSessions: normalizedIds.filter((item) => item !== habit.id) };
+        persistHabitPrefs();
+        renderQuickSessions();
+      });
+      pill.appendChild(label);
+      pill.appendChild(remove);
+      pill.addEventListener("click", () => {
+        if (runningSession) {
+          showHabitToast("Ya hay una sesión en curso");
+          return;
+        }
+        startSession(habit.id);
+        showHabitToast(`▶︎ Sesión: ${habit.name || "—"}`);
+      });
+      $habitQuickSessionsRow.appendChild(pill);
+    });
+  }
+
+  const totalPills = normalizedIds.length;
+  if ($habitQuickSessionsMeta) {
+    $habitQuickSessionsMeta.textContent = totalPills ? String(totalPills) : "—";
+  }
+  if ($habitQuickSessionsPreview) {
+    $habitQuickSessionsPreview.textContent = totalPills
+      ? `${totalPills} fijada${totalPills === 1 ? "" : "s"}`
+      : "Toca para añadir";
+  }
+  if ($habitQuickSessionsEmpty) {
+    $habitQuickSessionsEmpty.style.display = (!totalPills && !sortedTimeHabits.length) ? "block" : "none";
+  }
+}
+
 function computeBestStreak() {
   let best = 0;
   let label = "";
@@ -5686,6 +5791,19 @@ function bindEvents() {
   $habitTodaySearchClear?.addEventListener("click", clearTodaySearch);
   $habitTodaySearchReset?.addEventListener("click", clearTodaySearch);
 
+  $habitQuickSessionsAdd?.addEventListener("click", () => {
+    const habitId = $habitQuickSessionsSelect?.value || "";
+    if (!habitId) return;
+    const current = Array.isArray(habitPrefs?.quickSessions) ? habitPrefs.quickSessions : [];
+    if (current.includes(habitId)) {
+      $habitQuickSessionsSelect.value = "";
+      return;
+    }
+    habitPrefs = { ...habitPrefs, quickSessions: [...current, habitId] };
+    persistHabitPrefs();
+    renderQuickSessions();
+  });
+
   $habitManualClose?.addEventListener("click", closeManualTimeModal);
   $habitManualCancel?.addEventListener("click", closeManualTimeModal);
   $habitManualForm?.addEventListener("submit", handleManualSubmit);
@@ -5811,9 +5929,11 @@ function listenRemote() {
   });
 
   onValue(ref(db, HABIT_PREFS_PATH), (snap) => {
-    habitPrefs = snap.val() || { pinCount: "", pinTime: "" };
+    habitPrefs = snap.val() || { pinCount: "", pinTime: "", quickSessions: [] };
+    if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
     saveCache();
     renderPins();
+    renderQuickSessions();
   });
 
   onValue(ref(db, HABIT_CHECKS_PATH), (snap) => {

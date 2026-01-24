@@ -502,6 +502,21 @@
   <div class="habit-search-empty-text">No hay hábitos que coincidan</div>
   <button class="btn ghost btn-compact" id="habit-today-search-reset" type="button">Limpiar</button>
 </div>
+<details class="habit-accordion habit-quick-sessions" id="habit-quick-sessions" data-search-ignore="true">
+  <summary>
+    <div class="habit-accordion-title">Sesiones rápidas</div>
+    <div class="habit-accordion-meta" id="habit-quick-sessions-meta">—</div>
+    <div class="habit-accordion-preview" id="habit-quick-sessions-preview">Toca para añadir</div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-quick-sessions-controls">
+      <select id="habit-quick-sessions-select"></select>
+      <button class="btn ghost btn-compact" id="habit-quick-sessions-add" type="button">Añadir</button>
+    </div>
+    <div class="habit-quick-sessions-row" id="habit-quick-sessions-row"></div>
+    <div class="empty-state small" id="habit-quick-sessions-empty" style="display:none;">Añade hábitos de tiempo para iniciar sesiones con un toque.</div>
+  </div>
+</details>
 <div class="habit-custom-groups" id="habit-custom-groups"></div>
 <details class="habit-accordion habit-today-accordion" id="habits-today-acc-count" open>
 <summary>

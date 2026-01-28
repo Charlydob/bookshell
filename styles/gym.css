@@ -664,7 +664,8 @@
 }
 #gym-create-name {
   padding: 6px;
-  font-size: 20px;
+  font-size: 18px;
+  max-width: 180px;
 }
 .gym-create-form {
   display: flex;
@@ -836,10 +837,12 @@
   }
 }
 
-  .gym-input {
+  .gym-input.kg {
     height: 34px;
     border-radius: 11px;
-    padding: 0 8px;
+    padding: 0px;
+    max-width: 40px;
+    min-width: 60px;
   }
 
 /* 1) Que las celdas puedan encoger (CLAVE) */
@@ -886,7 +889,7 @@
 
 .gym-sets-row.is-unilateral .gym-input-uni[data-field="kgR"],
 .gym-sets-row.is-unilateral .gym-input-uni[data-field="kgL"]{
-  max-width: 68px;
+  max-width: 38px;
 }
 
 .gym-uni-label{
@@ -906,8 +909,12 @@
   height: 34px;
   padding: 0 6px;
   font-size: 14px;
+  max-width: 40px;
+  min-width: 10px; ;
 }
-
+.gym-set-swipe-front.is-unilateral {
+  gap: 0;
+}
 /* 4) La celda de KG (input + BW) también flexible */
 .gym-kg-cell{
   display: grid;

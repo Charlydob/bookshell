@@ -973,7 +973,9 @@
 .habit-records-card .habit-card-head {
   align-items: center;
 }
-
+.habit-records-card {
+  display: none;
+}
 .habit-records-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

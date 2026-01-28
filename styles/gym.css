@@ -667,6 +667,7 @@
   font-size: 18px;
   max-width: 180px;
 }
+
 .gym-create-form {
   display: flex;
   flex-direction: row;
@@ -974,3 +975,16 @@
 }
 .gym-set-swipe-front{ position: relative; z-index: 1; width: 100%; }
 .gym-set-swipe-under{ position: absolute; inset: 0; z-index: 0; }
+.gym-sets-header.is-unilateral{
+  max-width: 220px;
+  min-width: 220px;
+  gap: 0px;
+}
+.gym-sets-row.gym-set-swipe-front.is-unilateral{
+  gap: 0px;
+}
+input.gym-input.gym-input-uni.kg{
+  max-width: 8px;
+  min-width: 8px;
+font-size: 12px;
+}

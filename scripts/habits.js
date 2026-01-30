@@ -1169,6 +1169,20 @@ const $habitEntrySessions = document.getElementById("habit-entry-sessions");
 const $habitManualClose = document.getElementById("habit-manual-close");
 const $habitManualCancel = document.getElementById("habit-manual-cancel");
 
+const DEFAULT_TIME_INPUT_VALUE = "00:00";
+
+function bindTimeInputDefault(input) {
+  if (!input) return;
+  const setDefaultIfEmpty = () => {
+    if (!input.value) input.value = DEFAULT_TIME_INPUT_VALUE;
+  };
+  ["pointerdown", "mousedown", "touchstart", "focus"].forEach((eventName) => {
+    input.addEventListener(eventName, setDefaultIfEmpty, { capture: true });
+  });
+}
+
+bindTimeInputDefault($habitManualMinutes);
+
 // Delete confirm modal
 const $habitDeleteConfirm = document.getElementById("habit-delete-confirm");
 const $habitDeleteName = document.getElementById("habit-delete-name");
@@ -1741,6 +1755,7 @@ function renderHabitDetailActions(habit, dateKey) {
     input.step = "60";
     input.min = "00:00";
     input.placeholder = "00:12";
+    bindTimeInputDefault(input);
     const addBtn = buildHabitDetailActionButton("Añadir", {
       onClick: () => {
         const minutes = parseTimeToMinutes(input.value);
@@ -3842,6 +3857,7 @@ function appendTimeQuickControls(tools, habit, today) {
   inp.className = "habit-quick-input";
   inp.style.flex = "1";
   inp.addEventListener("click", (e) => e.stopPropagation());
+  bindTimeInputDefault(inp);
 
   const go = document.createElement("button");
   go.type = "button";

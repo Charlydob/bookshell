@@ -421,6 +421,13 @@ function bindEvents() {
     if (!exercise.sets || !exercise.sets[setIndex]) return;
 
     if (field === "done") {
+      if (target.checked) {
+        fillFromPlaceholdersIfEmpty(row, exercise.sets[setIndex], {
+          exerciseType: getExerciseType(exercise, exerciseId),
+          unilateral: getExerciseUnilateral(exercise, exerciseId),
+          useBodyweight: getExerciseUseBodyweight(exercise)
+        });
+      }
       exercise.sets[setIndex].done = target.checked;
       const isDone = areAllSetsDone(exercise);
       exercise.collapsed = isDone;
@@ -3341,6 +3348,27 @@ function bindEvents() {
     return norm ? Number.parseFloat(norm) : null;
   }
 
+  function parsePlaceholderInt(value) {
+    const trimmed = String(value || "").trim();
+    if (!trimmed) return null;
+    const numeric = Number.parseInt(trimmed.replace(",", "."), 10);
+    return Number.isNaN(numeric) ? null : numeric;
+  }
+
+  function parseBwPlaceholder(value) {
+    const trimmed = String(value || "").trim();
+    if (!trimmed || !/^BW/i.test(trimmed)) return null;
+    const match = trimmed.match(/BW(?:\(\+([^)]+)\))?/i);
+    if (!match) return null;
+    const extraLabel = match[1];
+    if (!extraLabel) {
+      return { extra: 0, fillInput: false };
+    }
+    const parsed = parseDecimalInput(extraLabel);
+    if (parsed == null) return null;
+    return { extra: parsed, fillInput: true };
+  }
+
   function parseSetInput(field, value) {
     if (value === "") return null;
     if (field === "kg" || field === "kgR" || field === "kgL") {
@@ -3384,6 +3412,65 @@ function bindEvents() {
     }
     const numeric = Number(trimmed);
     return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  function fillFromPlaceholdersIfEmpty(row, set, { exerciseType, unilateral, useBodyweight } = {}) {
+    if (!row || !set) return;
+    const fillRepsInput = (input, update) => {
+      if (!input || input.value !== "") return;
+      const parsed = parsePlaceholderInt(input.placeholder);
+      if (parsed == null) return;
+      update(parsed);
+      input.value = String(parsed);
+    };
+    const fillKgInput = (input, update) => {
+      if (!input || input.value !== "") return;
+      const placeholder = input.placeholder || "";
+      if (useBodyweight) {
+        const bwData = parseBwPlaceholder(placeholder);
+        if (bwData) {
+          update(bwData.extra);
+          if (bwData.fillInput) {
+            input.value = String(bwData.extra);
+          }
+          return;
+        }
+      }
+      const parsed = parseDecimalInput(placeholder);
+      if (parsed == null) return;
+      update(parsed);
+      input.value = String(parsed);
+    };
+
+    if (exerciseType === "time") {
+      fillKgInput(row.querySelector("[data-field='kg']"), (value) => {
+        set.kg = value;
+      });
+      return;
+    }
+
+    if (unilateral) {
+      fillRepsInput(row.querySelector("[data-field='repsR']"), (value) => {
+        set.repsR = value;
+      });
+      fillRepsInput(row.querySelector("[data-field='repsL']"), (value) => {
+        set.repsL = value;
+      });
+      fillKgInput(row.querySelector("[data-field='kgR']"), (value) => {
+        set.kgR = value;
+      });
+      fillKgInput(row.querySelector("[data-field='kgL']"), (value) => {
+        set.kgL = value;
+      });
+      return;
+    }
+
+    fillRepsInput(row.querySelector("[data-field='reps']"), (value) => {
+      set.reps = value;
+    });
+    fillKgInput(row.querySelector("[data-field='kg']"), (value) => {
+      set.kg = value;
+    });
   }
 
   function formatMmSs(seconds) {

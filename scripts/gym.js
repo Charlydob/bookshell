@@ -407,6 +407,8 @@ function bindEvents() {
     const workout = ensureWorkoutDraft();
     const exercise = workout?.exercises?.[exerciseId];
     if (!exercise) return;
+    let shouldReorder = false;
+    let shouldScrollToPending = false;
 
     if (field === "useBodyweight") {
       exercise.useBodyweight = target.checked;
@@ -421,6 +423,7 @@ function bindEvents() {
     if (!exercise.sets || !exercise.sets[setIndex]) return;
 
     if (field === "done") {
+      const wasDone = areAllSetsDone(exercise);
       if (target.checked) {
         fillFromPlaceholdersIfEmpty(row, exercise.sets[setIndex], {
           exerciseType: getExerciseType(exercise, exerciseId),
@@ -431,6 +434,8 @@ function bindEvents() {
       exercise.sets[setIndex].done = target.checked;
       const isDone = areAllSetsDone(exercise);
       exercise.collapsed = isDone;
+      shouldReorder = wasDone !== isDone;
+      shouldScrollToPending = isDone;
     } else if (field === "timeText") {
       const { sec, text } = parseMmSsFromDigits(target.value);
       target.value = text;
@@ -443,6 +448,9 @@ function bindEvents() {
     scheduleWorkoutSave();
     renderMetrics();
     updateExerciseCardState(exerciseId, card);
+    if (shouldReorder) {
+      reorderWorkoutExerciseCards(workout, { scrollToPending: shouldScrollToPending });
+    }
   });
 
   $gymWorkoutExercises.addEventListener(
@@ -1958,7 +1966,7 @@ function bindEvents() {
     const exercisesData = {};
     const template = templateId ? templates[templateId] : null;
     const exerciseIds = template?.exerciseIds || [];
-    exerciseIds.forEach((exerciseId) => {
+    exerciseIds.forEach((exerciseId, index) => {
       const exercise = exercises[exerciseId];
       if (!exercise) return;
       const muscleGroups = getExerciseMuscleGroups(exercise);
@@ -1970,6 +1978,7 @@ function bindEvents() {
         muscleGroupsSnapshot: muscleGroups,
         unilateralSnapshot: unilateral,
         typeSnapshot: exerciseType,
+        originalIndex: index,
         useBodyweight: false,
         sets
       };
@@ -2335,6 +2344,57 @@ function bindEvents() {
     renderWorkoutEditor();
   }
 
+  function getNextExerciseOriginalIndex(workout) {
+    const indexes = Object.values(workout?.exercises || {})
+      .map((exercise) => exercise?.originalIndex)
+      .filter((value) => Number.isFinite(value));
+    if (!indexes.length) {
+      return Object.keys(workout?.exercises || {}).length;
+    }
+    return Math.max(...indexes) + 1;
+  }
+
+  function ensureWorkoutExerciseOrder(workout) {
+    if (!workout?.exercises) return;
+    Object.entries(workout.exercises).forEach(([, exercise], index) => {
+      if (!Number.isFinite(exercise.originalIndex)) {
+        exercise.originalIndex = index;
+      }
+    });
+  }
+
+  function getOrderedWorkoutExerciseEntries(workout) {
+    ensureWorkoutExerciseOrder(workout);
+    return Object.entries(workout?.exercises || {}).sort(([, exerciseA], [, exerciseB]) => {
+      const doneA = areAllSetsDone(exerciseA);
+      const doneB = areAllSetsDone(exerciseB);
+      if (doneA !== doneB) return doneA ? 1 : -1;
+      const indexA = Number.isFinite(exerciseA.originalIndex) ? exerciseA.originalIndex : 0;
+      const indexB = Number.isFinite(exerciseB.originalIndex) ? exerciseB.originalIndex : 0;
+      return indexA - indexB;
+    });
+  }
+
+  function reorderWorkoutExerciseCards(workout, { scrollToPending = false } = {}) {
+    const orderedEntries = getOrderedWorkoutExerciseEntries(workout);
+    if (!orderedEntries.length) return;
+    const fragment = document.createDocumentFragment();
+    orderedEntries.forEach(([exerciseId]) => {
+      const card = $gymWorkoutExercises.querySelector(
+        `.gym-exercise-card[data-exercise-id="${exerciseId}"]`
+      );
+      if (card) fragment.appendChild(card);
+    });
+    $gymWorkoutExercises.appendChild(fragment);
+    if (!scrollToPending) return;
+    const pendingEntry = orderedEntries.find(([, exercise]) => !areAllSetsDone(exercise));
+    if (!pendingEntry) return;
+    const pendingCard = $gymWorkoutExercises.querySelector(
+      `.gym-exercise-card[data-exercise-id="${pendingEntry[0]}"]`
+    );
+    pendingCard?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   function findWorkoutById(workoutId) {
     const workouts = flattenWorkouts();
     return workouts.find((workout) => workout.id === workoutId) || null;
@@ -2350,7 +2410,7 @@ function bindEvents() {
     renderWorkoutEmoji(workout);
     renderMetrics();
     workoutStatsMap = buildExerciseStatsMap(workout.id);
-    const entries = Object.entries(workout.exercises || {});
+    const entries = getOrderedWorkoutExerciseEntries(workout);
     if (!entries.length) {
       $gymWorkoutExercises.innerHTML = `
         <div class="gym-empty">Añade ejercicios para empezar tu sesión.</div>
@@ -2390,8 +2450,8 @@ function bindEvents() {
           const kgPlaceholderL = getKgPlaceholderSide(lastDoneSet, useBodyweight, "kgL");
           const repsRValue = getSetSideValue(set?.repsR, set?.reps);
           const repsLValue = getSetSideValue(set?.repsL, set?.reps);
-          const kgRValue = getSetSideValue(set?.kgR, set?.kg ?? set?.extraKg);
-          const kgLValue = getSetSideValue(set?.kgL, set?.kg ?? set?.extraKg);
+          const kgRValue = set?.kgR ?? "";
+          const kgLValue = set?.kgL ?? "";
           const kgValue = set.kg ?? set.extraKg ?? "";
           const timeValue = formatMmSs(set.timeSec);
           const isPr = isSetPr(set, {
@@ -2981,6 +3041,7 @@ function bindEvents() {
       muscleGroupsSnapshot: getExerciseMuscleGroups(exercise),
       unilateralSnapshot: unilateral,
       typeSnapshot: exerciseType,
+      originalIndex: getNextExerciseOriginalIndex(workout),
       useBodyweight: false,
       sets: buildSetsFromHistory(exerciseId, workout?.id, exerciseType, unilateral)
     };
@@ -3091,8 +3152,11 @@ function bindEvents() {
 
   function migrateWorkoutExerciseData(workout) {
     if (!workout?.exercises) return;
-    Object.entries(workout.exercises).forEach(([exerciseId, exercise]) => {
+    Object.entries(workout.exercises).forEach(([exerciseId, exercise], index) => {
       let useBodyweight = Boolean(exercise.useBodyweight);
+      if (!Number.isFinite(exercise.originalIndex)) {
+        exercise.originalIndex = index;
+      }
       if (!exercise.typeSnapshot) {
         exercise.typeSnapshot = "reps";
       }

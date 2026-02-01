@@ -1050,6 +1050,7 @@ function bindEvents() {
             maxReps: null,
             maxRepsAll: null,
             maxKgRaw: null,
+            bestRepsByKg: {},
             lastSet: null,
             lastDoneSet: null
           };
@@ -1080,6 +1081,13 @@ function bindEvents() {
           if (rawKgValue != null) {
             if (stats[exerciseId].maxKgRaw == null || rawKgValue > stats[exerciseId].maxKgRaw) {
               stats[exerciseId].maxKgRaw = rawKgValue;
+            }
+            if (repsValue != null) {
+              const kgKey = String(rawKgValue);
+              const prevBest = stats[exerciseId].bestRepsByKg[kgKey];
+              if (prevBest == null || repsValue > prevBest) {
+                stats[exerciseId].bestRepsByKg[kgKey] = repsValue;
+              }
             }
           }
           if (useRepsForMax) {
@@ -2355,6 +2363,7 @@ function bindEvents() {
           const isPr = isSetPr(set, {
             prevMaxReps: stats.maxRepsAll,
             prevMaxKgRaw: stats.maxKgRaw,
+            prevBestRepsByKg: stats.bestRepsByKg,
             unilateral
           });
           const repsInput = exerciseType === "time"
@@ -2582,7 +2591,12 @@ function bindEvents() {
     return { maxReps, maxKgRaw, totalVolumeKg };
   }
 
-  function isSetPr(set, { prevMaxReps, prevMaxKgRaw, unilateral = false } = {}) {
+  function isSetPr(set, {
+    prevMaxReps,
+    prevMaxKgRaw,
+    prevBestRepsByKg,
+    unilateral = false
+  } = {}) {
     const hasPrevReps = prevMaxReps != null;
     const hasPrevKg = prevMaxKgRaw != null;
     if (!hasPrevReps && !hasPrevKg) return false;
@@ -2590,7 +2604,15 @@ function bindEvents() {
     const kgValue = getSetRawKgValue(set, { unilateral });
     const repsPr = hasPrevReps && repsValue != null && repsValue > prevMaxReps;
     const kgPr = hasPrevKg && kgValue != null && kgValue > prevMaxKgRaw;
-    return repsPr || kgPr;
+    const kgKey = kgValue != null ? String(kgValue) : null;
+    const prevBestRepsAtKg = kgKey ? prevBestRepsByKg?.[kgKey] : null;
+    const repsAtSameKgPr = hasPrevKg
+      && kgValue != null
+      && kgValue === prevMaxKgRaw
+      && repsValue != null
+      && prevBestRepsAtKg != null
+      && repsValue > prevBestRepsAtKg;
+    return repsPr || kgPr || repsAtSameKgPr;
   }
 
   function updateExerciseSummary(card, exercise, exerciseId, workoutDate) {
@@ -2630,7 +2652,12 @@ function bindEvents() {
       const index = Number(row.dataset.setIndex);
       const set = exercise.sets?.[index];
       if (!set) return;
-      const isPr = isSetPr(set, { prevMaxReps, prevMaxKgRaw, unilateral });
+      const isPr = isSetPr(set, {
+        prevMaxReps,
+        prevMaxKgRaw,
+        prevBestRepsByKg: prevStats.bestRepsByKg,
+        unilateral
+      });
       row.classList.toggle("set--pr", isPr);
     });
   }

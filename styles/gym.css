@@ -535,6 +535,11 @@
   align-items:center;
 }
 
+.gym-sets-header.is-cardio,
+.gym-sets-row.is-cardio {
+  grid-template-columns: 34px minmax(84px, 1fr) minmax(72px, 1fr) minmax(84px, 1fr) 44px;
+}
+
 .gym-sets-header {
   color: var(--txt-soft);
   text-transform: uppercase;
@@ -596,6 +601,12 @@
   font-size: 11px;
 }
 
+.gym-pace-readonly {
+  color: var(--txt-soft);
+  font-size: 12px;
+  text-align: center;
+}
+
 .gym-input {
   width: 100%;
   max-width: 100%;
@@ -603,6 +614,10 @@
   padding: 0 10px;
   text-align: center;
   box-sizing: border-box;
+}
+
+.gym-field.is-hidden {
+  display: none;
 }
 
 .gym-kg-cell{

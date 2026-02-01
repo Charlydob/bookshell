@@ -132,6 +132,8 @@ if ($viewGym) {
   const $gymCreateExercise = document.getElementById("gym-create-exercise");
   const $gymCreateUnilateral = document.getElementById("gym-create-unilateral");
   const $gymCreateType = document.getElementById("gym-create-type");
+  const $gymCreateStrengthTypeField = document.getElementById("gym-create-strength-type-field");
+  const $gymCreateStrengthType = document.getElementById("gym-create-strength-type");
   const $gymCreateTitle = $gymCreateModal?.querySelector(".modal-title");
 
   const $gymTemplateModal = document.getElementById("gym-template-modal");
@@ -300,10 +302,13 @@ function bindEvents() {
     if (!name) return;
     const now = Date.now();
     const muscleGroups = normalizeMuscleGroups(Array.from(createMuscles));
+    const exerciseType = $gymCreateType?.value || "strength";
+    const strengthType = $gymCreateStrengthType?.value || "reps";
     const payload = {
       name,
       muscleGroups,
-      type: $gymCreateType?.value || "reps",
+      type: exerciseType,
+      strengthType: exerciseType === "strength" ? strengthType : null,
       unilateral: Boolean($gymCreateUnilateral?.checked),
       updatedAt: now
     };
@@ -338,6 +343,10 @@ function bindEvents() {
 
   $gymCreateClose.addEventListener("click", () => {
     closeCreateExerciseModal();
+  });
+
+  $gymCreateType?.addEventListener("change", () => {
+    updateCreateExerciseTypeUI();
   });
 
   $gymCreateName?.addEventListener("focus", () => {
@@ -425,11 +434,14 @@ function bindEvents() {
     if (field === "done") {
       const wasDone = areAllSetsDone(exercise);
       if (target.checked) {
-        fillFromPlaceholdersIfEmpty(row, exercise.sets[setIndex], {
-          exerciseType: getExerciseType(exercise, exerciseId),
-          unilateral: getExerciseUnilateral(exercise, exerciseId),
-          useBodyweight: getExerciseUseBodyweight(exercise)
-        });
+        const exerciseType = getExerciseType(exercise, exerciseId);
+        if (exerciseType !== "cardio") {
+          fillFromPlaceholdersIfEmpty(row, exercise.sets[setIndex], {
+            exerciseType,
+            unilateral: getExerciseUnilateral(exercise, exerciseId),
+            useBodyweight: getExerciseUseBodyweight(exercise)
+          });
+        }
       }
       exercise.sets[setIndex].done = target.checked;
       const isDone = areAllSetsDone(exercise);
@@ -437,7 +449,7 @@ function bindEvents() {
       shouldReorder = wasDone !== isDone;
       shouldScrollToPending = isDone;
     } else if (field === "timeText") {
-      const { sec, text } = parseMmSsFromDigits(target.value);
+      const { sec, text } = parseDurationFromDigits(target.value);
       target.value = text;
       exercise.sets[setIndex].timeSec = sec;
     } else {
@@ -1109,6 +1121,7 @@ function bindEvents() {
           }
         }
         const exerciseType = getExerciseType(data, exerciseId);
+        if (exerciseType === "cardio") return;
         const useBodyweight = getExerciseUseBodyweight(data);
         const unilateral = getExerciseUnilateral(data, exerciseId);
         const useRepsForMax = useBodyweight && exerciseType !== "time";
@@ -1177,7 +1190,11 @@ function bindEvents() {
     return null;
   }
 
-  function buildSetsFromHistory(exerciseId, excludeId, exerciseType = "reps", unilateral = false) {
+  function buildSetsFromHistory(
+    exerciseId,
+    excludeId,
+    { exerciseType = "reps", unilateral = false } = {}
+  ) {
     const lastSets = getLastExerciseSets(exerciseId, excludeId);
     if (!lastSets || !lastSets.length) {
       return [createEmptySet(exerciseType, { unilateral })];
@@ -1186,6 +1203,15 @@ function bindEvents() {
   }
 
   function createEmptySet(exerciseType, { unilateral = false } = {}) {
+    if (exerciseType === "cardio") {
+      return {
+        timeSec: null,
+        distanceKm: null,
+        incline: null,
+        notes: null,
+        done: false
+      };
+    }
     if (exerciseType === "time") {
       return { timeSec: null, kg: null, extraKg: null, rpe: null, done: false };
     }
@@ -1378,6 +1404,7 @@ function bindEvents() {
 
   function getExerciseOptions() {
     return Object.values(exercises || {})
+      .filter((exercise) => normalizeExerciseDefinition(exercise).kind !== "cardio")
       .sort((a, b) => (a.name || "").localeCompare(b.name || "", "es"))
       .map((exercise) => ({
         value: exercise.id,
@@ -1386,7 +1413,10 @@ function bindEvents() {
   }
 
   function getExerciseTypeFromCatalog(exerciseId) {
-    return exercises?.[exerciseId]?.type || "reps";
+    const exercise = exercises?.[exerciseId];
+    if (!exercise) return "reps";
+    const { kind, strengthType } = normalizeExerciseDefinition(exercise);
+    return kind === "cardio" ? "cardio" : strengthType;
   }
 
   function getCardioNameOptions() {
@@ -1520,6 +1550,7 @@ function bindEvents() {
       const exerciseData = workout.exercises?.[exerciseId];
       if (!exerciseData?.sets?.length) return;
       const exerciseType = getExerciseType(exerciseData, exerciseId);
+      if (exerciseType === "cardio") return;
       const unilateral = getExerciseUnilateral(exerciseData, exerciseId);
       const useBodyweight = getExerciseUseBodyweight(exerciseData);
       let maxKgEff = null;
@@ -1610,7 +1641,8 @@ function bindEvents() {
     const exercise = exercises?.[exerciseId];
     if (!exercise || !$gymExDetailModal) return;
     gymExDetailSelection.exerciseId = exerciseId;
-    const exerciseType = exercise.type || "reps";
+    const exerciseType = getExerciseTypeFromCatalog(exerciseId);
+    if (exerciseType === "cardio") return;
     const metricOptions = exerciseType === "time"
       ? [
         { value: "maxKgEff", label: "Máximo (kg)" },
@@ -1741,7 +1773,8 @@ function bindEvents() {
   function buildExerciseDetailSummary(exerciseId) {
     const exercise = exercises?.[exerciseId];
     if (!exercise) return null;
-    const exerciseType = exercise.type || "reps";
+    const exerciseType = getExerciseTypeFromCatalog(exerciseId);
+    if (exerciseType === "cardio") return null;
     let setsCount = 0;
     let repsTotal = 0;
     let timeSecTotal = 0;
@@ -1824,7 +1857,12 @@ function bindEvents() {
       closeExerciseDetailModal();
       return;
     }
-    const metricOptions = exercise.type === "time"
+    const exerciseType = getExerciseTypeFromCatalog(exerciseId);
+    if (exerciseType === "cardio") {
+      closeExerciseDetailModal();
+      return;
+    }
+    const metricOptions = exerciseType === "time"
       ? [
         { value: "maxKgEff", label: "Máximo (kg)" },
         { value: "loadTime", label: "Carga-tiempo" },
@@ -1850,7 +1888,14 @@ function bindEvents() {
     editingExerciseId = exerciseId;
     createMuscles = new Set(getExerciseMuscleGroups(exercise));
     $gymCreateName.value = exercise.name || "";
-    $gymCreateType.value = exercise.type || "reps";
+    const { kind, strengthType } = normalizeExerciseDefinition(exercise);
+    if ($gymCreateType) {
+      $gymCreateType.value = kind;
+    }
+    if ($gymCreateStrengthType) {
+      $gymCreateStrengthType.value = strengthType;
+    }
+    updateCreateExerciseTypeUI();
     $gymCreateUnilateral.checked = Boolean(exercise.unilateral);
     updateActiveChipsMulti($gymCreateMuscleChips, createMuscles);
     if ($gymCreateTitle) {
@@ -1898,8 +1943,12 @@ function bindEvents() {
     $gymCreateModal.classList.remove("hidden");
     $gymCreateName.value = prefillName;
     if ($gymCreateType) {
-      $gymCreateType.value = "reps";
+      $gymCreateType.value = "strength";
     }
+    if ($gymCreateStrengthType) {
+      $gymCreateStrengthType.value = "reps";
+    }
+    updateCreateExerciseTypeUI();
     if ($gymCreateTitle) {
       $gymCreateTitle.textContent = "Crear ejercicio";
     }
@@ -1912,13 +1961,31 @@ function bindEvents() {
     $gymCreateName.value = "";
     $gymCreateUnilateral.checked = false;
     if ($gymCreateType) {
-      $gymCreateType.value = "reps";
+      $gymCreateType.value = "strength";
     }
+    if ($gymCreateStrengthType) {
+      $gymCreateStrengthType.value = "reps";
+    }
+    updateCreateExerciseTypeUI();
     if ($gymCreateTitle) {
       $gymCreateTitle.textContent = "Crear ejercicio";
     }
     $gymCreateExercise.textContent = "Crear";
     editingExerciseId = null;
+  }
+
+  function updateCreateExerciseTypeUI() {
+    if (!$gymCreateType) return;
+    const isCardio = $gymCreateType.value === "cardio";
+    if ($gymCreateStrengthTypeField) {
+      $gymCreateStrengthTypeField.classList.toggle("is-hidden", isCardio);
+    }
+    if ($gymCreateUnilateral) {
+      $gymCreateUnilateral.disabled = isCardio;
+      if (isCardio) {
+        $gymCreateUnilateral.checked = false;
+      }
+    }
   }
 
   function openTemplateModal() {
@@ -1970,14 +2037,16 @@ function bindEvents() {
       const exercise = exercises[exerciseId];
       if (!exercise) return;
       const muscleGroups = getExerciseMuscleGroups(exercise);
-      const exerciseType = exercise.type || "reps";
+      const { kind, strengthType } = normalizeExerciseDefinition(exercise);
+      const exerciseType = kind === "cardio" ? "cardio" : strengthType;
       const unilateral = Boolean(exercise.unilateral);
-      const sets = buildSetsFromHistory(exerciseId, null, exerciseType, unilateral);
+      const sets = buildSetsFromHistory(exerciseId, null, { exerciseType, unilateral });
       exercisesData[exerciseId] = {
         nameSnapshot: exercise.name,
         muscleGroupsSnapshot: muscleGroups,
         unilateralSnapshot: unilateral,
-        typeSnapshot: exerciseType,
+        typeSnapshot: kind,
+        strengthTypeSnapshot: kind === "strength" ? strengthType : null,
         originalIndex: index,
         useBodyweight: false,
         sets
@@ -2422,26 +2491,38 @@ function bindEvents() {
         const stats = workoutStatsMap[exerciseId] || {};
         const lastDoneSet = stats.lastDoneSet || null;
         const exerciseType = getExerciseType(exerciseData, exerciseId);
-        const useBodyweight = getExerciseUseBodyweight(exerciseData);
-        const unilateral = getExerciseUnilateral(exerciseData, exerciseId);
-        const maxLabel = formatMaxLabel(stats.maxSet, useBodyweight, { unilateral, exerciseType });
-        const prevLabel = exerciseType === "time"
-          ? formatPreviousTimeLabel(lastDoneSet, useBodyweight)
-          : maxLabel;
+        const isCardio = exerciseType === "cardio";
+        const useBodyweight = isCardio ? false : getExerciseUseBodyweight(exerciseData);
+        const unilateral = isCardio ? false : getExerciseUnilateral(exerciseData, exerciseId);
+        const maxLabel = isCardio
+          ? "—"
+          : formatMaxLabel(stats.maxSet, useBodyweight, { unilateral, exerciseType });
+        const prevLabel = isCardio
+          ? "—"
+          : exerciseType === "time"
+            ? formatPreviousTimeLabel(lastDoneSet, useBodyweight)
+            : maxLabel;
         const muscleGroups = getWorkoutExerciseMuscles(exerciseData);
         const muscleLabel = formatMuscleGroupsLabel(muscleGroups);
         const isUnilateralReps = unilateral && exerciseType !== "time";
         const isDone = areAllSetsDone(exerciseData);
         const isCollapsed = isDone && (exerciseData.collapsed ?? true);
         const summary = computeExerciseSummary(exerciseData, exerciseId, workout.date);
-        const summaryKgLabel = summary.maxKgRaw != null
+        const summaryKgLabel = summary?.maxKgRaw != null
           ? `${formatKgValue(summary.maxKgRaw)} kg`
           : "—";
-        const summaryRepsLabel = summary.maxReps != null ? `${summary.maxReps} reps` : "—";
-        const summaryVolumeLabel = `${Math.round(summary.totalVolumeKg)} kg`;
+        const summaryRepsLabel = summary?.maxReps != null ? `${summary.maxReps} reps` : "—";
+        const summaryVolumeLabel = `${Math.round(summary?.totalVolumeKg || 0)} kg`;
+        const summaryKmValue = summary?.distanceKmTotal ?? 0;
+        const summaryTimeValue = summary?.timeSecTotal ?? 0;
+        const summaryKmLabel = summary ? `${formatKgValue(summaryKmValue)} km` : "—";
+        const summaryTimeLabel = summary ? formatTimer(summaryTimeValue) : "—";
+        const summaryPaceLabel = summary?.avgPaceSecPerKm
+          ? formatPace(summary.avgPaceSecPerKm)
+          : "—";
         const rows = (exerciseData.sets || []).map((set, index) => {
           const prevText = prevLabel;
-          const timePlaceholder = formatMmSs(lastDoneSet?.timeSec) || "mm:ss";
+          const timePlaceholder = formatDurationInput(lastDoneSet?.timeSec) || "mm:ss";
           const repsPlaceholder = lastDoneSet?.reps ?? "reps";
           const repsPlaceholderR = getRepsPlaceholderSide(lastDoneSet, "repsR", "R");
           const repsPlaceholderL = getRepsPlaceholderSide(lastDoneSet, "repsL", "L");
@@ -2453,15 +2534,19 @@ function bindEvents() {
           const kgRValue = set?.kgR ?? "";
           const kgLValue = set?.kgL ?? "";
           const kgValue = set.kg ?? set.extraKg ?? "";
-          const timeValue = formatMmSs(set.timeSec);
-          const isPr = isSetPr(set, {
-            prevMaxReps: stats.maxRepsAll,
-            prevMaxKgRaw: stats.maxKgRaw,
-            prevBestRepsByKg: stats.bestRepsByKg,
-            unilateral
-          });
+          const timeValue = formatDurationInput(set.timeSec);
+          const distanceValue = formatDecimalInput(set?.distanceKm);
+          const paceLabel = formatPace(getCardioSetPaceSecPerKm(set));
+          const isPr = isCardio
+            ? false
+            : isSetPr(set, {
+              prevMaxReps: stats.maxRepsAll,
+              prevMaxKgRaw: stats.maxKgRaw,
+              prevBestRepsByKg: stats.bestRepsByKg,
+              unilateral
+            });
           const repsInput = exerciseType === "time"
-            ? `<input class="gym-input gym-time-input" data-field="timeText" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="${timePlaceholder}" value="${timeValue}"/>`
+            ? `<input class="gym-input gym-time-input" data-field="timeText" type="text" inputmode="numeric" pattern="[0-9:]*" placeholder="${timePlaceholder}" value="${timeValue}"/>`
             : unilateral
               ? `<div class="gym-dual">
                   <input class="gym-input" data-field="repsR" type="number" inputmode="numeric" placeholder="${repsPlaceholderR}" value="${repsRValue ?? ""}" aria-label="Reps derecha"/>
@@ -2482,7 +2567,13 @@ function bindEvents() {
       <input class="gym-input gym-input-uni" data-field="repsL" type="number" inputmode="numeric" placeholder="${repsPlaceholderL}" value="${repsLValue ?? ""}" aria-label="Reps izquierda"/>
       <input class="gym-input gym-input-uni kg" data-field="kgL" type="text" inputmode="decimal" autocomplete="off" placeholder="${kgPlaceholderL}" value="${kgLValue ?? ""}" aria-label="Kg izquierda"/>
     `;
-          const setInputs = isUnilateralReps ? unilateralInputs : `${repsInput}${kgInput}`;
+          const setInputs = isCardio
+            ? `
+                <input class="gym-input gym-time-input" data-field="timeText" type="text" inputmode="numeric" pattern="[0-9:]*" placeholder="mm:ss" value="${timeValue}"/>
+                <input class="gym-input" data-field="distanceKm" type="text" inputmode="decimal" autocomplete="off" placeholder="km" value="${distanceValue}"/>
+                <span class="gym-pace-readonly" data-field="pace">${paceLabel}</span>
+              `
+            : isUnilateralReps ? unilateralInputs : `${repsInput}${kgInput}`;
           return `
   <div class="gym-set-swipe" data-set-index="${index}">
     <div class="gym-set-swipe-under">
@@ -2491,9 +2582,9 @@ function bindEvents() {
       </button>
     </div>
 
-    <div class="gym-sets-row gym-set-swipe-front${isUnilateralReps ? " is-unilateral" : ""}${isPr ? " set--pr" : ""}" data-set-index="${index}">
+    <div class="gym-sets-row gym-set-swipe-front${isCardio ? " is-cardio" : ""}${isUnilateralReps ? " is-unilateral" : ""}${isPr ? " set--pr" : ""}" data-set-index="${index}">
       <span>${index + 1}</span>
-      <span class="gym-set-previous">${prevText}</span>
+      ${isCardio ? "" : `<span class="gym-set-previous">${prevText}</span>`}
       ${setInputs}
       <div class="gym-set-check">
         <input class="gym-checkbox" data-field="done" type="checkbox" ${set.done ? "checked" : ""}/>
@@ -2504,7 +2595,15 @@ function bindEvents() {
 `;
 
         }).join("");
-        const headerCells = isUnilateralReps
+        const headerCells = isCardio
+          ? `
+                <span>Set</span>
+                <span>TIME</span>
+                <span>KM</span>
+                <span>PACE</span>
+                <span>✔</span>
+              `
+          : isUnilateralReps
           ? `
                 <span>Set</span>
                 <span>${exerciseType === "time" ? "Anterior" : "Max"}</span>
@@ -2531,15 +2630,32 @@ function bindEvents() {
               ${unilateral ? "<span class=\"gym-unilateral-pill\">Unilateral</span>" : ""}
             </div>
             <div class="gym-exercise-actions">
+              ${isCardio ? "" : `
               <label class="gym-bw-toggle ${useBodyweight ? "is-active" : ""}">
                 <input data-field="useBodyweight" type="checkbox" ${useBodyweight ? "checked" : ""}/>
                 BW
-              </label>
+              </label>`}
               <button class="icon-btn icon-btn-small" data-action="exercise-remove" type="button" aria-label="Quitar ejercicio">🗑️</button>
-              <button class="icon-btn icon-btn-small gym-exercise-stats-btn gym-open-exercise-stats" data-action="exercise-stats" data-exercise-id="${exerciseId}" data-workout-id="${workout.id}" type="button" aria-label="Ver estadísticas">📈</button>
+              ${isCardio ? "" : `<button class="icon-btn icon-btn-small gym-exercise-stats-btn gym-open-exercise-stats" data-action="exercise-stats" data-exercise-id="${exerciseId}" data-workout-id="${workout.id}" type="button" aria-label="Ver estadísticas">📈</button>`}
             </div>
           </div>
             <div class="gym-exercise-summary">
+              ${isCardio
+                ? `
+              <div class="gym-summary-item">
+                <span class="gym-summary-label">KM hoy</span>
+                <span class="gym-summary-value" data-summary="cardio-km">${summaryKmLabel}</span>
+              </div>
+              <div class="gym-summary-item">
+                <span class="gym-summary-label">Tiempo hoy</span>
+                <span class="gym-summary-value" data-summary="cardio-time">${summaryTimeLabel}</span>
+              </div>
+              <div class="gym-summary-item">
+                <span class="gym-summary-label">Ritmo medio</span>
+                <span class="gym-summary-value" data-summary="cardio-pace">${summaryPaceLabel}</span>
+              </div>
+                `
+                : `
               <div class="gym-summary-item">
                 <span class="gym-summary-label">Max kg hoy</span>
                 <span class="gym-summary-value" data-summary="max-kg">${summaryKgLabel}</span>
@@ -2552,10 +2668,11 @@ function bindEvents() {
                 <span class="gym-summary-label">Volumen hoy</span>
                 <span class="gym-summary-value" data-summary="volume">${summaryVolumeLabel}</span>
               </div>
+                `}
             </div>
             <div class="gym-exercise-body">
               <div class="gym-sets-table">
-                <div class="gym-sets-header${isUnilateralReps ? " is-unilateral" : ""}">
+                <div class="gym-sets-header${isCardio ? " is-cardio" : ""}${isUnilateralReps ? " is-unilateral" : ""}">
                   ${headerCells}
                 </div>
                 ${rows}
@@ -2806,6 +2923,9 @@ function bindEvents() {
       const useBodyweight = getExerciseUseBodyweight(exercise);
       (exercise.sets || []).forEach((set) => {
         if (!set.done) return;
+        if (exerciseType === "cardio") {
+          return;
+        }
         if (exerciseType === "time") {
           const timeSec = Number(set.timeSec) || 0;
           const kgEff = getSetEffectiveKg(set, workout.date, useBodyweight) || 0;
@@ -2850,6 +2970,33 @@ function bindEvents() {
     return kgValue == null ? null : kgValue;
   }
 
+  function computeCardioTotals(sets, { doneOnly = true } = {}) {
+    let timeSecTotal = 0;
+    let distanceKmTotal = 0;
+    (sets || []).forEach((set) => {
+      if (!set) return;
+      if (doneOnly && !set.done) return;
+      const timeSec = Number(set.timeSec) || 0;
+      const distanceKm = Number(set.distanceKm) || 0;
+      if (timeSec > 0) {
+        timeSecTotal += timeSec;
+      }
+      if (distanceKm > 0) {
+        distanceKmTotal += distanceKm;
+      }
+    });
+    const avgPaceSecPerKm = distanceKmTotal > 0 ? timeSecTotal / distanceKmTotal : null;
+    return { timeSecTotal, distanceKmTotal, avgPaceSecPerKm };
+  }
+
+  function getCardioSetPaceSecPerKm(set) {
+    if (!set) return null;
+    const timeSec = Number(set.timeSec) || 0;
+    const distanceKm = Number(set.distanceKm) || 0;
+    if (distanceKm <= 0 || timeSec <= 0) return null;
+    return timeSec / distanceKm;
+  }
+
   function computeExerciseSummary(exercise, exerciseId, workoutDate) {
     const unilateral = getExerciseUnilateral(exercise, exerciseId);
     const exerciseType = getExerciseType(exercise, exerciseId);
@@ -2857,6 +3004,19 @@ function bindEvents() {
     let maxReps = null;
     let maxKgRaw = null;
     let totalVolumeKg = 0;
+
+    if (exerciseType === "cardio") {
+      const { timeSecTotal, distanceKmTotal, avgPaceSecPerKm } = computeCardioTotals(
+        exercise?.sets,
+        { doneOnly: true }
+      );
+      return {
+        exerciseType,
+        timeSecTotal,
+        distanceKmTotal,
+        avgPaceSecPerKm
+      };
+    }
 
     (exercise?.sets || []).forEach((set) => {
       const repsValue = getSetTotalReps(set, unilateral);
@@ -2922,9 +3082,24 @@ function bindEvents() {
   function updateExerciseSummary(card, exercise, exerciseId, workoutDate) {
     if (!card) return;
     const summary = computeExerciseSummary(exercise, exerciseId, workoutDate);
-    const maxKgLabel = summary.maxKgRaw != null ? `${formatKgValue(summary.maxKgRaw)} kg` : "—";
-    const maxRepsLabel = summary.maxReps != null ? `${summary.maxReps} reps` : "—";
-    const volumeLabel = `${Math.round(summary.totalVolumeKg)} kg`;
+    const exerciseType = getExerciseType(exercise, exerciseId);
+    if (exerciseType === "cardio") {
+      const kmValue = summary?.distanceKmTotal ?? 0;
+      const timeValue = summary?.timeSecTotal ?? 0;
+      const kmLabel = summary ? `${formatKgValue(kmValue)} km` : "—";
+      const timeLabel = summary ? formatTimer(timeValue) : "—";
+      const paceLabel = summary?.avgPaceSecPerKm ? formatPace(summary.avgPaceSecPerKm) : "—";
+      const kmEl = card.querySelector("[data-summary='cardio-km']");
+      const timeEl = card.querySelector("[data-summary='cardio-time']");
+      const paceEl = card.querySelector("[data-summary='cardio-pace']");
+      if (kmEl) kmEl.textContent = kmLabel;
+      if (timeEl) timeEl.textContent = timeLabel;
+      if (paceEl) paceEl.textContent = paceLabel;
+      return;
+    }
+    const maxKgLabel = summary?.maxKgRaw != null ? `${formatKgValue(summary.maxKgRaw)} kg` : "—";
+    const maxRepsLabel = summary?.maxReps != null ? `${summary.maxReps} reps` : "—";
+    const volumeLabel = `${Math.round(summary?.totalVolumeKg || 0)} kg`;
     const maxKgEl = card.querySelector("[data-summary='max-kg']");
     const maxRepsEl = card.querySelector("[data-summary='max-reps']");
     const volumeEl = card.querySelector("[data-summary='volume']");
@@ -2949,6 +3124,7 @@ function bindEvents() {
     updateExerciseSummary(card, exercise, exerciseId, workout.date);
 
     const unilateral = getExerciseUnilateral(exercise, exerciseId);
+    const exerciseType = getExerciseType(exercise, exerciseId);
     const prevStats = workoutStatsMap?.[exerciseId] || {};
     const prevMaxReps = prevStats.maxRepsAll;
     const prevMaxKgRaw = prevStats.maxKgRaw;
@@ -2956,6 +3132,14 @@ function bindEvents() {
       const index = Number(row.dataset.setIndex);
       const set = exercise.sets?.[index];
       if (!set) return;
+      if (exerciseType === "cardio") {
+        const paceEl = row.querySelector("[data-field='pace']");
+        if (paceEl) {
+          paceEl.textContent = formatPace(getCardioSetPaceSecPerKm(set));
+        }
+        row.classList.remove("set--pr");
+        return;
+      }
       const isPr = isSetPr(set, {
         prevMaxReps,
         prevMaxKgRaw,
@@ -2980,36 +3164,44 @@ function bindEvents() {
     if (!workout?.exercises?.[exerciseId]) return;
     const exercise = workout.exercises[exerciseId];
     const exerciseType = getExerciseType(exercise, exerciseId);
-    const unilateral = getExerciseUnilateral(exercise, exerciseId);
+    const unilateral = exerciseType === "cardio" ? false : getExerciseUnilateral(exercise, exerciseId);
     exercise.sets = exercise.sets || [];
     let nextSet = createEmptySet(exerciseType, { unilateral });
     if (exercise.sets.length) {
       const prevSet = exercise.sets[exercise.sets.length - 1];
-      nextSet = exerciseType === "time"
+      nextSet = exerciseType === "cardio"
         ? {
           timeSec: prevSet?.timeSec ?? null,
-          kg: prevSet?.kg ?? null,
-          extraKg: prevSet?.extraKg ?? null,
-          rpe: null,
+          distanceKm: prevSet?.distanceKm ?? null,
+          incline: prevSet?.incline ?? null,
+          notes: prevSet?.notes ?? null,
           done: false
         }
-        : unilateral
+        : exerciseType === "time"
           ? {
-            repsR: getSetSideValue(prevSet?.repsR, prevSet?.reps),
-            repsL: getSetSideValue(prevSet?.repsL, prevSet?.reps),
-            kgR: getSetSideValue(prevSet?.kgR, prevSet?.kg ?? prevSet?.extraKg),
-            kgL: getSetSideValue(prevSet?.kgL, prevSet?.kg ?? prevSet?.extraKg),
-            extraKg: prevSet?.extraKg ?? null,
-            rpe: null,
-            done: false
-          }
-          : {
-            reps: prevSet?.reps ?? null,
+            timeSec: prevSet?.timeSec ?? null,
             kg: prevSet?.kg ?? null,
             extraKg: prevSet?.extraKg ?? null,
             rpe: null,
             done: false
-          };
+          }
+          : unilateral
+            ? {
+              repsR: getSetSideValue(prevSet?.repsR, prevSet?.reps),
+              repsL: getSetSideValue(prevSet?.repsL, prevSet?.reps),
+              kgR: getSetSideValue(prevSet?.kgR, prevSet?.kg ?? prevSet?.extraKg),
+              kgL: getSetSideValue(prevSet?.kgL, prevSet?.kg ?? prevSet?.extraKg),
+              extraKg: prevSet?.extraKg ?? null,
+              rpe: null,
+              done: false
+            }
+            : {
+              reps: prevSet?.reps ?? null,
+              kg: prevSet?.kg ?? null,
+              extraKg: prevSet?.extraKg ?? null,
+              rpe: null,
+              done: false
+            };
     }
     exercise.sets.push(nextSet);
     scheduleWorkoutSave();
@@ -3034,16 +3226,18 @@ function bindEvents() {
     if (workout.exercises[exerciseId]) return;
     const exercise = exercises[exerciseId];
     if (!exercise) return;
-    const exerciseType = exercise.type || "reps";
+    const { kind, strengthType } = normalizeExerciseDefinition(exercise);
+    const exerciseType = kind === "cardio" ? "cardio" : strengthType;
     const unilateral = Boolean(exercise.unilateral);
     workout.exercises[exerciseId] = {
       nameSnapshot: exercise.name,
       muscleGroupsSnapshot: getExerciseMuscleGroups(exercise),
       unilateralSnapshot: unilateral,
-      typeSnapshot: exerciseType,
+      typeSnapshot: kind,
+      strengthTypeSnapshot: kind === "strength" ? strengthType : null,
       originalIndex: getNextExerciseOriginalIndex(workout),
       useBodyweight: false,
-      sets: buildSetsFromHistory(exerciseId, workout?.id, exerciseType, unilateral)
+      sets: buildSetsFromHistory(exerciseId, workout?.id, { exerciseType, unilateral })
     };
     scheduleWorkoutSave();
     renderWorkoutEditor();
@@ -3158,7 +3352,14 @@ function bindEvents() {
         exercise.originalIndex = index;
       }
       if (!exercise.typeSnapshot) {
-        exercise.typeSnapshot = "reps";
+        exercise.typeSnapshot = "strength";
+      }
+      if (exercise.typeSnapshot === "reps" || exercise.typeSnapshot === "time") {
+        exercise.strengthTypeSnapshot = exercise.typeSnapshot;
+        exercise.typeSnapshot = "strength";
+      }
+      if (exercise.typeSnapshot === "strength" && !exercise.strengthTypeSnapshot) {
+        exercise.strengthTypeSnapshot = "reps";
       }
       const unilateral = getExerciseUnilateral(exercise, exerciseId);
       (exercise.sets || []).forEach((set) => {
@@ -3187,6 +3388,14 @@ function bindEvents() {
         if (set?.timeSec != null) {
           const normalized = Number.isFinite(set.timeSec) ? set.timeSec : parseTimeInput(set.timeSec);
           set.timeSec = Number.isFinite(normalized) ? normalized : null;
+        }
+        if (set?.distanceKm != null) {
+          const normalized = parseDecimalInput(String(set.distanceKm));
+          set.distanceKm = Number.isFinite(normalized) ? normalized : null;
+        }
+        if (set?.incline != null) {
+          const normalized = parseDecimalInput(String(set.incline));
+          set.incline = Number.isFinite(normalized) ? normalized : null;
         }
       });
       exercise.useBodyweight = useBodyweight;
@@ -3438,23 +3647,31 @@ function bindEvents() {
     if (field === "kg" || field === "kgR" || field === "kgL") {
       return parseDecimalInput(value);
     }
-    if (field === "extraKg") {
+    if (field === "extraKg" || field === "distanceKm" || field === "incline") {
       return parseDecimalInput(value);
+    }
+    if (field === "notes") {
+      return value;
     }
     const numeric = Number(value);
     return Number.isNaN(numeric) ? null : numeric;
   }
 
-  function parseMmSsFromDigits(value) {
+  function parseDurationFromDigits(value) {
     const digits = String(value || "").replace(/\D/g, "");
     if (!digits) {
       return { sec: null, text: "" };
     }
     const rawSeconds = Number(digits.slice(-2));
-    const mins = digits.length > 2 ? Number(digits.slice(0, -2)) : 0;
+    const rawMinutes = digits.length > 2 ? Number(digits.slice(-4, -2)) : 0;
+    const rawHours = digits.length > 4 ? Number(digits.slice(0, -4)) : 0;
     const secs = Math.min(59, Number.isFinite(rawSeconds) ? rawSeconds : 0);
-    const sec = mins * 60 + secs;
-    const text = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    const mins = Math.min(59, Number.isFinite(rawMinutes) ? rawMinutes : 0);
+    const hrs = Number.isFinite(rawHours) ? rawHours : 0;
+    const sec = hrs * 3600 + mins * 60 + secs;
+    const text = hrs > 0
+      ? `${hrs}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
+      : `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
     return { sec, text };
   }
 
@@ -3464,15 +3681,18 @@ function bindEvents() {
     if (!trimmed) return null;
     if (trimmed.includes(":")) {
       const parts = trimmed.split(":");
-      if (parts.length > 2) return null;
-      const [minsPart, secsPart] = parts;
+      if (parts.length > 3) return null;
+      const [hoursPart, minsPart, secsPart] = parts.length === 3
+        ? parts
+        : ["0", parts[0], parts[1]];
+      const hrs = Number(hoursPart);
       const mins = Number(minsPart);
       const secs = Number(secsPart ?? 0);
-      if (!Number.isFinite(mins) || !Number.isFinite(secs)) return null;
-      return mins * 60 + Math.min(59, secs);
+      if (!Number.isFinite(hrs) || !Number.isFinite(mins) || !Number.isFinite(secs)) return null;
+      return hrs * 3600 + mins * 60 + Math.min(59, secs);
     }
     if (/^\d+$/.test(trimmed)) {
-      return parseMmSsFromDigits(trimmed).sec;
+      return parseDurationFromDigits(trimmed).sec;
     }
     const numeric = Number(trimmed);
     return Number.isFinite(numeric) ? numeric : null;
@@ -3480,6 +3700,7 @@ function bindEvents() {
 
   function fillFromPlaceholdersIfEmpty(row, set, { exerciseType, unilateral, useBodyweight } = {}) {
     if (!row || !set) return;
+    if (exerciseType === "cardio") return;
     const fillRepsInput = (input, update) => {
       if (!input || input.value !== "") return;
       const parsed = parsePlaceholderInt(input.placeholder);
@@ -3545,10 +3766,21 @@ function bindEvents() {
     return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   }
 
+  function formatDurationInput(seconds) {
+    if (!Number.isFinite(seconds)) return "";
+    return formatTimer(seconds);
+  }
+
   function formatKgValue(value) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return "—";
     return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1).replace(/\.0$/, "");
+  }
+
+  function formatDecimalInput(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "";
+    return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(2).replace(/\.0+$/, "");
   }
 
   function toNumber(value) {
@@ -3653,7 +3885,7 @@ function bindEvents() {
 
   function formatPreviousTimeLabel(lastSet, useBodyweight) {
     if (!lastSet) return "—";
-    const timeLabel = formatMmSs(lastSet.timeSec);
+    const timeLabel = formatDurationInput(lastSet.timeSec);
     if (!timeLabel) return "—";
     const kgLabel = formatSetKgLabel(lastSet, useBodyweight);
     return `${timeLabel} · ${kgLabel}`;
@@ -3683,8 +3915,41 @@ function bindEvents() {
     return fallback != null ? String(fallback) : fallbackLabel;
   }
 
+  function normalizeExerciseDefinition(exercise) {
+    const rawType = exercise?.type;
+    if (rawType === "cardio") {
+      return { kind: "cardio", strengthType: "reps" };
+    }
+    if (rawType === "strength") {
+      return { kind: "strength", strengthType: exercise?.strengthType || "reps" };
+    }
+    if (rawType === "time" || rawType === "reps") {
+      return { kind: "strength", strengthType: rawType };
+    }
+    return { kind: "strength", strengthType: exercise?.strengthType || "reps" };
+  }
+
+  function getExerciseKind(exerciseData, exerciseId) {
+    const rawType = exerciseData?.typeSnapshot ?? exercises?.[exerciseId]?.type;
+    if (rawType === "cardio") return "cardio";
+    return "strength";
+  }
+
+  function getExerciseStrengthType(exerciseData, exerciseId) {
+    const snapshot = exerciseData?.strengthTypeSnapshot;
+    if (snapshot === "time" || snapshot === "reps") return snapshot;
+    const rawType = exerciseData?.typeSnapshot ?? exercises?.[exerciseId]?.type;
+    if (rawType === "time" || rawType === "reps") return rawType;
+    if (rawType === "strength") {
+      return exercises?.[exerciseId]?.strengthType || "reps";
+    }
+    return exercises?.[exerciseId]?.strengthType || "reps";
+  }
+
   function getExerciseType(exerciseData, exerciseId) {
-    return exerciseData?.typeSnapshot ?? exercises?.[exerciseId]?.type ?? "reps";
+    const kind = getExerciseKind(exerciseData, exerciseId);
+    if (kind === "cardio") return "cardio";
+    return getExerciseStrengthType(exerciseData, exerciseId);
   }
 
   function getExerciseUseBodyweight(exerciseData) {

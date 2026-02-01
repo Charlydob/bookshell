@@ -72,8 +72,23 @@ if ($viewGym) {
   const $gymBack = document.getElementById("gym-back");
   const $gymWorkoutEmoji = document.getElementById("gym-workout-emoji");
   const $gymMetricDuration = document.getElementById("gym-metric-duration");
+  const $gymMetricDurationMain = document.getElementById("gym-metric-duration-main");
+  const $gymMetricDurationSub = document.getElementById("gym-metric-duration-sub");
+  const $gymMetricDurationBar = document.getElementById("gym-metric-duration-bar");
+  const $gymMetricDurationProgress = document.getElementById("gym-metric-duration-progress");
+  const $gymMetricDurationPr = document.getElementById("gym-metric-duration-pr");
   const $gymMetricVolume = document.getElementById("gym-metric-volume");
+  const $gymMetricVolumeMain = document.getElementById("gym-metric-volume-main");
+  const $gymMetricVolumeSub = document.getElementById("gym-metric-volume-sub");
+  const $gymMetricVolumeBar = document.getElementById("gym-metric-volume-bar");
+  const $gymMetricVolumeProgress = document.getElementById("gym-metric-volume-progress");
+  const $gymMetricVolumePr = document.getElementById("gym-metric-volume-pr");
   const $gymMetricExercises = document.getElementById("gym-metric-exercises");
+  const $gymMetricExercisesMain = document.getElementById("gym-metric-exercises-main");
+  const $gymMetricExercisesSub = document.getElementById("gym-metric-exercises-sub");
+  const $gymMetricExercisesBar = document.getElementById("gym-metric-exercises-bar");
+  const $gymMetricExercisesProgress = document.getElementById("gym-metric-exercises-progress");
+  const $gymMetricExercisesPr = document.getElementById("gym-metric-exercises-pr");
   const $gymWorkoutExercises = document.getElementById("gym-workout-exercises");
   const $gymStatsBack = document.getElementById("gym-stats-back");
   const $gymStatsKind = document.getElementById("gym-stats-kind");
@@ -185,6 +200,8 @@ if ($viewGym) {
   let editingExerciseId = null;
   let pendingResumeWorkout = null;
   let workoutStatsMap = {};
+  let workoutTypeStatsCache = {};
+  let workoutTypeStatsDirty = true;
 
   init();
 
@@ -337,6 +354,7 @@ function bindEvents() {
     if (!workout) return;
     workout.name = $gymWorkoutName.value;
     scheduleWorkoutSave();
+    renderMetrics();
   });
 
   $gymWorkoutName.addEventListener("blur", () => {
@@ -359,6 +377,7 @@ function bindEvents() {
       workout.emojiSnapshot = nextEmoji;
       scheduleWorkoutSave();
       renderWorkoutEmoji(workout);
+      renderMetrics();
       upsertTemplateFromWorkout(workout, { emoji: nextEmoji });
     });
   }
@@ -689,6 +708,7 @@ function bindEvents() {
 
     onValue(workoutsRef, (snap) => {
       workoutsByDate = snap.val() || {};
+      markWorkoutTypeStatsDirty();
       syncCurrentWorkout();
       attemptResumeWorkout();
       if (isHomeActive()) {
@@ -742,6 +762,7 @@ function bindEvents() {
       workoutsByDate = cached.workoutsByDate || workoutsByDate || {};
       bodyweightByDate = cached.bodyweightByDate || bodyweightByDate || {};
       cardioByDate = cached.cardioByDate || cardioByDate || {};
+      markWorkoutTypeStatsDirty();
       renderExerciseList();
       renderTemplates();
       renderHistory();
@@ -967,6 +988,7 @@ function bindEvents() {
       workoutsByDate[workout.date] = {};
     }
     workoutsByDate[workout.date][workout.id] = workout;
+    markWorkoutTypeStatsDirty();
   }
 
   function removeWorkoutLocal(date, workoutId) {
@@ -975,6 +997,7 @@ function bindEvents() {
     if (!Object.keys(workoutsByDate[date]).length) {
       delete workoutsByDate[date];
     }
+    markWorkoutTypeStatsDirty();
   }
 
   function upsertCardioLocal(session) {
@@ -1035,6 +1058,10 @@ function bindEvents() {
 
   function getBodyweightForDate(dateKey) {
     return getLatestBodyweightEntry(dateKey)?.entry?.weightKg ?? null;
+  }
+
+  function markWorkoutTypeStatsDirty() {
+    workoutTypeStatsDirty = true;
   }
 
   function buildExerciseStatsMap(excludeId) {
@@ -2478,11 +2505,221 @@ function bindEvents() {
     const workout = workoutDraft || currentWorkout;
     if (!workout) return;
     const { totalReps, totalVolumeKg } = computeWorkoutTotals(workout);
-    $gymMetricExercises.textContent = Object.keys(workout.exercises || {}).length;
-    $gymMetricVolume.textContent = `${Math.round(totalVolumeKg)} kg`;
-    $gymMetricDuration.textContent = formatDuration(getCurrentDuration());
+    const totalExercises = Object.keys(workout.exercises || {}).length;
+    const completedExercises = countWorkoutCompletedExercises(workout);
+    const typeStats = getWorkoutTypeStatsForWorkout(workout);
+    updateDurationMetric(typeStats);
+    updateVolumeMetric(totalVolumeKg, typeStats);
+    updateExercisesMetric(completedExercises, totalExercises, typeStats);
     workout.totalReps = totalReps;
     workout.totalVolumeKg = totalVolumeKg;
+  }
+
+  function updateDurationMetric(typeStats) {
+    const workout = workoutDraft || currentWorkout;
+    if (!workout) return;
+    const durationSec = getCurrentDuration();
+    const durationLabel = formatDuration(durationSec);
+    if ($gymMetricDurationMain) {
+      $gymMetricDurationMain.textContent = durationLabel;
+    }
+    const maxDurationSec = typeStats.maxDurationSec || 0;
+    const hasHistory = typeStats.hasHistory && maxDurationSec > 0;
+    const comparisonText = hasHistory
+      ? `${durationLabel} / ${formatDuration(maxDurationSec)}`
+      : "—";
+    const progressRatio = hasHistory ? durationSec / maxDurationSec : 0;
+    const showPr = hasHistory && durationSec >= maxDurationSec;
+    setMetricComparison(
+      {
+        subEl: $gymMetricDurationSub,
+        barEl: $gymMetricDurationBar,
+        progressEl: $gymMetricDurationProgress,
+        prEl: $gymMetricDurationPr
+      },
+      {
+        comparisonText,
+        progressRatio,
+        hasHistory,
+        showPr
+      }
+    );
+  }
+
+  function updateVolumeMetric(totalVolumeKg, typeStats) {
+    const currentVolume = Math.round(totalVolumeKg);
+    if ($gymMetricVolumeMain) {
+      $gymMetricVolumeMain.textContent = `${currentVolume} kg`;
+    }
+    const maxVolumeKg = typeStats.maxVolumeKg || 0;
+    const maxVolumeRounded = Math.round(maxVolumeKg);
+    const hasHistory = typeStats.hasHistory && maxVolumeRounded > 0;
+    const comparisonText = hasHistory
+      ? `${currentVolume} / ${maxVolumeRounded} kg`
+      : "—";
+    const progressRatio = hasHistory ? currentVolume / maxVolumeRounded : 0;
+    const showPr = hasHistory && currentVolume >= maxVolumeRounded;
+    setMetricComparison(
+      {
+        subEl: $gymMetricVolumeSub,
+        barEl: $gymMetricVolumeBar,
+        progressEl: $gymMetricVolumeProgress,
+        prEl: $gymMetricVolumePr
+      },
+      {
+        comparisonText,
+        progressRatio,
+        hasHistory,
+        showPr
+      }
+    );
+  }
+
+  function updateExercisesMetric(completedExercises, totalExercises, typeStats) {
+    if ($gymMetricExercisesMain) {
+      $gymMetricExercisesMain.textContent = `${completedExercises}/${totalExercises}`;
+    }
+    const maxExercisesCompleted = typeStats.maxExercisesCompleted || 0;
+    const hasHistory = typeStats.hasHistory;
+    const comparisonText = hasHistory ? `max: ${maxExercisesCompleted}` : "max: —";
+    const progressRatio = totalExercises > 0 ? completedExercises / totalExercises : 0;
+    const showPr = hasHistory && completedExercises >= maxExercisesCompleted && completedExercises > 0;
+    setMetricComparison(
+      {
+        subEl: $gymMetricExercisesSub,
+        barEl: $gymMetricExercisesBar,
+        progressEl: $gymMetricExercisesProgress,
+        prEl: $gymMetricExercisesPr
+      },
+      {
+        comparisonText,
+        progressRatio,
+        hasHistory: totalExercises > 0,
+        showPr,
+        emptyText: "max: —"
+      }
+    );
+  }
+
+  function setMetricComparison(elements, options) {
+    const { subEl, barEl, progressEl, prEl } = elements;
+    if (!subEl || !barEl || !progressEl || !prEl) return;
+    const {
+      comparisonText = "—",
+      progressRatio = 0,
+      hasHistory = false,
+      showPr = false,
+      emptyText = "—"
+    } = options || {};
+    const safeRatio = Math.max(0, Math.min(progressRatio || 0, 1));
+    if (!hasHistory) {
+      subEl.textContent = emptyText;
+      progressEl.classList.add("is-muted");
+      barEl.style.width = "0%";
+      prEl.hidden = true;
+      return;
+    }
+    subEl.textContent = comparisonText;
+    progressEl.classList.remove("is-muted");
+    barEl.style.width = `${Math.round(safeRatio * 100)}%`;
+    prEl.hidden = !showPr;
+  }
+
+  function getWorkoutTypeStatsForWorkout(workout) {
+    if (!workout) {
+      return {
+        maxDurationSec: 0,
+        maxVolumeKg: 0,
+        maxExercisesCompleted: 0,
+        hasHistory: false
+      };
+    }
+    const typeKey = getWorkoutTypeKey(workout);
+    if (!typeKey) {
+      return {
+        maxDurationSec: 0,
+        maxVolumeKg: 0,
+        maxExercisesCompleted: 0,
+        hasHistory: false
+      };
+    }
+    return getWorkoutTypeMaxStats(typeKey, workout.id);
+  }
+
+  function getWorkoutTypeKey(workout) {
+    const name = (workout?.name || "").trim();
+    const emoji = (workout?.emojiSnapshot || "").trim();
+    if (!name || !emoji) return null;
+    return `${name}__${emoji}`;
+  }
+
+  function ensureWorkoutTypeStatsCache() {
+    if (!workoutTypeStatsDirty) return;
+    workoutTypeStatsCache = {};
+    flattenWorkouts().forEach((workout) => {
+      const key = getWorkoutTypeKey(workout);
+      if (!key) return;
+      const entry = {
+        id: workout.id,
+        durationSec: getWorkoutDurationSeconds(workout),
+        volumeKg: getWorkoutVolumeKg(workout),
+        completedExercises: countWorkoutCompletedExercises(workout)
+      };
+      if (!workoutTypeStatsCache[key]) {
+        workoutTypeStatsCache[key] = [];
+      }
+      workoutTypeStatsCache[key].push(entry);
+    });
+    workoutTypeStatsDirty = false;
+  }
+
+  function getWorkoutTypeMaxStats(typeKey, excludeId) {
+    ensureWorkoutTypeStatsCache();
+    const list = workoutTypeStatsCache[typeKey] || [];
+    let maxDurationSec = 0;
+    let maxVolumeKg = 0;
+    let maxExercisesCompleted = 0;
+    let hasHistory = false;
+    list.forEach((entry) => {
+      if (excludeId && entry.id === excludeId) return;
+      hasHistory = true;
+      maxDurationSec = Math.max(maxDurationSec, entry.durationSec || 0);
+      maxVolumeKg = Math.max(maxVolumeKg, entry.volumeKg || 0);
+      maxExercisesCompleted = Math.max(maxExercisesCompleted, entry.completedExercises || 0);
+    });
+    return {
+      maxDurationSec,
+      maxVolumeKg,
+      maxExercisesCompleted,
+      hasHistory
+    };
+  }
+
+  function getWorkoutDurationSeconds(workout) {
+    if (!workout) return 0;
+    if (Number.isFinite(workout.durationSec)) {
+      return Math.max(0, workout.durationSec);
+    }
+    if (workout.startedAt && workout.finishedAt) {
+      return Math.max(0, Math.floor((workout.finishedAt - workout.startedAt) / 1000));
+    }
+    return 0;
+  }
+
+  function getWorkoutVolumeKg(workout) {
+    if (!workout) return 0;
+    if (Number.isFinite(workout.totalVolumeKg)) {
+      return workout.totalVolumeKg;
+    }
+    return computeWorkoutTotals(workout).totalVolumeKg;
+  }
+
+  function countWorkoutCompletedExercises(workout) {
+    if (!workout?.exercises) return 0;
+    return Object.values(workout.exercises).reduce((acc, exercise) => {
+      if (areAllSetsDone(exercise)) return acc + 1;
+      return acc;
+    }, 0);
   }
 
   function getCurrentDuration() {
@@ -3061,7 +3298,7 @@ function bindEvents() {
     stopDurationTicker();
     durationTimer = window.setInterval(() => {
       if (currentWorkout && !currentWorkout.finishedAt) {
-        $gymMetricDuration.textContent = formatDuration(getCurrentDuration());
+        updateDurationMetric(getWorkoutTypeStatsForWorkout(workoutDraft || currentWorkout));
       }
     }, 400);
   }

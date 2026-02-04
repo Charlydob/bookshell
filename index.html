@@ -319,18 +319,6 @@
 <div class="video-stat-value" id="video-stat-time">0</div>
 </div>
 </div>
-<!-- CRONÓMETRO -->
-<div class="video-timer-card">
-<div class="video-timer-row">
-<div class="video-timer-label">Cronómetro</div>
-<button class="btn primary" id="video-timer-toggle">Empezar</button>
-</div>
-<div class="video-timer-time" id="video-timer-display">00:00:00</div>
-<div class="video-timer-sub">
-<span>Hoy: <b id="video-timer-today">0 min</b></span>
-<span class="video-timer-hint" id="video-timer-hint"></span>
-</div>
-</div>
 <!-- CALENDARIO -->
 <div class="video-calendar-section">
 <div class="video-calendar-header">
@@ -373,25 +361,21 @@
 <div class="video-script-topbar">
 <button class="icon-btn" id="video-script-back" type="button">←</button>
 <div class="video-script-heading">
-<div class="video-script-title" id="video-script-title">Guion</div>
-<div class="video-script-subtitle" id="video-script-subtitle">—</div>
+<div class="video-script-title" id="video-script-title">Título del guion</div>
+<div class="video-script-subtitle" id="video-script-subtitle">Guion</div>
 </div>
-<button class="btn ghost" id="video-script-insert-link" type="button">📎 Insertar recurso</button>
-<button class="btn ghost" id="video-script-teleprompter" type="button">Teleprompter</button>
+<div class="video-script-actions">
+<button class="btn ghost btn-compact" id="video-script-insert-link" type="button" title="Insertar recurso">📎</button>
+<button class="btn ghost btn-compact" id="video-script-teleprompter" type="button">Teleprompter</button>
+</div>
 </div>
 <div class="video-script-count-header" id="video-script-count-header">
 <div class="video-script-count-badge" id="video-script-count-badge">Palabras: 0 · Progreso: 0%</div>
 <button class="btn ghost" id="video-script-count-toggle" type="button">⚙︎ Conteo</button>
 </div>
-<div class="video-script-meta">
-<div class="video-script-meta-block">
-<div class="video-script-meta-label">Palabras</div>
-<div class="video-script-meta-value" id="video-script-wordcount">0</div>
-</div>
-<div class="video-script-meta-block">
-<div class="video-script-meta-label">Progreso</div>
-<div class="video-script-meta-value" id="video-script-progress">0%</div>
-</div>
+<details class="video-script-meta" id="video-script-meta">
+<summary class="video-script-meta-summary">Detalles del guion</summary>
+<div class="video-script-meta-grid">
 <div class="video-script-meta-block">
 <div class="video-script-meta-label">Duración estimada</div>
 <div class="video-script-meta-value" id="video-script-duration">0 min</div>
@@ -401,6 +385,7 @@
 <input id="video-script-ppm" inputmode="numeric" min="60" type="number" value="150"/>
 </label>
 </div>
+</details>
 <div class="video-script-toolbar-floating">
 <div class="video-script-toolbar" id="video-script-toolbar">
 <div class="video-script-toolbar-main">
@@ -506,6 +491,10 @@
 <div class="video-links-title">Links y recursos</div>
 <button class="btn primary" id="video-links-new" type="button">Nuevo link</button>
 </div>
+<div class="video-links-filters">
+<label class="field-label" for="video-links-search">Buscar</label>
+<input class="video-links-search" id="video-links-search" placeholder="Buscar por título, nota o categoría" type="search"/>
+</div>
 <div class="video-links-list" id="video-links-list"></div>
 <div class="video-links-empty" id="video-links-empty">Aún no has guardado links.</div>
 </div>
@@ -517,6 +506,9 @@
 <div class="video-links-title">Nuevo link</div>
 </div>
 <form class="video-links-form" id="video-links-form">
+<div class="video-links-card">
+<div class="video-links-card-title">Guarda un recurso</div>
+<div class="hint">Si pegas una URL sin https://, la normalizamos automáticamente.</div>
 <label class="field-label" for="video-link-url">URL</label>
 <input id="video-link-url" name="url" placeholder="https://..." required="" type="url"/>
 <label class="field-label" for="video-link-title">Título (opcional)</label>
@@ -530,9 +522,11 @@
 </select>
 <label class="field-label" for="video-link-note">Nota</label>
 <textarea id="video-link-note" name="note" placeholder="Idea rápida o por qué sirve" rows="3"></textarea>
+<div class="form-error" id="video-link-error" role="alert"></div>
 <div class="video-links-actions">
 <button class="btn ghost" id="video-links-cancel" type="button">Cancelar</button>
 <button class="btn primary" id="video-links-save" type="submit">Guardar</button>
+</div>
 </div>
 </form>
 </div>
@@ -1969,6 +1963,49 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 <div class="modal-footer sheet-footer">
 <button class="btn ghost" id="video-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+<!-- MODAL IDEA -->
+<div class="modal-backdrop hidden" id="idea-modal-backdrop">
+<div class="modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="idea-modal-title">Nueva idea</div>
+<button class="icon-btn" id="idea-modal-close">✕</button>
+</div>
+<form class="modal-form" id="idea-form">
+<input id="idea-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Idea</div>
+<label class="field">
+<span class="field-label">Título <em class="hint">(obligatorio)</em></span>
+<input id="idea-title" required="" type="text"/>
+</label>
+<label class="field">
+<span class="field-label">Notas / preguion</span>
+<textarea id="idea-notes" placeholder="Escribe el preguion o ideas clave…" rows="5"></textarea>
+</label>
+<label class="field">
+<span class="field-label">Tags / hashtags</span>
+<input id="idea-tags" placeholder="amor, culpa, nietzsche" type="text"/>
+<span class="hint">Separados por comas. Se guardan como #tags.</span>
+</label>
+<label class="field">
+<span class="field-label">Link inspiración (opcional)</span>
+<div class="idea-link-row">
+<input id="idea-link" placeholder="https://..." type="url"/>
+<button class="btn ghost btn-compact" id="idea-add-resource" type="button">Añadir recurso</button>
+</div>
+</label>
+<div class="form-error" id="idea-form-error" role="alert"></div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="idea-modal-cancel" type="button">Cancelar</button>
 <button class="btn primary" type="submit">Guardar</button>
 </div>
 </form>

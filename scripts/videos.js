@@ -60,6 +60,8 @@ let teleprompterPlaying = false;
 let teleprompterSentences = [];
 let teleprompterActiveIndex = -1;
 let links = {};
+let linkPickerMode = "script";
+let linkPickerSelectHandler = null;
 
 const SCRIPT_SAVE_DEBOUNCE = 1000;
 const WORD_COUNT_DEBOUNCE = 200;
@@ -68,13 +70,58 @@ const TELEPROMPTER_PPM_KEY = "bookshell_video_teleprompter_ppm_v1";
 
 const DEFAULT_COUNT_SETTINGS = {
   countHeadings: false,
-  countHashtags: false,
+  countHashtags: true,
   countLinks: true,
   countUrls: false,
   countLists: true,
   excludeAnnotations: true,
   ignoreTags: true
 };
+
+function normalizeUrl(raw) {
+  if (!raw) return "";
+  const trimmed = String(raw).trim();
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith("www.")) return `https://${trimmed}`;
+  return `https://${trimmed}`;
+}
+
+function tagsInputToArray(raw) {
+  if (!raw) return [];
+  return String(raw)
+    .split(",")
+    .map((tag) => tag.replace(/^#+/, "").trim())
+    .filter(Boolean);
+}
+
+function formatTagsForStorage(raw) {
+  const tags = tagsInputToArray(raw);
+  if (!tags.length) return "";
+  return tags.map((tag) => `#${tag}`).join(" ");
+}
+
+function tagsToCsv(raw) {
+  if (!raw) return "";
+  if (Array.isArray(raw)) return raw.join(", ");
+  const cleaned = String(raw)
+    .replace(/#/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "";
+  return cleaned.split(" ").filter(Boolean).join(", ");
+}
+
+function formatTagsForDisplay(raw) {
+  if (!raw) return "";
+  if (Array.isArray(raw)) {
+    return raw.map((tag) => (tag.startsWith("#") ? tag : `#${tag}`)).join(" ");
+  }
+  const str = String(raw).trim();
+  if (!str) return "";
+  if (str.includes("#")) return str;
+  return formatTagsForStorage(str);
+}
 
 // Utils fecha
 function todayKey() {
@@ -199,12 +246,6 @@ if ($viewVideos) {
   const $videoStatWords = document.getElementById("video-stat-words");
   const $videoStatTime = document.getElementById("video-stat-time");
 
-  // Cronómetro
-  const $videoTimerToggle  = document.getElementById("video-timer-toggle");
-  const $videoTimerDisplay = document.getElementById("video-timer-display");
-  const $videoTimerToday   = document.getElementById("video-timer-today");
-  const $videoTimerHint    = document.getElementById("video-timer-hint");
-
   const $videoCalPrev = document.getElementById("video-cal-prev");
   const $videoCalNext = document.getElementById("video-cal-next");
   const $videoCalLabel = document.getElementById("video-cal-label");
@@ -277,10 +318,26 @@ if ($viewVideos) {
   const $videoLinksNewBack = document.getElementById("video-links-new-back");
   const $videoLinksForm = document.getElementById("video-links-form");
   const $videoLinksCancel = document.getElementById("video-links-cancel");
+  const $videoLinksSearch = document.getElementById("video-links-search");
   const $videoLinkUrl = document.getElementById("video-link-url");
   const $videoLinkTitle = document.getElementById("video-link-title");
   const $videoLinkCategory = document.getElementById("video-link-category");
   const $videoLinkNote = document.getElementById("video-link-note");
+  const $videoLinkError = document.getElementById("video-link-error");
+
+  // Modal idea
+  const $ideaModalBackdrop = document.getElementById("idea-modal-backdrop");
+  const $ideaModalTitle = document.getElementById("idea-modal-title");
+  const $ideaModalClose = document.getElementById("idea-modal-close");
+  const $ideaModalCancel = document.getElementById("idea-modal-cancel");
+  const $ideaForm = document.getElementById("idea-form");
+  const $ideaId = document.getElementById("idea-id");
+  const $ideaTitle = document.getElementById("idea-title");
+  const $ideaNotes = document.getElementById("idea-notes");
+  const $ideaTags = document.getElementById("idea-tags");
+  const $ideaLink = document.getElementById("idea-link");
+  const $ideaAddResource = document.getElementById("idea-add-resource");
+  const $ideaFormError = document.getElementById("idea-form-error");
 
   // Modal vídeo
   const $videoModalBackdrop = document.getElementById("video-modal-backdrop");
@@ -288,72 +345,6 @@ if ($viewVideos) {
   const $videoModalClose = document.getElementById("video-modal-close");
   const $videoModalCancel = document.getElementById("video-modal-cancel");
   const $videoForm = document.getElementById("video-form");
-// Modal asignar tiempo a vídeo
-const $assignWorkBackdrop = document.getElementById("assign-work-backdrop");
-const $assignWorkClose    = document.getElementById("assign-work-close");
-const $assignWorkSelect   = document.getElementById("assign-work-select");
-const $assignWorkSummary  = document.getElementById("assign-work-summary");
-const $assignWorkSkip     = document.getElementById("assign-work-skip");
-const $assignWorkSave     = document.getElementById("assign-work-save");
-
-let assignWorkResolve = null;
-
-function getInProgressVideos() {
-  const arr = Object.entries(videos || {})
-    .filter(([, v]) => {
-      const status = v?.status || "script";
-      return ["script", "in_progress", "recording", "editing", "scheduled"].includes(status);
-    })
-    .map(([id, v]) => ({ id, title: v.title || "Sin título" }));
-
-  // orden: alfabético (cámbialo si prefieres por fecha)
-  arr.sort((a,b) => a.title.localeCompare(b.title, "es"));
-  return arr;
-}
-
-function closeAssignWorkModal(resultId = null) {
-  if ($assignWorkBackdrop) $assignWorkBackdrop.classList.add("hidden");
-  const r = assignWorkResolve;
-  assignWorkResolve = null;
-  if (r) r(resultId);
-}
-
-function openAssignWorkModal(seconds) {
-  return new Promise((resolve) => {
-    if (!$assignWorkBackdrop || !$assignWorkSelect) return resolve(null);
-
-    const list = getInProgressVideos();
-    if (list.length === 0) return resolve(null);
-
-    $assignWorkSelect.innerHTML = "";
-    list.forEach(({id, title}) => {
-      const opt = document.createElement("option");
-      opt.value = id;
-      opt.textContent = title;
-      $assignWorkSelect.appendChild(opt);
-    });
-
-    if ($assignWorkSummary) $assignWorkSummary.textContent = `Tiempo: ${formatHHMMSS(seconds)}`;
-    assignWorkResolve = resolve;
-    $assignWorkBackdrop.classList.remove("hidden");
-  });
-}
-
-async function addWorkedSecondsToVideo(videoId, seconds) {
-  const s = Math.max(0, Math.floor(Number(seconds) || 0));
-  if (!videoId || s <= 0) return;
-
-  const r = ref(db, `${VIDEOS_PATH}/${videoId}/workedSec`);
-  const res = await runTransaction(r, (curr) => (Number(curr) || 0) + s);
-
-  if (!res?.committed) return; // ✅ no toques el estado si no se aplicó
-
-  const finalVal = Number(res.snapshot.val()) || 0;
-  if (videos && videos[videoId]) videos[videoId].workedSec = finalVal;
-}
-
-
-
   const $videoId = document.getElementById("video-id");
   const $videoTitle = document.getElementById("video-title");
   const $videoScriptWords = document.getElementById("video-script-words");
@@ -407,30 +398,37 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     $videoModalBackdrop.classList.add("hidden");
   }
 
+  function openIdeaModal(id = null) {
+    if (!$ideaModalBackdrop) return;
+    if (id && videos[id]) {
+      const v = videos[id];
+      $ideaModalTitle.textContent = "Editar idea";
+      $ideaId.value = id;
+      $ideaTitle.value = v.title || "";
+      $ideaNotes.value = v.ideaNotes || v.notes || "";
+      $ideaTags.value = tagsToCsv(v.tags || "");
+      $ideaLink.value = v.inspirationUrl || "";
+    } else {
+      $ideaModalTitle.textContent = "Nueva idea";
+      $ideaId.value = "";
+      $ideaTitle.value = "";
+      $ideaNotes.value = "";
+      $ideaTags.value = "";
+      $ideaLink.value = "";
+    }
+    if ($ideaFormError) $ideaFormError.textContent = "";
+    $ideaModalBackdrop.classList.remove("hidden");
+  }
+
+  function closeIdeaModal() {
+    if ($ideaModalBackdrop) $ideaModalBackdrop.classList.add("hidden");
+  }
+
   if ($btnAddVideo) {
     $btnAddVideo.addEventListener("click", () => openVideoModal());
   }
   if ($btnAddIdea) {
-    $btnAddIdea.addEventListener("click", async () => {
-      const title = (window.prompt("Título de la idea") || "").trim();
-      if (!title) return;
-      const tags = (window.prompt("Tags/hashtags (opcional)") || "").trim();
-      try {
-        const newRef = push(ref(db, VIDEOS_PATH));
-        await set(newRef, {
-          title,
-          tags,
-          type: "idea",
-          status: "idea",
-          scriptTarget: 2000,
-          scriptWords: 0,
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        });
-      } catch (err) {
-        console.error("Error creando idea", err);
-      }
-    });
+    $btnAddIdea.addEventListener("click", () => openIdeaModal());
   }
 
   function loadStoredPpm(key, fallback = 150) {
@@ -457,11 +455,11 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     if (settings.countHeadings) counting.push("headings"); else excluding.push("headings");
     if (settings.countHashtags) counting.push("hashtags"); else excluding.push("hashtags");
     if (settings.countLinks) counting.push("links"); else excluding.push("links");
-    if (settings.countUrls) counting.push("urls"); else excluding.push("urls");
+    if (settings.countUrls) counting.push("URLs"); else excluding.push("URLs");
     if (settings.countLists) counting.push("listas"); else excluding.push("listas");
     if (settings.excludeAnnotations) excluding.push("anotaciones"); else counting.push("anotaciones");
-    if (settings.ignoreTags) excluding.push("tags especiales"); else counting.push("tags especiales");
-    return `Contando: ${counting.join(", ") || "cuerpo"} · Excluyendo: ${excluding.join(", ") || "nada"}`;
+    if (settings.ignoreTags) excluding.push("tags [PAUSA]"); else counting.push("tags [PAUSA]");
+    return `Contando: ${counting.join(", ") || "texto"} · Excluyendo: ${excluding.join(", ") || "nada"}`;
   }
 
   function getWordTokens(text) {
@@ -505,6 +503,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
 
       line.parts.forEach((part) => {
         if (settings.excludeAnnotations && part.attrs?.annotation) return;
+        if (part.attrs?.resource) return;
         if (part.attrs?.link && !settings.countLinks) return;
 
         let text = part.text || "";
@@ -541,11 +540,11 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   function renderCountToggles(settings) {
     if (!$videoScriptCountToggles) return;
     const items = [
-      { key: "countHeadings", label: "Headings" },
-      { key: "countHashtags", label: "Hashtags" },
-      { key: "countLinks", label: "Links" },
-      { key: "countUrls", label: "URLs" },
-      { key: "countLists", label: "Listas" },
+      { key: "countHeadings", label: "Contar headings" },
+      { key: "countHashtags", label: "Contar hashtags" },
+      { key: "countLinks", label: "Contar links" },
+      { key: "countUrls", label: "Contar URLs" },
+      { key: "countLists", label: "Contar listas" },
       { key: "excludeAnnotations", label: "Excluir anotaciones" },
       { key: "ignoreTags", label: "Ignorar tags [PAUSA]" }
     ];
@@ -594,10 +593,30 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     window.Quill.register(AnnotationBlot, true);
   }
 
+  function buildResourceBlot() {
+    if (!window.Quill) return;
+    const Inline = window.Quill.import("blots/inline");
+    class ResourceBlot extends Inline {
+      static create(value) {
+        const node = super.create();
+        node.setAttribute("data-resource", value || "1");
+        node.classList.add("video-script-resource");
+        return node;
+      }
+      static formats(node) {
+        return node.getAttribute("data-resource");
+      }
+    }
+    ResourceBlot.blotName = "resource";
+    ResourceBlot.tagName = "span";
+    window.Quill.register(ResourceBlot, true);
+  }
+
   function initQuill() {
     if (quill || !$videoScriptEditor) return;
     if (!window.Quill) return;
     buildAnnotationBlot();
+    buildResourceBlot();
     const toolbarContainer = $videoScriptToolbar || false;
 
     quill = new window.Quill($videoScriptEditor, {
@@ -838,8 +857,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     if (!v) return;
     currentScriptTitle = v.title || "Guion";
     currentScriptTarget = v.scriptTarget || 2000;
-    if ($videoScriptTitle) $videoScriptTitle.textContent = "Guion";
-    if ($videoScriptSubtitle) $videoScriptSubtitle.textContent = currentScriptTitle;
+    if ($videoScriptTitle) $videoScriptTitle.textContent = currentScriptTitle;
+    if ($videoScriptSubtitle) $videoScriptSubtitle.textContent = "Guion";
 
     currentCountSettings = getVideoCountSettings(v);
     renderCountToggles(currentCountSettings);
@@ -898,8 +917,10 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     $videoCountSheetBackdrop.setAttribute("aria-hidden", "true");
   }
 
-  function openLinkPicker() {
+  function openLinkPicker({ mode = "script", onSelect } = {}) {
     if (!$videoLinkPickerBackdrop) return;
+    linkPickerMode = mode;
+    linkPickerSelectHandler = typeof onSelect === "function" ? onSelect : null;
     renderLinkPickerList();
     $videoLinkPickerBackdrop.classList.add("is-open");
     $videoLinkPickerBackdrop.setAttribute("aria-hidden", "false");
@@ -910,6 +931,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     if (!$videoLinkPickerBackdrop) return;
     $videoLinkPickerBackdrop.classList.remove("is-open");
     $videoLinkPickerBackdrop.setAttribute("aria-hidden", "true");
+    linkPickerMode = "script";
+    linkPickerSelectHandler = null;
   }
 
   function addSheetSwipeToClose(sheetEl, closeFn) {
@@ -960,33 +983,64 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
 
   function renderLinksList() {
     if (!$videoLinksList || !$videoLinksEmpty) return;
-    const items = getLinksArray().sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+    const search = ($videoLinksSearch?.value || "").trim().toLowerCase();
+    const items = getLinksArray()
+      .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))
+      .filter((item) => {
+        if (!search) return true;
+        const hay = `${item.title || ""} ${item.note || ""} ${item.category || ""} ${item.url || ""}`.toLowerCase();
+        return hay.includes(search);
+      });
     if (!items.length) {
       $videoLinksList.innerHTML = "";
+      $videoLinksEmpty.textContent = search ? "No hay links que coincidan." : "Aún no has guardado links.";
       $videoLinksEmpty.style.display = "block";
       return;
     }
     $videoLinksEmpty.style.display = "none";
     const frag = document.createDocumentFragment();
-    items.forEach((item) => {
-      const card = document.createElement("div");
-      card.className = "video-link-card";
-      const title = document.createElement("div");
-      title.className = "video-link-card-title";
-      title.textContent = item.title || "Recurso guardado";
-      const url = document.createElement("div");
-      url.className = "video-link-card-url";
-      url.textContent = item.url || "";
-      const meta = document.createElement("div");
-      meta.className = "video-link-card-meta";
-      const categoryLabel = LINK_CATEGORY_LABELS[item.category] || "Otro";
-      const dateLabel = formatLinkDate(item.createdAt);
-      const note = item.note ? ` · ${item.note}` : "";
-      meta.textContent = `${categoryLabel}${note}${dateLabel ? ` · ${dateLabel}` : ""}`;
-      card.appendChild(title);
-      card.appendChild(url);
-      card.appendChild(meta);
-      frag.appendChild(card);
+    const order = ["cancion", "visual", "tema", "otro"];
+    order.forEach((category) => {
+      const grouped = items.filter((item) => (item.category || "otro") === category);
+      if (!grouped.length) return;
+      const details = document.createElement("details");
+      details.className = "video-links-section";
+      details.open = true;
+      const summary = document.createElement("summary");
+      const label = LINK_CATEGORY_LABELS[category] || "Otro";
+      summary.innerHTML = `
+        <span>${label}</span>
+        <span class="video-finished-count">${grouped.length}</span>
+      `;
+      const body = document.createElement("div");
+      body.className = "video-links-section-body";
+      grouped.forEach((item) => {
+        const card = document.createElement("div");
+        card.className = "video-link-card";
+        const title = document.createElement("div");
+        title.className = "video-link-card-title";
+        if (item.url) {
+          const anchor = document.createElement("a");
+          anchor.href = normalizeUrl(item.url);
+          anchor.target = "_blank";
+          anchor.rel = "noopener noreferrer";
+          anchor.textContent = item.title || "Recurso guardado";
+          title.appendChild(anchor);
+        } else {
+          title.textContent = item.title || "Recurso guardado";
+        }
+        const meta = document.createElement("div");
+        meta.className = "video-link-card-meta";
+        const dateLabel = formatLinkDate(item.createdAt);
+        const note = item.note ? ` · ${item.note}` : "";
+        meta.textContent = `${label}${note}${dateLabel ? ` · ${dateLabel}` : ""}`;
+        card.appendChild(title);
+        card.appendChild(meta);
+        body.appendChild(card);
+      });
+      details.appendChild(summary);
+      details.appendChild(body);
+      frag.appendChild(details);
     });
     $videoLinksList.innerHTML = "";
     $videoLinksList.appendChild(frag);
@@ -1022,9 +1076,13 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         meta.textContent = `${LINK_CATEGORY_LABELS[item.category] || "Otro"}${item.note ? ` · ${item.note}` : ""}`;
         const btn = document.createElement("button");
         btn.className = "btn";
-        btn.textContent = "Insertar";
+        btn.textContent = linkPickerMode === "script" ? "Insertar" : "Usar";
         btn.addEventListener("click", () => {
-          insertLinkResource(item);
+          if (linkPickerMode === "script") {
+            insertLinkResource(item);
+          } else if (linkPickerSelectHandler) {
+            linkPickerSelectHandler(item);
+          }
           closeLinkPicker();
         });
         card.appendChild(title);
@@ -1041,7 +1099,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   function insertLinkResource(item) {
     if (!quill || !item) return;
     const range = quill.getSelection(true);
-    const url = item.url || "";
+    const url = item.url ? normalizeUrl(item.url) : "";
     if (!url) return;
     if (range && range.length > 0) {
       quill.formatText(range.index, range.length, "link", url, "user");
@@ -1049,12 +1107,12 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     }
     const title = item.title || "Recurso";
     const note = item.note ? ` — ${item.note}` : "";
-    const insertText = `\n🔗 ${title}\n${url}${note}\n`;
+    const headerText = `\n🔗 ${title}\n`;
+    const urlText = `${url}${note}\n`;
     const insertIndex = range ? range.index : quill.getLength();
-    quill.insertText(insertIndex, insertText, "user");
-    const urlIndex = insertIndex + `\n🔗 ${title}\n`.length;
-    quill.formatText(urlIndex, url.length, "link", url, "user");
-    quill.setSelection(urlIndex + url.length + note.length + 1, 0, "user");
+    quill.insertText(insertIndex, headerText, { resource: "1" }, "user");
+    quill.insertText(insertIndex + headerText.length, urlText, { resource: "1", link: url }, "user");
+    quill.setSelection(insertIndex + headerText.length + urlText.length, 0, "user");
   }
 
   function openLinksView() {
@@ -1074,6 +1132,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     }
 
     if ($videoLinkNote) $videoLinkNote.value = prefill.note || "";
+    if ($videoLinkError) $videoLinkError.textContent = "";
     setActiveView("view-links-new");
 
     // UX: foco al título si no hay, si no al note
@@ -1276,6 +1335,84 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       if (e.target === $videoModalBackdrop) closeVideoModal();
     });
   }
+  if ($ideaModalClose) $ideaModalClose.addEventListener("click", closeIdeaModal);
+  if ($ideaModalCancel) $ideaModalCancel.addEventListener("click", closeIdeaModal);
+  if ($ideaModalBackdrop) {
+    $ideaModalBackdrop.addEventListener("click", (e) => {
+      if (e.target === $ideaModalBackdrop) closeIdeaModal();
+    });
+  }
+  if ($ideaAddResource) {
+    $ideaAddResource.addEventListener("click", () => {
+      openLinkPicker({
+        mode: "idea",
+        onSelect: (item) => {
+          const safeUrl = item?.url ? normalizeUrl(item.url) : "";
+          if ($ideaLink && safeUrl) $ideaLink.value = safeUrl;
+          if ($ideaNotes && item) {
+            const title = item.title || "Recurso";
+            const line = `🔗 ${title} — ${safeUrl}${item.note ? ` (${item.note})` : ""}\n`;
+            const start = $ideaNotes.selectionStart ?? $ideaNotes.value.length;
+            const end = $ideaNotes.selectionEnd ?? $ideaNotes.value.length;
+            const before = $ideaNotes.value.slice(0, start);
+            const after = $ideaNotes.value.slice(end);
+            $ideaNotes.value = `${before}${line}${after}`;
+          }
+        }
+      });
+    });
+  }
+  if ($ideaForm) {
+    $ideaForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const id = $ideaId?.value || null;
+      const title = ($ideaTitle?.value || "").trim();
+      if (!title) {
+        if ($ideaFormError) $ideaFormError.textContent = "El título es obligatorio.";
+        return;
+      }
+      const notes = ($ideaNotes?.value || "").trim();
+      const tags = formatTagsForStorage($ideaTags?.value || "");
+      const rawLink = ($ideaLink?.value || "").trim();
+      const inspirationUrl = rawLink ? normalizeUrl(rawLink) : "";
+      if (inspirationUrl) {
+        try {
+          new URL(inspirationUrl);
+        } catch {
+          if ($ideaFormError) $ideaFormError.textContent = "El link de inspiración no es válido.";
+          return;
+        }
+      }
+      if ($ideaFormError) $ideaFormError.textContent = "";
+      const now = Date.now();
+      const payload = {
+        title,
+        tags: tags || null,
+        ideaNotes: notes || null,
+        inspirationUrl: inspirationUrl || null,
+        type: "idea",
+        status: "idea",
+        scriptTarget: 2000,
+        scriptWords: 0,
+        updatedAt: now
+      };
+      try {
+        if (id) {
+          await update(ref(db, `${VIDEOS_PATH}/${id}`), payload);
+        } else {
+          const newRef = push(ref(db, VIDEOS_PATH));
+          await set(newRef, {
+            ...payload,
+            createdAt: now
+          });
+        }
+        closeIdeaModal();
+      } catch (err) {
+        console.error("Error guardando idea", err);
+        if ($ideaFormError) $ideaFormError.textContent = "No se pudo guardar la idea. Intenta otra vez.";
+      }
+    });
+  }
 
   if ($videoScriptBack) $videoScriptBack.addEventListener("click", closeScriptView);
   if ($videoScriptTeleprompter) $videoScriptTeleprompter.addEventListener("click", openTeleprompterView);
@@ -1337,6 +1474,9 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       updateTeleprompterHighlight();
     });
   }
+  window.addEventListener("pagehide", () => {
+    if (scriptDirty) saveScript();
+  });
 
   if ($videoScriptCountToggle) {
     $videoScriptCountToggle.addEventListener("click", openCountSheet);
@@ -1352,7 +1492,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   addSheetSwipeToClose($videoCountSheet, closeCountSheet);
 
   if ($videoScriptInsertLink) {
-    $videoScriptInsertLink.addEventListener("click", openLinkPicker);
+    $videoScriptInsertLink.addEventListener("click", () => openLinkPicker({ mode: "script" }));
   }
   if ($videoLinkPickerClose) {
     $videoLinkPickerClose.addEventListener("click", closeLinkPicker);
@@ -1366,6 +1506,11 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   if ($videoLinkSearch) {
     $videoLinkSearch.addEventListener("input", () => {
       renderLinkPickerList();
+    });
+  }
+  if ($videoLinksSearch) {
+    $videoLinksSearch.addEventListener("input", () => {
+      renderLinksList();
     });
   }
 
@@ -1414,8 +1559,19 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   if ($videoLinksForm) {
     $videoLinksForm.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const url = ($videoLinkUrl?.value || "").trim();
-      if (!url) return;
+      const rawUrl = ($videoLinkUrl?.value || "").trim();
+      if (!rawUrl) {
+        if ($videoLinkError) $videoLinkError.textContent = "La URL es obligatoria.";
+        return;
+      }
+      const url = normalizeUrl(rawUrl);
+      try {
+        new URL(url);
+      } catch {
+        if ($videoLinkError) $videoLinkError.textContent = "La URL no es válida.";
+        return;
+      }
+      if ($videoLinkUrl) $videoLinkUrl.value = url;
       const title = ($videoLinkTitle?.value || "").trim();
       const category = $videoLinkCategory?.value || "otro";
       const note = ($videoLinkNote?.value || "").trim();
@@ -1432,276 +1588,15 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         });
         if ($videoLinksForm) $videoLinksForm.reset();
         if ($videoLinkCategory) $videoLinkCategory.value = "otro";
+        if ($videoLinkError) $videoLinkError.textContent = "";
         clearLinkParams();
         openLinksView();
       } catch (err) {
         console.error("Error guardando link", err);
+        if ($videoLinkError) $videoLinkError.textContent = "No se pudo guardar el link. Intenta otra vez.";
       }
     });
   }
-
-// === Cronómetro (tiempo real trabajado) ===
-const TIMER_STATE_KEY = "bookshell_video_timer_state_v2";
-const AUTO_FLUSH_MS = 15000;
-
-let timerRunning = false;
-let timerStartMs = 0;      // NO se reinicia nunca mientras esté corriendo
-let timerLastFlushMs = 0;  // para volcar a Firebase por “deltas”
-let timerInterval = null;
-
-function loadTimerState() {
-  try {
-    const raw = localStorage.getItem(TIMER_STATE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch (_) { return null; }
-}
-
-function saveTimerState() {
-  try {
-    const payload = timerRunning
-      ? { running: true, startMs: timerStartMs, lastFlushMs: timerLastFlushMs }
-      : { running: false };
-    localStorage.setItem(TIMER_STATE_KEY, JSON.stringify(payload));
-  } catch (_) {}
-}
-
-async function addWorkSeconds(dayKey, seconds) {
-  const s = Math.max(0, Math.floor(Number(seconds) || 0));
-  if (!dayKey || s <= 0) return;
-  const r = ref(db, `${VIDEO_WORK_PATH}/${dayKey}`);
-  await runTransaction(r, (curr) => (Number(curr) || 0) + s);
-}
-
-async function setWorkSeconds(dayKey, seconds) {
-  const s = Math.max(0, Math.floor(Number(seconds) || 0));
-  if (!dayKey) return;
-  const r = ref(db, `${VIDEO_WORK_PATH}/${dayKey}`);
-  await runTransaction(r, () => s);
-}
-
-function dayStartMsFromKey(key) {
-  const d = parseDateKey(key);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-}
-
-function dayKeyFromMs(ms) {
-  return dateToKey(new Date(ms));
-}
-
-function nextDayStartMs(ms) {
-  const d = new Date(ms);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
-}
-
-function getSessionSeconds() {
-  if (!timerRunning || !timerStartMs) return 0;
-  return Math.max(0, Math.floor((Date.now() - timerStartMs) / 1000));
-}
-
-function getUnflushedSecondsTotal() {
-  if (!timerRunning || !timerLastFlushMs) return 0;
-  return Math.max(0, Math.floor((Date.now() - timerLastFlushMs) / 1000));
-}
-
-function getUnflushedSecondsToday() {
-  if (!timerRunning || !timerLastFlushMs) return 0;
-  const now = Date.now();
-  const todayStart = dayStartMsFromKey(todayKey());
-  const from = Math.max(timerLastFlushMs, todayStart);
-  if (now <= from) return 0;
-  return Math.max(0, Math.floor((now - from) / 1000));
-}
-
-async function flushBetweenMs(fromMs, toMs) {
-  let a = Math.max(0, Number(fromMs) || 0);
-  const b = Math.max(0, Number(toMs) || 0);
-  if (b <= a) return;
-
-  while (a < b) {
-    const dayKey = dayKeyFromMs(a);
-    const end = Math.min(nextDayStartMs(a), b);
-    const sec = Math.floor((end - a) / 1000);
-    if (sec > 0) await addWorkSeconds(dayKey, sec);
-    a = end;
-  }
-}
-
-// vuelca a Firebase lo que falta desde el último flush
-async function flushIfNeeded(force = false) {
-  if (!timerRunning || !timerLastFlushMs) return;
-
-  const now = Date.now();
-  const elapsedMs = now - timerLastFlushMs;
-
-  if (!force && elapsedMs < AUTO_FLUSH_MS) return;
-
-  await flushBetweenMs(timerLastFlushMs, now);
-
-  timerLastFlushMs = now;
-  saveTimerState();
-}
-
-function getTodayWorkedSecondsLive() {
-  const base = Math.max(0, Number(videoWorkLog?.[todayKey()]) || 0);
-  return base + getUnflushedSecondsToday();
-}
-
-function getTotalWorkedSecondsLive() {
-  return Object.values(videos || {}).reduce((acc, v) => {
-    return acc + Math.max(0, Number(v?.workedSec) || 0);
-  }, 0);
-}
-
-function renderVideoTimerUI() {
-  if (!$videoTimerDisplay || !$videoTimerToggle || !$videoTimerToday) return;
-
-  $videoTimerDisplay.textContent = timerRunning ? formatHHMMSS(getSessionSeconds()) : "00:00:00";
-  $videoTimerToday.textContent = formatWorkTime(getTodayWorkedSecondsLive());
-
-  $videoTimerToggle.textContent = timerRunning ? "Parar" : "Empezar";
-  if ($videoTimerHint) $videoTimerHint.textContent = timerRunning ? "🎧 en marcha" : "";
-}
-
-function startVideoTimer() {
-  if (timerRunning) return;
-
-  const now = Date.now();
-  timerRunning = true;
-  timerStartMs = now;
-  timerLastFlushMs = now;
-  saveTimerState();
-
-  if (timerInterval) clearInterval(timerInterval);
-  timerInterval = setInterval(async () => {
-    await flushIfNeeded(false);
-    renderVideoTimerUI();
-    renderVideoStats();
-    renderVideoCalendar();
-  }, 1000);
-
-  renderVideoTimerUI();
-  renderVideoStats();
-  renderVideoCalendar();
-}
-
-async function stopVideoTimer() {
-  if (!timerRunning) return;
- const sessionSeconds = getSessionSeconds();
-  await flushIfNeeded(true);
-
-  timerRunning = false;
-  timerStartMs = 0;
-  timerLastFlushMs = 0;
-  saveTimerState();
-
-  if (timerInterval) {
-    clearInterval(timerInterval);
-    timerInterval = null;
-  }
-
-  renderVideoTimerUI();
-  renderVideoStats();
-  renderVideoCalendar();
-
-   if (sessionSeconds >= 20) { // umbral anti-pesadez
-    const vid = await openAssignWorkModal(sessionSeconds);
-    if (vid) {
-      await addWorkedSecondsToVideo(vid, sessionSeconds);
-      renderVideos(); // refresca tarjetas para mostrar "Trabajo"
-    }
-  }
-}
-
-// Botón start/stop
-if ($videoTimerToggle) {
-  $videoTimerToggle.addEventListener("click", async () => {
-    if (timerRunning) await stopVideoTimer();
-    else startVideoTimer();
-  });
-}
-
-// EDITAR TIEMPO “HOY” aunque NO esté cronometrando
-// Toca “Hoy: …” -> +15 / -10 / =120 (fija total) / 0 (pone a 0)
-if ($videoTimerToday) {
-  $videoTimerToday.style.cursor = "pointer";
-  $videoTimerToday.title = "Toca para ajustar tiempo (ej: +15, -10, =120, 0)";
-  $videoTimerToday.addEventListener("click", async () => {
-    const raw = prompt("Ajusta minutos: +15 / -10 / =120 (fijar total) / 0");
-    if (raw == null) return;
-
-    const s = String(raw).trim().replace(",", ".");
-    const key = todayKey();
-
-    // fijar total: "=120"
-    if (s.startsWith("=")) {
-      const mins = Number(s.slice(1));
-      if (!Number.isFinite(mins)) return;
-      await setWorkSeconds(key, mins * 60);
-    } else {
-      const mins = Number(s);
-      if (!Number.isFinite(mins)) return;
-      if (mins === 0) await setWorkSeconds(key, 0);
-      else await addWorkSeconds(key, mins * 60);
-    }
-
-    renderVideoTimerUI();
-    renderVideoStats();
-    renderVideoCalendar();
-  });
-}
-
-// Restaurar al abrir (NO reinicia startMs)
-(async () => {
-  const st = loadTimerState();
-  if (st?.running && st.startMs && st.lastFlushMs) {
-    timerRunning = true;
-    timerStartMs = Number(st.startMs) || Date.now();
-    timerLastFlushMs = Number(st.lastFlushMs) || timerStartMs;
-
-    // al abrir, volcamos lo acumulado mientras la app estuvo muerta
-    await flushIfNeeded(true);
-
-    if (timerInterval) clearInterval(timerInterval);
-    timerInterval = setInterval(async () => {
-      await flushIfNeeded(false);
-      renderVideoTimerUI();
-      renderVideoStats();
-      renderVideoCalendar();
-    }, 1000);
-  }
-  renderVideoTimerUI();
-})();
-
-// Eventos de vida: al ocultar, volcamos fuerte
-document.addEventListener("visibilitychange", () => {
-  if (!timerRunning) return;
-  if (document.hidden) flushIfNeeded(true);
-});
-
-window.addEventListener("focus", () => {
-  if (!timerRunning) return;
-  renderVideoTimerUI();
-  renderVideoStats();
-  renderVideoCalendar();
-});
-
-window.addEventListener("pagehide", () => {
-  if (scriptDirty) saveScript();
-  if (!timerRunning) return;
-  flushIfNeeded(true);
-});
-
-if ($assignWorkClose) $assignWorkClose.addEventListener("click", () => closeAssignWorkModal(null));
-if ($assignWorkSkip)  $assignWorkSkip.addEventListener("click",  () => closeAssignWorkModal(null));
-if ($assignWorkSave)  $assignWorkSave.addEventListener("click",  () => closeAssignWorkModal($assignWorkSelect?.value || null));
-
-// click fuera para cerrar
-if ($assignWorkBackdrop) {
-  $assignWorkBackdrop.addEventListener("click", (e) => {
-    if (e.target === $assignWorkBackdrop) closeAssignWorkModal(null);
-  });
-}
 
   // Guardar vídeo
   if ($videoForm) {
@@ -1770,7 +1665,6 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
     videoWorkLog = snap.val() || {};
     renderVideoStats();
     renderVideoCalendar();
-    renderVideoTimerUI();
   });
 
   onValue(ref(db, LINKS_PATH), (snap) => {
@@ -1818,11 +1712,11 @@ function renderVideos() {
   if ($videosEmpty) $videosEmpty.style.display = "none";
 
   const sections = [
-    { key: "idea", title: "Ideas", storage: "bookshell_videos_section_idea_v1", empty: "Aún no hay ideas." },
     { key: "script", title: "Guion", storage: "bookshell_videos_section_script_v1", empty: "Aún no hay guiones." },
     { key: "recording", title: "Grabación", storage: "bookshell_videos_section_recording_v1", empty: "Nada en grabación." },
     { key: "editing", title: "Edición", storage: "bookshell_videos_section_editing_v1", empty: "Nada en edición." },
     { key: "scheduled", title: "Programado/Publicar", storage: "bookshell_videos_section_scheduled_v1", empty: "Nada programado." },
+    { key: "idea", title: "Ideas", storage: "bookshell_videos_section_idea_v1", empty: "Aún no hay ideas." },
     { key: "published", title: "Publicados", storage: "bookshell_videos_section_published_v1", empty: "Aún no hay vídeos publicados." }
   ];
 
@@ -1943,7 +1837,8 @@ function createVideoCard(id) {
 
   const metaBits = [];
   if (v.publishDate) metaBits.push(`📅 ${v.publishDate}`);
-  if (isIdea && v.tags) metaBits.push(`🏷 ${v.tags}`);
+  const tagsDisplay = isIdea ? formatTagsForDisplay(v.tags) : "";
+  if (tagsDisplay) metaBits.push(`🏷 ${tagsDisplay}`);
   const durSplit = splitSeconds(durationTotal);
   if (durationTotal > 0) metaBits.push(`🎬 ${durSplit.min}m ${durSplit.sec}s`);
   meta.innerHTML = metaBits.map((m) => `<span>${m}</span>`).join("");
@@ -2041,7 +1936,10 @@ function createVideoCard(id) {
   const btnEdit = document.createElement("button");
   btnEdit.className = "btn";
   btnEdit.textContent = "Editar";
-  btnEdit.addEventListener("click", () => openVideoModal(id));
+  btnEdit.addEventListener("click", () => {
+    if (isIdea) openIdeaModal(id);
+    else openVideoModal(id);
+  });
 
   const btnScript = document.createElement("button");
   btnScript.className = "btn";
@@ -2116,7 +2014,8 @@ function createVideoCard(id) {
     const details = document.createElement("details");
     details.className = "video-finished";
     const storedOpen = localStorage.getItem(section.storage);
-    details.open = storedOpen ? storedOpen === "1" : section.key !== "published";
+    const defaultOpen = section.key !== "published" && section.key !== "idea";
+    details.open = storedOpen ? storedOpen === "1" : defaultOpen;
     details.addEventListener("toggle", () => {
       localStorage.setItem(section.storage, details.open ? "1" : "0");
     });
@@ -2437,11 +2336,8 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
           String(dayNum).padStart(2, "0");
 
         const t = totals[key] || { words: 0, seconds: 0, ideas: 0 };
-        const mergedSeconds =
-          Math.max(0, (totalsForStreak[key]?.seconds || 0)) +
-          (timerRunning && key === todayKey() ? getUnflushedSecondsToday() : 0);
-        const workedSec = Math.max(0, Number(videoWorkLog?.[key]) || 0) +
-          (timerRunning && key === todayKey() ? getUnflushedSecondsToday() : 0);
+        const mergedSeconds = Math.max(0, (totalsForStreak[key]?.seconds || 0));
+        const workedSec = Math.max(0, Number(videoWorkLog?.[key]) || 0);
         const hasWork = (t.words || 0) > 0 || mergedSeconds > 0 || (t.ideas || 0) > 0;
 
         const pub = publishInfo[key];
@@ -2640,10 +2536,6 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
       totalSeconds += Number(val?.seconds) || 0;
       totalIdeas += Number(val?.ideas) || 0;
     });
-    if (timerRunning && todayKey().startsWith(prefix)) {
-      totalSeconds += getUnflushedSecondsToday();
-    }
-
     let publishCount = 0;
     Object.entries(publishInfo || {}).forEach(([day, info]) => {
       if (day.startsWith(prefix) && info?.any) publishCount += 1;
@@ -2708,9 +2600,6 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
 
   window.__bookshellVideos = {
     getRecentVideo,
-    openVideoModal,
-    startVideoTimer,
-    stopVideoTimer,
-    isTimerRunning: () => !!timerRunning
+    openVideoModal
   };
 }

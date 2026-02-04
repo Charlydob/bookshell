@@ -26,7 +26,11 @@ const db = getDatabase(app);
 const MEDIA_PATH = "media";
 const LS_KEY = "bookshell.media.v3";
 const TMDB_CACHE_KEY = "bookshell.media.tmdb.v1";
+const PERSON_CACHE_KEY = "bookshell.media.person.v1";
+const PERSON_CREDITS_CACHE_KEY = "bookshell.media.personCredits.v1";
+const COUNTRY_DISCOVER_CACHE_KEY = "bookshell.media.countryDiscover.v1";
 const ROW_H = 46;
+const PERSON_CACHE_TTL = 1000 * 60 * 60 * 24 * 7;
 
 let items = [];
 let filtered = [];
@@ -350,6 +354,11 @@ function populateCountryDatalist() {
 /* ------------------------- TMDb ------------------------- */
 const TMDB_BASE = "https://api.themoviedb.org/3";
 let tmdbCache = loadTmdbCache();
+let personCache = loadPersonCache();
+let personCreditsCache = loadPersonCreditsCache();
+let countryDiscoverCache = loadCountryDiscoverCache();
+const personCreditsPending = new Map();
+const personGenderPending = new Map();
 
 function loadTmdbCache() {
   try {
@@ -366,6 +375,51 @@ function saveTmdbCache() {
   } catch (_) {}
 }
 
+function loadPersonCache() {
+  try {
+    const raw = localStorage.getItem(PERSON_CACHE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function savePersonCache() {
+  try {
+    localStorage.setItem(PERSON_CACHE_KEY, JSON.stringify(personCache || {}));
+  } catch (_) {}
+}
+
+function loadPersonCreditsCache() {
+  try {
+    const raw = localStorage.getItem(PERSON_CREDITS_CACHE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function savePersonCreditsCache() {
+  try {
+    localStorage.setItem(PERSON_CREDITS_CACHE_KEY, JSON.stringify(personCreditsCache || {}));
+  } catch (_) {}
+}
+
+function loadCountryDiscoverCache() {
+  try {
+    const raw = localStorage.getItem(COUNTRY_DISCOVER_CACHE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveCountryDiscoverCache() {
+  try {
+    localStorage.setItem(COUNTRY_DISCOVER_CACHE_KEY, JSON.stringify(countryDiscoverCache || {}));
+  } catch (_) {}
+}
+
 function tmdbKey(title, year, type) {
   return `${normKey(title)}|${Number(year) || 0}|${type || "movie"}`;
 }
@@ -376,6 +430,46 @@ function tmdbType(type) {
 
 function tmdbEnabled() {
   return !!TMDB_API_KEY || !!TMDB_READ_TOKEN;
+}
+
+function isFresh(entry) {
+  return entry && (nowTs() - Number(entry.ts || 0) < PERSON_CACHE_TTL);
+}
+
+function getCachedPersonGender(id) {
+  const entry = personCache?.[id];
+  if (!isFresh(entry)) return 0;
+  return normalizeGender(entry?.gender);
+}
+
+function setCachedPersonGender(id, gender) {
+  if (!id) return;
+  personCache[id] = { ts: nowTs(), gender: normalizeGender(gender) };
+  savePersonCache();
+}
+
+function getCachedPersonCredits(id) {
+  const entry = personCreditsCache?.[id];
+  if (!isFresh(entry)) return null;
+  return entry?.data || null;
+}
+
+function setCachedPersonCredits(id, data) {
+  if (!id) return;
+  personCreditsCache[id] = { ts: nowTs(), data };
+  savePersonCreditsCache();
+}
+
+function getCachedCountryDiscover(code) {
+  const entry = countryDiscoverCache?.[code];
+  if (!isFresh(entry)) return null;
+  return entry?.data || null;
+}
+
+function setCachedCountryDiscover(code, data) {
+  if (!code) return;
+  countryDiscoverCache[code] = { ts: nowTs(), data };
+  saveCountryDiscoverCache();
 }
 
 async function tmdbFetch(path, params = {}) {
@@ -474,6 +568,8 @@ async function tmdbFetchDetails(id, type) {
   return {
     tmdbId: Number(id) || 0,
     tmdbType: kind,
+    title: detail?.title || detail?.name || "",
+    year: Number(String(detail?.release_date || detail?.first_air_date || "").slice(0, 4)) || 0,
     director,
     directorData,
     cast: castTop,
@@ -1201,27 +1297,53 @@ function bindDom() {
   });
 
   els.legendList?.addEventListener("click", (e) => {
-    const row = e.target?.closest?.(".media-legend-row[data-action='entity']");
+    const row = e.target?.closest?.(".media-legend-row[data-action]");
     if (!row) return;
-    const name = row.dataset?.label || "";
-    const kind = row.dataset?.kind || "";
-    if (!name || (kind !== "actor" && kind !== "director")) return;
-    openEntityModal({ name, kind });
+    const action = row.dataset?.action || "";
+    if (action === "country") {
+      const code = row.dataset?.code || "";
+      const label = row.dataset?.label || "";
+      openCountryModal({ code, label });
+      return;
+    }
+    if (action === "entity") {
+      const name = row.dataset?.label || "";
+      const kind = row.dataset?.kind || "";
+      if (!name || (kind !== "actor" && kind !== "director")) return;
+      openEntityModal({ name, kind });
+    }
   });
 
   els.legendList?.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" && e.key !== " ") return;
-    const row = e.target?.closest?.(".media-legend-row[data-action='entity']");
+    const row = e.target?.closest?.(".media-legend-row[data-action]");
     if (!row) return;
     e.preventDefault();
-    const name = row.dataset?.label || "";
-    const kind = row.dataset?.kind || "";
-    if (!name || (kind !== "actor" && kind !== "director")) return;
-    openEntityModal({ name, kind });
+    const action = row.dataset?.action || "";
+    if (action === "country") {
+      const code = row.dataset?.code || "";
+      const label = row.dataset?.label || "";
+      openCountryModal({ code, label });
+      return;
+    }
+    if (action === "entity") {
+      const name = row.dataset?.label || "";
+      const kind = row.dataset?.kind || "";
+      if (!name || (kind !== "actor" && kind !== "director")) return;
+      openEntityModal({ name, kind });
+    }
   });
 
   // list scroll
   els.list?.addEventListener("scroll", () => renderVirtual());
+
+  els.countryList?.addEventListener("click", (e) => {
+    const row = e.target?.closest?.("[data-action='country']");
+    if (!row) return;
+    const code = row.dataset?.code || "";
+    const label = row.dataset?.label || "";
+    openCountryModal({ code, label });
+  });
 
   // bulk autofill
   els.bulkAutofillBtn?.addEventListener("click", () => {
@@ -2220,6 +2342,14 @@ function bindRowInteractions() {
     }
   });
 
+  els.itemsHost.addEventListener("click", (e) => {
+    if (e.target?.closest?.("[data-action]")) return;
+    const row = e.target?.closest?.(".media-row");
+    const id = row?.dataset?.id;
+    if (!id) return;
+    openTitleModal(id);
+  });
+
   // rating pointer
   els.itemsHost.addEventListener("pointerdown", (e) => {
     const rEl = e.target?.closest?.(".media-rating[data-action='rate']");
@@ -2348,7 +2478,7 @@ function renderDonutLegend(){
     const val = Number(r.value) || 0;
     const pct = fmtPct(val / sum);
     const color = colorForLabel(r.label);
-    const canOpen = (kind === "actor" || kind === "director");
+    const canOpen = (kind === "actor" || kind === "director" || kind === "country");
     const rowClasses = `media-legend-row${canOpen ? " is-action" : ""}`;
     let sub = "";
     if (kind === "year" || kind === "country") {
@@ -2361,8 +2491,10 @@ function renderDonutLegend(){
       const progress = (total || total === 0) ? `${watched.toLocaleString()}/${totalLabel}` : `${watched.toLocaleString()}/—`;
       sub = `<div class="media-legend-sub">Aprox TMDb: ${totalLabel} · Progreso: ${progress}</div>`;
     }
+    const action = kind === "country" ? "country" : "entity";
+    const codeAttr = kind === "country" ? `data-code="${escHtml(String(r.meta || ""))}"` : "";
     return `
-      <div class="${rowClasses}" ${canOpen ? `role="button" tabindex="0" data-action="entity" data-kind="${kind}" data-label="${name}"` : ""}>
+      <div class="${rowClasses}" ${canOpen ? `role="button" tabindex="0" data-action="${action}" data-kind="${kind}" data-label="${name}" ${codeAttr}` : ""}>
         <div class="media-legend-left">
           <span class="media-legend-dot" style="background:${color}"></span>
           <div>
@@ -2581,17 +2713,18 @@ function renderDonut() {
 
 /* ------------------------- Map (origen) ------------------------- */
 function computeCountryCounts() {
-  const map = new Map(); // key (en) -> {en, es, value}
+  const map = new Map(); // key (en) -> {en, es, code, value}
 
   for (const it of filtered) {
     const cc = it.countryCode || "";
     const en = norm(it.countryEn) || (cc ? (_codeToEn.get(cc) || "") : "") || "";
     const es = norm(it.countryLabel) || (cc ? (_codeToEs.get(cc) || "") : "") || "";
+    const code = cc || normalizeCountry(es || en || "").code || "";
 
     const key = en || es;
     if (!key) continue;
 
-    const cur = map.get(key) || { en: en || key, es: es || key, value: 0 };
+    const cur = map.get(key) || { en: en || key, es: es || key, code, value: 0 };
     cur.value += 1;
     map.set(key, cur);
   }
@@ -2613,9 +2746,10 @@ function renderCountryPanelList(rows) {
   }
 
   els.countryList.innerHTML = list.map(r => {
-    const name = String(r.es || r.en || "").replace(/</g, "&lt;");
+    const name = escHtml(String(r.es || r.en || ""));
     const v = Number(r.value) || 0;
-    return `<div class="geo-item"><div class="geo-name">${name}</div><div class="geo-count">${v}</div></div>`;
+    const code = String(r.code || "");
+    return `<button class="geo-item" data-action="country" data-code="${code}" data-label="${name}" type="button"><div class="geo-name">${name}</div><div class="geo-count">${v}</div></button>`;
   }).join("");
 }
 
@@ -3115,7 +3249,7 @@ function hideEditModal() {
 
 /* ------------------------- Entity modal (actor/director) ------------------------- */
 let entityModal = null;
-const ENTITY_PAGE_SIZE = 12;
+const ENTITY_PAGE_SIZE = 24;
 const entityState = {
   name: "",
   kind: "actor",
@@ -3173,16 +3307,6 @@ function ensureEntityModal() {
       </div>
       <div class="media-modal-body">
         <section class="media-modal-section">
-          <div class="media-entity-kpis">
-            <div class="media-entity-kpi">
-              <span>Vistos por mí</span>
-              <strong id="media-entity-watched">0</strong>
-            </div>
-            <div class="media-entity-kpi">
-              <span>Total en TMDb</span>
-              <strong id="media-entity-total">—</strong>
-            </div>
-          </div>
           <div class="media-entity-progress">
             <div class="media-entity-progress-row">
               <span>Progreso</span>
@@ -3208,7 +3332,7 @@ function ensureEntityModal() {
             <span class="media-entity-accordion-count" id="media-entity-unseen-count">0</span>
           </summary>
           <div class="media-entity-list" id="media-entity-unseen"></div>
-          <button class="btn ghost btn-compact" id="media-entity-more" type="button" style="display:none">Mostrar más</button>
+          <button class="btn ghost btn-compact" id="media-entity-more" type="button" style="display:none">Cargar más</button>
         </details>
         <section class="media-modal-section">
           <div class="media-modal-section-title">Colabora más con…</div>
@@ -3234,6 +3358,10 @@ function ensureEntityModal() {
       if (!id || !mediaType || !key) return;
       const credit = entityState.unseenCredits.find(c => c.key === key);
       if (credit) addItemFromCredit(credit);
+    }
+    if (act === "open-title") {
+      const id = e.target?.dataset?.id || e.target?.closest?.("[data-id]")?.dataset?.id;
+      if (id) openTitleModal(id);
     }
   });
 
@@ -3326,7 +3454,7 @@ function findEntityMetaFromItems(name, kind) {
 
 function getEntityLocalItems(name, kind, tmdbId = 0) {
   const key = normKey(name);
-  return filtered.filter(it => {
+  return items.filter(it => {
     if (!it) return false;
     if (kind === "actor") {
       const list = Array.isArray(it.cast) ? it.cast : [];
@@ -3345,14 +3473,46 @@ function getEntityLocalItems(name, kind, tmdbId = 0) {
   });
 }
 
-function creditKey(credit) {
-  if (credit.mediaType && credit.tmdbId) return `${credit.mediaType}|${credit.tmdbId}`;
-  return `${foldKey(credit.title)}|${credit.year || 0}`;
+function getSeenMovieIds() {
+  const seen = new Set();
+  items.forEach(it => {
+    if (!it || it.watchlist) return;
+    if (!it.tmdbId) return;
+    const isMovie = it.tmdbType === "movie" || it.type === "movie";
+    if (!isMovie) return;
+    seen.add(Number(it.tmdbId));
+  });
+  return seen;
 }
 
-function itemKey(it) {
-  if (it.tmdbType && it.tmdbId) return `${it.tmdbType}|${it.tmdbId}`;
-  return `${foldKey(it.title)}|${it.year || 0}`;
+function updateItemsWithPersonGender(tmdbId, gender) {
+  const g = normalizeGender(gender);
+  if (!tmdbId || !g) return;
+  const updates = [];
+  items.forEach(it => {
+    if (!it) return;
+    let changed = false;
+    let cast = Array.isArray(it.cast) ? it.cast : [];
+    if (cast.length) {
+      const nextCast = cast.map(entry => {
+        const normalized = normalizeCastEntry(entry);
+        if (!normalized) return entry;
+        if (normalized.tmdbId === tmdbId && !normalizeGender(normalized.gender)) {
+          changed = true;
+          return { ...normalized, gender: g };
+        }
+        return entry;
+      });
+      if (changed) cast = nextCast;
+    }
+    let directorData = it.directorData || null;
+    if (directorData?.tmdbId === tmdbId && !normalizeGender(directorData.gender)) {
+      directorData = { ...directorData, gender: g };
+      changed = true;
+    }
+    if (changed) updates.push({ id: it.id, cast, directorData });
+  });
+  updates.forEach(u => updateItem(u.id, { cast: u.cast, directorData: u.directorData }));
 }
 
 async function tmdbSearchPerson(name) {
@@ -3360,19 +3520,57 @@ async function tmdbSearchPerson(name) {
   const data = await tmdbFetch("/search/person", { query: name, language: "es-ES" });
   const first = Array.isArray(data?.results) ? data.results[0] : null;
   if (!first?.id) return null;
+  const gender = normalizeGender(first.gender);
+  if (gender) setCachedPersonGender(Number(first.id) || 0, gender);
   return {
     tmdbId: Number(first.id) || 0,
-    gender: normalizeGender(first.gender)
+    gender
   };
 }
 
 async function tmdbFetchPersonCredits(id) {
   if (!tmdbEnabled()) return { credits: [], gender: 0 };
-  const [person, credits] = await Promise.all([
+  const cached = getCachedPersonCredits(id);
+  if (cached) return cached;
+  if (personCreditsPending.has(id)) return personCreditsPending.get(id);
+
+  const promise = Promise.all([
     tmdbFetch(`/person/${id}`, { language: "es-ES" }),
-    tmdbFetch(`/person/${id}/combined_credits`, { language: "es-ES" })
-  ]);
-  return { credits, gender: normalizeGender(person?.gender) };
+    tmdbFetch(`/person/${id}/movie_credits`, { language: "es-ES" })
+  ]).then(([person, credits]) => {
+    const payload = { credits, gender: normalizeGender(person?.gender) };
+    setCachedPersonCredits(id, payload);
+    if (payload.gender) setCachedPersonGender(id, payload.gender);
+    personCreditsPending.delete(id);
+    return payload;
+  }).catch((e) => {
+    personCreditsPending.delete(id);
+    throw e;
+  });
+
+  personCreditsPending.set(id, promise);
+  return promise;
+}
+
+async function tmdbFetchPersonGender(id) {
+  if (!tmdbEnabled() || !id) return 0;
+  const cached = getCachedPersonGender(id);
+  if (cached) return cached;
+  if (personGenderPending.has(id)) return personGenderPending.get(id);
+
+  const promise = tmdbFetch(`/person/${id}`, { language: "es-ES" })
+    .then((person) => {
+      const gender = normalizeGender(person?.gender);
+      if (gender) setCachedPersonGender(id, gender);
+      personGenderPending.delete(id);
+      return gender;
+    }).catch(() => {
+      personGenderPending.delete(id);
+      return 0;
+    });
+
+  personGenderPending.set(id, promise);
+  return promise;
 }
 
 function normalizeCredits(raw, kind) {
@@ -3381,17 +3579,17 @@ function normalizeCredits(raw, kind) {
     : (Array.isArray(raw?.cast) ? raw.cast : []);
   const map = new Map();
   for (const c of list) {
+    if (c?.adult === true || c?.video === true) continue;
     const id = Number(c?.id) || 0;
-    const mediaType = c?.media_type || "";
     const title = c?.title || c?.name || "";
-    if (!id || !mediaType || !title) continue;
-    const year = Number(String(c?.release_date || c?.first_air_date || "").slice(0, 4)) || 0;
-    const key = `${mediaType}|${id}`;
+    if (!id || !title) continue;
+    const year = Number(String(c?.release_date || "").slice(0, 4)) || 0;
+    const key = `movie|${id}`;
     if (map.has(key)) continue;
     map.set(key, {
       key,
       tmdbId: id,
-      mediaType,
+      mediaType: "movie",
       title,
       year
     });
@@ -3413,6 +3611,10 @@ async function openEntityModal({ name, kind }) {
   const meta = findEntityMetaFromItems(name, kind);
   entityState.gender = meta.gender;
   entityState.tmdbId = meta.tmdbId;
+  if (!entityState.gender && entityState.tmdbId) {
+    const cachedGender = getCachedPersonGender(entityState.tmdbId);
+    if (cachedGender) entityState.gender = cachedGender;
+  }
 
   const titleEl = modal.querySelector("#media-entity-title");
   const subEl = modal.querySelector("#media-entity-sub");
@@ -3442,14 +3644,23 @@ async function openEntityModal({ name, kind }) {
       const fetched = await tmdbFetchPersonCredits(tmdbId);
       if (!entityState.gender && fetched.gender) entityState.gender = fetched.gender;
       entityState.credits = normalizeCredits(fetched.credits, kind);
+      if (fetched.gender) updateItemsWithPersonGender(tmdbId, fetched.gender);
     }
   } catch (e) {
     console.warn("[media] entity fetch failed", e);
   }
 
+  if (tmdbId && !entityState.gender && tmdbEnabled()) {
+    const gender = await tmdbFetchPersonGender(tmdbId);
+    if (gender) {
+      entityState.gender = gender;
+      updateItemsWithPersonGender(tmdbId, gender);
+    }
+  }
+
   entityState.localItems = getEntityLocalItems(name, kind, entityState.tmdbId);
-  const localKeys = new Set(entityState.localItems.map(itemKey));
-  entityState.unseenCredits = entityState.credits.filter(c => !localKeys.has(creditKey(c)));
+  const seenSet = getSeenMovieIds();
+  entityState.unseenCredits = entityState.credits.filter(c => !seenSet.has(c.tmdbId));
 
   const accordions = readEntityAccordionState();
   const seenSection = modal.querySelector("#media-entity-seen-section");
@@ -3461,12 +3672,8 @@ async function openEntityModal({ name, kind }) {
 }
 
 function renderEntityLoading() {
-  const watchedEl = entityModal?.querySelector("#media-entity-watched");
-  const totalEl = entityModal?.querySelector("#media-entity-total");
   const progressEl = entityModal?.querySelector("#media-entity-progress-label");
   const barEl = entityModal?.querySelector("#media-entity-progress-bar");
-  if (watchedEl) watchedEl.textContent = "—";
-  if (totalEl) totalEl.textContent = "—";
   if (progressEl) progressEl.textContent = "Cargando…";
   if (barEl) barEl.style.width = "0%";
 }
@@ -3481,19 +3688,16 @@ function renderEntityModal() {
 
   const seenItems = entityState.localItems.filter(it => !it.watchlist);
   const total = entityState.credits.length;
-  const watchedEl = modal.querySelector("#media-entity-watched");
-  const totalEl = modal.querySelector("#media-entity-total");
   const progressEl = modal.querySelector("#media-entity-progress-label");
   const barEl = modal.querySelector("#media-entity-progress-bar");
-  if (watchedEl) watchedEl.textContent = String(seenItems.length);
-  if (totalEl) totalEl.textContent = tmdbEnabled() ? total.toLocaleString() : "—";
   if (progressEl) {
     if (!tmdbEnabled()) {
       progressEl.textContent = "TMDb no disponible";
     } else if (total) {
-      progressEl.textContent = `${seenItems.length.toLocaleString()} / ${total.toLocaleString()}`;
+      const pct = Math.min(100, Math.round((seenItems.length / total) * 100));
+      progressEl.textContent = `${pct}% · ${seenItems.length.toLocaleString()} / ${total.toLocaleString()}`;
     } else {
-      progressEl.textContent = "0 / 0";
+      progressEl.textContent = "0% · 0 / 0";
     }
   }
   if (barEl) barEl.style.width = (total && tmdbEnabled())
@@ -3525,12 +3729,12 @@ function renderEntityLists() {
       seenEl.innerHTML = `<div style="opacity:.65;font-size:12px;padding:4px 2px">${query ? "Sin resultados." : "Aún no hay vistos."}</div>`;
     } else {
       seenEl.innerHTML = filteredSeen.map(it => `
-        <div class="media-entity-item">
+        <button class="media-entity-item" data-action="open-title" data-id="${it.id}" type="button">
           <div class="media-entity-item-main">
             <div class="media-entity-item-title">${escHtml(it.title || "—")}</div>
             <div class="media-entity-item-sub">${it.year || "—"} · ${typeLabelForItem(it)}</div>
           </div>
-        </div>
+        </button>
       `).join("");
     }
   }
@@ -3690,6 +3894,468 @@ async function addItemFromCredit(credit) {
     console.warn("[media] add from credit failed", e);
     setMediaSub("No se pudo crear la ficha", 2400);
   }
+}
+
+/* ------------------------- Title modal ------------------------- */
+let titleModal = null;
+const titleState = {
+  id: "",
+  item: null
+};
+
+function ensureTitleModal() {
+  if (titleModal) return titleModal;
+
+  titleModal = document.createElement("div");
+  titleModal.className = "media-modal hidden";
+  titleModal.innerHTML = `
+    <div class="media-modal-backdrop" data-action="close"></div>
+    <div class="media-modal-sheet" role="dialog" aria-modal="true" aria-label="Ficha de título">
+      <div class="media-modal-head">
+        <div class="media-modal-headtext">
+          <div class="media-modal-title" id="media-title-name">—</div>
+          <div class="media-modal-sub" id="media-title-sub">—</div>
+        </div>
+        <button class="media-modal-close" data-action="close" type="button" title="Cerrar" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="media-modal-body">
+        <section class="media-modal-section media-title-kpis">
+          <div class="media-title-kpi">
+            <span>Rating</span>
+            <strong id="media-title-rating">—</strong>
+          </div>
+          <div class="media-title-kpi">
+            <span>Watchlist</span>
+            <strong id="media-title-watchlist">—</strong>
+          </div>
+          <div class="media-title-kpi">
+            <span>Laura</span>
+            <strong id="media-title-laura">—</strong>
+          </div>
+          <button class="btn ghost btn-compact media-title-edit" data-action="edit" type="button">Editar</button>
+        </section>
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">País</div>
+          <div class="media-chip-row" id="media-title-country"></div>
+        </section>
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">Géneros</div>
+          <div class="media-chip-row" id="media-title-genres"></div>
+        </section>
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">Director</div>
+          <div class="media-chip-row" id="media-title-director"></div>
+        </section>
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">Reparto</div>
+          <div class="media-chip-row" id="media-title-cast"></div>
+        </section>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(titleModal);
+
+  titleModal.addEventListener("click", (e) => {
+    const act = e.target?.dataset?.action;
+    if (act === "close") hideTitleModal();
+    if (act === "edit" && titleState.id) {
+      hideTitleModal();
+      openEditModal(titleState.id);
+    }
+    if (act === "entity") {
+      const name = e.target?.dataset?.name || "";
+      const kind = e.target?.dataset?.kind || "";
+      if (!name || (kind !== "actor" && kind !== "director")) return;
+      hideTitleModal();
+      openEntityModal({ name, kind });
+    }
+    if (act === "country") {
+      const code = e.target?.dataset?.code || "";
+      const label = e.target?.dataset?.label || "";
+      hideTitleModal();
+      openCountryModal({ code, label });
+    }
+    if (act === "genre") {
+      const genre = e.target?.dataset?.label || "";
+      if (!genre) return;
+      hideTitleModal();
+      applyQuickFilter(genre);
+    }
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && titleModal && !titleModal.classList.contains("hidden")) hideTitleModal();
+  });
+
+  return titleModal;
+}
+
+function hideTitleModal() {
+  if (!titleModal) return;
+  titleModal.classList.add("hidden");
+}
+
+function applyQuickFilter(text) {
+  const q = norm(text);
+  state.q = q;
+  if (els.search) els.search.value = q;
+  state.view = "list";
+  setActiveViewBtns();
+  renderViewVisibility();
+  refresh();
+}
+
+function renderTitleModal() {
+  if (!titleModal || !titleState.item) return;
+  const it = titleState.item;
+  const typeLabel = typeLabelForItem(it);
+  const titleEl = titleModal.querySelector("#media-title-name");
+  const subEl = titleModal.querySelector("#media-title-sub");
+  if (titleEl) titleEl.textContent = it.title || "—";
+  if (subEl) subEl.textContent = [it.year || "—", typeLabel].join(" · ");
+
+  const ratingEl = titleModal.querySelector("#media-title-rating");
+  const watchlistEl = titleModal.querySelector("#media-title-watchlist");
+  const lauraEl = titleModal.querySelector("#media-title-laura");
+  if (ratingEl) ratingEl.textContent = it.rating ? `${it.rating}/5` : "—";
+  if (watchlistEl) watchlistEl.textContent = it.watchlist ? "Sí" : "No";
+  if (lauraEl) lauraEl.textContent = it.withLaura ? "Sí" : "No";
+
+  const countryWrap = titleModal.querySelector("#media-title-country");
+  const genresWrap = titleModal.querySelector("#media-title-genres");
+  const directorWrap = titleModal.querySelector("#media-title-director");
+  const castWrap = titleModal.querySelector("#media-title-cast");
+
+  if (countryWrap) {
+    const label = it.countryLabel || it.countryEn || "";
+    const code = it.countryCode || normalizeCountry(label).code || "";
+    countryWrap.innerHTML = label
+      ? `<button class="media-chip" data-action="country" data-code="${escHtml(code)}" data-label="${escHtml(label)}" type="button">${escHtml(label)}</button>`
+      : `<span class="media-chip is-muted">—</span>`;
+  }
+
+  if (genresWrap) {
+    const genres = Array.isArray(it.genres) ? it.genres : [];
+    genresWrap.innerHTML = genres.length
+      ? genres.map(g => `<button class="media-chip" data-action="genre" data-label="${escHtml(g)}" type="button">${escHtml(g)}</button>`).join("")
+      : `<span class="media-chip is-muted">—</span>`;
+  }
+
+  if (directorWrap) {
+    const name = norm(it.director);
+    directorWrap.innerHTML = name
+      ? `<button class="media-chip" data-action="entity" data-kind="director" data-name="${escHtml(name)}" type="button">${escHtml(name)}</button>`
+      : `<span class="media-chip is-muted">—</span>`;
+  }
+
+  if (castWrap) {
+    const cast = Array.isArray(it.cast) ? it.cast : [];
+    const names = cast.map(entry => normalizeCastEntry(entry)).filter(Boolean).map(entry => entry.name);
+    castWrap.innerHTML = names.length
+      ? names.map(name => `<button class="media-chip" data-action="entity" data-kind="actor" data-name="${escHtml(name)}" type="button">${escHtml(name)}</button>`).join("")
+      : `<span class="media-chip is-muted">—</span>`;
+  }
+}
+
+function openTitleModal(id) {
+  const it = findItem(id);
+  if (!it) return;
+  const modal = ensureTitleModal();
+  titleState.id = String(it.id);
+  titleState.item = it;
+  renderTitleModal();
+  modal.classList.remove("hidden");
+}
+
+/* ------------------------- Country modal ------------------------- */
+let countryModal = null;
+const countryState = {
+  code: "",
+  label: "",
+  total: null,
+  suggestions: [],
+  page: 1,
+  totalPages: 0,
+  loading: false
+};
+
+function ensureCountryModal() {
+  if (countryModal) return countryModal;
+
+  countryModal = document.createElement("div");
+  countryModal.className = "media-modal hidden";
+  countryModal.innerHTML = `
+    <div class="media-modal-backdrop" data-action="close"></div>
+    <div class="media-modal-sheet" role="dialog" aria-modal="true" aria-label="Ficha de país">
+      <div class="media-modal-head">
+        <div class="media-modal-headtext">
+          <div class="media-modal-title" id="media-country-title">—</div>
+          <div class="media-modal-sub">Ficha de país</div>
+        </div>
+        <button class="media-modal-close" data-action="close" type="button" title="Cerrar" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="media-modal-body">
+        <section class="media-modal-section media-country-kpis">
+          <div class="media-country-kpi">
+            <span>Vistas por mí</span>
+            <strong id="media-country-watched">0</strong>
+          </div>
+          <div class="media-country-kpi">
+            <span>Total TMDb (aprox)</span>
+            <strong id="media-country-total">—</strong>
+          </div>
+        </section>
+        <details class="media-modal-section media-entity-accordion" id="media-country-seen-section" open>
+          <summary class="media-entity-accordion-summary">
+            <span>Vistas</span>
+            <span class="media-entity-accordion-count" id="media-country-seen-count">0</span>
+          </summary>
+          <div class="media-entity-list" id="media-country-seen"></div>
+        </details>
+        <details class="media-modal-section media-entity-accordion" id="media-country-suggest-section">
+          <summary class="media-entity-accordion-summary">
+            <span>Sugerencias</span>
+            <span class="media-entity-accordion-count" id="media-country-suggest-count">0</span>
+          </summary>
+          <div class="media-entity-list" id="media-country-suggest"></div>
+          <button class="btn ghost btn-compact" id="media-country-more" type="button" style="display:none">Cargar más</button>
+        </details>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(countryModal);
+
+  countryModal.addEventListener("click", (e) => {
+    const act = e.target?.dataset?.action;
+    if (act === "close") hideCountryModal();
+    if (act === "add") {
+      const id = Number(e.target?.dataset?.tmdbId) || 0;
+      if (!id) return;
+      addItemFromTmdbMovie(id);
+    }
+    if (act === "open-title") {
+      const id = e.target?.dataset?.id || "";
+      if (id) openTitleModal(id);
+    }
+  });
+
+  countryModal.querySelector("#media-country-more")?.addEventListener("click", () => {
+    if (countryState.loading) return;
+    countryState.page += 1;
+    fetchCountrySuggestions();
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && countryModal && !countryModal.classList.contains("hidden")) hideCountryModal();
+  });
+
+  return countryModal;
+}
+
+function hideCountryModal() {
+  if (!countryModal) return;
+  countryModal.classList.add("hidden");
+}
+
+function countryLabelFromCode(code, fallback = "") {
+  if (!code) return fallback || "—";
+  return _codeToEs.get(code) || _codeToEn.get(code) || fallback || code;
+}
+
+function renderCountryModal() {
+  if (!countryModal) return;
+  const titleEl = countryModal.querySelector("#media-country-title");
+  if (titleEl) titleEl.textContent = countryState.label || "—";
+
+  const watchedEl = countryModal.querySelector("#media-country-watched");
+  const totalEl = countryModal.querySelector("#media-country-total");
+  const seenList = countryModal.querySelector("#media-country-seen");
+  const seenCount = countryModal.querySelector("#media-country-seen-count");
+  const suggestList = countryModal.querySelector("#media-country-suggest");
+  const suggestCount = countryModal.querySelector("#media-country-suggest-count");
+  const moreBtn = countryModal.querySelector("#media-country-more");
+
+  const seenItems = items.filter(it => !it.watchlist && it.countryCode === countryState.code);
+  if (watchedEl) watchedEl.textContent = String(seenItems.length);
+  if (totalEl) totalEl.textContent = (countryState.total || countryState.total === 0) ? countryState.total.toLocaleString() : "—";
+  if (seenCount) seenCount.textContent = String(seenItems.length);
+
+  if (seenList) {
+    seenList.innerHTML = seenItems.length
+      ? seenItems.map(it => `
+          <button class="media-entity-item" data-action="open-title" data-id="${it.id}" type="button">
+            <div class="media-entity-item-main">
+              <div class="media-entity-item-title">${escHtml(it.title || "—")}</div>
+              <div class="media-entity-item-sub">${it.year || "—"} · ${typeLabelForItem(it)}</div>
+            </div>
+          </button>
+        `).join("")
+      : `<div style="opacity:.65;font-size:12px;padding:4px 2px">Aún no hay vistos.</div>`;
+  }
+
+  if (!tmdbEnabled()) {
+    if (suggestList) suggestList.innerHTML = `<div style="opacity:.65;font-size:12px;padding:4px 2px">TMDb no disponible.</div>`;
+    if (suggestCount) suggestCount.textContent = "—";
+    if (moreBtn) moreBtn.style.display = "none";
+    return;
+  }
+
+  if (suggestCount) suggestCount.textContent = String(countryState.suggestions.length);
+  if (suggestList) {
+    suggestList.innerHTML = countryState.suggestions.length
+      ? countryState.suggestions.map(c => `
+          <div class="media-entity-item">
+            <div class="media-entity-item-main">
+              <div class="media-entity-item-title">${escHtml(c.title || "—")}</div>
+              <div class="media-entity-item-sub">${c.year || "—"} · Peli</div>
+            </div>
+            <button class="btn ghost btn-compact" data-action="add" data-tmdb-id="${c.tmdbId}" type="button">Añadir</button>
+          </div>
+        `).join("")
+      : `<div style="opacity:.65;font-size:12px;padding:4px 2px">Sin sugerencias.</div>`;
+  }
+  if (moreBtn) moreBtn.style.display = (countryState.page < countryState.totalPages) ? "" : "none";
+}
+
+async function fetchCountryTotal() {
+  if (!tmdbEnabled() || !countryState.code) return;
+  const cached = getCachedCountryDiscover(countryState.code);
+  if (cached?.total !== undefined) {
+    countryState.total = cached.total;
+    renderCountryModal();
+    return;
+  }
+  try {
+    const data = await tmdbFetch("/discover/movie", {
+      include_adult: false,
+      with_origin_country: countryState.code
+    });
+    const total = Number(data?.total_results) || 0;
+    const next = { ...(cached || {}), total };
+    setCachedCountryDiscover(countryState.code, next);
+    countryState.total = total;
+    renderCountryModal();
+  } catch (e) {
+    console.warn("[media] country total failed", e);
+  }
+}
+
+async function fetchCountrySuggestions() {
+  if (!tmdbEnabled() || !countryState.code) return;
+  const cached = getCachedCountryDiscover(countryState.code) || {};
+  const page = Math.max(1, countryState.page || 1);
+  if (cached.pages?.[page]) {
+    const payload = cached.pages[page];
+    countryState.totalPages = payload.totalPages || countryState.totalPages;
+    countryState.suggestions = dedupeSuggestions(countryState.suggestions.concat(payload.results || []));
+    renderCountryModal();
+    return;
+  }
+
+  countryState.loading = true;
+  try {
+    const data = await tmdbFetch("/discover/movie", {
+      include_adult: false,
+      with_origin_country: countryState.code,
+      page,
+      sort_by: "popularity.desc"
+    });
+    const results = Array.isArray(data?.results) ? data.results : [];
+    const seenSet = getSeenMovieIds();
+    const existingSet = new Set(items.filter(it => it.tmdbId && (it.tmdbType === "movie" || it.type === "movie")).map(it => Number(it.tmdbId)));
+    const mapped = results
+      .filter(r => !r?.adult && !r?.video)
+      .map(r => ({
+        tmdbId: Number(r?.id) || 0,
+        title: r?.title || "",
+        year: Number(String(r?.release_date || "").slice(0, 4)) || 0
+      }))
+      .filter(r => r.tmdbId && !seenSet.has(r.tmdbId) && !existingSet.has(r.tmdbId));
+
+    countryState.totalPages = Number(data?.total_pages) || 0;
+    countryState.suggestions = dedupeSuggestions(countryState.suggestions.concat(mapped));
+
+    const next = {
+      ...(cached || {}),
+      pages: {
+        ...(cached.pages || {}),
+        [page]: {
+          results: mapped,
+          totalPages: countryState.totalPages
+        }
+      }
+    };
+    setCachedCountryDiscover(countryState.code, next);
+  } catch (e) {
+    console.warn("[media] country discover failed", e);
+  } finally {
+    countryState.loading = false;
+    renderCountryModal();
+  }
+}
+
+function dedupeSuggestions(list) {
+  const map = new Map();
+  (list || []).forEach(c => {
+    if (!c?.tmdbId) return;
+    if (map.has(c.tmdbId)) return;
+    map.set(c.tmdbId, c);
+  });
+  return Array.from(map.values());
+}
+
+async function addItemFromTmdbMovie(id) {
+  if (!id || !tmdbEnabled()) return;
+  try {
+    const details = await tmdbFetchDetails(id, "movie");
+    const cc = normalizeCountry(details.country || "");
+    addItem({
+      title: details?.title || "",
+      type: "movie",
+      rating: 0,
+      year: details?.year || 0,
+      genres: details.genres || [],
+      director: details.director || "",
+      directorData: details.directorData || null,
+      cast: Array.isArray(details.cast) ? details.cast : [],
+      tmdbId: details.tmdbId || id,
+      tmdbType: details.tmdbType || "movie",
+      countryCode: cc.code,
+      countryEn: cc.en || "",
+      countryLabel: cc.es || "",
+      watchlist: true,
+      withLaura: false,
+      seasons: [],
+      season: 0,
+      episode: 0,
+      currentSeason: 0,
+      currentEpisode: 0,
+      watchDates: []
+    });
+    countryState.suggestions = countryState.suggestions.filter(c => c.tmdbId !== id);
+    renderCountryModal();
+    fetchCountrySuggestions();
+  } catch (e) {
+    console.warn("[media] add country suggestion failed", e);
+    setMediaSub("No se pudo crear la ficha", 2400);
+  }
+}
+
+function openCountryModal({ code, label }) {
+  const modal = ensureCountryModal();
+  const normalized = normalizeCountry(code || label || "");
+  countryState.code = normalized.code || code || "";
+  countryState.label = countryLabelFromCode(countryState.code, normalized.es || normalized.en || label || "");
+  countryState.total = null;
+  countryState.suggestions = [];
+  countryState.page = 1;
+  countryState.totalPages = 0;
+  renderCountryModal();
+  modal.classList.remove("hidden");
+  fetchCountryTotal();
+  fetchCountrySuggestions();
 }
 /* ------------------------- Refresh ------------------------- */
 function refreshChartsMaybe() {

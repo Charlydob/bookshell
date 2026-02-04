@@ -415,8 +415,18 @@ function buildShelfRowsByWidth(items, makeSpine, hostEl, rowClass = "books-shelf
 
 
 // === Navegación ===
+const deepLinkDebug =
+  new URLSearchParams(location.search).has("debugDeepLink") ||
+  window.__bookshellDebugDeepLink;
+const logNav = (label, payload = {}) => {
+  if (!deepLinkDebug) return;
+  const stack = new Error().stack;
+  console.log("[NAV]", label, payload, stack);
+};
+
 const activateView = (viewId, { persist = true, scroll = true } = {}) => {
   if (!viewId || !document.getElementById(viewId)) return;
+  logNav("activateView", { viewId, persist, scroll });
   document.querySelectorAll(".view").forEach(v => v.classList.remove("view-active"));
   document.getElementById(viewId).classList.add("view-active");
 
@@ -3006,6 +3016,10 @@ if ($calViewMode) {
     url.searchParams.delete("tab");
     url.searchParams.delete("start");
     url.searchParams.delete("stop");
+    logNav("replaceState shortcutDeepLink cleanup", {
+      search: url.searchParams.toString(),
+      hash: url.hash
+    });
     history.replaceState(
       {},
       "",

@@ -195,7 +195,8 @@ if ($viewMain) {
     const setView = window.__bookshellSetView || window.showView;
     if (typeof setView !== "function") return;
 
-    const prev = document.querySelector(".nav-btn.nav-btn-active")?.dataset?.view || "view-main";
+    const activeBefore = document.querySelector(".view.view-active")?.id || "";
+    const returnView = activeBefore || "view-main";
     try {
       setView(conf.view);
       await nextFrame();
@@ -208,14 +209,11 @@ if ($viewMain) {
     } catch (_) {}
 
     try {
-      setView("view-main");
+      if (returnView && returnView !== conf.view) {
+        setView(returnView);
+      }
       await nextFrame();
     } catch (_) {}
-
-    // volver como estaba (si no estabas en Inicio por alguna razón)
-    if (prev && prev !== "view-main" && !isDashboardActive()) {
-      try { setView(prev); } catch (_) {}
-    }
   }
 
   function resizeMaybe(el) {

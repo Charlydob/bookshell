@@ -2518,21 +2518,28 @@ Crear “<span id="gym-create-cta-text"></span>”
     showOverlay("UnhandledPromiseRejection: " + msg);
   });
 
+  const deepLinkParams = new URLSearchParams(location.search);
+  const deepLinkDebug = deepLinkParams.has("debugDeepLink") || window.__bookshellDebugDeepLink;
+  if (deepLinkDebug) window.__bookshellDebugDeepLink = true;
+  const logDeepLink = (...args) => {
+    if (deepLinkDebug) console.log("[BOOT][DeepLink]", ...args);
+  };
+  const logNav = (label, payload = {}) => {
+    if (!deepLinkDebug) return;
+    const stack = new Error().stack;
+    console.log("[NAV]", label, payload, stack);
+  };
+
   const setView = (viewId) => {
     const views = document.querySelectorAll(".view");
     if (!views.length) return;
+    logNav("setView", { viewId, from: document.querySelector(".view.view-active")?.id || "" });
     views.forEach(v => v.classList.toggle("view-active", v.id === viewId));
     document.querySelectorAll(".bottom-nav .nav-btn").forEach(b => {
       b.classList.toggle("nav-btn-active", b.dataset.view === viewId);
       if (b.dataset.view === viewId) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current");
     });
 
-  };
-
-  const deepLinkParams = new URLSearchParams(location.search);
-  const deepLinkDebug = deepLinkParams.has("debugDeepLink") || window.__bookshellDebugDeepLink;
-  const logDeepLink = (...args) => {
-    if (deepLinkDebug) console.log("[BOOT][DeepLink]", ...args);
   };
   const addLinkDeepLink = deepLinkParams.get("addLink") === "1";
   const deepLinkView = (() => {
@@ -2547,8 +2554,10 @@ Crear “<span id="gym-create-cta-text"></span>”
     window.__bookshellAddLinkDeepLink = true;
     if (!location.hash) {
       try {
+        logNav("replaceState addLink hash", { to: "#view-links-new" });
         history.replaceState(null, "", `${location.pathname}${location.search}#view-links-new`);
       } catch {
+        logNav("location.hash addLink", { to: "#view-links-new" });
         location.hash = "#view-links-new";
       }
     }
@@ -2558,6 +2567,7 @@ Crear “<span id="gym-create-cta-text"></span>”
     const nextHash = `#${deepLinkView}`;
     if (location.hash !== nextHash) {
       try {
+        logNav("replaceState deepLinkView", { to: nextHash });
         history.replaceState(null, "", `${location.pathname}${location.search}${nextHash}`);
       } catch {}
     }
@@ -2579,6 +2589,7 @@ Crear “<span id="gym-create-cta-text"></span>”
 const applyInitialView = () => {
   const hash = (location.hash || "").replace("#", "");
   const target = hash && document.getElementById(hash) ? hash : "";
+  logNav("applyInitialView", { hash, target });
   if (target) setView(target);
 };
 

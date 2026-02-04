@@ -7,6 +7,7 @@
 
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { TMDB_API_KEY, TMDB_READ_TOKEN } from "../config/tmdb.js";
 
 /* ------------------------- Firebase ------------------------- */
 const firebaseConfig = {
@@ -24,6 +25,7 @@ const db = getDatabase(app);
 
 const MEDIA_PATH = "media";
 const LS_KEY = "bookshell.media.v3";
+const TMDB_CACHE_KEY = "bookshell.media.tmdb.v1";
 const ROW_H = 46;
 
 let items = [];
@@ -40,7 +42,11 @@ const state = {
   laura: "all",         // all|with|without
   range: "total",       // day|week|month|year|total  (solo afecta a 'watched')
   chart: "type",        // type|genre|country|actor|director|year
-  view: "list"          // list|charts|map
+  view: "list",         // list|charts|map
+  rewatchOnly: false,
+  rewatchMin: 0,
+  watchedFrom: "",
+  watchedTo: ""
 };
 
 function log(...a) { try { console.debug("[media]", ...a); } catch (_) {} }
@@ -81,6 +87,14 @@ function startOfYear(ts = nowTs()) {
   d.setHours(0, 0, 0, 0);
   d.setMonth(0, 1);
   return d.getTime();
+}
+function endOfDay(ts = nowTs()) {
+  const d = new Date(ts);
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
+}
+function isoDay(ts = nowTs()) {
+  return new Date(startOfDay(ts)).toISOString().slice(0, 10);
 }
 function rangeStartTs() {
   const t = nowTs();
@@ -215,6 +229,108 @@ function populateCountryDatalist() {
   dl.appendChild(frag);
 }
 
+/* ------------------------- TMDb ------------------------- */
+const TMDB_BASE = "https://api.themoviedb.org/3";
+let tmdbCache = loadTmdbCache();
+
+function loadTmdbCache() {
+  try {
+    const raw = localStorage.getItem(TMDB_CACHE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveTmdbCache() {
+  try {
+    localStorage.setItem(TMDB_CACHE_KEY, JSON.stringify(tmdbCache || {}));
+  } catch (_) {}
+}
+
+function tmdbKey(title, year, type) {
+  return `${normKey(title)}|${Number(year) || 0}|${type || "movie"}`;
+}
+
+function tmdbType(type) {
+  return (type === "series" || type === "anime") ? "tv" : "movie";
+}
+
+function tmdbEnabled() {
+  return !!TMDB_API_KEY || !!TMDB_READ_TOKEN;
+}
+
+async function tmdbFetch(path, params = {}) {
+  const useKey = !!TMDB_API_KEY;
+  const url = new URL(`${TMDB_BASE}${path}`);
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
+  });
+  if (useKey) url.searchParams.set("api_key", TMDB_API_KEY);
+
+  const res = await fetch(url.toString(), {
+    headers: (!useKey && TMDB_READ_TOKEN) ? { Authorization: `Bearer ${TMDB_READ_TOKEN}` } : {}
+  });
+
+  if ((res.status === 401 || res.status === 403) && useKey && TMDB_READ_TOKEN) {
+    const retry = new URL(`${TMDB_BASE}${path}`);
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") retry.searchParams.set(k, String(v));
+    });
+    const res2 = await fetch(retry.toString(), {
+      headers: { Authorization: `Bearer ${TMDB_READ_TOKEN}` }
+    });
+    if (!res2.ok) throw new Error(`TMDB ${res2.status}`);
+    return res2.json();
+  }
+
+  if (!res.ok) throw new Error(`TMDB ${res.status}`);
+  return res.json();
+}
+
+async function tmdbSearch(title, year, type) {
+  const endpoint = tmdbType(type) === "tv" ? "/search/tv" : "/search/movie";
+  const params = {
+    query: title,
+    language: "es-ES"
+  };
+  if (year) {
+    if (endpoint === "/search/movie") params.year = year;
+    else params.first_air_date_year = year;
+  }
+  const data = await tmdbFetch(endpoint, params);
+  const results = Array.isArray(data?.results) ? data.results : [];
+  return results.slice(0, 10).map(r => ({
+    id: r.id,
+    title: r.title || r.name || "",
+    year: Number(String(r.release_date || r.first_air_date || "").slice(0, 4)) || 0
+  }));
+}
+
+async function tmdbFetchDetails(id, type) {
+  const kind = tmdbType(type);
+  const [detail, credits] = await Promise.all([
+    tmdbFetch(`/${kind}/${id}`, { language: "es-ES" }),
+    tmdbFetch(`/${kind}/${id}/credits`, { language: "es-ES" })
+  ]);
+
+  const genres = Array.isArray(detail?.genres) ? detail.genres.map(g => g?.name).filter(Boolean) : [];
+  const crew = Array.isArray(credits?.crew) ? credits.crew : [];
+  const cast = Array.isArray(credits?.cast) ? credits.cast : [];
+
+  const director = crew.find(c => c?.job === "Director")?.name || "";
+  const castTop = cast.sort((a, b) => (a?.order ?? 999) - (b?.order ?? 999)).slice(0, 10).map(c => c?.name).filter(Boolean);
+
+  let country = "";
+  if (kind === "movie") {
+    country = detail?.production_countries?.[0]?.iso_3166_1 || "";
+  } else {
+    country = detail?.origin_country?.[0] || "";
+  }
+
+  return { director, cast: castTop, genres, country };
+}
+
 /* ------------------------- Cache + Firebase merge ------------------------- */
 function firebasePath(id = "") {
   return id ? `${MEDIA_PATH}/${id}` : MEDIA_PATH;
@@ -330,6 +446,12 @@ function byUpdatedDesc(a, b) {
   return (Number(b?.updatedAt) || 0) - (Number(a?.updatedAt) || 0);
 }
 
+function normalizeWatchDates(raw, watchedAt) {
+  let dates = Array.isArray(raw) ? raw.map(v => String(v || "")).filter(Boolean) : [];
+  if (!dates.length && watchedAt) dates = [isoDay(watchedAt)];
+  return dates;
+}
+
 function normalizeItem(it) {
   if (!it || typeof it !== "object") return it;
 
@@ -347,6 +469,8 @@ function normalizeItem(it) {
   out.watchlist = !!out.watchlist;
 
   out.year = Number(out.year) || 0;
+
+  out.watchDates = normalizeWatchDates(out.watchDates, out.watchedAt);
 
   // país: guardamos label ES + EN (para mapa)
   const raw = out.countryCode || out.countryEn || out.countryLabel || out.country || "";
@@ -370,8 +494,16 @@ function normalizeItem(it) {
   out.updatedAt = Number(out.updatedAt) || t;
 
   // watchedAt solo si visto
-  if (!out.watchlist) out.watchedAt = Number(out.watchedAt) || out.updatedAt || t;
-  else out.watchedAt = Number(out.watchedAt) || 0;
+  const parsedDates = out.watchDates.map(d => Date.parse(d)).filter(n => Number.isFinite(n));
+  const lastTs = parsedDates.length ? Math.max(...parsedDates) : 0;
+  out.lastWatchedTs = lastTs || 0;
+  out.lastWatched = lastTs ? isoDay(lastTs) : "";
+  out.rewatchCount = Math.max(0, out.watchDates.length - 1);
+
+  if (out.watchDates.length && out.watchlist) out.watchlist = false;
+
+  if (!out.watchlist) out.watchedAt = lastTs || Number(out.watchedAt) || out.updatedAt || t;
+  else out.watchedAt = 0;
 
   return out;
 }
@@ -394,6 +526,22 @@ function applyFilters() {
     // rango: solo vistos
     if (!it.watchlist && !inRangeWatched(it)) return false;
 
+    if (state.rewatchOnly && (Number(it.rewatchCount) || 0) < 1) return false;
+    if (state.rewatchMin && (Number(it.rewatchCount) || 0) < Number(state.rewatchMin || 0)) return false;
+
+    if (state.watchedFrom || state.watchedTo) {
+      const lastTs = Number(it.lastWatchedTs) || 0;
+      if (!lastTs) return false;
+      if (state.watchedFrom) {
+        const fTs = Date.parse(state.watchedFrom);
+        if (Number.isFinite(fTs) && lastTs < startOfDay(fTs)) return false;
+      }
+      if (state.watchedTo) {
+        const tTs = Date.parse(state.watchedTo);
+        if (Number.isFinite(tTs) && lastTs > endOfDay(tTs)) return false;
+      }
+    }
+
     if (!q) return true;
 
     const hay = [
@@ -415,6 +563,62 @@ function applyFilters() {
 
 /* ------------------------- DOM ------------------------- */
 function qs(id) { return document.getElementById(id); }
+
+let addWatchDates = [];
+let addAutofillBusy = false;
+
+function updateChipPreview(inputEl, previewEl) {
+  if (!inputEl || !previewEl) return;
+  const items = parseCSV(inputEl.value);
+  previewEl.innerHTML = items.map(v => `<span class="media-chip">${escHtml(v)}</span>`).join("");
+}
+
+function updateAddWatchMeta() {
+  if (!els.addWatchMeta) return;
+  if (els.addWatchlist?.checked) {
+    els.addWatchMeta.textContent = "Se guardará en watchlist.";
+    return;
+  }
+  const count = addWatchDates.length;
+  if (!count) {
+    els.addWatchMeta.textContent = "Se guardará como visto hoy.";
+    return;
+  }
+  const last = addWatchDates[addWatchDates.length - 1];
+  const rewatches = Math.max(0, count - 1);
+  els.addWatchMeta.textContent = `Vistas: ${count} · Rewatches: ${rewatches} · Último: ${last}`;
+}
+
+function updateEditWatchMeta(it) {
+  const meta = qs("media-edit-watch-meta");
+  if (!meta) return;
+  if (it?.watchlist) {
+    meta.textContent = "En watchlist.";
+    return;
+  }
+  const dates = Array.isArray(it?.watchDates) ? it.watchDates : [];
+  const count = dates.length;
+  if (!count) {
+    meta.textContent = "Sin registros.";
+    return;
+  }
+  const last = dates[dates.length - 1];
+  const rewatches = Math.max(0, count - 1);
+  meta.textContent = `Vistas: ${count} · Rewatches: ${rewatches} · Último: ${last}`;
+}
+
+function resetAddModalState() {
+  addWatchDates = [];
+  addAutofillBusy = false;
+  if (els.addAutofillResults) els.addAutofillResults.innerHTML = "";
+  ["media-genres", "media-director", "media-cast", "media-country"].forEach(id => {
+    const el = qs(id);
+    if (el) delete el.dataset.userEdited;
+  });
+  updateAddWatchMeta();
+  updateChipPreview(els.addGenres, els.addGenresPreview);
+  updateChipPreview(els.addCast, els.addCastPreview);
+}
 
 const els = {
   view: null,
@@ -465,7 +669,13 @@ const els = {
   addLaura: null,
   addSeason: null,
   addEpisode: null,
-  addSeasonWrap: null
+  addSeasonWrap: null,
+  addAutofillBtn: null,
+  addAutofillResults: null,
+  addWatchToday: null,
+  addWatchMeta: null,
+  addGenresPreview: null,
+  addCastPreview: null
 };
 
 function bindDom() {
@@ -516,6 +726,12 @@ function bindDom() {
   els.addSeason = qs("media-season");
   els.addEpisode = qs("media-episode");
   els.addSeasonWrap = qs("media-seasonep");
+  els.addAutofillBtn = qs("media-autofill-btn");
+  els.addAutofillResults = qs("media-autofill-results");
+  els.addWatchToday = qs("media-add-watchtoday");
+  els.addWatchMeta = qs("media-add-watch-meta");
+  els.addGenresPreview = qs("media-add-genres-preview");
+  els.addCastPreview = qs("media-add-cast-preview");
 
   // country datalist
   populateCountryDatalist();
@@ -566,10 +782,86 @@ function bindDom() {
   function syncAddSeasonEp() {
     const t = els.addType?.value || "movie";
     if (!els.addSeasonWrap) return;
-    els.addSeasonWrap.style.display = (t === "series" || t === "anime") ? "" : "none";
+    const show = (t === "series" || t === "anime");
+    els.addSeasonWrap.style.display = show ? "" : "none";
+    const section = qs("media-add-progress-section");
+    if (section) section.style.display = show ? "" : "none";
   }
   els.addType?.addEventListener("change", syncAddSeasonEp);
   syncAddSeasonEp();
+
+  const addEditFields = [els.addGenres, els.addDirector, els.addCast, els.addCountry];
+  addEditFields.forEach((el) => {
+    el?.addEventListener("input", () => {
+      if (addAutofillBusy) return;
+      if (el) el.dataset.userEdited = "1";
+    });
+  });
+  els.addGenres?.addEventListener("input", () => updateChipPreview(els.addGenres, els.addGenresPreview));
+  els.addCast?.addEventListener("input", () => updateChipPreview(els.addCast, els.addCastPreview));
+
+  function updateAutofillButton() {
+    const ok = !!norm(els.addTitle?.value) && !!Number(els.addYear?.value) && !!(els.addType?.value || "");
+    if (els.addAutofillBtn) els.addAutofillBtn.disabled = !ok;
+    if (els.addAutofillResults) els.addAutofillResults.innerHTML = "";
+  }
+  ["input", "change"].forEach(evt => {
+    els.addTitle?.addEventListener(evt, updateAutofillButton);
+    els.addYear?.addEventListener(evt, updateAutofillButton);
+    els.addType?.addEventListener(evt, updateAutofillButton);
+  });
+
+  els.addToggle?.addEventListener("change", () => {
+    if (els.addToggle?.checked) resetAddModalState();
+  });
+
+  els.addWatchlist?.addEventListener("change", () => {
+    updateAddWatchMeta();
+  });
+
+  els.addWatchToday?.addEventListener("click", () => {
+    if (els.addWatchlist?.checked) els.addWatchlist.checked = false;
+    addWatchDates.push(isoDay());
+    updateAddWatchMeta();
+  });
+
+  els.addAutofillBtn?.addEventListener("click", async () => {
+    const title = norm(els.addTitle?.value);
+    const year = Number(els.addYear?.value) || 0;
+    const type = els.addType?.value || "movie";
+    if (!title || !year || !tmdbEnabled()) {
+      setMediaSub("No se pudo autocompletar", 2400);
+      return;
+    }
+    try {
+      addAutofillBusy = true;
+      await runTmdbAutofill({ title, year, type });
+    } catch (e) {
+      console.warn("[media] tmdb autocomplete failed", e);
+      setMediaSub("No se pudo autocompletar", 2400);
+    } finally {
+      addAutofillBusy = false;
+    }
+  });
+
+  els.addAutofillResults?.addEventListener("click", async (e) => {
+    const btn = e.target?.closest?.("[data-action='autofill-select']");
+    if (!btn) return;
+    const id = Number(btn.dataset.id) || 0;
+    const key = els.addAutofillResults?.dataset?.key;
+    const type = els.addAutofillResults?.dataset?.type || "movie";
+    if (!id || !key) return;
+    try {
+      addAutofillBusy = true;
+      await selectTmdbResult(key, id, type);
+    } catch (err) {
+      console.warn("[media] tmdb select failed", err);
+      setMediaSub("No se pudo autocompletar", 2400);
+    } finally {
+      addAutofillBusy = false;
+    }
+  });
+  updateAutofillButton();
 
   // add modal: save
   els.addConfirm?.addEventListener("click", () => {
@@ -592,6 +884,7 @@ function bindDom() {
 
     const season = Math.max(1, Number(els.addSeason?.value) || 1);
     const episode = Math.max(1, Number(els.addEpisode?.value) || 1);
+    const watchDates = watchlist ? [] : (addWatchDates.length ? addWatchDates.slice() : [isoDay()]);
 
     addItem({
       title,
@@ -607,7 +900,8 @@ function bindDom() {
       watchlist,
       withLaura,
       season,
-      episode
+      episode,
+      watchDates
     });
 
     // reset (suave)
@@ -622,6 +916,8 @@ function bindDom() {
     if (els.addLaura) els.addLaura.checked = false;
     if (els.addSeason) els.addSeason.value = "1";
     if (els.addEpisode) els.addEpisode.value = "1";
+    if (els.addAutofillResults) els.addAutofillResults.innerHTML = "";
+    resetAddModalState();
 
     if (els.addToggle) els.addToggle.checked = false;
   });
@@ -647,6 +943,95 @@ function bindDom() {
   mo.observe(els.view, { attributes: true, attributeFilter: ["class", "style"] });
 
   return true;
+}
+
+async function runTmdbAutofill({ title, year, type }) {
+  if (!els.addAutofillResults) return;
+  const key = tmdbKey(title, year, type);
+  const entry = tmdbCache[key] || { results: [], details: {}, selectedId: null };
+
+  if (entry.selectedId && entry.details?.[entry.selectedId]) {
+    applyAutofillData(entry.details[entry.selectedId]);
+    return;
+  }
+
+  let results = entry.results || [];
+  if (!results.length) {
+    results = await tmdbSearch(title, year, type);
+    entry.results = results;
+    tmdbCache[key] = entry;
+    saveTmdbCache();
+  }
+
+  if (!results.length) {
+    setMediaSub("No se pudo autocompletar", 2400);
+    return;
+  }
+
+  if (results.length === 1) {
+    await selectTmdbResult(key, results[0].id, type);
+    return;
+  }
+
+  renderAutofillResults(key, type, results.slice(0, 5));
+}
+
+function renderAutofillResults(key, type, results) {
+  if (!els.addAutofillResults) return;
+  els.addAutofillResults.dataset.key = key;
+  els.addAutofillResults.dataset.type = type;
+  els.addAutofillResults.innerHTML = `
+    <div class="media-autocomplete-card">
+      <div class="media-autocomplete-title">Selecciona un resultado</div>
+      <div class="media-autocomplete-actions">
+        ${results.map(r => `
+          <button class="btn ghost btn-compact" data-action="autofill-select" data-id="${r.id}">
+            ${escHtml(r.title || "—")}${r.year ? ` (${r.year})` : ""}
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+async function selectTmdbResult(key, id, type) {
+  const entry = tmdbCache[key] || { results: [], details: {}, selectedId: null };
+  if (entry.details?.[id]) {
+    entry.selectedId = id;
+    tmdbCache[key] = entry;
+    saveTmdbCache();
+    applyAutofillData(entry.details[id]);
+    if (els.addAutofillResults) els.addAutofillResults.innerHTML = "";
+    return;
+  }
+
+  const details = await tmdbFetchDetails(id, type);
+  entry.details = entry.details || {};
+  entry.details[id] = details;
+  entry.selectedId = id;
+  tmdbCache[key] = entry;
+  saveTmdbCache();
+  applyAutofillData(details);
+  if (els.addAutofillResults) els.addAutofillResults.innerHTML = "";
+}
+
+function applyAutofillData(details) {
+  if (!details) return;
+  if (els.addGenres && !els.addGenres.dataset.userEdited) {
+    els.addGenres.value = (details.genres || []).join(", ");
+  }
+  if (els.addDirector && !els.addDirector.dataset.userEdited) {
+    els.addDirector.value = details.director || "";
+  }
+  if (els.addCast && !els.addCast.dataset.userEdited) {
+    els.addCast.value = (details.cast || []).join(", ");
+  }
+  if (els.addCountry && !els.addCountry.dataset.userEdited) {
+    const cc = normalizeCountry(details.country || "");
+    els.addCountry.value = cc.es || details.country || "";
+  }
+  updateChipPreview(els.addGenres, els.addGenresPreview);
+  updateChipPreview(els.addCast, els.addCastPreview);
 }
 
 function isActiveView() {
@@ -710,6 +1095,31 @@ function ensureInlineFilters() {
           </div>
         </div>
 
+        <div class="media-inline-row">
+          <label class="media-mini">
+            <span>Rewatches</span>
+            <select id="media-filter-rewatch">
+              <option value="all">Todos</option>
+              <option value="only">Solo rewatches</option>
+            </select>
+          </label>
+
+          <label class="media-mini">
+            <span>Rewatch ≥</span>
+            <input id="media-filter-rewatch-min" type="number" min="0" placeholder="0" />
+          </label>
+
+          <label class="media-mini">
+            <span>Visto desde</span>
+            <input id="media-filter-watched-from" type="date" />
+          </label>
+
+          <label class="media-mini">
+            <span>Visto hasta</span>
+            <input id="media-filter-watched-to" type="date" />
+          </label>
+        </div>
+
 
         <div class="media-inline-row media-import-row">
           <button class="btn ghost btn-compact" id="media-import-csv-btn" type="button">Importar CSV (Letterboxd)</button>
@@ -723,10 +1133,21 @@ function ensureInlineFilters() {
 
   const $status = qs("media-filter-status");
   const $laura = qs("media-filter-laura");
+  const $rewatch = qs("media-filter-rewatch");
+  const $rewatchMin = qs("media-filter-rewatch-min");
+  const $from = qs("media-filter-watched-from");
+  const $to = qs("media-filter-watched-to");
   const rangeBtns = Array.from(wrap.querySelectorAll(".media-range-btn"));
 
   if ($status) $status.addEventListener("change", () => { state.status = $status.value || "all"; refresh(); });
   if ($laura) $laura.addEventListener("change", () => { state.laura = $laura.value || "all"; refresh(); });
+  if ($rewatch) $rewatch.addEventListener("change", () => { state.rewatchOnly = ($rewatch.value === "only"); refresh(); });
+  if ($rewatchMin) $rewatchMin.addEventListener("input", () => {
+    state.rewatchMin = Number($rewatchMin.value) || 0;
+    refresh();
+  });
+  if ($from) $from.addEventListener("change", () => { state.watchedFrom = $from.value || ""; refresh(); });
+  if ($to) $to.addEventListener("change", () => { state.watchedTo = $to.value || ""; refresh(); });
 
   rangeBtns.forEach(b => b.addEventListener("click", () => {
     state.range = b.dataset.range || "total";
@@ -867,7 +1288,10 @@ function importLetterboxdRows(rows) {
       if (ex0 && !Number(ex0.year)) {
         ex0.year = year;
         ex0.updatedAt = baseNow + i;
-        if (watchedAt && !ex0.watchlist) ex0.watchedAt = watchedAt;
+        if (watchedAt && !ex0.watchlist) {
+          ex0.watchDates = normalizeWatchDates(ex0.watchDates, watchedAt);
+          ex0.watchedAt = watchedAt;
+        }
         Object.assign(ex0, normalizeItem(ex0));
         byKey.delete(k0);
         byKey.set(k, ex0);
@@ -893,6 +1317,7 @@ function importLetterboxdRows(rows) {
       withLaura: false,
       season: 0,
       episode: 0,
+      watchDates: normalizeWatchDates([], watchedAt || baseNow),
       watchedAt: watchedAt || baseNow,
       createdAt: baseNow + i,
       updatedAt: baseNow + i
@@ -978,6 +1403,8 @@ function bindTypePills() {
 function addItem(patch) {
   const now = nowTs();
   const type = (patch.type === "series" || patch.type === "anime") ? patch.type : "movie";
+  const watchlist = !!patch.watchlist;
+  const watchDates = watchlist ? [] : normalizeWatchDates(patch.watchDates, now);
 
   const it = normalizeItem({
     id: uid(),
@@ -991,11 +1418,12 @@ function addItem(patch) {
     countryCode: patch.countryCode || "",
     countryEn: patch.countryEn || "",
     countryLabel: patch.countryLabel || "",
-    watchlist: !!patch.watchlist,
+    watchlist,
     withLaura: !!patch.withLaura,
     season: (type === "series" || type === "anime") ? (Number(patch.season) || 1) : 0,
     episode: (type === "series" || type === "anime") ? (Number(patch.episode) || 1) : 0,
-    watchedAt: (!!patch.watchlist ? 0 : now),
+    watchDates,
+    watchedAt: (watchlist ? 0 : now),
     createdAt: now,
     updatedAt: now
   });
@@ -1014,7 +1442,12 @@ function updateItem(id, patch) {
   const it = findItem(id);
   if (!it) return;
 
-  Object.assign(it, patch || {});
+  const next = { ...(patch || {}) };
+  if (next.watchlist) {
+    next.watchDates = [];
+    next.watchedAt = 0;
+  }
+  Object.assign(it, next);
   it.updatedAt = nowTs();
   const fixed = normalizeItem(it);
   Object.assign(it, fixed);
@@ -1036,6 +1469,7 @@ function deleteItem(id) {
 
 /* ------------------------- Virtual list ------------------------- */
 let pool = [];
+let openProgressId = null;
 
 function ensurePool(n) {
   while (pool.length < n) {
@@ -1047,6 +1481,15 @@ function ensurePool(n) {
         <div class="media-row-sub"></div>
       </div>
       <div class="media-row-tools">
+        <div class="media-row-progress">
+          <button class="media-progress-chip" data-action="progress" type="button">1x01</button>
+          <div class="media-progress-stepper" data-role="progress-stepper">
+            <button class="media-progress-btn" data-action="progress-dec" type="button">−</button>
+            <div class="media-progress-label">Ep <span data-role="progress-ep">1</span></div>
+            <button class="media-progress-btn" data-action="progress-inc" type="button">+</button>
+            <button class="btn ghost btn-compact media-progress-plus" data-action="progress-plus" type="button">+1</button>
+          </div>
+        </div>
         <div class="media-rating" data-action="rate" tabindex="0" role="slider"
              aria-valuemin="0" aria-valuemax="5" aria-valuenow="0">☆☆☆☆☆</div>
         <button class="media-icon" data-action="laura" title="Laura">L</button>
@@ -1073,16 +1516,16 @@ function subline(it) {
 
   if (it.countryLabel) parts.push(it.countryLabel);
 
-  if ((it.type === "series" || it.type === "anime") && (it.season || it.episode)) {
-    const s = Number(it.season) || 1;
-    const e = Number(it.episode) || 1;
-    parts.push(`S${s}E${e}`);
-  }
-
   if (it.watchlist) parts.push("Watchlist");
   if (it.withLaura) parts.push("Laura");
 
   return parts.length ? parts.join(" · ") : "—";
+}
+
+function formatProgress(it) {
+  const s = Math.max(1, Number(it?.season) || 1);
+  const e = Math.max(1, Number(it?.episode) || 1);
+  return `${s}x${String(e).padStart(2, "0")}`;
 }
 
 function renderVirtual() {
@@ -1126,6 +1569,19 @@ function renderVirtual() {
     row.querySelector(".media-row-title").textContent = it.title || "—";
     row.querySelector(".media-row-sub").textContent = subline(it);
 
+    const progressWrap = row.querySelector(".media-row-progress");
+    if (progressWrap) {
+      const showProgress = (it.type === "series" || it.type === "anime");
+      progressWrap.style.display = showProgress ? "" : "none";
+      row.classList.toggle("is-progress-open", showProgress && String(it.id) === String(openProgressId));
+      if (showProgress) {
+        const chip = progressWrap.querySelector(".media-progress-chip");
+        const epLabel = progressWrap.querySelector("[data-role='progress-ep']");
+        if (chip) chip.textContent = formatProgress(it);
+        if (epLabel) epLabel.textContent = String(Math.max(1, Number(it.episode) || 1));
+      }
+    }
+
     const rEl = row.querySelector(".media-rating");
     rEl.textContent = stars(it.rating);
     rEl.setAttribute("aria-valuenow", String(it.rating || 0));
@@ -1163,6 +1619,24 @@ function bindRowInteractions() {
 
     if (act === "rate") {
       // handled by pointer logic
+      return;
+    }
+
+    if (act === "progress") {
+      const it = findItem(id);
+      if (!it || (it.type !== "series" && it.type !== "anime")) return;
+      openProgressId = (String(openProgressId) === String(id)) ? null : String(id);
+      renderVirtual();
+      return;
+    }
+
+    if (act === "progress-inc" || act === "progress-dec" || act === "progress-plus") {
+      const it = findItem(id);
+      if (!it || (it.type !== "series" && it.type !== "anime")) return;
+      const delta = (act === "progress-dec") ? -1 : 1;
+      const next = Math.max(1, Number(it.episode || 1) + delta);
+      updateItem(id, { episode: next, season: Math.max(1, Number(it.season) || 1) });
+      if (act === "progress-plus") setMediaSub(`+1 episodio · ${formatProgress({ ...it, episode: next })}`, 1600);
       return;
     }
   });
@@ -1567,23 +2041,91 @@ function ensureEditModal() {
       </div>
 
       <div class="media-modal-body">
-        <label class="media-modal-field">
-          <span>Título</span>
-          <input id="media-edit-title" class="media-input" autocomplete="off" />
-        </label>
-
-        <div class="media-modal-grid">
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">Meta</div>
           <label class="media-modal-field">
-            <span>Tipo</span>
-            <select id="media-edit-type" class="media-input">
-              <option value="movie">Peli</option>
-              <option value="series">Serie</option>
-              <option value="anime">Anime</option>
-            </select>
+            <span>Título</span>
+            <input id="media-edit-title" class="media-input" autocomplete="off" />
           </label>
 
-          <div class="media-modal-field">
-            <span>Rating</span>
+          <div class="media-modal-grid media-modal-grid--meta">
+            <label class="media-modal-field">
+              <span>Tipo</span>
+              <select id="media-edit-type" class="media-input">
+                <option value="movie">Peli</option>
+                <option value="series">Serie</option>
+                <option value="anime">Anime</option>
+              </select>
+            </label>
+
+            <label class="media-modal-field">
+              <span>Año</span>
+              <input id="media-edit-year" class="media-input" type="number" inputmode="numeric" placeholder="Ej: 2017" />
+            </label>
+
+            <label class="media-modal-field">
+              <span>Origen</span>
+              <input id="media-edit-country" class="media-input" list="country-options" placeholder="País" autocomplete="off" />
+            </label>
+          </div>
+        </section>
+
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">Detalles</div>
+
+          <details class="media-modal-accordion" open>
+            <summary>Géneros</summary>
+            <div class="media-modal-accordion-body">
+              <input id="media-edit-genres" class="media-input" placeholder="Acción, Drama…" autocomplete="off" />
+              <div class="media-chip-preview" id="media-edit-genres-preview"></div>
+            </div>
+          </details>
+
+          <details class="media-modal-accordion">
+            <summary>Director</summary>
+            <div class="media-modal-accordion-body">
+              <input id="media-edit-director" class="media-input" placeholder="Nombre" autocomplete="off" />
+            </div>
+          </details>
+
+          <details class="media-modal-accordion">
+            <summary>Reparto</summary>
+            <div class="media-modal-accordion-body">
+              <input id="media-edit-cast" class="media-input" placeholder="Actores…" autocomplete="off" />
+              <div class="media-chip-preview" id="media-edit-cast-preview"></div>
+            </div>
+          </details>
+        </section>
+
+        <section class="media-modal-section" id="media-edit-progress-section">
+          <div class="media-modal-section-title">Progreso</div>
+          <div class="media-modal-grid" id="media-edit-seasonep">
+            <label class="media-modal-field">
+              <span>Temporada</span>
+              <input id="media-edit-season" class="media-input" type="number" inputmode="numeric" />
+            </label>
+            <label class="media-modal-field">
+              <span>Capítulo</span>
+              <input id="media-edit-episode" class="media-input" type="number" inputmode="numeric" />
+            </label>
+          </div>
+        </section>
+
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">Vistas</div>
+          <div class="media-modal-toggles">
+            <label class="media-check">
+              <input id="media-edit-watchlist" type="checkbox" />
+              <span>Watchlist</span>
+            </label>
+            <label class="media-check">
+              <input id="media-edit-laura" type="checkbox" />
+              <span>Laura</span>
+            </label>
+          </div>
+
+          <div class="media-stars-wrap">
+            <span class="media-stars-title">Rating</span>
             <input id="media-edit-rating" type="hidden" value="0" />
             <div class="media-stars" id="media-edit-stars" tabindex="0" role="slider"
                  aria-label="Rating" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0">
@@ -1595,56 +2137,12 @@ function ensureEditModal() {
               <div class="media-stars-meta" id="media-edit-rating-label">0/5</div>
             </div>
           </div>
-        </div>
 
-        <div class="media-modal-grid">
-          <label class="media-modal-field">
-            <span>Año</span>
-            <input id="media-edit-year" class="media-input" type="number" inputmode="numeric" placeholder="Ej: 2017" />
-          </label>
-
-          <label class="media-modal-field">
-            <span>Origen</span>
-            <input id="media-edit-country" class="media-input" list="country-options" placeholder="País" autocomplete="off" />
-          </label>
-        </div>
-
-        <label class="media-modal-field">
-          <span>Géneros (coma)</span>
-          <input id="media-edit-genres" class="media-input" placeholder="Acción, Drama…" autocomplete="off" />
-        </label>
-
-        <label class="media-modal-field">
-          <span>Director</span>
-          <input id="media-edit-director" class="media-input" placeholder="Nombre" autocomplete="off" />
-        </label>
-
-        <label class="media-modal-field">
-          <span>Reparto (coma)</span>
-          <input id="media-edit-cast" class="media-input" placeholder="Actores…" autocomplete="off" />
-        </label>
-
-        <div class="media-modal-toggles">
-          <label class="media-toggle">
-            <input id="media-edit-watchlist" type="checkbox" />
-            <span>Watchlist</span>
-          </label>
-          <label class="media-toggle">
-            <input id="media-edit-laura" type="checkbox" />
-            <span>Laura</span>
-          </label>
-        </div>
-
-        <div class="media-modal-grid" id="media-edit-seasonep">
-          <label class="media-modal-field">
-            <span>Temporada</span>
-            <input id="media-edit-season" class="media-input" type="number" inputmode="numeric" />
-          </label>
-          <label class="media-modal-field">
-            <span>Capítulo</span>
-            <input id="media-edit-episode" class="media-input" type="number" inputmode="numeric" />
-          </label>
-        </div>
+          <div class="media-watch-row">
+            <button class="btn ghost btn-compact" id="media-edit-watchtoday" type="button">Visto hoy</button>
+            <div class="media-watch-meta" id="media-edit-watch-meta">—</div>
+          </div>
+        </section>
       </div>
 
       <div class="media-modal-foot">
@@ -1686,6 +2184,31 @@ function ensureEditModal() {
     if (e.key === "ArrowRight") { e.preventDefault(); setEditRating(cur + 1); }
     if (e.key === "Home") { e.preventDefault(); setEditRating(0); }
     if (e.key === "End") { e.preventDefault(); setEditRating(5); }
+  });
+
+  editModal.querySelector("#media-edit-genres")?.addEventListener("input", () => {
+    updateChipPreview(qs("media-edit-genres"), qs("media-edit-genres-preview"));
+  });
+  editModal.querySelector("#media-edit-cast")?.addEventListener("input", () => {
+    updateChipPreview(qs("media-edit-cast"), qs("media-edit-cast-preview"));
+  });
+
+  editModal.querySelector("#media-edit-watchlist")?.addEventListener("change", () => {
+    const id = editModal.dataset.id;
+    const it = findItem(id);
+    if (!it) return;
+    updateEditWatchMeta({ ...it, watchlist: !!qs("media-edit-watchlist")?.checked });
+  });
+
+  editModal.querySelector("#media-edit-watchtoday")?.addEventListener("click", () => {
+    const id = editModal.dataset.id;
+    const it = findItem(id);
+    if (!it) return;
+    const watchDates = Array.isArray(it.watchDates) ? it.watchDates.slice() : [];
+    watchDates.push(isoDay());
+    updateItem(id, { watchlist: false, watchDates });
+    const updated = findItem(id);
+    updateEditWatchMeta(updated);
   });
 
   // delete
@@ -1771,7 +2294,10 @@ function syncEditSeasonEp() {
   const t = qs("media-edit-type")?.value || "movie";
   const wrap = qs("media-edit-seasonep");
   if (!wrap) return;
-  wrap.style.display = (t === "series" || t === "anime") ? "" : "none";
+  const show = (t === "series" || t === "anime");
+  wrap.style.display = show ? "" : "none";
+  const section = qs("media-edit-progress-section");
+  if (section) section.style.display = show ? "" : "none";
 }
 
 function openEditModal(id) {
@@ -1792,11 +2318,16 @@ function openEditModal(id) {
   qs("media-edit-director").value = it.director || "";
   qs("media-edit-cast").value = (it.cast || []).join(", ");
 
+  updateChipPreview(qs("media-edit-genres"), qs("media-edit-genres-preview"));
+  updateChipPreview(qs("media-edit-cast"), qs("media-edit-cast-preview"));
+
   qs("media-edit-watchlist").checked = !!it.watchlist;
   qs("media-edit-laura").checked = !!it.withLaura;
 
   qs("media-edit-season").value = String(it.season || 1);
   qs("media-edit-episode").value = String(it.episode || 1);
+
+  updateEditWatchMeta(it);
 
   syncEditSeasonEp();
 

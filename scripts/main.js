@@ -442,7 +442,12 @@ const activateView = (viewId, { persist = true, scroll = true } = {}) => {
   }
 };
 
-const storedView = !location.hash ? localStorage.getItem(LAST_VIEW_KEY) : null;
+if (!location.hash) {
+  console.log("[NAV] fallback check", { search: location.search, hash: location.hash });
+}
+const addLinkDeepLink = new URLSearchParams(location.search).get("addLink") === "1"
+  || window.__bookshellAddLinkDeepLink === true;
+const storedView = !location.hash && !addLinkDeepLink ? localStorage.getItem(LAST_VIEW_KEY) : null;
 if (storedView && document.getElementById(storedView)) {
   activateView(storedView, { persist: false, scroll: false });
 }

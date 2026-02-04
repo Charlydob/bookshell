@@ -2536,12 +2536,25 @@ Crear “<span id="gym-create-cta-text"></span>”
   const logDeepLink = (...args) => {
     if (deepLinkDebug) console.log("[BOOT][DeepLink]", ...args);
   };
+  const addLinkDeepLink = deepLinkParams.get("addLink") === "1";
   const deepLinkView = (() => {
     const explicit = deepLinkParams.get("view");
     if (explicit) return explicit;
-    if (deepLinkParams.get("addLink") === "1") return "view-links-new";
+    if (addLinkDeepLink) return "view-links-new";
     return "";
   })();
+
+  if (addLinkDeepLink) {
+    console.log("[BOOT] deep link detectado", { search: location.search, hash: location.hash });
+    window.__bookshellAddLinkDeepLink = true;
+    if (!location.hash) {
+      try {
+        history.replaceState(null, "", `${location.pathname}${location.search}#view-links-new`);
+      } catch {
+        location.hash = "#view-links-new";
+      }
+    }
+  }
 
   if (deepLinkView && document.getElementById(deepLinkView)) {
     const nextHash = `#${deepLinkView}`;

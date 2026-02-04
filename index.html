@@ -22,6 +22,7 @@
 <link href="icons/favicon-32.png" rel="icon" sizes="32x32" type="image/png"/>
 <link href="icons/favicon-16.png" rel="icon" sizes="16x16" type="image/png"/>
 <link href="icons/icon-512.png" rel="apple-touch-icon" sizes="180x180"/>
+<link href="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.snow.css" rel="stylesheet"/>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script><script src="https://cdn.jsdelivr.net/npm/echarts-gl@2/dist/echarts-gl.min.js"></script>
 
 <style>
@@ -314,7 +315,7 @@
 <div class="video-stat-value" id="video-stat-words">0</div>
 </div>
 <div class="video-stat-card">
-<div class="video-stat-label">Tiempo trabajado</div>
+<div class="video-stat-label">Ideas creadas</div>
 <div class="video-stat-value" id="video-stat-time">0</div>
 </div>
 </div>
@@ -356,6 +357,7 @@
 <!-- TOOLBAR + LISTA -->
 <div class="videos-toolbar">
 <button class="btn primary" id="btn-add-video">+ Añadir vídeo</button>
+<button class="btn" id="btn-add-idea">+ Idea</button>
 </div>
 <div class="videos-list" id="videos-list">
 <!-- Tarjetas de vídeos por JS -->
@@ -363,6 +365,91 @@
 <div class="videos-empty" id="videos-empty">
             Aún no has añadido ningún vídeo.
           </div>
+</div>
+</section>
+<section class="view" id="view-video-script">
+<div class="video-script-shell">
+<div class="video-script-topbar">
+<button class="icon-btn" id="video-script-back" type="button">←</button>
+<div class="video-script-heading">
+<div class="video-script-title" id="video-script-title">Guion</div>
+<div class="video-script-subtitle" id="video-script-subtitle">—</div>
+</div>
+<button class="btn ghost" id="video-script-teleprompter" type="button">Teleprompter</button>
+</div>
+<div class="video-script-meta">
+<div class="video-script-meta-block">
+<div class="video-script-meta-label">Palabras</div>
+<div class="video-script-meta-value" id="video-script-wordcount">0</div>
+</div>
+<div class="video-script-meta-block">
+<div class="video-script-meta-label">Progreso</div>
+<div class="video-script-meta-value" id="video-script-progress">0%</div>
+</div>
+<div class="video-script-meta-block">
+<div class="video-script-meta-label">Duración estimada</div>
+<div class="video-script-meta-value" id="video-script-duration">0 min</div>
+</div>
+<label class="video-script-ppm">
+<span>PPM</span>
+<input id="video-script-ppm" inputmode="numeric" min="60" type="number" value="150"/>
+</label>
+</div>
+<div class="video-script-toolbar-row">
+<div class="video-script-toolbar" id="video-script-toolbar"></div>
+<button class="btn" id="video-script-annotate" type="button">Anotación</button>
+</div>
+<div class="video-script-count-panel">
+<div class="video-script-count-title">Conteo</div>
+<div class="video-script-count-toggles" id="video-script-count-toggles"></div>
+<div class="video-script-count-summary" id="video-script-count-summary"></div>
+</div>
+<div class="video-script-editor" id="video-script-editor"></div>
+<div class="video-annotation-popup hidden" id="video-annotation-popup">
+<div class="video-annotation-popup-title" id="video-annotation-title">Nueva anotación</div>
+<textarea id="video-annotation-text" placeholder="Escribe tu anotación..." rows="3"></textarea>
+<div class="video-annotation-actions">
+<button class="btn ghost" id="video-annotation-cancel" type="button">Cerrar</button>
+<button class="btn ghost" id="video-annotation-delete" type="button">Borrar</button>
+<button class="btn primary" id="video-annotation-save" type="button">Guardar</button>
+</div>
+</div>
+</div>
+</section>
+<section class="view" id="view-video-teleprompter">
+<div class="video-teleprompter-shell">
+<div class="video-teleprompter-topbar">
+<button class="icon-btn" id="video-teleprompter-back" type="button">←</button>
+<div class="video-teleprompter-title" id="video-teleprompter-title">Teleprompter</div>
+</div>
+<div class="video-teleprompter-controls">
+<button class="btn primary" id="video-teleprompter-play" type="button">Play</button>
+<label>
+<span>Velocidad (PPM)</span>
+<input id="video-teleprompter-speed" inputmode="numeric" min="60" type="number" value="150"/>
+</label>
+<label>
+<span>Tamaño</span>
+<input id="video-teleprompter-size" max="64" min="18" type="range" value="32"/>
+</label>
+<label class="toggle-pill">
+<input id="video-teleprompter-highlight" type="checkbox"/>
+<span>Resaltar frase</span>
+</label>
+</div>
+<div class="video-teleprompter-body" id="video-teleprompter-body">
+<div class="video-teleprompter-content" id="video-teleprompter-content"></div>
+</div>
+</div>
+</section>
+<section class="view" id="view-video-day">
+<div class="video-day-shell">
+<div class="video-day-topbar">
+<button class="icon-btn" id="video-day-back" type="button">←</button>
+<div class="video-day-title" id="video-day-title">Resumen del día</div>
+</div>
+<div class="video-day-summary" id="video-day-summary"></div>
+<div class="video-day-list" id="video-day-list"></div>
 </div>
 </section>
 <!-- Vista RECETAS -->
@@ -1783,9 +1870,13 @@ Crear “<span id="gym-create-cta-text"></span>”
 <label class="field">
 <span class="field-label">Estado</span>
 <select id="video-status">
-<option value="in_progress">Curso</option>
-<option value="planned">Planificado</option>
+<option value="script">Guion</option>
+<option value="recording">Grabación</option>
+<option value="editing">Edición</option>
+<option value="scheduled">Programado</option>
 <option value="published">Publicado</option>
+<option value="in_progress">Curso (legacy)</option>
+<option value="planned">Planificado (legacy)</option>
 </select>
 </label>
 </div>
@@ -2373,6 +2464,7 @@ Crear “<span id="gym-create-cta-text"></span>”
 </script>
 
 <script src="scripts/main.js" type="module"></script>
+<script src="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js"></script>
 <script src="scripts/videos.js" type="module"></script>
 <script src="scripts/recipes.js" type="module"></script>
 <script src="scripts/habits.js" type="module"></script>

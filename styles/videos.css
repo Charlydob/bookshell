@@ -198,6 +198,334 @@
   padding: 4px 4px 8px;
 }
 
+.videos-toolbar .btn {
+  margin: 0 4px;
+}
+
+/* === Guion fullscreen === */
+.video-script-shell {
+  min-height: 100vh;
+  padding: 10px 10px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: radial-gradient(circle at top, rgba(127, 93, 255, 0.12), transparent),
+    rgba(7, 9, 16, 0.98);
+}
+
+.video-script-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: env(safe-area-inset-top);
+}
+
+.video-script-heading {
+  flex: 1;
+  text-align: center;
+}
+
+.video-script-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.video-script-subtitle {
+  font-size: 12px;
+  color: var(--txt-soft);
+}
+
+.video-script-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  background: rgba(9, 11, 20, 0.96);
+  border-radius: 16px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.video-script-meta-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.video-script-meta-label {
+  font-size: 11px;
+  color: var(--txt-soft);
+}
+
+.video-script-meta-value {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.video-script-ppm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.video-script-ppm input {
+  width: 70px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(14, 16, 26, 0.9);
+  color: inherit;
+}
+
+.video-script-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: sticky;
+  top: env(safe-area-inset-top);
+  z-index: 5;
+}
+
+.video-script-toolbar {
+  flex: 1;
+  background: rgba(9, 11, 20, 0.96);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.video-script-toolbar .ql-toolbar.ql-snow {
+  border: none;
+  background: transparent;
+}
+
+.video-script-toolbar .ql-container.ql-snow {
+  border: none;
+}
+
+.video-script-count-panel {
+  background: rgba(9, 11, 20, 0.96);
+  border-radius: 16px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.video-script-count-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--txt-soft);
+}
+
+.video-script-count-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.video-script-count-summary {
+  font-size: 11px;
+  color: var(--txt-soft);
+}
+
+.video-script-editor {
+  flex: 1;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(9, 11, 20, 0.92);
+}
+
+.video-script-editor .ql-editor {
+  min-height: 60vh;
+  padding: 16px;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.video-script-editor .ql-editor h1,
+.video-script-editor .ql-editor h2,
+.video-script-editor .ql-editor h3 {
+  color: #f8f5ff;
+}
+
+.video-annotation-popup {
+  position: sticky;
+  top: calc(env(safe-area-inset-top) + 56px);
+  background: rgba(14, 16, 26, 0.98);
+  border-radius: 16px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 6;
+}
+
+.video-annotation-popup textarea {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(9, 11, 20, 0.9);
+  color: inherit;
+  padding: 8px;
+}
+
+.video-annotation-popup-title {
+  font-size: 12px;
+  color: var(--txt-soft);
+}
+
+.video-annotation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.video-annotation-popup.hidden {
+  display: none;
+}
+
+.video-annotation {
+  background: rgba(255, 107, 154, 0.18);
+  box-shadow: 0 0 0 1px rgba(255, 107, 154, 0.35), 0 0 12px rgba(255, 107, 154, 0.18);
+  border-radius: 6px;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+/* === Teleprompter === */
+.video-teleprompter-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #05060b;
+  color: #f2f2f7;
+  padding: 10px 10px 40px;
+}
+
+.video-teleprompter-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: env(safe-area-inset-top);
+}
+
+.video-teleprompter-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.video-teleprompter-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.video-teleprompter-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--txt-soft);
+}
+
+.video-teleprompter-controls input[type="number"] {
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(12, 14, 22, 0.9);
+  color: inherit;
+}
+
+.video-teleprompter-body {
+  flex: 1;
+  overflow-y: auto;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 20px;
+  background: rgba(9, 11, 20, 0.96);
+}
+
+.video-teleprompter-content {
+  font-size: var(--teleprompter-size, 32px);
+  line-height: 1.6;
+  color: #fdfbff;
+  white-space: pre-wrap;
+}
+
+.video-teleprompter-sentence {
+  transition: color 0.2s ease, background 0.2s ease;
+  padding: 0 2px;
+  border-radius: 6px;
+}
+
+.video-teleprompter-sentence.is-active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+/* === Día calendario === */
+.video-day-shell {
+  min-height: 100vh;
+  padding: 14px 12px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: radial-gradient(circle at top, rgba(127, 93, 255, 0.12), transparent),
+    rgba(7, 9, 16, 0.98);
+}
+
+.video-day-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: env(safe-area-inset-top);
+}
+
+.video-day-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.video-day-summary {
+  background: rgba(9, 11, 20, 0.96);
+  border-radius: 16px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  color: var(--txt-soft);
+}
+
+.video-day-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.video-day-item {
+  background: rgba(9, 11, 20, 0.96);
+  border-radius: 16px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.video-day-item-title {
+  font-weight: 600;
+}
+
+.video-day-item-meta {
+  font-size: 12px;
+  color: var(--txt-soft);
+}
+
 .videos-list {
   display: flex;
   flex-direction: column;

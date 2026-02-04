@@ -536,22 +536,6 @@
 }
 
 /* Entity modal (actor/director) */
-.media-entity-kpis{
-  display:grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-.media-entity-kpi{
-  border-radius: 12px;
-  border: 1px solid rgba(255,255,255,.08);
-  background: rgba(255,255,255,.04);
-  padding: 8px 10px;
-  display:flex;
-  flex-direction:column;
-  gap: 4px;
-}
-.media-entity-kpi span{ font-size: 11px; opacity:.7; }
-.media-entity-kpi strong{ font-size: 16px; font-weight: 700; }
 .media-entity-progress{
   display:flex;
   flex-direction:column;
@@ -599,7 +583,14 @@
   align-items:center;
   justify-content:space-between;
   gap: 10px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  width: 100%;
 }
+button.media-entity-item{ cursor: pointer; }
+button.media-entity-item:hover{ background: rgba(255,255,255,.06); }
+button.media-entity-item:focus-visible{ outline: 2px solid rgba(167,139,250,.35); outline-offset: 3px; }
 .media-entity-item-main{
   display:flex;
   flex-direction:column;
@@ -687,6 +678,42 @@
   border-radius: 999px;
   background: rgba(255,255,255,.08);
   border: 1px solid rgba(255,255,255,.12);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.media-chip.is-muted{ opacity:.6; }
+.media-chip.is-muted{ cursor: default; }
+.media-chip-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap: 6px;
+}
+
+/* Title + country modals */
+.media-title-kpis,
+.media-country-kpis{
+  display:grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  align-items:center;
+}
+.media-title-kpi,
+.media-country-kpi{
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.04);
+  padding: 8px 10px;
+  display:flex;
+  flex-direction:column;
+  gap: 4px;
+}
+.media-title-kpi span,
+.media-country-kpi span{ font-size: 11px; opacity:.7; }
+.media-title-kpi strong,
+.media-country-kpi strong{ font-size: 16px; font-weight: 700; }
+.media-title-edit{
+  justify-self:end;
 }
 
 .media-watch-row{
@@ -914,7 +941,14 @@
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,.08);
   background: rgba(255,255,255,.03);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
 }
+.geo-item:hover{ background: rgba(255,255,255,.06); }
+.geo-item:focus-visible{ outline: 2px solid rgba(167,139,250,.35); outline-offset: 3px; }
 .geo-name{ font-size: 12px; opacity:.92; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .geo-count{ font-size: 12px; opacity:.72; }
 

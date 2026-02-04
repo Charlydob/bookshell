@@ -64,6 +64,40 @@ function parseCSV(s) {
   return norm(s).split(",").map(v => norm(v)).filter(Boolean).slice(0, 40);
 }
 
+function normalizeSeasons(raw) {
+  if (!Array.isArray(raw)) return [];
+  const mapped = raw.map(s => ({
+    seasonNumber: Number(s?.seasonNumber ?? s?.season) || 0,
+    episodeCount: Number(s?.episodeCount ?? s?.episodes) || 0
+  })).filter(s => s.seasonNumber > 0 && s.episodeCount > 0);
+  mapped.sort((a, b) => a.seasonNumber - b.seasonNumber);
+  return mapped;
+}
+
+function clampSeasonEpisode(seasons, season, episode) {
+  const s = Math.max(1, Number(season) || 1);
+  const e = Math.max(1, Number(episode) || 1);
+  const list = normalizeSeasons(seasons);
+  if (!list.length) return { season: s, episode: e };
+
+  const first = list[0];
+  const last = list[list.length - 1];
+  let target = list.find(x => x.seasonNumber === s);
+  if (!target) {
+    if (s <= first.seasonNumber) target = first;
+    else if (s >= last.seasonNumber) target = last;
+  }
+  const nextSeason = target?.seasonNumber || first.seasonNumber;
+  const maxEp = target?.episodeCount || 1;
+  return { season: nextSeason, episode: clamp(e, 1, maxEp) };
+}
+
+function getProgress(it) {
+  const season = Number(it?.currentSeason ?? it?.season) || 1;
+  const episode = Number(it?.currentEpisode ?? it?.episode) || 1;
+  return clampSeasonEpisode(it?.seasons, season, episode);
+}
+
 function startOfDay(ts = nowTs()) {
   const d = new Date(ts);
   d.setHours(0, 0, 0, 0);
@@ -328,7 +362,16 @@ async function tmdbFetchDetails(id, type) {
     country = detail?.origin_country?.[0] || "";
   }
 
-  return { director, cast: castTop, genres, country };
+  const seasons = (kind === "tv" && Array.isArray(detail?.seasons))
+    ? detail.seasons
+      .map(s => ({
+        seasonNumber: Number(s?.season_number) || 0,
+        episodeCount: Number(s?.episode_count) || 0
+      }))
+      .filter(s => s.seasonNumber > 0 && s.episodeCount > 0)
+    : [];
+
+  return { director, cast: castTop, genres, country, seasons };
 }
 
 /* ------------------------- Cache + Firebase merge ------------------------- */
@@ -482,9 +525,16 @@ function normalizeItem(it) {
 
   // progreso series/anime
   if (out.type === "series" || out.type === "anime") {
-    out.season = Math.max(1, Number(out.season) || 1);
-    out.episode = Math.max(1, Number(out.episode) || 1);
+    out.seasons = normalizeSeasons(out.seasons);
+    const progress = clampSeasonEpisode(out.seasons, out.currentSeason ?? out.season, out.currentEpisode ?? out.episode);
+    out.currentSeason = progress.season;
+    out.currentEpisode = progress.episode;
+    out.season = out.currentSeason;
+    out.episode = out.currentEpisode;
   } else {
+    out.seasons = [];
+    out.currentSeason = 0;
+    out.currentEpisode = 0;
     out.season = 0;
     out.episode = 0;
   }
@@ -566,6 +616,10 @@ function qs(id) { return document.getElementById(id); }
 
 let addWatchDates = [];
 let addAutofillBusy = false;
+let addAutofillSeasons = [];
+let editAutofillBusy = false;
+let editAutofillSeasons = [];
+let updateEditAutofillButton = null;
 
 function updateChipPreview(inputEl, previewEl) {
   if (!inputEl || !previewEl) return;
@@ -610,6 +664,7 @@ function updateEditWatchMeta(it) {
 function resetAddModalState() {
   addWatchDates = [];
   addAutofillBusy = false;
+  addAutofillSeasons = [];
   if (els.addAutofillResults) els.addAutofillResults.innerHTML = "";
   ["media-genres", "media-director", "media-cast", "media-country"].forEach(id => {
     const el = qs(id);
@@ -786,6 +841,7 @@ function bindDom() {
     els.addSeasonWrap.style.display = show ? "" : "none";
     const section = qs("media-add-progress-section");
     if (section) section.style.display = show ? "" : "none";
+    if (!show) addAutofillSeasons = [];
   }
   els.addType?.addEventListener("change", syncAddSeasonEp);
   syncAddSeasonEp();
@@ -835,7 +891,13 @@ function bindDom() {
     }
     try {
       addAutofillBusy = true;
-      await runTmdbAutofill({ title, year, type });
+      await runTmdbAutofill({
+        title,
+        year,
+        type,
+        resultsEl: els.addAutofillResults,
+        apply: (details) => applyAutofillData(details, "add")
+      });
     } catch (e) {
       console.warn("[media] tmdb autocomplete failed", e);
       setMediaSub("No se pudo autocompletar", 2400);
@@ -853,7 +915,7 @@ function bindDom() {
     if (!id || !key) return;
     try {
       addAutofillBusy = true;
-      await selectTmdbResult(key, id, type);
+      await selectTmdbResult(key, id, type, (details) => applyAutofillData(details, "add"), els.addAutofillResults);
     } catch (err) {
       console.warn("[media] tmdb select failed", err);
       setMediaSub("No se pudo autocompletar", 2400);
@@ -884,6 +946,7 @@ function bindDom() {
 
     const season = Math.max(1, Number(els.addSeason?.value) || 1);
     const episode = Math.max(1, Number(els.addEpisode?.value) || 1);
+    const seasons = (type === "series" || type === "anime") ? addAutofillSeasons : [];
     const watchDates = watchlist ? [] : (addWatchDates.length ? addWatchDates.slice() : [isoDay()]);
 
     addItem({
@@ -901,6 +964,9 @@ function bindDom() {
       withLaura,
       season,
       episode,
+      seasons,
+      currentSeason: season,
+      currentEpisode: episode,
       watchDates
     });
 
@@ -930,6 +996,10 @@ function bindDom() {
   // row interactions
   bindRowInteractions();
 
+  const fab = qs("media-fab-add");
+  fab?.addEventListener("pointerdown", (e) => e.stopPropagation());
+  fab?.addEventListener("click", (e) => e.stopPropagation());
+
   // resize/repaint cuando la vista se active
   const mo = new MutationObserver(() => {
     if (!isActiveView()) return;
@@ -945,13 +1015,13 @@ function bindDom() {
   return true;
 }
 
-async function runTmdbAutofill({ title, year, type }) {
-  if (!els.addAutofillResults) return;
+async function runTmdbAutofill({ title, year, type, resultsEl, apply }) {
+  if (!resultsEl) return;
   const key = tmdbKey(title, year, type);
   const entry = tmdbCache[key] || { results: [], details: {}, selectedId: null };
 
   if (entry.selectedId && entry.details?.[entry.selectedId]) {
-    applyAutofillData(entry.details[entry.selectedId]);
+    apply(entry.details[entry.selectedId]);
     return;
   }
 
@@ -969,18 +1039,18 @@ async function runTmdbAutofill({ title, year, type }) {
   }
 
   if (results.length === 1) {
-    await selectTmdbResult(key, results[0].id, type);
+    await selectTmdbResult(key, results[0].id, type, apply, resultsEl);
     return;
   }
 
-  renderAutofillResults(key, type, results.slice(0, 5));
+  renderAutofillResults(key, type, results.slice(0, 5), resultsEl);
 }
 
-function renderAutofillResults(key, type, results) {
-  if (!els.addAutofillResults) return;
-  els.addAutofillResults.dataset.key = key;
-  els.addAutofillResults.dataset.type = type;
-  els.addAutofillResults.innerHTML = `
+function renderAutofillResults(key, type, results, resultsEl) {
+  if (!resultsEl) return;
+  resultsEl.dataset.key = key;
+  resultsEl.dataset.type = type;
+  resultsEl.innerHTML = `
     <div class="media-autocomplete-card">
       <div class="media-autocomplete-title">Selecciona un resultado</div>
       <div class="media-autocomplete-actions">
@@ -994,14 +1064,14 @@ function renderAutofillResults(key, type, results) {
   `;
 }
 
-async function selectTmdbResult(key, id, type) {
+async function selectTmdbResult(key, id, type, apply, resultsEl) {
   const entry = tmdbCache[key] || { results: [], details: {}, selectedId: null };
   if (entry.details?.[id]) {
     entry.selectedId = id;
     tmdbCache[key] = entry;
     saveTmdbCache();
-    applyAutofillData(entry.details[id]);
-    if (els.addAutofillResults) els.addAutofillResults.innerHTML = "";
+    apply(entry.details[id]);
+    if (resultsEl) resultsEl.innerHTML = "";
     return;
   }
 
@@ -1011,27 +1081,42 @@ async function selectTmdbResult(key, id, type) {
   entry.selectedId = id;
   tmdbCache[key] = entry;
   saveTmdbCache();
-  applyAutofillData(details);
-  if (els.addAutofillResults) els.addAutofillResults.innerHTML = "";
+  apply(details);
+  if (resultsEl) resultsEl.innerHTML = "";
 }
 
-function applyAutofillData(details) {
+function applyAutofillData(details, mode) {
   if (!details) return;
-  if (els.addGenres && !els.addGenres.dataset.userEdited) {
-    els.addGenres.value = (details.genres || []).join(", ");
-  }
-  if (els.addDirector && !els.addDirector.dataset.userEdited) {
-    els.addDirector.value = details.director || "";
-  }
-  if (els.addCast && !els.addCast.dataset.userEdited) {
-    els.addCast.value = (details.cast || []).join(", ");
-  }
-  if (els.addCountry && !els.addCountry.dataset.userEdited) {
+  const isEdit = mode === "edit";
+  const genresEl = isEdit ? qs("media-edit-genres") : els.addGenres;
+  const directorEl = isEdit ? qs("media-edit-director") : els.addDirector;
+  const castEl = isEdit ? qs("media-edit-cast") : els.addCast;
+  const countryEl = isEdit ? qs("media-edit-country") : els.addCountry;
+
+  if (genresEl) genresEl.value = (details.genres || []).join(", ");
+  if (directorEl) directorEl.value = details.director || "";
+  if (castEl) castEl.value = (details.cast || []).join(", ");
+  if (countryEl) {
     const cc = normalizeCountry(details.country || "");
-    els.addCountry.value = cc.es || details.country || "";
+    countryEl.value = cc.es || details.country || "";
   }
-  updateChipPreview(els.addGenres, els.addGenresPreview);
-  updateChipPreview(els.addCast, els.addCastPreview);
+
+  const seasons = normalizeSeasons(details.seasons);
+  if (isEdit) editAutofillSeasons = seasons;
+  else addAutofillSeasons = seasons;
+
+  const typeEl = isEdit ? qs("media-edit-type") : els.addType;
+  const seasonEl = isEdit ? qs("media-edit-season") : els.addSeason;
+  const episodeEl = isEdit ? qs("media-edit-episode") : els.addEpisode;
+  if (typeEl && (typeEl.value === "series" || typeEl.value === "anime") && seasonEl && episodeEl) {
+    const progress = clampSeasonEpisode(seasons, seasonEl.value, episodeEl.value);
+    seasonEl.value = String(progress.season);
+    episodeEl.value = String(progress.episode);
+  }
+
+  updateChipPreview(genresEl, qs(isEdit ? "media-edit-genres-preview" : "media-add-genres-preview"));
+  updateChipPreview(castEl, qs(isEdit ? "media-edit-cast-preview" : "media-add-cast-preview"));
+  setMediaSub("Datos actualizados desde TMDb", 2200);
 }
 
 function isActiveView() {
@@ -1405,6 +1490,10 @@ function addItem(patch) {
   const type = (patch.type === "series" || patch.type === "anime") ? patch.type : "movie";
   const watchlist = !!patch.watchlist;
   const watchDates = watchlist ? [] : normalizeWatchDates(patch.watchDates, now);
+  const seasons = (type === "series" || type === "anime") ? normalizeSeasons(patch.seasons) : [];
+  const progress = (type === "series" || type === "anime")
+    ? clampSeasonEpisode(seasons, patch.currentSeason ?? patch.season, patch.currentEpisode ?? patch.episode)
+    : { season: 0, episode: 0 };
 
   const it = normalizeItem({
     id: uid(),
@@ -1420,8 +1509,11 @@ function addItem(patch) {
     countryLabel: patch.countryLabel || "",
     watchlist,
     withLaura: !!patch.withLaura,
-    season: (type === "series" || type === "anime") ? (Number(patch.season) || 1) : 0,
-    episode: (type === "series" || type === "anime") ? (Number(patch.episode) || 1) : 0,
+    seasons,
+    currentSeason: progress.season,
+    currentEpisode: progress.episode,
+    season: progress.season,
+    episode: progress.episode,
     watchDates,
     watchedAt: (watchlist ? 0 : now),
     createdAt: now,
@@ -1447,6 +1539,12 @@ function updateItem(id, patch) {
     next.watchDates = [];
     next.watchedAt = 0;
   }
+  if (next.type === "movie") {
+    next.seasons = [];
+    next.currentSeason = 0;
+    next.currentEpisode = 0;
+  }
+  if (next.seasons) next.seasons = normalizeSeasons(next.seasons);
   Object.assign(it, next);
   it.updatedAt = nowTs();
   const fixed = normalizeItem(it);
@@ -1485,7 +1583,7 @@ function ensurePool(n) {
           <button class="media-progress-chip" data-action="progress" type="button">1x01</button>
           <div class="media-progress-stepper" data-role="progress-stepper">
             <button class="media-progress-btn" data-action="progress-dec" type="button">−</button>
-            <div class="media-progress-label">Ep <span data-role="progress-ep">1</span></div>
+            <div class="media-progress-label">S <span data-role="progress-season">1</span> · E <span data-role="progress-ep">1</span></div>
             <button class="media-progress-btn" data-action="progress-inc" type="button">+</button>
             <button class="btn ghost btn-compact media-progress-plus" data-action="progress-plus" type="button">+1</button>
           </div>
@@ -1523,9 +1621,30 @@ function subline(it) {
 }
 
 function formatProgress(it) {
-  const s = Math.max(1, Number(it?.season) || 1);
-  const e = Math.max(1, Number(it?.episode) || 1);
-  return `${s}x${String(e).padStart(2, "0")}`;
+  const { season, episode } = getProgress(it);
+  return `S${season} · E${episode}`;
+}
+
+function stepProgress(it, delta) {
+  const seasons = normalizeSeasons(it?.seasons);
+  const { season, episode } = getProgress(it);
+  if (!seasons.length) {
+    return { season, episode: Math.max(1, episode + delta) };
+  }
+
+  const idx = seasons.findIndex(s => s.seasonNumber === season);
+  const cur = idx >= 0 ? seasons[idx] : seasons[0];
+  if (delta > 0) {
+    if (episode < cur.episodeCount) return { season: cur.seasonNumber, episode: episode + 1 };
+    const next = seasons[idx + 1];
+    if (next) return { season: next.seasonNumber, episode: 1 };
+    return { season: cur.seasonNumber, episode: cur.episodeCount };
+  }
+
+  if (episode > 1) return { season: cur.seasonNumber, episode: episode - 1 };
+  const prev = seasons[idx - 1];
+  if (prev) return { season: prev.seasonNumber, episode: prev.episodeCount };
+  return { season: cur.seasonNumber, episode: 1 };
 }
 
 function renderVirtual() {
@@ -1577,8 +1696,11 @@ function renderVirtual() {
       if (showProgress) {
         const chip = progressWrap.querySelector(".media-progress-chip");
         const epLabel = progressWrap.querySelector("[data-role='progress-ep']");
+        const seasonLabel = progressWrap.querySelector("[data-role='progress-season']");
+        const progress = getProgress(it);
         if (chip) chip.textContent = formatProgress(it);
-        if (epLabel) epLabel.textContent = String(Math.max(1, Number(it.episode) || 1));
+        if (epLabel) epLabel.textContent = String(progress.episode);
+        if (seasonLabel) seasonLabel.textContent = String(progress.season);
       }
     }
 
@@ -1634,9 +1756,14 @@ function bindRowInteractions() {
       const it = findItem(id);
       if (!it || (it.type !== "series" && it.type !== "anime")) return;
       const delta = (act === "progress-dec") ? -1 : 1;
-      const next = Math.max(1, Number(it.episode || 1) + delta);
-      updateItem(id, { episode: next, season: Math.max(1, Number(it.season) || 1) });
-      if (act === "progress-plus") setMediaSub(`+1 episodio · ${formatProgress({ ...it, episode: next })}`, 1600);
+      const next = stepProgress(it, delta);
+      updateItem(id, {
+        currentSeason: next.season,
+        currentEpisode: next.episode,
+        season: next.season,
+        episode: next.episode
+      });
+      if (act === "progress-plus") setMediaSub(`+1 episodio · ${formatProgress({ ...it, ...next })}`, 1600);
       return;
     }
   });
@@ -2045,8 +2172,12 @@ function ensureEditModal() {
           <div class="media-modal-section-title">Meta</div>
           <label class="media-modal-field">
             <span>Título</span>
-            <input id="media-edit-title" class="media-input" autocomplete="off" />
+            <div class="media-title-row">
+              <input id="media-edit-title" class="media-input" autocomplete="off" />
+              <button class="btn ghost btn-compact" id="media-edit-autofill-btn" type="button" disabled>Autocompletar</button>
+            </div>
           </label>
+          <div class="media-autocomplete-results" id="media-edit-autofill-results" aria-live="polite"></div>
 
           <div class="media-modal-grid media-modal-grid--meta">
             <label class="media-modal-field">
@@ -2169,6 +2300,68 @@ function ensureEditModal() {
 
   // type -> season/ep
   editModal.querySelector("#media-edit-type")?.addEventListener("change", () => syncEditSeasonEp());
+  editModal.querySelector("#media-edit-type")?.addEventListener("change", () => {
+    const show = ["series", "anime"].includes(qs("media-edit-type")?.value);
+    if (!show) editAutofillSeasons = [];
+  });
+
+  const editAutofillBtn = editModal.querySelector("#media-edit-autofill-btn");
+  const editAutofillResults = editModal.querySelector("#media-edit-autofill-results");
+  updateEditAutofillButton = () => {
+    const ok = !!norm(qs("media-edit-title")?.value)
+      && !!Number(qs("media-edit-year")?.value)
+      && !!(qs("media-edit-type")?.value || "");
+    if (editAutofillBtn) editAutofillBtn.disabled = !ok;
+    if (editAutofillResults) editAutofillResults.innerHTML = "";
+  };
+  ["input", "change"].forEach(evt => {
+    editModal.querySelector("#media-edit-title")?.addEventListener(evt, updateEditAutofillButton);
+    editModal.querySelector("#media-edit-year")?.addEventListener(evt, updateEditAutofillButton);
+    editModal.querySelector("#media-edit-type")?.addEventListener(evt, updateEditAutofillButton);
+  });
+
+  editAutofillBtn?.addEventListener("click", async () => {
+    const title = norm(qs("media-edit-title")?.value);
+    const year = Number(qs("media-edit-year")?.value) || 0;
+    const type = qs("media-edit-type")?.value || "movie";
+    if (!title || !year || !tmdbEnabled()) {
+      setMediaSub("No se pudo autocompletar", 2400);
+      return;
+    }
+    try {
+      editAutofillBusy = true;
+      await runTmdbAutofill({
+        title,
+        year,
+        type,
+        resultsEl: editAutofillResults,
+        apply: (details) => applyAutofillData(details, "edit")
+      });
+    } catch (e) {
+      console.warn("[media] tmdb autocomplete failed", e);
+      setMediaSub("No se pudo autocompletar", 2400);
+    } finally {
+      editAutofillBusy = false;
+    }
+  });
+
+  editAutofillResults?.addEventListener("click", async (e) => {
+    const btn = e.target?.closest?.("[data-action='autofill-select']");
+    if (!btn) return;
+    const id = Number(btn.dataset.id) || 0;
+    const key = editAutofillResults?.dataset?.key;
+    const type = editAutofillResults?.dataset?.type || "movie";
+    if (!id || !key) return;
+    try {
+      editAutofillBusy = true;
+      await selectTmdbResult(key, id, type, (details) => applyAutofillData(details, "edit"), editAutofillResults);
+    } catch (err) {
+      console.warn("[media] tmdb select failed", err);
+      setMediaSub("No se pudo autocompletar", 2400);
+    } finally {
+      editAutofillBusy = false;
+    }
+  });
 
   // rating stars
   const stars = editModal.querySelector("#media-edit-stars");
@@ -2244,6 +2437,7 @@ function ensureEditModal() {
 
     const season = Math.max(1, Number(qs("media-edit-season")?.value) || 1);
     const episode = Math.max(1, Number(qs("media-edit-episode")?.value) || 1);
+    const seasons = (type === "series" || type === "anime") ? editAutofillSeasons : [];
 
     updateItem(id, {
       title,
@@ -2258,6 +2452,9 @@ function ensureEditModal() {
       countryLabel: cc.es || cRaw,
       watchlist,
       withLaura,
+      seasons,
+      currentSeason: season,
+      currentEpisode: episode,
       season,
       episode,
       watchedAt: (watchlist ? 0 : (it.watchedAt || nowTs()))
@@ -2308,15 +2505,21 @@ function openEditModal(id) {
   m.dataset.id = String(id);
 
   qs("media-edit-title").value = it.title || "";
+  qs("media-edit-title").placeholder = it.title || "Título";
   qs("media-edit-type").value = it.type || "movie";
   setEditRating(it.rating || 0);
 
   qs("media-edit-year").value = it.year ? String(it.year) : "";
+  qs("media-edit-year").placeholder = it.year ? String(it.year) : "Ej: 2017";
   qs("media-edit-country").value = it.countryLabel || "";
+  qs("media-edit-country").placeholder = it.countryLabel || "País";
 
   qs("media-edit-genres").value = (it.genres || []).join(", ");
+  qs("media-edit-genres").placeholder = (it.genres || []).join(", ") || "Acción, Drama…";
   qs("media-edit-director").value = it.director || "";
+  qs("media-edit-director").placeholder = it.director || "Nombre";
   qs("media-edit-cast").value = (it.cast || []).join(", ");
+  qs("media-edit-cast").placeholder = (it.cast || []).join(", ") || "Actores…";
 
   updateChipPreview(qs("media-edit-genres"), qs("media-edit-genres-preview"));
   updateChipPreview(qs("media-edit-cast"), qs("media-edit-cast-preview"));
@@ -2324,8 +2527,16 @@ function openEditModal(id) {
   qs("media-edit-watchlist").checked = !!it.watchlist;
   qs("media-edit-laura").checked = !!it.withLaura;
 
-  qs("media-edit-season").value = String(it.season || 1);
-  qs("media-edit-episode").value = String(it.episode || 1);
+  const progress = getProgress(it);
+  qs("media-edit-season").value = String(progress.season || 1);
+  qs("media-edit-season").placeholder = String(progress.season || 1);
+  qs("media-edit-episode").value = String(progress.episode || 1);
+  qs("media-edit-episode").placeholder = String(progress.episode || 1);
+  editAutofillSeasons = normalizeSeasons(it.seasons);
+
+  const editResults = qs("media-edit-autofill-results");
+  if (editResults) editResults.innerHTML = "";
+  updateEditAutofillButton?.();
 
   updateEditWatchMeta(it);
 

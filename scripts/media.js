@@ -3282,6 +3282,33 @@ function readEntityAccordionState() {
   }
 }
 
+function countryStorageKey() {
+  const base = countryState.code || normKey(countryState.label || "");
+  return `mediaCountry:${base || "unknown"}`;
+}
+
+function readCountryAccordionState() {
+  try {
+    const raw = localStorage.getItem(countryStorageKey());
+    if (!raw) return { seen: true, suggest: false };
+    const parsed = JSON.parse(raw);
+    return {
+      seen: typeof parsed?.seen === "boolean" ? parsed.seen : true,
+      suggest: typeof parsed?.suggest === "boolean" ? parsed.suggest : false
+    };
+  } catch (e) {
+    return { seen: true, suggest: false };
+  }
+}
+
+function writeCountryAccordionState(state) {
+  try {
+    localStorage.setItem(countryStorageKey(), JSON.stringify(state));
+  } catch (e) {
+    /* noop */
+  }
+}
+
 function writeEntityAccordionState(state) {
   try {
     localStorage.setItem(entityStorageKey(), JSON.stringify(state));
@@ -3695,9 +3722,9 @@ function renderEntityModal() {
       progressEl.textContent = "TMDb no disponible";
     } else if (total) {
       const pct = Math.min(100, Math.round((seenItems.length / total) * 100));
-      progressEl.textContent = `${pct}% · ${seenItems.length.toLocaleString()} / ${total.toLocaleString()}`;
+      progressEl.textContent = `${seenItems.length.toLocaleString()} / ${total.toLocaleString()} (${pct}%)`;
     } else {
-      progressEl.textContent = "0% · 0 / 0";
+      progressEl.textContent = "0 / 0 (0%)";
     }
   }
   if (barEl) barEl.style.width = (total && tmdbEnabled())
@@ -4096,14 +4123,13 @@ function ensureCountryModal() {
         <button class="media-modal-close" data-action="close" type="button" title="Cerrar" aria-label="Cerrar">✕</button>
       </div>
       <div class="media-modal-body">
-        <section class="media-modal-section media-country-kpis">
-          <div class="media-country-kpi">
-            <span>Vistas por mí</span>
-            <strong id="media-country-watched">0</strong>
-          </div>
-          <div class="media-country-kpi">
-            <span>Total TMDb (aprox)</span>
-            <strong id="media-country-total">—</strong>
+        <section class="media-modal-section">
+          <div class="media-entity-progress media-country-progress">
+            <div class="media-entity-progress-row">
+              <span>Progreso</span>
+              <div class="media-entity-item-sub media-entity-progress-label" id="media-country-progress-label">—</div>
+            </div>
+            <div class="media-entity-bar"><div class="media-entity-bar-fill" id="media-country-progress-bar"></div></div>
           </div>
         </section>
         <details class="media-modal-section media-entity-accordion" id="media-country-seen-section" open>
@@ -4147,6 +4173,14 @@ function ensureCountryModal() {
     fetchCountrySuggestions();
   });
 
+  ["media-country-seen-section", "media-country-suggest-section"].forEach(id => {
+    countryModal.querySelector(`#${id}`)?.addEventListener("toggle", () => {
+      const seenOpen = !!countryModal.querySelector("#media-country-seen-section")?.open;
+      const suggestOpen = !!countryModal.querySelector("#media-country-suggest-section")?.open;
+      writeCountryAccordionState({ seen: seenOpen, suggest: suggestOpen });
+    });
+  });
+
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && countryModal && !countryModal.classList.contains("hidden")) hideCountryModal();
   });
@@ -4169,8 +4203,8 @@ function renderCountryModal() {
   const titleEl = countryModal.querySelector("#media-country-title");
   if (titleEl) titleEl.textContent = countryState.label || "—";
 
-  const watchedEl = countryModal.querySelector("#media-country-watched");
-  const totalEl = countryModal.querySelector("#media-country-total");
+  const progressEl = countryModal.querySelector("#media-country-progress-label");
+  const barEl = countryModal.querySelector("#media-country-progress-bar");
   const seenList = countryModal.querySelector("#media-country-seen");
   const seenCount = countryModal.querySelector("#media-country-seen-count");
   const suggestList = countryModal.querySelector("#media-country-suggest");
@@ -4178,8 +4212,20 @@ function renderCountryModal() {
   const moreBtn = countryModal.querySelector("#media-country-more");
 
   const seenItems = items.filter(it => !it.watchlist && it.countryCode === countryState.code);
-  if (watchedEl) watchedEl.textContent = String(seenItems.length);
-  if (totalEl) totalEl.textContent = (countryState.total || countryState.total === 0) ? countryState.total.toLocaleString() : "—";
+  const total = (countryState.total || countryState.total === 0) ? Number(countryState.total) : 0;
+  if (progressEl) {
+    if (!tmdbEnabled()) {
+      progressEl.textContent = "TMDb no disponible";
+    } else if (total) {
+      const pct = Math.min(100, Math.round((seenItems.length / total) * 100));
+      progressEl.textContent = `${seenItems.length.toLocaleString()} / ${total.toLocaleString()} (${pct}%)`;
+    } else {
+      progressEl.textContent = "0 / 0 (0%)";
+    }
+  }
+  if (barEl) barEl.style.width = (total && tmdbEnabled())
+    ? `${Math.min(100, Math.round((seenItems.length / total) * 100))}%`
+    : "0%";
   if (seenCount) seenCount.textContent = String(seenItems.length);
 
   if (seenList) {
@@ -4352,6 +4398,11 @@ function openCountryModal({ code, label }) {
   countryState.suggestions = [];
   countryState.page = 1;
   countryState.totalPages = 0;
+  const accordions = readCountryAccordionState();
+  const seenSection = modal.querySelector("#media-country-seen-section");
+  const suggestSection = modal.querySelector("#media-country-suggest-section");
+  if (seenSection) seenSection.open = accordions.seen;
+  if (suggestSection) suggestSection.open = accordions.suggest;
   renderCountryModal();
   modal.classList.remove("hidden");
   fetchCountryTotal();

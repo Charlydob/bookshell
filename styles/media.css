@@ -344,7 +344,7 @@
   overflow:hidden;
   display:flex;
   flex-direction:column;
-  max-height: calc(100vh - 32px);
+  max-height: 90vh;
 }
 
 .media-modal-head{
@@ -363,8 +363,8 @@
 .media-modal-sub{ font-size: 12px; opacity:.65; }
 
 .media-modal-close{
-  height: 34px;
-  width: 34px;
+  height: 44px;
+  width: 44px;
   border-radius: 12px;
   border: 1px solid rgba(255,255,255,.10);
   background: rgba(255,255,255,.04);

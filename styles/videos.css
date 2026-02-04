@@ -209,6 +209,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  position: relative;
   background: radial-gradient(circle at top, rgba(127, 93, 255, 0.12), transparent),
     rgba(7, 9, 16, 0.98);
 }
@@ -363,6 +364,33 @@
   flex-direction: column;
   gap: 8px;
   z-index: 6;
+  max-height: 90vh;
+}
+
+.video-annotation-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(7, 9, 16, 0.85);
+  font-size: 12px;
+  color: var(--txt-soft);
+}
+
+.video-annotation-selection-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.video-annotation-selection-value {
+  color: #f5f2ff;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
 }
 
 .video-annotation-popup textarea {
@@ -372,6 +400,7 @@
   background: rgba(9, 11, 20, 0.9);
   color: inherit;
   padding: 8px;
+  min-height: 88px;
 }
 
 .video-annotation-popup-title {
@@ -383,9 +412,26 @@
   display: flex;
   justify-content: flex-end;
   gap: 6px;
+  position: sticky;
+  bottom: 0;
+  padding-top: 6px;
+  background: linear-gradient(0deg, rgba(14, 16, 26, 0.98), rgba(14, 16, 26, 0.6));
 }
 
 .video-annotation-popup.hidden {
+  display: none;
+}
+
+.video-annotate-fab {
+  position: absolute;
+  z-index: 7;
+  padding: 10px 16px;
+  min-height: 44px;
+  border-radius: 999px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+
+.video-annotate-fab.hidden {
   display: none;
 }
 

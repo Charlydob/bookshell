@@ -46,7 +46,8 @@ const state = {
   rewatchOnly: false,
   rewatchMin: 0,
   watchedFrom: "",
-  watchedTo: ""
+  watchedTo: "",
+  meta: "all"           // all|complete|incomplete|missing-director|missing-cast
 };
 
 function log(...a) { try { console.debug("[media]", ...a); } catch (_) {} }
@@ -59,6 +60,7 @@ function nowTs() { return Date.now(); }
 function norm(s) { return String(s || "").trim(); }
 function normKey(s) { return norm(s).toLowerCase(); }
 function clamp(n, a, b) { n = Number(n) || 0; return Math.max(a, Math.min(b, n)); }
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 function parseCSV(s) {
   return norm(s).split(",").map(v => norm(v)).filter(Boolean).slice(0, 40);
@@ -559,6 +561,34 @@ function normalizeItem(it) {
 }
 
 /* ------------------------- Filters ------------------------- */
+function hasDirector(it) {
+  return norm(it?.director).length > 0;
+}
+
+function hasCast(it) {
+  if (Array.isArray(it?.cast)) return it.cast.filter(Boolean).length > 0;
+  return norm(it?.cast).length > 0;
+}
+
+function isMetaComplete(it) {
+  return hasDirector(it) && hasCast(it);
+}
+
+function metaLabel(value) {
+  switch (value) {
+    case "complete":
+      return "completos";
+    case "incomplete":
+      return "incompletos";
+    case "missing-director":
+      return "director falta";
+    case "missing-cast":
+      return "reparto falta";
+    default:
+      return "todos";
+  }
+}
+
 function applyFilters() {
   const q = normKey(state.q);
 
@@ -578,6 +608,14 @@ function applyFilters() {
 
     if (state.rewatchOnly && (Number(it.rewatchCount) || 0) < 1) return false;
     if (state.rewatchMin && (Number(it.rewatchCount) || 0) < Number(state.rewatchMin || 0)) return false;
+
+    if (state.meta !== "all") {
+      const complete = isMetaComplete(it);
+      if (state.meta === "complete" && !complete) return false;
+      if (state.meta === "incomplete" && complete) return false;
+      if (state.meta === "missing-director" && hasDirector(it)) return false;
+      if (state.meta === "missing-cast" && hasCast(it)) return false;
+    }
 
     if (state.watchedFrom || state.watchedTo) {
       const lastTs = Number(it.lastWatchedTs) || 0;
@@ -611,6 +649,182 @@ function applyFilters() {
   filtered.sort(byUpdatedDesc);
 }
 
+function getActiveFilterChips() {
+  const chips = [];
+
+  if (state.q) chips.push(`Texto: ${state.q}`);
+
+  if (state.type !== "all") {
+    const typeLabel = state.type === "movie" ? "Pelis" : (state.type === "series" ? "Series" : "Anime");
+    chips.push(`Tipo: ${typeLabel}`);
+  }
+
+  if (state.status !== "all") {
+    chips.push(`Estado: ${state.status === "watched" ? "Visto" : "Watchlist"}`);
+  }
+
+  if (state.laura !== "all") {
+    chips.push(`Laura: ${state.laura === "with" ? "Con" : "Sin"}`);
+  }
+
+  if (state.range !== "total") {
+    const rangeLabel = state.range === "day" ? "Día" : (state.range === "week" ? "Semana" : (state.range === "month" ? "Mes" : "Año"));
+    chips.push(`Rango: ${rangeLabel}`);
+  }
+
+  if (state.rewatchOnly) chips.push("Rewatches: solo");
+  if (state.rewatchMin) chips.push(`Rewatch ≥ ${state.rewatchMin}`);
+
+  if (state.watchedFrom) chips.push(`Visto desde ${state.watchedFrom}`);
+  if (state.watchedTo) chips.push(`Visto hasta ${state.watchedTo}`);
+
+  if (state.meta !== "all") chips.push(`Metadatos: ${metaLabel(state.meta)}`);
+
+  return chips;
+}
+
+function renderFilterChips() {
+  if (!els.filterChips || !els.filterCount) return;
+
+  const chips = getActiveFilterChips();
+  els.filterCount.textContent = String(chips.length);
+  els.filterCount.style.display = chips.length ? "" : "none";
+
+  if (!chips.length) {
+    els.filterChips.innerHTML = `<span class="media-filter-chip is-empty">Sin filtros activos</span>`;
+    return;
+  }
+
+  els.filterChips.innerHTML = chips.map(label => `<span class="media-filter-chip">${escHtml(label)}</span>`).join("");
+}
+
+function updateBulkAutofillUI() {
+  if (!els.bulkAutofillWrap || !els.bulkAutofillBtn) return;
+  const show = state.meta === "incomplete";
+  els.bulkAutofillWrap.style.display = show ? "" : "none";
+  els.bulkAutofillBtn.disabled = bulkAutofillBusy;
+  els.bulkAutofillBtn.textContent = bulkAutofillBusy ? "Autocompletando..." : "Autocompletar todos (en lote)";
+}
+
+function getCachedTmdbDetails(key) {
+  const entry = tmdbCache[key];
+  if (entry?.selectedId && entry.details?.[entry.selectedId]) return entry.details[entry.selectedId];
+  return null;
+}
+
+async function fetchTmdbDetailsForItem(it, key) {
+  const entry = tmdbCache[key] || { results: [], details: {}, selectedId: null };
+
+  if (entry.selectedId && entry.details?.[entry.selectedId]) {
+    return entry.details[entry.selectedId];
+  }
+
+  let results = entry.results || [];
+  if (!results.length) {
+    results = await tmdbSearch(it.title, it.year, it.type);
+    entry.results = results;
+  }
+
+  if (!results.length) {
+    tmdbCache[key] = entry;
+    saveTmdbCache();
+    return null;
+  }
+
+  const preferred = results.find(r => r.year && it.year && r.year === it.year) || results[0];
+  if (!preferred?.id) return null;
+
+  if (entry.details?.[preferred.id]) {
+    entry.selectedId = preferred.id;
+    tmdbCache[key] = entry;
+    saveTmdbCache();
+    return entry.details[preferred.id];
+  }
+
+  const details = await tmdbFetchDetails(preferred.id, it.type);
+  entry.details = entry.details || {};
+  entry.details[preferred.id] = details;
+  entry.selectedId = preferred.id;
+  tmdbCache[key] = entry;
+  saveTmdbCache();
+  return details;
+}
+
+function buildAutofillPatch(it, details) {
+  if (!details) return null;
+  const patch = {};
+
+  if (!hasDirector(it) && norm(details.director)) patch.director = details.director;
+  if (!hasCast(it) && Array.isArray(details.cast) && details.cast.length) patch.cast = details.cast;
+
+  if (!Array.isArray(it.genres) || it.genres.length === 0) {
+    if (Array.isArray(details.genres) && details.genres.length) patch.genres = details.genres;
+  }
+
+  if (!it.countryCode && !it.countryLabel && norm(details.country)) {
+    const cc = normalizeCountry(details.country || "");
+    patch.countryCode = cc.code || "";
+    patch.countryEn = cc.en || details.country || "";
+    patch.countryLabel = cc.es || details.country || "";
+  }
+
+  if ((it.type === "series" || it.type === "anime") && (!Array.isArray(it.seasons) || !it.seasons.length)) {
+    if (Array.isArray(details.seasons) && details.seasons.length) patch.seasons = details.seasons;
+  }
+
+  return Object.keys(patch).length ? patch : null;
+}
+
+async function runBulkAutofill() {
+  if (bulkAutofillBusy || state.meta !== "incomplete") return;
+  if (!tmdbEnabled()) {
+    setMediaSub("TMDb no disponible", 2400);
+    return;
+  }
+
+  const candidates = filtered.filter(it => isMetaComplete(it) === false);
+  if (!candidates.length) {
+    setMediaSub("No hay títulos incompletos", 2000);
+    return;
+  }
+
+  if (!window.confirm(`Autocompletar ${candidates.length} títulos incompletos?`)) return;
+
+  bulkAutofillBusy = true;
+  updateBulkAutofillUI();
+
+  let updated = 0;
+  let skipped = 0;
+
+  for (const it of candidates) {
+    if (!it || isMetaComplete(it)) { skipped++; continue; }
+    const key = tmdbKey(it.title, it.year, it.type);
+    const cached = getCachedTmdbDetails(key);
+    if (!cached && bulkAutofillSeen.has(key)) { skipped++; continue; }
+
+    try {
+      const details = cached || await fetchTmdbDetailsForItem(it, key);
+      const patch = buildAutofillPatch(it, details);
+      if (patch) {
+        updateItem(it.id, patch);
+        updated++;
+      } else {
+        skipped++;
+      }
+    } catch (err) {
+      console.warn("[media] bulk tmdb autofill failed", err);
+      skipped++;
+    } finally {
+      bulkAutofillSeen.add(key);
+      await sleep(350);
+    }
+  }
+
+  bulkAutofillBusy = false;
+  updateBulkAutofillUI();
+  setMediaSub(`Autocompletado: ${updated} · Omitidos: ${skipped}`, 3200);
+}
+
 /* ------------------------- DOM ------------------------- */
 function qs(id) { return document.getElementById(id); }
 
@@ -620,6 +834,8 @@ let addAutofillSeasons = [];
 let editAutofillBusy = false;
 let editAutofillSeasons = [];
 let updateEditAutofillButton = null;
+let bulkAutofillBusy = false;
+const bulkAutofillSeen = new Set();
 
 function updateChipPreview(inputEl, previewEl) {
   if (!inputEl || !previewEl) return;
@@ -682,6 +898,11 @@ const els = {
   search: null,
   typePills: null,
   filtersSlot: null,
+  filterCount: null,
+  filterChips: null,
+  metaFilter: null,
+  bulkAutofillWrap: null,
+  bulkAutofillBtn: null,
 
   // sections
   listCard: null,
@@ -794,6 +1015,12 @@ function bindDom() {
   // inline filters (si no existen, los inyectamos aquí para no tocar index)
   ensureInlineFilters();
   bindCsvImport();
+  els.filterCount = qs("media-filter-count");
+  els.filterChips = qs("media-filter-chips");
+  els.metaFilter = qs("media-filter-meta");
+
+  els.bulkAutofillWrap = qs("media-list-actions");
+  els.bulkAutofillBtn = qs("media-bulk-autofill");
 
   // bind: search
   els.search?.addEventListener("input", () => {
@@ -829,6 +1056,11 @@ function bindDom() {
 
   // list scroll
   els.list?.addEventListener("scroll", () => renderVirtual());
+
+  // bulk autofill
+  els.bulkAutofillBtn?.addEventListener("click", () => {
+    runBulkAutofill();
+  });
 
   // add modal: close
   els.addCancel?.addEventListener("click", () => { if (els.addToggle) els.addToggle.checked = false; });
@@ -1148,7 +1380,10 @@ function ensureInlineFilters() {
   wrap.innerHTML = `
     <details class="filters-fold media-inline-filters">
       <summary>
-        <span>Filtros</span>
+        <span class="media-inline-summary-left">
+          <span>Filtros</span>
+          <span class="media-filter-badge" id="media-filter-count">0</span>
+        </span>
         <span class="chev">▾</span>
       </summary>
       <div class="filters-body">
@@ -1205,6 +1440,24 @@ function ensureInlineFilters() {
           </label>
         </div>
 
+        <div class="media-inline-row">
+          <label class="media-mini">
+            <span>Metadatos</span>
+            <select id="media-filter-meta">
+              <option value="all">Todo</option>
+              <option value="complete">✅ Solo completos</option>
+              <option value="incomplete">⚠️ Solo incompletos</option>
+              <option value="missing-director">Director falta</option>
+              <option value="missing-cast">Reparto falta</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="media-filter-chiprow">
+          <div class="media-filter-chip-title">Activos</div>
+          <div class="media-filter-chips" id="media-filter-chips" aria-live="polite"></div>
+        </div>
+
 
         <div class="media-inline-row media-import-row">
           <button class="btn ghost btn-compact" id="media-import-csv-btn" type="button">Importar CSV (Letterboxd)</button>
@@ -1222,6 +1475,7 @@ function ensureInlineFilters() {
   const $rewatchMin = qs("media-filter-rewatch-min");
   const $from = qs("media-filter-watched-from");
   const $to = qs("media-filter-watched-to");
+  const $meta = qs("media-filter-meta");
   const rangeBtns = Array.from(wrap.querySelectorAll(".media-range-btn"));
 
   if ($status) $status.addEventListener("change", () => { state.status = $status.value || "all"; refresh(); });
@@ -1233,6 +1487,7 @@ function ensureInlineFilters() {
   });
   if ($from) $from.addEventListener("change", () => { state.watchedFrom = $from.value || ""; refresh(); });
   if ($to) $to.addEventListener("change", () => { state.watchedTo = $to.value || ""; refresh(); });
+  if ($meta) $meta.addEventListener("change", () => { state.meta = $meta.value || "all"; refresh(); });
 
   rangeBtns.forEach(b => b.addEventListener("click", () => {
     state.range = b.dataset.range || "total";
@@ -2560,6 +2815,8 @@ function refresh() {
   applyFilters();
   renderVirtual();
   refreshChartsMaybe();
+  renderFilterChips();
+  updateBulkAutofillUI();
 }
 
 /* ------------------------- Init ------------------------- */

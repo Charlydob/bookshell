@@ -34,6 +34,7 @@ const db = getDatabase(app);
 const VIDEOS_PATH = "videos";
 const VIDEO_LOG_PATH = "videoLog";
 const VIDEO_WORK_PATH = "videoWorkLog";
+const LINKS_PATH = "links";
 
 // Estado
 let videos = {};
@@ -46,6 +47,7 @@ let activeScriptVideoId = null;
 let quill = null;
 let scriptDirty = false;
 let scriptSaveTimer = null;
+let wordCountTimer = null;
 let currentCountSettings = null;
 let currentScriptTarget = 0;
 let currentScriptWords = 0;
@@ -57,8 +59,10 @@ let teleprompterTimer = null;
 let teleprompterPlaying = false;
 let teleprompterSentences = [];
 let teleprompterActiveIndex = -1;
+let links = {};
 
 const SCRIPT_SAVE_DEBOUNCE = 1000;
+const WORD_COUNT_DEBOUNCE = 200;
 const SCRIPT_PPM_KEY = "bookshell_video_script_ppm_v1";
 const TELEPROMPTER_PPM_KEY = "bookshell_video_teleprompter_ppm_v1";
 
@@ -214,10 +218,23 @@ if ($viewVideos) {
   const $videoScriptProgress = document.getElementById("video-script-progress");
   const $videoScriptDuration = document.getElementById("video-script-duration");
   const $videoScriptPpm = document.getElementById("video-script-ppm");
-  const $videoScriptAnnotate = document.getElementById("video-script-annotate");
+  const $videoScriptCountBadge = document.getElementById("video-script-count-badge");
+  const $videoScriptCountToggle = document.getElementById("video-script-count-toggle");
   const $videoScriptCountToggles = document.getElementById("video-script-count-toggles");
   const $videoScriptCountSummary = document.getElementById("video-script-count-summary");
   const $videoScriptTeleprompter = document.getElementById("video-script-teleprompter");
+  const $videoScriptInsertLink = document.getElementById("video-script-insert-link");
+  const $videoCountSheetBackdrop = document.getElementById("video-count-sheet-backdrop");
+  const $videoCountSheet = document.getElementById("video-count-sheet");
+  const $videoCountSheetClose = document.getElementById("video-count-sheet-close");
+  const $videoLinkPickerBackdrop = document.getElementById("video-link-picker-backdrop");
+  const $videoLinkPicker = document.getElementById("video-link-picker");
+  const $videoLinkPickerClose = document.getElementById("video-link-picker-close");
+  const $videoLinkSearch = document.getElementById("video-link-search");
+  const $videoLinkPickerList = document.getElementById("video-link-picker-list");
+  const $videoToolbarAnnotate = document.getElementById("video-toolbar-annotate");
+  const $videoToolbarMoreToggle = document.getElementById("video-toolbar-more-toggle");
+  const $videoToolbarMoreMenu = document.getElementById("video-toolbar-more-menu");
 
   const $annotationPopup = document.getElementById("video-annotation-popup");
   const $annotationTitle = document.getElementById("video-annotation-title");
@@ -243,6 +260,21 @@ if ($viewVideos) {
   const $videoDayTitle = document.getElementById("video-day-title");
   const $videoDaySummary = document.getElementById("video-day-summary");
   const $videoDayList = document.getElementById("video-day-list");
+
+  const $btnOpenLinks = document.getElementById("btn-open-links");
+  const $viewLinks = document.getElementById("view-links");
+  const $videoLinksBack = document.getElementById("video-links-back");
+  const $videoLinksNew = document.getElementById("video-links-new");
+  const $videoLinksList = document.getElementById("video-links-list");
+  const $videoLinksEmpty = document.getElementById("video-links-empty");
+  const $viewLinksNew = document.getElementById("view-links-new");
+  const $videoLinksNewBack = document.getElementById("video-links-new-back");
+  const $videoLinksForm = document.getElementById("video-links-form");
+  const $videoLinksCancel = document.getElementById("video-links-cancel");
+  const $videoLinkUrl = document.getElementById("video-link-url");
+  const $videoLinkTitle = document.getElementById("video-link-title");
+  const $videoLinkCategory = document.getElementById("video-link-category");
+  const $videoLinkNote = document.getElementById("video-link-note");
 
   // Modal vídeo
   const $videoModalBackdrop = document.getElementById("video-modal-backdrop");
@@ -491,6 +523,9 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     const pct = currentScriptTarget > 0 ? Math.min(100, Math.round((wordCount / currentScriptTarget) * 100)) : 0;
     if ($videoScriptWordcount) $videoScriptWordcount.textContent = wordCount.toLocaleString("es-ES");
     if ($videoScriptProgress) $videoScriptProgress.textContent = `${pct}%`;
+    if ($videoScriptCountBadge) {
+      $videoScriptCountBadge.textContent = `Palabras: ${wordCount.toLocaleString("es-ES")} · Progreso: ${pct}%`;
+    }
 
     const ppm = Math.max(60, Number($videoScriptPpm?.value) || loadStoredPpm(SCRIPT_PPM_KEY, 150));
     const minutes = wordCount > 0 ? Math.max(1, Math.round(wordCount / ppm)) : 0;
@@ -521,7 +556,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         currentCountSettings = { ...settings };
         if ($videoScriptCountSummary) $videoScriptCountSummary.textContent = getCountSummary(settings);
         scriptDirty = true;
-        updateWordCountAndSave(true);
+        scheduleWordCountUpdate();
+        scheduleScriptSave(false);
         saveScriptSettings();
       });
       const span = document.createElement("span");
@@ -556,29 +592,15 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     if (quill || !$videoScriptEditor) return;
     if (!window.Quill) return;
     buildAnnotationBlot();
-    const toolbarOptions = [
-      ["bold", "italic", "underline", { background: [] }],
-      [{ header: [1, 2, 3, false] }],
-      [{ list: "ordered" }, { list: "bullet" }],
-      ["link", "blockquote"]
-    ];
+    const toolbarContainer = $videoScriptToolbar || false;
 
     quill = new window.Quill($videoScriptEditor, {
       theme: "snow",
       modules: {
-        toolbar: {
-          container: toolbarOptions
-        }
+        toolbar: toolbarContainer
       },
       placeholder: "Escribe el guion aquí..."
     });
-
-    if ($videoScriptToolbar) {
-      const toolbar = quill.getModule("toolbar");
-      if (toolbar?.container) {
-        $videoScriptToolbar.appendChild(toolbar.container);
-      }
-    }
 
     quill.on("selection-change", (range) => {
       if (range && range.length > 0) {
@@ -597,7 +619,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     quill.on("text-change", (delta, old, source) => {
       if (source === "user") {
         scriptDirty = true;
-        updateWordCountAndSave(false);
+        scheduleWordCountUpdate();
+        scheduleScriptSave(false);
       }
     });
 
@@ -661,15 +684,13 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     return quill.getContents();
   }
 
-  function updateWordCountAndSave(forceImmediate) {
+  function scheduleWordCountUpdate() {
     if (!quill || !currentCountSettings) return;
-    const wordCount = computeWordCount(getScriptContent(), currentCountSettings);
-    updateScriptStats(wordCount);
-    if (forceImmediate) {
-      scheduleScriptSave(true);
-    } else {
-      scheduleScriptSave(false);
-    }
+    if (wordCountTimer) clearTimeout(wordCountTimer);
+    wordCountTimer = setTimeout(() => {
+      const wordCount = computeWordCount(getScriptContent(), currentCountSettings);
+      updateScriptStats(wordCount);
+    }, WORD_COUNT_DEBOUNCE);
   }
 
   function scheduleScriptSave(immediate) {
@@ -785,7 +806,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     }
     closeAnnotationPopup();
     scriptDirty = true;
-    updateWordCountAndSave(true);
+    scheduleWordCountUpdate();
+    scheduleScriptSave(false);
   }
 
   async function deleteAnnotation() {
@@ -801,7 +823,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     }
     closeAnnotationPopup();
     scriptDirty = true;
-    updateWordCountAndSave(true);
+    scheduleWordCountUpdate();
+    scheduleScriptSave(false);
   }
 
   function loadScriptIntoEditor(videoId) {
@@ -847,8 +870,222 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
 
   function closeScriptView() {
     if (scriptDirty) saveScript();
+    closeCountSheet();
+    closeLinkPicker();
+    if ($videoToolbarMoreMenu) {
+      $videoToolbarMoreMenu.classList.remove("is-open");
+      $videoToolbarMoreMenu.setAttribute("aria-hidden", "true");
+    }
     activeScriptVideoId = null;
     setActiveView("view-videos");
+  }
+
+  function openCountSheet() {
+    if (!$videoCountSheetBackdrop) return;
+    $videoCountSheetBackdrop.classList.add("is-open");
+    $videoCountSheetBackdrop.setAttribute("aria-hidden", "false");
+  }
+
+  function closeCountSheet() {
+    if (!$videoCountSheetBackdrop) return;
+    $videoCountSheetBackdrop.classList.remove("is-open");
+    $videoCountSheetBackdrop.setAttribute("aria-hidden", "true");
+  }
+
+  function openLinkPicker() {
+    if (!$videoLinkPickerBackdrop) return;
+    renderLinkPickerList();
+    $videoLinkPickerBackdrop.classList.add("is-open");
+    $videoLinkPickerBackdrop.setAttribute("aria-hidden", "false");
+    if ($videoLinkSearch) $videoLinkSearch.focus();
+  }
+
+  function closeLinkPicker() {
+    if (!$videoLinkPickerBackdrop) return;
+    $videoLinkPickerBackdrop.classList.remove("is-open");
+    $videoLinkPickerBackdrop.setAttribute("aria-hidden", "true");
+  }
+
+  function addSheetSwipeToClose(sheetEl, closeFn) {
+    if (!sheetEl) return;
+    let startY = 0;
+    let currentY = 0;
+    let dragging = false;
+    sheetEl.addEventListener("touchstart", (event) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      startY = touch.clientY;
+      currentY = startY;
+      dragging = true;
+    }, { passive: true });
+    sheetEl.addEventListener("touchmove", (event) => {
+      if (!dragging) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      currentY = touch.clientY;
+      const delta = Math.max(0, currentY - startY);
+      if (delta > 0) sheetEl.style.transform = `translateY(${delta}px)`;
+    }, { passive: true });
+    sheetEl.addEventListener("touchend", () => {
+      if (!dragging) return;
+      const delta = Math.max(0, currentY - startY);
+      sheetEl.style.transform = "";
+      dragging = false;
+      if (delta > 80) closeFn();
+    });
+  }
+
+  const LINK_CATEGORY_LABELS = {
+    cancion: "Canción",
+    visual: "Recurso visual",
+    tema: "Tema",
+    otro: "Otro"
+  };
+
+  function formatLinkDate(ts) {
+    const date = new Date(Number(ts) || 0);
+    if (Number.isNaN(date.getTime())) return "";
+    return `${date.toLocaleDateString("es-ES")} · ${date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`;
+  }
+
+  function getLinksArray() {
+    return Object.entries(links || {}).map(([id, item]) => ({ id, ...(item || {}) }));
+  }
+
+  function renderLinksList() {
+    if (!$videoLinksList || !$videoLinksEmpty) return;
+    const items = getLinksArray().sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+    if (!items.length) {
+      $videoLinksList.innerHTML = "";
+      $videoLinksEmpty.style.display = "block";
+      return;
+    }
+    $videoLinksEmpty.style.display = "none";
+    const frag = document.createDocumentFragment();
+    items.forEach((item) => {
+      const card = document.createElement("div");
+      card.className = "video-link-card";
+      const title = document.createElement("div");
+      title.className = "video-link-card-title";
+      title.textContent = item.title || "Recurso guardado";
+      const url = document.createElement("div");
+      url.className = "video-link-card-url";
+      url.textContent = item.url || "";
+      const meta = document.createElement("div");
+      meta.className = "video-link-card-meta";
+      const categoryLabel = LINK_CATEGORY_LABELS[item.category] || "Otro";
+      const dateLabel = formatLinkDate(item.createdAt);
+      const note = item.note ? ` · ${item.note}` : "";
+      meta.textContent = `${categoryLabel}${note}${dateLabel ? ` · ${dateLabel}` : ""}`;
+      card.appendChild(title);
+      card.appendChild(url);
+      card.appendChild(meta);
+      frag.appendChild(card);
+    });
+    $videoLinksList.innerHTML = "";
+    $videoLinksList.appendChild(frag);
+  }
+
+  function renderLinkPickerList() {
+    if (!$videoLinkPickerList) return;
+    const search = ($videoLinkSearch?.value || "").trim().toLowerCase();
+    const items = getLinksArray().sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+    const filtered = items.filter((item) => {
+      if (!search) return true;
+      const hay = `${item.title || ""} ${item.url || ""} ${item.note || ""}`.toLowerCase();
+      return hay.includes(search);
+    });
+    const frag = document.createDocumentFragment();
+    if (!filtered.length) {
+      const empty = document.createElement("div");
+      empty.className = "video-link-card";
+      empty.textContent = "No hay links que coincidan.";
+      frag.appendChild(empty);
+    } else {
+      filtered.forEach((item) => {
+        const card = document.createElement("div");
+        card.className = "video-link-card";
+        const title = document.createElement("div");
+        title.className = "video-link-card-title";
+        title.textContent = item.title || "Recurso guardado";
+        const url = document.createElement("div");
+        url.className = "video-link-card-url";
+        url.textContent = item.url || "";
+        const meta = document.createElement("div");
+        meta.className = "video-link-card-meta";
+        meta.textContent = `${LINK_CATEGORY_LABELS[item.category] || "Otro"}${item.note ? ` · ${item.note}` : ""}`;
+        const btn = document.createElement("button");
+        btn.className = "btn";
+        btn.textContent = "Insertar";
+        btn.addEventListener("click", () => {
+          insertLinkResource(item);
+          closeLinkPicker();
+        });
+        card.appendChild(title);
+        card.appendChild(url);
+        card.appendChild(meta);
+        card.appendChild(btn);
+        frag.appendChild(card);
+      });
+    }
+    $videoLinkPickerList.innerHTML = "";
+    $videoLinkPickerList.appendChild(frag);
+  }
+
+  function insertLinkResource(item) {
+    if (!quill || !item) return;
+    const range = quill.getSelection(true);
+    const url = item.url || "";
+    if (!url) return;
+    if (range && range.length > 0) {
+      quill.formatText(range.index, range.length, "link", url, "user");
+      return;
+    }
+    const title = item.title || "Recurso";
+    const note = item.note ? ` — ${item.note}` : "";
+    const insertText = `\n🔗 ${title}\n${url}${note}\n`;
+    const insertIndex = range ? range.index : quill.getLength();
+    quill.insertText(insertIndex, insertText, "user");
+    const urlIndex = insertIndex + `\n🔗 ${title}\n`.length;
+    quill.formatText(urlIndex, url.length, "link", url, "user");
+    quill.setSelection(urlIndex + url.length + note.length + 1, 0, "user");
+  }
+
+  function openLinksView() {
+    renderLinksList();
+    setActiveView("view-links");
+  }
+
+  function openLinksNewView(prefill = {}) {
+    if ($videoLinkUrl) $videoLinkUrl.value = prefill.url || "";
+    if ($videoLinkTitle) $videoLinkTitle.value = prefill.title || "";
+    if ($videoLinkCategory) $videoLinkCategory.value = prefill.category || "otro";
+    if ($videoLinkNote) $videoLinkNote.value = prefill.note || "";
+    setActiveView("view-links-new");
+  }
+
+  function clearLinkParams() {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("addLink");
+      url.searchParams.delete("url");
+      url.searchParams.delete("cat");
+      url.searchParams.delete("note");
+      url.searchParams.delete("title");
+      history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    } catch (_) {}
+  }
+
+  function handleDeepLinkParams() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("addLink") !== "1") return;
+      const url = params.get("url") || "";
+      const category = params.get("cat") || "otro";
+      const note = params.get("note") || "";
+      const title = params.get("title") || "";
+      openLinksNewView({ url, category, note, title });
+    } catch (_) {}
   }
 
   function renderTeleprompterContent() {
@@ -942,8 +1179,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
 
   if ($videoScriptBack) $videoScriptBack.addEventListener("click", closeScriptView);
   if ($videoScriptTeleprompter) $videoScriptTeleprompter.addEventListener("click", openTeleprompterView);
-  if ($videoScriptAnnotate) {
-    $videoScriptAnnotate.addEventListener("click", () => {
+  if ($videoToolbarAnnotate) {
+    $videoToolbarAnnotate.addEventListener("click", () => {
       const range = quill?.getSelection();
       if (!range || range.length <= 0) return;
       annotationRange = range;
@@ -1001,8 +1238,106 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     });
   }
 
+  if ($videoScriptCountToggle) {
+    $videoScriptCountToggle.addEventListener("click", openCountSheet);
+  }
+  if ($videoCountSheetClose) {
+    $videoCountSheetClose.addEventListener("click", closeCountSheet);
+  }
+  if ($videoCountSheetBackdrop) {
+    $videoCountSheetBackdrop.addEventListener("click", (event) => {
+      if (event.target === $videoCountSheetBackdrop) closeCountSheet();
+    });
+  }
+  addSheetSwipeToClose($videoCountSheet, closeCountSheet);
+
+  if ($videoScriptInsertLink) {
+    $videoScriptInsertLink.addEventListener("click", openLinkPicker);
+  }
+  if ($videoLinkPickerClose) {
+    $videoLinkPickerClose.addEventListener("click", closeLinkPicker);
+  }
+  if ($videoLinkPickerBackdrop) {
+    $videoLinkPickerBackdrop.addEventListener("click", (event) => {
+      if (event.target === $videoLinkPickerBackdrop) closeLinkPicker();
+    });
+  }
+  addSheetSwipeToClose($videoLinkPicker, closeLinkPicker);
+  if ($videoLinkSearch) {
+    $videoLinkSearch.addEventListener("input", () => {
+      renderLinkPickerList();
+    });
+  }
+
+  if ($videoToolbarMoreToggle && $videoToolbarMoreMenu) {
+    $videoToolbarMoreToggle.addEventListener("click", () => {
+      const isOpen = $videoToolbarMoreMenu.classList.toggle("is-open");
+      $videoToolbarMoreMenu.setAttribute("aria-hidden", String(!isOpen));
+    });
+  }
+  if ($videoToolbarMoreMenu) {
+    document.addEventListener("click", (event) => {
+      if (!$videoToolbarMoreMenu.classList.contains("is-open")) return;
+      const isToolbar = event.target.closest("#video-script-toolbar");
+      if (!isToolbar) {
+        $videoToolbarMoreMenu.classList.remove("is-open");
+        $videoToolbarMoreMenu.setAttribute("aria-hidden", "true");
+      }
+    });
+  }
+
   if ($videoDayBack) {
     $videoDayBack.addEventListener("click", () => setActiveView("view-videos"));
+  }
+
+  if ($btnOpenLinks) {
+    $btnOpenLinks.addEventListener("click", openLinksView);
+  }
+  if ($videoLinksBack) {
+    $videoLinksBack.addEventListener("click", () => setActiveView("view-videos"));
+  }
+  if ($videoLinksNew) {
+    $videoLinksNew.addEventListener("click", () => openLinksNewView());
+  }
+  if ($videoLinksNewBack) {
+    $videoLinksNewBack.addEventListener("click", () => {
+      clearLinkParams();
+      openLinksView();
+    });
+  }
+  if ($videoLinksCancel) {
+    $videoLinksCancel.addEventListener("click", () => {
+      clearLinkParams();
+      openLinksView();
+    });
+  }
+  if ($videoLinksForm) {
+    $videoLinksForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const url = ($videoLinkUrl?.value || "").trim();
+      if (!url) return;
+      const title = ($videoLinkTitle?.value || "").trim();
+      const category = $videoLinkCategory?.value || "otro";
+      const note = ($videoLinkNote?.value || "").trim();
+      const now = Date.now();
+      try {
+        const newRef = push(ref(db, LINKS_PATH));
+        await set(newRef, {
+          url,
+          title: title || null,
+          category,
+          note,
+          createdAt: now,
+          updatedAt: now
+        });
+        if ($videoLinksForm) $videoLinksForm.reset();
+        if ($videoLinkCategory) $videoLinkCategory.value = "otro";
+        clearLinkParams();
+        openLinksView();
+      } catch (err) {
+        console.error("Error guardando link", err);
+      }
+    });
   }
 
 // === Cronómetro (tiempo real trabajado) ===
@@ -1336,6 +1671,12 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
     renderVideoStats();
     renderVideoCalendar();
     renderVideoTimerUI();
+  });
+
+  onValue(ref(db, LINKS_PATH), (snap) => {
+    links = snap.val() || {};
+    renderLinksList();
+    renderLinkPickerList();
   });
 
   // === Render tarjetas ===
@@ -2262,6 +2603,8 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
       return null;
     }
   }
+
+  handleDeepLinkParams();
 
   window.__bookshellVideos = {
     getRecentVideo,

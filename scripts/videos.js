@@ -335,7 +335,7 @@ async function addWorkedSecondsToVideo(videoId, seconds) {
       $videoModalTitle.textContent = "Editar vídeo";
       $videoId.value = id;
       $videoTitle.value = v.title || "";
-      $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords || 0;
+$videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
 
       const dur = splitSeconds(v.durationSeconds || 0);
       $videoDurationMin.value = dur.min;
@@ -1820,7 +1820,7 @@ function createVideoCard(id) {
 
     let totalWords = 0;
     Object.values(videos || {}).forEach((v) => {
-      totalWords += Number(v?.script?.wordCount ?? v?.scriptWords || 0);
+totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
     });
 
     const { current } = computeVideoStreak(totalsForStreak);

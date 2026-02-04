@@ -2526,9 +2526,7 @@ Crear “<span id="gym-create-cta-text"></span>”
       b.classList.toggle("nav-btn-active", b.dataset.view === viewId);
       if (b.dataset.view === viewId) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current");
     });
-    try {
-      history.replaceState(null, "", `${location.pathname}${location.search}#${viewId}`);
-    } catch {}
+
   };
 
   const deepLinkParams = new URLSearchParams(location.search);
@@ -2566,12 +2564,6 @@ Crear “<span id="gym-create-cta-text"></span>”
     logDeepLink("prehash set", deepLinkView);
   }
 
-  // hash deep-link
-  const hash = (location.hash || "").replace("#", "");
-  if (hash && document.getElementById(hash)) {
-    logDeepLink("apply hash view", hash);
-    setView(hash);
-  }
 
   // click fallback (captura por si tu main.js muere)
   document.addEventListener("click", (e) => {
@@ -2584,6 +2576,18 @@ Crear “<span id="gym-create-cta-text"></span>”
 
   // expone util por consola
   window.__bookshellSetView = setView;
+const applyInitialView = () => {
+  const hash = (location.hash || "").replace("#", "");
+  const target = hash && document.getElementById(hash) ? hash : "";
+  if (target) setView(target);
+};
+
+// DOM listo -> aplica vista
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", applyInitialView, { once: true });
+} else {
+  applyInitialView();
+}
 
   console.log("[BOOT] nav fallback listo");
 })();

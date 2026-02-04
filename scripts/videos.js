@@ -42,6 +42,34 @@ let videoWorkLog = {}; // { "YYYY-MM-DD": seconds }
 let videoCalYear;
 let videoCalMonth;
 let videoCalViewMode = "month";
+let activeScriptVideoId = null;
+let quill = null;
+let scriptDirty = false;
+let scriptSaveTimer = null;
+let currentCountSettings = null;
+let currentScriptTarget = 0;
+let currentScriptWords = 0;
+let currentScriptTitle = "";
+let annotationRange = null;
+let annotationEditingId = null;
+let teleprompterTimer = null;
+let teleprompterPlaying = false;
+let teleprompterSentences = [];
+let teleprompterActiveIndex = -1;
+
+const SCRIPT_SAVE_DEBOUNCE = 1000;
+const SCRIPT_PPM_KEY = "bookshell_video_script_ppm_v1";
+const TELEPROMPTER_PPM_KEY = "bookshell_video_teleprompter_ppm_v1";
+
+const DEFAULT_COUNT_SETTINGS = {
+  countHeadings: false,
+  countHashtags: false,
+  countLinks: true,
+  countUrls: false,
+  countLists: true,
+  excludeAnnotations: true,
+  ignoreTags: true
+};
 
 // Utils fecha
 function todayKey() {
@@ -136,6 +164,17 @@ function normalizeNumberField(el, max = null) {
   });
 }
 
+function setActiveView(viewId) {
+  if (!viewId) return;
+  if (typeof window.__bookshellSetView === "function") {
+    window.__bookshellSetView(viewId);
+    return;
+  }
+  document.querySelectorAll(".view").forEach((v) => v.classList.remove("view-active"));
+  const target = document.getElementById(viewId);
+  if (target) target.classList.add("view-active");
+}
+
 // === DOM refs (solo si existe la pestaña) ===
 const $viewVideos = document.getElementById("view-videos");
 if ($viewVideos) {
@@ -162,6 +201,46 @@ if ($viewVideos) {
   const $videoCalViewMode = document.getElementById("video-cal-view-mode");
   const $videoCalendarSummary = document.getElementById("video-calendar-summary");
 
+  const $btnAddIdea = document.getElementById("btn-add-idea");
+
+  const $viewVideoScript = document.getElementById("view-video-script");
+  const $videoScriptBack = document.getElementById("video-script-back");
+  const $videoScriptTitle = document.getElementById("video-script-title");
+  const $videoScriptSubtitle = document.getElementById("video-script-subtitle");
+  const $videoScriptToolbar = document.getElementById("video-script-toolbar");
+  const $videoScriptEditor = document.getElementById("video-script-editor");
+  const $videoScriptWordcount = document.getElementById("video-script-wordcount");
+  const $videoScriptProgress = document.getElementById("video-script-progress");
+  const $videoScriptDuration = document.getElementById("video-script-duration");
+  const $videoScriptPpm = document.getElementById("video-script-ppm");
+  const $videoScriptAnnotate = document.getElementById("video-script-annotate");
+  const $videoScriptCountToggles = document.getElementById("video-script-count-toggles");
+  const $videoScriptCountSummary = document.getElementById("video-script-count-summary");
+  const $videoScriptTeleprompter = document.getElementById("video-script-teleprompter");
+
+  const $annotationPopup = document.getElementById("video-annotation-popup");
+  const $annotationTitle = document.getElementById("video-annotation-title");
+  const $annotationText = document.getElementById("video-annotation-text");
+  const $annotationCancel = document.getElementById("video-annotation-cancel");
+  const $annotationDelete = document.getElementById("video-annotation-delete");
+  const $annotationSave = document.getElementById("video-annotation-save");
+
+  const $viewTeleprompter = document.getElementById("view-video-teleprompter");
+  const $teleprompterBack = document.getElementById("video-teleprompter-back");
+  const $teleprompterTitle = document.getElementById("video-teleprompter-title");
+  const $teleprompterPlay = document.getElementById("video-teleprompter-play");
+  const $teleprompterSpeed = document.getElementById("video-teleprompter-speed");
+  const $teleprompterSize = document.getElementById("video-teleprompter-size");
+  const $teleprompterHighlight = document.getElementById("video-teleprompter-highlight");
+  const $teleprompterBody = document.getElementById("video-teleprompter-body");
+  const $teleprompterContent = document.getElementById("video-teleprompter-content");
+
+  const $viewVideoDay = document.getElementById("view-video-day");
+  const $videoDayBack = document.getElementById("video-day-back");
+  const $videoDayTitle = document.getElementById("video-day-title");
+  const $videoDaySummary = document.getElementById("video-day-summary");
+  const $videoDayList = document.getElementById("video-day-list");
+
   // Modal vídeo
   const $videoModalBackdrop = document.getElementById("video-modal-backdrop");
   const $videoModalTitle = document.getElementById("video-modal-title");
@@ -180,7 +259,10 @@ let assignWorkResolve = null;
 
 function getInProgressVideos() {
   const arr = Object.entries(videos || {})
-    .filter(([, v]) => (v?.status || "in_progress") === "in_progress")
+    .filter(([, v]) => {
+      const status = v?.status || "script";
+      return ["script", "in_progress", "recording", "editing", "scheduled"].includes(status);
+    })
     .map(([id, v]) => ({ id, title: v.title || "Sin título" }));
 
   // orden: alfabético (cámbialo si prefieres por fecha)
@@ -253,7 +335,7 @@ async function addWorkedSecondsToVideo(videoId, seconds) {
       $videoModalTitle.textContent = "Editar vídeo";
       $videoId.value = id;
       $videoTitle.value = v.title || "";
-      $videoScriptWords.value = v.scriptWords || 0;
+      $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords || 0;
 
       const dur = splitSeconds(v.durationSeconds || 0);
       $videoDurationMin.value = dur.min;
@@ -264,7 +346,7 @@ async function addWorkedSecondsToVideo(videoId, seconds) {
       $videoEditedSec.value = ed.sec;
 
       $videoPublishDate.value = v.publishDate || "";
-      $videoStatus.value = v.status || "in_progress";
+      $videoStatus.value = v.status || "script";
     } else {
       $videoModalTitle.textContent = "Nuevo vídeo";
       $videoId.value = "";
@@ -274,7 +356,7 @@ async function addWorkedSecondsToVideo(videoId, seconds) {
       $videoDurationSec.value = 0;
       $videoEditedMin.value = 0;
       $videoEditedSec.value = 0;
-      $videoStatus.value = "in_progress";
+      $videoStatus.value = "script";
     }
 
     $videoModalBackdrop.classList.remove("hidden");
@@ -287,12 +369,572 @@ async function addWorkedSecondsToVideo(videoId, seconds) {
   if ($btnAddVideo) {
     $btnAddVideo.addEventListener("click", () => openVideoModal());
   }
+  if ($btnAddIdea) {
+    $btnAddIdea.addEventListener("click", async () => {
+      const title = (window.prompt("Título de la idea") || "").trim();
+      if (!title) return;
+      const tags = (window.prompt("Tags/hashtags (opcional)") || "").trim();
+      try {
+        const newRef = push(ref(db, VIDEOS_PATH));
+        await set(newRef, {
+          title,
+          tags,
+          type: "idea",
+          status: "idea",
+          scriptTarget: 2000,
+          scriptWords: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        });
+      } catch (err) {
+        console.error("Error creando idea", err);
+      }
+    });
+  }
+
+  function loadStoredPpm(key, fallback = 150) {
+    const raw = Number(localStorage.getItem(key) || 0);
+    if (!Number.isFinite(raw) || raw <= 0) return fallback;
+    return raw;
+  }
+
+  function saveStoredPpm(key, value) {
+    const v = Math.max(60, Number(value) || 0);
+    localStorage.setItem(key, String(v));
+  }
+
+  function getVideoCountSettings(video) {
+    return {
+      ...DEFAULT_COUNT_SETTINGS,
+      ...(video?.script?.countSettings || {})
+    };
+  }
+
+  function getCountSummary(settings) {
+    const counting = [];
+    const excluding = [];
+    if (settings.countHeadings) counting.push("headings"); else excluding.push("headings");
+    if (settings.countHashtags) counting.push("hashtags"); else excluding.push("hashtags");
+    if (settings.countLinks) counting.push("links"); else excluding.push("links");
+    if (settings.countUrls) counting.push("urls"); else excluding.push("urls");
+    if (settings.countLists) counting.push("listas"); else excluding.push("listas");
+    if (settings.excludeAnnotations) excluding.push("anotaciones"); else counting.push("anotaciones");
+    if (settings.ignoreTags) excluding.push("tags especiales"); else counting.push("tags especiales");
+    return `Contando: ${counting.join(", ") || "cuerpo"} · Excluyendo: ${excluding.join(", ") || "nada"}`;
+  }
+
+  function getWordTokens(text) {
+    if (!text) return [];
+    const cleaned = text.normalize("NFKC");
+    return cleaned.match(/[\p{L}\p{N}#@]+(?:['’\-][\p{L}\p{N}]+)*/gu) || [];
+  }
+
+  function isUrlToken(token) {
+    return /^(https?:\/\/|www\.)/i.test(token) || /\.[a-z]{2,}$/i.test(token);
+  }
+
+  function computeWordCount(content, settings) {
+    const delta = content?.ops ? content : { ops: [] };
+    const lines = [];
+    let currentLine = { parts: [], attrs: {} };
+
+    delta.ops.forEach((op) => {
+      if (typeof op.insert !== "string") return;
+      const pieces = op.insert.split("\n");
+      pieces.forEach((piece, idx) => {
+        if (piece) {
+          currentLine.parts.push({ text: piece, attrs: op.attributes || {} });
+        }
+        if (idx < pieces.length - 1) {
+          currentLine.attrs = op.attributes || {};
+          lines.push(currentLine);
+          currentLine = { parts: [], attrs: {} };
+        }
+      });
+    });
+    if (currentLine.parts.length) lines.push(currentLine);
+
+    let count = 0;
+
+    lines.forEach((line) => {
+      const isHeading = !!line.attrs?.header;
+      const isList = !!line.attrs?.list;
+      if (isHeading && !settings.countHeadings) return;
+      if (isList && !settings.countLists) return;
+
+      line.parts.forEach((part) => {
+        if (settings.excludeAnnotations && part.attrs?.annotation) return;
+        if (part.attrs?.link && !settings.countLinks) return;
+
+        let text = part.text || "";
+        if (settings.ignoreTags) {
+          text = text.replace(/\[[^\]]+\]/g, " ");
+        }
+
+        const tokens = getWordTokens(text);
+        tokens.forEach((token) => {
+          if (!settings.countHashtags && token.startsWith("#")) return;
+          if (!settings.countUrls && isUrlToken(token)) return;
+          count += 1;
+        });
+      });
+    });
+
+    return count;
+  }
+
+  function updateScriptStats(wordCount) {
+    currentScriptWords = wordCount;
+    const pct = currentScriptTarget > 0 ? Math.min(100, Math.round((wordCount / currentScriptTarget) * 100)) : 0;
+    if ($videoScriptWordcount) $videoScriptWordcount.textContent = wordCount.toLocaleString("es-ES");
+    if ($videoScriptProgress) $videoScriptProgress.textContent = `${pct}%`;
+
+    const ppm = Math.max(60, Number($videoScriptPpm?.value) || loadStoredPpm(SCRIPT_PPM_KEY, 150));
+    const minutes = wordCount > 0 ? Math.max(1, Math.round(wordCount / ppm)) : 0;
+    if ($videoScriptDuration) $videoScriptDuration.textContent = minutes ? `${minutes} min` : "0 min";
+  }
+
+  function renderCountToggles(settings) {
+    if (!$videoScriptCountToggles) return;
+    const items = [
+      { key: "countHeadings", label: "Headings" },
+      { key: "countHashtags", label: "Hashtags" },
+      { key: "countLinks", label: "Links" },
+      { key: "countUrls", label: "URLs" },
+      { key: "countLists", label: "Listas" },
+      { key: "excludeAnnotations", label: "Excluir anotaciones" },
+      { key: "ignoreTags", label: "Ignorar tags [PAUSA]" }
+    ];
+
+    $videoScriptCountToggles.innerHTML = "";
+    items.forEach((item) => {
+      const label = document.createElement("label");
+      label.className = "toggle-pill";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = !!settings[item.key];
+      input.addEventListener("change", () => {
+        settings[item.key] = input.checked;
+        currentCountSettings = { ...settings };
+        if ($videoScriptCountSummary) $videoScriptCountSummary.textContent = getCountSummary(settings);
+        scriptDirty = true;
+        updateWordCountAndSave(true);
+        saveScriptSettings();
+      });
+      const span = document.createElement("span");
+      span.textContent = item.label;
+      label.appendChild(input);
+      label.appendChild(span);
+      $videoScriptCountToggles.appendChild(label);
+    });
+    if ($videoScriptCountSummary) $videoScriptCountSummary.textContent = getCountSummary(settings);
+  }
+
+  function buildAnnotationBlot() {
+    if (!window.Quill) return;
+    const Inline = window.Quill.import("blots/inline");
+    class AnnotationBlot extends Inline {
+      static create(value) {
+        const node = super.create();
+        node.setAttribute("data-annotation", value);
+        node.classList.add("video-annotation");
+        return node;
+      }
+      static formats(node) {
+        return node.getAttribute("data-annotation");
+      }
+    }
+    AnnotationBlot.blotName = "annotation";
+    AnnotationBlot.tagName = "span";
+    window.Quill.register(AnnotationBlot, true);
+  }
+
+  function initQuill() {
+    if (quill || !$videoScriptEditor) return;
+    if (!window.Quill) return;
+    buildAnnotationBlot();
+    const toolbarOptions = [
+      ["bold", "italic", "underline", { background: [] }],
+      [{ header: [1, 2, 3, false] }],
+      [{ list: "ordered" }, { list: "bullet" }],
+      ["link", "blockquote"]
+    ];
+
+    quill = new window.Quill($videoScriptEditor, {
+      theme: "snow",
+      modules: {
+        toolbar: {
+          container: toolbarOptions
+        }
+      },
+      placeholder: "Escribe el guion aquí..."
+    });
+
+    if ($videoScriptToolbar) {
+      const toolbar = quill.getModule("toolbar");
+      if (toolbar?.container) {
+        $videoScriptToolbar.appendChild(toolbar.container);
+      }
+    }
+
+    quill.on("selection-change", (range) => {
+      if (range && range.length > 0) {
+        annotationRange = range;
+      }
+    });
+
+    quill.on("text-change", (delta, old, source) => {
+      if (source === "user") {
+        scriptDirty = true;
+        updateWordCountAndSave(false);
+      }
+    });
+
+    quill.root.addEventListener("click", (event) => {
+      const target = event.target?.closest?.(".video-annotation");
+      if (!target) return;
+      const id = target.getAttribute("data-annotation");
+      if (!id) return;
+      const blot = window.Quill.find(target);
+      const index = quill.getIndex(blot);
+      const length = blot.length();
+      annotationRange = { index, length };
+      const ann = videos?.[activeScriptVideoId]?.script?.annotations?.[id];
+      openAnnotationPopup({
+        id,
+        text: ann?.text || "",
+        existing: true
+      });
+    });
+  }
+
+  function getScriptContent() {
+    if (!quill) return { ops: [] };
+    return quill.getContents();
+  }
+
+  function updateWordCountAndSave(forceImmediate) {
+    if (!quill || !currentCountSettings) return;
+    const wordCount = computeWordCount(getScriptContent(), currentCountSettings);
+    updateScriptStats(wordCount);
+    if (forceImmediate) {
+      scheduleScriptSave(true);
+    } else {
+      scheduleScriptSave(false);
+    }
+  }
+
+  function scheduleScriptSave(immediate) {
+    if (scriptSaveTimer) clearTimeout(scriptSaveTimer);
+    if (immediate) {
+      saveScript();
+      return;
+    }
+    scriptSaveTimer = setTimeout(() => {
+      saveScript();
+    }, SCRIPT_SAVE_DEBOUNCE);
+  }
+
+  async function saveScriptSettings() {
+    if (!activeScriptVideoId || !currentCountSettings) return;
+    try {
+      await update(ref(db, `${VIDEOS_PATH}/${activeScriptVideoId}/script`), {
+        countSettings: currentCountSettings
+      });
+    } catch (err) {
+      console.error("Error guardando settings de conteo", err);
+    }
+  }
+
+  async function updateWordLogForScript(videoId, diffWords) {
+    if (!videoId || !diffWords) return;
+    const day = todayKey();
+    const logRef = ref(db, `${VIDEO_LOG_PATH}/${day}/${videoId}`);
+    await runTransaction(logRef, (current) => {
+      const prev = current || { w: 0, s: 0 };
+      let w = (Number(prev.w) || 0) + diffWords;
+      let s = Number(prev.s) || 0;
+      if (w < 0) w = 0;
+      return { w, s };
+    });
+  }
+
+  async function saveScript() {
+    if (!activeScriptVideoId || !quill) return;
+    if (!scriptDirty) return;
+    const content = getScriptContent();
+    const wordCount = computeWordCount(content, currentCountSettings || DEFAULT_COUNT_SETTINGS);
+    const now = Date.now();
+    const prevWords = Number(videos?.[activeScriptVideoId]?.script?.wordCount || videos?.[activeScriptVideoId]?.scriptWords || 0);
+    const diffWords = wordCount - prevWords;
+
+    try {
+      await update(ref(db, `${VIDEOS_PATH}/${activeScriptVideoId}`), {
+        scriptWords: wordCount,
+        updatedAt: now,
+        "script/content": content,
+        "script/updatedAt": now,
+        "script/wordCount": wordCount,
+        "script/countSettings": currentCountSettings || DEFAULT_COUNT_SETTINGS
+      });
+      if (diffWords !== 0) await updateWordLogForScript(activeScriptVideoId, diffWords);
+      scriptDirty = false;
+    } catch (err) {
+      console.error("Error guardando guion", err);
+    }
+  }
+
+  function openAnnotationPopup({ id = null, text = "", existing = false }) {
+    annotationEditingId = id;
+    if ($annotationTitle) {
+      $annotationTitle.textContent = existing ? "Editar anotación" : "Nueva anotación";
+    }
+    if ($annotationText) $annotationText.value = text || "";
+    if ($annotationDelete) $annotationDelete.style.display = existing ? "inline-flex" : "none";
+    $annotationPopup?.classList.remove("hidden");
+  }
+
+  function closeAnnotationPopup() {
+    annotationEditingId = null;
+    annotationRange = null;
+    if ($annotationText) $annotationText.value = "";
+    $annotationPopup?.classList.add("hidden");
+  }
+
+  async function saveAnnotation() {
+    if (!activeScriptVideoId || !quill) return;
+    if (!annotationRange || annotationRange.length <= 0) return;
+    const text = ($annotationText?.value || "").trim();
+    if (!text) return;
+    const now = Date.now();
+    let id = annotationEditingId;
+    if (!id) {
+      const annRef = push(ref(db, `${VIDEOS_PATH}/${activeScriptVideoId}/script/annotations`));
+      id = annRef.key;
+      quill.formatText(annotationRange.index, annotationRange.length, "annotation", id, "user");
+      await set(annRef, {
+        id,
+        text,
+        createdAt: now,
+        updatedAt: now,
+        range: annotationRange
+      });
+    } else {
+      await update(ref(db, `${VIDEOS_PATH}/${activeScriptVideoId}/script/annotations/${id}`), {
+        text,
+        updatedAt: now,
+        range: annotationRange
+      });
+    }
+    closeAnnotationPopup();
+    scriptDirty = true;
+    updateWordCountAndSave(true);
+  }
+
+  async function deleteAnnotation() {
+    if (!activeScriptVideoId || !quill || !annotationEditingId || !annotationRange) return;
+    const id = annotationEditingId;
+    quill.formatText(annotationRange.index, annotationRange.length, "annotation", false, "user");
+    try {
+      await update(ref(db, `${VIDEOS_PATH}/${activeScriptVideoId}/script/annotations`), {
+        [id]: null
+      });
+    } catch (err) {
+      console.error("Error borrando anotación", err);
+    }
+    closeAnnotationPopup();
+    scriptDirty = true;
+    updateWordCountAndSave(true);
+  }
+
+  function loadScriptIntoEditor(videoId) {
+    const v = videos?.[videoId];
+    if (!v) return;
+    currentScriptTitle = v.title || "Guion";
+    currentScriptTarget = v.scriptTarget || 2000;
+    if ($videoScriptTitle) $videoScriptTitle.textContent = "Guion";
+    if ($videoScriptSubtitle) $videoScriptSubtitle.textContent = currentScriptTitle;
+
+    currentCountSettings = getVideoCountSettings(v);
+    renderCountToggles(currentCountSettings);
+
+    const ppm = loadStoredPpm(SCRIPT_PPM_KEY, 150);
+    if ($videoScriptPpm) $videoScriptPpm.value = ppm;
+
+    const scriptContent = v.script?.content;
+    if (scriptContent?.ops) {
+      quill.setContents(scriptContent);
+    } else if (typeof scriptContent === "string") {
+      quill.clipboard.dangerouslyPasteHTML(scriptContent);
+    } else {
+      quill.setText("");
+    }
+
+    const wordCount = computeWordCount(getScriptContent(), currentCountSettings);
+    updateScriptStats(wordCount);
+  }
+
+  function openScriptView(videoId) {
+    if (!videoId) return;
+    if (!window.Quill) {
+      console.error("Quill no cargado");
+      return;
+    }
+    initQuill();
+    activeScriptVideoId = videoId;
+    scriptDirty = false;
+    closeAnnotationPopup();
+    loadScriptIntoEditor(videoId);
+    setActiveView("view-video-script");
+  }
+
+  function closeScriptView() {
+    if (scriptDirty) saveScript();
+    activeScriptVideoId = null;
+    setActiveView("view-videos");
+  }
+
+  function renderTeleprompterContent() {
+    if (!$teleprompterContent || !quill) return;
+    const text = quill.getText().trim();
+    if (!text) {
+      $teleprompterContent.textContent = "Sin guion.";
+      teleprompterSentences = [];
+      return;
+    }
+    const parts = text.split(/[.!?¿¡]\s+/);
+    teleprompterSentences = parts.map((sentence) => sentence.trim()).filter(Boolean);
+    $teleprompterContent.innerHTML = teleprompterSentences
+      .map((sentence) => `<span class="video-teleprompter-sentence">${sentence}</span>`)
+      .join(" ");
+  }
+
+  function setTeleprompterSize(value) {
+    if (!$teleprompterContent) return;
+    $teleprompterContent.style.setProperty("--teleprompter-size", `${value}px`);
+  }
+
+  function updateTeleprompterHighlight() {
+    if (!$teleprompterBody || !teleprompterSentences.length) return;
+    if (!$teleprompterHighlight?.checked) return;
+    const sentenceEls = $teleprompterContent.querySelectorAll(".video-teleprompter-sentence");
+    if (!sentenceEls.length) return;
+    const top = $teleprompterBody.scrollTop;
+    let active = 0;
+    sentenceEls.forEach((el, idx) => {
+      const offset = el.offsetTop;
+      if (offset <= top + 20) active = idx;
+    });
+    if (active !== teleprompterActiveIndex) {
+      sentenceEls.forEach((el, idx) => {
+        el.classList.toggle("is-active", idx === active);
+      });
+      teleprompterActiveIndex = active;
+    }
+  }
+
+  function stopTeleprompter() {
+    teleprompterPlaying = false;
+    if (teleprompterTimer) clearInterval(teleprompterTimer);
+    teleprompterTimer = null;
+    if ($teleprompterPlay) $teleprompterPlay.textContent = "Play";
+  }
+
+  function startTeleprompter() {
+    if (!$teleprompterBody || !$teleprompterContent) return;
+    const ppm = Math.max(60, Number($teleprompterSpeed?.value) || 150);
+    saveStoredPpm(TELEPROMPTER_PPM_KEY, ppm);
+    const wordCount = computeWordCount(getScriptContent(), currentCountSettings || DEFAULT_COUNT_SETTINGS);
+    const durationSec = Math.max(10, Math.round((wordCount / ppm) * 60));
+    const scrollMax = Math.max(0, $teleprompterBody.scrollHeight - $teleprompterBody.clientHeight);
+    const pxPerSec = scrollMax > 0 ? scrollMax / durationSec : 0;
+    if (teleprompterTimer) clearInterval(teleprompterTimer);
+    teleprompterPlaying = true;
+    if ($teleprompterPlay) $teleprompterPlay.textContent = "Pause";
+    teleprompterTimer = setInterval(() => {
+      if (!teleprompterPlaying) return;
+      $teleprompterBody.scrollTop = Math.min(scrollMax, $teleprompterBody.scrollTop + pxPerSec / 10);
+      updateTeleprompterHighlight();
+      if ($teleprompterBody.scrollTop >= scrollMax) stopTeleprompter();
+    }, 100);
+  }
+
+  function openTeleprompterView() {
+    if (!activeScriptVideoId) return;
+    renderTeleprompterContent();
+    if ($teleprompterTitle) $teleprompterTitle.textContent = currentScriptTitle || "Teleprompter";
+    const stored = loadStoredPpm(TELEPROMPTER_PPM_KEY, loadStoredPpm(SCRIPT_PPM_KEY, 150));
+    if ($teleprompterSpeed) $teleprompterSpeed.value = stored;
+    if ($teleprompterSize) setTeleprompterSize($teleprompterSize.value);
+    if ($teleprompterBody) $teleprompterBody.scrollTop = 0;
+    stopTeleprompter();
+    setActiveView("view-video-teleprompter");
+  }
+
+  function closeTeleprompterView() {
+    stopTeleprompter();
+    setActiveView("view-video-script");
+  }
   if ($videoModalClose) $videoModalClose.addEventListener("click", closeVideoModal);
   if ($videoModalCancel) $videoModalCancel.addEventListener("click", closeVideoModal);
   if ($videoModalBackdrop) {
     $videoModalBackdrop.addEventListener("click", (e) => {
       if (e.target === $videoModalBackdrop) closeVideoModal();
     });
+  }
+
+  if ($videoScriptBack) $videoScriptBack.addEventListener("click", closeScriptView);
+  if ($videoScriptTeleprompter) $videoScriptTeleprompter.addEventListener("click", openTeleprompterView);
+  if ($videoScriptAnnotate) {
+    $videoScriptAnnotate.addEventListener("click", () => {
+      const range = quill?.getSelection();
+      if (!range || range.length <= 0) return;
+      annotationRange = range;
+      openAnnotationPopup({ existing: false });
+    });
+  }
+  if ($annotationCancel) $annotationCancel.addEventListener("click", closeAnnotationPopup);
+  if ($annotationSave) $annotationSave.addEventListener("click", saveAnnotation);
+  if ($annotationDelete) $annotationDelete.addEventListener("click", deleteAnnotation);
+
+  if ($videoScriptPpm) {
+    $videoScriptPpm.addEventListener("change", () => {
+      saveStoredPpm(SCRIPT_PPM_KEY, $videoScriptPpm.value);
+      updateScriptStats(currentScriptWords);
+    });
+  }
+
+  if ($teleprompterBack) $teleprompterBack.addEventListener("click", closeTeleprompterView);
+  if ($teleprompterPlay) {
+    $teleprompterPlay.addEventListener("click", () => {
+      if (teleprompterPlaying) {
+        stopTeleprompter();
+      } else {
+        startTeleprompter();
+      }
+    });
+  }
+  if ($teleprompterSpeed) {
+    $teleprompterSpeed.addEventListener("change", () => {
+      if (teleprompterPlaying) startTeleprompter();
+    });
+  }
+  if ($teleprompterSize) {
+    $teleprompterSize.addEventListener("input", () => setTeleprompterSize($teleprompterSize.value));
+  }
+  if ($teleprompterBody) {
+    $teleprompterBody.addEventListener("scroll", () => {
+      if ($teleprompterHighlight?.checked) updateTeleprompterHighlight();
+    });
+  }
+  if ($teleprompterHighlight) {
+    $teleprompterHighlight.addEventListener("change", () => {
+      updateTeleprompterHighlight();
+    });
+  }
+
+  if ($videoDayBack) {
+    $videoDayBack.addEventListener("click", () => setActiveView("view-videos"));
   }
 
 // === Cronómetro (tiempo real trabajado) ===
@@ -542,6 +1184,7 @@ window.addEventListener("focus", () => {
 });
 
 window.addEventListener("pagehide", () => {
+  if (scriptDirty) saveScript();
   if (!timerRunning) return;
   flushIfNeeded(true);
 });
@@ -576,6 +1219,7 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
 
       const data = {
         title,
+        type: id ? (videos?.[id]?.type || "video") : "video",
         scriptWords,
         scriptTarget: 2000,
         durationSeconds: durationSec,
@@ -627,6 +1271,32 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
   });
 
   // === Render tarjetas ===
+  const STATUS_LABELS = {
+    idea: "Idea",
+    script: "Guion",
+    in_progress: "Guion",
+    planned: "Planificado",
+    recording: "Grabación",
+    editing: "Edición",
+    scheduled: "Programado",
+    published: "Publicado"
+  };
+
+  function getSectionKey(video) {
+    if (!video) return "script";
+    if (video.type === "idea" || video.status === "idea") return "idea";
+    if (video.status === "published") return "published";
+    if (video.status === "recording") return "recording";
+    if (video.status === "editing") return "editing";
+    if (video.status === "scheduled" || video.status === "planned") return "scheduled";
+    return "script";
+  }
+
+  function getStatusLabel(status, type) {
+    if (type === "idea") return STATUS_LABELS.idea;
+    return STATUS_LABELS[status] || "Guion";
+  }
+
 function renderVideos() {
   if (!$videosList) return;
 
@@ -638,19 +1308,43 @@ function renderVideos() {
   }
   if ($videosEmpty) $videosEmpty.style.display = "none";
 
-  const publishedIds = [];
-  const activeIds = [];
+  const sections = [
+    { key: "idea", title: "Ideas", storage: "bookshell_videos_section_idea_v1", empty: "Aún no hay ideas." },
+    { key: "script", title: "Guion", storage: "bookshell_videos_section_script_v1", empty: "Aún no hay guiones." },
+    { key: "recording", title: "Grabación", storage: "bookshell_videos_section_recording_v1", empty: "Nada en grabación." },
+    { key: "editing", title: "Edición", storage: "bookshell_videos_section_editing_v1", empty: "Nada en edición." },
+    { key: "scheduled", title: "Programado/Publicar", storage: "bookshell_videos_section_scheduled_v1", empty: "Nada programado." },
+    { key: "published", title: "Publicados", storage: "bookshell_videos_section_published_v1", empty: "Aún no hay vídeos publicados." }
+  ];
+
+  const grouped = {
+    idea: [],
+    script: [],
+    recording: [],
+    editing: [],
+    scheduled: [],
+    published: []
+  };
 
   idsAll.forEach((id) => {
     const v = videos[id] || {};
-    // Publicado = status published (simple y estable)
-    if (v.status === "published") publishedIds.push(id);
-    else activeIds.push(id);
+    const key = getSectionKey(v);
+    grouped[key] = grouped[key] || [];
+    grouped[key].push(id);
   });
 
-  // orden
-  activeIds.sort((a, b) => (videos[b].updatedAt || 0) - (videos[a].updatedAt || 0));
-  publishedIds.sort((a, b) => {
+  grouped.idea.sort((a, b) => (videos[b].createdAt || 0) - (videos[a].createdAt || 0));
+  grouped.script.sort((a, b) => (videos[b].updatedAt || 0) - (videos[a].updatedAt || 0));
+  grouped.recording.sort((a, b) => (videos[b].updatedAt || 0) - (videos[a].updatedAt || 0));
+  grouped.editing.sort((a, b) => (videos[b].updatedAt || 0) - (videos[a].updatedAt || 0));
+  grouped.scheduled.sort((a, b) => {
+    const va = videos[a] || {};
+    const vb = videos[b] || {};
+    const da = va.publishDate ? parseDateKey(va.publishDate).getTime() : (va.updatedAt || 0);
+    const db = vb.publishDate ? parseDateKey(vb.publishDate).getTime() : (vb.updatedAt || 0);
+    return db - da;
+  });
+  grouped.published.sort((a, b) => {
     const va = videos[a] || {};
     const vb = videos[b] || {};
     const da = va.publishDate ? parseDateKey(va.publishDate).getTime() : (va.updatedAt || 0);
@@ -662,10 +1356,11 @@ function renderVideos() {
 function createVideoCard(id) {
   const v = videos[id];
   const isPublished = (v && v.status === "published");
+  const isIdea = v?.type === "idea" || v?.status === "idea";
   if (!v) return document.createElement("div");
 
   const scriptTarget = v.scriptTarget || 2000;
-  const scriptWords = Math.max(0, Number(v.scriptWords) || 0);
+  const scriptWords = Math.max(0, Number(v.script?.wordCount ?? v.scriptWords) || 0);
   const scriptPct = scriptTarget > 0 ? Math.min(100, Math.round((scriptWords / scriptTarget) * 100)) : 0;
 
   const durationTotal = Number(v.durationSeconds) || 0;
@@ -719,12 +1414,7 @@ function createVideoCard(id) {
 
   const status = document.createElement("span");
   status.className = "video-status-pill";
-  status.textContent =
-    v.status === "published"
-      ? "Publicado"
-      : v.status === "in_progress"
-      ? "Curso"
-      : "Planificado";
+  status.textContent = getStatusLabel(v.status, v.type);
 
   titleRow.appendChild(title);
   titleRow.appendChild(status);
@@ -744,6 +1434,7 @@ function createVideoCard(id) {
 
   const metaBits = [];
   if (v.publishDate) metaBits.push(`📅 ${v.publishDate}`);
+  if (isIdea && v.tags) metaBits.push(`🏷 ${v.tags}`);
   const durSplit = splitSeconds(durationTotal);
   if (durationTotal > 0) metaBits.push(`🎬 ${durSplit.min}m ${durSplit.sec}s`);
   meta.innerHTML = metaBits.map((m) => `<span>${m}</span>`).join("");
@@ -783,7 +1474,7 @@ function createVideoCard(id) {
   let currWords = scriptWords;
   let currEdited = editedSec;
 
-  if (!isPublished) {
+  if (!isPublished && !isIdea) {
     const ig = document.createElement("div");
     ig.className = "video-input-group";
     ig.innerHTML = `
@@ -843,6 +1534,26 @@ function createVideoCard(id) {
   btnEdit.textContent = "Editar";
   btnEdit.addEventListener("click", () => openVideoModal(id));
 
+  const btnScript = document.createElement("button");
+  btnScript.className = "btn";
+  btnScript.textContent = "Guion";
+  btnScript.addEventListener("click", () => openScriptView(id));
+
+  const btnConvert = document.createElement("button");
+  btnConvert.className = "btn";
+  btnConvert.textContent = "Convertir a vídeo";
+  btnConvert.addEventListener("click", async () => {
+    try {
+      await update(ref(db, `${VIDEOS_PATH}/${id}`), {
+        type: "video",
+        status: "script",
+        updatedAt: Date.now()
+      });
+    } catch (err) {
+      console.error("Error convirtiendo idea", err);
+    }
+  });
+
   const btnPublish = document.createElement("button");
   btnPublish.className = "btn";
   btnPublish.textContent = "Publicado";
@@ -858,7 +1569,9 @@ function createVideoCard(id) {
   }
 
   buttons.appendChild(btnEdit);
-  if (!isPublished) buttons.appendChild(btnPublish);
+  buttons.appendChild(btnScript);
+  if (isIdea) buttons.appendChild(btnConvert);
+  if (!isPublished && !isIdea) buttons.appendChild(btnPublish);
 
   if (!isPublished) actions.appendChild(inputGroup);
   actions.appendChild(buttons);
@@ -889,53 +1602,49 @@ function createVideoCard(id) {
 
   const frag = document.createDocumentFragment();
 
-  // Activos arriba
-  activeIds.forEach((id) => frag.appendChild(createVideoCard(id)));
-
-  // Desplegable publicados al final
-  const FIN_KEY = "bookshell_videos_published_open_v1";
-  const details = document.createElement("details");
-  details.className = "video-finished";
-  details.open = localStorage.getItem(FIN_KEY) === "1";
-
-  details.addEventListener("toggle", () => {
-    localStorage.setItem(FIN_KEY, details.open ? "1" : "0");
-  });
-
-  const summary = document.createElement("summary");
-  summary.className = "video-finished-summary";
-  summary.innerHTML = `
-    <span>Publicados</span>
-    <span class="video-finished-count">${publishedIds.length}</span>
-  `;
-
-  const box = document.createElement("div");
-  box.className = "video-finished-list";
-
-  if (!publishedIds.length) {
-    const empty = document.createElement("div");
-    empty.className = "video-finished-empty";
-    empty.textContent = "Aún no hay vídeos publicados.";
-    box.appendChild(empty);
-  } else {
-    publishedIds.forEach((id) => {
-      const c = createVideoCard(id);
-      c.classList.add("video-card-finished");
-      box.appendChild(c);
+  sections.forEach((section) => {
+    const ids = grouped[section.key] || [];
+    const details = document.createElement("details");
+    details.className = "video-finished";
+    const storedOpen = localStorage.getItem(section.storage);
+    details.open = storedOpen ? storedOpen === "1" : section.key !== "published";
+    details.addEventListener("toggle", () => {
+      localStorage.setItem(section.storage, details.open ? "1" : "0");
     });
-  }
 
-  details.appendChild(summary);
-  details.appendChild(box);
+    const summary = document.createElement("summary");
+    summary.className = "video-finished-summary";
+    summary.innerHTML = `
+      <span>${section.title}</span>
+      <span class="video-finished-count">${ids.length}</span>
+    `;
 
-  frag.appendChild(details);
+    const box = document.createElement("div");
+    box.className = "video-finished-list";
+
+    if (!ids.length) {
+      const empty = document.createElement("div");
+      empty.className = "video-finished-empty";
+      empty.textContent = section.empty;
+      box.appendChild(empty);
+    } else {
+      ids.forEach((id) => {
+        const c = createVideoCard(id);
+        if (section.key === "published") c.classList.add("video-card-finished");
+        box.appendChild(c);
+      });
+    }
+
+    details.appendChild(summary);
+    details.appendChild(box);
+    frag.appendChild(details);
+  });
 
   $videosList.innerHTML = "";
   $videosList.appendChild(frag);
 
-  // si no hay activos pero sí publicados, no mostramos “vacío”
   if ($videosEmpty) {
-    $videosEmpty.style.display = (!activeIds.length && !publishedIds.length) ? "block" : "none";
+    $videosEmpty.style.display = idsAll.length ? "none" : "block";
   }
 }
 
@@ -958,7 +1667,7 @@ function createVideoCard(id) {
 
         const safeNewWords = Math.max(0, Number(newWords) || 0);
 
-        const prevWords = Math.max(0, Number(video.scriptWords) || 0);
+        const prevWords = Math.max(0, Number(video.script?.wordCount ?? video.scriptWords) || 0);
         const prevEdited = Math.max(0, Number(video.editedSeconds) || 0);
 
         const safeOldEdited = Math.min(durationTotal, prevEdited);
@@ -969,6 +1678,11 @@ function createVideoCard(id) {
         return {
           ...video,
           scriptWords: safeNewWords,
+          script: {
+            ...(video.script || {}),
+            wordCount: safeNewWords,
+            updatedAt: Date.now()
+          },
           durationSeconds: durationTotal,
           editedSeconds: safeNewEdited,
           updatedAt: Date.now()
@@ -1015,7 +1729,7 @@ function createVideoCard(id) {
 
   // === Stats / streak ===
   function computeVideoDayTotals() {
-    const totals = {}; // {date: {words, seconds}}
+    const totals = {}; // {date: {words, seconds, ideas}}
     Object.entries(videoLog || {}).forEach(([day, perVideo]) => {
       let w = 0;
       let s = 0;
@@ -1023,8 +1737,17 @@ function createVideoCard(id) {
         w += Number(val.w || 0);
         s += Number(val.s || 0);
       });
-      totals[day] = { words: w, seconds: s };
+      totals[day] = { words: w, seconds: s, ideas: 0 };
     });
+
+    Object.entries(videos || {}).forEach(([, v]) => {
+      if (v?.type !== "idea" && v?.status !== "idea") return;
+      const day = v.createdAt ? dateToKey(new Date(v.createdAt)) : null;
+      if (!day) return;
+      if (!totals[day]) totals[day] = { words: 0, seconds: 0, ideas: 0 };
+      totals[day].ideas += 1;
+    });
+
     return totals;
   }
 
@@ -1035,9 +1758,9 @@ function createVideoCard(id) {
       ...Object.keys(videoWorkLog || {})
     ]);
     keys.forEach((k) => {
-      const t = totals?.[k] || { words: 0, seconds: 0 };
+      const t = totals?.[k] || { words: 0, seconds: 0, ideas: 0 };
       const extra = Math.max(0, Number(videoWorkLog?.[k]) || 0);
-      merged[k] = { words: t.words || 0, seconds: (t.seconds || 0) + extra };
+      merged[k] = { words: t.words || 0, seconds: (t.seconds || 0) + extra, ideas: t.ideas || 0 };
     });
     return merged;
   }
@@ -1096,24 +1819,25 @@ function createVideoCard(id) {
     const totalsForStreak = mergeTotalsForStreak(totals);
 
     let totalWords = 0;
-    Object.values(totals).forEach((t) => {
-      totalWords += t.words || 0;
+    Object.values(videos || {}).forEach((v) => {
+      totalWords += Number(v?.script?.wordCount ?? v?.scriptWords || 0);
     });
 
     const { current } = computeVideoStreak(totalsForStreak);
-
-    const workedSeconds = getTotalWorkedSecondsLive();
 
     // "Publicado" = vídeo cuya fecha de publicación aparece en verde (ese día está "done")
     const publishInfo = computePublishInfo();
     const videosPublished = Object.values(videos || {}).filter(
       (v) => v.publishDate && publishInfo[normalizeDateKey(v.publishDate)]?.done
     ).length;
+    const ideasCreated = Object.values(videos || {}).filter(
+      (v) => v?.type === "idea" || v?.status === "idea"
+    ).length;
 
     if ($videoStatCount) $videoStatCount.textContent = videosPublished;
     if ($videoStatStreak) $videoStatStreak.textContent = current;
     if ($videoStatWords) $videoStatWords.textContent = totalWords;
-    if ($videoStatTime) $videoStatTime.textContent = formatWorkTime(workedSeconds);
+    if ($videoStatTime) $videoStatTime.textContent = ideasCreated;
   }
   function isVideoFullyDone(v) {
     const scriptTarget = v.scriptTarget || 2000;
@@ -1203,13 +1927,13 @@ function createVideoCard(id) {
           String(videoCalMonth + 1).padStart(2, "0") + "-" +
           String(dayNum).padStart(2, "0");
 
-        const t = totals[key] || { words: 0, seconds: 0 };
+        const t = totals[key] || { words: 0, seconds: 0, ideas: 0 };
         const mergedSeconds =
           Math.max(0, (totalsForStreak[key]?.seconds || 0)) +
           (timerRunning && key === todayKey() ? getUnflushedSecondsToday() : 0);
         const workedSec = Math.max(0, Number(videoWorkLog?.[key]) || 0) +
           (timerRunning && key === todayKey() ? getUnflushedSecondsToday() : 0);
-        const hasWork = (t.words || 0) > 0 || mergedSeconds > 0;
+        const hasWork = (t.words || 0) > 0 || mergedSeconds > 0 || (t.ideas || 0) > 0;
 
         const pub = publishInfo[key];
         const isPublish = !!(pub && pub.any);
@@ -1240,6 +1964,7 @@ function createVideoCard(id) {
         metrics.className = "video-cal-metrics";
 
         const bits = [];
+        if ((t.ideas || 0) > 0) bits.push(`💡 ${t.ideas}`);
         if ((t.words || 0) > 0) bits.push(`${t.words || 0} w`);
         if (workedSec > 0) bits.push(`⏱ ${formatWorkTime(workedSec)}`);
         if (workedSec <= 0 && (t.seconds || 0) > 0) bits.push(`🎞 ${formatWorkTime(t.seconds)}`);
@@ -1252,6 +1977,8 @@ function createVideoCard(id) {
 
         cell.appendChild(num);
         cell.appendChild(metrics);
+        cell.dataset.date = key;
+        cell.addEventListener("click", () => openVideoDayView(key));
       }
 
       frag.appendChild(cell);
@@ -1261,11 +1988,84 @@ function createVideoCard(id) {
     $videoCalGrid.appendChild(frag);
   }
 
+  function openVideoDayView(dayKey) {
+    if (!$viewVideoDay || !$videoDaySummary || !$videoDayList) return;
+    const totals = computeVideoDayTotals();
+    const dayTotals = totals[dayKey] || { words: 0, seconds: 0, ideas: 0 };
+    const scheduled = Object.entries(videos || {}).filter(([, v]) => normalizeDateKey(v.publishDate) === dayKey);
+    const published = scheduled.filter(([, v]) => v.status === "published");
+    const worked = Math.max(0, Number(videoWorkLog?.[dayKey]) || 0) + (dayTotals.seconds || 0);
+
+    $videoDayTitle.textContent = `Resumen ${dayKey}`;
+    $videoDaySummary.textContent =
+      `Ideas: ${dayTotals.ideas || 0} · Palabras: ${dayTotals.words || 0} · Trabajo: ${formatWorkTime(worked)} · Publicaciones: ${published.length}/${scheduled.length}`;
+
+    const itemsMap = new Map();
+    Object.entries(videos || {}).forEach(([id, v]) => {
+      const createdDay = v.createdAt ? dateToKey(new Date(v.createdAt)) : "";
+      if ((v.type === "idea" || v.status === "idea") && createdDay === dayKey) {
+        itemsMap.set(id, {
+          id,
+          title: v.title || "Idea",
+          meta: ["Idea creada", v.tags ? `Tags: ${v.tags}` : ""].filter(Boolean),
+          isIdea: true
+        });
+      }
+      if (normalizeDateKey(v.publishDate) === dayKey) {
+        const existing = itemsMap.get(id) || { id, title: v.title || "Vídeo", meta: [] };
+        const label = v.status === "published" ? "Publicado" : "Programado";
+        existing.meta.push(label);
+        itemsMap.set(id, existing);
+      }
+    });
+
+    const dayLog = videoLog?.[dayKey] || {};
+    Object.entries(dayLog).forEach(([id, log]) => {
+      const words = Number(log?.w) || 0;
+      if (!words) return;
+      const existing = itemsMap.get(id) || { id, title: videos?.[id]?.title || "Vídeo", meta: [] };
+      existing.meta.push(`${words} palabras`);
+      itemsMap.set(id, existing);
+    });
+
+    const frag = document.createDocumentFragment();
+    if (!itemsMap.size) {
+      const empty = document.createElement("div");
+      empty.className = "video-finished-empty";
+      empty.textContent = "Sin entradas ese día.";
+      frag.appendChild(empty);
+    } else {
+      Array.from(itemsMap.values()).forEach((item) => {
+        const card = document.createElement("div");
+        card.className = "video-day-item";
+        const title = document.createElement("div");
+        title.className = "video-day-item-title";
+        title.textContent = item.title;
+        const meta = document.createElement("div");
+        meta.className = "video-day-item-meta";
+        meta.textContent = item.meta.join(" · ");
+        const btn = document.createElement("button");
+        btn.className = "btn";
+        btn.textContent = "Abrir guion";
+        btn.addEventListener("click", () => openScriptView(item.id));
+        card.appendChild(title);
+        card.appendChild(meta);
+        card.appendChild(btn);
+        frag.appendChild(card);
+      });
+    }
+
+    $videoDayList.innerHTML = "";
+    $videoDayList.appendChild(frag);
+    setActiveView("view-video-day");
+  }
+
   function renderVideoCalendarYearGrid(totalsForStreak, publishInfo) {
     $videoCalGrid.classList.add("video-calendar-year-grid");
     const months = Array.from({ length: 12 }, () => ({
       words: 0,
       seconds: 0,
+      ideas: 0,
       publish: 0,
       publishDone: 0
     }));
@@ -1276,6 +2076,7 @@ function createVideoCard(id) {
         const idx = Number(month) - 1;
         months[idx].words += Number(val?.words) || 0;
         months[idx].seconds += Number(val?.seconds) || 0;
+        months[idx].ideas += Number(val?.ideas) || 0;
       }
     });
 
@@ -1302,7 +2103,8 @@ function createVideoCard(id) {
       const metrics = document.createElement("div");
       metrics.className = "video-cal-month-metrics";
       const publishLabel = info.publish ? ` · ${info.publish} publicaciones` : "";
-      metrics.textContent = `${info.words || 0} w · ${formatWorkTime(info.seconds)}${publishLabel}`;
+      const ideaLabel = info.ideas ? ` · ${info.ideas} ideas` : "";
+      metrics.textContent = `${info.words || 0} w · ${formatWorkTime(info.seconds)}${ideaLabel}${publishLabel}`;
 
       cell.appendChild(name);
       cell.appendChild(metrics);
@@ -1322,10 +2124,12 @@ function createVideoCard(id) {
 
     let totalWords = 0;
     let totalSeconds = 0;
+    let totalIdeas = 0;
     Object.entries(totalsForStreak || {}).forEach(([day, val]) => {
       if (!day.startsWith(prefix)) return;
       totalWords += Number(val?.words) || 0;
       totalSeconds += Number(val?.seconds) || 0;
+      totalIdeas += Number(val?.ideas) || 0;
     });
     if (timerRunning && todayKey().startsWith(prefix)) {
       totalSeconds += getUnflushedSecondsToday();
@@ -1338,7 +2142,7 @@ function createVideoCard(id) {
 
     const scopeLabel = videoCalViewMode === "year" ? "año" : "mes";
     $videoCalendarSummary.textContent =
-      `Resumen del ${scopeLabel}: ${totalWords.toLocaleString("es-ES")} palabras · ${formatWorkTime(totalSeconds)} · ${publishCount} días con publicación`;
+      `Resumen del ${scopeLabel}: ${totalIdeas} ideas · ${totalWords.toLocaleString("es-ES")} palabras · ${formatWorkTime(totalSeconds)} · ${publishCount} días con publicación`;
   }
 
   // Nav calendario

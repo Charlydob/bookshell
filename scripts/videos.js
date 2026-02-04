@@ -52,6 +52,7 @@ let currentScriptWords = 0;
 let currentScriptTitle = "";
 let annotationRange = null;
 let annotationEditingId = null;
+let annotationSelectionText = "";
 let teleprompterTimer = null;
 let teleprompterPlaying = false;
 let teleprompterSentences = [];
@@ -220,10 +221,12 @@ if ($viewVideos) {
 
   const $annotationPopup = document.getElementById("video-annotation-popup");
   const $annotationTitle = document.getElementById("video-annotation-title");
+  const $annotationSelection = document.getElementById("video-annotation-selection");
   const $annotationText = document.getElementById("video-annotation-text");
   const $annotationCancel = document.getElementById("video-annotation-cancel");
   const $annotationDelete = document.getElementById("video-annotation-delete");
   const $annotationSave = document.getElementById("video-annotation-save");
+  const $annotationFab = document.getElementById("video-annotate-fab");
 
   const $viewTeleprompter = document.getElementById("view-video-teleprompter");
   const $teleprompterBack = document.getElementById("video-teleprompter-back");
@@ -580,6 +583,14 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     quill.on("selection-change", (range) => {
       if (range && range.length > 0) {
         annotationRange = range;
+        annotationSelectionText = getSelectionText(range);
+        updateAnnotationSelection(annotationSelectionText);
+        showAnnotationFab(range);
+      } else {
+        annotationRange = null;
+        annotationSelectionText = "";
+        updateAnnotationSelection("");
+        hideAnnotationFab();
       }
     });
 
@@ -603,9 +614,46 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       openAnnotationPopup({
         id,
         text: ann?.text || "",
-        existing: true
+        existing: true,
+        selectedText: ann?.selectedText || getSelectionText(annotationRange)
       });
     });
+  }
+
+  function getSelectionText(range) {
+    if (!quill || !range || range.length <= 0) return "";
+    return quill.getText(range.index, range.length).trim();
+  }
+
+  function getSelectionContext(range) {
+    if (!quill || !range || range.length <= 0) return "";
+    const start = Math.max(0, range.index - 30);
+    const end = range.index + range.length + 30;
+    return quill.getText(start, end - start).trim();
+  }
+
+  function updateAnnotationSelection(text) {
+    if (!$annotationSelection) return;
+    $annotationSelection.textContent = text || "—";
+  }
+
+  function showAnnotationFab(range) {
+    if (!$annotationFab || !$videoScriptEditor || !quill || !$viewVideoScript) return;
+    const bounds = quill.getBounds(range.index, range.length);
+    const shellRect = $viewVideoScript.getBoundingClientRect();
+    const editorRect = $videoScriptEditor.getBoundingClientRect();
+    if (!shellRect || !editorRect) return;
+    const top = editorRect.top - shellRect.top + bounds.top - 44;
+    const left = editorRect.left - shellRect.left + bounds.left;
+    const maxLeft = shellRect.width - $annotationFab.offsetWidth - 16;
+    const safeLeft = Math.max(12, Math.min(left, maxLeft));
+    $annotationFab.style.top = `${Math.max(12, top)}px`;
+    $annotationFab.style.left = `${safeLeft}px`;
+    $annotationFab.classList.remove("hidden");
+  }
+
+  function hideAnnotationFab() {
+    $annotationFab?.classList.add("hidden");
   }
 
   function getScriptContent() {
@@ -684,11 +732,12 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     }
   }
 
-  function openAnnotationPopup({ id = null, text = "", existing = false }) {
+  function openAnnotationPopup({ id = null, text = "", existing = false, selectedText = "" }) {
     annotationEditingId = id;
     if ($annotationTitle) {
       $annotationTitle.textContent = existing ? "Editar anotación" : "Nueva anotación";
     }
+    updateAnnotationSelection(selectedText || annotationSelectionText || "");
     if ($annotationText) $annotationText.value = text || "";
     if ($annotationDelete) $annotationDelete.style.display = existing ? "inline-flex" : "none";
     $annotationPopup?.classList.remove("hidden");
@@ -697,6 +746,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   function closeAnnotationPopup() {
     annotationEditingId = null;
     annotationRange = null;
+    annotationSelectionText = "";
+    updateAnnotationSelection("");
     if ($annotationText) $annotationText.value = "";
     $annotationPopup?.classList.add("hidden");
   }
@@ -706,6 +757,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     if (!annotationRange || annotationRange.length <= 0) return;
     const text = ($annotationText?.value || "").trim();
     if (!text) return;
+    const selectedText = getSelectionText(annotationRange);
+    const contextText = getSelectionContext(annotationRange);
     const now = Date.now();
     let id = annotationEditingId;
     if (!id) {
@@ -717,13 +770,17 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         text,
         createdAt: now,
         updatedAt: now,
-        range: annotationRange
+        range: annotationRange,
+        selectedText,
+        context: contextText
       });
     } else {
       await update(ref(db, `${VIDEOS_PATH}/${activeScriptVideoId}/script/annotations/${id}`), {
         text,
         updatedAt: now,
-        range: annotationRange
+        range: annotationRange,
+        selectedText,
+        context: contextText
       });
     }
     closeAnnotationPopup();
@@ -890,7 +947,18 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       const range = quill?.getSelection();
       if (!range || range.length <= 0) return;
       annotationRange = range;
-      openAnnotationPopup({ existing: false });
+      annotationSelectionText = getSelectionText(range);
+      openAnnotationPopup({ existing: false, selectedText: annotationSelectionText });
+    });
+  }
+  if ($annotationFab) {
+    $annotationFab.addEventListener("click", () => {
+      const range = quill?.getSelection();
+      if (!range || range.length <= 0) return;
+      annotationRange = range;
+      annotationSelectionText = getSelectionText(range);
+      openAnnotationPopup({ existing: false, selectedText: annotationSelectionText });
+      hideAnnotationFab();
     });
   }
   if ($annotationCancel) $annotationCancel.addEventListener("click", closeAnnotationPopup);

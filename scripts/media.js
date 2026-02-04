@@ -43,6 +43,8 @@ const state = {
   range: "total",       // day|week|month|year|total  (solo afecta a 'watched')
   chart: "type",        // type|genre|country|actor|director|year
   view: "list",         // list|charts|map
+  actorGender: "all",   // all|male|female (solo en actor)
+  breakdownQuery: "",
   rewatchOnly: false,
   rewatchMin: 0,
   watchedFrom: "",
@@ -64,6 +66,86 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 function parseCSV(s) {
   return norm(s).split(",").map(v => norm(v)).filter(Boolean).slice(0, 40);
+}
+
+function normalizeGender(v) {
+  const g = Number(v);
+  return (g === 1 || g === 2) ? g : 0;
+}
+
+function normalizeCastEntry(entry) {
+  if (!entry) return null;
+  if (typeof entry === "string") {
+    const name = norm(entry);
+    if (!name) return null;
+    return { name, gender: 0, tmdbId: 0 };
+  }
+  if (typeof entry === "object") {
+    const name = norm(entry.name || entry.label || entry.title);
+    if (!name) return null;
+    return {
+      name,
+      gender: normalizeGender(entry.gender),
+      tmdbId: Number(entry.tmdbId || entry.id) || 0
+    };
+  }
+  return null;
+}
+
+function normalizeCastList(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const entry of raw) {
+    const normalized = normalizeCastEntry(entry);
+    if (!normalized?.name) continue;
+    const key = normKey(normalized.name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(normalized);
+    if (out.length >= 40) break;
+  }
+  return out;
+}
+
+function castNames(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map(entry => (typeof entry === "string" ? norm(entry) : norm(entry?.name)))
+    .filter(Boolean);
+}
+
+function castHasEntries(list) {
+  return castNames(list).length > 0;
+}
+
+function mergeCastMeta(names, metaCast) {
+  const meta = Array.isArray(metaCast) ? metaCast : [];
+  const metaByName = new Map(meta.map(m => [normKey(m?.name || ""), m]));
+  const out = [];
+  for (const name of names) {
+    const key = normKey(name);
+    if (!key) continue;
+    const match = metaByName.get(key);
+    out.push(normalizeCastEntry({
+      name,
+      gender: match?.gender,
+      tmdbId: match?.tmdbId || match?.id
+    }));
+  }
+  return out.filter(Boolean);
+}
+
+function mergeDirectorMeta(name, directorData) {
+  const n = norm(name);
+  if (!n) return null;
+  if (directorData && normKey(directorData.name) === normKey(n)) {
+    return {
+      name: n,
+      gender: normalizeGender(directorData.gender),
+      tmdbId: Number(directorData.tmdbId || directorData.id) || 0
+    };
+  }
+  return null;
 }
 
 function normalizeSeasons(raw) {
@@ -354,8 +436,24 @@ async function tmdbFetchDetails(id, type) {
   const crew = Array.isArray(credits?.crew) ? credits.crew : [];
   const cast = Array.isArray(credits?.cast) ? credits.cast : [];
 
-  const director = crew.find(c => c?.job === "Director")?.name || "";
-  const castTop = cast.sort((a, b) => (a?.order ?? 999) - (b?.order ?? 999)).slice(0, 10).map(c => c?.name).filter(Boolean);
+  const directorEntry = crew.find(c => c?.job === "Director") || null;
+  const director = directorEntry?.name || "";
+  const directorData = directorEntry ? {
+    name: directorEntry?.name || "",
+    gender: normalizeGender(directorEntry?.gender),
+    tmdbId: Number(directorEntry?.id) || 0
+  } : null;
+
+  const castTop = cast
+    .slice()
+    .sort((a, b) => (a?.order ?? 999) - (b?.order ?? 999))
+    .slice(0, 10)
+    .map(c => ({
+      name: c?.name || "",
+      gender: normalizeGender(c?.gender),
+      tmdbId: Number(c?.id) || 0
+    }))
+    .filter(c => norm(c?.name));
 
   let country = "";
   if (kind === "movie") {
@@ -373,7 +471,16 @@ async function tmdbFetchDetails(id, type) {
       .filter(s => s.seasonNumber > 0 && s.episodeCount > 0)
     : [];
 
-  return { director, cast: castTop, genres, country, seasons };
+  return {
+    tmdbId: Number(id) || 0,
+    tmdbType: kind,
+    director,
+    directorData,
+    cast: castTop,
+    genres,
+    country,
+    seasons
+  };
 }
 
 /* ------------------------- Cache + Firebase merge ------------------------- */
@@ -507,7 +614,21 @@ function normalizeItem(it) {
   out.type = (out.type === "series" || out.type === "anime") ? out.type : "movie";
   out.genres = Array.isArray(out.genres) ? out.genres.map(norm).filter(Boolean).slice(0, 30) : [];
   out.director = norm(out.director);
-  out.cast = Array.isArray(out.cast) ? out.cast.map(norm).filter(Boolean).slice(0, 40) : [];
+  const rawCast = Array.isArray(out.cast) ? out.cast : (typeof out.cast === "string" ? parseCSV(out.cast) : []);
+  out.cast = normalizeCastList(rawCast);
+  if (out.directorData && typeof out.directorData === "object") {
+    const name = norm(out.directorData.name || out.director);
+    out.directorData = name ? {
+      name,
+      gender: normalizeGender(out.directorData.gender),
+      tmdbId: Number(out.directorData.tmdbId || out.directorData.id) || 0
+    } : null;
+  } else {
+    out.directorData = null;
+  }
+  if (out.directorData?.name) out.director = out.directorData.name;
+  out.tmdbId = Number(out.tmdbId) || 0;
+  out.tmdbType = (out.tmdbType === "tv" || out.tmdbType === "movie") ? out.tmdbType : "";
 
   out.rating = clamp(out.rating, 0, 5);
   out.withLaura = !!out.withLaura;
@@ -566,7 +687,7 @@ function hasDirector(it) {
 }
 
 function hasCast(it) {
-  if (Array.isArray(it?.cast)) return it.cast.filter(Boolean).length > 0;
+  if (Array.isArray(it?.cast)) return castHasEntries(it.cast);
   return norm(it?.cast).length > 0;
 }
 
@@ -640,7 +761,7 @@ function applyFilters() {
       it.countryEn,
       it.director,
       ...(it.genres || []),
-      ...(it.cast || [])
+      ...(Array.isArray(it.cast) ? castNames(it.cast) : [it.cast])
     ].filter(Boolean).join(" ");
 
     return normKey(hay).includes(q);
@@ -756,6 +877,11 @@ function buildAutofillPatch(it, details) {
 
   if (!hasDirector(it) && norm(details.director)) patch.director = details.director;
   if (!hasCast(it) && Array.isArray(details.cast) && details.cast.length) patch.cast = details.cast;
+  if (!it.tmdbId && details.tmdbId) {
+    patch.tmdbId = details.tmdbId;
+    patch.tmdbType = details.tmdbType || tmdbType(it.type);
+  }
+  if (!it.directorData && details.directorData) patch.directorData = details.directorData;
 
   if (!Array.isArray(it.genres) || it.genres.length === 0) {
     if (Array.isArray(details.genres) && details.genres.length) patch.genres = details.genres;
@@ -831,8 +957,10 @@ function qs(id) { return document.getElementById(id); }
 let addWatchDates = [];
 let addAutofillBusy = false;
 let addAutofillSeasons = [];
+let addAutofillMeta = null;
 let editAutofillBusy = false;
 let editAutofillSeasons = [];
+let editAutofillMeta = null;
 let updateEditAutofillButton = null;
 let bulkAutofillBusy = false;
 const bulkAutofillSeen = new Set();
@@ -881,6 +1009,7 @@ function resetAddModalState() {
   addWatchDates = [];
   addAutofillBusy = false;
   addAutofillSeasons = [];
+  addAutofillMeta = null;
   if (els.addAutofillResults) els.addAutofillResults.innerHTML = "";
   ["media-genres", "media-director", "media-cast", "media-country"].forEach(id => {
     const el = qs(id);
@@ -918,12 +1047,15 @@ const els = {
   // chart/map
   donutHost: null,
   chartSel: null,
+  actorGender: null,
+  actorGenderWrap: null,
   chartSub: null,
   chartEmpty: null,
   legend: null,
   legendMeta: null,
   legendList: null,
   legendMore: null,
+  legendSearch: null,
 
   mapHost: null,
   mapHint: null,
@@ -974,6 +1106,8 @@ function bindDom() {
 
   els.donutHost = qs("media-donut");
   els.chartSel = qs("media-chart-selector");
+  els.actorGender = qs("media-actor-filter-select");
+  els.actorGenderWrap = qs("media-actor-filter");
   els.chartSub = qs("media-chart-sub");
   els.chartEmpty = qs("media-chart-empty");
 
@@ -981,6 +1115,7 @@ function bindDom() {
   els.legendMeta = qs("media-legend-meta");
   els.legendList = qs("media-donut-legend");
   els.legendMore = qs("media-legend-more");
+  els.legendSearch = qs("media-legend-search");
 
   els.mapHost = qs("media-world-map");
   els.mapHint = qs("media-map-hint");
@@ -1045,13 +1180,44 @@ function bindDom() {
   // chart selector
   els.chartSel?.addEventListener("change", () => {
     state.chart = els.chartSel.value || "type";
+    updateActorFilterVisibility();
     renderDonut();
+  });
+
+  els.actorGender?.addEventListener("change", () => {
+    state.actorGender = els.actorGender.value || "all";
+    renderDonut();
+  });
+
+  els.legendSearch?.addEventListener("input", () => {
+    state.breakdownQuery = els.legendSearch.value || "";
+    renderDonutLegend();
   });
 
   // legend more
   els.legendMore?.addEventListener("click", () => {
     legendGrow();
     renderDonutLegend();
+  });
+
+  els.legendList?.addEventListener("click", (e) => {
+    const row = e.target?.closest?.(".media-legend-row[data-action='entity']");
+    if (!row) return;
+    const name = row.dataset?.label || "";
+    const kind = row.dataset?.kind || "";
+    if (!name || (kind !== "actor" && kind !== "director")) return;
+    openEntityModal({ name, kind });
+  });
+
+  els.legendList?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const row = e.target?.closest?.(".media-legend-row[data-action='entity']");
+    if (!row) return;
+    e.preventDefault();
+    const name = row.dataset?.label || "";
+    const kind = row.dataset?.kind || "";
+    if (!name || (kind !== "actor" && kind !== "director")) return;
+    openEntityModal({ name, kind });
   });
 
   // list scroll
@@ -1168,7 +1334,11 @@ function bindDom() {
 
     const genres = parseCSV(els.addGenres?.value);
     const director = norm(els.addDirector?.value);
-    const cast = parseCSV(els.addCast?.value);
+    const castNamesList = parseCSV(els.addCast?.value);
+    const cast = mergeCastMeta(castNamesList, addAutofillMeta?.cast);
+    const directorData = mergeDirectorMeta(director, addAutofillMeta?.directorData);
+    const tmdbId = Number(addAutofillMeta?.tmdbId) || 0;
+    const tmdbTypeValue = addAutofillMeta?.tmdbType || "";
 
     const cRaw = norm(els.addCountry?.value);
     const cc = normalizeCountry(cRaw);
@@ -1189,6 +1359,9 @@ function bindDom() {
       genres,
       director,
       cast,
+      directorData,
+      tmdbId,
+      tmdbType: tmdbTypeValue,
       countryCode: cc.code,
       countryEn: cc.en || (cRaw || ""),
       countryLabel: cc.es || (cRaw || ""),
@@ -1243,6 +1416,10 @@ function bindDom() {
     });
   });
   mo.observe(els.view, { attributes: true, attributeFilter: ["class", "style"] });
+
+  updateActorFilterVisibility();
+  if (els.actorGender) els.actorGender.value = state.actorGender || "all";
+  if (els.legendSearch) els.legendSearch.value = state.breakdownQuery || "";
 
   return true;
 }
@@ -1317,6 +1494,17 @@ async function selectTmdbResult(key, id, type, apply, resultsEl) {
   if (resultsEl) resultsEl.innerHTML = "";
 }
 
+function storeAutofillMeta(details, mode) {
+  const meta = details ? {
+    tmdbId: Number(details.tmdbId) || 0,
+    tmdbType: details.tmdbType || "",
+    cast: Array.isArray(details.cast) ? details.cast : [],
+    directorData: details.directorData || null
+  } : null;
+  if (mode === "edit") editAutofillMeta = meta;
+  else addAutofillMeta = meta;
+}
+
 function applyAutofillData(details, mode) {
   if (!details) return;
   const isEdit = mode === "edit";
@@ -1327,7 +1515,7 @@ function applyAutofillData(details, mode) {
 
   if (genresEl) genresEl.value = (details.genres || []).join(", ");
   if (directorEl) directorEl.value = details.director || "";
-  if (castEl) castEl.value = (details.cast || []).join(", ");
+  if (castEl) castEl.value = castNames(details.cast || []).join(", ");
   if (countryEl) {
     const cc = normalizeCountry(details.country || "");
     countryEl.value = cc.es || details.country || "";
@@ -1336,6 +1524,7 @@ function applyAutofillData(details, mode) {
   const seasons = normalizeSeasons(details.seasons);
   if (isEdit) editAutofillSeasons = seasons;
   else addAutofillSeasons = seasons;
+  storeAutofillMeta(details, mode);
 
   const typeEl = isEdit ? qs("media-edit-type") : els.addType;
   const seasonEl = isEdit ? qs("media-edit-season") : els.addSeason;
@@ -1366,6 +1555,11 @@ function renderViewVisibility() {
   if (els.listCard) els.listCard.style.display = (state.view === "list") ? "" : "none";
   if (els.chartCard) els.chartCard.style.display = (state.view === "charts") ? "" : "none";
   if (els.mapCard) els.mapCard.style.display = (state.view === "map") ? "" : "none";
+}
+
+function updateActorFilterVisibility() {
+  const show = state.chart === "actor";
+  if (els.actorGenderWrap) els.actorGenderWrap.style.display = show ? "" : "none";
 }
 
 function ensureInlineFilters() {
@@ -1759,6 +1953,9 @@ function addItem(patch) {
     genres: Array.isArray(patch.genres) ? patch.genres : [],
     director: patch.director || "",
     cast: Array.isArray(patch.cast) ? patch.cast : [],
+    directorData: patch.directorData || null,
+    tmdbId: Number(patch.tmdbId) || 0,
+    tmdbType: patch.tmdbType || "",
     countryCode: patch.countryCode || "",
     countryEn: patch.countryEn || "",
     countryLabel: patch.countryLabel || "",
@@ -2089,6 +2286,8 @@ function legendResetIfNeeded(kind){
   if (kind !== _legendKind) {
     _legendKind = kind;
     _legendLimit = 40;
+    state.breakdownQuery = "";
+    if (els.legendSearch) els.legendSearch.value = "";
   }
 }
 function legendGrow(){ _legendLimit = Math.min(2000, _legendLimit + LEGEND_STEP); }
@@ -2125,28 +2324,51 @@ function renderDonutLegend(){
 
   const rows = _legendRows || [];
   const sum = _legendSum || 0;
+  const kind = state.chart || "type";
+  const query = normKey(state.breakdownQuery);
+  const filteredRows = query
+    ? rows.filter(r => normKey(r.label).includes(query))
+    : rows;
 
-  els.legendMeta.textContent = String(rows.length || 0);
+  els.legendMeta.textContent = String(filteredRows.length || 0);
 
-  if (!rows.length || !sum){
-    els.legendList.innerHTML = `<div style="opacity:.65;font-size:12px;padding:10px 12px">Nada que desglosar todavía.</div>`;
+  if (!filteredRows.length || !sum){
+    const msg = rows.length ? "Sin resultados." : "Nada que desglosar todavía.";
+    els.legendList.innerHTML = `<div style="opacity:.65;font-size:12px;padding:10px 12px">${msg}</div>`;
     if (els.legendMore) els.legendMore.style.display = "none";
     return;
   }
 
-  const limit = Math.min(rows.length, _legendLimit);
-  const slice = rows.slice(0, limit);
+  const limit = Math.min(filteredRows.length, _legendLimit);
+  const slice = filteredRows.slice(0, limit);
+  if (kind === "year" || kind === "country") scheduleApproxTotals(kind, slice);
 
   els.legendList.innerHTML = slice.map(r => {
     const name = escHtml(r.label);
     const val = Number(r.value) || 0;
     const pct = fmtPct(val / sum);
     const color = colorForLabel(r.label);
+    const canOpen = (kind === "actor" || kind === "director");
+    const rowClasses = `media-legend-row${canOpen ? " is-action" : ""}`;
+    let sub = "";
+    if (kind === "year" || kind === "country") {
+      const watched = Number(r.watchedValue) || 0;
+      const type = tmdbTypeForState();
+      const value = r.meta || (kind === "year" ? Number(r.label) : "");
+      const key = value ? approxTotalsKey(kind, value, type) : "";
+      const total = key ? approxTotalsCache.get(key) : null;
+      const totalLabel = (total || total === 0) ? total.toLocaleString() : "—";
+      const progress = (total || total === 0) ? `${watched.toLocaleString()}/${totalLabel}` : `${watched.toLocaleString()}/—`;
+      sub = `<div class="media-legend-sub">Aprox TMDb: ${totalLabel} · Progreso: ${progress}</div>`;
+    }
     return `
-      <div class="media-legend-row">
+      <div class="${rowClasses}" ${canOpen ? `role="button" tabindex="0" data-action="entity" data-kind="${kind}" data-label="${name}"` : ""}>
         <div class="media-legend-left">
           <span class="media-legend-dot" style="background:${color}"></span>
-          <div class="media-legend-name" title="${name}">${name}</div>
+          <div>
+            <div class="media-legend-name" title="${name}">${name}</div>
+            ${sub}
+          </div>
         </div>
         <div class="media-legend-right">
           <div class="media-legend-pct">${pct}</div>
@@ -2156,63 +2378,135 @@ function renderDonutLegend(){
     `;
   }).join("");
 
-  if (els.legendMore) els.legendMore.style.display = (limit < rows.length) ? "" : "none";
+  if (els.legendMore) els.legendMore.style.display = (limit < filteredRows.length) ? "" : "none";
 }
 
 
 function computeCounts(kind) {
   const m = new Map();
 
-  const inc = (k, w = 1) => {
+  const inc = (k, { watched = false, meta = null } = {}) => {
     const key = norm(k);
     if (!key) return;
-    m.set(key, (m.get(key) || 0) + w);
+    const cur = m.get(key) || { label: key, value: 0, watchedValue: 0, meta: null };
+    cur.value += 1;
+    if (watched) cur.watchedValue += 1;
+    if (meta && !cur.meta) cur.meta = meta;
+    m.set(key, cur);
   };
+
+  const genderFilter = state.actorGender || "all";
 
   for (const it of filtered) {
     if (!it) continue;
+    const watched = !it.watchlist;
 
     if (kind === "type") {
-      inc(it.type);
+      inc(it.type, { watched });
       continue;
     }
 
     if (kind === "genre") {
-      for (const g of (it.genres || [])) inc(g);
+      for (const g of (it.genres || [])) inc(g, { watched });
       continue;
     }
 
     if (kind === "actor") {
-      for (const a of (it.cast || [])) inc(a);
+      const list = Array.isArray(it.cast) ? it.cast : [];
+      for (const entry of list) {
+        const normalized = normalizeCastEntry(entry);
+        if (!normalized) continue;
+        const gender = normalizeGender(normalized.gender);
+        if (genderFilter === "male" && gender !== 2) continue;
+        if (genderFilter === "female" && gender !== 1) continue;
+        if (genderFilter !== "all" && !gender) continue;
+        inc(normalized.name, { watched });
+      }
       continue;
     }
 
     if (kind === "director") {
-      inc(it.director);
+      inc(it.director, { watched });
       continue;
     }
 
     if (kind === "year") {
-      if (it.year) inc(String(it.year));
+      if (it.year) inc(String(it.year), { watched, meta: Number(it.year) || 0 });
       continue;
     }
 
     if (kind === "country") {
-      inc(it.countryLabel || it.countryEn || "");
+      const label = it.countryLabel || it.countryEn || "";
+      if (label) inc(label, { watched, meta: it.countryCode || "" });
       continue;
     }
   }
 
-  const rows = Array.from(m.entries())
-    .map(([label, value]) => ({ label, value }))
+  const rows = Array.from(m.values())
     .filter(r => r.value > 0)
     .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "es"));
 
   return rows;
 }
 
+const approxTotalsCache = new Map();
+const approxTotalsPending = new Set();
+
+function approxTotalsKey(kind, value, type) {
+  return `${kind}|${value}|${type || "all"}`;
+}
+
+function tmdbTypeForState() {
+  if (state.type === "series" || state.type === "anime") return "tv";
+  if (state.type === "movie") return "movie";
+  return "all";
+}
+
+async function tmdbDiscoverTotal({ kind, value, type }) {
+  if (!tmdbEnabled()) return null;
+  if (!value) return null;
+  const types = type === "all" ? ["movie", "tv"] : [type];
+
+  const results = await Promise.all(types.map(async (t) => {
+    const params = { include_adult: false };
+    if (kind === "year") {
+      if (t === "movie") params.primary_release_year = value;
+      else params.first_air_date_year = value;
+    } else if (kind === "country") {
+      params.with_origin_country = value;
+    }
+    const endpoint = t === "movie" ? "/discover/movie" : "/discover/tv";
+    const data = await tmdbFetch(endpoint, params);
+    return Number(data?.total_results) || 0;
+  }));
+  return results.reduce((acc, n) => acc + n, 0);
+}
+
+function scheduleApproxTotals(kind, rows) {
+  if (!tmdbEnabled()) return;
+  const type = tmdbTypeForState();
+  const targetRows = rows.slice(0, 6);
+  targetRows.forEach((row) => {
+    const value = row.meta || (kind === "year" ? Number(row.label) : "");
+    if (!value) return;
+    const key = approxTotalsKey(kind, value, type);
+    if (approxTotalsCache.has(key) || approxTotalsPending.has(key)) return;
+    approxTotalsPending.add(key);
+    tmdbDiscoverTotal({ kind, value, type }).then((total) => {
+      approxTotalsCache.set(key, Number(total) || 0);
+      approxTotalsPending.delete(key);
+      renderDonutLegend();
+    }).catch(() => {
+      approxTotalsCache.set(key, null);
+      approxTotalsPending.delete(key);
+    });
+  });
+}
+
 function renderDonut() {
   if (!els.donutHost) return;
+
+  updateActorFilterVisibility();
 
   const kind = state.chart || "type";
   const rows = computeCounts(kind);
@@ -2682,7 +2976,11 @@ function ensureEditModal() {
 
     const genres = parseCSV(qs("media-edit-genres")?.value);
     const director = norm(qs("media-edit-director")?.value);
-    const cast = parseCSV(qs("media-edit-cast")?.value);
+    const castNamesList = parseCSV(qs("media-edit-cast")?.value);
+    const cast = mergeCastMeta(castNamesList, editAutofillMeta?.cast || it.cast);
+    const directorData = mergeDirectorMeta(director, editAutofillMeta?.directorData || it.directorData);
+    const tmdbId = Number(editAutofillMeta?.tmdbId || it.tmdbId) || 0;
+    const tmdbTypeValue = editAutofillMeta?.tmdbType || it.tmdbType || "";
 
     const cRaw = norm(qs("media-edit-country")?.value);
     const cc = normalizeCountry(cRaw);
@@ -2702,6 +3000,9 @@ function ensureEditModal() {
       genres,
       director,
       cast,
+      directorData,
+      tmdbId,
+      tmdbType: tmdbTypeValue,
       countryCode: cc.code,
       countryEn: cc.en || cRaw,
       countryLabel: cc.es || cRaw,
@@ -2773,8 +3074,8 @@ function openEditModal(id) {
   qs("media-edit-genres").placeholder = (it.genres || []).join(", ") || "Acción, Drama…";
   qs("media-edit-director").value = it.director || "";
   qs("media-edit-director").placeholder = it.director || "Nombre";
-  qs("media-edit-cast").value = (it.cast || []).join(", ");
-  qs("media-edit-cast").placeholder = (it.cast || []).join(", ") || "Actores…";
+  qs("media-edit-cast").value = castNames(it.cast || []).join(", ");
+  qs("media-edit-cast").placeholder = castNames(it.cast || []).join(", ") || "Actores…";
 
   updateChipPreview(qs("media-edit-genres"), qs("media-edit-genres-preview"));
   updateChipPreview(qs("media-edit-cast"), qs("media-edit-cast-preview"));
@@ -2788,6 +3089,12 @@ function openEditModal(id) {
   qs("media-edit-episode").value = String(progress.episode || 1);
   qs("media-edit-episode").placeholder = String(progress.episode || 1);
   editAutofillSeasons = normalizeSeasons(it.seasons);
+  editAutofillMeta = {
+    tmdbId: Number(it.tmdbId) || 0,
+    tmdbType: it.tmdbType || "",
+    cast: Array.isArray(it.cast) ? it.cast : [],
+    directorData: it.directorData || null
+  };
 
   const editResults = qs("media-edit-autofill-results");
   if (editResults) editResults.innerHTML = "";
@@ -2804,6 +3111,493 @@ function hideEditModal() {
   if (!editModal) return;
   editModal.classList.add("hidden");
   editModal.dataset.id = "";
+}
+
+/* ------------------------- Entity modal (actor/director) ------------------------- */
+let entityModal = null;
+const ENTITY_PAGE_SIZE = 12;
+const entityState = {
+  name: "",
+  kind: "actor",
+  tmdbId: 0,
+  gender: 0,
+  credits: [],
+  localItems: [],
+  unseenCredits: [],
+  page: 1,
+  collabMode: "actors"
+};
+
+function ensureEntityModal() {
+  if (entityModal) return entityModal;
+
+  entityModal = document.createElement("div");
+  entityModal.className = "media-modal hidden";
+  entityModal.innerHTML = `
+    <div class="media-modal-backdrop" data-action="close"></div>
+    <div class="media-modal-sheet" role="dialog" aria-modal="true" aria-label="Ficha de entidad">
+      <div class="media-modal-head">
+        <div class="media-modal-headtext">
+          <div class="media-modal-title" id="media-entity-title">—</div>
+          <div class="media-modal-sub" id="media-entity-sub">—</div>
+        </div>
+        <button class="media-modal-close" data-action="close" type="button" title="Cerrar" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="media-modal-body">
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">KPIs</div>
+          <div class="media-entity-kpis">
+            <div class="media-entity-kpi">
+              <span>Vistos por mí</span>
+              <strong id="media-entity-watched">0</strong>
+            </div>
+            <div class="media-entity-kpi">
+              <span>Total en TMDb</span>
+              <strong id="media-entity-total">—</strong>
+            </div>
+            <div class="media-entity-kpi media-entity-progress">
+              <span>Progreso</span>
+              <div class="media-entity-bar"><div class="media-entity-bar-fill" id="media-entity-progress-bar"></div></div>
+              <div class="media-entity-item-sub" id="media-entity-progress-label">—</div>
+            </div>
+          </div>
+        </section>
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">Vistos</div>
+          <div class="media-entity-list" id="media-entity-seen"></div>
+        </section>
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">No vistos</div>
+          <div class="media-entity-list" id="media-entity-unseen"></div>
+          <button class="btn ghost btn-compact" id="media-entity-more" type="button" style="display:none">Mostrar más</button>
+        </section>
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">Colabora más con…</div>
+          <div class="media-entity-toggle" id="media-entity-collab-toggle" style="display:none">
+            <button class="btn ghost btn-compact" data-mode="actors" type="button">Actores</button>
+            <button class="btn ghost btn-compact" data-mode="directors" type="button">Directores</button>
+          </div>
+          <div class="media-entity-collab-list" id="media-entity-collab-list"></div>
+        </section>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(entityModal);
+
+  entityModal.addEventListener("click", (e) => {
+    const act = e.target?.dataset?.action;
+    if (act === "close") hideEntityModal();
+    if (act === "add") {
+      const id = Number(e.target?.dataset?.tmdbId) || 0;
+      const mediaType = e.target?.dataset?.mediaType || "";
+      const key = e.target?.dataset?.key || "";
+      if (!id || !mediaType || !key) return;
+      const credit = entityState.unseenCredits.find(c => c.key === key);
+      if (credit) addItemFromCredit(credit);
+    }
+  });
+
+  entityModal.querySelector("#media-entity-more")?.addEventListener("click", () => {
+    entityState.page += 1;
+    renderEntityLists();
+  });
+
+  entityModal.querySelector("#media-entity-collab-toggle")?.addEventListener("click", (e) => {
+    const btn = e.target?.closest?.("[data-mode]");
+    if (!btn) return;
+    entityState.collabMode = btn.dataset.mode || "actors";
+    renderEntityCollabs();
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && entityModal && !entityModal.classList.contains("hidden")) hideEntityModal();
+  });
+
+  return entityModal;
+}
+
+function hideEntityModal() {
+  if (!entityModal) return;
+  entityModal.classList.add("hidden");
+}
+
+function entityRoleLabel(kind, gender) {
+  if (kind === "director") return "Director";
+  if (gender === 1) return "Actriz";
+  if (gender === 2) return "Actor";
+  return "Actor/Actriz";
+}
+
+function typeLabelForItem(it) {
+  if (it.type === "series") return "Serie";
+  if (it.type === "anime") return "Anime";
+  return "Peli";
+}
+
+function findEntityMetaFromItems(name, kind) {
+  const key = normKey(name);
+  let gender = 0;
+  let tmdbId = 0;
+  for (const it of filtered) {
+    if (!it) continue;
+    if (kind === "actor") {
+      const list = Array.isArray(it.cast) ? it.cast : [];
+      for (const entry of list) {
+        const normalized = normalizeCastEntry(entry);
+        if (!normalized) continue;
+        if (normKey(normalized.name) !== key) continue;
+        if (!tmdbId && normalized.tmdbId) tmdbId = normalized.tmdbId;
+        if (!gender && normalized.gender) gender = normalized.gender;
+      }
+    } else if (kind === "director") {
+      if (normKey(it.director) !== key) continue;
+      if (!tmdbId && it.directorData?.tmdbId) tmdbId = it.directorData.tmdbId;
+      if (!gender && it.directorData?.gender) gender = it.directorData.gender;
+    }
+  }
+  return { gender, tmdbId };
+}
+
+function getEntityLocalItems(name, kind, tmdbId = 0) {
+  const key = normKey(name);
+  return filtered.filter(it => {
+    if (!it) return false;
+    if (kind === "actor") {
+      const list = Array.isArray(it.cast) ? it.cast : [];
+      return list.some(entry => {
+        const normalized = normalizeCastEntry(entry);
+        if (!normalized) return false;
+        if (tmdbId && normalized.tmdbId === tmdbId) return true;
+        return normKey(normalized.name) === key;
+      });
+    }
+    if (kind === "director") {
+      if (tmdbId && it.directorData?.tmdbId === tmdbId) return true;
+      return normKey(it.director) === key;
+    }
+    return false;
+  });
+}
+
+function creditKey(credit) {
+  if (credit.mediaType && credit.tmdbId) return `${credit.mediaType}|${credit.tmdbId}`;
+  return `${foldKey(credit.title)}|${credit.year || 0}`;
+}
+
+function itemKey(it) {
+  if (it.tmdbType && it.tmdbId) return `${it.tmdbType}|${it.tmdbId}`;
+  return `${foldKey(it.title)}|${it.year || 0}`;
+}
+
+async function tmdbSearchPerson(name) {
+  if (!tmdbEnabled()) return null;
+  const data = await tmdbFetch("/search/person", { query: name, language: "es-ES" });
+  const first = Array.isArray(data?.results) ? data.results[0] : null;
+  if (!first?.id) return null;
+  return {
+    tmdbId: Number(first.id) || 0,
+    gender: normalizeGender(first.gender)
+  };
+}
+
+async function tmdbFetchPersonCredits(id) {
+  if (!tmdbEnabled()) return { credits: [], gender: 0 };
+  const [person, credits] = await Promise.all([
+    tmdbFetch(`/person/${id}`, { language: "es-ES" }),
+    tmdbFetch(`/person/${id}/combined_credits`, { language: "es-ES" })
+  ]);
+  return { credits, gender: normalizeGender(person?.gender) };
+}
+
+function normalizeCredits(raw, kind) {
+  const list = kind === "director"
+    ? (Array.isArray(raw?.crew) ? raw.crew.filter(c => c?.job === "Director") : [])
+    : (Array.isArray(raw?.cast) ? raw.cast : []);
+  const map = new Map();
+  for (const c of list) {
+    const id = Number(c?.id) || 0;
+    const mediaType = c?.media_type || "";
+    const title = c?.title || c?.name || "";
+    if (!id || !mediaType || !title) continue;
+    const year = Number(String(c?.release_date || c?.first_air_date || "").slice(0, 4)) || 0;
+    const key = `${mediaType}|${id}`;
+    if (map.has(key)) continue;
+    map.set(key, {
+      key,
+      tmdbId: id,
+      mediaType,
+      title,
+      year
+    });
+  }
+  return Array.from(map.values()).sort((a, b) => (b.year - a.year) || a.title.localeCompare(b.title, "es"));
+}
+
+async function openEntityModal({ name, kind }) {
+  const modal = ensureEntityModal();
+  entityState.name = name;
+  entityState.kind = kind;
+  entityState.page = 1;
+  entityState.credits = [];
+  entityState.localItems = [];
+  entityState.unseenCredits = [];
+  entityState.collabMode = "actors";
+
+  const meta = findEntityMetaFromItems(name, kind);
+  entityState.gender = meta.gender;
+  entityState.tmdbId = meta.tmdbId;
+
+  const titleEl = modal.querySelector("#media-entity-title");
+  const subEl = modal.querySelector("#media-entity-sub");
+  if (titleEl) titleEl.textContent = name || "—";
+  if (subEl) subEl.textContent = entityRoleLabel(kind, meta.gender);
+
+  modal.classList.remove("hidden");
+
+  renderEntityLoading();
+
+  let tmdbId = meta.tmdbId;
+  try {
+    if (!tmdbId && tmdbEnabled()) {
+      const search = await tmdbSearchPerson(name);
+      tmdbId = search?.tmdbId || 0;
+      if (!entityState.gender && search?.gender) entityState.gender = search.gender;
+    }
+
+    if (tmdbId) {
+      entityState.tmdbId = tmdbId;
+      const fetched = await tmdbFetchPersonCredits(tmdbId);
+      if (!entityState.gender && fetched.gender) entityState.gender = fetched.gender;
+      entityState.credits = normalizeCredits(fetched.credits, kind);
+    }
+  } catch (e) {
+    console.warn("[media] entity fetch failed", e);
+  }
+
+  entityState.localItems = getEntityLocalItems(name, kind, entityState.tmdbId);
+  const localKeys = new Set(entityState.localItems.map(itemKey));
+  entityState.unseenCredits = entityState.credits.filter(c => !localKeys.has(creditKey(c)));
+
+  renderEntityModal();
+}
+
+function renderEntityLoading() {
+  const watchedEl = entityModal?.querySelector("#media-entity-watched");
+  const totalEl = entityModal?.querySelector("#media-entity-total");
+  const progressEl = entityModal?.querySelector("#media-entity-progress-label");
+  const barEl = entityModal?.querySelector("#media-entity-progress-bar");
+  if (watchedEl) watchedEl.textContent = "—";
+  if (totalEl) totalEl.textContent = "—";
+  if (progressEl) progressEl.textContent = "Cargando…";
+  if (barEl) barEl.style.width = "0%";
+}
+
+function renderEntityModal() {
+  const modal = entityModal;
+  if (!modal) return;
+  const titleEl = modal.querySelector("#media-entity-title");
+  const subEl = modal.querySelector("#media-entity-sub");
+  if (titleEl) titleEl.textContent = entityState.name || "—";
+  if (subEl) subEl.textContent = entityRoleLabel(entityState.kind, entityState.gender);
+
+  const seenItems = entityState.localItems.filter(it => !it.watchlist);
+  const total = entityState.credits.length;
+  const watchedEl = modal.querySelector("#media-entity-watched");
+  const totalEl = modal.querySelector("#media-entity-total");
+  const progressEl = modal.querySelector("#media-entity-progress-label");
+  const barEl = modal.querySelector("#media-entity-progress-bar");
+  if (watchedEl) watchedEl.textContent = String(seenItems.length);
+  if (totalEl) totalEl.textContent = tmdbEnabled() ? total.toLocaleString() : "—";
+  if (progressEl) {
+    if (!tmdbEnabled()) {
+      progressEl.textContent = "TMDb no disponible";
+    } else if (total) {
+      progressEl.textContent = `${seenItems.length.toLocaleString()} / ${total.toLocaleString()}`;
+    } else {
+      progressEl.textContent = "0 / 0";
+    }
+  }
+  if (barEl) barEl.style.width = (total && tmdbEnabled())
+    ? `${Math.min(100, Math.round((seenItems.length / total) * 100))}%`
+    : "0%";
+
+  renderEntityLists();
+  renderEntityCollabs();
+}
+
+function renderEntityLists() {
+  const modal = entityModal;
+  if (!modal) return;
+  const seenEl = modal.querySelector("#media-entity-seen");
+  const unseenEl = modal.querySelector("#media-entity-unseen");
+  const moreBtn = modal.querySelector("#media-entity-more");
+
+  const seenItems = entityState.localItems.filter(it => !it.watchlist);
+  if (seenEl) {
+    if (!seenItems.length) {
+      seenEl.innerHTML = `<div style="opacity:.65;font-size:12px;padding:4px 2px">Aún no hay vistos.</div>`;
+    } else {
+      seenEl.innerHTML = seenItems.map(it => `
+        <div class="media-entity-item">
+          <div class="media-entity-item-main">
+            <div class="media-entity-item-title">${escHtml(it.title || "—")}</div>
+            <div class="media-entity-item-sub">${it.year || "—"} · ${typeLabelForItem(it)}</div>
+          </div>
+        </div>
+      `).join("");
+    }
+  }
+
+  if (unseenEl) {
+    if (!tmdbEnabled()) {
+      unseenEl.innerHTML = `<div style="opacity:.65;font-size:12px;padding:4px 2px">TMDb no disponible.</div>`;
+      if (moreBtn) moreBtn.style.display = "none";
+      return;
+    }
+    if (!entityState.unseenCredits.length) {
+      unseenEl.innerHTML = `<div style="opacity:.65;font-size:12px;padding:4px 2px">No hay más títulos en TMDb.</div>`;
+      if (moreBtn) moreBtn.style.display = "none";
+      return;
+    }
+    const slice = entityState.unseenCredits.slice(0, entityState.page * ENTITY_PAGE_SIZE);
+    unseenEl.innerHTML = slice.map(c => `
+      <div class="media-entity-item">
+        <div class="media-entity-item-main">
+          <div class="media-entity-item-title">${escHtml(c.title)}</div>
+          <div class="media-entity-item-sub">${c.year || "—"} · ${c.mediaType === "tv" ? "Serie" : "Peli"}</div>
+        </div>
+        <button class="btn ghost btn-compact" data-action="add" data-key="${c.key}" data-tmdb-id="${c.tmdbId}" data-media-type="${c.mediaType}" type="button">Añadir</button>
+      </div>
+    `).join("");
+    if (moreBtn) moreBtn.style.display = (slice.length < entityState.unseenCredits.length) ? "" : "none";
+  }
+}
+
+function computeCollaborations() {
+  const seenItems = entityState.localItems.filter(it => !it.watchlist);
+  const total = seenItems.length || 0;
+  const counts = new Map();
+  const isActor = entityState.kind === "actor";
+
+  if (!total) return { total: 0, rows: [] };
+
+  seenItems.forEach(it => {
+    if (isActor) {
+      const castList = Array.isArray(it.cast) ? it.cast : [];
+      castList.forEach(entry => {
+        const normalized = normalizeCastEntry(entry);
+        if (!normalized?.name) return;
+        if (normKey(normalized.name) === normKey(entityState.name)) return;
+        const key = `actor|${normalized.name}`;
+        const cur = counts.get(key) || { name: normalized.name, role: "actor", count: 0 };
+        cur.count += 1;
+        counts.set(key, cur);
+      });
+      if (it.director) {
+        const key = `director|${it.director}`;
+        const cur = counts.get(key) || { name: it.director, role: "director", count: 0 };
+        cur.count += 1;
+        counts.set(key, cur);
+      }
+    } else {
+      const castList = Array.isArray(it.cast) ? it.cast : [];
+      castList.forEach(entry => {
+        const normalized = normalizeCastEntry(entry);
+        if (!normalized?.name) return;
+        const key = `actor|${normalized.name}`;
+        const cur = counts.get(key) || { name: normalized.name, role: "actor", count: 0 };
+        cur.count += 1;
+        counts.set(key, cur);
+      });
+    }
+  });
+
+  const rows = Array.from(counts.values())
+    .filter(r => r.count > 0)
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "es"));
+
+  return { total, rows };
+}
+
+function renderEntityCollabs() {
+  const modal = entityModal;
+  if (!modal) return;
+  const listEl = modal.querySelector("#media-entity-collab-list");
+  const toggleEl = modal.querySelector("#media-entity-collab-toggle");
+
+  const { total, rows } = computeCollaborations();
+  if (toggleEl) {
+    toggleEl.style.display = (entityState.kind === "actor") ? "" : "none";
+    if (entityState.kind === "actor") {
+      toggleEl.querySelectorAll("button").forEach(btn => {
+        btn.classList.toggle("primary", btn.dataset.mode === entityState.collabMode);
+      });
+    }
+  }
+
+  if (!listEl) return;
+  if (!total || !rows.length) {
+    listEl.innerHTML = `<div style="opacity:.65;font-size:12px;padding:4px 2px">Sin datos aún.</div>`;
+    return;
+  }
+
+  const filteredRows = entityState.kind === "actor"
+    ? rows.filter(r => (entityState.collabMode === "directors" ? r.role === "director" : r.role === "actor"))
+    : rows;
+
+  const top = filteredRows.slice(0, 8);
+  if (!top.length) {
+    listEl.innerHTML = `<div style="opacity:.65;font-size:12px;padding:4px 2px">Sin coincidencias.</div>`;
+    return;
+  }
+  listEl.innerHTML = top.map(r => {
+    const pct = fmtPct(r.count / total);
+    return `
+      <div class="media-entity-collab">
+        <div>${escHtml(r.name)}</div>
+        <span>${pct} (${r.count} de ${total})</span>
+      </div>
+    `;
+  }).join("");
+}
+
+async function addItemFromCredit(credit) {
+  if (!credit || !tmdbEnabled()) return;
+  try {
+    const type = credit.mediaType === "tv" ? "series" : "movie";
+    const details = await tmdbFetchDetails(credit.tmdbId, type);
+    const cc = normalizeCountry(details.country || "");
+    const seasons = normalizeSeasons(details.seasons);
+    addItem({
+      title: credit.title,
+      type,
+      rating: 0,
+      year: credit.year || 0,
+      genres: details.genres || [],
+      director: details.director || "",
+      directorData: details.directorData || null,
+      cast: Array.isArray(details.cast) ? details.cast : [],
+      tmdbId: details.tmdbId || credit.tmdbId,
+      tmdbType: details.tmdbType || credit.mediaType,
+      countryCode: cc.code,
+      countryEn: cc.en || "",
+      countryLabel: cc.es || "",
+      watchlist: true,
+      withLaura: false,
+      seasons,
+      season: 1,
+      episode: 1,
+      currentSeason: 1,
+      currentEpisode: 1,
+      watchDates: []
+    });
+    entityState.unseenCredits = entityState.unseenCredits.filter(c => c.key !== credit.key);
+    renderEntityModal();
+  } catch (e) {
+    console.warn("[media] add from credit failed", e);
+    setMediaSub("No se pudo crear la ficha", 2400);
+  }
 }
 /* ------------------------- Refresh ------------------------- */
 function refreshChartsMaybe() {

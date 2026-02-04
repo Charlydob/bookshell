@@ -1128,6 +1128,14 @@
             <option value="year">Año</option>
           </select>
         </label>
+        <label class="chart-selector media-actor-filter" id="media-actor-filter" for="media-actor-filter-select" style="display:none">
+          <span>Actor/Actriz</span>
+          <select class="chart-selector-input" id="media-actor-filter-select">
+            <option value="all" selected>Todos</option>
+            <option value="male">Actores</option>
+            <option value="female">Actrices</option>
+          </select>
+        </label>
       </div>
       <div class="media-donut-host" id="media-donut"></div>
 
@@ -1137,6 +1145,9 @@
           <span class="media-legend-meta" id="media-legend-meta">0</span>
         </summary>
         <div class="media-legend-body">
+          <div class="media-legend-search">
+            <input id="media-legend-search" class="media-input" type="search" placeholder="Buscar en desglose..." autocomplete="off" />
+          </div>
           <div class="media-legend-list" id="media-donut-legend"></div>
           <button class="btn ghost media-legend-more" id="media-legend-more" type="button" style="display:none">Mostrar más</button>
         </div>

@@ -503,9 +503,10 @@
 <div class="video-links-shell">
 <div class="video-links-topbar">
 <button class="icon-btn" id="video-links-new-back" type="button">←</button>
-<div class="video-links-title">Nuevo link</div>
+<div class="video-links-title" id="video-links-new-title">Nuevo link</div>
 </div>
 <form class="video-links-form" id="video-links-form">
+<input id="video-link-id" type="hidden"/>
 <div class="video-links-card">
 <div class="video-links-card-title">Guarda un recurso</div>
 <div class="hint">Si pegas una URL sin https://, la normalizamos automáticamente.</div>
@@ -1963,9 +1964,62 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 <div class="modal-footer sheet-footer">
 <button class="btn ghost" id="video-modal-cancel" type="button">Cancelar</button>
-<button class="btn primary" type="submit">Guardar</button>
+<button class="btn primary" id="video-form-save" type="submit">Guardar</button>
 </div>
 </form>
+</div>
+</div>
+<!-- MODAL REGISTRO -->
+<div class="modal-backdrop hidden" id="record-modal-backdrop">
+<div class="modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="record-modal-title">Editar registro</div>
+<button class="icon-btn" id="record-modal-close" aria-label="Cerrar">✕</button>
+</div>
+<form class="modal-form" id="record-form">
+<input id="record-id" type="hidden"/>
+<input id="record-day" type="hidden"/>
+<input id="record-video-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Registro</div>
+<label class="field">
+<span class="field-label">Palabras</span>
+<input id="record-words" inputmode="numeric" min="0" type="number" value="0"/>
+</label>
+<label class="field">
+<span class="field-label">Tiempo trabajado</span>
+<div class="time-split">
+<input class="time-input" id="record-time-min" inputmode="numeric" min="0" placeholder="min" type="number"/>
+<span class="time-sep">:</span>
+<input class="time-input" id="record-time-sec" inputmode="numeric" max="59" min="0" placeholder="seg" type="number"/>
+</div>
+</label>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="record-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" id="record-form-save" type="submit">Guardar cambios</button>
+</div>
+</form>
+</div>
+</div>
+<!-- MODAL ELIMINAR -->
+<div class="modal-backdrop hidden" id="confirm-delete-backdrop">
+<div class="modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="confirm-delete-title">Eliminar definitivamente</div>
+<button class="icon-btn" id="confirm-delete-close" aria-label="Cerrar">✕</button>
+</div>
+<div class="modal-body">
+<p id="confirm-delete-text">¿Eliminar definitivamente?</p>
+</div>
+<div class="modal-footer">
+<button class="btn ghost" id="confirm-delete-cancel" type="button">Cancelar</button>
+<button class="btn danger" id="confirm-delete-confirm" type="button">Eliminar</button>
+</div>
 </div>
 </div>
 <!-- MODAL IDEA -->
@@ -2006,7 +2060,7 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 <div class="modal-footer sheet-footer">
 <button class="btn ghost" id="idea-modal-cancel" type="button">Cancelar</button>
-<button class="btn primary" type="submit">Guardar</button>
+<button class="btn primary" id="idea-form-save" type="submit">Guardar</button>
 </div>
 </form>
 </div>

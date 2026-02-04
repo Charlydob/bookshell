@@ -12,6 +12,7 @@ import {
   onValue,
   push,
   set,
+  remove,
   update,
   runTransaction
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
@@ -44,6 +45,7 @@ let videoCalYear;
 let videoCalMonth;
 let videoCalViewMode = "month";
 let activeScriptVideoId = null;
+let activeVideoDayKey = null;
 let quill = null;
 let scriptDirty = false;
 let scriptSaveTimer = null;
@@ -77,6 +79,63 @@ const DEFAULT_COUNT_SETTINGS = {
   excludeAnnotations: true,
   ignoreTags: true
 };
+
+const STATE_STORAGE_KEY = "bookshell_video_state_v1";
+const state = {
+  ideas: [],
+  links: [],
+  scripts: [],
+  records: []
+};
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STATE_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    state.ideas = Array.isArray(parsed?.ideas) ? parsed.ideas : [];
+    state.links = Array.isArray(parsed?.links) ? parsed.links : [];
+    state.scripts = Array.isArray(parsed?.scripts) ? parsed.scripts : [];
+    state.records = Array.isArray(parsed?.records) ? parsed.records : [];
+  } catch (err) {
+    console.warn("No se pudo cargar el estado local", err);
+  }
+}
+
+function saveState() {
+  try {
+    localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(state));
+  } catch (err) {
+    console.warn("No se pudo guardar el estado local", err);
+  }
+}
+
+function rebuildState() {
+  const allVideos = Object.entries(videos || {}).map(([id, item]) => ({ id, ...(item || {}) }));
+  state.ideas = allVideos.filter((item) => item.type === "idea" || item.status === "idea");
+  state.scripts = allVideos.filter((item) => item.type !== "idea" && item.status !== "idea");
+  state.links = Object.entries(links || {}).map(([id, item]) => ({ id, ...(item || {}) }));
+
+  const records = [];
+  Object.entries(videoLog || {}).forEach(([day, perVideo]) => {
+    Object.entries(perVideo || {}).forEach(([videoId, log]) => {
+      const words = Math.max(0, Number(log?.w) || 0);
+      const seconds = Math.max(0, Number(log?.s) || 0);
+      if (words === 0 && seconds === 0) return;
+      records.push({
+        id: `${day}:${videoId}`,
+        day,
+        videoId,
+        words,
+        seconds
+      });
+    });
+  });
+  state.records = records;
+  saveState();
+}
+
+loadState();
 
 function normalizeUrl(raw) {
   if (!raw) return "";
@@ -121,6 +180,106 @@ function formatTagsForDisplay(raw) {
   if (!str) return "";
   if (str.includes("#")) return str;
   return formatTagsForStorage(str);
+}
+
+function getItem(entityType, id) {
+  if (!id) return null;
+  if (entityType === "link") return links?.[id] ? { id, ...(links[id] || {}) } : null;
+  if (entityType === "idea" || entityType === "script") {
+    return videos?.[id] ? { id, ...(videos[id] || {}) } : null;
+  }
+  if (entityType === "record") {
+    return state.records.find((record) => record.id === id) || null;
+  }
+  return null;
+}
+
+async function updateItem(entityType, id, patch = {}) {
+  if (!id) return;
+  const now = Date.now();
+  if (entityType === "link") {
+    links[id] = { ...(links[id] || {}), ...patch, updatedAt: now };
+    rebuildState();
+    renderLinksList();
+    renderLinkPickerList();
+    await update(ref(db, `${LINKS_PATH}/${id}`), { ...patch, updatedAt: now });
+    return;
+  }
+  if (entityType === "idea" || entityType === "script") {
+    videos[id] = { ...(videos[id] || {}), ...patch, updatedAt: now };
+    rebuildState();
+    renderVideos();
+    renderVideoStats();
+    renderVideoCalendar();
+    await update(ref(db, `${VIDEOS_PATH}/${id}`), { ...patch, updatedAt: now });
+    return;
+  }
+  if (entityType === "record") {
+    const record = getItem("record", id);
+    if (!record) return;
+    const safeWords = Math.max(0, Number(patch.words ?? record.words) || 0);
+    const safeSeconds = Math.max(0, Number(patch.seconds ?? record.seconds) || 0);
+    if (!videoLog[record.day]) videoLog[record.day] = {};
+    videoLog[record.day][record.videoId] = { w: safeWords, s: safeSeconds };
+    rebuildState();
+    renderVideoStats();
+    renderVideoCalendar();
+    if (activeVideoDayKey === record.day) openVideoDayView(record.day);
+    await update(ref(db, `${VIDEO_LOG_PATH}/${record.day}/${record.videoId}`), {
+      w: safeWords,
+      s: safeSeconds
+    });
+  }
+}
+
+async function deleteItem(entityType, id) {
+  if (!id) return;
+  if (entityType === "link") {
+    delete links[id];
+    rebuildState();
+    renderLinksList();
+    renderLinkPickerList();
+    await remove(ref(db, `${LINKS_PATH}/${id}`));
+    return;
+  }
+  if (entityType === "idea" || entityType === "script") {
+    const updates = {};
+    Object.entries(videoLog || {}).forEach(([day, perVideo]) => {
+      if (perVideo?.[id]) {
+        updates[`${day}/${id}`] = null;
+      }
+    });
+    delete videos[id];
+    if (videoLog && typeof videoLog === "object") {
+      Object.keys(videoLog).forEach((day) => {
+        if (videoLog?.[day]?.[id]) {
+          delete videoLog[day][id];
+        }
+      });
+    }
+    rebuildState();
+    renderVideos();
+    renderVideoStats();
+    renderVideoCalendar();
+    if (Object.keys(updates).length) {
+      await update(ref(db, VIDEO_LOG_PATH), updates);
+    }
+    await remove(ref(db, `${VIDEOS_PATH}/${id}`));
+    return;
+  }
+  if (entityType === "record") {
+    const record = getItem("record", id);
+    if (!record) return;
+    if (videoLog?.[record.day]) {
+      delete videoLog[record.day][record.videoId];
+      if (!Object.keys(videoLog[record.day]).length) delete videoLog[record.day];
+    }
+    rebuildState();
+    renderVideoStats();
+    renderVideoCalendar();
+    if (activeVideoDayKey === record.day) openVideoDayView(record.day);
+    await remove(ref(db, `${VIDEO_LOG_PATH}/${record.day}/${record.videoId}`));
+  }
 }
 
 // Utils fecha
@@ -319,6 +478,9 @@ if ($viewVideos) {
   const $videoLinksForm = document.getElementById("video-links-form");
   const $videoLinksCancel = document.getElementById("video-links-cancel");
   const $videoLinksSearch = document.getElementById("video-links-search");
+  const $videoLinksNewTitle = document.getElementById("video-links-new-title");
+  const $videoLinksSave = document.getElementById("video-links-save");
+  const $videoLinkId = document.getElementById("video-link-id");
   const $videoLinkUrl = document.getElementById("video-link-url");
   const $videoLinkTitle = document.getElementById("video-link-title");
   const $videoLinkCategory = document.getElementById("video-link-category");
@@ -338,6 +500,7 @@ if ($viewVideos) {
   const $ideaLink = document.getElementById("idea-link");
   const $ideaAddResource = document.getElementById("idea-add-resource");
   const $ideaFormError = document.getElementById("idea-form-error");
+  const $ideaFormSave = document.getElementById("idea-form-save");
 
   // Modal vídeo
   const $videoModalBackdrop = document.getElementById("video-modal-backdrop");
@@ -345,6 +508,7 @@ if ($viewVideos) {
   const $videoModalClose = document.getElementById("video-modal-close");
   const $videoModalCancel = document.getElementById("video-modal-cancel");
   const $videoForm = document.getElementById("video-form");
+  const $videoFormSave = document.getElementById("video-form-save");
   const $videoId = document.getElementById("video-id");
   const $videoTitle = document.getElementById("video-title");
   const $videoScriptWords = document.getElementById("video-script-words");
@@ -360,12 +524,212 @@ if ($viewVideos) {
   const $videoPublishDate = document.getElementById("video-publish-date");
   const $videoStatus = document.getElementById("video-status");
 
+  // Modal registro
+  const $recordModalBackdrop = document.getElementById("record-modal-backdrop");
+  const $recordModalTitle = document.getElementById("record-modal-title");
+  const $recordModalClose = document.getElementById("record-modal-close");
+  const $recordModalCancel = document.getElementById("record-modal-cancel");
+  const $recordForm = document.getElementById("record-form");
+  const $recordId = document.getElementById("record-id");
+  const $recordDay = document.getElementById("record-day");
+  const $recordVideoId = document.getElementById("record-video-id");
+  const $recordWords = document.getElementById("record-words");
+  const $recordTimeMin = document.getElementById("record-time-min");
+  const $recordTimeSec = document.getElementById("record-time-sec");
+  const $recordFormSave = document.getElementById("record-form-save");
+
+  normalizeNumberField($recordWords);
+  normalizeNumberField($recordTimeMin);
+  normalizeNumberField($recordTimeSec, 59);
+
+  // Modal eliminar
+  const $confirmDeleteBackdrop = document.getElementById("confirm-delete-backdrop");
+  const $confirmDeleteTitle = document.getElementById("confirm-delete-title");
+  const $confirmDeleteText = document.getElementById("confirm-delete-text");
+  const $confirmDeleteClose = document.getElementById("confirm-delete-close");
+  const $confirmDeleteCancel = document.getElementById("confirm-delete-cancel");
+  const $confirmDeleteConfirm = document.getElementById("confirm-delete-confirm");
+
+  let lastFocusedElement = null;
+  let activeActionMenu = null;
+  let deleteTarget = null;
+  let videoToastEl = null;
+  let videoToastTimeout = null;
+
   // === Modal helpers ===
+  function ensureVideoToast() {
+    if (!videoToastEl) {
+      videoToastEl = document.createElement("div");
+      videoToastEl.className = "video-toast hidden";
+      document.body.appendChild(videoToastEl);
+    }
+    return videoToastEl;
+  }
+
+  function showVideoToast(text) {
+    const toast = ensureVideoToast();
+    toast.textContent = text;
+    toast.classList.remove("hidden");
+    if (videoToastTimeout) clearTimeout(videoToastTimeout);
+    videoToastTimeout = setTimeout(() => {
+      toast.classList.add("hidden");
+    }, 2200);
+  }
+
+  function closeActiveActionMenu() {
+    if (!activeActionMenu) return;
+    activeActionMenu.classList.remove("is-open");
+    const toggle = activeActionMenu.querySelector(".video-action-menu-toggle");
+    if (toggle) toggle.setAttribute("aria-expanded", "false");
+    activeActionMenu = null;
+  }
+
+  function createActionMenu({ onEdit, onDelete, label }) {
+    const actions = document.createElement("div");
+    actions.className = "video-action-menu-wrap";
+
+    const trash = document.createElement("button");
+    trash.type = "button";
+    trash.className = "video-trash-btn";
+    trash.textContent = "🗑️";
+    trash.setAttribute("aria-label", `Eliminar ${label}`);
+    trash.addEventListener("click", (event) => {
+      event.stopPropagation();
+      onDelete?.();
+    });
+
+    const menu = document.createElement("div");
+    menu.className = "video-action-menu";
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "video-action-menu-toggle";
+    toggle.textContent = "⋯";
+    toggle.setAttribute("aria-label", `Más acciones de ${label}`);
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (activeActionMenu && activeActionMenu !== menu) {
+        closeActiveActionMenu();
+      }
+      const isOpen = menu.classList.toggle("is-open");
+      activeActionMenu = isOpen ? menu : null;
+      toggle.setAttribute("aria-expanded", String(isOpen));
+    });
+
+    const panel = document.createElement("div");
+    panel.className = "video-action-menu-panel";
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "btn ghost";
+    editBtn.textContent = "Editar";
+    editBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeActiveActionMenu();
+      onEdit?.();
+    });
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn ghost danger";
+    delBtn.textContent = "Eliminar";
+    delBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeActiveActionMenu();
+      onDelete?.();
+    });
+
+    panel.appendChild(editBtn);
+    panel.appendChild(delBtn);
+    menu.appendChild(toggle);
+    menu.appendChild(panel);
+
+    actions.appendChild(trash);
+    actions.appendChild(menu);
+    actions.openMenu = () => {
+      if (activeActionMenu && activeActionMenu !== menu) {
+        closeActiveActionMenu();
+      }
+      menu.classList.add("is-open");
+      activeActionMenu = menu;
+      toggle.setAttribute("aria-expanded", "true");
+    };
+    return actions;
+  }
+
+  function attachSwipeToMenu(target, onOpenMenu) {
+    if (!target) return;
+    let startX = 0;
+    let startY = 0;
+    target.addEventListener("touchstart", (event) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      startX = touch.clientX;
+      startY = touch.clientY;
+    }, { passive: true });
+    target.addEventListener("touchend", (event) => {
+      const touch = event.changedTouches[0];
+      if (!touch) return;
+      const dx = touch.clientX - startX;
+      const dy = Math.abs(touch.clientY - startY);
+      if (dx < -60 && dy < 40) {
+        onOpenMenu?.();
+      }
+    });
+  }
+
+  function openDeleteModal({ entityType, id, label }) {
+    if (!$confirmDeleteBackdrop) return;
+    lastFocusedElement = document.activeElement;
+    deleteTarget = { entityType, id };
+    if ($confirmDeleteTitle) $confirmDeleteTitle.textContent = "Eliminar definitivamente";
+    if ($confirmDeleteText) {
+      $confirmDeleteText.textContent = `¿Eliminar definitivamente \"${label}\"?`;
+    }
+    $confirmDeleteBackdrop.classList.remove("hidden");
+    $confirmDeleteBackdrop.setAttribute("aria-hidden", "false");
+    $confirmDeleteCancel?.focus();
+  }
+
+  function closeDeleteModal() {
+    if (!$confirmDeleteBackdrop) return;
+    $confirmDeleteBackdrop.classList.add("hidden");
+    $confirmDeleteBackdrop.setAttribute("aria-hidden", "true");
+    deleteTarget = null;
+    if (lastFocusedElement?.focus) lastFocusedElement.focus();
+  }
+
+  function openRecordModal(record) {
+    if (!$recordModalBackdrop || !record) return;
+    lastFocusedElement = document.activeElement;
+    $recordModalTitle.textContent = "Editar registro";
+    $recordId.value = record.id;
+    $recordDay.value = record.day;
+    $recordVideoId.value = record.videoId;
+    $recordWords.value = record.words || 0;
+    const split = splitSeconds(record.seconds || 0);
+    $recordTimeMin.value = split.min;
+    $recordTimeSec.value = split.sec;
+    if ($recordFormSave) $recordFormSave.textContent = "Guardar cambios";
+    $recordModalBackdrop.classList.remove("hidden");
+    $recordModalBackdrop.setAttribute("aria-hidden", "false");
+    $recordWords?.focus();
+  }
+
+  function closeRecordModal() {
+    if (!$recordModalBackdrop) return;
+    $recordModalBackdrop.classList.add("hidden");
+    $recordModalBackdrop.setAttribute("aria-hidden", "true");
+    if (lastFocusedElement?.focus) lastFocusedElement.focus();
+  }
+
   function openVideoModal(id = null) {
     if (id && videos[id]) {
       const v = videos[id];
       $videoModalTitle.textContent = "Editar vídeo";
       $videoId.value = id;
+      if ($videoFormSave) $videoFormSave.textContent = "Guardar cambios";
       $videoTitle.value = v.title || "";
 $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
 
@@ -383,6 +747,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       $videoModalTitle.textContent = "Nuevo vídeo";
       $videoId.value = "";
       $videoForm.reset();
+      if ($videoFormSave) $videoFormSave.textContent = "Guardar";
       $videoScriptWords.value = 0;
       $videoDurationMin.value = 0;
       $videoDurationSec.value = 0;
@@ -404,6 +769,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       const v = videos[id];
       $ideaModalTitle.textContent = "Editar idea";
       $ideaId.value = id;
+      if ($ideaFormSave) $ideaFormSave.textContent = "Guardar cambios";
       $ideaTitle.value = v.title || "";
       $ideaNotes.value = v.ideaNotes || v.notes || "";
       $ideaTags.value = tagsToCsv(v.tags || "");
@@ -411,6 +777,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     } else {
       $ideaModalTitle.textContent = "Nueva idea";
       $ideaId.value = "";
+      if ($ideaFormSave) $ideaFormSave.textContent = "Guardar";
       $ideaTitle.value = "";
       $ideaNotes.value = "";
       $ideaTags.value = "";
@@ -978,7 +1345,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   }
 
   function getLinksArray() {
-    return Object.entries(links || {}).map(([id, item]) => ({ id, ...(item || {}) }));
+    return state.links || [];
   }
 
   function renderLinksList() {
@@ -1017,6 +1384,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       grouped.forEach((item) => {
         const card = document.createElement("div");
         card.className = "video-link-card";
+        const header = document.createElement("div");
+        header.className = "video-link-card-header";
         const title = document.createElement("div");
         title.className = "video-link-card-title";
         if (item.url) {
@@ -1029,14 +1398,28 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         } else {
           title.textContent = item.title || "Recurso guardado";
         }
+        const actionMenu = createActionMenu({
+          onEdit: () => openLinksNewView(item),
+          onDelete: () => {
+            openDeleteModal({
+              entityType: "link",
+              id: item.id,
+              label: item.title || item.url || "Link"
+            });
+          },
+          label: item.title || "link"
+        });
+        header.appendChild(title);
+        header.appendChild(actionMenu);
         const meta = document.createElement("div");
         meta.className = "video-link-card-meta";
         const dateLabel = formatLinkDate(item.createdAt);
         const note = item.note ? ` · ${item.note}` : "";
         meta.textContent = `${label}${note}${dateLabel ? ` · ${dateLabel}` : ""}`;
-        card.appendChild(title);
+        card.appendChild(header);
         card.appendChild(meta);
         body.appendChild(card);
+        attachSwipeToMenu(card, () => actionMenu.openMenu?.());
       });
       details.appendChild(summary);
       details.appendChild(body);
@@ -1121,6 +1504,14 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   }
 
   function openLinksNewView(prefill = {}) {
+    const editingId = prefill.id || "";
+    if ($videoLinkId) $videoLinkId.value = editingId;
+    if ($videoLinksNewTitle) {
+      $videoLinksNewTitle.textContent = editingId ? "Editar link" : "Nuevo link";
+    }
+    if ($videoLinksSave) {
+      $videoLinksSave.textContent = editingId ? "Guardar cambios" : "Guardar";
+    }
     if ($videoLinkUrl) $videoLinkUrl.value = prefill.url || "";
     if ($videoLinkTitle) $videoLinkTitle.value = prefill.title || "";
 
@@ -1342,6 +1733,60 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       if (e.target === $ideaModalBackdrop) closeIdeaModal();
     });
   }
+  if ($recordModalClose) $recordModalClose.addEventListener("click", closeRecordModal);
+  if ($recordModalCancel) $recordModalCancel.addEventListener("click", closeRecordModal);
+  if ($recordModalBackdrop) {
+    $recordModalBackdrop.addEventListener("click", (event) => {
+      if (event.target === $recordModalBackdrop) closeRecordModal();
+    });
+  }
+  if ($recordModalBackdrop) {
+    $recordModalBackdrop.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRecordModal();
+      }
+    });
+  }
+  if ($recordForm) {
+    $recordForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const id = $recordId?.value || "";
+      if (!id) return;
+      const words = Math.max(0, Number($recordWords?.value) || 0);
+      const min = Math.max(0, Number($recordTimeMin?.value) || 0);
+      const sec = Math.max(0, Number($recordTimeSec?.value) || 0);
+      const seconds = toSeconds(min, Math.min(59, sec));
+      await updateItem("record", id, { words, seconds });
+      showVideoToast("Cambios guardados");
+      closeRecordModal();
+    });
+  }
+  if ($confirmDeleteClose) $confirmDeleteClose.addEventListener("click", closeDeleteModal);
+  if ($confirmDeleteCancel) $confirmDeleteCancel.addEventListener("click", closeDeleteModal);
+  if ($confirmDeleteBackdrop) {
+    $confirmDeleteBackdrop.addEventListener("click", (event) => {
+      if (event.target === $confirmDeleteBackdrop) closeDeleteModal();
+    });
+    $confirmDeleteBackdrop.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeDeleteModal();
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+      }
+    });
+  }
+  if ($confirmDeleteConfirm) {
+    $confirmDeleteConfirm.addEventListener("click", async () => {
+      if (!deleteTarget) return;
+      const { entityType, id } = deleteTarget;
+      await deleteItem(entityType, id);
+      showVideoToast("Eliminado");
+      closeDeleteModal();
+    });
+  }
   if ($ideaAddResource) {
     $ideaAddResource.addEventListener("click", () => {
       openLinkPicker({
@@ -1398,7 +1843,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       };
       try {
         if (id) {
-          await update(ref(db, `${VIDEOS_PATH}/${id}`), payload);
+          await updateItem("idea", id, payload);
+          showVideoToast("Cambios guardados");
         } else {
           const newRef = push(ref(db, VIDEOS_PATH));
           await set(newRef, {
@@ -1530,9 +1976,34 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       }
     });
   }
+  document.addEventListener("click", (event) => {
+    if (!activeActionMenu) return;
+    const isMenu = event.target.closest(".video-action-menu");
+    if (!isMenu) closeActiveActionMenu();
+  });
+  document.addEventListener("keydown", (event) => {
+    const deleteOpen = $confirmDeleteBackdrop && !$confirmDeleteBackdrop.classList.contains("hidden");
+    const recordOpen = $recordModalBackdrop && !$recordModalBackdrop.classList.contains("hidden");
+    if (deleteOpen && event.key === "Enter") {
+      event.preventDefault();
+      return;
+    }
+    if (event.key !== "Escape") return;
+    if (deleteOpen) {
+      event.preventDefault();
+      closeDeleteModal();
+    }
+    if (recordOpen) {
+      event.preventDefault();
+      closeRecordModal();
+    }
+  });
 
   if ($videoDayBack) {
-    $videoDayBack.addEventListener("click", () => setActiveView("view-videos"));
+    $videoDayBack.addEventListener("click", () => {
+      activeVideoDayKey = null;
+      setActiveView("view-videos");
+    });
   }
 
   if ($btnOpenLinks) {
@@ -1547,12 +2018,18 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   if ($videoLinksNewBack) {
     $videoLinksNewBack.addEventListener("click", () => {
       clearLinkParams();
+      if ($videoLinkId) $videoLinkId.value = "";
+      if ($videoLinksNewTitle) $videoLinksNewTitle.textContent = "Nuevo link";
+      if ($videoLinksSave) $videoLinksSave.textContent = "Guardar";
       openLinksView();
     });
   }
   if ($videoLinksCancel) {
     $videoLinksCancel.addEventListener("click", () => {
       clearLinkParams();
+      if ($videoLinkId) $videoLinkId.value = "";
+      if ($videoLinksNewTitle) $videoLinksNewTitle.textContent = "Nuevo link";
+      if ($videoLinksSave) $videoLinksSave.textContent = "Guardar";
       openLinksView();
     });
   }
@@ -1575,19 +2052,33 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       const title = ($videoLinkTitle?.value || "").trim();
       const category = $videoLinkCategory?.value || "otro";
       const note = ($videoLinkNote?.value || "").trim();
+      const id = ($videoLinkId?.value || "").trim();
       const now = Date.now();
       try {
-        const newRef = push(ref(db, LINKS_PATH));
-        await set(newRef, {
-          url,
-          title: title || null,
-          category,
-          note,
-          createdAt: now,
-          updatedAt: now
-        });
+        if (id) {
+          await updateItem("link", id, {
+            url,
+            title: title || null,
+            category,
+            note
+          });
+          showVideoToast("Cambios guardados");
+        } else {
+          const newRef = push(ref(db, LINKS_PATH));
+          await set(newRef, {
+            url,
+            title: title || null,
+            category,
+            note,
+            createdAt: now,
+            updatedAt: now
+          });
+        }
         if ($videoLinksForm) $videoLinksForm.reset();
         if ($videoLinkCategory) $videoLinkCategory.value = "otro";
+        if ($videoLinkId) $videoLinkId.value = "";
+        if ($videoLinksNewTitle) $videoLinksNewTitle.textContent = "Nuevo link";
+        if ($videoLinksSave) $videoLinksSave.textContent = "Guardar";
         if ($videoLinkError) $videoLinkError.textContent = "";
         clearLinkParams();
         openLinksView();
@@ -1629,7 +2120,8 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
 
       try {
         if (id) {
-          await update(ref(db, `${VIDEOS_PATH}/${id}`), data);
+          await updateItem("script", id, data);
+          showVideoToast("Cambios guardados");
         } else {
           const newRef = push(ref(db, VIDEOS_PATH));
           await set(newRef, {
@@ -1648,7 +2140,8 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
   // === Firebase listeners ===
   onValue(ref(db, VIDEOS_PATH), (snap) => {
     videos = snap.val() || {};
-    renderVideos();
+    rebuildState();
+    renderScripts();
     renderVideoStats();
     renderVideoCalendar();
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
@@ -1657,6 +2150,7 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
 
   onValue(ref(db, VIDEO_LOG_PATH), (snap) => {
     videoLog = snap.val() || {};
+    rebuildState();
     renderVideoStats();
     renderVideoCalendar();
   });
@@ -1669,6 +2163,7 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
 
   onValue(ref(db, LINKS_PATH), (snap) => {
     links = snap.val() || {};
+    rebuildState();
     renderLinksList();
     renderLinkPickerList();
   });
@@ -1703,7 +2198,7 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
 function renderVideos() {
   if (!$videosList) return;
 
-  const idsAll = Object.keys(videos || {});
+  const idsAll = [...state.scripts, ...state.ideas].map((item) => item.id);
   if (!idsAll.length) {
     $videosList.innerHTML = "";
     if ($videosEmpty) $videosEmpty.style.display = "block";
@@ -1819,8 +2314,28 @@ function createVideoCard(id) {
   status.className = "video-status-pill";
   status.textContent = getStatusLabel(v.status, v.type);
 
+  const actionMenu = createActionMenu({
+    onEdit: () => {
+      if (isIdea) openIdeaModal(id);
+      else openVideoModal(id);
+    },
+    onDelete: () => {
+      openDeleteModal({
+        entityType: isIdea ? "idea" : "script",
+        id,
+        label: v.title || "Sin título"
+      });
+    },
+    label: v.title || "elemento"
+  });
+
+  const titleActions = document.createElement("div");
+  titleActions.className = "video-item-actions";
+  titleActions.appendChild(status);
+  titleActions.appendChild(actionMenu);
+
   titleRow.appendChild(title);
-  titleRow.appendChild(status);
+  titleRow.appendChild(titleActions);
 
   const progLine = document.createElement("div");
   progLine.className = "video-progress-line";
@@ -2003,9 +2518,10 @@ function createVideoCard(id) {
     }
   });
 
+  attachSwipeToMenu(card, () => actionMenu.openMenu?.());
+
   return card;
 }
-
 
   const frag = document.createDocumentFragment();
 
@@ -2055,6 +2571,18 @@ function createVideoCard(id) {
     $videosEmpty.style.display = idsAll.length ? "none" : "block";
   }
 }
+
+  function renderIdeas() {
+    renderVideos();
+  }
+
+  function renderScripts() {
+    renderVideos();
+  }
+
+  function renderRecords(dayKey) {
+    if (dayKey) openVideoDayView(dayKey);
+  }
 
 
   // Actualizar progreso + log diario
@@ -2395,6 +2923,7 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
 
   function openVideoDayView(dayKey) {
     if (!$viewVideoDay || !$videoDaySummary || !$videoDayList) return;
+    activeVideoDayKey = dayKey;
     const totals = computeVideoDayTotals();
     const dayTotals = totals[dayKey] || { words: 0, seconds: 0, ideas: 0 };
     const scheduled = Object.entries(videos || {}).filter(([, v]) => normalizeDateKey(v.publishDate) === dayKey);
@@ -2413,47 +2942,79 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
           id,
           title: v.title || "Idea",
           meta: ["Idea creada", v.tags ? `Tags: ${v.tags}` : ""].filter(Boolean),
-          isIdea: true
+          isIdea: true,
+          type: "idea"
         });
       }
       if (normalizeDateKey(v.publishDate) === dayKey) {
         const existing = itemsMap.get(id) || { id, title: v.title || "Vídeo", meta: [] };
         const label = v.status === "published" ? "Publicado" : "Programado";
         existing.meta.push(label);
+        existing.type = existing.type || "script";
         itemsMap.set(id, existing);
       }
     });
 
-    const dayLog = videoLog?.[dayKey] || {};
-    Object.entries(dayLog).forEach(([id, log]) => {
-      const words = Number(log?.w) || 0;
-      if (!words) return;
-      const existing = itemsMap.get(id) || { id, title: videos?.[id]?.title || "Vídeo", meta: [] };
-      existing.meta.push(`${words} palabras`);
-      itemsMap.set(id, existing);
+    const dayRecords = state.records.filter((record) => record.day === dayKey);
+    const recordItems = dayRecords.map((record) => {
+      const title = videos?.[record.videoId]?.title || "Vídeo";
+      const time = formatWorkTime(record.seconds || 0);
+      return {
+        id: record.id,
+        recordId: record.id,
+        videoId: record.videoId,
+        title: `Registro · ${title}`,
+        meta: [
+          `${record.words || 0} palabras`,
+          record.seconds ? `⏱ ${time}` : ""
+        ].filter(Boolean),
+        type: "record"
+      };
     });
 
     const frag = document.createDocumentFragment();
-    if (!itemsMap.size) {
+    const items = [...itemsMap.values(), ...recordItems];
+    if (!items.length) {
       const empty = document.createElement("div");
       empty.className = "video-finished-empty";
       empty.textContent = "Sin entradas ese día.";
       frag.appendChild(empty);
     } else {
-      Array.from(itemsMap.values()).forEach((item) => {
+      items.forEach((item) => {
         const card = document.createElement("div");
         card.className = "video-day-item";
+        const header = document.createElement("div");
+        header.className = "video-day-item-header";
         const title = document.createElement("div");
         title.className = "video-day-item-title";
         title.textContent = item.title;
         const meta = document.createElement("div");
         meta.className = "video-day-item-meta";
         meta.textContent = item.meta.join(" · ");
+        header.appendChild(title);
+        if (item.type === "record") {
+          const actionMenu = createActionMenu({
+            onEdit: () => {
+              const record = getItem("record", item.recordId);
+              if (record) openRecordModal(record);
+            },
+            onDelete: () => {
+              openDeleteModal({
+                entityType: "record",
+                id: item.recordId,
+                label: item.title
+              });
+            },
+            label: "registro"
+          });
+          header.appendChild(actionMenu);
+          attachSwipeToMenu(card, () => actionMenu.openMenu?.());
+        }
         const btn = document.createElement("button");
         btn.className = "btn";
         btn.textContent = "Abrir guion";
-        btn.addEventListener("click", () => openScriptView(item.id));
-        card.appendChild(title);
+        btn.addEventListener("click", () => openScriptView(item.videoId || item.id));
+        card.appendChild(header);
         card.appendChild(meta);
         card.appendChild(btn);
         frag.appendChild(card);

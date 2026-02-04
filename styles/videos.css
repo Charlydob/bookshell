@@ -619,6 +619,19 @@
   font-size: 12px;
 }
 
+.video-link-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.video-link-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .video-link-card .btn {
   align-self: flex-start;
 }
@@ -912,6 +925,19 @@
   gap: 4px;
 }
 
+.video-day-item-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.video-day-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .video-day-item-title {
   font-weight: 600;
 }
@@ -993,6 +1019,87 @@
   display: flex;
   justify-content: space-between;
   gap: 6px;
+}
+
+.video-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.video-action-menu-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.video-action-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.video-action-menu-toggle {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(10, 12, 20, 0.85);
+  color: var(--txt);
+  padding: 4px 6px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.video-action-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  background: rgba(12, 14, 24, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 6px;
+  min-width: 140px;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 20;
+}
+
+.video-action-menu.is-open .video-action-menu-panel {
+  display: flex;
+}
+
+.video-action-menu-panel button {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.video-trash-btn {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(10, 12, 20, 0.85);
+  color: var(--txt);
+  padding: 4px 6px;
+  font-size: 14px;
+  line-height: 1;
+  display: none;
+}
+
+.video-toast {
+  position: fixed;
+  bottom: calc(env(safe-area-inset-bottom) + 18px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 18, 30, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--txt);
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4);
+  z-index: 999;
+}
+
+.video-toast.hidden {
+  display: none;
 }
 
 .video-title {
@@ -1093,6 +1200,10 @@
 
   .video-script-shell {
     padding-bottom: 80px;
+  }
+
+  .video-trash-btn {
+    display: inline-flex;
   }
 }
 /* Sección plegable: publicados */

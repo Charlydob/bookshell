@@ -3125,8 +3125,36 @@ const entityState = {
   localItems: [],
   unseenCredits: [],
   page: 1,
-  collabMode: "actors"
+  collabMode: "actors",
+  search: ""
 };
+
+function entityStorageKey() {
+  const base = entityState.tmdbId ? `tmdb:${entityState.tmdbId}` : `name:${normKey(entityState.name)}`;
+  return `mediaEntity:${entityState.kind}:${base}`;
+}
+
+function readEntityAccordionState() {
+  try {
+    const raw = localStorage.getItem(entityStorageKey());
+    if (!raw) return { seen: true, unseen: false };
+    const parsed = JSON.parse(raw);
+    return {
+      seen: typeof parsed?.seen === "boolean" ? parsed.seen : true,
+      unseen: typeof parsed?.unseen === "boolean" ? parsed.unseen : false
+    };
+  } catch (e) {
+    return { seen: true, unseen: false };
+  }
+}
+
+function writeEntityAccordionState(state) {
+  try {
+    localStorage.setItem(entityStorageKey(), JSON.stringify(state));
+  } catch (e) {
+    /* noop */
+  }
+}
 
 function ensureEntityModal() {
   if (entityModal) return entityModal;
@@ -3145,7 +3173,6 @@ function ensureEntityModal() {
       </div>
       <div class="media-modal-body">
         <section class="media-modal-section">
-          <div class="media-modal-section-title">KPIs</div>
           <div class="media-entity-kpis">
             <div class="media-entity-kpi">
               <span>Vistos por mí</span>
@@ -3155,22 +3182,34 @@ function ensureEntityModal() {
               <span>Total en TMDb</span>
               <strong id="media-entity-total">—</strong>
             </div>
-            <div class="media-entity-kpi media-entity-progress">
+          </div>
+          <div class="media-entity-progress">
+            <div class="media-entity-progress-row">
               <span>Progreso</span>
-              <div class="media-entity-bar"><div class="media-entity-bar-fill" id="media-entity-progress-bar"></div></div>
-              <div class="media-entity-item-sub" id="media-entity-progress-label">—</div>
+              <div class="media-entity-item-sub media-entity-progress-label" id="media-entity-progress-label">—</div>
             </div>
+            <div class="media-entity-bar"><div class="media-entity-bar-fill" id="media-entity-progress-bar"></div></div>
           </div>
         </section>
-        <section class="media-modal-section">
-          <div class="media-modal-section-title">Vistos</div>
+        <div class="media-entity-search">
+          <button class="btn ghost btn-compact" id="media-entity-search-toggle" type="button">Buscar en esta ficha…</button>
+          <input class="media-input" id="media-entity-search-input" type="search" placeholder="Buscar en vistos y no vistos" autocomplete="off" />
+        </div>
+        <details class="media-modal-section media-entity-accordion" id="media-entity-seen-section" open>
+          <summary class="media-entity-accordion-summary">
+            <span>Vistos</span>
+            <span class="media-entity-accordion-count" id="media-entity-seen-count">0</span>
+          </summary>
           <div class="media-entity-list" id="media-entity-seen"></div>
-        </section>
-        <section class="media-modal-section">
-          <div class="media-modal-section-title">No vistos</div>
+        </details>
+        <details class="media-modal-section media-entity-accordion" id="media-entity-unseen-section">
+          <summary class="media-entity-accordion-summary">
+            <span>No vistos</span>
+            <span class="media-entity-accordion-count" id="media-entity-unseen-count">0</span>
+          </summary>
           <div class="media-entity-list" id="media-entity-unseen"></div>
           <button class="btn ghost btn-compact" id="media-entity-more" type="button" style="display:none">Mostrar más</button>
-        </section>
+        </details>
         <section class="media-modal-section">
           <div class="media-modal-section-title">Colabora más con…</div>
           <div class="media-entity-toggle" id="media-entity-collab-toggle" style="display:none">
@@ -3196,6 +3235,32 @@ function ensureEntityModal() {
       const credit = entityState.unseenCredits.find(c => c.key === key);
       if (credit) addItemFromCredit(credit);
     }
+  });
+
+  entityModal.querySelector("#media-entity-search-toggle")?.addEventListener("click", () => {
+    const input = entityModal.querySelector("#media-entity-search-input");
+    if (!input) return;
+    input.classList.toggle("is-visible");
+    if (input.classList.contains("is-visible")) {
+      input.focus();
+    } else {
+      entityState.search = "";
+      input.value = "";
+      renderEntityLists();
+    }
+  });
+
+  entityModal.querySelector("#media-entity-search-input")?.addEventListener("input", (e) => {
+    entityState.search = e.target?.value || "";
+    renderEntityLists();
+  });
+
+  ["media-entity-seen-section", "media-entity-unseen-section"].forEach(id => {
+    entityModal.querySelector(`#${id}`)?.addEventListener("toggle", () => {
+      const seenOpen = !!entityModal.querySelector("#media-entity-seen-section")?.open;
+      const unseenOpen = !!entityModal.querySelector("#media-entity-unseen-section")?.open;
+      writeEntityAccordionState({ seen: seenOpen, unseen: unseenOpen });
+    });
   });
 
   entityModal.querySelector("#media-entity-more")?.addEventListener("click", () => {
@@ -3343,6 +3408,7 @@ async function openEntityModal({ name, kind }) {
   entityState.localItems = [];
   entityState.unseenCredits = [];
   entityState.collabMode = "actors";
+  entityState.search = "";
 
   const meta = findEntityMetaFromItems(name, kind);
   entityState.gender = meta.gender;
@@ -3352,6 +3418,12 @@ async function openEntityModal({ name, kind }) {
   const subEl = modal.querySelector("#media-entity-sub");
   if (titleEl) titleEl.textContent = name || "—";
   if (subEl) subEl.textContent = entityRoleLabel(kind, meta.gender);
+
+  const searchInput = modal.querySelector("#media-entity-search-input");
+  if (searchInput) {
+    searchInput.value = "";
+    searchInput.classList.remove("is-visible");
+  }
 
   modal.classList.remove("hidden");
 
@@ -3378,6 +3450,12 @@ async function openEntityModal({ name, kind }) {
   entityState.localItems = getEntityLocalItems(name, kind, entityState.tmdbId);
   const localKeys = new Set(entityState.localItems.map(itemKey));
   entityState.unseenCredits = entityState.credits.filter(c => !localKeys.has(creditKey(c)));
+
+  const accordions = readEntityAccordionState();
+  const seenSection = modal.querySelector("#media-entity-seen-section");
+  const unseenSection = modal.querySelector("#media-entity-unseen-section");
+  if (seenSection) seenSection.open = accordions.seen;
+  if (unseenSection) unseenSection.open = accordions.unseen;
 
   renderEntityModal();
 }
@@ -3432,13 +3510,21 @@ function renderEntityLists() {
   const seenEl = modal.querySelector("#media-entity-seen");
   const unseenEl = modal.querySelector("#media-entity-unseen");
   const moreBtn = modal.querySelector("#media-entity-more");
+  const seenCountEl = modal.querySelector("#media-entity-seen-count");
+  const unseenCountEl = modal.querySelector("#media-entity-unseen-count");
 
+  const query = normKey(entityState.search || "");
+  const matchesQuery = (title = "") => (query ? normKey(title).includes(query) : true);
   const seenItems = entityState.localItems.filter(it => !it.watchlist);
+  const filteredSeen = seenItems.filter(it => matchesQuery(it.title || ""));
+  if (seenCountEl) seenCountEl.textContent = String(seenItems.length);
+  if (unseenCountEl) unseenCountEl.textContent = tmdbEnabled() ? String(entityState.unseenCredits.length) : "—";
+
   if (seenEl) {
-    if (!seenItems.length) {
-      seenEl.innerHTML = `<div style="opacity:.65;font-size:12px;padding:4px 2px">Aún no hay vistos.</div>`;
+    if (!filteredSeen.length) {
+      seenEl.innerHTML = `<div style="opacity:.65;font-size:12px;padding:4px 2px">${query ? "Sin resultados." : "Aún no hay vistos."}</div>`;
     } else {
-      seenEl.innerHTML = seenItems.map(it => `
+      seenEl.innerHTML = filteredSeen.map(it => `
         <div class="media-entity-item">
           <div class="media-entity-item-main">
             <div class="media-entity-item-title">${escHtml(it.title || "—")}</div>
@@ -3460,7 +3546,13 @@ function renderEntityLists() {
       if (moreBtn) moreBtn.style.display = "none";
       return;
     }
-    const slice = entityState.unseenCredits.slice(0, entityState.page * ENTITY_PAGE_SIZE);
+    const unseenFiltered = entityState.unseenCredits.filter(c => matchesQuery(c.title || ""));
+    if (!unseenFiltered.length) {
+      unseenEl.innerHTML = `<div style="opacity:.65;font-size:12px;padding:4px 2px">Sin resultados.</div>`;
+      if (moreBtn) moreBtn.style.display = "none";
+      return;
+    }
+    const slice = unseenFiltered.slice(0, entityState.page * ENTITY_PAGE_SIZE);
     unseenEl.innerHTML = slice.map(c => `
       <div class="media-entity-item">
         <div class="media-entity-item-main">
@@ -3470,7 +3562,7 @@ function renderEntityLists() {
         <button class="btn ghost btn-compact" data-action="add" data-key="${c.key}" data-tmdb-id="${c.tmdbId}" data-media-type="${c.mediaType}" type="button">Añadir</button>
       </div>
     `).join("");
-    if (moreBtn) moreBtn.style.display = (slice.length < entityState.unseenCredits.length) ? "" : "none";
+    if (moreBtn) moreBtn.style.display = (slice.length < unseenFiltered.length) ? "" : "none";
   }
 }
 

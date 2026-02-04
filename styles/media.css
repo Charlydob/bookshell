@@ -538,14 +538,14 @@
 /* Entity modal (actor/director) */
 .media-entity-kpis{
   display:grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 .media-entity-kpi{
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid rgba(255,255,255,.08);
   background: rgba(255,255,255,.04);
-  padding: 10px 12px;
+  padding: 8px 10px;
   display:flex;
   flex-direction:column;
   gap: 4px;
@@ -556,9 +556,22 @@
   display:flex;
   flex-direction:column;
   gap: 6px;
+  margin-top: 2px;
+}
+.media-entity-progress-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 8px;
+  font-size: 11px;
+  opacity:.75;
+}
+.media-entity-progress-label{
+  font-variant-numeric: tabular-nums;
+  text-align:right;
 }
 .media-entity-bar{
-  height: 8px;
+  height: 4px;
   border-radius: 999px;
   background: rgba(255,255,255,.08);
   overflow:hidden;
@@ -572,12 +585,16 @@
   display:flex;
   flex-direction:column;
   gap: 8px;
+  max-height: min(35vh, 280px);
+  overflow:auto;
+  padding-right: 2px;
+  -webkit-overflow-scrolling: touch;
 }
 .media-entity-item{
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid rgba(255,255,255,.08);
   background: rgba(255,255,255,.03);
-  padding: 10px 12px;
+  padding: 6px 10px;
   display:flex;
   align-items:center;
   justify-content:space-between;
@@ -599,6 +616,45 @@
 .media-entity-item-sub{
   font-size: 11px;
   opacity:.65;
+}
+.media-entity-search{
+  display:flex;
+  flex-direction:column;
+  gap: 8px;
+}
+.media-entity-search .media-input{
+  display:none;
+}
+.media-entity-search .media-input.is-visible{
+  display:block;
+}
+.media-entity-accordion{
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.06);
+  background: rgba(255,255,255,.02);
+  padding: 8px 10px 10px;
+}
+.media-entity-accordion[open]{
+  background: rgba(255,255,255,.03);
+}
+.media-entity-accordion-summary{
+  list-style:none;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 8px;
+  cursor:pointer;
+  font-size: 12px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  opacity:.75;
+}
+.media-entity-accordion-summary::-webkit-details-marker{ display:none; }
+.media-entity-accordion-count{
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  opacity:.7;
 }
 .media-entity-toggle{
   display:flex;

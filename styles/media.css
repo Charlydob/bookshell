@@ -291,8 +291,9 @@
   font-size: 26px;
   line-height: 1;
   color: inherit;
-  z-index: 1200;
+  z-index: 2200;
   cursor:pointer;
+  pointer-events: auto;
 }
 .media-fab:active{ transform: translateX(-50%) scale(.98); }
 
@@ -331,6 +332,8 @@
 }
 
 .media-modal-head{
+  position: sticky;
+  top: 0;
   display:flex;
   justify-content:space-between;
   align-items:flex-start;
@@ -365,6 +368,8 @@
 }
 
 .media-modal-foot{
+  position: sticky;
+  bottom: 0;
   padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0px));
   display:flex;
   justify-content:flex-end;

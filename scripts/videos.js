@@ -1056,27 +1056,57 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     setActiveView("view-links");
   }
 
-function openLinksNewView(prefill = {}) {
-  if ($videoLinkUrl) $videoLinkUrl.value = prefill.url || "";
-  if ($videoLinkTitle) $videoLinkTitle.value = prefill.title || "";
+  function openLinksNewView(prefill = {}) {
+    if ($videoLinkUrl) $videoLinkUrl.value = prefill.url || "";
+    if ($videoLinkTitle) $videoLinkTitle.value = prefill.title || "";
 
-  const cat = (prefill.category || "otro").toLowerCase();
-  if ($videoLinkCategory) {
-    // si no existe esa option, cae a "otro"
-    const has = Array.from($videoLinkCategory.options || []).some(o => o.value === cat);
-    $videoLinkCategory.value = has ? cat : "otro";
+    const cat = (prefill.category || "otro").toLowerCase();
+    if ($videoLinkCategory) {
+      // si no existe esa option, cae a "otro"
+      const has = Array.from($videoLinkCategory.options || []).some(o => o.value === cat);
+      $videoLinkCategory.value = has ? cat : "otro";
+    }
+
+    if ($videoLinkNote) $videoLinkNote.value = prefill.note || "";
+    setActiveView("view-links-new");
+
+    // UX: foco al título si no hay, si no al note
+    setTimeout(() => {
+      if (($videoLinkTitle?.value || "").trim() === "") $videoLinkTitle?.focus();
+      else $videoLinkNote?.focus();
+    }, 50);
   }
 
-  if ($videoLinkNote) $videoLinkNote.value = prefill.note || "";
-  setActiveView("view-links-new");
+  const deepLinkDebug =
+    new URLSearchParams(window.location.search).has("debugDeepLink") ||
+    window.__bookshellDebugDeepLink;
+  const logDeepLink = (...args) => {
+    if (deepLinkDebug) console.log("[Videos][DeepLink]", ...args);
+  };
 
-  // UX: foco al título si no hay, si no al note
-  setTimeout(() => {
-    if (($videoLinkTitle?.value || "").trim() === "") $videoLinkTitle?.focus();
-    else $videoLinkNote?.focus();
-  }, 50);
-}
+  function runWhenRouterReady(run, timeoutMs = 1200) {
+    const start = performance.now();
+    const tick = () => {
+      const ready = typeof window.__bookshellSetView === "function";
+      if (ready || performance.now() - start > timeoutMs) {
+        run(ready);
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
 
+  function ensureHash(viewId) {
+    if (!viewId) return;
+    try {
+      const url = new URL(window.location.href);
+      const nextHash = `#${viewId}`;
+      if (url.hash !== nextHash) {
+        history.replaceState(null, "", `${url.pathname}${url.search}${nextHash}`);
+      }
+    } catch (_) {}
+  }
 
   function clearLinkParams() {
     try {
@@ -1090,48 +1120,56 @@ function openLinksNewView(prefill = {}) {
     } catch (_) {}
   }
 
-function handleDeepLinkParams() {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("addLink") !== "1") return;
+  function handleDeepLinkParams() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("addLink") !== "1") return;
 
-    const safeDec = (v) => {
-      if (v == null) return "";
-      try { return decodeURIComponent(v); } catch { return String(v); }
-    };
+      const safeDec = (value) => {
+        if (value == null) return "";
+        const str = String(value);
+        if (!/%[0-9A-Fa-f]{2}/.test(str)) return str;
+        try { return decodeURIComponent(str); } catch { return str; }
+      };
 
-    const url = safeDec(params.get("url")).trim();
-    if (!url) return; // si no hay URL, no hacemos nada
+      const url = safeDec(params.get("url")).trim();
+      if (!url) return; // si no hay URL, no hacemos nada
 
-    // NORMALIZA CATEGORÍA: si viene basura (URL), cae a "otro"
-    let category = safeDec(params.get("cat")).trim().toLowerCase();
-    const note = safeDec(params.get("note")).trim();
-    const title = safeDec(params.get("title")).trim();
+      const normalizeCategory = (raw) => {
+        let category = safeDec(raw).trim().toLowerCase();
+        if (!category) return "otro";
+        if (/https?:\/\//i.test(category) || category.includes("instagram.com")) return "otro";
+        const map = {
+          "canción": "cancion",
+          "cancion": "cancion",
+          "song": "cancion",
+          "visual": "visual",
+          "recurso visual": "visual",
+          "tema": "tema",
+          "topic": "tema",
+          "otro": "otro",
+          "other": "otro"
+        };
+        category = map[category] || category;
+        if (!["cancion", "visual", "tema", "otro"].includes(category)) return "otro";
+        return category;
+      };
 
-    // acepta valores humanos (Tema/Canción/Visual) o keys
-    const map = {
-      "canción": "cancion",
-      "cancion": "cancion",
-      "song": "cancion",
-      "visual": "visual",
-      "recurso visual": "visual",
-      "tema": "tema",
-      "topic": "tema",
-      "otro": "otro",
-      "other": "otro"
-    };
-    category = map[category] || category;
+      const category = normalizeCategory(params.get("cat"));
+      const note = safeDec(params.get("note")).trim();
+      const title = safeDec(params.get("title")).trim();
 
-    if (!["cancion","visual","tema","otro"].includes(category)) category = "otro";
-
-    openLinksNewView({ url, category, note, title });
-
-    // Limpia SOLO params de deep link sin cargarte hash/router
-    clearLinkParams();
-  } catch (err) {
-    console.error("[DeepLink] error", err);
+      runWhenRouterReady((routerReady) => {
+        logDeepLink("handleDeepLinkParams", { routerReady, url, category, note, title });
+        ensureHash("view-links-new");
+        openLinksNewView({ url, category, note, title });
+        logDeepLink("active view", document.querySelector(".view.view-active")?.id || "");
+        clearLinkParams();
+      });
+    } catch (err) {
+      console.error("[DeepLink] error", err);
+    }
   }
-}
 
 
 

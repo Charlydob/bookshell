@@ -172,8 +172,14 @@ function normalizeNumberField(el, max = null) {
 function setActiveView(viewId) {
   if (!viewId) return;
   if (typeof window.__bookshellSetView === "function") {
+    if (window.__bookshellDebugDeepLink) {
+      console.log("[NAV] setActiveView -> __bookshellSetView", { viewId }, new Error().stack);
+    }
     window.__bookshellSetView(viewId);
     return;
+  }
+  if (window.__bookshellDebugDeepLink) {
+    console.log("[NAV] setActiveView", { viewId }, new Error().stack);
   }
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("view-active"));
   const target = document.getElementById(viewId);
@@ -1103,6 +1109,9 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       const url = new URL(window.location.href);
       const nextHash = `#${viewId}`;
       if (url.hash !== nextHash) {
+        if (deepLinkDebug) {
+          console.log("[NAV] replaceState ensureHash", { to: nextHash }, new Error().stack);
+        }
         history.replaceState(null, "", `${url.pathname}${url.search}${nextHash}`);
       }
     } catch (_) {}
@@ -1116,6 +1125,12 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       url.searchParams.delete("cat");
       url.searchParams.delete("note");
       url.searchParams.delete("title");
+      if (deepLinkDebug) {
+        console.log("[NAV] replaceState clearLinkParams", {
+          search: url.searchParams.toString(),
+          hash: url.hash
+        }, new Error().stack);
+      }
       history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
     } catch (_) {}
   }

@@ -6039,6 +6039,12 @@ function clearShortcutCmdFromUrl(cmd) {
     const url = new URL(window.location.href);
     (cmd?._keys || []).forEach((k) => url.searchParams.delete(k));
     if (url.hash && url.hash.includes("?")) url.hash = url.hash.split("?")[0];
+    if (window.__bookshellDebugDeepLink) {
+      console.log("[NAV] replaceState clearShortcutCmdFromUrl", {
+        search: url.searchParams.toString(),
+        hash: url.hash
+      }, new Error().stack);
+    }
     history.replaceState({}, document.title, url.toString());
   } catch (_) {}
 }

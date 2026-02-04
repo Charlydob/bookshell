@@ -1001,78 +1001,105 @@
         </div>
 
         <div class="media-modal-body">
-          <label class="media-modal-field">
-            <span>Título</span>
-            <input id="media-title" class="media-input" placeholder="Añadir título…" autocomplete="off" />
-          </label>
-
-          <div class="media-modal-grid">
+          <section class="media-modal-section">
+            <div class="media-modal-section-title">Meta</div>
             <label class="media-modal-field">
-              <span>Tipo</span>
-              <select id="media-type" class="media-input">
-                <option value="movie">Peli</option>
-                <option value="series">Serie</option>
-                <option value="anime">Anime</option>
-              </select>
+              <span>Título</span>
+              <div class="media-title-row">
+                <input id="media-title" class="media-input" placeholder="Añadir título…" autocomplete="off" />
+                <button class="btn ghost btn-compact" id="media-autofill-btn" type="button" disabled>Autocompletar</button>
+              </div>
             </label>
+            <div class="media-autocomplete-results" id="media-autofill-results" aria-live="polite"></div>
 
-            <label class="media-modal-field">
-              <span>Rating</span>
-              <select id="media-rating" class="media-input">
-                <option value="0">0</option><option value="1">1</option><option value="2">2</option>
-                <option value="3">3</option><option value="4">4</option><option value="5">5</option>
-              </select>
-            </label>
-          </div>
+            <div class="media-modal-grid media-modal-grid--meta">
+              <label class="media-modal-field">
+                <span>Tipo</span>
+                <select id="media-type" class="media-input">
+                  <option value="movie">Peli</option>
+                  <option value="series">Serie</option>
+                  <option value="anime">Anime</option>
+                </select>
+              </label>
 
-          <div class="media-modal-grid">
-            <label class="media-modal-field">
-              <span>Año</span>
-              <input id="media-year" class="media-input" type="number" inputmode="numeric" placeholder="Ej: 2024" />
-            </label>
+              <label class="media-modal-field">
+                <span>Año</span>
+                <input id="media-year" class="media-input" type="number" inputmode="numeric" placeholder="Ej: 2024" />
+              </label>
 
-            <label class="media-modal-field">
-              <span>Origen</span>
-              <input id="media-country" class="media-input" list="country-options" placeholder="Ej: España" autocomplete="off" />
-            </label>
-          </div>
+              <label class="media-modal-field">
+                <span>Origen</span>
+                <input id="media-country" class="media-input" list="country-options" placeholder="Ej: España" autocomplete="off" />
+              </label>
+            </div>
+          </section>
 
-          <label class="media-modal-field">
-            <span>Géneros (coma)</span>
-            <input id="media-genres" class="media-input" placeholder="acción, drama…" autocomplete="off" />
-          </label>
+          <section class="media-modal-section">
+            <div class="media-modal-section-title">Detalles</div>
 
-          <label class="media-modal-field">
-            <span>Director</span>
-            <input id="media-director" class="media-input" placeholder="Opcional" autocomplete="off" />
-          </label>
+            <details class="media-modal-accordion" open>
+              <summary>Géneros</summary>
+              <div class="media-modal-accordion-body">
+                <input id="media-genres" class="media-input" placeholder="acción, drama…" autocomplete="off" />
+                <div class="media-chip-preview" id="media-add-genres-preview"></div>
+              </div>
+            </details>
 
-          <label class="media-modal-field">
-            <span>Reparto (coma)</span>
-            <input id="media-cast" class="media-input" placeholder="Opcional" autocomplete="off" />
-          </label>
+            <details class="media-modal-accordion">
+              <summary>Director</summary>
+              <div class="media-modal-accordion-body">
+                <input id="media-director" class="media-input" placeholder="Opcional" autocomplete="off" />
+              </div>
+            </details>
 
-          <div class="media-modal-toggles">
-            <label class="media-check">
-              <input id="media-watchlist" type="checkbox" />
-              <span>Watchlist</span>
-            </label>
-            <label class="media-check">
-              <input id="media-with-laura" type="checkbox" />
-              <span>Laura</span>
-            </label>
-          </div>
+            <details class="media-modal-accordion">
+              <summary>Reparto</summary>
+              <div class="media-modal-accordion-body">
+                <input id="media-cast" class="media-input" placeholder="Opcional" autocomplete="off" />
+                <div class="media-chip-preview" id="media-add-cast-preview"></div>
+              </div>
+            </details>
+          </section>
 
-          <div class="media-modal-grid" id="media-seasonep">
-            <label class="media-modal-field">
-              <span>Temporada</span>
-              <input id="media-season" class="media-input" type="number" inputmode="numeric" placeholder="1" />
-            </label>
-            <label class="media-modal-field">
-              <span>Capítulo</span>
-              <input id="media-episode" class="media-input" type="number" inputmode="numeric" placeholder="1" />
-            </label>
-          </div>
+          <section class="media-modal-section" id="media-add-progress-section">
+            <div class="media-modal-section-title">Progreso</div>
+            <div class="media-modal-grid" id="media-seasonep">
+              <label class="media-modal-field">
+                <span>Temporada</span>
+                <input id="media-season" class="media-input" type="number" inputmode="numeric" placeholder="1" />
+              </label>
+              <label class="media-modal-field">
+                <span>Capítulo</span>
+                <input id="media-episode" class="media-input" type="number" inputmode="numeric" placeholder="1" />
+              </label>
+            </div>
+          </section>
+
+          <section class="media-modal-section">
+            <div class="media-modal-section-title">Vistas</div>
+            <div class="media-modal-toggles">
+              <label class="media-check">
+                <input id="media-watchlist" type="checkbox" />
+                <span>Watchlist</span>
+              </label>
+              <label class="media-check">
+                <input id="media-with-laura" type="checkbox" />
+                <span>Laura</span>
+              </label>
+              <label class="media-check">
+                <select id="media-rating" class="media-input media-input-compact">
+                  <option value="0">0</option><option value="1">1</option><option value="2">2</option>
+                  <option value="3">3</option><option value="4">4</option><option value="5">5</option>
+                </select>
+                <span>Rating</span>
+              </label>
+            </div>
+
+            <div class="media-watch-row">
+              <button class="btn ghost btn-compact" id="media-add-watchtoday" type="button">Visto hoy</button>
+              <div class="media-watch-meta" id="media-add-watch-meta">Se guardará como visto hoy.</div>
+            </div>
+          </section>
         </div>
 
         <div class="media-modal-foot">

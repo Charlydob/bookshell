@@ -1056,13 +1056,27 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     setActiveView("view-links");
   }
 
-  function openLinksNewView(prefill = {}) {
-    if ($videoLinkUrl) $videoLinkUrl.value = prefill.url || "";
-    if ($videoLinkTitle) $videoLinkTitle.value = prefill.title || "";
-    if ($videoLinkCategory) $videoLinkCategory.value = prefill.category || "otro";
-    if ($videoLinkNote) $videoLinkNote.value = prefill.note || "";
-    setActiveView("view-links-new");
+function openLinksNewView(prefill = {}) {
+  if ($videoLinkUrl) $videoLinkUrl.value = prefill.url || "";
+  if ($videoLinkTitle) $videoLinkTitle.value = prefill.title || "";
+
+  const cat = (prefill.category || "otro").toLowerCase();
+  if ($videoLinkCategory) {
+    // si no existe esa option, cae a "otro"
+    const has = Array.from($videoLinkCategory.options || []).some(o => o.value === cat);
+    $videoLinkCategory.value = has ? cat : "otro";
   }
+
+  if ($videoLinkNote) $videoLinkNote.value = prefill.note || "";
+  setActiveView("view-links-new");
+
+  // UX: foco al título si no hay, si no al note
+  setTimeout(() => {
+    if (($videoLinkTitle?.value || "").trim() === "") $videoLinkTitle?.focus();
+    else $videoLinkNote?.focus();
+  }, 50);
+}
+
 
   function clearLinkParams() {
     try {
@@ -1076,17 +1090,50 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     } catch (_) {}
   }
 
-  function handleDeepLinkParams() {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get("addLink") !== "1") return;
-      const url = params.get("url") || "";
-      const category = params.get("cat") || "otro";
-      const note = params.get("note") || "";
-      const title = params.get("title") || "";
-      openLinksNewView({ url, category, note, title });
-    } catch (_) {}
+function handleDeepLinkParams() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("addLink") !== "1") return;
+
+    const safeDec = (v) => {
+      if (v == null) return "";
+      try { return decodeURIComponent(v); } catch { return String(v); }
+    };
+
+    const url = safeDec(params.get("url")).trim();
+    if (!url) return; // si no hay URL, no hacemos nada
+
+    // NORMALIZA CATEGORÍA: si viene basura (URL), cae a "otro"
+    let category = safeDec(params.get("cat")).trim().toLowerCase();
+    const note = safeDec(params.get("note")).trim();
+    const title = safeDec(params.get("title")).trim();
+
+    // acepta valores humanos (Tema/Canción/Visual) o keys
+    const map = {
+      "canción": "cancion",
+      "cancion": "cancion",
+      "song": "cancion",
+      "visual": "visual",
+      "recurso visual": "visual",
+      "tema": "tema",
+      "topic": "tema",
+      "otro": "otro",
+      "other": "otro"
+    };
+    category = map[category] || category;
+
+    if (!["cancion","visual","tema","otro"].includes(category)) category = "otro";
+
+    openLinksNewView({ url, category, note, title });
+
+    // Limpia SOLO params de deep link sin cargarte hash/router
+    clearLinkParams();
+  } catch (err) {
+    console.error("[DeepLink] error", err);
   }
+}
+
+
 
   function renderTeleprompterContent() {
     if (!$teleprompterContent || !quill) return;

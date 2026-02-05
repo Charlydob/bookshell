@@ -1193,7 +1193,7 @@
 @media (min-width: 900px) {
   .video-script-toolbar-floating {
     position: sticky;
-    top: calc(env(safe-area-inset-top) + 8px);
+    top: calc(env(safe-area-inset-top) - 8px);
     bottom: auto;
     z-index: 10;
   }

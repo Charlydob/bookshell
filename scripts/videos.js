@@ -1333,10 +1333,14 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
 
   const LINK_CATEGORY_LABELS = {
     cancion: "Canción",
-    visual: "Recurso visual",
+    visual: "Visual",
     tema: "Tema",
     otro: "Otro"
   };
+
+  function isIdeaVideo(item) {
+    return item?.type === "idea" || item?.status === "idea";
+  }
 
   function formatLinkDate(ts) {
     const date = new Date(Number(ts) || 0);
@@ -1372,7 +1376,12 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       if (!grouped.length) return;
       const details = document.createElement("details");
       details.className = "video-links-section";
-      details.open = true;
+      const storageKey = `bookshell_videos_links_section_${category}_v1`;
+      const storedOpen = localStorage.getItem(storageKey);
+      details.open = search ? true : (storedOpen ? storedOpen === "1" : true);
+      details.addEventListener("toggle", () => {
+        localStorage.setItem(storageKey, details.open ? "1" : "0");
+      });
       const summary = document.createElement("summary");
       const label = LINK_CATEGORY_LABELS[category] || "Otro";
       summary.innerHTML = `
@@ -1448,9 +1457,24 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       filtered.forEach((item) => {
         const card = document.createElement("div");
         card.className = "video-link-card";
+        const header = document.createElement("div");
+        header.className = "video-link-card-header";
         const title = document.createElement("div");
         title.className = "video-link-card-title";
         title.textContent = item.title || "Recurso guardado";
+        const actionMenu = createActionMenu({
+          onEdit: () => openLinksNewView(item),
+          onDelete: () => {
+            openDeleteModal({
+              entityType: "link",
+              id: item.id,
+              label: item.title || item.url || "Link"
+            });
+          },
+          label: item.title || "link"
+        });
+        header.appendChild(title);
+        header.appendChild(actionMenu);
         const url = document.createElement("div");
         url.className = "video-link-card-url";
         url.textContent = item.url || "";
@@ -1468,11 +1492,12 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
           }
           closeLinkPicker();
         });
-        card.appendChild(title);
+        card.appendChild(header);
         card.appendChild(url);
         card.appendChild(meta);
         card.appendChild(btn);
         frag.appendChild(card);
+        attachSwipeToMenu(card, () => actionMenu.openMenu?.());
       });
     }
     $videoLinkPickerList.innerHTML = "";
@@ -1847,10 +1872,18 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
           showVideoToast("Cambios guardados");
         } else {
           const newRef = push(ref(db, VIDEOS_PATH));
-          await set(newRef, {
+          const newIdea = {
             ...payload,
             createdAt: now
-          });
+          };
+          await set(newRef, newIdea);
+          if (newRef.key) {
+            videos[newRef.key] = newIdea;
+            rebuildState();
+            renderVideos();
+            renderVideoStats();
+            renderVideoCalendar();
+          }
         }
         closeIdeaModal();
       } catch (err) {
@@ -2065,14 +2098,21 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
           showVideoToast("Cambios guardados");
         } else {
           const newRef = push(ref(db, LINKS_PATH));
-          await set(newRef, {
+          const newLink = {
             url,
             title: title || null,
             category,
             note,
             createdAt: now,
             updatedAt: now
-          });
+          };
+          await set(newRef, newLink);
+          if (newRef.key) {
+            links[newRef.key] = newLink;
+            rebuildState();
+            renderLinksList();
+            renderLinkPickerList();
+          }
         }
         if ($videoLinksForm) $videoLinksForm.reset();
         if ($videoLinkCategory) $videoLinkCategory.value = "otro";
@@ -3009,11 +3049,37 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
           });
           header.appendChild(actionMenu);
           attachSwipeToMenu(card, () => actionMenu.openMenu?.());
+        } else if (item.type === "idea" || item.type === "script") {
+          const isIdea = item.type === "idea" || isIdeaVideo(videos[item.id]);
+          const actionMenu = createActionMenu({
+            onEdit: () => {
+              if (isIdea) {
+                openIdeaModal(item.id);
+              } else {
+                openVideoModal(item.id);
+              }
+            },
+            onDelete: () => {
+              openDeleteModal({
+                entityType: isIdea ? "idea" : "script",
+                id: item.id,
+                label: item.title
+              });
+            },
+            label: isIdea ? "idea" : "video"
+          });
+          header.appendChild(actionMenu);
+          attachSwipeToMenu(card, () => actionMenu.openMenu?.());
         }
         const btn = document.createElement("button");
         btn.className = "btn";
-        btn.textContent = "Abrir guion";
-        btn.addEventListener("click", () => openScriptView(item.videoId || item.id));
+        if (item.type === "record" || item.type === "script") {
+          btn.textContent = "Abrir guion";
+          btn.addEventListener("click", () => openScriptView(item.videoId || item.id));
+        } else {
+          btn.textContent = "Abrir idea";
+          btn.addEventListener("click", () => openIdeaModal(item.id));
+        }
         card.appendChild(header);
         card.appendChild(meta);
         card.appendChild(btn);

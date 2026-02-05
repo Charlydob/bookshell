@@ -371,6 +371,7 @@
 </div>
 <div class="video-script-count-header" id="video-script-count-header">
 <div class="video-script-count-badge" id="video-script-count-badge">Palabras: 0 · Progreso: 0%</div>
+<button class="btn ghost btn-compact" id="video-script-insert-inline" type="button" title="Insertar recurso">📎 Insertar</button>
 <button class="btn ghost" id="video-script-count-toggle" type="button">⚙︎ Conteo</button>
 </div>
 <details class="video-script-meta" id="video-script-meta">
@@ -441,9 +442,30 @@
 <div class="video-sheet-title">Insertar recurso</div>
 <button class="btn ghost" id="video-link-picker-close" type="button">Listo</button>
 </div>
+<div class="video-insert-type-row" id="video-insert-type-row">
+<button class="btn ghost is-active" data-insert-type="link" type="button">Link</button>
+<button class="btn ghost" data-insert-type="note" type="button">Nota</button>
+<button class="btn ghost" data-insert-type="quote" type="button">Cita</button>
+</div>
+<div class="video-insert-pane" data-insert-pane="link">
 <label class="field-label" for="video-link-search">Buscar link</label>
 <input class="video-link-search" id="video-link-search" placeholder="Buscar por título, nota o URL" type="search"/>
 <div class="video-link-picker-list" id="video-link-picker-list"></div>
+</div>
+<div class="video-insert-pane hidden" data-insert-pane="note">
+<label class="field-label" for="video-insert-note-text">Texto de la nota</label>
+<textarea class="video-insert-textarea" id="video-insert-note-text" rows="4" placeholder="Escribe la nota..."></textarea>
+<button class="btn primary" id="video-insert-note-confirm" type="button">Insertar nota</button>
+</div>
+<div class="video-insert-pane hidden" data-insert-pane="quote">
+<label class="field-label" for="video-insert-quote-book">Libro</label>
+<input class="video-link-search" id="video-insert-quote-book" list="video-books-datalist" placeholder="Buscar en tu biblioteca o escribir manualmente" type="search"/>
+<datalist id="video-books-datalist"></datalist>
+<label class="field-label" for="video-insert-quote-page">Página</label>
+<input class="video-link-search" id="video-insert-quote-page" min="1" inputmode="numeric" placeholder="Ej. 42" type="number"/>
+<label class="field-label" for="video-insert-quote-text">Texto de la cita</label>
+<textarea class="video-insert-textarea" id="video-insert-quote-text" rows="4" placeholder="Escribe la cita..."></textarea>
+<button class="btn primary" id="video-insert-quote-confirm" type="button">Insertar cita</button>
 </div>
 </div>
 </div>

@@ -36,6 +36,7 @@ const VIDEOS_PATH = "videos";
 const VIDEO_LOG_PATH = "videoLog";
 const VIDEO_WORK_PATH = "videoWorkLog";
 const LINKS_PATH = "links";
+const BOOKS_PATH = "books";
 
 // Estado
 let videos = {};
@@ -62,8 +63,10 @@ let teleprompterPlaying = false;
 let teleprompterSentences = [];
 let teleprompterActiveIndex = -1;
 let links = {};
+let books = {};
 let linkPickerMode = "script";
 let linkPickerSelectHandler = null;
+let insertType = "link";
 
 const SCRIPT_SAVE_DEBOUNCE = 1000;
 const WORD_COUNT_DEBOUNCE = 200;
@@ -426,6 +429,7 @@ if ($viewVideos) {
   const $videoScriptPpm = document.getElementById("video-script-ppm");
   const $videoScriptCountBadge = document.getElementById("video-script-count-badge");
   const $videoScriptCountToggle = document.getElementById("video-script-count-toggle");
+  const $videoScriptInsertInline = document.getElementById("video-script-insert-inline");
   const $videoScriptCountToggles = document.getElementById("video-script-count-toggles");
   const $videoScriptCountSummary = document.getElementById("video-script-count-summary");
   const $videoScriptTeleprompter = document.getElementById("video-script-teleprompter");
@@ -438,6 +442,15 @@ if ($viewVideos) {
   const $videoLinkPickerClose = document.getElementById("video-link-picker-close");
   const $videoLinkSearch = document.getElementById("video-link-search");
   const $videoLinkPickerList = document.getElementById("video-link-picker-list");
+  const $videoInsertTypeRow = document.getElementById("video-insert-type-row");
+  const $videoInsertPanes = document.querySelectorAll("[data-insert-pane]");
+  const $videoBooksDatalist = document.getElementById("video-books-datalist");
+  const $videoInsertNoteText = document.getElementById("video-insert-note-text");
+  const $videoInsertNoteConfirm = document.getElementById("video-insert-note-confirm");
+  const $videoInsertQuoteBook = document.getElementById("video-insert-quote-book");
+  const $videoInsertQuotePage = document.getElementById("video-insert-quote-page");
+  const $videoInsertQuoteText = document.getElementById("video-insert-quote-text");
+  const $videoInsertQuoteConfirm = document.getElementById("video-insert-quote-confirm");
   const $videoToolbarAnnotate = document.getElementById("video-toolbar-annotate");
   const $videoToolbarMoreToggle = document.getElementById("video-toolbar-more-toggle");
   const $videoToolbarMoreMenu = document.getElementById("video-toolbar-more-menu");
@@ -868,7 +881,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
 
       line.parts.forEach((part) => {
         if (settings.excludeAnnotations && part.attrs?.annotation) return;
-        if (part.attrs?.resource) return;
+        if (part.attrs?.resource || part.attrs?.resourceMeta) return;
         if (part.attrs?.link && !settings.countLinks) return;
 
         let text = part.text || "";
@@ -1287,6 +1300,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     linkPickerMode = mode;
     linkPickerSelectHandler = typeof onSelect === "function" ? onSelect : null;
     renderLinkPickerList();
+    setInsertType("link");
     $videoLinkPickerBackdrop.classList.add("is-open");
     $videoLinkPickerBackdrop.setAttribute("aria-hidden", "false");
     if ($videoLinkSearch) $videoLinkSearch.focus();
@@ -1298,6 +1312,38 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     $videoLinkPickerBackdrop.setAttribute("aria-hidden", "true");
     linkPickerMode = "script";
     linkPickerSelectHandler = null;
+    if ($videoInsertNoteText) $videoInsertNoteText.value = "";
+    if ($videoInsertQuotePage) $videoInsertQuotePage.value = "";
+    if ($videoInsertQuoteText) $videoInsertQuoteText.value = "";
+  }
+
+  function setInsertType(type) {
+    insertType = ["link", "note", "quote"].includes(type) ? type : "link";
+    if ($videoInsertTypeRow) {
+      $videoInsertTypeRow.querySelectorAll("[data-insert-type]").forEach((btn) => {
+        btn.classList.toggle("is-active", btn.dataset.insertType === insertType);
+      });
+    }
+    if ($videoInsertPanes?.length) {
+      $videoInsertPanes.forEach((pane) => {
+        pane.classList.toggle("hidden", pane.dataset.insertPane !== insertType);
+      });
+    }
+  }
+
+  function refreshBooksDatalist() {
+    if (!$videoBooksDatalist) return;
+    const list = Object.entries(books || {})
+      .map(([id, b]) => ({ id, title: (b?.title || "").trim() }))
+      .filter((b) => b.title)
+      .sort((a, b) => a.title.localeCompare(b.title, "es", { sensitivity: "base" }));
+    $videoBooksDatalist.innerHTML = "";
+    list.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.title;
+      option.dataset.bookId = item.id;
+      $videoBooksDatalist.appendChild(option);
+    });
   }
 
   function addSheetSwipeToClose(sheetEl, closeFn) {
@@ -1562,14 +1608,45 @@ const LINK_CATEGORY_LABELS = {
       quill.formatText(range.index, range.length, "link", url, "user");
       return;
     }
-    const title = item.title || "Recurso";
+    const title = (item.title || "").trim();
+    const label = title || url;
     const note = item.note ? ` — ${item.note}` : "";
-    const headerText = `\n🔗 ${title}\n`;
-    const urlText = `${url}${note}\n`;
+    const prefix = "\n🔗 ";
+    const suffix = `${note}\n`;
     const insertIndex = range ? range.index : quill.getLength();
-    quill.insertText(insertIndex, headerText, { resource: "1" }, "user");
-    quill.insertText(insertIndex + headerText.length, urlText, { resource: "1", link: url }, "user");
-    quill.setSelection(insertIndex + headerText.length + urlText.length, 0, "user");
+    quill.insertText(insertIndex, prefix, { resource: "1" }, "user");
+    quill.insertText(insertIndex + prefix.length, label, { resource: "1", link: url }, "user");
+    quill.insertText(insertIndex + prefix.length + label.length, suffix, { resource: "1" }, "user");
+    quill.setSelection(insertIndex + prefix.length + label.length + suffix.length, 0, "user");
+  }
+
+  function insertNoteResource(text) {
+    if (!quill || !text) return;
+    const range = quill.getSelection(true);
+    const insertIndex = range ? range.index : quill.getLength();
+    const body = `\n📝 ${text.trim()}\n`;
+    quill.insertText(insertIndex, body, { resource: "1" }, "user");
+    quill.setSelection(insertIndex + body.length, 0, "user");
+  }
+
+  function getBookSelection(rawTitle) {
+    const title = (rawTitle || "").trim();
+    if (!title) return { bookTitle: "", bookId: "" };
+    const found = Object.entries(books || {}).find(([, b]) => (b?.title || "").trim().toLowerCase() === title.toLowerCase());
+    if (found) return { bookTitle: (found[1]?.title || title).trim(), bookId: found[0] };
+    return { bookTitle: title, bookId: "" };
+  }
+
+  function insertQuoteResource({ text, bookTitle, page, bookId }) {
+    if (!quill || !text) return;
+    const range = quill.getSelection(true);
+    const insertIndex = range ? range.index : quill.getLength();
+    const quoteText = `\n“${text.trim()}”\n`;
+    const pageBit = Number(page) > 0 ? `, p. ${Number(page)}` : "";
+    const metaText = `— ${bookTitle || "Libro"}${pageBit}\n`;
+    quill.insertText(insertIndex, quoteText, { blockquote: true, resource: "1" }, "user");
+    quill.insertText(insertIndex + quoteText.length, metaText, { resource: "1", resourceMeta: "1", resourceBookId: bookId || "" }, "user");
+    quill.setSelection(insertIndex + quoteText.length + metaText.length, 0, "user");
   }
 
   function openLinksView() {
@@ -1987,6 +2064,9 @@ const LINK_CATEGORY_LABELS = {
   if ($videoScriptInsertLink) {
     $videoScriptInsertLink.addEventListener("click", () => openLinkPicker({ mode: "script" }));
   }
+  if ($videoScriptInsertInline) {
+    $videoScriptInsertInline.addEventListener("click", () => openLinkPicker({ mode: "script" }));
+  }
   if ($videoLinkPickerClose) {
     $videoLinkPickerClose.addEventListener("click", closeLinkPicker);
   }
@@ -1999,6 +2079,36 @@ const LINK_CATEGORY_LABELS = {
   if ($videoLinkSearch) {
     $videoLinkSearch.addEventListener("input", () => {
       renderLinkPickerList();
+    });
+  }
+  if ($videoInsertTypeRow) {
+    $videoInsertTypeRow.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-insert-type]");
+      if (!btn) return;
+      setInsertType(btn.dataset.insertType);
+    });
+  }
+  if ($videoInsertNoteConfirm) {
+    $videoInsertNoteConfirm.addEventListener("click", () => {
+      const text = ($videoInsertNoteText?.value || "").trim();
+      if (!text) return;
+      insertNoteResource(text);
+      closeLinkPicker();
+    });
+  }
+  if ($videoInsertQuoteConfirm) {
+    $videoInsertQuoteConfirm.addEventListener("click", () => {
+      const text = ($videoInsertQuoteText?.value || "").trim();
+      if (!text) return;
+      const page = Math.max(0, Number($videoInsertQuotePage?.value) || 0);
+      const selection = getBookSelection($videoInsertQuoteBook?.value || "");
+      insertQuoteResource({
+        text,
+        page,
+        bookTitle: selection.bookTitle || "Libro",
+        bookId: selection.bookId || ""
+      });
+      closeLinkPicker();
     });
   }
   ensureLinkCategoryOptions();
@@ -2232,6 +2342,11 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
     rebuildState();
     renderLinksList();
     renderLinkPickerList();
+  });
+
+  onValue(ref(db, BOOKS_PATH), (snap) => {
+    books = snap.val() || {};
+    refreshBooksDatalist();
   });
 
   // === Render tarjetas ===

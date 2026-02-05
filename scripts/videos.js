@@ -485,6 +485,9 @@ if ($viewVideos) {
   const $videoLinkTitle = document.getElementById("video-link-title");
   const $videoLinkCategory = document.getElementById("video-link-category");
   const $videoLinkNote = document.getElementById("video-link-note");
+  const $videoLinkBookFields = document.getElementById("video-link-book-fields");
+  const $videoLinkBookTitle = document.getElementById("video-link-book-title");
+  const $videoLinkBookPage = document.getElementById("video-link-book-page");
   const $videoLinkError = document.getElementById("video-link-error");
 
   // Modal idea
@@ -764,27 +767,22 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   }
 
   function openIdeaModal(id = null) {
-    if (!$ideaModalBackdrop) return;
-    if (id && videos[id]) {
-      const v = videos[id];
-      $ideaModalTitle.textContent = "Editar idea";
-      $ideaId.value = id;
-      if ($ideaFormSave) $ideaFormSave.textContent = "Guardar cambios";
-      $ideaTitle.value = v.title || "";
-      $ideaNotes.value = v.ideaNotes || v.notes || "";
-      $ideaTags.value = tagsToCsv(v.tags || "");
-      $ideaLink.value = v.inspirationUrl || "";
-    } else {
-      $ideaModalTitle.textContent = "Nueva idea";
-      $ideaId.value = "";
-      if ($ideaFormSave) $ideaFormSave.textContent = "Guardar";
-      $ideaTitle.value = "";
-      $ideaNotes.value = "";
-      $ideaTags.value = "";
-      $ideaLink.value = "";
+    const existingResource = id ? links?.[id] : null;
+    if (existingResource) {
+      openLinksNewView({ id, ...existingResource, category: normalizeLinkCategory(existingResource.category || "idea") });
+      return;
     }
-    if ($ideaFormError) $ideaFormError.textContent = "";
-    $ideaModalBackdrop.classList.remove("hidden");
+    if (id && videos[id]) {
+      const v = videos[id] || {};
+      openLinksNewView({
+        title: v.title || "",
+        note: v.ideaNotes || v.notes || "",
+        url: v.inspirationUrl || "",
+        category: "idea"
+      });
+      return;
+    }
+    openLinksNewView({ category: "idea" });
   }
 
   function closeIdeaModal() {
@@ -1331,12 +1329,53 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     });
   }
 
-  const LINK_CATEGORY_LABELS = {
+const LINK_CATEGORY_LABELS = {
     cancion: "Canción",
     visual: "Visual",
     tema: "Tema",
+    bookQuote: "Libro/Cita",
+    idea: "Ideas/Notas",
     otro: "Otro"
   };
+
+  const LINK_CATEGORY_ORDER = ["cancion", "visual", "tema", "bookQuote", "idea", "otro"];
+
+  function normalizeLinkCategory(raw) {
+    const cat = String(raw || "otro").trim().toLowerCase();
+    if (cat === "book" || cat === "libro" || cat === "libro/cita" || cat === "bookquote") return "bookQuote";
+    if (cat === "nota" || cat === "notes") return "idea";
+    if (["cancion", "visual", "tema", "idea", "otro"].includes(cat)) return cat;
+    return "otro";
+  }
+
+  function ensureLinkCategoryOptions() {
+    if (!$videoLinkCategory) return;
+    const wanted = [
+      ["cancion", "Canción"],
+      ["visual", "Visual"],
+      ["tema", "Tema"],
+      ["bookQuote", "Libro/Cita"],
+      ["idea", "Ideas/Notas"],
+      ["otro", "Otro"]
+    ];
+    const existing = new Set(Array.from($videoLinkCategory.options || []).map((opt) => opt.value));
+    wanted.forEach(([value, label]) => {
+      if (!existing.has(value)) {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = label;
+        $videoLinkCategory.appendChild(opt);
+      }
+    });
+  }
+
+
+  function toggleBookQuoteFields() {
+    if (!$videoLinkBookFields) return;
+    const cat = normalizeLinkCategory($videoLinkCategory?.value || "otro");
+    const show = cat === "bookQuote";
+    $videoLinkBookFields.classList.toggle("hidden", !show);
+  }
 
   function isIdeaVideo(item) {
     return item?.type === "idea" || item?.status === "idea";
@@ -1349,7 +1388,10 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   }
 
   function getLinksArray() {
-    return state.links || [];
+    return (state.links || []).map((item) => ({
+      ...item,
+      category: normalizeLinkCategory(item.category)
+    }));
   }
 
   function renderLinksList() {
@@ -1370,9 +1412,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     }
     $videoLinksEmpty.style.display = "none";
     const frag = document.createDocumentFragment();
-    const order = ["cancion", "visual", "tema", "otro"];
-    order.forEach((category) => {
-      const grouped = items.filter((item) => (item.category || "otro") === category);
+    LINK_CATEGORY_ORDER.forEach((category) => {
+      const grouped = items.filter((item) => normalizeLinkCategory(item.category) === category);
       if (!grouped.length) return;
       const details = document.createElement("details");
       details.className = "video-links-section";
@@ -1423,8 +1464,14 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         const meta = document.createElement("div");
         meta.className = "video-link-card-meta";
         const dateLabel = formatLinkDate(item.createdAt);
-        const note = item.note ? ` · ${item.note}` : "";
-        meta.textContent = `${label}${note}${dateLabel ? ` · ${dateLabel}` : ""}`;
+        const bits = [label];
+        if (category === "bookQuote") {
+          if (item.bookTitle) bits.push(`Libro: ${item.bookTitle}`);
+          if (item.page) bits.push(`Pág. ${item.page}`);
+        }
+        if (item.note) bits.push(item.note);
+        if (dateLabel) bits.push(dateLabel);
+        meta.textContent = bits.join(" · ");
         card.appendChild(header);
         card.appendChild(meta);
         body.appendChild(card);
@@ -1475,12 +1522,15 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         });
         header.appendChild(title);
         header.appendChild(actionMenu);
-        const url = document.createElement("div");
-        url.className = "video-link-card-url";
-        url.textContent = item.url || "";
         const meta = document.createElement("div");
         meta.className = "video-link-card-meta";
-        meta.textContent = `${LINK_CATEGORY_LABELS[item.category] || "Otro"}${item.note ? ` · ${item.note}` : ""}`;
+        const bits = [LINK_CATEGORY_LABELS[normalizeLinkCategory(item.category)] || "Otro"];
+        if (normalizeLinkCategory(item.category) === "bookQuote") {
+          if (item.bookTitle) bits.push(`Libro: ${item.bookTitle}`);
+          if (item.page) bits.push(`Pág. ${item.page}`);
+        }
+        if (item.note) bits.push(item.note);
+        meta.textContent = bits.join(" · ");
         const btn = document.createElement("button");
         btn.className = "btn";
         btn.textContent = linkPickerMode === "script" ? "Insertar" : "Usar";
@@ -1493,7 +1543,6 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
           closeLinkPicker();
         });
         card.appendChild(header);
-        card.appendChild(url);
         card.appendChild(meta);
         card.appendChild(btn);
         frag.appendChild(card);
@@ -1540,7 +1589,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     if ($videoLinkUrl) $videoLinkUrl.value = prefill.url || "";
     if ($videoLinkTitle) $videoLinkTitle.value = prefill.title || "";
 
-    const cat = (prefill.category || "otro").toLowerCase();
+    const cat = normalizeLinkCategory(prefill.category || "otro");
     if ($videoLinkCategory) {
       // si no existe esa option, cae a "otro"
       const has = Array.from($videoLinkCategory.options || []).some(o => o.value === cat);
@@ -1548,6 +1597,9 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     }
 
     if ($videoLinkNote) $videoLinkNote.value = prefill.note || "";
+    if ($videoLinkBookTitle) $videoLinkBookTitle.value = prefill.bookTitle || "";
+    if ($videoLinkBookPage) $videoLinkBookPage.value = prefill.page || "";
+    toggleBookQuoteFields();
     if ($videoLinkError) $videoLinkError.textContent = "";
     setActiveView("view-links-new");
 
@@ -1835,61 +1887,23 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   if ($ideaForm) {
     $ideaForm.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const id = $ideaId?.value || null;
       const title = ($ideaTitle?.value || "").trim();
       if (!title) {
         if ($ideaFormError) $ideaFormError.textContent = "El título es obligatorio.";
         return;
       }
       const notes = ($ideaNotes?.value || "").trim();
-      const tags = formatTagsForStorage($ideaTags?.value || "");
       const rawLink = ($ideaLink?.value || "").trim();
       const inspirationUrl = rawLink ? normalizeUrl(rawLink) : "";
       if (inspirationUrl) {
-        try {
-          new URL(inspirationUrl);
-        } catch {
+        try { new URL(inspirationUrl); } catch {
           if ($ideaFormError) $ideaFormError.textContent = "El link de inspiración no es válido.";
           return;
         }
       }
       if ($ideaFormError) $ideaFormError.textContent = "";
-      const now = Date.now();
-      const payload = {
-        title,
-        tags: tags || null,
-        ideaNotes: notes || null,
-        inspirationUrl: inspirationUrl || null,
-        type: "idea",
-        status: "idea",
-        scriptTarget: 2000,
-        scriptWords: 0,
-        updatedAt: now
-      };
-      try {
-        if (id) {
-          await updateItem("idea", id, payload);
-          showVideoToast("Cambios guardados");
-        } else {
-          const newRef = push(ref(db, VIDEOS_PATH));
-          const newIdea = {
-            ...payload,
-            createdAt: now
-          };
-          await set(newRef, newIdea);
-          if (newRef.key) {
-            videos[newRef.key] = newIdea;
-            rebuildState();
-            renderVideos();
-            renderVideoStats();
-            renderVideoCalendar();
-          }
-        }
-        closeIdeaModal();
-      } catch (err) {
-        console.error("Error guardando idea", err);
-        if ($ideaFormError) $ideaFormError.textContent = "No se pudo guardar la idea. Intenta otra vez.";
-      }
+      openLinksNewView({ title, note: notes, url: inspirationUrl, category: "idea" });
+      closeIdeaModal();
     });
   }
 
@@ -1987,6 +2001,12 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       renderLinkPickerList();
     });
   }
+  ensureLinkCategoryOptions();
+  toggleBookQuoteFields();
+  if ($videoLinkCategory) {
+    $videoLinkCategory.addEventListener("change", toggleBookQuoteFields);
+  }
+
   if ($videoLinksSearch) {
     $videoLinksSearch.addEventListener("input", () => {
       renderLinksList();
@@ -2070,41 +2090,44 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     $videoLinksForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const rawUrl = ($videoLinkUrl?.value || "").trim();
-      if (!rawUrl) {
-        if ($videoLinkError) $videoLinkError.textContent = "La URL es obligatoria.";
-        return;
-      }
-      const url = normalizeUrl(rawUrl);
-      try {
-        new URL(url);
-      } catch {
-        if ($videoLinkError) $videoLinkError.textContent = "La URL no es válida.";
-        return;
+      let url = "";
+      if (rawUrl) {
+        url = normalizeUrl(rawUrl);
+        try {
+          new URL(url);
+        } catch {
+          if ($videoLinkError) $videoLinkError.textContent = "La URL no es válida.";
+          return;
+        }
       }
       if ($videoLinkUrl) $videoLinkUrl.value = url;
       const title = ($videoLinkTitle?.value || "").trim();
-      const category = $videoLinkCategory?.value || "otro";
+      const category = normalizeLinkCategory($videoLinkCategory?.value || "otro");
       const note = ($videoLinkNote?.value || "").trim();
+      const bookTitle = ($videoLinkBookTitle?.value || "").trim();
+      const page = ($videoLinkBookPage?.value || "").trim();
       const id = ($videoLinkId?.value || "").trim();
       const now = Date.now();
+      const payload = {
+        type: "resource",
+        url,
+        title: title || null,
+        category,
+        note,
+        bookTitle: category === "bookQuote" ? (bookTitle || null) : null,
+        page: category === "bookQuote" ? (page || null) : null,
+        updatedAt: now
+      };
       try {
         if (id) {
-          await updateItem("link", id, {
-            url,
-            title: title || null,
-            category,
-            note
-          });
+          await updateItem("link", id, payload);
           showVideoToast("Cambios guardados");
         } else {
           const newRef = push(ref(db, LINKS_PATH));
           const newLink = {
-            url,
-            title: title || null,
-            category,
-            note,
+            ...payload,
             createdAt: now,
-            updatedAt: now
+            bookId: null
           };
           await set(newRef, newLink);
           if (newRef.key) {
@@ -2116,6 +2139,9 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         }
         if ($videoLinksForm) $videoLinksForm.reset();
         if ($videoLinkCategory) $videoLinkCategory.value = "otro";
+        if ($videoLinkBookTitle) $videoLinkBookTitle.value = "";
+        if ($videoLinkBookPage) $videoLinkBookPage.value = "";
+        toggleBookQuoteFields();
         if ($videoLinkId) $videoLinkId.value = "";
         if ($videoLinksNewTitle) $videoLinksNewTitle.textContent = "Nuevo link";
         if ($videoLinksSave) $videoLinksSave.textContent = "Guardar";
@@ -2238,7 +2264,7 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
 function renderVideos() {
   if (!$videosList) return;
 
-  const idsAll = [...state.scripts, ...state.ideas].map((item) => item.id);
+  const idsAll = Object.keys(videos || {}).filter((id) => !isIdeaVideo(videos[id]));
   if (!idsAll.length) {
     $videosList.innerHTML = "";
     if ($videosEmpty) $videosEmpty.style.display = "block";
@@ -2251,12 +2277,10 @@ function renderVideos() {
     { key: "recording", title: "Grabación", storage: "bookshell_videos_section_recording_v1", empty: "Nada en grabación." },
     { key: "editing", title: "Edición", storage: "bookshell_videos_section_editing_v1", empty: "Nada en edición." },
     { key: "scheduled", title: "Programado/Publicar", storage: "bookshell_videos_section_scheduled_v1", empty: "Nada programado." },
-    { key: "idea", title: "Ideas", storage: "bookshell_videos_section_idea_v1", empty: "Aún no hay ideas." },
     { key: "published", title: "Publicados", storage: "bookshell_videos_section_published_v1", empty: "Aún no hay vídeos publicados." }
   ];
 
   const grouped = {
-    idea: [],
     script: [],
     recording: [],
     editing: [],
@@ -2271,7 +2295,6 @@ function renderVideos() {
     grouped[key].push(id);
   });
 
-  grouped.idea.sort((a, b) => (videos[b].createdAt || 0) - (videos[a].createdAt || 0));
   grouped.script.sort((a, b) => (videos[b].updatedAt || 0) - (videos[a].updatedAt || 0));
   grouped.recording.sort((a, b) => (videos[b].updatedAt || 0) - (videos[a].updatedAt || 0));
   grouped.editing.sort((a, b) => (videos[b].updatedAt || 0) - (videos[a].updatedAt || 0));
@@ -2570,7 +2593,7 @@ function createVideoCard(id) {
     const details = document.createElement("details");
     details.className = "video-finished";
     const storedOpen = localStorage.getItem(section.storage);
-    const defaultOpen = section.key !== "published" && section.key !== "idea";
+    const defaultOpen = section.key !== "published";
     details.open = storedOpen ? storedOpen === "1" : defaultOpen;
     details.addEventListener("toggle", () => {
       localStorage.setItem(section.storage, details.open ? "1" : "0");
@@ -2716,9 +2739,9 @@ function createVideoCard(id) {
       totals[day] = { words: w, seconds: s, ideas: 0 };
     });
 
-    Object.entries(videos || {}).forEach(([, v]) => {
-      if (v?.type !== "idea" && v?.status !== "idea") return;
-      const day = v.createdAt ? dateToKey(new Date(v.createdAt)) : null;
+    Object.values(links || {}).forEach((item) => {
+      if (normalizeLinkCategory(item?.category) !== "idea") return;
+      const day = item?.createdAt ? dateToKey(new Date(item.createdAt)) : null;
       if (!day) return;
       if (!totals[day]) totals[day] = { words: 0, seconds: 0, ideas: 0 };
       totals[day].ideas += 1;
@@ -2806,8 +2829,8 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
     const videosPublished = Object.values(videos || {}).filter(
       (v) => v.publishDate && publishInfo[normalizeDateKey(v.publishDate)]?.done
     ).length;
-    const ideasCreated = Object.values(videos || {}).filter(
-      (v) => v?.type === "idea" || v?.status === "idea"
+    const ideasCreated = Object.values(links || {}).filter(
+      (item) => normalizeLinkCategory(item?.category) === "idea"
     ).length;
 
     if ($videoStatCount) $videoStatCount.textContent = videosPublished;
@@ -2976,16 +2999,6 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
 
     const itemsMap = new Map();
     Object.entries(videos || {}).forEach(([id, v]) => {
-      const createdDay = v.createdAt ? dateToKey(new Date(v.createdAt)) : "";
-      if ((v.type === "idea" || v.status === "idea") && createdDay === dayKey) {
-        itemsMap.set(id, {
-          id,
-          title: v.title || "Idea",
-          meta: ["Idea creada", v.tags ? `Tags: ${v.tags}` : ""].filter(Boolean),
-          isIdea: true,
-          type: "idea"
-        });
-      }
       if (normalizeDateKey(v.publishDate) === dayKey) {
         const existing = itemsMap.get(id) || { id, title: v.title || "Vídeo", meta: [] };
         const label = v.status === "published" ? "Publicado" : "Programado";
@@ -2993,6 +3006,18 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
         existing.type = existing.type || "script";
         itemsMap.set(id, existing);
       }
+    });
+
+    Object.entries(links || {}).forEach(([id, item]) => {
+      const createdDay = item?.createdAt ? dateToKey(new Date(item.createdAt)) : "";
+      const cat = normalizeLinkCategory(item?.category);
+      if (createdDay !== dayKey || cat !== "idea") return;
+      itemsMap.set(`link:${id}`, {
+        id,
+        title: item.title || "Idea/nota",
+        meta: [LINK_CATEGORY_LABELS[cat] || "Ideas/Notas", item.note || ""].filter(Boolean),
+        type: "link"
+      });
     });
 
     const dayRecords = state.records.filter((record) => record.day === dayKey);
@@ -3049,6 +3074,20 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
           });
           header.appendChild(actionMenu);
           attachSwipeToMenu(card, () => actionMenu.openMenu?.());
+        } else if (item.type === "link") {
+          const actionMenu = createActionMenu({
+            onEdit: () => openLinksNewView({ id: item.id, ...(links[item.id] || {}) }),
+            onDelete: () => {
+              openDeleteModal({
+                entityType: "link",
+                id: item.id,
+                label: item.title
+              });
+            },
+            label: "recurso"
+          });
+          header.appendChild(actionMenu);
+          attachSwipeToMenu(card, () => actionMenu.openMenu?.());
         } else if (item.type === "idea" || item.type === "script") {
           const isIdea = item.type === "idea" || isIdeaVideo(videos[item.id]);
           const actionMenu = createActionMenu({
@@ -3076,6 +3115,9 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
         if (item.type === "record" || item.type === "script") {
           btn.textContent = "Abrir guion";
           btn.addEventListener("click", () => openScriptView(item.videoId || item.id));
+        } else if (item.type === "link") {
+          btn.textContent = "Abrir recurso";
+          btn.addEventListener("click", () => openLinksNewView({ id: item.id, ...(links[item.id] || {}) }));
         } else {
           btn.textContent = "Abrir idea";
           btn.addEventListener("click", () => openIdeaModal(item.id));

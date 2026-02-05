@@ -511,18 +511,26 @@
 <div class="video-links-card-title">Guarda un recurso</div>
 <div class="hint">Si pegas una URL sin https://, la normalizamos automáticamente.</div>
 <label class="field-label" for="video-link-url">URL</label>
-<input id="video-link-url" name="url" placeholder="https://..." required="" type="url"/>
+<input id="video-link-url" name="url" placeholder="https://..." type="url"/>
 <label class="field-label" for="video-link-title">Título (opcional)</label>
 <input id="video-link-title" name="title" placeholder="Título corto" type="text"/>
 <label class="field-label" for="video-link-category">Categoría</label>
 <select id="video-link-category" name="category">
 <option value="cancion">Canción</option>
-<option value="visual">Recurso visual</option>
+<option value="visual">Visual</option>
 <option value="tema">Tema</option>
+<option value="bookQuote">Libro/Cita</option>
+<option value="idea">Ideas/Notas</option>
 <option value="otro">Otro</option>
 </select>
 <label class="field-label" for="video-link-note">Nota</label>
 <textarea id="video-link-note" name="note" placeholder="Idea rápida o por qué sirve" rows="3"></textarea>
+<div class="video-link-book-fields hidden" id="video-link-book-fields">
+<label class="field-label" for="video-link-book-title">Libro</label>
+<input id="video-link-book-title" name="bookTitle" placeholder="Título del libro" type="text"/>
+<label class="field-label" for="video-link-book-page">Página (opcional)</label>
+<input id="video-link-book-page" name="page" placeholder="p. 42" type="text"/>
+</div>
 <div class="form-error" id="video-link-error" role="alert"></div>
 <div class="video-links-actions">
 <button class="btn ghost" id="video-links-cancel" type="button">Cancelar</button>

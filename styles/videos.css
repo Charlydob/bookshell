@@ -288,7 +288,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   padding: 8px 10px;
   border-radius: 16px;
   background: rgba(9, 11, 20, 0.96);
@@ -303,19 +303,22 @@
   font-size: 13px;
   font-weight: 600;
   color: #f4f1ff;
-  flex: 1 1 180px;
+  flex: 1 1 auto;
   min-width: 0;
+  white-space: nowrap;
 }
 
 #video-script-insert-inline {
   flex: 0 0 auto;
   min-height: 38px;
+  min-width: 38px;
+  padding-inline: 10px;
 }
 
 #video-script-count-toggle {
   flex: 0 0 auto;
-  margin-left: auto;
   min-height: 38px;
+  white-space: nowrap;
 }
 
 .video-script-meta-block {
@@ -642,6 +645,29 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.video-insert-create-block {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 8px 10px;
+  background: rgba(9, 11, 20, 0.55);
+}
+
+.video-insert-create-block summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(245, 247, 255, 0.9);
+}
+
+.video-insert-create-block summary::-webkit-details-marker {
+  display: none;
+}
+
+.video-insert-create-block[open] summary {
+  margin-bottom: 8px;
 }
 
 .video-insert-textarea {
@@ -1241,15 +1267,17 @@
 }
 
 .video-card-buttons {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   gap: 8px;
   width: 100%;
 }
 
 .video-card-buttons .btn {
   min-width: 0;
-  width: 100%;
+  flex: 1 1 0;
+  white-space: nowrap;
 }
 
 @media (min-width: 900px) {
@@ -1447,8 +1475,8 @@
 
 
 @media (max-width: 640px) {
-  .video-card-buttons {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .video-script-count-header {
+    flex-wrap: wrap;
   }
 
   #video-script-count-toggle {

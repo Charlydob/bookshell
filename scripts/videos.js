@@ -447,10 +447,14 @@ if ($viewVideos) {
   const $videoBooksDatalist = document.getElementById("video-books-datalist");
   const $videoInsertNoteText = document.getElementById("video-insert-note-text");
   const $videoInsertNoteConfirm = document.getElementById("video-insert-note-confirm");
+  const $videoInsertNoteSearch = document.getElementById("video-insert-note-search");
+  const $videoInsertNoteList = document.getElementById("video-insert-note-list");
   const $videoInsertQuoteBook = document.getElementById("video-insert-quote-book");
   const $videoInsertQuotePage = document.getElementById("video-insert-quote-page");
   const $videoInsertQuoteText = document.getElementById("video-insert-quote-text");
   const $videoInsertQuoteConfirm = document.getElementById("video-insert-quote-confirm");
+  const $videoInsertQuoteSearch = document.getElementById("video-insert-quote-search");
+  const $videoInsertQuoteList = document.getElementById("video-insert-quote-list");
   const $videoToolbarAnnotate = document.getElementById("video-toolbar-annotate");
   const $videoToolbarMoreToggle = document.getElementById("video-toolbar-more-toggle");
   const $videoToolbarMoreMenu = document.getElementById("video-toolbar-more-menu");
@@ -1300,6 +1304,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     linkPickerMode = mode;
     linkPickerSelectHandler = typeof onSelect === "function" ? onSelect : null;
     renderLinkPickerList();
+    renderNotePickerList();
+    renderQuotePickerList();
     setInsertType("link");
     $videoLinkPickerBackdrop.classList.add("is-open");
     $videoLinkPickerBackdrop.setAttribute("aria-hidden", "false");
@@ -1313,8 +1319,10 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     linkPickerMode = "script";
     linkPickerSelectHandler = null;
     if ($videoInsertNoteText) $videoInsertNoteText.value = "";
+    if ($videoInsertNoteSearch) $videoInsertNoteSearch.value = "";
     if ($videoInsertQuotePage) $videoInsertQuotePage.value = "";
     if ($videoInsertQuoteText) $videoInsertQuoteText.value = "";
+    if ($videoInsertQuoteSearch) $videoInsertQuoteSearch.value = "";
   }
 
   function setInsertType(type) {
@@ -1597,6 +1605,109 @@ const LINK_CATEGORY_LABELS = {
     }
     $videoLinkPickerList.innerHTML = "";
     $videoLinkPickerList.appendChild(frag);
+  }
+
+  function getNoteResources() {
+    return getLinksArray()
+      .filter((item) => normalizeLinkCategory(item.category) === "idea" && (item.note || item.title))
+      .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  }
+
+  function getQuoteResources() {
+    return getLinksArray()
+      .filter((item) => normalizeLinkCategory(item.category) === "bookQuote" && (item.note || item.title || item.bookTitle))
+      .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  }
+
+  function renderNotePickerList() {
+    if (!$videoInsertNoteList) return;
+    const search = ($videoInsertNoteSearch?.value || "").trim().toLowerCase();
+    const items = getNoteResources().filter((item) => {
+      if (!search) return true;
+      const hay = `${item.title || ""} ${item.note || ""}`.toLowerCase();
+      return hay.includes(search);
+    });
+    const frag = document.createDocumentFragment();
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "video-link-card";
+      empty.textContent = "No hay notas guardadas que coincidan.";
+      frag.appendChild(empty);
+    } else {
+      items.forEach((item) => {
+        const card = document.createElement("div");
+        card.className = "video-link-card";
+        const title = document.createElement("div");
+        title.className = "video-link-card-title";
+        title.textContent = item.title || "Nota";
+        const meta = document.createElement("div");
+        meta.className = "video-link-card-meta";
+        meta.textContent = item.note || "Sin texto";
+        const btn = document.createElement("button");
+        btn.className = "btn";
+        btn.textContent = "Insertar";
+        btn.addEventListener("click", () => {
+          insertNoteResource(item.note || item.title || "");
+          closeLinkPicker();
+        });
+        card.appendChild(title);
+        card.appendChild(meta);
+        card.appendChild(btn);
+        frag.appendChild(card);
+      });
+    }
+    $videoInsertNoteList.innerHTML = "";
+    $videoInsertNoteList.appendChild(frag);
+  }
+
+  function renderQuotePickerList() {
+    if (!$videoInsertQuoteList) return;
+    const search = ($videoInsertQuoteSearch?.value || "").trim().toLowerCase();
+    const items = getQuoteResources().filter((item) => {
+      if (!search) return true;
+      const hay = `${item.note || ""} ${item.bookTitle || ""} ${item.title || ""} ${item.page || ""}`.toLowerCase();
+      return hay.includes(search);
+    });
+    const frag = document.createDocumentFragment();
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "video-link-card";
+      empty.textContent = "No hay citas guardadas que coincidan.";
+      frag.appendChild(empty);
+    } else {
+      items.forEach((item) => {
+        const card = document.createElement("div");
+        card.className = "video-link-card";
+        const title = document.createElement("div");
+        title.className = "video-link-card-title";
+        title.textContent = item.bookTitle || item.title || "Libro";
+        const meta = document.createElement("div");
+        meta.className = "video-link-card-meta";
+        const bits = [];
+        if (item.note) bits.push(`“${item.note}”`);
+        if (item.page) bits.push(`Pág. ${item.page}`);
+        meta.textContent = bits.join(" · ") || "Cita sin texto";
+        const btn = document.createElement("button");
+        btn.className = "btn";
+        btn.textContent = "Insertar";
+        btn.addEventListener("click", () => {
+          const selection = getBookSelection(item.bookTitle || item.title || "");
+          insertQuoteResource({
+            text: item.note || item.title || "",
+            page: Number(item.page) || 0,
+            bookTitle: selection.bookTitle || item.bookTitle || item.title || "Libro",
+            bookId: selection.bookId || ""
+          });
+          closeLinkPicker();
+        });
+        card.appendChild(title);
+        card.appendChild(meta);
+        card.appendChild(btn);
+        frag.appendChild(card);
+      });
+    }
+    $videoInsertQuoteList.innerHTML = "";
+    $videoInsertQuoteList.appendChild(frag);
   }
 
   function insertLinkResource(item) {
@@ -2079,6 +2190,16 @@ const LINK_CATEGORY_LABELS = {
   if ($videoLinkSearch) {
     $videoLinkSearch.addEventListener("input", () => {
       renderLinkPickerList();
+    });
+  }
+  if ($videoInsertNoteSearch) {
+    $videoInsertNoteSearch.addEventListener("input", () => {
+      renderNotePickerList();
+    });
+  }
+  if ($videoInsertQuoteSearch) {
+    $videoInsertQuoteSearch.addEventListener("input", () => {
+      renderQuotePickerList();
     });
   }
   if ($videoInsertTypeRow) {
@@ -2628,7 +2749,9 @@ function createVideoCard(id) {
 
   const btnEdit = document.createElement("button");
   btnEdit.className = "btn";
-  btnEdit.textContent = "Editar";
+  btnEdit.textContent = "✏️";
+  btnEdit.setAttribute("aria-label", "Editar");
+  btnEdit.title = "Editar";
   btnEdit.addEventListener("click", () => {
     if (isIdea) openIdeaModal(id);
     else openVideoModal(id);
@@ -2636,7 +2759,9 @@ function createVideoCard(id) {
 
   const btnScript = document.createElement("button");
   btnScript.className = "btn";
-  btnScript.textContent = "Guion";
+  btnScript.textContent = "📖";
+  btnScript.setAttribute("aria-label", "Abrir guion");
+  btnScript.title = "Abrir guion";
   btnScript.addEventListener("click", () => openScriptView(id));
 
   const btnConvert = document.createElement("button");
@@ -2656,7 +2781,9 @@ function createVideoCard(id) {
 
   const btnPublish = document.createElement("button");
   btnPublish.className = "btn";
-  btnPublish.textContent = "Publicado";
+  btnPublish.textContent = "✅";
+  btnPublish.setAttribute("aria-label", "Marcar publicado");
+  btnPublish.title = "Marcar publicado";
   btnPublish.addEventListener("click", () => markVideoPublished(id));
 
   btnEdit.classList.add("btn-secondary-action");

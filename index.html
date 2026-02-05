@@ -371,8 +371,8 @@
 </div>
 <div class="video-script-count-header" id="video-script-count-header">
 <div class="video-script-count-badge" id="video-script-count-badge">Palabras: 0 · Progreso: 0%</div>
-<button class="btn ghost btn-compact" id="video-script-insert-inline" type="button" title="Insertar recurso">📎 Insertar</button>
 <button class="btn ghost" id="video-script-count-toggle" type="button">⚙︎ Conteo</button>
+<button class="btn ghost btn-compact" id="video-script-insert-inline" type="button" title="Insertar recurso" aria-label="Insertar recurso">📎</button>
 </div>
 <details class="video-script-meta" id="video-script-meta">
 <summary class="video-script-meta-summary">Detalles del guion</summary>
@@ -453,11 +453,22 @@
 <div class="video-link-picker-list" id="video-link-picker-list"></div>
 </div>
 <div class="video-insert-pane hidden" data-insert-pane="note">
+<label class="field-label" for="video-insert-note-search">Buscar nota</label>
+<input class="video-link-search" id="video-insert-note-search" placeholder="Buscar por texto o título" type="search"/>
+<div class="video-link-picker-list" id="video-insert-note-list"></div>
+<details class="video-insert-create-block">
+<summary>Crear nueva nota</summary>
 <label class="field-label" for="video-insert-note-text">Texto de la nota</label>
 <textarea class="video-insert-textarea" id="video-insert-note-text" rows="4" placeholder="Escribe la nota..."></textarea>
 <button class="btn primary" id="video-insert-note-confirm" type="button">Insertar nota</button>
+</details>
 </div>
 <div class="video-insert-pane hidden" data-insert-pane="quote">
+<label class="field-label" for="video-insert-quote-search">Buscar cita</label>
+<input class="video-link-search" id="video-insert-quote-search" placeholder="Buscar por cita, libro o página" type="search"/>
+<div class="video-link-picker-list" id="video-insert-quote-list"></div>
+<details class="video-insert-create-block">
+<summary>Crear nueva cita</summary>
 <label class="field-label" for="video-insert-quote-book">Libro</label>
 <input class="video-link-search" id="video-insert-quote-book" list="video-books-datalist" placeholder="Buscar en tu biblioteca o escribir manualmente" type="search"/>
 <datalist id="video-books-datalist"></datalist>
@@ -466,6 +477,7 @@
 <label class="field-label" for="video-insert-quote-text">Texto de la cita</label>
 <textarea class="video-insert-textarea" id="video-insert-quote-text" rows="4" placeholder="Escribe la cita..."></textarea>
 <button class="btn primary" id="video-insert-quote-confirm" type="button">Insertar cita</button>
+</details>
 </div>
 </div>
 </div>

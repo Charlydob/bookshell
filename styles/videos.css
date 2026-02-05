@@ -287,8 +287,8 @@
 .video-script-count-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
   padding: 8px 10px;
   border-radius: 16px;
   background: rgba(9, 11, 20, 0.96);
@@ -303,6 +303,19 @@
   font-size: 13px;
   font-weight: 600;
   color: #f4f1ff;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+#video-script-insert-inline {
+  flex: 0 0 auto;
+  min-height: 38px;
+}
+
+#video-script-count-toggle {
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-height: 38px;
 }
 
 .video-script-meta-block {
@@ -606,6 +619,39 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+
+.video-insert-type-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.video-insert-type-row .btn {
+  min-height: 40px;
+}
+
+.video-insert-type-row .btn.is-active {
+  border-color: rgba(157, 121, 255, 0.7);
+  background: rgba(127, 93, 255, 0.24);
+}
+
+.video-insert-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.video-insert-textarea {
+  width: 100%;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(9, 11, 20, 0.9);
+  color: inherit;
+  resize: vertical;
 }
 
 .video-link-card {
@@ -1195,9 +1241,15 @@
 }
 
 .video-card-buttons {
-  display: flex;
-  flex-direction: row;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.video-card-buttons .btn {
+  min-width: 0;
+  width: 100%;
 }
 
 @media (min-width: 900px) {
@@ -1271,8 +1323,8 @@
 .video-card{ padding: 12px 12px; }
 .video-main{ gap: 6px; }
 .video-actions{ gap: 10px; flex-wrap: wrap; }
-.video-card-buttons{ flex-wrap: wrap; gap: 10px; }
-.video-card-buttons .btn{ min-width: 124px; }
+.video-card-buttons{ gap: 10px; }
+.video-card-buttons .btn{ min-width: 0; }
 .video-card.video-card-finished .video-input-group{ display:none; }
 
 .video-update{
@@ -1391,4 +1443,15 @@
 .video-card.is-collapsed .video-remaining,
 .video-card.is-collapsed .video-actions{
   display:none !important;
+}
+
+
+@media (max-width: 640px) {
+  .video-card-buttons {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #video-script-count-toggle {
+    margin-left: 0;
+  }
 }

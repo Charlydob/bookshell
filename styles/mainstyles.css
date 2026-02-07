@@ -23,6 +23,11 @@
   --blur-header: 14px;
   --blur-nav: 14px;
   --blur-modal: 10px;
+
+  --work-morning: rgba(255,214,0,.85);
+  --work-evening: rgba(255,59,48,.85);
+  --work-free: rgba(52,199,89,.85);
+  --work-unknown: rgba(142,142,147,.55);
 }
 
 html,

@@ -143,6 +143,42 @@ function foldKey(s) {
     .replace(/\s+/g, " ");
 }
 
+function isWorkHabit(habit) {
+  if (!habit || habit.archived) return false;
+  return foldKey(habit.name) === "trabajo";
+}
+
+function normalizeShiftValue(value) {
+  return value === "M" || value === "T" ? value : null;
+}
+
+function readDayMinutesAndShift(rawValue, isWork = false) {
+  if (rawValue == null) return { minutes: 0, shift: null, hasEntry: false };
+
+  if (typeof rawValue === "number") {
+    if (!isWork) return { minutes: Math.round(Math.max(0, rawValue) / 60), shift: null, hasEntry: rawValue > 0 };
+    const raw = Math.max(0, Number(rawValue) || 0);
+    const minutes = raw > 1440 ? Math.round(raw / 60) : Math.round(raw);
+    return { minutes, shift: null, hasEntry: raw > 0 };
+  }
+
+  if (typeof rawValue === "object") {
+    const shift = normalizeShiftValue(rawValue.shift);
+    const minRaw = Number(rawValue.min);
+    const secRaw = Number(rawValue.totalSec);
+    const minutes = Number.isFinite(minRaw) && minRaw > 0
+      ? Math.round(minRaw)
+      : (Number.isFinite(secRaw) && secRaw > 0 ? Math.round(secRaw / 60) : 0);
+    return {
+      minutes,
+      shift,
+      hasEntry: minutes > 0 || !!shift
+    };
+  }
+
+  return { minutes: 0, shift: null, hasEntry: false };
+}
+
 function resolveHabitIdFromToken(token) {
   const raw = String(token || "").trim();
   if (!raw) return null;
@@ -260,8 +296,22 @@ function normalizeSessionsStore(raw, persistRemote = false) {
         return;
       }
       if (val && typeof val === "object") {
+        const shift = normalizeShiftValue(val.shift);
+        const min = Number(val.min);
+        if (Number.isFinite(min) && min > 0) {
+          if (!totals[habitId]) totals[habitId] = {};
+          totals[habitId][dateKey] = shift ? { min: Math.round(min), shift } : { min: Math.round(min) };
+          return;
+        }
         const sec = Number(val.totalSec) || 0;
-        if (sec > 0) add(habitId, dateKey, sec);
+        if (sec > 0) {
+          if (!totals[habitId]) totals[habitId] = {};
+          if (shift && isWorkHabit(habits?.[habitId])) {
+            totals[habitId][dateKey] = { min: Math.round(sec / 60), shift };
+          } else {
+            totals[habitId][dateKey] = sec;
+          }
+        }
         changed = true;
       } else {
         changed = true;
@@ -301,24 +351,51 @@ function getHabitTotalSecForDate(habitId, dateKey) {
 
   const byDate = habitSessions?.[habitId];
   if (!byDate || typeof byDate !== "object") return 0;
-  const sec = Number(byDate[dateKey]) || 0;
-  return sec > 0 ? sec : 0;
+  const day = byDate[dateKey];
+  if (typeof day === "number") {
+    const sec = Number(day) || 0;
+    return sec > 0 ? sec : 0;
+  }
+  if (day && typeof day === "object") {
+    const min = Number(day.min) || 0;
+    return min > 0 ? Math.round(min * 60) : 0;
+  }
+  return 0;
 }
 
-function addHabitTimeSec(habitId, dateKey, secToAdd) {
+function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
   if (!habitId || !dateKey) return 0;
   const habit = habits[habitId];
   if (!habit || habit.archived) return 0;
   const addSec = Math.max(0, Math.round(Number(secToAdd) || 0));
   if (!addSec) return getHabitTotalSecForDate(habitId, dateKey);
   if (!habitSessions[habitId] || typeof habitSessions[habitId] !== "object") habitSessions[habitId] = {};
-  const next = (Number(habitSessions[habitId][dateKey]) || 0) + addSec;
-  habitSessions[habitId][dateKey] = next;
-  saveCache();
-  try {
-    set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), next);
-  } catch (err) {
-    console.warn("No se pudo guardar tiempo en remoto", err);
+
+  const isWork = isWorkHabit(habit);
+  const dayRaw = habitSessions[habitId][dateKey];
+  const day = readDayMinutesAndShift(dayRaw, isWork);
+  const nextMinutes = day.minutes + Math.round(addSec / 60);
+  const nextSec = Math.max(0, Math.round(nextMinutes * 60));
+  const shift = normalizeShiftValue(options?.shift) || day.shift;
+
+  if (isWork) {
+    const payload = { min: nextMinutes };
+    if (shift) payload.shift = shift;
+    habitSessions[habitId][dateKey] = payload;
+    saveCache();
+    try {
+      set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), payload);
+    } catch (err) {
+      console.warn("No se pudo guardar tiempo en remoto", err);
+    }
+  } else {
+    habitSessions[habitId][dateKey] = nextSec;
+    saveCache();
+    try {
+      set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), nextSec);
+    } catch (err) {
+      console.warn("No se pudo guardar tiempo en remoto", err);
+    }
   }
 
   // recalcular Desconocido del día
@@ -326,20 +403,42 @@ function addHabitTimeSec(habitId, dateKey, secToAdd) {
     try { recomputeUnknownForDate(dateKey, true); } catch (_) {}
   }
 
-  return next;
+  return nextSec;
 }
 
-function setHabitTimeSec(habitId, dateKey, totalSec) {
+function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
   if (!habitId || !dateKey) return;
   const habit = habits[habitId];
   if (!habit || habit.archived) return;
   const sec = Math.max(0, Math.round(Number(totalSec) || 0));
   if (!habitSessions[habitId] || typeof habitSessions[habitId] !== "object") habitSessions[habitId] = {};
-  if (sec > 0) habitSessions[habitId][dateKey] = sec;
-  else delete habitSessions[habitId][dateKey];
+
+  const isWork = isWorkHabit(habit);
+  const existing = readDayMinutesAndShift(habitSessions[habitId][dateKey], isWork);
+  const shiftOpt = Object.prototype.hasOwnProperty.call(options || {}, "shift")
+    ? normalizeShiftValue(options.shift)
+    : existing.shift;
+
+  if (sec > 0) {
+    if (isWork) {
+      const payload = { min: Math.round(sec / 60) };
+      if (shiftOpt) payload.shift = shiftOpt;
+      habitSessions[habitId][dateKey] = payload;
+    } else {
+      habitSessions[habitId][dateKey] = sec;
+    }
+  } else {
+    delete habitSessions[habitId][dateKey];
+  }
   saveCache();
   try {
-    set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), sec > 0 ? sec : null);
+    if (sec > 0 && isWork) {
+      const payload = { min: Math.round(sec / 60) };
+      if (shiftOpt) payload.shift = shiftOpt;
+      set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), payload);
+    } else {
+      set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), sec > 0 ? sec : null);
+    }
   } catch (err) {
     console.warn("No se pudo actualizar tiempo en remoto", err);
   }
@@ -739,7 +838,7 @@ function getSessionsForDate(dateKey) {
     const habit = habits[habitId];
     if (!habit || habit.archived) return;
     if (!byDate || typeof byDate !== "object") return;
-    const sec = Number(byDate[dateKey]) || 0;
+    const sec = getHabitTotalSecForDate(habitId, dateKey);
     if (sec > 0) out.push({ habitId, dateKey, durationSec: sec, source: "total" });
   });
   return out;
@@ -1405,10 +1504,11 @@ function openHabitModal(habit = null) {
   $habitTargetMinutes.value = habit && habit.targetMinutes ? habit.targetMinutes : "";
   if ($habitCountUnitMinutes) $habitCountUnitMinutes.value = habit && habit.countUnitMinutes ? habit.countUnitMinutes : "";
   const qas = habit && Array.isArray(habit.quickAdds) ? habit.quickAdds : [];
-  if ($habitQuick1Label) $habitQuick1Label.value = qas[0]?.label || "";
-  if ($habitQuick1Minutes) $habitQuick1Minutes.value = qas[0]?.minutes ? String(qas[0].minutes) : "";
-  if ($habitQuick2Label) $habitQuick2Label.value = qas[1]?.label || "";
-  if ($habitQuick2Minutes) $habitQuick2Minutes.value = qas[1]?.minutes ? String(qas[1].minutes) : "";
+  const workDefaults = isWorkHabit(habit) ? [{ label: "M", minutes: 480 }, { label: "T", minutes: 480 }] : null;
+  if ($habitQuick1Label) $habitQuick1Label.value = qas[0]?.label || workDefaults?.[0]?.label || "";
+  if ($habitQuick1Minutes) $habitQuick1Minutes.value = qas[0]?.minutes ? String(qas[0].minutes) : (workDefaults?.[0]?.minutes ? String(workDefaults[0].minutes) : "");
+  if ($habitQuick2Label) $habitQuick2Label.value = qas[1]?.label || workDefaults?.[1]?.label || "";
+  if ($habitQuick2Minutes) $habitQuick2Minutes.value = qas[1]?.minutes ? String(qas[1].minutes) : (workDefaults?.[1]?.minutes ? String(workDefaults[1].minutes) : "");
   habitEditingParams = getHabitParams(habit);
   renderHabitParamChips();
   syncHabitParamSelectOptions();
@@ -1474,12 +1574,18 @@ function gatherHabitPayload() {
 
   const qa1m = $habitQuick1Minutes?.value ? Number($habitQuick1Minutes.value) : 0;
   const qa2m = $habitQuick2Minutes?.value ? Number($habitQuick2Minutes.value) : 0;
-  const quickAdds = goal === "time"
+  let quickAdds = goal === "time"
     ? [
         ...(Number.isFinite(qa1m) && qa1m > 0 ? [{ label: ($habitQuick1Label?.value || "").trim(), minutes: Math.round(qa1m) }] : []),
         ...(Number.isFinite(qa2m) && qa2m > 0 ? [{ label: ($habitQuick2Label?.value || "").trim(), minutes: Math.round(qa2m) }] : []),
       ]
     : [];
+  if (goal === "time" && foldKey(name) === "trabajo") {
+    quickAdds = [
+      { label: "M", minutes: 480 },
+      { label: "T", minutes: 480 }
+    ];
+  }
   const params = Array.from(new Set(habitEditingParams.map(normalizeParamLabel).filter(Boolean)));
 
   return {
@@ -1577,6 +1683,8 @@ function renderWeekTimeline() {
   const start = startOfWeek(baseDate);
   const today = todayKey();
   const labels = ["L", "M", "X", "J", "V", "S", "D"];
+  const actives = activeHabits();
+  const workHabit = actives.find((h) => isWorkHabit(h));
   $habitWeekTimeline.innerHTML = "";
   for (let i = 0; i < 7; i++) {
     const date = addDays(start, i);
@@ -1589,6 +1697,7 @@ function renderWeekTimeline() {
       if (isHabitCompletedOnDate(habit, dateKey)) completed += 1;
     });
     const percent = scheduled ? Math.round((completed / scheduled) * 100) : 0;
+    const workEntry = workHabit ? readDayMinutesAndShift(habitSessions?.[workHabit.id]?.[dateKey], true) : { shift: null, hasEntry: false };
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "habit-week-day";
@@ -1597,6 +1706,9 @@ function renderWeekTimeline() {
     const isActive = dateKey === selectedDateKey;
     if (isToday) btn.classList.add("is-today");
     if (isActive) btn.classList.add("is-active");
+    btn.classList.add(workEntry.shift === "M"
+      ? "is-work-morning"
+      : (workEntry.shift === "T" ? "is-work-evening" : (workEntry.hasEntry ? "is-work-unknown" : "is-work-free")));
     btn.innerHTML = `
       <div class="day-label">${labels[i]}</div>
       <div class="day-number"><span>${date.getDate()}</span></div>
@@ -3826,7 +3938,7 @@ function appendTimeQuickControls(tools, habit, today) {
 
   // 1) Botones predefinidos (stack)
   const qas = Array.isArray(habit.quickAdds) ? habit.quickAdds : [];
-  qas.slice(0, 2).forEach((qa) => {
+  qas.slice(0, 2).forEach((qa, idx) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "habit-quick-add habit-time-btn";
@@ -3836,7 +3948,14 @@ function appendTimeQuickControls(tools, habit, today) {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const m = Math.round(Number(qa.minutes) || 0);
-      if (m > 0) addHabitTimeSec(habit.id, today, m * 60);
+      if (m > 0) {
+        if (isWorkHabit(habit)) {
+          const inferredShift = normalizeShiftValue((qa.label || "").trim().toUpperCase()) || (idx === 0 ? "M" : "T");
+          setHabitTimeSec(habit.id, today, m * 60, { shift: inferredShift });
+        } else {
+          addHabitTimeSec(habit.id, today, m * 60);
+        }
+      }
       renderHabitsPreservingTodayUI();
     });
     col.appendChild(btn);
@@ -3844,6 +3963,10 @@ function appendTimeQuickControls(tools, habit, today) {
 
   // 2) Input + botón “＋” en una fila (pero dentro de la columna)
   const inline = document.createElement("div");
+  if (isWorkHabit(habit)) {
+    tools.appendChild(col);
+    return;
+  }
   inline.className = "habit-quick-inline";
   inline.style.display = "flex";
   inline.style.gap = "1px";

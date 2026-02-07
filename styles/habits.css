@@ -1292,6 +1292,29 @@
   color: var(--txt-soft);
 }
 
+.habit-week-day.is-work-morning .day-number {
+  background: var(--work-morning);
+}
+
+.habit-week-day.is-work-evening .day-number {
+  background: var(--work-evening);
+}
+
+.habit-week-day.is-work-free .day-number {
+  background: var(--work-free);
+}
+
+.habit-week-day.is-work-unknown .day-number {
+  background: var(--work-unknown);
+}
+
+.habit-week-day.is-work-morning .day-number::before,
+.habit-week-day.is-work-evening .day-number::before,
+.habit-week-day.is-work-free .day-number::before,
+.habit-week-day.is-work-unknown .day-number::before {
+  display: none;
+}
+
 .habit-week-day.is-active {
   border-color: rgba(var(--hclr-rgb, 127, 93, 255), 0.6);
   box-shadow: 0 0 0 1px rgba(var(--hclr-rgb, 127, 93, 255), 0.35);

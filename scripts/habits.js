@@ -97,6 +97,12 @@ let habitDetailRange = "month";
 let habitDetailDateKey = todayKey();
 let habitDetailRecordsEntries = [];
 let habitDetailRecordsPage = 1;
+let habitDetailChartMode = "bar";
+let habitDetailChartRange = "30d";
+let habitDetailMonthCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let dayDominantCache = new Map();
+let dayDetailDateKey = todayKey();
+let dayDetailFocusHabitId = null;
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
 
@@ -402,6 +408,7 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
   if (habitId !== UNKNOWN_HABIT_ID) {
     try { recomputeUnknownForDate(dateKey, true); } catch (_) {}
   }
+  invalidateDominantCache(dateKey);
 
   return nextSec;
 }
@@ -447,6 +454,7 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
   if (habitId !== UNKNOWN_HABIT_ID) {
     try { recomputeUnknownForDate(dateKey, true); } catch (_) {}
   }
+  invalidateDominantCache(dateKey);
 }
 
 
@@ -539,7 +547,7 @@ function readCache() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      habits = parsed.habits || {};
+      habits = normalizeHabitsStore(parsed.habits || {});
       habitChecks = parsed.habitChecks || {};
       habitSessions = parsed.habitSessions || {};
       habitCounts = parsed.habitCounts || {};
@@ -664,6 +672,23 @@ function saveHistoryRange() {
 
 function isSystemHabit(habit) {
   return !!habit?.system;
+}
+
+function normalizeHabitModel(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  return {
+    ...raw,
+    excludeFromDominant: !!raw.excludeFromDominant
+  };
+}
+
+function normalizeHabitsStore(raw) {
+  const next = {};
+  Object.entries(raw || {}).forEach(([id, habit]) => {
+    const normalized = normalizeHabitModel(habit);
+    if (normalized) next[id] = normalized;
+  });
+  return next;
 }
 
 function activeHabits() {
@@ -981,6 +1006,65 @@ function getHabitDayScore(habit, dateKey) {
   return { score, minutes, checked, count: 0, hasActivity: checked || minutes > 0 };
 }
 
+function invalidateDominantCache(dateKey = null) {
+  if (!dateKey) {
+    dayDominantCache.clear();
+    return;
+  }
+  dayDominantCache.delete(dateKey);
+}
+
+function getHabitDominantValue(habit, dateKey) {
+  if (!habit || habit.archived) return { value: 0, minutes: 0 };
+  const goal = habit.goal || "check";
+  if (goal === "time") {
+    const minutes = getHabitValueForDate(habit, dateKey);
+    return { value: minutes, minutes };
+  }
+  if (goal === "count") {
+    const count = getHabitValueForDate(habit, dateKey);
+    return { value: count, minutes: 0 };
+  }
+  const check = getHabitValueForDate(habit, dateKey) > 0 ? 1 : 0;
+  return { value: check, minutes: 0 };
+}
+
+function getDayDominantHabit(dateKey) {
+  if (!dateKey) return null;
+  if (dayDominantCache.has(dateKey)) return dayDominantCache.get(dateKey);
+  const ranked = activeHabits()
+    .filter((habit) => !habit.excludeFromDominant)
+    .map((habit) => {
+      const { value, minutes } = getHabitDominantValue(habit, dateKey);
+      return { habit, value, minutes };
+    })
+    .filter((item) => item.value > 0)
+    .sort((a, b) => {
+      if (b.value !== a.value) return b.value - a.value;
+      if (b.minutes !== a.minutes) return b.minutes - a.minutes;
+      const byName = (a.habit.name || "").localeCompare(b.habit.name || "", "es");
+      if (byName !== 0) return byName;
+      return String(a.habit.id || "").localeCompare(String(b.habit.id || ""), "es");
+    });
+  const winner = ranked[0] || null;
+  dayDominantCache.set(dateKey, winner);
+  return winner;
+}
+
+function getWorkHabitEntry(dateKey) {
+  const work = activeHabits().find((h) => isWorkHabit(h));
+  if (!work) return { shift: null, hasEntry: false };
+  return readDayMinutesAndShift(habitSessions?.[work.id]?.[dateKey], true);
+}
+
+function getShiftClassForDate(dateKey) {
+  const entry = getWorkHabitEntry(dateKey);
+  if (entry.shift === "M") return "is-work-morning";
+  if (entry.shift === "T") return "is-work-evening";
+  if (entry.hasEntry) return "is-work-unknown";
+  return "is-work-free";
+}
+
 
 function getAvailableYears() {
   const years = new Set([new Date().getFullYear()]);
@@ -1191,6 +1275,8 @@ const $habitDetailHeatmap = document.getElementById("habit-detail-heatmap");
 const $habitDetailChart = document.getElementById("habit-detail-chart");
 const $habitDetailChartSub = document.getElementById("habit-detail-chart-sub");
 const $habitDetailChartMeta = document.getElementById("habit-detail-chart-meta");
+const $habitDetailChartMode = document.getElementById("habit-detail-chart-mode");
+const $habitDetailChartRange = document.getElementById("habit-detail-chart-range");
 const $habitDetailRecordsSub = document.getElementById("habit-detail-records-sub");
 const $habitDetailRecords = document.getElementById("habit-detail-records");
 const $habitDetailRecordsWrap = document.getElementById("habit-detail-records-wrap");
@@ -1209,6 +1295,7 @@ const $habitId = document.getElementById("habit-id");
 const $habitName = document.getElementById("habit-name");
 const $habitEmoji = document.getElementById("habit-emoji");
 const $habitColor = document.getElementById("habit-color");
+const $habitExcludeDominant = document.getElementById("habit-exclude-dominant");
 const $habitTargetMinutes = document.getElementById("habit-target-minutes");
 const $habitTargetMinutesWrap = document.getElementById("habit-target-minutes-wrap");
 const $habitCountUnitMinutes = document.getElementById("habit-count-unit-minutes");
@@ -1265,6 +1352,14 @@ const $habitEntryCount = document.getElementById("habit-entry-count");
 const $habitEntryCountMinus = document.getElementById("habit-entry-count-minus");
 const $habitEntryCountPlus = document.getElementById("habit-entry-count-plus");
 const $habitEntrySessions = document.getElementById("habit-entry-sessions");
+
+const $habitDayDetailModal = document.getElementById("habit-day-detail-modal");
+const $habitDayDetailTitle = document.getElementById("habit-day-detail-title");
+const $habitDayDetailDate = document.getElementById("habit-day-detail-date");
+const $habitDayDetailList = document.getElementById("habit-day-detail-list");
+const $habitDayDetailClose = document.getElementById("habit-day-detail-close");
+const $habitDayDetailCancel = document.getElementById("habit-day-detail-cancel");
+const $habitDayDetailSave = document.getElementById("habit-day-detail-save");
 const $habitManualClose = document.getElementById("habit-manual-close");
 const $habitManualCancel = document.getElementById("habit-manual-cancel");
 
@@ -1316,6 +1411,7 @@ function toggleDay(habitId, dateKey) {
   }
   saveCache();
   persistHabitCheck(habitId, dateKey, !!habitChecks[habitId][dateKey]);
+  invalidateDominantCache(dateKey);
   renderHabitsPreservingTodayUI();
 }
 
@@ -1364,6 +1460,7 @@ function setHabitCount(habitId, dateKey, value) {
   }
 
   persistHabitCount(habitId, dateKey, safe > 0 ? safe : null);
+  invalidateDominantCache(dateKey);
   renderHabitsPreservingTodayUI();
 }
 
@@ -1498,6 +1595,7 @@ function openHabitModal(habit = null) {
   $habitName.value = habit ? habit.name || "" : "";
   $habitEmoji.value = habit ? habit.emoji || "" : "";
   $habitColor.value = habit && habit.color ? habit.color : DEFAULT_COLOR;
+  if ($habitExcludeDominant) $habitExcludeDominant.checked = !!(habit && habit.excludeFromDominant);
   syncHabitGroupSelect(habit?.groupId || "");
   if ($habitGroupPrivate) $habitGroupPrivate.checked = !!(habit && habit.groupPrivate);
   if ($habitGroupLowUse) $habitGroupLowUse.checked = !!(habit && habit.groupLowUse);
@@ -1601,6 +1699,7 @@ function gatherHabitPayload() {
     targetMinutes: Number.isFinite(safeTargetMinutes) && safeTargetMinutes > 0 ? safeTargetMinutes : null,
     countUnitMinutes: Number.isFinite(safeUnit) && safeUnit > 0 ? Math.round(safeUnit) : null,
     quickAdds,
+    excludeFromDominant: !!$habitExcludeDominant?.checked,
     schedule: scheduleType === "days" ? { type: "days", days } : { type: "daily", days: [] },
     createdAt: existing?.createdAt || Date.now(),
     archived: existing?.archived || false
@@ -1709,14 +1808,22 @@ function renderWeekTimeline() {
     btn.classList.add(workEntry.shift === "M"
       ? "is-work-morning"
       : (workEntry.shift === "T" ? "is-work-evening" : (workEntry.hasEntry ? "is-work-unknown" : "is-work-free")));
+    const dominant = getDayDominantHabit(dateKey);
+    if (dominant?.habit?.color) {
+      btn.style.setProperty("--dom-rgb", hexToRgbString(dominant.habit.color));
+      btn.classList.add("has-dominant");
+    }
+    const dominantMark = dominant?.habit?.emoji || (dominant?.habit?.name?.[0] || "•");
     btn.innerHTML = `
       <div class="day-label">${labels[i]}</div>
+      <div class="day-dominant" title="${dominant?.habit?.name || "Sin dominante"}">${dominant ? dominantMark : ""}</div>
       <div class="day-number"><span>${date.getDate()}</span></div>
       <div class="day-meta">${isToday ? "Hoy" : ""}</div>
     `;
     btn.addEventListener("click", () => {
       selectedDateKey = dateKey;
       renderToday();
+      openDayDetailModal(dateKey);
     });
     $habitWeekTimeline.appendChild(btn);
   }
@@ -1890,143 +1997,129 @@ function renderHabitDetailActions(habit, dateKey) {
 
 function renderHabitDetailHeatmap(habit, rangeKey) {
   if (!$habitDetailHeatmap) return;
-  const days = getHabitDetailRangeDays(rangeKey);
-  const today = new Date();
   $habitDetailHeatmap.innerHTML = "";
-  const columns = Math.max(7, Math.ceil(days / 7));
-  $habitDetailHeatmap.style.setProperty("--heatmap-cols", String(columns));
+  const cursor = new Date(habitDetailMonthCursor.getFullYear(), habitDetailMonthCursor.getMonth(), 1);
+  const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+  const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+  const offset = (monthStart.getDay() + 6) % 7;
+  const cells = [];
+  for (let i = 0; i < offset; i += 1) cells.push(null);
+  for (let d = 1; d <= monthEnd.getDate(); d += 1) cells.push(new Date(cursor.getFullYear(), cursor.getMonth(), d));
+  while (cells.length < 42) cells.push(null);
 
-  for (let i = days - 1; i >= 0; i -= 1) {
-    const date = addDays(today, -i);
+  const nav = document.createElement("div");
+  nav.className = "habit-detail-chart-controls";
+  const prev = document.createElement("button");
+  prev.type = "button"; prev.className = "habit-range-btn"; prev.textContent = "←";
+  const next = document.createElement("button");
+  next.type = "button"; next.className = "habit-range-btn"; next.textContent = "→";
+  const lbl = document.createElement("div");
+  lbl.className = "habit-detail-section-sub";
+  lbl.textContent = monthStart.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+  prev.addEventListener("click", () => { habitDetailMonthCursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1); renderHabitDetail(habit.id, rangeKey); });
+  next.addEventListener("click", () => { habitDetailMonthCursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1); renderHabitDetail(habit.id, rangeKey); });
+  nav.appendChild(prev); nav.appendChild(lbl); nav.appendChild(next);
+  $habitDetailHeatmap.appendChild(nav);
+
+  const grid = document.createElement("div");
+  grid.className = "habit-month-grid";
+  cells.forEach((date) => {
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "habit-heatmap-cell";
+    if (!date) {
+      cell.classList.add("is-out");
+      cell.disabled = true;
+      grid.appendChild(cell);
+      return;
+    }
     const key = dateKeyLocal(date);
-    const data = getHabitDayScore(habit, key);
-    const level = scoreToHeatLevel(data.score);
-    const cell = document.createElement("div");
-    cell.className = `habit-heatmap-cell heat-level-${level}`;
-    cell.title = `${key} · ${data.hasActivity ? "activo" : "sin actividad"}`;
-    $habitDetailHeatmap.appendChild(cell);
-  }
+    const score = getHabitDayScore(habit, key).score;
+    const level = scoreToHeatLevel(score);
+    cell.classList.add(`heat-level-${level}`);
+    cell.innerHTML = `<span class="month-day-num">${date.getDate()}</span><span class="month-day-dot"></span>`;
+    cell.addEventListener("click", () => openDayDetailModal(key, habit.id));
+    grid.appendChild(cell);
+  });
+  $habitDetailHeatmap.appendChild(grid);
 
   if ($habitDetailHeatmapSub) {
-    $habitDetailHeatmapSub.textContent = `Últimos ${days} días`;
+    $habitDetailHeatmapSub.textContent = "Calendario mensual";
   }
+}
+
+function buildChartPoints(habit) {
+  const goal = habit.goal || "check";
+  const today = new Date();
+  const earliest = getEarliestActivityDate();
+  let start = addDays(today, -29);
+  if (habitDetailChartRange === "90d") start = addDays(today, -89);
+  if (habitDetailChartRange === "total") start = earliest;
+  if (!start) start = addDays(today, -29);
+  const points = [];
+  for (let d = new Date(start); d <= today; d = addDays(d, 1)) {
+    const key = dateKeyLocal(d);
+    points.push({ key, value: getHabitValueForDate(habit, key) });
+  }
+  if (habitDetailChartRange === "total" && points.length > 180) {
+    const packed = [];
+    for (let i = 0; i < points.length; i += 7) {
+      const chunk = points.slice(i, i + 7);
+      packed.push({ key: chunk[chunk.length - 1].key, value: chunk.reduce((a, b) => a + b.value, 0) });
+    }
+    return { points: packed, packed: true, goal };
+  }
+  return { points, packed: false, goal };
 }
 
 function renderHabitDetailChart(habit, rangeKey) {
   if (!$habitDetailChart) return;
-  const goal = habit.goal || "check";
-  const days = getHabitDetailChartDays(rangeKey);
-  const today = new Date();
-  const values = [];
-  let total = 0;
-
-  for (let i = days - 1; i >= 0; i -= 1) {
-    const date = addDays(today, -i);
-    const key = dateKeyLocal(date);
-    const value = getHabitValueForDate(habit, key);
-    values.push({ key, value });
-    total += value;
-  }
-
-  let maxValue = Math.max(0, ...values.map((item) => item.value));
-  if (maxValue <= 0) maxValue = 1;
+  const { points, packed, goal } = buildChartPoints(habit);
+  let maxValue = Math.max(1, ...points.map((p) => p.value));
   const scaleMax = maxValue * 1.08;
+  const formatTick = (value) => goal === "time" ? formatMinutes(Math.round(value)) : (goal === "count" ? `${Math.round(value)}×` : String(Math.round(value)));
+
   $habitDetailChart.innerHTML = "";
-  const formatTick = (value) => {
-    if (goal === "time") return formatMinutes(Math.round(value));
-    if (goal === "count") return `${Math.round(value)}×`;
-    return String(Math.round(value));
-  };
+  const axis = document.createElement("div"); axis.className = "habit-detail-chart-axis";
+  [scaleMax, scaleMax / 2, 0].forEach((tick) => { const t = document.createElement("span"); t.textContent = formatTick(tick); axis.appendChild(t); });
+  const barsWrap = document.createElement("div"); barsWrap.className = "habit-detail-chart-bars";
 
-  const axis = document.createElement("div");
-  axis.className = "habit-detail-chart-axis";
-  const half = scaleMax / 2;
-  const ticks = [scaleMax, half, 0];
-  ticks.forEach((tick) => {
-    const tickEl = document.createElement("span");
-    tickEl.textContent = formatTick(tick);
-    axis.appendChild(tickEl);
-  });
-
-  const barsWrap = document.createElement("div");
-  barsWrap.className = "habit-detail-chart-bars";
-  const clearActiveBars = () => {
-    barsWrap.querySelectorAll(".habit-detail-bar.is-active").forEach((bar) => {
-      bar.classList.remove("is-active");
+  if (habitDetailChartMode === "line") {
+    const line = document.createElement("div");
+    line.className = "habit-detail-line";
+    points.forEach((item) => {
+      const dot = document.createElement("button");
+      dot.type = "button";
+      dot.className = "habit-detail-line-dot";
+      dot.style.setProperty("--h", String((item.value / scaleMax) * 100));
+      dot.title = `${item.key} · ${formatTick(item.value)}`;
+      dot.addEventListener("click", () => openDayDetailModal(item.key, habit.id));
+      line.appendChild(dot);
     });
-  };
-
-  values.forEach((item) => {
-    const barItem = document.createElement("div");
-    barItem.className = "habit-detail-bar-item";
-    const plot = document.createElement("div");
-    plot.className = "habit-detail-bar-plot";
-    const bar = document.createElement("button");
-    bar.type = "button";
-    const heightPct = scaleMax ? (item.value / scaleMax) * 100 : 0;
-    bar.className = `habit-detail-bar${item.value ? "" : " is-empty"}`;
-    bar.style.setProperty("--h", Math.max(0, heightPct).toFixed(2));
-    const formattedValue = formatTick(item.value);
-    const labelValue = goal === "check"
-      ? (item.value ? "✓" : "—")
-      : formattedValue;
-    bar.title = `${item.key} · ${labelValue}`;
-    bar.setAttribute("aria-label", `${item.key} · ${labelValue}`);
-    bar.addEventListener("click", () => {
-      clearActiveBars();
-      bar.classList.add("is-active");
-    });
-    const tooltip = document.createElement("div");
-    tooltip.className = "habit-detail-bar-tooltip";
-    tooltip.textContent = labelValue;
-    bar.appendChild(tooltip);
-    const label = document.createElement("div");
-    label.className = "habit-detail-bar-label";
-    const labelDate = parseDateKey(item.key);
-    label.textContent = labelDate ? String(labelDate.getDate()) : "—";
-    plot.appendChild(bar);
-    barItem.appendChild(plot);
-    barItem.appendChild(label);
-    barsWrap.appendChild(barItem);
-  });
-
-  if (values.length) {
-    const maxItem = values.reduce((acc, item) => (item.value > acc.value ? item : acc), values[0]);
-    const maxHeightPct = scaleMax ? (maxItem.value / scaleMax) * 100 : 0;
-    console.debug("[habit-detail chart]", {
-      values: values.map((item) => item.value),
-      maxVal: maxValue,
-      scaleMax,
-      sampleH: `${Math.max(0, maxHeightPct).toFixed(2)}%`
+    barsWrap.appendChild(line);
+  } else {
+    points.forEach((item) => {
+      const barItem = document.createElement("div"); barItem.className = "habit-detail-bar-item";
+      const plot = document.createElement("div"); plot.className = "habit-detail-bar-plot";
+      const bar = document.createElement("button");
+      bar.type = "button";
+      bar.className = `habit-detail-bar${item.value ? "" : " is-empty"}`;
+      bar.style.setProperty("--h", Math.max(0, (item.value / scaleMax) * 100).toFixed(2));
+      bar.title = `${item.key} · ${formatTick(item.value)}`;
+      bar.addEventListener("click", () => openDayDetailModal(item.key, habit.id));
+      plot.appendChild(bar);
+      const label = document.createElement("div"); label.className = "habit-detail-bar-label";
+      label.textContent = parseDateKey(item.key)?.getDate?.() ? String(parseDateKey(item.key).getDate()) : "—";
+      barItem.appendChild(plot); barItem.appendChild(label); barsWrap.appendChild(barItem);
     });
   }
 
   $habitDetailChart.appendChild(axis);
   $habitDetailChart.appendChild(barsWrap);
+  barsWrap.scrollLeft = barsWrap.scrollWidth;
 
-  if ($habitDetailChartSub) {
-    $habitDetailChartSub.textContent = `Últimos ${days} días`;
-  }
-
-  if ($habitDetailChartMeta) {
-    const weekStart = addDays(today, -6);
-    const weekTotal = getHabitMetricForRange(habit, weekStart, endOfDay(today), goal === "time" ? "time" : "count");
-    const avgWeeks = days / 7;
-    const avgLabel = goal === "time"
-      ? `Promedio semanal: ${formatMinutes(Math.round(total / avgWeeks))}`
-      : `Promedio semanal: ${(total / avgWeeks).toFixed(1)}×`;
-    const { start, end } = getHabitDetailRangeBounds(rangeKey);
-    const totalRangeValue = getHabitMetricForRange(habit, start, end, goal === "time" ? "time" : "count");
-    const totalLabel = goal === "time"
-      ? `Total rango: ${formatMinutes(Math.round(totalRangeValue))}`
-      : `Total rango: ${Math.round(totalRangeValue)}×`;
-    const weekLabel = goal === "time" ? `Total semanal: ${formatMinutes(Math.round(weekTotal))}` : `Total semanal: ${Math.round(weekTotal)}×`;
-    $habitDetailChartMeta.innerHTML = `
-      <span>${avgLabel}</span>
-      <span>${weekLabel}</span>
-      <span>${totalLabel}</span>
-    `;
-  }
+  if ($habitDetailChartSub) $habitDetailChartSub.textContent = `Rango ${habitDetailChartRange.toUpperCase()}`;
+  if ($habitDetailChartMeta) $habitDetailChartMeta.textContent = packed ? "Total agrupado por semanas para rendimiento" : "";
 }
 
 function clearHabitEntry(habit, dateKey) {
@@ -3170,6 +3263,48 @@ function isHabitBudgetCompleted(habit) {
   return progress.target > 0 && progress.value >= progress.target;
 }
 
+function buildHistoryMonthCalendar() {
+  const wrap = document.createElement("section");
+  wrap.className = "habits-history-section";
+  const header = document.createElement("div");
+  header.className = "habits-history-section-header";
+  header.innerHTML = '<div class="habits-history-section-title">Calendario mensual</div>';
+  const body = document.createElement("div");
+  body.className = "habits-history-section-body";
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const offset = (start.getDay() + 6) % 7;
+  const grid = document.createElement("div");
+  grid.className = "habit-month-grid";
+  for (let i = 0; i < offset; i += 1) {
+    const empty = document.createElement("div");
+    empty.className = "habit-heatmap-cell is-out";
+    grid.appendChild(empty);
+  }
+  for (let d = 1; d <= end.getDate(); d += 1) {
+    const date = new Date(now.getFullYear(), now.getMonth(), d);
+    const key = dateKeyLocal(date);
+    const shiftClass = getShiftClassForDate(key);
+    const dominant = getDayDominantHabit(key);
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = `habit-heatmap-cell ${shiftClass}`;
+    cell.innerHTML = `<span class="month-day-num">${d}</span><span class="month-day-emoji">${dominant?.habit?.emoji || ""}</span>`;
+    cell.addEventListener("click", () => openDayDetailModal(key));
+    grid.appendChild(cell);
+  }
+  while (grid.children.length < 42) {
+    const empty = document.createElement("div");
+    empty.className = "habit-heatmap-cell is-out";
+    grid.appendChild(empty);
+  }
+  body.appendChild(grid);
+  wrap.appendChild(header);
+  wrap.appendChild(body);
+  return wrap;
+}
+
 function renderHistory() {
   $habitHistoryList.innerHTML = "";
 
@@ -3217,6 +3352,7 @@ function renderHistory() {
 
   const insights = document.createElement("div");
   insights.className = "habits-history-insights";
+  insights.appendChild(buildHistoryMonthCalendar());
 
   const trendSection = createHistorySection("Tendencia mensual");
   const trendControls = document.createElement("div");
@@ -5749,6 +5885,113 @@ function renderEntrySessions(habitId, dateKey) {
   $habitEntrySessions.appendChild(row);
 }
 
+function openDayDetailModal(dateKey = todayKey(), focusHabitId = null) {
+  if (!$habitDayDetailModal) return;
+  dayDetailDateKey = dateKey || todayKey();
+  dayDetailFocusHabitId = focusHabitId || null;
+  if ($habitDayDetailTitle) $habitDayDetailTitle.textContent = "Detalle del día";
+  if ($habitDayDetailDate) $habitDayDetailDate.textContent = formatShortDate(dayDetailDateKey, true);
+  renderDayDetailModal();
+  $habitDayDetailModal.classList.remove("hidden");
+}
+
+function closeDayDetailModal() {
+  $habitDayDetailModal?.classList.add("hidden");
+}
+
+function renderDayDetailModal() {
+  if (!$habitDayDetailList) return;
+  $habitDayDetailList.innerHTML = "";
+  const list = activeHabits()
+    .slice()
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+    .filter((h) => !dayDetailFocusHabitId || h.id === dayDetailFocusHabitId);
+  list.forEach((habit) => {
+    const row = document.createElement("div");
+    row.className = "habit-entry-session-row";
+    const label = document.createElement("div");
+    label.className = "habit-entry-session-label";
+    label.textContent = `${habit.emoji || "🏷️"} ${habit.name}`;
+    row.appendChild(label);
+    const goal = habit.goal || "check";
+    if (goal === "time") {
+      const minutes = Math.round(getHabitTotalSecForDate(habit.id, dayDetailDateKey) / 60);
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "0";
+      input.className = "habit-entry-minutes";
+      input.value = String(minutes || 0);
+      input.dataset.habitId = habit.id;
+      input.dataset.kind = "time";
+      row.appendChild(input);
+      if (isWorkHabit(habit)) {
+        const shift = document.createElement("select");
+        shift.className = "habits-history-select";
+        shift.dataset.habitId = habit.id;
+        shift.dataset.kind = "shift";
+        const currentShift = normalizeShiftValue(readDayMinutesAndShift(habitSessions?.[habit.id]?.[dayDetailDateKey], true).shift) || "";
+        shift.innerHTML = '<option value="">Sin shift</option><option value="M">M</option><option value="T">T</option>';
+        shift.value = currentShift;
+        row.appendChild(shift);
+      }
+    } else if (goal === "count") {
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "0";
+      input.className = "habit-entry-minutes";
+      input.value = String(getHabitCount(habit.id, dayDetailDateKey) || 0);
+      input.dataset.habitId = habit.id;
+      input.dataset.kind = "count";
+      row.appendChild(input);
+    } else {
+      const check = document.createElement("input");
+      check.type = "checkbox";
+      check.checked = !!(habitChecks?.[habit.id]?.[dayDetailDateKey]);
+      check.dataset.habitId = habit.id;
+      check.dataset.kind = "check";
+      row.appendChild(check);
+    }
+    $habitDayDetailList.appendChild(row);
+  });
+}
+
+function saveDayDetailModal() {
+  if (!$habitDayDetailList) return;
+  const rows = Array.from($habitDayDetailList.querySelectorAll("[data-habit-id]"));
+  const grouped = new Map();
+  rows.forEach((el) => {
+    const id = el.dataset.habitId;
+    if (!grouped.has(id)) grouped.set(id, []);
+    grouped.get(id).push(el);
+  });
+  grouped.forEach((controls, habitId) => {
+    const habit = habits[habitId];
+    if (!habit || habit.archived) return;
+    const goal = habit.goal || "check";
+    if (goal === "time") {
+      const input = controls.find((el) => el.dataset.kind === "time");
+      const shiftEl = controls.find((el) => el.dataset.kind === "shift");
+      const minutes = Math.max(0, Number(input?.value || 0));
+      const shift = shiftEl ? normalizeShiftValue(shiftEl.value) : undefined;
+      setHabitTimeSec(habitId, dayDetailDateKey, Math.round(minutes * 60), { shift });
+    } else if (goal === "count") {
+      const input = controls.find((el) => el.dataset.kind === "count");
+      setHabitCount(habitId, dayDetailDateKey, Math.max(0, Number(input?.value || 0)));
+    } else {
+      const check = controls.find((el) => el.dataset.kind === "check");
+      const checked = !!check?.checked;
+      if (!habitChecks[habitId]) habitChecks[habitId] = {};
+      if (checked) habitChecks[habitId][dayDetailDateKey] = true;
+      else delete habitChecks[habitId][dayDetailDateKey];
+      saveCache();
+      persistHabitCheck(habitId, dayDetailDateKey, checked ? true : null);
+      invalidateDominantCache(dayDetailDateKey);
+    }
+  });
+  closeDayDetailModal();
+  renderHabitsPreservingTodayUI();
+}
+
 function handleEntrySubmit(e) {
   e.preventDefault();
   if (!$habitEntryHabit || !$habitEntryDate) return;
@@ -5819,6 +6062,26 @@ function bindEvents() {
       habitDetailRange = range;
       if (habitDetailId) renderHabitDetail(habitDetailId, range);
     });
+  });
+  $habitDetailChartMode?.querySelectorAll("[data-mode]")?.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      habitDetailChartMode = btn.dataset.mode || "bar";
+      $habitDetailChartMode.querySelectorAll("[data-mode]").forEach((b) => b.classList.toggle("is-active", b === btn));
+      if (habitDetailId) renderHabitDetail(habitDetailId, habitDetailRange);
+    });
+  });
+  $habitDetailChartRange?.querySelectorAll("[data-chart-range]")?.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      habitDetailChartRange = btn.dataset.chartRange || "30d";
+      $habitDetailChartRange.querySelectorAll("[data-chart-range]").forEach((b) => b.classList.toggle("is-active", b === btn));
+      if (habitDetailId) renderHabitDetail(habitDetailId, habitDetailRange);
+    });
+  });
+  $habitDayDetailClose?.addEventListener("click", closeDayDetailModal);
+  $habitDayDetailCancel?.addEventListener("click", closeDayDetailModal);
+  $habitDayDetailSave?.addEventListener("click", saveDayDetailModal);
+  $habitDayDetailModal?.addEventListener("click", (event) => {
+    if (event.target === $habitDayDetailModal) closeDayDetailModal();
   });
 
   document.addEventListener("keydown", (event) => {
@@ -6049,7 +6312,8 @@ function listenRemote() {
   const rerender = () => renderHabitsPreservingTodayUI();
 
   onValue(ref(db, HABITS_PATH), (snap) => {
-    habits = snap.val() || {};
+    habits = normalizeHabitsStore(snap.val() || {});
+    invalidateDominantCache();
     ensureUnknownHabit(true);
     if (_pendingShortcutCmd) {
       try {
@@ -6077,12 +6341,14 @@ function listenRemote() {
 
   onValue(ref(db, HABIT_CHECKS_PATH), (snap) => {
     habitChecks = snap.val() || {};
+    invalidateDominantCache();
     saveCache();
     rerender();
   });
 
   onValue(ref(db, HABIT_COUNTS_PATH), (snap) => {
     habitCounts = snap.val() || {};
+    invalidateDominantCache();
     saveCache();
     rerender();
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
@@ -6093,6 +6359,7 @@ function listenRemote() {
     const raw = snap.val() || {};
     const norm = normalizeSessionsStore(raw, true);
     habitSessions = norm.normalized;
+    invalidateDominantCache();
     saveCache();
     rerender();
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}

@@ -1123,7 +1123,7 @@
 </div>
 <section class="habit-detail-section">
 <div class="habit-detail-section-head">
-<div class="habit-detail-section-title">Heatmap</div>
+<div class="habit-detail-section-title">Calendario</div>
 <div class="habit-detail-section-sub" id="habit-detail-heatmap-sub">—</div>
 </div>
 <div class="habit-detail-heatmap" id="habit-detail-heatmap"></div>
@@ -1132,6 +1132,17 @@
 <div class="habit-detail-section-head">
 <div class="habit-detail-section-title">Evolución</div>
 <div class="habit-detail-section-sub" id="habit-detail-chart-sub">—</div>
+</div>
+<div class="habit-detail-chart-controls">
+<div class="habit-range-toggle" id="habit-detail-chart-mode" role="group" aria-label="Tipo de gráfico">
+<button class="habit-range-btn is-active" data-mode="bar" type="button">Barras</button>
+<button class="habit-range-btn" data-mode="line" type="button">Línea</button>
+</div>
+<div class="habit-range-toggle" id="habit-detail-chart-range" role="group" aria-label="Rango del gráfico">
+<button class="habit-range-btn is-active" data-chart-range="30d" type="button">30d</button>
+<button class="habit-range-btn" data-chart-range="90d" type="button">90d</button>
+<button class="habit-range-btn" data-chart-range="total" type="button">Total</button>
+</div>
 </div>
 <div class="habit-detail-chart" id="habit-detail-chart"></div>
 <div class="habit-detail-chart-meta" id="habit-detail-chart-meta"></div>
@@ -2342,6 +2353,10 @@ Crear “<span id="gym-create-cta-text"></span>”
           <span class="field-label">Color</span>
           <input id="habit-color" type="color" value="#7f5dff"/>
           </label>
+          <label class="field field-inline-toggle">
+            <span class="field-label">Excluir de “dominante del día”</span>
+            <input id="habit-exclude-dominant" type="checkbox"/>
+          </label>
 
           <label class="field">
             <span class="field-label">Grupo</span>
@@ -2592,6 +2607,27 @@ Crear “<span id="gym-create-cta-text"></span>”
 <button class="btn primary" type="submit">Guardar</button>
 </div>
 </form>
+</div>
+</div>
+
+<!-- MODAL DETALLE DEL DÍA -->
+<div class="modal-backdrop hidden" id="habit-day-detail-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="habit-day-detail-title">Detalle del día</div>
+<button class="icon-btn" id="habit-day-detail-close">✕</button>
+</div>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title" id="habit-day-detail-date">—</div>
+<div id="habit-day-detail-list"></div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-day-detail-cancel" type="button">Cerrar</button>
+<button class="btn primary" id="habit-day-detail-save" type="button">Guardar</button>
+</div>
 </div>
 </div>
 <!-- CONFIRMAR ELIMINACIÓN HÁBITO -->

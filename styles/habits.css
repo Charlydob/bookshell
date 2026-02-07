@@ -2865,12 +2865,13 @@ display: grid;
   place-items: center;
   border-radius: 999px;
   z-index: 0;
+  bottom: 4px;
 }
 
 .history-month-cell.has-dominant .month-day-emoji::before{
   content:"";
   position:absolute;
-  inset:-60px;                 /* tamaño del halo */
+  inset:-8px;                 /* tamaño del halo */
   border-radius: inherit;
   background: radial-gradient(
     circle,
@@ -2888,12 +2889,12 @@ display: grid;
 .history-month-cell.has-dominant .month-day-emoji::after{
   content:"";
   position:absolute;
-  inset:-20px;                  /* anillo fino */
+  inset:2px;                  /* anillo fino */
   border-radius: inherit;
   box-shadow:
-    0 0 0 1px rgba(var(--dom-rgb), .70),
-    0 0 10px rgba(var(--dom-rgb), .00);
-  opacity: .9;
+    0 0 0 1px rgba(var(--dom-rgb), .0),
+    0 0 10px rgba(var(--dom-rgb), .90);
+  opacity: .79;
   z-index: -1;
   pointer-events: none;
 }

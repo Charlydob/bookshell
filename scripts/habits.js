@@ -3476,29 +3476,43 @@ function renderHistoryMonthGrid(year, month, grid) {
   const start = new Date(year, month, 1);
   const end = new Date(year, month + 1, 0);
   const offset = (start.getDay() + 6) % 7;
+
   for (let i = 0; i < offset; i += 1) {
     const empty = document.createElement("div");
     empty.className = "history-month-cell is-out";
     grid.appendChild(empty);
   }
+
   for (let d = 1; d <= end.getDate(); d += 1) {
     const date = new Date(year, month, d);
     const key = dateKeyLocal(date);
     const shiftClass = getShiftClassForDate(key);
     const dominant = getDayDominantHabit(key);
+
     const cell = document.createElement("button");
     cell.type = "button";
     cell.className = `history-month-cell ${shiftClass}`;
-    cell.innerHTML = `<span class="month-day-num">${d}</span><span class="month-day-emoji">${dominant?.habit?.emoji || ""}</span>`;
+
+    if (dominant?.habit?.color) {
+      cell.style.setProperty("--dom-rgb", hexToRgbString(dominant.habit.color));
+      cell.classList.add("has-dominant");
+    }
+
+    cell.innerHTML =
+      `<span class="month-day-num">${d}</span>` +
+      `<span class="month-day-emoji">${dominant?.habit?.emoji || ""}</span>`;
+
     cell.addEventListener("click", () => openDayDetailModal(key));
     grid.appendChild(cell);
   }
+
   while (grid.children.length < 42) {
     const empty = document.createElement("div");
     empty.className = "history-month-cell is-out";
     grid.appendChild(empty);
   }
 }
+
 
 function buildHistoryMonthCalendar(anchorDate = new Date()) {
   normalizeHistoryMonthState(anchorDate);

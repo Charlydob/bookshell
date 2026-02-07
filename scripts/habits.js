@@ -107,6 +107,61 @@ let dayDetailDateKey = todayKey();
 let dayDetailFocusHabitId = null;
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
+const DEBUG_HABITS_SYNC = (() => {
+  try {
+    return !!(window.__bookshellDebugHabitsSync || localStorage.getItem("bookshell.debug.habitsSync") === "1");
+  } catch (_) {
+    return !!window.__bookshellDebugHabitsSync;
+  }
+})();
+const pendingSessionWrites = new Map();
+
+function debugHabitsSync(...args) {
+  if (!DEBUG_HABITS_SYNC) return;
+  console.log("[habits:sync]", ...args);
+}
+
+function buildWorkDayPayload(minutes, shift) {
+  const payload = { min: Math.max(0, Math.round(Number(minutes) || 0)) };
+  payload.totalSec = payload.min * 60;
+  const normalizedShift = normalizeShiftValue(shift);
+  if (normalizedShift) payload.shift = normalizedShift;
+  return payload;
+}
+
+function sessionWriteKey(habitId, dateKey) {
+  return `${habitId || ""}::${dateKey || ""}`;
+}
+
+function queuePendingSessionWrite(habitId, dateKey, value) {
+  const key = sessionWriteKey(habitId, dateKey);
+  pendingSessionWrites.set(key, { habitId, dateKey, value, ts: Date.now() });
+}
+
+function applyPendingSessionWrites(snapshotValue) {
+  const now = Date.now();
+  pendingSessionWrites.forEach((entry, key) => {
+    if (!entry?.habitId || !entry?.dateKey) {
+      pendingSessionWrites.delete(key);
+      return;
+    }
+    if (now - entry.ts > 15000) {
+      debugHabitsSync("pending write expired", entry);
+      pendingSessionWrites.delete(key);
+      return;
+    }
+    const current = snapshotValue?.[entry.habitId]?.[entry.dateKey];
+    const currentJson = JSON.stringify(current ?? null);
+    const pendingJson = JSON.stringify(entry.value ?? null);
+    if (currentJson === pendingJson) {
+      pendingSessionWrites.delete(key);
+      return;
+    }
+    if (!snapshotValue[entry.habitId] || typeof snapshotValue[entry.habitId] !== "object") snapshotValue[entry.habitId] = {};
+    snapshotValue[entry.habitId][entry.dateKey] = entry.value;
+    debugHabitsSync("applied pending overlay", entry);
+  });
+}
 
 // Utilidades fecha
 function dateKeyLocal(date) {
@@ -350,6 +405,7 @@ function normalizeSessionsStore(raw, persistRemote = false) {
   const normalized = totals;
 
   if (persistRemote && changed) {
+    debugHabitsSync("normalizeSessionsStore persistRemote", normalized);
     try {
       set(ref(db, HABIT_SESSIONS_PATH), normalized);
     } catch (err) {
@@ -357,6 +413,7 @@ function normalizeSessionsStore(raw, persistRemote = false) {
     }
   }
 
+  if (changed) debugHabitsSync("normalizeSessionsStore changed", { raw, normalized });
   return { normalized, changed };
 }
 
@@ -406,20 +463,33 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
   const shift = normalizeShiftValue(options?.shift) || day.shift;
 
   if (isWork) {
-    const payload = { min: nextMinutes };
-    if (shift) payload.shift = shift;
+    const payload = buildWorkDayPayload(nextMinutes, shift);
     habitSessions[habitId][dateKey] = payload;
+    queuePendingSessionWrite(habitId, dateKey, payload);
+    debugHabitsSync("write:add work", { habitId, dateKey, payload, dayRaw });
     saveCache();
     try {
-      set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), payload);
+      set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), payload)
+        .then(() => debugHabitsSync("write:add work ok", { habitId, dateKey, payload }))
+        .catch((err) => {
+          debugHabitsSync("write:add work fail", { habitId, dateKey, err: String(err) });
+          console.warn("No se pudo guardar tiempo en remoto", err);
+        });
     } catch (err) {
       console.warn("No se pudo guardar tiempo en remoto", err);
     }
   } else {
     habitSessions[habitId][dateKey] = nextSec;
+    queuePendingSessionWrite(habitId, dateKey, nextSec);
+    debugHabitsSync("write:add", { habitId, dateKey, nextSec, dayRaw });
     saveCache();
     try {
-      set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), nextSec);
+      set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), nextSec)
+        .then(() => debugHabitsSync("write:add ok", { habitId, dateKey, nextSec }))
+        .catch((err) => {
+          debugHabitsSync("write:add fail", { habitId, dateKey, err: String(err) });
+          console.warn("No se pudo guardar tiempo en remoto", err);
+        });
     } catch (err) {
       console.warn("No se pudo guardar tiempo en remoto", err);
     }
@@ -447,26 +517,28 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
     ? normalizeShiftValue(options.shift)
     : existing.shift;
 
+  let payloadToWrite = sec > 0 ? sec : null;
   if (sec > 0) {
     if (isWork) {
-      const payload = { min: Math.round(sec / 60) };
-      if (shiftOpt) payload.shift = shiftOpt;
-      habitSessions[habitId][dateKey] = payload;
+      payloadToWrite = buildWorkDayPayload(Math.round(sec / 60), shiftOpt);
+      habitSessions[habitId][dateKey] = payloadToWrite;
     } else {
       habitSessions[habitId][dateKey] = sec;
     }
   } else {
     delete habitSessions[habitId][dateKey];
   }
+
+  queuePendingSessionWrite(habitId, dateKey, payloadToWrite);
+  debugHabitsSync("write:set", { habitId, dateKey, sec, shiftOpt, payload: payloadToWrite });
   saveCache();
   try {
-    if (sec > 0 && isWork) {
-      const payload = { min: Math.round(sec / 60) };
-      if (shiftOpt) payload.shift = shiftOpt;
-      set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), payload);
-    } else {
-      set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), sec > 0 ? sec : null);
-    }
+    set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), payloadToWrite)
+      .then(() => debugHabitsSync("write:set ok", { habitId, dateKey, payload: payloadToWrite }))
+      .catch((err) => {
+        debugHabitsSync("write:set fail", { habitId, dateKey, err: String(err) });
+        console.warn("No se pudo actualizar tiempo en remoto", err);
+      });
   } catch (err) {
     console.warn("No se pudo actualizar tiempo en remoto", err);
   }
@@ -4222,7 +4294,9 @@ function appendTimeQuickControls(tools, habit, today) {
       if (m > 0) {
         if (isWorkHabit(habit)) {
           const inferredShift = normalizeShiftValue((qa.label || "").trim().toUpperCase()) || (idx === 0 ? "M" : "T");
-          setHabitTimeSec(habit.id, today, m * 60, { shift: inferredShift });
+          const fixedMinutes = 480;
+          debugHabitsSync("quick shift click", { habitId: habit.id, dateKey: today, shift: inferredShift, fixedMinutes });
+          setHabitTimeSec(habit.id, today, fixedMinutes * 60, { shift: inferredShift });
         } else {
           addHabitTimeSec(habit.id, today, m * 60);
         }
@@ -6676,8 +6750,11 @@ function listenRemote() {
 
   onValue(ref(db, HABIT_SESSIONS_PATH), (snap) => {
     const raw = snap.val() || {};
+    debugHabitsSync("onValue:habitSessions raw", raw);
+    applyPendingSessionWrites(raw);
     const norm = normalizeSessionsStore(raw, true);
     habitSessions = norm.normalized;
+    debugHabitsSync("onValue:habitSessions normalized", habitSessions);
     invalidateDominantCache();
     saveCache();
     rerender();

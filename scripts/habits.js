@@ -143,6 +143,12 @@ function buildWorkDayPayload(minutes, shift) {
   return payload;
 }
 
+function warnShiftLostWrite({ habitId, dateKey, payload, options, prevShift }) {
+  const nextShift = normalizeShiftValue(payload?.shift);
+  if (!prevShift || nextShift) return;
+  console.warn("[SHIFT LOST WRITE]", { habitId, dateKey, payload, options });
+}
+
 function sessionWriteKey(habitId, dateKey) {
   return `${habitId || ""}::${dateKey || ""}`;
 }
@@ -363,11 +369,21 @@ function normalizeSessionsStore(raw, persistRemote = false) {
   const totals = {};
   let changed = false;
 
-  const add = (habitId, dateKey, sec) => {
+  const add = (habitId, dateKey, sec, options = {}) => {
     if (!habitId || !dateKey) return;
+    const habit = habits?.[habitId];
+    const isWork = isWorkHabit(habit);
+    const shift = normalizeShiftValue(options?.shift);
     const n = Number(sec) || 0;
     if (n <= 0) return;
     if (!totals[habitId]) totals[habitId] = {};
+    if (isWork) {
+      const current = readDayMinutesAndShift(totals[habitId][dateKey], true);
+      const nextMinutes = current.minutes + Math.round(n / 60);
+      const nextShift = shift || current.shift;
+      totals[habitId][dateKey] = buildWorkDayPayload(nextMinutes, nextShift);
+      return;
+    }
     totals[habitId][dateKey] = (Number(totals[habitId][dateKey]) || 0) + n;
   };
 
@@ -392,23 +408,21 @@ function normalizeSessionsStore(raw, persistRemote = false) {
         return;
       }
       if (val && typeof val === "object") {
+        const habit = habits?.[habitId];
+        const isWork = isWorkHabit(habit);
         const shift = normalizeShiftValue(val.shift);
         const min = Number(val.min);
         if (Number.isFinite(min) && min > 0) {
           if (!totals[habitId]) totals[habitId] = {};
           const roundedMin = Math.round(min);
-          totals[habitId][dateKey] = shift
-            ? { min: roundedMin, shift }
-            : { min: roundedMin };
+          totals[habitId][dateKey] = isWork
+            ? buildWorkDayPayload(roundedMin, shift)
+            : Math.round(roundedMin * 60);
           return;
         }
         const sec = Number(val.totalSec) || 0;
         if (sec > 0) {
-          if (!totals[habitId]) totals[habitId] = {};
-          const roundedMin = Math.round(sec / 60);
-          totals[habitId][dateKey] = shift
-            ? { min: roundedMin, shift }
-            : sec;
+          add(habitId, dateKey, sec, { shift });
         }
         changed = true;
       } else {
@@ -478,6 +492,7 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
 
   if (isWork) {
     const payload = buildWorkDayPayload(nextMinutes, shift);
+    warnShiftLostWrite({ habitId, dateKey, payload, options, prevShift: day.shift });
     habitSessions[habitId][dateKey] = payload;
     queuePendingSessionWrite(habitId, dateKey, payload);
     debugHabitsSync("write:add work", { habitId, dateKey, payload, dayRaw });
@@ -527,14 +542,15 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
 
   const isWork = isWorkHabit(habit);
   const existing = readDayMinutesAndShift(habitSessions[habitId][dateKey], isWork);
-  const shiftOpt = Object.prototype.hasOwnProperty.call(options || {}, "shift")
-    ? normalizeShiftValue(options.shift)
-    : existing.shift;
+  const hasShiftOption = Object.prototype.hasOwnProperty.call(options || {}, "shift");
+  const shiftFromOptions = hasShiftOption ? normalizeShiftValue(options.shift) : null;
+  const shiftOpt = shiftFromOptions || existing.shift;
 
   let payloadToWrite = sec > 0 ? sec : null;
   if (sec > 0) {
     if (isWork) {
       payloadToWrite = buildWorkDayPayload(Math.round(sec / 60), shiftOpt);
+      warnShiftLostWrite({ habitId, dateKey, payload: payloadToWrite, options, prevShift: existing.shift });
       habitSessions[habitId][dateKey] = payloadToWrite;
     } else {
       habitSessions[habitId][dateKey] = sec;

@@ -10,7 +10,8 @@ import {
   getDatabase,
   ref,
   onValue,
-  set
+  set,
+  get
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 const firebaseConfig = {
@@ -382,17 +383,19 @@ function normalizeSessionsStore(raw, persistRemote = false) {
         const min = Number(val.min);
         if (Number.isFinite(min) && min > 0) {
           if (!totals[habitId]) totals[habitId] = {};
-          totals[habitId][dateKey] = shift ? { min: Math.round(min), shift } : { min: Math.round(min) };
+          const roundedMin = Math.round(min);
+          totals[habitId][dateKey] = shift
+            ? { min: roundedMin, shift }
+            : { min: roundedMin };
           return;
         }
         const sec = Number(val.totalSec) || 0;
         if (sec > 0) {
           if (!totals[habitId]) totals[habitId] = {};
-          if (shift && isWorkHabit(habits?.[habitId])) {
-            totals[habitId][dateKey] = { min: Math.round(sec / 60), shift };
-          } else {
-            totals[habitId][dateKey] = sec;
-          }
+          const roundedMin = Math.round(sec / 60);
+          totals[habitId][dateKey] = shift
+            ? { min: roundedMin, shift }
+            : sec;
         }
         changed = true;
       } else {
@@ -405,12 +408,10 @@ function normalizeSessionsStore(raw, persistRemote = false) {
   const normalized = totals;
 
   if (persistRemote && changed) {
-    debugHabitsSync("normalizeSessionsStore persistRemote", normalized);
-    try {
-      set(ref(db, HABIT_SESSIONS_PATH), normalized);
-    } catch (err) {
-      console.warn("No se pudo migrar/normalizar sesiones en remoto", err);
-    }
+    debugHabitsSync("normalizeSessionsStore persistRemote skipped root overwrite", {
+      reason: "avoid replacing full history tree",
+      normalized
+    });
   }
 
   if (changed) debugHabitsSync("normalizeSessionsStore changed", { raw, normalized });
@@ -533,8 +534,20 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
   debugHabitsSync("write:set", { habitId, dateKey, sec, shiftOpt, payload: payloadToWrite });
   saveCache();
   try {
-    set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), payloadToWrite)
-      .then(() => debugHabitsSync("write:set ok", { habitId, dateKey, payload: payloadToWrite }))
+    const path = `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`;
+    console.info("[work-shift-debug] write:set path", path, payloadToWrite);
+    set(ref(db, path), payloadToWrite)
+      .then(async () => {
+        debugHabitsSync("write:set ok", { habitId, dateKey, payload: payloadToWrite });
+        try {
+          const parentPath = `${HABIT_SESSIONS_PATH}/${habitId}`;
+          const parentSnap = await get(ref(db, parentPath));
+          const allDays = Object.keys(parentSnap.val() || {}).sort();
+          console.info("[work-shift-debug] post-write days", { parentPath, updatedDate: dateKey, allDays });
+        } catch (snapshotErr) {
+          console.warn("[work-shift-debug] post-write snapshot failed", snapshotErr);
+        }
+      })
       .catch((err) => {
         debugHabitsSync("write:set fail", { habitId, dateKey, err: String(err) });
         console.warn("No se pudo actualizar tiempo en remoto", err);

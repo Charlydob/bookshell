@@ -1078,8 +1078,12 @@ function getWorkHabitEntry(dateKey) {
   return readDayMinutesAndShift(habitSessions?.[work.id]?.[dateKey], true);
 }
 
+function getShiftForDate(dateKey) {
+  return getWorkHabitEntry(dateKey);
+}
+
 function getShiftClassForDate(dateKey) {
-  const entry = getWorkHabitEntry(dateKey);
+  const entry = getShiftForDate(dateKey);
   if (entry.shift === "M") return "is-work-morning";
   if (entry.shift === "T") return "is-work-evening";
   if (entry.hasEntry) return "is-work-unknown";
@@ -1817,7 +1821,7 @@ function renderWeekTimeline() {
       if (isHabitCompletedOnDate(habit, dateKey)) completed += 1;
     });
     const percent = scheduled ? Math.round((completed / scheduled) * 100) : 0;
-    const workEntry = workHabit ? readDayMinutesAndShift(habitSessions?.[workHabit.id]?.[dateKey], true) : { shift: null, hasEntry: false };
+    const workEntry = workHabit ? getShiftForDate(dateKey) : { shift: null, hasEntry: false };
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "habit-week-day";
@@ -3355,7 +3359,7 @@ function renderHistoryMonthGrid(year, month, grid) {
   const offset = (start.getDay() + 6) % 7;
   for (let i = 0; i < offset; i += 1) {
     const empty = document.createElement("div");
-    empty.className = "habit-heatmap-cell is-out";
+    empty.className = "history-month-cell is-out";
     grid.appendChild(empty);
   }
   for (let d = 1; d <= end.getDate(); d += 1) {
@@ -3365,14 +3369,14 @@ function renderHistoryMonthGrid(year, month, grid) {
     const dominant = getDayDominantHabit(key);
     const cell = document.createElement("button");
     cell.type = "button";
-    cell.className = `habit-heatmap-cell ${shiftClass}`;
+    cell.className = `history-month-cell ${shiftClass}`;
     cell.innerHTML = `<span class="month-day-num">${d}</span><span class="month-day-emoji">${dominant?.habit?.emoji || ""}</span>`;
     cell.addEventListener("click", () => openDayDetailModal(key));
     grid.appendChild(cell);
   }
   while (grid.children.length < 42) {
     const empty = document.createElement("div");
-    empty.className = "habit-heatmap-cell is-out";
+    empty.className = "history-month-cell is-out";
     grid.appendChild(empty);
   }
 }
@@ -3413,7 +3417,7 @@ function buildHistoryMonthCalendar(anchorDate = new Date()) {
   });
   body.appendChild(weekdayHeader);
   const grid = document.createElement("div");
-  grid.className = "habit-month-grid";
+  grid.className = "history-month-grid";
 
   const updateCalendar = () => {
     monthLabel.textContent = formatHistoryMonthLabel(historyCalYear, historyCalMonth);
@@ -5577,6 +5581,39 @@ function computeSuccessStatsForRange(range) {
   return { scheduled, completed, successRatePct, start, end };
 }
 
+
+function computeWorkShiftStats(range) {
+  const { start, end } = getDaysRangeBounds(range);
+  const work = activeHabits().find((h) => isWorkHabit(h));
+  const counters = { morning: 0, evening: 0, free: 0, unknown: 0 };
+  if (!work) return counters;
+  for (let date = new Date(start); date <= end; date = addDays(date, 1)) {
+    const key = dateKeyLocal(date);
+    const entry = readDayMinutesAndShift(habitSessions?.[work.id]?.[key], true);
+    if (!entry.hasEntry) counters.free += 1;
+    else if (entry.shift === "M") counters.morning += 1;
+    else if (entry.shift === "T") counters.evening += 1;
+    else counters.unknown += 1;
+  }
+  return counters;
+}
+
+function renderWorkShiftReport() {
+  const morning = document.getElementById("habit-shifts-morning");
+  const evening = document.getElementById("habit-shifts-evening");
+  const free = document.getElementById("habit-shifts-free");
+  const unknown = document.getElementById("habit-shifts-unknown");
+  const meta = document.getElementById("habit-shifts-range-meta");
+  if (!morning || !evening || !free) return;
+  const range = habitDonutRange === "day" ? "week" : habitDonutRange;
+  const stats = computeWorkShiftStats(range);
+  morning.textContent = String(stats.morning);
+  evening.textContent = String(stats.evening);
+  free.textContent = String(stats.free);
+  if (unknown) unknown.textContent = String(stats.unknown);
+  if (meta) meta.textContent = `Rango ${rangeLabelTitle(range)}`;
+}
+
 function renderRecordsCard() {
   if (!$habitRecordsCurrentStreak) return;
   const stats = computeSuccessStatsForRange(habitRecordsRange);
@@ -5666,6 +5703,7 @@ function renderHabits() {
   renderRecordsCard();
   renderDonutGroupOptions();
   renderDonut();
+  renderWorkShiftReport();
   renderLineChart();
   renderGlobalHeatmap();
   renderRanking();
@@ -6031,31 +6069,149 @@ function closeDayDetailModal() {
   $habitDayDetailModal?.classList.add("hidden");
 }
 
-function renderDayDetailModal() {
-  if (!$habitDayDetailList) return;
-  $habitDayDetailList.innerHTML = "";
-  const list = activeHabits()
-    .slice()
-    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
-    .filter((h) => !dayDetailFocusHabitId || h.id === dayDetailFocusHabitId);
+function computeDayDetailBreakdown(dateKey, list) {
+  const rows = [];
+  let totalTimeMinutes = 0;
+  list.forEach((habit) => {
+    const goal = habit.goal || "check";
+    if (goal === "time") {
+      const minutes = Math.round(getHabitTotalSecForDate(habit.id, dateKey) / 60);
+      if (minutes > 0) {
+        totalTimeMinutes += minutes;
+        rows.push({ habit, kind: "time", minutes, valueLabel: formatMinutes(minutes), weight: minutes });
+      }
+      return;
+    }
+    if (goal === "count") {
+      const count = Math.max(0, Number(getHabitCount(habit.id, dateKey) || 0));
+      if (count > 0) rows.push({ habit, kind: "count", valueLabel: `${count}`, weight: count * 10 });
+      return;
+    }
+    const checked = !!(habitChecks?.[habit.id]?.[dateKey]);
+    if (checked) rows.push({ habit, kind: "check", valueLabel: "✔", weight: 5 });
+  });
+  rows.sort((a, b) => b.weight - a.weight);
+  return { rows, totalTimeMinutes };
+}
+
+function buildDayDetailDonut(dateKey, list) {
+  const card = document.createElement("section");
+  card.className = "habit-day-detail-card";
+  const title = document.createElement("div");
+  title.className = "sheet-section-title";
+  title.textContent = "Distribución diaria";
+  card.appendChild(title);
+
+  const { rows, totalTimeMinutes } = computeDayDetailBreakdown(dateKey, list);
+  const timeRows = rows.filter((row) => row.kind === "time");
+  const total = timeRows.reduce((acc, row) => acc + row.minutes, 0);
+
+  const donutWrap = document.createElement("div");
+  donutWrap.className = "habit-day-detail-donut-wrap";
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 120 120");
+  svg.classList.add("habit-day-detail-donut");
+  const radius = 42;
+  const circumference = 2 * Math.PI * radius;
+  const bg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  bg.setAttribute("cx", "60");
+  bg.setAttribute("cy", "60");
+  bg.setAttribute("r", String(radius));
+  bg.setAttribute("fill", "none");
+  bg.setAttribute("stroke", "rgba(255,255,255,.12)");
+  bg.setAttribute("stroke-width", "16");
+  svg.appendChild(bg);
+
+  let offset = 0;
+  timeRows.forEach((row) => {
+    const pct = total > 0 ? row.minutes / total : 0;
+    const slice = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    slice.setAttribute("cx", "60");
+    slice.setAttribute("cy", "60");
+    slice.setAttribute("r", String(radius));
+    slice.setAttribute("fill", "none");
+    slice.setAttribute("stroke", row.habit.color || "#8e86ff");
+    slice.setAttribute("stroke-width", "16");
+    slice.setAttribute("stroke-dasharray", `${Math.max(0, pct * circumference)} ${circumference}`);
+    slice.setAttribute("stroke-dashoffset", String(-offset));
+    slice.setAttribute("transform", "rotate(-90 60 60)");
+    offset += pct * circumference;
+    svg.appendChild(slice);
+  });
+
+  const center = document.createElement("div");
+  center.className = "habit-day-detail-donut-center";
+  center.innerHTML = `<strong>${totalTimeMinutes ? formatMinutes(totalTimeMinutes) : "Total"}</strong><span>${formatShortDate(dateKey, true)}</span>`;
+  donutWrap.appendChild(svg);
+  donutWrap.appendChild(center);
+  card.appendChild(donutWrap);
+
+  const rank = document.createElement("div");
+  rank.className = "habit-day-detail-ranking";
+  if (!rows.length) {
+    rank.innerHTML = '<div class="empty-state small">Sin actividad registrada.</div>';
+  } else {
+    const maxRows = 5;
+    rows.slice(0, maxRows).forEach((row, idx) => {
+      const item = document.createElement("div");
+      item.className = "habit-day-detail-rank-item";
+      item.innerHTML = `<span class="rank-order">${idx + 1}º</span><span class="rank-name">${row.habit.emoji || "🏷️"} ${row.habit.name}</span><span class="rank-value">${row.valueLabel}</span>`;
+      rank.appendChild(item);
+    });
+    if (rows.length > maxRows) {
+      const extra = document.createElement("div");
+      extra.className = "habit-day-detail-rank-item";
+      extra.innerHTML = `<span class="rank-order">·</span><span class="rank-name">Otros</span><span class="rank-value">${rows.length - maxRows}</span>`;
+      rank.appendChild(extra);
+    }
+  }
+  card.appendChild(rank);
+  return card;
+}
+
+function buildDayDetailEditAccordion(list) {
+  const details = document.createElement("details");
+  details.className = "habit-day-detail-edit-wrap";
+  const summary = document.createElement("summary");
+  summary.textContent = "Editar registros";
+  details.appendChild(summary);
+  const body = document.createElement("div");
+  body.className = "habit-day-detail-edit-body";
+
   list.forEach((habit) => {
     const row = document.createElement("div");
-    row.className = "habit-entry-session-row";
+    row.className = "habit-day-detail-edit-row";
     const label = document.createElement("div");
     label.className = "habit-entry-session-label";
     label.textContent = `${habit.emoji || "🏷️"} ${habit.name}`;
     row.appendChild(label);
     const goal = habit.goal || "check";
+
     if (goal === "time") {
-      const minutes = Math.round(getHabitTotalSecForDate(habit.id, dayDetailDateKey) / 60);
+      const minus = document.createElement("button");
+      minus.type = "button";
+      minus.className = "icon-btn";
+      minus.textContent = "−";
       const input = document.createElement("input");
       input.type = "number";
       input.min = "0";
       input.className = "habit-entry-minutes";
-      input.value = String(minutes || 0);
+      input.value = String(Math.round(getHabitTotalSecForDate(habit.id, dayDetailDateKey) / 60) || 0);
       input.dataset.habitId = habit.id;
       input.dataset.kind = "time";
+      const plus = document.createElement("button");
+      plus.type = "button";
+      plus.className = "icon-btn";
+      plus.textContent = "+";
+      minus.addEventListener("click", () => {
+        input.value = String(Math.max(0, Number(input.value || 0) - 15));
+      });
+      plus.addEventListener("click", () => {
+        input.value = String(Math.max(0, Number(input.value || 0) + 15));
+      });
+      row.appendChild(minus);
       row.appendChild(input);
+      row.appendChild(plus);
       if (isWorkHabit(habit)) {
         const shift = document.createElement("select");
         shift.className = "habits-history-select";
@@ -6067,6 +6223,10 @@ function renderDayDetailModal() {
         row.appendChild(shift);
       }
     } else if (goal === "count") {
+      const minus = document.createElement("button");
+      minus.type = "button";
+      minus.className = "icon-btn";
+      minus.textContent = "−";
       const input = document.createElement("input");
       input.type = "number";
       input.min = "0";
@@ -6074,7 +6234,19 @@ function renderDayDetailModal() {
       input.value = String(getHabitCount(habit.id, dayDetailDateKey) || 0);
       input.dataset.habitId = habit.id;
       input.dataset.kind = "count";
+      const plus = document.createElement("button");
+      plus.type = "button";
+      plus.className = "icon-btn";
+      plus.textContent = "+";
+      minus.addEventListener("click", () => {
+        input.value = String(Math.max(0, Number(input.value || 0) - 1));
+      });
+      plus.addEventListener("click", () => {
+        input.value = String(Math.max(0, Number(input.value || 0) + 1));
+      });
+      row.appendChild(minus);
       row.appendChild(input);
+      row.appendChild(plus);
     } else {
       const check = document.createElement("input");
       check.type = "checkbox";
@@ -6083,8 +6255,23 @@ function renderDayDetailModal() {
       check.dataset.kind = "check";
       row.appendChild(check);
     }
-    $habitDayDetailList.appendChild(row);
+
+    body.appendChild(row);
   });
+
+  details.appendChild(body);
+  return details;
+}
+
+function renderDayDetailModal() {
+  if (!$habitDayDetailList) return;
+  $habitDayDetailList.innerHTML = "";
+  const list = activeHabits()
+    .slice()
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+    .filter((h) => !dayDetailFocusHabitId || h.id === dayDetailFocusHabitId);
+  $habitDayDetailList.appendChild(buildDayDetailDonut(dayDetailDateKey, list));
+  $habitDayDetailList.appendChild(buildDayDetailEditAccordion(list));
 }
 
 function saveDayDetailModal() {

@@ -1253,6 +1253,16 @@
   cursor: pointer;
 }
 
+.habit-week-day.has-dominant {
+  background: linear-gradient(180deg, rgba(var(--dom-rgb, 127, 93, 255), 0.3), rgba(255,255,255,0.02));
+}
+
+.habit-week-day .day-dominant {
+  min-height: 14px;
+  font-size: 14px;
+  line-height: 1;
+}
+
 .habit-week-day .day-label {
   font-size: 11px;
   color: var(--txt-soft);
@@ -1989,15 +1999,41 @@
 
 .habit-detail-heatmap {
   display: grid;
-  grid-template-columns: repeat(var(--heatmap-cols, 14), minmax(0, 1fr));
-  gap: 4px;
+  gap: 8px;
 }
 
 .habit-detail-heatmap .habit-heatmap-cell {
   width: 100%;
   aspect-ratio: 1 / 1;
-  border-radius: 6px;
+  border-radius: 10px;
 }
+
+.habit-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.month-day-num { font-size: 10px; color: var(--txt-soft); }
+.month-day-dot { width: 6px; height: 6px; border-radius: 999px; background: rgba(255,255,255,.5); }
+.month-day-emoji { font-size: 14px; }
+
+.habit-heatmap-cell {
+  min-height: 42px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.04);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.habit-heatmap-cell.is-out { opacity: .35; }
+.habit-heatmap-cell.is-work-morning { background: color-mix(in srgb, var(--work-morning) 28%, transparent); }
+.habit-heatmap-cell.is-work-evening { background: color-mix(in srgb, var(--work-evening) 28%, transparent); }
+.habit-heatmap-cell.is-work-free { background: color-mix(in srgb, var(--work-free) 28%, transparent); }
+.habit-heatmap-cell.is-work-unknown { background: color-mix(in srgb, var(--work-unknown) 28%, transparent); }
 
 .habit-detail-chart {
   display: flex;
@@ -2008,6 +2044,38 @@
   border-radius: 14px;
   background: rgba(12, 14, 26, 0.65);
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.habit-detail-chart-controls {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.habit-detail-line {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(10px, 1fr);
+  align-items: end;
+  gap: 4px;
+  height: 180px;
+  width: 100%;
+}
+
+.habit-detail-line-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  border: 0;
+  background: rgba(var(--hclr-rgb, 127, 93, 255), 0.95);
+  transform: translateY(calc((100 - var(--h, 0)) * 1%));
+}
+
+.field-inline-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .habit-detail-chart-axis {

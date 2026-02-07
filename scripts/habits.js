@@ -143,12 +143,6 @@ function buildWorkDayPayload(minutes, shift) {
   return payload;
 }
 
-function warnShiftLostWrite({ habitId, dateKey, payload, options, prevShift }) {
-  const nextShift = normalizeShiftValue(payload?.shift);
-  if (!prevShift || nextShift) return;
-  console.warn("[SHIFT LOST WRITE]", { habitId, dateKey, payload, options });
-}
-
 function sessionWriteKey(habitId, dateKey) {
   return `${habitId || ""}::${dateKey || ""}`;
 }
@@ -369,21 +363,11 @@ function normalizeSessionsStore(raw, persistRemote = false) {
   const totals = {};
   let changed = false;
 
-  const add = (habitId, dateKey, sec, options = {}) => {
+  const add = (habitId, dateKey, sec) => {
     if (!habitId || !dateKey) return;
-    const habit = habits?.[habitId];
-    const isWork = isWorkHabit(habit);
-    const shift = normalizeShiftValue(options?.shift);
     const n = Number(sec) || 0;
     if (n <= 0) return;
     if (!totals[habitId]) totals[habitId] = {};
-    if (isWork) {
-      const current = readDayMinutesAndShift(totals[habitId][dateKey], true);
-      const nextMinutes = current.minutes + Math.round(n / 60);
-      const nextShift = shift || current.shift;
-      totals[habitId][dateKey] = buildWorkDayPayload(nextMinutes, nextShift);
-      return;
-    }
     totals[habitId][dateKey] = (Number(totals[habitId][dateKey]) || 0) + n;
   };
 
@@ -398,32 +382,65 @@ function normalizeSessionsStore(raw, persistRemote = false) {
       return;
     }
 
-    // v2: key = habitId y value = {dateKey: totalSec}
+    // v2: key = habitId y value = {dateKey: totalSec | {min,totalSec,shift}}
     const habitId = k;
+    const habit = habits?.[habitId];
+    const habitIsWork = habit ? isWorkHabit(habit) : false;
+
     Object.entries(v).forEach(([dateKey, val]) => {
       if (!dateKey) return;
+
+      // ✅ Trabajo: si llega como número, lo normalizamos a objeto (para permitir shift)
       if (typeof val === "number") {
-        if (val > 0) add(habitId, dateKey, val);
-        if (val <= 0) changed = true;
+        if (val > 0) {
+          if (habitIsWork) {
+            if (!totals[habitId]) totals[habitId] = {};
+            totals[habitId][dateKey] = { min: Math.round(val / 60) };
+            changed = true; // antes se guardaba como número, ahora como objeto
+          } else {
+            add(habitId, dateKey, val);
+          }
+        } else {
+          changed = true;
+        }
         return;
       }
+
       if (val && typeof val === "object") {
-        const habit = habits?.[habitId];
-        const isWork = isWorkHabit(habit);
         const shift = normalizeShiftValue(val.shift);
         const min = Number(val.min);
-        if (Number.isFinite(min) && min > 0) {
+
+        // ✅ preservar shift incluso con min=0 (turno M/T sin tiempo)
+        if (Number.isFinite(min) && min >= 0) {
           if (!totals[habitId]) totals[habitId] = {};
           const roundedMin = Math.round(min);
-          totals[habitId][dateKey] = isWork
-            ? buildWorkDayPayload(roundedMin, shift)
-            : Math.round(roundedMin * 60);
+
+          // ✅ Trabajo: SIEMPRE objeto; No-trabajo: objeto solo si hay min>0 o shift
+          if (habitIsWork) {
+            totals[habitId][dateKey] = shift ? { min: roundedMin, shift } : { min: roundedMin };
+          } else if (roundedMin > 0 || shift) {
+            totals[habitId][dateKey] = shift ? { min: roundedMin, shift } : { min: roundedMin };
+          } else {
+            changed = true;
+          }
           return;
         }
+
         const sec = Number(val.totalSec) || 0;
         if (sec > 0) {
-          add(habitId, dateKey, sec, { shift });
+          if (!totals[habitId]) totals[habitId] = {};
+          const roundedMin = Math.round(sec / 60);
+
+          // ✅ Trabajo: objeto; No-trabajo: conserva tu comportamiento (sec si no hay shift)
+          totals[habitId][dateKey] = habitIsWork
+            ? (shift ? { min: roundedMin, shift } : { min: roundedMin })
+            : (shift ? { min: roundedMin, shift } : sec);
+
+          // si venía como objeto con totalSec sin min, lo “arreglamos” a min (más estable)
+          changed = true;
+          return;
         }
+
         changed = true;
       } else {
         changed = true;
@@ -431,7 +448,6 @@ function normalizeSessionsStore(raw, persistRemote = false) {
     });
   });
 
-  // Si no había nada, devolvemos objeto vacío estable
   const normalized = totals;
 
   if (persistRemote && changed) {
@@ -444,6 +460,7 @@ function normalizeSessionsStore(raw, persistRemote = false) {
   if (changed) debugHabitsSync("normalizeSessionsStore changed", { raw, normalized });
   return { normalized, changed };
 }
+
 
 function getHabitTotalSecForDate(habitId, dateKey) {
   if (!habitId || !dateKey) return 0;
@@ -492,7 +509,6 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
 
   if (isWork) {
     const payload = buildWorkDayPayload(nextMinutes, shift);
-    warnShiftLostWrite({ habitId, dateKey, payload, options, prevShift: day.shift });
     habitSessions[habitId][dateKey] = payload;
     queuePendingSessionWrite(habitId, dateKey, payload);
     debugHabitsSync("write:add work", { habitId, dateKey, payload, dayRaw });
@@ -537,65 +553,43 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
   if (!habitId || !dateKey) return;
   const habit = habits[habitId];
   if (!habit || habit.archived) return;
+
   const sec = Math.max(0, Math.round(Number(totalSec) || 0));
   if (!habitSessions[habitId] || typeof habitSessions[habitId] !== "object") habitSessions[habitId] = {};
 
   const isWork = isWorkHabit(habit);
   const existing = readDayMinutesAndShift(habitSessions[habitId][dateKey], isWork);
-  const hasShiftOption = Object.prototype.hasOwnProperty.call(options || {}, "shift");
-  const shiftFromOptions = hasShiftOption ? normalizeShiftValue(options.shift) : null;
-  const shiftOpt = shiftFromOptions || existing.shift;
 
-  let payloadToWrite = sec > 0 ? sec : null;
-  if (sec > 0) {
-    if (isWork) {
-      payloadToWrite = buildWorkDayPayload(Math.round(sec / 60), shiftOpt);
-      warnShiftLostWrite({ habitId, dateKey, payload: payloadToWrite, options, prevShift: existing.shift });
+  // ✅ solo “override” si viene shift real (M/T o "")
+  const shiftOpt = (options && options.shift != null)
+    ? normalizeShiftValue(options.shift)
+    : existing.shift;
+
+  let payloadToWrite = null;
+
+  if (isWork) {
+    const minutes = Math.max(0, Math.round(sec / 60));
+    // ✅ permitir guardar turno aunque minutes=0
+    if (minutes > 0 || shiftOpt) {
+      payloadToWrite = buildWorkDayPayload(minutes, shiftOpt);
       habitSessions[habitId][dateKey] = payloadToWrite;
     } else {
-      habitSessions[habitId][dateKey] = sec;
+      delete habitSessions[habitId][dateKey];
     }
   } else {
-    delete habitSessions[habitId][dateKey];
+    payloadToWrite = sec > 0 ? sec : null;
+    if (sec > 0) habitSessions[habitId][dateKey] = sec;
+    else delete habitSessions[habitId][dateKey];
   }
 
   queuePendingSessionWrite(habitId, dateKey, payloadToWrite);
-  debugHabitsSync("write:set", { habitId, dateKey, sec, shiftOpt, payload: payloadToWrite });
   saveCache();
-  try {
-    const path = `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`;
-    if (isWork) {
-      debugWorkShift("[WORK] write paths", { sessionsPath: path, shiftsPath: null });
-    }
-    set(ref(db, path), payloadToWrite)
-      .then(async () => {
-        debugHabitsSync("write:set ok", { habitId, dateKey, payload: payloadToWrite });
-        if (isWork) {
-          debugWorkShift("[WORK] write done", { dateKey, shift: shiftOpt });
-        }
-        try {
-          const parentPath = `${HABIT_SESSIONS_PATH}/${habitId}`;
-          const parentSnap = await get(ref(db, parentPath));
-          const allDays = Object.keys(parentSnap.val() || {}).sort();
-          debugWorkShift("[WORK] post-write days", { parentPath, updatedDate: dateKey, allDays });
-        } catch (snapshotErr) {
-          debugWorkShift("[WORK] post-write snapshot failed", snapshotErr);
-        }
-      })
-      .catch((err) => {
-        debugHabitsSync("write:set fail", { habitId, dateKey, err: String(err) });
-        console.warn("No se pudo actualizar tiempo en remoto", err);
-      });
-  } catch (err) {
-    console.warn("No se pudo actualizar tiempo en remoto", err);
-  }
-
-  // recalcular Desconocido del día
-  if (habitId !== UNKNOWN_HABIT_ID) {
-    try { recomputeUnknownForDate(dateKey, true); } catch (_) {}
-  }
+  try { set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), payloadToWrite); } catch (_) {}
+  if (habitId !== UNKNOWN_HABIT_ID) { try { recomputeUnknownForDate(dateKey, true); } catch (_) {} }
   invalidateDominantCache(dateKey);
 }
+
+
 
 
 function getSessionDate(session) {
@@ -6411,33 +6405,44 @@ function saveDayDetailModal() {
     if (!grouped.has(id)) grouped.set(id, []);
     grouped.get(id).push(el);
   });
+
   grouped.forEach((controls, habitId) => {
     const habit = habits[habitId];
     if (!habit || habit.archived) return;
+
     const goal = habit.goal || "check";
     if (goal === "time") {
       const input = controls.find((el) => el.dataset.kind === "time");
       const shiftEl = controls.find((el) => el.dataset.kind === "shift");
       const minutes = Math.max(0, Number(input?.value || 0));
-      const shift = shiftEl ? normalizeShiftValue(shiftEl.value) : undefined;
-      setHabitTimeSec(habitId, dayDetailDateKey, Math.round(minutes * 60), { shift });
-    } else if (goal === "count") {
+      const shift = shiftEl ? normalizeShiftValue(shiftEl.value) : null;
+
+      const opts = shift ? { shift } : {}; // ✅ clave
+      setHabitTimeSec(habitId, dayDetailDateKey, Math.round(minutes * 60), opts);
+      return;
+    }
+
+    if (goal === "count") {
       const input = controls.find((el) => el.dataset.kind === "count");
       setHabitCount(habitId, dayDetailDateKey, Math.max(0, Number(input?.value || 0)));
-    } else {
-      const check = controls.find((el) => el.dataset.kind === "check");
-      const checked = !!check?.checked;
-      if (!habitChecks[habitId]) habitChecks[habitId] = {};
-      if (checked) habitChecks[habitId][dayDetailDateKey] = true;
-      else delete habitChecks[habitId][dayDetailDateKey];
-      saveCache();
-      persistHabitCheck(habitId, dayDetailDateKey, checked ? true : null);
-      invalidateDominantCache(dayDetailDateKey);
+      return;
     }
+
+    const check = controls.find((el) => el.dataset.kind === "check");
+    const checked = !!check?.checked;
+    if (!habitChecks[habitId]) habitChecks[habitId] = {};
+    if (checked) habitChecks[habitId][dayDetailDateKey] = true;
+    else delete habitChecks[habitId][dayDetailDateKey];
+    saveCache();
+    persistHabitCheck(habitId, dayDetailDateKey, checked ? true : null);
+    invalidateDominantCache(dayDetailDateKey);
   });
+
   closeDayDetailModal();
   renderHabitsPreservingTodayUI();
 }
+
+
 
 function handleEntrySubmit(e) {
   e.preventDefault();

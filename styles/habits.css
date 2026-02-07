@@ -2014,9 +2014,27 @@
   gap: 6px;
 }
 
+.habit-month-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.habit-month-weekdays span {
+  font-size: 11px;
+  color: var(--txt-soft);
+  text-align: center;
+}
+
 .month-day-num { font-size: 10px; color: var(--txt-soft); }
-.month-day-dot { width: 6px; height: 6px; border-radius: 999px; background: rgba(255,255,255,.5); }
 .month-day-emoji { font-size: 14px; }
+.month-day-value {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.92);
+  line-height: 1;
+  min-height: 12px;
+}
 
 .habit-heatmap-cell {
   min-height: 42px;
@@ -2027,6 +2045,10 @@
   align-items: center;
   justify-content: center;
   gap: 3px;
+}
+
+.habit-month-grid .habit-heatmap-cell .month-day-num {
+  align-self: flex-start;
 }
 
 .habit-heatmap-cell.is-out { opacity: .35; }
@@ -2061,6 +2083,46 @@
   gap: 4px;
   height: 180px;
   width: 100%;
+}
+
+.habit-detail-line-chart {
+  position: relative;
+  width: 100%;
+  min-width: 320px;
+  height: 180px;
+}
+
+.habit-detail-line-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.habit-detail-line-hit {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  width: 18px;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.habit-detail-line-hit:focus-visible {
+  outline: 2px solid rgba(var(--hclr-rgb, 127, 93, 255), 0.7);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+#habit-day-detail-modal .modal {
+  max-width: min(560px, 96vw);
+  max-height: min(90vh, 760px);
+}
+
+#habit-day-detail-modal .modal-scroll {
+  max-height: calc(90vh - 150px);
+  overflow-y: auto;
 }
 
 .habit-detail-line-dot {

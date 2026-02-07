@@ -1589,6 +1589,7 @@
   color: var(--txt);
   padding:0 10px; outline:none;
   text-align:center; font-weight:800;
+  max-width: 80px;
 }
 .habit-entry-session-row .icon-btn{
   width:44px; height:44px; padding:0;
@@ -2123,14 +2124,18 @@
   gap: 8px;
 }
 
-.habit-day-detail-rank-item,
-.habit-day-detail-edit-row {
+.habit-day-detail-rank-item{
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 8px;
 }
-
+.habit-day-detail-edit-row{
+display: grid;
+  grid-template-columns: 1fr 40px  0.25fr 40px auto;
+  align-items: center;
+  gap: 8px;
+}
 .rank-order { color: var(--txt-soft); font-size: 12px; }
 .rank-value { font-weight: 700; }
 

@@ -240,6 +240,25 @@ function formatHoursTotal(minutes) {
   return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
+function formatCompactDayValue(goal, value) {
+  if (goal === "time") {
+    const minutes = Math.max(0, Math.round(Number(value) || 0));
+    if (!minutes) return "";
+    if (minutes >= 60) {
+      const hours = minutes / 60;
+      const rounded = Math.round(hours * 10) / 10;
+      const display = Number.isInteger(rounded) ? String(Math.round(rounded)) : String(rounded.toFixed(1));
+      return `${display}h`;
+    }
+    return `${minutes}m`;
+  }
+  if (goal === "count") {
+    const count = Math.max(0, Math.round(Number(value) || 0));
+    return count > 0 ? `×${count}` : "";
+  }
+  return value > 0 ? "✓" : "";
+}
+
 function parseTimeToMinutes(v) {
   const s = String(v || "").trim();
   if (!s) return 0;
@@ -1823,7 +1842,6 @@ function renderWeekTimeline() {
     btn.addEventListener("click", () => {
       selectedDateKey = dateKey;
       renderToday();
-      openDayDetailModal(dateKey);
     });
     $habitWeekTimeline.appendChild(btn);
   }
@@ -2034,10 +2052,14 @@ function renderHabitDetailHeatmap(habit, rangeKey) {
       return;
     }
     const key = dateKeyLocal(date);
+    const dayValue = getHabitValueForDate(habit, key);
     const score = getHabitDayScore(habit, key).score;
     const level = scoreToHeatLevel(score);
     cell.classList.add(`heat-level-${level}`);
-    cell.innerHTML = `<span class="month-day-num">${date.getDate()}</span><span class="month-day-dot"></span>`;
+    cell.innerHTML = `
+      <span class="month-day-num">${date.getDate()}</span>
+      <span class="month-day-value">${formatCompactDayValue(habit.goal || "check", dayValue)}</span>
+    `;
     cell.addEventListener("click", () => openDayDetailModal(key, habit.id));
     grid.appendChild(cell);
   });
@@ -2085,18 +2107,61 @@ function renderHabitDetailChart(habit, rangeKey) {
   const barsWrap = document.createElement("div"); barsWrap.className = "habit-detail-chart-bars";
 
   if (habitDetailChartMode === "line") {
-    const line = document.createElement("div");
-    line.className = "habit-detail-line";
-    points.forEach((item) => {
-      const dot = document.createElement("button");
-      dot.type = "button";
-      dot.className = "habit-detail-line-dot";
-      dot.style.setProperty("--h", String((item.value / scaleMax) * 100));
-      dot.title = `${item.key} · ${formatTick(item.value)}`;
-      dot.addEventListener("click", () => openDayDetailModal(item.key, habit.id));
-      line.appendChild(dot);
+    const lineChart = document.createElement("div");
+    lineChart.className = "habit-detail-line-chart";
+    const width = Math.max(320, points.length * 18);
+    const height = 180;
+    const paddingX = 8;
+    const paddingY = 8;
+    const spanX = Math.max(1, width - paddingX * 2);
+    const spanY = Math.max(1, height - paddingY * 2);
+    const toX = (idx) => points.length <= 1
+      ? width / 2
+      : paddingX + (idx / (points.length - 1)) * spanX;
+    const toY = (value) => {
+      const normalized = Math.max(0, Math.min(1, value / scaleMax));
+      return paddingY + (1 - normalized) * spanY;
+    };
+    const polylinePoints = points
+      .map((item, idx) => `${toX(idx).toFixed(2)},${toY(item.value).toFixed(2)}`)
+      .join(" ");
+
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.classList.add("habit-detail-line-svg");
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.setAttribute("preserveAspectRatio", "none");
+
+    const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    polyline.setAttribute("points", polylinePoints);
+    polyline.setAttribute("fill", "none");
+    polyline.setAttribute("stroke", "rgba(var(--hclr-rgb, 127, 93, 255), 0.95)");
+    polyline.setAttribute("stroke-width", "3");
+    polyline.setAttribute("stroke-linecap", "round");
+    polyline.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(polyline);
+
+    if (points.length) {
+      const lastIdx = points.length - 1;
+      const last = points[lastIdx];
+      const lastDot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      lastDot.setAttribute("cx", toX(lastIdx).toFixed(2));
+      lastDot.setAttribute("cy", toY(last.value).toFixed(2));
+      lastDot.setAttribute("r", "4.5");
+      lastDot.setAttribute("fill", "rgba(var(--hclr-rgb, 127, 93, 255), 0.98)");
+      svg.appendChild(lastDot);
+    }
+
+    lineChart.appendChild(svg);
+    points.forEach((item, idx) => {
+      const hit = document.createElement("button");
+      hit.type = "button";
+      hit.className = "habit-detail-line-hit";
+      hit.style.left = `${(toX(idx) / width) * 100}%`;
+      hit.title = `${item.key} · ${formatTick(item.value)}`;
+      hit.addEventListener("click", () => openDayDetailModal(item.key, habit.id));
+      lineChart.appendChild(hit);
     });
-    barsWrap.appendChild(line);
+    barsWrap.appendChild(lineChart);
   } else {
     points.forEach((item) => {
       const barItem = document.createElement("div"); barItem.className = "habit-detail-bar-item";
@@ -3275,6 +3340,14 @@ function buildHistoryMonthCalendar() {
   const start = new Date(now.getFullYear(), now.getMonth(), 1);
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   const offset = (start.getDay() + 6) % 7;
+  const weekdayHeader = document.createElement("div");
+  weekdayHeader.className = "habit-month-weekdays";
+  ["L", "M", "X", "J", "V", "S", "D"].forEach((label) => {
+    const day = document.createElement("span");
+    day.textContent = label;
+    weekdayHeader.appendChild(day);
+  });
+  body.appendChild(weekdayHeader);
   const grid = document.createElement("div");
   grid.className = "habit-month-grid";
   for (let i = 0; i < offset; i += 1) {
@@ -4149,6 +4222,7 @@ function appendTimeQuickControls(tools, habit, today) {
 }
 
 function renderGlobalHeatmap() {
+  if (!$habitGlobalHeatmap) return;
   $habitGlobalHeatmap.innerHTML = "";
   const cells = buildYearCells(heatmapYear);
   let activeDays = 0;

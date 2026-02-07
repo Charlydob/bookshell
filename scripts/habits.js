@@ -34,6 +34,7 @@ const HABIT_SESSIONS_PATH = "habitSessions";
 const HABIT_COUNTS_PATH = "habitCounts";
 const HABIT_GROUPS_PATH = "habitGroups";
 const HABIT_PREFS_PATH = "habitPrefs";
+const HABIT_SESSIONS_LOG_PATH = "sessions";
 
 // Storage keys
 const STORAGE_KEY = "bookshell-habits-cache";
@@ -76,6 +77,8 @@ let activeTab = "today";
 let runningSession = null; // { startTs }
 let sessionInterval = null;
 let pendingSessionDuration = 0;
+let pendingSessionWindow = null; // { startTs, endTs, durationSec, dateKeyStart }
+let habitSessionLogs = {}; // { sessionId: { habitId, startTs, endTs, durationSec, dateKeyStart } }
 let heatmapYear = new Date().getFullYear();
 let habitHistoryRange = "week";
 let habitHistoryMetric = "time";
@@ -122,6 +125,13 @@ const DEBUG_WORK_SHIFT = (() => {
     return !!window.__bookshellDebugWorkShift;
   }
 })();
+const DEBUG_SESSION_SPLIT = (() => {
+  try {
+    return !!(window.__bookshellDebugSessionSplit || localStorage.getItem("bookshell.debug.sessionSplit") === "1");
+  } catch (_) {
+    return !!window.__bookshellDebugSessionSplit;
+  }
+})();
 
 const pendingSessionWrites = new Map();
 
@@ -133,6 +143,11 @@ function debugHabitsSync(...args) {
 function debugWorkShift(...args) {
   if (!DEBUG_WORK_SHIFT) return;
   console.log(...args);
+}
+
+function debugSessionSplit(...args) {
+  if (!DEBUG_SESSION_SPLIT) return;
+  console.log("[habits:split]", ...args);
 }
 
 function buildWorkDayPayload(minutes, shift) {
@@ -187,6 +202,28 @@ function dateKeyLocal(date) {
 
 function todayKey() {
   return dateKeyLocal(new Date());
+}
+
+// Reparte una sesión en bloques por día natural en hora local.
+// Ejemplo: 23:30-00:30 => [{ dateKey: "YYYY-MM-DD", sec: 1800 }, { ... }]
+function splitSessionByLocalDay(startTs, endTs) {
+  const out = [];
+  let t = Math.max(0, Math.round(Number(startTs) || 0));
+  const end = Math.max(0, Math.round(Number(endTs) || 0));
+  if (!t || !end || end <= t) return out;
+
+  while (t < end) {
+    const d = new Date(t);
+    const dateKey = dateKeyLocal(d);
+    const nextMidnight = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0, 0).getTime();
+    const chunkEnd = Math.min(end, nextMidnight);
+    const sec = Math.max(0, Math.round((chunkEnd - t) / 1000));
+    if (sec > 0) out.push({ dateKey, sec });
+    t = chunkEnd;
+  }
+
+  debugSessionSplit("splitSessionByLocalDay", { startTs, endTs, out });
+  return out;
 }
 
 function startOfWeek(d = new Date()) {
@@ -672,6 +709,53 @@ function ensureHabitToast() {
   return habitToastEl;
 }
 
+function createSessionId(startTs, endTs, habitId) {
+  const base = `${startTs || 0}-${endTs || 0}-${habitId || "unknown"}`;
+  const randomPart = Math.random().toString(36).slice(2, 8);
+  return `s-${base}-${randomPart}`;
+}
+
+function persistSessionLogEntry(entry) {
+  if (!entry?.id) return;
+  habitSessionLogs[entry.id] = entry;
+  saveCache();
+  try {
+    set(ref(db, `${HABIT_SESSIONS_LOG_PATH}/${entry.id}`), entry);
+  } catch (err) {
+    console.warn("No se pudo guardar log de sesión en remoto", err);
+  }
+}
+
+// Persiste sesión con start/end reales y agrega tiempo diario repartido por día local.
+function applyTimedSessionToHabit(habitId, sessionWindow) {
+  const habit = habits?.[habitId];
+  if (!habitId || !habit || habit.archived || !sessionWindow) return false;
+
+  const startTs = Math.max(0, Math.round(Number(sessionWindow.startTs) || 0));
+  const endTs = Math.max(0, Math.round(Number(sessionWindow.endTs) || 0));
+  if (!startTs || !endTs || endTs <= startTs) return false;
+
+  const durationSec = Math.max(1, Math.round(Number(sessionWindow.durationSec) || Math.round((endTs - startTs) / 1000)));
+  const chunks = splitSessionByLocalDay(startTs, endTs);
+  if (!chunks.length) return false;
+
+  debugSessionSplit("applyTimedSessionToHabit", { habitId, startTs, endTs, durationSec, chunks });
+  chunks.forEach((chunk) => {
+    addHabitTimeSec(habitId, chunk.dateKey, chunk.sec);
+  });
+
+  const entry = {
+    id: createSessionId(startTs, endTs, habitId),
+    habitId,
+    startTs,
+    endTs,
+    durationSec,
+    dateKeyStart: dateKeyLocal(new Date(startTs))
+  };
+  persistSessionLogEntry(entry);
+  return true;
+}
+
 function showHabitToast(text) {
   const toast = ensureHabitToast();
   toast.textContent = text;
@@ -694,6 +778,7 @@ function readCache() {
       habitCounts = parsed.habitCounts || {};
       habitGroups = parsed.habitGroups || {};
       habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "", quickSessions: [] };
+      habitSessionLogs = parsed.habitSessionLogs || {};
       if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
       const norm = normalizeSessionsStore(habitSessions, false);
       habitSessions = norm.normalized;
@@ -708,7 +793,7 @@ function saveCache() {
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ habits, habitChecks, habitSessions, habitCounts, habitGroups, habitPrefs })
+      JSON.stringify({ habits, habitChecks, habitSessions, habitCounts, habitGroups, habitPrefs, habitSessionLogs })
     );
   } catch (err) {
     console.warn("No se pudo guardar cache de hábitos", err);
@@ -733,7 +818,11 @@ function loadRunningSession() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && parsed.startTs) {
-        runningSession = parsed;
+        runningSession = {
+          ...parsed,
+          habitId: parsed.habitId || parsed.targetHabitId || null,
+          targetHabitId: parsed.targetHabitId || parsed.habitId || null
+        };
       }
     }
   } catch (err) {
@@ -5945,7 +6034,7 @@ function startSession(habitId = null) {
     ? habitId
     : null;
 
-  runningSession = { startTs: Date.now(), targetHabitId };
+  runningSession = { startTs: Date.now(), targetHabitId, habitId: targetHabitId };
   saveRunningSession();
   updateSessionUI();
   sessionInterval = setInterval(updateSessionUI, 1000);
@@ -5960,25 +6049,33 @@ function stopSession(assignHabitId = null, silent = false) {
 
   if (!runningSession) return;
 
-  const duration = Math.max(1, Math.round((Date.now() - runningSession.startTs) / 1000));
+  const endTs = Date.now();
+  const duration = Math.max(1, Math.round((endTs - runningSession.startTs) / 1000));
   const target = (typeof assignHabitId === "string" && assignHabitId)
     ? assignHabitId
-    : (runningSession?.targetHabitId || null);
+    : (runningSession?.targetHabitId || runningSession?.habitId || null);
 
   const startTs = runningSession.startTs;
-  const dateKey = dateKeyLocal(new Date(startTs));
+  const sessionWindow = {
+    startTs,
+    endTs,
+    durationSec: duration,
+    dateKeyStart: dateKeyLocal(new Date(startTs))
+  };
 
   pendingSessionDuration = duration;
+  pendingSessionWindow = sessionWindow;
   runningSession = null;
   saveRunningSession();
   if (sessionInterval) clearInterval(sessionInterval);
   updateSessionUI();
 
-  // Auto-asignación (Shortcuts / enlace)
+  // Auto-asignación (Shortcuts / enlace): agrega por chunks diarios y guarda log detallado.
   if (target && habits?.[target] && !habits[target]?.archived) {
-    addHabitTimeSec(target, dateKey, duration);
+    applyTimedSessionToHabit(target, sessionWindow);
     localStorage.setItem(LAST_HABIT_KEY, target);
     pendingSessionDuration = 0;
+    pendingSessionWindow = null;
     if (!silent) showHabitToast(`Asignado: ${habits[target]?.name || "hábito"} · ${Math.round(duration / 60)}m`);
     closeSessionModal?.();
     renderHabits();
@@ -6050,6 +6147,7 @@ function openSessionModal() {
 function closeSessionModal() {
   $habitSessionModal.classList.add("hidden");
   pendingSessionDuration = 0;
+  pendingSessionWindow = null;
   resetSessionModalViewportPadding();
 }
 
@@ -6091,16 +6189,15 @@ function renderSessionList() {
 
 
 function assignSession(habitId) {
-  if (!habitId || !pendingSessionDuration) {
+  if (!habitId || !pendingSessionDuration || !pendingSessionWindow) {
     closeSessionModal();
     return;
   }
-  const startTs = Date.now() - pendingSessionDuration * 1000;
-  const dateKey = dateKeyLocal(new Date(startTs));
-  addHabitTimeSec(habitId, dateKey, pendingSessionDuration);
+  applyTimedSessionToHabit(habitId, pendingSessionWindow);
 
   localStorage.setItem(LAST_HABIT_KEY, habitId);
   pendingSessionDuration = 0;
+  pendingSessionWindow = null;
   closeSessionModal();
   renderHabits();
 }
@@ -6911,6 +7008,11 @@ function listenRemote() {
     rerender();
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
     try { window.__bookshellDashboard?.render?.(); } catch (_) {}
+  });
+
+  onValue(ref(db, HABIT_SESSIONS_LOG_PATH), (snap) => {
+    habitSessionLogs = snap.val() || {};
+    saveCache();
   });
 }
 

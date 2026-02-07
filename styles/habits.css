@@ -2857,3 +2857,43 @@ display: grid;
   border-radius: 12px;
   padding: 8px;
 }
+.history-month-cell .month-day-emoji{
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  z-index: 0;
+}
+
+.history-month-cell.has-dominant .month-day-emoji::before{
+  content:"";
+  position:absolute;
+  inset:-60px;                 /* tamaño del halo */
+  border-radius: inherit;
+  background: radial-gradient(
+    circle,
+    rgba(var(--dom-rgb), .30) 0%,
+    rgba(var(--dom-rgb), .18) 35%,
+    rgba(var(--dom-rgb), .06) 60%,
+    rgba(var(--dom-rgb), 0) 75%
+  );
+  filter: blur(4px);
+  opacity: .99;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.history-month-cell.has-dominant .month-day-emoji::after{
+  content:"";
+  position:absolute;
+  inset:-20px;                  /* anillo fino */
+  border-radius: inherit;
+  box-shadow:
+    0 0 0 1px rgba(var(--dom-rgb), .70),
+    0 0 10px rgba(var(--dom-rgb), .00);
+  opacity: .9;
+  z-index: -1;
+  pointer-events: none;
+}

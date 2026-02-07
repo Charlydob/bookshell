@@ -256,6 +256,20 @@ function readDayMinutesAndShift(rawValue, isWork = false) {
   return { minutes: 0, shift: null, hasEntry: false };
 }
 
+function sessionValueToSeconds(value) {
+  if (typeof value === "number") {
+    const sec = Number(value) || 0;
+    return sec > 0 ? sec : 0;
+  }
+  if (value && typeof value === "object") {
+    const secRaw = Number(value.totalSec);
+    if (Number.isFinite(secRaw) && secRaw > 0) return Math.round(secRaw);
+    const minRaw = Number(value.min);
+    if (Number.isFinite(minRaw) && minRaw >= 0) return Math.round(minRaw * 60);
+  }
+  return 0;
+}
+
 function resolveHabitIdFromToken(token) {
   const raw = String(token || "").trim();
   if (!raw) return null;
@@ -481,15 +495,7 @@ function getHabitTotalSecForDate(habitId, dateKey) {
   const byDate = habitSessions?.[habitId];
   if (!byDate || typeof byDate !== "object") return 0;
   const day = byDate[dateKey];
-  if (typeof day === "number") {
-    const sec = Number(day) || 0;
-    return sec > 0 ? sec : 0;
-  }
-  if (day && typeof day === "object") {
-    const min = Number(day.min) || 0;
-    return min > 0 ? Math.round(min * 60) : 0;
-  }
-  return 0;
+  return sessionValueToSeconds(day);
 }
 
 function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
@@ -4514,10 +4520,10 @@ function minutesForHabitRange(habit, start, end) {
   const byDate = habitSessions?.[habit.id];
   if (!byDate || typeof byDate !== "object") return 0;
 
-  Object.entries(byDate).forEach(([dateKey, sec]) => {
+  Object.entries(byDate).forEach(([dateKey, sessionValue]) => {
     const parsed = parseDateKey(dateKey);
     if (parsed && isDateInRange(parsed, start, end)) {
-      totalMinutes += Math.round((Number(sec) || 0) / 60);
+      totalMinutes += Math.round(sessionValueToSeconds(sessionValue) / 60);
     }
   });
 
@@ -4557,9 +4563,9 @@ function collectHabitActiveDates(habit, start, end) {
 
   const byDate = habitSessions?.[habit.id];
   if (byDate && typeof byDate === "object") {
-    Object.entries(byDate).forEach(([key, sec]) => {
+    Object.entries(byDate).forEach(([key, sessionValue]) => {
       const parsed = parseDateKey(key);
-      if (parsed && isDateInRange(parsed, start, end) && (Number(sec) || 0) > 0) dates.add(key);
+      if (parsed && isDateInRange(parsed, start, end) && sessionValueToSeconds(sessionValue) > 0) dates.add(key);
     });
   }
 
@@ -4574,10 +4580,10 @@ function minutesForRange(range) {
     const habit = habits[habitId];
     if (!habit || habit.archived) return;
     if (!byDate || typeof byDate !== "object") return;
-    Object.entries(byDate).forEach(([dateKey, sec]) => {
+    Object.entries(byDate).forEach(([dateKey, sessionValue]) => {
       const parsed = parseDateKey(dateKey);
       if (parsed && isDateInRange(parsed, start, end)) {
-        total += Math.round((Number(sec) || 0) / 60);
+        total += Math.round(sessionValueToSeconds(sessionValue) / 60);
       }
     });
   });
@@ -4612,9 +4618,9 @@ function countActiveDaysInYear(year = new Date().getFullYear()) {
     const habit = habits[habitId];
     if (!habit || habit.archived) return;
     if (!byDate || typeof byDate !== "object") return;
-    Object.entries(byDate).forEach(([key, sec]) => {
+    Object.entries(byDate).forEach(([key, sessionValue]) => {
       const parsed = parseDateKey(key);
-      if (parsed && isDateInRange(parsed, start, end) && (Number(sec) || 0) > 0) dates.add(key);
+      if (parsed && isDateInRange(parsed, start, end) && sessionValueToSeconds(sessionValue) > 0) dates.add(key);
     });
   });
 
@@ -4711,7 +4717,7 @@ function getEarliestActivityDate() {
     if (!habit || habit.archived) return;
     if (!byDate || typeof byDate !== "object") return;
     Object.keys(byDate).forEach((key) => {
-      const sec = Number(byDate[key]) || 0;
+      const sec = sessionValueToSeconds(byDate[key]);
       if (sec <= 0) return;
       const parsed = parseDateKey(key);
       if (parsed && parsed < earliest) earliest = parsed;
@@ -4782,12 +4788,41 @@ function timeShareByHabit(range) {
 
 function buildTimeEntries(range) {
   const { start, end } = getRangeBounds(range);
-  return activeHabitsWithSystem()
+  const entries = activeHabitsWithSystem()
     .map((habit) => {
       const minutes = minutesForHabitRange(habit, start, end);
       return { habit, totalSec: Math.round(minutes * 60) };
     })
     .filter((item) => item.totalSec > 0);
+
+  const workHabit = activeHabitsWithSystem().find((habit) => isWorkHabit(habit));
+  if (workHabit) {
+    const startKey = dateKeyLocal(start);
+    const endKey = dateKeyLocal(end);
+    const workStore = habitSessions?.[workHabit.id] || {};
+    const workExamples = Object.entries(workStore)
+      .filter(([dateKey]) => dateKey >= startKey && dateKey <= endKey)
+      .slice(0, 5)
+      .map(([dateKey, raw]) => ({ dateKey, raw, seconds: sessionValueToSeconds(raw) }));
+    console.debug("[TimeByHabit] Trabajo examples in range", {
+      range,
+      workHabitId: workHabit.id,
+      startKey,
+      endKey,
+      examples: workExamples
+    });
+  }
+
+  console.debug("[TimeByHabit] Accumulated seconds by habit", {
+    range,
+    totals: entries.map((item) => ({
+      habitId: item.habit?.id,
+      habit: item.habit?.name,
+      totalSec: item.totalSec
+    }))
+  });
+
+  return entries;
 }
 
 function aggregateEntries(entries, mode = "habit") {

@@ -115,11 +115,24 @@ const DEBUG_HABITS_SYNC = (() => {
     return !!window.__bookshellDebugHabitsSync;
   }
 })();
+const DEBUG_WORK_SHIFT = (() => {
+  try {
+    return !!(window.__bookshellDebugWorkShift || localStorage.getItem("bookshell.debug.workShift") === "1");
+  } catch (_) {
+    return !!window.__bookshellDebugWorkShift;
+  }
+})();
+
 const pendingSessionWrites = new Map();
 
 function debugHabitsSync(...args) {
   if (!DEBUG_HABITS_SYNC) return;
   console.log("[habits:sync]", ...args);
+}
+
+function debugWorkShift(...args) {
+  if (!DEBUG_WORK_SHIFT) return;
+  console.log(...args);
 }
 
 function buildWorkDayPayload(minutes, shift) {
@@ -535,17 +548,22 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
   saveCache();
   try {
     const path = `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`;
-    console.info("[work-shift-debug] write:set path", path, payloadToWrite);
+    if (isWork) {
+      debugWorkShift("[WORK] write paths", { sessionsPath: path, shiftsPath: null });
+    }
     set(ref(db, path), payloadToWrite)
       .then(async () => {
         debugHabitsSync("write:set ok", { habitId, dateKey, payload: payloadToWrite });
+        if (isWork) {
+          debugWorkShift("[WORK] write done", { dateKey, shift: shiftOpt });
+        }
         try {
           const parentPath = `${HABIT_SESSIONS_PATH}/${habitId}`;
           const parentSnap = await get(ref(db, parentPath));
           const allDays = Object.keys(parentSnap.val() || {}).sort();
-          console.info("[work-shift-debug] post-write days", { parentPath, updatedDate: dateKey, allDays });
+          debugWorkShift("[WORK] post-write days", { parentPath, updatedDate: dateKey, allDays });
         } catch (snapshotErr) {
-          console.warn("[work-shift-debug] post-write snapshot failed", snapshotErr);
+          debugWorkShift("[WORK] post-write snapshot failed", snapshotErr);
         }
       })
       .catch((err) => {
@@ -1160,6 +1178,10 @@ function getDayDominantHabit(dateKey) {
 function getWorkHabitEntry(dateKey) {
   const work = activeHabits().find((h) => isWorkHabit(h));
   if (!work) return { shift: null, hasEntry: false };
+  const pending = pendingSessionWrites.get(sessionWriteKey(work.id, dateKey));
+  if (pending && Object.prototype.hasOwnProperty.call(pending, "value")) {
+    return readDayMinutesAndShift(pending.value, true);
+  }
   return readDayMinutesAndShift(habitSessions?.[work.id]?.[dateKey], true);
 }
 
@@ -1907,6 +1929,10 @@ function renderWeekTimeline() {
     });
     const percent = scheduled ? Math.round((completed / scheduled) * 100) : 0;
     const workEntry = workHabit ? getShiftForDate(dateKey) : { shift: null, hasEntry: false };
+    const computedClass = workEntry.shift === "M"
+      ? "is-work-morning"
+      : (workEntry.shift === "T" ? "is-work-evening" : (workEntry.hasEntry ? "is-work-unknown" : "is-work-free"));
+    debugWorkShift("[WORK] paint", { dateKey, computedShift: workEntry.shift, computedClass });
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "habit-week-day";
@@ -1915,9 +1941,7 @@ function renderWeekTimeline() {
     const isActive = dateKey === selectedDateKey;
     if (isToday) btn.classList.add("is-today");
     if (isActive) btn.classList.add("is-active");
-    btn.classList.add(workEntry.shift === "M"
-      ? "is-work-morning"
-      : (workEntry.shift === "T" ? "is-work-evening" : (workEntry.hasEntry ? "is-work-unknown" : "is-work-free")));
+    btn.classList.add(computedClass);
     const dominant = getDayDominantHabit(dateKey);
     if (dominant?.habit?.color) {
       btn.style.setProperty("--dom-rgb", hexToRgbString(dominant.habit.color));
@@ -4308,6 +4332,7 @@ function appendTimeQuickControls(tools, habit, today) {
         if (isWorkHabit(habit)) {
           const inferredShift = normalizeShiftValue((qa.label || "").trim().toUpperCase()) || (idx === 0 ? "M" : "T");
           const fixedMinutes = 480;
+          debugWorkShift("[WORK] click", { dateKey: today, shift: inferredShift });
           debugHabitsSync("quick shift click", { habitId: habit.id, dateKey: today, shift: inferredShift, fixedMinutes });
           setHabitTimeSec(habit.id, today, fixedMinutes * 60, { shift: inferredShift });
         } else {
@@ -6764,6 +6789,14 @@ function listenRemote() {
   onValue(ref(db, HABIT_SESSIONS_PATH), (snap) => {
     const raw = snap.val() || {};
     debugHabitsSync("onValue:habitSessions raw", raw);
+    const work = activeHabits().find((h) => isWorkHabit(h));
+    if (work) {
+      debugWorkShift("[WORK] onValue workShifts", null);
+      debugWorkShift("[WORK] onValue habitSessions(work)", {
+        dateKey: selectedDateKey,
+        value: raw?.[work.id]?.[selectedDateKey] ?? null
+      });
+    }
     applyPendingSessionWrites(raw);
     const norm = normalizeSessionsStore(raw, true);
     habitSessions = norm.normalized;

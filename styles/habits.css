@@ -2897,3 +2897,8 @@ display: grid;
   z-index: -1;
   pointer-events: none;
 }
+.history-month-cell .month-day-emoji{
+  position: relative;
+  isolation: isolate;   /* ✅ clave para iOS */
+  z-index: 0;
+}

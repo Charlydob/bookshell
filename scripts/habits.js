@@ -79,6 +79,8 @@ let heatmapYear = new Date().getFullYear();
 let habitHistoryRange = "week";
 let habitHistoryMetric = "time";
 let habitHistoryGroupMode = { kind: "habit", cat: null };
+let historyCalYear = null;
+let historyCalMonth = null;
 let habitDeleteTarget = null;
 let habitToastEl = null;
 let habitToastTimeout = null;
@@ -3328,35 +3330,36 @@ function isHabitBudgetCompleted(habit) {
   return progress.target > 0 && progress.value >= progress.target;
 }
 
-function buildHistoryMonthCalendar() {
-  const wrap = document.createElement("section");
-  wrap.className = "habits-history-section";
-  const header = document.createElement("div");
-  header.className = "habits-history-section-header";
-  header.innerHTML = '<div class="habits-history-section-title">Calendario mensual</div>';
-  const body = document.createElement("div");
-  body.className = "habits-history-section-body";
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+function formatHistoryMonthLabel(year, month) {
+  const date = new Date(year, month, 1);
+  return date.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+}
+
+function normalizeHistoryMonthState(anchorDate = new Date()) {
+  if (Number.isInteger(historyCalYear) && Number.isInteger(historyCalMonth)) return;
+  historyCalYear = anchorDate.getFullYear();
+  historyCalMonth = anchorDate.getMonth();
+}
+
+function shiftHistoryMonth(delta) {
+  const next = new Date(historyCalYear, historyCalMonth + delta, 1);
+  historyCalYear = next.getFullYear();
+  historyCalMonth = next.getMonth();
+}
+
+function renderHistoryMonthGrid(year, month, grid) {
+  if (!grid) return;
+  grid.innerHTML = "";
+  const start = new Date(year, month, 1);
+  const end = new Date(year, month + 1, 0);
   const offset = (start.getDay() + 6) % 7;
-  const weekdayHeader = document.createElement("div");
-  weekdayHeader.className = "habit-month-weekdays";
-  ["L", "M", "X", "J", "V", "S", "D"].forEach((label) => {
-    const day = document.createElement("span");
-    day.textContent = label;
-    weekdayHeader.appendChild(day);
-  });
-  body.appendChild(weekdayHeader);
-  const grid = document.createElement("div");
-  grid.className = "habit-month-grid";
   for (let i = 0; i < offset; i += 1) {
     const empty = document.createElement("div");
     empty.className = "habit-heatmap-cell is-out";
     grid.appendChild(empty);
   }
   for (let d = 1; d <= end.getDate(); d += 1) {
-    const date = new Date(now.getFullYear(), now.getMonth(), d);
+    const date = new Date(year, month, d);
     const key = dateKeyLocal(date);
     const shiftClass = getShiftClassForDate(key);
     const dominant = getDayDominantHabit(key);
@@ -3372,6 +3375,61 @@ function buildHistoryMonthCalendar() {
     empty.className = "habit-heatmap-cell is-out";
     grid.appendChild(empty);
   }
+}
+
+function buildHistoryMonthCalendar(anchorDate = new Date()) {
+  normalizeHistoryMonthState(anchorDate);
+  const wrap = document.createElement("section");
+  wrap.className = "habits-history-section";
+  const header = document.createElement("div");
+  header.className = "habits-history-section-header";
+  header.innerHTML = '<div class="habits-history-section-title">Calendario mensual</div>';
+  const nav = document.createElement("div");
+  nav.className = "habits-history-month-nav";
+  const prevBtn = document.createElement("button");
+  prevBtn.type = "button";
+  prevBtn.className = "habits-history-month-nav-btn";
+  prevBtn.textContent = "←";
+  prevBtn.setAttribute("aria-label", "Mes anterior");
+  const monthLabel = document.createElement("div");
+  monthLabel.className = "habits-history-month-label";
+  const nextBtn = document.createElement("button");
+  nextBtn.type = "button";
+  nextBtn.className = "habits-history-month-nav-btn";
+  nextBtn.textContent = "→";
+  nextBtn.setAttribute("aria-label", "Mes siguiente");
+  nav.appendChild(prevBtn);
+  nav.appendChild(monthLabel);
+  nav.appendChild(nextBtn);
+  header.appendChild(nav);
+  const body = document.createElement("div");
+  body.className = "habits-history-section-body";
+  const weekdayHeader = document.createElement("div");
+  weekdayHeader.className = "habit-month-weekdays";
+  ["L", "M", "X", "J", "V", "S", "D"].forEach((label) => {
+    const day = document.createElement("span");
+    day.textContent = label;
+    weekdayHeader.appendChild(day);
+  });
+  body.appendChild(weekdayHeader);
+  const grid = document.createElement("div");
+  grid.className = "habit-month-grid";
+
+  const updateCalendar = () => {
+    monthLabel.textContent = formatHistoryMonthLabel(historyCalYear, historyCalMonth);
+    renderHistoryMonthGrid(historyCalYear, historyCalMonth, grid);
+  };
+
+  prevBtn.addEventListener("click", () => {
+    shiftHistoryMonth(-1);
+    updateCalendar();
+  });
+  nextBtn.addEventListener("click", () => {
+    shiftHistoryMonth(1);
+    updateCalendar();
+  });
+
+  updateCalendar();
   body.appendChild(grid);
   wrap.appendChild(header);
   wrap.appendChild(body);

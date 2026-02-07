@@ -2388,6 +2388,36 @@
   font-size: 15px;
 }
 
+
+.habits-history-month-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.habits-history-month-nav-btn {
+  border: 1px solid rgba(255,255,255,0.12);
+  background: var(--glass);
+  color: var(--txt);
+  border-radius: var(--radius-pill);
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+
+.habits-history-month-label {
+  min-width: 160px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--txt);
+  text-transform: capitalize;
+}
+
 .habits-history-section-controls {
   display: flex;
   flex-wrap: wrap;

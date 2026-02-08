@@ -1064,11 +1064,12 @@ margin-top: 40px;
   padding: 6px 12px 4px;
 }
 .book-detail-body{
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   padding: 4px 2px 10px;
   background: radial-gradient(circle at 10% -10%, rgba(255,255,255,.04), transparent);
-  max-height: 68vh;
+  max-height: calc(100dvh - 24px);
   overflow-y: auto;
 }
 .book-detail-modal{

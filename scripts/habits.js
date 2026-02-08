@@ -463,34 +463,23 @@ function normalizeSessionsStore(raw, persistRemote = false) {
 
 
 function getHabitTotalSecForDate(habitId, dateKey) {
-  if (!habitId || !dateKey) return 0;
-
-  // Desconocido se calcula dinámicamente: 24h - tiempo asignado
-  if (habitId === UNKNOWN_HABIT_ID) {
-    ensureUnknownHabit(false);
-    const computed = computeUnknownSecForDate(dateKey);
-
-    // cache en memoria (sin machacar remoto)
-    if (!habitSessions[UNKNOWN_HABIT_ID] || typeof habitSessions[UNKNOWN_HABIT_ID] !== "object") {
-      habitSessions[UNKNOWN_HABIT_ID] = {};
-    }
-    habitSessions[UNKNOWN_HABIT_ID][dateKey] = computed;
-    return computed;
-  }
-
   const byDate = habitSessions?.[habitId];
-  if (!byDate || typeof byDate !== "object") return 0;
-  const day = byDate[dateKey];
-  if (typeof day === "number") {
-    const sec = Number(day) || 0;
-    return sec > 0 ? sec : 0;
+  if (!byDate) return 0;
+
+  const v = byDate[dateKey];
+
+  // caso antiguo: número en segundos
+  if (typeof v === "number") return Math.max(0, v);
+
+  // caso nuevo Trabajo: objeto {min, shift}
+  if (v && typeof v === "object") {
+    if (Number.isFinite(v.totalSec)) return Math.max(0, v.totalSec);
+    if (Number.isFinite(v.min)) return Math.max(0, v.min * 60);
   }
-  if (day && typeof day === "object") {
-    const min = Number(day.min) || 0;
-    return min > 0 ? Math.round(min * 60) : 0;
-  }
+
   return 0;
 }
+
 
 function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
   if (!habitId || !dateKey) return 0;
@@ -947,19 +936,20 @@ function ensureUnknownHabit(persistRemote = true) {
 function computeUnknownSecForDate(dateKey) {
   if (!dateKey) return 0;
 
-  // suma de TODO el tiempo registrado (excepto Desconocido)
   let assigned = 0;
-  Object.entries(habitSessions || {}).forEach(([hid, byDate]) => {
+  Object.keys(habitSessions || {}).forEach((hid) => {
     if (hid === UNKNOWN_HABIT_ID) return;
     const h = habits?.[hid];
     if (!h || h.archived) return;
-    const sec = Number(byDate?.[dateKey]) || 0;
-    if (sec > 0) assigned += sec;
+
+    assigned += getHabitTotalSecForDate(hid, dateKey); // ✅ Trabajo entra aquí
   });
 
   assigned = Math.min(DAY_SEC, Math.max(0, Math.round(assigned)));
   return Math.max(0, DAY_SEC - assigned);
 }
+
+
 
 function recomputeUnknownForDate(dateKey, persistRemote = false) {
   if (!dateKey) return 0;

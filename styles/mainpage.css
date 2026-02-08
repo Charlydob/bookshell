@@ -1640,18 +1640,101 @@ margin-top: 40px;
 }
 /* La fila ocupa exactamente el ancho útil del contenedor */
 .books-shelf-row{
-  position: relative;
   display: flex;
-  flex-wrap: nowrap;         /* FIX */
-  width: 100%;               /* FIX */
-  box-sizing: border-box;    /* FIX */
-  align-items: flex-end;
+  flex-wrap: nowrap;
+  width: 100%;
   gap: 8px;
-  padding-bottom: 16px;
-  overflow: visible;         /* FIX */
+  overflow-x: hidden;   /* no se sale */
+  overflow-y: visible;  /* sombras ok */
+}
+.books-shelf-row{
+  display: flex;
+  flex-wrap: nowrap;
+
+  overflow-x: auto;
+  overflow-y: hidden;
+
+  -webkit-overflow-scrolling: touch;
+}
+.book-spine{
+  flex: 0 0 auto;
+}
+
+.books-shelf-row{
+  scroll-snap-type: x mandatory;
+}
+
+.book-spine{
+  scroll-snap-align: start;
 }
 
 /* Un pelín de aire a la derecha para que jamás “muerda” el borde */
 .books-list-finished{
   padding-right: 28px; /* antes 12px */
+}
+/* Evita que los lomos se “salgan” por la derecha */
+.books-list-finished,
+.watchlist-body{
+  overflow-x: hidden;
+}
+
+/* La fila no puede medir más que su contenedor */
+.books-shelf-row{
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.books-finished, .books-watchlist{
+  overflow: hidden;
+}
+#book-detail-backdrop{
+  padding: 0;
+}
+.modal.book-detail-modal{
+  max-height: 850px;
+  margin-bottom: 0px;
+  bottom: 0px;
+}
+.modal-footer.book-detail-footer.sticky-footer{
+    margin-bottom: 0px;
+  bottom: 0px;
+}
+.book-detail-quotes-body{
+  max-height: 640px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+
+  flex: 1 1 auto;
+  min-height: 0;
+
+  padding: 12px;
+  padding-bottom: 24px;
+
+  background: rgba(255,255,255,0.03);
+  border-radius: 14px;
+}
+
+.book-detail-quotes-search{
+margin-left: 25%;
+margin-bottom: 6px;
+border-radius: 10px;
+padding: 8px;
+color: white;
+border: 1px solid rgba(255,255,255,0.12);
+background-color: transparent;
+}
+.book-detail-quotes-body{
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  min-height: 0;
+  flex: 1 1 auto;
+
+  padding: 12px;
+  padding-bottom: calc(12px + var(--detail-footer-h, 72px) + env(safe-area-inset-bottom));
+}
+.book-detail-footer{
+  --detail-footer-h: 72px; /* ajusta si tu footer mide más */
+}
+.book-detail-quote-item:last-child{
+  margin-bottom: 0;
 }

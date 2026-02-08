@@ -275,7 +275,7 @@ function setSpineWidth(spineEl, title) {
 // crea filas que SIEMPRE caben (sin wrap) => estante debajo de cada fila
 // === DEBUG SHELVES ===
 const SHELF_DEBUG = true;
-const SHELF_SAFE_RIGHT_PX = 40; // sube/baja 32–56 si hace falta
+const SHELF_SAFE_RIGHT_PX = 64; // sube/baja 32–56 si hace falta
 
 function dbg(...args) {
   if (SHELF_DEBUG) console.log("[SHELF]", ...args);
@@ -285,6 +285,7 @@ function dbgWarn(...args) {
 }
 const shelfLog = (...a) => dbg(...a);
 const shelfWarn = (...a) => dbgWarn(...a);
+
 
 function getShelfAvailWidthPx(hostEl) {
   if (!hostEl) {
@@ -310,8 +311,9 @@ function getShelfAvailWidthPx(hostEl) {
 
   return avail;
 }
-function buildShelfRowsByWidth(items, makeSpine, hostEl, rowClass = "books-shelf-row") {
-  // BOOKS: shelf auto-fit
+
+
+function buildShelfRowsByWidth_NO_WRAP(items, makeSpine, hostEl, rowClass = "books-shelf-row") {
   const row = document.createElement("div");
   row.className = rowClass;
 
@@ -325,6 +327,14 @@ function buildShelfRowsByWidth(items, makeSpine, hostEl, rowClass = "books-shelf
   return frag;
 }
 
+// Wrapper: mantiene el nombre que usa toda la app
+function buildShelfRowsByWidth(items, makeSpine, hostEl, rowClass = "books-shelf-row") {
+  // Si existe una versión WRAP, úsala. Si no, fallback seguro.
+  if (typeof buildShelfRowsByWidth_WRAP === "function") {
+    return buildShelfRowsByWidth_WRAP(items, makeSpine, hostEl, rowClass);
+  }
+  return buildShelfRowsByWidth_NO_WRAP(items, makeSpine, hostEl, rowClass);
+}
 
 
 

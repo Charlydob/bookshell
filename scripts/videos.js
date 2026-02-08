@@ -37,6 +37,7 @@ const VIDEO_LOG_PATH = "videoLog";
 const VIDEO_WORK_PATH = "videoWorkLog";
 const LINKS_PATH = "links";
 const BOOKS_PATH = "books";
+const QUOTE_BOOKS_PATH = "quoteBooks";
 
 // Estado
 let videos = {};
@@ -64,6 +65,7 @@ let teleprompterSentences = [];
 let teleprompterActiveIndex = -1;
 let links = {};
 let books = {};
+let quoteBooks = {};
 let linkPickerMode = "script";
 let linkPickerSelectHandler = null;
 let insertType = "link";
@@ -139,6 +141,15 @@ function rebuildState() {
 }
 
 loadState();
+
+function normalizeBookTitle(title) {
+  // VUXEL: normalización mínima para evitar duplicados triviales
+  return String(title || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function normalizeBookDisplayTitle(title) {
+  return String(title || "").trim().replace(/\s+/g, " ");
+}
 
 function normalizeUrl(raw) {
   if (!raw) return "";
@@ -495,6 +506,7 @@ if ($viewVideos) {
   const $videoLinksForm = document.getElementById("video-links-form");
   const $videoLinksCancel = document.getElementById("video-links-cancel");
   const $videoLinksSearch = document.getElementById("video-links-search");
+  const $videoLinksBookFilter = document.getElementById("video-links-book-filter");
   const $videoLinksNewTitle = document.getElementById("video-links-new-title");
   const $videoLinksSave = document.getElementById("video-links-save");
   const $videoLinkId = document.getElementById("video-link-id");
@@ -505,6 +517,7 @@ if ($viewVideos) {
   const $videoLinkBookFields = document.getElementById("video-link-book-fields");
   const $videoLinkBookTitle = document.getElementById("video-link-book-title");
   const $videoLinkBookPage = document.getElementById("video-link-book-page");
+  const $videoLinkBookCreate = document.getElementById("video-link-book-create");
   const $videoLinkError = document.getElementById("video-link-error");
 
   // Modal idea
@@ -1339,19 +1352,84 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     }
   }
 
+  function buildQuoteBookCatalog() {
+    const map = new Map();
+    Object.entries(books || {}).forEach(([id, b]) => {
+      const title = normalizeBookDisplayTitle(b?.title || "");
+      const key = normalizeBookTitle(title);
+      if (!key) return;
+      map.set(key, { key, title, bookId: id });
+    });
+    Object.entries(quoteBooks || {}).forEach(([key, b]) => {
+      const normKey = normalizeBookTitle(key || b?.id || "");
+      const title = normalizeBookDisplayTitle(b?.title || "");
+      if (!normKey) return;
+      const prev = map.get(normKey);
+      map.set(normKey, {
+        key: normKey,
+        title: prev?.title || title || normKey,
+        bookId: prev?.bookId || b?.bookId || ""
+      });
+    });
+    return Array.from(map.values()).sort((a, b) => a.title.localeCompare(b.title, "es", { sensitivity: "base" }));
+  }
+
   function refreshBooksDatalist() {
     if (!$videoBooksDatalist) return;
-    const list = Object.entries(books || {})
-      .map(([id, b]) => ({ id, title: (b?.title || "").trim() }))
-      .filter((b) => b.title)
-      .sort((a, b) => a.title.localeCompare(b.title, "es", { sensitivity: "base" }));
+    const list = buildQuoteBookCatalog();
     $videoBooksDatalist.innerHTML = "";
     list.forEach((item) => {
       const option = document.createElement("option");
       option.value = item.title;
-      option.dataset.bookId = item.id;
+      option.dataset.bookId = item.bookId || "";
+      option.dataset.bookKey = item.key;
       $videoBooksDatalist.appendChild(option);
     });
+    renderBookFilterOptions();
+  }
+
+  function renderBookFilterOptions() {
+    if (!$videoLinksBookFilter) return;
+    const current = $videoLinksBookFilter.value || "";
+    const list = buildQuoteBookCatalog();
+    $videoLinksBookFilter.innerHTML = '<option value="">Todos los libros</option><option value="__none__">Sin libro</option>';;
+    list.forEach((item) => {
+      const opt = document.createElement("option");
+      opt.value = item.key;
+      opt.textContent = item.title;
+      $videoLinksBookFilter.appendChild(opt);
+    });
+    $videoLinksBookFilter.value = Array.from($videoLinksBookFilter.options).some((o) => o.value === current) ? current : "";
+  }
+
+  function resolveBookSelection(rawTitle) {
+    const typedTitle = normalizeBookDisplayTitle(rawTitle);
+    const typedKey = normalizeBookTitle(typedTitle);
+    if (!typedKey) return { bookKey: "", bookTitle: "", bookId: "" };
+    const catalogItem = buildQuoteBookCatalog().find((item) => item.key === typedKey);
+    if (catalogItem) return { bookKey: catalogItem.key, bookTitle: catalogItem.title, bookId: catalogItem.bookId || "" };
+    return { bookKey: typedKey, bookTitle: typedTitle, bookId: "" };
+  }
+
+  async function upsertQuoteBook({ key, title, bookId = "" } = {}) {
+    if (!key || !title) return;
+    const now = Date.now();
+    // VUXEL: catálogo dinámico de libros usados en citas
+    const prev = quoteBooks?.[key] || {};
+    const payload = {
+      id: key,
+      title,
+      bookId: bookId || prev.bookId || "",
+      updatedAt: now,
+      createdAt: prev.createdAt || now
+    };
+    quoteBooks[key] = payload;
+    refreshBooksDatalist();
+    try {
+      await set(ref(db, `${QUOTE_BOOKS_PATH}/${key}`), payload);
+    } catch (err) {
+      console.warn("No se pudo guardar quoteBook", err);
+    }
   }
 
   function addSheetSwipeToClose(sheetEl, closeFn) {
@@ -1448,15 +1526,61 @@ const LINK_CATEGORY_LABELS = {
     }));
   }
 
+  function buildLinkCard(item, label, category) {
+    const card = document.createElement("div");
+    card.className = "video-link-card";
+    const header = document.createElement("div");
+    header.className = "video-link-card-header";
+    const title = document.createElement("div");
+    title.className = "video-link-card-title";
+    if (item.url) {
+      const anchor = document.createElement("a");
+      anchor.href = normalizeUrl(item.url);
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      anchor.textContent = item.title || "Recurso guardado";
+      title.appendChild(anchor);
+    } else {
+      title.textContent = item.title || "Recurso guardado";
+    }
+    const actionMenu = createActionMenu({
+      onEdit: () => openLinksNewView(item),
+      onDelete: () => openDeleteModal({ entityType: "link", id: item.id, label: item.title || item.url || "Link" }),
+      label: item.title || "link"
+    });
+    header.appendChild(title);
+    header.appendChild(actionMenu);
+    const meta = document.createElement("div");
+    meta.className = "video-link-card-meta";
+    const dateLabel = formatLinkDate(item.createdAt);
+    const bits = [label];
+    if (category === "bookQuote") {
+      if (item.bookTitle) bits.push(`Libro: ${item.bookTitle}`);
+      if (item.page) bits.push(`Pág. ${item.page}`);
+    }
+    if (item.note) bits.push(item.note);
+    if (dateLabel) bits.push(dateLabel);
+    meta.textContent = bits.join(" · ");
+    card.appendChild(header);
+    card.appendChild(meta);
+    attachSwipeToMenu(card, () => actionMenu.openMenu?.());
+    return card;
+  }
+
   function renderLinksList() {
     if (!$videoLinksList || !$videoLinksEmpty) return;
     const search = ($videoLinksSearch?.value || "").trim().toLowerCase();
+    const selectedBook = $videoLinksBookFilter?.value || "";
     const items = getLinksArray()
       .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))
       .filter((item) => {
         if (!search) return true;
-        const hay = `${item.title || ""} ${item.note || ""} ${item.category || ""} ${item.url || ""}`.toLowerCase();
-        return hay.includes(search);
+        const hay = `${item.title || ""} ${item.note || ""} ${item.category || ""} ${item.url || ""} ${item.bookTitle || ""}`.toLowerCase();
+        if (!hay.includes(search)) return false;
+        if (!selectedBook) return true;
+        const itemKey = normalizeBookTitle(item.bookTitle || "");
+        if (selectedBook === "__none__") return !itemKey;
+        return itemKey === selectedBook;
       });
     if (!items.length) {
       $videoLinksList.innerHTML = "";
@@ -1485,52 +1609,40 @@ const LINK_CATEGORY_LABELS = {
       `;
       const body = document.createElement("div");
       body.className = "video-links-section-body";
-      grouped.forEach((item) => {
-        const card = document.createElement("div");
-        card.className = "video-link-card";
-        const header = document.createElement("div");
-        header.className = "video-link-card-header";
-        const title = document.createElement("div");
-        title.className = "video-link-card-title";
-        if (item.url) {
-          const anchor = document.createElement("a");
-          anchor.href = normalizeUrl(item.url);
-          anchor.target = "_blank";
-          anchor.rel = "noopener noreferrer";
-          anchor.textContent = item.title || "Recurso guardado";
-          title.appendChild(anchor);
-        } else {
-          title.textContent = item.title || "Recurso guardado";
-        }
-        const actionMenu = createActionMenu({
-          onEdit: () => openLinksNewView(item),
-          onDelete: () => {
-            openDeleteModal({
-              entityType: "link",
-              id: item.id,
-              label: item.title || item.url || "Link"
-            });
-          },
-          label: item.title || "link"
+      if (category === "bookQuote") {
+        const byBook = new Map();
+        grouped.forEach((item) => {
+          const key = normalizeBookTitle(item.bookTitle || "") || "__none__";
+          if (!byBook.has(key)) byBook.set(key, []);
+          byBook.get(key).push(item);
         });
-        header.appendChild(title);
-        header.appendChild(actionMenu);
-        const meta = document.createElement("div");
-        meta.className = "video-link-card-meta";
-        const dateLabel = formatLinkDate(item.createdAt);
-        const bits = [label];
-        if (category === "bookQuote") {
-          if (item.bookTitle) bits.push(`Libro: ${item.bookTitle}`);
-          if (item.page) bits.push(`Pág. ${item.page}`);
-        }
-        if (item.note) bits.push(item.note);
-        if (dateLabel) bits.push(dateLabel);
-        meta.textContent = bits.join(" · ");
-        card.appendChild(header);
-        card.appendChild(meta);
-        body.appendChild(card);
-        attachSwipeToMenu(card, () => actionMenu.openMenu?.());
-      });
+        Array.from(byBook.entries()).sort((a, b) => {
+          if (a[0] === "__none__") return 1;
+          if (b[0] === "__none__") return -1;
+          const ta = (a[1][0]?.bookTitle || "");
+          const tb = (b[1][0]?.bookTitle || "");
+          return ta.localeCompare(tb, "es", { sensitivity: "base" });
+        }).forEach(([bookKey, bookItems]) => {
+          const groupDetails = document.createElement("details");
+          groupDetails.className = "video-links-book-group";
+          groupDetails.open = true;
+          const groupSummary = document.createElement("summary");
+          const title = bookKey === "__none__" ? "Sin libro" : (bookItems[0]?.bookTitle || "Libro");
+          groupSummary.innerHTML = `<span>${title}</span><span class="video-finished-count">${bookItems.length}</span>`;
+          const groupBody = document.createElement("div");
+          groupBody.className = "video-links-section-body";
+          bookItems.forEach((item) => {
+            groupBody.appendChild(buildLinkCard(item, label, category));
+          });
+          groupDetails.appendChild(groupSummary);
+          groupDetails.appendChild(groupBody);
+          body.appendChild(groupDetails);
+        });
+      } else {
+        grouped.forEach((item) => {
+          body.appendChild(buildLinkCard(item, label, category));
+        });
+      }
       details.appendChild(summary);
       details.appendChild(body);
       frag.appendChild(details);
@@ -1741,11 +1853,8 @@ const LINK_CATEGORY_LABELS = {
   }
 
   function getBookSelection(rawTitle) {
-    const title = (rawTitle || "").trim();
-    if (!title) return { bookTitle: "", bookId: "" };
-    const found = Object.entries(books || {}).find(([, b]) => (b?.title || "").trim().toLowerCase() === title.toLowerCase());
-    if (found) return { bookTitle: (found[1]?.title || title).trim(), bookId: found[0] };
-    return { bookTitle: title, bookId: "" };
+    const selection = resolveBookSelection(rawTitle);
+    return { bookTitle: selection.bookTitle, bookId: selection.bookId, bookKey: selection.bookKey };
   }
 
   function insertQuoteResource({ text, bookTitle, page, bookId }) {
@@ -2317,6 +2426,30 @@ const LINK_CATEGORY_LABELS = {
       openLinksView();
     });
   }
+
+  if ($videoLinksBookFilter) {
+    $videoLinksBookFilter.addEventListener("change", () => renderLinksList());
+  }
+
+  if ($videoLinkBookTitle) {
+    const syncCreateLabel = () => {
+      if (!$videoLinkBookCreate) return;
+      const title = normalizeBookDisplayTitle($videoLinkBookTitle.value || "");
+      $videoLinkBookCreate.textContent = title ? `+ Crear libro “${title}”` : "+ Crear libro";
+    };
+    $videoLinkBookTitle.addEventListener("input", syncCreateLabel);
+    syncCreateLabel();
+  }
+
+  if ($videoLinkBookCreate) {
+    $videoLinkBookCreate.addEventListener("click", async () => {
+      const selection = resolveBookSelection($videoLinkBookTitle?.value || "");
+      if (!selection.bookKey || !selection.bookTitle) return;
+      await upsertQuoteBook({ key: selection.bookKey, title: selection.bookTitle, bookId: selection.bookId });
+      if ($videoLinkBookTitle) $videoLinkBookTitle.value = selection.bookTitle;
+    });
+  }
+
   if ($videoLinksForm) {
     $videoLinksForm.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -2335,7 +2468,8 @@ const LINK_CATEGORY_LABELS = {
       const title = ($videoLinkTitle?.value || "").trim();
       const category = normalizeLinkCategory($videoLinkCategory?.value || "otro");
       const note = ($videoLinkNote?.value || "").trim();
-      const bookTitle = ($videoLinkBookTitle?.value || "").trim();
+      const rawBookTitle = ($videoLinkBookTitle?.value || "").trim();
+      const selection = category === "bookQuote" ? resolveBookSelection(rawBookTitle) : { bookKey: "", bookTitle: "", bookId: "" };
       const page = ($videoLinkBookPage?.value || "").trim();
       const id = ($videoLinkId?.value || "").trim();
       const now = Date.now();
@@ -2345,7 +2479,9 @@ const LINK_CATEGORY_LABELS = {
         title: title || null,
         category,
         note,
-        bookTitle: category === "bookQuote" ? (bookTitle || null) : null,
+        bookTitle: category === "bookQuote" ? (selection.bookTitle || null) : null,
+        bookKey: category === "bookQuote" ? (selection.bookKey || null) : null,
+        bookId: category === "bookQuote" ? (selection.bookId || null) : null,
         page: category === "bookQuote" ? (page || null) : null,
         updatedAt: now
       };
@@ -2357,8 +2493,7 @@ const LINK_CATEGORY_LABELS = {
           const newRef = push(ref(db, LINKS_PATH));
           const newLink = {
             ...payload,
-            createdAt: now,
-            bookId: null
+            createdAt: now
           };
           await set(newRef, newLink);
           if (newRef.key) {
@@ -2367,6 +2502,9 @@ const LINK_CATEGORY_LABELS = {
             renderLinksList();
             renderLinkPickerList();
           }
+        }
+        if (category === "bookQuote" && selection.bookKey && selection.bookTitle) {
+          await upsertQuoteBook({ key: selection.bookKey, title: selection.bookTitle, bookId: selection.bookId });
         }
         if ($videoLinksForm) $videoLinksForm.reset();
         if ($videoLinkCategory) $videoLinkCategory.value = "otro";
@@ -2458,15 +2596,43 @@ if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
     renderVideoCalendar();
   });
 
+
+  async function migrateLegacyQuoteBooks() {
+    const tasks = [];
+    Object.entries(links || {}).forEach(([id, item]) => {
+      if (normalizeLinkCategory(item?.category) !== "bookQuote") return;
+      const selection = resolveBookSelection(item.bookTitle || "");
+      if (!selection.bookKey) return;
+      if (!item.bookKey || !item.bookTitle || (item.bookTitle || "").trim() !== selection.bookTitle) {
+        // VUXEL: migración no destructiva de citas antiguas con bookTitle plano
+        tasks.push(update(ref(db, `${LINKS_PATH}/${id}`), {
+          bookKey: selection.bookKey,
+          bookTitle: selection.bookTitle,
+          bookId: selection.bookId || null,
+          updatedAt: Date.now()
+        }).catch(() => {}));
+      }
+      tasks.push(upsertQuoteBook({ key: selection.bookKey, title: selection.bookTitle, bookId: selection.bookId }));
+    });
+    if (tasks.length) await Promise.all(tasks);
+  }
+
   onValue(ref(db, LINKS_PATH), (snap) => {
     links = snap.val() || {};
     rebuildState();
     renderLinksList();
     renderLinkPickerList();
+    refreshBooksDatalist();
+    migrateLegacyQuoteBooks();
   });
 
   onValue(ref(db, BOOKS_PATH), (snap) => {
     books = snap.val() || {};
+    refreshBooksDatalist();
+  });
+
+  onValue(ref(db, QUOTE_BOOKS_PATH), (snap) => {
+    quoteBooks = snap.val() || {};
     refreshBooksDatalist();
   });
 
@@ -3511,6 +3677,8 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
 
   window.__bookshellVideos = {
     getRecentVideo,
-    openVideoModal
+    openVideoModal,
+    openLinksView,
+    openLinksNewView
   };
 }

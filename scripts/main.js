@@ -12,6 +12,7 @@ import {
   push,
   set,
   update,
+  remove,
   runTransaction
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import {
@@ -53,10 +54,12 @@ const storage = getStorage(app);
 // Rutas base (sin auth, un solo usuario)
 const BOOKS_PATH = "books";
 const READING_LOG_PATH = "readingLog";
+const LINKS_PATH = "links";
 
 // === Estado en memoria ===
 let books = {};
 let readingLog = {}; // { "YYYY-MM-DD": { bookId: pages } }
+let links = {};
 let bookDetailId = null;
 
 // Categorías (género): opciones
@@ -202,6 +205,9 @@ const $bookDetailPages = document.getElementById("book-detail-pages");
 const $bookDetailProgress = document.getElementById("book-detail-progress");
 const $bookDetailFinished = document.getElementById("book-detail-finished");
 const $bookDetailNotes = document.getElementById("book-detail-notes");
+const $bookDetailQuotes = document.getElementById("book-detail-quotes");
+const $bookDetailQuotesCount = document.getElementById("book-detail-quotes-count");
+const $bookDetailQuotesBody = document.getElementById("book-detail-quotes-body");
 const $bookDetailEdit = document.getElementById("book-detail-edit");
 
 // Stats
@@ -1019,6 +1025,7 @@ function openBookDetail(bookId) {
 
   const notes = b.notes || b.description || "Sin notas";
   fillDetail($bookDetailNotes, notes);
+  renderBookDetailQuotes(bookId, b);
 
   if ($bookDetailFavorite) {
     $bookDetailFavorite.checked = !!b.favorite;
@@ -1044,6 +1051,75 @@ if ($bookDetailEdit) {
   });
 }
 
+
+
+function normalizeBookTitle(title) {
+  // VUXEL: misma clave normalizada que en Vídeos/Links para citas
+  return String(title || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function getBookLinkedQuotes(bookId, book) {
+  const titleKey = normalizeBookTitle(book?.title || "");
+  return Object.entries(links || {})
+    .map(([id, item]) => ({ id, ...(item || {}) }))
+    .filter((item) => {
+      const cat = String(item.category || "").toLowerCase();
+      if (!(cat === "bookquote" || cat === "bookquote" || cat === "libro/cita" || item.category === "bookQuote")) {
+        if (item.category !== "bookQuote") return false;
+      }
+      if (item.bookId && item.bookId === bookId) return true;
+      const key = normalizeBookTitle(item.bookTitle || "");
+      return !!titleKey && key === titleKey;
+    })
+    .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+}
+
+function openQuoteInVideos(item) {
+  if (!item) return;
+  window.__bookshellSetView?.("view-videos");
+  window.__bookshellVideos?.openLinksNewView?.({ id: item.id, ...item });
+}
+
+function renderBookDetailQuotes(bookId, book) {
+  if (!$bookDetailQuotesBody || !$bookDetailQuotesCount) return;
+  const items = getBookLinkedQuotes(bookId, book);
+  $bookDetailQuotesCount.textContent = String(items.length);
+  $bookDetailQuotesBody.innerHTML = "";
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "video-links-empty";
+    empty.textContent = "No hay citas asociadas todavía.";
+    $bookDetailQuotesBody.appendChild(empty);
+    return;
+  }
+  items.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "video-link-card";
+    const meta = document.createElement("div");
+    meta.className = "video-link-card-meta";
+    const snippet = (item.note || item.title || "Cita sin texto").slice(0, 140);
+    meta.textContent = `${item.page ? `Pág. ${item.page} · ` : ""}${snippet}`;
+    const actions = document.createElement("div");
+    actions.className = "video-links-actions";
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "btn";
+    openBtn.textContent = "Abrir/Editar";
+    openBtn.addEventListener("click", () => openQuoteInVideos(item));
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn ghost";
+    delBtn.textContent = "Eliminar";
+    delBtn.addEventListener("click", async () => {
+      await remove(ref(db, `${LINKS_PATH}/${item.id}`));
+    });
+    actions.appendChild(openBtn);
+    actions.appendChild(delBtn);
+    row.appendChild(meta);
+    row.appendChild(actions);
+    $bookDetailQuotesBody.appendChild(row);
+  });
+}
 
 // === Modal libro ===
 function openBookModal(bookId = null) {
@@ -1201,6 +1277,10 @@ onValue(ref(db, READING_LOG_PATH), (snap) => {
   renderCalendar();
 });
 
+onValue(ref(db, LINKS_PATH), (snap) => {
+  links = snap.val() || {};
+  if (bookDetailId && books?.[bookDetailId]) renderBookDetailQuotes(bookDetailId, books[bookDetailId]);
+});
 
 // === Render libros ===
 function isBookFinished(b) {

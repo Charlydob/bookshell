@@ -855,6 +855,26 @@
   gap: 10px;
 }
 
+.video-links-book-group {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(6, 8, 15, 0.7);
+  overflow: hidden;
+}
+
+.video-links-book-group summary {
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.video-links-book-group summary::-webkit-details-marker {
+  display: none;
+}
+
 .video-link-card-title a {
   color: inherit;
   text-decoration: none;

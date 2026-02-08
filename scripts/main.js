@@ -12,6 +12,7 @@ import {
   push,
   set,
   update,
+  remove,
   runTransaction
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import {
@@ -53,10 +54,12 @@ const storage = getStorage(app);
 // Rutas base (sin auth, un solo usuario)
 const BOOKS_PATH = "books";
 const READING_LOG_PATH = "readingLog";
+const LINKS_PATH = "links";
 
 // === Estado en memoria ===
 let books = {};
 let readingLog = {}; // { "YYYY-MM-DD": { bookId: pages } }
+let links = {};
 let bookDetailId = null;
 
 // Categorías (género): opciones
@@ -202,7 +205,14 @@ const $bookDetailPages = document.getElementById("book-detail-pages");
 const $bookDetailProgress = document.getElementById("book-detail-progress");
 const $bookDetailFinished = document.getElementById("book-detail-finished");
 const $bookDetailNotes = document.getElementById("book-detail-notes");
+const $bookDetailQuotes = document.getElementById("book-detail-quotes");
+const $bookDetailQuotesCount = document.getElementById("book-detail-quotes-count");
+const $bookDetailQuotesBody = document.getElementById("book-detail-quotes-body");
+const $bookDetailQuotesSearch = document.getElementById("book-detail-quotes-search");
 const $bookDetailEdit = document.getElementById("book-detail-edit");
+
+let bookDetailQuoteSearchTimer = null;
+let bookDetailQuoteSearchValue = "";
 
 // Stats
 const $statStreakCurrent = document.getElementById("stat-streak-current");
@@ -301,113 +311,17 @@ function getShelfAvailWidthPx(hostEl) {
   return avail;
 }
 function buildShelfRowsByWidth(items, makeSpine, hostEl, rowClass = "books-shelf-row") {
-  const maxWidth = getShelfAvailWidthPx(hostEl);
-  const frag = document.createDocumentFragment();
+  // BOOKS: shelf auto-fit
+  const row = document.createElement("div");
+  row.className = rowClass;
 
-  let row = null;
-  let used = 0;
-  let rowIdx = -1;
-
-  // Medidor oculto para poder medir el ancho real del lomo aunque aún no esté en el DOM visible
-  let measurer = hostEl && hostEl.__shelfMeasurer;
-  if (hostEl && !measurer) {
-    measurer = document.createElement("div");
-    measurer.className = "shelf-measurer";
-    measurer.style.cssText =
-      "position:absolute;left:-99999px;top:-99999px;visibility:hidden;pointer-events:none;contain:layout style;";
-    hostEl.appendChild(measurer);
-    hostEl.__shelfMeasurer = measurer;
-  }
-
-  const startRow = () => {
-    row = document.createElement("div");
-    row.className = rowClass;
-    used = 0;
-    rowIdx++;
-    dbg("startRow", { rowIdx, rowClass, maxWidth });
-  };
-
-  const flush = () => {
-    if (row && row.childNodes.length) {
-      frag.appendChild(row);
-      dbg("flushRow", { rowIdx, itemsInRow: row.childNodes.length, used, maxWidth, free: maxWidth - used });
-    }
-    row = null;
-    used = 0;
-  };
-
-  const arr = items || [];
-  dbg("buildShelfRowsByWidth: begin", {
-    count: arr.length,
-    rowClass,
-    maxWidth,
-    host: hostEl?.className || hostEl?.id || "?"
-  });
-
-  arr.forEach((item, idx) => {
+  (items || []).forEach((item) => {
     const spine = makeSpine(item);
-
-    // ancho REAL del lomo: medir en measurer (si existe), si no dataset, si no fallback
-    let rectW = 0;
-    const dsW = Number(spine?.dataset?.spineWidth) || 0;
-
-    if (measurer && spine) {
-      measurer.appendChild(spine);
-      rectW = spine.getBoundingClientRect().width || 0;
-      measurer.removeChild(spine);
-    } else {
-      rectW = spine?.getBoundingClientRect?.().width || 0;
-    }
-
-    const w = Math.max(1, Math.ceil(rectW) || dsW || 46);
-
-    if (!row) startRow();
-
-    const needed = row.childNodes.length ? (SHELF_GAP_PX + w) : w;
-    const wouldBe = used + needed;
-
-    dbg("item", {
-      idx,
-      title: item?.title || item?.name || item?.id || "?",
-      w,
-      rectW: +Number(rectW || 0).toFixed(2),
-      dsW,
-      used,
-      needed,
-      wouldBe,
-      maxWidth,
-      fits: wouldBe < (maxWidth - 2)
-    });
-
-    if (row.childNodes.length && wouldBe >= (maxWidth - 2)) {
-      dbgWarn("wrapToNextRow", { rowIdx, idx, used, needed, wouldBe, maxWidth });
-      flush();
-      startRow();
-      row.appendChild(spine);
-      used = w;
-    } else {
-      row.appendChild(spine);
-      used = wouldBe;
-    }
+    if (spine) row.appendChild(spine);
   });
 
-  flush();
-  dbg("buildShelfRowsByWidth: end", { rows: rowIdx + 1 });
-
-  // Post-check: si host recorta por overflow, lo avisamos
-  try {
-    if (hostEl) {
-      const cs = getComputedStyle(hostEl);
-      if (cs.overflowX === "hidden" || cs.overflow === "hidden") {
-        dbgWarn("HOST HAS overflow hidden -> puede recortar", {
-          overflow: cs.overflow,
-          overflowX: cs.overflowX,
-          host: hostEl.className || hostEl.id
-        });
-      }
-    }
-  } catch {}
-
+  const frag = document.createDocumentFragment();
+  frag.appendChild(row);
   return frag;
 }
 
@@ -972,6 +886,10 @@ if ($bookIsbn) {
 function closeBookDetail() {
   bookDetailId = null;
   if ($bookDetailBackdrop) $bookDetailBackdrop.classList.add("hidden");
+  bookDetailQuoteSearchValue = "";
+  if ($bookDetailQuotesSearch) $bookDetailQuotesSearch.value = "";
+  // BOOKS: modal quotes scroll
+  document.body.style.overflow = "";
 }
 
 function fillDetail($el, value, fallback = "—") {
@@ -1019,13 +937,19 @@ function openBookDetail(bookId) {
 
   const notes = b.notes || b.description || "Sin notas";
   fillDetail($bookDetailNotes, notes);
+  renderBookDetailQuotes(bookId, b);
 
   if ($bookDetailFavorite) {
     $bookDetailFavorite.checked = !!b.favorite;
     $bookDetailFavorite.onchange = () => handleFavoriteToggle(bookId, $bookDetailFavorite.checked);
   }
 
+  if ($bookDetailQuotesSearch) $bookDetailQuotesSearch.value = "";
+  bookDetailQuoteSearchValue = "";
+
   $bookDetailBackdrop.classList.remove("hidden");
+  // BOOKS: modal quotes scroll
+  document.body.style.overflow = "hidden";
 }
 
 if ($bookDetailClose) $bookDetailClose.addEventListener("click", closeBookDetail);
@@ -1044,6 +968,101 @@ if ($bookDetailEdit) {
   });
 }
 
+
+
+function normalizeBookTitle(title) {
+  // VUXEL: misma clave normalizada que en Vídeos/Links para citas
+  return String(title || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function getBookLinkedQuotes(bookId, book) {
+  const titleKey = normalizeBookTitle(book?.title || "");
+  return Object.entries(links || {})
+    .map(([id, item]) => ({ id, ...(item || {}) }))
+    .filter((item) => {
+      const cat = String(item.category || "").toLowerCase();
+      if (!(cat === "bookquote" || cat === "bookquote" || cat === "libro/cita" || item.category === "bookQuote")) {
+        if (item.category !== "bookQuote") return false;
+      }
+      if (item.bookId && item.bookId === bookId) return true;
+      const key = normalizeBookTitle(item.bookTitle || "");
+      return !!titleKey && key === titleKey;
+    })
+    .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+}
+
+function openQuoteInVideos(item) {
+  if (!item) return;
+  window.__bookshellSetView?.("view-videos");
+  window.__bookshellVideos?.openLinksNewView?.({ id: item.id, ...item });
+}
+
+function renderBookDetailQuotes(bookId, book) {
+  if (!$bookDetailQuotesBody || !$bookDetailQuotesCount) return;
+  const allItems = getBookLinkedQuotes(bookId, book);
+  const query = String(bookDetailQuoteSearchValue || "").trim().toLowerCase();
+  const items = !query
+    ? allItems
+    : allItems.filter((item) => {
+      const text = String(item.note || item.title || "").toLowerCase();
+      const page = String(item.page || "").toLowerCase();
+      return text.includes(query) || page.includes(query);
+    });
+
+  $bookDetailQuotesCount.textContent = String(allItems.length);
+  $bookDetailQuotesBody.innerHTML = "";
+
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "video-links-empty";
+    empty.textContent = query
+      ? "No hay citas que coincidan"
+      : "No hay citas asociadas todavía.";
+    $bookDetailQuotesBody.appendChild(empty);
+    return;
+  }
+
+  items.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "video-link-card";
+    const meta = document.createElement("div");
+    meta.className = "video-link-card-meta";
+    const snippet = (item.note || item.title || "Cita sin texto").slice(0, 140);
+    meta.textContent = `${item.page ? `Pág. ${item.page} · ` : ""}${snippet}`;
+    const actions = document.createElement("div");
+    actions.className = "video-links-actions";
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "btn";
+    openBtn.textContent = "Abrir/Editar";
+    openBtn.addEventListener("click", () => openQuoteInVideos(item));
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn ghost";
+    delBtn.textContent = "Eliminar";
+    delBtn.addEventListener("click", async () => {
+      await remove(ref(db, `${LINKS_PATH}/${item.id}`));
+    });
+    actions.appendChild(openBtn);
+    actions.appendChild(delBtn);
+    row.appendChild(meta);
+    row.appendChild(actions);
+    $bookDetailQuotesBody.appendChild(row);
+  });
+}
+
+if ($bookDetailQuotesSearch) {
+  $bookDetailQuotesSearch.addEventListener("input", (event) => {
+    const nextValue = event?.target?.value ?? "";
+    clearTimeout(bookDetailQuoteSearchTimer);
+    bookDetailQuoteSearchTimer = setTimeout(() => {
+      bookDetailQuoteSearchValue = String(nextValue || "");
+      if (bookDetailId && books?.[bookDetailId]) {
+        renderBookDetailQuotes(bookDetailId, books[bookDetailId]);
+      }
+    }, 150);
+  });
+}
 
 // === Modal libro ===
 function openBookModal(bookId = null) {
@@ -1201,6 +1220,10 @@ onValue(ref(db, READING_LOG_PATH), (snap) => {
   renderCalendar();
 });
 
+onValue(ref(db, LINKS_PATH), (snap) => {
+  links = snap.val() || {};
+  if (bookDetailId && books?.[bookDetailId]) renderBookDetailQuotes(bookDetailId, books[bookDetailId]);
+});
 
 // === Render libros ===
 function isBookFinished(b) {

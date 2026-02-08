@@ -528,6 +528,11 @@
 <div class="video-links-filters">
 <label class="field-label" for="video-links-search">Buscar</label>
 <input class="video-links-search" id="video-links-search" placeholder="Buscar por título, nota o categoría" type="search"/>
+<label class="field-label" for="video-links-book-filter">Filtrar por libro</label>
+<select class="video-links-search" id="video-links-book-filter">
+<option value="">Todos los libros</option>
+<option value="__none__">Sin libro</option>
+</select>
 </div>
 <div class="video-links-list" id="video-links-list"></div>
 <div class="video-links-empty" id="video-links-empty">Aún no has guardado links.</div>
@@ -561,9 +566,10 @@
 <textarea id="video-link-note" name="note" placeholder="Idea rápida o por qué sirve" rows="3"></textarea>
 <div class="video-link-book-fields hidden" id="video-link-book-fields">
 <label class="field-label" for="video-link-book-title">Libro</label>
-<input id="video-link-book-title" name="bookTitle" placeholder="Título del libro" type="text"/>
+<input id="video-link-book-title" list="video-books-datalist" name="bookTitle" placeholder="Título del libro" type="search"/>
 <label class="field-label" for="video-link-book-page">Página (opcional)</label>
 <input id="video-link-book-page" name="page" placeholder="p. 42" type="text"/>
+<button class="btn ghost btn-compact" id="video-link-book-create" type="button">+ Crear libro</button>
 </div>
 <div class="form-error" id="video-link-error" role="alert"></div>
 <div class="video-links-actions">
@@ -1953,6 +1959,16 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 </div>
 </div>
+<details class="book-detail-quotes" id="book-detail-quotes" open>
+<summary>
+<span>Citas asociadas</span>
+<span class="books-finished-count" id="book-detail-quotes-count">0</span>
+</summary>
+<div class="book-detail-quotes-panel">
+<input class="book-detail-quotes-search" id="book-detail-quotes-search" type="search" placeholder="Buscar por texto o página"/>
+<div class="book-detail-quotes-body" id="book-detail-quotes-body"></div>
+</div>
+</details>
 </div>
 <div class="modal-footer book-detail-footer sticky-footer">
 <button class="btn primary btn-compact" id="book-detail-edit" type="button">Editar</button>

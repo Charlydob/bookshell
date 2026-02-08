@@ -1678,3 +1678,107 @@ margin-top: 40px;
 .books-list-finished{
   padding-right: 28px; /* antes 12px */
 }
+
+/* BOOKS: modal quotes scroll */
+#book-detail-backdrop{
+  position: fixed;
+  inset: 0;
+}
+
+.book-detail-modal{
+  margin: 12px;
+  max-height: calc(100dvh - 24px);
+  display: flex;
+  flex-direction: column;
+}
+
+.book-detail-modal .modal-header{
+  flex: 0 0 auto;
+}
+
+.book-detail-modal .modal-body{
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.book-detail-body{
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.book-detail-quotes{
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.book-detail-quotes > summary{
+  flex: 0 0 auto;
+}
+
+.book-detail-quotes-panel{
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.book-detail-quotes-search{
+  flex: 0 0 auto;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.05);
+  color: #fff;
+}
+
+.book-detail-quotes-body{
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 12px);
+}
+
+.book-detail-footer{
+  flex: 0 0 auto;
+}
+
+/* BOOKS: shelf auto-fit */
+.books-shelf-row{
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
+  gap: 12px;
+  align-items: end;
+  width: 100%;
+  box-sizing: border-box;
+  padding-bottom: 16px;
+}
+
+.book-spine{
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+.books-finished,
+.books-watchlist{
+  overflow: visible;
+}
+
+.books-list-finished,
+.watchlist-body{
+  padding-left: 12px;
+  padding-right: 12px;
+}

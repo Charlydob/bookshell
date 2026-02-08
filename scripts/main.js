@@ -208,7 +208,11 @@ const $bookDetailNotes = document.getElementById("book-detail-notes");
 const $bookDetailQuotes = document.getElementById("book-detail-quotes");
 const $bookDetailQuotesCount = document.getElementById("book-detail-quotes-count");
 const $bookDetailQuotesBody = document.getElementById("book-detail-quotes-body");
+const $bookDetailQuotesSearch = document.getElementById("book-detail-quotes-search");
 const $bookDetailEdit = document.getElementById("book-detail-edit");
+
+let bookDetailQuoteSearchTimer = null;
+let bookDetailQuoteSearchValue = "";
 
 // Stats
 const $statStreakCurrent = document.getElementById("stat-streak-current");
@@ -307,113 +311,17 @@ function getShelfAvailWidthPx(hostEl) {
   return avail;
 }
 function buildShelfRowsByWidth(items, makeSpine, hostEl, rowClass = "books-shelf-row") {
-  const maxWidth = getShelfAvailWidthPx(hostEl);
-  const frag = document.createDocumentFragment();
+  // BOOKS: shelf auto-fit
+  const row = document.createElement("div");
+  row.className = rowClass;
 
-  let row = null;
-  let used = 0;
-  let rowIdx = -1;
-
-  // Medidor oculto para poder medir el ancho real del lomo aunque aún no esté en el DOM visible
-  let measurer = hostEl && hostEl.__shelfMeasurer;
-  if (hostEl && !measurer) {
-    measurer = document.createElement("div");
-    measurer.className = "shelf-measurer";
-    measurer.style.cssText =
-      "position:absolute;left:-99999px;top:-99999px;visibility:hidden;pointer-events:none;contain:layout style;";
-    hostEl.appendChild(measurer);
-    hostEl.__shelfMeasurer = measurer;
-  }
-
-  const startRow = () => {
-    row = document.createElement("div");
-    row.className = rowClass;
-    used = 0;
-    rowIdx++;
-    dbg("startRow", { rowIdx, rowClass, maxWidth });
-  };
-
-  const flush = () => {
-    if (row && row.childNodes.length) {
-      frag.appendChild(row);
-      dbg("flushRow", { rowIdx, itemsInRow: row.childNodes.length, used, maxWidth, free: maxWidth - used });
-    }
-    row = null;
-    used = 0;
-  };
-
-  const arr = items || [];
-  dbg("buildShelfRowsByWidth: begin", {
-    count: arr.length,
-    rowClass,
-    maxWidth,
-    host: hostEl?.className || hostEl?.id || "?"
-  });
-
-  arr.forEach((item, idx) => {
+  (items || []).forEach((item) => {
     const spine = makeSpine(item);
-
-    // ancho REAL del lomo: medir en measurer (si existe), si no dataset, si no fallback
-    let rectW = 0;
-    const dsW = Number(spine?.dataset?.spineWidth) || 0;
-
-    if (measurer && spine) {
-      measurer.appendChild(spine);
-      rectW = spine.getBoundingClientRect().width || 0;
-      measurer.removeChild(spine);
-    } else {
-      rectW = spine?.getBoundingClientRect?.().width || 0;
-    }
-
-    const w = Math.max(1, Math.ceil(rectW) || dsW || 46);
-
-    if (!row) startRow();
-
-    const needed = row.childNodes.length ? (SHELF_GAP_PX + w) : w;
-    const wouldBe = used + needed;
-
-    dbg("item", {
-      idx,
-      title: item?.title || item?.name || item?.id || "?",
-      w,
-      rectW: +Number(rectW || 0).toFixed(2),
-      dsW,
-      used,
-      needed,
-      wouldBe,
-      maxWidth,
-      fits: wouldBe < (maxWidth - 2)
-    });
-
-    if (row.childNodes.length && wouldBe >= (maxWidth - 2)) {
-      dbgWarn("wrapToNextRow", { rowIdx, idx, used, needed, wouldBe, maxWidth });
-      flush();
-      startRow();
-      row.appendChild(spine);
-      used = w;
-    } else {
-      row.appendChild(spine);
-      used = wouldBe;
-    }
+    if (spine) row.appendChild(spine);
   });
 
-  flush();
-  dbg("buildShelfRowsByWidth: end", { rows: rowIdx + 1 });
-
-  // Post-check: si host recorta por overflow, lo avisamos
-  try {
-    if (hostEl) {
-      const cs = getComputedStyle(hostEl);
-      if (cs.overflowX === "hidden" || cs.overflow === "hidden") {
-        dbgWarn("HOST HAS overflow hidden -> puede recortar", {
-          overflow: cs.overflow,
-          overflowX: cs.overflowX,
-          host: hostEl.className || hostEl.id
-        });
-      }
-    }
-  } catch {}
-
+  const frag = document.createDocumentFragment();
+  frag.appendChild(row);
   return frag;
 }
 
@@ -978,7 +886,9 @@ if ($bookIsbn) {
 function closeBookDetail() {
   bookDetailId = null;
   if ($bookDetailBackdrop) $bookDetailBackdrop.classList.add("hidden");
-  // VUXEL: modal quotes scroll fix
+  bookDetailQuoteSearchValue = "";
+  if ($bookDetailQuotesSearch) $bookDetailQuotesSearch.value = "";
+  // BOOKS: modal quotes scroll
   document.body.style.overflow = "";
 }
 
@@ -1034,8 +944,11 @@ function openBookDetail(bookId) {
     $bookDetailFavorite.onchange = () => handleFavoriteToggle(bookId, $bookDetailFavorite.checked);
   }
 
+  if ($bookDetailQuotesSearch) $bookDetailQuotesSearch.value = "";
+  bookDetailQuoteSearchValue = "";
+
   $bookDetailBackdrop.classList.remove("hidden");
-  // VUXEL: modal quotes scroll fix
+  // BOOKS: modal quotes scroll
   document.body.style.overflow = "hidden";
 }
 
@@ -1086,16 +999,29 @@ function openQuoteInVideos(item) {
 
 function renderBookDetailQuotes(bookId, book) {
   if (!$bookDetailQuotesBody || !$bookDetailQuotesCount) return;
-  const items = getBookLinkedQuotes(bookId, book);
-  $bookDetailQuotesCount.textContent = String(items.length);
+  const allItems = getBookLinkedQuotes(bookId, book);
+  const query = String(bookDetailQuoteSearchValue || "").trim().toLowerCase();
+  const items = !query
+    ? allItems
+    : allItems.filter((item) => {
+      const text = String(item.note || item.title || "").toLowerCase();
+      const page = String(item.page || "").toLowerCase();
+      return text.includes(query) || page.includes(query);
+    });
+
+  $bookDetailQuotesCount.textContent = String(allItems.length);
   $bookDetailQuotesBody.innerHTML = "";
+
   if (!items.length) {
     const empty = document.createElement("div");
     empty.className = "video-links-empty";
-    empty.textContent = "No hay citas asociadas todavía.";
+    empty.textContent = query
+      ? "No hay citas que coincidan"
+      : "No hay citas asociadas todavía.";
     $bookDetailQuotesBody.appendChild(empty);
     return;
   }
+
   items.forEach((item) => {
     const row = document.createElement("div");
     row.className = "video-link-card";
@@ -1122,6 +1048,19 @@ function renderBookDetailQuotes(bookId, book) {
     row.appendChild(meta);
     row.appendChild(actions);
     $bookDetailQuotesBody.appendChild(row);
+  });
+}
+
+if ($bookDetailQuotesSearch) {
+  $bookDetailQuotesSearch.addEventListener("input", (event) => {
+    const nextValue = event?.target?.value ?? "";
+    clearTimeout(bookDetailQuoteSearchTimer);
+    bookDetailQuoteSearchTimer = setTimeout(() => {
+      bookDetailQuoteSearchValue = String(nextValue || "");
+      if (bookDetailId && books?.[bookDetailId]) {
+        renderBookDetailQuotes(bookDetailId, books[bookDetailId]);
+      }
+    }, 150);
   });
 }
 

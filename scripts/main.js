@@ -978,6 +978,8 @@ if ($bookIsbn) {
 function closeBookDetail() {
   bookDetailId = null;
   if ($bookDetailBackdrop) $bookDetailBackdrop.classList.add("hidden");
+  // VUXEL: modal quotes scroll fix
+  document.body.style.overflow = "";
 }
 
 function fillDetail($el, value, fallback = "—") {
@@ -1033,6 +1035,8 @@ function openBookDetail(bookId) {
   }
 
   $bookDetailBackdrop.classList.remove("hidden");
+  // VUXEL: modal quotes scroll fix
+  document.body.style.overflow = "hidden";
 }
 
 if ($bookDetailClose) $bookDetailClose.addEventListener("click", closeBookDetail);

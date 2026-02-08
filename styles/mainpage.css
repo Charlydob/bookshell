@@ -1062,19 +1062,25 @@ margin-top: 40px;
 
 .book-detail-modal .modal-body{
   padding: 6px 12px 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 .book-detail-body{
-  display: grid;
+  /* VUXEL: modal quotes scroll fix */
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   padding: 4px 2px 10px;
   background: radial-gradient(circle at 10% -10%, rgba(255,255,255,.04), transparent);
-  max-height: 68vh;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
 }
 .book-detail-modal{
   background: rgba(10, 12, 18, 0.94);
   border: 1px solid rgba(255,255,255,.12);
   box-shadow: 0 22px 60px rgba(0,0,0,.55);
+  max-height: calc(100dvh - 24px - env(safe-area-inset-bottom));
 }
 .book-detail-modal .modal-header{
   border-bottom: 1px solid rgba(255,255,255,.08);
@@ -1114,6 +1120,24 @@ margin-top: 40px;
 .book-detail-body .spec-value{
   font-size: 13px;
   color: #f7f7ff;
+}
+.book-detail-body .spec-block{
+  flex: 0 0 auto;
+}
+.book-detail-quotes{
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.book-detail-quotes-body{
+  /* VUXEL: modal quotes scroll fix */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 12px);
 }
 .book-detail-footer{
   display: flex;

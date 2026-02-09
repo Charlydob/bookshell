@@ -107,6 +107,7 @@ let habitDetailMonthCursor = new Date(new Date().getFullYear(), new Date().getMo
 let dayDominantCache = new Map();
 let habitCompareMode = "day";
 let habitCompareSort = "delta";
+let habitCompareView = "detail";
 let habitCompareTokenA = null;
 let habitCompareTokenB = null;
 const habitCompareAggregateCache = new Map();
@@ -3326,10 +3327,24 @@ function formatValueByType(value, type) {
   return `${Math.round(Number(value) || 0)}`;
 }
 
-function computeDelta(a, b, type) {
-  const diff = (Number(a) || 0) - (Number(b) || 0);
-  if (type === "duration") return `${diff >= 0 ? "+" : "-"}${formatMinutes(Math.abs(diff))}`;
-  return `${diff >= 0 ? "+" : ""}${diff}`;
+function computeCompareDeltaMeta(a, b, type) {
+  const safeA = Number(a) || 0;
+  const safeB = Number(b) || 0;
+  const diff = safeB - safeA;
+  const abs = Math.abs(diff);
+  const value = type === "duration" ? formatMinutes(abs) : `${Math.round(abs)}`;
+  const sign = diff > 0 ? "up" : diff < 0 ? "down" : "flat";
+  let pct = "—";
+  if (!safeA && !safeB) {
+    pct = "—";
+  } else if (!safeA && safeB > 0) {
+    pct = "nuevo";
+  } else {
+    const ratio = ((safeB - safeA) / Math.max(safeA, 1e-9)) * 100;
+    pct = `${ratio >= 0 ? "+" : ""}${Math.round(ratio)}%`;
+  }
+  const delta = sign === "flat" ? "—" : `${sign === "up" ? "↑" : "↓"} ${diff > 0 ? "+" : "-"}${value}`;
+  return { sign, delta, pct };
 }
 
 function buildCompareRows(habitsList, mode, tokenA, tokenB, sortMode) {
@@ -3344,8 +3359,11 @@ function buildCompareRows(habitsList, mode, tokenA, tokenB, sortMode) {
       type,
       a,
       b,
-      delta: a - b,
-      absDelta: Math.abs(a - b)
+      delta: b - a,
+      absDelta: Math.abs(a - b),
+      color: resolveHabitColor(habit),
+      emoji: habit?.emoji || "✨",
+      deltaMeta: computeCompareDeltaMeta(a, b, type)
     };
   });
   const scaleMax = rows.reduce((max, row) => Math.max(max, row.a, row.b), 0) || 1;
@@ -3381,6 +3399,9 @@ function renderHistoryCompareCard(habitsList) {
   const controls = document.createElement("div");
   controls.className = "habits-history-section-controls habit-compare-controls";
 
+  const compactRow = document.createElement("div");
+  compactRow.className = "habit-compare-compact-row";
+
   const modeToggle = document.createElement("div");
   modeToggle.className = "habits-history-toggle";
   [["day", "Día"], ["week", "Semana"], ["month", "Mes"]].forEach(([key, label]) => {
@@ -3400,13 +3421,16 @@ function renderHistoryCompareCard(habitsList) {
     });
     modeToggle.appendChild(btn);
   });
-  controls.appendChild(modeToggle);
+  compactRow.appendChild(modeToggle);
 
   const options = getCompareOptions(habitCompareMode);
   ensureCompareTokens(habitCompareMode, options);
-  const makeSelect = (labelText, current, onChange) => {
+  const makeSelect = (labelText, current, onChange, tokenName) => {
     const wrap = document.createElement("label");
     wrap.className = "habit-compare-select-wrap";
+    const tag = document.createElement("span");
+    tag.className = "habit-compare-select-tag";
+    tag.textContent = tokenName;
     const sr = document.createElement("span");
     sr.className = "habit-visually-hidden";
     sr.textContent = labelText;
@@ -3420,27 +3444,34 @@ function renderHistoryCompareCard(habitsList) {
     });
     select.value = current;
     select.addEventListener("change", (e) => onChange(e.target.value));
+    wrap.appendChild(tag);
     wrap.appendChild(sr);
     wrap.appendChild(select);
     return wrap;
   };
-  controls.appendChild(makeSelect("Periodo A", habitCompareTokenA, (value) => {
+  const selectors = document.createElement("div");
+  selectors.className = "habit-compare-selectors";
+  selectors.appendChild(makeSelect("Periodo A", habitCompareTokenA, (value) => {
     habitCompareTokenA = value;
     if (habitCompareTokenA === habitCompareTokenB) {
       const fallback = options.find((it) => it.token !== value);
       if (fallback) habitCompareTokenB = fallback.token;
     }
     renderHistory();
-  }));
-  controls.appendChild(makeSelect("Periodo B", habitCompareTokenB, (value) => {
+  }, "A"));
+  selectors.appendChild(makeSelect("Periodo B", habitCompareTokenB, (value) => {
     habitCompareTokenB = value;
     if (habitCompareTokenA === habitCompareTokenB) {
       const fallback = options.find((it) => it.token !== value);
       if (fallback) habitCompareTokenA = fallback.token;
     }
     renderHistory();
-  }));
+  }, "B"));
+  compactRow.appendChild(selectors);
+  controls.appendChild(compactRow);
 
+  const controlRow = document.createElement("div");
+  controlRow.className = "habit-compare-order-row";
   const sortToggle = document.createElement("div");
   sortToggle.className = "habits-history-toggle";
   [["delta", "Más cambio"], ["a", "A mayor"], ["b", "B mayor"]].forEach(([key, label]) => {
@@ -3456,67 +3487,117 @@ function renderHistoryCompareCard(habitsList) {
     });
     sortToggle.appendChild(btn);
   });
-  controls.appendChild(sortToggle);
+  controlRow.appendChild(sortToggle);
+
+  const viewToggle = document.createElement("div");
+  viewToggle.className = "habits-history-toggle";
+  [["summary", "Resumen"], ["detail", "Detalle"]].forEach(([key, label]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "habits-history-toggle-btn";
+    if (habitCompareView === key) btn.classList.add("is-active");
+    btn.textContent = label;
+    btn.setAttribute("aria-pressed", habitCompareView === key ? "true" : "false");
+    btn.addEventListener("click", () => {
+      habitCompareView = key;
+      renderHistory();
+    });
+    viewToggle.appendChild(btn);
+  });
+  controlRow.appendChild(viewToggle);
+  controls.appendChild(controlRow);
 
   header.appendChild(controls);
   card.appendChild(header);
 
   const body = document.createElement("div");
   body.className = "habits-history-section-body";
+  const globalLabels = document.createElement("div");
+  globalLabels.className = "habit-compare-global-labels";
+  const labelA = document.createElement("span");
+  const labelB = document.createElement("span");
+  labelA.textContent = `A · ${formatCompareToken(habitCompareMode, habitCompareTokenA)}`;
+  labelB.textContent = `B · ${formatCompareToken(habitCompareMode, habitCompareTokenB)}`;
+  globalLabels.appendChild(labelA);
+  globalLabels.appendChild(labelB);
+  body.appendChild(globalLabels);
+
   const list = document.createElement("div");
   list.className = "habit-compare-list";
+  list.classList.toggle("is-summary", habitCompareView === "summary");
 
   const rows = buildCompareRows(habitsList, habitCompareMode, habitCompareTokenA, habitCompareTokenB, habitCompareSort);
   rows.forEach((row) => {
     const rowEl = document.createElement("button");
     rowEl.type = "button";
     rowEl.className = "habit-compare-row";
+    rowEl.style.setProperty("--hclr", row.color || DEFAULT_COLOR);
+    rowEl.style.setProperty("--hclr-rgb", hexToRgbString(row.color || DEFAULT_COLOR));
     rowEl.addEventListener("click", () => openHabitDetail(row.habit.id, todayKey()));
 
-    const head = document.createElement("div");
-    head.className = "habit-compare-row-head";
-    const name = document.createElement("div");
-    name.className = "habits-history-list-title";
-    name.textContent = row.habit.name;
-    const delta = document.createElement("div");
-    delta.className = "habits-history-list-meta";
-    if (!row.a && !row.b) delta.textContent = "—";
-    else delta.textContent = computeDelta(row.a, row.b, row.type) + (row.type === "check" ? " check" : "");
-    head.appendChild(name);
-    head.appendChild(delta);
+    if (habitCompareView === "summary") {
+      rowEl.classList.add("is-summary");
+      const summary = document.createElement("div");
+      summary.className = "habit-compare-summary";
+      const leftChunk = document.createElement("div");
+      leftChunk.className = "habit-compare-summary-main";
+      leftChunk.textContent = `${row.emoji} ${row.habit.name}`;
+      const delta = document.createElement("span");
+      delta.className = `habit-compare-delta is-${row.deltaMeta.sign}`;
+      delta.textContent = row.deltaMeta.delta;
+      const pct = document.createElement("span");
+      pct.className = "habit-compare-pct";
+      pct.textContent = row.deltaMeta.pct;
+      summary.appendChild(leftChunk);
+      summary.appendChild(delta);
+      summary.appendChild(pct);
+      rowEl.appendChild(summary);
+    } else {
+      const head = document.createElement("div");
+      head.className = "habit-compare-row-head";
+      const name = document.createElement("div");
+      name.className = "habits-history-list-title";
+      name.textContent = row.habit.name;
+      const delta = document.createElement("div");
+      delta.className = `habit-compare-delta is-${row.deltaMeta.sign}`;
+      delta.textContent = `${row.deltaMeta.delta} · ${row.deltaMeta.pct}`;
+      head.appendChild(name);
+      head.appendChild(delta);
 
-    const bars = document.createElement("div");
-    bars.className = "habit-compare-bars";
-    const left = document.createElement("div");
-    left.className = "habit-compare-side is-left";
-    const right = document.createElement("div");
-    right.className = "habit-compare-side is-right";
-    const center = document.createElement("div");
-    center.className = "habit-compare-center";
-    const aBar = document.createElement("span");
-    aBar.className = "habit-compare-fill";
-    aBar.style.width = `${row.aPct}%`;
-    const bBar = document.createElement("span");
-    bBar.className = "habit-compare-fill";
-    bBar.style.width = `${row.bPct}%`;
-    left.appendChild(aBar);
-    right.appendChild(bBar);
-    bars.appendChild(left);
-    bars.appendChild(center);
-    bars.appendChild(right);
+      const bars = document.createElement("div");
+      bars.className = "habit-compare-bars";
+      const left = document.createElement("div");
+      left.className = "habit-compare-side is-left";
+      const right = document.createElement("div");
+      right.className = "habit-compare-side is-right";
+      const center = document.createElement("div");
+      center.className = "habit-compare-center";
+      center.textContent = row.emoji;
+      const aBar = document.createElement("span");
+      aBar.className = "habit-compare-fill";
+      aBar.style.width = `${row.aPct}%`;
+      const bBar = document.createElement("span");
+      bBar.className = "habit-compare-fill";
+      bBar.style.width = `${row.bPct}%`;
+      left.appendChild(aBar);
+      right.appendChild(bBar);
+      bars.appendChild(left);
+      bars.appendChild(center);
+      bars.appendChild(right);
 
-    const labels = document.createElement("div");
-    labels.className = "habit-compare-values";
-    const la = document.createElement("span");
-    la.textContent = `A ${row.a ? formatValueByType(row.a, row.type) : "—"}`;
-    const lb = document.createElement("span");
-    lb.textContent = `B ${row.b ? formatValueByType(row.b, row.type) : "—"}`;
-    labels.appendChild(la);
-    labels.appendChild(lb);
+      const labels = document.createElement("div");
+      labels.className = "habit-compare-values";
+      const la = document.createElement("span");
+      la.textContent = row.a ? formatValueByType(row.a, row.type) : "—";
+      const lb = document.createElement("span");
+      lb.textContent = row.b ? formatValueByType(row.b, row.type) : "—";
+      labels.appendChild(la);
+      labels.appendChild(lb);
 
-    rowEl.appendChild(head);
-    rowEl.appendChild(bars);
-    rowEl.appendChild(labels);
+      rowEl.appendChild(head);
+      rowEl.appendChild(bars);
+      rowEl.appendChild(labels);
+    }
     list.appendChild(rowEl);
   });
   body.appendChild(list);

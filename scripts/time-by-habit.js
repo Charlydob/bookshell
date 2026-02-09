@@ -14,6 +14,70 @@ function parseDateKey(key) {
   return new Date(y, m - 1, d);
 }
 
+function isValidTs(ts) {
+  return Number.isFinite(ts) && ts > 0;
+}
+
+function minTs(current, next) {
+  if (!isValidTs(next)) return current;
+  if (!isValidTs(current)) return next;
+  return Math.min(current, next);
+}
+
+function minTsFromSessionStore(habitSessions) {
+  let earliestTs = null;
+  Object.values(habitSessions || {}).forEach((byDate) => {
+    if (!byDate || typeof byDate !== "object") return;
+    Object.entries(byDate).forEach(([dateKey, rawValue]) => {
+      if (!rawValue || (typeof rawValue !== "number" && typeof rawValue !== "object")) return;
+      const sec = readSessionSec(rawValue);
+      if (sec <= 0) return;
+
+      if (rawValue && typeof rawValue === "object" && isValidTs(rawValue.startTs)) {
+        earliestTs = minTs(earliestTs, Number(rawValue.startTs));
+        return;
+      }
+
+      const parsed = parseDateKey(dateKey);
+      if (parsed) earliestTs = minTs(earliestTs, parsed.getTime());
+    });
+  });
+  return earliestTs;
+}
+
+function minTsFromHistoryStore(stores) {
+  let earliestTs = null;
+  (stores || []).forEach((store) => {
+    Object.values(store || {}).forEach((byDate) => {
+      if (!byDate || typeof byDate !== "object") return;
+      Object.entries(byDate).forEach(([dateKey, value]) => {
+        const n = Number(value) || 0;
+        if (n <= 0) return;
+        const parsed = parseDateKey(dateKey);
+        if (parsed) earliestTs = minTs(earliestTs, parsed.getTime());
+      });
+    });
+  });
+  return earliestTs;
+}
+
+export function resolveFirstRecordTs({
+  habitSessions,
+  habitChecks,
+  habitCounts,
+  appCreatedAt,
+  nowTs = Date.now()
+} = {}) {
+  const sessionsTs = minTsFromSessionStore(habitSessions);
+  if (isValidTs(sessionsTs)) return sessionsTs;
+
+  const historyTs = minTsFromHistoryStore([habitChecks, habitCounts]);
+  if (isValidTs(historyTs)) return historyTs;
+
+  if (isValidTs(appCreatedAt)) return Number(appCreatedAt);
+  return Number(nowTs) || Date.now();
+}
+
 function readSessionSec(rawValue) {
   if (typeof rawValue === "number") return Math.max(0, Math.round(rawValue));
   if (rawValue && typeof rawValue === "object") {

@@ -13,7 +13,7 @@ import {
   set,
   get
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-import { computeTimeByHabitDataset, debugComputeTimeByHabit } from "./time-by-habit.js";
+import { computeTimeByHabitDataset, debugComputeTimeByHabit, resolveFirstRecordTs } from "./time-by-habit.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC1oqRk7GpYX854RfcGrYHt6iRun5TfuYE",
@@ -599,8 +599,15 @@ function getRangeBounds(range) {
       return { start: new Date(now.getFullYear(), now.getMonth(), 1), end };
     case "year":
       return { start: new Date(now.getFullYear(), 0, 1), end };
-    case "total":
-      return { start: new Date(0), end };
+    case "total": {
+      const firstRecordTs = resolveFirstRecordTs({
+        habitSessions,
+        habitChecks,
+        habitCounts,
+        nowTs: Date.now()
+      });
+      return { start: new Date(firstRecordTs), end: new Date() };
+    }
     default:
       return { start: new Date(now.getFullYear(), now.getMonth(), now.getDate()), end };
   }
@@ -4254,8 +4261,15 @@ function getDaysRangeBounds(range) {
       return { start: new Date(today.getFullYear(), today.getMonth(), 1), end };
     case "year":
       return { start: new Date(heatmapYear, 0, 1), end: new Date(heatmapYear, 11, 31, 23, 59, 59, 999) };
-    case "total":
-      return { start: new Date(0), end };
+    case "total": {
+      const firstRecordTs = resolveFirstRecordTs({
+        habitSessions,
+        habitChecks,
+        habitCounts,
+        nowTs: Date.now()
+      });
+      return { start: new Date(firstRecordTs), end: new Date() };
+    }
     default:
       return { start: new Date(today.getFullYear(), today.getMonth(), today.getDate()), end };
   }
@@ -4676,40 +4690,13 @@ function computeCurrentStreakInRange(start, end) {
 
 
 function getEarliestActivityDate() {
-  const today = new Date();
-  let earliest = today;
-
-  Object.entries(habitChecks).forEach(([habitId, entries]) => {
-    const habit = habits[habitId];
-    if (!habit || habit.archived) return;
-    Object.keys(entries || {}).forEach((key) => {
-      const parsed = parseDateKey(key);
-      if (parsed && parsed < earliest) earliest = parsed;
-    });
+  const firstRecordTs = resolveFirstRecordTs({
+    habitSessions,
+    habitChecks,
+    habitCounts,
+    nowTs: Date.now()
   });
-
-  Object.entries(habitCounts).forEach(([habitId, entries]) => {
-    const habit = habits[habitId];
-    if (!habit || habit.archived) return;
-    Object.keys(entries || {}).forEach((key) => {
-      const parsed = parseDateKey(key);
-      if (parsed && Number(entries[key]) > 0 && parsed < earliest) earliest = parsed;
-    });
-  });
-
-  Object.entries(habitSessions || {}).forEach(([habitId, byDate]) => {
-    const habit = habits[habitId];
-    if (!habit || habit.archived) return;
-    if (!byDate || typeof byDate !== "object") return;
-    Object.keys(byDate).forEach((key) => {
-      const sec = Number(byDate[key]) || 0;
-      if (sec <= 0) return;
-      const parsed = parseDateKey(key);
-      if (parsed && parsed < earliest) earliest = parsed;
-    });
-  });
-
-  return earliest;
+  return new Date(firstRecordTs);
 }
 
 function getLineRangeBounds(range) {

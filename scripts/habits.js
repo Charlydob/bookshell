@@ -13,6 +13,7 @@ import {
   set,
   get
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { computeTimeByHabitDataset, debugComputeTimeByHabit } from "./time-by-habit.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC1oqRk7GpYX854RfcGrYHt6iRun5TfuYE",
@@ -4504,10 +4505,10 @@ function minutesForHabitRange(habit, start, end) {
   const byDate = habitSessions?.[habit.id];
   if (!byDate || typeof byDate !== "object") return 0;
 
-  Object.entries(byDate).forEach(([dateKey, sec]) => {
+  Object.keys(byDate).forEach((dateKey) => {
     const parsed = parseDateKey(dateKey);
     if (parsed && isDateInRange(parsed, start, end)) {
-      totalMinutes += Math.round((Number(sec) || 0) / 60);
+      totalMinutes += Math.round(getHabitTotalSecForDate(habit.id, dateKey) / 60);
     }
   });
 
@@ -4772,12 +4773,17 @@ function timeShareByHabit(range) {
 
 function buildTimeEntries(range) {
   const { start, end } = getRangeBounds(range);
-  return activeHabitsWithSystem()
-    .map((habit) => {
-      const minutes = minutesForHabitRange(habit, start, end);
-      return { habit, totalSec: Math.round(minutes * 60) };
-    })
-    .filter((item) => item.totalSec > 0);
+  return computeTimeByHabitDataset({
+    habitsById: habits,
+    habitSessions,
+    rangeStart: start,
+    rangeEnd: end,
+    unknownHabitId: UNKNOWN_HABIT_ID,
+    unknownHabitName: UNKNOWN_HABIT_NAME,
+    unknownHabitEmoji: UNKNOWN_HABIT_EMOJI,
+    unknownHabitColor: UNKNOWN_HABIT_COLOR,
+    daySec: DAY_SEC
+  });
 }
 
 function aggregateEntries(entries, mode = "habit") {
@@ -6979,10 +6985,10 @@ window.__bookshellHabits = {
   startSession,
   stopSession,
   toggleSession,
-  isRunning: () => !!runningSession
-,
+  isRunning: () => !!runningSession,
   getTimeShareByHabit: (range) => timeShareByHabit(range),
-  rangeLabel
+  rangeLabel,
+  debugComputeTimeByHabit
 };
 export function initHabits() {
   readCache();

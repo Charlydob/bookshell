@@ -105,6 +105,11 @@ let habitDetailChartMode = "bar";
 let habitDetailChartRange = "30d";
 let habitDetailMonthCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let dayDominantCache = new Map();
+let habitCompareMode = "day";
+let habitCompareSort = "delta";
+let habitCompareTokenA = null;
+let habitCompareTokenB = null;
+const habitCompareAggregateCache = new Map();
 let dayDetailDateKey = todayKey();
 let dayDetailFocusHabitId = null;
 const habitDetailRecordsPageSize = 10;
@@ -695,6 +700,7 @@ function readCache() {
 }
 
 function saveCache() {
+  invalidateCompareCache();
   try {
     localStorage.setItem(
       STORAGE_KEY,
@@ -1136,6 +1142,10 @@ function getHabitDayScore(habit, dateKey) {
   const timeScore = Math.min(3, Math.floor(minutes / 30));
   const score = (checked ? 1 : 0) + timeScore;
   return { score, minutes, checked, count: 0, hasActivity: checked || minutes > 0 };
+}
+
+function invalidateCompareCache() {
+  habitCompareAggregateCache.clear();
 }
 
 function invalidateDominantCache(dateKey = null) {
@@ -3136,6 +3146,385 @@ function getHistoryRangeBounds(range) {
   return { start, end };
 }
 
+function getISOWeekYearAndNumber(date) {
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = (target.getDay() + 6) % 7;
+  target.setDate(target.getDate() - day + 3);
+  const isoYear = target.getFullYear();
+  const firstThursday = new Date(isoYear, 0, 4);
+  const firstDay = (firstThursday.getDay() + 6) % 7;
+  firstThursday.setDate(firstThursday.getDate() - firstDay + 3);
+  const week = 1 + Math.round((target - firstThursday) / 604800000);
+  return { year: isoYear, week };
+}
+
+function isoWeekStart(isoYear, isoWeek) {
+  const jan4 = new Date(isoYear, 0, 4);
+  const jan4Day = (jan4.getDay() + 6) % 7;
+  const week1Monday = new Date(isoYear, 0, 4 - jan4Day);
+  return addDays(week1Monday, (isoWeek - 1) * 7);
+}
+
+function formatCompareToken(mode, token) {
+  if (!token) return "";
+  if (mode === "day") {
+    const date = parseDateKey(token);
+    if (!date) return token;
+    return date.toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" }).replace('.', '');
+  }
+  if (mode === "week") {
+    const [yRaw, wRaw] = String(token).split("-W");
+    const year = Number(yRaw);
+    const week = Number(wRaw);
+    if (!year || !week) return token;
+    const start = isoWeekStart(year, week);
+    const end = addDays(start, 6);
+    const startLabel = start.toLocaleDateString("es-ES", { day: "2-digit", month: "short" }).replace('.', '');
+    const endLabel = end.toLocaleDateString("es-ES", { day: "2-digit", month: "short" }).replace('.', '');
+    return `Semana ${String(week).padStart(2, "0")} (${startLabel}–${endLabel})`;
+  }
+  const [yRaw, mRaw] = String(token).split("-");
+  const year = Number(yRaw);
+  const month = Number(mRaw);
+  if (!year || !month) return token;
+  const date = new Date(year, month - 1, 1);
+  const name = date.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function getCompareDefaultTokens(mode) {
+  const today = new Date();
+  if (mode === "day") {
+    return {
+      a: dateKeyLocal(today),
+      b: dateKeyLocal(addDays(today, -1))
+    };
+  }
+  if (mode === "week") {
+    const cur = getISOWeekYearAndNumber(today);
+    const prevDate = addDays(today, -7);
+    const prev = getISOWeekYearAndNumber(prevDate);
+    return {
+      a: `${cur.year}-W${String(cur.week).padStart(2, "0")}`,
+      b: `${prev.year}-W${String(prev.week).padStart(2, "0")}`
+    };
+  }
+  const cur = new Date(today.getFullYear(), today.getMonth(), 1);
+  const prev = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  return {
+    a: `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}`,
+    b: `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`
+  };
+}
+
+function getCompareSubtitle(mode, tokenA, tokenB) {
+  const defaults = getCompareDefaultTokens(mode);
+  if (mode === "day" && tokenA === defaults.a && tokenB === defaults.b) return "Hoy vs Ayer";
+  return `${formatCompareToken(mode, tokenA)} vs ${formatCompareToken(mode, tokenB)}`;
+}
+
+function getCompareOptions(mode, count = 16) {
+  const options = [];
+  const now = new Date();
+  if (mode === "day") {
+    for (let i = 0; i < count; i += 1) {
+      const date = addDays(now, -i);
+      const token = dateKeyLocal(date);
+      options.push({ token, label: formatCompareToken("day", token) });
+    }
+    return options;
+  }
+  if (mode === "week") {
+    for (let i = 0; i < count; i += 1) {
+      const date = addDays(now, -7 * i);
+      const meta = getISOWeekYearAndNumber(date);
+      const token = `${meta.year}-W${String(meta.week).padStart(2, "0")}`;
+      if (!options.some((it) => it.token === token)) {
+        options.push({ token, label: formatCompareToken("week", token) });
+      }
+    }
+    return options;
+  }
+  for (let i = 0; i < count; i += 1) {
+    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const token = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    options.push({ token, label: formatCompareToken("month", token) });
+  }
+  return options;
+}
+
+function ensureCompareTokens(mode, options = []) {
+  const defaults = getCompareDefaultTokens(mode);
+  const allTokens = new Set(options.map((it) => it.token));
+  if (!allTokens.has(defaults.a)) options.unshift({ token: defaults.a, label: formatCompareToken(mode, defaults.a) });
+  if (!allTokens.has(defaults.b)) options.push({ token: defaults.b, label: formatCompareToken(mode, defaults.b) });
+  if (!habitCompareTokenA || !options.some((it) => it.token === habitCompareTokenA)) habitCompareTokenA = defaults.a;
+  if (!habitCompareTokenB || !options.some((it) => it.token === habitCompareTokenB)) habitCompareTokenB = defaults.b;
+  if (habitCompareTokenA === habitCompareTokenB) {
+    const fallback = options.find((it) => it.token !== habitCompareTokenA);
+    if (fallback) habitCompareTokenB = fallback.token;
+  }
+}
+
+function getRangeForCompare(mode, token) {
+  if (mode === "day") {
+    const day = parseDateKey(token) || new Date();
+    return {
+      start: new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0),
+      end: new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59, 999)
+    };
+  }
+  if (mode === "week") {
+    const [yRaw, wRaw] = String(token).split("-W");
+    const year = Number(yRaw);
+    const week = Number(wRaw);
+    const start = isoWeekStart(year, week);
+    return { start, end: new Date(addDays(start, 6).setHours(23, 59, 59, 999)) };
+  }
+  const [yRaw, mRaw] = String(token).split("-");
+  const year = Number(yRaw);
+  const month = Number(mRaw);
+  const start = new Date(year, month - 1, 1);
+  const end = new Date(year, month, 0, 23, 59, 59, 999);
+  return { start, end };
+}
+
+function resolveCompareType(habit) {
+  if (!habit || habit.archived) return "check";
+  if (habit.goal === "time") return "duration";
+  if (habit.goal === "count") return "count";
+  return "check";
+}
+
+function aggregateHabitValue(habit, range) {
+  if (!habit || habit.archived || !range) return 0;
+  const type = resolveCompareType(habit);
+  if (type === "duration") {
+    return getHabitMetricForRange(habit, range.start, range.end, "time");
+  }
+  if (type === "count") {
+    return getHabitMetricForRange(habit, range.start, range.end, "count");
+  }
+  return getHabitMetricForRange(habit, range.start, range.end, "count");
+}
+
+function getCompareAggregate(mode, token) {
+  const key = `${mode}::${token}`;
+  if (habitCompareAggregateCache.has(key)) return habitCompareAggregateCache.get(key);
+  const range = getRangeForCompare(mode, token);
+  const values = {};
+  activeHabits().forEach((habit) => {
+    values[habit.id] = aggregateHabitValue(habit, range);
+  });
+  const entry = { range, values };
+  habitCompareAggregateCache.set(key, entry);
+  return entry;
+}
+
+function formatValueByType(value, type) {
+  if (type === "duration") return formatMinutes(value || 0);
+  return `${Math.round(Number(value) || 0)}`;
+}
+
+function computeDelta(a, b, type) {
+  const diff = (Number(a) || 0) - (Number(b) || 0);
+  if (type === "duration") return `${diff >= 0 ? "+" : "-"}${formatMinutes(Math.abs(diff))}`;
+  return `${diff >= 0 ? "+" : ""}${diff}`;
+}
+
+function buildCompareRows(habitsList, mode, tokenA, tokenB, sortMode) {
+  const aggA = getCompareAggregate(mode, tokenA);
+  const aggB = getCompareAggregate(mode, tokenB);
+  const rows = habitsList.map((habit) => {
+    const type = resolveCompareType(habit);
+    const a = Number(aggA.values[habit.id] || 0);
+    const b = Number(aggB.values[habit.id] || 0);
+    return {
+      habit,
+      type,
+      a,
+      b,
+      delta: a - b,
+      absDelta: Math.abs(a - b)
+    };
+  });
+  const scaleMax = rows.reduce((max, row) => Math.max(max, row.a, row.b), 0) || 1;
+  rows.forEach((row) => {
+    row.aPct = (row.a / scaleMax) * 100;
+    row.bPct = (row.b / scaleMax) * 100;
+  });
+  rows.sort((left, right) => {
+    if (sortMode === "a") return right.a - left.a || right.absDelta - left.absDelta;
+    if (sortMode === "b") return right.b - left.b || right.absDelta - left.absDelta;
+    return right.absDelta - left.absDelta || right.a - left.a;
+  });
+  return rows;
+}
+
+function renderHistoryCompareCard(habitsList) {
+  const card = document.createElement("section");
+  card.className = "habits-history-section habit-compare-card";
+
+  const header = document.createElement("div");
+  header.className = "habits-history-section-header";
+  const titleWrap = document.createElement("div");
+  const title = document.createElement("div");
+  title.className = "habits-history-section-title";
+  title.textContent = "Comparativa";
+  const sub = document.createElement("div");
+  sub.className = "habits-history-list-meta";
+  sub.textContent = getCompareSubtitle(habitCompareMode, habitCompareTokenA, habitCompareTokenB);
+  titleWrap.appendChild(title);
+  titleWrap.appendChild(sub);
+  header.appendChild(titleWrap);
+
+  const controls = document.createElement("div");
+  controls.className = "habits-history-section-controls habit-compare-controls";
+
+  const modeToggle = document.createElement("div");
+  modeToggle.className = "habits-history-toggle";
+  [["day", "Día"], ["week", "Semana"], ["month", "Mes"]].forEach(([key, label]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "habits-history-toggle-btn";
+    btn.textContent = label;
+    btn.setAttribute("aria-pressed", habitCompareMode === key ? "true" : "false");
+    if (habitCompareMode === key) btn.classList.add("is-active");
+    btn.addEventListener("click", () => {
+      habitCompareMode = key;
+      const options = getCompareOptions(habitCompareMode);
+      habitCompareTokenA = null;
+      habitCompareTokenB = null;
+      ensureCompareTokens(habitCompareMode, options);
+      renderHistory();
+    });
+    modeToggle.appendChild(btn);
+  });
+  controls.appendChild(modeToggle);
+
+  const options = getCompareOptions(habitCompareMode);
+  ensureCompareTokens(habitCompareMode, options);
+  const makeSelect = (labelText, current, onChange) => {
+    const wrap = document.createElement("label");
+    wrap.className = "habit-compare-select-wrap";
+    const sr = document.createElement("span");
+    sr.className = "habit-visually-hidden";
+    sr.textContent = labelText;
+    const select = document.createElement("select");
+    select.className = "habits-history-select";
+    options.forEach((opt) => {
+      const o = document.createElement("option");
+      o.value = opt.token;
+      o.textContent = opt.label;
+      select.appendChild(o);
+    });
+    select.value = current;
+    select.addEventListener("change", (e) => onChange(e.target.value));
+    wrap.appendChild(sr);
+    wrap.appendChild(select);
+    return wrap;
+  };
+  controls.appendChild(makeSelect("Periodo A", habitCompareTokenA, (value) => {
+    habitCompareTokenA = value;
+    if (habitCompareTokenA === habitCompareTokenB) {
+      const fallback = options.find((it) => it.token !== value);
+      if (fallback) habitCompareTokenB = fallback.token;
+    }
+    renderHistory();
+  }));
+  controls.appendChild(makeSelect("Periodo B", habitCompareTokenB, (value) => {
+    habitCompareTokenB = value;
+    if (habitCompareTokenA === habitCompareTokenB) {
+      const fallback = options.find((it) => it.token !== value);
+      if (fallback) habitCompareTokenA = fallback.token;
+    }
+    renderHistory();
+  }));
+
+  const sortToggle = document.createElement("div");
+  sortToggle.className = "habits-history-toggle";
+  [["delta", "Más cambio"], ["a", "A mayor"], ["b", "B mayor"]].forEach(([key, label]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "habits-history-toggle-btn";
+    if (habitCompareSort === key) btn.classList.add("is-active");
+    btn.textContent = label;
+    btn.setAttribute("aria-pressed", habitCompareSort === key ? "true" : "false");
+    btn.addEventListener("click", () => {
+      habitCompareSort = key;
+      renderHistory();
+    });
+    sortToggle.appendChild(btn);
+  });
+  controls.appendChild(sortToggle);
+
+  header.appendChild(controls);
+  card.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "habits-history-section-body";
+  const list = document.createElement("div");
+  list.className = "habit-compare-list";
+
+  const rows = buildCompareRows(habitsList, habitCompareMode, habitCompareTokenA, habitCompareTokenB, habitCompareSort);
+  rows.forEach((row) => {
+    const rowEl = document.createElement("button");
+    rowEl.type = "button";
+    rowEl.className = "habit-compare-row";
+    rowEl.addEventListener("click", () => openHabitDetail(row.habit.id, todayKey()));
+
+    const head = document.createElement("div");
+    head.className = "habit-compare-row-head";
+    const name = document.createElement("div");
+    name.className = "habits-history-list-title";
+    name.textContent = row.habit.name;
+    const delta = document.createElement("div");
+    delta.className = "habits-history-list-meta";
+    if (!row.a && !row.b) delta.textContent = "—";
+    else delta.textContent = computeDelta(row.a, row.b, row.type) + (row.type === "check" ? " check" : "");
+    head.appendChild(name);
+    head.appendChild(delta);
+
+    const bars = document.createElement("div");
+    bars.className = "habit-compare-bars";
+    const left = document.createElement("div");
+    left.className = "habit-compare-side is-left";
+    const right = document.createElement("div");
+    right.className = "habit-compare-side is-right";
+    const center = document.createElement("div");
+    center.className = "habit-compare-center";
+    const aBar = document.createElement("span");
+    aBar.className = "habit-compare-fill";
+    aBar.style.width = `${row.aPct}%`;
+    const bBar = document.createElement("span");
+    bBar.className = "habit-compare-fill";
+    bBar.style.width = `${row.bPct}%`;
+    left.appendChild(aBar);
+    right.appendChild(bBar);
+    bars.appendChild(left);
+    bars.appendChild(center);
+    bars.appendChild(right);
+
+    const labels = document.createElement("div");
+    labels.className = "habit-compare-values";
+    const la = document.createElement("span");
+    la.textContent = `A ${row.a ? formatValueByType(row.a, row.type) : "—"}`;
+    const lb = document.createElement("span");
+    lb.textContent = `B ${row.b ? formatValueByType(row.b, row.type) : "—"}`;
+    labels.appendChild(la);
+    labels.appendChild(lb);
+
+    rowEl.appendChild(head);
+    rowEl.appendChild(bars);
+    rowEl.appendChild(labels);
+    list.appendChild(rowEl);
+  });
+  body.appendChild(list);
+  card.appendChild(body);
+
+  return card;
+}
+
 function formatHistoryValue(value, metric) {
   const safe = Math.round(Number(value) || 0);
   if (metric === "time") return formatMinutes(safe);
@@ -3614,11 +4003,15 @@ function renderHistory() {
       : "Crea un hábito para ver insights.";
     $habitHistoryEmpty.style.display = hasData ? "none" : "block";
   }
-  if (!hasData) return;
 
   const insights = document.createElement("div");
   insights.className = "habits-history-insights";
   insights.appendChild(buildHistoryMonthCalendar());
+  if (hasHabits) insights.appendChild(renderHistoryCompareCard(habitsList));
+  if (!hasData) {
+    $habitHistoryList.appendChild(insights);
+    return;
+  }
 
   const trendSection = createHistorySection("Tendencia mensual");
   const trendControls = document.createElement("div");

@@ -3330,22 +3330,37 @@ function formatValueByType(value, type) {
 function computeCompareDeltaMeta(a, b, type) {
   const safeA = Number(a) || 0;
   const safeB = Number(b) || 0;
-  const diff = safeB - safeA;
+  const diff = safeA - safeB;
   const abs = Math.abs(diff);
   const value = type === "duration" ? formatMinutes(abs) : `${Math.round(abs)}`;
   const sign = diff > 0 ? "up" : diff < 0 ? "down" : "flat";
   let pct = "—";
   if (!safeA && !safeB) {
     pct = "—";
-  } else if (!safeA && safeB > 0) {
+  } else if (!safeB && safeA > 0) {
     pct = "nuevo";
   } else {
-    const ratio = ((safeB - safeA) / Math.max(safeA, 1e-9)) * 100;
+    const ratio = ((safeA - safeB) / Math.max(Math.abs(safeB), 1e-9)) * 100;
     pct = `${ratio >= 0 ? "+" : ""}${Math.round(ratio)}%`;
   }
   const delta = sign === "flat" ? "—" : `${sign === "up" ? "↑" : "↓"} ${diff > 0 ? "+" : "-"}${value}`;
   return { sign, delta, pct };
 }
+
+function runCompareDeltaSelfChecks() {
+  const t1 = computeCompareDeltaMeta(0, 8 * 60, "duration");
+  console.assert(t1.sign === "down", "[Habits compare] A=0, B=8h should be down");
+  console.assert(t1.delta.includes("↓ -8h"), "[Habits compare] A=0, B=8h should show -8h");
+
+  const t2 = computeCompareDeltaMeta(8 * 60, 0, "duration");
+  console.assert(t2.sign === "up", "[Habits compare] A=8h, B=0 should be up");
+  console.assert(t2.delta.includes("↑ +8h"), "[Habits compare] A=8h, B=0 should show +8h");
+
+  const t3 = computeCompareDeltaMeta(4 * 60, 8 * 60, "duration");
+  console.assert(t3.sign === "down", "[Habits compare] A=4h, B=8h should be down");
+  console.assert(t3.delta.includes("↓ -4h"), "[Habits compare] A=4h, B=8h should show -4h");
+}
+runCompareDeltaSelfChecks();
 
 function buildCompareRows(habitsList, mode, tokenA, tokenB, sortMode) {
   const aggA = getCompareAggregate(mode, tokenA);
@@ -3359,7 +3374,7 @@ function buildCompareRows(habitsList, mode, tokenA, tokenB, sortMode) {
       type,
       a,
       b,
-      delta: b - a,
+      delta: a - b,
       absDelta: Math.abs(a - b),
       color: resolveHabitColor(habit),
       emoji: habit?.emoji || "✨",

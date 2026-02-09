@@ -1,4 +1,6 @@
-import { debugComputeTimeByHabit } from "../time-by-habit.js";
+import { debugComputeTimeByHabit, resolveFirstRecordTs } from "../time-by-habit.js";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const sampleData = {
   habitsById: {
@@ -26,10 +28,39 @@ const sampleData = {
 };
 
 const result = debugComputeTimeByHabit(sampleData);
-if (result.pass) {
-  console.log("PASS time-by-habit self-check");
-  process.exit(0);
+if (!result.pass) {
+  console.error("FAIL time-by-habit self-check", JSON.stringify(result.mismatches, null, 2));
+  process.exit(1);
 }
 
-console.error("FAIL time-by-habit self-check", JSON.stringify(result.mismatches, null, 2));
-process.exit(1);
+const nowTs = Date.now();
+const tenDaysAgo = nowTs - (10 * DAY_MS);
+const twoDaysMs = 2 * DAY_MS;
+
+const firstRecordTs = resolveFirstRecordTs({
+  habitSessions: {
+    hWork: {
+      [new Date(tenDaysAgo).toISOString().slice(0, 10)]: { totalSec: Math.round(twoDaysMs / 1000), startTs: tenDaysAgo }
+    }
+  },
+  nowTs
+});
+
+const totalRangeMs = nowTs - firstRecordTs;
+const knownMs = twoDaysMs;
+const unknownMs = Math.max(0, totalRangeMs - knownMs);
+
+if (Math.abs(totalRangeMs - (10 * DAY_MS)) > 1000) {
+  console.error("FAIL total range must be 10 days", { totalRangeMs, expectedMs: 10 * DAY_MS });
+  process.exit(1);
+}
+if (Math.abs(unknownMs - (8 * DAY_MS)) > 1000) {
+  console.error("FAIL unknown must be 8 days", { unknownMs, expectedMs: 8 * DAY_MS });
+  process.exit(1);
+}
+if (knownMs > totalRangeMs || unknownMs > totalRangeMs) {
+  console.error("FAIL known/unknown exceed total range", { knownMs, unknownMs, totalRangeMs });
+  process.exit(1);
+}
+
+console.log("PASS time-by-habit self-check");

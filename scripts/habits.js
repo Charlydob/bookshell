@@ -72,6 +72,8 @@ let _pendingShortcutCmd = null;
 let habits = {}; // {id: habit}
 let habitChecks = {}; // { habitId: { dateKey: true } }
 let habitSessions = {}; // { habitId: { dateKey: totalSec } }
+let habitSessionTimeline = {}; // { habitId: [{startTs,endTs,durationSec,dateKey,source}] }
+let habitSessionTimelineCoverage = {}; // { habitId: Set<dateKey> } days already backed by timestamped sessions
 let habitCounts = {}; // { habitId: { dateKey: number } }
 let habitGroups = {}; // { groupId: { id, name, createdAt } }
 let habitPrefs = { pinCount: "", pinTime: "", quickSessions: [] };
@@ -376,12 +378,77 @@ function isSessionActive(session) {
 function minutesFromSession(session) {
   return Math.round((session?.durationSec || 0) / 60);
 }
+
+function localStartOfDayTs(ts) {
+  const date = new Date(ts);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0).getTime();
+}
+
+function localStartOfNextDayTs(ts) {
+  const date = new Date(ts);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1, 0, 0, 0, 0).getTime();
+}
+
+// Repartimos sesiones por día local para que una sesión 23:30→00:30 compute 30m+30m.
+// Si no hay timestamps reales (legacy), el fallback se mantiene sin inventar reparto.
+function splitSessionByDay(startTs, endTs) {
+  const out = new Map();
+  const start = Number(startTs);
+  const end = Number(endTs);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return out;
+
+  let cursor = start;
+  while (cursor < end) {
+    const dayKey = dateKeyLocal(new Date(cursor));
+    const chunkEnd = Math.min(localStartOfNextDayTs(cursor), end);
+    const minutes = (chunkEnd - cursor) / 60000;
+    if (minutes > 0) out.set(dayKey, (out.get(dayKey) || 0) + minutes);
+    cursor = chunkEnd;
+  }
+  return out;
+}
+
+function parseSessionBounds(rawSession) {
+  if (!rawSession || typeof rawSession !== "object") return null;
+  const startTs = Number(rawSession.startTs);
+  let endTs = Number(rawSession.endTs);
+  const durationSec = Math.max(0, Number(rawSession.durationSec) || 0);
+  if (!Number.isFinite(startTs) || startTs <= 0) return null;
+  if (!Number.isFinite(endTs) || endTs <= startTs) {
+    if (rawSession.active || rawSession.isRunning) endTs = Date.now();
+    else if (durationSec > 0) endTs = startTs + (durationSec * 1000);
+  }
+  if (!Number.isFinite(endTs) || endTs <= startTs) return null;
+  return { startTs, endTs };
+}
+
+function isDevEnv() {
+  const host = window.location?.hostname || "";
+  return host === "localhost" || host === "127.0.0.1";
+}
+
+function runSplitSessionSelfChecks() {
+  if (!isDevEnv()) return;
+  const mkTs = (y, m, d, hh, mm) => new Date(y, m - 1, d, hh, mm, 0, 0).getTime();
+  const approx = (a, b) => Math.abs(a - b) < 1e-6;
+  const c1 = splitSessionByDay(mkTs(2026, 2, 10, 23, 30), mkTs(2026, 2, 11, 0, 30));
+  console.assert(approx(c1.get("2026-02-10") || 0, 30) && approx(c1.get("2026-02-11") || 0, 30), "[Habits split] 23:30→00:30 should be 30/30");
+  const c2 = splitSessionByDay(mkTs(2026, 2, 10, 22, 0), mkTs(2026, 2, 11, 1, 0));
+  console.assert(approx(c2.get("2026-02-10") || 0, 120) && approx(c2.get("2026-02-11") || 0, 60), "[Habits split] 22:00→01:00 should be 120/60");
+  const c3 = splitSessionByDay(mkTs(2026, 2, 10, 10, 0), mkTs(2026, 2, 10, 10, 45));
+  console.assert(approx(c3.get("2026-02-10") || 0, 45), "[Habits split] 10:00→10:45 should be 45");
+  const c4 = splitSessionByDay(mkTs(2026, 2, 10, 23, 0), mkTs(2026, 2, 12, 1, 0));
+  console.assert(approx(c4.get("2026-02-10") || 0, 60) && approx(c4.get("2026-02-11") || 0, 1440) && approx(c4.get("2026-02-12") || 0, 60), "[Habits split] multi-day should split across all boundaries");
+}
+runSplitSessionSelfChecks();
 // === Sesiones v2 (ahorro de storage) ===
 // Antes (v1): habitSessions = { sessionId: {habitId, dateKey, durationSec, ...} }
 // Ahora  (v2): habitSessions = { habitId: { dateKey: totalSec } }
 // Migración automática: v1 -> v2 (sobrescribe nodo remoto para borrar sesiones antiguas)
 function normalizeSessionsStore(raw, persistRemote = false) {
   const totals = {};
+  const timeline = {};
+  const coverage = {};
   let changed = false;
 
   const add = (habitId, dateKey, sec) => {
@@ -392,6 +459,24 @@ function normalizeSessionsStore(raw, persistRemote = false) {
     totals[habitId][dateKey] = (Number(totals[habitId][dateKey]) || 0) + n;
   };
 
+  const pushTimeline = (habitId, session, dayKeyHint = null) => {
+    const bounds = parseSessionBounds(session);
+    if (!bounds || !habitId) return;
+    if (!timeline[habitId]) timeline[habitId] = [];
+    timeline[habitId].push({
+      habitId,
+      startTs: bounds.startTs,
+      endTs: bounds.endTs,
+      durationSec: Math.max(1, Math.round((bounds.endTs - bounds.startTs) / 1000)),
+      dateKey: dayKeyHint || session.dateKey || dateKeyLocal(new Date(bounds.startTs)),
+      source: session.source || "ts"
+    });
+    if (dayKeyHint) {
+      if (!coverage[habitId]) coverage[habitId] = new Set();
+      coverage[habitId].add(dayKeyHint);
+    }
+  };
+
   Object.entries(raw || {}).forEach(([k, v]) => {
     if (!v || typeof v !== "object") return;
 
@@ -400,6 +485,7 @@ function normalizeSessionsStore(raw, persistRemote = false) {
       changed = true;
       const dateKey = v.dateKey || (v.startTs ? dateKeyLocal(new Date(v.startTs)) : null);
       add(v.habitId, dateKey, v.durationSec);
+      pushTimeline(v.habitId, v, dateKey);
       return;
     }
 
@@ -428,6 +514,9 @@ function normalizeSessionsStore(raw, persistRemote = false) {
       }
 
       if (val && typeof val === "object") {
+        if (Array.isArray(val.sessions)) {
+          val.sessions.forEach((session) => pushTimeline(habitId, session, dateKey));
+        }
         const shift = normalizeShiftValue(val.shift);
         const min = Number(val.min);
 
@@ -479,7 +568,7 @@ function normalizeSessionsStore(raw, persistRemote = false) {
   }
 
   if (changed) debugHabitsSync("normalizeSessionsStore changed", { raw, normalized });
-  return { normalized, changed };
+  return { normalized, changed, timeline, coverage };
 }
 
 
@@ -517,6 +606,13 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
   const nextSec = Math.max(0, Math.round(nextMinutes * 60));
   const shift = normalizeShiftValue(options?.shift) || day.shift;
 
+  const bounds = parseSessionBounds({
+    startTs: options?.startTs,
+    endTs: options?.endTs,
+    durationSec: addSec,
+    active: options?.active
+  });
+
   if (isWork) {
     const payload = buildWorkDayPayload(nextMinutes, shift);
     habitSessions[habitId][dateKey] = payload;
@@ -534,13 +630,29 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
       console.warn("No se pudo guardar tiempo en remoto", err);
     }
   } else {
-    habitSessions[habitId][dateKey] = nextSec;
-    queuePendingSessionWrite(habitId, dateKey, nextSec);
-    debugHabitsSync("write:add", { habitId, dateKey, nextSec, dayRaw });
+    const prevRaw = habitSessions[habitId][dateKey];
+    const prevSessions = Array.isArray(prevRaw?.sessions) ? prevRaw.sessions.slice() : [];
+    if (bounds) {
+      prevSessions.push({
+        startTs: bounds.startTs,
+        endTs: bounds.endTs,
+        durationSec: Math.max(1, Math.round((bounds.endTs - bounds.startTs) / 1000))
+      });
+      if (!habitSessionTimeline[habitId]) habitSessionTimeline[habitId] = [];
+      habitSessionTimeline[habitId].push({ habitId, ...prevSessions[prevSessions.length - 1], dateKey, source: "live" });
+      if (!habitSessionTimelineCoverage[habitId]) habitSessionTimelineCoverage[habitId] = new Set();
+      habitSessionTimelineCoverage[habitId].add(dateKey);
+    }
+    const payload = prevSessions.length
+      ? { totalSec: nextSec, sessions: prevSessions }
+      : nextSec;
+    habitSessions[habitId][dateKey] = payload;
+    queuePendingSessionWrite(habitId, dateKey, payload);
+    debugHabitsSync("write:add", { habitId, dateKey, nextSec, dayRaw, hasTimeline: !!prevSessions.length });
     saveCache();
     try {
-      set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), nextSec)
-        .then(() => debugHabitsSync("write:add ok", { habitId, dateKey, nextSec }))
+      set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), payload)
+        .then(() => debugHabitsSync("write:add ok", { habitId, dateKey, payload }))
         .catch((err) => {
           debugHabitsSync("write:add fail", { habitId, dateKey, err: String(err) });
           console.warn("No se pudo guardar tiempo en remoto", err);
@@ -707,6 +819,8 @@ function readCache() {
       if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
       const norm = normalizeSessionsStore(habitSessions, false);
       habitSessions = norm.normalized;
+      habitSessionTimeline = norm.timeline || {};
+      habitSessionTimelineCoverage = norm.coverage || {};
       if (norm.changed) saveCache();
     }
   } catch (err) {
@@ -1169,9 +1283,9 @@ function countActiveDaysInRange(start, end) {
     const habit = habits[habitId];
     if (!habit || habit.archived) return;
     if (!byDate || typeof byDate !== "object") return;
-    Object.entries(byDate).forEach(([key, sec]) => {
+    Object.keys(byDate).forEach((key) => {
       const parsed = parseDateKey(key);
-      if (parsed && isDateInRange(parsed, start, end) && (Number(sec) || 0) > 0) dates.add(key);
+      if (parsed && isDateInRange(parsed, start, end) && getHabitTotalSecForDate(habit.id, key) > 0) dates.add(key);
     });
   });
 
@@ -1194,7 +1308,7 @@ function collectHabitActivityDatesSet(habit) {
   const byDate = habitSessions?.[habit.id];
   if (byDate && typeof byDate === "object") {
     Object.keys(byDate).forEach((key) => {
-      if ((Number(byDate[key]) || 0) > 0) dates.add(key);
+      if (getHabitTotalSecForDate(habit.id, key) > 0) dates.add(key);
     });
   }
 
@@ -3824,16 +3938,16 @@ function renderHistoryCompareCard(habitsList) {
   ];
 
   const makeSelectionBlock = (tagName, selection, onChange) => {
-    const wrap = document.createElement("div");
-    wrap.className = "habit-compare-select-wrap";
+    const row = document.createElement("div");
+    row.className = "compare-row";
 
-    const tag = document.createElement("span");
-    tag.className = "habit-compare-select-tag";
-    tag.textContent = tagName;
-    wrap.appendChild(tag);
-
+    const typeField = document.createElement("label");
+    typeField.className = "compare-field habit-compare-field";
+    const typeLabel = document.createElement("span");
+    typeLabel.className = "habit-compare-field-label";
+    typeLabel.textContent = `${tagName} tipo`;
     const typeSelect = document.createElement("select");
-    typeSelect.className = "habits-history-select";
+    typeSelect.className = "habits-history-select habit-compare-select";
     const realOpt = document.createElement("option");
     realOpt.value = "real";
     realOpt.textContent = `${habitCompareMode === "day" ? "Día" : habitCompareMode === "week" ? "Semana" : habitCompareMode === "month" ? "Mes" : "Año"} real`;
@@ -3843,17 +3957,24 @@ function renderHistoryCompareCard(habitsList) {
     typeSelect.appendChild(realOpt);
     typeSelect.appendChild(avgOpt);
     typeSelect.value = selection?.kind || "real";
-    wrap.appendChild(typeSelect);
+    typeField.appendChild(typeLabel);
+    typeField.appendChild(typeSelect);
 
+    const valueField = document.createElement("div");
+    valueField.className = "compare-field habit-compare-field";
+    const valueLabel = document.createElement("span");
+    valueLabel.className = "habit-compare-field-label";
+    valueLabel.textContent = `${tagName} valor`;
     const valueWrap = document.createElement("div");
     valueWrap.className = "habit-compare-select-value";
-    wrap.appendChild(valueWrap);
+    valueField.appendChild(valueLabel);
+    valueField.appendChild(valueWrap);
 
     const renderValueControl = () => {
       valueWrap.innerHTML = "";
       if (typeSelect.value === "real") {
         const select = document.createElement("select");
-        select.className = "habits-history-select";
+        select.className = "habits-history-select habit-compare-select";
         options.forEach((opt) => {
           const o = document.createElement("option");
           o.value = opt.token;
@@ -3869,7 +3990,7 @@ function renderHistoryCompareCard(habitsList) {
         onChange({ kind: "real", token: select.value }, true);
       } else {
         const select = document.createElement("select");
-        select.className = "habits-history-select";
+        select.className = "habits-history-select habit-compare-select";
         refTypeChoices.forEach(([statKey, label]) => {
           const o = document.createElement("option");
           o.value = statKey;
@@ -3898,7 +4019,9 @@ function renderHistoryCompareCard(habitsList) {
     });
     renderValueControl();
 
-    return wrap;
+    row.appendChild(typeField);
+    row.appendChild(valueField);
+    return row;
   };
 
   const selectors = document.createElement("div");
@@ -4370,7 +4493,7 @@ function hasAnyHistoryDataInRange(start, end) {
     if (byDate && typeof byDate === "object") {
       if (Object.keys(byDate).some((key) => {
         const parsed = parseDateKey(key);
-        return parsed && isDateInRange(parsed, start, end) && (Number(byDate[key]) || 0) > 0;
+        return parsed && isDateInRange(parsed, start, end) && getHabitTotalSecForDate(habit.id, key) > 0;
       })) return true;
     }
     return false;
@@ -5708,7 +5831,26 @@ function minutesForHabitRange(habit, start, end) {
   const byDate = habitSessions?.[habit.id];
   if (!byDate || typeof byDate !== "object") return 0;
 
+  const startTs = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 0, 0, 0, 0).getTime();
+  const endTs = new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23, 59, 59, 999).getTime();
+  const detailed = Array.isArray(habitSessionTimeline?.[habit.id]) ? habitSessionTimeline[habit.id] : [];
+  const coverage = habitSessionTimelineCoverage?.[habit.id] || new Set();
+
+  detailed.forEach((session) => {
+    const bounds = parseSessionBounds(session);
+    if (!bounds) return;
+    const clippedStart = Math.max(bounds.startTs, startTs);
+    const clippedEnd = Math.min(bounds.endTs, endTs);
+    if (clippedEnd <= clippedStart) return;
+    const split = splitSessionByDay(clippedStart, clippedEnd);
+    split.forEach((mins) => {
+      totalMinutes += mins;
+    });
+  });
+
+  // Fallback legacy: mantener comportamiento previo para días sin timestamps reales.
   Object.keys(byDate).forEach((dateKey) => {
+    if (coverage.has(dateKey)) return;
     const parsed = parseDateKey(dateKey);
     if (parsed && isDateInRange(parsed, start, end)) {
       totalMinutes += Math.round(getHabitTotalSecForDate(habit.id, dateKey) / 60);
@@ -5751,9 +5893,9 @@ function collectHabitActiveDates(habit, start, end) {
 
   const byDate = habitSessions?.[habit.id];
   if (byDate && typeof byDate === "object") {
-    Object.entries(byDate).forEach(([key, sec]) => {
+    Object.keys(byDate).forEach((key) => {
       const parsed = parseDateKey(key);
-      if (parsed && isDateInRange(parsed, start, end) && (Number(sec) || 0) > 0) dates.add(key);
+      if (parsed && isDateInRange(parsed, start, end) && getHabitTotalSecForDate(habit.id, key) > 0) dates.add(key);
     });
   }
 
@@ -5764,16 +5906,8 @@ function collectHabitActiveDates(habit, start, end) {
 function minutesForRange(range) {
   const { start, end } = getRangeBounds(range);
   let total = 0;
-  Object.entries(habitSessions || {}).forEach(([habitId, byDate]) => {
-    const habit = habits[habitId];
-    if (!habit || habit.archived) return;
-    if (!byDate || typeof byDate !== "object") return;
-    Object.entries(byDate).forEach(([dateKey, sec]) => {
-      const parsed = parseDateKey(dateKey);
-      if (parsed && isDateInRange(parsed, start, end)) {
-        total += Math.round((Number(sec) || 0) / 60);
-      }
-    });
+  activeHabits().forEach((habit) => {
+    total += minutesForHabitRange(habit, start, end);
   });
   return total;
 }
@@ -5806,9 +5940,9 @@ function countActiveDaysInYear(year = new Date().getFullYear()) {
     const habit = habits[habitId];
     if (!habit || habit.archived) return;
     if (!byDate || typeof byDate !== "object") return;
-    Object.entries(byDate).forEach(([key, sec]) => {
+    Object.keys(byDate).forEach((key) => {
       const parsed = parseDateKey(key);
-      if (parsed && isDateInRange(parsed, start, end) && (Number(sec) || 0) > 0) dates.add(key);
+      if (parsed && isDateInRange(parsed, start, end) && getHabitTotalSecForDate(habit.id, key) > 0) dates.add(key);
     });
   });
 
@@ -5836,8 +5970,8 @@ function countActiveDaysTotal() {
     const habit = habits[habitId];
     if (!habit || habit.archived) return;
     if (!byDate || typeof byDate !== "object") return;
-    Object.entries(byDate).forEach(([key, sec]) => {
-      if ((Number(sec) || 0) > 0) dates.add(key);
+    Object.keys(byDate).forEach((key) => {
+      if (getHabitTotalSecForDate(habitId, key) > 0) dates.add(key);
     });
   });
 
@@ -7074,6 +7208,7 @@ function stopSession(assignHabitId = null, silent = false) {
     : (runningSession?.targetHabitId || null);
 
   const startTs = runningSession.startTs;
+  const endTs = Date.now();
   const dateKey = dateKeyLocal(new Date(startTs));
 
   pendingSessionDuration = duration;
@@ -7084,7 +7219,7 @@ function stopSession(assignHabitId = null, silent = false) {
 
   // Auto-asignación (Shortcuts / enlace)
   if (target && habits?.[target] && !habits[target]?.archived) {
-    addHabitTimeSec(target, dateKey, duration);
+    addHabitTimeSec(target, dateKey, duration, { startTs, endTs });
     localStorage.setItem(LAST_HABIT_KEY, target);
     pendingSessionDuration = 0;
     if (!silent) showHabitToast(`Asignado: ${habits[target]?.name || "hábito"} · ${Math.round(duration / 60)}m`);
@@ -7203,9 +7338,10 @@ function assignSession(habitId) {
     closeSessionModal();
     return;
   }
-  const startTs = Date.now() - pendingSessionDuration * 1000;
+  const endTs = Date.now();
+  const startTs = endTs - pendingSessionDuration * 1000;
   const dateKey = dateKeyLocal(new Date(startTs));
-  addHabitTimeSec(habitId, dateKey, pendingSessionDuration);
+  addHabitTimeSec(habitId, dateKey, pendingSessionDuration, { startTs, endTs });
 
   localStorage.setItem(LAST_HABIT_KEY, habitId);
   pendingSessionDuration = 0;
@@ -8021,6 +8157,8 @@ function listenRemote() {
     applyPendingSessionWrites(raw);
     const norm = normalizeSessionsStore(raw, true);
     habitSessions = norm.normalized;
+    habitSessionTimeline = norm.timeline || {};
+    habitSessionTimelineCoverage = norm.coverage || {};
     debugHabitsSync("onValue:habitSessions normalized", habitSessions);
     invalidateDominantCache();
     saveCache();

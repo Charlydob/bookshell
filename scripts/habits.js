@@ -1435,6 +1435,7 @@ const $habitDetailRecordsMore = document.getElementById("habit-detail-records-mo
 const $habitDetailInsightsSub = document.getElementById("habit-detail-insights-sub");
 const $habitDetailInsights = document.getElementById("habit-detail-insights");
 
+
 // Modal refs
 const $habitModal = document.getElementById("habit-modal-backdrop");
 const $habitModalTitle = document.getElementById("habit-modal-title");
@@ -3101,7 +3102,7 @@ function formatHistoryRangeLabel(range) {
       const startDay = String(start.getDate()).padStart(2, "0");
       const endDay = String(end.getDate()).padStart(2, "0");
       const monthLabel = end.toLocaleDateString("es-ES", { month: "short" }).replace(".", "");
-      return `Semana ${week} (${startDay}–${endDay} ${monthLabel} ${end.getFullYear()})`;
+      return `S. ${week} (${startDay}–${endDay} ${monthLabel} ${end.getFullYear()})`;
     }
     case "month": {
       const { end } = getDaysRangeBounds("month");
@@ -3182,7 +3183,7 @@ function formatCompareToken(mode, token) {
     const end = addDays(start, 6);
     const startLabel = start.toLocaleDateString("es-ES", { day: "2-digit", month: "short" }).replace('.', '');
     const endLabel = end.toLocaleDateString("es-ES", { day: "2-digit", month: "short" }).replace('.', '');
-    return `Semana ${String(week).padStart(2, "0")} (${startLabel}–${endLabel})`;
+    return `S. ${String(week).padStart(2, "0")} (${startLabel}–${endLabel})`;
   }
   const [yRaw, mRaw] = String(token).split("-");
   const year = Number(yRaw);
@@ -4516,7 +4517,7 @@ const sectionMap = {
   budget: budgetSection.section,
 };
 
-const order = ["trend", "budget", "week", "topDays", "distribution"]; // cambia aquí
+const order = ["trend", "budget"]; // cambia aquí
 Object.values(sectionMap).forEach((el) => el.remove()); // por si ya están
 order.forEach((k) => insights.appendChild(sectionMap[k]));
 
@@ -5843,20 +5844,26 @@ function renderDonutLegend(data, totalSec, groups = null, groupColorByKey = null
     return;
   }
 
-  data.forEach((item, idx) => {
-    const row = document.createElement("div");
-    row.className = "habit-donut-legend-item";
-    setSeriesColorVars(row, item, idx);
-    const pct = totalSec ? ((item.totalSec / totalSec) * 100) : 0;
-    row.innerHTML = `
-<span class="legend-dot">${idx + 1}º</span>
-      <div class="legend-text">
-        <div class="legend-name">${item.label}</div>
-<div class="legend-meta">${pct.toFixed(2)}% · ${formatMinutes(Math.round(item.totalSec / 60))}</div>
+data.forEach((item, idx) => {
+  const row = document.createElement("div");
+  row.className = "habit-donut-legend-item";
+  setSeriesColorVars(row, item, idx);
+
+  const pct = totalSec ? (item.totalSec / totalSec) * 100 : 0;
+
+  row.innerHTML = `
+    <span class="legend-dot">${idx + 1}º</span>
+    <div class="legend-text">
+      <div class="legend-name">${item.label}</div>
+      <div class="legend-meta">
+        ${pct.toFixed(2)}% · ${formatMinutes(Math.round(item.totalSec / 60))}
       </div>
-    `;
-    $habitDonutLegend.appendChild(row);
-  });
+    </div>
+  `;
+
+  document.querySelector(".habit-donut-legend").appendChild(row);
+});
+
 }
 
 function renderKPIs() {
@@ -5876,7 +5883,7 @@ function renderKPIs() {
       $habitKpiToday.classList.add("is-stacked");
       $habitKpiToday.innerHTML = `
         <span class="habit-kpi-value-line is-primary">Hoy: ${todayCount}</span>
-        <span class="habit-kpi-value-line">Rango: ${rangeCount}</span>
+        <span class="habit-kpi-value-line-rango">Total: ${rangeCount}</span>
       `;
     }
   }
@@ -5893,7 +5900,7 @@ function renderKPIs() {
   }
   if ($habitKpiActiveDaysLabel) {
     $habitKpiActiveDaysLabel.textContent = habitDonutRange === "total"
-      ? "Días contabilizados total"
+      ? "Días  total"
       : "Días contabilizados (rango)";
   }
   if ($habitKpiStreakTotal) {

@@ -543,7 +543,7 @@
 .habit-reports {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
 .habits-panel[data-panel="reports"] .habit-kpi-label {
@@ -640,8 +640,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 0px;
+  margin-bottom: 0px;
   flex-wrap: wrap;
 }
 
@@ -2560,8 +2560,8 @@ display: grid;
   background: var(--glass);
   color: var(--txt);
   border-radius: var(--radius-pill);
-  padding: 5px 10px;
-  font-size: 12px;
+  padding: 5px 4px;
+  font-size: 10px;
 }
 
 .habits-history-input {
@@ -2810,7 +2810,7 @@ display: grid;
 }
 
 .habit-pin-grid {
-  margin-top: 12px;
+  margin-top: 0px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -2921,7 +2921,7 @@ display: grid;
 }
 
 .habit-compare-controls .habits-history-toggle-btn {
-  min-height: 44px;
+  min-height: 4px;
 }
 
 .habit-compare-compact-row,
@@ -3122,4 +3122,150 @@ display: grid;
     width: 100%;
     justify-content: space-between;
   }
+}
+.habit-shifts-card{
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-radius: var(--radius-md);
+  background: rgba(255,255,255,0.04);
+}
+.habit-records-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12px, 1fr));
+  gap: 8px;
+}
+:root{
+  --work-morning: 16,255,16;
+}
+
+.habit-record-card-mañanas{
+  border: 1px solid rgba(var(--work-morning), 0.6);
+  box-shadow:
+    0 0 10px rgba(var(--work-morning), 0.6),
+    0 0 25px rgba(var(--work-morning), 0.35);
+}
+
+:root{
+  --work-morning: 255,220,40;     /* verde */
+  --work-afternoon: 255,60,60;   /* rojo */
+  --work-free: 16,255,16;       /* amarillo */
+  --work-unknown: 255,255,255;         /* blanco */
+}
+
+
+.habit-record-card-mañanas{
+  border: 1px solid rgba(var(--work-morning), 0.6);
+  box-shadow: 0 0 10px rgba(var(--work-morning), 0.6),
+              0 0 25px rgba(var(--work-morning), 0.35);
+              
+align-items: center;
+}
+
+.habit-record-card-tardes{
+  border: 1px solid rgba(var(--work-afternoon), 0.6);
+  box-shadow: 0 0 10px rgba(var(--work-afternoon), 0.6),
+              0 0 25px rgba(var(--work-afternoon), 0.35);
+align-items: center;
+
+}
+
+.habit-record-card-libres{
+  border: 1px solid rgba(var(--work-free), 0.6);
+  box-shadow: 0 0 10px rgba(var(--work-free), 0.6),
+              0 0 25px rgba(var(--work-free), 0.35);
+align-items: center;
+}
+
+.habit-record-card-desconocidos{
+  border: 1px solid rgba(var(--work-unknown), 0.4);
+  box-shadow: 0 0 10px rgba(var(--work-unknown), 0.35),
+              0 0 20px rgba(var(--work-unknown), 0.2);
+align-items: center;
+}
+#habit-kpi-total-hours{
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.habit-kpi-value-line-rango{
+  font-size: 10px;
+}
+.habit-donut-legend-wrap{
+  border: 1px solid rgba(120,180,255,0.18);
+  border-radius: 16px;
+  overflow: hidden;
+
+  background: radial-gradient(
+    circle at top,
+    rgba(120,180,255,0.10),
+    rgba(0,0,0,0.22)
+  );
+
+  box-shadow:
+    0 12px 30px rgba(0,0,0,0.35),
+    inset 0 1px 0 rgba(180,220,255,0.08);
+}
+
+.habit-donut-legend-wrap > summary{
+  padding: 12px 14px;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  font-weight: 600;
+  color: rgba(220,240,255,0.92);
+
+  background: linear-gradient(
+    to right,
+    rgba(120,180,255,0.10),
+    rgba(255,255,255,0.02)
+  );
+}
+
+.habit-donut-legend-wrap > summary::-webkit-details-marker{
+  display:none;
+}
+
+.habit-donut-legend-wrap > summary::after{
+  content: "⌄";
+  font-size: 14px;
+  opacity: 0.7;
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+
+.habit-donut-legend-wrap[open] > summary::after{
+  transform: rotate(180deg);
+  opacity: 1;
+}
+
+.habit-donut-legend{
+  padding: 12px 14px;
+  border-top: 1px solid rgba(120,180,255,0.14);
+
+  background: rgba(255,255,255,0.02);
+}
+#habit-line-card-grafico{
+  border: 1px solid rgba(120,180,255,0.18);
+  border-radius: 16px;
+  background: radial-gradient(
+    circle at top,
+    rgba(120,180,255,0.10),
+    rgba(0,0,0,0.22)
+  );
+  box-shadow:
+    0 12px 30px rgba(0,0,0,0.35),
+    inset 0 1px 0 rgba(180,220,255,0.08);
+}
+.habit-range-toggle{
+  align-items: center;
+  justify-content: center;
+  justify-items: center;
+  justify-self: center;
+  align-self: center;
+  align-content: center;
 }

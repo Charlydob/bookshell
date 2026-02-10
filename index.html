@@ -913,19 +913,19 @@
 </div>
 </div>
 <div class="habit-records-grid">
-<div class="habit-record-card">
-<div class="habit-kpi-label">Mañanas trabajadas</div>
+<div class="habit-record-card habit-record-card-mañanas">
+<div class="habit-kpi-label">Mañanas</div>
 <div class="habit-kpi-value" id="habit-shifts-morning">0</div>
 </div>
-<div class="habit-record-card">
-<div class="habit-kpi-label">Tardes trabajadas</div>
+<div class="habit-record-card habit-record-card-tardes">
+<div class="habit-kpi-label">Tardes</div>
 <div class="habit-kpi-value" id="habit-shifts-evening">0</div>
 </div>
-<div class="habit-record-card">
+<div class="habit-record-card habit-record-card-libres">
 <div class="habit-kpi-label">Días libres</div>
 <div class="habit-kpi-value" id="habit-shifts-free">0</div>
 </div>
-<div class="habit-record-card">
+<div class="habit-record-card habit-record-card-desconocidos">
 <div class="habit-kpi-label">Desconocido</div>
 <div class="habit-kpi-value" id="habit-shifts-unknown">0</div>
 </div>
@@ -993,10 +993,16 @@
 <div class="habit-unit" id="habit-unit" aria-label="Unidad de tiempo"></div>
 </div>
 </div>
-<div class="empty-state small" id="habit-donut-empty" style="display:none;">No hay datos en este rango.</div>
-<div class="habit-donut-legend" id="habit-donut-legend"></div>
+  <div class="empty-state small" id="habit-donut-empty" style="display:none;">
+  No hay datos en este rango.
 </div>
-<div class="habit-chart-card habit-line-card" id="habit-line-card">
+
+<details class="habit-donut-legend-wrap">
+  <summary>Leyenda</summary>
+  <div class="habit-donut-legend" id="habit-donut-legend"></div>
+</details>
+
+<div class="habit-chart-card habit-line-card" id="habit-line-card-grafico">
 <div class="habit-card-head habit-line-head">
 <div>
 <div class="habit-card-title">Evolución (min/día)</div>
@@ -1010,11 +1016,11 @@
 <label class="habit-select habit-select-compact" for="habit-evo-range">
 <span>Rango</span>
 <select aria-label="Rango evolución" id="habit-evo-range">
-<option selected="" value="7d">7D</option>
+<option selected="" value="total">Total</option>
 <option value="30d">30D</option>
 <option value="90d">90D</option>
 <option value="year">Año</option>
-<option value="total">Total</option>
+<option value="7d">7D</option>
 </select>
 </label>
 </div>

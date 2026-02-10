@@ -110,10 +110,14 @@ let habitCompareSort = "delta";
 let habitCompareView = "detail";
 let habitCompareSelectionA = null;
 let habitCompareSelectionB = null;
-let habitAveragesType = "AVG_DAILY";
-let habitAveragesSort = "desc";
+let habitStatsView = "MEAN";
+let habitStatsGranularity = "day";
+let habitStatsBaseMode = "CALENDAR";
+let habitStatsSort = "desc";
 const habitCompareAggregateCache = new Map();
 const habitCompareAverageCache = new Map();
+const habitStatsSeriesCache = new Map();
+const habitStatsResultCache = new Map();
 let dayDetailDateKey = todayKey();
 let dayDetailFocusHabitId = null;
 const habitDetailRecordsPageSize = 10;
@@ -1151,6 +1155,8 @@ function getHabitDayScore(habit, dateKey) {
 function invalidateCompareCache() {
   habitCompareAggregateCache.clear();
   habitCompareAverageCache.clear();
+  habitStatsSeriesCache.clear();
+  habitStatsResultCache.clear();
 }
 
 function invalidateDominantCache(dateKey = null) {
@@ -3203,21 +3209,26 @@ function formatCompareToken(mode, token) {
   return `Año ${year}`;
 }
 
-function getAverageTypeLabel(avgType, withRange = false) {
+function getCompareStatLabel(statKey, mode) {
+  const unitMap = { day: "diaria", week: "semanal", month: "mensual", year: "anual" };
+  const unit = unitMap[mode] || "diaria";
   const map = {
-    AVG_DAILY: "Media diaria",
-    AVG_WEEKLY: "Media semanal",
-    AVG_MONTHLY: "Media mensual",
-    AVG_YEARLY: "Media anual",
-    AVG_TOTAL: "Media total (por día)"
+    MEAN: `Media ${unit}`,
+    MEDIAN: `Mediana ${unit}`,
+    MODE: `Moda ${unit}`,
+    P25: `P25 ${unit}`,
+    P50: `P50 ${unit}`,
+    P75: `P75 ${unit}`,
+    P90: `P90 ${unit}`,
+    MAX: `Máx ${unit}`,
+    TOTAL_TYPICAL: `Total típico ${unit}`
   };
-  const label = map[avgType] || "Media";
-  return withRange ? `${label} (histórico)` : label;
+  return map[statKey] || `Referencia ${unit}`;
 }
 
 function formatCompareSelection(mode, selection) {
   if (!selection) return "—";
-  if (selection.kind === "avg") return getAverageTypeLabel(selection.avgType);
+  if (selection.kind === "ref") return getCompareStatLabel(selection.statKey, mode);
   return formatCompareToken(mode, selection.token);
 }
 
@@ -3226,26 +3237,26 @@ function getCompareDefaultSelections(mode) {
   if (mode === "day") {
     return {
       a: { kind: "real", token: dateKeyLocal(today) },
-      b: { kind: "avg", avgType: "AVG_DAILY" }
+      b: { kind: "ref", statKey: "MEAN" }
     };
   }
   if (mode === "week") {
     const cur = getISOWeekYearAndNumber(today);
     return {
       a: { kind: "real", token: `${cur.year}-W${String(cur.week).padStart(2, "0")}` },
-      b: { kind: "avg", avgType: "AVG_WEEKLY" }
+      b: { kind: "ref", statKey: "MEAN" }
     };
   }
   if (mode === "month") {
     const cur = new Date(today.getFullYear(), today.getMonth(), 1);
     return {
       a: { kind: "real", token: `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}` },
-      b: { kind: "avg", avgType: "AVG_MONTHLY" }
+      b: { kind: "ref", statKey: "MEAN" }
     };
   }
   return {
     a: { kind: "real", token: String(today.getFullYear()) },
-    b: { kind: "avg", avgType: "AVG_YEARLY" }
+    b: { kind: "ref", statKey: "MEAN" }
   };
 }
 
@@ -3351,28 +3362,6 @@ function getRangeForCompare(mode, token) {
   };
 }
 
-function getDaysInclusive(start, end) {
-  if (!start || !end || end < start) return 0;
-  return Math.floor((endOfDay(end) - new Date(start.getFullYear(), start.getMonth(), start.getDate())) / 86400000) + 1;
-}
-
-function countMonthsInclusive(start, end) {
-  if (!start || !end || end < start) return 0;
-  return ((end.getFullYear() - start.getFullYear()) * 12) + (end.getMonth() - start.getMonth()) + 1;
-}
-
-function countYearsInclusive(start, end) {
-  if (!start || !end || end < start) return 0;
-  return (end.getFullYear() - start.getFullYear()) + 1;
-}
-
-function countISOWeeksOverlapping(start, end) {
-  if (!start || !end || end < start) return 0;
-  const firstWeekStart = startOfWeek(start);
-  const lastWeekStart = startOfWeek(end);
-  return Math.floor((lastWeekStart - firstWeekStart) / 604800000) + 1;
-}
-
 function resolveCompareType(habit) {
   if (!habit || habit.archived) return "check";
   if (habit.goal === "time") return "duration";
@@ -3383,39 +3372,147 @@ function resolveCompareType(habit) {
 function aggregateHabitValue(habit, range) {
   if (!habit || habit.archived || !range) return 0;
   const type = resolveCompareType(habit);
-  if (type === "duration") {
-    return getHabitMetricForRange(habit, range.start, range.end, "time");
-  }
-  if (type === "count") {
-    return getHabitMetricForRange(habit, range.start, range.end, "count");
-  }
+  if (type === "duration") return getHabitMetricForRange(habit, range.start, range.end, "time");
   return getHabitMetricForRange(habit, range.start, range.end, "count");
 }
 
-function getHistoryAverageDenominator(avgType, start, end) {
-  if (avgType === "AVG_WEEKLY") return countISOWeeksOverlapping(start, end);
-  if (avgType === "AVG_MONTHLY") return countMonthsInclusive(start, end);
-  if (avgType === "AVG_YEARLY") return countYearsInclusive(start, end);
-  return getDaysInclusive(start, end);
+function getHistoryStatsRange() {
+  const start = getEarliestActivityDate();
+  const end = endOfDay(new Date());
+  return { start, end };
+}
+
+function formatStatToken(granularity, date) {
+  if (granularity === "day") return dateKeyLocal(date);
+  if (granularity === "week") {
+    const meta = getISOWeekYearAndNumber(date);
+    return `${meta.year}-W${String(meta.week).padStart(2, "0")}`;
+  }
+  if (granularity === "month") return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  return `${date.getFullYear()}`;
+}
+
+function nextTokenDate(granularity, date) {
+  if (granularity === "day") return addDays(date, 1);
+  if (granularity === "week") return addDays(date, 7);
+  if (granularity === "month") return new Date(date.getFullYear(), date.getMonth() + 1, 1);
+  return new Date(date.getFullYear() + 1, 0, 1);
+}
+
+function floorTokenDate(granularity, date) {
+  if (granularity === "day") return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  if (granularity === "week") return startOfWeek(date);
+  if (granularity === "month") return new Date(date.getFullYear(), date.getMonth(), 1);
+  return new Date(date.getFullYear(), 0, 1);
+}
+
+function buildSeries(habit, granularity, baseMode, rangeStart, rangeEnd) {
+  if (!habit || !rangeStart || !rangeEnd || rangeEnd < rangeStart) return [];
+  const cacheKey = `${habit.id}::${granularity}::${baseMode}::${dateKeyLocal(rangeStart)}::${dateKeyLocal(rangeEnd)}`;
+  if (habitStatsSeriesCache.has(cacheKey)) return habitStatsSeriesCache.get(cacheKey);
+  const vals = [];
+  for (let cursor = floorTokenDate(granularity, rangeStart); cursor <= rangeEnd; cursor = nextTokenDate(granularity, cursor)) {
+    const token = formatStatToken(granularity, cursor);
+    const value = Number(aggregateHabitValue(habit, getRangeForCompare(granularity, token)) || 0);
+    if (baseMode === "RECORDED_ONLY" && value === 0) continue;
+    vals.push(value);
+  }
+  habitStatsSeriesCache.set(cacheKey, vals);
+  return vals;
+}
+
+function getPercentile(vals, p) {
+  if (!vals.length) return 0;
+  const sorted = [...vals].sort((a, b) => a - b);
+  const i = p * (sorted.length - 1);
+  const lo = Math.floor(i);
+  const hi = Math.ceil(i);
+  if (lo === hi) return sorted[lo];
+  const weight = i - lo;
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * weight;
+}
+
+function getModeMeta(vals) {
+  if (!vals.length) return { value: 0, multi: false };
+  const freq = new Map();
+  vals.forEach((v) => {
+    const k = Number(v || 0);
+    freq.set(k, (freq.get(k) || 0) + 1);
+  });
+  let maxFreq = 0;
+  freq.forEach((count) => {
+    if (count > maxFreq) maxFreq = count;
+  });
+  const modes = [...freq.entries()]
+    .filter(([, count]) => count === maxFreq)
+    .map(([value]) => Number(value))
+    .sort((a, b) => a - b);
+  return { value: modes[0] || 0, multi: modes.length > 1 };
+}
+
+function summarizeSeries(vals, activeRateVals = vals) {
+  if (!vals.length) {
+    return { total: 0, mean: 0, median: 0, mode: 0, modeMulti: false, p25: 0, p50: 0, p75: 0, p90: 0, max: 0, activeRate: 0 };
+  }
+  const total = vals.reduce((acc, v) => acc + (Number(v) || 0), 0);
+  const modeMeta = getModeMeta(vals);
+  const activeBase = activeRateVals.length ? activeRateVals : vals;
+  return {
+    total,
+    mean: total / vals.length,
+    median: getPercentile(vals, 0.5),
+    mode: modeMeta.value,
+    modeMulti: modeMeta.multi,
+    p25: getPercentile(vals, 0.25),
+    p50: getPercentile(vals, 0.5),
+    p75: getPercentile(vals, 0.75),
+    p90: getPercentile(vals, 0.9),
+    max: Math.max(...vals),
+    activeRate: activeBase.length ? (activeBase.filter((v) => Number(v) > 0).length / activeBase.length) * 100 : 0
+  };
+}
+
+function getSeriesStat(habit, granularity, baseMode) {
+  const { start, end } = getHistoryStatsRange();
+  const cacheKey = `${habit.id}::${granularity}::${baseMode}::${dateKeyLocal(start)}::${dateKeyLocal(end)}`;
+  if (habitStatsResultCache.has(cacheKey)) return habitStatsResultCache.get(cacheKey);
+  const vals = buildSeries(habit, granularity, baseMode, start, end);
+  const calVals = buildSeries(habit, granularity, "CALENDAR", start, end);
+  const stat = summarizeSeries(vals, calVals);
+  habitStatsResultCache.set(cacheKey, stat);
+  return stat;
+}
+
+function getStatValueForKey(stat, key) {
+  const map = {
+    MEAN: stat.mean,
+    TOTAL: stat.total,
+    MEDIAN: stat.median,
+    MODE: stat.mode,
+    P25: stat.p25,
+    P50: stat.p50,
+    P75: stat.p75,
+    P90: stat.p90,
+    MAX: stat.max,
+    ACTIVE_RATE: stat.activeRate,
+    TOTAL_TYPICAL: stat.median
+  };
+  return Number(map[key] || 0);
 }
 
 function getCompareAggregate(selection, mode) {
-  const selectionKey = selection?.kind === "avg"
-    ? `avg::${selection.avgType}`
+  const selectionKey = selection?.kind === "ref"
+    ? `ref::${mode}::${habitStatsBaseMode}::${selection.statKey}`
     : `real::${mode}::${selection?.token}`;
 
-  if (selection?.kind === "avg") {
+  if (selection?.kind === "ref") {
     if (habitCompareAverageCache.has(selectionKey)) return habitCompareAverageCache.get(selectionKey);
-    const today = endOfDay(new Date());
-    const historyStart = getEarliestActivityDate();
-    const totalRange = { start: historyStart, end: today };
-    const denominator = getHistoryAverageDenominator(selection.avgType, historyStart, today);
     const values = {};
     activeHabits().forEach((habit) => {
-      const totalHabit = aggregateHabitValue(habit, totalRange);
-      values[habit.id] = denominator > 0 ? totalHabit / denominator : 0;
+      const stat = getSeriesStat(habit, mode, habitStatsBaseMode);
+      values[habit.id] = getStatValueForKey(stat, selection.statKey || "MEAN");
     });
-    const entry = { kind: "avg", range: totalRange, values, denominator, avgType: selection.avgType };
+    const entry = { kind: "ref", values, statKey: selection.statKey || "MEAN" };
     habitCompareAverageCache.set(selectionKey, entry);
     return entry;
   }
@@ -3479,7 +3576,7 @@ runCompareDeltaSelfChecks();
 function buildCompareRows(habitsList, mode, selectionA, selectionB, sortMode) {
   const aggA = getCompareAggregate(selectionA, mode);
   const aggB = getCompareAggregate(selectionB, mode);
-  const useDecimals = selectionA?.kind === "avg" || selectionB?.kind === "avg";
+  const useDecimals = selectionA?.kind === "ref" || selectionB?.kind === "ref";
   const rows = habitsList.map((habit) => {
     const type = resolveCompareType(habit);
     const a = Number(aggA.values[habit.id] || 0);
@@ -3557,12 +3654,16 @@ function renderHistoryCompareCard(habitsList) {
   const options = getCompareOptions(habitCompareMode);
   ensureCompareSelections(habitCompareMode, options);
 
-  const avgTypeChoices = [
-    ["AVG_DAILY", "Media diaria"],
-    ["AVG_WEEKLY", "Media semanal"],
-    ["AVG_MONTHLY", "Media mensual"],
-    ["AVG_YEARLY", "Media anual"],
-    ["AVG_TOTAL", "Media total"]
+  const refTypeChoices = [
+    ["MEAN", "Media"],
+    ["MEDIAN", "Mediana"],
+    ["MODE", "Moda"],
+    ["P25", "P25"],
+    ["P50", "P50"],
+    ["P75", "P75"],
+    ["P90", "P90"],
+    ["MAX", "Máx"],
+    ["TOTAL_TYPICAL", "Total típico"]
   ];
 
   const makeSelectionBlock = (tagName, selection, onChange) => {
@@ -3580,8 +3681,8 @@ function renderHistoryCompareCard(habitsList) {
     realOpt.value = "real";
     realOpt.textContent = `${habitCompareMode === "day" ? "Día" : habitCompareMode === "week" ? "Semana" : habitCompareMode === "month" ? "Mes" : "Año"} real`;
     const avgOpt = document.createElement("option");
-    avgOpt.value = "avg";
-    avgOpt.textContent = "Media";
+    avgOpt.value = "ref";
+    avgOpt.textContent = "Referencia";
     typeSelect.appendChild(realOpt);
     typeSelect.appendChild(avgOpt);
     typeSelect.value = selection?.kind || "real";
@@ -3612,25 +3713,25 @@ function renderHistoryCompareCard(habitsList) {
       } else {
         const select = document.createElement("select");
         select.className = "habits-history-select";
-        avgTypeChoices.forEach(([avgType, label]) => {
+        refTypeChoices.forEach(([statKey, label]) => {
           const o = document.createElement("option");
-          o.value = avgType;
+          o.value = statKey;
           o.textContent = label;
           select.appendChild(o);
         });
-        const selectedType = selection?.kind === "avg" ? selection.avgType : getCompareDefaultSelections(habitCompareMode).b.avgType;
+        const selectedType = selection?.kind === "ref" ? selection.statKey : getCompareDefaultSelections(habitCompareMode).b.statKey;
         select.value = selectedType;
-        select.addEventListener("change", (e) => onChange({ kind: "avg", avgType: e.target.value }));
+        select.addEventListener("change", (e) => onChange({ kind: "ref", statKey: e.target.value }));
 
         const hint = document.createElement("div");
         hint.className = "habit-compare-avg-hint";
-        hint.textContent = getAverageTypeLabel(select.value, true);
+        hint.textContent = `${getCompareStatLabel(select.value, habitCompareMode)} (histórico · ${habitStatsBaseMode === "CALENDAR" ? "calendario" : "con registro"})`;
         select.addEventListener("change", () => {
-          hint.textContent = getAverageTypeLabel(select.value, true);
+          hint.textContent = `${getCompareStatLabel(select.value, habitCompareMode)} (histórico · ${habitStatsBaseMode === "CALENDAR" ? "calendario" : "con registro"})`;
         });
         valueWrap.appendChild(select);
         valueWrap.appendChild(hint);
-        onChange({ kind: "avg", avgType: select.value }, true);
+        onChange({ kind: "ref", statKey: select.value }, true);
       }
     };
 
@@ -3676,12 +3777,12 @@ function renderHistoryCompareCard(habitsList) {
   presetsRow.className = "habit-compare-presets";
   const presetMap = {
     day: [
-      { label: "Hoy vs Media", a: { kind: "real", token: dateKeyLocal(new Date()) }, b: { kind: "avg", avgType: "AVG_DAILY" } },
+      { label: "Hoy vs Media", a: { kind: "real", token: dateKeyLocal(new Date()) }, b: { kind: "ref", statKey: "MEAN" } },
       { label: "Hoy vs Ayer", a: { kind: "real", token: dateKeyLocal(new Date()) }, b: { kind: "real", token: dateKeyLocal(addDays(new Date(), -1)) } }
     ],
-    week: [{ label: "Semana vs Media", a: getCompareDefaultSelections("week").a, b: { kind: "avg", avgType: "AVG_WEEKLY" } }],
-    month: [{ label: "Mes vs Media", a: getCompareDefaultSelections("month").a, b: { kind: "avg", avgType: "AVG_MONTHLY" } }],
-    year: [{ label: "Año vs Media", a: getCompareDefaultSelections("year").a, b: { kind: "avg", avgType: "AVG_YEARLY" } }]
+    week: [{ label: "Semana vs Media", a: getCompareDefaultSelections("week").a, b: { kind: "ref", statKey: "MEAN" } }],
+    month: [{ label: "Mes vs Media", a: getCompareDefaultSelections("month").a, b: { kind: "ref", statKey: "MEAN" } }],
+    year: [{ label: "Año vs Media", a: getCompareDefaultSelections("year").a, b: { kind: "ref", statKey: "MEAN" } }]
   };
   (presetMap[habitCompareMode] || []).forEach((preset) => {
     const btn = document.createElement("button");
@@ -3815,9 +3916,9 @@ function renderHistoryCompareCard(habitsList) {
       const labels = document.createElement("div");
       labels.className = "habit-compare-values";
       const la = document.createElement("span");
-      la.textContent = row.a ? formatValueByType(row.a, row.type, row.useDecimals) : "—";
+      la.textContent = formatValueByType(row.a, row.type, row.useDecimals);
       const lb = document.createElement("span");
-      lb.textContent = row.b ? formatValueByType(row.b, row.type, row.useDecimals) : "—";
+      lb.textContent = formatValueByType(row.b, row.type, row.useDecimals);
       labels.appendChild(la);
       labels.appendChild(lb);
 
@@ -3833,71 +3934,102 @@ function renderHistoryCompareCard(habitsList) {
   return card;
 }
 
-function renderHistoryAveragesCard(habitsList) {
-  const section = createHistorySection("Medias");
+function getStatGranularityLabel(granularity) {
+  return granularity === "day" ? "día" : granularity === "week" ? "semana" : granularity === "month" ? "mes" : "año";
+}
+
+function getStatUnitSuffix(view, granularity) {
+  if (view === "TOTAL" || view === "ACTIVE_RATE") return "";
+  return `/${getStatGranularityLabel(granularity)}`;
+}
+
+function getStatExplanation(view, granularity, baseMode) {
+  const unidad = getStatGranularityLabel(granularity);
+  const unidades = `${unidad}${unidad === "mes" ? "es" : "s"}`;
+  const baseText = baseMode === "CALENDAR"
+    ? "Calendario cuenta también las unidades sin registro como 0."
+    : "Con registro solo usa unidades con actividad (>0).";
+  const map = {
+    MEAN: { title: "Media", lines: [`Promedio por ${unidad}: total dividido entre número de ${unidades}.`, baseText] },
+    TOTAL: { title: "Total", lines: [`Suma histórica completa de ese hábito en todo el periodo guardado.`, `No es un promedio: es acumulado puro.`] },
+    MEDIAN: { title: "Mediana", lines: [`Valor del medio: la mitad de ${unidades} queda por debajo y la otra mitad por encima.`, "Resiste mejor días extremos que la media."] },
+    MODE: { title: "Moda", lines: [`Valor que más se repite por ${unidad}.`, "Si hay empate de modas mostramos la menor y marcamos “multi”."] },
+    P25: { title: "P25", lines: [`Nivel bajo típico: 25% de ${unidades} está por debajo.`, baseText] },
+    P50: { title: "P50", lines: ["P50 es exactamente la mediana.", baseText] },
+    P75: { title: "P75", lines: [`En el 75% de ${unidades} haces como mucho ese valor; el 25% mejor queda por encima.`, baseText] },
+    P90: { title: "P90", lines: [`Tu nivel alto típico: solo el 10% de ${unidades} lo supera.`, baseText] },
+    MAX: { title: "Máximo", lines: [`Tu récord en una sola ${unidad} dentro del histórico.`, "Útil para ver picos, no la rutina normal."] },
+    ACTIVE_RATE: { title: "Activos%", lines: [`Porcentaje de ${unidades} con actividad (>0).`, "Siempre se calcula sobre Calendario para medir constancia real."] }
+  };
+  return map[view] || map.MEAN;
+}
+
+function renderHistoryStatsCard(habitsList) {
+  const section = createHistorySection("Estadísticas");
   const controls = document.createElement("div");
   controls.className = "habits-history-section-controls";
-  const typeToggle = document.createElement("div");
-  typeToggle.className = "habits-history-toggle";
+
+  const viewToggle = document.createElement("div");
+  viewToggle.className = "habits-history-toggle habit-stats-scroll";
   [
-    ["AVG_DAILY", "Diaria"],
-    ["AVG_WEEKLY", "Semanal"],
-    ["AVG_MONTHLY", "Mensual"],
-    ["AVG_YEARLY", "Anual"],
-    ["AVG_TOTAL", "Total"]
+    ["MEAN", "Media"], ["TOTAL", "Total"], ["MEDIAN", "Mediana"], ["MODE", "Moda"],
+    ["P25", "P25"], ["P50", "P50"], ["P75", "P75"], ["P90", "P90"], ["MAX", "Máx"], ["ACTIVE_RATE", "Activos%"]
   ].forEach(([key, label]) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "habits-history-toggle-btn";
-    if (habitAveragesType === key) btn.classList.add("is-active");
+    if (habitStatsView === key) btn.classList.add("is-active");
     btn.textContent = label;
     btn.addEventListener("click", () => {
-      habitAveragesType = key;
+      habitStatsView = key;
       renderHistory();
     });
-    typeToggle.appendChild(btn);
+    viewToggle.appendChild(btn);
   });
 
-  const orderToggle = document.createElement("div");
-  orderToggle.className = "habits-history-toggle";
-  [["desc", "Mayor"], ["asc", "Menor"]].forEach(([key, label]) => {
+  const row2 = document.createElement("div");
+  row2.className = "habit-compare-order-row";
+  const granToggle = document.createElement("div");
+  granToggle.className = "habits-history-toggle";
+  [["day", "Día"], ["week", "Semana"], ["month", "Mes"], ["year", "Año"]].forEach(([key, label]) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "habits-history-toggle-btn";
-    if (habitAveragesSort === key) btn.classList.add("is-active");
+    if (habitStatsGranularity === key) btn.classList.add("is-active");
     btn.textContent = label;
     btn.addEventListener("click", () => {
-      habitAveragesSort = key;
+      habitStatsGranularity = key;
       renderHistory();
     });
-    orderToggle.appendChild(btn);
+    granToggle.appendChild(btn);
   });
+  const baseToggle = document.createElement("div");
+  baseToggle.className = "habits-history-toggle";
+  [["CALENDAR", "Calendario"], ["RECORDED_ONLY", "Con registro"]].forEach(([key, label]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "habits-history-toggle-btn";
+    if (habitStatsBaseMode === key) btn.classList.add("is-active");
+    btn.textContent = label;
+    btn.addEventListener("click", () => {
+      habitStatsBaseMode = key;
+      invalidateCompareCache();
+      renderHistory();
+    });
+    baseToggle.appendChild(btn);
+  });
+  row2.appendChild(granToggle);
+  row2.appendChild(baseToggle);
 
-  controls.appendChild(typeToggle);
-  controls.appendChild(orderToggle);
+  controls.appendChild(viewToggle);
+  controls.appendChild(row2);
   section.header.appendChild(controls);
 
-  const avgAgg = getCompareAggregate({ kind: "avg", avgType: habitAveragesType }, habitCompareMode);
-  const unit = habitAveragesType === "AVG_DAILY" || habitAveragesType === "AVG_TOTAL"
-    ? "/día"
-    : habitAveragesType === "AVG_WEEKLY"
-      ? "/semana"
-      : habitAveragesType === "AVG_MONTHLY"
-        ? "/mes"
-        : "/año";
   const rows = habitsList.map((habit) => {
-    const value = Number(avgAgg.values[habit.id] || 0);
     const type = resolveCompareType(habit);
-    return { habit, value, type, color: resolveHabitColor(habit), emoji: habit?.emoji || "🏷️" };
-  }).sort((a, b) => habitAveragesSort === "asc" ? a.value - b.value : b.value - a.value);
-
-  if (!rows.length) {
-    const empty = document.createElement("div");
-    empty.className = "habits-history-empty";
-    empty.textContent = "No hay hábitos para calcular medias.";
-    section.body.appendChild(empty);
-    return section.section;
-  }
+    const stat = getSeriesStat(habit, habitStatsGranularity, habitStatsBaseMode);
+    return { habit, type, stat, value: getStatValueForKey(stat, habitStatsView), color: resolveHabitColor(habit), emoji: habit?.emoji || "🏷️" };
+  }).sort((a, b) => habitStatsSort === "asc" ? a.value - b.value : b.value - a.value);
 
   const list = document.createElement("div");
   list.className = "habits-history-list";
@@ -3912,14 +4044,42 @@ function renderHistoryAveragesCard(habitsList) {
     title.textContent = `${row.emoji} ${row.habit.name}`;
     left.appendChild(title);
 
+    if (habitStatsView === "MODE" && row.stat.modeMulti) {
+      const meta = document.createElement("div");
+      meta.className = "habits-history-list-meta";
+      meta.textContent = "multi";
+      left.appendChild(meta);
+    }
+
     const value = document.createElement("div");
     value.className = "habits-history-list-value";
-    value.textContent = `${formatValueByType(row.value, row.type, true)}${unit}`;
+    if (habitStatsView === "ACTIVE_RATE") {
+      value.textContent = `${Math.round(row.value)}%`;
+    } else {
+      const useDecimals = row.type !== "duration" && habitStatsView !== "TOTAL";
+      value.textContent = `${formatValueByType(row.value, row.type, useDecimals)}${getStatUnitSuffix(habitStatsView, habitStatsGranularity)}`;
+    }
     rowEl.appendChild(left);
     rowEl.appendChild(value);
     list.appendChild(rowEl);
   });
   section.body.appendChild(list);
+
+  const explanation = getStatExplanation(habitStatsView, habitStatsGranularity, habitStatsBaseMode);
+  const box = document.createElement("div");
+  box.className = "habit-stats-explainer";
+  const title = document.createElement("div");
+  title.className = "habit-stats-explainer-title";
+  title.textContent = explanation.title;
+  box.appendChild(title);
+  explanation.lines.slice(0, 3).forEach((line) => {
+    const p = document.createElement("div");
+    p.className = "habit-stats-explainer-line";
+    p.textContent = line;
+    box.appendChild(p);
+  });
+  section.body.appendChild(box);
+
   return section.section;
 }
 
@@ -4811,8 +4971,8 @@ function renderHistory() {
   budgetSection.body.appendChild(budgetBody);
   insights.appendChild(budgetSection.section);
 
-  const averagesSection = renderHistoryAveragesCard(habitsList);
-  insights.appendChild(averagesSection);
+  const statsSection = renderHistoryStatsCard(habitsList);
+  insights.appendChild(statsSection);
 
   const sectionMap = {
     trend: trendSection.section,
@@ -4820,10 +4980,10 @@ function renderHistory() {
     topDays: topDaysSection.section,
     distribution: distributionSection.section,
     budget: budgetSection.section,
-    averages: averagesSection,
+    stats: statsSection,
   };
 
-  const order = ["trend", "budget", "averages"];
+  const order = ["trend", "budget", "stats"];
   Object.values(sectionMap).forEach((el) => el.remove());
   order.forEach((k) => insights.appendChild(sectionMap[k]));
 

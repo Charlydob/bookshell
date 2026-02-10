@@ -35,6 +35,7 @@ const HABIT_SESSIONS_PATH = "habitSessions";
 const HABIT_COUNTS_PATH = "habitCounts";
 const HABIT_GROUPS_PATH = "habitGroups";
 const HABIT_PREFS_PATH = "habitPrefs";
+const HABIT_COMPARE_SETTINGS_PATH = "habitsCompareSettings";
 
 // Storage keys
 const STORAGE_KEY = "bookshell-habits-cache";
@@ -42,6 +43,7 @@ const RUNNING_KEY = "bookshell-habit-running-session";
 const LAST_HABIT_KEY = "bookshell-habits-last-used";
 const HEATMAP_YEAR_STORAGE = "bookshell-habits-heatmap-year";
 const HISTORY_RANGE_STORAGE = "bookshell-habits-history-range:v1";
+const COMPARE_SETTINGS_STORAGE = "bookshell-habits-compare-settings:v1";
 const DEFAULT_COLOR = "#7f5dff";
 const PARAM_EMPTY_LABEL = "Sin parámetro";
 const PARAM_COLOR_PALETTE = [
@@ -108,8 +110,13 @@ let dayDominantCache = new Map();
 let habitCompareMode = "day";
 let habitCompareSort = "delta";
 let habitCompareView = "detail";
+let habitCompareScaleMode = "relative";
 let habitCompareSelectionA = null;
 let habitCompareSelectionB = null;
+let habitCompareFilterPanelOpen = false;
+let habitCompareMarked = {};
+let habitCompareHidden = {};
+let habitCompareFilters = { type: "all", delta: "all", marked: "all" };
 let habitStatsView = "MEAN";
 let habitStatsGranularity = "day";
 let habitStatsBaseMode = "CALENDAR";
@@ -812,6 +819,67 @@ function saveHistoryRange() {
     localStorage.setItem(HISTORY_RANGE_STORAGE, habitHistoryRange);
   } catch (err) {
     console.warn("No se pudo guardar rango de historial", err);
+  }
+}
+
+function normalizeHabitCompareSettings(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const scaleMode = source.scaleMode === "global" ? "global" : "relative";
+  const marked = source.marked && typeof source.marked === "object" ? source.marked : {};
+  const hidden = source.hidden && typeof source.hidden === "object" ? source.hidden : {};
+  const filtersRaw = source.filters && typeof source.filters === "object" ? source.filters : {};
+  const filters = {
+    type: ["all", "time", "counter"].includes(filtersRaw.type) ? filtersRaw.type : "all",
+    delta: ["all", "up", "down", "flat"].includes(filtersRaw.delta) ? filtersRaw.delta : "all",
+    marked: ["all", "only", "hide"].includes(filtersRaw.marked) ? filtersRaw.marked : "all"
+  };
+  const sort = ["delta", "a", "b", "positive", "negative"].includes(source.sort) ? source.sort : "delta";
+  return { scaleMode, marked, hidden, filters, sort };
+}
+
+function getHabitCompareSettingsPayload() {
+  return {
+    scaleMode: habitCompareScaleMode,
+    marked: habitCompareMarked,
+    hidden: habitCompareHidden,
+    filters: habitCompareFilters,
+    sort: habitCompareSort
+  };
+}
+
+function applyHabitCompareSettings(raw) {
+  const normalized = normalizeHabitCompareSettings(raw);
+  habitCompareScaleMode = normalized.scaleMode;
+  habitCompareMarked = normalized.marked;
+  habitCompareHidden = normalized.hidden;
+  habitCompareFilters = normalized.filters;
+  habitCompareSort = normalized.sort;
+}
+
+function saveHabitCompareSettingsLocal() {
+  try {
+    localStorage.setItem(COMPARE_SETTINGS_STORAGE, JSON.stringify(getHabitCompareSettingsPayload()));
+  } catch (err) {
+    console.warn("No se pudo guardar ajustes de comparativa", err);
+  }
+}
+
+function loadHabitCompareSettingsLocal() {
+  try {
+    const raw = localStorage.getItem(COMPARE_SETTINGS_STORAGE);
+    if (!raw) return;
+    applyHabitCompareSettings(JSON.parse(raw));
+  } catch (err) {
+    console.warn("No se pudo leer ajustes de comparativa", err);
+  }
+}
+
+function persistHabitCompareSettings() {
+  saveHabitCompareSettingsLocal();
+  try {
+    set(ref(db, HABIT_COMPARE_SETTINGS_PATH), getHabitCompareSettingsPayload());
+  } catch (err) {
+    console.warn("No se pudo guardar ajustes de comparativa en remoto", err);
   }
 }
 
@@ -3577,7 +3645,7 @@ function buildCompareRows(habitsList, mode, selectionA, selectionB, sortMode) {
   const aggA = getCompareAggregate(selectionA, mode);
   const aggB = getCompareAggregate(selectionB, mode);
   const useDecimals = selectionA?.kind === "ref" || selectionB?.kind === "ref";
-  const rows = habitsList.map((habit) => {
+  const rowsRaw = habitsList.map((habit) => {
     const type = resolveCompareType(habit);
     const a = Number(aggA.values[habit.id] || 0);
     const b = Number(aggB.values[habit.id] || 0);
@@ -3591,20 +3659,56 @@ function buildCompareRows(habitsList, mode, selectionA, selectionB, sortMode) {
       color: resolveHabitColor(habit),
       emoji: habit?.emoji || "✨",
       useDecimals,
+      marked: !!habitCompareMarked?.[habit.id],
       deltaMeta: computeCompareDeltaMeta(a, b, type)
     };
   });
-  const scaleMax = rows.reduce((max, row) => Math.max(max, row.a, row.b), 0) || 1;
-  rows.forEach((row) => {
+
+  const visibleRows = rowsRaw.filter((row) => {
+    if (habitCompareHidden?.[row.habit.id]) return false;
+    if (habitCompareFilters.type === "time" && row.type !== "duration") return false;
+    if (habitCompareFilters.type === "counter" && row.type === "duration") return false;
+    if (habitCompareFilters.delta === "up" && row.delta <= 0) return false;
+    if (habitCompareFilters.delta === "down" && row.delta >= 0) return false;
+    if (habitCompareFilters.delta === "flat" && row.delta !== 0) return false;
+    if (habitCompareFilters.marked === "only" && !row.marked) return false;
+    if (habitCompareFilters.marked === "hide" && row.marked) return false;
+    return true;
+  });
+
+  const globalScaleMax = visibleRows.reduce((max, row) => Math.max(max, row.a, row.b), 0) || 1;
+  visibleRows.forEach((row) => {
+    const rowScaleMax = (Math.max(row.a, row.b) * 1.05) || 1;
+    const scaleMax = habitCompareScaleMode === "relative" ? rowScaleMax : globalScaleMax;
     row.aPct = (row.a / scaleMax) * 100;
     row.bPct = (row.b / scaleMax) * 100;
   });
-  rows.sort((left, right) => {
+
+  visibleRows.sort((left, right) => {
     if (sortMode === "a") return right.a - left.a || right.absDelta - left.absDelta;
     if (sortMode === "b") return right.b - left.b || right.absDelta - left.absDelta;
+    if (sortMode === "positive") {
+      const leftPos = left.delta > 0 ? 1 : 0;
+      const rightPos = right.delta > 0 ? 1 : 0;
+      return rightPos - leftPos || right.delta - left.delta || right.absDelta - left.absDelta;
+    }
+    if (sortMode === "negative") {
+      const leftNeg = left.delta < 0 ? 1 : 0;
+      const rightNeg = right.delta < 0 ? 1 : 0;
+      return rightNeg - leftNeg || left.delta - right.delta || right.absDelta - left.absDelta;
+    }
     return right.absDelta - left.absDelta || right.a - left.a;
   });
-  return rows;
+
+  const hiddenCount = Object.keys(habitCompareHidden || {}).filter((id) => habitCompareHidden[id]).length;
+  const activeFilterCount = [
+    habitCompareFilters.type !== "all",
+    habitCompareFilters.delta !== "all",
+    habitCompareFilters.marked !== "all",
+    hiddenCount > 0
+  ].filter(Boolean).length;
+
+  return { rows: visibleRows, total: rowsRaw.length, shown: visibleRows.length, activeFilterCount };
 }
 
 function renderHistoryCompareCard(habitsList) {
@@ -3802,7 +3906,7 @@ function renderHistoryCompareCard(habitsList) {
   controlRow.className = "habit-compare-order-row";
   const sortToggle = document.createElement("div");
   sortToggle.className = "habits-history-toggle";
-  [["delta", "Más cambio"], ["a", "A mayor"], ["b", "B mayor"]].forEach(([key, label]) => {
+  [["delta", "Más cambio"], ["positive", "Positivos"], ["negative", "Negativos"], ["a", "A mayor"], ["b", "B mayor"]].forEach(([key, label]) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "habits-history-toggle-btn";
@@ -3811,11 +3915,30 @@ function renderHistoryCompareCard(habitsList) {
     btn.setAttribute("aria-pressed", habitCompareSort === key ? "true" : "false");
     btn.addEventListener("click", () => {
       habitCompareSort = key;
+      persistHabitCompareSettings();
       renderHistory();
     });
     sortToggle.appendChild(btn);
   });
   controlRow.appendChild(sortToggle);
+
+  const scaleToggle = document.createElement("div");
+  scaleToggle.className = "habits-history-toggle";
+  [["relative", "Relativa"], ["global", "Global"]].forEach(([key, label]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "habits-history-toggle-btn";
+    if (habitCompareScaleMode === key) btn.classList.add("is-active");
+    btn.textContent = label;
+    btn.setAttribute("aria-pressed", habitCompareScaleMode === key ? "true" : "false");
+    btn.addEventListener("click", () => {
+      habitCompareScaleMode = key;
+      persistHabitCompareSettings();
+      renderHistory();
+    });
+    scaleToggle.appendChild(btn);
+  });
+  controlRow.appendChild(scaleToggle);
 
   const viewToggle = document.createElement("div");
   viewToggle.className = "habits-history-toggle";
@@ -3833,6 +3956,17 @@ function renderHistoryCompareCard(habitsList) {
     viewToggle.appendChild(btn);
   });
   controlRow.appendChild(viewToggle);
+
+  const filterBtn = document.createElement("button");
+  filterBtn.type = "button";
+  filterBtn.className = "habits-history-toggle-btn";
+  filterBtn.textContent = `⏳ Filtro${habitCompareFilterPanelOpen ? " ▲" : " ▼"}`;
+  filterBtn.addEventListener("click", () => {
+    habitCompareFilterPanelOpen = !habitCompareFilterPanelOpen;
+    renderHistory();
+  });
+  controlRow.appendChild(filterBtn);
+
   controls.appendChild(controlRow);
 
   header.appendChild(controls);
@@ -3850,18 +3984,125 @@ function renderHistoryCompareCard(habitsList) {
   globalLabels.appendChild(labelB);
   body.appendChild(globalLabels);
 
+  const rowsData = buildCompareRows(habitsList, habitCompareMode, habitCompareSelectionA, habitCompareSelectionB, habitCompareSort);
+
+  const activeFiltersMeta = document.createElement("div");
+  activeFiltersMeta.className = "habits-history-list-meta";
+  activeFiltersMeta.textContent = `Mostrando ${rowsData.shown} de ${rowsData.total}${rowsData.activeFilterCount ? ` · ${rowsData.activeFilterCount} filtros activos` : ""}`;
+  body.appendChild(activeFiltersMeta);
+
+  if (habitCompareFilterPanelOpen) {
+    const filterPanel = document.createElement("div");
+    filterPanel.className = "habit-compare-filter-panel";
+
+    const filterRowA = document.createElement("div");
+    filterRowA.className = "habit-compare-filter-row";
+    const typeToggle = document.createElement("div");
+    typeToggle.className = "habits-history-toggle";
+    [["all", "Todos"], ["time", "Tiempo"], ["counter", "Contador"]].forEach(([key, label]) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "habits-history-toggle-btn";
+      if (habitCompareFilters.type === key) btn.classList.add("is-active");
+      btn.textContent = label;
+      btn.addEventListener("click", () => {
+        habitCompareFilters = { ...habitCompareFilters, type: key };
+        persistHabitCompareSettings();
+        renderHistory();
+      });
+      typeToggle.appendChild(btn);
+    });
+    filterRowA.appendChild(typeToggle);
+
+    const deltaToggle = document.createElement("div");
+    deltaToggle.className = "habits-history-toggle";
+    [["all", "Todos"], ["up", "Solo ↑"], ["down", "Solo ↓"], ["flat", "Solo 0"]].forEach(([key, label]) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "habits-history-toggle-btn";
+      if (habitCompareFilters.delta === key) btn.classList.add("is-active");
+      btn.textContent = label;
+      btn.addEventListener("click", () => {
+        habitCompareFilters = { ...habitCompareFilters, delta: key };
+        persistHabitCompareSettings();
+        renderHistory();
+      });
+      deltaToggle.appendChild(btn);
+    });
+    filterRowA.appendChild(deltaToggle);
+    filterPanel.appendChild(filterRowA);
+
+    const filterRowB = document.createElement("div");
+    filterRowB.className = "habit-compare-filter-row";
+    const markedToggle = document.createElement("div");
+    markedToggle.className = "habits-history-toggle";
+    [["all", "Todos"], ["only", "Solo marcados"], ["hide", "Ocultar marcados"]].forEach(([key, label]) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "habits-history-toggle-btn";
+      if (habitCompareFilters.marked === key) btn.classList.add("is-active");
+      btn.textContent = label;
+      btn.addEventListener("click", () => {
+        habitCompareFilters = { ...habitCompareFilters, marked: key };
+        persistHabitCompareSettings();
+        renderHistory();
+      });
+      markedToggle.appendChild(btn);
+    });
+    filterRowB.appendChild(markedToggle);
+    filterPanel.appendChild(filterRowB);
+
+    const hiddenList = document.createElement("div");
+    hiddenList.className = "habit-compare-hidden-list";
+    habitsList.forEach((habit) => {
+      const label = document.createElement("label");
+      label.className = "habit-compare-hidden-item";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = !!habitCompareHidden?.[habit.id];
+      input.addEventListener("change", () => {
+        habitCompareHidden = { ...habitCompareHidden, [habit.id]: input.checked };
+        persistHabitCompareSettings();
+        renderHistory();
+      });
+      const text = document.createElement("span");
+      text.textContent = `${habit.emoji || "✨"} ${habit.name}`;
+      label.appendChild(input);
+      label.appendChild(text);
+      hiddenList.appendChild(label);
+    });
+    filterPanel.appendChild(hiddenList);
+    body.appendChild(filterPanel);
+  }
+
   const list = document.createElement("div");
   list.className = "habit-compare-list";
   list.classList.toggle("is-summary", habitCompareView === "summary");
 
-  const rows = buildCompareRows(habitsList, habitCompareMode, habitCompareSelectionA, habitCompareSelectionB, habitCompareSort);
-  rows.forEach((row) => {
-    const rowEl = document.createElement("button");
-    rowEl.type = "button";
+  rowsData.rows.forEach((row) => {
+    const rowEl = document.createElement("div");
     rowEl.className = "habit-compare-row";
     rowEl.style.setProperty("--hclr", row.color || DEFAULT_COLOR);
     rowEl.style.setProperty("--hclr-rgb", hexToRgbString(row.color || DEFAULT_COLOR));
+    rowEl.tabIndex = 0;
     rowEl.addEventListener("click", () => openHabitDetail(row.habit.id, todayKey()));
+    rowEl.addEventListener("keydown", (evt) => {
+      if (evt.key === "Enter" || evt.key === " ") {
+        evt.preventDefault();
+        openHabitDetail(row.habit.id, todayKey());
+      }
+    });
+
+    const markBtn = document.createElement("button");
+    markBtn.type = "button";
+    markBtn.className = `habit-compare-mark-btn${row.marked ? " is-active" : ""}`;
+    markBtn.textContent = row.marked ? "⭐" : "☆";
+    markBtn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      habitCompareMarked = { ...habitCompareMarked, [row.habit.id]: !row.marked };
+      persistHabitCompareSettings();
+      renderHistory();
+    });
 
     if (habitCompareView === "summary") {
       rowEl.classList.add("is-summary");
@@ -3879,6 +4120,7 @@ function renderHistoryCompareCard(habitsList) {
       summary.appendChild(leftChunk);
       summary.appendChild(delta);
       summary.appendChild(pct);
+      summary.appendChild(markBtn);
       rowEl.appendChild(summary);
     } else {
       const head = document.createElement("div");
@@ -3891,6 +4133,7 @@ function renderHistoryCompareCard(habitsList) {
       delta.textContent = `${row.deltaMeta.delta} · ${row.deltaMeta.pct}`;
       head.appendChild(name);
       head.appendChild(delta);
+      head.appendChild(markBtn);
 
       const bars = document.createElement("div");
       bars.className = "habit-compare-bars";
@@ -7750,6 +7993,14 @@ function listenRemote() {
     renderQuickSessions();
   });
 
+  onValue(ref(db, HABIT_COMPARE_SETTINGS_PATH), (snap) => {
+    const remote = snap.val();
+    if (!remote) return;
+    applyHabitCompareSettings(remote);
+    saveHabitCompareSettingsLocal();
+    rerender();
+  });
+
   onValue(ref(db, HABIT_CHECKS_PATH), (snap) => {
     habitChecks = snap.val() || {};
     invalidateDominantCache();
@@ -7944,6 +8195,7 @@ export function initHabits() {
   loadRunningSession();
   loadHeatmapYear();
   loadHistoryRange();
+  loadHabitCompareSettingsLocal();
   ensureUnknownHabit(true);
   ensureSessionOverlayInBody();
   handleShortcutUrlOnce();

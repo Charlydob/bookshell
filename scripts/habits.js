@@ -108,9 +108,12 @@ let dayDominantCache = new Map();
 let habitCompareMode = "day";
 let habitCompareSort = "delta";
 let habitCompareView = "detail";
-let habitCompareTokenA = null;
-let habitCompareTokenB = null;
+let habitCompareSelectionA = null;
+let habitCompareSelectionB = null;
+let habitAveragesType = "AVG_DAILY";
+let habitAveragesSort = "desc";
 const habitCompareAggregateCache = new Map();
+const habitCompareAverageCache = new Map();
 let dayDetailDateKey = todayKey();
 let dayDetailFocusHabitId = null;
 const habitDetailRecordsPageSize = 10;
@@ -1147,6 +1150,7 @@ function getHabitDayScore(habit, dateKey) {
 
 function invalidateCompareCache() {
   habitCompareAggregateCache.clear();
+  habitCompareAverageCache.clear();
 }
 
 function invalidateDominantCache(dateKey = null) {
@@ -3185,44 +3189,75 @@ function formatCompareToken(mode, token) {
     const endLabel = end.toLocaleDateString("es-ES", { day: "2-digit", month: "short" }).replace('.', '');
     return `S. ${String(week).padStart(2, "0")} (${startLabel}–${endLabel})`;
   }
-  const [yRaw, mRaw] = String(token).split("-");
-  const year = Number(yRaw);
-  const month = Number(mRaw);
-  if (!year || !month) return token;
-  const date = new Date(year, month - 1, 1);
-  const name = date.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
-  return name.charAt(0).toUpperCase() + name.slice(1);
+  if (mode === "month") {
+    const [yRaw, mRaw] = String(token).split("-");
+    const year = Number(yRaw);
+    const month = Number(mRaw);
+    if (!year || !month) return token;
+    const date = new Date(year, month - 1, 1);
+    const name = date.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  }
+  const year = Number(token);
+  if (!year) return token;
+  return `Año ${year}`;
 }
 
-function getCompareDefaultTokens(mode) {
+function getAverageTypeLabel(avgType, withRange = false) {
+  const map = {
+    AVG_DAILY: "Media diaria",
+    AVG_WEEKLY: "Media semanal",
+    AVG_MONTHLY: "Media mensual",
+    AVG_YEARLY: "Media anual",
+    AVG_TOTAL: "Media total (por día)"
+  };
+  const label = map[avgType] || "Media";
+  return withRange ? `${label} (histórico)` : label;
+}
+
+function formatCompareSelection(mode, selection) {
+  if (!selection) return "—";
+  if (selection.kind === "avg") return getAverageTypeLabel(selection.avgType);
+  return formatCompareToken(mode, selection.token);
+}
+
+function getCompareDefaultSelections(mode) {
   const today = new Date();
   if (mode === "day") {
     return {
-      a: dateKeyLocal(today),
-      b: dateKeyLocal(addDays(today, -1))
+      a: { kind: "real", token: dateKeyLocal(today) },
+      b: { kind: "avg", avgType: "AVG_DAILY" }
     };
   }
   if (mode === "week") {
     const cur = getISOWeekYearAndNumber(today);
-    const prevDate = addDays(today, -7);
-    const prev = getISOWeekYearAndNumber(prevDate);
     return {
-      a: `${cur.year}-W${String(cur.week).padStart(2, "0")}`,
-      b: `${prev.year}-W${String(prev.week).padStart(2, "0")}`
+      a: { kind: "real", token: `${cur.year}-W${String(cur.week).padStart(2, "0")}` },
+      b: { kind: "avg", avgType: "AVG_WEEKLY" }
     };
   }
-  const cur = new Date(today.getFullYear(), today.getMonth(), 1);
-  const prev = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  if (mode === "month") {
+    const cur = new Date(today.getFullYear(), today.getMonth(), 1);
+    return {
+      a: { kind: "real", token: `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}` },
+      b: { kind: "avg", avgType: "AVG_MONTHLY" }
+    };
+  }
   return {
-    a: `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}`,
-    b: `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`
+    a: { kind: "real", token: String(today.getFullYear()) },
+    b: { kind: "avg", avgType: "AVG_YEARLY" }
   };
 }
 
-function getCompareSubtitle(mode, tokenA, tokenB) {
-  const defaults = getCompareDefaultTokens(mode);
-  if (mode === "day" && tokenA === defaults.a && tokenB === defaults.b) return "Hoy vs Ayer";
-  return `${formatCompareToken(mode, tokenA)} vs ${formatCompareToken(mode, tokenB)}`;
+function getCompareSubtitle(mode, selectionA, selectionB) {
+  const defaults = getCompareDefaultSelections(mode);
+  const isTodayVsYesterday = mode === "day"
+    && selectionA?.kind === "real"
+    && selectionB?.kind === "real"
+    && selectionA.token === defaults.a.token
+    && selectionB.token === dateKeyLocal(addDays(new Date(), -1));
+  if (isTodayVsYesterday) return "Hoy vs Ayer";
+  return `${formatCompareSelection(mode, selectionA)} vs ${formatCompareSelection(mode, selectionB)}`;
 }
 
 function getCompareOptions(mode, count = 16) {
@@ -3247,24 +3282,42 @@ function getCompareOptions(mode, count = 16) {
     }
     return options;
   }
+  if (mode === "month") {
+    for (let i = 0; i < count; i += 1) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const token = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      options.push({ token, label: formatCompareToken("month", token) });
+    }
+    return options;
+  }
   for (let i = 0; i < count; i += 1) {
-    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const token = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-    options.push({ token, label: formatCompareToken("month", token) });
+    const token = String(now.getFullYear() - i);
+    options.push({ token, label: formatCompareToken("year", token) });
   }
   return options;
 }
 
-function ensureCompareTokens(mode, options = []) {
-  const defaults = getCompareDefaultTokens(mode);
+function ensureCompareSelections(mode, options = []) {
+  const defaults = getCompareDefaultSelections(mode);
   const allTokens = new Set(options.map((it) => it.token));
-  if (!allTokens.has(defaults.a)) options.unshift({ token: defaults.a, label: formatCompareToken(mode, defaults.a) });
-  if (!allTokens.has(defaults.b)) options.push({ token: defaults.b, label: formatCompareToken(mode, defaults.b) });
-  if (!habitCompareTokenA || !options.some((it) => it.token === habitCompareTokenA)) habitCompareTokenA = defaults.a;
-  if (!habitCompareTokenB || !options.some((it) => it.token === habitCompareTokenB)) habitCompareTokenB = defaults.b;
-  if (habitCompareTokenA === habitCompareTokenB) {
-    const fallback = options.find((it) => it.token !== habitCompareTokenA);
-    if (fallback) habitCompareTokenB = fallback.token;
+  if (defaults.a.kind === "real" && !allTokens.has(defaults.a.token)) {
+    options.unshift({ token: defaults.a.token, label: formatCompareToken(mode, defaults.a.token) });
+  }
+
+  if (!habitCompareSelectionA || (habitCompareSelectionA.kind === "real" && !options.some((it) => it.token === habitCompareSelectionA.token))) {
+    habitCompareSelectionA = { ...defaults.a };
+  }
+  if (!habitCompareSelectionB || (habitCompareSelectionB.kind === "real" && !options.some((it) => it.token === habitCompareSelectionB.token))) {
+    habitCompareSelectionB = { ...defaults.b };
+  }
+
+  if (
+    habitCompareSelectionA.kind === "real"
+    && habitCompareSelectionB.kind === "real"
+    && habitCompareSelectionA.token === habitCompareSelectionB.token
+  ) {
+    const fallback = options.find((it) => it.token !== habitCompareSelectionA.token);
+    if (fallback) habitCompareSelectionB = { kind: "real", token: fallback.token };
   }
 }
 
@@ -3283,12 +3336,41 @@ function getRangeForCompare(mode, token) {
     const start = isoWeekStart(year, week);
     return { start, end: new Date(addDays(start, 6).setHours(23, 59, 59, 999)) };
   }
-  const [yRaw, mRaw] = String(token).split("-");
-  const year = Number(yRaw);
-  const month = Number(mRaw);
-  const start = new Date(year, month - 1, 1);
-  const end = new Date(year, month, 0, 23, 59, 59, 999);
-  return { start, end };
+  if (mode === "month") {
+    const [yRaw, mRaw] = String(token).split("-");
+    const year = Number(yRaw);
+    const month = Number(mRaw);
+    const start = new Date(year, month - 1, 1);
+    const end = new Date(year, month, 0, 23, 59, 59, 999);
+    return { start, end };
+  }
+  const year = Number(token);
+  return {
+    start: new Date(year, 0, 1, 0, 0, 0, 0),
+    end: new Date(year, 11, 31, 23, 59, 59, 999)
+  };
+}
+
+function getDaysInclusive(start, end) {
+  if (!start || !end || end < start) return 0;
+  return Math.floor((endOfDay(end) - new Date(start.getFullYear(), start.getMonth(), start.getDate())) / 86400000) + 1;
+}
+
+function countMonthsInclusive(start, end) {
+  if (!start || !end || end < start) return 0;
+  return ((end.getFullYear() - start.getFullYear()) * 12) + (end.getMonth() - start.getMonth()) + 1;
+}
+
+function countYearsInclusive(start, end) {
+  if (!start || !end || end < start) return 0;
+  return (end.getFullYear() - start.getFullYear()) + 1;
+}
+
+function countISOWeeksOverlapping(start, end) {
+  if (!start || !end || end < start) return 0;
+  const firstWeekStart = startOfWeek(start);
+  const lastWeekStart = startOfWeek(end);
+  return Math.floor((lastWeekStart - firstWeekStart) / 604800000) + 1;
 }
 
 function resolveCompareType(habit) {
@@ -3310,22 +3392,53 @@ function aggregateHabitValue(habit, range) {
   return getHabitMetricForRange(habit, range.start, range.end, "count");
 }
 
-function getCompareAggregate(mode, token) {
-  const key = `${mode}::${token}`;
-  if (habitCompareAggregateCache.has(key)) return habitCompareAggregateCache.get(key);
-  const range = getRangeForCompare(mode, token);
+function getHistoryAverageDenominator(avgType, start, end) {
+  if (avgType === "AVG_WEEKLY") return countISOWeeksOverlapping(start, end);
+  if (avgType === "AVG_MONTHLY") return countMonthsInclusive(start, end);
+  if (avgType === "AVG_YEARLY") return countYearsInclusive(start, end);
+  return getDaysInclusive(start, end);
+}
+
+function getCompareAggregate(selection, mode) {
+  const selectionKey = selection?.kind === "avg"
+    ? `avg::${selection.avgType}`
+    : `real::${mode}::${selection?.token}`;
+
+  if (selection?.kind === "avg") {
+    if (habitCompareAverageCache.has(selectionKey)) return habitCompareAverageCache.get(selectionKey);
+    const today = endOfDay(new Date());
+    const historyStart = getEarliestActivityDate();
+    const totalRange = { start: historyStart, end: today };
+    const denominator = getHistoryAverageDenominator(selection.avgType, historyStart, today);
+    const values = {};
+    activeHabits().forEach((habit) => {
+      const totalHabit = aggregateHabitValue(habit, totalRange);
+      values[habit.id] = denominator > 0 ? totalHabit / denominator : 0;
+    });
+    const entry = { kind: "avg", range: totalRange, values, denominator, avgType: selection.avgType };
+    habitCompareAverageCache.set(selectionKey, entry);
+    return entry;
+  }
+
+  if (habitCompareAggregateCache.has(selectionKey)) return habitCompareAggregateCache.get(selectionKey);
+  const range = getRangeForCompare(mode, selection?.token);
   const values = {};
   activeHabits().forEach((habit) => {
     values[habit.id] = aggregateHabitValue(habit, range);
   });
-  const entry = { range, values };
-  habitCompareAggregateCache.set(key, entry);
+  const entry = { kind: "real", range, values };
+  habitCompareAggregateCache.set(selectionKey, entry);
   return entry;
 }
 
-function formatValueByType(value, type) {
-  if (type === "duration") return formatMinutes(value || 0);
-  return `${Math.round(Number(value) || 0)}`;
+function formatValueByType(value, type, withDecimals = false) {
+  if (type === "duration") return formatMinutes(Math.round(value || 0));
+  const safe = Number(value) || 0;
+  if (withDecimals) {
+    const rounded = Math.round(safe * 10) / 10;
+    return Number.isInteger(rounded) ? `${rounded.toFixed(0)}` : `${rounded.toFixed(1)}`;
+  }
+  return `${Math.round(safe)}`;
 }
 
 function computeCompareDeltaMeta(a, b, type) {
@@ -3333,7 +3446,7 @@ function computeCompareDeltaMeta(a, b, type) {
   const safeB = Number(b) || 0;
   const diff = safeA - safeB;
   const abs = Math.abs(diff);
-  const value = type === "duration" ? formatMinutes(abs) : `${Math.round(abs)}`;
+  const value = type === "duration" ? formatMinutes(Math.round(abs)) : formatValueByType(abs, type, true);
   const sign = diff > 0 ? "up" : diff < 0 ? "down" : "flat";
   let pct = "—";
   if (!safeA && !safeB) {
@@ -3363,9 +3476,10 @@ function runCompareDeltaSelfChecks() {
 }
 runCompareDeltaSelfChecks();
 
-function buildCompareRows(habitsList, mode, tokenA, tokenB, sortMode) {
-  const aggA = getCompareAggregate(mode, tokenA);
-  const aggB = getCompareAggregate(mode, tokenB);
+function buildCompareRows(habitsList, mode, selectionA, selectionB, sortMode) {
+  const aggA = getCompareAggregate(selectionA, mode);
+  const aggB = getCompareAggregate(selectionB, mode);
+  const useDecimals = selectionA?.kind === "avg" || selectionB?.kind === "avg";
   const rows = habitsList.map((habit) => {
     const type = resolveCompareType(habit);
     const a = Number(aggA.values[habit.id] || 0);
@@ -3379,6 +3493,7 @@ function buildCompareRows(habitsList, mode, tokenA, tokenB, sortMode) {
       absDelta: Math.abs(a - b),
       color: resolveHabitColor(habit),
       emoji: habit?.emoji || "✨",
+      useDecimals,
       deltaMeta: computeCompareDeltaMeta(a, b, type)
     };
   });
@@ -3407,7 +3522,7 @@ function renderHistoryCompareCard(habitsList) {
   title.textContent = "Comparativa";
   const sub = document.createElement("div");
   sub.className = "habits-history-list-meta";
-  sub.textContent = getCompareSubtitle(habitCompareMode, habitCompareTokenA, habitCompareTokenB);
+  sub.textContent = getCompareSubtitle(habitCompareMode, habitCompareSelectionA, habitCompareSelectionB);
   titleWrap.appendChild(title);
   titleWrap.appendChild(sub);
   header.appendChild(titleWrap);
@@ -3420,7 +3535,7 @@ function renderHistoryCompareCard(habitsList) {
 
   const modeToggle = document.createElement("div");
   modeToggle.className = "habits-history-toggle";
-  [["day", "Día"], ["week", "Semana"], ["month", "Mes"]].forEach(([key, label]) => {
+  [["day", "Día"], ["week", "Semana"], ["month", "Mes"], ["year", "Año"]].forEach(([key, label]) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "habits-history-toggle-btn";
@@ -3430,9 +3545,9 @@ function renderHistoryCompareCard(habitsList) {
     btn.addEventListener("click", () => {
       habitCompareMode = key;
       const options = getCompareOptions(habitCompareMode);
-      habitCompareTokenA = null;
-      habitCompareTokenB = null;
-      ensureCompareTokens(habitCompareMode, options);
+      habitCompareSelectionA = null;
+      habitCompareSelectionB = null;
+      ensureCompareSelections(habitCompareMode, options);
       renderHistory();
     });
     modeToggle.appendChild(btn);
@@ -3440,51 +3555,147 @@ function renderHistoryCompareCard(habitsList) {
   compactRow.appendChild(modeToggle);
 
   const options = getCompareOptions(habitCompareMode);
-  ensureCompareTokens(habitCompareMode, options);
-  const makeSelect = (labelText, current, onChange, tokenName) => {
-    const wrap = document.createElement("label");
+  ensureCompareSelections(habitCompareMode, options);
+
+  const avgTypeChoices = [
+    ["AVG_DAILY", "Media diaria"],
+    ["AVG_WEEKLY", "Media semanal"],
+    ["AVG_MONTHLY", "Media mensual"],
+    ["AVG_YEARLY", "Media anual"],
+    ["AVG_TOTAL", "Media total"]
+  ];
+
+  const makeSelectionBlock = (tagName, selection, onChange) => {
+    const wrap = document.createElement("div");
     wrap.className = "habit-compare-select-wrap";
+
     const tag = document.createElement("span");
     tag.className = "habit-compare-select-tag";
-    tag.textContent = tokenName;
-    const sr = document.createElement("span");
-    sr.className = "habit-visually-hidden";
-    sr.textContent = labelText;
-    const select = document.createElement("select");
-    select.className = "habits-history-select";
-    options.forEach((opt) => {
-      const o = document.createElement("option");
-      o.value = opt.token;
-      o.textContent = opt.label;
-      select.appendChild(o);
-    });
-    select.value = current;
-    select.addEventListener("change", (e) => onChange(e.target.value));
+    tag.textContent = tagName;
     wrap.appendChild(tag);
-    wrap.appendChild(sr);
-    wrap.appendChild(select);
+
+    const typeSelect = document.createElement("select");
+    typeSelect.className = "habits-history-select";
+    const realOpt = document.createElement("option");
+    realOpt.value = "real";
+    realOpt.textContent = `${habitCompareMode === "day" ? "Día" : habitCompareMode === "week" ? "Semana" : habitCompareMode === "month" ? "Mes" : "Año"} real`;
+    const avgOpt = document.createElement("option");
+    avgOpt.value = "avg";
+    avgOpt.textContent = "Media";
+    typeSelect.appendChild(realOpt);
+    typeSelect.appendChild(avgOpt);
+    typeSelect.value = selection?.kind || "real";
+    wrap.appendChild(typeSelect);
+
+    const valueWrap = document.createElement("div");
+    valueWrap.className = "habit-compare-select-value";
+    wrap.appendChild(valueWrap);
+
+    const renderValueControl = () => {
+      valueWrap.innerHTML = "";
+      if (typeSelect.value === "real") {
+        const select = document.createElement("select");
+        select.className = "habits-history-select";
+        options.forEach((opt) => {
+          const o = document.createElement("option");
+          o.value = opt.token;
+          o.textContent = opt.label;
+          select.appendChild(o);
+        });
+        const selectedToken = selection?.kind === "real"
+          ? selection.token
+          : getCompareDefaultSelections(habitCompareMode).a.token;
+        if (options.some((it) => it.token === selectedToken)) select.value = selectedToken;
+        select.addEventListener("change", (e) => onChange({ kind: "real", token: e.target.value }));
+        valueWrap.appendChild(select);
+        onChange({ kind: "real", token: select.value }, true);
+      } else {
+        const select = document.createElement("select");
+        select.className = "habits-history-select";
+        avgTypeChoices.forEach(([avgType, label]) => {
+          const o = document.createElement("option");
+          o.value = avgType;
+          o.textContent = label;
+          select.appendChild(o);
+        });
+        const selectedType = selection?.kind === "avg" ? selection.avgType : getCompareDefaultSelections(habitCompareMode).b.avgType;
+        select.value = selectedType;
+        select.addEventListener("change", (e) => onChange({ kind: "avg", avgType: e.target.value }));
+
+        const hint = document.createElement("div");
+        hint.className = "habit-compare-avg-hint";
+        hint.textContent = getAverageTypeLabel(select.value, true);
+        select.addEventListener("change", () => {
+          hint.textContent = getAverageTypeLabel(select.value, true);
+        });
+        valueWrap.appendChild(select);
+        valueWrap.appendChild(hint);
+        onChange({ kind: "avg", avgType: select.value }, true);
+      }
+    };
+
+    typeSelect.addEventListener("change", () => {
+      renderValueControl();
+      renderHistory();
+    });
+    renderValueControl();
+
     return wrap;
   };
+
   const selectors = document.createElement("div");
   selectors.className = "habit-compare-selectors";
-  selectors.appendChild(makeSelect("Periodo A", habitCompareTokenA, (value) => {
-    habitCompareTokenA = value;
-    if (habitCompareTokenA === habitCompareTokenB) {
-      const fallback = options.find((it) => it.token !== value);
-      if (fallback) habitCompareTokenB = fallback.token;
+  selectors.appendChild(makeSelectionBlock("A", habitCompareSelectionA, (next, silent = false) => {
+    habitCompareSelectionA = next;
+    if (
+      habitCompareSelectionA?.kind === "real"
+      && habitCompareSelectionB?.kind === "real"
+      && habitCompareSelectionA.token === habitCompareSelectionB.token
+    ) {
+      const fallback = options.find((it) => it.token !== habitCompareSelectionA.token);
+      if (fallback) habitCompareSelectionB = { kind: "real", token: fallback.token };
     }
-    renderHistory();
-  }, "A"));
-  selectors.appendChild(makeSelect("Periodo B", habitCompareTokenB, (value) => {
-    habitCompareTokenB = value;
-    if (habitCompareTokenA === habitCompareTokenB) {
-      const fallback = options.find((it) => it.token !== value);
-      if (fallback) habitCompareTokenA = fallback.token;
+    if (!silent) renderHistory();
+  }));
+  selectors.appendChild(makeSelectionBlock("B", habitCompareSelectionB, (next, silent = false) => {
+    habitCompareSelectionB = next;
+    if (
+      habitCompareSelectionA?.kind === "real"
+      && habitCompareSelectionB?.kind === "real"
+      && habitCompareSelectionA.token === habitCompareSelectionB.token
+    ) {
+      const fallback = options.find((it) => it.token !== habitCompareSelectionB.token);
+      if (fallback) habitCompareSelectionA = { kind: "real", token: fallback.token };
     }
-    renderHistory();
-  }, "B"));
+    if (!silent) renderHistory();
+  }));
   compactRow.appendChild(selectors);
   controls.appendChild(compactRow);
+
+  const presetsRow = document.createElement("div");
+  presetsRow.className = "habit-compare-presets";
+  const presetMap = {
+    day: [
+      { label: "Hoy vs Media", a: { kind: "real", token: dateKeyLocal(new Date()) }, b: { kind: "avg", avgType: "AVG_DAILY" } },
+      { label: "Hoy vs Ayer", a: { kind: "real", token: dateKeyLocal(new Date()) }, b: { kind: "real", token: dateKeyLocal(addDays(new Date(), -1)) } }
+    ],
+    week: [{ label: "Semana vs Media", a: getCompareDefaultSelections("week").a, b: { kind: "avg", avgType: "AVG_WEEKLY" } }],
+    month: [{ label: "Mes vs Media", a: getCompareDefaultSelections("month").a, b: { kind: "avg", avgType: "AVG_MONTHLY" } }],
+    year: [{ label: "Año vs Media", a: getCompareDefaultSelections("year").a, b: { kind: "avg", avgType: "AVG_YEARLY" } }]
+  };
+  (presetMap[habitCompareMode] || []).forEach((preset) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "habits-history-toggle-btn";
+    btn.textContent = preset.label;
+    btn.addEventListener("click", () => {
+      habitCompareSelectionA = { ...preset.a };
+      habitCompareSelectionB = { ...preset.b };
+      renderHistory();
+    });
+    presetsRow.appendChild(btn);
+  });
+  controls.appendChild(presetsRow);
 
   const controlRow = document.createElement("div");
   controlRow.className = "habit-compare-order-row";
@@ -3532,8 +3743,8 @@ function renderHistoryCompareCard(habitsList) {
   globalLabels.className = "habit-compare-global-labels";
   const labelA = document.createElement("span");
   const labelB = document.createElement("span");
-  labelA.textContent = `A · ${formatCompareToken(habitCompareMode, habitCompareTokenA)}`;
-  labelB.textContent = `B · ${formatCompareToken(habitCompareMode, habitCompareTokenB)}`;
+  labelA.textContent = `A · ${formatCompareSelection(habitCompareMode, habitCompareSelectionA)}`;
+  labelB.textContent = `B · ${formatCompareSelection(habitCompareMode, habitCompareSelectionB)}`;
   globalLabels.appendChild(labelA);
   globalLabels.appendChild(labelB);
   body.appendChild(globalLabels);
@@ -3542,7 +3753,7 @@ function renderHistoryCompareCard(habitsList) {
   list.className = "habit-compare-list";
   list.classList.toggle("is-summary", habitCompareView === "summary");
 
-  const rows = buildCompareRows(habitsList, habitCompareMode, habitCompareTokenA, habitCompareTokenB, habitCompareSort);
+  const rows = buildCompareRows(habitsList, habitCompareMode, habitCompareSelectionA, habitCompareSelectionB, habitCompareSort);
   rows.forEach((row) => {
     const rowEl = document.createElement("button");
     rowEl.type = "button";
@@ -3604,9 +3815,9 @@ function renderHistoryCompareCard(habitsList) {
       const labels = document.createElement("div");
       labels.className = "habit-compare-values";
       const la = document.createElement("span");
-      la.textContent = row.a ? formatValueByType(row.a, row.type) : "—";
+      la.textContent = row.a ? formatValueByType(row.a, row.type, row.useDecimals) : "—";
       const lb = document.createElement("span");
-      lb.textContent = row.b ? formatValueByType(row.b, row.type) : "—";
+      lb.textContent = row.b ? formatValueByType(row.b, row.type, row.useDecimals) : "—";
       labels.appendChild(la);
       labels.appendChild(lb);
 
@@ -3620,6 +3831,96 @@ function renderHistoryCompareCard(habitsList) {
   card.appendChild(body);
 
   return card;
+}
+
+function renderHistoryAveragesCard(habitsList) {
+  const section = createHistorySection("Medias");
+  const controls = document.createElement("div");
+  controls.className = "habits-history-section-controls";
+  const typeToggle = document.createElement("div");
+  typeToggle.className = "habits-history-toggle";
+  [
+    ["AVG_DAILY", "Diaria"],
+    ["AVG_WEEKLY", "Semanal"],
+    ["AVG_MONTHLY", "Mensual"],
+    ["AVG_YEARLY", "Anual"],
+    ["AVG_TOTAL", "Total"]
+  ].forEach(([key, label]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "habits-history-toggle-btn";
+    if (habitAveragesType === key) btn.classList.add("is-active");
+    btn.textContent = label;
+    btn.addEventListener("click", () => {
+      habitAveragesType = key;
+      renderHistory();
+    });
+    typeToggle.appendChild(btn);
+  });
+
+  const orderToggle = document.createElement("div");
+  orderToggle.className = "habits-history-toggle";
+  [["desc", "Mayor"], ["asc", "Menor"]].forEach(([key, label]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "habits-history-toggle-btn";
+    if (habitAveragesSort === key) btn.classList.add("is-active");
+    btn.textContent = label;
+    btn.addEventListener("click", () => {
+      habitAveragesSort = key;
+      renderHistory();
+    });
+    orderToggle.appendChild(btn);
+  });
+
+  controls.appendChild(typeToggle);
+  controls.appendChild(orderToggle);
+  section.header.appendChild(controls);
+
+  const avgAgg = getCompareAggregate({ kind: "avg", avgType: habitAveragesType }, habitCompareMode);
+  const unit = habitAveragesType === "AVG_DAILY" || habitAveragesType === "AVG_TOTAL"
+    ? "/día"
+    : habitAveragesType === "AVG_WEEKLY"
+      ? "/semana"
+      : habitAveragesType === "AVG_MONTHLY"
+        ? "/mes"
+        : "/año";
+  const rows = habitsList.map((habit) => {
+    const value = Number(avgAgg.values[habit.id] || 0);
+    const type = resolveCompareType(habit);
+    return { habit, value, type, color: resolveHabitColor(habit), emoji: habit?.emoji || "🏷️" };
+  }).sort((a, b) => habitAveragesSort === "asc" ? a.value - b.value : b.value - a.value);
+
+  if (!rows.length) {
+    const empty = document.createElement("div");
+    empty.className = "habits-history-empty";
+    empty.textContent = "No hay hábitos para calcular medias.";
+    section.body.appendChild(empty);
+    return section.section;
+  }
+
+  const list = document.createElement("div");
+  list.className = "habits-history-list";
+  rows.forEach((row) => {
+    const rowEl = document.createElement("div");
+    rowEl.className = "habits-history-list-row";
+    rowEl.style.setProperty("--hclr", row.color || DEFAULT_COLOR);
+    rowEl.style.setProperty("--hclr-rgb", hexToRgbString(row.color || DEFAULT_COLOR));
+    const left = document.createElement("div");
+    const title = document.createElement("div");
+    title.className = "habits-history-list-title";
+    title.textContent = `${row.emoji} ${row.habit.name}`;
+    left.appendChild(title);
+
+    const value = document.createElement("div");
+    value.className = "habits-history-list-value";
+    value.textContent = `${formatValueByType(row.value, row.type, true)}${unit}`;
+    rowEl.appendChild(left);
+    rowEl.appendChild(value);
+    list.appendChild(rowEl);
+  });
+  section.body.appendChild(list);
+  return section.section;
 }
 
 function formatHistoryValue(value, metric) {
@@ -4509,17 +4810,22 @@ function renderHistory() {
   }
   budgetSection.body.appendChild(budgetBody);
   insights.appendChild(budgetSection.section);
-const sectionMap = {
-  trend: trendSection.section,
-  week: weekSection.section,
-  topDays: topDaysSection.section,
-  distribution: distributionSection.section,
-  budget: budgetSection.section,
-};
 
-const order = ["trend", "budget"]; // cambia aquí
-Object.values(sectionMap).forEach((el) => el.remove()); // por si ya están
-order.forEach((k) => insights.appendChild(sectionMap[k]));
+  const averagesSection = renderHistoryAveragesCard(habitsList);
+  insights.appendChild(averagesSection);
+
+  const sectionMap = {
+    trend: trendSection.section,
+    week: weekSection.section,
+    topDays: topDaysSection.section,
+    distribution: distributionSection.section,
+    budget: budgetSection.section,
+    averages: averagesSection,
+  };
+
+  const order = ["trend", "budget", "averages"];
+  Object.values(sectionMap).forEach((el) => el.remove());
+  order.forEach((k) => insights.appendChild(sectionMap[k]));
 
   $habitHistoryList.appendChild(insights);
 }

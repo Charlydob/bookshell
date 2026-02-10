@@ -2955,12 +2955,33 @@ display: grid;
   flex: 1;
 }
 
+
 .habit-compare-select-wrap {
   position: relative;
-  display: inline-flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: auto minmax(110px, 1fr);
   gap: 6px;
+  align-items: start;
   min-height: 44px;
+}
+
+.habit-compare-select-value {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.habit-compare-avg-hint {
+  font-size: 11px;
+  color: var(--txt-soft);
+  line-height: 1.2;
+}
+
+.habit-compare-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .habit-compare-select-tag {
@@ -3132,7 +3153,8 @@ display: grid;
     align-items: stretch;
   }
 
-  .habit-compare-order-row .habits-history-toggle {
+  .habit-compare-order-row .habits-history-toggle,
+  .habit-compare-presets {
     width: 100%;
     justify-content: space-between;
   }

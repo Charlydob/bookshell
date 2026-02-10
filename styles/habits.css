@@ -2966,10 +2966,18 @@ display: grid;
 .habit-compare-controls {
   width: 100%;
   gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .habit-compare-controls .habits-history-toggle-btn {
   min-height: 4px;
+}
+
+.habit-compare-primary-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--txt-soft);
 }
 
 .habit-compare-compact-row,
@@ -2980,6 +2988,25 @@ display: grid;
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.habit-compare-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 120px;
+}
+
+.habit-compare-field-label {
+  font-size: 11px;
+  color: var(--txt-soft);
+  font-weight: 700;
+}
+
+.habit-compare-select {
+  width: 100%;
+  font-size: 12px;
+  padding: 6px 10px;
 }
 
 .habit-compare-selectors {
@@ -3018,6 +3045,44 @@ display: grid;
   gap: 8px;
 }
 
+.habit-compare-section {
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--radius-md);
+  background: rgba(255,255,255,0.02);
+}
+
+.habit-compare-section-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.habit-compare-section-summary::-webkit-details-marker {
+  display: none;
+}
+
+.habit-compare-section-title {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.habit-compare-section-meta {
+  font-size: 11px;
+  color: var(--txt-soft);
+  text-align: right;
+}
+
+.habit-compare-section-body {
+  padding: 0 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .habit-compare-select-tag {
   border: 1px solid rgba(255,255,255,0.16);
   border-radius: var(--radius-pill);
@@ -3045,6 +3110,12 @@ display: grid;
   flex-wrap: wrap;
 }
 
+.habit-stats-controls {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
 .habit-compare-hidden-list {
   max-height: 140px;
   overflow: auto;
@@ -3059,6 +3130,16 @@ display: grid;
   gap: 6px;
   font-size: 12px;
   color: var(--txt-soft);
+}
+
+@media (max-width: 720px) {
+  .habit-compare-selectors {
+    grid-template-columns: 1fr;
+  }
+
+  .habit-compare-filter-row {
+    flex-direction: column;
+  }
 }
 
 .habit-compare-mark-btn {
@@ -3412,4 +3493,3 @@ align-items: center;
 
   color: rgba(230,240,255,0.92);
 }
-

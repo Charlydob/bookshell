@@ -113,7 +113,7 @@ let habitCompareView = "detail";
 let habitCompareScaleMode = "relative";
 let habitCompareSelectionA = null;
 let habitCompareSelectionB = null;
-let habitCompareFilterPanelOpen = false;
+let habitCompareSectionsOpen = { orderView: false, scale: false, filters: false };
 let habitCompareMarked = {};
 let habitCompareHidden = {};
 let habitCompareFilters = { type: "all", delta: "all", marked: "all" };
@@ -3731,6 +3731,59 @@ function renderHistoryCompareCard(habitsList) {
   const controls = document.createElement("div");
   controls.className = "habits-history-section-controls habit-compare-controls";
 
+  const primaryLabel = document.createElement("div");
+  primaryLabel.className = "habit-compare-primary-title";
+  primaryLabel.textContent = "Comparación";
+  controls.appendChild(primaryLabel);
+
+  const createCompareSelect = (label, value, entries, onChange) => {
+    const wrap = document.createElement("label");
+    wrap.className = "habit-compare-field";
+    const txt = document.createElement("span");
+    txt.className = "habit-compare-field-label";
+    txt.textContent = label;
+    const select = document.createElement("select");
+    select.className = "habits-history-select habit-compare-select";
+    entries.forEach(([key, name]) => {
+      const opt = document.createElement("option");
+      opt.value = key;
+      opt.textContent = name;
+      select.appendChild(opt);
+    });
+    select.value = value;
+    select.addEventListener("change", (e) => onChange(e.target.value));
+    wrap.appendChild(txt);
+    wrap.appendChild(select);
+    return wrap;
+  };
+
+  const createCompareSection = (id, titleText, summaryText, renderBody) => {
+    const details = document.createElement("details");
+    details.className = "habit-compare-section";
+    if (habitCompareSectionsOpen[id]) details.open = true;
+    details.addEventListener("toggle", () => {
+      habitCompareSectionsOpen = { ...habitCompareSectionsOpen, [id]: details.open };
+    });
+
+    const summary = document.createElement("summary");
+    summary.className = "habit-compare-section-summary";
+    const heading = document.createElement("span");
+    heading.className = "habit-compare-section-title";
+    heading.textContent = titleText;
+    const meta = document.createElement("span");
+    meta.className = "habit-compare-section-meta";
+    meta.textContent = summaryText;
+    summary.appendChild(heading);
+    summary.appendChild(meta);
+    details.appendChild(summary);
+
+    const bodyWrap = document.createElement("div");
+    bodyWrap.className = "habit-compare-section-body";
+    renderBody(bodyWrap);
+    details.appendChild(bodyWrap);
+    return details;
+  };
+
   const compactRow = document.createElement("div");
   compactRow.className = "habit-compare-compact-row";
 
@@ -3902,72 +3955,110 @@ function renderHistoryCompareCard(habitsList) {
   });
   controls.appendChild(presetsRow);
 
-  const controlRow = document.createElement("div");
-  controlRow.className = "habit-compare-order-row";
-  const sortToggle = document.createElement("div");
-  sortToggle.className = "habits-history-toggle";
-  [["delta", "Más cambio"], ["positive", "Positivos"], ["negative", "Negativos"], ["a", "A mayor"], ["b", "B mayor"]].forEach(([key, label]) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "habits-history-toggle-btn";
-    if (habitCompareSort === key) btn.classList.add("is-active");
-    btn.textContent = label;
-    btn.setAttribute("aria-pressed", habitCompareSort === key ? "true" : "false");
-    btn.addEventListener("click", () => {
-      habitCompareSort = key;
+  const deltaSummary = habitCompareFilters.delta === "up"
+    ? "Solo positivos"
+    : habitCompareFilters.delta === "down"
+      ? "Solo negativos"
+      : habitCompareFilters.delta === "flat"
+        ? "Solo 0"
+        : habitCompareSort === "positive"
+          ? "Positivos primero"
+          : habitCompareSort === "negative"
+            ? "Negativos primero"
+            : "Todos";
+  const orderSummary = `${habitCompareSort === "delta" ? "Más cambio" : habitCompareSort === "a" ? "A mayor" : habitCompareSort === "b" ? "B mayor" : habitCompareSort === "positive" ? "Positivos" : "Negativos"} · ${habitCompareView === "summary" ? "Resumen" : "Detalle"} · ${deltaSummary}`;
+  controls.appendChild(createCompareSection("orderView", "Orden y vista", orderSummary, (bodyWrap) => {
+    const row = document.createElement("div");
+    row.className = "habit-compare-filter-row";
+    row.appendChild(createCompareSelect("Orden", habitCompareSort, [["delta", "Más cambio"], ["a", "A mayor"], ["b", "B mayor"]], (next) => {
+      habitCompareSort = next;
       persistHabitCompareSettings();
       renderHistory();
-    });
-    sortToggle.appendChild(btn);
-  });
-  controlRow.appendChild(sortToggle);
-
-  const scaleToggle = document.createElement("div");
-  scaleToggle.className = "habits-history-toggle";
-  [["relative", "Relativa"], ["global", "Global"]].forEach(([key, label]) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "habits-history-toggle-btn";
-    if (habitCompareScaleMode === key) btn.classList.add("is-active");
-    btn.textContent = label;
-    btn.setAttribute("aria-pressed", habitCompareScaleMode === key ? "true" : "false");
-    btn.addEventListener("click", () => {
-      habitCompareScaleMode = key;
+    }));
+    const deltaSelectValue = habitCompareFilters.delta === "up"
+      ? "up"
+      : habitCompareFilters.delta === "down"
+        ? "down"
+        : habitCompareFilters.delta === "flat"
+          ? "flat"
+          : habitCompareSort === "positive"
+            ? "positive"
+            : habitCompareSort === "negative"
+              ? "negative"
+              : "all";
+    row.appendChild(createCompareSelect("Positivos/Negativos", deltaSelectValue, [["all", "Todos"], ["positive", "Positivos primero"], ["negative", "Negativos primero"], ["up", "Solo positivos"], ["down", "Solo negativos"], ["flat", "Solo 0"]], (next) => {
+      if (next === "positive" || next === "negative") {
+        habitCompareSort = next;
+        habitCompareFilters = { ...habitCompareFilters, delta: "all" };
+      } else {
+        habitCompareFilters = { ...habitCompareFilters, delta: next };
+      }
       persistHabitCompareSettings();
       renderHistory();
-    });
-    scaleToggle.appendChild(btn);
-  });
-  controlRow.appendChild(scaleToggle);
-
-  const viewToggle = document.createElement("div");
-  viewToggle.className = "habits-history-toggle";
-  [["summary", "Resumen"], ["detail", "Detalle"]].forEach(([key, label]) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "habits-history-toggle-btn";
-    if (habitCompareView === key) btn.classList.add("is-active");
-    btn.textContent = label;
-    btn.setAttribute("aria-pressed", habitCompareView === key ? "true" : "false");
-    btn.addEventListener("click", () => {
-      habitCompareView = key;
+    }));
+    row.appendChild(createCompareSelect("Vista", habitCompareView, [["summary", "Resumen"], ["detail", "Detalle"]], (next) => {
+      habitCompareView = next;
       renderHistory();
+    }));
+    bodyWrap.appendChild(row);
+  }));
+
+  controls.appendChild(createCompareSection("scale", "Escala", habitCompareScaleMode === "relative" ? "Relativa" : "Global", (bodyWrap) => {
+    const scaleToggle = document.createElement("div");
+    scaleToggle.className = "habits-history-toggle";
+    [["relative", "Relativa"], ["global", "Global"]].forEach(([key, label]) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "habits-history-toggle-btn";
+      if (habitCompareScaleMode === key) btn.classList.add("is-active");
+      btn.textContent = label;
+      btn.addEventListener("click", () => {
+        habitCompareScaleMode = key;
+        persistHabitCompareSettings();
+        renderHistory();
+      });
+      scaleToggle.appendChild(btn);
     });
-    viewToggle.appendChild(btn);
-  });
-  controlRow.appendChild(viewToggle);
+    bodyWrap.appendChild(scaleToggle);
+  }));
 
-  const filterBtn = document.createElement("button");
-  filterBtn.type = "button";
-  filterBtn.className = "habits-history-toggle-btn";
-  filterBtn.textContent = `⏳ Filtro${habitCompareFilterPanelOpen ? " ▲" : " ▼"}`;
-  filterBtn.addEventListener("click", () => {
-    habitCompareFilterPanelOpen = !habitCompareFilterPanelOpen;
-    renderHistory();
-  });
-  controlRow.appendChild(filterBtn);
+  const filterSummary = `${habitCompareFilters.type === "all" ? "Todos" : habitCompareFilters.type === "time" ? "Tiempo" : "Contador"} · ${habitCompareFilters.marked === "all" ? "Todos" : habitCompareFilters.marked === "only" ? "Solo marcados" : "Ocultar marcados"}`;
+  controls.appendChild(createCompareSection("filters", "Filtros", filterSummary, (bodyWrap) => {
+    const filterRow = document.createElement("div");
+    filterRow.className = "habit-compare-filter-row";
+    filterRow.appendChild(createCompareSelect("Tipo", habitCompareFilters.type, [["all", "Todos"], ["time", "Tiempo"], ["counter", "Contador"]], (next) => {
+      habitCompareFilters = { ...habitCompareFilters, type: next };
+      persistHabitCompareSettings();
+      renderHistory();
+    }));
+    filterRow.appendChild(createCompareSelect("Marcados", habitCompareFilters.marked, [["all", "Todos"], ["only", "Solo marcados"], ["hide", "Ocultar marcados"]], (next) => {
+      habitCompareFilters = { ...habitCompareFilters, marked: next };
+      persistHabitCompareSettings();
+      renderHistory();
+    }));
+    bodyWrap.appendChild(filterRow);
 
-  controls.appendChild(controlRow);
+    const hiddenList = document.createElement("div");
+    hiddenList.className = "habit-compare-hidden-list";
+    habitsList.forEach((habit) => {
+      const label = document.createElement("label");
+      label.className = "habit-compare-hidden-item";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = !!habitCompareHidden?.[habit.id];
+      input.addEventListener("change", () => {
+        habitCompareHidden = { ...habitCompareHidden, [habit.id]: input.checked };
+        persistHabitCompareSettings();
+        renderHistory();
+      });
+      const text = document.createElement("span");
+      text.textContent = `${habit.emoji || "✨"} ${habit.name}`;
+      label.appendChild(input);
+      label.appendChild(text);
+      hiddenList.appendChild(label);
+    });
+    bodyWrap.appendChild(hiddenList);
+  }));
 
   header.appendChild(controls);
   card.appendChild(header);
@@ -3990,90 +4081,6 @@ function renderHistoryCompareCard(habitsList) {
   activeFiltersMeta.className = "habits-history-list-meta";
   activeFiltersMeta.textContent = `Mostrando ${rowsData.shown} de ${rowsData.total}${rowsData.activeFilterCount ? ` · ${rowsData.activeFilterCount} filtros activos` : ""}`;
   body.appendChild(activeFiltersMeta);
-
-  if (habitCompareFilterPanelOpen) {
-    const filterPanel = document.createElement("div");
-    filterPanel.className = "habit-compare-filter-panel";
-
-    const filterRowA = document.createElement("div");
-    filterRowA.className = "habit-compare-filter-row";
-    const typeToggle = document.createElement("div");
-    typeToggle.className = "habits-history-toggle";
-    [["all", "Todos"], ["time", "Tiempo"], ["counter", "Contador"]].forEach(([key, label]) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "habits-history-toggle-btn";
-      if (habitCompareFilters.type === key) btn.classList.add("is-active");
-      btn.textContent = label;
-      btn.addEventListener("click", () => {
-        habitCompareFilters = { ...habitCompareFilters, type: key };
-        persistHabitCompareSettings();
-        renderHistory();
-      });
-      typeToggle.appendChild(btn);
-    });
-    filterRowA.appendChild(typeToggle);
-
-    const deltaToggle = document.createElement("div");
-    deltaToggle.className = "habits-history-toggle";
-    [["all", "Todos"], ["up", "Solo ↑"], ["down", "Solo ↓"], ["flat", "Solo 0"]].forEach(([key, label]) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "habits-history-toggle-btn";
-      if (habitCompareFilters.delta === key) btn.classList.add("is-active");
-      btn.textContent = label;
-      btn.addEventListener("click", () => {
-        habitCompareFilters = { ...habitCompareFilters, delta: key };
-        persistHabitCompareSettings();
-        renderHistory();
-      });
-      deltaToggle.appendChild(btn);
-    });
-    filterRowA.appendChild(deltaToggle);
-    filterPanel.appendChild(filterRowA);
-
-    const filterRowB = document.createElement("div");
-    filterRowB.className = "habit-compare-filter-row";
-    const markedToggle = document.createElement("div");
-    markedToggle.className = "habits-history-toggle";
-    [["all", "Todos"], ["only", "Solo marcados"], ["hide", "Ocultar marcados"]].forEach(([key, label]) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "habits-history-toggle-btn";
-      if (habitCompareFilters.marked === key) btn.classList.add("is-active");
-      btn.textContent = label;
-      btn.addEventListener("click", () => {
-        habitCompareFilters = { ...habitCompareFilters, marked: key };
-        persistHabitCompareSettings();
-        renderHistory();
-      });
-      markedToggle.appendChild(btn);
-    });
-    filterRowB.appendChild(markedToggle);
-    filterPanel.appendChild(filterRowB);
-
-    const hiddenList = document.createElement("div");
-    hiddenList.className = "habit-compare-hidden-list";
-    habitsList.forEach((habit) => {
-      const label = document.createElement("label");
-      label.className = "habit-compare-hidden-item";
-      const input = document.createElement("input");
-      input.type = "checkbox";
-      input.checked = !!habitCompareHidden?.[habit.id];
-      input.addEventListener("change", () => {
-        habitCompareHidden = { ...habitCompareHidden, [habit.id]: input.checked };
-        persistHabitCompareSettings();
-        renderHistory();
-      });
-      const text = document.createElement("span");
-      text.textContent = `${habit.emoji || "✨"} ${habit.name}`;
-      label.appendChild(input);
-      label.appendChild(text);
-      hiddenList.appendChild(label);
-    });
-    filterPanel.appendChild(hiddenList);
-    body.appendChild(filterPanel);
-  }
 
   const list = document.createElement("div");
   list.className = "habit-compare-list";
@@ -4210,62 +4217,45 @@ function getStatExplanation(view, granularity, baseMode) {
 function renderHistoryStatsCard(habitsList) {
   const section = createHistorySection("Estadísticas");
   const controls = document.createElement("div");
-  controls.className = "habits-history-section-controls";
+  controls.className = "habits-history-section-controls habit-stats-controls";
 
-  const viewToggle = document.createElement("div");
-  viewToggle.className = "habits-history-toggle habit-stats-scroll";
-  [
+  const makeStatsSelect = (label, value, entries, onChange) => {
+    const wrap = document.createElement("label");
+    wrap.className = "habit-compare-field";
+    const txt = document.createElement("span");
+    txt.className = "habit-compare-field-label";
+    txt.textContent = label;
+    const select = document.createElement("select");
+    select.className = "habits-history-select habit-compare-select";
+    entries.forEach(([key, name]) => {
+      const option = document.createElement("option");
+      option.value = key;
+      option.textContent = name;
+      select.appendChild(option);
+    });
+    select.value = value;
+    select.addEventListener("change", (e) => onChange(e.target.value));
+    wrap.appendChild(txt);
+    wrap.appendChild(select);
+    return wrap;
+  };
+
+  controls.appendChild(makeStatsSelect("Métrica", habitStatsView, [
     ["MEAN", "Media"], ["TOTAL", "Total"], ["MEDIAN", "Mediana"], ["MODE", "Moda"],
     ["P25", "P25"], ["P50", "P50"], ["P75", "P75"], ["P90", "P90"], ["MAX", "Máx"], ["ACTIVE_RATE", "Activos%"]
-  ].forEach(([key, label]) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "habits-history-toggle-btn";
-    if (habitStatsView === key) btn.classList.add("is-active");
-    btn.textContent = label;
-    btn.addEventListener("click", () => {
-      habitStatsView = key;
-      renderHistory();
-    });
-    viewToggle.appendChild(btn);
-  });
-
-  const row2 = document.createElement("div");
-  row2.className = "habit-compare-order-row";
-  const granToggle = document.createElement("div");
-  granToggle.className = "habits-history-toggle";
-  [["day", "Día"], ["week", "Semana"], ["month", "Mes"], ["year", "Año"]].forEach(([key, label]) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "habits-history-toggle-btn";
-    if (habitStatsGranularity === key) btn.classList.add("is-active");
-    btn.textContent = label;
-    btn.addEventListener("click", () => {
-      habitStatsGranularity = key;
-      renderHistory();
-    });
-    granToggle.appendChild(btn);
-  });
-  const baseToggle = document.createElement("div");
-  baseToggle.className = "habits-history-toggle";
-  [["CALENDAR", "Calendario"], ["RECORDED_ONLY", "Con registro"]].forEach(([key, label]) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "habits-history-toggle-btn";
-    if (habitStatsBaseMode === key) btn.classList.add("is-active");
-    btn.textContent = label;
-    btn.addEventListener("click", () => {
-      habitStatsBaseMode = key;
-      invalidateCompareCache();
-      renderHistory();
-    });
-    baseToggle.appendChild(btn);
-  });
-  row2.appendChild(granToggle);
-  row2.appendChild(baseToggle);
-
-  controls.appendChild(viewToggle);
-  controls.appendChild(row2);
+  ], (next) => {
+    habitStatsView = next;
+    renderHistory();
+  }));
+  controls.appendChild(makeStatsSelect("Unidad", habitStatsGranularity, [["day", "Día"], ["week", "Semana"], ["month", "Mes"], ["year", "Año"]], (next) => {
+    habitStatsGranularity = next;
+    renderHistory();
+  }));
+  controls.appendChild(makeStatsSelect("Base", habitStatsBaseMode, [["CALENDAR", "Calendario"], ["RECORDED_ONLY", "Con registro"]], (next) => {
+    habitStatsBaseMode = next;
+    invalidateCompareCache();
+    renderHistory();
+  }));
   section.header.appendChild(controls);
 
   const rows = habitsList.map((habit) => {

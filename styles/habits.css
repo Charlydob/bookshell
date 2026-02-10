@@ -3027,6 +3027,55 @@ display: grid;
   color: var(--txt-soft);
 }
 
+
+.habit-compare-filter-panel {
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: var(--radius-md);
+  padding: 8px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(9, 11, 20, 0.65);
+}
+
+.habit-compare-filter-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.habit-compare-hidden-list {
+  max-height: 140px;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 4px 8px;
+}
+
+.habit-compare-hidden-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--txt-soft);
+}
+
+.habit-compare-mark-btn {
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: var(--radius-pill);
+  background: rgba(255,255,255,0.06);
+  color: var(--txt-soft);
+  min-width: 30px;
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.habit-compare-mark-btn.is-active {
+  color: #f6c343;
+  border-color: rgba(246,195,67,0.7);
+  background: rgba(246,195,67,0.14);
+}
 .habit-compare-list {
   display: flex;
   flex-direction: column;
@@ -3037,6 +3086,7 @@ display: grid;
 
 .habit-compare-row {
   width: 100%;
+  cursor: pointer;
   border: 1px solid rgba(var(--hclr-rgb, 127, 93, 255), 0.26);
   background:
     linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02)),
@@ -3150,7 +3200,7 @@ display: grid;
 .habit-compare-summary {
   min-height: 44px;
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto auto auto;
   gap: 10px;
   align-items: center;
 }

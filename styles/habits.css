@@ -2052,13 +2052,6 @@
   align-self: flex-start;
 }
 
-.habit-heatmap-cell.is-out { opacity: .35; }
-.habit-heatmap-cell.is-work-morning { background: color-mix(in srgb, var(--work-morning) 28%, transparent); }
-.habit-heatmap-cell.is-work-evening { background: color-mix(in srgb, var(--work-evening) 28%, transparent); }
-.habit-heatmap-cell.is-work-free { background: color-mix(in srgb, var(--work-free) 28%, transparent); }
-.habit-heatmap-cell.is-work-unknown { background: color-mix(in srgb, var(--work-unknown) 28%, transparent); }
-
-
 .history-month-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -2084,10 +2077,31 @@
 }
 
 .history-month-cell.is-out { opacity: .35; }
-.history-month-cell.is-work-morning { background: color-mix(in srgb, var(--work-morning) 30%, transparent); }
-.history-month-cell.is-work-evening { background: color-mix(in srgb, var(--work-evening) 30%, transparent); }
-.history-month-cell.is-work-free { background: color-mix(in srgb, var(--work-free) 30%, transparent); }
-.history-month-cell.is-work-unknown { background: color-mix(in srgb, var(--work-unknown) 30%, transparent); }
+
+.history-month-cell.is-work-morning { 
+  background: color-mix(in srgb, var(--work-morning) 8%, transparent);
+  border: 1px solid rgba(var(--work-mañana), 0.30); 
+  box-shadow: 0 0 10px rgba(var(--work-mañana), 0.20);
+}
+.history-month-cell.is-work-evening {
+   background: color-mix(in srgb, var(--work-evening) 8%, transparent); 
+   
+  border: 1px solid rgba(var(--work-tarde), 0.30); 
+  box-shadow: 0 0 10px rgba(var(--work-tarde), 0.20);
+  }
+.history-month-cell.is-work-free {
+   background: color-mix(in srgb, var(--work-free) 8%, transparent); 
+   
+  border: 1px solid rgba(var(--work-libre), 0.30); 
+  box-shadow: 0 0 10px rgba(var(--work-libre), 0.20);
+  }
+.history-month-cell.is-work-unknown {
+   background: color-mix(in srgb, var(--work-unknown) 8%, transparent); 
+   
+  border: 1px solid rgba(var(--work-mañana), 0.30); 
+  box-shadow: 0 0 10px rgba(var(--work-mañana), 0.20);
+  }
+
 
 .habit-day-detail-card {
   display: grid;
@@ -3135,45 +3149,38 @@ display: grid;
   grid-template-columns: repeat(auto-fit, minmax(12px, 1fr));
   gap: 8px;
 }
-:root{
-  --work-morning: 16,255,16;
-}
 
-.habit-record-card-mañanas{
-  border: 1px solid rgba(var(--work-morning), 0.6);
-  box-shadow:
-    0 0 10px rgba(var(--work-morning), 0.6),
-    0 0 25px rgba(var(--work-morning), 0.35);
-}
+
+
 
 :root{
-  --work-morning: 255,220,40;     /* verde */
-  --work-afternoon: 255,60,60;   /* rojo */
-  --work-free: 16,255,16;       /* amarillo */
+  --work-mañana: 255,220,40;     /* verde */
+  --work-tarde: 255,60,60;   /* rojo */
+  --work-libre: 16,255,16;       /* amarillo */
   --work-unknown: 255,255,255;         /* blanco */
 }
 
 
 .habit-record-card-mañanas{
-  border: 1px solid rgba(var(--work-morning), 0.6);
-  box-shadow: 0 0 10px rgba(var(--work-morning), 0.6),
-              0 0 25px rgba(var(--work-morning), 0.35);
+  border: 1px solid rgba(var(--work-mañana), 0.6);
+  box-shadow: 0 0 10px rgba(var(--work-mañana), 0.6),
+              0 0 25px rgba(var(--work-mañana), 0.35);
               
 align-items: center;
 }
 
 .habit-record-card-tardes{
-  border: 1px solid rgba(var(--work-afternoon), 0.6);
-  box-shadow: 0 0 10px rgba(var(--work-afternoon), 0.6),
-              0 0 25px rgba(var(--work-afternoon), 0.35);
+  border: 1px solid rgba(var(--work-tarde), 0.6);
+  box-shadow: 0 0 10px rgba(var(--work-tarde), 0.6),
+              0 0 25px rgba(var(--work-tarde), 0.35);
 align-items: center;
 
 }
 
 .habit-record-card-libres{
-  border: 1px solid rgba(var(--work-free), 0.6);
-  box-shadow: 0 0 10px rgba(var(--work-free), 0.6),
-              0 0 25px rgba(var(--work-free), 0.35);
+  border: 1px solid rgba(var(--work-libre), 0.6);
+  box-shadow: 0 0 10px rgba(var(--work-libre), 0.6),
+              0 0 25px rgba(var(--work-libre), 0.35);
 align-items: center;
 }
 
@@ -3269,3 +3276,34 @@ align-items: center;
   align-self: center;
   align-content: center;
 }
+.inputs{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+
+  width: 100%;
+  max-width: 320px;
+
+  margin: 0 auto;
+  align-items: end;
+}
+
+.inputs label{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inputs input{
+  width: 140px;
+  height: 42px;
+
+  border-radius: 12px;
+  padding: 0 12px;
+
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(120,180,255,0.14);
+
+  color: rgba(230,240,255,0.92);
+}
+

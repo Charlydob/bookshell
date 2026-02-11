@@ -3610,6 +3610,28 @@ function aggregateHabitValue(habit, range) {
   return getHabitMetricForRange(habit, range.start, range.end, "count");
 }
 
+function getInProgressContributionForRange(habit, range) {
+  if (!habit || habit.archived || !range || !runningSession) return 0;
+  if (resolveCompareType(habit) !== "duration") return 0;
+  const targetHabitId = runningSession?.targetHabitId || null;
+  if (!targetHabitId || targetHabitId !== habit.id) return 0;
+
+  const startTs = Number(runningSession.startTs);
+  const endTs = Date.now();
+  if (!Number.isFinite(startTs) || endTs <= startTs) return 0;
+
+  const split = splitSessionByDay(startTs, endTs);
+  let extraMinutes = 0;
+  split.forEach((minutes, dayKey) => {
+    const day = parseDateKey(dayKey);
+    if (!day) return;
+    const inRange = day >= range.start && day <= range.end;
+    if (!inRange) return;
+    extraMinutes += Number(minutes) || 0;
+  });
+  return extraMinutes;
+}
+
 function getHistoryStatsRange() {
   const start = getEarliestActivityDate();
   const end = endOfDay(new Date());
@@ -3738,10 +3760,9 @@ function getCompareAggregate(selection, mode) {
   const selectionToken = selection?.kind === "real" ? selection?.token : null;
   const range = selection?.kind === "real" ? getRangeForCompare(mode, selectionToken) : null;
   const includesToday = !!(range && range.start <= new Date() && range.end >= new Date());
-  const liveVersion = (runningSession && includesToday) ? `live-${compareLiveTick}` : "live-static";
   const selectionKey = selection?.kind === "ref"
     ? `ref::${mode}::${habitStatsBaseMode}::${selection.statKey}::v${habitHistoryDataVersion}`
-    : `real::${mode}::${selection?.token}::v${habitHistoryDataVersion}::${liveVersion}`;
+    : `real::${mode}::${selection?.token}::v${habitHistoryDataVersion}`;
 
   if (selection?.kind === "ref") {
     const cacheHit = habitCompareAverageCache.has(selectionKey);
@@ -3779,14 +3800,29 @@ function getCompareAggregate(selection, mode) {
     lastDataVersion: habitHistoryDataVersion,
     lastHistoryUpdatedAt: habitHistoryUpdatedAt
   });
-  if (cacheHit) return habitCompareAggregateCache.get(selectionKey);
-  const values = {};
+  let baseEntry = null;
+  if (cacheHit) {
+    baseEntry = habitCompareAggregateCache.get(selectionKey);
+  } else {
+    const baseValues = {};
+    activeHabits().forEach((habit) => {
+      baseValues[habit.id] = aggregateHabitValue(habit, range);
+    });
+    baseEntry = { kind: "real", range, baseValues };
+    habitCompareAggregateCache.set(selectionKey, baseEntry);
+  }
+
+  if (!(runningSession && includesToday)) {
+    return { kind: "real", range, values: { ...(baseEntry.baseValues || {}) } };
+  }
+
+  const valuesWithLive = { ...(baseEntry.baseValues || {}) };
   activeHabits().forEach((habit) => {
-    values[habit.id] = aggregateHabitValue(habit, range);
+    const base = Number(baseEntry.baseValues?.[habit.id] || 0);
+    const extra = getInProgressContributionForRange(habit, range);
+    valuesWithLive[habit.id] = base + extra;
   });
-  const entry = { kind: "real", range, values };
-  habitCompareAggregateCache.set(selectionKey, entry);
-  return entry;
+  return { kind: "real", range, values: valuesWithLive };
 }
 
 function formatValueByType(value, type, withDecimals = false) {

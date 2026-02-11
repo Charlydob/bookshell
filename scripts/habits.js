@@ -158,6 +158,7 @@ let habitHistoryDataVersion = 0;
 let habitHistoryUpdatedAt = Date.now();
 let compareLiveTick = 0;
 let compareLiveInterval = null;
+let compareRefreshRaf = null;
 const reportDebugLastByRange = new Map();
 
 function debugCompare(...args) {
@@ -174,7 +175,25 @@ function markHistoryDataChanged(reason = "unknown", details = null) {
   habitHistoryDataVersion += 1;
   habitHistoryUpdatedAt = Date.now();
   invalidateCompareCache();
+  scheduleCompareRefresh(reason, details);
   debugCompare("history version bump", { reason, dataVersion: habitHistoryDataVersion, updatedAt: habitHistoryUpdatedAt, details });
+}
+
+function scheduleCompareRefresh(reason = "unknown", details = null) {
+  if (compareRefreshRaf != null) return;
+  compareRefreshRaf = window.requestAnimationFrame(() => {
+    compareRefreshRaf = null;
+    const habitsViewVisible = document.getElementById("view-habits")?.classList.contains("view-active");
+    if (!habitsViewVisible) return;
+    renderHistory();
+    debugCompare("refresh", {
+      reason,
+      dataVersion: habitHistoryDataVersion,
+      updatedAt: habitHistoryUpdatedAt,
+      activeTab,
+      details
+    });
+  });
 }
 
 function debugHabitsSync(...args) {
@@ -7333,6 +7352,7 @@ function startSession(habitId = null) {
   saveRunningSession();
   updateSessionUI();
   updateCompareLiveInterval();
+  scheduleCompareRefresh("session:start", { targetHabitId: targetHabitId || null });
   sessionInterval = setInterval(updateSessionUI, 1000);
 }
 
@@ -7360,6 +7380,7 @@ function stopSession(assignHabitId = null, silent = false) {
   if (sessionInterval) clearInterval(sessionInterval);
   updateSessionUI();
   updateCompareLiveInterval();
+  scheduleCompareRefresh("session:stop", { dateKey, durationSec: duration });
 
   // Auto-asignación (Shortcuts / enlace)
   if (target && habits?.[target] && !habits[target]?.archived) {

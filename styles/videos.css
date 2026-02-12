@@ -481,76 +481,60 @@
 }
 
 .video-script-editor .ql-editor .script-quote-card {
-  display: block;
+  display:block;
+  padding:16px 16px 14px 44px;
+  border-radius:18px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
   margin: 10px 0;
-  padding: 16px 16px 14px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  color: rgba(255, 255, 255, 0.78);
-  line-height: 1.35;
   position: relative;
-  padding-left: 42px;
 }
 
-.video-script-editor .ql-editor .script-quote-card::before {
-  content: "❝";
-  position: absolute;
-  left: 14px;
-  top: 10px;
-  font-size: 22px;
+.video-script-editor .ql-editor .script-quote-card .quote-icon{
+  position:absolute;
+  left:14px;
+  top:12px;
+  font-size: 20px;
   opacity: .55;
 }
 
-.video-script-editor .ql-editor .script-annotation-card {
-  display: block;
-  margin: 10px 0;
-  padding: 16px 16px 16px 44px;
-  border-radius: 18px;
-  background: rgba(255, 176, 80, 0.14);
-  border: 1px solid rgba(255, 176, 80, 0.22);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  color: rgba(255, 212, 160, 0.95);
-  font-weight: 700;
-  line-height: 1.3;
-  position: relative;
-}
-
-.video-script-editor .ql-editor .script-annotation-card::before {
-  content: "⚠️";
-  position: absolute;
-  left: 14px;
-  top: 12px;
-  font-size: 18px;
-  opacity: .9;
-}
-
-.script-annotation-delim,
-.script-quote-delim {
-  display: none;
-}
-
 .video-script-editor .ql-editor .script-quote-card .quote-text {
-  display: block;
-  padding-left: 26px;
+  display:block;
   color: rgba(255,255,255,0.78);
   line-height: 1.35;
 }
 
 .video-script-editor .ql-editor .script-quote-card .quote-author {
-  display: block;
-  padding-left: 26px;
-  margin-top: 10px;
-  opacity: .55;
+  display:block;
+  margin-top:10px;
+  opacity:.55;
 }
 
-.video-script-editor .ql-editor .script-annotation-card .annotation-text {
-  display: block;
-  padding-left: 30px;
+.video-script-editor .ql-editor .script-annotation-card{
+  display:block;
+  padding:16px 16px 16px 44px;
+  border-radius:18px;
+  background: rgba(255,176,80,0.14);
+  border: 1px solid rgba(255,176,80,0.22);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  margin: 10px 0;
+  position: relative;
+  color: rgba(255,212,160,0.95);
+  font-weight: 700;
+}
+
+.video-script-editor .ql-editor .script-annotation-card .annotation-icon{
+  position:absolute;
+  left:14px;
+  top:14px;
+  font-size: 18px;
+}
+
+.video-script-editor .ql-editor .script-annotation-card .annotation-text{
+  display:block;
   line-height: 1.3;
 }
-
 
 .video-inline-annotation-toggle {
   position: sticky;

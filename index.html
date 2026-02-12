@@ -365,7 +365,6 @@
 <div class="video-script-subtitle" id="video-script-subtitle">Guion</div>
 </div>
 <div class="video-script-actions">
-<button class="btn ghost btn-compact" id="video-script-insert-link" type="button" title="Insertar recurso">📎</button>
 <button class="btn ghost btn-compact" id="video-script-teleprompter" type="button">Teleprompter</button>
 </div>
 </div>
@@ -387,38 +386,45 @@
 </label>
 </div>
 </details>
-<div class="video-script-toolbar-floating">
-<div class="video-script-toolbar" id="video-script-toolbar">
-<div class="video-script-toolbar-main">
-<button class="ql-bold" aria-label="Negrita">B</button>
-<button class="ql-italic" aria-label="Cursiva">I</button>
-<button class="ql-underline" aria-label="Subrayado">U</button>
-<button class="ql-header" value="1" aria-label="Heading">H</button>
-<button class="ql-list" value="bullet" aria-label="Lista">•</button>
-<button class="ql-link" aria-label="Link">🔗</button>
-<button class="ql-background" value="yellow" aria-label="Highlight">✦</button>
-<button class="video-toolbar-action" id="video-toolbar-annotate" type="button">Anotación</button>
-<button class="video-toolbar-more" id="video-toolbar-more-toggle" type="button">⋯</button>
-</div>
-<div class="video-script-toolbar-more-menu" id="video-toolbar-more-menu" aria-hidden="true">
-<button class="ql-list" value="ordered">Lista num</button>
-<button class="ql-header" value="2">H2</button>
-<button class="ql-header" value="3">H3</button>
-<button class="ql-blockquote">Cita</button>
-<button class="ql-clean">Limpiar</button>
-</div>
-</div>
-</div>
+
+  <div class="video-script-toolbar-floating">
+      <div class="video-script-toolbar" id="video-script-toolbar">
+        <div class="video-script-toolbar-main">
+          <button class="ql-bold" aria-label="Negrita">B</button>
+          <button class="ql-italic" aria-label="Cursiva">I</button>
+          <button class="ql-underline" aria-label="Subrayado">U</button>
+          <button class="ql-header" value="1" aria-label="Heading">H</button>
+          <button class="ql-list" value="bullet" aria-label="Lista">•</button>
+          <button class="ql-link" aria-label="Link">🔗</button>
+          <button class="ql-background" value="yellow" aria-label="Highlight">✦</button>
+          <button class="video-toolbar-more" id="video-toolbar-more-toggle" type="button">⋯</button>
+        </div>
+        <div class="video-script-toolbar-more-menu" id="video-toolbar-more-menu" aria-hidden="true">
+          <button class="ql-list" value="ordered">Lista num</button>
+          <button class="ql-header" value="2">H2</button>
+          <button class="ql-header" value="3">H3</button>
+          <button class="ql-blockquote">Cita</button>
+          <button class="ql-clean">Limpiar</button>
+        </div>
+      </div>
+  </div>
+
+
 <div class="video-script-editor" id="video-script-editor"></div>
 <button class="btn primary video-annotate-fab hidden" id="video-annotate-fab" type="button">Anotar</button>
-<div class="video-inline-annotation-toggle hidden" id="video-inline-annotation-toggle">
-<div class="video-inline-annotation-title">Anotación inline (#...#)</div>
-<div class="video-inline-annotation-text" id="video-inline-annotation-text">—</div>
-<label class="video-inline-annotation-switch">
-<span>Cuenta para palabras</span>
-<input id="video-inline-annotation-checkbox" type="checkbox" />
-</label>
-</div>
+<details class="lista-anotaciones">
+  <summary>Anotaciones</summary>
+      <div class="lista-anotaciones" id="video-script-annotations"> <!-- Lista de anotaciones por JS --> 
+        <div class="video-inline-annotation-toggle hidden" id="video-inline-annotation-toggle">
+        <div class="video-inline-annotation-title">Anotación inline (#...#)</div>
+        <div class="video-inline-annotation-text" id="video-inline-annotation-text">—</div>
+        <label class="video-inline-annotation-switch">
+        <span>Cuenta para palabras</span>
+        <input id="video-inline-annotation-checkbox" type="checkbox" />
+        </label>
+        </div>
+    </div>
+</details>
 <div class="video-annotation-popup hidden" id="video-annotation-popup">
 <div class="video-annotation-popup-title" id="video-annotation-title">Nueva anotación</div>
 <div class="video-annotation-selection">

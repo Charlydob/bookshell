@@ -357,8 +357,11 @@
   position: fixed;
   left: 12px;
   right: 12px;
-  bottom: calc(env(safe-area-inset-bottom) + 10px);
+  bottom: calc(env(safe-area-inset-bottom) + 100px);
   z-index: 10;
+  max-width: 450px;
+  max-height: 20px;
+  min-height: 20px;
 }
 
 .video-script-toolbar {
@@ -437,13 +440,16 @@
 
 .video-script-count-toggles {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
 .video-script-count-toggles .toggle-pill {
   justify-content: space-between;
   width: 100%;
+  background-color: transparent;
+  border: 0px;
+  font-size: 12px;
 }
 
 .video-script-count-summary {
@@ -1337,12 +1343,7 @@
 }
 
 @media (min-width: 900px) {
-  .video-script-toolbar-floating {
-    position: sticky;
-    top: calc(env(safe-area-inset-top) - 8px);
-    bottom: auto;
-    z-index: 10;
-  }
+
 
   .video-script-shell {
     padding-bottom: 80px;

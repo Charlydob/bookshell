@@ -981,11 +981,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     const items = [
       { key: "countHeadings", label: "Contar headings" },
       { key: "countHashtags", label: "Contar hashtags" },
-      { key: "countLinks", label: "Contar links" },
-      { key: "countUrls", label: "Contar URLs" },
-      { key: "countLists", label: "Contar listas" },
-      { key: "excludeAnnotations", label: "Excluir anotaciones" },
-      { key: "ignoreTags", label: "Ignorar tags [PAUSA]" }
+
     ];
 
     $videoScriptCountToggles.innerHTML = "";

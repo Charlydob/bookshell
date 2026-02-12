@@ -866,7 +866,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   function getWordTokens(text) {
     if (!text) return [];
     const cleaned = text.normalize("NFKC");
-    return cleaned.match(/[\p{L}\p{N}#@]+(?:['’\-][\p{L}\p{N}]+)*/gu) || [];
+    return cleaned.match(/[\p{L}\p{N}@]+(?:['’\-][\p{L}\p{N}]+)*/gu) || [];
   }
 
 
@@ -902,23 +902,87 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     return { ...(video?.script?.annotationsMeta || {}) };
   }
 
+  function getEmbedWordCount(op) {
+    const insert = op?.insert;
+    if (!insert || typeof insert === "string") return 0;
+    const key = Object.keys(insert)[0];
+    const value = insert[key];
+    const text = typeof value === "string" ? value : (value?.text || value?.content || "");
+    return getWordTokens(text).length;
+  }
+
   function computeWordCount() {
     if (!quill) return 0;
-    const text = quill.getText();
-    const tokens = getWordTokens(text);
-    let count = 0;
-    let cursor = 0;
-    tokens.forEach((token) => {
-      const idx = text.indexOf(token, cursor);
-      if (idx < 0) return;
-      cursor = idx + token.length;
-      const format = quill.getFormat(idx, token.length);
-      if (!currentCountSettings?.hashtags && format.scriptAnnotation) return;
-      if (!currentCountSettings?.quotes && format.quoteCard) return;
-      if (!currentCountSettings?.headings && format.header) return;
-      count += 1;
+    const ops = quill.getContents()?.ops || [];
+    const totals = { wordsTotal: 0, wordsText: 0, wordsHeadings: 0, wordsQuotes: 0, wordsHashtags: 0 };
+
+    ops.forEach((op) => {
+      const attrs = op.attributes || {};
+      const insert = op.insert;
+      const isHeading = !!attrs.header;
+      const isQuote = !!attrs.quoteCard || !!attrs.blockquote;
+      const isAnnotation = !!attrs.scriptAnnotation || !!attrs.annotationCard;
+
+      if (typeof insert === "string") {
+        const tokens = getWordTokens(insert);
+        if (!tokens.length) return;
+        const count = tokens.length;
+        if (isHeading) {
+          if (currentCountSettings?.headings) totals.wordsHeadings += count;
+          else console.log("[COUNT] skip", { category: "headings", sample: insert.slice(0, 30) });
+          return;
+        }
+        if (isQuote) {
+          if (currentCountSettings?.quotes) totals.wordsQuotes += count;
+          else console.log("[COUNT] skip", { category: "quotes", sample: insert.slice(0, 30) });
+          return;
+        }
+        if (isAnnotation) {
+          if (currentCountSettings?.hashtags) totals.wordsHashtags += count;
+          else console.log("[COUNT] skip", { category: "hashtags", sample: insert.slice(0, 30) });
+          return;
+        }
+        totals.wordsText += count;
+        return;
+      }
+
+      const embedCount = getEmbedWordCount(op);
+      if (!embedCount) return;
+      const embedType = Object.keys(insert || {})[0] || "embed";
+      if (embedType === "quoteCard") {
+        if (currentCountSettings?.quotes) totals.wordsQuotes += embedCount;
+        else console.log("[COUNT] skip", { category: "quotes", sample: String(insert.quoteCard || "").slice(0, 30) });
+        return;
+      }
+      if (embedType === "annotationCard") {
+        if (currentCountSettings?.hashtags) totals.wordsHashtags += embedCount;
+        else console.log("[COUNT] skip", { category: "hashtags", sample: String(insert.annotationCard || "").slice(0, 30) });
+        return;
+      }
+      totals.wordsText += embedCount;
     });
-    return count;
+
+    totals.wordsTotal = totals.wordsText + totals.wordsHeadings + totals.wordsQuotes + totals.wordsHashtags;
+    console.log("[COUNT] settings", currentCountSettings);
+    console.log("[COUNT] totals", totals);
+    return totals.wordsTotal;
+  }
+
+  function dumpScriptStructure() {
+    if (!quill) return;
+    const ops = quill.getContents()?.ops || [];
+    ops.forEach((op, index) => {
+      if (typeof op.insert === "string") {
+        console.log(`[COUNTDBG] run#${index}`, { text: op.insert.slice(0, 80), len: op.insert.length, attrs: op.attributes || {} });
+      } else {
+        const embedType = Object.keys(op.insert || {})[0] || "embed";
+        console.log(`[COUNTDBG] run#${index}`, { embed: embedType, value: op.insert?.[embedType], attrs: op.attributes || {} });
+      }
+    });
+    const nodes = Array.from(document.querySelectorAll('#video-script-editor .ql-editor *')).map((el) => ({ tagName: el.tagName, className: el.className }));
+    console.log("[VIDEO] DOM structure", nodes);
+    console.log("[VIDEO] quote cards", document.querySelectorAll('.script-quote-card').length);
+    console.log("[VIDEO] annotation cards", document.querySelectorAll('.script-annotation-card').length);
   }
 
   function renderInlineAnnotationToggle(ann) {
@@ -969,6 +1033,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         currentCountSettings = { ...settings };
         if ($videoScriptCountSummary) $videoScriptCountSummary.textContent = getCountSummary(settings);
         scriptDirty = true;
+        const wordCount = computeWordCount();
+        updateScriptStats(wordCount);
         scheduleWordCountUpdate();
         scheduleScriptSave(false);
         saveScriptSettings();
@@ -1027,7 +1093,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     class ScriptAnnotationBlot extends Inline {}
     ScriptAnnotationBlot.blotName = "scriptAnnotation";
     ScriptAnnotationBlot.tagName = "SPAN";
-    ScriptAnnotationBlot.className = "script-annotation";
+    ScriptAnnotationBlot.className = "script-annotation-card";
 
     class ScriptAnnotationDelimBlot extends Inline {}
     ScriptAnnotationDelimBlot.blotName = "scriptAnnotationDelim";
@@ -1037,7 +1103,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     class QuoteCardBlot extends Inline {}
     QuoteCardBlot.blotName = "quoteCard";
     QuoteCardBlot.tagName = "SPAN";
-    QuoteCardBlot.className = "script-quote";
+    QuoteCardBlot.className = "script-quote-card";
 
     class QuoteCardDelimBlot extends Inline {}
     QuoteCardDelimBlot.blotName = "quoteCardDelim";
@@ -1096,6 +1162,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     if (scriptAnnotationTimer) clearTimeout(scriptAnnotationTimer);
     scriptAnnotationTimer = setTimeout(() => {
       applyScriptAnnotationHighlighting();
+      dumpScriptStructure();
       scheduleWordCountUpdate();
     }, SCRIPT_ANNOTATION_DEBOUNCE);
   }
@@ -1147,6 +1214,9 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       },
       placeholder: "Escribe el guion aquí..."
     });
+    window.__videoQuill = quill;
+    console.log("[VIDEO] Quill init", { quill, formats: quill.getFormat(0, quill.getLength()) });
+    console.log("[VIDEO] Quill registered formats", quill.options.formats);
 
     quill.on("selection-change", (range) => {
       const focused = quill.hasFocus() && scriptEditorFocused;
@@ -1204,13 +1274,13 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         }
       }
 
-      const quoteTarget = event.target?.closest?.(".script-quote");
+      const quoteTarget = event.target?.closest?.(".script-quote-card");
       if (quoteTarget) {
         revealDelimitedFormat("quoteCard", "[[quote]]", "[[/quote]]");
         return;
       }
 
-      const annotationTarget = event.target?.closest?.(".script-annotation");
+      const annotationTarget = event.target?.closest?.(".script-annotation-card");
       if (annotationTarget) {
         revealDelimitedFormat("scriptAnnotation", "#", "#");
         return;
@@ -1457,6 +1527,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     const wordCount = computeWordCount();
     updateScriptStats(wordCount);
     scheduleScriptAnnotationHighlighting();
+    dumpScriptStructure();
   }
 
   function openScriptView(videoId) {

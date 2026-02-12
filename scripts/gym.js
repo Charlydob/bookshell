@@ -2073,6 +2073,10 @@ function bindEvents() {
     renderWorkoutEditor();
   }
 
+  function normalizeWorkoutGroupName(name) {
+    return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+  }
+
   function renderHistory() {
     const workouts = flattenWorkouts();
     $gymHistoryList.innerHTML = "";
@@ -2081,33 +2085,78 @@ function bindEvents() {
       return;
     }
     $gymHistoryEmpty.classList.add("hidden");
-    const fragment = document.createDocumentFragment();
+
+    const groupsMap = new Map();
     workouts.forEach((workout) => {
-      const exerciseNames = Object.values(workout.exercises || {}).map((ex) => ex.nameSnapshot);
-      const chipList = exerciseNames.slice(0, 2);
-      const card = document.createElement("div");
-      card.className = "gym-card gym-history-card";
-      card.dataset.workoutId = workout.id;
-      card.innerHTML = `
-        <div class="gym-history-header">
-          <div>
-            <div class="gym-history-title">${workout.name || "Entrenamiento"}</div>
-            <div class="gym-history-date">${formatDateLabel(workout.date)}</div>
-          </div>
-          <div class="gym-history-metrics">
-            <div>Volumen ${Math.round(workout.totalVolumeKg || 0)} kg</div>
-            <div>Reps ${Math.round(workout.totalReps || 0)}</div>
-          </div>
-        </div>
-        <div class="gym-chip-row">
-          ${chipList.map((name) => `<span class="gym-chip">${name}</span>`).join("")}
-        </div>
-      `;
-      card.addEventListener("click", () => {
-        openWorkout(workout.id);
-      });
-      fragment.appendChild(card);
+      const normalized = normalizeWorkoutGroupName(workout.name || "Entrenamiento");
+      const key = normalized || "entrenamiento";
+      if (!groupsMap.has(key)) {
+        groupsMap.set(key, { label: (workout.name || "Entrenamiento").trim() || "Entrenamiento", workouts: [] });
+      }
+      groupsMap.get(key).workouts.push(workout);
     });
+
+    const groups = Array.from(groupsMap.values()).map((group) => {
+      const sorted = group.workouts.slice().sort((a, b) => {
+        if ((b.date || "") !== (a.date || "")) return String(b.date || "").localeCompare(String(a.date || ""));
+        return (b.updatedAt || b.startedAt || 0) - (a.updatedAt || a.startedAt || 0);
+      });
+      return {
+        ...group,
+        workouts: sorted,
+        latestDate: sorted[0]?.date || "",
+        totalVolume: sorted.reduce((acc, item) => acc + (Number(item.totalVolumeKg) || 0), 0)
+      };
+    }).sort((a, b) => String(b.latestDate || "").localeCompare(String(a.latestDate || "")));
+
+    const fragment = document.createDocumentFragment();
+    groups.forEach((group, groupIndex) => {
+      const details = document.createElement("details");
+      details.className = "gym-history-group gym-card";
+      if (groupIndex < 2) details.open = true;
+      details.innerHTML = `
+        <summary class="gym-history-group-summary">
+          <div>
+            <div class="gym-history-group-title">${group.label}</div>
+            <div class="gym-history-group-meta">${group.workouts.length} sesiones · ${Math.round(group.totalVolume)} kg total</div>
+          </div>
+          <div class="gym-history-group-date">${formatDateLabel(group.latestDate)}</div>
+        </summary>
+      `;
+
+      const body = document.createElement("div");
+      body.className = "gym-history-group-body";
+      group.workouts.forEach((workout) => {
+        const exerciseNames = Object.values(workout.exercises || {}).map((ex) => ex.nameSnapshot).filter(Boolean);
+        const chipList = exerciseNames.slice(0, 2);
+        const card = document.createElement("div");
+        card.className = "gym-history-card";
+        card.dataset.workoutId = workout.id;
+        card.innerHTML = `
+          <div class="gym-history-header">
+            <div>
+              <div class="gym-history-title">${workout.name || "Entrenamiento"}</div>
+              <div class="gym-history-date">${formatDateLabel(workout.date)}</div>
+            </div>
+            <div class="gym-history-metrics">
+              <div>Volumen ${Math.round(workout.totalVolumeKg || 0)} kg</div>
+              <div>Reps ${Math.round(workout.totalReps || 0)}</div>
+            </div>
+          </div>
+          <div class="gym-chip-row">
+            ${chipList.map((name) => `<span class="gym-chip">${name}</span>`).join("")}
+          </div>
+        `;
+        card.addEventListener("click", () => {
+          openWorkout(workout.id);
+        });
+        body.appendChild(card);
+      });
+
+      details.appendChild(body);
+      fragment.appendChild(details);
+    });
+
     $gymHistoryList.appendChild(fragment);
   }
 

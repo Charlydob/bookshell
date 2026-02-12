@@ -14,6 +14,7 @@
 <link href="styles/videos.css" rel="stylesheet"/>
 <link href="styles/recipes.css" rel="stylesheet"/>
 <link href="styles/habits.css" rel="stylesheet"/>
+<link href="styles/games.css" rel="stylesheet"/>
 <link href="styles/media.css" rel="stylesheet"/>
 <link href="styles/world.css" rel="stylesheet"/>
 <link href="styles/gym.css" rel="stylesheet"/>
@@ -1210,6 +1211,20 @@
 </div>
 </section>
 
+<section class="view" id="view-games">
+<div class="games-view">
+<div class="games-header">
+<div>
+<div class="games-title">Juegos</div>
+<div class="games-subtitle">Contadores por juego y modo</div>
+</div>
+<button class="btn primary" id="game-add-mode" type="button">+ Añadir modo</button>
+</div>
+<div class="games-list" id="games-groups-list"></div>
+<div class="empty-state" id="games-empty">Aún no tienes juegos. Crea tu primer modo.</div>
+</div>
+</section>
+
 <section class="view" id="view-media">
   <div class="media-wrapper">
     <div class="media-head">
@@ -1814,6 +1829,7 @@ Crear “<span id="gym-create-cta-text"></span>”
 <button class="nav-btn" data-view="view-videos">📹</button>
 <button class="nav-btn" data-view="view-recipes">🍳</button>
 <button class="nav-btn" data-view="view-habits">✅</button>
+<button class="nav-btn" data-view="view-games" title="Juegos" aria-label="Juegos">🎮</button>
 <button class="nav-btn" data-view="view-media">🎞️</button>
 <button class="nav-btn" data-view="view-world">🌍</button>
 <button class="nav-btn" data-view="view-gym">🏋️</button>
@@ -2699,6 +2715,92 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 </div>
 
+<div class="modal-backdrop hidden" id="game-mode-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="game-mode-modal-title">Nuevo modo</div>
+<button class="icon-btn" id="game-mode-close" type="button">✕</button>
+</div>
+<form class="modal-form" id="game-mode-form">
+<div class="modal-scroll sheet-body game-modal-scroll">
+<label class="field">
+<span class="field-label">Grupo</span>
+<select id="game-group-choice">
+<option value="existing">Elegir grupo existente</option>
+<option value="new">Crear grupo nuevo</option>
+</select>
+</label>
+<label class="field" id="game-group-existing-wrap">
+<span class="field-label">Grupo existente</span>
+<select id="game-existing-group"></select>
+</label>
+<div class="form-grid row-2" id="game-group-new-wrap" style="display:none;">
+<label class="field">
+<span class="field-label">Nombre del grupo</span>
+<input id="game-group-name" type="text" placeholder="Ej. CS2"/>
+</label>
+<label class="field">
+<span class="field-label">Emoji del grupo</span>
+<input id="game-group-emoji" type="text" maxlength="3" placeholder="🎮"/>
+</label>
+</div>
+<label class="field" id="game-group-habit-wrap" style="display:none;">
+<span class="field-label">Vincular hábito (grupo)</span>
+<select id="game-group-linked-habit"></select>
+</label>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Nombre del modo</span>
+<input id="game-mode-name" required type="text" placeholder="Ej. Premier"/>
+</label>
+<label class="field">
+<span class="field-label">Emoji del modo (opcional)</span>
+<input id="game-mode-emoji" type="text" maxlength="3" placeholder="⚔️"/>
+</label>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="game-mode-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+
+<div class="modal-backdrop hidden" id="game-group-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title">Editar grupo</div>
+<button class="icon-btn" id="game-group-close" type="button">✕</button>
+</div>
+<form class="modal-form" id="game-group-form">
+<input id="game-group-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Nombre</span>
+<input id="game-group-edit-name" required type="text"/>
+</label>
+<label class="field">
+<span class="field-label">Emoji</span>
+<input id="game-group-edit-emoji" maxlength="3" type="text"/>
+</label>
+</div>
+<label class="field">
+<span class="field-label">Vincular hábito</span>
+<select id="game-group-edit-habit"></select>
+</label>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="game-group-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+
 <script>
 /* Bookshell BOOT: fallback de navegación + overlay de errores (no toca tus JS) */
 (() => {
@@ -2828,6 +2930,7 @@ if (document.readyState === "loading") {
 <script src="scripts/videos.js" type="module"></script>
 <script src="scripts/recipes.js" type="module"></script>
 <script src="scripts/habits.js" type="module"></script>
+<script src="scripts/games.js" type="module"></script>
 <script src="scripts/dashboard.js" type="module"></script>
 <script src="scripts/media.js" type="module"></script>
 <script src="scripts/world.js" type="module"></script>

@@ -480,6 +480,20 @@
   color: #f8f5ff;
 }
 
+.script-annotation {
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #a78bfa 18%, transparent);
+  border: 1px solid color-mix(in srgb, #a78bfa 40%, transparent);
+  color: #e9d5ff;
+  font-style: italic;
+  box-shadow: 0 0 12px rgba(167, 139, 250, 0.25);
+}
+
+.script-annotation-delim {
+  opacity: .45;
+}
+
 
 .video-inline-annotation-toggle {
   position: sticky;

@@ -49,6 +49,8 @@ let videoCalViewMode = "month";
 let activeScriptVideoId = null;
 let activeVideoDayKey = null;
 let quill = null;
+let scriptAnnotationTimer = null;
+let isApplyingScriptAnnotations = false;
 let scriptDirty = false;
 let scriptSaveTimer = null;
 let wordCountTimer = null;
@@ -75,6 +77,7 @@ let insertType = "link";
 
 const SCRIPT_SAVE_DEBOUNCE = 1000;
 const WORD_COUNT_DEBOUNCE = 200;
+const SCRIPT_ANNOTATION_DEBOUNCE = 160;
 const SCRIPT_PPM_KEY = "bookshell_video_script_ppm_v1";
 const TELEPROMPTER_PPM_KEY = "bookshell_video_teleprompter_ppm_v1";
 
@@ -1047,10 +1050,95 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     window.Quill.register(ResourceBlot, true);
   }
 
+  function buildScriptAnnotationBlots() {
+    if (!window.Quill) return;
+    const Inline = window.Quill.import("blots/inline");
+
+    class ScriptAnnotationBlot extends Inline {
+      static create(value) {
+        const node = super.create();
+        const count = !!value?.count;
+        node.setAttribute("data-count", count ? "true" : "false");
+        node.classList.add("script-annotation");
+        return node;
+      }
+
+      static formats(node) {
+        return {
+          count: node.getAttribute("data-count") === "true"
+        };
+      }
+
+      format(name, value) {
+        if (name === "scriptAnnotation") {
+          if (!value) {
+            super.format(name, false);
+            return;
+          }
+          const count = !!value?.count;
+          this.domNode.setAttribute("data-count", count ? "true" : "false");
+          return;
+        }
+        super.format(name, value);
+      }
+    }
+
+    ScriptAnnotationBlot.blotName = "scriptAnnotation";
+    ScriptAnnotationBlot.tagName = "SPAN";
+    ScriptAnnotationBlot.className = "script-annotation";
+
+    class ScriptAnnotationDelimBlot extends Inline {}
+
+    ScriptAnnotationDelimBlot.blotName = "scriptAnnotationDelim";
+    ScriptAnnotationDelimBlot.tagName = "SPAN";
+    ScriptAnnotationDelimBlot.className = "script-annotation-delim";
+
+    window.Quill.register(ScriptAnnotationBlot, true);
+    window.Quill.register(ScriptAnnotationDelimBlot, true);
+  }
+
+  function applyScriptAnnotationHighlighting() {
+    if (!quill || isApplyingScriptAnnotations) return;
+    isApplyingScriptAnnotations = true;
+    try {
+      const text = quill.getText();
+      const totalLength = quill.getLength();
+      quill.formatText(0, totalLength, "scriptAnnotation", false, "silent");
+      quill.formatText(0, totalLength, "scriptAnnotationDelim", false, "silent");
+
+      const regex = /#([^#\n]+)#/g;
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        const raw = match[1] || "";
+        if (!raw.trim()) continue;
+
+        const start = match.index;
+        const innerStart = start + 1;
+        const innerLen = raw.length;
+        if (innerLen <= 0) continue;
+
+        quill.formatText(innerStart, innerLen, "scriptAnnotation", { count: false }, "silent");
+        quill.formatText(start, 1, "scriptAnnotationDelim", true, "silent");
+        quill.formatText(innerStart + innerLen, 1, "scriptAnnotationDelim", true, "silent");
+      }
+    } finally {
+      isApplyingScriptAnnotations = false;
+    }
+  }
+
+  function scheduleScriptAnnotationHighlighting() {
+    if (!quill) return;
+    if (scriptAnnotationTimer) clearTimeout(scriptAnnotationTimer);
+    scriptAnnotationTimer = setTimeout(() => {
+      applyScriptAnnotationHighlighting();
+    }, SCRIPT_ANNOTATION_DEBOUNCE);
+  }
+
   function initQuill() {
     if (quill || !$videoScriptEditor) return;
     if (!window.Quill) return;
     buildAnnotationBlot();
+    buildScriptAnnotationBlots();
     buildResourceBlot();
     const toolbarContainer = $videoScriptToolbar || false;
 
@@ -1081,6 +1169,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     });
 
     quill.on("text-change", (delta, old, source) => {
+      if (source === "silent") return;
+      scheduleScriptAnnotationHighlighting();
       if (source === "user") {
         scriptDirty = true;
         scheduleWordCountUpdate();
@@ -1347,6 +1437,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
 
     const wordCount = computeWordCount(getScriptContent(), currentCountSettings);
     updateScriptStats(wordCount);
+    scheduleScriptAnnotationHighlighting();
   }
 
   function openScriptView(videoId) {
@@ -3083,6 +3174,7 @@ function createVideoCard(id) {
 
   return card;
 }
+
 
   const frag = document.createDocumentFragment();
 

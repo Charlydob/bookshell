@@ -38,6 +38,11 @@ let filtered = [];
 let donutChart = null;
 let mapChart = null;
 
+let watchedModal = null;
+let watchedModalItemId = null;
+let watchedModalRating = 0;
+
+
 /* ------------------------- State ------------------------- */
 const state = {
   q: "",
@@ -217,6 +222,14 @@ function endOfDay(ts = nowTs()) {
 }
 function isoDay(ts = nowTs()) {
   return new Date(startOfDay(ts)).toISOString().slice(0, 10);
+}
+
+function localDateKey(ts = nowTs()) {
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 function rangeStartTs() {
   const t = nowTs();
@@ -2164,7 +2177,7 @@ function ensurePool(n) {
         </div>
         <div class="media-rating" data-action="rate" tabindex="0" role="slider"
              aria-valuemin="0" aria-valuemax="5" aria-valuenow="0">☆☆☆☆☆</div>
-        <button class="media-icon" data-action="laura" title="Laura">L</button>
+        <button class="media-icon media-eye" data-action="watched" title="Marcar como vista" aria-label="Marcar como vista">👁</button>
         <button class="media-icon" data-action="edit" title="Editar">✎</button>
       </div>
     `;
@@ -2174,8 +2187,11 @@ function ensurePool(n) {
 }
 
 function stars(n) {
-  const r = clamp(n, 0, 5);
-  return "★★★★★☆☆☆☆☆".slice(5 - r, 10 - r);
+  const r = clamp(Number(n) || 0, 0, 5);
+  const full = Math.floor(r);
+  const half = (r - full) >= 0.5 ? 1 : 0;
+  const empty = 5 - full - half;
+  return `${"★".repeat(full)}${half ? "⯨" : ""}${"☆".repeat(Math.max(0, empty))}`;
 }
 
 function subline(it) {
@@ -2189,7 +2205,6 @@ function subline(it) {
   if (it.countryLabel) parts.push(it.countryLabel);
 
   if (it.watchlist) parts.push("Watchlist");
-  if (it.withLaura) parts.push("Laura");
 
   return parts.length ? parts.join(" · ") : "—";
 }
@@ -2282,9 +2297,122 @@ function renderVirtual() {
     rEl.textContent = stars(it.rating);
     rEl.setAttribute("aria-valuenow", String(it.rating || 0));
 
-    const lBtn = row.querySelector("[data-action='laura']");
-    lBtn.classList.toggle("is-on", !!it.withLaura);
   }
+}
+
+function ensureWatchedModal() {
+  if (watchedModal) return watchedModal;
+  watchedModal = document.createElement("div");
+  watchedModal.className = "media-modal hidden media-watched-modal";
+  watchedModal.innerHTML = `
+    <div class="media-modal-backdrop" data-action="close"></div>
+    <div class="media-modal-sheet" role="dialog" aria-modal="true" aria-label="Marcar como vista">
+      <div class="media-modal-head">
+        <div class="media-modal-headtext">
+          <div class="media-modal-title" id="media-watched-title">—</div>
+          <div class="media-modal-sub" id="media-watched-sub">Valora tu vista</div>
+        </div>
+        <button class="media-modal-close" data-action="close" type="button" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="media-modal-body">
+        <section class="media-modal-section">
+          <div class="media-watched-stars" id="media-watched-stars"></div>
+          <div class="media-watched-rating-label" id="media-watched-rating-label">0.0 / 5</div>
+        </section>
+      </div>
+      <div class="media-modal-foot">
+        <button class="btn ghost" data-action="cancel" type="button">Cancelar</button>
+        <button class="btn primary" data-action="save" type="button">Guardar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(watchedModal);
+
+  const starsHost = watchedModal.querySelector("#media-watched-stars");
+  if (starsHost) {
+    for (let i = 1; i <= 5; i += 1) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "media-watched-star";
+      btn.dataset.star = String(i);
+      btn.textContent = "★";
+      btn.addEventListener("click", (event) => {
+        const rect = btn.getBoundingClientRect();
+        const isHalf = (event.clientX - rect.left) < (rect.width / 2);
+        watchedModalRating = clamp((i - 1) + (isHalf ? 0.5 : 1), 0, 5);
+        renderWatchedModalRating();
+      });
+      starsHost.appendChild(btn);
+    }
+  }
+
+  watchedModal.addEventListener("click", (event) => {
+    const actionEl = event.target?.closest?.("[data-action]");
+    const action = actionEl?.dataset?.action;
+    if (!action) return;
+    if (action === "close" || action === "cancel") {
+      closeWatchedModal();
+      return;
+    }
+    if (action === "save") {
+      confirmWatchedModal();
+    }
+  });
+
+  return watchedModal;
+}
+
+function renderWatchedModalRating() {
+  if (!watchedModal) return;
+  const stars = Array.from(watchedModal.querySelectorAll(".media-watched-star"));
+  stars.forEach((star, idx) => {
+    const pos = idx + 1;
+    let stateClass = "is-empty";
+    if (watchedModalRating >= pos) stateClass = "is-full";
+    else if (watchedModalRating >= pos - 0.5) stateClass = "is-half";
+    star.classList.remove("is-full", "is-half", "is-empty");
+    star.classList.add(stateClass);
+  });
+  const label = watchedModal.querySelector("#media-watched-rating-label");
+  if (label) label.textContent = `${watchedModalRating.toFixed(1)} / 5`;
+}
+
+function openWatchedModal(id) {
+  const it = findItem(id);
+  if (!it) return;
+  const modal = ensureWatchedModal();
+  watchedModalItemId = id;
+  watchedModalRating = clamp(Number(it.rating) || 0, 0, 5);
+  const titleEl = modal.querySelector("#media-watched-title");
+  const subEl = modal.querySelector("#media-watched-sub");
+  if (titleEl) titleEl.textContent = it.title || "Título";
+  if (subEl) subEl.textContent = it.year ? `${it.year} · Marca vista y valoración` : "Marca vista y valoración";
+  renderWatchedModalRating();
+  modal.classList.remove("hidden");
+}
+
+function closeWatchedModal() {
+  watchedModal?.classList.add("hidden");
+  watchedModalItemId = null;
+}
+
+function confirmWatchedModal() {
+  if (!watchedModalItemId) return;
+  const it = findItem(watchedModalItemId);
+  if (!it) return;
+  const today = localDateKey();
+  const dates = normalizeWatchDates(it.watchDates, it.watchedAt);
+  if (!dates.includes(today)) dates.push(today);
+  dates.sort();
+  updateItem(watchedModalItemId, {
+    watchlist: false,
+    watchedAt: startOfDay(nowTs()),
+    watchedOnLocal: today,
+    watchDates: dates,
+    status: "watched",
+    rating: clamp(watchedModalRating, 0, 5)
+  });
+  closeWatchedModal();
 }
 
 /* ------------------------- Row interactions ------------------------- */
@@ -2301,10 +2429,8 @@ function bindRowInteractions() {
 
     const act = btn.dataset.action;
 
-    if (act === "laura") {
-      const it = findItem(id);
-      if (!it) return;
-      updateItem(id, { withLaura: !it.withLaura });
+    if (act === "watched") {
+      openWatchedModal(id);
       return;
     }
 

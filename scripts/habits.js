@@ -489,6 +489,21 @@ function runSplitSessionSelfChecks() {
   console.assert(approx(c4.get("2026-02-10") || 0, 60) && approx(c4.get("2026-02-11") || 0, 1440) && approx(c4.get("2026-02-12") || 0, 60), "[Habits split] multi-day should split across all boundaries");
 }
 runSplitSessionSelfChecks();
+
+function dbgSimulateSessionSplit() {
+  const start = new Date(2026, 1, 11, 23, 50, 0, 0).getTime();
+  const end = new Date(2026, 1, 12, 0, 10, 0, 0).getTime();
+  const split = splitSessionByDay(start, end);
+  const rounded = {};
+  split.forEach((minutes, dayKey) => {
+    rounded[dayKey] = Math.round(minutes);
+  });
+  const expected = { "2026-02-11": 10, "2026-02-12": 10 };
+  console.log("[HABIT] dbgSimulateSessionSplit", { expected, obtained: rounded, startTs: start, endTs: end });
+  return rounded;
+}
+window.dbgSimulateSessionSplit = dbgSimulateSessionSplit;
+
 // === Sesiones v2 (ahorro de storage) ===
 // Antes (v1): habitSessions = { sessionId: {habitId, dateKey, durationSec, ...} }
 // Ahora  (v2): habitSessions = { habitId: { dateKey: totalSec } }
@@ -7420,7 +7435,19 @@ function stopSession(assignHabitId = null, silent = false) {
 
   // Auto-asignación (Shortcuts / enlace)
   if (target && habits?.[target] && !habits[target]?.archived) {
-    addHabitTimeSec(target, dateKey, duration, { startTs, endTs });
+    const splitByDay = splitSessionByDay(startTs, endTs);
+    const splitSummary = {};
+    if (splitByDay.size > 1) {
+      splitByDay.forEach((minutes, day) => {
+        splitSummary[day] = Math.round(minutes);
+      });
+      console.log("[HABIT] split across days", splitSummary);
+    }
+    splitByDay.forEach((minutes, day) => {
+      const sec = Math.max(0, Math.round(minutes * 60));
+      if (sec > 0) addHabitTimeSec(target, day, sec, { startTs, endTs });
+    });
+    console.log("[HABIT] session stop", { startTs, endTs, splitByDay: splitSummary });
     localStorage.setItem(LAST_HABIT_KEY, target);
     pendingSessionDuration = 0;
     if (!silent) showHabitToast(`Asignado: ${habits[target]?.name || "hábito"} · ${Math.round(duration / 60)}m`);
@@ -7541,8 +7568,15 @@ function assignSession(habitId) {
   }
   const endTs = Date.now();
   const startTs = endTs - pendingSessionDuration * 1000;
-  const dateKey = dateKeyLocal(new Date(startTs));
-  addHabitTimeSec(habitId, dateKey, pendingSessionDuration, { startTs, endTs });
+  const splitByDay = splitSessionByDay(startTs, endTs);
+  const splitSummary = {};
+  splitByDay.forEach((minutes, day) => {
+    splitSummary[day] = Math.round(minutes);
+    const sec = Math.max(0, Math.round(minutes * 60));
+    if (sec > 0) addHabitTimeSec(habitId, day, sec, { startTs, endTs });
+  });
+  console.log("[HABIT] session stop", { startTs, endTs, splitByDay: splitSummary });
+  if (splitByDay.size > 1) console.log("[HABIT] split across days", splitSummary);
 
   localStorage.setItem(LAST_HABIT_KEY, habitId);
   pendingSessionDuration = 0;

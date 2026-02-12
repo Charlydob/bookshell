@@ -289,6 +289,42 @@
   border-color: rgba(255, 0, 0, 0.507);
 }
 
+.media-eye{
+  font-size: 15px;
+}
+
+.media-watched-stars{
+  display:flex;
+  justify-content:center;
+  gap: 10px;
+}
+
+.media-watched-star{
+  appearance:none;
+  border:none;
+  background: transparent;
+  color: rgba(255,255,255,.24);
+  font-size: 34px;
+  cursor:pointer;
+  line-height: 1;
+  padding: 2px;
+  text-shadow: 0 4px 14px rgba(0,0,0,.35);
+}
+
+.media-watched-star.is-full{ color: #ffd86b; }
+.media-watched-star.is-half{
+  color: transparent;
+  background: linear-gradient(90deg, #ffd86b 0 50%, rgba(255,255,255,.24) 50% 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+.media-watched-rating-label{
+  margin-top: 8px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--txt-soft);
+}
+
 /* FAB: centro inferior, encima del nav */
 .media-fab{
   position: fixed;

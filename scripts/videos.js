@@ -51,6 +51,7 @@ let activeVideoDayKey = null;
 let quill = null;
 let scriptAnnotationTimer = null;
 let isApplyingScriptAnnotations = false;
+let isDelimiterRevealMode = false;
 let scriptDirty = false;
 let scriptSaveTimer = null;
 let wordCountTimer = null;
@@ -82,13 +83,9 @@ const SCRIPT_PPM_KEY = "bookshell_video_script_ppm_v1";
 const TELEPROMPTER_PPM_KEY = "bookshell_video_teleprompter_ppm_v1";
 
 const DEFAULT_COUNT_SETTINGS = {
-  countHeadings: false,
-  countHashtags: true,
-  countLinks: true,
-  countUrls: false,
-  countLists: true,
-  excludeAnnotations: true,
-  ignoreTags: true
+  headings: true,
+  hashtags: true,
+  quotes: true
 };
 
 const STATE_STORAGE_KEY = "bookshell_video_state_v1";
@@ -847,22 +844,22 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   }
 
   function getVideoCountSettings(video) {
+    const legacy = video?.script?.countSettings || {};
+    const scoped = video?.script?.settings?.scriptCount || {};
     return {
       ...DEFAULT_COUNT_SETTINGS,
-      ...(video?.script?.countSettings || {})
+      headings: scoped.headings ?? legacy.countHeadings ?? DEFAULT_COUNT_SETTINGS.headings,
+      hashtags: scoped.hashtags ?? legacy.countHashtags ?? DEFAULT_COUNT_SETTINGS.hashtags,
+      quotes: scoped.quotes ?? legacy.countQuotes ?? DEFAULT_COUNT_SETTINGS.quotes
     };
   }
 
   function getCountSummary(settings) {
     const counting = [];
     const excluding = [];
-    if (settings.countHeadings) counting.push("headings"); else excluding.push("headings");
-    if (settings.countHashtags) counting.push("hashtags"); else excluding.push("hashtags");
-    if (settings.countLinks) counting.push("links"); else excluding.push("links");
-    if (settings.countUrls) counting.push("URLs"); else excluding.push("URLs");
-    if (settings.countLists) counting.push("listas"); else excluding.push("listas");
-    if (settings.excludeAnnotations) excluding.push("anotaciones"); else counting.push("anotaciones");
-    if (settings.ignoreTags) excluding.push("tags [PAUSA]"); else counting.push("tags [PAUSA]");
+    if (settings.headings) counting.push("headings"); else excluding.push("headings");
+    if (settings.hashtags) counting.push("hashtags"); else excluding.push("hashtags");
+    if (settings.quotes) counting.push("citas"); else excluding.push("citas");
     return `Contando: ${counting.join(", ") || "texto"} · Excluyendo: ${excluding.join(", ") || "nada"}`;
   }
 
@@ -872,9 +869,6 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     return cleaned.match(/[\p{L}\p{N}#@]+(?:['’\-][\p{L}\p{N}]+)*/gu) || [];
   }
 
-  function isUrlToken(token) {
-    return /^(https?:\/\/|www\.)/i.test(token) || /\.[a-z]{2,}$/i.test(token);
-  }
 
   function hashInlineAnnotationId(value) {
     let hash = 2166136261;
@@ -888,66 +882,42 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
 
   function parseInlineAnnotations(rawText) {
     const text = String(rawText || "");
-    const segments = [];
     const annotations = [];
-    let cursor = 0;
-    while (cursor < text.length) {
-      const openIdx = text.indexOf("#", cursor);
-      if (openIdx < 0) {
-        segments.push({ type: "text", text: text.slice(cursor) });
-        break;
-      }
-      const closeIdx = text.indexOf("#", openIdx + 1);
-      if (closeIdx < 0) {
-        segments.push({ type: "text", text: text.slice(cursor) });
-        break;
-      }
-      if (openIdx > cursor) {
-        segments.push({ type: "text", text: text.slice(cursor, openIdx) });
-      }
-      const value = text.slice(openIdx + 1, closeIdx);
-      const id = hashInlineAnnotationId(`${openIdx}:${closeIdx}:${value}`);
-      const ann = { id, text: value, start: openIdx, end: closeIdx + 1 };
-      annotations.push(ann);
-      segments.push({ type: "annotation", id, text: value, start: openIdx, end: closeIdx + 1 });
-      cursor = closeIdx + 1;
+    const regex = /#([^#\n]+)#/g;
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      const value = (match[1] || "").trim();
+      if (!value) continue;
+      annotations.push({
+        id: hashInlineAnnotationId(`${match.index}:${value}`),
+        text: value,
+        start: match.index,
+        end: match.index + match[0].length
+      });
     }
-    return { text, segments, annotations };
+    return { annotations };
   }
 
   function getInlineMetaMap(video) {
     return { ...(video?.script?.annotationsMeta || {}) };
   }
 
-  function countWordsFromText(text, settings) {
-    let value = String(text || "");
-    if (settings.ignoreTags) value = value.replace(/\[[^\]]+\]/g, " ");
-    const tokens = getWordTokens(value);
+  function computeWordCount() {
+    if (!quill) return 0;
+    const text = quill.getText();
+    const tokens = getWordTokens(text);
     let count = 0;
+    let cursor = 0;
     tokens.forEach((token) => {
-      if (!settings.countHashtags && token.startsWith("#")) return;
-      if (!settings.countUrls && isUrlToken(token)) return;
+      const idx = text.indexOf(token, cursor);
+      if (idx < 0) return;
+      cursor = idx + token.length;
+      const format = quill.getFormat(idx, token.length);
+      if (!currentCountSettings?.hashtags && format.scriptAnnotation) return;
+      if (!currentCountSettings?.quotes && format.quoteCard) return;
+      if (!currentCountSettings?.headings && format.header) return;
       count += 1;
     });
-    return count;
-  }
-
-  function computeWordCount(content, settings) {
-    const rawText = quill ? quill.getText() : "";
-    const parsed = parseInlineAnnotations(rawText);
-    const meta = inlineAnnotationMeta || {};
-
-    let count = 0;
-    parsed.segments.forEach((segment) => {
-      if (segment.type === "annotation") {
-        if (settings.excludeAnnotations) return;
-        if (!meta?.[segment.id]?.countInWords) return;
-        count += countWordsFromText(segment.text, settings);
-        return;
-      }
-      count += countWordsFromText(segment.text, settings);
-    });
-
     return count;
   }
 
@@ -982,9 +952,9 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   function renderCountToggles(settings) {
     if (!$videoScriptCountToggles) return;
     const items = [
-      { key: "countHeadings", label: "Contar headings" },
-      { key: "countHashtags", label: "Contar hashtags" },
-
+      { key: "headings", label: "Contar headings" },
+      { key: "hashtags", label: "Contar hashtags" },
+      { key: "quotes", label: "Contar citas" }
     ];
 
     $videoScriptCountToggles.innerHTML = "";
@@ -1054,72 +1024,67 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     if (!window.Quill) return;
     const Inline = window.Quill.import("blots/inline");
 
-    class ScriptAnnotationBlot extends Inline {
-      static create(value) {
-        const node = super.create();
-        const count = !!value?.count;
-        node.setAttribute("data-count", count ? "true" : "false");
-        node.classList.add("script-annotation");
-        return node;
-      }
-
-      static formats(node) {
-        return {
-          count: node.getAttribute("data-count") === "true"
-        };
-      }
-
-      format(name, value) {
-        if (name === "scriptAnnotation") {
-          if (!value) {
-            super.format(name, false);
-            return;
-          }
-          const count = !!value?.count;
-          this.domNode.setAttribute("data-count", count ? "true" : "false");
-          return;
-        }
-        super.format(name, value);
-      }
-    }
-
+    class ScriptAnnotationBlot extends Inline {}
     ScriptAnnotationBlot.blotName = "scriptAnnotation";
     ScriptAnnotationBlot.tagName = "SPAN";
     ScriptAnnotationBlot.className = "script-annotation";
 
     class ScriptAnnotationDelimBlot extends Inline {}
-
     ScriptAnnotationDelimBlot.blotName = "scriptAnnotationDelim";
     ScriptAnnotationDelimBlot.tagName = "SPAN";
     ScriptAnnotationDelimBlot.className = "script-annotation-delim";
 
+    class QuoteCardBlot extends Inline {}
+    QuoteCardBlot.blotName = "quoteCard";
+    QuoteCardBlot.tagName = "SPAN";
+    QuoteCardBlot.className = "script-quote";
+
+    class QuoteCardDelimBlot extends Inline {}
+    QuoteCardDelimBlot.blotName = "quoteCardDelim";
+    QuoteCardDelimBlot.tagName = "SPAN";
+    QuoteCardDelimBlot.className = "script-quote-delim";
+
     window.Quill.register(ScriptAnnotationBlot, true);
     window.Quill.register(ScriptAnnotationDelimBlot, true);
+    window.Quill.register(QuoteCardBlot, true);
+    window.Quill.register(QuoteCardDelimBlot, true);
   }
 
   function applyScriptAnnotationHighlighting() {
-    if (!quill || isApplyingScriptAnnotations) return;
+    if (!quill || isApplyingScriptAnnotations || isDelimiterRevealMode) return;
     isApplyingScriptAnnotations = true;
     try {
       const text = quill.getText();
       const totalLength = quill.getLength();
       quill.formatText(0, totalLength, "scriptAnnotation", false, "silent");
       quill.formatText(0, totalLength, "scriptAnnotationDelim", false, "silent");
+      quill.formatText(0, totalLength, "quoteCard", false, "silent");
+      quill.formatText(0, totalLength, "quoteCardDelim", false, "silent");
 
-      const regex = /#([^#\n]+)#/g;
+      const annRegex = /#([^#\n]+)#/g;
       let match;
-      while ((match = regex.exec(text)) !== null) {
-        const raw = match[1] || "";
-        if (!raw.trim()) continue;
-
+      while ((match = annRegex.exec(text)) !== null) {
+        const raw = (match[1] || "").trim();
+        if (!raw) continue;
         const start = match.index;
         const innerStart = start + 1;
-        const innerLen = raw.length;
-        if (innerLen <= 0) continue;
-
-        quill.formatText(innerStart, innerLen, "scriptAnnotation", { count: false }, "silent");
+        const innerLen = match[1].length;
+        quill.formatText(innerStart, innerLen, "scriptAnnotation", true, "silent");
         quill.formatText(start, 1, "scriptAnnotationDelim", true, "silent");
         quill.formatText(innerStart + innerLen, 1, "scriptAnnotationDelim", true, "silent");
+      }
+
+      const quoteRegex = /\[\[quote\]\]([\s\S]+?)\[\[\/quote\]\]/gi;
+      while ((match = quoteRegex.exec(text)) !== null) {
+        const start = match.index;
+        const open = "[[quote]]";
+        const close = "[[/quote]]";
+        const innerStart = start + open.length;
+        const innerLen = match[1].length;
+        if (!match[1].trim()) continue;
+        quill.formatText(innerStart, innerLen, "quoteCard", true, "silent");
+        quill.formatText(start, open.length, "quoteCardDelim", true, "silent");
+        quill.formatText(innerStart + innerLen, close.length, "quoteCardDelim", true, "silent");
       }
     } finally {
       isApplyingScriptAnnotations = false;
@@ -1127,11 +1092,44 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   }
 
   function scheduleScriptAnnotationHighlighting() {
-    if (!quill) return;
+    if (!quill || isDelimiterRevealMode) return;
     if (scriptAnnotationTimer) clearTimeout(scriptAnnotationTimer);
     scriptAnnotationTimer = setTimeout(() => {
       applyScriptAnnotationHighlighting();
+      scheduleWordCountUpdate();
     }, SCRIPT_ANNOTATION_DEBOUNCE);
+  }
+
+  function findFormattedRange(index, formatName) {
+    if (!quill) return null;
+    const total = quill.getLength();
+    let start = index;
+    while (start > 0 && quill.getFormat(start - 1, 1)[formatName]) start -= 1;
+    let end = index;
+    while (end < total && quill.getFormat(end, 1)[formatName]) end += 1;
+    if (end <= start) return null;
+    return { start, length: end - start };
+  }
+
+  function revealDelimitedFormat(formatName, open, close) {
+    if (!quill) return;
+    const range = quill.getSelection(true);
+    if (!range) return;
+    const target = findFormattedRange(range.index, formatName);
+    if (!target) return;
+    const text = quill.getText(target.start, target.length);
+    isDelimiterRevealMode = true;
+    quill.deleteText(target.start, target.length, "silent");
+    quill.insertText(target.start, `${open}${text}${close}`, "silent");
+    quill.setSelection(target.start + open.length, text.length, "silent");
+  }
+
+  function closeDelimiterRevealMode() {
+    if (!isDelimiterRevealMode) return;
+    isDelimiterRevealMode = false;
+    scheduleScriptAnnotationHighlighting();
+    scriptDirty = true;
+    scheduleScriptSave(false);
   }
 
   function initQuill() {
@@ -1170,7 +1168,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
 
     quill.on("text-change", (delta, old, source) => {
       if (source === "silent") return;
-      scheduleScriptAnnotationHighlighting();
+      if (!isDelimiterRevealMode) scheduleScriptAnnotationHighlighting();
       if (source === "user") {
         scriptDirty = true;
         scheduleWordCountUpdate();
@@ -1185,6 +1183,13 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     quill.root.addEventListener("focusout", () => {
       scriptEditorFocused = false;
       hideAnnotationFab();
+      closeDelimiterRevealMode();
+    });
+
+    document.addEventListener("pointerdown", (event) => {
+      if (!isDelimiterRevealMode) return;
+      if (event.target && quill.root.contains(event.target)) return;
+      closeDelimiterRevealMode();
     });
 
     quill.root.addEventListener("click", (event) => {
@@ -1197,6 +1202,18 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         } else {
           renderInlineAnnotationToggle(null);
         }
+      }
+
+      const quoteTarget = event.target?.closest?.(".script-quote");
+      if (quoteTarget) {
+        revealDelimitedFormat("quoteCard", "[[quote]]", "[[/quote]]");
+        return;
+      }
+
+      const annotationTarget = event.target?.closest?.(".script-annotation");
+      if (annotationTarget) {
+        revealDelimitedFormat("scriptAnnotation", "#", "#");
+        return;
       }
 
       const target = event.target?.closest?.(".video-annotation");
@@ -1262,7 +1279,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     if (!quill || !currentCountSettings) return;
     if (wordCountTimer) clearTimeout(wordCountTimer);
     wordCountTimer = setTimeout(() => {
-      const wordCount = computeWordCount(getScriptContent(), currentCountSettings);
+      const wordCount = computeWordCount();
       updateScriptStats(wordCount);
     }, WORD_COUNT_DEBOUNCE);
   }
@@ -1282,7 +1299,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     if (!activeScriptVideoId || !currentCountSettings) return;
     try {
       await update(ref(db, `${VIDEOS_PATH}/${activeScriptVideoId}/script`), {
-        countSettings: currentCountSettings
+        countSettings: currentCountSettings,
+        "settings/scriptCount": currentCountSettings
       });
     } catch (err) {
       console.error("Error guardando settings de conteo", err);
@@ -1306,7 +1324,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     if (!activeScriptVideoId || !quill) return;
     if (!scriptDirty) return;
     const content = getScriptContent();
-    const wordCount = computeWordCount(content, currentCountSettings || DEFAULT_COUNT_SETTINGS);
+    const wordCount = computeWordCount();
     const now = Date.now();
     const prevWords = Number(videos?.[activeScriptVideoId]?.script?.wordCount || videos?.[activeScriptVideoId]?.scriptWords || 0);
     const diffWords = wordCount - prevWords;
@@ -1327,7 +1345,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         "script/annotationsMeta": nextMeta,
         "script/updatedAt": now,
         "script/wordCount": wordCount,
-        "script/countSettings": currentCountSettings || DEFAULT_COUNT_SETTINGS
+        "script/countSettings": currentCountSettings || DEFAULT_COUNT_SETTINGS,
+        "script/settings/scriptCount": currentCountSettings || DEFAULT_COUNT_SETTINGS
       });
       if (diffWords !== 0) await updateWordLogForScript(activeScriptVideoId, diffWords);
       scriptDirty = false;
@@ -1435,7 +1454,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       quill.setText("");
     }
 
-    const wordCount = computeWordCount(getScriptContent(), currentCountSettings);
+    const wordCount = computeWordCount();
     updateScriptStats(wordCount);
     scheduleScriptAnnotationHighlighting();
   }
@@ -2030,12 +2049,12 @@ const LINK_CATEGORY_LABELS = {
     if (!quill || !text) return;
     const range = quill.getSelection(true);
     const insertIndex = range ? range.index : quill.getLength();
-    const quoteText = `\n“${text.trim()}”\n`;
     const pageBit = Number(page) > 0 ? `, p. ${Number(page)}` : "";
-    const metaText = `— ${bookTitle || "Libro"}${pageBit}\n`;
-    quill.insertText(insertIndex, quoteText, { blockquote: true, resource: "1" }, "user");
-    quill.insertText(insertIndex + quoteText.length, metaText, { resource: "1", resourceMeta: "1", resourceBookId: bookId || "" }, "user");
-    quill.setSelection(insertIndex + quoteText.length + metaText.length, 0, "user");
+    const metaText = ` — ${bookTitle || "Libro"}${pageBit}`;
+    const rawQuote = `\n[[quote]]${text.trim()}${metaText}[[/quote]]\n`;
+    quill.insertText(insertIndex, rawQuote, { resource: "1", resourceMeta: "1", resourceBookId: bookId || "" }, "user");
+    quill.setSelection(insertIndex + rawQuote.length, 0, "user");
+    scheduleScriptAnnotationHighlighting();
   }
 
   function openLinksView() {
@@ -2231,7 +2250,7 @@ const LINK_CATEGORY_LABELS = {
     if (!$teleprompterBody || !$teleprompterContent) return;
     const ppm = Math.max(60, Number($teleprompterSpeed?.value) || 150);
     saveStoredPpm(TELEPROMPTER_PPM_KEY, ppm);
-    const wordCount = computeWordCount(getScriptContent(), currentCountSettings || DEFAULT_COUNT_SETTINGS);
+    const wordCount = computeWordCount();
     const durationSec = Math.max(10, Math.round((wordCount / ppm) * 60));
     const scrollMax = Math.max(0, $teleprompterBody.scrollHeight - $teleprompterBody.clientHeight);
     const pxPerSec = scrollMax > 0 ? scrollMax / durationSec : 0;
@@ -2377,21 +2396,25 @@ const LINK_CATEGORY_LABELS = {
   if ($videoScriptTeleprompter) $videoScriptTeleprompter.addEventListener("click", openTeleprompterView);
   if ($videoToolbarAnnotate) {
     $videoToolbarAnnotate.addEventListener("click", () => {
-      const range = quill?.getSelection();
+      const range = quill?.getSelection(true);
       if (!range || range.length <= 0) return;
-      annotationRange = range;
-      annotationSelectionText = getSelectionText(range);
-      openAnnotationPopup({ existing: false, selectedText: annotationSelectionText });
+      const selected = quill.getText(range.index, range.length);
+      quill.deleteText(range.index, range.length, "user");
+      quill.insertText(range.index, `#${selected}#`, "user");
+      quill.setSelection(range.index + 1, selected.length, "user");
+      scheduleScriptAnnotationHighlighting();
     });
   }
   if ($annotationFab) {
     $annotationFab.addEventListener("click", () => {
-      const range = quill?.getSelection();
+      const range = quill?.getSelection(true);
       if (!range || range.length <= 0) return;
-      annotationRange = range;
-      annotationSelectionText = getSelectionText(range);
-      openAnnotationPopup({ existing: false, selectedText: annotationSelectionText });
+      const selected = quill.getText(range.index, range.length);
+      quill.deleteText(range.index, range.length, "user");
+      quill.insertText(range.index, `#${selected}#`, "user");
+      quill.setSelection(range.index + 1, selected.length, "user");
       hideAnnotationFab();
+      scheduleScriptAnnotationHighlighting();
     });
   }
   if ($annotationCancel) $annotationCancel.addEventListener("click", closeAnnotationPopup);

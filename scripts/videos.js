@@ -473,6 +473,12 @@ if ($viewVideos) {
   const $videoToolbarAnnotate = document.getElementById("video-toolbar-annotate");
   const $videoToolbarMoreToggle = document.getElementById("video-toolbar-more-toggle");
   const $videoToolbarMoreMenu = document.getElementById("video-toolbar-more-menu");
+  const DEBUG_VIDEO_SCRIPT = Boolean(window.DEBUG_VIDEO_SCRIPT);
+
+  function debugVideoScriptLog(...args) {
+    if (!DEBUG_VIDEO_SCRIPT) return;
+    console.log(...args);
+  }
 
   const $annotationPopup = document.getElementById("video-annotation-popup");
   const $annotationTitle = document.getElementById("video-annotation-title");
@@ -977,18 +983,18 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     });
 
     breakdown.total = breakdown.normal + breakdown.headings + breakdown.links + breakdown.hashtags + breakdown.quotes;
-    console.log("[COUNT] settings", currentCountSettings);
-    console.log("[COUNT] breakdown", breakdown);
+    debugVideoScriptLog("[COUNT] settings", currentCountSettings);
+    debugVideoScriptLog("[COUNT] breakdown", breakdown);
     return breakdown.total;
   }
 
   function dumpScriptStructure() {
     if (!quill) return;
     const summary = dumpOpsSummary(quill);
-    console.log("[SCRIPT] ops summary", summary);
-    console.log("[SCRIPT] heading format detected via attrs.header", summary.some((run) => !!run?.attrs?.header));
-    console.log("[SCRIPT] annotation cards:", document.querySelectorAll('.script-annotation-card').length);
-    console.log("[SCRIPT] quote cards:", document.querySelectorAll('.script-quote-card').length);
+    debugVideoScriptLog("[SCRIPT] ops summary", summary);
+    debugVideoScriptLog("[SCRIPT] heading format detected via attrs.header", summary.some((run) => !!run?.attrs?.header));
+    debugVideoScriptLog("[SCRIPT] annotation cards:", document.querySelectorAll('.script-annotation-card').length);
+    debugVideoScriptLog("[SCRIPT] quote cards:", document.querySelectorAll('.script-quote-card').length);
   }
 
   function renderInlineAnnotationToggle(ann) {
@@ -1317,26 +1323,50 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     quill = new window.Quill($videoScriptEditor, {
       theme: "snow",
       modules: {
-        toolbar: {
-          container: toolbarContainer,
-          handlers: {
-            undo() {
-              quill.history.undo();
-            },
-            redo() {
-              quill.history.redo();
-            }
-          }
-        },
-        history: { delay: 1000, maxStack: 100, userOnly: true }
+        toolbar: toolbarContainer,
+        history: { delay: 800, maxStack: 200, userOnly: true }
       },
+      formats: [
+        "bold",
+        "italic",
+        "underline",
+        "header",
+        "list",
+        "bullet",
+        "link",
+        "blockquote",
+        "background",
+        "annotation",
+        "resource",
+        "annotationCard",
+        "quoteCard"
+      ],
       placeholder: "Escribe el guion aquí..."
     });
     window.__videoQuill = quill;
-    console.log("[SCRIPT] quill init", quill);
-    console.log("[SCRIPT] formats whitelist", quill.options.formats);
-    console.log("[SCRIPT] contents ops sample", (quill.getContents().ops || []).slice(0, 20));
-    console.log("[SCRIPT] dumpOpsSummary", dumpOpsSummary(quill));
+    window.__videoToolbarEl = toolbarContainer;
+
+    const toolbarModule = quill.getModule("toolbar");
+    if (toolbarModule) {
+      toolbarModule.addHandler("undo", () => quill.history.undo());
+      toolbarModule.addHandler("redo", () => quill.history.redo());
+    }
+
+    quill.keyboard.addBinding({ key: "z", shortKey: true }, () => {
+      quill.history.undo();
+      return false;
+    });
+    quill.keyboard.addBinding({ key: "z", shortKey: true, shiftKey: true }, () => {
+      quill.history.redo();
+      return false;
+    });
+
+    debugVideoScriptLog("[VIDEO] quill ready", quill);
+    debugVideoScriptLog("[VIDEO] toolbar module", toolbarModule);
+    debugVideoScriptLog("[VIDEO] formats", quill.options.formats);
+    debugVideoScriptLog("[VIDEO] modules", quill.options.modules);
+    debugVideoScriptLog("[SCRIPT] contents ops sample", (quill.getContents().ops || []).slice(0, 20));
+    debugVideoScriptLog("[SCRIPT] dumpOpsSummary", dumpOpsSummary(quill));
 
     quill.on("selection-change", (range) => {
       const focused = quill.hasFocus() && scriptEditorFocused;

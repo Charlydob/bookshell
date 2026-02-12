@@ -59,6 +59,9 @@ let currentScriptTitle = "";
 let annotationRange = null;
 let annotationEditingId = null;
 let annotationSelectionText = "";
+let scriptEditorFocused = false;
+let inlineAnnotationMeta = {};
+let inlineAnnotationActiveId = null;
 let teleprompterTimer = null;
 let teleprompterPlaying = false;
 let teleprompterSentences = [];
@@ -478,6 +481,9 @@ if ($viewVideos) {
   const $annotationDelete = document.getElementById("video-annotation-delete");
   const $annotationSave = document.getElementById("video-annotation-save");
   const $annotationFab = document.getElementById("video-annotate-fab");
+  const $inlineAnnotationToggle = document.getElementById("video-inline-annotation-toggle");
+  const $inlineAnnotationText = document.getElementById("video-inline-annotation-text");
+  const $inlineAnnotationCheckbox = document.getElementById("video-inline-annotation-checkbox");
 
   const $viewTeleprompter = document.getElementById("view-video-teleprompter");
   const $teleprompterBack = document.getElementById("video-teleprompter-back");
@@ -867,55 +873,93 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     return /^(https?:\/\/|www\.)/i.test(token) || /\.[a-z]{2,}$/i.test(token);
   }
 
-  function computeWordCount(content, settings) {
-    const delta = content?.ops ? content : { ops: [] };
-    const lines = [];
-    let currentLine = { parts: [], attrs: {} };
+  function hashInlineAnnotationId(value) {
+    let hash = 2166136261;
+    const text = String(value || "");
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `ann_${(hash >>> 0).toString(36)}`;
+  }
 
-    delta.ops.forEach((op) => {
-      if (typeof op.insert !== "string") return;
-      const pieces = op.insert.split("\n");
-      pieces.forEach((piece, idx) => {
-        if (piece) {
-          currentLine.parts.push({ text: piece, attrs: op.attributes || {} });
-        }
-        if (idx < pieces.length - 1) {
-          currentLine.attrs = op.attributes || {};
-          lines.push(currentLine);
-          currentLine = { parts: [], attrs: {} };
-        }
-      });
+  function parseInlineAnnotations(rawText) {
+    const text = String(rawText || "");
+    const segments = [];
+    const annotations = [];
+    let cursor = 0;
+    while (cursor < text.length) {
+      const openIdx = text.indexOf("#", cursor);
+      if (openIdx < 0) {
+        segments.push({ type: "text", text: text.slice(cursor) });
+        break;
+      }
+      const closeIdx = text.indexOf("#", openIdx + 1);
+      if (closeIdx < 0) {
+        segments.push({ type: "text", text: text.slice(cursor) });
+        break;
+      }
+      if (openIdx > cursor) {
+        segments.push({ type: "text", text: text.slice(cursor, openIdx) });
+      }
+      const value = text.slice(openIdx + 1, closeIdx);
+      const id = hashInlineAnnotationId(`${openIdx}:${closeIdx}:${value}`);
+      const ann = { id, text: value, start: openIdx, end: closeIdx + 1 };
+      annotations.push(ann);
+      segments.push({ type: "annotation", id, text: value, start: openIdx, end: closeIdx + 1 });
+      cursor = closeIdx + 1;
+    }
+    return { text, segments, annotations };
+  }
+
+  function getInlineMetaMap(video) {
+    return { ...(video?.script?.annotationsMeta || {}) };
+  }
+
+  function countWordsFromText(text, settings) {
+    let value = String(text || "");
+    if (settings.ignoreTags) value = value.replace(/\[[^\]]+\]/g, " ");
+    const tokens = getWordTokens(value);
+    let count = 0;
+    tokens.forEach((token) => {
+      if (!settings.countHashtags && token.startsWith("#")) return;
+      if (!settings.countUrls && isUrlToken(token)) return;
+      count += 1;
     });
-    if (currentLine.parts.length) lines.push(currentLine);
+    return count;
+  }
+
+  function computeWordCount(content, settings) {
+    const rawText = quill ? quill.getText() : "";
+    const parsed = parseInlineAnnotations(rawText);
+    const meta = inlineAnnotationMeta || {};
 
     let count = 0;
-
-    lines.forEach((line) => {
-      const isHeading = !!line.attrs?.header;
-      const isList = !!line.attrs?.list;
-      if (isHeading && !settings.countHeadings) return;
-      if (isList && !settings.countLists) return;
-
-      line.parts.forEach((part) => {
-        if (settings.excludeAnnotations && part.attrs?.annotation) return;
-        if (part.attrs?.resource || part.attrs?.resourceMeta) return;
-        if (part.attrs?.link && !settings.countLinks) return;
-
-        let text = part.text || "";
-        if (settings.ignoreTags) {
-          text = text.replace(/\[[^\]]+\]/g, " ");
-        }
-
-        const tokens = getWordTokens(text);
-        tokens.forEach((token) => {
-          if (!settings.countHashtags && token.startsWith("#")) return;
-          if (!settings.countUrls && isUrlToken(token)) return;
-          count += 1;
-        });
-      });
+    parsed.segments.forEach((segment) => {
+      if (segment.type === "annotation") {
+        if (settings.excludeAnnotations) return;
+        if (!meta?.[segment.id]?.countInWords) return;
+        count += countWordsFromText(segment.text, settings);
+        return;
+      }
+      count += countWordsFromText(segment.text, settings);
     });
 
     return count;
+  }
+
+  function renderInlineAnnotationToggle(ann) {
+    if (!$inlineAnnotationToggle || !$inlineAnnotationCheckbox || !$inlineAnnotationText) return;
+    if (!ann) {
+      inlineAnnotationActiveId = null;
+      $inlineAnnotationToggle.classList.add("hidden");
+      return;
+    }
+    inlineAnnotationActiveId = ann.id;
+    const enabled = !!inlineAnnotationMeta?.[ann.id]?.countInWords;
+    $inlineAnnotationText.textContent = ann.text || "(vacía)";
+    $inlineAnnotationCheckbox.checked = enabled;
+    $inlineAnnotationToggle.classList.remove("hidden");
   }
 
   function updateScriptStats(wordCount) {
@@ -1023,7 +1067,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     });
 
     quill.on("selection-change", (range) => {
-      if (range && range.length > 0) {
+      const focused = quill.hasFocus() && scriptEditorFocused;
+      if (range && range.length > 0 && focused) {
         annotationRange = range;
         annotationSelectionText = getSelectionText(range);
         updateAnnotationSelection(annotationSelectionText);
@@ -1033,6 +1078,9 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         annotationSelectionText = "";
         updateAnnotationSelection("");
         hideAnnotationFab();
+      }
+      if (!range || range.length > 0) {
+        renderInlineAnnotationToggle(null);
       }
     });
 
@@ -1044,7 +1092,27 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       }
     });
 
+    quill.root.addEventListener("focusin", () => {
+      scriptEditorFocused = true;
+    });
+
+    quill.root.addEventListener("focusout", () => {
+      scriptEditorFocused = false;
+      hideAnnotationFab();
+    });
+
     quill.root.addEventListener("click", (event) => {
+      const range = quill.getSelection();
+      if (range && range.length === 0) {
+        const parsed = parseInlineAnnotations(quill.getText());
+        const inlineAnn = parsed.annotations.find((ann) => range.index >= ann.start && range.index <= ann.end);
+        if (inlineAnn) {
+          renderInlineAnnotationToggle(inlineAnn);
+        } else {
+          renderInlineAnnotationToggle(null);
+        }
+      }
+
       const target = event.target?.closest?.(".video-annotation");
       if (!target) return;
       const id = target.getAttribute("data-annotation");
@@ -1156,12 +1224,21 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     const now = Date.now();
     const prevWords = Number(videos?.[activeScriptVideoId]?.script?.wordCount || videos?.[activeScriptVideoId]?.scriptWords || 0);
     const diffWords = wordCount - prevWords;
+    const scriptTextRaw = quill.getText();
+    const parsed = parseInlineAnnotations(scriptTextRaw);
+    const nextMeta = {};
+    parsed.annotations.forEach((ann) => {
+      nextMeta[ann.id] = { countInWords: !!inlineAnnotationMeta?.[ann.id]?.countInWords };
+    });
+    inlineAnnotationMeta = nextMeta;
 
     try {
       await update(ref(db, `${VIDEOS_PATH}/${activeScriptVideoId}`), {
         scriptWords: wordCount,
         updatedAt: now,
         "script/content": content,
+        "script/scriptTextRaw": scriptTextRaw,
+        "script/annotationsMeta": nextMeta,
         "script/updatedAt": now,
         "script/wordCount": wordCount,
         "script/countSettings": currentCountSettings || DEFAULT_COUNT_SETTINGS
@@ -1256,6 +1333,8 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     if ($videoScriptSubtitle) $videoScriptSubtitle.textContent = "Guion";
 
     currentCountSettings = getVideoCountSettings(v);
+    inlineAnnotationMeta = getInlineMetaMap(v);
+    renderInlineAnnotationToggle(null);
     renderCountToggles(currentCountSettings);
 
     const ppm = loadStoredPpm(SCRIPT_PPM_KEY, 150);
@@ -1297,6 +1376,9 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       $videoToolbarMoreMenu.setAttribute("aria-hidden", "true");
     }
     activeScriptVideoId = null;
+    scriptEditorFocused = false;
+    renderInlineAnnotationToggle(null);
+    hideAnnotationFab();
     setActiveView("view-videos");
   }
 
@@ -2228,6 +2310,18 @@ const LINK_CATEGORY_LABELS = {
   if ($annotationCancel) $annotationCancel.addEventListener("click", closeAnnotationPopup);
   if ($annotationSave) $annotationSave.addEventListener("click", saveAnnotation);
   if ($annotationDelete) $annotationDelete.addEventListener("click", deleteAnnotation);
+  if ($inlineAnnotationCheckbox) {
+    $inlineAnnotationCheckbox.addEventListener("change", () => {
+      if (!inlineAnnotationActiveId) return;
+      inlineAnnotationMeta[inlineAnnotationActiveId] = {
+        ...(inlineAnnotationMeta[inlineAnnotationActiveId] || {}),
+        countInWords: !!$inlineAnnotationCheckbox.checked
+      };
+      scriptDirty = true;
+      scheduleWordCountUpdate();
+      scheduleScriptSave(false);
+    });
+  }
 
   if ($videoScriptPpm) {
     $videoScriptPpm.addEventListener("change", () => {

@@ -2856,6 +2856,28 @@ Crear “<span id="gym-create-cta-text"></span>”
 <input id="game-mode-emoji" type="text" maxlength="3" placeholder="⚔️"/>
 </label>
 </div>
+<div id="game-mode-rank-base-wrap" style="display:none;">
+<div class="form-grid row-2" id="game-mode-base-elo-wrap" style="display:none;">
+<label class="field">
+<span class="field-label">Base ELO</span>
+<input id="game-mode-base-elo" type="number" step="1" inputmode="numeric" pattern="[0-9]*"/>
+</label>
+</div>
+<div class="form-grid row-3" id="game-mode-base-rr-wrap" style="display:none;">
+<label class="field">
+<span class="field-label">Base tier</span>
+<select id="game-mode-base-tier"></select>
+</label>
+<label class="field">
+<span class="field-label">Base rank</span>
+<select id="game-mode-base-rank"></select>
+</label>
+<label class="field">
+<span class="field-label">Base RR</span>
+<input id="game-mode-base-rr" type="number" min="0" max="100" step="1" inputmode="numeric" pattern="[0-9]*"/>
+</label>
+</div>
+</div>
 </div>
 <div class="modal-footer sheet-footer">
 <button class="btn ghost" id="game-mode-cancel" type="button">Cancelar</button>

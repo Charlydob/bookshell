@@ -296,6 +296,23 @@ bottom: 19px;
 .game-range-btn.is-active { border-color: rgba(83,235,255,.5); box-shadow: 0 0 0 1px rgba(83,235,255,.32) inset; }
 
 .game-day-modal { max-width: 460px; }
+.game-day-modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 12%, rgba(127,93,255,.18), transparent 58%);
+  pointer-events: none;
+  z-index: 101;
+}
+.game-day-modal {
+  position: relative;
+  z-index: 102;
+  pointer-events: auto;
+}
+.game-day-modal input {
+  position: relative;
+  z-index: 103;
+  pointer-events: auto;
+}
 .game-day-counter {
   margin-top: 10px;
   display: flex;

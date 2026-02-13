@@ -442,19 +442,99 @@ function renderGlobalStats() {
   if ($statsBreakdown) {
     const topWin = [...byMode].sort((a, b) => b.pct.winPct - a.pct.winPct)[0];
     const topPlays = byMode[0];
-    $statsBreakdown.innerHTML = `
-      <div class="games-break-card"><strong>Por grupo</strong>${Object.entries(byGroup).map(([gId, v]) => {
-        const gp = ensurePct(v.wins, v.losses, v.ties);
-        return `<div>${groups[gId]?.name || "Sin grupo"} · ${gp.total} · ${gp.winPct}%W</div>`;
-      }).join("") || "<div>Sin datos</div>"}</div>
-      <div class="games-break-card"><strong>Por modo</strong>${byMode.slice(0, 4).map((entry) => `<div>${entry.mode.modeName || "Modo"} · ${entry.pct.total} · ${entry.pct.winPct}%W</div>`).join("") || "<div>Sin datos</div>"}</div>
-      <div class="games-break-card"><strong>Top</strong><div>Winrate: ${topWin ? `${topWin.mode.modeName || "Modo"} (${topWin.pct.winPct}%)` : "—"}</div><div>Partidas: ${topPlays ? `${topPlays.mode.modeName || "Modo"} (${topPlays.pct.total})` : "—"}</div></div>
-      <div class="games-break-card"><strong>Desglose</strong>${byMode.map((entry) => {
-        const matches = entry.pct.total;
-        const winPct = matches ? ((entry.stats.wins / matches) * 100).toFixed(1) : "0.0";
-        return `<div>${entry.mode.modeName || "Modo"} · ${matches} partidas · ${entry.stats.wins}W / ${entry.stats.losses}L / ${entry.stats.ties}T · ${winPct}%W</div>`;
-      }).join("") || "<div>Sin datos</div>"}</div>`;
+    const breakdownRows = byMode.map((entry) => ({
+      mode: entry.mode.modeName || "Modo",
+      matches: entry.pct.total,
+      wins: entry.stats.wins,
+      losses: entry.stats.losses,
+      ties: entry.stats.ties,
+      winrate: entry.pct.winPct,
+      accent: detectStatsAccent(`${groups[entry.mode.groupId]?.name || ""} ${entry.mode.modeName || ""}`)
+    }));
+
+    const groupRows = Object.entries(byGroup).map(([gId, v]) => {
+      const gp = ensurePct(v.wins, v.losses, v.ties);
+      return {
+        label: groups[gId]?.name || "Sin grupo",
+        matches: gp.total,
+        wlt: `${v.wins}W ${v.losses}L ${v.ties}T`,
+        winrate: gp.winPct,
+        accent: detectStatsAccent(groups[gId]?.name || "")
+      };
+    }).sort((a, b) => b.matches - a.matches);
+
+    const modeRowsTop = byMode.slice(0, 5).map((entry) => ({
+      label: entry.mode.modeName || "Modo",
+      matches: entry.pct.total,
+      wlt: `${entry.stats.wins}W ${entry.stats.losses}L ${entry.stats.ties}T`,
+      winrate: entry.pct.winPct,
+      accent: detectStatsAccent(`${groups[entry.mode.groupId]?.name || ""} ${entry.mode.modeName || ""}`)
+    }));
+
+    const topRows = [
+      topWin ? {
+        label: "Mejor winrate",
+        matches: topWin.pct.total,
+        wlt: topWin.mode.modeName || "Modo",
+        winrate: topWin.pct.winPct,
+        accent: detectStatsAccent(`${groups[topWin.mode.groupId]?.name || ""} ${topWin.mode.modeName || ""}`)
+      } : null,
+      topPlays ? {
+        label: "Más jugado",
+        matches: topPlays.pct.total,
+        wlt: `${topPlays.stats.wins}W ${topPlays.stats.losses}L ${topPlays.stats.ties}T`,
+        winrate: topPlays.pct.winPct,
+        accent: detectStatsAccent(`${groups[topPlays.mode.groupId]?.name || ""} ${topPlays.mode.modeName || ""}`)
+      } : null
+    ].filter(Boolean);
+
+    $statsBreakdown.innerHTML = [
+      renderBreakdownStatsCard(breakdownRows),
+      renderStatsListCard("Por grupo", groupRows),
+      renderStatsListCard("Por modo", modeRowsTop),
+      renderStatsListCard("Top", topRows)
+    ].join("");
   }
+}
+
+function renderBreakdownStatsCard(list) {
+  const content = list.length ? list.map((x) => `
+    <div class="games-stats-row" style="${buildStatsGlowStyle(x.accent)}">
+      <div class="games-stats-left">${x.mode}</div>
+      <div class="games-stats-mid">${x.matches} partidas</div>
+      <div class="games-stats-right">${x.wins}W ${x.losses}L ${x.ties}T · ${x.winrate}%</div>
+    </div>
+  `).join("") : `<div class="games-stats-empty">Sin datos</div>`;
+  return `<div class="games-stats-card"><div class="games-stats-title">Desglose</div>${content}</div>`;
+}
+
+function renderStatsListCard(title, list) {
+  const rows = list.length ? list.map((entry) => `
+    <div class="games-stats-row" style="${buildStatsGlowStyle(entry.accent)}">
+      <div>
+        <div class="games-stats-left">${entry.label}</div>
+        <div class="games-stats-subrow">${entry.matches} partidas</div>
+      </div>
+      <div class="games-stats-mid">${entry.wlt}</div>
+      <div class="games-stats-right">${entry.winrate}%</div>
+    </div>
+  `).join("") : `<div class="games-stats-empty">Sin datos</div>`;
+  return `<div class="games-stats-card"><div class="games-stats-title">${title}</div>${rows}</div>`;
+}
+
+function detectStatsAccent(source) {
+  const val = String(source || "").toLowerCase();
+  if (/cs2|counter|csgo/.test(val)) return "#22c55e";
+  if (/valorant/.test(val)) return "#ef4444";
+  if (/fortnite/.test(val)) return "#60a5fa";
+  if (/league|lol/.test(val)) return "#f59e0b";
+  if (/apex/.test(val)) return "#fb7185";
+  return "#8b5cf6";
+}
+
+function buildStatsGlowStyle(accent) {
+  const color = accent || "#8b5cf6";
+  return `background: radial-gradient(circle at top, color-mix(in srgb, ${color} 25%, transparent), rgba(255,255,255,0.02)); border-color: color-mix(in srgb, ${color} 30%, rgba(255,255,255,0.05));`;
 }
 
 function renderGamesPanel() {

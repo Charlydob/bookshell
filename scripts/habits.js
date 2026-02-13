@@ -38,6 +38,9 @@ const HABIT_COUNTS_PATH = "habitCounts";
 const HABIT_GROUPS_PATH = "habitGroups";
 const HABIT_PREFS_PATH = "habitPrefs";
 const HABIT_COMPARE_SETTINGS_PATH = "habitsCompareSettings";
+const HABIT_UI_UID = String(window.__bookshellUid || localStorage.getItem("bookshell.uid") || "default");
+const HABIT_UI_PATH = `users/${HABIT_UI_UID}/ui`;
+const HABIT_UI_QUICK_COUNTERS_PATH = `${HABIT_UI_PATH}/quickCounters`;
 
 // Storage keys
 const STORAGE_KEY = "bookshell-habits-cache";
@@ -79,6 +82,7 @@ let habitSessionTimelineCoverage = {}; // { habitId: Set<dateKey> } days already
 let habitCounts = {}; // { habitId: { dateKey: number } }
 let habitGroups = {}; // { groupId: { id, name, createdAt } }
 let habitPrefs = { pinCount: "", pinTime: "", quickSessions: [] };
+let habitUI = { quickCounters: [] };
 let activeTab = "today";
 let runningSession = null; // { startTs }
 let sessionInterval = null;
@@ -890,6 +894,7 @@ function readCache() {
       habitGroups = parsed.habitGroups || {};
       habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "", quickSessions: [] };
       if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
+      habitUI = normalizeHabitUI(parsed.habitUI || {});
       const norm = normalizeSessionsStore(habitSessions, false);
       habitSessions = norm.normalized;
       habitSessionTimeline = norm.timeline || {};
@@ -906,7 +911,7 @@ function saveCache() {
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ habits, habitChecks, habitSessions, habitCounts, habitGroups, habitPrefs })
+      JSON.stringify({ habits, habitChecks, habitSessions, habitCounts, habitGroups, habitPrefs, habitUI })
     );
   } catch (err) {
     console.warn("No se pudo guardar cache de hábitos", err);
@@ -970,6 +975,49 @@ function persistHabitPrefs() {
   } catch (err) {
     console.warn("No se pudo guardar preferencias de hábitos", err);
   }
+}
+
+function normalizeHabitUI(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const quickCounters = Array.isArray(source.quickCounters)
+    ? source.quickCounters.filter((id) => typeof id === "string")
+    : [];
+  return { quickCounters };
+}
+
+function saveUI(partial = {}) {
+  const merged = normalizeHabitUI({ ...habitUI, ...(partial || {}) });
+  habitUI = merged;
+  saveCache();
+  try {
+    set(ref(db, HABIT_UI_QUICK_COUNTERS_PATH), merged.quickCounters || []);
+  } catch (err) {
+    console.warn("No se pudo guardar UI de hábitos", err);
+  }
+  renderQuickCounters();
+}
+
+function setQuickCounterPinned(habitId, enabled) {
+  if (!habitId) return;
+  let arr = Array.isArray(habitUI?.quickCounters) ? [...habitUI.quickCounters] : [];
+
+  if (enabled && !arr.includes(habitId)) arr.push(habitId);
+  if (!enabled) arr = arr.filter((x) => x !== habitId);
+
+  saveUI({ quickCounters: arr });
+}
+
+function moveQuickCounter(habitId, dir) {
+  if (!habitId || !Number.isFinite(dir)) return;
+  const arr = Array.isArray(habitUI?.quickCounters) ? [...habitUI.quickCounters] : [];
+  const i = arr.indexOf(habitId);
+  if (i < 0) return;
+
+  const j = i + dir;
+  if (j < 0 || j >= arr.length) return;
+
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  saveUI({ quickCounters: arr });
 }
 
 function loadHeatmapYear() {
@@ -1588,7 +1636,10 @@ const $habitQuickSessionsSelect = document.getElementById("habit-quick-sessions-
 const $habitQuickSessionsAdd = document.getElementById("habit-quick-sessions-add");
 const $habitQuickSessionsRow = document.getElementById("habit-quick-sessions-row");
 const $habitQuickSessionsEmpty = document.getElementById("habit-quick-sessions-empty");
+const $quickCountersWrap = document.querySelector(".quick-counters-wrap");
+const $quickCountersBody = document.getElementById("quick-counters-body");
 const $quickCountersGrid = document.getElementById("quick-counters-grid");
+const $quickCounterCount = document.getElementById("quick-counter-count");
 
 // Hoy (grupos plegables)
 const $todayCountPendingPrivateWrap = document.getElementById("habits-today-count-pending-private-wrap");
@@ -1720,6 +1771,11 @@ const $habitTargetMinutes = document.getElementById("habit-target-minutes");
 const $habitTargetMinutesWrap = document.getElementById("habit-target-minutes-wrap");
 const $habitCountUnitMinutes = document.getElementById("habit-count-unit-minutes");
 const $habitCountUnitMinutesWrap = document.getElementById("habit-count-unit-minutes-wrap");
+const $habitQuickCounterPinnedWrap = document.getElementById("habit-quick-counter-pinned-wrap");
+const $habitQuickCounterPinned = document.getElementById("habit-quick-counter-pinned");
+const $habitQuickCounterOrderWrap = document.getElementById("habit-quick-counter-order-wrap");
+const $habitQuickCounterUp = document.getElementById("habit-quick-counter-up");
+const $habitQuickCounterDown = document.getElementById("habit-quick-counter-down");
 const $habitQuickAddsWrap = document.getElementById("habit-quick-adds-wrap");
 const $habitQuick1Label = document.getElementById("habit-quick1-label");
 const $habitQuick1Minutes = document.getElementById("habit-quick1-minutes");
@@ -2021,6 +2077,10 @@ function openHabitModal(habit = null) {
   if ($habitGroupLowUse) $habitGroupLowUse.checked = !!(habit && habit.groupLowUse);
   $habitTargetMinutes.value = habit && habit.targetMinutes ? habit.targetMinutes : "";
   if ($habitCountUnitMinutes) $habitCountUnitMinutes.value = habit && habit.countUnitMinutes ? habit.countUnitMinutes : "";
+  if ($habitQuickCounterPinned) {
+    const quickIds = Array.isArray(habitUI?.quickCounters) ? habitUI.quickCounters : [];
+    $habitQuickCounterPinned.checked = !!(habit?.id && quickIds.includes(habit.id));
+  }
   const qas = habit && Array.isArray(habit.quickAdds) ? habit.quickAdds : [];
   const workDefaults = isWorkHabit(habit) ? [{ label: "M", minutes: 480 }, { label: "T", minutes: 480 }] : null;
   if ($habitQuick1Label) $habitQuick1Label.value = qas[0]?.label || workDefaults?.[0]?.label || "";
@@ -2053,6 +2113,12 @@ function updateHabitGoalUI() {
   }
   if ($habitCountUnitMinutesWrap) {
     $habitCountUnitMinutesWrap.style.display = goal === "count" ? "block" : "none";
+  }
+  if ($habitQuickCounterPinnedWrap) {
+    $habitQuickCounterPinnedWrap.style.display = goal === "count" ? "block" : "none";
+  }
+  if ($habitQuickCounterOrderWrap) {
+    $habitQuickCounterOrderWrap.style.display = goal === "count" ? "flex" : "none";
   }
   if ($habitQuickAddsWrap) {
     $habitQuickAddsWrap.style.display = goal === "time" ? "block" : "none";
@@ -2178,6 +2244,7 @@ function archiveHabit() {
   if (habit) {
     habit.archived = true;
     persistHabit(habit);
+    setQuickCounterPinned(habit.id, false);
   }
   saveCache();
   closeDeleteConfirm();
@@ -7140,13 +7207,37 @@ function renderQuickSessions() {
 }
 
 function renderQuickCounters() {
-  if (!$quickCountersGrid) return;
+  if (!$quickCountersGrid || !$quickCountersBody) return;
 
   $quickCountersGrid.innerHTML = "";
 
-  const counters = activeHabits().filter((habit) => habit.type === "counter" || (habit.goal || "check") === "count");
+  const counterMap = new Map(
+    activeHabits()
+      .filter((habit) => habit.type === "counter" || (habit.goal || "check") === "count")
+      .map((habit) => [habit.id, habit])
+  );
 
-  counters.forEach((habit) => {
+  const sourceIds = Array.isArray(habitUI?.quickCounters) ? habitUI.quickCounters : [];
+  const quickIds = [];
+  const seen = new Set();
+  sourceIds.forEach((id) => {
+    if (!counterMap.has(id) || seen.has(id)) return;
+    seen.add(id);
+    quickIds.push(id);
+  });
+
+  if (quickIds.length !== sourceIds.length || quickIds.some((id, index) => id !== sourceIds[index])) {
+    habitUI = { ...habitUI, quickCounters: quickIds };
+    saveUI({ quickCounters: quickIds });
+  }
+
+  if ($quickCounterCount) {
+    $quickCounterCount.textContent = `(${quickIds.length} fijado${quickIds.length === 1 ? "" : "s"})`;
+  }
+
+  quickIds.forEach((id) => {
+    const habit = counterMap.get(id);
+    if (!habit) return;
     const btn = document.createElement("div");
     btn.className = "quick-counter-btn";
 
@@ -7166,7 +7257,19 @@ function renderQuickCounters() {
 
     $quickCountersGrid.appendChild(btn);
   });
+
+  if (!quickIds.length) {
+    $quickCountersBody.classList.remove("open");
+    $quickCountersWrap?.classList.remove("is-open");
+  }
 }
+
+function toggleQuickCounters() {
+  if (!$quickCountersBody) return;
+  $quickCountersBody.classList.toggle("open");
+  $quickCountersWrap?.classList.toggle("is-open", $quickCountersBody.classList.contains("open"));
+}
+window.toggleQuickCounters = toggleQuickCounters;
 
 function incrementCounterHabit(habitId) {
   if (!habitId) return;
@@ -7458,6 +7561,11 @@ function handleHabitSubmit(e) {
   habits[payload.id] = payload;
   saveCache();
   persistHabit(payload);
+  if (payload.goal === "count") {
+    setQuickCounterPinned(payload.id, !!$habitQuickCounterPinned?.checked);
+  } else {
+    setQuickCounterPinned(payload.id, false);
+  }
   closeHabitModal();
   renderHabits();
 }
@@ -8267,6 +8375,21 @@ function bindEvents() {
   $habitForm?.querySelectorAll('input[name="habit-goal"]').forEach((r) => {
     r.addEventListener("change", updateHabitGoalUI);
   });
+  $habitQuickCounterPinned?.addEventListener("change", (event) => {
+    const habitId = $habitId?.value || "";
+    if (!habitId) return;
+    setQuickCounterPinned(habitId, !!event.target?.checked);
+  });
+  $habitQuickCounterUp?.addEventListener("click", () => {
+    const habitId = $habitId?.value || "";
+    if (!habitId) return;
+    moveQuickCounter(habitId, -1);
+  });
+  $habitQuickCounterDown?.addEventListener("click", () => {
+    const habitId = $habitId?.value || "";
+    if (!habitId) return;
+    moveQuickCounter(habitId, 1);
+  });
   $habitParamSelect?.addEventListener("change", (e) => {
     toggleParamNewInput(e.target.value === "__new__");
   });
@@ -8511,6 +8634,12 @@ function listenRemote() {
     saveCache();
     renderPins();
     renderQuickSessions();
+  });
+
+  onValue(ref(db, HABIT_UI_QUICK_COUNTERS_PATH), (snap) => {
+    habitUI = normalizeHabitUI({ ...habitUI, quickCounters: snap.val() || [] });
+    saveCache();
+    renderQuickCounters();
   });
 
   onValue(ref(db, HABIT_COMPARE_SETTINGS_PATH), (snap) => {

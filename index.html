@@ -749,12 +749,18 @@
     <div class="empty-state small" id="habit-quick-sessions-empty" style="display:none;">Añade hábitos de tiempo para iniciar sesiones con un toque.</div>
   </div>
 </details>
-<div class="quick-counters-wrap">
-  <div class="quick-counters-title">
-    Contadores rápidos
+<div class="habit-group quick-counters-wrap" data-search-ignore="true">
+
+  <div class="habit-group-head" onclick="toggleQuickCounters()">
+    <span>Contadores rápidos</span>
+    <span class="habit-group-sub" id="quick-counter-count"></span>
+    <span class="chev">⌄</span>
   </div>
 
-  <div class="quick-counters-grid" id="quick-counters-grid"></div>
+  <div class="habit-group-body" id="quick-counters-body">
+    <div class="quick-counters-grid" id="quick-counters-grid"></div>
+  </div>
+
 </div>
 <div class="habit-custom-groups" id="habit-custom-groups"></div>
 <details class="habit-accordion habit-today-accordion" id="habits-today-acc-count" open>
@@ -2554,6 +2560,21 @@ Crear “<span id="gym-create-cta-text"></span>”
   <input id="habit-count-unit-minutes" inputmode="numeric" min="0" placeholder="8" type="number"/>
   <div class="checkbox-field-hint">Si pones 8 y cuentas 2, se registran 16m ese día.</div>
 </label>
+
+<label class="field checkbox-field" id="habit-quick-counter-pinned-wrap" style="display:none;">
+  <div class="checkbox-field-row">
+    <div>
+      <div class="checkbox-field-title">Mostrar en contadores rápidos</div>
+      <div class="checkbox-field-hint">Fija este contador en el bloque rápido.</div>
+    </div>
+    <input id="habit-quick-counter-pinned" type="checkbox"/>
+  </div>
+</label>
+
+<div class="habit-quick-counter-order" id="habit-quick-counter-order-wrap" style="display:none;">
+  <button class="btn ghost btn-compact" id="habit-quick-counter-up" type="button">⬆ Subir</button>
+  <button class="btn ghost btn-compact" id="habit-quick-counter-down" type="button">⬇ Bajar</button>
+</div>
 
 <div class="sheet-subsection" id="habit-quick-adds-wrap" style="display:none">
   <div class="sheet-section-title">Atajos</div>

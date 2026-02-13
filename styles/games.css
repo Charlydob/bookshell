@@ -45,6 +45,7 @@
   backdrop-filter: blur(10px);
 }
 .games-stats-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.games-stats-actions{display:flex; align-items:center; gap:8px;}
 .games-stats-title { font-weight: 700; }
 .games-stats-sub { opacity: .72; font-size: .78rem; }
 .games-stats-filter {
@@ -59,7 +60,7 @@
 .games-stats-grid { margin-top: 10px; display: grid; grid-template-columns: 130px 1fr; gap: 10px; }
 
 .games-donut {
-  min-height: 120px;
+  min-height: 220px;
   border-radius: 14px;
   background: rgba(0,0,0,.2);
   border: 1px solid rgba(255,255,255,.08);
@@ -81,7 +82,7 @@
 }
 .games-donut-total { font-size: 1rem; font-weight: 800; }
 .games-line {
-  min-height: 120px;
+  min-height: 220px;
   border-radius: 14px;
   background: rgba(0,0,0,.2);
   border: 1px solid rgba(255,255,255,.08);

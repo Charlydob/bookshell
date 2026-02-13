@@ -14,6 +14,7 @@ import {
   get
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { computeTimeByHabitDataset, debugComputeTimeByHabit, resolveFirstRecordTs } from "./time-by-habit.js";
+import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC1oqRk7GpYX854RfcGrYHt6iRun5TfuYE",
@@ -1606,6 +1607,7 @@ const $habitWeekList = document.getElementById("habits-week-list");
 const $habitWeekEmpty = document.getElementById("habits-week-empty");
 const $habitHistoryList = document.getElementById("habits-history-list");
 const $habitHistoryEmpty = document.getElementById("habits-history-empty");
+const $habitExportBtn = document.getElementById("habits-export-btn");
 const $habitKpiToday = document.getElementById("habit-kpi-today");
 const $habitKpiTotalHours = document.getElementById("habit-kpi-total-hours");
 const $habitKpiTotalHoursRange = document.getElementById("habit-kpi-total-hours-range");
@@ -8035,7 +8037,85 @@ function handleEntrySubmit(e) {
 
 
 // Eventos
+
+function habitType(habit) {
+  const goal = habit?.goal || "check";
+  if (goal === "time") return "time";
+  if (goal === "count") return "count";
+  return "bool";
+}
+
+function habitDateKeys(habitId) {
+  const keys = new Set();
+  Object.keys(habits[habitId]?.log || {}).forEach((k) => keys.add(k));
+  Object.keys(habitChecks[habitId] || {}).forEach((k) => keys.add(k));
+  Object.keys(habitCounts[habitId] || {}).forEach((k) => keys.add(k));
+  return Array.from(keys).sort((a, b) => a.localeCompare(b));
+}
+
+function habitDailyRow(habit, date) {
+  const rawLog = habit?.log?.[date];
+  const type = habitType(habit);
+  const count = Number(habitCounts[habit.id]?.[date] || 0);
+  const done = habitChecks[habit.id]?.[date] ? 1 : 0;
+  const minutes = type === "time"
+    ? Math.max(0, Math.round(typeof rawLog === "number" ? rawLog / 60 : Number(rawLog?.min || rawLog?.totalSec / 60 || 0)))
+    : (type === "count" ? Math.max(0, Math.round((habit.countUnitMinutes || 0) * count)) : 0);
+  const notes = typeof rawLog === "object" ? (rawLog.notes || "") : "";
+  const source = typeof rawLog === "object" ? (rawLog.source || "") : "";
+  return {
+    date,
+    habitId: habit.id,
+    habitName: habit.name || "",
+    type,
+    minutes,
+    hours: (minutes / 60).toFixed(2),
+    count: type === "count" ? count : "",
+    done: type === "bool" ? done : (done || minutes > 0 || count > 0 ? 1 : 0),
+    notes,
+    source,
+    range: ""
+  };
+}
+
+function exportHabitsCsvSingle() {
+  const rows = Object.values(habits || {}).filter((h) => h?.id && !h.archived).flatMap((habit) => {
+    return habitDateKeys(habit.id).map((date) => habitDailyRow(habit, date)).filter((row) => row.minutes || row.count || row.done);
+  }).sort((a, b) => a.date.localeCompare(b.date));
+  const headers = ["date", "habitId", "habitName", "type", "minutes", "hours", "count", "done", "notes", "source", "range"];
+  triggerDownload(buildCsv(rows, headers), "bookshell-habits-export.csv");
+}
+
+async function exportHabitsZip() {
+  const files = {};
+  const summary = Object.values(habits || {}).filter((h) => h?.id && !h.archived).map((habit) => ({
+    habitId: habit.id,
+    habitName: habit.name || "",
+    type: habitType(habit),
+    emoji: habit.emoji || "",
+    createdAt: habit.createdAt || ""
+  }));
+  files["habits__summary.csv"] = buildCsv(summary, ["habitId", "habitName", "type", "emoji", "createdAt"]);
+  Object.values(habits || {}).filter((h) => h?.id && !h.archived).forEach((habit) => {
+    const rows = habitDateKeys(habit.id).map((date) => habitDailyRow(habit, date)).filter((row) => row.minutes || row.count || row.done)
+      .map((row) => ({ date: row.date, minutes: row.minutes, hours: row.hours, count: row.count, done: row.done, notes: row.notes }));
+    const filename = `habit__${sanitizeFileToken(habit.name)}__${sanitizeFileToken(habit.id)}.csv`;
+    files[filename] = buildCsv(rows, ["date", "minutes", "hours", "count", "done", "notes"]);
+  });
+  await downloadZip(files, "bookshell-habits-export.zip");
+}
+
+async function onHabitsExportClick() {
+  const choice = prompt("Exportar Hábitos:
+1) CSV único
+2) ZIP (por hábito)", "1");
+  if (!choice) return;
+  if (choice.trim() === "2") await exportHabitsZip();
+  else exportHabitsCsvSingle();
+}
+
 function bindEvents() {
+  $habitExportBtn?.addEventListener("click", onHabitsExportClick);
   $tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
       activeTab = tab.dataset.tab;

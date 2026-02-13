@@ -1220,7 +1220,11 @@
 </div>
 <button class="btn primary" id="game-add-mode" type="button">+ Añadir modo</button>
 </div>
-<section class="games-stats-card" id="game-stats-card">
+<div class="games-tabs" role="tablist" aria-label="Ventanas de juegos">
+<button class="games-tab-btn is-active" id="game-tab-counters" data-games-tab="counters" role="tab" aria-selected="true" type="button">Contadores</button>
+<button class="games-tab-btn" id="game-tab-stats" data-games-tab="stats" role="tab" aria-selected="false" type="button">Estadísticas</button>
+</div>
+<section class="games-stats-card hidden" id="game-stats-card" data-games-panel="stats">
 <div class="games-stats-head">
 <div>
 <div class="games-stats-title">Estadísticas</div>
@@ -1228,13 +1232,21 @@
 </div>
 <select id="game-stats-group-filter" class="games-stats-filter"></select>
 </div>
+<div class="game-ranges" id="game-stats-ranges">
+<button class="game-range-btn is-active" data-stats-range="1d" type="button">Día</button>
+<button class="game-range-btn" data-stats-range="7d" type="button">Semana</button>
+<button class="game-range-btn" data-stats-range="30d" type="button">Mes</button>
+<button class="game-range-btn" data-stats-range="365d" type="button">Año</button>
+<button class="game-range-btn" data-stats-range="total" type="button">Total</button>
+</div>
 <div class="games-stats-totals" id="game-stats-totals">0 partidas · 0W / 0L / 0T</div>
 <div class="games-stats-grid">
 <div class="games-donut" id="game-stats-donut"></div>
 <div class="games-line" id="game-stats-line"></div>
 </div>
+<div class="games-stats-breakdown" id="game-stats-breakdown"></div>
 </section>
-<div class="games-list" id="games-groups-list"></div>
+<div class="games-list" id="games-groups-list" data-games-panel="counters"></div>
 <div class="empty-state" id="games-empty">Aún no tienes juegos. Crea tu primer modo.</div>
 </div>
 </section>

@@ -262,6 +262,10 @@ body {
   display: none;
 }
 
+body.has-open-modal {
+  overflow: hidden;
+}
+
 .modal {
   width: min(560px, 100%);
   max-height: calc(100dvh - 32px - env(safe-area-inset-bottom));
@@ -336,6 +340,14 @@ body {
   }
   .modal-handle{
     display: block;
+  }
+  .modal-backdrop.modal-centered-mobile {
+    align-items: center;
+    padding: 12px;
+  }
+  .modal-backdrop.modal-centered-mobile .modal {
+    border-radius: 22px;
+    max-height: calc(100dvh - 24px);
   }
 }
 @media (min-width: 561px){

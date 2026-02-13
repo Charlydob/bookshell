@@ -7,7 +7,6 @@ const GROUPS_PATH = "gameGroups";
 const MODES_PATH = "gameModes";
 const DAILY_PATH = "gameModeDaily";
 const HABITS_PATH = "habits";
-const HABIT_SESSIONS_PATH = "habitSessions";
 const CACHE_KEY = "bookshell-games-cache:v2";
 const OPEN_KEY = "bookshell-games-open-groups";
 const HABIT_RUNNING_KEY = "bookshell-habit-running-session";
@@ -15,7 +14,6 @@ const HABIT_RUNNING_KEY = "bookshell-habit-running-session";
 let groups = {};
 let modes = {};
 let habits = {};
-let habitSessions = {};
 let dailyByMode = {};
 const openGroups = new Set();
 let sessionTick = null;
@@ -166,10 +164,11 @@ function groupTotals(groupId) {
 }
 
 function groupMinutesTotal(groupId) {
-  return groupModes(groupId).reduce((acc, mode) => {
-    const modeMinutes = Object.values(dailyByMode[mode.id] || {}).reduce((sum, row) => sum + clamp(Number(row?.minutes || 0)), 0);
-    return acc + modeMinutes;
-  }, 0);
+  const group = groups[groupId];
+  if (!group?.linkedHabitId) return 0;
+  const habit = habits[group.linkedHabitId];
+  if (!habit?.log) return 0;
+  return Object.values(habit.log).reduce((acc, dayVal) => acc + readDayMinutes(dayVal), 0);
 }
 
 function modeTotalsFromDaily(modeId) {
@@ -198,6 +197,16 @@ function getModePlayedMinutes(mode) {
   const habit = group?.linkedHabitId ? habits[group.linkedHabitId] : null;
   if (!habit?.log) return 0;
   return Object.values(habit.log).reduce((acc, val) => acc + readDayMinutes(val), 0);
+}
+
+function getLinkedHabitMinutes(modeId, day) {
+  const mode = modes[modeId];
+  if (!mode) return 0;
+  const group = groups[mode.groupId] || {};
+  const linkedHabitId = group?.linkedHabitId;
+  if (!linkedHabitId) return 0;
+  const dayEntry = habits?.[linkedHabitId]?.log?.[day];
+  return readDayMinutes(dayEntry);
 }
 
 function buildModeCard(mode, groupEmoji) {
@@ -261,19 +270,17 @@ function sumInRange(dailyMap, start, endExclusive) {
     acc.wins += Number(row?.wins || 0);
     acc.losses += Number(row?.losses || 0);
     acc.ties += Number(row?.ties || 0);
-    acc.minutes += Number(row?.minutes || 0);
     return acc;
-  }, { wins: 0, losses: 0, ties: 0, minutes: 0 });
+  }, { wins: 0, losses: 0, ties: 0 });
 }
 
 function mergeDailyMaps(modeIds) {
   return modeIds.reduce((acc, modeId) => {
     Object.entries(dailyByMode[modeId] || {}).forEach(([day, row]) => {
-      const prev = acc[day] || { wins: 0, losses: 0, ties: 0, minutes: 0 };
+      const prev = acc[day] || { wins: 0, losses: 0, ties: 0 };
       prev.wins += Number(row?.wins || 0);
       prev.losses += Number(row?.losses || 0);
       prev.ties += Number(row?.ties || 0);
-      prev.minutes += Number(row?.minutes || 0);
       acc[day] = prev;
     });
     return acc;
@@ -293,7 +300,7 @@ function buildDailySeries(dailyMap, rangeSpec) {
   const out = [];
   for (const cursor = new Date(start); cursor < end; cursor.setDate(cursor.getDate() + 1)) {
     const key = dateKeyLocal(cursor);
-    out.push([key, dailyMap[key] || { wins: 0, losses: 0, ties: 0, minutes: 0 }]);
+    out.push([key, dailyMap[key] || { wins: 0, losses: 0, ties: 0 }]);
   }
   return out;
 }
@@ -706,10 +713,8 @@ function formatHoursMinutes(min) {
 }
 
 function getModeDayMinutes(mode, dateKey, rec = null) {
-  const group = groups[mode.groupId] || {};
-  const habit = group?.linkedHabitId ? habits[group.linkedHabitId] : null;
-  if (habit?.log?.[dateKey] != null) return readDayMinutes(habit.log[dateKey]);
-  return Number((rec || dailyByMode[mode.id]?.[dateKey] || {}).minutes || 0);
+  void rec;
+  return getLinkedHabitMinutes(mode.id, dateKey);
 }
 
 function renderModeLineChart(modeId) {
@@ -852,8 +857,7 @@ async function saveDayRecord(modeId, day, rec) {
   dailyByMode[modeId][day] = {
     wins: clamp(Number(rec.wins || 0)),
     losses: clamp(Number(rec.losses || 0)),
-    ties: clamp(Number(rec.ties || 0)),
-    minutes: clamp(Number(rec.minutes || 0))
+    ties: clamp(Number(rec.ties || 0))
   };
   render();
   renderGlobalStats();
@@ -863,7 +867,7 @@ async function saveDayRecord(modeId, day, rec) {
   const mode = modes[modeId];
   const group = mode ? groups[mode.groupId] : null;
   if (group?.linkedHabitId) {
-    await syncGroupLinkedHabitMinutes(group.id, group.linkedHabitId, day);
+    await setLinkedHabitMinutes(group.linkedHabitId, day, rec.minutes);
   }
 
   if (currentModeId === modeId) {
@@ -872,58 +876,30 @@ async function saveDayRecord(modeId, day, rec) {
   }
 }
 
-function calcGroupMinutesForDate(groupId, day) {
-  return groupModes(groupId).reduce((acc, mode) => {
-    const minutes = Number(dailyByMode?.[mode.id]?.[day]?.minutes || 0);
-    return acc + clamp(minutes);
-  }, 0);
-}
-
-async function syncGroupLinkedHabitMinutes(groupId, linkedHabitId, day) {
-  if (!groupId || !linkedHabitId || !day) return;
-
-  const sumMinutes = calcGroupMinutesForDate(groupId, day);
-  const totalSec = Math.round(sumMinutes * 60);
-
-  // 1) Update local caches (para que UI reaccione sin esperar Firebase)
+async function setLinkedHabitMinutes(linkedHabitId, day, minutes) {
+  if (!linkedHabitId || !day) return;
+  const normalizedMinutes = clamp(Number(minutes || 0));
   habits[linkedHabitId] = habits[linkedHabitId] || { id: linkedHabitId };
   habits[linkedHabitId].log = habits[linkedHabitId].log || {};
-  if (sumMinutes > 0) habits[linkedHabitId].log[day] = { min: sumMinutes };
+  if (normalizedMinutes > 0) habits[linkedHabitId].log[day] = { min: normalizedMinutes };
   else delete habits[linkedHabitId].log[day];
-
-  habitSessions[linkedHabitId] = habitSessions[linkedHabitId] || {};
-  if (totalSec > 0) habitSessions[linkedHabitId][day] = totalSec;
-  else delete habitSessions[linkedHabitId][day];
-
-  // 2) Write Firebase (misma ruta diaria que hábitos + log de respaldo)
-  const updates = {
-    [`${HABITS_PATH}/${linkedHabitId}/log/${day}`]: sumMinutes > 0 ? { min: sumMinutes } : null,
-    [`${HABIT_SESSIONS_PATH}/${linkedHabitId}/${day}`]: totalSec > 0 ? totalSec : null,
-  };
-
-  try {
-    const habitsApi = window.__bookshellHabits;
-    if (habitsApi?.setDailyMinutes) habitsApi.setDailyMinutes(linkedHabitId, day, sumMinutes);
-  } catch (_) {}
-
-  try {
-    await update(ref(db), updates);
-  } catch (_) {}
+  render();
+  if (currentModeId) renderModeDetail();
+  await set(ref(db, `${HABITS_PATH}/${linkedHabitId}/log/${day}`), normalizedMinutes > 0 ? { min: normalizedMinutes } : null);
 }
 
 function openDayRecordModal(modeId, day) {
   const mode = modes[modeId];
   if (!mode) return;
   const group = groups[mode.groupId] || {};
-  const rec = dailyByMode[modeId]?.[day] || { wins: 0, losses: 0, ties: 0, minutes: 0 };
-  const linkedHabit = group?.linkedHabitId ? habits[group.linkedHabitId] : null;
-  const linkedMinutes = linkedHabit ? readDayMinutes(habitSessions?.[linkedHabit.id]?.[day]) : 0;
-  const minutesReadOnly = false;
+  const rec = dailyByMode[modeId]?.[day] || { wins: 0, losses: 0, ties: 0 };
+  const linkedMinutes = getLinkedHabitMinutes(modeId, day);
+  const minutesReadOnly = !group?.linkedHabitId;
   let state = {
     wins: clamp(Number(rec.wins || 0)),
     losses: clamp(Number(rec.losses || 0)),
     ties: clamp(Number(rec.ties || 0)),
-   minutes: clamp(Number(rec.minutes || 0))
+    minutes: linkedMinutes
   };
   const modal = document.createElement("div");
   modal.className = "modal-backdrop";
@@ -932,9 +908,9 @@ function openDayRecordModal(modeId, day) {
     <div class="modal-header"><div class="modal-title">Registro del día</div></div>
     <div class="modal-scroll sheet-body">
       <label class="field"><span class="field-label">Fecha</span><input type="text" value="${day}" readonly></label>
-      <label class="field"><span class="field-label">Horas / minutos</span><input id="game-day-minutes" type="number" min="0" value="${state.minutes || linkedMinutes || 0}" inputmode="numeric">
+      <label class="field"><span class="field-label">Horas / minutos</span><input id="game-day-minutes" type="number" min="0" value="${state.minutes || 0}" inputmode="numeric" ${minutesReadOnly ? "readonly" : ""}>
 </label>
-      ${minutesReadOnly ? '<div class="games-subtitle">Minutos vinculados al hábito del grupo.</div>' : ""}
+      ${minutesReadOnly ? '<div class="games-subtitle">Vincula un hábito al grupo para editar minutos.</div>' : ""}
       <div class="game-day-counter" data-k="losses"><span>Derrotas</span><div><button type="button" data-step="-1">-1</button><strong>${state.losses}</strong><button type="button" data-step="1">+1</button></div></div>
       <div class="game-day-counter" data-k="ties"><span>Empates</span><div><button type="button" data-step="-1">-1</button><strong>${state.ties}</strong><button type="button" data-step="1">+1</button></div></div>
       <div class="game-day-counter" data-k="wins"><span>Victorias</span><div><button type="button" data-step="-1">-1</button><strong>${state.wins}</strong><button type="button" data-step="1">+1</button></div></div>
@@ -959,11 +935,9 @@ function openDayRecordModal(modeId, day) {
       minutesInput?.select?.();
     }, 50);
   });
-const el = document.getElementById('game-day-minutes');
-el.readOnly = false;
-el.disabled = false;
-el.removeAttribute('readonly');
-requestAnimationFrame(() => setTimeout(() => el.focus(), 50));
+  if (!minutesReadOnly) {
+    requestAnimationFrame(() => setTimeout(() => minutesInput?.focus(), 50));
+  }
 
   const repaint = () => {
     modal.querySelectorAll(".game-day-counter").forEach((row) => {
@@ -1017,7 +991,7 @@ function buildGamesExportRows() {
       const losses = Number(row?.losses || 0);
       const ties = Number(row?.ties || 0);
       const matches = wins + losses + ties;
-      const minutes = Number(row?.minutes || 0);
+      const minutes = getLinkedHabitMinutes(mode.id, date);
       return {
         date,
         groupId: group.id || "",
@@ -1059,7 +1033,7 @@ async function exportGamesZipByMode() {
       const losses = Number(row?.losses || 0);
       const ties = Number(row?.ties || 0);
       const matches = wins + losses + ties;
-      const minutes = Number(row?.minutes || 0);
+      const minutes = getLinkedHabitMinutes(mode.id, date);
       return { date, wins, losses, ties, matches, minutes, hours: toHours(minutes), winPct: matches ? ((wins / matches) * 100).toFixed(2) : "0.00" };
     }).filter((row) => row.matches || row.minutes).sort((a, b) => a.date.localeCompare(b.date));
     const filename = `mode__${sanitizeFileToken(group.name)}__${sanitizeFileToken(mode.modeName)}__${sanitizeFileToken(mode.id)}.csv`;
@@ -1217,10 +1191,8 @@ function listenRemote() {
     habits = snap.val() || {};
     $groupHabit.innerHTML = habitOptionsHtml();
     $groupEditHabit.innerHTML = habitOptionsHtml();
-    if (currentModeId) renderModeDetail();
-  });
-  onValue(ref(db, HABIT_SESSIONS_PATH), (snap) => {
-    habitSessions = snap.val() || {};
+    render();
+    renderGlobalStats();
     if (currentModeId) renderModeDetail();
   });
 }

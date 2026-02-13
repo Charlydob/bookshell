@@ -884,6 +884,10 @@
 </div>
 <div class="habits-panel" data-panel="reports">
 <div class="habit-reports">
+<div class="habit-card-head">
+<div class="habit-card-title">Exportación</div>
+<button class="game-menu-btn" id="habits-export-btn" type="button">Exportar CSV</button>
+</div>
 <div class="habit-kpi-grid">
 <div class="habit-kpi-card">
 <div class="habit-kpi-label" id="habit-kpi-today-label">Hechos hoy</div>
@@ -1230,14 +1234,17 @@
 <div class="games-stats-title">Estadísticas</div>
 <div class="games-stats-sub" id="game-stats-sub">Global</div>
 </div>
+<div class="games-stats-actions">
+<button class="game-menu-btn" id="games-export-btn" type="button">Exportar CSV</button>
 <select id="game-stats-group-filter" class="games-stats-filter"></select>
 </div>
+</div>
 <div class="game-ranges" id="game-stats-ranges">
-<button class="game-range-btn is-active" data-stats-range="1d" type="button">Día</button>
-<button class="game-range-btn" data-stats-range="7d" type="button">Semana</button>
-<button class="game-range-btn" data-stats-range="30d" type="button">Mes</button>
-<button class="game-range-btn" data-stats-range="365d" type="button">Año</button>
-<button class="game-range-btn" data-stats-range="total" type="button">Total</button>
+<button class="game-range-btn" data-stats-range="day" type="button">Día</button>
+<button class="game-range-btn" data-stats-range="week" type="button">Semana</button>
+<button class="game-range-btn" data-stats-range="month" type="button">Mes</button>
+<button class="game-range-btn" data-stats-range="year" type="button">Año</button>
+<button class="game-range-btn is-active" data-stats-range="total" type="button">Total</button>
 </div>
 <div class="games-stats-totals" id="game-stats-totals">0 partidas · 0W / 0L / 0T</div>
 <div class="games-stats-grid">

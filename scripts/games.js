@@ -1,5 +1,7 @@
 import { db } from "./firebase-shared.js";
 import { ref, onValue, set, update, push, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { getRangeBounds, dateFromKey } from "./range-helpers.js";
+import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";
 
 const GROUPS_PATH = "gameGroups";
 const MODES_PATH = "gameModes";
@@ -20,8 +22,7 @@ let detailMonth = { year: new Date().getFullYear(), month: new Date().getMonth()
 let detailRange = "total";
 let selectedDonutKey = "wins";
 let gamesPanel = "counters";
-let statsRange = "1d";
-let detailLineRange = "30d";
+let statsRange = localStorage.getItem("bookshell-games-stats-range") || "total";
 let statsDonutKey = "wins";
 
 let statsLineChart = null;
@@ -70,6 +71,7 @@ const $statsLine = document.getElementById("game-stats-line");
 const $statsSub = document.getElementById("game-stats-sub");
 const $statsBreakdown = document.getElementById("game-stats-breakdown");
 const $statsCard = document.getElementById("game-stats-card");
+const $gamesExportBtn = document.getElementById("games-export-btn");
 const $tabCounters = document.getElementById("game-tab-counters");
 const $tabStats = document.getElementById("game-tab-stats");
 
@@ -232,53 +234,59 @@ function renderStatsFilter() {
   $statsFilter.value = options.some((o) => o.includes(`value=\"${current}\"`)) ? current : "all";
 }
 
-function linePointsFromDaily(modeIds) {
-  const dayMap = new Map();
-  modeIds.forEach((modeId) => {
-    const rows = dailyByMode[modeId] || {};
-    Object.entries(rows).forEach(([day, rec]) => {
-      const prev = dayMap.get(day) || { wins: 0, losses: 0, ties: 0 };
-      prev.wins += Number(rec?.wins || 0);
-      prev.losses += Number(rec?.losses || 0);
-      prev.ties += Number(rec?.ties || 0);
-      dayMap.set(day, prev);
-    });
-  });
-  return Array.from(dayMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+function getMinDataDate(modeIds) {
+  const keys = modeIds.flatMap((modeId) => Object.keys(dailyByMode[modeId] || {})).sort((a, b) => a.localeCompare(b));
+  return keys.length ? dateFromKey(keys[0]) : null;
 }
 
-function rangePointsFromDaily(modeIds, range = "30d") {
-  const map = new Map(linePointsFromDaily(modeIds));
-  if (range === "total") {
-    const keys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
-    if (!keys.length) return [];
-    const start = new Date(`${keys[0]}T12:00:00`);
-    const end = new Date(`${keys[keys.length - 1]}T12:00:00`);
-    const out = [];
-    for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
-      const key = dateKeyLocal(cursor);
-      out.push([key, map.get(key) || { wins: 0, losses: 0, ties: 0 }]);
-    }
-    return out;
+function isDateInRange(date, start, endExclusive) {
+  if (!date) return false;
+  if (start && date < start) return false;
+  if (endExclusive && date >= endExclusive) return false;
+  return true;
+}
+
+function sumInRange(dailyMap, start, endExclusive) {
+  return Object.entries(dailyMap || {}).reduce((acc, [key, row]) => {
+    if (!isDateInRange(dateFromKey(key), start, endExclusive)) return acc;
+    acc.wins += Number(row?.wins || 0);
+    acc.losses += Number(row?.losses || 0);
+    acc.ties += Number(row?.ties || 0);
+    acc.minutes += Number(row?.minutes || 0);
+    return acc;
+  }, { wins: 0, losses: 0, ties: 0, minutes: 0 });
+}
+
+function mergeDailyMaps(modeIds) {
+  return modeIds.reduce((acc, modeId) => {
+    Object.entries(dailyByMode[modeId] || {}).forEach(([day, row]) => {
+      const prev = acc[day] || { wins: 0, losses: 0, ties: 0, minutes: 0 };
+      prev.wins += Number(row?.wins || 0);
+      prev.losses += Number(row?.losses || 0);
+      prev.ties += Number(row?.ties || 0);
+      prev.minutes += Number(row?.minutes || 0);
+      acc[day] = prev;
+    });
+    return acc;
+  }, {});
+}
+
+function buildDailySeries(dailyMap, rangeSpec) {
+  const keys = Object.keys(dailyMap || {}).sort((a, b) => a.localeCompare(b));
+  let start = rangeSpec.start;
+  let end = rangeSpec.endExclusive;
+  if (!start && keys.length) start = dateFromKey(keys[0]);
+  if (!end && keys.length) {
+    end = dateFromKey(keys[keys.length - 1]);
+    end?.setDate(end.getDate() + 1);
   }
-  const days = Number(range.replace("d", "")) || 30;
+  if (!start || !end) return [];
   const out = [];
-  const start = new Date();
-  start.setDate(start.getDate() - days + 1);
-  for (const cursor = new Date(start); out.length < days; cursor.setDate(cursor.getDate() + 1)) {
+  for (const cursor = new Date(start); cursor < end; cursor.setDate(cursor.getDate() + 1)) {
     const key = dateKeyLocal(cursor);
-    out.push([key, map.get(key) || { wins: 0, losses: 0, ties: 0 }]);
+    out.push([key, dailyMap[key] || { wins: 0, losses: 0, ties: 0, minutes: 0 }]);
   }
   return out;
-}
-
-function applyPointsRange(points, range = "total") {
-  if (range === "total") return points;
-  const days = Number(range.replace("d", "")) || 30;
-  const minDate = new Date();
-  minDate.setDate(minDate.getDate() - days + 1);
-  const minKey = dateKeyLocal(minDate);
-  return points.filter(([day]) => day >= minKey);
 }
 
 function createGamesLineOption(points) {
@@ -311,19 +319,22 @@ function createGamesLineOption(points) {
 function renderLineChart($el, points, chartRef = "stats") {
   if (!$el) return;
   const hasData = points.some(([, v]) => Number(v.wins || 0) || Number(v.losses || 0) || Number(v.ties || 0));
+  let chart = chartRef === "stats" ? statsLineChart : detailLineChart;
   if (!hasData) {
-    $el.innerHTML = "<div class='empty-state small'>Sin datos todavía</div>";
-    const chart = chartRef === "stats" ? statsLineChart : detailLineChart;
     chart?.dispose();
     if (chartRef === "stats") statsLineChart = null;
     else detailLineChart = null;
+    if (!$el.querySelector('.empty-state')) $el.innerHTML = "<div class='empty-state small'>Sin datos…</div>";
     return;
   }
-  const chart = chartRef === "stats"
-    ? (statsLineChart || (statsLineChart = echarts.init($el)))
-    : (detailLineChart || (detailLineChart = echarts.init($el)));
+  if ($el.querySelector('.empty-state')) $el.innerHTML = "";
+  if (!chart) {
+    chart = echarts.init($el);
+    if (chartRef === "stats") statsLineChart = chart;
+    else detailLineChart = chart;
+  }
   chart.setOption(createGamesLineOption(points), true);
-  chart.resize();
+  requestAnimationFrame(() => setTimeout(() => chart.resize(), 50));
 }
 
 function renderDonut($el, vals, selectable = false, chartRef = "stats") {
@@ -380,50 +391,50 @@ function renderGlobalStats() {
   renderStatsFilter();
   const selected = $statsFilter?.value || "all";
   const modeRows = Object.values(modes || {}).filter((m) => m && (selected === "all" || m.groupId === selected));
-  const points = rangePointsFromDaily(modeRows.map((m) => m.id), statsRange === "total" ? "total" : statsRange);
-  const totals = statsRange === "total"
-    ? modeRows.reduce((acc, m) => {
-      const modeTotals = modeTotalsFromDaily(m.id);
-      acc.wins += modeTotals.wins;
-      acc.losses += modeTotals.losses;
-      acc.ties += modeTotals.ties;
-      return acc;
-    }, { wins: 0, losses: 0, ties: 0 })
-    : points.reduce((acc, [, day]) => {
-      acc.wins += Number(day.wins || 0);
-      acc.losses += Number(day.losses || 0);
-      acc.ties += Number(day.ties || 0);
-      return acc;
-    }, { wins: 0, losses: 0, ties: 0 });
+  const modeIds = modeRows.map((m) => m.id);
+  const minDate = getMinDataDate(modeIds);
+  const range = getRangeBounds(statsRange, new Date(), minDate);
+  const mergedDaily = mergeDailyMaps(modeIds);
+  const points = buildDailySeries(mergedDaily, range);
+  const totals = sumInRange(mergedDaily, range.start, range.endExclusive);
 
   const byGroup = modeRows.reduce((acc, m) => {
     const gId = m.groupId || "none";
     acc[gId] = acc[gId] || { wins: 0, losses: 0, ties: 0 };
-    const modeTotals = modeTotalsFromDaily(m.id);
+    const modeTotals = sumInRange(dailyByMode[m.id] || {}, range.start, range.endExclusive);
     acc[gId].wins += modeTotals.wins;
     acc[gId].losses += modeTotals.losses;
     acc[gId].ties += modeTotals.ties;
     return acc;
   }, {});
+
   const byMode = modeRows.map((m) => {
-    const { wins, losses, ties } = modeTotalsFromDaily(m.id);
-    return { name: m.modeName || "Modo", pct: ensurePct(wins, losses, ties) };
-  });
+    const stats = sumInRange(dailyByMode[m.id] || {}, range.start, range.endExclusive);
+    const pct = ensurePct(stats.wins, stats.losses, stats.ties);
+    return { mode: m, stats, pct };
+  }).sort((a, b) => b.pct.total - a.pct.total);
+
   const pct = ensurePct(totals.wins, totals.losses, totals.ties);
   if ($statsTotals) $statsTotals.textContent = `${pct.total} partidas · ${totals.wins}W / ${totals.losses}L / ${totals.ties}T · ${pct.winPct}%W`;
   if ($statsSub) $statsSub.textContent = selected === "all" ? "Global" : (groups[selected]?.name || "Grupo");
   renderDonut($statsDonut, totals, true, "stats");
   renderLineChart($statsLine, points, "stats");
+
   if ($statsBreakdown) {
     const topWin = [...byMode].sort((a, b) => b.pct.winPct - a.pct.winPct)[0];
-    const topPlays = [...byMode].sort((a, b) => b.pct.total - a.pct.total)[0];
+    const topPlays = byMode[0];
     $statsBreakdown.innerHTML = `
       <div class="games-break-card"><strong>Por grupo</strong>${Object.entries(byGroup).map(([gId, v]) => {
         const gp = ensurePct(v.wins, v.losses, v.ties);
         return `<div>${groups[gId]?.name || "Sin grupo"} · ${gp.total} · ${gp.winPct}%W</div>`;
       }).join("") || "<div>Sin datos</div>"}</div>
-      <div class="games-break-card"><strong>Por modo</strong>${[...byMode].sort((a, b) => b.pct.total - a.pct.total).slice(0, 4).map((m) => `<div>${m.name} · ${m.pct.total} · ${m.pct.winPct}%W</div>`).join("") || "<div>Sin datos</div>"}</div>
-      <div class="games-break-card"><strong>Top</strong><div>Winrate: ${topWin ? `${topWin.name} (${topWin.pct.winPct}%)` : "—"}</div><div>Partidas: ${topPlays ? `${topPlays.name} (${topPlays.pct.total})` : "—"}</div></div>`;
+      <div class="games-break-card"><strong>Por modo</strong>${byMode.slice(0, 4).map((entry) => `<div>${entry.mode.modeName || "Modo"} · ${entry.pct.total} · ${entry.pct.winPct}%W</div>`).join("") || "<div>Sin datos</div>"}</div>
+      <div class="games-break-card"><strong>Top</strong><div>Winrate: ${topWin ? `${topWin.mode.modeName || "Modo"} (${topWin.pct.winPct}%)` : "—"}</div><div>Partidas: ${topPlays ? `${topPlays.mode.modeName || "Modo"} (${topPlays.pct.total})` : "—"}</div></div>
+      <div class="games-break-card"><strong>Desglose</strong>${byMode.map((entry) => {
+        const matches = entry.pct.total;
+        const winPct = matches ? ((entry.stats.wins / matches) * 100).toFixed(1) : "0.0";
+        return `<div>${entry.mode.modeName || "Modo"} · ${matches} partidas · ${entry.stats.wins}W / ${entry.stats.losses}L / ${entry.stats.ties}T · ${winPct}%W</div>`;
+      }).join("") || "<div>Sin datos</div>"}</div>`;
   }
 }
 
@@ -662,22 +673,6 @@ function toggleGroupSession(groupIdValue) {
   api.startSession(group.linkedHabitId);
 }
 
-function modeRangeTotals(modeId, range = "total") {
-  if (!modes[modeId]) return { wins: 0, losses: 0, ties: 0 };
-  if (range === "total") return modeTotalsFromDaily(modeId);
-  const days = Number(range.replace("d", "")) || 30;
-  const minDate = new Date();
-  minDate.setDate(minDate.getDate() - days + 1);
-  const minKey = dateKeyLocal(minDate);
-  return Object.entries(dailyByMode[modeId] || {}).reduce((acc, [day, row]) => {
-    if (day < minKey) return acc;
-    acc.wins += Number(row?.wins || 0);
-    acc.losses += Number(row?.losses || 0);
-    acc.ties += Number(row?.ties || 0);
-    return acc;
-  }, { wins: 0, losses: 0, ties: 0 });
-}
-
 function formatMinutesShort(min) {
   const minutes = Math.max(0, Number(min || 0));
   if (!minutes) return "";
@@ -709,12 +704,14 @@ function renderModeDetail() {
   const mode = modes[currentModeId];
   if (!mode) return;
   const group = groups[mode.groupId] || {};
-  const totals = modeRangeTotals(mode.id, detailRange);
+  const modeDaily = dailyByMode[mode.id] || {};
+  const minDate = getMinDataDate([mode.id]);
+  const range = getRangeBounds(detailRange, new Date(), minDate);
+  const totals = sumInRange(modeDaily, range.start, range.endExclusive);
   const pct = ensurePct(totals.wins, totals.losses, totals.ties);
   const minutes = getModePlayedMinutes(mode);
   const hoursText = `${(minutes / 60).toFixed(1)}h`;
-  const points = rangePointsFromDaily([mode.id], detailLineRange);
-  const modeDaily = dailyByMode[mode.id] || {};
+  const points = buildDailySeries(modeDaily, range);
 
   const rows = monthGrid(detailMonth.year, detailMonth.month).map((dayDate) => {
     if (!dayDate) return '<button type="button" class="habit-heatmap-cell is-out" disabled aria-hidden="true"></button>';
@@ -773,20 +770,15 @@ function renderModeDetail() {
     <section class="game-detail-section">
       <strong>Rango</strong>
       <div class="game-ranges">
-        <button class="game-range-btn ${detailRange === "1d" ? "is-active" : ""}" data-range="1d">Día</button>
-        <button class="game-range-btn ${detailRange === "7d" ? "is-active" : ""}" data-range="7d">Semana</button>
-        <button class="game-range-btn ${detailRange === "30d" ? "is-active" : ""}" data-range="30d">Mes</button>
-        <button class="game-range-btn ${detailRange === "365d" ? "is-active" : ""}" data-range="365d">Año</button>
+        <button class="game-range-btn ${detailRange === "day" ? "is-active" : ""}" data-range="day">Día</button>
+        <button class="game-range-btn ${detailRange === "week" ? "is-active" : ""}" data-range="week">Semana</button>
+        <button class="game-range-btn ${detailRange === "month" ? "is-active" : ""}" data-range="month">Mes</button>
+        <button class="game-range-btn ${detailRange === "year" ? "is-active" : ""}" data-range="year">Año</button>
         <button class="game-range-btn ${detailRange === "total" ? "is-active" : ""}" data-range="total">Total</button>
       </div>
       <div class="games-stats-grid">
         <div class="games-donut" id="game-detail-donut"></div>
-        <div class="games-line" id="game-detail-line"></div>
-      </div>
-      <div class="game-ranges">
-        <button class="game-range-btn ${detailLineRange === "30d" ? "is-active" : ""}" data-line-range="30d">30d</button>
-        <button class="game-range-btn ${detailLineRange === "90d" ? "is-active" : ""}" data-line-range="90d">90d</button>
-        <button class="game-range-btn ${detailLineRange === "total" ? "is-active" : ""}" data-line-range="total">Total</button>
+        <div class="games-line" id="games-mode-line-${mode.id}"></div>
       </div>
     </section>
 
@@ -810,7 +802,8 @@ function renderModeDetail() {
 
 
   renderDonut(document.getElementById("game-detail-donut"), totals, true, "detail");
-  renderLineChart(document.getElementById("game-detail-line"), points, "detail");
+  const detailLineEl = document.getElementById(`games-mode-line-${mode.id}`);
+  requestAnimationFrame(() => setTimeout(() => renderLineChart(detailLineEl, points, "detail"), 0));
 }
 
 async function saveDayRecord(modeId, day, rec) {
@@ -893,12 +886,84 @@ function openDayRecordModal(modeId, day) {
   });
 }
 
+
+function toHours(value) {
+  return (Number(value || 0) / 60).toFixed(2);
+}
+
+function buildGamesExportRows() {
+  return Object.values(modes || {}).flatMap((mode) => {
+    const group = groups[mode.groupId] || {};
+    return Object.entries(dailyByMode[mode.id] || {}).map(([date, row]) => {
+      const wins = Number(row?.wins || 0);
+      const losses = Number(row?.losses || 0);
+      const ties = Number(row?.ties || 0);
+      const matches = wins + losses + ties;
+      const minutes = Number(row?.minutes || 0);
+      return {
+        date,
+        groupId: group.id || "",
+        groupName: group.name || "",
+        modeId: mode.id,
+        modeName: mode.modeName || "",
+        wins,
+        losses,
+        ties,
+        matches,
+        minutes,
+        hours: toHours(minutes),
+        winPct: matches ? ((wins / matches) * 100).toFixed(2) : "0.00"
+      };
+    }).filter((row) => row.matches || row.minutes);
+  }).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function exportGamesCsvSingle() {
+  const headers = ["date", "groupId", "groupName", "modeId", "modeName", "wins", "losses", "ties", "matches", "minutes", "hours", "winPct"];
+  triggerDownload(buildCsv(buildGamesExportRows(), headers), "bookshell-games-export.csv");
+}
+
+async function exportGamesZipByMode() {
+  const files = {};
+  const groupsRows = Object.values(groups || {}).map((g) => ({
+    groupId: g.id || "",
+    groupName: g.name || "",
+    linkedHabitId: g.linkedHabitId || "",
+    createdAt: g.createdAt || ""
+  }));
+  files["games__groups.csv"] = buildCsv(groupsRows, ["groupId", "groupName", "linkedHabitId", "createdAt"]);
+  const modeRows = Object.values(modes || {}).map((m) => ({ modeId: m.id, groupId: m.groupId || "", modeName: m.modeName || "", createdAt: m.createdAt || "" }));
+  files["games__modes.csv"] = buildCsv(modeRows, ["modeId", "groupId", "modeName", "createdAt"]);
+  Object.values(modes || {}).forEach((mode) => {
+    const group = groups[mode.groupId] || {};
+    const rows = Object.entries(dailyByMode[mode.id] || {}).map(([date, row]) => {
+      const wins = Number(row?.wins || 0);
+      const losses = Number(row?.losses || 0);
+      const ties = Number(row?.ties || 0);
+      const matches = wins + losses + ties;
+      const minutes = Number(row?.minutes || 0);
+      return { date, wins, losses, ties, matches, minutes, hours: toHours(minutes), winPct: matches ? ((wins / matches) * 100).toFixed(2) : "0.00" };
+    }).filter((row) => row.matches || row.minutes).sort((a, b) => a.date.localeCompare(b.date));
+    const filename = `mode__${sanitizeFileToken(group.name)}__${sanitizeFileToken(mode.modeName)}__${sanitizeFileToken(mode.id)}.csv`;
+    files[filename] = buildCsv(rows, ["date", "wins", "losses", "ties", "matches", "minutes", "hours", "winPct"]);
+  });
+  await downloadZip(files, "bookshell-games-export.zip");
+}
+
+async function onGamesExportClick() {
+  const choice = prompt("Exportar Juegos:
+1) CSV único
+2) ZIP (por modo)", "1");
+  if (!choice) return;
+  if (choice.trim() === "2") await exportGamesZipByMode();
+  else exportGamesCsvSingle();
+}
+
 function openModeDetail(modeId) {
   if (!modes[modeId]) return;
   currentModeId = modeId;
   detailMonth = { year: new Date().getFullYear(), month: new Date().getMonth() };
   detailRange = "total";
-  detailLineRange = "30d";
   selectedDonutKey = "wins";
   renderModeDetail();
   $detailModal.classList.remove("hidden");
@@ -974,11 +1039,13 @@ function bind() {
   $statsFilter?.addEventListener("change", renderGlobalStats);
   $tabCounters?.addEventListener("click", () => { gamesPanel = "counters"; renderGamesPanel(); });
   $tabStats?.addEventListener("click", () => { gamesPanel = "stats"; renderGamesPanel(); renderGlobalStats(); });
+  $gamesExportBtn?.addEventListener("click", onGamesExportClick);
 
   document.getElementById("game-stats-ranges")?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-stats-range]");
     if (!btn) return;
     statsRange = btn.dataset.statsRange;
+    localStorage.setItem("bookshell-games-stats-range", statsRange);
     document.querySelectorAll("#game-stats-ranges .game-range-btn").forEach((node) => node.classList.toggle("is-active", node === btn));
     renderGlobalStats();
   });
@@ -987,12 +1054,6 @@ function bind() {
     const rangeBtn = e.target.closest("[data-range]");
     if (rangeBtn) {
       detailRange = rangeBtn.dataset.range;
-      renderModeDetail();
-      return;
-    }
-    const lBtn = e.target.closest("[data-line-range]");
-    if (lBtn) {
-      detailLineRange = lBtn.dataset.lineRange;
       renderModeDetail();
       return;
     }
@@ -1069,6 +1130,7 @@ function init() {
   if (!$groupsList) return;
   loadCache();
   bind();
+  document.querySelectorAll("#game-stats-ranges .game-range-btn").forEach((btn) => btn.classList.toggle("is-active", btn.dataset.statsRange === statsRange));
   listenRemote();
   render();
 

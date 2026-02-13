@@ -1262,6 +1262,7 @@
 <div class="games-stats-totals" id="game-stats-totals">0 partidas · 0W / 0L / 0T</div>
 <div class="games-stats-grid">
 <div class="games-stats-left">
+<div class="games-rank-chips" id="games-rank-chips"></div>
 <div class="games-kpi-panel" id="games-kpi-panel">
   <div class="games-kpi-row">
     <span class="kpi kpi-k">K <b id="kpi-k">0</b></span>
@@ -2832,6 +2833,19 @@ Crear “<span id="gym-create-cta-text"></span>”
 <option value="shooter">Shooter</option>
 </select>
 </label>
+<label class="field" id="game-group-ranktype-wrap" style="display:none;">
+<span class="field-label">Rango</span>
+<select id="game-group-ranktype">
+<option value="none">Sin rango</option>
+<option value="elo">ELO</option>
+<option value="rr">RR (Valorant)</option>
+<option value="days">Días</option>
+</select>
+</label>
+<label class="field" id="game-group-accent-wrap" style="display:none;">
+<span class="field-label">Color accent</span>
+<input id="game-group-accent" type="color" value="#8b5cf6"/>
+</label>
 <div class="form-grid row-2">
 <label class="field">
 <span class="field-label">Nombre del modo</span>
@@ -2881,6 +2895,19 @@ Crear “<span id="gym-create-cta-text"></span>”
 <option value="other">Normal</option>
 <option value="shooter">Shooter</option>
 </select>
+</label>
+<label class="field">
+<span class="field-label">Rango</span>
+<select id="game-group-edit-ranktype">
+<option value="none">Sin rango</option>
+<option value="elo">ELO</option>
+<option value="rr">RR (Valorant)</option>
+<option value="days">Días</option>
+</select>
+</label>
+<label class="field">
+<span class="field-label">Color accent</span>
+<input id="game-group-edit-accent" type="color" value="#8b5cf6"/>
 </label>
 </div>
 <div class="modal-footer sheet-footer">

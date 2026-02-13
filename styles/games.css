@@ -61,6 +61,55 @@
 .games-stats-grid { margin-top: 10px; display: grid; grid-template-columns: 130px 1fr; gap: 10px; }
 .games-stats-left { display: flex; flex-direction: column; gap: 10px; }
 
+.games-rank-chips{
+  display:flex;
+  gap:10px;
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+  padding: 2px 2px 10px 2px;
+}
+
+.games-rank-chip{
+  min-width: 120px;
+  border-radius: 16px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
+  box-shadow: 0 10px 26px rgba(0,0,0,0.35);
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+
+.games-rank-chip-top{
+  display:flex;
+  justify-content:space-between;
+  align-items:baseline;
+  gap: 8px;
+}
+
+.games-rank-chip-game{
+  font-weight:800;
+  font-size:12px;
+  color: rgba(255,255,255,0.9);
+}
+
+.games-rank-chip-type{
+  font-size:11px;
+  color: rgba(255,255,255,0.55);
+}
+
+.games-rank-chip-main{
+  font-weight:900;
+  font-size:16px;
+  letter-spacing:0.2px;
+}
+
+.games-rank-chip-sub{
+  font-size:11px;
+  color: rgba(255,255,255,0.65);
+}
+
 .games-kpi-panel{
   border-radius: 18px;
   padding: 12px 14px;
@@ -571,6 +620,7 @@ bottom: 19px;
 .game-mini-grid { display: grid; gap: 8px; }
 .game-mini-grid.two { grid-template-columns: repeat(2, 1fr); }
 .game-mini-grid.three { grid-template-columns: repeat(3, 1fr); }
+.game-mini-grid.one { grid-template-columns: 1fr; }
 .game-mini-input,
 .game-mini-date {
   width: 100%;

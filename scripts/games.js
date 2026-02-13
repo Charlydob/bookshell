@@ -9,6 +9,8 @@ const DAILY_PATH = "gameModeDaily";
 const MATCHES_PATH = "gameMatches";
 const AGG_DAY_PATH = "gameAggDay";
 const AGG_TOTAL_PATH = "gameAggTotal";
+const AGG_RANK_DAY_PATH = "gameAggRankDay";
+const AGG_RANK_TOTAL_PATH = "gameAggRankTotal";
 const HABITS_PATH = "habits";
 const HABIT_SESSIONS_PATH = "habitSessions";
 const CACHE_KEY = "bookshell-games-cache:v2";
@@ -20,6 +22,8 @@ let modes = {};
 let habits = {};
 let habitSessions = {};
 let dailyByMode = {};
+let aggRankDay = {};
+let aggRankTotal = {};
 const openGroups = new Set();
 let sessionTick = null;
 let currentModeId = null;
@@ -63,7 +67,11 @@ const $groupEditName = document.getElementById("game-group-edit-name");
 const $groupEditEmoji = document.getElementById("game-group-edit-emoji");
 const $groupEditHabit = document.getElementById("game-group-edit-habit");
 const $groupEditCategory = document.getElementById("game-group-edit-category");
+const $groupEditRankType = document.getElementById("game-group-edit-ranktype");
+const $groupEditAccent = document.getElementById("game-group-edit-accent");
 const $groupCategory = document.getElementById("game-group-category");
+const $groupRankType = document.getElementById("game-group-ranktype");
+const $groupAccent = document.getElementById("game-group-accent");
 
 const $detailModal = document.getElementById("game-detail-modal");
 const $detailBody = document.getElementById("game-detail-body");
@@ -78,6 +86,7 @@ const $statsLine = document.getElementById("game-stats-line");
 const $statsSub = document.getElementById("game-stats-sub");
 const $statsBreakdown = document.getElementById("game-stats-breakdown");
 const $statsCard = document.getElementById("game-stats-card");
+const $rankChips = document.getElementById("games-rank-chips");
 const $gamesExportBtn = document.getElementById("games-export-btn");
 const $tabCounters = document.getElementById("game-tab-counters");
 const $tabStats = document.getElementById("game-tab-stats");
@@ -143,6 +152,76 @@ function isShooterMode(modeId) {
   const mode = modes[modeId];
   if (!mode) return false;
   return getGroupCategory(mode.groupId) === "shooter";
+}
+
+function getGroupMeta(groupId) {
+  return groups[groupId] || {};
+}
+
+function getGroupRankType(groupId) {
+  const rankType = String(getGroupMeta(groupId).rankType || "none").toLowerCase();
+  return ["elo", "rr", "days"].includes(rankType) ? rankType : "none";
+}
+
+function getGroupAccent(groupId) {
+  return getGroupMeta(groupId).accent || detectStatsAccent(getGroupMeta(groupId).name || "");
+}
+
+function isGroupShooter(groupId) {
+  const g = getGroupMeta(groupId);
+  if (g?.tags?.shooter) return true;
+  return getGroupCategory(groupId) === "shooter";
+}
+
+function getRankTypeLabel(rankType) {
+  if (rankType === "elo") return "ELO";
+  if (rankType === "rr") return "RR";
+  if (rankType === "days") return "DÍAS";
+  return "RANGO";
+}
+
+const RR_TIERS = ["IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND", "ASCENDANT", "IMMORTAL", "RADIANT"];
+const RR_TIER_LABEL_ES = { IRON: "Hierro", BRONZE: "Bronce", SILVER: "Plata", GOLD: "Oro", PLATINUM: "Platino", DIAMOND: "Diamante", ASCENDANT: "Ascendant", IMMORTAL: "Inmortal", RADIANT: "Radiante" };
+
+function applyRrDelta(current = {}, delta = 0) {
+  let tier = String(current.tier || "IRON").toUpperCase();
+  if (!RR_TIERS.includes(tier)) tier = "IRON";
+  let div = Number.isFinite(Number(current.div)) ? Number(current.div) : 1;
+  let rr = Math.round(Number(current.rr || 0));
+  rr += Math.round(Number(delta || 0));
+  let idx = RR_TIERS.indexOf(tier);
+
+  while (rr >= 100) {
+    rr -= 100;
+    if (tier === "RADIANT") { rr = Math.max(0, rr); break; }
+    if (div < 3) div += 1;
+    else {
+      idx = Math.min(RR_TIERS.length - 1, idx + 1);
+      tier = RR_TIERS[idx];
+      div = tier === "RADIANT" ? null : 1;
+    }
+  }
+
+  while (rr < 0) {
+    if (tier === "IRON" && div === 1) { rr = 0; break; }
+    rr += 100;
+    if (tier === "RADIANT") {
+      idx = Math.max(0, idx - 1);
+      tier = RR_TIERS[idx];
+      div = 3;
+      continue;
+    }
+    if (div > 1) div -= 1;
+    else {
+      idx = Math.max(0, idx - 1);
+      tier = RR_TIERS[idx];
+      div = tier === "RADIANT" ? null : 3;
+    }
+  }
+
+  if (tier === "RADIANT") div = null;
+  rr = Math.max(0, rr);
+  return { tier, div, rr };
 }
 
 function pctWidths(wins, losses, ties = 0) {
@@ -411,6 +490,63 @@ function renderKpiPanel(tot = {}) {
   setText("kpi-ra", tot.ra || 0);
 }
 
+function sumRankDeltaInRange(groupId, rangeStart, rangeEndExclusive) {
+  return Object.entries(aggRankDay || {}).reduce((acc, [dayKey, dayRow]) => {
+    if (!isDateInRange(dateFromKey(dayKey), rangeStart, rangeEndExclusive)) return acc;
+    return acc + Number(dayRow?.[groupId]?.delta || 0);
+  }, 0);
+}
+
+function renderRankChips(selectedGroupId, range) {
+  if (!$rankChips) return;
+  const allGroups = Object.values(groups || {}).filter((g) => g?.id && getGroupRankType(g.id) !== "none");
+  const targetGroups = (selectedGroupId === "all" ? allGroups : allGroups.filter((g) => g.id === selectedGroupId))
+    .sort((a, b) => Number(a.sort || 0) - Number(b.sort || 0) || (a.name || "").localeCompare(b.name || "es"));
+  if (!targetGroups.length) {
+    $rankChips.innerHTML = "";
+    return;
+  }
+
+  $rankChips.innerHTML = targetGroups.map((g) => {
+    const rankType = getGroupRankType(g.id);
+    const total = aggRankTotal[g.id] || {};
+    const delta = Math.round(sumRankDeltaInRange(g.id, range.start, range.endExclusive));
+    let main = "";
+    let sub = "";
+    if (rankType === "elo") {
+      main = `ELO ${Math.round(Number(total.elo || 0))}`;
+      sub = `Δ periodo ${delta >= 0 ? "+" : ""}${delta}`;
+    } else if (rankType === "rr") {
+      const tier = String(total.tier || "IRON").toUpperCase();
+      const tierEs = RR_TIER_LABEL_ES[tier] || tier;
+      const div = total.div ? ` ${total.div}` : "";
+      const rr = Math.max(0, Math.round(Number(total.rr || 0)));
+      main = `${tierEs.toUpperCase()}${div}`;
+      sub = `RR ${rr}/100 · Δ ${delta >= 0 ? "+" : ""}${delta}`;
+    } else {
+      const days = Math.max(0, Math.round(Number(total.days || 0)));
+      main = `Días ${days}`;
+      sub = `${delta >= 0 ? "+" : ""}${delta} en periodo`;
+    }
+    return `<div class="games-rank-chip" data-group-id="${g.id}">
+      <div class="games-rank-chip-top">
+        <span class="games-rank-chip-game">${g.name || "Grupo"}</span>
+        <span class="games-rank-chip-type">${getRankTypeLabel(rankType)}</span>
+      </div>
+      <div class="games-rank-chip-main">${main}</div>
+      <div class="games-rank-chip-sub">${sub}</div>
+    </div>`;
+  }).join("");
+
+  targetGroups.forEach((g) => {
+    const chip = $rankChips.querySelector(`[data-group-id="${g.id}"]`);
+    if (!chip) return;
+    const accent = getGroupAccent(g.id);
+    chip.style.background = `radial-gradient(circle at top, color-mix(in srgb, ${accent} 28%, transparent), rgba(255,255,255,0.02))`;
+    chip.style.borderColor = `color-mix(in srgb, ${accent} 35%, rgba(255,255,255,0.08))`;
+  });
+}
+
 function renderDonut($el, vals, selectable = false, chartRef = "stats") {
   if (!$el) return;
   const total = vals.wins + vals.losses + vals.ties;
@@ -471,6 +607,7 @@ function renderGlobalStats() {
   const mergedDaily = mergeDailyMaps(modeIds);
   const points = buildDailySeries(mergedDaily, range);
   const totals = sumInRange(mergedDaily, range.start, range.endExclusive);
+  renderRankChips(selected, range);
 
   const byGroup = modeRows.reduce((acc, m) => {
     const gId = m.groupId || "none";
@@ -512,7 +649,7 @@ function renderGlobalStats() {
     const topPlays = byMode[0];
     const breakdownRows = byMode.map((entry) => ({
       mode: entry.mode.modeName || "Modo",
-      groupCategory: getGroupCategory(entry.mode.groupId),
+      groupCategory: isGroupShooter(entry.mode.groupId) ? "shooter" : "other",
       matches: entry.pct.total,
       wins: entry.stats.wins,
       losses: entry.stats.losses,
@@ -722,6 +859,8 @@ function openModeModal(mode = null) {
   $groupHabit.innerHTML = habitOptionsHtml();
   $groupHabit.value = "";
   if ($groupCategory) $groupCategory.value = "other";
+  if ($groupRankType) $groupRankType.value = "none";
+  if ($groupAccent) $groupAccent.value = "#8b5cf6";
   toggleGroupChoice();
   $modeModal.classList.add("modal-centered-mobile");
   $modeModal.classList.remove("hidden");
@@ -739,6 +878,8 @@ function openGroupModal(groupIdValue) {
   $groupEditHabit.innerHTML = habitOptionsHtml();
   $groupEditHabit.value = g.linkedHabitId || "";
   if ($groupEditCategory) $groupEditCategory.value = getGroupCategory(g.id);
+  if ($groupEditRankType) $groupEditRankType.value = getGroupRankType(g.id);
+  if ($groupEditAccent) $groupEditAccent.value = g.accent || "#8b5cf6";
   $groupModal.classList.remove("hidden");
   syncModalScrollLock();
 }
@@ -755,6 +896,10 @@ function toggleGroupChoice() {
   $groupHabitWrap.style.display = isNew ? "block" : "none";
   const $groupCategoryWrap = document.getElementById("game-group-category-wrap");
   if ($groupCategoryWrap) $groupCategoryWrap.style.display = isNew ? "block" : "none";
+  const $groupRankTypeWrap = document.getElementById("game-group-ranktype-wrap");
+  if ($groupRankTypeWrap) $groupRankTypeWrap.style.display = isNew ? "block" : "none";
+  const $groupAccentWrap = document.getElementById("game-group-accent-wrap");
+  if ($groupAccentWrap) $groupAccentWrap.style.display = isNew ? "block" : "none";
   $existingWrap.style.display = isNew ? "none" : "block";
 }
 
@@ -773,6 +918,9 @@ async function createOrUpdateMode() {
       emoji: ($groupEmoji.value || "🎮").trim() || "🎮",
       linkedHabitId: $groupHabit.value || null,
       category: ($groupCategory?.value || "other"),
+      tags: { shooter: ($groupCategory?.value || "other") === "shooter" },
+      rankType: ($groupRankType?.value || "none"),
+      accent: $groupAccent?.value || "#8b5cf6",
       createdAt: nowTs(),
       updatedAt: nowTs()
     };
@@ -819,7 +967,10 @@ async function addMatchWithStats(modeId, result, options = {}) {
   if (!mode) return;
   const day = options.day || todayKey();
   const statKey = resultKeyFromCode(result);
-  const isShooter = isShooterMode(modeId);
+  const groupId = mode.groupId;
+  const rankType = getGroupRankType(groupId);
+  const rankDelta = Math.round(Number(options.rankDelta || 0));
+  const isShooter = isGroupShooter(groupId);
   const shooter = isShooter ? normalizeShooterPayload(options) : { k: 0, d: 0, a: 0, rf: 0, ra: 0 };
 
   await runTransaction(ref(db, `${DAILY_PATH}/${modeId}/${day}`), (current) => {
@@ -845,8 +996,8 @@ async function addMatchWithStats(modeId, result, options = {}) {
     ...shooter
   };
 
-  await Promise.all([
-    runTransaction(ref(db, `${AGG_DAY_PATH}/${day}/${mode.groupId}/${modeId}`), (current) => {
+  const jobs = [
+    runTransaction(ref(db, `${AGG_DAY_PATH}/${day}/${groupId}/${modeId}`), (current) => {
       const base = current || {};
       return {
         matches: clamp(Number(base.matches || 0) + payload.matches),
@@ -860,7 +1011,7 @@ async function addMatchWithStats(modeId, result, options = {}) {
         ra: clamp(Number(base.ra || 0) + payload.ra)
       };
     }),
-    runTransaction(ref(db, `${AGG_TOTAL_PATH}/${mode.groupId}/${modeId}`), (current) => {
+    runTransaction(ref(db, `${AGG_TOTAL_PATH}/${groupId}/${modeId}`), (current) => {
       const base = current || {};
       return {
         matches: clamp(Number(base.matches || 0) + payload.matches),
@@ -874,35 +1025,74 @@ async function addMatchWithStats(modeId, result, options = {}) {
         ra: clamp(Number(base.ra || 0) + payload.ra)
       };
     })
-  ]);
+  ];
 
-  if (isShooter) {
+  if (rankType !== "none") {
+    jobs.push(
+      runTransaction(ref(db, `${AGG_RANK_DAY_PATH}/${day}/${groupId}`), (current) => {
+        const base = current || {};
+        const next = { ...base, delta: Number(base.delta || 0) + rankDelta };
+        if (rankType === "elo") next.elo = Number(base.elo || 0) + rankDelta;
+        if (rankType === "days") next.days = Math.max(0, Number(base.days || 0) + rankDelta);
+        if (rankType === "rr") {
+          const rrState = applyRrDelta(base, rankDelta);
+          next.tier = rrState.tier;
+          next.div = rrState.div;
+          next.rr = rrState.rr;
+        }
+        return next;
+      }),
+      runTransaction(ref(db, `${AGG_RANK_TOTAL_PATH}/${groupId}`), (current) => {
+        const base = current || {};
+        const next = { ...base, delta: Number(base.delta || 0) + rankDelta };
+        if (rankType === "elo") next.elo = Number(base.elo || 0) + rankDelta;
+        if (rankType === "days") next.days = Math.max(0, Number(base.days || 0) + rankDelta);
+        if (rankType === "rr") {
+          const rrState = applyRrDelta(base, rankDelta);
+          next.tier = rrState.tier;
+          next.div = rrState.div;
+          next.rr = rrState.rr;
+        }
+        return next;
+      })
+    );
+  }
+
+  await Promise.all(jobs);
+
+  if (isShooter || rankType !== "none") {
     const matchId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    await set(ref(db, `${MATCHES_PATH}/${day}/${mode.groupId}/${modeId}/${matchId}`), {
+    await set(ref(db, `${MATCHES_PATH}/${day}/${groupId}/${modeId}/${matchId}`), {
       ts: Date.now(),
       result,
-      ...shooter
+      ...shooter,
+      rankDelta
     });
   }
 
   triggerHaptic();
 }
 
-function openShooterResultModal(modeId, result) {
+function openResultModal(modeId, result) {
   const mode = modes[modeId];
   if (!mode) return Promise.resolve(false);
   const group = groups[mode.groupId] || {};
+  const rankType = getGroupRankType(mode.groupId);
+  const shooter = isGroupShooter(mode.groupId);
+  const rankLabel = rankType === "elo" ? "ΔELO" : (rankType === "rr" ? "ΔRR" : "ΔDías");
+  const rankPlaceholder = rankType === "elo" ? "ELO" : (rankType === "rr" ? "RR" : "Días");
+
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
     overlay.className = "game-mini-modal-overlay";
     overlay.innerHTML = `
-      <div class="game-mini-modal" role="dialog" aria-modal="true" aria-label="Añadir estadística shooter">
+      <div class="game-mini-modal" role="dialog" aria-modal="true" aria-label="Registrar resultado">
         <div class="game-mini-title">${group.name || "Grupo"} · ${mode.modeName || "Modo"} · ${result}</div>
         <label class="field">
           <span class="field-label">Día</span>
           <input type="date" class="game-mini-date" value="${todayKey()}" max="9999-12-31" />
         </label>
-        <div class="game-mini-grid two">
+        ${shooter ? `<div class="game-mini-grid two">
           <input class="game-mini-input" data-key="rf" inputmode="numeric" placeholder="R+" maxlength="3" />
           <input class="game-mini-input" data-key="ra" inputmode="numeric" placeholder="R-" maxlength="3" />
         </div>
@@ -910,7 +1100,13 @@ function openShooterResultModal(modeId, result) {
           <input class="game-mini-input" data-key="k" inputmode="numeric" placeholder="K" maxlength="3" />
           <input class="game-mini-input" data-key="d" inputmode="numeric" placeholder="D" maxlength="3" />
           <input class="game-mini-input" data-key="a" inputmode="numeric" placeholder="A" maxlength="3" />
-        </div>
+        </div>` : ""}
+        ${rankType !== "none" ? `<div class="game-mini-grid one">
+          <label class="field">
+            <span class="field-label">${rankLabel}</span>
+            <input class="game-mini-input" data-key="rankDelta" inputmode="numeric" placeholder="${rankPlaceholder}" maxlength="5" />
+          </label>
+        </div>` : ""}
         <div class="game-mini-actions">
           <button type="button" class="btn ghost" data-act="cancel">Cancelar</button>
           <button type="button" class="btn primary" data-act="save">Guardar</button>
@@ -927,7 +1123,7 @@ function openShooterResultModal(modeId, result) {
         const dateInput = overlay.querySelector('.game-mini-date');
         const payload = { day: dateInput?.value || todayKey() };
         overlay.querySelectorAll('.game-mini-input').forEach((node) => {
-          payload[node.dataset.key] = clampStat(node.value);
+          payload[node.dataset.key] = Number(node.value || 0);
         });
         close(true, payload);
       }
@@ -956,8 +1152,10 @@ async function patchModeCounter(modeId, key, delta) {
     const resultMap = { wins: "W", losses: "L", ties: "T" };
     const result = resultMap[key] || "T";
     let payload = { day: todayKey() };
-    if (isShooterMode(modeId)) {
-      const formPayload = await openShooterResultModal(modeId, result);
+    const groupRankType = getGroupRankType(mode.groupId);
+    const shouldOpenModal = isGroupShooter(mode.groupId) || groupRankType !== "none";
+    if (shouldOpenModal) {
+      const formPayload = await openResultModal(modeId, result);
       if (!formPayload) return;
       payload = formPayload;
     }
@@ -1206,7 +1404,7 @@ function renderModeDetail() {
   }).join("");
 
   const modeTotals = modeTotalsFromDaily(mode.id);
-  const shooterLine = getGroupCategory(mode.groupId) === "shooter" && pct.total > 0
+  const shooterLine = isGroupShooter(mode.groupId) && pct.total > 0
     ? `<div>K ${modeTotals.k} · D ${modeTotals.d} · A ${modeTotals.a} · R ${modeTotals.rf}-${modeTotals.ra}</div>`
     : "";
 
@@ -1557,6 +1755,9 @@ function bind() {
       emoji: ($groupEditEmoji.value || "🎮").trim() || "🎮",
       linkedHabitId: $groupEditHabit.value || null,
       category: ($groupEditCategory?.value || "other"),
+      tags: { shooter: ($groupEditCategory?.value || "other") === "shooter" },
+      rankType: ($groupEditRankType?.value || "none"),
+      accent: $groupEditAccent?.value || "#8b5cf6",
       updatedAt: nowTs()
     };
     groups[id] = { ...group, ...payload };
@@ -1628,6 +1829,14 @@ function listenRemote() {
     saveCache();
     renderGlobalStats();
     if (currentModeId) renderModeDetail();
+  });
+  onValue(ref(db, AGG_RANK_DAY_PATH), (snap) => {
+    aggRankDay = snap.val() || {};
+    renderGlobalStats();
+  });
+  onValue(ref(db, AGG_RANK_TOTAL_PATH), (snap) => {
+    aggRankTotal = snap.val() || {};
+    renderGlobalStats();
   });
   onValue(ref(db, HABITS_PATH), (snap) => {
     habits = snap.val() || {};

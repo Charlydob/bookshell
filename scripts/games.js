@@ -1,11 +1,14 @@
 import { db } from "./firebase-shared.js";
-import { ref, onValue, set, update, push, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { ref, onValue, set, update, push, remove, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { getRangeBounds, dateFromKey } from "./range-helpers.js";
 import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";
 
 const GROUPS_PATH = "gameGroups";
 const MODES_PATH = "gameModes";
 const DAILY_PATH = "gameModeDaily";
+const MATCHES_PATH = "gameMatches";
+const AGG_DAY_PATH = "gameAggDay";
+const AGG_TOTAL_PATH = "gameAggTotal";
 const HABITS_PATH = "habits";
 const HABIT_SESSIONS_PATH = "habitSessions";
 const CACHE_KEY = "bookshell-games-cache:v2";
@@ -59,6 +62,8 @@ const $groupId = document.getElementById("game-group-id");
 const $groupEditName = document.getElementById("game-group-edit-name");
 const $groupEditEmoji = document.getElementById("game-group-edit-emoji");
 const $groupEditHabit = document.getElementById("game-group-edit-habit");
+const $groupEditCategory = document.getElementById("game-group-edit-category");
+const $groupCategory = document.getElementById("game-group-category");
 
 const $detailModal = document.getElementById("game-detail-modal");
 const $detailBody = document.getElementById("game-detail-body");
@@ -81,6 +86,7 @@ let editingModeId = null;
 
 function nowTs() { return Date.now(); }
 const clamp = (n, min = 0) => Math.max(min, n);
+const clampStat = (n) => Math.max(0, Math.min(999, Math.round(Number(n || 0))));
 function dateKeyLocal(date) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -117,6 +123,26 @@ function ensurePct(wins, losses, ties = 0) {
     lossPct: Math.round((losses / total) * 100),
     tiePct: Math.round((ties / total) * 100)
   };
+}
+
+function formatWLT({ w = 0, l = 0, t = 0 }) {
+  return `${Number(w || 0)}W ${Number(l || 0)}L ${Number(t || 0)}T`;
+}
+
+function formatLineRight(matches, w, l, t, wr) {
+  const safeWr = Number.isFinite(Number(wr)) ? Number(wr) : 0;
+  return `${Number(matches || 0)} · ${formatWLT({ w, l, t })} · ${safeWr}%`;
+}
+
+function getGroupCategory(groupId) {
+  const raw = String(groups[groupId]?.category || "other").toLowerCase();
+  return raw === "shooter" ? "shooter" : "other";
+}
+
+function isShooterMode(modeId) {
+  const mode = modes[modeId];
+  if (!mode) return false;
+  return getGroupCategory(mode.groupId) === "shooter";
 }
 
 function pctWidths(wins, losses, ties = 0) {
@@ -178,8 +204,13 @@ function modeTotalsFromDaily(modeId) {
     acc.wins += Number(row?.wins || 0);
     acc.losses += Number(row?.losses || 0);
     acc.ties += Number(row?.ties || 0);
+    acc.k += Number(row?.k || 0);
+    acc.d += Number(row?.d || 0);
+    acc.a += Number(row?.a || 0);
+    acc.rf += Number(row?.rf || 0);
+    acc.ra += Number(row?.ra || 0);
     return acc;
-  }, { wins: 0, losses: 0, ties: 0 });
+  }, { wins: 0, losses: 0, ties: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0 });
 }
 
 function readDayMinutes(rawValue) {
@@ -213,7 +244,7 @@ function buildModeCard(mode, groupEmoji) {
       <div class="game-split-tie" style="width:${tieW}%"></div>
       <div class="game-split-win" style="width:${winW}%"></div>
     </div>
-    <div class="game-card-total">${total} TOTAL</div>
+    <div class="game-card-total">${formatLineRight(total, wins, losses, ties, winPct)}</div>
     <div class="game-card-content">
       <div class="game-side left">
         <button class="game-thumb-btn-losses" data-action="loss" title="Derrota">👎</button>
@@ -228,7 +259,7 @@ function buildModeCard(mode, groupEmoji) {
         <button class="game-thumb-btn-wins" data-action="win" title="Victoria">👍</button>
       </div>
     </div>
-    <div class="game-bottom-tie">${ties} • ${tiePct}%</div>
+    <div class="game-bottom-tie">${formatWLT({ w: wins, l: losses, t: ties })}</div>
   </article>`;
 }
 
@@ -259,8 +290,13 @@ function sumInRange(dailyMap, start, endExclusive) {
     acc.wins += Number(row?.wins || 0);
     acc.losses += Number(row?.losses || 0);
     acc.ties += Number(row?.ties || 0);
+    acc.k += Number(row?.k || 0);
+    acc.d += Number(row?.d || 0);
+    acc.a += Number(row?.a || 0);
+    acc.rf += Number(row?.rf || 0);
+    acc.ra += Number(row?.ra || 0);
     return acc;
-  }, { wins: 0, losses: 0, ties: 0 });
+  }, { wins: 0, losses: 0, ties: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0 });
 }
 
 function mergeDailyMaps(modeIds) {
@@ -271,6 +307,11 @@ function mergeDailyMaps(modeIds) {
       prev.losses += Number(row?.losses || 0);
       prev.ties += Number(row?.ties || 0);
       prev.minutes = Number(prev.minutes || 0) + clamp(Number(row?.minutes || 0));
+      prev.k = Number(prev.k || 0) + Number(row?.k || 0);
+      prev.d = Number(prev.d || 0) + Number(row?.d || 0);
+      prev.a = Number(prev.a || 0) + Number(row?.a || 0);
+      prev.rf = Number(prev.rf || 0) + Number(row?.rf || 0);
+      prev.ra = Number(prev.ra || 0) + Number(row?.ra || 0);
       acc[day] = prev;
     });
     return acc;
@@ -434,7 +475,12 @@ function renderGlobalStats() {
   }).sort((a, b) => b.pct.total - a.pct.total);
 
   const pct = ensurePct(totals.wins, totals.losses, totals.ties);
-  if ($statsTotals) $statsTotals.textContent = `${pct.total} partidas · ${totals.wins}W / ${totals.losses}L / ${totals.ties}T · ${pct.winPct}%W`;
+  if ($statsTotals) {
+    const shooterText = (totals.k || totals.d || totals.a || totals.rf || totals.ra)
+      ? ` · K ${totals.k} D ${totals.d} A ${totals.a} · R ${totals.rf}-${totals.ra}`
+      : "";
+    $statsTotals.textContent = `${pct.total} partidas · ${totals.wins}W / ${totals.losses}L / ${totals.ties}T · ${pct.winPct}%W${shooterText}`;
+  }
   if ($statsSub) $statsSub.textContent = selected === "all" ? "Global" : (groups[selected]?.name || "Grupo");
   renderDonut($statsDonut, totals, true, "stats");
   renderLineChart($statsLine, points, "stats");
@@ -444,11 +490,17 @@ function renderGlobalStats() {
     const topPlays = byMode[0];
     const breakdownRows = byMode.map((entry) => ({
       mode: entry.mode.modeName || "Modo",
+      groupCategory: getGroupCategory(entry.mode.groupId),
       matches: entry.pct.total,
       wins: entry.stats.wins,
       losses: entry.stats.losses,
       ties: entry.stats.ties,
       winrate: entry.pct.winPct,
+      k: Number(entry.stats.k || 0),
+      d: Number(entry.stats.d || 0),
+      a: Number(entry.stats.a || 0),
+      rf: Number(entry.stats.rf || 0),
+      ra: Number(entry.stats.ra || 0),
       accent: detectStatsAccent(`${groups[entry.mode.groupId]?.name || ""} ${entry.mode.modeName || ""}`)
     }));
 
@@ -457,7 +509,9 @@ function renderGlobalStats() {
       return {
         label: groups[gId]?.name || "Sin grupo",
         matches: gp.total,
-        wlt: `${v.wins}W ${v.losses}L ${v.ties}T`,
+        wins: v.wins,
+        losses: v.losses,
+        ties: v.ties,
         winrate: gp.winPct,
         accent: detectStatsAccent(groups[gId]?.name || "")
       };
@@ -466,7 +520,9 @@ function renderGlobalStats() {
     const modeRowsTop = byMode.slice(0, 5).map((entry) => ({
       label: entry.mode.modeName || "Modo",
       matches: entry.pct.total,
-      wlt: `${entry.stats.wins}W ${entry.stats.losses}L ${entry.stats.ties}T`,
+      wins: entry.stats.wins,
+      losses: entry.stats.losses,
+      ties: entry.stats.ties,
       winrate: entry.pct.winPct,
       accent: detectStatsAccent(`${groups[entry.mode.groupId]?.name || ""} ${entry.mode.modeName || ""}`)
     }));
@@ -475,14 +531,18 @@ function renderGlobalStats() {
       topWin ? {
         label: "Mejor winrate",
         matches: topWin.pct.total,
-        wlt: topWin.mode.modeName || "Modo",
+        wins: topWin.stats.wins,
+        losses: topWin.stats.losses,
+        ties: topWin.stats.ties,
         winrate: topWin.pct.winPct,
         accent: detectStatsAccent(`${groups[topWin.mode.groupId]?.name || ""} ${topWin.mode.modeName || ""}`)
       } : null,
       topPlays ? {
         label: "Más jugado",
         matches: topPlays.pct.total,
-        wlt: `${topPlays.stats.wins}W ${topPlays.stats.losses}L ${topPlays.stats.ties}T`,
+        wins: topPlays.stats.wins,
+        losses: topPlays.stats.losses,
+        ties: topPlays.stats.ties,
         winrate: topPlays.pct.winPct,
         accent: detectStatsAccent(`${groups[topPlays.mode.groupId]?.name || ""} ${topPlays.mode.modeName || ""}`)
       } : null
@@ -501,8 +561,9 @@ function renderBreakdownStatsCard(list) {
   const content = list.length ? list.map((x) => `
     <div class="stats-line" style="${buildStatsGlowStyle(x.accent)}">
       <b>${x.mode}</b>
-      <span>${x.matches} · ${x.winrate}%</span>
+      <span>${formatLineRight(x.matches, x.wins, x.losses, x.ties, x.winrate)}</span>
     </div>
+    ${x.groupCategory === "shooter" && x.matches > 0 ? `<div class="stats-line-sub">K ${x.k} · D ${x.d} · A ${x.a} · R ${x.rf}-${x.ra}</div>` : ""}
   `).join("") : `<div class="games-stats-empty">Sin datos</div>`;
   return renderStatsFold({
     id: "breakdown",
@@ -517,7 +578,7 @@ function renderStatsListCard(title, list) {
   const rows = list.length ? list.map((entry) => `
     <div class="stats-line" style="${buildStatsGlowStyle(entry.accent)}">
       <b>${entry.label}</b>
-      <span>${entry.matches} · ${entry.winrate}%</span>
+      <span>${formatLineRight(entry.matches, entry.wins, entry.losses, entry.ties, entry.winrate)}</span>
     </div>
   `).join("") : `<div class="games-stats-empty">Sin datos</div>`;
   return renderStatsFold({
@@ -638,6 +699,7 @@ function openModeModal(mode = null) {
   if (mode?.groupId) $existingGroup.value = mode.groupId;
   $groupHabit.innerHTML = habitOptionsHtml();
   $groupHabit.value = "";
+  if ($groupCategory) $groupCategory.value = "other";
   toggleGroupChoice();
   $modeModal.classList.add("modal-centered-mobile");
   $modeModal.classList.remove("hidden");
@@ -654,6 +716,7 @@ function openGroupModal(groupIdValue) {
   $groupEditEmoji.value = g.emoji || "🎮";
   $groupEditHabit.innerHTML = habitOptionsHtml();
   $groupEditHabit.value = g.linkedHabitId || "";
+  if ($groupEditCategory) $groupEditCategory.value = getGroupCategory(g.id);
   $groupModal.classList.remove("hidden");
   syncModalScrollLock();
 }
@@ -668,6 +731,8 @@ function toggleGroupChoice() {
   const isNew = $groupChoice.value === "new";
   $newWrap.style.display = isNew ? "grid" : "none";
   $groupHabitWrap.style.display = isNew ? "block" : "none";
+  const $groupCategoryWrap = document.getElementById("game-group-category-wrap");
+  if ($groupCategoryWrap) $groupCategoryWrap.style.display = isNew ? "block" : "none";
   $existingWrap.style.display = isNew ? "none" : "block";
 }
 
@@ -685,6 +750,7 @@ async function createOrUpdateMode() {
       name,
       emoji: ($groupEmoji.value || "🎮").trim() || "🎮",
       linkedHabitId: $groupHabit.value || null,
+      category: ($groupCategory?.value || "other"),
       createdAt: nowTs(),
       updatedAt: nowTs()
     };
@@ -708,17 +774,180 @@ async function createOrUpdateMode() {
   render();
 }
 
+
+
+function resultKeyFromCode(result) {
+  if (result === "W") return "wins";
+  if (result === "L") return "losses";
+  return "ties";
+}
+
+function normalizeShooterPayload(raw = {}) {
+  return {
+    k: clampStat(raw.k),
+    d: clampStat(raw.d),
+    a: clampStat(raw.a),
+    rf: clampStat(raw.rf),
+    ra: clampStat(raw.ra)
+  };
+}
+
+async function addMatchWithStats(modeId, result, options = {}) {
+  const mode = modes[modeId];
+  if (!mode) return;
+  const day = options.day || todayKey();
+  const statKey = resultKeyFromCode(result);
+  const isShooter = isShooterMode(modeId);
+  const shooter = isShooter ? normalizeShooterPayload(options) : { k: 0, d: 0, a: 0, rf: 0, ra: 0 };
+
+  await runTransaction(ref(db, `${DAILY_PATH}/${modeId}/${day}`), (current) => {
+    const base = current || {};
+    return {
+      wins: clamp(Number(base.wins || 0) + (statKey === "wins" ? 1 : 0)),
+      losses: clamp(Number(base.losses || 0) + (statKey === "losses" ? 1 : 0)),
+      ties: clamp(Number(base.ties || 0) + (statKey === "ties" ? 1 : 0)),
+      minutes: clamp(Number(base.minutes || 0)),
+      k: clamp(Number(base.k || 0) + shooter.k),
+      d: clamp(Number(base.d || 0) + shooter.d),
+      a: clamp(Number(base.a || 0) + shooter.a),
+      rf: clamp(Number(base.rf || 0) + shooter.rf),
+      ra: clamp(Number(base.ra || 0) + shooter.ra)
+    };
+  });
+
+  const payload = {
+    matches: 1,
+    w: result === "W" ? 1 : 0,
+    l: result === "L" ? 1 : 0,
+    t: result === "T" ? 1 : 0,
+    ...shooter
+  };
+
+  await Promise.all([
+    runTransaction(ref(db, `${AGG_DAY_PATH}/${day}/${mode.groupId}/${modeId}`), (current) => {
+      const base = current || {};
+      return {
+        matches: clamp(Number(base.matches || 0) + payload.matches),
+        w: clamp(Number(base.w || 0) + payload.w),
+        l: clamp(Number(base.l || 0) + payload.l),
+        t: clamp(Number(base.t || 0) + payload.t),
+        k: clamp(Number(base.k || 0) + payload.k),
+        d: clamp(Number(base.d || 0) + payload.d),
+        a: clamp(Number(base.a || 0) + payload.a),
+        rf: clamp(Number(base.rf || 0) + payload.rf),
+        ra: clamp(Number(base.ra || 0) + payload.ra)
+      };
+    }),
+    runTransaction(ref(db, `${AGG_TOTAL_PATH}/${mode.groupId}/${modeId}`), (current) => {
+      const base = current || {};
+      return {
+        matches: clamp(Number(base.matches || 0) + payload.matches),
+        w: clamp(Number(base.w || 0) + payload.w),
+        l: clamp(Number(base.l || 0) + payload.l),
+        t: clamp(Number(base.t || 0) + payload.t),
+        k: clamp(Number(base.k || 0) + payload.k),
+        d: clamp(Number(base.d || 0) + payload.d),
+        a: clamp(Number(base.a || 0) + payload.a),
+        rf: clamp(Number(base.rf || 0) + payload.rf),
+        ra: clamp(Number(base.ra || 0) + payload.ra)
+      };
+    })
+  ]);
+
+  if (isShooter) {
+    const matchId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    await set(ref(db, `${MATCHES_PATH}/${day}/${mode.groupId}/${modeId}/${matchId}`), {
+      ts: Date.now(),
+      result,
+      ...shooter
+    });
+  }
+
+  triggerHaptic();
+}
+
+function openShooterResultModal(modeId, result) {
+  const mode = modes[modeId];
+  if (!mode) return Promise.resolve(false);
+  const group = groups[mode.groupId] || {};
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "game-mini-modal-overlay";
+    overlay.innerHTML = `
+      <div class="game-mini-modal" role="dialog" aria-modal="true" aria-label="Añadir estadística shooter">
+        <div class="game-mini-title">${group.name || "Grupo"} · ${mode.modeName || "Modo"} · ${result}</div>
+        <label class="field">
+          <span class="field-label">Día</span>
+          <input type="date" class="game-mini-date" value="${todayKey()}" max="9999-12-31" />
+        </label>
+        <div class="game-mini-grid two">
+          <input class="game-mini-input" data-key="rf" inputmode="numeric" placeholder="R+" maxlength="3" />
+          <input class="game-mini-input" data-key="ra" inputmode="numeric" placeholder="R-" maxlength="3" />
+        </div>
+        <div class="game-mini-grid three">
+          <input class="game-mini-input" data-key="k" inputmode="numeric" placeholder="K" maxlength="3" />
+          <input class="game-mini-input" data-key="d" inputmode="numeric" placeholder="D" maxlength="3" />
+          <input class="game-mini-input" data-key="a" inputmode="numeric" placeholder="A" maxlength="3" />
+        </div>
+        <div class="game-mini-actions">
+          <button type="button" class="btn ghost" data-act="cancel">Cancelar</button>
+          <button type="button" class="btn primary" data-act="save">Guardar</button>
+        </div>
+      </div>`;
+    const close = (ok, payload = null) => {
+      overlay.remove();
+      document.body.classList.remove("has-open-modal");
+      resolve(ok ? payload : false);
+    };
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay || e.target.closest('[data-act="cancel"]')) close(false);
+      if (e.target.closest('[data-act="save"]')) {
+        const dateInput = overlay.querySelector('.game-mini-date');
+        const payload = { day: dateInput?.value || todayKey() };
+        overlay.querySelectorAll('.game-mini-input').forEach((node) => {
+          payload[node.dataset.key] = clampStat(node.value);
+        });
+        close(true, payload);
+      }
+    });
+    overlay.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") close(false);
+      if (e.key === "Enter") {
+        e.preventDefault();
+        overlay.querySelector('[data-act="save"]')?.click();
+      }
+    });
+    document.body.appendChild(overlay);
+    document.body.classList.add("has-open-modal");
+    overlay.querySelector('.game-mini-input')?.focus();
+  });
+}
+
 async function patchModeCounter(modeId, key, delta) {
   const mode = modes[modeId];
   if (!mode) return;
   const dailyTotals = modeTotalsFromDaily(modeId);
   const prevTotal = clamp(Number(dailyTotals[key] || 0));
   if (delta < 0 && prevTotal <= 0) return;
-  mode.updatedAt = nowTs();
 
+  if (delta > 0) {
+    const resultMap = { wins: "W", losses: "L", ties: "T" };
+    const result = resultMap[key] || "T";
+    let payload = { day: todayKey() };
+    if (isShooterMode(modeId)) {
+      const formPayload = await openShooterResultModal(modeId, result);
+      if (!formPayload) return;
+      payload = formPayload;
+    }
+    await addMatchWithStats(modeId, result, payload);
+    await update(ref(db, `${MODES_PATH}/${modeId}`), { updatedAt: nowTs() });
+    return;
+  }
+
+  mode.updatedAt = nowTs();
   const day = todayKey();
   dailyByMode[modeId] = dailyByMode[modeId] || {};
-  const dayPrev = dailyByMode[modeId][day] || { wins: 0, losses: 0, ties: 0, minutes: 0 };
+  const dayPrev = dailyByMode[modeId][day] || { wins: 0, losses: 0, ties: 0, minutes: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0 };
   const dayValue = clamp(Number(dayPrev[key] || 0) + delta);
   dailyByMode[modeId][day] = { ...dayPrev, [key]: dayValue };
 
@@ -879,7 +1108,12 @@ async function reconcileGamesFromHabitSessions() {
         wins: clamp(Number(prev.wins || 0)),
         losses: clamp(Number(prev.losses || 0)),
         ties: clamp(Number(prev.ties || 0)),
-        minutes: nextMinutes
+        minutes: nextMinutes,
+        k: clamp(Number(prev.k || 0)),
+        d: clamp(Number(prev.d || 0)),
+        a: clamp(Number(prev.a || 0)),
+        rf: clamp(Number(prev.rf || 0)),
+        ra: clamp(Number(prev.ra || 0))
       };
       updates[`${DAILY_PATH}/${targetModeId}/${dateKey}/minutes`] = nextMinutes;
     });
@@ -950,6 +1184,9 @@ function renderModeDetail() {
   }).join("");
 
   const modeTotals = modeTotalsFromDaily(mode.id);
+  const shooterLine = getGroupCategory(mode.groupId) === "shooter" && pct.total > 0
+    ? `<div>K ${modeTotals.k} · D ${modeTotals.d} · A ${modeTotals.a} · R ${modeTotals.rf}-${modeTotals.ra}</div>`
+    : "";
 
   $detailTitle.textContent = `${group.name || "Grupo"} — ${mode.modeName || "Modo"}`;
   $detailBody.innerHTML = `
@@ -957,7 +1194,7 @@ function renderModeDetail() {
       <div class="game-detail-top">
         <div>
           <div class="game-detail-name">${mode.modeEmoji || group.emoji || "🎮"} ${group.name || "Grupo"} — ${mode.modeName || "Modo"}</div>
-          <div class="game-detail-sub">${pct.total} partidas · ${pct.winPct}%W / ${pct.lossPct}%L / ${pct.tiePct}%T</div>
+          <div class="game-detail-sub">${formatLineRight(pct.total, totals.wins, totals.losses, totals.ties, pct.winPct)}</div>
         </div>
         <div class="game-detail-actions">
           <button class="game-menu-btn" data-action="edit-mode">Editar</button>
@@ -966,8 +1203,9 @@ function renderModeDetail() {
         </div>
       </div>
       <div class="game-detail-summary">
-        <div>W/L/T: ${totals.wins}/${totals.losses}/${totals.ties}</div>
+        <div>W/L/T: ${formatWLT({ w: totals.wins, l: totals.losses, t: totals.ties })}</div>
         <div>Horas jugadas (hábito grupo): ${hoursText}</div>
+        ${shooterLine}
       </div>
     </section>
 
@@ -1033,7 +1271,12 @@ async function saveDayRecord(modeId, day, rec) {
     wins: clamp(Number(rec.wins || 0)),
     losses: clamp(Number(rec.losses || 0)),
     ties: clamp(Number(rec.ties || 0)),
-    minutes: clamp(Number(rec.minutes || 0))
+    minutes: clamp(Number(rec.minutes || 0)),
+    k: clamp(Number(rec.k || 0)),
+    d: clamp(Number(rec.d || 0)),
+    a: clamp(Number(rec.a || 0)),
+    rf: clamp(Number(rec.rf || 0)),
+    ra: clamp(Number(rec.ra || 0))
   };
   render();
   renderGlobalStats();
@@ -1060,7 +1303,12 @@ function openDayRecordModal(modeId, day) {
     wins: clamp(Number(rec.wins || 0)),
     losses: clamp(Number(rec.losses || 0)),
     ties: clamp(Number(rec.ties || 0)),
-    minutes: clamp(Number(rec.minutes || 0))
+    minutes: clamp(Number(rec.minutes || 0)),
+    k: clamp(Number(rec.k || 0)),
+    d: clamp(Number(rec.d || 0)),
+    a: clamp(Number(rec.a || 0)),
+    rf: clamp(Number(rec.rf || 0)),
+    ra: clamp(Number(rec.ra || 0))
   };
   const modal = document.createElement("div");
   modal.className = "modal-backdrop";
@@ -1286,6 +1534,7 @@ function bind() {
       name: $groupEditName.value.trim(),
       emoji: ($groupEditEmoji.value || "🎮").trim() || "🎮",
       linkedHabitId: $groupEditHabit.value || null,
+      category: ($groupEditCategory?.value || "other"),
       updatedAt: nowTs()
     };
     groups[id] = { ...group, ...payload };

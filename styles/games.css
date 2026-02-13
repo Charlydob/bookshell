@@ -59,6 +59,52 @@
 }
 .games-stats-totals { margin-top: 8px; font-size: .82rem; opacity: .92; }
 .games-stats-grid { margin-top: 10px; display: grid; grid-template-columns: 130px 1fr; gap: 10px; }
+.games-stats-left { display: flex; flex-direction: column; gap: 10px; }
+
+.games-kpi-panel{
+  border-radius: 18px;
+  padding: 12px 14px;
+  background: radial-gradient(circle at top, rgba(160,130,255,0.12), rgba(255,255,255,0.03));
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.02), 0 12px 28px rgba(0,0,0,0.35);
+}
+
+.games-kpi-row{
+  display:flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.games-kpi-row2{
+  margin-top: 8px;
+  opacity: 0.95;
+}
+
+.kpi{
+  flex: 1;
+  display:flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
+.kpi b{
+  font-size: 22px;
+  line-height: 1;
+}
+
+.kpi-k{ color: var(--ok-green, #37d67a); }
+.kpi-d{ color: var(--bad-red, #ff4d5e); }
+.kpi-a{ color: rgba(255,255,255,0.92); }
+
+.kpi-w{ color: rgba(200,190,255,0.95); }
+.kpi-rf{ color: #ffd25a; }
+.kpi-ra{ color: rgba(255,255,255,0.35); }
+
+#game-stats-donut { min-height: 176px; }
 
 .games-donut {
   min-height: 220px;
@@ -383,6 +429,7 @@ bottom: 19px;
 
 @media (max-width: 680px) {
   .games-stats-grid { grid-template-columns: 1fr; }
+  .kpi b { font-size: 20px; }
   .games-stats-breakdown .games-stats-row {
     align-items: flex-start;
     flex-direction: column;

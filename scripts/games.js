@@ -19,6 +19,9 @@ let currentModeId = null;
 let detailMonth = { year: new Date().getFullYear(), month: new Date().getMonth() };
 let detailRange = "total";
 let selectedDonutKey = "wins";
+let gamesPanel = "counters";
+let statsRange = "1d";
+let detailLineRange = "30d";
 
 const $groupsList = document.getElementById("games-groups-list");
 const $empty = document.getElementById("games-empty");
@@ -59,6 +62,10 @@ const $statsTotals = document.getElementById("game-stats-totals");
 const $statsDonut = document.getElementById("game-stats-donut");
 const $statsLine = document.getElementById("game-stats-line");
 const $statsSub = document.getElementById("game-stats-sub");
+const $statsBreakdown = document.getElementById("game-stats-breakdown");
+const $statsCard = document.getElementById("game-stats-card");
+const $tabCounters = document.getElementById("game-tab-counters");
+const $tabStats = document.getElementById("game-tab-stats");
 
 let editingModeId = null;
 
@@ -100,6 +107,15 @@ function ensurePct(wins, losses, ties = 0) {
     lossPct: Math.round((losses / total) * 100),
     tiePct: Math.round((ties / total) * 100)
   };
+}
+
+function pctWidths(wins, losses, ties = 0) {
+  const total = wins + losses + ties;
+  if (!total) return { lossW: 33.34, tieW: 33.33, winW: 33.33 };
+  const lossW = (losses / total) * 100;
+  const tieW = (ties / total) * 100;
+  const winW = Math.max(0, 100 - lossW - tieW);
+  return { lossW, tieW, winW };
 }
 
 function getRunningSessionState() {
@@ -163,17 +179,18 @@ function buildModeCard(mode, groupEmoji) {
   const ties = clamp(Number(mode.ties || 0));
   const { winPct, lossPct, tiePct, total } = ensurePct(wins, losses, ties);
   const emoji = (mode.modeEmoji || "").trim() || groupEmoji || "🎮";
-  const tieWidth = Math.min(40, Math.max(6, tiePct || 0));
+  const { lossW, tieW, winW } = pctWidths(wins, losses, ties);
   return `
   <article class="game-card" data-mode-id="${mode.id}" role="button" tabindex="0">
     <div class="game-split-bg">
-      <div class="game-split-loss" style="width:${Math.max(10, lossPct)}%"></div>
-      <div class="game-split-win" style="width:${Math.max(10, winPct)}%"></div>
-      <div class="game-split-tie" style="width:${tieWidth}%"></div>
+      <div class="game-split-loss" style="width:${lossW}%"></div>
+      <div class="game-split-tie" style="width:${tieW}%"></div>
+      <div class="game-split-win" style="width:${winW}%"></div>
     </div>
     <div class="game-card-total">${total} TOTAL</div>
     <div class="game-card-content">
       <div class="game-side left">
+        <button class="game-thumb-btn" data-action="loss" title="Derrota">👎</button>
         <div class="game-side-stat">${losses} • ${lossPct}%</div>
       </div>
       <div class="game-center">
@@ -182,6 +199,7 @@ function buildModeCard(mode, groupEmoji) {
       </div>
       <div class="game-side right">
         <div class="game-side-stat">${winPct}% • ${wins}</div>
+        <button class="game-thumb-btn" data-action="win" title="Victoria">👍</button>
       </div>
     </div>
     <div class="game-bottom-tie">${ties} • ${tiePct}%</div>
@@ -210,6 +228,15 @@ function linePointsFromDaily(modeIds) {
     });
   });
   return Array.from(dayMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+function applyPointsRange(points, range = "total") {
+  if (range === "total") return points;
+  const days = Number(range.replace("d", "")) || 30;
+  const minDate = new Date();
+  minDate.setDate(minDate.getDate() - days + 1);
+  const minKey = dateKeyLocal(minDate);
+  return points.filter(([day]) => day >= minKey);
 }
 
 function renderLineChart($el, points) {
@@ -262,17 +289,60 @@ function renderGlobalStats() {
   renderStatsFilter();
   const selected = $statsFilter?.value || "all";
   const modeRows = Object.values(modes || {}).filter((m) => m && (selected === "all" || m.groupId === selected));
-  const totals = modeRows.reduce((acc, m) => {
-    acc.wins += Number(m.wins || 0);
-    acc.losses += Number(m.losses || 0);
-    acc.ties += Number(m.ties || 0);
+  const points = applyPointsRange(linePointsFromDaily(modeRows.map((m) => m.id)), statsRange);
+  const totals = statsRange === "total"
+    ? modeRows.reduce((acc, m) => {
+      acc.wins += Number(m.wins || 0);
+      acc.losses += Number(m.losses || 0);
+      acc.ties += Number(m.ties || 0);
+      return acc;
+    }, { wins: 0, losses: 0, ties: 0 })
+    : points.reduce((acc, [, day]) => {
+      acc.wins += Number(day.wins || 0);
+      acc.losses += Number(day.losses || 0);
+      acc.ties += Number(day.ties || 0);
+      return acc;
+    }, { wins: 0, losses: 0, ties: 0 });
+
+  const byGroup = modeRows.reduce((acc, m) => {
+    const gId = m.groupId || "none";
+    acc[gId] = acc[gId] || { wins: 0, losses: 0, ties: 0 };
+    acc[gId].wins += Number(m.wins || 0);
+    acc[gId].losses += Number(m.losses || 0);
+    acc[gId].ties += Number(m.ties || 0);
     return acc;
-  }, { wins: 0, losses: 0, ties: 0 });
+  }, {});
+  const byMode = modeRows.map((m) => {
+    const wins = Number(m.wins || 0);
+    const losses = Number(m.losses || 0);
+    const ties = Number(m.ties || 0);
+    return { name: m.modeName || "Modo", pct: ensurePct(wins, losses, ties) };
+  });
   const pct = ensurePct(totals.wins, totals.losses, totals.ties);
   if ($statsTotals) $statsTotals.textContent = `${pct.total} partidas · ${totals.wins}W / ${totals.losses}L / ${totals.ties}T · ${pct.winPct}%W`;
   if ($statsSub) $statsSub.textContent = selected === "all" ? "Global" : (groups[selected]?.name || "Grupo");
   renderDonut($statsDonut, totals, false);
-  renderLineChart($statsLine, linePointsFromDaily(modeRows.map((m) => m.id)));
+  renderLineChart($statsLine, points);
+  if ($statsBreakdown) {
+    const topWin = [...byMode].sort((a, b) => b.pct.winPct - a.pct.winPct)[0];
+    const topPlays = [...byMode].sort((a, b) => b.pct.total - a.pct.total)[0];
+    $statsBreakdown.innerHTML = `
+      <div class="games-break-card"><strong>Por grupo</strong>${Object.entries(byGroup).map(([gId, v]) => {
+        const gp = ensurePct(v.wins, v.losses, v.ties);
+        return `<div>${groups[gId]?.name || "Sin grupo"} · ${gp.total} · ${gp.winPct}%W</div>`;
+      }).join("") || "<div>Sin datos</div>"}</div>
+      <div class="games-break-card"><strong>Por modo</strong>${[...byMode].sort((a, b) => b.pct.total - a.pct.total).slice(0, 4).map((m) => `<div>${m.name} · ${m.pct.total} · ${m.pct.winPct}%W</div>`).join("") || "<div>Sin datos</div>"}</div>
+      <div class="games-break-card"><strong>Top</strong><div>Winrate: ${topWin ? `${topWin.name} (${topWin.pct.winPct}%)` : "—"}</div><div>Partidas: ${topPlays ? `${topPlays.name} (${topPlays.pct.total})` : "—"}</div></div>`;
+  }
+}
+
+function renderGamesPanel() {
+  const stats = gamesPanel === "stats";
+  $statsCard?.classList.toggle("hidden", !stats);
+  $groupsList?.classList.toggle("hidden", stats);
+  $empty?.classList.toggle("hidden", stats || Object.values(groups || {}).some((g) => g?.id));
+  $tabCounters?.classList.toggle("is-active", !stats);
+  $tabStats?.classList.toggle("is-active", stats);
 }
 
 function render() {
@@ -313,6 +383,7 @@ function render() {
     });
     $groupsList.appendChild(detail);
   });
+  renderGamesPanel();
   renderGlobalStats();
 }
 
@@ -329,10 +400,12 @@ function openModeModal(mode = null) {
   $groupHabit.innerHTML = habitOptionsHtml();
   $groupHabit.value = "";
   toggleGroupChoice();
+  $modeModal.classList.add("modal-centered-mobile");
   $modeModal.classList.remove("hidden");
+  syncModalScrollLock();
 }
 
-function closeModeModal() { $modeModal.classList.add("hidden"); editingModeId = null; }
+function closeModeModal() { $modeModal.classList.add("hidden"); editingModeId = null; syncModalScrollLock(); }
 
 function openGroupModal(groupIdValue) {
   const g = groups[groupIdValue];
@@ -343,8 +416,14 @@ function openGroupModal(groupIdValue) {
   $groupEditHabit.innerHTML = habitOptionsHtml();
   $groupEditHabit.value = g.linkedHabitId || "";
   $groupModal.classList.remove("hidden");
+  syncModalScrollLock();
 }
-function closeGroupModal() { $groupModal.classList.add("hidden"); }
+function closeGroupModal() { $groupModal.classList.add("hidden"); syncModalScrollLock(); }
+
+function syncModalScrollLock() {
+  const hasOpen = !!document.querySelector(".modal-backdrop:not(.hidden)");
+  document.body.classList.toggle("has-open-modal", hasOpen);
+}
 
 function toggleGroupChoice() {
   const isNew = $groupChoice.value === "new";
@@ -531,19 +610,19 @@ function renderModeDetail() {
   const pct = ensurePct(totals.wins, totals.losses, totals.ties);
   const minutes = getModePlayedMinutes(mode);
   const hoursText = `${(minutes / 60).toFixed(1)}h`;
-  const points = linePointsFromDaily([mode.id]);
+  const points = applyPointsRange(linePointsFromDaily([mode.id]), detailLineRange);
   const modeDaily = dailyByMode[mode.id] || {};
 
   const rows = monthGrid(detailMonth.year, detailMonth.month).map((dayDate) => {
-    if (!dayDate) return '<div class="game-day" aria-hidden="true"></div>';
+    if (!dayDate) return '<button type="button" class="habit-heatmap-cell is-out" disabled aria-hidden="true"></button>';
     const key = dateKeyLocal(dayDate);
     const rec = modeDaily[key] || {};
     const min = Number(rec.minutes || 0);
-    const todayCls = key === todayKey() ? "today" : "";
-    return `<button type="button" class="game-day ${todayCls}" data-day="${key}">
-      <div class="game-day-num">${dayDate.getDate()}</div>
-      <div class="game-day-min">${min ? `${min}m` : ""}</div>
-      <div class="game-day-wlt">${Number(rec.wins || 0)}-${Number(rec.losses || 0)}-${Number(rec.ties || 0)}</div>
+    const todayCls = key === todayKey() ? "is-active" : "";
+    return `<button type="button" class="habit-heatmap-cell ${todayCls}" data-day="${key}">
+      <span class="month-day-num">${dayDate.getDate()}</span>
+      <span class="month-day-value">${Number(rec.wins || 0)}-${Number(rec.losses || 0)}-${Number(rec.ties || 0)}</span>
+      <span class="month-day-value">${min ? `${min}m` : ""}</span>
     </button>`;
   }).join("");
 
@@ -598,6 +677,11 @@ function renderModeDetail() {
         <div class="games-donut" id="game-detail-donut"></div>
         <div class="games-line" id="game-detail-line"></div>
       </div>
+      <div class="game-ranges">
+        <button class="game-range-btn ${detailLineRange === "30d" ? "is-active" : ""}" data-line-range="30d">30d</button>
+        <button class="game-range-btn ${detailLineRange === "90d" ? "is-active" : ""}" data-line-range="90d">90d</button>
+        <button class="game-range-btn ${detailLineRange === "total" ? "is-active" : ""}" data-line-range="total">Total</button>
+      </div>
     </section>
 
     <section class="game-detail-section">
@@ -609,7 +693,7 @@ function renderModeDetail() {
           <button class="game-menu-btn" data-cal-nav="1">→</button>
         </div>
       </div>
-      <div class="game-calendar-grid">${rows}</div>
+      <div class="habit-month-grid game-calendar-grid">${rows}</div>
     </section>`;
 
   renderDonut(document.getElementById("game-detail-donut"), totals, true);
@@ -621,14 +705,17 @@ function openModeDetail(modeId) {
   currentModeId = modeId;
   detailMonth = { year: new Date().getFullYear(), month: new Date().getMonth() };
   detailRange = "total";
+  detailLineRange = "30d";
   selectedDonutKey = "wins";
   renderModeDetail();
   $detailModal.classList.remove("hidden");
+  syncModalScrollLock();
 }
 
 function closeModeDetail() {
   $detailModal.classList.add("hidden");
   currentModeId = null;
+  syncModalScrollLock();
 }
 
 async function onListClick(e) {
@@ -648,7 +735,10 @@ async function onListClick(e) {
   if (action === "loss-minus" && modeId) return patchModeCounter(modeId, "losses", -1);
   if (action === "win-minus" && modeId) return patchModeCounter(modeId, "wins", -1);
   if (action === "tie-minus" && modeId) return patchModeCounter(modeId, "ties", -1);
-  if (action === "edit-mode" && modeId) return openModeModal(modes[modeId]);
+  if (action === "edit-mode" && modeId) {
+    if (currentModeId) closeModeDetail();
+    return openModeModal(modes[modeId]);
+  }
   if (action === "reset-mode" && modeId) return resetMode(modeId);
   if (action === "delete-mode" && modeId) return deleteMode(modeId);
   if (action === "group-menu" && groupIdValue) return handleGroupMenu(groupIdValue);
@@ -689,6 +779,16 @@ function bind() {
 
   $groupsList?.addEventListener("click", onListClick);
   $statsFilter?.addEventListener("change", renderGlobalStats);
+  $tabCounters?.addEventListener("click", () => { gamesPanel = "counters"; renderGamesPanel(); });
+  $tabStats?.addEventListener("click", () => { gamesPanel = "stats"; renderGamesPanel(); renderGlobalStats(); });
+
+  document.getElementById("game-stats-ranges")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-stats-range]");
+    if (!btn) return;
+    statsRange = btn.dataset.statsRange;
+    document.querySelectorAll("#game-stats-ranges .game-range-btn").forEach((node) => node.classList.toggle("is-active", node === btn));
+    renderGlobalStats();
+  });
 
   $detailBody?.addEventListener("click", async (e) => {
     const rangeBtn = e.target.closest("[data-range]");
@@ -700,6 +800,12 @@ function bind() {
     const dBtn = e.target.closest("[data-donut]");
     if (dBtn) {
       selectedDonutKey = dBtn.dataset.donut;
+      renderModeDetail();
+      return;
+    }
+    const lBtn = e.target.closest("[data-line-range]");
+    if (lBtn) {
+      detailLineRange = lBtn.dataset.lineRange;
       renderModeDetail();
       return;
     }

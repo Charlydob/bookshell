@@ -207,16 +207,16 @@ function buildModeCard(mode, groupEmoji) {
     <div class="game-card-total">${total} TOTAL</div>
     <div class="game-card-content">
       <div class="game-side left">
-        <button class="game-thumb-btn" data-action="loss" title="Derrota">👎</button>
-        <div class="game-side-stat">${losses} • ${lossPct}%</div>
+        <button class="game-thumb-btn-losses" data-action="loss" title="Derrota">👎</button>
+        <div class="game-side-stat-losses">${losses} • ${lossPct}%</div>
       </div>
       <div class="game-center">
         <div class="game-mode-name">${mode.modeName || "Modo"}</div>
         <button class="game-mode-emoji game-mode-emoji-btn" data-action="tie" title="Empate">${emoji}</button>
       </div>
       <div class="game-side right">
-        <div class="game-side-stat">${winPct}% • ${wins}</div>
-        <button class="game-thumb-btn" data-action="win" title="Victoria">👍</button>
+        <div class="game-side-stat-wins">${winPct}% • ${wins}</div>
+        <button class="game-thumb-btn-wins" data-action="win" title="Victoria">👍</button>
       </div>
     </div>
     <div class="game-bottom-tie">${ties} • ${tiePct}%</div>
@@ -790,17 +790,23 @@ function renderModeDetail() {
       </div>
     </section>
 
-    <section class="game-detail-section">
-      <div class="game-calendar-head">
-        <strong>Calendario mensual</strong>
-        <div>
-          <button class="game-menu-btn" data-cal-nav="-1">←</button>
-          <span>${new Date(detailMonth.year, detailMonth.month, 1).toLocaleDateString("es-ES", { month: "long", year: "numeric" })}</span>
-          <button class="game-menu-btn" data-cal-nav="1">→</button>
-        </div>
+    <section class="game-detail-section habit-detail-section">
+  <div class="game-calendar-head habit-detail-section-head">
+    <div>
+      <div class="game-detail-title habit-detail-section-title">Calendario mensual</div>
+      <div class="game-detail-sub habit-detail-section-sub">
+        ${new Date(detailMonth.year, detailMonth.month, 1).toLocaleDateString("es-ES",{month:"long",year:"numeric"})}
       </div>
-      <div class="habit-month-grid game-calendar-grid">${rows}</div>
-    </section>`;
+    </div>
+
+    <div class="game-cal-nav">
+      <button class="game-menu-btn" data-cal-nav="-1" aria-label="Mes anterior">←</button>
+      <button class="game-menu-btn" data-cal-nav="1" aria-label="Mes siguiente">→</button>
+    </div>
+  </div>
+
+  <div class="habit-month-grid game-calendar-grid">${rows}</div>
+</section>`;
 
 
   renderDonut(document.getElementById("game-detail-donut"), totals, true, "detail");
@@ -1033,6 +1039,31 @@ function listenRemote() {
     if (currentModeId) renderModeDetail();
   });
 }
+// ✅ Nuevo: solo actualiza el texto del botón de sesión (sin render completo)
+function tickSessionButtons() {
+  if (!document.getElementById("view-games")?.classList.contains("view-active")) return;
+
+  const running = getRunningSessionState();
+  const details = document.querySelectorAll("#games-groups-list .game-group");
+
+  details.forEach((detail) => {
+    const groupId = detail.dataset.groupId;
+    const g = groups?.[groupId];
+    const btn = detail.querySelector(".game-session-btn");
+    if (!btn) return;
+
+    const hasRunning = !!(running && g?.linkedHabitId && running.targetHabitId === g.linkedHabitId);
+    if (!hasRunning) {
+      // No fuerces estado si no está corriendo
+      if (btn.textContent.trim() !== "▶ Iniciar") btn.textContent = "▶ Iniciar";
+      return;
+    }
+
+    const elapsed = formatDuration((Date.now() - Number(running.startTs || Date.now())) / 1000);
+    const next = `■ ${elapsed}`;
+    if (btn.textContent !== next) btn.textContent = next;
+  });
+}
 
 function init() {
   if (!$groupsList) return;
@@ -1040,10 +1071,10 @@ function init() {
   bind();
   listenRemote();
   render();
+
   if (sessionTick) clearInterval(sessionTick);
-  sessionTick = setInterval(() => {
-    if (document.getElementById("view-games")?.classList.contains("view-active")) render();
-  }, 1000);
+  sessionTick = setInterval(tickSessionButtons, 1000); // ✅ antes: render()
 }
+
 
 init();

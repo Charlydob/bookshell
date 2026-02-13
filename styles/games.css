@@ -113,7 +113,7 @@
 .game-group-meta { font-size: .78rem; opacity: .82; }
 .game-group-actions { display: flex; align-items: center; gap: 8px; }
 
-.game-session-btn, .game-menu-btn, .game-ctrl-btn, .game-range-btn {
+.game-session-btn, .game-ctrl-btn, .game-range-btn {
   border: 1px solid rgba(255,255,255,.2);
   background: rgba(255,255,255,.1);
   color: inherit;
@@ -132,6 +132,7 @@
   padding: 8px 10px;
   background: rgba(8, 11, 26, .62);
   cursor: pointer;
+  max-height: 75px;
 }
 .game-split-bg { position: absolute; inset: 0; }
 .game-split-bg {
@@ -140,25 +141,49 @@
 .game-split-loss, .game-split-win, .game-split-tie {
   height: 100%;
 }
-.game-split-loss {
-  background: linear-gradient(90deg, rgba(255,42,74,.85), rgba(255,42,74,.3));
-  box-shadow: inset 0 0 18px rgba(255,62,102,.48), 0 0 18px rgba(255,58,102,.3);
+.game-split-loss{
+  background: linear-gradient(90deg, rgba(255, 0, 38, 0.85), rgba(255,42,74,.3));
+  border: 1px solid rgba(255,42,74,.75);
+
+  box-shadow:
+    inset 0 0 14px rgba(255,62,102,.35),
+    0 0 10px rgba(255,42,74,.55),
+    0 0 26px rgba(255,42,74,.35),
+    0 0 50px rgba(255,42,74,.20);
 }
-.game-split-win {
-  background: linear-gradient(270deg, rgba(22,255,138,.85), rgba(22,255,138,.3));
-  box-shadow: inset 0 0 18px rgba(64,235,151,.48), 0 0 18px rgba(64,235,151,.3);
+
+
+.game-split-win{
+  background: linear-gradient(270deg, rgba(0, 255, 128, 0.85), rgba(22,255,138,.3));
+  border: 1px solid rgba(22,255,138,.75);
+
+  box-shadow:
+    inset 0 0 14px rgba(64,235,151,.35),
+    0 0 10px rgba(22,255,138,.55),
+    0 0 26px rgba(22,255,138,.35),
+    0 0 50px rgba(22,255,138,.20);
 }
-.game-split-tie {
-  background: linear-gradient(180deg, rgba(224,231,240,.42), rgba(145,157,178,.22));
-  box-shadow: inset 0 0 16px rgba(232,239,255,.35), 0 0 12px rgba(187,196,216,.25);
+
+.game-split-tie{
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.653), rgba(145,157,178,.22));
+  border: 1px solid rgba(210,220,240,.55);
+
+  box-shadow:
+    inset 0 0 12px rgba(232,239,255,.28),
+    0 0 8px  rgba(200,210,230,.30),
+    0 0 20px rgba(180,190,210,.22),
+    0 0 40px rgba(160,170,190,.14);
 }
 
 .game-card-total {
   position: relative;
   text-align: center;
-  font-size: .72rem;
+  font-size: .52rem;
   opacity: .84;
-  margin-bottom: 4px;
+  margin-bottom: 0px;
+  top: 50px;
+  background-color: transparent;
+  border: 10px;
 }
 .game-card-content {
   position: relative;
@@ -174,24 +199,54 @@
   font-size: .72rem;
   opacity: .82;
 }
-.game-side-stat { font-size: .82rem; font-weight: 600; }
+.game-side-stat-losses { 
+  font-size: .72rem; 
+  font-weight: 600; 
+  bottom: 28px;
+  position: relative;
+}
+.game-side-stat-wins { 
+  font-size: .72rem; 
+  font-weight: 600; 
+  bottom: 9px;
+  position: relative;
+}
 .game-side.left { text-align: right; }
-.game-side.right { text-align: left; }
+.game-side.right { 
+  text-align: left; 
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+}
 .game-side { display: grid; gap: 4px; align-items: center; }
-.game-center { text-align: center; }
+.game-center { 
+  text-align: center;
+position: relative;
+bottom: 19px;
+ }
 .game-mode-name { font-weight: 700; font-size: .88rem; }
 .game-mode-emoji {
-  font-size: 1.25rem;
+  font-size: 0.9rem;
   border: 1px solid rgba(255,255,255,.22);
   border-radius: 999px;
-  width: 38px;
-  height: 38px;
+  width: 33px;
+  height: 33px;
   display: inline-grid;
   place-items: center;
   background: rgba(255,255,255,.1);
 }
 .game-mode-emoji-btn { cursor: pointer; }
-.game-thumb-btn {
+.game-thumb-btn-losses {
+  border: 1px solid rgba(255,255,255,.25);
+  background: rgba(6,8,22,.35);
+  border-radius: 999px;
+  width: 34px;
+  height: 34px;
+  font-size: 1rem;
+}
+.game-thumb-btn-wins{
+  position: relative;
+  bottom: 8px;
   border: 1px solid rgba(255,255,255,.25);
   background: rgba(6,8,22,.35);
   border-radius: 999px;
@@ -227,12 +282,7 @@
 .game-detail-sub { opacity: .75; font-size: .82rem; }
 .game-detail-actions { display: flex; gap: 6px; }
 .game-detail-summary { margin-top: 8px; font-size: .82rem; opacity: .92; display: grid; gap: 4px; }
-.game-detail-section {
-  border-radius: 16px;
-  padding: 12px;
-  border: 1px solid rgba(255,255,255,.1);
-  background: rgba(14, 17, 36, .82);
-}
+
 .game-controls-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
 .game-control-col { border-radius: 12px; padding: 10px 8px; text-align: center; }
 .game-control-col.loss { background: rgba(255,70,95,.2); }
@@ -243,24 +293,6 @@
 .game-ctrl-btn { padding: 6px 9px; }
 .game-ranges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .game-range-btn.is-active { border-color: rgba(83,235,255,.5); box-shadow: 0 0 0 1px rgba(83,235,255,.32) inset; }
-.game-calendar-grid {
-  margin-top: 8px;
-}
-.game-calendar-grid .habit-heatmap-cell {
-  min-height: 60px;
-  border-radius: 12px;
-  border: 1px solid rgba(165,182,222,.24);
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.04);
-}
-.game-calendar-grid .habit-heatmap-cell.is-active {
-  border-color: rgba(93,238,255,.5);
-  box-shadow: 0 0 0 1px rgba(93,238,255,.4), 0 0 14px rgba(93,238,255,.24);
-}
-.game-calendar-grid .habit-heatmap-cell.is-win { box-shadow: inset 0 0 0 1px rgba(64,235,151,.5), 0 0 12px rgba(64,235,151,.24); }
-.game-calendar-grid .habit-heatmap-cell.is-loss { box-shadow: inset 0 0 0 1px rgba(255,90,110,.5), 0 0 12px rgba(255,90,110,.24); }
-.game-calendar-grid .habit-heatmap-cell.is-even { box-shadow: inset 0 0 0 1px rgba(177,190,210,.45), 0 0 10px rgba(177,190,210,.2); }
-.game-calendar-grid .month-day-time { font-weight: 700; font-size: .72rem; }
-.game-calendar-head { display: flex; justify-content: space-between; align-items: center; }
 
 .game-day-modal { max-width: 460px; }
 .game-day-counter {
@@ -285,3 +317,90 @@
 }
 
 #games-empty { margin-top: 18px; }
+#game-detail-donut{
+  background-color: transparent;
+  border: 0px;
+}
+
+/* sección: clavadita a tu habit-detail-section */
+.game-detail-section{
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.game-calendar-head{
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.game-detail-title{ font-weight: 700; }
+.game-detail-sub{ font-size: 12px; color: var(--txt-soft); }
+
+/* nav botones en estilo “opal suave” */
+.game-cal-nav{ display:flex; gap:8px; align-items:center; }
+
+.game-menu-btn{
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  color: inherit;
+  border-radius: 12px;
+  padding: 8px 10px;
+  line-height: 1;
+  font-size: 12px;
+  transition: transform .15s ease, background .15s ease, border-color .15s ease;
+}
+.game-menu-btn:active{ transform: scale(.98); }
+.game-menu-btn:hover{
+  background: rgba(255,255,255,.08);
+  border-color: rgba(255,255,255,.18);
+}
+
+/* grid ya sigue tu patrón */
+.game-calendar-grid{ margin-top: 0; }
+
+/* celdas: mismas proporciones/feel que tu calendario */
+.game-calendar-grid .habit-heatmap-cell{
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.02);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
+  min-height: 45px; /* por si antes forzaba 60px */
+}
+
+/* estados (glow suave, no “neón duro”) */
+.game-calendar-grid .habit-heatmap-cell.is-active{
+  border-color: rgba(255,255,255,.18);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.05), 0 0 12px rgba(255,255,255,.08);
+}
+
+.game-calendar-grid .habit-heatmap-cell.is-win{
+  border-color: rgba(22,255,138,.22);
+  box-shadow: inset 0 0 0 1px rgba(64,235,151,.18), 0 0 14px rgba(64,235,151,.14);
+}
+.game-calendar-grid .habit-heatmap-cell.is-loss{
+  border-color: rgba(255,42,74,.22);
+  box-shadow: inset 0 0 0 1px rgba(255,90,110,.18), 0 0 14px rgba(255,90,110,.14);
+}
+.game-calendar-grid .habit-heatmap-cell.is-even{
+  border-color: rgba(187,196,216,.18);
+  box-shadow: inset 0 0 0 1px rgba(187,196,216,.14), 0 0 12px rgba(187,196,216,.10);
+}
+
+/* tipografía interna: reutiliza tus clases */
+.game-calendar-grid .month-day-num{ font-size: 10px; color: var(--txt-soft); }
+.game-calendar-grid .month-day-value{
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255,255,255,.92);
+  line-height: 1;
+  min-height: 12px;
+}

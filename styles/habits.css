@@ -1938,6 +1938,10 @@
   outline: none;
 }
 
+
+
+
+
 .habit-detail-section {
   background: rgba(255, 255, 255, 0.03);
   border-radius: 16px;
@@ -2036,6 +2040,10 @@
   line-height: 1;
   min-height: 12px;
 }
+
+
+
+
 
 .habit-heatmap-cell {
   min-height: 42px;

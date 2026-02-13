@@ -11,7 +11,8 @@ import {
   ref,
   onValue,
   set,
-  get
+  get,
+  runTransaction
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { computeTimeByHabitDataset, debugComputeTimeByHabit, resolveFirstRecordTs } from "./time-by-habit.js";
 import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";
@@ -1587,6 +1588,7 @@ const $habitQuickSessionsSelect = document.getElementById("habit-quick-sessions-
 const $habitQuickSessionsAdd = document.getElementById("habit-quick-sessions-add");
 const $habitQuickSessionsRow = document.getElementById("habit-quick-sessions-row");
 const $habitQuickSessionsEmpty = document.getElementById("habit-quick-sessions-empty");
+const $quickCountersGrid = document.getElementById("quick-counters-grid");
 
 // Hoy (grupos plegables)
 const $todayCountPendingPrivateWrap = document.getElementById("habits-today-count-pending-private-wrap");
@@ -3272,6 +3274,7 @@ function renderToday() {
   updateGroupMeta($todayTimeDoneLowWrap, $todayTimeDoneLow);
 
   renderQuickSessions();
+  renderQuickCounters();
 
   if ($habitTodaySearchInput?.value.trim()) {
     applyTodaySearch($habitTodaySearchInput.value);
@@ -7134,6 +7137,73 @@ function renderQuickSessions() {
   if ($habitQuickSessionsEmpty) {
     $habitQuickSessionsEmpty.style.display = (!totalPills && !sortedTimeHabits.length) ? "block" : "none";
   }
+}
+
+function renderQuickCounters() {
+  if (!$quickCountersGrid) return;
+
+  $quickCountersGrid.innerHTML = "";
+
+  const counters = activeHabits().filter((habit) => habit.type === "counter" || (habit.goal || "check") === "count");
+
+  counters.forEach((habit) => {
+    const btn = document.createElement("div");
+    btn.className = "quick-counter-btn";
+
+    btn.style.background = `
+      radial-gradient(circle at top,
+        color-mix(in srgb, ${habit.color || DEFAULT_COLOR} 35%, transparent),
+        rgba(255,255,255,0.02)
+      )
+    `;
+
+    btn.innerHTML = `
+      <div class="quick-counter-emoji">${habit.emoji || "🏷️"}</div>
+      <div class="quick-counter-name">${habit.name || "Contador"}</div>
+    `;
+
+    btn.onclick = () => incrementCounterHabit(habit.id);
+
+    $quickCountersGrid.appendChild(btn);
+  });
+}
+
+function incrementCounterHabit(habitId) {
+  if (!habitId) return;
+
+  const habit = habits[habitId];
+  if (!habit || habit.archived) return;
+
+  const dateKey = todayKey();
+  const current = getHabitCount(habitId, dateKey);
+  const next = current + 1;
+
+  if (!habitCounts[habitId]) habitCounts[habitId] = {};
+  habitCounts[habitId][dateKey] = next;
+  saveCache();
+
+  const per = Math.round(Number(habit.countUnitMinutes) || 0);
+  if ((habit.goal || "check") === "count" && per > 0) {
+    const curTotal = getHabitTotalSecForDate(habitId, dateKey);
+    const prevSec = Math.round(current * per * 60);
+    const baseSec = Math.max(0, curTotal - prevSec);
+    const nextSec = baseSec + Math.round(next * per * 60);
+    setHabitTimeSec(habitId, dateKey, nextSec);
+  }
+
+  invalidateDominantCache(dateKey);
+  renderHabitsPreservingTodayUI();
+
+  const path = `${HABIT_COUNTS_PATH}/${habitId}/${dateKey}`;
+  runTransaction(ref(db, path), (val) => {
+    const n = Number(val);
+    const base = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+    return base + 1;
+  }).catch((err) => {
+    console.warn("No se pudo incrementar contador", err);
+  });
+
+  globalThis.playClickSound?.();
 }
 
 function computeBestStreak() {

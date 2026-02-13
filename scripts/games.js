@@ -165,6 +165,13 @@ function groupTotals(groupId) {
   }, { wins: 0, losses: 0, ties: 0 });
 }
 
+function groupMinutesTotal(groupId) {
+  return groupModes(groupId).reduce((acc, mode) => {
+    const modeMinutes = Object.values(dailyByMode[mode.id] || {}).reduce((sum, row) => sum + clamp(Number(row?.minutes || 0)), 0);
+    return acc + modeMinutes;
+  }, 0);
+}
+
 function modeTotalsFromDaily(modeId) {
   return Object.values(dailyByMode[modeId] || {}).reduce((acc, row) => {
     acc.wins += Number(row?.wins || 0);
@@ -320,8 +327,15 @@ function createGamesLineOption(points) {
 
 function renderLineChart($el, points, chartRef = "stats") {
   if (!$el) return;
+  $el.style.minHeight = "220px";
   const hasData = points.some(([, v]) => Number(v.wins || 0) || Number(v.losses || 0) || Number(v.ties || 0));
   let chart = chartRef === "stats" ? statsLineChart : detailLineChart;
+  if (chart && chart.getDom?.() !== $el) {
+    chart.dispose();
+    chart = null;
+    if (chartRef === "stats") statsLineChart = null;
+    else detailLineChart = null;
+  }
   if (!hasData) {
     chart?.dispose();
     if (chartRef === "stats") statsLineChart = null;
@@ -459,6 +473,7 @@ function render() {
   groupRows.forEach((g) => {
     const groupedModes = groupModes(g.id);
     const { wins, losses, ties } = groupTotals(g.id);
+    const totalMinutes = groupMinutesTotal(g.id);
     const { winPct, lossPct } = ensurePct(wins, losses, ties);
     const hasRunning = !!(running && g.linkedHabitId && running.targetHabitId === g.linkedHabitId);
     const elapsed = hasRunning ? formatDuration((Date.now() - Number(running.startTs || Date.now())) / 1000) : "";
@@ -471,7 +486,7 @@ function render() {
       <summary>
         <div class="game-group-main">
           <div class="game-group-name">${g.emoji || "🎮"} ${g.name || "Grupo"}</div>
-          <div class="game-group-meta">${losses}L / ${wins}W / ${ties}T · ${lossPct}% - ${winPct}%</div>
+          <div class="game-group-meta">${losses}L / ${wins}W / ${ties}T · ${lossPct}% - ${winPct}% · ⏱ ${formatHoursMinutes(totalMinutes)}</div>
         </div>
         <div class="game-group-actions">
           <button class="game-session-btn" data-action="toggle-session">${hasRunning ? `■ ${elapsed}` : "▶ Iniciar"}</button>
@@ -683,11 +698,37 @@ function formatMinutesShort(min) {
   return h ? `${h}h ${m}m` : `${m}m`;
 }
 
+function formatHoursMinutes(min) {
+  const minutes = Math.max(0, Math.round(Number(min || 0)));
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${h}h ${m}m`;
+}
+
 function getModeDayMinutes(mode, dateKey, rec = null) {
   const group = groups[mode.groupId] || {};
   const habit = group?.linkedHabitId ? habits[group.linkedHabitId] : null;
   if (habit?.log?.[dateKey] != null) return readDayMinutes(habit.log[dateKey]);
   return Number((rec || dailyByMode[mode.id]?.[dateKey] || {}).minutes || 0);
+}
+
+function renderModeLineChart(modeId) {
+  const mode = modes[modeId];
+  const $el = document.getElementById(`games-mode-line-${modeId}`);
+  if (!mode || !$el) return;
+  $el.style.minHeight = "220px";
+
+  const modeDaily = dailyByMode[mode.id] || {};
+  const minDate = getMinDataDate([mode.id]);
+  const range = getRangeBounds(detailRange, new Date(), minDate);
+  const points = buildDailySeries(modeDaily, range);
+
+  renderLineChart($el, points, "detail");
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      detailLineChart?.resize();
+    });
+  });
 }
 
 function monthGrid(year, month) {
@@ -713,7 +754,6 @@ function renderModeDetail() {
   const pct = ensurePct(totals.wins, totals.losses, totals.ties);
   const minutes = getModePlayedMinutes(mode);
   const hoursText = `${(minutes / 60).toFixed(1)}h`;
-  const points = buildDailySeries(modeDaily, range);
 
   const rows = monthGrid(detailMonth.year, detailMonth.month).map((dayDate) => {
     if (!dayDate) return '<button type="button" class="habit-heatmap-cell is-out" disabled aria-hidden="true"></button>';
@@ -804,8 +844,7 @@ function renderModeDetail() {
 
 
   renderDonut(document.getElementById("game-detail-donut"), totals, true, "detail");
-  const detailLineEl = document.getElementById(`games-mode-line-${mode.id}`);
-  requestAnimationFrame(() => setTimeout(() => renderLineChart(detailLineEl, points, "detail"), 0));
+  renderModeLineChart(mode.id);
 }
 
 async function saveDayRecord(modeId, day, rec) {
@@ -825,6 +864,11 @@ async function saveDayRecord(modeId, day, rec) {
   const group = mode ? groups[mode.groupId] : null;
   if (group?.linkedHabitId) {
     await syncGroupLinkedHabitMinutes(group.id, group.linkedHabitId, day);
+  }
+
+  if (currentModeId === modeId) {
+    renderModeLineChart(modeId);
+    requestAnimationFrame(() => detailLineChart?.resize());
   }
 }
 
@@ -851,11 +895,16 @@ async function syncGroupLinkedHabitMinutes(groupId, linkedHabitId, day) {
   if (totalSec > 0) habitSessions[linkedHabitId][day] = totalSec;
   else delete habitSessions[linkedHabitId][day];
 
-  // 2) Write Firebase (log del hábito + sessions)
+  // 2) Write Firebase (misma ruta diaria que hábitos + log de respaldo)
   const updates = {
     [`${HABITS_PATH}/${linkedHabitId}/log/${day}`]: sumMinutes > 0 ? { min: sumMinutes } : null,
     [`${HABIT_SESSIONS_PATH}/${linkedHabitId}/${day}`]: totalSec > 0 ? totalSec : null,
   };
+
+  try {
+    const habitsApi = window.__bookshellHabits;
+    if (habitsApi?.setDailyMinutes) habitsApi.setDailyMinutes(linkedHabitId, day, sumMinutes);
+  } catch (_) {}
 
   try {
     await update(ref(db), updates);
@@ -883,7 +932,7 @@ function openDayRecordModal(modeId, day) {
     <div class="modal-header"><div class="modal-title">Registro del día</div></div>
     <div class="modal-scroll sheet-body">
       <label class="field"><span class="field-label">Fecha</span><input type="text" value="${day}" readonly></label>
-      <label class="field"><span class="field-label">Horas / minutos</span><input id="game-day-minutes" type="number" min="0" value="0" inputmode="numeric">
+      <label class="field"><span class="field-label">Horas / minutos</span><input id="game-day-minutes" type="number" min="0" value="${state.minutes || linkedMinutes || 0}" inputmode="numeric">
 </label>
       ${minutesReadOnly ? '<div class="games-subtitle">Minutos vinculados al hábito del grupo.</div>' : ""}
       <div class="game-day-counter" data-k="losses"><span>Derrotas</span><div><button type="button" data-step="-1">-1</button><strong>${state.losses}</strong><button type="button" data-step="1">+1</button></div></div>

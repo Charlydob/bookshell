@@ -736,6 +736,11 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
   return nextSec;
 }
 
+function setHabitDailyMinutes(habitId, dateKey, minutes, options = {}) {
+  const min = Math.max(0, Math.round(Number(minutes) || 0));
+  setHabitTimeSec(habitId, dateKey, min * 60, options);
+}
+
 function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
   if (!habitId || !dateKey) return;
   const habit = habits[habitId];
@@ -8635,6 +8640,7 @@ window.__bookshellHabits = {
   startSession,
   stopSession,
   toggleSession,
+  setDailyMinutes: setHabitDailyMinutes,
   isRunning: () => !!runningSession,
   getTimeShareByHabit: (range) => timeShareByHabit(range),
   rangeLabel,

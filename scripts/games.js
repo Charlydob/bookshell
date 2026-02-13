@@ -837,13 +837,28 @@ function calcGroupMinutesForDate(groupId, day) {
 
 async function syncGroupLinkedHabitMinutes(groupId, linkedHabitId, day) {
   if (!groupId || !linkedHabitId || !day) return;
+
   const sumMinutes = calcGroupMinutesForDate(groupId, day);
   const totalSec = Math.round(sumMinutes * 60);
+
+  // 1) Update local caches (para que UI reaccione sin esperar Firebase)
+  habits[linkedHabitId] = habits[linkedHabitId] || { id: linkedHabitId };
+  habits[linkedHabitId].log = habits[linkedHabitId].log || {};
+  if (sumMinutes > 0) habits[linkedHabitId].log[day] = { min: sumMinutes };
+  else delete habits[linkedHabitId].log[day];
+
   habitSessions[linkedHabitId] = habitSessions[linkedHabitId] || {};
   if (totalSec > 0) habitSessions[linkedHabitId][day] = totalSec;
   else delete habitSessions[linkedHabitId][day];
+
+  // 2) Write Firebase (log del hábito + sessions)
+  const updates = {
+    [`${HABITS_PATH}/${linkedHabitId}/log/${day}`]: sumMinutes > 0 ? { min: sumMinutes } : null,
+    [`${HABIT_SESSIONS_PATH}/${linkedHabitId}/${day}`]: totalSec > 0 ? totalSec : null,
+  };
+
   try {
-    await set(ref(db, `${HABIT_SESSIONS_PATH}/${linkedHabitId}/${day}`), totalSec > 0 ? totalSec : null);
+    await update(ref(db), updates);
   } catch (_) {}
 }
 
@@ -854,12 +869,12 @@ function openDayRecordModal(modeId, day) {
   const rec = dailyByMode[modeId]?.[day] || { wins: 0, losses: 0, ties: 0, minutes: 0 };
   const linkedHabit = group?.linkedHabitId ? habits[group.linkedHabitId] : null;
   const linkedMinutes = linkedHabit ? readDayMinutes(habitSessions?.[linkedHabit.id]?.[day]) : 0;
-  const minutesReadOnly = !!linkedHabit;
+  const minutesReadOnly = false;
   let state = {
     wins: clamp(Number(rec.wins || 0)),
     losses: clamp(Number(rec.losses || 0)),
     ties: clamp(Number(rec.ties || 0)),
-    minutes: minutesReadOnly ? linkedMinutes : clamp(Number(rec.minutes || 0))
+   minutes: clamp(Number(rec.minutes || 0))
   };
   const modal = document.createElement("div");
   modal.className = "modal-backdrop";
@@ -868,7 +883,8 @@ function openDayRecordModal(modeId, day) {
     <div class="modal-header"><div class="modal-title">Registro del día</div></div>
     <div class="modal-scroll sheet-body">
       <label class="field"><span class="field-label">Fecha</span><input type="text" value="${day}" readonly></label>
-      <label class="field"><span class="field-label">Horas / minutos</span><input id="game-day-minutes" type="number" min="0" value="${state.minutes}" ${minutesReadOnly ? "readonly" : ""}></label>
+      <label class="field"><span class="field-label">Horas / minutos</span><input id="game-day-minutes" type="number" min="0" value="0" inputmode="numeric">
+</label>
       ${minutesReadOnly ? '<div class="games-subtitle">Minutos vinculados al hábito del grupo.</div>' : ""}
       <div class="game-day-counter" data-k="losses"><span>Derrotas</span><div><button type="button" data-step="-1">-1</button><strong>${state.losses}</strong><button type="button" data-step="1">+1</button></div></div>
       <div class="game-day-counter" data-k="ties"><span>Empates</span><div><button type="button" data-step="-1">-1</button><strong>${state.ties}</strong><button type="button" data-step="1">+1</button></div></div>
@@ -894,6 +910,11 @@ function openDayRecordModal(modeId, day) {
       minutesInput?.select?.();
     }, 50);
   });
+const el = document.getElementById('game-day-minutes');
+el.readOnly = false;
+el.disabled = false;
+el.removeAttribute('readonly');
+requestAnimationFrame(() => setTimeout(() => el.focus(), 50));
 
   const repaint = () => {
     modal.querySelectorAll(".game-day-counter").forEach((row) => {
@@ -923,15 +944,14 @@ function openDayRecordModal(modeId, day) {
       repaint();
       return;
     }
-    if (e.target.closest("[data-save]")) {
-      if (!minutesReadOnly) {
-        const val = Number(modal.querySelector("#game-day-minutes")?.value || 0);
-        state.minutes = clamp(val);
-      }
-      await saveDayRecord(modeId, day, state);
-      modal.remove();
-      syncModalScrollLock();
-    }
+if (e.target.closest("[data-save]")) {
+  const val = Number(modal.querySelector("#game-day-minutes")?.value || 0);
+  state.minutes = clamp(val);
+  await saveDayRecord(modeId, day, state);
+  modal.remove();
+  syncModalScrollLock();
+}
+
   });
 }
 

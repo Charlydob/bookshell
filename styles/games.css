@@ -1,5 +1,6 @@
 .games-view {
   padding: 20px 12px 120px;
+  margin-top:40px;
 }
 
 .games-header {
@@ -421,4 +422,16 @@ bottom: 19px;
   color: rgba(255,255,255,.92);
   line-height: 1;
   min-height: 12px;
+}
+.game-detail-modal{
+  max-height: 840px;
+  padding: 0px;
+}
+#game-detail-modal{
+  padding: 0px;
+}
+.modal-footer.sheet-footer{
+  margin-bottom: 0px;
+  padding: 6px;
+  background-color: transparent;
 }

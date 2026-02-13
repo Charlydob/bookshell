@@ -7,6 +7,7 @@ const GROUPS_PATH = "gameGroups";
 const MODES_PATH = "gameModes";
 const DAILY_PATH = "gameModeDaily";
 const HABITS_PATH = "habits";
+const HABIT_SESSIONS_PATH = "habitSessions";
 const CACHE_KEY = "bookshell-games-cache:v2";
 const OPEN_KEY = "bookshell-games-open-groups";
 const HABIT_RUNNING_KEY = "bookshell-habit-running-session";
@@ -14,6 +15,7 @@ const HABIT_RUNNING_KEY = "bookshell-habit-running-session";
 let groups = {};
 let modes = {};
 let habits = {};
+let habitSessions = {};
 let dailyByMode = {};
 const openGroups = new Set();
 let sessionTick = null;
@@ -818,6 +820,31 @@ async function saveDayRecord(modeId, day, rec) {
   renderGlobalStats();
   if (currentModeId === modeId) renderModeDetail();
   await set(ref(db, `${DAILY_PATH}/${modeId}/${day}`), dailyByMode[modeId][day]);
+
+  const mode = modes[modeId];
+  const group = mode ? groups[mode.groupId] : null;
+  if (group?.linkedHabitId) {
+    await syncGroupLinkedHabitMinutes(group.id, group.linkedHabitId, day);
+  }
+}
+
+function calcGroupMinutesForDate(groupId, day) {
+  return groupModes(groupId).reduce((acc, mode) => {
+    const minutes = Number(dailyByMode?.[mode.id]?.[day]?.minutes || 0);
+    return acc + clamp(minutes);
+  }, 0);
+}
+
+async function syncGroupLinkedHabitMinutes(groupId, linkedHabitId, day) {
+  if (!groupId || !linkedHabitId || !day) return;
+  const sumMinutes = calcGroupMinutesForDate(groupId, day);
+  const totalSec = Math.round(sumMinutes * 60);
+  habitSessions[linkedHabitId] = habitSessions[linkedHabitId] || {};
+  if (totalSec > 0) habitSessions[linkedHabitId][day] = totalSec;
+  else delete habitSessions[linkedHabitId][day];
+  try {
+    await set(ref(db, `${HABIT_SESSIONS_PATH}/${linkedHabitId}/${day}`), totalSec > 0 ? totalSec : null);
+  } catch (_) {}
 }
 
 function openDayRecordModal(modeId, day) {
@@ -826,7 +853,7 @@ function openDayRecordModal(modeId, day) {
   const group = groups[mode.groupId] || {};
   const rec = dailyByMode[modeId]?.[day] || { wins: 0, losses: 0, ties: 0, minutes: 0 };
   const linkedHabit = group?.linkedHabitId ? habits[group.linkedHabitId] : null;
-  const linkedMinutes = linkedHabit ? readDayMinutes(linkedHabit.log?.[day]) : 0;
+  const linkedMinutes = linkedHabit ? readDayMinutes(habitSessions?.[linkedHabit.id]?.[day]) : 0;
   const minutesReadOnly = !!linkedHabit;
   let state = {
     wins: clamp(Number(rec.wins || 0)),
@@ -836,7 +863,8 @@ function openDayRecordModal(modeId, day) {
   };
   const modal = document.createElement("div");
   modal.className = "modal-backdrop";
-  modal.innerHTML = `<div class="modal habit-modal game-day-modal">
+  modal.innerHTML = `<div class="game-day-modal-overlay" aria-hidden="true"></div>
+  <div class="modal habit-modal game-day-modal" role="dialog" aria-modal="true">
     <div class="modal-header"><div class="modal-title">Registro del día</div></div>
     <div class="modal-scroll sheet-body">
       <label class="field"><span class="field-label">Fecha</span><input type="text" value="${day}" readonly></label>
@@ -853,6 +881,19 @@ function openDayRecordModal(modeId, day) {
   </div>`;
   document.body.appendChild(modal);
   syncModalScrollLock();
+  const panel = modal.querySelector(".game-day-modal");
+  const minutesInput = modal.querySelector("#game-day-minutes");
+
+  ["pointerdown", "touchstart"].forEach((evtName) => {
+    panel?.addEventListener(evtName, (e) => e.stopPropagation());
+    minutesInput?.addEventListener(evtName, (e) => e.stopPropagation());
+  });
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      minutesInput?.focus({ preventScroll: true });
+      minutesInput?.select?.();
+    }, 50);
+  });
 
   const repaint = () => {
     modal.querySelectorAll(".game-day-counter").forEach((row) => {
@@ -860,8 +901,16 @@ function openDayRecordModal(modeId, day) {
       row.querySelector("strong").textContent = state[k];
     });
   };
-  modal.addEventListener("click", async (e) => {
+  modal.addEventListener("pointerdown", async (e) => {
     if (e.target === modal || e.target.closest("[data-close]")) {
+      modal.remove();
+      syncModalScrollLock();
+      return;
+    }
+  });
+
+  modal.addEventListener("click", async (e) => {
+    if (e.target.closest("[data-close]")) {
       modal.remove();
       syncModalScrollLock();
       return;
@@ -1099,6 +1148,10 @@ function listenRemote() {
     habits = snap.val() || {};
     $groupHabit.innerHTML = habitOptionsHtml();
     $groupEditHabit.innerHTML = habitOptionsHtml();
+    if (currentModeId) renderModeDetail();
+  });
+  onValue(ref(db, HABIT_SESSIONS_PATH), (snap) => {
+    habitSessions = snap.val() || {};
     if (currentModeId) renderModeDetail();
   });
 }

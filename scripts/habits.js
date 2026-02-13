@@ -8106,13 +8106,16 @@ async function exportHabitsZip() {
 }
 
 async function onHabitsExportClick() {
-  const choice = prompt("Exportar Hábitos:
-1) CSV único
-2) ZIP (por hábito)", "1");
+  const choice = prompt(
+    "Exportar Hábitos:\n1) CSV único\n2) ZIP (por hábito)",
+    "1"
+  );
+
   if (!choice) return;
   if (choice.trim() === "2") await exportHabitsZip();
   else exportHabitsCsvSingle();
 }
+
 
 function bindEvents() {
   $habitExportBtn?.addEventListener("click", onHabitsExportClick);

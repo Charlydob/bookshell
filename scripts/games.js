@@ -951,13 +951,15 @@ async function exportGamesZipByMode() {
 }
 
 async function onGamesExportClick() {
-  const choice = prompt("Exportar Juegos:
-1) CSV único
-2) ZIP (por modo)", "1");
+  const choice = prompt(
+    "Exportar Juegos:\n1) CSV único\n2) ZIP (por modo)",
+    "1"
+  );
   if (!choice) return;
   if (choice.trim() === "2") await exportGamesZipByMode();
   else exportGamesCsvSingle();
 }
+
 
 function openModeDetail(modeId) {
   if (!modes[modeId]) return;

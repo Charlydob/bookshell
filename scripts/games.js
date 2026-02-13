@@ -499,27 +499,64 @@ function renderGlobalStats() {
 
 function renderBreakdownStatsCard(list) {
   const content = list.length ? list.map((x) => `
-    <div class="games-stats-row" style="${buildStatsGlowStyle(x.accent)}">
-      <div class="games-stats-left">${x.mode}</div>
-      <div class="games-stats-mid">${x.matches} partidas</div>
-      <div class="games-stats-right">${x.wins}W ${x.losses}L ${x.ties}T · ${x.winrate}%</div>
+    <div class="stats-line" style="${buildStatsGlowStyle(x.accent)}">
+      <b>${x.mode}</b>
+      <span>${x.matches} · ${x.winrate}%</span>
     </div>
   `).join("") : `<div class="games-stats-empty">Sin datos</div>`;
-  return `<div class="games-stats-card"><div class="games-stats-title">Desglose</div>${content}</div>`;
+  return renderStatsFold({
+    id: "breakdown",
+    title: "Desglose",
+    subtitle: `${list.length} modos`,
+    body: content,
+    open: true
+  });
 }
 
 function renderStatsListCard(title, list) {
   const rows = list.length ? list.map((entry) => `
-    <div class="games-stats-row" style="${buildStatsGlowStyle(entry.accent)}">
-      <div>
-        <div class="games-stats-left">${entry.label}</div>
-        <div class="games-stats-subrow">${entry.matches} partidas</div>
-      </div>
-      <div class="games-stats-mid">${entry.wlt}</div>
-      <div class="games-stats-right">${entry.winrate}%</div>
+    <div class="stats-line" style="${buildStatsGlowStyle(entry.accent)}">
+      <b>${entry.label}</b>
+      <span>${entry.matches} · ${entry.winrate}%</span>
     </div>
   `).join("") : `<div class="games-stats-empty">Sin datos</div>`;
-  return `<div class="games-stats-card"><div class="games-stats-title">${title}</div>${rows}</div>`;
+  return renderStatsFold({
+    id: slugifyStatsFold(title),
+    title,
+    subtitle: `${list.length} filas`,
+    body: rows
+  });
+}
+
+function renderStatsFold({ id, title, subtitle, body, open = false }) {
+  return `
+    <div class="stats-fold">
+      <button class="stats-fold-head" type="button" data-fold-toggle="${id}" aria-expanded="${open ? "true" : "false"}">
+        <span>${title}</span>
+        <span class="stats-fold-sub">${subtitle}</span>
+      </button>
+      <div class="stats-fold-body${open ? " open" : ""}" id="fold-${id}">
+        ${body}
+      </div>
+    </div>
+  `;
+}
+
+function slugifyStatsFold(value) {
+  return String(value || "stats")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "") || "stats";
+}
+
+function toggleStatsFold(id) {
+  const body = document.getElementById(`fold-${id}`);
+  if (!body) return;
+  body.classList.toggle("open");
+  const isOpen = body.classList.contains("open");
+  $statsBreakdown?.querySelector(`[data-fold-toggle="${id}"]`)?.setAttribute("aria-expanded", String(isOpen));
 }
 
 function detectStatsAccent(source) {
@@ -1263,6 +1300,11 @@ function bind() {
   $tabCounters?.addEventListener("click", () => { gamesPanel = "counters"; renderGamesPanel(); });
   $tabStats?.addEventListener("click", () => { gamesPanel = "stats"; renderGamesPanel(); renderGlobalStats(); });
   $gamesExportBtn?.addEventListener("click", onGamesExportClick);
+  $statsBreakdown?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-fold-toggle]");
+    if (!btn) return;
+    toggleStatsFold(btn.dataset.foldToggle);
+  });
 
   document.getElementById("game-stats-ranges")?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-stats-range]");

@@ -397,6 +397,20 @@ function renderLineChart($el, points, chartRef = "stats") {
   requestAnimationFrame(() => setTimeout(() => chart.resize(), 50));
 }
 
+function setText(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = String(v ?? 0);
+}
+
+function renderKpiPanel(tot = {}) {
+  setText("kpi-k", tot.k || 0);
+  setText("kpi-d", tot.d || 0);
+  setText("kpi-a", tot.a || 0);
+  setText("kpi-w", tot.w || 0);
+  setText("kpi-rf", tot.rf || 0);
+  setText("kpi-ra", tot.ra || 0);
+}
+
 function renderDonut($el, vals, selectable = false, chartRef = "stats") {
   if (!$el) return;
   const total = vals.wins + vals.losses + vals.ties;
@@ -482,6 +496,14 @@ function renderGlobalStats() {
     $statsTotals.textContent = `${pct.total} partidas · ${totals.wins}W / ${totals.losses}L / ${totals.ties}T · ${pct.winPct}%W${shooterText}`;
   }
   if ($statsSub) $statsSub.textContent = selected === "all" ? "Global" : (groups[selected]?.name || "Grupo");
+  renderKpiPanel({
+    k: totals.k,
+    d: totals.d,
+    a: totals.a,
+    w: totals.wins,
+    rf: totals.rf,
+    ra: totals.ra
+  });
   renderDonut($statsDonut, totals, true, "stats");
   renderLineChart($statsLine, points, "stats");
 

@@ -22,6 +22,12 @@ let selectedDonutKey = "wins";
 let gamesPanel = "counters";
 let statsRange = "1d";
 let detailLineRange = "30d";
+let statsDonutKey = "wins";
+
+let statsLineChart = null;
+let detailLineChart = null;
+let statsDonutChart = null;
+let detailDonutChart = null;
 
 const $groupsList = document.getElementById("games-groups-list");
 const $empty = document.getElementById("games-empty");
@@ -147,9 +153,19 @@ function groupModes(groupId) {
 }
 function groupTotals(groupId) {
   return groupModes(groupId).reduce((acc, m) => {
-    acc.wins += Number(m.wins || 0);
-    acc.losses += Number(m.losses || 0);
-    acc.ties += Number(m.ties || 0);
+    const totals = modeTotalsFromDaily(m.id);
+    acc.wins += totals.wins;
+    acc.losses += totals.losses;
+    acc.ties += totals.ties;
+    return acc;
+  }, { wins: 0, losses: 0, ties: 0 });
+}
+
+function modeTotalsFromDaily(modeId) {
+  return Object.values(dailyByMode[modeId] || {}).reduce((acc, row) => {
+    acc.wins += Number(row?.wins || 0);
+    acc.losses += Number(row?.losses || 0);
+    acc.ties += Number(row?.ties || 0);
     return acc;
   }, { wins: 0, losses: 0, ties: 0 });
 }
@@ -174,9 +190,10 @@ function getModePlayedMinutes(mode) {
 }
 
 function buildModeCard(mode, groupEmoji) {
-  const wins = clamp(Number(mode.wins || 0));
-  const losses = clamp(Number(mode.losses || 0));
-  const ties = clamp(Number(mode.ties || 0));
+  const dailyTotals = modeTotalsFromDaily(mode.id);
+  const wins = clamp(Number(dailyTotals.wins || 0));
+  const losses = clamp(Number(dailyTotals.losses || 0));
+  const ties = clamp(Number(dailyTotals.ties || 0));
   const { winPct, lossPct, tiePct, total } = ensurePct(wins, losses, ties);
   const emoji = (mode.modeEmoji || "").trim() || groupEmoji || "🎮";
   const { lossW, tieW, winW } = pctWidths(wins, losses, ties);
@@ -230,6 +247,31 @@ function linePointsFromDaily(modeIds) {
   return Array.from(dayMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 }
 
+function rangePointsFromDaily(modeIds, range = "30d") {
+  const map = new Map(linePointsFromDaily(modeIds));
+  if (range === "total") {
+    const keys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
+    if (!keys.length) return [];
+    const start = new Date(`${keys[0]}T12:00:00`);
+    const end = new Date(`${keys[keys.length - 1]}T12:00:00`);
+    const out = [];
+    for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+      const key = dateKeyLocal(cursor);
+      out.push([key, map.get(key) || { wins: 0, losses: 0, ties: 0 }]);
+    }
+    return out;
+  }
+  const days = Number(range.replace("d", "")) || 30;
+  const out = [];
+  const start = new Date();
+  start.setDate(start.getDate() - days + 1);
+  for (const cursor = new Date(start); out.length < days; cursor.setDate(cursor.getDate() + 1)) {
+    const key = dateKeyLocal(cursor);
+    out.push([key, map.get(key) || { wins: 0, losses: 0, ties: 0 }]);
+  }
+  return out;
+}
+
 function applyPointsRange(points, range = "total") {
   if (range === "total") return points;
   const days = Number(range.replace("d", "")) || 30;
@@ -239,62 +281,112 @@ function applyPointsRange(points, range = "total") {
   return points.filter(([day]) => day >= minKey);
 }
 
-function renderLineChart($el, points) {
-  if (!$el) return;
-  if (!points.length) {
-    $el.innerHTML = "<div class='games-subtitle'>Sin datos diarios todavía.</div>";
-    return;
-  }
-  const width = 360;
-  const height = 120;
-  const pad = 10;
-  const maxVal = Math.max(1, ...points.map(([, v]) => Math.max(v.wins, v.losses, v.ties)));
-  const make = (key) => points.map(([, v], i) => {
-    const x = pad + (i * (width - pad * 2)) / Math.max(1, points.length - 1);
-    const y = height - pad - ((v[key] || 0) / maxVal) * (height - pad * 2);
-    return `${x},${y}`;
-  }).join(" ");
-  $el.innerHTML = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
-    <polyline fill="none" stroke="rgba(255,90,110,.9)" stroke-width="2" points="${make("losses")}" />
-    <polyline fill="none" stroke="rgba(64,235,151,.95)" stroke-width="2" points="${make("wins")}" />
-    <polyline fill="none" stroke="rgba(177,190,210,.85)" stroke-width="2" points="${make("ties")}" />
-  </svg>`;
+function createGamesLineOption(points) {
+  return {
+    animation: false,
+    grid: { left: 34, right: 14, top: 18, bottom: 20 },
+    tooltip: { trigger: "axis", backgroundColor: "rgba(6,10,24,.96)", borderColor: "rgba(152,178,255,.3)", textStyle: { color: "#EAF2FF" } },
+    xAxis: {
+      type: "category",
+      data: points.map(([d]) => d.slice(5)),
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: "rgba(166,188,255,.25)" } },
+      axisLabel: { color: "rgba(225,235,255,.72)", fontSize: 10 }
+    },
+    yAxis: {
+      type: "value",
+      minInterval: 1,
+      axisLine: { show: false },
+      axisLabel: { color: "rgba(225,235,255,.72)", fontSize: 10 },
+      splitLine: { lineStyle: { color: "rgba(154,176,255,.12)" } }
+    },
+    series: [
+      { name: "Derrotas", type: "line", smooth: true, symbol: "none", data: points.map(([, v]) => v.losses || 0), lineStyle: { width: 2.2, color: "rgba(255,90,110,.92)" } },
+      { name: "Empates", type: "line", smooth: true, symbol: "none", data: points.map(([, v]) => v.ties || 0), lineStyle: { width: 1.4, color: "rgba(177,190,210,.88)" }, areaStyle: { color: "rgba(177,190,210,.08)" } },
+      { name: "Victorias", type: "line", smooth: true, symbol: "none", data: points.map(([, v]) => v.wins || 0), lineStyle: { width: 2.2, color: "rgba(64,235,151,.95)" } }
+    ]
+  };
 }
 
-function renderDonut($el, vals, selectable = false) {
+function renderLineChart($el, points, chartRef = "stats") {
+  if (!$el) return;
+  const hasData = points.some(([, v]) => Number(v.wins || 0) || Number(v.losses || 0) || Number(v.ties || 0));
+  if (!hasData) {
+    $el.innerHTML = "<div class='empty-state small'>Sin datos todavía</div>";
+    const chart = chartRef === "stats" ? statsLineChart : detailLineChart;
+    chart?.dispose();
+    if (chartRef === "stats") statsLineChart = null;
+    else detailLineChart = null;
+    return;
+  }
+  const chart = chartRef === "stats"
+    ? (statsLineChart || (statsLineChart = echarts.init($el)))
+    : (detailLineChart || (detailLineChart = echarts.init($el)));
+  chart.setOption(createGamesLineOption(points), true);
+  chart.resize();
+}
+
+function renderDonut($el, vals, selectable = false, chartRef = "stats") {
   if (!$el) return;
   const total = vals.wins + vals.losses + vals.ties;
-  const safe = total || 1;
-  const a = (vals.losses / safe) * 360;
-  const b = (vals.ties / safe) * 360;
-  const grad = `conic-gradient(rgba(255,90,110,.92) 0deg ${a}deg, rgba(177,190,210,.9) ${a}deg ${a + b}deg, rgba(64,235,151,.95) ${a + b}deg 360deg)`;
   const labels = { wins: "Victorias", losses: "Derrotas", ties: "Empates" };
-  const activeVal = vals[selectedDonutKey] || 0;
+  const activeKey = chartRef === "detail" ? selectedDonutKey : statsDonutKey;
+  const activeVal = vals[activeKey] || 0;
   const activePct = total ? Math.round((activeVal / total) * 100) : 0;
-  const buttons = selectable ? `
-    <div class="game-ranges">
-      <button class="game-range-btn ${selectedDonutKey === "losses" ? "is-active" : ""}" data-donut="losses">L</button>
-      <button class="game-range-btn ${selectedDonutKey === "ties" ? "is-active" : ""}" data-donut="ties">T</button>
-      <button class="game-range-btn ${selectedDonutKey === "wins" ? "is-active" : ""}" data-donut="wins">W</button>
-    </div>` : "";
-  $el.innerHTML = `<div class="games-donut-ring" style="background:${grad};">
-      <div class="games-donut-center">
-        <div class="games-donut-total">${total}</div>
-        <div>${labels[selectedDonutKey]} ${activeVal} (${activePct}%)</div>
-      </div>
-    </div>${buttons}`;
+  const oldChart = chartRef === "detail" ? detailDonutChart : statsDonutChart;
+  oldChart?.dispose();
+  if (chartRef === "detail") detailDonutChart = null;
+  else statsDonutChart = null;
+
+  $el.innerHTML = `<div class="games-donut-echart"></div>
+  <div class="games-donut-center">
+    <div class="games-donut-total">${total}</div>
+    <div>${labels[activeKey]} ${activeVal} (${activePct}%)</div>
+  </div>`;
+  const host = $el.querySelector(".games-donut-echart");
+  const chart = chartRef === "detail"
+    ? (detailDonutChart = echarts.init(host))
+    : (statsDonutChart = echarts.init(host));
+  chart.off("click");
+  if (selectable) {
+    chart.on("click", (params) => {
+      const key = params?.data?.key;
+      if (!key) return;
+      if (chartRef === "detail") selectedDonutKey = key;
+      else statsDonutKey = key;
+      renderModeDetail();
+      renderGlobalStats();
+    });
+  }
+  chart.setOption({
+    tooltip: { trigger: "item", formatter: "{b}: {c} ({d}%)" },
+    series: [{
+      type: "pie",
+      radius: ["62%", "84%"],
+      avoidLabelOverlap: true,
+      label: { show: false },
+      itemStyle: { borderWidth: 2, borderColor: "rgba(0,0,0,.2)", shadowBlur: 14, shadowColor: "rgba(150,190,255,.2)" },
+      data: [
+        { key: "losses", name: "Derrotas", value: vals.losses, itemStyle: { color: "rgba(255,90,110,.92)" } },
+        { key: "ties", name: "Empates", value: vals.ties, itemStyle: { color: "rgba(177,190,210,.9)" } },
+        { key: "wins", name: "Victorias", value: vals.wins, itemStyle: { color: "rgba(64,235,151,.95)" } }
+      ]
+    }]
+  }, true);
+  chart.resize();
 }
 
 function renderGlobalStats() {
   renderStatsFilter();
   const selected = $statsFilter?.value || "all";
   const modeRows = Object.values(modes || {}).filter((m) => m && (selected === "all" || m.groupId === selected));
-  const points = applyPointsRange(linePointsFromDaily(modeRows.map((m) => m.id)), statsRange);
+  const points = rangePointsFromDaily(modeRows.map((m) => m.id), statsRange === "total" ? "total" : statsRange);
   const totals = statsRange === "total"
     ? modeRows.reduce((acc, m) => {
-      acc.wins += Number(m.wins || 0);
-      acc.losses += Number(m.losses || 0);
-      acc.ties += Number(m.ties || 0);
+      const modeTotals = modeTotalsFromDaily(m.id);
+      acc.wins += modeTotals.wins;
+      acc.losses += modeTotals.losses;
+      acc.ties += modeTotals.ties;
       return acc;
     }, { wins: 0, losses: 0, ties: 0 })
     : points.reduce((acc, [, day]) => {
@@ -307,22 +399,21 @@ function renderGlobalStats() {
   const byGroup = modeRows.reduce((acc, m) => {
     const gId = m.groupId || "none";
     acc[gId] = acc[gId] || { wins: 0, losses: 0, ties: 0 };
-    acc[gId].wins += Number(m.wins || 0);
-    acc[gId].losses += Number(m.losses || 0);
-    acc[gId].ties += Number(m.ties || 0);
+    const modeTotals = modeTotalsFromDaily(m.id);
+    acc[gId].wins += modeTotals.wins;
+    acc[gId].losses += modeTotals.losses;
+    acc[gId].ties += modeTotals.ties;
     return acc;
   }, {});
   const byMode = modeRows.map((m) => {
-    const wins = Number(m.wins || 0);
-    const losses = Number(m.losses || 0);
-    const ties = Number(m.ties || 0);
+    const { wins, losses, ties } = modeTotalsFromDaily(m.id);
     return { name: m.modeName || "Modo", pct: ensurePct(wins, losses, ties) };
   });
   const pct = ensurePct(totals.wins, totals.losses, totals.ties);
   if ($statsTotals) $statsTotals.textContent = `${pct.total} partidas · ${totals.wins}W / ${totals.losses}L / ${totals.ties}T · ${pct.winPct}%W`;
   if ($statsSub) $statsSub.textContent = selected === "all" ? "Global" : (groups[selected]?.name || "Grupo");
-  renderDonut($statsDonut, totals, false);
-  renderLineChart($statsLine, points);
+  renderDonut($statsDonut, totals, true, "stats");
+  renderLineChart($statsLine, points, "stats");
   if ($statsBreakdown) {
     const topWin = [...byMode].sort((a, b) => b.pct.winPct - a.pct.winPct)[0];
     const topPlays = [...byMode].sort((a, b) => b.pct.total - a.pct.total)[0];
@@ -472,10 +563,9 @@ async function createOrUpdateMode() {
 async function patchModeCounter(modeId, key, delta) {
   const mode = modes[modeId];
   if (!mode) return;
-  const prevTotal = clamp(Number(mode[key] || 0));
+  const dailyTotals = modeTotalsFromDaily(modeId);
+  const prevTotal = clamp(Number(dailyTotals[key] || 0));
   if (delta < 0 && prevTotal <= 0) return;
-  const next = clamp(prevTotal + delta);
-  mode[key] = next;
   mode.updatedAt = nowTs();
 
   const day = todayKey();
@@ -489,7 +579,6 @@ async function patchModeCounter(modeId, key, delta) {
   triggerHaptic();
 
   const updates = {
-    [`${MODES_PATH}/${modeId}/${key}`]: next,
     [`${MODES_PATH}/${modeId}/updatedAt`]: mode.updatedAt,
     [`${DAILY_PATH}/${modeId}/${day}/${key}`]: dayValue
   };
@@ -574,9 +663,8 @@ function toggleGroupSession(groupIdValue) {
 }
 
 function modeRangeTotals(modeId, range = "total") {
-  const mode = modes[modeId];
-  if (!mode) return { wins: 0, losses: 0, ties: 0 };
-  if (range === "total") return { wins: Number(mode.wins || 0), losses: Number(mode.losses || 0), ties: Number(mode.ties || 0) };
+  if (!modes[modeId]) return { wins: 0, losses: 0, ties: 0 };
+  if (range === "total") return modeTotalsFromDaily(modeId);
   const days = Number(range.replace("d", "")) || 30;
   const minDate = new Date();
   minDate.setDate(minDate.getDate() - days + 1);
@@ -588,6 +676,21 @@ function modeRangeTotals(modeId, range = "total") {
     acc.ties += Number(row?.ties || 0);
     return acc;
   }, { wins: 0, losses: 0, ties: 0 });
+}
+
+function formatMinutesShort(min) {
+  const minutes = Math.max(0, Number(min || 0));
+  if (!minutes) return "";
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
+
+function getModeDayMinutes(mode, dateKey, rec = null) {
+  const group = groups[mode.groupId] || {};
+  const habit = group?.linkedHabitId ? habits[group.linkedHabitId] : null;
+  if (habit?.log?.[dateKey] != null) return readDayMinutes(habit.log[dateKey]);
+  return Number((rec || dailyByMode[mode.id]?.[dateKey] || {}).minutes || 0);
 }
 
 function monthGrid(year, month) {
@@ -610,21 +713,24 @@ function renderModeDetail() {
   const pct = ensurePct(totals.wins, totals.losses, totals.ties);
   const minutes = getModePlayedMinutes(mode);
   const hoursText = `${(minutes / 60).toFixed(1)}h`;
-  const points = applyPointsRange(linePointsFromDaily([mode.id]), detailLineRange);
+  const points = rangePointsFromDaily([mode.id], detailLineRange);
   const modeDaily = dailyByMode[mode.id] || {};
 
   const rows = monthGrid(detailMonth.year, detailMonth.month).map((dayDate) => {
     if (!dayDate) return '<button type="button" class="habit-heatmap-cell is-out" disabled aria-hidden="true"></button>';
     const key = dateKeyLocal(dayDate);
     const rec = modeDaily[key] || {};
-    const min = Number(rec.minutes || 0);
+    const min = getModeDayMinutes(mode, key, rec);
+    const balance = Number(rec.wins || 0) - Number(rec.losses || 0);
+    const tintCls = balance > 0 ? "is-win" : (balance < 0 ? "is-loss" : "is-even");
     const todayCls = key === todayKey() ? "is-active" : "";
-    return `<button type="button" class="habit-heatmap-cell ${todayCls}" data-day="${key}">
+    return `<button type="button" class="habit-heatmap-cell ${todayCls} ${tintCls}" data-day="${key}">
       <span class="month-day-num">${dayDate.getDate()}</span>
-      <span class="month-day-value">${Number(rec.wins || 0)}-${Number(rec.losses || 0)}-${Number(rec.ties || 0)}</span>
-      <span class="month-day-value">${min ? `${min}m` : ""}</span>
+      <span class="month-day-value month-day-time">${formatMinutesShort(min)}</span>
     </button>`;
   }).join("");
+
+  const modeTotals = modeTotalsFromDaily(mode.id);
 
   $detailTitle.textContent = `${group.name || "Grupo"} — ${mode.modeName || "Modo"}`;
   $detailBody.innerHTML = `
@@ -650,15 +756,15 @@ function renderModeDetail() {
       <strong>Controles</strong>
       <div class="game-controls-grid">
         <div class="game-control-col loss">
-          <div>Derrotas</div><div class="game-control-value">${Number(mode.losses || 0)}</div>
+          <div>Derrotas</div><div class="game-control-value">${modeTotals.losses}</div>
           <div class="game-control-actions"><button class="game-ctrl-btn" data-action="loss">+1</button><button class="game-ctrl-btn" data-action="loss-minus">-1</button></div>
         </div>
         <div class="game-control-col tie">
-          <div>Empates</div><div class="game-control-value">${Number(mode.ties || 0)}</div>
+          <div>Empates</div><div class="game-control-value">${modeTotals.ties}</div>
           <div class="game-control-actions"><button class="game-ctrl-btn" data-action="tie">+1</button><button class="game-ctrl-btn" data-action="tie-minus">-1</button></div>
         </div>
         <div class="game-control-col win">
-          <div>Victorias</div><div class="game-control-value">${Number(mode.wins || 0)}</div>
+          <div>Victorias</div><div class="game-control-value">${modeTotals.wins}</div>
           <div class="game-control-actions"><button class="game-ctrl-btn" data-action="win">+1</button><button class="game-ctrl-btn" data-action="win-minus">-1</button></div>
         </div>
       </div>
@@ -696,8 +802,89 @@ function renderModeDetail() {
       <div class="habit-month-grid game-calendar-grid">${rows}</div>
     </section>`;
 
-  renderDonut(document.getElementById("game-detail-donut"), totals, true);
-  renderLineChart(document.getElementById("game-detail-line"), points);
+
+  renderDonut(document.getElementById("game-detail-donut"), totals, true, "detail");
+  renderLineChart(document.getElementById("game-detail-line"), points, "detail");
+}
+
+async function saveDayRecord(modeId, day, rec) {
+  dailyByMode[modeId] = dailyByMode[modeId] || {};
+  dailyByMode[modeId][day] = {
+    wins: clamp(Number(rec.wins || 0)),
+    losses: clamp(Number(rec.losses || 0)),
+    ties: clamp(Number(rec.ties || 0)),
+    minutes: clamp(Number(rec.minutes || 0))
+  };
+  render();
+  renderGlobalStats();
+  if (currentModeId === modeId) renderModeDetail();
+  await set(ref(db, `${DAILY_PATH}/${modeId}/${day}`), dailyByMode[modeId][day]);
+}
+
+function openDayRecordModal(modeId, day) {
+  const mode = modes[modeId];
+  if (!mode) return;
+  const group = groups[mode.groupId] || {};
+  const rec = dailyByMode[modeId]?.[day] || { wins: 0, losses: 0, ties: 0, minutes: 0 };
+  const linkedHabit = group?.linkedHabitId ? habits[group.linkedHabitId] : null;
+  const linkedMinutes = linkedHabit ? readDayMinutes(linkedHabit.log?.[day]) : 0;
+  const minutesReadOnly = !!linkedHabit;
+  let state = {
+    wins: clamp(Number(rec.wins || 0)),
+    losses: clamp(Number(rec.losses || 0)),
+    ties: clamp(Number(rec.ties || 0)),
+    minutes: minutesReadOnly ? linkedMinutes : clamp(Number(rec.minutes || 0))
+  };
+  const modal = document.createElement("div");
+  modal.className = "modal-backdrop";
+  modal.innerHTML = `<div class="modal habit-modal game-day-modal">
+    <div class="modal-header"><div class="modal-title">Registro del día</div></div>
+    <div class="modal-scroll sheet-body">
+      <label class="field"><span class="field-label">Fecha</span><input type="text" value="${day}" readonly></label>
+      <label class="field"><span class="field-label">Horas / minutos</span><input id="game-day-minutes" type="number" min="0" value="${state.minutes}" ${minutesReadOnly ? "readonly" : ""}></label>
+      ${minutesReadOnly ? '<div class="games-subtitle">Minutos vinculados al hábito del grupo.</div>' : ""}
+      <div class="game-day-counter" data-k="losses"><span>Derrotas</span><div><button type="button" data-step="-1">-1</button><strong>${state.losses}</strong><button type="button" data-step="1">+1</button></div></div>
+      <div class="game-day-counter" data-k="ties"><span>Empates</span><div><button type="button" data-step="-1">-1</button><strong>${state.ties}</strong><button type="button" data-step="1">+1</button></div></div>
+      <div class="game-day-counter" data-k="wins"><span>Victorias</span><div><button type="button" data-step="-1">-1</button><strong>${state.wins}</strong><button type="button" data-step="1">+1</button></div></div>
+    </div>
+    <div class="modal-footer sheet-footer">
+      <button class="btn ghost" type="button" data-close>Cancelar</button>
+      <button class="btn primary" type="button" data-save>Guardar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+  syncModalScrollLock();
+
+  const repaint = () => {
+    modal.querySelectorAll(".game-day-counter").forEach((row) => {
+      const k = row.dataset.k;
+      row.querySelector("strong").textContent = state[k];
+    });
+  };
+  modal.addEventListener("click", async (e) => {
+    if (e.target === modal || e.target.closest("[data-close]")) {
+      modal.remove();
+      syncModalScrollLock();
+      return;
+    }
+    const stepBtn = e.target.closest("[data-step]");
+    if (stepBtn) {
+      const k = stepBtn.closest(".game-day-counter")?.dataset.k;
+      if (!k) return;
+      state[k] = clamp(Number(state[k] || 0) + Number(stepBtn.dataset.step || 0));
+      repaint();
+      return;
+    }
+    if (e.target.closest("[data-save]")) {
+      if (!minutesReadOnly) {
+        const val = Number(modal.querySelector("#game-day-minutes")?.value || 0);
+        state.minutes = clamp(val);
+      }
+      await saveDayRecord(modeId, day, state);
+      modal.remove();
+      syncModalScrollLock();
+    }
+  });
 }
 
 function openModeDetail(modeId) {
@@ -797,12 +984,6 @@ function bind() {
       renderModeDetail();
       return;
     }
-    const dBtn = e.target.closest("[data-donut]");
-    if (dBtn) {
-      selectedDonutKey = dBtn.dataset.donut;
-      renderModeDetail();
-      return;
-    }
     const lBtn = e.target.closest("[data-line-range]");
     if (lBtn) {
       detailLineRange = lBtn.dataset.lineRange;
@@ -819,8 +1000,7 @@ function bind() {
     }
     const day = e.target.closest("[data-day]")?.dataset.day;
     if (day && currentModeId) {
-      const rec = dailyByMode[currentModeId]?.[day] || { wins: 0, losses: 0, ties: 0, minutes: 0 };
-      alert(`${day}\nW/L/T: ${rec.wins || 0}/${rec.losses || 0}/${rec.ties || 0}\nMinutos: ${rec.minutes || 0}`);
+      openDayRecordModal(currentModeId, day);
       return;
     }
     if (e.target.closest("button[data-action]")) onListClick(e);

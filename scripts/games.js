@@ -1519,36 +1519,38 @@ function renderModeDetail() {
   renderDonut(document.getElementById("game-detail-donut"), totals, true, "detail");
   renderModeLineChart(mode.id);
 }
-
 async function saveDayRecord(modeId, day, rec) {
   dailyByMode[modeId] = dailyByMode[modeId] || {};
   dailyByMode[modeId][day] = {
-    wins: clamp(Number(rec.wins || 0)),
-    losses: clamp(Number(rec.losses || 0)),
-    ties: clamp(Number(rec.ties || 0)),
-    minutes: clamp(Number(rec.minutes || 0)),
-    k: clamp(Number(rec.k || 0)),
-    d: clamp(Number(rec.d || 0)),
-    a: clamp(Number(rec.a || 0)),
-    rf: clamp(Number(rec.rf || 0)),
-    ra: clamp(Number(rec.ra || 0))
+    wins: clamp(Number(rec?.wins || 0)),
+    losses: clamp(Number(rec?.losses || 0)),
+    ties: clamp(Number(rec?.ties || 0)),
+    minutes: clamp(Number(rec?.minutes || 0)),
+    k: clamp(Number(rec?.k || 0)),
+    d: clamp(Number(rec?.d || 0)),
+    a: clamp(Number(rec?.a || 0)),
+    rf: clamp(Number(rec?.rf || 0)),
+    ra: clamp(Number(rec?.ra || 0))
   };
-  render();
-  renderGlobalStats();
-  if (currentModeId === modeId) renderModeDetail();
+
   await set(ref(db, `${DAILY_PATH}/${modeId}/${day}`), dailyByMode[modeId][day]);
 
-  const mode = modes[modeId];
-  const group = mode ? groups[mode.groupId] : null;
+  render();
+  renderGlobalStats();
+  if (currentModeId === modeId) {
+    renderModeDetail();
+    renderModeLineChart(modeId);
+    requestAnimationFrame(() => detailLineChart?.resize?.());
+  }
+
+  const mode = modes?.[modeId];
+  const group = mode ? groups?.[mode.groupId] : null;
   if (group?.linkedHabitId) {
     await syncGroupLinkedHabitMinutes(group.id, group.linkedHabitId, day);
   }
-
-    <div class="modal-header"><div class="modal-title">Registro del dia</div></div>
-    renderModeLineChart(modeId);
-    requestAnimationFrame(() => detailLineChart?.resize());
-  }
 }
+
+
 
 function openDayRecordModal(modeId, day) {
   const mode = modes[modeId];
@@ -1678,8 +1680,9 @@ function exportGamesCsvSingle() {
 
 async function exportGamesZipByMode() {
   const files = {};
-  const groupsRows = Object.values(groups || {}).map((g) => ({
-    "Exportar Juegos:\n1) CSV unico\n2) ZIP (por modo)",
+
+  const groupsRows = Object.values(groups || {}).map(g => ({
+    __info: "Exportar Juegos: 1) CSV único 2) ZIP (por modo)",
     groupName: g.name || "",
     linkedHabitId: g.linkedHabitId || "",
     createdAt: g.createdAt || ""
@@ -1848,16 +1851,20 @@ function bind() {
 function listenRemote() {
   onValue(ref(db, GROUPS_PATH), (snap) => {
     groups = snap.val() || {};
-    if (!localStorage.getItem(OPEN_KEY)) Object.keys(groups).forEach((id) => openGroups.add(id));
+    if (!localStorage.getItem(OPEN_KEY)) {
+      Object.keys(groups).forEach((id) => openGroups.add(id));
+    }
     saveCache();
     render();
   });
+
   onValue(ref(db, MODES_PATH), (snap) => {
     modes = snap.val() || {};
     saveCache();
     render();
     if (currentModeId) renderModeDetail();
   });
+
   onValue(ref(db, DAILY_PATH), (snap) => {
     dailyByMode = snap.val() || {};
     saveCache();
@@ -1865,14 +1872,17 @@ function listenRemote() {
     renderGlobalStats();
     if (currentModeId) renderModeDetail();
   });
+
   onValue(ref(db, AGG_RANK_DAY_PATH), (snap) => {
     aggRankDay = snap.val() || {};
     renderGlobalStats();
   });
+
   onValue(ref(db, AGG_RANK_TOTAL_PATH), (snap) => {
     aggRankTotal = snap.val() || {};
     renderGlobalStats();
   });
+
   onValue(ref(db, HABITS_PATH), (snap) => {
     habits = snap.val() || {};
     if ($groupHabit) $groupHabit.innerHTML = habitOptionsHtml();
@@ -1881,17 +1891,23 @@ function listenRemote() {
     renderGlobalStats();
     if (currentModeId) renderModeDetail();
   });
+
   onValue(ref(db, HABIT_SESSIONS_PATH), (snap) => {
     habitSessions = snap.val() || {};
     reconcileGamesFromHabitSessions().catch(() => {});
   });
 }
 
-// actualiza solo el texto del boton de sesion (sin render completo)
-      if (btn.textContent.trim() !== "[START] Iniciar") btn.textContent = "[START] Iniciar";
-    const next = `[ON] ${elapsed}`;
+/* ========= Sesiones: actualizar solo texto del botón (sin render completo) ========= */
+function getRunningSessionFromHabitSessions() {
+  const list = Object.values(habitSessions || {});
+  return list.find(s => s && s.isRunning);
+}
 
-  sessionTick = setInterval(tickSessionButtons, 1000); // before: render()
+function tickSessionButtons() {
+  const running = getRunningSessionFromHabitSessions();
+  if (!running) return;
+
   const details = document.querySelectorAll("#games-groups-list .game-group");
 
   details.forEach((detail) => {
@@ -1900,17 +1916,29 @@ function listenRemote() {
     const btn = detail.querySelector(".game-session-btn");
     if (!btn) return;
 
-    const hasRunning = !!(running && g?.linkedHabitId && running.targetHabitId === g.linkedHabitId);
+    const hasRunning =
+      g?.linkedHabitId &&
+      running.targetHabitId === g.linkedHabitId;
+
     if (!hasRunning) {
-      // No fuerces estado si no estÃ¡ corriendo
-      if (btn.textContent.trim() !== "â¶ Iniciar") btn.textContent = "â¶ Iniciar";
+      const idle = "▶ Iniciar";
+      if (btn.textContent.trim() !== idle) btn.textContent = idle;
       return;
     }
 
-    const elapsed = formatDuration((Date.now() - Number(running.startTs || Date.now())) / 1000);
-    const next = `â  ${elapsed}`;
+    const elapsed = formatDuration(
+      (Date.now() - Number(running.startTs || Date.now())) / 1000
+    );
+
+    const next = `■ ${elapsed}`;
     if (btn.textContent !== next) btn.textContent = next;
   });
+}
+
+
+function startSessionTicker() {
+  if (sessionTick) clearInterval(sessionTick);
+  sessionTick = setInterval(tickSessionButtons, 1000);
 }
 
 function init() {

@@ -2957,34 +2957,45 @@ Crear “<span id="gym-create-cta-text"></span>”
 <script>
 /* Bookshell BOOT: fallback de navegación + overlay de errores (no toca tus JS) */
 (() => {
-  const showOverlay = (msg) => {
-    try {
-      let ov = document.getElementById("boot-error-overlay");
-      if (!ov) {
-        ov = document.createElement("div");
-        ov.id = "boot-error-overlay";
-        ov.style.cssText = [
-          "position:fixed","inset:0","z-index:999999",
-          "background:rgba(0,0,0,.92)","color:#fff",
-          "padding:14px","font:12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
-          "overflow:auto","white-space:pre-wrap"
-        ].join(";");
-        const head = document.createElement("div");
-        head.style.cssText = "display:flex;gap:10px;align-items:center;margin-bottom:10px;";
-        head.innerHTML = "<b style='font-size:13px'>⚠️ Error JS (BOOT)</b><span style='opacity:.75'>Toca para cerrar</span>";
-        ov.appendChild(head);
-        ov.addEventListener("click", () => ov.remove());
-        document.body.appendChild(ov);
-      }
-      ov.appendChild(document.createTextNode("\n" + msg + "\n"));
-      console.error(msg);
-    } catch {}
-  };
+const showOverlay = (msg) => {
+  try {
+    let ov = document.getElementById("boot-error-overlay");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "boot-error-overlay";
+      ov.style.cssText = [
+        "position:fixed","inset:0","z-index:999999",
+        "background:rgba(0,0,0,.92)","color:#fff",
+        "padding:14px",
+        "font:12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
+        "overflow:auto","white-space:pre-wrap"
+      ].join(";");
 
-  window.addEventListener("error", (e) => {
-    const msg = e?.error?.stack || `${e.message || "Error"} @ ${e.filename || ""}:${e.lineno || ""}:${e.colno || ""}`;
-    showOverlay(msg);
-  });
+      const head = document.createElement("div");
+      head.style.cssText = "display:flex;gap:10px;align-items:center;margin-bottom:10px;cursor:pointer;";
+      head.innerHTML = "<b style='font-size:13px'>⚠️ Error JS (BOOT)</b><span style='opacity:.75'>Toca para cerrar</span>";
+      ov.appendChild(head);
+
+      ov.addEventListener("click", () => ov.remove(), { passive: true });
+      (document.body || document.documentElement).appendChild(ov);
+    }
+    ov.appendChild(document.createTextNode("\n" + String(msg) + "\n"));
+    console.error(msg);
+  } catch (_) {}
+};
+
+window.addEventListener("error", (e) => {
+  const msg =
+    e?.error?.stack ||
+    `${e?.message || "Error"} @ ${e?.filename || ""}:${e?.lineno || ""}:${e?.colno || ""}`;
+  showOverlay(msg);
+});
+
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e?.reason;
+  const msg = r?.stack || r?.message || String(r || "Unhandled rejection");
+  showOverlay(msg);
+});
 
   window.addEventListener("unhandledrejection", (e) => {
     const r = e?.reason;

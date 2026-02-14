@@ -230,46 +230,73 @@ function applyRrDelta(current = {}, delta = 0) {
           ? Math.max(1, Math.min(3, Number(current.div)))
           : 1);
 
-  let rr = Math.round(Number((current.rr != null ? current.rr : current.base) || 0));
-  rr += Math.round(Number(delta || 0));
+  let rr = Math.max(0, Math.min(100, Math.round(Number((current.rr != null ? current.rr : current.base) || 0))));
+  const deltaNum = Math.round(Number(delta || 0));
+  const before = { tier, div, rr };
 
   let idx = RR_TIERS.findIndex((t) => String(t).toUpperCase() === String(tier).toUpperCase());
   if (idx < 0) idx = 0;
 
-  while (rr >= 100) {
-    if (tier === "Radiante") { rr = 100; break; }
-    rr -= 100;
+  if (deltaNum >= 0) {
+    rr += deltaNum;
+    while (rr >= 100) {
+      if (tier === "Radiante") { rr = 100; break; }
+      rr -= 100;
 
-    if (div != null && div < 3) div += 1;
-    else {
-      idx = Math.min(RR_TIERS.length - 1, idx + 1);
-      tier = RR_TIERS[idx];
-      if (tier === "Radiante") { div = null; rr = 100; break; }
-      div = 1;
+      if (div != null && div < 3) div += 1;
+      else {
+        idx = Math.min(RR_TIERS.length - 1, idx + 1);
+        tier = RR_TIERS[idx];
+        if (tier === "Radiante") { div = null; rr = 100; break; }
+        div = 1;
+      }
     }
-  }
+  } else {
+    const down = Math.abs(deltaNum);
 
-  while (rr < 0) {
-    if (tier === "Hierro" && div === 1) { rr = 0; break; }
-    rr += 100;
+    if (rr > 0) {
+      if (down >= rr) {
+        rr = 0;
+      } else {
+        rr -= down;
+      }
+    } else {
+      let x = down;
+      while (x > 0) {
+        if (tier === "Hierro" && div === 1) {
+          rr = 0;
+          break;
+        }
 
-    if (tier === "Radiante") {
-      idx = Math.max(0, idx - 1);
-      tier = RR_TIERS[idx];
-      div = 3;
-      continue;
+        if (tier === "Radiante") {
+          idx = Math.max(0, idx - 1);
+          tier = RR_TIERS[idx];
+          div = 3;
+        } else if (div != null && div > 1) {
+          div -= 1;
+        } else {
+          idx = Math.max(0, idx - 1);
+          tier = RR_TIERS[idx];
+          div = tier === "Radiante" ? null : 3;
+        }
+
+        if (x >= 100) {
+          x -= 100;
+          rr = 0;
+          continue;
+        }
+
+        rr = Math.max(0, Math.min(100, 100 - x));
+        x = 0;
+      }
     }
 
-    if (div != null && div > 1) div -= 1;
-    else {
-      idx = Math.max(0, idx - 1);
-      tier = RR_TIERS[idx];
-      div = tier === "Radiante" ? null : 3;
-    }
+    const after = { tier, div, rr: Math.max(0, rr) };
+    console.log("[games] rr:down:floorProtection", { before, delta: deltaNum, after });
   }
 
   if (tier === "Radiante") div = null;
-  rr = Math.max(0, rr);
+  rr = Math.max(0, Math.min(100, rr));
 
   return { tier, div, rr, base: rr };
 }

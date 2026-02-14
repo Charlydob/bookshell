@@ -285,6 +285,7 @@ function getAggregateFieldsForMode(modeId) {
 function computeModeAgg(modeId, rangeKey = "total", now = new Date()) {
   const base = getModeBases(modeId);
   const matchesAll = getMatchesForMode(modeId);
+  const includeBase = rangeKey === "total";
   const { startDay, endDay } = getDayRange(rangeKey, now);
   const matches = rangeKey === "total"
     ? matchesAll
@@ -293,12 +294,14 @@ function computeModeAgg(modeId, rangeKey = "total", now = new Date()) {
   const out = { gamesCount: matches.length };
   fields.forEach((field) => {
     const sum = matches.reduce((acc, m) => acc + Number(m?.[field] || 0), 0);
-    out[field] = Number(base?.[field] || 0) + sum;
+    const baseValue = includeBase ? Number(base?.[field] || 0) : 0;
+    out[field] = baseValue + sum;
   });
   const mode = modes[modeId];
   const groupRating = normalizeRating(groups[mode?.groupId]?.rating || groupRatings[mode?.groupId]?.rating);
   out.groupRatingValue = Number(groupRating.base || 0) + matches.reduce((acc, m) => acc + Number(m?.ratingDeltaFinal || ((Number(m?.ratingDeltaAbs) || 0) * (Number(m?.ratingDeltaSign) || 0)) || 0), 0);
 
+  console.log("[games] agg:basePolicy", { modeId, rangeKey, includeBase });
   console.log("[games] agg", {
     modeId,
     rangeKey,

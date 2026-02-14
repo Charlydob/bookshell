@@ -886,7 +886,7 @@ function buildGroupRatingKpi(groupId, range) {
       main: `${current}`,
       sub: (!range?.start && !range?.endExclusive)
         ? `Peak: ${peakAllTime}`
-        : `Peak: ${peakRange} · Hist: ${peakAllTime}`
+        : `Peak: ${peakAllTime}`
     };
   }
 
@@ -906,7 +906,7 @@ function buildGroupRatingKpi(groupId, range) {
     main: formatRrMain(cur),
     sub: (!range?.start && !range?.endExclusive)
       ? `Peak: ${formatRrMain(peakAllState)}`
-      : `Peak: ${formatRrMain(peakRangeState)} · Hist: ${formatRrMain(peakAllState)}`
+      : `Peak: ${formatRrMain(peakAllState)}`
   };
 }
 
@@ -957,11 +957,7 @@ async function openGroupBasesModal(groupId, modeId = null) {
         <label class="base-field"><span>Rondas a favor</span><input id="games-base-rf" type="number" min="0" max="1000000" step="1" value="${currentBases.rf}" inputmode="numeric"></label>
         <label class="base-field"><span>Rondas en contra</span><input id="games-base-ra" type="number" min="0" max="1000000" step="1" value="${currentBases.ra}" inputmode="numeric"></label>
       </div></details>
-      <details class="base-section" open><summary>Utilidad base</summary><div class="base-modal-grid">
-        <label class="base-field"><span>Grenades</span><input id="games-base-grenades" type="number" min="0" max="1000000" step="1" value="${currentBases.grenades}" inputmode="numeric"></label>
-        <label class="base-field"><span>Throws</span><input id="games-base-throws" type="number" min="0" max="1000000" step="1" value="${currentBases.throws}" inputmode="numeric"></label>
-        <label class="base-field"><span>Losses extra</span><input id="games-base-losses-extra" type="number" min="0" max="1000000" step="1" value="${currentBases.lossesExtra}" inputmode="numeric"></label>
-      </div></details>
+      
     </div>
     <div class="modal-footer sheet-footer base-modal-footer">
       <button class="btn ghost" type="button" data-close>Cancelar</button>
@@ -1372,7 +1368,7 @@ function renderGamesPanel() {
           <div class="game-group-meta">${losses}L / ${wins}W / ${ties}T - ${lossPct}% - ${winPct}% - ${formatHoursMinutes(totalMinutes)}</div>
         </div>
         <div class="game-group-actions">
-          <button class="game-session-btn" data-action="toggle-session">${hasRunning ? `[ON] ${elapsed}` : "[START] Iniciar"}</button>
+          <button class="game-session-btn" data-action="toggle-session">${hasRunning ? `${elapsed}` : "Iniciar"}</button>
           <button class="game-menu-btn" data-action="group-menu">...</button>
         </div>
       </summary>
@@ -1651,11 +1647,11 @@ function openResultModal(modeId, result) {
         ${rankType !== "none" ? `<div class="game-mini-grid one">
           <label class="field">
             <span class="field-label">${rankLabel}</span>
-            <input class="game-mini-input" data-key="rankDelta" inputmode="numeric" placeholder="${rankPlaceholder}" maxlength="5" />
+            <input class="game-mini-input-rr" data-key="rankDelta" inputmode="numeric" placeholder="${rankPlaceholder}" maxlength="5" />
           </label>
           <div class="game-sign-toggle" data-sign-wrap>
-            <button type="button" class="btn" data-sign="1">[+] Verde</button>
-            <button type="button" class="btn" data-sign="-1">[-] Rojo</button>
+            <button type="button" class="btn-verde" data-sign="1">[+] Verde</button>
+            <button type="button" class="btn-rojo" data-sign="-1">[-] Rojo</button>
           </div>
         </div>` : ""}
         <div class="game-mini-actions">
@@ -2097,21 +2093,36 @@ function renderModeDetail() {
       </div>
     </section>
 
-    <section class="game-detail-section">
-      <strong>Bases del modo</strong>
-      ${ratingSnap ? `<div class="games-rank-chip" data-group-id="${mode.groupId}">
+<section class="game-detail-section">
+  <strong>Bases del modo</strong>
+
+  <div class="game-detail-top-wrap">
+    ${ratingSnap ? `
+      <div class="games-rank-chip" data-group-id="${mode.groupId}">
         <div class="games-rank-chip-top">
           <span class="games-rank-chip-game">${group.name || "Grupo"}</span>
           <span class="games-rank-chip-type">${ratingSnap.typeLabel}</span>
         </div>
         <div class="games-rank-chip-main">${ratingSnap.main}</div>
         <div class="games-rank-chip-sub">${ratingSnap.sub}</div>
-      </div>` : ""}
+      </div>
+    ` : ""}
+
+    <div class="game-detail-bases-wrap">
       <div class="game-detail-sub">W ${bases.wins} - L ${bases.losses} - T ${bases.ties}</div>
       <div class="game-detail-sub">K ${bases.k} - D ${bases.d} - A ${bases.a}</div>
       <div class="game-detail-sub">R ${bases.rf}-${bases.ra}</div>
-      <button class="game-menu-btn" data-action="edit-group-bases" data-group-id="${mode.groupId}" data-mode-id="${mode.id}">Editar bases del modo</button>
-    </section>
+    </div>
+  </div>
+
+  <button class="game-menu-btn"
+    data-action="edit-group-bases"
+    data-group-id="${mode.groupId}"
+    data-mode-id="${mode.id}">
+    Editar bases del modo
+  </button>
+</section>
+
 
     <section class="game-detail-section">
       <strong>Rango</strong>

@@ -62,33 +62,30 @@
 .games-stats-left { display: flex; flex-direction: column; gap: 10px; }
 .games-rank-chips{
   display:grid;
-  grid-template-columns:repeat(2, minmax(0,1fr));
-  gap:10px;
+  grid-template-columns:repeat(3, minmax(0,1fr));
+  gap:8px;
   padding:2px 2px 10px 2px;
 }
 
-.games-rank-chip{
-  min-width: 90px;
-  max-width: 90px;
-}
+
 
 .games-rank-chip{
-  min-width: 120px;
+  min-width: 80px;
+  min-height: 80px;
   border-radius: 16px;
-  padding: 10px 12px;
+  padding: 8px;
   border: 1px solid rgba(255,255,255,0.08);
   background: rgba(255,255,255,0.03);
   box-shadow: 0 10px 26px rgba(0,0,0,0.35);
-  display:flex;
-  flex-direction:column;
-  gap:0px;
+
+  display: flex;
+  flex-direction: column;
 }
 
 .games-rank-chip-top{
-  display:flex;
-  justify-content:space-between;
-  align-items:baseline;
-  gap: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
 }
 
 .games-rank-chip-game{
@@ -101,17 +98,23 @@
   font-size:9px;
   color: rgba(255,255,255,0.55);
 }
-
 .games-rank-chip-main{
-  font-weight:900;
-  font-size:22px;
-  letter-spacing:0.2px;
+  margin: auto 0;          /* centro perfecto */
+  font-weight: 900;
+  font-size: 20px;
+  text-align: center;
+  color: white;
 }
+
 
 .games-rank-chip-sub{
-  font-size:9px;
-  color: rgba(255,255,255,0.65);
+  font-size: 10px;
+  opacity: .7;
+  text-align: center;
+    color: rgba(255,255,255,0.55);
+
 }
+
 
 .games-kpi-panel{
   border-radius: 18px;
@@ -436,9 +439,21 @@ bottom: 19px;
 
 .game-controls-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
 .game-control-col { border-radius: 12px; padding: 10px 8px; text-align: center; }
-.game-control-col.loss { background: rgba(255,70,95,.2); }
-.game-control-col.tie { background: rgba(136,149,168,.2); }
-.game-control-col.win { background: rgba(64,235,151,.2); }
+.game-control-col.loss{
+  border: 1px solid rgba(255,70,95,.55);
+  box-shadow: 0 0 14px rgba(255,70,95,.45);
+}
+
+.game-control-col.tie{
+  border: 1px solid rgba(136,149,168,.55);
+  box-shadow: 0 0 14px rgba(136,149,168,.40);
+}
+
+.game-control-col.win{
+  border: 1px solid rgba(64,235,151,.55);
+  box-shadow: 0 0 14px rgba(64,235,151,.45);
+}
+
 .game-control-value { font-size: 1.2rem; font-weight: 800; margin: 3px 0 8px; }
 .game-control-actions { display: flex; justify-content: center; gap: 6px; }
 .game-ctrl-btn { padding: 6px 9px; }
@@ -581,7 +596,7 @@ bottom: 19px;
   min-height: 12px;
 }
 .game-detail-modal{
-  max-height: 840px;
+  max-height: 740px;
   padding: 0px;
 }
 #game-detail-modal{
@@ -676,4 +691,76 @@ bottom: 19px;
 @media (max-width:420px){
   .base-modal-grid{ grid-template-columns:1fr; }
   .games-rank-chip-sub{ font-size:11px; color: var(--txt-soft, rgba(255,255,255,.62)); }
+}
+.game-detail-top-wrap{
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.game-detail-bases-wrap{
+  position: relative;
+  top: 20px;
+  font-size: 28px;
+}
+.game-detail-sub{
+  font-size: 14px;
+}
+.form-grid.row-3{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.base-modal{
+  max-width: 480px;
+max-height: 740px;
+}
+.modal-backdrop{
+  padding: 0px;
+}
+.base-modal-grid{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.field{
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  gap: 4px;
+}
+.game-mini-date{
+  min-width: 180px;
+  max-width: 180px;
+}
+.field-label{
+  font-size: 16px;
+  color: white;
+  align-items: center;
+}
+.game-mini-input-rr{
+  min-width: none;
+  max-width: 180px;
+}
+.btn-verde{
+  border: 1px solid rgba(22,255,138,.45);
+  background: rgba(22,255,138,.15);
+  color: inherit;
+  border-radius: 999px;
+  padding: 6px 10px;
+}
+.btn-rojo{
+  border: 1px solid rgba(255,42,74,.45);
+  background: rgba(255,42,74,.15);
+  color: inherit;
+  border-radius: 999px;
+  padding: 6px 10px;
+}
+.game-mini-input-k, .game-mini-input-a, .game-mini-input-rmas, .game-mini-input-rmenos, .game-mini-input-rf, .game-mini-input-d{
+   width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.06);
+  color: inherit;
+  padding: 8px;
+  box-shadow: inset 0 0 0 1px rgba(126, 211, 255, .08);
 }

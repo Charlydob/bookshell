@@ -3,6 +3,20 @@ import { ref, onValue, set, update, push, remove, runTransaction } from "https:/
 import { getRangeBounds, dateFromKey } from "./range-helpers.js";
 import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";
 
+const VERSION = "2026.02.14.1";
+console.log("[games] loaded", VERSION);
+window.addEventListener("error", (event) => {
+  console.error("[games] runtime error", {
+    message: event?.message,
+    filename: event?.filename,
+    line: event?.lineno,
+    column: event?.colno
+  });
+});
+window.addEventListener("unhandledrejection", (event) => {
+  console.error("[games] unhandled rejection", event?.reason);
+});
+
 const GROUPS_PATH = "gameGroups";
 const MODES_PATH = "gameModes";
 const DAILY_PATH = "gameModeDaily";
@@ -322,7 +336,7 @@ function buildModeCard(mode, groupEmoji) {
   const losses = clamp(Number(dailyTotals.losses || 0));
   const ties = clamp(Number(dailyTotals.ties || 0));
   const { winPct, lossPct, tiePct, total } = ensurePct(wins, losses, ties);
-  const emoji = (mode.modeEmoji || "").trim() || groupEmoji || "ð®";
+  const emoji = (mode.modeEmoji || "").trim() || groupEmoji || "🎮";
   const { lossW, tieW, winW } = pctWidths(wins, losses, ties);
   return `
   <article class="game-card" data-mode-id="${mode.id}" role="button" tabindex="0">
@@ -334,16 +348,16 @@ function buildModeCard(mode, groupEmoji) {
     <div class="game-card-total">${formatLineRight(total, wins, losses, ties, winPct)}</div>
     <div class="game-card-content">
       <div class="game-side left">
-        <button class="game-thumb-btn-losses" data-action="loss" title="Derrota">ð</button>
-        <div class="game-side-stat-losses">${losses} â¢ ${lossPct}%</div>
+        <button class="game-thumb-btn-losses" data-action="loss" title="Derrota">👎</button>
+        <div class="game-side-stat-losses">${losses} - ${lossPct}%</div>
       </div>
       <div class="game-center">
         <div class="game-mode-name">${mode.modeName || "Modo"}</div>
         <button class="game-mode-emoji game-mode-emoji-btn" data-action="tie" title="Empate">${emoji}</button>
       </div>
       <div class="game-side right">
-        <div class="game-side-stat-wins">${winPct}% â¢ ${wins}</div>
-        <button class="game-thumb-btn-wins" data-action="win" title="Victoria">ð</button>
+        <div class="game-side-stat-wins">${winPct}% - ${wins}</div>
+        <button class="game-thumb-btn-wins" data-action="win" title="Victoria">👍</button>
       </div>
     </div>
     <div class="game-bottom-tie">${formatWLT({ w: wins, l: losses, t: ties })}</div>
@@ -353,7 +367,7 @@ function buildModeCard(mode, groupEmoji) {
 function renderStatsFilter() {
   if (!$statsFilter) return;
   const options = ['<option value="all">Global</option>'];
-  Object.values(groups || {}).forEach((g) => options.push(`<option value="${g.id}">${g.emoji || "ð®"} ${g.name || "Grupo"}</option>`));
+  Object.values(groups || {}).forEach((g) => options.push(`<option value="${g.id}">${g.emoji || "🎮"} ${g.name || "Grupo"}</option>`));
   const current = $statsFilter.value || "all";
   $statsFilter.innerHTML = options.join("");
   $statsFilter.value = options.some((o) => o.includes(`value=\"${current}\"`)) ? current : "all";
@@ -443,7 +457,7 @@ function createGamesLineOption(points) {
 
     xAxis: {
       type: "category",
-      data: points.map(([d]) => d.slice(5)),
+      data: points.map(([d]) => String(d || "").slice(5)),
       boundaryGap: false,
       axisLine: { lineStyle: { color: "rgba(166,188,255,.25)" } },
       axisLabel: { color: "rgba(225,235,255,.72)", fontSize: 10 }
@@ -501,7 +515,7 @@ function renderLineChart($el, points, chartRef = "stats") {
     chart?.dispose();
     if (chartRef === "stats") statsLineChart = null;
     else detailLineChart = null;
-    if (!$el.querySelector('.empty-state')) $el.innerHTML = "<div class='empty-state small'>Sin datosâ¦</div>";
+    if (!$el.querySelector('.empty-state')) $el.innerHTML = "<div class='empty-state small'>Sin datos...</div>";
     return;
   }
   if ($el.querySelector('.empty-state')) $el.innerHTML = "";
@@ -528,8 +542,8 @@ function renderKpiPanel(tot = {}) {
   setText("kpi-ra", tot.ra || 0);
 }
 
-      sub = `Delta  periodo ${delta >= 0 ? "+" : ""}${delta}`;
-      sub = `RR ${rr}/100  -  Delta  ${delta >= 0 ? "+" : ""}${delta}`;
+function sumRankDeltaInRange(groupId, rangeStart, rangeEndExclusive) {
+  return Object.entries(aggRankDay || {}).reduce((acc, [dayKey, dayRow]) => {
     if (!isDateInRange(dateFromKey(dayKey), rangeStart, rangeEndExclusive)) return acc;
     return acc + Number(dayRow?.[groupId]?.delta || 0);
   }, 0);
@@ -539,7 +553,7 @@ function renderRankChips(selectedGroupId, range) {
   if (!$rankChips) return;
   const allGroups = Object.values(groups || {}).filter((g) => g?.id && getGroupRankType(g.id) !== "none");
   const targetGroups = (selectedGroupId === "all" ? allGroups : allGroups.filter((g) => g.id === selectedGroupId))
-    .sort((a, b) => Number(a.sort || 0) - Number(b.sort || 0) || (a.name || "").localeCompare(b.name || "es"));
+    .sort((a, b) => Number(a.sort || 0) - Number(b.sort || 0) || (a.name || "").localeCompare(b.name || "", "es"));
   if (!targetGroups.length) {
     $rankChips.innerHTML = "";
     return;
@@ -553,14 +567,14 @@ function renderRankChips(selectedGroupId, range) {
     let sub = "";
     if (rankType === "elo") {
       main = ` ${Math.round(Number(total.elo || 0))}`;
-      sub = `Î periodo ${delta >= 0 ? "+" : ""}${delta}`;
+      sub = `Delta  periodo ${delta >= 0 ? "+" : ""}${delta}`;
     } else if (rankType === "rr") {
       const tier = String(total.tier || "IRON").toUpperCase();
       const tierEs = RR_TIER_LABEL_ES[tier] || tier;
       const div = total.div ? ` ${total.div}` : "";
       const rr = Math.max(0, Math.round(Number(total.rr || 0)));
       main = `${tierEs.toUpperCase()}${div}`;
-      sub = `RR ${rr}/100 Â· Î ${delta >= 0 ? "+" : ""}${delta}`;
+      sub = `RR ${rr}/100 - Delta  ${delta >= 0 ? "+" : ""}${delta}`;
     } else {
       const days = Math.max(0, Math.round(Number(total.days || 0)));
       main = `${days}`;
@@ -640,8 +654,7 @@ function renderGlobalStats() {
   const selected = $statsFilter?.value || "all";
   const modeRows = Object.values(modes || {}).filter((m) => m && (selected === "all" || m.groupId === selected));
   const modeIds = modeRows.map((m) => m.id);
-      ? `  -  K ${totals.k} D ${totals.d} A ${totals.a}  -  R ${totals.rf}-${totals.ra}`
-    $statsTotals.textContent = `${pct.total} partidas  -  ${totals.wins}W / ${totals.losses}L / ${totals.ties}T  -  ${pct.winPct}%W${shooterText}`;
+  const range = getRangeBounds(statsRange, new Date(), getMinDataDate(modeIds));
   const mergedDaily = mergeDailyMaps(modeIds);
   const points = buildDailySeries(mergedDaily, range);
   const totals = sumInRange(mergedDaily, range.start, range.endExclusive);
@@ -666,19 +679,12 @@ function renderGlobalStats() {
   const pct = ensurePct(totals.wins, totals.losses, totals.ties);
   if ($statsTotals) {
     const shooterText = (totals.k || totals.d || totals.a || totals.rf || totals.ra)
-      ? ` Â· K ${totals.k} D ${totals.d} A ${totals.a} Â· R ${totals.rf}-${totals.ra}`
+      ? ` - K ${totals.k} D ${totals.d} A ${totals.a} - R ${totals.rf}-${totals.ra}`
       : "";
-    $statsTotals.textContent = `${pct.total} partidas Â· ${totals.wins}W / ${totals.losses}L / ${totals.ties}T Â· ${pct.winPct}%W${shooterText}`;
+    $statsTotals.textContent = `${pct.total} partidas - ${totals.wins}W / ${totals.losses}L / ${totals.ties}T - ${pct.winPct}%W${shooterText}`;
   }
   if ($statsSub) $statsSub.textContent = selected === "all" ? "Global" : (groups[selected]?.name || "Grupo");
-  renderKpiPanel({
-    k: totals.k,
-    d: totals.d,
-    a: totals.a,
-    w: totals.wins,
-    rf: totals.rf,
-    ra: totals.ra
-  });
+  renderKpiPanel({ k: totals.k, d: totals.d, a: totals.a, w: totals.wins, rf: totals.rf, ra: totals.ra });
   renderDonut($statsDonut, totals, true, "stats");
   renderLineChart($statsLine, points, "stats");
 
@@ -709,8 +715,8 @@ function renderGlobalStats() {
         wins: v.wins,
         losses: v.losses,
         ties: v.ties,
-        label: "Mas jugado",
-    ${x.groupCategory === "shooter" && x.matches > 0 ? `<div class="stats-line-sub">K ${x.k}  -  D ${x.d}  -  A ${x.a}  -  R ${x.rf}-${x.ra}</div>` : ""}
+        winrate: gp.winPct,
+        accent: getGroupAccent(gId)
       };
     }).sort((a, b) => b.matches - a.matches);
 
@@ -735,7 +741,7 @@ function renderGlobalStats() {
         accent: detectStatsAccent(`${groups[topWin.mode.groupId]?.name || ""} ${topWin.mode.modeName || ""}`)
       } : null,
       topPlays ? {
-        label: "MÃ¡s jugado",
+        label: "Mas jugado",
         matches: topPlays.pct.total,
         wins: topPlays.stats.wins,
         losses: topPlays.stats.losses,
@@ -760,7 +766,7 @@ function renderBreakdownStatsCard(list) {
       <b>${x.mode}</b>
       <span>${formatLineRight(x.matches, x.wins, x.losses, x.ties, x.winrate)}</span>
     </div>
-    ${x.groupCategory === "shooter" && x.matches > 0 ? `<div class="stats-line-sub">K ${x.k} Â· D ${x.d} Â· A ${x.a} Â· R ${x.rf}-${x.ra}</div>` : ""}
+    ${x.groupCategory === "shooter" && x.matches > 0 ? `<div class="stats-line-sub">K ${x.k} - D ${x.d} - A ${x.a} - R ${x.rf}-${x.ra}</div>` : ""}
   `).join("") : `<div class="games-stats-empty">Sin datos</div>`;
   return renderStatsFold({
     id: "breakdown",
@@ -837,15 +843,12 @@ function renderGamesPanel() {
   $statsCard?.classList.toggle("hidden", !stats);
   $groupsList?.classList.toggle("hidden", stats);
   $empty?.classList.toggle("hidden", stats || Object.values(groups || {}).some((g) => g?.id));
-          <div class="game-group-name">${g.emoji || "🎮"} ${g.name || "Grupo"}</div>
-          <div class="game-group-meta">${losses}L / ${wins}W / ${ties}T  -  ${lossPct}% - ${winPct}%  -  tiempo ${formatHoursMinutes(totalMinutes)}</div>
-          <button class="game-session-btn" data-action="toggle-session">${hasRunning ? `[ON] ${elapsed}` : "[START] Iniciar"}</button>
-          <button class="game-menu-btn" data-action="group-menu">...</button>
-  $groupEmoji.value = "🎮";
-  $existingGroup.innerHTML = Object.values(groups).map((g) => `<option value="${g.id}">${g.emoji || "🎮"} ${g.name}</option>`).join("");
-  $groupEditEmoji.value = g.emoji || "🎮";
-      emoji: ($groupEmoji.value || "🎮").trim() || "🎮",
-  $empty.style.display = groupRows.length ? "none" : "block";
+  if (!$groupsList) return;
+  const groupRows = Object.values(groups || {})
+    .filter((g) => g?.id)
+    .sort((a, b) => Number(a.sort || 0) - Number(b.sort || 0) || (a.name || "").localeCompare(b.name || "", "es"));
+  $groupsList.innerHTML = "";
+  if ($empty) $empty.style.display = groupRows.length ? "none" : "block";
   const running = getRunningSessionState();
 
   groupRows.forEach((g) => {
@@ -863,12 +866,12 @@ function renderGamesPanel() {
     detail.innerHTML = `
       <summary>
         <div class="game-group-main">
-          <div class="game-group-name">${g.emoji || "ð®"} ${g.name || "Grupo"}</div>
-          <div class="game-group-meta">${losses}L / ${wins}W / ${ties}T Â· ${lossPct}% - ${winPct}% Â· â± ${formatHoursMinutes(totalMinutes)}</div>
+          <div class="game-group-name">${g.emoji || "🎮"} ${g.name || "Grupo"}</div>
+          <div class="game-group-meta">${losses}L / ${wins}W / ${ties}T - ${lossPct}% - ${winPct}% - ${formatHoursMinutes(totalMinutes)}</div>
         </div>
         <div class="game-group-actions">
-          <button class="game-session-btn" data-action="toggle-session">${hasRunning ? `â  ${elapsed}` : "â¶ Iniciar"}</button>
-          <button class="game-menu-btn" data-action="group-menu">â¦</button>
+          <button class="game-session-btn" data-action="toggle-session">${hasRunning ? `[ON] ${elapsed}` : "[START] Iniciar"}</button>
+          <button class="game-menu-btn" data-action="group-menu">...</button>
         </div>
       </summary>
       <div class="game-group-body">${groupedModes.map((m) => buildModeCard(m, g.emoji)).join("")}</div>
@@ -880,8 +883,12 @@ function renderGamesPanel() {
     });
     $groupsList.appendChild(detail);
   });
-  renderGamesPanel();
   renderGlobalStats();
+}
+
+function render() {
+  renderGamesPanel();
+  if (currentModeId && !modes[currentModeId]) closeModeDetail();
 }
 
 function openModeModal(mode = null) {
@@ -889,10 +896,10 @@ function openModeModal(mode = null) {
   $modeTitle.textContent = editingModeId ? "Editar modo" : "Nuevo modo";
   $groupChoice.value = "existing";
   $groupName.value = "";
-  $groupEmoji.value = "ð®";
+  $groupEmoji.value = "🎮";
   $modeName.value = mode?.modeName || "";
   $modeEmoji.value = mode?.modeEmoji || "";
-  $existingGroup.innerHTML = Object.values(groups).map((g) => `<option value="${g.id}">${g.emoji || "ð®"} ${g.name}</option>`).join("");
+  $existingGroup.innerHTML = Object.values(groups).map((g) => `<option value="${g.id}">${g.emoji || "🎮"} ${g.name}</option>`).join("");
   if (mode?.groupId) $existingGroup.value = mode.groupId;
   $groupHabit.innerHTML = habitOptionsHtml();
   $groupHabit.value = "";
@@ -912,7 +919,7 @@ function openGroupModal(groupIdValue) {
   if (!g) return;
   $groupId.value = g.id;
   $groupEditName.value = g.name || "";
-  $groupEditEmoji.value = g.emoji || "ð®";
+  $groupEditEmoji.value = g.emoji || "🎮";
   $groupEditHabit.innerHTML = habitOptionsHtml();
   $groupEditHabit.value = g.linkedHabitId || "";
   if ($groupEditCategory) $groupEditCategory.value = getGroupCategory(g.id);
@@ -953,7 +960,7 @@ async function createOrUpdateMode() {
     const groupPayload = {
       id: groupIdRef.key,
       name,
-      emoji: ($groupEmoji.value || "ð®").trim() || "ð®",
+      emoji: ($groupEmoji.value || "🎮").trim() || "🎮",
       linkedHabitId: $groupHabit.value || null,
       category: ($groupCategory?.value || "other"),
       tags: { shooter: ($groupCategory?.value || "other") === "shooter" },
@@ -1026,14 +1033,7 @@ async function addMatchWithStats(modeId, result, options = {}) {
     };
   });
 
-  const payload = {
-    matches: 1,
-    w: result === "W" ? 1 : 0,
-    l: result === "L" ? 1 : 0,
-    t: result === "T" ? 1 : 0,
-    ...shooter
-  };
-
+  const payload = { matches: 1, w: result === "W" ? 1 : 0, l: result === "L" ? 1 : 0, t: result === "T" ? 1 : 0, ...shooter };
   const jobs = [
     runTransaction(ref(db, `${AGG_DAY_PATH}/${day}/${groupId}/${modeId}`), (current) => {
       const base = current || {};
@@ -1091,10 +1091,10 @@ async function addMatchWithStats(modeId, result, options = {}) {
           next.div = rrState.div;
           next.rr = rrState.rr;
         }
-  const rankLabel = rankType === "elo" ? "Delta ELO" : (rankType === "rr" ? "Delta RR" : "Delta Dias");
-  const rankPlaceholder = rankType === "elo" ? "ELO" : (rankType === "rr" ? "RR" : "Dias");
-        <div class="game-mini-title">${group.name || "Grupo"}  -  ${mode.modeName || "Modo"}  -  ${result}</div>
-          <span class="field-label">Dia</span>
+        return next;
+      })
+    );
+  }
 
   await Promise.all(jobs);
 
@@ -1117,17 +1117,17 @@ function openResultModal(modeId, result) {
   const group = groups[mode.groupId] || {};
   const rankType = getGroupRankType(mode.groupId);
   const shooter = isGroupShooter(mode.groupId);
-  const rankLabel = rankType === "elo" ? "ÎELO" : (rankType === "rr" ? "ÎRR" : "ÎDÃ­as");
-  const rankPlaceholder = rankType === "elo" ? "ELO" : (rankType === "rr" ? "RR" : "DÃ­as");
+  const rankLabel = rankType === "elo" ? "Delta ELO" : (rankType === "rr" ? "Delta RR" : "Delta Dias");
+  const rankPlaceholder = rankType === "elo" ? "ELO" : (rankType === "rr" ? "RR" : "Dias");
 
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
     overlay.className = "game-mini-modal-overlay";
     overlay.innerHTML = `
       <div class="game-mini-modal" role="dialog" aria-modal="true" aria-label="Registrar resultado">
-        <div class="game-mini-title">${group.name || "Grupo"} Â· ${mode.modeName || "Modo"} Â· ${result}</div>
+        <div class="game-mini-title">${group.name || "Grupo"} - ${mode.modeName || "Modo"} - ${result}</div>
         <label class="field">
-          <span class="field-label">DÃ­a</span>
+          <span class="field-label">Dia</span>
           <input type="date" class="game-mini-date" value="${todayKey()}" max="9999-12-31" />
         </label>
         ${shooter ? `<div class="game-mini-grid two">
@@ -1222,7 +1222,7 @@ async function patchModeCounter(modeId, key, delta) {
 }
 
 async function resetMode(modeId) {
-  if (!confirm("Â¿Resetear este modo?")) return;
+  if (!confirm("¿Resetear este modo?")) return;
   const mode = modes[modeId];
   if (!mode) return;
   mode.wins = 0; mode.losses = 0; mode.ties = 0; mode.updatedAt = nowTs();
@@ -1239,7 +1239,7 @@ async function resetMode(modeId) {
 }
 
 async function deleteMode(modeId) {
-  if (!confirm("Â¿Eliminar modo?")) return;
+  if (!confirm("¿Eliminar modo?")) return;
   delete modes[modeId];
   delete dailyByMode[modeId];
   if (currentModeId === modeId) closeModeDetail();
@@ -1248,7 +1248,7 @@ async function deleteMode(modeId) {
 }
 
 async function handleGroupMenu(groupIdValue) {
-  const action = prompt("AcciÃ³n de grupo: editar | add | reset | delete");
+  const action = prompt("Accion de grupo: editar | add | reset | delete");
   if (!action) return;
   const cmd = action.trim().toLowerCase();
   if (cmd === "editar" || cmd === "edit") return openGroupModal(groupIdValue);
@@ -1285,12 +1285,12 @@ async function handleGroupMenu(groupIdValue) {
 
 function toggleGroupSession(groupIdValue) {
   const group = groups[groupIdValue];
-  if (!group?.linkedHabitId) return alert("Vincula un hÃ¡bito al grupo para usar sesiones.");
+  if (!group?.linkedHabitId) return alert("Vincula un habito al grupo para usar sesiones.");
   const api = window.__bookshellHabits;
   if (!api) return;
   const running = getRunningSessionState();
   if (running) {
-    if (running.targetHabitId !== group.linkedHabitId) return alert("Ya hay una sesiÃ³n activa");
+    if (running.targetHabitId !== group.linkedHabitId) return alert("Ya hay una sesion activa");
     api.stopSession(group.linkedHabitId, true);
     return;
   }
@@ -1443,15 +1443,15 @@ function renderModeDetail() {
 
   const modeTotals = modeTotalsFromDaily(mode.id);
   const shooterLine = isGroupShooter(mode.groupId) && pct.total > 0
-    ? `<div>K ${modeTotals.k} Â· D ${modeTotals.d} Â· A ${modeTotals.a} Â· R ${modeTotals.rf}-${modeTotals.ra}</div>`
+    ? `<div>K ${modeTotals.k} - D ${modeTotals.d} - A ${modeTotals.a} - R ${modeTotals.rf}-${modeTotals.ra}</div>`
     : "";
 
-  $detailTitle.textContent = `${group.name || "Grupo"} â ${mode.modeName || "Modo"}`;
+  $detailTitle.textContent = `${group.name || "Grupo"} - ${mode.modeName || "Modo"}`;
   $detailBody.innerHTML = `
     <section class="game-detail-head">
       <div class="game-detail-top">
         <div>
-          <div class="game-detail-name">${mode.modeEmoji || group.emoji || "ð®"} ${group.name || "Grupo"} â ${mode.modeName || "Modo"}</div>
+          <div class="game-detail-name">${mode.modeEmoji || group.emoji || "🎮"} ${group.name || "Grupo"} - ${mode.modeName || "Modo"}</div>
           <div class="game-detail-sub">${formatLineRight(pct.total, totals.wins, totals.losses, totals.ties, pct.winPct)}</div>
         </div>
         <div class="game-detail-actions">
@@ -1462,7 +1462,7 @@ function renderModeDetail() {
       </div>
       <div class="game-detail-summary">
         <div>W/L/T: ${formatWLT({ w: totals.wins, l: totals.losses, t: totals.ties })}</div>
-        <div>Horas jugadas (hÃ¡bito grupo): ${hoursText}</div>
+        <div>Horas jugadas (habito grupo): ${hoursText}</div>
         ${shooterLine}
       </div>
     </section>
@@ -1488,10 +1488,10 @@ function renderModeDetail() {
     <section class="game-detail-section">
       <strong>Rango</strong>
       <div class="game-ranges">
-        <button class="game-range-btn ${detailRange === "day" ? "is-active" : ""}" data-range="day">DÃ­a</button>
+        <button class="game-range-btn ${detailRange === "day" ? "is-active" : ""}" data-range="day">Dia</button>
         <button class="game-range-btn ${detailRange === "week" ? "is-active" : ""}" data-range="week">Semana</button>
         <button class="game-range-btn ${detailRange === "month" ? "is-active" : ""}" data-range="month">Mes</button>
-        <button class="game-range-btn ${detailRange === "year" ? "is-active" : ""}" data-range="year">AÃ±o</button>
+        <button class="game-range-btn ${detailRange === "year" ? "is-active" : ""}" data-range="year">Ano</button>
         <button class="game-range-btn ${detailRange === "total" ? "is-active" : ""}" data-range="total">Total</button>
       </div>
       <div class="games-stats-grid">
@@ -1510,8 +1510,8 @@ function renderModeDetail() {
     </div>
 
     <div class="game-cal-nav">
-      <button class="game-menu-btn" data-cal-nav="-1" aria-label="Mes anterior">â</button>
-      <button class="game-menu-btn" data-cal-nav="1" aria-label="Mes siguiente">â</button>
+      <button class="game-menu-btn" data-cal-nav="-1" aria-label="Mes anterior"><-</button>
+      <button class="game-menu-btn" data-cal-nav="1" aria-label="Mes siguiente">-></button>
     </div>
   </div>
 
@@ -1572,7 +1572,7 @@ function openDayRecordModal(modeId, day) {
   modal.className = "modal-backdrop";
   modal.innerHTML = `<div class="game-day-modal-overlay" aria-hidden="true"></div>
   <div class="modal habit-modal game-day-modal" role="dialog" aria-modal="true">
-    <div class="modal-header"><div class="modal-title">Registro del dÃ­a</div></div>
+    <div class="modal-header"><div class="modal-title">Registro del dia</div></div>
     <div class="modal-scroll sheet-body">
       <label class="field"><span class="field-label">Fecha</span><input type="text" value="${day}" readonly></label>
       <label class="field"><span class="field-label">Horas / minutos</span><input id="game-day-minutes" type="number" min="0" value="${state.minutes || 0}" inputmode="numeric">
@@ -1708,7 +1708,7 @@ async function exportGamesZipByMode() {
 
 async function onGamesExportClick() {
   const choice = prompt(
-    "Exportar Juegos:\n1) CSV Ãºnico\n2) ZIP (por modo)",
+    "Exportar Juegos:\n1) CSV unico\n2) ZIP (por modo)",
     "1"
   );
   if (!choice) return;
@@ -1764,7 +1764,6 @@ async function onListClick(e) {
     return openModeModal(modes[modeId]);
   }
   if (action === "reset-mode" && modeId) return resetMode(modeId);
-      emoji: ($groupEditEmoji.value || "🎮").trim() || "🎮",
   if (action === "group-menu" && groupIdValue) return handleGroupMenu(groupIdValue);
   if (action === "toggle-session" && groupIdValue) return toggleGroupSession(groupIdValue);
 }
@@ -1790,7 +1789,7 @@ function bind() {
     if (!group) return;
     const payload = {
       name: $groupEditName.value.trim(),
-      emoji: ($groupEditEmoji.value || "ð®").trim() || "ð®",
+      emoji: ($groupEditEmoji.value || "🎮").trim() || "🎮",
       linkedHabitId: $groupEditHabit.value || null,
       category: ($groupEditCategory?.value || "other"),
       tags: { shooter: ($groupEditCategory?.value || "other") === "shooter" },
@@ -1863,12 +1862,13 @@ function listenRemote() {
     if (currentModeId) renderModeDetail();
   });
   onValue(ref(db, DAILY_PATH), (snap) => {
-// ✅ Nuevo: solo actualiza el texto del boton de sesion (sin render completo)
-      // No fuerces estado si no esta corriendo
-      if (btn.textContent.trim() !== "[START] Iniciar") btn.textContent = "[START] Iniciar";
-    const next = `[ON] ${elapsed}`;
+    dailyByMode = snap.val() || {};
+    saveCache();
+    render();
+    renderGlobalStats();
+    if (currentModeId) renderModeDetail();
   });
-  sessionTick = setInterval(tickSessionButtons, 1000); // ✅ antes: render()
+  onValue(ref(db, AGG_RANK_DAY_PATH), (snap) => {
     aggRankDay = snap.val() || {};
     renderGlobalStats();
   });
@@ -1878,8 +1878,8 @@ function listenRemote() {
   });
   onValue(ref(db, HABITS_PATH), (snap) => {
     habits = snap.val() || {};
-    $groupHabit.innerHTML = habitOptionsHtml();
-    $groupEditHabit.innerHTML = habitOptionsHtml();
+    if ($groupHabit) $groupHabit.innerHTML = habitOptionsHtml();
+    if ($groupEditHabit) $groupEditHabit.innerHTML = habitOptionsHtml();
     render();
     renderGlobalStats();
     if (currentModeId) renderModeDetail();
@@ -1889,11 +1889,12 @@ function listenRemote() {
     reconcileGamesFromHabitSessions().catch(() => {});
   });
 }
-// â Nuevo: solo actualiza el texto del botÃ³n de sesiÃ³n (sin render completo)
-function tickSessionButtons() {
-  if (!document.getElementById("view-games")?.classList.contains("view-active")) return;
 
-  const running = getRunningSessionState();
+// actualiza solo el texto del boton de sesion (sin render completo)
+      if (btn.textContent.trim() !== "[START] Iniciar") btn.textContent = "[START] Iniciar";
+    const next = `[ON] ${elapsed}`;
+
+  sessionTick = setInterval(tickSessionButtons, 1000); // before: render()
   const details = document.querySelectorAll("#games-groups-list .game-group");
 
   details.forEach((detail) => {

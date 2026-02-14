@@ -1186,24 +1186,22 @@ async function patchModeCounter(modeId, key, delta) {
   const prevTotal = clamp(Number(dailyTotals[key] || 0));
   if (delta < 0 && prevTotal <= 0) return;
 
+  let day = todayKey();
   if (delta > 0) {
     const resultMap = { wins: "W", losses: "L", ties: "T" };
     const result = resultMap[key] || "T";
-    let payload = { day: todayKey() };
+    let payload = { day };
     const groupRankType = getGroupRankType(mode.groupId);
     const shouldOpenModal = isGroupShooter(mode.groupId) || groupRankType !== "none";
     if (shouldOpenModal) {
       const formPayload = await openResultModal(modeId, result);
       if (!formPayload) return;
       payload = formPayload;
-  if (!confirm("¿Resetear este modo?")) return;
-  if (!confirm("¿Eliminar modo?")) return;
-  const action = prompt("Accion de grupo: editar | add | reset | delete");
-  if (!group?.linkedHabitId) return alert("Vincula un habito al grupo para usar sesiones.");
-    if (running.targetHabitId !== group.linkedHabitId) return alert("Ya hay una sesion activa");
+    }
+    day = payload.day || day;
+  }
 
   mode.updatedAt = nowTs();
-  const day = todayKey();
   dailyByMode[modeId] = dailyByMode[modeId] || {};
   const dayPrev = dailyByMode[modeId][day] || { wins: 0, losses: 0, ties: 0, minutes: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0 };
   const dayValue = clamp(Number(dayPrev[key] || 0) + delta);
@@ -1417,14 +1415,13 @@ function monthGrid(year, month) {
 function renderModeDetail() {
   if (!currentModeId || !$detailBody) return;
   const mode = modes[currentModeId];
-    ? `<div>K ${modeTotals.k}  -  D ${modeTotals.d}  -  A ${modeTotals.a}  -  R ${modeTotals.rf}-${modeTotals.ra}</div>`
-  $detailTitle.textContent = `${group.name || "Grupo"}  -  ${mode.modeName || "Modo"}`;
-          <div class="game-detail-name">${mode.modeEmoji || group.emoji || "🎮"} ${group.name || "Grupo"}  -  ${mode.modeName || "Modo"}</div>
-        <div>Horas jugadas (habito grupo): ${hoursText}</div>
-        <button class="game-range-btn ${detailRange === "day" ? "is-active" : ""}" data-range="day">Dia</button>
-        <button class="game-range-btn ${detailRange === "year" ? "is-active" : ""}" data-range="year">Ano</button>
-      <button class="game-menu-btn" data-cal-nav="-1" aria-label="Mes anterior"><-</button>
-      <button class="game-menu-btn" data-cal-nav="1" aria-label="Mes siguiente">-></button>
+  if (!mode) return;
+
+  const group = groups[mode.groupId] || {};
+  const modeDaily = dailyByMode[mode.id] || {};
+  const totals = modeTotalsFromDaily(mode.id);
+  const pct = ensurePct(totals.wins, totals.losses, totals.ties);
+  const minutes = Object.entries(modeDaily).reduce((acc, [day, rec]) => acc + getModeDayMinutes(mode, day, rec || {}), 0);
   const hoursText = `${(minutes / 60).toFixed(1)}h`;
 
   const rows = monthGrid(detailMonth.year, detailMonth.month).map((dayDate) => {

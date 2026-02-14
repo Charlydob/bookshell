@@ -248,13 +248,20 @@ function formatDuration(sec) {
   if (m < 60) return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
   return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
 }
-function triggerHaptic() { try { navigator.vibrate?.(10); } catch (_) {} }
+function triggerHaptic() {
+  try { navigator.vibrate?.(10); } catch (_) {}
+}
 
 function habitOptionsHtml() {
-  const rows = Object.values(habits || {}).filter((h) => h && h.id && !h.archived).sort((a, b) => (a.name || "").localeCompare(b.name || "es"));
+  const rows = Object.values(habits || {})
+    .filter(h => h && h.id && !h.archived)
+    .sort((a, b) => (a.name || "").localeCompare(b.name || "", "es"));
+
   const opt = ['<option value="">Ninguno</option>'];
-  rows.forEach((h) => opt.push(`<option value="${h.id}">${h.emoji || "✅"} ${h.name || h.id}</option>`));
-"} ${h.name || h.id}</option>`));
+  rows.forEach(h => {
+    opt.push(`<option value="${h.id}">${h.emoji || "✅"} ${h.name || h.id}</option>`);
+  });
+
   return opt.join("");
 }
 

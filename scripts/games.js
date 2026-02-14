@@ -114,6 +114,56 @@ let editingModeId = null;
 function nowTs() { return Date.now(); }
 const clamp = (n, min = 0) => Math.max(min, n);
 const clampStat = (n) => Math.max(0, Math.min(999, Math.round(Number(n || 0))));
+function normalizeKdaBase(raw = {}) {
+  return {
+    k: clampStat(raw.k),
+    d: clampStat(raw.d),
+    a: clampStat(raw.a),
+    updatedAt: Number(raw.updatedAt || nowTs())
+  };
+}
+
+function getGroupKdaBase(groupId) {
+  return normalizeKdaBase(groups[groupId]?.statsBase || groupRatings[groupId]?.statsBase);
+}
+
+function sumGroupMatchesKda(groupId, range) {
+  const byId = matchesByGroup[groupId] || {};
+  return Object.values(byId).reduce((acc, match) => {
+    if (!match?.day) return acc;
+    const d = dateFromKey(match.day);
+    if (range?.start && d < range.start) return acc;
+    if (range?.endExclusive && d >= range.endExclusive) return acc;
+    acc.k += clampStat(match.k);
+    acc.d += clampStat(match.d);
+    acc.a += clampStat(match.a);
+    return acc;
+  }, { k: 0, d: 0, a: 0 });
+}
+
+function getKdaTotalsByGroups(groupIds, range, rangeName = "total") {
+  const base = { k: 0, d: 0, a: 0 };
+  const sums = { k: 0, d: 0, a: 0 };
+  (groupIds || []).forEach((groupId) => {
+    const gBase = getGroupKdaBase(groupId);
+    const gSums = sumGroupMatchesKda(groupId, rangeName === "total" ? { start: null, endExclusive: null } : range);
+    base.k += gBase.k;
+    base.d += gBase.d;
+    base.a += gBase.a;
+    sums.k += gSums.k;
+    sums.d += gSums.d;
+    sums.a += gSums.a;
+  });
+  return {
+    base,
+    sums,
+    totals: {
+      k: base.k + sums.k,
+      d: base.d + sums.d,
+      a: base.a + sums.a
+    }
+  };
+}
 function dateKeyLocal(date) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -665,6 +715,58 @@ async function editGroupRatingBase(groupId) {
   if (currentModeId && modes[currentModeId]?.groupId === groupId) renderModeDetail();
 }
 
+
+function openEditKdaBaseModal(groupId) {
+  const current = getGroupKdaBase(groupId);
+  const modal = document.createElement("div");
+  modal.className = "modal-backdrop";
+  modal.innerHTML = `<div class="modal habit-modal" role="dialog" aria-modal="true">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">Editar base K/D/A</div>
+      <button class="icon-btn" type="button" data-close>✕</button>
+    </div>
+    <div class="modal-scroll sheet-body">
+      <div class="form-grid row-3">
+        <label class="field"><span class="field-label">Kills (K)</span><input id="games-base-k" type="number" min="0" step="1" value="${current.k}" inputmode="numeric"></label>
+        <label class="field"><span class="field-label">Deaths (D)</span><input id="games-base-d" type="number" min="0" step="1" value="${current.d}" inputmode="numeric"></label>
+        <label class="field"><span class="field-label">Assists (A)</span><input id="games-base-a" type="number" min="0" step="1" value="${current.a}" inputmode="numeric"></label>
+      </div>
+    </div>
+    <div class="modal-footer sheet-footer">
+      <button class="btn ghost" type="button" data-close>Cancelar</button>
+      <button class="btn primary" type="button" data-save>Guardar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+  syncModalScrollLock();
+
+  const close = () => {
+    modal.remove();
+    syncModalScrollLock();
+  };
+
+  modal.addEventListener("click", async (e) => {
+    if (e.target === modal || e.target.closest("[data-close]")) {
+      close();
+      return;
+    }
+    if (!e.target.closest("[data-save]")) return;
+    const base = normalizeKdaBase({
+      k: Number(modal.querySelector("#games-base-k")?.value || 0),
+      d: Number(modal.querySelector("#games-base-d")?.value || 0),
+      a: Number(modal.querySelector("#games-base-a")?.value || 0),
+      updatedAt: nowTs()
+    });
+    groups[groupId] = { ...(groups[groupId] || {}), statsBase: base };
+    console.log("[games] kdaBase:set", { groupId, base });
+    await set(ref(db, `${GAMES_GROUPS_PATH}/${groupId}/statsBase`), base);
+    renderGlobalStats();
+    if (currentModeId && modes[currentModeId]?.groupId === groupId) renderModeDetail();
+    close();
+  });
+}
+
 function renderRankChips(selectedGroupId, range) {
   if (!$rankChips) return;
   const groupRows = Object.values(groups || {}).filter((g) => g?.id && normalizeRating(g.rating).type !== "none");
@@ -751,11 +853,25 @@ function renderGlobalStats() {
   renderStatsFilter();
   const selected = $statsFilter?.value || "all";
   const modeRows = Object.values(modes || {}).filter((m) => m && (selected === "all" || m.groupId === selected));
+  const selectedGroupIds = selected === "all"
+    ? Object.values(groups || {}).map((g) => g?.id).filter(Boolean)
+    : [selected].filter(Boolean);
   const modeIds = modeRows.map((m) => m.id);
   const range = getRangeBounds(statsRange, new Date(), getMinDataDate(modeIds));
   const mergedDaily = mergeDailyMaps(modeIds);
   const points = buildDailySeries(mergedDaily, range);
   const totals = sumInRange(mergedDaily, range.start, range.endExclusive);
+  const kdaTotals = getKdaTotalsByGroups(selectedGroupIds, range, statsRange);
+  totals.k = kdaTotals.totals.k;
+  totals.d = kdaTotals.totals.d;
+  totals.a = kdaTotals.totals.a;
+  console.log("[games] kda:kpis", {
+    groupId: selected,
+    range: statsRange,
+    base: kdaTotals.base,
+    sums: kdaTotals.sums,
+    totals: kdaTotals.totals
+  });
   renderRankChips(selected, range);
 
   const byGroup = modeRows.reduce((acc, m) => {
@@ -1668,6 +1784,7 @@ function renderModeDetail() {
   const shooterLine = isGroupShooter(mode.groupId) && pct.total > 0
     ? `<div>K ${modeTotals.k} - D ${modeTotals.d} - A ${modeTotals.a} - R ${modeTotals.rf}-${modeTotals.ra}</div>`
     : "";
+  const kdaBase = getGroupKdaBase(mode.groupId);
 
   $detailTitle.textContent = `${group.name || "Grupo"} - ${mode.modeName || "Modo"}`;
   $detailBody.innerHTML = `
@@ -1720,6 +1837,12 @@ function renderModeDetail() {
       </div>
       <button class="game-menu-btn" data-action="edit-group-rating" data-group-id="${mode.groupId}">Editar base</button>
     </section>` : ""}
+
+    <section class="game-detail-section">
+      <strong>K/D/A base grupo</strong>
+      <div class="game-detail-sub">K ${kdaBase.k} - D ${kdaBase.d} - A ${kdaBase.a}</div>
+      <button class="game-menu-btn" data-action="edit-group-kda-base" data-group-id="${mode.groupId}">Editar base K/D/A</button>
+    </section>
 
     <section class="game-detail-section">
       <strong>Rango</strong>
@@ -2005,6 +2128,7 @@ async function onListClick(e) {
   if (action === "reset-mode" && modeId) return resetMode(modeId);
   if (action === "group-menu" && groupIdValue) return handleGroupMenu(groupIdValue);
   if (action === "edit-group-rating" && groupIdValue) return editGroupRatingBase(groupIdValue);
+  if (action === "edit-group-kda-base" && groupIdValue) return openEditKdaBaseModal(groupIdValue);
   if (action === "toggle-session" && groupIdValue) return toggleGroupSession(groupIdValue);
 }
 
@@ -2096,7 +2220,7 @@ function listenRemote() {
   onValue(ref(db, GROUPS_PATH), (snap) => {
     groups = snap.val() || {};
     Object.keys(groups).forEach((id) => {
-      groups[id] = { ...groups[id], id, rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating) };
+      groups[id] = { ...groups[id], id, rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating), statsBase: normalizeKdaBase(groupRatings[id]?.statsBase || groups[id]?.statsBase) };
     });
     if (!localStorage.getItem(OPEN_KEY)) {
       Object.keys(groups).forEach((id) => openGroups.add(id));
@@ -2123,7 +2247,11 @@ function listenRemote() {
   onValue(ref(db, GAMES_GROUPS_PATH), (snap) => {
     groupRatings = snap.val() || {};
     Object.keys(groups).forEach((id) => {
-      groups[id] = { ...groups[id], rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating) };
+      groups[id] = {
+        ...groups[id],
+        rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating),
+        statsBase: normalizeKdaBase(groupRatings[id]?.statsBase || groups[id]?.statsBase)
+      };
     });
     render();
     renderGlobalStats();

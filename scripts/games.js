@@ -433,7 +433,14 @@ function createGamesLineOption(points) {
   return {
     animation: false,
     grid: { left: 34, right: 14, top: 18, bottom: 20 },
-    tooltip: { trigger: "axis", backgroundColor: "rgba(6,10,24,.96)", borderColor: "rgba(152,178,255,.3)", textStyle: { color: "#EAF2FF" } },
+
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: "rgba(6,10,24,.96)",
+      borderColor: "rgba(152,178,255,.3)",
+      textStyle: { color: "#EAF2FF" }
+    },
+
     xAxis: {
       type: "category",
       data: points.map(([d]) => d.slice(5)),
@@ -441,17 +448,40 @@ function createGamesLineOption(points) {
       axisLine: { lineStyle: { color: "rgba(166,188,255,.25)" } },
       axisLabel: { color: "rgba(225,235,255,.72)", fontSize: 10 }
     },
+
     yAxis: {
       type: "value",
       minInterval: 1,
       axisLine: { show: false },
-    if (!$el.querySelector('.empty-state')) $el.innerHTML = "<div class='empty-state small'>Sin datos...</div>";
       splitLine: { lineStyle: { color: "rgba(154,176,255,.12)" } }
     },
+
     series: [
-      { name: "Derrotas", type: "line", smooth: true, symbol: "none", data: points.map(([, v]) => v.losses || 0), lineStyle: { width: 2.2, color: "rgba(255,90,110,.92)" } },
-      { name: "Empates", type: "line", smooth: true, symbol: "none", data: points.map(([, v]) => v.ties || 0), lineStyle: { width: 1.4, color: "rgba(177,190,210,.88)" }, areaStyle: { color: "rgba(177,190,210,.08)" } },
-      { name: "Victorias", type: "line", smooth: true, symbol: "none", data: points.map(([, v]) => v.wins || 0), lineStyle: { width: 2.2, color: "rgba(64,235,151,.95)" } }
+      {
+        name: "Derrotas",
+        type: "line",
+        smooth: true,
+        symbol: "none",
+        data: points.map(([, v]) => v.losses || 0),
+        lineStyle: { width: 2.2, color: "rgba(255,90,110,.92)" }
+      },
+      {
+        name: "Empates",
+        type: "line",
+        smooth: true,
+        symbol: "none",
+        data: points.map(([, v]) => v.ties || 0),
+        lineStyle: { width: 1.4, color: "rgba(177,190,210,.88)" },
+        areaStyle: { color: "rgba(177,190,210,.08)" }
+      },
+      {
+        name: "Victorias",
+        type: "line",
+        smooth: true,
+        symbol: "none",
+        data: points.map(([, v]) => v.wins || 0),
+        lineStyle: { width: 2.2, color: "rgba(64,235,151,.95)" }
+      }
     ]
   };
 }

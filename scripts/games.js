@@ -289,16 +289,16 @@ function modeTotalsFromDaily(modeId) {
     acc.a += Number(row?.a || 0);
     acc.rf += Number(row?.rf || 0);
     acc.ra += Number(row?.ra || 0);
-  const emoji = (mode.modeEmoji || "").trim() || groupEmoji || "🎮";
-        <button class="game-thumb-btn-losses" data-action="loss" title="Derrota">👎</button>
-        <div class="game-side-stat-losses">${losses}  -  ${lossPct}%</div>
-        <div class="game-side-stat-wins">${winPct}%  -  ${wins}</div>
-        <button class="game-thumb-btn-wins" data-action="win" title="Victoria">👍</button>
-  Object.values(groups || {}).forEach((g) => options.push(`<option value="${g.id}">${g.emoji || "🎮"} ${g.name || "Grupo"}</option>`));
+    acc.minutes += clamp(Number(row?.minutes || 0));
+    return acc;
+  }, { wins: 0, losses: 0, ties: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0, minutes: 0 });
+}
+
+function readDayMinutes(rawValue) {
   if (typeof rawValue === "number") return Math.round(Math.max(0, rawValue) / 60);
   if (typeof rawValue === "object") {
-    const minRaw = Number(rawValue.min);
-    const secRaw = Number(rawValue.totalSec);
+    const minRaw = Number(rawValue?.min);
+    const secRaw = Number(rawValue?.totalSec);
     if (Number.isFinite(minRaw) && minRaw > 0) return Math.round(minRaw);
     if (Number.isFinite(secRaw) && secRaw > 0) return Math.round(secRaw / 60);
   }

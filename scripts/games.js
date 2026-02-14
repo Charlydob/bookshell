@@ -113,55 +113,91 @@ let editingModeId = null;
 
 function nowTs() { return Date.now(); }
 const clamp = (n, min = 0) => Math.max(min, n);
-const clampStat = (n) => Math.max(0, Math.min(999, Math.round(Number(n || 0))));
-function normalizeKdaBase(raw = {}) {
+const MAX_BASE_COUNTER = 1_000_000;
+const BASE_COUNTER_FIELDS = ["wins", "losses", "ties", "k", "d", "a", "rf", "ra", "grenades", "throws", "lossesExtra"];
+
+function clampBaseCounter(n, field = "unknown", logClamp = false) {
+  const numeric = Number(n);
+  const safe = Number.isFinite(numeric) ? Math.round(numeric) : 0;
+  const clamped = Math.max(0, Math.min(MAX_BASE_COUNTER, safe));
+  if (logClamp && clamped !== safe) console.log("[games] bases:clampHit", { field, input: n, clamped });
+  return clamped;
+}
+
+const clampStat = (n, field = "stat") => clampBaseCounter(n, field, false);
+
+function normalizeGroupBases(raw = {}, legacy = {}, logClamp = false) {
+  const source = { ...legacy, ...raw };
+  const normalized = BASE_COUNTER_FIELDS.reduce((acc, field) => {
+    acc[field] = clampBaseCounter(source[field], field, logClamp);
+    return acc;
+  }, {});
+  return { ...normalized, updatedAt: Number(source.updatedAt || nowTs()) };
+}
+
+function getGroupLegacyBases(groupId) {
+  const legacyStatsBase = groups[groupId]?.statsBase || groupRatings[groupId]?.statsBase || {};
+  const legacyGroup = groups[groupId] || {};
   return {
-    k: clampStat(raw.k),
-    d: clampStat(raw.d),
-    a: clampStat(raw.a),
-    updatedAt: Number(raw.updatedAt || nowTs())
+    wins: legacyGroup.winsBase,
+    losses: legacyGroup.lossesBase,
+    ties: legacyGroup.tiesBase,
+    k: legacyStatsBase.k,
+    d: legacyStatsBase.d,
+    a: legacyStatsBase.a,
+    rf: legacyGroup.rfBase,
+    ra: legacyGroup.raBase,
+    grenades: legacyGroup.grenadesBase,
+    throws: legacyGroup.throwsBase,
+    lossesExtra: legacyGroup.lossesExtraBase,
+    updatedAt: legacyStatsBase.updatedAt || legacyGroup.updatedAt
   };
 }
 
-function getGroupKdaBase(groupId) {
-  return normalizeKdaBase(groups[groupId]?.statsBase || groupRatings[groupId]?.statsBase);
+function getGroupBases(groupId) {
+  return normalizeGroupBases(groups[groupId]?.bases || groupRatings[groupId]?.bases || {}, getGroupLegacyBases(groupId));
 }
 
-function sumGroupMatchesKda(groupId, range) {
+function sumGroupMatchesCounters(groupId, range, modeId = null) {
   const byId = matchesByGroup[groupId] || {};
   return Object.values(byId).reduce((acc, match) => {
     if (!match?.day) return acc;
+    if (modeId && match.modeId !== modeId) return acc;
     const d = dateFromKey(match.day);
     if (range?.start && d < range.start) return acc;
     if (range?.endExclusive && d >= range.endExclusive) return acc;
-    acc.k += clampStat(match.k);
-    acc.d += clampStat(match.d);
-    acc.a += clampStat(match.a);
+    const resultKey = String(match.resultKey || "").toLowerCase();
+    if (resultKey === "wins") acc.wins += 1;
+    if (resultKey === "losses") acc.losses += 1;
+    if (resultKey === "ties") acc.ties += 1;
+    acc.k += clampStat(match.k, "k");
+    acc.d += clampStat(match.d, "d");
+    acc.a += clampStat(match.a, "a");
+    acc.rf += clampStat(match.rf, "rf");
+    acc.ra += clampStat(match.ra, "ra");
+    acc.grenades += clampStat(match.grenades, "grenades");
+    acc.throws += clampStat(match.throws, "throws");
+    acc.lossesExtra += clampStat(match.lossesExtra, "lossesExtra");
     return acc;
-  }, { k: 0, d: 0, a: 0 });
+  }, { wins: 0, losses: 0, ties: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0, grenades: 0, throws: 0, lossesExtra: 0 });
 }
 
-function getKdaTotalsByGroups(groupIds, range, rangeName = "total") {
-  const base = { k: 0, d: 0, a: 0 };
-  const sums = { k: 0, d: 0, a: 0 };
+function getCounterTotalsByGroups(groupIds, range, rangeName = "total") {
+  const base = BASE_COUNTER_FIELDS.reduce((acc, field) => ({ ...acc, [field]: 0 }), {});
+  const sums = BASE_COUNTER_FIELDS.reduce((acc, field) => ({ ...acc, [field]: 0 }), {});
   (groupIds || []).forEach((groupId) => {
-    const gBase = getGroupKdaBase(groupId);
-    const gSums = sumGroupMatchesKda(groupId, rangeName === "total" ? { start: null, endExclusive: null } : range);
-    base.k += gBase.k;
-    base.d += gBase.d;
-    base.a += gBase.a;
-    sums.k += gSums.k;
-    sums.d += gSums.d;
-    sums.a += gSums.a;
+    const gBase = getGroupBases(groupId);
+    const gSums = sumGroupMatchesCounters(groupId, rangeName === "total" ? { start: null, endExclusive: null } : range);
+    BASE_COUNTER_FIELDS.forEach((field) => {
+      base[field] += Number(gBase[field] || 0);
+      sums[field] += Number(gSums[field] || 0);
+    });
   });
+  const totals = BASE_COUNTER_FIELDS.reduce((acc, field) => ({ ...acc, [field]: base[field] + sums[field] }), {});
   return {
     base,
     sums,
-    totals: {
-      k: base.k + sums.k,
-      d: base.d + sums.d,
-      a: base.a + sums.a
-    }
+    totals
   };
 }
 function dateKeyLocal(date) {
@@ -396,13 +432,8 @@ function groupModes(groupId) {
   return Object.values(modes || {}).filter((m) => m?.groupId === groupId).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 }
 function groupTotals(groupId) {
-  return groupModes(groupId).reduce((acc, m) => {
-    const totals = modeTotalsFromDaily(m.id);
-    acc.wins += totals.wins;
-    acc.losses += totals.losses;
-    acc.ties += totals.ties;
-    return acc;
-  }, { wins: 0, losses: 0, ties: 0 });
+  const totals = getCounterTotalsByGroups([groupId], { start: null, endExclusive: null }, "total").totals;
+  return { wins: totals.wins, losses: totals.losses, ties: totals.ties };
 }
 
 function groupMinutesTotal(groupId) {
@@ -688,50 +719,55 @@ function groupRatingSnapshot(groupId, range) {
   };
 }
 
-async function editGroupRatingBase(groupId) {
-  const current = normalizeRating(groups[groupId]?.rating || groupRatings[groupId]?.rating);
-  if (current.type === "none") return;
-  let next = { ...current };
-  if (current.type === "elo") {
-    const v = prompt("ELO base", String(current.base));
-    if (v === null) return;
-    next.base = Math.round(Number(v));
-    if (!Number.isFinite(next.base)) return;
-  } else {
-    const tier = prompt("Tier (Hierro/Bronce/Plata/Oro/Platino/Diamante/Ascendant/Inmortal/Radiante)", current.tier || "Hierro");
-    if (tier === null) return;
-    next.tier = RR_TIERS.find((t) => t.toUpperCase() === String(tier).trim().toUpperCase()) || current.tier;
-    next.div = next.tier === "Radiante" ? null : Math.max(1, Math.min(3, Math.round(Number(prompt("Division (1..3)", String(current.div || 1))))));
-    if (next.tier !== "Radiante" && !Number.isFinite(next.div)) return;
-    const rr = prompt("RR base (0..100)", String(current.base));
-    if (rr === null) return;
-    next.base = Math.max(0, Math.min(100, Math.round(Number(rr))));
-    if (!Number.isFinite(next.base)) return;
-  }
-  next.updatedAt = nowTs();
-  groups[groupId] = { ...(groups[groupId] || {}), rating: next };
-  await set(ref(db, `${GAMES_GROUPS_PATH}/${groupId}/rating`), next);
-  renderGlobalStats();
-  if (currentModeId && modes[currentModeId]?.groupId === groupId) renderModeDetail();
+function getBaseInputValue(modal, selector, field) {
+  const raw = modal.querySelector(selector)?.value;
+  const value = raw === "" ? 0 : Number(raw);
+  return clampBaseCounter(Number.isFinite(value) ? value : 0, field, true);
 }
 
-
-function openEditKdaBaseModal(groupId) {
-  const current = getGroupKdaBase(groupId);
+async function openGroupBasesModal(groupId) {
+  const currentBases = getGroupBases(groupId);
+  const currentRating = normalizeRating(groups[groupId]?.rating || groupRatings[groupId]?.rating);
+  console.log("[games] bases:open", { groupId, bases: currentBases, rating: currentRating });
+  const showRating = currentRating.type !== "none";
   const modal = document.createElement("div");
   modal.className = "modal-backdrop";
   modal.innerHTML = `<div class="modal habit-modal" role="dialog" aria-modal="true">
     <div class="modal-handle"></div>
     <div class="modal-header">
-      <div class="modal-title">Editar base K/D/A</div>
+      <div class="modal-title">Bases del grupo</div>
       <button class="icon-btn" type="button" data-close>✕</button>
     </div>
     <div class="modal-scroll sheet-body">
-      <div class="form-grid row-3">
-        <label class="field"><span class="field-label">Kills (K)</span><input id="games-base-k" type="number" min="0" step="1" value="${current.k}" inputmode="numeric"></label>
-        <label class="field"><span class="field-label">Deaths (D)</span><input id="games-base-d" type="number" min="0" step="1" value="${current.d}" inputmode="numeric"></label>
-        <label class="field"><span class="field-label">Assists (A)</span><input id="games-base-a" type="number" min="0" step="1" value="${current.a}" inputmode="numeric"></label>
-      </div>
+      ${showRating ? `<section class="game-detail-section"><strong>Rating</strong>
+        <div class="form-grid row-3">
+          ${currentRating.type === "elo" ? `<label class="field"><span class="field-label">ELO base</span><input id="games-base-rating" type="number" min="0" step="1" value="${currentRating.base}" inputmode="numeric"></label>` : `<label class="field"><span class="field-label">RR base</span><input id="games-base-rating" type="number" min="0" max="100" step="1" value="${currentRating.base}" inputmode="numeric"></label>
+          <label class="field"><span class="field-label">Tier</span><select id="games-base-tier">${RR_TIERS.map((tier) => `<option value="${tier}" ${tier === currentRating.tier ? "selected" : ""}>${tier}</option>`).join("")}</select></label>
+          <label class="field"><span class="field-label">Division</span><input id="games-base-div" type="number" min="1" max="3" step="1" value="${currentRating.div || 1}" inputmode="numeric"></label>`}
+        </div></section>` : ""}
+      <section class="game-detail-section"><strong>W/L/T base</strong>
+        <div class="form-grid row-3">
+          <label class="field"><span class="field-label">Wins</span><input id="games-base-wins" type="number" min="0" max="1000000" step="1" value="${currentBases.wins}" inputmode="numeric"></label>
+          <label class="field"><span class="field-label">Losses</span><input id="games-base-losses" type="number" min="0" max="1000000" step="1" value="${currentBases.losses}" inputmode="numeric"></label>
+          <label class="field"><span class="field-label">Ties</span><input id="games-base-ties" type="number" min="0" max="1000000" step="1" value="${currentBases.ties}" inputmode="numeric"></label>
+        </div></section>
+      <section class="game-detail-section"><strong>K/D/A base</strong>
+        <div class="form-grid row-3">
+          <label class="field"><span class="field-label">Kills (K)</span><input id="games-base-k" type="number" min="0" max="1000000" step="1" value="${currentBases.k}" inputmode="numeric"></label>
+          <label class="field"><span class="field-label">Deaths (D)</span><input id="games-base-d" type="number" min="0" max="1000000" step="1" value="${currentBases.d}" inputmode="numeric"></label>
+          <label class="field"><span class="field-label">Assists (A)</span><input id="games-base-a" type="number" min="0" max="1000000" step="1" value="${currentBases.a}" inputmode="numeric"></label>
+        </div></section>
+      <section class="game-detail-section"><strong>Rondas base</strong>
+        <div class="form-grid row-3">
+          <label class="field"><span class="field-label">Rondas a favor</span><input id="games-base-rf" type="number" min="0" max="1000000" step="1" value="${currentBases.rf}" inputmode="numeric"></label>
+          <label class="field"><span class="field-label">Rondas en contra</span><input id="games-base-ra" type="number" min="0" max="1000000" step="1" value="${currentBases.ra}" inputmode="numeric"></label>
+        </div></section>
+      <section class="game-detail-section"><strong>Utilidad base</strong>
+        <div class="form-grid row-3">
+          <label class="field"><span class="field-label">Grenades</span><input id="games-base-grenades" type="number" min="0" max="1000000" step="1" value="${currentBases.grenades}" inputmode="numeric"></label>
+          <label class="field"><span class="field-label">Throws</span><input id="games-base-throws" type="number" min="0" max="1000000" step="1" value="${currentBases.throws}" inputmode="numeric"></label>
+          <label class="field"><span class="field-label">Losses extra</span><input id="games-base-losses-extra" type="number" min="0" max="1000000" step="1" value="${currentBases.lossesExtra}" inputmode="numeric"></label>
+        </div></section>
     </div>
     <div class="modal-footer sheet-footer">
       <button class="btn ghost" type="button" data-close>Cancelar</button>
@@ -752,15 +788,44 @@ function openEditKdaBaseModal(groupId) {
       return;
     }
     if (!e.target.closest("[data-save]")) return;
-    const base = normalizeKdaBase({
-      k: Number(modal.querySelector("#games-base-k")?.value || 0),
-      d: Number(modal.querySelector("#games-base-d")?.value || 0),
-      a: Number(modal.querySelector("#games-base-a")?.value || 0),
+
+    const bases = normalizeGroupBases({
+      wins: getBaseInputValue(modal, "#games-base-wins", "wins"),
+      losses: getBaseInputValue(modal, "#games-base-losses", "losses"),
+      ties: getBaseInputValue(modal, "#games-base-ties", "ties"),
+      k: getBaseInputValue(modal, "#games-base-k", "k"),
+      d: getBaseInputValue(modal, "#games-base-d", "d"),
+      a: getBaseInputValue(modal, "#games-base-a", "a"),
+      rf: getBaseInputValue(modal, "#games-base-rf", "rf"),
+      ra: getBaseInputValue(modal, "#games-base-ra", "ra"),
+      grenades: getBaseInputValue(modal, "#games-base-grenades", "grenades"),
+      throws: getBaseInputValue(modal, "#games-base-throws", "throws"),
+      lossesExtra: getBaseInputValue(modal, "#games-base-losses-extra", "lossesExtra"),
       updatedAt: nowTs()
-    });
-    groups[groupId] = { ...(groups[groupId] || {}), statsBase: base };
-    console.log("[games] kdaBase:set", { groupId, base });
-    await set(ref(db, `${GAMES_GROUPS_PATH}/${groupId}/statsBase`), base);
+    }, {}, true);
+
+    const updates = { [`${GAMES_GROUPS_PATH}/${groupId}/bases`]: bases };
+    let nextRating = currentRating;
+    if (showRating) {
+      if (currentRating.type === "elo") {
+        nextRating = normalizeRating({ ...currentRating, base: Math.max(0, Math.round(Number(modal.querySelector("#games-base-rating")?.value || 0))), updatedAt: nowTs() });
+      } else {
+        const tier = modal.querySelector("#games-base-tier")?.value || currentRating.tier;
+        const divVal = Math.round(Number(modal.querySelector("#games-base-div")?.value || 1));
+        nextRating = normalizeRating({
+          ...currentRating,
+          base: Math.max(0, Math.min(100, Math.round(Number(modal.querySelector("#games-base-rating")?.value || 0)))),
+          tier,
+          div: tier === "Radiante" ? null : Math.max(1, Math.min(3, divVal)),
+          updatedAt: nowTs()
+        });
+      }
+      updates[`${GAMES_GROUPS_PATH}/${groupId}/rating`] = nextRating;
+    }
+
+    groups[groupId] = { ...(groups[groupId] || {}), bases, rating: nextRating };
+    console.log("[games] bases:save", { groupId, bases });
+    await update(ref(db), updates);
     renderGlobalStats();
     if (currentModeId && modes[currentModeId]?.groupId === groupId) renderModeDetail();
     close();
@@ -795,7 +860,7 @@ function renderRankChips(selectedGroupId, range) {
     const accent = getGroupAccent(group.id);
     chip.style.background = `radial-gradient(circle at top, color-mix(in srgb, ${accent} 28%, transparent), rgba(255,255,255,0.02))`;
     chip.style.borderColor = `color-mix(in srgb, ${accent} 35%, rgba(255,255,255,0.08))`;
-    chip.addEventListener("click", () => { editGroupRatingBase(group.id).catch((err) => console.error("[games] ratingBase:edit:error", err)); });
+    chip.addEventListener("click", () => { openGroupBasesModal(group.id).catch((err) => console.error("[games] bases:edit:error", err)); });
   });
 }
 
@@ -861,26 +926,27 @@ function renderGlobalStats() {
   const mergedDaily = mergeDailyMaps(modeIds);
   const points = buildDailySeries(mergedDaily, range);
   const totals = sumInRange(mergedDaily, range.start, range.endExclusive);
-  const kdaTotals = getKdaTotalsByGroups(selectedGroupIds, range, statsRange);
-  totals.k = kdaTotals.totals.k;
-  totals.d = kdaTotals.totals.d;
-  totals.a = kdaTotals.totals.a;
-  console.log("[games] kda:kpis", {
+  const counterTotals = getCounterTotalsByGroups(selectedGroupIds, range, statsRange);
+  totals.wins = counterTotals.totals.wins;
+  totals.losses = counterTotals.totals.losses;
+  totals.ties = counterTotals.totals.ties;
+  totals.k = counterTotals.totals.k;
+  totals.d = counterTotals.totals.d;
+  totals.a = counterTotals.totals.a;
+  totals.rf = counterTotals.totals.rf;
+  totals.ra = counterTotals.totals.ra;
+  console.log("[games] bases:kpis", {
     groupId: selected,
     range: statsRange,
-    base: kdaTotals.base,
-    sums: kdaTotals.sums,
-    totals: kdaTotals.totals
+    base: counterTotals.base,
+    sums: counterTotals.sums,
+    totals: counterTotals.totals
   });
   renderRankChips(selected, range);
 
-  const byGroup = modeRows.reduce((acc, m) => {
-    const gId = m.groupId || "none";
-    acc[gId] = acc[gId] || { wins: 0, losses: 0, ties: 0 };
-    const modeTotals = sumInRange(dailyByMode[m.id] || {}, range.start, range.endExclusive);
-    acc[gId].wins += modeTotals.wins;
-    acc[gId].losses += modeTotals.losses;
-    acc[gId].ties += modeTotals.ties;
+  const byGroup = selectedGroupIds.reduce((acc, gId) => {
+    const totalsByGroup = getCounterTotalsByGroups([gId], range, statsRange).totals;
+    acc[gId] = { wins: totalsByGroup.wins, losses: totalsByGroup.losses, ties: totalsByGroup.ties };
     return acc;
   }, {});
 
@@ -1198,7 +1264,10 @@ async function createOrUpdateMode() {
     groupIdValue = groupPayload.id;
     groups[groupPayload.id] = groupPayload;
     await set(groupIdRef, groupPayload);
-    await set(ref(db, `${GAMES_GROUPS_PATH}/${groupPayload.id}/rating`), groupPayload.rating);
+    await update(ref(db), {
+      [`${GAMES_GROUPS_PATH}/${groupPayload.id}/rating`]: groupPayload.rating,
+      [`${GAMES_GROUPS_PATH}/${groupPayload.id}/bases`]: normalizeGroupBases({})
+    });
   }
   if (!groupIdValue) return;
   const base = { groupId: groupIdValue, modeName: modeNameValue, modeEmoji: modeEmojiValue, updatedAt: nowTs() };
@@ -1358,13 +1427,13 @@ function openResultModal(modeId, result) {
           <input type="date" class="game-mini-date" value="${todayKey()}" max="9999-12-31" />
         </label>
         ${shooter ? `<div class="game-mini-grid two">
-          <input class="game-mini-input" data-key="rf" inputmode="numeric" placeholder="R+" maxlength="3" />
-          <input class="game-mini-input" data-key="ra" inputmode="numeric" placeholder="R-" maxlength="3" />
+          <input class="game-mini-input" data-key="rf" inputmode="numeric" placeholder="R+" maxlength="7" />
+          <input class="game-mini-input" data-key="ra" inputmode="numeric" placeholder="R-" maxlength="7" />
         </div>
         <div class="game-mini-grid three">
-          <input class="game-mini-input" data-key="k" inputmode="numeric" placeholder="K" maxlength="3" />
-          <input class="game-mini-input" data-key="d" inputmode="numeric" placeholder="D" maxlength="3" />
-          <input class="game-mini-input" data-key="a" inputmode="numeric" placeholder="A" maxlength="3" />
+          <input class="game-mini-input" data-key="k" inputmode="numeric" placeholder="K" maxlength="7" />
+          <input class="game-mini-input" data-key="d" inputmode="numeric" placeholder="D" maxlength="7" />
+          <input class="game-mini-input" data-key="a" inputmode="numeric" placeholder="A" maxlength="7" />
         </div>` : ""}
         ${rankType !== "none" ? `<div class="game-mini-grid one">
           <label class="field">
@@ -1784,7 +1853,7 @@ function renderModeDetail() {
   const shooterLine = isGroupShooter(mode.groupId) && pct.total > 0
     ? `<div>K ${modeTotals.k} - D ${modeTotals.d} - A ${modeTotals.a} - R ${modeTotals.rf}-${modeTotals.ra}</div>`
     : "";
-  const kdaBase = getGroupKdaBase(mode.groupId);
+  const bases = getGroupBases(mode.groupId);
 
   $detailTitle.textContent = `${group.name || "Grupo"} - ${mode.modeName || "Modo"}`;
   $detailBody.innerHTML = `
@@ -1825,23 +1894,20 @@ function renderModeDetail() {
       </div>
     </section>
 
-    ${ratingSnap ? `<section class="game-detail-section">
-      <strong>Rating grupo</strong>
-      <div class="games-rank-chip" data-group-id="${mode.groupId}">
+    <section class="game-detail-section">
+      <strong>Bases del grupo</strong>
+      ${ratingSnap ? `<div class="games-rank-chip" data-group-id="${mode.groupId}">
         <div class="games-rank-chip-top">
           <span class="games-rank-chip-game">${group.name || "Grupo"}</span>
           <span class="games-rank-chip-type">${ratingSnap.typeLabel}</span>
         </div>
         <div class="games-rank-chip-main">${ratingSnap.main}</div>
         <div class="games-rank-chip-sub">${ratingSnap.sub}</div>
-      </div>
-      <button class="game-menu-btn" data-action="edit-group-rating" data-group-id="${mode.groupId}">Editar base</button>
-    </section>` : ""}
-
-    <section class="game-detail-section">
-      <strong>K/D/A base grupo</strong>
-      <div class="game-detail-sub">K ${kdaBase.k} - D ${kdaBase.d} - A ${kdaBase.a}</div>
-      <button class="game-menu-btn" data-action="edit-group-kda-base" data-group-id="${mode.groupId}">Editar base K/D/A</button>
+      </div>` : ""}
+      <div class="game-detail-sub">W ${bases.wins} - L ${bases.losses} - T ${bases.ties}</div>
+      <div class="game-detail-sub">K ${bases.k} - D ${bases.d} - A ${bases.a}</div>
+      <div class="game-detail-sub">R ${bases.rf}-${bases.ra}</div>
+      <button class="game-menu-btn" data-action="edit-group-bases" data-group-id="${mode.groupId}">Editar bases del grupo</button>
     </section>
 
     <section class="game-detail-section">
@@ -2127,8 +2193,9 @@ async function onListClick(e) {
   }
   if (action === "reset-mode" && modeId) return resetMode(modeId);
   if (action === "group-menu" && groupIdValue) return handleGroupMenu(groupIdValue);
-  if (action === "edit-group-rating" && groupIdValue) return editGroupRatingBase(groupIdValue);
-  if (action === "edit-group-kda-base" && groupIdValue) return openEditKdaBaseModal(groupIdValue);
+  if (action === "edit-group-bases" && groupIdValue) return openGroupBasesModal(groupIdValue);
+  if (action === "edit-group-rating" && groupIdValue) return openGroupBasesModal(groupIdValue);
+  if (action === "edit-group-kda-base" && groupIdValue) return openGroupBasesModal(groupIdValue);
   if (action === "toggle-session" && groupIdValue) return toggleGroupSession(groupIdValue);
 }
 
@@ -2220,7 +2287,7 @@ function listenRemote() {
   onValue(ref(db, GROUPS_PATH), (snap) => {
     groups = snap.val() || {};
     Object.keys(groups).forEach((id) => {
-      groups[id] = { ...groups[id], id, rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating), statsBase: normalizeKdaBase(groupRatings[id]?.statsBase || groups[id]?.statsBase) };
+      groups[id] = { ...groups[id], id, rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating), bases: normalizeGroupBases(groupRatings[id]?.bases || groups[id]?.bases || {}, getGroupLegacyBases(id)) };
     });
     if (!localStorage.getItem(OPEN_KEY)) {
       Object.keys(groups).forEach((id) => openGroups.add(id));
@@ -2250,7 +2317,7 @@ function listenRemote() {
       groups[id] = {
         ...groups[id],
         rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating),
-        statsBase: normalizeKdaBase(groupRatings[id]?.statsBase || groups[id]?.statsBase)
+        bases: normalizeGroupBases(groupRatings[id]?.bases || groups[id]?.bases || {}, getGroupLegacyBases(id))
       };
     });
     render();

@@ -140,7 +140,7 @@ function formatWLT({ w = 0, l = 0, t = 0 }) {
 
 function formatLineRight(matches, w, l, t, wr) {
   const safeWr = Number.isFinite(Number(wr)) ? Number(wr) : 0;
-  return `${Number(matches || 0)} Â· ${formatWLT({ w, l, t })} Â· ${safeWr}%`;
+  return `${Number(matches || 0)}  -  ${formatWLT({ w, l, t })}  -  ${safeWr}%`;
 }
 
 function getGroupCategory(groupId) {
@@ -176,7 +176,7 @@ function isGroupShooter(groupId) {
 function getRankTypeLabel(rankType) {
   if (rankType === "elo") return "ELO";
   if (rankType === "rr") return "RR";
-  if (rankType === "days") return "DÃAS";
+  if (rankType === "days") return "DIAS";
   return "RANGO";
 }
 
@@ -253,7 +253,8 @@ function triggerHaptic() { try { navigator.vibrate?.(10); } catch (_) {} }
 function habitOptionsHtml() {
   const rows = Object.values(habits || {}).filter((h) => h && h.id && !h.archived).sort((a, b) => (a.name || "").localeCompare(b.name || "es"));
   const opt = ['<option value="">Ninguno</option>'];
-  rows.forEach((h) => opt.push(`<option value="${h.id}">${h.emoji || "â"} ${h.name || h.id}</option>`));
+  rows.forEach((h) => opt.push(`<option value="${h.id}">${h.emoji || "✅"} ${h.name || h.id}</option>`));
+"} ${h.name || h.id}</option>`));
   return opt.join("");
 }
 
@@ -288,12 +289,12 @@ function modeTotalsFromDaily(modeId) {
     acc.a += Number(row?.a || 0);
     acc.rf += Number(row?.rf || 0);
     acc.ra += Number(row?.ra || 0);
-    return acc;
-  }, { wins: 0, losses: 0, ties: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0 });
-}
-
-function readDayMinutes(rawValue) {
-  if (rawValue == null) return 0;
+  const emoji = (mode.modeEmoji || "").trim() || groupEmoji || "🎮";
+        <button class="game-thumb-btn-losses" data-action="loss" title="Derrota">👎</button>
+        <div class="game-side-stat-losses">${losses}  -  ${lossPct}%</div>
+        <div class="game-side-stat-wins">${winPct}%  -  ${wins}</div>
+        <button class="game-thumb-btn-wins" data-action="win" title="Victoria">👍</button>
+  Object.values(groups || {}).forEach((g) => options.push(`<option value="${g.id}">${g.emoji || "🎮"} ${g.name || "Grupo"}</option>`));
   if (typeof rawValue === "number") return Math.round(Math.max(0, rawValue) / 60);
   if (typeof rawValue === "object") {
     const minRaw = Number(rawValue.min);
@@ -437,7 +438,7 @@ function createGamesLineOption(points) {
       type: "value",
       minInterval: 1,
       axisLine: { show: false },
-      axisLabel: { color: "rgba(225,235,255,.72)", fontSize: 10 },
+    if (!$el.querySelector('.empty-state')) $el.innerHTML = "<div class='empty-state small'>Sin datos...</div>";
       splitLine: { lineStyle: { color: "rgba(154,176,255,.12)" } }
     },
     series: [
@@ -490,8 +491,8 @@ function renderKpiPanel(tot = {}) {
   setText("kpi-ra", tot.ra || 0);
 }
 
-function sumRankDeltaInRange(groupId, rangeStart, rangeEndExclusive) {
-  return Object.entries(aggRankDay || {}).reduce((acc, [dayKey, dayRow]) => {
+      sub = `Delta  periodo ${delta >= 0 ? "+" : ""}${delta}`;
+      sub = `RR ${rr}/100  -  Delta  ${delta >= 0 ? "+" : ""}${delta}`;
     if (!isDateInRange(dateFromKey(dayKey), rangeStart, rangeEndExclusive)) return acc;
     return acc + Number(dayRow?.[groupId]?.delta || 0);
   }, 0);
@@ -602,8 +603,8 @@ function renderGlobalStats() {
   const selected = $statsFilter?.value || "all";
   const modeRows = Object.values(modes || {}).filter((m) => m && (selected === "all" || m.groupId === selected));
   const modeIds = modeRows.map((m) => m.id);
-  const minDate = getMinDataDate(modeIds);
-  const range = getRangeBounds(statsRange, new Date(), minDate);
+      ? `  -  K ${totals.k} D ${totals.d} A ${totals.a}  -  R ${totals.rf}-${totals.ra}`
+    $statsTotals.textContent = `${pct.total} partidas  -  ${totals.wins}W / ${totals.losses}L / ${totals.ties}T  -  ${pct.winPct}%W${shooterText}`;
   const mergedDaily = mergeDailyMaps(modeIds);
   const points = buildDailySeries(mergedDaily, range);
   const totals = sumInRange(mergedDaily, range.start, range.endExclusive);
@@ -671,8 +672,8 @@ function renderGlobalStats() {
         wins: v.wins,
         losses: v.losses,
         ties: v.ties,
-        winrate: gp.winPct,
-        accent: detectStatsAccent(groups[gId]?.name || "")
+        label: "Mas jugado",
+    ${x.groupCategory === "shooter" && x.matches > 0 ? `<div class="stats-line-sub">K ${x.k}  -  D ${x.d}  -  A ${x.a}  -  R ${x.rf}-${x.ra}</div>` : ""}
       };
     }).sort((a, b) => b.matches - a.matches);
 
@@ -799,14 +800,14 @@ function renderGamesPanel() {
   $statsCard?.classList.toggle("hidden", !stats);
   $groupsList?.classList.toggle("hidden", stats);
   $empty?.classList.toggle("hidden", stats || Object.values(groups || {}).some((g) => g?.id));
-  $tabCounters?.classList.toggle("is-active", !stats);
-  $tabStats?.classList.toggle("is-active", stats);
-}
-
-function render() {
-  if (!$groupsList) return;
-  const groupRows = Object.values(groups || {}).filter((g) => g?.id).sort((a, b) => (a.name || "").localeCompare(b.name || "es"));
-  $groupsList.innerHTML = "";
+          <div class="game-group-name">${g.emoji || "🎮"} ${g.name || "Grupo"}</div>
+          <div class="game-group-meta">${losses}L / ${wins}W / ${ties}T  -  ${lossPct}% - ${winPct}%  -  tiempo ${formatHoursMinutes(totalMinutes)}</div>
+          <button class="game-session-btn" data-action="toggle-session">${hasRunning ? `[ON] ${elapsed}` : "[START] Iniciar"}</button>
+          <button class="game-menu-btn" data-action="group-menu">...</button>
+  $groupEmoji.value = "🎮";
+  $existingGroup.innerHTML = Object.values(groups).map((g) => `<option value="${g.id}">${g.emoji || "🎮"} ${g.name}</option>`).join("");
+  $groupEditEmoji.value = g.emoji || "🎮";
+      emoji: ($groupEmoji.value || "🎮").trim() || "🎮",
   $empty.style.display = groupRows.length ? "none" : "block";
   const running = getRunningSessionState();
 
@@ -1053,10 +1054,10 @@ async function addMatchWithStats(modeId, result, options = {}) {
           next.div = rrState.div;
           next.rr = rrState.rr;
         }
-        return next;
-      })
-    );
-  }
+  const rankLabel = rankType === "elo" ? "Delta ELO" : (rankType === "rr" ? "Delta RR" : "Delta Dias");
+  const rankPlaceholder = rankType === "elo" ? "ELO" : (rankType === "rr" ? "RR" : "Dias");
+        <div class="game-mini-title">${group.name || "Grupo"}  -  ${mode.modeName || "Modo"}  -  ${result}</div>
+          <span class="field-label">Dia</span>
 
   await Promise.all(jobs);
 
@@ -1158,11 +1159,11 @@ async function patchModeCounter(modeId, key, delta) {
       const formPayload = await openResultModal(modeId, result);
       if (!formPayload) return;
       payload = formPayload;
-    }
-    await addMatchWithStats(modeId, result, payload);
-    await update(ref(db, `${MODES_PATH}/${modeId}`), { updatedAt: nowTs() });
-    return;
-  }
+  if (!confirm("¿Resetear este modo?")) return;
+  if (!confirm("¿Eliminar modo?")) return;
+  const action = prompt("Accion de grupo: editar | add | reset | delete");
+  if (!group?.linkedHabitId) return alert("Vincula un habito al grupo para usar sesiones.");
+    if (running.targetHabitId !== group.linkedHabitId) return alert("Ya hay una sesion activa");
 
   mode.updatedAt = nowTs();
   const day = todayKey();
@@ -1379,14 +1380,14 @@ function monthGrid(year, month) {
 function renderModeDetail() {
   if (!currentModeId || !$detailBody) return;
   const mode = modes[currentModeId];
-  if (!mode) return;
-  const group = groups[mode.groupId] || {};
-  const modeDaily = dailyByMode[mode.id] || {};
-  const minDate = getMinDataDate([mode.id]);
-  const range = getRangeBounds(detailRange, new Date(), minDate);
-  const totals = sumInRange(modeDaily, range.start, range.endExclusive);
-  const pct = ensurePct(totals.wins, totals.losses, totals.ties);
-  const minutes = getModePlayedMinutes(mode);
+    ? `<div>K ${modeTotals.k}  -  D ${modeTotals.d}  -  A ${modeTotals.a}  -  R ${modeTotals.rf}-${modeTotals.ra}</div>`
+  $detailTitle.textContent = `${group.name || "Grupo"}  -  ${mode.modeName || "Modo"}`;
+          <div class="game-detail-name">${mode.modeEmoji || group.emoji || "🎮"} ${group.name || "Grupo"}  -  ${mode.modeName || "Modo"}</div>
+        <div>Horas jugadas (habito grupo): ${hoursText}</div>
+        <button class="game-range-btn ${detailRange === "day" ? "is-active" : ""}" data-range="day">Dia</button>
+        <button class="game-range-btn ${detailRange === "year" ? "is-active" : ""}" data-range="year">Ano</button>
+      <button class="game-menu-btn" data-cal-nav="-1" aria-label="Mes anterior"><-</button>
+      <button class="game-menu-btn" data-cal-nav="1" aria-label="Mes siguiente">-></button>
   const hoursText = `${(minutes / 60).toFixed(1)}h`;
 
   const rows = monthGrid(detailMonth.year, detailMonth.month).map((dayDate) => {
@@ -1509,7 +1510,7 @@ async function saveDayRecord(modeId, day, rec) {
     await syncGroupLinkedHabitMinutes(group.id, group.linkedHabitId, day);
   }
 
-  if (currentModeId === modeId) {
+    <div class="modal-header"><div class="modal-title">Registro del dia</div></div>
     renderModeLineChart(modeId);
     requestAnimationFrame(() => detailLineChart?.resize());
   }
@@ -1644,7 +1645,7 @@ function exportGamesCsvSingle() {
 async function exportGamesZipByMode() {
   const files = {};
   const groupsRows = Object.values(groups || {}).map((g) => ({
-    groupId: g.id || "",
+    "Exportar Juegos:\n1) CSV unico\n2) ZIP (por modo)",
     groupName: g.name || "",
     linkedHabitId: g.linkedHabitId || "",
     createdAt: g.createdAt || ""
@@ -1726,7 +1727,7 @@ async function onListClick(e) {
     return openModeModal(modes[modeId]);
   }
   if (action === "reset-mode" && modeId) return resetMode(modeId);
-  if (action === "delete-mode" && modeId) return deleteMode(modeId);
+      emoji: ($groupEditEmoji.value || "🎮").trim() || "🎮",
   if (action === "group-menu" && groupIdValue) return handleGroupMenu(groupIdValue);
   if (action === "toggle-session" && groupIdValue) return toggleGroupSession(groupIdValue);
 }
@@ -1825,12 +1826,12 @@ function listenRemote() {
     if (currentModeId) renderModeDetail();
   });
   onValue(ref(db, DAILY_PATH), (snap) => {
-    dailyByMode = snap.val() || {};
-    saveCache();
-    renderGlobalStats();
-    if (currentModeId) renderModeDetail();
+// ✅ Nuevo: solo actualiza el texto del boton de sesion (sin render completo)
+      // No fuerces estado si no esta corriendo
+      if (btn.textContent.trim() !== "[START] Iniciar") btn.textContent = "[START] Iniciar";
+    const next = `[ON] ${elapsed}`;
   });
-  onValue(ref(db, AGG_RANK_DAY_PATH), (snap) => {
+  sessionTick = setInterval(tickSessionButtons, 1000); // ✅ antes: render()
     aggRankDay = snap.val() || {};
     renderGlobalStats();
   });

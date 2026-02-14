@@ -1,5 +1,5 @@
 import { db } from "./firebase-shared.js";
-import { ref, onValue, set, update, push, remove, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { ref, onValue, set, update, push, remove, runTransaction, get } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { getRangeBounds, dateFromKey } from "./range-helpers.js";
 import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";
 
@@ -310,9 +310,11 @@ function modeTotalsFromDaily(modeId) {
     acc.a += Number(row?.a || 0);
     acc.rf += Number(row?.rf || 0);
     acc.ra += Number(row?.ra || 0);
+    acc.eloDelta += Number(row?.eloDelta || 0);
+    acc.rrDelta += Number(row?.rrDelta || 0);
     acc.minutes += clamp(Number(row?.minutes || 0));
     return acc;
-  }, { wins: 0, losses: 0, ties: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0, minutes: 0 });
+  }, { wins: 0, losses: 0, ties: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0, eloDelta: 0, rrDelta: 0, minutes: 0 });
 }
 
 function readDayMinutes(rawValue) {
@@ -396,8 +398,10 @@ function sumInRange(dailyMap, start, endExclusive) {
     acc.a += Number(row?.a || 0);
     acc.rf += Number(row?.rf || 0);
     acc.ra += Number(row?.ra || 0);
+    acc.eloDelta += Number(row?.eloDelta || 0);
+    acc.rrDelta += Number(row?.rrDelta || 0);
     return acc;
-  }, { wins: 0, losses: 0, ties: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0 });
+  }, { wins: 0, losses: 0, ties: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0, eloDelta: 0, rrDelta: 0 });
 }
 
 function mergeDailyMaps(modeIds) {
@@ -542,60 +546,108 @@ function renderKpiPanel(tot = {}) {
   setText("kpi-ra", tot.ra || 0);
 }
 
-function sumRankDeltaInRange(groupId, rangeStart, rangeEndExclusive) {
-  return Object.entries(aggRankDay || {}).reduce((acc, [dayKey, dayRow]) => {
-    if (!isDateInRange(dateFromKey(dayKey), rangeStart, rangeEndExclusive)) return acc;
-    return acc + Number(dayRow?.[groupId]?.delta || 0);
-  }, 0);
+function getModeRankBase(mode = {}) {
+  const rankBase = mode.rankBase || {};
+  let tier = String(rankBase.tier || "IRON").toUpperCase();
+  if (!RR_TIERS.includes(tier)) tier = "IRON";
+  const rawDiv = Number(rankBase.div);
+  const div = tier === "RADIANT" ? null : (Number.isFinite(rawDiv) ? Math.max(1, Math.min(3, Math.round(rawDiv))) : 1);
+  return { tier, div };
+}
+
+function getModeRatingSnapshot(mode, rankType, range) {
+  const stats = sumInRange(dailyByMode[mode.id] || {}, range.start, range.endExclusive);
+  if (rankType === "elo") {
+    const base = Number(mode.ratingBase || 0);
+    const delta = Math.round(Number(stats.eloDelta || 0));
+    return { main: `${Math.round(base + delta)}`, sub: `Delta periodo ${delta >= 0 ? "+" : ""}${delta}` };
+  }
+  if (rankType === "rr") {
+    const baseRr = Number(mode.rrBase || 0);
+    const baseRank = getModeRankBase(mode);
+    const delta = Math.round(Number(stats.rrDelta || 0));
+    const state = applyRrDelta({ ...baseRank, rr: baseRr }, delta);
+    const tierEs = RR_TIER_LABEL_ES[state.tier] || state.tier;
+    const divTxt = state.div ? ` ${state.div}` : "";
+    return {
+      main: `${tierEs.toUpperCase()}${divTxt}`,
+      sub: `RR ${Math.max(0, Math.round(Number(state.rr || 0)))}/100 - Delta periodo ${delta >= 0 ? "+" : ""}${delta}`
+    };
+  }
+  return null;
+}
+
+async function editModeRatingBase(modeId) {
+  const mode = modes[modeId];
+  if (!mode) return;
+  const rankType = getGroupRankType(mode.groupId);
+  if (rankType === "elo") {
+    const next = prompt("ELO base", String(Math.round(Number(mode.ratingBase || 0))));
+    if (next === null) return;
+    const ratingBase = Math.round(Number(next));
+    if (!Number.isFinite(ratingBase)) return;
+    mode.ratingBase = ratingBase;
+    await update(ref(db, `${MODES_PATH}/${modeId}`), { ratingBase, updatedAt: nowTs() });
+    renderGlobalStats();
+    return;
+  }
+  if (rankType === "rr") {
+    const tierInput = prompt("Tier base (Hierro/Bronce/Plata/Oro/Platino/Diamante/Ascendant/Inmortal/Radiante)", RR_TIER_LABEL_ES[getModeRankBase(mode).tier] || "Hierro");
+    if (tierInput === null) return;
+    const map = { HIERRO: "IRON", BRONCE: "BRONZE", PLATA: "SILVER", ORO: "GOLD", PLATINO: "PLATINUM", DIAMANTE: "DIAMOND", ASCENDANT: "ASCENDANT", INMORTAL: "IMMORTAL", RADIANTE: "RADIANT" };
+    const tier = map[String(tierInput).trim().toUpperCase()] || String(tierInput || "").trim().toUpperCase();
+    if (!RR_TIERS.includes(tier)) return;
+    let div = null;
+    if (tier !== "RADIANT") {
+      const divInput = prompt("Div base (1/2/3)", String(getModeRankBase(mode).div || 1));
+      if (divInput === null) return;
+      div = Math.max(1, Math.min(3, Math.round(Number(divInput))));
+      if (!Number.isFinite(div)) return;
+    }
+    const rrInput = prompt("RR base (0..100)", String(Math.max(0, Math.round(Number(mode.rrBase || 0)))));
+    if (rrInput === null) return;
+    const rrBase = Math.max(0, Math.min(100, Math.round(Number(rrInput))));
+    if (!Number.isFinite(rrBase)) return;
+    const rankBase = { tier, div };
+    mode.rankBase = rankBase;
+    mode.rrBase = rrBase;
+    await update(ref(db, `${MODES_PATH}/${modeId}`), { rrBase, rankBase, updatedAt: nowTs() });
+    renderGlobalStats();
+  }
 }
 
 function renderRankChips(selectedGroupId, range) {
   if (!$rankChips) return;
-  const allGroups = Object.values(groups || {}).filter((g) => g?.id && getGroupRankType(g.id) !== "none");
-  const targetGroups = (selectedGroupId === "all" ? allGroups : allGroups.filter((g) => g.id === selectedGroupId))
-    .sort((a, b) => Number(a.sort || 0) - Number(b.sort || 0) || (a.name || "").localeCompare(b.name || "", "es"));
-  if (!targetGroups.length) {
+  const allModes = Object.values(modes || {}).filter((m) => m?.id && getGroupRankType(m.groupId) !== "none");
+  const targetModes = (selectedGroupId === "all" ? allModes : allModes.filter((m) => m.groupId === selectedGroupId))
+    .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
+  if (!targetModes.length) {
     $rankChips.innerHTML = "";
     return;
   }
 
-  $rankChips.innerHTML = targetGroups.map((g) => {
-    const rankType = getGroupRankType(g.id);
-    const total = aggRankTotal[g.id] || {};
-    const delta = Math.round(sumRankDeltaInRange(g.id, range.start, range.endExclusive));
-    let main = "";
-    let sub = "";
-    if (rankType === "elo") {
-      main = ` ${Math.round(Number(total.elo || 0))}`;
-      sub = `Delta  periodo ${delta >= 0 ? "+" : ""}${delta}`;
-    } else if (rankType === "rr") {
-      const tier = String(total.tier || "IRON").toUpperCase();
-      const tierEs = RR_TIER_LABEL_ES[tier] || tier;
-      const div = total.div ? ` ${total.div}` : "";
-      const rr = Math.max(0, Math.round(Number(total.rr || 0)));
-      main = `${tierEs.toUpperCase()}${div}`;
-      sub = `RR ${rr}/100 - Delta  ${delta >= 0 ? "+" : ""}${delta}`;
-    } else {
-      const days = Math.max(0, Math.round(Number(total.days || 0)));
-      main = `${days}`;
-      sub = `${delta >= 0 ? "+" : ""}${delta} en periodo`;
-    }
-    return `<div class="games-rank-chip" data-group-id="${g.id}">
+  $rankChips.innerHTML = targetModes.map((mode) => {
+    const rankType = getGroupRankType(mode.groupId);
+    const snapshot = getModeRatingSnapshot(mode, rankType, range);
+    if (!snapshot) return "";
+    const group = groups[mode.groupId] || {};
+    return `<button class="games-rank-chip" type="button" data-mode-id="${mode.id}">
       <div class="games-rank-chip-top">
-        <span class="games-rank-chip-game">${g.name || "Grupo"}</span>
+        <span class="games-rank-chip-game">${group.name || "Grupo"} · ${mode.modeName || "Modo"}</span>
         <span class="games-rank-chip-type">${getRankTypeLabel(rankType)}</span>
       </div>
-      <div class="games-rank-chip-main">${main}</div>
-      <div class="games-rank-chip-sub">${sub}</div>
-    </div>`;
+      <div class="games-rank-chip-main">${snapshot.main}</div>
+      <div class="games-rank-chip-sub">${snapshot.sub}</div>
+    </button>`;
   }).join("");
 
-  targetGroups.forEach((g) => {
-    const chip = $rankChips.querySelector(`[data-group-id="${g.id}"]`);
+  targetModes.forEach((mode) => {
+    const chip = $rankChips.querySelector(`[data-mode-id="${mode.id}"]`);
     if (!chip) return;
-    const accent = getGroupAccent(g.id);
+    const accent = getGroupAccent(mode.groupId);
     chip.style.background = `radial-gradient(circle at top, color-mix(in srgb, ${accent} 28%, transparent), rgba(255,255,255,0.02))`;
     chip.style.borderColor = `color-mix(in srgb, ${accent} 35%, rgba(255,255,255,0.08))`;
+    chip.addEventListener("click", () => { editModeRatingBase(mode.id).catch((err) => console.error("[games] ratingBase:edit:error", err)); });
   });
 }
 
@@ -838,7 +890,18 @@ function buildStatsGlowStyle(accent) {
   return `background: radial-gradient(circle at top, color-mix(in srgb, ${color} 25%, transparent), rgba(255,255,255,0.02)); border-color: color-mix(in srgb, ${color} 30%, rgba(255,255,255,0.05));`;
 }
 
+function setGamesTab(tab) {
+  gamesPanel = tab === "stats" ? "stats" : "counters";
+  console.log("[games] tab:set", { tab: gamesPanel });
+  const isStats = gamesPanel === "stats";
+  $tabCounters?.classList.toggle("is-active", !isStats);
+  $tabCounters?.setAttribute("aria-selected", String(!isStats));
+  $tabStats?.classList.toggle("is-active", isStats);
+  $tabStats?.setAttribute("aria-selected", String(isStats));
+}
+
 function renderGamesPanel() {
+  setGamesTab(gamesPanel);
   const stats = gamesPanel === "stats";
   $statsCard?.classList.toggle("hidden", !stats);
   $groupsList?.classList.toggle("hidden", stats);
@@ -1179,142 +1242,109 @@ function openResultModal(modeId, result) {
   });
 }
 
+async function rebuildDailyFromMatches(modeId, day) {
+  console.log("[games] daily:rebuild:start", { modeId, day });
+  const snap = await get(ref(db, `${MATCHES_PATH}/${modeId}`));
+  const allMatches = snap.val() || {};
+  const matches = Object.values(allMatches).filter((m) => m?.day === day);
+  console.log("[games] daily:rebuild:matches", matches.length);
+
+  const dailyObj = matches.reduce((acc, match) => {
+    const resultKey = String(match.resultKey || "ties");
+    if (resultKey === "wins") acc.wins += 1;
+    else if (resultKey === "losses") acc.losses += 1;
+    else acc.ties += 1;
+    acc.k += Number(match.k || 0);
+    acc.d += Number(match.d || 0);
+    acc.a += Number(match.a || 0);
+    acc.rf += Number(match.rf || 0);
+    acc.ra += Number(match.ra || 0);
+    acc.minutes += clamp(Number(match.minutes || 0));
+    acc.eloDelta += Number(match.eloDelta || 0);
+    acc.rrDelta += Number(match.rrDelta || 0);
+    return acc;
+  }, { wins: 0, losses: 0, ties: 0, minutes: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0, eloDelta: 0, rrDelta: 0 });
+  console.log("[games] daily:rebuild:fold", dailyObj);
+
+  dailyByMode[modeId] = dailyByMode[modeId] || {};
+  if (!matches.length) {
+    delete dailyByMode[modeId][day];
+    await remove(ref(db, `${DAILY_PATH}/${modeId}/${day}`));
+  } else {
+    dailyByMode[modeId][day] = dailyObj;
+    await set(ref(db, `${DAILY_PATH}/${modeId}/${day}`), dailyObj);
+  }
+  console.log("[games] daily:rebuild:done", { modeId, day });
+}
+
 async function patchModeCounter(modeId, key, delta) {
   console.log("[games] patchModeCounter:start", { modeId, key, delta });
   const mode = modes[modeId];
   if (!mode) return;
-  const dailyTotals = modeTotalsFromDaily(modeId);
-  const prevTotal = clamp(Number(dailyTotals[key] || 0));
-  if (delta < 0 && prevTotal <= 0) return;
 
+  const resultMap = { wins: "W", losses: "L", ties: "T" };
+  const result = resultMap[key] || "T";
+  const rankType = getGroupRankType(mode.groupId);
   let day = todayKey();
-  let payload = { day };
-  let extraPatch = {};
-  let rankStatePatch = {};
+
   if (delta > 0) {
-    const resultMap = { wins: "W", losses: "L", ties: "T" };
-    const result = resultMap[key] || "T";
-    const groupRankType = getGroupRankType(mode.groupId);
-    const shouldOpenModal = isGroupShooter(mode.groupId) || groupRankType !== "none";
+    let payload = { day };
+    const shouldOpenModal = isGroupShooter(mode.groupId) || rankType !== "none";
     if (shouldOpenModal) {
-      console.log("[games] patchModeCounter:openModal", { modeId, groupId: mode.groupId, key });
       const formPayload = await openResultModal(modeId, result);
       if (!formPayload) return;
       payload = formPayload;
-      console.log("[games] patchModeCounter:payload", payload);
     }
     day = payload.day || day;
+    console.log("[games] match:add:start", { modeId, day, resultKey: key });
+    console.log("[games] match:add:payload", payload);
 
-    const EXTRA_KEYS = ["k", "d", "a", "rf", "ra", "eloDelta", "rrDelta", "rankDelta", "minutes"];
-    extraPatch = EXTRA_KEYS.reduce((acc, field) => {
-      if (payload[field] === undefined || payload[field] === null || payload[field] === "") return acc;
-      const parsed = Number(payload[field]);
-      if (!Number.isFinite(parsed)) return acc;
-      if (field === "minutes") {
-        acc[field] = clamp(parsed);
-        return acc;
-      }
-      if (["k", "d", "a", "rf", "ra"].includes(field)) {
-        acc[field] = clampStat(parsed);
-        return acc;
-      }
-      acc[field] = parsed;
-      return acc;
-    }, {});
-
-    if (typeof payload.rankTier === "string" && payload.rankTier.trim()) rankStatePatch.rankTier = payload.rankTier.trim().toUpperCase();
-    if (payload.rankDiv !== undefined && payload.rankDiv !== null && payload.rankDiv !== "") {
-      const rankDiv = Number(payload.rankDiv);
-      if (Number.isFinite(rankDiv)) rankStatePatch.rankDiv = clampStat(rankDiv);
-    }
-    if (payload.rankRr !== undefined && payload.rankRr !== null && payload.rankRr !== "") {
-      const rankRr = Number(payload.rankRr);
-      if (Number.isFinite(rankRr)) rankStatePatch.rankRr = clampStat(rankRr);
-    }
-    console.log("[games] patchModeCounter:extraPatch", { ...extraPatch, ...rankStatePatch });
-  }
-
-  mode.updatedAt = nowTs();
-  dailyByMode[modeId] = dailyByMode[modeId] || {};
-  const dayPrev = {
-    wins: 0,
-    losses: 0,
-    ties: 0,
-    minutes: 0,
-    k: 0,
-    d: 0,
-    a: 0,
-    rf: 0,
-    ra: 0,
-    eloDelta: 0,
-    rrDelta: 0,
-    rankDelta: 0,
-    ...(dailyByMode[modeId][day] || {})
-  };
-  const dayValue = clamp(Number(dayPrev[key] || 0) + delta);
-  const nextDay = {
-    ...dayPrev,
-    wins: clamp(Number(dayPrev.wins || 0)),
-    losses: clamp(Number(dayPrev.losses || 0)),
-    ties: clamp(Number(dayPrev.ties || 0)),
-    minutes: clamp(Number(dayPrev.minutes || 0)),
-    k: clampStat(dayPrev.k),
-    d: clampStat(dayPrev.d),
-    a: clampStat(dayPrev.a),
-    rf: clampStat(dayPrev.rf),
-    ra: clampStat(dayPrev.ra),
-    [key]: dayValue
-  };
-
-  Object.entries(extraPatch).forEach(([field, fieldDelta]) => {
-    const prevField = Number(dayPrev[field] || 0);
-    const nextValue = prevField + Number(fieldDelta || 0);
-    if (field === "minutes") nextDay[field] = clamp(nextValue);
-    else if (["k", "d", "a", "rf", "ra"].includes(field)) nextDay[field] = clampStat(nextValue);
-    else nextDay[field] = Number.isFinite(nextValue) ? nextValue : prevField;
-  });
-  if (rankStatePatch.rankTier !== undefined || dayPrev.rankTier !== undefined) nextDay.rankTier = rankStatePatch.rankTier || dayPrev.rankTier;
-  if (rankStatePatch.rankDiv !== undefined || dayPrev.rankDiv !== undefined) nextDay.rankDiv = rankStatePatch.rankDiv !== undefined ? rankStatePatch.rankDiv : dayPrev.rankDiv;
-  if (rankStatePatch.rankRr !== undefined || dayPrev.rankRr !== undefined) nextDay.rankRr = rankStatePatch.rankRr !== undefined ? rankStatePatch.rankRr : dayPrev.rankRr;
-
-  console.log("[games] patchModeCounter:dayPrev->next", { day, dayPrev, nextDay });
-  dailyByMode[modeId][day] = nextDay;
-
-  render();
-  if (currentModeId === modeId) renderModeDetail();
-  triggerHaptic();
-
-  const updates = {
-    [`${MODES_PATH}/${modeId}/updatedAt`]: mode.updatedAt,
-    [`${DAILY_PATH}/${modeId}/${day}/${key}`]: dayValue
-  };
-  Object.keys(extraPatch).forEach((field) => {
-    updates[`${DAILY_PATH}/${modeId}/${day}/${field}`] = nextDay[field];
-  });
-  if (nextDay.rankTier !== undefined) updates[`${DAILY_PATH}/${modeId}/${day}/rankTier`] = nextDay.rankTier;
-  if (nextDay.rankDiv !== undefined) updates[`${DAILY_PATH}/${modeId}/${day}/rankDiv`] = nextDay.rankDiv;
-  if (nextDay.rankRr !== undefined) updates[`${DAILY_PATH}/${modeId}/${day}/rankRr`] = nextDay.rankRr;
-
-  console.log("[games] patchModeCounter:firebaseUpdates", updates);
-  await update(ref(db), updates);
-
-  if (delta > 0) {
     const matchRef = push(ref(db, `${MATCHES_PATH}/${modeId}`));
-    await set(matchRef, {
-      id: matchRef.key,
+    const rankDelta = Number(payload.rankDelta || 0);
+    const matchObj = {
+      matchId: matchRef.key,
       modeId,
       groupId: mode.groupId,
       day,
-      resultKey: key,
       createdAt: nowTs(),
-      ...extraPatch,
-      ...rankStatePatch
-    });
+      resultKey: key,
+      k: clampStat(payload.k),
+      d: clampStat(payload.d),
+      a: clampStat(payload.a),
+      rf: clampStat(payload.rf),
+      ra: clampStat(payload.ra),
+      eloDelta: rankType === "elo" ? rankDelta : Number(payload.eloDelta || 0),
+      rrDelta: rankType === "rr" ? rankDelta : Number(payload.rrDelta || 0),
+      minutes: clamp(Number(payload.minutes || 0))
+    };
+    console.log("[games] match:add:write", matchObj);
+    await set(matchRef, matchObj);
+    await rebuildDailyFromMatches(modeId, day);
   }
 
-  console.log("[games] patchModeCounter:done", { modeId, day, key });
+  if (delta < 0) {
+    console.log("[games] match:undo:start", { modeId, day, resultKey: key });
+    const snap = await get(ref(db, `${MATCHES_PATH}/${modeId}`));
+    const byId = snap.val() || {};
+    const candidates = Object.values(byId)
+      .filter((m) => m?.day === day && m?.resultKey === key)
+      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+    const target = candidates[0];
+    if (!target?.matchId) return;
+    console.log("[games] match:undo:found", { matchId: target.matchId, createdAt: target.createdAt });
+    await remove(ref(db, `${MATCHES_PATH}/${modeId}/${target.matchId}`));
+    await rebuildDailyFromMatches(modeId, day);
+  }
+
+  mode.updatedAt = nowTs();
+  await update(ref(db, `${MODES_PATH}/${modeId}`), { updatedAt: mode.updatedAt });
+  render();
+  renderGlobalStats();
+  if (currentModeId === modeId) renderModeDetail();
+  triggerHaptic();
   saveCache();
 }
+
 
 async function resetMode(modeId) {
   if (!confirm("¿Resetear este modo?")) return;
@@ -1903,8 +1933,8 @@ function bind() {
 
   $groupsList?.addEventListener("click", onListClick);
   $statsFilter?.addEventListener("change", renderGlobalStats);
-  $tabCounters?.addEventListener("click", () => { gamesPanel = "counters"; renderGamesPanel(); });
-  $tabStats?.addEventListener("click", () => { gamesPanel = "stats"; renderGamesPanel(); renderGlobalStats(); });
+  $tabCounters?.addEventListener("click", () => { setGamesTab("counters"); renderGamesPanel(); });
+  $tabStats?.addEventListener("click", () => { setGamesTab("stats"); renderGamesPanel(); renderGlobalStats(); });
   $gamesExportBtn?.addEventListener("click", onGamesExportClick);
   $statsBreakdown?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-fold-toggle]");

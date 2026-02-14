@@ -21,6 +21,8 @@ const GROUPS_PATH = "gameGroups";
 const MODES_PATH = "gameModes";
 const DAILY_PATH = "gameModeDaily";
 const MATCHES_PATH = "gameMatches";
+const GAMES_GROUPS_PATH = "games/groups";
+const GAMES_MATCHES_PATH = "games/matches";
 const AGG_DAY_PATH = "gameAggDay";
 const AGG_TOTAL_PATH = "gameAggTotal";
 const AGG_RANK_DAY_PATH = "gameAggRankDay";
@@ -38,6 +40,8 @@ let habitSessions = {};
 let dailyByMode = {};
 let aggRankDay = {};
 let aggRankTotal = {};
+let groupRatings = {};
+let matchesByGroup = {};
 const openGroups = new Set();
 let sessionTick = null;
 let currentModeId = null;
@@ -173,8 +177,10 @@ function getGroupMeta(groupId) {
 }
 
 function getGroupRankType(groupId) {
+  const ratingType = String(getGroupMeta(groupId)?.rating?.type || "").toLowerCase();
+  if (["elo", "rr"].includes(ratingType)) return ratingType;
   const rankType = String(getGroupMeta(groupId).rankType || "none").toLowerCase();
-  return ["elo", "rr", "days"].includes(rankType) ? rankType : "none";
+  return ["elo", "rr"].includes(rankType) ? rankType : "none";
 }
 
 function getGroupAccent(groupId) {
@@ -190,36 +196,50 @@ function isGroupShooter(groupId) {
 function getRankTypeLabel(rankType) {
   if (rankType === "elo") return "ELO";
   if (rankType === "rr") return "RR";
-  if (rankType === "days") return "DIAS";
   return "RANGO";
 }
 
-const RR_TIERS = ["IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND", "ASCENDANT", "IMMORTAL", "RADIANT"];
-const RR_TIER_LABEL_ES = { IRON: "Hierro", BRONZE: "Bronce", SILVER: "Plata", GOLD: "Oro", PLATINUM: "Platino", DIAMOND: "Diamante", ASCENDANT: "Ascendant", IMMORTAL: "Inmortal", RADIANT: "Radiante" };
+const RR_TIERS = ["Hierro", "Bronce", "Plata", "Oro", "Platino", "Diamante", "Ascendant", "Inmortal", "Radiante"];
+const RR_TIER_INDEX = RR_TIERS.reduce((acc, tier, index) => ({ ...acc, [tier.toUpperCase()]: index }), {});
+
+function normalizeRating(raw = {}) {
+  const type = ["elo", "rr"].includes(String(raw.type || "none").toLowerCase()) ? String(raw.type).toLowerCase() : "none";
+  if (type === "elo") {
+    return { type, base: Math.round(Number(raw.base || 0)), tier: null, div: null, updatedAt: Number(raw.updatedAt || nowTs()) };
+  }
+  if (type === "rr") {
+    const tierRaw = String(raw.tier || "Hierro").trim();
+    const tier = RR_TIERS.find((t) => t.toUpperCase() === tierRaw.toUpperCase()) || "Hierro";
+    const divRaw = Number(raw.div);
+    const div = tier === "Radiante" ? null : (Number.isFinite(divRaw) ? Math.max(1, Math.min(3, Math.round(divRaw))) : 1);
+    const base = Math.max(0, Math.min(100, Math.round(Number(raw.base || 0))));
+    return { type, base, tier, div, updatedAt: Number(raw.updatedAt || nowTs()) };
+  }
+  return { type: "none", base: 0, tier: null, div: null, updatedAt: Number(raw.updatedAt || nowTs()) };
+}
 
 function applyRrDelta(current = {}, delta = 0) {
-  let tier = String(current.tier || "IRON").toUpperCase();
-  if (!RR_TIERS.includes(tier)) tier = "IRON";
-  let div = Number.isFinite(Number(current.div)) ? Number(current.div) : 1;
-  let rr = Math.round(Number(current.rr || 0));
+  let tier = RR_TIERS.find((t) => t.toUpperCase() === String(current.tier || "Hierro").toUpperCase()) || "Hierro";
+  let div = tier === "Radiante" ? null : (Number.isFinite(Number(current.div)) ? Math.max(1, Math.min(3, Number(current.div))) : 1);
+  let rr = Math.round(Number(current.rr ?? current.base || 0));
   rr += Math.round(Number(delta || 0));
   let idx = RR_TIERS.indexOf(tier);
 
   while (rr >= 100) {
+    if (tier === "Radiante") { rr = 100; break; }
     rr -= 100;
-    if (tier === "RADIANT") { rr = Math.max(0, rr); break; }
     if (div < 3) div += 1;
     else {
       idx = Math.min(RR_TIERS.length - 1, idx + 1);
       tier = RR_TIERS[idx];
-      div = tier === "RADIANT" ? null : 1;
+      div = tier === "Radiante" ? null : 1;
     }
   }
 
   while (rr < 0) {
-    if (tier === "IRON" && div === 1) { rr = 0; break; }
+    if (tier === "Hierro" && div === 1) { rr = 0; break; }
     rr += 100;
-    if (tier === "RADIANT") {
+    if (tier === "Radiante") {
       idx = Math.max(0, idx - 1);
       tier = RR_TIERS[idx];
       div = 3;
@@ -229,13 +249,13 @@ function applyRrDelta(current = {}, delta = 0) {
     else {
       idx = Math.max(0, idx - 1);
       tier = RR_TIERS[idx];
-      div = tier === "RADIANT" ? null : 3;
+      div = tier === "Radiante" ? null : 3;
     }
   }
 
-  if (tier === "RADIANT") div = null;
+  if (tier === "Radiante") div = null;
   rr = Math.max(0, rr);
-  return { tier, div, rr };
+  return { tier, div, rr, base: rr };
 }
 
 function pctWidths(wins, losses, ties = 0) {
@@ -546,108 +566,91 @@ function renderKpiPanel(tot = {}) {
   setText("kpi-ra", tot.ra || 0);
 }
 
-function getModeRankBase(mode = {}) {
-  const rankBase = mode.rankBase || {};
-  let tier = String(rankBase.tier || "IRON").toUpperCase();
-  if (!RR_TIERS.includes(tier)) tier = "IRON";
-  const rawDiv = Number(rankBase.div);
-  const div = tier === "RADIANT" ? null : (Number.isFinite(rawDiv) ? Math.max(1, Math.min(3, Math.round(rawDiv))) : 1);
-  return { tier, div };
+function getGroupPeriodRatingDelta(groupId, range) {
+  const byId = matchesByGroup[groupId] || {};
+  return Object.values(byId).reduce((acc, match) => {
+    if (!match?.day) return acc;
+    const d = dateFromKey(match.day);
+    if (range.start && d < range.start) return acc;
+    if (range.endExclusive && d >= range.endExclusive) return acc;
+    const abs = Number(match.ratingDeltaAbs);
+    const sign = Number(match.ratingDeltaSign);
+    const delta = Number.isFinite(abs) && Number.isFinite(sign) ? Math.round(abs * sign) : 0;
+    return acc + delta;
+  }, 0);
 }
 
-function getModeRatingSnapshot(mode, rankType, range) {
-  const stats = sumInRange(dailyByMode[mode.id] || {}, range.start, range.endExclusive);
-  if (rankType === "elo") {
-    const base = Number(mode.ratingBase || 0);
-    const delta = Math.round(Number(stats.eloDelta || 0));
-    return { main: `${Math.round(base + delta)}`, sub: `Delta periodo ${delta >= 0 ? "+" : ""}${delta}` };
+function groupRatingSnapshot(groupId, range) {
+  const rating = normalizeRating(groups[groupId]?.rating || groupRatings[groupId]?.rating);
+  if (rating.type === "none") return null;
+  const delta = getGroupPeriodRatingDelta(groupId, range);
+  if (rating.type === "elo") {
+    return { typeLabel: "ELO", main: `${rating.base}`, sub: `Delta periodo ${delta >= 0 ? "+" : ""}${delta}` };
   }
-  if (rankType === "rr") {
-    const baseRr = Number(mode.rrBase || 0);
-    const baseRank = getModeRankBase(mode);
-    const delta = Math.round(Number(stats.rrDelta || 0));
-    const state = applyRrDelta({ ...baseRank, rr: baseRr }, delta);
-    const tierEs = RR_TIER_LABEL_ES[state.tier] || state.tier;
-    const divTxt = state.div ? ` ${state.div}` : "";
-    return {
-      main: `${tierEs.toUpperCase()}${divTxt}`,
-      sub: `RR ${Math.max(0, Math.round(Number(state.rr || 0)))}/100 - Delta periodo ${delta >= 0 ? "+" : ""}${delta}`
-    };
-  }
-  return null;
+  const divTxt = rating.div ? ` ${rating.div}` : "";
+  return {
+    typeLabel: "RR",
+    main: `${rating.tier.toUpperCase()}${divTxt}`,
+    sub: `RR ${rating.base}/100 - Delta periodo ${delta >= 0 ? "+" : ""}${delta}`
+  };
 }
 
-async function editModeRatingBase(modeId) {
-  const mode = modes[modeId];
-  if (!mode) return;
-  const rankType = getGroupRankType(mode.groupId);
-  if (rankType === "elo") {
-    const next = prompt("ELO base", String(Math.round(Number(mode.ratingBase || 0))));
-    if (next === null) return;
-    const ratingBase = Math.round(Number(next));
-    if (!Number.isFinite(ratingBase)) return;
-    mode.ratingBase = ratingBase;
-    await update(ref(db, `${MODES_PATH}/${modeId}`), { ratingBase, updatedAt: nowTs() });
-    renderGlobalStats();
-    return;
+async function editGroupRatingBase(groupId) {
+  const current = normalizeRating(groups[groupId]?.rating || groupRatings[groupId]?.rating);
+  if (current.type === "none") return;
+  let next = { ...current };
+  if (current.type === "elo") {
+    const v = prompt("ELO base", String(current.base));
+    if (v === null) return;
+    next.base = Math.round(Number(v));
+    if (!Number.isFinite(next.base)) return;
+  } else {
+    const tier = prompt("Tier (Hierro/Bronce/Plata/Oro/Platino/Diamante/Ascendant/Inmortal/Radiante)", current.tier || "Hierro");
+    if (tier === null) return;
+    next.tier = RR_TIERS.find((t) => t.toUpperCase() === String(tier).trim().toUpperCase()) || current.tier;
+    next.div = next.tier === "Radiante" ? null : Math.max(1, Math.min(3, Math.round(Number(prompt("Division (1..3)", String(current.div || 1))))));
+    if (next.tier !== "Radiante" && !Number.isFinite(next.div)) return;
+    const rr = prompt("RR base (0..100)", String(current.base));
+    if (rr === null) return;
+    next.base = Math.max(0, Math.min(100, Math.round(Number(rr))));
+    if (!Number.isFinite(next.base)) return;
   }
-  if (rankType === "rr") {
-    const tierInput = prompt("Tier base (Hierro/Bronce/Plata/Oro/Platino/Diamante/Ascendant/Inmortal/Radiante)", RR_TIER_LABEL_ES[getModeRankBase(mode).tier] || "Hierro");
-    if (tierInput === null) return;
-    const map = { HIERRO: "IRON", BRONCE: "BRONZE", PLATA: "SILVER", ORO: "GOLD", PLATINO: "PLATINUM", DIAMANTE: "DIAMOND", ASCENDANT: "ASCENDANT", INMORTAL: "IMMORTAL", RADIANTE: "RADIANT" };
-    const tier = map[String(tierInput).trim().toUpperCase()] || String(tierInput || "").trim().toUpperCase();
-    if (!RR_TIERS.includes(tier)) return;
-    let div = null;
-    if (tier !== "RADIANT") {
-      const divInput = prompt("Div base (1/2/3)", String(getModeRankBase(mode).div || 1));
-      if (divInput === null) return;
-      div = Math.max(1, Math.min(3, Math.round(Number(divInput))));
-      if (!Number.isFinite(div)) return;
-    }
-    const rrInput = prompt("RR base (0..100)", String(Math.max(0, Math.round(Number(mode.rrBase || 0)))));
-    if (rrInput === null) return;
-    const rrBase = Math.max(0, Math.min(100, Math.round(Number(rrInput))));
-    if (!Number.isFinite(rrBase)) return;
-    const rankBase = { tier, div };
-    mode.rankBase = rankBase;
-    mode.rrBase = rrBase;
-    await update(ref(db, `${MODES_PATH}/${modeId}`), { rrBase, rankBase, updatedAt: nowTs() });
-    renderGlobalStats();
-  }
+  next.updatedAt = nowTs();
+  groups[groupId] = { ...(groups[groupId] || {}), rating: next };
+  await set(ref(db, `${GAMES_GROUPS_PATH}/${groupId}/rating`), next);
+  renderGlobalStats();
+  if (currentModeId && modes[currentModeId]?.groupId === groupId) renderModeDetail();
 }
 
 function renderRankChips(selectedGroupId, range) {
   if (!$rankChips) return;
-  const allModes = Object.values(modes || {}).filter((m) => m?.id && getGroupRankType(m.groupId) !== "none");
-  const targetModes = (selectedGroupId === "all" ? allModes : allModes.filter((m) => m.groupId === selectedGroupId))
-    .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
-  if (!targetModes.length) {
+  const groupRows = Object.values(groups || {}).filter((g) => g?.id && normalizeRating(g.rating).type !== "none");
+  const targets = selectedGroupId === "all" ? groupRows : groupRows.filter((g) => g.id === selectedGroupId);
+  if (!targets.length) {
     $rankChips.innerHTML = "";
     return;
   }
 
-  $rankChips.innerHTML = targetModes.map((mode) => {
-    const rankType = getGroupRankType(mode.groupId);
-    const snapshot = getModeRatingSnapshot(mode, rankType, range);
+  $rankChips.innerHTML = targets.map((group) => {
+    const snapshot = groupRatingSnapshot(group.id, range);
     if (!snapshot) return "";
-    const group = groups[mode.groupId] || {};
-    return `<button class="games-rank-chip" type="button" data-mode-id="${mode.id}">
+    return `<button class="games-rank-chip" type="button" data-group-id="${group.id}">
       <div class="games-rank-chip-top">
-        <span class="games-rank-chip-game">${group.name || "Grupo"} · ${mode.modeName || "Modo"}</span>
-        <span class="games-rank-chip-type">${getRankTypeLabel(rankType)}</span>
+        <span class="games-rank-chip-game">${group.name || "Grupo"}</span>
+        <span class="games-rank-chip-type">${snapshot.typeLabel}</span>
       </div>
       <div class="games-rank-chip-main">${snapshot.main}</div>
       <div class="games-rank-chip-sub">${snapshot.sub}</div>
     </button>`;
   }).join("");
 
-  targetModes.forEach((mode) => {
-    const chip = $rankChips.querySelector(`[data-mode-id="${mode.id}"]`);
+  targets.forEach((group) => {
+    const chip = $rankChips.querySelector(`[data-group-id="${group.id}"]`);
     if (!chip) return;
-    const accent = getGroupAccent(mode.groupId);
+    const accent = getGroupAccent(group.id);
     chip.style.background = `radial-gradient(circle at top, color-mix(in srgb, ${accent} 28%, transparent), rgba(255,255,255,0.02))`;
     chip.style.borderColor = `color-mix(in srgb, ${accent} 35%, rgba(255,255,255,0.08))`;
-    chip.addEventListener("click", () => { editModeRatingBase(mode.id).catch((err) => console.error("[games] ratingBase:edit:error", err)); });
+    chip.addEventListener("click", () => { editGroupRatingBase(group.id).catch((err) => console.error("[games] ratingBase:edit:error", err)); });
   });
 }
 
@@ -1028,6 +1031,7 @@ async function createOrUpdateMode() {
       category: ($groupCategory?.value || "other"),
       tags: { shooter: ($groupCategory?.value || "other") === "shooter" },
       rankType: ($groupRankType?.value || "none"),
+      rating: normalizeRating({ type: ($groupRankType?.value || "none"), base: 0, tier: "Hierro", div: 1 }),
       accent: $groupAccent?.value || "#8b5cf6",
       createdAt: nowTs(),
       updatedAt: nowTs()
@@ -1035,6 +1039,7 @@ async function createOrUpdateMode() {
     groupIdValue = groupPayload.id;
     groups[groupPayload.id] = groupPayload;
     await set(groupIdRef, groupPayload);
+    await set(ref(db, `${GAMES_GROUPS_PATH}/${groupPayload.id}/rating`), groupPayload.rating);
   }
   if (!groupIdValue) return;
   const base = { groupId: groupIdValue, modeName: modeNameValue, modeEmoji: modeEmojiValue, updatedAt: nowTs() };
@@ -1180,8 +1185,8 @@ function openResultModal(modeId, result) {
   const group = groups[mode.groupId] || {};
   const rankType = getGroupRankType(mode.groupId);
   const shooter = isGroupShooter(mode.groupId);
-  const rankLabel = rankType === "elo" ? "Delta ELO" : (rankType === "rr" ? "Delta RR" : "Delta Dias");
-  const rankPlaceholder = rankType === "elo" ? "ELO" : (rankType === "rr" ? "RR" : "Dias");
+  const rankLabel = rankType === "elo" ? "Delta ELO" : "Delta RR";
+  const rankPlaceholder = rankType === "elo" ? "ELO" : "RR";
 
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
@@ -1207,6 +1212,10 @@ function openResultModal(modeId, result) {
             <span class="field-label">${rankLabel}</span>
             <input class="game-mini-input" data-key="rankDelta" inputmode="numeric" placeholder="${rankPlaceholder}" maxlength="5" />
           </label>
+          <div class="game-sign-toggle" data-sign-wrap>
+            <button type="button" class="btn" data-sign="1">[+] Verde</button>
+            <button type="button" class="btn" data-sign="-1">[-] Rojo</button>
+          </div>
         </div>` : ""}
         <div class="game-mini-actions">
           <button type="button" class="btn ghost" data-act="cancel">Cancelar</button>
@@ -1219,6 +1228,12 @@ function openResultModal(modeId, result) {
       resolve(ok ? payload : false);
     };
     overlay.addEventListener("click", (e) => {
+      const signBtn = e.target.closest('[data-sign]');
+      if (signBtn) {
+        overlay.dataset.ratingSign = signBtn.dataset.sign;
+        overlay.querySelectorAll('[data-sign]').forEach((n) => n.classList.toggle('primary', n === signBtn));
+        return;
+      }
       if (e.target === overlay || e.target.closest('[data-act="cancel"]')) close(false);
       if (e.target.closest('[data-act="save"]')) {
         const dateInput = overlay.querySelector('.game-mini-date');
@@ -1226,6 +1241,8 @@ function openResultModal(modeId, result) {
         overlay.querySelectorAll('.game-mini-input').forEach((node) => {
           payload[node.dataset.key] = Number(node.value || 0);
         });
+        payload.ratingDeltaSign = Number(overlay.dataset.ratingSign || 1);
+        if (!overlay.dataset.ratingSign) console.log("[games] rating:sign:default", { modeId, groupId: mode.groupId, sign: 1 });
         close(true, payload);
       }
     });
@@ -1244,9 +1261,11 @@ function openResultModal(modeId, result) {
 
 async function rebuildDailyFromMatches(modeId, day) {
   console.log("[games] daily:rebuild:start", { modeId, day });
-  const snap = await get(ref(db, `${MATCHES_PATH}/${modeId}`));
+  const mode = modes[modeId];
+  if (!mode?.groupId) return;
+  const snap = await get(ref(db, `${GAMES_MATCHES_PATH}/${mode.groupId}`));
   const allMatches = snap.val() || {};
-  const matches = Object.values(allMatches).filter((m) => m?.day === day);
+  const matches = Object.values(allMatches).filter((m) => m?.day === day && m?.modeId === modeId);
   console.log("[games] daily:rebuild:matches", matches.length);
 
   const dailyObj = matches.reduce((acc, match) => {
@@ -1260,8 +1279,11 @@ async function rebuildDailyFromMatches(modeId, day) {
     acc.rf += Number(match.rf || 0);
     acc.ra += Number(match.ra || 0);
     acc.minutes += clamp(Number(match.minutes || 0));
-    acc.eloDelta += Number(match.eloDelta || 0);
-    acc.rrDelta += Number(match.rrDelta || 0);
+    const abs = Number(match.ratingDeltaAbs);
+    const sign = Number(match.ratingDeltaSign);
+    const delta = Number.isFinite(abs) && Number.isFinite(sign) ? Math.round(abs * sign) : 0;
+    if (getGroupRankType(mode.groupId) === "elo") acc.eloDelta += delta;
+    if (getGroupRankType(mode.groupId) === "rr") acc.rrDelta += delta;
     return acc;
   }, { wins: 0, losses: 0, ties: 0, minutes: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0, eloDelta: 0, rrDelta: 0 });
   console.log("[games] daily:rebuild:fold", dailyObj);
@@ -1275,6 +1297,25 @@ async function rebuildDailyFromMatches(modeId, day) {
     await set(ref(db, `${DAILY_PATH}/${modeId}/${day}`), dailyObj);
   }
   console.log("[games] daily:rebuild:done", { modeId, day });
+}
+
+async function applyGroupRatingDelta(groupId, deltaFinal) {
+  const current = normalizeRating(groups[groupId]?.rating || groupRatings[groupId]?.rating);
+  if (current.type === "none" || !Number.isFinite(Number(deltaFinal))) return current;
+  const before = { ...current };
+  let after = { ...current };
+  if (current.type === "elo") {
+    after.base = Math.round(Number(current.base || 0) + Number(deltaFinal || 0));
+  } else if (current.type === "rr") {
+    const next = applyRrDelta({ tier: current.tier, div: current.div, rr: current.base }, deltaFinal);
+    after.base = next.rr;
+    after.tier = next.tier;
+    after.div = next.div;
+  }
+  after.updatedAt = nowTs();
+  groups[groupId] = { ...(groups[groupId] || {}), rating: after };
+  await set(ref(db, `${GAMES_GROUPS_PATH}/${groupId}/rating`), after);
+  return { before, after };
 }
 
 async function patchModeCounter(modeId, key, delta) {
@@ -1299,8 +1340,10 @@ async function patchModeCounter(modeId, key, delta) {
     console.log("[games] match:add:start", { modeId, day, resultKey: key });
     console.log("[games] match:add:payload", payload);
 
-    const matchRef = push(ref(db, `${MATCHES_PATH}/${modeId}`));
-    const rankDelta = Number(payload.rankDelta || 0);
+    const matchRef = push(ref(db, `${GAMES_MATCHES_PATH}/${mode.groupId}`));
+    const deltaAbs = Math.abs(Math.round(Number(payload.rankDelta || 0)));
+    const sign = Number(payload.ratingDeltaSign || 1) === -1 ? -1 : 1;
+    const deltaFinal = rankType === "none" ? null : (deltaAbs * sign);
     const matchObj = {
       matchId: matchRef.key,
       modeId,
@@ -1313,26 +1356,37 @@ async function patchModeCounter(modeId, key, delta) {
       a: clampStat(payload.a),
       rf: clampStat(payload.rf),
       ra: clampStat(payload.ra),
-      eloDelta: rankType === "elo" ? rankDelta : Number(payload.eloDelta || 0),
-      rrDelta: rankType === "rr" ? rankDelta : Number(payload.rrDelta || 0),
+      ratingDeltaAbs: rankType === "none" ? null : deltaAbs,
+      ratingDeltaSign: rankType === "none" ? null : sign,
       minutes: clamp(Number(payload.minutes || 0))
     };
-    console.log("[games] match:add:write", matchObj);
+    console.log("[games] match:add", matchObj);
     await set(matchRef, matchObj);
+    if (deltaFinal !== null) {
+      const ratingDiff = await applyGroupRatingDelta(mode.groupId, deltaFinal);
+      console.log("[games] rating:add", { groupId: mode.groupId, deltaAbs, sign, deltaFinal, before: ratingDiff?.before, after: ratingDiff?.after, tier: ratingDiff?.after?.tier, div: ratingDiff?.after?.div });
+    }
     await rebuildDailyFromMatches(modeId, day);
   }
 
   if (delta < 0) {
     console.log("[games] match:undo:start", { modeId, day, resultKey: key });
-    const snap = await get(ref(db, `${MATCHES_PATH}/${modeId}`));
+    const snap = await get(ref(db, `${GAMES_MATCHES_PATH}/${mode.groupId}`));
     const byId = snap.val() || {};
     const candidates = Object.values(byId)
-      .filter((m) => m?.day === day && m?.resultKey === key)
+      .filter((m) => m?.day === day && m?.resultKey === key && m?.modeId === modeId)
       .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
     const target = candidates[0];
     if (!target?.matchId) return;
-    console.log("[games] match:undo:found", { matchId: target.matchId, createdAt: target.createdAt });
-    await remove(ref(db, `${MATCHES_PATH}/${modeId}/${target.matchId}`));
+    console.log("[games] match:undo", { foundMatchId: target.matchId, match: target });
+    await remove(ref(db, `${GAMES_MATCHES_PATH}/${mode.groupId}/${target.matchId}`));
+    const abs = Number(target.ratingDeltaAbs);
+    const sign = Number(target.ratingDeltaSign);
+    if (Number.isFinite(abs) && Number.isFinite(sign)) {
+      const deltaFinal = Math.round(abs * sign);
+      const ratingDiff = await applyGroupRatingDelta(mode.groupId, -deltaFinal);
+      console.log("[games] rating:undo", { groupId: mode.groupId, deltaFinal, before: ratingDiff?.before, after: ratingDiff?.after });
+    }
     await rebuildDailyFromMatches(modeId, day);
   }
 
@@ -1566,6 +1620,8 @@ function renderModeDetail() {
   }).join("");
 
   const modeTotals = modeTotalsFromDaily(mode.id);
+  const detailRangeBounds = getRangeBounds(detailRange, new Date(), getMinDataDate([mode.id]));
+  const ratingSnap = groupRatingSnapshot(mode.groupId, detailRangeBounds);
   const shooterLine = isGroupShooter(mode.groupId) && pct.total > 0
     ? `<div>K ${modeTotals.k} - D ${modeTotals.d} - A ${modeTotals.a} - R ${modeTotals.rf}-${modeTotals.ra}</div>`
     : "";
@@ -1608,6 +1664,19 @@ function renderModeDetail() {
         </div>
       </div>
     </section>
+
+    ${ratingSnap ? `<section class="game-detail-section">
+      <strong>Rating grupo</strong>
+      <div class="games-rank-chip" data-group-id="${mode.groupId}">
+        <div class="games-rank-chip-top">
+          <span class="games-rank-chip-game">${group.name || "Grupo"}</span>
+          <span class="games-rank-chip-type">${ratingSnap.typeLabel}</span>
+        </div>
+        <div class="games-rank-chip-main">${ratingSnap.main}</div>
+        <div class="games-rank-chip-sub">${ratingSnap.sub}</div>
+      </div>
+      <button class="game-menu-btn" data-action="edit-group-rating" data-group-id="${mode.groupId}">Editar base</button>
+    </section>` : ""}
 
     <section class="game-detail-section">
       <strong>Rango</strong>
@@ -1879,7 +1948,7 @@ async function onListClick(e) {
   if (!btn) return;
   const action = btn.dataset.action;
   const modeId = btn.closest(".game-card")?.dataset.modeId || currentModeId;
-  const groupIdValue = btn.closest(".game-group")?.dataset.groupId;
+  const groupIdValue = btn.dataset.groupId || btn.closest(".game-group")?.dataset.groupId;
   if (action === "loss" && modeId) return patchModeCounter(modeId, "losses", 1);
   if (action === "win" && modeId) return patchModeCounter(modeId, "wins", 1);
   if (action === "tie" && modeId) return patchModeCounter(modeId, "ties", 1);
@@ -1892,6 +1961,7 @@ async function onListClick(e) {
   }
   if (action === "reset-mode" && modeId) return resetMode(modeId);
   if (action === "group-menu" && groupIdValue) return handleGroupMenu(groupIdValue);
+  if (action === "edit-group-rating" && groupIdValue) return editGroupRatingBase(groupIdValue);
   if (action === "toggle-session" && groupIdValue) return toggleGroupSession(groupIdValue);
 }
 
@@ -1914,19 +1984,23 @@ function bind() {
     const id = $groupId.value;
     const group = groups[id];
     if (!group) return;
+    const prevRating = normalizeRating(group.rating || groupRatings[id]?.rating);
+    const nextType = ($groupEditRankType?.value || "none");
     const payload = {
       name: $groupEditName.value.trim(),
       emoji: ($groupEditEmoji.value || "🎮").trim() || "🎮",
       linkedHabitId: $groupEditHabit.value || null,
       category: ($groupEditCategory?.value || "other"),
       tags: { shooter: ($groupEditCategory?.value || "other") === "shooter" },
-      rankType: ($groupEditRankType?.value || "none"),
+      rankType: nextType,
+      rating: prevRating.type === nextType ? prevRating : normalizeRating({ type: nextType, base: 0, tier: "Hierro", div: 1 }),
       accent: $groupEditAccent?.value || "#8b5cf6",
       updatedAt: nowTs()
     };
     groups[id] = { ...group, ...payload };
     render();
     await update(ref(db, `${GROUPS_PATH}/${id}`), payload);
+    await set(ref(db, `${GAMES_GROUPS_PATH}/${id}/rating`), payload.rating);
     closeGroupModal();
     saveCache();
   });
@@ -1978,6 +2052,9 @@ function bind() {
 function listenRemote() {
   onValue(ref(db, GROUPS_PATH), (snap) => {
     groups = snap.val() || {};
+    Object.keys(groups).forEach((id) => {
+      groups[id] = { ...groups[id], id, rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating) };
+    });
     if (!localStorage.getItem(OPEN_KEY)) {
       Object.keys(groups).forEach((id) => openGroups.add(id));
     }
@@ -1996,6 +2073,22 @@ function listenRemote() {
     dailyByMode = snap.val() || {};
     saveCache();
     render();
+    renderGlobalStats();
+    if (currentModeId) renderModeDetail();
+  });
+
+  onValue(ref(db, GAMES_GROUPS_PATH), (snap) => {
+    groupRatings = snap.val() || {};
+    Object.keys(groups).forEach((id) => {
+      groups[id] = { ...groups[id], rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating) };
+    });
+    render();
+    renderGlobalStats();
+    if (currentModeId) renderModeDetail();
+  });
+
+  onValue(ref(db, GAMES_MATCHES_PATH), (snap) => {
+    matchesByGroup = snap.val() || {};
     renderGlobalStats();
     if (currentModeId) renderModeDetail();
   });
@@ -2067,6 +2160,36 @@ function startSessionTicker() {
   if (sessionTick) clearInterval(sessionTick);
   sessionTick = setInterval(tickSessionButtons, 1000);
 }
+
+async function migrateOldRatingToGroup() {
+  const updates = {};
+  const byGroup = {};
+  Object.values(modes || {}).forEach((mode) => {
+    if (!mode?.groupId) return;
+    const rankType = getGroupRankType(mode.groupId);
+    if (rankType === "none") return;
+    const prev = byGroup[mode.groupId];
+    const candidate = { mode, updatedAt: Number(mode.updatedAt || 0) };
+    if (!prev || candidate.updatedAt > prev.updatedAt) byGroup[mode.groupId] = candidate;
+  });
+
+  Object.entries(byGroup).forEach(([groupId, { mode }]) => {
+    const current = normalizeRating(groups[groupId]?.rating || groupRatings[groupId]?.rating);
+    if (current.type !== "none") return;
+    if (getGroupRankType(groupId) === "elo") {
+      updates[`${groupId}/rating`] = normalizeRating({ type: "elo", base: Number(mode.ratingBase || 0), updatedAt: nowTs() });
+      return;
+    }
+    const tier = RR_TIERS[RR_TIER_INDEX[String(mode?.rankBase?.tier || "HIERRO").toUpperCase()] || 0] || "Hierro";
+    updates[`${groupId}/rating`] = normalizeRating({ type: "rr", base: Number(mode.rrBase || 0), tier, div: Number(mode?.rankBase?.div || 1), updatedAt: nowTs() });
+  });
+
+  if (!Object.keys(updates).length) return 0;
+  await update(ref(db, GAMES_GROUPS_PATH), updates);
+  return Object.keys(updates).length;
+}
+
+window.migrateOldRatingToGroup = migrateOldRatingToGroup;
 
 function init() {
   if (!$groupsList) return;

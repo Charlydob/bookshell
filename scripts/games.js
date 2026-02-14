@@ -44,6 +44,7 @@ let aggRankTotal = {};
 let groupRatings = {};
 let modeBases = {};
 let matchesByGroup = {};
+let matchesByModeId = new Map();
 const openGroups = new Set();
 let sessionTick = null;
 let currentModeId = null;
@@ -117,6 +118,7 @@ function nowTs() { return Date.now(); }
 const clamp = (n, min = 0) => Math.max(min, n);
 const MAX_BASE_COUNTER = 1_000_000;
 const BASE_COUNTER_FIELDS = ["wins", "losses", "ties", "k", "d", "a", "rf", "ra", "grenades", "throws", "lossesExtra"];
+const MATCH_META_FIELDS = new Set(["matchId", "modeId", "groupId", "day", "createdAt", "updatedAt", "result", "resultKey", "ratingDeltaAbs", "ratingDeltaSign", "ratingDeltaFinal"]);
 
 function clampBaseCounter(n, field = "unknown", logClamp = false) {
   const numeric = Number(n);
@@ -181,47 +183,155 @@ function getModeBases(modeId) {
   return normalizeGroupBases(remote, getModeLegacyBases(modeId));
 }
 
-function sumGroupMatchesCounters(groupId, range, modeId = null) {
-  const byId = matchesByGroup[groupId] || {};
-  return Object.values(byId).reduce((acc, match) => {
-    if (!match?.day) return acc;
-    if (modeId && match.modeId !== modeId) return acc;
-    const d = dateFromKey(match.day);
-    if (range?.start && d < range.start) return acc;
-    if (range?.endExclusive && d >= range.endExclusive) return acc;
-    const resultKey = String(match.resultKey || "").toLowerCase();
-    if (resultKey === "wins") acc.wins += 1;
-    if (resultKey === "losses") acc.losses += 1;
-    if (resultKey === "ties") acc.ties += 1;
-    acc.k += clampStat(match.k, "k");
-    acc.d += clampStat(match.d, "d");
-    acc.a += clampStat(match.a, "a");
-    acc.rf += clampStat(match.rf, "rf");
-    acc.ra += clampStat(match.ra, "ra");
-    acc.grenades += clampStat(match.grenades, "grenades");
-    acc.throws += clampStat(match.throws, "throws");
-    acc.lossesExtra += clampStat(match.lossesExtra, "lossesExtra");
-    return acc;
-  }, { wins: 0, losses: 0, ties: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0, grenades: 0, throws: 0, lossesExtra: 0 });
+function tsToDay(ts) {
+  const d = new Date(Number(ts));
+  if (Number.isNaN(d.getTime())) return null;
+  return dateKeyLocal(d);
 }
 
-function getCounterTotalsByGroups(groupIds, range, rangeName = "total") {
-  const base = BASE_COUNTER_FIELDS.reduce((acc, field) => ({ ...acc, [field]: 0 }), {});
-  const sums = BASE_COUNTER_FIELDS.reduce((acc, field) => ({ ...acc, [field]: 0 }), {});
-  (groupIds || []).forEach((groupId) => {
-    const groupModeIds = getGroupModeIds(groupId);
-    groupModeIds.forEach((modeId) => {
-      const mBase = getModeBases(modeId);
-      BASE_COUNTER_FIELDS.forEach((field) => {
-        base[field] += Number(mBase[field] || 0);
-      });
-    });
-    const gSums = sumGroupMatchesCounters(groupId, rangeName === "total" ? { start: null, endExclusive: null } : range);
-    BASE_COUNTER_FIELDS.forEach((field) => {
-      sums[field] += Number(gSums[field] || 0);
+function normalizeMatchDay(rawDay) {
+  if (typeof rawDay === "string" && /^\d{4}-\d{2}-\d{2}$/.test(rawDay)) return rawDay;
+  if (typeof rawDay === "number" && Number.isFinite(rawDay)) return tsToDay(rawDay);
+  if (typeof rawDay === "string") {
+    const byTs = Number(rawDay);
+    if (Number.isFinite(byTs) && rawDay.trim()) {
+      const normalizedTs = tsToDay(byTs);
+      if (normalizedTs) return normalizedTs;
+    }
+    const parsed = new Date(rawDay);
+    if (!Number.isNaN(parsed.getTime())) return dateKeyLocal(parsed);
+  }
+  return null;
+}
+
+function normalizeMatchRecord(match, matchId = null, groupId = null) {
+  if (!match || typeof match !== "object") return null;
+  const normalizedDay = normalizeMatchDay(match.day);
+  if (!normalizedDay) {
+    console.warn("[games] badDay", { matchId: match?.matchId || matchId || null, originalDay: match.day, modeId: match.modeId, groupId: match.groupId || groupId || null });
+    return null;
+  }
+  const resultKey = String(match.resultKey || "").toLowerCase();
+  return {
+    ...match,
+    matchId: match.matchId || matchId || null,
+    groupId: match.groupId || groupId || null,
+    day: normalizedDay,
+    wins: Number(match.wins ?? (resultKey === "wins" ? 1 : 0)),
+    losses: Number(match.losses ?? (resultKey === "losses" ? 1 : 0)),
+    ties: Number(match.ties ?? (resultKey === "ties" ? 1 : 0))
+  };
+}
+
+function rebuildMatchesByModeIndex() {
+  matchesByModeId = new Map();
+  Object.entries(matchesByGroup || {}).forEach(([groupId, byId]) => {
+    Object.entries(byId || {}).forEach(([matchId, rawMatch]) => {
+      const match = normalizeMatchRecord(rawMatch, matchId, groupId);
+      if (!match?.modeId) return;
+      if (!matchesByModeId.has(match.modeId)) matchesByModeId.set(match.modeId, []);
+      matchesByModeId.get(match.modeId).push(match);
     });
   });
-  const totals = BASE_COUNTER_FIELDS.reduce((acc, field) => ({ ...acc, [field]: base[field] + sums[field] }), {});
+}
+
+function getMatchesForMode(modeId) {
+  return matchesByModeId.get(modeId) || [];
+}
+
+function getDayRange(rangeKey, now = new Date()) {
+  const today = dateKeyLocal(now);
+  if (rangeKey === "total") return { startDay: null, endDay: today };
+  const lower = String(rangeKey || "").toLowerCase();
+  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (lower === "day") {
+    return { startDay: today, endDay: today };
+  }
+  if (lower === "week") {
+    const day = (from.getDay() + 6) % 7;
+    from.setDate(from.getDate() - day);
+    return { startDay: dateKeyLocal(from), endDay: today };
+  }
+  if (lower === "month") {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { startDay: dateKeyLocal(start), endDay: today };
+  }
+  if (lower === "year") {
+    const start = new Date(now.getFullYear(), 0, 1);
+    return { startDay: dateKeyLocal(start), endDay: today };
+  }
+  return { startDay: null, endDay: today };
+}
+
+function getAggregateFieldsForMode(modeId) {
+  const fields = new Set(["wins", "losses", "ties", ...BASE_COUNTER_FIELDS, "minutes"]);
+  const base = getModeBases(modeId);
+  Object.keys(base || {}).forEach((field) => {
+    if (field !== "updatedAt") fields.add(field);
+  });
+  getMatchesForMode(modeId).forEach((match) => {
+    Object.entries(match || {}).forEach(([field, value]) => {
+      if (MATCH_META_FIELDS.has(field)) return;
+      if (typeof value !== "number" || !Number.isFinite(value)) return;
+      fields.add(field);
+    });
+  });
+  return Array.from(fields);
+}
+
+function computeModeAgg(modeId, rangeKey = "total", now = new Date()) {
+  const base = getModeBases(modeId);
+  const matchesAll = getMatchesForMode(modeId);
+  const { startDay, endDay } = getDayRange(rangeKey, now);
+  const matches = rangeKey === "total"
+    ? matchesAll
+    : matchesAll.filter((m) => m?.day && m.day >= startDay && m.day <= endDay);
+  const fields = getAggregateFieldsForMode(modeId);
+  const out = { gamesCount: matches.length };
+  fields.forEach((field) => {
+    const sum = matches.reduce((acc, m) => acc + Number(m?.[field] || 0), 0);
+    out[field] = Number(base?.[field] || 0) + sum;
+  });
+  const mode = modes[modeId];
+  const groupRating = normalizeRating(groups[mode?.groupId]?.rating || groupRatings[mode?.groupId]?.rating);
+  out.groupRatingValue = Number(groupRating.base || 0) + matches.reduce((acc, m) => acc + Number(m?.ratingDeltaFinal || ((Number(m?.ratingDeltaAbs) || 0) * (Number(m?.ratingDeltaSign) || 0)) || 0), 0);
+
+  console.log("[games] agg", {
+    modeId,
+    rangeKey,
+    base,
+    matchesAll: matchesAll.length,
+    matchesInRange: matches.length,
+    gamesCount: out.gamesCount,
+    sampleDays: matches.slice(0, 3).map((m) => m.day)
+  });
+  if (!Number.isFinite(out.gamesCount) || out.gamesCount < 0) {
+    console.error("[games] agg:invalidGamesCount", { modeId, rangeKey, gamesCount: out.gamesCount });
+  }
+  if (rangeKey === "year" && matchesAll.length > 0 && matches.length === 0) {
+    const uniqueDays = Array.from(new Set(matchesAll.map((m) => m.day))).slice(0, 10);
+    console.warn("[games] agg:yearZeroMatches", { modeId, uniqueDays });
+  }
+  return out;
+}
+
+function getCounterTotalsByGroups(groupIds, rangeName = "total", now = new Date()) {
+  const modeRows = Object.values(modes || {}).filter((m) => m && (groupIds || []).includes(m.groupId));
+  const base = {};
+  const sums = {};
+  const totals = {};
+  modeRows.forEach((mode) => {
+    const agg = computeModeAgg(mode.id, rangeName, now);
+    const modeBase = getModeBases(mode.id);
+    const fields = new Set([...Object.keys(agg), ...Object.keys(modeBase), ...BASE_COUNTER_FIELDS]);
+    fields.forEach((field) => {
+      if (field === "gamesCount" || field === "groupRatingValue" || field === "updatedAt") return;
+      base[field] = Number(base[field] || 0) + Number(modeBase[field] || 0);
+      totals[field] = Number(totals[field] || 0) + Number(agg[field] || 0);
+      sums[field] = Number(totals[field] || 0) - Number(base[field] || 0);
+    });
+    totals.gamesCount = Number(totals.gamesCount || 0) + Number(agg.gamesCount || 0);
+  });
   return { base, sums, totals };
 }
 function dateKeyLocal(date) {
@@ -456,7 +566,7 @@ function groupModes(groupId) {
   return Object.values(modes || {}).filter((m) => m?.groupId === groupId).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 }
 function groupTotals(groupId) {
-  const totals = getCounterTotalsByGroups([groupId], { start: null, endExclusive: null }, "total").totals;
+  const totals = getCounterTotalsByGroups([groupId], "total").totals;
   return { wins: totals.wins, losses: totals.losses, ties: totals.ties };
 }
 
@@ -716,8 +826,9 @@ function renderKpiPanel(tot = {}) {
 
 function getGroupMatchesSorted(groupId) {
   const byId = matchesByGroup[groupId] || {};
-  return Object.values(byId)
-    .filter((m) => m?.day)
+  return Object.entries(byId)
+    .map(([matchId, m]) => normalizeMatchRecord(m, matchId, groupId))
+    .filter(Boolean)
     .sort((a, b) => {
       const dayCmp = String(a.day || "").localeCompare(String(b.day || ""));
       if (dayCmp) return dayCmp;
@@ -997,11 +1108,14 @@ function renderGlobalStats() {
     ? Object.values(groups || {}).map((g) => g?.id).filter(Boolean)
     : [selected].filter(Boolean);
   const modeIds = modeRows.map((m) => m.id);
-  const range = getRangeBounds(statsRange, new Date(), getMinDataDate(modeIds));
+  const now = new Date();
+  const range = getRangeBounds(statsRange, now, getMinDataDate(modeIds));
+  const dayRange = getDayRange(statsRange, now);
+  console.log("[games] range", { rangeKey: statsRange, startDay: dayRange.startDay, endDay: dayRange.endDay });
   const mergedDaily = mergeDailyMaps(modeIds);
   const points = buildDailySeries(mergedDaily, range);
   const totals = sumInRange(mergedDaily, range.start, range.endExclusive);
-  const counterTotals = getCounterTotalsByGroups(selectedGroupIds, range, statsRange);
+  const counterTotals = getCounterTotalsByGroups(selectedGroupIds, statsRange, now);
   totals.wins = counterTotals.totals.wins;
   totals.losses = counterTotals.totals.losses;
   totals.ties = counterTotals.totals.ties;
@@ -1020,13 +1134,13 @@ function renderGlobalStats() {
   renderRankChips(selected, range);
 
   const byGroup = selectedGroupIds.reduce((acc, gId) => {
-    const totalsByGroup = getCounterTotalsByGroups([gId], range, statsRange).totals;
+    const totalsByGroup = getCounterTotalsByGroups([gId], statsRange, now).totals;
     acc[gId] = { wins: totalsByGroup.wins, losses: totalsByGroup.losses, ties: totalsByGroup.ties };
     return acc;
   }, {});
 
   const byMode = modeRows.map((m) => {
-    const stats = sumInRange(dailyByMode[m.id] || {}, range.start, range.endExclusive);
+    const stats = computeModeAgg(m.id, statsRange, now);
     const pct = ensurePct(stats.wins, stats.losses, stats.ties);
     return { mode: m, stats, pct };
   }).sort((a, b) => b.pct.total - a.pct.total);
@@ -1637,6 +1751,9 @@ async function patchModeCounter(modeId, key, delta) {
       day,
       createdAt: nowTs(),
       resultKey: key,
+      wins: key === "wins" ? 1 : 0,
+      losses: key === "losses" ? 1 : 0,
+      ties: key === "ties" ? 1 : 0,
       k: clampStat(payload.k),
       d: clampStat(payload.d),
       a: clampStat(payload.a),
@@ -1644,10 +1761,14 @@ async function patchModeCounter(modeId, key, delta) {
       ra: clampStat(payload.ra),
       ratingDeltaAbs: rankType === "none" ? null : deltaAbs,
       ratingDeltaSign: rankType === "none" ? null : sign,
+      ratingDeltaFinal: rankType === "none" ? null : deltaFinal,
       minutes: clamp(Number(payload.minutes || 0))
     };
     console.log("[games] match:add", matchObj);
     await set(matchRef, matchObj);
+    matchesByGroup[mode.groupId] = matchesByGroup[mode.groupId] || {};
+    matchesByGroup[mode.groupId][matchRef.key] = matchObj;
+    rebuildMatchesByModeIndex();
     if (deltaFinal !== null) {
       console.log("[games] rating:add", { groupId: mode.groupId, deltaAbs, sign, deltaFinal });
     }
@@ -1665,6 +1786,8 @@ async function patchModeCounter(modeId, key, delta) {
     if (!target?.matchId) return;
     console.log("[games] match:undo", { foundMatchId: target.matchId, match: target });
     await remove(ref(db, `${GAMES_MATCHES_PATH}/${mode.groupId}/${target.matchId}`));
+    if (matchesByGroup?.[mode.groupId]) delete matchesByGroup[mode.groupId][target.matchId];
+    rebuildMatchesByModeIndex();
     const abs = Number(target.ratingDeltaAbs);
     const sign = Number(target.ratingDeltaSign);
     if (Number.isFinite(abs) && Number.isFinite(sign)) {
@@ -1884,14 +2007,11 @@ function renderModeDetail() {
 
   const group = groups[mode.groupId] || {};
   const modeDaily = dailyByMode[mode.id] || {};
-  const detailRangeBounds = getRangeBounds(detailRange, new Date(), getMinDataDate([mode.id]));
-  const rangeForMatches = detailRange === "total" ? { start: null, endExclusive: null } : detailRangeBounds;
-  const baseCounters = getModeBases(mode.id);
-  const rangeCounters = sumGroupMatchesCounters(mode.groupId, rangeForMatches, mode.id);
-  const totals = BASE_COUNTER_FIELDS.reduce((acc, field) => {
-    acc[field] = Number(baseCounters[field] || 0) + Number(rangeCounters[field] || 0);
-    return acc;
-  }, {});
+  const now = new Date();
+  const detailRangeBounds = getRangeBounds(detailRange, now, getMinDataDate([mode.id]));
+  const detailDayRange = getDayRange(detailRange, now);
+  console.log("[games] range", { rangeKey: detailRange, startDay: detailDayRange.startDay, endDay: detailDayRange.endDay });
+  const totals = computeModeAgg(mode.id, detailRange, now);
   const pct = ensurePct(totals.wins, totals.losses, totals.ties);
   const minutes = Object.entries(modeDaily).reduce((acc, [day, rec]) => acc + getModeDayMinutes(mode, day, rec || {}), 0);
   const hoursText = `${(minutes / 60).toFixed(1)}h`;
@@ -2316,6 +2436,8 @@ function bind() {
     const btn = e.target.closest("[data-stats-range]");
     if (!btn) return;
     statsRange = btn.dataset.statsRange;
+    const dayRange = getDayRange(statsRange, new Date());
+    console.log("[games] range", { rangeKey: statsRange, startDay: dayRange.startDay, endDay: dayRange.endDay });
     localStorage.setItem("bookshell-games-stats-range", statsRange);
     document.querySelectorAll("#game-stats-ranges .game-range-btn").forEach((node) => node.classList.toggle("is-active", node === btn));
     renderGlobalStats();
@@ -2325,6 +2447,8 @@ function bind() {
     const rangeBtn = e.target.closest("[data-range]");
     if (rangeBtn) {
       detailRange = rangeBtn.dataset.range;
+      const dayRange = getDayRange(detailRange, new Date());
+      console.log("[games] range", { rangeKey: detailRange, startDay: dayRange.startDay, endDay: dayRange.endDay });
       renderModeDetail();
       return;
     }
@@ -2395,6 +2519,7 @@ function listenRemote() {
 
   onValue(ref(db, GAMES_MATCHES_PATH), (snap) => {
     matchesByGroup = snap.val() || {};
+    rebuildMatchesByModeIndex();
     renderGlobalStats();
     if (currentModeId) renderModeDetail();
   });

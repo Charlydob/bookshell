@@ -1180,6 +1180,7 @@ function openResultModal(modeId, result) {
 }
 
 async function patchModeCounter(modeId, key, delta) {
+  console.log("[games] patchModeCounter:start", { modeId, key, delta });
   const mode = modes[modeId];
   if (!mode) return;
   const dailyTotals = modeTotalsFromDaily(modeId);
@@ -1187,25 +1188,97 @@ async function patchModeCounter(modeId, key, delta) {
   if (delta < 0 && prevTotal <= 0) return;
 
   let day = todayKey();
+  let payload = { day };
+  let extraPatch = {};
+  let rankStatePatch = {};
   if (delta > 0) {
     const resultMap = { wins: "W", losses: "L", ties: "T" };
     const result = resultMap[key] || "T";
-    let payload = { day };
     const groupRankType = getGroupRankType(mode.groupId);
     const shouldOpenModal = isGroupShooter(mode.groupId) || groupRankType !== "none";
     if (shouldOpenModal) {
+      console.log("[games] patchModeCounter:openModal", { modeId, groupId: mode.groupId, key });
       const formPayload = await openResultModal(modeId, result);
       if (!formPayload) return;
       payload = formPayload;
+      console.log("[games] patchModeCounter:payload", payload);
     }
     day = payload.day || day;
+
+    const EXTRA_KEYS = ["k", "d", "a", "rf", "ra", "eloDelta", "rrDelta", "rankDelta", "minutes"];
+    extraPatch = EXTRA_KEYS.reduce((acc, field) => {
+      if (payload[field] === undefined || payload[field] === null || payload[field] === "") return acc;
+      const parsed = Number(payload[field]);
+      if (!Number.isFinite(parsed)) return acc;
+      if (field === "minutes") {
+        acc[field] = clamp(parsed);
+        return acc;
+      }
+      if (["k", "d", "a", "rf", "ra"].includes(field)) {
+        acc[field] = clampStat(parsed);
+        return acc;
+      }
+      acc[field] = parsed;
+      return acc;
+    }, {});
+
+    if (typeof payload.rankTier === "string" && payload.rankTier.trim()) rankStatePatch.rankTier = payload.rankTier.trim().toUpperCase();
+    if (payload.rankDiv !== undefined && payload.rankDiv !== null && payload.rankDiv !== "") {
+      const rankDiv = Number(payload.rankDiv);
+      if (Number.isFinite(rankDiv)) rankStatePatch.rankDiv = clampStat(rankDiv);
+    }
+    if (payload.rankRr !== undefined && payload.rankRr !== null && payload.rankRr !== "") {
+      const rankRr = Number(payload.rankRr);
+      if (Number.isFinite(rankRr)) rankStatePatch.rankRr = clampStat(rankRr);
+    }
+    console.log("[games] patchModeCounter:extraPatch", { ...extraPatch, ...rankStatePatch });
   }
 
   mode.updatedAt = nowTs();
   dailyByMode[modeId] = dailyByMode[modeId] || {};
-  const dayPrev = dailyByMode[modeId][day] || { wins: 0, losses: 0, ties: 0, minutes: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0 };
+  const dayPrev = {
+    wins: 0,
+    losses: 0,
+    ties: 0,
+    minutes: 0,
+    k: 0,
+    d: 0,
+    a: 0,
+    rf: 0,
+    ra: 0,
+    eloDelta: 0,
+    rrDelta: 0,
+    rankDelta: 0,
+    ...(dailyByMode[modeId][day] || {})
+  };
   const dayValue = clamp(Number(dayPrev[key] || 0) + delta);
-  dailyByMode[modeId][day] = { ...dayPrev, [key]: dayValue };
+  const nextDay = {
+    ...dayPrev,
+    wins: clamp(Number(dayPrev.wins || 0)),
+    losses: clamp(Number(dayPrev.losses || 0)),
+    ties: clamp(Number(dayPrev.ties || 0)),
+    minutes: clamp(Number(dayPrev.minutes || 0)),
+    k: clampStat(dayPrev.k),
+    d: clampStat(dayPrev.d),
+    a: clampStat(dayPrev.a),
+    rf: clampStat(dayPrev.rf),
+    ra: clampStat(dayPrev.ra),
+    [key]: dayValue
+  };
+
+  Object.entries(extraPatch).forEach(([field, fieldDelta]) => {
+    const prevField = Number(dayPrev[field] || 0);
+    const nextValue = prevField + Number(fieldDelta || 0);
+    if (field === "minutes") nextDay[field] = clamp(nextValue);
+    else if (["k", "d", "a", "rf", "ra"].includes(field)) nextDay[field] = clampStat(nextValue);
+    else nextDay[field] = Number.isFinite(nextValue) ? nextValue : prevField;
+  });
+  if (rankStatePatch.rankTier !== undefined || dayPrev.rankTier !== undefined) nextDay.rankTier = rankStatePatch.rankTier || dayPrev.rankTier;
+  if (rankStatePatch.rankDiv !== undefined || dayPrev.rankDiv !== undefined) nextDay.rankDiv = rankStatePatch.rankDiv !== undefined ? rankStatePatch.rankDiv : dayPrev.rankDiv;
+  if (rankStatePatch.rankRr !== undefined || dayPrev.rankRr !== undefined) nextDay.rankRr = rankStatePatch.rankRr !== undefined ? rankStatePatch.rankRr : dayPrev.rankRr;
+
+  console.log("[games] patchModeCounter:dayPrev->next", { day, dayPrev, nextDay });
+  dailyByMode[modeId][day] = nextDay;
 
   render();
   if (currentModeId === modeId) renderModeDetail();
@@ -1215,7 +1288,31 @@ async function patchModeCounter(modeId, key, delta) {
     [`${MODES_PATH}/${modeId}/updatedAt`]: mode.updatedAt,
     [`${DAILY_PATH}/${modeId}/${day}/${key}`]: dayValue
   };
+  Object.keys(extraPatch).forEach((field) => {
+    updates[`${DAILY_PATH}/${modeId}/${day}/${field}`] = nextDay[field];
+  });
+  if (nextDay.rankTier !== undefined) updates[`${DAILY_PATH}/${modeId}/${day}/rankTier`] = nextDay.rankTier;
+  if (nextDay.rankDiv !== undefined) updates[`${DAILY_PATH}/${modeId}/${day}/rankDiv`] = nextDay.rankDiv;
+  if (nextDay.rankRr !== undefined) updates[`${DAILY_PATH}/${modeId}/${day}/rankRr`] = nextDay.rankRr;
+
+  console.log("[games] patchModeCounter:firebaseUpdates", updates);
   await update(ref(db), updates);
+
+  if (delta > 0) {
+    const matchRef = push(ref(db, `${MATCHES_PATH}/${modeId}`));
+    await set(matchRef, {
+      id: matchRef.key,
+      modeId,
+      groupId: mode.groupId,
+      day,
+      resultKey: key,
+      createdAt: nowTs(),
+      ...extraPatch,
+      ...rankStatePatch
+    });
+  }
+
+  console.log("[games] patchModeCounter:done", { modeId, day, key });
   saveCache();
 }
 

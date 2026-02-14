@@ -54,6 +54,9 @@ let selectedDonutKey = "wins";
 let gamesPanel = "counters";
 let statsRange = localStorage.getItem("bookshell-games-stats-range") || "total";
 let statsDonutKey = "wins";
+const state = {
+  gamesRangeKey: "total"
+};
 
 let statsLineChart = null;
 let detailLineChart = null;
@@ -611,10 +614,13 @@ function getModePlayedMinutes(mode) {
 }
 
 function buildModeCard(mode, groupEmoji) {
-  const dailyTotals = modeTotalsFromDaily(mode.id);
-  const wins = clamp(Number(dailyTotals.wins || 0));
-  const losses = clamp(Number(dailyTotals.losses || 0));
-  const ties = clamp(Number(dailyTotals.ties || 0));
+  const rangeKey = state.gamesRangeKey || "total";
+  const agg = computeModeAgg(mode.id, rangeKey, new Date());
+  console.log("[games] miniCard", { modeId: mode.id, rangeKey, agg });
+  const wins = clamp(Number(agg.wins || 0));
+  const losses = clamp(Number(agg.losses || 0));
+  const ties = clamp(Number(agg.ties || 0));
+  const totalGames = wins + losses + ties;
   const { winPct, lossPct, tiePct, total } = ensurePct(wins, losses, ties);
   const emoji = (mode.modeEmoji || "").trim() || groupEmoji || "🎮";
   const { lossW, tieW, winW } = pctWidths(wins, losses, ties);
@@ -640,7 +646,7 @@ function buildModeCard(mode, groupEmoji) {
         <button class="game-thumb-btn-wins" data-action="win" title="Victoria">👍</button>
       </div>
     </div>
-    <div class="game-bottom-tie">${formatWLT({ w: wins, l: losses, t: ties })}</div>
+    <div class="game-bottom-tie">${totalGames} - ${wins}W ${losses}L ${ties}T - ${winPct}%</div>
   </article>`;
 }
 
@@ -1309,12 +1315,25 @@ function buildStatsGlowStyle(accent) {
 
 function setGamesTab(tab) {
   gamesPanel = tab === "stats" ? "stats" : "counters";
+  state.gamesRangeKey = gamesPanel === "stats" ? (statsRange || "total") : "total";
   console.log("[games] tab:set", { tab: gamesPanel });
   const isStats = gamesPanel === "stats";
   $tabCounters?.classList.toggle("is-active", !isStats);
   $tabCounters?.setAttribute("aria-selected", String(!isStats));
   $tabStats?.classList.toggle("is-active", isStats);
   $tabStats?.setAttribute("aria-selected", String(isStats));
+}
+
+function renderGamesList() {
+  renderGamesPanel();
+}
+
+function renderStats() {
+  renderGlobalStats();
+}
+
+function refreshOpenModeModal() {
+  if (currentModeId) renderModeDetail();
 }
 
 function renderGamesPanel() {
@@ -1367,7 +1386,7 @@ function renderGamesPanel() {
 }
 
 function render() {
-  renderGamesPanel();
+  renderGamesList();
   if (currentModeId && !modes[currentModeId]) closeModeDetail();
 }
 
@@ -1799,9 +1818,9 @@ async function patchModeCounter(modeId, key, delta) {
 
   mode.updatedAt = nowTs();
   await update(ref(db, `${MODES_PATH}/${modeId}`), { updatedAt: mode.updatedAt });
-  render();
-  renderGlobalStats();
-  if (currentModeId === modeId) renderModeDetail();
+  renderGamesList();
+  renderStats();
+  refreshOpenModeModal();
   triggerHaptic();
   saveCache();
 }
@@ -2436,11 +2455,13 @@ function bind() {
     const btn = e.target.closest("[data-stats-range]");
     if (!btn) return;
     statsRange = btn.dataset.statsRange;
+    state.gamesRangeKey = statsRange || "total";
     const dayRange = getDayRange(statsRange, new Date());
     console.log("[games] range", { rangeKey: statsRange, startDay: dayRange.startDay, endDay: dayRange.endDay });
     localStorage.setItem("bookshell-games-stats-range", statsRange);
     document.querySelectorAll("#game-stats-ranges .game-range-btn").forEach((node) => node.classList.toggle("is-active", node === btn));
-    renderGlobalStats();
+    renderStats();
+    renderGamesList();
   });
 
   $detailBody?.addEventListener("click", async (e) => {

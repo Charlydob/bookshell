@@ -22,6 +22,7 @@ const MODES_PATH = "gameModes";
 const DAILY_PATH = "gameModeDaily";
 const MATCHES_PATH = "gameMatches";
 const GAMES_GROUPS_PATH = "games/groups";
+const GAMES_MODES_PATH = "games/modes";
 const GAMES_MATCHES_PATH = "games/matches";
 const AGG_DAY_PATH = "gameAggDay";
 const AGG_TOTAL_PATH = "gameAggTotal";
@@ -41,6 +42,7 @@ let dailyByMode = {};
 let aggRankDay = {};
 let aggRankTotal = {};
 let groupRatings = {};
+let modeBases = {};
 let matchesByGroup = {};
 const openGroups = new Set();
 let sessionTick = null;
@@ -154,8 +156,29 @@ function getGroupLegacyBases(groupId) {
   };
 }
 
-function getGroupBases(groupId) {
-  return normalizeGroupBases(groups[groupId]?.bases || groupRatings[groupId]?.bases || {}, getGroupLegacyBases(groupId));
+function getModeLegacyBases(modeId) {
+  const mode = modes[modeId] || {};
+  const groupId = mode.groupId;
+  const groupLegacy = groupId ? getGroupLegacyBases(groupId) : {};
+  return {
+    wins: mode.winsBase,
+    losses: mode.lossesBase,
+    ties: mode.tiesBase,
+    k: mode.kBase,
+    d: mode.dBase,
+    a: mode.aBase,
+    rf: mode.rfBase,
+    ra: mode.raBase,
+    grenades: mode.grenadesBase,
+    throws: mode.throwsBase,
+    lossesExtra: mode.lossesExtraBase,
+    updatedAt: mode.updatedAt || groupLegacy.updatedAt
+  };
+}
+
+function getModeBases(modeId) {
+  const remote = modeBases?.[modeId]?.bases || modeBases?.[modeId] || {};
+  return normalizeGroupBases(remote, getModeLegacyBases(modeId));
 }
 
 function sumGroupMatchesCounters(groupId, range, modeId = null) {
@@ -186,19 +209,20 @@ function getCounterTotalsByGroups(groupIds, range, rangeName = "total") {
   const base = BASE_COUNTER_FIELDS.reduce((acc, field) => ({ ...acc, [field]: 0 }), {});
   const sums = BASE_COUNTER_FIELDS.reduce((acc, field) => ({ ...acc, [field]: 0 }), {});
   (groupIds || []).forEach((groupId) => {
-    const gBase = getGroupBases(groupId);
+    const groupModeIds = getGroupModeIds(groupId);
+    groupModeIds.forEach((modeId) => {
+      const mBase = getModeBases(modeId);
+      BASE_COUNTER_FIELDS.forEach((field) => {
+        base[field] += Number(mBase[field] || 0);
+      });
+    });
     const gSums = sumGroupMatchesCounters(groupId, rangeName === "total" ? { start: null, endExclusive: null } : range);
     BASE_COUNTER_FIELDS.forEach((field) => {
-      base[field] += Number(gBase[field] || 0);
       sums[field] += Number(gSums[field] || 0);
     });
   });
   const totals = BASE_COUNTER_FIELDS.reduce((acc, field) => ({ ...acc, [field]: base[field] + sums[field] }), {});
-  return {
-    base,
-    sums,
-    totals
-  };
+  return { base, sums, totals };
 }
 function dateKeyLocal(date) {
   const y = date.getFullYear();
@@ -690,33 +714,84 @@ function renderKpiPanel(tot = {}) {
   setText("kpi-ra", tot.ra || 0);
 }
 
-function getGroupPeriodRatingDelta(groupId, range) {
+function getGroupMatchesSorted(groupId) {
   const byId = matchesByGroup[groupId] || {};
-  return Object.values(byId).reduce((acc, match) => {
-    if (!match?.day) return acc;
+  return Object.values(byId)
+    .filter((m) => m?.day)
+    .sort((a, b) => {
+      const dayCmp = String(a.day || "").localeCompare(String(b.day || ""));
+      if (dayCmp) return dayCmp;
+      return Number(a.createdAt || 0) - Number(b.createdAt || 0);
+    });
+}
+
+function getMatchRatingDelta(match) {
+  const abs = Number(match?.ratingDeltaAbs);
+  const sign = Number(match?.ratingDeltaSign);
+  if (!Number.isFinite(abs) || !Number.isFinite(sign)) return 0;
+  return Math.round(abs * sign);
+}
+
+function formatRrMain(state = {}) {
+  const divTxt = state?.div ? ` ${state.div}` : "";
+  return `${String(state?.tier || "Hierro").toUpperCase()}${divTxt} · ${Math.max(0, Math.round(Number(state?.base || 0)))}/100`;
+}
+
+function rrPeakScore(state = {}) {
+  const idx = RR_TIER_INDEX[String(state?.tier || "HIERRO").toUpperCase()] || 0;
+  if (String(state?.tier || "").toUpperCase() === "RADIANTE") return (idx * 300) + Number(state?.base || 0);
+  const div = Math.max(1, Math.min(3, Number(state?.div || 1)));
+  return (idx * 300) + ((div - 1) * 100) + Number(state?.base || 0);
+}
+
+function buildGroupRatingKpi(groupId, range) {
+  const rating = normalizeRating(groups[groupId]?.rating || groupRatings[groupId]?.rating);
+  if (rating.type === "none") return null;
+  const matches = getGroupMatchesSorted(groupId);
+  if (rating.type === "elo") {
+    const totalDelta = matches.reduce((acc, m) => acc + getMatchRatingDelta(m), 0);
+    let value = Math.round(Number(rating.base || 0));
+    let peakAllTime = value;
+    let peakRange = value;
+    matches.forEach((match) => {
+      value += getMatchRatingDelta(match);
+      peakAllTime = Math.max(peakAllTime, value);
+      const d = dateFromKey(match.day);
+      const inRange = !(range?.start && d < range.start) && !(range?.endExclusive && d >= range.endExclusive);
+      if (inRange) peakRange = Math.max(peakRange, value);
+    });
+    const current = Math.round(Number(rating.base || 0) + totalDelta);
+    return {
+      typeLabel: "ELO",
+      main: `${current}`,
+      sub: (!range?.start && !range?.endExclusive)
+        ? `Peak: ${peakAllTime}`
+        : `Peak: ${peakRange} · Hist: ${peakAllTime}`
+    };
+  }
+
+  let cur = normalizeRating(rating);
+  let peakAllState = { ...cur };
+  let peakRangeState = { ...cur };
+  matches.forEach((match) => {
+    cur = normalizeRating({ ...cur, ...applyRrDelta(cur, getMatchRatingDelta(match)) });
+    if (rrPeakScore(cur) > rrPeakScore(peakAllState)) peakAllState = { ...cur };
     const d = dateFromKey(match.day);
-    if (range.start && d < range.start) return acc;
-    if (range.endExclusive && d >= range.endExclusive) return acc;
-    const abs = Number(match.ratingDeltaAbs);
-    const sign = Number(match.ratingDeltaSign);
-    const delta = Number.isFinite(abs) && Number.isFinite(sign) ? Math.round(abs * sign) : 0;
-    return acc + delta;
-  }, 0);
+    const inRange = !(range?.start && d < range.start) && !(range?.endExclusive && d >= range.endExclusive);
+    if (inRange && rrPeakScore(cur) > rrPeakScore(peakRangeState)) peakRangeState = { ...cur };
+  });
+
+  return {
+    typeLabel: "RR",
+    main: formatRrMain(cur),
+    sub: (!range?.start && !range?.endExclusive)
+      ? `Peak: ${formatRrMain(peakAllState)}`
+      : `Peak: ${formatRrMain(peakRangeState)} · Hist: ${formatRrMain(peakAllState)}`
+  };
 }
 
 function groupRatingSnapshot(groupId, range) {
-  const rating = normalizeRating(groups[groupId]?.rating || groupRatings[groupId]?.rating);
-  if (rating.type === "none") return null;
-  const delta = getGroupPeriodRatingDelta(groupId, range);
-  if (rating.type === "elo") {
-    return { typeLabel: "ELO", main: `${rating.base}`, sub: `Delta periodo ${delta >= 0 ? "+" : ""}${delta}` };
-  }
-  const divTxt = rating.div ? ` ${rating.div}` : "";
-  return {
-    typeLabel: "RR",
-    main: `${rating.tier.toUpperCase()}${divTxt}`,
-    sub: `RR ${rating.base}/100 - Delta periodo ${delta >= 0 ? "+" : ""}${delta}`
-  };
+  return buildGroupRatingKpi(groupId, range);
 }
 
 function getBaseInputValue(modal, selector, field) {
@@ -725,51 +800,50 @@ function getBaseInputValue(modal, selector, field) {
   return clampBaseCounter(Number.isFinite(value) ? value : 0, field, true);
 }
 
-async function openGroupBasesModal(groupId) {
-  const currentBases = getGroupBases(groupId);
+async function openGroupBasesModal(groupId, modeId = null) {
+  const resolvedModeId = modeId || currentModeId || getGroupTargetModeId(groupId);
+  if (!resolvedModeId || !modes[resolvedModeId]) return;
+  const currentBases = getModeBases(resolvedModeId);
   const currentRating = normalizeRating(groups[groupId]?.rating || groupRatings[groupId]?.rating);
-  console.log("[games] bases:open", { groupId, bases: currentBases, rating: currentRating });
   const showRating = currentRating.type !== "none";
+  const modeLabel = modes[resolvedModeId]?.modeName || "Modo";
+
   const modal = document.createElement("div");
   modal.className = "modal-backdrop";
-  modal.innerHTML = `<div class="modal habit-modal" role="dialog" aria-modal="true">
+  modal.innerHTML = `<div class="modal habit-modal base-modal" role="dialog" aria-modal="true">
     <div class="modal-handle"></div>
     <div class="modal-header">
-      <div class="modal-title">Bases del grupo</div>
+      <div class="modal-title">Bases · ${modeLabel}</div>
       <button class="icon-btn" type="button" data-close>✕</button>
     </div>
     <div class="modal-scroll sheet-body">
-      ${showRating ? `<section class="game-detail-section"><strong>Rating</strong>
+      ${showRating ? `<section class="base-section"><strong>Rating del grupo</strong>
         <div class="form-grid row-3">
-          ${currentRating.type === "elo" ? `<label class="field"><span class="field-label">ELO base</span><input id="games-base-rating" type="number" min="0" step="1" value="${currentRating.base}" inputmode="numeric"></label>` : `<label class="field"><span class="field-label">RR base</span><input id="games-base-rating" type="number" min="0" max="100" step="1" value="${currentRating.base}" inputmode="numeric"></label>
+          ${currentRating.type === "elo" ? `<label class="field"><span class="field-label">ELO base</span><input id="games-base-rating" type="number" min="0" max="1000000" step="1" value="${currentRating.base}" inputmode="numeric"></label>` : `<label class="field"><span class="field-label">RR base</span><input id="games-base-rating" type="number" min="0" max="100" step="1" value="${currentRating.base}" inputmode="numeric"></label>
           <label class="field"><span class="field-label">Tier</span><select id="games-base-tier">${RR_TIERS.map((tier) => `<option value="${tier}" ${tier === currentRating.tier ? "selected" : ""}>${tier}</option>`).join("")}</select></label>
           <label class="field"><span class="field-label">Division</span><input id="games-base-div" type="number" min="1" max="3" step="1" value="${currentRating.div || 1}" inputmode="numeric"></label>`}
         </div></section>` : ""}
-      <section class="game-detail-section"><strong>W/L/T base</strong>
-        <div class="form-grid row-3">
-          <label class="field"><span class="field-label">Wins</span><input id="games-base-wins" type="number" min="0" max="1000000" step="1" value="${currentBases.wins}" inputmode="numeric"></label>
-          <label class="field"><span class="field-label">Losses</span><input id="games-base-losses" type="number" min="0" max="1000000" step="1" value="${currentBases.losses}" inputmode="numeric"></label>
-          <label class="field"><span class="field-label">Ties</span><input id="games-base-ties" type="number" min="0" max="1000000" step="1" value="${currentBases.ties}" inputmode="numeric"></label>
-        </div></section>
-      <section class="game-detail-section"><strong>K/D/A base</strong>
-        <div class="form-grid row-3">
-          <label class="field"><span class="field-label">Kills (K)</span><input id="games-base-k" type="number" min="0" max="1000000" step="1" value="${currentBases.k}" inputmode="numeric"></label>
-          <label class="field"><span class="field-label">Deaths (D)</span><input id="games-base-d" type="number" min="0" max="1000000" step="1" value="${currentBases.d}" inputmode="numeric"></label>
-          <label class="field"><span class="field-label">Assists (A)</span><input id="games-base-a" type="number" min="0" max="1000000" step="1" value="${currentBases.a}" inputmode="numeric"></label>
-        </div></section>
-      <section class="game-detail-section"><strong>Rondas base</strong>
-        <div class="form-grid row-3">
-          <label class="field"><span class="field-label">Rondas a favor</span><input id="games-base-rf" type="number" min="0" max="1000000" step="1" value="${currentBases.rf}" inputmode="numeric"></label>
-          <label class="field"><span class="field-label">Rondas en contra</span><input id="games-base-ra" type="number" min="0" max="1000000" step="1" value="${currentBases.ra}" inputmode="numeric"></label>
-        </div></section>
-      <section class="game-detail-section"><strong>Utilidad base</strong>
-        <div class="form-grid row-3">
-          <label class="field"><span class="field-label">Grenades</span><input id="games-base-grenades" type="number" min="0" max="1000000" step="1" value="${currentBases.grenades}" inputmode="numeric"></label>
-          <label class="field"><span class="field-label">Throws</span><input id="games-base-throws" type="number" min="0" max="1000000" step="1" value="${currentBases.throws}" inputmode="numeric"></label>
-          <label class="field"><span class="field-label">Losses extra</span><input id="games-base-losses-extra" type="number" min="0" max="1000000" step="1" value="${currentBases.lossesExtra}" inputmode="numeric"></label>
-        </div></section>
+      <details class="base-section" open><summary>W/L/T base</summary><div class="base-modal-grid">
+        <label class="base-field"><span>Wins</span><input id="games-base-wins" type="number" min="0" max="1000000" step="1" value="${currentBases.wins}" inputmode="numeric"></label>
+        <label class="base-field"><span>Losses</span><input id="games-base-losses" type="number" min="0" max="1000000" step="1" value="${currentBases.losses}" inputmode="numeric"></label>
+        <label class="base-field"><span>Ties</span><input id="games-base-ties" type="number" min="0" max="1000000" step="1" value="${currentBases.ties}" inputmode="numeric"></label>
+      </div></details>
+      <details class="base-section" open><summary>K/D/A base</summary><div class="base-modal-grid">
+        <label class="base-field"><span>Kills (K)</span><input id="games-base-k" type="number" min="0" max="1000000" step="1" value="${currentBases.k}" inputmode="numeric"></label>
+        <label class="base-field"><span>Deaths (D)</span><input id="games-base-d" type="number" min="0" max="1000000" step="1" value="${currentBases.d}" inputmode="numeric"></label>
+        <label class="base-field"><span>Assists (A)</span><input id="games-base-a" type="number" min="0" max="1000000" step="1" value="${currentBases.a}" inputmode="numeric"></label>
+      </div></details>
+      <details class="base-section" open><summary>Rondas base</summary><div class="base-modal-grid">
+        <label class="base-field"><span>Rondas a favor</span><input id="games-base-rf" type="number" min="0" max="1000000" step="1" value="${currentBases.rf}" inputmode="numeric"></label>
+        <label class="base-field"><span>Rondas en contra</span><input id="games-base-ra" type="number" min="0" max="1000000" step="1" value="${currentBases.ra}" inputmode="numeric"></label>
+      </div></details>
+      <details class="base-section" open><summary>Utilidad base</summary><div class="base-modal-grid">
+        <label class="base-field"><span>Grenades</span><input id="games-base-grenades" type="number" min="0" max="1000000" step="1" value="${currentBases.grenades}" inputmode="numeric"></label>
+        <label class="base-field"><span>Throws</span><input id="games-base-throws" type="number" min="0" max="1000000" step="1" value="${currentBases.throws}" inputmode="numeric"></label>
+        <label class="base-field"><span>Losses extra</span><input id="games-base-losses-extra" type="number" min="0" max="1000000" step="1" value="${currentBases.lossesExtra}" inputmode="numeric"></label>
+      </div></details>
     </div>
-    <div class="modal-footer sheet-footer">
+    <div class="modal-footer sheet-footer base-modal-footer">
       <button class="btn ghost" type="button" data-close>Cancelar</button>
       <button class="btn primary" type="button" data-save>Guardar</button>
     </div>
@@ -804,11 +878,13 @@ async function openGroupBasesModal(groupId) {
       updatedAt: nowTs()
     }, {}, true);
 
-    const updates = { [`${GAMES_GROUPS_PATH}/${groupId}/bases`]: bases };
-    let nextRating = currentRating;
+    const updates = { [`${GAMES_MODES_PATH}/${resolvedModeId}/bases`]: bases };
+    modeBases[resolvedModeId] = { ...(modeBases[resolvedModeId] || {}), bases };
+
     if (showRating) {
+      let nextRating = currentRating;
       if (currentRating.type === "elo") {
-        nextRating = normalizeRating({ ...currentRating, base: Math.max(0, Math.round(Number(modal.querySelector("#games-base-rating")?.value || 0))), updatedAt: nowTs() });
+        nextRating = normalizeRating({ ...currentRating, base: clampBaseCounter(modal.querySelector("#games-base-rating")?.value || 0, "rating", true), updatedAt: nowTs() });
       } else {
         const tier = modal.querySelector("#games-base-tier")?.value || currentRating.tier;
         const divVal = Math.round(Number(modal.querySelector("#games-base-div")?.value || 1));
@@ -821,10 +897,9 @@ async function openGroupBasesModal(groupId) {
         });
       }
       updates[`${GAMES_GROUPS_PATH}/${groupId}/rating`] = nextRating;
+      groups[groupId] = { ...(groups[groupId] || {}), rating: nextRating };
     }
 
-    groups[groupId] = { ...(groups[groupId] || {}), bases, rating: nextRating };
-    console.log("[games] bases:save", { groupId, bases });
     await update(ref(db), updates);
     renderGlobalStats();
     if (currentModeId && modes[currentModeId]?.groupId === groupId) renderModeDetail();
@@ -860,7 +935,7 @@ function renderRankChips(selectedGroupId, range) {
     const accent = getGroupAccent(group.id);
     chip.style.background = `radial-gradient(circle at top, color-mix(in srgb, ${accent} 28%, transparent), rgba(255,255,255,0.02))`;
     chip.style.borderColor = `color-mix(in srgb, ${accent} 35%, rgba(255,255,255,0.08))`;
-    chip.addEventListener("click", () => { openGroupBasesModal(group.id).catch((err) => console.error("[games] bases:edit:error", err)); });
+    chip.addEventListener("click", () => { openGroupBasesModal(group.id, getGroupTargetModeId(group.id)).catch((err) => console.error("[games] bases:edit:error", err)); });
   });
 }
 
@@ -1265,8 +1340,7 @@ async function createOrUpdateMode() {
     groups[groupPayload.id] = groupPayload;
     await set(groupIdRef, groupPayload);
     await update(ref(db), {
-      [`${GAMES_GROUPS_PATH}/${groupPayload.id}/rating`]: groupPayload.rating,
-      [`${GAMES_GROUPS_PATH}/${groupPayload.id}/bases`]: normalizeGroupBases({})
+      [`${GAMES_GROUPS_PATH}/${groupPayload.id}/rating`]: groupPayload.rating
     });
   }
   if (!groupIdValue) return;
@@ -1279,6 +1353,9 @@ async function createOrUpdateMode() {
     const payload = { id: modeIdRef.key, wins: 0, losses: 0, ties: 0, createdAt: nowTs(), ...base };
     modes[payload.id] = payload;
     await set(modeIdRef, payload);
+    const basePayload = normalizeGroupBases({});
+    modeBases[payload.id] = { bases: basePayload };
+    await set(ref(db, `${GAMES_MODES_PATH}/${payload.id}/bases`), basePayload);
   }
   saveCache();
   closeModeModal();
@@ -1527,25 +1604,6 @@ async function rebuildDailyFromMatches(modeId, day) {
   console.log("[games] daily:rebuild:done", { modeId, day });
 }
 
-async function applyGroupRatingDelta(groupId, deltaFinal) {
-  const current = normalizeRating(groups[groupId]?.rating || groupRatings[groupId]?.rating);
-  if (current.type === "none" || !Number.isFinite(Number(deltaFinal))) return current;
-  const before = { ...current };
-  let after = { ...current };
-  if (current.type === "elo") {
-    after.base = Math.round(Number(current.base || 0) + Number(deltaFinal || 0));
-  } else if (current.type === "rr") {
-    const next = applyRrDelta({ tier: current.tier, div: current.div, rr: current.base }, deltaFinal);
-    after.base = next.rr;
-    after.tier = next.tier;
-    after.div = next.div;
-  }
-  after.updatedAt = nowTs();
-  groups[groupId] = { ...(groups[groupId] || {}), rating: after };
-  await set(ref(db, `${GAMES_GROUPS_PATH}/${groupId}/rating`), after);
-  return { before, after };
-}
-
 async function patchModeCounter(modeId, key, delta) {
   console.log("[games] patchModeCounter:start", { modeId, key, delta });
   const mode = modes[modeId];
@@ -1591,8 +1649,7 @@ async function patchModeCounter(modeId, key, delta) {
     console.log("[games] match:add", matchObj);
     await set(matchRef, matchObj);
     if (deltaFinal !== null) {
-      const ratingDiff = await applyGroupRatingDelta(mode.groupId, deltaFinal);
-      console.log("[games] rating:add", { groupId: mode.groupId, deltaAbs, sign, deltaFinal, before: ratingDiff?.before, after: ratingDiff?.after, tier: ratingDiff?.after?.tier, div: ratingDiff?.after?.div });
+      console.log("[games] rating:add", { groupId: mode.groupId, deltaAbs, sign, deltaFinal });
     }
     await rebuildDailyFromMatches(modeId, day);
   }
@@ -1612,8 +1669,7 @@ async function patchModeCounter(modeId, key, delta) {
     const sign = Number(target.ratingDeltaSign);
     if (Number.isFinite(abs) && Number.isFinite(sign)) {
       const deltaFinal = Math.round(abs * sign);
-      const ratingDiff = await applyGroupRatingDelta(mode.groupId, -deltaFinal);
-      console.log("[games] rating:undo", { groupId: mode.groupId, deltaFinal, before: ratingDiff?.before, after: ratingDiff?.after });
+      console.log("[games] rating:undo", { groupId: mode.groupId, deltaFinal });
     }
     await rebuildDailyFromMatches(modeId, day);
   }
@@ -1828,7 +1884,14 @@ function renderModeDetail() {
 
   const group = groups[mode.groupId] || {};
   const modeDaily = dailyByMode[mode.id] || {};
-  const totals = modeTotalsFromDaily(mode.id);
+  const detailRangeBounds = getRangeBounds(detailRange, new Date(), getMinDataDate([mode.id]));
+  const rangeForMatches = detailRange === "total" ? { start: null, endExclusive: null } : detailRangeBounds;
+  const baseCounters = getModeBases(mode.id);
+  const rangeCounters = sumGroupMatchesCounters(mode.groupId, rangeForMatches, mode.id);
+  const totals = BASE_COUNTER_FIELDS.reduce((acc, field) => {
+    acc[field] = Number(baseCounters[field] || 0) + Number(rangeCounters[field] || 0);
+    return acc;
+  }, {});
   const pct = ensurePct(totals.wins, totals.losses, totals.ties);
   const minutes = Object.entries(modeDaily).reduce((acc, [day, rec]) => acc + getModeDayMinutes(mode, day, rec || {}), 0);
   const hoursText = `${(minutes / 60).toFixed(1)}h`;
@@ -1847,13 +1910,11 @@ function renderModeDetail() {
     </button>`;
   }).join("");
 
-  const modeTotals = modeTotalsFromDaily(mode.id);
-  const detailRangeBounds = getRangeBounds(detailRange, new Date(), getMinDataDate([mode.id]));
   const ratingSnap = groupRatingSnapshot(mode.groupId, detailRangeBounds);
   const shooterLine = isGroupShooter(mode.groupId) && pct.total > 0
-    ? `<div>K ${modeTotals.k} - D ${modeTotals.d} - A ${modeTotals.a} - R ${modeTotals.rf}-${modeTotals.ra}</div>`
+    ? `<div>K ${totals.k} - D ${totals.d} - A ${totals.a} - R ${totals.rf}-${totals.ra}</div>`
     : "";
-  const bases = getGroupBases(mode.groupId);
+  const bases = getModeBases(mode.id);
 
   $detailTitle.textContent = `${group.name || "Grupo"} - ${mode.modeName || "Modo"}`;
   $detailBody.innerHTML = `
@@ -1880,22 +1941,22 @@ function renderModeDetail() {
       <strong>Controles</strong>
       <div class="game-controls-grid">
         <div class="game-control-col loss">
-          <div>Derrotas</div><div class="game-control-value">${modeTotals.losses}</div>
+          <div>Derrotas</div><div class="game-control-value">${totals.losses}</div>
           <div class="game-control-actions"><button class="game-ctrl-btn" data-action="loss">+1</button><button class="game-ctrl-btn" data-action="loss-minus">-1</button></div>
         </div>
         <div class="game-control-col tie">
-          <div>Empates</div><div class="game-control-value">${modeTotals.ties}</div>
+          <div>Empates</div><div class="game-control-value">${totals.ties}</div>
           <div class="game-control-actions"><button class="game-ctrl-btn" data-action="tie">+1</button><button class="game-ctrl-btn" data-action="tie-minus">-1</button></div>
         </div>
         <div class="game-control-col win">
-          <div>Victorias</div><div class="game-control-value">${modeTotals.wins}</div>
+          <div>Victorias</div><div class="game-control-value">${totals.wins}</div>
           <div class="game-control-actions"><button class="game-ctrl-btn" data-action="win">+1</button><button class="game-ctrl-btn" data-action="win-minus">-1</button></div>
         </div>
       </div>
     </section>
 
     <section class="game-detail-section">
-      <strong>Bases del grupo</strong>
+      <strong>Bases del modo</strong>
       ${ratingSnap ? `<div class="games-rank-chip" data-group-id="${mode.groupId}">
         <div class="games-rank-chip-top">
           <span class="games-rank-chip-game">${group.name || "Grupo"}</span>
@@ -1907,7 +1968,7 @@ function renderModeDetail() {
       <div class="game-detail-sub">W ${bases.wins} - L ${bases.losses} - T ${bases.ties}</div>
       <div class="game-detail-sub">K ${bases.k} - D ${bases.d} - A ${bases.a}</div>
       <div class="game-detail-sub">R ${bases.rf}-${bases.ra}</div>
-      <button class="game-menu-btn" data-action="edit-group-bases" data-group-id="${mode.groupId}">Editar bases del grupo</button>
+      <button class="game-menu-btn" data-action="edit-group-bases" data-group-id="${mode.groupId}" data-mode-id="${mode.id}">Editar bases del modo</button>
     </section>
 
     <section class="game-detail-section">
@@ -2181,6 +2242,7 @@ async function onListClick(e) {
   const action = btn.dataset.action;
   const modeId = btn.closest(".game-card")?.dataset.modeId || currentModeId;
   const groupIdValue = btn.dataset.groupId || btn.closest(".game-group")?.dataset.groupId;
+  const actionModeId = btn.dataset.modeId || modeId;
   if (action === "loss" && modeId) return patchModeCounter(modeId, "losses", 1);
   if (action === "win" && modeId) return patchModeCounter(modeId, "wins", 1);
   if (action === "tie" && modeId) return patchModeCounter(modeId, "ties", 1);
@@ -2193,9 +2255,9 @@ async function onListClick(e) {
   }
   if (action === "reset-mode" && modeId) return resetMode(modeId);
   if (action === "group-menu" && groupIdValue) return handleGroupMenu(groupIdValue);
-  if (action === "edit-group-bases" && groupIdValue) return openGroupBasesModal(groupIdValue);
-  if (action === "edit-group-rating" && groupIdValue) return openGroupBasesModal(groupIdValue);
-  if (action === "edit-group-kda-base" && groupIdValue) return openGroupBasesModal(groupIdValue);
+  if (action === "edit-group-bases" && groupIdValue) return openGroupBasesModal(groupIdValue, actionModeId);
+  if (action === "edit-group-rating" && groupIdValue) return openGroupBasesModal(groupIdValue, actionModeId);
+  if (action === "edit-group-kda-base" && groupIdValue) return openGroupBasesModal(groupIdValue, actionModeId);
   if (action === "toggle-session" && groupIdValue) return toggleGroupSession(groupIdValue);
 }
 
@@ -2287,7 +2349,7 @@ function listenRemote() {
   onValue(ref(db, GROUPS_PATH), (snap) => {
     groups = snap.val() || {};
     Object.keys(groups).forEach((id) => {
-      groups[id] = { ...groups[id], id, rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating), bases: normalizeGroupBases(groupRatings[id]?.bases || groups[id]?.bases || {}, getGroupLegacyBases(id)) };
+      groups[id] = { ...groups[id], id, rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating) };
     });
     if (!localStorage.getItem(OPEN_KEY)) {
       Object.keys(groups).forEach((id) => openGroups.add(id));
@@ -2311,13 +2373,19 @@ function listenRemote() {
     if (currentModeId) renderModeDetail();
   });
 
+
+  onValue(ref(db, GAMES_MODES_PATH), (snap) => {
+    modeBases = snap.val() || {};
+    render();
+    renderGlobalStats();
+    if (currentModeId) renderModeDetail();
+  });
   onValue(ref(db, GAMES_GROUPS_PATH), (snap) => {
     groupRatings = snap.val() || {};
     Object.keys(groups).forEach((id) => {
       groups[id] = {
         ...groups[id],
-        rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating),
-        bases: normalizeGroupBases(groupRatings[id]?.bases || groups[id]?.bases || {}, getGroupLegacyBases(id))
+        rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating)
       };
     });
     render();

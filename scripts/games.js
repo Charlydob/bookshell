@@ -57,13 +57,6 @@ const $groupHabit = document.getElementById("game-group-linked-habit");
 const $groupHabitWrap = document.getElementById("game-group-habit-wrap");
 const $modeName = document.getElementById("game-mode-name");
 const $modeEmoji = document.getElementById("game-mode-emoji");
-const $modeRankBaseWrap = document.getElementById("game-mode-rank-base-wrap");
-const $modeBaseEloWrap = document.getElementById("game-mode-base-elo-wrap");
-const $modeBaseElo = document.getElementById("game-mode-base-elo");
-const $modeBaseRrWrap = document.getElementById("game-mode-base-rr-wrap");
-const $modeBaseTier = document.getElementById("game-mode-base-tier");
-const $modeBaseRank = document.getElementById("game-mode-base-rank");
-const $modeBaseRr = document.getElementById("game-mode-base-rr");
 
 const $groupModal = document.getElementById("game-group-modal");
 const $groupForm = document.getElementById("game-group-form");
@@ -147,7 +140,7 @@ function formatWLT({ w = 0, l = 0, t = 0 }) {
 
 function formatLineRight(matches, w, l, t, wr) {
   const safeWr = Number.isFinite(Number(wr)) ? Number(wr) : 0;
-  return `${Number(matches || 0)} · ${formatWLT({ w, l, t })} · ${safeWr}%`;
+  return `${Number(matches || 0)} Â· ${formatWLT({ w, l, t })} Â· ${safeWr}%`;
 }
 
 function getGroupCategory(groupId) {
@@ -183,63 +176,12 @@ function isGroupShooter(groupId) {
 function getRankTypeLabel(rankType) {
   if (rankType === "elo") return "ELO";
   if (rankType === "rr") return "RR";
-  if (rankType === "days") return "DÍAS";
+  if (rankType === "days") return "DÃAS";
   return "RANGO";
 }
 
 const RR_TIERS = ["IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND", "ASCENDANT", "IMMORTAL", "RADIANT"];
 const RR_TIER_LABEL_ES = { IRON: "Hierro", BRONZE: "Bronce", SILVER: "Plata", GOLD: "Oro", PLATINUM: "Platino", DIAMOND: "Diamante", ASCENDANT: "Ascendant", IMMORTAL: "Inmortal", RADIANT: "Radiante" };
-
-function defaultModeRank(rankType) {
-  if (rankType === "elo") return { system: "ELO", base: 0 };
-  if (rankType === "rr") return { system: "RR", baseTier: "IRON", baseRank: 1, baseRR: 0 };
-  return null;
-}
-
-function normalizeModeRank(mode = {}, rankType = "none") {
-  const base = mode.rank || {};
-  if (rankType === "elo") {
-    return {
-      system: "ELO",
-      base: Math.round(Number(base.base ?? 0))
-    };
-  }
-  if (rankType === "rr") {
-    const tier = String(base.baseTier || "IRON").toUpperCase();
-    const safeTier = RR_TIERS.includes(tier) ? tier : "IRON";
-    const parsedRank = Math.round(Number(base.baseRank || 1));
-    return {
-      system: "RR",
-      baseTier: safeTier,
-      baseRank: safeTier === "RADIANT" ? null : Math.max(1, Math.min(3, parsedRank || 1)),
-      baseRR: Math.max(0, Math.min(100, Math.round(Number(base.baseRR || 0))))
-    };
-  }
-  return null;
-}
-
-function currentRankFromMode(groupId, mode) {
-  const rankType = getGroupRankType(groupId);
-  const rank = normalizeModeRank(mode, rankType) || defaultModeRank(rankType);
-  const total = aggRankTotal[groupId] || {};
-  if (rankType === "elo") {
-    const delta = Math.round(Number(total.elo || 0));
-    return { main: `ELO ${Math.round(Number(rank.base || 0)) + delta}`, delta, baseLabel: `Base ${Math.round(Number(rank.base || 0))}` };
-  }
-  if (rankType === "rr") {
-    const delta = Math.round(Number(total.delta || 0));
-    const current = applyRrDelta({ tier: rank.baseTier, div: rank.baseRank, rr: rank.baseRR }, delta);
-    const tierEs = RR_TIER_LABEL_ES[current.tier] || current.tier;
-    const div = current.div ? ` ${current.div}` : "";
-    return {
-      main: `${tierEs.toUpperCase()}${div}`,
-      delta,
-      rr: current.rr,
-      baseLabel: `Base ${(RR_TIER_LABEL_ES[rank.baseTier] || rank.baseTier).toUpperCase()}${rank.baseRank ? ` ${rank.baseRank}` : ""} · ${rank.baseRR}/100`
-    };
-  }
-  return null;
-}
 
 function applyRrDelta(current = {}, delta = 0) {
   let tier = String(current.tier || "IRON").toUpperCase();
@@ -282,85 +224,6 @@ function applyRrDelta(current = {}, delta = 0) {
   return { tier, div, rr };
 }
 
-function updateModeRankBaseUI() {
-  if (!$modeRankBaseWrap) return;
-  const groupIdValue = $groupChoice.value === "new" ? null : $existingGroup.value;
-  const rankType = $groupChoice.value === "new" ? ($groupRankType?.value || "none") : getGroupRankType(groupIdValue);
-  const mode = editingModeId ? modes[editingModeId] : null;
-  const rank = normalizeModeRank(mode, rankType) || defaultModeRank(rankType);
-
-  $modeRankBaseWrap.style.display = rankType === "none" ? "none" : "block";
-  if ($modeBaseEloWrap) $modeBaseEloWrap.style.display = rankType === "elo" ? "grid" : "none";
-  if ($modeBaseRrWrap) $modeBaseRrWrap.style.display = rankType === "rr" ? "grid" : "none";
-  if (rankType === "elo" && $modeBaseElo) $modeBaseElo.value = String(rank?.base ?? 0);
-  if (rankType === "rr") {
-    if ($modeBaseTier) $modeBaseTier.value = rank?.baseTier || "IRON";
-    if ($modeBaseRank) {
-      const value = rank?.baseRank ? String(rank.baseRank) : "1";
-      $modeBaseRank.value = value;
-      $modeBaseRank.disabled = ($modeBaseTier?.value || "").toUpperCase() === "RADIANT";
-    }
-    if ($modeBaseRr) $modeBaseRr.value = String(rank?.baseRR ?? 0);
-  }
-}
-
-function getModeRankBasePayload(groupIdValue) {
-  const rankType = getGroupRankType(groupIdValue);
-  if (rankType === "elo") {
-    return { rank: normalizeModeRank({ rank: { base: Number($modeBaseElo?.value || 0) } }, "elo") };
-  }
-  if (rankType === "rr") {
-    const tier = String($modeBaseTier?.value || "IRON").toUpperCase();
-    const baseRankRaw = Number($modeBaseRank?.value || 1);
-    return {
-      rank: normalizeModeRank({ rank: { baseTier: tier, baseRank: tier === "RADIANT" ? null : baseRankRaw, baseRR: Number($modeBaseRr?.value || 0) } }, "rr")
-    };
-  }
-  return { rank: null };
-}
-
-async function adjustStat(modeId, key, delta) {
-  const mode = modes[modeId];
-  if (!mode) return;
-  const safeDelta = Math.round(Number(delta || 0));
-  if (!safeDelta) return;
-  const modeDaily = dailyByMode[modeId] || {};
-  const totalCur = clamp(Number(modeTotalsFromDaily(modeId)[key] || 0));
-  const totalNext = Math.max(0, totalCur + safeDelta);
-  if (totalNext === totalCur) return;
-  const dayMap = { ...modeDaily };
-  let remaining = totalNext - totalCur;
-
-  if (remaining > 0) {
-    const day = todayKey();
-    const prev = dayMap[day] || { wins: 0, losses: 0, ties: 0, minutes: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0 };
-    dayMap[day] = { ...prev, [key]: clamp(Number(prev[key] || 0) + remaining) };
-  } else {
-    let toRemove = Math.abs(remaining);
-    const sortedDays = Object.keys(dayMap).sort((a, b) => b.localeCompare(a));
-    for (const day of sortedDays) {
-      if (!toRemove) break;
-      const prev = dayMap[day] || {};
-      const cur = clamp(Number(prev[key] || 0));
-      if (!cur) continue;
-      const dec = Math.min(cur, toRemove);
-      dayMap[day] = { ...prev, [key]: cur - dec };
-      toRemove -= dec;
-    }
-  }
-
-  mode.updatedAt = nowTs();
-  dailyByMode[modeId] = dayMap;
-  render();
-  if (currentModeId === modeId) renderModeDetail();
-  triggerHaptic();
-  await update(ref(db), {
-    [`${MODES_PATH}/${modeId}/updatedAt`]: mode.updatedAt,
-    [`${DAILY_PATH}/${modeId}`]: dayMap
-  });
-  saveCache();
-}
-
 function pctWidths(wins, losses, ties = 0) {
   const total = wins + losses + ties;
   if (!total) return { lossW: 33.34, tieW: 33.33, winW: 33.33 };
@@ -390,7 +253,7 @@ function triggerHaptic() { try { navigator.vibrate?.(10); } catch (_) {} }
 function habitOptionsHtml() {
   const rows = Object.values(habits || {}).filter((h) => h && h.id && !h.archived).sort((a, b) => (a.name || "").localeCompare(b.name || "es"));
   const opt = ['<option value="">Ninguno</option>'];
-  rows.forEach((h) => opt.push(`<option value="${h.id}">${h.emoji || "✅"} ${h.name || h.id}</option>`));
+  rows.forEach((h) => opt.push(`<option value="${h.id}">${h.emoji || "â"} ${h.name || h.id}</option>`));
   return opt.join("");
 }
 
@@ -451,7 +314,7 @@ function buildModeCard(mode, groupEmoji) {
   const losses = clamp(Number(dailyTotals.losses || 0));
   const ties = clamp(Number(dailyTotals.ties || 0));
   const { winPct, lossPct, tiePct, total } = ensurePct(wins, losses, ties);
-  const emoji = (mode.modeEmoji || "").trim() || groupEmoji || "🎮";
+  const emoji = (mode.modeEmoji || "").trim() || groupEmoji || "ð®";
   const { lossW, tieW, winW } = pctWidths(wins, losses, ties);
   return `
   <article class="game-card" data-mode-id="${mode.id}" role="button" tabindex="0">
@@ -463,16 +326,16 @@ function buildModeCard(mode, groupEmoji) {
     <div class="game-card-total">${formatLineRight(total, wins, losses, ties, winPct)}</div>
     <div class="game-card-content">
       <div class="game-side left">
-        <button class="game-thumb-btn-losses" data-action="loss" title="Derrota">👎</button>
-        <div class="game-side-stat-losses">${losses} • ${lossPct}%</div>
+        <button class="game-thumb-btn-losses" data-action="loss" title="Derrota">ð</button>
+        <div class="game-side-stat-losses">${losses} â¢ ${lossPct}%</div>
       </div>
       <div class="game-center">
         <div class="game-mode-name">${mode.modeName || "Modo"}</div>
         <button class="game-mode-emoji game-mode-emoji-btn" data-action="tie" title="Empate">${emoji}</button>
       </div>
       <div class="game-side right">
-        <div class="game-side-stat-wins">${winPct}% • ${wins}</div>
-        <button class="game-thumb-btn-wins" data-action="win" title="Victoria">👍</button>
+        <div class="game-side-stat-wins">${winPct}% â¢ ${wins}</div>
+        <button class="game-thumb-btn-wins" data-action="win" title="Victoria">ð</button>
       </div>
     </div>
     <div class="game-bottom-tie">${formatWLT({ w: wins, l: losses, t: ties })}</div>
@@ -482,7 +345,7 @@ function buildModeCard(mode, groupEmoji) {
 function renderStatsFilter() {
   if (!$statsFilter) return;
   const options = ['<option value="all">Global</option>'];
-  Object.values(groups || {}).forEach((g) => options.push(`<option value="${g.id}">${g.emoji || "🎮"} ${g.name || "Grupo"}</option>`));
+  Object.values(groups || {}).forEach((g) => options.push(`<option value="${g.id}">${g.emoji || "ð®"} ${g.name || "Grupo"}</option>`));
   const current = $statsFilter.value || "all";
   $statsFilter.innerHTML = options.join("");
   $statsFilter.value = options.some((o) => o.includes(`value=\"${current}\"`)) ? current : "all";
@@ -600,7 +463,7 @@ function renderLineChart($el, points, chartRef = "stats") {
     chart?.dispose();
     if (chartRef === "stats") statsLineChart = null;
     else detailLineChart = null;
-    if (!$el.querySelector('.empty-state')) $el.innerHTML = "<div class='empty-state small'>Sin datos…</div>";
+    if (!$el.querySelector('.empty-state')) $el.innerHTML = "<div class='empty-state small'>Sin datosâ¦</div>";
     return;
   }
   if ($el.querySelector('.empty-state')) $el.innerHTML = "";
@@ -646,19 +509,23 @@ function renderRankChips(selectedGroupId, range) {
 
   $rankChips.innerHTML = targetGroups.map((g) => {
     const rankType = getGroupRankType(g.id);
+    const total = aggRankTotal[g.id] || {};
     const delta = Math.round(sumRankDeltaInRange(g.id, range.start, range.endExclusive));
-    const mode = groupModes(g.id).find((m) => m.id === g.lastUsedModeId) || groupModes(g.id)[0] || {};
     let main = "";
     let sub = "";
-    if (rankType === "elo" || rankType === "rr") {
-      const current = currentRankFromMode(g.id, mode) || {};
-      main = current.main || "-";
-      if (rankType === "elo") sub = `${current.baseLabel || "Base 0"} · Δ periodo ${delta >= 0 ? "+" : ""}${delta}`;
-      if (rankType === "rr") sub = `RR ${Math.max(0, Math.round(Number(current.rr || 0)))}/100 · ${current.baseLabel || "Base"} · Δ ${delta >= 0 ? "+" : ""}${delta}`;
+    if (rankType === "elo") {
+      main = ` ${Math.round(Number(total.elo || 0))}`;
+      sub = `Î periodo ${delta >= 0 ? "+" : ""}${delta}`;
+    } else if (rankType === "rr") {
+      const tier = String(total.tier || "IRON").toUpperCase();
+      const tierEs = RR_TIER_LABEL_ES[tier] || tier;
+      const div = total.div ? ` ${total.div}` : "";
+      const rr = Math.max(0, Math.round(Number(total.rr || 0)));
+      main = `${tierEs.toUpperCase()}${div}`;
+      sub = `RR ${rr}/100 Â· Î ${delta >= 0 ? "+" : ""}${delta}`;
     } else {
-      const total = aggRankTotal[g.id] || {};
       const days = Math.max(0, Math.round(Number(total.days || 0)));
-      main = `Días ${days}`;
+      main = `${days}`;
       sub = `${delta >= 0 ? "+" : ""}${delta} en periodo`;
     }
     return `<div class="games-rank-chip" data-group-id="${g.id}">
@@ -761,9 +628,9 @@ function renderGlobalStats() {
   const pct = ensurePct(totals.wins, totals.losses, totals.ties);
   if ($statsTotals) {
     const shooterText = (totals.k || totals.d || totals.a || totals.rf || totals.ra)
-      ? ` · K ${totals.k} D ${totals.d} A ${totals.a} · R ${totals.rf}-${totals.ra}`
+      ? ` Â· K ${totals.k} D ${totals.d} A ${totals.a} Â· R ${totals.rf}-${totals.ra}`
       : "";
-    $statsTotals.textContent = `${pct.total} partidas · ${totals.wins}W / ${totals.losses}L / ${totals.ties}T · ${pct.winPct}%W${shooterText}`;
+    $statsTotals.textContent = `${pct.total} partidas Â· ${totals.wins}W / ${totals.losses}L / ${totals.ties}T Â· ${pct.winPct}%W${shooterText}`;
   }
   if ($statsSub) $statsSub.textContent = selected === "all" ? "Global" : (groups[selected]?.name || "Grupo");
   renderKpiPanel({
@@ -830,7 +697,7 @@ function renderGlobalStats() {
         accent: detectStatsAccent(`${groups[topWin.mode.groupId]?.name || ""} ${topWin.mode.modeName || ""}`)
       } : null,
       topPlays ? {
-        label: "Más jugado",
+        label: "MÃ¡s jugado",
         matches: topPlays.pct.total,
         wins: topPlays.stats.wins,
         losses: topPlays.stats.losses,
@@ -855,7 +722,7 @@ function renderBreakdownStatsCard(list) {
       <b>${x.mode}</b>
       <span>${formatLineRight(x.matches, x.wins, x.losses, x.ties, x.winrate)}</span>
     </div>
-    ${x.groupCategory === "shooter" && x.matches > 0 ? `<div class="stats-line-sub">K ${x.k} · D ${x.d} · A ${x.a} · R ${x.rf}-${x.ra}</div>` : ""}
+    ${x.groupCategory === "shooter" && x.matches > 0 ? `<div class="stats-line-sub">K ${x.k} Â· D ${x.d} Â· A ${x.a} Â· R ${x.rf}-${x.ra}</div>` : ""}
   `).join("") : `<div class="games-stats-empty">Sin datos</div>`;
   return renderStatsFold({
     id: "breakdown",
@@ -958,12 +825,12 @@ function render() {
     detail.innerHTML = `
       <summary>
         <div class="game-group-main">
-          <div class="game-group-name">${g.emoji || "🎮"} ${g.name || "Grupo"}</div>
-          <div class="game-group-meta">${losses}L / ${wins}W / ${ties}T · ${lossPct}% - ${winPct}% · ⏱ ${formatHoursMinutes(totalMinutes)}</div>
+          <div class="game-group-name">${g.emoji || "ð®"} ${g.name || "Grupo"}</div>
+          <div class="game-group-meta">${losses}L / ${wins}W / ${ties}T Â· ${lossPct}% - ${winPct}% Â· â± ${formatHoursMinutes(totalMinutes)}</div>
         </div>
         <div class="game-group-actions">
-          <button class="game-session-btn" data-action="toggle-session">${hasRunning ? `■ ${elapsed}` : "▶ Iniciar"}</button>
-          <button class="game-menu-btn" data-action="group-menu">…</button>
+          <button class="game-session-btn" data-action="toggle-session">${hasRunning ? `â  ${elapsed}` : "â¶ Iniciar"}</button>
+          <button class="game-menu-btn" data-action="group-menu">â¦</button>
         </div>
       </summary>
       <div class="game-group-body">${groupedModes.map((m) => buildModeCard(m, g.emoji)).join("")}</div>
@@ -984,24 +851,17 @@ function openModeModal(mode = null) {
   $modeTitle.textContent = editingModeId ? "Editar modo" : "Nuevo modo";
   $groupChoice.value = "existing";
   $groupName.value = "";
-  $groupEmoji.value = "🎮";
+  $groupEmoji.value = "ð®";
   $modeName.value = mode?.modeName || "";
   $modeEmoji.value = mode?.modeEmoji || "";
-  $existingGroup.innerHTML = Object.values(groups).map((g) => `<option value="${g.id}">${g.emoji || "🎮"} ${g.name}</option>`).join("");
+  $existingGroup.innerHTML = Object.values(groups).map((g) => `<option value="${g.id}">${g.emoji || "ð®"} ${g.name}</option>`).join("");
   if (mode?.groupId) $existingGroup.value = mode.groupId;
   $groupHabit.innerHTML = habitOptionsHtml();
   $groupHabit.value = "";
   if ($groupCategory) $groupCategory.value = "other";
   if ($groupRankType) $groupRankType.value = "none";
   if ($groupAccent) $groupAccent.value = "#8b5cf6";
-  if ($modeBaseTier && !$modeBaseTier.options.length) {
-    $modeBaseTier.innerHTML = RR_TIERS.map((tier) => `<option value="${tier}">${RR_TIER_LABEL_ES[tier] || tier}</option>`).join("");
-  }
-  if ($modeBaseRank && !$modeBaseRank.options.length) {
-    $modeBaseRank.innerHTML = [1, 2, 3].map((rank) => `<option value="${rank}">${rank}</option>`).join("");
-  }
   toggleGroupChoice();
-  updateModeRankBaseUI();
   $modeModal.classList.add("modal-centered-mobile");
   $modeModal.classList.remove("hidden");
   syncModalScrollLock();
@@ -1014,7 +874,7 @@ function openGroupModal(groupIdValue) {
   if (!g) return;
   $groupId.value = g.id;
   $groupEditName.value = g.name || "";
-  $groupEditEmoji.value = g.emoji || "🎮";
+  $groupEditEmoji.value = g.emoji || "ð®";
   $groupEditHabit.innerHTML = habitOptionsHtml();
   $groupEditHabit.value = g.linkedHabitId || "";
   if ($groupEditCategory) $groupEditCategory.value = getGroupCategory(g.id);
@@ -1041,7 +901,6 @@ function toggleGroupChoice() {
   const $groupAccentWrap = document.getElementById("game-group-accent-wrap");
   if ($groupAccentWrap) $groupAccentWrap.style.display = isNew ? "block" : "none";
   $existingWrap.style.display = isNew ? "none" : "block";
-  updateModeRankBaseUI();
 }
 
 async function createOrUpdateMode() {
@@ -1056,7 +915,7 @@ async function createOrUpdateMode() {
     const groupPayload = {
       id: groupIdRef.key,
       name,
-      emoji: ($groupEmoji.value || "🎮").trim() || "🎮",
+      emoji: ($groupEmoji.value || "ð®").trim() || "ð®",
       linkedHabitId: $groupHabit.value || null,
       category: ($groupCategory?.value || "other"),
       tags: { shooter: ($groupCategory?.value || "other") === "shooter" },
@@ -1070,8 +929,7 @@ async function createOrUpdateMode() {
     await set(groupIdRef, groupPayload);
   }
   if (!groupIdValue) return;
-  const rankPayload = getModeRankBasePayload(groupIdValue);
-  const base = { groupId: groupIdValue, modeName: modeNameValue, modeEmoji: modeEmojiValue, rank: rankPayload.rank, updatedAt: nowTs() };
+  const base = { groupId: groupIdValue, modeName: modeNameValue, modeEmoji: modeEmojiValue, updatedAt: nowTs() };
   if (editingModeId && modes[editingModeId]) {
     modes[editingModeId] = { ...modes[editingModeId], ...base };
     await update(ref(db, `${MODES_PATH}/${editingModeId}`), base);
@@ -1221,32 +1079,32 @@ function openResultModal(modeId, result) {
   const group = groups[mode.groupId] || {};
   const rankType = getGroupRankType(mode.groupId);
   const shooter = isGroupShooter(mode.groupId);
-  const rankLabel = rankType === "elo" ? "ΔELO" : (rankType === "rr" ? "RR (magnitud)" : "ΔDías");
-  const rankPlaceholder = rankType === "elo" ? "ELO" : (rankType === "rr" ? "RR" : "Días");
+  const rankLabel = rankType === "elo" ? "ÎELO" : (rankType === "rr" ? "ÎRR" : "ÎDÃ­as");
+  const rankPlaceholder = rankType === "elo" ? "ELO" : (rankType === "rr" ? "RR" : "DÃ­as");
 
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
     overlay.className = "game-mini-modal-overlay";
     overlay.innerHTML = `
       <div class="game-mini-modal" role="dialog" aria-modal="true" aria-label="Registrar resultado">
-        <div class="game-mini-title">${group.name || "Grupo"} · ${mode.modeName || "Modo"} · ${result}</div>
+        <div class="game-mini-title">${group.name || "Grupo"} Â· ${mode.modeName || "Modo"} Â· ${result}</div>
         <label class="field">
-          <span class="field-label">Día</span>
+          <span class="field-label">DÃ­a</span>
           <input type="date" class="game-mini-date" value="${todayKey()}" max="9999-12-31" />
         </label>
         ${shooter ? `<div class="game-mini-grid two">
-          <input class="game-mini-input" data-key="rf" type="number" min="0" inputmode="numeric" pattern="[0-9]*" placeholder="R+" maxlength="3" />
-          <input class="game-mini-input" data-key="ra" type="number" min="0" inputmode="numeric" pattern="[0-9]*" placeholder="R-" maxlength="3" />
+          <input class="game-mini-input" data-key="rf" inputmode="numeric" placeholder="R+" maxlength="3" />
+          <input class="game-mini-input" data-key="ra" inputmode="numeric" placeholder="R-" maxlength="3" />
         </div>
         <div class="game-mini-grid three">
-          <input class="game-mini-input" data-key="k" type="number" min="0" inputmode="numeric" pattern="[0-9]*" placeholder="K" maxlength="3" />
-          <input class="game-mini-input" data-key="d" type="number" min="0" inputmode="numeric" pattern="[0-9]*" placeholder="D" maxlength="3" />
-          <input class="game-mini-input" data-key="a" type="number" min="0" inputmode="numeric" pattern="[0-9]*" placeholder="A" maxlength="3" />
+          <input class="game-mini-input" data-key="k" inputmode="numeric" placeholder="K" maxlength="3" />
+          <input class="game-mini-input" data-key="d" inputmode="numeric" placeholder="D" maxlength="3" />
+          <input class="game-mini-input" data-key="a" inputmode="numeric" placeholder="A" maxlength="3" />
         </div>` : ""}
         ${rankType !== "none" ? `<div class="game-mini-grid one">
           <label class="field">
             <span class="field-label">${rankLabel}</span>
-            <input class="game-mini-input" data-key="rankDelta" type="number" min="0" inputmode="numeric" pattern="[0-9]*" placeholder="${rankPlaceholder}" maxlength="5" />
+            <input class="game-mini-input" data-key="rankDelta" inputmode="numeric" placeholder="${rankPlaceholder}" maxlength="5" />
           </label>
         </div>` : ""}
         <div class="game-mini-actions">
@@ -1265,14 +1123,8 @@ function openResultModal(modeId, result) {
         const dateInput = overlay.querySelector('.game-mini-date');
         const payload = { day: dateInput?.value || todayKey() };
         overlay.querySelectorAll('.game-mini-input').forEach((node) => {
-          payload[node.dataset.key] = Math.max(0, Number(node.value || 0));
+          payload[node.dataset.key] = Number(node.value || 0);
         });
-        if (rankType === "rr") {
-          const rf = Number(payload.rf || 0);
-          const ra = Number(payload.ra || 0);
-          const inferredSign = rf > ra ? 1 : (rf < ra ? -1 : 1);
-          payload.rankDelta = Math.max(0, Number(payload.rankDelta || 0)) * inferredSign;
-        }
         close(true, payload);
       }
     });
@@ -1292,6 +1144,9 @@ function openResultModal(modeId, result) {
 async function patchModeCounter(modeId, key, delta) {
   const mode = modes[modeId];
   if (!mode) return;
+  const dailyTotals = modeTotalsFromDaily(modeId);
+  const prevTotal = clamp(Number(dailyTotals[key] || 0));
+  if (delta < 0 && prevTotal <= 0) return;
 
   if (delta > 0) {
     const resultMap = { wins: "W", losses: "L", ties: "T" };
@@ -1309,11 +1164,27 @@ async function patchModeCounter(modeId, key, delta) {
     return;
   }
 
-  await adjustStat(modeId, key, delta);
+  mode.updatedAt = nowTs();
+  const day = todayKey();
+  dailyByMode[modeId] = dailyByMode[modeId] || {};
+  const dayPrev = dailyByMode[modeId][day] || { wins: 0, losses: 0, ties: 0, minutes: 0, k: 0, d: 0, a: 0, rf: 0, ra: 0 };
+  const dayValue = clamp(Number(dayPrev[key] || 0) + delta);
+  dailyByMode[modeId][day] = { ...dayPrev, [key]: dayValue };
+
+  render();
+  if (currentModeId === modeId) renderModeDetail();
+  triggerHaptic();
+
+  const updates = {
+    [`${MODES_PATH}/${modeId}/updatedAt`]: mode.updatedAt,
+    [`${DAILY_PATH}/${modeId}/${day}/${key}`]: dayValue
+  };
+  await update(ref(db), updates);
+  saveCache();
 }
 
 async function resetMode(modeId) {
-  if (!confirm("¿Resetear este modo?")) return;
+  if (!confirm("Â¿Resetear este modo?")) return;
   const mode = modes[modeId];
   if (!mode) return;
   mode.wins = 0; mode.losses = 0; mode.ties = 0; mode.updatedAt = nowTs();
@@ -1330,7 +1201,7 @@ async function resetMode(modeId) {
 }
 
 async function deleteMode(modeId) {
-  if (!confirm("¿Eliminar modo?")) return;
+  if (!confirm("Â¿Eliminar modo?")) return;
   delete modes[modeId];
   delete dailyByMode[modeId];
   if (currentModeId === modeId) closeModeDetail();
@@ -1339,7 +1210,7 @@ async function deleteMode(modeId) {
 }
 
 async function handleGroupMenu(groupIdValue) {
-  const action = prompt("Acción de grupo: editar | add | reset | delete");
+  const action = prompt("AcciÃ³n de grupo: editar | add | reset | delete");
   if (!action) return;
   const cmd = action.trim().toLowerCase();
   if (cmd === "editar" || cmd === "edit") return openGroupModal(groupIdValue);
@@ -1376,12 +1247,12 @@ async function handleGroupMenu(groupIdValue) {
 
 function toggleGroupSession(groupIdValue) {
   const group = groups[groupIdValue];
-  if (!group?.linkedHabitId) return alert("Vincula un hábito al grupo para usar sesiones.");
+  if (!group?.linkedHabitId) return alert("Vincula un hÃ¡bito al grupo para usar sesiones.");
   const api = window.__bookshellHabits;
   if (!api) return;
   const running = getRunningSessionState();
   if (running) {
-    if (running.targetHabitId !== group.linkedHabitId) return alert("Ya hay una sesión activa");
+    if (running.targetHabitId !== group.linkedHabitId) return alert("Ya hay una sesiÃ³n activa");
     api.stopSession(group.linkedHabitId, true);
     return;
   }
@@ -1534,19 +1405,15 @@ function renderModeDetail() {
 
   const modeTotals = modeTotalsFromDaily(mode.id);
   const shooterLine = isGroupShooter(mode.groupId) && pct.total > 0
-    ? `<div>K ${modeTotals.k} · D ${modeTotals.d} · A ${modeTotals.a} · R ${modeTotals.rf}-${modeTotals.ra}</div>`
-    : "";
-  const currentRank = currentRankFromMode(mode.groupId, mode);
-  const rankLine = currentRank
-    ? `<div>${currentRank.main} · ${currentRank.baseLabel} · Δ total ${currentRank.delta >= 0 ? "+" : ""}${currentRank.delta}</div>`
+    ? `<div>K ${modeTotals.k} Â· D ${modeTotals.d} Â· A ${modeTotals.a} Â· R ${modeTotals.rf}-${modeTotals.ra}</div>`
     : "";
 
-  $detailTitle.textContent = `${group.name || "Grupo"} — ${mode.modeName || "Modo"}`;
+  $detailTitle.textContent = `${group.name || "Grupo"} â ${mode.modeName || "Modo"}`;
   $detailBody.innerHTML = `
     <section class="game-detail-head">
       <div class="game-detail-top">
         <div>
-          <div class="game-detail-name">${mode.modeEmoji || group.emoji || "🎮"} ${group.name || "Grupo"} — ${mode.modeName || "Modo"}</div>
+          <div class="game-detail-name">${mode.modeEmoji || group.emoji || "ð®"} ${group.name || "Grupo"} â ${mode.modeName || "Modo"}</div>
           <div class="game-detail-sub">${formatLineRight(pct.total, totals.wins, totals.losses, totals.ties, pct.winPct)}</div>
         </div>
         <div class="game-detail-actions">
@@ -1557,9 +1424,8 @@ function renderModeDetail() {
       </div>
       <div class="game-detail-summary">
         <div>W/L/T: ${formatWLT({ w: totals.wins, l: totals.losses, t: totals.ties })}</div>
-        <div>Horas jugadas (hábito grupo): ${hoursText}</div>
+        <div>Horas jugadas (hÃ¡bito grupo): ${hoursText}</div>
         ${shooterLine}
-        ${rankLine}
       </div>
     </section>
 
@@ -1584,10 +1450,10 @@ function renderModeDetail() {
     <section class="game-detail-section">
       <strong>Rango</strong>
       <div class="game-ranges">
-        <button class="game-range-btn ${detailRange === "day" ? "is-active" : ""}" data-range="day">Día</button>
+        <button class="game-range-btn ${detailRange === "day" ? "is-active" : ""}" data-range="day">DÃ­a</button>
         <button class="game-range-btn ${detailRange === "week" ? "is-active" : ""}" data-range="week">Semana</button>
         <button class="game-range-btn ${detailRange === "month" ? "is-active" : ""}" data-range="month">Mes</button>
-        <button class="game-range-btn ${detailRange === "year" ? "is-active" : ""}" data-range="year">Año</button>
+        <button class="game-range-btn ${detailRange === "year" ? "is-active" : ""}" data-range="year">AÃ±o</button>
         <button class="game-range-btn ${detailRange === "total" ? "is-active" : ""}" data-range="total">Total</button>
       </div>
       <div class="games-stats-grid">
@@ -1606,8 +1472,8 @@ function renderModeDetail() {
     </div>
 
     <div class="game-cal-nav">
-      <button class="game-menu-btn" data-cal-nav="-1" aria-label="Mes anterior">←</button>
-      <button class="game-menu-btn" data-cal-nav="1" aria-label="Mes siguiente">→</button>
+      <button class="game-menu-btn" data-cal-nav="-1" aria-label="Mes anterior">â</button>
+      <button class="game-menu-btn" data-cal-nav="1" aria-label="Mes siguiente">â</button>
     </div>
   </div>
 
@@ -1668,7 +1534,7 @@ function openDayRecordModal(modeId, day) {
   modal.className = "modal-backdrop";
   modal.innerHTML = `<div class="game-day-modal-overlay" aria-hidden="true"></div>
   <div class="modal habit-modal game-day-modal" role="dialog" aria-modal="true">
-    <div class="modal-header"><div class="modal-title">Registro del día</div></div>
+    <div class="modal-header"><div class="modal-title">Registro del dÃ­a</div></div>
     <div class="modal-scroll sheet-body">
       <label class="field"><span class="field-label">Fecha</span><input type="text" value="${day}" readonly></label>
       <label class="field"><span class="field-label">Horas / minutos</span><input id="game-day-minutes" type="number" min="0" value="${state.minutes || 0}" inputmode="numeric">
@@ -1804,7 +1670,7 @@ async function exportGamesZipByMode() {
 
 async function onGamesExportClick() {
   const choice = prompt(
-    "Exportar Juegos:\n1) CSV único\n2) ZIP (por modo)",
+    "Exportar Juegos:\n1) CSV Ãºnico\n2) ZIP (por modo)",
     "1"
   );
   if (!choice) return;
@@ -1868,9 +1734,6 @@ async function onListClick(e) {
 function bind() {
   $addMode?.addEventListener("click", () => openModeModal());
   $groupChoice?.addEventListener("change", toggleGroupChoice);
-  $existingGroup?.addEventListener("change", updateModeRankBaseUI);
-  $groupRankType?.addEventListener("change", updateModeRankBaseUI);
-  $modeBaseTier?.addEventListener("change", updateModeRankBaseUI);
   $modeClose?.addEventListener("click", closeModeModal);
   $modeCancel?.addEventListener("click", closeModeModal);
   $modeModal?.addEventListener("click", (e) => { if (e.target === $modeModal) closeModeModal(); });
@@ -1889,7 +1752,7 @@ function bind() {
     if (!group) return;
     const payload = {
       name: $groupEditName.value.trim(),
-      emoji: ($groupEditEmoji.value || "🎮").trim() || "🎮",
+      emoji: ($groupEditEmoji.value || "ð®").trim() || "ð®",
       linkedHabitId: $groupEditHabit.value || null,
       category: ($groupEditCategory?.value || "other"),
       tags: { shooter: ($groupEditCategory?.value || "other") === "shooter" },
@@ -1952,31 +1815,11 @@ function listenRemote() {
   onValue(ref(db, GROUPS_PATH), (snap) => {
     groups = snap.val() || {};
     if (!localStorage.getItem(OPEN_KEY)) Object.keys(groups).forEach((id) => openGroups.add(id));
-    const migrations = {};
-    Object.values(modes || {}).forEach((mode) => {
-      const rankType = getGroupRankType(mode.groupId);
-      if (rankType === "none") return;
-      const normalized = normalizeModeRank(mode, rankType) || defaultModeRank(rankType);
-      if (JSON.stringify(mode.rank || null) !== JSON.stringify(normalized)) migrations[`${MODES_PATH}/${mode.id}/rank`] = normalized;
-      modes[mode.id] = { ...mode, rank: normalized };
-    });
-    if (Object.keys(migrations).length) update(ref(db), migrations).catch(() => {});
     saveCache();
     render();
   });
   onValue(ref(db, MODES_PATH), (snap) => {
     modes = snap.val() || {};
-    const migrations = {};
-    Object.values(modes || {}).forEach((mode) => {
-      const rankType = getGroupRankType(mode.groupId);
-      if (rankType === "none") return;
-      const normalized = normalizeModeRank(mode, rankType) || defaultModeRank(rankType);
-      const before = JSON.stringify(mode.rank || null);
-      const after = JSON.stringify(normalized);
-      if (before !== after) migrations[`${MODES_PATH}/${mode.id}/rank`] = normalized;
-      modes[mode.id] = { ...mode, rank: normalized };
-    });
-    if (Object.keys(migrations).length) update(ref(db), migrations).catch(() => {});
     saveCache();
     render();
     if (currentModeId) renderModeDetail();
@@ -2008,7 +1851,7 @@ function listenRemote() {
     reconcileGamesFromHabitSessions().catch(() => {});
   });
 }
-// ✅ Nuevo: solo actualiza el texto del botón de sesión (sin render completo)
+// â Nuevo: solo actualiza el texto del botÃ³n de sesiÃ³n (sin render completo)
 function tickSessionButtons() {
   if (!document.getElementById("view-games")?.classList.contains("view-active")) return;
 
@@ -2023,13 +1866,13 @@ function tickSessionButtons() {
 
     const hasRunning = !!(running && g?.linkedHabitId && running.targetHabitId === g.linkedHabitId);
     if (!hasRunning) {
-      // No fuerces estado si no está corriendo
-      if (btn.textContent.trim() !== "▶ Iniciar") btn.textContent = "▶ Iniciar";
+      // No fuerces estado si no estÃ¡ corriendo
+      if (btn.textContent.trim() !== "â¶ Iniciar") btn.textContent = "â¶ Iniciar";
       return;
     }
 
     const elapsed = formatDuration((Date.now() - Number(running.startTs || Date.now())) / 1000);
-    const next = `■ ${elapsed}`;
+    const next = `â  ${elapsed}`;
     if (btn.textContent !== next) btn.textContent = next;
   });
 }
@@ -2043,7 +1886,7 @@ function init() {
   render();
 
   if (sessionTick) clearInterval(sessionTick);
-  sessionTick = setInterval(tickSessionButtons, 1000); // ✅ antes: render()
+  sessionTick = setInterval(tickSessionButtons, 1000); // â antes: render()
 }
 
 

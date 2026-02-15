@@ -69,6 +69,11 @@ let teleprompterTimer = null;
 let teleprompterPlaying = false;
 let teleprompterSentences = [];
 let teleprompterActiveIndex = -1;
+let caretFollowRaf = 0;
+let floatingUiRaf = 0;
+let lastScriptInputAt = 0;
+let countWidgetExpandedUntil = 0;
+let countWidgetMode = "normal";
 let links = {};
 let books = {};
 let quoteBooks = {};
@@ -78,7 +83,10 @@ let insertType = "link";
 
 const SCRIPT_SAVE_DEBOUNCE = 1000;
 const WORD_COUNT_DEBOUNCE = 200;
-const SCRIPT_ANNOTATION_DEBOUNCE = 160;
+const SCRIPT_ANNOTATION_DEBOUNCE = 120;
+const SCRIPT_TYPING_COMPACT_MS = 1500;
+const SCRIPT_COMPACT_SCROLL_TOP_THRESHOLD = 12;
+const SCRIPT_WIDGET_EXPAND_MS = 4000;
 const SCRIPT_PPM_KEY = "bookshell_video_script_ppm_v1";
 const TELEPROMPTER_PPM_KEY = "bookshell_video_teleprompter_ppm_v1";
 
@@ -436,6 +444,7 @@ if ($viewVideos) {
   const $videoScriptBack = document.getElementById("video-script-back");
   const $videoScriptTitle = document.getElementById("video-script-title");
   const $videoScriptSubtitle = document.getElementById("video-script-subtitle");
+  const $videoScriptCountHeader = document.getElementById("video-script-count-header");
   const $videoScriptToolbar = document.getElementById("video-script-toolbar");
   const $videoScriptEditor = document.getElementById("video-script-editor");
   const $videoScriptWordcount = document.getElementById("video-script-wordcount");
@@ -963,6 +972,116 @@ function extraerNotas(rawText) {
 }
 
 
+  function getEmbedRaw(insert = {}) {
+    const embedType = Object.keys(insert || {})[0] || "";
+    const value = insert?.[embedType] || {};
+    if (embedType === "annotationCard" || embedType === "quoteCard") {
+      return String(value?.raw || value?.text || "");
+    }
+    if (typeof value === "string") return value;
+    return String(value?.text || value?.content || "");
+  }
+
+  function getRawOffsetMap(editor = quill) {
+    const map = [];
+    const ops = editor?.getContents()?.ops || [];
+    let rawCursor = 0;
+    let quillCursor = 0;
+
+    ops.forEach((op) => {
+      const insert = op?.insert;
+      if (typeof insert === "string") {
+        const len = insert.length;
+        if (len > 0) {
+          map.push({
+            type: "text",
+            rawStart: rawCursor,
+            rawEnd: rawCursor + len,
+            quillStart: quillCursor,
+            quillEnd: quillCursor + len
+          });
+          rawCursor += len;
+          quillCursor += len;
+        }
+        return;
+      }
+
+      const raw = getEmbedRaw(insert);
+      const rawLen = raw.length;
+      map.push({
+        type: "embed",
+        rawStart: rawCursor,
+        rawEnd: rawCursor + rawLen,
+        quillStart: quillCursor,
+        quillEnd: quillCursor + 1
+      });
+      rawCursor += rawLen;
+      quillCursor += 1;
+    });
+
+    return { map, rawLength: rawCursor, quillLength: quillCursor };
+  }
+
+  function quillIndexToRawOffset(index, offsetMap, side = "start") {
+    const { map, rawLength } = offsetMap || {};
+    if (!map?.length) return 0;
+    const safeIndex = Math.max(0, Number(index) || 0);
+
+    for (let i = 0; i < map.length; i += 1) {
+      const seg = map[i];
+      if (safeIndex < seg.quillStart) return seg.rawStart;
+      if (safeIndex > seg.quillEnd) continue;
+
+      if (seg.type === "text") {
+        return seg.rawStart + (safeIndex - seg.quillStart);
+      }
+      return side === "end" ? seg.rawEnd : seg.rawStart;
+    }
+
+    return rawLength;
+  }
+
+  function rawOffsetToQuillIndex(rawOffset, offsetMap) {
+    const { map, quillLength } = offsetMap || {};
+    if (!map?.length) return 0;
+    const safeRaw = Math.max(0, Number(rawOffset) || 0);
+
+    for (let i = 0; i < map.length; i += 1) {
+      const seg = map[i];
+      if (safeRaw < seg.rawStart) return seg.quillStart;
+      if (safeRaw > seg.rawEnd) continue;
+
+      if (seg.type === "text") {
+        return seg.quillStart + (safeRaw - seg.rawStart);
+      }
+
+      const midpoint = seg.rawStart + ((seg.rawEnd - seg.rawStart) / 2);
+      return safeRaw <= midpoint ? seg.quillStart : seg.quillEnd;
+    }
+
+    return quillLength;
+  }
+
+  function getRawSelectionOffsets(editor = quill) {
+    const selection = editor?.getSelection();
+    if (!selection) return null;
+    const offsetMap = getRawOffsetMap(editor);
+    const start = quillIndexToRawOffset(selection.index, offsetMap, "start");
+    const end = quillIndexToRawOffset(selection.index + selection.length, offsetMap, "end");
+    return { start, end };
+  }
+
+  function restoreSelectionFromRawOffsets(selectionRaw, source = "silent") {
+    if (!quill || !selectionRaw) return;
+    const offsetMap = getRawOffsetMap(quill);
+    const start = rawOffsetToQuillIndex(selectionRaw.start, offsetMap);
+    const end = rawOffsetToQuillIndex(selectionRaw.end, offsetMap);
+    const safeStart = Math.max(0, Math.min(start, quill.getLength() - 1));
+    const safeEnd = Math.max(safeStart, Math.min(end, quill.getLength() - 1));
+    quill.setSelection(safeStart, safeEnd - safeStart, source);
+  }
+
+
   function getInlineMetaMap(video) {
     return { ...(video?.script?.annotationsMeta || {}) };
   }
@@ -1069,13 +1188,96 @@ function extraerNotas(rawText) {
     const pct = currentScriptTarget > 0 ? Math.min(100, Math.round((wordCount / currentScriptTarget) * 100)) : 0;
     if ($videoScriptWordcount) $videoScriptWordcount.textContent = wordCount.toLocaleString("es-ES");
     if ($videoScriptProgress) $videoScriptProgress.textContent = `${pct}%`;
-    if ($videoScriptCountBadge) {
-      $videoScriptCountBadge.textContent = `Palabras: ${wordCount.toLocaleString("es-ES")} · Progreso: ${pct}%`;
-    }
+    renderCountWidget();
 
     const ppm = Math.max(60, Number($videoScriptPpm?.value) || loadStoredPpm(SCRIPT_PPM_KEY, 150));
     const minutes = wordCount > 0 ? Math.max(1, Math.round(wordCount / ppm)) : 0;
     if ($videoScriptDuration) $videoScriptDuration.textContent = minutes ? `${minutes} min` : "0 min";
+  }
+
+
+  function renderCountWidget() {
+    if (!$videoScriptCountBadge) return;
+    const pct = currentScriptTarget > 0 ? Math.min(100, Math.round((currentScriptWords / currentScriptTarget) * 100)) : 0;
+    $videoScriptCountBadge.classList.toggle("is-compact", countWidgetMode === "compact");
+    $videoScriptCountBadge.setAttribute("role", "button");
+    $videoScriptCountBadge.setAttribute("tabindex", "0");
+    $videoScriptCountBadge.setAttribute("aria-label", `Conteo de guion ${pct}%`);
+
+    if (countWidgetMode === "compact") {
+      $videoScriptCountBadge.innerHTML = `<span class="video-script-progress-track" aria-hidden="true"><span class="video-script-progress-fill" style="width:${pct}%"></span></span>`;
+      return;
+    }
+
+    $videoScriptCountBadge.textContent = `Palabras: ${currentScriptWords.toLocaleString("es-ES")} · Progreso: ${pct}%`;
+  }
+
+  function computeCountWidgetMode() {
+    if (!quill) return "normal";
+    const scrollTop = quill.root?.scrollTop || 0;
+    if (scrollTop <= SCRIPT_COMPACT_SCROLL_TOP_THRESHOLD) return "normal";
+    if (Date.now() < countWidgetExpandedUntil) return "normal";
+    const typingRecent = scriptEditorFocused && (Date.now() - lastScriptInputAt < SCRIPT_TYPING_COMPACT_MS);
+    return typingRecent ? "compact" : "normal";
+  }
+
+  function updateCountWidgetMode() {
+    const nextMode = computeCountWidgetMode();
+    if (nextMode !== countWidgetMode) {
+      countWidgetMode = nextMode;
+      if ($videoScriptCountHeader) {
+        $videoScriptCountHeader.classList.toggle("is-compact", countWidgetMode === "compact");
+      }
+    }
+    renderCountWidget();
+  }
+
+  function scheduleFollowCaret() {
+    if (!quill) return;
+    if (caretFollowRaf) cancelAnimationFrame(caretFollowRaf);
+    caretFollowRaf = requestAnimationFrame(() => {
+      caretFollowRaf = 0;
+      const range = quill.getSelection();
+      if (!range || range.length > 0) return;
+      const root = quill.root;
+      const rootRect = root.getBoundingClientRect();
+      if (!rootRect.width) return;
+      const bounds = quill.getBounds(range.index, 0);
+      const caretLeft = bounds.left;
+      const margin = 28;
+      const visibleLeft = root.scrollLeft + margin;
+      const visibleRight = root.scrollLeft + root.clientWidth - margin;
+
+      if (caretLeft < visibleLeft) {
+        root.scrollLeft = Math.max(0, caretLeft - margin);
+      } else if (caretLeft > visibleRight) {
+        root.scrollLeft = Math.max(0, caretLeft - root.clientWidth + margin);
+      }
+    });
+  }
+
+  function scheduleFloatingUiUpdate() {
+    if (floatingUiRaf) cancelAnimationFrame(floatingUiRaf);
+    floatingUiRaf = requestAnimationFrame(() => {
+      floatingUiRaf = 0;
+      updateFloatingUI();
+    });
+  }
+
+  function updateFloatingUI() {
+    if (!$viewVideoScript || !$viewVideoScript.classList.contains("view-active")) return;
+    const vv = window.visualViewport;
+    const viewportHeight = vv?.height || window.innerHeight;
+    const viewportTop = vv?.offsetTop || 0;
+    const keyboardOffset = Math.max(0, window.innerHeight - (viewportHeight + viewportTop));
+    const translateY = -keyboardOffset;
+
+    if ($videoScriptToolbar?.parentElement) {
+      $videoScriptToolbar.parentElement.style.transform = `translateY(${translateY}px)`;
+    }
+    if ($videoScriptCountHeader) {
+      $videoScriptCountHeader.style.transform = `translateY(${translateY}px)`;
+    }
   }
 
   function renderCountToggles(settings) {
@@ -1239,8 +1441,11 @@ function extraerNotas(rawText) {
     const Delta = window.Quill.import("delta");
     const base = quill.getContents();
     const ops = base?.ops || [];
+    const selectionRaw = getRawSelectionOffsets(quill);
     let changed = false;
     const next = [];
+
+    debugVideoScriptLog("[SCRIPT] parse:start", { source, hasSelection: !!selectionRaw });
 
     const pushText = (value, attrs) => {
       if (!value) return;
@@ -1264,7 +1469,6 @@ function extraerNotas(rawText) {
         pushText(String(part.value || ""), attrs);
       });
     };
-
 
     const appendFromString = (segment, attrs = {}) => {
       if (!segment) return;
@@ -1318,27 +1522,28 @@ function extraerNotas(rawText) {
     });
 
     if (!changed) {
+      debugVideoScriptLog("[SCRIPT] parse:skip-no-change");
       dumpScriptStructure();
       return;
     }
 
-    const selection = quill.getSelection();
     isApplyingScriptAnnotations = true;
     quill.setContents(new Delta(next), source);
     isApplyingScriptAnnotations = false;
-    if (selection) {
-      quill.setSelection(Math.min(selection.index, quill.getLength() - 1), selection.length, "silent");
-    }
+    restoreSelectionFromRawOffsets(selectionRaw, "silent");
+    debugVideoScriptLog("[SCRIPT] parse:applied", { changed });
     dumpScriptStructure();
   }
 
   function scheduleScriptAnnotationHighlighting() {
     if (!quill || isDelimiterRevealMode) return;
     if (scriptAnnotationTimer) clearTimeout(scriptAnnotationTimer);
+    debugVideoScriptLog("[SCRIPT] input->debounce", { wait: SCRIPT_ANNOTATION_DEBOUNCE });
     scriptAnnotationTimer = setTimeout(() => {
+      debugVideoScriptLog("[SCRIPT] debounce->parse");
       parseScriptEntities("silent");
       scheduleWordCountUpdate();
-    }, 150);
+    }, SCRIPT_ANNOTATION_DEBOUNCE);
   }
 
   function revealEmbedRaw(target, openLength, closeLength) {
@@ -1437,26 +1642,46 @@ function extraerNotas(rawText) {
       if (!range || range.length > 0) {
         renderInlineAnnotationToggle(null);
       }
+      scheduleFollowCaret();
+      updateCountWidgetMode();
     });
 
     quill.on("text-change", (delta, old, source) => {
       if (source === "silent") return;
       if (!isDelimiterRevealMode) scheduleScriptAnnotationHighlighting();
       if (source === "user") {
+        lastScriptInputAt = Date.now();
         scriptDirty = true;
         scheduleWordCountUpdate();
         scheduleScriptSave(false);
+        updateCountWidgetMode();
+        scheduleFloatingUiUpdate();
       }
+      scheduleFollowCaret();
     });
 
     quill.root.addEventListener("focusin", () => {
       scriptEditorFocused = true;
+      scheduleFloatingUiUpdate();
+      updateCountWidgetMode();
     });
 
     quill.root.addEventListener("focusout", () => {
       scriptEditorFocused = false;
       hideAnnotationFab();
       closeDelimiterRevealMode();
+      scheduleFloatingUiUpdate();
+      updateCountWidgetMode();
+    });
+
+    quill.root.addEventListener("scroll", () => {
+      updateCountWidgetMode();
+      scheduleFollowCaret();
+    }, { passive: true });
+
+    document.addEventListener("selectionchange", () => {
+      if (!quill?.hasFocus()) return;
+      scheduleFollowCaret();
     });
 
     document.addEventListener("pointerdown", (event) => {
@@ -1742,9 +1967,15 @@ function extraerNotas(rawText) {
     initQuill();
     activeScriptVideoId = videoId;
     scriptDirty = false;
+    lastScriptInputAt = 0;
+    countWidgetExpandedUntil = 0;
+    countWidgetMode = "normal";
     closeAnnotationPopup();
     loadScriptIntoEditor(videoId);
     setActiveView("view-video-script");
+    updateCountWidgetMode();
+    scheduleFloatingUiUpdate();
+    scheduleFollowCaret();
   }
 
   function closeScriptView() {
@@ -1757,6 +1988,10 @@ function extraerNotas(rawText) {
     }
     activeScriptVideoId = null;
     scriptEditorFocused = false;
+    countWidgetMode = "normal";
+    countWidgetExpandedUntil = 0;
+    if ($videoScriptToolbar?.parentElement) $videoScriptToolbar.parentElement.style.transform = "";
+    if ($videoScriptCountHeader) $videoScriptCountHeader.style.transform = "";
     renderInlineAnnotationToggle(null);
     hideAnnotationFab();
     setActiveView("view-videos");
@@ -2742,12 +2977,38 @@ const LINK_CATEGORY_LABELS = {
       updateTeleprompterHighlight();
     });
   }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", scheduleFloatingUiUpdate, { passive: true });
+    window.visualViewport.addEventListener("scroll", scheduleFloatingUiUpdate, { passive: true });
+  }
+  window.addEventListener("resize", scheduleFloatingUiUpdate, { passive: true });
+  document.addEventListener("focusin", scheduleFloatingUiUpdate);
+  document.addEventListener("focusout", () => {
+    setTimeout(scheduleFloatingUiUpdate, 0);
+  });
+
   window.addEventListener("pagehide", () => {
     if (scriptDirty) saveScript();
   });
 
   if ($videoScriptCountToggle) {
-    $videoScriptCountToggle.addEventListener("click", openCountSheet);
+    $videoScriptCountToggle.addEventListener("click", () => {
+      countWidgetExpandedUntil = Date.now() + SCRIPT_WIDGET_EXPAND_MS;
+      updateCountWidgetMode();
+      openCountSheet();
+    });
+  }
+  if ($videoScriptCountBadge) {
+    const expandCountWidget = () => {
+      countWidgetExpandedUntil = Date.now() + SCRIPT_WIDGET_EXPAND_MS;
+      updateCountWidgetMode();
+    };
+    $videoScriptCountBadge.addEventListener("click", expandCountWidget);
+    $videoScriptCountBadge.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      expandCountWidget();
+    });
   }
   if ($videoCountSheetClose) {
     $videoCountSheetClose.addEventListener("click", closeCountSheet);

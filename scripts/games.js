@@ -190,7 +190,8 @@ function getModeBases(modeId) {
 }
 
 function getGroupGameType(groupId) {
-  return String(groups[groupId]?.gameType || groupRatings[groupId]?.gameType || "normal").toLowerCase() === "sandbox" ? "sandbox" : "normal";
+  const rawType = String(groups[groupId]?.gameType || groupRatings[groupId]?.gameType || "normal").toLowerCase();
+  return rawType === "sandbox" ? "sandbox" : "normal";
 }
 
 function isSandboxGroup(groupId) {
@@ -474,7 +475,12 @@ function formatLineRight(matches, w, l, t, wr) {
 
 function getGroupCategory(groupId) {
   const raw = String(groups[groupId]?.category || "other").toLowerCase();
+  if (getGroupGameType(groupId) === "sandbox" || raw === "sandbox") return "sandbox";
   return raw === "shooter" ? "shooter" : "other";
+}
+
+function gameTypeFromCategory(category) {
+  return String(category || "other").toLowerCase() === "sandbox" ? "sandbox" : "normal";
 }
 
 function isShooterMode(modeId) {
@@ -1590,26 +1596,29 @@ async function createOrUpdateMode() {
     const name = $groupName.value.trim();
     if (!name) return;
     const groupIdRef = push(ref(db, GROUPS_PATH));
+    const categoryValue = ($groupCategory?.value || "other");
+    const gameType = gameTypeFromCategory(categoryValue);
     const groupPayload = {
       id: groupIdRef.key,
       name,
       emoji: ($groupEmoji.value || "🎮").trim() || "🎮",
       linkedHabitId: $groupHabit.value || null,
-      category: ($groupCategory?.value || "other"),
-      tags: { shooter: ($groupCategory?.value || "other") === "shooter" },
+      category: categoryValue,
+      tags: { shooter: categoryValue === "shooter" },
       rankType: ($groupRankType?.value || "none"),
       rating: normalizeRating({ type: ($groupRankType?.value || "none"), base: 0, tier: "Hierro", div: 1 }),
       accent: $groupAccent?.value || "#8b5cf6",
-      gameType: "normal",
+      gameType,
       createdAt: nowTs(),
       updatedAt: nowTs()
     };
+    console.log("[games] groupType:set", { groupId: groupPayload.id, gameType });
     groupIdValue = groupPayload.id;
     groups[groupPayload.id] = groupPayload;
     await set(groupIdRef, groupPayload);
     await update(ref(db), {
       [`${GAMES_GROUPS_PATH}/${groupPayload.id}/rating`]: groupPayload.rating,
-      [`${GAMES_GROUPS_PATH}/${groupPayload.id}/gameType`]: "normal"
+      [`${GAMES_GROUPS_PATH}/${groupPayload.id}/gameType`]: gameType
     });
   }
   if (!groupIdValue) return;
@@ -2704,21 +2713,25 @@ function bind() {
     if (!group) return;
     const prevRating = normalizeRating(group.rating || groupRatings[id]?.rating);
     const nextType = ($groupEditRankType?.value || "none");
+    const categoryValue = ($groupEditCategory?.value || "other");
+    const gameType = gameTypeFromCategory(categoryValue);
     const payload = {
       name: $groupEditName.value.trim(),
       emoji: ($groupEditEmoji.value || "🎮").trim() || "🎮",
       linkedHabitId: $groupEditHabit.value || null,
-      category: ($groupEditCategory?.value || "other"),
-      tags: { shooter: ($groupEditCategory?.value || "other") === "shooter" },
+      category: categoryValue,
+      tags: { shooter: categoryValue === "shooter" },
+      gameType,
       rankType: nextType,
       rating: prevRating.type === nextType ? prevRating : normalizeRating({ type: nextType, base: 0, tier: "Hierro", div: 1 }),
       accent: $groupEditAccent?.value || "#8b5cf6",
       updatedAt: nowTs()
     };
+    console.log("[games] groupType:set", { groupId: id, gameType });
     groups[id] = { ...group, ...payload };
     render();
     await update(ref(db, `${GROUPS_PATH}/${id}`), payload);
-    await set(ref(db, `${GAMES_GROUPS_PATH}/${id}/rating`), payload.rating);
+    await update(ref(db, `${GAMES_GROUPS_PATH}/${id}`), { rating: payload.rating, gameType });
     closeGroupModal();
     saveCache();
   });

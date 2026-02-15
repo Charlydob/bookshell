@@ -889,21 +889,62 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     return `ann_${(hash >>> 0).toString(36)}`;
   }
 
+  function extraerNotas(rawText) {
+    const text = String(rawText || "");
+    const segments = [];
+    let cursor = 0;
+
+    while (cursor < text.length) {
+      if (text[cursor] !== "#") {
+        let nextHash = cursor;
+        while (nextHash < text.length && text[nextHash] !== "#") nextHash += 1;
+        segments.push({ type: "text", value: text.slice(cursor, nextHash) });
+        cursor = nextHash;
+        continue;
+      }
+
+      let close = cursor + 1;
+      while (close < text.length && text[close] !== "#") close += 1;
+      if (close >= text.length) {
+        segments.push({ type: "text", value: text.slice(cursor) });
+        cursor = text.length;
+        break;
+      }
+
+      segments.push({
+        type: "note",
+        value: text.slice(cursor + 1, close),
+        raw: text.slice(cursor, close + 1)
+      });
+      cursor = close + 1;
+    }
+
+    return { segments };
+  }
+
   function parseInlineAnnotations(rawText) {
     const text = String(rawText || "");
+    const { segments } = extraerNotas(text);
     const annotations = [];
-    const regex = /#([^#\n]+)#/g;
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      const value = (match[1] || "").trim();
-      if (!value) continue;
-      annotations.push({
-        id: hashInlineAnnotationId(`${match.index}:${value}`),
-        text: value,
-        start: match.index,
-        end: match.index + match[0].length
-      });
-    }
+    let index = 0;
+
+    segments.forEach((segment) => {
+      if (segment.type === "note") {
+        const textValue = String(segment.value || "");
+        if (textValue.trim()) {
+          const raw = String(segment.raw || "");
+          annotations.push({
+            id: hashInlineAnnotationId(`${index}:${raw}`),
+            text: textValue,
+            start: index,
+            end: index + raw.length
+          });
+        }
+      }
+      const consumed = segment.type === "note" ? String(segment.raw || "") : String(segment.value || "");
+      index += consumed.length;
+    });
+
     return { annotations };
   }
 
@@ -974,9 +1015,6 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
         return;
       }
       if (embedType === "annotationCard") {
-        const value = insert.annotationCard || {};
-        const annCount = getWordTokens(value?.text || "").length;
-        if (currentCountSettings?.hashtags) breakdown.hashtags += annCount;
         return;
       }
       breakdown.normal += getEmbedWordCount(op);
@@ -1106,7 +1144,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     class AnnotationCardBlot extends BlockEmbed {
       static create(value) {
         const node = super.create();
-        const text = String(value?.text || "").trim();
+        const text = String(value?.text || "");
         const raw = String(value?.raw || `#${text}#`);
         node.setAttribute("data-raw", raw);
         node.setAttribute("data-text", text);
@@ -1196,21 +1234,20 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
 
     const parseAnnotationsInText = (segment, attrs = {}) => {
       if (!segment) return;
-      let cursor = 0;
-      const annRegex = /#([^#\n]+)#/g;
-      let annMatch;
-      while ((annMatch = annRegex.exec(segment)) !== null) {
-        pushText(segment.slice(cursor, annMatch.index), attrs);
-        const annText = String(annMatch[1] || "").trim();
-        if (annText) {
-          changed = true;
-          next.push({ insert: { annotationCard: { text: annText, raw: annMatch[0] } } });
-        } else {
-          pushText(annMatch[0], attrs);
+      const { segments } = extraerNotas(segment);
+      segments.forEach((part) => {
+        if (part.type === "note") {
+          const annText = String(part.value || "");
+          if (annText.trim()) {
+            changed = true;
+            next.push({ insert: { annotationCard: { text: annText, raw: String(part.raw || "") } } });
+          } else {
+            pushText(String(part.raw || ""), attrs);
+          }
+          return;
         }
-        cursor = annMatch.index + annMatch[0].length;
-      }
-      pushText(segment.slice(cursor), attrs);
+        pushText(String(part.value || ""), attrs);
+      });
     };
 
     const appendFromString = (segment, attrs = {}) => {

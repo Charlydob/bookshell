@@ -2377,7 +2377,7 @@ function renderModeDetail() {
       </section>
       <section class="game-detail-section">
         <strong>Bases sandbox</strong>
-        <div class="game-detail-bases-wrap">
+        <div class="game-detail-bases-wrap-sandbox">
           <div class="game-detail-sub">Dias base: ${getSandboxGroupState(mode.groupId).daysBase}</div>
           <div class="game-detail-sub">Peak dias: ${getSandboxGroupState(mode.groupId).peakDays}</div>
           <div class="game-detail-sub">Mundos perdidos base: ${getSandboxModeBases(mode.id).worldsLost}</div>
@@ -2761,30 +2761,26 @@ function openSandboxWorldDetailModal(modeId, worldId) {
   if (!mode?.groupId || !worldId) return;
   const groupId = mode.groupId;
   const state = { q: "", emoji: "all" };
+
   const overlay = document.createElement("div");
   overlay.className = "game-mini-modal-overlay";
   overlay.innerHTML = `<div class="game-mini-modal opal-modal" role="dialog" aria-modal="true" aria-label="Detalle de mundo">
     <div class="game-mini-title" data-world-head></div>
+
     <div class="opal-field"><span>Nombre</span><input type="text" data-world-name /></div>
     <div class="opal-field"><span>Día actual</span><input type="number" min="0" step="1" data-world-day /></div>
     <div class="opal-field"><span>Estado</span><select data-world-status><option value="active">active</option><option value="lost">lost</option></select></div>
+
     <details class="world-notes-details" open>
       <summary data-notes-summary>Coordenadas y notas</summary>
       <div class="opal-field"><input type="text" placeholder="Buscar..." data-note-search /></div>
       <div class="chip-row" data-emoji-chips></div>
-      <div class="sandbox-note-list" data-note-list></div>
-      <div class="sandbox-note-inputs">
-        <input type="text" placeholder="Emoji" maxlength="4" data-note-emoji />
-        <input type="text" placeholder="Nombre" data-note-name />
-        <input type="number" min="0" step="1" placeholder="Día" data-note-day />
-        <input type="number" step="1" placeholder="X" data-note-x />
-        <input type="number" step="1" placeholder="Y" data-note-y />
-        <input type="number" step="1" placeholder="Z" data-note-z />
-        <select data-note-dimension><option value="">Dimensión</option><option value="overworld">overworld</option><option value="nether">nether</option><option value="end">end</option></select>
-        <input type="text" placeholder="Nota" data-note-text />
-        <button class="game-ctrl-btn" data-act="add-note">Añadir nota</button>
+      <div class="sandbox-notes-actions">
+        <button type="button" class="game-ctrl-btn" data-act="open-add-note">Añadir nota</button>
       </div>
+      <div class="sandbox-note-list" data-note-list></div>
     </details>
+
     <div class="game-mini-actions">
       <button type="button" class="btn ghost" data-act="close">Cerrar</button>
       <button type="button" class="btn primary" data-act="save-world">Guardar</button>
@@ -2794,15 +2790,128 @@ function openSandboxWorldDetailModal(modeId, worldId) {
   document.body.classList.add("has-open-modal");
   console.log("[games][sandbox] worldModal:open", { worldId });
 
+  const closeOverlay = () => closeOverlayModal(overlay);
+
+  const getNoteId = (note) =>
+    String(note?.id ?? note?.noteId ?? note?.key ?? note?._id ?? "");
+
+  const getNoteById = (noteId) => {
+    const notes = getSandboxWorldNotes(groupId, worldId) || [];
+    return notes.find((n) => getNoteId(n) === String(noteId)) || null;
+  };
+
+  const openNoteModal = ({ mode = "add", noteId = null, seed = null } = {}) => {
+    const isEdit = mode === "edit";
+    const noteOverlay = document.createElement("div");
+    noteOverlay.className = "game-mini-modal-overlay is-child-modal";
+    noteOverlay.innerHTML = `<div class="game-mini-modal opal-modal sandbox-note-modal" role="dialog" aria-modal="true" aria-label="${isEdit ? "Editar nota" : "Añadir nota"}">
+      <div class="game-mini-title">${isEdit ? "Editar nota" : "Añadir nota"}</div>
+
+      <div class="sandbox-note-inputs">
+        <div class="sandbox-note-meta">
+          <input type="text" placeholder="Emoji" maxlength="4" data-note-emoji value="${seed?.emoji || "📍"}" />
+          <input type="text" placeholder="Nombre" data-note-name value="${seed?.name || seed?.title || ""}" />
+          <input type="number" min="0" step="1" placeholder="Día" data-note-day value="${seed?.day ?? ""}" />
+        </div>
+
+        <div class="sandbox-note-coords">
+          <input type="number" step="1" placeholder="X" data-note-x value="${seed?.x ?? ""}" />
+          <input type="number" step="1" placeholder="Y" data-note-y value="${seed?.y ?? ""}" />
+          <input type="number" step="1" placeholder="Z" data-note-z value="${seed?.z ?? ""}" />
+        </div>
+
+        <select data-note-dimension>
+          <option value="" ${!seed?.dimension ? "selected" : ""}>Dimensión</option>
+          <option value="overworld" ${seed?.dimension === "overworld" ? "selected" : ""}>overworld</option>
+          <option value="nether" ${seed?.dimension === "nether" ? "selected" : ""}>nether</option>
+          <option value="end" ${seed?.dimension === "end" ? "selected" : ""}>end</option>
+        </select>
+
+        <input type="text" placeholder="Nota" data-note-text value="${seed?.note || seed?.text || ""}" />
+      </div>
+
+      <div class="game-mini-actions">
+        <button type="button" class="btn ghost" data-act="close-note">Cancelar</button>
+        <button type="button" class="btn primary" data-act="${isEdit ? "save-note" : "add-note"}">${isEdit ? "Guardar" : "Añadir"}</button>
+      </div>
+    </div>`;
+
+    document.body.appendChild(noteOverlay);
+    document.body.classList.add("has-open-modal");
+
+    const closeNote = () => closeOverlayModal(noteOverlay);
+
+    noteOverlay.addEventListener("click", async (e) => {
+      if (e.target === noteOverlay || e.target.closest('[data-act="close-note"]')) return closeNote();
+
+      // ADD
+      if (e.target.closest('[data-act="add-note"]')) {
+        const noteRef = push(ref(db, `${GAMES_SANDBOX_WORLD_NOTES_PATH}/${groupId}/${worldId}`));
+        const note = normalizeSandboxWorldNote({
+          emoji: noteOverlay.querySelector('[data-note-emoji]')?.value || "📍",
+          name: noteOverlay.querySelector('[data-note-name]')?.value || null,
+          note: noteOverlay.querySelector('[data-note-text]')?.value || null,
+          day: noteOverlay.querySelector('[data-note-day]')?.value || null,
+          x: noteOverlay.querySelector('[data-note-x]')?.value || null,
+          y: noteOverlay.querySelector('[data-note-y]')?.value || null,
+          z: noteOverlay.querySelector('[data-note-z]')?.value || null,
+          dimension: noteOverlay.querySelector('[data-note-dimension]')?.value || null,
+          createdAt: nowTs()
+        }, groupId, worldId, noteRef.key);
+
+        await set(noteRef, note);
+        console.log("[games][sandbox] note:add", note);
+        closeNote();
+        renderNotes();
+        return;
+      }
+
+      // SAVE (EDIT)
+      if (e.target.closest('[data-act="save-note"]')) {
+        if (!noteId) return closeNote();
+        const noteRef = ref(db, `${GAMES_SANDBOX_WORLD_NOTES_PATH}/${groupId}/${worldId}/${noteId}`);
+
+        const payload = normalizeSandboxWorldNote({
+          ...(seed || {}),
+          emoji: noteOverlay.querySelector('[data-note-emoji]')?.value || "📍",
+          name: noteOverlay.querySelector('[data-note-name]')?.value || null,
+          note: noteOverlay.querySelector('[data-note-text]')?.value || null,
+          day: noteOverlay.querySelector('[data-note-day]')?.value || null,
+          x: noteOverlay.querySelector('[data-note-x]')?.value || null,
+          y: noteOverlay.querySelector('[data-note-y]')?.value || null,
+          z: noteOverlay.querySelector('[data-note-z]')?.value || null,
+          dimension: noteOverlay.querySelector('[data-note-dimension]')?.value || null,
+          updatedAt: nowTs()
+        }, groupId, worldId, noteId);
+
+        await update(noteRef, payload);
+        console.log("[games][sandbox] note:update", { noteId, payload });
+        closeNote();
+        renderNotes();
+        return;
+      }
+    });
+
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeNote(); }, { once: true });
+  };
+
+  const openAddNoteModal = () => openNoteModal({ mode: "add" });
+
   const renderNotes = () => {
     const world = getSandboxWorld(groupId, worldId);
     if (!world) return;
-    const notes = getSandboxWorldNotes(groupId, worldId);
+    const notes = getSandboxWorldNotes(groupId, worldId) || [];
     const search = state.q.trim().toLowerCase();
+
     const emojis = Array.from(new Set(notes.map((note) => getSandboxNoteEmoji(note)).filter(Boolean)));
     if (state.emoji !== "all" && !emojis.includes(state.emoji)) state.emoji = "all";
+
     const chipsWrap = overlay.querySelector("[data-emoji-chips]");
-    chipsWrap.innerHTML = [`<button class="chip ${state.emoji === "all" ? "is-on" : ""}" data-act="filter-emoji" data-emoji="all">Todos</button>`, ...emojis.map((emoji) => `<button class="chip ${state.emoji === emoji ? "is-on" : ""}" data-act="filter-emoji" data-emoji="${emoji}">${emoji}</button>`)].join("");
+    chipsWrap.innerHTML = [
+      `<button class="chip ${state.emoji === "all" ? "is-on" : ""}" data-act="filter-emoji" data-emoji="all">Todos</button>`,
+      ...emojis.map((emoji) => `<button class="chip ${state.emoji === emoji ? "is-on" : ""}" data-act="filter-emoji" data-emoji="${emoji}">${emoji}</button>`)
+    ].join("");
+
     const filtered = notes.filter((note) => {
       const emoji = getSandboxNoteEmoji(note);
       if (state.emoji !== "all" && emoji !== state.emoji) return false;
@@ -2810,13 +2919,31 @@ function openSandboxWorldDetailModal(modeId, worldId) {
       const blob = `${note.name || note.title || ""} ${note.note || note.text || ""}`.toLowerCase();
       return blob.includes(search);
     });
+
     overlay.querySelector("[data-notes-summary]").textContent = `Coordenadas y notas (${notes.length})`;
-    overlay.querySelector("[data-note-list]").innerHTML = filtered.map((note) => `<div class="note-row"><div class="note-row-title">${getSandboxNoteEmoji(note)} <strong>${note.name || note.title || "Sin nombre"}</strong></div><div class="note-row-meta">(${note.x ?? "-"} ${note.y ?? "-"} ${note.z ?? "-"} · ${note.dimension || "world"}) <span>Día ${note.day ?? "-"}</span></div><div class="note-row-text">${note.note || note.text || ""}</div></div>`).join("") || '<div class="game-detail-sub">Sin notas.</div>';
+
+    overlay.querySelector("[data-note-list]").innerHTML =
+      filtered.map((note) => {
+        const noteId = getNoteId(note);
+        return `
+          <div class="note-row" data-note-id="${noteId}">
+            <div class="note-row-head">
+              <div class="note-row-title">${getSandboxNoteEmoji(note)} <strong>${note.name || note.title || "Sin nombre"} (${note.x ?? "-"} ${note.y ?? "-"} ${note.z ?? "-"} · ${note.dimension || "world"}) <span>Día ${note.day ?? "-"}</strong></div>
+              <div class="note-row-actions">
+                <button type="button" class="icon-btn" data-act="edit-note" title="Editar">✏️</button>
+                <button type="button" class="icon-btn danger" data-act="del-note" title="Eliminar">🗑️</button>
+              </div>
+            </div>
+            <div class="note-row-meta"></span></div>
+            <div class="note-row-text">${note.note || note.text || ""}</div>
+          </div>
+        `;
+      }).join("") || '<div class="game-detail-sub">Sin notas.</div>';
   };
 
   const renderWorld = () => {
     const world = getSandboxWorld(groupId, worldId);
-    if (!world) return closeOverlayModal(overlay);
+    if (!world) return closeOverlay();
     overlay.querySelector("[data-world-head]").innerHTML = `${world.name} <span class="chip is-on">${world.status}</span>`;
     overlay.querySelector("[data-world-name]").value = world.name || "Mundo";
     overlay.querySelector("[data-world-day]").value = Number(world.currentDay || 0);
@@ -2833,16 +2960,42 @@ function openSandboxWorldDetailModal(modeId, worldId) {
   });
 
   overlay.addEventListener("click", async (e) => {
-    if (e.target === overlay || e.target.closest('[data-act="close"]')) return closeOverlayModal(overlay);
+    if (e.target === overlay || e.target.closest('[data-act="close"]')) return closeOverlay();
+
     const emojiChip = e.target.closest('[data-act="filter-emoji"]');
     if (emojiChip) {
       state.emoji = emojiChip.dataset.emoji || "all";
       renderNotes();
       return;
     }
+
+    if (e.target.closest('[data-act="open-add-note"]')) {
+      openAddNoteModal();
+      return;
+    }
+
+    const row = e.target.closest(".note-row");
+    if (row && e.target.closest('[data-act="del-note"]')) {
+      const noteId = row.dataset.noteId;
+      if (!noteId) return;
+      await remove(ref(db, `${GAMES_SANDBOX_WORLD_NOTES_PATH}/${groupId}/${worldId}/${noteId}`));
+      console.log("[games][sandbox] note:del", { noteId });
+      renderNotes();
+      return;
+    }
+
+    if (row && e.target.closest('[data-act="edit-note"]')) {
+      const noteId = row.dataset.noteId;
+      if (!noteId) return;
+      const seed = getNoteById(noteId);
+      openNoteModal({ mode: "edit", noteId, seed });
+      return;
+    }
+
     if (e.target.closest('[data-act="save-world"]')) {
       const current = getSandboxWorld(groupId, worldId);
       if (!current) return;
+
       const payload = normalizeSandboxWorld({
         ...current,
         name: overlay.querySelector('[data-world-name]')?.value || "Mundo",
@@ -2850,33 +3003,16 @@ function openSandboxWorldDetailModal(modeId, worldId) {
         status: overlay.querySelector('[data-world-status]')?.value || "active",
         updatedAt: nowTs()
       }, groupId, worldId);
+
       await update(ref(db, `${GAMES_SANDBOX_WORLDS_PATH}/${groupId}/${worldId}`), payload);
       renderModeDetail();
       renderGamesList();
-      return closeOverlayModal(overlay);
-    }
-    if (e.target.closest('[data-act="add-note"]')) {
-      const noteRef = push(ref(db, `${GAMES_SANDBOX_WORLD_NOTES_PATH}/${groupId}/${worldId}`));
-      const note = normalizeSandboxWorldNote({
-        emoji: overlay.querySelector('[data-note-emoji]')?.value || "📍",
-        name: overlay.querySelector('[data-note-name]')?.value || null,
-        note: overlay.querySelector('[data-note-text]')?.value || null,
-        day: overlay.querySelector('[data-note-day]')?.value || null,
-        x: overlay.querySelector('[data-note-x]')?.value || null,
-        y: overlay.querySelector('[data-note-y]')?.value || null,
-        z: overlay.querySelector('[data-note-z]')?.value || null,
-        dimension: overlay.querySelector('[data-note-dimension]')?.value || null,
-        createdAt: nowTs()
-      }, groupId, worldId, noteRef.key);
-      await set(noteRef, note);
-      console.log("[games][sandbox] note:add", note);
-      ["[data-note-name]", "[data-note-text]", "[data-note-day]", "[data-note-x]", "[data-note-y]", "[data-note-z]"]
-        .forEach((sel) => { const n = overlay.querySelector(sel); if (n) n.value = ""; });
-      renderNotes();
-      return;
+      return closeOverlay();
     }
   });
 }
+
+
 
 async function addSandboxWorld(modeId) {
   const mode = modes[modeId];

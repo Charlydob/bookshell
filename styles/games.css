@@ -805,10 +805,33 @@ max-height: 740px;
 .sandbox-world-card.is-active { border-color: rgba(120,255,190,.75); }
 .sandbox-world-edit-grid { display:grid; grid-template-columns: repeat(3, minmax(120px,1fr)); gap:8px; margin-bottom:8px; }
 .sandbox-world-edit-grid label { display:grid; gap:4px; font-size:.75rem; }
-.sandbox-note-inputs { display:grid; grid-template-columns: repeat(auto-fit, minmax(110px,1fr)); gap:6px; margin-top:10px; }
+.sandbox-note-inputs { 
+  display:grid; 
+  grid-template-columns: repeat(auto-fit, minmax(40px,1fr)); 
+  gap:6px; 
+  margin-top:10px; 
+}
 .sandbox-note-list { display:grid; gap:6px; margin-top:8px; }
 .sandbox-note-item { border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:6px 8px; font-size:.74rem; opacity:.85; }
 
+/* mini modal hijo por encima del detalle */
+.game-mini-modal-overlay.is-child-modal{ z-index: 99999; }
+
+/* botón al final del bloque */
+.sandbox-notes-actions{ display:flex; justify-content:flex-end; margin-top:10px; }
+
+/* layout modal añadir nota */
+.sandbox-note-modal .sandbox-note-inputs{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.sandbox-note-coords{
+  display:flex;
+  gap:8px;
+}
+.sandbox-note-coords > input{ flex:1 1 0; min-width:0; }
 
 
 .opal-modal{
@@ -841,3 +864,29 @@ max-height: 740px;
 .note-row-title{ display:flex; gap:6px; align-items:center; }
 .note-row-meta{ font-size:.78rem; opacity:.78; display:flex; justify-content:space-between; }
 .note-row-text{ font-size:.82rem; opacity:.9; margin-top:4px; }
+.sandbox-note-meta{
+  font-size:.72rem;
+  opacity:.7;
+  display:flex;
+  gap:8px;
+  justify-content:space-between;
+  margin-top:6px;
+  flex-direction: row;
+  min-width: none;
+  max-width: 380px;
+}
+.note-row-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.note-row-actions{display:flex;gap:6px}
+.icon-btn{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);border-radius:10px;padding:6px 8px;line-height:1;cursor:pointer}
+.icon-btn.danger{border-color:rgba(255,90,90,.25)}
+.note-row-title{
+  font-size: 11px;
+}
+
+.game-detail-bases-wrap-sandbox{
+  position: relative;
+  top: 0px;
+  font-size: 24px;
+  display: flex;
+  gap: 6px;
+}

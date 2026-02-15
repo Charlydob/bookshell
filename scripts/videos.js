@@ -889,23 +889,41 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
     return `ann_${(hash >>> 0).toString(36)}`;
   }
 
-  function parseInlineAnnotations(rawText) {
-    const text = String(rawText || "");
-    const annotations = [];
-    const regex = /#([^#\n]+)#/g;
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      const value = (match[1] || "").trim();
-      if (!value) continue;
-      annotations.push({
-        id: hashInlineAnnotationId(`${match.index}:${value}`),
-        text: value,
-        start: match.index,
-        end: match.index + match[0].length
-      });
-    }
-    return { annotations };
+function parseInlineAnnotations(rawText) {
+  const text = String(rawText || "");
+  const annotations = [];
+
+  // 1) Bloques:
+  //  (# en línea sola) \n ... \n (# en línea sola)
+  const blockRegex = /(^|\n)#\s*\n([\s\S]*?)\n#\s*(?=\n|$)/g;
+  let m;
+  while ((m = blockRegex.exec(text)) !== null) {
+    const value = String(m[2] || "").trim();
+    if (!value) continue;
+    annotations.push({
+      id: hashInlineAnnotationId(`${m.index}:${value}`),
+      text: value,
+      start: m.index,
+      end: m.index + m[0].length
+    });
   }
+
+  // 2) Inline: #algo#
+  const inlineRegex = /#([^#\n]+)#/g;
+  while ((m = inlineRegex.exec(text)) !== null) {
+    const value = String(m[1] || "").trim();
+    if (!value) continue;
+    annotations.push({
+      id: hashInlineAnnotationId(`${m.index}:${value}`),
+      text: value,
+      start: m.index,
+      end: m.index + m[0].length
+    });
+  }
+
+  return { annotations };
+}
+
 
   function getInlineMetaMap(video) {
     return { ...(video?.script?.annotationsMeta || {}) };
@@ -1194,24 +1212,56 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       next.push(attrs && Object.keys(attrs).length ? { insert: value, attributes: attrs } : { insert: value });
     };
 
-    const parseAnnotationsInText = (segment, attrs = {}) => {
-      if (!segment) return;
-      let cursor = 0;
-      const annRegex = /#([^#\n]+)#/g;
-      let annMatch;
-      while ((annMatch = annRegex.exec(segment)) !== null) {
-        pushText(segment.slice(cursor, annMatch.index), attrs);
-        const annText = String(annMatch[1] || "").trim();
-        if (annText) {
-          changed = true;
-          next.push({ insert: { annotationCard: { text: annText, raw: annMatch[0] } } });
-        } else {
-          pushText(annMatch[0], attrs);
-        }
-        cursor = annMatch.index + annMatch[0].length;
+const parseAnnotationsInText = (segment, attrs = {}) => {
+  if (!segment) return;
+
+  // helper: inline #...#
+  const parseInline = (s) => {
+    let cursor = 0;
+    const inlineRegex = /#([^#\n]+)#/g;
+    let mm;
+    while ((mm = inlineRegex.exec(s)) !== null) {
+      pushText(s.slice(cursor, mm.index), attrs);
+      const annText = String(mm[1] || "").trim();
+      if (annText) {
+        changed = true;
+        next.push({ insert: { annotationCard: { text: annText, raw: mm[0] } } });
+      } else {
+        pushText(mm[0], attrs);
       }
-      pushText(segment.slice(cursor), attrs);
-    };
+      cursor = mm.index + mm[0].length;
+    }
+    pushText(s.slice(cursor), attrs);
+  };
+
+  // 1) bloques multilínea con # en línea sola
+  let cursor = 0;
+  const blockRegex = /(^|\n)#\s*\n([\s\S]*?)\n#\s*(?=\n|$)/g;
+  let m;
+
+  while ((m = blockRegex.exec(segment)) !== null) {
+    // texto antes del bloque
+    parseInline(segment.slice(cursor, m.index));
+
+    // preserva el salto previo si lo consumió el regex
+    if (m[1] === "\n") pushText("\n", attrs);
+
+    const blockText = String(m[2] || "").trim();
+    if (blockText) {
+      changed = true;
+      next.push({ insert: { annotationCard: { text: blockText, raw: m[0] } } });
+    } else {
+      // si está vacío, lo dejamos tal cual
+      pushText(m[0], attrs);
+    }
+
+    cursor = m.index + m[0].length;
+  }
+
+  // resto del texto (con inline)
+  parseInline(segment.slice(cursor));
+};
+
 
     const appendFromString = (segment, attrs = {}) => {
       if (!segment) return;
@@ -2949,53 +2999,64 @@ const LINK_CATEGORY_LABELS = {
     });
   }
 
-  // Guardar vídeo
-  if ($videoForm) {
-    $videoForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const id = $videoId.value || null;
-      const title = ($videoTitle.value || "").trim();
-      if (!title) return;
+// Guardar vídeo
+if ($videoForm) {
+  $videoForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
 
-      const scriptWords = Math.max(0, Number($videoScriptWords.value) || 0);
-    let durationSec = toSeconds($videoDurationMin.value, $videoDurationSec.value);
-let editedSec   = toSeconds($videoEditedMin.value, $videoEditedSec.value);
+    const id = ($videoId?.value || "").trim() || null;
+    const title = ($videoTitle?.value || "").trim();
+    if (!title) return;
 
-if (editedSec > durationSec) durationSec = editedSec; // <- clave: no capar
+    const scriptWords = Math.max(0, Number($videoScriptWords?.value) || 0);
 
-      const publishDate = $videoPublishDate.value || null;
-      const status = $videoStatus.value || "in_progress";
+    let durationSec = toSeconds($videoDurationMin?.value, $videoDurationSec?.value);
+    let editedSec   = toSeconds($videoEditedMin?.value,  $videoEditedSec?.value);
+    if (editedSec > durationSec) durationSec = editedSec;
 
-      const data = {
-        title,
-        type: id ? (videos?.[id]?.type || "video") : "video",
-        scriptWords,
-        scriptTarget: 2000,
-        durationSeconds: durationSec,
-        editedSeconds: editedSec,
-        publishDate,
-        status,
-        updatedAt: Date.now()
-      };
+    const publishDate = ($videoPublishDate?.value || "").trim() || null;
+    const status = ($videoStatus?.value || "").trim() || "script";
 
-      try {
-        if (id) {
-          await updateItem("script", id, data);
-          showVideoToast("Cambios guardados");
-        } else {
-          const newRef = push(ref(db, VIDEOS_PATH));
-          await set(newRef, {
-            ...data,
-            createdAt: Date.now()
-          });
-        }
-      } catch (err) {
-        console.error("Error guardando vídeo", err);
+    const now = Date.now();
+    const data = {
+      title,
+      type: id ? (videos?.[id]?.type || "video") : "video",
+      scriptWords,
+      scriptTarget: id ? (videos?.[id]?.scriptTarget || 2000) : 2000,
+      durationSeconds: durationSec,
+      editedSeconds: editedSec,
+      publishDate,
+      status,
+      updatedAt: now
+    };
+
+    try {
+      if (id) {
+        // ✅ update duro a Firebase
+        await update(ref(db, `${VIDEOS_PATH}/${id}`), data);
+
+        // ✅ cache local + rerender
+        videos[id] = { ...(videos[id] || {}), ...data };
+        rebuildState();
+        renderVideos();
+        renderVideoStats();
+        renderVideoCalendar();
+
+        showVideoToast("Cambios guardados");
+      } else {
+        const newRef = push(ref(db, VIDEOS_PATH));
+        await set(newRef, { ...data, createdAt: now });
+        showVideoToast("Vídeo creado");
       }
+    } catch (err) {
+      console.error("Error guardando vídeo", err);
+      showVideoToast("No se pudo guardar");
+    }
 
-      closeVideoModal();
-    });
-  }
+    closeVideoModal();
+  });
+}
+
 
   // === Firebase listeners ===
   onValue(ref(db, VIDEOS_PATH), (snap) => {

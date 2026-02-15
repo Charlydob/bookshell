@@ -1612,3 +1612,4 @@
     margin-left: 0;
   }
 }
+.script-annotation-card .annotation-text { white-space: pre-wrap; }

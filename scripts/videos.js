@@ -890,38 +890,76 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
   }
 
 function parseInlineAnnotations(rawText) {
-  const text = String(rawText || "");
+  const { segments } = extraerNotas(rawText);
   const annotations = [];
+  let cursor = 0;
 
-  // 1) Bloques:
-  //  (# en línea sola) \n ... \n (# en línea sola)
-  const blockRegex = /(^|\n)#\s*\n([\s\S]*?)\n#\s*(?=\n|$)/g;
-  let m;
-  while ((m = blockRegex.exec(text)) !== null) {
-    const value = String(m[2] || "").trim();
-    if (!value) continue;
-    annotations.push({
-      id: hashInlineAnnotationId(`${m.index}:${value}`),
-      text: value,
-      start: m.index,
-      end: m.index + m[0].length
-    });
-  }
-
-  // 2) Inline: #algo#
-  const inlineRegex = /#([^#\n]+)#/g;
-  while ((m = inlineRegex.exec(text)) !== null) {
-    const value = String(m[1] || "").trim();
-    if (!value) continue;
-    annotations.push({
-      id: hashInlineAnnotationId(`${m.index}:${value}`),
-      text: value,
-      start: m.index,
-      end: m.index + m[0].length
-    });
-  }
+  segments.forEach((segment) => {
+    const segmentValue = String(segment?.value || "");
+    if (segment.type === "note") {
+      if (segmentValue.trim()) {
+        annotations.push({
+          id: hashInlineAnnotationId(`${cursor}:${segmentValue}`),
+          text: segmentValue,
+          raw: segment.raw,
+          start: cursor,
+          end: cursor + String(segment.raw || "").length
+        });
+      }
+      cursor += String(segment.raw || "").length;
+      return;
+    }
+    cursor += segmentValue.length;
+  });
 
   return { annotations };
+}
+
+function extraerNotas(rawText) {
+  const text = String(rawText || "");
+  const segments = [];
+  let i = 0;
+  let textBuffer = "";
+
+  const flushTextBuffer = () => {
+    if (!textBuffer) return;
+    segments.push({ type: "text", value: textBuffer });
+    textBuffer = "";
+  };
+
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch !== "#") {
+      textBuffer += ch;
+      i += 1;
+      continue;
+    }
+
+    let closeIndex = -1;
+    let j = i + 1;
+    while (j < text.length) {
+      if (text[j] === "#") {
+        closeIndex = j;
+        break;
+      }
+      j += 1;
+    }
+
+    if (closeIndex === -1) {
+      textBuffer += text.slice(i);
+      i = text.length;
+      break;
+    }
+
+    flushTextBuffer();
+    const value = text.slice(i + 1, closeIndex);
+    const raw = text.slice(i, closeIndex + 1);
+    segments.push({ type: "note", value, raw });
+    i = closeIndex + 1;
+  }
+
+  flushTextBuffer();
+  return { segments };
 }
 
 
@@ -992,9 +1030,6 @@ function parseInlineAnnotations(rawText) {
         return;
       }
       if (embedType === "annotationCard") {
-        const value = insert.annotationCard || {};
-        const annCount = getWordTokens(value?.text || "").length;
-        if (currentCountSettings?.hashtags) breakdown.hashtags += annCount;
         return;
       }
       breakdown.normal += getEmbedWordCount(op);
@@ -1212,55 +1247,23 @@ function parseInlineAnnotations(rawText) {
       next.push(attrs && Object.keys(attrs).length ? { insert: value, attributes: attrs } : { insert: value });
     };
 
-const parseAnnotationsInText = (segment, attrs = {}) => {
-  if (!segment) return;
-
-  // helper: inline #...#
-  const parseInline = (s) => {
-    let cursor = 0;
-    const inlineRegex = /#([^#\n]+)#/g;
-    let mm;
-    while ((mm = inlineRegex.exec(s)) !== null) {
-      pushText(s.slice(cursor, mm.index), attrs);
-      const annText = String(mm[1] || "").trim();
-      if (annText) {
-        changed = true;
-        next.push({ insert: { annotationCard: { text: annText, raw: mm[0] } } });
-      } else {
-        pushText(mm[0], attrs);
-      }
-      cursor = mm.index + mm[0].length;
-    }
-    pushText(s.slice(cursor), attrs);
-  };
-
-  // 1) bloques multilínea con # en línea sola
-  let cursor = 0;
-  const blockRegex = /(^|\n)#\s*\n([\s\S]*?)\n#\s*(?=\n|$)/g;
-  let m;
-
-  while ((m = blockRegex.exec(segment)) !== null) {
-    // texto antes del bloque
-    parseInline(segment.slice(cursor, m.index));
-
-    // preserva el salto previo si lo consumió el regex
-    if (m[1] === "\n") pushText("\n", attrs);
-
-    const blockText = String(m[2] || "").trim();
-    if (blockText) {
-      changed = true;
-      next.push({ insert: { annotationCard: { text: blockText, raw: m[0] } } });
-    } else {
-      // si está vacío, lo dejamos tal cual
-      pushText(m[0], attrs);
-    }
-
-    cursor = m.index + m[0].length;
-  }
-
-  // resto del texto (con inline)
-  parseInline(segment.slice(cursor));
-};
+    const parseAnnotationsInText = (segment, attrs = {}) => {
+      if (!segment) return;
+      const { segments } = extraerNotas(segment);
+      segments.forEach((part) => {
+        if (part.type === "note") {
+          const noteText = String(part.value || "");
+          if (noteText.trim()) {
+            changed = true;
+            next.push({ insert: { annotationCard: { text: noteText, raw: part.raw } } });
+          } else {
+            pushText(String(part.raw || ""), attrs);
+          }
+          return;
+        }
+        pushText(String(part.value || ""), attrs);
+      });
+    };
 
 
     const appendFromString = (segment, attrs = {}) => {

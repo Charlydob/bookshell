@@ -764,3 +764,29 @@ max-height: 740px;
   padding: 8px;
   box-shadow: inset 0 0 0 1px rgba(126, 211, 255, .08);
 }
+
+.game-card-sandbox {
+  max-height: none;
+  border: 1px solid rgba(120,255,190,.26);
+  background: linear-gradient(145deg, rgba(30,78,64,.35), rgba(38,64,100,.28));
+  backdrop-filter: blur(5px);
+}
+.sandbox-card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.sandbox-card-title { font-weight:700; font-size:.92rem; }
+.sandbox-chip { font-size:.62rem; border:1px solid rgba(255,255,255,.2); border-radius:999px; padding:2px 8px; opacity:.9; }
+.sandbox-kpi-row { display:flex; align-items:baseline; gap:8px; margin-top:8px; }
+.sandbox-kpi-label { font-size:.72rem; opacity:.78; }
+.sandbox-days-display { border:0; background:none; color:inherit; padding:0; font-size:1.5rem; font-weight:800; cursor:pointer; }
+.sandbox-subline { font-size:.72rem; opacity:.72; margin-top:4px; }
+.sandbox-inline-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+.sandbox-days-editor { display:flex; gap:8px; margin-top:8px; }
+.sandbox-days-editor input { width:92px; }
+.sandbox-world-list { display:grid; gap:8px; margin-top:8px; }
+.sandbox-world-card { text-align:left; border:1px solid rgba(255,255,255,.18); border-radius:11px; background:rgba(255,255,255,.04); color:inherit; padding:8px; }
+.sandbox-world-card.is-active { border-color: rgba(120,255,190,.75); }
+.sandbox-world-edit-grid { display:grid; grid-template-columns: repeat(3, minmax(120px,1fr)); gap:8px; margin-bottom:8px; }
+.sandbox-world-edit-grid label { display:grid; gap:4px; font-size:.75rem; }
+.sandbox-note-inputs { display:grid; grid-template-columns: repeat(7, minmax(72px,1fr)); gap:6px; margin-top:10px; }
+.sandbox-note-list { display:grid; gap:6px; margin-top:8px; }
+.sandbox-note-item { border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:6px 8px; font-size:.74rem; opacity:.85; }
+

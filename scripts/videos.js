@@ -74,6 +74,7 @@ let floatingUiRaf = 0;
 let lastScriptInputAt = 0;
 let countWidgetExpandedUntil = 0;
 let countWidgetMode = "normal";
+let videoUi = { toolbarOpen: false, countOpen: false, countMiniMode: "pct", lastInputTs: 0, dragging: false };
 let links = {};
 let books = {};
 let quoteBooks = {};
@@ -89,6 +90,7 @@ const SCRIPT_COMPACT_SCROLL_TOP_THRESHOLD = 12;
 const SCRIPT_WIDGET_EXPAND_MS = 4000;
 const SCRIPT_PPM_KEY = "bookshell_video_script_ppm_v1";
 const TELEPROMPTER_PPM_KEY = "bookshell_video_teleprompter_ppm_v1";
+const VIDEO_COUNT_MINI_MODE_KEY = "bookshell_video_count_mini_mode_v1";
 
 const DEFAULT_COUNT_SETTINGS = {
   headings: true,
@@ -483,10 +485,163 @@ if ($viewVideos) {
   const $videoToolbarMoreToggle = document.getElementById("video-toolbar-more-toggle");
   const $videoToolbarMoreMenu = document.getElementById("video-toolbar-more-menu");
   const DEBUG_VIDEO_SCRIPT = Boolean(window.DEBUG_VIDEO_SCRIPT);
+  let $videoToolbarRail = null;
+  let $videoToolbarRailHandle = null;
+  let $videoToolbarPanel = null;
+  let $videoCountRail = null;
+  let $videoCountRailHandle = null;
+  let $videoCountPanel = null;
+  let $videoCountRing = null;
+  let $videoCountRingText = null;
+  let edgeGestureState = null;
+  let autoFoldTimer = null;
 
   function debugVideoScriptLog(...args) {
     if (!DEBUG_VIDEO_SCRIPT) return;
     console.log(...args);
+  }
+
+  function createToolbarRailOnce() {
+    if ($videoToolbarRail || !$viewVideoScript || !$videoScriptToolbar) return;
+    $videoToolbarRail = document.createElement("div");
+    $videoToolbarRail.className = "video-toolbar-rail";
+    $videoToolbarRail.id = "video-toolbar-rail";
+    $videoToolbarRailHandle = document.createElement("button");
+    $videoToolbarRailHandle.type = "button";
+    $videoToolbarRailHandle.className = "video-rail-handle";
+    $videoToolbarRailHandle.textContent = ">";
+    $videoToolbarPanel = document.createElement("div");
+    $videoToolbarPanel.className = "video-toolbar-panel";
+    $videoToolbarPanel.appendChild($videoScriptToolbar);
+    $videoToolbarRail.append($videoToolbarRailHandle, $videoToolbarPanel);
+    $viewVideoScript.appendChild($videoToolbarRail);
+    const legacyToolbarFloating = $viewVideoScript.querySelector(".video-script-toolbar-floating");
+    if (legacyToolbarFloating) legacyToolbarFloating.style.display = "none";
+
+    $videoToolbarRailHandle.addEventListener("click", () => {
+      if (videoUi.toolbarOpen) closeToolbar(); else openToolbar();
+    });
+  }
+
+  function createCountRailOnce() {
+    if ($videoCountRail || !$viewVideoScript || !$videoScriptCountHeader) return;
+    videoUi.countMiniMode = localStorage.getItem(VIDEO_COUNT_MINI_MODE_KEY) === "words" ? "words" : "pct";
+    $videoCountRail = document.createElement("div");
+    $videoCountRail.className = "video-count-rail";
+    $videoCountRail.id = "video-count-rail";
+    $videoCountRailHandle = document.createElement("button");
+    $videoCountRailHandle.type = "button";
+    $videoCountRailHandle.className = "video-count-handle";
+    $videoCountRailHandle.innerHTML = `<span class="video-count-ring" id="video-count-ring"><span class="video-count-ring-inner" id="video-count-ring-text">0%</span></span>`;
+    $videoCountPanel = document.createElement("div");
+    $videoCountPanel.className = "video-count-panel";
+    $videoCountPanel.appendChild($videoScriptCountHeader);
+    $videoCountRail.append($videoCountRailHandle, $videoCountPanel);
+    $viewVideoScript.appendChild($videoCountRail);
+    $videoCountRing = $videoCountRail.querySelector("#video-count-ring");
+    $videoCountRingText = $videoCountRail.querySelector("#video-count-ring-text");
+
+    $videoCountRailHandle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      videoUi.countMiniMode = videoUi.countMiniMode === "pct" ? "words" : "pct";
+      localStorage.setItem(VIDEO_COUNT_MINI_MODE_KEY, videoUi.countMiniMode);
+      updateCountRing();
+    });
+  }
+
+  function setVideoRailsActive(active) {
+    createToolbarRailOnce();
+    createCountRailOnce();
+    if ($videoToolbarRail) $videoToolbarRail.classList.toggle("is-active", !!active);
+    if ($videoCountRail) $videoCountRail.classList.toggle("is-active", !!active);
+    if (!active) {
+      closeToolbar();
+      closeCount();
+    }
+  }
+
+  function openToolbar() {
+    if (!$videoToolbarRail) return;
+    videoUi.toolbarOpen = true;
+    $videoToolbarRail.classList.add("is-open");
+  }
+
+  function closeToolbar() {
+    if (!$videoToolbarRail) return;
+    videoUi.toolbarOpen = false;
+    $videoToolbarRail.classList.remove("is-open");
+  }
+
+  function openCount() {
+    if (!$videoCountRail) return;
+    videoUi.countOpen = true;
+    $videoCountRail.classList.add("is-open");
+  }
+
+  function closeCount() {
+    if (!$videoCountRail) return;
+    videoUi.countOpen = false;
+    $videoCountRail.classList.remove("is-open");
+  }
+
+  function updateCountRing() {
+    if (!$videoCountRing || !$videoCountRingText) return;
+    const hasTarget = Number(currentScriptTarget) > 0;
+    const progress = hasTarget ? Math.max(0, Math.min(1, currentScriptWords / currentScriptTarget)) : 0;
+    const pct = hasTarget ? `${Math.round(progress * 100)}%` : "—";
+    $videoCountRing.style.setProperty("--video-count-progress", String(progress));
+    $videoCountRingText.textContent = videoUi.countMiniMode === "words" ? `${currentScriptWords}` : pct;
+  }
+
+  function scheduleAutoFoldPanels() {
+    if (videoUi.dragging) return;
+    if (autoFoldTimer) clearTimeout(autoFoldTimer);
+    autoFoldTimer = setTimeout(() => {
+      if (videoUi.dragging) return;
+      closeToolbar();
+      closeCount();
+    }, 30);
+  }
+
+  function handleEdgeGestureStart(clientX, target, pointerId = null) {
+    const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+    let mode = "";
+    if (clientX < 18) mode = "openToolbar";
+    if (clientX > vw - 18) mode = "openCount";
+    if (videoUi.toolbarOpen && target?.closest?.("#video-toolbar-rail")) mode = "closeToolbar";
+    if (videoUi.countOpen && target?.closest?.("#video-count-rail")) mode = "closeCount";
+    if (!mode) return;
+    edgeGestureState = { mode, startX: clientX, pointerId };
+    videoUi.dragging = true;
+  }
+
+  function handleEdgeGestureMove(clientX) {
+    if (!edgeGestureState) return;
+    const dx = clientX - edgeGestureState.startX;
+    if (edgeGestureState.mode === "openToolbar" && dx > 24) {
+      openToolbar();
+      edgeGestureState = null;
+      return;
+    }
+    if (edgeGestureState.mode === "openCount" && dx < -24) {
+      openCount();
+      edgeGestureState = null;
+      return;
+    }
+    if (edgeGestureState.mode === "closeToolbar" && dx < -24) {
+      closeToolbar();
+      edgeGestureState = null;
+      return;
+    }
+    if (edgeGestureState.mode === "closeCount" && dx > 24) {
+      closeCount();
+      edgeGestureState = null;
+    }
+  }
+
+  function handleEdgeGestureEnd() {
+    edgeGestureState = null;
+    videoUi.dragging = false;
   }
 
   const $annotationPopup = document.getElementById("video-annotation-popup");
@@ -1189,6 +1344,7 @@ function extraerNotas(rawText) {
     if ($videoScriptWordcount) $videoScriptWordcount.textContent = wordCount.toLocaleString("es-ES");
     if ($videoScriptProgress) $videoScriptProgress.textContent = `${pct}%`;
     renderCountWidget();
+    updateCountRing();
 
     const ppm = Math.max(60, Number($videoScriptPpm?.value) || loadStoredPpm(SCRIPT_PPM_KEY, 150));
     const minutes = wordCount > 0 ? Math.max(1, Math.round(wordCount / ppm)) : 0;
@@ -1266,18 +1422,7 @@ function extraerNotas(rawText) {
 
   function updateFloatingUI() {
     if (!$viewVideoScript || !$viewVideoScript.classList.contains("view-active")) return;
-    const vv = window.visualViewport;
-    const viewportHeight = vv?.height || window.innerHeight;
-    const viewportTop = vv?.offsetTop || 0;
-    const keyboardOffset = Math.max(0, window.innerHeight - (viewportHeight + viewportTop));
-    const translateY = -keyboardOffset;
-
-    if ($videoScriptToolbar?.parentElement) {
-      $videoScriptToolbar.parentElement.style.transform = `translateY(${translateY}px)`;
-    }
-    if ($videoScriptCountHeader) {
-      $videoScriptCountHeader.style.transform = `translateY(${translateY}px)`;
-    }
+    updateCountRing();
   }
 
   function renderCountToggles(settings) {
@@ -1576,6 +1721,8 @@ function extraerNotas(rawText) {
     buildAnnotationBlot();
     buildScriptAnnotationBlots();
     buildResourceBlot();
+    createToolbarRailOnce();
+    createCountRailOnce();
     const toolbarContainer = $videoScriptToolbar || false;
 
     quill = new window.Quill($videoScriptEditor, {
@@ -1651,13 +1798,22 @@ function extraerNotas(rawText) {
       if (!isDelimiterRevealMode) scheduleScriptAnnotationHighlighting();
       if (source === "user") {
         lastScriptInputAt = Date.now();
+        videoUi.lastInputTs = Date.now();
         scriptDirty = true;
         scheduleWordCountUpdate();
         scheduleScriptSave(false);
         updateCountWidgetMode();
+        scheduleAutoFoldPanels();
+        updateCountRing();
         scheduleFloatingUiUpdate();
       }
       scheduleFollowCaret();
+    });
+
+    quill.root.addEventListener("input", () => {
+      videoUi.lastInputTs = Date.now();
+      updateCountRing();
+      scheduleAutoFoldPanels();
     });
 
     quill.root.addEventListener("focusin", () => {
@@ -1973,7 +2129,9 @@ function extraerNotas(rawText) {
     closeAnnotationPopup();
     loadScriptIntoEditor(videoId);
     setActiveView("view-video-script");
+    setVideoRailsActive(true);
     updateCountWidgetMode();
+    updateCountRing();
     scheduleFloatingUiUpdate();
     scheduleFollowCaret();
   }
@@ -1990,8 +2148,7 @@ function extraerNotas(rawText) {
     scriptEditorFocused = false;
     countWidgetMode = "normal";
     countWidgetExpandedUntil = 0;
-    if ($videoScriptToolbar?.parentElement) $videoScriptToolbar.parentElement.style.transform = "";
-    if ($videoScriptCountHeader) $videoScriptCountHeader.style.transform = "";
+    setVideoRailsActive(false);
     renderInlineAnnotationToggle(null);
     hideAnnotationFab();
     setActiveView("view-videos");
@@ -2977,15 +3134,44 @@ const LINK_CATEGORY_LABELS = {
       updateTeleprompterHighlight();
     });
   }
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener("resize", scheduleFloatingUiUpdate, { passive: true });
-    window.visualViewport.addEventListener("scroll", scheduleFloatingUiUpdate, { passive: true });
-  }
   window.addEventListener("resize", scheduleFloatingUiUpdate, { passive: true });
   document.addEventListener("focusin", scheduleFloatingUiUpdate);
   document.addEventListener("focusout", () => {
     setTimeout(scheduleFloatingUiUpdate, 0);
   });
+
+  document.addEventListener("pointerdown", (event) => {
+    if (!$viewVideoScript?.classList.contains("view-active")) return;
+    if ((videoUi.toolbarOpen || videoUi.countOpen) && !event.target.closest("#video-toolbar-rail") && !event.target.closest("#video-count-rail")) {
+      closeToolbar();
+      closeCount();
+    }
+    handleEdgeGestureStart(event.clientX, event.target, event.pointerId);
+    if (event.target?.setPointerCapture && event.pointerId != null) {
+      try { event.target.setPointerCapture(event.pointerId); } catch { /* noop */ }
+    }
+  }, { passive: true });
+
+  document.addEventListener("pointermove", (event) => {
+    handleEdgeGestureMove(event.clientX);
+  }, { passive: true });
+  document.addEventListener("pointerup", handleEdgeGestureEnd, { passive: true });
+  document.addEventListener("pointercancel", handleEdgeGestureEnd, { passive: true });
+
+  if (!window.PointerEvent) {
+    document.addEventListener("touchstart", (event) => {
+      const touch = event.touches?.[0];
+      if (!touch) return;
+      handleEdgeGestureStart(touch.clientX, event.target, null);
+    }, { passive: true });
+    document.addEventListener("touchmove", (event) => {
+      const touch = event.touches?.[0];
+      if (!touch) return;
+      handleEdgeGestureMove(touch.clientX);
+    }, { passive: true });
+    document.addEventListener("touchend", handleEdgeGestureEnd, { passive: true });
+    document.addEventListener("touchcancel", handleEdgeGestureEnd, { passive: true });
+  }
 
   window.addEventListener("pagehide", () => {
     if (scriptDirty) saveScript();

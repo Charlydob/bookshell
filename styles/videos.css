@@ -205,7 +205,7 @@
 /* === Guion fullscreen === */
 .video-script-shell {
   min-height: 100vh;
-  padding: 10px 10px 140px;
+  padding: 10px 10px 220px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -285,6 +285,13 @@
 }
 
 .video-script-count-header {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(env(safe-area-inset-bottom) + 174px);
+  z-index: 52;
+  max-width: 450px;
+  margin: 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -293,10 +300,13 @@
   border-radius: 16px;
   background: rgba(9, 11, 20, 0.96);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  position: sticky;
-  top: calc(env(safe-area-inset-top) + 56px);
-  z-index: 7;
   backdrop-filter: blur(10px);
+  transition: transform 140ms ease, padding 140ms ease, border-color 140ms ease, background-color 140ms ease;
+  will-change: transform;
+}
+
+.video-script-count-header.is-compact {
+  padding: 4px 6px;
 }
 
 .video-script-count-badge {
@@ -306,6 +316,41 @@
   flex: 1 1 auto;
   min-width: 0;
   white-space: nowrap;
+  border-radius: 10px;
+  transition: all 140ms ease;
+}
+
+.video-script-count-badge.is-compact {
+  padding: 1px 0;
+  min-height: 8px;
+}
+
+.video-script-progress-track {
+  display: block;
+  width: 100%;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 40, 40, 0.18);
+  overflow: hidden;
+}
+
+.video-script-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ff4747, #ff1a1a);
+  transition: width 140ms ease;
+}
+
+.video-script-count-header.is-compact #video-script-count-toggle,
+.video-script-count-header.is-compact #video-script-insert-inline {
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  border-width: 0;
+  overflow: hidden;
 }
 
 #video-script-insert-inline {
@@ -357,10 +402,12 @@
   position: fixed;
   left: 12px;
   right: 12px;
-  bottom: calc(env(safe-area-inset-bottom) + 100px);
+  bottom: calc(env(safe-area-inset-bottom) + 18px);
   z-index: 50;
   max-width: 450px;
   pointer-events: auto;
+  transition: transform 140ms ease;
+  will-change: transform;
 }
 
 
@@ -476,7 +523,8 @@
   padding: 16px;
   font-size: 16px;
   line-height: 1.6;
-  padding-bottom: calc(160px + env(safe-area-inset-bottom));
+  overflow-x: auto;
+  padding-bottom: calc(220px + env(safe-area-inset-bottom));
 }
 
 .video-script-editor .ql-editor h1,

@@ -24,6 +24,7 @@ const MATCHES_PATH = "gameMatches";
 const GAMES_GROUPS_PATH = "games/groups";
 const GAMES_MODES_PATH = "games/modes";
 const GAMES_MATCHES_PATH = "games/matches";
+const GAMES_SANDBOX_EVENTS_PATH = "games/sandboxEvents";
 const AGG_DAY_PATH = "gameAggDay";
 const AGG_TOTAL_PATH = "gameAggTotal";
 const AGG_RANK_DAY_PATH = "gameAggRankDay";
@@ -45,6 +46,8 @@ let groupRatings = {};
 let modeBases = {};
 let matchesByGroup = {};
 let matchesByModeId = new Map();
+let sandboxEventsByGroup = {};
+let sandboxEventsByModeId = new Map();
 const openGroups = new Set();
 let sessionTick = null;
 let currentModeId = null;
@@ -186,6 +189,31 @@ function getModeBases(modeId) {
   return normalizeGroupBases(remote, getModeLegacyBases(modeId));
 }
 
+function getGroupGameType(groupId) {
+  return String(groups[groupId]?.gameType || groupRatings[groupId]?.gameType || "normal").toLowerCase() === "sandbox" ? "sandbox" : "normal";
+}
+
+function isSandboxGroup(groupId) {
+  return getGroupGameType(groupId) === "sandbox";
+}
+
+function getSandboxGroupState(groupId) {
+  const source = groupRatings[groupId]?.sandbox || groups[groupId]?.sandbox || {};
+  return {
+    daysBase: clampBaseCounter(source.daysBase, "daysBase", false),
+    peakDays: clampBaseCounter(source.peakDays, "peakDays", false),
+    updatedAt: Number(source.updatedAt || 0)
+  };
+}
+
+function getSandboxModeBases(modeId) {
+  const modeBase = modeBases?.[modeId]?.bases || modeBases?.[modeId] || {};
+  return {
+    worldsLost: clampBaseCounter(modeBase.worldsLost, "worldsLost", false),
+    updatedAt: Number(modeBase.updatedAt || 0)
+  };
+}
+
 function tsToDay(ts) {
   const d = new Date(Number(ts));
   if (Number.isNaN(d.getTime())) return null;
@@ -226,6 +254,20 @@ function normalizeMatchRecord(match, matchId = null, groupId = null) {
   };
 }
 
+function normalizeSandboxEventRecord(eventObj, eventId = null, groupId = null) {
+  if (!eventObj || typeof eventObj !== "object") return null;
+  const normalizedDay = normalizeMatchDay(eventObj.day);
+  if (!normalizedDay) return null;
+  return {
+    ...eventObj,
+    eventId: eventObj.eventId || eventId || null,
+    groupId: eventObj.groupId || groupId || null,
+    day: normalizedDay,
+    daysDelta: Number(eventObj.daysDelta || 0),
+    worldsLostDelta: Number(eventObj.worldsLostDelta || 0)
+  };
+}
+
 function rebuildMatchesByModeIndex() {
   matchesByModeId = new Map();
   Object.entries(matchesByGroup || {}).forEach(([groupId, byId]) => {
@@ -238,8 +280,24 @@ function rebuildMatchesByModeIndex() {
   });
 }
 
+function rebuildSandboxEventsByModeIndex() {
+  sandboxEventsByModeId = new Map();
+  Object.entries(sandboxEventsByGroup || {}).forEach(([groupId, byId]) => {
+    Object.entries(byId || {}).forEach(([eventId, rawEvent]) => {
+      const eventObj = normalizeSandboxEventRecord(rawEvent, eventId, groupId);
+      if (!eventObj?.modeId) return;
+      if (!sandboxEventsByModeId.has(eventObj.modeId)) sandboxEventsByModeId.set(eventObj.modeId, []);
+      sandboxEventsByModeId.get(eventObj.modeId).push(eventObj);
+    });
+  });
+}
+
 function getMatchesForMode(modeId) {
   return matchesByModeId.get(modeId) || [];
+}
+
+function getSandboxEventsForMode(modeId) {
+  return sandboxEventsByModeId.get(modeId) || [];
 }
 
 function getDayRange(rangeKey, now = new Date()) {
@@ -319,6 +377,33 @@ function computeModeAgg(modeId, rangeKey = "total", now = new Date()) {
     console.warn("[games] agg:yearZeroMatches", { modeId, uniqueDays });
   }
   return out;
+}
+
+function computeSandboxAgg(groupId, modeId, rangeKey = "total", now = new Date()) {
+  const eventsAll = getSandboxEventsForMode(modeId);
+  const includeBase = rangeKey === "total";
+  const { startDay, endDay } = getDayRange(rangeKey, now);
+  const eventsInRange = rangeKey === "total"
+    ? eventsAll
+    : eventsAll.filter((eventObj) => eventObj?.day && eventObj.day >= startDay && eventObj.day <= endDay);
+
+  const groupSandbox = getSandboxGroupState(groupId);
+  const modeSandboxBase = getSandboxModeBases(modeId);
+  const days = (includeBase ? Number(groupSandbox.daysBase || 0) : 0)
+    + eventsInRange.reduce((acc, eventObj) => acc + Number(eventObj?.daysDelta || 0), 0);
+  const worldsLost = (includeBase ? Number(modeSandboxBase.worldsLost || 0) : 0)
+    + eventsInRange.reduce((acc, eventObj) => acc + Number(eventObj?.worldsLostDelta || 0), 0);
+
+  const totalDays = Number(groupSandbox.daysBase || 0)
+    + eventsAll.reduce((acc, eventObj) => acc + Number(eventObj?.daysDelta || 0), 0);
+  const peakDays = Math.max(Number(groupSandbox.peakDays || 0), totalDays);
+
+  console.log("[games] sandbox:agg", { groupId, modeId, rangeKey, days, worldsLost });
+  return {
+    days: Math.max(0, Math.round(days)),
+    worldsLost: Math.max(0, Math.round(worldsLost)),
+    peakDays: Math.max(0, Math.round(peakDays))
+  };
 }
 
 function getCounterTotalsByGroups(groupIds, rangeName = "total", now = new Date()) {
@@ -618,6 +703,25 @@ function getModePlayedMinutes(mode) {
 
 function buildModeCard(mode, groupEmoji) {
   const rangeKey = state.gamesRangeKey || "total";
+  const groupId = mode.groupId;
+  const emoji = (mode.modeEmoji || "").trim() || groupEmoji || "🎮";
+
+  if (isSandboxGroup(groupId)) {
+    const agg = computeSandboxAgg(groupId, mode.id, rangeKey, new Date());
+    return `
+    <article class="game-card" data-mode-id="${mode.id}" role="button" tabindex="0">
+      <div class="game-card-total">DÍAS: ${agg.days}</div>
+      <div class="game-card-content">
+        <div class="game-center" style="width:100%">
+          <div class="game-mode-name">${mode.modeName || "Modo"}</div>
+          <button class="game-mode-emoji game-mode-emoji-btn" data-action="sandbox-worlds-lost" title="Mundo perdido">${emoji}</button>
+          <div class="game-side-stat-losses">Peak: ${agg.peakDays} · Hist: ${agg.peakDays}</div>
+        </div>
+      </div>
+      <div class="game-bottom-tie">Mundos perdidos: ${agg.worldsLost}</div>
+    </article>`;
+  }
+
   const agg = computeModeAgg(mode.id, rangeKey, new Date());
   console.log("[games] miniCard", { modeId: mode.id, rangeKey, agg });
   const wins = clamp(Number(agg.wins || 0));
@@ -625,7 +729,6 @@ function buildModeCard(mode, groupEmoji) {
   const ties = clamp(Number(agg.ties || 0));
   const totalGames = wins + losses + ties;
   const { winPct, lossPct, tiePct, total } = ensurePct(wins, losses, ties);
-  const emoji = (mode.modeEmoji || "").trim() || groupEmoji || "🎮";
   const { lossW, tieW, winW } = pctWidths(wins, losses, ties);
   return `
   <article class="game-card" data-mode-id="${mode.id}" role="button" tabindex="0">
@@ -652,6 +755,7 @@ function buildModeCard(mode, groupEmoji) {
     <div class="game-bottom-tie">${totalGames} - ${wins}W ${losses}L ${ties}T - ${winPct}%</div>
   </article>`;
 }
+
 
 function renderStatsFilter() {
   if (!$statsFilter) return;
@@ -927,6 +1031,9 @@ async function openGroupBasesModal(groupId, modeId = null) {
   const currentRating = normalizeRating(groups[groupId]?.rating || groupRatings[groupId]?.rating);
   const showRating = currentRating.type !== "none";
   const modeLabel = modes[resolvedModeId]?.modeName || "Modo";
+  const sandboxGroup = isSandboxGroup(groupId);
+  const sandboxGroupState = getSandboxGroupState(groupId);
+  const sandboxModeBase = getSandboxModeBases(resolvedModeId);
 
   const modal = document.createElement("div");
   modal.className = "modal-backdrop";
@@ -937,7 +1044,10 @@ async function openGroupBasesModal(groupId, modeId = null) {
       <button class="icon-btn" type="button" data-close>✕</button>
     </div>
     <div class="modal-scroll sheet-body">
-      ${showRating ? `<section class="base-section"><strong>Rating del grupo</strong>
+      ${sandboxGroup ? `<details class="base-section" open><summary>Bases sandbox</summary><div class="base-modal-grid">
+        <label class="base-field"><span>Dias base</span><input id="games-base-days" type="number" min="0" max="1000000" step="1" value="${sandboxGroupState.daysBase}" inputmode="numeric"></label>
+        <label class="base-field"><span>Mundos perdidos base</span><input id="games-base-worlds-lost" type="number" min="0" max="1000000" step="1" value="${sandboxModeBase.worldsLost}" inputmode="numeric"></label>
+      </div></details>` : `${showRating ? `<section class="base-section"><strong>Rating del grupo</strong>
         <div class="form-grid row-3">
           ${currentRating.type === "elo" ? `<label class="field"><span class="field-label">ELO base</span><input id="games-base-rating" type="number" min="0" max="1000000" step="1" value="${currentRating.base}" inputmode="numeric"></label>` : `<label class="field"><span class="field-label">RR base</span><input id="games-base-rating" type="number" min="0" max="100" step="1" value="${currentRating.base}" inputmode="numeric"></label>
           <label class="field"><span class="field-label">Tier</span><select id="games-base-tier">${RR_TIERS.map((tier) => `<option value="${tier}" ${tier === currentRating.tier ? "selected" : ""}>${tier}</option>`).join("")}</select></label>
@@ -956,7 +1066,7 @@ async function openGroupBasesModal(groupId, modeId = null) {
       <details class="base-section" open><summary>Rondas base</summary><div class="base-modal-grid">
         <label class="base-field"><span>Rondas a favor</span><input id="games-base-rf" type="number" min="0" max="1000000" step="1" value="${currentBases.rf}" inputmode="numeric"></label>
         <label class="base-field"><span>Rondas en contra</span><input id="games-base-ra" type="number" min="0" max="1000000" step="1" value="${currentBases.ra}" inputmode="numeric"></label>
-      </div></details>
+      </div></details>`}
       
     </div>
     <div class="modal-footer sheet-footer base-modal-footer">
@@ -978,6 +1088,29 @@ async function openGroupBasesModal(groupId, modeId = null) {
       return;
     }
     if (!e.target.closest("[data-save]")) return;
+
+    if (sandboxGroup) {
+      const sandboxGroupNext = {
+        daysBase: getBaseInputValue(modal, "#games-base-days", "daysBase"),
+        peakDays: Math.max(getBaseInputValue(modal, "#games-base-days", "daysBase"), Number(sandboxGroupState.peakDays || 0)),
+        updatedAt: nowTs()
+      };
+      const sandboxModeNext = {
+        worldsLost: getBaseInputValue(modal, "#games-base-worlds-lost", "worldsLost"),
+        updatedAt: nowTs()
+      };
+      modeBases[resolvedModeId] = { ...(modeBases[resolvedModeId] || {}), bases: sandboxModeNext };
+      groupRatings[groupId] = { ...(groupRatings[groupId] || {}), sandbox: sandboxGroupNext, gameType: "sandbox" };
+      await update(ref(db), {
+        [`${GAMES_MODES_PATH}/${resolvedModeId}/bases`]: sandboxModeNext,
+        [`${GAMES_GROUPS_PATH}/${groupId}/sandbox`]: sandboxGroupNext,
+        [`${GAMES_GROUPS_PATH}/${groupId}/gameType`]: "sandbox"
+      });
+      renderGlobalStats();
+      if (currentModeId && modes[currentModeId]?.groupId === groupId) renderModeDetail();
+      close();
+      return;
+    }
 
     const bases = normalizeGroupBases({
       wins: getBaseInputValue(modal, "#games-base-wins", "wins"),
@@ -1354,6 +1487,8 @@ function renderGamesPanel() {
     const { wins, losses, ties } = groupTotals(g.id);
     const totalMinutes = groupMinutesTotal(g.id);
     const { winPct, lossPct } = ensurePct(wins, losses, ties);
+    const sandboxMainMode = groupedModes[0];
+    const sandboxAgg = isSandboxGroup(g.id) && sandboxMainMode ? computeSandboxAgg(g.id, sandboxMainMode.id, "total", new Date()) : null;
     const hasRunning = !!(running && g.linkedHabitId && running.targetHabitId === g.linkedHabitId);
     const elapsed = hasRunning ? formatDuration((Date.now() - Number(running.startTs || Date.now())) / 1000) : "";
     if (!openGroups.size) openGroups.add(g.id);
@@ -1365,7 +1500,7 @@ function renderGamesPanel() {
       <summary>
         <div class="game-group-main">
           <div class="game-group-name">${g.emoji || "🎮"} ${g.name || "Grupo"}</div>
-          <div class="game-group-meta">${losses}L / ${wins}W / ${ties}T - ${lossPct}% - ${winPct}% - ${formatHoursMinutes(totalMinutes)}</div>
+          <div class="game-group-meta">${sandboxAgg ? `DÍAS: ${sandboxAgg.days} · Peak: ${sandboxAgg.peakDays} · Mundos perdidos: ${sandboxAgg.worldsLost}` : `${losses}L / ${wins}W / ${ties}T - ${lossPct}% - ${winPct}% - ${formatHoursMinutes(totalMinutes)}`}</div>
         </div>
         <div class="game-group-actions">
           <button class="game-session-btn" data-action="toggle-session">${hasRunning ? `${elapsed}` : "Iniciar"}</button>
@@ -1465,6 +1600,7 @@ async function createOrUpdateMode() {
       rankType: ($groupRankType?.value || "none"),
       rating: normalizeRating({ type: ($groupRankType?.value || "none"), base: 0, tier: "Hierro", div: 1 }),
       accent: $groupAccent?.value || "#8b5cf6",
+      gameType: "normal",
       createdAt: nowTs(),
       updatedAt: nowTs()
     };
@@ -1472,7 +1608,8 @@ async function createOrUpdateMode() {
     groups[groupPayload.id] = groupPayload;
     await set(groupIdRef, groupPayload);
     await update(ref(db), {
-      [`${GAMES_GROUPS_PATH}/${groupPayload.id}/rating`]: groupPayload.rating
+      [`${GAMES_GROUPS_PATH}/${groupPayload.id}/rating`]: groupPayload.rating,
+      [`${GAMES_GROUPS_PATH}/${groupPayload.id}/gameType`]: "normal"
     });
   }
   if (!groupIdValue) return;
@@ -1485,7 +1622,9 @@ async function createOrUpdateMode() {
     const payload = { id: modeIdRef.key, wins: 0, losses: 0, ties: 0, createdAt: nowTs(), ...base };
     modes[payload.id] = payload;
     await set(modeIdRef, payload);
-    const basePayload = normalizeGroupBases({});
+    const basePayload = isSandboxGroup(groupIdValue)
+      ? { worldsLost: 0, updatedAt: nowTs() }
+      : normalizeGroupBases({});
     modeBases[payload.id] = { bases: basePayload };
     await set(ref(db, `${GAMES_MODES_PATH}/${payload.id}/bases`), basePayload);
   }
@@ -1736,10 +1875,77 @@ async function rebuildDailyFromMatches(modeId, day) {
   console.log("[games] daily:rebuild:done", { modeId, day });
 }
 
+async function addSandboxEvent(modeId, payload = {}) {
+  const mode = modes[modeId];
+  if (!mode?.groupId) return;
+  const groupId = mode.groupId;
+  const day = payload.day || todayKey();
+  const daysDelta = clampBaseCounter(payload.daysDelta, "daysDelta", false);
+  const worldsLostDelta = clampBaseCounter(payload.worldsLostDelta, "worldsLostDelta", false);
+  const eventRef = push(ref(db, `${GAMES_SANDBOX_EVENTS_PATH}/${groupId}`));
+  const eventObj = {
+    eventId: eventRef.key,
+    groupId,
+    modeId,
+    day,
+    createdAt: nowTs(),
+    daysDelta,
+    worldsLostDelta
+  };
+  console.log("[games] sandbox:add", eventObj);
+  await set(eventRef, eventObj);
+}
+
+async function undoSandboxEvent(modeId, key) {
+  const mode = modes[modeId];
+  if (!mode?.groupId) return;
+  const snap = await get(ref(db, `${GAMES_SANDBOX_EVENTS_PATH}/${mode.groupId}`));
+  const byId = snap.val() || {};
+  const candidates = Object.values(byId)
+    .filter((eventObj) => eventObj?.modeId === modeId && ((key === "days" && Number(eventObj?.daysDelta || 0) > 0) || (key === "worldsLost" && Number(eventObj?.worldsLostDelta || 0) > 0)))
+    .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+  const target = candidates[0];
+  if (!target?.eventId) return;
+  await remove(ref(db, `${GAMES_SANDBOX_EVENTS_PATH}/${mode.groupId}/${target.eventId}`));
+}
+
 async function patchModeCounter(modeId, key, delta) {
   console.log("[games] patchModeCounter:start", { modeId, key, delta });
   const mode = modes[modeId];
   if (!mode) return;
+
+  if (isSandboxGroup(mode.groupId)) {
+    if (delta > 0) {
+      await addSandboxEvent(modeId, {
+        day: todayKey(),
+        daysDelta: key === "days" ? 1 : 0,
+        worldsLostDelta: key === "worldsLost" ? 1 : 0
+      });
+      if (key === "days") {
+        const aggTotal = computeSandboxAgg(mode.groupId, modeId, "total", new Date());
+        const groupSandbox = getSandboxGroupState(mode.groupId);
+        const nextPeak = Math.max(Number(groupSandbox.peakDays || 0), Number(aggTotal.days || 0));
+        if (nextPeak > Number(groupSandbox.peakDays || 0)) {
+          await update(ref(db, `${GAMES_GROUPS_PATH}/${mode.groupId}/sandbox`), {
+            ...groupSandbox,
+            peakDays: nextPeak,
+            updatedAt: nowTs()
+          });
+        }
+      }
+    }
+    if (delta < 0) {
+      await undoSandboxEvent(modeId, key);
+    }
+    mode.updatedAt = nowTs();
+    await update(ref(db, `${MODES_PATH}/${modeId}`), { updatedAt: mode.updatedAt });
+    renderGamesList();
+    renderStats();
+    refreshOpenModeModal();
+    triggerHaptic();
+    saveCache();
+    return;
+  }
 
   const resultMap = { wins: "W", losses: "L", ties: "T" };
   const result = resultMap[key] || "T";
@@ -2024,6 +2230,50 @@ function renderModeDetail() {
   if (!mode) return;
 
   const group = groups[mode.groupId] || {};
+  if (isSandboxGroup(mode.groupId)) {
+    const totals = computeSandboxAgg(mode.groupId, mode.id, detailRange, new Date());
+    const bases = getSandboxModeBases(mode.id);
+    const groupSandbox = getSandboxGroupState(mode.groupId);
+    $detailTitle.textContent = `${group.name || "Grupo"} - ${mode.modeName || "Modo"}`;
+    $detailBody.innerHTML = `
+      <section class="game-detail-head">
+        <div class="game-detail-top">
+          <div>
+            <div class="game-detail-name">${mode.modeEmoji || group.emoji || "🎮"} ${group.name || "Grupo"} - ${mode.modeName || "Modo"}</div>
+            <div class="game-detail-sub">DÍAS: ${totals.days} · Peak: ${totals.peakDays}</div>
+          </div>
+          <div class="game-detail-actions">
+            <button class="game-menu-btn" data-action="edit-mode">Editar</button>
+            <button class="game-menu-btn" data-action="delete-mode">Eliminar</button>
+          </div>
+        </div>
+        <div class="game-detail-summary"><div>Mundos perdidos: ${totals.worldsLost}</div></div>
+      </section>
+      <section class="game-detail-section">
+        <strong>Controles</strong>
+        <div class="game-controls-grid">
+          <div class="game-control-col loss">
+            <div>Mundos perdidos</div><div class="game-control-value">${totals.worldsLost}</div>
+            <div class="game-control-actions"><button class="game-ctrl-btn" data-action="sandbox-worlds-lost">+1</button><button class="game-ctrl-btn" data-action="sandbox-worlds-lost-undo">undo</button></div>
+          </div>
+          <div class="game-control-col win">
+            <div>Anadir dias</div><div class="game-control-value">${totals.days}</div>
+            <div class="game-control-actions"><input id="sandbox-days-input" type="number" min="1" step="1" style="width:88px" /><button class="game-ctrl-btn" data-action="sandbox-days-plus">+</button><button class="game-ctrl-btn" data-action="sandbox-days-undo">undo</button></div>
+          </div>
+        </div>
+      </section>
+      <section class="game-detail-section">
+        <strong>Bases sandbox</strong>
+        <div class="game-detail-bases-wrap">
+          <div class="game-detail-sub">Dias base: ${groupSandbox.daysBase}</div>
+          <div class="game-detail-sub">Peak dias: ${groupSandbox.peakDays}</div>
+          <div class="game-detail-sub">Mundos perdidos base: ${bases.worldsLost}</div>
+        </div>
+        <button class="game-menu-btn" data-action="edit-group-bases" data-group-id="${mode.groupId}" data-mode-id="${mode.id}">Editar bases del modo</button>
+      </section>
+    `;
+    return;
+  }
   const modeDaily = dailyByMode[mode.id] || {};
   const now = new Date();
   const detailRangeBounds = getRangeBounds(detailRange, now, getMinDataDate([mode.id]));
@@ -2402,6 +2652,25 @@ async function onListClick(e) {
   if (action === "loss-minus" && modeId) return patchModeCounter(modeId, "losses", -1);
   if (action === "win-minus" && modeId) return patchModeCounter(modeId, "wins", -1);
   if (action === "tie-minus" && modeId) return patchModeCounter(modeId, "ties", -1);
+  if (action === "sandbox-worlds-lost" && modeId) return patchModeCounter(modeId, "worldsLost", 1);
+  if (action === "sandbox-worlds-lost-undo" && modeId) return patchModeCounter(modeId, "worldsLost", -1);
+  if (action === "sandbox-days-plus" && modeId) {
+    const input = document.getElementById("sandbox-days-input");
+    const daysDelta = Math.max(0, Math.round(Number(input?.value || 0)));
+    if (!daysDelta) return;
+    await addSandboxEvent(modeId, { day: todayKey(), daysDelta, worldsLostDelta: 0 });
+    const mode = modes[modeId];
+    const aggTotal = computeSandboxAgg(mode.groupId, modeId, "total", new Date());
+    const groupSandbox = getSandboxGroupState(mode.groupId);
+    const nextPeak = Math.max(Number(groupSandbox.peakDays || 0), Number(aggTotal.days || 0));
+    await update(ref(db, `${GAMES_GROUPS_PATH}/${mode.groupId}/sandbox`), { ...groupSandbox, peakDays: nextPeak, updatedAt: nowTs() });
+    if (input) input.value = "";
+    renderGamesList();
+    renderStats();
+    refreshOpenModeModal();
+    return;
+  }
+  if (action === "sandbox-days-undo" && modeId) return patchModeCounter(modeId, "days", -1);
   if (action === "edit-mode" && modeId) {
     if (currentModeId) closeModeDetail();
     return openModeModal(modes[modeId]);
@@ -2544,7 +2813,9 @@ function listenRemote() {
     Object.keys(groups).forEach((id) => {
       groups[id] = {
         ...groups[id],
-        rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating)
+        rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating),
+        gameType: groupRatings[id]?.gameType || groups[id]?.gameType || "normal",
+        sandbox: groupRatings[id]?.sandbox || groups[id]?.sandbox || { daysBase: 0, peakDays: 0 }
       };
     });
     render();
@@ -2555,6 +2826,14 @@ function listenRemote() {
   onValue(ref(db, GAMES_MATCHES_PATH), (snap) => {
     matchesByGroup = snap.val() || {};
     rebuildMatchesByModeIndex();
+    renderGlobalStats();
+    if (currentModeId) renderModeDetail();
+  });
+
+  onValue(ref(db, GAMES_SANDBOX_EVENTS_PATH), (snap) => {
+    sandboxEventsByGroup = snap.val() || {};
+    rebuildSandboxEventsByModeIndex();
+    render();
     renderGlobalStats();
     if (currentModeId) renderModeDetail();
   });

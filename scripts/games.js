@@ -798,25 +798,24 @@ function buildModeCard(mode, groupEmoji) {
 
   if (isSandboxGroup(groupId)) {
     const derived = getSandboxDerived(groupId);
-    return `
-    <article class="game-card game-card-sandbox" data-mode-id="${mode.id}" data-group-id="${groupId}" role="button" tabindex="0">
-      <div class="sandbox-card-head">
-        <div class="sandbox-card-title">${emoji} ${mode.modeName || "Modo"}</div>
-        <span class="sandbox-chip">SANDBOX</span>
-      </div>
-      <div class="sandbox-kpi-row">
-        <span class="sandbox-kpi-label">DÍAS:</span>
-        <button type="button" class="sandbox-days-display" data-action="sandbox-days-inline-edit">${derived.currentDays}</button>
-      </div>
-      <div class="sandbox-subline">Peak: ${derived.peakDays} · Mundos: ${derived.worldsCount} · Perdidos: ${derived.lostCount}</div>
-      <div class="sandbox-inline-actions">
-        <button type="button" class="game-ctrl-btn" data-action="sandbox-days-inline-edit">Actualizar días</button>
-      </div>
-      <div class="sandbox-days-editor hidden" data-sandbox-days-editor>
-        <input type="number" min="0" step="1" value="${derived.currentDays}" data-sandbox-days-input />
-        <button type="button" class="game-ctrl-btn" data-action="sandbox-days-save">✓</button>
-      </div>
-    </article>`;
+return `
+<article class="game-card game-card-sandbox" data-mode-id="${mode.id}" data-group-id="${groupId}" role="button" tabindex="0">
+  <div class="sandbox-card-head">
+    <div class="sandbox-card-title">${emoji} ${mode.modeName || "Modo"}</div>
+    <span class="sandbox-chip">SANDBOX</span>
+  </div>
+
+  <div class="sandbox-kpi-row">
+    <span class="sandbox-kpi-label">DÍAS:</span>
+    <input type="number" min="0" step="1"
+           value="${derived.currentDays}"
+           class="sandbox-days-inline"
+           data-sandbox-days-input />
+  </div>
+
+  <div class="sandbox-subline">Peak: ${derived.peakDays} · Mundos: ${derived.worldsCount} · Perdidos: ${derived.lostCount}</div>
+</article>`;
+
   }
 
   const agg = computeModeAgg(mode.id, rangeKey, new Date());
@@ -852,6 +851,74 @@ function buildModeCard(mode, groupEmoji) {
     <div class="game-bottom-tie">${totalGames} - ${wins}W ${losses}L ${ties}T - ${winPct}%</div>
   </article>`;
 }
+
+let sandboxDaysSaveT = null;
+
+document.addEventListener("input", (e) => {
+  const inp = e.target.closest("[data-sandbox-days-input]");
+  if (!inp) return;
+
+  const card = inp.closest(".game-card-sandbox");
+  const groupId = card?.dataset.groupId;
+  if (!groupId) return;
+
+  const nextDays = Math.max(0, Number(inp.value || 0));
+
+  clearTimeout(sandboxDaysSaveT);
+
+  sandboxDaysSaveT = setTimeout(() => {
+    (async () => {
+      try {
+        await update(
+          ref(db, `${GAMES_SANDBOX_PATH}/${groupId}`), // ⚠️ aquí suele estar el fallo real
+          {
+            currentDays: nextDays,
+            updatedAt: nowTs()
+          }
+        );
+
+        renderGamesList();
+      } catch (err) {
+        console.error("[sandbox] days:update failed", err);
+      }
+    })();
+  }, 250);
+});
+
+// Evita que el click en inputs/botones dentro de la card dispare "abrir detalle"
+document.addEventListener("pointerdown", (e) => {
+  const inSandboxCard = e.target.closest(".game-card-sandbox");
+  if (!inSandboxCard) return;
+
+  if (e.target.closest("input, button, select, textarea, a, label")) {
+    e.stopPropagation();
+  }
+}, true);
+document.addEventListener("click", (e) => {
+  const inSandboxCard = e.target.closest(".game-card-sandbox");
+  if (!inSandboxCard) return;
+
+  if (e.target.closest("input, button, select, textarea, a, label")) {
+    e.stopPropagation();
+  }
+}, true);
+document.addEventListener("focusin", (e) => {
+  const inp = e.target.closest("[data-sandbox-days-input]");
+  if (!inp) return;
+
+  // solo la primera vez que entras
+  if (inp.dataset.cleared !== "1") {
+    inp.dataset.cleared = "1";
+    inp.value = "";
+  }
+});
+document.addEventListener("blur", (e) => {
+  const inp = e.target.closest?.("[data-sandbox-days-input]");
+  if (!inp) return;
+
+  inp.dataset.cleared = "0";
+  if (inp.value === "") inp.value = inp.placeholder || "0";
+}, true);
 
 
 function renderStatsFilter() {

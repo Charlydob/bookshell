@@ -890,3 +890,31 @@ max-height: 740px;
   display: flex;
   gap: 6px;
 }
+
+.sandbox-days-inline{
+  width: 72px;
+  text-align: center;
+  font-weight: 900;
+  border-radius: 14px;
+  padding: 0px 0px;
+  background: rgba(255, 255, 255, 0);
+  border: 0px solid rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.92);
+  outline: none;
+  font-size: 24px;
+}
+.sandbox-days-inline:focus{
+  border-color: rgba(255,255,255,0.22);
+  box-shadow: 0 0 0 3px rgba(140,120,255,0.18);
+}
+.sandbox-days-inline{
+  opacity: 1;
+  transition: opacity .15s ease;
+}
+
+.sandbox-days-inline:focus{
+  opacity: 1;
+}
+.sandbox-days-inline:placeholder-shown{
+  opacity: .35;
+}

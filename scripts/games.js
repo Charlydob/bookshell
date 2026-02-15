@@ -324,14 +324,20 @@ function normalizeSandboxWorldNote(note = {}, groupId, worldId, noteId) {
   const dimRaw = String(note.dimension || "").toLowerCase();
   const dimension = ["overworld", "nether", "end"].includes(dimRaw) ? dimRaw : null;
   const rawTags = Array.isArray(note.tags) ? note.tags : [];
+  const emoji = note.emoji == null ? null : String(note.emoji).trim();
+  const name = note.name == null ? null : String(note.name).trim();
+  const noteText = note.note == null ? null : String(note.note).trim();
   return {
     noteId: note.noteId || noteId,
     worldId: note.worldId || worldId,
     groupId: note.groupId || groupId,
     createdAt: Number(note.createdAt || nowTs()),
     day: note.day == null ? null : clampBaseCounter(note.day, "note.day"),
-    title: note.title == null ? null : String(note.title),
-    text: note.text == null ? null : String(note.text),
+    emoji: emoji || null,
+    name: name || null,
+    note: noteText || null,
+    title: note.title == null ? (name || null) : String(note.title),
+    text: note.text == null ? (noteText || null) : String(note.text),
     x: note.x == null ? null : Number(note.x),
     y: note.y == null ? null : Number(note.y),
     z: note.z == null ? null : Number(note.z),
@@ -434,7 +440,7 @@ function computeModeAgg(modeId, rangeKey = "total", now = new Date()) {
   });
   const mode = modes[modeId];
   const groupRating = normalizeRating(groups[mode?.groupId]?.rating || groupRatings[mode?.groupId]?.rating);
-  out.groupRatingValue = Number(groupRating.base || 0) + matches.reduce((acc, m) => acc + Number(m?.ratingDeltaFinal || ((Number(m?.ratingDeltaAbs) || 0) * (Number(m?.ratingDeltaSign) || 0)) || 0), 0);
+  out.groupRatingValue = Number(groupRating.base || 0) + matches.reduce((acc, m) => acc + getMatchRatingDelta(m), 0);
 
   console.log("[games] agg:basePolicy", { modeId, rangeKey, includeBase });
   console.log("[games] agg", {
@@ -1041,6 +1047,8 @@ function getGroupMatchesSorted(groupId) {
 }
 
 function getMatchRatingDelta(match) {
+  const final = Number(match?.ratingDeltaFinal);
+  if (Number.isFinite(final)) return Math.round(final);
   const abs = Number(match?.ratingDeltaAbs);
   const sign = Number(match?.ratingDeltaSign);
   if (!Number.isFinite(abs) || !Number.isFinite(sign)) return 0;
@@ -1856,6 +1864,12 @@ function openResultModal(modeId, result) {
   const shooter = isGroupShooter(mode.groupId);
   const rankLabel = rankType === "elo" ? "Delta ELO" : "Delta RR";
   const rankPlaceholder = rankType === "elo" ? "ELO" : "RR";
+  const setSignUI = (modalEl, sign) => {
+    const btnGreen = modalEl.querySelector('[data-delta-sign="+1"]');
+    const btnRed = modalEl.querySelector('[data-delta-sign="-1"]');
+    if (btnGreen) btnGreen.classList.toggle("is-on", sign === 1);
+    if (btnRed) btnRed.classList.toggle("is-on", sign === -1);
+  };
 
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
@@ -1879,10 +1893,10 @@ function openResultModal(modeId, result) {
         ${rankType !== "none" ? `<div class="game-mini-grid one">
           <label class="field">
             <span class="field-label">${rankLabel}</span>
-            <input class="game-mini-input-rr" data-key="rankDelta" inputmode="numeric" placeholder="${rankPlaceholder}" maxlength="5" />
+            <input class="game-mini-input game-mini-input-rr" data-key="rankDelta" inputmode="numeric" placeholder="${rankPlaceholder}" maxlength="5" />
           </label>
           <div class="game-sign-toggle" data-sign-wrap>
-            <button type="button" class="btn-verde" data-delta-sign="1">[+] Verde</button>
+            <button type="button" class="btn-verde is-on" data-delta-sign="+1">[+] Verde</button>
             <button type="button" class="btn-rojo" data-delta-sign="-1">[-] Rojo</button>
           </div>
         </div>` : ""}
@@ -1896,13 +1910,16 @@ function openResultModal(modeId, result) {
       document.body.classList.remove("has-open-modal");
       resolve(ok ? payload : false);
     };
+    overlay.dataset.ratingSign = "1";
+    setSignUI(overlay, 1);
     overlay.addEventListener("click", (e) => {
-      const signBtn = e.target.closest('[data-delta-sign]');
+      const signBtn = e.target.closest("[data-delta-sign]");
       if (signBtn) {
         const sign = Number(signBtn.dataset.deltaSign) === -1 ? -1 : 1;
         overlay.dataset.ratingSign = String(sign);
-        overlay.querySelectorAll('[data-delta-sign]').forEach((n) => n.classList.toggle('primary', n === signBtn));
-        console.log("[games] deltaSign:click", { sign, btnClass: signBtn.className });
+        setSignUI(overlay, sign);
+        console.log("[games] deltaSign:set", { sign, btn: signBtn.textContent, class: signBtn.className });
+        console.log("[games] deltaSign:click", { sign });
         return;
       }
       if (e.target === overlay || e.target.closest('[data-act="cancel"]')) close(false);
@@ -1950,9 +1967,7 @@ async function rebuildDailyFromMatches(modeId, day) {
     acc.rf += Number(match.rf || 0);
     acc.ra += Number(match.ra || 0);
     acc.minutes += clamp(Number(match.minutes || 0));
-    const abs = Number(match.ratingDeltaAbs);
-    const sign = Number(match.ratingDeltaSign);
-    const delta = Number.isFinite(abs) && Number.isFinite(sign) ? Math.round(abs * sign) : 0;
+    const delta = getMatchRatingDelta(match);
     if (getGroupRankType(mode.groupId) === "elo") acc.eloDelta += delta;
     if (getGroupRankType(mode.groupId) === "rr") acc.rrDelta += delta;
     return acc;
@@ -2060,9 +2075,12 @@ async function patchModeCounter(modeId, key, delta) {
     console.log("[games] match:add:payload", payload);
 
     const matchRef = push(ref(db, `${GAMES_MATCHES_PATH}/${mode.groupId}`));
-    const deltaAbs = Math.abs(Math.round(Number(payload.rankDelta || 0)));
+    const deltaInput = Number(payload.rankDelta || 0);
+    const abs = Math.abs(Math.round(deltaInput || 0));
     const sign = Number(payload.ratingDeltaSign || 1) === -1 ? -1 : 1;
-    const deltaFinal = rankType === "none" ? null : (deltaAbs * sign);
+    const ratingDeltaFinal = abs === 0 ? 0 : (abs * sign);
+    const deltaFinal = rankType === "none" ? null : ratingDeltaFinal;
+    console.log("[games] match:save:rating", { abs, sign, final: ratingDeltaFinal });
     const matchObj = {
       matchId: matchRef.key,
       modeId,
@@ -2078,7 +2096,7 @@ async function patchModeCounter(modeId, key, delta) {
       a: clampStat(payload.a),
       rf: clampStat(payload.rf),
       ra: clampStat(payload.ra),
-      ratingDeltaAbs: rankType === "none" ? null : deltaAbs,
+      ratingDeltaAbs: rankType === "none" ? null : abs,
       ratingDeltaSign: rankType === "none" ? null : sign,
       ratingDeltaFinal: rankType === "none" ? null : deltaFinal,
       minutes: clamp(Number(payload.minutes || 0))
@@ -2089,7 +2107,9 @@ async function patchModeCounter(modeId, key, delta) {
     matchesByGroup[mode.groupId][matchRef.key] = matchObj;
     rebuildMatchesByModeIndex();
     if (deltaFinal !== null) {
-      console.log("[games] rating:add", { groupId: mode.groupId, deltaAbs, sign, deltaFinal });
+      console.log("[games] rating:add", { groupId: mode.groupId, abs, sign, deltaFinal });
+      const snapshotAfter = groupRatingSnapshot(mode.groupId, getRangeBounds("total", new Date(), getMinDataDate([modeId])));
+      console.log("[games] rating:kpi:afterSave", { groupId: mode.groupId, current: snapshotAfter.main, deltaFinal });
     }
     await rebuildDailyFromMatches(modeId, day);
   }
@@ -2327,8 +2347,6 @@ function renderModeDetail() {
   const group = groups[mode.groupId] || {};
   if (isSandboxGroup(mode.groupId)) {
     const derived = getSandboxDerived(mode.groupId);
-    const activeDetail = derived.activeWorldId ? getSandboxWorld(mode.groupId, derived.activeWorldId) : null;
-    const notes = activeDetail ? getSandboxWorldNotes(mode.groupId, activeDetail.worldId) : [];
     const worldsHtml = derived.worlds.map((world) => `
       <button type="button" class="sandbox-world-card ${world.worldId === derived.activeWorldId ? "is-active" : ""}" data-action="sandbox-world-open" data-world-id="${world.worldId}">
         <div><strong>${world.name}</strong></div>
@@ -2352,31 +2370,10 @@ function renderModeDetail() {
       <section class="game-detail-section">
         <strong>Mundos</strong>
         <div class="sandbox-inline-actions">
-          <button class="game-ctrl-btn" data-action="sandbox-world-add" data-mode-id="${mode.id}">+ Añadir mundo</button>
-          <button class="game-ctrl-btn" data-action="sandbox-world-mark-lost" data-mode-id="${mode.id}">Marcar mundo como perdido</button>
+          <button class="game-ctrl-btn" data-action="sandbox-world-add" data-mode-id="${mode.id}">+ Crear mundo</button>
+          <button class="game-ctrl-btn" data-action="sandbox-world-mark-lost" data-mode-id="${mode.id}">💔 Perdido</button>
         </div>
         <div class="sandbox-world-list">${worldsHtml || '<div class="game-detail-sub">No hay mundos aún.</div>'}</div>
-      </section>
-      <section class="game-detail-section">
-        <strong>Detalle de mundo</strong>
-        ${activeDetail ? `<div class="sandbox-world-detail" data-world-id="${activeDetail.worldId}">
-          <div class="sandbox-world-edit-grid">
-            <label><span>Nombre</span><input type="text" value="${activeDetail.name || ""}" data-sandbox-world-name></label>
-            <label><span>Día actual</span><input type="number" min="0" step="1" value="${Number(activeDetail.currentDay || 0)}" data-sandbox-world-day></label>
-            <label><span>Estado</span><select data-sandbox-world-status><option value="active" ${activeDetail.status === "active" ? "selected" : ""}>active</option><option value="lost" ${activeDetail.status === "lost" ? "selected" : ""}>lost</option></select></label>
-          </div>
-          <button class="game-ctrl-btn" data-action="sandbox-world-save" data-world-id="${activeDetail.worldId}">Guardar mundo</button>
-          <div class="sandbox-note-inputs">
-            <input type="number" min="0" step="1" placeholder="Day" data-note-day>
-            <input type="number" step="1" placeholder="X" data-note-x>
-            <input type="number" step="1" placeholder="Y" data-note-y>
-            <input type="number" step="1" placeholder="Z" data-note-z>
-            <select data-note-dimension><option value="">Dimensión</option><option value="overworld">overworld</option><option value="nether">nether</option><option value="end">end</option></select>
-            <input type="text" placeholder="Nota" data-note-text>
-            <button class="game-ctrl-btn" data-action="sandbox-note-add" data-world-id="${activeDetail.worldId}">Añadir</button>
-          </div>
-          <div class="sandbox-note-list">${notes.map((note) => `<div class="sandbox-note-item">D${note.day ?? "-"} · ${note.dimension || "world"} · (${note.x ?? "-"},${note.y ?? "-"},${note.z ?? "-"}) · ${note.text || ""}</div>`).join("") || '<div class="game-detail-sub">Sin notas.</div>'}</div>
-        </div>` : '<div class="game-detail-sub">Selecciona un mundo para ver detalle.</div>'}
       </section>
       <section class="game-detail-section">
         <strong>Bases sandbox</strong>
@@ -2750,33 +2747,173 @@ function closeModeDetail() {
   syncModalScrollLock();
 }
 
-async function setSandboxDays(groupId, day, worldId = null) {
-  const resolvedWorldId = worldId || getSandboxDerived(groupId).activeWorldId;
-  if (!resolvedWorldId) return;
-  const safeDay = clampBaseCounter(day, "sandboxDay");
-  await update(ref(db, `${GAMES_SANDBOX_WORLDS_PATH}/${groupId}/${resolvedWorldId}`), { currentDay: safeDay, updatedAt: nowTs() });
-  console.log("[games][sandbox] days:set", { groupId, worldId: resolvedWorldId, day: safeDay });
+function closeOverlayModal(modalEl) {
+  modalEl?.remove();
+  document.body.classList.remove("has-open-modal");
+}
+
+function getSandboxNoteEmoji(note) {
+  return String(note?.emoji || "").trim() || "📍";
+}
+
+function openSandboxWorldDetailModal(modeId, worldId) {
+  const mode = modes[modeId];
+  if (!mode?.groupId || !worldId) return;
+  const groupId = mode.groupId;
+  const state = { q: "", emoji: "all" };
+  const overlay = document.createElement("div");
+  overlay.className = "game-mini-modal-overlay";
+  overlay.innerHTML = `<div class="game-mini-modal opal-modal" role="dialog" aria-modal="true" aria-label="Detalle de mundo">
+    <div class="game-mini-title" data-world-head></div>
+    <div class="opal-field"><span>Nombre</span><input type="text" data-world-name /></div>
+    <div class="opal-field"><span>Día actual</span><input type="number" min="0" step="1" data-world-day /></div>
+    <div class="opal-field"><span>Estado</span><select data-world-status><option value="active">active</option><option value="lost">lost</option></select></div>
+    <details class="world-notes-details" open>
+      <summary data-notes-summary>Coordenadas y notas</summary>
+      <div class="opal-field"><input type="text" placeholder="Buscar..." data-note-search /></div>
+      <div class="chip-row" data-emoji-chips></div>
+      <div class="sandbox-note-list" data-note-list></div>
+      <div class="sandbox-note-inputs">
+        <input type="text" placeholder="Emoji" maxlength="4" data-note-emoji />
+        <input type="text" placeholder="Nombre" data-note-name />
+        <input type="number" min="0" step="1" placeholder="Día" data-note-day />
+        <input type="number" step="1" placeholder="X" data-note-x />
+        <input type="number" step="1" placeholder="Y" data-note-y />
+        <input type="number" step="1" placeholder="Z" data-note-z />
+        <select data-note-dimension><option value="">Dimensión</option><option value="overworld">overworld</option><option value="nether">nether</option><option value="end">end</option></select>
+        <input type="text" placeholder="Nota" data-note-text />
+        <button class="game-ctrl-btn" data-act="add-note">Añadir nota</button>
+      </div>
+    </details>
+    <div class="game-mini-actions">
+      <button type="button" class="btn ghost" data-act="close">Cerrar</button>
+      <button type="button" class="btn primary" data-act="save-world">Guardar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  document.body.classList.add("has-open-modal");
+  console.log("[games][sandbox] worldModal:open", { worldId });
+
+  const renderNotes = () => {
+    const world = getSandboxWorld(groupId, worldId);
+    if (!world) return;
+    const notes = getSandboxWorldNotes(groupId, worldId);
+    const search = state.q.trim().toLowerCase();
+    const emojis = Array.from(new Set(notes.map((note) => getSandboxNoteEmoji(note)).filter(Boolean)));
+    if (state.emoji !== "all" && !emojis.includes(state.emoji)) state.emoji = "all";
+    const chipsWrap = overlay.querySelector("[data-emoji-chips]");
+    chipsWrap.innerHTML = [`<button class="chip ${state.emoji === "all" ? "is-on" : ""}" data-act="filter-emoji" data-emoji="all">Todos</button>`, ...emojis.map((emoji) => `<button class="chip ${state.emoji === emoji ? "is-on" : ""}" data-act="filter-emoji" data-emoji="${emoji}">${emoji}</button>`)].join("");
+    const filtered = notes.filter((note) => {
+      const emoji = getSandboxNoteEmoji(note);
+      if (state.emoji !== "all" && emoji !== state.emoji) return false;
+      if (!search) return true;
+      const blob = `${note.name || note.title || ""} ${note.note || note.text || ""}`.toLowerCase();
+      return blob.includes(search);
+    });
+    overlay.querySelector("[data-notes-summary]").textContent = `Coordenadas y notas (${notes.length})`;
+    overlay.querySelector("[data-note-list]").innerHTML = filtered.map((note) => `<div class="note-row"><div class="note-row-title">${getSandboxNoteEmoji(note)} <strong>${note.name || note.title || "Sin nombre"}</strong></div><div class="note-row-meta">(${note.x ?? "-"} ${note.y ?? "-"} ${note.z ?? "-"} · ${note.dimension || "world"}) <span>Día ${note.day ?? "-"}</span></div><div class="note-row-text">${note.note || note.text || ""}</div></div>`).join("") || '<div class="game-detail-sub">Sin notas.</div>';
+  };
+
+  const renderWorld = () => {
+    const world = getSandboxWorld(groupId, worldId);
+    if (!world) return closeOverlayModal(overlay);
+    overlay.querySelector("[data-world-head]").innerHTML = `${world.name} <span class="chip is-on">${world.status}</span>`;
+    overlay.querySelector("[data-world-name]").value = world.name || "Mundo";
+    overlay.querySelector("[data-world-day]").value = Number(world.currentDay || 0);
+    overlay.querySelector("[data-world-status]").value = world.status || "active";
+    renderNotes();
+  };
+  renderWorld();
+
+  overlay.addEventListener("input", (e) => {
+    if (e.target.matches("[data-note-search]")) {
+      state.q = e.target.value || "";
+      renderNotes();
+    }
+  });
+
+  overlay.addEventListener("click", async (e) => {
+    if (e.target === overlay || e.target.closest('[data-act="close"]')) return closeOverlayModal(overlay);
+    const emojiChip = e.target.closest('[data-act="filter-emoji"]');
+    if (emojiChip) {
+      state.emoji = emojiChip.dataset.emoji || "all";
+      renderNotes();
+      return;
+    }
+    if (e.target.closest('[data-act="save-world"]')) {
+      const current = getSandboxWorld(groupId, worldId);
+      if (!current) return;
+      const payload = normalizeSandboxWorld({
+        ...current,
+        name: overlay.querySelector('[data-world-name]')?.value || "Mundo",
+        currentDay: Number(overlay.querySelector('[data-world-day]')?.value || 0),
+        status: overlay.querySelector('[data-world-status]')?.value || "active",
+        updatedAt: nowTs()
+      }, groupId, worldId);
+      await update(ref(db, `${GAMES_SANDBOX_WORLDS_PATH}/${groupId}/${worldId}`), payload);
+      renderModeDetail();
+      renderGamesList();
+      return closeOverlayModal(overlay);
+    }
+    if (e.target.closest('[data-act="add-note"]')) {
+      const noteRef = push(ref(db, `${GAMES_SANDBOX_WORLD_NOTES_PATH}/${groupId}/${worldId}`));
+      const note = normalizeSandboxWorldNote({
+        emoji: overlay.querySelector('[data-note-emoji]')?.value || "📍",
+        name: overlay.querySelector('[data-note-name]')?.value || null,
+        note: overlay.querySelector('[data-note-text]')?.value || null,
+        day: overlay.querySelector('[data-note-day]')?.value || null,
+        x: overlay.querySelector('[data-note-x]')?.value || null,
+        y: overlay.querySelector('[data-note-y]')?.value || null,
+        z: overlay.querySelector('[data-note-z]')?.value || null,
+        dimension: overlay.querySelector('[data-note-dimension]')?.value || null,
+        createdAt: nowTs()
+      }, groupId, worldId, noteRef.key);
+      await set(noteRef, note);
+      console.log("[games][sandbox] note:add", note);
+      ["[data-note-name]", "[data-note-text]", "[data-note-day]", "[data-note-x]", "[data-note-y]", "[data-note-z]"]
+        .forEach((sel) => { const n = overlay.querySelector(sel); if (n) n.value = ""; });
+      renderNotes();
+      return;
+    }
+  });
 }
 
 async function addSandboxWorld(modeId) {
   const mode = modes[modeId];
   if (!mode) return;
   const groupId = mode.groupId;
-  const name = prompt("Nombre del mundo", `Mundo ${new Date().toLocaleDateString("es")}`);
-  if (!name) return;
-  const worldRef = push(ref(db, `${GAMES_SANDBOX_WORLDS_PATH}/${groupId}`));
-  const world = normalizeSandboxWorld({
-    name,
-    createdAt: nowTs(),
-    startDay: 0,
-    currentDay: 0,
-    endedDay: null,
-    status: "active",
-    notes: null
-  }, groupId, worldRef.key);
-  await set(worldRef, world);
-  await update(ref(db, `${GAMES_GROUPS_PATH}/${groupId}/sandbox`), { ...getSandboxGroupState(groupId), activeWorldId: world.worldId, updatedAt: nowTs() });
-  console.log("[games][sandbox] world:add", world);
+  const overlay = document.createElement("div");
+  overlay.className = "game-mini-modal-overlay";
+  overlay.innerHTML = `<div class="game-mini-modal opal-modal" role="dialog" aria-modal="true" aria-label="Crear mundo">
+    <div class="game-mini-title">Crear mundo</div>
+    <label class="opal-field"><span>Nombre</span><input type="text" data-world-name value="Hardcore" /></label>
+    <label class="opal-field"><span>Día inicial</span><input type="number" min="0" step="1" data-world-day value="0" /></label>
+    <div class="game-mini-actions"><button type="button" class="btn ghost" data-act="cancel">Cancelar</button><button type="button" class="btn primary" data-act="save">Guardar</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  document.body.classList.add("has-open-modal");
+  overlay.addEventListener("click", async (e) => {
+    if (e.target === overlay || e.target.closest('[data-act="cancel"]')) return closeOverlayModal(overlay);
+    if (!e.target.closest('[data-act="save"]')) return;
+    const name = String(overlay.querySelector('[data-world-name]')?.value || "Hardcore").trim() || "Hardcore";
+    const startDay = clampBaseCounter(Number(overlay.querySelector('[data-world-day]')?.value || 0), "startDay");
+    const worldRef = push(ref(db, `${GAMES_SANDBOX_WORLDS_PATH}/${groupId}`));
+    const world = normalizeSandboxWorld({
+      name,
+      createdAt: nowTs(),
+      startDay,
+      currentDay: startDay,
+      endedDay: null,
+      status: "active",
+      notes: null
+    }, groupId, worldRef.key);
+    await set(worldRef, world);
+    await update(ref(db, `${GAMES_GROUPS_PATH}/${groupId}/sandbox`), { ...getSandboxGroupState(groupId), activeWorldId: world.worldId, updatedAt: nowTs() });
+    console.log("[games][sandbox] world:add", world);
+    renderGamesList();
+    if (currentModeId) renderModeDetail();
+    closeOverlayModal(overlay);
+  });
 }
 
 async function markSandboxWorldLost(modeId) {
@@ -2785,18 +2922,48 @@ async function markSandboxWorldLost(modeId) {
   const groupId = mode.groupId;
   const activeWorlds = getSandboxWorlds(groupId).filter((world) => world.status === "active");
   if (!activeWorlds.length) return;
-  const selectedId = prompt(`Mundo a perder:\n${activeWorlds.map((world) => `${world.worldId}: ${world.name}`).join("\n")}`, activeWorlds[0].worldId);
-  if (!selectedId) return;
-  const targetWorld = activeWorlds.find((world) => world.worldId === selectedId) || activeWorlds[0];
-  const endedDayRaw = prompt("Día final", String(Number(targetWorld.currentDay || 0)));
-  if (endedDayRaw === null) return;
-  const endedDay = clampBaseCounter(Number(endedDayRaw || targetWorld.currentDay || 0), "endedDay");
-  if (!confirm(`Marcar ${targetWorld.name} como perdido en día ${endedDay}?`)) return;
-  await update(ref(db, `${GAMES_SANDBOX_WORLDS_PATH}/${groupId}/${targetWorld.worldId}`), { status: "lost", endedDay, updatedAt: nowTs() });
-  const peakDays = Math.max(Number(getSandboxGroupState(groupId).peakDays || 0), endedDay);
-  await update(ref(db, `${GAMES_GROUPS_PATH}/${groupId}/sandbox`), { ...getSandboxGroupState(groupId), peakDays, updatedAt: nowTs() });
-  console.log("[games][sandbox] world:lost", { worldId: targetWorld.worldId, endedDay });
+  const overlay = document.createElement("div");
+  overlay.className = "game-mini-modal-overlay";
+  overlay.innerHTML = `<div class="game-mini-modal opal-modal" role="dialog" aria-modal="true" aria-label="Marcar mundo como perdido">
+    <div class="game-mini-title">Marcar mundo como perdido</div>
+    <label class="opal-field"><span>Mundo</span><select data-world-id>${activeWorlds.map((world) => `<option value="${world.worldId}">${world.name} · Día ${Number(world.currentDay || 0)}</option>`).join("")}</select></label>
+    <label class="opal-field"><span>Día final</span><input type="number" min="0" step="1" data-ended-day value="${Number(activeWorlds[0]?.currentDay || 0)}" /></label>
+    <div class="game-mini-actions"><button type="button" class="btn ghost" data-act="cancel">Cancelar</button><button type="button" class="btn primary" data-act="confirm">💔 Perdido</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  document.body.classList.add("has-open-modal");
+  overlay.addEventListener("change", (e) => {
+    if (!e.target.matches('[data-world-id]')) return;
+    const world = activeWorlds.find((item) => item.worldId === e.target.value);
+    const dayInput = overlay.querySelector('[data-ended-day]');
+    if (world && dayInput) dayInput.value = String(Number(world.currentDay || 0));
+  });
+  overlay.addEventListener("click", async (e) => {
+    if (e.target === overlay || e.target.closest('[data-act="cancel"]')) return closeOverlayModal(overlay);
+    if (!e.target.closest('[data-act="confirm"]')) return;
+    const worldId = overlay.querySelector('[data-world-id]')?.value;
+    const targetWorld = activeWorlds.find((world) => world.worldId === worldId) || activeWorlds[0];
+    if (!targetWorld) return;
+    const endedDay = clampBaseCounter(Number(overlay.querySelector('[data-ended-day]')?.value || targetWorld.currentDay || 0), "endedDay");
+    await update(ref(db, `${GAMES_SANDBOX_WORLDS_PATH}/${groupId}/${targetWorld.worldId}`), { status: "lost", endedDay, updatedAt: nowTs() });
+    const peakDays = Math.max(Number(getSandboxGroupState(groupId).peakDays || 0), endedDay);
+    const nextActive = getSandboxWorlds(groupId).find((world) => world.status === "active" && world.worldId !== targetWorld.worldId)?.worldId || null;
+    await update(ref(db, `${GAMES_GROUPS_PATH}/${groupId}/sandbox`), { ...getSandboxGroupState(groupId), peakDays, activeWorldId: nextActive, updatedAt: nowTs() });
+    console.log("[games][sandbox] world:lost", { worldId: targetWorld.worldId, endedDay });
+    renderGamesList();
+    if (currentModeId) renderModeDetail();
+    closeOverlayModal(overlay);
+  });
 }
+
+async function setSandboxDays(groupId, day, worldId = null) {
+  const resolvedWorldId = worldId || getSandboxDerived(groupId).activeWorldId;
+  if (!resolvedWorldId) return;
+  const safeDay = clampBaseCounter(day, "sandboxDay");
+  await update(ref(db, `${GAMES_SANDBOX_WORLDS_PATH}/${groupId}/${resolvedWorldId}`), { currentDay: safeDay, updatedAt: nowTs() });
+  console.log("[games][sandbox] days:set", { groupId, worldId: resolvedWorldId, day: safeDay });
+}
+
 
 async function onListClick(e) {
   const btn = e.target.closest("button[data-action]");
@@ -2845,46 +3012,9 @@ async function onListClick(e) {
     return;
   }
   if (action === "sandbox-world-open" && currentModeId) {
-    const mode = modes[currentModeId];
     const worldId = btn.dataset.worldId;
-    if (!mode?.groupId || !worldId) return;
-    await update(ref(db, `${GAMES_GROUPS_PATH}/${mode.groupId}/sandbox`), { ...getSandboxGroupState(mode.groupId), activeWorldId: worldId, updatedAt: nowTs() });
-    renderModeDetail();
-    return;
-  }
-  if (action === "sandbox-world-save" && currentModeId) {
-    const mode = modes[currentModeId];
-    const worldId = btn.dataset.worldId;
-    const detail = btn.closest(".sandbox-world-detail");
-    if (!mode?.groupId || !worldId || !detail) return;
-    const payload = normalizeSandboxWorld({
-      ...getSandboxWorld(mode.groupId, worldId),
-      name: detail.querySelector('[data-sandbox-world-name]')?.value || "Mundo",
-      currentDay: Number(detail.querySelector('[data-sandbox-world-day]')?.value || 0),
-      status: detail.querySelector('[data-sandbox-world-status]')?.value || "active",
-      updatedAt: nowTs()
-    }, mode.groupId, worldId);
-    await update(ref(db, `${GAMES_SANDBOX_WORLDS_PATH}/${mode.groupId}/${worldId}`), payload);
-    renderModeDetail();
-    return;
-  }
-  if (action === "sandbox-note-add" && currentModeId) {
-    const mode = modes[currentModeId];
-    const worldId = btn.dataset.worldId;
-    const detail = btn.closest(".sandbox-world-detail");
-    if (!mode?.groupId || !worldId || !detail) return;
-    const noteRef = push(ref(db, `${GAMES_SANDBOX_WORLD_NOTES_PATH}/${mode.groupId}/${worldId}`));
-    const note = normalizeSandboxWorldNote({
-      day: detail.querySelector('[data-note-day]')?.value || null,
-      x: detail.querySelector('[data-note-x]')?.value || null,
-      y: detail.querySelector('[data-note-y]')?.value || null,
-      z: detail.querySelector('[data-note-z]')?.value || null,
-      dimension: detail.querySelector('[data-note-dimension]')?.value || null,
-      text: detail.querySelector('[data-note-text]')?.value || null,
-      createdAt: nowTs()
-    }, mode.groupId, worldId, noteRef.key);
-    await set(noteRef, note);
-    renderModeDetail();
+    if (!worldId) return;
+    openSandboxWorldDetailModal(currentModeId, worldId);
     return;
   }
   if (action === "sandbox-worlds-lost-undo" && modeId) return patchModeCounter(modeId, "worldsLost", -1);

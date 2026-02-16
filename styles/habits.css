@@ -2605,6 +2605,18 @@ display: grid;
 }
 
 
+
+.habit-schedule-config-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
 .habits-history-month-nav {
   display: inline-flex;
   align-items: center;

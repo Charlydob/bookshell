@@ -38,6 +38,7 @@ const HABIT_COUNTS_PATH = "habitCounts";
 const HABIT_GROUPS_PATH = "habitGroups";
 const HABIT_PREFS_PATH = "habitPrefs";
 const HABIT_COMPARE_SETTINGS_PATH = "habitsCompareSettings";
+const HABITS_SCHEDULE_PATH = "habitsSchedule";
 const HABIT_UI_UID = String(window.__bookshellUid || localStorage.getItem("bookshell.uid") || "default");
 const HABIT_UI_PATH = `users/${HABIT_UI_UID}/ui`;
 const HABIT_UI_QUICK_COUNTERS_PATH = `${HABIT_UI_PATH}/quickCounters`;
@@ -49,6 +50,7 @@ const LAST_HABIT_KEY = "bookshell-habits-last-used";
 const HEATMAP_YEAR_STORAGE = "bookshell-habits-heatmap-year";
 const HISTORY_RANGE_STORAGE = "bookshell-habits-history-range:v1";
 const COMPARE_SETTINGS_STORAGE = "bookshell-habits-compare-settings:v1";
+const HABITS_SCHEDULE_STORAGE = "bookshell-habits-schedule-cache:v1";
 const DEFAULT_COLOR = "#7f5dff";
 const PARAM_EMPTY_LABEL = "Sin parámetro";
 const PARAM_COLOR_PALETTE = [
@@ -135,6 +137,11 @@ const habitStatsSeriesCache = new Map();
 const habitStatsResultCache = new Map();
 let dayDetailDateKey = todayKey();
 let dayDetailFocusHabitId = null;
+let habitSchedule = createDefaultHabitSchedule();
+let scheduleCalYear = null;
+let scheduleCalMonth = null;
+let scheduleTickInterval = null;
+let scheduleAutoCloseInterval = null;
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
 const DEBUG_HABITS_SYNC = (() => {
@@ -266,6 +273,449 @@ function todayKey() {
   return dateKeyLocal(new Date());
 }
 
+
+function createDefaultHabitSchedule() {
+  const emptyWeek = { mon: {}, tue: {}, wed: {}, thu: {}, fri: {}, sat: {}, sun: {} };
+  return {
+    schedules: {
+      base: { M: {}, T: {}, Libre: {} },
+      overrides: {
+        M: { ...emptyWeek },
+        T: { ...emptyWeek },
+        Libre: { ...emptyWeek }
+      }
+    },
+    settings: {
+      dayCloseTime: "00:00",
+      successThreshold: 70
+    },
+    summaries: {}
+  };
+}
+
+function normalizeHabitSchedule(raw) {
+  const defaults = createDefaultHabitSchedule();
+  const out = {
+    schedules: {
+      base: { ...defaults.schedules.base },
+      overrides: {
+        M: { ...defaults.schedules.overrides.M },
+        T: { ...defaults.schedules.overrides.T },
+        Libre: { ...defaults.schedules.overrides.Libre }
+      }
+    },
+    settings: { ...defaults.settings },
+    summaries: {}
+  };
+  if (!raw || typeof raw !== "object") return out;
+
+  const inBase = raw.schedules?.base || {};
+  ["M", "T", "Libre"].forEach((type) => {
+    const src = inBase?.[type] || {};
+    const normalized = {};
+    Object.entries(src).forEach(([habitId, minutes]) => {
+      const n = Math.max(0, Math.round(Number(minutes) || 0));
+      if (habitId && n > 0) normalized[habitId] = n;
+    });
+    out.schedules.base[type] = normalized;
+  });
+
+  const inOverrides = raw.schedules?.overrides || {};
+  ["M", "T", "Libre"].forEach((type) => {
+    const dayMap = inOverrides?.[type] || {};
+    ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].forEach((dayKey) => {
+      const src = dayMap?.[dayKey] || {};
+      const normalized = {};
+      Object.entries(src).forEach(([habitId, minutes]) => {
+        const n = Math.max(0, Math.round(Number(minutes) || 0));
+        if (habitId && n > 0) normalized[habitId] = n;
+      });
+      out.schedules.overrides[type][dayKey] = normalized;
+    });
+  });
+
+  const closeTime = String(raw.settings?.dayCloseTime || defaults.settings.dayCloseTime);
+  out.settings.dayCloseTime = /^\d{2}:\d{2}$/.test(closeTime) ? closeTime : defaults.settings.dayCloseTime;
+  const threshold = Number(raw.settings?.successThreshold);
+  out.settings.successThreshold = Number.isFinite(threshold) ? Math.max(1, Math.min(100, Math.round(threshold))) : defaults.settings.successThreshold;
+
+  if (raw.summaries && typeof raw.summaries === "object") {
+    out.summaries = raw.summaries;
+  }
+
+  return out;
+}
+
+function scheduleWeekdayKey(date = new Date()) {
+  const idx = (date.getDay() + 6) % 7;
+  return ["mon", "tue", "wed", "thu", "fri", "sat", "sun"][idx];
+}
+
+function scheduleShiftTypeForDate(dateKey = todayKey()) {
+  const shift = getShiftForDate(dateKey)?.shift;
+  if (shift === "M" || shift === "T") return shift;
+  return "Libre";
+}
+
+function scheduleTemplateForDate(dateKey = todayKey()) {
+  const type = scheduleShiftTypeForDate(dateKey);
+  const date = parseDateKey(dateKey) || new Date();
+  const dayKey = scheduleWeekdayKey(date);
+  const override = habitSchedule?.schedules?.overrides?.[type]?.[dayKey] || {};
+  const base = habitSchedule?.schedules?.base?.[type] || {};
+  const hasOverride = Object.keys(override).length > 0;
+  return { type, dayKey, template: hasOverride ? override : base, usingOverride: hasOverride };
+}
+
+function scheduleLabelForScore(score = 0) {
+  if (score < 40) return "día en fuga";
+  if (score < 70) return "en marcha";
+  if (score < 90) return "bien jugado";
+  return "día exprimido";
+}
+
+
+const SCHEDULE_SUCCESS_EMOJI = "✅";
+const SCHEDULE_FAIL_EMOJI = "❌";
+const SCHEDULE_AUTOCLOSE_MARKER_STORAGE = "bookshell-habits-schedule-autoclose:v1";
+
+function buildScheduleDayData(dateKey = todayKey()) {
+  const active = activeHabits().filter((habit) => (habit.goal || "check") === "time");
+  const { type, dayKey, template, usingOverride } = scheduleTemplateForDate(dateKey);
+  const doneMap = {};
+  active.forEach((habit) => {
+    doneMap[habit.id] = Math.round(getHabitTotalSecForDate(habit.id, dateKey) / 60);
+  });
+
+  if (runningSession?.targetHabitId && (parseDateKey(dateKey)?.getTime() === parseDateKey(todayKey())?.getTime())) {
+    const elapsedMin = Math.max(0, Math.round((Date.now() - runningSession.startTs) / 60000));
+    doneMap[runningSession.targetHabitId] = Math.max(doneMap[runningSession.targetHabitId] || 0, (doneMap[runningSession.targetHabitId] || 0) + elapsedMin);
+  }
+
+  const rows = Object.entries(template || {}).map(([habitId, target]) => {
+    const habit = habits[habitId];
+    const done = Math.max(0, Math.round(doneMap[habitId] || 0));
+    const targetMin = Math.max(0, Math.round(Number(target) || 0));
+    const percentRaw = targetMin > 0 ? Math.round((done / targetMin) * 100) : 0;
+    const percent = Math.max(0, Math.min(100, percentRaw));
+    const extra = Math.max(0, done - targetMin);
+    const remaining = Math.max(0, targetMin - done);
+    return { habitId, habit, target: targetMin, done, percent, extra, remaining, completed: targetMin > 0 && done >= targetMin };
+  }).filter((row) => row.habit && !row.habit.archived);
+
+  const withGoalIds = new Set(rows.map((row) => row.habitId));
+  const extras = active
+    .map((habit) => ({ habitId: habit.id, habit, done: Math.round(doneMap[habit.id] || 0) }))
+    .filter((row) => row.done > 0 && !withGoalIds.has(row.habitId))
+    .sort((a, b) => b.done - a.done || (a.habit.name || "").localeCompare(b.habit.name || "", "es"));
+
+  rows.sort((a, b) => {
+    if (a.completed !== b.completed) return a.completed ? 1 : -1;
+    if (!a.completed && !b.completed && b.remaining !== a.remaining) return b.remaining - a.remaining;
+    return (a.habit?.name || "").localeCompare(b.habit?.name || "", "es");
+  });
+
+  const runningId = runningSession?.targetHabitId || null;
+  if (runningId) {
+    const idx = rows.findIndex((row) => row.habitId === runningId);
+    if (idx > 0) rows.unshift(rows.splice(idx, 1)[0]);
+  }
+
+  const totalTargetMin = rows.reduce((acc, row) => acc + row.target, 0);
+  const totalDoneMin = rows.reduce((acc, row) => acc + row.done, 0);
+  const weightedDone = rows.reduce((acc, row) => acc + Math.min(row.done, row.target), 0);
+  const score = totalTargetMin > 0 ? Math.round((weightedDone / totalTargetMin) * 100) : 0;
+  const extrasTotalMin = extras.reduce((acc, row) => acc + row.done, 0);
+
+  return {
+    dateKey,
+    type,
+    dayKey,
+    usingOverride,
+    rows,
+    extras,
+    totalTargetMin,
+    totalDoneMin,
+    extrasTotalMin,
+    score,
+    label: scheduleLabelForScore(score)
+  };
+}
+
+function closeScheduleDay(dateKey = todayKey(), source = "manual") {
+  const data = buildScheduleDayData(dateKey);
+  const perHabit = {};
+  data.rows.forEach((row) => {
+    perHabit[row.habitId] = {
+      target: row.target,
+      done: row.done,
+      percent: row.percent,
+      extra: row.extra
+    };
+  });
+  const extras = {};
+  data.extras.forEach((row) => {
+    extras[row.habitId] = row.done;
+  });
+  const payload = {
+    type: data.type,
+    score: data.score,
+    label: data.label,
+    totalTargetMin: data.totalTargetMin,
+    totalDoneMin: data.totalDoneMin,
+    perHabit,
+    extras,
+    closedAtTs: Date.now(),
+    closeSource: source
+  };
+  if (!habitSchedule.summaries || typeof habitSchedule.summaries !== "object") habitSchedule.summaries = {};
+  habitSchedule.summaries[dateKey] = payload;
+  persistHabitSchedule();
+  try { set(ref(db, `${HABITS_SCHEDULE_PATH}/summaries/${dateKey}`), payload); } catch (_) {}
+  renderSchedule();
+}
+
+function openScheduleSummaryModal(dateKey) {
+  const summary = habitSchedule?.summaries?.[dateKey];
+  if (!summary || !$habitScheduleSummaryModal || !$habitScheduleSummaryContent) return;
+  if ($habitScheduleSummaryTitle) $habitScheduleSummaryTitle.textContent = `Resumen · ${dateKey}`;
+  const topDone = Object.entries(summary.perHabit || {})
+    .map(([habitId, row]) => ({ habit: habits[habitId], ...row }))
+    .filter((row) => row.habit)
+    .sort((a, b) => (b.percent - a.percent) || (b.extra - a.extra))
+    .slice(0, 3);
+  const topMiss = Object.entries(summary.perHabit || {})
+    .map(([habitId, row]) => ({ habit: habits[habitId], ...row, remaining: Math.max(0, (row.target || 0) - (row.done || 0)) }))
+    .filter((row) => row.habit)
+    .sort((a, b) => b.remaining - a.remaining)
+    .slice(0, 3);
+  const extrasTotal = Object.values(summary.extras || {}).reduce((acc, value) => acc + Math.max(0, Number(value) || 0), 0);
+  const renderList = (rows, empty) => rows.length
+    ? `<ul>${rows.map((row) => `<li>${row.habit.emoji || "🏷️"} ${row.habit.name} · ${row.percent || 0}%</li>`).join("")}</ul>`
+    : `<div class="hint">${empty}</div>`;
+  $habitScheduleSummaryContent.innerHTML = `
+    <div class="habit-schedule-summary-score">${summary.score || 0}% <small>${summary.label || scheduleLabelForScore(summary.score || 0)}</small></div>
+    <div class="habit-schedule-summary-meta">Objetivo ${formatMinutes(summary.totalTargetMin || 0)} · Hecho ${formatMinutes(summary.totalDoneMin || 0)}</div>
+    <div class="habit-schedule-summary-meta">Extras ${formatMinutes(extrasTotal)}</div>
+    <div class="sheet-section-title">Top cumplidos</div>
+    ${renderList(topDone, "Sin hábitos cumplidos")}
+    <div class="sheet-section-title">Top pendientes</div>
+    ${renderList(topMiss, "Nada pendiente")}
+  `;
+  $habitScheduleSummaryModal.classList.remove("hidden");
+}
+
+function closeScheduleSummaryModal() {
+  $habitScheduleSummaryModal?.classList.add("hidden");
+}
+
+function renderScheduleMonthGrid(year, month, grid) {
+  if (!grid) return;
+  grid.innerHTML = "";
+  const start = new Date(year, month, 1);
+  const end = new Date(year, month + 1, 0);
+  const offset = (start.getDay() + 6) % 7;
+  for (let i = 0; i < offset; i += 1) {
+    const empty = document.createElement("div");
+    empty.className = "history-month-cell is-out";
+    grid.appendChild(empty);
+  }
+  for (let d = 1; d <= end.getDate(); d += 1) {
+    const key = dateKeyLocal(new Date(year, month, d));
+    const summary = habitSchedule?.summaries?.[key];
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "history-month-cell habit-schedule-cell";
+    const threshold = habitSchedule?.settings?.successThreshold || 70;
+    const emoji = summary ? ((summary.score || 0) >= threshold ? SCHEDULE_SUCCESS_EMOJI : SCHEDULE_FAIL_EMOJI) : "";
+    cell.innerHTML = `<span class="month-day-num">${d}</span><span class="month-day-emoji">${emoji}</span>`;
+    if (summary) cell.addEventListener("click", () => openScheduleSummaryModal(key));
+    grid.appendChild(cell);
+  }
+  while (grid.children.length < 42) {
+    const empty = document.createElement("div");
+    empty.className = "history-month-cell is-out";
+    grid.appendChild(empty);
+  }
+}
+
+function parseCloseTimeToMinutes(value = "00:00") {
+  const [h, m] = String(value).split(":").map((n) => Number(n));
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return 0;
+  return Math.max(0, Math.min(23, h)) * 60 + Math.max(0, Math.min(59, m));
+}
+
+function maybeAutoCloseScheduleDay() {
+  const closeMin = parseCloseTimeToMinutes(habitSchedule?.settings?.dayCloseTime || "00:00");
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  if (nowMin < closeMin) return;
+  const marker = `${dateKeyLocal(now)}@${habitSchedule?.settings?.dayCloseTime || "00:00"}`;
+  const last = localStorage.getItem(SCHEDULE_AUTOCLOSE_MARKER_STORAGE);
+  if (last === marker) return;
+  const targetDate = dateKeyLocal(addDays(now, -1));
+  closeScheduleDay(targetDate, "auto");
+  try { localStorage.setItem(SCHEDULE_AUTOCLOSE_MARKER_STORAGE, marker); } catch (_) {}
+}
+
+function updateScheduleLiveInterval() {
+  const shouldRun = !!runningSession && activeTab === "schedule";
+  if (shouldRun && !scheduleTickInterval) {
+    scheduleTickInterval = window.setInterval(() => {
+      renderSchedule();
+    }, 15000);
+  }
+  if (!shouldRun && scheduleTickInterval) {
+    window.clearInterval(scheduleTickInterval);
+    scheduleTickInterval = null;
+  }
+}
+
+function renderSchedule() {
+  if (!$habitScheduleView) return;
+  if (activeTab !== "schedule") {
+    updateScheduleLiveInterval();
+    return;
+  }
+  const data = buildScheduleDayData(todayKey());
+  const threshold = habitSchedule?.settings?.successThreshold || 70;
+  if (!Number.isInteger(scheduleCalYear) || !Number.isInteger(scheduleCalMonth)) {
+    scheduleCalYear = new Date().getFullYear();
+    scheduleCalMonth = new Date().getMonth();
+  }
+
+  const timeHabits = activeHabits().filter((habit) => (habit.goal || "check") === "time");
+  const selectedType = $habitScheduleView.querySelector('[data-role="schedule-type"]')?.value || data.type;
+  const selectedDay = $habitScheduleView.querySelector('[data-role="schedule-day"]')?.value || "base";
+  const sourceObj = selectedDay === "base"
+    ? (habitSchedule?.schedules?.base?.[selectedType] || {})
+    : (habitSchedule?.schedules?.overrides?.[selectedType]?.[selectedDay] || {});
+
+  $habitScheduleView.innerHTML = `
+    <section class="habits-history-section habit-schedule-score-wrap">
+      <div class="habit-schedule-score">${data.score}%</div>
+      <div class="habit-schedule-score-label">${data.label}</div>
+      <div class="habit-schedule-score-sub">Plantilla ${data.type}${data.usingOverride ? ` · override ${data.dayKey.toUpperCase()}` : ""}</div>
+    </section>
+    <section class="habits-history-section habit-schedule-config">
+      <div class="habits-history-section-header">
+        <div class="habits-history-section-title">Plantillas</div>
+      </div>
+      <div class="habit-schedule-config-row">
+        <select class="habits-history-select" data-role="schedule-type">
+          <option value="M" ${selectedType === "M" ? "selected" : ""}>M</option>
+          <option value="T" ${selectedType === "T" ? "selected" : ""}>T</option>
+          <option value="Libre" ${selectedType === "Libre" ? "selected" : ""}>Libre</option>
+        </select>
+        <select class="habits-history-select" data-role="schedule-day">
+          <option value="base" ${selectedDay === "base" ? "selected" : ""}>Base</option>
+          <option value="mon" ${selectedDay === "mon" ? "selected" : ""}>Lunes</option>
+          <option value="tue" ${selectedDay === "tue" ? "selected" : ""}>Martes</option>
+          <option value="wed" ${selectedDay === "wed" ? "selected" : ""}>Miércoles</option>
+          <option value="thu" ${selectedDay === "thu" ? "selected" : ""}>Jueves</option>
+          <option value="fri" ${selectedDay === "fri" ? "selected" : ""}>Viernes</option>
+          <option value="sat" ${selectedDay === "sat" ? "selected" : ""}>Sábado</option>
+          <option value="sun" ${selectedDay === "sun" ? "selected" : ""}>Domingo</option>
+        </select>
+        <input class="habits-history-input" data-role="close-time" type="time" value="${habitSchedule?.settings?.dayCloseTime || "00:00"}"/>
+        <input class="habits-history-input" data-role="success-threshold" type="number" min="1" max="100" value="${threshold}"/>
+      </div>
+      <div class="habit-schedule-targets" data-role="schedule-targets"></div>
+      <div class="habit-schedule-actions">
+        <button class="btn ghost btn-compact" type="button" data-role="schedule-save-config">Guardar plantilla</button>
+        <button class="btn ghost btn-compact" type="button" data-role="schedule-close-day">Cerrar día</button>
+      </div>
+    </section>
+    <section class="habits-history-section">
+      <div class="habit-schedule-list" data-role="schedule-progress-list"></div>
+      <details class="habit-accordion habit-schedule-extras" data-role="schedule-extras">
+        <summary><div class="habit-accordion-title">Extras</div></summary>
+        <div class="habit-accordion-body" data-role="schedule-extras-list"></div>
+      </details>
+    </section>
+    <section class="habits-history-section">
+      <div class="habits-history-section-header">
+        <div class="habits-history-section-title">Calendario de resultados</div>
+        <div class="habits-history-month-nav">
+          <button class="habits-history-month-nav-btn" type="button" data-role="schedule-cal-prev">←</button>
+          <div class="habits-history-month-label">${formatHistoryMonthLabel(scheduleCalYear, scheduleCalMonth)}</div>
+          <button class="habits-history-month-nav-btn" type="button" data-role="schedule-cal-next">→</button>
+        </div>
+      </div>
+      <div class="habit-month-weekdays"><span>L</span><span>M</span><span>X</span><span>J</span><span>V</span><span>S</span><span>D</span></div>
+      <div class="history-month-grid" data-role="schedule-month-grid"></div>
+    </section>
+  `;
+
+  const targetsWrap = $habitScheduleView.querySelector('[data-role="schedule-targets"]');
+  if (targetsWrap) {
+    targetsWrap.innerHTML = timeHabits.map((habit) => {
+      const val = Math.max(0, Math.round(Number(sourceObj[habit.id]) || 0));
+      return `<label class="habit-schedule-target-row"><span>${habit.emoji || "🏷️"} ${habit.name}</span><input type="number" min="0" step="5" data-habit-id="${habit.id}" value="${val}"/></label>`;
+    }).join("");
+  }
+
+  const list = $habitScheduleView.querySelector('[data-role="schedule-progress-list"]');
+  const makeRow = (row, extraMode = false) => {
+    const isFocused = runningSession?.targetHabitId === row.habitId;
+    const pctLabel = extraMode ? `+${row.done} min` : `${row.percent}%`;
+    return `<div class="habit-schedule-row ${row.completed ? "is-complete" : ""} ${isFocused ? "is-focused" : ""}">
+      <div class="habit-schedule-name">${row.habit?.emoji || "🏷️"} ${row.habit?.name || "—"}</div>
+      <div class="habit-schedule-bar"><span style="width:${Math.max(0, Math.min(100, row.percent || 0))}%"></span></div>
+      <div class="habit-schedule-pct">${pctLabel}</div>
+    </div>`;
+  };
+  if (list) list.innerHTML = data.rows.map((row) => makeRow(row)).join("") || '<div class="hint">Define objetivos para ver progreso.</div>';
+
+  const extrasList = $habitScheduleView.querySelector('[data-role="schedule-extras-list"]');
+  const extrasWrap = $habitScheduleView.querySelector('[data-role="schedule-extras"]');
+  if (extrasList) {
+    extrasList.innerHTML = data.extras.map((row) => makeRow({ ...row, percent: 100, completed: false }, true)).join("") || '<div class="hint">Sin extras hoy.</div>';
+  }
+  if (extrasWrap) extrasWrap.style.display = data.extras.length ? "block" : "none";
+
+  const monthGrid = $habitScheduleView.querySelector('[data-role="schedule-month-grid"]');
+  renderScheduleMonthGrid(scheduleCalYear, scheduleCalMonth, monthGrid);
+
+  $habitScheduleView.querySelector('[data-role="schedule-type"]')?.addEventListener("change", () => renderSchedule());
+  $habitScheduleView.querySelector('[data-role="schedule-day"]')?.addEventListener("change", () => renderSchedule());
+  $habitScheduleView.querySelector('[data-role="schedule-cal-prev"]')?.addEventListener("click", () => {
+    const next = new Date(scheduleCalYear, scheduleCalMonth - 1, 1);
+    scheduleCalYear = next.getFullYear();
+    scheduleCalMonth = next.getMonth();
+    renderSchedule();
+  });
+  $habitScheduleView.querySelector('[data-role="schedule-cal-next"]')?.addEventListener("click", () => {
+    const next = new Date(scheduleCalYear, scheduleCalMonth + 1, 1);
+    scheduleCalYear = next.getFullYear();
+    scheduleCalMonth = next.getMonth();
+    renderSchedule();
+  });
+  $habitScheduleView.querySelector('[data-role="schedule-close-day"]')?.addEventListener("click", () => {
+    closeScheduleDay(todayKey(), "manual");
+  });
+  $habitScheduleView.querySelector('[data-role="schedule-save-config"]')?.addEventListener("click", () => {
+    const type = $habitScheduleView.querySelector('[data-role="schedule-type"]')?.value || "M";
+    const day = $habitScheduleView.querySelector('[data-role="schedule-day"]')?.value || "base";
+    const nextMap = {};
+    $habitScheduleView.querySelectorAll('.habit-schedule-target-row input[data-habit-id]').forEach((input) => {
+      const id = input.getAttribute("data-habit-id") || "";
+      const val = Math.max(0, Math.round(Number(input.value) || 0));
+      if (id && val > 0) nextMap[id] = val;
+    });
+    if (!habitSchedule.schedules?.base) habitSchedule.schedules = createDefaultHabitSchedule().schedules;
+    if (day === "base") habitSchedule.schedules.base[type] = nextMap;
+    else habitSchedule.schedules.overrides[type][day] = nextMap;
+    const closeTime = $habitScheduleView.querySelector('[data-role="close-time"]')?.value || "00:00";
+    const successThreshold = Math.max(1, Math.min(100, Math.round(Number($habitScheduleView.querySelector('[data-role="success-threshold"]')?.value || 70))));
+    habitSchedule.settings.dayCloseTime = closeTime;
+    habitSchedule.settings.successThreshold = successThreshold;
+    persistHabitSchedule();
+    renderSchedule();
+  });
+
+  updateScheduleLiveInterval();
+}
 function startOfWeek(d = new Date()) {
   const date = new Date(d);
   const day = date.getDay();
@@ -895,6 +1345,7 @@ function readCache() {
       habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "", quickSessions: [] };
       if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
       habitUI = normalizeHabitUI(parsed.habitUI || {});
+      habitSchedule = normalizeHabitSchedule(parsed.habitSchedule || readScheduleLocalFallback());
       const norm = normalizeSessionsStore(habitSessions, false);
       habitSessions = norm.normalized;
       habitSessionTimeline = norm.timeline || {};
@@ -911,13 +1362,33 @@ function saveCache() {
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ habits, habitChecks, habitSessions, habitCounts, habitGroups, habitPrefs, habitUI })
+      JSON.stringify({ habits, habitChecks, habitSessions, habitCounts, habitGroups, habitPrefs, habitUI, habitSchedule })
     );
+    localStorage.setItem(HABITS_SCHEDULE_STORAGE, JSON.stringify(habitSchedule));
   } catch (err) {
     console.warn("No se pudo guardar cache de hábitos", err);
   }
 }
 
+
+function readScheduleLocalFallback() {
+  try {
+    const raw = localStorage.getItem(HABITS_SCHEDULE_STORAGE);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function persistHabitSchedule() {
+  const normalized = normalizeHabitSchedule(habitSchedule);
+  habitSchedule = normalized;
+  try { localStorage.setItem(HABITS_SCHEDULE_STORAGE, JSON.stringify(normalized)); } catch (_) {}
+  saveCache();
+  try { set(ref(db, HABITS_SCHEDULE_PATH), normalized); } catch (err) {
+    console.warn("No se pudo guardar horario en remoto", err);
+  }
+}
 function saveRunningSession() {
   if (!runningSession) {
     localStorage.removeItem(RUNNING_KEY);
@@ -1836,6 +2307,12 @@ const $habitDayDetailList = document.getElementById("habit-day-detail-list");
 const $habitDayDetailClose = document.getElementById("habit-day-detail-close");
 const $habitDayDetailCancel = document.getElementById("habit-day-detail-cancel");
 const $habitDayDetailSave = document.getElementById("habit-day-detail-save");
+const $habitScheduleView = document.getElementById("habit-schedule-view");
+const $habitScheduleSummaryModal = document.getElementById("habit-schedule-summary-modal");
+const $habitScheduleSummaryTitle = document.getElementById("habit-schedule-summary-title");
+const $habitScheduleSummaryContent = document.getElementById("habit-schedule-summary-content");
+const $habitScheduleSummaryClose = document.getElementById("habit-schedule-summary-close");
+const $habitScheduleSummaryCancel = document.getElementById("habit-schedule-summary-cancel");
 const $habitManualClose = document.getElementById("habit-manual-close");
 const $habitManualCancel = document.getElementById("habit-manual-cancel");
 
@@ -7537,6 +8014,7 @@ function renderHabits() {
   renderToday();
   renderWeek();
   renderHistory();
+  renderSchedule();
   renderKPIs();
   renderPins();
   renderRecordsCard();
@@ -7660,6 +8138,7 @@ function updateSessionUI() {
   }
   $habitOverlay.classList.toggle("hidden", !isRunning || !habitsVisible);
   $habitFab.textContent = isRunning ? "⏹ Parar sesión" : "▶︎ Empezar sesión";
+  updateScheduleLiveInterval();
 }
 
 function formatTimer(sec) {
@@ -8364,6 +8843,11 @@ function bindEvents() {
   $habitDayDetailModal?.addEventListener("click", (event) => {
     if (event.target === $habitDayDetailModal) closeDayDetailModal();
   });
+  $habitScheduleSummaryClose?.addEventListener("click", closeScheduleSummaryModal);
+  $habitScheduleSummaryCancel?.addEventListener("click", closeScheduleSummaryModal);
+  $habitScheduleSummaryModal?.addEventListener("click", (event) => {
+    if (event.target === $habitScheduleSummaryModal) closeScheduleSummaryModal();
+  });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && $habitDetailOverlay && !$habitDetailOverlay.classList.contains("hidden")) {
@@ -8605,7 +9089,7 @@ function attachNavHook() {
 // Firebase listeners
 
 function listenRemote() {
-  const rerender = () => renderHabitsPreservingTodayUI();
+  const rerender = () => renderHabitsPreservingUI();
 
   onValue(ref(db, HABITS_PATH), (snap) => {
     habits = normalizeHabitsStore(snap.val() || {});
@@ -8642,8 +9126,14 @@ function listenRemote() {
     renderQuickCounters();
   });
 
-  onValue(ref(db, HABIT_COMPARE_SETTINGS_PATH), (snap) => {
-    const remote = snap.val();
+  onValue(ref(db, HABITS_SCHEDULE_PATH), (snap) => {
+    const raw = snap.val();
+    habitSchedule = normalizeHabitSchedule(raw || readScheduleLocalFallback() || {});
+    saveCache();
+    if (activeTab === "schedule") renderSchedule();
+  });
+
+  onValue(ref(db, HABIT_COMPARE_SETTINGS_PATH), (snap) => {    const remote = snap.val();
     if (!remote) return;
     applyHabitCompareSettings(remote);
     saveHabitCompareSettingsLocal();
@@ -8697,7 +9187,7 @@ function listenRemote() {
 
 
 function goHabitSubtab(tab) {
-  const allowed = new Set(["today", "week", "history", "reports"]);
+  const allowed = new Set(["today", "week", "history", "schedule", "reports"]);
   activeTab = allowed.has(tab) ? tab : "today";
   renderHabits();
 }
@@ -8858,6 +9348,8 @@ export function initHabits() {
   attachNavHook();
   listenRemote();
   renderHabits();
+  maybeAutoCloseScheduleDay();
+  scheduleAutoCloseInterval = window.setInterval(maybeAutoCloseScheduleDay, 60000);
   if (runningSession) {
     sessionInterval = setInterval(updateSessionUI, 1000);
   }

@@ -720,6 +720,7 @@
 <button aria-selected="true" class="habit-subtab is-active" data-tab="today" role="tab">Hoy</button>
 <button aria-selected="false" class="habit-subtab" data-tab="week" role="tab">Semana</button>
 <button aria-selected="false" class="habit-subtab" data-tab="history" role="tab">Historial</button>
+<button aria-selected="false" class="habit-subtab" data-tab="schedule" role="tab">Horario</button>
 <button aria-selected="false" class="habit-subtab" data-tab="reports" role="tab">Reportes</button>
 </div>
 <div class="habits-views">
@@ -894,6 +895,9 @@
 <div class="habits-panel" data-panel="history">
 <div class="habit-heatmap-list" id="habits-history-list"></div>
 <div class="empty-state small" id="habits-history-empty">Sin historial aún.</div>
+</div>
+<div class="habits-panel" data-panel="schedule">
+<div class="habit-schedule" id="habit-schedule-view"></div>
 </div>
 <div class="habits-panel" data-panel="reports">
 <div class="habit-reports">
@@ -2771,6 +2775,24 @@ Crear “<span id="gym-create-cta-text"></span>”
 <div class="modal-footer sheet-footer">
 <button class="btn ghost" id="habit-day-detail-cancel" type="button">Cerrar</button>
 <button class="btn primary" id="habit-day-detail-save" type="button">Guardar</button>
+</div>
+</div>
+</div>
+<!-- MODAL RESUMEN HORARIO -->
+<div class="modal-backdrop hidden" id="habit-schedule-summary-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="habit-schedule-summary-title">Resumen del día</div>
+<button class="icon-btn" id="habit-schedule-summary-close" type="button">✕</button>
+</div>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div id="habit-schedule-summary-content"></div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-schedule-summary-cancel" type="button">Cerrar</button>
 </div>
 </div>
 </div>

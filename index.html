@@ -18,7 +18,6 @@
 <link href="styles/media.css" rel="stylesheet"/>
 <link href="styles/world.css" rel="stylesheet"/>
 <link href="styles/gym.css" rel="stylesheet"/>
-<link href="styles/people.css" rel="stylesheet"/>
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="icons/favicon.ico" rel="icon"/>
 <link href="icons/favicon-32.png" rel="icon" sizes="32x32" type="image/png"/>
@@ -1887,20 +1886,6 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 </div>
 
-<section class="view" id="view-people">
-<div class="people-shell">
-<div class="people-toolbar" id="people-toolbar-tags"></div>
-<div class="people-actions">
-<button aria-label="Añadir persona" class="btn primary" id="people-add-person" type="button">+ Persona</button>
-<button aria-label="Radar cumpleaños" class="btn" id="people-radar" type="button">Radar 🎂</button>
-<button aria-label="Leaderboards" class="btn" id="people-leaderboard" type="button">🏆 Leaderboards</button>
-<button aria-label="Ajustes de people" class="btn" id="people-settings" type="button">⚙️</button>
-</div>
-<div class="people-graph-wrap">
-<svg class="people-graph" id="people-graph" preserveAspectRatio="xMidYMid meet" viewBox="0 0 360 420"></svg>
-</div>
-</div>
-</section>
 
 <nav class="bottom-nav"><button class="nav-btn nav-btn-active" data-view="view-main">🏠</button>
 <button class="nav-btn" data-view="view-books">📖</button>
@@ -1911,14 +1896,7 @@ Crear “<span id="gym-create-cta-text"></span>”
 <button class="nav-btn" data-view="view-media">🎞️</button>
 <button class="nav-btn" data-view="view-world">🌍</button>
 <button class="nav-btn" data-view="view-gym">🏋️</button>
-<button aria-label="People" class="nav-btn" data-view="view-people">👤</button>
 </nav>
-
-<div class="modal-backdrop hidden" id="people-person-modal"><div class="modal people-modal"><div class="modal-handle"></div><div class="modal-header"><div class="modal-title" id="people-person-title">Persona</div><button class="icon-btn" id="people-person-close" type="button">✕</button></div><div class="modal-scroll sheet-body people-modal-body" id="people-person-body"></div></div></div>
-<div class="modal-backdrop hidden" id="people-tags-modal"><div class="modal people-mini-modal"><div class="modal-handle"></div><div class="modal-header"><div class="modal-title">Tags</div><button class="icon-btn" id="people-tags-close" type="button">✕</button></div><div class="modal-scroll sheet-body" id="people-tags-body"></div></div></div>
-<div class="modal-backdrop hidden" id="people-types-modal"><div class="modal people-mini-modal"><div class="modal-handle"></div><div class="modal-header"><div class="modal-title">Tipos de vínculo</div><button class="icon-btn" id="people-types-close" type="button">✕</button></div><div class="modal-scroll sheet-body" id="people-types-body"></div></div></div>
-<div class="modal-backdrop hidden" id="people-radar-modal"><div class="modal people-mini-modal"><div class="modal-handle"></div><div class="modal-header"><div class="modal-title">Radar cumpleaños</div><button class="icon-btn" id="people-radar-close" type="button">✕</button></div><div class="modal-scroll sheet-body" id="people-radar-body"></div></div></div>
-<div class="modal-backdrop hidden" id="people-leader-modal"><div class="modal people-mini-modal"><div class="modal-handle"></div><div class="modal-header"><div class="modal-title">Leaderboards</div><button class="icon-btn" id="people-leader-close" type="button">✕</button></div><div class="modal-scroll sheet-body" id="people-leader-body"></div></div></div>
 
 <!-- MODAL LIBRO -->
 <div class="modal-backdrop hidden" id="book-modal-backdrop">
@@ -3124,7 +3102,6 @@ if (document.readyState === "loading") {
 <script src="scripts/media.js" type="module"></script>
 <script src="scripts/world.js" type="module"></script>
 <script src="scripts/gym.js" type="module"></script>
-<script src="scripts/people.js" type="module"></script>
 <datalist id="country-options"></datalist>
 </body>
 </html>

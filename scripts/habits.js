@@ -52,6 +52,7 @@ const HEATMAP_YEAR_STORAGE = "bookshell-habits-heatmap-year";
 const HISTORY_RANGE_STORAGE = "bookshell-habits-history-range:v1";
 const COMPARE_SETTINGS_STORAGE = "bookshell-habits-compare-settings:v1";
 const HABITS_SCHEDULE_STORAGE = "bookshell-habits-schedule-cache:v1";
+const HABITS_SCHEDULE_ROW_VIEW_STORAGE = "bookshell-habits-schedule-row-view:v1";
 const DEFAULT_COLOR = "#7f5dff";
 const PARAM_EMPTY_LABEL = "Sin parámetro";
 const PARAM_COLOR_PALETTE = [
@@ -147,6 +148,7 @@ let scheduleCalMonth = null;
 let scheduleTickInterval = null;
 let scheduleAutoCloseInterval = null;
 let scheduleConfigOpen = false;
+let scheduleRowViewModes = loadScheduleRowViewModes();
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
 const DEBUG_HABITS_SYNC = (() => {
@@ -222,6 +224,53 @@ function debugHabitsSync(...args) {
 function debugWorkShift(...args) {
   if (!DEBUG_WORK_SHIFT) return;
   console.log(...args);
+}
+
+function loadScheduleRowViewModes() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(HABITS_SCHEDULE_ROW_VIEW_STORAGE) || "{}");
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed;
+  } catch (_) {
+    return {};
+  }
+}
+
+function persistScheduleRowViewModes() {
+  try {
+    localStorage.setItem(HABITS_SCHEDULE_ROW_VIEW_STORAGE, JSON.stringify(scheduleRowViewModes || {}));
+  } catch (_) {
+    // noop: prefer in-memory session state when localStorage is unavailable
+  }
+}
+
+function getScheduleRowViewMode(rowKey) {
+  return scheduleRowViewModes?.[rowKey] === "detail" ? "detail" : "percent";
+}
+
+function toggleScheduleRowViewMode(rowKey) {
+  const next = getScheduleRowViewMode(rowKey) === "percent" ? "detail" : "percent";
+  if (!scheduleRowViewModes || typeof scheduleRowViewModes !== "object") scheduleRowViewModes = {};
+  scheduleRowViewModes[rowKey] = next;
+  persistScheduleRowViewModes();
+  return next;
+}
+
+function buildScheduleRowDetailLabel(row) {
+  const metricIsCount = row?.info?.metric === "count";
+  const done = Math.max(0, Math.round(Number(row?.done) || 0));
+  const target = Math.max(0, Math.round(Number(row?.value) || 0));
+  const exceeded = Math.max(0, Math.round(Number(row?.exceeded) || 0));
+  const kind = row?.info?.kind || "goal";
+
+  if (kind === "neutral") {
+    return metricIsCount ? `${done}` : `${done}m`;
+  }
+  if (kind === "limit") {
+    if (exceeded > 0) return metricIsCount ? `+${exceeded}` : `+${exceeded}m`;
+    return metricIsCount ? `${done} / ${target}` : `${done}m / ${target}m`;
+  }
+  return metricIsCount ? `${done} / ${target}` : `${done}m / ${target}m`;
 }
 
 function buildWorkDayPayload(minutes, shift) {
@@ -821,6 +870,10 @@ function renderSchedule(reason = "manual") {
     </section>
     <section class="habits-history-section">
       <div class="habit-schedule-list" data-role="schedule-progress-list"></div>
+      <details class="habit-accordion habit-schedule-extras" data-role="schedule-limits">
+        <summary><div class="habit-accordion-title">Límites</div></summary>
+        <div class="habit-accordion-body" data-role="schedule-limits-list"></div>
+      </details>
       <details class="habit-accordion habit-schedule-extras" data-role="schedule-neutrals">
         <summary><div class="habit-accordion-title">Neutrales con actividad</div></summary>
         <div class="habit-accordion-body" data-role="schedule-neutrals-list"></div>
@@ -862,20 +915,27 @@ function renderSchedule(reason = "manual") {
 
 
   const list = $habitScheduleView.querySelector('[data-role="schedule-progress-list"]');
-  const makeRow = (row, extraMode = false) => {
+  const makeRow = (row, rowGroup = "goals") => {
     const isFocused = runningSession?.targetHabitId === row.habitId;
-    const pctLabel = extraMode ? `${row.done}${row.info.metric === "count" ? "x" : "m"}` : `${row.percent}%`;
+    const rowKey = `${rowGroup}:${row.habitId}`;
+    const viewMode = getScheduleRowViewMode(rowKey);
+    const pctLabel = viewMode === "detail" ? buildScheduleRowDetailLabel(row) : `${row.percent}%`;
     return `<div class="habit-schedule-row ${row.completed ? "is-complete" : ""} ${isFocused ? "is-focused" : ""} ${row.exceeded > 0 ? "is-over-limit" : ""}">
       <div class="habit-schedule-name">${row.habit?.emoji || "🏷️"} ${row.habit?.name || "—"}</div>
       <div class="habit-schedule-bar"><span style="width:${Math.max(0, Math.min(100, row.percent || 0))}%"></span></div>
-      <div class="habit-schedule-pct">${pctLabel}</div>
+      <button class="habit-schedule-pct" type="button" data-role="schedule-row-toggle" data-row-key="${rowKey}" data-view-mode="${viewMode}" data-label-percent="${row.percent}%" data-label-detail="${buildScheduleRowDetailLabel(row)}" aria-label="Alternar entre porcentaje y detalle">${pctLabel}</button>
     </div>`;
   };
-  if (list) list.innerHTML = data.rows.map((row) => makeRow(row)).join("") || '<div class="hint">Define objetivos para ver progreso.</div>';
+  if (list) list.innerHTML = data.rows.map((row) => makeRow(row, "goals")).join("") || '<div class="hint">Define objetivos para ver progreso.</div>';
+
+  const limitsList = $habitScheduleView.querySelector('[data-role="schedule-limits-list"]');
+  const limitsWrap = $habitScheduleView.querySelector('[data-role="schedule-limits"]');
+  if (limitsList) limitsList.innerHTML = data.limits.map((row) => makeRow(row, "limits")).join("") || '<div class="hint">Sin límites configurados.</div>';
+  if (limitsWrap) limitsWrap.style.display = data.limits.length ? "block" : "none";
 
   const neutralList = $habitScheduleView.querySelector('[data-role="schedule-neutrals-list"]');
   const neutralWrap = $habitScheduleView.querySelector('[data-role="schedule-neutrals"]');
-  if (neutralList) neutralList.innerHTML = data.neutrals.map((row) => makeRow({ ...row, percent: 100 }, true)).join("") || '<div class="hint">Sin actividad neutral.</div>';
+  if (neutralList) neutralList.innerHTML = data.neutrals.map((row) => makeRow({ ...row, percent: 100 }, "neutrals")).join("") || '<div class="hint">Sin actividad neutral.</div>';
   if (neutralWrap) neutralWrap.style.display = data.neutrals.length ? "block" : "none";
 
   const monthGrid = $habitScheduleView.querySelector('[data-role="schedule-month-grid"]');
@@ -936,6 +996,19 @@ function renderSchedule(reason = "manual") {
     stopScheduleTemplateEditing();
     scheduleConfigOpen = false;
     renderSchedule("editor:cancel");
+  });
+  $habitScheduleView.querySelectorAll('[data-role="schedule-row-toggle"]').forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const rowKey = btn.getAttribute("data-row-key");
+      if (!rowKey) return;
+      const nextMode = toggleScheduleRowViewMode(rowKey);
+      const nextLabel = nextMode === "detail"
+        ? (btn.getAttribute("data-label-detail") || "")
+        : (btn.getAttribute("data-label-percent") || "0%");
+      btn.textContent = nextLabel;
+      btn.setAttribute("data-view-mode", nextMode);
+    });
   });
   $habitScheduleView.querySelectorAll('[data-role="schedule-mode"]').forEach((select) => {
     select.addEventListener("change", () => {

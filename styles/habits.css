@@ -3717,7 +3717,7 @@ align-items: center;
 
 .habit-schedule-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 1.5fr auto;
+  grid-template-columns: minmax(0, 1fr) 1.5fr 96px;
   align-items: center;
   gap: 8px;
   min-height: 28px;
@@ -3749,9 +3749,20 @@ align-items: center;
 }
 
 .habit-schedule-pct {
+  width: 96px;
+  justify-self: end;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: right;
+  cursor: pointer;
   font-size: 12px;
   font-weight: 700;
   color: var(--txt-soft);
+}
+
+.habit-schedule-pct:hover {
+  color: var(--txt);
 }
 
 .habit-schedule-row.is-focused .habit-schedule-bar > span {

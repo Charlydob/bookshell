@@ -11,6 +11,7 @@ import {
   ref,
   onValue,
   set,
+  update,
   get,
   runTransaction
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
@@ -567,8 +568,11 @@ function closeScheduleDay(dateKey = todayKey(), source = "manual") {
   };
   if (!habitSchedule.summaries || typeof habitSchedule.summaries !== "object") habitSchedule.summaries = {};
   habitSchedule.summaries[dateKey] = payload;
-  persistHabitSchedule();
-  try { set(ref(db, `${HABITS_SCHEDULE_PATH}/summaries/${dateKey}`), payload); } catch (_) {}
+  persistHabitScheduleLocal();
+  auditScheduleWrite(`${HABITS_SCHEDULE_PATH}/summaries/${dateKey}`, payload);
+  update(ref(db, `${HABITS_SCHEDULE_PATH}/summaries`), { [dateKey]: payload }).catch((err) => {
+    console.warn("No se pudo guardar resumen de horario", err);
+  });
   renderSchedule();
 }
 
@@ -851,6 +855,9 @@ function renderSchedule() {
   $habitScheduleView.querySelector('[data-role="schedule-save-config"]')?.addEventListener("click", () => {
     const type = $habitScheduleView.querySelector('[data-role="schedule-type"]')?.value || "M";
     const day = $habitScheduleView.querySelector('[data-role="schedule-day"]')?.value || "base";
+    const previousMap = day === "base"
+      ? { ...(habitSchedule?.schedules?.base?.[type] || {}) }
+      : { ...(habitSchedule?.schedules?.overrides?.[type]?.[day] || {}) };
     const nextMap = {};
     $habitScheduleView.querySelectorAll('.habit-schedule-target-row [data-role="schedule-mode"]').forEach((select) => {
       const id = select.getAttribute("data-habit-id") || "";
@@ -868,7 +875,27 @@ function renderSchedule() {
     const successThreshold = Math.max(1, Math.min(100, Math.round(Number($habitScheduleView.querySelector('[data-role="success-threshold"]')?.value || 70))));
     habitSchedule.settings.dayCloseTime = closeTime;
     habitSchedule.settings.successThreshold = successThreshold;
-    persistHabitSchedule();
+    persistHabitScheduleLocal();
+    const templatePath = day === "base"
+      ? `${HABITS_SCHEDULE_PATH}/schedules/base/${type}`
+      : `${HABITS_SCHEDULE_PATH}/schedules/overrides/${type}/${day}`;
+    const templatePatch = {};
+    Object.keys(previousMap).forEach((habitId) => {
+      if (!Object.prototype.hasOwnProperty.call(nextMap, habitId)) templatePatch[habitId] = null;
+    });
+    Object.entries(nextMap).forEach(([habitId, entry]) => {
+      templatePatch[habitId] = entry;
+    });
+    auditScheduleWrite(templatePath, templatePatch);
+    update(ref(db, templatePath), templatePatch).catch((err) => {
+      console.warn("No se pudo guardar plantilla en remoto", err);
+    });
+    const settingsPath = `${HABITS_SCHEDULE_PATH}/settings`;
+    const settingsPayload = { dayCloseTime: closeTime, successThreshold };
+    auditScheduleWrite(settingsPath, settingsPayload);
+    update(ref(db, settingsPath), settingsPayload).catch((err) => {
+      console.warn("No se pudo guardar ajustes de horario en remoto", err);
+    });
     scheduleConfigOpen = false;
     renderSchedule();
   });
@@ -1496,7 +1523,7 @@ function readCache() {
       habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "", quickSessions: [] };
       if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
       habitUI = normalizeHabitUI(parsed.habitUI || {});
-      habitSchedule = normalizeHabitSchedule(parsed.habitSchedule || readScheduleLocalFallback());
+      habitSchedule = createDefaultHabitSchedule();
       const norm = normalizeSessionsStore(habitSessions, false);
       habitSessions = norm.normalized;
       habitSessionTimeline = norm.timeline || {};
@@ -1522,22 +1549,28 @@ function saveCache() {
 }
 
 
-function readScheduleLocalFallback() {
-  try {
-    const raw = localStorage.getItem(HABITS_SCHEDULE_STORAGE);
-    return raw ? JSON.parse(raw) : null;
-  } catch (_) {
-    return null;
-  }
+function auditScheduleWrite(path, payload) {
+  console.warn("SCHEDULE WRITE", path, payload, new Error().stack);
 }
 
-function persistHabitSchedule() {
+function persistHabitScheduleLocal() {
   const normalized = normalizeHabitSchedule(habitSchedule);
   habitSchedule = normalized;
   try { localStorage.setItem(HABITS_SCHEDULE_STORAGE, JSON.stringify(normalized)); } catch (_) {}
   saveCache();
-  try { set(ref(db, HABITS_SCHEDULE_PATH), normalized); } catch (err) {
-    console.warn("No se pudo guardar horario en remoto", err);
+}
+
+async function loadScheduleFromRemote() {
+  try {
+    const snap = await get(ref(db, HABITS_SCHEDULE_PATH));
+    const raw = snap.val();
+    habitSchedule = raw && typeof raw === "object"
+      ? normalizeHabitSchedule(raw)
+      : createDefaultHabitSchedule();
+    saveCache();
+  } catch (err) {
+    console.warn("No se pudo leer horario remoto", err);
+    habitSchedule = createDefaultHabitSchedule();
   }
 }
 function saveRunningSession() {
@@ -9279,7 +9312,9 @@ function listenRemote() {
 
   onValue(ref(db, HABITS_SCHEDULE_PATH), (snap) => {
     const raw = snap.val();
-    habitSchedule = normalizeHabitSchedule(raw || readScheduleLocalFallback() || {});
+    habitSchedule = raw && typeof raw === "object"
+      ? normalizeHabitSchedule(raw)
+      : createDefaultHabitSchedule();
     saveCache();
     if (activeTab === "schedule") renderSchedule();
   });
@@ -9486,7 +9521,7 @@ window.__bookshellHabits = {
   rangeLabel,
   debugComputeTimeByHabit
 };
-export function initHabits() {
+export async function initHabits() {
   readCache();
   loadRunningSession();
   loadHeatmapYear();
@@ -9497,6 +9532,7 @@ export function initHabits() {
   handleShortcutUrlOnce();
   bindEvents();
   attachNavHook();
+  await loadScheduleFromRemote();
   listenRemote();
   renderHabits();
   maybeAutoCloseScheduleDay();

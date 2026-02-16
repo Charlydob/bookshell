@@ -9492,7 +9492,7 @@ export function initHabits() {
   listenRemote();
   renderHabits();
   maybeAutoCloseScheduleDay();
-  scheduleAutoCloseInterval = window.setInterval(maybeAutoCloseScheduleDay, 60000);
+  scheduleAutoCloseInterval = window.setInterval(maybeAutoCloseScheduleDay, 600000);
   if (runningSession) {
     sessionInterval = setInterval(updateSessionUI, 1000);
   }

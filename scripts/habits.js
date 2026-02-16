@@ -149,6 +149,7 @@ let scheduleTickInterval = null;
 let scheduleAutoCloseInterval = null;
 let scheduleConfigOpen = false;
 let scheduleViewMode = loadScheduleViewMode();
+let habitDetailScheduleSelection = { type: "Libre", day: "base" };
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
 const DEBUG_HABITS_SYNC = (() => {
@@ -800,6 +801,61 @@ function readScheduleTemplateFromState(type = "M", day = "base", source = schedu
   return deepCloneScheduleState(source?.schedules?.overrides?.[type]?.[day] || {});
 }
 
+function getHabitScheduleEntryForSelection(habitId, type = "Libre", day = "base", source = scheduleState) {
+  if (!habitId) return null;
+  const node = day === "base"
+    ? source?.schedules?.base?.[type]?.[habitId]
+    : source?.schedules?.overrides?.[type]?.[day]?.[habitId];
+  if (!node || typeof node !== "object") return null;
+  return {
+    mode: String(node.mode || "neutral"),
+    value: Math.max(0, Math.round(Number(node.value) || 0))
+  };
+}
+
+function updateLocalScheduleHabitEntry(habitId, type = "Libre", day = "base", entry = null) {
+  if (!habitId) return;
+  if (!scheduleState?.schedules?.base || !scheduleState?.schedules?.overrides) {
+    scheduleState = normalizeHabitSchedule(scheduleState || createDefaultHabitSchedule());
+  }
+  if (day === "base") {
+    if (!scheduleState.schedules.base[type]) scheduleState.schedules.base[type] = {};
+    if (!entry) delete scheduleState.schedules.base[type][habitId];
+    else scheduleState.schedules.base[type][habitId] = entry;
+    persistHabitScheduleLocal();
+    return;
+  }
+  if (!scheduleState.schedules.overrides[type]) scheduleState.schedules.overrides[type] = {};
+  if (!scheduleState.schedules.overrides[type][day]) scheduleState.schedules.overrides[type][day] = {};
+  if (!entry) delete scheduleState.schedules.overrides[type][day][habitId];
+  else scheduleState.schedules.overrides[type][day][habitId] = entry;
+  persistHabitScheduleLocal();
+}
+
+async function saveHabitScheduleEntryByHabit(habitId, { type = "Libre", day = "base", mode = "neutral", value = 0 } = {}) {
+  if (!habitId) return;
+  const safeMode = SCHEDULE_MODES[mode] ? mode : "neutral";
+  const safeValue = Math.max(0, Math.round(Number(value) || 0));
+  const path = day === "base"
+    ? `${HABITS_SCHEDULE_PATH}/schedules/base/${type}`
+    : `${HABITS_SCHEDULE_PATH}/schedules/overrides/${type}/${day}`;
+  const payload = { [habitId]: { mode: safeMode, value: safeValue } };
+  auditScheduleWrite(path, payload);
+  await update(ref(db, path), payload);
+  updateLocalScheduleHabitEntry(habitId, type, day, { mode: safeMode, value: safeValue });
+}
+
+async function removeHabitScheduleEntryByHabit(habitId, { type = "Libre", day = "base" } = {}) {
+  if (!habitId) return;
+  const path = day === "base"
+    ? `${HABITS_SCHEDULE_PATH}/schedules/base/${type}`
+    : `${HABITS_SCHEDULE_PATH}/schedules/overrides/${type}/${day}`;
+  const payload = { [habitId]: null };
+  auditScheduleWrite(path, payload);
+  await update(ref(db, path), payload);
+  updateLocalScheduleHabitEntry(habitId, type, day, null);
+}
+
 function beginScheduleTemplateEditing(type = "M", day = "base") {
   const normalizedType = type || "M";
   const normalizedDay = day || "base";
@@ -977,10 +1033,12 @@ function renderSchedule(reason = "manual") {
     const percentLabel = `${row.percent}%`;
     const timeLabel = buildScheduleRowDetailLabel(row);
     const slotLabel = scheduleViewMode === "time" ? timeLabel : percentLabel;
-    return `<div class="habit-schedule-row ${row.completed ? "is-complete" : ""} ${isFocused ? "is-focused" : ""} ${row.exceeded > 0 ? "is-over-limit" : ""}">
-      <div class="habit-schedule-name">${row.habit?.emoji || "🏷️"} ${row.habit?.name || "—"}</div>
+    const isDone = String(row.mode || "").startsWith("target") && row.progress >= 1;
+    const isOver = String(row.mode || "").startsWith("limit") && row.done > row.value;
+    return `<div class="habit-schedule-row ${row.completed ? "is-complete" : ""} ${isFocused ? "is-focused" : ""} ${isOver ? "is-over-limit" : ""} ${isDone ? "schedule-row--done" : ""} ${isOver ? "schedule-row--over" : ""}">
+      <div class="habit-schedule-name">${row.habit?.emoji || "🏷️"} ${row.habit?.name || "—"}${isDone ? ' <span class="habit-schedule-badge">Hecho</span>' : ""}</div>
       <div class="habit-schedule-bar"><span style="width:${Math.max(0, Math.min(100, row.percent || 0))}%"></span></div>
-      <div class="habit-schedule-pct ${scheduleViewMode === "time" && row.exceeded > 0 ? "is-danger" : ""}" data-role="schedule-right-slot" data-label-percent="${percentLabel}" data-label-time="${timeLabel}" data-is-exceeded="${row.exceeded > 0 ? "1" : "0"}">${slotLabel}</div>
+      <div class="habit-schedule-pct ${scheduleViewMode === "time" && isOver ? "is-danger" : ""}" data-role="schedule-right-slot" data-label-percent="${percentLabel}" data-label-time="${timeLabel}" data-is-exceeded="${isOver ? "1" : "0"}">${slotLabel}</div>
     </div>`;
   };
   if (list) list.innerHTML = data.rows.map((row) => makeRow(row, "goals")).join("") || '<div class="hint">Define objetivos para ver progreso.</div>';
@@ -2667,6 +2725,13 @@ const $habitDetailRecordsWrap = document.getElementById("habit-detail-records-wr
 const $habitDetailRecordsMore = document.getElementById("habit-detail-records-more");
 const $habitDetailInsightsSub = document.getElementById("habit-detail-insights-sub");
 const $habitDetailInsights = document.getElementById("habit-detail-insights");
+const $habitDetailScheduleStatus = document.getElementById("habit-detail-schedule-status");
+const $habitDetailScheduleType = document.getElementById("habit-detail-schedule-type");
+const $habitDetailScheduleVariant = document.getElementById("habit-detail-schedule-variant");
+const $habitDetailScheduleMode = document.getElementById("habit-detail-schedule-mode");
+const $habitDetailScheduleValue = document.getElementById("habit-detail-schedule-value");
+const $habitDetailScheduleSave = document.getElementById("habit-detail-schedule-save");
+const $habitDetailScheduleRemove = document.getElementById("habit-detail-schedule-remove");
 
 
 // Modal refs
@@ -3315,6 +3380,11 @@ function openHabitDetail(habitId, dateKeyContext = todayKey()) {
   if (!habit || habit.archived || !$habitDetailOverlay) return;
   habitDetailId = habitId;
   habitDetailDateKey = dateKeyContext || todayKey();
+  const scheduleContext = scheduleTemplateForDate(habitDetailDateKey);
+  habitDetailScheduleSelection = {
+    type: scheduleContext?.type || "Libre",
+    day: scheduleContext?.usingOverride ? (scheduleContext?.dayKey || "base") : "base"
+  };
   $habitDetailOverlay.classList.remove("hidden");
   $habitDetailOverlay.setAttribute("aria-hidden", "false");
   renderHabitDetail(habitId, habitDetailRange);
@@ -3757,6 +3827,40 @@ function renderHabitDetailInsights(habit, rangeKey) {
   }
 }
 
+function renderHabitDetailSchedulePanel(habit) {
+  if (!habit || !$habitDetailScheduleType || !$habitDetailScheduleVariant || !$habitDetailScheduleMode || !$habitDetailScheduleValue) return;
+  const selectedType = ["M", "T", "Libre"].includes(habitDetailScheduleSelection?.type)
+    ? habitDetailScheduleSelection.type
+    : (scheduleShiftTypeForDate(todayKey()) || "Libre");
+  const selectedDay = ["base", "mon", "tue", "wed", "thu", "fri", "sat", "sun"].includes(habitDetailScheduleSelection?.day)
+    ? habitDetailScheduleSelection.day
+    : "base";
+  habitDetailScheduleSelection = { type: selectedType, day: selectedDay };
+
+  $habitDetailScheduleType.value = selectedType;
+  $habitDetailScheduleVariant.value = selectedDay;
+
+  const current = getHabitScheduleEntryForSelection(habit.id, selectedType, selectedDay);
+  if (!current) {
+    $habitDetailScheduleMode.value = "neutral";
+    $habitDetailScheduleValue.value = "";
+    $habitDetailScheduleValue.disabled = true;
+    if ($habitDetailScheduleStatus) $habitDetailScheduleStatus.textContent = "No configurado";
+    return;
+  }
+
+  $habitDetailScheduleMode.value = current.mode;
+  $habitDetailScheduleValue.value = String(current.value || 0);
+  $habitDetailScheduleValue.disabled = current.mode === "neutral";
+  const info = scheduleModeInfo(current.mode);
+  if ($habitDetailScheduleStatus) {
+    const valueLabel = info.metric === "time" ? `${current.value}m` : `${current.value}x`;
+    $habitDetailScheduleStatus.textContent = info.kind === "neutral"
+      ? `Configurado: ${info.label}`
+      : `Configurado: ${info.label} ${valueLabel}`;
+  }
+}
+
 function renderHabitDetail(habitId, rangeKey = habitDetailRange) {
   const habit = habits[habitId];
   if (!habit || habit.archived) return;
@@ -3791,6 +3895,7 @@ function renderHabitDetail(habitId, rangeKey = habitDetailRange) {
   if ($habitDetailGoal) $habitDetailGoal.textContent = goal === "time" ? "Tiempo" : (goal === "count" ? "Contador" : "Check");
 
   renderHabitDetailActions(habit, habitDetailDateKey || today);
+  renderHabitDetailSchedulePanel(habit);
   renderHabitDetailHeatmap(habit, rangeKey);
   renderHabitDetailChart(habit, rangeKey);
   updateHabitDetailRecordsSummary(habit, rangeKey);
@@ -9308,6 +9413,61 @@ function bindEvents() {
       $habitDetailChartRange.querySelectorAll("[data-chart-range]").forEach((b) => b.classList.toggle("is-active", b === btn));
       if (habitDetailId) renderHabitDetail(habitDetailId, habitDetailRange);
     });
+  });
+
+  $habitDetailScheduleType?.addEventListener("change", () => {
+    habitDetailScheduleSelection = {
+      type: $habitDetailScheduleType.value || "Libre",
+      day: $habitDetailScheduleVariant?.value || "base"
+    };
+    if (!habitDetailId || !habits[habitDetailId]) return;
+    renderHabitDetailSchedulePanel(habits[habitDetailId]);
+  });
+  $habitDetailScheduleVariant?.addEventListener("change", () => {
+    habitDetailScheduleSelection = {
+      type: $habitDetailScheduleType?.value || "Libre",
+      day: $habitDetailScheduleVariant.value || "base"
+    };
+    if (!habitDetailId || !habits[habitDetailId]) return;
+    renderHabitDetailSchedulePanel(habits[habitDetailId]);
+  });
+  $habitDetailScheduleMode?.addEventListener("change", () => {
+    if (!$habitDetailScheduleValue) return;
+    $habitDetailScheduleValue.disabled = $habitDetailScheduleMode.value === "neutral";
+    if ($habitDetailScheduleMode.value === "neutral") $habitDetailScheduleValue.value = "0";
+  });
+  $habitDetailScheduleSave?.addEventListener("click", async () => {
+    if (!habitDetailId || !habits[habitDetailId]) return;
+    const type = $habitDetailScheduleType?.value || "Libre";
+    const day = $habitDetailScheduleVariant?.value || "base";
+    const mode = $habitDetailScheduleMode?.value || "neutral";
+    const value = Math.max(0, Math.round(Number($habitDetailScheduleValue?.value || 0)));
+    const payloadValue = mode === "neutral" ? 0 : value;
+    try {
+      await saveHabitScheduleEntryByHabit(habitDetailId, { type, day, mode, value: payloadValue });
+      habitDetailScheduleSelection = { type, day };
+      renderHabitDetailSchedulePanel(habits[habitDetailId]);
+      if (activeTab === "schedule") renderSchedule("detail:habit-save");
+      showHabitToast("Horario guardado");
+    } catch (err) {
+      console.warn("No se pudo guardar horario del hábito", err);
+      showHabitToast("No se pudo guardar el horario");
+    }
+  });
+  $habitDetailScheduleRemove?.addEventListener("click", async () => {
+    if (!habitDetailId || !habits[habitDetailId]) return;
+    const type = $habitDetailScheduleType?.value || "Libre";
+    const day = $habitDetailScheduleVariant?.value || "base";
+    try {
+      await removeHabitScheduleEntryByHabit(habitDetailId, { type, day });
+      habitDetailScheduleSelection = { type, day };
+      renderHabitDetailSchedulePanel(habits[habitDetailId]);
+      if (activeTab === "schedule") renderSchedule("detail:habit-remove");
+      showHabitToast("Horario eliminado");
+    } catch (err) {
+      console.warn("No se pudo eliminar horario del hábito", err);
+      showHabitToast("No se pudo quitar del horario");
+    }
   });
   $habitDayDetailClose?.addEventListener("click", closeDayDetailModal);
   $habitDayDetailCancel?.addEventListener("click", closeDayDetailModal);

@@ -1210,6 +1210,53 @@
 <div class="habit-detail-chart" id="habit-detail-chart"></div>
 <div class="habit-detail-chart-meta" id="habit-detail-chart-meta"></div>
 </section>
+<section class="habit-detail-section habit-detail-schedule-section">
+<div class="habit-detail-section-head">
+<div class="habit-detail-section-title">Horario</div>
+<div class="habit-detail-section-sub" id="habit-detail-schedule-status">No configurado</div>
+</div>
+<div class="habit-detail-schedule-grid">
+<label class="habit-detail-schedule-field">
+<span>Tipo de día</span>
+<select id="habit-detail-schedule-type">
+<option value="M">M (mañana)</option>
+<option value="T">T (tarde)</option>
+<option value="Libre">Libre</option>
+</select>
+</label>
+<label class="habit-detail-schedule-field">
+<span>Variante</span>
+<select id="habit-detail-schedule-variant">
+<option value="base">Base</option>
+<option value="mon">L</option>
+<option value="tue">M</option>
+<option value="wed">X</option>
+<option value="thu">J</option>
+<option value="fri">V</option>
+<option value="sat">S</option>
+<option value="sun">D</option>
+</select>
+</label>
+<label class="habit-detail-schedule-field habit-detail-schedule-field--wide">
+<span>Modo</span>
+<select id="habit-detail-schedule-mode">
+<option value="targetMin">Objetivo tiempo (min)</option>
+<option value="targetCount">Objetivo count (x)</option>
+<option value="limitMin">Límite tiempo (min)</option>
+<option value="limitCount">Límite count (x)</option>
+<option value="neutral">Neutral</option>
+</select>
+</label>
+<label class="habit-detail-schedule-field habit-detail-schedule-field--wide">
+<span>Valor</span>
+<input id="habit-detail-schedule-value" min="0" step="1" type="number" placeholder="0" />
+</label>
+</div>
+<div class="habit-detail-schedule-actions">
+<button class="btn ghost btn-compact" id="habit-detail-schedule-save" type="button">Guardar</button>
+<button class="btn ghost btn-compact" id="habit-detail-schedule-remove" type="button">Quitar de horario</button>
+</div>
+</section>
 <details class="habit-detail-section habit-detail-records-wrap" id="habit-detail-records-wrap">
 <summary class="habit-detail-records-summary">
 <div class="habit-detail-section-head">

@@ -492,33 +492,40 @@ function collectDoneByDayForHabit(habitId, dayCloseTime = "00:00") {
       });
     });
   } else {
-    Object.entries(habitSessions?.[habitId] || {}).forEach(([dayKey, sec]) => {
-      const min = Math.max(0, (Number(sec) || 0) / 60);
+    Object.keys(habitSessions?.[habitId] || {}).forEach((dayKey) => {
+      const min = Math.max(0, getHabitTotalSecForDate(habitId, dayKey) / 60);
       if (min > 0) out.set(dayKey, (out.get(dayKey) || 0) + min);
     });
   }
   return out;
 }
 
+function computeHabitDayTotals(habitId, dayKey, dayCloseTime = "00:00", options = {}) {
+  const includeRunningLive = options?.includeRunningLive !== false;
+  const doneCount = Math.max(0, Number(getHabitCount(habitId, dayKey) || 0));
+  const byDay = collectDoneByDayForHabit(habitId, dayCloseTime);
+  let doneMin = Math.max(0, Math.round(byDay.get(dayKey) || 0));
+
+  if (includeRunningLive && runningSession?.targetHabitId === habitId) {
+    splitSpanByDay(runningSession.startTs, Date.now(), dayCloseTime).forEach((chunk) => {
+      if (chunk.dayKey !== dayKey) return;
+      doneMin = Math.max(0, Math.round(doneMin + chunk.minutes));
+    });
+  }
+
+  console.log("DAY TOTALS", habitId, { doneMin, doneCount, from: "shared-helper" });
+  return { doneMin, doneCount };
+}
+
 function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), scheduleState?.settings?.dayCloseTime || "00:00")) {
   const closeTime = scheduleState?.settings?.dayCloseTime || "00:00";
   const { type, dayKey, template, usingOverride } = scheduleTemplateForDate(dateKey);
   const allHabits = activeHabits();
-  const doneTimeMap = {};
-  const doneCountMap = {};
+  const doneTotalsMap = {};
 
   allHabits.forEach((habit) => {
-    doneCountMap[habit.id] = getHabitCount(habit.id, dateKey);
-    const byDay = collectDoneByDayForHabit(habit.id, closeTime);
-    doneTimeMap[habit.id] = Math.max(0, Math.round(byDay.get(dateKey) || 0));
+    doneTotalsMap[habit.id] = computeHabitDayTotals(habit.id, dateKey, closeTime, { includeRunningLive: true });
   });
-
-  if (runningSession?.targetHabitId) {
-    splitSpanByDay(runningSession.startTs, Date.now(), closeTime).forEach((chunk) => {
-      if (chunk.dayKey !== dateKey) return;
-      doneTimeMap[runningSession.targetHabitId] = Math.max(0, Math.round((doneTimeMap[runningSession.targetHabitId] || 0) + chunk.minutes));
-    });
-  }
 
   const entries = Object.entries(template || {}).map(([habitId, config]) => {
     const habit = habits[habitId];
@@ -526,7 +533,8 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
     const mode = String(config?.mode || "neutral");
     const value = Math.max(0, Math.round(Number(config?.value) || 0));
     const info = scheduleModeInfo(mode);
-    const done = info.metric === "count" ? doneCountMap[habitId] || 0 : doneTimeMap[habitId] || 0;
+    const totals = doneTotalsMap[habitId] || { doneMin: 0, doneCount: 0 };
+    const done = info.metric === "count" ? totals.doneCount : totals.doneMin;
     const ratio = value > 0 ? (done / value) : 0;
     const progress = Math.max(0, Math.min(1, ratio));
     const percent = Math.max(0, Math.min(100, Math.round(progress * 100)));
@@ -2301,7 +2309,7 @@ function getHabitDayScore(habit, dateKey) {
     return { score: hasActivity ? 1 : 0, minutes: 0, checked: false, count, hasActivity };
   }
   const checked = !!(habitChecks[habit.id] && habitChecks[habit.id][dateKey]);
-  const minutes = getSessionsForHabitDate(habit.id, dateKey).reduce((acc, s) => acc + minutesFromSession(s), 0);
+  const { doneMin: minutes } = computeHabitDayTotals(habit.id, dateKey, "00:00", { includeRunningLive: false });
   const timeScore = Math.min(3, Math.floor(minutes / 30));
   const score = (checked ? 1 : 0) + timeScore;
   return { score, minutes, checked, count: 0, hasActivity: checked || minutes > 0 };

@@ -3592,6 +3592,49 @@ align-items: center;
   text-align: center;
 }
 
+.habit-schedule-score-wrap {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.habit-schedule-score-wrap.is-good {
+  border: 1px solid rgba(74, 222, 128, .35);
+  background: linear-gradient(180deg, rgba(74, 222, 128, .12), rgba(255,255,255,.04));
+}
+
+.habit-schedule-score-wrap.is-bad {
+  border: 1px solid rgba(248, 113, 113, .35);
+  background: linear-gradient(180deg, rgba(248, 113, 113, .14), rgba(255,255,255,.04));
+}
+
+.habit-schedule-head-side {
+  display: grid;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--txt-soft);
+}
+
+.habit-schedule-head-side strong {
+  font-size: 13px;
+  color: var(--txt);
+}
+
+.habit-schedule-head-side.is-right {
+  text-align: right;
+}
+
+.habit-schedule-controls {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.habit-schedule-config.is-hidden {
+  display: none;
+}
+
 .habit-schedule-score {
   font-size: 40px;
   font-weight: 800;
@@ -3620,17 +3663,21 @@ align-items: center;
   display: grid;
   gap: 6px;
   margin-top: 8px;
+  max-height: 280px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .habit-schedule-target-row {
   display: grid;
-  grid-template-columns: 1fr 78px;
+  grid-template-columns: minmax(0, 1fr) 138px 74px;
   align-items: center;
   gap: 8px;
   font-size: 13px;
 }
 
-.habit-schedule-target-row input {
+.habit-schedule-target-row input,
+.habit-schedule-target-row select {
   width: 100%;
   height: 30px;
   border-radius: 10px;
@@ -3718,3 +3765,5 @@ align-items: center;
   color: var(--txt-soft);
   margin-bottom: 4px;
 }
+
+.habit-schedule-row.is-over-limit .habit-schedule-bar > span { background: linear-gradient(90deg, rgba(248,113,113,.55), rgba(248,113,113,.9)); }

@@ -309,28 +309,39 @@ function normalizeHabitSchedule(raw) {
   };
   if (!raw || typeof raw !== "object") return out;
 
+  const normalizeEntry = (entry) => {
+    if (entry == null) return null;
+    if (typeof entry === "number") {
+      const n = Math.max(0, Math.round(Number(entry) || 0));
+      return n > 0 ? { mode: "targetMin", value: n } : null;
+    }
+    if (typeof entry !== "object") return null;
+    const mode = String(entry.mode || "neutral");
+    if (!["targetMin", "targetCount", "limitMin", "limitCount", "neutral"].includes(mode)) return null;
+    const value = Math.max(0, Math.round(Number(entry.value) || 0));
+    if (mode === "neutral") return { mode, value: 0 };
+    return value > 0 ? { mode, value } : null;
+  };
+
+  const normalizeTemplateMap = (src) => {
+    const normalized = {};
+    Object.entries(src || {}).forEach(([habitId, rawEntry]) => {
+      const entry = normalizeEntry(rawEntry);
+      if (habitId && entry) normalized[habitId] = entry;
+    });
+    return normalized;
+  };
+
   const inBase = raw.schedules?.base || {};
   ["M", "T", "Libre"].forEach((type) => {
-    const src = inBase?.[type] || {};
-    const normalized = {};
-    Object.entries(src).forEach(([habitId, minutes]) => {
-      const n = Math.max(0, Math.round(Number(minutes) || 0));
-      if (habitId && n > 0) normalized[habitId] = n;
-    });
-    out.schedules.base[type] = normalized;
+    out.schedules.base[type] = normalizeTemplateMap(inBase?.[type]);
   });
 
   const inOverrides = raw.schedules?.overrides || {};
   ["M", "T", "Libre"].forEach((type) => {
     const dayMap = inOverrides?.[type] || {};
     ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].forEach((dayKey) => {
-      const src = dayMap?.[dayKey] || {};
-      const normalized = {};
-      Object.entries(src).forEach(([habitId, minutes]) => {
-        const n = Math.max(0, Math.round(Number(minutes) || 0));
-        if (habitId && n > 0) normalized[habitId] = n;
-      });
-      out.schedules.overrides[type][dayKey] = normalized;
+      out.schedules.overrides[type][dayKey] = normalizeTemplateMap(dayMap?.[dayKey]);
     });
   });
 
@@ -378,38 +389,103 @@ function scheduleLabelForScore(score = 0) {
 const SCHEDULE_SUCCESS_EMOJI = "✅";
 const SCHEDULE_FAIL_EMOJI = "❌";
 const SCHEDULE_AUTOCLOSE_MARKER_STORAGE = "bookshell-habits-schedule-autoclose:v1";
+const SCHEDULE_MODES = {
+  targetMin: { label: "Objetivo tiempo", unit: "min", kind: "goal", metric: "time" },
+  targetCount: { label: "Objetivo contable", unit: "count", kind: "goal", metric: "count" },
+  limitMin: { label: "Límite tiempo", unit: "min", kind: "limit", metric: "time" },
+  limitCount: { label: "Límite contable", unit: "count", kind: "limit", metric: "count" },
+  neutral: { label: "Neutral", unit: "none", kind: "neutral", metric: "none" }
+};
 
-function buildScheduleDayData(dateKey = todayKey()) {
-  const active = activeHabits().filter((habit) => (habit.goal || "check") === "time");
+function scheduleModeInfo(mode) {
+  return SCHEDULE_MODES[mode] || SCHEDULE_MODES.neutral;
+}
+
+function scheduleDayKeyFromTs(ts, dayCloseTime = "00:00") {
+  const closeMin = parseCloseTimeToMinutes(dayCloseTime);
+  const shifted = Number(ts) - closeMin * 60000;
+  return dateKeyLocal(new Date(shifted));
+}
+
+function splitSpanByDay(startTs, endTs, dayCloseTime = "00:00") {
+  const out = [];
+  const start = Number(startTs);
+  const end = Number(endTs);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return out;
+  const closeMin = parseCloseTimeToMinutes(dayCloseTime);
+  const closeMs = closeMin * 60000;
+  let cursor = start;
+  while (cursor < end) {
+    const shifted = new Date(cursor - closeMs);
+    const nextBoundary = new Date(shifted.getFullYear(), shifted.getMonth(), shifted.getDate() + 1, 0, 0, 0, 0).getTime() + closeMs;
+    const chunkEnd = Math.min(end, nextBoundary);
+    const minutes = (chunkEnd - cursor) / 60000;
+    if (minutes > 0) out.push({ dayKey: scheduleDayKeyFromTs(cursor, dayCloseTime), minutes });
+    cursor = chunkEnd;
+  }
+  return out;
+}
+
+function collectDoneByDayForHabit(habitId, dayCloseTime = "00:00") {
+  const out = new Map();
+  const detailed = Array.isArray(habitSessionTimeline?.[habitId]) ? habitSessionTimeline[habitId] : [];
+  if (detailed.length) {
+    detailed.forEach((session) => {
+      const bounds = parseSessionBounds(session);
+      if (!bounds) return;
+      splitSpanByDay(bounds.startTs, bounds.endTs, dayCloseTime).forEach((chunk) => {
+        out.set(chunk.dayKey, (out.get(chunk.dayKey) || 0) + chunk.minutes);
+      });
+    });
+  } else {
+    Object.entries(habitSessions?.[habitId] || {}).forEach(([dayKey, sec]) => {
+      const min = Math.max(0, (Number(sec) || 0) / 60);
+      if (min > 0) out.set(dayKey, (out.get(dayKey) || 0) + min);
+    });
+  }
+  return out;
+}
+
+function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), habitSchedule?.settings?.dayCloseTime || "00:00")) {
+  const closeTime = habitSchedule?.settings?.dayCloseTime || "00:00";
   const { type, dayKey, template, usingOverride } = scheduleTemplateForDate(dateKey);
-  const doneMap = {};
-  active.forEach((habit) => {
-    doneMap[habit.id] = Math.round(getHabitTotalSecForDate(habit.id, dateKey) / 60);
+  const allHabits = activeHabits();
+  const doneTimeMap = {};
+  const doneCountMap = {};
+
+  allHabits.forEach((habit) => {
+    doneCountMap[habit.id] = getHabitCount(habit.id, dateKey);
+    const byDay = collectDoneByDayForHabit(habit.id, closeTime);
+    doneTimeMap[habit.id] = Math.max(0, Math.round(byDay.get(dateKey) || 0));
   });
 
-  if (runningSession?.targetHabitId && (parseDateKey(dateKey)?.getTime() === parseDateKey(todayKey())?.getTime())) {
-    const elapsedMin = Math.max(0, Math.round((Date.now() - runningSession.startTs) / 60000));
-    doneMap[runningSession.targetHabitId] = Math.max(doneMap[runningSession.targetHabitId] || 0, (doneMap[runningSession.targetHabitId] || 0) + elapsedMin);
+  if (runningSession?.targetHabitId) {
+    splitSpanByDay(runningSession.startTs, Date.now(), closeTime).forEach((chunk) => {
+      if (chunk.dayKey !== dateKey) return;
+      doneTimeMap[runningSession.targetHabitId] = Math.max(0, Math.round((doneTimeMap[runningSession.targetHabitId] || 0) + chunk.minutes));
+    });
   }
 
-  const rows = Object.entries(template || {}).map(([habitId, target]) => {
+  const entries = Object.entries(template || {}).map(([habitId, config]) => {
     const habit = habits[habitId];
-    const done = Math.max(0, Math.round(doneMap[habitId] || 0));
-    const targetMin = Math.max(0, Math.round(Number(target) || 0));
-    const percentRaw = targetMin > 0 ? Math.round((done / targetMin) * 100) : 0;
-    const percent = Math.max(0, Math.min(100, percentRaw));
-    const extra = Math.max(0, done - targetMin);
-    const remaining = Math.max(0, targetMin - done);
-    return { habitId, habit, target: targetMin, done, percent, extra, remaining, completed: targetMin > 0 && done >= targetMin };
-  }).filter((row) => row.habit && !row.habit.archived);
+    if (!habit || habit.archived) return null;
+    const mode = String(config?.mode || "neutral");
+    const value = Math.max(0, Math.round(Number(config?.value) || 0));
+    const info = scheduleModeInfo(mode);
+    const done = info.metric === "count" ? doneCountMap[habitId] || 0 : doneTimeMap[habitId] || 0;
+    const ratio = value > 0 ? (done / value) : 0;
+    const progress = Math.max(0, Math.min(1, ratio));
+    const percent = Math.max(0, Math.min(100, Math.round(progress * 100)));
+    const remaining = Math.max(0, value - done);
+    const exceeded = Math.max(0, done - value);
+    return { habitId, habit, mode, info, value, done, progress, percent, remaining, exceeded, completed: info.kind === "goal" && done >= value };
+  }).filter(Boolean);
 
-  const withGoalIds = new Set(rows.map((row) => row.habitId));
-  const extras = active
-    .map((habit) => ({ habitId: habit.id, habit, done: Math.round(doneMap[habit.id] || 0) }))
-    .filter((row) => row.done > 0 && !withGoalIds.has(row.habitId))
-    .sort((a, b) => b.done - a.done || (a.habit.name || "").localeCompare(b.habit.name || "", "es"));
+  const goalRows = entries.filter((row) => row.info.kind === "goal");
+  const limitRows = entries.filter((row) => row.info.kind === "limit");
+  const neutralRows = entries.filter((row) => row.info.kind === "neutral" && row.done > 0);
 
-  rows.sort((a, b) => {
+  goalRows.sort((a, b) => {
     if (a.completed !== b.completed) return a.completed ? 1 : -1;
     if (!a.completed && !b.completed && b.remaining !== a.remaining) return b.remaining - a.remaining;
     return (a.habit?.name || "").localeCompare(b.habit?.name || "", "es");
@@ -417,45 +493,59 @@ function buildScheduleDayData(dateKey = todayKey()) {
 
   const runningId = runningSession?.targetHabitId || null;
   if (runningId) {
-    const idx = rows.findIndex((row) => row.habitId === runningId);
-    if (idx > 0) rows.unshift(rows.splice(idx, 1)[0]);
+    const idx = goalRows.findIndex((row) => row.habitId === runningId);
+    if (idx > 0) goalRows.unshift(goalRows.splice(idx, 1)[0]);
   }
 
-  const totalTargetMin = rows.reduce((acc, row) => acc + row.target, 0);
-  const totalDoneMin = rows.reduce((acc, row) => acc + row.done, 0);
-  const weightedDone = rows.reduce((acc, row) => acc + Math.min(row.done, row.target), 0);
-  const score = totalTargetMin > 0 ? Math.round((weightedDone / totalTargetMin) * 100) : 0;
-  const extrasTotalMin = extras.reduce((acc, row) => acc + row.done, 0);
+  const totalWeight = goalRows.reduce((acc, row) => acc + Math.max(1, row.value), 0);
+  const score = totalWeight > 0
+    ? Math.round((goalRows.reduce((acc, row) => acc + (row.progress * Math.max(1, row.value)), 0) / totalWeight) * 100)
+    : 0;
+
+  const totalTargetMin = goalRows.filter((row) => row.info.metric === "time").reduce((acc, row) => acc + row.value, 0);
+  const totalDoneMin = goalRows.filter((row) => row.info.metric === "time").reduce((acc, row) => acc + row.done, 0);
+  const totalTargetCount = goalRows.filter((row) => row.info.metric === "count").reduce((acc, row) => acc + row.value, 0);
+  const totalDoneCount = goalRows.filter((row) => row.info.metric === "count").reduce((acc, row) => acc + row.done, 0);
+  const wastedExcessMin = limitRows.filter((row) => row.info.metric === "time").reduce((acc, row) => acc + row.exceeded, 0);
+  const wastedExcessCount = limitRows.filter((row) => row.info.metric === "count").reduce((acc, row) => acc + row.exceeded, 0);
+  const wastedTotalMin = limitRows.filter((row) => row.info.metric === "time").reduce((acc, row) => acc + row.done, 0);
+  const wastedTotalCount = limitRows.filter((row) => row.info.metric === "count").reduce((acc, row) => acc + row.done, 0);
 
   return {
     dateKey,
     type,
     dayKey,
     usingOverride,
-    rows,
-    extras,
+    closeTime,
+    rows: goalRows,
+    limits: limitRows,
+    neutrals: neutralRows,
+    score,
+    label: scheduleLabelForScore(score),
+    runningId,
     totalTargetMin,
     totalDoneMin,
-    extrasTotalMin,
-    score,
-    label: scheduleLabelForScore(score)
+    totalTargetCount,
+    totalDoneCount,
+    wastedExcessMin,
+    wastedExcessCount,
+    wastedTotalMin,
+    wastedTotalCount
   };
 }
 
 function closeScheduleDay(dateKey = todayKey(), source = "manual") {
   const data = buildScheduleDayData(dateKey);
   const perHabit = {};
-  data.rows.forEach((row) => {
+  [...data.rows, ...data.limits, ...data.neutrals].forEach((row) => {
     perHabit[row.habitId] = {
-      target: row.target,
+      mode: row.mode,
+      target: row.value,
       done: row.done,
       percent: row.percent,
-      extra: row.extra
+      remaining: row.remaining,
+      exceeded: row.exceeded
     };
-  });
-  const extras = {};
-  data.extras.forEach((row) => {
-    extras[row.habitId] = row.done;
   });
   const payload = {
     type: data.type,
@@ -463,8 +553,14 @@ function closeScheduleDay(dateKey = todayKey(), source = "manual") {
     label: data.label,
     totalTargetMin: data.totalTargetMin,
     totalDoneMin: data.totalDoneMin,
+    totalTargetCount: data.totalTargetCount,
+    totalDoneCount: data.totalDoneCount,
+    wastedExcessMin: data.wastedExcessMin,
+    wastedExcessCount: data.wastedExcessCount,
+    wastedTotalMin: data.wastedTotalMin,
+    wastedTotalCount: data.wastedTotalCount,
     perHabit,
-    extras,
+    successThreshold: habitSchedule?.settings?.successThreshold || 70,
     closedAtTs: Date.now(),
     closeSource: source
   };
@@ -482,25 +578,35 @@ function openScheduleSummaryModal(dateKey) {
   const topDone = Object.entries(summary.perHabit || {})
     .map(([habitId, row]) => ({ habit: habits[habitId], ...row }))
     .filter((row) => row.habit)
-    .sort((a, b) => (b.percent - a.percent) || (b.extra - a.extra))
+    .sort((a, b) => (b.percent - a.percent) || ((b.done || 0) - (a.done || 0)))
     .slice(0, 3);
   const topMiss = Object.entries(summary.perHabit || {})
-    .map(([habitId, row]) => ({ habit: habits[habitId], ...row, remaining: Math.max(0, (row.target || 0) - (row.done || 0)) }))
+    .map(([habitId, row]) => ({ habit: habits[habitId], ...row, remaining: Math.max(0, (row.remaining || 0)) }))
     .filter((row) => row.habit)
     .sort((a, b) => b.remaining - a.remaining)
     .slice(0, 3);
-  const extrasTotal = Object.values(summary.extras || {}).reduce((acc, value) => acc + Math.max(0, Number(value) || 0), 0);
+  const exceededLimits = Object.entries(summary.perHabit || {})
+    .map(([habitId, row]) => ({ habit: habits[habitId], ...row }))
+    .filter((row) => row.habit && (row.mode === "limitMin" || row.mode === "limitCount") && (row.exceeded || 0) > 0)
+    .slice(0, 5);
+  const neutralWithActivity = Object.entries(summary.perHabit || {})
+    .map(([habitId, row]) => ({ habit: habits[habitId], ...row }))
+    .filter((row) => row.habit && row.mode === "neutral" && (row.done || 0) > 0)
+    .slice(0, 5);
   const renderList = (rows, empty) => rows.length
     ? `<ul>${rows.map((row) => `<li>${row.habit.emoji || "🏷️"} ${row.habit.name} · ${row.percent || 0}%</li>`).join("")}</ul>`
     : `<div class="hint">${empty}</div>`;
   $habitScheduleSummaryContent.innerHTML = `
     <div class="habit-schedule-summary-score">${summary.score || 0}% <small>${summary.label || scheduleLabelForScore(summary.score || 0)}</small></div>
-    <div class="habit-schedule-summary-meta">Objetivo ${formatMinutes(summary.totalTargetMin || 0)} · Hecho ${formatMinutes(summary.totalDoneMin || 0)}</div>
-    <div class="habit-schedule-summary-meta">Extras ${formatMinutes(extrasTotal)}</div>
+    <div class="habit-schedule-summary-meta">Aprovechado ${formatMinutes(summary.totalDoneMin || 0)} · Desperdiciado ${formatMinutes(summary.wastedExcessMin || 0)}</div>
     <div class="sheet-section-title">Top cumplidos</div>
     ${renderList(topDone, "Sin hábitos cumplidos")}
     <div class="sheet-section-title">Top pendientes</div>
     ${renderList(topMiss, "Nada pendiente")}
+    <div class="sheet-section-title">Límites excedidos</div>
+    ${exceededLimits.length ? `<ul>${exceededLimits.map((row) => `<li>${row.habit.emoji || "🏷️"} ${row.habit.name} · +${row.exceeded}${row.mode === "limitCount" ? "x" : "m"}</li>`).join("")}</ul>` : '<div class="hint">Sin excesos</div>'}
+    <div class="sheet-section-title">Neutrales con actividad</div>
+    ${neutralWithActivity.length ? `<ul>${neutralWithActivity.map((row) => `<li>${row.habit.emoji || "🏷️"} ${row.habit.name} · ${row.done}${row.mode === "limitCount" || row.mode === "targetCount" ? "x" : "m"}</li>`).join("")}</ul>` : '<div class="hint">Sin actividad neutral</div>'}
   `;
   $habitScheduleSummaryModal.classList.remove("hidden");
 }
@@ -546,15 +652,16 @@ function parseCloseTimeToMinutes(value = "00:00") {
 }
 
 function maybeAutoCloseScheduleDay() {
-  const closeMin = parseCloseTimeToMinutes(habitSchedule?.settings?.dayCloseTime || "00:00");
+  const closeTime = habitSchedule?.settings?.dayCloseTime || "00:00";
+  const closeMin = parseCloseTimeToMinutes(closeTime);
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
   if (nowMin < closeMin) return;
-  const marker = `${dateKeyLocal(now)}@${habitSchedule?.settings?.dayCloseTime || "00:00"}`;
+  const marker = `${dateKeyLocal(now)}@${closeTime}`;
   const last = localStorage.getItem(SCHEDULE_AUTOCLOSE_MARKER_STORAGE);
   if (last === marker) return;
-  const targetDate = dateKeyLocal(addDays(now, -1));
-  closeScheduleDay(targetDate, "auto");
+  const targetDate = scheduleDayKeyFromTs(now.getTime() - 60000, closeTime);
+  if (!habitSchedule?.summaries?.[targetDate]) closeScheduleDay(targetDate, "auto");
   try { localStorage.setItem(SCHEDULE_AUTOCLOSE_MARKER_STORAGE, marker); } catch (_) {}
 }
 
@@ -577,31 +684,45 @@ function renderSchedule() {
     updateScheduleLiveInterval();
     return;
   }
-  const data = buildScheduleDayData(todayKey());
+  const currentDateKey = scheduleDayKeyFromTs(Date.now(), habitSchedule?.settings?.dayCloseTime || "00:00");
+  const data = buildScheduleDayData(currentDateKey);
   const threshold = habitSchedule?.settings?.successThreshold || 70;
   if (!Number.isInteger(scheduleCalYear) || !Number.isInteger(scheduleCalMonth)) {
     scheduleCalYear = new Date().getFullYear();
     scheduleCalMonth = new Date().getMonth();
   }
 
-  const timeHabits = activeHabits().filter((habit) => (habit.goal || "check") === "time");
+  const allHabits = activeHabits();
   const selectedType = $habitScheduleView.querySelector('[data-role="schedule-type"]')?.value || data.type;
   const selectedDay = $habitScheduleView.querySelector('[data-role="schedule-day"]')?.value || "base";
   const sourceObj = selectedDay === "base"
     ? (habitSchedule?.schedules?.base?.[selectedType] || {})
     : (habitSchedule?.schedules?.overrides?.[selectedType]?.[selectedDay] || {});
+  const scoreGood = data.score >= threshold;
+  const wastedLabel = data.wastedExcessCount > 0
+    ? `${formatMinutes(data.wastedExcessMin)} +${data.wastedExcessCount}x`
+    : formatMinutes(data.wastedExcessMin);
+  const usedLabel = data.totalDoneCount > 0
+    ? `${formatMinutes(data.totalDoneMin)} +${data.totalDoneCount}x`
+    : formatMinutes(data.totalDoneMin);
 
   $habitScheduleView.innerHTML = `
-    <section class="habits-history-section habit-schedule-score-wrap">
+    <section class="habits-history-section habit-schedule-score-wrap ${scoreGood ? "is-good" : "is-bad"}">
+      <div class="habit-schedule-head-side is-left"><span>Aprovechado</span><strong>${usedLabel}</strong></div>
+      <div>
       <div class="habit-schedule-score">${data.score}%</div>
       <div class="habit-schedule-score-label">${data.label}</div>
       <div class="habit-schedule-score-sub">Plantilla ${data.type}${data.usingOverride ? ` · override ${data.dayKey.toUpperCase()}` : ""}</div>
+      </div>
+      <div class="habit-schedule-head-side is-right"><span>Desperdiciado</span><strong>${wastedLabel}</strong></div>
+    </section>
+    <section class="habits-history-section habit-schedule-controls">
+      <button class="btn ghost btn-compact" type="button" data-role="schedule-open-editor">Editar plantillas</button>
+      <button class="btn ghost btn-compact" type="button" data-role="schedule-close-day">Cerrar día</button>
     </section>
     <section class="habits-history-section habit-schedule-config">
-      <div class="habits-history-section-header">
-        <div class="habits-history-section-title">Plantillas</div>
-      </div>
-      <div class="habit-schedule-config-row">
+      <div class="habits-history-section-header"><div class="habits-history-section-title">Plantillas</div></div>
+      <div class="habit-schedule-config-row habit-schedule-config-row-top">
         <select class="habits-history-select" data-role="schedule-type">
           <option value="M" ${selectedType === "M" ? "selected" : ""}>M</option>
           <option value="T" ${selectedType === "T" ? "selected" : ""}>T</option>
@@ -623,14 +744,14 @@ function renderSchedule() {
       <div class="habit-schedule-targets" data-role="schedule-targets"></div>
       <div class="habit-schedule-actions">
         <button class="btn ghost btn-compact" type="button" data-role="schedule-save-config">Guardar plantilla</button>
-        <button class="btn ghost btn-compact" type="button" data-role="schedule-close-day">Cerrar día</button>
+        <button class="btn ghost btn-compact" type="button" data-role="schedule-cancel-editor">Cerrar</button>
       </div>
     </section>
     <section class="habits-history-section">
       <div class="habit-schedule-list" data-role="schedule-progress-list"></div>
-      <details class="habit-accordion habit-schedule-extras" data-role="schedule-extras">
-        <summary><div class="habit-accordion-title">Extras</div></summary>
-        <div class="habit-accordion-body" data-role="schedule-extras-list"></div>
+      <details class="habit-accordion habit-schedule-extras" data-role="schedule-neutrals">
+        <summary><div class="habit-accordion-title">Neutrales con actividad</div></summary>
+        <div class="habit-accordion-body" data-role="schedule-neutrals-list"></div>
       </details>
     </section>
     <section class="habits-history-section">
@@ -649,17 +770,32 @@ function renderSchedule() {
 
   const targetsWrap = $habitScheduleView.querySelector('[data-role="schedule-targets"]');
   if (targetsWrap) {
-    targetsWrap.innerHTML = timeHabits.map((habit) => {
-      const val = Math.max(0, Math.round(Number(sourceObj[habit.id]) || 0));
-      return `<label class="habit-schedule-target-row"><span>${habit.emoji || "🏷️"} ${habit.name}</span><input type="number" min="0" step="5" data-habit-id="${habit.id}" value="${val}"/></label>`;
+    targetsWrap.innerHTML = allHabits.map((habit) => {
+      const cfg = sourceObj[habit.id] || { mode: "neutral", value: 0 };
+      const mode = cfg.mode || "neutral";
+      const val = Math.max(0, Math.round(Number(cfg.value) || 0));
+      return `<div class="habit-schedule-target-row">
+        <span>${habit.emoji || "🏷️"} ${habit.name}</span>
+        <select data-role="schedule-mode" data-habit-id="${habit.id}">
+          <option value="targetMin" ${mode === "targetMin" ? "selected" : ""}>Objetivo tiempo</option>
+          <option value="targetCount" ${mode === "targetCount" ? "selected" : ""}>Objetivo contable</option>
+          <option value="limitMin" ${mode === "limitMin" ? "selected" : ""}>Límite tiempo</option>
+          <option value="limitCount" ${mode === "limitCount" ? "selected" : ""}>Límite contable</option>
+          <option value="neutral" ${mode === "neutral" ? "selected" : ""}>Neutral</option>
+        </select>
+        <input type="number" min="0" step="1" data-role="schedule-value" data-habit-id="${habit.id}" value="${val}" ${mode === "neutral" ? "disabled" : ""}/>
+      </div>`;
     }).join("");
   }
+
+  const configPanel = $habitScheduleView.querySelector('.habit-schedule-config');
+  configPanel?.classList.add("is-hidden");
 
   const list = $habitScheduleView.querySelector('[data-role="schedule-progress-list"]');
   const makeRow = (row, extraMode = false) => {
     const isFocused = runningSession?.targetHabitId === row.habitId;
-    const pctLabel = extraMode ? `+${row.done} min` : `${row.percent}%`;
-    return `<div class="habit-schedule-row ${row.completed ? "is-complete" : ""} ${isFocused ? "is-focused" : ""}">
+    const pctLabel = extraMode ? `${row.done}${row.info.metric === "count" ? "x" : "m"}` : `${row.percent}%`;
+    return `<div class="habit-schedule-row ${row.completed ? "is-complete" : ""} ${isFocused ? "is-focused" : ""} ${row.exceeded > 0 ? "is-over-limit" : ""}">
       <div class="habit-schedule-name">${row.habit?.emoji || "🏷️"} ${row.habit?.name || "—"}</div>
       <div class="habit-schedule-bar"><span style="width:${Math.max(0, Math.min(100, row.percent || 0))}%"></span></div>
       <div class="habit-schedule-pct">${pctLabel}</div>
@@ -667,12 +803,10 @@ function renderSchedule() {
   };
   if (list) list.innerHTML = data.rows.map((row) => makeRow(row)).join("") || '<div class="hint">Define objetivos para ver progreso.</div>';
 
-  const extrasList = $habitScheduleView.querySelector('[data-role="schedule-extras-list"]');
-  const extrasWrap = $habitScheduleView.querySelector('[data-role="schedule-extras"]');
-  if (extrasList) {
-    extrasList.innerHTML = data.extras.map((row) => makeRow({ ...row, percent: 100, completed: false }, true)).join("") || '<div class="hint">Sin extras hoy.</div>';
-  }
-  if (extrasWrap) extrasWrap.style.display = data.extras.length ? "block" : "none";
+  const neutralList = $habitScheduleView.querySelector('[data-role="schedule-neutrals-list"]');
+  const neutralWrap = $habitScheduleView.querySelector('[data-role="schedule-neutrals"]');
+  if (neutralList) neutralList.innerHTML = data.neutrals.map((row) => makeRow({ ...row, percent: 100 }, true)).join("") || '<div class="hint">Sin actividad neutral.</div>';
+  if (neutralWrap) neutralWrap.style.display = data.neutrals.length ? "block" : "none";
 
   const monthGrid = $habitScheduleView.querySelector('[data-role="schedule-month-grid"]');
   renderScheduleMonthGrid(scheduleCalYear, scheduleCalMonth, monthGrid);
@@ -692,16 +826,33 @@ function renderSchedule() {
     renderSchedule();
   });
   $habitScheduleView.querySelector('[data-role="schedule-close-day"]')?.addEventListener("click", () => {
-    closeScheduleDay(todayKey(), "manual");
+    closeScheduleDay(currentDateKey, "manual");
+  });
+  $habitScheduleView.querySelector('[data-role="schedule-open-editor"]')?.addEventListener("click", () => {
+    configPanel?.classList.remove("is-hidden");
+  });
+  $habitScheduleView.querySelector('[data-role="schedule-cancel-editor"]')?.addEventListener("click", () => {
+    configPanel?.classList.add("is-hidden");
+  });
+  $habitScheduleView.querySelectorAll('[data-role="schedule-mode"]').forEach((select) => {
+    select.addEventListener("change", () => {
+      const habitId = select.getAttribute("data-habit-id");
+      const input = $habitScheduleView.querySelector(`[data-role=\"schedule-value\"][data-habit-id=\"${habitId}\"]`);
+      if (input) input.disabled = select.value === "neutral";
+    });
   });
   $habitScheduleView.querySelector('[data-role="schedule-save-config"]')?.addEventListener("click", () => {
     const type = $habitScheduleView.querySelector('[data-role="schedule-type"]')?.value || "M";
     const day = $habitScheduleView.querySelector('[data-role="schedule-day"]')?.value || "base";
     const nextMap = {};
-    $habitScheduleView.querySelectorAll('.habit-schedule-target-row input[data-habit-id]').forEach((input) => {
-      const id = input.getAttribute("data-habit-id") || "";
-      const val = Math.max(0, Math.round(Number(input.value) || 0));
-      if (id && val > 0) nextMap[id] = val;
+    $habitScheduleView.querySelectorAll('.habit-schedule-target-row [data-role="schedule-mode"]').forEach((select) => {
+      const id = select.getAttribute("data-habit-id") || "";
+      const input = $habitScheduleView.querySelector(`[data-role=\"schedule-value\"][data-habit-id=\"${id}\"]`);
+      const mode = select.value || "neutral";
+      const val = Math.max(0, Math.round(Number(input?.value) || 0));
+      if (!id) return;
+      if (mode === "neutral") nextMap[id] = { mode: "neutral", value: 0 };
+      else if (val > 0) nextMap[id] = { mode, value: val };
     });
     if (!habitSchedule.schedules?.base) habitSchedule.schedules = createDefaultHabitSchedule().schedules;
     if (day === "base") habitSchedule.schedules.base[type] = nextMap;
@@ -820,13 +971,14 @@ function hexToRgbString(hex) {
 }
 
 function formatMinutes(min) {
-  if (!min) return "0m";
-  if (min >= 60) {
-    const hours = Math.floor(min / 60);
-    const rest = min % 60;
+  const safeMin = Math.max(0, Math.round(Number(min) || 0));
+  if (!safeMin) return "0m";
+  if (safeMin >= 60) {
+    const hours = Math.floor(safeMin / 60);
+    const rest = safeMin % 60;
     return rest ? `${hours}h ${rest}m` : `${hours}h`;
   }
-  return `${min}m`;
+  return `${safeMin}m`;
 }
 
 function formatHoursTotal(minutes) {
@@ -897,18 +1049,9 @@ function localStartOfNextDayTs(ts) {
 // Si no hay timestamps reales (legacy), el fallback se mantiene sin inventar reparto.
 function splitSessionByDay(startTs, endTs) {
   const out = new Map();
-  const start = Number(startTs);
-  const end = Number(endTs);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return out;
-
-  let cursor = start;
-  while (cursor < end) {
-    const dayKey = dateKeyLocal(new Date(cursor));
-    const chunkEnd = Math.min(localStartOfNextDayTs(cursor), end);
-    const minutes = (chunkEnd - cursor) / 60000;
-    if (minutes > 0) out.set(dayKey, (out.get(dayKey) || 0) + minutes);
-    cursor = chunkEnd;
-  }
+  splitSpanByDay(startTs, endTs, "00:00").forEach((chunk) => {
+    out.set(chunk.dayKey, (out.get(chunk.dayKey) || 0) + chunk.minutes);
+  });
   return out;
 }
 

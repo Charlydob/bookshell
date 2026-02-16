@@ -138,7 +138,10 @@ const habitStatsSeriesCache = new Map();
 const habitStatsResultCache = new Map();
 let dayDetailDateKey = todayKey();
 let dayDetailFocusHabitId = null;
-let habitSchedule = createDefaultHabitSchedule();
+let scheduleState = createDefaultHabitSchedule();
+let draftState = null;
+let isEditingTemplates = false;
+let scheduleEditorSelection = { type: "M", day: "base" };
 let scheduleCalYear = null;
 let scheduleCalMonth = null;
 let scheduleTickInterval = null;
@@ -374,8 +377,8 @@ function scheduleTemplateForDate(dateKey = todayKey()) {
   const type = scheduleShiftTypeForDate(dateKey);
   const date = parseDateKey(dateKey) || new Date();
   const dayKey = scheduleWeekdayKey(date);
-  const override = habitSchedule?.schedules?.overrides?.[type]?.[dayKey] || {};
-  const base = habitSchedule?.schedules?.base?.[type] || {};
+  const override = scheduleState?.schedules?.overrides?.[type]?.[dayKey] || {};
+  const base = scheduleState?.schedules?.base?.[type] || {};
   const hasOverride = Object.keys(override).length > 0;
   return { type, dayKey, template: hasOverride ? override : base, usingOverride: hasOverride };
 }
@@ -448,8 +451,8 @@ function collectDoneByDayForHabit(habitId, dayCloseTime = "00:00") {
   return out;
 }
 
-function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), habitSchedule?.settings?.dayCloseTime || "00:00")) {
-  const closeTime = habitSchedule?.settings?.dayCloseTime || "00:00";
+function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), scheduleState?.settings?.dayCloseTime || "00:00")) {
+  const closeTime = scheduleState?.settings?.dayCloseTime || "00:00";
   const { type, dayKey, template, usingOverride } = scheduleTemplateForDate(dateKey);
   const allHabits = activeHabits();
   const doneTimeMap = {};
@@ -562,22 +565,22 @@ function closeScheduleDay(dateKey = todayKey(), source = "manual") {
     wastedTotalMin: data.wastedTotalMin,
     wastedTotalCount: data.wastedTotalCount,
     perHabit,
-    successThreshold: habitSchedule?.settings?.successThreshold || 70,
+    successThreshold: scheduleState?.settings?.successThreshold || 70,
     closedAtTs: Date.now(),
     closeSource: source
   };
-  if (!habitSchedule.summaries || typeof habitSchedule.summaries !== "object") habitSchedule.summaries = {};
-  habitSchedule.summaries[dateKey] = payload;
+  if (!scheduleState.summaries || typeof scheduleState.summaries !== "object") scheduleState.summaries = {};
+  scheduleState.summaries[dateKey] = payload;
   persistHabitScheduleLocal();
   auditScheduleWrite(`${HABITS_SCHEDULE_PATH}/summaries/${dateKey}`, payload);
   update(ref(db, `${HABITS_SCHEDULE_PATH}/summaries`), { [dateKey]: payload }).catch((err) => {
     console.warn("No se pudo guardar resumen de horario", err);
   });
-  renderSchedule();
+  renderSchedule("manual");
 }
 
 function openScheduleSummaryModal(dateKey) {
-  const summary = habitSchedule?.summaries?.[dateKey];
+  const summary = scheduleState?.summaries?.[dateKey];
   if (!summary || !$habitScheduleSummaryModal || !$habitScheduleSummaryContent) return;
   if ($habitScheduleSummaryTitle) $habitScheduleSummaryTitle.textContent = `Resumen · ${dateKey}`;
   const topDone = Object.entries(summary.perHabit || {})
@@ -633,11 +636,11 @@ function renderScheduleMonthGrid(year, month, grid) {
   }
   for (let d = 1; d <= end.getDate(); d += 1) {
     const key = dateKeyLocal(new Date(year, month, d));
-    const summary = habitSchedule?.summaries?.[key];
+    const summary = scheduleState?.summaries?.[key];
     const cell = document.createElement("button");
     cell.type = "button";
     cell.className = "history-month-cell habit-schedule-cell";
-    const threshold = habitSchedule?.settings?.successThreshold || 70;
+    const threshold = scheduleState?.settings?.successThreshold || 70;
     const emoji = summary ? ((summary.score || 0) >= threshold ? SCHEDULE_SUCCESS_EMOJI : SCHEDULE_FAIL_EMOJI) : "";
     cell.innerHTML = `<span class="month-day-num">${d}</span><span class="month-day-emoji">${emoji}</span>`;
     if (summary) cell.addEventListener("click", () => openScheduleSummaryModal(key));
@@ -657,7 +660,7 @@ function parseCloseTimeToMinutes(value = "00:00") {
 }
 
 function maybeAutoCloseScheduleDay() {
-  const closeTime = habitSchedule?.settings?.dayCloseTime || "00:00";
+  const closeTime = scheduleState?.settings?.dayCloseTime || "00:00";
   const closeMin = parseCloseTimeToMinutes(closeTime);
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -666,7 +669,7 @@ function maybeAutoCloseScheduleDay() {
   const last = localStorage.getItem(SCHEDULE_AUTOCLOSE_MARKER_STORAGE);
   if (last === marker) return;
   const targetDate = scheduleDayKeyFromTs(now.getTime() - 600000, closeTime);
-  if (!habitSchedule?.summaries?.[targetDate]) closeScheduleDay(targetDate, "auto");
+  if (!scheduleState?.summaries?.[targetDate]) closeScheduleDay(targetDate, "auto");
   try { localStorage.setItem(SCHEDULE_AUTOCLOSE_MARKER_STORAGE, marker); } catch (_) {}
 }
 
@@ -674,7 +677,7 @@ function updateScheduleLiveInterval() {
   const shouldRun = !!runningSession && activeTab === "schedule";
   if (shouldRun && !scheduleTickInterval) {
     scheduleTickInterval = window.setInterval(() => {
-      renderSchedule();
+      renderSchedule("tick:session");
     }, 15000);
   }
   if (!shouldRun && scheduleTickInterval) {
@@ -683,26 +686,88 @@ function updateScheduleLiveInterval() {
   }
 }
 
-function renderSchedule() {
+function deepCloneScheduleState(value) {
+  return JSON.parse(JSON.stringify(value || {}));
+}
+
+function readScheduleTemplateFromState(type = "M", day = "base", source = scheduleState) {
+  if (day === "base") return deepCloneScheduleState(source?.schedules?.base?.[type] || {});
+  return deepCloneScheduleState(source?.schedules?.overrides?.[type]?.[day] || {});
+}
+
+function beginScheduleTemplateEditing(type = "M", day = "base") {
+  const normalizedType = type || "M";
+  const normalizedDay = day || "base";
+  scheduleEditorSelection = { type: normalizedType, day: normalizedDay };
+  draftState = {
+    type: normalizedType,
+    day: normalizedDay,
+    templateMap: readScheduleTemplateFromState(normalizedType, normalizedDay),
+    closeTime: scheduleState?.settings?.dayCloseTime || "00:00",
+    successThreshold: Math.max(1, Math.min(100, Math.round(Number(scheduleState?.settings?.successThreshold || 70))))
+  };
+  isEditingTemplates = true;
+  scheduleConfigOpen = true;
+  console.warn("EDITOR RENDER", "open-editor");
+}
+
+function stopScheduleTemplateEditing() {
+  isEditingTemplates = false;
+  draftState = null;
+}
+
+function shouldSkipScheduleRender(reason = "unknown") {
+  if (!isEditingTemplates) return false;
+  const allowedReasons = new Set([
+    "editor:open",
+    "editor:select-type",
+    "editor:select-day",
+    "editor:save-confirm",
+    "editor:cancel",
+    "editor:close",
+    "editor:toggle",
+    "manual"
+  ]);
+  if (allowedReasons.has(reason)) return false;
+  console.warn("EDITOR RENDER", `blocked:${reason}`);
+  return true;
+}
+
+function renderSchedule(reason = "manual") {
   if (!$habitScheduleView) return;
   if (activeTab !== "schedule") {
     updateScheduleLiveInterval();
     return;
   }
-  const currentDateKey = scheduleDayKeyFromTs(Date.now(), habitSchedule?.settings?.dayCloseTime || "00:00");
+  if (shouldSkipScheduleRender(reason)) {
+    updateScheduleLiveInterval();
+    return;
+  }
+  console.warn("EDITOR RENDER", reason);
+  const currentDateKey = scheduleDayKeyFromTs(Date.now(), scheduleState?.settings?.dayCloseTime || "00:00");
   const data = buildScheduleDayData(currentDateKey);
-  const threshold = habitSchedule?.settings?.successThreshold || 70;
+  const threshold = scheduleState?.settings?.successThreshold || 70;
   if (!Number.isInteger(scheduleCalYear) || !Number.isInteger(scheduleCalMonth)) {
     scheduleCalYear = new Date().getFullYear();
     scheduleCalMonth = new Date().getMonth();
   }
 
   const allHabits = activeHabits();
-  const selectedType = $habitScheduleView.querySelector('[data-role="schedule-type"]')?.value || data.type;
-  const selectedDay = $habitScheduleView.querySelector('[data-role="schedule-day"]')?.value || "base";
-  const sourceObj = selectedDay === "base"
-    ? (habitSchedule?.schedules?.base?.[selectedType] || {})
-    : (habitSchedule?.schedules?.overrides?.[selectedType]?.[selectedDay] || {});
+  const selectedType = isEditingTemplates
+    ? (scheduleEditorSelection.type || "M")
+    : ($habitScheduleView.querySelector('[data-role="schedule-type"]')?.value || data.type);
+  const selectedDay = isEditingTemplates
+    ? (scheduleEditorSelection.day || "base")
+    : ($habitScheduleView.querySelector('[data-role="schedule-day"]')?.value || "base");
+  const sourceObj = isEditingTemplates
+    ? (draftState?.templateMap || {})
+    : readScheduleTemplateFromState(selectedType, selectedDay);
+  const closeTimeValue = isEditingTemplates
+    ? (draftState?.closeTime || "00:00")
+    : (scheduleState?.settings?.dayCloseTime || "00:00");
+  const thresholdValue = isEditingTemplates
+    ? Math.max(1, Math.min(100, Math.round(Number(draftState?.successThreshold || threshold))))
+    : threshold;
   const scoreGood = data.score >= threshold;
   const wastedLabel = data.wastedExcessCount > 0
     ? `${formatMinutes(data.wastedExcessMin)} +${data.wastedExcessCount}x`
@@ -745,8 +810,8 @@ function renderSchedule() {
           <option value="sat" ${selectedDay === "sat" ? "selected" : ""}>Sábado</option>
           <option value="sun" ${selectedDay === "sun" ? "selected" : ""}>Domingo</option>
         </select>
-        <input class="habits-history-input" data-role="close-time" type="time" value="${habitSchedule?.settings?.dayCloseTime || "00:00"}"/>
-        <input class="habits-history-input" data-role="success-threshold" type="number" min="1" max="100" value="${threshold}"/>
+        <input class="habits-history-input" data-role="close-time" type="time" value="${closeTimeValue}"/>
+        <input class="habits-history-input" data-role="success-threshold" type="number" min="1" max="100" value="${thresholdValue}"/>
       </div>
       <div class="habit-schedule-targets" data-role="schedule-targets"></div>
       <div class="habit-schedule-actions">
@@ -816,48 +881,101 @@ function renderSchedule() {
   const monthGrid = $habitScheduleView.querySelector('[data-role="schedule-month-grid"]');
   renderScheduleMonthGrid(scheduleCalYear, scheduleCalMonth, monthGrid);
 
-  $habitScheduleView.querySelector('[data-role="schedule-type"]')?.addEventListener("change", () => renderSchedule());
-  $habitScheduleView.querySelector('[data-role="schedule-day"]')?.addEventListener("change", () => renderSchedule());
+  $habitScheduleView.querySelector('[data-role="schedule-type"]')?.addEventListener("change", (event) => {
+    const nextType = event.target?.value || "M";
+    if (isEditingTemplates) {
+      scheduleEditorSelection.type = nextType;
+      if (draftState) {
+        draftState.type = nextType;
+        draftState.templateMap = readScheduleTemplateFromState(nextType, scheduleEditorSelection.day || "base");
+      }
+    }
+    renderSchedule("editor:select-type");
+  });
+  $habitScheduleView.querySelector('[data-role="schedule-day"]')?.addEventListener("change", (event) => {
+    const nextDay = event.target?.value || "base";
+    if (isEditingTemplates) {
+      scheduleEditorSelection.day = nextDay;
+      if (draftState) {
+        draftState.day = nextDay;
+        draftState.templateMap = readScheduleTemplateFromState(scheduleEditorSelection.type || "M", nextDay);
+      }
+    }
+    renderSchedule("editor:select-day");
+  });
   $habitScheduleView.querySelector('[data-role="schedule-cal-prev"]')?.addEventListener("click", () => {
     const next = new Date(scheduleCalYear, scheduleCalMonth - 1, 1);
     scheduleCalYear = next.getFullYear();
     scheduleCalMonth = next.getMonth();
-    renderSchedule();
+    renderSchedule("manual");
   });
   $habitScheduleView.querySelector('[data-role="schedule-cal-next"]')?.addEventListener("click", () => {
     const next = new Date(scheduleCalYear, scheduleCalMonth + 1, 1);
     scheduleCalYear = next.getFullYear();
     scheduleCalMonth = next.getMonth();
-    renderSchedule();
+    renderSchedule("manual");
   });
   $habitScheduleView.querySelector('[data-role="schedule-close-day"]')?.addEventListener("click", () => {
     closeScheduleDay(currentDateKey, "manual");
   });
   $habitScheduleView.querySelector('[data-role="schedule-open-editor"]')?.addEventListener("click", () => {
-    scheduleConfigOpen = true;
-    renderSchedule();
+    beginScheduleTemplateEditing(selectedType, selectedDay);
+    renderSchedule("editor:open");
   });
   $habitScheduleView.querySelector('[data-role="schedule-config-toggle"]')?.addEventListener("click", () => {
-    scheduleConfigOpen = !scheduleConfigOpen;
-    renderSchedule();
+    if (scheduleConfigOpen) {
+      stopScheduleTemplateEditing();
+      scheduleConfigOpen = false;
+      renderSchedule("editor:toggle");
+      return;
+    }
+    beginScheduleTemplateEditing(selectedType, selectedDay);
+    renderSchedule("editor:toggle");
   });
   $habitScheduleView.querySelector('[data-role="schedule-cancel-editor"]')?.addEventListener("click", () => {
+    stopScheduleTemplateEditing();
     scheduleConfigOpen = false;
-    renderSchedule();
+    renderSchedule("editor:cancel");
   });
   $habitScheduleView.querySelectorAll('[data-role="schedule-mode"]').forEach((select) => {
     select.addEventListener("change", () => {
       const habitId = select.getAttribute("data-habit-id");
       const input = $habitScheduleView.querySelector(`[data-role=\"schedule-value\"][data-habit-id=\"${habitId}\"]`);
       if (input) input.disabled = select.value === "neutral";
+      if (!isEditingTemplates || !draftState || !habitId) return;
+      const mode = select.value || "neutral";
+      const currentValue = Math.max(0, Math.round(Number(input?.value) || 0));
+      if (mode === "neutral") draftState.templateMap[habitId] = { mode: "neutral", value: 0 };
+      else draftState.templateMap[habitId] = { mode, value: currentValue };
     });
   });
+  $habitScheduleView.querySelectorAll('[data-role="schedule-value"]').forEach((input) => {
+    input.addEventListener("input", () => {
+      const habitId = input.getAttribute("data-habit-id");
+      if (!isEditingTemplates || !draftState || !habitId) return;
+      const modeSelect = $habitScheduleView.querySelector(`[data-role=\"schedule-mode\"][data-habit-id=\"${habitId}\"]`);
+      const mode = modeSelect?.value || "neutral";
+      const value = Math.max(0, Math.round(Number(input.value) || 0));
+      if (mode === "neutral") draftState.templateMap[habitId] = { mode: "neutral", value: 0 };
+      else draftState.templateMap[habitId] = { mode, value };
+    });
+  });
+  $habitScheduleView.querySelector('[data-role="close-time"]')?.addEventListener("input", (event) => {
+    if (!isEditingTemplates || !draftState) return;
+    draftState.closeTime = event.target?.value || "00:00";
+  });
+  $habitScheduleView.querySelector('[data-role="success-threshold"]')?.addEventListener("input", (event) => {
+    if (!isEditingTemplates || !draftState) return;
+    const value = Math.max(1, Math.min(100, Math.round(Number(event.target?.value || 70))));
+    draftState.successThreshold = value;
+  });
   $habitScheduleView.querySelector('[data-role="schedule-save-config"]')?.addEventListener("click", () => {
+    if (!isEditingTemplates || !draftState) return;
     const type = $habitScheduleView.querySelector('[data-role="schedule-type"]')?.value || "M";
     const day = $habitScheduleView.querySelector('[data-role="schedule-day"]')?.value || "base";
     const previousMap = day === "base"
-      ? { ...(habitSchedule?.schedules?.base?.[type] || {}) }
-      : { ...(habitSchedule?.schedules?.overrides?.[type]?.[day] || {}) };
+      ? { ...(scheduleState?.schedules?.base?.[type] || {}) }
+      : { ...(scheduleState?.schedules?.overrides?.[type]?.[day] || {}) };
     const nextMap = {};
     $habitScheduleView.querySelectorAll('.habit-schedule-target-row [data-role="schedule-mode"]').forEach((select) => {
       const id = select.getAttribute("data-habit-id") || "";
@@ -868,14 +986,11 @@ function renderSchedule() {
       if (mode === "neutral") nextMap[id] = { mode: "neutral", value: 0 };
       else if (val > 0) nextMap[id] = { mode, value: val };
     });
-    if (!habitSchedule.schedules?.base) habitSchedule.schedules = createDefaultHabitSchedule().schedules;
-    if (day === "base") habitSchedule.schedules.base[type] = nextMap;
-    else habitSchedule.schedules.overrides[type][day] = nextMap;
+    draftState.templateMap = deepCloneScheduleState(nextMap);
     const closeTime = $habitScheduleView.querySelector('[data-role="close-time"]')?.value || "00:00";
     const successThreshold = Math.max(1, Math.min(100, Math.round(Number($habitScheduleView.querySelector('[data-role="success-threshold"]')?.value || 70))));
-    habitSchedule.settings.dayCloseTime = closeTime;
-    habitSchedule.settings.successThreshold = successThreshold;
-    persistHabitScheduleLocal();
+    draftState.closeTime = closeTime;
+    draftState.successThreshold = successThreshold;
     const templatePath = day === "base"
       ? `${HABITS_SCHEDULE_PATH}/schedules/base/${type}`
       : `${HABITS_SCHEDULE_PATH}/schedules/overrides/${type}/${day}`;
@@ -887,17 +1002,25 @@ function renderSchedule() {
       templatePatch[habitId] = entry;
     });
     auditScheduleWrite(templatePath, templatePatch);
-    update(ref(db, templatePath), templatePatch).catch((err) => {
-      console.warn("No se pudo guardar plantilla en remoto", err);
-    });
     const settingsPath = `${HABITS_SCHEDULE_PATH}/settings`;
     const settingsPayload = { dayCloseTime: closeTime, successThreshold };
     auditScheduleWrite(settingsPath, settingsPayload);
-    update(ref(db, settingsPath), settingsPayload).catch((err) => {
-      console.warn("No se pudo guardar ajustes de horario en remoto", err);
+    Promise.all([
+      update(ref(db, templatePath), templatePatch),
+      update(ref(db, settingsPath), settingsPayload)
+    ]).then(() => {
+      if (!scheduleState.schedules?.base) scheduleState.schedules = createDefaultHabitSchedule().schedules;
+      if (day === "base") scheduleState.schedules.base[type] = deepCloneScheduleState(nextMap);
+      else scheduleState.schedules.overrides[type][day] = deepCloneScheduleState(nextMap);
+      scheduleState.settings.dayCloseTime = closeTime;
+      scheduleState.settings.successThreshold = successThreshold;
+      persistHabitScheduleLocal();
+      stopScheduleTemplateEditing();
+      scheduleConfigOpen = false;
+      renderSchedule("editor:save-confirm");
+    }).catch((err) => {
+      console.warn("No se pudo guardar plantilla/ajustes de horario en remoto", err);
     });
-    scheduleConfigOpen = false;
-    renderSchedule();
   });
 
   updateScheduleLiveInterval();
@@ -1523,7 +1646,7 @@ function readCache() {
       habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "", quickSessions: [] };
       if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
       habitUI = normalizeHabitUI(parsed.habitUI || {});
-      habitSchedule = createDefaultHabitSchedule();
+      scheduleState = normalizeHabitSchedule(parsed.scheduleState || parsed.habitSchedule || createDefaultHabitSchedule());
       const norm = normalizeSessionsStore(habitSessions, false);
       habitSessions = norm.normalized;
       habitSessionTimeline = norm.timeline || {};
@@ -1540,9 +1663,9 @@ function saveCache() {
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ habits, habitChecks, habitSessions, habitCounts, habitGroups, habitPrefs, habitUI, habitSchedule })
+      JSON.stringify({ habits, habitChecks, habitSessions, habitCounts, habitGroups, habitPrefs, habitUI, scheduleState })
     );
-    localStorage.setItem(HABITS_SCHEDULE_STORAGE, JSON.stringify(habitSchedule));
+    localStorage.setItem(HABITS_SCHEDULE_STORAGE, JSON.stringify(scheduleState));
   } catch (err) {
     console.warn("No se pudo guardar cache de hábitos", err);
   }
@@ -1554,23 +1677,24 @@ function auditScheduleWrite(path, payload) {
 }
 
 function persistHabitScheduleLocal() {
-  const normalized = normalizeHabitSchedule(habitSchedule);
-  habitSchedule = normalized;
+  const normalized = normalizeHabitSchedule(scheduleState);
+  scheduleState = normalized;
   try { localStorage.setItem(HABITS_SCHEDULE_STORAGE, JSON.stringify(normalized)); } catch (_) {}
   saveCache();
 }
 
 async function loadScheduleFromRemote() {
   try {
+    console.warn("SCHEDULE UPDATE", "firebase:get:init");
     const snap = await get(ref(db, HABITS_SCHEDULE_PATH));
     const raw = snap.val();
-    habitSchedule = raw && typeof raw === "object"
+    scheduleState = raw && typeof raw === "object"
       ? normalizeHabitSchedule(raw)
       : createDefaultHabitSchedule();
     saveCache();
   } catch (err) {
     console.warn("No se pudo leer horario remoto", err);
-    habitSchedule = createDefaultHabitSchedule();
+    scheduleState = createDefaultHabitSchedule();
   }
 }
 function saveRunningSession() {
@@ -8198,7 +8322,7 @@ function renderHabits() {
   renderToday();
   renderWeek();
   renderHistory();
-  renderSchedule();
+  renderSchedule("manual");
   renderKPIs();
   renderPins();
   renderRecordsCard();
@@ -9311,12 +9435,13 @@ function listenRemote() {
   });
 
   onValue(ref(db, HABITS_SCHEDULE_PATH), (snap) => {
+    console.warn("SCHEDULE UPDATE", "firebase:onValue");
     const raw = snap.val();
-    habitSchedule = raw && typeof raw === "object"
+    scheduleState = raw && typeof raw === "object"
       ? normalizeHabitSchedule(raw)
       : createDefaultHabitSchedule();
     saveCache();
-    if (activeTab === "schedule") renderSchedule();
+    if (activeTab === "schedule") renderSchedule("remote:onValue");
   });
 
   onValue(ref(db, HABIT_COMPARE_SETTINGS_PATH), (snap) => {    const remote = snap.val();

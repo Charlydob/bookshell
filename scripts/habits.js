@@ -142,6 +142,7 @@ let scheduleCalYear = null;
 let scheduleCalMonth = null;
 let scheduleTickInterval = null;
 let scheduleAutoCloseInterval = null;
+let scheduleConfigOpen = false;
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
 const DEBUG_HABITS_SYNC = (() => {
@@ -720,8 +721,10 @@ function renderSchedule() {
       <button class="btn ghost btn-compact" type="button" data-role="schedule-open-editor">Editar plantillas</button>
       <button class="btn ghost btn-compact" type="button" data-role="schedule-close-day">Cerrar día</button>
     </section>
-    <section class="habits-history-section habit-schedule-config">
-      <div class="habits-history-section-header"><div class="habits-history-section-title">Plantillas</div></div>
+    <section class="habits-history-section habit-schedule-config ${scheduleConfigOpen ? "" : "is-hidden"}">
+      <div class="habits-history-section-header">
+        <button class="habits-history-section-title habit-schedule-config-toggle" type="button" data-role="schedule-config-toggle" aria-expanded="${scheduleConfigOpen ? "true" : "false"}">Plantillas</button>
+      </div>
       <div class="habit-schedule-config-row habit-schedule-config-row-top">
         <select class="habits-history-select" data-role="schedule-type">
           <option value="M" ${selectedType === "M" ? "selected" : ""}>M</option>
@@ -788,8 +791,6 @@ function renderSchedule() {
     }).join("");
   }
 
-  const configPanel = $habitScheduleView.querySelector('.habit-schedule-config');
-  configPanel?.classList.add("is-hidden");
 
   const list = $habitScheduleView.querySelector('[data-role="schedule-progress-list"]');
   const makeRow = (row, extraMode = false) => {
@@ -829,10 +830,16 @@ function renderSchedule() {
     closeScheduleDay(currentDateKey, "manual");
   });
   $habitScheduleView.querySelector('[data-role="schedule-open-editor"]')?.addEventListener("click", () => {
-    configPanel?.classList.remove("is-hidden");
+    scheduleConfigOpen = true;
+    renderSchedule();
+  });
+  $habitScheduleView.querySelector('[data-role="schedule-config-toggle"]')?.addEventListener("click", () => {
+    scheduleConfigOpen = !scheduleConfigOpen;
+    renderSchedule();
   });
   $habitScheduleView.querySelector('[data-role="schedule-cancel-editor"]')?.addEventListener("click", () => {
-    configPanel?.classList.add("is-hidden");
+    scheduleConfigOpen = false;
+    renderSchedule();
   });
   $habitScheduleView.querySelectorAll('[data-role="schedule-mode"]').forEach((select) => {
     select.addEventListener("change", () => {
@@ -862,6 +869,7 @@ function renderSchedule() {
     habitSchedule.settings.dayCloseTime = closeTime;
     habitSchedule.settings.successThreshold = successThreshold;
     persistHabitSchedule();
+    scheduleConfigOpen = false;
     renderSchedule();
   });
 

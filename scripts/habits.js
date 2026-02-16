@@ -660,7 +660,7 @@ function maybeAutoCloseScheduleDay() {
   const marker = `${dateKeyLocal(now)}@${closeTime}`;
   const last = localStorage.getItem(SCHEDULE_AUTOCLOSE_MARKER_STORAGE);
   if (last === marker) return;
-  const targetDate = scheduleDayKeyFromTs(now.getTime() - 60000, closeTime);
+  const targetDate = scheduleDayKeyFromTs(now.getTime() - 600000, closeTime);
   if (!habitSchedule?.summaries?.[targetDate]) closeScheduleDay(targetDate, "auto");
   try { localStorage.setItem(SCHEDULE_AUTOCLOSE_MARKER_STORAGE, marker); } catch (_) {}
 }

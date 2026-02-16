@@ -76,7 +76,7 @@
 
 .habits-subtabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 8px;
   padding: 0px;
   margin-bottom: 0;
@@ -1221,6 +1221,7 @@
   border: 1px solid rgba(255,255,255,0.08);
   overflow: hidden;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  margin-top: 20px;
 }
 
 .habit-accordion[open] {
@@ -3627,8 +3628,12 @@ align-items: center;
 
 .habit-schedule-controls {
   display: flex;
-  gap: 8px;
-  justify-content: flex-end;
+  gap: 0px;
+  justify-content: space-between;
+  padding: 0px;
+  background-color: transparent;
+  border: none;
+
 }
 
 .habit-schedule-config.is-hidden {
@@ -3707,7 +3712,7 @@ align-items: center;
 }
 
 .habit-schedule-row.is-complete {
-  opacity: .58;
+  opacity: 1;
 }
 
 .habit-schedule-name {

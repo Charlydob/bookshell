@@ -452,8 +452,6 @@ function scheduleLabelForScore(score = 0) {
 }
 
 
-const SCHEDULE_SUCCESS_EMOJI = "✅";
-const SCHEDULE_FAIL_EMOJI = "❌";
 const SCHEDULE_AUTOCLOSE_MARKER_STORAGE = "bookshell-habits-schedule-autoclose:v1";
 const SCHEDULE_MODES = {
   targetMin: { label: "Objetivo tiempo", unit: "min", kind: "goal", metric: "time" },
@@ -465,6 +463,23 @@ const SCHEDULE_MODES = {
 
 function scheduleModeInfo(mode) {
   return SCHEDULE_MODES[mode] || SCHEDULE_MODES.neutral;
+}
+
+function clampScheduleThreshold(value, fallback = 70) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return Math.max(1, Math.min(100, Math.round(Number(fallback) || 70)));
+  return Math.max(1, Math.min(100, Math.round(numeric)));
+}
+
+function scheduleThresholdForContext({ type = "Libre", dayKey = "mon", template = {}, usingOverride = false } = {}) {
+  const settings = scheduleState?.settings || {};
+  const globalThreshold = clampScheduleThreshold(settings?.successThreshold, 70);
+  const templateThreshold = clampScheduleThreshold(template?.__meta?.successThreshold, globalThreshold);
+  const typeThreshold = clampScheduleThreshold(settings?.thresholdByType?.[type], templateThreshold);
+  if (usingOverride) {
+    return clampScheduleThreshold(settings?.thresholdByTypeAndDay?.[type]?.[dayKey], typeThreshold);
+  }
+  return typeThreshold;
 }
 
 function scheduleDayKeyFromTs(ts, dayCloseTime = "00:00") {
@@ -597,6 +612,8 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
   const wastedTotalMin = limitRows.filter((row) => row.info.metric === "time").reduce((acc, row) => acc + row.done, 0);
   const wastedTotalCount = limitRows.filter((row) => row.info.metric === "count").reduce((acc, row) => acc + row.done, 0);
 
+  const thresholdUsed = scheduleThresholdForContext({ type, dayKey, template, usingOverride });
+
   return {
     dateKey,
     type,
@@ -616,7 +633,9 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
     wastedExcessMin,
     wastedExcessCount,
     wastedTotalMin,
-    wastedTotalCount
+    wastedTotalCount,
+    thresholdUsed,
+    templateVariantUsed: usingOverride ? dayKey : "base"
   };
 }
 
@@ -646,6 +665,9 @@ function closeScheduleDay(dateKey = todayKey(), source = "manual") {
     wastedTotalMin: data.wastedTotalMin,
     wastedTotalCount: data.wastedTotalCount,
     perHabit,
+    thresholdUsed: data.thresholdUsed,
+    templateTypeUsed: data.type,
+    templateVariantUsed: data.templateVariantUsed,
     successThreshold: scheduleState?.settings?.successThreshold || 70,
     closedAtTs: Date.now(),
     closeSource: source
@@ -721,9 +743,11 @@ function renderScheduleMonthGrid(year, month, grid) {
     const cell = document.createElement("button");
     cell.type = "button";
     cell.className = "history-month-cell habit-schedule-cell";
-    const threshold = scheduleState?.settings?.successThreshold || 70;
-    const emoji = summary ? ((summary.score || 0) >= threshold ? SCHEDULE_SUCCESS_EMOJI : SCHEDULE_FAIL_EMOJI) : "";
-    cell.innerHTML = `<span class="month-day-num">${d}</span><span class="month-day-emoji">${emoji}</span>`;
+    const thresholdUsed = clampScheduleThreshold(summary?.thresholdUsed ?? summary?.successThreshold, scheduleState?.settings?.successThreshold || 70);
+    const dayScore = Math.max(0, Math.min(100, Math.round(Number(summary?.score) || 0)));
+    const scoreLabel = summary ? `${dayScore}%` : "";
+    if (summary) cell.classList.add(dayScore >= thresholdUsed ? "is-good" : "is-bad");
+    cell.innerHTML = `<span class="month-day-num">${d}</span><span class="month-day-emoji">${scoreLabel}</span>`;
     if (summary) cell.addEventListener("click", () => openScheduleSummaryModal(key));
     grid.appendChild(cell);
   }

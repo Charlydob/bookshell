@@ -483,6 +483,7 @@
   pointer-events: none;
   opacity: 0;
   transition: opacity 150ms ease;
+  bottom: 120px;
 }
 
 .video-toolbar-rail { left: max(0px, env(safe-area-inset-left)); }
@@ -496,7 +497,7 @@
 
 .video-rail-handle,
 .video-count-handle {
-  width: 26px;
+  width: 46px;
   height: 52px;
   border-radius: 0 14px 14px 0;
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -514,7 +515,7 @@
 .video-toolbar-panel,
 .video-count-panel {
   position: absolute;
-  top: 50%;
+  top: 27%;
   transform: translateY(-50%);
   transition: transform 180ms ease;
 }

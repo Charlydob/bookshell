@@ -482,39 +482,50 @@ function splitSpanByDay(startTs, endTs, dayCloseTime = "00:00") {
 
 function collectDoneByDayForHabit(habitId, dayCloseTime = "00:00") {
   const out = new Map();
-  const detailed = Array.isArray(habitSessionTimeline?.[habitId]) ? habitSessionTimeline[habitId] : [];
-  if (detailed.length) {
-    detailed.forEach((session) => {
-      const bounds = parseSessionBounds(session);
-      if (!bounds) return;
-      splitSpanByDay(bounds.startTs, bounds.endTs, dayCloseTime).forEach((chunk) => {
-        out.set(chunk.dayKey, (out.get(chunk.dayKey) || 0) + chunk.minutes);
+
+  // Fuente base: totales persistidos por día (siempre actualizados por +X min y stop session).
+  Object.keys(habitSessions?.[habitId] || {}).forEach((storedDayKey) => {
+    const min = Math.max(0, getHabitTotalSecForDate(habitId, storedDayKey) / 60);
+    if (min > 0) out.set(storedDayKey, (out.get(storedDayKey) || 0) + min);
+  });
+
+  // Si el cierre del día no es medianoche, recalculamos con sesiones detalladas cuando existan.
+  if (dayCloseTime !== "00:00") {
+    const detailed = Array.isArray(habitSessionTimeline?.[habitId]) ? habitSessionTimeline[habitId] : [];
+    if (detailed.length) {
+      const fromTimeline = new Map();
+      detailed.forEach((session) => {
+        const bounds = parseSessionBounds(session);
+        if (!bounds) return;
+        splitSpanByDay(bounds.startTs, bounds.endTs, dayCloseTime).forEach((chunk) => {
+          fromTimeline.set(chunk.dayKey, (fromTimeline.get(chunk.dayKey) || 0) + chunk.minutes);
+        });
       });
-    });
-  } else {
-    Object.keys(habitSessions?.[habitId] || {}).forEach((dayKey) => {
-      const min = Math.max(0, getHabitTotalSecForDate(habitId, dayKey) / 60);
-      if (min > 0) out.set(dayKey, (out.get(dayKey) || 0) + min);
-    });
+      fromTimeline.forEach((minutes, key) => {
+        out.set(key, Math.max(out.get(key) || 0, minutes));
+      });
+    }
   }
+
   return out;
 }
 
 function computeHabitDayTotals(habitId, dayKey, dayCloseTime = "00:00", options = {}) {
-  const includeRunningLive = options?.includeRunningLive !== false;
+  const includeRunning = options?.includeRunning !== false;
   const doneCount = Math.max(0, Number(getHabitCount(habitId, dayKey) || 0));
   const byDay = collectDoneByDayForHabit(habitId, dayCloseTime);
   let doneMin = Math.max(0, Math.round(byDay.get(dayKey) || 0));
 
-  if (includeRunningLive && runningSession?.targetHabitId === habitId) {
+  if (includeRunning && runningSession?.targetHabitId === habitId) {
     splitSpanByDay(runningSession.startTs, Date.now(), dayCloseTime).forEach((chunk) => {
       if (chunk.dayKey !== dayKey) return;
       doneMin = Math.max(0, Math.round(doneMin + chunk.minutes));
     });
   }
 
-  console.log("DAY TOTALS", habitId, { doneMin, doneCount, from: "shared-helper" });
-  return { doneMin, doneCount };
+  const totals = { doneMin, doneCount };
+  console.warn("[TOTALS]", habitId, dayKey, totals, { source: "shared" });
+  return totals;
 }
 
 function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), scheduleState?.settings?.dayCloseTime || "00:00")) {
@@ -524,7 +535,7 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
   const doneTotalsMap = {};
 
   allHabits.forEach((habit) => {
-    doneTotalsMap[habit.id] = computeHabitDayTotals(habit.id, dateKey, closeTime, { includeRunningLive: true });
+    doneTotalsMap[habit.id] = computeHabitDayTotals(habit.id, dateKey, closeTime, { includeRunning: true });
   });
 
   const entries = Object.entries(template || {}).map(([habitId, config]) => {
@@ -535,6 +546,7 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
     const info = scheduleModeInfo(mode);
     const totals = doneTotalsMap[habitId] || { doneMin: 0, doneCount: 0 };
     const done = info.metric === "count" ? totals.doneCount : totals.doneMin;
+    console.warn("[RENDER] horario", habitId, done);
     const ratio = value > 0 ? (done / value) : 0;
     const progress = Math.max(0, Math.min(1, ratio));
     const percent = Math.max(0, Math.min(100, Math.round(progress * 100)));
@@ -2309,7 +2321,7 @@ function getHabitDayScore(habit, dateKey) {
     return { score: hasActivity ? 1 : 0, minutes: 0, checked: false, count, hasActivity };
   }
   const checked = !!(habitChecks[habit.id] && habitChecks[habit.id][dateKey]);
-  const { doneMin: minutes } = computeHabitDayTotals(habit.id, dateKey, "00:00", { includeRunningLive: false });
+  const { doneMin: minutes } = computeHabitDayTotals(habit.id, dateKey, "00:00", { includeRunning: false });
   const timeScore = Math.min(3, Math.floor(minutes / 30));
   const score = (checked ? 1 : 0) + timeScore;
   return { score, minutes, checked, count: 0, hasActivity: checked || minutes > 0 };
@@ -4085,6 +4097,7 @@ function renderToday() {
       const metaText = isCount
         ? (dayData.count ? `${scheduleLabel} · ${dayData.count} hoy` : scheduleLabel)
         : (dayData.minutes ? `${scheduleLabel} · ${formatMinutes(dayData.minutes)} hoy` : scheduleLabel);
+      console.warn("[RENDER] minicard", habit.id, isCount ? dayData.count : dayData.minutes);
 
       const card = buildTodayCard(habit, dateKey, dayData, metaText, streak, daysDone);
       const groupId = habit?.groupId || "";
@@ -8398,6 +8411,12 @@ function renderHabitsPreservingUI() {
   }
 }
 
+function invalidateHabitRenderCaches() {
+  // dayTotalsCache/renderedSnapshots pueden existir en builds previos o flags de depuración.
+  if (window.dayTotalsCache && typeof window.dayTotalsCache.clear === "function") window.dayTotalsCache.clear();
+  if (window.renderedSnapshots && typeof window.renderedSnapshots.clear === "function") window.renderedSnapshots.clear();
+}
+
 function renderHabits() {
   renderSubtabs();
   renderToday();
@@ -8499,9 +8518,12 @@ function stopSession(assignHabitId = null, silent = false) {
       const sec = Math.max(0, Math.round(minutes * 60));
       if (sec > 0) addHabitTimeSec(target, day, sec, { startTs, endTs });
     });
+    const savedPayload = { targetHabitId: target, startTs, endTs, durationSec: duration, splitByDay: splitSummary };
+    console.warn("[STOP] saved session", savedPayload);
     console.log("[HABIT] session stop", { startTs, endTs, splitByDay: splitSummary });
     localStorage.setItem(LAST_HABIT_KEY, target);
     pendingSessionDuration = 0;
+    invalidateHabitRenderCaches();
     if (!silent) showHabitToast(`Asignado: ${habits[target]?.name || "hábito"} · ${Math.round(duration / 60)}m`);
     closeSessionModal?.();
     renderHabits();
@@ -8628,11 +8650,14 @@ function assignSession(habitId) {
     const sec = Math.max(0, Math.round(minutes * 60));
     if (sec > 0) addHabitTimeSec(habitId, day, sec, { startTs, endTs });
   });
+  const savedPayload = { targetHabitId: habitId, startTs, endTs, durationSec: pendingSessionDuration, splitByDay: splitSummary };
+  console.warn("[STOP] saved session", savedPayload);
   console.log("[HABIT] session stop", { startTs, endTs, splitByDay: splitSummary });
   if (splitByDay.size > 1) console.log("[HABIT] split across days", splitSummary);
 
   localStorage.setItem(LAST_HABIT_KEY, habitId);
   pendingSessionDuration = 0;
+  invalidateHabitRenderCaches();
   closeSessionModal();
   renderHabits();
 }

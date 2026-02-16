@@ -149,7 +149,7 @@ let scheduleTickInterval = null;
 let scheduleAutoCloseInterval = null;
 let scheduleConfigOpen = false;
 let scheduleViewMode = loadScheduleViewMode();
-let habitDetailScheduleSelection = { type: "Libre", day: "base" };
+let habitDetailScheduleSelection = { types: ["Libre"], dows: [] };
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
 const DEBUG_HABITS_SYNC = (() => {
@@ -801,6 +801,20 @@ function readScheduleTemplateFromState(type = "M", day = "base", source = schedu
   return deepCloneScheduleState(source?.schedules?.overrides?.[type]?.[day] || {});
 }
 
+const SCHEDULE_DOWS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const SCHEDULE_DOW_LABELS = { mon: "L", tue: "M", wed: "X", thu: "J", fri: "V", sat: "S", sun: "D" };
+const SCHEDULE_TYPES = ["Libre", "M", "T"];
+const SCHEDULE_TYPE_LABELS = { Libre: "L", M: "M", T: "T" };
+const SCHEDULE_TYPE_COLORS = { Libre: "#22c55e", M: "#facc15", T: "#ef4444" };
+
+function sanitizeScheduleTypes(types = []) {
+  return Array.from(new Set((Array.isArray(types) ? types : []).filter((type) => SCHEDULE_TYPES.includes(type))));
+}
+
+function sanitizeScheduleDows(dows = []) {
+  return Array.from(new Set((Array.isArray(dows) ? dows : []).filter((dow) => SCHEDULE_DOWS.includes(dow))));
+}
+
 function getHabitScheduleEntryForSelection(habitId, type = "Libre", day = "base", source = scheduleState) {
   if (!habitId) return null;
   const node = day === "base"
@@ -832,28 +846,103 @@ function updateLocalScheduleHabitEntry(habitId, type = "Libre", day = "base", en
   persistHabitScheduleLocal();
 }
 
-async function saveHabitScheduleEntryByHabit(habitId, { type = "Libre", day = "base", mode = "neutral", value = 0 } = {}) {
-  if (!habitId) return;
-  const safeMode = SCHEDULE_MODES[mode] ? mode : "neutral";
-  const safeValue = Math.max(0, Math.round(Number(value) || 0));
-  const path = day === "base"
-    ? `${HABITS_SCHEDULE_PATH}/schedules/base/${type}`
-    : `${HABITS_SCHEDULE_PATH}/schedules/overrides/${type}/${day}`;
-  const payload = { [habitId]: { mode: safeMode, value: safeValue } };
-  auditScheduleWrite(path, payload);
-  await update(ref(db, path), payload);
-  updateLocalScheduleHabitEntry(habitId, type, day, { mode: safeMode, value: safeValue });
+function computeHabitChipRings(habitId) {
+  const configured = {};
+  const configuredBase = {};
+  SCHEDULE_DOWS.forEach((dow) => {
+    configured[dow] = { Libre: false, M: false, T: false };
+  });
+  SCHEDULE_TYPES.forEach((type) => {
+    configuredBase[type] = !!scheduleState?.schedules?.base?.[type]?.[habitId];
+    SCHEDULE_DOWS.forEach((dow) => {
+      configured[dow][type] = !!scheduleState?.schedules?.overrides?.[type]?.[dow]?.[habitId];
+    });
+  });
+
+  const rings = {};
+  SCHEDULE_DOWS.forEach((dow) => {
+    const parts = SCHEDULE_TYPES.filter((type) => configured[dow][type]);
+    if (!parts.length) {
+      rings[dow] = "linear-gradient(transparent, transparent)";
+      return;
+    }
+    const slice = 360 / parts.length;
+    const segments = parts.map((type, index) => {
+      const from = Math.round(slice * index * 100) / 100;
+      const to = Math.round(slice * (index + 1) * 100) / 100;
+      return `${SCHEDULE_TYPE_COLORS[type]} ${from}deg ${to}deg`;
+    });
+    rings[dow] = `conic-gradient(${segments.join(", ")})`;
+  });
+
+  return { configured, configuredBase, rings };
 }
 
-async function removeHabitScheduleEntryByHabit(habitId, { type = "Libre", day = "base" } = {}) {
-  if (!habitId) return;
-  const path = day === "base"
-    ? `${HABITS_SCHEDULE_PATH}/schedules/base/${type}`
-    : `${HABITS_SCHEDULE_PATH}/schedules/overrides/${type}/${day}`;
-  const payload = { [habitId]: null };
-  auditScheduleWrite(path, payload);
-  await update(ref(db, path), payload);
-  updateLocalScheduleHabitEntry(habitId, type, day, null);
+function inferBulkEntryFromSelection(habitId, selectedTypes = [], selectedDows = []) {
+  const types = sanitizeScheduleTypes(selectedTypes);
+  if (!types.length || !habitId) return null;
+  const dows = sanitizeScheduleDows(selectedDows);
+  const type = types[0];
+  if (!dows.length) return getHabitScheduleEntryForSelection(habitId, type, "base");
+  return getHabitScheduleEntryForSelection(habitId, type, dows[0]);
+}
+
+async function applyHabitScheduleBulk(habitId, selectedDows = [], selectedTypes = [], mode = "neutral", value = 0) {
+  if (!habitId) return false;
+  const safeTypes = sanitizeScheduleTypes(selectedTypes);
+  if (!safeTypes.length) throw new Error("missing-type");
+  const safeDows = sanitizeScheduleDows(selectedDows);
+  const safeMode = SCHEDULE_MODES[mode] ? mode : "neutral";
+  const safeValue = safeMode === "neutral" ? 0 : Math.max(0, Math.round(Number(value) || 0));
+
+  const payload = {};
+  const localOps = [];
+  safeTypes.forEach((type) => {
+    if (!safeDows.length) {
+      const key = `schedules/base/${type}/${habitId}`;
+      payload[key] = { mode: safeMode, value: safeValue };
+      localOps.push({ type, day: "base", entry: { mode: safeMode, value: safeValue } });
+      return;
+    }
+    safeDows.forEach((dow) => {
+      const key = `schedules/overrides/${type}/${dow}/${habitId}`;
+      payload[key] = { mode: safeMode, value: safeValue };
+      localOps.push({ type, day: dow, entry: { mode: safeMode, value: safeValue } });
+    });
+  });
+
+  auditScheduleWrite(`${HABITS_SCHEDULE_PATH}`, payload);
+  await update(ref(db, HABITS_SCHEDULE_PATH), payload);
+  localOps.forEach((op) => updateLocalScheduleHabitEntry(habitId, op.type, op.day, op.entry));
+  return true;
+}
+
+async function removeHabitScheduleBulk(habitId, selectedDows = [], selectedTypes = []) {
+  if (!habitId) return false;
+  const safeTypes = sanitizeScheduleTypes(selectedTypes);
+  if (!safeTypes.length) throw new Error("missing-type");
+  const safeDows = sanitizeScheduleDows(selectedDows);
+  const payload = {};
+  const localOps = [];
+
+  safeTypes.forEach((type) => {
+    if (!safeDows.length) {
+      const key = `schedules/base/${type}/${habitId}`;
+      payload[key] = null;
+      localOps.push({ type, day: "base" });
+      return;
+    }
+    safeDows.forEach((dow) => {
+      const key = `schedules/overrides/${type}/${dow}/${habitId}`;
+      payload[key] = null;
+      localOps.push({ type, day: dow });
+    });
+  });
+
+  auditScheduleWrite(`${HABITS_SCHEDULE_PATH}`, payload);
+  await update(ref(db, HABITS_SCHEDULE_PATH), payload);
+  localOps.forEach((op) => updateLocalScheduleHabitEntry(habitId, op.type, op.day, null));
+  return true;
 }
 
 function beginScheduleTemplateEditing(type = "M", day = "base") {
@@ -2726,8 +2815,12 @@ const $habitDetailRecordsMore = document.getElementById("habit-detail-records-mo
 const $habitDetailInsightsSub = document.getElementById("habit-detail-insights-sub");
 const $habitDetailInsights = document.getElementById("habit-detail-insights");
 const $habitDetailScheduleStatus = document.getElementById("habit-detail-schedule-status");
-const $habitDetailScheduleType = document.getElementById("habit-detail-schedule-type");
-const $habitDetailScheduleVariant = document.getElementById("habit-detail-schedule-variant");
+const $habitDetailScheduleDayChips = document.getElementById("habit-detail-schedule-day-chips");
+const $habitDetailScheduleTypeChips = document.getElementById("habit-detail-schedule-type-chips");
+const $habitDetailScheduleDaysAll = document.getElementById("habit-detail-schedule-days-all");
+const $habitDetailScheduleDaysWork = document.getElementById("habit-detail-schedule-days-work");
+const $habitDetailScheduleDaysWeekend = document.getElementById("habit-detail-schedule-days-weekend");
+const $habitDetailScheduleDaysClear = document.getElementById("habit-detail-schedule-days-clear");
 const $habitDetailScheduleMode = document.getElementById("habit-detail-schedule-mode");
 const $habitDetailScheduleValue = document.getElementById("habit-detail-schedule-value");
 const $habitDetailScheduleSave = document.getElementById("habit-detail-schedule-save");
@@ -3382,8 +3475,8 @@ function openHabitDetail(habitId, dateKeyContext = todayKey()) {
   habitDetailDateKey = dateKeyContext || todayKey();
   const scheduleContext = scheduleTemplateForDate(habitDetailDateKey);
   habitDetailScheduleSelection = {
-    type: scheduleContext?.type || "Libre",
-    day: scheduleContext?.usingOverride ? (scheduleContext?.dayKey || "base") : "base"
+    types: [scheduleContext?.type || "Libre"],
+    dows: scheduleContext?.usingOverride ? [scheduleContext?.dayKey || "mon"] : []
   };
   $habitDetailOverlay.classList.remove("hidden");
   $habitDetailOverlay.setAttribute("aria-hidden", "false");
@@ -3828,36 +3921,65 @@ function renderHabitDetailInsights(habit, rangeKey) {
 }
 
 function renderHabitDetailSchedulePanel(habit) {
-  if (!habit || !$habitDetailScheduleType || !$habitDetailScheduleVariant || !$habitDetailScheduleMode || !$habitDetailScheduleValue) return;
-  const selectedType = ["M", "T", "Libre"].includes(habitDetailScheduleSelection?.type)
-    ? habitDetailScheduleSelection.type
-    : (scheduleShiftTypeForDate(todayKey()) || "Libre");
-  const selectedDay = ["base", "mon", "tue", "wed", "thu", "fri", "sat", "sun"].includes(habitDetailScheduleSelection?.day)
-    ? habitDetailScheduleSelection.day
-    : "base";
-  habitDetailScheduleSelection = { type: selectedType, day: selectedDay };
+  if (!habit || !$habitDetailScheduleMode || !$habitDetailScheduleValue) return;
+  const selectedTypes = sanitizeScheduleTypes(habitDetailScheduleSelection?.types || []);
+  const selectedDows = sanitizeScheduleDows(habitDetailScheduleSelection?.dows || []);
+  habitDetailScheduleSelection = {
+    types: selectedTypes.length ? selectedTypes : [scheduleShiftTypeForDate(todayKey()) || "Libre"],
+    dows: selectedDows
+  };
 
-  $habitDetailScheduleType.value = selectedType;
-  $habitDetailScheduleVariant.value = selectedDay;
+  const ringInfo = computeHabitChipRings(habit.id);
 
-  const current = getHabitScheduleEntryForSelection(habit.id, selectedType, selectedDay);
-  if (!current) {
+  if ($habitDetailScheduleDayChips) {
+    $habitDetailScheduleDayChips.innerHTML = "";
+    SCHEDULE_DOWS.forEach((dow) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "habit-detail-schedule-chip";
+      if (habitDetailScheduleSelection.dows.includes(dow)) chip.classList.add("is-selected");
+      chip.style.setProperty("--ring-gradient", ringInfo.rings[dow] || "linear-gradient(transparent, transparent)");
+      chip.dataset.dow = dow;
+      chip.title = `Configurado: ${SCHEDULE_TYPES.filter((type) => ringInfo.configured[dow][type]).join(", ") || "sin datos"}`;
+      chip.innerHTML = `<span>${SCHEDULE_DOW_LABELS[dow]}</span>`;
+      $habitDetailScheduleDayChips.appendChild(chip);
+    });
+  }
+
+  if ($habitDetailScheduleTypeChips) {
+    $habitDetailScheduleTypeChips.innerHTML = "";
+    SCHEDULE_TYPES.forEach((type) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "habit-detail-schedule-chip is-type";
+      chip.style.color = SCHEDULE_TYPE_COLORS[type];
+      if (habitDetailScheduleSelection.types.includes(type)) chip.classList.add("is-selected");
+      chip.dataset.type = type;
+      chip.innerHTML = `<span>${SCHEDULE_TYPE_LABELS[type]}</span>${ringInfo.configuredBase[type] ? '<span class="habit-detail-schedule-chip-dot"></span>' : ""}`;
+      chip.title = ringInfo.configuredBase[type] ? `${type} tiene base` : `${type} sin base`;
+      $habitDetailScheduleTypeChips.appendChild(chip);
+    });
+  }
+
+  const preview = inferBulkEntryFromSelection(habit.id, habitDetailScheduleSelection.types, habitDetailScheduleSelection.dows);
+  if (preview) {
+    $habitDetailScheduleMode.value = preview.mode;
+    $habitDetailScheduleValue.value = String(preview.value || 0);
+    $habitDetailScheduleValue.disabled = preview.mode === "neutral";
+  } else {
     $habitDetailScheduleMode.value = "neutral";
     $habitDetailScheduleValue.value = "";
     $habitDetailScheduleValue.disabled = true;
-    if ($habitDetailScheduleStatus) $habitDetailScheduleStatus.textContent = "No configurado";
-    return;
   }
 
-  $habitDetailScheduleMode.value = current.mode;
-  $habitDetailScheduleValue.value = String(current.value || 0);
-  $habitDetailScheduleValue.disabled = current.mode === "neutral";
-  const info = scheduleModeInfo(current.mode);
   if ($habitDetailScheduleStatus) {
-    const valueLabel = info.metric === "time" ? `${current.value}m` : `${current.value}x`;
-    $habitDetailScheduleStatus.textContent = info.kind === "neutral"
-      ? `Configurado: ${info.label}`
-      : `Configurado: ${info.label} ${valueLabel}`;
+    const scope = habitDetailScheduleSelection.dows.length
+      ? `${habitDetailScheduleSelection.dows.length} día(s)`
+      : "Base";
+    const hasAny = preview || habitDetailScheduleSelection.types.some((type) => ringInfo.configuredBase[type]);
+    $habitDetailScheduleStatus.textContent = hasAny
+      ? `${scope} · ${habitDetailScheduleSelection.types.join("+")}`
+      : "No configurado";
   }
 }
 
@@ -9415,21 +9537,63 @@ function bindEvents() {
     });
   });
 
-  $habitDetailScheduleType?.addEventListener("change", () => {
+  $habitDetailScheduleDayChips?.addEventListener("click", (event) => {
+    const chip = event.target?.closest?.("button[data-dow]");
+    if (!chip) return;
+    const dow = chip.dataset.dow;
+    if (!SCHEDULE_DOWS.includes(dow)) return;
+    const current = new Set(habitDetailScheduleSelection?.dows || []);
+    if (current.has(dow)) current.delete(dow);
+    else current.add(dow);
     habitDetailScheduleSelection = {
-      type: $habitDetailScheduleType.value || "Libre",
-      day: $habitDetailScheduleVariant?.value || "base"
+      types: sanitizeScheduleTypes(habitDetailScheduleSelection?.types || []),
+      dows: sanitizeScheduleDows(Array.from(current))
     };
     if (!habitDetailId || !habits[habitDetailId]) return;
     renderHabitDetailSchedulePanel(habits[habitDetailId]);
   });
-  $habitDetailScheduleVariant?.addEventListener("change", () => {
+  $habitDetailScheduleTypeChips?.addEventListener("click", (event) => {
+    const chip = event.target?.closest?.("button[data-type]");
+    if (!chip) return;
+    const type = chip.dataset.type;
+    if (!SCHEDULE_TYPES.includes(type)) return;
+    const current = new Set(habitDetailScheduleSelection?.types || []);
+    if (current.has(type)) current.delete(type);
+    else current.add(type);
     habitDetailScheduleSelection = {
-      type: $habitDetailScheduleType?.value || "Libre",
-      day: $habitDetailScheduleVariant.value || "base"
+      types: sanitizeScheduleTypes(Array.from(current)),
+      dows: sanitizeScheduleDows(habitDetailScheduleSelection?.dows || [])
     };
     if (!habitDetailId || !habits[habitDetailId]) return;
     renderHabitDetailSchedulePanel(habits[habitDetailId]);
+  });
+  $habitDetailScheduleDaysAll?.addEventListener("click", () => {
+    habitDetailScheduleSelection = {
+      types: sanitizeScheduleTypes(habitDetailScheduleSelection?.types || []),
+      dows: [...SCHEDULE_DOWS]
+    };
+    if (habitDetailId && habits[habitDetailId]) renderHabitDetailSchedulePanel(habits[habitDetailId]);
+  });
+  $habitDetailScheduleDaysWork?.addEventListener("click", () => {
+    habitDetailScheduleSelection = {
+      types: sanitizeScheduleTypes(habitDetailScheduleSelection?.types || []),
+      dows: ["mon", "tue", "wed", "thu", "fri"]
+    };
+    if (habitDetailId && habits[habitDetailId]) renderHabitDetailSchedulePanel(habits[habitDetailId]);
+  });
+  $habitDetailScheduleDaysWeekend?.addEventListener("click", () => {
+    habitDetailScheduleSelection = {
+      types: sanitizeScheduleTypes(habitDetailScheduleSelection?.types || []),
+      dows: ["sat", "sun"]
+    };
+    if (habitDetailId && habits[habitDetailId]) renderHabitDetailSchedulePanel(habits[habitDetailId]);
+  });
+  $habitDetailScheduleDaysClear?.addEventListener("click", () => {
+    habitDetailScheduleSelection = {
+      types: sanitizeScheduleTypes(habitDetailScheduleSelection?.types || []),
+      dows: []
+    };
+    if (habitDetailId && habits[habitDetailId]) renderHabitDetailSchedulePanel(habits[habitDetailId]);
   });
   $habitDetailScheduleMode?.addEventListener("change", () => {
     if (!$habitDetailScheduleValue) return;
@@ -9438,35 +9602,44 @@ function bindEvents() {
   });
   $habitDetailScheduleSave?.addEventListener("click", async () => {
     if (!habitDetailId || !habits[habitDetailId]) return;
-    const type = $habitDetailScheduleType?.value || "Libre";
-    const day = $habitDetailScheduleVariant?.value || "base";
+    const types = sanitizeScheduleTypes(habitDetailScheduleSelection?.types || []);
+    const dows = sanitizeScheduleDows(habitDetailScheduleSelection?.dows || []);
+    if (!types.length) {
+      showHabitToast("Selecciona al menos un tipo de jornada");
+      return;
+    }
     const mode = $habitDetailScheduleMode?.value || "neutral";
     const value = Math.max(0, Math.round(Number($habitDetailScheduleValue?.value || 0)));
-    const payloadValue = mode === "neutral" ? 0 : value;
+    if (mode !== "neutral" && value <= 0) {
+      showHabitToast("El valor debe ser mayor a 0");
+      return;
+    }
     try {
-      await saveHabitScheduleEntryByHabit(habitDetailId, { type, day, mode, value: payloadValue });
-      habitDetailScheduleSelection = { type, day };
+      await applyHabitScheduleBulk(habitDetailId, dows, types, mode, value);
       renderHabitDetailSchedulePanel(habits[habitDetailId]);
       if (activeTab === "schedule") renderSchedule("detail:habit-save");
-      showHabitToast("Horario guardado");
+      showHabitToast("Aplicado");
     } catch (err) {
-      console.warn("No se pudo guardar horario del hábito", err);
-      showHabitToast("No se pudo guardar el horario");
+      console.warn("No se pudo aplicar horario del hábito", err);
+      showHabitToast("No se pudo aplicar");
     }
   });
   $habitDetailScheduleRemove?.addEventListener("click", async () => {
     if (!habitDetailId || !habits[habitDetailId]) return;
-    const type = $habitDetailScheduleType?.value || "Libre";
-    const day = $habitDetailScheduleVariant?.value || "base";
+    const types = sanitizeScheduleTypes(habitDetailScheduleSelection?.types || []);
+    const dows = sanitizeScheduleDows(habitDetailScheduleSelection?.dows || []);
+    if (!types.length) {
+      showHabitToast("Selecciona al menos un tipo de jornada");
+      return;
+    }
     try {
-      await removeHabitScheduleEntryByHabit(habitDetailId, { type, day });
-      habitDetailScheduleSelection = { type, day };
+      await removeHabitScheduleBulk(habitDetailId, dows, types);
       renderHabitDetailSchedulePanel(habits[habitDetailId]);
       if (activeTab === "schedule") renderSchedule("detail:habit-remove");
-      showHabitToast("Horario eliminado");
+      showHabitToast("Quitado");
     } catch (err) {
       console.warn("No se pudo eliminar horario del hábito", err);
-      showHabitToast("No se pudo quitar del horario");
+      showHabitToast("No se pudo quitar");
     }
   });
   $habitDayDetailClose?.addEventListener("click", closeDayDetailModal);

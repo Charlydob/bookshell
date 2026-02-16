@@ -194,6 +194,7 @@
 <!-- TOOLBAR + LISTA LIBROS -->
 <div class="books-toolbar">
 <button class="btn primary" id="btn-add-book">+ Añadir libro</button>
+<button class="btn ghost btn-compact" id="books-start-session" type="button">▶ Iniciar sesión</button>
 </div>
 <div class="books-filters is-collapsed" id="books-filters">
 <div class="books-filters-header" id="books-filters-header">
@@ -348,6 +349,7 @@
 <button class="btn primary" id="btn-add-video">+ Añadir vídeo</button>
 <button class="btn" id="btn-add-idea">+ Idea</button>
 <button class="btn" id="btn-open-links">Links</button>
+<button class="btn ghost btn-compact" id="videos-start-session" type="button">▶ Iniciar sesión</button>
 </div>
 <div class="videos-list" id="videos-list">
 <!-- Tarjetas de vídeos por JS -->
@@ -626,6 +628,7 @@
 </div>
 <div class="recipes-toolbar">
 <button class="btn primary" id="btn-add-recipe">+ Añadir receta</button>
+<button class="btn ghost btn-compact" id="recipes-start-session" type="button">▶ Iniciar sesión</button>
 </div>
 <div class="books-filters is-collapsed" id="recipes-filters">
 <div class="books-filters-header" id="recipes-filters-header">
@@ -1304,6 +1307,7 @@
         <button class="media-viewbtn" data-media-view="charts" type="button">Gráficos</button>
         <button class="media-viewbtn" data-media-view="map" type="button">Mapa</button>
       </div>
+      <button class="btn ghost btn-compact" id="media-start-session" type="button">▶ Iniciar sesión</button>
     </div>
 
     <div class="media-filters">
@@ -1596,8 +1600,9 @@
 <div class="gym-title">Gym</div>
 <div class="gym-subtitle"></div>
 </div>
-<div>
+<div class="gym-hero-actions">
 <button class="gym-btn gym-btn-ghost" id="gym-open-stats" type="button">📊</button>
+<button class="gym-btn gym-btn-ghost" id="gym-start-session" type="button">▶ Iniciar sesión</button>
 </div>
 </div>
 
@@ -3119,6 +3124,7 @@ if (document.readyState === "loading") {
 <script src="scripts/videos.js" type="module"></script>
 <script src="scripts/recipes.js" type="module"></script>
 <script src="scripts/habits.js" type="module"></script>
+<script src="scripts/session-quickstart.js" type="module"></script>
 <script src="scripts/games.js" type="module"></script>
 <script src="scripts/dashboard.js" type="module"></script>
 <script src="scripts/media.js" type="module"></script>

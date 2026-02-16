@@ -55,6 +55,11 @@
   padding: 6px 4px 0;
 }
 
+.gym-hero-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .gym-title {
   font-size: 26px;
   font-weight: 700;

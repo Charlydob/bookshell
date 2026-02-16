@@ -52,7 +52,7 @@ const HEATMAP_YEAR_STORAGE = "bookshell-habits-heatmap-year";
 const HISTORY_RANGE_STORAGE = "bookshell-habits-history-range:v1";
 const COMPARE_SETTINGS_STORAGE = "bookshell-habits-compare-settings:v1";
 const HABITS_SCHEDULE_STORAGE = "bookshell-habits-schedule-cache:v1";
-const HABITS_SCHEDULE_ROW_VIEW_STORAGE = "bookshell-habits-schedule-row-view:v1";
+const HABITS_SCHEDULE_VIEW_MODE_STORAGE = "scheduleViewMode";
 const DEFAULT_COLOR = "#7f5dff";
 const PARAM_EMPTY_LABEL = "Sin parámetro";
 const PARAM_COLOR_PALETTE = [
@@ -148,7 +148,7 @@ let scheduleCalMonth = null;
 let scheduleTickInterval = null;
 let scheduleAutoCloseInterval = null;
 let scheduleConfigOpen = false;
-let scheduleRowViewModes = loadScheduleRowViewModes();
+let scheduleViewMode = loadScheduleViewMode();
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
 const DEBUG_HABITS_SYNC = (() => {
@@ -226,34 +226,27 @@ function debugWorkShift(...args) {
   console.log(...args);
 }
 
-function loadScheduleRowViewModes() {
+function loadScheduleViewMode() {
   try {
-    const parsed = JSON.parse(localStorage.getItem(HABITS_SCHEDULE_ROW_VIEW_STORAGE) || "{}");
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed;
+    const saved = (localStorage.getItem(HABITS_SCHEDULE_VIEW_MODE_STORAGE) || "percent").trim();
+    return saved === "time" ? "time" : "percent";
   } catch (_) {
-    return {};
+    return "percent";
   }
 }
 
-function persistScheduleRowViewModes() {
+function persistScheduleViewMode() {
   try {
-    localStorage.setItem(HABITS_SCHEDULE_ROW_VIEW_STORAGE, JSON.stringify(scheduleRowViewModes || {}));
+    localStorage.setItem(HABITS_SCHEDULE_VIEW_MODE_STORAGE, scheduleViewMode === "time" ? "time" : "percent");
   } catch (_) {
     // noop: prefer in-memory session state when localStorage is unavailable
   }
 }
 
-function getScheduleRowViewMode(rowKey) {
-  return scheduleRowViewModes?.[rowKey] === "detail" ? "detail" : "percent";
-}
-
-function toggleScheduleRowViewMode(rowKey) {
-  const next = getScheduleRowViewMode(rowKey) === "percent" ? "detail" : "percent";
-  if (!scheduleRowViewModes || typeof scheduleRowViewModes !== "object") scheduleRowViewModes = {};
-  scheduleRowViewModes[rowKey] = next;
-  persistScheduleRowViewModes();
-  return next;
+function toggleScheduleViewMode() {
+  scheduleViewMode = scheduleViewMode === "percent" ? "time" : "percent";
+  persistScheduleViewMode();
+  return scheduleViewMode;
 }
 
 function buildScheduleRowDetailLabel(row) {
@@ -271,6 +264,25 @@ function buildScheduleRowDetailLabel(row) {
     return metricIsCount ? `${done} / ${target}` : `${done}m / ${target}m`;
   }
   return metricIsCount ? `${done} / ${target}` : `${done}m / ${target}m`;
+}
+
+function updateScheduleRightSlots() {
+  if (!$habitScheduleView) return;
+  const view = scheduleViewMode === "time" ? "time" : "percent";
+  $habitScheduleView.querySelectorAll('[data-role="schedule-right-slot"]').forEach((slot) => {
+    const percentLabel = slot.getAttribute("data-label-percent") || "0%";
+    const timeLabel = slot.getAttribute("data-label-time") || "—";
+    const exceeded = slot.getAttribute("data-is-exceeded") === "1";
+    slot.textContent = view === "time" ? timeLabel : percentLabel;
+    slot.classList.toggle("is-danger", view === "time" && exceeded);
+  });
+  const toggleBtn = $habitScheduleView.querySelector('[data-role="schedule-view-toggle"]');
+  if (toggleBtn) {
+    const isTime = view === "time";
+    toggleBtn.textContent = "% / tiempo";
+    toggleBtn.setAttribute("aria-pressed", isTime ? "true" : "false");
+    toggleBtn.setAttribute("data-mode", view);
+  }
 }
 
 function buildWorkDayPayload(minutes, shift) {
@@ -857,6 +869,7 @@ function renderSchedule(reason = "manual") {
     </section>
     <section class="habits-history-section habit-schedule-controls">
       <button class="btn ghost btn-compact" type="button" data-role="schedule-open-editor">Editar plantillas</button>
+      <button class="btn ghost btn-compact" type="button" data-role="schedule-view-toggle" aria-pressed="${scheduleViewMode === "time" ? "true" : "false"}">% / tiempo</button>
       <button class="btn ghost btn-compact" type="button" data-role="schedule-close-day">Cerrar día</button>
     </section>
     <section class="habits-history-section habit-schedule-config ${scheduleConfigOpen ? "" : "is-hidden"}">
@@ -937,13 +950,13 @@ function renderSchedule(reason = "manual") {
   const list = $habitScheduleView.querySelector('[data-role="schedule-progress-list"]');
   const makeRow = (row, rowGroup = "goals") => {
     const isFocused = runningSession?.targetHabitId === row.habitId;
-    const rowKey = `${rowGroup}:${row.habitId}`;
-    const viewMode = getScheduleRowViewMode(rowKey);
-    const pctLabel = viewMode === "detail" ? buildScheduleRowDetailLabel(row) : `${row.percent}%`;
+    const percentLabel = `${row.percent}%`;
+    const timeLabel = buildScheduleRowDetailLabel(row);
+    const slotLabel = scheduleViewMode === "time" ? timeLabel : percentLabel;
     return `<div class="habit-schedule-row ${row.completed ? "is-complete" : ""} ${isFocused ? "is-focused" : ""} ${row.exceeded > 0 ? "is-over-limit" : ""}">
       <div class="habit-schedule-name">${row.habit?.emoji || "🏷️"} ${row.habit?.name || "—"}</div>
       <div class="habit-schedule-bar"><span style="width:${Math.max(0, Math.min(100, row.percent || 0))}%"></span></div>
-      <button class="habit-schedule-pct" type="button" data-role="schedule-row-toggle" data-row-key="${rowKey}" data-view-mode="${viewMode}" data-label-percent="${row.percent}%" data-label-detail="${buildScheduleRowDetailLabel(row)}" aria-label="Alternar entre porcentaje y detalle">${pctLabel}</button>
+      <div class="habit-schedule-pct ${scheduleViewMode === "time" && row.exceeded > 0 ? "is-danger" : ""}" data-role="schedule-right-slot" data-label-percent="${percentLabel}" data-label-time="${timeLabel}" data-is-exceeded="${row.exceeded > 0 ? "1" : "0"}">${slotLabel}</div>
     </div>`;
   };
   if (list) list.innerHTML = data.rows.map((row) => makeRow(row, "goals")).join("") || '<div class="hint">Define objetivos para ver progreso.</div>';
@@ -1017,18 +1030,9 @@ function renderSchedule(reason = "manual") {
     scheduleConfigOpen = false;
     renderSchedule("editor:cancel");
   });
-  $habitScheduleView.querySelectorAll('[data-role="schedule-row-toggle"]').forEach((btn) => {
-    btn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const rowKey = btn.getAttribute("data-row-key");
-      if (!rowKey) return;
-      const nextMode = toggleScheduleRowViewMode(rowKey);
-      const nextLabel = nextMode === "detail"
-        ? (btn.getAttribute("data-label-detail") || "")
-        : (btn.getAttribute("data-label-percent") || "0%");
-      btn.textContent = nextLabel;
-      btn.setAttribute("data-view-mode", nextMode);
-    });
+  $habitScheduleView.querySelector('[data-role="schedule-view-toggle"]')?.addEventListener("click", () => {
+    toggleScheduleViewMode();
+    updateScheduleRightSlots();
   });
   $habitScheduleView.querySelectorAll('[data-role="schedule-mode"]').forEach((select) => {
     select.addEventListener("change", () => {
@@ -1116,6 +1120,8 @@ function renderSchedule(reason = "manual") {
     });
   });
 
+  updateScheduleRightSlots();
+
   updateScheduleLiveInterval();
 }
 function startOfWeek(d = new Date()) {
@@ -1199,6 +1205,18 @@ function resolveHabitIdFromToken(token) {
     return foldKey(h.name) === fk;
   });
   return found?.id || null;
+}
+
+function resolveHabitIdByName(name) {
+  const raw = String(name || "").trim();
+  if (!raw) return { status: "none", habitId: null, matches: [], query: "" };
+  const fk = foldKey(raw);
+  const matches = Object.values(habits || {})
+    .filter((h) => h && !h.archived && foldKey(h.name) === fk)
+    .map((h) => ({ id: h.id, name: h.name, emoji: h.emoji || "🏷️" }));
+  if (matches.length === 1) return { status: "single", habitId: matches[0].id, matches, query: raw };
+  if (matches.length > 1) return { status: "multiple", habitId: null, matches, query: raw };
+  return { status: "none", habitId: null, matches: [], query: raw };
 }
 
 function hexToRgb(hex) {
@@ -8463,19 +8481,35 @@ function deleteHabit() {
 }
 
 // Cronómetro
-function startSession(habitId = null) {
+function startSession(habitId = null, meta = null) {
   if (runningSession) return;
 
   const targetHabitId = (typeof habitId === "string" && habits?.[habitId] && !habits[habitId]?.archived)
     ? habitId
     : null;
 
-  runningSession = { startTs: Date.now(), targetHabitId };
+  runningSession = {
+    startTs: Date.now(),
+    targetHabitId,
+    meta: meta && typeof meta === "object" ? { ...meta } : null
+  };
   saveRunningSession();
   updateSessionUI();
   updateCompareLiveInterval();
   scheduleCompareRefresh("session:start", { targetHabitId: targetHabitId || null });
   sessionInterval = setInterval(updateSessionUI, 1000);
+}
+
+function getRunningHabitSession() {
+  return runningSession ? { ...runningSession } : null;
+}
+
+function startHabitSessionUniversal(habitId, meta = null) {
+  return startSession(habitId, meta);
+}
+
+function stopHabitSessionUniversal() {
+  return stopSession(null, true);
 }
 
 function stopSession(assignHabitId = null, silent = false) {
@@ -9745,6 +9779,15 @@ window.__bookshellHabits = {
   goHabitSubtab,
   startSession,
   stopSession,
+  startHabitSessionUniversal,
+  stopHabitSessionUniversal,
+  getRunningHabitSession,
+  resolveHabitIdByName,
+  listActiveHabits: () => activeHabits().map((habit) => ({
+    id: habit.id,
+    name: habit.name,
+    emoji: habit.emoji || "🏷️"
+  })),
   toggleSession,
   setDailyMinutes: setHabitDailyMinutes,
   isRunning: () => !!runningSession,

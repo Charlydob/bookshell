@@ -243,7 +243,7 @@
   display: grid;
   place-items: center;
   font-size: 11px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .quick-counters-wrap {
@@ -254,7 +254,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  cursor: pointer;
+  cursor: default;
   user-select: none;
 }
 
@@ -307,7 +307,7 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  cursor: pointer;
+  cursor: default;
   transition: transform 0.08s ease;
 }
 
@@ -3749,20 +3749,20 @@ align-items: center;
 }
 
 .habit-schedule-pct {
-  width: 96px;
+  width: 112px;
   justify-self: end;
   padding: 0;
   border: 0;
   background: transparent;
   text-align: right;
-  cursor: pointer;
+  cursor: default;
   font-size: 12px;
   font-weight: 700;
   color: var(--txt-soft);
 }
 
-.habit-schedule-pct:hover {
-  color: var(--txt);
+.habit-schedule-pct.is-danger {
+  color: #fca5a5;
 }
 
 .habit-schedule-row.is-focused .habit-schedule-bar > span {

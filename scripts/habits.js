@@ -17,6 +17,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { computeTimeByHabitDataset, debugComputeTimeByHabit, resolveFirstRecordTs } from "./time-by-habit.js";
 import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";
+import { computeDayCreditsAndScores } from "./schedule-credits.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC1oqRk7GpYX854RfcGrYHt6iRun5TfuYE",
@@ -53,6 +54,7 @@ const HISTORY_RANGE_STORAGE = "bookshell-habits-history-range:v1";
 const COMPARE_SETTINGS_STORAGE = "bookshell-habits-compare-settings:v1";
 const HABITS_SCHEDULE_STORAGE = "bookshell-habits-schedule-cache:v1";
 const HABITS_SCHEDULE_VIEW_MODE_STORAGE = "scheduleViewMode";
+const HABITS_SCHEDULE_SCORE_MODE_STORAGE = "scheduleScoreMode";
 const DEFAULT_COLOR = "#7f5dff";
 const PARAM_EMPTY_LABEL = "Sin parámetro";
 const PARAM_COLOR_PALETTE = [
@@ -149,6 +151,7 @@ let scheduleTickInterval = null;
 let scheduleAutoCloseInterval = null;
 let scheduleConfigOpen = false;
 let scheduleViewMode = loadScheduleViewMode();
+let scheduleScoreMode = loadScheduleScoreMode();
 let habitDetailScheduleSelection = { types: ["Libre"], dows: [] };
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
@@ -234,6 +237,42 @@ function loadScheduleViewMode() {
   } catch (_) {
     return "percent";
   }
+}
+
+function loadScheduleScoreMode() {
+  try {
+    const saved = (localStorage.getItem(HABITS_SCHEDULE_SCORE_MODE_STORAGE) || "").trim();
+    return saved === "credits" ? "credits" : "plan";
+  } catch (_) {
+    return "plan";
+  }
+}
+
+function persistScheduleScoreMode() {
+  try {
+    localStorage.setItem(HABITS_SCHEDULE_SCORE_MODE_STORAGE, scheduleScoreMode === "credits" ? "credits" : "plan");
+  } catch (_) {
+    // noop
+  }
+}
+
+function ensureScheduleScoreModeDefault() {
+  let hasSaved = false;
+  try {
+    hasSaved = !!localStorage.getItem(HABITS_SCHEDULE_SCORE_MODE_STORAGE);
+  } catch (_) {
+    hasSaved = true;
+  }
+  if (hasSaved) return;
+  const mode = scheduleState?.settings?.scoreModeDefault === "credits" ? "credits" : "plan";
+  scheduleScoreMode = mode;
+  persistScheduleScoreMode();
+}
+
+function toggleScheduleScoreMode() {
+  scheduleScoreMode = scheduleScoreMode === "plan" ? "credits" : "plan";
+  persistScheduleScoreMode();
+  return scheduleScoreMode;
 }
 
 function persistScheduleViewMode() {
@@ -354,7 +393,12 @@ function createDefaultHabitSchedule() {
     },
     settings: {
       dayCloseTime: "00:00",
-      successThreshold: 70
+      successThreshold: 70,
+      creditRate: 1,
+      creditAllocationOrder: ["goals", "limits"],
+      scoreModeDefault: "plan",
+      allowCreditsOutsideTemplate: false,
+      netScoreEnabled: false
     },
     summaries: {}
   };
@@ -416,6 +460,16 @@ function normalizeHabitSchedule(raw) {
   out.settings.dayCloseTime = /^\d{2}:\d{2}$/.test(closeTime) ? closeTime : defaults.settings.dayCloseTime;
   const threshold = Number(raw.settings?.successThreshold);
   out.settings.successThreshold = Number.isFinite(threshold) ? Math.max(1, Math.min(100, Math.round(threshold))) : defaults.settings.successThreshold;
+  const creditRate = Number(raw.settings?.creditRate);
+  out.settings.creditRate = Number.isFinite(creditRate) && creditRate >= 0 ? creditRate : defaults.settings.creditRate;
+  const orderRaw = Array.isArray(raw.settings?.creditAllocationOrder) ? raw.settings.creditAllocationOrder : defaults.settings.creditAllocationOrder;
+  const normalizedOrder = orderRaw
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter((item) => item === "goals" || item === "limits");
+  out.settings.creditAllocationOrder = Array.from(new Set(normalizedOrder.concat(["goals", "limits"]))).slice(0, 2);
+  out.settings.scoreModeDefault = raw.settings?.scoreModeDefault === "credits" ? "credits" : defaults.settings.scoreModeDefault;
+  out.settings.allowCreditsOutsideTemplate = !!raw.settings?.allowCreditsOutsideTemplate;
+  out.settings.netScoreEnabled = !!raw.settings?.netScoreEnabled;
 
   if (raw.summaries && typeof raw.summaries === "object") {
     out.summaries = raw.summaries;
@@ -574,7 +628,6 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
     const info = scheduleModeInfo(mode);
     const totals = doneTotalsMap[habitId] || { doneMin: 0, doneCount: 0 };
     const done = info.metric === "count" ? totals.doneCount : totals.doneMin;
-    console.warn("[RENDER] horario", habitId, done);
     const ratio = value > 0 ? (done / value) : 0;
     const progress = Math.max(0, Math.min(1, ratio));
     const percent = Math.max(0, Math.min(100, Math.round(progress * 100)));
@@ -615,6 +668,16 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
 
   const thresholdUsed = scheduleThresholdForContext({ type, dayKey, template, usingOverride });
 
+  const credits = computeDayCreditsAndScores({
+    targets: goalRows,
+    limits: limitRows,
+    neutrals: neutralRows,
+    doneMap: doneTotalsMap,
+    settings: scheduleState?.settings || {},
+    habitMeta: habits
+  });
+  credits.scorePlan = score;
+
   return {
     dateKey,
     type,
@@ -636,7 +699,10 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
     wastedTotalMin,
     wastedTotalCount,
     thresholdUsed,
-    templateVariantUsed: usingOverride ? dayKey : "base"
+    templateVariantUsed: usingOverride ? dayKey : "base",
+    ...credits,
+    scorePlan: score,
+    scoreCred: scheduleState?.settings?.netScoreEnabled ? credits.scoreNet : credits.scoreCred
   };
 }
 
@@ -665,6 +731,17 @@ function closeScheduleDay(dateKey = todayKey(), source = "manual") {
     wastedExcessCount: data.wastedExcessCount,
     wastedTotalMin: data.wastedTotalMin,
     wastedTotalCount: data.wastedTotalCount,
+    scorePlan: data.scorePlan,
+    scoreCred: data.scoreCred,
+    budgetMin: data.budgetMin,
+    creditsEarned: data.creditsEarned,
+    creditsToGoals: data.creditsToGoals,
+    creditsToLimits: data.creditsToLimits,
+    missingMin: data.missingMin,
+    missingAfter: data.missingAfter,
+    wasteAfter: data.wasteAfter,
+    productiveMin: data.productiveMin,
+    productiveMinAdjusted: data.productiveMinAdjusted,
     perHabit,
     thresholdUsed: data.thresholdUsed,
     templateTypeUsed: data.type,
@@ -709,8 +786,10 @@ function openScheduleSummaryModal(dateKey) {
     ? `<ul>${rows.map((row) => `<li>${row.habit.emoji || "🏷️"} ${row.habit.name} · ${row.percent || 0}%</li>`).join("")}</ul>`
     : `<div class="hint">${empty}</div>`;
   $habitScheduleSummaryContent.innerHTML = `
-    <div class="habit-schedule-summary-score">${summary.score || 0}% <small>${summary.label || scheduleLabelForScore(summary.score || 0)}</small></div>
-    <div class="habit-schedule-summary-meta">Aprovechado ${formatMinutes(summary.totalDoneMin || 0)} · Desperdiciado ${formatMinutes(summary.wastedExcessMin || 0)}</div>
+    <div class="habit-schedule-summary-score">${summary.scoreCred ?? summary.score || 0}% <small>${summary.label || scheduleLabelForScore(summary.score || 0)}</small></div>
+    <div class="habit-schedule-summary-meta">Aprovechado ${formatMinutes(summary.productiveMinAdjusted || summary.totalDoneMin || 0)} · Desperdiciado ${formatMinutes(summary.wasteAfter ?? summary.wastedExcessMin || 0)} <small>(bruto ${formatMinutes(summary.wastedExcessMin || 0)})</small></div>
+    <div class="hint">🪙 Ganadas ${formatMinutes(summary.creditsEarned || 0)} · Objetivos ${formatMinutes(summary.creditsToGoals || 0)} · Límites ${formatMinutes(summary.creditsToLimits || 0)}</div>
+    <div class="hint">Pendiente ${formatMinutes(summary.missingMin || 0)} → ${formatMinutes(summary.missingAfter || 0)}</div>
     <div class="sheet-section-title">Top cumplidos</div>
     ${renderList(topDone, "Sin hábitos cumplidos")}
     <div class="sheet-section-title">Top pendientes</div>
@@ -954,7 +1033,12 @@ function beginScheduleTemplateEditing(type = "M", day = "base") {
     day: normalizedDay,
     templateMap: readScheduleTemplateFromState(normalizedType, normalizedDay),
     closeTime: scheduleState?.settings?.dayCloseTime || "00:00",
-    successThreshold: Math.max(1, Math.min(100, Math.round(Number(scheduleState?.settings?.successThreshold || 70))))
+    successThreshold: Math.max(1, Math.min(100, Math.round(Number(scheduleState?.settings?.successThreshold || 70)))),
+    creditRate: Number(scheduleState?.settings?.creditRate ?? 1),
+    creditAllocationOrder: Array.isArray(scheduleState?.settings?.creditAllocationOrder) ? [...scheduleState.settings.creditAllocationOrder] : ["goals", "limits"],
+    scoreModeDefault: scheduleState?.settings?.scoreModeDefault === "credits" ? "credits" : "plan",
+    allowCreditsOutsideTemplate: !!scheduleState?.settings?.allowCreditsOutsideTemplate,
+    netScoreEnabled: !!scheduleState?.settings?.netScoreEnabled
   };
   isEditingTemplates = true;
   scheduleConfigOpen = true;
@@ -1018,25 +1102,45 @@ function renderSchedule(reason = "manual") {
   const thresholdValue = isEditingTemplates
     ? Math.max(1, Math.min(100, Math.round(Number(draftState?.successThreshold || threshold))))
     : threshold;
-  const scoreGood = data.score >= threshold;
-  const wastedLabel = data.wastedExcessCount > 0
-    ? `${formatMinutes(data.wastedExcessMin)} +${data.wastedExcessCount}x`
-    : formatMinutes(data.wastedExcessMin);
+  ensureScheduleScoreModeDefault();
+  const scoreMain = scheduleScoreMode === "credits" ? (data.scoreCred || 0) : (data.scorePlan || data.score || 0);
+  const scoreGood = scoreMain >= threshold;
+  const wastedLabel = formatMinutes(data.wasteAfter ?? data.wastedExcessMin);
   const usedLabel = data.totalDoneCount > 0
     ? `${formatMinutes(data.totalDoneMin)} +${data.totalDoneCount}x`
     : formatMinutes(data.totalDoneMin);
+  const creditsLine = data.creditsEarned > 0
+    ? `🪙 +${formatMinutes(data.creditsEarned)} · usados O:${formatMinutes(data.creditsToGoals)} L:${formatMinutes(data.creditsToLimits)}`
+    : "🪙 +0m";
+  const creditRateValue = isEditingTemplates
+    ? Number(draftState?.creditRate ?? scheduleState?.settings?.creditRate ?? 1)
+    : Number(scheduleState?.settings?.creditRate ?? 1);
+  const allocationOrder = (isEditingTemplates
+    ? (Array.isArray(draftState?.creditAllocationOrder) ? draftState.creditAllocationOrder : ["goals", "limits"])
+    : (Array.isArray(scheduleState?.settings?.creditAllocationOrder) ? scheduleState.settings.creditAllocationOrder : ["goals", "limits"]))
+    .join(",") === "limits,goals" ? "limits-first" : "goals-first";
+  const allowOutsideCredits = isEditingTemplates
+    ? !!draftState?.allowCreditsOutsideTemplate
+    : !!scheduleState?.settings?.allowCreditsOutsideTemplate;
+  const scoreModeDefault = isEditingTemplates
+    ? (draftState?.scoreModeDefault === "credits" ? "credits" : "plan")
+    : (scheduleState?.settings?.scoreModeDefault === "credits" ? "credits" : "plan");
+  const netScoreEnabled = isEditingTemplates
+    ? !!draftState?.netScoreEnabled
+    : !!scheduleState?.settings?.netScoreEnabled;
 
   $habitScheduleView.innerHTML = `
     <section class="habits-history-section habit-schedule-score-wrap ${scoreGood ? "is-good" : "is-bad"}">
-      <div class="habit-schedule-head-side is-left"><span>Aprovechado</span><strong>${usedLabel}</strong></div>
+      <div class="habit-schedule-head-side is-left"><span>Aprovechado</span><strong>${usedLabel}</strong><small>${data.creditsEarned > 0 ? `+🪙 ${formatMinutes(data.creditsEarned)}` : ""}</small></div>
       <div>
-      <div class="habit-schedule-score">${data.score}%</div>
-      <div class="habit-schedule-score-label">${data.label}</div>
-      <div class="habit-schedule-score-sub">Plantilla ${data.type}${data.usingOverride ? ` · override ${data.dayKey.toUpperCase()}` : ""}</div>
+      <div class="habit-schedule-score">${scoreMain}%</div>
+      <div class="habit-schedule-score-label">${scheduleScoreMode === "credits" ? "aprovechado" : data.label}</div>
+      <div class="habit-schedule-score-sub">Plantilla ${data.type}${data.usingOverride ? ` · override ${data.dayKey.toUpperCase()}` : ""} · ${creditsLine}</div>
       </div>
       <div class="habit-schedule-head-side is-right"><span>Desperdiciado</span><strong>${wastedLabel}</strong></div>
     </section>
     <section class="habits-history-section habit-schedule-controls">
+      <button class="btn ghost btn-compact" type="button" data-role="schedule-score-toggle">${scheduleScoreMode === "credits" ? "Aprovechado" : "Plan"}</button>
       <button class="btn ghost btn-compact" type="button" data-role="schedule-open-editor">Editar plantillas</button>
       <button class="btn ghost btn-compact" type="button" data-role="schedule-view-toggle" aria-pressed="${scheduleViewMode === "time" ? "true" : "false"}">% / tiempo</button>
       <button class="btn ghost btn-compact" type="button" data-role="schedule-close-day">Cerrar día</button>
@@ -1063,6 +1167,19 @@ function renderSchedule(reason = "manual") {
         </select>
         <input class="habits-history-input" data-role="close-time" type="time" value="${closeTimeValue}"/>
         <input class="habits-history-input" data-role="success-threshold" type="number" min="1" max="100" value="${thresholdValue}"/>
+        <input class="habits-history-input" data-role="credit-rate" type="number" min="0" step="0.1" value="${creditRateValue}"/>
+      </div>
+      <div class="habit-schedule-config-row">
+        <select class="habits-history-select" data-role="credit-order">
+          <option value="goals-first" ${allocationOrder === "goals-first" ? "selected" : ""}>Créditos: objetivos → límites</option>
+          <option value="limits-first" ${allocationOrder === "limits-first" ? "selected" : ""}>Créditos: límites → objetivos</option>
+        </select>
+        <select class="habits-history-select" data-role="score-default">
+          <option value="plan" ${scoreModeDefault === "plan" ? "selected" : ""}>Score default: Plan</option>
+          <option value="credits" ${scoreModeDefault === "credits" ? "selected" : ""}>Score default: Aprovechado</option>
+        </select>
+        <label class="toggle-pill"><input type="checkbox" data-role="allow-outside" ${allowOutsideCredits ? "checked" : ""}/><span>Permitir fuera de plantilla</span></label>
+        <label class="toggle-pill"><input type="checkbox" data-role="net-score" ${netScoreEnabled ? "checked" : ""}/><span>Score neto</span></label>
       </div>
       <div class="habit-schedule-targets" data-role="schedule-targets"></div>
       <div class="habit-schedule-actions">
@@ -1205,6 +1322,10 @@ function renderSchedule(reason = "manual") {
     toggleScheduleViewMode();
     updateScheduleRightSlots();
   });
+  $habitScheduleView.querySelector('[data-role="schedule-score-toggle"]')?.addEventListener("click", () => {
+    toggleScheduleScoreMode();
+    renderSchedule("manual");
+  });
   $habitScheduleView.querySelectorAll('[data-role="schedule-mode"]').forEach((select) => {
     select.addEventListener("change", () => {
       const habitId = select.getAttribute("data-habit-id");
@@ -1237,6 +1358,27 @@ function renderSchedule(reason = "manual") {
     const value = Math.max(1, Math.min(100, Math.round(Number(event.target?.value || 70))));
     draftState.successThreshold = value;
   });
+  $habitScheduleView.querySelector('[data-role="credit-rate"]')?.addEventListener("input", (event) => {
+    if (!isEditingTemplates || !draftState) return;
+    const value = Number(event.target?.value);
+    draftState.creditRate = Number.isFinite(value) && value >= 0 ? value : 1;
+  });
+  $habitScheduleView.querySelector('[data-role="credit-order"]')?.addEventListener("change", (event) => {
+    if (!isEditingTemplates || !draftState) return;
+    draftState.creditAllocationOrder = event.target?.value === "limits-first" ? ["limits", "goals"] : ["goals", "limits"];
+  });
+  $habitScheduleView.querySelector('[data-role="score-default"]')?.addEventListener("change", (event) => {
+    if (!isEditingTemplates || !draftState) return;
+    draftState.scoreModeDefault = event.target?.value === "credits" ? "credits" : "plan";
+  });
+  $habitScheduleView.querySelector('[data-role="allow-outside"]')?.addEventListener("change", (event) => {
+    if (!isEditingTemplates || !draftState) return;
+    draftState.allowCreditsOutsideTemplate = !!event.target?.checked;
+  });
+  $habitScheduleView.querySelector('[data-role="net-score"]')?.addEventListener("change", (event) => {
+    if (!isEditingTemplates || !draftState) return;
+    draftState.netScoreEnabled = !!event.target?.checked;
+  });
   $habitScheduleView.querySelector('[data-role="schedule-save-config"]')?.addEventListener("click", () => {
     if (!isEditingTemplates || !draftState) return;
     const type = $habitScheduleView.querySelector('[data-role="schedule-type"]')?.value || "M";
@@ -1257,8 +1399,18 @@ function renderSchedule(reason = "manual") {
     draftState.templateMap = deepCloneScheduleState(nextMap);
     const closeTime = $habitScheduleView.querySelector('[data-role="close-time"]')?.value || "00:00";
     const successThreshold = Math.max(1, Math.min(100, Math.round(Number($habitScheduleView.querySelector('[data-role="success-threshold"]')?.value || 70))));
+    const creditRate = Math.max(0, Number($habitScheduleView.querySelector('[data-role="credit-rate"]')?.value || 1));
+    const creditAllocationOrder = $habitScheduleView.querySelector('[data-role="credit-order"]')?.value === "limits-first" ? ["limits", "goals"] : ["goals", "limits"];
+    const scoreModeDefaultNext = $habitScheduleView.querySelector('[data-role="score-default"]')?.value === "credits" ? "credits" : "plan";
+    const allowCreditsOutsideTemplate = !!$habitScheduleView.querySelector('[data-role="allow-outside"]')?.checked;
+    const netScoreEnabled = !!$habitScheduleView.querySelector('[data-role="net-score"]')?.checked;
     draftState.closeTime = closeTime;
     draftState.successThreshold = successThreshold;
+    draftState.creditRate = creditRate;
+    draftState.creditAllocationOrder = creditAllocationOrder;
+    draftState.scoreModeDefault = scoreModeDefaultNext;
+    draftState.allowCreditsOutsideTemplate = allowCreditsOutsideTemplate;
+    draftState.netScoreEnabled = netScoreEnabled;
     const templatePath = day === "base"
       ? `${HABITS_SCHEDULE_PATH}/schedules/base/${type}`
       : `${HABITS_SCHEDULE_PATH}/schedules/overrides/${type}/${day}`;
@@ -1271,7 +1423,7 @@ function renderSchedule(reason = "manual") {
     });
     auditScheduleWrite(templatePath, templatePatch);
     const settingsPath = `${HABITS_SCHEDULE_PATH}/settings`;
-    const settingsPayload = { dayCloseTime: closeTime, successThreshold };
+    const settingsPayload = { dayCloseTime: closeTime, successThreshold, creditRate, creditAllocationOrder, scoreModeDefault: scoreModeDefaultNext, allowCreditsOutsideTemplate, netScoreEnabled };
     auditScheduleWrite(settingsPath, settingsPayload);
     Promise.all([
       update(ref(db, templatePath), templatePatch),
@@ -1282,6 +1434,11 @@ function renderSchedule(reason = "manual") {
       else scheduleState.schedules.overrides[type][day] = deepCloneScheduleState(nextMap);
       scheduleState.settings.dayCloseTime = closeTime;
       scheduleState.settings.successThreshold = successThreshold;
+      scheduleState.settings.creditRate = creditRate;
+      scheduleState.settings.creditAllocationOrder = creditAllocationOrder;
+      scheduleState.settings.scoreModeDefault = scoreModeDefaultNext;
+      scheduleState.settings.allowCreditsOutsideTemplate = allowCreditsOutsideTemplate;
+      scheduleState.settings.netScoreEnabled = netScoreEnabled;
       persistHabitScheduleLocal();
       stopScheduleTemplateEditing();
       scheduleConfigOpen = false;
@@ -2185,9 +2342,15 @@ function isSystemHabit(habit) {
 
 function normalizeHabitModel(raw) {
   if (!raw || typeof raw !== "object") return null;
+  const countMinuteValue = Math.max(1, Math.round(Number(raw.countMinuteValue ?? raw.countUnitMinutes) || 1));
   return {
     ...raw,
-    excludeFromDominant: !!raw.excludeFromDominant
+    excludeFromDominant: !!raw.excludeFromDominant,
+    habitScheduleCreditEligible: !!raw.habitScheduleCreditEligible,
+    countMinuteValue,
+    countUnitMinutes: Number.isFinite(Number(raw.countUnitMinutes)) && Number(raw.countUnitMinutes) > 0
+      ? Math.round(Number(raw.countUnitMinutes))
+      : countMinuteValue
   };
 }
 
@@ -2302,7 +2465,9 @@ function ensureUnknownHabit(persistRemote = true) {
     groupPrivate: false,
     groupLowUse: true,
     targetMinutes: null,
+    countMinuteValue: 1,
     countUnitMinutes: null,
+    habitScheduleCreditEligible: false,
     quickAdds: [],
     params: [],
     schedule: { type: "daily", days: [] },
@@ -2843,6 +3008,7 @@ const $habitTargetMinutes = document.getElementById("habit-target-minutes");
 const $habitTargetMinutesWrap = document.getElementById("habit-target-minutes-wrap");
 const $habitCountUnitMinutes = document.getElementById("habit-count-unit-minutes");
 const $habitCountUnitMinutesWrap = document.getElementById("habit-count-unit-minutes-wrap");
+const $habitCreditEligible = document.getElementById("habit-credit-eligible");
 const $habitQuickCounterPinnedWrap = document.getElementById("habit-quick-counter-pinned-wrap");
 const $habitQuickCounterPinned = document.getElementById("habit-quick-counter-pinned");
 const $habitQuickCounterOrderWrap = document.getElementById("habit-quick-counter-order-wrap");
@@ -3154,7 +3320,8 @@ function openHabitModal(habit = null) {
   if ($habitGroupPrivate) $habitGroupPrivate.checked = !!(habit && habit.groupPrivate);
   if ($habitGroupLowUse) $habitGroupLowUse.checked = !!(habit && habit.groupLowUse);
   $habitTargetMinutes.value = habit && habit.targetMinutes ? habit.targetMinutes : "";
-  if ($habitCountUnitMinutes) $habitCountUnitMinutes.value = habit && habit.countUnitMinutes ? habit.countUnitMinutes : "";
+  if ($habitCountUnitMinutes) $habitCountUnitMinutes.value = habit && (habit.countMinuteValue || habit.countUnitMinutes) ? (habit.countMinuteValue || habit.countUnitMinutes) : "";
+  if ($habitCreditEligible) $habitCreditEligible.checked = !!(habit && habit.habitScheduleCreditEligible);
   if ($habitQuickCounterPinned) {
     const quickIds = Array.isArray(habitUI?.quickCounters) ? habitUI.quickCounters : [];
     $habitQuickCounterPinned.checked = !!(habit?.id && quickIds.includes(habit.id));
@@ -3233,6 +3400,7 @@ function gatherHabitPayload() {
 
   const unit = $habitCountUnitMinutes?.value ? Number($habitCountUnitMinutes.value) : null;
   const safeUnit = goal === "count" ? unit : null;
+  const habitScheduleCreditEligible = !!$habitCreditEligible?.checked;
 
   const qa1m = $habitQuick1Minutes?.value ? Number($habitQuick1Minutes.value) : 0;
   const qa2m = $habitQuick2Minutes?.value ? Number($habitQuick2Minutes.value) : 0;
@@ -3261,7 +3429,9 @@ function gatherHabitPayload() {
     groupLowUse,
     params,
     targetMinutes: Number.isFinite(safeTargetMinutes) && safeTargetMinutes > 0 ? safeTargetMinutes : null,
+    countMinuteValue: Number.isFinite(safeUnit) && safeUnit > 0 ? Math.round(safeUnit) : null,
     countUnitMinutes: Number.isFinite(safeUnit) && safeUnit > 0 ? Math.round(safeUnit) : null,
+    habitScheduleCreditEligible,
     quickAdds,
     excludeFromDominant: !!$habitExcludeDominant?.checked,
     schedule: scheduleType === "days" ? { type: "days", days } : { type: "daily", days: [] },

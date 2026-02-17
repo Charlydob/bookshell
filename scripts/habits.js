@@ -785,22 +785,63 @@ function openScheduleSummaryModal(dateKey) {
   const renderList = (rows, empty) => rows.length
     ? `<ul>${rows.map((row) => `<li>${row.habit.emoji || "🏷️"} ${row.habit.name} · ${row.percent || 0}%</li>`).join("")}</ul>`
     : `<div class="hint">${empty}</div>`;
-  $habitScheduleSummaryContent.innerHTML = `
-    <div class="habit-schedule-summary-score">${summary.scoreCred ?? summary.score || 0}% <small>${summary.label || scheduleLabelForScore(summary.score || 0)}</small></div>
-    <div class="habit-schedule-summary-meta">Aprovechado ${formatMinutes(summary.productiveMinAdjusted || summary.totalDoneMin || 0)} · Desperdiciado ${formatMinutes(summary.wasteAfter ?? summary.wastedExcessMin || 0)} <small>(bruto ${formatMinutes(summary.wastedExcessMin || 0)})</small></div>
-    <div class="hint">🪙 Ganadas ${formatMinutes(summary.creditsEarned || 0)} · Objetivos ${formatMinutes(summary.creditsToGoals || 0)} · Límites ${formatMinutes(summary.creditsToLimits || 0)}</div>
-    <div class="hint">Pendiente ${formatMinutes(summary.missingMin || 0)} → ${formatMinutes(summary.missingAfter || 0)}</div>
-    <div class="sheet-section-title">Top cumplidos</div>
-    ${renderList(topDone, "Sin hábitos cumplidos")}
-    <div class="sheet-section-title">Top pendientes</div>
-    ${renderList(topMiss, "Nada pendiente")}
-    <div class="sheet-section-title">Límites excedidos</div>
-    ${exceededLimits.length ? `<ul>${exceededLimits.map((row) => `<li>${row.habit.emoji || "🏷️"} ${row.habit.name} · +${row.exceeded}${row.mode === "limitCount" ? "x" : "m"}</li>`).join("")}</ul>` : '<div class="hint">Sin excesos</div>'}
-    <div class="sheet-section-title">Neutrales con actividad</div>
-    ${neutralWithActivity.length ? `<ul>${neutralWithActivity.map((row) => `<li>${row.habit.emoji || "🏷️"} ${row.habit.name} · ${row.done}${row.mode === "limitCount" || row.mode === "targetCount" ? "x" : "m"}</li>`).join("")}</ul>` : '<div class="hint">Sin actividad neutral</div>'}
-  `;
-  $habitScheduleSummaryModal.classList.remove("hidden");
-}
+$habitScheduleSummaryContent.innerHTML = `
+  <div class="habit-schedule-summary-score">
+    ${(summary.scoreCred ?? summary.score ?? 0)}%
+    <small>${summary.label || scheduleLabelForScore((summary.scoreCred ?? summary.score ?? 0))}</small>
+  </div>
+
+  <div class="habit-schedule-summary-meta">
+    Aprovechado ${formatMinutes(summary.productiveMinAdjusted ?? summary.totalDoneMin ?? 0)}
+    · Desperdiciado ${formatMinutes(summary.wasteAfter ?? summary.wastedExcessMin ?? 0)}
+    <small>(bruto ${formatMinutes(summary.wastedExcessMin ?? 0)})</small>
+  </div>
+
+  <div class="hint">
+    🪙 Ganadas ${formatMinutes(summary.creditsEarned ?? 0)}
+    · Objetivos ${formatMinutes(summary.creditsToGoals ?? 0)}
+    · Límites ${formatMinutes(summary.creditsToLimits ?? 0)}
+  </div>
+
+  <div class="hint">
+    Pendiente ${formatMinutes(summary.missingMin ?? 0)} → ${formatMinutes(summary.missingAfter ?? 0)}
+  </div>
+
+  <div class="sheet-section-title">Top cumplidos</div>
+  ${renderList(topDone, "Sin hábitos cumplidos")}
+
+  <div class="sheet-section-title">Top pendientes</div>
+  ${renderList(topMiss, "Nada pendiente")}
+
+  <div class="sheet-section-title">Límites excedidos</div>
+  ${
+    exceededLimits.length
+      ? `<ul>${exceededLimits
+          .map(
+            (row) =>
+              `<li>${row.habit.emoji || "🏷️"} ${row.habit.name} · +${row.exceeded}${
+                row.mode === "limitCount" ? "x" : "m"
+              }</li>`
+          )
+          .join("")}</ul>`
+      : '<div class="hint">Sin excesos</div>'
+  }
+
+  <div class="sheet-section-title">Neutrales con actividad</div>
+  ${
+    neutralWithActivity.length
+      ? `<ul>${neutralWithActivity
+          .map(
+            (row) =>
+              `<li>${row.habit.emoji || "🏷️"} ${row.habit.name} · ${row.done}${
+                row.mode === "limitCount" || row.mode === "targetCount" ? "x" : "m"
+              }</li>`
+          )
+          .join("")}</ul>`
+      : '<div class="hint">Sin actividad neutral</div>'
+  }
+`;
+$habitScheduleSummaryModal.classList.remove("hidden");
 
 function closeScheduleSummaryModal() {
   $habitScheduleSummaryModal?.classList.add("hidden");

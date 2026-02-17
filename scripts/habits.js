@@ -3252,6 +3252,7 @@ const $habitDetailScheduleMode = document.getElementById("habit-detail-schedule-
 const $habitDetailScheduleValue = document.getElementById("habit-detail-schedule-value");
 const $habitDetailScheduleSave = document.getElementById("habit-detail-schedule-save");
 const $habitDetailScheduleRemove = document.getElementById("habit-detail-schedule-remove");
+const $habitDetailCreditEligible = document.getElementById("habit-detail-credit-eligible");
 
 
 // Modal refs
@@ -4449,6 +4450,9 @@ function renderHabitDetail(habitId, rangeKey = habitDetailRange) {
   if ($habitDetailStatus) $habitDetailStatus.textContent = doneToday ? "Hecho hoy" : "Pendiente hoy";
   if ($habitDetailStreak) $habitDetailStreak.textContent = `🔥 ${streak}`;
   if ($habitDetailGoal) $habitDetailGoal.textContent = goal === "time" ? "Tiempo" : (goal === "count" ? "Contador" : "Check");
+  if ($habitDetailCreditEligible) {
+    $habitDetailCreditEligible.checked = !!(habit.creditEligibleOutsideSchedule || habit.habitScheduleCreditEligible);
+  }
 
   renderHabitDetailActions(habit, habitDetailDateKey || today);
   renderHabitDetailSchedulePanel(habit);
@@ -10075,6 +10079,19 @@ function bindEvents() {
       console.warn("No se pudo eliminar horario del hábito", err);
       showHabitToast("No se pudo quitar");
     }
+  });
+  $habitDetailCreditEligible?.addEventListener("change", () => {
+    if (!habitDetailId || !habits[habitDetailId]) return;
+    const checked = !!$habitDetailCreditEligible.checked;
+    const habit = {
+      ...habits[habitDetailId],
+      habitScheduleCreditEligible: checked,
+      creditEligibleOutsideSchedule: checked
+    };
+    habits[habitDetailId] = habit;
+    saveCache();
+    persistHabit(habit);
+    if (activeTab === "schedule") renderSchedule("detail:credit-eligible");
   });
   $habitDayDetailClose?.addEventListener("click", closeDayDetailModal);
   $habitDayDetailCancel?.addEventListener("click", closeDayDetailModal);

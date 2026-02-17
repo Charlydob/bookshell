@@ -78,16 +78,12 @@ export function computeDayCreditsAndScores({ targets = [], limits = [], neutrals
     creditsToLimits += used;
   });
 
-  const templateIds = new Set([
-    ...targetRows.map((row) => row.habitId),
-    ...limitRows.map((row) => row.habitId),
-    ...neutrals.map((row) => row.habitId)
-  ]);
+  const targetIds = new Set(targetRows.map((row) => row.habitId));
 
   const earnedFromTargets = targetRows.reduce((acc, row) => acc + Math.max(0, row.doneEqMin - row.valueEqMin), 0);
   let earnedOutside = 0;
   Object.entries(doneMap || {}).forEach(([habitId, totals]) => {
-    if (!habitId || templateIds.has(habitId)) return;
+    if (!habitId || targetIds.has(habitId)) return;
     const meta = habitMeta?.[habitId] || {};
     if (!meta.creditEligibleOutsideSchedule && !meta.habitScheduleCreditEligible) return;
     const doneCount = Math.max(0, Number(totals?.doneCount) || 0);

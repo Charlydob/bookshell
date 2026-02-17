@@ -4,19 +4,6 @@ function clampPercent(value) {
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 
-function normalizeOrder(orderRaw) {
-  const fallback = ["goals", "limits"];
-  if (!Array.isArray(orderRaw) || !orderRaw.length) return fallback;
-  const cleaned = orderRaw
-    .map((item) => String(item || "").trim().toLowerCase())
-    .filter((item) => item === "goals" || item === "limits");
-  const unique = Array.from(new Set(cleaned));
-  if (!unique.length) return fallback;
-  if (!unique.includes("goals")) unique.push("goals");
-  if (!unique.includes("limits")) unique.push("limits");
-  return unique.slice(0, 2);
-}
-
 function toEqMinutes(row, habitMeta) {
   const metric = row?.info?.metric || "time";
   const done = Math.max(0, Number(row?.done) || 0);
@@ -37,12 +24,17 @@ function toEqMinutes(row, habitMeta) {
   };
 }
 
-export function computeDayCreditsAndScores({ targets = [], limits = [], neutrals = [], doneMap = {}, settings = {}, habitMeta = {} } = {}) {
-  const creditRateRaw = Number(settings?.creditRate);
-  const creditRate = Number.isFinite(creditRateRaw) && creditRateRaw >= 0 ? creditRateRaw : 1;
-  const order = normalizeOrder(settings?.creditAllocationOrder);
-  const allowOutside = !!settings?.allowCreditsOutsideTemplate;
+function safeMinMap(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object") return out;
+  Object.entries(raw).forEach(([habitId, value]) => {
+    const min = Math.max(0, Math.round(Number(value) || 0));
+    if (habitId && min > 0) out[habitId] = min;
+  });
+  return out;
+}
 
+export function computeDayCreditsAndScores({ targets = [], limits = [], neutrals = [], doneMap = {}, habitMeta = {}, dayCredits = {} } = {}) {
   const targetRows = targets.map((row) => {
     const eq = toEqMinutes(row, habitMeta);
     return { ...row, ...eq };
@@ -52,12 +44,39 @@ export function computeDayCreditsAndScores({ targets = [], limits = [], neutrals
     return { ...row, ...eq };
   });
 
-  const budgetMin = targetRows.reduce((acc, row) => acc + row.valueEqMin, 0);
-  const productiveMin = targetRows.reduce((acc, row) => acc + Math.min(row.doneEqMin, row.valueEqMin), 0);
-  const missingMin = targetRows.reduce((acc, row) => acc + Math.max(0, row.valueEqMin - row.doneEqMin), 0);
-  const wasteExcessMin = limitRows.reduce((acc, row) => acc + Math.max(0, row.doneEqMin - row.valueEqMin), 0);
+  const spentByHabitRaw = safeMinMap(dayCredits?.spentByHabit);
+  const spentToLimitsRaw = safeMinMap(dayCredits?.spentToLimits);
 
-  const earnedFromTargets = targetRows.reduce((acc, row) => acc + Math.max(0, row.doneEqMin - row.valueEqMin), 0);
+  const budgetMin = targetRows.reduce((acc, row) => acc + row.valueEqMin, 0);
+  const productiveRealMin = targetRows.reduce((acc, row) => acc + Math.min(row.doneEqMin, row.valueEqMin), 0);
+
+  const targetCoinContributionByHabit = {};
+  const targetMissingEqByHabit = {};
+  const targetRealContributionByHabit = {};
+  let creditsToGoals = 0;
+
+  targetRows.forEach((row) => {
+    const missingEq = Math.max(0, row.valueEqMin - row.doneEqMin);
+    const spent = Math.max(0, Math.round(Number(spentByHabitRaw[row.habitId]) || 0));
+    const used = Math.min(missingEq, spent);
+    targetMissingEqByHabit[row.habitId] = missingEq;
+    targetCoinContributionByHabit[row.habitId] = used;
+    targetRealContributionByHabit[row.habitId] = Math.min(row.doneEqMin, row.valueEqMin);
+    creditsToGoals += used;
+  });
+
+  const limitForgivenByHabit = {};
+  const limitExcessEqByHabit = {};
+  let creditsToLimits = 0;
+
+  limitRows.forEach((row) => {
+    const excessEq = Math.max(0, row.doneEqMin - row.valueEqMin);
+    const spent = Math.max(0, Math.round(Number(spentToLimitsRaw[row.habitId]) || 0));
+    const used = Math.min(excessEq, spent);
+    limitExcessEqByHabit[row.habitId] = excessEq;
+    limitForgivenByHabit[row.habitId] = used;
+    creditsToLimits += used;
+  });
 
   const templateIds = new Set([
     ...targetRows.map((row) => row.habitId),
@@ -65,59 +84,54 @@ export function computeDayCreditsAndScores({ targets = [], limits = [], neutrals
     ...neutrals.map((row) => row.habitId)
   ]);
 
+  const earnedFromTargets = targetRows.reduce((acc, row) => acc + Math.max(0, row.doneEqMin - row.valueEqMin), 0);
   let earnedOutside = 0;
-  if (allowOutside) {
-    Object.entries(doneMap || {}).forEach(([habitId, totals]) => {
-      if (!habitId || templateIds.has(habitId)) return;
-      const meta = habitMeta?.[habitId] || {};
-      if (!meta.habitScheduleCreditEligible) return;
-      const doneCount = Math.max(0, Number(totals?.doneCount) || 0);
-      const doneMin = Math.max(0, Number(totals?.doneMin) || 0);
-      const perCount = Math.max(1, Math.round(Number(meta?.countMinuteValue ?? meta?.countUnitMinutes) || 1));
-      earnedOutside += doneMin + (doneCount * perCount);
-    });
-  }
-
-  const creditsEarned = (earnedFromTargets + earnedOutside) * creditRate;
-
-  let remainingCredits = creditsEarned;
-  let creditsToGoals = 0;
-  let creditsToLimits = 0;
-
-  order.forEach((slot) => {
-    if (slot === "goals") {
-      const used = Math.min(remainingCredits, missingMin - creditsToGoals);
-      creditsToGoals += Math.max(0, used);
-      remainingCredits -= Math.max(0, used);
-      return;
-    }
-    if (slot === "limits") {
-      const used = Math.min(remainingCredits, wasteExcessMin - creditsToLimits);
-      creditsToLimits += Math.max(0, used);
-      remainingCredits -= Math.max(0, used);
-    }
+  Object.entries(doneMap || {}).forEach(([habitId, totals]) => {
+    if (!habitId || templateIds.has(habitId)) return;
+    const meta = habitMeta?.[habitId] || {};
+    if (!meta.creditEligibleOutsideSchedule && !meta.habitScheduleCreditEligible) return;
+    const doneCount = Math.max(0, Number(totals?.doneCount) || 0);
+    const doneMin = Math.max(0, Number(totals?.doneMin) || 0);
+    const perCount = Math.max(1, Math.round(Number(meta?.countMinuteValue ?? meta?.countUnitMinutes) || 1));
+    earnedOutside += doneMin + (doneCount * perCount);
   });
 
-  const productiveMinAdjusted = productiveMin + creditsToGoals;
+  const creditsEarned = Math.max(0, Math.round(earnedFromTargets + earnedOutside));
+  const coinsSpent = creditsToGoals + creditsToLimits;
+  const coinsAvailable = Math.max(0, creditsEarned - coinsSpent);
+
+  const productiveMinAdjusted = productiveRealMin + creditsToGoals;
+  const missingMin = targetRows.reduce((acc, row) => acc + Math.max(0, row.valueEqMin - row.doneEqMin), 0);
   const missingAfter = Math.max(0, missingMin - creditsToGoals);
+  const wasteExcessMin = limitRows.reduce((acc, row) => acc + Math.max(0, row.doneEqMin - row.valueEqMin), 0);
   const wasteAfter = Math.max(0, wasteExcessMin - creditsToLimits);
 
   const scoreCred = budgetMin > 0 ? clampPercent((productiveMinAdjusted / budgetMin) * 100) : 0;
-  const scoreNet = budgetMin > 0 ? clampPercent(((productiveMinAdjusted - wasteAfter) / budgetMin) * 100) : 0;
 
   return {
     scorePlan: 0,
     scoreCred,
-    scoreNet,
+    scoreNet: scoreCred,
     budgetMin,
     creditsEarned,
+    coinsSpent,
+    coinsAvailable,
     creditsToGoals,
     creditsToLimits,
     missingMin,
     missingAfter,
     wasteExcessMin,
     wasteAfter,
-    productiveMin,
-    productiveMinAdjusted
+    productiveMin: productiveRealMin,
+    productiveMinAdjusted,
+    targetCoinContributionByHabit,
+    targetMissingEqByHabit,
+    targetRealContributionByHabit,
+    limitForgivenByHabit,
+    limitExcessEqByHabit,
+    spentByHabit: spentByHabitRaw,
+    spentToLimits: spentToLimitsRaw,
+    earnedFromTargets,
+    earnedOutside
   };
 }

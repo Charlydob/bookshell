@@ -209,43 +209,70 @@
 
 .habit-quick-sessions-row{
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   padding: 6px 2px;
   margin-top: 8px;
 }
 
-
-.habit-quick-pill {
+.habit-quick-pill{
   border-radius: 999px;
   padding: 8px 12px;
   border: 1px solid rgba(255,255,255,0.18);
-  background: linear-gradient(130deg, rgba(var(--hclr-rgb, 127, 93, 255), 0.2), rgba(255,255,255,0.08));
+  background: linear-gradient(
+    130deg,
+    rgba(var(--hclr-rgb, 127, 93, 255), 0.2),
+    rgba(255,255,255,0.08)
+  );
   box-shadow: 0 8px 18px rgba(20, 20, 40, 0.2);
+
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  white-space: nowrap;
+  justify-content: space-between;
+  gap: 4px;
+
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+
   color: var(--txt);
 }
 
-.habit-quick-pill-label {
+.habit-quick-pill-label{
   font-size: 13px;
   font-weight: 600;
+
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.habit-quick-pill-remove {
+.habit-quick-pill-remove{
   border: none;
   background: rgba(255,255,255,0.18);
   color: var(--txt);
+
   width: 18px;
   height: 18px;
   border-radius: 50%;
+
   display: grid;
   place-items: center;
+
   font-size: 11px;
   cursor: default;
+
+  flex: 0 0 auto;
 }
+
+/* opcional: límite en pantallas grandes */
+@media (min-width: 420px){
+  .habit-quick-pill{
+    max-width: 160px;
+  }
+}
+
 
 .quick-counters-wrap {
   margin-top: 14px;
@@ -1287,10 +1314,10 @@
 }
 
 .habit-accordion-body {
-  padding: 6px 14px 16px;
+  padding: 6px 14px 1px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 1px;
   background: rgba(255,255,255,0.02);
 }
 
@@ -1466,7 +1493,7 @@
 }
 
 .habit-custom-group .habit-accordion-body {
-  padding: 6px 14px 14px;
+  padding: 6px 14px 1px;
   background: rgba(255,255,255,0.02);
 }
 
@@ -1771,7 +1798,7 @@
 
 /* === Hoy: agrupación por tipo (contadores / tiempo) === */
 .habit-today-accordion { margin-bottom: 10px; }
-.habit-today-accordion .habit-accordion-body { padding-top: 10px; }
+.habit-today-accordion .habit-accordion-body { padding-top: 1px; }
 .habits-subgroup { display: flex; flex-direction: column; gap: 12px; }
 .habits-subgroup + .habits-subgroup { margin-top: 16px; }
 .habits-subgroup-title { font-size: 12px; font-weight: 700; color: var(--txt-soft); margin: 2px 2px 0; }

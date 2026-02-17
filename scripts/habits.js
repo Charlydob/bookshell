@@ -842,6 +842,7 @@ $habitScheduleSummaryContent.innerHTML = `
   }
 `;
 $habitScheduleSummaryModal.classList.remove("hidden");
+}
 
 function closeScheduleSummaryModal() {
   $habitScheduleSummaryModal?.classList.add("hidden");
@@ -10389,3 +10390,6 @@ async function initHabits() {
 
 // Autoinit
 initHabits();
+
+// TODO REMOVE: parse smoke check
+console.log("habits.js parsed OK");

@@ -10363,7 +10363,7 @@ window.__bookshellHabits = {
   rangeLabel,
   debugComputeTimeByHabit
 };
-export async function initHabits() {
+async function initHabits() {
   readCache();
   loadRunningSession();
   loadHeatmapYear();

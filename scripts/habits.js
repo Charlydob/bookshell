@@ -519,7 +519,8 @@ function createDefaultHabitSchedule() {
       creditAllocationOrder: ["goals", "limits"],
       scoreModeDefault: "plan",
       allowCreditsOutsideTemplate: false,
-      netScoreEnabled: false
+      netScoreEnabled: false,
+      schedule24hIncludeLimits: false
     },
     summaries: {},
     dayCredits: {}
@@ -551,7 +552,7 @@ function normalizeHabitSchedule(raw) {
     }
     if (typeof entry !== "object") return null;
     const mode = String(entry.mode || "neutral");
-    if (!["targetMin", "targetCount", "limitMin", "limitCount", "neutral"].includes(mode)) return null;
+    if (!["targetMin", "targetCount", "limitMin", "limitCount", "neutral", "neutralPlannedTime"].includes(mode)) return null;
     const value = Math.max(0, Math.round(Number(entry.value) || 0));
     if (mode === "neutral") return { mode, value: 0 };
     return value > 0 ? { mode, value } : null;
@@ -593,6 +594,7 @@ function normalizeHabitSchedule(raw) {
   out.settings.scoreModeDefault = raw.settings?.scoreModeDefault === "credits" ? "credits" : defaults.settings.scoreModeDefault;
   out.settings.allowCreditsOutsideTemplate = !!raw.settings?.allowCreditsOutsideTemplate;
   out.settings.netScoreEnabled = !!raw.settings?.netScoreEnabled;
+  out.settings.schedule24hIncludeLimits = !!raw.settings?.schedule24hIncludeLimits;
 
   if (raw.summaries && typeof raw.summaries === "object") {
     out.summaries = raw.summaries;
@@ -657,11 +659,100 @@ const SCHEDULE_MODES = {
   targetCount: { label: "Objetivo contable", unit: "count", kind: "goal", metric: "count" },
   limitMin: { label: "Límite tiempo", unit: "min", kind: "limit", metric: "time" },
   limitCount: { label: "Límite contable", unit: "count", kind: "limit", metric: "count" },
+  neutralPlannedTime: { label: "Neutral planificado", unit: "min", kind: "neutral", metric: "time" },
   neutral: { label: "Neutral", unit: "none", kind: "neutral", metric: "none" }
 };
 
 function scheduleModeInfo(mode) {
   return SCHEDULE_MODES[mode] || SCHEDULE_MODES.neutral;
+}
+
+function scheduleEntryToEqMinutes(habitId, config = {}, doneMap = {}, habitMeta = {}) {
+  const mode = String(config?.mode || "neutral");
+  const info = scheduleModeInfo(mode);
+  const value = Math.max(0, Math.round(Number(config?.value) || 0));
+  const totals = doneMap?.[habitId] || { doneMin: 0, doneCount: 0 };
+  const doneMin = Math.max(0, Number(totals?.doneMin) || 0);
+  const doneCount = Math.max(0, Number(totals?.doneCount) || 0);
+  const habit = habitMeta?.[habitId] || {};
+  const countMinuteValue = Math.max(1, Math.round(Number(habit?.countMinuteValue ?? habit?.countUnitMinutes) || 1));
+  const valueEqMin = info.metric === "count" ? value * countMinuteValue : value;
+  const doneEqMin = info.metric === "count" ? doneCount * countMinuteValue : doneMin;
+  return {
+    habitId,
+    mode,
+    info,
+    value,
+    valueEqMin,
+    doneEqMin
+  };
+}
+
+function computeScheduleHeaderStats(dayKey, templateEffective = {}, doneMap = {}, coinsState = {}, settings = {}) {
+  const template = templateEffective && typeof templateEffective === "object" ? templateEffective : {};
+  const habitMeta = settings?.habitMeta && typeof settings.habitMeta === "object" ? settings.habitMeta : {};
+  const includeLimits24h = !!settings?.schedule24hIncludeLimits;
+  const rows = Object.entries(template)
+    .filter(([habitId]) => habitId && !habitId.startsWith("__"))
+    .map(([habitId, config]) => scheduleEntryToEqMinutes(habitId, config, doneMap, habitMeta));
+
+  const goals = rows.filter((row) => row.info.kind === "goal");
+  const limits = rows.filter((row) => row.info.kind === "limit");
+  const neutralsPlanned = rows.filter((row) => row.mode === "neutralPlannedTime");
+  const neutralsDoneRows = rows.filter((row) => row.info.kind === "neutral" && row.doneEqMin > 0);
+
+  const targetCoinMap = coinsState?.targetCoinContributionByHabit || {};
+  const limitForgivenMap = coinsState?.limitForgivenByHabit || {};
+
+  const objectivesTargetMinEq = goals.reduce((acc, row) => acc + row.valueEqMin, 0);
+  const objectivesRealMinEq = goals.reduce((acc, row) => acc + Math.min(row.doneEqMin, row.valueEqMin), 0);
+  const objectivesCoinMinEq = goals.reduce((acc, row) => {
+    const missing = Math.max(0, row.valueEqMin - row.doneEqMin);
+    const coin = Math.max(0, Math.round(Number(targetCoinMap[row.habitId]) || 0));
+    return acc + Math.min(missing, coin);
+  }, 0);
+  const objectivesFilledMinEq = Math.min(objectivesTargetMinEq, objectivesRealMinEq + objectivesCoinMinEq);
+  const objectivesMissingMinEq = Math.max(0, objectivesTargetMinEq - objectivesFilledMinEq);
+
+  const limitsCapMinEq = limits.reduce((acc, row) => acc + row.valueEqMin, 0);
+  const limitsDoneMinEq = limits.reduce((acc, row) => acc + row.doneEqMin, 0);
+  const limitsExcessMinEq = limits.reduce((acc, row) => acc + Math.max(0, row.doneEqMin - row.valueEqMin), 0);
+  const limitsForgivenMinEq = limits.reduce((acc, row) => {
+    const excess = Math.max(0, row.doneEqMin - row.valueEqMin);
+    const forgiven = Math.max(0, Math.round(Number(limitForgivenMap[row.habitId]) || 0));
+    return acc + Math.min(excess, forgiven);
+  }, 0);
+
+  const neutralsPlannedMinEq = neutralsPlanned.reduce((acc, row) => acc + row.valueEqMin, 0);
+  const neutralsDoneMinEq = neutralsDoneRows.reduce((acc, row) => acc + row.doneEqMin, 0);
+
+  const totalPlanned24hMinEq = objectivesTargetMinEq + neutralsPlannedMinEq + (includeLimits24h ? limitsCapMinEq : 0);
+  const remaining24hMinEq = Math.max(0, (24 * 60) - totalPlanned24hMinEq);
+  const scorePlan = objectivesTargetMinEq > 0
+    ? Math.max(0, Math.min(100, Math.round((objectivesFilledMinEq / objectivesTargetMinEq) * 100)))
+    : 0;
+  const scoreAprovechado = objectivesTargetMinEq > 0
+    ? Math.max(0, Math.min(100, Math.round(((objectivesFilledMinEq - Math.max(0, limitsExcessMinEq - limitsForgivenMinEq)) / objectivesTargetMinEq) * 100)))
+    : 0;
+
+  return {
+    dayKey,
+    objectivesTargetMinEq,
+    objectivesRealMinEq,
+    objectivesCoinMinEq,
+    objectivesFilledMinEq,
+    objectivesMissingMinEq,
+    limitsCapMinEq,
+    limitsDoneMinEq,
+    limitsExcessMinEq,
+    limitsForgivenMinEq,
+    neutralsPlannedMinEq,
+    neutralsDoneMinEq,
+    totalPlanned24hMinEq,
+    remaining24hMinEq,
+    scorePlan,
+    scoreAprovechado
+  };
 }
 
 function clampScheduleThreshold(value, fallback = 70) {
@@ -783,6 +874,7 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
   const goalRows = entries.filter((row) => row.info.kind === "goal");
   const limitRows = entries.filter((row) => row.info.kind === "limit");
   const neutralRows = entries.filter((row) => row.info.kind === "neutral" && row.done > 0);
+  const neutralPlannedRows = entries.filter((row) => row.mode === "neutralPlannedTime");
 
   goalRows.sort((a, b) => {
     if (a.completed !== b.completed) return a.completed ? 1 : -1;
@@ -795,11 +887,6 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
     const idx = goalRows.findIndex((row) => row.habitId === runningId);
     if (idx > 0) goalRows.unshift(goalRows.splice(idx, 1)[0]);
   }
-
-  const totalWeight = goalRows.reduce((acc, row) => acc + Math.max(1, row.value), 0);
-  const score = totalWeight > 0
-    ? Math.round((goalRows.reduce((acc, row) => acc + (row.progress * Math.max(1, row.value)), 0) / totalWeight) * 100)
-    : 0;
 
   const totalTargetMin = goalRows.filter((row) => row.info.metric === "time").reduce((acc, row) => acc + row.value, 0);
   const totalDoneMin = goalRows.filter((row) => row.info.metric === "time").reduce((acc, row) => acc + row.done, 0);
@@ -821,7 +908,26 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
     habitMeta: habits,
     dayCredits
   });
-  credits.scorePlan = score;
+
+  const stats = computeScheduleHeaderStats(dateKey, template, doneTotalsMap, credits, {
+    habitMeta: habits,
+    schedule24hIncludeLimits: !!scheduleState?.settings?.schedule24hIncludeLimits
+  });
+  credits.scorePlan = stats.scorePlan;
+  credits.scoreNet = stats.scoreAprovechado;
+
+  const visibleObjectivesFilledEq = goalRows.reduce((acc, row) => {
+    const missingEq = Math.max(0, Number(credits.targetMissingEqByHabit?.[row.habitId]) || 0);
+    const coinEq = Math.max(0, Number(credits.targetCoinContributionByHabit?.[row.habitId]) || 0);
+    const targetEq = Math.max(0, Number(row.info?.metric === "count"
+      ? row.value * Math.max(1, Math.round(Number(row?.habit?.countMinuteValue ?? row?.habit?.countUnitMinutes) || 1))
+      : row.value) || 0);
+    const realEq = Math.max(0, targetEq - missingEq);
+    return acc + Math.min(targetEq, realEq + Math.min(missingEq, coinEq));
+  }, 0);
+  if (Math.abs(visibleObjectivesFilledEq - stats.objectivesFilledMinEq) >= 1) {
+    console.warn("[SCHEDULE STATS]", stats); // TODO REMOVE
+  }
 
   const goalRowsWithCoins = goalRows.map((row) => {
     const cpm = Math.max(1, Math.round(Number(row?.habit?.countMinuteValue ?? row?.habit?.countUnitMinutes) || 1));
@@ -863,8 +969,8 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
     rows: goalRowsWithCoins,
     limits: limitRowsWithCoins,
     neutrals: neutralRows,
-    score,
-    label: scheduleLabelForScore(score),
+    score: stats.scorePlan,
+    label: scheduleLabelForScore(stats.scorePlan),
     runningId,
     totalTargetMin,
     totalDoneMin,
@@ -876,16 +982,19 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
     wastedTotalCount,
     thresholdUsed,
     templateVariantUsed: usingOverride ? dayKey : "base",
+    headerStats: stats,
+    neutralPlannedRows,
     ...credits,
-    scorePlan: score,
-    scoreCred: scheduleState?.settings?.netScoreEnabled ? credits.scoreNet : credits.scoreCred
+    scorePlan: stats.scorePlan,
+    scoreCred: scheduleState?.settings?.netScoreEnabled ? stats.scoreAprovechado : credits.scoreCred
   };
 }
 
 function closeScheduleDay(dateKey = todayKey(), source = "manual") {
   const data = buildScheduleDayData(dateKey);
+  const stats = data.headerStats || computeScheduleHeaderStats(dateKey, {}, {}, {}, {});
   const perHabit = {};
-  [...data.rows, ...data.limits, ...data.neutrals].forEach((row) => {
+  [...data.rows, ...data.limits, ...data.neutrals, ...(data.neutralPlannedRows || [])].forEach((row) => {
     perHabit[row.habitId] = {
       mode: row.mode,
       target: row.value,
@@ -909,6 +1018,7 @@ function closeScheduleDay(dateKey = todayKey(), source = "manual") {
     wastedTotalCount: data.wastedTotalCount,
     scorePlan: data.scorePlan,
     scoreCred: data.scoreCred,
+    scoreAprovechado: stats.scoreAprovechado,
     budgetMin: data.budgetMin,
     coinsEarned: data.creditsEarned,
     coinsSpent: data.coinsSpent,
@@ -927,6 +1037,20 @@ function closeScheduleDay(dateKey = todayKey(), source = "manual") {
     thresholdUsed: data.thresholdUsed,
     templateTypeUsed: data.type,
     templateVariantUsed: data.templateVariantUsed,
+    headerStats: stats,
+    objectivesTargetMinEq: stats.objectivesTargetMinEq,
+    objectivesRealMinEq: stats.objectivesRealMinEq,
+    objectivesCoinMinEq: stats.objectivesCoinMinEq,
+    objectivesFilledMinEq: stats.objectivesFilledMinEq,
+    objectivesMissingMinEq: stats.objectivesMissingMinEq,
+    limitsCapMinEq: stats.limitsCapMinEq,
+    limitsDoneMinEq: stats.limitsDoneMinEq,
+    limitsExcessMinEq: stats.limitsExcessMinEq,
+    limitsForgivenMinEq: stats.limitsForgivenMinEq,
+    neutralsPlannedMinEq: stats.neutralsPlannedMinEq,
+    neutralsDoneMinEq: stats.neutralsDoneMinEq,
+    totalPlanned24hMinEq: stats.totalPlanned24hMinEq,
+    remaining24hMinEq: stats.remaining24hMinEq,
     successThreshold: scheduleState?.settings?.successThreshold || 70,
     closedAtTs: Date.now(),
     closeSource: source
@@ -944,6 +1068,23 @@ function closeScheduleDay(dateKey = todayKey(), source = "manual") {
 function openScheduleSummaryModal(dateKey) {
   const summary = scheduleState?.summaries?.[dateKey];
   if (!summary || !$habitScheduleSummaryModal || !$habitScheduleSummaryContent) return;
+  const stats = summary.headerStats || {
+    objectivesTargetMinEq: Math.max(0, Number(summary.objectivesTargetMinEq) || 0),
+    objectivesRealMinEq: Math.max(0, Number(summary.objectivesRealMinEq) || 0),
+    objectivesCoinMinEq: Math.max(0, Number(summary.objectivesCoinMinEq) || 0),
+    objectivesFilledMinEq: Math.max(0, Number(summary.objectivesFilledMinEq) || 0),
+    objectivesMissingMinEq: Math.max(0, Number(summary.objectivesMissingMinEq) || 0),
+    limitsCapMinEq: Math.max(0, Number(summary.limitsCapMinEq) || 0),
+    limitsDoneMinEq: Math.max(0, Number(summary.limitsDoneMinEq) || 0),
+    limitsExcessMinEq: Math.max(0, Number(summary.limitsExcessMinEq ?? summary.wastedExcessMin) || 0),
+    limitsForgivenMinEq: Math.max(0, Number(summary.limitsForgivenMinEq ?? summary.creditsToLimits) || 0),
+    neutralsPlannedMinEq: Math.max(0, Number(summary.neutralsPlannedMinEq) || 0),
+    neutralsDoneMinEq: Math.max(0, Number(summary.neutralsDoneMinEq) || 0),
+    totalPlanned24hMinEq: Math.max(0, Number(summary.totalPlanned24hMinEq) || 0),
+    remaining24hMinEq: Math.max(0, Number(summary.remaining24hMinEq) || 0),
+    scorePlan: Math.max(0, Number(summary.scorePlan ?? summary.score) || 0),
+    scoreAprovechado: Math.max(0, Number(summary.scoreAprovechado ?? summary.scoreCred ?? summary.score) || 0)
+  };
   if ($habitScheduleSummaryTitle) $habitScheduleSummaryTitle.textContent = `Resumen · ${dateKey}`;
   const topDone = Object.entries(summary.perHabit || {})
     .map(([habitId, row]) => ({ habit: habits[habitId], ...row }))
@@ -961,15 +1102,15 @@ function openScheduleSummaryModal(dateKey) {
     .slice(0, 5);
   const neutralWithActivity = Object.entries(summary.perHabit || {})
     .map(([habitId, row]) => ({ habit: habits[habitId], ...row }))
-    .filter((row) => row.habit && row.mode === "neutral" && (row.done || 0) > 0)
+    .filter((row) => row.habit && (row.mode === "neutral" || row.mode === "neutralPlannedTime") && (row.done || 0) > 0)
     .slice(0, 5);
   const renderList = (rows, empty) => rows.length
     ? `<ul>${rows.map((row) => `<li>${row.habit.emoji || "🏷️"} ${row.habit.name} · ${row.percent || 0}%</li>`).join("")}</ul>`
     : `<div class="hint">${empty}</div>`;
 $habitScheduleSummaryContent.innerHTML = `
   <div class="habit-schedule-summary-score">
-    ${(summary.scoreCred ?? summary.score ?? 0)}%
-    <small>${summary.label || scheduleLabelForScore((summary.scoreCred ?? summary.score ?? 0))}</small>
+    ${(summary.scoreCred ?? stats.scoreAprovechado ?? summary.score ?? 0)}%
+    <small>${summary.label || scheduleLabelForScore((stats.scorePlan ?? summary.score ?? 0))}</small>
   </div>
 
   <div class="habit-schedule-summary-meta">
@@ -986,7 +1127,15 @@ $habitScheduleSummaryContent.innerHTML = `
   </div>
 
   <div class="hint">
-    Pendiente ${formatMinutes(summary.missingMin ?? 0)} → ${formatMinutes(summary.missingAfter ?? 0)}
+    Objetivos ${formatMinutes(stats.objectivesFilledMinEq)} / ${formatMinutes(stats.objectivesTargetMinEq)} · Pendiente ${formatMinutes(stats.objectivesMissingMinEq)}
+  </div>
+
+  <div class="hint">
+    Límites ${formatMinutes(Math.min(stats.limitsDoneMinEq, stats.limitsCapMinEq))} / ${formatMinutes(stats.limitsCapMinEq)} · Exceso ${formatMinutes(stats.limitsExcessMinEq)} · Perdonado ${formatMinutes(stats.limitsForgivenMinEq)}
+  </div>
+
+  <div class="hint">
+    Neutrales ${formatMinutes(stats.neutralsDoneMinEq)} / ${formatMinutes(stats.neutralsPlannedMinEq)} · Planificado ${formatMinutes(stats.totalPlanned24hMinEq)} / 24h · Sin asignar ${formatMinutes(stats.remaining24hMinEq)}
   </div>
 
   <div class="sheet-section-title">Top cumplidos</div>
@@ -1262,7 +1411,8 @@ function beginScheduleTemplateEditing(type = "M", day = "base") {
     creditAllocationOrder: Array.isArray(scheduleState?.settings?.creditAllocationOrder) ? [...scheduleState.settings.creditAllocationOrder] : ["goals", "limits"],
     scoreModeDefault: scheduleState?.settings?.scoreModeDefault === "credits" ? "credits" : "plan",
     allowCreditsOutsideTemplate: !!scheduleState?.settings?.allowCreditsOutsideTemplate,
-    netScoreEnabled: !!scheduleState?.settings?.netScoreEnabled
+    netScoreEnabled: !!scheduleState?.settings?.netScoreEnabled,
+    schedule24hIncludeLimits: !!scheduleState?.settings?.schedule24hIncludeLimits
   };
   isEditingTemplates = true;
   scheduleConfigOpen = true;
@@ -1304,6 +1454,7 @@ function renderSchedule(reason = "manual") {
   console.warn("EDITOR RENDER", reason);
   const currentDateKey = scheduleDayKeyFromTs(Date.now(), scheduleState?.settings?.dayCloseTime || "00:00");
   const data = buildScheduleDayData(currentDateKey);
+  const stats = data.headerStats || computeScheduleHeaderStats(currentDateKey, scheduleTemplateForDate(currentDateKey).template || {}, {}, {}, {});
   scheduleCoinSpenderState = null;
   const threshold = scheduleState?.settings?.successThreshold || 70;
   if (!Number.isInteger(scheduleCalYear) || !Number.isInteger(scheduleCalMonth)) {
@@ -1328,13 +1479,14 @@ function renderSchedule(reason = "manual") {
     ? Math.max(1, Math.min(100, Math.round(Number(draftState?.successThreshold || threshold))))
     : threshold;
   ensureScheduleScoreModeDefault();
-  const scoreMain = scheduleScoreMode === "credits" ? (data.scoreCred || 0) : (data.scorePlan || data.score || 0);
+  const scoreMain = scheduleScoreMode === "credits" ? (stats.scoreAprovechado || data.scoreCred || 0) : (stats.scorePlan || data.scorePlan || data.score || 0);
   const scoreGood = scoreMain >= threshold;
-  const wastedLabel = formatMinutes(data.wasteAfter ?? data.wastedExcessMin);
+  const wastedLabel = formatMinutes(Math.max(0, stats.limitsExcessMinEq - stats.limitsForgivenMinEq));
   const coinsAvailableLabel = formatMinutes(data.coinsAvailable ?? 0);
-  const usedLabel = data.totalDoneCount > 0
-    ? `${formatMinutes(data.totalDoneMin)} +${data.totalDoneCount}x`
-    : formatMinutes(data.totalDoneMin);
+  const usedLabel = formatMinutes(stats.objectivesFilledMinEq);
+  const includeLimits24h = isEditingTemplates
+    ? !!draftState?.schedule24hIncludeLimits
+    : !!scheduleState?.settings?.schedule24hIncludeLimits;
   const creditsLine = `🪙 ganadas ${formatMinutes(data.creditsEarned ?? 0)} · gastadas ${formatMinutes(data.coinsSpent ?? 0)} · disp ${coinsAvailableLabel}`;
   const creditRateValue = isEditingTemplates
     ? Number(draftState?.creditRate ?? scheduleState?.settings?.creditRate ?? 1)
@@ -1355,13 +1507,22 @@ function renderSchedule(reason = "manual") {
 
   $habitScheduleView.innerHTML = `
     <section class="habits-history-section habit-schedule-score-wrap ${scoreGood ? "is-good" : "is-bad"}">
-      <div class="habit-schedule-head-side is-left"><span>Aprovechado</span><strong>${usedLabel}</strong><small>🪙 ${coinsAvailableLabel}</small></div>
+      <div class="habit-schedule-head-side is-left"><span>Aprovechado/Plan</span><strong>${usedLabel} / ${formatMinutes(stats.objectivesTargetMinEq)}</strong><small>🪙 ${coinsAvailableLabel}</small></div>
       <div>
       <div class="habit-schedule-score">${scoreMain}%</div>
       <div class="habit-schedule-score-label">${scheduleScoreMode === "credits" ? "aprovechado" : data.label}</div>
       <div class="habit-schedule-score-sub">Plantilla ${data.type}${data.usingOverride ? ` · override ${data.dayKey.toUpperCase()}` : ""} · ${creditsLine}</div>
       </div>
       <div class="habit-schedule-head-side is-right"><span>Desperdiciado</span><strong>${wastedLabel}</strong></div>
+    </section>
+    <section class="habits-history-section habit-schedule-totals">
+      <div class="habit-schedule-total-row"><strong>Objetivos:</strong> ${formatMinutes(stats.objectivesFilledMinEq)} / ${formatMinutes(stats.objectivesTargetMinEq)}</div>
+      <div class="habit-schedule-total-sub">Real ${formatMinutes(stats.objectivesRealMinEq)} + Monedas ${formatMinutes(stats.objectivesCoinMinEq)} · Pendiente ${formatMinutes(stats.objectivesMissingMinEq)}</div>
+      <div class="habit-schedule-total-row"><strong>Límites:</strong> ${formatMinutes(Math.min(stats.limitsDoneMinEq, stats.limitsCapMinEq))} / ${formatMinutes(stats.limitsCapMinEq)}</div>
+      <div class="habit-schedule-total-sub">Exceso ${formatMinutes(stats.limitsExcessMinEq)} · Perdonado ${formatMinutes(stats.limitsForgivenMinEq)} · Desperdiciado efectivo ${formatMinutes(Math.max(0, stats.limitsExcessMinEq - stats.limitsForgivenMinEq))}</div>
+      <div class="habit-schedule-total-row"><strong>Neutrales:</strong> ${formatMinutes(stats.neutralsDoneMinEq)} / ${formatMinutes(stats.neutralsPlannedMinEq)}</div>
+      <div class="habit-schedule-total-row"><strong>Planificado hoy:</strong> ${formatMinutes(stats.totalPlanned24hMinEq)} / 24h</div>
+      <div class="habit-schedule-total-sub">Sin asignar ${formatMinutes(stats.remaining24hMinEq)}${includeLimits24h ? " · incluye límites" : " · sin límites"}</div>
     </section>
     <section class="habits-history-section habit-schedule-controls">
       <button class="btn ghost btn-compact" type="button" data-role="schedule-score-toggle">${scheduleScoreMode === "credits" ? "Aprovechado" : "Plan"}</button>
@@ -1404,6 +1565,7 @@ function renderSchedule(reason = "manual") {
         </select>
         <label class="toggle-pill"><input type="checkbox" data-role="allow-outside" ${allowOutsideCredits ? "checked" : ""}/><span>Permitir fuera de plantilla</span></label>
         <label class="toggle-pill"><input type="checkbox" data-role="net-score" ${netScoreEnabled ? "checked" : ""}/><span>Score neto</span></label>
+        <label class="toggle-pill"><input type="checkbox" data-role="schedule-24h-include-limits" ${includeLimits24h ? "checked" : ""}/><span>24h incluye límites</span></label>
       </div>
       <div class="habit-schedule-targets" data-role="schedule-targets"></div>
       <div class="habit-schedule-actions">
@@ -1420,6 +1582,10 @@ function renderSchedule(reason = "manual") {
       <details class="habit-accordion habit-schedule-extras" data-role="schedule-neutrals">
         <summary><div class="habit-accordion-title">Neutrales con actividad</div></summary>
         <div class="habit-accordion-body" data-role="schedule-neutrals-list"></div>
+      </details>
+      <details class="habit-accordion habit-schedule-extras" data-role="schedule-neutrals-planned">
+        <summary><div class="habit-accordion-title">Neutrales planificados</div></summary>
+        <div class="habit-accordion-body" data-role="schedule-neutrals-planned-list"></div>
       </details>
     </section>
     <section class="habits-history-section">
@@ -1449,6 +1615,7 @@ function renderSchedule(reason = "manual") {
           <option value="targetCount" ${mode === "targetCount" ? "selected" : ""}>Objetivo contable</option>
           <option value="limitMin" ${mode === "limitMin" ? "selected" : ""}>Límite tiempo</option>
           <option value="limitCount" ${mode === "limitCount" ? "selected" : ""}>Límite contable</option>
+          <option value="neutralPlannedTime" ${mode === "neutralPlannedTime" ? "selected" : ""}>Neutral planificado</option>
           <option value="neutral" ${mode === "neutral" ? "selected" : ""}>Neutral</option>
         </select>
         <input type="number" min="0" step="1" data-role="schedule-value" data-habit-id="${habit.id}" value="${val}" ${mode === "neutral" ? "disabled" : ""}/>
@@ -1503,6 +1670,11 @@ function renderSchedule(reason = "manual") {
   const neutralWrap = $habitScheduleView.querySelector('[data-role="schedule-neutrals"]');
   if (neutralList) neutralList.innerHTML = data.neutrals.map((row) => makeRow({ ...row, percent: 100 }, "neutrals")).join("") || '<div class="hint">Sin actividad neutral.</div>';
   if (neutralWrap) neutralWrap.style.display = data.neutrals.length ? "block" : "none";
+
+  const neutralPlannedList = $habitScheduleView.querySelector('[data-role="schedule-neutrals-planned-list"]');
+  const neutralPlannedWrap = $habitScheduleView.querySelector('[data-role="schedule-neutrals-planned"]');
+  if (neutralPlannedList) neutralPlannedList.innerHTML = (data.neutralPlannedRows || []).map((row) => makeRow(row, "neutrals")).join("") || '<div class="hint">Sin neutrales planificados.</div>';
+  if (neutralPlannedWrap) neutralPlannedWrap.style.display = (data.neutralPlannedRows || []).length ? "block" : "none";
 
   const monthGrid = $habitScheduleView.querySelector('[data-role="schedule-month-grid"]');
   renderScheduleMonthGrid(scheduleCalYear, scheduleCalMonth, monthGrid);
@@ -1624,6 +1796,10 @@ function renderSchedule(reason = "manual") {
     if (!isEditingTemplates || !draftState) return;
     draftState.netScoreEnabled = !!event.target?.checked;
   });
+  $habitScheduleView.querySelector('[data-role="schedule-24h-include-limits"]')?.addEventListener("change", (event) => {
+    if (!isEditingTemplates || !draftState) return;
+    draftState.schedule24hIncludeLimits = !!event.target?.checked;
+  });
   $habitScheduleView.querySelector('[data-role="schedule-save-config"]')?.addEventListener("click", () => {
     if (!isEditingTemplates || !draftState) return;
     const type = $habitScheduleView.querySelector('[data-role="schedule-type"]')?.value || "M";
@@ -1649,6 +1825,7 @@ function renderSchedule(reason = "manual") {
     const scoreModeDefaultNext = $habitScheduleView.querySelector('[data-role="score-default"]')?.value === "credits" ? "credits" : "plan";
     const allowCreditsOutsideTemplate = !!$habitScheduleView.querySelector('[data-role="allow-outside"]')?.checked;
     const netScoreEnabled = !!$habitScheduleView.querySelector('[data-role="net-score"]')?.checked;
+    const schedule24hIncludeLimits = !!$habitScheduleView.querySelector('[data-role="schedule-24h-include-limits"]')?.checked;
     draftState.closeTime = closeTime;
     draftState.successThreshold = successThreshold;
     draftState.creditRate = creditRate;
@@ -1656,6 +1833,7 @@ function renderSchedule(reason = "manual") {
     draftState.scoreModeDefault = scoreModeDefaultNext;
     draftState.allowCreditsOutsideTemplate = allowCreditsOutsideTemplate;
     draftState.netScoreEnabled = netScoreEnabled;
+    draftState.schedule24hIncludeLimits = schedule24hIncludeLimits;
     const templatePath = day === "base"
       ? `${HABITS_SCHEDULE_PATH}/schedules/base/${type}`
       : `${HABITS_SCHEDULE_PATH}/schedules/overrides/${type}/${day}`;
@@ -1668,7 +1846,16 @@ function renderSchedule(reason = "manual") {
     });
     auditScheduleWrite(templatePath, templatePatch);
     const settingsPath = `${HABITS_SCHEDULE_PATH}/settings`;
-    const settingsPayload = { dayCloseTime: closeTime, successThreshold, creditRate, creditAllocationOrder, scoreModeDefault: scoreModeDefaultNext, allowCreditsOutsideTemplate, netScoreEnabled };
+    const settingsPayload = {
+      dayCloseTime: closeTime,
+      successThreshold,
+      creditRate,
+      creditAllocationOrder,
+      scoreModeDefault: scoreModeDefaultNext,
+      allowCreditsOutsideTemplate,
+      netScoreEnabled,
+      schedule24hIncludeLimits
+    };
     auditScheduleWrite(settingsPath, settingsPayload);
     Promise.all([
       update(ref(db, templatePath), templatePatch),
@@ -1684,6 +1871,7 @@ function renderSchedule(reason = "manual") {
       scheduleState.settings.scoreModeDefault = scoreModeDefaultNext;
       scheduleState.settings.allowCreditsOutsideTemplate = allowCreditsOutsideTemplate;
       scheduleState.settings.netScoreEnabled = netScoreEnabled;
+      scheduleState.settings.schedule24hIncludeLimits = schedule24hIncludeLimits;
       persistHabitScheduleLocal();
       stopScheduleTemplateEditing();
       scheduleConfigOpen = false;

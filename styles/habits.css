@@ -3893,6 +3893,22 @@ align-items: center;
   gap: 6px;
 }
 
+.habit-schedule-totals {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+
+.habit-schedule-total-row {
+  font-size: 13px;
+  color: var(--txt);
+}
+
+.habit-schedule-total-sub {
+  font-size: 12px;
+  color: var(--txt-soft);
+}
+
 .habit-schedule-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 1.5fr 96px;

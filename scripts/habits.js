@@ -111,6 +111,7 @@ let habitLineHabit = "total";
 let habitDaysRange = "day";
 let habitLineTooltip = null;
 let habitDurationMode = "auto";
+let analyticsTimeUnitMode = "auto";
 let habitLastDonutBreakdown = [];
 let habitEditingParams = [];
 let selectedDateKey = todayKey();
@@ -2570,6 +2571,7 @@ function readCache() {
       habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
       if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
       habitDurationMode = ["auto", "min", "h", "d"].includes(habitPrefs.analyticsUnit) ? habitPrefs.analyticsUnit : "auto";
+      analyticsTimeUnitMode = habitDurationMode;
       habitUI = normalizeHabitUI(parsed.habitUI || {});
       scheduleState = normalizeHabitSchedule(parsed.scheduleState || parsed.habitSchedule || createDefaultHabitSchedule());
       const norm = normalizeSessionsStore(habitSessions, false);
@@ -2828,19 +2830,21 @@ function isSystemHabit(habit) {
 
 
 function normalizeGoalsByRange(raw = {}) {
-  const read = (key, fallback = null) => {
-    const val = Number(raw?.[key]);
-    if (Number.isFinite(val) && val > 0) return Math.round(val);
-    if (fallback == null) return null;
-    const fb = Number(raw?.[fallback]);
-    return Number.isFinite(fb) && fb > 0 ? Math.round(fb) : null;
+  const goalsRaw = raw?.goals && typeof raw.goals === "object" ? raw.goals : null;
+  const read = (key, aliases = []) => {
+    const candidates = [raw?.[key], goalsRaw?.[`${key}Min`], ...aliases.map((alias) => raw?.[alias])];
+    for (const candidate of candidates) {
+      const val = Number(candidate);
+      if (Number.isFinite(val) && val > 0) return Math.round(val);
+    }
+    return null;
   };
   return {
-    day: read("day", "dayGoalMin"),
-    week: read("week", "weekGoalMin"),
-    month: read("month", "monthGoalMin"),
-    year: read("year", "yearGoalMin"),
-    total: read("total", "totalGoalMin")
+    day: read("day", ["dayGoalMin"]),
+    week: read("week", ["weekGoalMin"]),
+    month: read("month", ["monthGoalMin"]),
+    year: read("year", ["yearGoalMin"]),
+    total: read("total", ["totalGoalMin"])
   };
 }
 
@@ -3599,6 +3603,13 @@ const $habitScheduleSummaryClose = document.getElementById("habit-schedule-summa
 const $habitScheduleSummaryCancel = document.getElementById("habit-schedule-summary-cancel");
 const $habitManualClose = document.getElementById("habit-manual-close");
 const $habitManualCancel = document.getElementById("habit-manual-cancel");
+const $habitRangeGoalsModal = document.getElementById("habit-range-goals-modal");
+const $habitRangeGoalsTitle = document.getElementById("habit-range-goals-title");
+const $habitRangeGoalsClose = document.getElementById("habit-range-goals-close");
+const $habitRangeGoalsCancel = document.getElementById("habit-range-goals-cancel");
+const $habitRangeGoalsClear = document.getElementById("habit-range-goals-clear");
+const $habitRangeGoalsForm = document.getElementById("habit-range-goals-form");
+const $habitRangeGoalsGrid = document.getElementById("habit-range-goals-grid");
 
 const DEFAULT_TIME_INPUT_VALUE = "00:00";
 
@@ -7687,8 +7698,9 @@ function renderHabitUnitSelector() {
     btn.textContent = opt.label;
     btn.addEventListener("click", () => {
       if (habitDurationMode === opt.value) return;
-      habitDurationMode = opt.value;
-      habitPrefs = { ...habitPrefs, analyticsUnit: opt.value };
+      analyticsTimeUnitMode = opt.value;
+      habitDurationMode = analyticsTimeUnitMode;
+      habitPrefs = { ...habitPrefs, analyticsUnit: analyticsTimeUnitMode };
       persistHabitPrefs();
       renderDonut();
       renderLineChart();
@@ -7700,18 +7712,131 @@ function renderHabitUnitSelector() {
   });
 }
 
-function promptRangeGoalEdit(habit, range, currentGoal) {
-  const msg = `Objetivo ${rangeLabelTitle(range)} para ${habit?.name || "hábito"} (minutos)`;
-  const raw = window.prompt(msg, currentGoal ? String(currentGoal) : "");
-  if (raw == null) return;
-  const next = Math.max(0, Math.round(Number(raw) || 0));
-  const goalsByRange = normalizeGoalsByRange(habit.goalsByRange || habit || {});
-  goalsByRange[range] = next > 0 ? next : null;
-  const payload = { ...habit, goalsByRange };
-  habits[habit.id] = payload;
+function renderHabitProgressRow(habit, progressMin, goalMin, options = {}) {
+  const {
+    subtitle = "",
+    rightLabel = "",
+    progressRatio = 0,
+    canOverflow = false,
+    onGoalClick = null,
+    showPercent = false,
+    focusClass = ""
+  } = options;
+  const row = document.createElement("div");
+  row.className = `habit-schedule-row habit-analytics-progress-row ${focusClass}`.trim();
+  setHabitColorVars(row, habit);
+
+  const safeRatio = Math.max(0, Number(progressRatio) || 0);
+  const barWidth = Math.max(2, Math.min(100, safeRatio * 100));
+  const isOverGoal = canOverflow && goalMin > 0 && progressMin > goalMin;
+  if (isOverGoal) row.classList.add("is-over-goal");
+
+  const left = document.createElement("div");
+  left.className = "habit-schedule-name";
+  left.textContent = `${habit?.emoji || "🏷️"} ${habit?.name || "—"}`;
+
+  if (typeof onGoalClick === "function") {
+    const goalBtn = document.createElement("button");
+    goalBtn.type = "button";
+    goalBtn.className = "habit-range-goal-edit";
+    goalBtn.title = "Editar objetivos";
+    goalBtn.textContent = "🎯";
+    goalBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onGoalClick();
+    });
+    left.appendChild(goalBtn);
+  }
+
+  const middle = document.createElement("div");
+  middle.className = "habit-analytics-progress-main";
+  const meta = document.createElement("div");
+  meta.className = "habit-analytics-row-meta";
+  meta.textContent = subtitle;
+  const bar = document.createElement("div");
+  bar.className = "habit-schedule-bar";
+  const fill = document.createElement("span");
+  fill.style.width = `${barWidth.toFixed(2)}%`;
+  bar.appendChild(fill);
+  middle.append(meta, bar);
+
+  const right = document.createElement("div");
+  right.className = "habit-schedule-pct";
+  right.textContent = rightLabel;
+
+  if (showPercent) {
+    const pct = document.createElement("div");
+    pct.className = "habit-analytics-row-right";
+    pct.textContent = `${Math.round(Math.min(999, safeRatio * 100))}%`;
+    right.appendChild(pct);
+  }
+
+  row.append(left, middle, right);
+  return row;
+}
+
+function openRangeGoalsModal(habit) {
+  if (!habit || !$habitRangeGoalsModal) return;
+  $habitRangeGoalsModal.dataset.habitId = habit.id;
+  if ($habitRangeGoalsTitle) $habitRangeGoalsTitle.textContent = `Objetivos — ${habit.emoji || "🏷️"} ${habit.name || "Hábito"}`;
+  if ($habitRangeGoalsGrid) {
+    const goals = normalizeGoalsByRange(habit.goalsByRange || habit || {});
+    const fields = [
+      ["day", "Día"],
+      ["week", "Semana"],
+      ["month", "Mes"],
+      ["year", "Año"],
+      ["total", "Total"]
+    ];
+    $habitRangeGoalsGrid.innerHTML = fields.map(([key, label]) => `
+      <label class="field">
+        <span class="field-label">${label}</span>
+        <input type="number" min="0" step="1" data-goal-range="${key}" value="${goals[key] || ""}" placeholder="Sin objetivo" />
+      </label>
+    `).join("");
+  }
+  $habitRangeGoalsModal.classList.remove("hidden");
+}
+
+function closeRangeGoalsModal() {
+  if (!$habitRangeGoalsModal) return;
+  $habitRangeGoalsModal.classList.add("hidden");
+  delete $habitRangeGoalsModal.dataset.habitId;
+}
+
+function saveRangeGoalsModal({ clear = false } = {}) {
+  const habitId = $habitRangeGoalsModal?.dataset?.habitId;
+  if (!habitId || !habits[habitId]) return;
+  const habit = habits[habitId];
+  const goalsByRange = { day: null, week: null, month: null, year: null, total: null };
+  if (!clear && $habitRangeGoalsGrid) {
+    $habitRangeGoalsGrid.querySelectorAll("[data-goal-range]").forEach((input) => {
+      const key = input.dataset.goalRange;
+      const val = Math.round(Number(input.value) || 0);
+      goalsByRange[key] = val > 0 ? val : null;
+    });
+  }
+  const payload = {
+    ...habit,
+    goalsByRange,
+    goals: {
+      dayMin: goalsByRange.day,
+      weekMin: goalsByRange.week,
+      monthMin: goalsByRange.month,
+      yearMin: goalsByRange.year,
+      totalMin: goalsByRange.total
+    }
+  };
+  habits[habitId] = normalizeHabitModel(payload);
   saveCache();
-  persistHabit(payload);
+  persistHabit(habits[habitId]);
+  closeRangeGoalsModal();
   renderAnalyticsRangePanels();
+}
+
+function promptRangeGoalEdit(habit) {
+  openRangeGoalsModal(habit);
 }
 
 function renderAnalyticsRangePanels() {
@@ -7736,7 +7861,7 @@ function renderAnalyticsRangePanels() {
         row.innerHTML = `
           <div class="habit-analytics-row-main">
             <div class="habit-analytics-row-name">${item.label}</div>
-            <div class="habit-analytics-row-meta">${formatDuration(Math.round(item.totalSec / 60), habitDurationMode)}</div>
+            <div class="habit-analytics-row-meta">${formatDuration(Math.round(item.totalSec / 60), analyticsTimeUnitMode)}</div>
             <div class="habit-analytics-mini-bar"><span style="width:${Math.max(3, Math.min(100, item.percent || 0)).toFixed(2)}%"></span></div>
           </div>
           <div class="habit-analytics-row-right">${(item.percent || 0).toFixed(2)}%</div>`;
@@ -7753,25 +7878,21 @@ function renderAnalyticsRangePanels() {
     if (!used.length) {
       $habitRangeHabitsList.innerHTML = '<div class="habit-range-empty">Sin hábitos con uso en este rango.</div>';
     } else {
+      const maxMinutes = Math.max(1, ...used.map((entry) => entry.minutes));
       used.forEach((row) => {
         const goal = resolveHabitGoalForRange(row.habit, habitDonutRange, start, end);
-        const ratio = goal ? Math.max(0, row.minutes / goal) : (total ? row.minutes / total : 0);
-        const displayPct = goal ? `${Math.round(Math.min(999, ratio * 100))}%` : `${Math.round((ratio || 0) * 100)}%`;
+        const ratio = goal ? Math.max(0, row.minutes / goal) : (row.minutes / maxMinutes);
         const rightText = goal
-          ? `${formatDuration(row.minutes, habitDurationMode)} / ${formatDuration(goal, habitDurationMode)}`
-          : `${formatDuration(row.minutes, habitDurationMode)}`;
-        const div = document.createElement("div");
-        div.className = "habit-analytics-row";
-        setHabitColorVars(div, row.habit);
-        div.innerHTML = `
-          <div class="habit-analytics-row-main">
-            <div class="habit-analytics-row-name">${row.habit.emoji || "🏷️"} ${row.habit.name}</div>
-            <div class="habit-analytics-row-meta">${rightText}<button type="button" class="habit-range-goal-edit" title="Editar objetivo">✏️</button></div>
-            <div class="habit-range-progress"><span style="width:${Math.max(2, Math.min(100, ratio * 100)).toFixed(2)}%"></span></div>
-          </div>
-          <div class="habit-analytics-row-right">${displayPct}</div>`;
-        div.querySelector('.habit-range-goal-edit')?.addEventListener('click', () => promptRangeGoalEdit(row.habit, habitDonutRange, goal));
-        $habitRangeHabitsList.appendChild(div);
+          ? `${formatDuration(row.minutes, analyticsTimeUnitMode)} / ${formatDuration(goal, analyticsTimeUnitMode)}`
+          : `${formatDuration(row.minutes, analyticsTimeUnitMode)}`;
+        const progressRow = renderHabitProgressRow(row.habit, row.minutes, goal, {
+          subtitle: rightText,
+          rightLabel: rightText,
+          progressRatio: ratio,
+          canOverflow: true,
+          onGoalClick: () => promptRangeGoalEdit(row.habit)
+        });
+        $habitRangeHabitsList.appendChild(progressRow);
       });
     }
   }
@@ -7784,10 +7905,11 @@ function renderAnalyticsRangePanels() {
       if ($habitAccRangeUnused) $habitAccRangeUnused.open = false;
     } else {
       unused.forEach((row) => {
-        const div = document.createElement("div");
-        div.className = "habit-analytics-row";
-        setHabitColorVars(div, row.habit);
-        div.innerHTML = `<div class="habit-analytics-row-main"><div class="habit-analytics-row-name">${row.habit.emoji || "🏷️"} ${row.habit.name}</div><div class="habit-analytics-row-meta">Sin uso en ${rangeLabelTitle(habitDonutRange).toLowerCase()}</div></div>`;
+        const div = renderHabitProgressRow(row.habit, 0, null, {
+          subtitle: `Sin uso en ${rangeLabelTitle(habitDonutRange).toLowerCase()}`,
+          rightLabel: formatDuration(0, analyticsTimeUnitMode),
+          progressRatio: 0
+        });
         $habitRangeUnusedList.appendChild(div);
       });
     }
@@ -8808,7 +8930,7 @@ function renderDonut() {
   $habitDonut.style.display = "block";
   if ($habitDonutCenter) $habitDonutCenter.style.display = "flex";
   if (!habitDonutChart) habitDonutChart = echarts.init($habitDonut);
-  if ($habitDonutTotal) $habitDonutTotal.textContent = formatDuration(totalMinutes, habitDurationMode);
+  if ($habitDonutTotal) $habitDonutTotal.textContent = formatDuration(totalMinutes, analyticsTimeUnitMode);
 
   const baseSeriesData = data.map((item, idx) => ({
     name: item.label,
@@ -8834,7 +8956,7 @@ function renderDonut() {
   }
 
   const option = {
-    tooltip: { trigger: "item", formatter: (params) => `${params.name}: ${formatDuration(params.value, habitDurationMode)} (${Number(params.percent || 0).toFixed(2)}%)` },
+    tooltip: { trigger: "item", formatter: (params) => `${params.name}: ${formatDuration(params.value, analyticsTimeUnitMode)} (${Number(params.percent || 0).toFixed(2)}%)` },
     series: [
       {
         type: "pie",
@@ -10636,6 +10758,16 @@ function bindEvents() {
 
   $habitEntryClose?.addEventListener("click", closeEntryModal);
   $habitEntryCancel?.addEventListener("click", closeEntryModal);
+  $habitRangeGoalsClose?.addEventListener("click", closeRangeGoalsModal);
+  $habitRangeGoalsCancel?.addEventListener("click", closeRangeGoalsModal);
+  $habitRangeGoalsClear?.addEventListener("click", () => saveRangeGoalsModal({ clear: true }));
+  $habitRangeGoalsForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveRangeGoalsModal();
+  });
+  $habitRangeGoalsModal?.addEventListener("click", (event) => {
+    if (event.target === $habitRangeGoalsModal) closeRangeGoalsModal();
+  });
   $habitEntryForm?.addEventListener("submit", handleEntrySubmit);
   $habitEntryHabit?.addEventListener("change", refreshEntryModal);
   $habitEntryDate?.addEventListener("change", refreshEntryModal);
@@ -10759,6 +10891,7 @@ function listenRemote() {
     habitPrefs = snap.val() || { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
     if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
     habitDurationMode = ["auto", "min", "h", "d"].includes(habitPrefs.analyticsUnit) ? habitPrefs.analyticsUnit : "auto";
+      analyticsTimeUnitMode = habitDurationMode;
     saveCache();
     renderPins();
     renderQuickSessions();

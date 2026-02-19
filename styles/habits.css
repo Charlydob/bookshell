@@ -1767,7 +1767,8 @@
 
 /* === Habit unit selector (v3) === */
 .habit-unit{
-  margin-top: 8px;
+  margin-top: 0;
+  margin-left: auto;
   display:flex;
   gap: 6px;
   padding: 6px 8px;
@@ -1793,6 +1794,42 @@
   background: rgba(147, 110, 255, 0.22);
   border-color: rgba(147, 110, 255, 0.40);
   color: #f5f7ff;
+}
+
+.habit-analytics-breakdown-head{
+  display:flex;
+  justify-content:flex-end;
+}
+
+.habit-analytics-progress-row{
+  grid-template-columns: minmax(0, 1fr) 1.8fr 132px;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.03);
+}
+
+.habit-analytics-progress-row .habit-schedule-name{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+.habit-analytics-progress-main{ min-width:0; }
+
+.habit-analytics-progress-row.is-over-goal .habit-schedule-bar > span{
+  box-shadow: 0 0 12px rgba(var(--hclr-rgb, 127, 93, 255), .55);
+}
+
+.habit-range-goals-grid{
+  display:grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.habit-range-goals-grid .field:last-child{
+  grid-column: 1 / -1;
 }
 
 
@@ -3753,7 +3790,7 @@ align-items: center;
 .habit-range-goal-head{ font-size:12px; font-weight:700; color:var(--txt-soft); }
 .habit-range-progress{ height:8px; border-radius:999px; background:rgba(255,255,255,.09); overflow:hidden; margin-top:6px; }
 .habit-range-progress > span{ display:block; height:100%; border-radius:999px; background:linear-gradient(90deg, rgba(var(--hclr-rgb,127,93,255),.95), rgba(var(--hclr-rgb,127,93,255),.52)); }
-.habit-range-goal-edit{ margin-left:8px; border:none; background:transparent; color:var(--txt-soft); cursor:pointer; }
+.habit-range-goal-edit{ margin-left:auto; border:none; background:transparent; color:var(--txt-soft); cursor:pointer; font-size:14px; }
 .habit-accordion-nested{ margin-top:8px; }
 .habit-accordion-nested summary{ padding:10px 12px; }
 .habit-range-empty{ color:var(--txt-soft); font-size:12px; padding:8px; }

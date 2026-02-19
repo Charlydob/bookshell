@@ -88,7 +88,7 @@ let habitSessionTimeline = {}; // { habitId: [{startTs,endTs,durationSec,dateKey
 let habitSessionTimelineCoverage = {}; // { habitId: Set<dateKey> } days already backed by timestamped sessions
 let habitCounts = {}; // { habitId: { dateKey: number } }
 let habitGroups = {}; // { groupId: { id, name, createdAt } }
-let habitPrefs = { pinCount: "", pinTime: "", quickSessions: [] };
+let habitPrefs = { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
 let habitUI = { quickCounters: [] };
 let activeTab = "today";
 let runningSession = null; // { startTs }
@@ -110,6 +110,8 @@ let habitLineRange = "7d";
 let habitLineHabit = "total";
 let habitDaysRange = "day";
 let habitLineTooltip = null;
+let habitDurationMode = "auto";
+let habitLastDonutBreakdown = [];
 let habitEditingParams = [];
 let selectedDateKey = todayKey();
 let habitRecordsRange = "month";
@@ -2015,15 +2017,50 @@ function hexToRgbString(hex) {
   return `${r}, ${g}, ${b}`;
 }
 
-function formatMinutes(min) {
-  const safeMin = Math.max(0, Math.round(Number(min) || 0));
+
+function formatDuration(valueMinutes, mode = "auto") {
+  const safeMin = Math.max(0, Math.round(Number(valueMinutes) || 0));
   if (!safeMin) return "0m";
-  if (safeMin >= 60) {
-    const hours = Math.floor(safeMin / 60);
-    const rest = safeMin % 60;
-    return rest ? `${hours}h ${rest}m` : `${hours}h`;
+  const hours = Math.floor(safeMin / 60);
+  const mins = safeMin % 60;
+  const days = Math.floor(hours / 24);
+  const restHours = hours % 24;
+
+  if (mode === "min") return `${safeMin}m`;
+  if (mode === "h") return mins ? `${hours}h ${mins}m` : `${hours}h`;
+  if (mode === "d") {
+    if (!days) return mins ? `${hours}h ${mins}m` : `${hours}h`;
+    return restHours ? `${days}d ${restHours}h` : `${days}d`;
   }
-  return `${safeMin}m`;
+
+  if (safeMin < 60) return `${safeMin}m`;
+  if (safeMin < 24 * 60) return mins ? `${hours}h ${mins}m` : `${hours}h`;
+  return restHours ? `${days}d ${restHours}h` : `${days}d`;
+}
+
+function daysBetweenInclusive(start, end) {
+  if (!(start instanceof Date) || !(end instanceof Date)) return 0;
+  const s = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
+  const e = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+  if (e < s) return 0;
+  return Math.floor((e - s) / 86400000) + 1;
+}
+
+function resolveHabitGoalForRange(habit, range, start, end) {
+  const goals = normalizeGoalsByRange(habit?.goalsByRange || habit || {});
+  if (goals[range]) return goals[range];
+  const dayGoal = goals.day || (Number(habit?.targetMinutes) > 0 ? Math.round(Number(habit.targetMinutes)) : null);
+  if (!dayGoal) return null;
+  if (range === "day") return dayGoal;
+  if (range === "week") return dayGoal * 7;
+  const daysInRange = daysBetweenInclusive(start, end);
+  if (range === "month" || range === "year") return dayGoal * Math.max(1, daysInRange);
+  if (range === "total") return dayGoal * Math.max(1, daysInRange);
+  return null;
+}
+
+function formatMinutes(min) {
+  return formatDuration(min, habitDurationMode);
 }
 
 function formatHoursTotal(minutes) {
@@ -2530,8 +2567,9 @@ function readCache() {
       habitSessions = parsed.habitSessions || {};
       habitCounts = parsed.habitCounts || {};
       habitGroups = parsed.habitGroups || {};
-      habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "", quickSessions: [] };
+      habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
       if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
+      habitDurationMode = ["auto", "min", "h", "d"].includes(habitPrefs.analyticsUnit) ? habitPrefs.analyticsUnit : "auto";
       habitUI = normalizeHabitUI(parsed.habitUI || {});
       scheduleState = normalizeHabitSchedule(parsed.scheduleState || parsed.habitSchedule || createDefaultHabitSchedule());
       const norm = normalizeSessionsStore(habitSessions, false);
@@ -2788,9 +2826,28 @@ function isSystemHabit(habit) {
   return !!habit?.system;
 }
 
+
+function normalizeGoalsByRange(raw = {}) {
+  const read = (key, fallback = null) => {
+    const val = Number(raw?.[key]);
+    if (Number.isFinite(val) && val > 0) return Math.round(val);
+    if (fallback == null) return null;
+    const fb = Number(raw?.[fallback]);
+    return Number.isFinite(fb) && fb > 0 ? Math.round(fb) : null;
+  };
+  return {
+    day: read("day", "dayGoalMin"),
+    week: read("week", "weekGoalMin"),
+    month: read("month", "monthGoalMin"),
+    year: read("year", "yearGoalMin"),
+    total: read("total", "totalGoalMin")
+  };
+}
+
 function normalizeHabitModel(raw) {
   if (!raw || typeof raw !== "object") return null;
   const countMinuteValue = Math.max(1, Math.round(Number(raw.countMinuteValue ?? raw.countUnitMinutes) || 1));
+  const goalsByRange = normalizeGoalsByRange(raw.goalsByRange || raw);
   return {
     ...raw,
     excludeFromDominant: !!raw.excludeFromDominant,
@@ -2799,7 +2856,8 @@ function normalizeHabitModel(raw) {
     countMinuteValue,
     countUnitMinutes: Number.isFinite(Number(raw.countUnitMinutes)) && Number(raw.countUnitMinutes) > 0
       ? Math.round(Number(raw.countUnitMinutes))
-      : countMinuteValue
+      : countMinuteValue,
+    goalsByRange
   };
 }
 
@@ -3372,6 +3430,14 @@ const $habitEvoSelect = document.getElementById("habit-evo-select");
 const $habitEvoRange = document.getElementById("habit-evo-range");
 const $habitLineTotal = document.getElementById("habit-line-total");
 const $habitLineDays = document.getElementById("habit-line-days");
+const $habitUnit = document.getElementById("habit-unit");
+const $habitDonutBreakdownList = document.getElementById("habit-donut-breakdown-list");
+const $habitAccDonutBreakdownMeta = document.getElementById("habit-acc-donut-breakdown-meta");
+const $habitRangeHabitsList = document.getElementById("habit-range-habits-list");
+const $habitAccRangeHabitsMeta = document.getElementById("habit-acc-range-habits-meta");
+const $habitRangeUnusedList = document.getElementById("habit-range-unused-list");
+const $habitAccRangeUnusedTitle = document.getElementById("habit-acc-range-unused-title");
+const $habitAccRangeUnused = document.getElementById("habit-acc-range-unused");
 const $habitGlobalHeatmap = document.getElementById("habit-global-heatmap");
 const $habitHeatmapYear = document.getElementById("habit-heatmap-year");
 const $habitHeatmapSub = document.getElementById("habit-heatmap-sub");
@@ -3881,6 +3947,7 @@ function gatherHabitPayload() {
     groupLowUse,
     params,
     targetMinutes: Number.isFinite(safeTargetMinutes) && safeTargetMinutes > 0 ? safeTargetMinutes : null,
+    goalsByRange: normalizeGoalsByRange(existing?.goalsByRange || existing || {}),
     countMinuteValue: Number.isFinite(safeUnit) && safeUnit > 0 ? Math.round(safeUnit) : null,
     countUnitMinutes: Number.isFinite(safeUnit) && safeUnit > 0 ? Math.round(safeUnit) : null,
     habitScheduleCreditEligible,
@@ -7603,6 +7670,130 @@ function renderLineChart() {
   });
 }
 
+
+function renderHabitUnitSelector() {
+  if (!$habitUnit) return;
+  const opts = [
+    { value: "auto", label: "Auto" },
+    { value: "min", label: "Min" },
+    { value: "h", label: "Horas" },
+    { value: "d", label: "Días" }
+  ];
+  $habitUnit.innerHTML = "";
+  opts.forEach((opt) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `habit-unit-btn${habitDurationMode === opt.value ? " active" : ""}`;
+    btn.textContent = opt.label;
+    btn.addEventListener("click", () => {
+      if (habitDurationMode === opt.value) return;
+      habitDurationMode = opt.value;
+      habitPrefs = { ...habitPrefs, analyticsUnit: opt.value };
+      persistHabitPrefs();
+      renderDonut();
+      renderLineChart();
+      renderAnalyticsRangePanels();
+      renderKPIs();
+      renderPins();
+    });
+    $habitUnit.appendChild(btn);
+  });
+}
+
+function promptRangeGoalEdit(habit, range, currentGoal) {
+  const msg = `Objetivo ${rangeLabelTitle(range)} para ${habit?.name || "hábito"} (minutos)`;
+  const raw = window.prompt(msg, currentGoal ? String(currentGoal) : "");
+  if (raw == null) return;
+  const next = Math.max(0, Math.round(Number(raw) || 0));
+  const goalsByRange = normalizeGoalsByRange(habit.goalsByRange || habit || {});
+  goalsByRange[range] = next > 0 ? next : null;
+  const payload = { ...habit, goalsByRange };
+  habits[habit.id] = payload;
+  saveCache();
+  persistHabit(payload);
+  renderAnalyticsRangePanels();
+}
+
+function renderAnalyticsRangePanels() {
+  const { start, end } = getRangeBounds(habitDonutRange);
+  const allHabits = activeHabits().map((habit) => ({ habit, minutes: minutesForHabitRange(habit, start, end) }));
+  const used = allHabits.filter((row) => row.minutes > 0).sort((a, b) => b.minutes - a.minutes);
+  const unused = allHabits.filter((row) => row.minutes <= 0).sort((a, b) => a.habit.name.localeCompare(b.habit.name, "es"));
+  const total = used.reduce((acc, row) => acc + row.minutes, 0);
+
+  if ($habitAccDonutBreakdownMeta) {
+    $habitAccDonutBreakdownMeta.textContent = `${rangeLabelTitle(habitDonutRange)} · ${habitLastDonutBreakdown.length} segmentos`;
+  }
+  if ($habitDonutBreakdownList) {
+    $habitDonutBreakdownList.innerHTML = "";
+    if (!habitLastDonutBreakdown.length) {
+      $habitDonutBreakdownList.innerHTML = '<div class="habit-range-empty">Sin datos en este rango.</div>';
+    } else {
+      habitLastDonutBreakdown.forEach((item, idx) => {
+        const row = document.createElement("div");
+        row.className = "habit-analytics-row";
+        setSeriesColorVars(row, item, idx);
+        row.innerHTML = `
+          <div class="habit-analytics-row-main">
+            <div class="habit-analytics-row-name">${item.label}</div>
+            <div class="habit-analytics-row-meta">${formatDuration(Math.round(item.totalSec / 60), habitDurationMode)}</div>
+            <div class="habit-analytics-mini-bar"><span style="width:${Math.max(3, Math.min(100, item.percent || 0)).toFixed(2)}%"></span></div>
+          </div>
+          <div class="habit-analytics-row-right">${(item.percent || 0).toFixed(2)}%</div>`;
+        $habitDonutBreakdownList.appendChild(row);
+      });
+    }
+  }
+
+  if ($habitAccRangeHabitsMeta) {
+    $habitAccRangeHabitsMeta.textContent = `${rangeLabelTitle(habitDonutRange)} · ${used.length}/${allHabits.length} activos`;
+  }
+  if ($habitRangeHabitsList) {
+    $habitRangeHabitsList.innerHTML = "";
+    if (!used.length) {
+      $habitRangeHabitsList.innerHTML = '<div class="habit-range-empty">Sin hábitos con uso en este rango.</div>';
+    } else {
+      used.forEach((row) => {
+        const goal = resolveHabitGoalForRange(row.habit, habitDonutRange, start, end);
+        const ratio = goal ? Math.max(0, row.minutes / goal) : (total ? row.minutes / total : 0);
+        const displayPct = goal ? `${Math.round(Math.min(999, ratio * 100))}%` : `${Math.round((ratio || 0) * 100)}%`;
+        const rightText = goal
+          ? `${formatDuration(row.minutes, habitDurationMode)} / ${formatDuration(goal, habitDurationMode)}`
+          : `${formatDuration(row.minutes, habitDurationMode)}`;
+        const div = document.createElement("div");
+        div.className = "habit-analytics-row";
+        setHabitColorVars(div, row.habit);
+        div.innerHTML = `
+          <div class="habit-analytics-row-main">
+            <div class="habit-analytics-row-name">${row.habit.emoji || "🏷️"} ${row.habit.name}</div>
+            <div class="habit-analytics-row-meta">${rightText}<button type="button" class="habit-range-goal-edit" title="Editar objetivo">✏️</button></div>
+            <div class="habit-range-progress"><span style="width:${Math.max(2, Math.min(100, ratio * 100)).toFixed(2)}%"></span></div>
+          </div>
+          <div class="habit-analytics-row-right">${displayPct}</div>`;
+        div.querySelector('.habit-range-goal-edit')?.addEventListener('click', () => promptRangeGoalEdit(row.habit, habitDonutRange, goal));
+        $habitRangeHabitsList.appendChild(div);
+      });
+    }
+  }
+
+  if ($habitAccRangeUnusedTitle) $habitAccRangeUnusedTitle.textContent = `No usados (${unused.length})`;
+  if ($habitRangeUnusedList) {
+    $habitRangeUnusedList.innerHTML = "";
+    if (!unused.length) {
+      $habitRangeUnusedList.innerHTML = '<div class="habit-range-empty">Todos los hábitos tienen uso.</div>';
+      if ($habitAccRangeUnused) $habitAccRangeUnused.open = false;
+    } else {
+      unused.forEach((row) => {
+        const div = document.createElement("div");
+        div.className = "habit-analytics-row";
+        setHabitColorVars(div, row.habit);
+        div.innerHTML = `<div class="habit-analytics-row-main"><div class="habit-analytics-row-name">${row.habit.emoji || "🏷️"} ${row.habit.name}</div><div class="habit-analytics-row-meta">Sin uso en ${rangeLabelTitle(habitDonutRange).toLowerCase()}</div></div>`;
+        $habitRangeUnusedList.appendChild(div);
+      });
+    }
+  }
+}
+
 function getDaysRangeBounds(range) {
   const today = new Date();
   const end = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
@@ -8602,11 +8793,14 @@ function renderDonut() {
   }
 
   if (!data.length || !totalMinutes) {
+    habitLastDonutBreakdown = [];
     if (habitDonutChart) habitDonutChart.clear();
     $habitDonut.style.display = "none";
     if ($habitDonutCenter) $habitDonutCenter.style.display = "none";
     if ($habitDonutLegend) $habitDonutLegend.innerHTML = "";
     if ($habitDonutEmpty) $habitDonutEmpty.style.display = "block";
+    renderAnalyticsRangePanels();
+    renderHabitUnitSelector();
     return;
   }
 
@@ -8614,7 +8808,7 @@ function renderDonut() {
   $habitDonut.style.display = "block";
   if ($habitDonutCenter) $habitDonutCenter.style.display = "flex";
   if (!habitDonutChart) habitDonutChart = echarts.init($habitDonut);
-  if ($habitDonutTotal) $habitDonutTotal.textContent = formatMinutes(totalMinutes);
+  if ($habitDonutTotal) $habitDonutTotal.textContent = formatDuration(totalMinutes, habitDurationMode);
 
   const baseSeriesData = data.map((item, idx) => ({
     name: item.label,
@@ -8640,7 +8834,7 @@ function renderDonut() {
   }
 
   const option = {
-    tooltip: { trigger: "item", formatter: "{b}: {c}m ({d}%)" },
+    tooltip: { trigger: "item", formatter: (params) => `${params.name}: ${formatDuration(params.value, habitDurationMode)} (${Number(params.percent || 0).toFixed(2)}%)` },
     series: [
       {
         type: "pie",
@@ -8677,6 +8871,11 @@ function renderDonut() {
   const legendData = paramModel?.slices || data;
   const legendGroups = paramModel?.groups || null;
   renderDonutLegend(legendData, totalSec, legendGroups, groupColorByKey);
+  habitLastDonutBreakdown = data
+    .map((item) => ({ ...item, percent: totalSec ? (item.totalSec / totalSec) * 100 : 0 }))
+    .sort((a, b) => b.totalSec - a.totalSec);
+  renderAnalyticsRangePanels();
+  renderHabitUnitSelector();
 }
 
 function renderDonutLegend(data, totalSec, groups = null, groupColorByKey = null) {
@@ -10557,8 +10756,9 @@ function listenRemote() {
   });
 
   onValue(ref(db, HABIT_PREFS_PATH), (snap) => {
-    habitPrefs = snap.val() || { pinCount: "", pinTime: "", quickSessions: [] };
+    habitPrefs = snap.val() || { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
     if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
+    habitDurationMode = ["auto", "min", "h", "d"].includes(habitPrefs.analyticsUnit) ? habitPrefs.analyticsUnit : "auto";
     saveCache();
     renderPins();
     renderQuickSessions();

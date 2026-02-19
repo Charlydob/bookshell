@@ -1031,7 +1031,6 @@
 <div class="habit-donut-center" id="habit-donut-center">
 <div class="habit-donut-label">Tiempo</div>
 <div class="habit-donut-total" id="habit-donut-total">0m</div>
-<div class="habit-unit" id="habit-unit" aria-label="Unidad de tiempo"></div>
 </div>
 </div>
   <div class="empty-state small" id="habit-donut-empty" style="display:none;">
@@ -1087,6 +1086,9 @@
 <div class="habit-accordion-meta" id="habit-acc-donut-breakdown-meta">—</div>
 </summary>
 <div class="habit-accordion-body">
+<div class="habit-analytics-breakdown-head">
+  <div class="habit-unit" id="habit-unit" aria-label="Unidad de tiempo"></div>
+</div>
 <div class="habit-ranking-list habit-analytics-breakdown-list" id="habit-donut-breakdown-list"></div>
 </div>
 </details>
@@ -2866,6 +2868,29 @@ Crear “<span id="gym-create-cta-text"></span>”
 <button class="btn ghost" id="habit-day-detail-cancel" type="button">Cerrar</button>
 <button class="btn primary" id="habit-day-detail-save" type="button">Guardar</button>
 </div>
+</div>
+</div>
+<!-- MODAL OBJETIVOS POR RANGO -->
+<div class="modal-backdrop hidden" id="habit-range-goals-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="habit-range-goals-title">Objetivos — Hábito</div>
+<button class="icon-btn" id="habit-range-goals-close" type="button">✕</button>
+</div>
+<form class="modal-form" id="habit-range-goals-form">
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Objetivos por rango (minutos)</div>
+<div class="habit-range-goals-grid" id="habit-range-goals-grid"></div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-range-goals-clear" type="button">Limpiar objetivos</button>
+<button class="btn ghost" id="habit-range-goals-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
 </div>
 </div>
 <!-- MODAL RESUMEN HORARIO -->

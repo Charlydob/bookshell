@@ -1598,9 +1598,11 @@ body.is-session-detail-open #app {
   height: 30px;
   border-radius: 999px;
   display: grid;
+  padding: 0px;
+  font-size: 29px;
   place-items: center;
-  border: 1px solid rgba(255,255,255,0.2);
-  background: rgba(0,0,0,0.24);
+  border: 0px solid rgba(255,255,255,0.2);
+  background: rgba(0, 0, 0, 0);
 }
 
 .habit-session-detail {
@@ -1637,7 +1639,9 @@ body.is-session-detail-open #app {
   margin: 0 auto;
 }
 
-.habit-session-detail-header { display: flex; flex-direction: row;
+.habit-session-detail-header { 
+  margin-top: 20px;
+  display: flex; flex-direction: row;
   justify-content: space-between;
   
   gap: 8px; }
@@ -1656,19 +1660,20 @@ body.is-session-detail-open #app {
   font-size: 20px;
 }
 .habit-session-detail-timer {
+  margin-top: 40%;
   text-align: center;
-  font-size: clamp(44px, 15vw, 88px);
+  font-size: clamp(104px, 10vw, 108px);
   font-weight: 900;
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
 }
 .habit-session-detail-controls { display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(10px, 1fr));
    gap: 8px; }
-.habit-session-detail-controls .btn { min-height: 44px; border-width: 1px; }
+.habit-session-detail-controls .btn { min-height: 44px; border-width: 1px; padding: 0; }
 .habit-session-detail-adjusts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .habit-session-btn-primary { font-weight: 700; }
-.habit-session-btn-secondary { opacity: 0.95; }
+.habit-session-btn-secondary { opacity: 0.95; padding: 0px;}
 
 .habit-session-stats {
   display: grid;

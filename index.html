@@ -1176,12 +1176,37 @@
 </div>
 </div>
 <div class="habit-session-overlay hidden" id="habit-session-overlay">
-<div class="habit-session-pill">
+<div class="habit-session-pill" id="habit-session-pill">
 <div>
 <div class="habit-session-label">Sesión en curso</div>
 <div class="habit-session-time" id="habit-session-time">00:00</div>
 </div>
+<div class="habit-session-emoji" id="habit-session-emoji" aria-hidden="true">•</div>
 <button class="btn danger btn-compact" id="habit-session-stop">⏹ Parar</button>
+</div>
+</div>
+<div class="habit-session-detail hidden" id="habit-session-detail" role="dialog" aria-modal="true" aria-hidden="true">
+<div class="habit-session-detail-panel">
+<header class="habit-session-detail-header">
+<button class="icon-btn" id="habit-session-detail-close" type="button" aria-label="Cerrar">✕</button>
+<div class="habit-session-detail-head-main">
+<div class="habit-session-detail-emoji" id="habit-session-detail-emoji">•</div>
+<div>
+<div class="habit-session-detail-title" id="habit-session-detail-title">Hábito</div>
+<div class="habit-session-detail-sub">Sesión en curso</div>
+</div>
+</div>
+</header>
+<div class="habit-session-detail-timer" id="habit-session-detail-timer">00:00</div>
+<div class="habit-session-detail-controls">
+<button class="btn danger" id="habit-session-detail-stop" type="button">⏹ Parar</button>
+<button class="btn" id="habit-session-detail-pause" type="button">⏸ Pausa</button>
+<div class="habit-session-detail-adjusts">
+<button class="btn ghost" id="habit-session-detail-minus" type="button">−1 min</button>
+<button class="btn ghost" id="habit-session-detail-plus" type="button">+1 min</button>
+</div>
+</div>
+<section class="habit-session-ranking" id="habit-session-ranking"></section>
 </div>
 </div>
 <div class="habit-detail-overlay hidden" id="habit-detail-overlay" role="dialog" aria-modal="true" aria-hidden="true">

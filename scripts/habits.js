@@ -91,8 +91,10 @@ let habitGroups = {}; // { groupId: { id, name, createdAt } }
 let habitPrefs = { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
 let habitUI = { quickCounters: [] };
 let activeTab = "today";
-let runningSession = null; // { startTs }
+let runningSession = null; // { startTs, targetHabitId, elapsedMs, isPaused, pausedAt }
 let sessionInterval = null;
+let sessionDetailOpen = false;
+let sessionLastRankKey = "";
 let pendingSessionDuration = 0;
 let heatmapYear = new Date().getFullYear();
 let habitHistoryRange = "week";
@@ -837,10 +839,11 @@ function computeHabitDayTotals(habitId, dayKey, dayCloseTime = "00:00", options 
   let doneMin = Math.max(0, Math.round(byDay.get(dayKey) || 0));
 
   if (includeRunning && runningSession?.targetHabitId === habitId) {
-    splitSpanByDay(runningSession.startTs, Date.now(), dayCloseTime).forEach((chunk) => {
-      if (chunk.dayKey !== dayKey) return;
-      doneMin = Math.max(0, Math.round(doneMin + chunk.minutes));
-    });
+    const liveDayKey = scheduleDayKeyFromTs(Date.now(), dayCloseTime);
+    if (liveDayKey === dayKey) {
+      const liveMinutes = getRunningElapsedSec(runningSession) / 60;
+      doneMin = Math.max(0, Math.round(doneMin + liveMinutes));
+    }
   }
 
   const totals = { doneMin, doneCount };
@@ -2640,14 +2643,52 @@ function loadRunningSession() {
   try {
     const raw = localStorage.getItem(RUNNING_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && parsed.startTs) {
-        runningSession = parsed;
-      }
+      runningSession = normalizeRunningSession(JSON.parse(raw));
     }
   } catch (err) {
     console.warn("No se pudo leer sesión activa", err);
   }
+}
+
+function normalizeRunningSession(raw) {
+  if (!raw || !raw.startTs) return null;
+  return {
+    startTs: Number(raw.startTs) || Date.now(),
+    sessionStartTs: Number(raw.sessionStartTs) || Number(raw.startTs) || Date.now(),
+    targetHabitId: raw.targetHabitId || null,
+    meta: raw.meta && typeof raw.meta === "object" ? { ...raw.meta } : null,
+    elapsedMs: Math.max(0, Number(raw.elapsedMs) || 0),
+    isPaused: !!raw.isPaused,
+    pausedAt: Number(raw.pausedAt) || null
+  };
+}
+
+function getRunningElapsedMs(session = runningSession, nowTs = Date.now()) {
+  if (!session) return 0;
+  const base = Math.max(0, Number(session.elapsedMs) || 0);
+  if (session.isPaused) return base;
+  const startTs = Number(session.startTs) || nowTs;
+  return Math.max(0, base + (nowTs - startTs));
+}
+
+function getRunningElapsedSec(session = runningSession, nowTs = Date.now()) {
+  return Math.max(0, Math.round(getRunningElapsedMs(session, nowTs) / 1000));
+}
+
+function getSessionHabitMeta(session = runningSession) {
+  const habit = session?.targetHabitId ? habits?.[session.targetHabitId] : null;
+  const fallbackName = session?.meta?.habitName || "Sesión";
+  const name = habit?.name || fallbackName;
+  const emoji = habit?.emoji || session?.meta?.habitEmoji || (name ? String(name).trim().charAt(0) : "•") || "•";
+  const color = habit?.color || session?.meta?.habitColor || DEFAULT_COLOR;
+  return { habit, name, emoji, color };
+}
+
+function formatHHMM(totalMinutes) {
+  const safe = Math.max(0, Math.round(Number(totalMinutes) || 0));
+  const h = Math.floor(safe / 60).toString().padStart(2, "0");
+  const m = (safe % 60).toString().padStart(2, "0");
+  return `${h}:${m}`;
 }
 
 function sortedHabitGroups() {
@@ -3473,6 +3514,18 @@ const $habitFab = document.getElementById("habit-session-toggle");
 const $habitOverlay = document.getElementById("habit-session-overlay");
 const $habitOverlayTime = document.getElementById("habit-session-time");
 const $habitOverlayStop = document.getElementById("habit-session-stop");
+const $habitOverlayPill = document.getElementById("habit-session-pill");
+const $habitOverlayEmoji = document.getElementById("habit-session-emoji");
+const $habitSessionDetail = document.getElementById("habit-session-detail");
+const $habitSessionDetailClose = document.getElementById("habit-session-detail-close");
+const $habitSessionDetailEmoji = document.getElementById("habit-session-detail-emoji");
+const $habitSessionDetailTitle = document.getElementById("habit-session-detail-title");
+const $habitSessionDetailTimer = document.getElementById("habit-session-detail-timer");
+const $habitSessionDetailStop = document.getElementById("habit-session-detail-stop");
+const $habitSessionDetailPause = document.getElementById("habit-session-detail-pause");
+const $habitSessionDetailMinus = document.getElementById("habit-session-detail-minus");
+const $habitSessionDetailPlus = document.getElementById("habit-session-detail-plus");
+const $habitSessionRanking = document.getElementById("habit-session-ranking");
 const $habitDaysList = document.getElementById("habit-days-list");
 const $habitDetailOverlay = document.getElementById("habit-detail-overlay");
 const $habitDetailClose = document.getElementById("habit-detail-close");
@@ -9728,11 +9781,15 @@ function startSession(habitId = null, meta = null) {
     ? habitId
     : null;
 
-  runningSession = {
+  runningSession = normalizeRunningSession({
     startTs: Date.now(),
+    sessionStartTs: Date.now(),
     targetHabitId,
-    meta: meta && typeof meta === "object" ? { ...meta } : null
-  };
+    meta: meta && typeof meta === "object" ? { ...meta } : null,
+    elapsedMs: 0,
+    isPaused: false,
+    pausedAt: null
+  });
   saveRunningSession();
   updateSessionUI();
   updateCompareLiveInterval();
@@ -9741,7 +9798,7 @@ function startSession(habitId = null, meta = null) {
 }
 
 function getRunningHabitSession() {
-  return runningSession ? { ...runningSession } : null;
+  return runningSession ? { ...runningSession, elapsedSec: getRunningElapsedSec() } : null;
 }
 
 function startHabitSessionUniversal(habitId, meta = null) {
@@ -9752,8 +9809,43 @@ function stopHabitSessionUniversal() {
   return stopSession(null, true);
 }
 
+function pauseRunningSession() {
+  if (!runningSession || runningSession.isPaused) return;
+  runningSession.elapsedMs = getRunningElapsedMs(runningSession);
+  runningSession.isPaused = true;
+  runningSession.pausedAt = Date.now();
+  saveRunningSession();
+}
+
+function resumeRunningSession() {
+  if (!runningSession || !runningSession.isPaused) return;
+  runningSession.startTs = Date.now();
+  runningSession.isPaused = false;
+  runningSession.pausedAt = null;
+  saveRunningSession();
+}
+
+function togglePauseRunningSession() {
+  if (!runningSession) return;
+  if (runningSession.isPaused) resumeRunningSession();
+  else pauseRunningSession();
+  updateSessionUI();
+}
+
+function adjustRunningSessionByMinutes(deltaMin = 0) {
+  if (!runningSession) return;
+  const deltaMs = Math.round((Number(deltaMin) || 0) * 60000);
+  const currentMs = getRunningElapsedMs(runningSession);
+  const nextMs = Math.max(0, currentMs + deltaMs);
+  // Ajuste +/-1min seguro: persistimos offset sin romper el conteo en vivo.
+  runningSession.elapsedMs = nextMs;
+  runningSession.startTs = Date.now();
+  if (runningSession.isPaused) runningSession.pausedAt = Date.now();
+  saveRunningSession();
+  updateSessionUI();
+}
+
 function stopSession(assignHabitId = null, silent = false) {
-  // si viene como handler de click, el primer arg será un Event
   if (assignHabitId && typeof assignHabitId === "object" && assignHabitId.type) {
     assignHabitId = null;
     silent = false;
@@ -9761,36 +9853,36 @@ function stopSession(assignHabitId = null, silent = false) {
 
   if (!runningSession) return;
 
-  const duration = Math.max(1, Math.round((Date.now() - runningSession.startTs) / 1000));
+  const duration = Math.max(1, getRunningElapsedSec(runningSession));
   const target = (typeof assignHabitId === "string" && assignHabitId)
     ? assignHabitId
     : (runningSession?.targetHabitId || null);
 
-  const startTs = runningSession.startTs;
+  const startTs = Number(runningSession.sessionStartTs || runningSession.startTs);
   const endTs = Date.now();
   const dateKey = dateKeyLocal(new Date(startTs));
 
   pendingSessionDuration = duration;
   runningSession = null;
+  closeSessionDetailOverlay();
   saveRunningSession();
   if (sessionInterval) clearInterval(sessionInterval);
   updateSessionUI();
   updateCompareLiveInterval();
   scheduleCompareRefresh("session:stop", { dateKey, durationSec: duration });
 
-  // Auto-asignación (Shortcuts / enlace)
   if (target && habits?.[target] && !habits[target]?.archived) {
     const splitByDay = splitSessionByDay(startTs, endTs);
     const splitSummary = {};
-    if (splitByDay.size > 1) {
-      splitByDay.forEach((minutes, day) => {
-        splitSummary[day] = Math.round(minutes);
-      });
-      console.log("[HABIT] split across days", splitSummary);
-    }
+    let totalSplitSec = 0;
+    splitByDay.forEach((minutes) => { totalSplitSec += Math.max(0, Math.round(minutes * 60)); });
+    const scale = totalSplitSec > 0 ? duration / totalSplitSec : 1;
     splitByDay.forEach((minutes, day) => {
-      const sec = Math.max(0, Math.round(minutes * 60));
-      if (sec > 0) addHabitTimeSec(target, day, sec, { startTs, endTs });
+      const sec = Math.max(0, Math.round(minutes * 60 * scale));
+      if (sec > 0) {
+        splitSummary[day] = sec;
+        addHabitTimeSec(target, day, sec, { startTs, endTs });
+      }
     });
     const savedPayload = { targetHabitId: target, startTs, endTs, durationSec: duration, splitByDay: splitSummary };
     console.warn("[STOP] saved session", savedPayload);
@@ -9804,7 +9896,6 @@ function stopSession(assignHabitId = null, silent = false) {
     return;
   }
 
-  // flujo normal: abrir selector
   openSessionModal();
 }
 
@@ -9814,22 +9905,111 @@ function ensureSessionOverlayInBody() {
   }
 }
 
+function openSessionDetailOverlay() {
+  if (!runningSession || !$habitSessionDetail) return;
+  sessionDetailOpen = true;
+  $habitSessionDetail.classList.remove("hidden");
+  $habitSessionDetail.setAttribute("aria-hidden", "false");
+  document.body.classList.add("is-session-detail-open");
+}
+
+function closeSessionDetailOverlay() {
+  if (!$habitSessionDetail) return;
+  sessionDetailOpen = false;
+  $habitSessionDetail.classList.add("hidden");
+  $habitSessionDetail.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("is-session-detail-open");
+}
+
+function getTotalMinutesStoredByHabit(habitId) {
+  const byDate = habitSessions?.[habitId] || {};
+  let total = 0;
+  Object.keys(byDate).forEach((dayKey) => {
+    total += Math.round(getHabitTotalSecForDate(habitId, dayKey) / 60);
+  });
+  return Math.max(0, total);
+}
+
+function buildSessionRanking() {
+  const activeId = runningSession?.targetHabitId;
+  if (!activeId) return null;
+  const liveMinutes = getRunningElapsedSec() / 60;
+  const rows = activeHabits().map((habit) => {
+    const stored = getTotalMinutesStoredByHabit(habit.id);
+    const total = stored + (habit.id === activeId ? liveMinutes : 0);
+    return { habit, total };
+  }).sort((a, b) => b.total - a.total);
+  const index = rows.findIndex((row) => row.habit.id === activeId);
+  return {
+    current: rows[index] || null,
+    ahead: index > 0 ? rows[index - 1] : null,
+    behind: index >= 0 && index < rows.length - 1 ? rows[index + 1] : null,
+    rank: index + 1,
+    total: rows.length
+  };
+}
+
+function renderSessionRanking() {
+  if (!$habitSessionRanking) return;
+  const ranking = buildSessionRanking();
+  if (!ranking || !ranking.current) {
+    $habitSessionRanking.innerHTML = "";
+    return;
+  }
+  const key = `${ranking.rank}|${ranking.ahead?.habit?.id || "top"}|${ranking.behind?.habit?.id || "last"}`;
+  if (sessionLastRankKey && sessionLastRankKey !== key) {
+    // Ranking + swap: detectamos cambio de puesto y disparamos transición suave.
+    $habitSessionRanking.classList.add("is-swapping");
+    setTimeout(() => $habitSessionRanking?.classList.remove("is-swapping"), 320);
+  }
+  sessionLastRankKey = key;
+
+  const card = (row, opts = {}) => {
+    if (!row && opts.kind === "ahead") return '<article class="habit-session-rank-card"><div class="habit-session-rank-emoji">👑</div><div class="habit-session-rank-name">#1 Top</div><div class="habit-session-rank-total">—</div></article>';
+    if (!row && opts.kind === "behind") return '<article class="habit-session-rank-card"><div class="habit-session-rank-emoji">—</div><div class="habit-session-rank-name">Último</div><div class="habit-session-rank-total">—</div></article>';
+    if (!row) return "";
+    const emoji = row.habit?.emoji || "•";
+    const shortName = String(row.habit?.name || "Hábito").slice(0, 12);
+    const totalLabel = formatHHMM(row.total);
+    return `<article class="habit-session-rank-card ${opts.active ? "is-active" : ""}"><div class="habit-session-rank-emoji">${emoji}</div><div class="habit-session-rank-name">${shortName}</div><div class="habit-session-rank-total">${totalLabel}</div></article>`;
+  };
+
+  $habitSessionRanking.innerHTML = [
+    card(ranking.behind, { kind: "behind" }),
+    card(ranking.current, { active: true }),
+    card(ranking.ahead, { kind: "ahead" })
+  ].join("");
+}
+
 function updateSessionUI() {
   const isRunning = !!runningSession;
   const habitsVisible = document.getElementById("view-habits")?.classList.contains("view-active");
   if (isRunning) {
-    const elapsed = Math.max(0, Math.round((Date.now() - runningSession.startTs) / 1000));
+    const elapsed = getRunningElapsedSec(runningSession);
+    const { name, emoji, color } = getSessionHabitMeta(runningSession);
     $habitOverlayTime.textContent = formatTimer(elapsed);
+    if ($habitSessionDetailTimer) $habitSessionDetailTimer.textContent = formatTimer(elapsed);
+    if ($habitOverlayEmoji) $habitOverlayEmoji.textContent = emoji || "•";
+    if ($habitSessionDetailEmoji) $habitSessionDetailEmoji.textContent = emoji || "•";
+    if ($habitSessionDetailTitle) $habitSessionDetailTitle.textContent = name || "Sesión";
+    if ($habitSessionDetailPause) $habitSessionDetailPause.textContent = runningSession.isPaused ? "▶ Continuar" : "⏸ Pausa";
+    // Tinte por color del hábito activo (pill + overlay) usando --hclr-rgb.
+    const rgb = hexToRgbString(color || DEFAULT_COLOR);
+    $habitOverlayPill?.style.setProperty("--hclr-rgb", rgb);
+    $habitSessionDetail?.style.setProperty("--hclr-rgb", rgb);
+    renderSessionRanking();
   }
+  if (!isRunning) closeSessionDetailOverlay();
   $habitOverlay.classList.toggle("hidden", !isRunning || !habitsVisible);
   $habitFab.textContent = isRunning ? "⏹ Parar sesión" : "▶︎ Empezar sesión";
   updateScheduleLiveInterval();
 }
 
 function formatTimer(sec) {
-  const m = Math.floor(sec / 60).toString().padStart(2, "0");
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60).toString().padStart(2, "0");
   const s = Math.floor(sec % 60).toString().padStart(2, "0");
-  return `${m}:${s}`;
+  return h > 0 ? `${String(h).padStart(2, "0")}:${m}:${s}` : `${m}:${s}`;
 }
 
 function updateSessionModalViewportPadding() {
@@ -10749,7 +10929,18 @@ function bindEvents() {
       startSession();
     }
   });
+  $habitOverlayPill?.addEventListener("click", (event) => {
+    if (!runningSession) return;
+    if (event.target?.closest?.("#habit-session-stop")) return;
+    openSessionDetailOverlay();
+    updateSessionUI();
+  });
   $habitOverlayStop.addEventListener("click", stopSession);
+  $habitSessionDetailStop?.addEventListener("click", stopSession);
+  $habitSessionDetailClose?.addEventListener("click", closeSessionDetailOverlay);
+  $habitSessionDetailPause?.addEventListener("click", togglePauseRunningSession);
+  $habitSessionDetailPlus?.addEventListener("click", () => adjustRunningSessionByMinutes(1));
+  $habitSessionDetailMinus?.addEventListener("click", () => adjustRunningSessionByMinutes(-1));
 
   $habitSessionClose.addEventListener("click", closeSessionModal);
   $habitSessionCancel.addEventListener("click", closeSessionModal);

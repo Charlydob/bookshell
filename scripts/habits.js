@@ -3709,6 +3709,9 @@ function setHabitCount(habitId, dateKey, value) {
 
   persistHabitCount(habitId, dateKey, safe > 0 ? safe : null);
   invalidateDominantCache(dateKey);
+  if (dateKey === todayKey()) {
+    updateQuickCounterTileState(habitId, safe);
+  }
   renderHabitsPreservingTodayUI();
 }
 
@@ -9335,6 +9338,14 @@ function renderQuickCounters() {
     if (!habit) return;
     const btn = document.createElement("div");
     btn.className = "quick-counter-btn";
+    btn.dataset.habitId = habit.id;
+    btn.style.setProperty("--hclr", habit.color || DEFAULT_COLOR);
+    btn.style.setProperty("--hclr-rgb", hexToRgbString(habit.color || DEFAULT_COLOR));
+
+    const dateKey = todayKey();
+    // countToday gobierna glow + badge de los contadores rápidos fijados.
+    const countToday = getHabitCount(habit.id, dateKey);
+    if (countToday > 0) btn.classList.add("is-counted-today");
 
     btn.style.background = `
       radial-gradient(circle at top,
@@ -9346,6 +9357,7 @@ function renderQuickCounters() {
     btn.innerHTML = `
       <div class="quick-counter-emoji">${habit.emoji || "🏷️"}</div>
       <div class="quick-counter-name">${habit.name || "Contador"}</div>
+      ${countToday > 0 ? `<span class="quick-counter-badge" aria-label="Contado hoy">${countToday}</span>` : ""}
     `;
 
     btn.onclick = () => incrementCounterHabit(habit.id);
@@ -9356,6 +9368,34 @@ function renderQuickCounters() {
   if (!quickIds.length) {
     $quickCountersBody.classList.remove("open");
     $quickCountersWrap?.classList.remove("is-open");
+  }
+}
+
+function updateQuickCounterTileState(habitId, countToday, { animate = false } = {}) {
+  const tile = $quickCountersGrid?.querySelector(`.quick-counter-btn[data-habit-id="${habitId}"]`);
+  if (!tile) return;
+
+  // Clase visual para feedback inmediato cuando hoy > 0.
+  tile.classList.toggle("is-counted-today", countToday > 0);
+
+  let badge = tile.querySelector(".quick-counter-badge");
+  if (countToday > 0) {
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "quick-counter-badge";
+      badge.setAttribute("aria-label", "Contado hoy");
+      tile.appendChild(badge);
+    }
+    badge.textContent = String(countToday);
+  } else if (badge) {
+    badge.remove();
+  }
+
+  if (animate) {
+    tile.classList.remove("is-pop");
+    void tile.offsetWidth;
+    tile.classList.add("is-pop");
+    window.setTimeout(() => tile.classList.remove("is-pop"), 180);
   }
 }
 
@@ -9379,6 +9419,8 @@ function incrementCounterHabit(habitId) {
   if (!habitCounts[habitId]) habitCounts[habitId] = {};
   habitCounts[habitId][dateKey] = next;
   saveCache();
+
+  updateQuickCounterTileState(habitId, next, { animate: true });
 
   const per = Math.round(Number(habit.countUnitMinutes) || 0);
   if ((habit.goal || "check") === "count" && per > 0) {

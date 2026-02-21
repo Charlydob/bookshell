@@ -95,6 +95,8 @@ let runningSession = null; // { startTs, targetHabitId, elapsedMs, isPaused, pau
 let sessionInterval = null;
 let sessionDetailOpen = false;
 let sessionLastRankKey = "";
+let sessionLastRankPosition = null;
+let sessionBodyOverflowBackup = "";
 let pendingSessionDuration = 0;
 let heatmapYear = new Date().getFullYear();
 let habitHistoryRange = "week";
@@ -3525,6 +3527,7 @@ const $habitSessionDetailStop = document.getElementById("habit-session-detail-st
 const $habitSessionDetailPause = document.getElementById("habit-session-detail-pause");
 const $habitSessionDetailMinus = document.getElementById("habit-session-detail-minus");
 const $habitSessionDetailPlus = document.getElementById("habit-session-detail-plus");
+const $habitSessionStats = document.getElementById("habit-session-stats");
 const $habitSessionRanking = document.getElementById("habit-session-ranking");
 const $habitDaysList = document.getElementById("habit-days-list");
 const $habitDetailOverlay = document.getElementById("habit-detail-overlay");
@@ -8490,6 +8493,16 @@ function timeShareByHabit(range) {
     .sort((a, b) => b.minutes - a.minutes);
 }
 
+function getHabitTotalsAllTime() {
+  const entries = buildTimeEntries("total", "getHabitTotalsAllTime");
+  return aggregateEntries(entries, "habit").map((item) => ({
+    habitId: item.habit?.id || item.key,
+    totalMs: Math.max(0, Math.round((Number(item.totalSec) || 0) * 1000)),
+    totalSec: Math.max(0, Number(item.totalSec) || 0),
+    habit: item.habit || habits?.[item.habit?.id] || null
+  }));
+}
+
 function buildTimeEntries(range, reason = "recompute") {
   const { start, end } = getRangeBounds(range);
   const dataset = computeTimeByHabitDataset({
@@ -8957,7 +8970,16 @@ function renderDonut() {
   const groupedModel = isGrouped
     ? buildGroupedHabitDonutModel(entries, habitDonutGroupMode.cat)
     : null;
-  const data = isGrouped ? groupedModel.habits : aggregateEntries(entries, "habit");
+  const data = isGrouped
+    ? groupedModel.habits
+    : (habitDonutRange === "total"
+      ? getHabitTotalsAllTime().map((item) => ({
+        key: item.habitId,
+        label: item.habit?.name || UNKNOWN_HABIT_NAME,
+        totalSec: Math.round(item.totalMs / 1000),
+        habit: item.habit || habits?.[item.habitId] || null
+      }))
+      : aggregateEntries(entries, "habit"));
   const totalSec = isGrouped
     ? groupedModel.totalSec
     : data.reduce((acc, item) => acc + item.totalSec, 0);
@@ -9794,7 +9816,7 @@ function startSession(habitId = null, meta = null) {
   updateSessionUI();
   updateCompareLiveInterval();
   scheduleCompareRefresh("session:start", { targetHabitId: targetHabitId || null });
-  sessionInterval = setInterval(updateSessionUI, 1000);
+  sessionInterval = setInterval(updateSessionUI, 500);
 }
 
 function getRunningHabitSession() {
@@ -9910,6 +9932,8 @@ function openSessionDetailOverlay() {
   sessionDetailOpen = true;
   $habitSessionDetail.classList.remove("hidden");
   $habitSessionDetail.setAttribute("aria-hidden", "false");
+  sessionBodyOverflowBackup = document.body.style.overflow;
+  document.body.style.overflow = "hidden";
   document.body.classList.add("is-session-detail-open");
 }
 
@@ -9918,35 +9942,48 @@ function closeSessionDetailOverlay() {
   sessionDetailOpen = false;
   $habitSessionDetail.classList.add("hidden");
   $habitSessionDetail.setAttribute("aria-hidden", "true");
+  document.body.style.overflow = sessionBodyOverflowBackup || "";
+  sessionBodyOverflowBackup = "";
   document.body.classList.remove("is-session-detail-open");
-}
-
-function getTotalMinutesStoredByHabit(habitId) {
-  const byDate = habitSessions?.[habitId] || {};
-  let total = 0;
-  Object.keys(byDate).forEach((dayKey) => {
-    total += Math.round(getHabitTotalSecForDate(habitId, dayKey) / 60);
-  });
-  return Math.max(0, total);
 }
 
 function buildSessionRanking() {
   const activeId = runningSession?.targetHabitId;
   if (!activeId) return null;
-  const liveMinutes = getRunningElapsedSec() / 60;
+  const runningMs = Math.max(0, getRunningElapsedMs(runningSession));
+  const totalsByHabitId = new Map(getHabitTotalsAllTime().map((item) => [item.habitId, item]));
   const rows = activeHabits().map((habit) => {
-    const stored = getTotalMinutesStoredByHabit(habit.id);
-    const total = stored + (habit.id === activeId ? liveMinutes : 0);
-    return { habit, total };
-  }).sort((a, b) => b.total - a.total);
+    const base = totalsByHabitId.get(habit.id);
+    const baseMs = base?.totalMs || 0;
+    const totalMs = baseMs + (habit.id === activeId ? runningMs : 0);
+    return { habit, totalMs };
+  }).sort((a, b) => b.totalMs - a.totalMs);
   const index = rows.findIndex((row) => row.habit.id === activeId);
+  const current = rows[index] || null;
   return {
-    current: rows[index] || null,
+    current,
     ahead: index > 0 ? rows[index - 1] : null,
     behind: index >= 0 && index < rows.length - 1 ? rows[index + 1] : null,
     rank: index + 1,
-    total: rows.length
+    total: rows.length,
+    runningMs,
+    activeTotalLiveMs: current?.totalMs || 0
   };
+}
+
+function renderSessionStats(ranking) {
+  if (!$habitSessionStats || !ranking?.current) return;
+  const habit = ranking.current.habit;
+  const todaySec = getHabitTotalSecForDate(habit.id, todayKey());
+  const goal = resolveHabitGoalForRange(habit, "day");
+  const rows = [`<article class="habit-session-stat-item"><div class="habit-session-stat-label">Total (all-time)</div><div class="habit-session-stat-value">${formatDuration(Math.round(ranking.activeTotalLiveMs / 60000), analyticsTimeUnitMode)}</div></article>`];
+  if (todaySec > 0) {
+    rows.push(`<article class="habit-session-stat-item"><div class="habit-session-stat-label">Hoy</div><div class="habit-session-stat-value">${formatDuration(Math.round(todaySec / 60), analyticsTimeUnitMode)}</div></article>`);
+  }
+  if (goal?.hasGoal) {
+    rows.push(`<article class="habit-session-stat-item"><div class="habit-session-stat-label">Objetivo</div><div class="habit-session-stat-value">${goal.label}</div></article>`);
+  }
+  $habitSessionStats.innerHTML = rows.join("");
 }
 
 function renderSessionRanking() {
@@ -9954,23 +9991,24 @@ function renderSessionRanking() {
   const ranking = buildSessionRanking();
   if (!ranking || !ranking.current) {
     $habitSessionRanking.innerHTML = "";
+    if ($habitSessionStats) $habitSessionStats.innerHTML = "";
     return;
   }
   const key = `${ranking.rank}|${ranking.ahead?.habit?.id || "top"}|${ranking.behind?.habit?.id || "last"}`;
   if (sessionLastRankKey && sessionLastRankKey !== key) {
-    // Ranking + swap: detectamos cambio de puesto y disparamos transición suave.
     $habitSessionRanking.classList.add("is-swapping");
     setTimeout(() => $habitSessionRanking?.classList.remove("is-swapping"), 320);
   }
   sessionLastRankKey = key;
+  sessionLastRankPosition = ranking.rank;
 
   const card = (row, opts = {}) => {
-    if (!row && opts.kind === "ahead") return '<article class="habit-session-rank-card"><div class="habit-session-rank-emoji">👑</div><div class="habit-session-rank-name">#1 Top</div><div class="habit-session-rank-total">—</div></article>';
+    if (!row && opts.kind === "ahead") return '<article class="habit-session-rank-card"><div class="habit-session-rank-emoji">👑</div><div class="habit-session-rank-name">Top</div><div class="habit-session-rank-total">—</div></article>';
     if (!row && opts.kind === "behind") return '<article class="habit-session-rank-card"><div class="habit-session-rank-emoji">—</div><div class="habit-session-rank-name">Último</div><div class="habit-session-rank-total">—</div></article>';
     if (!row) return "";
     const emoji = row.habit?.emoji || "•";
     const shortName = String(row.habit?.name || "Hábito").slice(0, 12);
-    const totalLabel = formatHHMM(row.total);
+    const totalLabel = formatDuration(Math.round(row.totalMs / 60000), analyticsTimeUnitMode);
     return `<article class="habit-session-rank-card ${opts.active ? "is-active" : ""}"><div class="habit-session-rank-emoji">${emoji}</div><div class="habit-session-rank-name">${shortName}</div><div class="habit-session-rank-total">${totalLabel}</div></article>`;
   };
 
@@ -9979,6 +10017,8 @@ function renderSessionRanking() {
     card(ranking.current, { active: true }),
     card(ranking.ahead, { kind: "ahead" })
   ].join("");
+
+  renderSessionStats(ranking);
 }
 
 function updateSessionUI() {
@@ -10941,6 +10981,13 @@ function bindEvents() {
   $habitSessionDetailPause?.addEventListener("click", togglePauseRunningSession);
   $habitSessionDetailPlus?.addEventListener("click", () => adjustRunningSessionByMinutes(1));
   $habitSessionDetailMinus?.addEventListener("click", () => adjustRunningSessionByMinutes(-1));
+  const swallowOverlayEvent = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  $habitSessionDetail?.addEventListener("touchmove", swallowOverlayEvent, { passive: false });
+  $habitSessionDetail?.addEventListener("wheel", swallowOverlayEvent, { passive: false });
+  $habitSessionDetail?.addEventListener("click", (event) => event.stopPropagation());
 
   $habitSessionClose.addEventListener("click", closeSessionModal);
   $habitSessionCancel.addEventListener("click", closeSessionModal);
@@ -11374,7 +11421,7 @@ async function initHabits() {
   maybeAutoCloseScheduleDay();
   scheduleAutoCloseInterval = window.setInterval(maybeAutoCloseScheduleDay, 600000);
   if (runningSession) {
-    sessionInterval = setInterval(updateSessionUI, 1000);
+    sessionInterval = setInterval(updateSessionUI, 500);
   }
   window.addEventListener("resize", () => {
     if (habitDonutChart) habitDonutChart.resize();

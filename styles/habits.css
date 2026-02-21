@@ -1637,7 +1637,10 @@ body.is-session-detail-open #app {
   margin: 0 auto;
 }
 
-.habit-session-detail-header { display: flex; flex-direction: column; gap: 8px; }
+.habit-session-detail-header { display: flex; flex-direction: row;
+  justify-content: space-between;
+  
+  gap: 8px; }
 .habit-session-detail-head-main { display: flex; align-items: center; gap: 12px; }
 .habit-session-detail-emoji { font-size: 34px; }
 .habit-session-detail-title { font-size: 21px; font-weight: 800; }
@@ -1659,7 +1662,9 @@ body.is-session-detail-open #app {
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
 }
-.habit-session-detail-controls { display: grid; gap: 8px; }
+.habit-session-detail-controls { display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+   gap: 8px; }
 .habit-session-detail-controls .btn { min-height: 44px; border-width: 1px; }
 .habit-session-detail-adjusts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .habit-session-btn-primary { font-weight: 700; }
@@ -1667,6 +1672,7 @@ body.is-session-detail-open #app {
 
 .habit-session-stats {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
 }
 

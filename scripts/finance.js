@@ -249,12 +249,14 @@ function loadLocal() {
 
 function createModalBase({ title, body, cancel = 'Cancelar', confirm = 'Guardar', danger = false, onConfirm }) {
   const backdrop = getFinanceHost('#finance-modal-backdrop');
-  backdrop.classList.remove('hidden');
-  backdrop.innerHTML = `<div class="modal finance-modal"><div class="modal-header"><div class="modal-title">${title}</div><button class="icon-btn" data-close>✕</button></div><div class="modal-body">${body}</div><div class="modal-footer sheet-footer"><button class="opal-pill" data-close>${cancel}</button><button class="opal-pill ${danger ? '' : 'opal-pill--primary'}" data-modal-confirm>${confirm}</button></div></div>`;
-  const close = () => { backdrop.classList.add('hidden'); backdrop.innerHTML = ''; };
+  backdrop.className = 'fin-modal open';
+  backdrop.dataset.open = '1';
+  backdrop.innerHTML = `<div class="fin-modal__dialog"><div class="modal-header"><div class="modal-title">${title}</div><button class="icon-btn" data-close>✕</button></div><div class="modal-body">${body}</div><div class="modal-footer sheet-footer"><button class="opal-pill" data-close>${cancel}</button><button class="opal-pill ${danger ? '' : 'opal-pill--primary'}" data-modal-confirm>${confirm}</button></div></div>`;
+  console.log('[FIN] open modal', backdrop);
+  const close = () => { backdrop.className = 'fin-modal'; backdrop.dataset.open = '0'; backdrop.innerHTML = ''; };
   backdrop.onclick = (e) => { if (e.target === backdrop || e.target.closest('[data-close]')) close(); };
   backdrop.querySelector('[data-modal-confirm]')?.addEventListener('click', () => {
-    const shouldClose = onConfirm?.(backdrop.querySelector('.modal'));
+    const shouldClose = onConfirm?.(backdrop.querySelector('.fin-modal__dialog'));
     if (shouldClose !== false) close();
   });
 }
@@ -271,16 +273,27 @@ function ensureTodayRow() {
   recalcVariaciones();
 }
 
-function renderSparkline(points) {
+function lineChartSvg(points) {
   if (!points.length) return '<div class="finance-spark-empty"></div>';
   const min = Math.min(...points, 0);
   const max = Math.max(...points, 1);
   const coords = points.map((v, i) => {
     const x = points.length === 1 ? 0 : (i / (points.length - 1)) * 100;
-    const y = 100 - ((v - min) / (max - min || 1)) * 100;
-    return `${x},${y}`;
-  }).join(' ');
-  return `<svg viewBox="0 0 100 100" preserveAspectRatio="none" width="100%" height="92"><polyline fill="none" stroke="#90a7ff" stroke-width="2" points="${coords}"/></svg>`;
+    const y = 100 - ((v - min) / (max - min || 1)) * 84 + 8;
+    return [x, y];
+  });
+  const polyline = coords.map(([x, y]) => `${x},${y}`).join(' ');
+  const area = `0,100 ${polyline} 100,100`;
+  const dots = coords.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.8" fill="#a592ff"/>`).join('');
+  return `<svg viewBox="0 0 100 100" preserveAspectRatio="none"><defs><linearGradient id="fin-grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(127,93,255,.45)"/><stop offset="100%" stop-color="rgba(127,93,255,0)"/></linearGradient></defs><polygon points="${area}" fill="url(#fin-grad)"/><polyline fill="none" stroke="#9b87ff" stroke-width="2" points="${polyline}"/>${dots}</svg>`;
+}
+
+function renderLineChart(points, container) {
+  if (!container) {
+    console.warn('[FIN] finance-linechart container missing');
+    return;
+  }
+  container.innerHTML = lineChartSvg(points);
 }
 
 function renderCuentas() {
@@ -288,7 +301,7 @@ function renderCuentas() {
   const host = getFinanceHost('#finance-content');
   const last = state.registros.at(-1) || { total: 0, variacion: 0, varpct: 0 };
   const pts = state.registros.map((r) => Number(r.total || 0));
-  host.innerHTML = `<section class="finance-panel"><div class="finance-overview-hero ${valueToneClass(last.variacion)}"><div class="finance-overview-top"><button class="finance-total">${formatCurrency(last.total || 0)}</button><button class="opal-pill" id="fin-add-account">+ Cuenta</button></div><div class="finance-delta-row"><span class="finance-sign-badge ${valueToneClass(last.variacion)}">${formatSignedCurrency(last.variacion || 0)} · ${formatSignedPercent(last.varpct || 0)}</span></div><div class="finance-spark">${renderSparkline(pts)}</div></div></section><section class="finance-list">${state.cuentas.map((c) => {
+  host.innerHTML = `<section class="finance-panel finance-header-card"><div class="finance-overview-hero ${valueToneClass(last.variacion)}"><div class="finance-overview-top"><button class="finance-total">${formatCurrency(last.total || 0)}</button><button class="opal-pill" id="fin-add-account">+ Cuenta</button></div><div class="finance-delta-row"><span class="delta-badge ${last.variacion >= 0 ? 'pos' : 'neg'} ${valueToneClass(last.variacion)}">${formatSignedCurrency(last.variacion || 0)} · ${formatSignedPercent(last.varpct || 0)}</span></div><div id="finance-linechart" class="finance-chart"></div></div></section><section class="finance-list">${state.cuentas.map((c) => {
     const row = state.registros.at(-1);
     const prev = state.registros.at(-2);
     const cur = Number(row?.saldos?.[c] || 0);
@@ -296,6 +309,7 @@ function renderCuentas() {
     const delta = cur - pv;
     return `<article class="finance-account-card ${valueToneClass(delta)}" data-account="${c}"><button class="finance-dot-menu" data-account-menu="${c}">⋮</button><div class="finance-account-main"><div class="finance-account-name">${c}</div><div class="finance-edit-zone"><button class="finance-amount-display ${state.editingInline === c ? 'hidden' : ''}" data-now-display="${c}">${formatCurrency(cur)}</button><input class="finance-inline-input ${state.editingInline === c ? '' : 'hidden'}" data-now-input="${c}" placeholder="${cur}" /></div><small class="${valueToneClass(delta)}">${formatSignedCurrency(delta)}</small></div></article>`;
   }).join('')}</section>`;
+  renderLineChart(pts, host.querySelector('#finance-linechart'));
 }
 
 function getObjetivosCapitalDisponible() {
@@ -311,7 +325,11 @@ function renderObjetivos() {
   const origen = Array.isArray(state.finanzas.origenObjetivos) && state.finanzas.origenObjetivos.length ? state.finanzas.origenObjetivos.join(', ') : 'Todas';
   const cap = getObjetivosCapitalDisponible();
   const pct = totalObj ? Math.min(100, (totalAho / totalObj) * 100) : 0;
-  host.innerHTML = `<section class="finance-panel"><div class="finance-goal-header"><button class="opal-pill opal-pill--primary" id="goal-new">Nuevo objetivo</button><button class="opal-pill" id="goal-origin">Cuentas origen</button></div><div class="finance-goal-meta">Objetivo ${formatCurrency(totalObj)} · Ahorrado ${formatCurrency(totalAho)}</div><div class="finance-goal-meta">Origen: ${origen}</div><div class="finance-goal-meta">Disponible: ${formatCurrency(cap)}</div><div class="finance-donut"><div class="finance-goal-ring" style="--ring:#8b7dff;--pct:${pct}">${Math.round(pct)}%</div></div></section><section class="finance-list">${state.objetivos.map((o, i) => `<article class="finance-goal-card"><span><strong>${o.nombre}</strong><small>${formatCurrency(o.ahorrado || 0)} / ${formatCurrency(o.objetivo || 0)}</small><small>${o.fecha || 'Sin fecha'}</small></span><button class="finance-dot-menu" data-del-goal="${i}">⋮</button></article>`).join('') || '<div class="empty-state">Sin objetivos</div>'}</section>`;
+  host.innerHTML = `<section class="finance-panel"><div class="finance-goal-header"><button class="opal-pill opal-pill--primary" id="goal-new">Nuevo objetivo</button><button class="opal-pill" id="goal-origin">Cuentas origen</button></div><div class="finance-goals-summary"><div class="donut-wrap"><div class="donut" style="--p:${pct.toFixed(2)}"></div><span class="donut-label">${Math.round(pct)}%</span></div><div class="finance-goal-stats"><div>Objetivo total: ${formatCurrency(totalObj)}</div><div>Ahorrado: ${formatCurrency(totalAho)}</div><div>Disponible: ${formatCurrency(cap)}</div><div>Origen: ${origen}</div></div></div></section><section class="finance-list">${state.objetivos.map((o, i) => {
+    const goalPct = Number(o.objetivo) ? Math.min(100, (Number(o.ahorrado || 0) / Number(o.objetivo || 0)) * 100) : 0;
+    const days = o.fecha ? Math.ceil((new Date(`${o.fecha}T00:00:00`) - new Date()) / 86400000) : null;
+    return `<article class="finance-goal-card"><span><strong>${o.nombre}</strong><small>${formatCurrency(o.ahorrado || 0)} / ${formatCurrency(o.objetivo || 0)}</small><small>${days == null ? (o.fecha || 'Sin fecha') : `${days >= 0 ? days : 0} días restantes`}</small></span><div class="donut-wrap"><div class="donut donut--sm" style="--p:${goalPct.toFixed(2)}"></div><span class="donut-label">${Math.round(goalPct)}%</span></div><button class="finance-dot-menu" data-del-goal="${i}">⋮</button></article>`;
+  }).join('') || '<div class="empty-state">Sin objetivos</div>'}</section>`;
 }
 
 function renderGastos() {
@@ -601,6 +619,9 @@ async function bootFinance() {
   console.log('[FIN] script loaded', new Date().toISOString());
   try {
     console.log('[FIN] DOM ready state:', document.readyState);
+    const stylesheets = [...document.styleSheets].map((sheet) => sheet.href).filter(Boolean);
+    console.log('[FIN] stylesheets:', stylesheets);
+    console.log('[FIN] finance.css loaded:', stylesheets.some((href) => href.includes('styles/finance.css')));
 
     const root = getFinanceScope();
     console.log('[FIN] view-finance found:', !!root);

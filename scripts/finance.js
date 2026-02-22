@@ -1,30 +1,31 @@
-import { ref, onValue, set, off } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+import { ref, onValue, get, child, update } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 import { db } from './firebase-shared.js';
 import { formatCurrency, formatSignedCurrency, formatSignedPercent } from './finance-format.js';
 
 const LS_CUENTAS = 'mis_cuentas_fase1_cuentas';
 const LS_DATA = 'mis_cuentas_fase1_data';
-const LS_UID = 'mis_cuentas_uid';
+const FIN_PATH = 'vuxel/finance';
 const DEFAULT_CUENTAS = ['Principal', 'Ahorro', 'Broker'];
 const TODAY = () => new Date().toISOString().slice(0, 10);
 const WEEK_DAYS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
 const state = {
-  uid: String(window.__bookshellUid || localStorage.getItem('bookshell.uid') || localStorage.getItem(LS_UID) || 'default'),
   view: 'cuentas',
   cuentas: [],
   registros: [],
   objetivos: [],
   finanzas: { ingreso: 0, inversiones: 0, fijas: [], variables: [], origenVariable: '', origenObjetivos: [], calModo: 'dia', calMes: '', calAnio: new Date().getFullYear() },
-  cloudUnsubs: [],
   editingInline: null,
   calSelectedDate: TODAY()
 };
 
+let isApplyingRemote = false;
+let unsubscribeFinance = null;
+let financeBootstrapped = false;
+
 function parseNumber(v) { const n = Number(String(v ?? '').replace(/\./g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0; }
 function valueToneClass(v) { return v > 0 ? 'tone-pos' : v < 0 ? 'tone-neg' : 'tone-neutral'; }
-function emitLogin() { window.dispatchEvent(new CustomEvent('finanzas-login', { detail: { uid: state.uid } })); }
 function sortRegistros() { state.registros.sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || ''))); }
 
 function getFallbackSaldos() {
@@ -67,20 +68,90 @@ function recalcVariaciones() {
   });
 }
 
-function persistLocal() {
-  localStorage.setItem(LS_UID, state.uid);
-  localStorage.setItem(LS_CUENTAS, JSON.stringify(state.cuentas));
-  localStorage.setItem(LS_DATA, JSON.stringify({ registros: state.registros, objetivos: state.objetivos, finanzas: state.finanzas }));
+function hasRemotePayload(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  return ['cuentas', 'registros', 'objetivos', 'gastos', 'finanzas'].some((k) => payload[k] != null);
 }
 
-function cloudPath(base) { return `users/${state.uid}/finanzas/${base}`; }
-function syncCloud() {
-  if (!state.uid) return;
-  set(ref(db, cloudPath('cuentas')), state.cuentas);
-  set(ref(db, cloudPath('data')), { registros: state.registros, objetivos: state.objetivos, finanzas: state.finanzas });
+function readLegacyLocalSnapshot() {
+  const cuentasRaw = JSON.parse(localStorage.getItem(LS_CUENTAS) || 'null');
+  const dataRaw = JSON.parse(localStorage.getItem(LS_DATA) || 'null');
+  if (!Array.isArray(cuentasRaw) && !Array.isArray(dataRaw?.registros) && !Array.isArray(dataRaw?.objetivos)) return null;
+  return {
+    cuentas: Array.isArray(cuentasRaw) && cuentasRaw.length ? cuentasRaw : [...DEFAULT_CUENTAS],
+    registros: Array.isArray(dataRaw?.registros) ? dataRaw.registros : [],
+    objetivos: Array.isArray(dataRaw?.objetivos) ? dataRaw.objetivos : [],
+    gastos: Array.isArray(dataRaw?.finanzas?.variables) ? dataRaw.finanzas.variables : [],
+    finanzas: dataRaw?.finanzas || null
+  };
 }
 
-function persistAndRender() { persistLocal(); syncCloud(); render(); }
+async function finLoadFromRTDB() {
+  const rootRef = ref(db);
+  const [cuentasSnap, registrosSnap, objetivosSnap, gastosSnap, finanzasSnap] = await Promise.all([
+    get(child(rootRef, `${FIN_PATH}/cuentas`)),
+    get(child(rootRef, `${FIN_PATH}/registros`)),
+    get(child(rootRef, `${FIN_PATH}/objetivos`)),
+    get(child(rootRef, `${FIN_PATH}/gastos`)),
+    get(child(rootRef, `${FIN_PATH}/finanzas`))
+  ]);
+
+  const remote = {
+    cuentas: cuentasSnap.val(),
+    registros: registrosSnap.val(),
+    objetivos: objetivosSnap.val(),
+    gastos: gastosSnap.val(),
+    finanzas: finanzasSnap.val()
+  };
+
+  const legacy = !hasRemotePayload(remote) ? readLegacyLocalSnapshot() : null;
+  if (legacy) {
+    state.cuentas = legacy.cuentas;
+    state.registros = legacy.registros;
+    state.objetivos = legacy.objetivos;
+    state.finanzas = { ...state.finanzas, ...(legacy.finanzas || {}), variables: legacy.gastos };
+    await finSaveToRTDB();
+  } else {
+    state.cuentas = Array.isArray(remote.cuentas) && remote.cuentas.length ? remote.cuentas : [...DEFAULT_CUENTAS];
+    state.registros = Array.isArray(remote.registros) ? remote.registros : [];
+    state.objetivos = Array.isArray(remote.objetivos) ? remote.objetivos : [];
+    state.finanzas = { ...state.finanzas, ...(remote.finanzas || {}), variables: Array.isArray(remote.gastos) ? remote.gastos : [] };
+  }
+
+  if (!state.finanzas.origenVariable) state.finanzas.origenVariable = state.cuentas[0] || '';
+  if (!state.finanzas.calMes) state.finanzas.calMes = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+  recalcVariaciones();
+  render();
+}
+
+async function finSaveToRTDB() {
+  if (isApplyingRemote) return;
+  await update(ref(db), {
+    [`${FIN_PATH}/cuentas`]: state.cuentas ?? [],
+    [`${FIN_PATH}/registros`]: state.registros ?? [],
+    [`${FIN_PATH}/objetivos`]: state.objetivos ?? [],
+    [`${FIN_PATH}/gastos`]: state.finanzas.variables ?? [],
+    [`${FIN_PATH}/finanzas`]: { ...state.finanzas, variables: [] },
+    [`${FIN_PATH}/meta/updatedAt`]: Date.now()
+  });
+}
+
+function finSubscribeRTDB() {
+  if (unsubscribeFinance) unsubscribeFinance();
+  unsubscribeFinance = onValue(ref(db, FIN_PATH), (snap) => {
+    const remote = snap.val() || {};
+    isApplyingRemote = true;
+    state.cuentas = Array.isArray(remote.cuentas) && remote.cuentas.length ? remote.cuentas : [...DEFAULT_CUENTAS];
+    state.registros = Array.isArray(remote.registros) ? remote.registros : [];
+    state.objetivos = Array.isArray(remote.objetivos) ? remote.objetivos : [];
+    state.finanzas = { ...state.finanzas, ...(remote.finanzas || {}), variables: Array.isArray(remote.gastos) ? remote.gastos : [] };
+    recalcVariaciones();
+    render();
+    isApplyingRemote = false;
+  });
+}
+
+function persistAndRender() { recalcVariaciones(); void finSaveToRTDB(); render(); }
 
 function upsertRegistroCuenta(cuenta, fecha, valor) {
   if (!state.cuentas.includes(cuenta)) return;
@@ -103,7 +174,6 @@ function upsertRegistroCuenta(cuenta, fecha, valor) {
 
 function getSnapshot() {
   return {
-    uid: state.uid,
     cuentas: [...state.cuentas],
     registros: state.registros.map((r) => ({ ...r, saldos: { ...(r.saldos || {}) } })),
     objetivos: state.objetivos.map((g) => ({ ...g }))
@@ -143,12 +213,9 @@ window.FIN_GLOBAL = {
 };
 
 function loadLocal() {
-  const cuentasRaw = JSON.parse(localStorage.getItem(LS_CUENTAS) || 'null');
-  const dataRaw = JSON.parse(localStorage.getItem(LS_DATA) || 'null');
-  state.cuentas = Array.isArray(cuentasRaw) && cuentasRaw.length ? cuentasRaw : [...DEFAULT_CUENTAS];
-  state.registros = Array.isArray(dataRaw?.registros) ? dataRaw.registros : [];
-  state.objetivos = Array.isArray(dataRaw?.objetivos) ? dataRaw.objetivos : [];
-  state.finanzas = { ...state.finanzas, ...(dataRaw?.finanzas || {}) };
+  state.cuentas = [...DEFAULT_CUENTAS];
+  state.registros = [];
+  state.objetivos = [];
   if (!state.finanzas.origenVariable) state.finanzas.origenVariable = state.cuentas[0] || '';
   if (!state.finanzas.calMes) state.finanzas.calMes = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
 }
@@ -281,35 +348,6 @@ function render() {
   if (state.view === 'gastos') renderGastos();
   if (state.view === 'objetivos') renderObjetivos();
   if (state.view === 'calendario') renderCalendario();
-}
-
-function bindCloud() {
-  state.cloudUnsubs.forEach((u) => u());
-  state.cloudUnsubs = [];
-  const cuentasRef = ref(db, cloudPath('cuentas'));
-  const dataRef = ref(db, cloudPath('data'));
-  const onCuentas = onValue(cuentasRef, (snap) => {
-    const remote = snap.val();
-    if (Array.isArray(remote) && remote.length) { state.cuentas = remote; recalcVariaciones(); persistLocal(); render(); }
-  });
-  const onData = onValue(dataRef, (snap) => {
-    const remote = snap.val() || {};
-    if (Array.isArray(remote.registros)) state.registros = remote.registros;
-    if (Array.isArray(remote.objetivos)) state.objetivos = remote.objetivos;
-    if (remote.finanzas) state.finanzas = { ...state.finanzas, ...remote.finanzas };
-    recalcVariaciones(); persistLocal(); render();
-  });
-  state.cloudUnsubs.push(() => off(cuentasRef, 'value', onCuentas));
-  state.cloudUnsubs.push(() => off(dataRef, 'value', onData));
-}
-
-function applyUid(nextUid) {
-  const uid = String(nextUid || 'default');
-  if (uid === state.uid) return;
-  state.uid = uid;
-  persistLocal();
-  bindCloud();
-  emitLogin();
 }
 
 function renameCuenta(oldName, nextName) {
@@ -502,16 +540,27 @@ function bindInteractions() {
   root?.addEventListener('input', onRootInput);
   root?.addEventListener('keydown', onRootKeydown);
   root?.addEventListener('focusout', onRootBlur);
-  window.addEventListener('finanzas-login', (e) => applyUid(e.detail?.uid));
+}
+
+async function maybeBootstrapFinance() {
+  if (financeBootstrapped) return;
+  const root = document.getElementById('view-finance');
+  if (!root?.classList.contains('view-active')) return;
+  financeBootstrapped = true;
+  await finLoadFromRTDB();
+  finSubscribeRTDB();
 }
 
 function init() {
   loadLocal();
   recalcVariaciones();
-  bindCloud();
   bindInteractions();
-  emitLogin();
   render();
+  void maybeBootstrapFinance();
+  const root = document.getElementById('view-finance');
+  root?.addEventListener('click', () => { void maybeBootstrapFinance(); });
+  const navBtn = document.querySelector('.nav-btn[data-view="view-finance"]');
+  navBtn?.addEventListener('click', () => { void maybeBootstrapFinance(); });
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });

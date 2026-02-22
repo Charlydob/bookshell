@@ -2,6 +2,10 @@
   padding: calc(env(safe-area-inset-top, 0px) + 40px) 12px 110px;
 }
 
+#view-finance .hidden {
+  display: none !important;
+}
+
 .finance-shell {
   display: grid;
   gap: 10px;
@@ -186,6 +190,18 @@
   background: linear-gradient(104deg, color-mix(in srgb, var(--acc-color), #07153f 65%) 0%, rgba(7, 20, 58, 0.95) 70%);
 }
 
+.finance-account-card.tone-pos,
+.finance-overview-hero.tone-pos {
+  border-color: rgba(61, 211, 133, 0.65);
+  box-shadow: 0 0 24px rgba(26, 173, 98, 0.32), inset 0 0 0 1px rgba(134, 241, 189, 0.2);
+}
+
+.finance-account-card.tone-neg,
+.finance-overview-hero.tone-neg {
+  border-color: rgba(242, 91, 120, 0.7);
+  box-shadow: 0 0 24px rgba(214, 67, 97, 0.3), inset 0 0 0 1px rgba(255, 141, 164, 0.22);
+}
+
 .finance-account-main {
   display: grid;
   gap: 8px;
@@ -368,11 +384,4 @@
   text-align: left;
   display: grid;
   gap: 10px;
-}
-
-@media (min-width: 900px) {
-  #view-finance {
-    max-width: 460px;
-    margin: 0 auto;
-  }
 }

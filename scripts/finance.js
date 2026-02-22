@@ -362,10 +362,15 @@ function renderCalendario() {
       const prevKey = prevDate.toISOString().slice(0, 10);
       const cur = getMetricAtDate(date, selectedCuenta);
       const prev = getMetricAtDate(prevKey, selectedCuenta);
-      const has = Number.isFinite(cur);
-      const delta = has && Number.isFinite(prev) ? cur - prev : 0;
-      const pct = has && Number.isFinite(prev) && prev ? (delta / prev) * 100 : 0;
-      grid.innerHTML += `<button class="fin-cell ${has ? valueToneClass(delta) : 'tone-neutral'} ${state.calSelectedDate === date ? 'active' : ''}" data-cal-day="${date}"><b>${d}</b><small>${has ? formatCurrency(cur) : '—'}</small><small>${has ? `${formatSignedCurrency(delta)} · ${formatSignedPercent(pct)}` : ''}</small></button>`;
+      const hasSeries = Number.isFinite(cur) && Number.isFinite(prev);
+      const delta = hasSeries ? Number((cur - prev).toFixed(2)) : 0;
+      const pct = hasSeries && prev ? Number((((cur - prev) / prev) * 100).toFixed(2)) : 0;
+      const hasData = hasSeries && (delta !== 0 || pct !== 0);
+      const cellStateClass = hasData ? (delta > 0 ? 'cal-pos' : 'cal-neg') : 'cal-neutral';
+      const content = hasData
+        ? `<div class="cal-day">${d}</div><div class="cal-eur">${formatSignedCurrency(delta)}</div><div class="cal-pct">${formatSignedPercent(pct)}</div>`
+        : `<div class="cal-day">${d}</div><div class="cal-empty">—</div>`;
+      grid.innerHTML += `<button class="fin-cell ${cellStateClass} ${state.calSelectedDate === date ? 'active' : ''}" data-cal-day="${date}">${content}</button>`;
     }
   } else if (state.finanzas.calModo === 'mes') {
     grid.style.gridTemplateColumns = 'repeat(3,minmax(0,1fr))';

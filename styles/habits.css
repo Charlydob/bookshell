@@ -2354,6 +2354,7 @@ body.is-session-detail-open #app {
 
 .habit-detail-schedule-chip {
   --ring-gradient: transparent;
+  --chip-rgb: var(--hclr-rgb, 127, 93, 255);
   position: relative;
   min-width: 36px;
   width: 36px;
@@ -2369,7 +2370,7 @@ body.is-session-detail-open #app {
   font-weight: 700;
   letter-spacing: .02em;
   cursor: pointer;
-  transition: transform .16s ease, box-shadow .16s ease, background .16s ease;
+  transition: transform .18s ease, box-shadow .18s ease, background .18s ease, border-color .18s ease, filter .18s ease;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
@@ -2399,8 +2400,15 @@ body.is-session-detail-open #app {
 }
 
 .habit-detail-schedule-chip.is-selected {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 20px rgba(0,0,0,.22), 0 0 0 1px rgba(127, 93, 255, .35);
+  transform: translateY(-1px) scale(1.03);
+  border-color: rgba(var(--chip-rgb), .66);
+  background: radial-gradient(circle at 25% 20%, rgba(var(--chip-rgb), .32), rgba(var(--chip-rgb), .18) 48%, rgba(13,17,26,.95) 100%);
+  box-shadow:
+    0 0 0 1px rgba(var(--chip-rgb), .68),
+    0 0 14px rgba(var(--chip-rgb), .65),
+    0 0 28px rgba(var(--chip-rgb), .32),
+    0 12px 20px rgba(0,0,0,.34);
+  filter: saturate(1.15) brightness(1.08);
 }
 
 .habit-detail-schedule-chip.is-type {
@@ -2457,6 +2465,21 @@ body.is-session-detail-open #app {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.habit-detail-monthly-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.habit-detail-monthly-progress {
+  margin-top: 8px;
+}
+
+.habit-detail-monthly-progress .habit-schedule-row {
+  margin-bottom: 0;
 }
 
 .habit-detail-records-wrap {

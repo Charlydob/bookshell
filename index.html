@@ -18,6 +18,7 @@
 <link href="styles/media.css" rel="stylesheet"/>
 <link href="styles/world.css" rel="stylesheet"/>
 <link href="styles/gym.css" rel="stylesheet"/>
+<link href="styles/finance.css" rel="stylesheet"/>
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="icons/favicon.ico" rel="icon"/>
 <link href="icons/favicon-32.png" rel="icon" sizes="32x32" type="image/png"/>
@@ -2016,6 +2017,16 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 
 
+<section class="view" id="view-finance">
+  <div class="finance-shell">
+    <div class="finance-topnav" id="finance-topnav"></div>
+    <div id="finance-content"></div>
+  </div>
+</section>
+
+<div class="modal-backdrop hidden" id="finance-modal-backdrop"></div>
+
+
 <nav class="bottom-nav"><button class="nav-btn nav-btn-active" data-view="view-main">🏠</button>
 <button class="nav-btn" data-view="view-books">📖</button>
 <button class="nav-btn" data-view="view-videos">📹</button>
@@ -2024,6 +2035,7 @@ Crear “<span id="gym-create-cta-text"></span>”
 <button class="nav-btn" data-view="view-games" title="Juegos" aria-label="Juegos">🎮</button>
 <button class="nav-btn" data-view="view-media">🎞️</button>
 <button class="nav-btn" data-view="view-world">🌍</button>
+<button class="nav-btn" data-view="view-finance" title="Cuentas" aria-label="Cuentas">$</button>
 <button class="nav-btn" data-view="view-gym">🏋️</button>
 </nav>
 
@@ -3282,6 +3294,7 @@ if (document.readyState === "loading") {
 <script src="scripts/media.js" type="module"></script>
 <script src="scripts/world.js" type="module"></script>
 <script src="scripts/gym.js" type="module"></script>
+<script src="scripts/finance.js" type="module"></script>
 <datalist id="country-options"></datalist>
 </body>
 </html>

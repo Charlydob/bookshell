@@ -190,7 +190,7 @@ function render() {
 
   host.innerHTML = `
     <section class="finance-tab ${toneClass(change.delta)}">
-      <article class="finance-tab__panel">
+      <article class="finance-tab__panel" id="finance-overview">
         <p class="finance-tab__eyebrow">TOTAL</p>
         <h2 class="finance-tab__total">${fmtCurrency(total)}</h2>
         <p class="finance-tab__delta ${toneClass(change.delta)}">${fmtSignedCurrency(change.delta)} · ${fmtSignedPercent(change.deltaPct)}</p>

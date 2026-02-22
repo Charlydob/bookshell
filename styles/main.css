@@ -2387,3 +2387,11 @@ margin-top: 0px;
   align-content: center;
 
 }
+
+.finance-tab__controls {
+  background: linear-gradient(135deg, rgba(140, 107, 255, 0.45), rgba(91, 62, 218, 0.28));
+  box-shadow: 0 0 0 1px rgba(140, 107, 255, 0.5), 0 0 18px rgba(140, 107, 255, 0.56);
+  display: grid;
+  flex-direction: row;
+
+}

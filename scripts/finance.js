@@ -1,513 +1,358 @@
-import { ref, onValue, set, update, remove, push } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+import { ref, onValue, set, update, remove, push, off } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 import { db } from './firebase-shared.js';
-import { formatCurrency, formatSignedCurrency, formatSignedPercent, formatDateEs } from './finance-format.js';
-import { buildAccountSeries, calcDelta, calcGoalProgress, dateKey } from './finance-calc.js';
+import { formatCurrency, formatSignedCurrency, formatSignedPercent } from './finance-format.js';
 
-const USER_ID = 'default';
-const ROOT = `voxelFinance/${USER_ID}`;
-const LS_KEY = 'bookshell.finance.cache.v1';
-const ACCOUNT_TYPES = [
-  ['cash', 'Efectivo'],
-  ['broker', 'Broker'],
-  ['crypto', 'Crypto'],
-  ['debt', 'Deuda'],
-  ['other', 'Otra']
-];
+const LS_CUENTAS = 'mis_cuentas_fase1_cuentas';
+const LS_DATA = 'mis_cuentas_fase1_data';
+const LS_UID = 'mis_cuentas_uid';
+const DEFAULT_CUENTAS = ['Principal', 'Ahorro', 'Broker'];
+const TODAY = () => new Date().toISOString().slice(0, 10);
 
 const state = {
-  internalView: 'overview',
-  range: 'month',
-  granularity: 'day',
-  selectedAccountId: 'total',
-  selectedMonth: new Date().getMonth(),
-  selectedYear: new Date().getFullYear(),
-  editingValueTarget: null,
-  data: { accounts: {}, snapshots: {}, goals: {}, settings: {} }
+  uid: String(window.__bookshellUid || localStorage.getItem('bookshell.uid') || localStorage.getItem(LS_UID) || 'default'),
+  view: 'cuentas',
+  cuentas: [],
+  registros: [],
+  objetivos: [],
+  finanzas: { ingreso: 0, inversiones: 0, fijas: [], variables: [], origenVariable: '' },
+  selectedCuenta: '',
+  editingKey: null,
+  cloudUnsubs: []
 };
 
-function normalizeData(raw = {}) {
-  return {
-    accounts: raw.accounts || {},
-    snapshots: raw.snapshots || {},
-    goals: raw.goals || {},
-    settings: raw.settings || {}
-  };
+function emitLogin() { window.dispatchEvent(new CustomEvent('finanzas-login', { detail: { uid: state.uid } })); }
+function parseNumber(v) { const n = Number(String(v ?? '').replace(/\./g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0; }
+function valueToneClass(v) { return v > 0 ? 'tone-pos' : v < 0 ? 'tone-neg' : 'tone-neutral'; }
+
+function getFallbackSaldos() {
+  return Object.fromEntries((state.cuentas.length ? state.cuentas : DEFAULT_CUENTAS).map((n) => [n, 0]));
 }
 
-function loadCache() {
-  try {
-    const cached = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
-    if (cached) state.data = normalizeData(cached);
-  } catch (_) {}
+function loadLocal() {
+  const cuentasRaw = JSON.parse(localStorage.getItem(LS_CUENTAS) || 'null');
+  const dataRaw = JSON.parse(localStorage.getItem(LS_DATA) || 'null');
+  state.cuentas = Array.isArray(cuentasRaw) && cuentasRaw.length ? cuentasRaw : [...DEFAULT_CUENTAS];
+  state.registros = Array.isArray(dataRaw?.registros) ? dataRaw.registros : [];
+  state.objetivos = Array.isArray(dataRaw?.objetivos) ? dataRaw.objetivos : [];
+  state.finanzas = { ...state.finanzas, ...(dataRaw?.finanzas || {}) };
+  if (!state.finanzas.origenVariable) state.finanzas.origenVariable = state.cuentas[0] || '';
 }
 
-function saveCache() {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(state.data)); } catch (_) {}
+function persistLocal() {
+  localStorage.setItem(LS_UID, state.uid);
+  localStorage.setItem(LS_CUENTAS, JSON.stringify(state.cuentas));
+  localStorage.setItem(LS_DATA, JSON.stringify({ registros: state.registros, objetivos: state.objetivos, finanzas: state.finanzas }));
 }
 
-function bindFirebase() {
-  onValue(ref(db, ROOT), snap => {
-    state.data = { ...state.data, ...normalizeData(snap.val() || {}) };
-    saveCache();
-    render();
+function sortRegistros() { state.registros.sort((a, b) => a.fecha.localeCompare(b.fecha)); }
+function getLastKnownSaldosBefore(fecha) {
+  sortRegistros();
+  const prev = [...state.registros].reverse().find((r) => r.fecha < fecha);
+  return prev ? { ...prev.saldos } : getFallbackSaldos();
+}
+function fillSaldosForDate(registro) {
+  const base = getLastKnownSaldosBefore(registro.fecha);
+  registro.saldos = { ...base, ...(registro.saldos || {}) };
+  state.cuentas.forEach((c) => { if (!Number.isFinite(registro.saldos[c])) registro.saldos[c] = 0; });
+}
+function recalcVariaciones() {
+  sortRegistros();
+  let prev = 0;
+  state.registros.forEach((r) => {
+    r.total = state.cuentas.reduce((acc, c) => acc + Number(r.saldos?.[c] || 0), 0);
+    r.variacion = r.total - prev;
+    r.varpct = prev ? (r.variacion / prev) * 100 : 0;
+    prev = r.total;
   });
 }
 
-function getAccountsOrdered() {
-  return Object.entries(state.data.accounts || {}).sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
+function upsertRegistroCuenta(cuenta, fecha, valor) {
+  if (!state.cuentas.includes(cuenta)) return;
+  let row = state.registros.find((r) => r.fecha === fecha);
+  if (row) {
+    row.saldos = row.saldos || {};
+    row.saldos[cuenta] = valor;
+    fillSaldosForDate(row);
+  } else {
+    const base = getLastKnownSaldosBefore(fecha);
+    base[cuenta] = valor;
+    row = { fecha, saldos: base, total: 0, variacion: 0, varpct: 0 };
+    state.registros.push(row);
+  }
+  recalcVariaciones();
+  persistLocal();
+  syncCloud();
+  render();
 }
 
-function getSeries(accountId = 'total') {
-  return buildAccountSeries(state.data.accounts || {}, state.data.snapshots || {}, accountId);
+function ensureTodayRow() {
+  if (state.registros.some((r) => r.fecha === TODAY())) return;
+  state.registros.push({ fecha: TODAY(), saldos: getLastKnownSaldosBefore(TODAY()), total: 0, variacion: 0, varpct: 0 });
+  recalcVariaciones();
 }
 
-function valueToneClass(v) { return v > 0 ? 'tone-pos' : v < 0 ? 'tone-neg' : 'tone-neutral'; }
+function addCuenta() {
+  const name = prompt('Nombre de la cuenta');
+  if (!name) return;
+  const trimmed = name.trim();
+  if (!trimmed || state.cuentas.includes(trimmed)) return alert('Nombre inválido o repetido.');
+  state.cuentas.push(trimmed);
+  state.registros.forEach((r) => { r.saldos = r.saldos || {}; r.saldos[trimmed] = Number(r.saldos[trimmed] || 0); });
+  if (!state.finanzas.origenVariable) state.finanzas.origenVariable = trimmed;
+  recalcVariaciones(); persistLocal(); syncCloud(); render();
+}
 
-function deltaBadge(deltaValue, deltaPercent, prefix = '') {
-  const tone = valueToneClass(deltaValue);
-  return `<span class="finance-sign-badge ${tone}">${prefix}${formatSignedCurrency(deltaValue)} · ${formatSignedPercent(deltaPercent)}</span>`;
+function deleteCuenta(cuenta) {
+  if (!state.cuentas.includes(cuenta)) return;
+  if (!confirm(`Eliminar ${cuenta} y su historial?`)) return;
+  state.cuentas = state.cuentas.filter((c) => c !== cuenta);
+  state.registros.forEach((r) => delete r.saldos?.[cuenta]);
+  if (state.finanzas.origenVariable === cuenta) state.finanzas.origenVariable = state.cuentas[0] || '';
+  recalcVariaciones(); persistLocal(); syncCloud(); render();
+}
+
+function getCuentaActual(cuenta) {
+  sortRegistros();
+  const last = [...state.registros].reverse().find((r) => Number.isFinite(r.saldos?.[cuenta]));
+  const prev = [...state.registros].reverse().find((r) => r !== last && Number.isFinite(r.saldos?.[cuenta]));
+  const cur = Number(last?.saldos?.[cuenta] || 0);
+  const pv = Number(prev?.saldos?.[cuenta] || 0);
+  const delta = cur - pv;
+  return { cur, delta, pct: pv ? (delta / pv) * 100 : 0 };
 }
 
 function renderTopNav() {
   const root = document.getElementById('finance-topnav');
   if (!root) return;
-  const items = [['overview', '€'], ['goals', '◎'], ['calendar', '📅'], ['charts', '📈']];
-  root.innerHTML = items.map(([id, icon]) => `<button class="finance-mini-btn ${state.internalView === id ? 'active' : ''}" data-fin-view="${id}">${icon}</button>`).join('');
+  const items = [['cuentas', '💳'], ['gastos', '🧾'], ['objetivos', '◎'], ['calendario', '📅']];
+  root.innerHTML = items.map(([id, ic]) => `<button class="finance-mini-btn ${state.view === id ? 'active' : ''}" data-fin-view="${id}">${ic}</button>`).join('');
 }
 
-function renderOverview() {
+function renderCuentas() {
+  ensureTodayRow();
   const host = document.getElementById('finance-content');
-  const orderedAccounts = getAccountsOrdered();
-
-  if (!orderedAccounts.length) {
-    host.innerHTML = `<section class="finance-panel finance-panel-empty">
-      <div class="finance-total">$ / Cuentas</div>
-      <p class="empty-state">No hay cuentas todavía.</p>
-      <button class="opal-pill opal-pill--primary" id="finance-account-create-empty">Nueva cuenta</button>
-    </section>`;
-    return;
-  }
-
-  const totalSeries = getSeries('total');
-  const total = calcDelta(totalSeries, state.range);
-  const chips = calcMonthVsMonth();
-  const spark = totalSeries.length ? '' : '<div class="finance-spark-empty"></div>';
-
-  const accountsList = orderedAccounts.map(([id, acc]) => {
-    const d = calcDelta(getSeries(id), state.range);
-    const accent = acc.color || '#6f79b8';
-    return `<article class="finance-account-card" style="--acc-color:${accent}" data-account-id="${id}">
-      <button class="finance-dot-menu" data-account-menu="${id}" aria-label="Menú cuenta">⋮</button>
-      <div class="finance-account-main">
-        <div class="finance-account-name">${acc.name || 'Cuenta'}</div>
-        <button class="finance-amount-display" data-inline-edit="${id}" data-inline-current="${d.current}">${formatCurrency(d.current)}</button>
-      </div>
-      <div class="finance-account-right">${deltaBadge(d.deltaValue, d.deltaPercent, 'Mes ')}</div>
-    </article>`;
-  }).join('');
-
-  host.innerHTML = `<section class="finance-panel finance-overview-hero">
-    <div class="finance-overview-top">
-      <button class="opal-pill" id="finance-refresh">Actualizar</button>
-      <button class="opal-pill opal-pill--primary" id="finance-account-create">Nueva cuenta</button>
-    </div>
-    <button class="finance-total" data-inline-edit="total" data-inline-current="${total.current}">${formatCurrency(total.current)}</button>
-    <div class="finance-delta-row">${deltaBadge(total.deltaValue, total.deltaPercent)}</div>
-    <div class="finance-spark" id="finance-spark">${spark}</div>
-    <div class="finance-controls">
-      <label class="opal-select-wrap"><span>Rango</span><select class="opal-select" id="finance-range"><option value="day">Día</option><option value="week">Semana</option><option value="month">Mes</option><option value="year">Año</option><option value="total">Total</option></select></label>
-      <button class="opal-pill" id="finance-history-total">Historial</button>
-      <button class="opal-pill" id="finance-month-vs">Mes vs Mes</button>
-    </div>
-    <div class="finance-chip-row">
-      <span class="finance-chip ${valueToneClass(chips.current.deltaValue)}">Mes actual: ${formatSignedCurrency(chips.current.deltaValue)} (${formatSignedPercent(chips.current.deltaPercent)})</span>
-      <span class="finance-chip ${valueToneClass(chips.prev.deltaValue)}">Mes anterior: ${formatSignedCurrency(chips.prev.deltaValue)} (${formatSignedPercent(chips.prev.deltaPercent)})</span>
-    </div>
+  const last = state.registros[state.registros.length - 1] || { total: 0, variacion: 0, varpct: 0 };
+  host.innerHTML = `<section class="finance-panel finance-overview-hero ${valueToneClass(last.variacion)}">
+    <div class="finance-overview-top"><button class="opal-pill" id="fin-refresh">Actualizar</button><button class="opal-pill opal-pill--primary" id="fin-add-account">Nueva cuenta</button></div>
+    <div class="finance-total">${formatCurrency(last.total || 0)}</div>
+    <div class="finance-delta-row"><span class="finance-sign-badge ${valueToneClass(last.variacion)}">${formatSignedCurrency(last.variacion)} · ${formatSignedPercent(last.varpct)}</span></div>
+    <div class="finance-controls"><button class="opal-pill" id="fin-history-total">Historial</button><select class="opal-select" id="periodo"><option>Mes</option><option>Año</option></select><select class="opal-select" id="comparar"><option>Comparativa</option><option>Mes vs mes</option></select></div>
   </section>
-  <section class="finance-list">${accountsList}</section>`;
-
-  const rangeSel = document.getElementById('finance-range');
-  if (rangeSel) rangeSel.value = state.range;
-  drawSpark(totalSeries);
+  <section class="finance-list">${state.cuentas.map((c) => {
+    const m = getCuentaActual(c);
+    return `<article class="finance-account-card ${valueToneClass(m.delta)}" data-account="${c}"><button class="finance-dot-menu" data-del-account="${c}">⋮</button><div class="finance-account-main"><div class="finance-account-name">${c}</div>
+      <div class="finance-edit-zone"><button class="finance-amount-display" data-now-display="${c}">${formatCurrency(m.cur)}</button><input class="finance-inline-input hidden" data-now-input="${c}" placeholder="${formatCurrency(m.cur)}" inputmode="decimal"></div></div>
+      <div class="finance-account-right"><span class="finance-sign-badge ${valueToneClass(m.delta)}">${formatSignedCurrency(m.delta)} · ${formatSignedPercent(m.pct)}</span></div></article>`;
+  }).join('')}</section>`;
 }
 
-function calcMonthVsMonth() {
-  const series = getSeries('total');
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const current = calcDelta(series.filter(s => new Date(`${s.date}T12:00:00`) >= monthStart), 'month');
-  const prev = calcDelta(series.filter(s => {
-    const d = new Date(`${s.date}T12:00:00`);
-    return d >= prevStart && d < monthStart;
-  }), 'month');
-  return { current, prev };
-}
-
-function renderGoals() {
+function renderGastos() {
   const host = document.getElementById('finance-content');
-  const goals = Object.entries(state.data.goals || {}).sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
-  const totalGoal = goals.reduce((acc, [, g]) => acc + Number(g.target || 0), 0);
-  const totalSaved = goals.reduce((acc, [, g]) => acc + Number(g.saved || 0), 0);
-  const pct = totalGoal ? (totalSaved / totalGoal) * 100 : 0;
-  host.innerHTML = `
-    <section class="finance-panel">
-      <div class="finance-goal-header"><button class="opal-pill opal-pill--primary" id="goal-new">Nuevo objetivo</button></div>
-      <div class="finance-donut" id="finance-goal-donut"></div>
-      <div class="finance-goal-meta">${formatCurrency(totalSaved)} / ${formatCurrency(totalGoal)}</div>
-    </section>
-    <section class="finance-list">${goals.map(([id, g]) => {
-      const p = calcGoalProgress(g);
-      return `<button class="finance-goal-card" data-goal-id="${id}" style="--ring:${g.color || '#8b7dff'};--pct:${p.pct}">
-        <span><strong>${g.name}</strong><small>${formatCurrency(p.saved)} / ${formatCurrency(p.target)}</small><small>${g.targetDate ? formatDateEs(g.targetDate) : 'Sin fecha'}</small></span>
-        <div class="finance-goal-ring">${Math.round(p.pct)}%</div><button class="finance-dot-menu" data-goal-menu="${id}">⋮</button>
-      </button>`;
-    }).join('') || '<div class="empty-state">Sin objetivos todavía.</div>'}</section>`;
-  drawGoalDonut(pct);
+  const f = state.finanzas;
+  const comprometido = (Number(f.inversiones || 0)) + f.fijas.reduce((a, g) => a + Number(g.importe || 0), 0);
+  const esencial = f.fijas.filter((g) => g.esencial).reduce((a, g) => a + Number(g.importe || 0), 0);
+  host.innerHTML = `<section class="finance-panel"><div class="finance-row"><label class="opal-select-wrap"><span>Ingreso mensual</span><input class="opal-input" id="fin-ingreso" value="${f.ingreso || 0}"></label><label class="opal-select-wrap"><span>Inversiones</span><input class="opal-input" id="fin-inv" value="${f.inversiones || 0}"></label></div>
+  <div class="finance-chip-row"><span class="finance-chip tone-neutral">Comprometido ${formatCurrency(comprometido)}</span><span class="finance-chip tone-neg">Esencial ${formatCurrency(esencial)}</span></div>
+  <div class="finance-row"><label class="opal-select-wrap"><span>Origen de cuenta</span><select class="opal-select" id="fin-origen">${state.cuentas.map((c) => `<option ${f.origenVariable===c?'selected':''}>${c}</option>`).join('')}</select></label><button class="opal-pill" id="fin-new-fixed">Nuevo gasto fijo</button></div>
+  </section>
+  <section class="finance-list">${f.fijas.map((g, i) => `<article class="finance-account-card ${g.esencial ? 'tone-neg' : 'tone-neutral'}"><div><b>${g.nombre}</b><div>${g.categoria || 'General'}</div></div><div>${formatCurrency(g.importe)}</div><button class="finance-dot-menu" data-del-fixed="${i}">⋮</button></article>`).join('') || '<div class="empty-state">Sin gastos fijos</div>'}
+  <button class="opal-pill opal-pill--primary" id="fin-add-variable">Registrar gasto variable</button></section>`;
 }
 
-function renderCalendar() {
+function renderObjetivos() {
   const host = document.getElementById('finance-content');
-  host.innerHTML = `<section class="finance-panel">
-  <div class="finance-row"><h3>Calendario de variación</h3><label class="opal-select-wrap"><select class="opal-select" id="fin-gran"><option value="day">Día</option><option value="month">Mes</option><option value="year">Año</option></select></label></div>
-  <div class="finance-row"><label class="opal-select-wrap"><span>Mes</span><select class="opal-select" id="fin-month">${Array.from({ length: 12 }, (_, i) => `<option value="${i}">${new Date(2000, i, 1).toLocaleString('es-ES', { month: 'long' })}</option>`).join('')}</select></label><label class="opal-select-wrap"><span>Cuenta</span><select class="opal-select" id="fin-account"><option value="total">Total (todas)</option>${getAccountsOrdered().map(([id, a]) => `<option value="${id}">${a.name}</option>`).join('')}</select></label></div>
-  <div class="finance-row"><label class="opal-select-wrap"><span>Año</span><input class="opal-input" id="fin-year" type="number" value="${state.selectedYear}"></label></div>
-  <div class="finance-grid" id="finance-grid"></div></section>`;
-  document.getElementById('fin-gran').value = state.granularity;
-  document.getElementById('fin-account').value = state.selectedAccountId;
-  document.getElementById('fin-month').value = String(state.selectedMonth);
-  buildGrid();
+  const totalObj = state.objetivos.reduce((a, o) => a + Number(o.objetivo || 0), 0);
+  const totalAho = state.objetivos.reduce((a, o) => a + Number(o.ahorrado || 0), 0);
+  host.innerHTML = `<section class="finance-panel"><div class="finance-goal-header"><button class="opal-pill opal-pill--primary" id="goal-new">Nuevo objetivo</button></div>
+  <div class="finance-goal-meta">${formatCurrency(totalAho)} / ${formatCurrency(totalObj)} · Disponible ${formatCurrency((state.registros.at(-1)?.total || 0) - totalAho)}</div></section>
+  <section class="finance-list">${state.objetivos.map((o, i) => {
+    const pct = o.objetivo ? Math.max(0, Math.min(100, (o.ahorrado / o.objetivo) * 100)) : 0;
+    const days = o.fecha ? Math.ceil((new Date(`${o.fecha}T00:00:00`) - new Date()) / 86400000) : null;
+    return `<article class="finance-goal-card"><span><strong>${o.nombre}</strong><small>${Math.round(pct)}%</small><small>${days == null ? 'Sin fecha' : `quedan ${days} días`}</small></span><div class="finance-goal-ring" style="--ring:#8b7dff;--pct:${pct}">${Math.round(pct)}%</div><button class="finance-dot-menu" data-del-goal="${i}">⋮</button></article>`;
+  }).join('') || '<div class="empty-state">Sin objetivos</div>'}</section>`;
 }
 
-function buildGrid() {
-  const grid = document.getElementById('finance-grid');
-  if (!grid) return;
-  const series = getSeries(state.selectedAccountId);
-  const map = new Map(series.map(s => [s.date, s.value]));
-  if (state.granularity === 'day') {
-    const days = new Date(state.selectedYear, state.selectedMonth + 1, 0).getDate();
-    grid.innerHTML = ['L', 'M', 'X', 'J', 'V', 'S', 'D'].map(d => `<div class="fin-head">${d}</div>`).join('');
-    for (let d = 1; d <= days; d++) {
-      const key = `${state.selectedYear}-${String(state.selectedMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      const cur = map.get(key);
-      const prev = findPrevValue(series, key);
-      const delta = Number.isFinite(cur) ? cur - prev : null;
-      const tone = valueToneClass(delta ?? 0);
-      grid.insertAdjacentHTML('beforeend', `<button class="fin-cell ${tone}" data-period="${key}">${Number.isFinite(delta) ? formatSignedCurrency(delta) : '—'}<small>${prev ? formatSignedPercent((delta / prev) * 100) : '—'}</small></button>`);
-    }
-  } else if (state.granularity === 'month') {
-    grid.innerHTML = '';
-    for (let m = 0; m < 12; m++) {
-      const end = `${state.selectedYear}-${String(m + 1).padStart(2, '0')}-31`;
-      const cur = findPrevValue(series, end);
-      const prev = findPrevValue(series, `${state.selectedYear}-${String(m).padStart(2, '0')}-31`);
-      const delta = cur - prev;
-      grid.insertAdjacentHTML('beforeend', `<button class="fin-cell ${valueToneClass(delta)}" data-period="${state.selectedYear}-${m + 1}">${['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'][m]}<small>${formatSignedCurrency(delta)}</small></button>`);
-    }
-  } else {
-    grid.innerHTML = '';
-    const years = [...new Set(series.map(s => s.date.slice(0, 4)))];
-    years.forEach(y => {
-      const cur = findPrevValue(series, `${y}-12-31`);
-      const prev = findPrevValue(series, `${Number(y) - 1}-12-31`);
-      const delta = cur - prev;
-      grid.insertAdjacentHTML('beforeend', `<button class="fin-cell ${valueToneClass(delta)}" data-period="${y}">${y}<small>${formatSignedCurrency(delta)}</small></button>`);
-    });
-  }
-}
-
-function findPrevValue(series, key) {
-  let prev = 0;
-  for (const s of series) {
-    if (s.date <= key) prev = s.value;
-    else break;
-  }
-  return prev;
-}
-
-function renderCharts() {
+function renderCalendario() {
   const host = document.getElementById('finance-content');
-  host.innerHTML = '<section class="finance-panel"><div class="empty-state">Gráficos avanzados integrados en Historial de cuenta.</div></section>';
-}
-
-function openGoalModal(goalId = null) {
-  const g = goalId ? state.data.goals[goalId] : { name: '', target: 0, saved: 0, targetDate: dateKey(), color: '#8b7dff' };
-  const modal = document.getElementById('finance-modal-backdrop');
-  modal.classList.remove('hidden');
-  document.body.classList.add('has-open-modal');
-  modal.innerHTML = `<div class="modal finance-modal"><div class="modal-header"><div class="modal-title">${goalId ? 'Editar objetivo' : 'Nuevo objetivo'}</div><button class="icon-btn" data-close>✕</button></div>
-  <div class="modal-body"><label class="field"><span>Nombre</span><input id="goal-name" value="${g.name || ''}"></label>
-  <label class="field"><span>Objetivo €</span><input id="goal-target" inputmode="decimal" value="${g.target || 0}"></label>
-  <label class="field"><span>Ahorrado €</span><input id="goal-saved" inputmode="decimal" value="${g.saved || 0}"></label>
-  <label class="field"><span>Fecha objetivo</span><input id="goal-date" type="date" value="${g.targetDate || dateKey()}"></label>
-  <label class="field"><span>Color</span><input id="goal-color" type="color" value="${g.color || '#8b7dff'}"></label>
-  <div class="finance-modal-actions"><button class="opal-pill" data-close>Cancelar</button><button class="opal-pill opal-pill--primary" id="goal-save">Guardar</button></div></div></div>`;
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal || e.target.closest('[data-close]')) closeModal();
-  }, { once: true });
-  document.getElementById('goal-save')?.addEventListener('click', async () => {
-    const payload = {
-      name: document.getElementById('goal-name').value.trim(),
-      target: Number(document.getElementById('goal-target').value || 0),
-      saved: Number(document.getElementById('goal-saved').value || 0),
-      targetDate: document.getElementById('goal-date').value || dateKey(),
-      color: document.getElementById('goal-color').value,
-      order: goalId ? state.data.goals[goalId]?.order || Date.now() : Date.now()
-    };
-    if (goalId) await update(ref(db, `${ROOT}/goals/${goalId}`), payload);
-    else await set(push(ref(db, `${ROOT}/goals`)), payload);
-    closeModal();
-  });
-}
-
-function openAccountModal(accountId = null) {
-  const account = accountId ? state.data.accounts[accountId] : {
-    name: '', type: 'cash', color: '#6d7dff', includedInTotal: true, order: Date.now()
-  };
-  const modal = document.getElementById('finance-modal-backdrop');
-  modal.classList.remove('hidden');
-  document.body.classList.add('has-open-modal');
-  modal.innerHTML = `<div class="modal finance-modal"><div class="modal-header"><div class="modal-title">${accountId ? 'Editar cuenta' : 'Nueva cuenta'}</div><button class="icon-btn" data-close>✕</button></div>
-    <div class="modal-body">
-      <label class="field"><span>Nombre</span><input id="account-name" value="${account.name || ''}" placeholder="Ej. Principal"></label>
-      <label class="field"><span>Tipo</span><select id="account-type" class="opal-select">${ACCOUNT_TYPES.map(([v, t]) => `<option value="${v}" ${account.type === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-      <label class="field"><span>Color</span><input id="account-color" type="color" value="${account.color || '#6d7dff'}"></label>
-      <label class="field field-inline"><span>Incluir en total</span><input id="account-in-total" type="checkbox" ${account.includedInTotal !== false ? 'checked' : ''}></label>
-      <div class="finance-modal-actions"><button class="opal-pill" data-close>Cancelar</button><button class="opal-pill opal-pill--primary" id="account-save">Guardar</button></div>
-    </div>
-  </div>`;
-
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal || e.target.closest('[data-close]')) closeModal();
-  }, { once: true });
-
-  document.getElementById('account-save')?.addEventListener('click', async () => {
-    const name = document.getElementById('account-name').value.trim();
-    if (!name) return;
-    const payload = {
-      id: accountId || undefined,
-      name,
-      type: document.getElementById('account-type').value,
-      color: document.getElementById('account-color').value,
-      includedInTotal: document.getElementById('account-in-total').checked,
-      order: account.order || Date.now()
-    };
-    if (accountId) await update(ref(db, `${ROOT}/accounts/${accountId}`), payload);
-    else {
-      const newRef = push(ref(db, `${ROOT}/accounts`));
-      payload.id = newRef.key;
-      await set(newRef, payload);
-    }
-    closeModal();
-  });
-}
-
-async function deleteAccount(accountId) {
-  if (!accountId || !state.data.accounts?.[accountId]) return;
-  const deleteSnapshots = confirm('¿Eliminar también snapshots de esta cuenta? (recomendado)');
-  if (!confirm('Eliminar cuenta de forma definitiva. ¿Continuar?')) return;
-  await remove(ref(db, `${ROOT}/accounts/${accountId}`));
-  if (deleteSnapshots) await remove(ref(db, `${ROOT}/snapshots/${accountId}`));
-}
-
-function openHistoryModal(accountId = 'total', period = '') {
-  const modal = document.getElementById('finance-modal-backdrop');
-  const accName = accountId === 'total' ? 'Total (todas)' : state.data.accounts?.[accountId]?.name || 'Cuenta';
-  const series = getSeries(accountId);
-  modal.classList.remove('hidden');
-  document.body.classList.add('has-open-modal');
-  modal.innerHTML = `<div class="modal finance-modal"><div class="modal-header"><div class="modal-title">Historial · ${accName}</div><button class="icon-btn" data-close>✕</button></div>
-  <div class="modal-body"><div class="finance-history-chart" id="finance-history-chart"></div>
-  <div class="finance-history-table-wrap"><table class="finance-history-table"><thead><tr><th>Fecha</th><th>Valor</th><th>Δ€</th><th>Δ%</th></tr></thead><tbody>
-  ${series.slice(-90).reverse().map((row, i, arr) => {
-    const prev = arr[i + 1]?.value ?? row.value;
-    const d = row.value - prev;
-    const pct = prev === 0 ? null : (d / prev) * 100;
-    return `<tr><td>${formatDateEs(row.date)}</td><td>${formatCurrency(row.value)}</td><td class="${valueToneClass(d)}">${formatSignedCurrency(d)}</td><td class="${valueToneClass(d)}">${formatSignedPercent(pct)}</td></tr>`;
-  }).join('')}</tbody></table></div>
-  <div class="finance-modal-actions"><button class="opal-pill" data-close>Cerrar</button></div></div></div>`;
-  drawHistoryChart(series, period);
-  modal.addEventListener('click', (e) => { if (e.target === modal || e.target.closest('[data-close]')) closeModal(); }, { once: true });
-}
-
-function closeModal() {
-  const modal = document.getElementById('finance-modal-backdrop');
-  modal.classList.add('hidden');
-  modal.innerHTML = '';
-  document.body.classList.remove('has-open-modal');
-}
-
-function drawSpark(series) {
-  const el = document.getElementById('finance-spark');
-  if (!el || !window.echarts || !series.length) return;
-  const chart = window.echarts.init(el, null, { renderer: 'canvas' });
-  chart.setOption({
-    grid: { top: 8, bottom: 8, left: 4, right: 4 },
-    xAxis: { type: 'category', show: false, data: series.map(s => s.date) },
-    yAxis: { type: 'value', show: false },
-    series: [{ type: 'line', smooth: true, data: series.map(s => s.value), symbol: 'none', lineStyle: { color: '#42db7f', width: 2.5 }, areaStyle: { color: 'rgba(66,219,127,.14)' } }]
-  });
-}
-
-function drawGoalDonut(pct) {
-  const el = document.getElementById('finance-goal-donut');
-  if (!el || !window.echarts) return;
-  const chart = window.echarts.init(el);
-  chart.setOption({ series: [{ type: 'pie', radius: ['68%', '88%'], label: { show: true, position: 'center', formatter: `${Math.round(pct)}%`, color: '#fff', fontSize: 20, fontWeight: 700 }, data: [{ value: pct, itemStyle: { color: '#8b7dff' } }, { value: 100 - pct, itemStyle: { color: 'rgba(255,255,255,.12)' } }] }] });
-}
-
-function drawHistoryChart(series) {
-  const el = document.getElementById('finance-history-chart');
-  if (!el || !window.echarts) return;
-  const data = series.slice(-120);
-  const chart = window.echarts.init(el);
-  chart.setOption({ tooltip: { trigger: 'axis' }, grid: { top: 22, left: 16, right: 16, bottom: 24 }, xAxis: { type: 'category', data: data.map(s => s.date), axisLabel: { show: false } }, yAxis: { type: 'value', splitLine: { lineStyle: { color: 'rgba(255,255,255,.08)' } } }, series: [{ type: 'line', data: data.map(s => s.value), smooth: true, symbolSize: 6, itemStyle: { color: '#58d4a5' }, lineStyle: { color: '#58d4a5' } }] });
-}
-
-function parseMoneyInput(value) {
-  const cleaned = String(value || '').replace(/[€\s]/g, '').replace(/\./g, '').replace(',', '.');
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function setInlineEditor(container, accountId, currentValue) {
-  if (!container || state.editingValueTarget) return;
-  state.editingValueTarget = accountId;
-  const prevHtml = container.innerHTML;
-  const initial = Number(currentValue || 0).toFixed(2).replace('.', ',');
-  container.innerHTML = `<div class="finance-inline-edit-wrap">
-    <input class="finance-inline-input" inputmode="decimal" placeholder="0,00 €" value="${initial}">
-    <button class="opal-pill finance-inline-save">✓</button>
-    <button class="opal-pill finance-inline-cancel">✕</button>
-  </div>`;
-  document.body.classList.add('finance-inline-editing');
-  const blocker = document.getElementById('finance-inline-blocker') || createInlineBlocker();
-  blocker.classList.remove('hidden');
-
-  const input = container.querySelector('.finance-inline-input');
-  input?.focus();
-  input?.select();
-
-  const closeInline = () => {
-    state.editingValueTarget = null;
-    container.innerHTML = prevHtml;
-    document.body.classList.remove('finance-inline-editing');
-    blocker.classList.add('hidden');
-  };
-
-  const saveInline = async () => {
-    const value = parseMoneyInput(input?.value);
-    await saveSnapshotForTarget(accountId, value);
-    closeInline();
-  };
-
-  container.querySelector('.finance-inline-save')?.addEventListener('click', saveInline, { once: true });
-  container.querySelector('.finance-inline-cancel')?.addEventListener('click', closeInline, { once: true });
-  input?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); saveInline(); }
-    if (e.key === 'Escape') { e.preventDefault(); closeInline(); }
-  });
-  input?.addEventListener('blur', () => { if (state.editingValueTarget === accountId) saveInline(); });
-}
-
-function createInlineBlocker() {
-  const blocker = document.createElement('div');
-  blocker.id = 'finance-inline-blocker';
-  blocker.className = 'finance-inline-blocker';
-  document.body.appendChild(blocker);
-  blocker.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
-  return blocker;
-}
-
-async function saveSnapshotForTarget(accountId, value) {
-  const today = dateKey();
-  if (accountId !== 'total') {
-    await set(ref(db, `${ROOT}/snapshots/${accountId}/${today}`), { value });
-    return;
-  }
-
-  const included = getAccountsOrdered().filter(([, acc]) => acc.includedInTotal !== false);
-  if (!included.length) return;
-
-  const currentSeries = getSeries('total');
-  const current = currentSeries.length ? currentSeries[currentSeries.length - 1].value : 0;
-  const delta = value - current;
-  const step = delta / included.length;
-  const payload = {};
-
-  included.forEach(([id], index) => {
-    const accountSeries = getSeries(id);
-    const currentValue = accountSeries.length ? accountSeries[accountSeries.length - 1].value : 0;
-    const corrected = index === included.length - 1 ? value - (current + (step * (included.length - 1))) + currentValue : currentValue + step;
-    payload[id] = { [today]: { value: Number(corrected.toFixed(2)) } };
-  });
-
-  await update(ref(db, `${ROOT}/snapshots`), payload);
+  host.innerHTML = `<section class="finance-panel"><div class="finance-grid">${state.registros.map((r) => `<button class="fin-cell ${valueToneClass(r.variacion)}" data-history-day="${r.fecha}"><b>${r.fecha}</b><small>${formatSignedCurrency(r.variacion)}</small></button>`).join('')}</div></section>`;
 }
 
 function render() {
   renderTopNav();
-  if (state.internalView === 'overview') renderOverview();
-  if (state.internalView === 'goals') renderGoals();
-  if (state.internalView === 'calendar') renderCalendar();
-  if (state.internalView === 'charts') renderCharts();
+  if (state.view === 'cuentas') renderCuentas();
+  if (state.view === 'gastos') renderGastos();
+  if (state.view === 'objetivos') renderObjetivos();
+  if (state.view === 'calendario') renderCalendario();
+}
+
+function openCuentaDetalle(cuenta) {
+  const rows = state.registros.map((r, i) => ({ x: i, y: Number(r.saldos?.[cuenta] || 0), fecha: r.fecha }));
+  const modal = document.getElementById('finance-modal-backdrop');
+  modal.classList.remove('hidden');
+  modal.innerHTML = `<div class="modal finance-modal"><div class="modal-header"><div class="modal-title">${cuenta}</div><button class="icon-btn" data-close>✕</button></div><div class="modal-body"><canvas id="cuenta-chart" width="300" height="130" style="width:100%;height:130px"></canvas><div id="chart-tip" class="finance-chip tone-neutral">—</div><div class="finance-history-table-wrap"><table class="finance-history-table"><tr><th>Fecha</th><th>Saldo</th><th>⋮</th></tr>${rows.map((r) => `<tr><td>${r.fecha}</td><td>${formatCurrency(r.y)}</td><td><button class="opal-pill" data-edit-day="${cuenta}|${r.fecha}">Editar</button> <button class="opal-pill" data-del-day="${cuenta}|${r.fecha}">Eliminar</button></td></tr>`).join('')}</table></div></div></div>`;
+  const cv = document.getElementById('cuenta-chart'); const ctx = cv.getContext('2d');
+  const min = Math.min(...rows.map((r) => r.y), 0); const max = Math.max(...rows.map((r) => r.y), 1);
+  ctx.strokeStyle = '#7da1ff'; ctx.lineWidth = 2; ctx.beginPath();
+  rows.forEach((r, i) => { const x = (i / Math.max(1, rows.length - 1)) * cv.width; const y = cv.height - ((r.y - min) / (max - min || 1)) * cv.height; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }); ctx.stroke();
+  cv.addEventListener('pointermove', (e) => {
+    const idx = Math.round(((e.offsetX / cv.clientWidth) * (rows.length - 1)));
+    const row = rows[Math.max(0, Math.min(rows.length - 1, idx))];
+    document.getElementById('chart-tip').textContent = `${row.fecha} · ${formatCurrency(row.y)}`;
+  });
+}
+
+function applyUid(nextUid) {
+  const uid = String(nextUid || 'default');
+  if (uid === state.uid) return;
+  state.uid = uid;
+  persistLocal();
+  bindCloud();
+  emitLogin();
+}
+
+function cloudPath(base) { return `users/${state.uid}/finanzas/${base}`; }
+function syncCloud() {
+  if (!state.uid) return;
+  set(ref(db, cloudPath('cuentas')), state.cuentas);
+  set(ref(db, cloudPath('data')), { registros: state.registros, objetivos: state.objetivos, finanzas: state.finanzas });
+}
+function bindCloud() {
+  state.cloudUnsubs.forEach((u) => u());
+  state.cloudUnsubs = [];
+  const cuentasRef = ref(db, cloudPath('cuentas'));
+  const dataRef = ref(db, cloudPath('data'));
+  const onCuentas = onValue(cuentasRef, (snap) => {
+    const remote = snap.val();
+    if (Array.isArray(remote) && remote.length) { state.cuentas = remote; persistLocal(); render(); }
+  });
+  const onData = onValue(dataRef, (snap) => {
+    const remote = snap.val() || {};
+    if (Array.isArray(remote.registros)) state.registros = remote.registros;
+    if (Array.isArray(remote.objetivos)) state.objetivos = remote.objetivos;
+    if (remote.finanzas) state.finanzas = { ...state.finanzas, ...remote.finanzas };
+    recalcVariaciones(); persistLocal(); render();
+  });
+  state.cloudUnsubs.push(() => off(cuentasRef, 'value', onCuentas));
+  state.cloudUnsubs.push(() => off(dataRef, 'value', onData));
 }
 
 function onRootClick(e) {
-  const vBtn = e.target.closest('[data-fin-view]');
-  if (vBtn) { state.internalView = vBtn.dataset.finView; render(); return; }
-
-  if (e.target.id === 'goal-new') return openGoalModal();
-  const gCard = e.target.closest('[data-goal-id]');
-  if (gCard) return openGoalModal(gCard.dataset.goalId);
-  const gMenu = e.target.closest('[data-goal-menu]');
-  if (gMenu) {
-    const id = gMenu.dataset.goalMenu;
-    if (confirm('¿Eliminar objetivo?')) remove(ref(db, `${ROOT}/goals/${id}`));
+  const v = e.target.closest('[data-fin-view]'); if (v) { state.view = v.dataset.finView; render(); return; }
+  if (e.target.id === 'fin-refresh') { recalcVariaciones(); render(); return; }
+  if (e.target.id === 'fin-add-account') return addCuenta();
+  const delAccount = e.target.closest('[data-del-account]');
+  if (delAccount) {
+    const c = delAccount.dataset.delAccount;
+    const action = prompt('editar/eliminar');
+    if (action === 'eliminar') deleteCuenta(c);
+    if (action === 'editar') {
+      const n = prompt('Nuevo nombre', c)?.trim();
+      if (n && !state.cuentas.includes(n)) {
+        state.cuentas = state.cuentas.map((x) => (x === c ? n : x));
+        state.registros.forEach((r) => { r.saldos[n] = r.saldos[c]; delete r.saldos[c]; });
+        persistLocal(); syncCloud(); render();
+      }
+    }
     return;
   }
-
-  if (e.target.id === 'finance-account-create-empty' || e.target.id === 'finance-account-create') return openAccountModal();
-
-  const accountMenu = e.target.closest('[data-account-menu]');
-  if (accountMenu) {
-    const id = accountMenu.dataset.accountMenu;
-    const action = prompt('Cuenta: escribe "editar" o "eliminar"');
-    if (action === 'editar') openAccountModal(id);
-    if (action === 'eliminar') deleteAccount(id);
+  const display = e.target.closest('[data-now-display]');
+  if (display) {
+    const c = display.dataset.nowDisplay;
+    const zone = display.closest('.finance-edit-zone');
+    const input = zone.querySelector(`[data-now-input="${c}"]`);
+    display.classList.add('hidden'); input.classList.remove('hidden'); input.value = ''; input.focus();
     return;
   }
+  const card = e.target.closest('[data-account]');
+  if (card && !e.target.closest('[data-now-display]') && !e.target.closest('[data-del-account]')) openCuentaDetalle(card.dataset.account);
 
-  if (e.target.id === 'finance-history-total') return openHistoryModal('total');
+  if (e.target.id === 'fin-new-fixed') {
+    const nombre = prompt('Nombre gasto fijo'); if (!nombre) return;
+    const importe = parseNumber(prompt('Importe mensual') || '0');
+    const categoria = prompt('Categoría', 'General') || 'General';
+    const esencial = confirm('¿Es esencial?');
+    state.finanzas.fijas.push({ nombre, importe, categoria, esencial }); persistLocal(); syncCloud(); render(); return;
+  }
+  const delFixed = e.target.closest('[data-del-fixed]');
+  if (delFixed) { if (confirm('Eliminar gasto fijo?')) { state.finanzas.fijas.splice(Number(delFixed.dataset.delFixed), 1); persistLocal(); syncCloud(); render(); } return; }
+  if (e.target.id === 'fin-add-variable') {
+    const importe = parseNumber(prompt('Importe gasto variable') || '0');
+    if (!importe) return;
+    const categoria = prompt('Categoría', 'General') || 'General';
+    const cuenta = state.finanzas.origenVariable || state.cuentas[0];
+    const actual = getCuentaActual(cuenta).cur;
+    state.finanzas.variables.push({ fecha: TODAY(), importe, categoria, cuenta });
+    upsertRegistroCuenta(cuenta, TODAY(), Number((actual - importe).toFixed(2)));
+    persistLocal(); syncCloud(); render();
+  }
 
-  const account = e.target.closest('[data-account-id]');
-  if (account && !e.target.closest('[data-inline-edit]')) return openHistoryModal(account.dataset.accountId);
+  if (e.target.id === 'goal-new') {
+    const nombre = prompt('Nombre del objetivo'); if (!nombre) return;
+    const objetivo = parseNumber(prompt('Objetivo') || '0');
+    const ahorrado = parseNumber(prompt('Ahorrado') || '0');
+    const fecha = prompt('Fecha YYYY-MM-DD', TODAY()) || TODAY();
+    state.objetivos.push({ nombre, objetivo, ahorrado, fecha }); persistLocal(); syncCloud(); render();
+  }
+  const delGoal = e.target.closest('[data-del-goal]');
+  if (delGoal) { if (confirm('Eliminar objetivo?')) { state.objetivos.splice(Number(delGoal.dataset.delGoal), 1); persistLocal(); syncCloud(); render(); } }
 
-  const inline = e.target.closest('[data-inline-edit]');
-  if (inline) return setInlineEditor(inline, inline.dataset.inlineEdit, Number(inline.dataset.inlineCurrent || 0));
+  if (e.target.closest('[data-close]') || e.target.id === 'finance-modal-backdrop') {
+    document.getElementById('finance-modal-backdrop').classList.add('hidden');
+    document.getElementById('finance-modal-backdrop').innerHTML = '';
+  }
 
-  const cell = e.target.closest('.fin-cell[data-period]');
-  if (cell) return openHistoryModal(state.selectedAccountId, cell.dataset.period);
+  const editDay = e.target.closest('[data-edit-day]');
+  if (editDay) {
+    const [cuenta, fecha] = editDay.dataset.editDay.split('|');
+    const value = parseNumber(prompt('Nuevo saldo') || '0');
+    upsertRegistroCuenta(cuenta, fecha, value);
+  }
+  const delDay = e.target.closest('[data-del-day]');
+  if (delDay) {
+    const [cuenta, fecha] = delDay.dataset.delDay.split('|');
+    const row = state.registros.find((r) => r.fecha === fecha);
+    if (row && confirm('Eliminar registro de cuenta para esa fecha?')) { delete row.saldos[cuenta]; fillSaldosForDate(row); recalcVariaciones(); persistLocal(); syncCloud(); render(); }
+  }
 }
 
 function onRootChange(e) {
-  if (e.target.id === 'finance-range') { state.range = e.target.value; renderOverview(); }
-  if (e.target.id === 'fin-gran') { state.granularity = e.target.value; renderCalendar(); }
-  if (e.target.id === 'fin-account') { state.selectedAccountId = e.target.value; buildGrid(); }
-  if (e.target.id === 'fin-year') { state.selectedYear = Number(e.target.value) || new Date().getFullYear(); buildGrid(); }
-  if (e.target.id === 'fin-month') { state.selectedMonth = Number(e.target.value) || 0; buildGrid(); }
+  if (e.target.id === 'fin-origen') { state.finanzas.origenVariable = e.target.value; persistLocal(); syncCloud(); }
+  if (e.target.id === 'fin-ingreso') { state.finanzas.ingreso = parseNumber(e.target.value); persistLocal(); syncCloud(); }
+  if (e.target.id === 'fin-inv') { state.finanzas.inversiones = parseNumber(e.target.value); persistLocal(); syncCloud(); }
+}
+
+function onRootKeydown(e) {
+  const input = e.target.closest('[data-now-input]');
+  if (!input) return;
+  if (e.key === 'Enter') input.blur();
+}
+
+function onRootBlur(e) {
+  const input = e.target.closest('[data-now-input]');
+  if (!input) return;
+  const cuenta = input.dataset.nowInput;
+  const typed = input.value.trim();
+  const v = typed ? parseNumber(typed) : parseNumber(input.placeholder);
+  upsertRegistroCuenta(cuenta, TODAY(), v);
 }
 
 function bindInteractions() {
   const root = document.getElementById('view-finance');
   root?.addEventListener('click', onRootClick);
   root?.addEventListener('change', onRootChange);
+  root?.addEventListener('keydown', onRootKeydown);
+  root?.addEventListener('focusout', onRootBlur);
+  window.addEventListener('finanzas-login', (e) => applyUid(e.detail?.uid));
 }
 
+window.getFinanzasSnapshot = () => ({ uid: state.uid, cuentas: [...state.cuentas], registros: [...state.registros] });
+
 function init() {
-  loadCache();
-  bindFirebase();
+  loadLocal();
+  recalcVariaciones();
+  bindCloud();
   bindInteractions();
+  emitLogin();
   render();
 }
 

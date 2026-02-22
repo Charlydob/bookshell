@@ -24,6 +24,25 @@ let isApplyingRemote = false;
 let unsubscribeFinance = null;
 let financeBootstrapped = false;
 
+function getFinanceScope() {
+  return document.getElementById('view-finance');
+}
+
+function getFinanceHost(selector, { required = true } = {}) {
+  const scope = getFinanceScope();
+  const node = scope?.querySelector(selector) || null;
+  console.log(`[FIN] host ${node ? 'found' : 'missing'}: ${selector}`);
+  if (!node && required) throw new Error(`Finance host missing: ${selector}`);
+  return node;
+}
+
+function renderFinanceCrash(err) {
+  const scope = getFinanceScope();
+  if (!scope) return;
+  const host = scope.querySelector('#finance-content') || scope;
+  host.innerHTML = `<div class="finance-panel"><div style="font-size:18px;font-weight:700;margin-bottom:8px;">Finance crashed</div><pre style="white-space:pre-wrap;opacity:.85">${String(err?.stack || err)}</pre></div>`;
+}
+
 function parseNumber(v) { const n = Number(String(v ?? '').replace(/\./g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0; }
 function valueToneClass(v) { return v > 0 ? 'tone-pos' : v < 0 ? 'tone-neg' : 'tone-neutral'; }
 function sortRegistros() { state.registros.sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || ''))); }
@@ -229,7 +248,7 @@ function loadLocal() {
 }
 
 function createModalBase({ title, body, cancel = 'Cancelar', confirm = 'Guardar', danger = false, onConfirm }) {
-  const backdrop = document.getElementById('finance-modal-backdrop');
+  const backdrop = getFinanceHost('#finance-modal-backdrop');
   backdrop.classList.remove('hidden');
   backdrop.innerHTML = `<div class="modal finance-modal"><div class="modal-header"><div class="modal-title">${title}</div><button class="icon-btn" data-close>✕</button></div><div class="modal-body">${body}</div><div class="modal-footer sheet-footer"><button class="opal-pill" data-close>${cancel}</button><button class="opal-pill ${danger ? '' : 'opal-pill--primary'}" data-modal-confirm>${confirm}</button></div></div>`;
   const close = () => { backdrop.classList.add('hidden'); backdrop.innerHTML = ''; };
@@ -241,7 +260,7 @@ function createModalBase({ title, body, cancel = 'Cancelar', confirm = 'Guardar'
 }
 
 function renderTopNav() {
-  const root = document.getElementById('finance-topnav');
+  const root = getFinanceHost('#finance-topnav');
   const items = [['cuentas', '💳'], ['gastos', '🧾'], ['objetivos', '◎'], ['calendario', '📅']];
   root.innerHTML = items.map(([id, ic]) => `<button class="finance-mini-btn ${state.view === id ? 'active' : ''}" data-fin-view="${id}">${ic}</button>`).join('');
 }
@@ -266,7 +285,7 @@ function renderSparkline(points) {
 
 function renderCuentas() {
   ensureTodayRow();
-  const host = document.getElementById('finance-content');
+  const host = getFinanceHost('#finance-content');
   const last = state.registros.at(-1) || { total: 0, variacion: 0, varpct: 0 };
   const pts = state.registros.map((r) => Number(r.total || 0));
   host.innerHTML = `<section class="finance-panel"><div class="finance-overview-hero ${valueToneClass(last.variacion)}"><div class="finance-overview-top"><button class="finance-total">${formatCurrency(last.total || 0)}</button><button class="opal-pill" id="fin-add-account">+ Cuenta</button></div><div class="finance-delta-row"><span class="finance-sign-badge ${valueToneClass(last.variacion)}">${formatSignedCurrency(last.variacion || 0)} · ${formatSignedPercent(last.varpct || 0)}</span></div><div class="finance-spark">${renderSparkline(pts)}</div></div></section><section class="finance-list">${state.cuentas.map((c) => {
@@ -286,7 +305,7 @@ function getObjetivosCapitalDisponible() {
 }
 
 function renderObjetivos() {
-  const host = document.getElementById('finance-content');
+  const host = getFinanceHost('#finance-content');
   const totalObj = state.objetivos.reduce((a, o) => a + Number(o.objetivo || 0), 0);
   const totalAho = state.objetivos.reduce((a, o) => a + Number(o.ahorrado || 0), 0);
   const origen = Array.isArray(state.finanzas.origenObjetivos) && state.finanzas.origenObjetivos.length ? state.finanzas.origenObjetivos.join(', ') : 'Todas';
@@ -296,13 +315,13 @@ function renderObjetivos() {
 }
 
 function renderGastos() {
-  const host = document.getElementById('finance-content');
+  const host = getFinanceHost('#finance-content');
   const vars = state.finanzas.variables || [];
   host.innerHTML = `<section class="finance-panel"><div class="finance-row"><label class="opal-select-wrap"><span>Cuenta a descontar</span><select class="opal-select" id="fin-origen">${state.cuentas.map((c) => `<option ${state.finanzas.origenVariable === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label><button class="opal-pill" id="fin-new-fixed">Nuevo gasto fijo</button></div><button class="opal-pill opal-pill--primary" id="fin-add-variable">Registrar gasto variable</button></section><section class="finance-list">${vars.map((g, i) => `<article class="finance-account-card tone-neg"><div><b>${formatCurrency(g.importe || 0)}</b><div>${g.categoria || 'General'} · ${g.cuenta} · ${g.fecha}</div>${g.etiqueta ? `<small>${g.etiqueta}</small>` : ''}</div><button class="finance-dot-menu" data-del-var="${i}">⋮</button></article>`).join('') || '<div class="empty-state">Sin gastos variables</div>'}</section>`;
 }
 
 function renderCalendario() {
-  const host = document.getElementById('finance-content');
+  const host = getFinanceHost('#finance-content');
   const selectedCuenta = state.finanzas.calCuenta || 'Total (todas)';
   const [yRaw, mRaw] = String(state.finanzas.calMes || '').split('-');
   const year = Number(yRaw || state.finanzas.calAnio || new Date().getFullYear());
@@ -542,7 +561,7 @@ function onRootBlur(e) {
 }
 
 function bindInteractions() {
-  const root = document.getElementById('view-finance');
+  const root = getFinanceScope();
   root?.addEventListener('click', onRootClick);
   root?.addEventListener('change', onRootChange);
   root?.addEventListener('input', onRootInput);
@@ -552,7 +571,7 @@ function bindInteractions() {
 
 async function maybeBootstrapFinance() {
   if (financeBootstrapped) return;
-  const root = document.getElementById('view-finance');
+  const root = getFinanceScope();
   if (!root?.classList.contains('view-active')) return;
   financeBootstrapped = true;
   await finLoadFromRTDB();
@@ -560,42 +579,40 @@ async function maybeBootstrapFinance() {
 }
 
 async function initFinanceTab() {
-  loadLocal();
-  recalcVariaciones();
-  bindInteractions();
-  render();
-  await maybeBootstrapFinance();
-  const root = document.getElementById('view-finance');
-  root?.addEventListener('click', () => { void maybeBootstrapFinance(); });
-  const navBtn = document.querySelector('.nav-btn[data-view="view-finance"]');
-  navBtn?.addEventListener('click', () => { void maybeBootstrapFinance(); });
+  try {
+    loadLocal();
+    recalcVariaciones();
+    bindInteractions();
+    render();
+    await maybeBootstrapFinance();
+    const root = getFinanceScope();
+    root?.addEventListener('click', () => { void maybeBootstrapFinance(); });
+    const navBtn = document.querySelector('.nav-btn[data-view="view-finance"]');
+    navBtn?.addEventListener('click', () => { void maybeBootstrapFinance(); });
+  } catch (err) {
+    console.error('[FIN] init failed', err);
+    renderFinanceCrash(err);
+    throw err;
+  }
 }
 
 async function bootFinance() {
-  console.group('[FIN] boot');
+  console.group('[FIN] boot start');
   console.log('[FIN] script loaded', new Date().toISOString());
   try {
     console.log('[FIN] DOM ready state:', document.readyState);
 
-    const root = document.querySelector('#view-finance');
-    console.log('[FIN] #view-finance exists:', !!root);
-
-    const tabs = document.querySelector('.finance-tabs, .tabs');
-    const dashboard = document.querySelector('#dashboard, .paneldashboard, .finance-dashboard');
-    console.log('[FIN] tabs:', !!tabs, 'dashboard:', !!dashboard);
+    const root = getFinanceScope();
+    console.log('[FIN] view-finance found:', !!root);
+    getFinanceHost('#finance-topnav', { required: false });
+    getFinanceHost('#finance-content', { required: false });
+    getFinanceHost('#finance-modal-backdrop', { required: false });
 
     await initFinanceTab();
     console.log('[FIN] initFinanceTab OK');
   } catch (err) {
     console.error('[FIN] boot FAILED:', err);
-    const root = document.querySelector('#view-finance');
-    if (root) {
-      root.innerHTML = `
-        <div style="padding:20px;color:#fff;">
-          <div style="font-size:18px;font-weight:700;margin-bottom:8px;">Finance crashed</div>
-          <pre style="white-space:pre-wrap;opacity:.85">${String(err?.stack || err)}</pre>
-        </div>`;
-    }
+    renderFinanceCrash(err);
   } finally {
     console.groupEnd();
   }

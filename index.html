@@ -19,6 +19,9 @@
 <link href="styles/world.css" rel="stylesheet"/>
 <link href="styles/gym.css" rel="stylesheet"/>
 <link href="styles/finance.css" rel="stylesheet"/>
+<link rel="stylesheet" href="styles/main.css">
+<link rel="stylesheet" href="styles/finance.css">
+<link rel="stylesheet" href="styles/finance-legacy.css">
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="icons/favicon.ico" rel="icon"/>
 <link href="icons/favicon-32.png" rel="icon" sizes="32x32" type="image/png"/>
@@ -2018,9 +2021,568 @@ Crear “<span id="gym-create-cta-text"></span>”
 
 
 <section class="view" id="view-finance">
-  <div class="finance-shell">
-    <div class="finance-topnav" id="finance-topnav"></div>
-    <div id="finance-content"></div>
+    <div class="finance-shell finance-shell--embedded" style="padding-top:40px;">
+<!-- 0️⃣ LOGIN SIMPLE -->
+<div id="login-overlay" class="login-overlay" aria-hidden="true">
+  <div class="login-card">
+    <h2>Accede a tus datos</h2>
+
+    <label for="login-id">ID de usuario</label>
+    <input id="login-id" type="text" placeholder="ej: charly" autocomplete="username" />
+
+    <div class="login-actions">
+      <button id="login-btn">Entrar</button>
+      <button id="login-clear" class="btn-secondary">Olvidar en este dispositivo</button>
+    </div>
+
+    <p class="login-hint">
+      Usa el mismo ID en todos tus dispositivos para ver los mismos datos.
+    </p>
+  </div>
+</div>
+  <!-- NAV TABS GLOBAL -->
+ <nav class="tabs">
+    <button class="tab tab-cuentas active" data-tab="cuentas" aria-label="Cuentas">
+      <span class="tab-icon">€</span>
+    </button>
+    <button class="tab tab-objetivos" data-tab="objetivos" aria-label="Objetivos">
+      <span class="tab-icon">🎯</span>
+    </button>
+    <button class="tab tab-gastos" data-tab="gastos" aria-label="Gastos mensuales">
+      <span class="tab-icon">💸</span>
+    </button>
+    <!-- NUEVA PESTAÑA MERCADOS -->
+    <button class="tab tab-mercados" data-tab="mercados" aria-label="Mercados">
+      <span class="tab-icon">📈</span>
+    </button>
+    <button class="tab tab-youtube" data-tab="youtube" aria-label="YouTube & comida">
+      <span class="tab-icon">▶️</span>
+    </button>
+    <!-- NUEVA PESTAÑA CALENDARIO -->
+    <button class="tab tab-calendario" data-tab="calendario" aria-label="Calendario">
+      <span class="tab-icon">📅</span>
+    </button>
+  </nav>
+
+  <!-- 1️⃣TAB CUENTAS -->
+  <section id="tab-cuentas" class="paneldashboard tab-panel" hidden>
+    <div class="total-header">
+      <div id="total-actual" class="total-actual">0,00 €</div>
+      <div id="total-variacion-mini" class="total-variacion-mini">0,00 € · 0,00 %</div>
+      <canvas id="total-sparkline" class="total-sparkline" width="360" height="80"></canvas>
+    </div>
+
+    <!-- Primera fila: todo en una misma línea -->
+
+
+    <div class="actions actions-top">
+      <button id="btn-abrir-modal">Actualizar</button>
+
+      <select id="periodo">
+        <option value="mes" selected>Mes</option>
+        <option value="semana">Semana</option>
+        <option value="anio">Año</option>
+      </select>
+
+      <button id="btn-historial">Historial</button>
+
+      <select id="comparar">
+        <option value="mes" selected>Mes vs Mes</option>
+        <option value="semana">Sem. vs Sem.</option>
+      </select>
+
+      <span id="status"></span>
+    </div>
+
+    <!-- Segunda fila: variaciones en una sola línea -->
+    <div class="actions actions-variaciones">
+      <span id="var-total" class="var-total">Mes: 0,00 € (0,00%)</span>
+      <span id="var-comparada" class="var-comparada">Mes actual: 0,00 € (0,00%) · Anterior: 0,00 € (0,00%)</span>
+    </div>
+
+    <div id="dashboard" class="cards"></div>
+  </section>
+<!-- 2️⃣TAB OBJETIVOS -->
+<section id="tab-objetivos" class=" panel-objetivos tab-panel" hidden>
+      <div class="objetivos-header">
+        <div class="objetivos-title">Objetivos de ahorro</div>
+        <button id="btn-nuevo-objetivo">Nuevo objetivo</button>
+            <button id="btn-origen-cuentas">Cuentas origen</button>
+
+      </div>
+  
+      <!-- BLOQUE SUPERIOR: CÍRCULO GLOBAL + RESUMEN -->
+    <div class="objetivos-top">
+
+      <!-- Círculo global centrado -->
+      <div class="objetivos-global-wrapper">
+        <div id="obj-global-circle" class="objetivo-circle objetivo-circle-global">
+          <div id="obj-global-pct" class="objetivo-circle-inner objetivo-circle-inner-global">0%</div>
+        </div>
+      </div>
+
+      <!-- Texto de resumen alineado -->
+      <div class="objetivos-resumen">
+        <div class="obj-linea">
+          <span id="obj-total-objetivo" class="obj-bold">Objetivo total: 0,00 €</span>
+        </div>
+        <div class="obj-linea">
+          <span id="obj-total-progreso">Ahorrado: 0,00 € (0,00%)</span>
+        </div>
+        <div class="obj-linea">
+          <span id="obj-origen-resumen">Origen: todas</span>
+        </div>
+        <div class="obj-linea">
+          <span id="obj-capital-disponible">Disponible: 0,00 €</span>
+        </div>
+      </div>
+
+      <!-- Botones alineados arriba a la derecha -->
+
+    </div>
+  <div id="objetivos-list" class="objetivos-list"></div>
+</section>
+<!-- TAB GASTOS FIJOS -->
+<section id="tab-gastos" class="panel-gastos tab-panel" hidden>
+  <div class="gastos-header">
+    <div class="gastos-header-top">
+      <div class="gastos-header-text">
+        <div class="gastos-diff-label">Balance mensual</div>
+        <div id="g-balance-final" class="g-balance-final">0,00 €</div>
+        <div id="g-balance-detalle" class="g-balance-detalle">
+          Ing: 0,00 € · Gastos fijos: 0,00 € · Gasto variable: 0,00 €
+        </div>
+      </div>
+
+<div class="g-semicircle-center">
+  <div class="g-semi-line">Ingresos: <span id="g-semi-ingresos">0,00 €</span></div>
+  <div class="g-semi-line">Inversión: <span id="g-semi-inversion">0,00 €</span></div>
+  <div class="g-semi-line">Gastos totales: <span id="g-semi-gastos">0,00 €</span></div>
+  <div class="g-semi-line g-semi-rest">Te queda: <span id="g-semi-resto">0,00 €</span></div>
+</div>
+    </div>
+
+    <div class="gastos-semicircle-wrapper">
+<canvas id="g-semicircle" width="260" height="140"></canvas>
+<div class="g-origen-wrapper">
+  <button id="g-btn-origen-cuentas" class="btn-pill-small">
+    Cuentas gasto variable
+  </button>
+  <span id="g-origen-cuentas-label" class="muted">Todas las cuentas</span>
+</div>
+
+    </div>
+  </div>
+
+<div class="gastos-config panel">
+  <div class="g-config-row">
+    <label for="g-input-ingresos">Ingresos mensuales</label>
+    <div class="g-config-input">
+      <input id="g-input-ingresos" type="text" inputmode="decimal" placeholder="0,00 €" />
+      <button id="g-btn-ingresos-guardar">Añadir</button>
+    </div>
+  </div>
+
+  <div class="g-kpis">
+    <div id="g-kpi-comprometido" class="g-kpi-line">
+      0% de tus ingresos está comprometido en gastos fijos.
+    </div>
+    <div id="g-kpi-esencial" class="g-kpi-line">
+      Esencial: 0% · Prescindible: 0%.
+    </div>
+  </div>
+  <div id="ingresos-list-body" class="gastos-list-body"></div>
+</div>
+
+  <div class="gastos-list panel">
+    <div class="gastos-list-header">
+      <div class="gastos-list-title">Gastos mensuales fijos</div>
+      <button id="g-btn-nuevo-gasto">Añadir </button>
+    </div>
+    <div id="g-categorias-chips" class="g-categorias-chips"></div>
+    <div id="gastos-list-body" class="gastos-list-body muted">
+      Aún no has añadido ningún gasto fijo.
+    </div>
+  </div>
+  <div class="gastos-inversion panel">
+    <label for="g-input-inversion">Inversión mensual</label>
+    <div class="g-config-input">
+      <input id="g-input-inversion" type="text" inputmode="decimal" placeholder="0,00 €" />
+      <button id="g-btn-inversion-guardar">Guardar</button>
+    </div>
+  </div>
+
+  <div class="gastos-historial panel">
+    <div class="gastos-list-header">
+      <div class="gastos-list-title">Historial mensual</div>
+      <button id="g-btn-cerrar-mes">Actualizar</button>
+    </div>
+    <div id="g-historial-list" class="g-historial-list muted">
+      Sin datos todavía.
+    </div>
+  </div>
+</section>
+<!-- TAB MERCADOS -->
+<section id="tab-mercados" class="panel-mercados tab-panel" hidden>
+  <div class="mercados-header">
+    <div class="mercados-title">Conversor cripto / bolsa</div>
+  </div>
+
+  <div class="mercados-config panel">
+    <div class="merc-row">
+      <label for="merc-tipo">Tipo de activo</label>
+      <select id="merc-tipo">
+        <option value="crypto">Cripto</option>
+        <option value="stock">Acción / ETF / Fondo</option>
+      </select>
+    </div>
+
+    <div class="merc-row">
+      <label for="merc-simbolo">Símbolo / Ticker</label>
+      <input id="merc-simbolo" type="text" placeholder="BTC, ETH, NVDA, IE00B03HCZ61..." />
+    </div>
+
+    <div class="merc-row">
+      <label for="merc-cantidad">Cantidad en €</label>
+      <input id="merc-cantidad" type="text" inputmode="decimal" placeholder="0,00 €" />
+    </div>
+
+    <div class="merc-row merc-row-precio-manual">
+      <label for="merc-precio-manual">Precio actual (€/u) si NO es cripto (opcional)</label>
+      <input id="merc-precio-manual" type="text" inputmode="decimal" placeholder="0,00 €" />
+    </div>
+
+    <div class="merc-actions">
+      <button id="merc-btn-calcular">Calcular</button>
+      <button id="merc-btn-guardar" class="btn-secondary">Guardar en lista</button>
+    </div>
+
+    <div id="merc-resultado" class="merc-resultado muted">
+      Introduce datos y pulsa “Calcular”.
+    </div>
+  </div>
+
+  <div class="mercados-list panel">
+    <div class="mercados-list-header">
+      <div class="mercados-list-title">Seguimiento rápido</div>
+      <button id="merc-btn-refrescar">Actualizar todos</button>
+    </div>
+    <div id="mercados-list-body" class="mercados-list-body muted">
+      No has guardado ningún activo todavía.
+    </div>
+  </div>
+</section>
+<!-- TAB YOUTUBE -->
+<section id="tab-youtube" class="panel-youtube tab-panel" hidden>
+  <div class="yt-header">
+    <div class="yt-title">YouTube → comida</div>
+    <div id="yt-mes-label" class="yt-mes-label">Mes actual</div>
+  </div>
+
+  <!-- Panel principal: aro + resumen + inputs -->
+  <div class="panel yt-main">
+    <div class="yt-main-top">
+      <div class="yt-ring-wrapper">
+        <div id="yt-ring" class="yt-ring">
+          <div class="yt-ring-inner">
+            <span id="yt-ring-text">0%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="yt-summary">
+        <label class="yt-field-label" for="yt-mes">Mes</label>
+        <input id="yt-mes" type="month" />
+
+        <div class="yt-summary-line">YouTube: <span id="yt-ingreso">0,00 €</span></div>
+        <div class="yt-summary-line">Comida: <span id="yt-comida">0,00 €</span></div>
+        <div class="yt-summary-line yt-summary-rest">
+          Te queda: <span id="yt-resto">0,00 €</span>
+        </div>
+        <div class="yt-summary-line">Vídeos: <span id="yt-videos-label">0</span></div>
+        <div class="yt-summary-line yt-daily-line">
+  Diario recomendado: <span id="yt-diario-ideal">—</span>
+</div>
+<div class="yt-summary-line yt-daily-line">
+  Ritmo actual: <span id="yt-diario-actual">—</span>
+  <span id="yt-diario-badge" class="yt-daily-badge">—</span>
+</div>
+<div class="yt-summary-line yt-daily-line">
+  Días al ritmo recomendado: <span id="yt-dias-ideal">0,0</span>
+</div>
+<div class="yt-summary-line yt-daily-line">
+  Días a este ritmo: <span id="yt-dias-actual">0,0</span>
+</div>
+      </div>
+    </div>
+
+    <div class="yt-main-form">
+      <div class="yt-row">
+        <label for="yt-input-ingreso">Pago Youtube</label>
+        <div class="yt-input-wrap">
+          <input id="yt-input-ingreso" type="text" inputmode="decimal" placeholder="0,00 €" />
+          <button id="yt-btn-add-ingreso">Añadir</button>
+        </div>
+      </div>
+
+      <div class="yt-row">
+        <label for="yt-input-comida">Gasto comida</label>
+        <div class="yt-input-wrap">
+          <input id="yt-input-comida" type="text" inputmode="decimal" placeholder="0,00 €" />
+          <button id="yt-btn-add-comida">Añadir</button>
+        </div>
+      </div>
+
+      <div class="yt-row">
+        <label for="yt-input-videos">Vídeos hechos</label>
+        <div class="yt-input-wrap">
+          <input id="yt-input-videos" type="number" min="0" step="1" />
+          <button id="yt-btn-set-videos">Guardar</button>
+        </div>
+      </div>
+    </div>
+        <div class="yt-registros">
+      <div class="yt-registros-title">Registros del mes</div>
+      <ul id="yt-list" class="yt-list"></ul>
+    </div>
+
+  </div>
+
+  <!-- Panel gráficos con tabs -->
+  <div class="panel yt-charts">
+    <div class="yt-chart-header">
+      <div class="yt-chart-title">Histórico</div>
+      <div class="yt-chart-tabs">
+        <button class="yt-chart-tab active" data-yt-chart="money">€</button>
+        <button class="yt-chart-tab" data-yt-chart="videos">Vídeos</button>
+      </div>
+    </div>
+
+    <div class="yt-chart-body">
+      <canvas id="yt-chart-money"></canvas>
+      <canvas id="yt-chart-videos"></canvas>
+    </div>
+
+    <div class="yt-chart-legend">
+      <span class="yt-legend-income">Ingresos YouTube</span>
+      <span class="yt-legend-food">Gasto comida</span>
+    </div>
+  </div>
+</section>
+<!-- TAB CALENDARIO -->
+<section id="tab-calendario" class="panel-calendario tab-panel" hidden>
+  <div class="cal-header">
+    <div class="cal-header-top">
+      <div class="cal-title">Calendario de variación</div>
+      <select id="cal-modo">
+        <option value="dia" selected>Día</option>
+        <option value="mes">Mes</option>
+        <option value="anio">Año</option>
+      </select>
+    </div>
+
+    <div class="cal-header-filtros">
+      <div class="cal-field cal-field-mes">
+        <label for="cal-mes">Mes</label>
+        <input id="cal-mes" type="month" />
+      </div>
+      <div class="cal-field cal-field-anio">
+        <label for="cal-anio">Año</label>
+        <input id="cal-anio" type="number" inputmode="numeric" placeholder="2025" />
+      </div>
+      <div class="cal-field">
+        <label for="cal-cuenta">Cuenta</label>
+        <select id="cal-cuenta">
+          <!-- se rellena desde JS -->
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div id="cal-grid" class="cal-grid">
+    <!-- pintado desde JS -->
+  </div>
+</section>
+
+</main>
+  <!-- MODALES -->
+  <!-- MODAL HISTORIAL -->
+  <div id="modal-historial" class="modal" aria-hidden="true">
+    <div class="modal__backdrop" id="modal-historial-close"></div>
+    <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="modal-historial-title">
+      <header class="modal__header">
+        <h3 id="modal-historial-title">Historial</h3>
+      </header>
+      <div class="modal__body">
+        <div class="actions">
+          <button id="btn-add-cuenta">Añadir cuenta</button>
+          <button id="btn-del-cuenta">Eliminar cuenta</button>
+          <button id="btn-reset">Borrar todo</button>
+        </div>
+        <div id="col-restore" class="col-restore"></div>
+        <div id="tabla-historial" class="table"></div>
+      </div>
+      <footer class="modal__footer">
+        <div class="actions">
+          <button id="btn-cerrar-modal-historial" class="btn-secondary">Cerrar</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+  <!-- MODAL DETALLE CUENTA -->
+  <div id="modal-cuenta" class="modal" aria-hidden="true">
+    <div class="modal__backdrop" id="modal-cuenta-close"></div>
+    <div class="modal__dialog modal-cuenta-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-cuenta-title">
+      <header class="modal__header">
+        <h3 id="modal-cuenta-title">Detalle de cuenta</h3>
+        <button id="btn-actualizar-cuenta" class="btn-header">Actualizar</button>
+      </header>
+      <div class="modal__body">
+        <canvas id="cuenta-chart" width="360" height="180"></canvas>
+        <div id="cuenta-tooltip" class="cuenta-tooltip">—</div>
+        <div class="table-wrapper">
+          <table class="table-cuenta">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Valor</th>
+                <th>Δ€</th>
+                <th>Δ%</th>
+                <th></th> <!-- acciones -->
+              </tr>
+            </thead>
+            <tbody id="cuenta-historial-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <footer class="modal__footer">
+        <div class="actions">
+          <button id="btn-cerrar-modal-cuenta" class="btn-secondary">Cerrar</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+  <!-- MODAL ACTUALIZAR -->
+  <div id="modal" class="modal" aria-hidden="true">
+    <div class="modal__backdrop" id="modal-close"></div>
+    <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header class="modal__header">
+        <h3 id="modal-title">Actualizar saldos</h3>
+      </header>
+      <div class="modal__body">
+        <div class="row">
+          <label>Fecha</label>
+          <input id="fecha" type="date" />
+        </div>
+
+        <div id="cuentas-wrapper" class="card"></div>
+
+        <div class="row total">
+          <span>TOTAL</span>
+          <strong id="total">0,00 €</strong>
+        </div>
+        <div class="row var">
+          <span>Variación</span>
+          <strong id="variacion">0,00 €</strong>
+        </div>
+        <div class="row var">
+          <span>%Var</span>
+          <strong id="varpct">0,00%</strong>
+        </div>
+      </div>
+      <footer class="modal__footer">
+        <div class="actions">
+          <button id="btn-guardar">Guardar</button>
+          <button id="btn-limpiar">Limpiar</button>
+          <button id="btn-cerrar-modal" class="btn-secondary">Cancelar</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+  <!-- MODAL ACTUALIZACIÓN INDIVIDUAL -->
+  <div id="modal-individual" class="modal-individual" aria-hidden="true">
+    <div class="modal-individual__backdrop" id="modal-individual-backdrop"></div>
+    <div class="modal-individual__dialog" role="dialog" aria-modal="true">
+      <div class="modal-individual__header">
+        <div id="indiv-title" class="modal-individual__title">Actualizar cuenta</div>
+        <button type="button" id="indiv-close" class="modal-individual__close">×</button>
+      </div>
+      <div class="modal-individual__body">
+        <div class="mini-field">
+          <label for="indiv-fecha">Fecha</label>
+          <input id="indiv-fecha" type="date" />
+        </div>
+        <div class="mini-field">
+          <label for="indiv-cantidad">Cantidad</label>
+          <input id="indiv-cantidad" type="text" placeholder="0,00 €" inputmode="decimal" />
+        </div>
+      </div>
+      <div class="modal-individual__footer">
+        <button type="button" id="indiv-cancelar" class="modal-individual__btn">Cancelar</button>
+        <button type="button" id="indiv-guardar" class="modal-individual__btn modal-individual__btn--primary">Guardar</button>
+      </div>
+    </div>
+  </div>
+  <!-- MODAL OBJETIVO -->
+  <div id="modal-objetivo" class="modal" aria-hidden="true">
+    <div class="modal__backdrop" id="modal-objetivo-backdrop"></div>
+    <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="modal-objetivo-title">
+      <header class="modal__header">
+        <h3 id="modal-objetivo-title">Nuevo objetivo</h3>
+      </header>
+      <div class="modal__body">
+        <div class="row">
+          <label for="obj-nombre">Nombre</label>
+          <input id="obj-nombre" type="text" />
+        </div>
+
+        <div class="row">
+          <label for="obj-cantidad">Objetivo (€)</label>
+          <input id="obj-cantidad" type="text" inputmode="decimal" placeholder="0,00 €" />
+        </div>
+
+        <div class="row">
+          <label for="obj-ahorrado">Ahorrado (€)</label>
+          <input id="obj-ahorrado" type="text" inputmode="decimal" placeholder="0,00 €" />
+        </div>
+
+        <div class="row">
+          <label for="obj-fecha">Fecha objetivo</label>
+          <input id="obj-fecha" type="date" />
+        </div>
+
+        <div class="row">
+          <label for="obj-color">Color</label>
+          <input id="obj-color" type="color" value="#7cc0ff" />
+        </div>
+      </div>
+      <footer class="modal__footer">
+        <div class="actions">
+          <button id="btn-guardar-objetivo">Guardar</button>
+          <button id="btn-cerrar-modal-objetivo" class="btn-secondary">Cancelar</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+  <!-- MODAL CUENTAS ORIGEN PARA OBJETIVOS -->
+  <div id="modal-origen" class="modal" aria-hidden="true">
+    <div class="modal__backdrop" id="modal-origen-backdrop"></div>
+    <div class="modal__dialog" role="dialog" aria-modal="true">
+      <header class="modal__header">
+        <h3>Seleccionar cuentas origen</h3>
+      </header>
+      <div class="modal__body">
+        <div id="origen-cuentas-list" class="origen-cuentas-list"></div>
+        <p class="origen-note">Si no marcas ninguna, se usarán todas las cuentas.</p>
+      </div>
+      <footer class="modal__footer">
+        <div class="actions">
+          <button id="btn-guardar-origen">Guardar</button>
+          <button id="btn-cerrar-modal-origen" class="btn-secondary">Cancelar</button>
+        </div>
+      </footer>
+    </div>
+  </div>
   </div>
 </section>
 
@@ -3293,8 +3855,11 @@ if (document.readyState === "loading") {
 <script src="scripts/dashboard.js" type="module"></script>
 <script src="scripts/media.js" type="module"></script>
 <script src="scripts/world.js" type="module"></script>
-<script src="scripts/gym.js" type="module"></script>
-<script src="scripts/finance.js" type="module"></script>
+<script src="scripts/gym\.js" type="module"></script>
+<script src="scripts/finanzas/app.js" defer></script>
+<script src="scripts/finanzas/calendario.js" defer></script>
+<script src="scripts/finanzas/objetivos.js" defer></script>
+<script src="scripts/finanzas/finanzas.js" defer></script>
 <datalist id="country-options"></datalist>
 </body>
 </html>

@@ -1,23 +1,40 @@
-import { onValue, push, ref, set, update } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+import { get, onValue, push, ref, remove, set, update } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 import { db } from './firebase-shared.js';
 
-const FIN_PATH = 'vuxel/financeTab';
+const FIN_PATH = 'finance';
+const UI_KEY = 'financeTab.ui.v1';
 const RANGE_DAYS = { week: 7, month: 30, year: 365, total: Infinity };
+
+const initialUi = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(UI_KEY) || '{}');
+  } catch {
+    return {};
+  }
+})();
 
 const state = {
   subview: 'inicio',
-  range: 'total',
-  compareMode: 'month',
-  showHistory: false,
+  rangeMode: initialUi.rangeMode || 'total',
+  compareMode: initialUi.compareMode || 'month',
   accounts: [],
-  snapshotsByAccount: {},
-  modalAccountId: null,
-  calendarMonth: new Date(),
-  error: ''
+  entriesByAccount: {},
+  modal: { type: null, accountId: null },
+  entryForm: { open: false, entryId: null, tsInput: '', valueInput: '' },
+  error: '',
+  unsubscribe: null
 };
 
+function persistUi() {
+  localStorage.setItem(UI_KEY, JSON.stringify({ rangeMode: state.rangeMode, compareMode: state.compareMode }));
+}
+
 function log(...parts) {
-  console.log('[Finance]', ...parts);
+  console.log('Finance:', ...parts);
+}
+
+function warnMissing(id) {
+  console.warn(`Finance: missing DOM node ${id}`);
 }
 
 function fmtCurrency(value) {
@@ -46,27 +63,27 @@ function toDateKey(ts) {
   return new Date(ts).toISOString().slice(0, 10);
 }
 
-function startOfDayMs(ts) {
+function toDateTimeLocal(ts = Date.now()) {
   const d = new Date(ts);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function buildAccountModel() {
-  const now = Date.now();
-  const accounts = state.accounts.map((acc) => {
-    const list = [...(state.snapshotsByAccount[acc.id] || [])].sort((a, b) => a.ts - b.ts);
-    const current = list.at(-1)?.value ?? 0;
-    const points = list.map((p) => ({ ...p, ts: Number(p.ts || 0), value: Number(p.value || 0), delta: Number(p.delta || 0), deltaPct: Number(p.deltaPct || 0) }));
-    const range = computeRangeDelta(points, state.range, now);
-    return { ...acc, snapshots: points, current, range };
-  });
-  return accounts;
+function accountEntries(accountId) {
+  return [...(state.entriesByAccount[accountId] || [])]
+    .map((e) => ({ ...e, ts: Number(e.ts || 0), value: Number(e.value || 0) }))
+    .sort((a, b) => a.ts - b.ts)
+    .map((entry, index, arr) => {
+      const prev = arr[index - 1];
+      const delta = prev ? entry.value - prev.value : 0;
+      const deltaPct = prev?.value ? (delta / prev.value) * 100 : 0;
+      return { ...entry, delta, deltaPct, dateKey: toDateKey(entry.ts) };
+    });
 }
 
-function computeRangeDelta(points, range, nowTs) {
+function computeRangeDelta(points, rangeMode, nowTs = Date.now()) {
   if (!points.length) return { delta: 0, deltaPct: 0 };
-  const days = RANGE_DAYS[range] ?? Infinity;
+  const days = RANGE_DAYS[rangeMode] ?? Infinity;
   const startTs = days === Infinity ? -Infinity : nowTs - days * 86400000;
   const inRange = points.filter((p) => p.ts >= startTs);
   const first = (inRange[0] || points[0]).value;
@@ -76,56 +93,66 @@ function computeRangeDelta(points, range, nowTs) {
   return { delta, deltaPct };
 }
 
+function buildAccountModel() {
+  return state.accounts.map((acc) => {
+    const entries = accountEntries(acc.id);
+    const current = entries.at(-1)?.value ?? 0;
+    return { ...acc, entries, current, range: computeRangeDelta(entries, state.rangeMode) };
+  });
+}
+
 function buildGlobalSeries(accounts) {
   const events = [];
   for (const account of accounts) {
-    for (const snap of account.snapshots) events.push({ accountId: account.id, ...snap });
+    for (const entry of account.entries) events.push({ accountId: account.id, ...entry });
   }
   events.sort((a, b) => a.ts - b.ts);
   const values = Object.fromEntries(accounts.map((acc) => [acc.id, 0]));
   const series = [];
   for (const ev of events) {
     values[ev.accountId] = ev.value;
-    const total = Object.values(values).reduce((sum, val) => sum + Number(val || 0), 0);
-    series.push({ ts: ev.ts, total, dateKey: toDateKey(ev.ts) });
+    series.push({ ts: ev.ts, total: Object.values(values).reduce((sum, val) => sum + Number(val || 0), 0), dateKey: toDateKey(ev.ts) });
   }
   return series;
 }
 
-function periodFromRange(range, now = new Date()) {
-  if (range === 'week') {
-    const day = now.getDay() || 7;
+function periodWindow(mode, now = new Date()) {
+  if (mode === 'week') {
+    const d = now.getDay() || 7;
     const start = new Date(now);
-    start.setDate(now.getDate() - day + 1);
+    start.setDate(now.getDate() - d + 1);
     start.setHours(0, 0, 0, 0);
     const end = new Date(start);
     end.setDate(start.getDate() + 7);
     return { start: start.getTime(), end: end.getTime(), label: 'Semana' };
   }
-  if (range === 'year') {
+  const start = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime();
+  return { start, end, label: 'Mes' };
+}
+
+function periodFromRange(rangeMode, now = new Date()) {
+  if (rangeMode === 'week') return periodWindow('week', now);
+  if (rangeMode === 'year') {
     const y = now.getFullYear();
     return { start: new Date(y, 0, 1).getTime(), end: new Date(y + 1, 0, 1).getTime(), label: 'Año' };
   }
-  if (range === 'total') {
-    return { start: -Infinity, end: Infinity, label: 'Total' };
-  }
-  return { start: new Date(now.getFullYear(), now.getMonth(), 1).getTime(), end: new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime(), label: 'Mes' };
-}
-
-function periodDelta(series, period) {
-  if (!series.length) return { delta: 0, deltaPct: 0, start: 0, end: 0 };
-  const startPoint = series.find((p) => p.ts >= period.start) || series[0];
-  const endCandidates = series.filter((p) => p.ts < period.end);
-  const endPoint = endCandidates.at(-1) || series.at(-1);
-  const delta = endPoint.total - startPoint.total;
-  const deltaPct = startPoint.total ? (delta / startPoint.total) * 100 : 0;
-  return { delta, deltaPct, start: startPoint.total, end: endPoint.total };
+  if (rangeMode === 'total') return { start: -Infinity, end: Infinity, label: 'Total' };
+  return periodWindow('month', now);
 }
 
 function previousPeriod(period) {
   if (!Number.isFinite(period.start) || !Number.isFinite(period.end)) return period;
   const size = period.end - period.start;
   return { ...period, start: period.start - size, end: period.start };
+}
+
+function periodDelta(series, period) {
+  if (!series.length) return { delta: 0, deltaPct: 0, start: 0, end: 0 };
+  const startPoint = series.find((p) => p.ts >= period.start) || series[0];
+  const endPoint = series.filter((p) => p.ts < period.end).at(-1) || series.at(-1);
+  const delta = endPoint.total - startPoint.total;
+  return { delta, deltaPct: startPoint.total ? (delta / startPoint.total) * 100 : 0, start: startPoint.total, end: endPoint.total };
 }
 
 function sparklinePath(values, width = 320, height = 110) {
@@ -140,149 +167,140 @@ function sparklinePath(values, width = 320, height = 110) {
   }).join(' ');
 }
 
-function monthGrid(date, daily) {
-  const y = date.getFullYear();
-  const m = date.getMonth();
-  const first = new Date(y, m, 1);
-  const start = new Date(first);
-  start.setDate(first.getDate() - ((first.getDay() + 6) % 7));
-  const cells = [];
-  for (let i = 0; i < 42; i += 1) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
-    const key = d.toISOString().slice(0, 10);
-    cells.push({ date: d, inMonth: d.getMonth() === m, key, info: daily[key] || null });
-  }
-  return cells;
-}
-
-function deriveDailyGlobal(series) {
-  const byDay = {};
-  let prev = 0;
-  const lastPerDay = {};
-  for (const point of series) lastPerDay[point.dateKey] = point.total;
-  const keys = Object.keys(lastPerDay).sort();
-  for (const k of keys) {
-    const total = lastPerDay[k];
-    const delta = total - prev;
-    byDay[k] = { delta, pct: prev ? (delta / prev) * 100 : 0, total };
-    prev = total;
-  }
-  return byDay;
-}
-
 function render() {
-  log('render start');
   const host = document.getElementById('finance-content');
-  if (!host) return;
+  if (!host) {
+    warnMissing('finance-content');
+    return;
+  }
+
+  console.log('Finance render', state.subview, state.rangeMode);
   if (state.error) {
     host.innerHTML = `<article class="finance-tab__panel"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`;
     return;
   }
+
   const accounts = buildAccountModel();
   const series = buildGlobalSeries(accounts);
   const total = accounts.reduce((sum, acc) => sum + acc.current, 0);
-  const period = periodFromRange(state.range);
-  const change = periodDelta(series, period);
-  const compare = periodDelta(series, previousPeriod(period));
-  const variationCls = toneClass(change.delta);
-  const line = sparklinePath(series.map((s) => s.total));
+  const change = periodDelta(series, periodFromRange(state.rangeMode));
+  const comparePeriod = periodWindow(state.compareMode);
+  const compare = periodDelta(series, comparePeriod);
+  const comparePrev = periodDelta(series, previousPeriod(comparePeriod));
 
   host.innerHTML = `
-    <section class="finance-tab ${variationCls}">
-      ${renderTopNav()}
-      <div class="finance-tab__view ${state.subview === 'inicio' ? '' : 'is-hidden'}">${renderInicio(accounts, total, change, compare, line, period.label)}</div>
-      <div class="finance-tab__view ${state.subview === 'objetivos' ? '' : 'is-hidden'}">${renderPlaceholder('Objetivos', 'Preparado para la siguiente iteración.')}</div>
-      <div class="finance-tab__view ${state.subview === 'balance' ? '' : 'is-hidden'}">${renderPlaceholder('Balance', 'Resumen de gastos e ingresos próximamente.')}</div>
-      <div class="finance-tab__view ${state.subview === 'calendario' ? '' : 'is-hidden'}">${renderCalendar(deriveDailyGlobal(series))}</div>
-      <div class="finance-tab__view ${state.subview === 'extra' ? '' : 'is-hidden'}">${renderPlaceholder('Vista 5', 'Espacio reservado para futuras funciones.')}</div>
+    <section class="finance-tab ${toneClass(change.delta)}">
+      <article class="finance-tab__panel">
+        <p class="finance-tab__eyebrow">TOTAL</p>
+        <h2 class="finance-tab__total">${fmtCurrency(total)}</h2>
+        <p class="finance-tab__delta ${toneClass(change.delta)}">${fmtSignedCurrency(change.delta)} · ${fmtSignedPercent(change.deltaPct)}</p>
+        <div class="finance-tab__chart"><svg viewBox="0 0 320 110" preserveAspectRatio="none">${series.length ? `<path d="${sparklinePath(series.map((s) => s.total))}"/>` : ''}</svg></div>
+      </article>
+      <article class="finance-tab__controls">
+        <button class="finance-pill" data-refresh>Actualizar</button>
+        <select class="finance-pill" data-range>
+          <option value="total" ${state.rangeMode === 'total' ? 'selected' : ''}>Total</option>
+          <option value="month" ${state.rangeMode === 'month' ? 'selected' : ''}>Mes</option>
+          <option value="week" ${state.rangeMode === 'week' ? 'selected' : ''}>Semana</option>
+          <option value="year" ${state.rangeMode === 'year' ? 'selected' : ''}>Año</option>
+        </select>
+        <button class="finance-pill" data-history>Historial</button>
+        <select class="finance-pill" data-compare>
+          <option value="month" ${state.compareMode === 'month' ? 'selected' : ''}>Mes vs Mes</option>
+          <option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option>
+        </select>
+      </article>
+      <article class="finance-tab__compare-row">
+        <div class="finance-tab__chip ${toneClass(compare.delta)}">${comparePeriod.label} actual: ${fmtSignedCurrency(compare.delta)} (${fmtSignedPercent(compare.deltaPct)})</div>
+        <div class="finance-tab__chip ${toneClass(comparePrev.delta)}">${comparePeriod.label} anterior: ${fmtSignedCurrency(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div>
+      </article>
+      <article class="finance-tab__panel">
+        <div class="finance-tab__panel-head"><h3>Cuentas</h3><button class="finance-pill" data-new-account>+ Cuenta</button></div>
+        <div class="finance-tab__accounts">${accounts.map((account) => `
+          <button class="finance-tab__account ${toneClass(account.range.delta)}" data-open-detail="${account.id}">
+            <div class="finance-tab__account-main">
+              <span>${account.name}</span>
+              <input class="finance-tab__balance-input" data-account-input="${account.id}" value="${Number(account.current).toFixed(2)}" inputmode="decimal" />
+            </div>
+            <span class="finance-tab__chip ${toneClass(account.range.delta)}">${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span>
+          </button>
+        `).join('') || '<p class="finance-tab__empty">Sin cuentas todavía.</p>'}</div>
+      </article>
     </section>`;
 
-  if (state.modalAccountId) renderModal(accounts.find((a) => a.id === state.modalAccountId));
-  else hideModal();
-  log('render end');
+  renderModal(accounts);
 }
 
-function renderTopNav() {
-  const items = [
-    ['inicio', '🏠', 'Inicio'], ['objetivos', '🎯', 'Objetivos'], ['balance', '📊', 'Balance'], ['calendario', '🗓️', 'Calendario'], ['extra', '✨', 'Vista 5']
-  ];
-  return `<nav class="finance-tab__mini-nav">${items.map(([id, icon, label]) => `<button class="finance-tab__mini-btn ${state.subview === id ? 'is-active' : ''}" data-subview="${id}" aria-label="${label}">${icon}</button>`).join('')}</nav>`;
-}
-
-function renderInicio(accounts, total, change, compare, line, periodLabel) {
-  return `
-    <article class="finance-tab__panel">
-      <p class="finance-tab__eyebrow">TOTAL</p>
-      <h2 class="finance-tab__total">${fmtCurrency(total)}</h2>
-      <p class="finance-tab__delta ${toneClass(change.delta)}">${fmtSignedCurrency(change.delta)} · ${fmtSignedPercent(change.deltaPct)}</p>
-      <div class="finance-tab__chart"><svg viewBox="0 0 320 110" preserveAspectRatio="none">${line ? `<path d="${line}"/>` : ''}</svg></div>
-    </article>
-    <article class="finance-tab__controls">
-      <button class="finance-pill" data-refresh>Actualizar</button>
-      <select class="finance-pill" data-range>
-        <option value="month" ${state.range === 'month' ? 'selected' : ''}>Mes</option>
-        <option value="week" ${state.range === 'week' ? 'selected' : ''}>Semana</option>
-        <option value="year" ${state.range === 'year' ? 'selected' : ''}>Año</option>
-        <option value="total" ${state.range === 'total' ? 'selected' : ''}>Total</option>
-      </select>
-      <button class="finance-pill" data-history>Historial</button>
-      <select class="finance-pill" data-compare ${state.range === 'total' ? 'disabled' : ''}>
-        <option value="month">Mes vs Mes</option>
-        <option value="week">Semana vs Semana</option>
-      </select>
-    </article>
-    <article class="finance-tab__compare-row">
-      <div class="finance-tab__chip ${toneClass(change.delta)}">${periodLabel}: ${fmtSignedCurrency(change.delta)} (${fmtSignedPercent(change.deltaPct)})</div>
-      <div class="finance-tab__chip ${toneClass(compare.delta)}">Anterior: ${fmtCurrency(compare.start)} → ${fmtCurrency(compare.end)}</div>
-    </article>
-    <article class="finance-tab__panel">
-      <div class="finance-tab__panel-head"><h3>Cuentas</h3><button class="finance-pill" data-new-account>+ Cuenta</button></div>
-      <div class="finance-tab__accounts">${accounts.map(renderAccountCard).join('') || '<p class="finance-tab__empty">Sin cuentas todavía.</p>'}</div>
-    </article>`;
-}
-
-function renderAccountCard(account) {
-  return `<button class="finance-tab__account ${toneClass(account.range.delta)}" data-open-modal="${account.id}">
-      <div class="finance-tab__account-main">
-        <span>${account.name}</span>
-        <input class="finance-tab__balance-input" data-account-input="${account.id}" value="${Number(account.current).toFixed(2)}" inputmode="decimal" />
-      </div>
-      <span class="finance-tab__chip ${toneClass(account.range.delta)}">Mes ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span>
-    </button>`;
-}
-
-function renderPlaceholder(title, description) {
-  return `<article class="finance-tab__panel finance-tab__placeholder"><h3>${title}</h3><p>${description}</p></article>`;
-}
-
-function renderCalendar(daily) {
-  const grid = monthGrid(state.calendarMonth, daily);
-  return `<article class="finance-tab__panel">
-    <div class="finance-tab__panel-head"><h3>Calendario</h3></div>
-    <div class="finance-tab__calendar-controls"><select class="finance-pill"><option>Día</option><option>Mes</option><option>Año</option></select><select class="finance-pill"><option>${state.calendarMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}</option></select><select class="finance-pill"><option>Todas las cuentas</option></select></div>
-    <div class="finance-tab__calendar-grid">${grid.map((cell) => {
-      const info = cell.info;
-      return `<div class="finance-tab__day ${cell.inMonth ? '' : 'is-out'} ${info ? toneClass(info.delta) : ''}"><strong>${cell.date.getDate()}</strong>${info ? `<small>${fmtSignedCurrency(info.delta)}</small><small>${fmtSignedPercent(info.pct)}</small>` : ''}</div>`;
-    }).join('')}</div>
-  </article>`;
-}
-
-function renderModal(account) {
+function renderModal(accounts) {
   const backdrop = document.getElementById('finance-modal-backdrop');
-  if (!backdrop || !account) return;
-  const points = account.snapshots;
-  const path = sparklinePath(points.map((p) => p.value), 300, 100);
+  if (!backdrop) {
+    warnMissing('finance-modal-backdrop');
+    return;
+  }
+
+  if (!state.modal.type) {
+    backdrop.classList.add('hidden');
+    backdrop.innerHTML = '';
+    return;
+  }
+
   backdrop.classList.remove('hidden');
-  backdrop.innerHTML = `<div class="finance-modal" role="dialog" aria-modal="true"><header><h3>${account.name}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><button class="finance-pill" data-modal-update="${account.id}">Actualizar</button><div class="finance-tab__chart"><svg viewBox="0 0 300 100">${path ? `<path d="${path}"/>` : ''}${points.map((p, i) => `<circle cx="${(i / Math.max(points.length - 1, 1)) * 300}" cy="${100 - ((p.value - Math.min(...points.map((r) => r.value))) / ((Math.max(...points.map((r) => r.value)) - Math.min(...points.map((r) => r.value))) || 1)) * 100}" r="3" class="${toneClass(p.delta)}"></circle>`).join('')}</svg></div><div class="finance-tab__table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ€</th><th>Δ%</th></tr></thead><tbody>${points.slice().reverse().map((p) => `<tr><td>${new Date(p.ts).toLocaleString('es-ES')}</td><td>${fmtCurrency(p.value)}</td><td class="${toneClass(p.delta)}">${fmtSignedCurrency(p.delta)}</td><td class="${toneClass(p.deltaPct)}">${fmtSignedPercent(p.deltaPct)}</td></tr>`).join('') || '<tr><td colspan="4">Sin registros</td></tr>'}</tbody></table></div></div>`;
-  log(`open modal ${account.id}`);
+
+  if (state.modal.type === 'history') {
+    backdrop.innerHTML = `<div class="finance-modal" role="dialog" aria-modal="true">
+      <header><h3>Historial</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+      <div class="finance-tab__table-wrap finance-history-list">${accounts.map((account) => {
+        const entries = account.entries;
+        return `<button class="finance-history-item" data-open-detail="${account.id}"><strong>${account.name}</strong><small>${entries.length} registros · ${fmtCurrency(account.current)}</small></button>`;
+      }).join('') || '<p class="finance-tab__empty">Sin registros.</p>'}</div>
+    </div>`;
+    return;
+  }
+
+  const account = accounts.find((acc) => acc.id === state.modal.accountId);
+  if (!account) {
+    state.modal = { type: null, accountId: null };
+    render();
+    return;
+  }
+  const points = account.entries;
+  const path = sparklinePath(points.map((p) => p.value), 300, 100);
+  backdrop.innerHTML = `<div class="finance-modal" role="dialog" aria-modal="true">
+    <header><h3>${account.name}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+    <div class="finance-modal__actions"><button class="finance-pill" data-add-entry="${account.id}">Añadir registro</button><button class="finance-pill" data-refresh>Actualizar</button></div>
+    <div class="finance-tab__chart"><svg viewBox="0 0 300 100">${path ? `<path d="${path}"/>` : ''}</svg></div>
+    <div class="finance-tab__table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ€</th><th>Δ%</th><th></th></tr></thead><tbody>
+      ${points.slice().reverse().map((p) => `<tr><td>${new Date(p.ts).toLocaleString('es-ES')}</td><td>${fmtCurrency(p.value)}</td><td class="${toneClass(p.delta)}">${fmtSignedCurrency(p.delta)}</td><td class="${toneClass(p.deltaPct)}">${fmtSignedPercent(p.deltaPct)}</td><td><button class="finance-pill finance-pill--mini" data-edit-entry="${account.id}:${p.id}">Editar</button><button class="finance-pill finance-pill--mini" data-delete-entry="${account.id}:${p.id}">🗑</button></td></tr>`).join('') || '<tr><td colspan="5">Sin registros</td></tr>'}
+    </tbody></table></div>
+    ${state.entryForm.open ? `<div class="finance-entry-form"><h4>${state.entryForm.entryId ? 'Editar registro' : 'Añadir registro'}</h4><input type="datetime-local" data-entry-ts value="${state.entryForm.tsInput}" /><input type="number" step="0.01" data-entry-value value="${state.entryForm.valueInput}" placeholder="Valor €" /><div class="finance-modal__actions"><button class="finance-pill" data-save-entry="${account.id}">Guardar</button><button class="finance-pill" data-cancel-entry>Cancelar</button></div></div>` : ''}
+  </div>`;
 }
 
-function hideModal() {
-  const backdrop = document.getElementById('finance-modal-backdrop');
-  if (!backdrop) return;
-  backdrop.classList.add('hidden');
-  backdrop.innerHTML = '';
+async function loadDataOnce() {
+  console.log('Finance load start');
+  const snap = await get(ref(db, FIN_PATH));
+  const val = snap.val() || {};
+  const accountsMap = val.accounts || {};
+  const entriesMap = val.accountsEntries || val.entries || {};
+  state.accounts = Object.values(accountsMap).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  state.entriesByAccount = Object.fromEntries(Object.entries(entriesMap).map(([accId, map]) => [accId, Object.entries(map || {}).map(([id, entry]) => ({ id, ...entry }))]));
+  const entriesCount = Object.values(state.entriesByAccount).reduce((sum, list) => sum + list.length, 0);
+  console.log('Finance load ok', state.accounts.length, entriesCount);
+}
+
+function subscribe() {
+  if (state.unsubscribe) state.unsubscribe();
+  state.unsubscribe = onValue(ref(db, FIN_PATH), (snap) => {
+    const val = snap.val() || {};
+    state.accounts = Object.values(val.accounts || {}).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const entriesMap = val.accountsEntries || val.entries || {};
+    state.entriesByAccount = Object.fromEntries(Object.entries(entriesMap).map(([accId, map]) => [accId, Object.entries(map || {}).map(([id, entry]) => ({ id, ...entry }))]));
+    render();
+  }, (error) => {
+    console.error('Finance load error', error);
+    state.error = String(error?.message || error);
+    render();
+  });
 }
 
 async function addAccount(name) {
@@ -290,43 +308,112 @@ async function addAccount(name) {
   await set(ref(db, `${FIN_PATH}/accounts/${id}`), { id, name, createdAt: Date.now(), updatedAt: Date.now() });
 }
 
-async function saveSnapshot(accountId, rawValue) {
-  const value = Number(String(rawValue).replace(',', '.'));
-  if (!Number.isFinite(value)) return;
-  const now = Date.now();
-  const list = [...(state.snapshotsByAccount[accountId] || [])].sort((a, b) => a.ts - b.ts);
-  const prev = Number(list.at(-1)?.value || 0);
-  const delta = value - prev;
-  const deltaPct = prev ? (delta / prev) * 100 : 0;
-  const payload = { ts: now, dateKey: toDateKey(now), value, delta, deltaPct };
-  await set(push(ref(db, `${FIN_PATH}/snapshots/${accountId}`)), payload);
-  await update(ref(db, `${FIN_PATH}/accounts/${accountId}`), { updatedAt: now, lastValue: value });
-  log(`save snapshot ${value}`);
+async function saveEntry(accountId, value, ts = Date.now(), entryId = null) {
+  const parsedValue = Number(String(value).replace(',', '.'));
+  if (!Number.isFinite(parsedValue)) return;
+  const payload = { ts: Number(ts), value: parsedValue };
+  if (entryId) await update(ref(db, `${FIN_PATH}/accountsEntries/${accountId}/${entryId}`), payload);
+  else await set(push(ref(db, `${FIN_PATH}/accountsEntries/${accountId}`)), payload);
+  await update(ref(db, `${FIN_PATH}/accounts/${accountId}`), { updatedAt: Date.now(), lastValue: parsedValue });
+}
+
+async function deleteEntry(accountId, entryId) {
+  await remove(ref(db, `${FIN_PATH}/accountsEntries/${accountId}/${entryId}`));
+  await update(ref(db, `${FIN_PATH}/accounts/${accountId}`), { updatedAt: Date.now() });
 }
 
 function bindEvents() {
   const financeView = document.getElementById('view-finance');
-  if (!financeView || financeView.dataset.financeBound === '1') return;
+  if (!financeView) {
+    warnMissing('view-finance');
+    return;
+  }
+  if (financeView.dataset.financeBound === '1') return;
   financeView.dataset.financeBound = '1';
 
   financeView.addEventListener('click', async (event) => {
-    const sub = event.target.closest('[data-subview]');
-    if (sub) { state.subview = sub.dataset.subview; render(); return; }
-    if (event.target.closest('[data-refresh]')) { render(); return; }
-    if (event.target.closest('[data-history]')) { state.showHistory = !state.showHistory; return; }
-    if (event.target.closest('[data-new-account]')) {
-      const name = window.prompt('Nombre de la cuenta');
-      if (name) await addAccount(name.trim());
+    if (event.target.closest('[data-refresh]')) {
+      console.log('Finance: refresh requested');
+      await loadDataOnce();
+      render();
       return;
     }
-    const open = event.target.closest('[data-open-modal]');
-    if (open && !event.target.closest('[data-account-input]')) { state.modalAccountId = open.dataset.openModal; render(); return; }
-    if (event.target.closest('[data-close-modal]') || event.target.id === 'finance-modal-backdrop') { state.modalAccountId = null; render(); }
+    if (event.target.closest('[data-history]')) {
+      console.log('Finance: history open');
+      state.modal = { type: 'history', accountId: null };
+      render();
+      return;
+    }
+    if (event.target.closest('[data-close-modal]') || event.target.id === 'finance-modal-backdrop') {
+      console.log('Finance: modal close');
+      state.modal = { type: null, accountId: null };
+      state.entryForm = { open: false, entryId: null, tsInput: '', valueInput: '' };
+      render();
+      return;
+    }
+    if (event.target.closest('[data-open-detail]') && !event.target.closest('[data-account-input]')) {
+      const accountId = event.target.closest('[data-open-detail]').dataset.openDetail;
+      console.log('Finance: open detail', accountId);
+      state.modal = { type: 'detail', accountId };
+      render();
+      return;
+    }
+    if (event.target.closest('[data-new-account]')) {
+      const name = window.prompt('Nombre de la cuenta');
+      if (name?.trim()) await addAccount(name.trim());
+      return;
+    }
+    if (event.target.closest('[data-add-entry]')) {
+      console.log('Finance: open add entry');
+      state.entryForm = { open: true, entryId: null, tsInput: toDateTimeLocal(Date.now()), valueInput: '' };
+      render();
+      return;
+    }
+    if (event.target.closest('[data-cancel-entry]')) {
+      state.entryForm = { open: false, entryId: null, tsInput: '', valueInput: '' };
+      render();
+      return;
+    }
+    if (event.target.closest('[data-save-entry]')) {
+      const accountId = event.target.closest('[data-save-entry]').dataset.saveEntry;
+      const tsInput = financeView.querySelector('[data-entry-ts]')?.value;
+      const valueInput = financeView.querySelector('[data-entry-value]')?.value;
+      const ts = tsInput ? new Date(tsInput).getTime() : Date.now();
+      console.log('Finance: save entry', accountId, ts);
+      await saveEntry(accountId, valueInput, ts, state.entryForm.entryId);
+      state.entryForm = { open: false, entryId: null, tsInput: '', valueInput: '' };
+      return;
+    }
+    if (event.target.closest('[data-delete-entry]')) {
+      const [accountId, entryId] = event.target.closest('[data-delete-entry]').dataset.deleteEntry.split(':');
+      if (window.confirm('¿Eliminar este registro?')) {
+        console.log('Finance: delete entry', accountId, entryId);
+        await deleteEntry(accountId, entryId);
+      }
+      return;
+    }
+    if (event.target.closest('[data-edit-entry]')) {
+      const [accountId, entryId] = event.target.closest('[data-edit-entry]').dataset.editEntry.split(':');
+      const entry = accountEntries(accountId).find((item) => item.id === entryId);
+      state.entryForm = { open: true, entryId, tsInput: toDateTimeLocal(entry?.ts || Date.now()), valueInput: entry?.value ?? '' };
+      console.log('Finance: edit entry', accountId, entryId);
+      render();
+    }
   });
 
   financeView.addEventListener('change', (event) => {
-    if (event.target.matches('[data-range]')) { state.range = event.target.value; render(); }
-    if (event.target.matches('[data-compare]')) { state.compareMode = event.target.value; render(); }
+    if (event.target.matches('[data-range]')) {
+      state.rangeMode = event.target.value;
+      persistUi();
+      console.log('Finance: range change', state.rangeMode);
+      render();
+    }
+    if (event.target.matches('[data-compare]')) {
+      state.compareMode = event.target.value;
+      persistUi();
+      console.log('Finance: compare change', state.compareMode);
+      render();
+    }
   });
 
   financeView.addEventListener('focusin', (event) => {
@@ -336,38 +423,22 @@ function bindEvents() {
   financeView.addEventListener('keydown', async (event) => {
     if (event.key !== 'Enter' || !event.target.matches('[data-account-input]')) return;
     event.preventDefault();
-    await saveSnapshot(event.target.dataset.accountInput, event.target.value);
+    await saveEntry(event.target.dataset.accountInput, event.target.value, Date.now());
     event.target.blur();
   });
 
   financeView.addEventListener('focusout', async (event) => {
     if (!event.target.matches('[data-account-input]')) return;
-    await saveSnapshot(event.target.dataset.accountInput, event.target.value);
+    await saveEntry(event.target.dataset.accountInput, event.target.value, Date.now());
   });
 }
 
-function subscribe() {
-  onValue(ref(db, FIN_PATH), (snap) => {
-    const val = snap.val() || {};
-    const accountsMap = val.accounts || {};
-    const snapshotsMap = val.snapshots || {};
-    state.accounts = Object.values(accountsMap).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-    state.snapshotsByAccount = Object.fromEntries(Object.entries(snapshotsMap).map(([accId, list]) => [accId, Object.values(list || {})]));
-    log('loaded accounts', state.accounts.length);
-    render();
-  }, (error) => {
-    console.error('Finance load error', error);
-    state.error = String(error?.message || error);
-    render();
-  });
-}
-
-function boot() {
-  log('boot');
+async function boot() {
   bindEvents();
+  await loadDataOnce();
   subscribe();
   render();
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { boot(); }, { once: true });
 else boot();

@@ -87,6 +87,7 @@ function readLegacyLocalSnapshot() {
 }
 
 async function finLoadFromRTDB() {
+  console.log('[FIN] finLoadFromRTDB start');
   const rootRef = ref(db);
   const [cuentasSnap, registrosSnap, objetivosSnap, gastosSnap, finanzasSnap] = await Promise.all([
     get(child(rootRef, `${FIN_PATH}/cuentas`)),
@@ -121,7 +122,14 @@ async function finLoadFromRTDB() {
   if (!state.finanzas.origenVariable) state.finanzas.origenVariable = state.cuentas[0] || '';
   if (!state.finanzas.calMes) state.finanzas.calMes = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
   recalcVariaciones();
+  console.log('[FIN] data loaded', {
+    cuentas: state.cuentas.length,
+    registros: state.registros.length,
+    objetivos: state.objetivos.length,
+    variables: state.finanzas.variables.length
+  });
   render();
+  console.log('[FIN] render after load OK');
 }
 
 async function finSaveToRTDB() {
@@ -551,17 +559,47 @@ async function maybeBootstrapFinance() {
   finSubscribeRTDB();
 }
 
-function init() {
+async function initFinanceTab() {
   loadLocal();
   recalcVariaciones();
   bindInteractions();
   render();
-  void maybeBootstrapFinance();
+  await maybeBootstrapFinance();
   const root = document.getElementById('view-finance');
   root?.addEventListener('click', () => { void maybeBootstrapFinance(); });
   const navBtn = document.querySelector('.nav-btn[data-view="view-finance"]');
   navBtn?.addEventListener('click', () => { void maybeBootstrapFinance(); });
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
-else init();
+async function bootFinance() {
+  console.group('[FIN] boot');
+  console.log('[FIN] script loaded', new Date().toISOString());
+  try {
+    console.log('[FIN] DOM ready state:', document.readyState);
+
+    const root = document.querySelector('#view-finance');
+    console.log('[FIN] #view-finance exists:', !!root);
+
+    const tabs = document.querySelector('.finance-tabs, .tabs');
+    const dashboard = document.querySelector('#dashboard, .paneldashboard, .finance-dashboard');
+    console.log('[FIN] tabs:', !!tabs, 'dashboard:', !!dashboard);
+
+    await initFinanceTab();
+    console.log('[FIN] initFinanceTab OK');
+  } catch (err) {
+    console.error('[FIN] boot FAILED:', err);
+    const root = document.querySelector('#view-finance');
+    if (root) {
+      root.innerHTML = `
+        <div style="padding:20px;color:#fff;">
+          <div style="font-size:18px;font-weight:700;margin-bottom:8px;">Finance crashed</div>
+          <pre style="white-space:pre-wrap;opacity:.85">${String(err?.stack || err)}</pre>
+        </div>`;
+    }
+  } finally {
+    console.groupEnd();
+  }
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { void bootFinance(); }, { once: true });
+else void bootFinance();

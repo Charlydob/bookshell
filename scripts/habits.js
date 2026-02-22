@@ -2891,6 +2891,15 @@ function normalizeGoalsByRange(raw = {}) {
   };
 }
 
+function normalizeMonthlyGoal(rawGoal, habitGoal = "check") {
+  if (!rawGoal || typeof rawGoal !== "object") return null;
+  const target = Math.round(Number(rawGoal.target) || 0);
+  if (!Number.isFinite(target) || target <= 0) return null;
+  const fallbackUnit = habitGoal === "time" ? "min" : "count";
+  const unit = rawGoal.unit === "min" || rawGoal.unit === "count" ? rawGoal.unit : fallbackUnit;
+  return { target, unit };
+}
+
 function normalizeHabitModel(raw) {
   if (!raw || typeof raw !== "object") return null;
   const countMinuteValue = Math.max(1, Math.round(Number(raw.countMinuteValue ?? raw.countUnitMinutes) || 1));
@@ -2904,7 +2913,8 @@ function normalizeHabitModel(raw) {
     countUnitMinutes: Number.isFinite(Number(raw.countUnitMinutes)) && Number(raw.countUnitMinutes) > 0
       ? Math.round(Number(raw.countUnitMinutes))
       : countMinuteValue,
-    goalsByRange
+    goalsByRange,
+    monthlyGoal: normalizeMonthlyGoal(raw.monthlyGoal, raw.goal || "check")
   };
 }
 
@@ -3567,6 +3577,11 @@ const $habitDetailScheduleValue = document.getElementById("habit-detail-schedule
 const $habitDetailScheduleSave = document.getElementById("habit-detail-schedule-save");
 const $habitDetailScheduleRemove = document.getElementById("habit-detail-schedule-remove");
 const $habitDetailCreditEligible = document.getElementById("habit-detail-credit-eligible");
+const $habitDetailMonthlySub = document.getElementById("habit-detail-monthly-sub");
+const $habitDetailMonthlyTarget = document.getElementById("habit-detail-monthly-target");
+const $habitDetailMonthlySave = document.getElementById("habit-detail-monthly-save");
+const $habitDetailMonthlyClear = document.getElementById("habit-detail-monthly-clear");
+const $habitDetailMonthlyProgress = document.getElementById("habit-detail-monthly-progress");
 
 
 // Modal refs
@@ -4018,6 +4033,7 @@ function gatherHabitPayload() {
     params,
     targetMinutes: Number.isFinite(safeTargetMinutes) && safeTargetMinutes > 0 ? safeTargetMinutes : null,
     goalsByRange: normalizeGoalsByRange(existing?.goalsByRange || existing || {}),
+    monthlyGoal: normalizeMonthlyGoal(existing?.monthlyGoal, goal),
     countMinuteValue: Number.isFinite(safeUnit) && safeUnit > 0 ? Math.round(safeUnit) : null,
     countUnitMinutes: Number.isFinite(safeUnit) && safeUnit > 0 ? Math.round(safeUnit) : null,
     habitScheduleCreditEligible,
@@ -4226,6 +4242,65 @@ function getHabitValueForDate(habit, dateKey) {
     return getHabitCount(habit.id, dateKey);
   }
   return isHabitCompletedOnDate(habit, dateKey) ? 1 : 0;
+}
+
+function getMonthlyProgress(habitId, year, month) {
+  const habit = habits?.[habitId];
+  if (!habit || habit.archived) return { current: 0, target: 0, pct: 0 };
+  const monthlyGoal = normalizeMonthlyGoal(habit.monthlyGoal, habit.goal || "check");
+  if (!monthlyGoal) return { current: 0, target: 0, pct: 0 };
+
+  const monthIndex = Number(month) > 11 ? Number(month) - 1 : Number(month);
+  if (!Number.isFinite(monthIndex)) return { current: 0, target: monthlyGoal.target, pct: 0 };
+  const start = new Date(Number(year), monthIndex, 1);
+  const end = new Date(Number(year), monthIndex + 1, 1);
+
+  let current = 0;
+  for (let cursor = new Date(start); cursor < end; cursor = addDays(cursor, 1)) {
+    const key = dateKeyLocal(cursor);
+    current += getHabitValueForDate(habit, key);
+  }
+
+  const target = Math.max(0, Number(monthlyGoal.target) || 0);
+  const pct = target > 0 ? Math.max(0, Math.min(999, (current / target) * 100)) : 0;
+  return { current, target, pct };
+}
+
+function renderHabitDetailMonthlyGoalPanel(habit) {
+  if (!habit || !$habitDetailMonthlyProgress) return;
+  const goal = habit.goal || "check";
+  const now = new Date();
+  const monthName = now.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+  const monthlyGoal = normalizeMonthlyGoal(habit.monthlyGoal, goal);
+
+  if ($habitDetailMonthlyTarget) {
+    $habitDetailMonthlyTarget.placeholder = goal === "time" ? "min" : "unidades";
+    $habitDetailMonthlyTarget.value = monthlyGoal ? String(monthlyGoal.target) : "";
+  }
+
+  if (!monthlyGoal) {
+    if ($habitDetailMonthlySub) $habitDetailMonthlySub.textContent = `Sin objetivo mensual · ${monthName}`;
+    $habitDetailMonthlyProgress.innerHTML = '<div class="empty-state small">Sin objetivo mensual. Pulsa <strong>Configurar</strong> para empezar.</div>';
+    return;
+  }
+
+  const progress = getMonthlyProgress(habit.id, now.getFullYear(), now.getMonth());
+  const currentLabel = goal === "time" ? formatMinutes(Math.round(progress.current)) : `${Math.round(progress.current)}×`;
+  const targetLabel = goal === "time" ? formatMinutes(Math.round(progress.target)) : `${Math.round(progress.target)}×`;
+  const ratio = progress.target > 0 ? progress.current / progress.target : 0;
+
+  if ($habitDetailMonthlySub) $habitDetailMonthlySub.textContent = `${monthName} · ${Math.round(progress.pct)}%`;
+
+  $habitDetailMonthlyProgress.innerHTML = "";
+  const row = renderHabitProgressRow(habit, progress.current, progress.target, {
+    subtitle: `${currentLabel} / ${targetLabel}`,
+    rightLabel: `${Math.round(progress.current)} / ${Math.round(progress.target)}${goal === "time" ? " min" : ""}`,
+    progressRatio: ratio,
+    canOverflow: true,
+    showPercent: true,
+    focusClass: "is-focused"
+  });
+  $habitDetailMonthlyProgress.appendChild(row);
 }
 
 function openHabitDetail(habitId, dateKeyContext = todayKey()) {
@@ -4781,6 +4856,7 @@ function renderHabitDetail(habitId, rangeKey = habitDetailRange) {
 
   renderHabitDetailActions(habit, habitDetailDateKey || today);
   renderHabitDetailSchedulePanel(habit);
+  renderHabitDetailMonthlyGoalPanel(habit);
   renderHabitDetailHeatmap(habit, rangeKey);
   renderHabitDetailChart(habit, rangeKey);
   updateHabitDetailRecordsSummary(habit, rangeKey);
@@ -10851,6 +10927,40 @@ function bindEvents() {
       showHabitToast("No se pudo quitar");
     }
   });
+  $habitDetailMonthlySave?.addEventListener("click", () => {
+    if (!habitDetailId || !habits[habitDetailId]) return;
+    const habit = habits[habitDetailId];
+    const target = Math.max(0, Math.round(Number($habitDetailMonthlyTarget?.value || 0)));
+    if (target <= 0) {
+      showHabitToast("Introduce un objetivo mensual mayor a 0");
+      return;
+    }
+    const next = {
+      ...habit,
+      monthlyGoal: {
+        target,
+        unit: (habit.goal || "check") === "time" ? "min" : "count"
+      }
+    };
+    habits[habitDetailId] = normalizeHabitModel(next);
+    saveCache();
+    persistHabit(habits[habitDetailId]);
+    renderHabitDetailMonthlyGoalPanel(habits[habitDetailId]);
+    if (activeTab === "schedule") renderSchedule("detail:monthly-goal-save");
+    showHabitToast("Objetivo mensual guardado");
+  });
+
+  $habitDetailMonthlyClear?.addEventListener("click", () => {
+    if (!habitDetailId || !habits[habitDetailId]) return;
+    const next = { ...habits[habitDetailId], monthlyGoal: null };
+    habits[habitDetailId] = normalizeHabitModel(next);
+    saveCache();
+    persistHabit(habits[habitDetailId]);
+    renderHabitDetailMonthlyGoalPanel(habits[habitDetailId]);
+    if (activeTab === "schedule") renderSchedule("detail:monthly-goal-clear");
+    showHabitToast("Objetivo mensual quitado");
+  });
+
   $habitDetailCreditEligible?.addEventListener("change", () => {
     if (!habitDetailId || !habits[habitDetailId]) return;
     const checked = !!$habitDetailCreditEligible.checked;

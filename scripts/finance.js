@@ -1,4 +1,4 @@
-import { ref, onValue, set, update, remove, push, off } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+import { ref, onValue, set, off } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 import { db } from './firebase-shared.js';
 import { formatCurrency, formatSignedCurrency, formatSignedPercent } from './finance-format.js';
 
@@ -7,6 +7,8 @@ const LS_DATA = 'mis_cuentas_fase1_data';
 const LS_UID = 'mis_cuentas_uid';
 const DEFAULT_CUENTAS = ['Principal', 'Ahorro', 'Broker'];
 const TODAY = () => new Date().toISOString().slice(0, 10);
+const WEEK_DAYS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
 const state = {
   uid: String(window.__bookshellUid || localStorage.getItem('bookshell.uid') || localStorage.getItem(LS_UID) || 'default'),
@@ -14,19 +16,131 @@ const state = {
   cuentas: [],
   registros: [],
   objetivos: [],
-  finanzas: { ingreso: 0, inversiones: 0, fijas: [], variables: [], origenVariable: '' },
-  selectedCuenta: '',
-  editingKey: null,
-  cloudUnsubs: []
+  finanzas: { ingreso: 0, inversiones: 0, fijas: [], variables: [], origenVariable: '', origenObjetivos: [], calModo: 'dia', calMes: '', calAnio: new Date().getFullYear() },
+  cloudUnsubs: [],
+  editingInline: null,
+  calSelectedDate: TODAY()
 };
 
-function emitLogin() { window.dispatchEvent(new CustomEvent('finanzas-login', { detail: { uid: state.uid } })); }
 function parseNumber(v) { const n = Number(String(v ?? '').replace(/\./g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0; }
 function valueToneClass(v) { return v > 0 ? 'tone-pos' : v < 0 ? 'tone-neg' : 'tone-neutral'; }
+function emitLogin() { window.dispatchEvent(new CustomEvent('finanzas-login', { detail: { uid: state.uid } })); }
+function sortRegistros() { state.registros.sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || ''))); }
 
 function getFallbackSaldos() {
   return Object.fromEntries((state.cuentas.length ? state.cuentas : DEFAULT_CUENTAS).map((n) => [n, 0]));
 }
+
+function getLastKnownSaldosBefore(fecha) {
+  sortRegistros();
+  const acc = getFallbackSaldos();
+  for (const row of state.registros) {
+    if (row.fecha >= fecha) break;
+    const saldos = row.saldos || {};
+    state.cuentas.forEach((c) => {
+      if (Number.isFinite(Number(saldos[c]))) acc[c] = Number(saldos[c]);
+    });
+  }
+  return acc;
+}
+
+function fillSaldosForDate(fecha, current = {}) {
+  const base = getLastKnownSaldosBefore(fecha);
+  const merged = { ...base, ...(current || {}) };
+  state.cuentas.forEach((c) => {
+    if (!Number.isFinite(Number(merged[c]))) merged[c] = Number(base[c] || 0);
+  });
+  return merged;
+}
+
+function recalcVariaciones() {
+  sortRegistros();
+  const known = getFallbackSaldos();
+  let prev = 0;
+  state.registros.forEach((r) => {
+    r.saldos = fillSaldosForDate(r.fecha, r.saldos || {});
+    state.cuentas.forEach((c) => { known[c] = Number(r.saldos[c] || known[c] || 0); });
+    r.total = state.cuentas.reduce((acc, c) => acc + Number(known[c] || 0), 0);
+    r.variacion = Number((r.total - prev).toFixed(2));
+    r.varpct = prev ? Number(((r.variacion / prev) * 100).toFixed(2)) : 0;
+    prev = r.total;
+  });
+}
+
+function persistLocal() {
+  localStorage.setItem(LS_UID, state.uid);
+  localStorage.setItem(LS_CUENTAS, JSON.stringify(state.cuentas));
+  localStorage.setItem(LS_DATA, JSON.stringify({ registros: state.registros, objetivos: state.objetivos, finanzas: state.finanzas }));
+}
+
+function cloudPath(base) { return `users/${state.uid}/finanzas/${base}`; }
+function syncCloud() {
+  if (!state.uid) return;
+  set(ref(db, cloudPath('cuentas')), state.cuentas);
+  set(ref(db, cloudPath('data')), { registros: state.registros, objetivos: state.objetivos, finanzas: state.finanzas });
+}
+
+function persistAndRender() { persistLocal(); syncCloud(); render(); }
+
+function upsertRegistroCuenta(cuenta, fecha, valor) {
+  if (!state.cuentas.includes(cuenta)) return;
+  let row = state.registros.find((r) => r.fecha === fecha);
+  if (row) {
+    row.saldos = row.saldos || {};
+    row.saldos[cuenta] = Number(valor || 0);
+    row.saldos = fillSaldosForDate(fecha, row.saldos);
+    row.total = state.cuentas.reduce((acc, c) => acc + Number(row.saldos[c] || 0), 0);
+  } else {
+    const base = getLastKnownSaldosBefore(fecha);
+    base[cuenta] = Number(valor || 0);
+    row = { fecha, saldos: fillSaldosForDate(fecha, base), total: 0, variacion: 0, varpct: 0 };
+    row.total = state.cuentas.reduce((acc, c) => acc + Number(row.saldos[c] || 0), 0);
+    state.registros.push(row);
+  }
+  recalcVariaciones();
+  persistAndRender();
+}
+
+function getSnapshot() {
+  return {
+    uid: state.uid,
+    cuentas: [...state.cuentas],
+    registros: state.registros.map((r) => ({ ...r, saldos: { ...(r.saldos || {}) } })),
+    objetivos: state.objetivos.map((g) => ({ ...g }))
+  };
+}
+
+function getRowAtOrBefore(fecha) {
+  sortRegistros();
+  let found = null;
+  for (const row of state.registros) {
+    if (row.fecha <= fecha) found = row;
+    if (row.fecha > fecha) break;
+  }
+  return found;
+}
+
+function getMetricAtDate(fecha, cuenta = 'Total (todas)') {
+  const row = getRowAtOrBefore(fecha);
+  if (!row) return null;
+  if (cuenta === 'Total (todas)') return Number(row.total || 0);
+  return Number(row.saldos?.[cuenta]);
+}
+
+function getSaldosActuales() {
+  const last = state.registros.at(-1);
+  if (!last) return getFallbackSaldos();
+  return fillSaldosForDate(last.fecha, last.saldos || {});
+}
+
+window.getFinanzasSnapshot = getSnapshot;
+window.FIN_GLOBAL = {
+  getCuentas: () => [...state.cuentas],
+  getRegistros: () => getSnapshot().registros,
+  getLastRegistro: () => ({ ...(state.registros.at(-1) || null) }),
+  getSaldosActuales,
+  upsertRegistroCuenta
+};
 
 function loadLocal() {
   const cuentasRaw = JSON.parse(localStorage.getItem(LS_CUENTAS) || 'null');
@@ -36,145 +150,129 @@ function loadLocal() {
   state.objetivos = Array.isArray(dataRaw?.objetivos) ? dataRaw.objetivos : [];
   state.finanzas = { ...state.finanzas, ...(dataRaw?.finanzas || {}) };
   if (!state.finanzas.origenVariable) state.finanzas.origenVariable = state.cuentas[0] || '';
+  if (!state.finanzas.calMes) state.finanzas.calMes = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
 }
 
-function persistLocal() {
-  localStorage.setItem(LS_UID, state.uid);
-  localStorage.setItem(LS_CUENTAS, JSON.stringify(state.cuentas));
-  localStorage.setItem(LS_DATA, JSON.stringify({ registros: state.registros, objetivos: state.objetivos, finanzas: state.finanzas }));
-}
-
-function sortRegistros() { state.registros.sort((a, b) => a.fecha.localeCompare(b.fecha)); }
-function getLastKnownSaldosBefore(fecha) {
-  sortRegistros();
-  const prev = [...state.registros].reverse().find((r) => r.fecha < fecha);
-  return prev ? { ...prev.saldos } : getFallbackSaldos();
-}
-function fillSaldosForDate(registro) {
-  const base = getLastKnownSaldosBefore(registro.fecha);
-  registro.saldos = { ...base, ...(registro.saldos || {}) };
-  state.cuentas.forEach((c) => { if (!Number.isFinite(registro.saldos[c])) registro.saldos[c] = 0; });
-}
-function recalcVariaciones() {
-  sortRegistros();
-  let prev = 0;
-  state.registros.forEach((r) => {
-    r.total = state.cuentas.reduce((acc, c) => acc + Number(r.saldos?.[c] || 0), 0);
-    r.variacion = r.total - prev;
-    r.varpct = prev ? (r.variacion / prev) * 100 : 0;
-    prev = r.total;
+function createModalBase({ title, body, cancel = 'Cancelar', confirm = 'Guardar', danger = false, onConfirm }) {
+  const backdrop = document.getElementById('finance-modal-backdrop');
+  backdrop.classList.remove('hidden');
+  backdrop.innerHTML = `<div class="modal finance-modal"><div class="modal-header"><div class="modal-title">${title}</div><button class="icon-btn" data-close>✕</button></div><div class="modal-body">${body}</div><div class="modal-footer sheet-footer"><button class="opal-pill" data-close>${cancel}</button><button class="opal-pill ${danger ? '' : 'opal-pill--primary'}" data-modal-confirm>${confirm}</button></div></div>`;
+  const close = () => { backdrop.classList.add('hidden'); backdrop.innerHTML = ''; };
+  backdrop.onclick = (e) => { if (e.target === backdrop || e.target.closest('[data-close]')) close(); };
+  backdrop.querySelector('[data-modal-confirm]')?.addEventListener('click', () => {
+    const shouldClose = onConfirm?.(backdrop.querySelector('.modal'));
+    if (shouldClose !== false) close();
   });
-}
-
-function upsertRegistroCuenta(cuenta, fecha, valor) {
-  if (!state.cuentas.includes(cuenta)) return;
-  let row = state.registros.find((r) => r.fecha === fecha);
-  if (row) {
-    row.saldos = row.saldos || {};
-    row.saldos[cuenta] = valor;
-    fillSaldosForDate(row);
-  } else {
-    const base = getLastKnownSaldosBefore(fecha);
-    base[cuenta] = valor;
-    row = { fecha, saldos: base, total: 0, variacion: 0, varpct: 0 };
-    state.registros.push(row);
-  }
-  recalcVariaciones();
-  persistLocal();
-  syncCloud();
-  render();
-}
-
-function ensureTodayRow() {
-  if (state.registros.some((r) => r.fecha === TODAY())) return;
-  state.registros.push({ fecha: TODAY(), saldos: getLastKnownSaldosBefore(TODAY()), total: 0, variacion: 0, varpct: 0 });
-  recalcVariaciones();
-}
-
-function addCuenta() {
-  const name = prompt('Nombre de la cuenta');
-  if (!name) return;
-  const trimmed = name.trim();
-  if (!trimmed || state.cuentas.includes(trimmed)) return alert('Nombre inválido o repetido.');
-  state.cuentas.push(trimmed);
-  state.registros.forEach((r) => { r.saldos = r.saldos || {}; r.saldos[trimmed] = Number(r.saldos[trimmed] || 0); });
-  if (!state.finanzas.origenVariable) state.finanzas.origenVariable = trimmed;
-  recalcVariaciones(); persistLocal(); syncCloud(); render();
-}
-
-function deleteCuenta(cuenta) {
-  if (!state.cuentas.includes(cuenta)) return;
-  if (!confirm(`Eliminar ${cuenta} y su historial?`)) return;
-  state.cuentas = state.cuentas.filter((c) => c !== cuenta);
-  state.registros.forEach((r) => delete r.saldos?.[cuenta]);
-  if (state.finanzas.origenVariable === cuenta) state.finanzas.origenVariable = state.cuentas[0] || '';
-  recalcVariaciones(); persistLocal(); syncCloud(); render();
-}
-
-function getCuentaActual(cuenta) {
-  sortRegistros();
-  const last = [...state.registros].reverse().find((r) => Number.isFinite(r.saldos?.[cuenta]));
-  const prev = [...state.registros].reverse().find((r) => r !== last && Number.isFinite(r.saldos?.[cuenta]));
-  const cur = Number(last?.saldos?.[cuenta] || 0);
-  const pv = Number(prev?.saldos?.[cuenta] || 0);
-  const delta = cur - pv;
-  return { cur, delta, pct: pv ? (delta / pv) * 100 : 0 };
 }
 
 function renderTopNav() {
   const root = document.getElementById('finance-topnav');
-  if (!root) return;
   const items = [['cuentas', '💳'], ['gastos', '🧾'], ['objetivos', '◎'], ['calendario', '📅']];
   root.innerHTML = items.map(([id, ic]) => `<button class="finance-mini-btn ${state.view === id ? 'active' : ''}" data-fin-view="${id}">${ic}</button>`).join('');
+}
+
+function ensureTodayRow() {
+  if (state.registros.some((r) => r.fecha === TODAY())) return;
+  state.registros.push({ fecha: TODAY(), saldos: fillSaldosForDate(TODAY(), {}), total: 0, variacion: 0, varpct: 0 });
+  recalcVariaciones();
+}
+
+function renderSparkline(points) {
+  if (!points.length) return '<div class="finance-spark-empty"></div>';
+  const min = Math.min(...points, 0);
+  const max = Math.max(...points, 1);
+  const coords = points.map((v, i) => {
+    const x = points.length === 1 ? 0 : (i / (points.length - 1)) * 100;
+    const y = 100 - ((v - min) / (max - min || 1)) * 100;
+    return `${x},${y}`;
+  }).join(' ');
+  return `<svg viewBox="0 0 100 100" preserveAspectRatio="none" width="100%" height="92"><polyline fill="none" stroke="#90a7ff" stroke-width="2" points="${coords}"/></svg>`;
 }
 
 function renderCuentas() {
   ensureTodayRow();
   const host = document.getElementById('finance-content');
-  const last = state.registros[state.registros.length - 1] || { total: 0, variacion: 0, varpct: 0 };
-  host.innerHTML = `<section class="finance-panel finance-overview-hero ${valueToneClass(last.variacion)}">
-    <div class="finance-overview-top"><button class="opal-pill" id="fin-refresh">Actualizar</button><button class="opal-pill opal-pill--primary" id="fin-add-account">Nueva cuenta</button></div>
-    <div class="finance-total">${formatCurrency(last.total || 0)}</div>
-    <div class="finance-delta-row"><span class="finance-sign-badge ${valueToneClass(last.variacion)}">${formatSignedCurrency(last.variacion)} · ${formatSignedPercent(last.varpct)}</span></div>
-    <div class="finance-controls"><button class="opal-pill" id="fin-history-total">Historial</button><select class="opal-select" id="periodo"><option>Mes</option><option>Año</option></select><select class="opal-select" id="comparar"><option>Comparativa</option><option>Mes vs mes</option></select></div>
-  </section>
-  <section class="finance-list">${state.cuentas.map((c) => {
-    const m = getCuentaActual(c);
-    return `<article class="finance-account-card ${valueToneClass(m.delta)}" data-account="${c}"><button class="finance-dot-menu" data-del-account="${c}">⋮</button><div class="finance-account-main"><div class="finance-account-name">${c}</div>
-      <div class="finance-edit-zone"><button class="finance-amount-display" data-now-display="${c}">${formatCurrency(m.cur)}</button><input class="finance-inline-input hidden" data-now-input="${c}" placeholder="${formatCurrency(m.cur)}" inputmode="decimal"></div></div>
-      <div class="finance-account-right"><span class="finance-sign-badge ${valueToneClass(m.delta)}">${formatSignedCurrency(m.delta)} · ${formatSignedPercent(m.pct)}</span></div></article>`;
+  const last = state.registros.at(-1) || { total: 0, variacion: 0, varpct: 0 };
+  const pts = state.registros.map((r) => Number(r.total || 0));
+  host.innerHTML = `<section class="finance-panel"><div class="finance-overview-hero ${valueToneClass(last.variacion)}"><div class="finance-overview-top"><button class="finance-total">${formatCurrency(last.total || 0)}</button><button class="opal-pill" id="fin-add-account">+ Cuenta</button></div><div class="finance-delta-row"><span class="finance-sign-badge ${valueToneClass(last.variacion)}">${formatSignedCurrency(last.variacion || 0)} · ${formatSignedPercent(last.varpct || 0)}</span></div><div class="finance-spark">${renderSparkline(pts)}</div></div></section><section class="finance-list">${state.cuentas.map((c) => {
+    const row = state.registros.at(-1);
+    const prev = state.registros.at(-2);
+    const cur = Number(row?.saldos?.[c] || 0);
+    const pv = Number(prev?.saldos?.[c] || 0);
+    const delta = cur - pv;
+    return `<article class="finance-account-card ${valueToneClass(delta)}" data-account="${c}"><button class="finance-dot-menu" data-account-menu="${c}">⋮</button><div class="finance-account-main"><div class="finance-account-name">${c}</div><div class="finance-edit-zone"><button class="finance-amount-display ${state.editingInline === c ? 'hidden' : ''}" data-now-display="${c}">${formatCurrency(cur)}</button><input class="finance-inline-input ${state.editingInline === c ? '' : 'hidden'}" data-now-input="${c}" placeholder="${cur}" /></div><small class="${valueToneClass(delta)}">${formatSignedCurrency(delta)}</small></div></article>`;
   }).join('')}</section>`;
 }
 
-function renderGastos() {
-  const host = document.getElementById('finance-content');
-  const f = state.finanzas;
-  const comprometido = (Number(f.inversiones || 0)) + f.fijas.reduce((a, g) => a + Number(g.importe || 0), 0);
-  const esencial = f.fijas.filter((g) => g.esencial).reduce((a, g) => a + Number(g.importe || 0), 0);
-  host.innerHTML = `<section class="finance-panel"><div class="finance-row"><label class="opal-select-wrap"><span>Ingreso mensual</span><input class="opal-input" id="fin-ingreso" value="${f.ingreso || 0}"></label><label class="opal-select-wrap"><span>Inversiones</span><input class="opal-input" id="fin-inv" value="${f.inversiones || 0}"></label></div>
-  <div class="finance-chip-row"><span class="finance-chip tone-neutral">Comprometido ${formatCurrency(comprometido)}</span><span class="finance-chip tone-neg">Esencial ${formatCurrency(esencial)}</span></div>
-  <div class="finance-row"><label class="opal-select-wrap"><span>Origen de cuenta</span><select class="opal-select" id="fin-origen">${state.cuentas.map((c) => `<option ${f.origenVariable===c?'selected':''}>${c}</option>`).join('')}</select></label><button class="opal-pill" id="fin-new-fixed">Nuevo gasto fijo</button></div>
-  </section>
-  <section class="finance-list">${f.fijas.map((g, i) => `<article class="finance-account-card ${g.esencial ? 'tone-neg' : 'tone-neutral'}"><div><b>${g.nombre}</b><div>${g.categoria || 'General'}</div></div><div>${formatCurrency(g.importe)}</div><button class="finance-dot-menu" data-del-fixed="${i}">⋮</button></article>`).join('') || '<div class="empty-state">Sin gastos fijos</div>'}
-  <button class="opal-pill opal-pill--primary" id="fin-add-variable">Registrar gasto variable</button></section>`;
+function getObjetivosCapitalDisponible() {
+  const map = getSaldosActuales();
+  const origen = Array.isArray(state.finanzas.origenObjetivos) && state.finanzas.origenObjetivos.length ? state.finanzas.origenObjetivos : state.cuentas;
+  return origen.reduce((acc, c) => acc + Number(map[c] || 0), 0);
 }
 
 function renderObjetivos() {
   const host = document.getElementById('finance-content');
   const totalObj = state.objetivos.reduce((a, o) => a + Number(o.objetivo || 0), 0);
   const totalAho = state.objetivos.reduce((a, o) => a + Number(o.ahorrado || 0), 0);
-  host.innerHTML = `<section class="finance-panel"><div class="finance-goal-header"><button class="opal-pill opal-pill--primary" id="goal-new">Nuevo objetivo</button></div>
-  <div class="finance-goal-meta">${formatCurrency(totalAho)} / ${formatCurrency(totalObj)} · Disponible ${formatCurrency((state.registros.at(-1)?.total || 0) - totalAho)}</div></section>
-  <section class="finance-list">${state.objetivos.map((o, i) => {
-    const pct = o.objetivo ? Math.max(0, Math.min(100, (o.ahorrado / o.objetivo) * 100)) : 0;
-    const days = o.fecha ? Math.ceil((new Date(`${o.fecha}T00:00:00`) - new Date()) / 86400000) : null;
-    return `<article class="finance-goal-card"><span><strong>${o.nombre}</strong><small>${Math.round(pct)}%</small><small>${days == null ? 'Sin fecha' : `quedan ${days} días`}</small></span><div class="finance-goal-ring" style="--ring:#8b7dff;--pct:${pct}">${Math.round(pct)}%</div><button class="finance-dot-menu" data-del-goal="${i}">⋮</button></article>`;
-  }).join('') || '<div class="empty-state">Sin objetivos</div>'}</section>`;
+  const origen = Array.isArray(state.finanzas.origenObjetivos) && state.finanzas.origenObjetivos.length ? state.finanzas.origenObjetivos.join(', ') : 'Todas';
+  const cap = getObjetivosCapitalDisponible();
+  const pct = totalObj ? Math.min(100, (totalAho / totalObj) * 100) : 0;
+  host.innerHTML = `<section class="finance-panel"><div class="finance-goal-header"><button class="opal-pill opal-pill--primary" id="goal-new">Nuevo objetivo</button><button class="opal-pill" id="goal-origin">Cuentas origen</button></div><div class="finance-goal-meta">Objetivo ${formatCurrency(totalObj)} · Ahorrado ${formatCurrency(totalAho)}</div><div class="finance-goal-meta">Origen: ${origen}</div><div class="finance-goal-meta">Disponible: ${formatCurrency(cap)}</div><div class="finance-donut"><div class="finance-goal-ring" style="--ring:#8b7dff;--pct:${pct}">${Math.round(pct)}%</div></div></section><section class="finance-list">${state.objetivos.map((o, i) => `<article class="finance-goal-card"><span><strong>${o.nombre}</strong><small>${formatCurrency(o.ahorrado || 0)} / ${formatCurrency(o.objetivo || 0)}</small><small>${o.fecha || 'Sin fecha'}</small></span><button class="finance-dot-menu" data-del-goal="${i}">⋮</button></article>`).join('') || '<div class="empty-state">Sin objetivos</div>'}</section>`;
+}
+
+function renderGastos() {
+  const host = document.getElementById('finance-content');
+  const vars = state.finanzas.variables || [];
+  host.innerHTML = `<section class="finance-panel"><div class="finance-row"><label class="opal-select-wrap"><span>Cuenta a descontar</span><select class="opal-select" id="fin-origen">${state.cuentas.map((c) => `<option ${state.finanzas.origenVariable === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label><button class="opal-pill" id="fin-new-fixed">Nuevo gasto fijo</button></div><button class="opal-pill opal-pill--primary" id="fin-add-variable">Registrar gasto variable</button></section><section class="finance-list">${vars.map((g, i) => `<article class="finance-account-card tone-neg"><div><b>${formatCurrency(g.importe || 0)}</b><div>${g.categoria || 'General'} · ${g.cuenta} · ${g.fecha}</div>${g.etiqueta ? `<small>${g.etiqueta}</small>` : ''}</div><button class="finance-dot-menu" data-del-var="${i}">⋮</button></article>`).join('') || '<div class="empty-state">Sin gastos variables</div>'}</section>`;
 }
 
 function renderCalendario() {
   const host = document.getElementById('finance-content');
-  host.innerHTML = `<section class="finance-panel"><div class="finance-grid">${state.registros.map((r) => `<button class="fin-cell ${valueToneClass(r.variacion)}" data-history-day="${r.fecha}"><b>${r.fecha}</b><small>${formatSignedCurrency(r.variacion)}</small></button>`).join('')}</div></section>`;
+  const selectedCuenta = state.finanzas.calCuenta || 'Total (todas)';
+  const [yRaw, mRaw] = String(state.finanzas.calMes || '').split('-');
+  const year = Number(yRaw || state.finanzas.calAnio || new Date().getFullYear());
+  const month = Number(mRaw || 1);
+  const monthOpts = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`)
+    .map((k, i) => `<option value="${k}" ${k === state.finanzas.calMes ? 'selected' : ''}>${MONTHS[i]} de ${year}</option>`).join('');
+  host.innerHTML = `<section class="finance-panel"><div class="finance-row"><select id="cal-modo" class="opal-select"><option value="dia" ${state.finanzas.calModo === 'dia' ? 'selected' : ''}>Día</option><option value="mes" ${state.finanzas.calModo === 'mes' ? 'selected' : ''}>Mes</option><option value="anio" ${state.finanzas.calModo === 'anio' ? 'selected' : ''}>Año</option></select><select id="cal-mes" class="opal-select">${monthOpts}</select></div><div class="finance-row"><input id="cal-anio" class="opal-input" type="number" value="${year}" /><select id="cal-cuenta" class="opal-select"><option ${selectedCuenta === 'Total (todas)' ? 'selected' : ''}>Total (todas)</option>${state.cuentas.map((c) => `<option ${selectedCuenta === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div><div id="cal-grid" class="finance-grid"></div></section>`;
+  const grid = host.querySelector('#cal-grid');
+  if (state.finanzas.calModo === 'dia') {
+    grid.innerHTML = WEEK_DAYS.map((d) => `<div class="fin-head">${d}</div>`).join('');
+    const first = new Date(year, month - 1, 1);
+    const days = new Date(year, month, 0).getDate();
+    const offset = (first.getDay() + 6) % 7;
+    for (let i = 0; i < offset; i += 1) grid.innerHTML += '<div class="fin-cell tone-neutral"></div>';
+    for (let d = 1; d <= days; d += 1) {
+      const date = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const prevDate = new Date(`${date}T00:00:00`); prevDate.setDate(prevDate.getDate() - 1);
+      const prevKey = prevDate.toISOString().slice(0, 10);
+      const cur = getMetricAtDate(date, selectedCuenta);
+      const prev = getMetricAtDate(prevKey, selectedCuenta);
+      const has = Number.isFinite(cur);
+      const delta = has && Number.isFinite(prev) ? cur - prev : 0;
+      const pct = has && Number.isFinite(prev) && prev ? (delta / prev) * 100 : 0;
+      grid.innerHTML += `<button class="fin-cell ${has ? valueToneClass(delta) : 'tone-neutral'} ${state.calSelectedDate === date ? 'active' : ''}" data-cal-day="${date}"><b>${d}</b><small>${has ? formatCurrency(cur) : '—'}</small><small>${has ? `${formatSignedCurrency(delta)} · ${formatSignedPercent(pct)}` : ''}</small></button>`;
+    }
+  } else if (state.finanzas.calModo === 'mes') {
+    grid.style.gridTemplateColumns = 'repeat(3,minmax(0,1fr))';
+    grid.innerHTML = Array.from({ length: 12 }, (_, i) => {
+      const end = new Date(year, i + 1, 0).toISOString().slice(0, 10);
+      const prevEnd = new Date(year, i, 0).toISOString().slice(0, 10);
+      const cur = getMetricAtDate(end, selectedCuenta);
+      const prev = getMetricAtDate(prevEnd, selectedCuenta);
+      const delta = Number.isFinite(cur) && Number.isFinite(prev) ? cur - prev : 0;
+      return `<div class="fin-cell ${valueToneClass(delta)}"><b>${MONTHS[i]}</b><small>${formatSignedCurrency(delta)}</small></div>`;
+    }).join('');
+  } else {
+    const years = [...new Set(state.registros.map((r) => Number(String(r.fecha || '').slice(0, 4))).filter(Boolean))];
+    grid.style.gridTemplateColumns = 'repeat(2,minmax(0,1fr))';
+    grid.innerHTML = years.map((y) => {
+      const cur = getMetricAtDate(`${y}-12-31`, selectedCuenta);
+      const prev = getMetricAtDate(`${y - 1}-12-31`, selectedCuenta);
+      const delta = Number.isFinite(cur) && Number.isFinite(prev) ? cur - prev : 0;
+      return `<div class="fin-cell ${valueToneClass(delta)}"><b>${y}</b><small>${formatSignedCurrency(delta)}</small></div>`;
+    }).join('') || '<div class="empty-state">Sin años disponibles</div>';
+  }
 }
 
 function render() {
@@ -185,37 +283,6 @@ function render() {
   if (state.view === 'calendario') renderCalendario();
 }
 
-function openCuentaDetalle(cuenta) {
-  const rows = state.registros.map((r, i) => ({ x: i, y: Number(r.saldos?.[cuenta] || 0), fecha: r.fecha }));
-  const modal = document.getElementById('finance-modal-backdrop');
-  modal.classList.remove('hidden');
-  modal.innerHTML = `<div class="modal finance-modal"><div class="modal-header"><div class="modal-title">${cuenta}</div><button class="icon-btn" data-close>✕</button></div><div class="modal-body"><canvas id="cuenta-chart" width="300" height="130" style="width:100%;height:130px"></canvas><div id="chart-tip" class="finance-chip tone-neutral">—</div><div class="finance-history-table-wrap"><table class="finance-history-table"><tr><th>Fecha</th><th>Saldo</th><th>⋮</th></tr>${rows.map((r) => `<tr><td>${r.fecha}</td><td>${formatCurrency(r.y)}</td><td><button class="opal-pill" data-edit-day="${cuenta}|${r.fecha}">Editar</button> <button class="opal-pill" data-del-day="${cuenta}|${r.fecha}">Eliminar</button></td></tr>`).join('')}</table></div></div></div>`;
-  const cv = document.getElementById('cuenta-chart'); const ctx = cv.getContext('2d');
-  const min = Math.min(...rows.map((r) => r.y), 0); const max = Math.max(...rows.map((r) => r.y), 1);
-  ctx.strokeStyle = '#7da1ff'; ctx.lineWidth = 2; ctx.beginPath();
-  rows.forEach((r, i) => { const x = (i / Math.max(1, rows.length - 1)) * cv.width; const y = cv.height - ((r.y - min) / (max - min || 1)) * cv.height; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }); ctx.stroke();
-  cv.addEventListener('pointermove', (e) => {
-    const idx = Math.round(((e.offsetX / cv.clientWidth) * (rows.length - 1)));
-    const row = rows[Math.max(0, Math.min(rows.length - 1, idx))];
-    document.getElementById('chart-tip').textContent = `${row.fecha} · ${formatCurrency(row.y)}`;
-  });
-}
-
-function applyUid(nextUid) {
-  const uid = String(nextUid || 'default');
-  if (uid === state.uid) return;
-  state.uid = uid;
-  persistLocal();
-  bindCloud();
-  emitLogin();
-}
-
-function cloudPath(base) { return `users/${state.uid}/finanzas/${base}`; }
-function syncCloud() {
-  if (!state.uid) return;
-  set(ref(db, cloudPath('cuentas')), state.cuentas);
-  set(ref(db, cloudPath('data')), { registros: state.registros, objetivos: state.objetivos, finanzas: state.finanzas });
-}
 function bindCloud() {
   state.cloudUnsubs.forEach((u) => u());
   state.cloudUnsubs = [];
@@ -223,7 +290,7 @@ function bindCloud() {
   const dataRef = ref(db, cloudPath('data'));
   const onCuentas = onValue(cuentasRef, (snap) => {
     const remote = snap.val();
-    if (Array.isArray(remote) && remote.length) { state.cuentas = remote; persistLocal(); render(); }
+    if (Array.isArray(remote) && remote.length) { state.cuentas = remote; recalcVariaciones(); persistLocal(); render(); }
   });
   const onData = onValue(dataRef, (snap) => {
     const remote = snap.val() || {};
@@ -236,94 +303,185 @@ function bindCloud() {
   state.cloudUnsubs.push(() => off(dataRef, 'value', onData));
 }
 
+function applyUid(nextUid) {
+  const uid = String(nextUid || 'default');
+  if (uid === state.uid) return;
+  state.uid = uid;
+  persistLocal();
+  bindCloud();
+  emitLogin();
+}
+
+function renameCuenta(oldName, nextName) {
+  if (!nextName || oldName === nextName || state.cuentas.includes(nextName)) return;
+  state.cuentas = state.cuentas.map((c) => (c === oldName ? nextName : c));
+  state.registros.forEach((r) => {
+    r.saldos = r.saldos || {};
+    r.saldos[nextName] = Number(r.saldos[oldName] || 0);
+    delete r.saldos[oldName];
+  });
+  recalcVariaciones();
+  persistAndRender();
+}
+
+function deleteCuenta(cuenta) {
+  state.cuentas = state.cuentas.filter((c) => c !== cuenta);
+  state.registros.forEach((r) => { delete r.saldos?.[cuenta]; });
+  state.finanzas.origenVariable = state.cuentas[0] || '';
+  state.finanzas.origenObjetivos = (state.finanzas.origenObjetivos || []).filter((c) => c !== cuenta);
+  recalcVariaciones();
+  persistAndRender();
+}
+
 function onRootClick(e) {
-  const v = e.target.closest('[data-fin-view]'); if (v) { state.view = v.dataset.finView; render(); return; }
-  if (e.target.id === 'fin-refresh') { recalcVariaciones(); render(); return; }
-  if (e.target.id === 'fin-add-account') return addCuenta();
-  const delAccount = e.target.closest('[data-del-account]');
-  if (delAccount) {
-    const c = delAccount.dataset.delAccount;
-    const action = prompt('editar/eliminar');
-    if (action === 'eliminar') deleteCuenta(c);
-    if (action === 'editar') {
-      const n = prompt('Nuevo nombre', c)?.trim();
-      if (n && !state.cuentas.includes(n)) {
-        state.cuentas = state.cuentas.map((x) => (x === c ? n : x));
-        state.registros.forEach((r) => { r.saldos[n] = r.saldos[c]; delete r.saldos[c]; });
-        persistLocal(); syncCloud(); render();
+  const v = e.target.closest('[data-fin-view]');
+  if (v) { state.view = v.dataset.finView; render(); return; }
+
+  if (e.target.id === 'fin-add-account') {
+    createModalBase({
+      title: 'Nueva cuenta',
+      body: '<label class="opal-select-wrap"><span>Nombre</span><input class="opal-input" id="new-account-name" /></label>',
+      onConfirm: (node) => {
+        const name = node.querySelector('#new-account-name')?.value?.trim();
+        if (!name || state.cuentas.includes(name)) return false;
+        state.cuentas.push(name);
+        state.registros.forEach((r) => { r.saldos = r.saldos || {}; r.saldos[name] = Number(r.saldos[name] || 0); });
+        recalcVariaciones();
+        persistAndRender();
+        return true;
       }
-    }
+    });
     return;
   }
+
+  const menu = e.target.closest('[data-account-menu]');
+  if (menu) {
+    const cuenta = menu.dataset.accountMenu;
+    createModalBase({
+      title: cuenta,
+      confirm: 'Guardar',
+      body: `<label class="opal-select-wrap"><span>Renombrar</span><input class="opal-input" id="rename-account" value="${cuenta}" /></label><button class="opal-pill" id="delete-account-btn">Eliminar cuenta</button>`,
+      onConfirm: (node) => {
+        renameCuenta(cuenta, node.querySelector('#rename-account')?.value?.trim());
+        return true;
+      }
+    });
+    document.getElementById('delete-account-btn')?.addEventListener('click', () => {
+      createModalBase({ title: 'Eliminar cuenta', confirm: 'Eliminar', danger: true, body: `<p>¿Eliminar ${cuenta} y su historial?</p>`, onConfirm: () => { deleteCuenta(cuenta); return true; } });
+    });
+    return;
+  }
+
   const display = e.target.closest('[data-now-display]');
   if (display) {
     const c = display.dataset.nowDisplay;
-    const zone = display.closest('.finance-edit-zone');
-    const input = zone.querySelector(`[data-now-input="${c}"]`);
-    display.classList.add('hidden'); input.classList.remove('hidden'); input.value = ''; input.focus();
+    state.editingInline = c;
+    render();
+    document.querySelector(`[data-now-input="${c}"]`)?.focus();
     return;
-  }
-  const card = e.target.closest('[data-account]');
-  if (card && !e.target.closest('[data-now-display]') && !e.target.closest('[data-del-account]')) openCuentaDetalle(card.dataset.account);
-
-  if (e.target.id === 'fin-new-fixed') {
-    const nombre = prompt('Nombre gasto fijo'); if (!nombre) return;
-    const importe = parseNumber(prompt('Importe mensual') || '0');
-    const categoria = prompt('Categoría', 'General') || 'General';
-    const esencial = confirm('¿Es esencial?');
-    state.finanzas.fijas.push({ nombre, importe, categoria, esencial }); persistLocal(); syncCloud(); render(); return;
-  }
-  const delFixed = e.target.closest('[data-del-fixed]');
-  if (delFixed) { if (confirm('Eliminar gasto fijo?')) { state.finanzas.fijas.splice(Number(delFixed.dataset.delFixed), 1); persistLocal(); syncCloud(); render(); } return; }
-  if (e.target.id === 'fin-add-variable') {
-    const importe = parseNumber(prompt('Importe gasto variable') || '0');
-    if (!importe) return;
-    const categoria = prompt('Categoría', 'General') || 'General';
-    const cuenta = state.finanzas.origenVariable || state.cuentas[0];
-    const actual = getCuentaActual(cuenta).cur;
-    state.finanzas.variables.push({ fecha: TODAY(), importe, categoria, cuenta });
-    upsertRegistroCuenta(cuenta, TODAY(), Number((actual - importe).toFixed(2)));
-    persistLocal(); syncCloud(); render();
   }
 
   if (e.target.id === 'goal-new') {
-    const nombre = prompt('Nombre del objetivo'); if (!nombre) return;
-    const objetivo = parseNumber(prompt('Objetivo') || '0');
-    const ahorrado = parseNumber(prompt('Ahorrado') || '0');
-    const fecha = prompt('Fecha YYYY-MM-DD', TODAY()) || TODAY();
-    state.objetivos.push({ nombre, objetivo, ahorrado, fecha }); persistLocal(); syncCloud(); render();
+    createModalBase({
+      title: 'Nuevo objetivo',
+      body: `<label class="opal-select-wrap"><span>Nombre</span><input class="opal-input" id="goal-nombre" /></label><label class="opal-select-wrap"><span>Objetivo €</span><input class="opal-input" id="goal-obj" /></label><label class="opal-select-wrap"><span>Ahorrado €</span><input class="opal-input" id="goal-aho" /></label><label class="opal-select-wrap"><span>Fecha objetivo</span><input class="opal-input" id="goal-fecha" type="date" value="${TODAY()}" /></label><label class="opal-select-wrap"><span>Color</span><input class="opal-input" id="goal-color" value="#8b7dff" /></label>`,
+      onConfirm: (node) => {
+        const nombre = node.querySelector('#goal-nombre')?.value?.trim();
+        if (!nombre) return false;
+        state.objetivos.push({ nombre, objetivo: parseNumber(node.querySelector('#goal-obj')?.value), ahorrado: parseNumber(node.querySelector('#goal-aho')?.value), fecha: node.querySelector('#goal-fecha')?.value || TODAY(), color: node.querySelector('#goal-color')?.value || '#8b7dff' });
+        persistAndRender();
+        return true;
+      }
+    });
+    return;
   }
+
+  if (e.target.id === 'goal-origin') {
+    createModalBase({
+      title: 'Cuentas origen',
+      body: state.cuentas.map((c) => `<label class="finance-chip ${state.finanzas.origenObjetivos?.includes(c) ? 'tone-pos' : 'tone-neutral'}"><input type="checkbox" data-origin-c="${c}" ${state.finanzas.origenObjetivos?.includes(c) ? 'checked' : ''}/> ${c}</label>`).join(''),
+      onConfirm: (node) => {
+        const picks = [...node.querySelectorAll('[data-origin-c]:checked')].map((i) => i.dataset.originC);
+        state.finanzas.origenObjetivos = picks;
+        persistAndRender();
+        return true;
+      }
+    });
+    return;
+  }
+
   const delGoal = e.target.closest('[data-del-goal]');
-  if (delGoal) { if (confirm('Eliminar objetivo?')) { state.objetivos.splice(Number(delGoal.dataset.delGoal), 1); persistLocal(); syncCloud(); render(); } }
-
-  if (e.target.closest('[data-close]') || e.target.id === 'finance-modal-backdrop') {
-    document.getElementById('finance-modal-backdrop').classList.add('hidden');
-    document.getElementById('finance-modal-backdrop').innerHTML = '';
+  if (delGoal) {
+    const idx = Number(delGoal.dataset.delGoal);
+    createModalBase({ title: 'Eliminar objetivo', confirm: 'Eliminar', danger: true, body: '<p>¿Eliminar objetivo?</p>', onConfirm: () => { state.objetivos.splice(idx, 1); persistAndRender(); return true; } });
   }
 
-  const editDay = e.target.closest('[data-edit-day]');
-  if (editDay) {
-    const [cuenta, fecha] = editDay.dataset.editDay.split('|');
-    const value = parseNumber(prompt('Nuevo saldo') || '0');
-    upsertRegistroCuenta(cuenta, fecha, value);
+  if (e.target.id === 'fin-add-variable') {
+    createModalBase({
+      title: 'Registrar gasto variable',
+      body: `<label class="opal-select-wrap"><span>Importe</span><input class="opal-input" id="gasto-importe" /></label><label class="opal-select-wrap"><span>Categoría</span><input class="opal-input" id="gasto-cat" value="General" /></label><label class="opal-select-wrap"><span>Etiqueta (opcional)</span><input class="opal-input" id="gasto-tag" /></label><label class="opal-select-wrap"><span>Fecha</span><input class="opal-input" id="gasto-fecha" type="date" value="${TODAY()}" /></label><label class="opal-select-wrap"><span>Cuenta a descontar</span><select class="opal-select" id="gasto-cuenta">${state.cuentas.map((c) => `<option ${state.finanzas.origenVariable === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>`,
+      onConfirm: (node) => {
+        const importe = parseNumber(node.querySelector('#gasto-importe')?.value);
+        if (!importe) return false;
+        const fecha = node.querySelector('#gasto-fecha')?.value || TODAY();
+        const cuenta = node.querySelector('#gasto-cuenta')?.value || state.cuentas[0];
+        const saldoPrevio = Number(getMetricAtDate(fecha, cuenta));
+        const saldoBase = Number.isFinite(saldoPrevio) ? saldoPrevio : Number(getLastKnownSaldosBefore(fecha)[cuenta] || 0);
+        state.finanzas.variables.push({ fecha, importe, categoria: node.querySelector('#gasto-cat')?.value || 'General', etiqueta: node.querySelector('#gasto-tag')?.value || '', cuenta });
+        upsertRegistroCuenta(cuenta, fecha, Number((saldoBase - importe).toFixed(2)));
+        return true;
+      }
+    });
+    return;
   }
-  const delDay = e.target.closest('[data-del-day]');
-  if (delDay) {
-    const [cuenta, fecha] = delDay.dataset.delDay.split('|');
-    const row = state.registros.find((r) => r.fecha === fecha);
-    if (row && confirm('Eliminar registro de cuenta para esa fecha?')) { delete row.saldos[cuenta]; fillSaldosForDate(row); recalcVariaciones(); persistLocal(); syncCloud(); render(); }
+
+  const delVar = e.target.closest('[data-del-var]');
+  if (delVar) {
+    const idx = Number(delVar.dataset.delVar);
+    createModalBase({ title: 'Eliminar gasto', confirm: 'Eliminar', danger: true, body: '<p>¿Eliminar gasto del historial?</p>', onConfirm: () => { state.finanzas.variables.splice(idx, 1); persistAndRender(); return true; } });
   }
+
+  if (e.target.id === 'fin-new-fixed') {
+    createModalBase({
+      title: 'Nuevo gasto fijo',
+      body: `<label class="opal-select-wrap"><span>Nombre</span><input class="opal-input" id="fijo-nombre" /></label><label class="opal-select-wrap"><span>Importe mensual</span><input class="opal-input" id="fijo-importe" /></label><label class="opal-select-wrap"><span>Categoría</span><input class="opal-input" id="fijo-cat" value="General" /></label><label class="finance-chip tone-neutral"><input type="checkbox" id="fijo-esencial" /> Esencial</label>`,
+      onConfirm: (node) => {
+        const nombre = node.querySelector('#fijo-nombre')?.value?.trim();
+        if (!nombre) return false;
+        state.finanzas.fijas.push({ nombre, importe: parseNumber(node.querySelector('#fijo-importe')?.value), categoria: node.querySelector('#fijo-cat')?.value || 'General', esencial: !!node.querySelector('#fijo-esencial')?.checked });
+        persistAndRender();
+        return true;
+      }
+    });
+    return;
+  }
+
+  const calDay = e.target.closest('[data-cal-day]');
+  if (calDay) state.calSelectedDate = calDay.dataset.calDay;
 }
 
 function onRootChange(e) {
-  if (e.target.id === 'fin-origen') { state.finanzas.origenVariable = e.target.value; persistLocal(); syncCloud(); }
-  if (e.target.id === 'fin-ingreso') { state.finanzas.ingreso = parseNumber(e.target.value); persistLocal(); syncCloud(); }
-  if (e.target.id === 'fin-inv') { state.finanzas.inversiones = parseNumber(e.target.value); persistLocal(); syncCloud(); }
+  if (e.target.id === 'fin-origen') { state.finanzas.origenVariable = e.target.value; persistAndRender(); }
+  if (e.target.id === 'cal-modo') { state.finanzas.calModo = e.target.value; renderCalendario(); }
+  if (e.target.id === 'cal-mes') { state.finanzas.calMes = e.target.value; renderCalendario(); }
+  if (e.target.id === 'cal-cuenta') { state.finanzas.calCuenta = e.target.value; renderCalendario(); }
+}
+
+function onRootInput(e) {
+  if (e.target.id === 'cal-anio') {
+    state.finanzas.calAnio = Number(e.target.value || new Date().getFullYear());
+    state.finanzas.calMes = `${state.finanzas.calAnio}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+    renderCalendario();
+  }
 }
 
 function onRootKeydown(e) {
   const input = e.target.closest('[data-now-input]');
   if (!input) return;
+  if (e.key === 'Escape') {
+    state.editingInline = null;
+    render();
+  }
   if (e.key === 'Enter') input.blur();
 }
 
@@ -332,20 +490,20 @@ function onRootBlur(e) {
   if (!input) return;
   const cuenta = input.dataset.nowInput;
   const typed = input.value.trim();
-  const v = typed ? parseNumber(typed) : parseNumber(input.placeholder);
-  upsertRegistroCuenta(cuenta, TODAY(), v);
+  if (!typed) { state.editingInline = null; render(); return; }
+  upsertRegistroCuenta(cuenta, TODAY(), parseNumber(typed));
+  state.editingInline = null;
 }
 
 function bindInteractions() {
   const root = document.getElementById('view-finance');
   root?.addEventListener('click', onRootClick);
   root?.addEventListener('change', onRootChange);
+  root?.addEventListener('input', onRootInput);
   root?.addEventListener('keydown', onRootKeydown);
   root?.addEventListener('focusout', onRootBlur);
   window.addEventListener('finanzas-login', (e) => applyUid(e.detail?.uid));
 }
-
-window.getFinanzasSnapshot = () => ({ uid: state.uid, cuentas: [...state.cuentas], registros: [...state.registros] });
 
 function init() {
   loadLocal();

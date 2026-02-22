@@ -385,3 +385,19 @@
   display: grid;
   gap: 10px;
 }
+
+
+#cal-grid .fin-cell.active {
+  box-shadow: 0 0 0 1px rgba(132,170,255,.7), 0 0 18px rgba(132,170,255,.45);
+}
+
+#cal-grid .fin-cell {
+  min-height: 72px;
+}
+
+.finance-modal .modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}

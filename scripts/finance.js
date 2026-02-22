@@ -264,6 +264,7 @@ function createModalBase({ title, body, cancel = 'Cancelar', confirm = 'Guardar'
 function renderTopNav() {
   const root = getFinanceHost('#finance-topnav');
   const items = [['cuentas', '💳'], ['gastos', '🧾'], ['objetivos', '◎'], ['calendario', '📅']];
+  root.className = 'finance-topnav';
   root.innerHTML = items.map(([id, ic]) => `<button class="finance-mini-btn ${state.view === id ? 'active' : ''}" data-fin-view="${id}">${ic}</button>`).join('');
 }
 
@@ -284,8 +285,8 @@ function lineChartSvg(points) {
   });
   const polyline = coords.map(([x, y]) => `${x},${y}`).join(' ');
   const area = `0,100 ${polyline} 100,100`;
-  const dots = coords.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.8" fill="#a592ff"/>`).join('');
-  return `<svg viewBox="0 0 100 100" preserveAspectRatio="none"><defs><linearGradient id="fin-grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(127,93,255,.45)"/><stop offset="100%" stop-color="rgba(127,93,255,0)"/></linearGradient></defs><polygon points="${area}" fill="url(#fin-grad)"/><polyline fill="none" stroke="#9b87ff" stroke-width="2" points="${polyline}"/>${dots}</svg>`;
+  const dots = coords.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.8" fill="#62ffba"/>`).join('');
+  return `<svg viewBox="0 0 100 100" preserveAspectRatio="none"><defs><linearGradient id="fin-grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(93,255,185,.35)"/><stop offset="100%" stop-color="rgba(93,255,185,0)"/></linearGradient><filter id="fin-line-glow"><feGaussianBlur stdDeviation="1.4" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><polygon points="${area}" fill="url(#fin-grad)"/><polyline fill="none" stroke="#5dffb9" stroke-width="2.1" filter="url(#fin-line-glow)" points="${polyline}"/>${dots}</svg>`;
 }
 
 function renderLineChart(points, container) {
@@ -301,13 +302,14 @@ function renderCuentas() {
   const host = getFinanceHost('#finance-content');
   const last = state.registros.at(-1) || { total: 0, variacion: 0, varpct: 0 };
   const pts = state.registros.map((r) => Number(r.total || 0));
-  host.innerHTML = `<section class="finance-panel finance-header-card"><div class="finance-overview-hero ${valueToneClass(last.variacion)}"><div class="finance-overview-top"><button class="finance-total">${formatCurrency(last.total || 0)}</button><button class="opal-pill" id="fin-add-account">+ Cuenta</button></div><div class="finance-delta-row"><span class="delta-badge ${last.variacion >= 0 ? 'pos' : 'neg'} ${valueToneClass(last.variacion)}">${formatSignedCurrency(last.variacion || 0)} · ${formatSignedPercent(last.varpct || 0)}</span></div><div id="finance-linechart" class="finance-chart"></div></div></section><section class="finance-list">${state.cuentas.map((c) => {
+  host.innerHTML = `<section class="finance-panel finance-header-card finance-header"><div class="finance-overview-hero ${valueToneClass(last.variacion)}"><div class="finance-overview-top"><button class="finance-total">${formatCurrency(last.total || 0)}</button></div><div class="finance-delta finance-delta-row"><span class="delta-badge ${last.variacion >= 0 ? 'pos' : 'neg'} ${valueToneClass(last.variacion)}">${formatSignedCurrency(last.variacion || 0)} · ${formatSignedPercent(last.varpct || 0)}</span></div><div id="finance-linechart" class="finance-chart"></div></div></section><section class="finance-controls"><button class="opal-pill" id="fin-add-account">Actualizar</button><label class="opal-select-wrap"><select class="opal-select" aria-label="Periodo"><option selected>Mes</option><option>Semana</option><option>Año</option></select></label><button class="opal-pill">Historial</button><label class="opal-select-wrap"><select class="opal-select" aria-label="Comparativa"><option selected>Mes vs Mes</option><option>Año vs Año</option></select></label></section><section class="finance-list finance-accounts">${state.cuentas.map((c) => {
     const row = state.registros.at(-1);
     const prev = state.registros.at(-2);
     const cur = Number(row?.saldos?.[c] || 0);
     const pv = Number(prev?.saldos?.[c] || 0);
     const delta = cur - pv;
-    return `<article class="finance-account-card ${valueToneClass(delta)}" data-account="${c}"><button class="finance-dot-menu" data-account-menu="${c}">⋮</button><div class="finance-account-main"><div class="finance-account-name">${c}</div><div class="finance-edit-zone"><button class="finance-amount-display ${state.editingInline === c ? 'hidden' : ''}" data-now-display="${c}">${formatCurrency(cur)}</button><input class="finance-inline-input ${state.editingInline === c ? '' : 'hidden'}" data-now-input="${c}" placeholder="${cur}" /></div><small class="${valueToneClass(delta)}">${formatSignedCurrency(delta)}</small></div></article>`;
+    const pct = pv ? ((delta / pv) * 100) : 0;
+    return `<article class="finance-account-card ${valueToneClass(delta)}" data-account="${c}"><div class="finance-account-main"><div class="finance-account-name">${c}</div><div class="finance-edit-zone"><button class="finance-amount-display ${state.editingInline === c ? 'hidden' : ''}" data-now-display="${c}">${formatCurrency(cur)}</button><input class="finance-inline-input ${state.editingInline === c ? '' : 'hidden'}" data-now-input="${c}" placeholder="${formatCurrency(cur)}" /></div></div><div class="finance-account-side"><span class="finance-chip ${valueToneClass(delta)}">Mes ${formatSignedPercent(pct)} · ${formatSignedCurrency(delta)}</span><button class="finance-more finance-dot-menu" data-account-menu="${c}">⋮</button></div></article>`;
   }).join('')}</section>`;
   renderLineChart(pts, host.querySelector('#finance-linechart'));
 }

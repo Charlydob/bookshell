@@ -2395,3 +2395,19 @@ margin-top: 0px;
   flex-direction: row;
 
 }
+.finance-scope .financeAccountCard__balanceWrap {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+.finance-scope .financeAccountCard__balanceLabel {
+  font-size: 12px;
+  opacity: .7;
+}
+.finance-scope .finance-shared-chip {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 11px;
+  opacity: .8;
+}

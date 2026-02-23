@@ -27,11 +27,51 @@ const state = {
   lastMovementAccountId: localStorage.getItem('bookshell_finance_lastMovementAccountId') || '',
   unsubscribe: null,
   saveTimers: {},
-  error: ''
+  error: '',
+  booted: false
 };
 
 function log(...parts) { console.log('[finance]', ...parts); }
 function warnMissing(id) { console.warn(`[finance] missing DOM node ${id}`); }
+function $req(sel, ctx = document) {
+  const el = ctx.querySelector(sel);
+  if (!el) throw new Error(`[finance] Missing element: ${sel}`);
+  return el;
+}
+function $opt(sel, ctx = document) { return ctx.querySelector(sel); }
+
+function resolveFinanceRoot() {
+  return $opt('#finance-root')
+    || $opt('[data-tab="finance"]')
+    || $opt('#finance, #financeTab, .finance-tab, [data-view="finance"]')
+    || $opt('#tab-finance')
+    || $opt('#view-finance');
+}
+
+function ensureFinanceHost() {
+  const current = $opt('#finance-content');
+  if (current) return current;
+  const root = resolveFinanceRoot() || $req('#tab-finance, #view-finance');
+  const host = document.createElement('div');
+  host.id = 'finance-content';
+  const mountTarget = $opt('#finance-main', root) || root;
+  mountTarget.append(host);
+  console.warn('[finance] #finance-content not found, created fallback container inside finance root');
+  return host;
+}
+
+function showFinanceBootError(err) {
+  const message = String(err?.message || err || 'Error desconocido');
+  const host = $opt('#finance-content');
+  if (host) host.innerHTML = `<article class="finance-panel"><h3>Error JS (BOOT)</h3><p>${escapeHtml(message)}</p></article>`;
+  const overlay = $opt('#finance-modalOverlay');
+  if (overlay) {
+    overlay.classList.remove('hidden');
+    overlay.classList.add('is-open');
+    overlay.setAttribute('aria-hidden', 'false');
+    overlay.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true"><header><h3>Error JS (BOOT)</h3></header><p>${escapeHtml(message)}</p></div>`;
+  }
+}
 function nowTs() { return Date.now(); }
 function getMonthKeyFromDate(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
 function parseMonthKey(monthKey) { const [y, m] = String(monthKey).split('-').map(Number); return new Date(y, (m || 1) - 1, 1); }
@@ -323,7 +363,7 @@ function getBudgetItems(monthKey = getSelectedBalanceMonthKey()) {
 function openAccountDetail(accountId) {
   log(`openAccountDetail accountId=${accountId}`);
   state.modal = { type: 'account-detail', accountId, importRaw: '', importPreview: null, importError: '' };
-  render();
+  triggerRender();
 }
 
 function parseCsvRows(rawCsv = '') {
@@ -399,7 +439,21 @@ function renderFinanceNav() {
 }
 
 function renderFinanceHome(accounts, totalSeries) {
+  console.group('[finance] renderFinanceHome');
+  console.log('state:', JSON.stringify(state));
+  console.log('root candidates:', {
+    financeRoot: document.getElementById('finance-root'),
+    tab: document.querySelector('[data-tab="finance"]'),
+    container: document.querySelector('#finance, #financeTab, .finance-tab, [data-view="finance"]'),
+  });
+  console.groupEnd();
+
+  const root = resolveFinanceRoot();
+  if (!root) throw new Error('[finance] finance root not available before renderFinanceHome');
+  if (!$opt('#finance-content')) ensureFinanceHost();
+
   const total = accounts.reduce((sum, account) => sum + account.current, 0);
+  const totalReal = accounts.reduce((sum, account) => sum + Number(account.currentReal || 0), 0);
   const totalRange = computeDeltaForRange(totalSeries, state.rangeMode);
   const chart = chartModelForRange(totalSeries, state.rangeMode);
   const compareBounds = getRangeBounds(state.compareMode);
@@ -410,7 +464,7 @@ function renderFinanceHome(accounts, totalSeries) {
     <section class="finance-home ${toneClass(totalRange.delta)}">
       <article class="finance__hero"><p class="finance__eyebrow">TOTAL</p><h2 id="finance-totalValue">${fmtCurrency(total)}</h2>
         <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedCurrency(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
-        <p>Saldo real: <strong>${fmtCurrency(account.currentReal)}</strong>${account.shared ? ` · Mi parte: <strong>${fmtCurrency(account.current)}</strong>` : ''}</p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div></article>
+        <p>Saldo real: <strong>${fmtCurrency(totalReal)}</strong> · Mi parte: <strong>${fmtCurrency(total)}</strong></p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div></article>
       <article class="finance__controls">
         <select class="finance-pill" data-range><option value="total" ${state.rangeMode === 'total' ? 'selected' : ''}>Total</option><option value="month" ${state.rangeMode === 'month' ? 'selected' : ''}>Mes</option><option value="week" ${state.rangeMode === 'week' ? 'selected' : ''}>Semana</option><option value="year" ${state.rangeMode === 'year' ? 'selected' : ''}>Año</option></select>
         <button class="finance-pill" data-history>Historial</button>
@@ -510,7 +564,7 @@ function renderModal() {
   backdrop.classList.add('is-open'); backdrop.classList.remove('hidden'); backdrop.setAttribute('aria-hidden', 'false'); document.body.classList.add('finance-modal-open');
   if (state.modal.type === 'account-detail') {
     const account = accounts.find((item) => item.id === state.modal.accountId);
-    if (!account) { state.modal = { type: null }; render(); return; }
+    if (!account) { state.modal = { type: null }; triggerRender(); return; }
     const chart = chartModelForRange(account.daily, 'total');
     const preview = state.modal.importPreview;
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Detalle de cuenta · ${escapeHtml(account.name)}</h3><div class="finance-row"><button class="finance-pill finance-pill--mini" data-edit-account="${account.id}">Editar cuenta</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header>
@@ -552,7 +606,7 @@ function renderModal() {
     return;
   }
   if (state.modal.type === 'goal-detail') {
-    const goal = state.goals.goals?.[state.modal.goalId]; if (!goal) { state.modal = { type: null }; render(); return; }
+    const goal = state.goals.goals?.[state.modal.goalId]; if (!goal) { state.modal = { type: null }; triggerRender(); return; }
     const selected = new Set(goal.accountsIncluded || []);
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${escapeHtml(goal.title)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
       <p>Meta ${fmtCurrency(goal.targetAmount)} · vence ${new Date(goal.dueDateISO).toLocaleDateString('es-ES')}</p><p>Prioridad por (dinero / días).</p>
@@ -566,7 +620,7 @@ function renderModal() {
   }
   if (state.modal.type === 'edit-account') {
     const account = accounts.find((item) => item.id === state.modal.accountId);
-    if (!account) { state.modal = { type: null }; render(); return; }
+    if (!account) { state.modal = { type: null }; triggerRender(); return; }
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><form class="finance-entry-form" data-edit-account-form="${account.id}"><input type="text" name="name" value="${escapeHtml(account.name)}" required /><label><input type="checkbox" name="shared" ${account.shared ? 'checked' : ''} /> Cuenta compartida</label><select name="sharedRatio"><option value="0.5" ${(account.sharedRatio === 0.5) ? 'selected' : ''}>50%</option><option value="1" ${(account.sharedRatio === 1) ? 'selected' : ''}>100%</option></select><button class="finance-pill" type="submit">Guardar</button></form></div>`;
     return;
   }
@@ -619,8 +673,8 @@ function subscribe() {
     state.legacyEntries = val.accountsEntries || val.entries || state.legacyEntries;
     state.balance = { tx: val.balance?.tx || {}, movements: val.movements || {}, categories: val.balance?.categories || {}, budgets: val.balance?.budgets || {}, snapshots: val.balance?.snapshots || {}, defaultAccountId: val.balance?.defaultAccountId || '', lastSeenMonthKey: val.balance?.lastSeenMonthKey || '' };
     state.goals = { goals: val.goals?.goals || {} };
-    render();
-  }, (error) => { state.error = String(error?.message || error); render(); });
+    triggerRender();
+  }, (error) => { state.error = String(error?.message || error); triggerRender(); });
 }
 
 async function addAccount({ name, shared = false, sharedRatio = 0.5 }) {
@@ -648,65 +702,77 @@ async function deleteDay(accountId, day) {
 }
 async function deleteAccount(accountId) { await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}`))); }
 
-function render() {
-  const host = document.getElementById('finance-content'); if (!host) return;
-  renderFinanceNav();
-  if (state.error) { host.innerHTML = `<article class="finance-panel"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`; return; }
-  const accounts = buildAccountModels(); const totalSeries = buildTotalSeries(accounts);
-  if (state.activeView === 'balance') { host.innerHTML = renderFinanceBalance(); maybeRolloverSnapshot(); }
-  else if (state.activeView === 'goals') host.innerHTML = renderFinanceGoals();
-  else if (state.activeView === 'calendar') host.innerHTML = renderFinanceCalendar(accounts, totalSeries);
-  else host.innerHTML = renderFinanceHome(accounts, totalSeries);
-  renderModal();
-  renderToast();
+function triggerRender() {
+  render().catch((e) => {
+    console.error('[finance] render top-level', e);
+    showFinanceBootError(e);
+  });
+}
+
+async function render() {
+  try {
+    const host = ensureFinanceHost();
+    renderFinanceNav();
+    if (state.error) { host.innerHTML = `<article class=\"finance-panel\"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`; return; }
+    const accounts = buildAccountModels(); const totalSeries = buildTotalSeries(accounts);
+    if (state.activeView === 'balance') { host.innerHTML = renderFinanceBalance(); await maybeRolloverSnapshot(); }
+    else if (state.activeView === 'goals') host.innerHTML = renderFinanceGoals();
+    else if (state.activeView === 'calendar') host.innerHTML = renderFinanceCalendar(accounts, totalSeries);
+    else host.innerHTML = renderFinanceHome(accounts, totalSeries);
+    renderModal();
+    renderToast();
+  } catch (err) {
+    console.error('[finance] render crashed', err);
+    showFinanceBootError(err);
+  }
 }
 
 function bindEvents() {
   const view = document.getElementById('view-finance'); if (!view || view.dataset.financeBound === '1') return; view.dataset.financeBound = '1';
   view.addEventListener('click', async (event) => {
     const target = event.target;
-    const nextView = target.closest('[data-finance-view]')?.dataset.financeView; if (nextView) { state.activeView = nextView; render(); return; }
-    if (target.closest('[data-close-modal]') || target.id === 'finance-modalOverlay') { state.modal = { type: null }; render(); return; }
-    if (target.closest('[data-history]')) { state.modal = { type: 'history' }; render(); return; }
-    if (target.closest('[data-new-account]')) { state.modal = { type: 'new-account' }; render(); return; }
+    const nextView = target.closest('[data-finance-view]')?.dataset.financeView; if (nextView) { state.activeView = nextView; triggerRender(); return; }
+    if (target.closest('[data-close-modal]') || target.id === 'finance-modalOverlay') { state.modal = { type: null }; triggerRender(); return; }
+    if (target.closest('[data-history]')) { state.modal = { type: 'history' }; triggerRender(); return; }
+    if (target.closest('[data-new-account]')) { state.modal = { type: 'new-account' }; triggerRender(); return; }
     const openAccount = target.closest('[data-open-detail]')?.dataset.openDetail; if (openAccount && !target.closest('[data-account-input]') && !target.closest('[data-account-save]') && !target.closest('[data-delete-account]')) { openAccountDetail(openAccount); return; }
     const delAcc = target.closest('[data-delete-account]')?.dataset.deleteAccount; if (delAcc && window.confirm('¿Eliminar esta cuenta y todos sus registros?')) { await deleteAccount(delAcc); return; }
-    const editAcc = target.closest('[data-edit-account]')?.dataset.editAccount; if (editAcc) { state.modal = { type: 'edit-account', accountId: editAcc }; render(); return; }
+    const editAcc = target.closest('[data-edit-account]')?.dataset.editAccount; if (editAcc) { state.modal = { type: 'edit-account', accountId: editAcc }; triggerRender(); return; }
     const saveAccountCard = target.closest('[data-account-save]')?.dataset.accountSave; if (saveAccountCard) { const input = view.querySelector(`[data-account-input="${saveAccountCard}"]`); await saveSnapshot(saveAccountCard, dayKeyFromTs(Date.now()), input?.value || ''); return; }
     const delDay = target.closest('[data-delete-day]')?.dataset.deleteDay; if (delDay) { const [accountId, day] = delDay.split(':'); if (window.confirm(`¿Eliminar ${day}?`)) await deleteDay(accountId, day); return; }
     const saveDay = target.closest('[data-save-day]')?.dataset.saveDay; if (saveDay) { const [accountId, day] = saveDay.split(':'); const form = view.querySelector(`[data-account-row-form="${saveDay}"]`); const val = form?.querySelector('[name="value"]')?.value; await saveSnapshot(accountId, day, val); return; }
-    const budgetMenu = target.closest('[data-budget-menu]')?.dataset.budgetMenu; if (budgetMenu) { state.modal = { type: 'budget', budgetId: budgetMenu }; render(); return; }
-    const budgetDelete = target.closest('[data-budget-delete]')?.dataset.budgetDelete; if (budgetDelete && window.confirm('¿Eliminar presupuesto?')) { const monthKey = getSelectedBalanceMonthKey(); await safeFirebase(() => remove(ref(db, `${state.financePath}/balance/budgets/${monthKey}/${budgetDelete}`))); state.modal = { type: null }; toast('Presupuesto eliminado'); render(); return; }
-    const importApply = target.closest('[data-import-apply]')?.dataset.importApply; if (importApply) { const parsed = state.modal.importPreview; if (!parsed?.validRows?.length) { state.modal = { ...state.modal, importError: 'CSV sin filas válidas.' }; render(); return; } const imported = await applyImportRows(importApply, parsed); toast(`Importados ${imported} días`); openAccountDetail(importApply); return; }
-    const monthShift = target.closest('[data-month-shift]')?.dataset.monthShift; if (monthShift) { state.calendarMonthOffset += Number(monthShift); render(); return; }
-    const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); render(); return; }
-    const openModal = target.closest('[data-open-modal]')?.dataset.openModal; if (openModal) { state.modal = { type: openModal, budgetId: null }; render(); return; }
-    const openGoal = target.closest('[data-open-goal]')?.dataset.openGoal; if (openGoal) { state.modal = { type: 'goal-detail', goalId: openGoal }; render(); return; }
+    const budgetMenu = target.closest('[data-budget-menu]')?.dataset.budgetMenu; if (budgetMenu) { state.modal = { type: 'budget', budgetId: budgetMenu }; triggerRender(); return; }
+    const budgetDelete = target.closest('[data-budget-delete]')?.dataset.budgetDelete; if (budgetDelete && window.confirm('¿Eliminar presupuesto?')) { const monthKey = getSelectedBalanceMonthKey(); await safeFirebase(() => remove(ref(db, `${state.financePath}/balance/budgets/${monthKey}/${budgetDelete}`))); state.modal = { type: null }; toast('Presupuesto eliminado'); triggerRender(); return; }
+    const importApply = target.closest('[data-import-apply]')?.dataset.importApply; if (importApply) { const parsed = state.modal.importPreview; if (!parsed?.validRows?.length) { state.modal = { ...state.modal, importError: 'CSV sin filas válidas.' }; triggerRender(); return; } const imported = await applyImportRows(importApply, parsed); toast(`Importados ${imported} días`); openAccountDetail(importApply); return; }
+    const monthShift = target.closest('[data-month-shift]')?.dataset.monthShift; if (monthShift) { state.calendarMonthOffset += Number(monthShift); triggerRender(); return; }
+    const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); triggerRender(); return; }
+    const openModal = target.closest('[data-open-modal]')?.dataset.openModal; if (openModal) { state.modal = { type: openModal, budgetId: null }; triggerRender(); return; }
+    const openGoal = target.closest('[data-open-goal]')?.dataset.openGoal; if (openGoal) { state.modal = { type: 'goal-detail', goalId: openGoal }; triggerRender(); return; }
     const delGoal = target.closest('[data-delete-goal]')?.dataset.deleteGoal; if (delGoal && window.confirm('¿Borrar objetivo?')) { await safeFirebase(() => remove(ref(db, `${state.financePath}/goals/goals/${delGoal}`))); return; }
   });
 
   view.addEventListener('change', async (event) => {
-    if (event.target.matches('[data-range]')) { state.rangeMode = event.target.value; render(); }
-    if (event.target.matches('[data-compare]')) { state.compareMode = event.target.value; render(); }
-    if (event.target.matches('[data-calendar-account]')) { state.calendarAccountId = event.target.value; render(); }
-    if (event.target.matches('[data-calendar-mode]')) { state.calendarMode = event.target.value; render(); }
-    if (event.target.matches('[data-balance-type]')) { state.balanceFilterType = event.target.value; render(); }
-    if (event.target.matches('[data-balance-category]')) { state.balanceFilterCategory = event.target.value; render(); }
-    if (event.target.matches('[data-balance-account]')) { state.balanceAccountFilter = event.target.value; render(); }
+    if (event.target.matches('[data-range]')) { state.rangeMode = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-compare]')) { state.compareMode = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-calendar-account]')) { state.calendarAccountId = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-calendar-mode]')) { state.calendarMode = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-balance-type]')) { state.balanceFilterType = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-balance-category]')) { state.balanceFilterCategory = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-balance-account]')) { state.balanceAccountFilter = event.target.value; triggerRender(); }
     if (event.target.matches('[data-import-file]')) {
       const file = event.target.files?.[0];
       if (!file) return;
       const raw = await file.text();
       const parsed = parseCsvRows(raw);
       state.modal = { ...state.modal, importRaw: raw, importPreview: parsed, importError: parsed.validRows.length ? '' : 'CSV inválido o sin filas válidas.' };
-      render();
+      triggerRender();
     }
   });
 
 
   view.addEventListener('submit', async (event) => {
     if (event.target.matches('[data-new-account-form]')) {
-      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 0.5); if (name) await addAccount({ name, shared, sharedRatio }); state.modal = { type: null }; render(); return;
+      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 0.5); if (name) await addAccount({ name, shared, sharedRatio }); state.modal = { type: null }; triggerRender(); return;
     }
     if (event.target.matches('[data-account-entry-form]')) {
       event.preventDefault();
@@ -725,7 +791,7 @@ function bindEvents() {
       const form = new FormData(event.target);
       await updateAccountMeta(accountId, { name: String(form.get('name') || '').trim(), shared: form.get('shared') === 'on', sharedRatio: Number(form.get('sharedRatio') || 0.5) });
       state.modal = { type: null };
-      render();
+      triggerRender();
       return;
     }
     if (event.target.matches('[data-import-preview-form]')) {
@@ -734,7 +800,7 @@ function bindEvents() {
       const textCsv = event.target.querySelector('textarea[name="csvText"]')?.value || '';
       const parsed = parseCsvRows(textCsv);
       state.modal = { ...state.modal, accountId, importRaw: textCsv, importPreview: parsed, importError: parsed.validRows.length ? '' : 'CSV inválido o sin filas válidas.' };
-      render();
+      triggerRender();
       return;
     }
     if (event.target.matches('[data-balance-form]')) {
@@ -751,7 +817,7 @@ function bindEvents() {
       log('movement:add', { accountId, date: dateISO, amount, type });
       await recomputeAccountEntries(accountId, dateISO);
       if (!state.balance.categories?.[category]) await safeFirebase(() => set(ref(db, `${state.financePath}/balance/categories/${category}`), { createdAt: nowTs() }));
-      state.modal = { type: null }; toast('Movimiento guardado'); render(); return;
+      state.modal = { type: null }; toast('Movimiento guardado'); triggerRender(); return;
     }
     if (event.target.matches('[data-budget-form]')) {
       event.preventDefault();
@@ -762,18 +828,18 @@ function bindEvents() {
       if (!category || !monthKey || !Number.isFinite(limit)) { toast('Datos de presupuesto inválidos'); return; }
       const budgetId = state.modal.budgetId || push(ref(db, `${state.financePath}/balance/budgets/${monthKey}`)).key;
       await safeFirebase(() => set(ref(db, `${state.financePath}/balance/budgets/${monthKey}/${budgetId}`), { category, limit, createdAt: nowTs(), updatedAt: nowTs() }));
-      state.modal = { type: null }; toast('Presupuesto guardado'); render(); return;
+      state.modal = { type: null }; toast('Presupuesto guardado'); triggerRender(); return;
     }
     if (event.target.matches('[data-goal-form]')) {
       event.preventDefault(); const form = new FormData(event.target); const goalId = push(ref(db, `${state.financePath}/goals/goals`)).key;
       const payload = { title: String(form.get('title') || '').trim(), targetAmount: Number(form.get('targetAmount') || 0), dueDateISO: `${form.get('dueDateISO')}T00:00:00.000Z`, accountsIncluded: form.getAll('accountsIncluded'), createdAt: nowTs(), updatedAt: nowTs() };
-      await safeFirebase(() => set(ref(db, `${state.financePath}/goals/goals/${goalId}`), payload)); state.modal = { type: null }; toast('Objetivo creado'); render(); return;
+      await safeFirebase(() => set(ref(db, `${state.financePath}/goals/goals/${goalId}`), payload)); state.modal = { type: null }; toast('Objetivo creado'); triggerRender(); return;
     }
     const goalAccountsId = event.target.dataset.goalAccountsForm;
     if (goalAccountsId) {
       event.preventDefault(); const ids = [...event.target.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value);
       await safeFirebase(() => update(ref(db, `${state.financePath}/goals/goals/${goalAccountsId}`), { accountsIncluded: ids, updatedAt: nowTs() }));
-      state.modal = { type: null }; render();
+      state.modal = { type: null }; triggerRender();
     }
   });
 
@@ -785,15 +851,51 @@ function bindEvents() {
   }, true);
 }
 
+function financeDomReady() {
+  return Boolean(resolveFinanceRoot() || $opt('#view-finance') || $opt('#tab-finance'));
+}
+
 async function boot() {
+  if (state.booted) return;
+  if (!financeDomReady()) {
+    log('boot deferred: finance DOM not ready yet');
+    return;
+  }
+  state.booted = true;
+  const financeRoot = resolveFinanceRoot();
+  log('dom root resolved', {
+    missingFinanceRootId: !$opt('#finance-root'),
+    missingDataTabFinance: !$opt('[data-tab="finance"]'),
+    missingLegacyContainerSelector: !$opt('#finance, #financeTab, .finance-tab, [data-view="finance"]'),
+    resolvedRoot: financeRoot?.id || financeRoot?.className || financeRoot?.tagName || null,
+  });
   state.deviceId = getDeviceId();
   state.financePath = `bookshell/finance/${state.deviceId}`;
   log('init ok', { financePath: state.financePath });
   bindEvents();
   await loadDataOnce();
   subscribe();
-  render();
+  await render();
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
-else boot();
+function bootFinance() {
+  boot().catch((e) => {
+    console.error('[finance] boot crashed', e);
+    showFinanceBootError(e);
+  });
+}
+
+if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', () => bootFinance(), { once: true });
+else bootFinance();
+
+window.addEventListener('click', (event) => {
+  if (event.target.closest?.('[data-view="view-finance"]')) bootFinance();
+});
+
+const financeDomObserver = new MutationObserver(() => {
+  if (!state.booted && financeDomReady()) {
+    bootFinance();
+    financeDomObserver.disconnect();
+  }
+});
+if (!state.booted) financeDomObserver.observe(document.documentElement, { childList: true, subtree: true });

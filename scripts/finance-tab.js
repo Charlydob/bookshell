@@ -2,39 +2,30 @@ import { get, onValue, push, ref, remove, set, update } from 'https://www.gstati
 import { db } from './firebase-shared.js';
 
 const FIN_PATH = 'finance';
-const UI_KEY = 'financeTab.ui.v1';
-const RANGE_DAYS = { week: 7, month: 30, year: 365, total: Infinity };
-
-const initialUi = (() => {
-  try {
-    return JSON.parse(localStorage.getItem(UI_KEY) || '{}');
-  } catch {
-    return {};
-  }
-})();
+const DAY_MS = 86400000;
+const RANGE_LABEL = { total: 'Total', month: 'Mes', week: 'Semana', year: 'Año' };
 
 const state = {
-  subview: 'inicio',
-  rangeMode: initialUi.rangeMode || 'total',
-  compareMode: initialUi.compareMode || 'month',
+  rangeMode: 'month',
+  compareMode: 'month',
   accounts: [],
-  entriesByAccount: {},
+  legacyEntries: {},
   modal: { type: null, accountId: null },
-  entryForm: { open: false, entryId: null, tsInput: '', valueInput: '' },
-  error: '',
-  unsubscribe: null
+  toast: '',
+  calendarMonthOffset: 0,
+  calendarAccountId: 'total',
+  calendarMode: 'day',
+  unsubscribe: null,
+  saveTimers: {},
+  error: ''
 };
 
-function persistUi() {
-  localStorage.setItem(UI_KEY, JSON.stringify({ rangeMode: state.rangeMode, compareMode: state.compareMode }));
-}
-
 function log(...parts) {
-  console.log('Finance:', ...parts);
+  console.log('[finance]', ...parts);
 }
 
 function warnMissing(id) {
-  console.warn(`Finance: missing DOM node ${id}`);
+  console.warn(`[finance] missing DOM node ${id}`);
 }
 
 function fmtCurrency(value) {
@@ -50,7 +41,7 @@ function fmtSignedCurrency(value) {
 function fmtSignedPercent(value) {
   const num = Number(value || 0);
   const sign = num > 0 ? '+' : '';
-  return `${sign}${num.toFixed(2)} %`;
+  return `${sign}${num.toFixed(2)}%`;
 }
 
 function toneClass(value) {
@@ -59,145 +50,235 @@ function toneClass(value) {
   return 'is-neutral';
 }
 
-function toDateKey(ts) {
-  return new Date(ts).toISOString().slice(0, 10);
+function dayKeyFromTs(ts) {
+  const d = new Date(Number(ts || Date.now()));
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
-function toDateTimeLocal(ts = Date.now()) {
-  const d = new Date(ts);
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+function parseDayKey(key) {
+  return new Date(`${key}T00:00:00`).getTime();
 }
 
-function accountEntries(accountId) {
-  return [...(state.entriesByAccount[accountId] || [])]
-    .map((e) => ({ ...e, ts: Number(e.ts || 0), value: Number(e.value || 0) }))
-    .sort((a, b) => a.ts - b.ts)
-    .map((entry, index, arr) => {
-      const prev = arr[index - 1];
-      const delta = prev ? entry.value - prev.value : 0;
-      const deltaPct = prev?.value ? (delta / prev.value) * 100 : 0;
-      return { ...entry, delta, deltaPct, dateKey: toDateKey(entry.ts) };
+function normalizeDaily(daily = {}) {
+  return Object.entries(daily)
+    .map(([day, record]) => ({ day, ts: Number(record?.ts || parseDayKey(day)), value: Number(record?.value || 0) }))
+    .filter((item) => Number.isFinite(item.value) && item.day)
+    .sort((a, b) => a.ts - b.ts);
+}
+
+function normalizeLegacyEntries(entriesMap = {}) {
+  const grouped = {};
+  Object.values(entriesMap || {}).forEach((entry) => {
+    const ts = Number(entry?.ts || 0);
+    const value = Number(entry?.value);
+    if (!Number.isFinite(ts) || !Number.isFinite(value)) return;
+    const day = dayKeyFromTs(ts);
+    if (!grouped[day] || grouped[day].ts < ts) grouped[day] = { ts, value };
+  });
+  return grouped;
+}
+
+function buildAccountModels() {
+  return state.accounts.map((account) => {
+    const modernDaily = normalizeDaily(account.daily || {});
+    const modernByDay = Object.fromEntries(modernDaily.map((item) => [item.day, { value: item.value, ts: item.ts }]));
+    const legacyDaily = normalizeLegacyEntries(state.legacyEntries[account.id] || {});
+    Object.entries(legacyDaily).forEach(([day, record]) => {
+      if (!modernByDay[day] || modernByDay[day].ts < record.ts) modernByDay[day] = record;
     });
-}
+    const daily = Object.entries(modernByDay)
+      .map(([day, record]) => ({ day, ts: Number(record.ts || parseDayKey(day)), value: Number(record.value || 0) }))
+      .sort((a, b) => a.ts - b.ts)
+      .map((point, index, arr) => {
+        const prev = arr[index - 1];
+        const delta = prev ? point.value - prev.value : 0;
+        const deltaPct = prev?.value ? (delta / prev.value) * 100 : 0;
+        return { ...point, delta, deltaPct };
+      });
 
-function computeRangeDelta(points, rangeMode, nowTs = Date.now()) {
-  if (!points.length) return { delta: 0, deltaPct: 0 };
-  const days = RANGE_DAYS[rangeMode] ?? Infinity;
-  const startTs = days === Infinity ? -Infinity : nowTs - days * 86400000;
-  const inRange = points.filter((p) => p.ts >= startTs);
-  const first = (inRange[0] || points[0]).value;
-  const last = (inRange.at(-1) || points.at(-1)).value;
-  const delta = last - first;
-  const deltaPct = first ? (delta / first) * 100 : 0;
-  return { delta, deltaPct };
-}
-
-function buildAccountModel() {
-  return state.accounts.map((acc) => {
-    const entries = accountEntries(acc.id);
-    const current = entries.at(-1)?.value ?? 0;
-    return { ...acc, entries, current, range: computeRangeDelta(entries, state.rangeMode) };
+    const current = daily.at(-1)?.value ?? 0;
+    const range = computeDeltaForRange(daily, state.rangeMode);
+    return { ...account, daily, current, range };
   });
 }
 
-function buildGlobalSeries(accounts) {
-  const events = [];
-  for (const account of accounts) {
-    for (const entry of account.entries) events.push({ accountId: account.id, ...entry });
-  }
-  events.sort((a, b) => a.ts - b.ts);
-  const values = Object.fromEntries(accounts.map((acc) => [acc.id, 0]));
-  const series = [];
-  for (const ev of events) {
-    values[ev.accountId] = ev.value;
-    series.push({ ts: ev.ts, total: Object.values(values).reduce((sum, val) => sum + Number(val || 0), 0), dateKey: toDateKey(ev.ts) });
-  }
-  return series;
-}
-
-function periodWindow(mode, now = new Date()) {
+function getRangeBounds(mode, anchorDate = new Date()) {
+  const now = new Date(anchorDate);
+  if (mode === 'total') return { start: -Infinity, end: Infinity };
   if (mode === 'week') {
-    const d = now.getDay() || 7;
+    const day = now.getDay() || 7;
     const start = new Date(now);
-    start.setDate(now.getDate() - d + 1);
+    start.setDate(now.getDate() - day + 1);
     start.setHours(0, 0, 0, 0);
     const end = new Date(start);
     end.setDate(start.getDate() + 7);
-    return { start: start.getTime(), end: end.getTime(), label: 'Semana' };
+    return { start: start.getTime(), end: end.getTime() };
+  }
+  if (mode === 'year') {
+    const start = new Date(now.getFullYear(), 0, 1).getTime();
+    const end = new Date(now.getFullYear() + 1, 0, 1).getTime();
+    return { start, end };
   }
   const start = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime();
-  return { start, end, label: 'Mes' };
+  return { start, end };
 }
 
-function periodFromRange(rangeMode, now = new Date()) {
-  if (rangeMode === 'week') return periodWindow('week', now);
-  if (rangeMode === 'year') {
-    const y = now.getFullYear();
-    return { start: new Date(y, 0, 1).getTime(), end: new Date(y + 1, 0, 1).getTime(), label: 'Año' };
-  }
-  if (rangeMode === 'total') return { start: -Infinity, end: Infinity, label: 'Total' };
-  return periodWindow('month', now);
+function computeDeltaForRange(series, mode) {
+  if (!series.length) return { delta: 0, deltaPct: 0, startValue: 0, endValue: 0 };
+  const { start, end } = getRangeBounds(mode);
+  const startPoint = series.find((point) => point.ts >= start) || series[0];
+  const endPoint = [...series].reverse().find((point) => point.ts < end) || series.at(-1);
+  const delta = endPoint.value - startPoint.value;
+  const deltaPct = startPoint.value ? (delta / startPoint.value) * 100 : 0;
+  return { delta, deltaPct, startValue: startPoint.value, endValue: endPoint.value };
 }
 
-function previousPeriod(period) {
-  if (!Number.isFinite(period.start) || !Number.isFinite(period.end)) return period;
-  const size = period.end - period.start;
-  return { ...period, start: period.start - size, end: period.start };
+function computeDeltaWithinBounds(series, bounds) {
+  if (!series.length) return { delta: 0, deltaPct: 0, startValue: 0, endValue: 0 };
+  const startPoint = series.find((point) => point.ts >= bounds.start) || series[0];
+  const endPoint = [...series].reverse().find((point) => point.ts < bounds.end) || series.at(-1);
+  const delta = endPoint.value - startPoint.value;
+  const deltaPct = startPoint.value ? (delta / startPoint.value) * 100 : 0;
+  return { delta, deltaPct, startValue: startPoint.value, endValue: endPoint.value };
 }
 
-function periodDelta(series, period) {
-  if (!series.length) return { delta: 0, deltaPct: 0, start: 0, end: 0 };
-  const startPoint = series.find((p) => p.ts >= period.start) || series[0];
-  const endPoint = series.filter((p) => p.ts < period.end).at(-1) || series.at(-1);
-  const delta = endPoint.total - startPoint.total;
-  return { delta, deltaPct: startPoint.total ? (delta / startPoint.total) * 100 : 0, start: startPoint.total, end: endPoint.total };
+function buildTotalSeries(accounts) {
+  const daySet = new Set();
+  accounts.forEach((account) => account.daily.forEach((point) => daySet.add(point.day)));
+  const days = [...daySet].sort();
+  if (!days.length) return [];
+
+  const perAccount = Object.fromEntries(accounts.map((account) => [account.id, Object.fromEntries(account.daily.map((p) => [p.day, p.value]))]));
+  const running = Object.fromEntries(accounts.map((account) => [account.id, 0]));
+
+  return days.map((day) => {
+    accounts.forEach((account) => {
+      if (perAccount[account.id][day] != null) running[account.id] = perAccount[account.id][day];
+    });
+    return { day, ts: parseDayKey(day), value: Object.values(running).reduce((sum, val) => sum + Number(val || 0), 0) };
+  });
 }
 
-function sparklinePath(values, width = 320, height = 110) {
-  if (!values.length) return '';
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+function filterSeriesByRange(series, mode) {
+  if (mode === 'total') return series;
+  const { start, end } = getRangeBounds(mode);
+  const filtered = series.filter((point) => point.ts >= start && point.ts < end);
+  return filtered.length ? filtered : series.slice(-1);
+}
+
+function aggregateYear(series) {
+  if (!series.length) return [];
+  if (series.length <= 45) return series;
+  const byMonth = {};
+  series.forEach((point) => {
+    const d = new Date(point.ts);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    byMonth[key] = point;
+  });
+  return Object.entries(byMonth).map(([key, point]) => ({ ...point, day: `${key}-01` })).sort((a, b) => a.ts - b.ts);
+}
+
+function chartModelForRange(series, mode) {
+  let points = filterSeriesByRange(series, mode);
+  if (mode === 'year') points = aggregateYear(points);
+  const delta = computeDeltaForRange(points.map((point) => ({ ...point, value: point.value })), 'total').delta;
+  return { points, tone: toneClass(delta) };
+}
+
+function linePath(points, width = 320, height = 120) {
+  if (!points.length) return '';
+  const vals = points.map((point) => point.value);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
   const spread = max - min || 1;
-  return values.map((v, i) => {
-    const x = (i / Math.max(values.length - 1, 1)) * width;
-    const y = height - ((v - min) / spread) * height;
-    return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
+  return points
+    .map((point, index) => {
+      const x = (index / Math.max(points.length - 1, 1)) * width;
+      const y = height - ((point.value - min) / spread) * height;
+      return `${index === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+}
+
+function pointDots(points, width = 300, height = 96) {
+  if (!points.length) return '';
+  const vals = points.map((point) => point.value);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const spread = max - min || 1;
+  return points.map((point, index) => {
+    const x = (index / Math.max(points.length - 1, 1)) * width;
+    const y = height - ((point.value - min) / spread) * height;
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" class="${toneClass(point.delta)}"/>`;
+  }).join('');
+}
+
+function monthLabel(offset = 0) {
+  const d = new Date();
+  d.setMonth(d.getMonth() + offset);
+  return new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(d);
+}
+
+function calendarData(accounts, totalSeries) {
+  const date = new Date();
+  date.setMonth(date.getMonth() + state.calendarMonthOffset);
+  const monthStart = new Date(date.getFullYear(), date.getMonth(), 1).getTime();
+  const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 1).getTime();
+  const source = state.calendarAccountId === 'total'
+    ? totalSeries.map((point, idx, arr) => ({ ...point, delta: idx ? point.value - arr[idx - 1].value : 0 }))
+    : (accounts.find((acc) => acc.id === state.calendarAccountId)?.daily || []);
+
+  return source
+    .filter((point) => point.ts >= monthStart && point.ts < monthEnd)
+    .filter((point) => Math.abs(Number(point.delta || 0)) > 0.00001 || state.calendarMode === 'month')
+    .map((point) => {
+      const prev = source.filter((i) => i.ts < point.ts).at(-1);
+      const delta = prev ? point.value - prev.value : point.delta || 0;
+      const deltaPct = prev?.value ? (delta / prev.value) * 100 : 0;
+      return { ...point, delta, deltaPct };
+    });
 }
 
 function render() {
   const host = document.getElementById('finance-content');
-  if (!host) {
-    warnMissing('finance-content');
-    return;
-  }
+  if (!host) return warnMissing('finance-content');
 
-  console.log('Finance render', state.subview, state.rangeMode);
   if (state.error) {
-    host.innerHTML = `<article class="finance-tab__panel"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`;
+    host.innerHTML = `<article class="finance-panel"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`;
     return;
   }
 
-  const accounts = buildAccountModel();
-  const series = buildGlobalSeries(accounts);
-  const total = accounts.reduce((sum, acc) => sum + acc.current, 0);
-  const change = periodDelta(series, periodFromRange(state.rangeMode));
-  const comparePeriod = periodWindow(state.compareMode);
-  const compare = periodDelta(series, comparePeriod);
-  const comparePrev = periodDelta(series, previousPeriod(comparePeriod));
+  const accounts = buildAccountModels();
+  const totalSeries = buildTotalSeries(accounts);
+  const total = accounts.reduce((sum, account) => sum + account.current, 0);
+  const totalRange = computeDeltaForRange(totalSeries, state.rangeMode);
+  const chart = chartModelForRange(totalSeries, state.rangeMode);
+  const compareBounds = getRangeBounds(state.compareMode);
+  const compareCurrent = computeDeltaWithinBounds(totalSeries, compareBounds);
+  const previousBounds = {
+    start: compareBounds.start - (compareBounds.end - compareBounds.start),
+    end: compareBounds.start
+  };
+  const comparePrev = computeDeltaWithinBounds(totalSeries, previousBounds);
+
+  const calendarPoints = calendarData(accounts, totalSeries);
 
   host.innerHTML = `
-    <section class="finance-tab ${toneClass(change.delta)}">
-      <article class="finance-tab__panel" id="finance-overview">
-        <p class="finance-tab__eyebrow">TOTAL</p>
-        <h2 class="finance-tab__total">${fmtCurrency(total)}</h2>
-        <p class="finance-tab__delta ${toneClass(change.delta)}">${fmtSignedCurrency(change.delta)} · ${fmtSignedPercent(change.deltaPct)}</p>
-        <div class="finance-tab__chart"><svg viewBox="0 0 320 110" preserveAspectRatio="none">${series.length ? `<path d="${sparklinePath(series.map((s) => s.total))}"/>` : ''}</svg></div>
+    <section class="finance-home ${toneClass(totalRange.delta)}">
+      <article class="finance-panel finance-overview">
+        <p class="finance-eyebrow">TOTAL</p>
+        <h2 class="finance-total">${fmtCurrency(total)}</h2>
+        <p class="finance-delta ${toneClass(totalRange.delta)}">${fmtSignedCurrency(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
+        <div class="finance-chart ${chart.tone}">
+          ${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}
+        </div>
       </article>
-      <article class="finance-tab__controls">
-        <button class="finance-pill" data-refresh>Actualizar</button>
+
+      <article class="finance-controls">
         <select class="finance-pill" data-range>
           <option value="total" ${state.rangeMode === 'total' ? 'selected' : ''}>Total</option>
           <option value="month" ${state.rangeMode === 'month' ? 'selected' : ''}>Mes</option>
@@ -210,33 +291,59 @@ function render() {
           <option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option>
         </select>
       </article>
-      <article class="finance-tab__compare-row">
-        <div class="finance-tab__chip ${toneClass(compare.delta)}">${comparePeriod.label} actual: ${fmtSignedCurrency(compare.delta)} (${fmtSignedPercent(compare.deltaPct)})</div>
-        <div class="finance-tab__chip ${toneClass(comparePrev.delta)}">${comparePeriod.label} anterior: ${fmtSignedCurrency(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div>
+
+      <article class="finance-compare-row">
+        <div class="finance-chip ${toneClass(compareCurrent.delta)}">${state.compareMode === 'week' ? 'Semana' : 'Mes'} actual: ${fmtSignedCurrency(compareCurrent.delta)} (${fmtSignedPercent(compareCurrent.deltaPct)})</div>
+        <div class="finance-chip ${toneClass(comparePrev.delta)}">${state.compareMode === 'week' ? 'Semana' : 'Mes'} anterior: ${fmtSignedCurrency(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div>
       </article>
-      <article class="finance-tab__panel">
-        <div class="finance-tab__panel-head"><h3>Cuentas</h3><button class="finance-pill" data-new-account>+ Cuenta</button></div>
-        <div class="finance-tab__accounts">${accounts.map((account) => `
-          <button class="finance-tab__account ${toneClass(account.range.delta)}" data-open-detail="${account.id}">
-            <div class="finance-tab__account-main">
-              <span>${account.name}</span>
-              <input class="finance-tab__balance-input" data-account-input="${account.id}" value="${Number(account.current).toFixed(2)}" inputmode="decimal" />
+
+      <article class="finance-panel">
+        <div class="finance-panel-head"><h3>Cuentas</h3><button class="finance-pill" data-new-account>+ Cuenta</button></div>
+        <div class="finance-account-list">${accounts.map((account) => `
+          <article class="finance-account ${toneClass(account.range.delta)}" data-open-detail="${account.id}">
+            <div class="finance-account-main">
+              <strong>${account.name}</strong>
+              <input class="finance-balance-input" data-account-input="${account.id}" value="${account.current.toFixed(2)}" inputmode="decimal" placeholder="0.00" />
             </div>
-            <span class="finance-tab__chip ${toneClass(account.range.delta)}">${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span>
-          </button>
-        `).join('') || '<p class="finance-tab__empty">Sin cuentas todavía.</p>'}</div>
+            <div class="finance-account-side">
+              <span class="finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span>
+              <button class="finance-pill finance-pill--mini" data-delete-account="${account.id}">⋯</button>
+            </div>
+          </article>
+        `).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div>
       </article>
-    </section>`;
+
+      <article class="finance-panel">
+        <div class="finance-panel-head">
+          <h3>Calendario</h3>
+          <span class="finance-month-label">${monthLabel(state.calendarMonthOffset)}</span>
+        </div>
+        <div class="finance-calendar-controls">
+          <button class="finance-pill" data-month-shift="-1">◀</button>
+          <select class="finance-pill" data-calendar-account>
+            <option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>
+            ${accounts.map((account) => `<option value="${account.id}" ${state.calendarAccountId === account.id ? 'selected' : ''}>${account.name}</option>`).join('')}
+          </select>
+          <select class="finance-pill" data-calendar-mode>
+            <option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>Día</option>
+            <option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option>
+          </select>
+          <button class="finance-pill" data-month-shift="1">▶</button>
+        </div>
+        <div class="finance-calendar-grid">
+          ${calendarPoints.map((point) => `<div class="finance-day ${toneClass(point.delta)}"><strong>${new Date(point.ts).getDate()}</strong><span>${fmtSignedCurrency(point.delta)}</span><span>${fmtSignedPercent(point.deltaPct)}</span></div>`).join('') || '<p class="finance-empty">Sin cambios para este mes.</p>'}
+        </div>
+      </article>
+    </section>
+  `;
 
   renderModal(accounts);
+  renderToast();
 }
 
 function renderModal(accounts) {
   const backdrop = document.getElementById('finance-modal-backdrop');
-  if (!backdrop) {
-    warnMissing('finance-modal-backdrop');
-    return;
-  }
+  if (!backdrop) return warnMissing('finance-modal-backdrop');
 
   if (!state.modal.type) {
     backdrop.classList.add('hidden');
@@ -245,47 +352,123 @@ function renderModal(accounts) {
   }
 
   backdrop.classList.remove('hidden');
+  backdrop.style.display = 'flex';
 
   if (state.modal.type === 'history') {
-    backdrop.innerHTML = `<div class="finance-modal" role="dialog" aria-modal="true">
-      <header><h3>Historial</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
-      <div class="finance-tab__table-wrap finance-history-list">${accounts.map((account) => {
-        const entries = account.entries;
-        return `<button class="finance-history-item" data-open-detail="${account.id}"><strong>${account.name}</strong><small>${entries.length} registros · ${fmtCurrency(account.current)}</small></button>`;
-      }).join('') || '<p class="finance-tab__empty">Sin registros.</p>'}</div>
-    </div>`;
+    backdrop.innerHTML = `
+      <div class="finance-modal" role="dialog" aria-modal="true">
+        <header><h3>Historial</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+        <div class="finance-history-list">
+          ${accounts.map((account) => `
+            <details class="finance-history-item" data-history-account="${account.id}">
+              <summary><strong>${account.name}</strong><small>${account.daily.length} registros · ${fmtCurrency(account.current)}</small></summary>
+              <div class="finance-history-rows" data-history-rows="${account.id}"><p class="finance-empty">Pulsa para cargar…</p></div>
+            </details>
+          `).join('') || '<p class="finance-empty">Sin historial.</p>'}
+        </div>
+      </div>
+    `;
     return;
   }
 
-  const account = accounts.find((acc) => acc.id === state.modal.accountId);
+  const account = accounts.find((item) => item.id === state.modal.accountId);
   if (!account) {
     state.modal = { type: null, accountId: null };
     render();
     return;
   }
-  const points = account.entries;
-  const path = sparklinePath(points.map((p) => p.value), 300, 100);
-  backdrop.innerHTML = `<div class="finance-modal" role="dialog" aria-modal="true">
-    <header><h3>${account.name}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
-    <div class="finance-modal__actions"><button class="finance-pill" data-add-entry="${account.id}">Añadir registro</button><button class="finance-pill" data-refresh>Actualizar</button></div>
-    <div class="finance-tab__chart"><svg viewBox="0 0 300 100">${path ? `<path d="${path}"/>` : ''}</svg></div>
-    <div class="finance-tab__table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ€</th><th>Δ%</th><th></th></tr></thead><tbody>
-      ${points.slice().reverse().map((p) => `<tr><td>${new Date(p.ts).toLocaleString('es-ES')}</td><td>${fmtCurrency(p.value)}</td><td class="${toneClass(p.delta)}">${fmtSignedCurrency(p.delta)}</td><td class="${toneClass(p.deltaPct)}">${fmtSignedPercent(p.deltaPct)}</td><td><button class="finance-pill finance-pill--mini" data-edit-entry="${account.id}:${p.id}">Editar</button><button class="finance-pill finance-pill--mini" data-delete-entry="${account.id}:${p.id}">🗑</button></td></tr>`).join('') || '<tr><td colspan="5">Sin registros</td></tr>'}
-    </tbody></table></div>
-    ${state.entryForm.open ? `<div class="finance-entry-form"><h4>${state.entryForm.entryId ? 'Editar registro' : 'Añadir registro'}</h4><input type="datetime-local" data-entry-ts value="${state.entryForm.tsInput}" /><input type="number" step="0.01" data-entry-value value="${state.entryForm.valueInput}" placeholder="Valor €" /><div class="finance-modal__actions"><button class="finance-pill" data-save-entry="${account.id}">Guardar</button><button class="finance-pill" data-cancel-entry>Cancelar</button></div></div>` : ''}
-  </div>`;
+
+  const chart = chartModelForRange(account.daily.map((point) => ({ ...point, value: point.value })), state.rangeMode);
+  backdrop.innerHTML = `
+    <div class="finance-modal ${toneClass(account.range.delta)}" role="dialog" aria-modal="true">
+      <header>
+        <h3>${account.name}</h3>
+        <div class="finance-modal-actions"><button class="finance-pill" data-close-modal>Cerrar</button><button class="finance-pill" data-delete-account="${account.id}">Eliminar cuenta</button></div>
+      </header>
+      <p class="finance-delta ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]}: ${fmtSignedCurrency(account.range.delta)} · ${fmtSignedPercent(account.range.deltaPct)}</p>
+      <div class="finance-chart ${chart.tone}">
+        ${chart.points.length ? `<svg viewBox="0 0 300 96"><path d="${linePath(chart.points, 300, 96)}"/>${pointDots(chart.points, 300, 96)}</svg>` : '<div class="finance-empty">Sin datos de cuenta.</div>'}
+      </div>
+      <div class="finance-modal-actions">
+        <button class="finance-pill" data-show-add-day="${account.id}">Añadir registro</button>
+      </div>
+      <form class="finance-entry-form hidden" data-entry-form="${account.id}">
+        <input type="date" data-entry-day value="${dayKeyFromTs(Date.now())}" />
+        <input type="number" step="0.01" data-entry-value placeholder="Saldo €" />
+        <button class="finance-pill" type="submit">Actualizar</button>
+      </form>
+      <div class="finance-table-wrap">
+        <table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ€</th><th>Δ%</th><th></th></tr></thead><tbody>
+          ${account.daily.slice().reverse().map((point) => `
+            <tr>
+              <td>${new Date(point.ts).toLocaleDateString('es-ES')}</td>
+              <td>${fmtCurrency(point.value)}</td>
+              <td class="${toneClass(point.delta)}">${fmtSignedCurrency(point.delta)}</td>
+              <td class="${toneClass(point.deltaPct)}">${fmtSignedPercent(point.deltaPct)}</td>
+              <td><button class="finance-pill finance-pill--mini" data-delete-day="${account.id}:${point.day}">⋯</button></td>
+            </tr>
+          `).join('') || '<tr><td colspan="5">Sin registros.</td></tr>'}
+        </tbody></table>
+      </div>
+    </div>
+  `;
+}
+
+function renderToast() {
+  let toast = document.getElementById('finance-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'finance-toast';
+    toast.className = 'finance-toast hidden';
+    document.getElementById('view-finance')?.append(toast);
+  }
+  if (!state.toast) {
+    toast.classList.add('hidden');
+    toast.textContent = '';
+    return;
+  }
+  toast.textContent = state.toast;
+  toast.classList.remove('hidden');
+}
+
+function toast(message) {
+  state.toast = message;
+  renderToast();
+  window.clearTimeout(state.toastTimer);
+  state.toastTimer = window.setTimeout(() => {
+    state.toast = '';
+    renderToast();
+  }, 1400);
+}
+
+async function migrateLegacy(entriesMap = {}, accounts = []) {
+  const updates = {};
+  let writes = 0;
+  accounts.forEach((account) => {
+    const legacyByDay = normalizeLegacyEntries(entriesMap[account.id] || {});
+    Object.entries(legacyByDay).forEach(([day, record]) => {
+      const current = account.daily?.[day];
+      if (!current || Number(current.ts || 0) < Number(record.ts)) {
+        updates[`${FIN_PATH}/accounts/${account.id}/daily/${day}`] = { value: record.value, ts: record.ts };
+        writes += 1;
+      }
+    });
+  });
+  if (writes) {
+    await update(ref(db), updates);
+    log('legacy normalized daily writes', writes);
+  }
 }
 
 async function loadDataOnce() {
-  console.log('Finance load start');
   const snap = await get(ref(db, FIN_PATH));
   const val = snap.val() || {};
   const accountsMap = val.accounts || {};
   const entriesMap = val.accountsEntries || val.entries || {};
   state.accounts = Object.values(accountsMap).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-  state.entriesByAccount = Object.fromEntries(Object.entries(entriesMap).map(([accId, map]) => [accId, Object.entries(map || {}).map(([id, entry]) => ({ id, ...entry }))]));
-  const entriesCount = Object.values(state.entriesByAccount).reduce((sum, list) => sum + list.length, 0);
-  console.log('Finance load ok', state.accounts.length, entriesCount);
+  state.legacyEntries = entriesMap;
+  await migrateLegacy(entriesMap, state.accounts);
+  log('loaded accounts:', state.accounts.length);
 }
 
 function subscribe() {
@@ -293,11 +476,9 @@ function subscribe() {
   state.unsubscribe = onValue(ref(db, FIN_PATH), (snap) => {
     const val = snap.val() || {};
     state.accounts = Object.values(val.accounts || {}).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-    const entriesMap = val.accountsEntries || val.entries || {};
-    state.entriesByAccount = Object.fromEntries(Object.entries(entriesMap).map(([accId, map]) => [accId, Object.entries(map || {}).map(([id, entry]) => ({ id, ...entry }))]));
+    state.legacyEntries = val.accountsEntries || val.entries || {};
     render();
   }, (error) => {
-    console.error('Finance load error', error);
     state.error = String(error?.message || error);
     render();
   });
@@ -305,140 +486,169 @@ function subscribe() {
 
 async function addAccount(name) {
   const id = push(ref(db, `${FIN_PATH}/accounts`)).key;
-  await set(ref(db, `${FIN_PATH}/accounts/${id}`), { id, name, createdAt: Date.now(), updatedAt: Date.now() });
+  await set(ref(db, `${FIN_PATH}/accounts/${id}`), { id, name, createdAt: Date.now(), updatedAt: Date.now(), daily: {} });
 }
 
-async function saveEntry(accountId, value, ts = Date.now(), entryId = null) {
+async function saveDaily(accountId, day, value, ts = Date.now()) {
   const parsedValue = Number(String(value).replace(',', '.'));
-  if (!Number.isFinite(parsedValue)) return;
-  const payload = { ts: Number(ts), value: parsedValue };
-  if (entryId) await update(ref(db, `${FIN_PATH}/accountsEntries/${accountId}/${entryId}`), payload);
-  else await set(push(ref(db, `${FIN_PATH}/accountsEntries/${accountId}`)), payload);
+  if (!Number.isFinite(parsedValue) || !day) return false;
+  const account = state.accounts.find((item) => item.id === accountId);
+  const existing = Number(account?.daily?.[day]?.value);
+  if (Number.isFinite(existing) && Math.abs(existing - parsedValue) < 0.00001) return false;
+
+  await set(ref(db, `${FIN_PATH}/accounts/${accountId}/daily/${day}`), { value: parsedValue, ts: Number(ts) });
   await update(ref(db, `${FIN_PATH}/accounts/${accountId}`), { updatedAt: Date.now(), lastValue: parsedValue });
+  log('saved daily', accountId, day, parsedValue);
+  toast('Guardado');
+  return true;
 }
 
-async function deleteEntry(accountId, entryId) {
-  await remove(ref(db, `${FIN_PATH}/accountsEntries/${accountId}/${entryId}`));
-  await update(ref(db, `${FIN_PATH}/accounts/${accountId}`), { updatedAt: Date.now() });
+async function deleteDay(accountId, day) {
+  await remove(ref(db, `${FIN_PATH}/accounts/${accountId}/daily/${day}`));
+}
+
+async function deleteAccount(accountId) {
+  await remove(ref(db, `${FIN_PATH}/accounts/${accountId}`));
+  await remove(ref(db, `${FIN_PATH}/accountsEntries/${accountId}`));
+}
+
+function queueInputSave(accountId, inputEl) {
+  const day = dayKeyFromTs(Date.now());
+  const key = `${accountId}:${day}`;
+  window.clearTimeout(state.saveTimers[key]);
+  state.saveTimers[key] = window.setTimeout(async () => {
+    await saveDaily(accountId, day, inputEl.value, Date.now());
+  }, 220);
 }
 
 function bindEvents() {
-  const financeView = document.getElementById('view-finance');
-  if (!financeView) {
-    warnMissing('view-finance');
-    return;
-  }
-  if (financeView.dataset.financeBound === '1') return;
-  financeView.dataset.financeBound = '1';
+  const view = document.getElementById('view-finance');
+  if (!view) return warnMissing('view-finance');
+  if (view.dataset.financeBound === '1') return;
+  view.dataset.financeBound = '1';
 
-  financeView.addEventListener('click', async (event) => {
-    if (event.target.closest('[data-refresh]')) {
-      console.log('Finance: refresh requested');
-      await loadDataOnce();
-      render();
-      return;
-    }
-    if (event.target.closest('[data-history]')) {
-      console.log('Finance: history open');
+  view.addEventListener('click', async (event) => {
+    const target = event.target;
+
+    if (target.closest('[data-history]')) {
       state.modal = { type: 'history', accountId: null };
-      render();
-      return;
+      return render();
     }
-    if (event.target.closest('[data-close-modal]') || event.target.id === 'finance-modal-backdrop') {
-      console.log('Finance: modal close');
+
+    if (target.closest('[data-close-modal]') || target.id === 'finance-modal-backdrop') {
       state.modal = { type: null, accountId: null };
-      state.entryForm = { open: false, entryId: null, tsInput: '', valueInput: '' };
-      render();
-      return;
+      return render();
     }
-    if (event.target.closest('[data-open-detail]') && !event.target.closest('[data-account-input]')) {
-      const accountId = event.target.closest('[data-open-detail]').dataset.openDetail;
-      console.log('Finance: open detail', accountId);
-      state.modal = { type: 'detail', accountId };
-      render();
-      return;
+
+    const openAccount = target.closest('[data-open-detail]')?.dataset.openDetail;
+    if (openAccount && !target.closest('[data-account-input]')) {
+      state.modal = { type: 'detail', accountId: openAccount };
+      log('mount dom ok');
+      return render();
     }
-    if (event.target.closest('[data-new-account]')) {
+
+    if (target.closest('[data-new-account]')) {
       const name = window.prompt('Nombre de la cuenta');
       if (name?.trim()) await addAccount(name.trim());
       return;
     }
-    if (event.target.closest('[data-add-entry]')) {
-      console.log('Finance: open add entry');
-      state.entryForm = { open: true, entryId: null, tsInput: toDateTimeLocal(Date.now()), valueInput: '' };
-      render();
+
+    const deleteDayPayload = target.closest('[data-delete-day]')?.dataset.deleteDay;
+    if (deleteDayPayload) {
+      const [accountId, day] = deleteDayPayload.split(':');
+      if (window.confirm(`¿Eliminar el día ${day}?`)) await deleteDay(accountId, day);
       return;
     }
-    if (event.target.closest('[data-cancel-entry]')) {
-      state.entryForm = { open: false, entryId: null, tsInput: '', valueInput: '' };
-      render();
+
+    const deleteAccountId = target.closest('[data-delete-account]')?.dataset.deleteAccount;
+    if (deleteAccountId) {
+      if (window.confirm('¿Eliminar esta cuenta y todos sus registros?')) await deleteAccount(deleteAccountId);
+      state.modal = { type: null, accountId: null };
       return;
     }
-    if (event.target.closest('[data-save-entry]')) {
-      const accountId = event.target.closest('[data-save-entry]').dataset.saveEntry;
-      const tsInput = financeView.querySelector('[data-entry-ts]')?.value;
-      const valueInput = financeView.querySelector('[data-entry-value]')?.value;
-      const ts = tsInput ? new Date(tsInput).getTime() : Date.now();
-      console.log('Finance: save entry', accountId, ts);
-      await saveEntry(accountId, valueInput, ts, state.entryForm.entryId);
-      state.entryForm = { open: false, entryId: null, tsInput: '', valueInput: '' };
+
+    if (target.closest('[data-show-add-day]')) {
+      view.querySelector('[data-entry-form]')?.classList.toggle('hidden');
       return;
     }
-    if (event.target.closest('[data-delete-entry]')) {
-      const [accountId, entryId] = event.target.closest('[data-delete-entry]').dataset.deleteEntry.split(':');
-      if (window.confirm('¿Eliminar este registro?')) {
-        console.log('Finance: delete entry', accountId, entryId);
-        await deleteEntry(accountId, entryId);
-      }
-      return;
-    }
-    if (event.target.closest('[data-edit-entry]')) {
-      const [accountId, entryId] = event.target.closest('[data-edit-entry]').dataset.editEntry.split(':');
-      const entry = accountEntries(accountId).find((item) => item.id === entryId);
-      state.entryForm = { open: true, entryId, tsInput: toDateTimeLocal(entry?.ts || Date.now()), valueInput: entry?.value ?? '' };
-      console.log('Finance: edit entry', accountId, entryId);
+
+    const monthShift = target.closest('[data-month-shift]')?.dataset.monthShift;
+    if (monthShift) {
+      state.calendarMonthOffset += Number(monthShift);
       render();
     }
   });
 
-  financeView.addEventListener('change', (event) => {
+  view.addEventListener('change', (event) => {
     if (event.target.matches('[data-range]')) {
       state.rangeMode = event.target.value;
-      persistUi();
-      console.log('Finance: range change', state.rangeMode);
       render();
     }
     if (event.target.matches('[data-compare]')) {
       state.compareMode = event.target.value;
-      persistUi();
-      console.log('Finance: compare change', state.compareMode);
+      render();
+    }
+    if (event.target.matches('[data-calendar-account]')) {
+      state.calendarAccountId = event.target.value;
+      render();
+    }
+    if (event.target.matches('[data-calendar-mode]')) {
+      state.calendarMode = event.target.value;
       render();
     }
   });
 
-  financeView.addEventListener('focusin', (event) => {
-    if (event.target.matches('[data-account-input]')) event.target.select();
+  view.addEventListener('focusin', (event) => {
+    if (event.target.matches('[data-account-input]')) {
+      event.target.dataset.initialValue = event.target.value;
+      event.target.select();
+    }
   });
 
-  financeView.addEventListener('keydown', async (event) => {
+  view.addEventListener('keydown', async (event) => {
     if (event.key !== 'Enter' || !event.target.matches('[data-account-input]')) return;
     event.preventDefault();
-    await saveEntry(event.target.dataset.accountInput, event.target.value, Date.now());
+    queueInputSave(event.target.dataset.accountInput, event.target);
     event.target.blur();
   });
 
-  financeView.addEventListener('focusout', async (event) => {
+  view.addEventListener('focusout', async (event) => {
     if (!event.target.matches('[data-account-input]')) return;
-    await saveEntry(event.target.dataset.accountInput, event.target.value, Date.now());
+    if (event.target.value === event.target.dataset.initialValue) return;
+    queueInputSave(event.target.dataset.accountInput, event.target);
   });
+
+  view.addEventListener('submit', async (event) => {
+    if (!event.target.matches('[data-entry-form]')) return;
+    event.preventDefault();
+    const accountId = event.target.dataset.entryForm;
+    const day = event.target.querySelector('[data-entry-day]')?.value;
+    const value = event.target.querySelector('[data-entry-value]')?.value;
+    await saveDaily(accountId, day, value, Date.now());
+    event.target.classList.add('hidden');
+  });
+
+  view.addEventListener('toggle', (event) => {
+    const details = event.target.closest('[data-history-account]');
+    if (!details || !details.open) return;
+    const accountId = details.dataset.historyAccount;
+    const host = view.querySelector(`[data-history-rows="${accountId}"]`);
+    if (!host || host.dataset.loaded === '1') return;
+    const account = buildAccountModels().find((item) => item.id === accountId);
+    host.dataset.loaded = '1';
+    host.innerHTML = account?.daily?.length
+      ? account.daily.slice().reverse().map((row) => `<div class="finance-history-row"><span>${new Date(row.ts).toLocaleDateString('es-ES')}</span><span>${fmtCurrency(row.value)}</span><span class="${toneClass(row.delta)}">${fmtSignedCurrency(row.delta)}</span><span class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</span></div>`).join('')
+      : '<p class="finance-empty">Sin registros.</p>';
+  }, true);
 }
 
 async function boot() {
+  log('init ok');
   bindEvents();
   await loadDataOnce();
   subscribe();
   render();
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { boot(); }, { once: true });
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
 else boot();

@@ -578,6 +578,24 @@ Modal: #finance-modalOverlay, #finance-modal
   padding: 12px;
   border-top: 1px solid rgba(255,255,255,.10);
 }
+
+
+.financeTab .fin-move-modal{
+  width: min(620px, calc(100vw - 20px));
+  padding: 12px;
+}
+.financeTab .fin-move-header{ margin-bottom: 10px; }
+.financeTab .fin-move-grid{ gap: 8px; }
+.financeTab .fin-move-grid--meta{ align-items: end; }
+.financeTab .fin-move-inline{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+.financeTab .fin-move-input{ min-width: 0; }
+.financeTab .fin-move-footer{ padding-top: 2px; }
+.financeTab .fin-move-extras .fm-details__body{ padding-top: 10px; }
+
 .finance-tx-form{
 display: flex;
 flex-direction: column;

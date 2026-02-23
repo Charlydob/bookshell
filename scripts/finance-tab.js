@@ -25,6 +25,7 @@ const state = {
   balanceFilterType: 'all',
   balanceFilterCategory: 'all',
   balanceAccountFilter: 'all',
+  balanceShowAllTx: false,
   lastMovementAccountId: localStorage.getItem('bookshell_finance_lastMovementAccountId') || '',
   unsubscribe: null,
   saveTimers: {},
@@ -162,6 +163,8 @@ function normalizeFoodMap(map = {}) {
       lastUsedAt: Number(payload?.lastUsedAt || 0),
       lastPrice: Number(payload?.lastPrice || 0),
       lastCategory: String(payload?.lastCategory || ''),
+      lastAccountId: String(payload?.lastAccountId || ''),
+      lastNote: String(payload?.lastNote || ''),
       lastExtras: payload?.lastExtras || {}
     };
   });
@@ -224,6 +227,8 @@ async function upsertFoodItem(value, incrementCount = false, patch = {}) {
     lastUsedAt: incrementCount ? nowTs() : Number(prev.lastUsedAt || 0),
     lastPrice: Number(patch.lastPrice ?? prev.lastPrice ?? 0),
     lastCategory: String(patch.lastCategory ?? prev.lastCategory ?? ''),
+    lastAccountId: String(patch.lastAccountId ?? prev.lastAccountId ?? ''),
+    lastNote: String(patch.lastNote ?? prev.lastNote ?? ''),
     lastExtras: patch.lastExtras || prev.lastExtras || {}
   };
   state.food.items[name] = payload;
@@ -330,8 +335,9 @@ async function recomputeAccountEntries(accountId, fromDay) {
   if (!allDays.length) return;
   const normalizedFromDay = toIsoDay(fromDay || '') || fromDay;
   const startDay = normalizedFromDay || allDays[0];
-  console.log('[FINANCE][BALANCE] recompute balances', { accountId, fromDay: startDay, txCount: movements.length });
-  const dayMovementNet = {};
+  console.debug('[FINANCE] recompute account entries', { accountId, startDay, txCount: movements.length });
+
+  const dayEvents = {};
   movements.forEach((row) => {
     const day = String(row.date || isoToDay(row.dateISO || ''));
     if (!day) return;
@@ -342,9 +348,17 @@ async function recomputeAccountEntries(accountId, fromDay) {
       if (row.fromAccountId === accountId) delta = -Number(row.amount || 0);
       if (row.toAccountId === accountId) delta += Number(row.amount || 0);
     }
-    dayMovementNet[day] = (dayMovementNet[day] || 0) + delta;
+    if (!delta) return;
+    if (!dayEvents[day]) dayEvents[day] = [];
+    const ts = Number(row.ts || row.timestamp || row.createdAt || row.updatedAt || 0);
+    dayEvents[day].push({ kind: 'tx', ts: Number.isFinite(ts) ? ts : 0, delta });
   });
-  const snapshotByDay = Object.fromEntries(snapshots.map((row) => [row.day, row]));
+  snapshots.forEach((row) => {
+    if (!dayEvents[row.day]) dayEvents[row.day] = [];
+    const ts = Number(row.updatedAt || 0);
+    dayEvents[row.day].push({ kind: 'snapshot', ts: Number.isFinite(ts) && ts > 0 ? ts : Number.MAX_SAFE_INTEGER, value: row.value });
+  });
+
   const existingEntries = account.entries || account.daily || {};
   let carry = 0;
   const prevDays = Object.keys(existingEntries).filter((day) => day < startDay).sort();
@@ -353,20 +367,31 @@ async function recomputeAccountEntries(accountId, fromDay) {
     const prevSnapshot = snapshots.filter((row) => row.day < startDay).at(-1);
     if (prevSnapshot) carry = prevSnapshot.value;
   }
+
   const updatesMap = {};
   const targetDays = allDays.filter((day) => day >= startDay);
   targetDays.forEach((day) => {
     let value = carry;
-    let source = 'derived';
-    if (snapshotByDay[day]) {
-      value = snapshotByDay[day].value;
-      source = 'snapshot';
+    const events = (dayEvents[day] || []).sort((a, b) => {
+      if (a.ts !== b.ts) return a.ts - b.ts;
+      if (a.kind === b.kind) return 0;
+      return a.kind === 'tx' ? -1 : 1;
+    });
+    if (!events.length) {
+      value = carry;
     } else {
-      // Consolidación diaria: sin snapshot manual, el cierre deriva del día previo + neto de movimientos.
-      value = carry + Number(dayMovementNet[day] || 0);
+      events.forEach((event) => {
+        if (event.kind === 'snapshot') value = Number(event.value || 0);
+        else value += Number(event.delta || 0);
+      });
     }
     carry = value;
-    updatesMap[`${state.financePath}/accounts/${accountId}/entries/${day}`] = { dateISO: `${day}T00:00:00.000Z`, value, updatedAt: nowTs(), source };
+    updatesMap[`${state.financePath}/accounts/${accountId}/entries/${day}`] = {
+      dateISO: `${day}T00:00:00.000Z`,
+      value,
+      updatedAt: nowTs(),
+      source: events.some((event) => event.kind === 'snapshot') ? 'snapshot' : 'derived'
+    };
   });
   updatesMap[`${state.financePath}/accounts/${accountId}/updatedAt`] = nowTs();
   await safeFirebase(() => update(ref(db), updatesMap));
@@ -564,20 +589,22 @@ function summaryForMonth(monthKey) {
   const rows = balanceTxList().filter((tx) => tx.monthKey === monthKey);
   const income = rows.filter((tx) => tx.type === 'income').reduce((s, tx) => s + tx.amount, 0);
   const expense = rows.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + tx.amount, 0);
-  return { income, expense, invest: 0, net: income - expense };
+  const invest = rows.filter((tx) => tx.type === 'invest').reduce((s, tx) => s + tx.amount, 0);
+  return { income, expense, invest, net: income - expense - invest };
 }
 
 function monthlyNetRows() {
   const byMonth = {};
   balanceTxList().forEach((tx) => {
-    if (!tx.monthKey) return;
-    byMonth[tx.monthKey] = (byMonth[tx.monthKey] || 0) + (tx.type === 'income' ? tx.amount : -tx.amount);
+    if (!tx.monthKey || tx.type === 'transfer') return;
+    const delta = tx.type === 'income' ? tx.amount : -tx.amount;
+    byMonth[tx.monthKey] = (byMonth[tx.monthKey] || 0) + delta;
   });
   return Object.entries(byMonth).map(([month, net]) => ({ month, net })).sort((a, b) => b.month.localeCompare(a.month));
 }
 function categoriesList() {
   const dynamic = Object.values(state.balance.categories || {}).map((row) => String(row?.name || '')).filter(Boolean);
-  const fromTx = [...new Set(balanceTxList().map((tx) => tx.category).filter(Boolean))];
+  const fromTx = [...new Set(balanceTxList().map((tx) => tx.category).filter((name) => name && String(name).toLowerCase() !== 'transfer'))];
   return [...new Set([...dynamic, ...fromTx])].sort((a, b) => a.localeCompare(b, 'es'));
 }
 function getBudgetItems(monthKey = getSelectedBalanceMonthKey()) {
@@ -765,15 +792,13 @@ function renderFinanceBalance() {
   <div class="finance-chip ${toneClass(prevSummary.net)}">Mes anterior: ${fmtSignedCurrency(prevSummary.net)}</div></article>
   <article class="financeGlassCard">
   <div class="finance-row"><h3>Transacciones</h3><div class="finance-row"><select class="finance-pill" data-balance-type><option value="all">Todos</option><option value="expense" ${state.balanceFilterType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${state.balanceFilterType === 'income' ? 'selected' : ''}>Ingreso</option><option value="transfer" ${state.balanceFilterType === 'transfer' ? 'selected' : ''}>Transferencia</option></select><select class="finance-pill" data-balance-category><option value="all">Todas</option>${categories.map((c) => `<option ${state.balanceFilterCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select><select class="finance-pill" data-balance-account><option value="all">Todas las cuentas</option>${accounts.map((a) => `<option value="${a.id}" ${state.balanceAccountFilter === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div></div>
-  <div class="financeTxList financeTxList--scroll" style="max-height:260px;overflow-y:auto;">${tx.slice(0, 5).map((row) => {
+  <div class="financeTxList financeTxList--scroll" style="max-height:260px;overflow-y:auto;">${(state.balanceShowAllTx ? tx : tx.slice(0, 5)).map((row) => {
     const accountText = row.type === 'transfer'
       ? `${accountName(row.fromAccountId)} → ${accountName(row.toAccountId)}`
       : accountName(row.accountId);
-    return `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}</span><strong class="${row.type === 'income' ? 'is-positive' : 'is-negative'}">${row.type === 'transfer' ? fmtCurrency(row.amount) : fmtCurrency(row.amount)}</strong><span class="finance-row"><button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button></span></div>`;
-  }).join('') || '<p class="finance-empty">Sin movimientos en este mes.</p>'}${tx.length > 5 ? tx.slice(5).map((row) => {
-    const accountText = row.type === 'transfer' ? `${accountName(row.fromAccountId)} → ${accountName(row.toAccountId)}` : accountName(row.accountId);
-    return `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}</span><strong class="${row.type === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrency(row.amount)}</strong><span class="finance-row"><button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button></span></div>`;
-  }).join('') : ''}</div></article>
+    const tone = row.type === 'income' ? 'is-positive' : (row.type === 'expense' ? 'is-negative' : 'is-neutral');
+    return `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}</span><strong class="${tone}">${fmtCurrency(row.amount)}</strong><span class="finance-row"><button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button></span></div>`;
+  }).join('') || '<p class="finance-empty">Sin movimientos en este mes.</p>'}</div>${tx.length > 5 ? `<div class="finance-row"><button class="finance-pill finance-pill--mini" data-balance-showmore>${state.balanceShowAllTx ? 'Ver menos' : `Ver más (${tx.length - 5})`}</button></div>` : ''}</article>
   <article class="financeGlassCard"><div class="finance-row"><h3>Presupuestos</h3><button class="finance-pill" data-open-modal="budget">+ Presupuesto</button></div>
   <div class="financeBudgetList">${budgetItems.length ? budgetItems.map((budget) => {
     const spent = budget.category.toLowerCase() === 'total' ? totalSpent : Number(spentByCategory[budget.category] || 0);
@@ -782,6 +807,12 @@ function renderFinanceBalance() {
     return `<div class="financeBudgetRow"><div class="finance-row"><span>${escapeHtml(budget.category)}</span><div class="finance-row"><button class="finance-pill finance-pill--mini" data-budget-menu="${budget.id}">✏️</button><button class="finance-pill finance-pill--mini" data-budget-delete="${budget.id}">❌</button></div></div><small>${fmtCurrency(spent)} / ${fmtCurrency(limit)} (${pct.toFixed(0)}%)</small></div>`;
   }).join('') : '<p class="finance-empty">Sin presupuestos.</p>'}</div></article>
   <article class="financeGlassCard"><h3>Balance neto por mes</h3><div class="financeSummaryGrid"><div><small>Mejor mes</small><strong class="is-positive">${bestMonth ? `${bestMonth.month} · ${fmtCurrency(bestMonth.net)}` : '—'}</strong></div><div><small>Peor mes</small><strong class="is-negative">${worstMonth ? `${worstMonth.month} · ${fmtCurrency(worstMonth.net)}` : '—'}</strong></div><div><small>Media mensual</small><strong class="${toneClass(avgNet)}">${monthNetList.length ? fmtCurrency(avgNet) : '—'}</strong></div></div><div class="financeTxList" style="max-height:220px;overflow-y:auto;">${monthNetList.map((row) => `<div class="financeTxRow"><span>${row.month}</span><strong class="${toneClass(row.net)}">${fmtSignedCurrency(row.net)}</strong></div>`).join('') || '<p class="finance-empty">Sin meses con movimientos.</p>'}</div></article></section>`;
+}
+
+function renderFinanceGoals() {
+  const goals = Object.entries(state.goals.goals || {}).map(([id, row]) => ({ id, ...row }))
+    .sort((a, b) => Number(a?.dueDateISO ? new Date(a.dueDateISO).getTime() : 0) - Number(b?.dueDateISO ? new Date(b.dueDateISO).getTime() : 0));
+  return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Objetivos</h2><button class="finance-pill" data-open-modal="goal">+ Objetivo</button></header><article class="financeGlassCard"><div class="financeBudgetList">${goals.length ? goals.map((goal) => `<div class="financeBudgetRow"><div class="finance-row"><strong>${escapeHtml(goal.title || 'Objetivo')}</strong><div class="finance-row"><button class="finance-pill finance-pill--mini" data-open-goal="${goal.id}">✏️</button><button class="finance-pill finance-pill--mini" data-delete-goal="${goal.id}">❌</button></div></div><small>${fmtCurrency(Number(goal.targetAmount || 0))} · vence ${goal.dueDateISO ? new Date(goal.dueDateISO).toLocaleDateString('es-ES') : 'sin fecha'} · ${(goal.accountsIncluded || []).length} cuentas</small></div>`).join('') : '<p class="finance-empty">Sin objetivos todavía.</p>'}</div></article></section>`;
 }
 
 function renderModal() {
@@ -881,11 +912,11 @@ if (state.modal.type === 'tx') {
   const defaultTo = txEdit?.toAccountId || state.balanceFormState.toAccountId || accounts[1]?.id || accounts[0]?.id || '';
   const accountOptions = accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
   const categories = categoriesList();
-  backdrop.innerHTML = `<div id="finance-modal" class="finance-modal fm-modal" role="dialog" aria-modal="true" tabindex="-1">
-    <header class="fm-modal__header"><h3 class="fm-modal__title">${txEdit ? 'Editar movimiento' : 'Añadir movimiento'}</h3><button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button></header>
-    <form class="finance-entry-form finance-tx-form fm-form" data-balance-form>
+  backdrop.innerHTML = `<div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1">
+    <header class="fm-modal__header fin-move-header"><h3 class="fm-modal__title fin-move-title">${txEdit ? 'Editar movimiento' : 'Añadir movimiento'}</h3><button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button></header>
+    <form class="finance-entry-form finance-tx-form fm-form fin-move-form" data-balance-form>
       <input type="hidden" name="txId" value="${escapeHtml(txEdit?.id || '')}" />
-      <div class="fm-grid fm-grid--top">
+      <div class="fm-grid fm-grid--top fin-move-grid">
         <div class="fm-field fm-field--type"><label class="fm-label" for="fm-tx-type">Tipo</label><select id="fm-tx-type" name="type" class="finance-pill fm-control fm-control--select" data-tx-type><option value="expense" ${defaultType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${defaultType === 'income' ? 'selected' : ''}>Ingreso</option><option value="transfer" ${defaultType === 'transfer' ? 'selected' : ''}>Transferencia</option></select></div>
         <div class="fm-field fm-field--amount"><label class="fm-label" for="fm-tx-amount">Cantidad</label><input id="fm-tx-amount" class="fm-control fm-control--amount" required name="amount" type="number" step="0.01" placeholder="Cantidad €" value="${escapeHtml(defaultAmount)}"/></div>
         <div class="fm-field fm-field--date"><label class="fm-label" for="fm-tx-date">Fecha</label><input id="fm-tx-date" class="fm-control fm-control--date" name="dateISO" type="date" value="${defaultDate}"/></div>
@@ -893,17 +924,19 @@ if (state.modal.type === 'tx') {
         <div class="fm-field fm-field--account" data-tx-account-from hidden><label class="fm-label" for="fm-tx-account-from">Cuenta origen</label><select id="fm-tx-account-from" class="fm-control fm-control--account fm-control--select" name="fromAccountId"><option value="">Selecciona cuenta</option>${accountOptions}</select></div>
         <div class="fm-field fm-field--account" data-tx-account-to hidden><label class="fm-label" for="fm-tx-account-to">Cuenta destino</label><select id="fm-tx-account-to" class="fm-control fm-control--account fm-control--select" name="toAccountId"><option value="">Selecciona cuenta</option>${accountOptions}</select></div>
       </div>
-      <div class="fm-grid fm-grid--meta">
-        <div class="fm-field fm-field--category"><label class="fm-label" for="fm-tx-category">Categoría</label><input id="fm-tx-category" class="fm-control fm-control--category" name="category" list="fm-tx-cat-list" placeholder="Categoría" autocomplete="off" value="${escapeHtml(defaultCategory)}"/><datalist id="fm-tx-cat-list">${categories.map((c) => `<option value="${escapeHtml(c)}"></option>`).join('')}</datalist><button type="button" class="finance-pill finance-pill--mini" data-category-create hidden>+ crear</button></div>
+      <div class="fm-grid fm-grid--meta fin-move-grid fin-move-grid--meta">
+        <div class="fm-field fm-field--category fin-move-field" data-category-block><label class="fm-label" for="fm-tx-category">Categoría</label><select id="fm-tx-category" class="fm-control fm-control--category fm-control--select fin-move-select" name="category"><option value="">Seleccionar</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select><div class="fin-move-inline"><input class="fm-control fin-move-input" type="text" placeholder="Nueva categoría" data-category-new /><button type="button" class="finance-pill finance-pill--mini" data-category-create>+ añadir</button></div></div>
         <div class="fm-field fm-field--note"><label class="fm-label" for="fm-tx-note">Nota</label><input id="fm-tx-note" class="fm-control fm-control--note" name="note" type="text" placeholder="Nota (opcional)" value="${escapeHtml(defaultNote)}"/></div>
       </div>
-      <details class="fm-details fm-details--extras" data-section="food-extras"><summary class="fm-details__summary"><span class="fm-details__title">Extras</span><span class="fm-details__hint">Opcional</span><span class="fm-details__chev" aria-hidden="true">⌄</span></summary><div class="fm-details__body">${renderFoodExtrasSection()}</div></details>
-      <div class="fm-actions"><button class="finance-pill fm-action fm-action--submit" type="submit">${txEdit ? 'Guardar cambios' : 'Añadir movimiento'}</button></div>
+      <details class="fm-details fm-details--extras fin-move-extras" data-section="food-extras"><summary class="fm-details__summary"><span class="fm-details__title">Extras</span><span class="fm-details__hint">Opcional</span><span class="fm-details__chev" aria-hidden="true">⌄</span></summary><div class="fm-details__body">${renderFoodExtrasSection()}</div></details>
+      <div class="fm-actions fin-move-footer"><button class="finance-pill fm-action fm-action--submit" type="submit">${txEdit ? 'Guardar cambios' : 'Añadir movimiento'}</button></div>
     </form>
   </div>`;
   const form = backdrop.querySelector('[data-balance-form]');
   if (form) {
     form.querySelector('select[name="accountId"]').value = defaultAccountId;
+    const categorySelect = form.querySelector('select[name="category"]');
+    if (categorySelect) categorySelect.value = defaultCategory;
     form.querySelector('select[name="fromAccountId"]').value = defaultFrom;
     form.querySelector('select[name="toAccountId"]').value = defaultTo;
     if (txEdit?.extras || txEdit?.food) {
@@ -973,7 +1006,7 @@ function getFoodFormRefs(form) {
   if (!form) return {};
   return {
     extra: form.querySelector('[data-food-extra]'),
-    category: form.querySelector('input[name="category"]'),
+    category: form.querySelector('select[name="category"]'),
     mealType: form.querySelector('select[name="foodMealType"]'),
     cuisine: form.querySelector('select[name="foodCuisine"]'),
     place: form.querySelector('select[name="foodPlace"]'),
@@ -1010,6 +1043,29 @@ function refreshFoodTopItems(form) {
   if (!host) return;
   const topItems = topFoodItems(6);
   host.innerHTML = topItems.map((item) => `<button type="button" class="finance-chip" data-food-top-item="${escapeHtml(item.name)}">${escapeHtml(item.name)} <small>×${item.count}</small></button>`).join('') || '<small class="finance-empty">Sin habituales aún.</small>';
+}
+
+async function applyFoodItemPreset(form, itemName) {
+  const name = normalizeFoodName(itemName);
+  if (!form || !name) return;
+  const refs = getFoodFormRefs(form);
+  const preset = state.food.items?.[name] || {};
+  if (refs.itemSearch) refs.itemSearch.value = name;
+  if (refs.itemValue) refs.itemValue.value = name;
+  const amountInput = form.querySelector('input[name="amount"]');
+  if (amountInput && Number(preset.lastPrice || 0) > 0) amountInput.value = String(preset.lastPrice);
+  if (preset.lastCategory && refs.category) refs.category.value = preset.lastCategory;
+  const accountSelect = form.querySelector('select[name="accountId"]');
+  if (accountSelect && preset.lastAccountId) accountSelect.value = preset.lastAccountId;
+  const noteInput = form.querySelector('input[name="note"]');
+  if (noteInput && preset.lastNote) noteInput.value = preset.lastNote;
+  if (preset.lastExtras) {
+    if (refs.mealType) refs.mealType.value = preset.lastExtras.mealType || '';
+    if (refs.cuisine) refs.cuisine.value = preset.lastExtras.cuisine || '';
+    if (refs.place) refs.place.value = preset.lastExtras.place || '';
+  }
+  await toggleFoodExtras(form);
+  persistBalanceFormState(form);
 }
 
 async function syncFoodOptionsInForm(form) {
@@ -1050,13 +1106,13 @@ function syncTxTypeFields(form) {
 }
 
 function maybeToggleCategoryCreate(form) {
-  const input = form?.querySelector('input[name="category"]');
+  const input = form?.querySelector('[data-category-new]');
   const btn = form?.querySelector('[data-category-create]');
   if (!input || !btn) return;
   const value = String(input.value || '').trim();
   const exists = categoriesList().some((row) => row.toLowerCase() === value.toLowerCase());
-  btn.hidden = !value || exists;
-  btn.textContent = `+ crear "${value}"`;
+  btn.disabled = !value || exists;
+  btn.textContent = value ? `+ añadir "${value}"` : '+ añadir';
 }
 
 function persistBalanceFormState(form) {
@@ -1224,9 +1280,7 @@ function bindEvents() {
     if (topItem) {
       const form = target.closest('[data-balance-form]');
       if (!form) return;
-      const refs = getFoodFormRefs(form);
-      if (refs.itemSearch) refs.itemSearch.value = topItem;
-      if (refs.itemValue) refs.itemValue.value = topItem;
+      await applyFoodItemPreset(form, topItem);
       renderFoodItemSearchResults(form);
       return;
     }
@@ -1234,9 +1288,7 @@ function bindEvents() {
     if (selectedItem) {
       const form = target.closest('[data-balance-form]');
       if (!form) return;
-      const refs = getFoodFormRefs(form);
-      if (refs.itemSearch) refs.itemSearch.value = selectedItem;
-      if (refs.itemValue) refs.itemValue.value = selectedItem;
+      await applyFoodItemPreset(form, selectedItem);
       renderFoodItemSearchResults(form);
       return;
     }
@@ -1248,21 +1300,7 @@ function bindEvents() {
       if (!name) return;
       await loadFoodCatalog();
       await upsertFoodItem(name, false);
-      const refs = getFoodFormRefs(form);
-      if (refs.itemSearch) refs.itemSearch.value = name;
-      if (refs.itemValue) refs.itemValue.value = name;
-      const preset = state.food.items?.[name] || {};
-      const amountInput = form.querySelector('input[name="amount"]');
-      if (amountInput && Number(preset.lastPrice || 0) > 0) amountInput.value = String(preset.lastPrice);
-      if (preset.lastCategory) {
-        const catInput = form.querySelector('input[name="category"]');
-        if (catInput) catInput.value = preset.lastCategory;
-      }
-      if (preset.lastExtras) {
-        if (refs.mealType) refs.mealType.value = preset.lastExtras.mealType || '';
-        if (refs.cuisine) refs.cuisine.value = preset.lastExtras.cuisine || '';
-        if (refs.place) refs.place.value = preset.lastExtras.place || '';
-      }
+      await applyFoodItemPreset(form, name);
       renderFoodItemSearchResults(form);
       refreshFoodTopItems(form);
       maybeToggleCategoryCreate(form);
@@ -1279,16 +1317,27 @@ function bindEvents() {
       const touched = [existing.accountId, existing.fromAccountId, existing.toAccountId].filter(Boolean);
       for (const accountId of [...new Set(touched)]) await recomputeAccountEntries(accountId, existing.date || isoToDay(existing.dateISO || ''));
       toast('Movimiento eliminado');
+      triggerRender();
       return;
     }
     const createCategory = target.closest('[data-category-create]');
     if (createCategory) {
       const form = target.closest('[data-balance-form]');
-      const category = String(form?.querySelector('input[name="category"]')?.value || '').trim();
+      const categoryInput = form?.querySelector('[data-category-new]');
+      const categorySelect = form?.querySelector('select[name="category"]');
+      const category = normalizeFoodName(String(categoryInput?.value || ''));
       if (!category) return;
       await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
       state.balance.categories[category] = { name: category, lastUsedAt: nowTs() };
+      if (categorySelect && ![...categorySelect.options].some((opt) => opt.value === category)) {
+        categorySelect.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`);
+      }
+      if (categorySelect) categorySelect.value = category;
+      if (categoryInput) categoryInput.value = '';
       maybeToggleCategoryCreate(form);
+      await toggleFoodExtras(form);
+      persistBalanceFormState(form);
+      toast('Categoría creada');
       return;
     }
     const nextView = target.closest('[data-finance-view]')?.dataset.financeView; if (nextView) { state.activeView = nextView; triggerRender(); return; }
@@ -1325,7 +1374,8 @@ function bindEvents() {
       triggerRender();
       return;
     }
-    const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); triggerRender(); return; }
+    const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); state.balanceShowAllTx = false; triggerRender(); return; }
+    if (target.closest('[data-balance-showmore]')) { state.balanceShowAllTx = !state.balanceShowAllTx; triggerRender(); return; }
     const openModal = target.closest('[data-open-modal]')?.dataset.openModal; if (openModal) { state.modal = { type: openModal, budgetId: null }; triggerRender(); return; }
     const openGoal = target.closest('[data-open-goal]')?.dataset.openGoal; if (openGoal) { state.modal = { type: 'goal-detail', goalId: openGoal }; triggerRender(); return; }
     const delGoal = target.closest('[data-delete-goal]')?.dataset.deleteGoal; if (delGoal && window.confirm('¿Borrar objetivo?')) { await safeFirebase(() => remove(ref(db, `${state.financePath}/goals/goals/${delGoal}`))); return; }
@@ -1341,12 +1391,17 @@ view.addEventListener('focusout', async (event) => {
   if (event.target.matches('[data-account-input]')) {
     const accountId = event.target.dataset.accountInput;
     const value = event.target.value.trim();
-
+    const prev = String(event.target.dataset.prev || '').trim();
     if (!value) {
-      event.target.value = event.target.dataset.prev || '';
+      event.target.value = prev;
       return;
     }
-
+    const nextNum = Number(value);
+    const prevNum = Number(prev);
+    if (!Number.isFinite(nextNum) || (Number.isFinite(prevNum) && Math.abs(nextNum - prevNum) < 0.000001)) {
+      event.target.value = prev;
+      return;
+    }
     await saveSnapshot(accountId, dayKeyFromTs(Date.now()), value);
   }
 });
@@ -1355,9 +1410,9 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-compare]')) { state.compareMode = event.target.value; triggerRender(); }
     if (event.target.matches('[data-calendar-account]')) { state.calendarAccountId = event.target.value; triggerRender(); }
     if (event.target.matches('[data-calendar-mode]')) { state.calendarMode = event.target.value; triggerRender(); }
-    if (event.target.matches('[data-balance-type]')) { state.balanceFilterType = event.target.value; triggerRender(); }
-    if (event.target.matches('[data-balance-category]')) { state.balanceFilterCategory = event.target.value; triggerRender(); }
-    if (event.target.matches('[data-balance-account]')) { state.balanceAccountFilter = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-balance-type]')) { state.balanceFilterType = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
+    if (event.target.matches('[data-balance-category]')) { state.balanceFilterCategory = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
+    if (event.target.matches('[data-balance-account]')) { state.balanceAccountFilter = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
     if (event.target.matches('[data-import-file]')) {
       const file = event.target.files?.[0];
       if (!file) return;
@@ -1366,7 +1421,7 @@ view.addEventListener('focusout', async (event) => {
       state.modal = { ...state.modal, importRaw: raw, importPreview: parsed, importError: parsed.validRows.length ? '' : 'CSV inválido o sin filas válidas.' };
       triggerRender();
     }
-    if (event.target.matches('[data-balance-form] input[name="category"]')) {
+    if (event.target.matches('[data-balance-form] select[name="category"]')) {
       const form = event.target.closest('[data-balance-form]');
       await toggleFoodExtras(form);
       maybeToggleCategoryCreate(form);
@@ -1377,9 +1432,8 @@ view.addEventListener('focusout', async (event) => {
   });
 
   view.addEventListener('input', async (event) => {
-    if (event.target.matches('[data-balance-form] input[name="category"]')) {
+    if (event.target.matches('[data-balance-form] [data-category-new]')) {
       const form = event.target.closest('[data-balance-form]');
-      await toggleFoodExtras(form);
       maybeToggleCategoryCreate(form);
       persistBalanceFormState(form);
       return;
@@ -1461,7 +1515,8 @@ view.addEventListener('focusout', async (event) => {
       const type = normalizeTxType(String(form.get('type') || 'expense'));
       const amount = Number(form.get('amount') || 0);
       const dateISO = String(form.get('dateISO') || dayKeyFromTs(Date.now()));
-      const category = String(form.get('category') || 'Sin categoría').trim() || 'Sin categoría';
+      const pickedCategory = String(form.get('category') || '').trim();
+      const category = type === 'transfer' ? 'transfer' : (pickedCategory || 'Sin categoría');
       const note = String(form.get('note') || '').trim();
       const accountId = String(form.get('accountId') || '');
       const fromAccountId = String(form.get('fromAccountId') || '');
@@ -1492,17 +1547,20 @@ view.addEventListener('focusout', async (event) => {
       };
       console.log('[FINANCE][BALANCE] save transaction', `${state.financePath}/transactions/${saveId}`);
       await safeFirebase(() => set(ref(db, `${state.financePath}/transactions/${saveId}`), payload));
-      if (!state.balance.categories?.[category]) await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
-      await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
+      if (type !== 'transfer') {
+        if (!state.balance.categories?.[category]) await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
+        await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
+      }
       if (extras?.item) {
         await loadFoodCatalog();
-        await upsertFoodItem(extras.item, true, { lastPrice: amount, lastCategory: category, lastExtras: extras });
+        await upsertFoodItem(extras.item, true, { lastPrice: amount, lastCategory: category, lastExtras: extras, lastAccountId: accountId, lastNote: note });
         if (extras.mealType) await upsertFoodOption('typeOfMeal', extras.mealType, true);
         if (extras.cuisine) await upsertFoodOption('cuisine', extras.cuisine, true);
         if (extras.place) await upsertFoodOption('place', extras.place, true);
       }
       const touched = new Set([payload.accountId, payload.fromAccountId, payload.toAccountId, prev?.accountId, prev?.fromAccountId, prev?.toAccountId].filter(Boolean));
-      for (const account of touched) await recomputeAccountEntries(account, dateISO);
+      const recomputeStart = [dateISO, prev?.date, isoToDay(prev?.dateISO || '')].filter(Boolean).sort()[0] || dateISO;
+      for (const account of touched) await recomputeAccountEntries(account, recomputeStart);
       localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId || fromAccountId || '');
       state.lastMovementAccountId = accountId || fromAccountId || '';
       state.balanceFormState = {};

@@ -615,7 +615,9 @@ function renderFinanceBalance() {
   <article class="financeGlassCard"><div class="finance-row"><button class="finance-pill" data-balance-month="-1">◀</button><strong>${monthLabelByKey(monthKey)}</strong><button class="finance-pill" data-balance-month="1">▶</button></div>
   <div class="financeSummaryGrid"><div><small>Ingresos</small><strong class="is-positive">${fmtCurrency(monthSummary.income)}</strong></div><div><small>Gastos</small><strong class="is-negative">${fmtCurrency(monthSummary.expense)}</strong></div><div><small>Inversión</small><strong class="is-neutral">${fmtCurrency(monthSummary.invest)}</strong></div><div><small>Neto</small><strong class="${toneClass(monthSummary.net)}">${fmtCurrency(monthSummary.net)}</strong></div></div>
   <div class="finance-chip ${toneClass(deltaNet)}">Mes anterior: ${fmtSignedCurrency(deltaNet)} (${fmtSignedPercent(deltaPct)})</div></article>
-  <article class="financeGlassCard"><div class="finance-row"><h3>Transacciones</h3><div class="finance-row"><select class="finance-pill" data-balance-type><option value="all">Todos</option><option value="expense" ${state.balanceFilterType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${state.balanceFilterType === 'income' ? 'selected' : ''}>Ingreso</option></select><select class="finance-pill" data-balance-category><option value="all">Todas</option>${categories.map((c) => `<option ${state.balanceFilterCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select><select class="finance-pill" data-balance-account><option value="all">Todas las cuentas</option>${accounts.map((a) => `<option value="${a.id}" ${state.balanceAccountFilter === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div></div>
+  <article class="financeGlassCard">
+  <h3>Transacciones</h3>
+  <div class="finance-row"><h3>Transacciones</h3><div class="finance-row"><select class="finance-pill" data-balance-type><option value="all">Todos</option><option value="expense" ${state.balanceFilterType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${state.balanceFilterType === 'income' ? 'selected' : ''}>Ingreso</option></select><select class="finance-pill" data-balance-category><option value="all">Todas</option>${categories.map((c) => `<option ${state.balanceFilterCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select><select class="finance-pill" data-balance-account><option value="all">Todas las cuentas</option>${accounts.map((a) => `<option value="${a.id}" ${state.balanceAccountFilter === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div></div>
   <div class="financeTxList">${tx.map((row) => `<div class="financeTxRow"><span>${new Date(row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${escapeHtml(accounts.find((a) => a.id === row.accountId)?.name || 'Sin cuenta')}</span><strong class="${row.type === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrency(row.amount)}</strong></div>`).join('') || '<p class="finance-empty">Sin movimientos en este mes.</p>'}</div></article>
   <article class="financeGlassCard"><div class="finance-row"><h3>Presupuestos</h3><button class="finance-pill" data-open-modal="budget">+ Presupuesto</button></div>
   <div class="financeBudgetList">${budgetItems.length ? budgetItems.map((budget) => {
@@ -686,21 +688,175 @@ function renderModal() {
       </section></div>`;
     return;
   }
-  if (state.modal.type === 'tx') {
-    const defaultAccountId = state.lastMovementAccountId || state.balance.defaultAccountId || accounts[0]?.id || '';
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Añadir movimiento</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
-      <form class="finance-entry-form finance-tx-form" data-balance-form>
-      <select name="type" class="finance-pill"><option value="expense">Gasto</option><option value="income">Ingreso</option></select>
-      <input required name="amount" type="number" step="0.01" placeholder="Cantidad €" />
-      <input name="dateISO" type="date" value="${dayKeyFromTs(Date.now())}" />
-      <select name="accountId" required><option value="">Selecciona cuenta</option>${accounts.map((a) => `<option value="${a.id}" ${defaultAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select>
-      <input name="category" list="finance-cat-list" placeholder="Categoría" />
-      <datalist id="finance-cat-list">${categories.map((c) => `<option value="${escapeHtml(c)}"></option>`).join('')}</datalist>
-      <input name="note" type="text" placeholder="Nota (opcional)" />
+if (state.modal.type === 'tx') {
+  const defaultAccountId =
+    state.lastMovementAccountId || state.balance.defaultAccountId || accounts[0]?.id || '';
+
+  const typeSelect = `
+    <div class="fm-field fm-field--type">
+      <label class="fm-label" for="fm-tx-type">Tipo</label>
+      <select id="fm-tx-type" name="type" class="finance-pill fm-control fm-control--select">
+        <option value="expense">Gasto</option>
+        <option value="income">Ingreso</option>
+      </select>
+    </div>
+  `;
+
+  const amountField = `
+    <div class="fm-field fm-field--amount">
+      <label class="fm-label" for="fm-tx-amount">Cantidad</label>
+      <input
+        id="fm-tx-amount"
+        class="fm-control fm-control--amount"
+        required
+        name="amount"
+        type="number"
+        step="0.01"
+        placeholder="Cantidad €"
+        inputmode="decimal"
+      />
+    </div>
+  `;
+
+  const dateField = `
+    <div class="fm-field fm-field--date">
+      <label class="fm-label" for="fm-tx-date">Fecha</label>
+      <input
+        id="fm-tx-date"
+        class="fm-control fm-control--date"
+        name="dateISO"
+        type="date"
+        value="${dayKeyFromTs(Date.now())}"
+      />
+    </div>
+  `;
+
+  const accountOptions = accounts
+    .map(
+      (a) =>
+        `<option value="${a.id}" ${defaultAccountId === a.id ? 'selected' : ''}>${escapeHtml(
+          a.name
+        )}</option>`
+    )
+    .join('');
+
+  const accountField = `
+    <div class="fm-field fm-field--account">
+      <label class="fm-label" for="fm-tx-account">Cuenta</label>
+      <select
+        id="fm-tx-account"
+        class="fm-control fm-control--account fm-control--select"
+        name="accountId"
+        required
+      >
+        <option value="">Selecciona cuenta</option>
+        ${accountOptions}
+      </select>
+    </div>
+  `;
+
+  const categoryOptions = categories
+    .map((c) => `<option value="${escapeHtml(c)}"></option>`)
+    .join('');
+
+  const categoryField = `
+    <div class="fm-field fm-field--category">
+      <label class="fm-label" for="fm-tx-category">Categoría</label>
+      <input
+        id="fm-tx-category"
+        class="fm-control fm-control--category"
+        name="category"
+        list="fm-tx-cat-list"
+        placeholder="Categoría"
+        autocomplete="off"
+      />
+      <datalist id="fm-tx-cat-list">
+        ${categoryOptions}
+      </datalist>
+    </div>
+  `;
+
+  const noteField = `
+    <div class="fm-field fm-field--note">
+      <label class="fm-label" for="fm-tx-note">Nota</label>
+      <input
+        id="fm-tx-note"
+        class="fm-control fm-control--note"
+        name="note"
+        type="text"
+        placeholder="Nota (opcional)"
+      />
+    </div>
+  `;
+
+ // sustituye tu bloque foodExtras por este
+const foodExtras = `
+  <details class="fm-details fm-details--extras" data-section="food-extras">
+    <summary class="fm-details__summary">
+      <span class="fm-details__title">Extras</span>
+      <span class="fm-details__hint">Opcional</span>
+      <span class="fm-details__chev" aria-hidden="true">⌄</span>
+    </summary>
+
+    <div class="fm-details__body">
       ${renderFoodExtrasSection()}
-      <button class="finance-pill" type="submit">Añadir movimiento</button></form></div>`;
-    return;
-  }
+    </div>
+  </details>
+`;
+
+  const submitRow = `
+    <div class="fm-actions">
+      <button class="finance-pill fm-action fm-action--submit" type="submit">
+        Añadir movimiento
+      </button>
+    </div>
+  `;
+
+backdrop.innerHTML = `
+  <div id="finance-modal" class="finance-modal fm-modal" role="dialog" aria-modal="true" tabindex="-1">
+    <header class="fm-modal__header">
+      <h3 class="fm-modal__title">Añadir movimiento</h3>
+      <button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button>
+    </header>
+
+    <form class="finance-entry-form finance-tx-form fm-form" data-balance-form>
+      <section class="fm-section fm-section--main">
+        <header class="fm-section__header">
+          <h4 class="fm-section__title">Movimiento</h4>
+        </header>
+
+        <div class="fm-grid fm-grid--top">
+          ${typeSelect}
+          ${amountField}
+          ${dateField}
+          ${accountField}
+        </div>
+
+        <div class="fm-grid fm-grid--meta">
+          ${categoryField}
+          ${noteField}
+        </div>
+      </section>
+
+      <details class="fm-details fm-details--extras" data-section="food-extras">
+        <summary class="fm-details__summary">
+          <span class="fm-details__title">Extras</span>
+          <span class="fm-details__hint">Opcional</span>
+          <span class="fm-details__chev" aria-hidden="true">⌄</span>
+        </summary>
+        <div class="fm-details__body">
+          ${renderFoodExtrasSection()}
+        </div>
+      </details>
+
+      <div class="fm-actions">
+        <button class="finance-pill fm-action fm-action--submit" type="submit">Añadir movimiento</button>
+      </div>
+    </form>
+  </div>
+`;
+  return;
+}
   if (state.modal.type === 'budget') {
     const monthKey = getSelectedBalanceMonthKey();
     const budget = state.modal.budgetId ? getBudgetItems(monthKey).find((item) => item.id === state.modal.budgetId) : null;

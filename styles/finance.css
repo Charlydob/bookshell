@@ -1,3 +1,5 @@
+
+
 .financeTab {
   --fin-bg: #030a1a;
   --fin-panel: rgba(9, 22, 48, 0.62);
@@ -297,6 +299,9 @@ Modal: #finance-modalOverlay, #finance-modal
   box-shadow: 0 8px 26px rgba(0,0,0,.35);
   backdrop-filter: blur(14px);
   padding: 14px;
+  max-width: 95%;
+  min-width: 95%;
+  justify-content: center;
 }
 .financeTab .financeViewHeader,
 .financeTab .finance-row {
@@ -310,6 +315,11 @@ Modal: #finance-modalOverlay, #finance-modal
   display: grid;
   grid-template-columns: repeat(2,minmax(0,1fr));
   gap: 10px;
+}
+.finance-row h3{  
+ display: none;
+ max-width: 20px ;
+ min-width: 20px;
 }
 .financeTab .financeTxList,
 .financeTab .financeBudgetList,
@@ -422,3 +432,184 @@ Modal: #finance-modalOverlay, #finance-modal
   border-style: dashed;
   border-color: rgba(74,222,128,.5);
 }
+/* ===== Finance Modal (mínimo, estilable por bloques) ===== */
+.fm-modal{
+  width: min(560px, calc(100vw - 24px));
+  margin: 12px auto;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(25,25,35,.92);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 18px 50px rgba(0,0,0,.45);
+  color: #fff;
+}
+
+.fm-modal__header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding-bottom:10px;
+  margin-bottom:12px;
+  border-bottom: 1px solid rgba(255,255,255,.10);
+}
+
+.fm-modal__title{
+  margin:0;
+  font-size:16px;
+  font-weight:700;
+}
+
+/* form */
+.fm-form{ display:block; }
+
+/* secciones */
+.fm-section{
+  padding:12px;
+  border-radius:14px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.10);
+  margin-bottom:12px;
+}
+
+.fm-section__header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:10px;
+}
+
+.fm-section__title{
+  margin:0;
+  font-size:13px;
+  font-weight:700;
+  opacity:.9;
+}
+
+/* grids */
+.fm-grid{
+  display:grid;
+  gap:10px;
+}
+
+.fm-grid--top{ grid-template-columns: 1fr 1fr; }
+.fm-grid--meta{ grid-template-columns: 1fr; }
+
+@media (min-width: 420px){
+  .fm-grid--meta{ grid-template-columns: 1fr 1fr; }
+}
+
+/* fields */
+.fm-field{ display:flex; flex-direction:column; gap:6px; }
+
+.fm-label{
+  font-size:12px;
+  opacity:.8;
+}
+
+/* controls */
+.fm-control{
+  width:100%;
+  padding:10px 12px;
+  border-radius:12px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(0,0,0,.20);
+  color: inherit;
+  outline: none;
+}
+
+.fm-control::placeholder{ color: rgba(255,255,255,.55); }
+.fm-control:focus{
+  border-color: rgba(127,93,255,.55);
+  box-shadow: 0 0 0 3px rgba(127,93,255,.18);
+}
+
+.fm-control--select{ appearance:none; }
+
+/* acciones */
+.fm-actions{
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+  padding-top:6px;
+}
+
+/* botón cerrar (usa tu .finance-pill, esto es extra por si acaso) */
+.fm-modal__close{
+  white-space:nowrap;
+}
+/* ===== Extras plegable ===== */
+.fm-details{
+  margin-top: 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.10);
+  overflow: hidden;
+}
+
+.fm-details__summary{
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding: 12px;
+}
+
+.fm-details__summary::-webkit-details-marker{ display:none; }
+
+.fm-details__title{
+  font-size: 13px;
+  font-weight: 800;
+  opacity: .95;
+}
+
+.fm-details__hint{
+  font-size: 12px;
+  opacity: .65;
+  margin-left: auto;
+}
+
+.fm-details__chev{
+  opacity: .75;
+  transform: translateY(-1px);
+  transition: transform .18s ease;
+}
+
+.fm-details[open] .fm-details__chev{
+  transform: rotate(180deg);
+}
+
+.fm-details__body{
+  padding: 12px;
+  border-top: 1px solid rgba(255,255,255,.10);
+}
+.finance-tx-form{
+display: flex;
+flex-direction: column;
+}
+
+/* fuerza columna única aunque tu CSS viejo ponga grid/flex en .finance-entry-form */
+.finance-entry-form.fm-form{
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px;
+  align-items: stretch;
+}
+
+/* que Movimiento, Extras y botón ocupen todo el ancho */
+.fm-section--main,
+.fm-details,
+.fm-actions{
+  width: 100%;
+}
+
+/* botón debajo y centrado (o cámbialo a flex-end si quieres a la derecha) */
+.fm-actions{
+  display: flex;
+  justify-content: center;
+}
+
+/* extras plegable (el tuyo vale, esto es por si faltaba) */
+.fm-details{ margin: 0; }

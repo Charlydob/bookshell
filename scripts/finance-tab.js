@@ -45,8 +45,8 @@ function fmtSignedPercent(value) {
 }
 
 function toneClass(value) {
-  if (value > 0) return 'is-pos';
-  if (value < 0) return 'is-neg';
+  if (value > 0) return 'is-positive';
+  if (value < 0) return 'is-negative';
   return 'is-neutral';
 }
 
@@ -269,52 +269,53 @@ function render() {
 
   host.innerHTML = `
     <section class="finance-home ${toneClass(totalRange.delta)}">
-      <article class="finance-panel finance-overview">
-        <p class="finance-eyebrow">TOTAL</p>
-        <h2 class="finance-total">${fmtCurrency(total)}</h2>
-        <p class="finance-delta ${toneClass(totalRange.delta)}">${fmtSignedCurrency(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
-        <div class="finance-chart ${chart.tone}">
+      <article class="finance__hero">
+        <p class="finance__eyebrow">TOTAL</p>
+        <h2 id="finance-totalValue" class="finance__total">${fmtCurrency(total)}</h2>
+        <p id="finance-totalDelta" class="finance__delta ${toneClass(totalRange.delta)}">${fmtSignedCurrency(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
+        <div id="finance-lineChart" class="finance__chart ${chart.tone}">
           ${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}
         </div>
       </article>
 
-      <article class="finance-controls">
-        <select class="finance-pill" data-range>
+      <article class="finance__controls">
+        <select id="finance-rangeSelect" class="finance-pill" data-range>
           <option value="total" ${state.rangeMode === 'total' ? 'selected' : ''}>Total</option>
           <option value="month" ${state.rangeMode === 'month' ? 'selected' : ''}>Mes</option>
           <option value="week" ${state.rangeMode === 'week' ? 'selected' : ''}>Semana</option>
           <option value="year" ${state.rangeMode === 'year' ? 'selected' : ''}>Año</option>
         </select>
-        <button class="finance-pill" data-history>Historial</button>
-        <select class="finance-pill" data-compare>
+        <button id="finance-historyBtn" class="finance-pill" data-history>Historial</button>
+        <select id="finance-compareSelect" class="finance-pill" data-compare>
           <option value="month" ${state.compareMode === 'month' ? 'selected' : ''}>Mes vs Mes</option>
           <option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option>
         </select>
+        <button id="finance-refreshBtn" class="finance-pill finance-pill--secondary" type="button" aria-hidden="true" tabindex="-1">Actualizar</button>
       </article>
 
-      <article class="finance-compare-row">
-        <div class="finance-chip ${toneClass(compareCurrent.delta)}">${state.compareMode === 'week' ? 'Semana' : 'Mes'} actual: ${fmtSignedCurrency(compareCurrent.delta)} (${fmtSignedPercent(compareCurrent.deltaPct)})</div>
-        <div class="finance-chip ${toneClass(comparePrev.delta)}">${state.compareMode === 'week' ? 'Semana' : 'Mes'} anterior: ${fmtSignedCurrency(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div>
+      <article class="finance__compareRow">
+        <div id="finance-currentComparePill" class="finance-chip ${toneClass(compareCurrent.delta)}">${state.compareMode === 'week' ? 'Semana' : 'Mes'} actual: ${fmtSignedCurrency(compareCurrent.delta)} (${fmtSignedPercent(compareCurrent.deltaPct)})</div>
+        <div id="finance-prevComparePill" class="finance-chip ${toneClass(comparePrev.delta)}">${state.compareMode === 'week' ? 'Semana' : 'Mes'} anterior: ${fmtSignedCurrency(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div>
       </article>
 
-      <article class="finance-panel">
-        <div class="finance-panel-head"><h3>Cuentas</h3><button class="finance-pill" data-new-account>+ Cuenta</button></div>
-        <div class="finance-account-list">${accounts.map((account) => `
-          <article class="finance-account ${toneClass(account.range.delta)}" data-open-detail="${account.id}">
-            <div class="finance-account-main">
-              <strong>${account.name}</strong>
-              <input class="finance-balance-input" data-account-input="${account.id}" value="${account.current.toFixed(2)}" inputmode="decimal" placeholder="0.00" />
+      <article class="finance__accounts">
+        <div class="finance__sectionHeader"><h2>Cuentas</h2><button id="finance-addAccountBtn" class="finance-pill" data-new-account>+ Cuenta</button></div>
+        <div id="finance-accountsList" class="finance-account-list">${accounts.map((account) => `
+          <article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}">
+            <div class="financeAccountCard__main">
+              <strong class="financeAccountCard__title">${account.name}</strong>
+              <input class="financeAccountCard__balance" data-account-input="${account.id}" value="${account.current.toFixed(2)}" inputmode="decimal" placeholder="0.00" />
             </div>
-            <div class="finance-account-side">
-              <span class="finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span>
-              <button class="finance-pill finance-pill--mini" data-delete-account="${account.id}">⋯</button>
+            <div class="financeAccountCard__side">
+              <span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span>
+              <button class="financeAccountCard__menuBtn" data-delete-account="${account.id}" aria-label="Opciones de ${account.name}">⋯</button>
             </div>
           </article>
         `).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div>
       </article>
 
-      <article class="finance-panel">
-        <div class="finance-panel-head">
+      <article class="finance__calendarPreview">
+        <div class="finance__sectionHeader">
           <h3>Calendario</h3>
           <span class="finance-month-label">${monthLabel(state.calendarMonthOffset)}</span>
         </div>
@@ -331,7 +332,7 @@ function render() {
           <button class="finance-pill" data-month-shift="1">▶</button>
         </div>
         <div class="finance-calendar-grid">
-          ${calendarPoints.map((point) => `<div class="finance-day ${toneClass(point.delta)}"><strong>${new Date(point.ts).getDate()}</strong><span>${fmtSignedCurrency(point.delta)}</span><span>${fmtSignedPercent(point.deltaPct)}</span></div>`).join('') || '<p class="finance-empty">Sin cambios para este mes.</p>'}
+          ${calendarPoints.map((point) => `<div class="financeCalCell ${toneClass(point.delta)}"><strong>${new Date(point.ts).getDate()}</strong><span>${fmtSignedCurrency(point.delta)}</span><span>${fmtSignedPercent(point.deltaPct)}</span></div>`).join('') || '<p class="finance-empty">Sin cambios para este mes.</p>'}
         </div>
       </article>
     </section>
@@ -342,21 +343,26 @@ function render() {
 }
 
 function renderModal(accounts) {
-  const backdrop = document.getElementById('finance-modal-backdrop');
-  if (!backdrop) return warnMissing('finance-modal-backdrop');
+  const backdrop = document.getElementById('finance-modalOverlay');
+  if (!backdrop) return warnMissing('finance-modalOverlay');
 
   if (!state.modal.type) {
+    backdrop.classList.remove('is-open');
     backdrop.classList.add('hidden');
+    backdrop.setAttribute('aria-hidden', 'true');
     backdrop.innerHTML = '';
+    document.body.classList.remove('finance-modal-open');
     return;
   }
 
+  backdrop.classList.add('is-open');
   backdrop.classList.remove('hidden');
-  backdrop.style.display = 'flex';
+  backdrop.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('finance-modal-open');
 
   if (state.modal.type === 'history') {
     backdrop.innerHTML = `
-      <div class="finance-modal" role="dialog" aria-modal="true">
+      <div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1">
         <header><h3>Historial</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
         <div class="finance-history-list">
           ${accounts.map((account) => `
@@ -371,6 +377,20 @@ function renderModal(accounts) {
     return;
   }
 
+  if (state.modal.type === 'new-account') {
+    backdrop.innerHTML = `
+      <div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1">
+        <header><h3>Nueva cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+        <form class="finance-entry-form" data-new-account-form>
+          <input type="text" data-account-name-input placeholder="Nombre de la cuenta" required />
+          <button class="finance-pill" type="submit">Crear cuenta</button>
+        </form>
+      </div>
+    `;
+    backdrop.querySelector('#finance-modal')?.focus();
+    return;
+  }
+
   const account = accounts.find((item) => item.id === state.modal.accountId);
   if (!account) {
     state.modal = { type: null, accountId: null };
@@ -380,7 +400,7 @@ function renderModal(accounts) {
 
   const chart = chartModelForRange(account.daily.map((point) => ({ ...point, value: point.value })), state.rangeMode);
   backdrop.innerHTML = `
-    <div class="finance-modal ${toneClass(account.range.delta)}" role="dialog" aria-modal="true">
+    <div id="finance-modal" class="finance-modal ${toneClass(account.range.delta)}" role="dialog" aria-modal="true" tabindex="-1">
       <header>
         <h3>${account.name}</h3>
         <div class="finance-modal-actions"><button class="finance-pill" data-close-modal>Cerrar</button><button class="finance-pill" data-delete-account="${account.id}">Eliminar cuenta</button></div>
@@ -412,6 +432,7 @@ function renderModal(accounts) {
       </div>
     </div>
   `;
+  backdrop.querySelector('#finance-modal')?.focus();
 }
 
 function renderToast() {
@@ -535,7 +556,7 @@ function bindEvents() {
       return render();
     }
 
-    if (target.closest('[data-close-modal]') || target.id === 'finance-modal-backdrop') {
+    if (target.closest('[data-close-modal]') || target.id === 'finance-modalOverlay') {
       state.modal = { type: null, accountId: null };
       return render();
     }
@@ -548,8 +569,8 @@ function bindEvents() {
     }
 
     if (target.closest('[data-new-account]')) {
-      const name = window.prompt('Nombre de la cuenta');
-      if (name?.trim()) await addAccount(name.trim());
+      state.modal = { type: 'new-account', accountId: null };
+      render();
       return;
     }
 
@@ -619,6 +640,15 @@ function bindEvents() {
   });
 
   view.addEventListener('submit', async (event) => {
+    if (event.target.matches('[data-new-account-form]')) {
+      event.preventDefault();
+      const name = event.target.querySelector('[data-account-name-input]')?.value?.trim();
+      if (name) await addAccount(name);
+      state.modal = { type: null, accountId: null };
+      render();
+      return;
+    }
+
     if (!event.target.matches('[data-entry-form]')) return;
     event.preventDefault();
     const accountId = event.target.dataset.entryForm;

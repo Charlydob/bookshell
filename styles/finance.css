@@ -722,3 +722,14 @@ display: flex;
 .financeTab .financeCalCell span{
   font-size: 6px;
 }
+
+.financeTab{
+  overflow-x: hidden;
+  touch-action: pan-y; /* solo vertical */
+}
+
+
+*::-webkit-scrollbar {
+  width: 0px;
+  height: 0px;
+}

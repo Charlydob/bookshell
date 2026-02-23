@@ -13,9 +13,10 @@ const state = {
   activeView: 'home',
   accounts: [],
   legacyEntries: {},
-  balance: { tx: {}, movements: {}, categories: {}, budgets: {}, snapshots: {}, defaultAccountId: '', lastSeenMonthKey: '' },
+  balance: { tx: {}, movements: {}, transactions: {}, categories: {}, budgets: {}, snapshots: {}, defaultAccountId: '', lastSeenMonthKey: '' },
   goals: { goals: {} },
   modal: { type: null, accountId: null, goalId: null, budgetId: null, importRaw: '', importPreview: null, importError: '' },
+  balanceFormState: {},
   toast: '',
   calendarMonthOffset: 0,
   calendarAccountId: 'total',
@@ -134,6 +135,15 @@ function normalizeAccountShare(account = {}) {
   return { shared, sharedRatio };
 }
 function movementSign(type) { return type === 'income' ? 1 : -1; }
+function txSortTs(row) {
+  return new Date(row?.date || row?.dateISO || 0).getTime() || 0;
+}
+function normalizeTxType(type = '') {
+  const safe = String(type || '').trim().toLowerCase();
+  if (safe === 'income' || safe === 'expense' || safe === 'transfer') return safe;
+  if (safe === 'invest') return 'expense';
+  return 'expense';
+}
 function isFoodCategory(category = '') {
   const normalized = String(category || '').trim().toLowerCase();
   return normalized === 'comida' || normalized === 'food';
@@ -149,7 +159,10 @@ function normalizeFoodMap(map = {}) {
     out[safeName] = {
       createdAt: Number(payload?.createdAt || 0) || nowTs(),
       count: Number(payload?.count || 0),
-      lastUsedAt: Number(payload?.lastUsedAt || 0)
+      lastUsedAt: Number(payload?.lastUsedAt || 0),
+      lastPrice: Number(payload?.lastPrice || 0),
+      lastCategory: String(payload?.lastCategory || ''),
+      lastExtras: payload?.lastExtras || {}
     };
   });
   return out;
@@ -173,14 +186,14 @@ async function loadFoodCatalog(force = false) {
   if (state.food.loaded && !force) return;
   state.food.loading = true;
   try {
-    const snap = await safeFirebase(() => get(ref(db, `${state.financePath}/balance/food`)));
+    const snap = await safeFirebase(() => get(ref(db, `${state.financePath}/catalog`)));
     const val = snap?.val() || {};
     state.food.options = {
-      typeOfMeal: normalizeFoodMap(val.options?.typeOfMeal || {}),
-      cuisine: normalizeFoodMap(val.options?.cuisine || {}),
-      place: normalizeFoodMap(val.options?.place || {})
+      typeOfMeal: normalizeFoodMap(val.foodOptions?.typeOfMeal || {}),
+      cuisine: normalizeFoodMap(val.foodOptions?.cuisine || {}),
+      place: normalizeFoodMap(val.foodOptions?.place || {})
     };
-    state.food.items = normalizeFoodMap(val.items || {});
+    state.food.items = normalizeFoodMap(val.foodItems || {});
     state.food.loaded = true;
   } finally {
     state.food.loading = false;
@@ -197,21 +210,24 @@ async function upsertFoodOption(kind, value, incrementCount = false) {
     count: Number(prev.count || 0) + (incrementCount ? 1 : 0)
   };
   state.food.options[kind][name] = payload;
-  await safeFirebase(() => update(ref(db, `${state.financePath}/balance/food/options/${kind}/${name}`), payload));
+  await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/foodOptions/${kind}/${name}`), payload));
   return name;
 }
 
-async function upsertFoodItem(value, incrementCount = false) {
+async function upsertFoodItem(value, incrementCount = false, patch = {}) {
   const name = normalizeFoodName(value);
   if (!name) return '';
   const prev = state.food.items[name] || {};
   const payload = {
     createdAt: Number(prev.createdAt || 0) || nowTs(),
     count: Number(prev.count || 0) + (incrementCount ? 1 : 0),
-    lastUsedAt: incrementCount ? nowTs() : Number(prev.lastUsedAt || 0)
+    lastUsedAt: incrementCount ? nowTs() : Number(prev.lastUsedAt || 0),
+    lastPrice: Number(patch.lastPrice ?? prev.lastPrice ?? 0),
+    lastCategory: String(patch.lastCategory ?? prev.lastCategory ?? ''),
+    lastExtras: patch.lastExtras || prev.lastExtras || {}
   };
   state.food.items[name] = payload;
-  await safeFirebase(() => update(ref(db, `${state.financePath}/balance/food/items/${name}`), payload));
+  await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/foodItems/${name}`), payload));
   return name;
 }
 
@@ -301,28 +317,32 @@ async function recomputeAccountEntries(accountId, fromDay) {
   const account = root.accounts?.[accountId] || state.accounts.find((item) => item.id === accountId);
   if (!account) return;
   const snapshots = normalizeSnapshots(account.snapshots || {});
-  const movementRows = [];
-  Object.entries(root.movements || {}).forEach(([monthKey, rows]) => {
-    Object.entries(rows || {}).forEach(([id, row]) => {
-      if (row?.accountId === accountId) movementRows.push({ id, ...row, monthKey: row?.monthKey || monthKey, amount: Number(row?.amount || 0) });
-    });
-  });
-  const movements = movementRows.sort((a, b) => new Date(a.dateISO || 0) - new Date(b.dateISO || 0));
+  const txRows = balanceTxList().filter((row) => (
+    row.accountId === accountId || row.fromAccountId === accountId || row.toAccountId === accountId
+  ));
+  const movements = txRows.sort((a, b) => txSortTs(a) - txSortTs(b));
   const daySet = new Set([
     ...snapshots.map((row) => row.day),
-    ...movements.map((row) => isoToDay(row.dateISO || ''))
+    ...movements.map((row) => String(row.date || isoToDay(row.dateISO || '')))
   ].filter(Boolean));
   if (fromDay) daySet.add(fromDay);
   const allDays = [...daySet].sort();
   if (!allDays.length) return;
   const normalizedFromDay = toIsoDay(fromDay || '') || fromDay;
   const startDay = normalizedFromDay || allDays[0];
-  log(`recompute from ${startDay} for accountId=${accountId}`);
+  console.log('[FINANCE][BALANCE] recompute balances', { accountId, fromDay: startDay, txCount: movements.length });
   const dayMovementNet = {};
   movements.forEach((row) => {
-    const day = isoToDay(row.dateISO || '');
+    const day = String(row.date || isoToDay(row.dateISO || ''));
     if (!day) return;
-    dayMovementNet[day] = (dayMovementNet[day] || 0) + movementSign(row.type) * Number(row.amount || 0);
+    let delta = 0;
+    if (row.type === 'income' && row.accountId === accountId) delta = Number(row.amount || 0);
+    else if (row.type === 'expense' && row.accountId === accountId) delta = -Number(row.amount || 0);
+    else if (row.type === 'transfer') {
+      if (row.fromAccountId === accountId) delta = -Number(row.amount || 0);
+      if (row.toAccountId === accountId) delta += Number(row.amount || 0);
+    }
+    dayMovementNet[day] = (dayMovementNet[day] || 0) + delta;
   });
   const snapshotByDay = Object.fromEntries(snapshots.map((row) => [row.day, row]));
   const existingEntries = account.entries || account.daily || {};
@@ -503,16 +523,39 @@ function calendarYearData(accounts, totalSeries) {
 }
 
 function balanceTxList() {
-  const flat = [];
+  const fromNew = Object.entries(state.balance.transactions || {}).map(([id, row]) => ({
+    id,
+    ...row,
+    amount: Number(row?.amount || 0),
+    type: normalizeTxType(row?.type),
+    date: String(row?.date || isoToDay(row?.dateISO || '') || ''),
+    monthKey: String(row?.monthKey || String(row?.date || isoToDay(row?.dateISO || '') || '').slice(0, 7))
+  }));
+  const fromLegacy = [];
   Object.entries(state.balance.movements || {}).forEach(([monthKey, rows]) => {
     Object.entries(rows || {}).forEach(([id, row]) => {
-      flat.push({ id, ...row, monthKey: row?.monthKey || monthKey, amount: Number(row?.amount || 0) });
+      fromLegacy.push({
+        id,
+        ...row,
+        type: normalizeTxType(row?.type),
+        date: String(isoToDay(row?.dateISO || row?.date || '')),
+        monthKey: row?.monthKey || monthKey,
+        amount: Number(row?.amount || 0),
+        accountId: String(row?.accountId || '')
+      });
     });
   });
-  const legacy = Object.entries(state.balance.tx || {}).map(([id, row]) => ({ id, ...row, amount: Number(row.amount || 0) }));
-  return [...flat, ...legacy]
+  const legacyTx = Object.entries(state.balance.tx || {}).map(([id, row]) => ({
+    id,
+    ...row,
+    type: normalizeTxType(row?.type),
+    date: String(row?.date || isoToDay(row?.dateISO || '')),
+    monthKey: String(row?.monthKey || String(row?.date || isoToDay(row?.dateISO || '') || '').slice(0, 7)),
+    amount: Number(row?.amount || 0)
+  }));
+  return [...fromNew, ...fromLegacy, ...legacyTx]
     .filter((row) => Number.isFinite(row.amount) && row.monthKey)
-    .sort((a, b) => new Date(b.dateISO || 0) - new Date(a.dateISO || 0));
+    .sort((a, b) => (txSortTs(b) - txSortTs(a)) || (Number(b.createdAt || 0) - Number(a.createdAt || 0)));
 }
 function getSelectedBalanceMonthKey() {
   return offsetMonthKey(getMonthKeyFromDate(), state.balanceMonthOffset);
@@ -521,11 +564,19 @@ function summaryForMonth(monthKey) {
   const rows = balanceTxList().filter((tx) => tx.monthKey === monthKey);
   const income = rows.filter((tx) => tx.type === 'income').reduce((s, tx) => s + tx.amount, 0);
   const expense = rows.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + tx.amount, 0);
-  const invest = rows.filter((tx) => tx.type === 'invest').reduce((s, tx) => s + tx.amount, 0);
-  return { income, expense, invest, net: income - expense - invest };
+  return { income, expense, invest: 0, net: income - expense };
+}
+
+function monthlyNetRows() {
+  const byMonth = {};
+  balanceTxList().forEach((tx) => {
+    if (!tx.monthKey) return;
+    byMonth[tx.monthKey] = (byMonth[tx.monthKey] || 0) + (tx.type === 'income' ? tx.amount : -tx.amount);
+  });
+  return Object.entries(byMonth).map(([month, net]) => ({ month, net })).sort((a, b) => b.month.localeCompare(a.month));
 }
 function categoriesList() {
-  const dynamic = Object.keys(state.balance.categories || {});
+  const dynamic = Object.values(state.balance.categories || {}).map((row) => String(row?.name || '')).filter(Boolean);
   const fromTx = [...new Set(balanceTxList().map((tx) => tx.category).filter(Boolean))];
   return [...new Set([...dynamic, ...fromTx])].sort((a, b) => a.localeCompare(b, 'es'));
 }
@@ -688,81 +739,49 @@ function renderFinanceCalendar(accounts, totalSeries) {
 
 function renderFinanceBalance() {
   const monthKey = getSelectedBalanceMonthKey();
+  const categories = categoriesList();
+  const accounts = buildAccountModels();
   const tx = balanceTxList().filter((row) => row.monthKey === monthKey)
     .filter((row) => state.balanceFilterType === 'all' || row.type === state.balanceFilterType)
     .filter((row) => state.balanceFilterCategory === 'all' || row.category === state.balanceFilterCategory)
-    .filter((row) => state.balanceAccountFilter === 'all' || row.accountId === state.balanceAccountFilter);
-  const categories = categoriesList();
-  const accounts = buildAccountModels();
+    .filter((row) => {
+      if (state.balanceAccountFilter === 'all') return true;
+      return row.accountId === state.balanceAccountFilter || row.fromAccountId === state.balanceAccountFilter || row.toAccountId === state.balanceAccountFilter;
+    });
   const monthSummary = summaryForMonth(monthKey);
   const prevSummary = summaryForMonth(offsetMonthKey(monthKey, -1));
-  const deltaNet = monthSummary.net - prevSummary.net;
-  const deltaPct = prevSummary.net ? (deltaNet / Math.abs(prevSummary.net)) * 100 : 0;
   const spentByCategory = {};
   balanceTxList().filter((row) => row.monthKey === monthKey && row.type === 'expense').forEach((row) => { spentByCategory[row.category || 'Sin categoría'] = (spentByCategory[row.category || 'Sin categoría'] || 0) + row.amount; });
-  const totalSpent = Object.values(spentByCategory).reduce((s, v) => s + v, 0);
+  const totalSpent = Object.values(spentByCategory).reduce((sum, value) => sum + value, 0);
   const budgetItems = getBudgetItems(monthKey);
+  const monthNetList = monthlyNetRows();
+  const bestMonth = monthNetList.reduce((best, row) => (!best || row.net > best.net ? row : best), null);
+  const worstMonth = monthNetList.reduce((worst, row) => (!worst || row.net < worst.net ? row : worst), null);
+  const avgNet = monthNetList.length ? monthNetList.reduce((sum, row) => sum + row.net, 0) / monthNetList.length : 0;
+  const accountName = (id) => escapeHtml(accounts.find((a) => a.id === id)?.name || 'Sin cuenta');
   return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2><button class="finance-pill" data-open-modal="tx">+ Añadir</button></header>
   <article class="financeGlassCard"><div class="finance-row"><button class="finance-pill" data-balance-month="-1">◀</button><strong>${monthLabelByKey(monthKey)}</strong><button class="finance-pill" data-balance-month="1">▶</button></div>
-  <div class="financeSummaryGrid"><div><small>Ingresos</small><strong class="is-positive">${fmtCurrency(monthSummary.income)}</strong></div><div><small>Gastos</small><strong class="is-negative">${fmtCurrency(monthSummary.expense)}</strong></div><div><small>Inversión</small><strong class="is-neutral">${fmtCurrency(monthSummary.invest)}</strong></div><div><small>Neto</small><strong class="${toneClass(monthSummary.net)}">${fmtCurrency(monthSummary.net)}</strong></div></div>
-  <div class="finance-chip ${toneClass(deltaNet)}">Mes anterior: ${fmtSignedCurrency(deltaNet)} (${fmtSignedPercent(deltaPct)})</div></article>
+  <div class="financeSummaryGrid"><div><small>Ingresos</small><strong class="is-positive">${fmtCurrency(monthSummary.income)}</strong></div><div><small>Gastos</small><strong class="is-negative">${fmtCurrency(monthSummary.expense)}</strong></div><div><small>Neto</small><strong class="${toneClass(monthSummary.net)}">${fmtCurrency(monthSummary.net)}</strong></div><div><small>Mes anterior</small><strong class="${toneClass(prevSummary.net)}">${fmtCurrency(prevSummary.net)}</strong></div></div>
+  <div class="finance-chip ${toneClass(prevSummary.net)}">Mes anterior: ${fmtSignedCurrency(prevSummary.net)}</div></article>
   <article class="financeGlassCard">
-  <h3>Transacciones</h3>
-  <div class="finance-row"><h3>Transacciones</h3><div class="finance-row"><select class="finance-pill" data-balance-type><option value="all">Todos</option><option value="expense" ${state.balanceFilterType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${state.balanceFilterType === 'income' ? 'selected' : ''}>Ingreso</option></select><select class="finance-pill" data-balance-category><option value="all">Todas</option>${categories.map((c) => `<option ${state.balanceFilterCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select><select class="finance-pill" data-balance-account><option value="all">Todas las cuentas</option>${accounts.map((a) => `<option value="${a.id}" ${state.balanceAccountFilter === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div></div>
-  <div class="financeTxList">${tx.map((row) => `<div class="financeTxRow"><span>${new Date(row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${escapeHtml(accounts.find((a) => a.id === row.accountId)?.name || 'Sin cuenta')}</span><strong class="${row.type === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrency(row.amount)}</strong></div>`).join('') || '<p class="finance-empty">Sin movimientos en este mes.</p>'}</div></article>
+  <div class="finance-row"><h3>Transacciones</h3><div class="finance-row"><select class="finance-pill" data-balance-type><option value="all">Todos</option><option value="expense" ${state.balanceFilterType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${state.balanceFilterType === 'income' ? 'selected' : ''}>Ingreso</option><option value="transfer" ${state.balanceFilterType === 'transfer' ? 'selected' : ''}>Transferencia</option></select><select class="finance-pill" data-balance-category><option value="all">Todas</option>${categories.map((c) => `<option ${state.balanceFilterCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select><select class="finance-pill" data-balance-account><option value="all">Todas las cuentas</option>${accounts.map((a) => `<option value="${a.id}" ${state.balanceAccountFilter === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div></div>
+  <div class="financeTxList financeTxList--scroll" style="max-height:260px;overflow-y:auto;">${tx.slice(0, 5).map((row) => {
+    const accountText = row.type === 'transfer'
+      ? `${accountName(row.fromAccountId)} → ${accountName(row.toAccountId)}`
+      : accountName(row.accountId);
+    return `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}</span><strong class="${row.type === 'income' ? 'is-positive' : 'is-negative'}">${row.type === 'transfer' ? fmtCurrency(row.amount) : fmtCurrency(row.amount)}</strong><span class="finance-row"><button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button></span></div>`;
+  }).join('') || '<p class="finance-empty">Sin movimientos en este mes.</p>'}${tx.length > 5 ? tx.slice(5).map((row) => {
+    const accountText = row.type === 'transfer' ? `${accountName(row.fromAccountId)} → ${accountName(row.toAccountId)}` : accountName(row.accountId);
+    return `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}</span><strong class="${row.type === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrency(row.amount)}</strong><span class="finance-row"><button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button></span></div>`;
+  }).join('') : ''}</div></article>
   <article class="financeGlassCard"><div class="finance-row"><h3>Presupuestos</h3><button class="finance-pill" data-open-modal="budget">+ Presupuesto</button></div>
   <div class="financeBudgetList">${budgetItems.length ? budgetItems.map((budget) => {
     const spent = budget.category.toLowerCase() === 'total' ? totalSpent : Number(spentByCategory[budget.category] || 0);
     const limit = Number(budget.limit || 0);
     const pct = limit ? (spent / limit) * 100 : 0;
-    return `<div class="financeBudgetRow"><div class="finance-row"><span>${escapeHtml(budget.category)}</span><div class="finance-row"><small>${fmtCurrency(spent)} / ${limit ? fmtCurrency(limit) : '—'}</small><button class="finance-pill finance-pill--mini" data-budget-menu="${budget.id}">⋯</button></div></div><div class="financeProgress"><i style="width:${Math.min(100, pct)}%" class="${pct > 100 ? 'is-negative' : ''}"></i></div>${pct > 100 ? '<small class="is-negative">over</small>' : ''}</div>`;
-  }).join('') : '<p class="finance-empty">No hay presupuestos aún.</p>'}</div></article></section>`;
-}
-
-function goalScore(goal) {
-  const due = new Date(goal.dueDateISO || Date.now()).getTime();
-  const daysLeft = Math.max(1, Math.ceil((due - Date.now()) / 86400000));
-  const weight = Number(goal.targetAmount || 0);
-  const score = weight / daysLeft;
-  return Number.isFinite(score) ? score : 0;
-}
-function accountCurrentMap() { return Object.fromEntries(buildAccountModels().map((a) => [a.id, a.current])); }
-function renderFinanceGoals() {
-  log('goals init', { total: Object.keys(state.goals.goals || {}).length });
-  const goals = Object.entries(state.goals.goals || {}).map(([id, g]) => ({ id, ...g })).sort((a, b) => goalScore(b) - goalScore(a));
-  const balances = accountCurrentMap();
-  const totals = goals.map((g) => {
-    const available = (g.accountsIncluded || []).reduce((sum, id) => sum + Number(balances[id] || 0), 0);
-    const progress = Math.min(available, Number(g.targetAmount || 0));
-    const pct = g.targetAmount ? (progress / g.targetAmount) * 100 : 0;
-    const daysLeft = Math.ceil((new Date(g.dueDateISO || Date.now()).getTime() - Date.now()) / 86400000);
-    return { ...g, available, progress, pct, daysLeft, score: goalScore(g) };
-  });
-  const pool = Object.values(balances).reduce((s, v) => s + v, 0);
-  const scoreSum = totals.reduce((s, g) => s + g.score, 0) || 1;
-  const targetTotal = totals.reduce((s, g) => s + Number(g.targetAmount || 0), 0);
-  const progressTotal = totals.reduce((s, g) => s + g.progress, 0);
-  return `<section class="financeGoalsView"><header class="financeViewHeader"><h2>Objetivos</h2><button class="finance-pill" data-open-modal="goal">+ Objetivo</button></header>
-  <article class="financeGlassCard"><h3>Objetivo total</h3><p>${fmtCurrency(progressTotal)} / ${fmtCurrency(targetTotal)} (${targetTotal ? ((progressTotal / targetTotal) * 100).toFixed(1) : '0'}%)</p><div class="financeProgress"><i style="width:${targetTotal ? Math.min(100, (progressTotal / targetTotal) * 100) : 0}%"></i></div></article>
-  <div class="financeGoalsList">${totals.map((g) => {
-    const allocationShare = g.score / scoreSum;
-    const allocated = Math.min(Number(g.targetAmount || 0), pool * allocationShare);
-    const statusClass = g.daysLeft < 0 ? 'is-negative' : (g.daysLeft < 14 && g.pct < 70 ? 'is-warn' : 'is-positive');
-    return `<article class="financeGlassCard"><div class="finance-row"><strong>${escapeHtml(g.title || 'Objetivo')}</strong><div><button class="finance-pill finance-pill--mini" data-open-goal="${g.id}">⋯</button><button class="finance-pill finance-pill--mini" data-delete-goal="${g.id}">✕</button></div></div>
-      <p>${fmtCurrency(g.progress)} / ${fmtCurrency(g.targetAmount)} (${g.pct.toFixed(1)}%)</p><div class="financeProgress"><i style="width:${Math.min(100, g.pct)}%"></i></div>
-      <p class="${statusClass}">Prioridad ${(g.score).toFixed(2)} · vence ${new Date(g.dueDateISO).toLocaleDateString('es-ES')}</p><small>Asignación sugerida: ${fmtCurrency(allocated)} (${(allocationShare * 100).toFixed(1)}% del pool, dinero / días)</small></article>`;
-  }).join('') || '<p class="finance-empty">Sin objetivos aún.</p>'}</div></section>`;
-}
-
-function accountValueForDay(account = {}, day) {
-  if (!day) return 0;
-  const snapshot = account.snapshots?.[day];
-  if (snapshot && Number.isFinite(Number(snapshot.value))) return Number(snapshot.value);
-  const entry = account.entries?.[day] || account.daily?.[day];
-  if (entry && Number.isFinite(Number(entry.value))) return Number(entry.value);
-  const dailyRows = normalizeDaily(account.entries || account.daily || {});
-  const prev = dailyRows.filter((row) => row.day <= day).at(-1);
-  return Number(prev?.value || 0);
+    return `<div class="financeBudgetRow"><div class="finance-row"><span>${escapeHtml(budget.category)}</span><div class="finance-row"><button class="finance-pill finance-pill--mini" data-budget-menu="${budget.id}">✏️</button><button class="finance-pill finance-pill--mini" data-budget-delete="${budget.id}">❌</button></div></div><small>${fmtCurrency(spent)} / ${fmtCurrency(limit)} (${pct.toFixed(0)}%)</small></div>`;
+  }).join('') : '<p class="finance-empty">Sin presupuestos.</p>'}</div></article>
+  <article class="financeGlassCard"><h3>Balance neto por mes</h3><div class="financeSummaryGrid"><div><small>Mejor mes</small><strong class="is-positive">${bestMonth ? `${bestMonth.month} · ${fmtCurrency(bestMonth.net)}` : '—'}</strong></div><div><small>Peor mes</small><strong class="is-negative">${worstMonth ? `${worstMonth.month} · ${fmtCurrency(worstMonth.net)}` : '—'}</strong></div><div><small>Media mensual</small><strong class="${toneClass(avgNet)}">${monthNetList.length ? fmtCurrency(avgNet) : '—'}</strong></div></div><div class="financeTxList" style="max-height:220px;overflow-y:auto;">${monthNetList.map((row) => `<div class="financeTxRow"><span>${row.month}</span><strong class="${toneClass(row.net)}">${fmtSignedCurrency(row.net)}</strong></div>`).join('') || '<p class="finance-empty">Sin meses con movimientos.</p>'}</div></article></section>`;
 }
 
 function renderModal() {
@@ -850,172 +869,56 @@ function renderModal() {
     return;
   }
 if (state.modal.type === 'tx') {
-  const defaultAccountId =
-    state.lastMovementAccountId || state.balance.defaultAccountId || accounts[0]?.id || '';
-
-  const typeSelect = `
-    <div class="fm-field fm-field--type">
-      <label class="fm-label" for="fm-tx-type">Tipo</label>
-      <select id="fm-tx-type" name="type" class="finance-pill fm-control fm-control--select">
-        <option value="expense">Gasto</option>
-        <option value="income">Ingreso</option>
-      </select>
-    </div>
-  `;
-
-  const amountField = `
-    <div class="fm-field fm-field--amount">
-      <label class="fm-label" for="fm-tx-amount">Cantidad</label>
-      <input
-        id="fm-tx-amount"
-        class="fm-control fm-control--amount"
-        required
-        name="amount"
-        type="number"
-        step="0.01"
-        placeholder="Cantidad €"
-        inputmode="decimal"
-      />
-    </div>
-  `;
-
-  const dateField = `
-    <div class="fm-field fm-field--date">
-      <label class="fm-label" for="fm-tx-date">Fecha</label>
-      <input
-        id="fm-tx-date"
-        class="fm-control fm-control--date"
-        name="dateISO"
-        type="date"
-        value="${dayKeyFromTs(Date.now())}"
-      />
-    </div>
-  `;
-
-  const accountOptions = accounts
-    .map(
-      (a) =>
-        `<option value="${a.id}" ${defaultAccountId === a.id ? 'selected' : ''}>${escapeHtml(
-          a.name
-        )}</option>`
-    )
-    .join('');
-
-  const accountField = `
-    <div class="fm-field fm-field--account">
-      <label class="fm-label" for="fm-tx-account">Cuenta</label>
-      <select
-        id="fm-tx-account"
-        class="fm-control fm-control--account fm-control--select"
-        name="accountId"
-        required
-      >
-        <option value="">Selecciona cuenta</option>
-        ${accountOptions}
-      </select>
-    </div>
-  `;
-
-  const categoryOptions = categories
-    .map((c) => `<option value="${escapeHtml(c)}"></option>`)
-    .join('');
-
-  const categoryField = `
-    <div class="fm-field fm-field--category">
-      <label class="fm-label" for="fm-tx-category">Categoría</label>
-      <input
-        id="fm-tx-category"
-        class="fm-control fm-control--category"
-        name="category"
-        list="fm-tx-cat-list"
-        placeholder="Categoría"
-        autocomplete="off"
-      />
-      <datalist id="fm-tx-cat-list">
-        ${categoryOptions}
-      </datalist>
-    </div>
-  `;
-
-  const noteField = `
-    <div class="fm-field fm-field--note">
-      <label class="fm-label" for="fm-tx-note">Nota</label>
-      <input
-        id="fm-tx-note"
-        class="fm-control fm-control--note"
-        name="note"
-        type="text"
-        placeholder="Nota (opcional)"
-      />
-    </div>
-  `;
-
- // sustituye tu bloque foodExtras por este
-const foodExtras = `
-  <details class="fm-details fm-details--extras" data-section="food-extras">
-    <summary class="fm-details__summary">
-      <span class="fm-details__title">Extras</span>
-      <span class="fm-details__hint">Opcional</span>
-      <span class="fm-details__chev" aria-hidden="true">⌄</span>
-    </summary>
-
-    <div class="fm-details__body">
-      ${renderFoodExtrasSection()}
-    </div>
-  </details>
-`;
-
-  const submitRow = `
-    <div class="fm-actions">
-      <button class="finance-pill fm-action fm-action--submit" type="submit">
-        Añadir movimiento
-      </button>
-    </div>
-  `;
-
-backdrop.innerHTML = `
-  <div id="finance-modal" class="finance-modal fm-modal" role="dialog" aria-modal="true" tabindex="-1">
-    <header class="fm-modal__header">
-      <h3 class="fm-modal__title">Añadir movimiento</h3>
-      <button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button>
-    </header>
-
+  const accountsById = Object.fromEntries(accounts.map((a) => [a.id, a]));
+  const txEdit = state.modal.txId ? balanceTxList().find((row) => row.id === state.modal.txId) : null;
+  const defaultAccountId = txEdit?.accountId || state.lastMovementAccountId || state.balance.defaultAccountId || accounts[0]?.id || '';
+  const defaultType = txEdit?.type || state.balanceFormState.type || 'expense';
+  const defaultCategory = txEdit?.category || state.balanceFormState.category || '';
+  const defaultDate = txEdit?.date || isoToDay(txEdit?.dateISO || '') || dayKeyFromTs(Date.now());
+  const defaultAmount = txEdit?.amount || state.balanceFormState.amount || '';
+  const defaultNote = txEdit?.note || state.balanceFormState.note || '';
+  const defaultFrom = txEdit?.fromAccountId || state.balanceFormState.fromAccountId || defaultAccountId;
+  const defaultTo = txEdit?.toAccountId || state.balanceFormState.toAccountId || accounts[1]?.id || accounts[0]?.id || '';
+  const accountOptions = accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
+  const categories = categoriesList();
+  backdrop.innerHTML = `<div id="finance-modal" class="finance-modal fm-modal" role="dialog" aria-modal="true" tabindex="-1">
+    <header class="fm-modal__header"><h3 class="fm-modal__title">${txEdit ? 'Editar movimiento' : 'Añadir movimiento'}</h3><button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button></header>
     <form class="finance-entry-form finance-tx-form fm-form" data-balance-form>
-      <section class="fm-section fm-section--main">
-        <header class="fm-section__header">
-          <h4 class="fm-section__title">Movimiento</h4>
-        </header>
-
-        <div class="fm-grid fm-grid--top">
-          ${typeSelect}
-          ${amountField}
-          ${dateField}
-          ${accountField}
-        </div>
-
-        <div class="fm-grid fm-grid--meta">
-          ${categoryField}
-          ${noteField}
-        </div>
-      </section>
-
-      <details class="fm-details fm-details--extras" data-section="food-extras">
-        <summary class="fm-details__summary">
-          <span class="fm-details__title">Extras</span>
-          <span class="fm-details__hint">Opcional</span>
-          <span class="fm-details__chev" aria-hidden="true">⌄</span>
-        </summary>
-        <div class="fm-details__body">
-          ${renderFoodExtrasSection()}
-        </div>
-      </details>
-
-      <div class="fm-actions">
-        <button class="finance-pill fm-action fm-action--submit" type="submit">Añadir movimiento</button>
+      <input type="hidden" name="txId" value="${escapeHtml(txEdit?.id || '')}" />
+      <div class="fm-grid fm-grid--top">
+        <div class="fm-field fm-field--type"><label class="fm-label" for="fm-tx-type">Tipo</label><select id="fm-tx-type" name="type" class="finance-pill fm-control fm-control--select" data-tx-type><option value="expense" ${defaultType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${defaultType === 'income' ? 'selected' : ''}>Ingreso</option><option value="transfer" ${defaultType === 'transfer' ? 'selected' : ''}>Transferencia</option></select></div>
+        <div class="fm-field fm-field--amount"><label class="fm-label" for="fm-tx-amount">Cantidad</label><input id="fm-tx-amount" class="fm-control fm-control--amount" required name="amount" type="number" step="0.01" placeholder="Cantidad €" value="${escapeHtml(defaultAmount)}"/></div>
+        <div class="fm-field fm-field--date"><label class="fm-label" for="fm-tx-date">Fecha</label><input id="fm-tx-date" class="fm-control fm-control--date" name="dateISO" type="date" value="${defaultDate}"/></div>
+        <div class="fm-field fm-field--account" data-tx-account-single><label class="fm-label" for="fm-tx-account">Cuenta</label><select id="fm-tx-account" class="fm-control fm-control--account fm-control--select" name="accountId"><option value="">Selecciona cuenta</option>${accountOptions}</select></div>
+        <div class="fm-field fm-field--account" data-tx-account-from hidden><label class="fm-label" for="fm-tx-account-from">Cuenta origen</label><select id="fm-tx-account-from" class="fm-control fm-control--account fm-control--select" name="fromAccountId"><option value="">Selecciona cuenta</option>${accountOptions}</select></div>
+        <div class="fm-field fm-field--account" data-tx-account-to hidden><label class="fm-label" for="fm-tx-account-to">Cuenta destino</label><select id="fm-tx-account-to" class="fm-control fm-control--account fm-control--select" name="toAccountId"><option value="">Selecciona cuenta</option>${accountOptions}</select></div>
       </div>
+      <div class="fm-grid fm-grid--meta">
+        <div class="fm-field fm-field--category"><label class="fm-label" for="fm-tx-category">Categoría</label><input id="fm-tx-category" class="fm-control fm-control--category" name="category" list="fm-tx-cat-list" placeholder="Categoría" autocomplete="off" value="${escapeHtml(defaultCategory)}"/><datalist id="fm-tx-cat-list">${categories.map((c) => `<option value="${escapeHtml(c)}"></option>`).join('')}</datalist><button type="button" class="finance-pill finance-pill--mini" data-category-create hidden>+ crear</button></div>
+        <div class="fm-field fm-field--note"><label class="fm-label" for="fm-tx-note">Nota</label><input id="fm-tx-note" class="fm-control fm-control--note" name="note" type="text" placeholder="Nota (opcional)" value="${escapeHtml(defaultNote)}"/></div>
+      </div>
+      <details class="fm-details fm-details--extras" data-section="food-extras"><summary class="fm-details__summary"><span class="fm-details__title">Extras</span><span class="fm-details__hint">Opcional</span><span class="fm-details__chev" aria-hidden="true">⌄</span></summary><div class="fm-details__body">${renderFoodExtrasSection()}</div></details>
+      <div class="fm-actions"><button class="finance-pill fm-action fm-action--submit" type="submit">${txEdit ? 'Guardar cambios' : 'Añadir movimiento'}</button></div>
     </form>
-  </div>
-`;
+  </div>`;
+  const form = backdrop.querySelector('[data-balance-form]');
+  if (form) {
+    form.querySelector('select[name="accountId"]').value = defaultAccountId;
+    form.querySelector('select[name="fromAccountId"]').value = defaultFrom;
+    form.querySelector('select[name="toAccountId"]').value = defaultTo;
+    if (txEdit?.extras || txEdit?.food) {
+      const extras = txEdit.extras || txEdit.food;
+      const refs = getFoodFormRefs(form);
+      if (refs.mealType) refs.mealType.value = extras.mealType || extras.foodType || '';
+      if (refs.cuisine) refs.cuisine.value = extras.cuisine || '';
+      if (refs.place) refs.place.value = extras.place || '';
+      if (refs.itemSearch) refs.itemSearch.value = extras.item || extras.productName || '';
+      if (refs.itemValue) refs.itemValue.value = extras.item || extras.productName || '';
+    }
+    syncTxTypeFields(form);
+    toggleFoodExtras(form);
+    maybeToggleCategoryCreate(form);
+  }
   return;
 }
   if (state.modal.type === 'calendar-day-edit') {
@@ -1134,6 +1037,47 @@ async function toggleFoodExtras(form) {
   await syncFoodOptionsInForm(form);
 }
 
+
+function syncTxTypeFields(form) {
+  if (!form) return;
+  const type = form.querySelector('[data-tx-type]')?.value || 'expense';
+  const single = form.querySelector('[data-tx-account-single]');
+  const from = form.querySelector('[data-tx-account-from]');
+  const to = form.querySelector('[data-tx-account-to]');
+  if (single) single.hidden = type === 'transfer';
+  if (from) from.hidden = type !== 'transfer';
+  if (to) to.hidden = type !== 'transfer';
+}
+
+function maybeToggleCategoryCreate(form) {
+  const input = form?.querySelector('input[name="category"]');
+  const btn = form?.querySelector('[data-category-create]');
+  if (!input || !btn) return;
+  const value = String(input.value || '').trim();
+  const exists = categoriesList().some((row) => row.toLowerCase() === value.toLowerCase());
+  btn.hidden = !value || exists;
+  btn.textContent = `+ crear "${value}"`;
+}
+
+function persistBalanceFormState(form) {
+  if (!form) return;
+  const fd = new FormData(form);
+  state.balanceFormState = {
+    type: String(fd.get('type') || ''),
+    amount: String(fd.get('amount') || ''),
+    dateISO: String(fd.get('dateISO') || ''),
+    accountId: String(fd.get('accountId') || ''),
+    fromAccountId: String(fd.get('fromAccountId') || ''),
+    toAccountId: String(fd.get('toAccountId') || ''),
+    category: String(fd.get('category') || ''),
+    note: String(fd.get('note') || ''),
+    foodMealType: String(fd.get('foodMealType') || ''),
+    foodCuisine: String(fd.get('foodCuisine') || ''),
+    foodPlace: String(fd.get('foodPlace') || ''),
+    foodItem: String(fd.get('foodItem') || '')
+  };
+}
+
 function renderToast() {
   let el = document.getElementById('finance-toast');
   if (!el) { el = document.createElement('div'); el.id = 'finance-toast'; el.className = 'finance-toast hidden'; document.getElementById('view-finance')?.append(el); }
@@ -1163,8 +1107,9 @@ function applyRemoteData(val = {}, replace = false) {
   state.balance = {
     tx: root.balance?.tx || (replace ? {} : state.balance.tx),
     movements: root.movements || (replace ? {} : state.balance.movements),
-    categories: root.balance?.categories || (replace ? {} : state.balance.categories),
-    budgets: root.balance?.budgets || (replace ? {} : state.balance.budgets),
+    transactions: root.transactions || (replace ? {} : state.balance.transactions),
+    categories: root.catalog?.categories || root.balance?.categories || (replace ? {} : state.balance.categories),
+    budgets: root.budgets || root.balance?.budgets || (replace ? {} : state.balance.budgets),
     snapshots: root.balance?.snapshots || (replace ? {} : state.balance.snapshots),
     defaultAccountId: root.balance?.defaultAccountId || (replace ? '' : state.balance.defaultAccountId),
     lastSeenMonthKey: root.balance?.lastSeenMonthKey || (replace ? '' : state.balance.lastSeenMonthKey)
@@ -1173,6 +1118,7 @@ function applyRemoteData(val = {}, replace = false) {
 }
 
 async function loadDataOnce() {
+  console.log('[FINANCE][BALANCE] load from firebase', state.financePath);
   const snap = await safeFirebase(() => get(ref(db, state.financePath)));
   const val = snap?.val();
   if (val && typeof val === 'object') applyRemoteData(val, true);
@@ -1192,6 +1138,7 @@ async function loadDataOnce() {
 
 function subscribe() {
   if (state.unsubscribe) state.unsubscribe();
+  console.log('[FINANCE][BALANCE] subscribe firebase', state.financePath);
   state.unsubscribe = onValue(ref(db, state.financePath), (snap) => {
     const val = snap.val();
     if (!val && state.hydratedFromRemote) {
@@ -1304,8 +1251,44 @@ function bindEvents() {
       const refs = getFoodFormRefs(form);
       if (refs.itemSearch) refs.itemSearch.value = name;
       if (refs.itemValue) refs.itemValue.value = name;
+      const preset = state.food.items?.[name] || {};
+      const amountInput = form.querySelector('input[name="amount"]');
+      if (amountInput && Number(preset.lastPrice || 0) > 0) amountInput.value = String(preset.lastPrice);
+      if (preset.lastCategory) {
+        const catInput = form.querySelector('input[name="category"]');
+        if (catInput) catInput.value = preset.lastCategory;
+      }
+      if (preset.lastExtras) {
+        if (refs.mealType) refs.mealType.value = preset.lastExtras.mealType || '';
+        if (refs.cuisine) refs.cuisine.value = preset.lastExtras.cuisine || '';
+        if (refs.place) refs.place.value = preset.lastExtras.place || '';
+      }
       renderFoodItemSearchResults(form);
       refreshFoodTopItems(form);
+      maybeToggleCategoryCreate(form);
+      return;
+    }
+    const txEdit = target.closest('[data-tx-edit]')?.dataset.txEdit;
+    if (txEdit) { state.modal = { type: 'tx', txId: txEdit }; triggerRender(); return; }
+    const txDelete = target.closest('[data-tx-delete]')?.dataset.txDelete;
+    if (txDelete && window.confirm('¿Eliminar movimiento?')) {
+      const existing = balanceTxList().find((row) => row.id === txDelete);
+      if (!existing) return;
+      console.log('[FINANCE][BALANCE] delete transaction', `${state.financePath}/transactions/${txDelete}`);
+      await safeFirebase(() => remove(ref(db, `${state.financePath}/transactions/${txDelete}`)));
+      const touched = [existing.accountId, existing.fromAccountId, existing.toAccountId].filter(Boolean);
+      for (const accountId of [...new Set(touched)]) await recomputeAccountEntries(accountId, existing.date || isoToDay(existing.dateISO || ''));
+      toast('Movimiento eliminado');
+      return;
+    }
+    const createCategory = target.closest('[data-category-create]');
+    if (createCategory) {
+      const form = target.closest('[data-balance-form]');
+      const category = String(form?.querySelector('input[name="category"]')?.value || '').trim();
+      if (!category) return;
+      await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
+      state.balance.categories[category] = { name: category, lastUsedAt: nowTs() };
+      maybeToggleCategoryCreate(form);
       return;
     }
     const nextView = target.closest('[data-finance-view]')?.dataset.financeView; if (nextView) { state.activeView = nextView; triggerRender(); return; }
@@ -1319,7 +1302,7 @@ function bindEvents() {
     const delDay = target.closest('[data-delete-day]')?.dataset.deleteDay; if (delDay) { const [accountId, day] = delDay.split(':'); if (window.confirm(`¿Eliminar ${day}?`)) await deleteDay(accountId, day); return; }
     const saveDay = target.closest('[data-save-day]')?.dataset.saveDay; if (saveDay) { const [accountId, day] = saveDay.split(':'); const form = view.querySelector(`[data-account-row-form="${saveDay}"]`); const val = form?.querySelector('[name="value"]')?.value; await saveSnapshot(accountId, day, val); return; }
     const budgetMenu = target.closest('[data-budget-menu]')?.dataset.budgetMenu; if (budgetMenu) { state.modal = { type: 'budget', budgetId: budgetMenu }; triggerRender(); return; }
-    const budgetDelete = target.closest('[data-budget-delete]')?.dataset.budgetDelete; if (budgetDelete && window.confirm('¿Eliminar presupuesto?')) { const monthKey = getSelectedBalanceMonthKey(); await safeFirebase(() => remove(ref(db, `${state.financePath}/balance/budgets/${monthKey}/${budgetDelete}`))); state.modal = { type: null }; toast('Presupuesto eliminado'); triggerRender(); return; }
+    const budgetDelete = target.closest('[data-budget-delete]')?.dataset.budgetDelete; if (budgetDelete && window.confirm('¿Eliminar presupuesto?')) { const monthKey = getSelectedBalanceMonthKey(); await safeFirebase(() => remove(ref(db, `${state.financePath}/budgets/${monthKey}/${budgetDelete}`))); state.modal = { type: null }; toast('Presupuesto eliminado'); triggerRender(); return; }
     const importApply = target.closest('[data-import-apply]')?.dataset.importApply; if (importApply) { const parsed = state.modal.importPreview; if (!parsed?.validRows?.length) { state.modal = { ...state.modal, importError: 'CSV sin filas válidas.' }; triggerRender(); return; } const imported = await applyImportRows(importApply, parsed); toast(`Importados ${imported} días`); openAccountDetail(importApply); return; }
     const calendarDay = target.closest('[data-calendar-day]')?.dataset.calendarDay; if (calendarDay) { state.modal = { type: 'calendar-day-edit', day: calendarDay }; triggerRender(); return; }
     const openMonth = target.closest('[data-calendar-open-month]')?.dataset.calendarOpenMonth; if (openMonth) {
@@ -1384,14 +1367,26 @@ view.addEventListener('focusout', async (event) => {
       triggerRender();
     }
     if (event.target.matches('[data-balance-form] input[name="category"]')) {
-      await toggleFoodExtras(event.target.closest('[data-balance-form]'));
+      const form = event.target.closest('[data-balance-form]');
+      await toggleFoodExtras(form);
+      maybeToggleCategoryCreate(form);
+    }
+    if (event.target.matches('[data-tx-type]')) {
+      syncTxTypeFields(event.target.closest('[data-balance-form]'));
     }
   });
 
   view.addEventListener('input', async (event) => {
     if (event.target.matches('[data-balance-form] input[name="category"]')) {
-      await toggleFoodExtras(event.target.closest('[data-balance-form]'));
+      const form = event.target.closest('[data-balance-form]');
+      await toggleFoodExtras(form);
+      maybeToggleCategoryCreate(form);
+      persistBalanceFormState(form);
       return;
+    }
+
+    if (event.target.closest('[data-balance-form]')) {
+      persistBalanceFormState(event.target.closest('[data-balance-form]'));
     }
     if (event.target.matches('[data-food-item-search]')) {
       const form = event.target.closest('[data-balance-form]');
@@ -1462,30 +1457,59 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-balance-form]')) {
       event.preventDefault();
       const form = new FormData(event.target);
-      const type = String(form.get('type') || 'expense'); const amount = Number(form.get('amount') || 0); const dateISO = String(form.get('dateISO') || dayKeyFromTs(Date.now()));
-      const category = String(form.get('category') || 'Sin categoría').trim() || 'Sin categoría'; const note = String(form.get('note') || '').trim(); const accountId = String(form.get('accountId') || '');
-      if (!accountId) { toast('Selecciona una cuenta'); return; }
+      const txId = String(form.get('txId') || '').trim();
+      const type = normalizeTxType(String(form.get('type') || 'expense'));
+      const amount = Number(form.get('amount') || 0);
+      const dateISO = String(form.get('dateISO') || dayKeyFromTs(Date.now()));
+      const category = String(form.get('category') || 'Sin categoría').trim() || 'Sin categoría';
+      const note = String(form.get('note') || '').trim();
+      const accountId = String(form.get('accountId') || '');
+      const fromAccountId = String(form.get('fromAccountId') || '');
+      const toAccountId = String(form.get('toAccountId') || '');
+      if (!Number.isFinite(amount) || amount <= 0) { toast('Cantidad inválida'); return; }
+      if ((type === 'income' || type === 'expense') && !accountId) { toast('Selecciona una cuenta'); return; }
+      if (type === 'transfer' && (!fromAccountId || !toAccountId || fromAccountId === toAccountId)) { toast('Transferencia inválida'); return; }
       const mealType = normalizeFoodName(String(form.get('foodMealType') || ''));
       const cuisine = normalizeFoodName(String(form.get('foodCuisine') || ''));
       const place = normalizeFoodName(String(form.get('foodPlace') || ''));
       const item = normalizeFoodName(String(form.get('foodItem') || ''));
-      const foodData = isFoodCategory(category) ? { mealType: mealType || '', cuisine: cuisine || '', place: place || '', item: item || '' } : undefined;
-      const monthKey = dateISO.slice(0, 7); const movementId = push(ref(db, `${state.financePath}/movements/${monthKey}`)).key;
-      const payload = { amount, category, note, dateISO: `${dateISO}T12:00:00.000Z`, monthKey, type, accountId, createdAt: nowTs(), food: foodData };
-      await safeFirebase(() => set(ref(db, `${state.financePath}/movements/${monthKey}/${movementId}`), payload));
-      if (foodData) {
+      const extras = isFoodCategory(category) ? { mealType: mealType || '', cuisine: cuisine || '', place: place || '', item: item || '' } : undefined;
+      const saveId = txId || push(ref(db, `${state.financePath}/transactions`)).key;
+      const prev = txId ? balanceTxList().find((row) => row.id === txId) : null;
+      const payload = {
+        type,
+        amount,
+        date: dateISO,
+        monthKey: dateISO.slice(0, 7),
+        accountId: type === 'transfer' ? '' : accountId,
+        fromAccountId: type === 'transfer' ? fromAccountId : '',
+        toAccountId: type === 'transfer' ? toAccountId : '',
+        category,
+        note,
+        extras: extras || null,
+        updatedAt: nowTs(),
+        createdAt: Number(prev?.createdAt || 0) || nowTs()
+      };
+      console.log('[FINANCE][BALANCE] save transaction', `${state.financePath}/transactions/${saveId}`);
+      await safeFirebase(() => set(ref(db, `${state.financePath}/transactions/${saveId}`), payload));
+      if (!state.balance.categories?.[category]) await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
+      await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
+      if (extras?.item) {
         await loadFoodCatalog();
-        if (foodData.mealType) await upsertFoodOption('typeOfMeal', foodData.mealType, true);
-        if (foodData.cuisine) await upsertFoodOption('cuisine', foodData.cuisine, true);
-        if (foodData.place) await upsertFoodOption('place', foodData.place, true);
-        if (foodData.item) await upsertFoodItem(foodData.item, true);
+        await upsertFoodItem(extras.item, true, { lastPrice: amount, lastCategory: category, lastExtras: extras });
+        if (extras.mealType) await upsertFoodOption('typeOfMeal', extras.mealType, true);
+        if (extras.cuisine) await upsertFoodOption('cuisine', extras.cuisine, true);
+        if (extras.place) await upsertFoodOption('place', extras.place, true);
       }
-      localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId);
-      state.lastMovementAccountId = accountId;
-      log('movement:add', { accountId, date: dateISO, amount, type, food: foodData || null });
-      await recomputeAccountEntries(accountId, dateISO);
-      if (!state.balance.categories?.[category]) await safeFirebase(() => set(ref(db, `${state.financePath}/balance/categories/${category}`), { createdAt: nowTs() }));
-      state.modal = { type: null }; toast('Movimiento guardado'); triggerRender(); return;
+      const touched = new Set([payload.accountId, payload.fromAccountId, payload.toAccountId, prev?.accountId, prev?.fromAccountId, prev?.toAccountId].filter(Boolean));
+      for (const account of touched) await recomputeAccountEntries(account, dateISO);
+      localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId || fromAccountId || '');
+      state.lastMovementAccountId = accountId || fromAccountId || '';
+      state.balanceFormState = {};
+      state.modal = { type: null };
+      toast(txId ? 'Movimiento actualizado' : 'Movimiento guardado');
+      triggerRender();
+      return;
     }
     if (event.target.matches('[data-budget-form]')) {
       event.preventDefault();
@@ -1494,8 +1518,8 @@ view.addEventListener('focusout', async (event) => {
       const limit = Number(form.get('limit') || 0);
       const monthKey = String(form.get('monthKey') || getSelectedBalanceMonthKey());
       if (!category || !monthKey || !Number.isFinite(limit)) { toast('Datos de presupuesto inválidos'); return; }
-      const budgetId = state.modal.budgetId || push(ref(db, `${state.financePath}/balance/budgets/${monthKey}`)).key;
-      await safeFirebase(() => set(ref(db, `${state.financePath}/balance/budgets/${monthKey}/${budgetId}`), { category, limit, createdAt: nowTs(), updatedAt: nowTs() }));
+      const budgetId = state.modal.budgetId || push(ref(db, `${state.financePath}/budgets/${monthKey}`)).key;
+      await safeFirebase(() => set(ref(db, `${state.financePath}/budgets/${monthKey}/${budgetId}`), { category, limit, createdAt: nowTs(), updatedAt: nowTs() }));
       state.modal = { type: null }; toast('Presupuesto guardado'); triggerRender(); return;
     }
     if (event.target.matches('[data-goal-form]')) {
@@ -1539,7 +1563,7 @@ async function boot() {
   });
   state.deviceId = getDeviceId();
   console.log('[finance] deviceId', state.deviceId);
-  state.financePath = `Finance/${state.deviceId}`;
+  state.financePath = 'Finance';
   log('init ok', { financePath: state.financePath });
   bindEvents();
   await loadDataOnce();

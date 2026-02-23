@@ -270,3 +270,88 @@ Accounts: #finance-accountsList, .financeAccountCard, .financeAccountCard__delta
 Calendar preview: .finance__calendarPreview, .finance-calendar-weekdays, .finance-calendar-days, .financeCalCell
 Modal: #finance-modalOverlay, #finance-modal
 */
+
+.financeTab .financeInnerNav {
+  max-width: 780px;
+  margin: 0 auto 14px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.financeTab .financeInnerNav .finance-pill.is-active {
+  border-color: rgba(255,255,255,.35);
+  background: var(--card, rgba(15,23,42,.86));
+  box-shadow: 0 0 0 1px rgba(255,255,255,.1) inset;
+}
+.financeTab .financeBalanceView,
+.financeTab .financeGoalsView {
+  max-width: 780px;
+  margin: 0 auto;
+  display: grid;
+  gap: 12px;
+}
+.financeTab .financeGlassCard {
+  border-radius: var(--radius, 16px);
+  background: var(--card-soft, rgba(15,23,42,.75));
+  border: 1px solid var(--line, rgba(148,163,184,.25));
+  box-shadow: 0 8px 26px rgba(0,0,0,.35);
+  backdrop-filter: blur(14px);
+  padding: 14px;
+}
+.financeTab .financeViewHeader,
+.financeTab .finance-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.financeTab .financeSummaryGrid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 10px;
+}
+.financeTab .financeTxList,
+.financeTab .financeBudgetList,
+.financeTab .financeGoalsList {
+  display: grid;
+  gap: 10px;
+}
+.financeTab .financeTxRow {
+  display: grid;
+  grid-template-columns: 98px 1fr auto;
+  gap: 10px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  padding-bottom: 6px;
+}
+.financeTab .financeProgress {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.12);
+  overflow: hidden;
+}
+.financeTab .financeProgress i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #4ade80, #22d3ee);
+}
+.financeTab .financeProgress i.is-negative { background: #fb7185; }
+.financeTab .finance-budget-form,
+.financeTab .finance-goal-form,
+.financeTab .finance-goal-form fieldset,
+.financeTab .finance-tx-form {
+  display: grid;
+  gap: 10px;
+}
+.financeTab .finance-budget-form input,
+.financeTab .finance-goal-form input,
+.financeTab .finance-tx-form input,
+.financeTab .finance-tx-form select {
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.15);
+  background: rgba(10,14,24,.55);
+  color: inherit;
+  padding: 10px;
+}
+.financeTab .is-warn { color: #facc15; }

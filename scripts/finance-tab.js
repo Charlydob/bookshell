@@ -266,6 +266,20 @@ function render() {
   const comparePrev = computeDeltaWithinBounds(totalSeries, previousBounds);
 
   const calendarPoints = calendarData(accounts, totalSeries);
+  const bestPoint = calendarPoints
+    .filter((point) => point.delta > 0)
+    .sort((a, b) => b.delta - a.delta)[0] || null;
+  const worstPoint = calendarPoints
+    .filter((point) => point.delta < 0)
+    .sort((a, b) => a.delta - b.delta)[0] || null;
+
+  const calendarHighlight = [bestPoint, worstPoint].filter(Boolean).map((point) => `
+    <div class="financeCalHighlight ${toneClass(point.delta)}">
+      <strong>${new Date(point.ts).getDate()}</strong>
+      <span>${fmtSignedCurrency(point.delta)}</span>
+      <span>${fmtSignedPercent(point.deltaPct)}</span>
+    </div>
+  `).join('');
 
   host.innerHTML = `
     <section class="finance-home ${toneClass(totalRange.delta)}">
@@ -332,7 +346,7 @@ function render() {
           <button class="finance-pill" data-month-shift="1">▶</button>
         </div>
         <div class="finance-calendar-grid">
-          ${calendarPoints.map((point) => `<div class="financeCalCell ${toneClass(point.delta)}"><strong>${new Date(point.ts).getDate()}</strong><span>${fmtSignedCurrency(point.delta)}</span><span>${fmtSignedPercent(point.deltaPct)}</span></div>`).join('') || '<p class="finance-empty">Sin cambios para este mes.</p>'}
+          ${calendarHighlight || '<p class="finance-empty">Sin cambios para este mes.</p>'}
         </div>
       </article>
     </section>

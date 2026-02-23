@@ -576,10 +576,10 @@ function renderFinanceHome(accounts, totalSeries) {
       <article class="finance__controls">
         <select class="finance-pill" data-range><option value="total" ${state.rangeMode === 'total' ? 'selected' : ''}>Total</option><option value="month" ${state.rangeMode === 'month' ? 'selected' : ''}>Mes</option><option value="week" ${state.rangeMode === 'week' ? 'selected' : ''}>Semana</option><option value="year" ${state.rangeMode === 'year' ? 'selected' : ''}>Año</option></select>
         <button class="finance-pill" data-history>Historial</button>
-        <select class="finance-pill" data-compare><option value="month" ${state.compareMode === 'month' ? 'selected' : ''}>Mes vs Mes</option><option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option></select><button class="finance-pill finance-pill--secondary" type="button">Actualizar</button></article>
+        <select class="finance-pill" data-compare><option value="month" ${state.compareMode === 'month' ? 'selected' : ''}>Mes vs Mes</option><option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option></select></article>
       <article class="finance__compareRow"><div class="finance-chip ${toneClass(compareCurrent.delta)}">Actual: ${fmtSignedCurrency(compareCurrent.delta)} (${fmtSignedPercent(compareCurrent.deltaPct)})</div><div class="finance-chip ${toneClass(comparePrev.delta)}">Anterior: ${fmtSignedCurrency(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div></article>
       <article class="finance__accounts"><div class="finance__sectionHeader"><h2>Cuentas</h2><button class="finance-pill" data-new-account>+ Cuenta</button></div>
-      <div id="finance-accountsList">${accounts.map((account) => `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">Mi saldo</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${account.current.toFixed(2)}" inputmode="decimal" placeholder="Snapshot hoy" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}%</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">⋯</button></div></article>`).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
+      <div id="finance-accountsList">${accounts.map((account) => `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">Mi saldo</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${account.current.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}%</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">⋯</button></div></article>`).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
     </section>`;
 }
 
@@ -677,15 +677,74 @@ function renderModal() {
     if (!account) { state.modal = { type: null }; triggerRender(); return; }
     const chart = chartModelForRange(account.daily, 'total');
     const preview = state.modal.importPreview;
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Detalle de cuenta · ${escapeHtml(account.name)}</h3><div class="finance-row"><button class="finance-pill finance-pill--mini" data-edit-account="${account.id}">Editar cuenta</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header>
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3> ${escapeHtml(account.name)}</h3><div class="finance-row"><button class="finance-pill finance-pill--mini" data-edit-account="${account.id}">Editar cuenta</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header>
       <p>Saldo real: <strong>${fmtCurrency(account.currentReal)}</strong>${account.shared ? ` · Mi parte: <strong>${fmtCurrency(account.current)}</strong>` : ''}</p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos.</div>'}</div>
-      <form class="finance-entry-form" data-account-entry-form="${account.id}"><input name="day" type="date" value="${dayKeyFromTs(Date.now())}" required /><input name="value" type="number" step="0.01" placeholder="Valor real" required /><button class="finance-pill" type="submit">Guardar snapshot</button></form>
-      <div class="finance-table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ</th><th>Δ%</th><th></th></tr></thead><tbody>${account.daily.slice().reverse().map((row) => `<tr><td>${new Date(row.ts).toLocaleDateString('es-ES')}</td><td><form data-account-row-form="${account.id}:${row.day}"><input name="value" type="number" step="0.01" value="${Number(row.realValue || row.value || 0)}"/></form></td><td class="${toneClass(row.delta)}">${fmtSignedCurrency(row.delta)}</td><td class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</td><td><button class="finance-pill finance-pill--mini" data-save-day="${account.id}:${row.day}">Editar</button><button class="finance-pill finance-pill--mini" data-delete-day="${account.id}:${row.day}">Borrar</button></td></tr>`).join('') || '<tr><td colspan="5">Sin registros.</td></tr>'}</tbody></table></div>
-      <section class="financeImportBox"><h4>Importar CSV</h4><form class="finance-budget-form" data-import-preview-form="${account.id}"><input type="file" accept=".csv,text/csv" data-import-file="${account.id}" /><textarea name="csvText" placeholder="date,value
-2026-01-01,1200.50">${escapeHtml(state.modal.importRaw || '')}</textarea><button class="finance-pill" type="submit">Previsualizar</button></form>
-      ${state.modal.importError ? `<p class="is-negative">${escapeHtml(state.modal.importError)}</p>` : ''}
-      ${preview ? `<p>${preview.validRows.length} filas válidas / ${preview.totalRows}</p><div class="finance-table-wrap"><table><thead><tr><th>#</th><th>Fecha</th><th>Valor</th></tr></thead><tbody>${preview.validRows.slice(0, 10).map((row) => `<tr><td>${row.lineNumber}</td><td>${row.dateISO}</td><td>${fmtCurrency(row.value)}</td></tr>`).join('') || '<tr><td colspan="3">Sin filas válidas.</td></tr>'}</tbody></table></div><button class="finance-pill" data-import-apply="${account.id}">Importar ahora</button>` : ''}
-      </section></div>`;
+      <form class="finance-entry-form" data-account-entry-form="${account.id}"><input name="day" type="date" value="${dayKeyFromTs(Date.now())}" required /><input name="value" type="number" step="0.01" placeholder="Valor real" required /><button class="finance-pill" id="guardar-dato-vista-detalle" type="submit">💳</button></form>
+      <div class="finance-table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ</th><th>Δ%</th><th></th></tr></thead><tbody>${account.daily.slice().reverse().map((row) => `<tr><td>${new Date(row.ts).toLocaleDateString('es-ES')}</td><td><form data-account-row-form="${account.id}:${row.day}"><input name="value" type="number" step="0.01" value="${Number(row.realValue || row.value || 0)}"/></form></td><td class="${toneClass(row.delta)}">${fmtSignedCurrency(row.delta)}</td><td class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</td><td>
+      <div class="boton-editar-borrar"><button class="finance-pill finance-pill--mini" data-save-day="${account.id}:${row.day}">✏️</button><button class="finance-pill finance-pill--mini" data-delete-day="${account.id}:${row.day}">❌</button></div></td></tr>`).join('') || '<tr><td colspan="5">Sin registros.</td></tr>'}</tbody></table></div>
+      <section class="financeImportBox">
+      
+      <section class="financeImportBox">
+  <details class="finance-import-details">
+    <summary class="finance-import-summary">
+      <span>Importar CSV</span>
+      <span class="finance-import-chevron">⌄</span>
+    </summary>
+
+    <div class="finance-import-body">
+
+      <form class="finance-budget-form" data-import-preview-form="${account.id}">
+        <input type="file" accept=".csv,text/csv" data-import-file="${account.id}" />
+
+        <textarea 
+          name="csvText" 
+          placeholder="date,value&#10;2026-01-01,1200.50"
+        >${escapeHtml(state.modal.importRaw || '')}</textarea>
+
+        <button class="finance-pill" type="submit">
+          Previsualizar
+        </button>
+      </form>
+
+      ${state.modal.importError 
+        ? `<p class="is-negative">${escapeHtml(state.modal.importError)}</p>` 
+        : ''}
+
+      ${preview ? `
+        <p>${preview.validRows.length} filas válidas / ${preview.totalRows}</p>
+
+        <div class="finance-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Fecha</th>
+                <th>Valor</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${
+                preview.validRows.slice(0, 10).map((row) => `
+                  <tr>
+                    <td>${row.lineNumber}</td>
+                    <td>${row.dateISO}</td>
+                    <td>${fmtCurrency(row.value)}</td>
+                  </tr>
+                `).join('') || 
+                `<tr><td colspan="3">Sin filas válidas.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+
+        <button class="finance-pill" data-import-apply="${account.id}">
+          Importar ahora
+        </button>
+      ` : ''}
+
+    </div>
+  </details>
+</section>`;
     return;
   }
 if (state.modal.type === 'tx') {
@@ -890,7 +949,11 @@ backdrop.innerHTML = `
     return;
   }
   if (state.modal.type === 'new-account') {
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Nueva cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><form class="finance-entry-form" data-new-account-form><input type="text" name="name" data-account-name-input placeholder="Nombre de la cuenta" required /><label><input type="checkbox" name="shared" /> Cuenta compartida</label><select name="sharedRatio"><option value="0.5">50%</option><option value="1">100%</option></select><button class="finance-pill" type="submit">Crear cuenta</button></form></div>`;
+    backdrop.innerHTML = 
+    `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header>
+    <h3>Nueva cuenta</h3>
+    <button class="finance-pill" data-close-modal>❌</button></header>
+    <form class="finance-entry-form" id="modal-cuenta-nueva" data-new-account-form><input type="text" name="name" data-account-name-input placeholder="Nombre de la cuenta" required /><label><input type="checkbox" name="shared" /> 🫂</label><select name="sharedRatio"><option value="0.5">50%</option><option value="1">100%</option></select><button class="finance-pill" type="submit">Crear</button></form></div>`;
     return;
   }
 }
@@ -1028,6 +1091,7 @@ async function saveSnapshot(accountId, day, value) {
   toast('Guardado');
   return true;
 }
+
 async function deleteDay(accountId, day) {
   await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}/snapshots/${day}`)));
   await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}/entries/${day}`)));
@@ -1132,7 +1196,26 @@ function bindEvents() {
     const openGoal = target.closest('[data-open-goal]')?.dataset.openGoal; if (openGoal) { state.modal = { type: 'goal-detail', goalId: openGoal }; triggerRender(); return; }
     const delGoal = target.closest('[data-delete-goal]')?.dataset.deleteGoal; if (delGoal && window.confirm('¿Borrar objetivo?')) { await safeFirebase(() => remove(ref(db, `${state.financePath}/goals/goals/${delGoal}`))); return; }
   });
+view.addEventListener('focusin', (event) => {
+  if (event.target.matches('[data-account-input]')) {
+    event.target.dataset.prev = event.target.value;
+    event.target.value = '';
+  }
+});
 
+view.addEventListener('focusout', async (event) => {
+  if (event.target.matches('[data-account-input]')) {
+    const accountId = event.target.dataset.accountInput;
+    const value = event.target.value.trim();
+
+    if (!value) {
+      event.target.value = event.target.dataset.prev || '';
+      return;
+    }
+
+    await saveSnapshot(accountId, dayKeyFromTs(Date.now()), value);
+  }
+});
   view.addEventListener('change', async (event) => {
     if (event.target.matches('[data-range]')) { state.rangeMode = event.target.value; triggerRender(); }
     if (event.target.matches('[data-compare]')) { state.compareMode = event.target.value; triggerRender(); }

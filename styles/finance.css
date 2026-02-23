@@ -11,10 +11,7 @@
   --fin-negative: #ff708f;
   --fin-neutral: #9db0df;
   padding: calc(env(safe-area-inset-top, 0px) + 20px) 14px 108px;
-  background:
-    radial-gradient(130% 55% at 30% -5%, rgba(22, 126, 92, 0.52), rgba(4, 20, 48, 0) 54%),
-    radial-gradient(140% 72% at 70% 100%, rgba(20, 60, 210, 0.32), rgba(4, 18, 40, 0) 55%),
-    var(--fin-bg);
+  background:transparen;
   color: var(--fin-text);
 }
 
@@ -26,9 +23,6 @@
 }
 
 .financeTab .finance__hero,
-.financeTab .finance__controls,
-.financeTab .finance__compareRow,
-.financeTab .finance__accounts,
 .financeTab .finance__calendarPreview,
 .financeTab .financeAccountCard,
 .financeTab .finance-chip,
@@ -40,7 +34,6 @@
 }
 
 .financeTab .finance__hero,
-.financeTab .finance__accounts,
 .financeTab .finance__calendarPreview {
   border-radius: 28px;
   padding: 18px;
@@ -66,9 +59,9 @@
 
 .financeTab .finance__controls {
   border-radius: 999px;
-  padding: 8px;
+  padding: 0px;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -613,3 +606,119 @@ flex-direction: column;
 
 /* extras plegable (el tuyo vale, esto es por si faltaba) */
 .fm-details{ margin: 0; }
+
+
+#modal-cuenta-nueva {
+  
+  margin: 12px auto;
+  padding: 14px;
+  border-radius: 16px;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 18px 50px rgba(0,0,0,.45);
+  color: #fff;
+  display: grid;
+  grid-template-columns: 1fr 0.1fr 1fr;
+}
+[name="sharedRatio"] {
+  display: none;
+}
+
+#modal-cuenta-nueva label {
+  padding: 0px;
+  margin: 0px;
+  max-width: 10px;
+  min-width: 20px;
+}
+
+.finance-home{
+  background: transparent;
+}
+.financeTab .finance__controls {
+  background: transparent;
+  border: 0px;
+
+}
+
+.finance-pill.finance-pill--secondary{
+  display: none;
+}
+.financeTab .finance__compareRow{
+  padding: 0px;
+  margin-top: 0px;
+}
+.financeTab .finance-home  {
+  gap: 8px;
+}
+.financeTab .finance-chip{
+  display: flex;
+  padding: 4px;
+  font-size: 12px;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+.financeTab .finance__accounts{
+  background-color: transparent;
+  padding: 0px;
+}
+.financeTab .finance__accounts .financeAccountCard__deltaPill{
+  padding: 4px 8px;
+  font-size: 10px;
+  max-width: 120px;
+  min-width: 120px;
+}
+.financeTab .finance__accounts .financeAccountCard__menuBtn{
+ font-size: 14px;
+ background-color: transparent;
+ border: 0px;
+ padding: 0;
+}
+.financeTab .finance__accounts .financeAccountCard__balanceLabel{
+  display: none;
+}
+.financeTab .finance__accounts .finance-pill--mini{
+  display: none;
+}
+.financeTab .finance__accounts .financeAccountCard__balance{
+  position: absolute;
+  left: 20px;
+  top: 40px;
+}
+.financeTab .finance__accounts .financeAccountCard{
+  padding: 9px
+}
+.financeTab .finance-entry-form{
+  display: grid;
+  grid-template-columns: 110px 100px 75px;
+}
+#guardar-dato-vista-detalle.finance-pill {
+border: 0;
+background-color: transparent;
+padding: 0;
+font-size: 18px;
+}
+.financeTab [data-account-row-form] input {
+background-color: transparent;
+border: 0;
+max-width: 60px;
+color: white;
+justify-content: center;
+text-align: center;
+}
+div.boton-editar-borrar{
+display: flex;
+}
+
+.financeTab .financeCalCell {
+
+  padding: 4px;
+  min-height: 50px;
+  min-width: 45px;
+}
+.financeTab .financeCalCell strong {
+  font-size: 10px;
+}
+.financeTab .financeCalCell span{
+  font-size: 6px;
+}

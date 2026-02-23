@@ -15,7 +15,7 @@ const state = {
   legacyEntries: {},
   balance: { tx: {}, categories: {}, budgets: {}, snapshots: {}, lastSeenMonthKey: '' },
   goals: { goals: {} },
-  modal: { type: null, accountId: null, goalId: null },
+  modal: { type: null, accountId: null, goalId: null, budgetId: null, importRaw: '', importPreview: null, importError: '' },
   toast: '',
   calendarMonthOffset: 0,
   calendarAccountId: 'total',
@@ -42,6 +42,33 @@ function fmtSignedPercent(value) { const num = Number(value || 0); return `${num
 function toneClass(value) { if (value > 0) return 'is-positive'; if (value < 0) return 'is-negative'; return 'is-neutral'; }
 function dayKeyFromTs(ts) { const d = new Date(Number(ts || Date.now())); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function parseDayKey(key) { return new Date(`${key}T00:00:00`).getTime(); }
+function toIsoDay(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const slash = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (!slash) return null;
+  const day = Number(slash[1]);
+  const month = Number(slash[2]);
+  const year = Number(slash[3]);
+  if (!day || !month || !year || month > 12 || day > 31) return null;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+function parseEuroNumber(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return NaN;
+  const clean = raw.replace(/[^\d,.-]/g, '');
+  if (!clean) return NaN;
+  const hasComma = clean.includes(',');
+  const hasDot = clean.includes('.');
+  let normalized = clean;
+  if (hasComma && hasDot) {
+    normalized = clean.lastIndexOf(',') > clean.lastIndexOf('.') ? clean.replace(/\./g, '').replace(',', '.') : clean.replace(/,/g, '');
+  } else if (hasComma) {
+    normalized = clean.replace(/\./g, '').replace(',', '.');
+  }
+  return Number(normalized);
+}
 
 function getDeviceId() {
   const existing = localStorage.getItem(DEVICE_KEY);
@@ -189,7 +216,79 @@ function summaryForMonth(monthKey) {
 function categoriesList() {
   const dynamic = Object.keys(state.balance.categories || {});
   const fromTx = [...new Set(balanceTxList().map((tx) => tx.category).filter(Boolean))];
-  return [...new Set(['Comida', ...dynamic, ...fromTx])].sort((a, b) => a.localeCompare(b, 'es'));
+  return [...new Set([...dynamic, ...fromTx])].sort((a, b) => a.localeCompare(b, 'es'));
+}
+function getBudgetItems(monthKey = getSelectedBalanceMonthKey()) {
+  const monthBudgets = state.balance.budgets?.[monthKey] || {};
+  return Object.entries(monthBudgets).map(([id, payload]) => {
+    if (!payload || typeof payload !== 'object') return null;
+    if (payload.category != null) return { id, category: String(payload.category), limit: Number(payload.limit || 0) };
+    if (id === '_total') return { id, category: 'Total', limit: Number(payload.limit || 0) };
+    if (payload.limit == null) return null;
+    return { id, category: id, limit: Number(payload.limit || 0) };
+  }).filter((row) => row && row.category);
+}
+
+function openAccountDetail(accountId) {
+  log(`openAccountDetail accountId=${accountId}`);
+  state.modal = { type: 'account-detail', accountId, importRaw: '', importPreview: null, importError: '' };
+  render();
+}
+
+function parseCsvRows(rawCsv = '') {
+  const lines = String(rawCsv || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return { rows: [], validRows: [], invalidRows: 0, totalRows: 0 };
+  const parseLine = (line) => {
+    const out = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') { current += '"'; i += 1; }
+        else inQuotes = !inQuotes;
+      } else if (ch === ',' && !inQuotes) {
+        out.push(current.trim());
+        current = '';
+      } else current += ch;
+    }
+    out.push(current.trim());
+    return out;
+  };
+  const firstCols = parseLine(lines[0]).map((col) => col.toLowerCase());
+  const hasHeader = firstCols.includes('date') || firstCols.includes('value');
+  const offset = hasHeader ? 1 : 0;
+  const sourceRows = lines.slice(offset).map(parseLine);
+  const mapped = sourceRows.map((cols, index) => {
+    const dateISO = toIsoDay(cols[0]);
+    const value = parseEuroNumber(cols[1]);
+    const valid = Boolean(dateISO) && Number.isFinite(value);
+    return { lineNumber: index + offset + 1, raw: cols, dateISO, value, valid };
+  });
+  const validRows = mapped.filter((row) => row.valid);
+  log(`import parsed rows=${mapped.length}`);
+  return { rows: mapped, validRows, invalidRows: mapped.length - validRows.length, totalRows: mapped.length };
+}
+
+async function applyImportRows(accountId, parsed) {
+  const byDay = {};
+  parsed.validRows.forEach((row) => { byDay[row.dateISO] = row.value; });
+  const days = Object.keys(byDay);
+  if (!days.length) return 0;
+  const updatesMap = {};
+  days.forEach((day) => {
+    updatesMap[`${state.financePath}/accounts/${accountId}/daily/${day}`] = {
+      value: byDay[day],
+      ts: parseDayKey(day),
+      dateISO: `${day}T00:00:00.000Z`,
+      updatedAt: nowTs()
+    };
+  });
+  updatesMap[`${state.financePath}/accounts/${accountId}/updatedAt`] = nowTs();
+  updatesMap[`${state.financePath}/accounts/${accountId}/lastImportAt`] = nowTs();
+  await safeFirebase(() => update(ref(db), updatesMap));
+  log(`import applied days=${days.length}`);
+  return days.length;
 }
 
 async function maybeRolloverSnapshot() {
@@ -257,23 +356,23 @@ function renderFinanceBalance() {
   const prevSummary = summaryForMonth(offsetMonthKey(monthKey, -1));
   const deltaNet = monthSummary.net - prevSummary.net;
   const deltaPct = prevSummary.net ? (deltaNet / Math.abs(prevSummary.net)) * 100 : 0;
-  const budgets = state.balance.budgets?.[monthKey] || {};
   const spentByCategory = {};
   balanceTxList().filter((row) => row.monthKey === monthKey && row.type === 'expense').forEach((row) => { spentByCategory[row.category || 'Sin categoría'] = (spentByCategory[row.category || 'Sin categoría'] || 0) + row.amount; });
-  const categoriesWithBudget = Object.keys(budgets).filter((cat) => cat !== '_total');
   const totalSpent = Object.values(spentByCategory).reduce((s, v) => s + v, 0);
-  const totalLimit = Number(budgets._total?.limit || categoriesWithBudget.reduce((sumLimits, cat) => sumLimits + Number(budgets[cat]?.limit || 0), 0));
+  const budgetItems = getBudgetItems(monthKey);
   return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2><button class="finance-pill" data-open-modal="tx">+ Añadir</button></header>
   <article class="financeGlassCard"><div class="finance-row"><button class="finance-pill" data-balance-month="-1">◀</button><strong>${monthLabelByKey(monthKey)}</strong><button class="finance-pill" data-balance-month="1">▶</button></div>
   <div class="financeSummaryGrid"><div><small>Ingresos</small><strong class="is-positive">${fmtCurrency(monthSummary.income)}</strong></div><div><small>Gastos</small><strong class="is-negative">${fmtCurrency(monthSummary.expense)}</strong></div><div><small>Inversión</small><strong class="is-neutral">${fmtCurrency(monthSummary.invest)}</strong></div><div><small>Neto</small><strong class="${toneClass(monthSummary.net)}">${fmtCurrency(monthSummary.net)}</strong></div></div>
   <div class="finance-chip ${toneClass(deltaNet)}">Mes anterior: ${fmtSignedCurrency(deltaNet)} (${fmtSignedPercent(deltaPct)})</div></article>
   <article class="financeGlassCard"><div class="finance-row"><h3>Transacciones</h3><div class="finance-row"><select class="finance-pill" data-balance-type><option value="all">Todos</option><option value="expense" ${state.balanceFilterType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${state.balanceFilterType === 'income' ? 'selected' : ''}>Ingreso</option><option value="invest" ${state.balanceFilterType === 'invest' ? 'selected' : ''}>Inversión</option></select><select class="finance-pill" data-balance-category><option value="all">Todas</option>${categories.map((c) => `<option ${state.balanceFilterCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select></div></div>
   <div class="financeTxList">${tx.map((row) => `<div class="financeTxRow"><span>${new Date(row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')}</span><strong class="${row.type === 'income' ? 'is-positive' : row.type === 'expense' ? 'is-negative' : 'is-neutral'}">${fmtCurrency(row.amount)}</strong></div>`).join('') || '<p class="finance-empty">Sin movimientos en este mes.</p>'}</div></article>
-  <article class="financeGlassCard"><div class="finance-row"><h3>Presupuestos</h3><button class="finance-pill" data-open-modal="budget">Editar presupuestos</button></div>
-  <div class="financeBudgetList">${categories.map((cat) => {
-    const spent = Number(spentByCategory[cat] || 0); const limit = Number(budgets[cat]?.limit || 0); const pct = limit ? (spent / limit) * 100 : 0;
-    return `<div><div class="finance-row"><span>${escapeHtml(cat)}</span><small>${fmtCurrency(spent)} / ${limit ? fmtCurrency(limit) : '—'}</small></div><div class="financeProgress"><i style="width:${Math.min(100, pct)}%" class="${pct > 100 ? 'is-negative' : ''}"></i></div>${pct > 100 ? '<small class="is-negative">over</small>' : ''}</div>`;
-  }).join('')}<div><div class="finance-row"><strong>Total</strong><small>${fmtCurrency(totalSpent)} / ${totalLimit ? fmtCurrency(totalLimit) : '—'}</small></div><div class="financeProgress"><i style="width:${totalLimit ? Math.min(100, (totalSpent / totalLimit) * 100) : 0}%" class="${totalLimit && totalSpent > totalLimit ? 'is-negative' : ''}"></i></div></div></div></article></section>`;
+  <article class="financeGlassCard"><div class="finance-row"><h3>Presupuestos</h3><button class="finance-pill" data-open-modal="budget">+ Presupuesto</button></div>
+  <div class="financeBudgetList">${budgetItems.length ? budgetItems.map((budget) => {
+    const spent = budget.category.toLowerCase() === 'total' ? totalSpent : Number(spentByCategory[budget.category] || 0);
+    const limit = Number(budget.limit || 0);
+    const pct = limit ? (spent / limit) * 100 : 0;
+    return `<div class="financeBudgetRow"><div class="finance-row"><span>${escapeHtml(budget.category)}</span><div class="finance-row"><small>${fmtCurrency(spent)} / ${limit ? fmtCurrency(limit) : '—'}</small><button class="finance-pill finance-pill--mini" data-budget-menu="${budget.id}">⋯</button></div></div><div class="financeProgress"><i style="width:${Math.min(100, pct)}%" class="${pct > 100 ? 'is-negative' : ''}"></i></div>${pct > 100 ? '<small class="is-negative">over</small>' : ''}</div>`;
+  }).join('') : '<p class="finance-empty">No hay presupuestos aún.</p>'}</div></article></section>`;
 }
 
 function goalScore(goal) {
@@ -319,22 +418,39 @@ function renderModal(accounts) {
     backdrop.classList.remove('is-open'); backdrop.classList.add('hidden'); backdrop.setAttribute('aria-hidden', 'true'); backdrop.innerHTML = ''; document.body.classList.remove('finance-modal-open'); return;
   }
   backdrop.classList.add('is-open'); backdrop.classList.remove('hidden'); backdrop.setAttribute('aria-hidden', 'false'); document.body.classList.add('finance-modal-open');
+  if (state.modal.type === 'account-detail') {
+    const account = accounts.find((item) => item.id === state.modal.accountId);
+    if (!account) { state.modal = { type: null }; render(); return; }
+    const chart = chartModelForRange(account.daily, 'total');
+    const preview = state.modal.importPreview;
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Detalle de cuenta · ${escapeHtml(account.name)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+      <div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos.</div>'}</div>
+      <form class="finance-entry-form" data-account-entry-form="${account.id}"><input name="day" type="date" value="${dayKeyFromTs(Date.now())}" required /><input name="value" type="number" step="0.01" placeholder="Valor" required /><button class="finance-pill" type="submit">Guardar registro</button></form>
+      <div class="finance-table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ</th><th>Δ%</th><th></th></tr></thead><tbody>${account.daily.slice().reverse().map((row) => `<tr><td>${new Date(row.ts).toLocaleDateString('es-ES')}</td><td><form data-account-row-form="${account.id}:${row.day}"><input name="value" type="number" step="0.01" value="${Number(row.value || 0)}"/></form></td><td class="${toneClass(row.delta)}">${fmtSignedCurrency(row.delta)}</td><td class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</td><td><button class="finance-pill finance-pill--mini" data-save-day="${account.id}:${row.day}">Editar</button><button class="finance-pill finance-pill--mini" data-delete-day="${account.id}:${row.day}">Borrar</button></td></tr>`).join('') || '<tr><td colspan="5">Sin registros.</td></tr>'}</tbody></table></div>
+      <section class="financeImportBox"><h4>Importar CSV</h4><form class="finance-budget-form" data-import-preview-form="${account.id}"><input type="file" accept=".csv,text/csv" data-import-file="${account.id}" /><textarea name="csvText" placeholder="date,value
+2026-01-01,1200.50">${escapeHtml(state.modal.importRaw || '')}</textarea><button class="finance-pill" type="submit">Previsualizar</button></form>
+      ${state.modal.importError ? `<p class="is-negative">${escapeHtml(state.modal.importError)}</p>` : ''}
+      ${preview ? `<p>${preview.validRows.length} filas válidas / ${preview.totalRows}</p><div class="finance-table-wrap"><table><thead><tr><th>#</th><th>Fecha</th><th>Valor</th></tr></thead><tbody>${preview.validRows.slice(0, 10).map((row) => `<tr><td>${row.lineNumber}</td><td>${row.dateISO}</td><td>${fmtCurrency(row.value)}</td></tr>`).join('') || '<tr><td colspan="3">Sin filas válidas.</td></tr>'}</tbody></table></div><button class="finance-pill" data-import-apply="${account.id}">Importar ahora</button>` : ''}
+      </section></div>`;
+    return;
+  }
   if (state.modal.type === 'tx') {
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Añadir transacción</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
       <form class="finance-entry-form finance-tx-form" data-balance-form>
       <select name="type" class="finance-pill"><option value="expense">Gasto</option><option value="income">Ingreso</option><option value="invest">Inversión</option></select>
       <input required name="amount" type="number" step="0.01" placeholder="Cantidad €" />
       <input name="dateISO" type="date" value="${dayKeyFromTs(Date.now())}" />
-      <input name="category" list="finance-cat-list" value="Comida" placeholder="Categoría" />
+      <input name="category" list="finance-cat-list" placeholder="Categoría" />
       <datalist id="finance-cat-list">${categories.map((c) => `<option value="${escapeHtml(c)}"></option>`).join('')}</datalist>
       <input name="note" type="text" placeholder="Nota (opcional)" />
       <button class="finance-pill" type="submit">Guardar</button></form></div>`;
     return;
   }
   if (state.modal.type === 'budget') {
-    const monthKey = getSelectedBalanceMonthKey(); const budgets = state.balance.budgets?.[monthKey] || {};
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar presupuestos (${monthKey})</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
-      <form class="finance-budget-form" data-budget-form>${categories.map((c) => `<label>${escapeHtml(c)}<input data-budget-cat="${escapeHtml(c)}" type="number" step="0.01" value="${Number(budgets[c]?.limit || 0)}" /></label>`).join('')}<label>Total<input data-budget-total type="number" step="0.01" value="${Number(budgets._total?.limit || 0)}"/></label><button class="finance-pill" type="submit">Guardar</button></form></div>`;
+    const monthKey = getSelectedBalanceMonthKey();
+    const budget = state.modal.budgetId ? getBudgetItems(monthKey).find((item) => item.id === state.modal.budgetId) : null;
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${budget ? 'Editar' : 'Nuevo'} presupuesto (${monthKey})</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+      <form class="finance-budget-form" data-budget-form><input name="category" list="finance-cat-list" value="${escapeHtml(budget?.category || '')}" placeholder="Categoría o Total" required /><datalist id="finance-cat-list"><option value="Total"></option>${categories.map((c) => `<option value="${escapeHtml(c)}"></option>`).join('')}</datalist><input name="limit" type="number" step="0.01" value="${Number(budget?.limit || 0)}" placeholder="Límite €" required /><input name="monthKey" type="month" value="${monthKey}" required /><button class="finance-pill" type="submit">Guardar</button>${budget ? `<button class="finance-pill" type="button" data-budget-delete="${budget.id}">Eliminar</button>` : ''}</form></div>`;
     return;
   }
   if (state.modal.type === 'goal') {
@@ -352,7 +468,6 @@ function renderModal(accounts) {
     return;
   }
 
-  // legacy modals
   if (state.modal.type === 'history') {
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Historial</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><div class="finance-history-list">${accounts.map((account) => `<details class="finance-history-item" data-history-account="${account.id}"><summary><strong>${escapeHtml(account.name)}</strong><small>${account.daily.length} registros · ${fmtCurrency(account.current)}</small></summary><div class="finance-history-rows" data-history-rows="${account.id}"><p class="finance-empty">Pulsa para cargar…</p></div></details>`).join('') || '<p class="finance-empty">Sin historial.</p>'}</div></div>`;
     return;
@@ -444,23 +559,35 @@ function bindEvents() {
     if (target.closest('[data-close-modal]') || target.id === 'finance-modalOverlay') { state.modal = { type: null }; render(); return; }
     if (target.closest('[data-history]')) { state.modal = { type: 'history' }; render(); return; }
     if (target.closest('[data-new-account]')) { state.modal = { type: 'new-account' }; render(); return; }
-    const openAccount = target.closest('[data-open-detail]')?.dataset.openDetail; if (openAccount && !target.closest('[data-account-input]')) { state.modal = { type: 'history' }; render(); return; }
+    const openAccount = target.closest('[data-open-detail]')?.dataset.openDetail; if (openAccount && !target.closest('[data-account-input]')) { openAccountDetail(openAccount); return; }
     const delAcc = target.closest('[data-delete-account]')?.dataset.deleteAccount; if (delAcc && window.confirm('¿Eliminar esta cuenta y todos sus registros?')) { await deleteAccount(delAcc); return; }
     const delDay = target.closest('[data-delete-day]')?.dataset.deleteDay; if (delDay) { const [accountId, day] = delDay.split(':'); if (window.confirm(`¿Eliminar ${day}?`)) await deleteDay(accountId, day); return; }
+    const saveDay = target.closest('[data-save-day]')?.dataset.saveDay; if (saveDay) { const [accountId, day] = saveDay.split(':'); const form = view.querySelector(`[data-account-row-form="${saveDay}"]`); const val = form?.querySelector('[name="value"]')?.value; await saveDaily(accountId, day, val, parseDayKey(day)); return; }
+    const budgetMenu = target.closest('[data-budget-menu]')?.dataset.budgetMenu; if (budgetMenu) { state.modal = { type: 'budget', budgetId: budgetMenu }; render(); return; }
+    const budgetDelete = target.closest('[data-budget-delete]')?.dataset.budgetDelete; if (budgetDelete && window.confirm('¿Eliminar presupuesto?')) { const monthKey = getSelectedBalanceMonthKey(); await safeFirebase(() => remove(ref(db, `${state.financePath}/balance/budgets/${monthKey}/${budgetDelete}`))); state.modal = { type: null }; toast('Presupuesto eliminado'); render(); return; }
+    const importApply = target.closest('[data-import-apply]')?.dataset.importApply; if (importApply) { const parsed = state.modal.importPreview; if (!parsed?.validRows?.length) { state.modal = { ...state.modal, importError: 'CSV sin filas válidas.' }; render(); return; } const imported = await applyImportRows(importApply, parsed); toast(`Importados ${imported} días`); openAccountDetail(importApply); return; }
     const monthShift = target.closest('[data-month-shift]')?.dataset.monthShift; if (monthShift) { state.calendarMonthOffset += Number(monthShift); render(); return; }
     const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); render(); return; }
-    const openModal = target.closest('[data-open-modal]')?.dataset.openModal; if (openModal) { state.modal = { type: openModal }; render(); return; }
+    const openModal = target.closest('[data-open-modal]')?.dataset.openModal; if (openModal) { state.modal = { type: openModal, budgetId: null }; render(); return; }
     const openGoal = target.closest('[data-open-goal]')?.dataset.openGoal; if (openGoal) { state.modal = { type: 'goal-detail', goalId: openGoal }; render(); return; }
     const delGoal = target.closest('[data-delete-goal]')?.dataset.deleteGoal; if (delGoal && window.confirm('¿Borrar objetivo?')) { await safeFirebase(() => remove(ref(db, `${state.financePath}/goals/goals/${delGoal}`))); return; }
   });
 
-  view.addEventListener('change', (event) => {
+  view.addEventListener('change', async (event) => {
     if (event.target.matches('[data-range]')) { state.rangeMode = event.target.value; render(); }
     if (event.target.matches('[data-compare]')) { state.compareMode = event.target.value; render(); }
     if (event.target.matches('[data-calendar-account]')) { state.calendarAccountId = event.target.value; render(); }
     if (event.target.matches('[data-calendar-mode]')) { state.calendarMode = event.target.value; render(); }
     if (event.target.matches('[data-balance-type]')) { state.balanceFilterType = event.target.value; render(); }
     if (event.target.matches('[data-balance-category]')) { state.balanceFilterCategory = event.target.value; render(); }
+    if (event.target.matches('[data-import-file]')) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const raw = await file.text();
+      const parsed = parseCsvRows(raw);
+      state.modal = { ...state.modal, importRaw: raw, importPreview: parsed, importError: parsed.validRows.length ? '' : 'CSV inválido o sin filas válidas.' };
+      render();
+    }
   });
 
   view.addEventListener('focusout', (event) => {
@@ -473,23 +600,46 @@ function bindEvents() {
     if (event.target.matches('[data-new-account-form]')) {
       event.preventDefault(); const name = event.target.querySelector('[data-account-name-input]')?.value?.trim(); if (name) await addAccount(name); state.modal = { type: null }; render(); return;
     }
+    if (event.target.matches('[data-account-entry-form]')) {
+      event.preventDefault();
+      const accountId = event.target.dataset.accountEntryForm;
+      const form = new FormData(event.target);
+      const day = String(form.get('day') || '').trim();
+      const value = form.get('value');
+      if (!day) { toast('Fecha inválida'); return; }
+      await saveDaily(accountId, day, value, parseDayKey(day));
+      openAccountDetail(accountId);
+      return;
+    }
+    if (event.target.matches('[data-import-preview-form]')) {
+      event.preventDefault();
+      const accountId = event.target.dataset.importPreviewForm;
+      const textCsv = event.target.querySelector('textarea[name="csvText"]')?.value || '';
+      const parsed = parseCsvRows(textCsv);
+      state.modal = { ...state.modal, accountId, importRaw: textCsv, importPreview: parsed, importError: parsed.validRows.length ? '' : 'CSV inválido o sin filas válidas.' };
+      render();
+      return;
+    }
     if (event.target.matches('[data-balance-form]')) {
       event.preventDefault();
       const form = new FormData(event.target);
       const type = String(form.get('type') || 'expense'); const amount = Number(form.get('amount') || 0); const dateISO = String(form.get('dateISO') || dayKeyFromTs(Date.now()));
-      const category = String(form.get('category') || 'Comida').trim() || 'Comida'; const note = String(form.get('note') || '').trim();
+      const category = String(form.get('category') || 'Sin categoría').trim() || 'Sin categoría'; const note = String(form.get('note') || '').trim();
       const monthKey = dateISO.slice(0, 7); const txId = push(ref(db, `${state.financePath}/balance/tx`)).key;
       await safeFirebase(() => set(ref(db, `${state.financePath}/balance/tx/${txId}`), { amount, category, note, dateISO: `${dateISO}T12:00:00.000Z`, monthKey, type }));
       if (!state.balance.categories?.[category]) await safeFirebase(() => set(ref(db, `${state.financePath}/balance/categories/${category}`), { createdAt: nowTs() }));
       state.modal = { type: null }; toast('Transacción guardada'); render(); return;
     }
     if (event.target.matches('[data-budget-form]')) {
-      event.preventDefault(); const monthKey = getSelectedBalanceMonthKey(); const updatesMap = {};
-      event.target.querySelectorAll('[data-budget-cat]').forEach((input) => {
-        const cat = input.dataset.budgetCat; const limit = Number(input.value || 0); updatesMap[`${state.financePath}/balance/budgets/${monthKey}/${cat}/limit`] = limit;
-      });
-      updatesMap[`${state.financePath}/balance/budgets/${monthKey}/_total/limit`] = Number(event.target.querySelector('[data-budget-total]')?.value || 0);
-      await safeFirebase(() => update(ref(db), updatesMap)); state.modal = { type: null }; toast('Presupuestos guardados'); render(); return;
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const category = String(form.get('category') || '').trim();
+      const limit = Number(form.get('limit') || 0);
+      const monthKey = String(form.get('monthKey') || getSelectedBalanceMonthKey());
+      if (!category || !monthKey || !Number.isFinite(limit)) { toast('Datos de presupuesto inválidos'); return; }
+      const budgetId = state.modal.budgetId || push(ref(db, `${state.financePath}/balance/budgets/${monthKey}`)).key;
+      await safeFirebase(() => set(ref(db, `${state.financePath}/balance/budgets/${monthKey}/${budgetId}`), { category, limit, createdAt: nowTs(), updatedAt: nowTs() }));
+      state.modal = { type: null }; toast('Presupuesto guardado'); render(); return;
     }
     if (event.target.matches('[data-goal-form]')) {
       event.preventDefault(); const form = new FormData(event.target); const goalId = push(ref(db, `${state.financePath}/goals/goals`)).key;

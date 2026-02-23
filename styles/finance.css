@@ -733,3 +733,27 @@ display: flex;
   width: 0px;
   height: 0px;
 }
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  justify-content: center;
+  align-items: center;
+}
+input {
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.15);
+  background: rgba(10,14,24,.55);
+  color: inherit;
+  padding: 10px 12px;
+  margin-left: 20px;
+  max-width: 100px;
+}
+.finance-calendar-months, .finance-calendar-years{
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  justify-content: center;
+grid-template-columns: 1fr 1fr 1fr 1fr;
+}

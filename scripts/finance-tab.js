@@ -2,7 +2,7 @@ import { get, onValue, push, ref, remove, set, update } from 'https://www.gstati
 import { db } from './firebase-shared.js';
 
 const LEGACY_PATH = 'finance';
-const DEVICE_KEY = 'bookshell_deviceId';
+const DEVICE_KEY = 'finance_deviceId';
 const RANGE_LABEL = { total: 'Total', month: 'Mes', week: 'Semana', year: 'Año' };
 
 const state = {
@@ -33,6 +33,7 @@ const state = {
     options: { typeOfMeal: {}, cuisine: {}, place: {} },
     items: {}
   },
+  hydratedFromRemote: false,
   error: '',
   booted: false
 };
@@ -81,6 +82,11 @@ function showFinanceBootError(err) {
 function nowTs() { return Date.now(); }
 function getMonthKeyFromDate(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
 function parseMonthKey(monthKey) { const [y, m] = String(monthKey).split('-').map(Number); return new Date(y, (m || 1) - 1, 1); }
+function monthDiffFromNow(monthKey) {
+  const target = parseMonthKey(monthKey);
+  const now = new Date();
+  return (target.getFullYear() - now.getFullYear()) * 12 + (target.getMonth() - now.getMonth());
+}
 function offsetMonthKey(monthKey, offset) { const d = parseMonthKey(monthKey); d.setMonth(d.getMonth() + offset); return getMonthKeyFromDate(d); }
 function monthLabelByKey(monthKey) { return new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(parseMonthKey(monthKey)); }
 function escapeHtml(value = '') { return String(value).replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s])); }
@@ -240,6 +246,35 @@ function getDeviceId() {
   return generated;
 }
 
+function calendarAnchorDate() {
+  const date = new Date();
+  date.setMonth(date.getMonth() + state.calendarMonthOffset);
+  return date;
+}
+
+function calendarSourceSeries(accounts, totalSeries) {
+  if (state.calendarAccountId === 'total') return totalSeries.map((point, idx, arr) => ({ ...point, delta: idx ? point.value - arr[idx - 1].value : 0 }));
+  return accounts.find((acc) => acc.id === state.calendarAccountId)?.daily || [];
+}
+
+function closePointBefore(series, tsExclusive) {
+  for (let i = series.length - 1; i >= 0; i -= 1) {
+    if (series[i].ts < tsExclusive) return series[i];
+  }
+  return null;
+}
+
+function deltaByBounds(series, startTs, endTs) {
+  const prev = closePointBefore(series, startTs);
+  const end = closePointBefore(series, endTs);
+  if (!prev && !end) return { delta: 0, deltaPct: 0, isEmpty: true };
+  const startValue = Number(prev?.value ?? end?.value ?? 0);
+  const endValue = Number(end?.value ?? startValue);
+  const delta = endValue - startValue;
+  const deltaPct = startValue ? (delta / startValue) * 100 : 0;
+  return { delta, deltaPct, isEmpty: false };
+}
+
 function safeFirebase(action, fallback = null) {
   return action().catch((error) => {
     log('firebase error', error);
@@ -280,7 +315,8 @@ async function recomputeAccountEntries(accountId, fromDay) {
   if (fromDay) daySet.add(fromDay);
   const allDays = [...daySet].sort();
   if (!allDays.length) return;
-  const startDay = fromDay || allDays[0];
+  const normalizedFromDay = toIsoDay(fromDay || '') || fromDay;
+  const startDay = normalizedFromDay || allDays[0];
   log(`recompute from ${startDay} for accountId=${accountId}`);
   const dayMovementNet = {};
   movements.forEach((row) => {
@@ -305,7 +341,10 @@ async function recomputeAccountEntries(accountId, fromDay) {
     if (snapshotByDay[day]) {
       value = snapshotByDay[day].value;
       source = 'snapshot';
-    } else value = carry + Number(dayMovementNet[day] || 0);
+    } else {
+      // Consolidación diaria: sin snapshot manual, el cierre deriva del día previo + neto de movimientos.
+      value = carry + Number(dayMovementNet[day] || 0);
+    }
     carry = value;
     updatesMap[`${state.financePath}/accounts/${accountId}/entries/${day}`] = { dateISO: `${day}T00:00:00.000Z`, value, updatedAt: nowTs(), source };
   });
@@ -415,19 +454,52 @@ function linePath(points, width = 320, height = 120) {
 }
 
 function calendarData(accounts, totalSeries) {
-  const date = new Date(); date.setMonth(date.getMonth() + state.calendarMonthOffset);
+  const date = calendarAnchorDate();
   const year = date.getFullYear(); const month = date.getMonth();
   const monthStartDate = new Date(year, month, 1); const monthStart = monthStartDate.getTime(); const monthEnd = new Date(year, month + 1, 1).getTime();
   const daysInMonth = new Date(year, month + 1, 0).getDate(); const firstWeekdayOffset = (monthStartDate.getDay() + 6) % 7;
-  const source = state.calendarAccountId === 'total' ? totalSeries.map((point, idx, arr) => ({ ...point, delta: idx ? point.value - arr[idx - 1].value : 0 })) : (accounts.find((acc) => acc.id === state.calendarAccountId)?.daily || []);
+  const source = calendarSourceSeries(accounts, totalSeries);
   const pointsByDay = {};
   source.filter((point) => point.ts >= monthStart && point.ts < monthEnd).forEach((point) => {
     const prev = source.filter((i) => i.ts < point.ts).at(-1); const delta = prev ? point.value - prev.value : point.delta || 0; const deltaPct = prev?.value ? (delta / prev.value) * 100 : 0;
     pointsByDay[new Date(point.ts).getDate()] = { ...point, delta, deltaPct };
   });
   const cells = []; for (let i = 0; i < firstWeekdayOffset; i += 1) cells.push(null);
-  for (let day = 1; day <= daysInMonth; day += 1) cells.push(pointsByDay[day] ? { ...pointsByDay[day], dayNumber: day } : { dayNumber: day, delta: 0, deltaPct: 0, isEmpty: true });
-  return { cells };
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const dayKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    cells.push(pointsByDay[day] ? { ...pointsByDay[day], dayNumber: day, dayKey } : { dayNumber: day, dayKey, delta: 0, deltaPct: 0, isEmpty: true });
+  }
+  return { cells, year, month };
+}
+
+function calendarMonthData(accounts, totalSeries) {
+  const date = calendarAnchorDate();
+  const year = date.getFullYear();
+  const source = calendarSourceSeries(accounts, totalSeries);
+  const months = Array.from({ length: 12 }, (_, index) => {
+    const monthStart = new Date(year, index, 1).getTime();
+    const monthEnd = new Date(year, index + 1, 1).getTime();
+    const deltaRow = deltaByBounds(source, monthStart, monthEnd);
+    return {
+      month: index,
+      monthKey: `${year}-${String(index + 1).padStart(2, '0')}`,
+      label: new Intl.DateTimeFormat('es-ES', { month: 'long' }).format(new Date(year, index, 1)),
+      ...deltaRow
+    };
+  });
+  return { year, months };
+}
+
+function calendarYearData(accounts, totalSeries) {
+  const source = calendarSourceSeries(accounts, totalSeries);
+  const years = [...new Set(source.map((point) => new Date(point.ts).getFullYear()))].sort((a, b) => a - b);
+  if (!years.length) years.push(new Date().getFullYear());
+  return years.map((year) => {
+    const start = new Date(year, 0, 1).getTime();
+    const end = new Date(year + 1, 0, 1).getTime();
+    const deltaRow = deltaByBounds(source, start, end);
+    return { year, ...deltaRow };
+  });
 }
 
 function balanceTxList() {
@@ -585,14 +657,33 @@ function renderFinanceHome(accounts, totalSeries) {
 
 function renderFinanceCalendar(accounts, totalSeries) {
   const weekdayLabels = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
-  const calendar = calendarData(accounts, totalSeries);
-  return `<section class="finance-home"><article class="finance__calendarPreview"><div class="finance__sectionHeader"><h2>Calendario</h2><span class="finance-month-label">${monthLabelByKey(offsetMonthKey(getMonthKeyFromDate(), state.calendarMonthOffset))}</span></div>
-  <div class="finance-calendar-controls"><button class="finance-pill" data-month-shift="-1">◀</button><select class="finance-pill" data-calendar-account><option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select><select class="finance-pill" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>Día</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option></select><button class="finance-pill" data-month-shift="1">▶</button></div>
-  <div class="finance-calendar-grid"><div class="finance-calendar-weekdays">${weekdayLabels.map((l) => `<span>${l}</span>`).join('')}</div><div class="finance-calendar-days">${calendar.cells.map((point) => {
-    if (!point) return '<div class="financeCalCell financeCalCell--blank"></div>';
-    const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
-    return `<div class="financeCalCell ${tone}"><strong>${point.dayNumber}</strong><span>${point.isEmpty ? '—' : fmtSignedCurrency(point.delta)}</span><span>${point.isEmpty ? '—' : fmtSignedPercent(point.deltaPct)}</span></div>`;
-  }).join('')}</div></div></article></section>`;
+  const dayCalendar = calendarData(accounts, totalSeries);
+  const monthCalendar = calendarMonthData(accounts, totalSeries);
+  const yearCalendar = calendarYearData(accounts, totalSeries);
+  const modeLabel = state.calendarMode === 'month'
+    ? `${monthCalendar.year}`
+    : (state.calendarMode === 'year' ? 'Años' : monthLabelByKey(offsetMonthKey(getMonthKeyFromDate(), state.calendarMonthOffset)));
+  let content = '';
+  if (state.calendarMode === 'month') {
+    content = `<div class="finance-calendar-months">${monthCalendar.months.map((point) => {
+      const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
+      return `<button class="financeCalCell ${tone}" data-calendar-open-month="${point.monthKey}"><strong>${escapeHtml(point.label)}</strong><span>${point.isEmpty ? '—' : fmtSignedCurrency(point.delta)}</span><span>${point.isEmpty ? '—' : fmtSignedPercent(point.deltaPct)}</span></button>`;
+    }).join('')}</div>`;
+  } else if (state.calendarMode === 'year') {
+    content = `<div class="finance-calendar-years">${yearCalendar.map((point) => {
+      const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
+      return `<button class="financeCalCell ${tone}" data-calendar-open-year="${point.year}"><strong>${point.year}</strong><span>${point.isEmpty ? '—' : fmtSignedCurrency(point.delta)}</span></button>`;
+    }).join('')}</div>`;
+  } else {
+    content = `<div class="finance-calendar-grid"><div class="finance-calendar-weekdays">${weekdayLabels.map((l) => `<span>${l}</span>`).join('')}</div><div class="finance-calendar-days">${dayCalendar.cells.map((point) => {
+      if (!point) return '<div class="financeCalCell financeCalCell--blank"></div>';
+      const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
+      return `<button class="financeCalCell ${tone}" data-calendar-day="${point.dayKey}"><strong>${point.dayNumber}</strong><span>${point.isEmpty ? '—' : fmtSignedCurrency(point.delta)}</span><span>${point.isEmpty ? '—' : fmtSignedPercent(point.deltaPct)}</span></button>`;
+    }).join('')}</div></div>`;
+  }
+  return `<section class="finance-home"><article class="finance__calendarPreview"><div class="finance__sectionHeader"><h2>Calendario</h2><span class="finance-month-label">${modeLabel}</span></div>
+  <div class="finance-calendar-controls"><button class="finance-pill" data-month-shift="-1">◀</button><select class="finance-pill" data-calendar-account><option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select><select class="finance-pill" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>Día</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>Año</option></select><button class="finance-pill" data-month-shift="1">▶</button></div>
+  ${content}</article></section>`;
 }
 
 function renderFinanceBalance() {
@@ -661,6 +752,17 @@ function renderFinanceGoals() {
       <p>${fmtCurrency(g.progress)} / ${fmtCurrency(g.targetAmount)} (${g.pct.toFixed(1)}%)</p><div class="financeProgress"><i style="width:${Math.min(100, g.pct)}%"></i></div>
       <p class="${statusClass}">Prioridad ${(g.score).toFixed(2)} · vence ${new Date(g.dueDateISO).toLocaleDateString('es-ES')}</p><small>Asignación sugerida: ${fmtCurrency(allocated)} (${(allocationShare * 100).toFixed(1)}% del pool, dinero / días)</small></article>`;
   }).join('') || '<p class="finance-empty">Sin objetivos aún.</p>'}</div></section>`;
+}
+
+function accountValueForDay(account = {}, day) {
+  if (!day) return 0;
+  const snapshot = account.snapshots?.[day];
+  if (snapshot && Number.isFinite(Number(snapshot.value))) return Number(snapshot.value);
+  const entry = account.entries?.[day] || account.daily?.[day];
+  if (entry && Number.isFinite(Number(entry.value))) return Number(entry.value);
+  const dailyRows = normalizeDaily(account.entries || account.daily || {});
+  const prev = dailyRows.filter((row) => row.day <= day).at(-1);
+  return Number(prev?.value || 0);
 }
 
 function renderModal() {
@@ -916,6 +1018,12 @@ backdrop.innerHTML = `
 `;
   return;
 }
+  if (state.modal.type === 'calendar-day-edit') {
+    const day = String(state.modal.day || '').trim();
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar saldos · ${escapeHtml(day)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+      <form data-calendar-day-form="${escapeHtml(day)}">${accounts.map((account) => `<label>${escapeHtml(account.name)}<input name="acc_${account.id}" type="number" step="0.01" value="${accountValueForDay(account, day)}" /></label>`).join('') || '<p class="finance-empty">No hay cuentas.</p>'}<button class="finance-pill" type="submit">Guardar</button></form></div>`;
+    return;
+  }
   if (state.modal.type === 'budget') {
     const monthKey = getSelectedBalanceMonthKey();
     const budget = state.modal.budgetId ? getBudgetItems(monthKey).find((item) => item.id === state.modal.budgetId) : null;
@@ -1046,29 +1154,52 @@ async function migrateLegacy(entriesMap = {}, accounts = []) {
   if (writes) await safeFirebase(() => update(ref(db), updatesMap));
 }
 
+function applyRemoteData(val = {}, replace = false) {
+  const root = val && typeof val === 'object' ? val : {};
+  const accountsMap = root.accounts || (replace ? {} : Object.fromEntries(state.accounts.map((acc) => [acc.id, acc])));
+  const fallbackEntries = replace ? {} : state.legacyEntries;
+  state.accounts = Object.values(accountsMap).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  state.legacyEntries = root.accountsEntries || root.entries || fallbackEntries;
+  state.balance = {
+    tx: root.balance?.tx || (replace ? {} : state.balance.tx),
+    movements: root.movements || (replace ? {} : state.balance.movements),
+    categories: root.balance?.categories || (replace ? {} : state.balance.categories),
+    budgets: root.balance?.budgets || (replace ? {} : state.balance.budgets),
+    snapshots: root.balance?.snapshots || (replace ? {} : state.balance.snapshots),
+    defaultAccountId: root.balance?.defaultAccountId || (replace ? '' : state.balance.defaultAccountId),
+    lastSeenMonthKey: root.balance?.lastSeenMonthKey || (replace ? '' : state.balance.lastSeenMonthKey)
+  };
+  state.goals = { goals: root.goals?.goals || (replace ? {} : state.goals.goals) };
+}
+
 async function loadDataOnce() {
   const snap = await safeFirebase(() => get(ref(db, state.financePath)));
+  const val = snap?.val();
+  if (val && typeof val === 'object') applyRemoteData(val, true);
+  else applyRemoteData({}, true);
   const legacySnap = await safeFirebase(() => get(ref(db, LEGACY_PATH)));
-  const val = snap?.val() || {};
-  const fallback = legacySnap?.val() || {};
-  const accountsMap = Object.keys(val.accounts || {}).length ? val.accounts : (fallback.accounts || {});
-  const entriesMap = val.accountsEntries || val.entries || fallback.accountsEntries || fallback.entries || {};
-  state.accounts = Object.values(accountsMap).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-  state.legacyEntries = entriesMap;
-  state.balance = { tx: val.balance?.tx || {}, movements: val.movements || {}, categories: val.balance?.categories || {}, budgets: val.balance?.budgets || {}, snapshots: val.balance?.snapshots || {}, defaultAccountId: val.balance?.defaultAccountId || '', lastSeenMonthKey: val.balance?.lastSeenMonthKey || '' };
-  state.goals = { goals: val.goals?.goals || {} };
-  await migrateLegacy(entriesMap, state.accounts);
+  if (!state.accounts.length && legacySnap?.exists()) {
+    const fallback = legacySnap.val() || {};
+    const fallbackAccounts = Object.values(fallback.accounts || {}).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    if (fallbackAccounts.length) {
+      state.accounts = fallbackAccounts;
+      state.legacyEntries = fallback.accountsEntries || fallback.entries || {};
+    }
+  }
+  state.hydratedFromRemote = true;
   log('loaded accounts:', state.accounts.length);
 }
 
 function subscribe() {
   if (state.unsubscribe) state.unsubscribe();
   state.unsubscribe = onValue(ref(db, state.financePath), (snap) => {
-    const val = snap.val() || {};
-    state.accounts = Object.values(val.accounts || {}).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-    state.legacyEntries = val.accountsEntries || val.entries || state.legacyEntries;
-    state.balance = { tx: val.balance?.tx || {}, movements: val.movements || {}, categories: val.balance?.categories || {}, budgets: val.balance?.budgets || {}, snapshots: val.balance?.snapshots || {}, defaultAccountId: val.balance?.defaultAccountId || '', lastSeenMonthKey: val.balance?.lastSeenMonthKey || '' };
-    state.goals = { goals: val.goals?.goals || {} };
+    const val = snap.val();
+    if (!val && state.hydratedFromRemote) {
+      triggerRender();
+      return;
+    }
+    applyRemoteData(val || {}, false);
+    state.hydratedFromRemote = true;
     triggerRender();
   }, (error) => { state.error = String(error?.message || error); triggerRender(); });
 }
@@ -1190,7 +1321,27 @@ function bindEvents() {
     const budgetMenu = target.closest('[data-budget-menu]')?.dataset.budgetMenu; if (budgetMenu) { state.modal = { type: 'budget', budgetId: budgetMenu }; triggerRender(); return; }
     const budgetDelete = target.closest('[data-budget-delete]')?.dataset.budgetDelete; if (budgetDelete && window.confirm('¿Eliminar presupuesto?')) { const monthKey = getSelectedBalanceMonthKey(); await safeFirebase(() => remove(ref(db, `${state.financePath}/balance/budgets/${monthKey}/${budgetDelete}`))); state.modal = { type: null }; toast('Presupuesto eliminado'); triggerRender(); return; }
     const importApply = target.closest('[data-import-apply]')?.dataset.importApply; if (importApply) { const parsed = state.modal.importPreview; if (!parsed?.validRows?.length) { state.modal = { ...state.modal, importError: 'CSV sin filas válidas.' }; triggerRender(); return; } const imported = await applyImportRows(importApply, parsed); toast(`Importados ${imported} días`); openAccountDetail(importApply); return; }
-    const monthShift = target.closest('[data-month-shift]')?.dataset.monthShift; if (monthShift) { state.calendarMonthOffset += Number(monthShift); triggerRender(); return; }
+    const calendarDay = target.closest('[data-calendar-day]')?.dataset.calendarDay; if (calendarDay) { state.modal = { type: 'calendar-day-edit', day: calendarDay }; triggerRender(); return; }
+    const openMonth = target.closest('[data-calendar-open-month]')?.dataset.calendarOpenMonth; if (openMonth) {
+      state.calendarMonthOffset = monthDiffFromNow(openMonth);
+      state.calendarMode = 'day';
+      triggerRender();
+      return;
+    }
+    const openYear = target.closest('[data-calendar-open-year]')?.dataset.calendarOpenYear; if (openYear) {
+      state.calendarMonthOffset = monthDiffFromNow(`${openYear}-01`);
+      state.calendarMode = 'month';
+      triggerRender();
+      return;
+    }
+    const monthShift = target.closest('[data-month-shift]')?.dataset.monthShift; if (monthShift) {
+      const step = Number(monthShift);
+      if (state.calendarMode === 'month') state.calendarMonthOffset += (step * 12);
+      else if (state.calendarMode === 'year') state.calendarMonthOffset += (step * 120);
+      else state.calendarMonthOffset += step;
+      triggerRender();
+      return;
+    }
     const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); triggerRender(); return; }
     const openModal = target.closest('[data-open-modal]')?.dataset.openModal; if (openModal) { state.modal = { type: openModal, budgetId: null }; triggerRender(); return; }
     const openGoal = target.closest('[data-open-goal]')?.dataset.openGoal; if (openGoal) { state.modal = { type: 'goal-detail', goalId: openGoal }; triggerRender(); return; }
@@ -1255,6 +1406,29 @@ view.addEventListener('focusout', async (event) => {
   view.addEventListener('submit', async (event) => {
     if (event.target.matches('[data-new-account-form]')) {
       event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 0.5); if (name) await addAccount({ name, shared, sharedRatio }); state.modal = { type: null }; triggerRender(); return;
+    }
+    if (event.target.matches('[data-calendar-day-form]')) {
+      event.preventDefault();
+      const day = String(event.target.dataset.calendarDayForm || '').trim();
+      if (!day) { toast('Fecha inválida'); return; }
+      const updatesMap = {};
+      const touched = [];
+      buildAccountModels().forEach((account) => {
+        const raw = event.target.querySelector(`[name="acc_${account.id}"]`)?.value;
+        if (raw == null || raw === '') return;
+        const parsed = Number(String(raw).replace(',', '.'));
+        if (!Number.isFinite(parsed)) return;
+        updatesMap[`${state.financePath}/accounts/${account.id}/snapshots/${day}`] = { value: parsed, updatedAt: nowTs() };
+        updatesMap[`${state.financePath}/accounts/${account.id}/updatedAt`] = nowTs();
+        touched.push(account.id);
+      });
+      if (!touched.length) { toast('Sin cambios'); return; }
+      await safeFirebase(() => update(ref(db), updatesMap));
+      for (const accountId of touched) await recomputeAccountEntries(accountId, day);
+      state.modal = { type: null };
+      toast('Saldos guardados');
+      triggerRender();
+      return;
     }
     if (event.target.matches('[data-account-entry-form]')) {
       event.preventDefault();
@@ -1364,7 +1538,8 @@ async function boot() {
     resolvedRoot: financeRoot?.id || financeRoot?.className || financeRoot?.tagName || null,
   });
   state.deviceId = getDeviceId();
-  state.financePath = `bookshell/finance/${state.deviceId}`;
+  console.log('[finance] deviceId', state.deviceId);
+  state.financePath = `Finance/${state.deviceId}`;
   log('init ok', { financePath: state.financePath });
   bindEvents();
   await loadDataOnce();

@@ -375,3 +375,50 @@ Modal: #finance-modalOverlay, #finance-modal
 .financeTab .financeBudgetRow .finance-row {
   align-items: center;
 }
+
+.financeTab .food-extra {
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 14px;
+  padding: 10px;
+  background: rgba(10,14,24,.35);
+  display: grid;
+  gap: 10px;
+}
+.financeTab .food-extra h4 { margin: 0; font-size: .95rem; }
+.financeTab .food-extra-field { display: grid; gap: 6px; }
+.financeTab .food-extra-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+.financeTab .food-top-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.financeTab .food-top-items .finance-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255,255,255,.2);
+  background: rgba(20,34,66,.7);
+  color: inherit;
+}
+.financeTab .food-search-list {
+  display: grid;
+  gap: 6px;
+  max-height: 160px;
+  overflow: auto;
+}
+.financeTab .food-result {
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(12,18,33,.6);
+  color: inherit;
+  padding: 8px 10px;
+}
+.financeTab .food-result--create {
+  border-style: dashed;
+  border-color: rgba(74,222,128,.5);
+}

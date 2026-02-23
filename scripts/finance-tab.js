@@ -27,6 +27,12 @@ const state = {
   lastMovementAccountId: localStorage.getItem('bookshell_finance_lastMovementAccountId') || '',
   unsubscribe: null,
   saveTimers: {},
+  food: {
+    loaded: false,
+    loading: false,
+    options: { typeOfMeal: {}, cuisine: {}, place: {} },
+    items: {}
+  },
   error: '',
   booted: false
 };
@@ -122,6 +128,108 @@ function normalizeAccountShare(account = {}) {
   return { shared, sharedRatio };
 }
 function movementSign(type) { return type === 'income' ? 1 : -1; }
+function isFoodCategory(category = '') {
+  const normalized = String(category || '').trim().toLowerCase();
+  return normalized === 'comida' || normalized === 'food';
+}
+function normalizeFoodName(value = '') {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+function normalizeFoodMap(map = {}) {
+  const out = {};
+  Object.entries(map || {}).forEach(([name, payload]) => {
+    const safeName = normalizeFoodName(name);
+    if (!safeName) return;
+    out[safeName] = {
+      createdAt: Number(payload?.createdAt || 0) || nowTs(),
+      count: Number(payload?.count || 0),
+      lastUsedAt: Number(payload?.lastUsedAt || 0)
+    };
+  });
+  return out;
+}
+function foodOptionList(kind) {
+  return Object.keys(state.food.options?.[kind] || {}).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+}
+function foodItemsList() {
+  return Object.entries(state.food.items || {}).map(([name, meta]) => ({
+    name,
+    count: Number(meta?.count || 0),
+    lastUsedAt: Number(meta?.lastUsedAt || 0)
+  }));
+}
+function topFoodItems(limit = 6) {
+  return foodItemsList().sort((a, b) => (b.count - a.count) || (b.lastUsedAt - a.lastUsedAt) || a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })).slice(0, limit);
+}
+
+async function loadFoodCatalog(force = false) {
+  if (state.food.loading) return;
+  if (state.food.loaded && !force) return;
+  state.food.loading = true;
+  try {
+    const snap = await safeFirebase(() => get(ref(db, `${state.financePath}/balance/food`)));
+    const val = snap?.val() || {};
+    state.food.options = {
+      typeOfMeal: normalizeFoodMap(val.options?.typeOfMeal || {}),
+      cuisine: normalizeFoodMap(val.options?.cuisine || {}),
+      place: normalizeFoodMap(val.options?.place || {})
+    };
+    state.food.items = normalizeFoodMap(val.items || {});
+    state.food.loaded = true;
+  } finally {
+    state.food.loading = false;
+  }
+}
+
+async function upsertFoodOption(kind, value, incrementCount = false) {
+  const name = normalizeFoodName(value);
+  if (!name) return '';
+  if (!state.food.options[kind]) state.food.options[kind] = {};
+  const prev = state.food.options[kind][name] || {};
+  const payload = {
+    createdAt: Number(prev.createdAt || 0) || nowTs(),
+    count: Number(prev.count || 0) + (incrementCount ? 1 : 0)
+  };
+  state.food.options[kind][name] = payload;
+  await safeFirebase(() => update(ref(db, `${state.financePath}/balance/food/options/${kind}/${name}`), payload));
+  return name;
+}
+
+async function upsertFoodItem(value, incrementCount = false) {
+  const name = normalizeFoodName(value);
+  if (!name) return '';
+  const prev = state.food.items[name] || {};
+  const payload = {
+    createdAt: Number(prev.createdAt || 0) || nowTs(),
+    count: Number(prev.count || 0) + (incrementCount ? 1 : 0),
+    lastUsedAt: incrementCount ? nowTs() : Number(prev.lastUsedAt || 0)
+  };
+  state.food.items[name] = payload;
+  await safeFirebase(() => update(ref(db, `${state.financePath}/balance/food/items/${name}`), payload));
+  return name;
+}
+
+function renderFoodOptionField(kind, label, selectName) {
+  const options = foodOptionList(kind);
+  return `<div class="food-extra-field" data-food-kind="${kind}"><label>${label}</label><div class="food-extra-row"><select name="${selectName}" data-food-select="${kind}"><option value="">Seleccionar (opcional)</option>${options.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="finance-pill finance-pill--mini" data-food-add="${kind}">+ añadir</button></div></div>`;
+}
+
+function renderFoodExtrasSection() {
+  const topItems = topFoodItems(6);
+  return `<section class="food-extra" data-food-extra hidden>
+    <h4>Extras de comida</h4>
+    ${renderFoodOptionField('typeOfMeal', 'Tipo de comida', 'foodMealType')}
+    ${renderFoodOptionField('cuisine', 'Cocina', 'foodCuisine')}
+    ${renderFoodOptionField('place', 'Lugar', 'foodPlace')}
+    <div class="food-extra-field">
+      <label>Producto / Plato</label>
+      <div class="food-top-items" data-food-top>${topItems.map((item) => `<button type="button" class="finance-chip" data-food-top-item="${escapeHtml(item.name)}">${escapeHtml(item.name)} <small>×${item.count}</small></button>`).join('') || '<small class="finance-empty">Sin habituales aún.</small>'}</div>
+      <input type="search" data-food-item-search placeholder="Buscar plato (ej: pollo)" autocomplete="off" />
+      <div class="food-search-list" data-food-item-results></div>
+      <input type="hidden" name="foodItem" data-food-item-value />
+    </div>
+  </section>`;
+}
 function isoToDay(dateISO = '') { return String(dateISO).slice(0, 10); }
 
 function getDeviceId() {
@@ -589,6 +697,7 @@ function renderModal() {
       <input name="category" list="finance-cat-list" placeholder="Categoría" />
       <datalist id="finance-cat-list">${categories.map((c) => `<option value="${escapeHtml(c)}"></option>`).join('')}</datalist>
       <input name="note" type="text" placeholder="Nota (opcional)" />
+      ${renderFoodExtrasSection()}
       <button class="finance-pill" type="submit">Añadir movimiento</button></form></div>`;
     return;
   }
@@ -628,6 +737,74 @@ function renderModal() {
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Nueva cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><form class="finance-entry-form" data-new-account-form><input type="text" name="name" data-account-name-input placeholder="Nombre de la cuenta" required /><label><input type="checkbox" name="shared" /> Cuenta compartida</label><select name="sharedRatio"><option value="0.5">50%</option><option value="1">100%</option></select><button class="finance-pill" type="submit">Crear cuenta</button></form></div>`;
     return;
   }
+}
+
+function getFoodFormRefs(form) {
+  if (!form) return {};
+  return {
+    extra: form.querySelector('[data-food-extra]'),
+    category: form.querySelector('input[name="category"]'),
+    mealType: form.querySelector('select[name="foodMealType"]'),
+    cuisine: form.querySelector('select[name="foodCuisine"]'),
+    place: form.querySelector('select[name="foodPlace"]'),
+    itemSearch: form.querySelector('[data-food-item-search]'),
+    itemValue: form.querySelector('[data-food-item-value]'),
+    itemResults: form.querySelector('[data-food-item-results]')
+  };
+}
+
+function clearFoodFormState(form) {
+  const refs = getFoodFormRefs(form);
+  if (refs.mealType) refs.mealType.value = '';
+  if (refs.cuisine) refs.cuisine.value = '';
+  if (refs.place) refs.place.value = '';
+  if (refs.itemSearch) refs.itemSearch.value = '';
+  if (refs.itemValue) refs.itemValue.value = '';
+  if (refs.itemResults) refs.itemResults.innerHTML = '';
+}
+
+function renderFoodItemSearchResults(form) {
+  const refs = getFoodFormRefs(form);
+  if (!refs.itemResults) return;
+  const query = normalizeFoodName(refs.itemSearch?.value || '').toLowerCase();
+  const all = foodItemsList();
+  const filtered = query ? all.filter((row) => row.name.toLowerCase().includes(query)) : all;
+  const rows = filtered.slice(0, 8).map((row) => `<button type="button" class="food-result" data-food-item-select="${escapeHtml(row.name)}">${escapeHtml(row.name)} <small>×${row.count}</small></button>`);
+  const canCreate = query && !all.some((row) => row.name.toLowerCase() === query);
+  if (canCreate) rows.push(`<button type="button" class="food-result food-result--create" data-food-item-create="${escapeHtml(refs.itemSearch?.value || '')}">Crear “${escapeHtml(refs.itemSearch?.value || '')}”</button>`);
+  refs.itemResults.innerHTML = rows.join('') || '<small class="finance-empty">Sin resultados.</small>';
+}
+
+function refreshFoodTopItems(form) {
+  const host = form?.querySelector('[data-food-top]');
+  if (!host) return;
+  const topItems = topFoodItems(6);
+  host.innerHTML = topItems.map((item) => `<button type="button" class="finance-chip" data-food-top-item="${escapeHtml(item.name)}">${escapeHtml(item.name)} <small>×${item.count}</small></button>`).join('') || '<small class="finance-empty">Sin habituales aún.</small>';
+}
+
+async function syncFoodOptionsInForm(form) {
+  const refs = getFoodFormRefs(form);
+  [['typeOfMeal', refs.mealType], ['cuisine', refs.cuisine], ['place', refs.place]].forEach(([kind, select]) => {
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = `<option value="">Seleccionar (opcional)</option>${foodOptionList(kind).map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}`;
+    select.value = current;
+  });
+  refreshFoodTopItems(form);
+  renderFoodItemSearchResults(form);
+}
+
+async function toggleFoodExtras(form) {
+  const refs = getFoodFormRefs(form);
+  if (!refs.extra || !refs.category) return;
+  const isFood = isFoodCategory(refs.category.value);
+  refs.extra.hidden = !isFood;
+  if (!isFood) {
+    clearFoodFormState(form);
+    return;
+  }
+  await loadFoodCatalog();
+  await syncFoodOptionsInForm(form);
 }
 
 function renderToast() {
@@ -731,6 +908,55 @@ function bindEvents() {
   const view = document.getElementById('view-finance'); if (!view || view.dataset.financeBound === '1') return; view.dataset.financeBound = '1';
   view.addEventListener('click', async (event) => {
     const target = event.target;
+    const foodAdd = target.closest('[data-food-add]')?.dataset.foodAdd;
+    if (foodAdd) {
+      const form = target.closest('[data-balance-form]');
+      if (!form) return;
+      const typed = window.prompt('Nuevo valor');
+      const name = normalizeFoodName(typed || '');
+      if (!name) return;
+      await loadFoodCatalog();
+      await upsertFoodOption(foodAdd, name, false);
+      await syncFoodOptionsInForm(form);
+      const select = form.querySelector(`[data-food-select="${foodAdd}"]`);
+      if (select) select.value = name;
+      return;
+    }
+    const topItem = target.closest('[data-food-top-item]')?.dataset.foodTopItem;
+    if (topItem) {
+      const form = target.closest('[data-balance-form]');
+      if (!form) return;
+      const refs = getFoodFormRefs(form);
+      if (refs.itemSearch) refs.itemSearch.value = topItem;
+      if (refs.itemValue) refs.itemValue.value = topItem;
+      renderFoodItemSearchResults(form);
+      return;
+    }
+    const selectedItem = target.closest('[data-food-item-select]')?.dataset.foodItemSelect;
+    if (selectedItem) {
+      const form = target.closest('[data-balance-form]');
+      if (!form) return;
+      const refs = getFoodFormRefs(form);
+      if (refs.itemSearch) refs.itemSearch.value = selectedItem;
+      if (refs.itemValue) refs.itemValue.value = selectedItem;
+      renderFoodItemSearchResults(form);
+      return;
+    }
+    const createItem = target.closest('[data-food-item-create]')?.dataset.foodItemCreate;
+    if (createItem != null) {
+      const form = target.closest('[data-balance-form]');
+      if (!form) return;
+      const name = normalizeFoodName(createItem);
+      if (!name) return;
+      await loadFoodCatalog();
+      await upsertFoodItem(name, false);
+      const refs = getFoodFormRefs(form);
+      if (refs.itemSearch) refs.itemSearch.value = name;
+      if (refs.itemValue) refs.itemValue.value = name;
+      renderFoodItemSearchResults(form);
+      refreshFoodTopItems(form);
+      return;
+    }
     const nextView = target.closest('[data-finance-view]')?.dataset.financeView; if (nextView) { state.activeView = nextView; triggerRender(); return; }
     if (target.closest('[data-close-modal]') || target.id === 'finance-modalOverlay') { state.modal = { type: null }; triggerRender(); return; }
     if (target.closest('[data-history]')) { state.modal = { type: 'history' }; triggerRender(); return; }
@@ -766,6 +992,23 @@ function bindEvents() {
       const parsed = parseCsvRows(raw);
       state.modal = { ...state.modal, importRaw: raw, importPreview: parsed, importError: parsed.validRows.length ? '' : 'CSV inválido o sin filas válidas.' };
       triggerRender();
+    }
+    if (event.target.matches('[data-balance-form] input[name="category"]')) {
+      await toggleFoodExtras(event.target.closest('[data-balance-form]'));
+    }
+  });
+
+  view.addEventListener('input', async (event) => {
+    if (event.target.matches('[data-balance-form] input[name="category"]')) {
+      await toggleFoodExtras(event.target.closest('[data-balance-form]'));
+      return;
+    }
+    if (event.target.matches('[data-food-item-search]')) {
+      const form = event.target.closest('[data-balance-form]');
+      if (!form) return;
+      const refs = getFoodFormRefs(form);
+      if (refs.itemValue) refs.itemValue.value = normalizeFoodName(event.target.value);
+      renderFoodItemSearchResults(form);
     }
   });
 
@@ -809,12 +1052,24 @@ function bindEvents() {
       const type = String(form.get('type') || 'expense'); const amount = Number(form.get('amount') || 0); const dateISO = String(form.get('dateISO') || dayKeyFromTs(Date.now()));
       const category = String(form.get('category') || 'Sin categoría').trim() || 'Sin categoría'; const note = String(form.get('note') || '').trim(); const accountId = String(form.get('accountId') || '');
       if (!accountId) { toast('Selecciona una cuenta'); return; }
+      const mealType = normalizeFoodName(String(form.get('foodMealType') || ''));
+      const cuisine = normalizeFoodName(String(form.get('foodCuisine') || ''));
+      const place = normalizeFoodName(String(form.get('foodPlace') || ''));
+      const item = normalizeFoodName(String(form.get('foodItem') || ''));
+      const foodData = isFoodCategory(category) ? { mealType: mealType || '', cuisine: cuisine || '', place: place || '', item: item || '' } : undefined;
       const monthKey = dateISO.slice(0, 7); const movementId = push(ref(db, `${state.financePath}/movements/${monthKey}`)).key;
-      const payload = { amount, category, note, dateISO: `${dateISO}T12:00:00.000Z`, monthKey, type, accountId, createdAt: nowTs() };
+      const payload = { amount, category, note, dateISO: `${dateISO}T12:00:00.000Z`, monthKey, type, accountId, createdAt: nowTs(), food: foodData };
       await safeFirebase(() => set(ref(db, `${state.financePath}/movements/${monthKey}/${movementId}`), payload));
+      if (foodData) {
+        await loadFoodCatalog();
+        if (foodData.mealType) await upsertFoodOption('typeOfMeal', foodData.mealType, true);
+        if (foodData.cuisine) await upsertFoodOption('cuisine', foodData.cuisine, true);
+        if (foodData.place) await upsertFoodOption('place', foodData.place, true);
+        if (foodData.item) await upsertFoodItem(foodData.item, true);
+      }
       localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId);
       state.lastMovementAccountId = accountId;
-      log('movement:add', { accountId, date: dateISO, amount, type });
+      log('movement:add', { accountId, date: dateISO, amount, type, food: foodData || null });
       await recomputeAccountEntries(accountId, dateISO);
       if (!state.balance.categories?.[category]) await safeFirebase(() => set(ref(db, `${state.financePath}/balance/categories/${category}`), { createdAt: nowTs() }));
       state.modal = { type: null }; toast('Movimiento guardado'); triggerRender(); return;

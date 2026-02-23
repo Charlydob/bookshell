@@ -13,7 +13,7 @@ const state = {
   activeView: 'home',
   accounts: [],
   legacyEntries: {},
-  balance: { tx: {}, categories: {}, budgets: {}, snapshots: {}, lastSeenMonthKey: '' },
+  balance: { tx: {}, movements: {}, categories: {}, budgets: {}, snapshots: {}, defaultAccountId: '', lastSeenMonthKey: '' },
   goals: { goals: {} },
   modal: { type: null, accountId: null, goalId: null, budgetId: null, importRaw: '', importPreview: null, importError: '' },
   toast: '',
@@ -23,6 +23,8 @@ const state = {
   balanceMonthOffset: 0,
   balanceFilterType: 'all',
   balanceFilterCategory: 'all',
+  balanceAccountFilter: 'all',
+  lastMovementAccountId: localStorage.getItem('bookshell_finance_lastMovementAccountId') || '',
   unsubscribe: null,
   saveTimers: {},
   error: ''
@@ -69,6 +71,18 @@ function parseEuroNumber(value) {
   }
   return Number(normalized);
 }
+function clampRatio(value, fallback = 1) {
+  const ratio = Number(value);
+  if (!Number.isFinite(ratio)) return fallback;
+  return Math.min(1, Math.max(0.1, ratio));
+}
+function normalizeAccountShare(account = {}) {
+  const shared = Boolean(account.shared);
+  const sharedRatio = shared ? clampRatio(account.sharedRatio, 0.5) : 1;
+  return { shared, sharedRatio };
+}
+function movementSign(type) { return type === 'income' ? 1 : -1; }
+function isoToDay(dateISO = '') { return String(dateISO).slice(0, 10); }
 
 function getDeviceId() {
   const existing = localStorage.getItem(DEVICE_KEY);
@@ -89,6 +103,66 @@ function safeFirebase(action, fallback = null) {
 function normalizeDaily(daily = {}) {
   return Object.entries(daily).map(([day, record]) => ({ day, ts: Number(record?.ts || parseDayKey(day)), value: Number(record?.value || 0) }))
     .filter((item) => Number.isFinite(item.value) && item.day).sort((a, b) => a.ts - b.ts);
+}
+function normalizeSnapshots(snapshots = {}) {
+  return Object.entries(snapshots || {}).map(([day, row]) => ({ day, value: Number(row?.value), updatedAt: Number(row?.updatedAt || 0) }))
+    .filter((row) => row.day && Number.isFinite(row.value)).sort((a, b) => parseDayKey(a.day) - parseDayKey(b.day));
+}
+function movementRowsByAccount(accountId) {
+  return balanceTxList().filter((row) => row.accountId === accountId);
+}
+async function recomputeAccountEntries(accountId, fromDay) {
+  if (!accountId) return;
+  const snap = await safeFirebase(() => get(ref(db, `${state.financePath}`)));
+  const root = snap?.val() || {};
+  const account = root.accounts?.[accountId] || state.accounts.find((item) => item.id === accountId);
+  if (!account) return;
+  const snapshots = normalizeSnapshots(account.snapshots || {});
+  const movementRows = [];
+  Object.entries(root.movements || {}).forEach(([monthKey, rows]) => {
+    Object.entries(rows || {}).forEach(([id, row]) => {
+      if (row?.accountId === accountId) movementRows.push({ id, ...row, monthKey: row?.monthKey || monthKey, amount: Number(row?.amount || 0) });
+    });
+  });
+  const movements = movementRows.sort((a, b) => new Date(a.dateISO || 0) - new Date(b.dateISO || 0));
+  const daySet = new Set([
+    ...snapshots.map((row) => row.day),
+    ...movements.map((row) => isoToDay(row.dateISO || ''))
+  ].filter(Boolean));
+  if (fromDay) daySet.add(fromDay);
+  const allDays = [...daySet].sort();
+  if (!allDays.length) return;
+  const startDay = fromDay || allDays[0];
+  log(`recompute from ${startDay} for accountId=${accountId}`);
+  const dayMovementNet = {};
+  movements.forEach((row) => {
+    const day = isoToDay(row.dateISO || '');
+    if (!day) return;
+    dayMovementNet[day] = (dayMovementNet[day] || 0) + movementSign(row.type) * Number(row.amount || 0);
+  });
+  const snapshotByDay = Object.fromEntries(snapshots.map((row) => [row.day, row]));
+  const existingEntries = account.entries || account.daily || {};
+  let carry = 0;
+  const prevDays = Object.keys(existingEntries).filter((day) => day < startDay).sort();
+  if (prevDays.length) carry = Number(existingEntries[prevDays.at(-1)]?.value || 0);
+  else {
+    const prevSnapshot = snapshots.filter((row) => row.day < startDay).at(-1);
+    if (prevSnapshot) carry = prevSnapshot.value;
+  }
+  const updatesMap = {};
+  const targetDays = allDays.filter((day) => day >= startDay);
+  targetDays.forEach((day) => {
+    let value = carry;
+    let source = 'derived';
+    if (snapshotByDay[day]) {
+      value = snapshotByDay[day].value;
+      source = 'snapshot';
+    } else value = carry + Number(dayMovementNet[day] || 0);
+    carry = value;
+    updatesMap[`${state.financePath}/accounts/${accountId}/entries/${day}`] = { dateISO: `${day}T00:00:00.000Z`, value, updatedAt: nowTs(), source };
+  });
+  updatesMap[`${state.financePath}/accounts/${accountId}/updatedAt`] = nowTs();
+  await safeFirebase(() => update(ref(db), updatesMap));
 }
 function normalizeLegacyEntries(entriesMap = {}) {
   const grouped = {};
@@ -134,20 +208,29 @@ function computeDeltaWithinBounds(series, bounds) {
 
 function buildAccountModels() {
   return state.accounts.map((account) => {
-    const modernDaily = normalizeDaily(account.daily || {});
-    const modernByDay = Object.fromEntries(modernDaily.map((item) => [item.day, { value: item.value, ts: item.ts }]));
+    const share = normalizeAccountShare(account);
+    const sourceEntries = Object.keys(account.entries || {}).length ? (account.entries || {}) : (account.daily || {});
+    const modernDaily = normalizeDaily(sourceEntries);
+    const modernByDay = Object.fromEntries(modernDaily.map((item) => [item.day, { value: item.value, ts: item.ts, source: item.source || 'derived' }]));
     const legacyDaily = normalizeLegacyEntries(state.legacyEntries[account.id] || {});
     Object.entries(legacyDaily).forEach(([day, record]) => {
-      if (!modernByDay[day] || modernByDay[day].ts < record.ts) modernByDay[day] = record;
+      if (!modernByDay[day] || modernByDay[day].ts < record.ts) modernByDay[day] = { ...record, source: 'legacy' };
     });
-    const daily = Object.entries(modernByDay).map(([day, record]) => ({ day, ts: Number(record.ts || parseDayKey(day)), value: Number(record.value || 0) }))
-      .sort((a, b) => a.ts - b.ts).map((point, index, arr) => {
-        const prev = arr[index - 1]; const delta = prev ? point.value - prev.value : 0; const deltaPct = prev?.value ? (delta / prev.value) * 100 : 0;
-        return { ...point, delta, deltaPct };
-      });
-    const current = daily.at(-1)?.value ?? 0;
+    const dailyReal = Object.entries(modernByDay).map(([day, record]) => ({ day, ts: Number(record.ts || parseDayKey(day)), value: Number(record.value || 0), source: record.source || 'derived' }))
+      .sort((a, b) => a.ts - b.ts);
+    const daily = dailyReal.map((point, index, arr) => {
+      const prev = arr[index - 1];
+      const myValue = point.value * share.sharedRatio;
+      const prevValue = prev ? prev.value * share.sharedRatio : 0;
+      const delta = prev ? myValue - prevValue : 0;
+      const deltaPct = prevValue ? (delta / prevValue) * 100 : 0;
+      return { ...point, value: myValue, realValue: point.value, delta, deltaPct };
+    });
+    const currentReal = dailyReal.at(-1)?.value ?? 0;
+    const current = currentReal * share.sharedRatio;
     const range = computeDeltaForRange(daily, state.rangeMode);
-    return { ...account, daily, current, range };
+    if (share.shared) log(`account sharedRatio=${share.sharedRatio} applied`, { accountId: account.id });
+    return { ...account, ...share, daily, dailyReal, current, currentReal, range };
   });
 }
 function buildTotalSeries(accounts) {
@@ -200,8 +283,16 @@ function calendarData(accounts, totalSeries) {
 }
 
 function balanceTxList() {
-  return Object.entries(state.balance.tx || {}).map(([id, row]) => ({ id, ...row, amount: Number(row.amount || 0) }))
-    .filter((row) => Number.isFinite(row.amount) && row.monthKey).sort((a, b) => new Date(b.dateISO || 0) - new Date(a.dateISO || 0));
+  const flat = [];
+  Object.entries(state.balance.movements || {}).forEach(([monthKey, rows]) => {
+    Object.entries(rows || {}).forEach(([id, row]) => {
+      flat.push({ id, ...row, monthKey: row?.monthKey || monthKey, amount: Number(row?.amount || 0) });
+    });
+  });
+  const legacy = Object.entries(state.balance.tx || {}).map(([id, row]) => ({ id, ...row, amount: Number(row.amount || 0) }));
+  return [...flat, ...legacy]
+    .filter((row) => Number.isFinite(row.amount) && row.monthKey)
+    .sort((a, b) => new Date(b.dateISO || 0) - new Date(a.dateISO || 0));
 }
 function getSelectedBalanceMonthKey() {
   return offsetMonthKey(getMonthKeyFromDate(), state.balanceMonthOffset);
@@ -273,20 +364,16 @@ function parseCsvRows(rawCsv = '') {
 async function applyImportRows(accountId, parsed) {
   const byDay = {};
   parsed.validRows.forEach((row) => { byDay[row.dateISO] = row.value; });
-  const days = Object.keys(byDay);
+  const days = Object.keys(byDay).sort();
   if (!days.length) return 0;
   const updatesMap = {};
   days.forEach((day) => {
-    updatesMap[`${state.financePath}/accounts/${accountId}/daily/${day}`] = {
-      value: byDay[day],
-      ts: parseDayKey(day),
-      dateISO: `${day}T00:00:00.000Z`,
-      updatedAt: nowTs()
-    };
+    updatesMap[`${state.financePath}/accounts/${accountId}/snapshots/${day}`] = { value: byDay[day], updatedAt: nowTs() };
   });
   updatesMap[`${state.financePath}/accounts/${accountId}/updatedAt`] = nowTs();
   updatesMap[`${state.financePath}/accounts/${accountId}/lastImportAt`] = nowTs();
   await safeFirebase(() => update(ref(db), updatesMap));
+  await recomputeAccountEntries(accountId, days[0]);
   log(`import applied days=${days.length}`);
   return days.length;
 }
@@ -323,14 +410,14 @@ function renderFinanceHome(accounts, totalSeries) {
     <section class="finance-home ${toneClass(totalRange.delta)}">
       <article class="finance__hero"><p class="finance__eyebrow">TOTAL</p><h2 id="finance-totalValue">${fmtCurrency(total)}</h2>
         <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedCurrency(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
-        <div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div></article>
+        <p>Saldo real: <strong>${fmtCurrency(account.currentReal)}</strong>${account.shared ? ` · Mi parte: <strong>${fmtCurrency(account.current)}</strong>` : ''}</p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div></article>
       <article class="finance__controls">
         <select class="finance-pill" data-range><option value="total" ${state.rangeMode === 'total' ? 'selected' : ''}>Total</option><option value="month" ${state.rangeMode === 'month' ? 'selected' : ''}>Mes</option><option value="week" ${state.rangeMode === 'week' ? 'selected' : ''}>Semana</option><option value="year" ${state.rangeMode === 'year' ? 'selected' : ''}>Año</option></select>
         <button class="finance-pill" data-history>Historial</button>
         <select class="finance-pill" data-compare><option value="month" ${state.compareMode === 'month' ? 'selected' : ''}>Mes vs Mes</option><option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option></select><button class="finance-pill finance-pill--secondary" type="button">Actualizar</button></article>
       <article class="finance__compareRow"><div class="finance-chip ${toneClass(compareCurrent.delta)}">Actual: ${fmtSignedCurrency(compareCurrent.delta)} (${fmtSignedPercent(compareCurrent.deltaPct)})</div><div class="finance-chip ${toneClass(comparePrev.delta)}">Anterior: ${fmtSignedCurrency(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div></article>
       <article class="finance__accounts"><div class="finance__sectionHeader"><h2>Cuentas</h2><button class="finance-pill" data-new-account>+ Cuenta</button></div>
-      <div id="finance-accountsList">${accounts.map((account) => `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${account.current.toFixed(2)}" inputmode="decimal" /></div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">⋯</button></div></article>`).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
+      <div id="finance-accountsList">${accounts.map((account) => `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">Mi saldo</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${account.current.toFixed(2)}" inputmode="decimal" placeholder="Snapshot hoy" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}%</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">⋯</button></div></article>`).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
     </section>`;
 }
 
@@ -350,8 +437,10 @@ function renderFinanceBalance() {
   const monthKey = getSelectedBalanceMonthKey();
   const tx = balanceTxList().filter((row) => row.monthKey === monthKey)
     .filter((row) => state.balanceFilterType === 'all' || row.type === state.balanceFilterType)
-    .filter((row) => state.balanceFilterCategory === 'all' || row.category === state.balanceFilterCategory);
+    .filter((row) => state.balanceFilterCategory === 'all' || row.category === state.balanceFilterCategory)
+    .filter((row) => state.balanceAccountFilter === 'all' || row.accountId === state.balanceAccountFilter);
   const categories = categoriesList();
+  const accounts = buildAccountModels();
   const monthSummary = summaryForMonth(monthKey);
   const prevSummary = summaryForMonth(offsetMonthKey(monthKey, -1));
   const deltaNet = monthSummary.net - prevSummary.net;
@@ -364,8 +453,8 @@ function renderFinanceBalance() {
   <article class="financeGlassCard"><div class="finance-row"><button class="finance-pill" data-balance-month="-1">◀</button><strong>${monthLabelByKey(monthKey)}</strong><button class="finance-pill" data-balance-month="1">▶</button></div>
   <div class="financeSummaryGrid"><div><small>Ingresos</small><strong class="is-positive">${fmtCurrency(monthSummary.income)}</strong></div><div><small>Gastos</small><strong class="is-negative">${fmtCurrency(monthSummary.expense)}</strong></div><div><small>Inversión</small><strong class="is-neutral">${fmtCurrency(monthSummary.invest)}</strong></div><div><small>Neto</small><strong class="${toneClass(monthSummary.net)}">${fmtCurrency(monthSummary.net)}</strong></div></div>
   <div class="finance-chip ${toneClass(deltaNet)}">Mes anterior: ${fmtSignedCurrency(deltaNet)} (${fmtSignedPercent(deltaPct)})</div></article>
-  <article class="financeGlassCard"><div class="finance-row"><h3>Transacciones</h3><div class="finance-row"><select class="finance-pill" data-balance-type><option value="all">Todos</option><option value="expense" ${state.balanceFilterType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${state.balanceFilterType === 'income' ? 'selected' : ''}>Ingreso</option><option value="invest" ${state.balanceFilterType === 'invest' ? 'selected' : ''}>Inversión</option></select><select class="finance-pill" data-balance-category><option value="all">Todas</option>${categories.map((c) => `<option ${state.balanceFilterCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select></div></div>
-  <div class="financeTxList">${tx.map((row) => `<div class="financeTxRow"><span>${new Date(row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')}</span><strong class="${row.type === 'income' ? 'is-positive' : row.type === 'expense' ? 'is-negative' : 'is-neutral'}">${fmtCurrency(row.amount)}</strong></div>`).join('') || '<p class="finance-empty">Sin movimientos en este mes.</p>'}</div></article>
+  <article class="financeGlassCard"><div class="finance-row"><h3>Transacciones</h3><div class="finance-row"><select class="finance-pill" data-balance-type><option value="all">Todos</option><option value="expense" ${state.balanceFilterType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${state.balanceFilterType === 'income' ? 'selected' : ''}>Ingreso</option></select><select class="finance-pill" data-balance-category><option value="all">Todas</option>${categories.map((c) => `<option ${state.balanceFilterCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select><select class="finance-pill" data-balance-account><option value="all">Todas las cuentas</option>${accounts.map((a) => `<option value="${a.id}" ${state.balanceAccountFilter === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div></div>
+  <div class="financeTxList">${tx.map((row) => `<div class="financeTxRow"><span>${new Date(row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${escapeHtml(accounts.find((a) => a.id === row.accountId)?.name || 'Sin cuenta')}</span><strong class="${row.type === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrency(row.amount)}</strong></div>`).join('') || '<p class="finance-empty">Sin movimientos en este mes.</p>'}</div></article>
   <article class="financeGlassCard"><div class="finance-row"><h3>Presupuestos</h3><button class="finance-pill" data-open-modal="budget">+ Presupuesto</button></div>
   <div class="financeBudgetList">${budgetItems.length ? budgetItems.map((budget) => {
     const spent = budget.category.toLowerCase() === 'total' ? totalSpent : Number(spentByCategory[budget.category] || 0);
@@ -410,10 +499,11 @@ function renderFinanceGoals() {
   }).join('') || '<p class="finance-empty">Sin objetivos aún.</p>'}</div></section>`;
 }
 
-function renderModal(accounts) {
+function renderModal() {
   const backdrop = document.getElementById('finance-modalOverlay');
   if (!backdrop) return;
   const categories = categoriesList();
+  const accounts = buildAccountModels();
   if (!state.modal.type) {
     backdrop.classList.remove('is-open'); backdrop.classList.add('hidden'); backdrop.setAttribute('aria-hidden', 'true'); backdrop.innerHTML = ''; document.body.classList.remove('finance-modal-open'); return;
   }
@@ -423,10 +513,10 @@ function renderModal(accounts) {
     if (!account) { state.modal = { type: null }; render(); return; }
     const chart = chartModelForRange(account.daily, 'total');
     const preview = state.modal.importPreview;
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Detalle de cuenta · ${escapeHtml(account.name)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
-      <div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos.</div>'}</div>
-      <form class="finance-entry-form" data-account-entry-form="${account.id}"><input name="day" type="date" value="${dayKeyFromTs(Date.now())}" required /><input name="value" type="number" step="0.01" placeholder="Valor" required /><button class="finance-pill" type="submit">Guardar registro</button></form>
-      <div class="finance-table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ</th><th>Δ%</th><th></th></tr></thead><tbody>${account.daily.slice().reverse().map((row) => `<tr><td>${new Date(row.ts).toLocaleDateString('es-ES')}</td><td><form data-account-row-form="${account.id}:${row.day}"><input name="value" type="number" step="0.01" value="${Number(row.value || 0)}"/></form></td><td class="${toneClass(row.delta)}">${fmtSignedCurrency(row.delta)}</td><td class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</td><td><button class="finance-pill finance-pill--mini" data-save-day="${account.id}:${row.day}">Editar</button><button class="finance-pill finance-pill--mini" data-delete-day="${account.id}:${row.day}">Borrar</button></td></tr>`).join('') || '<tr><td colspan="5">Sin registros.</td></tr>'}</tbody></table></div>
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Detalle de cuenta · ${escapeHtml(account.name)}</h3><div class="finance-row"><button class="finance-pill finance-pill--mini" data-edit-account="${account.id}">Editar cuenta</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header>
+      <p>Saldo real: <strong>${fmtCurrency(account.currentReal)}</strong>${account.shared ? ` · Mi parte: <strong>${fmtCurrency(account.current)}</strong>` : ''}</p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos.</div>'}</div>
+      <form class="finance-entry-form" data-account-entry-form="${account.id}"><input name="day" type="date" value="${dayKeyFromTs(Date.now())}" required /><input name="value" type="number" step="0.01" placeholder="Valor real" required /><button class="finance-pill" type="submit">Guardar snapshot</button></form>
+      <div class="finance-table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ</th><th>Δ%</th><th></th></tr></thead><tbody>${account.daily.slice().reverse().map((row) => `<tr><td>${new Date(row.ts).toLocaleDateString('es-ES')}</td><td><form data-account-row-form="${account.id}:${row.day}"><input name="value" type="number" step="0.01" value="${Number(row.realValue || row.value || 0)}"/></form></td><td class="${toneClass(row.delta)}">${fmtSignedCurrency(row.delta)}</td><td class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</td><td><button class="finance-pill finance-pill--mini" data-save-day="${account.id}:${row.day}">Editar</button><button class="finance-pill finance-pill--mini" data-delete-day="${account.id}:${row.day}">Borrar</button></td></tr>`).join('') || '<tr><td colspan="5">Sin registros.</td></tr>'}</tbody></table></div>
       <section class="financeImportBox"><h4>Importar CSV</h4><form class="finance-budget-form" data-import-preview-form="${account.id}"><input type="file" accept=".csv,text/csv" data-import-file="${account.id}" /><textarea name="csvText" placeholder="date,value
 2026-01-01,1200.50">${escapeHtml(state.modal.importRaw || '')}</textarea><button class="finance-pill" type="submit">Previsualizar</button></form>
       ${state.modal.importError ? `<p class="is-negative">${escapeHtml(state.modal.importError)}</p>` : ''}
@@ -435,15 +525,17 @@ function renderModal(accounts) {
     return;
   }
   if (state.modal.type === 'tx') {
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Añadir transacción</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+    const defaultAccountId = state.lastMovementAccountId || state.balance.defaultAccountId || accounts[0]?.id || '';
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Añadir movimiento</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
       <form class="finance-entry-form finance-tx-form" data-balance-form>
-      <select name="type" class="finance-pill"><option value="expense">Gasto</option><option value="income">Ingreso</option><option value="invest">Inversión</option></select>
+      <select name="type" class="finance-pill"><option value="expense">Gasto</option><option value="income">Ingreso</option></select>
       <input required name="amount" type="number" step="0.01" placeholder="Cantidad €" />
       <input name="dateISO" type="date" value="${dayKeyFromTs(Date.now())}" />
+      <select name="accountId" required><option value="">Selecciona cuenta</option>${accounts.map((a) => `<option value="${a.id}" ${defaultAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select>
       <input name="category" list="finance-cat-list" placeholder="Categoría" />
       <datalist id="finance-cat-list">${categories.map((c) => `<option value="${escapeHtml(c)}"></option>`).join('')}</datalist>
       <input name="note" type="text" placeholder="Nota (opcional)" />
-      <button class="finance-pill" type="submit">Guardar</button></form></div>`;
+      <button class="finance-pill" type="submit">Añadir movimiento</button></form></div>`;
     return;
   }
   if (state.modal.type === 'budget') {
@@ -472,8 +564,14 @@ function renderModal(accounts) {
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Historial</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><div class="finance-history-list">${accounts.map((account) => `<details class="finance-history-item" data-history-account="${account.id}"><summary><strong>${escapeHtml(account.name)}</strong><small>${account.daily.length} registros · ${fmtCurrency(account.current)}</small></summary><div class="finance-history-rows" data-history-rows="${account.id}"><p class="finance-empty">Pulsa para cargar…</p></div></details>`).join('') || '<p class="finance-empty">Sin historial.</p>'}</div></div>`;
     return;
   }
+  if (state.modal.type === 'edit-account') {
+    const account = accounts.find((item) => item.id === state.modal.accountId);
+    if (!account) { state.modal = { type: null }; render(); return; }
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><form class="finance-entry-form" data-edit-account-form="${account.id}"><input type="text" name="name" value="${escapeHtml(account.name)}" required /><label><input type="checkbox" name="shared" ${account.shared ? 'checked' : ''} /> Cuenta compartida</label><select name="sharedRatio"><option value="0.5" ${(account.sharedRatio === 0.5) ? 'selected' : ''}>50%</option><option value="1" ${(account.sharedRatio === 1) ? 'selected' : ''}>100%</option></select><button class="finance-pill" type="submit">Guardar</button></form></div>`;
+    return;
+  }
   if (state.modal.type === 'new-account') {
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Nueva cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><form class="finance-entry-form" data-new-account-form><input type="text" data-account-name-input placeholder="Nombre de la cuenta" required /><button class="finance-pill" type="submit">Crear cuenta</button></form></div>`;
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Nueva cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><form class="finance-entry-form" data-new-account-form><input type="text" name="name" data-account-name-input placeholder="Nombre de la cuenta" required /><label><input type="checkbox" name="shared" /> Cuenta compartida</label><select name="sharedRatio"><option value="0.5">50%</option><option value="1">100%</option></select><button class="finance-pill" type="submit">Crear cuenta</button></form></div>`;
     return;
   }
 }
@@ -492,7 +590,7 @@ async function migrateLegacy(entriesMap = {}, accounts = []) {
     const legacyByDay = normalizeLegacyEntries(entriesMap[account.id] || {});
     Object.entries(legacyByDay).forEach(([day, record]) => {
       const current = account.daily?.[day];
-      if (!current || Number(current.ts || 0) < Number(record.ts)) { updatesMap[`${state.financePath}/accounts/${account.id}/daily/${day}`] = { value: record.value, ts: record.ts }; writes += 1; }
+      if (!current || Number(current.ts || 0) < Number(record.ts)) { updatesMap[`${state.financePath}/accounts/${account.id}/entries/${day}`] = { value: record.value, ts: record.ts, source: 'legacy', updatedAt: nowTs(), dateISO: `${day}T00:00:00.000Z` }; writes += 1; }
     });
   });
   if (writes) await safeFirebase(() => update(ref(db), updatesMap));
@@ -507,7 +605,7 @@ async function loadDataOnce() {
   const entriesMap = val.accountsEntries || val.entries || fallback.accountsEntries || fallback.entries || {};
   state.accounts = Object.values(accountsMap).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   state.legacyEntries = entriesMap;
-  state.balance = { tx: val.balance?.tx || {}, categories: val.balance?.categories || {}, budgets: val.balance?.budgets || {}, snapshots: val.balance?.snapshots || {}, lastSeenMonthKey: val.balance?.lastSeenMonthKey || '' };
+  state.balance = { tx: val.balance?.tx || {}, movements: val.movements || {}, categories: val.balance?.categories || {}, budgets: val.balance?.budgets || {}, snapshots: val.balance?.snapshots || {}, defaultAccountId: val.balance?.defaultAccountId || '', lastSeenMonthKey: val.balance?.lastSeenMonthKey || '' };
   state.goals = { goals: val.goals?.goals || {} };
   await migrateLegacy(entriesMap, state.accounts);
   log('loaded accounts:', state.accounts.length);
@@ -519,23 +617,35 @@ function subscribe() {
     const val = snap.val() || {};
     state.accounts = Object.values(val.accounts || {}).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     state.legacyEntries = val.accountsEntries || val.entries || state.legacyEntries;
-    state.balance = { tx: val.balance?.tx || {}, categories: val.balance?.categories || {}, budgets: val.balance?.budgets || {}, snapshots: val.balance?.snapshots || {}, lastSeenMonthKey: val.balance?.lastSeenMonthKey || '' };
+    state.balance = { tx: val.balance?.tx || {}, movements: val.movements || {}, categories: val.balance?.categories || {}, budgets: val.balance?.budgets || {}, snapshots: val.balance?.snapshots || {}, defaultAccountId: val.balance?.defaultAccountId || '', lastSeenMonthKey: val.balance?.lastSeenMonthKey || '' };
     state.goals = { goals: val.goals?.goals || {} };
     render();
   }, (error) => { state.error = String(error?.message || error); render(); });
 }
 
-async function addAccount(name) {
+async function addAccount({ name, shared = false, sharedRatio = 0.5 }) {
   const id = push(ref(db, `${state.financePath}/accounts`)).key;
-  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), { id, name, createdAt: nowTs(), updatedAt: nowTs(), daily: {} }));
+  const ratio = shared ? clampRatio(sharedRatio, 0.5) : 1;
+  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), { id, name, shared, sharedRatio: ratio, createdAt: nowTs(), updatedAt: nowTs(), entries: {}, snapshots: {} }));
 }
-async function saveDaily(accountId, day, value, ts = nowTs()) {
-  const parsedValue = Number(String(value).replace(',', '.')); if (!Number.isFinite(parsedValue) || !day) return false;
-  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${accountId}/daily/${day}`), { value: parsedValue, ts: Number(ts) }));
-  await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { updatedAt: nowTs(), lastValue: parsedValue }));
-  toast('Guardado'); return true;
+async function updateAccountMeta(accountId, payload = {}) {
+  const shared = Boolean(payload.shared);
+  const sharedRatio = shared ? clampRatio(payload.sharedRatio, 0.5) : 1;
+  await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { ...payload, shared, sharedRatio, updatedAt: nowTs() }));
 }
-async function deleteDay(accountId, day) { await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}/daily/${day}`))); }
+async function saveSnapshot(accountId, day, value) {
+  const parsedValue = Number(String(value).replace(',', '.'));
+  if (!Number.isFinite(parsedValue) || !day) return false;
+  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${accountId}/snapshots/${day}`), { value: parsedValue, updatedAt: nowTs() }));
+  await recomputeAccountEntries(accountId, day);
+  toast('Guardado');
+  return true;
+}
+async function deleteDay(accountId, day) {
+  await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}/snapshots/${day}`)));
+  await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}/entries/${day}`)));
+  await recomputeAccountEntries(accountId, day);
+}
 async function deleteAccount(accountId) { await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}`))); }
 
 function render() {
@@ -547,7 +657,7 @@ function render() {
   else if (state.activeView === 'goals') host.innerHTML = renderFinanceGoals();
   else if (state.activeView === 'calendar') host.innerHTML = renderFinanceCalendar(accounts, totalSeries);
   else host.innerHTML = renderFinanceHome(accounts, totalSeries);
-  renderModal(accounts);
+  renderModal();
   renderToast();
 }
 
@@ -559,10 +669,12 @@ function bindEvents() {
     if (target.closest('[data-close-modal]') || target.id === 'finance-modalOverlay') { state.modal = { type: null }; render(); return; }
     if (target.closest('[data-history]')) { state.modal = { type: 'history' }; render(); return; }
     if (target.closest('[data-new-account]')) { state.modal = { type: 'new-account' }; render(); return; }
-    const openAccount = target.closest('[data-open-detail]')?.dataset.openDetail; if (openAccount && !target.closest('[data-account-input]')) { openAccountDetail(openAccount); return; }
+    const openAccount = target.closest('[data-open-detail]')?.dataset.openDetail; if (openAccount && !target.closest('[data-account-input]') && !target.closest('[data-account-save]') && !target.closest('[data-delete-account]')) { openAccountDetail(openAccount); return; }
     const delAcc = target.closest('[data-delete-account]')?.dataset.deleteAccount; if (delAcc && window.confirm('¿Eliminar esta cuenta y todos sus registros?')) { await deleteAccount(delAcc); return; }
+    const editAcc = target.closest('[data-edit-account]')?.dataset.editAccount; if (editAcc) { state.modal = { type: 'edit-account', accountId: editAcc }; render(); return; }
+    const saveAccountCard = target.closest('[data-account-save]')?.dataset.accountSave; if (saveAccountCard) { const input = view.querySelector(`[data-account-input="${saveAccountCard}"]`); await saveSnapshot(saveAccountCard, dayKeyFromTs(Date.now()), input?.value || ''); return; }
     const delDay = target.closest('[data-delete-day]')?.dataset.deleteDay; if (delDay) { const [accountId, day] = delDay.split(':'); if (window.confirm(`¿Eliminar ${day}?`)) await deleteDay(accountId, day); return; }
-    const saveDay = target.closest('[data-save-day]')?.dataset.saveDay; if (saveDay) { const [accountId, day] = saveDay.split(':'); const form = view.querySelector(`[data-account-row-form="${saveDay}"]`); const val = form?.querySelector('[name="value"]')?.value; await saveDaily(accountId, day, val, parseDayKey(day)); return; }
+    const saveDay = target.closest('[data-save-day]')?.dataset.saveDay; if (saveDay) { const [accountId, day] = saveDay.split(':'); const form = view.querySelector(`[data-account-row-form="${saveDay}"]`); const val = form?.querySelector('[name="value"]')?.value; await saveSnapshot(accountId, day, val); return; }
     const budgetMenu = target.closest('[data-budget-menu]')?.dataset.budgetMenu; if (budgetMenu) { state.modal = { type: 'budget', budgetId: budgetMenu }; render(); return; }
     const budgetDelete = target.closest('[data-budget-delete]')?.dataset.budgetDelete; if (budgetDelete && window.confirm('¿Eliminar presupuesto?')) { const monthKey = getSelectedBalanceMonthKey(); await safeFirebase(() => remove(ref(db, `${state.financePath}/balance/budgets/${monthKey}/${budgetDelete}`))); state.modal = { type: null }; toast('Presupuesto eliminado'); render(); return; }
     const importApply = target.closest('[data-import-apply]')?.dataset.importApply; if (importApply) { const parsed = state.modal.importPreview; if (!parsed?.validRows?.length) { state.modal = { ...state.modal, importError: 'CSV sin filas válidas.' }; render(); return; } const imported = await applyImportRows(importApply, parsed); toast(`Importados ${imported} días`); openAccountDetail(importApply); return; }
@@ -580,6 +692,7 @@ function bindEvents() {
     if (event.target.matches('[data-calendar-mode]')) { state.calendarMode = event.target.value; render(); }
     if (event.target.matches('[data-balance-type]')) { state.balanceFilterType = event.target.value; render(); }
     if (event.target.matches('[data-balance-category]')) { state.balanceFilterCategory = event.target.value; render(); }
+    if (event.target.matches('[data-balance-account]')) { state.balanceAccountFilter = event.target.value; render(); }
     if (event.target.matches('[data-import-file]')) {
       const file = event.target.files?.[0];
       if (!file) return;
@@ -590,15 +703,10 @@ function bindEvents() {
     }
   });
 
-  view.addEventListener('focusout', (event) => {
-    if (!event.target.matches('[data-account-input]')) return;
-    const day = dayKeyFromTs(Date.now()); const accountId = event.target.dataset.accountInput; clearTimeout(state.saveTimers[accountId]);
-    state.saveTimers[accountId] = setTimeout(() => saveDaily(accountId, day, event.target.value, Date.now()), 220);
-  });
 
   view.addEventListener('submit', async (event) => {
     if (event.target.matches('[data-new-account-form]')) {
-      event.preventDefault(); const name = event.target.querySelector('[data-account-name-input]')?.value?.trim(); if (name) await addAccount(name); state.modal = { type: null }; render(); return;
+      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 0.5); if (name) await addAccount({ name, shared, sharedRatio }); state.modal = { type: null }; render(); return;
     }
     if (event.target.matches('[data-account-entry-form]')) {
       event.preventDefault();
@@ -607,8 +715,17 @@ function bindEvents() {
       const day = String(form.get('day') || '').trim();
       const value = form.get('value');
       if (!day) { toast('Fecha inválida'); return; }
-      await saveDaily(accountId, day, value, parseDayKey(day));
+      await saveSnapshot(accountId, day, value);
       openAccountDetail(accountId);
+      return;
+    }
+    if (event.target.matches('[data-edit-account-form]')) {
+      event.preventDefault();
+      const accountId = event.target.dataset.editAccountForm;
+      const form = new FormData(event.target);
+      await updateAccountMeta(accountId, { name: String(form.get('name') || '').trim(), shared: form.get('shared') === 'on', sharedRatio: Number(form.get('sharedRatio') || 0.5) });
+      state.modal = { type: null };
+      render();
       return;
     }
     if (event.target.matches('[data-import-preview-form]')) {
@@ -624,11 +741,17 @@ function bindEvents() {
       event.preventDefault();
       const form = new FormData(event.target);
       const type = String(form.get('type') || 'expense'); const amount = Number(form.get('amount') || 0); const dateISO = String(form.get('dateISO') || dayKeyFromTs(Date.now()));
-      const category = String(form.get('category') || 'Sin categoría').trim() || 'Sin categoría'; const note = String(form.get('note') || '').trim();
-      const monthKey = dateISO.slice(0, 7); const txId = push(ref(db, `${state.financePath}/balance/tx`)).key;
-      await safeFirebase(() => set(ref(db, `${state.financePath}/balance/tx/${txId}`), { amount, category, note, dateISO: `${dateISO}T12:00:00.000Z`, monthKey, type }));
+      const category = String(form.get('category') || 'Sin categoría').trim() || 'Sin categoría'; const note = String(form.get('note') || '').trim(); const accountId = String(form.get('accountId') || '');
+      if (!accountId) { toast('Selecciona una cuenta'); return; }
+      const monthKey = dateISO.slice(0, 7); const movementId = push(ref(db, `${state.financePath}/movements/${monthKey}`)).key;
+      const payload = { amount, category, note, dateISO: `${dateISO}T12:00:00.000Z`, monthKey, type, accountId, createdAt: nowTs() };
+      await safeFirebase(() => set(ref(db, `${state.financePath}/movements/${monthKey}/${movementId}`), payload));
+      localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId);
+      state.lastMovementAccountId = accountId;
+      log('movement:add', { accountId, date: dateISO, amount, type });
+      await recomputeAccountEntries(accountId, dateISO);
       if (!state.balance.categories?.[category]) await safeFirebase(() => set(ref(db, `${state.financePath}/balance/categories/${category}`), { createdAt: nowTs() }));
-      state.modal = { type: null }; toast('Transacción guardada'); render(); return;
+      state.modal = { type: null }; toast('Movimiento guardado'); render(); return;
     }
     if (event.target.matches('[data-budget-form]')) {
       event.preventDefault();

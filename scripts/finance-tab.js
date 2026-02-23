@@ -226,21 +226,37 @@ function monthLabel(offset = 0) {
 function calendarData(accounts, totalSeries) {
   const date = new Date();
   date.setMonth(date.getMonth() + state.calendarMonthOffset);
-  const monthStart = new Date(date.getFullYear(), date.getMonth(), 1).getTime();
-  const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 1).getTime();
+
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const monthStartDate = new Date(year, month, 1);
+  const monthStart = monthStartDate.getTime();
+  const monthEnd = new Date(year, month + 1, 1).getTime();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstWeekdayOffset = (monthStartDate.getDay() + 6) % 7;
+
   const source = state.calendarAccountId === 'total'
     ? totalSeries.map((point, idx, arr) => ({ ...point, delta: idx ? point.value - arr[idx - 1].value : 0 }))
     : (accounts.find((acc) => acc.id === state.calendarAccountId)?.daily || []);
 
-  return source
+  const pointsByDay = {};
+  source
     .filter((point) => point.ts >= monthStart && point.ts < monthEnd)
-    .filter((point) => Math.abs(Number(point.delta || 0)) > 0.00001 || state.calendarMode === 'month')
-    .map((point) => {
+    .forEach((point) => {
       const prev = source.filter((i) => i.ts < point.ts).at(-1);
       const delta = prev ? point.value - prev.value : point.delta || 0;
       const deltaPct = prev?.value ? (delta / prev.value) * 100 : 0;
-      return { ...point, delta, deltaPct };
+      const dayNumber = new Date(point.ts).getDate();
+      pointsByDay[dayNumber] = { ...point, delta, deltaPct, dayNumber };
     });
+
+  const cells = [];
+  for (let i = 0; i < firstWeekdayOffset; i += 1) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    cells.push(pointsByDay[day] || { dayNumber: day, delta: 0, deltaPct: 0, isEmpty: true });
+  }
+
+  return { cells, daysInMonth };
 }
 
 function render() {
@@ -265,21 +281,8 @@ function render() {
   };
   const comparePrev = computeDeltaWithinBounds(totalSeries, previousBounds);
 
-  const calendarPoints = calendarData(accounts, totalSeries);
-  const bestPoint = calendarPoints
-    .filter((point) => point.delta > 0)
-    .sort((a, b) => b.delta - a.delta)[0] || null;
-  const worstPoint = calendarPoints
-    .filter((point) => point.delta < 0)
-    .sort((a, b) => a.delta - b.delta)[0] || null;
-
-  const calendarHighlight = [bestPoint, worstPoint].filter(Boolean).map((point) => `
-    <div class="financeCalHighlight ${toneClass(point.delta)}">
-      <strong>${new Date(point.ts).getDate()}</strong>
-      <span>${fmtSignedCurrency(point.delta)}</span>
-      <span>${fmtSignedPercent(point.deltaPct)}</span>
-    </div>
-  `).join('');
+  const calendar = calendarData(accounts, totalSeries);
+  const weekdayLabels = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 
   host.innerHTML = `
     <section class="finance-home ${toneClass(totalRange.delta)}">
@@ -346,7 +349,16 @@ function render() {
           <button class="finance-pill" data-month-shift="1">▶</button>
         </div>
         <div class="finance-calendar-grid">
-          ${calendarHighlight || '<p class="finance-empty">Sin cambios para este mes.</p>'}
+          <div class="finance-calendar-weekdays">${weekdayLabels.map((label) => `<span>${label}</span>`).join('')}</div>
+          <div class="finance-calendar-days">
+            ${calendar.cells.map((point) => {
+              if (!point) return '<div class="financeCalCell financeCalCell--blank" aria-hidden="true"></div>';
+              const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
+              const valueLabel = point.isEmpty ? '—' : fmtSignedCurrency(point.delta);
+              const percentLabel = point.isEmpty ? '—' : fmtSignedPercent(point.deltaPct);
+              return `<div class="financeCalCell ${tone}"><strong>${point.dayNumber}</strong><span>${valueLabel}</span><span>${percentLabel}</span></div>`;
+            }).join('')}
+          </div>
         </div>
       </article>
     </section>

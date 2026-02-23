@@ -94,33 +94,47 @@
 .financeTab .finance__sectionHeader { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .financeTab .finance__sectionHeader h2,
 .financeTab .finance__sectionHeader h3 { margin: 0; font-size: 1.1rem; }
-.financeTab .finance__calendarPreview .finance__sectionHeader h3 { color: #52f0ae; }
 .financeTab #finance-accountsList { margin-top: 12px; display: grid; gap: 12px; }
 
 .financeTab .financeAccountCard {
   border-radius: 22px;
-  padding: 16px;
+  padding: 14px 16px;
   display: flex;
   justify-content: space-between;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
   cursor: pointer;
 }
 .financeTab .financeAccountCard.is-positive { background: linear-gradient(98deg, rgba(36, 135, 100, .6), rgba(11, 28, 65, .9)); }
 .financeTab .financeAccountCard.is-negative { background: linear-gradient(98deg, rgba(154, 57, 89, .62), rgba(11, 29, 67, .92)); }
-.financeTab .financeAccountCard__main { display: grid; gap: 10px; }
-.financeTab .financeAccountCard__title { font-size: clamp(1.4rem, 3vw, 2rem); }
+.financeTab .financeAccountCard__main { display: grid; gap: 6px; min-width: 0; }
+.financeTab .financeAccountCard__title { font-size: clamp(1.25rem, 2.8vw, 1.95rem); }
 .financeTab .financeAccountCard__balance {
-  width: 180px;
-  border-radius: 999px;
-  border: 1px solid rgba(170, 197, 255, .24);
-  background: rgba(2, 11, 30, .9);
+  width: 100%;
+  border: 0;
+  background: transparent;
   color: var(--fin-text);
-  padding: 10px 14px;
-  font-size: 1.9rem;
+  padding: 0;
+  font-size: clamp(2rem, 7.6vw, 3rem);
+  line-height: 1.05;
+  box-shadow: none;
 }
-.financeTab .financeAccountCard__side { display: grid; align-content: space-between; justify-items: end; }
-.financeTab .financeAccountCard__deltaPill { max-width: 200px; text-align: right; }
-.financeTab .financeAccountCard__menuBtn { width: 38px; min-width: 38px; border-radius: 50%; padding: 0; font-size: 1.1rem; }
+.financeTab .financeAccountCard__balance:focus {
+  outline: none;
+}
+.financeTab .financeAccountCard__balance::-webkit-outer-spin-button,
+.financeTab .financeAccountCard__balance::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.financeTab .financeAccountCard__side { display: grid; gap: 8px; justify-items: end; }
+.financeTab .financeAccountCard__deltaPill {
+  max-width: 190px;
+  text-align: right;
+  border: 1px solid rgba(167, 192, 248, 0.22);
+  background: rgba(8, 20, 46, 0.72);
+}
+.financeTab .financeAccountCard__menuBtn { width: 34px; min-width: 34px; border-radius: 50%; padding: 0; font-size: 1.1rem; }
 
 .financeTab .finance__calendarPreview .finance-month-label { text-transform: capitalize; color: var(--fin-muted); }
 .financeTab .finance-calendar-controls {
@@ -134,27 +148,40 @@
   border-radius: 22px;
   border: 1px solid rgba(170, 194, 246, 0.18);
   padding: 12px;
-  display: flex;
-  align-items: stretch;
-  flex-wrap: wrap;
-  gap: 10px;
   background: rgba(4, 16, 40, .55);
 }
-.financeTab .financeCalHighlight {
-  border-radius: 16px;
+.financeTab .finance-calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.financeTab .finance-calendar-weekdays span {
+  text-align: center;
+  font-weight: 600;
+  color: var(--fin-muted);
+}
+.financeTab .finance-calendar-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+.financeTab .financeCalCell {
+  border-radius: 14px;
   border: 1px solid rgba(160, 182, 228, 0.15);
-  padding: 12px;
-  min-height: 108px;
-  min-width: 140px;
-  flex: 1 1 140px;
+  padding: 8px;
+  min-height: 82px;
   background: rgba(7, 20, 44, .72);
   display: grid;
   gap: 2px;
-  align-content: center;
 }
-.financeTab .financeCalHighlight strong { font-size: 2rem; line-height: 1; }
-.financeTab .financeCalHighlight.is-positive { background: linear-gradient(160deg, rgba(55, 158, 85, .68), rgba(32, 65, 45, .86)); }
-.financeTab .financeCalHighlight.is-negative { background: linear-gradient(160deg, rgba(155, 57, 84, .68), rgba(60, 27, 43, .86)); }
+.financeTab .financeCalCell strong { font-size: 1.6rem; line-height: 1; }
+.financeTab .financeCalCell--blank {
+  border-color: transparent;
+  background: transparent;
+}
+.financeTab .financeCalCell.is-positive { background: linear-gradient(160deg, rgba(55, 158, 85, .68), rgba(32, 65, 45, .86)); }
+.financeTab .financeCalCell.is-negative { background: linear-gradient(160deg, rgba(155, 57, 84, .68), rgba(60, 27, 43, .86)); }
 
 .financeTab .is-positive { color: var(--fin-positive); }
 .financeTab .is-negative { color: var(--fin-negative); }
@@ -240,6 +267,6 @@ Hero: .finance__hero, #finance-totalValue, #finance-totalDelta, #finance-lineCha
 Controls: .finance__controls, #finance-rangeSelect, #finance-historyBtn, #finance-compareSelect
 Compare pills: #finance-currentComparePill, #finance-prevComparePill
 Accounts: #finance-accountsList, .financeAccountCard, .financeAccountCard__deltaPill, .financeAccountCard__balance, .financeAccountCard__menuBtn
-Calendar preview: .finance__calendarPreview, .financeCalCell, .financeCalCell.is-positive/.is-negative
+Calendar preview: .finance__calendarPreview, .finance-calendar-weekdays, .finance-calendar-days, .financeCalCell
 Modal: #finance-modalOverlay, #finance-modal
 */

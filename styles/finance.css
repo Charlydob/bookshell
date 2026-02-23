@@ -355,3 +355,23 @@ Modal: #finance-modalOverlay, #finance-modal
   padding: 10px;
 }
 .financeTab .is-warn { color: #facc15; }
+
+.financeTab .financeImportBox {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+}
+.financeTab .financeImportBox textarea {
+  min-height: 120px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.15);
+  background: rgba(10,14,24,.55);
+  color: inherit;
+  padding: 10px;
+}
+.financeTab [data-account-row-form] input {
+  width: 120px;
+}
+.financeTab .financeBudgetRow .finance-row {
+  align-items: center;
+}

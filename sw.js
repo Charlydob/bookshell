@@ -12,7 +12,7 @@ const ASSETS = [
   "/styles/media.css",
   "/styles/world.css",
   "/styles/gym.css",
-  "/scripts/main.js",
+  "/scripts/books.js",
   "/scripts/videos.js",
   "/scripts/recipes.js",
   "/scripts/habits.js",

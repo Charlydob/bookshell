@@ -3256,7 +3256,7 @@ window.addEventListener("unhandledrejection", (e) => {
   }
 
 
-  // click fallback (captura por si tu main.js muere)
+  // click fallback (captura por si tu books.js muere)
   document.addEventListener("click", (e) => {
     const btn = e.target && e.target.closest ? e.target.closest(".bottom-nav .nav-btn[data-view]") : null;
     if (!btn) return;
@@ -3285,18 +3285,7 @@ if (document.readyState === "loading") {
 })();
 </script>
 
-<script src="scripts/main.js" type="module"></script>
-<script src="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js"></script>
-<script src="scripts/videos.js" type="module"></script>
-<script src="scripts/recipes.js" type="module"></script>
-<script src="scripts/habits.js" type="module"></script>
-<script src="scripts/session-quickstart.js" type="module"></script>
-<script src="scripts/games.js" type="module"></script>
-<script src="scripts/dashboard.js" type="module"></script>
-<script src="scripts/media.js" type="module"></script>
-<script src="scripts/world.js" type="module"></script>
-<script src="scripts/gym\.js" type="module"></script>
-<script src="scripts/finance-tab.js" type="module"></script>
+<script src="scripts/app.js" type="module"></script>
 <datalist id="country-options"></datalist>
 </body>
 </html>

@@ -238,24 +238,53 @@ async function upsertFoodItem(value, incrementCount = false, patch = {}) {
 
 function renderFoodOptionField(kind, label, selectName) {
   const options = foodOptionList(kind);
-  return `<div class="food-extra-field" data-food-kind="${kind}"><label>${label}</label><div class="food-extra-row"><select name="${selectName}" data-food-select="${kind}"><option value="">Seleccionar (opcional)</option>${options.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="finance-pill finance-pill--mini" data-food-add="${kind}">+ añadir</button></div></div>`;
+  return `
+  
+  <div class="food-extra-field" data-food-kind="${kind}">
+  
+  <label>${label}</label>
+  <div class="food-extra-row">
+  <select name="${selectName}" data-food-select="${kind}">
+  <option value="">Elegir</option>
+  
+  ${options.map((name) => 
+    `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}</select>
+    <button type="button" class="finance-pill finance-pill--mini" data-food-add="${kind}">+</button></div></div>`;
 }
 
 function renderFoodExtrasSection() {
   const topItems = topFoodItems(6);
-  return `<section class="food-extra" data-food-extra hidden>
-    <h4>Extras de comida</h4>
-    ${renderFoodOptionField('typeOfMeal', 'Tipo de comida', 'foodMealType')}
-    ${renderFoodOptionField('cuisine', 'Cocina', 'foodCuisine')}
-    ${renderFoodOptionField('place', 'Lugar', 'foodPlace')}
-    <div class="food-extra-field">
-      <label>Producto / Plato</label>
-      <div class="food-top-items" data-food-top>${topItems.map((item) => `<button type="button" class="finance-chip" data-food-top-item="${escapeHtml(item.name)}">${escapeHtml(item.name)} <small>×${item.count}</small></button>`).join('') || '<small class="finance-empty">Sin habituales aún.</small>'}</div>
-      <input type="search" data-food-item-search placeholder="Buscar plato (ej: pollo)" autocomplete="off" />
-      <div class="food-search-list" data-food-item-results></div>
-      <input type="hidden" name="foodItem" data-food-item-value />
+  return `
+      <h4>Extras de comida</h4>
+
+  <section class="food-extra" data-food-extra hidden>
+    ${renderFoodOptionField('typeOfMeal', '¿Tipo?', 'foodMealType')}
+    ${renderFoodOptionField('cuisine', '¿Saludable?', 'foodCuisine')}
+    ${renderFoodOptionField('place', '¿Donde?', 'foodPlace')}
+     </section>
+    
+    <div class="food-extra-field-platos">
+
+      <div class="habituales">
+        <label>Producto / Plato</label>
+
+          <div class="food-top-items" data-food-top>${topItems.map((item) => `<button type="button" class="finance-chip" data-food-top-item="${escapeHtml(item.name)}">${escapeHtml(item.name)} 
+
+          <small>×${item.count}</small></button>`).join('') || '<small class="finance-empty">Sin habituales aún.</small>'}</div>
+      </div>  
+
+      <div class="resultados">
+        <input type="search" data-food-item-search placeholder="Buscar plato (ej: pollo)" autocomplete="off" />
+
+        <div class="food-search-list" data-food-item-results></div>
+      
+      </div>
+
+        <input type="hidden" name="foodItem" data-food-item-value />
+   
+
     </div>
-  </section>`;
+ `;
 }
 function isoToDay(dateISO = '') { return String(dateISO).slice(0, 10); }
 
@@ -488,14 +517,39 @@ function chartModelForRange(series, mode) {
   const delta = computeDeltaForRange(points.map((point) => ({ ...point, value: point.value })), 'total').delta;
   return { points, tone: toneClass(delta) };
 }
-function linePath(points, width = 320, height = 120) {
+function linePath(points, width = 320, height = 120, tension = 0.7, pad = 10) {
   if (!points.length) return '';
-  const vals = points.map((point) => point.value); const min = Math.min(...vals); const max = Math.max(...vals); const spread = max - min || 1;
-  return points.map((point, index) => {
+
+  const vals = points.map(p => p.value);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const spread = max - min || 1;
+
+  const innerH = Math.max(1, height - pad * 2);
+
+  const coords = points.map((point, index) => {
     const x = (index / Math.max(points.length - 1, 1)) * width;
-    const y = height - ((point.value - min) / spread) * height;
-    return `${index === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
+    const y = pad + (innerH - ((point.value - min) / spread) * innerH);
+    return { x, y };
+  });
+
+  if (coords.length < 2) return `M${coords[0].x.toFixed(1)},${coords[0].y.toFixed(1)}`;
+
+  let d = `M${coords[0].x.toFixed(1)},${coords[0].y.toFixed(1)}`;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const p0 = coords[i - 1] || coords[i];
+    const p1 = coords[i];
+    const p2 = coords[i + 1];
+    const p3 = coords[i + 2] || p2;
+
+    const c1x = p1.x + (p2.x - p0.x) / 6 * tension;
+    const c1y = p1.y + (p2.y - p0.y) / 6 * tension;
+    const c2x = p2.x - (p3.x - p1.x) / 6 * tension;
+    const c2y = p2.y - (p3.y - p1.y) / 6 * tension;
+
+    d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+  }
+  return d;
 }
 
 function calendarData(accounts, totalSeries) {
@@ -760,7 +814,15 @@ function renderFinanceCalendar(accounts, totalSeries) {
     }).join('')}</div></div>`;
   }
   return `<section class="finance-home"><article class="finance__calendarPreview"><div class="finance__sectionHeader"><h2>Calendario</h2><span class="finance-month-label">${modeLabel}</span></div>
-  <div class="finance-calendar-controls"><button class="finance-pill" data-month-shift="-1">◀</button><select class="finance-pill" data-calendar-account><option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select><select class="finance-pill" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>Día</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>Año</option></select><button class="finance-pill" data-month-shift="1">▶</button></div>
+
+  <div class="finance-calendar-controls">
+  
+  <button class="boton-calendario" data-month-shift="-1">◀</button>
+
+  <select class="finance-pill" data-calendar-account><option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select><select class="finance-pill" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>Día</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>Año</option></select>
+  
+  <button class="boton-calendario" data-month-shift="1">▶</button>
+  </div>
   ${content}</article></section>`;
 }
 
@@ -787,11 +849,36 @@ function renderFinanceBalance() {
   const avgNet = monthNetList.length ? monthNetList.reduce((sum, row) => sum + row.net, 0) / monthNetList.length : 0;
   const accountName = (id) => escapeHtml(accounts.find((a) => a.id === id)?.name || 'Sin cuenta');
   return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2><button class="finance-pill" data-open-modal="tx">+ Añadir</button></header>
-  <article class="financeGlassCard"><div class="finance-row"><button class="finance-pill" data-balance-month="-1">◀</button><strong>${monthLabelByKey(monthKey)}</strong><button class="finance-pill" data-balance-month="1">▶</button></div>
-  <div class="financeSummaryGrid"><div><small>Ingresos</small><strong class="is-positive">${fmtCurrency(monthSummary.income)}</strong></div><div><small>Gastos</small><strong class="is-negative">${fmtCurrency(monthSummary.expense)}</strong></div><div><small>Neto</small><strong class="${toneClass(monthSummary.net)}">${fmtCurrency(monthSummary.net)}</strong></div><div><small>Mes anterior</small><strong class="${toneClass(prevSummary.net)}">${fmtCurrency(prevSummary.net)}</strong></div></div>
+  <article class="financeGlassCard">
+  <div class="finance-row">
+  <button class="boton-calendario" data-balance-month="-1">◀</button>
+  <strong>${monthLabelByKey(monthKey)}</strong>
+  <button class="boton-calendario" data-balance-month="1">▶</button></div>
+
+  <div class="financeSummaryGrid">
+  
+  <div class="dash-balance"><small>Ingresos</small><strong class="is-positive">${fmtCurrency(monthSummary.income)}</strong></div>
+  
+  <div class="dash-balance"><small>Gastos</small><strong class="is-negative">${fmtCurrency(monthSummary.expense)}</strong></div>
+  
+  <div class="dash-balance"><small>Neto</small><strong class="${toneClass(monthSummary.net)}">${fmtCurrency(monthSummary.net)}</strong></div>
+  
+  <div class="dash-balance"><small>Mes anterior</small><strong class="${toneClass(prevSummary.net)}">${fmtCurrency(prevSummary.net)}</strong></div></div>
+
+
   <div class="finance-chip ${toneClass(prevSummary.net)}">Mes anterior: ${fmtSignedCurrency(prevSummary.net)}</div></article>
   <article class="financeGlassCard">
-  <div class="finance-row"><h3>Transacciones</h3><div class="finance-row"><select class="finance-pill" data-balance-type><option value="all">Todos</option><option value="expense" ${state.balanceFilterType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${state.balanceFilterType === 'income' ? 'selected' : ''}>Ingreso</option><option value="transfer" ${state.balanceFilterType === 'transfer' ? 'selected' : ''}>Transferencia</option></select><select class="finance-pill" data-balance-category><option value="all">Todas</option>${categories.map((c) => `<option ${state.balanceFilterCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select><select class="finance-pill" data-balance-account><option value="all">Todas las cuentas</option>${accounts.map((a) => `<option value="${a.id}" ${state.balanceAccountFilter === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div></div>
+  <div class="finance-row"><h3>Transacciones</h3>
+  
+  <div class="finance-row-transacciones">
+  
+  <select class="finance-pill-transacciones" data-balance-type><option value="all">Todos</option><option value="expense" ${state.balanceFilterType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${state.balanceFilterType === 'income' ? 'selected' : ''}>Ingreso</option><option value="transfer" ${state.balanceFilterType === 'transfer' ? 'selected' : ''}>Transferencia</option></select>
+  
+  <select class="finance-pill-transacciones" data-balance-category><option value="all">Todas</option>${categories.map((c) => `<option ${state.balanceFilterCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select>
+  
+  <select class="finance-pill-transacciones" data-balance-account><option value="all">Cuentas</option>
+  
+  ${accounts.map((a) => `<option value="${a.id}" ${state.balanceAccountFilter === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div></div>
   <div class="financeTxList financeTxList--scroll" style="max-height:260px;overflow-y:auto;">${(state.balanceShowAllTx ? tx : tx.slice(0, 5)).map((row) => {
     const accountText = row.type === 'transfer'
       ? `${accountName(row.fromAccountId)} → ${accountName(row.toAccountId)}`
@@ -804,15 +891,100 @@ function renderFinanceBalance() {
     const spent = budget.category.toLowerCase() === 'total' ? totalSpent : Number(spentByCategory[budget.category] || 0);
     const limit = Number(budget.limit || 0);
     const pct = limit ? (spent / limit) * 100 : 0;
-    return `<div class="financeBudgetRow"><div class="finance-row"><span>${escapeHtml(budget.category)}</span><div class="finance-row"><button class="finance-pill finance-pill--mini" data-budget-menu="${budget.id}">✏️</button><button class="finance-pill finance-pill--mini" data-budget-delete="${budget.id}">❌</button></div></div><small>${fmtCurrency(spent)} / ${fmtCurrency(limit)} (${pct.toFixed(0)}%)</small></div>`;
+
+return `<div class="financeBudgetRow">
+  <div class="finance-row">
+    <span>${escapeHtml(budget.category)}</span>
+    <div class="finance-row">
+      <button class="finance-pill finance-pill--mini" data-budget-menu="${budget.id}">✏️</button>
+      <button class="finance-pill finance-pill--mini" data-budget-delete="${budget.id}">❌</button>
+    </div>
+  </div>
+
+  <small>${fmtCurrency(spent)} / ${fmtCurrency(limit)} (${pct.toFixed(0)}%)</small>
+
+  <div class="financeProgress">
+    <div class="financeProgress__bar" style="width:${Math.max(0, Math.min(100, pct)).toFixed(2)}%"></div>
+  </div>
+</div>`;
+
+
   }).join('') : '<p class="finance-empty">Sin presupuestos.</p>'}</div></article>
-  <article class="financeGlassCard"><h3>Balance neto por mes</h3><div class="financeSummaryGrid"><div><small>Mejor mes</small><strong class="is-positive">${bestMonth ? `${bestMonth.month} · ${fmtCurrency(bestMonth.net)}` : '—'}</strong></div><div><small>Peor mes</small><strong class="is-negative">${worstMonth ? `${worstMonth.month} · ${fmtCurrency(worstMonth.net)}` : '—'}</strong></div><div><small>Media mensual</small><strong class="${toneClass(avgNet)}">${monthNetList.length ? fmtCurrency(avgNet) : '—'}</strong></div></div><div class="financeTxList" style="max-height:220px;overflow-y:auto;">${monthNetList.map((row) => `<div class="financeTxRow"><span>${row.month}</span><strong class="${toneClass(row.net)}">${fmtSignedCurrency(row.net)}</strong></div>`).join('') || '<p class="finance-empty">Sin meses con movimientos.</p>'}</div></article></section>`;
+  <article class="financeGlassCard"><h3>Balance neto por mes</h3>
+  
+  <div class="financeSummaryGrid">
+  
+  <div class="valoracion-mes"><small>Mejor mes</small><strong class="is-positive">${bestMonth ? `${bestMonth.month} · ${fmtCurrency(bestMonth.net)}` : '—'}</strong></div>
+  
+  <div class="valoracion-mes"><small>Peor mes</small><strong class="is-negative">${worstMonth ? `${worstMonth.month} · ${fmtCurrency(worstMonth.net)}` : '—'}</strong></div>
+
+  </div>
+  <div class="media-mensual">
+    <small>Media mensual</small>
+    <strong class="${toneClass(avgNet)}">${monthNetList.length ? fmtCurrency(avgNet) : '—'}</strong>
+  </div>  
+  
+  <div class="financeTxList" style="max-height:220px;overflow-y:auto;">${monthNetList.map((row) => `<div class="financeTxRow-balance-por-mes"><span>${row.month}</span><strong class="${toneClass(row.net)}">${fmtSignedCurrency(row.net)}</strong></div>`).join('') || '<p class="finance-empty">Sin meses con movimientos.</p>'}</div></article></section>`;
 }
 
 function renderFinanceGoals() {
-  const goals = Object.entries(state.goals.goals || {}).map(([id, row]) => ({ id, ...row }))
+  const goals = Object.entries(state.goals.goals || {})
+    .map(([id, row]) => ({ id, ...row }))
     .sort((a, b) => Number(a?.dueDateISO ? new Date(a.dueDateISO).getTime() : 0) - Number(b?.dueDateISO ? new Date(b.dueDateISO).getTime() : 0));
-  return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Objetivos</h2><button class="finance-pill" data-open-modal="goal">+ Objetivo</button></header><article class="financeGlassCard"><div class="financeBudgetList">${goals.length ? goals.map((goal) => `<div class="financeBudgetRow"><div class="finance-row"><strong>${escapeHtml(goal.title || 'Objetivo')}</strong><div class="finance-row"><button class="finance-pill finance-pill--mini" data-open-goal="${goal.id}">✏️</button><button class="finance-pill finance-pill--mini" data-delete-goal="${goal.id}">❌</button></div></div><small>${fmtCurrency(Number(goal.targetAmount || 0))} · vence ${goal.dueDateISO ? new Date(goal.dueDateISO).toLocaleDateString('es-ES') : 'sin fecha'} · ${(goal.accountsIncluded || []).length} cuentas</small></div>`).join('') : '<p class="finance-empty">Sin objetivos todavía.</p>'}</div></article></section>`;
+
+  // saldo actual por cuenta (usa tu modelo ya calculado en pantalla)
+  const accounts = buildAccountModels();
+  const accountsById = Object.fromEntries(accounts.map(a => [a.id, a]));
+
+  return `
+  <section class="financeBalanceView">
+    <header class="financeViewHeader">
+      <h2>Objetivos</h2>
+      <button class="finance-pill" data-open-modal="goal">+ Objetivo</button>
+    </header>
+
+    <article class="financeGlassCard">
+      <div class="financeBudgetList">
+        ${
+          goals.length
+            ? goals.map(goal => {
+                const target = Number(goal.targetAmount || 0);
+
+                const includedIds = goal.accountsIncluded || [];
+                const current = includedIds.length
+                  ? includedIds.reduce((sum, id) => sum + Number(accountsById[id]?.current || 0), 0)
+                  : 0;
+
+                const pct = target > 0 ? Math.max(0, Math.min(100, (current / target) * 100)) : 0;
+
+                return `
+                  <div class="financeBudgetRow">
+                    <div class="finance-row">
+                      <strong>${escapeHtml(goal.title || 'Objetivo')}</strong>
+                      <div class="finance-row">
+                        <button class="finance-pill finance-pill--mini" data-open-goal="${goal.id}">✏️</button>
+                        <button class="finance-pill finance-pill--mini" data-delete-goal="${goal.id}">❌</button>
+                      </div>
+                    </div>
+
+                    <small>
+                      ${fmtCurrency(target)} ·
+                      progreso ${fmtCurrency(current)} (${pct.toFixed(0)}%) ·
+                      vence ${goal.dueDateISO ? new Date(goal.dueDateISO).toLocaleDateString('es-ES') : 'sin fecha'} ·
+                      ${includedIds.length} cuentas
+                    </small>
+
+                    <div class="financeProgress">
+                      <div class="financeProgress__bar" style="width:${pct.toFixed(2)}%"></div>
+                    </div>
+                  </div>
+                `;
+              }).join('')
+            : `<p class="finance-empty">Sin objetivos todavía.</p>`
+        }
+      </div>
+    </article>
+  </section>`;
 }
 
 function renderModal() {
@@ -912,46 +1084,126 @@ if (state.modal.type === 'tx') {
   const defaultTo = txEdit?.toAccountId || state.balanceFormState.toAccountId || accounts[1]?.id || accounts[0]?.id || '';
   const accountOptions = accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
   const categories = categoriesList();
-  backdrop.innerHTML = `<div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1">
-    <header class="fm-modal__header fin-move-header"><h3 class="fm-modal__title fin-move-title">${txEdit ? 'Editar movimiento' : 'Añadir movimiento'}</h3><button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button></header>
+  backdrop.innerHTML = 
+  
+  `<div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1">
+    <header class="fm-modal__header fin-move-header">
+      <h3 class="fm-modal__title fin-move-title">${txEdit ? 'Editar movimiento' : 'Añadir movimiento'}</h3>
+      
+      <button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button>
+    </header>
+
     <form class="finance-entry-form finance-tx-form fm-form fin-move-form" data-balance-form>
       <input type="hidden" name="txId" value="${escapeHtml(txEdit?.id || '')}" />
       <div class="fm-grid fm-grid--top fin-move-grid">
-        <div class="fm-field fm-field--type"><label class="fm-label" for="fm-tx-type">Tipo</label><select id="fm-tx-type" name="type" class="finance-pill fm-control fm-control--select" data-tx-type><option value="expense" ${defaultType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${defaultType === 'income' ? 'selected' : ''}>Ingreso</option><option value="transfer" ${defaultType === 'transfer' ? 'selected' : ''}>Transferencia</option></select></div>
-        <div class="fm-field fm-field--amount"><label class="fm-label" for="fm-tx-amount">Cantidad</label><input id="fm-tx-amount" class="fm-control fm-control--amount" required name="amount" type="number" step="0.01" placeholder="Cantidad €" value="${escapeHtml(defaultAmount)}"/></div>
-        <div class="fm-field fm-field--date"><label class="fm-label" for="fm-tx-date">Fecha</label><input id="fm-tx-date" class="fm-control fm-control--date" name="dateISO" type="date" value="${defaultDate}"/></div>
-        <div class="fm-field fm-field--account" data-tx-account-single><label class="fm-label" for="fm-tx-account">Cuenta</label><select id="fm-tx-account" class="fm-control fm-control--account fm-control--select" name="accountId"><option value="">Selecciona cuenta</option>${accountOptions}</select></div>
-        <div class="fm-field fm-field--account" data-tx-account-from hidden><label class="fm-label" for="fm-tx-account-from">Cuenta origen</label><select id="fm-tx-account-from" class="fm-control fm-control--account fm-control--select" name="fromAccountId"><option value="">Selecciona cuenta</option>${accountOptions}</select></div>
-        <div class="fm-field fm-field--account" data-tx-account-to hidden><label class="fm-label" for="fm-tx-account-to">Cuenta destino</label><select id="fm-tx-account-to" class="fm-control fm-control--account fm-control--select" name="toAccountId"><option value="">Selecciona cuenta</option>${accountOptions}</select></div>
+        <div class="fm-field fm-field--type">
+        <label class="fm-label-tipo" for="fm-tx-type">Tipo</label>
+        
+        <select id="fm-tx-type" name="type" class="finance-pill fm-control fm-control--select" data-tx-type>
+        
+        <option value="expense" ${defaultType === 'expense' ? 'selected' : ''}>Gasto</option>
+        <option value="income" ${defaultType === 'income' ? 'selected' : ''}>Ingreso</option>
+        <option value="transfer" ${defaultType === 'transfer' ? 'selected' : ''}>Transferencia</option></select></div>
+
+        <div class="fm-field fm-field--amount">
+        <label class="fm-label-cantidad" for="fm-tx-amount">Cantidad</label>
+        <input id="fm-tx-amount" class="fm-control fm-control--amount" required name="amount" type="number" step="0.01" placeholder="Cantidad €" value="${escapeHtml(defaultAmount)}"/></div>
+
+        <div class="fm-field fm-field--date">
+        <label class="fm-label-fecha" for="fm-tx-date">Fecha</label>
+        <input id="fm-tx-date" class="fm-control fm-control--date" name="dateISO" type="date" value="${defaultDate}"/></div>
+        
+        <div class="fm-field fm-field--account" data-tx-account-single>
+        <label class="fm-label-cuenta" for="fm-tx-account">Cuenta</label>
+        
+        <select id="fm-tx-account" class="fm-control fm-control--account fm-control--select" name="accountId">
+        <option value="">Selecciona cuenta</option>${accountOptions}</select></div>
+        
+        <div class="fm-field fm-field--account" data-tx-account-from hidden>
+        <label class="fm-label-cuenta-origen" for="fm-tx-account-from">Cuenta origen</label>
+        
+        <select id="fm-tx-account-from" class="fm-control fm-control--account fm-control--select" name="fromAccountId">
+        <option value="">Selecciona cuenta</option>${accountOptions}</select></div>
+
+        <div class="fm-field fm-field--account" data-tx-account-to hidden>
+        <label class="fm-label-cuenta-destino" for="fm-tx-account-to">Cuenta destino</label>
+        <select id="fm-tx-account-to" class="fm-control fm-control--account fm-control--select" name="toAccountId">
+        <option value="">Selecciona cuenta</option>${accountOptions}</select></div>
       </div>
       <div class="fm-grid fm-grid--meta fin-move-grid fin-move-grid--meta">
-        <div class="fm-field fm-field--category fin-move-field" data-category-block><label class="fm-label" for="fm-tx-category">Categoría</label><select id="fm-tx-category" class="fm-control fm-control--category fm-control--select fin-move-select" name="category"><option value="">Seleccionar</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select><div class="fin-move-inline"><input class="fm-control fin-move-input" type="text" placeholder="Nueva categoría" data-category-new /><button type="button" class="finance-pill finance-pill--mini" data-category-create>+ añadir</button></div></div>
-        <div class="fm-field fm-field--note"><label class="fm-label" for="fm-tx-note">Nota</label><input id="fm-tx-note" class="fm-control fm-control--note" name="note" type="text" placeholder="Nota (opcional)" value="${escapeHtml(defaultNote)}"/></div>
+        <div class="fm-field fm-field--category fin-move-field" data-category-block>
+        <label class="fm-label-categoria" for="fm-tx-category">Categoría</label>
+        <select id="fm-tx-category" class="fm-control fm-control--category fm-control--select fin-move-select" name="category">
+        <option value="">Seleccionar</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
+        
+        <div class="fin-move-inline"><input class="fm-control fin-move-input" type="text" placeholder="Nueva categoría" data-category-new />
+        
+        <button type="button" class="finance-pill finance-pill--mini" data-category-create>+ añadir</button></div></div>
+        
+        <div class="fm-field fm-field--note">
+        <label class="fm-label-nota" for="fm-tx-note">Nota</label>
+        <input id="fm-tx-note" class="fm-control fm-control--note" name="note" type="text" placeholder="Notas" value="${escapeHtml(defaultNote)}"/></div>
       </div>
-      <details class="fm-details fm-details--extras fin-move-extras" data-section="food-extras"><summary class="fm-details__summary"><span class="fm-details__title">Extras</span><span class="fm-details__hint">Opcional</span><span class="fm-details__chev" aria-hidden="true">⌄</span></summary><div class="fm-details__body">${renderFoodExtrasSection()}</div></details>
-      <div class="fm-actions fin-move-footer"><button class="finance-pill fm-action fm-action--submit" type="submit">${txEdit ? 'Guardar cambios' : 'Añadir movimiento'}</button></div>
+      <details class="fm-details fm-details--extras fin-move-extras" data-section="food-extras">
+      <summary class="fm-details__summary">
+      <span class="fm-details__title">Extras</span>
+      <span class="fm-details__hint">Opcional</span>
+      <span class="fm-details__chev" aria-hidden="true">⌄</span>
+      </summary>
+      
+      <div class="fm-details__body">${renderFoodExtrasSection()}</div></details>
+      <div class="fm-actions fin-move-footer">
+      <button class="finance-pill fm-action fm-action--submit" type="submit">${txEdit ? 'Guardar cambios' : 'Añadir movimiento'}</button></div>
     </form>
   </div>`;
+
   const form = backdrop.querySelector('[data-balance-form]');
   if (form) {
-    form.querySelector('select[name="accountId"]').value = defaultAccountId;
-    const categorySelect = form.querySelector('select[name="category"]');
-    if (categorySelect) categorySelect.value = defaultCategory;
-    form.querySelector('select[name="fromAccountId"]').value = defaultFrom;
-    form.querySelector('select[name="toAccountId"]').value = defaultTo;
-    if (txEdit?.extras || txEdit?.food) {
-      const extras = txEdit.extras || txEdit.food;
-      const refs = getFoodFormRefs(form);
-      if (refs.mealType) refs.mealType.value = extras.mealType || extras.foodType || '';
-      if (refs.cuisine) refs.cuisine.value = extras.cuisine || '';
-      if (refs.place) refs.place.value = extras.place || '';
-      if (refs.itemSearch) refs.itemSearch.value = extras.item || extras.productName || '';
-      if (refs.itemValue) refs.itemValue.value = extras.item || extras.productName || '';
-    }
+  const typeSel = form.querySelector('[data-tx-type]');
+  const catSel = form.querySelector('select[name="category"]');
+
+  // enganchar cambios
+  typeSel?.addEventListener('change', () => {
     syncTxTypeFields(form);
+  });
+  catSel?.addEventListener('change', () => {
     toggleFoodExtras(form);
-    maybeToggleCategoryCreate(form);
+  });
+
+  // aplicar estado inicial (después de setear defaults)
+  syncTxTypeFields(form);
+  toggleFoodExtras(form);
+}
+if (form) {
+  const acc = form.querySelector('select[name="accountId"]');
+  if (acc) acc.value = defaultAccountId || '';
+
+  const cat = form.querySelector('select[name="category"]');
+  if (cat) cat.value = defaultCategory || '';
+
+  const from = form.querySelector('select[name="fromAccountId"]');
+  if (from) from.value = defaultFrom || '';
+
+  const to = form.querySelector('select[name="toAccountId"]');
+  if (to) to.value = defaultTo || '';
+
+  // primero: que la UI refleje tipo + categoría
+  syncTxTypeFields(form);
+  toggleFoodExtras(form);
+  maybeToggleCategoryCreate(form);
+
+  // luego: extras (y vuelve a toggle por si categoría viene de txEdit)
+  if (txEdit?.extras || txEdit?.food) {
+    const extras = txEdit.extras || txEdit.food;
+    const refs = getFoodFormRefs(form);
+    if (refs.mealType) refs.mealType.value = extras.mealType || extras.foodType || '';
+    if (refs.cuisine)  refs.cuisine.value  = extras.cuisine || '';
+    if (refs.place)    refs.place.value    = extras.place || '';
+    if (refs.itemSearch) refs.itemSearch.value = extras.item || extras.productName || '';
+    if (refs.itemValue)  refs.itemValue.value  = extras.item || extras.productName || '';
+    toggleFoodExtras(form);
   }
+}
   return;
 }
   if (state.modal.type === 'calendar-day-edit') {
@@ -964,7 +1216,25 @@ if (state.modal.type === 'tx') {
     const monthKey = getSelectedBalanceMonthKey();
     const budget = state.modal.budgetId ? getBudgetItems(monthKey).find((item) => item.id === state.modal.budgetId) : null;
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${budget ? 'Editar' : 'Nuevo'} presupuesto (${monthKey})</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
-      <form class="finance-budget-form" data-budget-form><input name="category" list="finance-cat-list" value="${escapeHtml(budget?.category || '')}" placeholder="Categoría o Total" required /><datalist id="finance-cat-list"><option value="Total"></option>${categories.map((c) => `<option value="${escapeHtml(c)}"></option>`).join('')}</datalist><input name="limit" type="number" step="0.01" value="${Number(budget?.limit || 0)}" placeholder="Límite €" required /><input name="monthKey" type="month" value="${monthKey}" required /><button class="finance-pill" type="submit">Guardar</button>${budget ? `<button class="finance-pill" type="button" data-budget-delete="${budget.id}">Eliminar</button>` : ''}</form></div>`;
+ 
+    <form class="finance-budget-form-presupuesto" data-budget-form>
+    
+    <input name="category" list="finance-cat-list" value="${escapeHtml(budget?.category || '')}" placeholder="Categoría o Total" required />
+    
+    <datalist id="finance-cat-list">
+    
+    <option value="Total"></option>
+    
+    ${categories.map((c) => `
+      
+      <option value="${escapeHtml(c)}"></option>`).join('')}</datalist>
+      
+      <input name="limit" type="number" step="0.01" value="${Number(budget?.limit || 0)}" placeholder="Límite €" required />
+      <input name="monthKey" type="month" value="${monthKey}" required />
+      
+      <button class="finance-pill" type="submit">Guardar presupuesto</button>
+      </form>
+      ${budget ? `<button class="finance-pill" type="button" data-budget-delete="${budget.id}">Eliminar</button>` : ''}</div>`;
     return;
   }
   if (state.modal.type === 'goal') {
@@ -989,7 +1259,16 @@ if (state.modal.type === 'tx') {
   if (state.modal.type === 'edit-account') {
     const account = accounts.find((item) => item.id === state.modal.accountId);
     if (!account) { state.modal = { type: null }; triggerRender(); return; }
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><form class="finance-entry-form" data-edit-account-form="${account.id}"><input type="text" name="name" value="${escapeHtml(account.name)}" required /><label><input type="checkbox" name="shared" ${account.shared ? 'checked' : ''} /> Cuenta compartida</label><select name="sharedRatio"><option value="0.5" ${(account.sharedRatio === 0.5) ? 'selected' : ''}>50%</option><option value="1" ${(account.sharedRatio === 1) ? 'selected' : ''}>100%</option></select><button class="finance-pill" type="submit">Guardar</button></form></div>`;
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><form class="finance-entry-form" data-edit-account-form="${account.id}"><input type="text" name="name" value="${escapeHtml(account.name)}" required /><label>
+    
+    <input type="checkbox" name="shared" ${account.shared ? 'checked' : ''} /> Cuenta compartida</label>
+    
+    <select name="sharedRatio"><option value="0.5" ${(account.sharedRatio === 0.5) ? 'selected' : ''}>50%</option>
+    
+ 
+    </select>
+    
+    <button class="finance-pill" type="submit">Guardar</button></form></div>`;
     return;
   }
   if (state.modal.type === 'new-account') {
@@ -997,7 +1276,16 @@ if (state.modal.type === 'tx') {
     `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header>
     <h3>Nueva cuenta</h3>
     <button class="finance-pill" data-close-modal>❌</button></header>
-    <form class="finance-entry-form" id="modal-cuenta-nueva" data-new-account-form><input type="text" name="name" data-account-name-input placeholder="Nombre de la cuenta" required /><label><input type="checkbox" name="shared" /> 🫂</label><select name="sharedRatio"><option value="0.5">50%</option><option value="1">100%</option></select><button class="finance-pill" type="submit">Crear</button></form></div>`;
+    <form class="finance-entry-form" id="modal-cuenta-nueva" data-new-account-form><input type="text" name="name" data-account-name-input placeholder="Nombre de la cuenta" required /><label>
+    
+    <input type="checkbox" name="shared" /> 🫂</label><select name="sharedRatio">
+    
+    <option value="0.5">50%</option>
+    
+    
+    </select>
+    
+    <button class="finance-pill" type="submit">Crear</button></form></div>`;
     return;
   }
 }
@@ -1080,29 +1368,24 @@ async function syncFoodOptionsInForm(form) {
   renderFoodItemSearchResults(form);
 }
 
-async function toggleFoodExtras(form) {
-  const refs = getFoodFormRefs(form);
-  if (!refs.extra || !refs.category) return;
-  const isFood = isFoodCategory(refs.category.value);
-  refs.extra.hidden = !isFood;
-  if (!isFood) {
-    clearFoodFormState(form);
-    return;
-  }
-  await loadFoodCatalog();
-  await syncFoodOptionsInForm(form);
-}
+
 
 
 function syncTxTypeFields(form) {
-  if (!form) return;
-  const type = form.querySelector('[data-tx-type]')?.value || 'expense';
-  const single = form.querySelector('[data-tx-account-single]');
-  const from = form.querySelector('[data-tx-account-from]');
-  const to = form.querySelector('[data-tx-account-to]');
-  if (single) single.hidden = type === 'transfer';
-  if (from) from.hidden = type !== 'transfer';
-  if (to) to.hidden = type !== 'transfer';
+  const typeSel = form.querySelector('[data-tx-type]');
+  const elSingle = form.querySelector('[data-tx-account-single]');
+  const elFrom = form.querySelector('[data-tx-account-from]');
+  const elTo = form.querySelector('[data-tx-account-to]');
+  if (!typeSel || !elSingle || !elFrom || !elTo) return;
+
+  const isTransfer = typeSel.value === 'transfer';
+
+  // Cuenta única
+  elSingle.style.display = isTransfer ? 'none' : '';
+
+  // Origen / destino
+  elFrom.style.display = isTransfer ? '' : 'none';
+  elTo.style.display = isTransfer ? '' : 'none';
 }
 
 function maybeToggleCategoryCreate(form) {
@@ -1114,7 +1397,18 @@ function maybeToggleCategoryCreate(form) {
   btn.disabled = !value || exists;
   btn.textContent = value ? `+ añadir "${value}"` : '+ añadir';
 }
+function toggleFoodExtras(form) {
+  const catSel = form.querySelector('select[name="category"]');
+  const foodBox = form.querySelector('[data-section="food-extras"]');
+  if (!foodBox) return;
 
+  const v = (catSel?.value || '').toLowerCase();
+  const isFood = v === 'comida' || v.includes('comida');
+  foodBox.hidden = !isFood;
+
+  // opcional: cerrar si se oculta
+  if (!isFood) foodBox.removeAttribute('open');
+}
 function persistBalanceFormState(form) {
   if (!form) return;
   const fd = new FormData(form);

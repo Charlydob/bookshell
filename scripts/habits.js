@@ -849,7 +849,6 @@ function computeHabitDayTotals(habitId, dayKey, dayCloseTime = "00:00", options 
   }
 
   const totals = { doneMin, doneCount };
-  console.warn("[TOTALS]", habitId, dayKey, totals, { source: "shared" });
   return totals;
 }
 
@@ -5205,7 +5204,6 @@ function renderToday() {
       const metaText = isCount
         ? (dayData.count ? `${scheduleLabel} · ${dayData.count} hoy` : scheduleLabel)
         : (dayData.minutes ? `${scheduleLabel} · ${formatMinutes(dayData.minutes)} hoy` : scheduleLabel);
-      console.warn("[RENDER] minicard", habit.id, isCount ? dayData.count : dayData.minutes);
 
       const card = buildTodayCard(habit, dateKey, dayData, metaText, streak, daysDone);
       const groupId = habit?.groupId || "";

@@ -424,7 +424,7 @@ const TIME_UNITS = [
   }
 
   function clickNav(viewId) {
-    // main.js tiene el router; si existe, lo usamos. Si no, intentamos click a nav.
+    // books.js tiene el router; si existe, lo usamos. Si no, intentamos click a nav.
     if (typeof window.showView === "function") return window.showView(viewId);
     const btn = document.querySelector(`.nav-btn[data-view="${viewId}"]`);
     btn?.click?.();

@@ -1234,3 +1234,14 @@ input[type="date"]::-webkit-calendar-picker-indicator{ opacity:.7; }
 .finFood__selectedItem{display:flex;justify-content:space-between;align-items:center}
 .finTxDay__row{width:100%;text-align:left;background:transparent;border:0}
 .finFixed__fields{display:grid;gap:.5rem}
+
+.financeTab .finAgg__section { display:grid; gap:10px; }
+.financeTab .finAgg__tabs { display:flex; gap:6px; flex-wrap:wrap; }
+.financeTab .finAgg__scopeToggle { display:flex; gap:8px; margin:10px 0; }
+.financeTab .finAgg__active { outline: 1px solid rgba(120,255,200,.65); }
+.financeTab .finAgg__totals { display:grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap:8px; }
+.financeTab .finAgg__totals > div { border:1px solid rgba(166,188,233,.2); border-radius:14px; padding:8px; background:rgba(6,18,44,.5); }
+.financeTab .finAgg__averages { border:1px solid rgba(166,188,233,.2); border-radius:14px; padding:8px; }
+.financeTab .finRank__block { display:grid; gap:4px; }
+.financeTab .finHist__list { display:grid; gap:6px; max-height:260px; overflow:auto; }
+.financeTab .finHist__row { display:grid; grid-template-columns: 120px 1fr 1fr 1fr; gap:6px; font-size:.84rem; border-bottom:1px solid rgba(166,188,233,.14); padding-bottom:4px; }

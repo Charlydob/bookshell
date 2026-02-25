@@ -15,7 +15,17 @@ const state = {
   legacyEntries: {},
   balance: { tx: {}, movements: {}, transactions: {}, categories: {}, budgets: {}, snapshots: {}, defaultAccountId: '', lastSeenMonthKey: '' },
   goals: { goals: {} },
-  modal: { type: null, accountId: null, goalId: null, budgetId: null, importRaw: '', importPreview: null, importError: '' },
+  modal: {
+    type: null,
+    accountId: null,
+    goalId: null,
+    budgetId: null,
+    txType: '',
+    monthOffset: 0,
+    importRaw: '',
+    importPreview: null,
+    importError: ''
+  },
   balanceFormState: {},
   toast: '',
   calendarMonthOffset: 0,
@@ -647,6 +657,25 @@ function summaryForMonth(monthKey) {
   return { income, expense, invest, net: income - expense - invest };
 }
 
+function openBalanceDrilldown(txType) {
+  if (txType !== 'income' && txType !== 'expense') return;
+  state.modal = {
+    type: 'balance-drilldown',
+    txType,
+    monthOffset: state.balanceMonthOffset,
+    importRaw: '',
+    importPreview: null,
+    importError: ''
+  };
+  triggerRender();
+}
+
+function buildDrilldownRows(txType, monthKey) {
+  return balanceTxList()
+    .filter((row) => row.type === txType && row.monthKey === monthKey)
+    .sort((a, b) => txSortTs(b) - txSortTs(a));
+}
+
 function monthlyNetRows() {
   const byMonth = {};
   balanceTxList().forEach((tx) => {
@@ -857,9 +886,9 @@ function renderFinanceBalance() {
 
   <div class="financeSummaryGrid">
   
-  <div class="dash-balance"><small>Ingresos</small><strong class="is-positive">${fmtCurrency(monthSummary.income)}</strong></div>
+  <button class="dash-balance" type="button" data-balance-drilldown="income"><small>Ingresos</small><strong class="is-positive">${fmtCurrency(monthSummary.income)}</strong></button>
   
-  <div class="dash-balance"><small>Gastos</small><strong class="is-negative">${fmtCurrency(monthSummary.expense)}</strong></div>
+  <button class="dash-balance" type="button" data-balance-drilldown="expense"><small>Gastos</small><strong class="is-negative">${fmtCurrency(monthSummary.expense)}</strong></button>
   
   <div class="dash-balance"><small>Neto</small><strong class="${toneClass(monthSummary.net)}">${fmtCurrency(monthSummary.net)}</strong></div>
   
@@ -936,6 +965,26 @@ function renderFinanceGoals() {
   const accounts = buildAccountModels();
   const accountsById = Object.fromEntries(accounts.map(a => [a.id, a]));
 
+  const totalObjective = goals.reduce((sum, goal) => sum + Number(goal.targetAmount || 0), 0);
+  const contributingAccounts = new Set();
+  goals.forEach((goal) => (goal.accountsIncluded || []).forEach((id) => contributingAccounts.add(id)));
+  const totalPool = [...contributingAccounts].reduce((sum, id) => sum + Number(accountsById[id]?.current || 0), 0);
+  const globalPct = totalObjective > 0 ? Math.max(0, Math.min(100, (totalPool / totalObjective) * 100)) : 0;
+  const sortedGoals = goals.slice().sort((a, b) => {
+    const aDue = a?.dueDateISO ? new Date(a.dueDateISO).getTime() : Number.MAX_SAFE_INTEGER;
+    const bDue = b?.dueDateISO ? new Date(b.dueDateISO).getTime() : Number.MAX_SAFE_INTEGER;
+    if (aDue !== bDue) return aDue - bDue;
+    return Number(a.targetAmount || 0) - Number(b.targetAmount || 0);
+  });
+  const allocationByGoal = {};
+  let remainingPool = totalPool;
+  sortedGoals.forEach((goal) => {
+    const target = Math.max(0, Number(goal.targetAmount || 0));
+    const assigned = Math.max(0, Math.min(target, remainingPool));
+    allocationByGoal[goal.id] = assigned;
+    remainingPool -= assigned;
+  });
+
   return `
   <section class="financeBalanceView">
     <header class="financeViewHeader">
@@ -944,18 +993,28 @@ function renderFinanceGoals() {
     </header>
 
     <article class="financeGlassCard">
+      <div class="financeSummaryGrid">
+        <div class="valoracion-mes"><small>Total objetivo</small><strong>${fmtCurrency(totalObjective)}</strong></div>
+        <div class="valoracion-mes"><small>Total ahorrado</small><strong class="${toneClass(totalPool)}">${fmtCurrency(totalPool)}</strong></div>
+      </div>
+      <div class="media-mensual">
+        <small>Progreso global</small>
+        <strong class="${toneClass(globalPct - 100)}">${globalPct.toFixed(2)}%</strong>
+      </div>
+      <div class="financeProgress"><div class="financeProgress__bar" style="width:${Math.max(0, Math.min(100, globalPct)).toFixed(2)}%"></div></div>
+    </article>
+
+    <article class="financeGlassCard">
       <div class="financeBudgetList">
         ${
           goals.length
             ? goals.map(goal => {
                 const target = Number(goal.targetAmount || 0);
-
                 const includedIds = goal.accountsIncluded || [];
-                const current = includedIds.length
-                  ? includedIds.reduce((sum, id) => sum + Number(accountsById[id]?.current || 0), 0)
-                  : 0;
-
-                const pct = target > 0 ? Math.max(0, Math.min(100, (current / target) * 100)) : 0;
+                const assigned = Number(allocationByGoal[goal.id] || 0);
+                const pct = target > 0 ? Math.max(0, Math.min(100, (assigned / target) * 100)) : 0;
+                const remaining = Math.max(0, target - assigned);
+                const complete = remaining <= 0.000001 && target > 0;
 
                 return `
                   <div class="financeBudgetRow">
@@ -969,9 +1028,11 @@ function renderFinanceGoals() {
 
                     <small>
                       ${fmtCurrency(target)} ·
-                      progreso ${fmtCurrency(current)} (${pct.toFixed(0)}%) ·
+                      asignado ${fmtCurrency(assigned)} (${pct.toFixed(0)}%) ·
+                      restante ${fmtCurrency(remaining)} ·
                       vence ${goal.dueDateISO ? new Date(goal.dueDateISO).toLocaleDateString('es-ES') : 'sin fecha'} ·
-                      ${includedIds.length} cuentas
+                      ${includedIds.length} cuentas ·
+                      ${complete ? 'completo' : 'pendiente'}
                     </small>
 
                     <div class="financeProgress">
@@ -1071,13 +1132,13 @@ function renderModal() {
 </section>`;
     return;
   }
-if (state.modal.type === 'tx') {
+  if (state.modal.type === 'tx') {
   const accountsById = Object.fromEntries(accounts.map((a) => [a.id, a]));
   const txEdit = state.modal.txId ? balanceTxList().find((row) => row.id === state.modal.txId) : null;
   const defaultAccountId = txEdit?.accountId || state.lastMovementAccountId || state.balance.defaultAccountId || accounts[0]?.id || '';
   const defaultType = txEdit?.type || state.balanceFormState.type || 'expense';
   const defaultCategory = txEdit?.category || state.balanceFormState.category || '';
-  const defaultDate = txEdit?.date || isoToDay(txEdit?.dateISO || '') || dayKeyFromTs(Date.now());
+  const defaultDate = txEdit?.date || isoToDay(txEdit?.dateISO || '') || state.balanceFormState.dateISO || dayKeyFromTs(Date.now());
   const defaultAmount = txEdit?.amount || state.balanceFormState.amount || '';
   const defaultNote = txEdit?.note || state.balanceFormState.note || '';
   const defaultFrom = txEdit?.fromAccountId || state.balanceFormState.fromAccountId || defaultAccountId;
@@ -1206,6 +1267,16 @@ if (form) {
 }
   return;
 }
+  if (state.modal.type === 'balance-drilldown') {
+    const txType = state.modal.txType === 'income' ? 'income' : 'expense';
+    const monthOffset = Number(state.modal.monthOffset || 0);
+    const monthKey = offsetMonthKey(getMonthKeyFromDate(), monthOffset);
+    const rows = buildDrilldownRows(txType, monthKey);
+    const title = txType === 'income' ? 'Ingresos' : 'Gastos';
+    const accountName = (id) => escapeHtml(accounts.find((a) => a.id === id)?.name || 'Sin cuenta');
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${title} · ${monthLabelByKey(monthKey)}</h3><div class="finance-row"><button class="finance-pill" data-drilldown-month="-1">◀</button><button class="finance-pill" data-drilldown-month="1">▶</button><button class="finance-pill" data-drilldown-add="${txType}">+ Añadir</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header><div class="financeTxList financeTxList--scroll" style="max-height:360px;overflow-y:auto;">${rows.map((row) => `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountName(row.accountId)}</span><strong class="${txType === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrency(row.amount)}</strong></div>`).join('') || '<p class="finance-empty">Sin registros en este mes.</p>'}</div></div>`;
+    return;
+  }
   if (state.modal.type === 'calendar-day-edit') {
     const day = String(state.modal.day || '').trim();
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar saldos · ${escapeHtml(day)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
@@ -1512,7 +1583,7 @@ async function updateAccountMeta(accountId, payload = {}) {
   await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { ...payload, shared, sharedRatio, updatedAt: nowTs() }));
 }
 async function saveSnapshot(accountId, day, value) {
-  const parsedValue = Number(String(value).replace(',', '.'));
+  const parsedValue = parseEuroNumber(value);
   if (!Number.isFinite(parsedValue) || !day) return false;
   await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${accountId}/snapshots/${day}`), { value: parsedValue, updatedAt: nowTs() }));
   await recomputeAccountEntries(accountId, day);
@@ -1669,6 +1740,21 @@ function bindEvents() {
       return;
     }
     const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); state.balanceShowAllTx = false; triggerRender(); return; }
+    const drilldown = target.closest('[data-balance-drilldown]')?.dataset.balanceDrilldown; if (drilldown) { openBalanceDrilldown(drilldown); return; }
+    const drilldownMonth = target.closest('[data-drilldown-month]')?.dataset.drilldownMonth;
+    if (drilldownMonth && state.modal.type === 'balance-drilldown') {
+      state.modal = { ...state.modal, monthOffset: Number(state.modal.monthOffset || 0) + Number(drilldownMonth) };
+      triggerRender();
+      return;
+    }
+    const drilldownAdd = target.closest('[data-drilldown-add]')?.dataset.drilldownAdd;
+    if (drilldownAdd && state.modal.type === 'balance-drilldown') {
+      const monthKey = offsetMonthKey(getMonthKeyFromDate(), Number(state.modal.monthOffset || 0));
+      state.balanceFormState = { ...state.balanceFormState, type: drilldownAdd, dateISO: `${monthKey}-01` };
+      state.modal = { type: 'tx', txType: drilldownAdd };
+      triggerRender();
+      return;
+    }
     if (target.closest('[data-balance-showmore]')) { state.balanceShowAllTx = !state.balanceShowAllTx; triggerRender(); return; }
     const openModal = target.closest('[data-open-modal]')?.dataset.openModal; if (openModal) { state.modal = { type: openModal, budgetId: null }; triggerRender(); return; }
     const openGoal = target.closest('[data-open-goal]')?.dataset.openGoal; if (openGoal) { state.modal = { type: 'goal-detail', goalId: openGoal }; triggerRender(); return; }
@@ -1690,15 +1776,26 @@ view.addEventListener('focusout', async (event) => {
       event.target.value = prev;
       return;
     }
-    const nextNum = Number(value);
-    const prevNum = Number(prev);
+    const nextNum = parseEuroNumber(value);
+    const prevNum = parseEuroNumber(prev);
     if (!Number.isFinite(nextNum) || (Number.isFinite(prevNum) && Math.abs(nextNum - prevNum) < 0.000001)) {
       event.target.value = prev;
       return;
     }
-    await saveSnapshot(accountId, dayKeyFromTs(Date.now()), value);
+    const saved = await saveSnapshot(accountId, dayKeyFromTs(Date.now()), nextNum);
+    if (saved) {
+      event.target.value = String(nextNum.toFixed(2));
+      event.target.dataset.prev = event.target.value;
+      triggerRender();
+    }
   }
 });
+  view.addEventListener('keydown', async (event) => {
+    if (!event.target.matches('[data-account-input]')) return;
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    event.target.blur();
+  });
   view.addEventListener('change', async (event) => {
     if (event.target.matches('[data-range]')) { state.rangeMode = event.target.value; triggerRender(); }
     if (event.target.matches('[data-compare]')) { state.compareMode = event.target.value; triggerRender(); }
@@ -1808,7 +1905,7 @@ view.addEventListener('focusout', async (event) => {
       const txId = String(form.get('txId') || '').trim();
       const type = normalizeTxType(String(form.get('type') || 'expense'));
       const amount = Number(form.get('amount') || 0);
-      const dateISO = String(form.get('dateISO') || dayKeyFromTs(Date.now()));
+      const dateISO = toIsoDay(String(form.get('dateISO') || dayKeyFromTs(Date.now()))) || dayKeyFromTs(Date.now());
       const pickedCategory = String(form.get('category') || '').trim();
       const category = type === 'transfer' ? 'transfer' : (pickedCategory || 'Sin categoría');
       const note = String(form.get('note') || '').trim();

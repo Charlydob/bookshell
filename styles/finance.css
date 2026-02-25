@@ -1228,3 +1228,9 @@ input[type="date"]::-webkit-calendar-picker-indicator{ opacity:.7; }
 .financeTab .financeStats__foodRow small { opacity: .75; }
 .financeTab .financeStats__manage .financeStats__detailsBody { max-height: 260px; }
 .financeTab .financeStats__deleteBtn { border: 1px solid rgba(255,105,105,.5); background: rgba(255,80,80,.12); color: #ffd7d7; border-radius: 8px; min-height: 24px; min-width: 24px; }
+
+.finFood__itemDraft{display:flex;gap:.4rem;align-items:center;margin-top:.5rem}
+.finFood__selectedList{display:grid;gap:.35rem;margin-top:.5rem}
+.finFood__selectedItem{display:flex;justify-content:space-between;align-items:center}
+.finTxDay__row{width:100%;text-align:left;background:transparent;border:0}
+.finFixed__fields{display:grid;gap:.5rem}

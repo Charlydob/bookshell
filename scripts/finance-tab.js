@@ -36,6 +36,7 @@ const state = {
   balanceFilterCategory: 'all',
   balanceAccountFilter: 'all',
   balanceShowAllTx: false,
+  balanceStatsMode: 'expense',
   lastMovementAccountId: localStorage.getItem('bookshell_finance_lastMovementAccountId') || '',
   unsubscribe: null,
   saveTimers: {},
@@ -140,10 +141,32 @@ function clampRatio(value, fallback = 1) {
   if (!Number.isFinite(ratio)) return fallback;
   return Math.min(1, Math.max(0.1, ratio));
 }
+function isShared(account = {}) {
+  return Boolean(account?.shared);
+}
+function getRatio(account = {}) {
+  return isShared(account) ? clampRatio(account?.sharedRatio, 0.5) : 1;
+}
+function shareAmount(account = {}, amount = 0) {
+  return Number(amount || 0) * getRatio(account);
+}
 function normalizeAccountShare(account = {}) {
-  const shared = Boolean(account.shared);
-  const sharedRatio = shared ? clampRatio(account.sharedRatio, 0.5) : 1;
+  const shared = isShared(account);
+  const sharedRatio = getRatio(account);
   return { shared, sharedRatio };
+}
+function personalDeltaForTx(tx = {}, accountsById = {}) {
+  const safeType = normalizeTxType(tx?.type);
+  const amount = Number(tx?.amount || 0);
+  if (!Number.isFinite(amount)) return 0;
+  if (safeType === 'income') return shareAmount(accountsById[tx?.accountId], amount);
+  if (safeType === 'expense') return -shareAmount(accountsById[tx?.accountId], amount);
+  if (safeType === 'transfer') {
+    const fromPart = shareAmount(accountsById[tx?.fromAccountId], amount);
+    const toPart = shareAmount(accountsById[tx?.toAccountId], amount);
+    return toPart - fromPart;
+  }
+  return 0;
 }
 function movementSign(type) { return type === 'income' ? 1 : -1; }
 function txSortTs(row) {
@@ -649,12 +672,13 @@ function balanceTxList() {
 function getSelectedBalanceMonthKey() {
   return offsetMonthKey(getMonthKeyFromDate(), state.balanceMonthOffset);
 }
-function summaryForMonth(monthKey) {
+function summaryForMonth(monthKey, accountsById = {}) {
+  const resolvedAccountsById = Object.keys(accountsById || {}).length ? accountsById : Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
   const rows = balanceTxList().filter((tx) => tx.monthKey === monthKey);
-  const income = rows.filter((tx) => tx.type === 'income').reduce((s, tx) => s + tx.amount, 0);
-  const expense = rows.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + tx.amount, 0);
-  const invest = rows.filter((tx) => tx.type === 'invest').reduce((s, tx) => s + tx.amount, 0);
-  return { income, expense, invest, net: income - expense - invest };
+  const income = rows.filter((tx) => tx.type === 'income').reduce((s, tx) => s + shareAmount(resolvedAccountsById[tx.accountId], tx.amount), 0);
+  const expense = rows.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + shareAmount(resolvedAccountsById[tx.accountId], tx.amount), 0);
+  const transferImpact = rows.filter((tx) => tx.type === 'transfer').reduce((s, tx) => s + personalDeltaForTx(tx, resolvedAccountsById), 0);
+  return { income, expense, transferImpact, net: income - expense + transferImpact };
 }
 
 function openBalanceDrilldown(txType) {
@@ -676,15 +700,72 @@ function buildDrilldownRows(txType, monthKey) {
     .sort((a, b) => txSortTs(b) - txSortTs(a));
 }
 
-function monthlyNetRows() {
+function monthlyNetRows(accountsById = {}) {
+  const resolvedAccountsById = Object.keys(accountsById || {}).length ? accountsById : Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
   const byMonth = {};
   balanceTxList().forEach((tx) => {
-    if (!tx.monthKey || tx.type === 'transfer') return;
-    const delta = tx.type === 'income' ? tx.amount : -tx.amount;
+    if (!tx.monthKey) return;
+    const delta = personalDeltaForTx(tx, resolvedAccountsById);
     byMonth[tx.monthKey] = (byMonth[tx.monthKey] || 0) + delta;
   });
   return Object.entries(byMonth).map(([month, net]) => ({ month, net })).sort((a, b) => b.month.localeCompare(a.month));
 }
+
+function categoryColor(index = 0) {
+  const palette = ['#65d8ff', '#8aff8a', '#ffcf66', '#ff8fb6', '#b7a1ff', '#75f0d6', '#ffc78a', '#9fb8ff'];
+  return palette[index % palette.length];
+}
+
+function buildBalanceStats(rows, accountsById) {
+  const spentByCategoryPersonal = {};
+  const incomeByCategoryPersonal = {};
+  const foodByItemPersonal = {};
+  rows.forEach((row) => {
+    const amountPersonal = Math.abs(shareAmount(accountsById[row.accountId], row.amount));
+    if (!amountPersonal) return;
+    const category = row.category || 'Sin categoría';
+    if (row.type === 'expense') {
+      spentByCategoryPersonal[category] = (spentByCategoryPersonal[category] || 0) + amountPersonal;
+      const foodItem = normalizeFoodName(row.extras?.item || row.extras?.productName || row.extras?.name || '');
+      if (foodItem) {
+        foodByItemPersonal[foodItem] = foodByItemPersonal[foodItem] || { name: foodItem, total: 0, count: 0 };
+        foodByItemPersonal[foodItem].total += amountPersonal;
+        foodByItemPersonal[foodItem].count += 1;
+      }
+    }
+    if (row.type === 'income') incomeByCategoryPersonal[category] = (incomeByCategoryPersonal[category] || 0) + amountPersonal;
+  });
+  const totalSpentPersonal = Object.values(spentByCategoryPersonal).reduce((sum, value) => sum + Number(value || 0), 0);
+  const totalIncomePersonal = Object.values(incomeByCategoryPersonal).reduce((sum, value) => sum + Number(value || 0), 0);
+  const topFoodItemsPersonal = Object.values(foodByItemPersonal)
+    .sort((a, b) => (b.total - a.total) || (b.count - a.count) || a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }))
+    .slice(0, 5);
+  return { spentByCategoryPersonal, incomeByCategoryPersonal, totalSpentPersonal, totalIncomePersonal, topFoodItemsPersonal };
+}
+
+function donutSegments(mapData = {}, total = 0) {
+  if (!total) return [];
+  const radius = 38;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+  return Object.entries(mapData)
+    .sort((a, b) => b[1] - a[1])
+    .map(([label, value], index) => {
+      const ratio = Number(value || 0) / total;
+      const length = circumference * ratio;
+      const segment = {
+        label,
+        value,
+        color: categoryColor(index),
+        pct: ratio * 100,
+        strokeDasharray: `${length} ${Math.max(0, circumference - length)}`,
+        strokeDashoffset: -offset
+      };
+      offset += length;
+      return segment;
+    });
+}
+
 function categoriesList() {
   const dynamic = Object.values(state.balance.categories || {}).map((row) => String(row?.name || '')).filter(Boolean);
   const fromTx = [...new Set(balanceTxList().map((tx) => tx.category).filter((name) => name && String(name).toLowerCase() !== 'transfer'))];
@@ -812,7 +893,7 @@ function renderFinanceHome(accounts, totalSeries) {
         <select class="finance-pill" data-compare><option value="month" ${state.compareMode === 'month' ? 'selected' : ''}>Mes vs Mes</option><option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option></select></article>
       <article class="finance__compareRow"><div class="finance-chip ${toneClass(compareCurrent.delta)}">Actual: ${fmtSignedCurrency(compareCurrent.delta)} (${fmtSignedPercent(compareCurrent.deltaPct)})</div><div class="finance-chip ${toneClass(comparePrev.delta)}">Anterior: ${fmtSignedCurrency(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div></article>
       <article class="finance__accounts"><div class="finance__sectionHeader"><h2>Cuentas</h2><button class="finance-pill" data-new-account>+ Cuenta</button></div>
-      <div id="finance-accountsList">${accounts.map((account) => `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">Mi saldo</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${account.current.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}%</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">⋯</button></div></article>`).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
+      <div id="finance-accountsList">${accounts.map((account) => { const editableBalance = account.shared ? account.currentReal : account.current; return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'}</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${editableBalance.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${fmtCurrency(account.current)}</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">⋯</button></div></article>`; }).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
     </section>`;
 }
 
@@ -859,24 +940,32 @@ function renderFinanceBalance() {
   const monthKey = getSelectedBalanceMonthKey();
   const categories = categoriesList();
   const accounts = buildAccountModels();
-  const tx = balanceTxList().filter((row) => row.monthKey === monthKey)
+  const accountsById = Object.fromEntries(accounts.map((account) => [account.id, account]));
+  const allMonthTx = balanceTxList().filter((row) => row.monthKey === monthKey);
+  const tx = allMonthTx
     .filter((row) => state.balanceFilterType === 'all' || row.type === state.balanceFilterType)
     .filter((row) => state.balanceFilterCategory === 'all' || row.category === state.balanceFilterCategory)
     .filter((row) => {
       if (state.balanceAccountFilter === 'all') return true;
       return row.accountId === state.balanceAccountFilter || row.fromAccountId === state.balanceAccountFilter || row.toAccountId === state.balanceAccountFilter;
     });
-  const monthSummary = summaryForMonth(monthKey);
-  const prevSummary = summaryForMonth(offsetMonthKey(monthKey, -1));
-  const spentByCategory = {};
-  balanceTxList().filter((row) => row.monthKey === monthKey && row.type === 'expense').forEach((row) => { spentByCategory[row.category || 'Sin categoría'] = (spentByCategory[row.category || 'Sin categoría'] || 0) + row.amount; });
-  const totalSpent = Object.values(spentByCategory).reduce((sum, value) => sum + value, 0);
+  const monthSummary = summaryForMonth(monthKey, accountsById);
+  const prevSummary = summaryForMonth(offsetMonthKey(monthKey, -1), accountsById);
+  const stats = buildBalanceStats(allMonthTx, accountsById);
+  const spentByCategory = stats.spentByCategoryPersonal;
+  const totalSpent = stats.totalSpentPersonal;
   const budgetItems = getBudgetItems(monthKey);
-  const monthNetList = monthlyNetRows();
+  const monthNetList = monthlyNetRows(accountsById);
   const bestMonth = monthNetList.reduce((best, row) => (!best || row.net > best.net ? row : best), null);
   const worstMonth = monthNetList.reduce((worst, row) => (!worst || row.net < worst.net ? row : worst), null);
   const avgNet = monthNetList.length ? monthNetList.reduce((sum, row) => sum + row.net, 0) / monthNetList.length : 0;
   const accountName = (id) => escapeHtml(accounts.find((a) => a.id === id)?.name || 'Sin cuenta');
+  const mode = state.balanceStatsMode === 'income' ? 'income' : 'expense';
+  const donutMap = mode === 'income' ? stats.incomeByCategoryPersonal : stats.spentByCategoryPersonal;
+  const donutTotal = mode === 'income' ? stats.totalIncomePersonal : stats.totalSpentPersonal;
+  const segments = donutSegments(donutMap, donutTotal);
+  const comparisonMax = Math.max(stats.totalIncomePersonal, stats.totalSpentPersonal, 1);
+
   return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2><button class="finance-pill" data-open-modal="tx">+ Añadir</button></header>
   <article class="financeGlassCard">
   <div class="finance-row">
@@ -885,36 +974,51 @@ function renderFinanceBalance() {
   <button class="boton-calendario" data-balance-month="1">▶</button></div>
 
   <div class="financeSummaryGrid">
-  
-  <button class="dash-balance" type="button" data-balance-drilldown="income"><small>Ingresos</small><strong class="is-positive">${fmtCurrency(monthSummary.income)}</strong></button>
-  
-  <button class="dash-balance" type="button" data-balance-drilldown="expense"><small>Gastos</small><strong class="is-negative">${fmtCurrency(monthSummary.expense)}</strong></button>
-  
-  <div class="dash-balance"><small>Neto</small><strong class="${toneClass(monthSummary.net)}">${fmtCurrency(monthSummary.net)}</strong></div>
-  
+  <button class="dash-balance" type="button" data-balance-drilldown="income"><small>Ingresos (mi parte)</small><strong class="is-positive">${fmtCurrency(monthSummary.income)}</strong></button>
+  <button class="dash-balance" type="button" data-balance-drilldown="expense"><small>Gastos (mi parte)</small><strong class="is-negative">${fmtCurrency(monthSummary.expense)}</strong></button>
+  <div class="dash-balance"><small>Neto personal</small><strong class="${toneClass(monthSummary.net)}">${fmtCurrency(monthSummary.net)}</strong><small>Incluye impacto de transferencias: ${fmtSignedCurrency(monthSummary.transferImpact)}</small></div>
   <div class="dash-balance"><small>Mes anterior</small><strong class="${toneClass(prevSummary.net)}">${fmtCurrency(prevSummary.net)}</strong></div></div>
-
 
   <div class="finance-chip ${toneClass(prevSummary.net)}">Mes anterior: ${fmtSignedCurrency(prevSummary.net)}</div></article>
   <article class="financeGlassCard">
   <div class="finance-row"><h3>Transacciones</h3>
-  
   <div class="finance-row-transacciones">
-  
   <select class="finance-pill-transacciones" data-balance-type><option value="all">Todos</option><option value="expense" ${state.balanceFilterType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${state.balanceFilterType === 'income' ? 'selected' : ''}>Ingreso</option><option value="transfer" ${state.balanceFilterType === 'transfer' ? 'selected' : ''}>Transferencia</option></select>
-  
   <select class="finance-pill-transacciones" data-balance-category><option value="all">Todas</option>${categories.map((c) => `<option ${state.balanceFilterCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select>
-  
-  <select class="finance-pill-transacciones" data-balance-account><option value="all">Cuentas</option>
-  
-  ${accounts.map((a) => `<option value="${a.id}" ${state.balanceAccountFilter === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div></div>
+  <select class="finance-pill-transacciones" data-balance-account><option value="all">Cuentas</option>${accounts.map((a) => `<option value="${a.id}" ${state.balanceAccountFilter === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div></div>
   <div class="financeTxList financeTxList--scroll" style="max-height:260px;overflow-y:auto;">${(state.balanceShowAllTx ? tx : tx.slice(0, 5)).map((row) => {
     const accountText = row.type === 'transfer'
       ? `${accountName(row.fromAccountId)} → ${accountName(row.toAccountId)}`
       : accountName(row.accountId);
     const tone = row.type === 'income' ? 'is-positive' : (row.type === 'expense' ? 'is-negative' : 'is-neutral');
-    return `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}</span><strong class="${tone}">${fmtCurrency(row.amount)}</strong><span class="finance-row"><button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button></span></div>`;
+    const personalImpact = personalDeltaForTx(row, accountsById);
+    return `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${row.type === 'transfer' ? `<small> · impacto personal: ${fmtSignedCurrency(personalImpact)}</small>` : ''}</span><strong class="${tone}">${fmtCurrency(row.amount)}</strong><span class="finance-row"><button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button></span></div>`;
   }).join('') || '<p class="finance-empty">Sin movimientos en este mes.</p>'}</div>${tx.length > 5 ? `<div class="finance-row"><button class="finance-pill finance-pill--mini" data-balance-showmore>${state.balanceShowAllTx ? 'Ver menos' : `Ver más (${tx.length - 5})`}</button></div>` : ''}</article>
+
+  <article class="financeGlassCard financeStats">
+    <div class="financeStats__header"><h3>Estadísticas</h3>
+      <div class="financeStats__tabs">
+        <button class="financeStats__pill ${mode === 'expense' ? 'is-active' : ''}" data-finance-stats-mode="expense">Gastos</button>
+        <button class="financeStats__pill ${mode === 'income' ? 'is-active' : ''}" data-finance-stats-mode="income">Ingresos</button>
+      </div>
+    </div>
+    <div class="financeStats__card">
+      <div class="financeStats__chart">
+        <svg viewBox="0 0 100 100" aria-label="Distribución por categoría">
+          <circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="16"></circle>
+          ${segments.map((segment) => `<circle cx="50" cy="50" r="38" fill="none" stroke="${segment.color}" stroke-width="16" stroke-dasharray="${segment.strokeDasharray}" stroke-dashoffset="${segment.strokeDashoffset}" transform="rotate(-90 50 50)"></circle>`).join('')}
+        </svg>
+      </div>
+      <div class="financeStats__legend">${segments.length ? segments.map((segment) => `<div class="financeStats__row"><span><i style="background:${segment.color}"></i>${escapeHtml(segment.label)}</span><strong>${fmtCurrency(segment.value)} · ${segment.pct.toFixed(1)}%</strong></div>`).join('') : '<p class="finance-empty">Sin datos para este periodo.</p>'}</div>
+    </div>
+    <div class="financeStats__card">
+      <h4>Comparativa del período (mi parte)</h4>
+      <div class="financeStats__bar"><div class="financeStats__row"><span>Ingresos</span><strong>${fmtCurrency(stats.totalIncomePersonal)}</strong></div><div class="financeStats__barFill is-positive" style="width:${(stats.totalIncomePersonal / comparisonMax) * 100}%"></div></div>
+      <div class="financeStats__bar"><div class="financeStats__row"><span>Gastos</span><strong>${fmtCurrency(stats.totalSpentPersonal)}</strong></div><div class="financeStats__barFill is-negative" style="width:${(stats.totalSpentPersonal / comparisonMax) * 100}%"></div></div>
+    </div>
+    ${stats.topFoodItemsPersonal.length ? `<div class="financeStats__card"><h4>Comidas más compradas (mi parte)</h4>${stats.topFoodItemsPersonal.map((item) => `<div class="financeStats__row"><span>${escapeHtml(item.name)} · ${item.count}x</span><strong>${fmtCurrency(item.total)}</strong></div>`).join('')}</div>` : ''}
+  </article>
+
   <article class="financeGlassCard"><div class="finance-row"><h3>Presupuestos</h3><button class="finance-pill" data-open-modal="budget">+ Presupuesto</button></div>
   <div class="financeBudgetList">${budgetItems.length ? budgetItems.map((budget) => {
     const spent = budget.category.toLowerCase() === 'total' ? totalSpent : Number(spentByCategory[budget.category] || 0);
@@ -940,19 +1044,19 @@ return `<div class="financeBudgetRow">
 
   }).join('') : '<p class="finance-empty">Sin presupuestos.</p>'}</div></article>
   <article class="financeGlassCard"><h3>Balance neto por mes</h3>
-  
+
   <div class="financeSummaryGrid">
-  
+
   <div class="valoracion-mes"><small>Mejor mes</small><strong class="is-positive">${bestMonth ? `${bestMonth.month} · ${fmtCurrency(bestMonth.net)}` : '—'}</strong></div>
-  
+
   <div class="valoracion-mes"><small>Peor mes</small><strong class="is-negative">${worstMonth ? `${worstMonth.month} · ${fmtCurrency(worstMonth.net)}` : '—'}</strong></div>
 
   </div>
   <div class="media-mensual">
     <small>Media mensual</small>
     <strong class="${toneClass(avgNet)}">${monthNetList.length ? fmtCurrency(avgNet) : '—'}</strong>
-  </div>  
-  
+  </div>
+
   <div class="financeTxList" style="max-height:220px;overflow-y:auto;">${monthNetList.map((row) => `<div class="financeTxRow-balance-por-mes"><span>${row.month}</span><strong class="${toneClass(row.net)}">${fmtSignedCurrency(row.net)}</strong></div>`).join('') || '<p class="finance-empty">Sin meses con movimientos.</p>'}</div></article></section>`;
 }
 
@@ -1740,6 +1844,7 @@ function bindEvents() {
       return;
     }
     const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); state.balanceShowAllTx = false; triggerRender(); return; }
+    const statsMode = target.closest('[data-finance-stats-mode]')?.dataset.financeStatsMode; if (statsMode) { state.balanceStatsMode = statsMode === 'income' ? 'income' : 'expense'; triggerRender(); return; }
     const drilldown = target.closest('[data-balance-drilldown]')?.dataset.balanceDrilldown; if (drilldown) { openBalanceDrilldown(drilldown); return; }
     const drilldownMonth = target.closest('[data-drilldown-month]')?.dataset.drilldownMonth;
     if (drilldownMonth && state.modal.type === 'balance-drilldown') {

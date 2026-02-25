@@ -738,6 +738,8 @@ async function ensureBtcEurPrice(force = false) {
 function buildAccountModels() {
   return state.accounts.map((account) => {
     const share = normalizeAccountShare(account);
+
+
     const sourceEntries = Object.keys(account.entries || {}).length ? (account.entries || {}) : (account.daily || {});
     const modernDaily = normalizeDaily(sourceEntries);
     const modernByDay = Object.fromEntries(modernDaily.map((item) => [item.day, { value: item.value, ts: item.ts, source: item.source || 'derived' }]));
@@ -753,6 +755,9 @@ function buildAccountModels() {
     let currentReal = dailyReal.at(-1)?.value ?? 0;
     if (hasBtc) currentReal = btcUnits * btcPrice;
     const current = currentReal * share.sharedRatio;
+
+
+
     const daily = dailyReal.map((point, index, arr) => {
       const prev = arr[index - 1];
       const myValue = point.value * share.sharedRatio;
@@ -762,10 +767,13 @@ function buildAccountModels() {
       return { ...point, value: myValue, realValue: point.value, delta, deltaPct };
     });
     const range = computeDeltaForRange(daily, state.rangeMode);
+    
     if (share.shared) log(`account sharedRatio=${share.sharedRatio} applied`, { accountId: account.id });
-    return { ...account, ...share, daily, dailyReal, current, currentReal, btcPrice };
+
+    return { ...account, ...share, daily, dailyReal, current, currentReal, btcPrice, range, };
   });
 }
+
 function buildTotalSeries(accounts) {
   const daySet = new Set();
   accounts.forEach((account) => account.daily.forEach((point) => daySet.add(point.day)));
@@ -950,8 +958,19 @@ function accountValueByTs(account = {}, ts = 0) {
 }
 
 function calcAccountsDeltaForBucket(mode = 'month', bucketKey = '', accounts = state.accounts) {
+  if (mode === 'total') {
+    return (accounts || []).reduce((sum, acc) => {
+      const snaps = normalizeSnapshots(acc.snapshots || {});
+      const ents  = normalizeDaily(acc.entries || acc.daily || {});
+      const series = (snaps.length ? snaps : ents);
+      if (!series.length) return sum;
+      const startDay = series[0].day;
+      const endDay   = series.at(-1).day;
+      return sum + (accountValueForDay(acc, endDay) - accountValueForDay(acc, startDay));
+    }, 0);
+  }
+
   const bounds = bucketRange(mode, bucketKey);
-  if (!Number.isFinite(bounds.start) || !Number.isFinite(bounds.end)) return 0;
   const startTs = bounds.start;
   const endTs = Math.max(bounds.start, bounds.end - 1);
   return (accounts || []).reduce((sum, account) => {
@@ -1548,6 +1567,7 @@ function renderFinanceBalance() {
       <div><small>Patrimonio</small><strong class="${toneClass(metricValue(aggLast, aggScope, 'netWealth'))}">${aggLast ? fmtCurrency(metricValue(aggLast, aggScope, 'netWealth')) : '—'}</strong></div>
       <div><small>Δ Cuentas</small><strong class="${toneClass(Number(aggLast?.accountsDeltaReal || 0))}">${aggLast ? fmtCurrency(Number(aggLast.accountsDeltaReal || 0)) : '—'}</strong></div>
     </div>
+
     <div class="finAgg__averages">
       <small>Medias (${aggMode})</small>
       <strong>Operativo ${fmtCurrency(aggAvg.netOperative)} · Patrimonio ${fmtCurrency(aggAvg.netWealth)} · ΔCuentas ${fmtCurrency(aggAvg.accountsDeltaReal)}</strong>

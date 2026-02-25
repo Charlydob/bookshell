@@ -4,6 +4,9 @@ import { db } from './firebase-shared.js';
 const LEGACY_PATH = 'finance';
 const DEVICE_KEY = 'finance_deviceId';
 const RANGE_LABEL = { total: 'Total', month: 'Mes', week: 'Semana', year: 'Año' };
+const BTC_PRICE_CACHE_KEY = 'bookshell_finance_btc_eur_cache_v1';
+const BTC_PRICE_CACHE_TTL_MS = 20 * 60 * 1000;
+const AGG_MODES = ['day', 'week', 'month', 'year', 'total'];
 
 const state = {
   deviceId: '',
@@ -13,7 +16,7 @@ const state = {
   activeView: 'home',
   accounts: [],
   legacyEntries: {},
-  balance: { tx: {}, movements: {}, transactions: {}, categories: {}, budgets: {}, snapshots: {}, recurring: {}, defaultAccountId: '', lastSeenMonthKey: '' },
+  balance: { tx: {}, movements: {}, transactions: {}, categories: {}, budgets: {}, snapshots: {}, recurring: {}, aggregates: {}, defaultAccountId: '', lastSeenMonthKey: '' },
   goals: { goals: {} },
   modal: {
     type: null,
@@ -40,6 +43,8 @@ const state = {
   balanceStatsRange: 'month',
   balanceStatsGroupBy: 'category',
   balanceStatsScope: 'personal',
+  balanceAggMode: 'month',
+  balanceAggScope: 'my',
   balanceAmountAuto: true,
   lastMovementAccountId: localStorage.getItem('bookshell_finance_lastMovementAccountId') || '',
   unsubscribe: null,
@@ -51,6 +56,9 @@ const state = {
     items: {}
   },
   hydratedFromRemote: false,
+  btcEurPrice: 0,
+  btcPriceTs: 0,
+  aggregateRebuildTimer: null,
   error: '',
   booted: false
 };
@@ -113,6 +121,59 @@ function fmtSignedPercent(value) { const num = Number(value || 0); return `${num
 function toneClass(value) { if (value > 0) return 'is-positive'; if (value < 0) return 'is-negative'; return 'is-neutral'; }
 function dayKeyFromTs(ts) { const d = new Date(Number(ts || Date.now())); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function parseDayKey(key) { return new Date(`${key}T00:00:00`).getTime(); }
+function isoWeekKeyFromDate(value) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + 3 - ((date.getDay() + 6) % 7));
+  const week1 = new Date(date.getFullYear(), 0, 4);
+  const weekNo = 1 + Math.round((((date.getTime() - week1.getTime()) / 86400000) - 3 + ((week1.getDay() + 6) % 7)) / 7);
+  return `${date.getFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+}
+function bucketKeyForDay(dayKey, mode = 'day') {
+  if (!dayKey) return '';
+  if (mode === 'day') return dayKey;
+  const d = new Date(`${dayKey}T00:00:00`);
+  if (mode === 'week') return isoWeekKeyFromDate(d);
+  if (mode === 'month') return dayKey.slice(0, 7);
+  if (mode === 'year') return dayKey.slice(0, 4);
+  return 'all';
+}
+function bucketKeyForTx(tx = {}, mode = 'day') {
+  const day = String(tx.date || isoToDay(tx.dateISO || '') || '');
+  return bucketKeyForDay(day, mode);
+}
+function bucketRange(mode = 'month', bucketKey = '') {
+  if (mode === 'total') return { start: -Infinity, end: Infinity };
+  if (mode === 'day') {
+    const start = parseDayKey(bucketKey);
+    return { start, end: start + 86400000 };
+  }
+  if (mode === 'week') {
+    const match = String(bucketKey).match(/^(\d{4})-W(\d{2})$/);
+    if (!match) return { start: 0, end: 0 };
+    const year = Number(match[1]);
+    const week = Number(match[2]);
+    const simple = new Date(Date.UTC(year, 0, 1 + (week - 1) * 7));
+    const dow = simple.getUTCDay() || 7;
+    const start = new Date(simple);
+    if (dow <= 4) start.setUTCDate(simple.getUTCDate() - dow + 1);
+    else start.setUTCDate(simple.getUTCDate() + 8 - dow);
+    return { start: start.getTime(), end: start.getTime() + (7 * 86400000) };
+  }
+  if (mode === 'month') {
+    const [y, m] = String(bucketKey).split('-').map(Number);
+    const start = new Date(y, (m || 1) - 1, 1).getTime();
+    return { start, end: new Date(y, (m || 1), 1).getTime() };
+  }
+  const year = Number(bucketKey || new Date().getFullYear());
+  return { start: new Date(year, 0, 1).getTime(), end: new Date(year + 1, 0, 1).getTime() };
+}
+function pctDelta(curr = 0, prev = 0) {
+  const c = Number(curr || 0);
+  const p = Number(prev || 0);
+  if (!Number.isFinite(p) || p === 0) return null;
+  return ((c - p) / Math.abs(p)) * 100;
+}
 function toIsoDay(value = '') {
   const raw = String(value || '').trim();
   if (!raw) return null;
@@ -621,6 +682,59 @@ function computeDeltaWithinBounds(series, bounds) {
   return { delta, deltaPct, startValue: startPoint.value, endValue: endPoint.value };
 }
 
+function accountValueForDay(account = {}, day = '') {
+  const safeDay = toIsoDay(day) || String(day || '').slice(0, 10);
+  if (!safeDay) return 0;
+  const snapshots = normalizeSnapshots(account.snapshots || {});
+  const exactSnapshot = snapshots.find((row) => row.day === safeDay);
+  if (exactSnapshot) return Number(exactSnapshot.value || 0);
+  const previousSnapshot = snapshots.filter((row) => row.day < safeDay).at(-1);
+  if (previousSnapshot) return Number(previousSnapshot.value || 0);
+  const entries = normalizeDaily(account.entries || account.daily || {});
+  const prevEntry = entries.filter((row) => row.day <= safeDay).at(-1);
+  return Number(prevEntry?.value || 0);
+}
+
+function readCachedBtcPrice() {
+  try {
+    const raw = localStorage.getItem(BTC_PRICE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Number.isFinite(parsed?.price) || !Number.isFinite(parsed?.ts)) return null;
+    if ((Date.now() - parsed.ts) > BTC_PRICE_CACHE_TTL_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function ensureBtcEurPrice(force = false) {
+  const cached = readCachedBtcPrice();
+  if (!force && cached) {
+    state.btcEurPrice = Number(cached.price || 0);
+    state.btcPriceTs = Number(cached.ts || 0);
+    return state.btcEurPrice;
+  }
+  try {
+    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=eur');
+    const json = await res.json();
+    const price = Number(json?.bitcoin?.eur || 0);
+    if (Number.isFinite(price) && price > 0) {
+      state.btcEurPrice = price;
+      state.btcPriceTs = Date.now();
+      localStorage.setItem(BTC_PRICE_CACHE_KEY, JSON.stringify({ price, ts: state.btcPriceTs }));
+      return price;
+    }
+  } catch (error) {
+    log('btc price fetch failed', error);
+  }
+  if (cached?.price) {
+    state.btcEurPrice = Number(cached.price);
+    state.btcPriceTs = Number(cached.ts || 0);
+  }
+  return state.btcEurPrice || 0;
+}
+
 function buildAccountModels() {
   return state.accounts.map((account) => {
     const share = normalizeAccountShare(account);
@@ -633,6 +747,12 @@ function buildAccountModels() {
     });
     const dailyReal = Object.entries(modernByDay).map(([day, record]) => ({ day, ts: Number(record.ts || parseDayKey(day)), value: Number(record.value || 0), source: record.source || 'derived' }))
       .sort((a, b) => a.ts - b.ts);
+    const btcUnits = Number(account?.btcUnits || 0);
+    const btcPrice = Number(state.btcEurPrice || 0);
+    const hasBtc = Boolean(account?.isBitcoin);
+    let currentReal = dailyReal.at(-1)?.value ?? 0;
+    if (hasBtc) currentReal = btcUnits * btcPrice;
+    const current = currentReal * share.sharedRatio;
     const daily = dailyReal.map((point, index, arr) => {
       const prev = arr[index - 1];
       const myValue = point.value * share.sharedRatio;
@@ -641,11 +761,9 @@ function buildAccountModels() {
       const deltaPct = prevValue ? (delta / prevValue) * 100 : 0;
       return { ...point, value: myValue, realValue: point.value, delta, deltaPct };
     });
-    const currentReal = dailyReal.at(-1)?.value ?? 0;
-    const current = currentReal * share.sharedRatio;
     const range = computeDeltaForRange(daily, state.rangeMode);
     if (share.shared) log(`account sharedRatio=${share.sharedRatio} applied`, { accountId: account.id });
-    return { ...account, ...share, daily, dailyReal, current, currentReal, range };
+    return { ...account, ...share, daily, dailyReal, current, currentReal, btcPrice };
   });
 }
 function buildTotalSeries(accounts) {
@@ -805,6 +923,90 @@ function summaryForMonth(monthKey, accountsById = {}) {
   return { income, expense, transferImpact, net: income - expense + transferImpact };
 }
 
+function calcAggForBucket(txListBucket = [], accountsById = {}) {
+  const incomeMy = txListBucket.filter((tx) => tx.type === 'income').reduce((s, tx) => s + shareAmount(accountsById[tx.accountId], tx.amount), 0);
+  const expenseMy = txListBucket.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + shareAmount(accountsById[tx.accountId], tx.amount), 0);
+  const transferImpactMy = txListBucket.filter((tx) => tx.type === 'transfer').reduce((s, tx) => s + personalDeltaForTx(tx, accountsById), 0);
+  const incomeTotal = txListBucket.filter((tx) => tx.type === 'income').reduce((s, tx) => s + Number(tx.amount || 0), 0);
+  const expenseTotal = txListBucket.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + Number(tx.amount || 0), 0);
+  const transferImpactTotal = 0;
+  return {
+    incomeMy,
+    expenseMy,
+    netOperativeMy: incomeMy - expenseMy,
+    transferImpactMy,
+    netWealthMy: incomeMy - expenseMy + transferImpactMy,
+    incomeTotal,
+    expenseTotal,
+    netOperativeTotal: incomeTotal - expenseTotal,
+    transferImpactTotal,
+    netWealthTotal: incomeTotal - expenseTotal + transferImpactTotal
+  };
+}
+
+function accountValueByTs(account = {}, ts = 0) {
+  const day = dayKeyFromTs(ts);
+  return accountValueForDay(account, day);
+}
+
+function calcAccountsDeltaForBucket(mode = 'month', bucketKey = '', accounts = state.accounts) {
+  const bounds = bucketRange(mode, bucketKey);
+  if (!Number.isFinite(bounds.start) || !Number.isFinite(bounds.end)) return 0;
+  const startTs = bounds.start;
+  const endTs = Math.max(bounds.start, bounds.end - 1);
+  return (accounts || []).reduce((sum, account) => {
+    const start = accountValueByTs(account, startTs);
+    const end = accountValueByTs(account, endTs);
+    return sum + (end - start);
+  }, 0);
+}
+
+function scheduleAggregateRebuild() {
+  clearTimeout(state.aggregateRebuildTimer);
+  state.aggregateRebuildTimer = setTimeout(() => {
+    rebuildAggregates().catch((error) => console.error('[finance] aggregate rebuild failed', error));
+  }, 250);
+}
+
+async function rebuildAggregates() {
+  const rows = balanceTxList();
+  const accountsById = Object.fromEntries(state.accounts.map((account) => [account.id, account]));
+  const grouped = { day: {}, week: {}, month: {}, year: {}, total: { all: rows } };
+  rows.forEach((tx) => {
+    ['day', 'week', 'month', 'year'].forEach((mode) => {
+      const key = bucketKeyForTx(tx, mode);
+      if (!key) return;
+      grouped[mode][key] = grouped[mode][key] || [];
+      grouped[mode][key].push(tx);
+    });
+  });
+  const updates = {};
+  AGG_MODES.forEach((mode) => {
+    Object.entries(grouped[mode] || {}).forEach(([bucketKey, list]) => {
+      const agg = calcAggForBucket(list, accountsById);
+      const accountsDeltaReal = calcAccountsDeltaForBucket(mode, bucketKey, state.accounts);
+      updates[`${state.financePath}/aggregates/${mode}/${bucketKey}`] = {
+        ...agg,
+        accountsDeltaReal,
+        updatedAt: nowTs()
+      };
+    });
+  });
+  if (Object.keys(updates).length) await safeFirebase(() => update(ref(db), updates));
+}
+
+function aggregateRowsForMode(mode = 'month') {
+  const map = state.balance.aggregates?.[mode] || {};
+  return Object.entries(map).map(([bucketKey, row]) => ({ bucketKey, ...row })).sort((a, b) => a.bucketKey.localeCompare(b.bucketKey));
+}
+
+function metricValue(row, scope = 'my', metric = 'netOperative') {
+  const suffix = scope === 'total' ? 'Total' : 'My';
+  const key = `${metric}${suffix}`;
+  return Number(row?.[key] || 0);
+}
+
+
 function openBalanceDrilldown(txType) {
   if (txType !== 'income' && txType !== 'expense') return;
   state.modal = {
@@ -826,13 +1028,17 @@ function buildDrilldownRows(txType, monthKey) {
 
 function monthlyNetRows(accountsById = {}) {
   const resolvedAccountsById = Object.keys(accountsById || {}).length ? accountsById : Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
-  const byMonth = {};
+  const grouped = {};
   balanceTxList().forEach((tx) => {
     if (!tx.monthKey) return;
-    const delta = personalDeltaForTx(tx, resolvedAccountsById);
-    byMonth[tx.monthKey] = (byMonth[tx.monthKey] || 0) + delta;
+    grouped[tx.monthKey] = grouped[tx.monthKey] || [];
+    grouped[tx.monthKey].push(tx);
   });
-  return Object.entries(byMonth).map(([month, net]) => ({ month, net })).sort((a, b) => b.month.localeCompare(a.month));
+  return Object.entries(grouped).map(([month, rows]) => {
+    const agg = calcAggForBucket(rows, resolvedAccountsById);
+    const accountsDeltaReal = calcAccountsDeltaForBucket('month', month, state.accounts);
+    return { month, netOperative: agg.netOperativeMy, netWealth: agg.netWealthMy, accountsDeltaReal };
+  }).sort((a, b) => b.month.localeCompare(a.month));
 }
 
 function categoryColor(index = 0) {
@@ -1172,14 +1378,22 @@ function renderFinanceBalance() {
     });
   const monthSummary = summaryForMonth(monthKey, accountsById);
   const prevSummary = summaryForMonth(offsetMonthKey(monthKey, -1), accountsById);
+  const monthAgg = calcAggForBucket(allMonthTx, accountsById);
+  const monthAccountsDeltaReal = calcAccountsDeltaForBucket('month', monthKey, state.accounts);
+  const prevMonthKey = offsetMonthKey(monthKey, -1);
+  const prevMonthRows = [...balanceTxList().filter((row) => row.monthKey === prevMonthKey), ...recurringForMonth(prevMonthKey)];
+  const prevMonthAgg = calcAggForBucket(prevMonthRows, accountsById);
+  const prevMonthAccountsDeltaReal = calcAccountsDeltaForBucket('month', prevMonthKey, state.accounts);
   const statsMonth = buildBalanceStats(allMonthTx, accountsById);
   const spentByCategory = statsMonth.spentByCategoryPersonal;
   const totalSpent = statsMonth.totalSpentPersonal;
   const budgetItems = getBudgetItems(monthKey);
   const monthNetList = monthlyNetRows(accountsById);
-  const bestMonth = monthNetList.reduce((best, row) => (!best || row.net > best.net ? row : best), null);
-  const worstMonth = monthNetList.reduce((worst, row) => (!worst || row.net < worst.net ? row : worst), null);
-  const avgNet = monthNetList.length ? monthNetList.reduce((sum, row) => sum + row.net, 0) / monthNetList.length : 0;
+  const metricRows = [
+    { id: 'netOperative', label: 'Operativo', current: monthAgg.netOperativeMy, prev: prevMonthAgg.netOperativeMy },
+    { id: 'netWealth', label: 'Patrimonio', current: monthAgg.netWealthMy, prev: prevMonthAgg.netWealthMy },
+    { id: 'accountsDeltaReal', label: 'Δ Cuentas', current: monthAccountsDeltaReal, prev: prevMonthAccountsDeltaReal }
+  ];
   const accountName = (id) => escapeHtml(accounts.find((a) => a.id === id)?.name || 'Sin cuenta');
   const mode = state.balanceStatsMode === 'income' ? 'income' : 'expense';
   const statsRange = ['day', 'week', 'month', 'year', 'total'].includes(state.balanceStatsRange) ? state.balanceStatsRange : 'month';
@@ -1198,6 +1412,22 @@ function renderFinanceBalance() {
   const groupLabel = ({ category: 'Categorías', account: 'Cuentas', store: 'Supermercado', mealType: 'Tipo comida', product: 'Producto / Item' })[statsGroupBy] || 'Categorías';
   const scopeLabel = statsScope === 'global' ? 'total global' : 'mi parte';
   const txByDay = groupTxByDay(tx, accountsById, statsScope);
+  const aggMode = AGG_MODES.includes(state.balanceAggMode) ? state.balanceAggMode : 'month';
+  const aggScope = state.balanceAggScope === 'total' ? 'total' : 'my';
+  const aggRows = aggregateRowsForMode(aggMode);
+  const aggLast = aggRows.at(-1) || null;
+  const avgDiv = Math.max(aggRows.length, 1);
+  const aggAvg = {
+    netOperative: aggRows.reduce((s, row) => s + metricValue(row, aggScope, 'netOperative'), 0) / avgDiv,
+    netWealth: aggRows.reduce((s, row) => s + metricValue(row, aggScope, 'netWealth'), 0) / avgDiv,
+    accountsDeltaReal: aggRows.reduce((s, row) => s + Number(row.accountsDeltaReal || 0), 0) / avgDiv
+  };
+  const rankMetric = (metric, best = true) => aggRows.reduce((pick, row) => {
+    const value = metric === 'accountsDeltaReal' ? Number(row.accountsDeltaReal || 0) : metricValue(row, aggScope, metric);
+    if (!pick) return { bucketKey: row.bucketKey, value };
+    if (best ? value > pick.value : value < pick.value) return { bucketKey: row.bucketKey, value };
+    return pick;
+  }, null);
 
   return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2><button class="finance-pill" data-open-modal="tx">+ Añadir</button></header>
   <article class="financeGlassCard">
@@ -1206,11 +1436,16 @@ function renderFinanceBalance() {
   <strong>${monthLabelByKey(monthKey)}</strong>
   <button class="boton-calendario" data-balance-month="1">▶</button></div>
 
+  <div class="finAgg__scopeToggle">
+    <button class="finance-pill ${state.balanceAggScope === 'my' ? 'finAgg__active' : ''}" data-fin-agg-scope="my">Mi parte</button>
+    <button class="finance-pill ${state.balanceAggScope === 'total' ? 'finAgg__active' : ''}" data-fin-agg-scope="total">Total</button>
+  </div>
   <div class="financeSummaryGrid">
-  <button class="dash-balance" type="button" data-balance-drilldown="income"><small>Ingresos (mi parte)</small><strong class="is-positive">${fmtCurrency(monthSummary.income)}</strong></button>
-  <button class="dash-balance" type="button" data-balance-drilldown="expense"><small>Gastos (mi parte)</small><strong class="is-negative">${fmtCurrency(monthSummary.expense)}</strong></button>
-  <div class="dash-balance"><small>Neto personal</small><strong class="${toneClass(monthSummary.net)}">${fmtCurrency(monthSummary.net)}</strong><small>Incluye impacto de transferencias: ${fmtSignedCurrency(monthSummary.transferImpact)}</small></div>
-  <div class="dash-balance"><small>Mes anterior</small><strong class="${toneClass(prevSummary.net)}">${fmtCurrency(prevSummary.net)}</strong></div></div>
+  <button class="dash-balance" type="button" data-balance-drilldown="income"><small>Ingresos (${aggScope === 'total' ? 'total' : 'mi parte'})</small><strong class="is-positive">${fmtCurrency(aggScope === 'total' ? monthAgg.incomeTotal : monthAgg.incomeMy)}</strong></button>
+  <button class="dash-balance" type="button" data-balance-drilldown="expense"><small>Gastos (${aggScope === 'total' ? 'total' : 'mi parte'})</small><strong class="is-negative">${fmtCurrency(aggScope === 'total' ? monthAgg.expenseTotal : monthAgg.expenseMy)}</strong></button>
+  <div class="dash-balance"><small>Neto operativo</small><strong class="${toneClass(aggScope === 'total' ? monthAgg.netOperativeTotal : monthAgg.netOperativeMy)}">${fmtCurrency(aggScope === 'total' ? monthAgg.netOperativeTotal : monthAgg.netOperativeMy)}</strong></div>
+  <div class="dash-balance"><small>Cambio patrimonio</small><strong class="${toneClass(aggScope === 'total' ? monthAgg.netWealthTotal : monthAgg.netWealthMy)}">${fmtCurrency(aggScope === 'total' ? monthAgg.netWealthTotal : monthAgg.netWealthMy)}</strong><small>Impacto transferencias: ${fmtSignedCurrency(aggScope === 'total' ? monthAgg.transferImpactTotal : monthAgg.transferImpactMy)}</small></div>
+  <div class="dash-balance"><small>Δ Cuentas (real)</small><strong class="${toneClass(monthAccountsDeltaReal)}">${fmtCurrency(monthAccountsDeltaReal)}</strong></div></div>
 
   <div class="finance-chip ${toneClass(prevSummary.net)}">Mes anterior: ${fmtSignedCurrency(prevSummary.net)}</div></article>
   <article class="financeGlassCard">
@@ -1305,6 +1540,34 @@ function renderFinanceBalance() {
     </details>
   </article>
 
+  <article class="financeGlassCard finAgg__section">
+    <h3>Histórico / Agregados</h3>
+    <div class="finAgg__tabs">${[['day','Día'],['week','Semana'],['month','Mes'],['year','Año'],['total','Total']].map(([key,label]) => `<button class="finance-pill ${aggMode === key ? 'finAgg__active' : ''}" data-fin-agg-mode="${key}">${label}</button>`).join('')}</div>
+    <div class="finAgg__totals">
+      <div><small>Operativo</small><strong class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${aggLast ? fmtCurrency(metricValue(aggLast, aggScope, 'netOperative')) : '—'}</strong></div>
+      <div><small>Patrimonio</small><strong class="${toneClass(metricValue(aggLast, aggScope, 'netWealth'))}">${aggLast ? fmtCurrency(metricValue(aggLast, aggScope, 'netWealth')) : '—'}</strong></div>
+      <div><small>Δ Cuentas</small><strong class="${toneClass(Number(aggLast?.accountsDeltaReal || 0))}">${aggLast ? fmtCurrency(Number(aggLast.accountsDeltaReal || 0)) : '—'}</strong></div>
+    </div>
+    <div class="finAgg__averages">
+      <small>Medias (${aggMode})</small>
+      <strong>Operativo ${fmtCurrency(aggAvg.netOperative)} · Patrimonio ${fmtCurrency(aggAvg.netWealth)} · ΔCuentas ${fmtCurrency(aggAvg.accountsDeltaReal)}</strong>
+    </div>
+    <div class="finRank__block">
+      <div>Mejor operativo: <strong>${rankMetric('netOperative', true)?.bucketKey || '—'} ${rankMetric('netOperative', true) ? `· ${fmtCurrency(rankMetric('netOperative', true).value)}` : ''}</strong></div>
+      <div>Peor operativo: <strong>${rankMetric('netOperative', false)?.bucketKey || '—'} ${rankMetric('netOperative', false) ? `· ${fmtCurrency(rankMetric('netOperative', false).value)}` : ''}</strong></div>
+    </div>
+    <div class="finHist__list">${aggRows.slice().reverse().map((row, idx, arr) => {
+      const prev = arr[idx + 1];
+      const op = metricValue(row, aggScope, 'netOperative');
+      const nw = metricValue(row, aggScope, 'netWealth');
+      const dc = Number(row.accountsDeltaReal || 0);
+      const opPct = pctDelta(op, prev ? metricValue(prev, aggScope, 'netOperative') : 0);
+      const nwPct = pctDelta(nw, prev ? metricValue(prev, aggScope, 'netWealth') : 0);
+      const dcPct = pctDelta(dc, prev ? Number(prev.accountsDeltaReal || 0) : 0);
+      return `<div class="finHist__row"><span>${row.bucketKey}</span><span>${fmtSignedCurrency(op)} ${opPct == null ? '' : `(${fmtSignedPercent(opPct)})`}</span><span>${fmtSignedCurrency(nw)} ${nwPct == null ? '' : `(${fmtSignedPercent(nwPct)})`}</span><span>${fmtSignedCurrency(dc)} ${dcPct == null ? '' : `(${fmtSignedPercent(dcPct)})`}</span></div>`;
+    }).join('') || '<p class="finance-empty">Sin agregados guardados.</p>'}</div>
+  </article>
+
   <article class="financeGlassCard"><div class="finance-row"><h3>Presupuestos</h3><button class="finance-pill" data-open-modal="budget">+ Presupuesto</button></div>
   <div class="financeBudgetList">${budgetItems.length ? budgetItems.map((budget) => {
     const spent = budget.category.toLowerCase() === 'total' ? totalSpent : Number(spentByCategory[budget.category] || 0);
@@ -1330,20 +1593,22 @@ return `<div class="financeBudgetRow">
 
   }).join('') : '<p class="finance-empty">Sin presupuestos.</p>'}</div></article>
   <article class="financeGlassCard"><h3>Balance neto por mes</h3>
-
-  <div class="financeSummaryGrid">
-
-  <div class="valoracion-mes"><small>Mejor mes</small><strong class="is-positive">${bestMonth ? `${bestMonth.month} · ${fmtCurrency(bestMonth.net)}` : '—'}</strong></div>
-
-  <div class="valoracion-mes"><small>Peor mes</small><strong class="is-negative">${worstMonth ? `${worstMonth.month} · ${fmtCurrency(worstMonth.net)}` : '—'}</strong></div>
-
-  </div>
-  <div class="media-mensual">
-    <small>Media mensual</small>
-    <strong class="${toneClass(avgNet)}">${monthNetList.length ? fmtCurrency(avgNet) : '—'}</strong>
-  </div>
-
-  <div class="financeTxList" style="max-height:220px;overflow-y:auto;">${monthNetList.map((row) => `<div class="financeTxRow-balance-por-mes"><span>${row.month}</span><strong class="${toneClass(row.net)}">${fmtSignedCurrency(row.net)}</strong></div>`).join('') || '<p class="finance-empty">Sin meses con movimientos.</p>'}</div></article></section>`;
+  <div class="finAgg__totals">${metricRows.map((metric) => {
+    const pct = pctDelta(metric.current, metric.prev);
+    const best = monthNetList.reduce((pick, row) => {
+      const value = Number(row[metric.id] || 0);
+      if (!pick || value > pick.value) return { month: row.month, value };
+      return pick;
+    }, null);
+    const worst = monthNetList.reduce((pick, row) => {
+      const value = Number(row[metric.id] || 0);
+      if (!pick || value < pick.value) return { month: row.month, value };
+      return pick;
+    }, null);
+    const avg = monthNetList.length ? monthNetList.reduce((sum, row) => sum + Number(row[metric.id] || 0), 0) / monthNetList.length : 0;
+    return `<div><small>${metric.label}</small><strong class="${toneClass(metric.current)}">${fmtCurrency(metric.current)}</strong><small>Media ${fmtCurrency(avg)} · Mejor ${best ? `${best.month} ${fmtCurrency(best.value)}` : '—'} · Peor ${worst ? `${worst.month} ${fmtCurrency(worst.value)}` : '—'} ${pct == null ? '' : `· Δ% ${fmtSignedPercent(pct)}`}</small></div>`;
+  }).join('')}</div>
+  <div class="financeTxList" style="max-height:220px;overflow-y:auto;">${monthNetList.map((row) => `<div class="financeTxRow-balance-por-mes"><span>${row.month}</span><strong class="${toneClass(row.netOperative)}">Op ${fmtSignedCurrency(row.netOperative)}</strong><strong class="${toneClass(row.netWealth)}">Pat ${fmtSignedCurrency(row.netWealth)}</strong><strong class="${toneClass(row.accountsDeltaReal)}">ΔC ${fmtSignedCurrency(row.accountsDeltaReal)}</strong></div>`).join('') || '<p class="finance-empty">Sin meses con movimientos.</p>'}</div></article></section>`;
 }
 
 function renderFinanceGoals() {
@@ -1739,14 +2004,11 @@ if (form) {
     const account = accounts.find((item) => item.id === state.modal.accountId);
     if (!account) { state.modal = { type: null }; triggerRender(); return; }
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><form class="finance-entry-form" data-edit-account-form="${account.id}"><input type="text" name="name" value="${escapeHtml(account.name)}" required /><label>
-    
     <input type="checkbox" name="shared" ${account.shared ? 'checked' : ''} /> Cuenta compartida</label>
-    
-    <select name="sharedRatio"><option value="0.5" ${(account.sharedRatio === 0.5) ? 'selected' : ''}>50%</option>
-    
- 
-    </select>
-    
+    <select name="sharedRatio"><option value="0.5" ${(account.sharedRatio === 0.5) ? 'selected' : ''}>50%</option></select>
+    <label><input type="checkbox" name="isBitcoin" ${account.isBitcoin ? 'checked' : ''} /> Cuenta Bitcoin</label>
+    <input type="number" name="btcUnits" step="0.00000001" min="0" value="${Number(account.btcUnits || 0)}" placeholder="BTC unidades" />
+    <small>BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(Number(account.btcUnits || 0) * Number(state.btcEurPrice || 0))}</small>
     <button class="finance-pill" type="submit">Guardar</button></form></div>`;
     return;
   }
@@ -1756,14 +2018,12 @@ if (form) {
     <h3>Nueva cuenta</h3>
     <button class="finance-pill" data-close-modal>❌</button></header>
     <form class="finance-entry-form" id="modal-cuenta-nueva" data-new-account-form><input type="text" name="name" data-account-name-input placeholder="Nombre de la cuenta" required /><label>
-    
     <input type="checkbox" name="shared" /> 🫂</label><select name="sharedRatio">
-    
     <option value="0.5">50%</option>
-    
-    
     </select>
-    
+    <label><input type="checkbox" name="isBitcoin" /> Cuenta Bitcoin</label>
+    <input type="number" name="btcUnits" step="0.00000001" min="0" value="0" placeholder="BTC unidades" />
+    <small>BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(0)}</small>
     <button class="finance-pill" type="submit">Crear</button></form></div>`;
     return;
   }
@@ -1986,6 +2246,7 @@ function applyRemoteData(val = {}, replace = false) {
     snapshots: root.balance?.snapshots || (replace ? {} : state.balance.snapshots),
     recurring: root.recurring || root.balance?.recurring || (replace ? {} : state.balance.recurring),
     defaultAccountId: root.balance?.defaultAccountId || (replace ? '' : state.balance.defaultAccountId),
+    aggregates: root.aggregates || root.balance?.aggregates || (replace ? {} : state.balance.aggregates),
     lastSeenMonthKey: root.balance?.lastSeenMonthKey || (replace ? '' : state.balance.lastSeenMonthKey)
   };
   state.goals = { goals: root.goals?.goals || (replace ? {} : state.goals.goals) };
@@ -2025,15 +2286,15 @@ function subscribe() {
   }, (error) => { state.error = String(error?.message || error); triggerRender(); });
 }
 
-async function addAccount({ name, shared = false, sharedRatio = 0.5 }) {
+async function addAccount({ name, shared = false, sharedRatio = 0.5, isBitcoin = false, btcUnits = 0 }) {
   const id = push(ref(db, `${state.financePath}/accounts`)).key;
   const ratio = shared ? clampRatio(sharedRatio, 0.5) : 1;
-  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), { id, name, shared, sharedRatio: ratio, createdAt: nowTs(), updatedAt: nowTs(), entries: {}, snapshots: {} }));
+  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), { id, name, shared, sharedRatio: ratio, isBitcoin: Boolean(isBitcoin), btcUnits: Number(btcUnits || 0), createdAt: nowTs(), updatedAt: nowTs(), entries: {}, snapshots: {} }));
 }
 async function updateAccountMeta(accountId, payload = {}) {
   const shared = Boolean(payload.shared);
   const sharedRatio = shared ? clampRatio(payload.sharedRatio, 0.5) : 1;
-  await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { ...payload, shared, sharedRatio, updatedAt: nowTs() }));
+  await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { ...payload, shared, sharedRatio, isBitcoin: Boolean(payload.isBitcoin), btcUnits: Number(payload.btcUnits || 0), updatedAt: nowTs() }));
 }
 async function saveSnapshot(accountId, day, value) {
   const parsedValue = parseEuroNumber(value);
@@ -2063,8 +2324,9 @@ async function render() {
     const host = ensureFinanceHost();
     renderFinanceNav();
     if (state.error) { host.innerHTML = `<article class=\"finance-panel\"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`; return; }
+    await ensureBtcEurPrice();
     const accounts = buildAccountModels(); const totalSeries = buildTotalSeries(accounts);
-    if (state.activeView === 'balance') { await ensureFoodCatalogLoaded(); host.innerHTML = renderFinanceBalance(); await maybeRolloverSnapshot(); }
+    if (state.activeView === 'balance') { await ensureFoodCatalogLoaded(); host.innerHTML = renderFinanceBalance(); await maybeRolloverSnapshot(); if (!Object.keys(state.balance.aggregates || {}).length) scheduleAggregateRebuild(); }
     else if (state.activeView === 'goals') host.innerHTML = renderFinanceGoals();
     else if (state.activeView === 'calendar') host.innerHTML = renderFinanceCalendar(accounts, totalSeries);
     else host.innerHTML = renderFinanceHome(accounts, totalSeries);
@@ -2181,6 +2443,7 @@ function bindEvents() {
       const touched = [existing.accountId, existing.fromAccountId, existing.toAccountId].filter(Boolean);
       for (const accountId of [...new Set(touched)]) await recomputeAccountEntries(accountId, existing.date || isoToDay(existing.dateISO || ''));
       toast('Movimiento eliminado');
+      scheduleAggregateRebuild();
       triggerRender();
       return;
     }
@@ -2253,6 +2516,8 @@ function bindEvents() {
       return;
     }
     const drilldown = target.closest('[data-balance-drilldown]')?.dataset.balanceDrilldown; if (drilldown) { openBalanceDrilldown(drilldown); return; }
+    const aggMode = target.closest('[data-fin-agg-mode]')?.dataset.finAggMode; if (aggMode) { state.balanceAggMode = AGG_MODES.includes(aggMode) ? aggMode : 'month'; triggerRender(); return; }
+    const aggScope = target.closest('[data-fin-agg-scope]')?.dataset.finAggScope; if (aggScope) { state.balanceAggScope = aggScope === 'total' ? 'total' : 'my'; triggerRender(); return; }
     const drilldownMonth = target.closest('[data-drilldown-month]')?.dataset.drilldownMonth;
     if (drilldownMonth && state.modal.type === 'balance-drilldown') {
       state.modal = { ...state.modal, monthOffset: Number(state.modal.monthOffset || 0) + Number(drilldownMonth) };
@@ -2365,7 +2630,7 @@ view.addEventListener('focusout', async (event) => {
 
   view.addEventListener('submit', async (event) => {
     if (event.target.matches('[data-new-account-form]')) {
-      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 0.5); if (name) await addAccount({ name, shared, sharedRatio }); state.modal = { type: null }; triggerRender(); return;
+      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 0.5); const isBitcoin = form.get('isBitcoin') === 'on'; const btcUnits = Number(form.get('btcUnits') || 0); if (name) await addAccount({ name, shared, sharedRatio, isBitcoin, btcUnits }); state.modal = { type: null }; triggerRender(); return;
     }
     if (event.target.matches('[data-calendar-day-form]')) {
       event.preventDefault();
@@ -2405,7 +2670,7 @@ view.addEventListener('focusout', async (event) => {
       event.preventDefault();
       const accountId = event.target.dataset.editAccountForm;
       const form = new FormData(event.target);
-      await updateAccountMeta(accountId, { name: String(form.get('name') || '').trim(), shared: form.get('shared') === 'on', sharedRatio: Number(form.get('sharedRatio') || 0.5) });
+      await updateAccountMeta(accountId, { name: String(form.get('name') || '').trim(), shared: form.get('shared') === 'on', sharedRatio: Number(form.get('sharedRatio') || 0.5), isBitcoin: form.get('isBitcoin') === 'on', btcUnits: Number(form.get('btcUnits') || 0) });
       state.modal = { type: null };
       triggerRender();
       return;
@@ -2509,6 +2774,7 @@ view.addEventListener('focusout', async (event) => {
       const touched = new Set([payload.accountId, payload.fromAccountId, payload.toAccountId, prev?.accountId, prev?.fromAccountId, prev?.toAccountId].filter(Boolean));
       const recomputeStart = [dateISO, prev?.date, isoToDay(prev?.dateISO || '')].filter(Boolean).sort()[0] || dateISO;
       for (const account of touched) await recomputeAccountEntries(account, recomputeStart);
+      scheduleAggregateRebuild();
       localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId || fromAccountId || '');
       state.lastMovementAccountId = accountId || fromAccountId || '';
       state.balanceFormState = {};

@@ -143,7 +143,22 @@ function bucketKeyForTx(tx = {}, mode = 'day') {
   return bucketKeyForDay(day, mode);
 }
 function bucketRange(mode = 'month', bucketKey = '') {
-  if (mode === 'total') return { start: -Infinity, end: Infinity };
+  if (mode === 'total') {
+    const accountTs = (state.accounts || []).flatMap((account) => {
+      const snapshotsTs = normalizeSnapshots(account?.snapshots || {}).map((row) => parseDayKey(row.day));
+      const entriesTs = normalizeDaily(account?.entries || account?.daily || {}).map((row) => Number(row.ts || parseDayKey(row.day)));
+      return [...snapshotsTs, ...entriesTs].filter((ts) => Number.isFinite(ts));
+    });
+    const movementTs = balanceTxList().map((row) => txTs(row)).filter((ts) => Number.isFinite(ts) && ts > 0);
+    const allTs = [...accountTs, ...movementTs];
+    if (!allTs.length) {
+      const now = Date.now();
+      return { start: now, end: now + 1 };
+    }
+    const start = Math.min(...allTs);
+    const end = Math.max(...allTs) + 1;
+    return { start, end };
+  }
   if (mode === 'day') {
     const start = parseDayKey(bucketKey);
     return { start, end: start + 86400000 };
@@ -335,9 +350,9 @@ function normalizeFoodExtras(rawExtras = {}, amount = 0) {
   return {
     items,
     filters: {
-      mealType: normalizeFoodName(extras.mealType || extras.foodType || items[0]?.mealType || ''),
-      cuisine: normalizeFoodName(extras.cuisine || items[0]?.cuisine || ''),
-      place: normalizeFoodName(extras.place || items[0]?.place || ''),
+      mealType: normalizeFoodName(extras.filters?.mealType || extras.mealType || extras.foodType || items[0]?.mealType || ''),
+      cuisine: normalizeFoodName(extras.filters?.cuisine || extras.cuisine || items[0]?.cuisine || ''),
+      place: normalizeFoodName(extras.filters?.place || extras.place || items.find((item) => item?.place)?.place || ''),
       healthy: String(extras.healthy || items[0]?.healthy || '')
     }
   };
@@ -958,18 +973,6 @@ function accountValueByTs(account = {}, ts = 0) {
 }
 
 function calcAccountsDeltaForBucket(mode = 'month', bucketKey = '', accounts = state.accounts) {
-  if (mode === 'total') {
-    return (accounts || []).reduce((sum, acc) => {
-      const snaps = normalizeSnapshots(acc.snapshots || {});
-      const ents  = normalizeDaily(acc.entries || acc.daily || {});
-      const series = (snaps.length ? snaps : ents);
-      if (!series.length) return sum;
-      const startDay = series[0].day;
-      const endDay   = series.at(-1).day;
-      return sum + (accountValueForDay(acc, endDay) - accountValueForDay(acc, startDay));
-    }, 0);
-  }
-
   const bounds = bucketRange(mode, bucketKey);
   const startTs = bounds.start;
   const endTs = Math.max(bounds.start, bounds.end - 1);
@@ -1170,6 +1173,11 @@ function filterTxByRange(rows = [], mode = 'month') {
 
 function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense', scope = 'personal', accountsById = {}) {
   const output = {};
+  const isMissingGroupedValue = (value = '') => {
+    const normalized = normalizeFoodName(value).toLowerCase();
+    if (!normalized) return true;
+    return normalized.startsWith('sin ');
+  };
   rows.forEach((row) => {
     if (row.type !== txMode) return;
     const amount = scope === 'global'
@@ -1178,11 +1186,18 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
     if (!amount) return;
     let key = 'Sin datos';
     if (groupBy === 'account') key = accountsById[row.accountId]?.name || 'Sin cuenta';
-    else if (groupBy === 'store') key = normalizeFoodName(row.extras?.filters?.place || row.extras?.place || '') || 'Sin supermercado';
-    else if (groupBy === 'mealType') key = normalizeFoodName(row.extras?.filters?.mealType || row.extras?.mealType || '') || 'Sin tipo';
+    else if (groupBy === 'store') {
+      const items = foodItemsFromTx(row);
+      key = normalizeFoodName(row.extras?.filters?.place || row.extras?.place || items.find((item) => item?.place)?.place || '');
+      if (isMissingGroupedValue(key)) return;
+    } else if (groupBy === 'mealType') {
+      key = normalizeFoodName(row.extras?.filters?.mealType || row.extras?.mealType || '');
+      if (isMissingGroupedValue(key)) return;
+    }
     else if (groupBy === 'product') {
       const first = foodItemsFromTx(row)[0];
-      key = normalizeFoodName(first?.name || '') || 'Sin producto';
+      key = normalizeFoodName(first?.name || '');
+      if (isMissingGroupedValue(key)) return;
     } else key = row.category || 'Sin categoría';
     output[key] = (output[key] || 0) + amount;
   });
@@ -1514,6 +1529,7 @@ function renderFinanceBalance() {
         <strong class="financeStats__donutValue">${fmtCurrency(donutTotal)}</strong>
         <small class="financeStats__donutSub">Distribución ${groupLabel.toLowerCase()}</small>
       </div>
+      ${segments.length ? '' : '<p class="financeStats__emptyHint">Sin datos para agrupar.</p>'}
     </div>
 
     <details class="financeStats__details">
@@ -1538,7 +1554,7 @@ function renderFinanceBalance() {
     <details class="financeStats__foodsDetails">
       <summary class="financeStats__detailsSummary">Productos/Comidas más comprados (${scopeLabel})</summary>
       <div class="financeStats__detailsBody financeStats__foodsList">
-        ${topFoodItems.length ? topFoodItems.map((item) => `<div class="financeStats__foodRow"><span>${escapeHtml(item.name)} · x${item.count}</span><small>${((item.total / Math.max(1, totalFoodSpent)) * 100).toFixed(1)}%</small><strong>${fmtCurrency(item.total)}</strong></div>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
+        ${topFoodItems.length ? topFoodItems.map((item) => `<div class="financeStats__foodRow"><span>${escapeHtml(item.name)} · x${item.count}</span><small>${(totalFoodSpent > 0 ? ((item.total / totalFoodSpent) * 100) : 0).toFixed(1)}%</small><strong>${fmtCurrency(item.total)}</strong></div>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
       </div>
     </details>
 

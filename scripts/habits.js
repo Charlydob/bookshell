@@ -4840,7 +4840,9 @@ function renderHabitDetail(habitId, rangeKey = habitDetailRange) {
   if ($habitDetailMeta) $habitDetailMeta.textContent = `${scheduleLabel} · ${goalLabel}`;
   if ($habitDetailTotal) {
     const { start, end } = getHabitDetailRangeBounds(rangeKey);
-    const totalValue = getHabitMetricForRange(habit, start, end, goal === "time" ? "time" : "count");
+    const totalValue = goal === "time"
+      ? getHabitTotalMinutesAllTime(habit.id)
+      : getHabitMetricForRange(habit, start, end, goal === "time" ? "time" : "count");
     const totalLabel = goal === "time"
       ? `Horas totales: ${formatHoursTotal(totalValue)}`
       : (goal === "count" ? `Total: ${Math.round(totalValue)}×` : `Total: ${Math.round(totalValue)} días`);
@@ -8577,6 +8579,20 @@ function getHabitTotalsAllTime() {
   }));
 }
 
+function getHabitTotalMs(habitId) {
+  if (!habitId) return 0;
+  const match = getHabitTotalsAllTime().find((item) => item.habitId === habitId);
+  return Math.max(0, Number(match?.totalMs) || 0);
+}
+
+function getHabitTotalMinutesAllTime(habitId) {
+  return Math.round(getHabitTotalMs(habitId) / 60000);
+}
+
+function getHabitsTotalMinutesAllTime() {
+  return getHabitTotalsAllTime().reduce((acc, item) => acc + Math.round((Number(item.totalMs) || 0) / 60000), 0);
+}
+
 function buildTimeEntries(range, reason = "recompute") {
   const { start, end } = getRangeBounds(range);
   const dataset = computeTimeByHabitDataset({
@@ -8810,6 +8826,17 @@ function rangeLabelTitle(range) {
 }
 
 function totalsByHabit(range) {
+  if (range === "total") {
+    return activeHabits()
+      .map((habit) => {
+        const minutes = getHabitTotalMinutesAllTime(habit.id);
+        const daysActive = countHabitActivityDays(habit);
+        const streak = computeHabitCurrentStreak(habit);
+        return { habit, minutes, daysActive, streak };
+      })
+      .filter((item) => item.minutes > 0)
+      .sort((a, b) => b.minutes - a.minutes);
+  }
   const { start, end } = getRangeBounds(range);
   return activeHabits()
     .map((habit) => {
@@ -9256,7 +9283,7 @@ function renderKPIs() {
     }
   }
   if ($habitKpiTotalHours) {
-    $habitKpiTotalHours.textContent = formatHoursTotal(minutesForRange(habitDonutRange));
+    $habitKpiTotalHours.textContent = formatHoursTotal(getHabitsTotalMinutesAllTime());
   }
   if ($habitKpiTotalHoursRange) {
     $habitKpiTotalHoursRange.textContent = `Rango ${rangeLabelTitle(habitDonutRange)}`;
@@ -9340,15 +9367,15 @@ function renderPins() {
   const timeHabit = habitPrefs?.pinTime ? habits?.[habitPrefs.pinTime] : null;
   if (timeHabit && (timeHabit.goal || "check") === "time") {
     const todayMinutes = getHabitDayScore(timeHabit, dateKey).minutes || 0;
-    const rangeMinutes = minutesForHabitRange(timeHabit, start, end);
+    const allTimeMinutes = getHabitTotalMinutesAllTime(timeHabit.id);
     if (habitDonutRange === "day") {
       if ($habitPinTimeToday) $habitPinTimeToday.textContent = `Hoy: ${formatMinutes(todayMinutes)}`;
       if ($habitPinTimeRange) {
-        $habitPinTimeRange.textContent = ` ${formatMinutes(rangeMinutes)} · ${rangeLabelTitle(habitDonutRange)}`;
+        $habitPinTimeRange.textContent = ` Total: ${formatMinutes(allTimeMinutes)}`;
       }
     } else {
       if ($habitPinTimeToday) {
-        $habitPinTimeToday.textContent = ` ${formatMinutes(rangeMinutes)} · ${rangeLabelTitle(habitDonutRange)}`;
+        $habitPinTimeToday.textContent = ` Total: ${formatMinutes(allTimeMinutes)}`;
       }
       if ($habitPinTimeRange) $habitPinTimeRange.textContent = `Hoy: ${formatMinutes(todayMinutes)}`;
     }

@@ -187,6 +187,8 @@ const DEBUG_COMPARE = (() => {
 })();
 
 const pendingSessionWrites = new Map();
+const pendingDayUsageWrites = new Map();
+const dayUsagePersistTimers = new Map();
 let habitHistoryDataVersion = 0;
 let habitHistoryUpdatedAt = Date.now();
 let compareLiveTick = 0;
@@ -997,7 +999,7 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
   };
 }
 
-function closeScheduleDay(dateKey = todayKey(), source = "manual") {
+function buildScheduleDaySummaryPayload(dateKey = todayKey(), source = "manual") {
   const data = buildScheduleDayData(dateKey);
   const stats = data.headerStats || computeScheduleHeaderStats(dateKey, {}, {}, {}, {});
   const perHabit = {};
@@ -1062,13 +1064,76 @@ function closeScheduleDay(dateKey = todayKey(), source = "manual") {
     closedAtTs: Date.now(),
     closeSource: source
   };
+  return {
+    dateKey,
+    usagePercent: Math.max(0, Math.round(Number(data.scoreCred ?? stats.scoreAprovechado ?? data.score ?? 0) || 0)),
+    payload
+  };
+}
+
+function refreshScheduleCalendarDay(dayKey, reason = "auto") {
+  if (!$habitScheduleView || activeTab !== "schedule") return;
+  renderSchedule(reason);
+}
+
+function queueDayUsageRetry(dayKey, payload) {
+  if (!dayKey || !payload) return;
+  const current = pendingDayUsageWrites.get(dayKey) || {};
+  const attempts = Math.max(0, Number(current.attempts) || 0);
+  const next = { payload, attempts: attempts + 1 };
+  pendingDayUsageWrites.set(dayKey, next);
+  const delay = Math.min(30000, 1500 * Math.max(1, next.attempts));
+  window.setTimeout(() => {
+    const pending = pendingDayUsageWrites.get(dayKey);
+    if (!pending || pending.payload !== payload) return;
+    persistDayUsage(dayKey, payload.scoreCred, { payload: pending.payload, source: "retry" });
+  }, delay);
+}
+
+function persistDayUsage(dayKey, usagePercent, extraStats = {}) {
+  if (!dayKey) return;
+  const incomingPayload = extraStats?.payload && typeof extraStats.payload === "object" ? extraStats.payload : null;
+  const source = extraStats?.source || "auto";
+  const summaryPayload = incomingPayload || buildScheduleDaySummaryPayload(dayKey, source).payload;
+  const normalizedPercent = Math.max(0, Math.round(Number(usagePercent ?? summaryPayload.scoreCred ?? summaryPayload.scoreAprovechado ?? summaryPayload.score) || 0));
+  const payload = {
+    ...summaryPayload,
+    scoreCred: normalizedPercent,
+    scoreAprovechado: Math.max(0, Math.round(Number(summaryPayload.scoreAprovechado ?? normalizedPercent) || 0))
+  };
+
   if (!scheduleState.summaries || typeof scheduleState.summaries !== "object") scheduleState.summaries = {};
-  scheduleState.summaries[dateKey] = payload;
+  scheduleState.summaries[dayKey] = payload;
   persistHabitScheduleLocal();
-  auditScheduleWrite(`${HABITS_SCHEDULE_PATH}/summaries/${dateKey}`, payload);
-  update(ref(db, `${HABITS_SCHEDULE_PATH}/summaries`), { [dateKey]: payload }).catch((err) => {
-    console.warn("No se pudo guardar resumen de horario", err);
-  });
+  refreshScheduleCalendarDay(dayKey, source);
+
+  auditScheduleWrite(`${HABITS_SCHEDULE_PATH}/summaries/${dayKey}`, payload);
+  update(ref(db, `${HABITS_SCHEDULE_PATH}/summaries`), { [dayKey]: payload })
+    .then(() => {
+      const pending = pendingDayUsageWrites.get(dayKey);
+      if (pending && pending.payload === payload) pendingDayUsageWrites.delete(dayKey);
+    })
+    .catch((err) => {
+      console.warn("No se pudo guardar resumen de horario", err);
+      queueDayUsageRetry(dayKey, payload);
+    });
+}
+
+function schedulePersistDayUsage(dayKey, source = "auto") {
+  if (!dayKey) return;
+  const prevTimer = dayUsagePersistTimers.get(dayKey);
+  if (prevTimer) window.clearTimeout(prevTimer);
+  const timer = window.setTimeout(() => {
+    dayUsagePersistTimers.delete(dayKey);
+    const built = buildScheduleDaySummaryPayload(dayKey, source);
+    persistDayUsage(dayKey, built.usagePercent, { payload: built.payload, source });
+  }, 1000); // debounce por día para evitar ráfagas de escrituras
+  dayUsagePersistTimers.set(dayKey, timer);
+}
+
+function closeScheduleDay(dateKey = todayKey(), source = "manual") {
+  const built = buildScheduleDaySummaryPayload(dateKey, source);
+  persistDayUsage(dateKey, built.usagePercent, { payload: built.payload, source });
   renderSchedule("manual");
 }
 
@@ -2417,6 +2482,7 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
   }
   invalidateDominantCache(dateKey);
   markHistoryDataChanged("addHabitTimeSec", { habitId, dateKey, addSec });
+  schedulePersistDayUsage(dateKey, "session-update");
 
   return nextSec;
 }
@@ -2465,6 +2531,7 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
   if (habitId !== UNKNOWN_HABIT_ID) { try { recomputeUnknownForDate(dateKey, true); } catch (_) {} }
   invalidateDominantCache(dateKey);
   markHistoryDataChanged("setHabitTimeSec", { habitId, dateKey, totalSec: sec });
+  schedulePersistDayUsage(dateKey, "session-edit");
 }
 
 
@@ -3783,6 +3850,7 @@ function setHabitCount(habitId, dateKey, value) {
     updateQuickCounterTileState(habitId, safe);
   }
   renderHabitsPreservingTodayUI();
+  schedulePersistDayUsage(dateKey, "count-update");
 }
 
 function adjustHabitCount(habitId, dateKey, delta) {
@@ -7608,6 +7676,13 @@ function ensureHabitLineTooltip() {
   return habitLineTooltip;
 }
 
+function hideHabitLineTooltip() {
+  if (!habitLineTooltip) return;
+  habitLineTooltip.classList.add("hidden");
+  habitLineTooltip.style.left = "";
+  habitLineTooltip.style.top = "";
+}
+
 function formatLineTooltip(point, isTotal) {
   if (!point) return "";
   const parts = [`${formatShortDate(point.dateKey, true)} · ${formatMinutes(point.minutes)}`];
@@ -7696,6 +7771,8 @@ function renderLineChart() {
       $habitLineDays.textContent = `${activeDays} día${activeDays === 1 ? "" : "s"}`;
     }
   }
+  const tooltip = ensureHabitLineTooltip();
+  hideHabitLineTooltip();
   $habitLineChart.innerHTML = "";
   if ($habitLineEmpty) $habitLineEmpty.style.display = hasData ? "none" : "block";
   if (!points.length || !hasData) return;
@@ -7787,7 +7864,6 @@ function renderLineChart() {
 
   $habitLineChart.appendChild(svg);
 
-  const tooltip = ensureHabitLineTooltip();
   const handlePointer = (evt) => {
     const rect = svg.getBoundingClientRect();
     const x = evt.clientX - rect.left;
@@ -7810,10 +7886,14 @@ function renderLineChart() {
   };
   svg.addEventListener("pointermove", handlePointer);
   svg.addEventListener("pointerdown", handlePointer);
-  svg.addEventListener("pointerleave", () => {
-    tooltip.classList.add("hidden");
+  const hideCursorAndTooltip = () => {
+    hideHabitLineTooltip();
     cursorDot.style.opacity = "0";
-  });
+  };
+  svg.addEventListener("pointerleave", hideCursorAndTooltip);
+  svg.addEventListener("pointerup", hideCursorAndTooltip);
+  svg.addEventListener("pointercancel", hideCursorAndTooltip);
+  window.addEventListener("scroll", hideCursorAndTooltip, { passive: true, once: true });
 }
 
 
@@ -11384,6 +11464,7 @@ function listenRemote() {
 function goHabitSubtab(tab) {
   const allowed = new Set(["today", "week", "history", "schedule", "reports"]);
   activeTab = allowed.has(tab) ? tab : "today";
+  if (activeTab !== "reports") hideHabitLineTooltip();
   renderHabits();
 }
 

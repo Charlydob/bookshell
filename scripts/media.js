@@ -6,7 +6,7 @@
 // - Sync: localStorage + Firebase RTDB (merge anti-pisotón)
 
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { getDatabase, ref, onValue, runTransaction, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { TMDB_API_KEY, TMDB_READ_TOKEN } from "../config/tmdb.js";
 
 /* ------------------------- Firebase ------------------------- */
@@ -25,6 +25,7 @@ const db = getDatabase(app);
 
 const MEDIA_PATH = "media";
 const LS_KEY = "bookshell.media.v3";
+const FILTERS_LS_KEY = "bookshell.media.filters.v1";
 const TMDB_CACHE_KEY = "bookshell.media.tmdb.v1";
 const PERSON_CACHE_KEY = "bookshell.media.person.v1";
 const PERSON_CREDITS_CACHE_KEY = "bookshell.media.personCredits.v1";
@@ -41,6 +42,7 @@ let mapChart = null;
 let watchedModal = null;
 let watchedModalItemId = null;
 let watchedModalRating = 0;
+let editProgressDebounceTimer = 0;
 
 
 /* ------------------------- State ------------------------- */
@@ -58,7 +60,8 @@ const state = {
   rewatchMin: 0,
   watchedFrom: "",
   watchedTo: "",
-  meta: "all"           // all|complete|incomplete|missing-director|missing-cast
+  meta: "all",          // all|complete|incomplete|missing-director|missing-cast
+  seenMoreThanOnce: false
 };
 
 function log(...a) { try { console.debug("[media]", ...a); } catch (_) {} }
@@ -72,6 +75,52 @@ function norm(s) { return String(s || "").trim(); }
 function normKey(s) { return norm(s).toLowerCase(); }
 function clamp(n, a, b) { n = Number(n) || 0; return Math.max(a, Math.min(b, n)); }
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+function showSoftToast(message) {
+  const msg = norm(message);
+  if (!msg) return;
+  if (typeof window?.toast === "function") {
+    window.toast(msg);
+    return;
+  }
+  setMediaSub(msg, 2200);
+}
+
+function parseTimecodeToSeconds(input) {
+  const raw = norm(input);
+  if (!raw) return null;
+  const clean = raw.replace(/\s+/g, "");
+  const parts = clean.split(":");
+  if (parts.length !== 2 && parts.length !== 3) return null;
+  if (!parts.every(p => /^\d{1,2}$/.test(p))) return null;
+
+  let h = 0;
+  let m = 0;
+  let s = 0;
+  if (parts.length === 2) {
+    [m, s] = parts.map(Number);
+  } else {
+    [h, m, s] = parts.map(Number);
+  }
+  if (m > 59 || s > 59) return null;
+  return (h * 3600) + (m * 60) + s;
+}
+
+function secondsToTimecode(totalSeconds) {
+  const safe = Math.max(0, Number(totalSeconds) || 0);
+  const h = Math.floor(safe / 3600);
+  const m = Math.floor((safe % 3600) / 60);
+  const s = Math.floor(safe % 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function normalizeEpisodeCode(raw, fallbackSeason = 1, fallbackEpisode = 1) {
+  const txt = norm(raw).toUpperCase();
+  const m = txt.match(/^S(\d{1,2})E(\d{1,2})$/);
+  const season = m ? Number(m[1]) : Math.max(1, Number(fallbackSeason) || 1);
+  const episode = m ? Number(m[2]) : Math.max(1, Number(fallbackEpisode) || 1);
+  return `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
+}
 
 function parseCSV(s) {
   return norm(s).split(",").map(v => norm(v)).filter(Boolean).slice(0, 40);
@@ -616,6 +665,23 @@ function save() {
   try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
 }
 
+function loadFilterPrefs() {
+  try {
+    const raw = localStorage.getItem(FILTERS_LS_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (!parsed || typeof parsed !== "object") return;
+    state.seenMoreThanOnce = !!parsed.seenMoreThanOnce;
+  } catch (_) {}
+}
+
+function saveFilterPrefs() {
+  try {
+    localStorage.setItem(FILTERS_LS_KEY, JSON.stringify({
+      seenMoreThanOnce: !!state.seenMoreThanOnce
+    }));
+  } catch (_) {}
+}
+
 const pendingWrites = new Map(); // id -> updatedAt
 let firebaseBound = false;
 
@@ -746,6 +812,19 @@ function normalizeItem(it) {
   out.year = Number(out.year) || 0;
 
   out.watchDates = normalizeWatchDates(out.watchDates, out.watchedAt);
+  out.seenCount = Math.max(0, Number(out.seenCount) || 0);
+
+  const progressRaw = out.progress && typeof out.progress === "object" ? out.progress : null;
+  const progressSeconds = parseTimecodeToSeconds(progressRaw?.timecode);
+  if (progressRaw && progressSeconds !== null) {
+    out.progress = {
+      timecode: secondsToTimecode(progressSeconds),
+      updatedAt: Number(progressRaw.updatedAt) || out.updatedAt || nowTs(),
+      ...(progressRaw.episode ? { episode: normalizeEpisodeCode(progressRaw.episode) } : {})
+    };
+  } else {
+    out.progress = null;
+  }
 
   // país: guardamos label ES + EN (para mapa)
   const raw = out.countryCode || out.countryEn || out.countryLabel || out.country || "";
@@ -838,6 +917,7 @@ function applyFilters() {
 
     if (state.rewatchOnly && (Number(it.rewatchCount) || 0) < 1) return false;
     if (state.rewatchMin && (Number(it.rewatchCount) || 0) < Number(state.rewatchMin || 0)) return false;
+    if (state.seenMoreThanOnce && (Number(it.seenCount) || 0) < 2) return false;
 
     if (state.meta !== "all") {
       const complete = isMetaComplete(it);
@@ -904,6 +984,7 @@ function getActiveFilterChips() {
 
   if (state.rewatchOnly) chips.push("Rewatches: solo");
   if (state.rewatchMin) chips.push(`Rewatch ≥ ${state.rewatchMin}`);
+  if (state.seenMoreThanOnce) chips.push("Visto > 1");
 
   if (state.watchedFrom) chips.push(`Visto desde ${state.watchedFrom}`);
   if (state.watchedTo) chips.push(`Visto hasta ${state.watchedTo}`);
@@ -1758,6 +1839,11 @@ function ensureInlineFilters() {
             <input id="media-filter-rewatch-min" type="number" min="0" placeholder="0" />
           </label>
 
+          <label class="media-check">
+            <input id="media-filter-seen-multi" type="checkbox" />
+            <span>Visto más de una vez</span>
+          </label>
+
           <label class="media-mini">
             <span>Visto desde</span>
             <input id="media-filter-watched-from" type="date" />
@@ -1802,6 +1888,7 @@ function ensureInlineFilters() {
   const $laura = qs("media-filter-laura");
   const $rewatch = qs("media-filter-rewatch");
   const $rewatchMin = qs("media-filter-rewatch-min");
+  const $seenMulti = qs("media-filter-seen-multi");
   const $from = qs("media-filter-watched-from");
   const $to = qs("media-filter-watched-to");
   const $meta = qs("media-filter-meta");
@@ -1814,6 +1901,11 @@ function ensureInlineFilters() {
     state.rewatchMin = Number($rewatchMin.value) || 0;
     refresh();
   });
+  if ($seenMulti) $seenMulti.addEventListener("change", () => {
+    state.seenMoreThanOnce = !!$seenMulti.checked;
+    saveFilterPrefs();
+    refresh();
+  });
   if ($from) $from.addEventListener("change", () => { state.watchedFrom = $from.value || ""; refresh(); });
   if ($to) $to.addEventListener("change", () => { state.watchedTo = $to.value || ""; refresh(); });
   if ($meta) $meta.addEventListener("change", () => { state.meta = $meta.value || "all"; refresh(); });
@@ -1823,6 +1915,16 @@ function ensureInlineFilters() {
     rangeBtns.forEach(x => x.classList.toggle("is-active", x === b));
     refresh();
   }));
+
+  if ($status) $status.value = state.status || "all";
+  if ($laura) $laura.value = state.laura || "all";
+  if ($rewatch) $rewatch.value = state.rewatchOnly ? "only" : "all";
+  if ($rewatchMin) $rewatchMin.value = state.rewatchMin ? String(state.rewatchMin) : "";
+  if ($seenMulti) $seenMulti.checked = !!state.seenMoreThanOnce;
+  if ($from) $from.value = state.watchedFrom || "";
+  if ($to) $to.value = state.watchedTo || "";
+  if ($meta) $meta.value = state.meta || "all";
+  rangeBtns.forEach(x => x.classList.toggle("is-active", (x.dataset.range || "total") === (state.range || "total")));
 }
 
 /* ------------------------- CSV import (Letterboxd) ------------------------- */
@@ -2103,6 +2205,8 @@ function addItem(patch) {
     episode: progress.episode,
     watchDates,
     watchedAt: (watchlist ? 0 : now),
+    seenCount: Math.max(0, Number(patch.seenCount) || 0),
+    progress: patch.progress || null,
     createdAt: now,
     updatedAt: now
   });
@@ -2959,6 +3063,96 @@ function renderMap() {
 /* ------------------------- Edit modal ------------------------- */
 let editModal = null;
 
+function readProgressDraftFromModal() {
+  const id = editModal?.dataset?.id;
+  const it = findItem(id);
+  if (!it) return { ok: false, reason: "no-item" };
+
+  const rawTimecode = qs("media-edit-timecode")?.value || "";
+  if (!norm(rawTimecode)) return { ok: false, reason: "empty" };
+  const seconds = parseTimecodeToSeconds(rawTimecode);
+  if (seconds === null) return { ok: false, reason: "invalid-timecode" };
+
+  const normalized = secondsToTimecode(seconds);
+  const out = { timecode: normalized, updatedAt: nowTs() };
+  if (it.type === "series" || it.type === "anime") {
+    out.episode = normalizeEpisodeCode(
+      qs("media-edit-progress-episode")?.value,
+      Number(qs("media-edit-season")?.value) || it.currentSeason || 1,
+      Number(qs("media-edit-episode")?.value) || it.currentEpisode || 1
+    );
+  }
+  return { ok: true, value: out, changed: normalized !== norm(rawTimecode) };
+}
+
+function saveProgressFromModal({ force = false } = {}) {
+  const id = editModal?.dataset?.id;
+  if (!id) return false;
+
+  const it = findItem(id);
+  if (!it) return false;
+
+  const draft = readProgressDraftFromModal();
+  if (!draft.ok) {
+    if (force && draft.reason === "invalid-timecode") {
+      showSoftToast("Formato inválido. Usa HH:MM:SS o MM:SS");
+    }
+    return false;
+  }
+
+  const current = it.progress || null;
+  const next = draft.value;
+  const sameTime = (current?.timecode || "") === next.timecode;
+  const sameEp = (current?.episode || "") === (next.episode || "");
+  if (!force && sameTime && sameEp) return true;
+
+  updateItem(id, { progress: next });
+  if (draft.changed && qs("media-edit-timecode")) qs("media-edit-timecode").value = next.timecode;
+  if (next.episode && qs("media-edit-progress-episode")) qs("media-edit-progress-episode").value = next.episode;
+  return true;
+}
+
+function scheduleProgressSave() {
+  if (editProgressDebounceTimer) clearTimeout(editProgressDebounceTimer);
+  editProgressDebounceTimer = setTimeout(() => {
+    editProgressDebounceTimer = 0;
+    saveProgressFromModal();
+  }, 600);
+}
+
+async function adjustSeenCountFromModal(delta) {
+  const id = editModal?.dataset?.id;
+  if (!id || !delta) return;
+  const itemRef = ref(db, firebasePath(id));
+  try {
+    await runTransaction(itemRef, (current) => {
+      if (!current || typeof current !== "object") return current;
+      const base = Math.max(0, Number(current.seenCount) || 0);
+      return {
+        ...current,
+        seenCount: Math.max(0, base + delta),
+        updatedAt: nowTs()
+      };
+    });
+  } catch (e) {
+    console.warn("[media] seenCount transaction failed", e);
+    showSoftToast("No se pudo actualizar 'Visto'");
+    return;
+  }
+
+  const local = findItem(id);
+  if (!local) return;
+  const next = Math.max(0, (Number(local.seenCount) || 0) + delta);
+  updateItem(id, { seenCount: next });
+  renderSeenCount(findItem(id));
+}
+
+function renderSeenCount(it) {
+  const label = qs("media-edit-seen-count");
+  if (!label) return;
+  label.textContent = `Visto: ${Math.max(0, Number(it?.seenCount) || 0)}`;
+}
+
 function ensureEditModal() {
   if (editModal) return editModal;
 
@@ -3049,6 +3243,16 @@ function ensureEditModal() {
               <input id="media-edit-episode" class="media-input" type="number" inputmode="numeric" />
             </label>
           </div>
+          <div class="media-modal-grid">
+            <label class="media-modal-field">
+              <span>Marcador</span>
+              <input id="media-edit-timecode" class="media-input" placeholder="HH:MM:SS o MM:SS" autocomplete="off" />
+            </label>
+            <label class="media-modal-field" id="media-edit-progress-episode-wrap">
+              <span>Episodio (SxxEyy)</span>
+              <input id="media-edit-progress-episode" class="media-input" placeholder="S01E01" autocomplete="off" />
+            </label>
+          </div>
         </section>
 
         <section class="media-modal-section">
@@ -3080,7 +3284,13 @@ function ensureEditModal() {
 
           <div class="media-watch-row">
             <button class="btn ghost btn-compact" id="media-edit-watchtoday" type="button">Visto hoy</button>
+            <button class="btn ghost btn-compact" id="media-edit-finished" type="button">Marcar terminado</button>
             <div class="media-watch-meta" id="media-edit-watch-meta">—</div>
+          </div>
+          <div class="media-watch-row">
+            <div class="media-watch-meta" id="media-edit-seen-count">Visto: 0</div>
+            <button class="btn ghost btn-compact" id="media-edit-seen-dec" type="button">−</button>
+            <button class="btn ghost btn-compact" id="media-edit-seen-inc" type="button">+</button>
           </div>
         </section>
       </div>
@@ -3195,6 +3405,11 @@ function ensureEditModal() {
     updateChipPreview(qs("media-edit-cast"), qs("media-edit-cast-preview"));
   });
 
+  ["#media-edit-timecode", "#media-edit-progress-episode", "#media-edit-season", "#media-edit-episode"].forEach((sel) => {
+    editModal.querySelector(sel)?.addEventListener("input", () => scheduleProgressSave());
+    editModal.querySelector(sel)?.addEventListener("change", () => scheduleProgressSave());
+  });
+
   editModal.querySelector("#media-edit-watchlist")?.addEventListener("change", () => {
     const id = editModal.dataset.id;
     const it = findItem(id);
@@ -3212,6 +3427,28 @@ function ensureEditModal() {
     const updated = findItem(id);
     updateEditWatchMeta(updated);
   });
+
+  editModal.querySelector("#media-edit-finished")?.addEventListener("click", async () => {
+    const id = editModal.dataset.id;
+    const it = findItem(id);
+    if (!it) return;
+    const durationSeconds = Number(it?.durationSeconds) || Number(it?.runtimeSeconds) || 0;
+    if (durationSeconds > 0) {
+      const progressPatch = {
+        timecode: secondsToTimecode(durationSeconds),
+        updatedAt: nowTs(),
+        ...((it.type === "series" || it.type === "anime") ? {
+          episode: normalizeEpisodeCode(qs("media-edit-progress-episode")?.value, it.currentSeason || 1, it.currentEpisode || 1)
+        } : {})
+      };
+      updateItem(id, { progress: progressPatch });
+      if (qs("media-edit-timecode")) qs("media-edit-timecode").value = progressPatch.timecode;
+    }
+    await adjustSeenCountFromModal(1);
+  });
+
+  editModal.querySelector("#media-edit-seen-inc")?.addEventListener("click", () => adjustSeenCountFromModal(1));
+  editModal.querySelector("#media-edit-seen-dec")?.addEventListener("click", () => adjustSeenCountFromModal(-1));
 
   // delete
   editModal.querySelector("[data-action='delete']")?.addEventListener("click", () => {
@@ -3251,6 +3488,8 @@ function ensureEditModal() {
     const season = Math.max(1, Number(qs("media-edit-season")?.value) || 1);
     const episode = Math.max(1, Number(qs("media-edit-episode")?.value) || 1);
     const seasons = (type === "series" || type === "anime") ? editAutofillSeasons : [];
+
+    saveProgressFromModal({ force: true });
 
     updateItem(id, {
       title,
@@ -3306,11 +3545,10 @@ function setEditRating(n) {
 function syncEditSeasonEp() {
   const t = qs("media-edit-type")?.value || "movie";
   const wrap = qs("media-edit-seasonep");
-  if (!wrap) return;
+  const epWrap = qs("media-edit-progress-episode-wrap");
   const show = (t === "series" || t === "anime");
-  wrap.style.display = show ? "" : "none";
-  const section = qs("media-edit-progress-section");
-  if (section) section.style.display = show ? "" : "none";
+  if (wrap) wrap.style.display = show ? "" : "none";
+  if (epWrap) epWrap.style.display = show ? "" : "none";
 }
 
 function openEditModal(id) {
@@ -3348,6 +3586,8 @@ function openEditModal(id) {
   qs("media-edit-season").placeholder = String(progress.season || 1);
   qs("media-edit-episode").value = String(progress.episode || 1);
   qs("media-edit-episode").placeholder = String(progress.episode || 1);
+  qs("media-edit-timecode").value = it.progress?.timecode || "";
+  qs("media-edit-progress-episode").value = it.progress?.episode || normalizeEpisodeCode("", progress.season || 1, progress.episode || 1);
   editAutofillSeasons = normalizeSeasons(it.seasons);
   editAutofillMeta = {
     tmdbId: Number(it.tmdbId) || 0,
@@ -3361,6 +3601,7 @@ function openEditModal(id) {
   updateEditAutofillButton?.();
 
   updateEditWatchMeta(it);
+  renderSeenCount(it);
 
   syncEditSeasonEp();
 
@@ -3369,6 +3610,11 @@ function openEditModal(id) {
 
 function hideEditModal() {
   if (!editModal) return;
+  if (editProgressDebounceTimer) {
+    clearTimeout(editProgressDebounceTimer);
+    editProgressDebounceTimer = 0;
+  }
+  saveProgressFromModal({ force: true });
   editModal.classList.add("hidden");
   editModal.dataset.id = "";
 }
@@ -4555,6 +4801,7 @@ function initViewDefaults() {
 }
 
 function init() {
+  loadFilterPrefs();
   if (!bindDom()) return;
 
   loadCache();

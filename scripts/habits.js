@@ -3600,6 +3600,7 @@ const $habitSessionDetailEmoji = document.getElementById("habit-session-detail-e
 const $habitSessionDetailTitle = document.getElementById("habit-session-detail-title");
 const $habitSessionDetailTimer = document.getElementById("habit-session-detail-timer");
 const $habitSessionDetailStop = document.getElementById("habit-session-detail-stop");
+const $habitSessionDetailCancel = document.getElementById("habit-session-detail-cancel");
 const $habitSessionDetailPause = document.getElementById("habit-session-detail-pause");
 const $habitSessionDetailMinus = document.getElementById("habit-session-detail-minus");
 const $habitSessionDetailPlus = document.getElementById("habit-session-detail-plus");
@@ -10102,6 +10103,31 @@ function stopSession(assignHabitId = null, silent = false) {
   openSessionModal();
 }
 
+function cancelRunningSession({ requireConfirm = true } = {}) {
+  if (!runningSession) return false;
+  // VOXEL: confirmación explícita para evitar cancelar la sesión activa por misclick.
+  if (requireConfirm) {
+    const ok = window.confirm("¿Cancelar esta sesión activa? Se perderá el tiempo en curso y no se registrará.");
+    if (!ok) return false;
+  }
+
+  // VOXEL: limpiar sesión activa sin registrar tiempo ni crear una sesión final.
+  runningSession = null;
+  pendingSessionDuration = 0;
+  closeSessionDetailOverlay();
+  closeSessionModal?.();
+  saveRunningSession();
+  if (sessionInterval) {
+    clearInterval(sessionInterval);
+    sessionInterval = null;
+  }
+  updateSessionUI();
+  updateCompareLiveInterval();
+  scheduleCompareRefresh("session:cancel");
+  showHabitToast("Sesión cancelada");
+  return true;
+}
+
 function ensureSessionOverlayInBody() {
   if ($habitOverlay && $habitOverlay.parentElement !== document.body) {
     document.body.appendChild($habitOverlay);
@@ -10204,7 +10230,6 @@ function renderSessionRanking() {
 
 function updateSessionUI() {
   const isRunning = !!runningSession;
-  const habitsVisible = document.getElementById("view-habits")?.classList.contains("view-active");
   if (isRunning) {
     const elapsed = getRunningElapsedSec(runningSession);
     const { name, emoji, color } = getSessionHabitMeta(runningSession);
@@ -10221,7 +10246,8 @@ function updateSessionUI() {
     renderSessionRanking();
   }
   if (!isRunning) closeSessionDetailOverlay();
-  $habitOverlay.classList.toggle("hidden", !isRunning || !habitsVisible);
+  // VOXEL: SessionBar global (pill flotante) visible en cualquier pestaña cuando hay sesión activa.
+  $habitOverlay.classList.toggle("hidden", !isRunning);
   $habitFab.textContent = isRunning ? "⏹ Parar sesión" : "▶︎ Empezar sesión";
   updateScheduleLiveInterval();
 }
@@ -11192,6 +11218,8 @@ function bindEvents() {
   });
   $habitOverlayStop.addEventListener("click", stopSession);
   $habitSessionDetailStop?.addEventListener("click", stopSession);
+  // VOXEL: botón para cancelar la sesión activa sin registrarla.
+  $habitSessionDetailCancel?.addEventListener("click", () => cancelRunningSession({ requireConfirm: true }));
   $habitSessionDetailClose?.addEventListener("click", closeSessionDetailOverlay);
   $habitSessionDetailPause?.addEventListener("click", togglePauseRunningSession);
   $habitSessionDetailPlus?.addEventListener("click", () => adjustRunningSessionByMinutes(1));

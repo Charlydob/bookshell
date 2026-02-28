@@ -1465,6 +1465,9 @@ small.finAgg__totals-small {
 .finFood__results{
   display:grid;
   gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .finFood__draft{

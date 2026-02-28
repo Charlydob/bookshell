@@ -2035,6 +2035,8 @@ function renderModal() {
   const defaultFoodMealType = state.balanceFormState.foodMealType || '';
   const defaultFoodCuisine = state.balanceFormState.foodCuisine || '';
   const defaultFoodPlace = state.balanceFormState.foodPlace || '';
+  const defaultFoodExtrasOpen = !!state.balanceFormState.foodExtrasOpen;
+  const defaultFoodResultsScrollTop = Number(state.balanceFormState.foodResultsScrollTop || 0);
   const defaultFrom = txEdit?.fromAccountId || state.balanceFormState.fromAccountId || defaultAccountId;
   const defaultTo = txEdit?.toAccountId || state.balanceFormState.toAccountId || accounts[1]?.id || accounts[0]?.id || '';
   const accountOptions = accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
@@ -2121,7 +2123,7 @@ function renderModal() {
       </div>
 
 
-<details class="fm-details fm-details--extras fin-move-extras" data-section="food-extras">
+<details class="fm-details fm-details--extras fin-move-extras" data-section="food-extras" ${defaultFoodExtrasOpen ? 'open' : ''}>
 <summary class="fm-details__summary">
 <span class="fm-details__title">Extras</span>
 <span class="fm-details__hint">Opcional</span>
@@ -2217,6 +2219,17 @@ if (form) {
     if (refs.mealType) refs.mealType.value = defaultFoodMealType;
     if (refs.cuisine) refs.cuisine.value = defaultFoodCuisine;
     if (refs.place) refs.place.value = defaultFoodPlace;
+  }
+  const foodDetails = form.querySelector('[data-section="food-extras"]');
+  foodDetails?.addEventListener('toggle', () => {
+    state.balanceFormState = { ...state.balanceFormState, foodExtrasOpen: !!foodDetails.open };
+  });
+  const refs = getFoodFormRefs(form);
+  if (refs.itemResults) {
+    refs.itemResults.scrollTop = Number.isFinite(defaultFoodResultsScrollTop) ? defaultFoodResultsScrollTop : 0;
+    refs.itemResults.addEventListener('scroll', () => {
+      state.balanceFormState = { ...state.balanceFormState, foodResultsScrollTop: refs.itemResults.scrollTop };
+    });
   }
 }
   return;
@@ -2370,6 +2383,23 @@ function clearFoodFormState(form) {
   if (refs.itemResults) refs.itemResults.innerHTML = '';
 }
 
+function keepFoodExtrasOpen(form) {
+  const details = form?.querySelector('[data-section="food-extras"]');
+  if (!details || details.hidden) return;
+  details.open = true;
+  state.balanceFormState = { ...state.balanceFormState, foodExtrasOpen: true };
+}
+
+function resetFoodSearchAndFilters(form) {
+  const refs = getFoodFormRefs(form);
+  if (refs.itemSearch) refs.itemSearch.value = '';
+  if (refs.itemValue) refs.itemValue.value = '';
+  if (refs.foodId) refs.foodId.value = '';
+  if (refs.mealType) refs.mealType.value = '';
+  if (refs.cuisine) refs.cuisine.value = '';
+  if (refs.place) refs.place.value = '';
+}
+
 function readFoodItemsFromForm(form) {
   const refs = getFoodFormRefs(form);
   try {
@@ -2400,6 +2430,7 @@ function recalcFoodAmount(form) {
 function renderFoodItemSearchResults(form) {
   const refs = getFoodFormRefs(form);
   if (!refs.itemResults) return;
+  const prevScrollTop = refs.itemResults.scrollTop;
   const query = normalizeFoodName(refs.itemSearch?.value || '').toLowerCase();
   const mealType = normalizeFoodName(refs.mealType?.value || '').toLowerCase();
   const place = normalizeFoodName(refs.place?.value || '').toLowerCase();
@@ -2418,6 +2449,9 @@ function renderFoodItemSearchResults(form) {
   const canCreate = query && !all.some((row) => row.name.toLowerCase() === query);
   if (canCreate) rows.push(`<button type="button" class="food-result food-result--create" data-food-item-create="${escapeHtml(refs.itemSearch?.value || '')}">Crear “${escapeHtml(refs.itemSearch?.value || '')}”</button>`);
   refs.itemResults.innerHTML = rows.join('') || '<small class="finance-empty">Sin resultados.</small>';
+  const maxScrollTop = Math.max((refs.itemResults.scrollHeight || 0) - (refs.itemResults.clientHeight || 0), 0);
+  refs.itemResults.scrollTop = Math.min(prevScrollTop, maxScrollTop);
+  state.balanceFormState = { ...state.balanceFormState, foodResultsScrollTop: refs.itemResults.scrollTop };
 }
 
 function refreshFoodTopItems(form) {
@@ -2499,10 +2533,12 @@ async function toggleFoodExtras(form) {
 
   if (!isFood) {
     foodBox.removeAttribute('open');
+    state.balanceFormState = { ...state.balanceFormState, foodExtrasOpen: false };
     return;
   }
   await ensureFoodCatalogLoaded();
   await syncFoodOptionsInForm(form);
+  if (state.balanceFormState.foodExtrasOpen) foodBox.open = true;
 }
 function persistBalanceFormState(form) {
   if (!form) return;
@@ -2520,7 +2556,9 @@ function persistBalanceFormState(form) {
     foodCuisine: String(fd.get('foodCuisine') || ''),
     foodPlace: String(fd.get('foodPlace') || ''),
     foodItem: String(fd.get('foodItem') || ''),
-    foodId: String(fd.get('foodId') || '')
+    foodId: String(fd.get('foodId') || ''),
+    foodExtrasOpen: !!form.querySelector('[data-section="food-extras"]')?.open,
+    foodResultsScrollTop: Number(form.querySelector('[data-food-item-results]')?.scrollTop || 0)
   };
 }
 
@@ -2721,6 +2759,9 @@ function bindEvents() {
       });
       writeFoodItemsToForm(form, items);
       recalcFoodAmount(form);
+      resetFoodSearchAndFilters(form);
+      keepFoodExtrasOpen(form);
+      renderFoodItemSearchResults(form);
       persistBalanceFormState(form);
       return;
     }
@@ -2961,7 +3002,15 @@ view.addEventListener('focusout', async (event) => {
       if (cuisine) await upsertFoodOption('cuisine', cuisine, false);
       if (place) await upsertFoodOption('place', place, false);
       financeDebug('food modal saved', { foodId: foodId || state.food.nameToId?.[name.toLowerCase()] || null, name });
-      state.balanceFormState = { ...state.balanceFormState, foodItem: name, foodId: state.food.nameToId?.[name.toLowerCase()] || foodId, foodMealType: mealType, foodCuisine: cuisine, foodPlace: place };
+      state.balanceFormState = {
+        ...state.balanceFormState,
+        foodItem: name,
+        foodId: state.food.nameToId?.[name.toLowerCase()] || foodId,
+        foodMealType: mealType,
+        foodCuisine: cuisine,
+        foodPlace: place,
+        foodExtrasOpen: true
+      };
       state.modal = { type: 'tx', txId: state.modal.txId || '' };
       triggerRender();
       return;

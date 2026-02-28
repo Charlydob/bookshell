@@ -306,6 +306,7 @@ function normalizeFoodEntityMap(map = {}) {
       healthy: normalizeFoodName(payload?.healthy || payload?.cuisine || ''),
       place: normalizeFoodName(payload?.place || payload?.foodPlace || ''),
       defaultPrice: Number(payload?.defaultPrice || 0),
+      priceHistory: normalizeFoodPriceHistory(payload?.priceHistory || {}),
       countUsed: Number(payload?.countUsed || payload?.count || 0),
       createdAt: Number(payload?.createdAt || 0) || nowTs(),
       updatedAt: Number(payload?.updatedAt || 0) || nowTs()
@@ -313,6 +314,42 @@ function normalizeFoodEntityMap(map = {}) {
     nameToId[safeName.toLowerCase()] = safeId;
   });
   return { out, nameToId };
+}
+
+function normalizeFoodPriceHistory(map = {}) {
+  return Object.entries(map || {}).reduce((acc, [entryId, entry]) => {
+    const safeId = String(entryId || '').trim();
+    const price = Number(entry?.price);
+    const ts = Number(entry?.ts || 0);
+    if (!safeId || !Number.isFinite(price) || !Number.isFinite(ts) || ts <= 0) return acc;
+    acc[safeId] = {
+      price,
+      ts,
+      source: String(entry?.source || '')
+    };
+    return acc;
+  }, {});
+}
+
+function foodPriceHistoryList(food = {}) {
+  return Object.values(food?.priceHistory || {})
+    .filter((row) => Number.isFinite(Number(row?.price)) && Number.isFinite(Number(row?.ts)))
+    .map((row) => ({ price: Number(row.price), ts: Number(row.ts), source: String(row.source || '') }))
+    .sort((a, b) => a.ts - b.ts);
+}
+
+async function recordFoodPricePoint(foodId, priceInput, source = 'expense') {
+  const safeFoodId = String(foodId || '').trim();
+  const price = Number(priceInput);
+  if (!safeFoodId || !Number.isFinite(price) || price <= 0) return;
+  const entryId = push(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory`)).key;
+  const payload = { price, ts: nowTs(), source: String(source || '') };
+  await safeFirebase(() => set(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${entryId}`), payload));
+  if (!state.food.itemsById?.[safeFoodId]) return;
+  state.food.itemsById[safeFoodId].priceHistory = {
+    ...(state.food.itemsById[safeFoodId].priceHistory || {}),
+    [entryId]: payload
+  };
 }
 function getFoodByName(name = '') {
   const safe = normalizeFoodName(name).toLowerCase();
@@ -596,6 +633,7 @@ function renderFoodExtrasSection() {
                     <span class="finFood__chipTxt">${escapeHtml(item.name)}</span>
                     <small class="finFood__chipCount">×${item.count}</small>
                   </button>
+                  <button type="button" class="finance-pill finance-pill--mini" data-food-item-info="${escapeHtml(item.id)}" title="Ficha del producto">ℹ️</button>
                   <button type="button" class="finance-pill finance-pill--mini" data-food-item-edit="${escapeHtml(item.id)}" title="Editar comida">✏️</button>
                 </div>
               `).join('') || `<small class="finance-empty">Sin habituales aún.</small>`
@@ -630,6 +668,43 @@ function renderFoodExtrasSection() {
       </section>
     </div>
   `;
+}
+
+function renderFoodPriceHistorySection(food = {}) {
+  const history = foodPriceHistoryList(food);
+  const chartPath = history.length ? linePath(history.map((row, index) => ({ value: row.price, index }))) : '';
+  return `
+    <section class="finFoodInfo">
+      <h4>Histórico de precios</h4>
+      ${history.length
+        ? `<div class="finFoodInfo__chartWrap"><svg viewBox="0 0 320 120" preserveAspectRatio="none" aria-label="Histórico de precios"><path d="${chartPath}" /></svg></div>`
+        : '<p class="finance-empty">Sin datos.</p>'}
+      <div class="finFoodInfo__actions">
+        <button type="button" class="finance-pill finance-pill--mini" data-food-history-register="${escapeHtml(food.id || '')}">+ registrar precio</button>
+      </div>
+      ${history.length
+        ? `<div class="finFoodInfo__list">${history.slice().reverse().slice(0, 12).map((row) => `<div class="finFoodInfo__row"><span>${new Date(row.ts).toLocaleDateString('es-ES')}</span><strong>${fmtCurrency(row.price)}</strong></div>`).join('')}</div>`
+        : ''}
+    </section>
+  `;
+}
+
+function renderFoodItemModalForm(editing, presetName, mode = 'edit') {
+  const isInfo = mode === 'info';
+  return `<form data-food-item-form>
+        <input type="hidden" name="foodId" value="${escapeHtml(editing?.id || '')}" />
+        <label>Nombre<input name="name" required value="${escapeHtml(presetName)}" /></label>
+        <label>Tipo<select name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
+        <input name="mealTypeNew" placeholder="Añadir nuevo tipo…" />
+        <label>Saludable<select name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.cuisine || editing?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
+        <input name="cuisineNew" placeholder="Añadir nuevo saludable…" />
+        <label>Dónde<select name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
+        <input name="placeNew" placeholder="Añadir nuevo dónde…" />
+        <label>Precio por defecto<input name="defaultPrice" type="number" step="0.01" min="0" value="${Number(editing?.defaultPrice || 0) || ''}" /></label>
+        <small>Puedes añadir valores nuevos de Tipo/Saludable/Dónde con el botón + en el formulario de movimiento.</small>
+        ${isInfo ? `<input type="hidden" name="saveMode" value="info" />${renderFoodPriceHistorySection(editing || {})}` : ''}
+        <button class="finance-pill" type="submit">${isInfo ? 'Guardar ficha' : 'Guardar comida'}</button>
+      </form>`;
 }
 
 function isoToDay(dateISO = '') { return String(dateISO).slice(0, 10); }
@@ -2335,20 +2410,10 @@ if (form) {
   if (state.modal.type === 'food-item') {
     const editing = state.modal.foodId ? (state.food.itemsById?.[state.modal.foodId] || null) : null;
     const presetName = normalizeFoodName(state.modal.foodName || editing?.name || '');
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${editing ? 'Editar comida' : 'Nueva comida'}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
-      <form data-food-item-form>
-        <input type="hidden" name="foodId" value="${escapeHtml(editing?.id || '')}" />
-        <label>Nombre<input name="name" required value="${escapeHtml(presetName)}" /></label>
-        <label>Tipo<select name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
-        <input name="mealTypeNew" placeholder="Añadir nuevo tipo…" />
-        <label>Saludable<select name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.cuisine || editing?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
-        <input name="cuisineNew" placeholder="Añadir nuevo saludable…" />
-        <label>Dónde<select name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
-        <input name="placeNew" placeholder="Añadir nuevo dónde…" />
-        <label>Precio por defecto<input name="defaultPrice" type="number" step="0.01" min="0" value="${Number(editing?.defaultPrice || 0) || ''}" /></label>
-        <small>Puedes añadir valores nuevos de Tipo/Saludable/Dónde con el botón + en el formulario de movimiento.</small>
-        <button class="finance-pill" type="submit">Guardar comida</button>
-      </form>
+    const mode = state.modal.mode || 'edit';
+    const title = mode === 'info' ? 'Ficha de producto' : (editing ? 'Editar comida' : 'Nueva comida');
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${title}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+      ${renderFoodItemModalForm(editing, presetName, mode)}
     </div>`;
     return;
   }
@@ -2390,14 +2455,19 @@ function keepFoodExtrasOpen(form) {
   state.balanceFormState = { ...state.balanceFormState, foodExtrasOpen: true };
 }
 
-function resetFoodSearchAndFilters(form) {
+function resetFoodEntryForm(form, { keepDropdownOpen = true } = {}) {
   const refs = getFoodFormRefs(form);
   if (refs.itemSearch) refs.itemSearch.value = '';
   if (refs.itemValue) refs.itemValue.value = '';
   if (refs.foodId) refs.foodId.value = '';
+  if (refs.itemPrice) refs.itemPrice.value = '';
   if (refs.mealType) refs.mealType.value = '';
   if (refs.cuisine) refs.cuisine.value = '';
   if (refs.place) refs.place.value = '';
+  if (!keepDropdownOpen) {
+    const details = form?.querySelector('[data-section="food-extras"]');
+    if (details) details.open = false;
+  }
 }
 
 function readFoodItemsFromForm(form) {
@@ -2445,7 +2515,7 @@ function renderFoodItemSearchResults(form) {
   });
   const source = (mealType || place || cuisine) ? filteredByMeta : all;
   const filtered = query ? source.filter((row) => row.name.toLowerCase().includes(query)) : source;
-  const rows = filtered.slice(0, 10).map((row) => `<div class="finFood__resultRow"><button type="button" class="food-result" data-food-item-select="${escapeHtml(row.id)}">${escapeHtml(row.name)} <small>×${row.count}</small></button><button type="button" class="finance-pill finance-pill--mini" data-food-item-edit="${escapeHtml(row.id)}">✏️</button></div>`);
+  const rows = filtered.slice(0, 10).map((row) => `<div class="finFood__resultRow"><button type="button" class="food-result" data-food-item-select="${escapeHtml(row.id)}">${escapeHtml(row.name)} <small>×${row.count}</small></button><button type="button" class="finance-pill finance-pill--mini" data-food-item-info="${escapeHtml(row.id)}" title="Ficha del producto">ℹ️</button><button type="button" class="finance-pill finance-pill--mini" data-food-item-edit="${escapeHtml(row.id)}">✏️</button></div>`);
   const canCreate = query && !all.some((row) => row.name.toLowerCase() === query);
   if (canCreate) rows.push(`<button type="button" class="food-result food-result--create" data-food-item-create="${escapeHtml(refs.itemSearch?.value || '')}">Crear “${escapeHtml(refs.itemSearch?.value || '')}”</button>`);
   refs.itemResults.innerHTML = rows.join('') || '<small class="finance-empty">Sin resultados.</small>';
@@ -2458,7 +2528,7 @@ function refreshFoodTopItems(form) {
   const host = form?.querySelector('[data-food-top]');
   if (!host) return;
   const topItems = topFoodItems(5);
-  host.innerHTML = topItems.map((item) => `<div class="finFood__resultRow"><button type="button" class="finance-chip" data-food-top-item="${escapeHtml(item.id)}">${escapeHtml(item.name)} <small>×${item.count}</small></button><button type="button" class="finance-pill finance-pill--mini" data-food-item-edit="${escapeHtml(item.id)}">✏️</button></div>`).join('') || '<small class="finance-empty">Sin habituales aún.</small>';
+  host.innerHTML = topItems.map((item) => `<div class="finFood__resultRow"><button type="button" class="finance-chip" data-food-top-item="${escapeHtml(item.id)}">${escapeHtml(item.name)} <small>×${item.count}</small></button><button type="button" class="finance-pill finance-pill--mini" data-food-item-info="${escapeHtml(item.id)}" title="Ficha del producto">ℹ️</button><button type="button" class="finance-pill finance-pill--mini" data-food-item-edit="${escapeHtml(item.id)}">✏️</button></div>`).join('') || '<small class="finance-empty">Sin habituales aún.</small>';
 }
 
 async function applyFoodItemPreset(form, foodIdOrName) {
@@ -2733,9 +2803,25 @@ function bindEvents() {
       triggerRender();
       return;
     }
+    const foodInfoId = target.closest('[data-food-item-info]')?.dataset.foodItemInfo;
+    if (foodInfoId) {
+      state.modal = { type: 'food-item', foodId: foodInfoId, mode: 'info', source: 'balance-form-info' };
+      triggerRender();
+      return;
+    }
     const editFoodId = target.closest('[data-food-item-edit]')?.dataset.foodItemEdit;
     if (editFoodId) {
       state.modal = { type: 'food-item', foodId: editFoodId, source: 'balance-form-edit' };
+      triggerRender();
+      return;
+    }
+    const registerFoodHistory = target.closest('[data-food-history-register]')?.dataset.foodHistoryRegister;
+    if (registerFoodHistory) {
+      const raw = window.prompt('Precio a registrar (€)');
+      const price = parseEuroNumber(raw);
+      if (!Number.isFinite(price) || price <= 0) { toast('Precio inválido'); return; }
+      await recordFoodPricePoint(registerFoodHistory, price, 'manual');
+      toast('Precio registrado');
       triggerRender();
       return;
     }
@@ -2759,7 +2845,7 @@ function bindEvents() {
       });
       writeFoodItemsToForm(form, items);
       recalcFoodAmount(form);
-      resetFoodSearchAndFilters(form);
+      resetFoodEntryForm(form, { keepDropdownOpen: true });
       keepFoodExtrasOpen(form);
       renderFoodItemSearchResults(form);
       persistBalanceFormState(form);
@@ -2997,7 +3083,12 @@ view.addEventListener('focusout', async (event) => {
       const cuisine = normalizeFoodName(String(form.get('cuisineNew') || form.get('cuisine') || ''));
       const place = normalizeFoodName(String(form.get('placeNew') || form.get('place') || ''));
       const defaultPrice = Number(form.get('defaultPrice') || 0);
-      await upsertFoodItem({ id: foodId, name, mealType, cuisine, healthy: cuisine, place, defaultPrice }, false);
+      const saveMode = String(form.get('saveMode') || '');
+      const prevFood = foodId ? (state.food.itemsById?.[foodId] || null) : null;
+      const savedFoodId = await upsertFoodItem({ id: foodId, name, mealType, cuisine, healthy: cuisine, place, defaultPrice }, false);
+      if (saveMode === 'info' && Number.isFinite(defaultPrice) && defaultPrice > 0 && Number(prevFood?.defaultPrice || 0) !== defaultPrice) {
+        await recordFoodPricePoint(savedFoodId, defaultPrice, 'manual');
+      }
       if (mealType) await upsertFoodOption('typeOfMeal', mealType, false);
       if (cuisine) await upsertFoodOption('cuisine', cuisine, false);
       if (place) await upsertFoodOption('place', place, false);
@@ -3005,7 +3096,7 @@ view.addEventListener('focusout', async (event) => {
       state.balanceFormState = {
         ...state.balanceFormState,
         foodItem: name,
-        foodId: state.food.nameToId?.[name.toLowerCase()] || foodId,
+        foodId: state.food.nameToId?.[name.toLowerCase()] || savedFoodId || foodId,
         foodMealType: mealType,
         foodCuisine: cuisine,
         foodPlace: place,
@@ -3163,6 +3254,7 @@ view.addEventListener('focusout', async (event) => {
             defaultPrice: Number(foodItem.price || amount)
           }, true, { lastCategory: category, lastAccountId: accountId, lastNote: note });
           foodItem.foodId = savedFoodId;
+          await recordFoodPricePoint(savedFoodId, Number(foodItem.price || amount), 'expense');
           financeDebug('transaction food usage saved', { txId: saveId, foodId: savedFoodId, name: foodItem.name });
           if (foodItem.mealType || mealType) await upsertFoodOption('typeOfMeal', foodItem.mealType || mealType, true);
           if (foodItem.cuisine || cuisine) await upsertFoodOption('cuisine', foodItem.cuisine || cuisine, true);

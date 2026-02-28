@@ -2115,9 +2115,17 @@ function extraerNotas(rawText) {
   }
 
   function openScriptView(videoId) {
-    if (!videoId) return;
+    if (!videoId) {
+      console.error('[VIDEOS] openScriptView sin videoId', { videoId });
+      return;
+    }
     if (!window.Quill) {
       console.error("Quill no cargado");
+      return;
+    }
+    const video = videos?.[videoId];
+    if (!video) {
+      console.error('[VIDEOS] openScriptView video no encontrado', { videoId, known: Object.keys(videos || {}).length });
       return;
     }
     initQuill();
@@ -2127,6 +2135,22 @@ function extraerNotas(rawText) {
     countWidgetExpandedUntil = 0;
     countWidgetMode = "normal";
     closeAnnotationPopup();
+    if (!video.script || typeof video.script !== 'object') {
+      const now = Date.now();
+      const emptyScript = {
+        content: { ops: [{ insert: '\n' }] },
+        scriptTextRaw: '',
+        wordCount: Number(video.scriptWords || 0) || 0,
+        annotationsMeta: {},
+        updatedAt: now,
+        createdAt: now
+      };
+      videos[videoId] = { ...video, script: emptyScript, updatedAt: now };
+      console.log('[VIDEOS] creando guion vacío', { videoId, path: `${VIDEOS_PATH}/${videoId}/script` });
+      void set(ref(db, `${VIDEOS_PATH}/${videoId}/script`), emptyScript).catch((err) => {
+        console.error('[VIDEOS] error creando guion vacío', { videoId, err });
+      });
+    }
     loadScriptIntoEditor(videoId);
     setActiveView("view-video-script");
     setVideoRailsActive(true);
@@ -3864,7 +3888,10 @@ function createVideoCard(id) {
   btnScript.textContent = "📖";
   btnScript.setAttribute("aria-label", "Abrir guion");
   btnScript.title = "Abrir guion";
-  btnScript.addEventListener("click", () => openScriptView(id));
+  btnScript.addEventListener("click", (event) => {
+    console.log('[VIDEOS] click abrir guion', { videoId: id, source: 'video-card', button: event.currentTarget?.textContent || '' });
+    openScriptView(id);
+  });
 
   const btnConvert = document.createElement("button");
   btnConvert.className = "btn";
@@ -4459,7 +4486,15 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
         btn.className = "btn";
         if (item.type === "record" || item.type === "script") {
           btn.textContent = "Abrir guion";
-          btn.addEventListener("click", () => openScriptView(item.videoId || item.id));
+          btn.addEventListener("click", (event) => {
+            const targetVideoId = item.videoId || item.id;
+            if (!targetVideoId) {
+              console.error('[VIDEOS] abrir guion sin id desde actividad', { item, clicked: event.currentTarget });
+              return;
+            }
+            console.log('[VIDEOS] click abrir guion', { videoId: targetVideoId, source: 'video-day' });
+            openScriptView(targetVideoId);
+          });
         } else if (item.type === "link") {
           btn.textContent = "Abrir recurso";
           btn.addEventListener("click", () => openLinksNewView({ id: item.id, ...(links[item.id] || {}) }));

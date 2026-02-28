@@ -1370,156 +1370,74 @@ small.finAgg__totals-small {
 }
 
 .finFood{
-  display: grid;
-  gap: 14px;
-}
-
-.finFood__head{
-  display:flex;
-  flex-direction:column;
-  gap:4px;
-}
-
-.finFood__title{
-  margin:0;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.finFood__hint{
-  margin:0;
-  font-size: 12px;
-  opacity: .6;
-}
-
-.finFood__quick{
   display:grid;
-  grid-template-columns: repeat(3, minmax(0,1fr));
-  gap: 10px;
+  gap:10px;
+  width:100%;
+  max-width:100%;
+  overflow-x:hidden;
 }
+
+.finFood__head{display:flex;flex-direction:column;gap:2px}
+.finFood__title{margin:0;font-size:14px;font-weight:700}
+.finFood__quick{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 
 .finFood__card{
   display:grid;
-  gap: 12px;
-  padding: 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.07);
-  background: rgba(255,255,255,.03);
+  gap:10px;
+  padding:10px;
+  border-radius:16px;
+  border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.04);
+  width:100%;
+  max-width:100%;
+  overflow-x:hidden;
 }
 
-.finFood__block{
-  display:grid;
-  gap: 8px;
-}
-
-.finFood__labelRow{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap: 10px;
-}
-
-.finFood__label{
-  font-size: 12px;
-  opacity: .7;
-  font-weight: 600;
-}
-
-.finFood__tag{
-  font-size: 11px;
-  opacity: .55;
-}
-
-.finFood__chips{
-  display:flex;
-  flex-wrap:wrap;
-  gap: 8px;
-}
-
-.finFood__chip{
-  display:inline-flex;
-  align-items:center;
-  gap: 8px;
-  border-radius: 999px;
-  padding: 6px 10px;
-  border: 1px solid rgba(255,255,255,.08);
-  background: rgba(255,255,255,.04);
-  color: inherit;
-}
-
-.finFood__chipCount{
-  opacity:.65;
-  font-size: 11px;
-}
+.finFood__block{display:grid;gap:8px;min-width:0}
+.finFood__labelRow{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.finFood__label{font-size:12px;opacity:.75;font-weight:600}
+.finFood__tag{font-size:11px;opacity:.55}
 
 .finFood__search,
 .finFood__price{
-  height: 40px;
-  border-radius: 12px;
-  padding: 0 12px;
-  border: 1px solid rgba(255,255,255,.08);
-  background: rgba(0,0,0,.18);
-  color: inherit;
+  height:42px;
+  border-radius:14px;
+  padding:0 12px;
+  border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.06);
+  color:inherit;
+  min-width:0;
 }
 
-.finFood__results{
+.finFood__results,
+.financeTab .food-list{
   display:grid;
-  gap: 6px;
-  max-height: 280px;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  gap:8px;
+  max-height:250px;
+  overflow-y:auto;
+  overflow-x:hidden;
+  -webkit-overflow-scrolling:touch;
+  width:100%;
+  max-width:100%;
 }
 
-.finFood__draft{
-  display:grid;
-  grid-template-columns: 1fr auto auto;
-  gap: 8px;
-  align-items:center;
-}
+.finFood__draft{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+.finFood__btn{min-height:48px}
+.finFood__btn--ghost{min-height:38px;opacity:.9}
+.finFood__selected{display:grid;gap:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,.06)}
 
-.finFood__btn--ghost{
-  opacity: .85;
-}
+.financeTab .food-extra-field{display:grid;gap:6px;min-width:0}
+.financeTab .food-extra-field .food-control{width:100%;min-width:0}
+.financeTab .foodX-mini{min-height:40px;height:40px;width:100%;border-radius:12px}
+.financeTab .busqueda-precio{display:grid;grid-template-columns:minmax(0,1fr) 112px;gap:8px;min-width:0}
 
-.finFood__selected{
-  display:grid;
-  gap: 8px;
-  padding-top: 6px;
-  border-top: 1px solid rgba(255,255,255,.06);
-}
-.financeTab .food-extra-row {
-    display: grid;
-    grid-template-columns: 90px;
-    gap: -19px;
-    margin: 0px;
-}
+.financeTab .finFood__selectedItem{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+.financeTab .finFood__selectedItem span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.financeTab .finance-pill.finance-pill--mini.finance-pill-borrar-comida{min-height:40px;padding:0 12px;border-radius:12px}
 
-.financeTab .finance-pill--mini {
-    font-size: 10px;
-    background-color: transparent;
-    border: 1px solid rgba(255,255,255,.1);
-    padding: 0px;
-    margin: 0px;
-    
-}
-
-.finFood__search{
-  background-color: transparent;
-}
-
-.busqueda-precio{
-  display: grid;
-  grid-template-columns: 150px 100px;
-  gap: 8px;
-  align-content: center;}
-
-.finance-pill.finance-pill--mini.finance-pill-borrar-comida {
-    font-size: 8px;
-    background-color: transparent;
-    border: 0px solid rgba(255, 255, 255, .1);
-    padding: 10px 30px;
-    margin: 0px;
-}
+.foodX-grid{width:100%;max-width:100%}
+.foodX-inline{width:100%;max-width:100%}
+.foodX-stack{display:grid;gap:10px}
 
 .seleccion-programacion{
   display: grid;
@@ -1578,9 +1496,13 @@ small.finAgg__totals-small {
   height: 120px;
 }
 .finFoodInfo__chartWrap path{
-  fill: none;
-  stroke: #8dd3ff;
-  stroke-width: 2;
+  fill:none;
+  stroke:#8dd3ff;
+  stroke-width:2;
+}
+.finFoodInfo__chartWrap circle{
+  fill:#8dd3ff;
+  opacity:.9;
 }
 .finFoodInfo__list{
   display: grid;
@@ -1600,17 +1522,21 @@ small.finAgg__totals-small {
 .financeTab .food-sheet-modal {
   max-width: 520px;
   width: calc(100vw - 24px);
-  max-height: min(92vh, 820px);
-  border-radius: 28px;
-  padding: 16px;
+  max-height: min(92vh, 860px);
+  border-radius: 24px;
+  padding: 10px 12px 14px;
   overflow: auto;
+  overflow-x: hidden;
 }
 
 .financeTab .food-sheet-header {
   position: sticky;
   top: 0;
   z-index: 2;
-  padding: 6px 0 12px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding: 4px 0 10px;
   backdrop-filter: blur(12px);
 }
 
@@ -1625,15 +1551,16 @@ small.finAgg__totals-small {
 
 .financeTab .food-sheet-form {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .financeTab .food-form-grid {
   display: grid;
-  grid-template-columns: 1fr;
   gap: 10px;
-  align-items: center;
 }
+
+.financeTab .food-form-row{display:grid;gap:6px}
+.financeTab .food-form-inline{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
 
 .financeTab .food-form-label {
   font-size: 12px;
@@ -1646,8 +1573,8 @@ small.finAgg__totals-small {
 .financeTab .food-sheet-form select,
 .financeTab .food-item .food-pill,
 .financeTab .food-iconbtn {
-  height: 44px;
-  min-height: 44px;
+  height: 42px;
+  min-height: 42px;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.06);
@@ -1673,8 +1600,8 @@ small.finAgg__totals-small {
 }
 
 .financeTab .food-mini-btn {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border-radius: 14px;
   display: grid;
   place-items: center;
@@ -1702,7 +1629,7 @@ small.finAgg__totals-small {
 }
 
 .financeTab .finFoodInfo__chartWrap {
-  min-height: 156px;
+  min-height: 160px;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1720,7 +1647,7 @@ small.finAgg__totals-small {
   border-radius: 999px;
   background: rgba(255, 255, 255, .08);
   color: var(--fin-text);
-  min-height: 36px;
+  min-height: 34px;
   padding: 0 12px;
 }
 
@@ -1743,13 +1670,15 @@ small.finAgg__totals-small {
 .financeTab .food-item {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
+  min-width:0;
 }
 
 .financeTab .food-pill {
   border-radius: 999px;
-  padding: 0 14px;
+  min-width:0;
+  padding: 0 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1770,11 +1699,11 @@ small.finAgg__totals-small {
 .financeTab .food-pill__actions {
   display: grid;
   grid-auto-flow: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .financeTab .food-iconbtn {
-  width: 44px;
+  width: 40px;
   padding: 0;
   display: grid;
   place-items: center;
@@ -1799,10 +1728,6 @@ small.finAgg__totals-small {
 }
 
 @media (min-width: 560px) {
-  .financeTab .food-form-grid {
-    grid-template-columns: 120px 1fr auto;
-    gap: 10px 12px;
-  }
   .financeTab .food-items-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

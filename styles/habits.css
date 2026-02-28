@@ -1628,17 +1628,51 @@ body.is-session-detail-open #app {
   font-weight: 800;
 }
 
-.habit-session-emoji {
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
-  display: grid;
-  padding: 0px;
-  font-size: 29px;
+.session-multi__pill-emoji {
+  display: inline-grid;
   place-items: center;
-  border: 0px solid rgba(255,255,255,0.2);
-  background: rgba(0, 0, 0, 0);
+  min-width: 24px;
+  font-size: 20px;
 }
+
+.habit-session-emoji {
+  overflow-x: auto;
+  max-width: 120px;
+  white-space: nowrap;
+  display: flex;
+  gap: 2px;
+}
+
+.habit-session-multi {
+  display: grid;
+  gap: 8px;
+}
+
+.session-multi__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(var(--hclr-rgb, 127, 93, 255), 0.2);
+  border-radius: 12px;
+  padding: 8px;
+}
+
+.session-multi__main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.session-multi__name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.session-multi__time { font-variant-numeric: tabular-nums; font-size: 13px; }
+.session-multi__actions { display: flex; gap: 6px; }
 
 .habit-session-detail {
   position: fixed;

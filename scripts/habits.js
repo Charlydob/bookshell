@@ -13,7 +13,8 @@ import {
   set,
   update,
   get,
-  runTransaction
+  runTransaction,
+  push
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { computeTimeByHabitDataset, debugComputeTimeByHabit, resolveFirstRecordTs } from "./time-by-habit.js";
 import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";
@@ -34,6 +35,7 @@ const db = getDatabase(app);
 
 // Rutas
 const HABITS_PATH = "habits";
+const HABIT_ACTIVE_SESSIONS_PATH = `${HABITS_PATH}/activeSessions`;
 const HABIT_CHECKS_PATH = "habitChecks";
 const HABIT_SESSIONS_PATH = "habitSessions";
 const HABIT_COUNTS_PATH = "habitCounts";
@@ -48,7 +50,7 @@ const HABIT_UI_QUICK_COUNTERS_PATH = `${HABIT_UI_PATH}/quickCounters`;
 
 // Storage keys
 const STORAGE_KEY = "bookshell-habits-cache";
-const RUNNING_KEY = "bookshell-habit-running-session";
+const SESSION_SELECTED_KEY = "bookshell-habit-selected-session";
 const LAST_HABIT_KEY = "bookshell-habits-last-used";
 const HEATMAP_YEAR_STORAGE = "bookshell-habits-heatmap-year";
 const HISTORY_RANGE_STORAGE = "bookshell-habits-history-range:v1";
@@ -91,7 +93,9 @@ let habitGroups = {}; // { groupId: { id, name, createdAt } }
 let habitPrefs = { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
 let habitUI = { quickCounters: [] };
 let activeTab = "today";
-let runningSession = null; // { startTs, targetHabitId, elapsedMs, isPaused, pausedAt }
+let runningSession = null; // Sesión principal (derivada de activeSessions)
+let activeSessions = {};
+let selectedSessionId = null;
 let sessionInterval = null;
 let sessionDetailOpen = false;
 let sessionLastRankKey = "";
@@ -2695,47 +2699,88 @@ async function loadScheduleFromRemote() {
     scheduleState = createDefaultHabitSchedule();
   }
 }
-function saveRunningSession() {
-  if (!runningSession) {
-    localStorage.removeItem(RUNNING_KEY);
-    return;
-  }
+function loadSessionSelection() {
   try {
-    localStorage.setItem(RUNNING_KEY, JSON.stringify(runningSession));
-  } catch (err) {
-    console.warn("No se pudo guardar sesión activa", err);
+    selectedSessionId = localStorage.getItem(SESSION_SELECTED_KEY) || null;
+  } catch (_) {
+    selectedSessionId = null;
   }
 }
 
-function loadRunningSession() {
+function persistSessionSelection(sessionId = null) {
+  selectedSessionId = sessionId || null;
   try {
-    const raw = localStorage.getItem(RUNNING_KEY);
-    if (raw) {
-      runningSession = normalizeRunningSession(JSON.parse(raw));
-    }
-  } catch (err) {
-    console.warn("No se pudo leer sesión activa", err);
-  }
+    if (selectedSessionId) localStorage.setItem(SESSION_SELECTED_KEY, selectedSessionId);
+    else localStorage.removeItem(SESSION_SELECTED_KEY);
+  } catch (_) {}
 }
 
 function normalizeRunningSession(raw) {
-  if (!raw || !raw.startTs) return null;
+  if (!raw || !raw.sessionId) return null;
+  const status = raw.status === "paused" ? "paused" : "running";
+  const startedAt = Number(raw.startedAt) || Date.now();
+  const createdAt = Number(raw.createdAt) || startedAt;
   return {
-    startTs: Number(raw.startTs) || Date.now(),
-    sessionStartTs: Number(raw.sessionStartTs) || Number(raw.startTs) || Date.now(),
-    targetHabitId: raw.targetHabitId || null,
-    meta: raw.meta && typeof raw.meta === "object" ? { ...raw.meta } : null,
-    elapsedMs: Math.max(0, Number(raw.elapsedMs) || 0),
-    isPaused: !!raw.isPaused,
-    pausedAt: Number(raw.pausedAt) || null
+    sessionId: raw.sessionId,
+    habitId: raw.habitId || null,
+    targetHabitId: raw.habitId || null,
+    startedAt,
+    startTs: startedAt,
+    firstStartedAt: Number(raw.firstStartedAt) || createdAt,
+    createdAt,
+    updatedAt: Number(raw.updatedAt) || createdAt,
+    status,
+    isPaused: status === "paused",
+    pausedAt: Number(raw.pausedAt) || null,
+    accMs: Math.max(0, Number(raw.accMs) || 0),
+    elapsedMs: Math.max(0, Number(raw.accMs) || 0),
+    emoji: raw.emoji || "•",
+    meta: raw.meta && typeof raw.meta === "object" ? { ...raw.meta } : null
   };
+}
+
+function normalizeActiveSessionsStore(raw) {
+  const next = {};
+  Object.entries(raw || {}).forEach(([sessionId, value]) => {
+    const session = normalizeRunningSession({ ...(value || {}), sessionId });
+    if (session) next[sessionId] = session;
+  });
+  return next;
+}
+
+function getActiveSessionsList() {
+  return Object.values(activeSessions || {}).sort((a, b) => {
+    const aTs = Number(a?.firstStartedAt || a?.createdAt || a?.startedAt || 0);
+    const bTs = Number(b?.firstStartedAt || b?.createdAt || b?.startedAt || 0);
+    if (aTs !== bTs) return aTs - bTs;
+    return String(a?.sessionId || "").localeCompare(String(b?.sessionId || ""));
+  });
+}
+
+function pickPrimarySessionId() {
+  const list = getActiveSessionsList();
+  if (!list.length) return null;
+  if (selectedSessionId && activeSessions?.[selectedSessionId]) return selectedSessionId;
+  return list[0]?.sessionId || null;
+}
+
+function syncPrimaryRunningSession() {
+  const primaryId = pickPrimarySessionId();
+  if (!primaryId) {
+    runningSession = null;
+    persistSessionSelection(null);
+    return;
+  }
+  if (selectedSessionId !== primaryId) persistSessionSelection(primaryId);
+  runningSession = activeSessions?.[primaryId] || null;
 }
 
 function getRunningElapsedMs(session = runningSession, nowTs = Date.now()) {
   if (!session) return 0;
-  const base = Math.max(0, Number(session.elapsedMs) || 0);
-  if (session.isPaused) return base;
-  const startTs = Number(session.startTs) || nowTs;
+  const base = Math.max(0, Number(session.accMs ?? session.elapsedMs) || 0);
+  const paused = session.status === "paused" || session.isPaused;
+  if (paused) return base;
+  const startTs = Number(session.startedAt ?? session.startTs) || nowTs;
   return Math.max(0, base + (nowTs - startTs));
 }
 
@@ -2744,10 +2789,11 @@ function getRunningElapsedSec(session = runningSession, nowTs = Date.now()) {
 }
 
 function getSessionHabitMeta(session = runningSession) {
-  const habit = session?.targetHabitId ? habits?.[session.targetHabitId] : null;
+  const habitId = session?.habitId || session?.targetHabitId || null;
+  const habit = habitId ? habits?.[habitId] : null;
   const fallbackName = session?.meta?.habitName || "Sesión";
   const name = habit?.name || fallbackName;
-  const emoji = habit?.emoji || session?.meta?.habitEmoji || (name ? String(name).trim().charAt(0) : "•") || "•";
+  const emoji = habit?.emoji || session?.emoji || session?.meta?.habitEmoji || (name ? String(name).trim().charAt(0) : "•") || "•";
   const color = habit?.color || session?.meta?.habitColor || DEFAULT_COLOR;
   return { habit, name, emoji, color };
 }
@@ -9536,10 +9582,6 @@ function renderQuickSessions() {
       pill.appendChild(label);
       pill.appendChild(remove);
       pill.addEventListener("click", () => {
-        if (runningSession) {
-          showHabitToast("Ya hay una sesión en curso");
-          return;
-        }
         startSession(habit.id);
         showHabitToast(`▶︎ Sesión: ${habit.name || "—"}`);
       });
@@ -9978,27 +10020,30 @@ function deleteHabit() {
 }
 
 // Cronómetro
-function startSession(habitId = null, meta = null) {
-  if (runningSession) return;
-
+async function startSession(habitId = null, meta = null) {
   const targetHabitId = (typeof habitId === "string" && habits?.[habitId] && !habits[habitId]?.archived)
     ? habitId
     : null;
-
-  runningSession = normalizeRunningSession({
-    startTs: Date.now(),
-    sessionStartTs: Date.now(),
-    targetHabitId,
-    meta: meta && typeof meta === "object" ? { ...meta } : null,
-    elapsedMs: 0,
-    isPaused: false,
-    pausedAt: null
-  });
-  saveRunningSession();
+  const now = Date.now();
+  const sessionRef = push(ref(db, HABIT_ACTIVE_SESSIONS_PATH));
+  const payload = {
+    habitId: targetHabitId,
+    startedAt: now,
+    firstStartedAt: now,
+    createdAt: now,
+    updatedAt: now,
+    status: "running",
+    pausedAt: null,
+    accMs: 0,
+    emoji: (targetHabitId && habits?.[targetHabitId]?.emoji) || meta?.habitEmoji || "•",
+    deviceId: HABIT_UI_UID,
+    meta: meta && typeof meta === "object" ? { ...meta } : null
+  };
+  await set(sessionRef, payload);
+  persistSessionSelection(sessionRef.key);
   updateSessionUI();
   updateCompareLiveInterval();
   scheduleCompareRefresh("session:start", { targetHabitId: targetHabitId || null });
-  sessionInterval = setInterval(updateSessionUI, 500);
 }
 
 function getRunningHabitSession() {
@@ -10013,64 +10058,72 @@ function stopHabitSessionUniversal() {
   return stopSession(null, true);
 }
 
-function pauseRunningSession() {
-  if (!runningSession || runningSession.isPaused) return;
-  runningSession.elapsedMs = getRunningElapsedMs(runningSession);
-  runningSession.isPaused = true;
-  runningSession.pausedAt = Date.now();
-  saveRunningSession();
+async function patchSession(sessionId, patch = {}) {
+  if (!sessionId) return;
+  await update(ref(db, `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`), { ...patch, updatedAt: Date.now() });
 }
 
-function resumeRunningSession() {
-  if (!runningSession || !runningSession.isPaused) return;
-  runningSession.startTs = Date.now();
-  runningSession.isPaused = false;
-  runningSession.pausedAt = null;
-  saveRunningSession();
+async function pauseRunningSession(sessionId = runningSession?.sessionId) {
+  const session = sessionId ? activeSessions?.[sessionId] : null;
+  if (!session || session.status === "paused") return;
+  const now = Date.now();
+  await patchSession(sessionId, {
+    accMs: getRunningElapsedMs(session, now),
+    status: "paused",
+    pausedAt: now
+  });
 }
 
-function togglePauseRunningSession() {
-  if (!runningSession) return;
-  if (runningSession.isPaused) resumeRunningSession();
-  else pauseRunningSession();
+async function resumeRunningSession(sessionId = runningSession?.sessionId) {
+  const session = sessionId ? activeSessions?.[sessionId] : null;
+  if (!session || session.status !== "paused") return;
+  const now = Date.now();
+  await patchSession(sessionId, {
+    startedAt: now,
+    status: "running",
+    pausedAt: null
+  });
+}
+
+async function togglePauseRunningSession(sessionId = runningSession?.sessionId) {
+  const session = sessionId ? activeSessions?.[sessionId] : null;
+  if (!session) return;
+  if (session.status === "paused") await resumeRunningSession(sessionId);
+  else await pauseRunningSession(sessionId);
   updateSessionUI();
 }
 
-function adjustRunningSessionByMinutes(deltaMin = 0) {
-  if (!runningSession) return;
+async function adjustRunningSessionByMinutes(deltaMin = 0, sessionId = runningSession?.sessionId) {
+  const session = sessionId ? activeSessions?.[sessionId] : null;
+  if (!session) return;
   const deltaMs = Math.round((Number(deltaMin) || 0) * 60000);
-  const currentMs = getRunningElapsedMs(runningSession);
-  const nextMs = Math.max(0, currentMs + deltaMs);
-  // Ajuste +/-1min seguro: persistimos offset sin romper el conteo en vivo.
-  runningSession.elapsedMs = nextMs;
-  runningSession.startTs = Date.now();
-  if (runningSession.isPaused) runningSession.pausedAt = Date.now();
-  saveRunningSession();
+  const nextMs = Math.max(0, getRunningElapsedMs(session) + deltaMs);
+  const patch = { accMs: nextMs };
+  if (session.status === "running") patch.startedAt = Date.now();
+  await patchSession(sessionId, patch);
   updateSessionUI();
 }
 
-function stopSession(assignHabitId = null, silent = false) {
+async function stopSession(assignHabitId = null, silent = false, sessionId = runningSession?.sessionId) {
   if (assignHabitId && typeof assignHabitId === "object" && assignHabitId.type) {
     assignHabitId = null;
     silent = false;
   }
 
-  if (!runningSession) return;
+  const session = sessionId ? activeSessions?.[sessionId] : null;
+  if (!session) return;
 
-  const duration = Math.max(1, getRunningElapsedSec(runningSession));
+  const endTs = Date.now();
+  const duration = Math.max(1, Math.round(getRunningElapsedMs(session, endTs) / 1000));
   const target = (typeof assignHabitId === "string" && assignHabitId)
     ? assignHabitId
-    : (runningSession?.targetHabitId || null);
-
-  const startTs = Number(runningSession.sessionStartTs || runningSession.startTs);
-  const endTs = Date.now();
+    : (session?.habitId || session?.targetHabitId || null);
+  const startTs = Number(session.firstStartedAt || session.createdAt || session.startedAt || endTs);
   const dateKey = dateKeyLocal(new Date(startTs));
 
-  pendingSessionDuration = duration;
-  runningSession = null;
-  closeSessionDetailOverlay();
-  saveRunningSession();
-  if (sessionInterval) clearInterval(sessionInterval);
+  await set(ref(db, `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`), null);
+  if (runningSession?.sessionId === sessionId) closeSessionDetailOverlay();
+
   updateSessionUI();
   updateCompareLiveInterval();
   scheduleCompareRefresh("session:stop", { dateKey, durationSec: duration });
@@ -10100,27 +10153,22 @@ function stopSession(assignHabitId = null, silent = false) {
     return;
   }
 
+  pendingSessionDuration = duration;
   openSessionModal();
 }
 
-function cancelRunningSession({ requireConfirm = true } = {}) {
-  if (!runningSession) return false;
-  // VOXEL: confirmación explícita para evitar cancelar la sesión activa por misclick.
+async function cancelRunningSession({ requireConfirm = true, sessionId = runningSession?.sessionId } = {}) {
+  const session = sessionId ? activeSessions?.[sessionId] : null;
+  if (!session) return false;
   if (requireConfirm) {
     const ok = window.confirm("¿Cancelar esta sesión activa? Se perderá el tiempo en curso y no se registrará.");
     if (!ok) return false;
   }
 
-  // VOXEL: limpiar sesión activa sin registrar tiempo ni crear una sesión final.
-  runningSession = null;
+  await set(ref(db, `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`), null);
   pendingSessionDuration = 0;
-  closeSessionDetailOverlay();
+  if (runningSession?.sessionId === sessionId) closeSessionDetailOverlay();
   closeSessionModal?.();
-  saveRunningSession();
-  if (sessionInterval) {
-    clearInterval(sessionInterval);
-    sessionInterval = null;
-  }
   updateSessionUI();
   updateCompareLiveInterval();
   scheduleCompareRefresh("session:cancel");
@@ -10228,27 +10276,68 @@ function renderSessionRanking() {
   renderSessionStats(ranking);
 }
 
+function renderSessionDetailList() {
+  const listHost = document.getElementById("habit-session-detail-list");
+  if (!listHost) return;
+  const sessions = getActiveSessionsList();
+  const primaryId = runningSession?.sessionId || null;
+  const others = sessions.filter((item) => item.sessionId !== primaryId);
+  if (!others.length) {
+    listHost.innerHTML = "";
+    listHost.style.display = "none";
+    return;
+  }
+  listHost.style.display = "grid";
+  listHost.innerHTML = others.map((session) => {
+    const meta = getSessionHabitMeta(session);
+    return `<article class="session-multi__item" data-session-id="${session.sessionId}">
+      <button class="session-multi__main" type="button" data-session-select="${session.sessionId}">
+        <span class="session-multi__emoji">${meta.emoji || "•"}</span>
+        <span class="session-multi__name">${meta.name || "Sesión"}</span>
+        <span class="session-multi__time">${formatTimer(getRunningElapsedSec(session))}</span>
+      </button>
+      <div class="session-multi__actions">
+        <button class="btn danger btn-compact" type="button" data-session-stop="${session.sessionId}">Parar</button>
+        <button class="btn ghost btn-compact" type="button" data-session-cancel="${session.sessionId}">Cancelar</button>
+      </div>
+    </article>`;
+  }).join("");
+}
+
 function updateSessionUI() {
-  const isRunning = !!runningSession;
+  syncPrimaryRunningSession();
+  const sessions = getActiveSessionsList();
+  const isRunning = sessions.length > 0;
   if (isRunning) {
     const elapsed = getRunningElapsedSec(runningSession);
     const { name, emoji, color } = getSessionHabitMeta(runningSession);
-    $habitOverlayTime.textContent = formatTimer(elapsed);
+    const globalStart = Math.min(...sessions.map((item) => Number(item.firstStartedAt || item.createdAt || item.startedAt || Date.now())));
+    const globalElapsed = Math.max(0, Math.round((Date.now() - globalStart) / 1000));
+    $habitOverlayTime.textContent = formatTimer(globalElapsed);
     if ($habitSessionDetailTimer) $habitSessionDetailTimer.textContent = formatTimer(elapsed);
-    if ($habitOverlayEmoji) $habitOverlayEmoji.textContent = emoji || "•";
+    if ($habitOverlayEmoji) {
+      $habitOverlayEmoji.innerHTML = sessions.map((item) => {
+        const itemMeta = getSessionHabitMeta(item);
+        return `<span class="session-multi__pill-emoji">${itemMeta.emoji || "•"}</span>`;
+      }).join("");
+    }
     if ($habitSessionDetailEmoji) $habitSessionDetailEmoji.textContent = emoji || "•";
     if ($habitSessionDetailTitle) $habitSessionDetailTitle.textContent = name || "Sesión";
-    if ($habitSessionDetailPause) $habitSessionDetailPause.textContent = runningSession.isPaused ? "▶ Continuar" : "⏸ Pausa";
-    // Tinte por color del hábito activo (pill + overlay) usando --hclr-rgb.
+    if ($habitSessionDetailPause) $habitSessionDetailPause.textContent = runningSession?.status === "paused" ? "▶ Continuar" : "⏸ Pausa";
     const rgb = hexToRgbString(color || DEFAULT_COLOR);
     $habitOverlayPill?.style.setProperty("--hclr-rgb", rgb);
     $habitSessionDetail?.style.setProperty("--hclr-rgb", rgb);
     renderSessionRanking();
+    renderSessionDetailList();
   }
-  if (!isRunning) closeSessionDetailOverlay();
-  // VOXEL: SessionBar global (pill flotante) visible en cualquier pestaña cuando hay sesión activa.
+  if (!isRunning) {
+    renderSessionDetailList();
+    closeSessionDetailOverlay();
+  }
   $habitOverlay.classList.toggle("hidden", !isRunning);
   $habitFab.textContent = isRunning ? "⏹ Parar sesión" : "▶︎ Empezar sesión";
+  if (sessionInterval) clearInterval(sessionInterval);
+  sessionInterval = isRunning ? setInterval(updateSessionUI, 500) : null;
   updateScheduleLiveInterval();
 }
 
@@ -11221,9 +11310,27 @@ function bindEvents() {
   // VOXEL: botón para cancelar la sesión activa sin registrarla.
   $habitSessionDetailCancel?.addEventListener("click", () => cancelRunningSession({ requireConfirm: true }));
   $habitSessionDetailClose?.addEventListener("click", closeSessionDetailOverlay);
-  $habitSessionDetailPause?.addEventListener("click", togglePauseRunningSession);
+  $habitSessionDetailPause?.addEventListener("click", () => togglePauseRunningSession());
   $habitSessionDetailPlus?.addEventListener("click", () => adjustRunningSessionByMinutes(1));
   $habitSessionDetailMinus?.addEventListener("click", () => adjustRunningSessionByMinutes(-1));
+  $habitSessionDetail?.addEventListener("click", (event) => {
+    const selectBtn = event.target?.closest?.("[data-session-select]");
+    if (selectBtn) {
+      const nextId = selectBtn.getAttribute("data-session-select") || null;
+      persistSessionSelection(nextId);
+      updateSessionUI();
+      return;
+    }
+    const stopBtn = event.target?.closest?.("[data-session-stop]");
+    if (stopBtn) {
+      stopSession(null, false, stopBtn.getAttribute("data-session-stop"));
+      return;
+    }
+    const cancelBtn = event.target?.closest?.("[data-session-cancel]");
+    if (cancelBtn) {
+      cancelRunningSession({ requireConfirm: true, sessionId: cancelBtn.getAttribute("data-session-cancel") });
+    }
+  });
   const swallowOverlayEvent = (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -11461,6 +11568,11 @@ function listenRemote() {
     try { window.__bookshellDashboard?.render?.(); } catch (_) {}
   });
 
+  onValue(ref(db, HABIT_ACTIVE_SESSIONS_PATH), (snap) => {
+    activeSessions = normalizeActiveSessionsStore(snap.val() || {});
+    syncPrimaryRunningSession();
+    rerender();
+  });
   onValue(ref(db, HABIT_SESSIONS_PATH), (snap) => {
     const raw = snap.val() || {};
     debugHabitsSync("onValue:habitSessions raw", raw);
@@ -11650,7 +11762,7 @@ window.__bookshellHabits = {
 };
 async function initHabits() {
   readCache();
-  loadRunningSession();
+  loadSessionSelection();
   loadHeatmapYear();
   loadHistoryRange();
   loadHabitCompareSettingsLocal();
@@ -11664,7 +11776,7 @@ async function initHabits() {
   renderHabits();
   maybeAutoCloseScheduleDay();
   scheduleAutoCloseInterval = window.setInterval(maybeAutoCloseScheduleDay, 600000);
-  if (runningSession) {
+  if (getActiveSessionsList().length) {
     sessionInterval = setInterval(updateSessionUI, 500);
   }
   window.addEventListener("resize", () => {

@@ -591,17 +591,16 @@ async function deleteManagedStatItem(kind, rawName) {
 function renderFoodOptionField(kind, label, selectName) {
   const options = foodOptionList(kind);
   return `
-  
-  <div class="food-extra-field" data-food-kind="${kind}">
-  
-  <label>${label}</label>
-  <div class="food-extra-row">
-  <select name="${selectName}" data-food-select="${kind}">
-  <option value="">Elegir</option>
-  
-  ${options.map((name) => 
-    `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}</select>
-    <button type="button" class="finance-pill finance-pill--mini" data-food-add="${kind}">+</button></div></div>`;
+    <div class="food-extra-field" data-food-kind="${kind}">
+      <label>${label}</label>
+      <div class="food-extra-row">
+        <select class="food-control" name="${selectName}" data-food-select="${kind}">
+          <option value="">Elegir</option>
+          ${options.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}
+        </select>
+        <button type="button" class="food-mini-btn" data-food-add="${kind}" aria-label="Añadir ${escapeHtml(label)}">+</button>
+      </div>
+    </div>`;
 }
 
 function renderFoodExtrasSection() {
@@ -625,16 +624,18 @@ function renderFoodExtrasSection() {
             <span class="finFood__tag">Habituales</span>
           </div>
 
-          <div class="finFood__chips" data-food-top>
+          <div class="food-list food-items-grid" data-food-top>
             ${
               topItems.map(item => `
-                <div class="finFood__resultRow">
-                  <button type="button" class="finFood__chip" data-food-top-item="${escapeHtml(item.id)}">
-                    <span class="finFood__chipTxt">${escapeHtml(item.name)}</span>
-                    <small class="finFood__chipCount">×${item.count}</small>
+                <div class="food-item">
+                  <button type="button" class="food-pill" data-food-top-item="${escapeHtml(item.id)}">
+                    <span class="food-pill__name">${escapeHtml(item.name)}</span>
+                    <small class="food-pill__count">×${item.count}</small>
                   </button>
-                  <button type="button" class="finance-pill finance-pill--mini" data-food-item-info="${escapeHtml(item.id)}" title="Ficha del producto">ℹ️</button>
-                  <button type="button" class="finance-pill finance-pill--mini" data-food-item-edit="${escapeHtml(item.id)}" title="Editar comida">✏️</button>
+                  <div class="food-pill__actions">
+                    <button type="button" class="food-iconbtn" data-food-item-info="${escapeHtml(item.id)}" title="Ficha del producto" aria-label="Ficha del producto">ℹ️</button>
+                    <button type="button" class="food-iconbtn" data-food-item-edit="${escapeHtml(item.id)}" title="Editar comida" aria-label="Editar comida">✏️</button>
+                  </div>
                 </div>
               `).join('') || `<small class="finance-empty">Sin habituales aún.</small>`
             }
@@ -678,9 +679,9 @@ function renderFoodPriceHistorySection(food = {}) {
       <h4>Histórico de precios</h4>
       ${history.length
         ? `<div class="finFoodInfo__chartWrap"><svg viewBox="0 0 320 120" preserveAspectRatio="none" aria-label="Histórico de precios"><path d="${chartPath}" /></svg></div>`
-        : '<p class="finance-empty">Sin datos.</p>'}
+        : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin datos</span></div>'}
       <div class="finFoodInfo__actions">
-        <button type="button" class="finance-pill finance-pill--mini" data-food-history-register="${escapeHtml(food.id || '')}">+ registrar precio</button>
+        <button type="button" class="food-history-btn" data-food-history-register="${escapeHtml(food.id || '')}">+ registrar precio</button>
       </div>
       ${history.length
         ? `<div class="finFoodInfo__list">${history.slice().reverse().slice(0, 12).map((row) => `<div class="finFoodInfo__row"><span>${new Date(row.ts).toLocaleDateString('es-ES')}</span><strong>${fmtCurrency(row.price)}</strong></div>`).join('')}</div>`
@@ -691,19 +692,32 @@ function renderFoodPriceHistorySection(food = {}) {
 
 function renderFoodItemModalForm(editing, presetName, mode = 'edit') {
   const isInfo = mode === 'info';
-  return `<form data-food-item-form>
+  return `<form class="food-sheet-form" data-food-item-form>
         <input type="hidden" name="foodId" value="${escapeHtml(editing?.id || '')}" />
-        <label>Nombre<input name="name" required value="${escapeHtml(presetName)}" /></label>
-        <label>Tipo<select name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
-        <input name="mealTypeNew" placeholder="Añadir nuevo tipo…" />
-        <label>Saludable<select name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.cuisine || editing?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
-        <input name="cuisineNew" placeholder="Añadir nuevo saludable…" />
-        <label>Dónde<select name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
-        <input name="placeNew" placeholder="Añadir nuevo dónde…" />
-        <label>Precio por defecto<input name="defaultPrice" type="number" step="0.01" min="0" value="${Number(editing?.defaultPrice || 0) || ''}" /></label>
-        <small>Puedes añadir valores nuevos de Tipo/Saludable/Dónde con el botón + en el formulario de movimiento.</small>
+        <div class="food-form-grid">
+          <label class="food-form-label" for="food-name-input">Nombre</label>
+          <input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(presetName)}" />
+          <span></span>
+
+          <label class="food-form-label" for="food-mealType-input">Tipo</label>
+          <select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select>
+          <button type="button" class="food-mini-btn" data-food-add="typeOfMeal" aria-label="Añadir nuevo tipo">+</button>
+
+          <label class="food-form-label" for="food-cuisine-input">Saludable</label>
+          <select id="food-cuisine-input" class="food-control" name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.cuisine || editing?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select>
+          <button type="button" class="food-mini-btn" data-food-add="cuisine" aria-label="Añadir nuevo saludable">+</button>
+
+          <label class="food-form-label" for="food-place-input">Dónde</label>
+          <select id="food-place-input" class="food-control" name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select>
+          <button type="button" class="food-mini-btn" data-food-add="place" aria-label="Añadir nuevo dónde">+</button>
+
+          <label class="food-form-label" for="food-defaultPrice-input">Precio por defecto</label>
+          <input id="food-defaultPrice-input" class="food-control" name="defaultPrice" type="number" step="0.01" min="0" value="${Number(editing?.defaultPrice || 0) || ''}" />
+          <span></span>
+        </div>
+        <small class="food-sheet-note">Puedes añadir valores nuevos desde el botón + junto a cada selector.</small>
         ${isInfo ? `<input type="hidden" name="saveMode" value="info" />${renderFoodPriceHistorySection(editing || {})}` : ''}
-        <button class="finance-pill" type="submit">${isInfo ? 'Guardar ficha' : 'Guardar comida'}</button>
+        <footer class="food-sheet-footer"><button class="finance-pill food-sheet-submit" type="submit">${isInfo ? 'Guardar ficha' : 'Guardar comida'}</button></footer>
       </form>`;
 }
 
@@ -2412,7 +2426,7 @@ if (form) {
     const presetName = normalizeFoodName(state.modal.foodName || editing?.name || '');
     const mode = state.modal.mode || 'edit';
     const title = mode === 'info' ? 'Ficha de producto' : (editing ? 'Editar comida' : 'Nueva comida');
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${title}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>${title}</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header>
       ${renderFoodItemModalForm(editing, presetName, mode)}
     </div>`;
     return;
@@ -2515,9 +2529,9 @@ function renderFoodItemSearchResults(form) {
   });
   const source = (mealType || place || cuisine) ? filteredByMeta : all;
   const filtered = query ? source.filter((row) => row.name.toLowerCase().includes(query)) : source;
-  const rows = filtered.slice(0, 10).map((row) => `<div class="finFood__resultRow"><button type="button" class="food-result" data-food-item-select="${escapeHtml(row.id)}">${escapeHtml(row.name)} <small>×${row.count}</small></button><button type="button" class="finance-pill finance-pill--mini" data-food-item-info="${escapeHtml(row.id)}" title="Ficha del producto">ℹ️</button><button type="button" class="finance-pill finance-pill--mini" data-food-item-edit="${escapeHtml(row.id)}">✏️</button></div>`);
+  const rows = filtered.slice(0, 10).map((row) => { const selected = String(refs.foodId?.value || '') === String(row.id); return `<div class="food-item"><button type="button" class="food-pill ${selected ? 'is-selected' : ''}" data-food-item-select="${escapeHtml(row.id)}"><span class="food-pill__name">${escapeHtml(row.name)}</span><small class="food-pill__count">×${row.count}</small></button><div class="food-pill__actions"><button type="button" class="food-iconbtn" data-food-item-info="${escapeHtml(row.id)}" title="Ficha del producto" aria-label="Ficha del producto">ℹ️</button><button type="button" class="food-iconbtn" data-food-item-edit="${escapeHtml(row.id)}" aria-label="Editar comida">✏️</button></div></div>`; });
   const canCreate = query && !all.some((row) => row.name.toLowerCase() === query);
-  if (canCreate) rows.push(`<button type="button" class="food-result food-result--create" data-food-item-create="${escapeHtml(refs.itemSearch?.value || '')}">Crear “${escapeHtml(refs.itemSearch?.value || '')}”</button>`);
+  if (canCreate) rows.push(`<button type="button" class="food-pill food-pill--create" data-food-item-create="${escapeHtml(refs.itemSearch?.value || '')}">Crear “${escapeHtml(refs.itemSearch?.value || '')}”</button>`);
   refs.itemResults.innerHTML = rows.join('') || '<small class="finance-empty">Sin resultados.</small>';
   const maxScrollTop = Math.max((refs.itemResults.scrollHeight || 0) - (refs.itemResults.clientHeight || 0), 0);
   refs.itemResults.scrollTop = Math.min(prevScrollTop, maxScrollTop);
@@ -2528,7 +2542,7 @@ function refreshFoodTopItems(form) {
   const host = form?.querySelector('[data-food-top]');
   if (!host) return;
   const topItems = topFoodItems(5);
-  host.innerHTML = topItems.map((item) => `<div class="finFood__resultRow"><button type="button" class="finance-chip" data-food-top-item="${escapeHtml(item.id)}">${escapeHtml(item.name)} <small>×${item.count}</small></button><button type="button" class="finance-pill finance-pill--mini" data-food-item-info="${escapeHtml(item.id)}" title="Ficha del producto">ℹ️</button><button type="button" class="finance-pill finance-pill--mini" data-food-item-edit="${escapeHtml(item.id)}">✏️</button></div>`).join('') || '<small class="finance-empty">Sin habituales aún.</small>';
+  host.innerHTML = topItems.map((item) => `<div class="food-item"><button type="button" class="food-pill" data-food-top-item="${escapeHtml(item.id)}"><span class="food-pill__name">${escapeHtml(item.name)}</span><small class="food-pill__count">×${item.count}</small></button><div class="food-pill__actions"><button type="button" class="food-iconbtn" data-food-item-info="${escapeHtml(item.id)}" title="Ficha del producto" aria-label="Ficha del producto">ℹ️</button><button type="button" class="food-iconbtn" data-food-item-edit="${escapeHtml(item.id)}" aria-label="Editar comida">✏️</button></div></div>`).join('') || '<small class="finance-empty">Sin habituales aún.</small>';
 }
 
 async function applyFoodItemPreset(form, foodIdOrName) {
@@ -2765,15 +2779,19 @@ function bindEvents() {
     const target = event.target;
     const foodAdd = target.closest('[data-food-add]')?.dataset.foodAdd;
     if (foodAdd) {
-      const form = target.closest('[data-balance-form]');
-      if (!form) return;
+      const hostForm = target.closest('[data-balance-form], [data-food-item-form]');
+      if (!hostForm) return;
       const typed = window.prompt('Nuevo valor');
       const name = normalizeFoodName(typed || '');
       if (!name) return;
       await loadFoodCatalog();
       await upsertFoodOption(foodAdd, name, false);
-      await syncFoodOptionsInForm(form);
-      const select = form.querySelector(`[data-food-select="${foodAdd}"]`);
+      if (hostForm.matches('[data-balance-form]')) {
+        await syncFoodOptionsInForm(hostForm);
+      } else {
+        triggerRender();
+      }
+      const select = hostForm.querySelector(`[data-food-select="${foodAdd}"], select[name="${foodAdd === 'typeOfMeal' ? 'mealType' : foodAdd}"]`);
       if (select) select.value = name;
       return;
     }

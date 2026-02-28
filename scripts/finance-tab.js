@@ -325,7 +325,8 @@ function normalizeFoodPriceHistory(map = {}) {
     acc[safeId] = {
       price,
       ts,
-      source: String(entry?.source || '')
+      source: String(entry?.source || ''),
+      expenseId: String(entry?.expenseId || '')
     };
     return acc;
   }, {});
@@ -334,16 +335,41 @@ function normalizeFoodPriceHistory(map = {}) {
 function foodPriceHistoryList(food = {}) {
   return Object.values(food?.priceHistory || {})
     .filter((row) => Number.isFinite(Number(row?.price)) && Number.isFinite(Number(row?.ts)))
-    .map((row) => ({ price: Number(row.price), ts: Number(row.ts), source: String(row.source || '') }))
+    .map((row) => ({
+      price: Number(row.price),
+      ts: Number(row.ts),
+      source: String(row.source || ''),
+      expenseId: String(row.expenseId || '')
+    }))
     .sort((a, b) => a.ts - b.ts);
 }
 
-async function recordFoodPricePoint(foodId, priceInput, source = 'expense') {
+function shouldAppendFoodPricePoint(food = {}, priceInput) {
+  const price = Number(priceInput);
+  if (!Number.isFinite(price) || price <= 0) return false;
+  const history = foodPriceHistoryList(food);
+  if (!history.length) return true;
+  return Math.abs(Number(history[history.length - 1].price || 0) - price) > 0.001;
+}
+
+async function recordFoodPricePoint(foodId, priceInput, source = 'expense', options = {}) {
   const safeFoodId = String(foodId || '').trim();
   const price = Number(priceInput);
   if (!safeFoodId || !Number.isFinite(price) || price <= 0) return;
+  const ts = Number(options?.ts || nowTs());
+  const expenseId = String(options?.expenseId || '').trim();
+  const food = state.food.itemsById?.[safeFoodId] || null;
+  if (expenseId) {
+    const exists = Object.values(food?.priceHistory || {}).some((entry) => String(entry?.expenseId || '') === expenseId);
+    if (exists) return;
+  }
   const entryId = push(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory`)).key;
-  const payload = { price, ts: nowTs(), source: String(source || '') };
+  const payload = {
+    price,
+    ts: Number.isFinite(ts) && ts > 0 ? ts : nowTs(),
+    source: String(source || ''),
+    ...(expenseId ? { expenseId } : {})
+  };
   await safeFirebase(() => set(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${entryId}`), payload));
   if (!state.food.itemsById?.[safeFoodId]) return;
   state.food.itemsById[safeFoodId].priceHistory = {
@@ -540,6 +566,7 @@ async function upsertFoodItem(value, incrementCount = false, patch = {}) {
     healthy: normalizeFoodName(payloadInput.healthy ?? patch.lastExtras?.healthy ?? prevEntity.healthy ?? ''),
     place: normalizeFoodName(payloadInput.place ?? patch.lastExtras?.place ?? prevEntity.place ?? ''),
     defaultPrice: Number(payloadInput.defaultPrice ?? patch.lastPrice ?? prevEntity.defaultPrice ?? 0),
+    priceHistory: prevEntity.priceHistory || {},
     countUsed: Number(prevEntity.countUsed || 0) + (incrementCount ? 1 : 0),
     createdAt: Number(prevEntity.createdAt || 0) || nowTs(),
     updatedAt: nowTs()
@@ -592,14 +619,12 @@ function renderFoodOptionField(kind, label, selectName) {
   const options = foodOptionList(kind);
   return `
     <div class="food-extra-field" data-food-kind="${kind}">
-      <label>${label}</label>
-      <div class="food-extra-row">
-        <select class="food-control" name="${selectName}" data-food-select="${kind}">
-          <option value="">Elegir</option>
-          ${options.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}
-        </select>
-        <button type="button" class="food-mini-btn" data-food-add="${kind}" aria-label="Añadir ${escapeHtml(label)}">+</button>
-      </div>
+      <label class="finFood__label">${label}</label>
+      <select class="food-control" name="${selectName}" data-food-select="${kind}">
+        <option value="">Elegir</option>
+        ${options.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}
+      </select>
+      <button type="button" class="food-mini-btn foodX-mini" data-food-add="${kind}" aria-label="Añadir ${escapeHtml(label)}">+</button>
     </div>`;
 }
 
@@ -611,7 +636,7 @@ function renderFoodExtrasSection() {
         <h4 class="finFood__title">Extras de comida</h4>
       </div>
 
-      <section class="finFood__quick" data-food-extra hidden>
+      <section class="finFood__quick foodX-grid" data-food-extra hidden>
         ${renderFoodOptionField('typeOfMeal', 'Tipo', 'foodMealType')}
         ${renderFoodOptionField('cuisine', 'Saludable', 'foodCuisine')}
         ${renderFoodOptionField('place', 'Dónde', 'foodPlace')}
@@ -644,7 +669,7 @@ function renderFoodExtrasSection() {
 
         <div class="finFood__block">
           <label class="finFood__label">Buscar</label>
-<div class="busqueda-precio">
+<div class="busqueda-precio foodX-inline">
           <input class="finFood__search" type="search" data-food-item-search placeholder="Buscar plato (ej: pollo)" autocomplete="off" />
           <input class="finFood__price" type="number" step="0.01" min="0" placeholder="Precio" data-food-item-price />
 </div>
@@ -652,10 +677,8 @@ function renderFoodExtrasSection() {
           </div>
         </div>
 
-        <div class="finFood__draft">
-          
-          
-          <button type="button" class="finance-pill finance-pill--mini finFood__btn" data-food-item-add>Añadir</button>
+        <div class="finFood__draft foodX-inline">
+          <button type="button" class="finance-pill finFood__btn" data-food-item-add>Añadir</button>
           <button type="button" class="finance-pill finance-pill--mini finFood__btn finFood__btn--ghost" data-food-reset-amount>Reset €</button>
         </div>
 
@@ -674,11 +697,22 @@ function renderFoodExtrasSection() {
 function renderFoodPriceHistorySection(food = {}) {
   const history = foodPriceHistoryList(food);
   const chartPath = history.length ? linePath(history.map((row, index) => ({ value: row.price, index }))) : '';
+  const points = history.length
+    ? history.map((row, index) => {
+      const values = history.map((entry) => entry.price);
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const spread = max - min || 1;
+      const x = (index / Math.max(history.length - 1, 1)) * 320;
+      const y = 10 + (100 - (((row.price - min) / spread) * 100));
+      return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5"></circle>`;
+    }).join('')
+    : '';
   return `
     <section class="finFoodInfo">
       <h4>Histórico de precios</h4>
       ${history.length
-        ? `<div class="finFoodInfo__chartWrap"><svg viewBox="0 0 320 120" preserveAspectRatio="none" aria-label="Histórico de precios"><path d="${chartPath}" /></svg></div>`
+        ? `<div class="finFoodInfo__chartWrap"><svg viewBox="0 0 320 120" preserveAspectRatio="none" aria-label="Histórico de precios"><path d="${chartPath}" />${points}</svg></div>`
         : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin datos</span></div>'}
       <div class="finFoodInfo__actions">
         <button type="button" class="food-history-btn" data-food-history-register="${escapeHtml(food.id || '')}">+ registrar precio</button>
@@ -694,26 +728,12 @@ function renderFoodItemModalForm(editing, presetName, mode = 'edit') {
   const isInfo = mode === 'info';
   return `<form class="food-sheet-form" data-food-item-form>
         <input type="hidden" name="foodId" value="${escapeHtml(editing?.id || '')}" />
-        <div class="food-form-grid">
-          <label class="food-form-label" for="food-name-input">Nombre</label>
-          <input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(presetName)}" />
-          <span></span>
-
-          <label class="food-form-label" for="food-mealType-input">Tipo</label>
-          <select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select>
-          <button type="button" class="food-mini-btn" data-food-add="typeOfMeal" aria-label="Añadir nuevo tipo">+</button>
-
-          <label class="food-form-label" for="food-cuisine-input">Saludable</label>
-          <select id="food-cuisine-input" class="food-control" name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.cuisine || editing?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select>
-          <button type="button" class="food-mini-btn" data-food-add="cuisine" aria-label="Añadir nuevo saludable">+</button>
-
-          <label class="food-form-label" for="food-place-input">Dónde</label>
-          <select id="food-place-input" class="food-control" name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select>
-          <button type="button" class="food-mini-btn" data-food-add="place" aria-label="Añadir nuevo dónde">+</button>
-
-          <label class="food-form-label" for="food-defaultPrice-input">Precio por defecto</label>
-          <input id="food-defaultPrice-input" class="food-control" name="defaultPrice" type="number" step="0.01" min="0" value="${Number(editing?.defaultPrice || 0) || ''}" />
-          <span></span>
+        <div class="food-form-grid foodX-stack">
+          <div class="food-form-row"><label class="food-form-label" for="food-name-input">Nombre</label><input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(presetName)}" /></div>
+          <div class="food-form-row"><label class="food-form-label" for="food-mealType-input">Tipo</label><div class="food-form-inline"><select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="typeOfMeal" aria-label="Añadir nuevo tipo">+</button></div></div>
+          <div class="food-form-row"><label class="food-form-label" for="food-cuisine-input">Saludable</label><div class="food-form-inline"><select id="food-cuisine-input" class="food-control" name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.cuisine || editing?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="cuisine" aria-label="Añadir nuevo saludable">+</button></div></div>
+          <div class="food-form-row"><label class="food-form-label" for="food-place-input">Dónde</label><div class="food-form-inline"><select id="food-place-input" class="food-control" name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="place" aria-label="Añadir nuevo dónde">+</button></div></div>
+          <div class="food-form-row"><label class="food-form-label" for="food-defaultPrice-input">Precio por defecto</label><input id="food-defaultPrice-input" class="food-control" name="defaultPrice" type="number" step="0.01" min="0" value="${Number(editing?.defaultPrice || 0) || ''}" /></div>
         </div>
         <small class="food-sheet-note">Puedes añadir valores nuevos desde el botón + junto a cada selector.</small>
         ${isInfo ? `<input type="hidden" name="saveMode" value="info" />${renderFoodPriceHistorySection(editing || {})}` : ''}
@@ -2499,7 +2519,7 @@ function writeFoodItemsToForm(form, items = []) {
   if (refs.itemsJson) refs.itemsJson.value = JSON.stringify(items);
   if (refs.itemsList) {
     refs.itemsList.innerHTML = items.length
-      ? items.map((item, index) => `<div class="finFood__selectedItem"><span>${escapeHtml(item.name)} · ${fmtCurrency(item.price || 0)}</span><button type="button" class="finance-pill finance-pill--mini finance-pill-borrar-comida" data-food-item-remove="${index}">x</button></div>`).join('')
+      ? items.map((item, index) => `<div class="finFood__selectedItem"><span>${escapeHtml(item.name)} · ${fmtCurrency(item.price || 0)}</span><button type="button" class="finance-pill finance-pill--mini finance-pill-borrar-comida" data-food-item-remove="${index}">×</button></div>`).join('')
       : '<small class="finance-empty">Sin productos añadidos.</small>';
   }
 }
@@ -2823,12 +2843,14 @@ function bindEvents() {
     }
     const foodInfoId = target.closest('[data-food-item-info]')?.dataset.foodItemInfo;
     if (foodInfoId) {
+      event.stopPropagation();
       state.modal = { type: 'food-item', foodId: foodInfoId, mode: 'info', source: 'balance-form-info' };
       triggerRender();
       return;
     }
     const editFoodId = target.closest('[data-food-item-edit]')?.dataset.foodItemEdit;
     if (editFoodId) {
+      event.stopPropagation();
       state.modal = { type: 'food-item', foodId: editFoodId, source: 'balance-form-edit' };
       triggerRender();
       return;
@@ -3104,8 +3126,10 @@ view.addEventListener('focusout', async (event) => {
       const saveMode = String(form.get('saveMode') || '');
       const prevFood = foodId ? (state.food.itemsById?.[foodId] || null) : null;
       const savedFoodId = await upsertFoodItem({ id: foodId, name, mealType, cuisine, healthy: cuisine, place, defaultPrice }, false);
-      if (saveMode === 'info' && Number.isFinite(defaultPrice) && defaultPrice > 0 && Number(prevFood?.defaultPrice || 0) !== defaultPrice) {
-        await recordFoodPricePoint(savedFoodId, defaultPrice, 'manual');
+      if (!prevFood && Number.isFinite(defaultPrice) && defaultPrice > 0) {
+        await recordFoodPricePoint(savedFoodId, defaultPrice, 'create');
+      } else if (saveMode === 'info' && shouldAppendFoodPricePoint(prevFood || {}, defaultPrice)) {
+        await recordFoodPricePoint(savedFoodId, defaultPrice, 'sheet');
       }
       if (mealType) await upsertFoodOption('typeOfMeal', mealType, false);
       if (cuisine) await upsertFoodOption('cuisine', cuisine, false);
@@ -3272,7 +3296,7 @@ view.addEventListener('focusout', async (event) => {
             defaultPrice: Number(foodItem.price || amount)
           }, true, { lastCategory: category, lastAccountId: accountId, lastNote: note });
           foodItem.foodId = savedFoodId;
-          await recordFoodPricePoint(savedFoodId, Number(foodItem.price || amount), 'expense');
+          await recordFoodPricePoint(savedFoodId, Number(foodItem.price || amount), 'expense', { ts: dateISO ? parseDayKey(dateISO) : nowTs(), expenseId: saveId });
           financeDebug('transaction food usage saved', { txId: saveId, foodId: savedFoodId, name: foodItem.name });
           if (foodItem.mealType || mealType) await upsertFoodOption('typeOfMeal', foodItem.mealType || mealType, true);
           if (foodItem.cuisine || cuisine) await upsertFoodOption('cuisine', foodItem.cuisine || cuisine, true);

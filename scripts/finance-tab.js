@@ -7,6 +7,7 @@ const RANGE_LABEL = { total: 'Total', month: 'Mes', week: 'Semana', year: 'Año'
 const BTC_PRICE_CACHE_KEY = 'bookshell_finance_btc_eur_cache_v1';
 const BTC_PRICE_CACHE_TTL_MS = 20 * 60 * 1000;
 const AGG_MODES = ['day', 'week', 'month', 'year', 'total'];
+const FINANCE_DEBUG = true;
 
 const state = {
   deviceId: '',
@@ -53,7 +54,9 @@ const state = {
     loaded: false,
     loading: false,
     options: { typeOfMeal: {}, cuisine: {}, place: {} },
-    items: {}
+    items: {},
+    itemsById: {},
+    nameToId: {}
   },
   hydratedFromRemote: false,
   btcEurPrice: 0,
@@ -283,17 +286,53 @@ function normalizeFoodMap(map = {}) {
   });
   return out;
 }
+function financeDebug(...parts) {
+  if (!FINANCE_DEBUG) return;
+  console.log('[FINANCE][DEBUG]', ...parts);
+}
+function normalizeFoodEntityMap(map = {}) {
+  const out = {};
+  const nameToId = {};
+  Object.entries(map || {}).forEach(([id, payload]) => {
+    const safeId = String(id || '').trim();
+    if (!safeId) return;
+    const safeName = normalizeFoodName(payload?.name || '');
+    if (!safeName) return;
+    out[safeId] = {
+      id: safeId,
+      name: safeName,
+      mealType: normalizeFoodName(payload?.mealType || payload?.foodMealType || ''),
+      cuisine: normalizeFoodName(payload?.cuisine || payload?.healthy || payload?.foodCuisine || ''),
+      healthy: normalizeFoodName(payload?.healthy || payload?.cuisine || ''),
+      place: normalizeFoodName(payload?.place || payload?.foodPlace || ''),
+      defaultPrice: Number(payload?.defaultPrice || 0),
+      countUsed: Number(payload?.countUsed || payload?.count || 0),
+      createdAt: Number(payload?.createdAt || 0) || nowTs(),
+      updatedAt: Number(payload?.updatedAt || 0) || nowTs()
+    };
+    nameToId[safeName.toLowerCase()] = safeId;
+  });
+  return { out, nameToId };
+}
+function getFoodByName(name = '') {
+  const safe = normalizeFoodName(name).toLowerCase();
+  if (!safe) return null;
+  const id = state.food.nameToId?.[safe];
+  return id ? state.food.itemsById?.[id] || null : null;
+}
 function foodOptionList(kind) {
   return Object.keys(state.food.options?.[kind] || {}).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
 }
 function foodItemsList() {
-  return Object.entries(state.food.items || {}).map(([name, meta]) => ({
-    name,
-    count: Number(meta?.count || 0),
-    lastUsedAt: Number(meta?.lastUsedAt || 0)
+  return Object.values(state.food.itemsById || {}).map((item) => ({
+    id: item.id,
+    name: item.name,
+    count: Number(item.countUsed || 0),
+    lastUsedAt: Number(item.updatedAt || 0),
+    meta: item
   }));
 }
-function topFoodItems(limit = 6) {
+function topFoodItems(limit = 5) {
   return foodItemsList().sort((a, b) => (b.count - a.count) || (b.lastUsedAt - a.lastUsedAt) || a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })).slice(0, limit);
 }
 
@@ -310,6 +349,31 @@ async function loadFoodCatalog(force = false) {
       place: normalizeFoodMap(val.foodOptions?.place || {})
     };
     state.food.items = normalizeFoodMap(val.foodItems || {});
+    const foodSnap = await safeFirebase(() => get(ref(db, `${state.financePath}/foodItems`)));
+    const entityMap = foodSnap?.val() || {};
+    const normalizedEntities = normalizeFoodEntityMap(entityMap);
+    if (!Object.keys(normalizedEntities.out).length && Object.keys(state.food.items || {}).length) {
+      Object.entries(state.food.items || {}).forEach(([name, legacy]) => {
+        const id = window.crypto?.randomUUID?.() || `food-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+        normalizedEntities.out[id] = {
+          id,
+          name,
+          mealType: normalizeFoodName(legacy?.lastExtras?.mealType || ''),
+          cuisine: normalizeFoodName(legacy?.lastExtras?.cuisine || ''),
+          healthy: normalizeFoodName(legacy?.lastExtras?.healthy || legacy?.lastExtras?.cuisine || ''),
+          place: normalizeFoodName(legacy?.lastExtras?.place || ''),
+          defaultPrice: Number(legacy?.lastPrice || 0),
+          countUsed: Number(legacy?.count || 0),
+          createdAt: Number(legacy?.createdAt || 0) || nowTs(),
+          updatedAt: Number(legacy?.lastUsedAt || 0) || nowTs()
+        };
+        normalizedEntities.nameToId[name.toLowerCase()] = id;
+      });
+      financeDebug('migrated legacy foodItems into entities', { count: Object.keys(normalizedEntities.out).length });
+    }
+    state.food.itemsById = normalizedEntities.out;
+    state.food.nameToId = normalizedEntities.nameToId;
+    financeDebug('food catalog loaded', { options: Object.keys(state.food.options?.typeOfMeal || {}).length, items: Object.keys(state.food.itemsById || {}).length });
     state.food.loaded = true;
   } finally {
     state.food.loading = false;
@@ -325,6 +389,7 @@ function normalizeFoodExtras(rawExtras = {}, amount = 0) {
   const extras = { ...rawExtras };
   const items = Array.isArray(extras.items)
     ? extras.items.map((item) => ({
+      foodId: String(item?.foodId || ''),
       name: normalizeFoodName(item?.name || item?.item || item?.productName || ''),
       price: Number(item?.price || 0),
       mealType: normalizeFoodName(item?.mealType || item?.typeOfMeal || ''),
@@ -337,6 +402,7 @@ function normalizeFoodExtras(rawExtras = {}, amount = 0) {
     const legacyName = normalizeFoodName(extras.item || extras.productName || extras.name || '');
     if (legacyName) {
       items.push({
+        foodId: String(extras.foodId || ''),
         name: legacyName,
         price: Number(extras.price || amount || 0),
         mealType: normalizeFoodName(extras.mealType || extras.foodType || ''),
@@ -423,22 +489,42 @@ async function upsertFoodOption(kind, value, incrementCount = false) {
 }
 
 async function upsertFoodItem(value, incrementCount = false, patch = {}) {
-  const name = normalizeFoodName(value);
+  const payloadInput = typeof value === 'object' && value ? value : { name: value };
+  const name = normalizeFoodName(payloadInput.name || '');
   if (!name) return '';
-  const prev = state.food.items[name] || {};
+  const existingId = payloadInput.id || state.food.nameToId?.[name.toLowerCase()] || '';
+  const foodId = existingId || (window.crypto?.randomUUID?.() || `food-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`);
+  const prevEntity = state.food.itemsById?.[foodId] || getFoodByName(name) || {};
   const payload = {
+    id: foodId,
+    name,
+    mealType: normalizeFoodName(payloadInput.mealType ?? patch.lastExtras?.mealType ?? prevEntity.mealType ?? ''),
+    cuisine: normalizeFoodName(payloadInput.cuisine ?? patch.lastExtras?.cuisine ?? prevEntity.cuisine ?? ''),
+    healthy: normalizeFoodName(payloadInput.healthy ?? patch.lastExtras?.healthy ?? prevEntity.healthy ?? ''),
+    place: normalizeFoodName(payloadInput.place ?? patch.lastExtras?.place ?? prevEntity.place ?? ''),
+    defaultPrice: Number(payloadInput.defaultPrice ?? patch.lastPrice ?? prevEntity.defaultPrice ?? 0),
+    countUsed: Number(prevEntity.countUsed || 0) + (incrementCount ? 1 : 0),
+    createdAt: Number(prevEntity.createdAt || 0) || nowTs(),
+    updatedAt: nowTs()
+  };
+  state.food.itemsById[foodId] = payload;
+  state.food.nameToId[name.toLowerCase()] = foodId;
+  financeDebug('upsert food item', { foodId, name, incrementCount, payload });
+  await safeFirebase(() => set(ref(db, `${state.financePath}/foodItems/${foodId}`), payload));
+  const prev = state.food.items[name] || {};
+  const legacyPayload = {
     createdAt: Number(prev.createdAt || 0) || nowTs(),
     count: Number(prev.count || 0) + (incrementCount ? 1 : 0),
     lastUsedAt: incrementCount ? nowTs() : Number(prev.lastUsedAt || 0),
-    lastPrice: Number(patch.lastPrice ?? prev.lastPrice ?? 0),
+    lastPrice: Number(payload.defaultPrice || patch.lastPrice || prev.lastPrice || 0),
     lastCategory: String(patch.lastCategory ?? prev.lastCategory ?? ''),
     lastAccountId: String(patch.lastAccountId ?? prev.lastAccountId ?? ''),
     lastNote: String(patch.lastNote ?? prev.lastNote ?? ''),
-    lastExtras: patch.lastExtras || prev.lastExtras || {}
+    lastExtras: { mealType: payload.mealType, cuisine: payload.cuisine, place: payload.place, healthy: payload.healthy }
   };
-  state.food.items[name] = payload;
-  await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/foodItems/${name}`), payload));
-  return name;
+  state.food.items[name] = legacyPayload;
+  await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/foodItems/${name}`), legacyPayload));
+  return foodId;
 }
 
 async function deleteManagedStatItem(kind, rawName) {
@@ -482,7 +568,7 @@ function renderFoodOptionField(kind, label, selectName) {
 }
 
 function renderFoodExtrasSection() {
-  const topItems = topFoodItems(6);
+  const topItems = topFoodItems(5);
   return `
     <div class="finFood">
       <div class="finFood__head">
@@ -505,10 +591,13 @@ function renderFoodExtrasSection() {
           <div class="finFood__chips" data-food-top>
             ${
               topItems.map(item => `
-                <button type="button" class="finFood__chip" data-food-top-item="${escapeHtml(item.name)}">
-                  <span class="finFood__chipTxt">${escapeHtml(item.name)}</span>
-                  <small class="finFood__chipCount">×${item.count}</small>
-                </button>
+                <div class="finFood__resultRow">
+                  <button type="button" class="finFood__chip" data-food-top-item="${escapeHtml(item.id)}">
+                    <span class="finFood__chipTxt">${escapeHtml(item.name)}</span>
+                    <small class="finFood__chipCount">×${item.count}</small>
+                  </button>
+                  <button type="button" class="finance-pill finance-pill--mini" data-food-item-edit="${escapeHtml(item.id)}" title="Editar comida">✏️</button>
+                </div>
               `).join('') || `<small class="finance-empty">Sin habituales aún.</small>`
             }
           </div>
@@ -537,6 +626,7 @@ function renderFoodExtrasSection() {
 
         <input type="hidden" name="foodItems" data-food-items-json value="[]" />
         <input type="hidden" name="foodItem" data-food-item-value />
+        <input type="hidden" name="foodId" data-food-id-value />
       </section>
     </div>
   `;
@@ -1940,6 +2030,11 @@ function renderModal() {
   const defaultDate = txEdit?.date || isoToDay(txEdit?.dateISO || '') || state.balanceFormState.dateISO || dayKeyFromTs(Date.now());
   const defaultAmount = txEdit?.amount || state.balanceFormState.amount || '';
   const defaultNote = txEdit?.note || state.balanceFormState.note || '';
+  const defaultFoodId = state.balanceFormState.foodId || '';
+  const defaultFoodItem = state.balanceFormState.foodItem || '';
+  const defaultFoodMealType = state.balanceFormState.foodMealType || '';
+  const defaultFoodCuisine = state.balanceFormState.foodCuisine || '';
+  const defaultFoodPlace = state.balanceFormState.foodPlace || '';
   const defaultFrom = txEdit?.fromAccountId || state.balanceFormState.fromAccountId || defaultAccountId;
   const defaultTo = txEdit?.toAccountId || state.balanceFormState.toAccountId || accounts[1]?.id || accounts[0]?.id || '';
   const accountOptions = accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
@@ -2115,6 +2210,13 @@ if (form) {
     void toggleFoodExtras(form);
   } else {
     writeFoodItemsToForm(form, []);
+    const refs = getFoodFormRefs(form);
+    if (refs.itemSearch) refs.itemSearch.value = defaultFoodItem;
+    if (refs.itemValue) refs.itemValue.value = defaultFoodItem;
+    if (refs.foodId) refs.foodId.value = defaultFoodId;
+    if (refs.mealType) refs.mealType.value = defaultFoodMealType;
+    if (refs.cuisine) refs.cuisine.value = defaultFoodCuisine;
+    if (refs.place) refs.place.value = defaultFoodPlace;
   }
 }
   return;
@@ -2217,6 +2319,26 @@ if (form) {
     <button class="finance-pill" type="submit">Crear</button></form></div>`;
     return;
   }
+  if (state.modal.type === 'food-item') {
+    const editing = state.modal.foodId ? (state.food.itemsById?.[state.modal.foodId] || null) : null;
+    const presetName = normalizeFoodName(state.modal.foodName || editing?.name || '');
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${editing ? 'Editar comida' : 'Nueva comida'}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+      <form data-food-item-form>
+        <input type="hidden" name="foodId" value="${escapeHtml(editing?.id || '')}" />
+        <label>Nombre<input name="name" required value="${escapeHtml(presetName)}" /></label>
+        <label>Tipo<select name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
+        <input name="mealTypeNew" placeholder="Añadir nuevo tipo…" />
+        <label>Saludable<select name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.cuisine || editing?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
+        <input name="cuisineNew" placeholder="Añadir nuevo saludable…" />
+        <label>Dónde<select name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
+        <input name="placeNew" placeholder="Añadir nuevo dónde…" />
+        <label>Precio por defecto<input name="defaultPrice" type="number" step="0.01" min="0" value="${Number(editing?.defaultPrice || 0) || ''}" /></label>
+        <small>Puedes añadir valores nuevos de Tipo/Saludable/Dónde con el botón + en el formulario de movimiento.</small>
+        <button class="finance-pill" type="submit">Guardar comida</button>
+      </form>
+    </div>`;
+    return;
+  }
 }
 
 function getFoodFormRefs(form) {
@@ -2229,6 +2351,7 @@ function getFoodFormRefs(form) {
     place: form.querySelector('select[name="foodPlace"]'),
     itemSearch: form.querySelector('[data-food-item-search]'),
     itemValue: form.querySelector('[data-food-item-value]'),
+    foodId: form.querySelector('[data-food-id-value]'),
     itemResults: form.querySelector('[data-food-item-results]'),
     itemPrice: form.querySelector('[data-food-item-price]'),
     itemsJson: form.querySelector('[data-food-items-json]'),
@@ -2243,6 +2366,7 @@ function clearFoodFormState(form) {
   if (refs.place) refs.place.value = '';
   if (refs.itemSearch) refs.itemSearch.value = '';
   if (refs.itemValue) refs.itemValue.value = '';
+  if (refs.foodId) refs.foodId.value = '';
   if (refs.itemResults) refs.itemResults.innerHTML = '';
 }
 
@@ -2280,9 +2404,9 @@ function renderFoodItemSearchResults(form) {
   const mealType = normalizeFoodName(refs.mealType?.value || '').toLowerCase();
   const place = normalizeFoodName(refs.place?.value || '').toLowerCase();
   const cuisine = normalizeFoodName(refs.cuisine?.value || '').toLowerCase();
-  const all = foodItemsList().map((row) => ({ ...row, meta: state.food.items?.[row.name] || {} }));
+  const all = foodItemsList();
   const filteredByMeta = all.filter((row) => {
-    const extras = row.meta?.lastExtras || {};
+    const extras = row.meta || {};
     if (mealType && normalizeFoodName(extras.mealType || '').toLowerCase() !== mealType) return false;
     if (place && normalizeFoodName(extras.place || '').toLowerCase() !== place) return false;
     if (cuisine && normalizeFoodName(extras.cuisine || '').toLowerCase() !== cuisine) return false;
@@ -2290,7 +2414,7 @@ function renderFoodItemSearchResults(form) {
   });
   const source = (mealType || place || cuisine) ? filteredByMeta : all;
   const filtered = query ? source.filter((row) => row.name.toLowerCase().includes(query)) : source;
-  const rows = filtered.slice(0, 10).map((row) => `<button type="button" class="food-result" data-food-item-select="${escapeHtml(row.name)}">${escapeHtml(row.name)} <small>×${row.count}</small></button>`);
+  const rows = filtered.slice(0, 10).map((row) => `<div class="finFood__resultRow"><button type="button" class="food-result" data-food-item-select="${escapeHtml(row.id)}">${escapeHtml(row.name)} <small>×${row.count}</small></button><button type="button" class="finance-pill finance-pill--mini" data-food-item-edit="${escapeHtml(row.id)}">✏️</button></div>`);
   const canCreate = query && !all.some((row) => row.name.toLowerCase() === query);
   if (canCreate) rows.push(`<button type="button" class="food-result food-result--create" data-food-item-create="${escapeHtml(refs.itemSearch?.value || '')}">Crear “${escapeHtml(refs.itemSearch?.value || '')}”</button>`);
   refs.itemResults.innerHTML = rows.join('') || '<small class="finance-empty">Sin resultados.</small>';
@@ -2299,28 +2423,26 @@ function renderFoodItemSearchResults(form) {
 function refreshFoodTopItems(form) {
   const host = form?.querySelector('[data-food-top]');
   if (!host) return;
-  const topItems = topFoodItems(6);
-  host.innerHTML = topItems.map((item) => `<button type="button" class="finance-chip" data-food-top-item="${escapeHtml(item.name)}">${escapeHtml(item.name)} <small>×${item.count}</small></button>`).join('') || '<small class="finance-empty">Sin habituales aún.</small>';
+  const topItems = topFoodItems(5);
+  host.innerHTML = topItems.map((item) => `<div class="finFood__resultRow"><button type="button" class="finance-chip" data-food-top-item="${escapeHtml(item.id)}">${escapeHtml(item.name)} <small>×${item.count}</small></button><button type="button" class="finance-pill finance-pill--mini" data-food-item-edit="${escapeHtml(item.id)}">✏️</button></div>`).join('') || '<small class="finance-empty">Sin habituales aún.</small>';
 }
 
-async function applyFoodItemPreset(form, itemName) {
-  const name = normalizeFoodName(itemName);
-  if (!form || !name) return;
+async function applyFoodItemPreset(form, foodIdOrName) {
+  const safeValue = normalizeFoodName(foodIdOrName);
+  if (!form || !safeValue) return;
   const refs = getFoodFormRefs(form);
-  const preset = state.food.items?.[name] || {};
+  const preset = state.food.itemsById?.[safeValue] || getFoodByName(safeValue) || null;
+  const name = normalizeFoodName(preset?.name || safeValue);
   if (refs.itemSearch) refs.itemSearch.value = name;
   if (refs.itemValue) refs.itemValue.value = name;
-  if (refs.itemPrice && Number(preset.lastPrice || 0) > 0) refs.itemPrice.value = String(preset.lastPrice);
-  if (preset.lastCategory && refs.category) refs.category.value = preset.lastCategory;
+  if (refs.foodId) refs.foodId.value = preset?.id || '';
+  if (refs.itemPrice && Number(preset?.defaultPrice || 0) > 0 && !String(refs.itemPrice.value || '').trim()) refs.itemPrice.value = String(preset.defaultPrice);
   const accountSelect = form.querySelector('select[name="accountId"]');
-  if (accountSelect && preset.lastAccountId) accountSelect.value = preset.lastAccountId;
-  const noteInput = form.querySelector('input[name="note"]');
-  if (noteInput && preset.lastNote) noteInput.value = preset.lastNote;
-  if (preset.lastExtras) {
-    if (refs.mealType) refs.mealType.value = preset.lastExtras.mealType || '';
-    if (refs.cuisine) refs.cuisine.value = preset.lastExtras.cuisine || '';
-    if (refs.place) refs.place.value = preset.lastExtras.place || '';
-  }
+  if (accountSelect && preset?.lastAccountId) accountSelect.value = preset.lastAccountId;
+  if (refs.mealType) refs.mealType.value = preset?.mealType || '';
+  if (refs.cuisine) refs.cuisine.value = preset?.cuisine || preset?.healthy || '';
+  if (refs.place) refs.place.value = preset?.place || '';
+  financeDebug('food selected in form', { foodId: preset?.id || null, name });
   await toggleFoodExtras(form);
   persistBalanceFormState(form);
 }
@@ -2397,7 +2519,8 @@ function persistBalanceFormState(form) {
     foodMealType: String(fd.get('foodMealType') || ''),
     foodCuisine: String(fd.get('foodCuisine') || ''),
     foodPlace: String(fd.get('foodPlace') || ''),
-    foodItem: String(fd.get('foodItem') || '')
+    foodItem: String(fd.get('foodItem') || ''),
+    foodId: String(fd.get('foodId') || '')
   };
 }
 
@@ -2568,12 +2691,14 @@ function bindEvents() {
       if (!form) return;
       const name = normalizeFoodName(createItem);
       if (!name) return;
-      await loadFoodCatalog();
-      await upsertFoodItem(name, false);
-      await applyFoodItemPreset(form, name);
-      renderFoodItemSearchResults(form);
-      refreshFoodTopItems(form);
-      maybeToggleCategoryCreate(form);
+      state.modal = { type: 'food-item', foodName: name, source: 'balance-form-create' };
+      triggerRender();
+      return;
+    }
+    const editFoodId = target.closest('[data-food-item-edit]')?.dataset.foodItemEdit;
+    if (editFoodId) {
+      state.modal = { type: 'food-item', foodId: editFoodId, source: 'balance-form-edit' };
+      triggerRender();
       return;
     }
     const addFoodItem = target.closest('[data-food-item-add]');
@@ -2586,6 +2711,7 @@ function bindEvents() {
       const price = Number(refs.itemPrice?.value || 0);
       const items = readFoodItemsFromForm(form);
       items.push({
+        foodId: refs.foodId?.value || '',
         name,
         price: Number.isFinite(price) ? price : 0,
         mealType: refs.mealType?.value || '',
@@ -2813,12 +2939,33 @@ view.addEventListener('focusout', async (event) => {
       if (!form) return;
       const refs = getFoodFormRefs(form);
       if (refs.itemValue) refs.itemValue.value = normalizeFoodName(event.target.value);
+      if (refs.foodId) refs.foodId.value = '';
       renderFoodItemSearchResults(form);
     }
   });
 
 
   view.addEventListener('submit', async (event) => {
+    if (event.target.matches('[data-food-item-form]')) {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const foodId = String(form.get('foodId') || '');
+      const name = normalizeFoodName(String(form.get('name') || ''));
+      if (!name) { toast('Nombre obligatorio'); return; }
+      const mealType = normalizeFoodName(String(form.get('mealTypeNew') || form.get('mealType') || ''));
+      const cuisine = normalizeFoodName(String(form.get('cuisineNew') || form.get('cuisine') || ''));
+      const place = normalizeFoodName(String(form.get('placeNew') || form.get('place') || ''));
+      const defaultPrice = Number(form.get('defaultPrice') || 0);
+      await upsertFoodItem({ id: foodId, name, mealType, cuisine, healthy: cuisine, place, defaultPrice }, false);
+      if (mealType) await upsertFoodOption('typeOfMeal', mealType, false);
+      if (cuisine) await upsertFoodOption('cuisine', cuisine, false);
+      if (place) await upsertFoodOption('place', place, false);
+      financeDebug('food modal saved', { foodId: foodId || state.food.nameToId?.[name.toLowerCase()] || null, name });
+      state.balanceFormState = { ...state.balanceFormState, foodItem: name, foodId: state.food.nameToId?.[name.toLowerCase()] || foodId, foodMealType: mealType, foodCuisine: cuisine, foodPlace: place };
+      state.modal = { type: 'tx', txId: state.modal.txId || '' };
+      triggerRender();
+      return;
+    }
     if (event.target.matches('[data-new-account-form]')) {
       event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 0.5); const isBitcoin = form.get('isBitcoin') === 'on'; const btcUnits = Number(form.get('btcUnits') || 0); if (name) await addAccount({ name, shared, sharedRatio, isBitcoin, btcUnits }); state.modal = { type: null }; triggerRender(); return;
     }
@@ -2894,10 +3041,12 @@ view.addEventListener('focusout', async (event) => {
       const cuisine = normalizeFoodName(String(form.get('foodCuisine') || ''));
       const place = normalizeFoodName(String(form.get('foodPlace') || ''));
       const item = normalizeFoodName(String(form.get('foodItem') || ''));
+      const foodIdFromForm = String(form.get('foodId') || '').trim();
       const foodItemsRaw = (() => {
         try { return JSON.parse(String(form.get('foodItems') || '[]')); } catch { return []; }
       })();
       const foodItems = Array.isArray(foodItemsRaw) ? foodItemsRaw.map((row) => ({
+        foodId: String(row?.foodId || foodIdFromForm || ''),
         name: normalizeFoodName(row?.name || row?.item || row?.productName || item),
         price: Number(row?.price || 0),
         mealType: normalizeFoodName(row?.mealType || mealType),
@@ -2906,7 +3055,7 @@ view.addEventListener('focusout', async (event) => {
         healthy: String(row?.healthy || cuisine || '')
       })).filter((row) => row.name) : [];
       const extras = isFoodCategory(category)
-        ? { items: foodItems.length ? foodItems : (item ? [{ name: item, price: amount, mealType, cuisine, place, healthy: cuisine }] : []), filters: { mealType: mealType || '', cuisine: cuisine || '', place: place || '', healthy: cuisine || '' } }
+        ? { items: foodItems.length ? foodItems : (item ? [{ foodId: foodIdFromForm || '', name: item, price: amount, mealType, cuisine, place, healthy: cuisine }] : []), filters: { mealType: mealType || '', cuisine: cuisine || '', place: place || '', healthy: cuisine || '' } }
         : undefined;
       const saveId = txId || push(ref(db, `${state.financePath}/transactions`)).key;
       const prev = txId ? balanceTxList().find((row) => row.id === txId) : null;
@@ -2955,7 +3104,17 @@ view.addEventListener('focusout', async (event) => {
       if (extras?.items?.length) {
         await ensureFoodCatalogLoaded();
         for (const foodItem of extras.items) {
-          await upsertFoodItem(foodItem.name, true, { lastPrice: Number(foodItem.price || amount), lastCategory: category, lastExtras: { mealType: foodItem.mealType || mealType, cuisine: foodItem.cuisine || cuisine, place: foodItem.place || place, healthy: foodItem.healthy || '' }, lastAccountId: accountId, lastNote: note });
+          const savedFoodId = await upsertFoodItem({
+            id: foodItem.foodId || '',
+            name: foodItem.name,
+            mealType: foodItem.mealType || mealType,
+            cuisine: foodItem.cuisine || cuisine,
+            healthy: foodItem.healthy || foodItem.cuisine || cuisine,
+            place: foodItem.place || place,
+            defaultPrice: Number(foodItem.price || amount)
+          }, true, { lastCategory: category, lastAccountId: accountId, lastNote: note });
+          foodItem.foodId = savedFoodId;
+          financeDebug('transaction food usage saved', { txId: saveId, foodId: savedFoodId, name: foodItem.name });
           if (foodItem.mealType || mealType) await upsertFoodOption('typeOfMeal', foodItem.mealType || mealType, true);
           if (foodItem.cuisine || cuisine) await upsertFoodOption('cuisine', foodItem.cuisine || cuisine, true);
           if (foodItem.place || place) await upsertFoodOption('place', foodItem.place || place, true);

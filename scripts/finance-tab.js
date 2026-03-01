@@ -1746,7 +1746,19 @@ function renderFinanceBalance() {
   const calloutBoxRadius = 64;
   const calloutFrom = calloutSegment ? { x: 50 + (Math.cos(calloutSegment.midAngle) * calloutInnerRadius), y: 50 + (Math.sin(calloutSegment.midAngle) * calloutInnerRadius) } : null;
   const calloutTo = calloutSegment ? { x: 50 + (Math.cos(calloutSegment.midAngle) * calloutOuterRadius), y: 50 + (Math.sin(calloutSegment.midAngle) * calloutOuterRadius) } : null;
-  const calloutBox = calloutSegment ? { x: 50 + (Math.cos(calloutSegment.midAngle) * calloutBoxRadius), y: 50 + (Math.sin(calloutSegment.midAngle) * calloutBoxRadius) } : null;
+const calloutBox = calloutSegment
+  ? (() => {
+      const rawX = 50 + (Math.cos(calloutSegment.midAngle) * calloutBoxRadius);
+      const rawY = 50 + (Math.sin(calloutSegment.midAngle) * calloutBoxRadius);
+
+      // 🔒 Clamp para que nunca se salga del SVG (móvil safe)
+      const margin = 8; // margen interior %
+      const x = Math.max(margin, Math.min(100 - margin, rawX));
+      const y = Math.max(margin, Math.min(100 - margin, rawY));
+
+      return { x, y };
+    })()
+  : null;
   const monthScopeLabel = statsRange === 'month' ? ` — ${capitalizeFirst(monthLabelByKey(monthKey))}` : '';
   const totalIncome = statsScope === 'global' ? rangeStats.totalIncomeGlobal : rangeStats.totalIncomePersonal;
   const totalSpentRange = statsScope === 'global' ? rangeStats.totalSpentGlobal : rangeStats.totalSpentPersonal;

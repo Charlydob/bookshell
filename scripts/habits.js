@@ -8439,6 +8439,21 @@ function minutesByHabitRange(range) {
   return filtered.sort((a, b) => b.value - a.value).slice(0, 5);
 }
 
+function normalizeCrossRange(range = "month") {
+  if (["day", "week", "month", "year", "total"].includes(range)) return range;
+  return "month";
+}
+
+function getHoursByHabitId(range = "month") {
+  const safeRange = normalizeCrossRange(range);
+  const { start, end } = getRangeBounds(safeRange);
+  const byHabitId = {};
+  activeHabits().forEach((habit) => {
+    byHabitId[habit.id] = Number((minutesForHabitRange(habit, start, end) / 60).toFixed(4));
+  });
+  return byHabitId;
+}
+
 
 function minutesForHabitRange(habit, start, end) {
   let totalMinutes = 0;
@@ -11757,6 +11772,7 @@ window.__bookshellHabits = {
   setDailyMinutes: setHabitDailyMinutes,
   isRunning: () => !!runningSession,
   getTimeShareByHabit: (range) => timeShareByHabit(range),
+  getHoursByHabitId,
   rangeLabel,
   debugComputeTimeByHabit
 };

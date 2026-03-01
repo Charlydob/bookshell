@@ -42,6 +42,7 @@ const state = {
   balanceShowAllTx: false,
   balanceStatsMode: 'expense',
   balanceStatsRange: 'month',
+  balanceRoiMode: 'balance',
   balanceStatsGroupBy: 'category',
   balanceStatsScope: 'personal',
   balanceStatsActiveSegment: null,
@@ -1163,6 +1164,7 @@ function balanceTxList() {
     monthKey: String(row?.monthKey || String(row?.date || isoToDay(row?.dateISO || '') || '').slice(0, 7)),
     category: String(row?.category || ''),
     note: String(row?.note || ''),
+    linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
     createdAt: Number(row?.createdAt || 0),
     updatedAt: Number(row?.updatedAt || 0),
     extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
@@ -1193,6 +1195,7 @@ function balanceTxList() {
         monthKey: String(row?.monthKey || monthKey),
         category: String(row?.category || ''),
         note: String(row?.note || ''),
+        linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
         createdAt: Number(row?.createdAt || 0),
         updatedAt: Number(row?.updatedAt || 0),
         extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
@@ -1215,6 +1218,7 @@ function balanceTxList() {
     monthKey: String(row?.monthKey || String(row?.date || isoToDay(row?.dateISO || '') || '').slice(0, 7)),
     category: String(row?.category || ''),
     note: String(row?.note || ''),
+    linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
     createdAt: Number(row?.createdAt || 0),
     updatedAt: Number(row?.updatedAt || 0),
     extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
@@ -1458,6 +1462,69 @@ function filterTxByRange(rows = [], mode = 'month') {
   return rows.filter((row) => {
     const ts = txTs(row);
     return ts >= start && ts <= end;
+  });
+}
+
+function listHabitOptions() {
+  const apiList = window.__bookshellHabits?.listActiveHabits;
+  const habits = typeof apiList === 'function' ? apiList() : [];
+  if (!Array.isArray(habits)) return [];
+  return habits
+    .map((habit) => ({ id: String(habit?.id || ''), name: String(habit?.name || '').trim() }))
+    .filter((habit) => habit.id && habit.name);
+}
+
+function getHoursByHabitId(range = 'month') {
+  const safeRange = ['day', 'week', 'month', 'year', 'total'].includes(range) ? range : 'month';
+  const reader = window.__bookshellHabits?.getHoursByHabitId;
+  if (typeof reader !== 'function') return {};
+  try {
+    const hours = reader(safeRange);
+    if (!hours || typeof hours !== 'object') return {};
+    return Object.fromEntries(Object.entries(hours).map(([habitId, value]) => [habitId, Number(value || 0)]));
+  } catch (err) {
+    console.warn('[finance] getHoursByHabitId failed', err);
+    return {};
+  }
+}
+
+function buildHabitPerHourMetrics(rows = [], range = 'month') {
+  const safeRange = ['day', 'week', 'month', 'year', 'total'].includes(range) ? range : 'month';
+  const txRows = safeRange === 'month'
+    ? rows.filter((row) => row.monthKey === getSelectedBalanceMonthKey())
+    : filterTxByRange(rows, safeRange);
+  const sumIncome = {};
+  const sumExpense = {};
+  txRows.forEach((row) => {
+    const habitId = String(row?.linkedHabitId || '').trim();
+    if (!habitId) return;
+    const amount = Number(row?.amount || 0);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    if (row.type === 'income') sumIncome[habitId] = (sumIncome[habitId] || 0) + amount;
+    if (row.type === 'expense') sumExpense[habitId] = (sumExpense[habitId] || 0) + amount;
+  });
+
+  const hoursByHabitId = getHoursByHabitId(safeRange);
+  const habits = listHabitOptions();
+  const habitsById = Object.fromEntries(habits.map((habit) => [habit.id, habit]));
+  const ids = new Set([...Object.keys(hoursByHabitId), ...Object.keys(sumIncome), ...Object.keys(sumExpense)]);
+  return [...ids].map((habitId) => {
+    const hours = Number(hoursByHabitId[habitId] || 0);
+    const income = Number(sumIncome[habitId] || 0);
+    const expense = Number(sumExpense[habitId] || 0);
+    const balance = income - expense;
+    const hasHours = hours > 0;
+    return {
+      habitId,
+      habitName: habitsById[habitId]?.name || habitId,
+      hours,
+      income,
+      expense,
+      balance,
+      incomePerHour: hasHours ? income / hours : null,
+      expensePerHour: hasHours ? expense / hours : null,
+      balancePerHour: hasHours ? balance / hours : null
+    };
   });
 }
 
@@ -1772,6 +1839,14 @@ function renderFinanceBalance() {
     if (best ? value > pick.value : value < pick.value) return { bucketKey: row.bucketKey, value };
     return pick;
   }, null);
+  const roiMode = ['income', 'expense', 'balance'].includes(state.balanceRoiMode) ? state.balanceRoiMode : 'balance';
+  const roiMetrics = buildHabitPerHourMetrics(allTxRows, statsRange)
+    .sort((a, b) => {
+      const key = roiMode === 'income' ? 'incomePerHour' : roiMode === 'expense' ? 'expensePerHour' : 'balancePerHour';
+      const av = Number.isFinite(a[key]) ? Number(a[key]) : Number.NEGATIVE_INFINITY;
+      const bv = Number.isFinite(b[key]) ? Number(b[key]) : Number.NEGATIVE_INFINITY;
+      return bv - av;
+    });
 
   return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2><button class="finance-pill" data-open-modal="tx">+ Añadir</button></header>
   <article class="financeGlassCard">
@@ -1908,6 +1983,26 @@ function renderFinanceBalance() {
         ${foodItemsList().length ? foodItemsList().sort((a, b) => a.name.localeCompare(b.name, 'es')).map((item) => `<div class="financeStats__manageRow"><span>${escapeHtml(item.name)}</span></div>`).join('') : '<p class="finance-empty">Sin productos.</p>'}
       </div>
     </details>
+  </article>
+
+  <article class="financeGlassCard financeRoi">
+    <div class="finance-row financeRoi__header">
+      <h3>€/h por hábito</h3>
+      <div class="financeRoi__toggle" role="tablist" aria-label="Métrica €/h">
+        <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'income' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="income">Ingresos €/h</button>
+        <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'expense' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="expense">Gastos €/h</button>
+        <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'balance' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="balance">Balance €/h</button>
+      </div>
+    </div>
+    <small class="financeRoi__hint">Para alemán usa dos hábitos: Alemán (clases) y Alemán (autoestudio). Vincula el gasto de clases al primero.</small>
+    <div class="financeRoi__table">
+      <div class="financeRoi__row financeRoi__row--head"><span>Hábito</span><span>Horas</span><span>€ vinculados</span><span>€/h</span></div>
+      ${roiMetrics.map((row) => {
+        const amount = roiMode === 'income' ? row.income : roiMode === 'expense' ? row.expense : row.balance;
+        const perHour = roiMode === 'income' ? row.incomePerHour : roiMode === 'expense' ? row.expensePerHour : row.balancePerHour;
+        return `<div class="financeRoi__row"><span>${escapeHtml(row.habitName)}</span><span>${row.hours.toFixed(2)} h</span><span class="${toneClass(amount)}">${fmtSignedCurrency(amount)}</span><span class="${toneClass(perHour || 0)}">${Number.isFinite(perHour) ? `${fmtSignedCurrency(perHour)}/h` : 'N/A'}</span></div>`;
+      }).join('') || '<p class="finance-empty">Sin hábitos vinculados en este rango.</p>'}
+    </div>
   </article>
 
   <article class="financeGlassCard finAgg__section">
@@ -2226,6 +2321,8 @@ function renderModal() {
   const defaultDate = txEdit?.date || isoToDay(txEdit?.dateISO || '') || state.balanceFormState.dateISO || dayKeyFromTs(Date.now());
   const defaultAmount = txEdit?.amount || state.balanceFormState.amount || '';
   const defaultNote = txEdit?.note || state.balanceFormState.note || '';
+  const defaultLinkedHabitId = (txEdit?.linkedHabitId || state.balanceFormState.linkedHabitId || '').trim();
+  const habitOptions = listHabitOptions();
   const defaultFoodId = state.balanceFormState.foodId || '';
   const defaultFoodItem = state.balanceFormState.foodItem || '';
   const defaultFoodMealType = state.balanceFormState.foodMealType || '';
@@ -2300,6 +2397,14 @@ function renderModal() {
 
 
       <div class="fm-grid fm-grid--meta fin-move-grid fin-move-grid--meta">
+
+        <div class="fm-field financeRoi__field">
+          <label class="fm-label" for="fm-tx-linked-habit">Vincular a hábito (opcional)</label>
+          <select id="fm-tx-linked-habit" class="fm-control fm-control--select" name="linkedHabitId">
+            <option value="">Sin vincular</option>
+            ${habitOptions.map((habit) => `<option value="${escapeHtml(habit.id)}" ${defaultLinkedHabitId === habit.id ? 'selected' : ''}>${escapeHtml(habit.name)}</option>`).join('')}
+          </select>
+        </div>
 
         <div class="fm-field fm-field--category fin-move-field" data-category-block>
         <label class="fm-label-categoria" for="fm-tx-category">Categoría</label>
@@ -2789,6 +2894,7 @@ function persistBalanceFormState(form) {
     toAccountId: String(fd.get('toAccountId') || ''),
     category: String(fd.get('category') || ''),
     note: String(fd.get('note') || ''),
+    linkedHabitId: String(fd.get('linkedHabitId') || ''),
     foodMealType: String(fd.get('foodMealType') || ''),
     foodCuisine: String(fd.get('foodCuisine') || ''),
     foodPlace: String(fd.get('foodPlace') || ''),
@@ -3137,6 +3243,7 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
     const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); state.balanceShowAllTx = false; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const statsMode = target.closest('[data-finance-stats-mode]')?.dataset.financeStatsMode; if (statsMode) { state.balanceStatsMode = statsMode === 'income' ? 'income' : 'expense'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const statsRange = target.closest('[data-finance-stats-range]')?.dataset.financeStatsRange; if (statsRange) { state.balanceStatsRange = statsRange; state.balanceStatsActiveSegment = null; triggerRender(); return; }
+    const roiMode = target.closest('[data-finance-roi-mode]')?.dataset.financeRoiMode; if (roiMode) { state.balanceRoiMode = ['income', 'expense', 'balance'].includes(roiMode) ? roiMode : 'balance'; triggerRender(); return; }
     const statsScope = target.closest('[data-finance-stats-scope]')?.dataset.financeStatsScope; if (statsScope) { state.balanceStatsScope = statsScope === 'global' ? 'global' : 'personal'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const manageDelete = target.closest('[data-finance-manage-delete]')?.dataset.financeManageDelete;
     if (manageDelete) {
@@ -3366,6 +3473,7 @@ view.addEventListener('focusout', async (event) => {
       const accountId = String(form.get('accountId') || '');
       const fromAccountId = String(form.get('fromAccountId') || '');
       const toAccountId = String(form.get('toAccountId') || '');
+      const linkedHabitId = String(form.get('linkedHabitId') || '').trim() || null;
       if (!Number.isFinite(amount) || amount <= 0) { toast('Cantidad inválida'); return; }
       if ((type === 'income' || type === 'expense') && !accountId) { toast('Selecciona una cuenta'); return; }
       if (type === 'transfer' && (!fromAccountId || !toAccountId || fromAccountId === toAccountId)) { toast('Transferencia inválida'); return; }
@@ -3407,6 +3515,7 @@ view.addEventListener('focusout', async (event) => {
         toAccountId: type === 'transfer' ? toAccountId : '',
         category,
         note,
+        linkedHabitId,
         extras: extras || null,
         updatedAt: nowTs(),
         createdAt: Number(prev?.createdAt || 0) || nowTs()
@@ -3427,6 +3536,7 @@ view.addEventListener('focusout', async (event) => {
           toAccountId: type === 'transfer' ? toAccountId : '',
           category,
           note,
+          linkedHabitId,
           extras: extras || null,
           schedule: { frequency: recurringFrequency, dayOfMonth: recurringDay, startDate: recurringStart, endDate: recurringEndRaw || '' },
           updatedAt: nowTs(),

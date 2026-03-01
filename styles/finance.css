@@ -1843,3 +1843,60 @@ max-width: 150px;
 min-width: 150px;
 margin: 0px;
 }
+
+.financeRoi__field {
+  min-width: 0;
+}
+
+.financeRoi {
+  display: grid;
+  gap: 10px;
+}
+
+.financeRoi__header {
+  align-items: flex-start;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.financeRoi__toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.financeRoi__btn--active {
+  border-color: rgba(145, 247, 255, 0.8);
+  box-shadow: 0 0 0 1px rgba(145, 247, 255, 0.35) inset;
+}
+
+.financeRoi__hint {
+  opacity: 0.8;
+}
+
+.financeRoi__table {
+  display: grid;
+  gap: 6px;
+}
+
+.financeRoi__row {
+  display: grid;
+  grid-template-columns: 1.35fr 0.7fr 0.95fr 0.85fr;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.86rem;
+}
+
+.financeRoi__row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.financeRoi__row--head {
+  font-size: 0.74rem;
+  opacity: 0.72;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

@@ -1937,3 +1937,31 @@ margin: 0px;
   padding-top: 6px;
   font-weight: 700;
 }
+
+
+.financeRoi__titleWrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.finance-info-copy {
+  display: grid;
+  gap: 8px;
+  font-size: 0.92rem;
+}
+
+.finance-info-copy ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.finance-info-copy p,
+.finance-info-copy hr {
+  margin: 0;
+}
+
+.financeRoi__customDates {
+  grid-template-columns: minmax(0, 1fr);
+}

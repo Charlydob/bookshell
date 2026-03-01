@@ -8444,9 +8444,27 @@ function normalizeCrossRange(range = "month") {
   return "month";
 }
 
+function normalizeCrossRangePayload(payload = "month") {
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const safeRange = normalizeCrossRange(String(payload.range || "month"));
+    const startTs = Number(payload.start);
+    const endTs = Number(payload.end);
+    if (Number.isFinite(startTs) && Number.isFinite(endTs) && endTs > startTs) {
+      return {
+        range: safeRange,
+        start: new Date(startTs),
+        end: new Date(endTs - 1)
+      };
+    }
+    return { range: safeRange, ...getRangeBounds(safeRange) };
+  }
+  const safeRange = normalizeCrossRange(payload);
+  return { range: safeRange, ...getRangeBounds(safeRange) };
+}
+
 function getHoursByHabitId(range = "month") {
-  const safeRange = normalizeCrossRange(range);
-  const { start, end } = getRangeBounds(safeRange);
+  const normalized = normalizeCrossRangePayload(range);
+  const { start, end } = normalized;
   const byHabitId = {};
   activeHabits().forEach((habit) => {
     byHabitId[habit.id] = Number((minutesForHabitRange(habit, start, end) / 60).toFixed(4));

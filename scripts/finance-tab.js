@@ -1616,6 +1616,14 @@ function amountAllocatedToRange(row = {}, rangeBounds = {}) {
   return amount * (overlap / windowDays);
 }
 
+function computeTransactionAmountInRange(row = {}, viewedRange = {}) {
+  return amountAllocatedToRange(row, viewedRange);
+}
+
+function computeHoursByHabitInRange(range = 'month', viewedRange = null) {
+  return getHoursByHabitId(range, viewedRange);
+}
+
 function buildHabitPerHourMetrics(rows = [], range = 'month') {
   const safeRange = ['day', 'week', 'month', 'year', 'total'].includes(range) ? range : 'month';
   const rangeBounds = rangeBoundsForMode(safeRange);
@@ -1624,13 +1632,13 @@ function buildHabitPerHourMetrics(rows = [], range = 'month') {
   rows.forEach((row) => {
     const habitId = String(row?.linkedHabitId || '').trim();
     if (!habitId) return;
-    const inRangeAmount = amountAllocatedToRange(row, rangeBounds);
+    const inRangeAmount = computeTransactionAmountInRange(row, rangeBounds);
     if (!Number.isFinite(inRangeAmount) || inRangeAmount <= 0) return;
     if (row.type === 'income') sumIncome[habitId] = (sumIncome[habitId] || 0) + inRangeAmount;
     if (row.type === 'expense') sumExpense[habitId] = (sumExpense[habitId] || 0) + inRangeAmount;
   });
 
-  const hoursByHabitId = getHoursByHabitId(safeRange, rangeBounds);
+  const hoursByHabitId = computeHoursByHabitInRange(safeRange, rangeBounds);
   const habits = listHabitOptions();
   const habitsById = Object.fromEntries(habits.map((habit) => [habit.id, habit]));
   const ids = new Set([...Object.keys(hoursByHabitId), ...Object.keys(sumIncome), ...Object.keys(sumExpense)]);
@@ -2132,8 +2140,9 @@ function renderFinanceBalance() {
 
   <details class="financeGlassCard financeRoi" open>
     <summary class="financeRoi__summary">
-      <div>
+      <div class="financeRoi__titleWrap">
         <h3>€/h por hábitos</h3>
+        <button type="button" class="finance-pill finance-pill--mini" data-open-modal="roi-info" aria-label="Cómo se calcula €/h por hábito">i</button>
       </div>
       <div class="financeRoi__summaryStats">
         <span>Ingresos <strong class="is-positive">${fmtCurrency(roiTotals.income)}</strong></span>
@@ -2142,7 +2151,6 @@ function renderFinanceBalance() {
         <span>Balance €/h <strong class="${toneClass(roiTotals.balancePerHour || 0)}">${Number.isFinite(roiTotals.balancePerHour) ? `${fmtSignedCurrency(roiTotals.balancePerHour)}/h` : 'N/A'}</strong></span>
       </div>
     </summary>
-    <small class="financeRoi__hint">Para alemán usa dos hábitos: Alemán (clases) y Alemán (autoestudio). Vincula el gasto de clases al primero.</small>
     <div class="financeRoi__toggle" role="tablist" aria-label="Métrica €/h">
       <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'income' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="income">Ingresos €/h</button>
       <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'expense' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="expense">Gastos €/h</button>
@@ -2576,10 +2584,13 @@ function renderModal() {
             <option value="year" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'year') ? 'selected' : ''}>Anual</option>
             <option value="custom" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'custom') ? 'selected' : ''}>Personalizado</option>
           </select>
-          <input type="date" class="fm-control" name="allocationAnchorDate" value="${escapeHtml(defaultAllocation.anchorDate || defaultDate)}" data-allocation-anchor ${defaultAllocation.mode === 'point' ? 'hidden' : ''} />
+          <label class="fm-label" data-allocation-anchor-label for="fm-tx-allocation-anchor" ${defaultAllocation.mode === 'point' ? 'hidden' : ''}>Periodo de referencia (ancla)</label>
+          <input id="fm-tx-allocation-anchor" type="date" class="fm-control" name="allocationAnchorDate" value="${escapeHtml(defaultAllocation.anchorDate || defaultDate)}" data-allocation-anchor ${defaultAllocation.mode === 'point' ? 'hidden' : ''} />
           <div class="financeRoi__customDates" data-allocation-custom ${defaultAllocation.period === 'custom' && defaultAllocation.mode === 'period' ? '' : 'hidden'}>
-            <input type="date" class="fm-control" name="allocationCustomStart" value="${escapeHtml(defaultAllocation.customStart || defaultAllocation.anchorDate || defaultDate)}" />
-            <input type="date" class="fm-control" name="allocationCustomEnd" value="${escapeHtml(defaultAllocation.customEnd || defaultAllocation.anchorDate || defaultDate)}" />
+            <label class="fm-label" for="fm-tx-allocation-custom-start">Desde (incl.)</label>
+            <input id="fm-tx-allocation-custom-start" type="date" class="fm-control" name="allocationCustomStart" value="${escapeHtml(defaultAllocation.customStart || defaultAllocation.anchorDate || defaultDate)}" />
+            <label class="fm-label" for="fm-tx-allocation-custom-end">Hasta (incl.)</label>
+            <input id="fm-tx-allocation-custom-end" type="date" class="fm-control" name="allocationCustomEnd" value="${escapeHtml(defaultAllocation.customEnd || defaultAllocation.anchorDate || defaultDate)}" />
           </div>
         </div>
 
@@ -2780,6 +2791,29 @@ if (form) {
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${escapeHtml(goal.title)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
       <p>Meta ${fmtCurrency(goal.targetAmount)} · vence ${new Date(goal.dueDateISO).toLocaleDateString('es-ES')}</p><p>Prioridad por (dinero / días).</p>
       <form data-goal-accounts-form="${state.modal.goalId}">${accounts.map((a) => `<label><input type="checkbox" value="${a.id}" ${selected.has(a.id) ? 'checked' : ''}/> ${escapeHtml(a.name)}</label>`).join('')}<button class="finance-pill" type="submit">Actualizar cuentas</button></form></div>`;
+    return;
+  }
+
+  if (state.modal.type === 'roi-info') {
+    const habits = listHabitOptions();
+    const hasGermanClassesHabit = habits.some((habit) => /alem[aá]n/i.test(habit.name) && /clase/i.test(habit.name));
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Cómo se calcula €/h por hábito</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+      <div class="finance-info-copy">
+        <p><strong>Distribución:</strong> Puntual cuenta solo el día del movimiento. Mensual/Semanal/Anual usan su periodo de referencia. Personalizado usa el rango [desde, hasta] (incluyentes).</p>
+        <p><strong>Rango visible:</strong> este panel usa solo las horas del hábito dentro del rango que estás viendo (día/semana/mes/año/total).</p>
+        <p><strong>Prorrateo:</strong> si tu rango visible cubre solo parte del periodo de una transacción, se imputa solo la parte proporcional por solape de días.</p>
+        <p><strong>Ejemplo:</strong> Ingreso mensual 300€ en febrero + 30h en febrero = 10€/h. Si luego registras más horas ese mes, el €/h baja.</p>
+        <p><strong>Horas = 0:</strong> se muestra N/A.</p>
+        <p><strong>Movimientos sin vínculo a hábito:</strong> no cuentan aquí.</p>
+        <hr />
+        <p><strong>Alemán recomendado en 2 hábitos:</strong></p>
+        <ul>
+          <li><strong>Alemán (clases):</strong> usa solo el botón “Clase” (1h por clase) y vincula aquí el gasto de clases.</li>
+          <li><strong>Alemán (autoestudio):</strong> Duolingo/otros, sin coste asociado.</li>
+        </ul>
+        <p>${hasGermanClassesHabit ? 'Las horas de “Alemán (clases)” salen del botón Clase (1h por pulsación).' : 'Si activas el botón “Clase”, las horas pueden contarse como 1h por pulsación en “Alemán (clases)”.'}</p>
+      </div>
+    </div>`;
     return;
   }
 
@@ -3043,13 +3077,16 @@ function syncAllocationFields(form) {
   const modeSel = form?.querySelector('[data-allocation-mode]');
   const customWrap = form?.querySelector('[data-allocation-custom]');
   const anchorInput = form?.querySelector('[data-allocation-anchor]');
-  if (!linked || !block || !modeSel || !customWrap || !anchorInput) return;
+  const anchorLabel = form?.querySelector('[data-allocation-anchor-label]');
+  if (!linked || !block || !modeSel || !customWrap || !anchorInput || !anchorLabel) return;
   const hasHabit = !!String(linked.value || '').trim();
   block.hidden = !hasHabit;
   const mode = String(modeSel.value || 'point');
-  const isPeriod = mode !== 'point';
-  anchorInput.hidden = !isPeriod;
-  customWrap.hidden = !(isPeriod && mode === 'custom');
+  const isCustom = mode === 'custom';
+  const showAnchor = mode !== 'point' && !isCustom;
+  anchorInput.hidden = !showAnchor;
+  anchorLabel.hidden = !showAnchor;
+  customWrap.hidden = !(mode !== 'point' && isCustom);
 }
 
 function maybeToggleCategoryCreate(form) {
@@ -3682,12 +3719,27 @@ view.addEventListener('focusout', async (event) => {
       const toAccountId = String(form.get('toAccountId') || '');
       const linkedHabitId = String(form.get('linkedHabitId') || '').trim() || null;
       const allocationModeRaw = String(form.get('allocationMode') || 'point');
+      const allocationAnchorDate = String(form.get('allocationAnchorDate') || dateISO);
+      const allocationCustomStart = String(form.get('allocationCustomStart') || '');
+      const allocationCustomEnd = String(form.get('allocationCustomEnd') || '');
+      if (linkedHabitId && allocationModeRaw === 'custom') {
+        if (!allocationCustomStart || !allocationCustomEnd) {
+          toast('Completa Desde y Hasta para una distribución personalizada');
+          return;
+        }
+        const startTs = localStartOfDayTs(allocationCustomStart);
+        const endTs = localStartOfDayTs(allocationCustomEnd);
+        if (!startTs || !endTs || startTs > endTs) {
+          toast('Rango personalizado inválido: "Desde" debe ser menor o igual a "Hasta"');
+          return;
+        }
+      }
       const allocation = normalizeTxAllocation(linkedHabitId ? {
         mode: allocationModeRaw === 'point' ? 'point' : 'period',
         period: allocationModeRaw === 'point' ? 'day' : allocationModeRaw,
-        anchorDate: String(form.get('allocationAnchorDate') || dateISO),
-        customStart: String(form.get('allocationCustomStart') || ''),
-        customEnd: String(form.get('allocationCustomEnd') || '')
+        anchorDate: allocationAnchorDate,
+        customStart: allocationCustomStart,
+        customEnd: allocationCustomEnd
       } : { mode: 'point', period: 'day', anchorDate: dateISO }, dateISO);
       if (!Number.isFinite(amount) || amount <= 0) { toast('Cantidad inválida'); return; }
       if ((type === 'income' || type === 'expense') && !accountId) { toast('Selecciona una cuenta'); return; }

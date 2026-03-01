@@ -636,36 +636,19 @@ function renderFoodExtrasSection() {
         <h4 class="finFood__title">Extras de comida</h4>
       </div>
 
-      <section class="finFood__quick foodX-grid" data-food-extra hidden>
-        ${renderFoodOptionField('typeOfMeal', 'Tipo', 'foodMealType')}
-        ${renderFoodOptionField('cuisine', 'Saludable', 'foodCuisine')}
-        ${renderFoodOptionField('place', 'Dónde', 'foodPlace')}
-      </section>
+   <details class="finFood__dropdown">
+  <summary class="finFood__dropdownSummary">Extras de comida</summary>
+
+  <section class="finFood__quick foodX-grid" data-food-extra>
+    ${renderFoodOptionField('typeOfMeal', 'Tipo', 'foodMealType')}
+    ${renderFoodOptionField('cuisine', 'Saludable', 'foodCuisine')}
+    ${renderFoodOptionField('place', 'Dónde', 'foodPlace')}
+  </section>
+</details>
 
       <section class="finFood__card">
-        <div class="finFood__block">
-          <div class="finFood__labelRow">
-            <label class="finFood__label">Producto / Plato</label>
-            <span class="finFood__tag">Habituales</span>
-          </div>
 
-          <div class="food-list food-items-grid" data-food-top>
-            ${
-              topItems.map(item => `
-                <div class="food-item">
-                  <button type="button" class="food-pill" data-food-top-item="${escapeHtml(item.id)}">
-                    <span class="food-pill__name">${escapeHtml(item.name)}</span>
-                    <small class="food-pill__count">×${item.count}</small>
-                  </button>
-                  <div class="food-pill__actions">
-                    <button type="button" class="food-iconbtn" data-food-item-info="${escapeHtml(item.id)}" title="Ficha del producto" aria-label="Ficha del producto">ℹ️</button>
-                    <button type="button" class="food-iconbtn" data-food-item-edit="${escapeHtml(item.id)}" title="Editar comida" aria-label="Editar comida">✏️</button>
-                  </div>
-                </div>
-              `).join('') || `<small class="finance-empty">Sin habituales aún.</small>`
-            }
-          </div>
-        </div>
+        
 
         <div class="finFood__block">
           <label class="finFood__label">Buscar</label>
@@ -691,6 +674,47 @@ function renderFoodExtrasSection() {
         <input type="hidden" name="foodId" data-food-id-value />
       </section>
     </div>
+
+    <div class="finFood__block">
+          <div class="finFood__labelRow">
+            <label class="finFood__label">Producto / Plato</label>
+            <span class="finFood__tag">Habituales</span>
+          </div>
+
+          <div class="food-list food-items-grid" data-food-top>
+            ${
+  topItems.map(item => `
+    <div class="food-item">
+      
+      <div class="food-pill" data-food-top-item="${escapeHtml(item.id)}">
+        
+        <button type="button" class="food-pill__main">
+          <span class="food-pill__name">${escapeHtml(item.name)}</span>
+          <small class="food-pill__count">×${item.count}</small>
+        </button>
+        <button type="button"
+            class="food-iconbtn"
+            data-food-item-info="${escapeHtml(item.id)}"
+            title="Ficha del producto"
+            aria-label="Ficha del producto">
+            ℹ️
+          </button>
+
+          <button type="button"
+            class="food-iconbtn"
+            data-food-item-edit="${escapeHtml(item.id)}"
+            title="Editar comida"
+            aria-label="Editar comida">
+            ✏️
+          </button>
+
+      </div>
+
+    </div>
+  `).join('') || `<small class="finance-empty">Sin habituales aún.</small>`
+}
+          </div>
+        </div>
   `;
 }
 
@@ -1125,37 +1149,76 @@ function balanceTxList() {
   const fromNew = Object.entries(state.balance.transactions || {}).map(([id, row]) => ({
     id,
     ...row,
-    amount: Number(row?.amount || 0),
+    __src: 'transactions',
+    __path: `${state.financePath}/transactions/${id}`,
     type: normalizeTxType(row?.type),
+    amount: Number(row?.amount || 0),
+    accountId: String(row?.accountId || ''),
+    fromAccountId: String(row?.fromAccountId || ''),
+    toAccountId: String(row?.toAccountId || ''),
     date: String(row?.date || isoToDay(row?.dateISO || '') || ''),
+    dateISO: String(row?.dateISO || ''),
     monthKey: String(row?.monthKey || String(row?.date || isoToDay(row?.dateISO || '') || '').slice(0, 7)),
+    category: String(row?.category || ''),
+    note: String(row?.note || ''),
+    createdAt: Number(row?.createdAt || 0),
+    updatedAt: Number(row?.updatedAt || 0),
     extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
   }));
+
+  // ✅ Si ya existen transactions, NO mezcles legacy (evita el doble fantasma)
+  if (fromNew.length) {
+    return fromNew
+      .filter((row) => Number.isFinite(row.amount) && row.monthKey)
+      .sort((a, b) => (txSortTs(b) - txSortTs(a)) || (Number(b.createdAt || 0) - Number(a.createdAt || 0)));
+  }
+
   const fromLegacy = [];
   Object.entries(state.balance.movements || {}).forEach(([monthKey, rows]) => {
     Object.entries(rows || {}).forEach(([id, row]) => {
       fromLegacy.push({
         id,
         ...row,
+        __src: 'movements',
+        __path: `${state.financePath}/movements/${monthKey}/${id}`,
         type: normalizeTxType(row?.type),
-        date: String(isoToDay(row?.dateISO || row?.date || '')),
-        monthKey: row?.monthKey || monthKey,
         amount: Number(row?.amount || 0),
         accountId: String(row?.accountId || ''),
+        fromAccountId: String(row?.fromAccountId || ''),
+        toAccountId: String(row?.toAccountId || ''),
+        date: String(isoToDay(row?.dateISO || row?.date || '')),
+        dateISO: String(row?.dateISO || ''),
+        monthKey: String(row?.monthKey || monthKey),
+        category: String(row?.category || ''),
+        note: String(row?.note || ''),
+        createdAt: Number(row?.createdAt || 0),
+        updatedAt: Number(row?.updatedAt || 0),
         extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
       });
     });
   });
+
   const legacyTx = Object.entries(state.balance.tx || {}).map(([id, row]) => ({
     id,
     ...row,
+    __src: 'tx',
+    __path: `${state.financePath}/tx/${id}`,
     type: normalizeTxType(row?.type),
-    date: String(row?.date || isoToDay(row?.dateISO || '')),
-    monthKey: String(row?.monthKey || String(row?.date || isoToDay(row?.dateISO || '') || '').slice(0, 7)),
     amount: Number(row?.amount || 0),
+    accountId: String(row?.accountId || ''),
+    fromAccountId: String(row?.fromAccountId || ''),
+    toAccountId: String(row?.toAccountId || ''),
+    date: String(row?.date || isoToDay(row?.dateISO || '')),
+    dateISO: String(row?.dateISO || ''),
+    monthKey: String(row?.monthKey || String(row?.date || isoToDay(row?.dateISO || '') || '').slice(0, 7)),
+    category: String(row?.category || ''),
+    note: String(row?.note || ''),
+    createdAt: Number(row?.createdAt || 0),
+    updatedAt: Number(row?.updatedAt || 0),
     extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
   }));
-  return [...fromNew, ...fromLegacy, ...legacyTx]
+
+  return [...fromLegacy, ...legacyTx]
     .filter((row) => Number.isFinite(row.amount) && row.monthKey)
     .sort((a, b) => (txSortTs(b) - txSortTs(a)) || (Number(b.createdAt || 0) - Number(a.createdAt || 0)));
 }
@@ -2549,7 +2612,23 @@ function renderFoodItemSearchResults(form) {
   });
   const source = (mealType || place || cuisine) ? filteredByMeta : all;
   const filtered = query ? source.filter((row) => row.name.toLowerCase().includes(query)) : source;
-  const rows = filtered.slice(0, 10).map((row) => { const selected = String(refs.foodId?.value || '') === String(row.id); return `<div class="food-item"><button type="button" class="food-pill ${selected ? 'is-selected' : ''}" data-food-item-select="${escapeHtml(row.id)}"><span class="food-pill__name">${escapeHtml(row.name)}</span><small class="food-pill__count">×${row.count}</small></button><div class="food-pill__actions"><button type="button" class="food-iconbtn" data-food-item-info="${escapeHtml(row.id)}" title="Ficha del producto" aria-label="Ficha del producto">ℹ️</button><button type="button" class="food-iconbtn" data-food-item-edit="${escapeHtml(row.id)}" aria-label="Editar comida">✏️</button></div></div>`; });
+  const rows = filtered.slice(0, 10).map((row) => { const selected = String(refs.foodId?.value || '') === String(row.id); return `
+<div class="food-item" id="panel-lista-platos">
+  <button type="button" class="food-pill ${selected ? 'is-selected' : ''}" data-food-item-select="${escapeHtml(row.id)}" id="plato-pill">
+
+    <span class="food-pill__name">${escapeHtml(row.name)}</span>
+
+    <small class="food-pill__count">×${row.count}</small>
+
+  <button type="button" class="food-iconbtn" data-food-item-info="${escapeHtml(row.id)}" title="Ficha del producto" aria-label="Ficha del producto">ℹ️</button>
+
+  <button type="button" class="food-iconbtn" data-food-item-edit="${escapeHtml(row.id)}" aria-label="Editar comida">✏️</button>
+
+  </button>
+
+</div>
+    
+    `; });
   const canCreate = query && !all.some((row) => row.name.toLowerCase() === query);
   if (canCreate) rows.push(`<button type="button" class="food-pill food-pill--create" data-food-item-create="${escapeHtml(refs.itemSearch?.value || '')}">Crear “${escapeHtml(refs.itemSearch?.value || '')}”</button>`);
   refs.itemResults.innerHTML = rows.join('') || '<small class="finance-empty">Sin resultados.</small>';
@@ -2562,7 +2641,37 @@ function refreshFoodTopItems(form) {
   const host = form?.querySelector('[data-food-top]');
   if (!host) return;
   const topItems = topFoodItems(5);
-  host.innerHTML = topItems.map((item) => `<div class="food-item"><button type="button" class="food-pill" data-food-top-item="${escapeHtml(item.id)}"><span class="food-pill__name">${escapeHtml(item.name)}</span><small class="food-pill__count">×${item.count}</small></button><div class="food-pill__actions"><button type="button" class="food-iconbtn" data-food-item-info="${escapeHtml(item.id)}" title="Ficha del producto" aria-label="Ficha del producto">ℹ️</button><button type="button" class="food-iconbtn" data-food-item-edit="${escapeHtml(item.id)}" aria-label="Editar comida">✏️</button></div></div>`).join('') || '<small class="finance-empty">Sin habituales aún.</small>';
+  host.innerHTML = topItems.map((item) => 
+    `<div class="food-item" id="contenedor-habituales">
+
+  <div class="food-pill" data-food-top-item="${escapeHtml(item.id)}">
+
+    <button type="button" class="food-pill__main">
+      <span class="food-pill__name">${escapeHtml(item.name)}</span>
+      <small class="food-pill__count">×${item.count}</small>
+    </button>
+
+    <div class="food-pill__actions">
+      <button type="button"
+        class="food-iconbtn"
+        data-food-item-info="${escapeHtml(item.id)}"
+        title="Ficha del producto"
+        aria-label="Ficha del producto">
+        ℹ️
+      </button>
+
+      <button type="button"
+        class="food-iconbtn"
+        data-food-item-edit="${escapeHtml(item.id)}"
+        aria-label="Editar comida">
+        ✏️
+      </button>
+    </div>
+
+  </div>
+
+</div>`
+).join('') || '<small class="finance-empty">Sin habituales aún.</small>';
 }
 
 async function applyFoodItemPreset(form, foodIdOrName) {
@@ -2917,19 +3026,26 @@ function bindEvents() {
     }
     const txEdit = target.closest('[data-tx-edit]')?.dataset.txEdit;
     if (txEdit) { state.modal = { type: 'tx', txId: txEdit }; triggerRender(); return; }
-    const txDelete = target.closest('[data-tx-delete]')?.dataset.txDelete;
-    if (txDelete && window.confirm('¿Eliminar movimiento?')) {
-      const existing = balanceTxList().find((row) => row.id === txDelete);
-      if (!existing) return;
-      console.log('[FINANCE][BALANCE] delete transaction', `${state.financePath}/transactions/${txDelete}`);
-      await safeFirebase(() => remove(ref(db, `${state.financePath}/transactions/${txDelete}`)));
-      const touched = [existing.accountId, existing.fromAccountId, existing.toAccountId].filter(Boolean);
-      for (const accountId of [...new Set(touched)]) await recomputeAccountEntries(accountId, existing.date || isoToDay(existing.dateISO || ''));
-      toast('Movimiento eliminado');
-      scheduleAggregateRebuild();
-      triggerRender();
-      return;
-    }
+const txDelete = target.closest('[data-tx-delete]')?.dataset.txDelete;
+if (txDelete && window.confirm('¿Eliminar movimiento?')) {
+  const existing = balanceTxList().find((row) => row.id === txDelete);
+  if (!existing) return;
+
+  const path = existing.__path || `${state.financePath}/transactions/${txDelete}`;
+  console.log('[FINANCE][BALANCE] delete', path);
+
+  await safeFirebase(() => remove(ref(db, path)));
+
+  const touched = [existing.accountId, existing.fromAccountId, existing.toAccountId].filter(Boolean);
+  for (const accountId of [...new Set(touched)]) {
+    await recomputeAccountEntries(accountId, existing.date || isoToDay(existing.dateISO || ''));
+  }
+
+  toast('Movimiento eliminado');
+  scheduleAggregateRebuild();
+  triggerRender();
+  return;
+}
     const createCategory = target.closest('[data-category-create]');
     if (createCategory) {
       const form = target.closest('[data-balance-form]');

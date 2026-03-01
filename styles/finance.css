@@ -1663,8 +1663,9 @@ small.finAgg__totals-small {
 
 .financeTab .food-items-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
   gap: 10px;
+  height: 100px;
 }
 
 .financeTab .food-item {
@@ -1699,8 +1700,11 @@ small.finAgg__totals-small {
 .financeTab .food-pill__actions {
   display: grid;
   grid-auto-flow: column;
-  gap: 6px;
+  gap: 1px;
+  font-size: 10px;
+  padding: 0px;
 }
+
 
 .financeTab .food-iconbtn {
   width: 40px;
@@ -1729,6 +1733,104 @@ small.finAgg__totals-small {
 
 @media (min-width: 560px) {
   .financeTab .food-items-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+}
+.financeTab .food-iconbtn {
+    width: 20px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    background-color: transparent;
+    border: 0px;
+    font-size: 10px;
+    gap: 0px;
+}
+.food-pill{
+  font-size: 10px;
+  padding: 0px;
+
+}
+
+.fm-details__body h4 {
+    display: none;
+}
+
+#contenedor-habituales{
+  display: grid;
+  grid-template-columns: 250px 10px 10px;
+  
+}
+
+.food-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.food-pill__main {
+  all: unset;
+  cursor: pointer;
+  flex: 1;
+}
+
+.food-pill__actions {
+  display: flex;
+  gap: 6px;
+}
+.food-pill{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:10px 14px;
+  border-radius:16px;
+  width:100%;
+}
+
+.food-pill__main{
+  all:unset;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex:1;
+  min-width:0;
+}
+
+.food-iconbtn{
+  flex:0 0 auto;
+}
+.food-iconbtn:first-of-type{
+  margin-left:auto;
+}
+#panel-lista-platos{
+  display:grid;
+  grid-template-columns: 232px 10px 10px;
+  height: 42px;
+    min-height: 42px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--fin-text);
+}
+
+#plato-pill{
+  background-color: transparent;
+  border: none;
+  display: grid;
+  grid-template-columns: 100px 10px;
+  text-align: left;
+  justify-content: start;
+  min-width: 200px;
+  max-width: 200px;
+}
+div.food-form-grid.foodX-stack{
+display: grid;
+grid-template-columns: 150px 150px;
+}
+#food-name-input{
+max-width: 150px;
+min-width: 150px;
+margin: 0px;
 }

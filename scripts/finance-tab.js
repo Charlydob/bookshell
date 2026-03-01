@@ -207,6 +207,111 @@ function toIsoDay(value = '') {
   if (!day || !month || !year || month > 12 || day > 31) return null;
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
+
+function normalizeTxAllocation(raw = {}, fallbackDate = '') {
+  const mode = raw?.mode === 'period' ? 'period' : 'point';
+  const period = ['day', 'week', 'month', 'year', 'custom'].includes(raw?.period) ? raw.period : 'day';
+  const anchorDate = toIsoDay(String(raw?.anchorDate || fallbackDate || '')) || toIsoDay(fallbackDate) || dayKeyFromTs(Date.now());
+  const customStart = toIsoDay(String(raw?.customStart || '')) || null;
+  const customEnd = toIsoDay(String(raw?.customEnd || '')) || null;
+  if (mode !== 'period') {
+    return { mode: 'point', period: 'day', anchorDate };
+  }
+  if (period === 'custom') {
+    const start = customStart || anchorDate;
+    const end = customEnd || start;
+    return { mode, period, anchorDate, customStart: start, customEnd: end };
+  }
+  return { mode, period, anchorDate };
+}
+
+function localStartOfDayTs(day = '') {
+  const normalized = toIsoDay(day);
+  if (!normalized) return 0;
+  const [y, m, d] = normalized.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0).getTime();
+}
+
+function rangeBoundsForMode(mode = 'month') {
+  if (mode === 'month') {
+    const key = getSelectedBalanceMonthKey();
+    const [year, month] = String(key).split('-').map(Number);
+    const start = new Date(year, (month || 1) - 1, 1, 0, 0, 0, 0).getTime();
+    const end = new Date(year, (month || 1), 1, 0, 0, 0, 0).getTime();
+    return { start, end };
+  }
+  if (mode === 'total') {
+    const rows = balanceTxList();
+    if (!rows.length) {
+      const now = Date.now();
+      return { start: now, end: now + 86400000 };
+    }
+    const dates = rows
+      .map((row) => localStartOfDayTs(row?.date || isoToDay(row?.dateISO || '')))
+      .filter((ts) => Number.isFinite(ts) && ts > 0);
+    const start = Math.min(...dates);
+    const end = Math.max(...dates) + 86400000;
+    return { start, end };
+  }
+  const start = rangeStartByMode(mode);
+  if (!Number.isFinite(start)) {
+    const now = Date.now();
+    return { start: now, end: now + 86400000 };
+  }
+  if (mode === 'day') return { start, end: start + 86400000 };
+  if (mode === 'week') return { start, end: start + (7 * 86400000) };
+  if (mode === 'year') {
+    const d = new Date(start);
+    return { start, end: new Date(d.getFullYear() + 1, 0, 1, 0, 0, 0, 0).getTime() };
+  }
+  return { start, end: Date.now() + 1 };
+}
+
+function isoWeekStartTs(anchorIso = '') {
+  const date = new Date(`${anchorIso}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return 0;
+  const day = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - day);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function allocationWindowBounds(allocation = {}, fallbackDate = '') {
+  const normalized = normalizeTxAllocation(allocation, fallbackDate);
+  const anchorDay = normalized.anchorDate;
+  if (normalized.mode !== 'period') {
+    const start = localStartOfDayTs(anchorDay);
+    return { start, end: start + 86400000 };
+  }
+  if (normalized.period === 'week') {
+    const start = isoWeekStartTs(anchorDay);
+    return { start, end: start + (7 * 86400000) };
+  }
+  if (normalized.period === 'month') {
+    const [y, m] = anchorDay.split('-').map(Number);
+    const start = new Date(y, (m || 1) - 1, 1, 0, 0, 0, 0).getTime();
+    return { start, end: new Date(y, (m || 1), 1, 0, 0, 0, 0).getTime() };
+  }
+  if (normalized.period === 'year') {
+    const [y] = anchorDay.split('-').map(Number);
+    const start = new Date(y, 0, 1, 0, 0, 0, 0).getTime();
+    return { start, end: new Date(y + 1, 0, 1, 0, 0, 0, 0).getTime() };
+  }
+  if (normalized.period === 'custom') {
+    const start = localStartOfDayTs(normalized.customStart || anchorDay);
+    const end = localStartOfDayTs(normalized.customEnd || normalized.customStart || anchorDay) + 86400000;
+    return { start: Math.min(start, end - 86400000), end: Math.max(end, start + 86400000) };
+  }
+  const start = localStartOfDayTs(anchorDay);
+  return { start, end: start + 86400000 };
+}
+
+function overlapDays(windowBounds = {}, rangeBounds = {}) {
+  const start = Math.max(Number(windowBounds.start || 0), Number(rangeBounds.start || 0));
+  const end = Math.min(Number(windowBounds.end || 0), Number(rangeBounds.end || 0));
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+  return (end - start) / 86400000;
+}
 function parseEuroNumber(value) {
   const raw = String(value ?? '').trim();
   if (!raw) return NaN;
@@ -1165,6 +1270,7 @@ function balanceTxList() {
     category: String(row?.category || ''),
     note: String(row?.note || ''),
     linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
+    allocation: normalizeTxAllocation(row?.allocation || {}, String(row?.date || isoToDay(row?.dateISO || '') || '')),
     createdAt: Number(row?.createdAt || 0),
     updatedAt: Number(row?.updatedAt || 0),
     extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
@@ -1196,6 +1302,7 @@ function balanceTxList() {
         category: String(row?.category || ''),
         note: String(row?.note || ''),
         linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
+        allocation: normalizeTxAllocation(row?.allocation || {}, String(isoToDay(row?.dateISO || row?.date || '') || '')),
         createdAt: Number(row?.createdAt || 0),
         updatedAt: Number(row?.updatedAt || 0),
         extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
@@ -1219,6 +1326,7 @@ function balanceTxList() {
     category: String(row?.category || ''),
     note: String(row?.note || ''),
     linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
+    allocation: normalizeTxAllocation(row?.allocation || {}, String(row?.date || isoToDay(row?.dateISO || '') || '')),
     createdAt: Number(row?.createdAt || 0),
     updatedAt: Number(row?.updatedAt || 0),
     extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
@@ -1474,12 +1582,15 @@ function listHabitOptions() {
     .filter((habit) => habit.id && habit.name);
 }
 
-function getHoursByHabitId(range = 'month') {
+function getHoursByHabitId(range = 'month', explicitBounds = null) {
   const safeRange = ['day', 'week', 'month', 'year', 'total'].includes(range) ? range : 'month';
   const reader = window.__bookshellHabits?.getHoursByHabitId;
   if (typeof reader !== 'function') return {};
   try {
-    const hours = reader(safeRange);
+    const payload = explicitBounds && Number.isFinite(explicitBounds.start) && Number.isFinite(explicitBounds.end)
+      ? { range: safeRange, start: explicitBounds.start, end: explicitBounds.end }
+      : safeRange;
+    const hours = reader(payload);
     if (!hours || typeof hours !== 'object') return {};
     return Object.fromEntries(Object.entries(hours).map(([habitId, value]) => [habitId, Number(value || 0)]));
   } catch (err) {
@@ -1488,27 +1599,42 @@ function getHoursByHabitId(range = 'month') {
   }
 }
 
+function amountAllocatedToRange(row = {}, rangeBounds = {}) {
+  const amount = Number(row?.amount || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const fallbackDate = String(row?.date || isoToDay(row?.dateISO || '') || '');
+  const allocation = normalizeTxAllocation(row?.allocation || {}, fallbackDate);
+  const txDayTs = localStartOfDayTs(fallbackDate || allocation.anchorDate);
+  if (allocation.mode === 'point') {
+    return txDayTs >= rangeBounds.start && txDayTs < rangeBounds.end ? amount : 0;
+  }
+  const windowBounds = allocationWindowBounds(allocation, fallbackDate);
+  const windowDays = overlapDays(windowBounds, windowBounds);
+  if (!windowDays) return 0;
+  const overlap = overlapDays(windowBounds, rangeBounds);
+  if (!overlap) return 0;
+  return amount * (overlap / windowDays);
+}
+
 function buildHabitPerHourMetrics(rows = [], range = 'month') {
   const safeRange = ['day', 'week', 'month', 'year', 'total'].includes(range) ? range : 'month';
-  const txRows = safeRange === 'month'
-    ? rows.filter((row) => row.monthKey === getSelectedBalanceMonthKey())
-    : filterTxByRange(rows, safeRange);
+  const rangeBounds = rangeBoundsForMode(safeRange);
   const sumIncome = {};
   const sumExpense = {};
-  txRows.forEach((row) => {
+  rows.forEach((row) => {
     const habitId = String(row?.linkedHabitId || '').trim();
     if (!habitId) return;
-    const amount = Number(row?.amount || 0);
-    if (!Number.isFinite(amount) || amount <= 0) return;
-    if (row.type === 'income') sumIncome[habitId] = (sumIncome[habitId] || 0) + amount;
-    if (row.type === 'expense') sumExpense[habitId] = (sumExpense[habitId] || 0) + amount;
+    const inRangeAmount = amountAllocatedToRange(row, rangeBounds);
+    if (!Number.isFinite(inRangeAmount) || inRangeAmount <= 0) return;
+    if (row.type === 'income') sumIncome[habitId] = (sumIncome[habitId] || 0) + inRangeAmount;
+    if (row.type === 'expense') sumExpense[habitId] = (sumExpense[habitId] || 0) + inRangeAmount;
   });
 
-  const hoursByHabitId = getHoursByHabitId(safeRange);
+  const hoursByHabitId = getHoursByHabitId(safeRange, rangeBounds);
   const habits = listHabitOptions();
   const habitsById = Object.fromEntries(habits.map((habit) => [habit.id, habit]));
   const ids = new Set([...Object.keys(hoursByHabitId), ...Object.keys(sumIncome), ...Object.keys(sumExpense)]);
-  return [...ids].map((habitId) => {
+  const rowsByHabit = [...ids].map((habitId) => {
     const hours = Number(hoursByHabitId[habitId] || 0);
     const income = Number(sumIncome[habitId] || 0);
     const expense = Number(sumExpense[habitId] || 0);
@@ -1525,7 +1651,25 @@ function buildHabitPerHourMetrics(rows = [], range = 'month') {
       expensePerHour: hasHours ? expense / hours : null,
       balancePerHour: hasHours ? balance / hours : null
     };
-  });
+  }).sort((a, b) => (b.balance - a.balance) || (b.income - a.income));
+
+  const totals = rowsByHabit.reduce((acc, row) => {
+    acc.income += row.income;
+    acc.expense += row.expense;
+    acc.hours += row.hours;
+    return acc;
+  }, { income: 0, expense: 0, hours: 0 });
+  const totalBalance = totals.income - totals.expense;
+  return {
+    rows: rowsByHabit,
+    totals: {
+      income: totals.income,
+      expense: totals.expense,
+      balance: totalBalance,
+      hours: totals.hours,
+      balancePerHour: totals.hours > 0 ? totalBalance / totals.hours : null
+    }
+  };
 }
 
 function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense', scope = 'personal', accountsById = {}) {
@@ -1840,13 +1984,14 @@ function renderFinanceBalance() {
     return pick;
   }, null);
   const roiMode = ['income', 'expense', 'balance'].includes(state.balanceRoiMode) ? state.balanceRoiMode : 'balance';
-  const roiMetrics = buildHabitPerHourMetrics(allTxRows, statsRange)
-    .sort((a, b) => {
-      const key = roiMode === 'income' ? 'incomePerHour' : roiMode === 'expense' ? 'expensePerHour' : 'balancePerHour';
-      const av = Number.isFinite(a[key]) ? Number(a[key]) : Number.NEGATIVE_INFINITY;
-      const bv = Number.isFinite(b[key]) ? Number(b[key]) : Number.NEGATIVE_INFINITY;
-      return bv - av;
-    });
+  const roiData = buildHabitPerHourMetrics(allTxRows, statsRange);
+  const roiMetrics = roiData.rows.slice().sort((a, b) => {
+    const key = roiMode === 'income' ? 'incomePerHour' : roiMode === 'expense' ? 'expensePerHour' : 'balancePerHour';
+    const av = Number.isFinite(a[key]) ? Number(a[key]) : Number.NEGATIVE_INFINITY;
+    const bv = Number.isFinite(b[key]) ? Number(b[key]) : Number.NEGATIVE_INFINITY;
+    return bv - av;
+  });
+  const roiTotals = roiData.totals;
 
   return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2><button class="finance-pill" data-open-modal="tx">+ Añadir</button></header>
   <article class="financeGlassCard">
@@ -1985,25 +2130,34 @@ function renderFinanceBalance() {
     </details>
   </article>
 
-  <article class="financeGlassCard financeRoi">
-    <div class="finance-row financeRoi__header">
-      <h3>€/h por hábito</h3>
-      <div class="financeRoi__toggle" role="tablist" aria-label="Métrica €/h">
-        <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'income' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="income">Ingresos €/h</button>
-        <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'expense' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="expense">Gastos €/h</button>
-        <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'balance' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="balance">Balance €/h</button>
+  <details class="financeGlassCard financeRoi" open>
+    <summary class="financeRoi__summary">
+      <div>
+        <h3>€/h por hábitos</h3>
       </div>
-    </div>
+      <div class="financeRoi__summaryStats">
+        <span>Ingresos <strong class="is-positive">${fmtCurrency(roiTotals.income)}</strong></span>
+        <span>Gastos <strong class="is-negative">${fmtCurrency(roiTotals.expense)}</strong></span>
+        <span>Balance <strong class="${toneClass(roiTotals.balance)}">${fmtSignedCurrency(roiTotals.balance)}</strong></span>
+        <span>Balance €/h <strong class="${toneClass(roiTotals.balancePerHour || 0)}">${Number.isFinite(roiTotals.balancePerHour) ? `${fmtSignedCurrency(roiTotals.balancePerHour)}/h` : 'N/A'}</strong></span>
+      </div>
+    </summary>
     <small class="financeRoi__hint">Para alemán usa dos hábitos: Alemán (clases) y Alemán (autoestudio). Vincula el gasto de clases al primero.</small>
+    <div class="financeRoi__toggle" role="tablist" aria-label="Métrica €/h">
+      <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'income' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="income">Ingresos €/h</button>
+      <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'expense' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="expense">Gastos €/h</button>
+      <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'balance' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="balance">Balance €/h</button>
+    </div>
     <div class="financeRoi__table">
-      <div class="financeRoi__row financeRoi__row--head"><span>Hábito</span><span>Horas</span><span>€ vinculados</span><span>€/h</span></div>
+      <div class="financeRoi__row financeRoi__row--head"><span>Hábito</span><span>Horas</span><span>€ asignados</span><span>€/h</span></div>
       ${roiMetrics.map((row) => {
         const amount = roiMode === 'income' ? row.income : roiMode === 'expense' ? row.expense : row.balance;
         const perHour = roiMode === 'income' ? row.incomePerHour : roiMode === 'expense' ? row.expensePerHour : row.balancePerHour;
         return `<div class="financeRoi__row"><span>${escapeHtml(row.habitName)}</span><span>${row.hours.toFixed(2)} h</span><span class="${toneClass(amount)}">${fmtSignedCurrency(amount)}</span><span class="${toneClass(perHour || 0)}">${Number.isFinite(perHour) ? `${fmtSignedCurrency(perHour)}/h` : 'N/A'}</span></div>`;
       }).join('') || '<p class="finance-empty">Sin hábitos vinculados en este rango.</p>'}
+      <div class="financeRoi__row financeRoi__row--total"><span>TOTAL</span><span>${roiTotals.hours.toFixed(2)} h</span><span class="${toneClass(roiMode === 'income' ? roiTotals.income : roiMode === 'expense' ? roiTotals.expense : roiTotals.balance)}">${fmtSignedCurrency(roiMode === 'income' ? roiTotals.income : roiMode === 'expense' ? roiTotals.expense : roiTotals.balance)}</span><span class="${toneClass(roiMode === 'income' ? roiTotals.income : roiMode === 'expense' ? roiTotals.expense : roiTotals.balancePerHour || 0)}">${Number.isFinite(roiMode === 'income' ? (roiTotals.hours > 0 ? roiTotals.income / roiTotals.hours : null) : roiMode === 'expense' ? (roiTotals.hours > 0 ? roiTotals.expense / roiTotals.hours : null) : roiTotals.balancePerHour) ? `${fmtSignedCurrency(roiMode === 'income' ? roiTotals.income / roiTotals.hours : roiMode === 'expense' ? roiTotals.expense / roiTotals.hours : roiTotals.balancePerHour)}/h` : 'N/A'}</span></div>
     </div>
-  </article>
+  </details>
 
   <article class="financeGlassCard finAgg__section">
     <h3>Histórico / Agregados</h3>
@@ -2322,6 +2476,13 @@ function renderModal() {
   const defaultAmount = txEdit?.amount || state.balanceFormState.amount || '';
   const defaultNote = txEdit?.note || state.balanceFormState.note || '';
   const defaultLinkedHabitId = (txEdit?.linkedHabitId || state.balanceFormState.linkedHabitId || '').trim();
+  const defaultAllocation = normalizeTxAllocation(txEdit?.allocation || {
+    mode: state.balanceFormState.allocationMode || 'point',
+    period: state.balanceFormState.allocationPeriod || 'day',
+    anchorDate: state.balanceFormState.allocationAnchorDate || defaultDate,
+    customStart: state.balanceFormState.allocationCustomStart || '',
+    customEnd: state.balanceFormState.allocationCustomEnd || ''
+  }, defaultDate);
   const habitOptions = listHabitOptions();
   const defaultFoodId = state.balanceFormState.foodId || '';
   const defaultFoodItem = state.balanceFormState.foodItem || '';
@@ -2400,10 +2561,26 @@ function renderModal() {
 
         <div class="fm-field financeRoi__field">
           <label class="fm-label" for="fm-tx-linked-habit">Vincular a hábito (opcional)</label>
-          <select id="fm-tx-linked-habit" class="fm-control fm-control--select" name="linkedHabitId">
+          <select id="fm-tx-linked-habit" class="fm-control fm-control--select" name="linkedHabitId" data-linked-habit-select>
             <option value="">Sin vincular</option>
             ${habitOptions.map((habit) => `<option value="${escapeHtml(habit.id)}" ${defaultLinkedHabitId === habit.id ? 'selected' : ''}>${escapeHtml(habit.name)}</option>`).join('')}
           </select>
+        </div>
+
+        <div class="fm-field financeRoi__field" data-allocation-block ${defaultLinkedHabitId ? '' : 'hidden'}>
+          <label class="fm-label" for="fm-tx-allocation-mode">Distribución</label>
+          <select id="fm-tx-allocation-mode" class="fm-control fm-control--select" name="allocationMode" data-allocation-mode>
+            <option value="point" ${defaultAllocation.mode === 'point' ? 'selected' : ''}>Puntual (solo ese día)</option>
+            <option value="month" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'month') ? 'selected' : ''}>Mensual</option>
+            <option value="week" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'week') ? 'selected' : ''}>Semanal</option>
+            <option value="year" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'year') ? 'selected' : ''}>Anual</option>
+            <option value="custom" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'custom') ? 'selected' : ''}>Personalizado</option>
+          </select>
+          <input type="date" class="fm-control" name="allocationAnchorDate" value="${escapeHtml(defaultAllocation.anchorDate || defaultDate)}" data-allocation-anchor ${defaultAllocation.mode === 'point' ? 'hidden' : ''} />
+          <div class="financeRoi__customDates" data-allocation-custom ${defaultAllocation.period === 'custom' && defaultAllocation.mode === 'period' ? '' : 'hidden'}>
+            <input type="date" class="fm-control" name="allocationCustomStart" value="${escapeHtml(defaultAllocation.customStart || defaultAllocation.anchorDate || defaultDate)}" />
+            <input type="date" class="fm-control" name="allocationCustomEnd" value="${escapeHtml(defaultAllocation.customEnd || defaultAllocation.anchorDate || defaultDate)}" />
+          </div>
         </div>
 
         <div class="fm-field fm-field--category fin-move-field" data-category-block>
@@ -2474,9 +2651,12 @@ function renderModal() {
   catSel?.addEventListener('change', () => {
     void toggleFoodExtras(form);
   });
+  form.querySelector('[data-linked-habit-select]')?.addEventListener('change', () => syncAllocationFields(form));
+  form.querySelector('[data-allocation-mode]')?.addEventListener('change', () => syncAllocationFields(form));
 
   // aplicar estado inicial (después de setear defaults)
   syncTxTypeFields(form);
+  syncAllocationFields(form);
   void toggleFoodExtras(form);
 }
 if (form) {
@@ -2495,6 +2675,7 @@ if (form) {
 
   // primero: que la UI refleje tipo + categoría
   syncTxTypeFields(form);
+  syncAllocationFields(form);
   void toggleFoodExtras(form);
   maybeToggleCategoryCreate(form);
 
@@ -2855,6 +3036,22 @@ function syncTxTypeFields(form) {
   elTo.style.display = isTransfer ? '' : 'none';
 }
 
+
+function syncAllocationFields(form) {
+  const linked = form?.querySelector('[data-linked-habit-select]');
+  const block = form?.querySelector('[data-allocation-block]');
+  const modeSel = form?.querySelector('[data-allocation-mode]');
+  const customWrap = form?.querySelector('[data-allocation-custom]');
+  const anchorInput = form?.querySelector('[data-allocation-anchor]');
+  if (!linked || !block || !modeSel || !customWrap || !anchorInput) return;
+  const hasHabit = !!String(linked.value || '').trim();
+  block.hidden = !hasHabit;
+  const mode = String(modeSel.value || 'point');
+  const isPeriod = mode !== 'point';
+  anchorInput.hidden = !isPeriod;
+  customWrap.hidden = !(isPeriod && mode === 'custom');
+}
+
 function maybeToggleCategoryCreate(form) {
   const input = form?.querySelector('[data-category-new]');
   const btn = form?.querySelector('[data-category-create]');
@@ -2895,6 +3092,11 @@ function persistBalanceFormState(form) {
     category: String(fd.get('category') || ''),
     note: String(fd.get('note') || ''),
     linkedHabitId: String(fd.get('linkedHabitId') || ''),
+    allocationMode: String(fd.get('allocationMode') || 'point'),
+    allocationPeriod: String(fd.get('allocationMode') || 'point'),
+    allocationAnchorDate: String(fd.get('allocationAnchorDate') || ''),
+    allocationCustomStart: String(fd.get('allocationCustomStart') || ''),
+    allocationCustomEnd: String(fd.get('allocationCustomEnd') || ''),
     foodMealType: String(fd.get('foodMealType') || ''),
     foodCuisine: String(fd.get('foodCuisine') || ''),
     foodPlace: String(fd.get('foodPlace') || ''),
@@ -3338,6 +3540,11 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-tx-type]')) {
       syncTxTypeFields(event.target.closest('[data-balance-form]'));
     }
+    if (event.target.matches('[data-linked-habit-select], [data-allocation-mode]')) {
+      const form = event.target.closest('[data-balance-form]');
+      syncAllocationFields(form);
+      persistBalanceFormState(form);
+    }
   });
 
   view.addEventListener('input', async (event) => {
@@ -3474,6 +3681,14 @@ view.addEventListener('focusout', async (event) => {
       const fromAccountId = String(form.get('fromAccountId') || '');
       const toAccountId = String(form.get('toAccountId') || '');
       const linkedHabitId = String(form.get('linkedHabitId') || '').trim() || null;
+      const allocationModeRaw = String(form.get('allocationMode') || 'point');
+      const allocation = normalizeTxAllocation(linkedHabitId ? {
+        mode: allocationModeRaw === 'point' ? 'point' : 'period',
+        period: allocationModeRaw === 'point' ? 'day' : allocationModeRaw,
+        anchorDate: String(form.get('allocationAnchorDate') || dateISO),
+        customStart: String(form.get('allocationCustomStart') || ''),
+        customEnd: String(form.get('allocationCustomEnd') || '')
+      } : { mode: 'point', period: 'day', anchorDate: dateISO }, dateISO);
       if (!Number.isFinite(amount) || amount <= 0) { toast('Cantidad inválida'); return; }
       if ((type === 'income' || type === 'expense') && !accountId) { toast('Selecciona una cuenta'); return; }
       if (type === 'transfer' && (!fromAccountId || !toAccountId || fromAccountId === toAccountId)) { toast('Transferencia inválida'); return; }
@@ -3516,6 +3731,7 @@ view.addEventListener('focusout', async (event) => {
         category,
         note,
         linkedHabitId,
+        allocation,
         extras: extras || null,
         updatedAt: nowTs(),
         createdAt: Number(prev?.createdAt || 0) || nowTs()
@@ -3537,6 +3753,7 @@ view.addEventListener('focusout', async (event) => {
           category,
           note,
           linkedHabitId,
+          allocation,
           extras: extras || null,
           schedule: { frequency: recurringFrequency, dayOfMonth: recurringDay, startDate: recurringStart, endDate: recurringEndRaw || '' },
           updatedAt: nowTs(),

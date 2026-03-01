@@ -44,6 +44,7 @@ const state = {
   balanceStatsRange: 'month',
   balanceStatsGroupBy: 'category',
   balanceStatsScope: 'personal',
+  balanceStatsActiveSegment: null,
   balanceAggMode: 'month',
   balanceAggScope: 'my',
   balanceAmountAuto: true,
@@ -117,6 +118,7 @@ function monthDiffFromNow(monthKey) {
 }
 function offsetMonthKey(monthKey, offset) { const d = parseMonthKey(monthKey); d.setMonth(d.getMonth() + offset); return getMonthKeyFromDate(d); }
 function monthLabelByKey(monthKey) { return new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(parseMonthKey(monthKey)); }
+function capitalizeFirst(value = '') { return value ? value.charAt(0).toUpperCase() + value.slice(1) : ''; }
 function escapeHtml(value = '') { return String(value).replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s])); }
 function fmtCurrency(value) { return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(Number(value || 0)); }
 function fmtSignedCurrency(value) { const num = Number(value || 0); return `${num > 0 ? '+' : ''}${fmtCurrency(num)}`; }
@@ -1497,20 +1499,27 @@ function donutSegments(mapData = {}, total = 0) {
   const radius = 38;
   const circumference = 2 * Math.PI * radius;
   let offset = 0;
+  let accumulatedRatio = 0;
   return Object.entries(mapData)
     .sort((a, b) => b[1] - a[1])
     .map(([label, value], index) => {
       const ratio = Number(value || 0) / total;
       const length = circumference * ratio;
+      const startRatio = accumulatedRatio;
+      const endRatio = accumulatedRatio + ratio;
+      const midAngle = ((startRatio + endRatio) / 2) * (Math.PI * 2) - (Math.PI / 2);
       const segment = {
         label,
         value,
         color: categoryColor(index),
         pct: ratio * 100,
+        midAngle,
+        key: `${label}__${index}`,
         strokeDasharray: `${length} ${Math.max(0, circumference - length)}`,
         strokeDashoffset: -offset
       };
       offset += length;
+      accumulatedRatio = endRatio;
       return segment;
     });
 }
@@ -1721,11 +1730,24 @@ function renderFinanceBalance() {
   const statsRange = ['day', 'week', 'month', 'year', 'total'].includes(state.balanceStatsRange) ? state.balanceStatsRange : 'month';
   const statsScope = state.balanceStatsScope === 'global' ? 'global' : 'personal';
   const statsGroupBy = ['category', 'account', 'store', 'mealType', 'product'].includes(state.balanceStatsGroupBy) ? state.balanceStatsGroupBy : 'category';
-  const rangeRows = filterTxByRange(balanceTxList(), statsRange);
+  const allTxRows = balanceTxList();
+  const rangeRows = statsRange === 'month'
+    ? allTxRows.filter((row) => row.monthKey === monthKey)
+    : filterTxByRange(allTxRows, statsRange);
   const rangeStats = buildBalanceStats(rangeRows, accountsById);
   const donutMap = aggregateStatsGroup(rangeRows, statsGroupBy, mode, statsScope, accountsById);
   const donutTotal = Object.values(donutMap).reduce((sum, value) => sum + Number(value || 0), 0);
   const segments = donutSegments(donutMap, donutTotal);
+  const selectedSegment = segments.find((segment) => segment.key === state.balanceStatsActiveSegment) || null;
+  if (!selectedSegment && state.balanceStatsActiveSegment) state.balanceStatsActiveSegment = null;
+  const calloutSegment = selectedSegment;
+  const calloutInnerRadius = 46;
+  const calloutOuterRadius = 56;
+  const calloutBoxRadius = 64;
+  const calloutFrom = calloutSegment ? { x: 50 + (Math.cos(calloutSegment.midAngle) * calloutInnerRadius), y: 50 + (Math.sin(calloutSegment.midAngle) * calloutInnerRadius) } : null;
+  const calloutTo = calloutSegment ? { x: 50 + (Math.cos(calloutSegment.midAngle) * calloutOuterRadius), y: 50 + (Math.sin(calloutSegment.midAngle) * calloutOuterRadius) } : null;
+  const calloutBox = calloutSegment ? { x: 50 + (Math.cos(calloutSegment.midAngle) * calloutBoxRadius), y: 50 + (Math.sin(calloutSegment.midAngle) * calloutBoxRadius) } : null;
+  const monthScopeLabel = statsRange === 'month' ? ` — ${capitalizeFirst(monthLabelByKey(monthKey))}` : '';
   const totalIncome = statsScope === 'global' ? rangeStats.totalIncomeGlobal : rangeStats.totalIncomePersonal;
   const totalSpentRange = statsScope === 'global' ? rangeStats.totalSpentGlobal : rangeStats.totalSpentPersonal;
   const topFoodItems = statsScope === 'global' ? rangeStats.topFoodItemsGlobal : rangeStats.topFoodItemsPersonal;
@@ -1799,7 +1821,7 @@ function renderFinanceBalance() {
 
   <article class="financeGlassCard financeStats">
     <div class="financeStats__header">
-      <h3 class="financeStats__title">Estadísticas</h3>
+      <h3 class="financeStats__title">Estadísticas${monthScopeLabel}</h3>
       <div class="financeStats__mode">
         
       </div>
@@ -1830,11 +1852,13 @@ function renderFinanceBalance() {
       </select>
     </div>
 
-    <div class="financeStats__donutWrap">
+    <div class="financeStats__donutWrap ${calloutSegment ? 'is-focused' : ''}">
       <svg class="financeStats__donutSvg" viewBox="0 0 100 100" aria-label="Distribución por agrupación">
         <circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="16"></circle>
-        ${segments.map((segment) => `<circle cx="50" cy="50" r="38" fill="none" stroke="${segment.color}" stroke-width="16" stroke-dasharray="${segment.strokeDasharray}" stroke-dashoffset="${segment.strokeDashoffset}" transform="rotate(-90 50 50)"></circle>`).join('')}
+        ${segments.map((segment) => `<circle class="financeStats__segment ${state.balanceStatsActiveSegment === segment.key ? 'is-active' : ''}" data-finance-stats-segment="${escapeHtml(segment.key)}" cx="50" cy="50" r="38" fill="none" stroke="${segment.color}" stroke-width="16" stroke-dasharray="${segment.strokeDasharray}" stroke-dashoffset="${segment.strokeDashoffset}" transform="rotate(-90 50 50)"></circle>`).join('')}
+        ${calloutSegment ? `<polyline class="financeStats__calloutLine" points="${calloutFrom.x},${calloutFrom.y} ${calloutTo.x},${calloutTo.y} ${calloutBox.x},${calloutBox.y}"></polyline>` : ''}
       </svg>
+      ${calloutSegment ? `<div class="financeStats__callout" style="left: calc(${calloutBox.x}%); top: calc(${calloutBox.y}%);"><strong>${escapeHtml(calloutSegment.label)}</strong><small>${fmtCurrency(calloutSegment.value)} · ${calloutSegment.pct.toFixed(1)}%</small></div>` : ''}
       <div class="financeStats__donutCenter">
         <small>Total (${scopeLabel})</small>
         <strong class="financeStats__donutValue">${fmtCurrency(donutTotal)}</strong>
@@ -1846,7 +1870,7 @@ function renderFinanceBalance() {
     <details class="financeStats__details">
       <summary class="financeStats__detailsSummary">Leyenda</summary>
       <div class="financeStats__detailsBody financeStats__legendGrid">
-        ${segments.length ? segments.map((segment, index) => `<div class="financeStats__rankRow"><span class="financeStats__rank">${index + 1}º</span><span class="financeStats__name"><i class="financeStats__dot" style="background:${segment.color}"></i>${escapeHtml(segment.label)}</span><span class="financeStats__meta">${fmtCurrency(segment.value)} · ${segment.pct.toFixed(1)}%</span></div>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
+        ${segments.length ? segments.map((segment, index) => `<button type="button" class="financeStats__rankRow ${state.balanceStatsActiveSegment === segment.key ? 'is-active' : ''}" data-finance-stats-segment="${escapeHtml(segment.key)}"><span class="financeStats__rank">${index + 1}º</span><span class="financeStats__name"><i class="financeStats__dot" style="background:${segment.color}"></i>${escapeHtml(segment.label)}</span><span class="financeStats__meta">${fmtCurrency(segment.value)} · ${segment.pct.toFixed(1)}%</span></button>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
       </div>
     </details>
 
@@ -2906,6 +2930,16 @@ function bindEvents() {
   const view = document.getElementById('view-finance'); if (!view || view.dataset.financeBound === '1') return; view.dataset.financeBound = '1';
   view.addEventListener('click', async (event) => {
     const target = event.target;
+    const segmentToggle = target.closest('[data-finance-stats-segment]')?.dataset.financeStatsSegment;
+    if (segmentToggle) {
+      state.balanceStatsActiveSegment = state.balanceStatsActiveSegment === segmentToggle ? null : segmentToggle;
+      triggerRender();
+      return;
+    }
+    if (state.balanceStatsActiveSegment && state.activeView === 'balance' && !target.closest('.financeStats')) {
+      state.balanceStatsActiveSegment = null;
+      triggerRender();
+    }
     const foodAdd = target.closest('[data-food-add]')?.dataset.foodAdd;
     if (foodAdd) {
       const hostForm = target.closest('[data-balance-form], [data-food-item-form]');
@@ -3100,10 +3134,10 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
       triggerRender();
       return;
     }
-    const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); state.balanceShowAllTx = false; triggerRender(); return; }
-    const statsMode = target.closest('[data-finance-stats-mode]')?.dataset.financeStatsMode; if (statsMode) { state.balanceStatsMode = statsMode === 'income' ? 'income' : 'expense'; triggerRender(); return; }
-    const statsRange = target.closest('[data-finance-stats-range]')?.dataset.financeStatsRange; if (statsRange) { state.balanceStatsRange = statsRange; triggerRender(); return; }
-    const statsScope = target.closest('[data-finance-stats-scope]')?.dataset.financeStatsScope; if (statsScope) { state.balanceStatsScope = statsScope === 'global' ? 'global' : 'personal'; triggerRender(); return; }
+    const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); state.balanceShowAllTx = false; state.balanceStatsActiveSegment = null; triggerRender(); return; }
+    const statsMode = target.closest('[data-finance-stats-mode]')?.dataset.financeStatsMode; if (statsMode) { state.balanceStatsMode = statsMode === 'income' ? 'income' : 'expense'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
+    const statsRange = target.closest('[data-finance-stats-range]')?.dataset.financeStatsRange; if (statsRange) { state.balanceStatsRange = statsRange; state.balanceStatsActiveSegment = null; triggerRender(); return; }
+    const statsScope = target.closest('[data-finance-stats-scope]')?.dataset.financeStatsScope; if (statsScope) { state.balanceStatsScope = statsScope === 'global' ? 'global' : 'personal'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const manageDelete = target.closest('[data-finance-manage-delete]')?.dataset.financeManageDelete;
     if (manageDelete) {
       const encodedValue = target.closest('[data-finance-manage-value]')?.dataset.financeManageValue || target.dataset.financeManageValue || '';
@@ -3180,7 +3214,7 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-balance-type]')) { state.balanceFilterType = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
     if (event.target.matches('[data-balance-category]')) { state.balanceFilterCategory = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
     if (event.target.matches('[data-balance-account]')) { state.balanceAccountFilter = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
-    if (event.target.matches('[data-finance-stats-group]')) { state.balanceStatsGroupBy = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-finance-stats-group]')) { state.balanceStatsGroupBy = event.target.value; state.balanceStatsActiveSegment = null; triggerRender(); }
     if (event.target.matches('[data-import-file]')) {
       const file = event.target.files?.[0];
       if (!file) return;

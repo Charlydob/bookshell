@@ -1,0 +1,51 @@
+export const LEGACY_PATH = 'finance';
+export const DEVICE_KEY = 'finance_deviceId';
+export const RANGE_LABEL = { total: 'Total', month: 'Mes', week: 'Semana', year: 'Año' };
+export const BTC_PRICE_CACHE_KEY = 'bookshell_finance_btc_eur_cache_v1';
+export const BTC_PRICE_CACHE_TTL_MS = 20 * 60 * 1000;
+export const AGG_MODES = ['day', 'week', 'month', 'year', 'total'];
+export const FINANCE_DEBUG = true;
+
+export const state = {
+  deviceId: '',
+  financePath: '',
+  rangeMode: 'month',
+  compareMode: 'month',
+  activeView: 'home',
+  accounts: [],
+  legacyEntries: {},
+  balance: { tx: {}, movements: {}, transactions: {}, categories: {}, budgets: {}, snapshots: {}, recurring: {}, aggregates: {}, defaultAccountId: '', lastSeenMonthKey: '' },
+  goals: { goals: {} },
+  modal: { type: null, accountId: null, goalId: null, budgetId: null, txType: '', monthOffset: 0, importRaw: '', importPreview: null, importError: '' },
+  balanceFormState: {},
+  toast: '',
+  calendarMonthOffset: 0,
+  calendarAccountId: 'total',
+  calendarMode: 'day',
+  balanceMonthOffset: 0,
+  balanceFilterType: 'all',
+  balanceFilterCategory: 'all',
+  balanceAccountFilter: 'all',
+  balanceShowAllTx: false,
+  balanceStatsMode: 'expense',
+  balanceStatsRange: 'month',
+  balanceRoiMode: 'balance',
+  balanceStatsGroupBy: 'category',
+  balanceStatsScope: 'personal',
+  balanceStatsActiveSegment: null,
+  balanceAggMode: 'month',
+  balanceAggScope: 'my',
+  balanceAmountAuto: true,
+  lastMovementAccountId: localStorage.getItem('bookshell_finance_lastMovementAccountId') || '',
+  unsubscribe: null,
+  saveTimers: {},
+  food: { loaded: false, loading: false, options: { typeOfMeal: {}, cuisine: {}, place: {} }, items: {}, itemsById: {}, nameToId: {} },
+  hydratedFromRemote: false,
+  btcEurPrice: 0,
+  btcPriceTs: 0,
+  aggregateRebuildTimer: null,
+  error: '',
+  booted: false,
+  firstInitDone: false,
+  eventsAbortController: null,
+};

@@ -1,11 +1,10 @@
 // scripts/app.js
 const LAST_VIEW_KEY = "bookshell:lastView";
+const APP_BOOT_TS = performance.now();
 
-// 👇 Mapea viewId -> módulo
-// Ajusta paths si renombras main.js -> books.js, etc.
 const VIEW_MODULE = {
   "view-main":   () => import("./dashboard.js"),
-  "view-books":  () => import("./books.js"),         // o "./books.js"
+  "view-books":  () => import("./books.js"),
   "view-videos": () => import("./videos.js"),
   "view-recipes":() => import("./recipes.js"),
   "view-habits": () => import("./habits.js"),
@@ -16,15 +15,14 @@ const VIEW_MODULE = {
   "view-finance":() => import("./finance-tab.js"),
 };
 
-const loaded = new Map();     // viewId -> module
-const inited = new Set();     // viewId
+const loaded = new Map();
+let currentViewId = null;
 
 function isValidView(viewId) {
   return !!(viewId && document.getElementById(viewId) && VIEW_MODULE[viewId]);
 }
 
 function setView(viewId, { pushHash = true } = {}) {
-  // Si existe el fallback de tu index, úsalo (misma UX/clases)
   if (typeof window.__bookshellSetView === "function") {
     window.__bookshellSetView(viewId);
   } else {
@@ -57,39 +55,49 @@ function getInitialView() {
   const saved = localStorage.getItem(LAST_VIEW_KEY);
   if (isValidView(saved)) return saved;
 
-  // tu HTML marca view-main activo por defecto
   return "view-main";
 }
 
-async function loadAndInit(viewId) {
-  if (!VIEW_MODULE[viewId]) return;
-
+async function getModule(viewId) {
   let mod = loaded.get(viewId);
   if (!mod) {
     mod = await VIEW_MODULE[viewId]();
     loaded.set(viewId, mod);
   }
+  return mod;
+}
 
-  // Init solo una vez por vista
-  if (!inited.has(viewId)) {
-    inited.add(viewId);
+async function destroyCurrentView(nextViewId) {
+  if (!currentViewId || currentViewId === nextViewId) return;
+  const currentMod = loaded.get(currentViewId);
+  if (typeof currentMod?.destroy === "function") {
+    await currentMod.destroy();
+  }
+  console.log("[perf] listeners", currentViewId, countTabListeners(currentMod));
+}
 
-    // Contrato recomendado: export function init(ctx) {}
-    if (typeof mod.init === "function") {
-      await mod.init({
-        viewId,
-        setView,
-        // util por si quieres: cargar libs gordas bajo demanda
-        loadScriptOnce,
-        loadStyleOnce,
-      });
-    }
+function countTabListeners(mod) {
+  if (!mod || typeof mod.getListenerCount !== "function") return "n/a";
+  return mod.getListenerCount();
+}
+
+async function loadAndInit(viewId) {
+  if (!VIEW_MODULE[viewId]) return;
+
+  await destroyCurrentView(viewId);
+
+  const mod = await getModule(viewId);
+
+  if (typeof mod.init === "function") {
+    await mod.init({ viewId, setView, loadScriptOnce, loadStyleOnce });
   }
 
-  // Hook opcional: cuando vuelves a una pestaña (refresh UI si quieres)
   if (typeof mod.onShow === "function") {
     await mod.onShow({ viewId, setView });
   }
+
+  currentViewId = viewId;
+  console.log("[perf] listeners", viewId, countTabListeners(mod));
 }
 
 function bindNav() {
@@ -111,7 +119,6 @@ function bindNav() {
   });
 }
 
-// ---- Lazy loaders para libs externas (Quill/ECharts) ----
 const _scriptOnce = new Map();
 function loadScriptOnce(src) {
   if (_scriptOnce.has(src)) return _scriptOnce.get(src);
@@ -142,15 +149,10 @@ function loadStyleOnce(href) {
   return p;
 }
 
-// ---- BOOT ----
 (function boot() {
   bindNav();
   const viewId = getInitialView();
   setView(viewId, { pushHash: true });
   loadAndInit(viewId);
-
-  // Precarga suave de 1–2 pestañas probables cuando el hilo esté libre
-  if ("requestIdleCallback" in window) {
-    requestIdleCallback(() => { VIEW_MODULE["view-habits"]?.(); });
-  }
+  console.log("[perf] app-initial-load-ms", Math.round(performance.now() - APP_BOOT_TS));
 })();

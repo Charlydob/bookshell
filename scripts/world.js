@@ -5,6 +5,13 @@ import { getCountryEnglishName, getCountryOptions } from "./countries.js";
 const LS_VISITS = "world_visits_v1";
 const LS_WATCH = "world_watchlist_v1";
 
+
+const worldState = {
+  initialized: false,
+  abortController: null,
+  searchCache: new Map(),
+};
+
 const COUNTRY_NAME_OVERRIDES = {
   US: "United States of America",
   RU: "Russia",
@@ -91,7 +98,11 @@ function countryMapNameFromISO2(code) {
 /* ---- Nominatim ---- */
 let nominatimAbort = null;
 async function nominatimSearch(q) {
-  if (!q || q.trim().length < 2) return [];
+  const normalized = String(q || "").trim().toLowerCase();
+  if (normalized.length < 2) return [];
+  if (worldState.searchCache.has(normalized)) {
+    return worldState.searchCache.get(normalized);
+  }
   if (nominatimAbort) nominatimAbort.abort();
   nominatimAbort = new AbortController();
 
@@ -100,7 +111,7 @@ async function nominatimSearch(q) {
   url.searchParams.set("addressdetails", "1");
   url.searchParams.set("limit", "8");
   url.searchParams.set("accept-language", "es");
-  url.searchParams.set("q", q.trim());
+  url.searchParams.set("q", normalized);
 
   try {
     const res = await fetch(url.toString(), {
@@ -108,9 +119,14 @@ async function nominatimSearch(q) {
       headers: { "Accept": "application/json" },
     });
     if (!res.ok) return [];
-    return await res.json();
+    const data = await res.json();
+    worldState.searchCache.set(normalized, data);
+    if (worldState.searchCache.size > 100) {
+      const firstKey = worldState.searchCache.keys().next().value;
+      worldState.searchCache.delete(firstKey);
+    }
+    return data;
   } catch (err) {
-    // ✅ evitar UnhandledPromiseRejection cuando se aborta al teclear rápido
     if (err?.name === "AbortError") return [];
     console.warn("Nominatim error", err);
     return [];
@@ -602,9 +618,12 @@ function computeSubdivisionCounts(geojson, points) {
   return counts;
 }
 
-async function attachWorldTab() {
+export async function init() {
   const $view = $id("view-world");
-  if (!$view) return;
+  if (!$view || worldState.initialized) return;
+  worldState.initialized = true;
+  worldState.abortController = new AbortController();
+  const evtOpts = { signal: worldState.abortController.signal };
 
   const $map = $id("world-map");
   const $pct = $id("world-pct");
@@ -641,7 +660,7 @@ if ($backBtn) {
     drill.mapKey = null;
     showBackBtn(false);
     renderAll();
-  });
+  }, evtOpts);
 }
 
   const $watchInput = $id("world-watch-q");
@@ -935,6 +954,7 @@ chart.setOption({
 }
 
   // --- Watchlist add (Nominatim) ---
+  const SEARCH_DEBOUNCE_MS = 200;
   let watchT = 0;
   async function handleWatchSuggest() {
     clearTimeout(watchT);
@@ -962,10 +982,10 @@ chart.setOption({
         $watchInput.setAttribute("list", "world-watch-dl");
       }
       dl.innerHTML = html;
-    }, 250);
+    }, SEARCH_DEBOUNCE_MS);
   }
 
-  $watchInput.addEventListener("input", handleWatchSuggest);
+  $watchInput.addEventListener("input", handleWatchSuggest, evtOpts);
 
   $watchAdd.addEventListener("click", async () => {
     const q = $watchInput.value.trim();
@@ -983,7 +1003,7 @@ chart.setOption({
     persist();
     $watchInput.value = "";
     renderWatchlist($watchList, watch);
-  });
+  }, evtOpts);
 
   $watchList.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-act]");
@@ -995,7 +1015,7 @@ chart.setOption({
       persist();
       renderWatchlist($watchList, watch);
     }
-  });
+  }, evtOpts);
 
   // --- Modal add visit ---
   let addT = 0;
@@ -1050,8 +1070,8 @@ chart.setOption({
 
         $addResults.appendChild(row);
       }
-    }, 250);
-  });
+    }, SEARCH_DEBOUNCE_MS);
+  }, evtOpts);
 
   $addSave.addEventListener("click", async () => {
     const kind = $addKind.value;
@@ -1100,7 +1120,7 @@ chart.setOption({
     $addResults.innerHTML = "";
 
     await renderAll();
-  });
+  }, evtOpts);
 
   // borrar visitas
   $visitsList.addEventListener("click", async (e) => {
@@ -1112,11 +1132,29 @@ chart.setOption({
     visits = visits.filter(v => v.id !== id);
     persist();
     await renderAll();
-  });
+  }, evtOpts);
 
-  $filter.addEventListener("change", renderAll);
+  $filter.addEventListener("change", renderAll, evtOpts);
 
   await renderAll();
 }
 
-document.addEventListener("DOMContentLoaded", attachWorldTab);
+export function destroy() {
+  if (worldState.abortController) {
+    worldState.abortController.abort();
+    worldState.abortController = null;
+  }
+  if (nominatimAbort) {
+    nominatimAbort.abort();
+    nominatimAbort = null;
+  }
+  worldState.initialized = false;
+  console.log("[perf] listeners view-world", getListenerCount());
+}
+
+export function getListenerCount() {
+  let count = 0;
+  if (worldState.abortController) count += 1;
+  if (nominatimAbort) count += 1;
+  return count;
+}

@@ -1,72 +1,23 @@
-import { get, onValue, push, ref, remove, set, update } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
-import { db } from './firebase-shared.js';
+let get;
+let onValue;
+let push;
+let ref;
+let remove;
+let set;
+let update;
+let db;
 
-const LEGACY_PATH = 'finance';
-const DEVICE_KEY = 'finance_deviceId';
-const RANGE_LABEL = { total: 'Total', month: 'Mes', week: 'Semana', year: 'Año' };
-const BTC_PRICE_CACHE_KEY = 'bookshell_finance_btc_eur_cache_v1';
-const BTC_PRICE_CACHE_TTL_MS = 20 * 60 * 1000;
-const AGG_MODES = ['day', 'week', 'month', 'year', 'total'];
-const FINANCE_DEBUG = true;
+async function ensureFinanceLoaded() {
+  if (db && get && onValue && ref) return;
+  const dbMod = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js');
+  ({ get, onValue, push, ref, remove, set, update } = dbMod);
+  ({ db } = await import('./firebase-shared.js'));
+}
 
-const state = {
-  deviceId: '',
-  financePath: '',
-  rangeMode: 'month',
-  compareMode: 'month',
-  activeView: 'home',
-  accounts: [],
-  legacyEntries: {},
-  balance: { tx: {}, movements: {}, transactions: {}, categories: {}, budgets: {}, snapshots: {}, recurring: {}, aggregates: {}, defaultAccountId: '', lastSeenMonthKey: '' },
-  goals: { goals: {} },
-  modal: {
-    type: null,
-    accountId: null,
-    goalId: null,
-    budgetId: null,
-    txType: '',
-    monthOffset: 0,
-    importRaw: '',
-    importPreview: null,
-    importError: ''
-  },
-  balanceFormState: {},
-  toast: '',
-  calendarMonthOffset: 0,
-  calendarAccountId: 'total',
-  calendarMode: 'day',
-  balanceMonthOffset: 0,
-  balanceFilterType: 'all',
-  balanceFilterCategory: 'all',
-  balanceAccountFilter: 'all',
-  balanceShowAllTx: false,
-  balanceStatsMode: 'expense',
-  balanceStatsRange: 'month',
-  balanceRoiMode: 'balance',
-  balanceStatsGroupBy: 'category',
-  balanceStatsScope: 'personal',
-  balanceStatsActiveSegment: null,
-  balanceAggMode: 'month',
-  balanceAggScope: 'my',
-  balanceAmountAuto: true,
-  lastMovementAccountId: localStorage.getItem('bookshell_finance_lastMovementAccountId') || '',
-  unsubscribe: null,
-  saveTimers: {},
-  food: {
-    loaded: false,
-    loading: false,
-    options: { typeOfMeal: {}, cuisine: {}, place: {} },
-    items: {},
-    itemsById: {},
-    nameToId: {}
-  },
-  hydratedFromRemote: false,
-  btcEurPrice: 0,
-  btcPriceTs: 0,
-  aggregateRebuildTimer: null,
-  error: '',
-  booted: false
-};
+import { LEGACY_PATH, DEVICE_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
+import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './finance/ui.js';
+import { resolveFinancePath } from './finance/data.js';
+import { parseImportRaw } from './finance/import.js';
 
 function log(...parts) { console.log('[finance]', ...parts); }
 function warnMissing(id) { console.warn(`[finance] missing DOM node ${id}`); }
@@ -77,38 +28,6 @@ function $req(sel, ctx = document) {
 }
 function $opt(sel, ctx = document) { return ctx.querySelector(sel); }
 
-function resolveFinanceRoot() {
-  return $opt('#finance-root')
-    || $opt('[data-tab="finance"]')
-    || $opt('#finance, #financeTab, .finance-tab, [data-view="finance"]')
-    || $opt('#tab-finance')
-    || $opt('#view-finance');
-}
-
-function ensureFinanceHost() {
-  const current = $opt('#finance-content');
-  if (current) return current;
-  const root = resolveFinanceRoot() || $req('#tab-finance, #view-finance');
-  const host = document.createElement('div');
-  host.id = 'finance-content';
-  const mountTarget = $opt('#finance-main', root) || root;
-  mountTarget.append(host);
-  console.warn('[finance] #finance-content not found, created fallback container inside finance root');
-  return host;
-}
-
-function showFinanceBootError(err) {
-  const message = String(err?.message || err || 'Error desconocido');
-  const host = $opt('#finance-content');
-  if (host) host.innerHTML = `<article class="finance-panel"><h3>Error JS (BOOT)</h3><p>${escapeHtml(message)}</p></article>`;
-  const overlay = $opt('#finance-modalOverlay');
-  if (overlay) {
-    overlay.classList.remove('hidden');
-    overlay.classList.add('is-open');
-    overlay.setAttribute('aria-hidden', 'false');
-    overlay.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true"><header><h3>Error JS (BOOT)</h3></header><p>${escapeHtml(message)}</p></div>`;
-  }
-}
 function nowTs() { return Date.now(); }
 function getMonthKeyFromDate(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
 function parseMonthKey(monthKey) { const [y, m] = String(monthKey).split('-').map(Number); return new Date(y, (m || 1) - 1, 1); }
@@ -1849,7 +1768,7 @@ function renderFinanceHome(accounts, totalSeries) {
 
   const root = resolveFinanceRoot();
   if (!root) throw new Error('[finance] finance root not available before renderFinanceHome');
-  if (!$opt('#finance-content')) ensureFinanceHost();
+  if (!$opt('#finance-content')) ensureFinanceHost($opt, $req);
 
   const total = accounts.reduce((sum, account) => sum + account.current, 0);
   const totalReal = accounts.reduce((sum, account) => sum + Number(account.currentReal || 0), 0);
@@ -3248,13 +3167,13 @@ async function deleteAccount(accountId) { await safeFirebase(() => remove(ref(db
 function triggerRender() {
   render().catch((e) => {
     console.error('[finance] render top-level', e);
-    showFinanceBootError(e);
+    showFinanceBootError($opt, e);
   });
 }
 
 async function render() {
   try {
-    const host = ensureFinanceHost();
+    const host = ensureFinanceHost($opt, $req);
     renderFinanceNav();
     if (state.error) { host.innerHTML = `<article class=\"finance-panel\"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`; return; }
     await ensureBtcEurPrice();
@@ -3267,12 +3186,14 @@ async function render() {
     renderToast();
   } catch (err) {
     console.error('[finance] render crashed', err);
-    showFinanceBootError(err);
+    showFinanceBootError($opt, err);
   }
 }
 
 function bindEvents() {
   const view = document.getElementById('view-finance'); if (!view || view.dataset.financeBound === '1') return; view.dataset.financeBound = '1';
+  state.eventsAbortController = new AbortController();
+  const evtOpts = { signal: state.eventsAbortController.signal };
   view.addEventListener('click', async (event) => {
     const target = event.target;
     const segmentToggle = target.closest('[data-finance-stats-segment]')?.dataset.financeStatsSegment;
@@ -3521,7 +3442,7 @@ view.addEventListener('focusin', (event) => {
     event.target.dataset.prev = event.target.value;
     event.target.value = '';
   }
-});
+}, evtOpts);
 
 view.addEventListener('focusout', async (event) => {
   if (event.target.matches('[data-account-input]')) {
@@ -3582,7 +3503,7 @@ view.addEventListener('focusout', async (event) => {
       syncAllocationFields(form);
       persistBalanceFormState(form);
     }
-  });
+  }, evtOpts);
 
   view.addEventListener('input', async (event) => {
     if (event.target.matches('[data-balance-form] [data-category-new]')) {
@@ -3866,7 +3787,7 @@ view.addEventListener('focusout', async (event) => {
       await safeFirebase(() => update(ref(db, `${state.financePath}/goals/goals/${goalAccountsId}`), { accountsIncluded: ids, updatedAt: nowTs() }));
       state.modal = { type: null }; triggerRender();
     }
-  });
+  }, evtOpts);
 
   view.addEventListener('toggle', (event) => {
     const foodDetails = event.target.closest('[data-section="food-extras"]');
@@ -3878,7 +3799,7 @@ view.addEventListener('focusout', async (event) => {
     const accountId = details.dataset.historyAccount; const host = view.querySelector(`[data-history-rows="${accountId}"]`); if (!host || host.dataset.loaded === '1') return;
     const account = buildAccountModels().find((item) => item.id === accountId); host.dataset.loaded = '1';
     host.innerHTML = account?.daily?.length ? account.daily.slice().reverse().map((row) => `<div class="finance-history-row"><span>${new Date(row.ts).toLocaleDateString('es-ES')}</span><span>${fmtCurrency(row.value)}</span><span class="${toneClass(row.delta)}">${fmtSignedCurrency(row.delta)}</span><span class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</span></div>`).join('') : '<p class="finance-empty">Sin registros.</p>';
-  }, true);
+  }, { ...evtOpts, capture: true });
 }
 
 function financeDomReady() {
@@ -3892,7 +3813,7 @@ async function boot() {
     return;
   }
   state.booted = true;
-  const financeRoot = resolveFinanceRoot();
+  const financeRoot = resolveFinanceRoot($opt, $req);
   log('dom root resolved', {
     missingFinanceRootId: !$opt('#finance-root'),
     missingDataTabFinance: !$opt('[data-tab="finance"]'),
@@ -3901,7 +3822,7 @@ async function boot() {
   });
   state.deviceId = getDeviceId();
   console.log('[finance] deviceId', state.deviceId);
-  state.financePath = 'Finance';
+  state.financePath = resolveFinancePath();
   log('init ok', { financePath: state.financePath });
   bindEvents();
   await loadDataOnce();
@@ -3912,21 +3833,51 @@ async function boot() {
 function bootFinance() {
   boot().catch((e) => {
     console.error('[finance] boot crashed', e);
-    showFinanceBootError(e);
+    showFinanceBootError($opt, e);
   });
 }
 
-if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', () => bootFinance(), { once: true });
-else bootFinance();
 
-window.addEventListener('click', (event) => {
-  if (event.target.closest?.('[data-view="view-finance"]')) bootFinance();
-});
-
-const financeDomObserver = new MutationObserver(() => {
-  if (!state.booted && financeDomReady()) {
-    bootFinance();
-    financeDomObserver.disconnect();
+export async function init() {
+  const financeStart = performance.now();
+  await ensureFinanceLoaded();
+  await boot();
+  if (!state.firstInitDone) {
+    state.firstInitDone = true;
+    console.log('[perf] finance-first-open-ms', Math.round(performance.now() - financeStart));
   }
-});
-if (!state.booted) financeDomObserver.observe(document.documentElement, { childList: true, subtree: true });
+  console.log('[perf] listeners view-finance', getFinanceListenerCount());
+}
+
+export function destroy() {
+  if (state.unsubscribe) {
+    state.unsubscribe();
+    state.unsubscribe = null;
+  }
+  if (state.aggregateRebuildTimer) {
+    clearTimeout(state.aggregateRebuildTimer);
+    state.aggregateRebuildTimer = null;
+  }
+  if (state.toastTimer) {
+    clearTimeout(state.toastTimer);
+    state.toastTimer = null;
+  }
+  if (state.eventsAbortController) {
+    state.eventsAbortController.abort();
+    state.eventsAbortController = null;
+  }
+  const view = document.getElementById('view-finance');
+  if (view) delete view.dataset.financeBound;
+  state.booted = false;
+  console.log('[finance] destroy completed');
+  console.log('[perf] listeners view-finance', getFinanceListenerCount());
+}
+
+function getFinanceListenerCount() {
+  let count = 0;
+  if (state.unsubscribe) count += 1;
+  if (state.eventsAbortController) count += 1;
+  if (state.aggregateRebuildTimer) count += 1;
+  if (state.toastTimer) count += 1;
+  return count;
+}

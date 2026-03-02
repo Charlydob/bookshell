@@ -1,5 +1,5 @@
-const CACHE_NAME = "bookshell-static-v1";
-const ASSETS = [
+const STATIC_CACHE = "bookshell-static-v2";
+const APP_SHELL = [
   "/",
   "/index.html",
   "/manifest.webmanifest",
@@ -12,17 +12,9 @@ const ASSETS = [
   "/styles/media.css",
   "/styles/world.css",
   "/styles/gym.css",
-  "/scripts/books.js",
-  "/scripts/videos.js",
-  "/scripts/recipes.js",
-  "/scripts/habits.js",
-  "/scripts/dashboard.js",
-  "/scripts/media.js",
-  "/scripts/world.js",
-  "/scripts/gym.js",
-  "/scripts/countries.js",
-  "/scripts/world-heatmap.js",
-  "/scripts/firebase-shared.js",
+  "/styles/finance.css",
+  "/styles/main.css",
+  "/scripts/app.js",
   "/icons/favicon-16.png",
   "/icons/favicon-32.png",
   "/icons/icon-192.png",
@@ -30,35 +22,51 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
-  );
+  event.waitUntil(caches.open(STATIC_CACHE).then((cache) => cache.addAll(APP_SHELL)));
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(
-      keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
-    ))
+    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== STATIC_CACHE).map((k) => caches.delete(k))))
   );
   self.clients.claim();
 });
 
+function isFirebaseRequest(url) {
+  return url.hostname.includes("firebaseio.com")
+    || url.hostname.includes("firebasedatabase.app")
+    || url.hostname.includes("googleapis.com");
+}
+
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const fetchPromise = fetch(event.request)
-        .then((response) => {
-          if (response && response.status === 200) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-          }
-          return response;
-        })
-        .catch(() => cached);
-      return cached || fetchPromise;
-    })
-  );
+  const { request } = event;
+  if (request.method !== "GET") return;
+
+  const url = new URL(request.url);
+  if (isFirebaseRequest(url)) return;
+
+  const isStaticAsset = request.destination === "style"
+    || request.destination === "script"
+    || request.destination === "image"
+    || request.destination === "font"
+    || request.mode === "navigate";
+
+  if (!isStaticAsset) return;
+
+  event.respondWith((async () => {
+    const cache = await caches.open(STATIC_CACHE);
+    const cached = await cache.match(request);
+
+    const networkFetch = fetch(request)
+      .then((response) => {
+        if (response && response.ok) {
+          cache.put(request, response.clone());
+        }
+        return response;
+      })
+      .catch(() => cached || caches.match("/index.html"));
+
+    return cached || networkFetch;
+  })());
 });

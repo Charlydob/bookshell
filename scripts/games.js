@@ -1,7 +1,30 @@
-import { db } from "./firebase-shared.js";
+import { db, auth } from "./firebase-shared.js";
+const uid = auth.currentUser?.uid;
+if (!uid) throw new Error("[games] No hay usuario autenticado (auth.currentUser es null).");
+
 import { ref, onValue, set, update, push, remove, runTransaction, get } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { getRangeBounds, dateFromKey } from "./range-helpers.js";
 import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";
+
+const DBG = true;
+
+function dbg(label, path, value) {
+  if (!DBG) return;
+  const size = value && typeof value === "object" ? Object.keys(value).length : (value == null ? 0 : 1);
+  console.log(`🧭 [games] ${label}\n→ ${path}\n→ size: ${size}\n→`, value);
+}
+
+function onValueDbg(path, cb, label = "onValue") {
+  const r = ref(db, path);
+  if (DBG) console.log(`👂 [games] listen: ${label}\n→ ${path}`);
+  return onValue(r, (snap) => {
+    const val = snap.val();
+    dbg(label, path, val);
+    cb(val, snap);
+  }, (err) => {
+    console.error(`🔥 [games] onValue error: ${label}\n→ ${path}`, err);
+  });
+}
 
 const VERSION = "2026.02.14.1";
 console.log("[games] loaded", VERSION);
@@ -17,22 +40,23 @@ window.addEventListener("unhandledrejection", (event) => {
   console.error("[games] unhandled rejection", event?.reason);
 });
 
-const GROUPS_PATH = "gameGroups";
-const MODES_PATH = "gameModes";
-const DAILY_PATH = "gameModeDaily";
-const MATCHES_PATH = "gameMatches";
-const GAMES_GROUPS_PATH = "games/groups";
-const GAMES_MODES_PATH = "games/modes";
-const GAMES_MATCHES_PATH = "games/matches";
-const GAMES_SANDBOX_EVENTS_PATH = "games/sandboxEvents";
-const GAMES_SANDBOX_WORLDS_PATH = "games/sandboxWorlds";
-const GAMES_SANDBOX_WORLD_NOTES_PATH = "games/sandboxWorldNotes";
-const AGG_DAY_PATH = "gameAggDay";
-const AGG_TOTAL_PATH = "gameAggTotal";
-const AGG_RANK_DAY_PATH = "gameAggRankDay";
-const AGG_RANK_TOTAL_PATH = "gameAggRankTotal";
-const HABITS_PATH = "habits";
-const HABIT_SESSIONS_PATH = "habitSessions";
+const BASE = `v2/users/${uid}`;
+const GAMES_BASE = `${BASE}/games`;
+const GAMES_GROUPS_PATH = `${GAMES_BASE}/gameGroups`;
+const GAMES_MODES_PATH = `${GAMES_BASE}/games/modes`;
+const GAMES_MATCHES_PATH = `${GAMES_BASE}/games/matches`;
+const GAMES_DAILY_PATH = `${GAMES_BASE}/gameModeDaily`;
+
+const GAMES_SANDBOX_EVENTS_PATH = `${GAMES_BASE}/games/sandboxEvents`;
+const GAMES_SANDBOX_WORLDS_PATH = `${GAMES_BASE}/games/sandboxWorlds`;
+const GAMES_SANDBOX_WORLD_NOTES_PATH = `${GAMES_BASE}/games/sandboxWorldNotes`;
+
+const AGG_RANK_DAY_PATH = `${GAMES_BASE}/gameAggRankDay`;
+const AGG_RANK_TOTAL_PATH = `${GAMES_BASE}/gameAggRankTotal`;
+
+const HABITS_PATH = `${BASE}/habits/habits`;
+const HABIT_SESSIONS_PATH = `${BASE}/habits/habitSessions`;
+
 const CACHE_KEY = "bookshell-games-cache:v2";
 const OPEN_KEY = "bookshell-games-open-groups";
 const HABIT_RUNNING_KEY = "bookshell-habit-running-session";
@@ -139,7 +163,14 @@ function clampBaseCounter(n, field = "unknown", logClamp = false) {
 }
 
 const clampStat = (n, field = "stat") => clampBaseCounter(n, field, false);
-
+function modeIdFromName(name) {
+  return String(name || "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quitar acentos
+    .replace(/[^a-z0-9]+/g, "-") // espacios y símbolos → -
+    .replace(/^-+|-+$/g, "") // limpiar bordes
+    || "mode";
+}
 function normalizeGroupBases(raw = {}, legacy = {}, logClamp = false) {
   const source = { ...legacy, ...raw };
   const normalized = BASE_COUNTER_FIELDS.reduce((acc, field) => {
@@ -189,10 +220,14 @@ function getModeLegacyBases(modeId) {
 }
 
 function getModeBases(modeId) {
-  const remote = modeBases?.[modeId]?.bases || modeBases?.[modeId] || {};
+  const fromMode = modes?.[modeId]?.bases || {};
+  const fromModeBases = modeBases?.[modeId]?.bases || modeBases?.[modeId] || {};
+  const remote = Object.keys(fromMode).length ? fromMode : fromModeBases;
   return normalizeGroupBases(remote, getModeLegacyBases(modeId));
 }
-
+function getDailyForMode(modeId) {
+  return dailyByMode?.[modeId] && typeof dailyByMode[modeId] === "object" ? dailyByMode[modeId] : {};
+}
 function getGroupGameType(groupId) {
   const rawType = String(groups[groupId]?.gameType || groupRatings[groupId]?.gameType || "normal").toLowerCase();
   return rawType === "sandbox" ? "sandbox" : "normal";
@@ -283,8 +318,15 @@ function rebuildMatchesByModeIndex() {
       matchesByModeId.get(match.modeId).push(match);
     });
   });
-}
 
+  const sampleModeIds = Array.from(matchesByModeId.keys()).slice(0, 10);
+  console.log("[games] matchIndex", {
+    modesKeys: Object.keys(modes || {}).length,
+    modesSample: Object.keys(modes || {}).slice(0, 10),
+    modeIdsInMatchesSample: sampleModeIds,
+    missingInModes: sampleModeIds.filter((id) => !modes?.[id]).slice(0, 10),
+  });
+}
 function rebuildSandboxEventsByModeIndex() {
   sandboxEventsByModeId = new Map();
   Object.entries(sandboxEventsByGroup || {}).forEach(([groupId, byId]) => {
@@ -408,57 +450,73 @@ function getDayRange(rangeKey, now = new Date()) {
 }
 
 function getAggregateFieldsForMode(modeId) {
-  const fields = new Set(["wins", "losses", "ties", ...BASE_COUNTER_FIELDS, "minutes"]);
+  const fields = new Set(["wins", "losses", "ties", ...BASE_COUNTER_FIELDS, "minutes", "eloDelta", "rrDelta"]);
   const base = getModeBases(modeId);
-  Object.keys(base || {}).forEach((field) => {
-    if (field !== "updatedAt") fields.add(field);
-  });
-  getMatchesForMode(modeId).forEach((match) => {
-    Object.entries(match || {}).forEach(([field, value]) => {
-      if (MATCH_META_FIELDS.has(field)) return;
-      if (typeof value !== "number" || !Number.isFinite(value)) return;
-      fields.add(field);
+  Object.keys(base || {}).forEach((k) => k !== "updatedAt" && fields.add(k));
+
+  const daily = getDailyForMode(modeId);
+  Object.values(daily).forEach((row) => {
+    Object.entries(row || {}).forEach(([k, v]) => {
+      if (typeof v === "number" && Number.isFinite(v)) fields.add(k);
     });
   });
+
   return Array.from(fields);
 }
 
 function computeModeAgg(modeId, rangeKey = "total", now = new Date()) {
   const base = getModeBases(modeId);
-  const matchesAll = getMatchesForMode(modeId);
   const includeBase = rangeKey === "total";
   const { startDay, endDay } = getDayRange(rangeKey, now);
-  const matches = rangeKey === "total"
+
+  const dailyAll = getDailyForMode(modeId);
+  const dailyEntries = Object.entries(dailyAll)
+    .filter(([day]) => day && (rangeKey === "total" || (day >= startDay && day <= endDay)));
+
+  const fields = getAggregateFieldsForMode(modeId);
+  const out = {};
+
+  // gamesCount = sum(w/l/t) (no "nº de días" ni "nº de matches")
+  const dailyGames = dailyEntries.reduce((acc, [, row]) => {
+    const w = Number(row?.wins || 0);
+    const l = Number(row?.losses || 0);
+    const t = Number(row?.ties || 0);
+    return acc + w + l + t;
+  }, 0);
+
+  const baseGames = includeBase
+    ? (Number(base?.wins || 0) + Number(base?.losses || 0) + Number(base?.ties || 0))
+    : 0;
+
+  out.gamesCount = baseGames + dailyGames;
+
+  fields.forEach((field) => {
+    if (field === "updatedAt") return;
+    const dailySum = dailyEntries.reduce((acc, [, row]) => acc + Number(row?.[field] || 0), 0);
+    const baseValue = includeBase ? Number(base?.[field] || 0) : 0;
+    out[field] = baseValue + dailySum;
+  });
+
+  // rating lo puedes seguir sacando de matches (porque el delta vive ahí)
+  const matchesAll = getMatchesForMode(modeId);
+  const matchesInRange = rangeKey === "total"
     ? matchesAll
     : matchesAll.filter((m) => m?.day && m.day >= startDay && m.day <= endDay);
-  const fields = getAggregateFieldsForMode(modeId);
-  const out = { gamesCount: matches.length };
-  fields.forEach((field) => {
-    const sum = matches.reduce((acc, m) => acc + Number(m?.[field] || 0), 0);
-    const baseValue = includeBase ? Number(base?.[field] || 0) : 0;
-    out[field] = baseValue + sum;
-  });
+
   const mode = modes[modeId];
   const groupRating = normalizeRating(groups[mode?.groupId]?.rating || groupRatings[mode?.groupId]?.rating);
-  out.groupRatingValue = Number(groupRating.base || 0) + matches.reduce((acc, m) => acc + getMatchRatingDelta(m), 0);
+  out.groupRatingValue = Number(groupRating.base || 0) + matchesInRange.reduce((acc, m) => acc + getMatchRatingDelta(m), 0);
 
-  console.log("[games] agg:basePolicy", { modeId, rangeKey, includeBase });
   console.log("[games] agg", {
     modeId,
     rangeKey,
-    base,
-    matchesAll: matchesAll.length,
-    matchesInRange: matches.length,
+pathDaily: `${GAMES_DAILY_PATH}/${modeId}`,
+    dailyDays: dailyEntries.length,
     gamesCount: out.gamesCount,
-    sampleDays: matches.slice(0, 3).map((m) => m.day)
+    sampleDaily: dailyEntries.slice(0, 2),
+    bases: base
   });
-  if (!Number.isFinite(out.gamesCount) || out.gamesCount < 0) {
-    console.error("[games] agg:invalidGamesCount", { modeId, rangeKey, gamesCount: out.gamesCount });
-  }
-  if (rangeKey === "year" && matchesAll.length > 0 && matches.length === 0) {
-    const uniqueDays = Array.from(new Set(matchesAll.map((m) => m.day))).slice(0, 10);
-    console.warn("[games] agg:yearZeroMatches", { modeId, uniqueDays });
-  }
+
   return out;
 }
 
@@ -538,6 +596,9 @@ function loadCache() {
 }
 
 function ensurePct(wins, losses, ties = 0) {
+  wins = Number(wins || 0);
+  losses = Number(losses || 0);
+  ties = Number(ties || 0);
   const total = wins + losses + ties;
   if (!total) return { winPct: 0, lossPct: 0, tiePct: 0, total: 0 };
   return {
@@ -747,8 +808,12 @@ function groupModes(groupId) {
   return Object.values(modes || {}).filter((m) => m?.groupId === groupId).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 }
 function groupTotals(groupId) {
-  const totals = getCounterTotalsByGroups([groupId], "total").totals;
-  return { wins: totals.wins, losses: totals.losses, ties: totals.ties };
+  const { totals } = getCounterTotalsByGroups([groupId], "total");
+  return {
+    wins: Number(totals?.wins || 0),
+    losses: Number(totals?.losses || 0),
+    ties: Number(totals?.ties || 0)
+  };
 }
 
 function groupMinutesTotal(groupId) {
@@ -870,12 +935,9 @@ document.addEventListener("input", (e) => {
     (async () => {
       try {
         await update(
-          ref(db, `${GAMES_SANDBOX_PATH}/${groupId}`), // ⚠️ aquí suele estar el fallo real
-          {
-            currentDays: nextDays,
-            updatedAt: nowTs()
-          }
-        );
+  ref(db, `${GAMES_GROUPS_PATH}/${groupId}/sandbox`),
+  { currentDays: nextDays, updatedAt: nowTs() }
+);
 
         renderGamesList();
       } catch (err) {
@@ -1636,51 +1698,78 @@ function refreshOpenModeModal() {
 
 function renderGamesPanel() {
   setGamesTab(gamesPanel);
+
   const stats = gamesPanel === "stats";
   $statsCard?.classList.toggle("hidden", !stats);
   $groupsList?.classList.toggle("hidden", stats);
   $empty?.classList.toggle("hidden", stats || Object.values(groups || {}).some((g) => g?.id));
   if (!$groupsList) return;
+
   const groupRows = Object.values(groups || {})
     .filter((g) => g?.id)
-    .sort((a, b) => Number(a.sort || 0) - Number(b.sort || 0) || (a.name || "").localeCompare(b.name || "", "es"));
+    .sort((a, b) =>
+      Number(a.sort || 0) - Number(b.sort || 0) ||
+      (a.name || "").localeCompare(b.name || "", "es")
+    );
+
   $groupsList.innerHTML = "";
   if ($empty) $empty.style.display = groupRows.length ? "none" : "block";
+
   const running = getRunningSessionState();
 
   groupRows.forEach((g) => {
     const groupedModes = groupModes(g.id);
-    const { wins, losses, ties } = groupTotals(g.id);
-    const totalMinutes = groupMinutesTotal(g.id);
+
+    // ✅ hard fallbacks (evita undefinedL/W/T)
+    const totals = groupTotals(g.id) || {};
+    const wins = Number(totals.wins || 0);
+    const losses = Number(totals.losses || 0);
+    const ties = Number(totals.ties || 0);
+
+    const totalMinutes = Number(groupMinutesTotal(g.id) || 0);
     const { winPct, lossPct } = ensurePct(wins, losses, ties);
+
     const sandboxDerived = isSandboxGroup(g.id) ? getSandboxDerived(g.id) : null;
+
     const hasRunning = !!(running && g.linkedHabitId && running.targetHabitId === g.linkedHabitId);
-    const elapsed = hasRunning ? formatDuration((Date.now() - Number(running.startTs || Date.now())) / 1000) : "";
+    const elapsed = hasRunning
+      ? formatDuration((Date.now() - Number(running.startTs || Date.now())) / 1000)
+      : "";
+
     if (!openGroups.size) openGroups.add(g.id);
+
     const detail = document.createElement("details");
     detail.className = "game-group";
     detail.open = openGroups.has(g.id);
     detail.dataset.groupId = g.id;
+
+    const meta = sandboxDerived
+      ? `DÍAS: ${Number(sandboxDerived.currentDays || 0)} · Peak: ${Number(sandboxDerived.peakDays || 0)} · Mundos perdidos: ${Number(sandboxDerived.lostCount || 0)}`
+      : `${losses}L / ${wins}W / ${ties}T - ${lossPct}% - ${winPct}% - ${formatHoursMinutes(totalMinutes)}`;
+
     detail.innerHTML = `
       <summary>
         <div class="game-group-main">
           <div class="game-group-name">${g.emoji || "🎮"} ${g.name || "Grupo"}</div>
-          <div class="game-group-meta">${sandboxDerived ? `DÍAS: ${sandboxDerived.currentDays} · Peak: ${sandboxDerived.peakDays} · Mundos perdidos: ${sandboxDerived.lostCount}` : `${losses}L / ${wins}W / ${ties}T - ${lossPct}% - ${winPct}% - ${formatHoursMinutes(totalMinutes)}`}</div>
+          <div class="game-group-meta">${meta}</div>
         </div>
         <div class="game-group-actions">
           <button class="game-session-btn" data-action="toggle-session">${hasRunning ? `${elapsed}` : "Iniciar"}</button>
           <button class="game-menu-btn" data-action="group-menu">...</button>
         </div>
       </summary>
-      <div class="game-group-body">${groupedModes.map((m) => buildModeCard(m, g.emoji)).join("")}</div>
+      <div class="game-group-body">${(groupedModes || []).map((m) => buildModeCard(m, g.emoji)).join("")}</div>
     `;
+
     detail.addEventListener("toggle", () => {
       if (detail.open) openGroups.add(g.id);
       else openGroups.delete(g.id);
       saveCache();
     });
+
     $groupsList.appendChild(detail);
   });
+
   renderGlobalStats();
 }
 
@@ -1747,61 +1836,99 @@ function toggleGroupChoice() {
 }
 
 async function createOrUpdateMode() {
-  const modeNameValue = $modeName.value.trim();
+  const modeNameValue = String($modeName?.value || "").trim();
   if (!modeNameValue) return;
-  const modeEmojiValue = $modeEmoji.value.trim();
-  let groupIdValue = $existingGroup.value;
-  if ($groupChoice.value === "new") {
-    const name = $groupName.value.trim();
+
+  const modeEmojiValue = String($modeEmoji?.value || "🎮").trim() || "🎮";
+
+  const groupChoiceValue = String($groupChoice?.value || "existing");
+  let groupIdValue = String($existingGroup?.value || "").trim();
+
+  if (groupChoiceValue === "new") {
+    const name = String($groupName?.value || "").trim();
     if (!name) return;
-    const groupIdRef = push(ref(db, GROUPS_PATH));
-    const categoryValue = ($groupCategory?.value || "other");
+
+    const groupEmojiValue = String($groupEmoji?.value || "🎮").trim() || "🎮";
+    const linkedHabitIdValue = String($groupHabit?.value || "").trim() || null;
+
+    const categoryValue = String($groupCategory?.value || "other");
     const gameType = gameTypeFromCategory(categoryValue);
+
+    const groupIdRef = push(ref(db, GAMES_GROUPS_PATH));
+    const groupId = groupIdRef.key;
+
+    const rankTypeValue = String($groupRankType?.value || "none");
+    const accentValue = String($groupAccent?.value || "#8b5cf6");
+
     const groupPayload = {
-      id: groupIdRef.key,
+      id: groupId,
       name,
-      emoji: ($groupEmoji.value || "🎮").trim() || "🎮",
-      linkedHabitId: $groupHabit.value || null,
+      emoji: groupEmojiValue,
+      linkedHabitId: linkedHabitIdValue,
       category: categoryValue,
       tags: { shooter: categoryValue === "shooter" },
-      rankType: ($groupRankType?.value || "none"),
-      rating: normalizeRating({ type: ($groupRankType?.value || "none"), base: 0, tier: "Hierro", div: 1 }),
-      accent: $groupAccent?.value || "#8b5cf6",
+      rankType: rankTypeValue,
+      rating: normalizeRating({ type: rankTypeValue, base: 0, tier: "Hierro", div: 1 }),
+      accent: accentValue,
       gameType,
+      sandbox: { daysBase: 0, peakDays: 0, currentDays: 0, updatedAt: nowTs() },
       createdAt: nowTs(),
       updatedAt: nowTs()
     };
-    console.log("[games] groupType:set", { groupId: groupPayload.id, gameType });
-    groupIdValue = groupPayload.id;
-    groups[groupPayload.id] = groupPayload;
+
+    console.log("[games] group:create", { groupId, gameType, categoryValue });
+
+    groupIdValue = groupId;
+    groups[groupId] = groupPayload;
     await set(groupIdRef, groupPayload);
-    await update(ref(db), {
-      [`${GAMES_GROUPS_PATH}/${groupPayload.id}/rating`]: groupPayload.rating,
-      [`${GAMES_GROUPS_PATH}/${groupPayload.id}/gameType`]: gameType
-    });
   }
+
   if (!groupIdValue) return;
-  const base = { groupId: groupIdValue, modeName: modeNameValue, modeEmoji: modeEmojiValue, updatedAt: nowTs() };
-  if (editingModeId && modes[editingModeId]) {
+
+  const base = {
+    groupId: groupIdValue,
+    modeName: modeNameValue,
+    modeEmoji: modeEmojiValue,
+    updatedAt: nowTs()
+  };
+
+  // UPDATE
+  if (editingModeId && modes?.[editingModeId]) {
     modes[editingModeId] = { ...modes[editingModeId], ...base };
-    await update(ref(db, `${MODES_PATH}/${editingModeId}`), base);
-  } else {
-    const modeIdRef = push(ref(db, MODES_PATH));
-    const payload = { id: modeIdRef.key, wins: 0, losses: 0, ties: 0, createdAt: nowTs(), ...base };
-    modes[payload.id] = payload;
-    await set(modeIdRef, payload);
-    const basePayload = isSandboxGroup(groupIdValue)
-      ? { worldsLost: 0, updatedAt: nowTs() }
-      : normalizeGroupBases({});
-    modeBases[payload.id] = { bases: basePayload };
-    await set(ref(db, `${GAMES_MODES_PATH}/${payload.id}/bases`), basePayload);
+    await update(ref(db, `${GAMES_MODES_PATH}/${editingModeId}`), base);
+    saveCache();
+    closeModeModal();
+    render();
+    return;
   }
+
+  // CREATE
+  const modeIdRef = push(ref(db, GAMES_MODES_PATH));
+  const modeId = modeIdRef.key;
+
+  const payload = {
+    id: modeId,
+    wins: 0,
+    losses: 0,
+    ties: 0,
+    createdAt: nowTs(),
+    ...base
+  };
+
+  modes[modeId] = payload;
+  await set(modeIdRef, payload);
+
+  const basePayload = isSandboxGroup(groupIdValue)
+    ? { worldsLost: 0, updatedAt: nowTs() }
+    : normalizeGroupBases({});
+
+  modeBases[modeId] = { bases: basePayload };
+  await set(ref(db, `${GAMES_MODES_PATH}/${modeId}/bases`), basePayload);
+
   saveCache();
   closeModeModal();
   render();
 }
-
-
 
 function resultKeyFromCode(result) {
   if (result === "W") return "wins";
@@ -1830,7 +1957,7 @@ async function addMatchWithStats(modeId, result, options = {}) {
   const isShooter = isGroupShooter(groupId);
   const shooter = isShooter ? normalizeShooterPayload(options) : { k: 0, d: 0, a: 0, rf: 0, ra: 0 };
 
-  await runTransaction(ref(db, `${DAILY_PATH}/${modeId}/${day}`), (current) => {
+  await runTransaction(ref(db, `${GAMES_DAILY_PATH}/${modeId}/${day}`), (current) => {
     const base = current || {};
     return {
       wins: clamp(Number(base.wins || 0) + (statKey === "wins" ? 1 : 0)),
@@ -1912,7 +2039,7 @@ async function addMatchWithStats(modeId, result, options = {}) {
 
   if (isShooter || rankType !== "none") {
     const matchId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    await set(ref(db, `${MATCHES_PATH}/${day}/${groupId}/${modeId}/${matchId}`), {
+    await set(ref(db, `${GAMES_MATCHES_PATH}/${day}/${groupId}/${modeId}/${matchId}`), {
       ts: Date.now(),
       result,
       ...shooter,
@@ -2044,10 +2171,10 @@ async function rebuildDailyFromMatches(modeId, day) {
   dailyByMode[modeId] = dailyByMode[modeId] || {};
   if (!matches.length) {
     delete dailyByMode[modeId][day];
-    await remove(ref(db, `${DAILY_PATH}/${modeId}/${day}`));
+    await remove(ref(db, `${GAMES_DAILY_PATH}/${modeId}/${day}`));
   } else {
     dailyByMode[modeId][day] = dailyObj;
-    await set(ref(db, `${DAILY_PATH}/${modeId}/${day}`), dailyObj);
+    await set(ref(db, `${GAMES_DAILY_PATH}/${modeId}/${day}`), dailyObj);
   }
   console.log("[games] daily:rebuild:done", { modeId, day });
 }
@@ -2115,7 +2242,7 @@ async function patchModeCounter(modeId, key, delta) {
       await undoSandboxEvent(modeId, key);
     }
     mode.updatedAt = nowTs();
-    await update(ref(db, `${MODES_PATH}/${modeId}`), { updatedAt: mode.updatedAt });
+    await update(ref(db, `${GAMES_MODES_PATH}/${modeId}`), { updatedAt: mode.updatedAt });
     renderGamesList();
     renderStats();
     refreshOpenModeModal();
@@ -2204,7 +2331,7 @@ async function patchModeCounter(modeId, key, delta) {
   }
 
   mode.updatedAt = nowTs();
-  await update(ref(db, `${MODES_PATH}/${modeId}`), { updatedAt: mode.updatedAt });
+  await update(ref(db, `${GAMES_MODES_PATH}/${modeId}`), { updatedAt: mode.updatedAt });
   renderGamesList();
   renderStats();
   refreshOpenModeModal();
@@ -2222,11 +2349,11 @@ async function resetMode(modeId) {
   render();
   if (currentModeId === modeId) renderModeDetail();
   await update(ref(db), {
-    [`${MODES_PATH}/${modeId}/wins`]: 0,
-    [`${MODES_PATH}/${modeId}/losses`]: 0,
-    [`${MODES_PATH}/${modeId}/ties`]: 0,
-    [`${MODES_PATH}/${modeId}/updatedAt`]: mode.updatedAt,
-    [`${DAILY_PATH}/${modeId}`]: null
+    [`${GAMES_MODES_PATH}/${modeId}/wins`]: 0,
+    [`${GAMES_MODES_PATH}/${modeId}/losses`]: 0,
+    [`${GAMES_MODES_PATH}/${modeId}/ties`]: 0,
+    [`${GAMES_MODES_PATH}/${modeId}/updatedAt`]: mode.updatedAt,
+    [`${GAMES_DAILY_PATH}/${modeId}`]: null
   });
 }
 
@@ -2236,7 +2363,7 @@ async function deleteMode(modeId) {
   delete dailyByMode[modeId];
   if (currentModeId === modeId) closeModeDetail();
   render();
-  await Promise.all([remove(ref(db, `${MODES_PATH}/${modeId}`)), remove(ref(db, `${DAILY_PATH}/${modeId}`))]);
+  await Promise.all([remove(ref(db, `${GAMES_MODES_PATH}/${modeId}`)), remove(ref(db, `${GAMES_DAILY_PATH}/${modeId}`))]);
 }
 
 async function handleGroupMenu(groupIdValue) {
@@ -2250,11 +2377,11 @@ async function handleGroupMenu(groupIdValue) {
     const updates = {};
     groupModes(groupIdValue).forEach((m) => {
       m.wins = 0; m.losses = 0; m.ties = 0; m.updatedAt = nowTs();
-      updates[`${MODES_PATH}/${m.id}/wins`] = 0;
-      updates[`${MODES_PATH}/${m.id}/losses`] = 0;
-      updates[`${MODES_PATH}/${m.id}/ties`] = 0;
-      updates[`${MODES_PATH}/${m.id}/updatedAt`] = m.updatedAt;
-      updates[`${DAILY_PATH}/${m.id}`] = null;
+      updates[`${GAMES_MODES_PATH}/${m.id}/wins`] = 0;
+      updates[`${GAMES_MODES_PATH}/${m.id}/losses`] = 0;
+      updates[`${GAMES_MODES_PATH}/${m.id}/ties`] = 0;
+      updates[`${GAMES_MODES_PATH}/${m.id}/updatedAt`] = m.updatedAt;
+      updates[`${GAMES_DAILY_PATH}/${m.id}`] = null;
       dailyByMode[m.id] = {};
     });
     render();
@@ -2262,12 +2389,12 @@ async function handleGroupMenu(groupIdValue) {
   }
   if (cmd === "delete") {
     if (!confirm("Eliminar grupo y todos sus modos?")) return;
-    const jobs = [remove(ref(db, `${GROUPS_PATH}/${groupIdValue}`))];
+    const jobs = [remove(ref(db, `${GAMES_GROUPS_PATH}/${groupIdValue}`))];
     groupModes(groupIdValue).forEach((m) => {
       delete modes[m.id];
       delete dailyByMode[m.id];
-      jobs.push(remove(ref(db, `${MODES_PATH}/${m.id}`)));
-      jobs.push(remove(ref(db, `${DAILY_PATH}/${m.id}`)));
+      jobs.push(remove(ref(db, `${GAMES_MODES_PATH}/${m.id}`)));
+      jobs.push(remove(ref(db, `${GAMES_DAILY_PATH}/${m.id}`)));
     });
     delete groups[groupIdValue];
     render();
@@ -2365,7 +2492,7 @@ async function reconcileGamesFromHabitSessions() {
         rf: clamp(Number(prev.rf || 0)),
         ra: clamp(Number(prev.ra || 0))
       };
-      updates[`${DAILY_PATH}/${targetModeId}/${dateKey}/minutes`] = nextMinutes;
+      updates[`${GAMES_DAILY_PATH}/${targetModeId}/${dateKey}/minutes`] = nextMinutes;
     });
   });
   if (!Object.keys(updates).length) return;
@@ -2605,7 +2732,7 @@ async function saveDayRecord(modeId, day, rec) {
     ra: clamp(Number(rec?.ra || 0))
   };
 
-  await set(ref(db, `${DAILY_PATH}/${modeId}/${day}`), dailyByMode[modeId][day]);
+  await set(ref(db, `${GAMES_DAILY_PATH}/${modeId}/${day}`), dailyByMode[modeId][day]);
 
   render();
   renderGlobalStats();
@@ -2798,7 +2925,7 @@ function openModeDetail(modeId) {
     group.lastUsedModeId = modeId;
     groups[group.id] = group;
     saveCache();
-    update(ref(db, `${GROUPS_PATH}/${group.id}`), { lastUsedModeId: modeId, updatedAt: nowTs() }).catch(() => {});
+    update(ref(db, `${GAMES_GROUPS_PATH}/${group.id}`), { lastUsedModeId: modeId, updatedAt: nowTs() }).catch(() => {});
   }
   detailMonth = { year: new Date().getFullYear(), month: new Date().getMonth() };
   detailRange = "total";
@@ -3237,7 +3364,12 @@ async function onListClick(e) {
     refreshOpenModeModal();
     return;
   }
-  if (action === "sandbox-days-undo" && modeId) return patchModeCounter(modeId, "days", -1);
+  if (action === "sandbox-days-undo" && modeId) {
+  const mode = modes?.[modeId];
+  const groupId = mode?.groupId;
+  if (!groupId) return;
+  return patchGroupSandboxDays(groupId, -1);
+}
   if (action === "edit-mode" && modeId) {
     if (currentModeId) closeModeDetail();
     return openModeModal(modes[modeId]);
@@ -3249,7 +3381,13 @@ async function onListClick(e) {
   if (action === "edit-group-kda-base" && groupIdValue) return openGroupBasesModal(groupIdValue, actionModeId);
   if (action === "toggle-session" && groupIdValue) return toggleGroupSession(groupIdValue);
 }
-
+async function patchGroupSandboxDays(groupId, delta) {
+  const path = `${GAMES_GROUPS_PATH}/${groupId}/sandbox/currentDays`;
+  return runTransaction(ref(db, path), (cur) => {
+    const n = Number(cur || 0) + Number(delta || 0);
+    return Math.max(0, n);
+  });
+}
 function bind() {
   $addMode?.addEventListener("click", () => openModeModal());
   $groupChoice?.addEventListener("change", toggleGroupChoice);
@@ -3288,7 +3426,7 @@ function bind() {
     console.log("[games] groupType:set", { groupId: id, gameType });
     groups[id] = { ...group, ...payload };
     render();
-    await update(ref(db, `${GROUPS_PATH}/${id}`), payload);
+    await update(ref(db, `${GAMES_GROUPS_PATH}/${id}`), payload);
     await update(ref(db, `${GAMES_GROUPS_PATH}/${id}`), { rating: payload.rating, gameType });
     closeGroupModal();
     saveCache();
@@ -3344,75 +3482,91 @@ function bind() {
   });
 }
 
-function listenRemote() {
-  onValue(ref(db, GROUPS_PATH), (snap) => {
-    groups = snap.val() || {};
-    Object.keys(groups).forEach((id) => {
-      groups[id] = { ...groups[id], id, rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating) };
+function listenRemote(uid) {
+  const p = (fn) => (typeof fn === "function" ? fn(uid) : fn);
+
+  const watch = (label, path, apply) => {
+    const resolved = p(path);
+    onValue(ref(db, resolved), (snap) => {
+      const val = snap.val() || {};
+      const keys = val && typeof val === "object" ? Object.keys(val) : [];
+      console.log(`[games] onValue:${label}`, {
+        path: resolved,
+        exists: snap.exists(),
+        keys: keys.length,
+        sampleKey: keys[0] || null,
+        sample: keys[0] ? val[keys[0]] : val
+      });
+      apply(val);
     });
-    if (!localStorage.getItem(OPEN_KEY)) {
-      Object.keys(groups).forEach((id) => openGroups.add(id));
-    }
-    saveCache();
-    render();
+  };
+
+onValue(ref(db, GAMES_GROUPS_PATH), (snap) => {
+  const raw = snap.val() || {};
+  groups = raw;
+
+  if (!localStorage.getItem(OPEN_KEY)) {
+    Object.keys(groups).forEach((id) => openGroups.add(id));
+  }
+
+  Object.keys(groups).forEach((id) => {
+    const g = groups[id] || {};
+    const sb = g.sandbox || {};
+    groups[id] = {
+      ...g,
+      id,
+      rating: normalizeRating(g.rating),
+      gameType: g.gameType || "normal",
+      sandbox: {
+        daysBase: Number(sb.daysBase || 0),
+        peakDays: Number(sb.peakDays || 0),
+        currentDays: Number(sb.currentDays || 0),
+        updatedAt: sb.updatedAt || null
+      }
+    };
   });
 
-  onValue(ref(db, MODES_PATH), (snap) => {
-    modes = snap.val() || {};
-    saveCache();
-    render();
-    if (currentModeId) renderModeDetail();
-  });
+  saveCache();
+  render();
+  renderGlobalStats();
+  if (currentModeId) renderModeDetail();
+});
 
-  onValue(ref(db, DAILY_PATH), (snap) => {
-    dailyByMode = snap.val() || {};
+
+  watch("modes", GAMES_MODES_PATH, (val) => {
+    modes = val || {};
     saveCache();
     render();
     renderGlobalStats();
     if (currentModeId) renderModeDetail();
   });
 
-
-  onValue(ref(db, GAMES_MODES_PATH), (snap) => {
-    modeBases = snap.val() || {};
-    render();
-    renderGlobalStats();
-    if (currentModeId) renderModeDetail();
-  });
-  onValue(ref(db, GAMES_GROUPS_PATH), (snap) => {
-    groupRatings = snap.val() || {};
-    Object.keys(groups).forEach((id) => {
-      groups[id] = {
-        ...groups[id],
-        rating: normalizeRating(groupRatings[id]?.rating || groups[id]?.rating),
-        gameType: groupRatings[id]?.gameType || groups[id]?.gameType || "normal",
-        sandbox: groupRatings[id]?.sandbox || groups[id]?.sandbox || { daysBase: 0, peakDays: 0 }
-      };
-    });
+  watch("daily", GAMES_DAILY_PATH, (val) => {
+    dailyByMode = val || {};
+    saveCache();
     render();
     renderGlobalStats();
     if (currentModeId) renderModeDetail();
   });
 
-  onValue(ref(db, GAMES_MATCHES_PATH), (snap) => {
-    matchesByGroup = snap.val() || {};
+  watch("matches", GAMES_MATCHES_PATH, (val) => {
+    matchesByGroup = val || {};
     rebuildMatchesByModeIndex();
     renderGlobalStats();
     if (currentModeId) renderModeDetail();
   });
 
-  onValue(ref(db, GAMES_SANDBOX_EVENTS_PATH), (snap) => {
-    sandboxEventsByGroup = snap.val() || {};
+  watch("sandboxEvents", GAMES_SANDBOX_EVENTS_PATH, (val) => {
+    sandboxEventsByGroup = val || {};
     rebuildSandboxEventsByModeIndex();
     render();
     renderGlobalStats();
     if (currentModeId) renderModeDetail();
   });
 
-  onValue(ref(db, GAMES_SANDBOX_WORLDS_PATH), (snap) => {
-    const raw = snap.val() || {};
+  watch("sandboxWorlds", GAMES_SANDBOX_WORLDS_PATH, (raw) => {
     sandboxWorldsByGroup = {};
-    Object.entries(raw).forEach(([groupId, byWorld]) => {
+    Object.entries(raw || {}).forEach(([groupId, byWorld]) => {
       sandboxWorldsByGroup[groupId] = {};
       Object.entries(byWorld || {}).forEach(([worldId, world]) => {
         sandboxWorldsByGroup[groupId][worldId] = normalizeSandboxWorld(world, groupId, worldId);
@@ -3423,15 +3577,15 @@ function listenRemote() {
     if (currentModeId) renderModeDetail();
   });
 
-  onValue(ref(db, GAMES_SANDBOX_WORLD_NOTES_PATH), (snap) => {
-    const raw = snap.val() || {};
+  watch("sandboxWorldNotes", GAMES_SANDBOX_WORLD_NOTES_PATH, (raw) => {
     sandboxWorldNotesByGroup = {};
-    Object.entries(raw).forEach(([groupId, byWorld]) => {
+    Object.entries(raw || {}).forEach(([groupId, byWorld]) => {
       sandboxWorldNotesByGroup[groupId] = {};
       Object.entries(byWorld || {}).forEach(([worldId, byNote]) => {
         sandboxWorldNotesByGroup[groupId][worldId] = {};
         Object.entries(byNote || {}).forEach(([noteId, note]) => {
-          sandboxWorldNotesByGroup[groupId][worldId][noteId] = normalizeSandboxWorldNote(note, groupId, worldId, noteId);
+          sandboxWorldNotesByGroup[groupId][worldId][noteId] =
+            normalizeSandboxWorldNote(note, groupId, worldId, noteId);
         });
       });
     });
@@ -3439,18 +3593,18 @@ function listenRemote() {
     if (currentModeId) renderModeDetail();
   });
 
-  onValue(ref(db, AGG_RANK_DAY_PATH), (snap) => {
-    aggRankDay = snap.val() || {};
+  watch("aggRankDay", AGG_RANK_DAY_PATH, (val) => {
+    aggRankDay = val || {};
     renderGlobalStats();
   });
 
-  onValue(ref(db, AGG_RANK_TOTAL_PATH), (snap) => {
-    aggRankTotal = snap.val() || {};
+  watch("aggRankTotal", AGG_RANK_TOTAL_PATH, (val) => {
+    aggRankTotal = val || {};
     renderGlobalStats();
   });
 
-  onValue(ref(db, HABITS_PATH), (snap) => {
-    habits = snap.val() || {};
+  watch("habits", HABITS_PATH, (val) => {
+    habits = val || {};
     if ($groupHabit) $groupHabit.innerHTML = habitOptionsHtml();
     if ($groupEditHabit) $groupEditHabit.innerHTML = habitOptionsHtml();
     render();
@@ -3458,8 +3612,8 @@ function listenRemote() {
     if (currentModeId) renderModeDetail();
   });
 
-  onValue(ref(db, HABIT_SESSIONS_PATH), (snap) => {
-    habitSessions = snap.val() || {};
+  watch("habitSessions", HABIT_SESSIONS_PATH, (val) => {
+    habitSessions = val || {};
     reconcileGamesFromHabitSessions().catch(() => {});
   });
 }

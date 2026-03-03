@@ -1,13 +1,9 @@
 // habits.js
 // Nueva pestaña de hábitos con check-ins, sesiones cronometradas y reportes
 
+import { db, auth } from "./firebase-shared.js";
+
 import {
-  initializeApp,
-  getApps,
-  getApp
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import {
-  getDatabase,
   ref,
   onValue,
   set,
@@ -16,36 +12,39 @@ import {
   runTransaction,
   push
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
 import { computeTimeByHabitDataset, debugComputeTimeByHabit, resolveFirstRecordTs } from "./time-by-habit.js";
 import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";
 import { computeDayCreditsAndScores } from "./schedule-credits.js";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyC1oqRk7GpYX854RfcGrYHt6iRun5TfuYE",
-  authDomain: "bookshell-59703.firebaseapp.com",
-  databaseURL: "https://bookshell-59703-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "bookshell-59703",
-  storageBucket: "bookshell-59703.appspot.com",
-  messagingSenderId: "554557230752",
-  appId: "1:554557230752:web:37c24e287210433cf883c5"
-};
+// ✅ app.js ya hace gating por auth; aquí asumimos sesión activa
+const uid = auth.currentUser?.uid;
+if (!uid) throw new Error("[habits] No hay usuario autenticado (auth.currentUser es null).");
 
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-const db = getDatabase(app);
+// ✅ Base v2 por usuario
+const BASE = `v2/users/${uid}`;
 
-// Rutas
-const HABITS_PATH = "habits";
+// ✅ Raíz del módulo hábitos
+const HABITS_ROOT = `${BASE}/habits`;
+
+// ✅ Definiciones de hábitos (OJO: están en /habits/habits)
+const HABITS_PATH = `${HABITS_ROOT}/habits`;
+
+// ✅ Sesiones activas (cuelgan del mismo nodo /habits/habits)
 const HABIT_ACTIVE_SESSIONS_PATH = `${HABITS_PATH}/activeSessions`;
-const HABIT_CHECKS_PATH = "habitChecks";
-const HABIT_SESSIONS_PATH = "habitSessions";
-const HABIT_COUNTS_PATH = "habitCounts";
-const HABIT_GROUPS_PATH = "habitGroups";
-const HABIT_PREFS_PATH = "habitPrefs";
-const HABIT_COMPARE_SETTINGS_PATH = "habitsCompareSettings";
-const HABITS_SCHEDULE_PATH = "habitsSchedule";
+
+// ✅ Resto cuelga de la raíz del módulo
+const HABIT_CHECKS_PATH = `${HABITS_ROOT}/habitChecks`;
+const HABIT_SESSIONS_PATH = `${HABITS_ROOT}/habitSessions`;
+const HABIT_COUNTS_PATH = `${HABITS_ROOT}/habitCounts`;
+const HABIT_GROUPS_PATH = `${HABITS_ROOT}/habitGroups`;
+const HABIT_PREFS_PATH = `${HABITS_ROOT}/habitPrefs`;
+const HABIT_COMPARE_SETTINGS_PATH = `${HABITS_ROOT}/habitsCompareSettings`;
+const HABITS_SCHEDULE_PATH = `${HABITS_ROOT}/habitsSchedule`;
 const HABITS_SCHEDULE_DAY_CREDITS_PATH = `${HABITS_SCHEDULE_PATH}/dayCredits`;
-const HABIT_UI_UID = String(window.__bookshellUid || localStorage.getItem("bookshell.uid") || "default");
-const HABIT_UI_PATH = `users/${HABIT_UI_UID}/ui`;
+
+// ✅ UI (antes: users/{HABIT_UI_UID}/ui)
+const HABIT_UI_PATH = `${HABITS_PATH}/ui`;
 const HABIT_UI_QUICK_COUNTERS_PATH = `${HABIT_UI_PATH}/quickCounters`;
 
 // Storage keys
@@ -80,7 +79,6 @@ const UNKNOWN_HABIT_NAME = "Desconocido";
 const UNKNOWN_HABIT_EMOJI = "❓";
 const UNKNOWN_HABIT_COLOR = "#8b93a6"; // neutro
 let _pendingShortcutCmd = null;
-
 
 // Estado
 let habits = {}; // {id: habit}
@@ -168,6 +166,7 @@ let scheduleCoinSpenderState = null;
 let habitDetailScheduleSelection = { types: ["Libre"], dows: [] };
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
+
 const DEBUG_HABITS_SYNC = (() => {
   try {
     return !!(window.__bookshellDebugHabitsSync || localStorage.getItem("bookshell.debug.habitsSync") === "1");
@@ -175,6 +174,7 @@ const DEBUG_HABITS_SYNC = (() => {
     return !!window.__bookshellDebugHabitsSync;
   }
 })();
+
 const DEBUG_WORK_SHIFT = (() => {
   try {
     return !!(window.__bookshellDebugWorkShift || localStorage.getItem("bookshell.debug.workShift") === "1");
@@ -182,6 +182,7 @@ const DEBUG_WORK_SHIFT = (() => {
     return !!window.__bookshellDebugWorkShift;
   }
 })();
+
 const DEBUG_COMPARE = (() => {
   try {
     return !!(window.__bookshellDebugCompare || localStorage.getItem("bookshell.debug.compare") === "1");
@@ -215,7 +216,12 @@ function markHistoryDataChanged(reason = "unknown", details = null) {
   habitHistoryUpdatedAt = Date.now();
   invalidateCompareCache();
   scheduleCompareRefresh(reason, details);
-  debugCompare("history version bump", { reason, dataVersion: habitHistoryDataVersion, updatedAt: habitHistoryUpdatedAt, details });
+  debugCompare("history version bump", {
+    reason,
+    dataVersion: habitHistoryDataVersion,
+    updatedAt: habitHistoryUpdatedAt,
+    details
+  });
 }
 
 function scheduleCompareRefresh(reason = "unknown", details = null) {
@@ -244,7 +250,6 @@ function debugWorkShift(...args) {
   if (!DEBUG_WORK_SHIFT) return;
   console.log(...args);
 }
-
 function loadScheduleViewMode() {
   try {
     const saved = (localStorage.getItem(HABITS_SCHEDULE_VIEW_MODE_STORAGE) || "percent").trim();
@@ -8103,9 +8108,23 @@ function promptRangeGoalEdit(habit) {
 
 function renderAnalyticsRangePanels() {
   const { start, end } = getRangeBounds(habitDonutRange);
-  const allHabits = activeHabits().map((habit) => ({ habit, minutes: minutesForHabitRange(habit, start, end) }));
-  const used = allHabits.filter((row) => row.minutes > 0).sort((a, b) => b.minutes - a.minutes);
-  const unused = allHabits.filter((row) => row.minutes <= 0).sort((a, b) => a.habit.name.localeCompare(b.habit.name, "es"));
+
+  const allHabits = activeHabits()
+    .filter(h => h && typeof h === "object") // 👈 evita null/_init
+    .map((habit) => ({ habit, minutes: minutesForHabitRange(habit, start, end) }));
+
+  const used = allHabits
+    .filter((row) => row.minutes > 0)
+    .sort((a, b) => b.minutes - a.minutes);
+
+  const unused = allHabits
+    .filter((row) => row.minutes <= 0)
+    .sort((a, b) => {
+      const A = String(a?.habit?.name ?? a?.habit?.label ?? a?.habit?.title ?? a?.habit?.id ?? "");
+      const B = String(b?.habit?.name ?? b?.habit?.label ?? b?.habit?.title ?? b?.habit?.id ?? "");
+      return A.localeCompare(B, "es", { sensitivity: "base" });
+    });
+
   const total = used.reduce((acc, row) => acc + row.minutes, 0);
 
   if ($habitAccDonutBreakdownMeta) {
@@ -10069,7 +10088,7 @@ async function startSession(habitId = null, meta = null) {
     pausedAt: null,
     accMs: 0,
     emoji: (targetHabitId && habits?.[targetHabitId]?.emoji) || meta?.habitEmoji || "•",
-    deviceId: HABIT_UI_UID,
+    deviceId: uid,
     meta: meta && typeof meta === "object" ? { ...meta } : null
   };
   await set(sessionRef, payload);

@@ -2411,3 +2411,38 @@ margin-top: 0px;
   font-size: 11px;
   opacity: .8;
 }
+.book-bookmark-input {
+  width: 18px;
+    height: 46px;
+    border: none;
+    border-bottom: none;
+    background: transparent;
+    color: rgba(255, 255, 255, .92);
+    font-weight: 800;
+    font-size: 12px;
+    letter-spacing: .02em;
+    text-align: center;
+    appearance: textfield;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+    margin-right: 20px;
+}
+.modal.book-detail-modal {
+    max-height: 650px;
+    margin-bottom: 0px;
+    bottom: 0px;
+    margin-top: 200px;
+}
+
+#book-detail-quotes-body {
+  overflow-y: auto;   /* o scroll */
+  max-height: 36vh;  /* o la altura que necesites */
+}
+.book-detail-quotes-body {
+  flex: 1;
+  min-height: 20px;        /* correcto, NO lo quites */
+  max-height: 20px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}

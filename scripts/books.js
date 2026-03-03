@@ -1,12 +1,7 @@
 // books.js
-// books.js
+import { db, storage, auth } from "./firebase-shared.js";
+
 import {
-  initializeApp,
-  getApps,
-  getApp
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import {
-  getDatabase,
   ref,
   onValue,
   push,
@@ -15,12 +10,13 @@ import {
   remove,
   runTransaction
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
 import {
-  getStorage,
   ref as storageRef,
   uploadBytes,
   getDownloadURL
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+
 import {
   ensureCountryDatalist,
   getCountryEnglishName,
@@ -28,33 +24,23 @@ import {
 } from "./countries.js";
 import { renderCountryHeatmap, renderCountryList } from "./world-heatmap.js";
 
-// === Firebase ===
-const firebaseConfig = {
-  apiKey: "AIzaSyC1oqRk7GpYX854RfcGrYHt6iRun5TfuYE",
-  authDomain: "bookshell-59703.firebaseapp.com",
-  databaseURL: "https://bookshell-59703-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "bookshell-59703",
-  storageBucket: "bookshell-59703.appspot.com",
-  messagingSenderId: "554557230752",
-  appId: "1:554557230752:web:37c24e287210433cf883c5"
-};
-
 const LAST_VIEW_KEY = "bookshell:lastView";
 
+// ✅ app.js ya registra SW; si quieres dejarlo aquí, ok, pero evita duplicar.
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
   });
 }
 
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-const db = getDatabase(app);
-const storage = getStorage(app);
+// ✅ Rutas v2 (por usuario). app.js ya garantiza que hay sesión.
+const uid = auth.currentUser?.uid;
+if (!uid) throw new Error("[books] No hay usuario autenticado (auth.currentUser es null).");
 
-// Rutas base (sin auth, un solo usuario)
-const BOOKS_PATH = "books";
-const READING_LOG_PATH = "readingLog";
-const LINKS_PATH = "links";
+const BOOKS_PATH       = `v2/users/${uid}/books/books`;
+const READING_LOG_PATH = `v2/users/${uid}/books/readingLog`;
+const LINKS_PATH       = `v2/users/${uid}/books/links`;
+const META_GENRES_PATH = `v2/users/${uid}/books/meta/genres`; // o global: `v2/meta/genres`
 
 // === Estado en memoria ===
 let books = {};
@@ -63,7 +49,6 @@ let links = {};
 let bookDetailId = null;
 
 // Categorías (género): opciones
-const META_GENRES_PATH = "meta/genres";
 const DEFAULT_GENRES = [
   "Novela","Ensayo","Fantasía","Ciencia ficción","Terror",
   "Historia","Biografía","Filosofía","Poesía","Misterio","Otros"
@@ -3094,6 +3079,7 @@ if ($calViewMode) {
     tryRun();
   }
 })();
+
 
 // === API para Dashboard (Inicio) ===
 function getRecentBook() {

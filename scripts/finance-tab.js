@@ -1,71 +1,23 @@
-import { get, onValue, push, ref, remove, set, update } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
-import { db } from './firebase-shared.js';
+let get;
+let onValue;
+let push;
+let ref;
+let remove;
+let set;
+let update;
+let db;
 
-const LEGACY_PATH = 'finance';
-const DEVICE_KEY = 'finance_deviceId';
-const RANGE_LABEL = { total: 'Total', month: 'Mes', week: 'Semana', year: 'Año' };
-const BTC_PRICE_CACHE_KEY = 'bookshell_finance_btc_eur_cache_v1';
-const BTC_PRICE_CACHE_TTL_MS = 20 * 60 * 1000;
-const AGG_MODES = ['day', 'week', 'month', 'year', 'total'];
-const FINANCE_DEBUG = true;
+async function ensureFinanceLoaded() {
+  if (db && get && onValue && ref) return;
+  const dbMod = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js');
+  ({ get, onValue, push, ref, remove, set, update } = dbMod);
+  ({ db } = await import('./firebase-shared.js'));
+}
 
-const state = {
-  deviceId: '',
-  financePath: '',
-  rangeMode: 'month',
-  compareMode: 'month',
-  activeView: 'home',
-  accounts: [],
-  legacyEntries: {},
-  balance: { tx: {}, movements: {}, transactions: {}, categories: {}, budgets: {}, snapshots: {}, recurring: {}, aggregates: {}, defaultAccountId: '', lastSeenMonthKey: '' },
-  goals: { goals: {} },
-  modal: {
-    type: null,
-    accountId: null,
-    goalId: null,
-    budgetId: null,
-    txType: '',
-    monthOffset: 0,
-    importRaw: '',
-    importPreview: null,
-    importError: ''
-  },
-  balanceFormState: {},
-  toast: '',
-  calendarMonthOffset: 0,
-  calendarAccountId: 'total',
-  calendarMode: 'day',
-  balanceMonthOffset: 0,
-  balanceFilterType: 'all',
-  balanceFilterCategory: 'all',
-  balanceAccountFilter: 'all',
-  balanceShowAllTx: false,
-  balanceStatsMode: 'expense',
-  balanceStatsRange: 'month',
-  balanceStatsGroupBy: 'category',
-  balanceStatsScope: 'personal',
-  balanceStatsActiveSegment: null,
-  balanceAggMode: 'month',
-  balanceAggScope: 'my',
-  balanceAmountAuto: true,
-  lastMovementAccountId: localStorage.getItem('bookshell_finance_lastMovementAccountId') || '',
-  unsubscribe: null,
-  saveTimers: {},
-  food: {
-    loaded: false,
-    loading: false,
-    options: { typeOfMeal: {}, cuisine: {}, place: {} },
-    items: {},
-    itemsById: {},
-    nameToId: {}
-  },
-  hydratedFromRemote: false,
-  btcEurPrice: 0,
-  btcPriceTs: 0,
-  aggregateRebuildTimer: null,
-  error: '',
-  booted: false
-};
+import { LEGACY_PATH, DEVICE_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
+import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './finance/ui.js';
+import { resolveFinancePath } from './finance/data.js';
+import { parseImportRaw } from './finance/import.js';
 
 function log(...parts) { console.log('[finance]', ...parts); }
 function warnMissing(id) { console.warn(`[finance] missing DOM node ${id}`); }
@@ -76,38 +28,6 @@ function $req(sel, ctx = document) {
 }
 function $opt(sel, ctx = document) { return ctx.querySelector(sel); }
 
-function resolveFinanceRoot() {
-  return $opt('#finance-root')
-    || $opt('[data-tab="finance"]')
-    || $opt('#finance, #financeTab, .finance-tab, [data-view="finance"]')
-    || $opt('#tab-finance')
-    || $opt('#view-finance');
-}
-
-function ensureFinanceHost() {
-  const current = $opt('#finance-content');
-  if (current) return current;
-  const root = resolveFinanceRoot() || $req('#tab-finance, #view-finance');
-  const host = document.createElement('div');
-  host.id = 'finance-content';
-  const mountTarget = $opt('#finance-main', root) || root;
-  mountTarget.append(host);
-  console.warn('[finance] #finance-content not found, created fallback container inside finance root');
-  return host;
-}
-
-function showFinanceBootError(err) {
-  const message = String(err?.message || err || 'Error desconocido');
-  const host = $opt('#finance-content');
-  if (host) host.innerHTML = `<article class="finance-panel"><h3>Error JS (BOOT)</h3><p>${escapeHtml(message)}</p></article>`;
-  const overlay = $opt('#finance-modalOverlay');
-  if (overlay) {
-    overlay.classList.remove('hidden');
-    overlay.classList.add('is-open');
-    overlay.setAttribute('aria-hidden', 'false');
-    overlay.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true"><header><h3>Error JS (BOOT)</h3></header><p>${escapeHtml(message)}</p></div>`;
-  }
-}
 function nowTs() { return Date.now(); }
 function getMonthKeyFromDate(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
 function parseMonthKey(monthKey) { const [y, m] = String(monthKey).split('-').map(Number); return new Date(y, (m || 1) - 1, 1); }
@@ -205,6 +125,111 @@ function toIsoDay(value = '') {
   const year = Number(slash[3]);
   if (!day || !month || !year || month > 12 || day > 31) return null;
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function normalizeTxAllocation(raw = {}, fallbackDate = '') {
+  const mode = raw?.mode === 'period' ? 'period' : 'point';
+  const period = ['day', 'week', 'month', 'year', 'custom'].includes(raw?.period) ? raw.period : 'day';
+  const anchorDate = toIsoDay(String(raw?.anchorDate || fallbackDate || '')) || toIsoDay(fallbackDate) || dayKeyFromTs(Date.now());
+  const customStart = toIsoDay(String(raw?.customStart || '')) || null;
+  const customEnd = toIsoDay(String(raw?.customEnd || '')) || null;
+  if (mode !== 'period') {
+    return { mode: 'point', period: 'day', anchorDate };
+  }
+  if (period === 'custom') {
+    const start = customStart || anchorDate;
+    const end = customEnd || start;
+    return { mode, period, anchorDate, customStart: start, customEnd: end };
+  }
+  return { mode, period, anchorDate };
+}
+
+function localStartOfDayTs(day = '') {
+  const normalized = toIsoDay(day);
+  if (!normalized) return 0;
+  const [y, m, d] = normalized.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0).getTime();
+}
+
+function rangeBoundsForMode(mode = 'month') {
+  if (mode === 'month') {
+    const key = getSelectedBalanceMonthKey();
+    const [year, month] = String(key).split('-').map(Number);
+    const start = new Date(year, (month || 1) - 1, 1, 0, 0, 0, 0).getTime();
+    const end = new Date(year, (month || 1), 1, 0, 0, 0, 0).getTime();
+    return { start, end };
+  }
+  if (mode === 'total') {
+    const rows = balanceTxList();
+    if (!rows.length) {
+      const now = Date.now();
+      return { start: now, end: now + 86400000 };
+    }
+    const dates = rows
+      .map((row) => localStartOfDayTs(row?.date || isoToDay(row?.dateISO || '')))
+      .filter((ts) => Number.isFinite(ts) && ts > 0);
+    const start = Math.min(...dates);
+    const end = Math.max(...dates) + 86400000;
+    return { start, end };
+  }
+  const start = rangeStartByMode(mode);
+  if (!Number.isFinite(start)) {
+    const now = Date.now();
+    return { start: now, end: now + 86400000 };
+  }
+  if (mode === 'day') return { start, end: start + 86400000 };
+  if (mode === 'week') return { start, end: start + (7 * 86400000) };
+  if (mode === 'year') {
+    const d = new Date(start);
+    return { start, end: new Date(d.getFullYear() + 1, 0, 1, 0, 0, 0, 0).getTime() };
+  }
+  return { start, end: Date.now() + 1 };
+}
+
+function isoWeekStartTs(anchorIso = '') {
+  const date = new Date(`${anchorIso}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return 0;
+  const day = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - day);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function allocationWindowBounds(allocation = {}, fallbackDate = '') {
+  const normalized = normalizeTxAllocation(allocation, fallbackDate);
+  const anchorDay = normalized.anchorDate;
+  if (normalized.mode !== 'period') {
+    const start = localStartOfDayTs(anchorDay);
+    return { start, end: start + 86400000 };
+  }
+  if (normalized.period === 'week') {
+    const start = isoWeekStartTs(anchorDay);
+    return { start, end: start + (7 * 86400000) };
+  }
+  if (normalized.period === 'month') {
+    const [y, m] = anchorDay.split('-').map(Number);
+    const start = new Date(y, (m || 1) - 1, 1, 0, 0, 0, 0).getTime();
+    return { start, end: new Date(y, (m || 1), 1, 0, 0, 0, 0).getTime() };
+  }
+  if (normalized.period === 'year') {
+    const [y] = anchorDay.split('-').map(Number);
+    const start = new Date(y, 0, 1, 0, 0, 0, 0).getTime();
+    return { start, end: new Date(y + 1, 0, 1, 0, 0, 0, 0).getTime() };
+  }
+  if (normalized.period === 'custom') {
+    const start = localStartOfDayTs(normalized.customStart || anchorDay);
+    const end = localStartOfDayTs(normalized.customEnd || normalized.customStart || anchorDay) + 86400000;
+    return { start: Math.min(start, end - 86400000), end: Math.max(end, start + 86400000) };
+  }
+  const start = localStartOfDayTs(anchorDay);
+  return { start, end: start + 86400000 };
+}
+
+function overlapDays(windowBounds = {}, rangeBounds = {}) {
+  const start = Math.max(Number(windowBounds.start || 0), Number(rangeBounds.start || 0));
+  const end = Math.min(Number(windowBounds.end || 0), Number(rangeBounds.end || 0));
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+  return (end - start) / 86400000;
 }
 function parseEuroNumber(value) {
   const raw = String(value ?? '').trim();
@@ -1163,6 +1188,8 @@ function balanceTxList() {
     monthKey: String(row?.monthKey || String(row?.date || isoToDay(row?.dateISO || '') || '').slice(0, 7)),
     category: String(row?.category || ''),
     note: String(row?.note || ''),
+    linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
+    allocation: normalizeTxAllocation(row?.allocation || {}, String(row?.date || isoToDay(row?.dateISO || '') || '')),
     createdAt: Number(row?.createdAt || 0),
     updatedAt: Number(row?.updatedAt || 0),
     extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
@@ -1193,6 +1220,8 @@ function balanceTxList() {
         monthKey: String(row?.monthKey || monthKey),
         category: String(row?.category || ''),
         note: String(row?.note || ''),
+        linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
+        allocation: normalizeTxAllocation(row?.allocation || {}, String(isoToDay(row?.dateISO || row?.date || '') || '')),
         createdAt: Number(row?.createdAt || 0),
         updatedAt: Number(row?.updatedAt || 0),
         extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
@@ -1215,6 +1244,8 @@ function balanceTxList() {
     monthKey: String(row?.monthKey || String(row?.date || isoToDay(row?.dateISO || '') || '').slice(0, 7)),
     category: String(row?.category || ''),
     note: String(row?.note || ''),
+    linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
+    allocation: normalizeTxAllocation(row?.allocation || {}, String(row?.date || isoToDay(row?.dateISO || '') || '')),
     createdAt: Number(row?.createdAt || 0),
     updatedAt: Number(row?.updatedAt || 0),
     extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
@@ -1461,6 +1492,113 @@ function filterTxByRange(rows = [], mode = 'month') {
   });
 }
 
+function listHabitOptions() {
+  const apiList = window.__bookshellHabits?.listActiveHabits;
+  const habits = typeof apiList === 'function' ? apiList() : [];
+  if (!Array.isArray(habits)) return [];
+  return habits
+    .map((habit) => ({ id: String(habit?.id || ''), name: String(habit?.name || '').trim() }))
+    .filter((habit) => habit.id && habit.name);
+}
+
+function getHoursByHabitId(range = 'month', explicitBounds = null) {
+  const safeRange = ['day', 'week', 'month', 'year', 'total'].includes(range) ? range : 'month';
+  const reader = window.__bookshellHabits?.getHoursByHabitId;
+  if (typeof reader !== 'function') return {};
+  try {
+    const payload = explicitBounds && Number.isFinite(explicitBounds.start) && Number.isFinite(explicitBounds.end)
+      ? { range: safeRange, start: explicitBounds.start, end: explicitBounds.end }
+      : safeRange;
+    const hours = reader(payload);
+    if (!hours || typeof hours !== 'object') return {};
+    return Object.fromEntries(Object.entries(hours).map(([habitId, value]) => [habitId, Number(value || 0)]));
+  } catch (err) {
+    console.warn('[finance] getHoursByHabitId failed', err);
+    return {};
+  }
+}
+
+function amountAllocatedToRange(row = {}, rangeBounds = {}) {
+  const amount = Number(row?.amount || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const fallbackDate = String(row?.date || isoToDay(row?.dateISO || '') || '');
+  const allocation = normalizeTxAllocation(row?.allocation || {}, fallbackDate);
+  const txDayTs = localStartOfDayTs(fallbackDate || allocation.anchorDate);
+  if (allocation.mode === 'point') {
+    return txDayTs >= rangeBounds.start && txDayTs < rangeBounds.end ? amount : 0;
+  }
+  const windowBounds = allocationWindowBounds(allocation, fallbackDate);
+  const windowDays = overlapDays(windowBounds, windowBounds);
+  if (!windowDays) return 0;
+  const overlap = overlapDays(windowBounds, rangeBounds);
+  if (!overlap) return 0;
+  return amount * (overlap / windowDays);
+}
+
+function computeTransactionAmountInRange(row = {}, viewedRange = {}) {
+  return amountAllocatedToRange(row, viewedRange);
+}
+
+function computeHoursByHabitInRange(range = 'month', viewedRange = null) {
+  return getHoursByHabitId(range, viewedRange);
+}
+
+function buildHabitPerHourMetrics(rows = [], range = 'month') {
+  const safeRange = ['day', 'week', 'month', 'year', 'total'].includes(range) ? range : 'month';
+  const rangeBounds = rangeBoundsForMode(safeRange);
+  const sumIncome = {};
+  const sumExpense = {};
+  rows.forEach((row) => {
+    const habitId = String(row?.linkedHabitId || '').trim();
+    if (!habitId) return;
+    const inRangeAmount = computeTransactionAmountInRange(row, rangeBounds);
+    if (!Number.isFinite(inRangeAmount) || inRangeAmount <= 0) return;
+    if (row.type === 'income') sumIncome[habitId] = (sumIncome[habitId] || 0) + inRangeAmount;
+    if (row.type === 'expense') sumExpense[habitId] = (sumExpense[habitId] || 0) + inRangeAmount;
+  });
+
+  const hoursByHabitId = computeHoursByHabitInRange(safeRange, rangeBounds);
+  const habits = listHabitOptions();
+  const habitsById = Object.fromEntries(habits.map((habit) => [habit.id, habit]));
+  const ids = new Set([...Object.keys(hoursByHabitId), ...Object.keys(sumIncome), ...Object.keys(sumExpense)]);
+  const rowsByHabit = [...ids].map((habitId) => {
+    const hours = Number(hoursByHabitId[habitId] || 0);
+    const income = Number(sumIncome[habitId] || 0);
+    const expense = Number(sumExpense[habitId] || 0);
+    const balance = income - expense;
+    const hasHours = hours > 0;
+    return {
+      habitId,
+      habitName: habitsById[habitId]?.name || habitId,
+      hours,
+      income,
+      expense,
+      balance,
+      incomePerHour: hasHours ? income / hours : null,
+      expensePerHour: hasHours ? expense / hours : null,
+      balancePerHour: hasHours ? balance / hours : null
+    };
+  }).sort((a, b) => (b.balance - a.balance) || (b.income - a.income));
+
+  const totals = rowsByHabit.reduce((acc, row) => {
+    acc.income += row.income;
+    acc.expense += row.expense;
+    acc.hours += row.hours;
+    return acc;
+  }, { income: 0, expense: 0, hours: 0 });
+  const totalBalance = totals.income - totals.expense;
+  return {
+    rows: rowsByHabit,
+    totals: {
+      income: totals.income,
+      expense: totals.expense,
+      balance: totalBalance,
+      hours: totals.hours,
+      balancePerHour: totals.hours > 0 ? totalBalance / totals.hours : null
+    }
+  };
+}
+
 function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense', scope = 'personal', accountsById = {}) {
   const output = {};
   const isMissingGroupedValue = (value = '') => {
@@ -1630,7 +1768,7 @@ function renderFinanceHome(accounts, totalSeries) {
 
   const root = resolveFinanceRoot();
   if (!root) throw new Error('[finance] finance root not available before renderFinanceHome');
-  if (!$opt('#finance-content')) ensureFinanceHost();
+  if (!$opt('#finance-content')) ensureFinanceHost($opt, $req);
 
   const total = accounts.reduce((sum, account) => sum + account.current, 0);
   const totalReal = accounts.reduce((sum, account) => sum + Number(account.currentReal || 0), 0);
@@ -1784,6 +1922,15 @@ const calloutBox = calloutSegment
     if (best ? value > pick.value : value < pick.value) return { bucketKey: row.bucketKey, value };
     return pick;
   }, null);
+  const roiMode = ['income', 'expense', 'balance'].includes(state.balanceRoiMode) ? state.balanceRoiMode : 'balance';
+  const roiData = buildHabitPerHourMetrics(allTxRows, statsRange);
+  const roiMetrics = roiData.rows.slice().sort((a, b) => {
+    const key = roiMode === 'income' ? 'incomePerHour' : roiMode === 'expense' ? 'expensePerHour' : 'balancePerHour';
+    const av = Number.isFinite(a[key]) ? Number(a[key]) : Number.NEGATIVE_INFINITY;
+    const bv = Number.isFinite(b[key]) ? Number(b[key]) : Number.NEGATIVE_INFINITY;
+    return bv - av;
+  });
+  const roiTotals = roiData.totals;
 
   return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2><button class="finance-pill" data-open-modal="tx">+ Añadir</button></header>
   <article class="financeGlassCard">
@@ -1921,6 +2068,35 @@ const calloutBox = calloutSegment
       </div>
     </details>
   </article>
+
+  <details class="financeGlassCard financeRoi" open>
+    <summary class="financeRoi__summary">
+      <div class="financeRoi__titleWrap">
+        <h3>€/h por hábitos</h3>
+        <button type="button" class="finance-pill finance-pill--mini" data-open-modal="roi-info" aria-label="Cómo se calcula €/h por hábito">i</button>
+      </div>
+      <div class="financeRoi__summaryStats">
+        <span>Ingresos <strong class="is-positive">${fmtCurrency(roiTotals.income)}</strong></span>
+        <span>Gastos <strong class="is-negative">${fmtCurrency(roiTotals.expense)}</strong></span>
+        <span>Balance <strong class="${toneClass(roiTotals.balance)}">${fmtSignedCurrency(roiTotals.balance)}</strong></span>
+        <span>Balance €/h <strong class="${toneClass(roiTotals.balancePerHour || 0)}">${Number.isFinite(roiTotals.balancePerHour) ? `${fmtSignedCurrency(roiTotals.balancePerHour)}/h` : 'N/A'}</strong></span>
+      </div>
+    </summary>
+    <div class="financeRoi__toggle" role="tablist" aria-label="Métrica €/h">
+      <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'income' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="income">Ingresos €/h</button>
+      <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'expense' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="expense">Gastos €/h</button>
+      <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'balance' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="balance">Balance €/h</button>
+    </div>
+    <div class="financeRoi__table">
+      <div class="financeRoi__row financeRoi__row--head"><span>Hábito</span><span>Horas</span><span>€ asignados</span><span>€/h</span></div>
+      ${roiMetrics.map((row) => {
+        const amount = roiMode === 'income' ? row.income : roiMode === 'expense' ? row.expense : row.balance;
+        const perHour = roiMode === 'income' ? row.incomePerHour : roiMode === 'expense' ? row.expensePerHour : row.balancePerHour;
+        return `<div class="financeRoi__row"><span>${escapeHtml(row.habitName)}</span><span>${row.hours.toFixed(2)} h</span><span class="${toneClass(amount)}">${fmtSignedCurrency(amount)}</span><span class="${toneClass(perHour || 0)}">${Number.isFinite(perHour) ? `${fmtSignedCurrency(perHour)}/h` : 'N/A'}</span></div>`;
+      }).join('') || '<p class="finance-empty">Sin hábitos vinculados en este rango.</p>'}
+      <div class="financeRoi__row financeRoi__row--total"><span>TOTAL</span><span>${roiTotals.hours.toFixed(2)} h</span><span class="${toneClass(roiMode === 'income' ? roiTotals.income : roiMode === 'expense' ? roiTotals.expense : roiTotals.balance)}">${fmtSignedCurrency(roiMode === 'income' ? roiTotals.income : roiMode === 'expense' ? roiTotals.expense : roiTotals.balance)}</span><span class="${toneClass(roiMode === 'income' ? roiTotals.income : roiMode === 'expense' ? roiTotals.expense : roiTotals.balancePerHour || 0)}">${Number.isFinite(roiMode === 'income' ? (roiTotals.hours > 0 ? roiTotals.income / roiTotals.hours : null) : roiMode === 'expense' ? (roiTotals.hours > 0 ? roiTotals.expense / roiTotals.hours : null) : roiTotals.balancePerHour) ? `${fmtSignedCurrency(roiMode === 'income' ? roiTotals.income / roiTotals.hours : roiMode === 'expense' ? roiTotals.expense / roiTotals.hours : roiTotals.balancePerHour)}/h` : 'N/A'}</span></div>
+    </div>
+  </details>
 
   <article class="financeGlassCard finAgg__section">
     <h3>Histórico / Agregados</h3>
@@ -2238,6 +2414,15 @@ function renderModal() {
   const defaultDate = txEdit?.date || isoToDay(txEdit?.dateISO || '') || state.balanceFormState.dateISO || dayKeyFromTs(Date.now());
   const defaultAmount = txEdit?.amount || state.balanceFormState.amount || '';
   const defaultNote = txEdit?.note || state.balanceFormState.note || '';
+  const defaultLinkedHabitId = (txEdit?.linkedHabitId || state.balanceFormState.linkedHabitId || '').trim();
+  const defaultAllocation = normalizeTxAllocation(txEdit?.allocation || {
+    mode: state.balanceFormState.allocationMode || 'point',
+    period: state.balanceFormState.allocationPeriod || 'day',
+    anchorDate: state.balanceFormState.allocationAnchorDate || defaultDate,
+    customStart: state.balanceFormState.allocationCustomStart || '',
+    customEnd: state.balanceFormState.allocationCustomEnd || ''
+  }, defaultDate);
+  const habitOptions = listHabitOptions();
   const defaultFoodId = state.balanceFormState.foodId || '';
   const defaultFoodItem = state.balanceFormState.foodItem || '';
   const defaultFoodMealType = state.balanceFormState.foodMealType || '';
@@ -2313,6 +2498,33 @@ function renderModal() {
 
       <div class="fm-grid fm-grid--meta fin-move-grid fin-move-grid--meta">
 
+        <div class="fm-field financeRoi__field">
+          <label class="fm-label" for="fm-tx-linked-habit">Vincular a hábito (opcional)</label>
+          <select id="fm-tx-linked-habit" class="fm-control fm-control--select" name="linkedHabitId" data-linked-habit-select>
+            <option value="">Sin vincular</option>
+            ${habitOptions.map((habit) => `<option value="${escapeHtml(habit.id)}" ${defaultLinkedHabitId === habit.id ? 'selected' : ''}>${escapeHtml(habit.name)}</option>`).join('')}
+          </select>
+        </div>
+
+        <div class="fm-field financeRoi__field" data-allocation-block ${defaultLinkedHabitId ? '' : 'hidden'}>
+          <label class="fm-label" for="fm-tx-allocation-mode">Distribución</label>
+          <select id="fm-tx-allocation-mode" class="fm-control fm-control--select" name="allocationMode" data-allocation-mode>
+            <option value="point" ${defaultAllocation.mode === 'point' ? 'selected' : ''}>Puntual (solo ese día)</option>
+            <option value="month" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'month') ? 'selected' : ''}>Mensual</option>
+            <option value="week" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'week') ? 'selected' : ''}>Semanal</option>
+            <option value="year" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'year') ? 'selected' : ''}>Anual</option>
+            <option value="custom" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'custom') ? 'selected' : ''}>Personalizado</option>
+          </select>
+          <label class="fm-label" data-allocation-anchor-label for="fm-tx-allocation-anchor" ${defaultAllocation.mode === 'point' ? 'hidden' : ''}>Periodo de referencia (ancla)</label>
+          <input id="fm-tx-allocation-anchor" type="date" class="fm-control" name="allocationAnchorDate" value="${escapeHtml(defaultAllocation.anchorDate || defaultDate)}" data-allocation-anchor ${defaultAllocation.mode === 'point' ? 'hidden' : ''} />
+          <div class="financeRoi__customDates" data-allocation-custom ${defaultAllocation.period === 'custom' && defaultAllocation.mode === 'period' ? '' : 'hidden'}>
+            <label class="fm-label" for="fm-tx-allocation-custom-start">Desde (incl.)</label>
+            <input id="fm-tx-allocation-custom-start" type="date" class="fm-control" name="allocationCustomStart" value="${escapeHtml(defaultAllocation.customStart || defaultAllocation.anchorDate || defaultDate)}" />
+            <label class="fm-label" for="fm-tx-allocation-custom-end">Hasta (incl.)</label>
+            <input id="fm-tx-allocation-custom-end" type="date" class="fm-control" name="allocationCustomEnd" value="${escapeHtml(defaultAllocation.customEnd || defaultAllocation.anchorDate || defaultDate)}" />
+          </div>
+        </div>
+
         <div class="fm-field fm-field--category fin-move-field" data-category-block>
         <label class="fm-label-categoria" for="fm-tx-category">Categoría</label>
 
@@ -2381,9 +2593,12 @@ function renderModal() {
   catSel?.addEventListener('change', () => {
     void toggleFoodExtras(form);
   });
+  form.querySelector('[data-linked-habit-select]')?.addEventListener('change', () => syncAllocationFields(form));
+  form.querySelector('[data-allocation-mode]')?.addEventListener('change', () => syncAllocationFields(form));
 
   // aplicar estado inicial (después de setear defaults)
   syncTxTypeFields(form);
+  syncAllocationFields(form);
   void toggleFoodExtras(form);
 }
 if (form) {
@@ -2402,6 +2617,7 @@ if (form) {
 
   // primero: que la UI refleje tipo + categoría
   syncTxTypeFields(form);
+  syncAllocationFields(form);
   void toggleFoodExtras(form);
   maybeToggleCategoryCreate(form);
 
@@ -2506,6 +2722,29 @@ if (form) {
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${escapeHtml(goal.title)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
       <p>Meta ${fmtCurrency(goal.targetAmount)} · vence ${new Date(goal.dueDateISO).toLocaleDateString('es-ES')}</p><p>Prioridad por (dinero / días).</p>
       <form data-goal-accounts-form="${state.modal.goalId}">${accounts.map((a) => `<label><input type="checkbox" value="${a.id}" ${selected.has(a.id) ? 'checked' : ''}/> ${escapeHtml(a.name)}</label>`).join('')}<button class="finance-pill" type="submit">Actualizar cuentas</button></form></div>`;
+    return;
+  }
+
+  if (state.modal.type === 'roi-info') {
+    const habits = listHabitOptions();
+    const hasGermanClassesHabit = habits.some((habit) => /alem[aá]n/i.test(habit.name) && /clase/i.test(habit.name));
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Cómo se calcula €/h por hábito</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+      <div class="finance-info-copy">
+        <p><strong>Distribución:</strong> Puntual cuenta solo el día del movimiento. Mensual/Semanal/Anual usan su periodo de referencia. Personalizado usa el rango [desde, hasta] (incluyentes).</p>
+        <p><strong>Rango visible:</strong> este panel usa solo las horas del hábito dentro del rango que estás viendo (día/semana/mes/año/total).</p>
+        <p><strong>Prorrateo:</strong> si tu rango visible cubre solo parte del periodo de una transacción, se imputa solo la parte proporcional por solape de días.</p>
+        <p><strong>Ejemplo:</strong> Ingreso mensual 300€ en febrero + 30h en febrero = 10€/h. Si luego registras más horas ese mes, el €/h baja.</p>
+        <p><strong>Horas = 0:</strong> se muestra N/A.</p>
+        <p><strong>Movimientos sin vínculo a hábito:</strong> no cuentan aquí.</p>
+        <hr />
+        <p><strong>Alemán recomendado en 2 hábitos:</strong></p>
+        <ul>
+          <li><strong>Alemán (clases):</strong> usa solo el botón “Clase” (1h por clase) y vincula aquí el gasto de clases.</li>
+          <li><strong>Alemán (autoestudio):</strong> Duolingo/otros, sin coste asociado.</li>
+        </ul>
+        <p>${hasGermanClassesHabit ? 'Las horas de “Alemán (clases)” salen del botón Clase (1h por pulsación).' : 'Si activas el botón “Clase”, las horas pueden contarse como 1h por pulsación en “Alemán (clases)”.'}</p>
+      </div>
+    </div>`;
     return;
   }
 
@@ -2762,6 +3001,25 @@ function syncTxTypeFields(form) {
   elTo.style.display = isTransfer ? '' : 'none';
 }
 
+
+function syncAllocationFields(form) {
+  const linked = form?.querySelector('[data-linked-habit-select]');
+  const block = form?.querySelector('[data-allocation-block]');
+  const modeSel = form?.querySelector('[data-allocation-mode]');
+  const customWrap = form?.querySelector('[data-allocation-custom]');
+  const anchorInput = form?.querySelector('[data-allocation-anchor]');
+  const anchorLabel = form?.querySelector('[data-allocation-anchor-label]');
+  if (!linked || !block || !modeSel || !customWrap || !anchorInput || !anchorLabel) return;
+  const hasHabit = !!String(linked.value || '').trim();
+  block.hidden = !hasHabit;
+  const mode = String(modeSel.value || 'point');
+  const isCustom = mode === 'custom';
+  const showAnchor = mode !== 'point' && !isCustom;
+  anchorInput.hidden = !showAnchor;
+  anchorLabel.hidden = !showAnchor;
+  customWrap.hidden = !(mode !== 'point' && isCustom);
+}
+
 function maybeToggleCategoryCreate(form) {
   const input = form?.querySelector('[data-category-new]');
   const btn = form?.querySelector('[data-category-create]');
@@ -2801,6 +3059,12 @@ function persistBalanceFormState(form) {
     toAccountId: String(fd.get('toAccountId') || ''),
     category: String(fd.get('category') || ''),
     note: String(fd.get('note') || ''),
+    linkedHabitId: String(fd.get('linkedHabitId') || ''),
+    allocationMode: String(fd.get('allocationMode') || 'point'),
+    allocationPeriod: String(fd.get('allocationMode') || 'point'),
+    allocationAnchorDate: String(fd.get('allocationAnchorDate') || ''),
+    allocationCustomStart: String(fd.get('allocationCustomStart') || ''),
+    allocationCustomEnd: String(fd.get('allocationCustomEnd') || ''),
     foodMealType: String(fd.get('foodMealType') || ''),
     foodCuisine: String(fd.get('foodCuisine') || ''),
     foodPlace: String(fd.get('foodPlace') || ''),
@@ -2915,13 +3179,13 @@ async function deleteAccount(accountId) { await safeFirebase(() => remove(ref(db
 function triggerRender() {
   render().catch((e) => {
     console.error('[finance] render top-level', e);
-    showFinanceBootError(e);
+    showFinanceBootError($opt, e);
   });
 }
 
 async function render() {
   try {
-    const host = ensureFinanceHost();
+    const host = ensureFinanceHost($opt, $req);
     renderFinanceNav();
     if (state.error) { host.innerHTML = `<article class=\"finance-panel\"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`; return; }
     await ensureBtcEurPrice();
@@ -2934,12 +3198,14 @@ async function render() {
     renderToast();
   } catch (err) {
     console.error('[finance] render crashed', err);
-    showFinanceBootError(err);
+    showFinanceBootError($opt, err);
   }
 }
 
 function bindEvents() {
   const view = document.getElementById('view-finance'); if (!view || view.dataset.financeBound === '1') return; view.dataset.financeBound = '1';
+  state.eventsAbortController = new AbortController();
+  const evtOpts = { signal: state.eventsAbortController.signal };
   view.addEventListener('click', async (event) => {
     const target = event.target;
     const segmentToggle = target.closest('[data-finance-stats-segment]')?.dataset.financeStatsSegment;
@@ -3149,6 +3415,7 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
     const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); state.balanceShowAllTx = false; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const statsMode = target.closest('[data-finance-stats-mode]')?.dataset.financeStatsMode; if (statsMode) { state.balanceStatsMode = statsMode === 'income' ? 'income' : 'expense'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const statsRange = target.closest('[data-finance-stats-range]')?.dataset.financeStatsRange; if (statsRange) { state.balanceStatsRange = statsRange; state.balanceStatsActiveSegment = null; triggerRender(); return; }
+    const roiMode = target.closest('[data-finance-roi-mode]')?.dataset.financeRoiMode; if (roiMode) { state.balanceRoiMode = ['income', 'expense', 'balance'].includes(roiMode) ? roiMode : 'balance'; triggerRender(); return; }
     const statsScope = target.closest('[data-finance-stats-scope]')?.dataset.financeStatsScope; if (statsScope) { state.balanceStatsScope = statsScope === 'global' ? 'global' : 'personal'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const manageDelete = target.closest('[data-finance-manage-delete]')?.dataset.financeManageDelete;
     if (manageDelete) {
@@ -3187,7 +3454,7 @@ view.addEventListener('focusin', (event) => {
     event.target.dataset.prev = event.target.value;
     event.target.value = '';
   }
-});
+}, evtOpts);
 
 view.addEventListener('focusout', async (event) => {
   if (event.target.matches('[data-account-input]')) {
@@ -3243,7 +3510,12 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-tx-type]')) {
       syncTxTypeFields(event.target.closest('[data-balance-form]'));
     }
-  });
+    if (event.target.matches('[data-linked-habit-select], [data-allocation-mode]')) {
+      const form = event.target.closest('[data-balance-form]');
+      syncAllocationFields(form);
+      persistBalanceFormState(form);
+    }
+  }, evtOpts);
 
   view.addEventListener('input', async (event) => {
     if (event.target.matches('[data-balance-form] [data-category-new]')) {
@@ -3378,6 +3650,30 @@ view.addEventListener('focusout', async (event) => {
       const accountId = String(form.get('accountId') || '');
       const fromAccountId = String(form.get('fromAccountId') || '');
       const toAccountId = String(form.get('toAccountId') || '');
+      const linkedHabitId = String(form.get('linkedHabitId') || '').trim() || null;
+      const allocationModeRaw = String(form.get('allocationMode') || 'point');
+      const allocationAnchorDate = String(form.get('allocationAnchorDate') || dateISO);
+      const allocationCustomStart = String(form.get('allocationCustomStart') || '');
+      const allocationCustomEnd = String(form.get('allocationCustomEnd') || '');
+      if (linkedHabitId && allocationModeRaw === 'custom') {
+        if (!allocationCustomStart || !allocationCustomEnd) {
+          toast('Completa Desde y Hasta para una distribución personalizada');
+          return;
+        }
+        const startTs = localStartOfDayTs(allocationCustomStart);
+        const endTs = localStartOfDayTs(allocationCustomEnd);
+        if (!startTs || !endTs || startTs > endTs) {
+          toast('Rango personalizado inválido: "Desde" debe ser menor o igual a "Hasta"');
+          return;
+        }
+      }
+      const allocation = normalizeTxAllocation(linkedHabitId ? {
+        mode: allocationModeRaw === 'point' ? 'point' : 'period',
+        period: allocationModeRaw === 'point' ? 'day' : allocationModeRaw,
+        anchorDate: allocationAnchorDate,
+        customStart: allocationCustomStart,
+        customEnd: allocationCustomEnd
+      } : { mode: 'point', period: 'day', anchorDate: dateISO }, dateISO);
       if (!Number.isFinite(amount) || amount <= 0) { toast('Cantidad inválida'); return; }
       if ((type === 'income' || type === 'expense') && !accountId) { toast('Selecciona una cuenta'); return; }
       if (type === 'transfer' && (!fromAccountId || !toAccountId || fromAccountId === toAccountId)) { toast('Transferencia inválida'); return; }
@@ -3419,6 +3715,8 @@ view.addEventListener('focusout', async (event) => {
         toAccountId: type === 'transfer' ? toAccountId : '',
         category,
         note,
+        linkedHabitId,
+        allocation,
         extras: extras || null,
         updatedAt: nowTs(),
         createdAt: Number(prev?.createdAt || 0) || nowTs()
@@ -3439,6 +3737,8 @@ view.addEventListener('focusout', async (event) => {
           toAccountId: type === 'transfer' ? toAccountId : '',
           category,
           note,
+          linkedHabitId,
+          allocation,
           extras: extras || null,
           schedule: { frequency: recurringFrequency, dayOfMonth: recurringDay, startDate: recurringStart, endDate: recurringEndRaw || '' },
           updatedAt: nowTs(),
@@ -3499,7 +3799,7 @@ view.addEventListener('focusout', async (event) => {
       await safeFirebase(() => update(ref(db, `${state.financePath}/goals/goals/${goalAccountsId}`), { accountsIncluded: ids, updatedAt: nowTs() }));
       state.modal = { type: null }; triggerRender();
     }
-  });
+  }, evtOpts);
 
   view.addEventListener('toggle', (event) => {
     const foodDetails = event.target.closest('[data-section="food-extras"]');
@@ -3511,7 +3811,7 @@ view.addEventListener('focusout', async (event) => {
     const accountId = details.dataset.historyAccount; const host = view.querySelector(`[data-history-rows="${accountId}"]`); if (!host || host.dataset.loaded === '1') return;
     const account = buildAccountModels().find((item) => item.id === accountId); host.dataset.loaded = '1';
     host.innerHTML = account?.daily?.length ? account.daily.slice().reverse().map((row) => `<div class="finance-history-row"><span>${new Date(row.ts).toLocaleDateString('es-ES')}</span><span>${fmtCurrency(row.value)}</span><span class="${toneClass(row.delta)}">${fmtSignedCurrency(row.delta)}</span><span class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</span></div>`).join('') : '<p class="finance-empty">Sin registros.</p>';
-  }, true);
+  }, { ...evtOpts, capture: true });
 }
 
 function financeDomReady() {
@@ -3525,7 +3825,7 @@ async function boot() {
     return;
   }
   state.booted = true;
-  const financeRoot = resolveFinanceRoot();
+  const financeRoot = resolveFinanceRoot($opt, $req);
   log('dom root resolved', {
     missingFinanceRootId: !$opt('#finance-root'),
     missingDataTabFinance: !$opt('[data-tab="finance"]'),
@@ -3534,7 +3834,7 @@ async function boot() {
   });
   state.deviceId = getDeviceId();
   console.log('[finance] deviceId', state.deviceId);
-  state.financePath = 'Finance';
+  state.financePath = resolveFinancePath();
   log('init ok', { financePath: state.financePath });
   bindEvents();
   await loadDataOnce();
@@ -3545,21 +3845,51 @@ async function boot() {
 function bootFinance() {
   boot().catch((e) => {
     console.error('[finance] boot crashed', e);
-    showFinanceBootError(e);
+    showFinanceBootError($opt, e);
   });
 }
 
-if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', () => bootFinance(), { once: true });
-else bootFinance();
 
-window.addEventListener('click', (event) => {
-  if (event.target.closest?.('[data-view="view-finance"]')) bootFinance();
-});
-
-const financeDomObserver = new MutationObserver(() => {
-  if (!state.booted && financeDomReady()) {
-    bootFinance();
-    financeDomObserver.disconnect();
+export async function init() {
+  const financeStart = performance.now();
+  await ensureFinanceLoaded();
+  await boot();
+  if (!state.firstInitDone) {
+    state.firstInitDone = true;
+    console.log('[perf] finance-first-open-ms', Math.round(performance.now() - financeStart));
   }
-});
-if (!state.booted) financeDomObserver.observe(document.documentElement, { childList: true, subtree: true });
+  console.log('[perf] listeners view-finance', getFinanceListenerCount());
+}
+
+export function destroy() {
+  if (state.unsubscribe) {
+    state.unsubscribe();
+    state.unsubscribe = null;
+  }
+  if (state.aggregateRebuildTimer) {
+    clearTimeout(state.aggregateRebuildTimer);
+    state.aggregateRebuildTimer = null;
+  }
+  if (state.toastTimer) {
+    clearTimeout(state.toastTimer);
+    state.toastTimer = null;
+  }
+  if (state.eventsAbortController) {
+    state.eventsAbortController.abort();
+    state.eventsAbortController = null;
+  }
+  const view = document.getElementById('view-finance');
+  if (view) delete view.dataset.financeBound;
+  state.booted = false;
+  console.log('[finance] destroy completed');
+  console.log('[perf] listeners view-finance', getFinanceListenerCount());
+}
+
+function getFinanceListenerCount() {
+  let count = 0;
+  if (state.unsubscribe) count += 1;
+  if (state.eventsAbortController) count += 1;
+  if (state.aggregateRebuildTimer) count += 1;
+  if (state.toastTimer) count += 1;
+  return count;
+}

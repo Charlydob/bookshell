@@ -17,7 +17,7 @@ async function ensureFinanceLoaded() {
 import { LEGACY_PATH, DEVICE_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
 import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './finance/ui.js';
 import { resolveFinancePath } from './finance/data.js';
-import { parseImportRaw } from './finance/import.js';
+import { parseImportRaw, parseTicketImport, applyTicketImport } from './finance/import.js';
 
 function log(...parts) { console.log('[finance]', ...parts); }
 function warnMissing(id) { console.warn(`[finance] missing DOM node ${id}`); }
@@ -294,6 +294,18 @@ function isFoodCategory(category = '') {
 }
 function normalizeFoodName(value = '') {
   return String(value || '').trim().replace(/\s+/g, ' ');
+}
+function ticketCategoryToTxCategory(category = '') {
+  const safe = String(category || '').trim().toLowerCase();
+  if (!safe || safe === 'otros' || safe === 'hogar' || safe === 'higiene' || safe === 'mascotas') return 'Otros';
+  return 'Comida';
+}
+function isTicketExtraLike(name = '') {
+  const safe = normalizeFoodName(name).toLowerCase();
+  return /bolsa|descuento|cupon|cupón|redondeo|deposito|depósito/.test(safe);
+}
+function toTicketPriceLine(item = {}) {
+  return `${Number(item.qty || 1)} × ${escapeHtml(item.name_norm || item.name_raw || 'Producto')} → ${fmtCurrency(item.total_price || 0)}`;
 }
 function normalizeFoodMap(map = {}) {
   const out = {};
@@ -2434,6 +2446,9 @@ function renderModal() {
   const defaultTo = txEdit?.toAccountId || state.balanceFormState.toAccountId || accounts[1]?.id || accounts[0]?.id || '';
   const accountOptions = accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
   const categories = categoriesList();
+  const ticketImportState = state.modal.ticketImport || { raw: '', parsed: null, error: '', warnings: [], open: false };
+  const ticketPreview = ticketImportState.parsed?.ok ? ticketImportState.parsed.data : null;
+  const ticketPreviewWarnings = [...(ticketImportState.parsed?.warnings || []), ...(ticketImportState.warnings || [])];
   backdrop.innerHTML = 
   
   `<div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1">
@@ -2542,6 +2557,33 @@ function renderModal() {
         /div>
       </div>
 
+<details class="fm-details fin-move-extras" ${ticketImportState.open ? 'open' : ''}>
+  <summary class="fm-details__summary">
+    <span class="fm-details__title">Import</span>
+    <span class="fm-details__hint">Ticket JSON</span>
+    <span class="fm-details__chev" aria-hidden="true">⌄</span>
+  </summary>
+  <div class="fm-details__body">
+    <div class="finance-row" style="gap:8px;flex-wrap:wrap;">
+      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-preview>Preview</button>
+      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-paste>📋 Pegar</button>
+      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-cancel>Cancel</button>
+    </div>
+    <textarea name="ticketImportRaw" data-ticket-import-raw rows="10" style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escapeHtml(ticketImportState.raw || '')}</textarea>
+    ${ticketImportState.error ? `<p class="is-negative">${escapeHtml(ticketImportState.error)}</p>` : ''}
+    ${ticketPreview ? `
+      <div class="finance-mini-list" style="margin-top:8px;max-height:240px;overflow:auto;">
+        <p><strong>Supermercado:</strong> ${escapeHtml(ticketPreview.source?.vendor || 'unknown')}</p>
+        <p><strong>Fecha:</strong> ${escapeHtml(ticketPreview.purchase?.date || '—')}</p>
+        <p><strong>Total ticket:</strong> ${fmtCurrency(ticketPreview.purchase?.total || 0)}</p>
+        ${(ticketPreviewWarnings || []).map((warning) => `<p class="is-negative">⚠ ${escapeHtml(warning)}</p>`).join('')}
+        <ul>${(ticketPreview.items || []).map((item) => `<li>${toTicketPriceLine(item)}</li>`).join('')}</ul>
+      </div>
+      <button type="button" class="finance-pill" data-ticket-import-apply>Apply Import</button>
+    ` : ''}
+  </div>
+</details>
+
 
 <details class="fm-details fm-details--extras fin-move-extras" data-section="food-extras" ${defaultFoodExtrasOpen ? 'open' : ''}>
 <summary class="fm-details__summary">
@@ -2622,7 +2664,11 @@ if (form) {
   maybeToggleCategoryCreate(form);
 
   // luego: extras (y vuelve a toggle por si categoría viene de txEdit)
-  if (txEdit?.extras || txEdit?.food) {
+  if (Array.isArray(state.balanceFormState.importedFoodItems) && state.balanceFormState.importedFoodItems.length) {
+    writeFoodItemsToForm(form, state.balanceFormState.importedFoodItems);
+    recalcFoodAmount(form);
+    void toggleFoodExtras(form);
+  } else if (txEdit?.extras || txEdit?.food) {
     const extras = normalizeFoodExtras(txEdit.extras || txEdit.food, txEdit.amount);
     const refs = getFoodFormRefs(form);
     if (refs.mealType) refs.mealType.value = extras?.filters?.mealType || '';
@@ -3208,6 +3254,137 @@ function bindEvents() {
   const evtOpts = { signal: state.eventsAbortController.signal };
   view.addEventListener('click', async (event) => {
     const target = event.target;
+    const ticketImportRawEl = target.closest('[data-balance-form]')?.querySelector('[data-ticket-import-raw]');
+    if (ticketImportRawEl && state.modal?.type === 'tx') {
+      state.modal = {
+        ...state.modal,
+        ticketImport: {
+          ...(state.modal.ticketImport || {}),
+          raw: String(ticketImportRawEl.value || '')
+        }
+      };
+    }
+    if (target.closest('[data-ticket-import-paste]')) {
+      try {
+        const text = await navigator.clipboard.readText();
+        state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, raw: text, error: '' } };
+      } catch {
+        state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, error: 'No se pudo leer el portapapeles' } };
+      }
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-ticket-import-cancel]')) {
+      state.modal = { ...state.modal, ticketImport: { raw: '', parsed: null, error: '', warnings: [], open: false } };
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-ticket-import-preview]')) {
+      const raw = String(ticketImportRawEl?.value || state.modal.ticketImport?.raw || '');
+      const parsed = parseTicketImport(raw);
+      state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, raw, parsed, error: parsed.ok ? '' : parsed.error, warnings: [] } };
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-ticket-import-apply]')) {
+      try {
+        const parsed = state.modal.ticketImport?.parsed;
+        if (!parsed?.ok) {
+          state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), error: 'Primero genera un preview válido' } };
+          triggerRender();
+          return;
+        }
+        await ensureFoodCatalogLoaded();
+        const currentDraft = {
+          amount: Number(state.balanceFormState.amount || 0),
+          note: state.balanceFormState.note || '',
+          dateISO: state.balanceFormState.dateISO || dayKeyFromTs(Date.now())
+        };
+        const products = Object.values(state.food.itemsById || {});
+        const importResult = applyTicketImport(parsed.data, currentDraft, products);
+        const updatesMap = {};
+        const purchaseTs = parseDayKey(parsed.data?.purchase?.date || dayKeyFromTs(Date.now()));
+        importResult.createdProducts.forEach((product) => {
+          const id = window.crypto?.randomUUID?.() || `food-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+          const payload = {
+            id,
+            name: product.name,
+            mealType: '',
+            cuisine: String(product.healthy || ''),
+            healthy: String(product.healthy || ''),
+            place: String(product.place || parsed.data?.source?.vendor || 'unknown'),
+            defaultPrice: Number(product.defaultPrice || 0),
+            priceHistory: {},
+            countUsed: 0,
+            createdAt: nowTs(),
+            updatedAt: nowTs()
+          };
+          updatesMap[`${state.financePath}/foodItems/${id}`] = payload;
+          updatesMap[`${state.financePath}/catalog/foodItems/${product.name}`] = {
+            createdAt: nowTs(),
+            count: 0,
+            lastUsedAt: nowTs(),
+            lastPrice: Number(product.defaultPrice || 0),
+            lastCategory: 'Comida',
+            lastAccountId: '',
+            lastNote: 'Import ticket',
+            lastExtras: { mealType: '', cuisine: String(product.healthy || ''), place: String(product.place || 'unknown'), healthy: String(product.healthy || '') }
+          };
+        });
+        importResult.updatedProducts.forEach((product) => {
+          updatesMap[`${state.financePath}/foodItems/${product.id}/defaultPrice`] = Number(product.defaultPrice || 0);
+          updatesMap[`${state.financePath}/foodItems/${product.id}/updatedAt`] = nowTs();
+          if (product.priceHistory && Object.keys(product.priceHistory).length) {
+            const entryId = push(ref(db, `${state.financePath}/foodItems/${product.id}/priceHistory`)).key;
+            updatesMap[`${state.financePath}/foodItems/${product.id}/priceHistory/${entryId}`] = {
+              price: Number(product.defaultPrice || 0),
+              ts: purchaseTs,
+              source: 'ticket_import'
+            };
+          }
+        });
+        if (Object.keys(updatesMap).length) await safeFirebase(() => update(ref(db), updatesMap));
+        await ensureFoodCatalogLoaded(true);
+        const importedItems = importResult.updatedDraft.importedItems.map((item) => ({
+          foodId: item.productId || (getFoodByName(item.name)?.id || ''),
+          name: item.name,
+          price: Number(item.price || 0),
+          mealType: '',
+          cuisine: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryGuess || ''),
+          place: String(importResult.updatedDraft.importedVendor || 'unknown'),
+          healthy: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryGuess || '')
+        }));
+        const category = importedItems.some((row) => row.cuisine === 'otros')
+          ? 'Otros'
+          : ticketCategoryToTxCategory(importedItems[0]?.cuisine || '');
+        state.balanceFormState = {
+          ...state.balanceFormState,
+          type: 'expense',
+          amount: String(importResult.updatedDraft.amount || 0),
+          dateISO: importResult.updatedDraft.dateISO || dayKeyFromTs(Date.now()),
+          note: importResult.updatedDraft.note || '',
+          category,
+          foodPlace: String(importResult.updatedDraft.importedVendor || 'unknown'),
+          importedFoodItems: importedItems,
+          foodExtrasOpen: true
+        };
+        state.modal = {
+          ...state.modal,
+          ticketImport: {
+            ...(state.modal.ticketImport || {}),
+            open: true,
+            warnings: importResult.warnings,
+            error: ''
+          }
+        };
+        triggerRender();
+        toast('Import aplicado');
+      } catch (error) {
+        state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), error: 'No se pudo aplicar el import. Revisa el JSON.' } };
+        triggerRender();
+      }
+      return;
+    }
     const segmentToggle = target.closest('[data-finance-stats-segment]')?.dataset.financeStatsSegment;
     if (segmentToggle) {
       state.balanceStatsActiveSegment = state.balanceStatsActiveSegment === segmentToggle ? null : segmentToggle;

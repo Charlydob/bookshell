@@ -48,11 +48,21 @@ export function parseTicketImport(text = '') {
     });
   }
   const vendor = String(parsed?.source?.vendor || '').trim() || 'unknown';
+  const purchase = parsed?.purchase && typeof parsed.purchase === 'object' ? parsed.purchase : {};
+  const cardLast4Raw = purchase.card_last4;
+  const cardLast4 = typeof cardLast4Raw === 'string' ? cardLast4Raw.trim() : '';
+  if (cardLast4 && !/^\d{4}$/.test(cardLast4)) {
+    warnings.push('purchase.card_last4 inválido (debe ser string de 4 dígitos), se ignora');
+  }
   return {
     ok: true,
     data: {
       ...parsed,
       source: { ...(parsed.source || {}), vendor },
+      purchase: {
+        ...purchase,
+        ...(cardLast4 && /^\d{4}$/.test(cardLast4) ? { card_last4: cardLast4 } : { card_last4: undefined })
+      },
       items
     },
     warnings
@@ -71,7 +81,7 @@ export function matchExistingProduct(ticketItem = {}, products = []) {
   }) || null;
 }
 
-export function applyTicketImport(ticket, currentExpenseDraft = {}, products = []) {
+export function applyTicketImport(ticket, currentExpenseDraft = {}, products = [], accounts = []) {
   const isExtraLine = (name = '') => /bolsa|descuento|cupon|cupón|redondeo|deposito|depósito/.test(normalizeProductName(name));
   const warnings = [];
   const createdProducts = [];
@@ -112,6 +122,18 @@ export function applyTicketImport(ticket, currentExpenseDraft = {}, products = [
   if (Number.isFinite(purchaseTotal) && Math.abs(purchaseTotal - amount) > 0.5) {
     warnings.push(`El total del ticket difiere de la suma de líneas (${(purchaseTotal - amount).toFixed(2)}€)`);
   }
+  const cardLast4 = String(ticket?.purchase?.card_last4 || '').trim();
+  const matchedAccounts = /^\d{4}$/.test(cardLast4)
+    ? accounts.filter((account) => String(account?.cardLast4 || '').trim() === cardLast4)
+    : [];
+  const autoSelectedAccount = matchedAccounts.length === 1 ? matchedAccounts[0] : null;
+  if (cardLast4 && matchedAccounts.length === 1) {
+    warnings.push(`Cuenta detectada por tarjeta ****${cardLast4} → ${autoSelectedAccount?.name || 'Sin nombre'}`);
+  } else if (cardLast4 && matchedAccounts.length === 0) {
+    warnings.push(`Tarjeta ****${cardLast4} no coincide con ninguna cuenta`);
+  } else if (cardLast4 && matchedAccounts.length > 1) {
+    warnings.push(`Tarjeta ****${cardLast4} coincide con varias cuentas; selecciona manualmente`);
+  }
   const updatedDraft = {
     ...currentExpenseDraft,
     type: 'expense',
@@ -122,8 +144,9 @@ export function applyTicketImport(ticket, currentExpenseDraft = {}, products = [
       .filter(Boolean)
       .join(' · ')
       .trim(),
+    ...(autoSelectedAccount && !String(currentExpenseDraft.accountId || '').trim() ? { accountId: autoSelectedAccount.id } : {}),
     importedItems: lineItems,
     importedVendor: String(ticket?.source?.vendor || 'unknown').trim() || 'unknown'
   };
-  return { updatedDraft, createdProducts, updatedProducts, warnings };
+  return { updatedDraft, createdProducts, updatedProducts, warnings, accountMatch: { cardLast4, matches: matchedAccounts, selected: autoSelectedAccount } };
 }

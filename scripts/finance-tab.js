@@ -300,6 +300,26 @@ function ticketCategoryToTxCategory(category = '') {
   if (!safe || safe === 'otros' || safe === 'hogar' || safe === 'higiene' || safe === 'mascotas') return 'Otros';
   return 'Comida';
 }
+
+function normalizeCardLast4(value = '') {
+  const digits = String(value || '').replace(/\D/g, '').slice(0, 4);
+  return /^\d{4}$/.test(digits) ? digits : '';
+}
+
+function getCardLast4Duplicates(cardLast4 = '', currentAccountId = '') {
+  const normalized = normalizeCardLast4(cardLast4);
+  if (!normalized) return [];
+  return (state.accounts || []).filter((account) => String(account?.id || '') !== String(currentAccountId || '') && normalizeCardLast4(account?.cardLast4 || '') === normalized);
+}
+
+function resolveTicketCardAccountPreview(ticket = null, accounts = []) {
+  const cardLast4 = String(ticket?.purchase?.card_last4 || '').trim();
+  if (!/^\d{4}$/.test(cardLast4)) return { cardLast4: '', matches: [], selected: null, status: 'none' };
+  const matches = accounts.filter((account) => normalizeCardLast4(account?.cardLast4 || '') === cardLast4);
+  if (matches.length === 1) return { cardLast4, matches, selected: matches[0], status: 'single' };
+  if (matches.length > 1) return { cardLast4, matches, selected: null, status: 'multiple' };
+  return { cardLast4, matches: [], selected: null, status: 'zero' };
+}
 function isTicketExtraLike(name = '') {
   const safe = normalizeFoodName(name).toLowerCase();
   return /bolsa|descuento|cupon|cupón|redondeo|deposito|depósito/.test(safe);
@@ -2420,7 +2440,7 @@ function renderModal() {
   if (state.modal.type === 'tx') {
   const accountsById = Object.fromEntries(accounts.map((a) => [a.id, a]));
   const txEdit = state.modal.txId ? balanceTxList().find((row) => row.id === state.modal.txId) : null;
-  const defaultAccountId = txEdit?.accountId || state.lastMovementAccountId || state.balance.defaultAccountId || accounts[0]?.id || '';
+  const defaultAccountId = txEdit?.accountId || state.balanceFormState.accountId || state.lastMovementAccountId || state.balance.defaultAccountId || accounts[0]?.id || '';
   const defaultType = txEdit?.type || state.balanceFormState.type || 'expense';
   const defaultCategory = txEdit?.category || state.balanceFormState.category || '';
   const defaultDate = txEdit?.date || isoToDay(txEdit?.dateISO || '') || state.balanceFormState.dateISO || dayKeyFromTs(Date.now());
@@ -2449,6 +2469,7 @@ function renderModal() {
   const ticketImportState = state.modal.ticketImport || { raw: '', parsed: null, error: '', warnings: [], open: false };
   const ticketPreview = ticketImportState.parsed?.ok ? ticketImportState.parsed.data : null;
   const ticketPreviewWarnings = [...(ticketImportState.parsed?.warnings || []), ...(ticketImportState.warnings || [])];
+  const ticketCardPreview = resolveTicketCardAccountPreview(ticketPreview, accounts);
   backdrop.innerHTML = 
   
   `<div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1">
@@ -2576,6 +2597,8 @@ function renderModal() {
         <p><strong>Supermercado:</strong> ${escapeHtml(ticketPreview.source?.vendor || 'unknown')}</p>
         <p><strong>Fecha:</strong> ${escapeHtml(ticketPreview.purchase?.date || '—')}</p>
         <p><strong>Total ticket:</strong> ${fmtCurrency(ticketPreview.purchase?.total || 0)}</p>
+        ${ticketCardPreview.cardLast4 ? `<p><strong>Pago:</strong> tarjeta ****${escapeHtml(ticketCardPreview.cardLast4)}</p>` : ''}
+        <p><strong>Cuenta sugerida:</strong> ${ticketCardPreview.status === 'single' ? escapeHtml(ticketCardPreview.selected?.name || '—') : 'No se pudo decidir'}</p>
         ${(ticketPreviewWarnings || []).map((warning) => `<p class="is-negative">⚠ ${escapeHtml(warning)}</p>`).join('')}
         <ul>${(ticketPreview.items || []).map((item) => `<li>${toTicketPriceLine(item)}</li>`).join('')}</ul>
       </div>
@@ -2801,11 +2824,16 @@ if (form) {
   if (state.modal.type === 'edit-account') {
     const account = accounts.find((item) => item.id === state.modal.accountId);
     if (!account) { state.modal = { type: null }; triggerRender(); return; }
+    const duplicateCardAccounts = getCardLast4Duplicates(account.cardLast4, account.id);
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><form class="finance-entry-form" data-edit-account-form="${account.id}"><input type="text" name="name" value="${escapeHtml(account.name)}" required /><label>
     <input type="checkbox" name="shared" ${account.shared ? 'checked' : ''} /> Cuenta compartida</label>
     <select name="sharedRatio"><option value="0.5" ${(account.sharedRatio === 0.5) ? 'selected' : ''}>50%</option></select>
     <label><input type="checkbox" name="isBitcoin" ${account.isBitcoin ? 'checked' : ''} /> Cuenta Bitcoin</label>
     <input type="number" name="btcUnits" step="0.00000001" min="0" value="${Number(account.btcUnits || 0)}" placeholder="BTC unidades" />
+    <label>Tarjeta (últimos 4)
+    <input type="text" name="cardLast4" data-card-last4-input inputmode="numeric" maxlength="4" pattern="\\d{4}" value="${escapeHtml(normalizeCardLast4(account.cardLast4 || ''))}" placeholder="1234" />
+    </label>
+    ${duplicateCardAccounts.length ? '<small class="is-negative">⚠ last4 duplicado: el import no podrá decidir.</small>' : ''}
     <small>BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(Number(account.btcUnits || 0) * Number(state.btcEurPrice || 0))}</small>
     <button class="finance-pill" type="submit">Guardar</button></form></div>`;
     return;
@@ -2821,6 +2849,9 @@ if (form) {
     </select>
     <label><input type="checkbox" name="isBitcoin" /> Cuenta Bitcoin</label>
     <input type="number" name="btcUnits" step="0.00000001" min="0" value="0" placeholder="BTC unidades" />
+    <label>Tarjeta (últimos 4)
+    <input type="text" name="cardLast4" data-card-last4-input inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="1234" />
+    </label>
     <small>BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(0)}</small>
     <button class="finance-pill" type="submit">Crear</button></form></div>`;
     return;
@@ -3196,15 +3227,15 @@ function subscribe() {
   }, (error) => { state.error = String(error?.message || error); triggerRender(); });
 }
 
-async function addAccount({ name, shared = false, sharedRatio = 0.5, isBitcoin = false, btcUnits = 0 }) {
+async function addAccount({ name, shared = false, sharedRatio = 0.5, isBitcoin = false, btcUnits = 0, cardLast4 = '' }) {
   const id = push(ref(db, `${state.financePath}/accounts`)).key;
   const ratio = shared ? clampRatio(sharedRatio, 0.5) : 1;
-  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), { id, name, shared, sharedRatio: ratio, isBitcoin: Boolean(isBitcoin), btcUnits: Number(btcUnits || 0), createdAt: nowTs(), updatedAt: nowTs(), entries: {}, snapshots: {} }));
+  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), { id, name, shared, sharedRatio: ratio, isBitcoin: Boolean(isBitcoin), btcUnits: Number(btcUnits || 0), cardLast4: normalizeCardLast4(cardLast4), createdAt: nowTs(), updatedAt: nowTs(), entries: {}, snapshots: {} }));
 }
 async function updateAccountMeta(accountId, payload = {}) {
   const shared = Boolean(payload.shared);
   const sharedRatio = shared ? clampRatio(payload.sharedRatio, 0.5) : 1;
-  await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { ...payload, shared, sharedRatio, isBitcoin: Boolean(payload.isBitcoin), btcUnits: Number(payload.btcUnits || 0), updatedAt: nowTs() }));
+  await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { ...payload, shared, sharedRatio, isBitcoin: Boolean(payload.isBitcoin), btcUnits: Number(payload.btcUnits || 0), cardLast4: normalizeCardLast4(payload.cardLast4), updatedAt: nowTs() }));
 }
 async function saveSnapshot(accountId, day, value) {
   const parsedValue = parseEuroNumber(value);
@@ -3298,10 +3329,11 @@ function bindEvents() {
         const currentDraft = {
           amount: Number(state.balanceFormState.amount || 0),
           note: state.balanceFormState.note || '',
-          dateISO: state.balanceFormState.dateISO || dayKeyFromTs(Date.now())
+          dateISO: state.balanceFormState.dateISO || dayKeyFromTs(Date.now()),
+          accountId: state.balanceFormState.accountId || ''
         };
         const products = Object.values(state.food.itemsById || {});
-        const importResult = applyTicketImport(parsed.data, currentDraft, products);
+        const importResult = applyTicketImport(parsed.data, currentDraft, products, state.accounts || []);
         const updatesMap = {};
         const purchaseTs = parseDayKey(parsed.data?.purchase?.date || dayKeyFromTs(Date.now()));
         importResult.createdProducts.forEach((product) => {
@@ -3363,6 +3395,7 @@ function bindEvents() {
           amount: String(importResult.updatedDraft.amount || 0),
           dateISO: importResult.updatedDraft.dateISO || dayKeyFromTs(Date.now()),
           note: importResult.updatedDraft.note || '',
+          accountId: importResult.updatedDraft.accountId || state.balanceFormState.accountId || '',
           category,
           foodPlace: String(importResult.updatedDraft.importedVendor || 'unknown'),
           importedFoodItems: importedItems,
@@ -3695,6 +3728,10 @@ view.addEventListener('focusout', async (event) => {
   }, evtOpts);
 
   view.addEventListener('input', async (event) => {
+    if (event.target.matches('[data-card-last4-input]')) {
+      const cleaned = String(event.target.value || '').replace(/\D/g, '').slice(0, 4);
+      if (event.target.value !== cleaned) event.target.value = cleaned;
+    }
     if (event.target.matches('[data-balance-form] [data-category-new]')) {
       const form = event.target.closest('[data-balance-form]');
       maybeToggleCategoryCreate(form);
@@ -3760,7 +3797,7 @@ view.addEventListener('focusout', async (event) => {
       return;
     }
     if (event.target.matches('[data-new-account-form]')) {
-      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 0.5); const isBitcoin = form.get('isBitcoin') === 'on'; const btcUnits = Number(form.get('btcUnits') || 0); if (name) await addAccount({ name, shared, sharedRatio, isBitcoin, btcUnits }); state.modal = { type: null }; triggerRender(); return;
+      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 0.5); const isBitcoin = form.get('isBitcoin') === 'on'; const btcUnits = Number(form.get('btcUnits') || 0); const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); if (name) { const duplicates = getCardLast4Duplicates(cardLast4); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); await addAccount({ name, shared, sharedRatio, isBitcoin, btcUnits, cardLast4 }); } state.modal = { type: null }; triggerRender(); return;
     }
     if (event.target.matches('[data-calendar-day-form]')) {
       event.preventDefault();
@@ -3800,7 +3837,7 @@ view.addEventListener('focusout', async (event) => {
       event.preventDefault();
       const accountId = event.target.dataset.editAccountForm;
       const form = new FormData(event.target);
-      await updateAccountMeta(accountId, { name: String(form.get('name') || '').trim(), shared: form.get('shared') === 'on', sharedRatio: Number(form.get('sharedRatio') || 0.5), isBitcoin: form.get('isBitcoin') === 'on', btcUnits: Number(form.get('btcUnits') || 0) });
+      const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); const duplicates = getCardLast4Duplicates(cardLast4, accountId); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); await updateAccountMeta(accountId, { name: String(form.get('name') || '').trim(), shared: form.get('shared') === 'on', sharedRatio: Number(form.get('sharedRatio') || 0.5), isBitcoin: form.get('isBitcoin') === 'on', btcUnits: Number(form.get('btcUnits') || 0), cardLast4 });
       state.modal = { type: null };
       triggerRender();
       return;

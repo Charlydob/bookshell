@@ -1,11 +1,6 @@
-// gym.js
+import { db, auth } from "./firebase-shared.js";
+
 import {
-  initializeApp,
-  getApps,
-  getApp
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import {
-  getDatabase,
   ref,
   onValue,
   set,
@@ -14,20 +9,12 @@ import {
   remove
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
+const uid = auth.currentUser?.uid;
+if (!uid) throw new Error("[gym] No hay usuario autenticado");
+
 const $viewGym = document.getElementById("view-gym");
 if ($viewGym) {
-  const firebaseConfig = {
-    apiKey: "AIzaSyC1oqRk7GpYX854RfcGrYHt6iRun5TfuYE",
-    authDomain: "bookshell-59703.firebaseapp.com",
-    databaseURL: "https://bookshell-59703-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "bookshell-59703",
-    storageBucket: "bookshell-59703.appspot.com",
-    messagingSenderId: "554557230752",
-    appId: "1:554557230752:web:37c24e287210433cf883c5"
-  };
 
-  const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-  const db = getDatabase(app);
 
   const DEVICE_ID_KEY = "bookshell:gym:deviceId:v1";
   const GYM_CACHE_KEY = "bookshell:gym:cache:v1";
@@ -157,8 +144,8 @@ if ($viewGym) {
   const $gymCardioSummary = document.getElementById("gym-cardio-summary");
   const $gymCardioProgress = document.getElementById("gym-cardio-progress");
 
-  const deviceId = getDeviceId();
-  const basePath = `gym/${deviceId}`;
+const basePath = `v2/users/${uid}/gym/gym`;
+
   const exercisesRef = ref(db, `${basePath}/exercises`);
   const templatesRef = ref(db, `${basePath}/templates`);
   const workoutsRef = ref(db, `${basePath}/workouts`);

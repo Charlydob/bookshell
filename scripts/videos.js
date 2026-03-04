@@ -1,43 +1,32 @@
 // videos.js
-// Lógica pestaña "Vídeos YouTube": stats, calendario, tarjetas y log diario
+import { db, auth } from "./firebase-shared.js";
 
 import {
-  initializeApp,
-  getApps,
-  getApp
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import {
-  getDatabase,
   ref,
   onValue,
   push,
   set,
-  remove,
   update,
+  remove,
   runTransaction
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-// === Firebase shared app ===
-const firebaseConfig = {
-  apiKey: "AIzaSyC1oqRk7GpYX854RfcGrYHt6iRun5TfuYE",
-  authDomain: "bookshell-59703.firebaseapp.com",
-  databaseURL: "https://bookshell-59703-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "bookshell-59703",
-  storageBucket: "bookshell-59703.appspot.com",
-  messagingSenderId: "554557230752",
-  appId: "1:554557230752:web:37c24e287210433cf883c5"
-};
+// ✅ Rutas v2 (por usuario). app.js ya garantiza que hay sesión.
+const uid = auth.currentUser?.uid;
+if (!uid) throw new Error("[videos] No hay usuario autenticado (auth.currentUser es null).");
 
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-const db = getDatabase(app);
+// ✅ Rutas (v2/users/${uid}/videos/...)
+const VIDEOS_PATH      = `v2/users/${uid}/videos/videos`;      // si tu nodo principal se llama "videos"
+const VIDEO_LOG_PATH   = `v2/users/${uid}/videos/videoLog`;
+const VIDEO_WORK_PATH  = `v2/users/${uid}/videos/videoWorkLog`;
+const LINKS_PATH       = `v2/users/${uid}/videos/links`;
+const BOOKS_PATH       = `v2/users/${uid}/videos/books`;
+const QUOTE_BOOKS_PATH = `v2/users/${uid}/videos/quoteBooks`;
 
-// Rutas
-const VIDEOS_PATH = "videos";
-const VIDEO_LOG_PATH = "videoLog";
-const VIDEO_WORK_PATH = "videoWorkLog";
-const LINKS_PATH = "links";
-const BOOKS_PATH = "books";
-const QUOTE_BOOKS_PATH = "quoteBooks";
+// Ejemplo de uso:
+// onValue(ref(db, VIDEO_LOG_PATH), (snap) => { ... });
+// push(ref(db, VIDEOS_PATH))
+// set(ref(db, `${VIDEO_WORK_PATH}/${dayKey}`), payload)
 
 // Estado
 let videos = {};

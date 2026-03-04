@@ -326,14 +326,22 @@ export function parseTicketImport(text = '') {
 }
 
 export function matchExistingProduct(ticketItem = {}, products = []) {
-  const byName = normalizeProductName(ticketItem.name_norm || ticketItem.name_raw || '');
-  if (!byName) return null;
+  const rawNorm = normalizeProductName(ticketItem.name_norm || ticketItem.name_raw || '');
+  const vendorKey = firebaseSafeKey(ticketItem.vendor || ticketItem.sourceVendor || '');
+  if (!rawNorm) return null;
   return products.find((product) => {
+    const productKey = firebaseSafeKey(product?.key || product?.name || '');
+    if (productKey && productKey === firebaseSafeKey(rawNorm)) return true;
     const productName = normalizeProductName(product?.name || '');
-    if (productName === byName) return true;
-    if (!Array.isArray(product?.aliases)) return false;
-    const raw = normalizeProductName(ticketItem.name_raw || '');
-    return product.aliases.some((alias) => normalizeProductName(alias) === raw);
+    if (productName === rawNorm) return true;
+    const displayName = normalizeProductName(product?.displayName || '');
+    if (displayName === rawNorm) return true;
+    if (Array.isArray(product?.aliases) && product.aliases.some((alias) => normalizeProductName(alias) === rawNorm)) return true;
+    const vendorAliases = product?.vendorAliases && typeof product.vendorAliases === 'object' ? product.vendorAliases : {};
+    if (vendorKey && Array.isArray(vendorAliases[vendorKey])) {
+      return vendorAliases[vendorKey].some((alias) => normalizeProductName(alias) === rawNorm);
+    }
+    return false;
   }) || null;
 }
 
@@ -356,7 +364,7 @@ export function applyTicketImport(ticket, currentExpenseDraft = {}, products = [
   const lineItems = [];
   let amount = 0;
   for (const item of ticket.items || []) {
-    const matched = matchExistingProduct(item, products);
+    const matched = matchExistingProduct({ ...item, vendor: ticket?.source?.vendor || '' }, products);
     const linePrice = Number(item.total_price || 0);
     const appCategory = String(item.category_app || mapTicketCategoryToApp(item.category_guess || 'otros'));
     amount += linePrice;
@@ -388,6 +396,12 @@ export function applyTicketImport(ticket, currentExpenseDraft = {}, products = [
     } else {
       createdProducts.push({
         name: item.name_norm,
+        displayName: item.name_norm,
+        aliases: [item.name_raw].filter(Boolean),
+        vendorAliases: {
+          [firebaseSafeKey(ticket?.source?.vendor || 'unknown') || 'unknown']: [item.name_norm, item.name_raw].filter(Boolean)
+        },
+        createdFromVendor: String(ticket?.source?.vendor || ''),
         defaultPrice: Number.isFinite(nextDefaultPrice) && nextDefaultPrice > 0 ? nextDefaultPrice : linePrice,
         place: String(ticket?.source?.vendor || 'unknown').trim() || 'unknown',
         healthy: appCategory,

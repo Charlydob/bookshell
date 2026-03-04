@@ -362,7 +362,12 @@ function normalizeFoodEntityMap(map = {}) {
     if (!safeName) return;
     out[safeId] = {
       id: safeId,
+      idKey: String(payload?.idKey || firebaseSafeKey(safeName)),
       name: safeName,
+      displayName: String(payload?.displayName || safeName),
+      aliases: Array.isArray(payload?.aliases) ? payload.aliases.map((alias) => normalizeFoodName(alias)).filter(Boolean) : [],
+      vendorAliases: payload?.vendorAliases && typeof payload.vendorAliases === 'object' ? payload.vendorAliases : {},
+      createdFromVendor: String(payload?.createdFromVendor || ''),
       mealType: normalizeFoodName(payload?.mealType || payload?.foodMealType || ''),
       cuisine: normalizeFoodName(payload?.cuisine || payload?.healthy || payload?.foodCuisine || ''),
       healthy: normalizeFoodName(payload?.healthy || payload?.cuisine || ''),
@@ -379,30 +384,62 @@ function normalizeFoodEntityMap(map = {}) {
 }
 
 function normalizeFoodPriceHistory(map = {}) {
-  return Object.entries(map || {}).reduce((acc, [entryId, entry]) => {
-    const safeId = String(entryId || '').trim();
-    const price = Number(entry?.price);
-    const ts = Number(entry?.ts || 0);
-    if (!safeId || !Number.isFinite(price) || !Number.isFinite(ts) || ts <= 0) return acc;
-    acc[safeId] = {
-      price,
-      ts,
-      source: String(entry?.source || ''),
-      expenseId: String(entry?.expenseId || '')
-    };
-    return acc;
-  }, {});
+  const out = {};
+  const entries = Object.entries(map || {});
+  const looksLikeLegacy = entries.some(([, value]) => Number.isFinite(Number(value?.price)));
+  if (looksLikeLegacy) {
+    out.unknown = {};
+    entries.forEach(([entryId, value]) => {
+      const price = Number(value?.price);
+      const ts = Number(value?.ts || 0);
+      if (!entryId || !Number.isFinite(price) || !Number.isFinite(ts) || ts <= 0) return;
+      out.unknown[entryId] = {
+        price,
+        ts,
+        date: String(value?.date || dayKeyFromTs(ts)),
+        source: String(value?.source || ''),
+        expenseId: String(value?.expenseId || ''),
+        vendor: 'unknown',
+        unitPrice: Number(value?.unitPrice || price),
+        linePrice: Number(value?.linePrice || price)
+      };
+    });
+    return out;
+  }
+  entries.forEach(([vendorRaw, vendorRows]) => {
+    const vendor = firebaseSafeKey(vendorRaw) || 'unknown';
+    out[vendor] = {};
+    Object.entries(vendorRows || {}).forEach(([entryId, value]) => {
+      const price = Number(value?.price);
+      const ts = Number(value?.ts || 0);
+      if (!entryId || !Number.isFinite(price) || !Number.isFinite(ts) || ts <= 0) return;
+      out[vendor][entryId] = {
+        price,
+        ts,
+        date: String(value?.date || dayKeyFromTs(ts)),
+        source: String(value?.source || ''),
+        expenseId: String(value?.expenseId || ''),
+        vendor,
+        unitPrice: Number(value?.unitPrice || price),
+        linePrice: Number(value?.linePrice || price)
+      };
+    });
+  });
+  return out;
 }
 
 function foodPriceHistoryList(food = {}) {
-  return Object.values(food?.priceHistory || {})
+  return Object.entries(food?.priceHistory || {}).flatMap(([vendorKey, vendorRows]) => Object.values(vendorRows || {}).map((row) => ({
+      vendor: firebaseSafeKey(vendorKey) || 'unknown',
+      price: Number(row?.price),
+      unitPrice: Number(row?.unitPrice || row?.price || 0),
+      linePrice: Number(row?.linePrice || row?.price || 0),
+      ts: Number(row?.ts),
+      date: String(row?.date || dayKeyFromTs(Number(row?.ts || 0))),
+      source: String(row?.source || ''),
+      expenseId: String(row?.expenseId || '')
+    })))
     .filter((row) => Number.isFinite(Number(row?.price)) && Number.isFinite(Number(row?.ts)))
-    .map((row) => ({
-      price: Number(row.price),
-      ts: Number(row.ts),
-      source: String(row.source || ''),
-      expenseId: String(row.expenseId || '')
-    }))
     .sort((a, b) => a.ts - b.ts);
 }
 
@@ -419,24 +456,34 @@ async function recordFoodPricePoint(foodId, priceInput, source = 'expense', opti
   const price = Number(priceInput);
   if (!safeFoodId || !Number.isFinite(price) || price <= 0) return;
   const ts = Number(options?.ts || nowTs());
+  const vendor = firebaseSafeKey(options?.vendor || 'unknown') || 'unknown';
+  const date = String(options?.date || dayKeyFromTs(ts));
   const expenseId = String(options?.expenseId || '').trim();
   const food = state.food.itemsById?.[safeFoodId] || null;
   if (expenseId) {
-    const exists = Object.values(food?.priceHistory || {}).some((entry) => String(entry?.expenseId || '') === expenseId);
+    const exists = Object.values(food?.priceHistory || {}).some((vendorRows) => Object.values(vendorRows || {}).some((entry) => String(entry?.expenseId || '') === expenseId));
     if (exists) return;
   }
-  const entryId = push(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory`)).key;
+  const entryId = push(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${vendor}`)).key;
   const payload = {
     price,
+    unitPrice: Number(options?.unitPrice || price),
+    linePrice: Number(options?.linePrice || price),
     ts: Number.isFinite(ts) && ts > 0 ? ts : nowTs(),
+    date,
+    vendor,
     source: String(source || ''),
     ...(expenseId ? { expenseId } : {})
   };
-  await safeFirebase(() => set(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${entryId}`), payload));
+  await safeFirebase(() => set(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${vendor}/${entryId}`), payload));
   if (!state.food.itemsById?.[safeFoodId]) return;
+  if (!state.food.itemsById[safeFoodId].priceHistory?.[vendor]) state.food.itemsById[safeFoodId].priceHistory[vendor] = {};
   state.food.itemsById[safeFoodId].priceHistory = {
     ...(state.food.itemsById[safeFoodId].priceHistory || {}),
-    [entryId]: payload
+    [vendor]: {
+      ...(state.food.itemsById[safeFoodId].priceHistory?.[vendor] || {}),
+      [entryId]: payload
+    }
   };
 }
 function getFoodByName(name = '') {
@@ -628,7 +675,12 @@ async function upsertFoodItem(value, incrementCount = false, patch = {}) {
   const prevEntity = state.food.itemsById?.[foodId] || getFoodByName(name) || {};
   const payload = {
     id: foodId,
+    idKey: firebaseSafeKey(name),
     name,
+    displayName: String(payloadInput.displayName || prevEntity.displayName || name).trim() || name,
+    aliases: Array.isArray(payloadInput.aliases) ? payloadInput.aliases.map((alias) => normalizeFoodName(alias)).filter(Boolean) : (prevEntity.aliases || []),
+    vendorAliases: payloadInput.vendorAliases && typeof payloadInput.vendorAliases === 'object' ? payloadInput.vendorAliases : (prevEntity.vendorAliases || {}),
+    createdFromVendor: String(payloadInput.createdFromVendor || prevEntity.createdFromVendor || ''),
     mealType: normalizeFoodName(payloadInput.mealType ?? patch.lastExtras?.mealType ?? prevEntity.mealType ?? ''),
     cuisine: normalizeFoodName(payloadInput.cuisine ?? patch.lastExtras?.cuisine ?? prevEntity.cuisine ?? ''),
     healthy: normalizeFoodName(payloadInput.healthy ?? patch.lastExtras?.healthy ?? prevEntity.healthy ?? ''),
@@ -770,6 +822,13 @@ function renderFoodExtrasSection() {
             aria-label="Ficha del producto">
             ℹ️
           </button>
+          <button type="button"
+            class="food-iconbtn"
+            data-food-item-detail="${escapeHtml(item.id)}"
+            title="Detalle de precios"
+            aria-label="Detalle de precios">
+            📈
+          </button>
 
           <button type="button"
             class="food-iconbtn"
@@ -791,23 +850,21 @@ function renderFoodExtrasSection() {
 
 function renderFoodPriceHistorySection(food = {}) {
   const history = foodPriceHistoryList(food);
-  const chartPath = history.length ? linePath(history.map((row, index) => ({ value: row.price, index }))) : '';
-  const points = history.length
-    ? history.map((row, index) => {
-      const values = history.map((entry) => entry.price);
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-      const spread = max - min || 1;
-      const x = (index / Math.max(history.length - 1, 1)) * 320;
-      const y = 10 + (100 - (((row.price - min) / spread) * 100));
-      return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5"></circle>`;
-    }).join('')
-    : '';
+  const byVendor = history.reduce((acc, row) => {
+    const key = firebaseSafeKey(row.vendor || 'unknown') || 'unknown';
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(row);
+    return acc;
+  }, {});
+  const currentRows = Object.entries(byVendor).map(([vendor, rows]) => {
+    const last = rows.sort((a, b) => b.ts - a.ts)[0] || null;
+    return last ? `<div class="finFoodInfo__row"><span>${escapeHtml(vendor)}</span><strong>${fmtCurrency(last.price)}</strong><small>${new Date(last.ts).toLocaleDateString('es-ES')}</small></div>` : '';
+  }).join('');
   return `
     <section class="finFoodInfo">
       <h4>Histórico de precios</h4>
       ${history.length
-        ? `<div class="finFoodInfo__chartWrap"><svg viewBox="0 0 320 120" preserveAspectRatio="none" aria-label="Histórico de precios"><path d="${chartPath}" />${points}</svg></div>`
+        ? `<div class="finFoodInfo__list"><h5>Precio actual por súper</h5>${currentRows}</div><div class="finFoodInfo__chartWrap" data-food-history-chart data-food-history-series='${escapeHtml(JSON.stringify(byVendor))}'></div>`
         : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin datos</span></div>'}
       <div class="finFoodInfo__actions">
         <button type="button" class="food-history-btn" data-food-history-register="${escapeHtml(food.id || '')}">+ registrar precio</button>
@@ -820,11 +877,19 @@ function renderFoodPriceHistorySection(food = {}) {
 }
 
 function renderFoodItemModalForm(editing, presetName, mode = 'edit') {
-  const isInfo = mode === 'info';
+  const isInfo = mode === 'info' || mode === 'detail';
+  const displayName = String(editing?.displayName || presetName || '');
+  const aliases = Array.isArray(editing?.aliases) ? editing.aliases.join(', ') : '';
+  const vendorAliasList = editing?.vendorAliases && typeof editing.vendorAliases === 'object'
+    ? Object.entries(editing.vendorAliases).map(([vendor, list]) => `${vendor}:${Array.isArray(list) ? list.join('|') : ''}`).join(', ')
+    : '';
   return `<form class="food-sheet-form" data-food-item-form>
         <input type="hidden" name="foodId" value="${escapeHtml(editing?.id || '')}" />
         <div class="food-form-grid foodX-stack">
           <div class="food-form-row"><label class="food-form-label" for="food-name-input">Nombre</label><input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(presetName)}" /></div>
+          <div class="food-form-row"><label class="food-form-label" for="food-displayName-input">Display name</label><input id="food-displayName-input" class="food-control" name="displayName" value="${escapeHtml(displayName)}" /></div>
+          <div class="food-form-row"><label class="food-form-label" for="food-aliases-input">Alias (coma)</label><input id="food-aliases-input" class="food-control" name="aliases" value="${escapeHtml(aliases)}" placeholder="coca cola zero, cocacola" /></div>
+          <div class="food-form-row"><label class="food-form-label" for="food-vendorAliases-input">Alias por súper</label><input id="food-vendorAliases-input" class="food-control" name="vendorAliases" value="${escapeHtml(vendorAliasList)}" placeholder="mercadona:coca cola|coke, eroski:coca-cola" /></div>
           <div class="food-form-row"><label class="food-form-label" for="food-mealType-input">Tipo</label><div class="food-form-inline"><select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="typeOfMeal" aria-label="Añadir nuevo tipo">+</button></div></div>
           <div class="food-form-row"><label class="food-form-label" for="food-cuisine-input">Saludable</label><div class="food-form-inline"><select id="food-cuisine-input" class="food-control" name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.cuisine || editing?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="cuisine" aria-label="Añadir nuevo saludable">+</button></div></div>
           <div class="food-form-row"><label class="food-form-label" for="food-place-input">Dónde</label><div class="food-form-inline"><select id="food-place-input" class="food-control" name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="place" aria-label="Añadir nuevo dónde">+</button></div></div>
@@ -834,6 +899,34 @@ function renderFoodItemModalForm(editing, presetName, mode = 'edit') {
         ${isInfo ? `<input type="hidden" name="saveMode" value="info" />${renderFoodPriceHistorySection(editing || {})}` : ''}
         <footer class="food-sheet-footer"><button class="finance-pill food-sheet-submit" type="submit">${isInfo ? 'Guardar ficha' : 'Guardar comida'}</button></footer>
       </form>`;
+}
+
+function renderFoodHistoryVendorChart() {
+  const host = document.querySelector('[data-food-history-chart]');
+  if (!host || typeof echarts === 'undefined') return;
+  let byVendor = {};
+  try { byVendor = JSON.parse(host.dataset.foodHistorySeries || '{}'); } catch (_) { byVendor = {}; }
+  const vendorKeys = Object.keys(byVendor || {});
+  if (!vendorKeys.length) return;
+  const series = vendorKeys.map((vendor) => ({
+    name: vendor,
+    type: 'line',
+    showSymbol: true,
+    smooth: false,
+    lineStyle: { width: 2 },
+    data: (byVendor[vendor] || []).map((row) => [String(row.date || dayKeyFromTs(row.ts)), Number(row.price || 0)])
+  }));
+  const chart = echarts.getInstanceByDom(host) || echarts.init(host);
+  chart.setOption({
+    animation: false,
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'axis', backgroundColor: '#0d1329', borderColor: 'rgba(125,190,255,.35)', textStyle: { color: '#f4f8ff' } },
+    legend: { top: 0, textStyle: { color: '#cdd9f6', fontSize: 11 } },
+    grid: { left: 34, right: 12, top: 28, bottom: 24 },
+    xAxis: { type: 'time', axisLabel: { color: '#9fb2da' } },
+    yAxis: { type: 'value', axisLabel: { color: '#9fb2da' } },
+    series
+  }, { notMerge: true });
 }
 
 function isoToDay(dateISO = '') { return String(dateISO).slice(0, 10); }
@@ -1726,6 +1819,44 @@ function donutSegments(mapData = {}, total = 0) {
 
 let financeStatsDonutChart = null;
 
+function updateLegendSelection(selectedKey = '') {
+  const rows = document.querySelectorAll('[data-finance-stats-segment]');
+  rows.forEach((row) => {
+    row.classList.toggle('is-active', String(row.dataset.financeStatsSegment || '') === String(selectedKey || ''));
+  });
+}
+
+function updateCallout(selectedKey = '') {
+  const host = document.querySelector('[data-finance-stats-donut-wrap]');
+  if (!host) return;
+  let segments = [];
+  try { segments = JSON.parse(host.dataset.financeStatsSegments || '[]'); } catch (_) { segments = []; }
+  const segment = segments.find((row) => String(row?._key || '') === String(selectedKey || '')) || null;
+  const callout = host.querySelector('[data-finance-stats-callout]');
+  const line = host.querySelector('[data-finance-stats-callout-line]');
+  if (!callout || !line) return;
+  if (!segment) {
+    callout.hidden = true;
+    line.hidden = true;
+    return;
+  }
+  const calloutInnerRadius = 46;
+  const calloutOuterRadius = 56;
+  const calloutBoxRadius = 64;
+  const calloutFrom = { x: 50 + (Math.cos(segment.midAngle) * calloutInnerRadius), y: 50 + (Math.sin(segment.midAngle) * calloutInnerRadius) };
+  const calloutTo = { x: 50 + (Math.cos(segment.midAngle) * calloutOuterRadius), y: 50 + (Math.sin(segment.midAngle) * calloutOuterRadius) };
+  const rawX = 50 + (Math.cos(segment.midAngle) * calloutBoxRadius);
+  const rawY = 50 + (Math.sin(segment.midAngle) * calloutBoxRadius);
+  const margin = 8;
+  const calloutBox = { x: Math.max(margin, Math.min(100 - margin, rawX)), y: Math.max(margin, Math.min(100 - margin, rawY)) };
+  line.setAttribute('points', `${calloutFrom.x},${calloutFrom.y} ${calloutTo.x},${calloutTo.y} ${calloutBox.x},${calloutBox.y}`);
+  callout.style.left = `calc(${calloutBox.x}% )`;
+  callout.style.top = `calc(${calloutBox.y}% )`;
+  callout.innerHTML = `<strong>${escapeHtml(segment.label)}</strong><small>${fmtCurrency(segment.value)} · ${Number(segment.pct || 0).toFixed(1)}%</small>`;
+  callout.hidden = false;
+  line.hidden = false;
+}
+
 function disposeFinanceStatsDonutChart() {
   if (!financeStatsDonutChart) return;
   const zr = financeStatsDonutChart.getZr?.();
@@ -1783,6 +1914,9 @@ function renderFinanceStatsDonutChart() {
     financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
     if (state.balanceStatsActiveSegment) {
       state.balanceStatsActiveSegment = null;
+      state.balanceStatsSelectedSliceKey = null;
+      updateLegendSelection('');
+      updateCallout('');
       if (rerender) triggerRender();
     }
   };
@@ -1794,13 +1928,15 @@ function renderFinanceStatsDonutChart() {
     const segmentKey = String(params.data._key || '');
     if (!segmentKey || !Number.isInteger(idx) || idx < 0) return;
     if (state.balanceStatsActiveSegment === segmentKey) {
-      resetSelection();
+      resetSelection({ rerender: false });
       return;
     }
     state.balanceStatsActiveSegment = segmentKey;
+    state.balanceStatsSelectedSliceKey = segmentKey;
     financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
     financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idx });
-    triggerRender();
+    updateLegendSelection(segmentKey);
+    updateCallout(segmentKey);
   });
 
   const zr = financeStatsDonutChart.getZr?.();
@@ -1819,7 +1955,12 @@ function renderFinanceStatsDonutChart() {
     if (selectedIndex >= 0) {
       financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
       financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: selectedIndex });
+      updateLegendSelection(state.balanceStatsActiveSegment);
+      updateCallout(state.balanceStatsActiveSegment);
     }
+  } else {
+    updateLegendSelection('');
+    updateCallout('');
   }
 }
 
@@ -2047,25 +2188,7 @@ function renderFinanceBalance() {
   const segments = donutSegments(donutMap, donutTotal);
   const selectedSegment = segments.find((segment) => segment._key === state.balanceStatsActiveSegment) || null;
   if (!selectedSegment && state.balanceStatsActiveSegment) state.balanceStatsActiveSegment = null;
-  const calloutSegment = selectedSegment;
-  const calloutInnerRadius = 46;
-  const calloutOuterRadius = 56;
-  const calloutBoxRadius = 64;
-  const calloutFrom = calloutSegment ? { x: 50 + (Math.cos(calloutSegment.midAngle) * calloutInnerRadius), y: 50 + (Math.sin(calloutSegment.midAngle) * calloutInnerRadius) } : null;
-  const calloutTo = calloutSegment ? { x: 50 + (Math.cos(calloutSegment.midAngle) * calloutOuterRadius), y: 50 + (Math.sin(calloutSegment.midAngle) * calloutOuterRadius) } : null;
-const calloutBox = calloutSegment
-  ? (() => {
-      const rawX = 50 + (Math.cos(calloutSegment.midAngle) * calloutBoxRadius);
-      const rawY = 50 + (Math.sin(calloutSegment.midAngle) * calloutBoxRadius);
-
-      // 🔒 Clamp para que nunca se salga del SVG (móvil safe)
-      const margin = 8; // margen interior %
-      const x = Math.max(margin, Math.min(100 - margin, rawX));
-      const y = Math.max(margin, Math.min(100 - margin, rawY));
-
-      return { x, y };
-    })()
-  : null;
+  const legendExpanded = state.balanceStatsLegendExpanded !== false;
   const monthScopeLabel = statsRange === 'month' ? ` — ${capitalizeFirst(monthLabelByKey(monthKey))}` : '';
   const totalIncome = statsScope === 'global' ? rangeStats.totalIncomeGlobal : rangeStats.totalIncomePersonal;
   const totalSpentRange = statsScope === 'global' ? rangeStats.totalSpentGlobal : rangeStats.totalSpentPersonal;
@@ -2183,7 +2306,7 @@ const calloutBox = calloutSegment
       ${statsGroupBy === 'product' && mode === 'expense' ? `<label class="financeStats__checkbox"><input type="checkbox" data-finance-stats-include-unlined ${includeUnlined ? 'checked' : ''}> Incluir gastos sin líneas</label>` : ''}
     </div>
 
-    <div class="financeStats__donutWrap ${calloutSegment ? 'is-focused' : ''}">
+    <div class="financeStats__donutWrap" data-finance-stats-donut-wrap data-finance-stats-segments='${escapeHtml(JSON.stringify(segments))}'>
       <div
         class="financeStats__donutChart"
         data-finance-stats-donut="${escapeHtml(JSON.stringify(segments.map((segment) => ({
@@ -2194,8 +2317,8 @@ const calloutBox = calloutSegment
         }))))}"
         aria-label="Distribución por agrupación"
       ></div>
-      ${calloutSegment ? `<svg class="financeStats__calloutSvg" viewBox="0 0 100 100" aria-hidden="true"><polyline class="financeStats__calloutLine" points="${calloutFrom.x},${calloutFrom.y} ${calloutTo.x},${calloutTo.y} ${calloutBox.x},${calloutBox.y}"></polyline></svg>` : ''}
-      ${calloutSegment ? `<div class="financeStats__callout" style="left: calc(${calloutBox.x}%); top: calc(${calloutBox.y}%);"><strong>${escapeHtml(calloutSegment.label)}</strong><small>${fmtCurrency(calloutSegment.value)} · ${calloutSegment.pct.toFixed(1)}%</small></div>` : ''}
+      <svg class="financeStats__calloutSvg" viewBox="0 0 100 100" aria-hidden="true"><polyline class="financeStats__calloutLine" data-finance-stats-callout-line hidden></polyline></svg>
+      <div class="financeStats__callout" data-finance-stats-callout hidden></div>
       <div class="financeStats__donutCenter">
         <small>${statsGroupBy === 'product' ? `Total (con líneas · ${scopeLabel})` : `Total (${scopeLabel})`}</small>
         <strong class="financeStats__donutValue">${fmtCurrency(donutTotal)}</strong>
@@ -2205,8 +2328,8 @@ const calloutBox = calloutSegment
     </div>
     ${showUnlinedNotice ? `<div class="financeStats__unlinedNotice"><span>Aviso: ${fmtCurrency(unlinedTotal)} en gastos sin desglose (no incluidos en este gráfico)</span><button type="button" class="finance-pill finance-pill--mini" data-finance-stats-view-unlined>Ver</button></div>` : ''}
 
-    <details class="financeStats__details">
-      <summary class="financeStats__detailsSummary">Leyenda</summary>
+    <details class="financeStats__details" data-finance-stats-legend-details ${legendExpanded ? 'open' : ''}>
+      <summary class="financeStats__detailsSummary" data-finance-stats-legend-summary>Leyenda</summary>
       <div class="financeStats__detailsBody financeStats__legendGrid">
         ${segments.length ? segments.map((segment, index) => `<button type="button" class="financeStats__rankRow ${state.balanceStatsActiveSegment === segment._key ? 'is-active' : ''}" data-finance-stats-segment="${escapeHtml(segment._key)}"><span class="financeStats__rank">${index + 1}º</span><span class="financeStats__name"><i class="financeStats__dot" style="background:${segment.color}"></i>${escapeHtml(segment.label)}</span><span class="financeStats__meta">${fmtCurrency(segment.value)} · ${segment.pct.toFixed(1)}%</span></button>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
       </div>
@@ -2227,7 +2350,7 @@ const calloutBox = calloutSegment
     <details class="financeStats__foodsDetails">
       <summary class="financeStats__detailsSummary">Productos/Comidas más comprados (${scopeLabel})</summary>
       <div class="financeStats__detailsBody financeStats__foodsList">
-        ${topFoodItems.length ? topFoodItems.map((item) => `<div class="financeStats__foodRow"><span>${escapeHtml(item.name)} · x${item.count}</span><small>${(totalFoodSpent > 0 ? ((item.total / totalFoodSpent) * 100) : 0).toFixed(1)}%</small><strong>${fmtCurrency(item.total)}</strong></div>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
+        ${topFoodItems.length ? topFoodItems.map((item) => `<div class="financeStats__foodRow"><span>${escapeHtml(item.name)} · x${item.count}</span><small>${(totalFoodSpent > 0 ? ((item.total / totalFoodSpent) * 100) : 0).toFixed(1)}%</small><strong>${fmtCurrency(item.total)}</strong><button type="button" class="food-iconbtn" data-food-item-detail-name="${escapeHtml(item.name)}" aria-label="Abrir ficha de ${escapeHtml(item.name)}">📈</button></div>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
       </div>
     </details>
 
@@ -2243,7 +2366,7 @@ const calloutBox = calloutSegment
         <div class="financeStats__manageRow"><strong>Saludable</strong></div>
         ${foodOptionList('cuisine').length ? foodOptionList('cuisine').map((name) => `<div class="financeStats__manageRow"><span>${escapeHtml(name)}</span><button class="financeStats__deleteBtn" data-finance-manage-delete="cuisine" data-finance-manage-value="${escapeHtml(name)}">❌</button></div>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
         <div class="financeStats__manageRow"><strong>Productos</strong></div>
-        ${foodItemsList().length ? foodItemsList().sort((a, b) => a.name.localeCompare(b.name, 'es')).map((item) => `<div class="financeStats__manageRow"><span>${escapeHtml(item.name)}</span></div>`).join('') : '<p class="finance-empty">Sin productos.</p>'}
+        ${foodItemsList().length ? foodItemsList().sort((a, b) => a.name.localeCompare(b.name, 'es')).map((item) => `<div class="financeStats__manageRow"><span>${escapeHtml(item.name)}</span><button type="button" class="food-iconbtn" data-food-item-detail="${escapeHtml(item.id)}" aria-label="Abrir ficha de ${escapeHtml(item.name)}">📈</button></div>`).join('') : '<p class="finance-empty">Sin productos.</p>'}
       </div>
     </details>
   </article>
@@ -3032,10 +3155,11 @@ if (form) {
     const editing = state.modal.foodId ? (state.food.itemsById?.[state.modal.foodId] || null) : null;
     const presetName = normalizeFoodName(state.modal.foodName || editing?.name || '');
     const mode = state.modal.mode || 'edit';
-    const title = mode === 'info' ? 'Ficha de producto' : (editing ? 'Editar comida' : 'Nueva comida');
+    const title = (mode === 'info' || mode === 'detail') ? 'Product Detail' : (editing ? 'Editar comida' : 'Nueva comida');
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>${title}</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header>
       ${renderFoodItemModalForm(editing, presetName, mode)}
     </div>`;
+    renderFoodHistoryVendorChart();
     return;
   }
 }
@@ -3554,16 +3678,24 @@ function bindEvents() {
         importResult.createdProducts.forEach((product) => {
           const productKey = firebaseSafeKey(product.name);
           const id = window.crypto?.randomUUID?.() || `food-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+          const vendorKey = firebaseSafeKey(parsed.data?.source?.vendor || product.place || 'unknown') || 'unknown';
           const payload = {
             id,
+            idKey: productKey,
             name: product.name,
+            displayName: String(product.displayName || product.name || '').trim() || product.name,
+            aliases: Array.isArray(product.aliases) ? product.aliases : [],
+            vendorAliases: product.vendorAliases && typeof product.vendorAliases === 'object' ? product.vendorAliases : {},
+            createdFromVendor: String(parsed.data?.source?.vendor || ''),
             key: productKey,
             mealType: '',
             cuisine: String(product.cuisine || product.healthy || ''),
             healthy: String(product.healthy || product.cuisine || ''),
             place: String(product.place || parsed.data?.source?.vendor || 'unknown'),
             defaultPrice: Number(product.defaultPrice || 0),
-            priceHistory: {},
+            priceHistory: {
+              [vendorKey]: {}
+            },
             countUsed: 0,
             createdAt: nowTs(),
             updatedAt: nowTs()
@@ -3593,14 +3725,17 @@ function bindEvents() {
             updatesMap[`${state.financePath}/foodItems/${product.id}/healthy`] = String(product.healthy || '').trim();
           }
           updatesMap[`${state.financePath}/foodItems/${product.id}/updatedAt`] = nowTs();
-          if (product.priceHistory && Object.keys(product.priceHistory).length) {
-            const entryId = push(ref(db, `${state.financePath}/foodItems/${product.id}/priceHistory`)).key;
-            updatesMap[`${state.financePath}/foodItems/${product.id}/priceHistory/${entryId}`] = {
-              price: Number(product.defaultPrice || 0),
-              ts: purchaseTs,
-              source: 'ticket_import'
-            };
-          }
+          const vendorKey = firebaseSafeKey(parsed.data?.source?.vendor || 'unknown') || 'unknown';
+          const entryId = push(ref(db, `${state.financePath}/foodItems/${product.id}/priceHistory/${vendorKey}`)).key;
+          updatesMap[`${state.financePath}/foodItems/${product.id}/priceHistory/${vendorKey}/${entryId}`] = {
+            price: Number(product.defaultPrice || 0),
+            unitPrice: Number(product.defaultPrice || 0),
+            linePrice: Number(product.defaultPrice || 0),
+            date: dayKeyFromTs(purchaseTs),
+            vendor: vendorKey,
+            ts: purchaseTs,
+            source: 'ticket_import'
+          };
         });
         if (Object.keys(updatesMap).length) await safeFirebase(() => update(ref(db), updatesMap));
         await ensureFoodCatalogLoaded(true);
@@ -3670,6 +3805,29 @@ function bindEvents() {
     const segmentToggle = target.closest('[data-finance-stats-segment]')?.dataset.financeStatsSegment;
     if (segmentToggle) {
       state.balanceStatsActiveSegment = state.balanceStatsActiveSegment === segmentToggle ? null : segmentToggle;
+      state.balanceStatsSelectedSliceKey = state.balanceStatsActiveSegment;
+      updateLegendSelection(state.balanceStatsActiveSegment || '');
+      updateCallout(state.balanceStatsActiveSegment || '');
+      if (financeStatsDonutChart) {
+        financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
+        const rows = (() => { try { return JSON.parse(document.querySelector('[data-finance-stats-donut]')?.dataset.financeStatsDonut || '[]'); } catch (_) { return []; } })();
+        const idx = rows.findIndex((row) => String(row?._key || '') === String(state.balanceStatsActiveSegment || ''));
+        if (idx >= 0) financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idx });
+      }
+      return;
+    }
+    const foodDetailId = target.closest('[data-food-item-detail]')?.dataset.foodItemDetail;
+    if (foodDetailId) {
+      state.modal = { type: 'food-item', foodId: foodDetailId, mode: 'detail', source: 'stats-list-detail' };
+      triggerRender();
+      return;
+    }
+    const foodDetailName = target.closest('[data-food-item-detail-name]')?.dataset.foodItemDetailName;
+    if (foodDetailName) {
+      const found = getFoodByName(foodDetailName);
+      state.modal = found
+        ? { type: 'food-item', foodId: found.id, mode: 'detail', source: 'stats-list-detail-name' }
+        : { type: 'food-item', foodName: foodDetailName, mode: 'detail', source: 'stats-list-detail-name' };
       triggerRender();
       return;
     }
@@ -3956,6 +4114,10 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-balance-account]')) { state.balanceAccountFilter = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
     if (event.target.matches('[data-finance-stats-group]')) { state.balanceStatsGroupBy = event.target.value; state.balanceStatsActiveSegment = null; triggerRender(); }
     if (event.target.matches('[data-finance-stats-include-unlined]')) { state.balanceStatsIncludeUnlined = !!event.target.checked; state.balanceStatsActiveSegment = null; triggerRender(); }
+
+    if (event.target.matches('[data-finance-stats-legend-details]')) {
+      state.balanceStatsLegendExpanded = !!event.target.open;
+    }
     if (event.target.matches('[data-import-file]')) {
       const file = event.target.files?.[0];
       if (!file) return;
@@ -4022,6 +4184,12 @@ view.addEventListener('focusout', async (event) => {
     }
   });
 
+  view.addEventListener('toggle', (event) => {
+    if (event.target.matches('[data-finance-stats-legend-details]')) {
+      state.balanceStatsLegendExpanded = !!event.target.open;
+    }
+  });
+
 
   view.addEventListener('submit', async (event) => {
     if (event.target.matches('[data-food-item-form]')) {
@@ -4033,10 +4201,19 @@ view.addEventListener('focusout', async (event) => {
       const mealType = normalizeFoodName(String(form.get('mealTypeNew') || form.get('mealType') || ''));
       const cuisine = normalizeFoodName(String(form.get('cuisineNew') || form.get('cuisine') || ''));
       const place = normalizeFoodName(String(form.get('placeNew') || form.get('place') || ''));
+      const displayName = String(form.get('displayName') || name).trim() || name;
+      const aliases = String(form.get('aliases') || '').split(',').map((row) => normalizeFoodName(row)).filter(Boolean);
+      const vendorAliases = String(form.get('vendorAliases') || '').split(',').reduce((acc, row) => {
+        const [rawVendor, rawVals] = String(row || '').split(':');
+        const vendor = firebaseSafeKey(rawVendor || '');
+        if (!vendor) return acc;
+        acc[vendor] = String(rawVals || '').split('|').map((it) => normalizeFoodName(it)).filter(Boolean);
+        return acc;
+      }, {});
       const defaultPrice = Number(form.get('defaultPrice') || 0);
       const saveMode = String(form.get('saveMode') || '');
       const prevFood = foodId ? (state.food.itemsById?.[foodId] || null) : null;
-      const savedFoodId = await upsertFoodItem({ id: foodId, name, mealType, cuisine, healthy: cuisine, place, defaultPrice }, false);
+      const savedFoodId = await upsertFoodItem({ id: foodId, name, displayName, aliases, vendorAliases, mealType, cuisine, healthy: cuisine, place, defaultPrice }, false);
       if (!prevFood && Number.isFinite(defaultPrice) && defaultPrice > 0) {
         await recordFoodPricePoint(savedFoodId, defaultPrice, 'create');
       } else if (saveMode === 'info' && shouldAppendFoodPricePoint(prevFood || {}, defaultPrice)) {
@@ -4241,7 +4418,14 @@ view.addEventListener('focusout', async (event) => {
             defaultPrice: Number(foodItem.price || amount)
           }, true, { lastCategory: category, lastAccountId: accountId, lastNote: note });
           foodItem.foodId = savedFoodId;
-          await recordFoodPricePoint(savedFoodId, Number(foodItem.price || amount), 'expense', { ts: dateISO ? parseDayKey(dateISO) : nowTs(), expenseId: saveId });
+          await recordFoodPricePoint(savedFoodId, Number(foodItem.price || amount), 'expense', {
+            ts: dateISO ? parseDayKey(dateISO) : nowTs(),
+            date: dateISO || dayKeyFromTs(nowTs()),
+            vendor: foodItem.place || place || 'unknown',
+            unitPrice: Number(foodItem.price || amount),
+            linePrice: Number(foodItem.amount || foodItem.price || amount),
+            expenseId: saveId
+          });
           financeDebug('transaction food usage saved', { txId: saveId, foodId: savedFoodId, name: foodItem.name });
           if (foodItem.mealType || mealType) await upsertFoodOption('typeOfMeal', foodItem.mealType || mealType, true);
           if (foodItem.cuisine || cuisine) await upsertFoodOption('cuisine', foodItem.cuisine || cuisine, true);

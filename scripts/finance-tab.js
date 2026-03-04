@@ -1757,6 +1757,7 @@ function renderFinanceStatsDonutChart() {
   financeStatsDonutChart.setOption({
     animation: false,
     tooltip: {
+      show: false,
       trigger: 'item',
       triggerOn: 'none',
       formatter: (params) => `${escapeHtml(params?.data?.name || '')}<br>${fmtCurrency(params?.data?.value || 0)} · ${(Number(params?.percent || 0)).toFixed(1)}%`
@@ -1780,7 +1781,6 @@ function renderFinanceStatsDonutChart() {
 
   const resetSelection = ({ rerender = true } = {}) => {
     financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
-    financeStatsDonutChart.dispatchAction({ type: 'hideTip' });
     if (state.balanceStatsActiveSegment) {
       state.balanceStatsActiveSegment = null;
       if (rerender) triggerRender();
@@ -1800,7 +1800,6 @@ function renderFinanceStatsDonutChart() {
     state.balanceStatsActiveSegment = segmentKey;
     financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
     financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idx });
-    financeStatsDonutChart.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: idx });
     triggerRender();
   });
 
@@ -1820,7 +1819,6 @@ function renderFinanceStatsDonutChart() {
     if (selectedIndex >= 0) {
       financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
       financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: selectedIndex });
-      financeStatsDonutChart.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: selectedIndex });
     }
   }
 }

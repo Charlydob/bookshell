@@ -17,7 +17,7 @@ async function ensureFinanceLoaded() {
 import { LEGACY_PATH, DEVICE_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
 import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './finance/ui.js';
 import { resolveFinancePath } from './finance/data.js';
-import { parseImportRaw, parseTicketImport, applyTicketImport, TICKET_IMPORT_SAMPLE_V1 } from './finance/import.js';
+import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, TICKET_IMPORT_SAMPLE_V1 } from './finance/import.js';
 
 function log(...parts) { console.log('[finance]', ...parts); }
 function warnMissing(id) { console.warn(`[finance] missing DOM node ${id}`); }
@@ -325,7 +325,10 @@ function isTicketExtraLike(name = '') {
   return /bolsa|descuento|cupon|cupón|redondeo|deposito|depósito/.test(safe);
 }
 function toTicketPriceLine(item = {}) {
-  return `${Number(item.qty || 1)} × ${escapeHtml(item.name_norm || item.name_raw || 'Producto')} → ${fmtCurrency(item.total_price || 0)}`;
+  const fromGuess = escapeHtml(String(item.category_guess || 'otros'));
+  const toApp = escapeHtml(String(item.category_app || mapTicketCategoryToApp(item.category_guess || 'otros')));
+  const inferredNote = item.category_inferred ? ' ⚠ heurística' : '';
+  return `${escapeHtml(item.name_norm || item.name_raw || 'Producto')} — ${fromGuess} → ${toApp}${inferredNote} · ${Number(item.qty || 1)} × ${fmtCurrency(item.total_price || 0)}`;
 }
 function normalizeFoodMap(map = {}) {
   const out = {};
@@ -3349,8 +3352,8 @@ function bindEvents() {
             id,
             name: product.name,
             mealType: '',
-            cuisine: String(product.healthy || ''),
-            healthy: String(product.healthy || ''),
+            cuisine: String(product.cuisine || product.healthy || ''),
+            healthy: String(product.healthy || product.cuisine || ''),
             place: String(product.place || parsed.data?.source?.vendor || 'unknown'),
             defaultPrice: Number(product.defaultPrice || 0),
             priceHistory: {},
@@ -3367,11 +3370,19 @@ function bindEvents() {
             lastCategory: 'Comida',
             lastAccountId: '',
             lastNote: 'Import ticket',
-            lastExtras: { mealType: '', cuisine: String(product.healthy || ''), place: String(product.place || 'unknown'), healthy: String(product.healthy || '') }
+            lastExtras: { mealType: '', cuisine: String(product.cuisine || product.healthy || ''), place: String(product.place || 'unknown'), healthy: String(product.healthy || product.cuisine || '') }
           };
         });
         importResult.updatedProducts.forEach((product) => {
-          updatesMap[`${state.financePath}/foodItems/${product.id}/defaultPrice`] = Number(product.defaultPrice || 0);
+          if (Number.isFinite(Number(product.defaultPrice))) {
+            updatesMap[`${state.financePath}/foodItems/${product.id}/defaultPrice`] = Number(product.defaultPrice || 0);
+          }
+          if (String(product.cuisine || '').trim()) {
+            updatesMap[`${state.financePath}/foodItems/${product.id}/cuisine`] = String(product.cuisine || '').trim();
+          }
+          if (String(product.healthy || '').trim()) {
+            updatesMap[`${state.financePath}/foodItems/${product.id}/healthy`] = String(product.healthy || '').trim();
+          }
           updatesMap[`${state.financePath}/foodItems/${product.id}/updatedAt`] = nowTs();
           if (product.priceHistory && Object.keys(product.priceHistory).length) {
             const entryId = push(ref(db, `${state.financePath}/foodItems/${product.id}/priceHistory`)).key;
@@ -3389,9 +3400,9 @@ function bindEvents() {
           name: item.name,
           price: Number(item.price || 0),
           mealType: '',
-          cuisine: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryGuess || ''),
+          cuisine: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryApp || ''),
           place: String(importResult.updatedDraft.importedVendor || 'unknown'),
-          healthy: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryGuess || '')
+          healthy: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryApp || '')
         }));
         const category = importedItems.some((row) => row.cuisine === 'otros')
           ? 'Otros'

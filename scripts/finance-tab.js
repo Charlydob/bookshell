@@ -17,7 +17,7 @@ async function ensureFinanceLoaded() {
 import { LEGACY_PATH, DEVICE_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
 import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './finance/ui.js';
 import { resolveFinancePath } from './finance/data.js';
-import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, TICKET_IMPORT_SAMPLE_V1 } from './finance/import.js';
+import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, firebaseSafeKey, TICKET_IMPORT_SAMPLE_V1 } from './finance/import.js';
 
 function log(...parts) { console.log('[finance]', ...parts); }
 function warnMissing(id) { console.warn(`[finance] missing DOM node ${id}`); }
@@ -478,11 +478,11 @@ async function loadFoodCatalog(force = false) {
     const entityMap = foodSnap?.val() || {};
     const normalizedEntities = normalizeFoodEntityMap(entityMap);
     if (!Object.keys(normalizedEntities.out).length && Object.keys(state.food.items || {}).length) {
-      Object.entries(state.food.items || {}).forEach(([name, legacy]) => {
+      Object.entries(state.food.items || {}).forEach(([key, legacy]) => {
         const id = window.crypto?.randomUUID?.() || `food-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
         normalizedEntities.out[id] = {
           id,
-          name,
+          name: normalizeFoodName(legacy?.name || key || ''),
           mealType: normalizeFoodName(legacy?.lastExtras?.mealType || ''),
           cuisine: normalizeFoodName(legacy?.lastExtras?.cuisine || ''),
           healthy: normalizeFoodName(legacy?.lastExtras?.healthy || legacy?.lastExtras?.cuisine || ''),
@@ -492,7 +492,7 @@ async function loadFoodCatalog(force = false) {
           createdAt: Number(legacy?.createdAt || 0) || nowTs(),
           updatedAt: Number(legacy?.lastUsedAt || 0) || nowTs()
         };
-        normalizedEntities.nameToId[name.toLowerCase()] = id;
+        if (normalizedEntities.out[id].name) normalizedEntities.nameToId[normalizedEntities.out[id].name.toLowerCase()] = id;
       });
       financeDebug('migrated legacy foodItems into entities', { count: Object.keys(normalizedEntities.out).length });
     }
@@ -637,8 +637,11 @@ async function upsertFoodItem(value, incrementCount = false, patch = {}) {
   state.food.nameToId[name.toLowerCase()] = foodId;
   financeDebug('upsert food item', { foodId, name, incrementCount, payload });
   await safeFirebase(() => set(ref(db, `${state.financePath}/foodItems/${foodId}`), payload));
-  const prev = state.food.items[name] || {};
+  const legacyKey = firebaseSafeKey(name);
+  const prev = state.food.items[legacyKey] || state.food.items[name] || {};
   const legacyPayload = {
+    name,
+    key: legacyKey,
     createdAt: Number(prev.createdAt || 0) || nowTs(),
     count: Number(prev.count || 0) + (incrementCount ? 1 : 0),
     lastUsedAt: incrementCount ? nowTs() : Number(prev.lastUsedAt || 0),
@@ -648,8 +651,8 @@ async function upsertFoodItem(value, incrementCount = false, patch = {}) {
     lastNote: String(patch.lastNote ?? prev.lastNote ?? ''),
     lastExtras: { mealType: payload.mealType, cuisine: payload.cuisine, place: payload.place, healthy: payload.healthy }
   };
-  state.food.items[name] = legacyPayload;
-  await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/foodItems/${name}`), legacyPayload));
+  state.food.items[legacyKey] = legacyPayload;
+  await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/foodItems/${legacyKey}`), legacyPayload));
   return foodId;
 }
 
@@ -3400,10 +3403,12 @@ function bindEvents() {
         const updatesMap = {};
         const purchaseTs = parseDayKey(parsed.data?.purchase?.date || dayKeyFromTs(Date.now()));
         importResult.createdProducts.forEach((product) => {
+          const productKey = firebaseSafeKey(product.name);
           const id = window.crypto?.randomUUID?.() || `food-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
           const payload = {
             id,
             name: product.name,
+            key: productKey,
             mealType: '',
             cuisine: String(product.cuisine || product.healthy || ''),
             healthy: String(product.healthy || product.cuisine || ''),
@@ -3415,7 +3420,9 @@ function bindEvents() {
             updatedAt: nowTs()
           };
           updatesMap[`${state.financePath}/foodItems/${id}`] = payload;
-          updatesMap[`${state.financePath}/catalog/foodItems/${product.name}`] = {
+          updatesMap[`${state.financePath}/catalog/foodItems/${productKey}`] = {
+            name: product.name,
+            key: productKey,
             createdAt: nowTs(),
             count: 0,
             lastUsedAt: nowTs(),

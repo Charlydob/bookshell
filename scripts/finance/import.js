@@ -5,7 +5,7 @@ export function parseImportRaw(value = '') {
 export const TICKET_IMPORT_SAMPLE_V1 = `{
   "schema": "TICKET_V1",
   "source": {
-    "vendor": "Mercadona",
+    "vendor": "Eroski",
     "currency": "EUR"
   },
   "purchase": {
@@ -43,14 +43,26 @@ export const TICKET_IMPORT_SAMPLE_V1 = `{
 }`;
 
 export function sanitizeImportText(raw = '') {
-  return String(raw || '')
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/, '')
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/[\uFEFF\u200B]/g, '')
-    .replace(/\u00A0/g, ' ');
+  const input = String(raw || '');
+  const changes = [];
+  let sanitized = input.trim();
+  if (sanitized !== input) changes.push('trimmed_outer_whitespace');
+  const noStartFence = sanitized.replace(/^```(?:json)?\s*/i, '');
+  const noFences = noStartFence.replace(/\s*```$/, '');
+  if (noFences !== sanitized) changes.push('removed_markdown_fences');
+  sanitized = noFences;
+  const withNormalQuotes = sanitized
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'");
+  if (withNormalQuotes !== sanitized) changes.push('replaced_smart_quotes');
+  sanitized = withNormalQuotes;
+  const noInvisible = sanitized.replace(/[\uFEFF\u200B]/g, '');
+  if (noInvisible !== sanitized) changes.push('removed_invisible_chars');
+  sanitized = noInvisible;
+  const noNbsp = sanitized.replace(/\u00A0/g, ' ');
+  if (noNbsp !== sanitized) changes.push('replaced_nbsp');
+  sanitized = noNbsp;
+  return { sanitized, changes };
 }
 
 export function toNumberEUR(value) {
@@ -66,12 +78,12 @@ export function toNumberEUR(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function buildJsonParseDiagnostic(error, text = '') {
+export function buildParseError(error, text = '') {
   const message = error?.message || 'Error desconocido';
   const match = /position\s+(\d+)/i.exec(message);
   const pos = match ? Number(match[1]) : -1;
   if (!Number.isFinite(pos) || pos < 0) {
-    return `JSON inválido: ${message}`;
+    return { message: `JSON inválido: ${message}`, line: null, column: null, position: null, snippet: '', charCodes: [] };
   }
   const upto = text.slice(0, pos);
   const line = upto.split('\n').length;
@@ -81,8 +93,19 @@ function buildJsonParseDiagnostic(error, text = '') {
   const snippet = text.slice(snippetStart, snippetEnd).replace(/\n/g, '↵');
   const codesStart = Math.max(0, pos - 10);
   const codesEnd = Math.min(text.length, pos + 10);
-  const charCodes = Array.from(text.slice(codesStart, codesEnd)).map((char) => char.charCodeAt(0)).join(', ');
-  return `JSON inválido (línea ${line}, col ${col}): ${message}. Cerca de aquí: ${snippet}. CharCodes: [${charCodes}]`;
+  const charCodes = Array.from(text.slice(codesStart, codesEnd)).map((char, index) => ({
+    offset: codesStart + index,
+    char,
+    code: char.charCodeAt(0)
+  }));
+  return {
+    message: `JSON inválido (línea ${line}, col ${col}): ${message}`,
+    line,
+    column: col,
+    position: pos,
+    snippet,
+    charCodes
+  };
 }
 
 export function normalizeProductName(str = '') {
@@ -147,18 +170,55 @@ function hasMissingCategory(product = {}) {
 }
 
 export function parseTicketImport(text = '') {
-  const sanitizedText = sanitizeImportText(text);
+  const raw = String(text || '');
+  const sanitize = sanitizeImportText(raw);
   let parsed;
   try {
-    parsed = JSON.parse(sanitizedText);
+    parsed = JSON.parse(sanitize.sanitized);
   } catch (error) {
-    return { ok: false, error: buildJsonParseDiagnostic(error, sanitizedText) };
+    const parseError = buildParseError(error, sanitize.sanitized);
+    return {
+      ok: false,
+      stage: 'parse',
+      error: parseError.message,
+      diagnostic: {
+        stage: 'parse',
+        raw_length: raw.length,
+        sanitized_length: sanitize.sanitized.length,
+        sanitize_changes: sanitize.changes,
+        parse_error: parseError
+      }
+    };
   }
   if (!parsed || parsed.schema !== 'TICKET_V1') {
-    return { ok: false, error: 'Formato no compatible (se espera TICKET_V1)' };
+    return {
+      ok: false,
+      stage: 'validate',
+      error: 'Formato no compatible (se espera TICKET_V1)',
+      errors: [{ path: 'schema', code: 'invalid_schema', message: 'Formato no compatible (se espera TICKET_V1)' }],
+      diagnostic: {
+        stage: 'validate',
+        raw_length: raw.length,
+        sanitized_length: sanitize.sanitized.length,
+        sanitize_changes: sanitize.changes,
+        validate_errors: [{ path: 'schema', code: 'invalid_schema', message: 'Formato no compatible (se espera TICKET_V1)' }]
+      }
+    };
   }
   if (!Array.isArray(parsed.items) || !parsed.items.length) {
-    return { ok: false, error: 'No hay productos' };
+    return {
+      ok: false,
+      stage: 'validate',
+      error: 'No hay productos',
+      errors: [{ path: 'items', code: 'items_required', message: 'Debe existir un array items con al menos 1 elemento' }],
+      diagnostic: {
+        stage: 'validate',
+        raw_length: raw.length,
+        sanitized_length: sanitize.sanitized.length,
+        sanitize_changes: sanitize.changes,
+        validate_errors: [{ path: 'items', code: 'items_required', message: 'Debe existir un array items con al menos 1 elemento' }]
+      }
+    };
   }
 
   const warnings = [];
@@ -168,12 +228,45 @@ export function parseTicketImport(text = '') {
     const qtyRaw = Number(row.qty);
     const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? qtyRaw : 1;
     if (!(Number.isFinite(qtyRaw) && qtyRaw > 0)) warnings.push(`Item ${i + 1}: qty <= 0, se ajusta a 1`);
-    const totalPrice = Number(row.total_price);
-    if (!Number.isFinite(totalPrice)) return { ok: false, error: `items[${i}].total_price es obligatorio y debe ser numérico finito` };
+    const totalPrice = toNumberEUR(row.total_price);
+    if (!Number.isFinite(totalPrice)) {
+      const validationErrors = [{ path: `items[${i}].total_price`, code: 'total_price_required', message: 'Debe ser numérico finito (number o string convertible EUR)' }];
+      return {
+        ok: false,
+        stage: 'validate',
+        error: `${validationErrors[0].path}: ${validationErrors[0].message}`,
+        errors: validationErrors,
+        diagnostic: {
+          stage: 'validate',
+          raw_length: raw.length,
+          sanitized_length: sanitize.sanitized.length,
+          sanitize_changes: sanitize.changes,
+          validate_errors: validationErrors,
+          warnings
+        }
+      };
+    }
     const unitPriceRaw = row.unit_price;
     const unitPriceParsed = unitPriceRaw == null ? null : toNumberEUR(unitPriceRaw);
     const unitPrice = Number.isFinite(unitPriceParsed) ? unitPriceParsed : (qty > 0 ? totalPrice / qty : totalPrice);
     const nameNorm = String(row.name_norm || '').trim() || String(row.name_raw || '').trim();
+    if (!nameNorm) {
+      const validationErrors = [{ path: `items[${i}]`, code: 'name_required', message: 'name_raw o name_norm es obligatorio' }];
+      return {
+        ok: false,
+        stage: 'validate',
+        error: `${validationErrors[0].path}: ${validationErrors[0].message}`,
+        errors: validationErrors,
+        diagnostic: {
+          stage: 'validate',
+          raw_length: raw.length,
+          sanitized_length: sanitize.sanitized.length,
+          sanitize_changes: sanitize.changes,
+          validate_errors: validationErrors,
+          warnings
+        }
+      };
+    }
     const categoryInfo = resolveTicketItemCategory({ ...row, name_norm: nameNorm });
     if (categoryInfo.category_inferred) {
       warnings.push(`Item ${i + 1}: faltaba category_guess útil, inferida por nombre → ${categoryInfo.category_app}`);
@@ -207,6 +300,7 @@ export function parseTicketImport(text = '') {
 
   return {
     ok: true,
+    stage: 'ok',
     data: {
       ...parsed,
       source: { ...(parsed.source || {}), vendor },
@@ -218,7 +312,16 @@ export function parseTicketImport(text = '') {
       },
       items
     },
-    warnings
+    warnings,
+    diagnostic: {
+      stage: 'ok',
+      raw_length: raw.length,
+      sanitized_length: sanitize.sanitized.length,
+      sanitize_changes: sanitize.changes,
+      warnings,
+      computed_total: computedTotal,
+      purchase_total: ticketTotal
+    }
   };
 }
 

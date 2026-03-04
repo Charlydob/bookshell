@@ -583,49 +583,75 @@ function mergedFoodHistory(food = {}) {
   const explicit = foodPriceHistoryList(food);
   const implicit = foodHistoryFromTransactions(food);
   const byVendorAndDate = {};
+
   [...explicit, ...implicit].forEach((row) => {
+    const unitPriceRaw = row?.unitPrice ?? row?.price ?? 0;
+    const totalPriceRaw = row?.totalPrice ?? row?.linePrice ?? row?.price ?? 0;
+    const linePriceRaw  = row?.linePrice  ?? row?.totalPrice ?? row?.price ?? 0;
+
+    const qty = Math.max(1, Number(row?.qty ?? 1));
+    const unit = String(row?.unit ?? "ud").trim() || "ud"; // aquí sí usamos || por si trim() da ''
+
     const normalized = {
       ...row,
-      price: Number(row?.unitPrice || row?.price || 0),
-      unitPrice: Number(row?.unitPrice || row?.price || 0),
-      totalPrice: Number(row?.totalPrice || row?.linePrice || row?.price || 0),
-      linePrice: Number(row?.linePrice || row?.totalPrice || row?.price || 0),
-      qty: Math.max(1, Number(row?.qty || 1)),
-      unit: String(row?.unit || 'ud').trim() || 'ud'
+      price: Number(unitPriceRaw),
+      unitPrice: Number(unitPriceRaw),
+      totalPrice: Number(totalPriceRaw),
+      linePrice: Number(linePriceRaw),
+      qty,
+      unit
     };
+
     appendPriceHistoryPoint(byVendorAndDate, normalized);
   });
+
   return Object.values(byVendorAndDate)
-    .filter((row) => Number.isFinite(row.ts) && row.ts > 0 && Number.isFinite(Number(row.unitPrice || row.price)) && Number(row.unitPrice || row.price) > 0)
+    .filter((row) =>
+      Number.isFinite(row.ts) &&
+      row.ts > 0 &&
+      Number.isFinite(Number(row.unitPrice ?? row.price)) &&
+      Number(row.unitPrice ?? row.price) > 0
+    )
     .sort((a, b) => a.ts - b.ts);
 }
 
 function shouldAppendFoodPricePoint(food = {}, priceInput) {
   const price = Number(priceInput);
   if (!Number.isFinite(price) || price <= 0) return false;
+
   const history = foodPriceHistoryList(food);
   if (!history.length) return true;
-  return Math.abs(Number(history[history.length - 1].price || 0) - price) > 0.001;
+
+  return Math.abs(Number(history[history.length - 1]?.price ?? 0) - price) > 0.001;
 }
 
-async function recordFoodPricePoint(foodId, priceInput, source = 'expense', options = {}) {
-  const safeFoodId = String(foodId || '').trim();
+async function recordFoodPricePoint(foodId, priceInput, source = "expense", options = {}) {
+  const safeFoodId = String(foodId ?? "").trim();
   const price = Number(priceInput);
   if (!safeFoodId || !Number.isFinite(price) || price <= 0) return;
-  const ts = Number(options?.ts || nowTs());
-  const vendor = firebaseSafeKey(options?.vendor || 'unknown') || 'unknown';
-  const date = String(options?.date || dayKeyFromTs(ts));
-  const expenseId = String(options?.expenseId || '').trim();
-  const food = state.food.itemsById?.[safeFoodId] || null;
+
+  const ts = Number(options?.ts ?? nowTs());
+  const vendor = firebaseSafeKey(options?.vendor ?? "unknown") || "unknown";
+  const date = String(options?.date ?? dayKeyFromTs(ts));
+  const expenseId = String(options?.expenseId ?? "").trim();
+
+  const food = state.food.itemsById?.[safeFoodId] ?? null;
+
   if (expenseId) {
-    const exists = Object.values(food?.priceHistory || {}).some((vendorRows) => Object.values(vendorRows || {}).some((entry) => String(entry?.expenseId || '') === expenseId));
+    const exists = Object.values(food?.priceHistory ?? {}).some((vendorRows) =>
+      Object.values(vendorRows ?? {}).some((entry) => String(entry?.expenseId ?? "") === expenseId)
+    );
     if (exists) return;
   }
+
   const entryId = push(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${vendor}`)).key;
-  const qty = Math.max(1, Number(options?.qty || 1));
-  const unit = String(options?.unit || 'ud').trim() || 'ud';
-  const totalPrice = Number(options?.totalPrice || options?.linePrice || price);
-  const unitPrice = Number(options?.unitPrice || computeUnitPrice(totalPrice, qty) || price);
+
+  const qty = Math.max(1, Number(options?.qty ?? 1));
+  const unit = String(options?.unit ?? "ud").trim() || "ud";
+
+  const totalPrice = Number(options?.totalPrice ?? options?.linePrice ?? price);
+  const unitPrice = Number(options?.unitPrice ?? computeUnitPrice(totalPrice, qty) ?? price);
+
   const payload = {
     price: unitPrice,
     unitPrice,
@@ -636,37 +662,55 @@ async function recordFoodPricePoint(foodId, priceInput, source = 'expense', opti
     ts: Number.isFinite(ts) && ts > 0 ? ts : nowTs(),
     date,
     vendor,
-    source: String(source || ''),
+    source: String(source ?? ""),
     ...(expenseId ? { expenseId } : {})
   };
-  await safeFirebase(() => set(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${vendor}/${entryId}`), payload));
+
+  await safeFirebase(() =>
+    set(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${vendor}/${entryId}`), payload)
+  );
+
   if (!state.food.itemsById?.[safeFoodId]) return;
-  if (!state.food.itemsById[safeFoodId].priceHistory?.[vendor]) state.food.itemsById[safeFoodId].priceHistory[vendor] = {};
+
+  if (!state.food.itemsById[safeFoodId].priceHistory?.[vendor]) {
+    state.food.itemsById[safeFoodId].priceHistory[vendor] = {};
+  }
+
   state.food.itemsById[safeFoodId].priceHistory = {
-    ...(state.food.itemsById[safeFoodId].priceHistory || {}),
+    ...(state.food.itemsById[safeFoodId].priceHistory ?? {}),
     [vendor]: {
-      ...(state.food.itemsById[safeFoodId].priceHistory?.[vendor] || {}),
+      ...(state.food.itemsById[safeFoodId].priceHistory?.[vendor] ?? {}),
       [entryId]: payload
     }
   };
 }
 
 async function deleteFoodPricePoint(foodId, vendor, entryId) {
-  const safeFoodId = String(foodId || '').trim();
-  const safeVendor = firebaseSafeKey(vendor || 'unknown') || 'unknown';
-  const safeEntryId = String(entryId || '').trim();
+  const safeFoodId = String(foodId ?? "").trim();
+  const safeVendor = firebaseSafeKey(vendor ?? "unknown") || "unknown";
+  const safeEntryId = String(entryId ?? "").trim();
   if (!safeFoodId || !safeEntryId) return false;
-  await safeFirebase(() => remove(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${safeVendor}/${safeEntryId}`)));
+
+  await safeFirebase(() =>
+    remove(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${safeVendor}/${safeEntryId}`))
+  );
+
   if (!state.food.itemsById?.[safeFoodId]?.priceHistory?.[safeVendor]) return true;
-  const nextVendorRows = { ...(state.food.itemsById[safeFoodId].priceHistory[safeVendor] || {}) };
+
+  const nextVendorRows = { ...(state.food.itemsById[safeFoodId].priceHistory[safeVendor] ?? {}) };
   delete nextVendorRows[safeEntryId];
+
   state.food.itemsById[safeFoodId].priceHistory = {
-    ...(state.food.itemsById[safeFoodId].priceHistory || {}),
+    ...(state.food.itemsById[safeFoodId].priceHistory ?? {}),
     [safeVendor]: nextVendorRows
   };
-  if (!Object.keys(nextVendorRows).length) delete state.food.itemsById[safeFoodId].priceHistory[safeVendor];
+
+  if (!Object.keys(nextVendorRows).length) {
+    delete state.food.itemsById[safeFoodId].priceHistory[safeVendor];
+  }
   return true;
 }
+
 function getFoodByName(name = '') {
   const safe = normalizeFoodName(name).toLowerCase();
   if (!safe) return null;

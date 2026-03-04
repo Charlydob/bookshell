@@ -515,8 +515,11 @@ function normalizeFoodExtras(rawExtras = {}, amount = 0) {
   const items = Array.isArray(extras.items)
     ? extras.items.map((item) => ({
       foodId: String(item?.foodId || ''),
+      productKey: String(item?.productKey || ''),
       name: normalizeFoodName(item?.name || item?.item || item?.productName || ''),
-      price: Number(item?.price || 0),
+      qty: Math.max(1, Number(item?.qty || 1)),
+      amount: Number((item?.amount ?? item?.price) || 0),
+      price: Number((item?.price ?? item?.amount) || 0),
       mealType: normalizeFoodName(item?.mealType || item?.typeOfMeal || ''),
       cuisine: normalizeFoodName(item?.cuisine || ''),
       place: normalizeFoodName(item?.place || ''),
@@ -528,8 +531,11 @@ function normalizeFoodExtras(rawExtras = {}, amount = 0) {
     if (legacyName) {
       items.push({
         foodId: String(extras.foodId || ''),
+        productKey: String(extras.productKey || ''),
         name: legacyName,
-        price: Number(extras.price || amount || 0),
+        qty: Math.max(1, Number(extras.qty || 1)),
+        amount: Number((extras.amount ?? extras.price ?? amount) || 0),
+        price: Number((extras.price ?? extras.amount ?? amount) || 0),
         mealType: normalizeFoodName(extras.mealType || extras.foodType || ''),
         cuisine: normalizeFoodName(extras.cuisine || ''),
         place: normalizeFoodName(extras.place || ''),
@@ -1639,6 +1645,7 @@ function buildHabitPerHourMetrics(rows = [], range = 'month') {
 
 function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense', scope = 'personal', accountsById = {}) {
   const output = {};
+  const ungroupedLabel = 'Importe sin líneas';
   const isMissingGroupedValue = (value = '') => {
     const normalized = normalizeFoodName(value).toLowerCase();
     if (!normalized) return true;
@@ -1661,9 +1668,25 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
       if (isMissingGroupedValue(key)) return;
     }
     else if (groupBy === 'product') {
-      const first = foodItemsFromTx(row)[0];
-      key = normalizeFoodName(first?.name || '');
-      if (isMissingGroupedValue(key)) return;
+      const items = foodItemsFromTx(row);
+      const txTotal = Math.abs(Number(row.amount || 0));
+      const shareFactor = txTotal > 0 ? (amount / txTotal) : 1;
+      let assigned = 0;
+      items.forEach((item) => {
+        const itemName = normalizeFoodName(item?.name || '');
+        const lineAmount = Number(item?.price);
+        if (isMissingGroupedValue(itemName)) return;
+        if (!Number.isFinite(lineAmount) || lineAmount <= 0) return;
+        const scopedLineAmount = Math.abs(lineAmount) * shareFactor;
+        if (!scopedLineAmount) return;
+        output[itemName] = (output[itemName] || 0) + scopedLineAmount;
+        assigned += scopedLineAmount;
+      });
+      const remainder = Math.max(0, amount - assigned);
+      if (remainder > 0.0001) {
+        output[ungroupedLabel] = (output[ungroupedLabel] || 0) + remainder;
+      }
+      return;
     } else key = row.category || 'Sin categoría';
     output[key] = (output[key] || 0) + amount;
   });
@@ -3457,7 +3480,10 @@ function bindEvents() {
         await ensureFoodCatalogLoaded(true);
         const importedItems = importResult.updatedDraft.importedItems.map((item) => ({
           foodId: item.productId || (getFoodByName(item.name)?.id || ''),
+          productKey: firebaseSafeKey(item.name),
           name: item.name,
+          qty: Math.max(1, Number(item.qty || 1)),
+          amount: Number(item.price || 0),
           price: Number(item.price || 0),
           mealType: '',
           cuisine: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryApp || ''),
@@ -4009,15 +4035,18 @@ view.addEventListener('focusout', async (event) => {
       })();
       const foodItems = Array.isArray(foodItemsRaw) ? foodItemsRaw.map((row) => ({
         foodId: String(row?.foodId || foodIdFromForm || ''),
+        productKey: String(row?.productKey || ''),
         name: normalizeFoodName(row?.name || row?.item || row?.productName || item),
-        price: Number(row?.price || 0),
+        qty: Math.max(1, Number(row?.qty || 1)),
+        amount: Number((row?.amount ?? row?.price) || 0),
+        price: Number((row?.price ?? row?.amount) || 0),
         mealType: normalizeFoodName(row?.mealType || mealType),
         cuisine: normalizeFoodName(row?.cuisine || cuisine),
         place: normalizeFoodName(row?.place || place),
         healthy: String(row?.healthy || cuisine || '')
       })).filter((row) => row.name) : [];
       const extras = isFoodCategory(category)
-        ? { items: foodItems.length ? foodItems : (item ? [{ foodId: foodIdFromForm || '', name: item, price: amount, mealType, cuisine, place, healthy: cuisine }] : []), filters: { mealType: mealType || '', cuisine: cuisine || '', place: place || '', healthy: cuisine || '' } }
+        ? { items: foodItems.length ? foodItems : (item ? [{ foodId: foodIdFromForm || '', productKey: firebaseSafeKey(item), name: item, qty: 1, amount, price: amount, mealType, cuisine, place, healthy: cuisine }] : []), filters: { mealType: mealType || '', cuisine: cuisine || '', place: place || '', healthy: cuisine || '' } }
         : undefined;
       const saveId = txId || push(ref(db, `${state.financePath}/transactions`)).key;
       const prev = txId ? balanceTxList().find((row) => row.id === txId) : null;
@@ -4044,6 +4073,9 @@ view.addEventListener('focusout', async (event) => {
         createdAt: Number(prev?.createdAt || 0) || nowTs()
       };
       console.log('[FINANCE][BALANCE] save transaction', `${state.financePath}/transactions/${saveId}`);
+      if (window?.BOOKSHELL_DEV || window?.localStorage?.getItem('bookshell_debug_expense_payload') === '1') {
+        console.log('[FINANCE][DEBUG] expense payload', payload);
+      }
       await safeFirebase(() => set(ref(db, `${state.financePath}/transactions/${saveId}`), payload));
       if (type !== 'transfer') {
         if (!state.balance.categories?.[category]) await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));

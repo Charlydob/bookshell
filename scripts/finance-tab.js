@@ -443,6 +443,78 @@ function foodPriceHistoryList(food = {}) {
     .sort((a, b) => a.ts - b.ts);
 }
 
+function resolveFoodItemByAnyKey(rawKey = '') {
+  const safeKey = String(rawKey || '').trim();
+  if (!safeKey) return null;
+  if (state.food.itemsById?.[safeKey]) return state.food.itemsById[safeKey];
+  const normalized = firebaseSafeKey(safeKey);
+  return Object.values(state.food.itemsById || {}).find((item) => {
+    if (!item) return false;
+    if (String(item.id || '') === safeKey) return true;
+    if (String(item.idKey || '') === safeKey) return true;
+    if (firebaseSafeKey(item?.name || '') === safeKey) return true;
+    if (firebaseSafeKey(item?.displayName || '') === safeKey) return true;
+    return normalized && (String(item.idKey || '') === normalized || firebaseSafeKey(item?.name || '') === normalized);
+  }) || null;
+}
+
+function foodHistoryFromTransactions(food = {}) {
+  const byKey = {};
+  const foodId = String(food?.id || '');
+  const foodName = normalizeFoodName(food?.name || '').toLowerCase();
+  const foodDisplay = normalizeFoodName(food?.displayName || '').toLowerCase();
+  const foodIdKey = String(food?.idKey || firebaseSafeKey(food?.name || '') || '');
+  balanceTxList().forEach((row) => {
+    if (normalizeTxType(row?.type) !== 'expense') return;
+    const txItems = foodItemsFromTx(row);
+    txItems.forEach((item) => {
+      const itemFoodId = String(item?.foodId || '');
+      const itemName = normalizeFoodName(item?.name || '').toLowerCase();
+      const itemKey = String(item?.productKey || firebaseSafeKey(item?.name || '') || '');
+      const matches = (foodId && itemFoodId === foodId)
+        || (foodIdKey && itemKey === foodIdKey)
+        || (foodName && itemName === foodName)
+        || (foodDisplay && itemName === foodDisplay);
+      if (!matches) return;
+      const ts = Number(row?.date ? parseDayKey(row.date) : txSortTs(row));
+      const price = Number(item?.price || item?.amount || 0);
+      if (!Number.isFinite(ts) || ts <= 0 || !Number.isFinite(price) || price <= 0) return;
+      const vendor = firebaseSafeKey(item?.place || row?.extras?.filters?.place || row?.extras?.place || food?.place || 'unknown') || 'unknown';
+      const key = `${vendor}__${String(row?.id || '') || ts}`;
+      byKey[key] = {
+        vendor,
+        price,
+        unitPrice: Number(item?.price || price),
+        linePrice: Number(item?.amount || item?.price || price),
+        ts,
+        date: String(row?.date || dayKeyFromTs(ts)),
+        source: 'expense-line',
+        expenseId: String(row?.id || '')
+      };
+    });
+  });
+  return Object.values(byKey).sort((a, b) => a.ts - b.ts);
+}
+
+function mergedFoodHistory(food = {}) {
+  const explicit = foodPriceHistoryList(food);
+  const implicit = foodHistoryFromTransactions(food);
+  const byKey = {};
+  [...explicit, ...implicit].forEach((row) => {
+    const vendor = firebaseSafeKey(row?.vendor || 'unknown') || 'unknown';
+    const key = `${vendor}__${String(row?.expenseId || '') || String(row?.ts || '')}__${Number(row?.price || 0).toFixed(3)}`;
+    byKey[key] = {
+      ...row,
+      vendor,
+      ts: Number(row?.ts || 0),
+      price: Number(row?.price || 0)
+    };
+  });
+  return Object.values(byKey)
+    .filter((row) => Number.isFinite(row.ts) && row.ts > 0 && Number.isFinite(row.price) && row.price > 0)
+    .sort((a, b) => a.ts - b.ts);
+}
+
 function shouldAppendFoodPricePoint(food = {}, priceInput) {
   const price = Number(priceInput);
   if (!Number.isFinite(price) || price <= 0) return false;
@@ -848,40 +920,101 @@ function renderFoodExtrasSection() {
   `;
 }
 
-function renderFoodPriceHistorySection(food = {}) {
-  const history = foodPriceHistoryList(food);
-  const byVendor = history.reduce((acc, row) => {
-    const key = firebaseSafeKey(row.vendor || 'unknown') || 'unknown';
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(row);
+function foodChartSeriesByVendor(history = [], range = 'total') {
+  const now = Date.now();
+  const days = range === '30d' ? 30 : (range === '90d' ? 90 : 0);
+  const minTs = days ? (now - (days * 86400000)) : 0;
+  const filtered = history.filter((row) => !days || Number(row.ts || 0) >= minTs);
+  const byVendor = filtered.reduce((acc, row) => {
+    const vendor = firebaseSafeKey(row.vendor || 'unknown') || 'unknown';
+    if (!acc[vendor]) acc[vendor] = [];
+    acc[vendor].push(row);
     return acc;
   }, {});
-  const currentRows = Object.entries(byVendor).map(([vendor, rows]) => {
-    const last = rows.sort((a, b) => b.ts - a.ts)[0] || null;
-    return last ? `<tr><td>${escapeHtml(vendor)}</td><td><strong>${fmtCurrency(last.price)}</strong></td><td>${new Date(last.ts).toLocaleDateString('es-ES')}</td></tr>` : '';
-  }).join('');
-  const vendorChips = Object.keys(byVendor).map((vendor) => `<span class="finFoodChip">${escapeHtml(vendor)}</span>`).join('') || '<span class="finFoodChip">Sin vendor</span>';
+  Object.values(byVendor).forEach((rows) => rows.sort((a, b) => a.ts - b.ts));
+  return byVendor;
+}
+
+function foodDetailViewModel(food = {}, fallbackName = '') {
+  const name = normalizeFoodName(food?.name || fallbackName || '');
+  const displayName = String(food?.displayName || name || food?.idKey || 'Producto').trim() || 'Producto';
+  const history = mergedFoodHistory(food);
+  const byVendor = history.reduce((acc, row) => {
+    const vendor = firebaseSafeKey(row.vendor || 'unknown') || 'unknown';
+    if (!acc[vendor]) acc[vendor] = [];
+    acc[vendor].push(row);
+    return acc;
+  }, {});
+  const vendors = Object.keys(byVendor);
+  const latestByVendor = vendors.map((vendor) => {
+    const last = (byVendor[vendor] || []).slice().sort((a, b) => b.ts - a.ts)[0] || null;
+    return last ? { vendor, ...last } : null;
+  }).filter(Boolean).sort((a, b) => b.ts - a.ts);
+  const latest = latestByVendor[0] || null;
+  const latestLine = latestByVendor.length > 1
+    ? latestByVendor.slice(0, 2).map((row) => `${fmtCurrency(row.price)} (${row.vendor})`).join(' · ')
+    : (latest ? `${fmtCurrency(latest.price)} · Vendor: ${latest.vendor}` : 'Último precio: —');
+  return {
+    name,
+    displayName,
+    history,
+    byVendor,
+    vendors,
+    latest,
+    latestByVendor,
+    latestLine,
+    chartByVendor: foodChartSeriesByVendor(history, 'total')
+  };
+}
+
+function renderFoodPriceHistorySection(food = {}, options = {}) {
+  const view = foodDetailViewModel(food, options?.presetName || '');
+  const currentRows = view.latestByVendor.map((row) => `<tr><td>${escapeHtml(row.vendor)}</td><td><strong>${fmtCurrency(row.price)}</strong></td><td>${new Date(row.ts).toLocaleDateString('es-ES')}</td></tr>`).join('');
+  const vendorChips = view.vendors.map((vendor) => `<span class="finFoodChip">${escapeHtml(vendor)}</span>`).join('') || '<span class="finFoodChip">Sin vendor</span>';
+  const overviewSub = [food?.mealType || 'Sin categoría', view.vendors.length ? `${view.vendors.length} vendor${view.vendors.length > 1 ? 's' : ''}` : 'Sin vendors', view.latestLine].join(' · ');
   return `
-    <section class="finFoodDetailSection">
-      <h4>Datos</h4>
-      <div class="finFoodDataGrid">
-        <div><small>Categoría</small><strong>${escapeHtml(food?.mealType || food?.category || '—')}</strong></div>
-        <div><small>Vendors detectados</small><div class="finFoodChipRow">${vendorChips}</div></div>
+    <section class="finFoodDetailHead">
+      <div>
+        <h2>${escapeHtml(view.displayName)}</h2>
+        <p>${escapeHtml(overviewSub)}</p>
       </div>
     </section>
-    <section class="finFoodDetailSection">
-      <h4>Precios</h4>
-      ${history.length
-        ? `<div class="finFoodPriceTableWrap"><table class="finFoodPriceTable"><thead><tr><th>Vendor</th><th>Último precio</th><th>Fecha</th></tr></thead><tbody>${currentRows}</tbody></table></div>`
-        : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin historial aún</span></div>'}
+
+    <section class="finFoodDetailSection finFoodDetailSection--chips">
+      <button type="button" class="finFoodChip finFoodChip--action" data-food-scroll-to="aliases">Aliases</button>
+      <button type="button" class="finFoodChip finFoodChip--action" data-food-history-register="${escapeHtml(food.id || '')}">+ Precio</button>
+      <button type="button" class="finFoodChip finFoodChip--action" data-food-view-purchases="${escapeHtml(food.id || '')}">Ver compras</button>
     </section>
-    <section class="finFoodDetailSection">
-      <h4>Gráfico</h4>
-      ${history.length
-        ? `<div class="finFoodInfo__chartWrap" data-food-history-chart data-food-history-series='${escapeHtml(JSON.stringify(byVendor))}'></div>`
-        : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin historial aún</span></div>'}
-      <div class="finFoodInfo__actions">
-        <button type="button" class="food-history-btn" data-food-history-register="${escapeHtml(food.id || '')}">+ registrar precio</button>
+
+    <section class="finFoodDetailSection" data-food-detail-card="evolution">
+      <div class="finFoodCardTitleRow"><h4>Evolución</h4><div class="finFoodMiniTabs"><button type="button" class="finFoodMiniTab is-active" data-food-chart-type="line">Línea</button><button type="button" class="finFoodMiniTab" data-food-chart-type="bar">Barras</button></div></div>
+      <div class="finFoodMiniTabs" data-food-range-tabs><button type="button" class="finFoodMiniTab" data-food-chart-range="30d">30d</button><button type="button" class="finFoodMiniTab" data-food-chart-range="90d">90d</button><button type="button" class="finFoodMiniTab is-active" data-food-chart-range="total">Total</button></div>
+      ${view.history.length
+        ? `<div class="finFoodInfo__chartWrap" data-food-history-chart data-food-chart-type="line" data-food-chart-range="total" data-food-history-series='${escapeHtml(JSON.stringify(view.chartByVendor))}'></div>`
+        : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin historial. Registra un precio para ver evolución.</span></div>'}
+    </section>
+
+    <section class="finFoodDetailSection" data-food-detail-card="prices">
+      <div class="finFoodCardTitleRow"><h4>Precios</h4><button type="button" class="food-history-btn" data-food-history-register="${escapeHtml(food.id || '')}">+ registrar precio</button></div>
+      ${view.latestByVendor.length
+        ? `<div class="finFoodPriceTableWrap"><table class="finFoodPriceTable"><thead><tr><th>Vendor</th><th>Último precio</th><th>Fecha</th></tr></thead><tbody>${currentRows}</tbody></table></div>`
+        : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin historial</span></div>'}
+    </section>
+
+    <section class="finFoodDetailSection" data-food-detail-card="aliases" id="food-detail-aliases">
+      <h4>Aliases</h4>
+      ${renderFoodAliasEditor(food || {})}
+      <div class="food-form-row"><label class="food-form-label" for="food-vendorAliases-input">Alias por súper</label><input id="food-vendorAliases-input" class="food-control" name="vendorAliases" value="${escapeHtml(options.vendorAliasList || '')}" placeholder="mercadona:coca cola|coke" /></div>
+      <div class="finFoodChipRow">${vendorChips}</div>
+    </section>
+
+    <section class="finFoodDetailSection" data-food-detail-card="data">
+      <h4>Datos</h4>
+      <div class="food-form-grid foodX-stack">
+        <div class="food-form-row"><label class="food-form-label" for="food-mealType-input">Categoría</label><div class="food-form-inline"><select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="typeOfMeal" aria-label="Añadir nuevo tipo">+</button></div></div>
+        <div class="food-form-row"><label class="food-form-label" for="food-cuisine-input">Saludable</label><div class="food-form-inline"><select id="food-cuisine-input" class="food-control" name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.cuisine || food?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="cuisine" aria-label="Añadir nuevo saludable">+</button></div></div>
+        <div class="food-form-row"><label class="food-form-label" for="food-place-input">Dónde</label><div class="food-form-inline"><select id="food-place-input" class="food-control" name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="place" aria-label="Añadir nuevo dónde">+</button></div></div>
+        <div class="food-form-row"><label class="food-form-label" for="food-defaultPrice-input">Precio por defecto</label><input id="food-defaultPrice-input" class="food-control" name="defaultPrice" type="number" step="0.01" min="0" value="${Number(food?.defaultPrice || 0) || ''}" /></div>
       </div>
     </section>
   `;
@@ -897,14 +1030,16 @@ function renderFoodAliasEditor(editing = {}) {
 }
 
 function renderFoodItemModalForm(editing, presetName, mode = 'edit') {
-  const isInfo = mode === 'info' || mode === 'detail';
   const isDetail = mode === 'detail';
+  const isInfo = mode === 'info' || isDetail;
   const displayName = String(editing?.displayName || presetName || '');
   const vendorAliasList = editing?.vendorAliases && typeof editing.vendorAliases === 'object'
     ? Object.entries(editing.vendorAliases).map(([vendor, list]) => `${vendor}:${Array.isArray(list) ? list.join('|') : ''}`).join(', ')
     : '';
+  const detailBody = renderFoodPriceHistorySection(editing || { name: presetName, displayName }, { presetName, vendorAliasList });
   return `<form class="food-sheet-form" data-food-item-form data-food-item-mode="${isDetail ? 'detail' : (isInfo ? 'info' : 'edit')}">
         <input type="hidden" name="foodId" value="${escapeHtml(editing?.id || '')}" />
+        ${isDetail ? `<section class="finFoodDetailSection"><div class="food-form-grid foodX-stack"><div class="food-form-row"><label class="food-form-label" for="food-name-input">Nombre</label><input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(presetName)}" /></div><div class="food-form-row"><label class="food-form-label" for="food-displayName-input">Display name</label><input id="food-displayName-input" class="food-control" name="displayName" value="${escapeHtml(displayName)}" data-food-display-name /></div></div></section>${detailBody}` : `
         <section class="finFoodDetailSection">
           <h4>Header</h4>
           <div class="food-form-grid foodX-stack">
@@ -926,8 +1061,8 @@ function renderFoodItemModalForm(editing, presetName, mode = 'edit') {
             <div class="food-form-row"><label class="food-form-label" for="food-defaultPrice-input">Precio por defecto</label><input id="food-defaultPrice-input" class="food-control" name="defaultPrice" type="number" step="0.01" min="0" value="${Number(editing?.defaultPrice || 0) || ''}" /></div>
           </div>
         </section>
-        ${isInfo ? `<input type="hidden" name="saveMode" value="info" />${renderFoodPriceHistorySection(editing || {})}` : ''}
-        <footer class="food-sheet-footer"><button class="finance-pill food-sheet-submit" type="submit">Guardar</button></footer>
+        ${isInfo ? `<input type="hidden" name="saveMode" value="info" />${detailBody}` : ''}`}
+        <footer class="food-sheet-footer"><button class="finance-pill food-sheet-submit" type="submit" ${isDetail ? 'data-food-save disabled' : ''}>Guardar</button></footer>
       </form>`;
 }
 
@@ -938,13 +1073,21 @@ function renderFoodHistoryVendorChart() {
   try { byVendor = JSON.parse(host.dataset.foodHistorySeries || '{}'); } catch (_) { byVendor = {}; }
   const vendorKeys = Object.keys(byVendor || {});
   if (!vendorKeys.length) return;
-  const series = vendorKeys.map((vendor) => ({
+  const chartType = host.dataset.foodChartType === 'bar' ? 'bar' : 'line';
+  const range = host.dataset.foodChartRange || 'total';
+  const points = Object.entries(byVendor).flatMap(([vendor, rows]) => (rows || []).map((row) => ({ ...row, vendor })));
+  const filtered = foodChartSeriesByVendor(points, range);
+  const vendors = Object.keys(filtered);
+  if (!vendors.length) return;
+  const palette = ['#7dbdff', '#7af0c8', '#f9b571', '#dba4ff', '#ff7d9f', '#ffe082'];
+  const series = vendors.map((vendor, index) => ({
     name: vendor,
-    type: 'line',
-    showSymbol: true,
+    type: chartType,
+    showSymbol: chartType === 'line',
     smooth: false,
     lineStyle: { width: 2 },
-    data: (byVendor[vendor] || []).map((row) => [String(row.date || dayKeyFromTs(row.ts)), Number(row.price || 0)])
+    itemStyle: { color: palette[index % palette.length] },
+    data: (filtered[vendor] || []).map((row) => [String(row.date || dayKeyFromTs(row.ts)), Number(row.price || 0)])
   }));
   const chart = echarts.getInstanceByDom(host) || echarts.init(host);
   chart.setOption({
@@ -957,6 +1100,33 @@ function renderFoodHistoryVendorChart() {
     yAxis: { type: 'value', axisLabel: { color: '#9fb2da' } },
     series
   }, { notMerge: true });
+}
+
+function snapshotFoodDetailForm(formEl) {
+  if (!formEl) return '{}';
+  const fd = new FormData(formEl);
+  const keys = ['foodId', 'name', 'displayName', 'aliases', 'vendorAliases', 'mealType', 'cuisine', 'place', 'defaultPrice'];
+  const snap = keys.reduce((acc, key) => {
+    acc[key] = String(fd.get(key) || '').trim();
+    return acc;
+  }, {});
+  return JSON.stringify(snap);
+}
+
+function updateFoodDetailSaveState(formEl) {
+  if (!formEl || formEl.dataset.foodItemMode !== 'detail') return;
+  const saveBtn = formEl.querySelector('[data-food-save]');
+  if (!saveBtn) return;
+  if (!formEl.dataset.foodInitialSnapshot) formEl.dataset.foodInitialSnapshot = snapshotFoodDetailForm(formEl);
+  const dirty = formEl.dataset.foodInitialSnapshot !== snapshotFoodDetailForm(formEl);
+  saveBtn.disabled = !dirty;
+}
+
+function initFoodDetailInteractions() {
+  const formEl = document.querySelector('[data-food-item-form][data-food-item-mode="detail"]');
+  if (!formEl) return;
+  formEl.dataset.foodInitialSnapshot = snapshotFoodDetailForm(formEl);
+  updateFoodDetailSaveState(formEl);
 }
 
 function isoToDay(dateISO = '') { return String(dateISO).slice(0, 10); }
@@ -1861,10 +2031,11 @@ function updateLegendSelection(selectedKey = '') {
   });
 }
 
-function openProductDetail(productKey = '') {
+async function openProductDetail(productKey = '') {
   const safeKey = String(productKey || '').trim();
   if (!safeKey) return;
-  const item = state.food.itemsById?.[safeKey] || null;
+  await ensureFoodCatalogLoaded();
+  const item = resolveFoodItemByAnyKey(safeKey);
   state.modal = item
     ? { type: 'food-item', foodId: item.id, mode: 'detail', source: 'stats-legend' }
     : { type: 'food-item', foodId: safeKey, mode: 'detail', source: 'stats-legend' };
@@ -2422,7 +2593,7 @@ function renderFinanceBalance() {
     <details class="financeStats__details" data-finance-stats-legend-details ${legendExpanded ? 'open' : ''}>
       <summary class="financeStats__detailsSummary" data-finance-stats-legend-summary>Leyenda</summary>
       <div class="financeStats__detailsBody financeStats__legendGrid">
-        ${segments.length ? segments.map((segment, index) => `<div class="financeStats__rankRow ${state.balanceStatsActiveSegment === segment._key ? 'is-active' : ''} financeLegendRow" data-finance-stats-segment="${escapeHtml(segment._key)}" data-product-key="${escapeHtml(segment.productKey || '')}"><div class="financeStats__left"><span class="financeStats__rank">${index + 1}º</span><span class="financeStats__name"><i class="financeStats__dot" style="background:${segment.color}"></i>${escapeHtml(segment.label)}</span></div><div class="financeStats__right">${statsGroupBy === 'product' ? `<button type="button" class="financeProductStatsBtn" data-finance-product-stats="${escapeHtml(segment.productKey || segment._key)}" aria-label="Ver estadísticas del producto">📈</button>` : ''}<span class="financeStats__meta">${fmtCurrency(segment.value)}</span><span class="financeStats__meta">${segment.pct.toFixed(1)}%</span></div></div>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
+        ${segments.length ? segments.map((segment, index) => `<div class="financeStats__rankRow ${state.balanceStatsActiveSegment === segment._key ? 'is-active' : ''} financeLegendRow" data-finance-stats-segment="${escapeHtml(segment._key)}" data-product-key="${escapeHtml(segment.productKey || '')}"><div class="financeStats__left"><span class="financeStats__rank">${index + 1}</span><span class="financeStats__name"><i class="financeStats__dot" style="background:${segment.color}"></i>${escapeHtml(segment.label)}</span></div><div class="financeStats__right">${statsGroupBy === 'product' ? `<button type="button" class="financeProductStatsBtn" data-finance-product-stats="${escapeHtml(segment.productKey || segment._key)}" aria-label="Ver estadísticas del producto">📈</button>` : ''}<span class="financeStats__meta">${fmtCurrency(segment.value)} · ${segment.pct.toFixed(1)}%</span></div></div>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
       </div>
     </details>
 
@@ -3243,7 +3414,7 @@ if (form) {
     return;
   }
   if (state.modal.type === 'food-item') {
-    const editing = state.modal.foodId ? (state.food.itemsById?.[state.modal.foodId] || null) : null;
+    const editing = state.modal.foodId ? (state.food.itemsById?.[state.modal.foodId] || resolveFoodItemByAnyKey(state.modal.foodId) || null) : null;
     const presetName = normalizeFoodName(state.modal.foodName || editing?.name || '');
     const mode = state.modal.mode || 'edit';
     const title = (mode === 'info' || mode === 'detail') ? 'Product Detail' : (editing ? 'Editar comida' : 'Nueva comida');
@@ -3251,6 +3422,7 @@ if (form) {
       ${renderFoodItemModalForm(editing, presetName, mode)}
     </div>`;
     renderFoodHistoryVendorChart();
+    initFoodDetailInteractions();
     return;
   }
 }
@@ -3909,7 +4081,7 @@ function bindEvents() {
     }
     const legendProductKey = target.closest('[data-finance-product-stats]')?.dataset.financeProductStats || target.closest('.financeLegendRow')?.dataset.productKey;
     if (target.closest('[data-finance-product-stats]') && legendProductKey) {
-      openProductDetail(legendProductKey);
+      await openProductDetail(legendProductKey);
       return;
     }
     const foodDetailId = target.closest('[data-food-item-detail]')?.dataset.foodItemDetail;
@@ -4018,6 +4190,34 @@ function bindEvents() {
       await recordFoodPricePoint(registerFoodHistory, price, 'manual');
       toast('Precio registrado');
       triggerRender();
+      return;
+    }
+    const chartTypeBtn = target.closest('[data-food-chart-type]');
+    if (chartTypeBtn) {
+      const host = document.querySelector('[data-food-history-chart]');
+      if (!host) return;
+      host.dataset.foodChartType = chartTypeBtn.dataset.foodChartType || 'line';
+      document.querySelectorAll('[data-food-chart-type]').forEach((el) => el.classList.toggle('is-active', el === chartTypeBtn));
+      renderFoodHistoryVendorChart();
+      return;
+    }
+    const chartRangeBtn = target.closest('[data-food-chart-range]');
+    if (chartRangeBtn) {
+      const host = document.querySelector('[data-food-history-chart]');
+      if (!host) return;
+      host.dataset.foodChartRange = chartRangeBtn.dataset.foodChartRange || 'total';
+      document.querySelectorAll('[data-food-chart-range]').forEach((el) => el.classList.toggle('is-active', el === chartRangeBtn));
+      renderFoodHistoryVendorChart();
+      return;
+    }
+    const scrollToCard = target.closest('[data-food-scroll-to]')?.dataset.foodScrollTo;
+    if (scrollToCard) {
+      document.querySelector(`[data-food-detail-card="${scrollToCard}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    const viewPurchasesFood = target.closest('[data-food-view-purchases]')?.dataset.foodViewPurchases;
+    if (viewPurchasesFood) {
+      toast('Filtra por producto desde “Movimientos” (próx. atajo directo)');
       return;
     }
     const addFoodItem = target.closest('[data-food-item-add]');
@@ -4256,6 +4456,9 @@ view.addEventListener('focusout', async (event) => {
       syncAllocationFields(form);
       persistBalanceFormState(form);
     }
+    if (event.target.closest('[data-food-item-form][data-food-item-mode="detail"]')) {
+      updateFoodDetailSaveState(event.target.closest('[data-food-item-form]'));
+    }
   }, evtOpts);
 
   view.addEventListener('input', async (event) => {
@@ -4298,6 +4501,9 @@ view.addEventListener('focusout', async (event) => {
       if (refs.itemValue) refs.itemValue.value = normalizeFoodName(event.target.value);
       if (refs.foodId) refs.foodId.value = '';
       renderFoodItemSearchResults(form);
+    }
+    if (event.target.closest('[data-food-item-form][data-food-item-mode="detail"]')) {
+      updateFoodDetailSaveState(event.target.closest('[data-food-item-form]'));
     }
   });
 

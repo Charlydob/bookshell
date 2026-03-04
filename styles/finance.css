@@ -1292,11 +1292,11 @@ summary.fm-details__summary{
 .financeTab .financeStats__foodRow,
 .financeTab .financeStats__manageRow,
 .financeTab .financeStats__row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.financeTab .financeStats__rankRow { width: 100%; border: 1px solid transparent; border-radius: 12px; background: rgba(255,255,255,.02); color: inherit; padding: 6px 8px; text-align: left; cursor: pointer; }
+.financeTab .financeStats__rankRow { width: 100%; min-height: 46px; border: 1px solid transparent; border-radius: 10px; background: rgba(255,255,255,.02); color: inherit; padding: 4px 8px; text-align: left; cursor: pointer; }
 .financeTab .financeStats__rankRow.is-active { border-color: rgba(125,190,255,.5); background: rgba(95,165,255,.15); box-shadow: 0 0 0 1px rgba(125,190,255,.2) inset; }
-.financeTab .financeStats__name { display: inline-flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
-.financeTab .financeStats__meta { opacity: .92; font-weight: 600; }
-.financeTab .financeStats__rank { min-width: 30px; height: 30px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: rgba(90,120,190,.25); border: 1px solid rgba(110,150,220,.45); }
+.financeTab .financeStats__name { display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.financeTab .financeStats__meta { opacity: .92; font-weight: 600; font-size: 12px; white-space: nowrap; }
+.financeTab .financeStats__rank { min-width: 24px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: rgba(90,120,190,.25); border: 1px solid rgba(110,150,220,.45); font-size: 11px; }
 .financeTab .financeStats__dot { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
 .financeTab .financeStats__compare { display: grid; gap: 10px; }
 .financeTab .financeStats__compareRow { display: grid; gap: 6px; }
@@ -1311,21 +1311,29 @@ summary.fm-details__summary{
 .financeTab .financeStats__right { display:flex; align-items:center; gap:8px; }
 .financeTab .financeStats__right { margin-left:auto; }
 .financeTab .financeProductStatsBtn {
-  width: 38px;
-  height: 38px;
-  min-width: 38px;
-  border-radius: 10px;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  border-radius: 9px;
   border: 1px solid rgba(125,190,255,.45);
   background: rgba(95,165,255,.18);
   color: #eaf4ff;
   display:grid;
   place-items:center;
-  font-size: 16px;
+  font-size: 14px;
 }
 .financeTab .finFoodDetailSection { border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:10px; display:grid; gap:8px; }
 .financeTab .finFoodChipRow { display:flex; gap:6px; flex-wrap:wrap; }
 .financeTab .finFoodChip { border:1px solid rgba(255,255,255,.16); border-radius:999px; padding:4px 10px; font-size:12px; background:rgba(255,255,255,.06); }
 .financeTab .finFoodChip--remove { cursor:pointer; color:inherit; }
+.financeTab .finFoodChip--action { padding: 3px 9px; font-size: 11px; }
+.financeTab .finFoodDetailHead h2 { margin: 0; font-size: 1.28rem; line-height: 1.1; }
+.financeTab .finFoodDetailHead p { margin: 2px 0 0; font-size: 12px; opacity: .8; }
+.financeTab .finFoodDetailSection--chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.financeTab .finFoodCardTitleRow { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.financeTab .finFoodMiniTabs { display:flex; gap:6px; flex-wrap:wrap; }
+.financeTab .finFoodMiniTab { border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05); color: inherit; min-height: 28px; padding: 0 10px; border-radius: 999px; font-size: 11px; }
+.financeTab .finFoodMiniTab.is-active { background: rgba(125,190,255,.22); border-color: rgba(125,190,255,.45); }
 .financeTab .finFoodDataGrid { display:grid; gap:8px; }
 .financeTab .finFoodPriceTableWrap { overflow:auto; }
 .financeTab .finFoodPriceTable { width:100%; border-collapse:collapse; font-size:12px; }
@@ -1685,7 +1693,8 @@ small.finAgg__totals-small {
 .financeTab .food-sheet-footer {
   position: sticky;
   bottom: 0;
-  padding-top: 12px;
+  padding-top: 10px;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
   background: linear-gradient(180deg, transparent, rgba(8, 16, 40, 0.7) 35%);
 }
 

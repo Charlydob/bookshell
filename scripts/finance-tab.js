@@ -858,46 +858,76 @@ function renderFoodPriceHistorySection(food = {}) {
   }, {});
   const currentRows = Object.entries(byVendor).map(([vendor, rows]) => {
     const last = rows.sort((a, b) => b.ts - a.ts)[0] || null;
-    return last ? `<div class="finFoodInfo__row"><span>${escapeHtml(vendor)}</span><strong>${fmtCurrency(last.price)}</strong><small>${new Date(last.ts).toLocaleDateString('es-ES')}</small></div>` : '';
+    return last ? `<tr><td>${escapeHtml(vendor)}</td><td><strong>${fmtCurrency(last.price)}</strong></td><td>${new Date(last.ts).toLocaleDateString('es-ES')}</td></tr>` : '';
   }).join('');
+  const vendorChips = Object.keys(byVendor).map((vendor) => `<span class="finFoodChip">${escapeHtml(vendor)}</span>`).join('') || '<span class="finFoodChip">Sin vendor</span>';
   return `
-    <section class="finFoodInfo">
-      <h4>Histórico de precios</h4>
+    <section class="finFoodDetailSection">
+      <h4>Datos</h4>
+      <div class="finFoodDataGrid">
+        <div><small>Categoría</small><strong>${escapeHtml(food?.mealType || food?.category || '—')}</strong></div>
+        <div><small>Vendors detectados</small><div class="finFoodChipRow">${vendorChips}</div></div>
+      </div>
+    </section>
+    <section class="finFoodDetailSection">
+      <h4>Precios</h4>
       ${history.length
-        ? `<div class="finFoodInfo__list"><h5>Precio actual por súper</h5>${currentRows}</div><div class="finFoodInfo__chartWrap" data-food-history-chart data-food-history-series='${escapeHtml(JSON.stringify(byVendor))}'></div>`
-        : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin datos</span></div>'}
+        ? `<div class="finFoodPriceTableWrap"><table class="finFoodPriceTable"><thead><tr><th>Vendor</th><th>Último precio</th><th>Fecha</th></tr></thead><tbody>${currentRows}</tbody></table></div>`
+        : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin historial aún</span></div>'}
+    </section>
+    <section class="finFoodDetailSection">
+      <h4>Gráfico</h4>
+      ${history.length
+        ? `<div class="finFoodInfo__chartWrap" data-food-history-chart data-food-history-series='${escapeHtml(JSON.stringify(byVendor))}'></div>`
+        : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin historial aún</span></div>'}
       <div class="finFoodInfo__actions">
         <button type="button" class="food-history-btn" data-food-history-register="${escapeHtml(food.id || '')}">+ registrar precio</button>
       </div>
-      ${history.length
-        ? `<div class="finFoodInfo__list">${history.slice().reverse().slice(0, 12).map((row) => `<div class="finFoodInfo__row"><span>${new Date(row.ts).toLocaleDateString('es-ES')}</span><strong>${fmtCurrency(row.price)}</strong></div>`).join('')}</div>`
-        : ''}
     </section>
   `;
 }
 
+function renderFoodAliasEditor(editing = {}) {
+  const aliases = Array.isArray(editing?.aliases) ? editing.aliases : [];
+  return `<div class="finFoodAliasEditor" data-food-alias-editor>
+    <input type="hidden" name="aliases" value="${escapeHtml(aliases.join(', '))}" data-food-aliases-hidden />
+    <div class="finFoodChipRow" data-food-aliases-chips>${aliases.map((alias, index) => `<button type="button" class="finFoodChip finFoodChip--remove" data-food-alias-remove="${index}">${escapeHtml(alias)} ×</button>`).join('') || '<span class="finFoodChip">Sin alias</span>'}</div>
+    <div class="food-form-inline"><input class="food-control" type="text" data-food-alias-input placeholder="Añadir alias" /><button type="button" class="food-mini-btn" data-food-alias-add>+</button></div>
+  </div>`;
+}
+
 function renderFoodItemModalForm(editing, presetName, mode = 'edit') {
   const isInfo = mode === 'info' || mode === 'detail';
+  const isDetail = mode === 'detail';
   const displayName = String(editing?.displayName || presetName || '');
-  const aliases = Array.isArray(editing?.aliases) ? editing.aliases.join(', ') : '';
   const vendorAliasList = editing?.vendorAliases && typeof editing.vendorAliases === 'object'
     ? Object.entries(editing.vendorAliases).map(([vendor, list]) => `${vendor}:${Array.isArray(list) ? list.join('|') : ''}`).join(', ')
     : '';
-  return `<form class="food-sheet-form" data-food-item-form>
+  return `<form class="food-sheet-form" data-food-item-form data-food-item-mode="${isDetail ? 'detail' : (isInfo ? 'info' : 'edit')}">
         <input type="hidden" name="foodId" value="${escapeHtml(editing?.id || '')}" />
-        <div class="food-form-grid foodX-stack">
-          <div class="food-form-row"><label class="food-form-label" for="food-name-input">Nombre</label><input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(presetName)}" /></div>
-          <div class="food-form-row"><label class="food-form-label" for="food-displayName-input">Display name</label><input id="food-displayName-input" class="food-control" name="displayName" value="${escapeHtml(displayName)}" /></div>
-          <div class="food-form-row"><label class="food-form-label" for="food-aliases-input">Alias (coma)</label><input id="food-aliases-input" class="food-control" name="aliases" value="${escapeHtml(aliases)}" placeholder="coca cola zero, cocacola" /></div>
-          <div class="food-form-row"><label class="food-form-label" for="food-vendorAliases-input">Alias por súper</label><input id="food-vendorAliases-input" class="food-control" name="vendorAliases" value="${escapeHtml(vendorAliasList)}" placeholder="mercadona:coca cola|coke, eroski:coca-cola" /></div>
-          <div class="food-form-row"><label class="food-form-label" for="food-mealType-input">Tipo</label><div class="food-form-inline"><select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="typeOfMeal" aria-label="Añadir nuevo tipo">+</button></div></div>
-          <div class="food-form-row"><label class="food-form-label" for="food-cuisine-input">Saludable</label><div class="food-form-inline"><select id="food-cuisine-input" class="food-control" name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.cuisine || editing?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="cuisine" aria-label="Añadir nuevo saludable">+</button></div></div>
-          <div class="food-form-row"><label class="food-form-label" for="food-place-input">Dónde</label><div class="food-form-inline"><select id="food-place-input" class="food-control" name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="place" aria-label="Añadir nuevo dónde">+</button></div></div>
-          <div class="food-form-row"><label class="food-form-label" for="food-defaultPrice-input">Precio por defecto</label><input id="food-defaultPrice-input" class="food-control" name="defaultPrice" type="number" step="0.01" min="0" value="${Number(editing?.defaultPrice || 0) || ''}" /></div>
-        </div>
-        <small class="food-sheet-note">Puedes añadir valores nuevos desde el botón + junto a cada selector.</small>
+        <section class="finFoodDetailSection">
+          <h4>Header</h4>
+          <div class="food-form-grid foodX-stack">
+            <div class="food-form-row"><label class="food-form-label" for="food-name-input">Nombre</label><input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(presetName)}" /></div>
+            <div class="food-form-row"><label class="food-form-label" for="food-displayName-input">Display name</label><input id="food-displayName-input" class="food-control" name="displayName" value="${escapeHtml(displayName)}" data-food-display-name /></div>
+          </div>
+        </section>
+        <section class="finFoodDetailSection">
+          <h4>Aliases</h4>
+          ${renderFoodAliasEditor(editing || {})}
+          <div class="food-form-row"><label class="food-form-label" for="food-vendorAliases-input">Alias por súper</label><input id="food-vendorAliases-input" class="food-control" name="vendorAliases" value="${escapeHtml(vendorAliasList)}" placeholder="mercadona:coca cola|coke" /></div>
+        </section>
+        <section class="finFoodDetailSection">
+          <h4>Atributos</h4>
+          <div class="food-form-grid foodX-stack">
+            <div class="food-form-row"><label class="food-form-label" for="food-mealType-input">Tipo</label><div class="food-form-inline"><select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="typeOfMeal" aria-label="Añadir nuevo tipo">+</button></div></div>
+            <div class="food-form-row"><label class="food-form-label" for="food-cuisine-input">Saludable</label><div class="food-form-inline"><select id="food-cuisine-input" class="food-control" name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.cuisine || editing?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="cuisine" aria-label="Añadir nuevo saludable">+</button></div></div>
+            <div class="food-form-row"><label class="food-form-label" for="food-place-input">Dónde</label><div class="food-form-inline"><select id="food-place-input" class="food-control" name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="place" aria-label="Añadir nuevo dónde">+</button></div></div>
+            <div class="food-form-row"><label class="food-form-label" for="food-defaultPrice-input">Precio por defecto</label><input id="food-defaultPrice-input" class="food-control" name="defaultPrice" type="number" step="0.01" min="0" value="${Number(editing?.defaultPrice || 0) || ''}" /></div>
+          </div>
+        </section>
         ${isInfo ? `<input type="hidden" name="saveMode" value="info" />${renderFoodPriceHistorySection(editing || {})}` : ''}
-        <footer class="food-sheet-footer"><button class="finance-pill food-sheet-submit" type="submit">${isInfo ? 'Guardar ficha' : 'Guardar comida'}</button></footer>
+        <footer class="food-sheet-footer"><button class="finance-pill food-sheet-submit" type="submit">Guardar</button></footer>
       </form>`;
 }
 
@@ -1738,6 +1768,7 @@ function buildHabitPerHourMetrics(rows = [], range = 'month') {
 
 function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense', scope = 'personal', accountsById = {}, options = {}) {
   const output = {};
+  const productKeyByLabel = {};
   const ungroupedLabel = 'Importe sin líneas';
   const includeUnlined = !!options.includeUnlined;
   let unlinedTotal = 0;
@@ -1767,6 +1798,7 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
       const validLines = items
         .map((item) => ({
           name: normalizeFoodName(item?.name || ''),
+          productKey: String(item?.productKey || firebaseSafeKey(item?.name || '')),
           lineAmount: Math.abs(Number(item?.price))
         }))
         .filter((item) => !isMissingGroupedValue(item.name) && Number.isFinite(item.lineAmount) && item.lineAmount > 0);
@@ -1785,16 +1817,18 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
         const scopedLineAmount = amount * (item.lineAmount / linesTotal);
         if (!scopedLineAmount) return;
         output[item.name] = (output[item.name] || 0) + scopedLineAmount;
+        if (!productKeyByLabel[item.name] && item.productKey) productKeyByLabel[item.name] = item.productKey;
       });
       return;
     } else key = row.category || 'Sin categoría';
     output[key] = (output[key] || 0) + amount;
   });
-  return { breakdown: output, unlinedTotal };
+  return { breakdown: output, unlinedTotal, productKeyByLabel };
 }
 
-function donutSegments(mapData = {}, total = 0) {
+function donutSegments(mapData = {}, total = 0, options = {}) {
   if (!total) return [];
+  const productKeyByLabel = options?.productKeyByLabel || {};
   let accumulatedRatio = 0;
   return Object.entries(mapData)
     .sort((a, b) => b[1] - a[1])
@@ -1810,7 +1844,8 @@ function donutSegments(mapData = {}, total = 0) {
         pct: ratio * 100,
         midAngle,
         key: `${firebaseSafeKey(label)}__${index}`,
-        _key: firebaseSafeKey(label)
+        _key: String(productKeyByLabel[label] || firebaseSafeKey(label)),
+        productKey: String(productKeyByLabel[label] || firebaseSafeKey(label))
       };
       accumulatedRatio = endRatio;
       return segment;
@@ -1826,35 +1861,83 @@ function updateLegendSelection(selectedKey = '') {
   });
 }
 
+function openProductDetail(productKey = '') {
+  const safeKey = String(productKey || '').trim();
+  if (!safeKey) return;
+  const item = state.food.itemsById?.[safeKey] || null;
+  state.modal = item
+    ? { type: 'food-item', foodId: item.id, mode: 'detail', source: 'stats-legend' }
+    : { type: 'food-item', foodId: safeKey, mode: 'detail', source: 'stats-legend' };
+  triggerRender();
+}
+
+function ensureFinanceStatsCallout(host) {
+  if (!host) return { callout: null, line: null };
+  let callout = host.querySelector('#financeStatsDonutCallout');
+  if (!callout) {
+    callout = document.createElement('div');
+    callout.id = 'financeStatsDonutCallout';
+    callout.className = 'financeStats__callout';
+    host.appendChild(callout);
+  }
+  let line = host.querySelector('#financeStatsDonutCalloutLine');
+  if (!line) line = host.querySelector('[data-finance-stats-callout-line]');
+  return { callout, line };
+}
+
+function updateCalloutFromSlice(params) {
+  const host = document.querySelector('[data-finance-stats-donut-wrap]');
+  if (!host) return;
+  const { callout, line } = ensureFinanceStatsCallout(host);
+  if (!callout || !line) return;
+  const hasValidData = Boolean(params?.data?.name) && params?.data?.value != null;
+  if (!hasValidData || !Number.isFinite(Number(params?.data?.midAngle))) {
+    callout.style.display = 'none';
+    callout.textContent = '';
+    line.style.display = 'none';
+    line.setAttribute('points', '');
+    return;
+  }
+  const sliceMidAngle = Number(params.data.midAngle);
+  const sliceLabel = String(params.data.name || '');
+  const sliceValue = Number(params.data.value || 0);
+  const slicePct = Number(params?.percent ?? params?.data?.pct ?? 0);
+  const calloutInnerRadius = 46;
+  const calloutOuterRadius = 56;
+  const calloutBoxRadius = 64;
+  const calloutFrom = { x: 50 + (Math.cos(sliceMidAngle) * calloutInnerRadius), y: 50 + (Math.sin(sliceMidAngle) * calloutInnerRadius) };
+  const calloutTo = { x: 50 + (Math.cos(sliceMidAngle) * calloutOuterRadius), y: 50 + (Math.sin(sliceMidAngle) * calloutOuterRadius) };
+  const rawX = 50 + (Math.cos(sliceMidAngle) * calloutBoxRadius);
+  const rawY = 50 + (Math.sin(sliceMidAngle) * calloutBoxRadius);
+  const margin = 8;
+  const calloutBox = { x: Math.max(margin, Math.min(100 - margin, rawX)), y: Math.max(margin, Math.min(100 - margin, rawY)) };
+  line.setAttribute('points', `${calloutFrom.x},${calloutFrom.y} ${calloutTo.x},${calloutTo.y} ${calloutBox.x},${calloutBox.y}`);
+  callout.style.left = `calc(${calloutBox.x}% )`;
+  callout.style.top = `calc(${calloutBox.y}% )`;
+  callout.innerHTML = `<strong>${escapeHtml(sliceLabel)}</strong><small>${fmtCurrency(sliceValue)} · ${slicePct.toFixed(1)}%</small>`;
+  callout.style.display = 'grid';
+  line.style.display = 'block';
+}
+
 function updateCallout(selectedKey = '') {
   const host = document.querySelector('[data-finance-stats-donut-wrap]');
   if (!host) return;
   let segments = [];
   try { segments = JSON.parse(host.dataset.financeStatsSegments || '[]'); } catch (_) { segments = []; }
   const segment = segments.find((row) => String(row?._key || '') === String(selectedKey || '')) || null;
-  const callout = host.querySelector('[data-finance-stats-callout]');
-  const line = host.querySelector('[data-finance-stats-callout-line]');
-  if (!callout || !line) return;
   if (!segment) {
-    callout.hidden = true;
-    line.hidden = true;
+    updateCalloutFromSlice(null);
     return;
   }
-  const calloutInnerRadius = 46;
-  const calloutOuterRadius = 56;
-  const calloutBoxRadius = 64;
-  const calloutFrom = { x: 50 + (Math.cos(segment.midAngle) * calloutInnerRadius), y: 50 + (Math.sin(segment.midAngle) * calloutInnerRadius) };
-  const calloutTo = { x: 50 + (Math.cos(segment.midAngle) * calloutOuterRadius), y: 50 + (Math.sin(segment.midAngle) * calloutOuterRadius) };
-  const rawX = 50 + (Math.cos(segment.midAngle) * calloutBoxRadius);
-  const rawY = 50 + (Math.sin(segment.midAngle) * calloutBoxRadius);
-  const margin = 8;
-  const calloutBox = { x: Math.max(margin, Math.min(100 - margin, rawX)), y: Math.max(margin, Math.min(100 - margin, rawY)) };
-  line.setAttribute('points', `${calloutFrom.x},${calloutFrom.y} ${calloutTo.x},${calloutTo.y} ${calloutBox.x},${calloutBox.y}`);
-  callout.style.left = `calc(${calloutBox.x}% )`;
-  callout.style.top = `calc(${calloutBox.y}% )`;
-  callout.innerHTML = `<strong>${escapeHtml(segment.label)}</strong><small>${fmtCurrency(segment.value)} · ${Number(segment.pct || 0).toFixed(1)}%</small>`;
-  callout.hidden = false;
-  line.hidden = false;
+  updateCalloutFromSlice({
+    data: {
+      name: segment.label,
+      value: Number(segment.value || 0),
+      pct: Number(segment.pct || 0),
+      midAngle: Number(segment.midAngle)
+    },
+    percent: Number(segment.pct || 0)
+  });
 }
 
 function disposeFinanceStatsDonutChart() {
@@ -1905,6 +1988,9 @@ function renderFinanceStatsDonutChart() {
         name: row.name,
         value: Number(row.value || 0),
         _key: row._key,
+        productKey: row.productKey,
+        pct: Number(row.pct || 0),
+        midAngle: Number(row.midAngle || 0),
         itemStyle: { color: row.color }
       }))
     }]
@@ -1912,6 +1998,7 @@ function renderFinanceStatsDonutChart() {
 
   const resetSelection = ({ rerender = true } = {}) => {
     financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
+    updateCallout('');
     if (state.balanceStatsActiveSegment) {
       state.balanceStatsActiveSegment = null;
       state.balanceStatsSelectedSliceKey = null;
@@ -1936,7 +2023,7 @@ function renderFinanceStatsDonutChart() {
     financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
     financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idx });
     updateLegendSelection(segmentKey);
-    updateCallout(segmentKey);
+    updateCalloutFromSlice(params);
   });
 
   const zr = financeStatsDonutChart.getZr?.();
@@ -1950,6 +2037,7 @@ function renderFinanceStatsDonutChart() {
   if (zr) zr.on('click', financeStatsDonutChart.__financeBgClickHandler);
 
   financeStatsDonutChart.resize();
+  updateCalloutFromSlice(null);
   if (state.balanceStatsActiveSegment) {
     const selectedIndex = rows.findIndex((row) => row._key === state.balanceStatsActiveSegment);
     if (selectedIndex >= 0) {
@@ -2185,7 +2273,7 @@ function renderFinanceBalance() {
   const donutMap = donutAggregation.breakdown;
   const unlinedTotal = donutAggregation.unlinedTotal;
   const donutTotal = Object.values(donutMap).reduce((sum, value) => sum + Number(value || 0), 0);
-  const segments = donutSegments(donutMap, donutTotal);
+  const segments = donutSegments(donutMap, donutTotal, { productKeyByLabel: donutAggregation.productKeyByLabel });
   const selectedSegment = segments.find((segment) => segment._key === state.balanceStatsActiveSegment) || null;
   if (!selectedSegment && state.balanceStatsActiveSegment) state.balanceStatsActiveSegment = null;
   const legendExpanded = state.balanceStatsLegendExpanded !== false;
@@ -2313,12 +2401,15 @@ function renderFinanceBalance() {
           name: segment.label,
           value: segment.value,
           _key: segment._key,
+          productKey: segment.productKey,
+          pct: segment.pct,
+          midAngle: segment.midAngle,
           color: segment.color
         }))))}"
         aria-label="Distribución por agrupación"
       ></div>
-      <svg class="financeStats__calloutSvg" viewBox="0 0 100 100" aria-hidden="true"><polyline class="financeStats__calloutLine" data-finance-stats-callout-line hidden></polyline></svg>
-      <div class="financeStats__callout" data-finance-stats-callout hidden></div>
+      <svg class="financeStats__calloutSvg" viewBox="0 0 100 100" aria-hidden="true"><polyline id="financeStatsDonutCalloutLine" class="financeStats__calloutLine" data-finance-stats-callout-line style="display:none"></polyline></svg>
+      <div id="financeStatsDonutCallout" class="financeStats__callout" data-finance-stats-callout style="display:none"></div>
       <div class="financeStats__donutCenter">
         <small>${statsGroupBy === 'product' ? `Total (con líneas · ${scopeLabel})` : `Total (${scopeLabel})`}</small>
         <strong class="financeStats__donutValue">${fmtCurrency(donutTotal)}</strong>
@@ -2331,7 +2422,7 @@ function renderFinanceBalance() {
     <details class="financeStats__details" data-finance-stats-legend-details ${legendExpanded ? 'open' : ''}>
       <summary class="financeStats__detailsSummary" data-finance-stats-legend-summary>Leyenda</summary>
       <div class="financeStats__detailsBody financeStats__legendGrid">
-        ${segments.length ? segments.map((segment, index) => `<button type="button" class="financeStats__rankRow ${state.balanceStatsActiveSegment === segment._key ? 'is-active' : ''}" data-finance-stats-segment="${escapeHtml(segment._key)}"><span class="financeStats__rank">${index + 1}º</span><span class="financeStats__name"><i class="financeStats__dot" style="background:${segment.color}"></i>${escapeHtml(segment.label)}</span><span class="financeStats__meta">${fmtCurrency(segment.value)} · ${segment.pct.toFixed(1)}%</span></button>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
+        ${segments.length ? segments.map((segment, index) => `<div class="financeStats__rankRow ${state.balanceStatsActiveSegment === segment._key ? 'is-active' : ''} financeLegendRow" data-finance-stats-segment="${escapeHtml(segment._key)}" data-product-key="${escapeHtml(segment.productKey || '')}"><div class="financeStats__left"><span class="financeStats__rank">${index + 1}º</span><span class="financeStats__name"><i class="financeStats__dot" style="background:${segment.color}"></i>${escapeHtml(segment.label)}</span></div><div class="financeStats__right">${statsGroupBy === 'product' ? `<button type="button" class="financeProductStatsBtn" data-finance-product-stats="${escapeHtml(segment.productKey || segment._key)}" aria-label="Ver estadísticas del producto">📈</button>` : ''}<span class="financeStats__meta">${fmtCurrency(segment.value)}</span><span class="financeStats__meta">${segment.pct.toFixed(1)}%</span></div></div>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
       </div>
     </details>
 
@@ -3803,7 +3894,7 @@ function bindEvents() {
       return;
     }
     const segmentToggle = target.closest('[data-finance-stats-segment]')?.dataset.financeStatsSegment;
-    if (segmentToggle) {
+    if (segmentToggle && !target.closest('[data-finance-product-stats]')) {
       state.balanceStatsActiveSegment = state.balanceStatsActiveSegment === segmentToggle ? null : segmentToggle;
       state.balanceStatsSelectedSliceKey = state.balanceStatsActiveSegment;
       updateLegendSelection(state.balanceStatsActiveSegment || '');
@@ -3814,6 +3905,11 @@ function bindEvents() {
         const idx = rows.findIndex((row) => String(row?._key || '') === String(state.balanceStatsActiveSegment || ''));
         if (idx >= 0) financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idx });
       }
+      return;
+    }
+    const legendProductKey = target.closest('[data-finance-product-stats]')?.dataset.financeProductStats || target.closest('.financeLegendRow')?.dataset.productKey;
+    if (target.closest('[data-finance-product-stats]') && legendProductKey) {
+      openProductDetail(legendProductKey);
       return;
     }
     const foodDetailId = target.closest('[data-food-item-detail]')?.dataset.foodItemDetail;
@@ -3834,6 +3930,27 @@ function bindEvents() {
     if (state.balanceStatsActiveSegment && state.activeView === 'balance' && !target.closest('.financeStats')) {
       state.balanceStatsActiveSegment = null;
       triggerRender();
+    }
+    const aliasRemoveIndex = target.closest('[data-food-alias-remove]')?.dataset.foodAliasRemove;
+    const aliasAddBtn = target.closest('[data-food-alias-add]');
+    if (aliasRemoveIndex != null || aliasAddBtn) {
+      const formEl = target.closest('[data-food-item-form]');
+      const hidden = formEl?.querySelector('[data-food-aliases-hidden]');
+      const input = formEl?.querySelector('[data-food-alias-input]');
+      const chips = formEl?.querySelector('[data-food-aliases-chips]');
+      if (!hidden || !chips) return;
+      const aliases = String(hidden.value || '').split(',').map((row) => normalizeFoodName(row)).filter(Boolean);
+      if (aliasRemoveIndex != null) aliases.splice(Number(aliasRemoveIndex), 1);
+      if (aliasAddBtn) {
+        const alias = normalizeFoodName(String(input?.value || ''));
+        if (alias && !aliases.includes(alias)) aliases.push(alias);
+        if (input) input.value = '';
+      }
+      hidden.value = aliases.join(', ');
+      chips.innerHTML = aliases.length
+        ? aliases.map((alias, index) => `<button type="button" class="finFoodChip finFoodChip--remove" data-food-alias-remove="${index}">${escapeHtml(alias)} ×</button>`).join('')
+        : '<span class="finFoodChip">Sin alias</span>';
+      return;
     }
     const foodAdd = target.closest('[data-food-add]')?.dataset.foodAdd;
     if (foodAdd) {
@@ -4191,6 +4308,33 @@ view.addEventListener('focusout', async (event) => {
   });
 
 
+  view.addEventListener('focusout', async (event) => {
+    if (!event.target.matches('[data-food-display-name]')) return;
+    const formEl = event.target.closest('[data-food-item-form][data-food-item-mode="detail"]');
+    if (!formEl) return;
+    const idInput = formEl.querySelector('input[name="foodId"]');
+    const nameInput = formEl.querySelector('input[name="name"]');
+    const foodId = String(idInput?.value || '');
+    const name = normalizeFoodName(String(nameInput?.value || ''));
+    const displayName = String(event.target.value || '').trim() || name;
+    if (!foodId || !name || !displayName) return;
+    const prevFood = state.food.itemsById?.[foodId] || null;
+    if (prevFood && String(prevFood.displayName || '') === displayName) return;
+    await upsertFoodItem({
+      id: foodId,
+      name,
+      displayName,
+      aliases: Array.isArray(prevFood?.aliases) ? prevFood.aliases : [],
+      vendorAliases: prevFood?.vendorAliases && typeof prevFood.vendorAliases === 'object' ? prevFood.vendorAliases : {},
+      mealType: prevFood?.mealType || '',
+      cuisine: prevFood?.cuisine || prevFood?.healthy || '',
+      healthy: prevFood?.cuisine || prevFood?.healthy || '',
+      place: prevFood?.place || '',
+      defaultPrice: Number(prevFood?.defaultPrice || 0)
+    }, false);
+    toast('Display name guardado');
+  });
+
   view.addEventListener('submit', async (event) => {
     if (event.target.matches('[data-food-item-form]')) {
       event.preventDefault();
@@ -4232,8 +4376,13 @@ view.addEventListener('focusout', async (event) => {
         foodPlace: place,
         foodExtrasOpen: true
       };
-      state.modal = { type: 'tx', txId: state.modal.txId || '' };
-      triggerRender();
+      if (state.modal.type === 'food-item' && ['detail', 'info'].includes(state.modal.mode || '')) {
+        state.modal = { ...state.modal, foodId: savedFoodId || foodId || state.modal.foodId };
+        triggerRender();
+      } else {
+        state.modal = { type: 'tx', txId: state.modal.txId || '' };
+        triggerRender();
+      }
       return;
     }
     if (event.target.matches('[data-new-account-form]')) {

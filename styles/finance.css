@@ -1305,6 +1305,32 @@ summary.fm-details__summary{
 .financeTab .financeStats__barFill--income { background: linear-gradient(90deg, #30d158, #57e27d); }
 .financeTab .financeStats__barFill--expense { background: linear-gradient(90deg, #ff453a, #ff6b63); }
 .financeTab .financeStats__foodsList { gap: 10px; }
+
+.financeTab #financeStatsDonutCallout { display: none; }
+.financeTab .financeStats__left,
+.financeTab .financeStats__right { display:flex; align-items:center; gap:8px; }
+.financeTab .financeStats__right { margin-left:auto; }
+.financeTab .financeProductStatsBtn {
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  border-radius: 10px;
+  border: 1px solid rgba(125,190,255,.45);
+  background: rgba(95,165,255,.18);
+  color: #eaf4ff;
+  display:grid;
+  place-items:center;
+  font-size: 16px;
+}
+.financeTab .finFoodDetailSection { border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:10px; display:grid; gap:8px; }
+.financeTab .finFoodChipRow { display:flex; gap:6px; flex-wrap:wrap; }
+.financeTab .finFoodChip { border:1px solid rgba(255,255,255,.16); border-radius:999px; padding:4px 10px; font-size:12px; background:rgba(255,255,255,.06); }
+.financeTab .finFoodChip--remove { cursor:pointer; color:inherit; }
+.financeTab .finFoodDataGrid { display:grid; gap:8px; }
+.financeTab .finFoodPriceTableWrap { overflow:auto; }
+.financeTab .finFoodPriceTable { width:100%; border-collapse:collapse; font-size:12px; }
+.financeTab .finFoodPriceTable th, .financeTab .finFoodPriceTable td { padding:6px; border-bottom:1px solid rgba(255,255,255,.08); text-align:left; }
+
 .financeTab .financeStats__foodRow small { opacity: .75; }
 .financeTab .financeStats__manage .financeStats__detailsBody { max-height: 260px; }
 .financeTab .financeStats__deleteBtn { border: 1px solid rgba(255,105,105,.5); background: rgba(255,80,80,.12); color: #ffd7d7; border-radius: 8px; min-height: 24px; min-width: 24px; }

@@ -2472,6 +2472,10 @@ function renderModal() {
   const ticketImportState = state.modal.ticketImport || { raw: '', parsed: null, error: '', warnings: [], open: false };
   const ticketPreview = ticketImportState.parsed?.ok ? ticketImportState.parsed.data : null;
   const ticketPreviewWarnings = [...(ticketImportState.parsed?.warnings || []), ...(ticketImportState.warnings || [])];
+  const diagnostic = ticketImportState.diagnostic || ticketImportState.parsed?.diagnostic || null;
+  const rawText = String(ticketImportState.raw || '');
+  const rawPreviewHead = rawText.slice(0, 80);
+  const rawPreviewTail = rawText.length > 80 ? rawText.slice(-80) : '';
   const ticketCardPreview = resolveTicketCardAccountPreview(ticketPreview, accounts);
   backdrop.innerHTML = 
   
@@ -2591,11 +2595,30 @@ function renderModal() {
     <div class="finance-row" style="gap:8px;flex-wrap:wrap;">
       <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-preview>Preview</button>
       <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-paste>📋 Pegar</button>
-      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-sample>Pegar sample</button>
+      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-sample>Pegar ejemplo</button>
       <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-cancel>Cancel</button>
+      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-copy-diagnostic>Copiar diagnóstico</button>
     </div>
-    <textarea name="ticketImportRaw" data-ticket-import-raw rows="10" style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escapeHtml(ticketImportState.raw || '')}</textarea>
+    <textarea name="ticketImportRaw" data-ticket-import-raw rows="10" autocapitalize="off" autocorrect="off" spellcheck="false" style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escapeHtml(ticketImportState.raw || '')}</textarea>
+    <p class="finance-help" style="margin:6px 0 0 0;">raw.length=${rawText.length} · head=${escapeHtml(rawPreviewHead)}${rawPreviewTail ? ` · tail=${escapeHtml(rawPreviewTail)}` : ''}</p>
     ${ticketImportState.error ? `<p class="is-negative">${escapeHtml(ticketImportState.error)}</p>` : ''}
+    ${diagnostic ? `
+      <div class="finance-mini-list" style="margin-top:8px;max-height:220px;overflow:auto;">
+        <p><strong>Diagnóstico</strong></p>
+        <p>stage: ${escapeHtml(String(diagnostic.stage || 'unknown'))}</p>
+        <p>raw.length: ${Number(diagnostic.raw_length || rawText.length)}</p>
+        <p>sanitized.length: ${Number(diagnostic.sanitized_length || 0)}</p>
+        <p>sanitize.changes: ${(diagnostic.sanitize_changes || []).map((it) => escapeHtml(String(it))).join(', ') || 'none'}</p>
+        ${Number.isFinite(Number(diagnostic.computed_total)) || Number.isFinite(Number(diagnostic.purchase_total))
+          ? `<p>computed_total: ${fmtCurrency(diagnostic.computed_total || 0)} · purchase.total: ${fmtCurrency(diagnostic.purchase_total || 0)}</p>`
+          : ''}
+        ${(diagnostic.validate_errors || []).map((entry) => `<p class="is-negative">• ${escapeHtml(String(entry.path || 'root'))}: ${escapeHtml(String(entry.message || entry.code || 'error'))}</p>`).join('')}
+        ${diagnostic.parse_error?.snippet ? `<p>snippet: ${escapeHtml(String(diagnostic.parse_error.snippet || ''))}</p>` : ''}
+        ${Array.isArray(diagnostic.parse_error?.charCodes) && diagnostic.parse_error.charCodes.length
+          ? `<p>charCodes: ${escapeHtml(diagnostic.parse_error.charCodes.map((row) => `${row.offset}:${row.code}`).join(', '))}</p>`
+          : ''}
+      </div>
+    ` : ''}
     ${ticketPreview ? `
       <div class="finance-mini-list" style="margin-top:8px;max-height:240px;overflow:auto;">
         <p><strong>Supermercado:</strong> ${escapeHtml(ticketPreview.source?.vendor || 'unknown')}</p>
@@ -3303,7 +3326,7 @@ function bindEvents() {
     if (target.closest('[data-ticket-import-paste]')) {
       try {
         const text = await navigator.clipboard.readText();
-        state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, raw: text, error: '' } };
+        state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, raw: text, error: '', diagnostic: null } };
       } catch {
         state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, error: 'No se pudo leer el portapapeles' } };
       }
@@ -3311,19 +3334,40 @@ function bindEvents() {
       return;
     }
     if (target.closest('[data-ticket-import-sample]')) {
-      state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, raw: TICKET_IMPORT_SAMPLE_V1, error: '' } };
+      state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, raw: TICKET_IMPORT_SAMPLE_V1, error: '', diagnostic: null } };
       triggerRender();
       return;
     }
     if (target.closest('[data-ticket-import-cancel]')) {
-      state.modal = { ...state.modal, ticketImport: { raw: '', parsed: null, error: '', warnings: [], open: false } };
+      state.modal = { ...state.modal, ticketImport: { raw: '', parsed: null, error: '', warnings: [], open: false, diagnostic: null } };
       triggerRender();
+      return;
+    }
+    if (target.closest('[data-ticket-import-copy-diagnostic]')) {
+      try {
+        const diagnostic = state.modal.ticketImport?.diagnostic || state.modal.ticketImport?.parsed?.diagnostic || { message: 'Sin diagnóstico aún' };
+        await navigator.clipboard.writeText(JSON.stringify(diagnostic, null, 2));
+        toast('Diagnóstico copiado');
+      } catch {
+        toast('No se pudo copiar el diagnóstico');
+      }
       return;
     }
     if (target.closest('[data-ticket-import-preview]')) {
       const raw = String(ticketImportRawEl?.value || state.modal.ticketImport?.raw || '');
       const parsed = parseTicketImport(raw);
-      state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, raw, parsed, error: parsed.ok ? '' : parsed.error, warnings: [] } };
+      state.modal = {
+        ...state.modal,
+        ticketImport: {
+          ...(state.modal.ticketImport || {}),
+          open: true,
+          raw,
+          parsed,
+          diagnostic: parsed.diagnostic || null,
+          error: parsed.ok ? '' : parsed.error,
+          warnings: []
+        }
+      };
       triggerRender();
       return;
     }
@@ -3331,7 +3375,16 @@ function bindEvents() {
       try {
         const parsed = state.modal.ticketImport?.parsed;
         if (!parsed?.ok) {
-          state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), error: 'Primero genera un preview válido' } };
+          state.modal = {
+            ...state.modal,
+            ticketImport: {
+              ...(state.modal.ticketImport || {}),
+              error: parsed?.stage === 'validate'
+                ? 'No se pudo aplicar por validación. Revisa Diagnóstico.'
+                : 'No se pudo aplicar por parse. Revisa Diagnóstico.',
+              diagnostic: parsed?.diagnostic || { stage: 'apply', error: 'Primero genera un preview válido' }
+            }
+          };
           triggerRender();
           return;
         }
@@ -3425,13 +3478,32 @@ function bindEvents() {
             ...(state.modal.ticketImport || {}),
             open: true,
             warnings: importResult.warnings,
-            error: ''
+            error: '',
+            diagnostic: {
+              ...(parsed.diagnostic || {}),
+              stage: 'apply',
+              apply: 'ok',
+              warnings: importResult.warnings,
+              computed_total: parsed.data?.purchase?.computed_total,
+              purchase_total: parsed.data?.purchase?.total
+            }
           }
         };
         triggerRender();
         toast('Import aplicado');
       } catch (error) {
-        state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), error: 'No se pudo aplicar el import. Revisa el JSON.' } };
+        state.modal = {
+          ...state.modal,
+          ticketImport: {
+            ...(state.modal.ticketImport || {}),
+            error: `No se pudo aplicar el import: ${error?.message || 'error desconocido'}`,
+            diagnostic: {
+              ...(state.modal.ticketImport?.diagnostic || state.modal.ticketImport?.parsed?.diagnostic || {}),
+              stage: 'apply',
+              apply_error: String(error?.message || 'error desconocido')
+            }
+          }
+        };
         triggerRender();
       }
       return;
@@ -3754,6 +3826,17 @@ view.addEventListener('focusout', async (event) => {
       const form = event.target.closest('[data-balance-form]');
       maybeToggleCategoryCreate(form);
       persistBalanceFormState(form);
+      return;
+    }
+
+    if (event.target.matches('[data-ticket-import-raw]') && state.modal?.type === 'tx') {
+      state.modal = {
+        ...state.modal,
+        ticketImport: {
+          ...(state.modal.ticketImport || {}),
+          raw: String(event.target.value || '')
+        }
+      };
       return;
     }
 

@@ -1702,15 +1702,11 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
 
 function donutSegments(mapData = {}, total = 0) {
   if (!total) return [];
-  const radius = 38;
-  const circumference = 2 * Math.PI * radius;
-  let offset = 0;
   let accumulatedRatio = 0;
   return Object.entries(mapData)
     .sort((a, b) => b[1] - a[1])
     .map(([label, value], index) => {
       const ratio = Number(value || 0) / total;
-      const length = circumference * ratio;
       const startRatio = accumulatedRatio;
       const endRatio = accumulatedRatio + ratio;
       const midAngle = ((startRatio + endRatio) / 2) * (Math.PI * 2) - (Math.PI / 2);
@@ -1720,14 +1716,113 @@ function donutSegments(mapData = {}, total = 0) {
         color: categoryColor(index),
         pct: ratio * 100,
         midAngle,
-        key: `${label}__${index}`,
-        strokeDasharray: `${length} ${Math.max(0, circumference - length)}`,
-        strokeDashoffset: -offset
+        key: `${firebaseSafeKey(label)}__${index}`,
+        _key: firebaseSafeKey(label)
       };
-      offset += length;
       accumulatedRatio = endRatio;
       return segment;
     });
+}
+
+let financeStatsDonutChart = null;
+
+function disposeFinanceStatsDonutChart() {
+  if (!financeStatsDonutChart) return;
+  const zr = financeStatsDonutChart.getZr?.();
+  if (zr && financeStatsDonutChart.__financeBgClickHandler) {
+    zr.off('click', financeStatsDonutChart.__financeBgClickHandler);
+    financeStatsDonutChart.__financeBgClickHandler = null;
+  }
+  try { financeStatsDonutChart.dispose(); } catch (_) {}
+  financeStatsDonutChart = null;
+}
+
+function renderFinanceStatsDonutChart() {
+  const host = document.querySelector('[data-finance-stats-donut]');
+  if (!host || typeof echarts === 'undefined') {
+    disposeFinanceStatsDonutChart();
+    return;
+  }
+  let rows = [];
+  try { rows = JSON.parse(host.dataset.financeStatsDonut || '[]'); } catch (_) { rows = []; }
+  if (!Array.isArray(rows) || !rows.length) {
+    disposeFinanceStatsDonutChart();
+    return;
+  }
+  if (!financeStatsDonutChart || financeStatsDonutChart.getDom() !== host) {
+    disposeFinanceStatsDonutChart();
+    financeStatsDonutChart = echarts.init(host);
+  }
+
+  financeStatsDonutChart.setOption({
+    animation: false,
+    tooltip: {
+      trigger: 'item',
+      triggerOn: 'none',
+      formatter: (params) => `${escapeHtml(params?.data?.name || '')}<br>${fmtCurrency(params?.data?.value || 0)} · ${(Number(params?.percent || 0)).toFixed(1)}%`
+    },
+    series: [{
+      type: 'pie',
+      radius: ['58%', '80%'],
+      avoidLabelOverlap: true,
+      label: { show: false },
+      labelLine: { show: false },
+      emphasis: { scale: true, scaleSize: 6 },
+      itemStyle: { borderColor: 'rgba(8,14,34,.9)', borderWidth: 2 },
+      data: rows.map((row) => ({
+        name: row.name,
+        value: Number(row.value || 0),
+        _key: row._key,
+        itemStyle: { color: row.color }
+      }))
+    }]
+  }, { notMerge: true });
+
+  const resetSelection = ({ rerender = true } = {}) => {
+    financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
+    financeStatsDonutChart.dispatchAction({ type: 'hideTip' });
+    if (state.balanceStatsActiveSegment) {
+      state.balanceStatsActiveSegment = null;
+      if (rerender) triggerRender();
+    }
+  };
+
+  financeStatsDonutChart.off('click');
+  financeStatsDonutChart.on('click', (params) => {
+    if (params?.seriesType !== 'pie' || !params?.data) return;
+    const idx = Number(params.dataIndex);
+    const segmentKey = String(params.data._key || '');
+    if (!segmentKey || !Number.isInteger(idx) || idx < 0) return;
+    if (state.balanceStatsActiveSegment === segmentKey) {
+      resetSelection();
+      return;
+    }
+    state.balanceStatsActiveSegment = segmentKey;
+    financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
+    financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idx });
+    financeStatsDonutChart.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: idx });
+    triggerRender();
+  });
+
+  const zr = financeStatsDonutChart.getZr?.();
+  if (zr && financeStatsDonutChart.__financeBgClickHandler) {
+    zr.off('click', financeStatsDonutChart.__financeBgClickHandler);
+  }
+  financeStatsDonutChart.__financeBgClickHandler = (event) => {
+    if (event?.target) return;
+    resetSelection();
+  };
+  if (zr) zr.on('click', financeStatsDonutChart.__financeBgClickHandler);
+
+  financeStatsDonutChart.resize();
+  if (state.balanceStatsActiveSegment) {
+    const selectedIndex = rows.findIndex((row) => row._key === state.balanceStatsActiveSegment);
+    if (selectedIndex >= 0) {
+      financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
+      financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: selectedIndex });
+      financeStatsDonutChart.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: selectedIndex });
+    }
+  }
 }
 
 function categoriesList() {
@@ -1952,7 +2047,7 @@ function renderFinanceBalance() {
   const unlinedTotal = donutAggregation.unlinedTotal;
   const donutTotal = Object.values(donutMap).reduce((sum, value) => sum + Number(value || 0), 0);
   const segments = donutSegments(donutMap, donutTotal);
-  const selectedSegment = segments.find((segment) => segment.key === state.balanceStatsActiveSegment) || null;
+  const selectedSegment = segments.find((segment) => segment._key === state.balanceStatsActiveSegment) || null;
   if (!selectedSegment && state.balanceStatsActiveSegment) state.balanceStatsActiveSegment = null;
   const calloutSegment = selectedSegment;
   const calloutInnerRadius = 46;
@@ -2091,11 +2186,17 @@ const calloutBox = calloutSegment
     </div>
 
     <div class="financeStats__donutWrap ${calloutSegment ? 'is-focused' : ''}">
-      <svg class="financeStats__donutSvg" viewBox="0 0 100 100" aria-label="Distribución por agrupación">
-        <circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="16"></circle>
-        ${segments.map((segment) => `<circle class="financeStats__segment ${state.balanceStatsActiveSegment === segment.key ? 'is-active' : ''}" data-finance-stats-segment="${escapeHtml(segment.key)}" cx="50" cy="50" r="38" fill="none" stroke="${segment.color}" stroke-width="16" stroke-dasharray="${segment.strokeDasharray}" stroke-dashoffset="${segment.strokeDashoffset}" transform="rotate(-90 50 50)"></circle>`).join('')}
-        ${calloutSegment ? `<polyline class="financeStats__calloutLine" points="${calloutFrom.x},${calloutFrom.y} ${calloutTo.x},${calloutTo.y} ${calloutBox.x},${calloutBox.y}"></polyline>` : ''}
-      </svg>
+      <div
+        class="financeStats__donutChart"
+        data-finance-stats-donut="${escapeHtml(JSON.stringify(segments.map((segment) => ({
+          name: segment.label,
+          value: segment.value,
+          _key: segment._key,
+          color: segment.color
+        }))))}"
+        aria-label="Distribución por agrupación"
+      ></div>
+      ${calloutSegment ? `<svg class="financeStats__calloutSvg" viewBox="0 0 100 100" aria-hidden="true"><polyline class="financeStats__calloutLine" points="${calloutFrom.x},${calloutFrom.y} ${calloutTo.x},${calloutTo.y} ${calloutBox.x},${calloutBox.y}"></polyline></svg>` : ''}
       ${calloutSegment ? `<div class="financeStats__callout" style="left: calc(${calloutBox.x}%); top: calc(${calloutBox.y}%);"><strong>${escapeHtml(calloutSegment.label)}</strong><small>${fmtCurrency(calloutSegment.value)} · ${calloutSegment.pct.toFixed(1)}%</small></div>` : ''}
       <div class="financeStats__donutCenter">
         <small>${statsGroupBy === 'product' ? `Total (con líneas · ${scopeLabel})` : `Total (${scopeLabel})`}</small>
@@ -2109,7 +2210,7 @@ const calloutBox = calloutSegment
     <details class="financeStats__details">
       <summary class="financeStats__detailsSummary">Leyenda</summary>
       <div class="financeStats__detailsBody financeStats__legendGrid">
-        ${segments.length ? segments.map((segment, index) => `<button type="button" class="financeStats__rankRow ${state.balanceStatsActiveSegment === segment.key ? 'is-active' : ''}" data-finance-stats-segment="${escapeHtml(segment.key)}"><span class="financeStats__rank">${index + 1}º</span><span class="financeStats__name"><i class="financeStats__dot" style="background:${segment.color}"></i>${escapeHtml(segment.label)}</span><span class="financeStats__meta">${fmtCurrency(segment.value)} · ${segment.pct.toFixed(1)}%</span></button>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
+        ${segments.length ? segments.map((segment, index) => `<button type="button" class="financeStats__rankRow ${state.balanceStatsActiveSegment === segment._key ? 'is-active' : ''}" data-finance-stats-segment="${escapeHtml(segment._key)}"><span class="financeStats__rank">${index + 1}º</span><span class="financeStats__name"><i class="financeStats__dot" style="background:${segment.color}"></i>${escapeHtml(segment.label)}</span><span class="financeStats__meta">${fmtCurrency(segment.value)} · ${segment.pct.toFixed(1)}%</span></button>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
       </div>
     </details>
 
@@ -3340,10 +3441,18 @@ async function render() {
     if (state.error) { host.innerHTML = `<article class=\"finance-panel\"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`; return; }
     await ensureBtcEurPrice();
     const accounts = buildAccountModels(); const totalSeries = buildTotalSeries(accounts);
-    if (state.activeView === 'balance') { await ensureFoodCatalogLoaded(); host.innerHTML = renderFinanceBalance(); await maybeRolloverSnapshot(); if (!Object.keys(state.balance.aggregates || {}).length) scheduleAggregateRebuild(); }
-    else if (state.activeView === 'goals') host.innerHTML = renderFinanceGoals();
-    else if (state.activeView === 'calendar') host.innerHTML = renderFinanceCalendar(accounts, totalSeries);
-    else host.innerHTML = renderFinanceHome(accounts, totalSeries);
+    if (state.activeView === 'balance') {
+      await ensureFoodCatalogLoaded();
+      host.innerHTML = renderFinanceBalance();
+      renderFinanceStatsDonutChart();
+      await maybeRolloverSnapshot();
+      if (!Object.keys(state.balance.aggregates || {}).length) scheduleAggregateRebuild();
+    } else {
+      disposeFinanceStatsDonutChart();
+      if (state.activeView === 'goals') host.innerHTML = renderFinanceGoals();
+      else if (state.activeView === 'calendar') host.innerHTML = renderFinanceCalendar(accounts, totalSeries);
+      else host.innerHTML = renderFinanceHome(accounts, totalSeries);
+    }
     renderModal();
     renderToast();
   } catch (err) {

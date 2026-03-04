@@ -2078,3 +2078,108 @@ font-size: 10px;
 .finFoodDetailBody{
   padding-top:8px;
 }
+/* Food detail sheet refresh */
+.financeTab .food-sheet-modal .food-sheet-form {
+  gap: 12px;
+  padding-bottom: 86px;
+}
+.financeTab .food-sheet-modal .finFoodCard,
+.financeTab .food-sheet-modal .finFoodDetailSection {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 16px;
+  background: rgba(10, 18, 42, 0.45);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+.financeTab .food-sheet-modal .finFoodDetailSummary {
+  list-style: none;
+  cursor: pointer;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+}
+.financeTab .food-sheet-modal .finFoodDetailSummary::after {
+  content: '⌄';
+  opacity: .75;
+  transition: transform .18s ease;
+}
+.financeTab .food-sheet-modal details[open] > .finFoodDetailSummary::after { transform: rotate(180deg); }
+.financeTab .food-sheet-modal .finFoodDetailSummary::-webkit-details-marker { display: none; }
+.financeTab .food-sheet-modal .food-form-grid.foodX-stack {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (max-width: 440px) {
+  .financeTab .food-sheet-modal .food-form-grid.foodX-stack,
+  .financeTab .food-sheet-modal .finFoodRegisterGrid {
+    grid-template-columns: 1fr;
+  }
+}
+.financeTab .food-sheet-modal .finFoodRegisterGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.financeTab .food-sheet-modal .finFoodRegisterAction {
+  align-self: end;
+}
+.financeTab .food-sheet-modal .finFoodInlineRegister {
+  border: 1px solid rgba(125, 190, 255, 0.35);
+  border-radius: 14px;
+  padding: 10px;
+  background: rgba(125, 190, 255, 0.08);
+}
+.financeTab .food-sheet-modal .finFoodLabelAction {
+  margin-left: 8px;
+  border: 0;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  border-radius: 999px;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+.financeTab .food-sheet-modal .finFoodInlineAddBtn {
+  min-height: 42px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255,255,255,.08);
+  color: inherit;
+  padding: 0 12px;
+}
+.financeTab .food-sheet-modal .finFoodPriceTable th,
+.financeTab .food-sheet-modal .finFoodPriceTable td {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.financeTab .food-sheet-modal .finFoodAliasBtn,
+.financeTab .food-sheet-modal .finFoodLinkBtn {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+}
+.financeTab .food-sheet-modal .finFoodTableActions {
+  display: flex;
+  gap: 6px;
+}
+.financeTab .food-sheet-modal .finFoodIconAction {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+}
+.financeTab .food-sheet-modal .finFoodIconAction--danger {
+  border-color: rgba(255, 110, 110, 0.4);
+  color: #ffc5c5;
+}
+.financeTab .food-sheet-modal .finFoodMiniTab[data-food-vendor-toggle] {
+  border-color: color-mix(in srgb, var(--vendor-color, #7dbdff) 60%, rgba(255,255,255,.2));
+}
+.financeTab .food-sheet-modal .food-sheet-footer {
+  padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+}

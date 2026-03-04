@@ -555,25 +555,39 @@ function foodHistoryFromTransactions(food = {}) {
         || (foodDisplay && itemName === foodDisplay);
       if (!matches) return;
       const ts = Number(row?.date ? parseDayKey(row.date) : txSortTs(row));
-      const totalPrice = Number(item?.totalPrice ?? item?.amount ?? item?.price || 0);
-      if (!Number.isFinite(ts) || ts <= 0 || !Number.isFinite(totalPrice) || totalPrice <= 0) return;
-      const qty = Math.max(1, Number(item?.qty || 1));
-      const unitPrice = Number(item?.unitPrice || computeUnitPrice(totalPrice, qty));
-      const vendor = firebaseSafeKey(item?.place || row?.extras?.filters?.place || row?.extras?.place || food?.place || 'unknown') || 'unknown';
-      const key = `${vendor}__${String(row?.id || '') || ts}`;
-      byKey[key] = {
-        vendor,
-        price: unitPrice,
-        unitPrice,
-        qty,
-        unit: String(item?.unit || 'ud').trim() || 'ud',
-        totalPrice,
-        linePrice: totalPrice,
-        ts,
-        date: String(row?.date || dayKeyFromTs(ts)),
-        source: 'expense-line',
-        expenseId: String(row?.id || '')
-      };
+
+const totalPriceRaw = item?.totalPrice ?? item?.amount ?? item?.price ?? 0;
+const totalPrice = Number(totalPriceRaw);
+
+if (!Number.isFinite(ts) || ts <= 0 || !Number.isFinite(totalPrice) || totalPrice <= 0) return;
+
+const qty = Math.max(1, Number(item?.qty ?? 1));
+const unitPrice = Number(item?.unitPrice ?? computeUnitPrice(totalPrice, qty) ?? 0);
+
+const vendor =
+  firebaseSafeKey(
+    item?.place ??
+    row?.extras?.filters?.place ??
+    row?.extras?.place ??
+    food?.place ??
+    "unknown"
+  ) || "unknown";
+
+const key = `${vendor}__${String(row?.id ?? "") || ts}`;
+
+byKey[key] = {
+  vendor,
+  price: unitPrice,
+  unitPrice,
+  qty,
+  unit: String(item?.unit ?? "ud").trim() || "ud",
+  totalPrice,
+  linePrice: totalPrice,
+  ts,
+  date: String(row?.date ?? dayKeyFromTs(ts)),
+  source: "expense-line",
+  expenseId: String(row?.id ?? "")
+};
     });
   });
   return Object.values(byKey).sort((a, b) => a.ts - b.ts);

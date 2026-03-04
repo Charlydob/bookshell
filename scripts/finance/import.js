@@ -118,6 +118,15 @@ export function normalizeProductName(str = '') {
     .trim();
 }
 
+export function normalizeTicketKey(str = '') {
+  return String(str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 const VALID_TICKET_CATEGORIES = new Set([
   'lacteos', 'carne', 'pescado', 'fruta', 'verdura', 'panaderia',
   'bebidas', 'snacks', 'hogar', 'higiene', 'congelados', 'despensa',
@@ -358,21 +367,24 @@ export function parseTicketImport(text = '') {
 }
 
 export function matchExistingProduct(ticketItem = {}, products = []) {
-  const rawNorm = normalizeProductName(ticketItem.name_norm || ticketItem.name_raw || '');
-  const vendorKey = firebaseSafeKey(ticketItem.vendor || ticketItem.sourceVendor || '');
-  if (!rawNorm) return null;
+  const rawCanonical = normalizeTicketKey(ticketItem.name_raw || ticketItem.name_norm || '');
+  if (!rawCanonical) return null;
+  const canonicalKey = firebaseSafeKey(rawCanonical);
   return products.find((product) => {
+    const primaryCanonical = normalizeTicketKey(product?.ticketName || product?.name || '');
+    if (primaryCanonical && primaryCanonical === rawCanonical) return true;
     const productKey = firebaseSafeKey(product?.key || product?.name || '');
-    if (productKey && productKey === firebaseSafeKey(rawNorm)) return true;
-    const productName = normalizeProductName(product?.name || '');
-    if (productName === rawNorm) return true;
-    const displayName = normalizeProductName(product?.displayName || '');
-    if (displayName === rawNorm) return true;
-    if (Array.isArray(product?.aliases) && product.aliases.some((alias) => normalizeProductName(alias) === rawNorm)) return true;
-    const vendorAliases = product?.vendorAliases && typeof product.vendorAliases === 'object' ? product.vendorAliases : {};
-    if (vendorKey && Array.isArray(vendorAliases[vendorKey])) {
-      return vendorAliases[vendorKey].some((alias) => normalizeProductName(alias) === rawNorm);
-    }
+    if (productKey && productKey === canonicalKey) return true;
+
+    const aliases = Array.isArray(product?.aliases) ? product.aliases : [];
+    if (aliases.some((alias) => normalizeTicketKey(alias) === rawCanonical)) return true;
+    const vendorAliases = product?.vendorAliases && typeof product.vendorAliases === 'object'
+      ? Object.values(product.vendorAliases).flatMap((list) => (Array.isArray(list) ? list : []))
+      : [];
+    if (vendorAliases.some((alias) => normalizeTicketKey(alias) === rawCanonical)) return true;
+
+    const displayName = normalizeTicketKey(product?.displayName || '');
+    if (displayName === rawCanonical) return true;
     return false;
   }) || null;
 }
@@ -395,14 +407,30 @@ export function applyTicketImport(ticket, currentExpenseDraft = {}, products = [
   const updatedProducts = [];
   const lineItems = [];
   let amount = 0;
+  const toUniqueList = (values = []) => {
+    const seen = new Set();
+    const output = [];
+    for (const value of values) {
+      const safe = String(value || '').trim();
+      if (!safe) continue;
+      const canonical = normalizeTicketKey(safe);
+      if (!canonical || seen.has(canonical)) continue;
+      seen.add(canonical);
+      output.push(safe);
+    }
+    return output;
+  };
   for (const item of ticket.items || []) {
     const matched = matchExistingProduct({ ...item, vendor: ticket?.source?.vendor || '' }, products);
+    const rawName = String(item.name_raw || item.name_norm || '').trim();
+    const canonicalName = normalizeTicketKey(rawName);
+    const normalizedName = String(item.name_norm || rawName).trim();
     const linePrice = Number(item.total_price || 0);
     const appCategory = String(item.category_app || mapTicketCategoryToApp(item.category_guess || 'otros'));
     amount += linePrice;
     lineItems.push({
       productId: matched?.id || '',
-      name: item.name_norm,
+      name: rawName || normalizedName,
       qty: Number(item.qty || 1),
       unit: String(item.unit || 'ud').trim() || 'ud',
       price: linePrice,
@@ -420,20 +448,27 @@ export function applyTicketImport(ticket, currentExpenseDraft = {}, products = [
       const prevPrice = Number(matched.defaultPrice || 0);
       const shouldUpdatePrice = Number.isFinite(nextDefaultPrice) && nextDefaultPrice > 0 && Math.abs(prevPrice - nextDefaultPrice) > 0.001;
       const shouldFillCategory = hasMissingCategory(matched) && appCategory;
-      if (shouldUpdatePrice || shouldFillCategory) {
+      const nextAliases = toUniqueList([...(Array.isArray(matched.aliases) ? matched.aliases : []), rawName, normalizedName]);
+      const aliasesChanged = JSON.stringify(nextAliases) !== JSON.stringify(Array.isArray(matched.aliases) ? matched.aliases : []);
+      const shouldSetTicketName = !String(matched.ticketName || '').trim() && rawName;
+      if (shouldUpdatePrice || shouldFillCategory || aliasesChanged || shouldSetTicketName) {
         updatedProducts.push({
           ...matched,
+          ...(shouldSetTicketName ? { ticketName: rawName } : {}),
+          ...(aliasesChanged ? { aliases: nextAliases } : {}),
           ...(shouldUpdatePrice ? { defaultPrice: nextDefaultPrice } : {}),
           ...(shouldFillCategory ? { healthy: appCategory, cuisine: appCategory } : {})
         });
       }
     } else {
+      const initialAliases = toUniqueList([normalizedName]);
       createdProducts.push({
-        name: item.name_norm,
-        displayName: item.name_norm,
-        aliases: [item.name_raw].filter(Boolean),
+        name: canonicalName || normalizeTicketKey(normalizedName),
+        ticketName: rawName || normalizedName,
+        displayName: rawName || normalizedName,
+        aliases: initialAliases,
         vendorAliases: {
-          [firebaseSafeKey(ticket?.source?.vendor || 'unknown') || 'unknown']: [item.name_norm, item.name_raw].filter(Boolean)
+          [firebaseSafeKey(ticket?.source?.vendor || 'unknown') || 'unknown']: toUniqueList([normalizedName, rawName])
         },
         createdFromVendor: String(ticket?.source?.vendor || ''),
         defaultPrice: Number.isFinite(nextDefaultPrice) && nextDefaultPrice > 0 ? nextDefaultPrice : linePrice,

@@ -95,6 +95,57 @@ export function normalizeProductName(str = '') {
     .trim();
 }
 
+const VALID_TICKET_CATEGORIES = new Set([
+  'lacteos', 'carne', 'pescado', 'fruta', 'verdura', 'panaderia',
+  'bebidas', 'snacks', 'hogar', 'higiene', 'congelados', 'despensa',
+  'mascotas', 'otros'
+]);
+
+export function mapTicketCategoryToApp(catGuess = '') {
+  const normalized = normalizeProductName(catGuess).replace(/\s+/g, '');
+  return VALID_TICKET_CATEGORIES.has(normalized) ? normalized : 'otros';
+}
+
+export function inferCategoryFromName(name = '') {
+  const safe = normalizeProductName(name);
+  if (!safe) return null;
+  const keywordMap = [
+    { category: 'hogar', pattern: /\b(papel|detergente|suavizante|lavavajillas|lejia|bolsa basura|fregasuelos|limpiador)\b/ },
+    { category: 'higiene', pattern: /\b(gel|champu|desodorante|jabon manos|pasta dental|cepillo dental|higienico)\b/ },
+    { category: 'lacteos', pattern: /\b(leche|queso|yogur|yogurt|kefir|mantequilla)\b/ },
+    { category: 'carne', pattern: /\b(pollo|ternera|cerdo|hamburguesa|carne picada|pavo)\b/ },
+    { category: 'pescado', pattern: /\b(atun|salmon|merluza|bacalao|pescado|gamba)\b/ },
+    { category: 'fruta', pattern: /\b(manzana|platano|banana|pera|naranja|fruta|fresa|uvas?)\b/ },
+    { category: 'verdura', pattern: /\b(lechuga|tomate|cebolla|zanahoria|pepino|brocoli|espinaca|verdura)\b/ },
+    { category: 'panaderia', pattern: /\b(pan|barra|croissant|bolleria|magdalena|tostada)\b/ },
+    { category: 'bebidas', pattern: /\b(agua|zumo|jugo|refresco|cola|cerveza|vino|bebida)\b/ },
+    { category: 'snacks', pattern: /\b(patatas|snack|galletas?|chocolate|frutos secos)\b/ },
+    { category: 'congelados', pattern: /\b(congelado|helado)\b/ },
+    { category: 'despensa', pattern: /\b(arroz|pasta|legumbre|harina|aceite|sal|azucar|mermelada|conserva)\b/ },
+    { category: 'mascotas', pattern: /\b(perro|gato|mascota|pienso|arena gato)\b/ }
+  ];
+  const hit = keywordMap.find(({ pattern }) => pattern.test(safe));
+  return hit ? hit.category : null;
+}
+
+function resolveTicketItemCategory(item = {}) {
+  const mappedGuess = mapTicketCategoryToApp(item.category_guess || '');
+  const inferred = mappedGuess === 'otros'
+    ? inferCategoryFromName(item.name_norm || item.name_raw || '')
+    : null;
+  return {
+    category_guess: mappedGuess,
+    category_app: mapTicketCategoryToApp(inferred || mappedGuess),
+    category_inferred: Boolean(inferred)
+  };
+}
+
+function hasMissingCategory(product = {}) {
+  const healthy = String(product?.healthy ?? '').trim();
+  const cuisine = String(product?.cuisine ?? '').trim();
+  return !healthy && !cuisine;
+}
+
 export function parseTicketImport(text = '') {
   const sanitizedText = sanitizeImportText(text);
   let parsed;
@@ -123,13 +174,18 @@ export function parseTicketImport(text = '') {
     const unitPriceParsed = unitPriceRaw == null ? null : toNumberEUR(unitPriceRaw);
     const unitPrice = Number.isFinite(unitPriceParsed) ? unitPriceParsed : (qty > 0 ? totalPrice / qty : totalPrice);
     const nameNorm = String(row.name_norm || '').trim() || String(row.name_raw || '').trim();
+    const categoryInfo = resolveTicketItemCategory({ ...row, name_norm: nameNorm });
+    if (categoryInfo.category_inferred) {
+      warnings.push(`Item ${i + 1}: faltaba category_guess útil, inferida por nombre → ${categoryInfo.category_app}`);
+    }
     items.push({
       ...row,
       qty,
       total_price: totalPrice,
       unit_price: unitPrice,
       name_norm: nameNorm,
-      name_raw: String(row.name_raw || nameNorm || '').trim()
+      name_raw: String(row.name_raw || nameNorm || '').trim(),
+      ...categoryInfo
     });
   }
   const vendor = String(parsed?.source?.vendor || '').trim() || 'unknown';
@@ -188,6 +244,7 @@ export function applyTicketImport(ticket, currentExpenseDraft = {}, products = [
   for (const item of ticket.items || []) {
     const matched = matchExistingProduct(item, products);
     const linePrice = Number(item.total_price || 0);
+    const appCategory = String(item.category_app || mapTicketCategoryToApp(item.category_guess || 'otros'));
     amount += linePrice;
     lineItems.push({
       productId: matched?.id || '',
@@ -195,7 +252,9 @@ export function applyTicketImport(ticket, currentExpenseDraft = {}, products = [
       qty: Number(item.qty || 1),
       price: linePrice,
       unitPrice: Number(item.unit_price || 0),
-      categoryGuess: String(item.category_guess || 'otros')
+      categoryGuess: String(item.category_guess || 'otros'),
+      categoryApp: appCategory,
+      categoryInferred: Boolean(item.category_inferred)
     });
     const nextDefaultPrice = Number(item.unit_price || item.total_price || 0);
     if (isExtraLine(item.name_norm || item.name_raw || '')) {
@@ -203,15 +262,23 @@ export function applyTicketImport(ticket, currentExpenseDraft = {}, products = [
     }
     if (matched) {
       const prevPrice = Number(matched.defaultPrice || 0);
-      if (Number.isFinite(nextDefaultPrice) && nextDefaultPrice > 0 && Math.abs(prevPrice - nextDefaultPrice) > 0.001) {
-        updatedProducts.push({ ...matched, defaultPrice: nextDefaultPrice });
+      const shouldUpdatePrice = Number.isFinite(nextDefaultPrice) && nextDefaultPrice > 0 && Math.abs(prevPrice - nextDefaultPrice) > 0.001;
+      const shouldFillCategory = hasMissingCategory(matched) && appCategory;
+      if (shouldUpdatePrice || shouldFillCategory) {
+        updatedProducts.push({
+          ...matched,
+          ...(shouldUpdatePrice ? { defaultPrice: nextDefaultPrice } : {}),
+          ...(shouldFillCategory ? { healthy: appCategory, cuisine: appCategory } : {})
+        });
       }
     } else {
       createdProducts.push({
         name: item.name_norm,
         defaultPrice: Number.isFinite(nextDefaultPrice) && nextDefaultPrice > 0 ? nextDefaultPrice : linePrice,
         place: String(ticket?.source?.vendor || 'unknown').trim() || 'unknown',
-        healthy: String(item.category_guess || 'otros')
+        healthy: appCategory,
+        cuisine: appCategory,
+        tags: Array.isArray(item.tags) ? item.tags : []
       });
     }
   }

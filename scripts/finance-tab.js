@@ -17,7 +17,7 @@ async function ensureFinanceLoaded() {
 import { LEGACY_PATH, DEVICE_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
 import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './finance/ui.js';
 import { resolveFinancePath } from './finance/data.js';
-import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, firebaseSafeKey, TICKET_IMPORT_SAMPLE_V1 } from './finance/import.js';
+import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, firebaseSafeKey, TICKET_IMPORT_SAMPLE_V1, resolveTicketMovementCategory } from './finance/import.js';
 
 function log(...parts) { console.log('[finance]', ...parts); }
 function warnMissing(id) { console.warn(`[finance] missing DOM node ${id}`); }
@@ -301,6 +301,83 @@ function ticketCategoryToTxCategory(category = '') {
   return 'Comida';
 }
 
+
+function resolveProductIdentity(item = {}, productsById = {}) {
+  const explicitId = String(item?.foodId || item?.productId || '').trim();
+  if (explicitId && productsById[explicitId]) return explicitId;
+  const productKey = String(item?.productKey || firebaseSafeKey(item?.name || '')).trim();
+  if (!productKey) return '';
+  const found = Object.values(productsById || {}).find((product) => {
+    if (!product) return false;
+    if (String(product.idKey || '') === productKey) return true;
+    if (firebaseSafeKey(product?.name || '') === productKey) return true;
+    if (firebaseSafeKey(product?.displayName || '') === productKey) return true;
+    return Array.isArray(product?.aliases) && product.aliases.some((alias) => firebaseSafeKey(alias || '') === productKey);
+  });
+  return String(found?.id || productKey);
+}
+
+function computeUnitPrice(totalPriceInput, qtyInput) {
+  const totalPrice = Number(totalPriceInput || 0);
+  const qty = Number(qtyInput || 0);
+  if (!Number.isFinite(totalPrice) || totalPrice <= 0) return 0;
+  if (!Number.isFinite(qty) || qty <= 0) return Number(totalPrice.toFixed(2));
+  return Number((totalPrice / qty).toFixed(2));
+}
+
+function appendPriceHistoryPoint(pointsByVendorAndDate = {}, row = {}) {
+  const vendor = firebaseSafeKey(row?.vendor || 'unknown') || 'unknown';
+  const ts = Number(row?.ts || 0);
+  const date = String(row?.date || dayKeyFromTs(ts));
+  if (!vendor || !date) return pointsByVendorAndDate;
+  const key = `${vendor}__${date}`;
+  const current = pointsByVendorAndDate[key];
+  if (!current || ts >= Number(current.ts || 0)) {
+    pointsByVendorAndDate[key] = {
+      ...row,
+      vendor,
+      date,
+      ts: Number.isFinite(ts) && ts > 0 ? ts : parseDayKey(date)
+    };
+  }
+  return pointsByVendorAndDate;
+}
+
+function accumulateSpendByProduct(rows = [], amountByTxId = {}, productsById = {}) {
+  const spend = {};
+  const productKeyByLabel = {};
+  const statsByProduct = {};
+  rows.forEach((row) => {
+    const txAmount = Math.abs(Number(amountByTxId[row.id] ?? row.amount ?? 0));
+    if (!txAmount) return;
+    const items = foodItemsFromTx(row);
+    const validLines = items.map((item) => {
+      const totalPrice = Math.abs(Number(item?.totalPrice ?? item?.amount ?? item?.price ?? 0));
+      const qty = Math.max(1, Number(item?.qty || 1));
+      const unit = String(item?.unit || 'ud').trim() || 'ud';
+      const unitPrice = Number(item?.unitPrice || computeUnitPrice(totalPrice, qty));
+      return { item, totalPrice, qty, unit, unitPrice };
+    }).filter((line) => line.totalPrice > 0 && normalizeFoodName(line.item?.name || ''));
+    if (!validLines.length) return;
+    const linesTotal = validLines.reduce((sum, line) => sum + line.totalPrice, 0) || 1;
+    validLines.forEach((line) => {
+      const productId = resolveProductIdentity(line.item, productsById);
+      const canonicalName = productsById?.[productId]?.displayName || productsById?.[productId]?.name || line.item?.name || productId || 'Sin datos';
+      const label = normalizeFoodName(canonicalName) || 'Sin datos';
+      const scopedLineAmount = txAmount * (line.totalPrice / linesTotal);
+      spend[label] = (spend[label] || 0) + scopedLineAmount;
+      productKeyByLabel[label] = productId || line.item?.productKey || firebaseSafeKey(label);
+      const prev = statsByProduct[label] || { purchaseCount: 0, sumUnitPriceWeighted: 0, sumQty: 0, units: new Set() };
+      prev.purchaseCount += 1;
+      prev.sumUnitPriceWeighted += line.unitPrice * line.qty;
+      prev.sumQty += line.qty;
+      prev.units.add(line.unit);
+      statsByProduct[label] = prev;
+    });
+  });
+  return { spend, productKeyByLabel, statsByProduct };
+}
+
 function normalizeCardLast4(value = '') {
   const digits = String(value || '').replace(/\D/g, '').slice(0, 4);
   return /^\d{4}$/.test(digits) ? digits : '';
@@ -478,15 +555,20 @@ function foodHistoryFromTransactions(food = {}) {
         || (foodDisplay && itemName === foodDisplay);
       if (!matches) return;
       const ts = Number(row?.date ? parseDayKey(row.date) : txSortTs(row));
-      const price = Number(item?.price || item?.amount || 0);
-      if (!Number.isFinite(ts) || ts <= 0 || !Number.isFinite(price) || price <= 0) return;
+      const totalPrice = Number(item?.totalPrice ?? item?.amount ?? item?.price || 0);
+      if (!Number.isFinite(ts) || ts <= 0 || !Number.isFinite(totalPrice) || totalPrice <= 0) return;
+      const qty = Math.max(1, Number(item?.qty || 1));
+      const unitPrice = Number(item?.unitPrice || computeUnitPrice(totalPrice, qty));
       const vendor = firebaseSafeKey(item?.place || row?.extras?.filters?.place || row?.extras?.place || food?.place || 'unknown') || 'unknown';
       const key = `${vendor}__${String(row?.id || '') || ts}`;
       byKey[key] = {
         vendor,
-        price,
-        unitPrice: Number(item?.price || price),
-        linePrice: Number(item?.amount || item?.price || price),
+        price: unitPrice,
+        unitPrice,
+        qty,
+        unit: String(item?.unit || 'ud').trim() || 'ud',
+        totalPrice,
+        linePrice: totalPrice,
         ts,
         date: String(row?.date || dayKeyFromTs(ts)),
         source: 'expense-line',
@@ -500,19 +582,21 @@ function foodHistoryFromTransactions(food = {}) {
 function mergedFoodHistory(food = {}) {
   const explicit = foodPriceHistoryList(food);
   const implicit = foodHistoryFromTransactions(food);
-  const byKey = {};
+  const byVendorAndDate = {};
   [...explicit, ...implicit].forEach((row) => {
-    const vendor = firebaseSafeKey(row?.vendor || 'unknown') || 'unknown';
-    const key = `${vendor}__${String(row?.expenseId || '') || String(row?.ts || '')}__${Number(row?.price || 0).toFixed(3)}`;
-    byKey[key] = {
+    const normalized = {
       ...row,
-      vendor,
-      ts: Number(row?.ts || 0),
-      price: Number(row?.price || 0)
+      price: Number(row?.unitPrice || row?.price || 0),
+      unitPrice: Number(row?.unitPrice || row?.price || 0),
+      totalPrice: Number(row?.totalPrice || row?.linePrice || row?.price || 0),
+      linePrice: Number(row?.linePrice || row?.totalPrice || row?.price || 0),
+      qty: Math.max(1, Number(row?.qty || 1)),
+      unit: String(row?.unit || 'ud').trim() || 'ud'
     };
+    appendPriceHistoryPoint(byVendorAndDate, normalized);
   });
-  return Object.values(byKey)
-    .filter((row) => Number.isFinite(row.ts) && row.ts > 0 && Number.isFinite(row.price) && row.price > 0)
+  return Object.values(byVendorAndDate)
+    .filter((row) => Number.isFinite(row.ts) && row.ts > 0 && Number.isFinite(Number(row.unitPrice || row.price)) && Number(row.unitPrice || row.price) > 0)
     .sort((a, b) => a.ts - b.ts);
 }
 
@@ -538,10 +622,17 @@ async function recordFoodPricePoint(foodId, priceInput, source = 'expense', opti
     if (exists) return;
   }
   const entryId = push(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${vendor}`)).key;
+  const qty = Math.max(1, Number(options?.qty || 1));
+  const unit = String(options?.unit || 'ud').trim() || 'ud';
+  const totalPrice = Number(options?.totalPrice || options?.linePrice || price);
+  const unitPrice = Number(options?.unitPrice || computeUnitPrice(totalPrice, qty) || price);
   const payload = {
-    price,
-    unitPrice: Number(options?.unitPrice || price),
-    linePrice: Number(options?.linePrice || price),
+    price: unitPrice,
+    unitPrice,
+    qty,
+    unit,
+    totalPrice,
+    linePrice: totalPrice,
     ts: Number.isFinite(ts) && ts > 0 ? ts : nowTs(),
     date,
     vendor,
@@ -655,8 +746,11 @@ function normalizeFoodExtras(rawExtras = {}, amount = 0) {
       productKey: String(item?.productKey || ''),
       name: normalizeFoodName(item?.name || item?.item || item?.productName || ''),
       qty: Math.max(1, Number(item?.qty || 1)),
-      amount: Number((item?.amount ?? item?.price) || 0),
-      price: Number((item?.price ?? item?.amount) || 0),
+      unit: String(item?.unit || 'ud').trim() || 'ud',
+      amount: Number((item?.amount ?? item?.totalPrice ?? item?.price) || 0),
+      totalPrice: Number((item?.totalPrice ?? item?.amount ?? item?.price) || 0),
+      price: Number((item?.price ?? item?.totalPrice ?? item?.amount) || 0),
+      unitPrice: Number((item?.unitPrice ?? item?.unit_price) || computeUnitPrice((item?.totalPrice ?? item?.amount ?? item?.price), item?.qty || 1)),
       mealType: normalizeFoodName(item?.mealType || item?.typeOfMeal || ''),
       cuisine: normalizeFoodName(item?.cuisine || ''),
       place: normalizeFoodName(item?.place || ''),
@@ -671,8 +765,11 @@ function normalizeFoodExtras(rawExtras = {}, amount = 0) {
         productKey: String(extras.productKey || ''),
         name: legacyName,
         qty: Math.max(1, Number(extras.qty || 1)),
-        amount: Number((extras.amount ?? extras.price ?? amount) || 0),
-        price: Number((extras.price ?? extras.amount ?? amount) || 0),
+        unit: String(extras.unit || 'ud').trim() || 'ud',
+        amount: Number((extras.amount ?? extras.totalPrice ?? extras.price ?? amount) || 0),
+        totalPrice: Number((extras.totalPrice ?? extras.amount ?? extras.price ?? amount) || 0),
+        price: Number((extras.price ?? extras.totalPrice ?? extras.amount ?? amount) || 0),
+        unitPrice: Number((extras.unitPrice ?? extras.unit_price) || computeUnitPrice((extras.totalPrice ?? extras.amount ?? extras.price ?? amount), extras.qty || 1)),
         mealType: normalizeFoodName(extras.mealType || extras.foodType || ''),
         cuisine: normalizeFoodName(extras.cuisine || ''),
         place: normalizeFoodName(extras.place || ''),
@@ -970,9 +1067,16 @@ function foodDetailViewModel(food = {}, fallbackName = '') {
     return last ? { vendor, ...last } : null;
   }).filter(Boolean).sort((a, b) => b.ts - a.ts);
   const latest = latestByVendor[0] || null;
-  const latestLine = latestByVendor.length > 1
-    ? latestByVendor.slice(0, 2).map((row) => `${fmtCurrency(row.price)} (${row.vendor})`).join(' · ')
-    : (latest ? `${fmtCurrency(latest.price)} · Vendor: ${latest.vendor}` : 'Último precio: —');
+  const totalQty = history.reduce((sum, row) => sum + Math.max(1, Number(row.qty || 1)), 0);
+  const weightedAvgUnitPrice = totalQty > 0
+    ? history.reduce((sum, row) => sum + (Number(row.unitPrice || row.price || 0) * Math.max(1, Number(row.qty || 1))), 0) / totalQty
+    : null;
+  const uniqueUnits = [...new Set(history.map((row) => String(row.unit || 'ud').trim() || 'ud'))];
+  const hasSingleUnit = uniqueUnits.length === 1;
+  const unitLabel = hasSingleUnit ? uniqueUnits[0] : '';
+  const latestLine = latest
+    ? `Último: ${Number(latest.unitPrice || latest.price || 0).toFixed(2)} €/` + `${latest.unit || 'ud'} · Media: ${hasSingleUnit && Number.isFinite(weightedAvgUnitPrice) ? `${weightedAvgUnitPrice.toFixed(2)} €/` + unitLabel : '—'} · Compras: ${history.length}`
+    : 'Último: — · Media: — · Compras: 0';
   const vendorAliases = food?.vendorAliases && typeof food.vendorAliases === 'object' ? food.vendorAliases : {};
   const vendorSet = new Set([...vendors, ...Object.keys(vendorAliases || {})]);
   const allVendors = [...vendorSet].filter(Boolean).sort((a, b) => a.localeCompare(b, 'es'));
@@ -993,7 +1097,7 @@ function foodDetailViewModel(food = {}, fallbackName = '') {
       aliasText: aliases.join(', '),
       latest: latestVendor,
       latestDateLabel: latestVendor ? new Date(latestVendor.ts).toLocaleDateString('es-ES') : '—',
-      latestPriceLabel: latestVendor ? fmtCurrency(latestVendor.price) : '—',
+      latestPriceLabel: latestVendor ? `${Number(latestVendor.unitPrice || latestVendor.price || 0).toFixed(2)} €/` + `${latestVendor.unit || 'ud'}` : '—',
       latestEntry: explicitRows[0] || null,
       hasExplicit: !!explicitRows.length
     };
@@ -1176,7 +1280,7 @@ function renderFoodHistoryVendorChart() {
     smooth: false,
     lineStyle: { width: 2 },
     itemStyle: { color: palette[index % palette.length] },
-    data: hiddenVendors.has(vendor) ? [] : (filtered[vendor] || []).map((row) => [String(row.date || dayKeyFromTs(row.ts)), Number(row.price || 0)])
+    data: hiddenVendors.has(vendor) ? [] : (filtered[vendor] || []).map((row) => [String(row.date || dayKeyFromTs(row.ts)), Number(row.unitPrice || row.price || 0), row])
   }));
   const chart = echarts.getInstanceByDom(host) || echarts.init(host);
 chart.setOption({
@@ -1189,11 +1293,23 @@ chart.setOption({
     padding: [6, 8],
     backgroundColor: '#0d1329',
     borderColor: 'rgba(125,190,255,.35)',
-    textStyle: { color: '#f4f8ff', fontSize: 11 }
+    textStyle: { color: '#f4f8ff', fontSize: 11 },
+    formatter: (points = []) => {
+      if (!points.length) return '';
+      const date = points[0]?.axisValueLabel || '';
+      const lines = points.map((point) => {
+        const payload = point?.data?.[2] || {};
+        const unit = payload?.unit || 'ud';
+        const qty = Number(payload?.qty || 1);
+        const total = Number(payload?.totalPrice || payload?.linePrice || 0);
+        return `${point.marker}${point.seriesName}: <strong>${Number(point.value?.[1] || 0).toFixed(2)} €/` + `${unit}</strong><br/><small>qty: ${qty} · total: ${fmtCurrency(total)}</small>`;
+      });
+      return `<strong>${date}</strong><br/>${lines.join('<br/>')}`;
+    }
   },
   legend: { show: false },
 
-  grid: { left: 34, right: 12, top: 28, bottom: 38, containLabel: true },
+  grid: { left: 36, right: 16, top: 18, bottom: 34, containLabel: true },
 
   xAxis: {
     type: 'time',
@@ -1213,7 +1329,7 @@ chart.setOption({
 
   yAxis: {
     type: 'value',
-    axisLabel: { color: '#9fb2da', margin: 10 },
+    axisLabel: { color: '#9fb2da', margin: 10, fontSize: 11 },
     axisTick: { show: false },
     splitLine: { show: false } // 👈 adiós líneas intermedias
   },
@@ -2085,34 +2201,33 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
     }
     else if (groupBy === 'product') {
       const items = foodItemsFromTx(row);
-      const validLines = items
-        .map((item) => ({
-          name: normalizeFoodName(item?.name || ''),
-          productKey: String(item?.productKey || firebaseSafeKey(item?.name || '')),
-          lineAmount: Math.abs(Number(item?.price))
-        }))
-        .filter((item) => !isMissingGroupedValue(item.name) && Number.isFinite(item.lineAmount) && item.lineAmount > 0);
-      if (!validLines.length) {
+      const hasLines = items.some((item) => normalizeFoodName(item?.name || ''));
+      if (!hasLines) {
         unlinedTotal += amount;
         if (includeUnlined) output[ungroupedLabel] = (output[ungroupedLabel] || 0) + amount;
-        return;
       }
-      const linesTotal = validLines.reduce((sum, item) => sum + item.lineAmount, 0);
-      if (!linesTotal) {
-        unlinedTotal += amount;
-        if (includeUnlined) output[ungroupedLabel] = (output[ungroupedLabel] || 0) + amount;
-        return;
-      }
-      validLines.forEach((item) => {
-        const scopedLineAmount = amount * (item.lineAmount / linesTotal);
-        if (!scopedLineAmount) return;
-        output[item.name] = (output[item.name] || 0) + scopedLineAmount;
-        if (!productKeyByLabel[item.name] && item.productKey) productKeyByLabel[item.name] = item.productKey;
-      });
       return;
     } else key = row.category || 'Sin categoría';
     output[key] = (output[key] || 0) + amount;
   });
+  if (groupBy === 'product') {
+    const scopedAmountByTx = {};
+    rows.forEach((row) => {
+      if (row.type !== txMode) return;
+      const scopedAmount = scope === 'global' ? Math.abs(Number(row.amount || 0)) : Math.abs(shareAmount(accountsById[row.accountId], row.amount));
+      if (!scopedAmount) return;
+      scopedAmountByTx[row.id] = scopedAmount;
+    });
+    const spendStats = accumulateSpendByProduct(rows.filter((row) => row.type === txMode), scopedAmountByTx, state.food.itemsById || {});
+    Object.entries(spendStats.spend || {}).forEach(([label, value]) => {
+      if (isMissingGroupedValue(label)) return;
+      output[label] = (output[label] || 0) + Number(value || 0);
+      if (!productKeyByLabel[label] && spendStats.productKeyByLabel?.[label]) productKeyByLabel[label] = spendStats.productKeyByLabel[label];
+    });
+    state.balanceStatsProductMeta = spendStats.statsByProduct || {};
+  } else {
+    state.balanceStatsProductMeta = {};
+  }
   return { breakdown: output, unlinedTotal, productKeyByLabel };
 }
 
@@ -2714,7 +2829,18 @@ function renderFinanceBalance() {
     <details class="financeStats__details" data-finance-stats-legend-details ${legendExpanded ? 'open' : ''}>
       <summary class="financeStats__detailsSummary" data-finance-stats-legend-summary>Leyenda</summary>
       <div class="financeStats__detailsBody financeStats__legendGrid">
-        ${segments.length ? segments.map((segment, index) => `<div class="financeStats__rankRow ${state.balanceStatsActiveSegment === segment._key ? 'is-active' : ''} financeLegendRow" data-finance-stats-segment="${escapeHtml(segment._key)}" data-product-key="${escapeHtml(segment.productKey || '')}"><div class="financeStats__left"><span class="financeStats__rank">${index + 1}</span><span class="financeStats__name"><i class="financeStats__dot" style="background:${segment.color}"></i>${escapeHtml(segment.label)}</span></div><div class="financeStats__right">${statsGroupBy === 'product' ? `<button type="button" class="financeProductStatsBtn" data-finance-product-stats="${escapeHtml(segment.productKey || segment._key)}" aria-label="Ver estadísticas del producto">📈</button>` : ''}<span class="financeStats__meta">${fmtCurrency(segment.value)} · ${segment.pct.toFixed(1)}%</span></div></div>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
+        ${segments.length ? segments.map((segment, index) => {
+          const productMeta = state.balanceStatsProductMeta?.[segment.label] || null;
+          const hasSingleUnit = productMeta && productMeta.units instanceof Set && productMeta.units.size === 1;
+          const unit = hasSingleUnit ? [...productMeta.units][0] : '';
+          const avgUnitPrice = (productMeta && Number(productMeta.sumQty || 0) > 0 && hasSingleUnit)
+            ? (Number(productMeta.sumUnitPriceWeighted || 0) / Number(productMeta.sumQty || 1))
+            : null;
+          const micro = productMeta
+            ? `${fmtCurrency(segment.value)} · ${productMeta.purchaseCount} compras · ${Number.isFinite(avgUnitPrice) ? `${Number(avgUnitPrice).toFixed(2)} €/` + unit : 'Media: —'}`
+            : `${fmtCurrency(segment.value)} · ${segment.pct.toFixed(1)}%`;
+          return `<div class="financeStats__rankRow ${state.balanceStatsActiveSegment === segment._key ? 'is-active' : ''} financeLegendRow" data-finance-stats-segment="${escapeHtml(segment._key)}" data-product-key="${escapeHtml(segment.productKey || '')}"><div class="financeStats__left"><span class="financeStats__rank">${index + 1}</span><span class="financeStats__name"><i class="financeStats__dot" style="background:${segment.color}"></i>${escapeHtml(segment.label)}</span></div><div class="financeStats__right">${statsGroupBy === 'product' ? `<button type="button" class="financeProductStatsBtn" data-finance-product-stats="${escapeHtml(segment.productKey || segment._key)}" aria-label="Ver estadísticas del producto">📈</button>` : ''}<span class="financeStats__meta">${fmtCurrency(segment.value)} · ${segment.pct.toFixed(1)}%</span>${statsGroupBy === 'product' ? `<small class="financeStats__micro">${escapeHtml(micro)}</small>` : ''}</div></div>`;
+        }).join('') : '<p class="finance-empty">Sin datos.</p>'}
       </div>
     </details>
 
@@ -4139,21 +4265,29 @@ function bindEvents() {
         });
         if (Object.keys(updatesMap).length) await safeFirebase(() => update(ref(db), updatesMap));
         await ensureFoodCatalogLoaded(true);
-        const importedItems = importResult.updatedDraft.importedItems.map((item) => ({
-          foodId: item.productId || (getFoodByName(item.name)?.id || ''),
-          productKey: firebaseSafeKey(item.name),
-          name: item.name,
-          qty: Math.max(1, Number(item.qty || 1)),
-          amount: Number(item.price || 0),
-          price: Number(item.price || 0),
-          mealType: '',
-          cuisine: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryApp || ''),
-          place: String(importResult.updatedDraft.importedVendor || 'unknown'),
-          healthy: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryApp || '')
-        }));
-        const category = importedItems.some((row) => row.cuisine === 'otros')
-          ? 'Otros'
-          : ticketCategoryToTxCategory(importedItems[0]?.cuisine || '');
+        const importedItems = importResult.updatedDraft.importedItems.map((item) => {
+          const qty = Math.max(1, Number(item.qty || 1));
+          const totalPrice = Number(item.totalPrice || item.price || 0);
+          const unitPrice = Number(item.unitPrice || computeUnitPrice(totalPrice, qty));
+          return {
+            foodId: item.productId || (getFoodByName(item.name)?.id || ''),
+            productKey: String(item.productId || firebaseSafeKey(item.name)),
+            name: item.name,
+            qty,
+            unit: String(item.unit || 'ud').trim() || 'ud',
+            unitPrice,
+            amount: totalPrice,
+            totalPrice,
+            price: totalPrice,
+            mealType: '',
+            cuisine: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryApp || ''),
+            place: String(importResult.updatedDraft.importedVendor || 'unknown'),
+            healthy: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryApp || '')
+          };
+        });
+        const category = String(state.balanceFormState.category || '').trim().toLowerCase() === 'sin categoría' || !String(state.balanceFormState.category || '').trim()
+          ? resolveTicketMovementCategory(parsed.data)
+          : (state.balanceFormState.category || importResult.updatedDraft.category || 'Sin categoría');
         state.balanceFormState = {
           ...state.balanceFormState,
           type: 'expense',
@@ -4916,20 +5050,28 @@ view.addEventListener('focusout', async (event) => {
       const foodItemsRaw = (() => {
         try { return JSON.parse(String(form.get('foodItems') || '[]')); } catch { return []; }
       })();
-      const foodItems = Array.isArray(foodItemsRaw) ? foodItemsRaw.map((row) => ({
-        foodId: String(row?.foodId || foodIdFromForm || ''),
-        productKey: String(row?.productKey || ''),
-        name: normalizeFoodName(row?.name || row?.item || row?.productName || item),
-        qty: Math.max(1, Number(row?.qty || 1)),
-        amount: Number((row?.amount ?? row?.price) || 0),
-        price: Number((row?.price ?? row?.amount) || 0),
-        mealType: normalizeFoodName(row?.mealType || mealType),
-        cuisine: normalizeFoodName(row?.cuisine || cuisine),
-        place: normalizeFoodName(row?.place || place),
-        healthy: String(row?.healthy || cuisine || '')
-      })).filter((row) => row.name) : [];
+      const foodItems = Array.isArray(foodItemsRaw) ? foodItemsRaw.map((row) => {
+        const qty = Math.max(1, Number(row?.qty || 1));
+        const totalPrice = Number((row?.totalPrice ?? row?.amount ?? row?.price) || 0);
+        const unitPrice = Number((row?.unitPrice ?? row?.unit_price) || computeUnitPrice(totalPrice, qty));
+        return {
+          foodId: String(row?.foodId || foodIdFromForm || ''),
+          productKey: String(row?.productKey || ''),
+          name: normalizeFoodName(row?.name || row?.item || row?.productName || item),
+          qty,
+          unit: String(row?.unit || 'ud').trim() || 'ud',
+          unitPrice,
+          amount: totalPrice,
+          totalPrice,
+          price: totalPrice,
+          mealType: normalizeFoodName(row?.mealType || mealType),
+          cuisine: normalizeFoodName(row?.cuisine || cuisine),
+          place: normalizeFoodName(row?.place || place),
+          healthy: String(row?.healthy || cuisine || '')
+        };
+      }).filter((row) => row.name) : [];
       const extras = isFoodCategory(category)
-        ? { items: foodItems.length ? foodItems : (item ? [{ foodId: foodIdFromForm || '', productKey: firebaseSafeKey(item), name: item, qty: 1, amount, price: amount, mealType, cuisine, place, healthy: cuisine }] : []), filters: { mealType: mealType || '', cuisine: cuisine || '', place: place || '', healthy: cuisine || '' } }
+        ? { items: foodItems.length ? foodItems : (item ? [{ foodId: foodIdFromForm || '', productKey: firebaseSafeKey(item), name: item, qty: 1, unit: 'ud', unitPrice: amount, amount, totalPrice: amount, price: amount, mealType, cuisine, place, healthy: cuisine }] : []), filters: { mealType: mealType || '', cuisine: cuisine || '', place: place || '', healthy: cuisine || '' } }
         : undefined;
       const saveId = txId || push(ref(db, `${state.financePath}/transactions`)).key;
       const prev = txId ? balanceTxList().find((row) => row.id === txId) : null;
@@ -4992,15 +5134,18 @@ view.addEventListener('focusout', async (event) => {
             cuisine: foodItem.cuisine || cuisine,
             healthy: foodItem.healthy || foodItem.cuisine || cuisine,
             place: foodItem.place || place,
-            defaultPrice: Number(foodItem.price || amount)
+            defaultPrice: Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount)
           }, true, { lastCategory: category, lastAccountId: accountId, lastNote: note });
           foodItem.foodId = savedFoodId;
-          await recordFoodPricePoint(savedFoodId, Number(foodItem.price || amount), 'expense', {
+          await recordFoodPricePoint(savedFoodId, Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount), 'expense', {
             ts: dateISO ? parseDayKey(dateISO) : nowTs(),
             date: dateISO || dayKeyFromTs(nowTs()),
             vendor: foodItem.place || place || 'unknown',
-            unitPrice: Number(foodItem.price || amount),
-            linePrice: Number(foodItem.amount || foodItem.price || amount),
+            unitPrice: Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount),
+            qty: Math.max(1, Number(foodItem.qty || 1)),
+            unit: String(foodItem.unit || 'ud').trim() || 'ud',
+            totalPrice: Number(foodItem.totalPrice || foodItem.amount || foodItem.price || amount),
+            linePrice: Number(foodItem.totalPrice || foodItem.amount || foodItem.price || amount),
             expenseId: saveId
           });
           financeDebug('transaction food usage saved', { txId: saveId, foodId: savedFoodId, name: foodItem.name });

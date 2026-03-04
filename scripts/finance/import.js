@@ -124,6 +124,14 @@ const VALID_TICKET_CATEGORIES = new Set([
   'mascotas', 'otros'
 ]);
 
+const FOOD_TICKET_CATEGORIES = new Set([
+  'fruta', 'verdura', 'carne', 'pescado', 'lacteos', 'despensa', 'panaderia', 'bebidas', 'congelados', 'snacks'
+]);
+
+const KNOWN_GROCERY_VENDORS = [
+  'mercadona', 'eroski', 'carrefour', 'dia', 'aldi', 'lidl', 'ahorramas', 'alcampo', 'hipercor', 'el corte ingles', 'consum', 'bonpreu', 'spar'
+];
+
 export function mapTicketCategoryToApp(catGuess = '') {
   const normalized = normalizeProductName(catGuess).replace(/\s+/g, '');
   return VALID_TICKET_CATEGORIES.has(normalized) ? normalized : 'otros';
@@ -149,6 +157,29 @@ export function inferCategoryFromName(name = '') {
   ];
   const hit = keywordMap.find(({ pattern }) => pattern.test(safe));
   return hit ? hit.category : null;
+}
+
+export function computeUnitPrice(totalPriceInput, qtyInput, decimals = 2) {
+  const totalPrice = Number(totalPriceInput);
+  const qty = Number(qtyInput);
+  if (!Number.isFinite(totalPrice) || totalPrice <= 0) return 0;
+  if (!Number.isFinite(qty) || qty <= 0) return Number(totalPrice.toFixed(decimals));
+  const factor = 10 ** decimals;
+  return Math.round((totalPrice / qty) * factor) / factor;
+}
+
+function isKnownGroceryVendor(vendor = '') {
+  const normalized = normalizeProductName(vendor);
+  return KNOWN_GROCERY_VENDORS.some((entry) => normalized.includes(entry));
+}
+
+export function resolveTicketMovementCategory(ticket = {}) {
+  const vendor = String(ticket?.source?.vendor || '').trim();
+  if (isKnownGroceryVendor(vendor)) return 'Comida';
+  const items = Array.isArray(ticket?.items) ? ticket.items : [];
+  if (!items.length) return 'Sin categoría';
+  const foodCount = items.filter((item) => FOOD_TICKET_CATEGORIES.has(mapTicketCategoryToApp(item?.category_app || item?.category_guess || ''))).length;
+  return (foodCount / items.length) > 0.6 ? 'Comida' : 'Sin categoría';
 }
 
 function resolveTicketItemCategory(item = {}) {
@@ -248,7 +279,7 @@ export function parseTicketImport(text = '') {
     }
     const unitPriceRaw = row.unit_price;
     const unitPriceParsed = unitPriceRaw == null ? null : toNumberEUR(unitPriceRaw);
-    const unitPrice = Number.isFinite(unitPriceParsed) ? unitPriceParsed : (qty > 0 ? totalPrice / qty : totalPrice);
+    const unitPrice = Number.isFinite(unitPriceParsed) ? unitPriceParsed : computeUnitPrice(totalPrice, qty);
     const nameNorm = String(row.name_norm || '').trim() || String(row.name_raw || '').trim();
     if (!nameNorm) {
       const validationErrors = [{ path: `items[${i}]`, code: 'name_required', message: 'name_raw o name_norm es obligatorio' }];
@@ -274,6 +305,7 @@ export function parseTicketImport(text = '') {
     items.push({
       ...row,
       qty,
+      unit: String(row.unit || 'ud').trim() || 'ud',
       total_price: totalPrice,
       unit_price: unitPrice,
       name_norm: nameNorm,
@@ -372,7 +404,9 @@ export function applyTicketImport(ticket, currentExpenseDraft = {}, products = [
       productId: matched?.id || '',
       name: item.name_norm,
       qty: Number(item.qty || 1),
+      unit: String(item.unit || 'ud').trim() || 'ud',
       price: linePrice,
+      totalPrice: linePrice,
       unitPrice: Number(item.unit_price || 0),
       categoryGuess: String(item.category_guess || 'otros'),
       categoryApp: appCategory,
@@ -429,7 +463,9 @@ export function applyTicketImport(ticket, currentExpenseDraft = {}, products = [
   const updatedDraft = {
     ...currentExpenseDraft,
     type: 'expense',
-    category: 'Comida',
+    category: String(currentExpenseDraft.category || '').trim().toLowerCase() === 'sin categoría' || !String(currentExpenseDraft.category || '').trim()
+      ? resolveTicketMovementCategory(ticket)
+      : currentExpenseDraft.category,
     amount: Number(purchaseTotal) > 0 ? purchaseTotal : amount,
     dateISO: String(ticket?.purchase?.date || currentExpenseDraft.dateISO || ''),
     note: [currentExpenseDraft.note || '', ticket?.source?.vendor && ticket.source.vendor !== 'unknown' ? `Ticket ${ticket.source.vendor}` : '']

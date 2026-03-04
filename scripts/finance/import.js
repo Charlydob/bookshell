@@ -337,6 +337,17 @@ export function matchExistingProduct(ticketItem = {}, products = []) {
   }) || null;
 }
 
+export function firebaseSafeKey(str) {
+  return String(str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[.#$/[\]]/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+    .trim();
+}
+
 export function applyTicketImport(ticket, currentExpenseDraft = {}, products = [], accounts = []) {
   const isExtraLine = (name = '') => /bolsa|descuento|cupon|cupón|redondeo|deposito|depósito/.test(normalizeProductName(name));
   const warnings = [];

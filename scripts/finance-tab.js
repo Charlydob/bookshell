@@ -17,7 +17,7 @@ async function ensureFinanceLoaded() {
 import { LEGACY_PATH, DEVICE_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
 import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './finance/ui.js';
 import { resolveFinancePath } from './finance/data.js';
-import { parseImportRaw, parseTicketImport, applyTicketImport } from './finance/import.js';
+import { parseImportRaw, parseTicketImport, applyTicketImport, TICKET_IMPORT_SAMPLE_V1 } from './finance/import.js';
 
 function log(...parts) { console.log('[finance]', ...parts); }
 function warnMissing(id) { console.warn(`[finance] missing DOM node ${id}`); }
@@ -2588,6 +2588,7 @@ function renderModal() {
     <div class="finance-row" style="gap:8px;flex-wrap:wrap;">
       <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-preview>Preview</button>
       <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-paste>📋 Pegar</button>
+      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-sample>Pegar sample</button>
       <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-cancel>Cancel</button>
     </div>
     <textarea name="ticketImportRaw" data-ticket-import-raw rows="10" style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escapeHtml(ticketImportState.raw || '')}</textarea>
@@ -2596,7 +2597,8 @@ function renderModal() {
       <div class="finance-mini-list" style="margin-top:8px;max-height:240px;overflow:auto;">
         <p><strong>Supermercado:</strong> ${escapeHtml(ticketPreview.source?.vendor || 'unknown')}</p>
         <p><strong>Fecha:</strong> ${escapeHtml(ticketPreview.purchase?.date || '—')}</p>
-        <p><strong>Total ticket:</strong> ${fmtCurrency(ticketPreview.purchase?.total || 0)}</p>
+        <p><strong>ticket_total:</strong> ${fmtCurrency(ticketPreview.purchase?.total || 0)}</p>
+        <p><strong>computed_total:</strong> ${fmtCurrency(ticketPreview.purchase?.computed_total || 0)}</p>
         ${ticketCardPreview.cardLast4 ? `<p><strong>Pago:</strong> tarjeta ****${escapeHtml(ticketCardPreview.cardLast4)}</p>` : ''}
         <p><strong>Cuenta sugerida:</strong> ${ticketCardPreview.status === 'single' ? escapeHtml(ticketCardPreview.selected?.name || '—') : 'No se pudo decidir'}</p>
         ${(ticketPreviewWarnings || []).map((warning) => `<p class="is-negative">⚠ ${escapeHtml(warning)}</p>`).join('')}
@@ -3302,6 +3304,11 @@ function bindEvents() {
       } catch {
         state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, error: 'No se pudo leer el portapapeles' } };
       }
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-ticket-import-sample]')) {
+      state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, raw: TICKET_IMPORT_SAMPLE_V1, error: '' } };
       triggerRender();
       return;
     }

@@ -1643,9 +1643,11 @@ function buildHabitPerHourMetrics(rows = [], range = 'month') {
   };
 }
 
-function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense', scope = 'personal', accountsById = {}) {
+function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense', scope = 'personal', accountsById = {}, options = {}) {
   const output = {};
   const ungroupedLabel = 'Importe sin líneas';
+  const includeUnlined = !!options.includeUnlined;
+  let unlinedTotal = 0;
   const isMissingGroupedValue = (value = '') => {
     const normalized = normalizeFoodName(value).toLowerCase();
     if (!normalized) return true;
@@ -1669,28 +1671,33 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
     }
     else if (groupBy === 'product') {
       const items = foodItemsFromTx(row);
-      const txTotal = Math.abs(Number(row.amount || 0));
-      const shareFactor = txTotal > 0 ? (amount / txTotal) : 1;
-      let assigned = 0;
-      items.forEach((item) => {
-        const itemName = normalizeFoodName(item?.name || '');
-        const lineAmount = Number(item?.price);
-        if (isMissingGroupedValue(itemName)) return;
-        if (!Number.isFinite(lineAmount) || lineAmount <= 0) return;
-        const scopedLineAmount = Math.abs(lineAmount) * shareFactor;
-        if (!scopedLineAmount) return;
-        output[itemName] = (output[itemName] || 0) + scopedLineAmount;
-        assigned += scopedLineAmount;
-      });
-      const remainder = Math.max(0, amount - assigned);
-      if (remainder > 0.0001) {
-        output[ungroupedLabel] = (output[ungroupedLabel] || 0) + remainder;
+      const validLines = items
+        .map((item) => ({
+          name: normalizeFoodName(item?.name || ''),
+          lineAmount: Math.abs(Number(item?.price))
+        }))
+        .filter((item) => !isMissingGroupedValue(item.name) && Number.isFinite(item.lineAmount) && item.lineAmount > 0);
+      if (!validLines.length) {
+        unlinedTotal += amount;
+        if (includeUnlined) output[ungroupedLabel] = (output[ungroupedLabel] || 0) + amount;
+        return;
       }
+      const linesTotal = validLines.reduce((sum, item) => sum + item.lineAmount, 0);
+      if (!linesTotal) {
+        unlinedTotal += amount;
+        if (includeUnlined) output[ungroupedLabel] = (output[ungroupedLabel] || 0) + amount;
+        return;
+      }
+      validLines.forEach((item) => {
+        const scopedLineAmount = amount * (item.lineAmount / linesTotal);
+        if (!scopedLineAmount) return;
+        output[item.name] = (output[item.name] || 0) + scopedLineAmount;
+      });
       return;
     } else key = row.category || 'Sin categoría';
     output[key] = (output[key] || 0) + amount;
   });
-  return output;
+  return { breakdown: output, unlinedTotal };
 }
 
 function donutSegments(mapData = {}, total = 0) {
@@ -1905,6 +1912,11 @@ function renderFinanceBalance() {
     .filter((row) => {
       if (state.balanceAccountFilter === 'all') return true;
       return row.accountId === state.balanceAccountFilter || row.fromAccountId === state.balanceAccountFilter || row.toAccountId === state.balanceAccountFilter;
+    })
+    .filter((row) => {
+      if (!state.balanceFilterUnlinedOnly) return true;
+      if (row.type !== 'expense') return false;
+      return !foodItemsFromTx(row).length;
     });
   const monthSummary = summaryForMonth(monthKey, accountsById);
   const prevSummary = summaryForMonth(offsetMonthKey(monthKey, -1), accountsById);
@@ -1929,12 +1941,15 @@ function renderFinanceBalance() {
   const statsRange = ['day', 'week', 'month', 'year', 'total'].includes(state.balanceStatsRange) ? state.balanceStatsRange : 'month';
   const statsScope = state.balanceStatsScope === 'global' ? 'global' : 'personal';
   const statsGroupBy = ['category', 'account', 'store', 'mealType', 'product'].includes(state.balanceStatsGroupBy) ? state.balanceStatsGroupBy : 'category';
+  const includeUnlined = !!state.balanceStatsIncludeUnlined;
   const allTxRows = balanceTxList();
   const rangeRows = statsRange === 'month'
     ? allTxRows.filter((row) => row.monthKey === monthKey)
     : filterTxByRange(allTxRows, statsRange);
   const rangeStats = buildBalanceStats(rangeRows, accountsById);
-  const donutMap = aggregateStatsGroup(rangeRows, statsGroupBy, mode, statsScope, accountsById);
+  const donutAggregation = aggregateStatsGroup(rangeRows, statsGroupBy, mode, statsScope, accountsById, { includeUnlined: includeUnlined && statsGroupBy === 'product' });
+  const donutMap = donutAggregation.breakdown;
+  const unlinedTotal = donutAggregation.unlinedTotal;
   const donutTotal = Object.values(donutMap).reduce((sum, value) => sum + Number(value || 0), 0);
   const segments = donutSegments(donutMap, donutTotal);
   const selectedSegment = segments.find((segment) => segment.key === state.balanceStatsActiveSegment) || null;
@@ -1965,6 +1980,7 @@ const calloutBox = calloutSegment
   const totalFoodSpent = statsScope === 'global' ? rangeStats.totalFoodSpentGlobal : rangeStats.totalFoodSpentPersonal;
   const comparisonMax = Math.max(totalIncome, totalSpentRange, 1);
   const groupLabel = ({ category: 'Categorías', account: 'Cuentas', store: 'Supermercado', mealType: 'Tipo comida', product: 'Producto / Item' })[statsGroupBy] || 'Categorías';
+  const showUnlinedNotice = statsGroupBy === 'product' && mode === 'expense' && unlinedTotal > 0;
   const scopeLabel = statsScope === 'global' ? 'total global' : 'mi parte';
   const txByDay = groupTxByDay(tx, accountsById, statsScope);
   const aggMode = AGG_MODES.includes(state.balanceAggMode) ? state.balanceAggMode : 'month';
@@ -2032,7 +2048,8 @@ const calloutBox = calloutSegment
     <div class="finance-row-transacciones">
     <select class="finance-pill-transacciones" data-balance-type><option value="all">Todos</option><option value="expense" ${state.balanceFilterType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${state.balanceFilterType === 'income' ? 'selected' : ''}>Ingreso</option><option value="transfer" ${state.balanceFilterType === 'transfer' ? 'selected' : ''}>Transferencia</option></select>
     <select class="finance-pill-transacciones" data-balance-category><option value="all">Todas</option>${categories.map((c) => `<option ${state.balanceFilterCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select>
-    <select class="finance-pill-transacciones" data-balance-account><option value="all">Cuentas</option>${accounts.map((a) => `<option value="${a.id}" ${state.balanceAccountFilter === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div></div>
+    <select class="finance-pill-transacciones" data-balance-account><option value="all">Cuentas</option>${accounts.map((a) => `<option value="${a.id}" ${state.balanceAccountFilter === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select>
+    ${state.balanceFilterUnlinedOnly ? '<button class="finance-pill finance-pill--mini" data-balance-filter-unlined-clear>Sin desglose ✕</button>' : ''}</div></div>
     <div class="financeTxList financeTxList--scroll" style="max-height:260px;overflow-y:auto;">${(state.balanceShowAllTx ? txByDay : txByDay.slice(0, 10)).map((day) => {
       const label = new Date(`${day.dayISO}T00:00:00`).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
       return `<button type="button" class="financeTxRow finTxDay__row" data-tx-day-open="${day.dayISO}"><span class="${toneClass(day.net)}">${label}</span><span class="${toneClass(day.net)}">${day.rows.length} movimientos</span><strong class="${toneClass(day.net)}">${fmtSignedCurrency(day.net)}</strong></button>`;
@@ -2070,6 +2087,7 @@ const calloutBox = calloutSegment
         <option value="mealType" ${statsGroupBy === 'mealType' ? 'selected' : ''}>Tipo comida</option>
         <option value="product" ${statsGroupBy === 'product' ? 'selected' : ''}>Producto / Item</option>
       </select>
+      ${statsGroupBy === 'product' && mode === 'expense' ? `<label class="financeStats__checkbox"><input type="checkbox" data-finance-stats-include-unlined ${includeUnlined ? 'checked' : ''}> Incluir gastos sin líneas</label>` : ''}
     </div>
 
     <div class="financeStats__donutWrap ${calloutSegment ? 'is-focused' : ''}">
@@ -2080,12 +2098,13 @@ const calloutBox = calloutSegment
       </svg>
       ${calloutSegment ? `<div class="financeStats__callout" style="left: calc(${calloutBox.x}%); top: calc(${calloutBox.y}%);"><strong>${escapeHtml(calloutSegment.label)}</strong><small>${fmtCurrency(calloutSegment.value)} · ${calloutSegment.pct.toFixed(1)}%</small></div>` : ''}
       <div class="financeStats__donutCenter">
-        <small>Total (${scopeLabel})</small>
+        <small>${statsGroupBy === 'product' ? `Total (con líneas · ${scopeLabel})` : `Total (${scopeLabel})`}</small>
         <strong class="financeStats__donutValue">${fmtCurrency(donutTotal)}</strong>
         <small class="financeStats__donutSub">Distribución ${groupLabel.toLowerCase()}</small>
       </div>
       ${segments.length ? '' : '<p class="financeStats__emptyHint">Sin datos para agrupar.</p>'}
     </div>
+    ${showUnlinedNotice ? `<div class="financeStats__unlinedNotice"><span>Aviso: ${fmtCurrency(unlinedTotal)} en gastos sin desglose (no incluidos en este gráfico)</span><button type="button" class="finance-pill finance-pill--mini" data-finance-stats-view-unlined>Ver</button></div>` : ''}
 
     <details class="financeStats__details">
       <summary class="financeStats__detailsSummary">Leyenda</summary>
@@ -3750,6 +3769,8 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
     const statsRange = target.closest('[data-finance-stats-range]')?.dataset.financeStatsRange; if (statsRange) { state.balanceStatsRange = statsRange; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const roiMode = target.closest('[data-finance-roi-mode]')?.dataset.financeRoiMode; if (roiMode) { state.balanceRoiMode = ['income', 'expense', 'balance'].includes(roiMode) ? roiMode : 'balance'; triggerRender(); return; }
     const statsScope = target.closest('[data-finance-stats-scope]')?.dataset.financeStatsScope; if (statsScope) { state.balanceStatsScope = statsScope === 'global' ? 'global' : 'personal'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
+    if (target.closest('[data-finance-stats-view-unlined]')) { state.balanceFilterType = 'expense'; state.balanceFilterCategory = 'all'; state.balanceFilterUnlinedOnly = true; state.balanceShowAllTx = true; triggerRender(); return; }
+    if (target.closest('[data-balance-filter-unlined-clear]')) { state.balanceFilterUnlinedOnly = false; triggerRender(); return; }
     const manageDelete = target.closest('[data-finance-manage-delete]')?.dataset.financeManageDelete;
     if (manageDelete) {
       const encodedValue = target.closest('[data-finance-manage-value]')?.dataset.financeManageValue || target.dataset.financeManageValue || '';
@@ -3827,6 +3848,7 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-balance-category]')) { state.balanceFilterCategory = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
     if (event.target.matches('[data-balance-account]')) { state.balanceAccountFilter = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
     if (event.target.matches('[data-finance-stats-group]')) { state.balanceStatsGroupBy = event.target.value; state.balanceStatsActiveSegment = null; triggerRender(); }
+    if (event.target.matches('[data-finance-stats-include-unlined]')) { state.balanceStatsIncludeUnlined = !!event.target.checked; state.balanceStatsActiveSegment = null; triggerRender(); }
     if (event.target.matches('[data-import-file]')) {
       const file = event.target.files?.[0];
       if (!file) return;

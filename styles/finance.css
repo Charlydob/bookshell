@@ -1241,6 +1241,8 @@ summary.fm-details__summary{
 .financeTab .financeStats__group { display: grid; gap: 6px; }
 .financeTab .financeStats__groupLabel { font-size: .82rem; opacity: .8; text-transform: uppercase; letter-spacing: .04em; }
 .financeTab .financeStats__groupSelect { border-radius: 12px; background: rgba(17,25,50,.85); color: #fff; border: 1px solid rgba(255,255,255,.2); min-height: 36px; padding: 0 10px; }
+.financeTab .financeStats__checkbox { display: inline-flex; align-items: center; gap: 8px; font-size: .82rem; opacity: .9; }
+.financeTab .financeStats__unlinedNotice { display: flex; justify-content: space-between; align-items: center; gap: 10px; border: 1px dashed rgba(255,255,255,.25); border-radius: 10px; padding: 8px 10px; font-size: .82rem; background: rgba(255,255,255,.03); }
 .financeTab .financeStats__donutWrap { position: relative; display: grid; place-items: center; padding: 8px 0; }
 .financeTab .financeStats__donutSvg { width: 220px; max-width: 100%; display: block; overflow: visible; }
 .financeTab .financeStats__segment { cursor: pointer; transition: filter .2s ease, opacity .2s ease, stroke-width .2s ease; }

@@ -1047,11 +1047,29 @@ function renderFoodItemModalForm(editing, presetName, mode = 'edit') {
             <div class="food-form-row"><label class="food-form-label" for="food-displayName-input">Display name</label><input id="food-displayName-input" class="food-control" name="displayName" value="${escapeHtml(displayName)}" data-food-display-name /></div>
           </div>
         </section>
-        <section class="finFoodDetailSection">
-          <h4>Aliases</h4>
-          ${renderFoodAliasEditor(editing || {})}
-          <div class="food-form-row"><label class="food-form-label" for="food-vendorAliases-input">Alias por súper</label><input id="food-vendorAliases-input" class="food-control" name="vendorAliases" value="${escapeHtml(vendorAliasList)}" placeholder="mercadona:coca cola|coke" /></div>
-        </section>
+        <details class="finFoodDetailSection finFoodDetailSection--aliases">
+  <summary class="finFoodDetailSummary">
+    Aliases
+  </summary>
+
+  <div class="finFoodDetailBody">
+    ${renderFoodAliasEditor(editing || {})}
+
+    <div class="food-form-row">
+      <label class="food-form-label" for="food-vendorAliases-input">
+        Alias por súper
+      </label>
+
+      <input
+        id="food-vendorAliases-input"
+        class="food-control"
+        name="vendorAliases"
+        value="${escapeHtml(vendorAliasList)}"
+        placeholder="mercadona:coca cola|coke"
+      />
+    </div>
+  </div>
+</details>
         <section class="finFoodDetailSection">
           <h4>Atributos</h4>
           <div class="food-form-grid foodX-stack">
@@ -1090,16 +1108,44 @@ function renderFoodHistoryVendorChart() {
     data: (filtered[vendor] || []).map((row) => [String(row.date || dayKeyFromTs(row.ts)), Number(row.price || 0)])
   }));
   const chart = echarts.getInstanceByDom(host) || echarts.init(host);
-  chart.setOption({
-    animation: false,
-    backgroundColor: 'transparent',
-    tooltip: { trigger: 'axis', backgroundColor: '#0d1329', borderColor: 'rgba(125,190,255,.35)', textStyle: { color: '#f4f8ff' } },
-    legend: { top: 0, textStyle: { color: '#cdd9f6', fontSize: 11 } },
-    grid: { left: 34, right: 12, top: 28, bottom: 24 },
-    xAxis: { type: 'time', axisLabel: { color: '#9fb2da' } },
-    yAxis: { type: 'value', axisLabel: { color: '#9fb2da' } },
-    series
-  }, { notMerge: true });
+chart.setOption({
+  animation: false,
+  backgroundColor: 'transparent',
+  tooltip: {
+    trigger: 'axis',
+    backgroundColor: '#0d1329',
+    borderColor: 'rgba(125,190,255,.35)',
+    textStyle: { color: '#f4f8ff' }
+  },
+  legend: { top: 0, textStyle: { color: '#cdd9f6', fontSize: 11 } },
+
+  grid: { left: 34, right: 12, top: 28, bottom: 38, containLabel: true },
+
+  xAxis: {
+    type: 'time',
+    axisLabel: {
+      color: '#9fb2da',
+      hideOverlap: true,
+      interval: 'auto',
+      margin: 10,
+      formatter: (v) => {
+        const d = new Date(v);
+        return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+      }
+    },
+    axisTick: { show: false },
+    splitLine: { show: false }
+  },
+
+  yAxis: {
+    type: 'value',
+    axisLabel: { color: '#9fb2da', margin: 10 },
+    axisTick: { show: false },
+    splitLine: { show: false } // 👈 adiós líneas intermedias
+  },
+
+  series
+}, { notMerge: true });
 }
 
 function snapshotFoodDetailForm(formEl) {
@@ -2138,34 +2184,35 @@ function renderFinanceStatsDonutChart() {
     disposeFinanceStatsDonutChart();
     financeStatsDonutChart = echarts.init(host);
   }
+financeStatsDonutChart.setOption({
+  animation: false,
 
-  financeStatsDonutChart.setOption({
-    animation: false,
-    tooltip: {
-      show: false,
-      trigger: 'item',
-      triggerOn: 'none',
-      formatter: (params) => `${escapeHtml(params?.data?.name || '')}<br>${fmtCurrency(params?.data?.value || 0)} · ${(Number(params?.percent || 0)).toFixed(1)}%`
+  tooltip: {
+    show: false
+  },
+
+  series: [{
+    type: 'pie',
+    radius: ['58%', '80%'],
+    avoidLabelOverlap: true,
+    label: { show: false },
+    labelLine: false ,
+    emphasis: { disabled: true },   // 👈 evita hover visual
+    itemStyle: {
+      borderColor: 'rgba(8,14,34,.9)',
+      borderWidth: 2
     },
-    series: [{
-      type: 'pie',
-      radius: ['58%', '80%'],
-      avoidLabelOverlap: true,
-      label: { show: false },
-      labelLine: { show: false },
-      emphasis: { scale: true, scaleSize: 6 },
-      itemStyle: { borderColor: 'rgba(8,14,34,.9)', borderWidth: 2 },
-      data: rows.map((row) => ({
-        name: row.name,
-        value: Number(row.value || 0),
-        _key: row._key,
-        productKey: row.productKey,
-        pct: Number(row.pct || 0),
-        midAngle: Number(row.midAngle || 0),
-        itemStyle: { color: row.color }
-      }))
-    }]
-  }, { notMerge: true });
+    data: rows.map((row) => ({
+      name: row.name,
+      value: Number(row.value || 0),
+      _key: row._key,
+      productKey: row.productKey,
+      pct: Number(row.pct || 0),
+      midAngle: Number(row.midAngle || 0),
+      itemStyle: { color: row.color }
+    }))
+  }]
+}, { notMerge: true });
 
   const resetSelection = ({ rerender = true } = {}) => {
     financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
@@ -2579,12 +2626,12 @@ function renderFinanceBalance() {
         }))))}"
         aria-label="Distribución por agrupación"
       ></div>
-      <svg class="financeStats__calloutSvg" viewBox="0 0 100 100" aria-hidden="true"><polyline id="financeStatsDonutCalloutLine" class="financeStats__calloutLine" data-finance-stats-callout-line style="display:none"></polyline></svg>
+      <svg class="financeStats__calloutSvg" viewBox="0 0 0 0" aria-hidden="true"><polyline id="financeStatsDonutCalloutLine" class="financeStats__calloutLine" data-finance-stats-callout-line style="display:none"></polyline></svg>
       <div id="financeStatsDonutCallout" class="financeStats__callout" data-finance-stats-callout style="display:none"></div>
       <div class="financeStats__donutCenter">
-        <small>${statsGroupBy === 'product' ? `Total (con líneas · ${scopeLabel})` : `Total (${scopeLabel})`}</small>
+        <small>${statsGroupBy === 'product' ? `Total (${scopeLabel})` : `Total (${scopeLabel})`}</small>
         <strong class="financeStats__donutValue">${fmtCurrency(donutTotal)}</strong>
-        <small class="financeStats__donutSub">Distribución ${groupLabel.toLowerCase()}</small>
+        <small class="financeStats__donutSub">${groupLabel.toLowerCase()}</small>
       </div>
       ${segments.length ? '' : '<p class="financeStats__emptyHint">Sin datos para agrupar.</p>'}
     </div>
@@ -3414,17 +3461,33 @@ if (form) {
     return;
   }
   if (state.modal.type === 'food-item') {
-    const editing = state.modal.foodId ? (state.food.itemsById?.[state.modal.foodId] || resolveFoodItemByAnyKey(state.modal.foodId) || null) : null;
-    const presetName = normalizeFoodName(state.modal.foodName || editing?.name || '');
-    const mode = state.modal.mode || 'edit';
-    const title = (mode === 'info' || mode === 'detail') ? 'Product Detail' : (editing ? 'Editar comida' : 'Nueva comida');
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>${title}</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header>
-      ${renderFoodItemModalForm(editing, presetName, mode)}
-    </div>`;
-    renderFoodHistoryVendorChart();
-    initFoodDetailInteractions();
-    return;
-  }
+  const editing = state.modal.foodId
+    ? (state.food.itemsById?.[state.modal.foodId] || resolveFoodItemByAnyKey(state.modal.foodId) || null)
+    : null;
+
+  const presetName = normalizeFoodName(state.modal.foodName || editing?.name || '');
+  const mode = state.modal.mode || 'edit';
+
+  // 👇 título = nombre del producto (fallback decente)
+  const productTitle = presetName || editing?.name || 'Producto';
+
+  const title =
+    (mode === 'info' || mode === 'detail')
+      ? escapeHtml(productTitle)
+      : (editing ? 'Editar comida' : 'Nueva comida');
+
+  backdrop.innerHTML = `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1">
+    <header class="food-sheet-header">
+      <h3>${title}</h3>
+      <button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button>
+    </header>
+    ${renderFoodItemModalForm(editing, presetName, mode)}
+  </div>`;
+
+  renderFoodHistoryVendorChart();
+  initFoodDetailInteractions();
+  return;
+}
 }
 
 function getFoodFormRefs(form) {

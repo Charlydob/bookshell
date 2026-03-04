@@ -198,7 +198,7 @@
 .financeTab #finance-modalOverlay.is-open { display: flex; }
 .financeTab #finance-modal {
   width: min(720px, 100%);
-  max-height: min(90vh, 820px);
+  max-height: min(80vh, 820px);
   overflow: auto;
   border-radius: 26px;
   padding: 18px;
@@ -1618,9 +1618,10 @@ small.finAgg__totals-small {
   width: 44px;
   height: 44px;
   border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.08);
+  border: 0px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
   color: var(--fin-text);
+  font-size: 21px;
 }
 
 .financeTab .food-sheet-form {
@@ -1710,6 +1711,9 @@ small.finAgg__totals-small {
   border: 1px solid rgba(255, 255, 255, 0.08);
   display: grid;
   place-items: center;
+  align-content: center;
+  padding-top: 15px;
+  padding-right: 15px;
 }
 
 .financeTab .finFoodInfo__chartWrap--empty {
@@ -2030,4 +2034,47 @@ margin: 0px;
 
 .financeRoi__customDates {
   grid-template-columns: minmax(0, 1fr);
+}
+.financeTab .financeStats__rankRow {
+width: 80%;
+min-height: 46px;
+border: 1px solid transparent;
+border-radius: 10px;
+background: rgba(255,255,255,.02);
+color: inherit;
+padding: 4px 8px;
+text-align: center;
+cursor: pointer;
+justify-self: center;
+font-size: 10px;
+}
+
+.food-sheet-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0 10px;
+  backdrop-filter: blur(12px);
+}
+.finFoodDetailSummary{
+  cursor:pointer;
+  font-weight:600;
+  padding:8px 0;
+  list-style:none;
+}
+
+.finFoodDetailSummary::-webkit-details-marker{
+  display:none;
+}
+
+.finFoodDetailSection{
+  border-radius:12px;
+}
+
+.finFoodDetailSection[open] .finFoodDetailSummary{
+  opacity:.9;
+}
+
+.finFoodDetailBody{
+  padding-top:8px;
 }

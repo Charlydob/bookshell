@@ -429,7 +429,8 @@ function normalizeFoodPriceHistory(map = {}) {
 }
 
 function foodPriceHistoryList(food = {}) {
-  return Object.entries(food?.priceHistory || {}).flatMap(([vendorKey, vendorRows]) => Object.values(vendorRows || {}).map((row) => ({
+  return Object.entries(food?.priceHistory || {}).flatMap(([vendorKey, vendorRows]) => Object.entries(vendorRows || {}).map(([entryId, row]) => ({
+      entryId: String(entryId || ''),
       vendor: firebaseSafeKey(vendorKey) || 'unknown',
       price: Number(row?.price),
       unitPrice: Number(row?.unitPrice || row?.price || 0),
@@ -557,6 +558,23 @@ async function recordFoodPricePoint(foodId, priceInput, source = 'expense', opti
       [entryId]: payload
     }
   };
+}
+
+async function deleteFoodPricePoint(foodId, vendor, entryId) {
+  const safeFoodId = String(foodId || '').trim();
+  const safeVendor = firebaseSafeKey(vendor || 'unknown') || 'unknown';
+  const safeEntryId = String(entryId || '').trim();
+  if (!safeFoodId || !safeEntryId) return false;
+  await safeFirebase(() => remove(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${safeVendor}/${safeEntryId}`)));
+  if (!state.food.itemsById?.[safeFoodId]?.priceHistory?.[safeVendor]) return true;
+  const nextVendorRows = { ...(state.food.itemsById[safeFoodId].priceHistory[safeVendor] || {}) };
+  delete nextVendorRows[safeEntryId];
+  state.food.itemsById[safeFoodId].priceHistory = {
+    ...(state.food.itemsById[safeFoodId].priceHistory || {}),
+    [safeVendor]: nextVendorRows
+  };
+  if (!Object.keys(nextVendorRows).length) delete state.food.itemsById[safeFoodId].priceHistory[safeVendor];
+  return true;
 }
 function getFoodByName(name = '') {
   const safe = normalizeFoodName(name).toLowerCase();
@@ -939,6 +957,7 @@ function foodDetailViewModel(food = {}, fallbackName = '') {
   const name = normalizeFoodName(food?.name || fallbackName || '');
   const displayName = String(food?.displayName || name || food?.idKey || 'Producto').trim() || 'Producto';
   const history = mergedFoodHistory(food);
+  const explicitHistory = foodPriceHistoryList(food);
   const byVendor = history.reduce((acc, row) => {
     const vendor = firebaseSafeKey(row.vendor || 'unknown') || 'unknown';
     if (!acc[vendor]) acc[vendor] = [];
@@ -954,6 +973,31 @@ function foodDetailViewModel(food = {}, fallbackName = '') {
   const latestLine = latestByVendor.length > 1
     ? latestByVendor.slice(0, 2).map((row) => `${fmtCurrency(row.price)} (${row.vendor})`).join(' · ')
     : (latest ? `${fmtCurrency(latest.price)} · Vendor: ${latest.vendor}` : 'Último precio: —');
+  const vendorAliases = food?.vendorAliases && typeof food.vendorAliases === 'object' ? food.vendorAliases : {};
+  const vendorSet = new Set([...vendors, ...Object.keys(vendorAliases || {})]);
+  const allVendors = [...vendorSet].filter(Boolean).sort((a, b) => a.localeCompare(b, 'es'));
+  const latestByVendorMap = latestByVendor.reduce((acc, row) => ({ ...acc, [row.vendor]: row }), {});
+  const explicitByVendor = explicitHistory.reduce((acc, row) => {
+    const vendor = firebaseSafeKey(row.vendor || 'unknown') || 'unknown';
+    if (!acc[vendor]) acc[vendor] = [];
+    acc[vendor].push(row);
+    return acc;
+  }, {});
+  const tableRows = allVendors.map((vendor) => {
+    const latestVendor = latestByVendorMap[vendor] || null;
+    const aliases = Array.isArray(vendorAliases[vendor]) ? vendorAliases[vendor] : [];
+    const explicitRows = (explicitByVendor[vendor] || []).slice().sort((a, b) => b.ts - a.ts);
+    return {
+      vendor,
+      aliases,
+      aliasText: aliases.join(', '),
+      latest: latestVendor,
+      latestDateLabel: latestVendor ? new Date(latestVendor.ts).toLocaleDateString('es-ES') : '—',
+      latestPriceLabel: latestVendor ? fmtCurrency(latestVendor.price) : '—',
+      latestEntry: explicitRows[0] || null,
+      hasExplicit: !!explicitRows.length
+    };
+  });
   return {
     name,
     displayName,
@@ -963,60 +1007,79 @@ function foodDetailViewModel(food = {}, fallbackName = '') {
     latest,
     latestByVendor,
     latestLine,
-    chartByVendor: foodChartSeriesByVendor(history, 'total')
+    chartByVendor: foodChartSeriesByVendor(history, 'total'),
+    vendorAliases,
+    tableRows
   };
 }
 
 function renderFoodPriceHistorySection(food = {}, options = {}) {
   const view = foodDetailViewModel(food, options?.presetName || '');
-  const currentRows = view.latestByVendor.map((row) => `<tr><td>${escapeHtml(row.vendor)}</td><td><strong>${fmtCurrency(row.price)}</strong></td><td>${new Date(row.ts).toLocaleDateString('es-ES')}</td></tr>`).join('');
+  const currentRows = view.tableRows.map((row) => `<tr data-food-vendor-row="${escapeHtml(row.vendor)}"><td><button type="button" class="finFoodLinkBtn" data-food-focus-vendor="${escapeHtml(row.vendor)}">${escapeHtml(row.vendor)}</button></td><td><button type="button" class="finFoodAliasBtn" data-food-alias-edit="${escapeHtml(row.vendor)}" data-food-current-alias="${escapeHtml(row.aliasText)}">${escapeHtml(row.aliasText || '—')}</button></td><td><strong>${row.latestPriceLabel}</strong></td><td>${row.latestDateLabel}</td><td><div class="finFoodTableActions"><button type="button" class="finFoodIconAction" data-food-price-add-vendor="${escapeHtml(row.vendor)}" aria-label="Registrar precio en ${escapeHtml(row.vendor)}">＋</button>${row.latestEntry ? `<button type="button" class="finFoodIconAction finFoodIconAction--danger" data-food-price-delete="${escapeHtml(row.vendor)}:${escapeHtml(row.latestEntry.entryId || '')}" aria-label="Borrar último registro de ${escapeHtml(row.vendor)}">🗑</button>` : ''}</div></td></tr>`).join('');
   const vendorChips = view.vendors.map((vendor) => `<span class="finFoodChip">${escapeHtml(vendor)}</span>`).join('') || '<span class="finFoodChip">Sin vendor</span>';
   const overviewSub = [food?.mealType || 'Sin categoría', view.vendors.length ? `${view.vendors.length} vendor${view.vendors.length > 1 ? 's' : ''}` : 'Sin vendors', view.latestLine].join(' · ');
+  const vendorOptions = ['unknown', ...new Set(view.tableRows.map((row) => row.vendor))].map((vendor) => `<option value="${escapeHtml(vendor)}">${escapeHtml(vendor)}</option>`).join('');
   return `
-    <section class="finFoodDetailHead">
-      <div>
-        <h2>${escapeHtml(view.displayName)}</h2>
-        <p>${escapeHtml(overviewSub)}</p>
+    <section class="finFoodDetailHead finFoodCard">
+      <div class="finFoodCardTitleRow">
+        <div>
+          <h2>🍽️ ${escapeHtml(view.displayName)}</h2>
+          <p>${escapeHtml(overviewSub)}</p>
+        </div>
+        <button type="button" class="food-history-btn" data-food-open-edit="${escapeHtml(food.id || '')}">Editar</button>
       </div>
     </section>
 
-    <section class="finFoodDetailSection finFoodDetailSection--chips">
+    <section class="finFoodDetailSection finFoodDetailSection--chips finFoodCard">
       <button type="button" class="finFoodChip finFoodChip--action" data-food-scroll-to="aliases">Aliases</button>
-      <button type="button" class="finFoodChip finFoodChip--action" data-food-history-register="${escapeHtml(food.id || '')}">+ Precio</button>
+      <button type="button" class="finFoodChip finFoodChip--action" data-food-toggle-register>+ Precio</button>
       <button type="button" class="finFoodChip finFoodChip--action" data-food-view-purchases="${escapeHtml(food.id || '')}">Ver compras</button>
     </section>
 
-    <section class="finFoodDetailSection" data-food-detail-card="evolution">
+    <section class="finFoodDetailSection finFoodCard" data-food-detail-card="evolution">
       <div class="finFoodCardTitleRow"><h4>Evolución</h4><div class="finFoodMiniTabs"><button type="button" class="finFoodMiniTab is-active" data-food-chart-type="line">Línea</button><button type="button" class="finFoodMiniTab" data-food-chart-type="bar">Barras</button></div></div>
+      <div class="finFoodMiniTabs" data-food-vendor-legend></div>
       <div class="finFoodMiniTabs" data-food-range-tabs><button type="button" class="finFoodMiniTab" data-food-chart-range="30d">30d</button><button type="button" class="finFoodMiniTab" data-food-chart-range="90d">90d</button><button type="button" class="finFoodMiniTab is-active" data-food-chart-range="total">Total</button></div>
       ${view.history.length
         ? `<div class="finFoodInfo__chartWrap" data-food-history-chart data-food-chart-type="line" data-food-chart-range="total" data-food-history-series='${escapeHtml(JSON.stringify(view.chartByVendor))}'></div>`
         : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin historial. Registra un precio para ver evolución.</span></div>'}
     </section>
 
-    <section class="finFoodDetailSection" data-food-detail-card="prices">
-      <div class="finFoodCardTitleRow"><h4>Precios</h4><button type="button" class="food-history-btn" data-food-history-register="${escapeHtml(food.id || '')}">+ registrar precio</button></div>
-      ${view.latestByVendor.length
-        ? `<div class="finFoodPriceTableWrap"><table class="finFoodPriceTable"><thead><tr><th>Vendor</th><th>Último precio</th><th>Fecha</th></tr></thead><tbody>${currentRows}</tbody></table></div>`
+    <section class="finFoodDetailSection finFoodCard" data-food-detail-card="prices">
+      <div class="finFoodCardTitleRow"><h4>Precios</h4><button type="button" class="food-history-btn" data-food-toggle-register>+ registrar precio</button></div>
+      <div class="finFoodInlineRegister" data-food-register-inline hidden>
+        <div class="food-form-grid finFoodRegisterGrid">
+          <div class="food-form-row"><label class="food-form-label" for="food-register-vendor">Supermercado</label><select id="food-register-vendor" class="food-control" data-food-register-vendor><option value="">Seleccionar</option>${vendorOptions}</select></div>
+          <div class="food-form-row"><label class="food-form-label" for="food-register-price">Precio</label><input id="food-register-price" class="food-control" type="number" min="0" step="0.01" data-food-register-price placeholder="0.00" /></div>
+          <div class="food-form-row"><label class="food-form-label" for="food-register-date">Fecha</label><input id="food-register-date" class="food-control" type="date" data-food-register-date value="${escapeHtml(dayKeyFromTs(nowTs()))}" /></div>
+          <div class="food-form-row finFoodRegisterAction"><button type="button" class="food-history-btn" data-food-register-submit="${escapeHtml(food.id || '')}">Guardar precio</button></div>
+        </div>
+      </div>
+      ${view.tableRows.length
+        ? `<div class="finFoodPriceTableWrap"><table class="finFoodPriceTable"><thead><tr><th>Supermercado</th><th>Alias</th><th>Último precio</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>${currentRows}</tbody></table></div>`
         : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin historial</span></div>'}
     </section>
 
-    <section class="finFoodDetailSection" data-food-detail-card="aliases" id="food-detail-aliases">
-      <h4>Aliases</h4>
-      ${renderFoodAliasEditor(food || {})}
-      <div class="food-form-row"><label class="food-form-label" for="food-vendorAliases-input">Alias por súper</label><input id="food-vendorAliases-input" class="food-control" name="vendorAliases" value="${escapeHtml(options.vendorAliasList || '')}" placeholder="mercadona:coca cola|coke" /></div>
-      <div class="finFoodChipRow">${vendorChips}</div>
-    </section>
-
-    <section class="finFoodDetailSection" data-food-detail-card="data">
-      <h4>Datos</h4>
-      <div class="food-form-grid foodX-stack">
-        <div class="food-form-row"><label class="food-form-label" for="food-mealType-input">Categoría</label><div class="food-form-inline"><select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="typeOfMeal" aria-label="Añadir nuevo tipo">+</button></div></div>
-        <div class="food-form-row"><label class="food-form-label" for="food-cuisine-input">Saludable</label><div class="food-form-inline"><select id="food-cuisine-input" class="food-control" name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.cuisine || food?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="cuisine" aria-label="Añadir nuevo saludable">+</button></div></div>
-        <div class="food-form-row"><label class="food-form-label" for="food-place-input">Dónde</label><div class="food-form-inline"><select id="food-place-input" class="food-control" name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="place" aria-label="Añadir nuevo dónde">+</button></div></div>
+    <details class="finFoodDetailSection finFoodCard" data-food-detail-card="data">
+      <summary class="finFoodDetailSummary">Datos</summary>
+      <div class="finFoodDetailBody food-form-grid foodX-stack">
+        <div class="food-form-row"><label class="food-form-label" for="food-name-input">Nombre</label><input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(food?.name || options?.presetName || '')}" /></div>
+        <div class="food-form-row"><label class="food-form-label" for="food-displayName-input">Display name</label><input id="food-displayName-input" class="food-control" name="displayName" value="${escapeHtml(food?.displayName || options?.presetName || '')}" data-food-display-name /></div>
+        <div class="food-form-row"><label class="food-form-label" for="food-mealType-input">Categoría <button type="button" class="finFoodLabelAction" data-food-add="typeOfMeal">+ Añadir</button></label><select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>
+        <div class="food-form-row"><label class="food-form-label" for="food-cuisine-input">Saludable <button type="button" class="finFoodLabelAction" data-food-add="cuisine">+ Añadir</button></label><select id="food-cuisine-input" class="food-control" name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.cuisine || food?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>
+        <div class="food-form-row"><label class="food-form-label" for="food-place-input">Dónde <button type="button" class="finFoodLabelAction" data-food-add="place">+ Añadir</button></label><select id="food-place-input" class="food-control" name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>
         <div class="food-form-row"><label class="food-form-label" for="food-defaultPrice-input">Precio por defecto</label><input id="food-defaultPrice-input" class="food-control" name="defaultPrice" type="number" step="0.01" min="0" value="${Number(food?.defaultPrice || 0) || ''}" /></div>
       </div>
-    </section>
+    </details>
+
+    <details class="finFoodDetailSection finFoodCard" data-food-detail-card="aliases" id="food-detail-aliases">
+      <summary class="finFoodDetailSummary">Aliases</summary>
+      <div class="finFoodDetailBody">
+        ${renderFoodAliasEditor(food || {})}
+        <div class="food-form-row"><label class="food-form-label" for="food-vendorAliases-input">Alias por súper</label><input id="food-vendorAliases-input" class="food-control" name="vendorAliases" value="${escapeHtml(options.vendorAliasList || '')}" placeholder="mercadona:coca cola|coke" /></div>
+        <div class="finFoodChipRow">${vendorChips}</div>
+      </div>
+    </details>
   `;
 }
 
@@ -1025,7 +1088,7 @@ function renderFoodAliasEditor(editing = {}) {
   return `<div class="finFoodAliasEditor" data-food-alias-editor>
     <input type="hidden" name="aliases" value="${escapeHtml(aliases.join(', '))}" data-food-aliases-hidden />
     <div class="finFoodChipRow" data-food-aliases-chips>${aliases.map((alias, index) => `<button type="button" class="finFoodChip finFoodChip--remove" data-food-alias-remove="${index}">${escapeHtml(alias)} ×</button>`).join('') || '<span class="finFoodChip">Sin alias</span>'}</div>
-    <div class="food-form-inline"><input class="food-control" type="text" data-food-alias-input placeholder="Añadir alias" /><button type="button" class="food-mini-btn" data-food-alias-add>+</button></div>
+    <div class="food-form-inline"><input class="food-control" type="text" data-food-alias-input placeholder="Añadir alias" /><button type="button" class="finFoodInlineAddBtn" data-food-alias-add>Añadir</button></div>
   </div>`;
 }
 
@@ -1039,7 +1102,7 @@ function renderFoodItemModalForm(editing, presetName, mode = 'edit') {
   const detailBody = renderFoodPriceHistorySection(editing || { name: presetName, displayName }, { presetName, vendorAliasList });
   return `<form class="food-sheet-form" data-food-item-form data-food-item-mode="${isDetail ? 'detail' : (isInfo ? 'info' : 'edit')}">
         <input type="hidden" name="foodId" value="${escapeHtml(editing?.id || '')}" />
-        ${isDetail ? `<section class="finFoodDetailSection"><div class="food-form-grid foodX-stack"><div class="food-form-row"><label class="food-form-label" for="food-name-input">Nombre</label><input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(presetName)}" /></div><div class="food-form-row"><label class="food-form-label" for="food-displayName-input">Display name</label><input id="food-displayName-input" class="food-control" name="displayName" value="${escapeHtml(displayName)}" data-food-display-name /></div></div></section>${detailBody}` : `
+        ${isDetail ? detailBody : `
         <section class="finFoodDetailSection">
           <h4>Header</h4>
           <div class="food-form-grid foodX-stack">
@@ -1097,7 +1160,15 @@ function renderFoodHistoryVendorChart() {
   const filtered = foodChartSeriesByVendor(points, range);
   const vendors = Object.keys(filtered);
   if (!vendors.length) return;
+  const hiddenVendors = new Set(String(host.dataset.foodHiddenVendors || '').split(',').map((v) => firebaseSafeKey(v || '')).filter(Boolean));
   const palette = ['#7dbdff', '#7af0c8', '#f9b571', '#dba4ff', '#ff7d9f', '#ffe082'];
+  const legendHost = document.querySelector('[data-food-vendor-legend]');
+  if (legendHost) {
+    legendHost.innerHTML = vendors.map((vendor, index) => {
+      const isHidden = hiddenVendors.has(vendor);
+      return `<button type="button" class="finFoodMiniTab ${isHidden ? '' : 'is-active'}" data-food-vendor-toggle="${escapeHtml(vendor)}" style="--vendor-color:${palette[index % palette.length]}">${escapeHtml(vendor)}</button>`;
+    }).join('');
+  }
   const series = vendors.map((vendor, index) => ({
     name: vendor,
     type: chartType,
@@ -1105,7 +1176,7 @@ function renderFoodHistoryVendorChart() {
     smooth: false,
     lineStyle: { width: 2 },
     itemStyle: { color: palette[index % palette.length] },
-    data: (filtered[vendor] || []).map((row) => [String(row.date || dayKeyFromTs(row.ts)), Number(row.price || 0)])
+    data: hiddenVendors.has(vendor) ? [] : (filtered[vendor] || []).map((row) => [String(row.date || dayKeyFromTs(row.ts)), Number(row.price || 0)])
   }));
   const chart = echarts.getInstanceByDom(host) || echarts.init(host);
 chart.setOption({
@@ -1113,11 +1184,14 @@ chart.setOption({
   backgroundColor: 'transparent',
   tooltip: {
     trigger: 'axis',
+    confine: true,
+    borderRadius: 10,
+    padding: [6, 8],
     backgroundColor: '#0d1329',
     borderColor: 'rgba(125,190,255,.35)',
-    textStyle: { color: '#f4f8ff' }
+    textStyle: { color: '#f4f8ff', fontSize: 11 }
   },
-  legend: { top: 0, textStyle: { color: '#cdd9f6', fontSize: 11 } },
+  legend: { show: false },
 
   grid: { left: 34, right: 12, top: 28, bottom: 38, containLabel: true },
 
@@ -4247,11 +4321,96 @@ function bindEvents() {
     }
     const registerFoodHistory = target.closest('[data-food-history-register]')?.dataset.foodHistoryRegister;
     if (registerFoodHistory) {
-      const raw = window.prompt('Precio a registrar (€)');
-      const price = parseEuroNumber(raw);
+      const registerInline = document.querySelector('[data-food-register-inline]');
+      if (registerInline) registerInline.hidden = false;
+      return;
+    }
+    const toggleInlineRegister = target.closest('[data-food-toggle-register]');
+    if (toggleInlineRegister) {
+      const registerInline = document.querySelector('[data-food-register-inline]');
+      if (!registerInline) return;
+      registerInline.hidden = !registerInline.hidden;
+      if (!registerInline.hidden) registerInline.querySelector('[data-food-register-price]')?.focus();
+      return;
+    }
+    const submitRegister = target.closest('[data-food-register-submit]')?.dataset.foodRegisterSubmit;
+    if (submitRegister) {
+      const registerWrap = document.querySelector('[data-food-register-inline]');
+      const vendor = String(document.querySelector('[data-food-register-vendor]')?.value || '').trim();
+      const price = parseEuroNumber(document.querySelector('[data-food-register-price]')?.value || '');
+      const date = String(document.querySelector('[data-food-register-date]')?.value || dayKeyFromTs(nowTs()));
+      if (!vendor) { toast('Selecciona supermercado'); return; }
       if (!Number.isFinite(price) || price <= 0) { toast('Precio inválido'); return; }
-      await recordFoodPricePoint(registerFoodHistory, price, 'manual');
+      await recordFoodPricePoint(submitRegister, price, 'manual', { vendor, date, ts: parseDayKey(date) || nowTs() });
+      if (registerWrap) registerWrap.hidden = true;
       toast('Precio registrado');
+      triggerRender();
+      return;
+    }
+    const addVendorPrice = target.closest('[data-food-price-add-vendor]')?.dataset.foodPriceAddVendor;
+    if (addVendorPrice) {
+      const registerInline = document.querySelector('[data-food-register-inline]');
+      if (!registerInline) return;
+      registerInline.hidden = false;
+      const vendorInput = registerInline.querySelector('[data-food-register-vendor]');
+      if (vendorInput) vendorInput.value = addVendorPrice;
+      registerInline.querySelector('[data-food-register-price]')?.focus();
+      return;
+    }
+    const deletePriceKey = target.closest('[data-food-price-delete]')?.dataset.foodPriceDelete;
+    if (deletePriceKey) {
+      const [vendor, entryId] = String(deletePriceKey).split(':');
+      const foodId = state.modal.foodId || '';
+      if (!foodId || !vendor || !entryId) return;
+      if (!window.confirm('¿Borrar este precio?')) return;
+      await deleteFoodPricePoint(foodId, vendor, entryId);
+      toast('Registro eliminado');
+      triggerRender();
+      return;
+    }
+    const editVendorAlias = target.closest('[data-food-alias-edit]')?.dataset.foodAliasEdit;
+    if (editVendorAlias) {
+      const aliasesCard = document.querySelector('[data-food-detail-card="aliases"]');
+      if (aliasesCard && aliasesCard.tagName === 'DETAILS') aliasesCard.open = true;
+      const input = document.querySelector('#food-vendorAliases-input');
+      if (!input) return;
+      const key = firebaseSafeKey(editVendorAlias);
+      const map = String(input.value || '').split(',').reduce((acc, row) => {
+        const [rawVendor, rawVals] = String(row || '').split(':');
+        const vendor = firebaseSafeKey(rawVendor || '');
+        if (!vendor) return acc;
+        acc[vendor] = String(rawVals || '').split('|').map((it) => normalizeFoodName(it)).filter(Boolean);
+        return acc;
+      }, {});
+      if (!map[key]) map[key] = [];
+      input.value = Object.entries(map).map(([vendor, aliases]) => `${vendor}:${aliases.join('|')}`).join(', ');
+      input.focus();
+      toast(`Edita alias para ${editVendorAlias} y pulsa Guardar`);
+      return;
+    }
+    const vendorFocus = target.closest('[data-food-focus-vendor]')?.dataset.foodFocusVendor;
+    if (vendorFocus) {
+      const host = document.querySelector('[data-food-history-chart]');
+      if (!host) return;
+      host.dataset.foodHiddenVendors = Object.keys(JSON.parse(host.dataset.foodHistorySeries || '{}')).filter((vendor) => vendor !== vendorFocus).join(',');
+      renderFoodHistoryVendorChart();
+      return;
+    }
+    const vendorToggle = target.closest('[data-food-vendor-toggle]')?.dataset.foodVendorToggle;
+    if (vendorToggle) {
+      const host = document.querySelector('[data-food-history-chart]');
+      if (!host) return;
+      const hidden = new Set(String(host.dataset.foodHiddenVendors || '').split(',').map((row) => firebaseSafeKey(row || '')).filter(Boolean));
+      const vendorKey = firebaseSafeKey(vendorToggle || '');
+      if (!vendorKey) return;
+      if (hidden.has(vendorKey)) hidden.delete(vendorKey); else hidden.add(vendorKey);
+      host.dataset.foodHiddenVendors = [...hidden].join(',');
+      renderFoodHistoryVendorChart();
+      return;
+    }
+    const openFoodEdit = target.closest('[data-food-open-edit]')?.dataset.foodOpenEdit;
+    if (openFoodEdit) {
+      state.modal = { type: 'food-item', foodId: openFoodEdit, source: 'detail-edit' };
       triggerRender();
       return;
     }

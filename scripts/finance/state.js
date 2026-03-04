@@ -34,6 +34,8 @@ export const state = {
   balanceStatsScope: 'personal',
   balanceStatsIncludeUnlined: false,
   balanceStatsActiveSegment: null,
+  balanceStatsSelectedSliceKey: null,
+  balanceStatsLegendExpanded: true,
   balanceFilterUnlinedOnly: false,
   balanceAggMode: 'month',
   balanceAggScope: 'my',

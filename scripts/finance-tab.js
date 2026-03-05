@@ -4595,10 +4595,50 @@ async function probeFinanceRoots() {
   return { newPath, legacyPath, newRoot, legacyRoot, chosenPath };
 }
 
+async function detectFinancePath(basePath) {
+  const candidates = [];
+  const add = (path) => {
+    if (path && !candidates.includes(path)) candidates.push(path);
+  };
+
+  add(basePath);
+  if (/\/finance\/?$/.test(basePath) && !/\/finance\/finance\/?$/.test(basePath)) {
+    add(basePath.replace(/\/finance\/?$/, '/finance/finance'));
+  }
+  if (/\/finance\/finance\/?$/.test(basePath)) {
+    add(basePath.replace(/\/finance\/finance\/?$/, '/finance'));
+  }
+  if (!/\/finance\/finance\/?$/.test(basePath)) {
+    add(basePath.replace(/\/$/, '') + '/finance');
+  }
+
+  for (const root of candidates) {
+    try {
+      const snap = await get(ref(db, `${root}/transactions`));
+      if (snap?.exists()) return root;
+    } catch (error) {
+      console.warn('[FINANCE] detectFinancePath probe failed', root, error?.message || error);
+    }
+  }
+
+  for (const root of candidates) {
+    try {
+      const snap = await get(ref(db, `${root}/accounts`));
+      if (snap?.exists()) return root;
+    } catch {
+      // noop
+    }
+  }
+
+  return basePath;
+}
+
 async function loadDataOnce() {
   const { newRoot, legacyRoot } = financeRootsCache;
   const mergedRoot = mergeFinanceRoots(newRoot, legacyRoot);
   applyRemoteData(mergedRoot, true);
+  const txCount = Object.keys((state.balance.transactions || {})).length;
+  console.log('[FINANCE] after applyRemoteData txCount', txCount);
   financeNeedsLegacyAccountsMerge = !hasData(newRoot?.accounts) && hasData(legacyRoot?.accounts);
   console.log('[FINANCE] counts', {
     accounts: Object.keys((mergedRoot.accounts || {})).length,
@@ -5937,6 +5977,7 @@ function financeDomReady() {
 
 async function boot() {
   if (state.booted) return;
+  await ensureFinanceLoaded();
   if (!financeDomReady()) {
     log('boot deferred: finance DOM not ready yet');
     return;
@@ -5953,8 +5994,9 @@ async function boot() {
   console.log('[finance] deviceId', state.deviceId);
   const pathProbe = await probeFinanceRoots();
   financeRootsCache = { newRoot: pathProbe.newRoot, legacyRoot: pathProbe.legacyRoot };
-  state.financePath = pathProbe.chosenPath;
-  console.log('[FINANCE] chosen financePath', state.financePath);
+  const rawPath = resolveFinancePath();
+  state.financePath = await detectFinancePath(rawPath);
+  console.log('[FINANCE] financePath resolved', { rawPath, financePath: state.financePath });
   log('init ok', { financePath: state.financePath });
   bindEvents();
   await loadDataOnce();

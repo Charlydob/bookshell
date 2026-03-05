@@ -1004,12 +1004,14 @@ function renderFinanceProducts() {
   const cfg = state.foodProductsView || {};
   const { lines, purchaseCount } = buildFoodLines(cfg.range || '30d', cfg);
   const agg = aggregateProducts(lines, purchaseCount);
+  const vendorTotals = agg?.vendorTotals && typeof agg.vendorTotals === 'object' ? agg.vendorTotals : {};
+  const vendorKeys = Object.keys(vendorTotals);
   const rangeOptions = [['month', 'Mes'], ['30d', '30d'], ['90d', '90d'], ['year', 'Año'], ['custom', 'Custom']];
-  const list = (cfg.tab || 'top-eur') === 'top-count' ? agg.topByCount : agg.topByTotal;
+  const list = (cfg.tab || 'top-eur') === 'top-count' ? (agg?.topByCount || []) : (agg?.topByTotal || []);
   const listVisible = cfg.onlyWithItems ? list.filter((row) => row.count > 0) : list;
-  const vendorOptions = ['all', ...Object.keys(agg.vendorTotals).sort((a, b) => a.localeCompare(b, 'es'))];
+  const vendorOptions = ['all', ...vendorKeys.sort((a, b) => a.localeCompare(b, 'es'))];
   const accountOptions = ['all', ...new Set(balanceTxList().map((row) => String(row.accountId || '')).filter(Boolean))];
-  const totalAverage = agg.purchaseCount > 0 ? agg.totalFood / agg.purchaseCount : 0;
+  const totalAverage = agg?.purchaseCount > 0 ? agg.totalFood / agg.purchaseCount : 0;
   return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Productos</h2></header>
     <section class="finFoodProductsHead">
       <div class="finFoodFilters">

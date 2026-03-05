@@ -19,6 +19,9 @@ import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './f
 import { resolveFinancePath } from './finance/data.js';
 import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, firebaseSafeKey, TICKET_IMPORT_SAMPLE_V1, resolveTicketMovementCategory } from './finance/import.js';
 
+let productsSearchTimer = null;
+let mergeSearchTimer = null;
+
 function log(...parts) { console.log('[finance]', ...parts); }
 function warnMissing(id) { console.warn(`[finance] missing DOM node ${id}`); }
 function $req(sel, ctx = document) {
@@ -924,7 +927,7 @@ function aggregateProducts(lines = [], purchaseCount = 0) {
     }
     const row = acc[canonicalId];
     row.total += Number(line.totalPrice || 0);
-    row.count += 1;
+    row.count += Math.max(1, Number(line.qty || 1));
     row.purchases.add(line.txId);
     row.aliases.add(line.nameRaw);
     if (line.ts >= row.lastTs) {
@@ -1004,7 +1007,11 @@ function buildProductsViewModel(cfg = {}) {
       lastPrice: detail?.lastPrice ?? null
     };
   });
-  const sortedRows = productRows.slice().sort((a, b) => {
+  const productsQuery = normalizeFoodName(effectiveCfg.productsQuery || '');
+  const queryFilteredRows = productsQuery
+    ? productRows.filter((row) => normalizeFoodName(row.canonicalName || '').includes(productsQuery))
+    : productRows;
+  const sortedRows = queryFilteredRows.slice().sort((a, b) => {
     if ((effectiveCfg.tab || 'top-eur') === 'top-count') return b.count - a.count || b.total - a.total;
     return b.total - a.total || b.count - a.count;
   });
@@ -1034,12 +1041,13 @@ function renderProductsView(isModal = false) {
   const accountOptions = ['all', ...new Set(balanceTxList().filter((row) => normalizeTxType(row?.type) === 'expense').map((row) => String(row.accountId || '')).filter(Boolean))];
   const totalAverage = purchaseCount > 0 ? totalFood / purchaseCount : 0;
   const listHtml = listVisible.length
-    ? listVisible.map((row) => `<button type="button" class="finFoodProductsRow" data-food-item-detail="${escapeHtml(row.canonicalId)}"><strong>${escapeHtml(row.canonicalName)}</strong><span>${fmtCurrency(row.total)} · ${row.percentOfFood.toFixed(1)}%</span><span>${(cfg.tab || 'top-eur') === 'top-count' ? `${row.count} veces` : `${row.purchases} compras`}</span><span>${row.cheapestVendorKey ? `Más barato en ${escapeHtml(row.cheapestVendorKey)} (${Number(row.cheapestPrice || 0).toFixed(2)} €/ud)` : 'Sin comparativa'}</span><small>${row.lastVendor ? `Último ${Number(row.lastPrice || 0).toFixed(2)} €/ud · ${escapeHtml(row.lastVendor)}` : ''}</small></button>`).join('')
+    ? listVisible.map((row) => `<button type="button" class="finFoodProductsRow" data-food-item-detail="${escapeHtml(row.canonicalId)}"><strong>${escapeHtml(row.canonicalName)}</strong><span>${fmtCurrency(row.total)} · ${row.percentOfFood.toFixed(1)}%</span><span>${(cfg.tab || 'top-eur') === 'top-count' ? `${row.count} uds` : `${row.purchases} compras`}</span><span>${row.cheapestVendorKey ? `Más barato en ${escapeHtml(row.cheapestVendorKey)} (${Number(row.cheapestPrice || 0).toFixed(2)} €/ud)` : 'Sin comparativa'}</span><small>${row.lastVendor ? `Último ${Number(row.lastPrice || 0).toFixed(2)} €/ud · ${escapeHtml(row.lastVendor)}` : ''}</small></button>`).join('')
     : '<p class="finance-empty">Sin productos en este rango.</p>';
-  const content = `<section class="finFoodProductsHead">
+  const content = `<div class="financeProductsView"><section class="finFoodProductsHead">
       <div class="finFoodFilters">
         <select class="food-control" data-food-products-range>${rangeOptions.map(([key, label]) => `<option value="${key}" ${cfg.range === key ? 'selected' : ''}>${label}</option>`).join('')}</select>
         <select class="food-control" data-food-products-vendor>${vendorOptions.map((vendor) => `<option value="${escapeHtml(vendor)}" ${cfg.vendor === vendor ? 'selected' : ''}>${escapeHtml(vendor === 'all' ? 'Todos vendors' : vendor)}</option>`).join('')}</select>
+        <input class="food-control" type="search" placeholder="Buscar producto" value="${escapeHtml(cfg.productsQuery || '')}" data-food-products-search />
         <select class="food-control" data-food-products-account>${accountOptions.map((id) => `<option value="${escapeHtml(id)}" ${cfg.account === id ? 'selected' : ''}>${escapeHtml(id === 'all' ? 'Todas cuentas' : (state.accounts.find((acc) => acc.id === id)?.name || id))}</option>`).join('')}</select>
         <label class="financeStats__checkbox"><input type="checkbox" data-food-products-items-only ${cfg.onlyWithItems ? 'checked' : ''}> solo con items</label>
         <label class="financeStats__checkbox"><input type="checkbox" data-food-products-food-only ${cfg.onlyFood ? 'checked' : ''}> Solo comida</label>
@@ -1054,7 +1062,7 @@ function renderProductsView(isModal = false) {
       </div>
       <div class="finFoodMiniTabs"><button type="button" class="finFoodMiniTab ${(cfg.tab || 'top-eur') === 'top-eur' ? 'is-active' : ''}" data-food-products-tab="top-eur">Top €</button><button type="button" class="finFoodMiniTab ${(cfg.tab || 'top-eur') === 'top-count' ? 'is-active' : ''}" data-food-products-tab="top-count">Top #</button><button type="button" class="finFoodMiniTab" data-food-merge-open="">Fusionar</button></div>
     </section>
-    <section class="finFoodProductsList">${listHtml}</section>`;
+    <section class="finFoodProductsScroll" data-finance-products-scroll><section class="finFoodProductsList">${listHtml}</section></section></div>`;
   if (isModal) {
     return `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>Food / Productos</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header>${content}</div>`;
   }
@@ -1070,30 +1078,61 @@ function renderFinanceProducts() {
   return renderProductsView(false);
 }
 
+function firebaseSafeKeyLoose(s) {
+  return String(s ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[.#$\[\]\/]/g, '_')
+    .replace(/\s+/g, ' ')
+    .slice(0, 120) || 'unknown';
+}
+
+function firebaseClean(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (v === undefined) continue;
+    if (Number.isNaN(v)) continue;
+    if (v === Infinity || v === -Infinity) continue;
+    if (v instanceof Date || v instanceof Map || v instanceof Set || Array.isArray(v) || (v && typeof v === 'object')) continue;
+    out[k] = v === null ? null : v;
+  }
+  return out;
+}
+
 async function mergeFoodProducts(selection = [], destinationId = '') {
   const ids = [...new Set(selection.map((id) => String(id || '').trim()).filter(Boolean))];
   if (ids.length < 2) return false;
-  const canonicalId = destinationId || ids[0];
+  const canonicalId = firebaseSafeKeyLoose(destinationId || ids[0]);
   const canonicalName = state.food.itemsById?.[canonicalId]?.displayName || state.food.itemsById?.[canonicalId]?.name || canonicalId;
-  const canonicalPayload = { name: canonicalName, createdAt: Number(state.foodCatalog.canonicals?.[canonicalId]?.createdAt || nowTs()), updatedAt: nowTs() };
+  const canonicalPayload = firebaseClean({
+    name: String(canonicalName || canonicalId),
+    createdAt: Number(state.foodCatalog.canonicals?.[canonicalId]?.createdAt || nowTs()),
+    updatedAt: nowTs()
+  });
+  console.log('[mergeFoodProducts] payload', canonicalPayload);
   await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/canonicals/${canonicalId}`), canonicalPayload));
   state.foodCatalog.canonicals[canonicalId] = canonicalPayload;
   for (const id of ids) {
     const item = state.food.itemsById?.[id] || {};
     const aliases = [...new Set([item.name, item.displayName, ...(item.aliases || [])].map((v) => normalizeFoodName(v)).filter(Boolean))];
     const vendors = Object.keys(item.vendorAliases || {}).length ? Object.keys(item.vendorAliases || {}) : ['unknown'];
-    for (const vendorKey of vendors) {
+    for (const vendorRaw of vendors) {
+      const vendorKey = firebaseSafeKeyLoose(vendorRaw);
       for (const aliasRaw of aliases) {
-        const aliasKey = normalizeAliasKey(aliasRaw);
-        const payload = { canonicalId, aliasRaw, updatedAt: nowTs() };
+        const aliasKey = firebaseSafeKeyLoose(normalizeAliasKey(aliasRaw));
+        const payload = firebaseClean({ canonicalId, aliasRaw: String(aliasRaw || ''), updatedAt: nowTs() });
+        console.log('[mergeFoodProducts] payload', payload);
         await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/aliases/${vendorKey}/${aliasKey}`), payload));
         if (!state.foodCatalog.aliases[vendorKey]) state.foodCatalog.aliases[vendorKey] = {};
         state.foodCatalog.aliases[vendorKey][aliasKey] = payload;
       }
     }
     if (id !== canonicalId) {
-      await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/merges/${id}`), canonicalId));
-      state.foodCatalog.merges[id] = canonicalId;
+      const mergeFromId = firebaseSafeKeyLoose(id);
+      const mergePayload = firebaseClean({ canonicalId });
+      console.log('[mergeFoodProducts] payload', mergePayload);
+      await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/merges/${mergeFromId}`), mergePayload));
+      state.foodCatalog.merges[mergeFromId] = canonicalId;
     }
   }
   return true;
@@ -1549,6 +1588,13 @@ function renderFoodPriceHistorySection(food = {}, options = {}) {
       <div class="finFoodDetailBody">
         ${renderFoodAliasEditor(food || {})}
         <div class="food-form-row"><label class="food-form-label" for="food-vendorAliases-input">Alias por súper</label><input id="food-vendorAliases-input" class="food-control" name="vendorAliases" value="${escapeHtml(options.vendorAliasList || '')}" placeholder="mercadona:coca cola|coke" /></div>
+        <div class="finFoodAliasPicker">
+          <div class="food-form-row"><label class="food-form-label" for="food-alias-canonical-picker">Producto existente</label><input id="food-alias-canonical-picker" class="food-control" type="search" list="food-alias-canonical-list" placeholder="Buscar canonical" data-food-alias-canonical-picker /></div>
+          <div class="food-form-row"><label class="food-form-label" for="food-alias-vendor-picker">Supermercado</label><input id="food-alias-vendor-picker" class="food-control" type="search" list="food-alias-vendor-list" placeholder="Buscar vendor" data-food-alias-vendor-picker /></div>
+          <button type="button" class="food-history-btn" data-food-alias-associate="${escapeHtml(food?.id || '')}" ${food?.id ? '' : 'disabled'}>Asociar</button>
+          <datalist id="food-alias-canonical-list">${Object.values(state.food.itemsById || {}).map((item) => `<option value="${escapeHtml(item.id || '')}">${escapeHtml(item.displayName || item.name || item.id || '')}</option>`).join('')}</datalist>
+          <datalist id="food-alias-vendor-list">${[...new Set(Object.keys(view.byVendor || {}).concat(Object.keys(view.vendorAliases || {})))].filter(Boolean).sort((a,b)=>a.localeCompare(b,'es')).map((vendor) => `<option value="${escapeHtml(vendor)}"></option>`).join('')}</datalist>
+        </div>
         <div class="finFoodChipRow">${vendorChips}</div>
       </div>
     </details>
@@ -2918,7 +2964,7 @@ function renderFinanceNav() {
   const nav = document.getElementById('finance-topnav');
   if (!nav) return;
   const items = [['home', 'Principal'], ['balance', 'Balance'], ['goals', 'Objetivos'], ['calendar', 'Calendario'], ['products', 'Productos']];
-  nav.innerHTML = `<div class="financeInnerNav">${items.map(([id, label]) => `<button class="finance-pill ${state.activeView === id ? 'is-active' : ''}" data-finance-view="${id}">${label}</button>`).join('')}</div>`;
+  nav.innerHTML = `<div class="financeInnerNav">${items.map(([id, label]) => `<button type="button" class="finance-pill ${state.activeView === id ? 'is-active' : ''}" data-finance-view="${id}">${label}</button>`).join('')}</div>`;
 }
 
 function renderFinanceHome(accounts, totalSeries) {
@@ -4459,8 +4505,34 @@ async function deleteDay(accountId, day) {
 }
 async function deleteAccount(accountId) { await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}`))); }
 
-function triggerRender() {
-  render().catch((e) => {
+
+function captureFinanceUiState() {
+  const isProductsView = state.activeView === 'products' || state.modal?.type === 'food-products';
+  if (!isProductsView) return null;
+  const sc = document.querySelector('[data-finance-products-scroll]');
+  const openDetails = [...document.querySelectorAll('.financeTab details[id], #finance-modal details[id]')]
+    .map((el) => ({ id: el.id, open: !!el.open }));
+  return { y: sc?.scrollTop ?? 0, openDetails };
+}
+
+function restoreFinanceUiState(snapshot) {
+  if (!snapshot) return;
+  snapshot.openDetails.forEach((row) => {
+    const el = document.getElementById(row.id);
+    if (el) el.open = !!row.open;
+  });
+  requestAnimationFrame(() => {
+    const sc = document.querySelector('[data-finance-products-scroll]');
+    if (sc) sc.scrollTop = snapshot.y || 0;
+  });
+}
+
+function triggerRender(options = {}) {
+  const preserveUi = options.preserveUi !== false;
+  const uiSnapshot = preserveUi ? captureFinanceUiState() : null;
+  render().then(() => {
+    if (preserveUi) restoreFinanceUiState(uiSnapshot);
+  }).catch((e) => {
     console.error('[finance] render top-level', e);
     showFinanceBootError($opt, e);
   });
@@ -4504,8 +4576,9 @@ function bindEvents() {
   const evtOpts = { signal: state.eventsAbortController.signal };
   view.addEventListener('click', async (event) => {
     const target = event.target;
-    const ticketImportRawEl = target.closest('[data-balance-form]')?.querySelector('[data-ticket-import-raw]');
-    if (ticketImportRawEl && state.modal?.type === 'tx') {
+    const formButton = target.closest('button:not([type]), button[type="submit"]');
+    if (formButton) { event.preventDefault(); event.stopPropagation(); }
+    const fakeLink = target.closest('a[href=if (ticketImportRawEl && state.modal?.type === 'tx') {
       state.modal = {
         ...state.modal,
         ticketImport: {
@@ -4955,6 +5028,28 @@ function bindEvents() {
       toast(`Edita alias para ${editVendorAlias} y pulsa Guardar`);
       return;
     }
+    const aliasAssociateFoodId = target.closest('[data-food-alias-associate]')?.dataset.foodAliasAssociate;
+    if (aliasAssociateFoodId) {
+      const canonicalRaw = String(document.querySelector('[data-food-alias-canonical-picker]')?.value || '').trim();
+      const vendorRaw = String(document.querySelector('[data-food-alias-vendor-picker]')?.value || '').trim();
+      const currentFood = state.food.itemsById?.[aliasAssociateFoodId] || null;
+      const aliasRaw = normalizeFoodName(currentFood?.displayName || currentFood?.name || '');
+      const canonicalId = firebaseSafeKeyLoose(canonicalRaw || aliasAssociateFoodId);
+      const vendorKey = firebaseSafeKeyLoose(vendorRaw || 'unknown');
+      const aliasKey = firebaseSafeKeyLoose(normalizeAliasKey(aliasRaw));
+      if (!canonicalId || !aliasKey) { toast('Selecciona producto y vendor'); return; }
+      const payload = firebaseClean({ canonicalId, aliasRaw, updatedAt: nowTs() });
+      await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/aliases/${vendorKey}/${aliasKey}`), payload));
+      if (!state.foodCatalog.aliases[vendorKey]) state.foodCatalog.aliases[vendorKey] = {};
+      state.foodCatalog.aliases[vendorKey][aliasKey] = payload;
+      if (canonicalId !== aliasAssociateFoodId) {
+        await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/merges/${firebaseSafeKeyLoose(aliasAssociateFoodId)}`), firebaseClean({ canonicalId })));
+      }
+      toast('Alias asociado');
+      triggerRender();
+      return;
+    }
+
     const vendorFocus = target.closest('[data-food-focus-vendor]')?.dataset.foodFocusVendor;
     if (vendorFocus) {
       const host = document.querySelector('[data-food-history-chart]');
@@ -5270,8 +5365,18 @@ view.addEventListener('focusout', async (event) => {
     }
 
     if (event.target.matches('[data-food-merge-search]')) {
-      state.modal = { ...state.modal, search: String(event.target.value || '') };
-      triggerRender();
+      const value = String(event.target.value || '');
+      state.modal = { ...state.modal, search: value };
+      clearTimeout(mergeSearchTimer);
+      mergeSearchTimer = setTimeout(() => triggerRender(), 150);
+      return;
+    }
+
+    if (event.target.matches('[data-food-products-search]')) {
+      const value = String(event.target.value || '');
+      state.foodProductsView = { ...state.foodProductsView, productsQuery: value };
+      clearTimeout(productsSearchTimer);
+      productsSearchTimer = setTimeout(() => triggerRender(), 150);
       return;
     }
 

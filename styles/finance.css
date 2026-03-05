@@ -2285,3 +2285,48 @@ header.food-sheet-header h3{
 .financeTab .finFoodChip{padding:3px 8px;font-size:11px}
 .financeTab .finFoodMiniTabs{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .financeTab .finFoodMiniTab{min-height:24px;padding:0 9px;font-size:11px}
+
+
+.financeTab,
+.financeTab .financeProductsView,
+.financeTab .finFoodProductsView,
+.financeTab .finFoodProductsList,
+.financeTab .finFoodProductsCard {
+  overflow-x: hidden;
+}
+
+.financeTab .financeProductsView * {
+  overscroll-behavior: contain;
+}
+
+.financeTab .finFoodProductsScroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  max-height: 58vh;
+}
+
+
+.financeTab .finFoodAliasPicker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+.financeTab .finFoodAliasPicker > .food-history-btn { grid-column: span 2; }
+
+
+.financeTab .financeInnerNav {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+.financeTab .financeInnerNav .finance-pill {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  min-width: 0;
+  padding: 0 8px;
+}

@@ -253,6 +253,10 @@ function parseEuroNumber(value) {
   }
   return Number(normalized);
 }
+function parseMoney(value = '') {
+  const parsed = parseEuroNumber(value);
+  return Number.isFinite(parsed) ? parsed : Number(value);
+}
 function clampRatio(value, fallback = 1) {
   const ratio = Number(value);
   if (!Number.isFinite(ratio)) return fallback;
@@ -302,9 +306,31 @@ function txSortTs(row) {
 }
 function normalizeTxType(type = '') {
   const safe = String(type || '').trim().toLowerCase();
+  if (safe === 'ingreso' || safe === 'ingresos') return 'income';
+  if (safe === 'gasto' || safe === 'gastos' || safe === 'egreso' || safe === 'egresos') return 'expense';
+  if (safe === 'transferencia' || safe === 'traspaso') return 'transfer';
   if (safe === 'income' || safe === 'expense' || safe === 'transfer') return safe;
   if (safe === 'invest') return 'expense';
   return 'expense';
+}
+function normalizeTxRow(raw = {}, id = '') {
+  const row = raw && typeof raw === 'object' ? raw : {};
+  const type = normalizeTxType(row.type);
+  let amount = row.amount;
+  amount = (typeof amount === 'number') ? amount : parseMoney(String(amount ?? ''));
+  amount = Number.isFinite(amount) ? amount : 0;
+  const dateISO = toIsoDay(String(row.date || row.dateISO || '')) || '';
+  const date = dateISO || String(row.date || row.dateISO || '');
+  const monthKey = String(row.monthKey || (dateISO ? dateISO.slice(0, 7) : '') || '').slice(0, 7);
+  return {
+    id: String(row.id || id || ''),
+    ...row,
+    type,
+    amount,
+    date: dateISO || date,
+    dateISO: dateISO || date,
+    monthKey
+  };
 }
 function isFoodCategory(category = '') {
   const normalized = String(category || '').trim().toLowerCase();
@@ -1211,12 +1237,14 @@ function foodItemsFromTx(row = {}) {
 
 function groupTxByDay(txList = [], accountsById = {}, scope = 'personal') {
   const grouped = {};
-  txList.forEach((row) => {
+  txList.forEach((rawRow) => {
+    const row = normalizeTxRow(rawRow, rawRow?.id);
     const day = isoToDay(row.date || row.dateISO || '');
     if (!day) return;
     if (!grouped[day]) grouped[day] = { dayISO: day, rows: [], totalIncome: 0, totalExpense: 0, net: 0 };
+    const amount = Number.isFinite(row.amount) ? row.amount : 0;
     const impact = scope === 'global'
-      ? (row.type === 'income' ? Number(row.amount || 0) : (row.type === 'expense' ? -Number(row.amount || 0) : 0))
+      ? (row.type === 'income' ? amount : (row.type === 'expense' ? -amount : 0))
       : personalDeltaForTx(row, accountsById);
     grouped[day].rows.push(row);
     if (impact >= 0) grouped[day].totalIncome += impact;
@@ -1240,7 +1268,7 @@ function recurringForMonth(monthKey = getSelectedBalanceMonthKey()) {
     const dateISO = `${monthKey}-${String(safeDay).padStart(2, '0')}`;
     if (schedule.startDate && dateISO < String(schedule.startDate)) return;
     if (schedule.endDate && dateISO > String(schedule.endDate)) return;
-    rows.push({
+    rows.push(normalizeTxRow({
       id: `rec-${id}-${monthKey}`,
       recurringId: id,
       recurringVirtual: true,
@@ -1248,10 +1276,8 @@ function recurringForMonth(monthKey = getSelectedBalanceMonthKey()) {
       date: dateISO,
       dateISO,
       monthKey,
-      amount: Number(rec.amount || 0),
-      type: normalizeTxType(rec.type),
       personalRatio: Number.isFinite(Number(rec?.personalRatio)) ? clamp01(rec.personalRatio, 1) : null
-    });
+    }, `rec-${id}-${monthKey}`));
   });
   return rows;
 }
@@ -2177,9 +2203,10 @@ function calendarYearData(accounts, totalSeries) {
 
 function balanceTxList() {
   const normalizeBalanceRow = (id, row = {}, source = 'transactions', fallbackPath = '', fallbackMonthKey = '') => {
-    const dateISO = String(row?.dateISO || '');
-    const date = String(row?.date || isoToDay(dateISO || row?.date || '') || '');
-    const monthKey = String(row?.monthKey || date.slice(0, 7) || fallbackMonthKey || '');
+    const normalized = normalizeTxRow(row, id);
+    const dateISO = String(normalized?.dateISO || '');
+    const date = String(normalized?.date || isoToDay(dateISO || normalized?.date || '') || '');
+    const monthKey = String(normalized?.monthKey || date.slice(0, 7) || fallbackMonthKey || '');
     const parsedTs = new Date(date || dateISO || 0).getTime();
     if (FINANCE_DEBUG && !Number.isFinite(parsedTs) && (date || dateISO)) {
       console.log('[BALANCE] invalid date row', { source, id, date, dateISO, monthKey });
@@ -2187,10 +2214,9 @@ function balanceTxList() {
     return {
       id,
       ...row,
+      ...normalized,
       __src: source,
       __path: row?.__path || fallbackPath,
-      type: normalizeTxType(row?.type),
-      amount: Number(row?.amount || 0),
       accountId: String(row?.accountId || ''),
       fromAccountId: String(row?.fromAccountId || ''),
       toAccountId: String(row?.toAccountId || ''),
@@ -2204,7 +2230,7 @@ function balanceTxList() {
       allocation: normalizeTxAllocation(row?.allocation || {}, String(date || isoToDay(dateISO || '') || '')),
       createdAt: Number(row?.createdAt || 0),
       updatedAt: Number(row?.updatedAt || 0),
-      extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
+      extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(normalized?.amount || 0))
     };
   };
 
@@ -2244,23 +2270,43 @@ function summaryForMonth(monthKey, accountsById = {}) {
 }
 
 function calcAggForBucket(txListBucket = [], accountsById = {}) {
-  const incomeMy = txListBucket.filter((tx) => tx.type === 'income').reduce((s, tx) => s + (Number(tx.amount || 0) * personalRatioForTx(tx, accountsById)), 0);
-  const expenseMy = txListBucket.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + (Number(tx.amount || 0) * personalRatioForTx(tx, accountsById)), 0);
-  const transferImpactMy = 0;
-  const incomeTotal = txListBucket.filter((tx) => tx.type === 'income').reduce((s, tx) => s + Number(tx.amount || 0), 0);
-  const expenseTotal = txListBucket.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + Number(tx.amount || 0), 0);
-  const transferImpactTotal = 0;
+  let incomeMy = 0;
+  let expenseMy = 0;
+  let incomeTotal = 0;
+  let expenseTotal = 0;
+  let transferImpactMy = 0;
+
+  for (const raw of txListBucket) {
+    const tx = normalizeTxRow(raw, raw?.id);
+    const t = tx.type;
+    const a = tx.amount;
+    if (!Number.isFinite(a) || a <= 0) continue;
+    if (t === 'income') {
+      incomeMy += shareAmount(accountsById[tx.accountId], a);
+      incomeTotal += a;
+      continue;
+    }
+    if (t === 'expense') {
+      expenseMy += shareAmount(accountsById[tx.accountId], a);
+      expenseTotal += a;
+      continue;
+    }
+    if (t === 'transfer') {
+      transferImpactMy += personalDeltaForTx(tx, accountsById);
+    }
+  }
+
   return {
     incomeMy,
     expenseMy,
     netOperativeMy: incomeMy - expenseMy,
     transferImpactMy,
-    netWealthMy: incomeMy - expenseMy,
+    netWealthMy: incomeMy - expenseMy + transferImpactMy,
     incomeTotal,
     expenseTotal,
     netOperativeTotal: incomeTotal - expenseTotal,
-    transferImpactTotal,
-    netWealthTotal: incomeTotal - expenseTotal + transferImpactTotal
+    transferImpactTotal: 0,
+    netWealthTotal: incomeTotal - expenseTotal
   };
 }
 
@@ -3062,6 +3108,7 @@ function renderFinanceBalance() {
   const monthSummary = summaryForMonth(monthKey, accountsById);
   const prevSummary = summaryForMonth(offsetMonthKey(monthKey, -1), accountsById);
   const monthAgg = calcAggForBucket(allMonthTx, accountsById);
+  console.log('[BALANCE] month', monthKey, 'rows', allMonthTx.length, 'agg', monthAgg);
   const monthAccountsDeltaReal = calcAccountsDeltaForBucket('month', monthKey, state.accounts);
   const prevMonthKey = offsetMonthKey(monthKey, -1);
   const prevMonthRows = [...balanceTxList().filter((row) => row.monthKey === prevMonthKey), ...recurringForMonth(prevMonthKey)];
@@ -4539,6 +4586,7 @@ function applyRemoteData(val = {}, replace = false) {
     lastSeenMonthKey: root.balance?.lastSeenMonthKey || (replace ? '' : state.balance.lastSeenMonthKey)
   };
   state.goals = { goals: root.goals?.goals || (replace ? {} : state.goals.goals) };
+  console.log('[BALANCE] sample tx', balanceTxList().slice(0, 5));
 }
 
 function hasData(value) {
@@ -5767,7 +5815,7 @@ view.addEventListener('focusout', async (event) => {
       const form = new FormData(event.target);
       const txId = String(form.get('txId') || '').trim();
       const type = normalizeTxType(String(form.get('type') || 'expense'));
-      const amount = Number(form.get('amount') || 0);
+      const amount = parseMoney(String(form.get('amount') || ''));
       const dateISO = toIsoDay(String(form.get('dateISO') || dayKeyFromTs(Date.now()))) || dayKeyFromTs(Date.now());
       const pickedCategory = String(form.get('category') || '').trim();
       const category = type === 'transfer' ? 'transfer' : (pickedCategory || 'Sin categoría');

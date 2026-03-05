@@ -795,6 +795,240 @@ async function ensureFoodCatalogLoaded(force = false) {
   await loadFoodCatalog(force);
 }
 
+function normalizeAliasKey(value = '') {
+  return firebaseSafeKey(normalizeFoodName(value).toLowerCase());
+}
+
+async function loadFoodMetaCatalog(force = false) {
+  if (state.foodCatalog.loading) return;
+  if (state.foodCatalog.loaded && !force) return;
+  state.foodCatalog.loading = true;
+  try {
+    const snap = await safeFirebase(() => get(ref(db, `${state.financePath}/foodCatalog`)));
+    const val = snap?.val() || {};
+    state.foodCatalog.canonicals = val.canonicals && typeof val.canonicals === 'object' ? val.canonicals : {};
+    state.foodCatalog.aliases = val.aliases && typeof val.aliases === 'object' ? val.aliases : {};
+    state.foodCatalog.ignored = val.ignored && typeof val.ignored === 'object' ? val.ignored : {};
+    state.foodCatalog.merges = val.merges && typeof val.merges === 'object' ? val.merges : {};
+    state.foodCatalog.loaded = true;
+  } finally {
+    state.foodCatalog.loading = false;
+  }
+}
+
+async function ensureFoodMetaCatalogLoaded(force = false) {
+  await loadFoodMetaCatalog(force);
+}
+
+function resolveFoodRangeBounds(range = '30d', customStart = '', customEnd = '') {
+  const now = Date.now();
+  if (range === 'month') {
+    const d = new Date(now);
+    return { start: new Date(d.getFullYear(), d.getMonth(), 1).getTime(), end: now + 1 };
+  }
+  if (range === '90d') return { start: now - (90 * 86400000), end: now + 1 };
+  if (range === 'year') {
+    const d = new Date(now);
+    return { start: new Date(d.getFullYear(), 0, 1).getTime(), end: now + 1 };
+  }
+  if (range === 'total') {
+    const rows = balanceTxList().filter((row) => normalizeTxType(row?.type) === 'expense');
+    const tsList = rows.map((row) => txTs(row)).filter((ts) => Number.isFinite(ts) && ts > 0);
+    if (!tsList.length) return { start: now - (30 * 86400000), end: now + 1 };
+    return { start: Math.min(...tsList), end: Math.max(...tsList) + 1 };
+  }
+  if (range === 'custom') {
+    const start = parseDayKey(customStart || dayKeyFromTs(now - (30 * 86400000)));
+    const end = parseDayKey(customEnd || dayKeyFromTs(now)) + 86400000;
+    return { start: Math.min(start, end - 86400000), end: Math.max(end, start + 86400000) };
+  }
+  return { start: now - (30 * 86400000), end: now + 1 };
+}
+
+function buildFoodLines(range = '30d', filters = {}) {
+  const { start, end } = resolveFoodRangeBounds(range, filters.customStart, filters.customEnd);
+  const vendorFilter = String(filters.vendor || 'all');
+  const accountFilter = String(filters.account || 'all');
+  const lines = [];
+  let purchaseCount = 0;
+  balanceTxList().forEach((row) => {
+    if (normalizeTxType(row?.type) !== 'expense') return;
+    const ts = txTs(row);
+    if (!Number.isFinite(ts) || ts < start || ts >= end) return;
+    if (accountFilter !== 'all' && String(row?.accountId || '') !== accountFilter) return;
+    purchaseCount += 1;
+    const items = foodItemsFromTx(row).filter((item) => normalizeFoodName(item?.name || ''));
+    if (!items.length) return;
+    const txVendor = firebaseSafeKey(normalizeFoodName(row?.extras?.filters?.place || row?.extras?.place || 'unknown')) || 'unknown';
+    const valid = items.map((item) => {
+      const totalPrice = Math.abs(Number(item?.totalPrice ?? item?.amount ?? item?.price ?? 0));
+      const qty = Math.max(1, Number(item?.qty || 1));
+      const unit = String(item?.unit || 'ud').trim() || 'ud';
+      const unitPrice = Number(item?.unitPrice || computeUnitPrice(totalPrice, qty));
+      const vendorKey = firebaseSafeKey(normalizeFoodName(item?.place || txVendor || 'unknown')) || 'unknown';
+      return {
+        txId: row.id,
+        accountId: String(row?.accountId || ''),
+        ts,
+        date: dayKeyFromTs(ts),
+        vendorKey,
+        nameRaw: normalizeFoodName(item?.name || ''),
+        foodId: String(item?.foodId || ''),
+        productKey: String(item?.productKey || ''),
+        qty,
+        unit,
+        totalPrice,
+        unitPrice: Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : totalPrice,
+      };
+    }).filter((line) => line.totalPrice > 0);
+    valid.forEach((line) => {
+      if (vendorFilter !== 'all' && line.vendorKey !== vendorFilter) return;
+      lines.push(line);
+    });
+  });
+  return { lines, purchaseCount };
+}
+
+function resolveCanonicalForLine(line = {}) {
+  const vendorKey = line.vendorKey || 'unknown';
+  const aliasKey = normalizeAliasKey(line.nameRaw || line.productKey || '');
+  const byVendor = state.foodCatalog.aliases?.[vendorKey] || {};
+  const fromAlias = byVendor?.[aliasKey]?.canonicalId;
+  if (fromAlias) return String(fromAlias);
+  if (line.foodId && state.food.itemsById?.[line.foodId]) return String(line.foodId);
+  const resolvedFood = resolveFoodItemByAnyKey(line.nameRaw || line.productKey || '');
+  if (resolvedFood?.id) return String(resolvedFood.id);
+  return `pseudo_${aliasKey || normalizeAliasKey('sin-datos')}`;
+}
+
+function aggregateProducts(lines = [], purchaseCount = 0) {
+  const acc = {};
+  const totalFood = lines.reduce((sum, line) => sum + Number(line.totalPrice || 0), 0);
+  lines.forEach((line) => {
+    const canonicalId = resolveCanonicalForLine(line);
+    const canonicalMeta = state.foodCatalog.canonicals?.[canonicalId] || state.food.itemsById?.[canonicalId] || {};
+    const canonicalName = normalizeFoodName(canonicalMeta?.name || canonicalMeta?.displayName || line.nameRaw || canonicalId.replace(/^pseudo_/, '')) || 'Sin datos';
+    if (!acc[canonicalId]) {
+      acc[canonicalId] = { canonicalId, canonicalName, total: 0, count: 0, purchases: new Set(), vendors: {}, lastTs: 0, lastPrice: null, lastVendor: '', aliases: new Set() };
+    }
+    const row = acc[canonicalId];
+    row.total += Number(line.totalPrice || 0);
+    row.count += 1;
+    row.purchases.add(line.txId);
+    row.aliases.add(line.nameRaw);
+    if (line.ts >= row.lastTs) {
+      row.lastTs = line.ts;
+      row.lastPrice = line.unitPrice || line.totalPrice;
+      row.lastVendor = line.vendorKey;
+    }
+    if (!row.vendors[line.vendorKey]) row.vendors[line.vendorKey] = { aliasSet: new Set(), prices: [], count: 0, lastTs: 0, lastPrice: null, unit: line.unit || 'ud' };
+    const vendor = row.vendors[line.vendorKey];
+    vendor.aliasSet.add(line.nameRaw);
+    vendor.prices.push(line.unitPrice || line.totalPrice);
+    vendor.count += 1;
+    if (line.ts >= vendor.lastTs) {
+      vendor.lastTs = line.ts;
+      vendor.lastPrice = line.unitPrice || line.totalPrice;
+      vendor.unit = line.unit || vendor.unit || 'ud';
+    }
+  });
+  const products = Object.values(acc).map((row) => {
+    const vendorRows = Object.entries(row.vendors).map(([vendorKey, meta]) => {
+      const avg = meta.prices.length ? (meta.prices.reduce((sum, p) => sum + Number(p || 0), 0) / meta.prices.length) : null;
+      const minPrice = meta.prices.length ? Math.min(...meta.prices) : null;
+      return { vendorKey, aliasText: [...meta.aliasSet].join(', '), count: meta.count, lastPrice: meta.lastPrice, avgPrice: avg, minPrice, unit: meta.unit || 'ud', lastTs: meta.lastTs };
+    }).sort((a, b) => (a.avgPrice ?? Infinity) - (b.avgPrice ?? Infinity));
+    const cheapest = vendorRows.find((v) => Number.isFinite(v.avgPrice));
+    const pricy = vendorRows.slice().reverse().find((v) => Number.isFinite(v.avgPrice));
+    return {
+      ...row,
+      purchases: row.purchases.size,
+      aliases: [...row.aliases],
+      percentOfFood: totalFood > 0 ? (row.total / totalFood) * 100 : 0,
+      vendorRows,
+      cheapestVendorKey: cheapest?.vendorKey || '',
+      cheapestPrice: cheapest?.avgPrice ?? null,
+      pricyVendorKey: pricy?.vendorKey || '',
+      pricyPrice: pricy?.avgPrice ?? null
+    };
+  }).filter((row) => !state.foodCatalog.ignored?.[row.canonicalId]);
+  const topVendorByEur = lines.reduce((accVendor, line) => {
+    accVendor[line.vendorKey] = (accVendor[line.vendorKey] || 0) + Number(line.totalPrice || 0);
+    return accVendor;
+  }, {});
+  const topVendor = Object.entries(topVendorByEur).sort((a, b) => b[1] - a[1])[0] || null;
+  return { products, totalFood, purchaseCount, itemsCount: lines.length, topVendor: topVendor ? { key: topVendor[0], total: topVendor[1] } : null };
+}
+
+
+function renderFoodProductsModal() {
+  const cfg = state.foodProductsView || {};
+  const { lines, purchaseCount } = buildFoodLines(cfg.range || '30d', cfg);
+  const agg = aggregateProducts(lines, purchaseCount);
+  const list = agg.products.slice().sort((a, b) => {
+    if ((cfg.tab || 'top-eur') === 'top-count') return b.count - a.count || b.total - a.total;
+    return b.total - a.total || b.count - a.count;
+  });
+  const listVisible = cfg.onlyWithItems ? list.filter((row) => row.count > 0) : list;
+  const rangeOptions = [['month', 'Mes'], ['30d', '30d'], ['90d', '90d'], ['year', 'Año'], ['total', 'Total'], ['custom', 'Custom']];
+  const vendorOptions = ['all', ...new Set(lines.map((line) => line.vendorKey))];
+  const accountOptions = ['all', ...new Set(balanceTxList().filter((row) => normalizeTxType(row?.type) === 'expense').map((row) => String(row.accountId || '')).filter(Boolean))];
+  const totalAverage = agg.purchaseCount > 0 ? agg.totalFood / agg.purchaseCount : 0;
+  return `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1">
+    <header class="food-sheet-header">
+      <h3>Food / Productos</h3>
+      <button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button>
+    </header>
+    <section class="finFoodProductsHead">
+      <div class="finFoodFilters">
+        <select class="food-control" data-food-products-range>${rangeOptions.map(([key, label]) => `<option value="${key}" ${cfg.range === key ? 'selected' : ''}>${label}</option>`).join('')}</select>
+        <select class="food-control" data-food-products-vendor>${vendorOptions.map((vendor) => `<option value="${escapeHtml(vendor)}" ${cfg.vendor === vendor ? 'selected' : ''}>${escapeHtml(vendor === 'all' ? 'Todos vendors' : vendor)}</option>`).join('')}</select>
+        <select class="food-control" data-food-products-account>${accountOptions.map((id) => `<option value="${escapeHtml(id)}" ${cfg.account === id ? 'selected' : ''}>${escapeHtml(id === 'all' ? 'Todas cuentas' : (state.accounts.find((acc) => acc.id === id)?.name || id))}</option>`).join('')}</select>
+        <label class="financeStats__checkbox"><input type="checkbox" data-food-products-items-only ${cfg.onlyWithItems ? 'checked' : ''}> solo con items</label>
+        ${cfg.range === 'custom' ? `<div class="finFoodCustomRange"><input type="date" class="food-control" data-food-products-custom-start value="${escapeHtml(cfg.customStart || '')}" /><input type="date" class="food-control" data-food-products-custom-end value="${escapeHtml(cfg.customEnd || '')}" /></div>` : ''}
+      </div>
+      <div class="finFoodChipRow">
+        <span class="finFoodChip finFoodChip--glow">Total € comida: ${fmtCurrency(agg.totalFood)}</span>
+        <span class="finFoodChip">Compras: ${agg.purchaseCount}</span>
+        <span class="finFoodChip">Items: ${agg.itemsCount}</span>
+        <span class="finFoodChip">Media compra: ${fmtCurrency(totalAverage)}</span>
+        <span class="finFoodChip">Top vendor: ${agg.topVendor ? `${escapeHtml(agg.topVendor.key)} (${fmtCurrency(agg.topVendor.total)})` : '—'}</span>
+      </div>
+      <div class="finFoodMiniTabs"><button type="button" class="finFoodMiniTab ${(cfg.tab || 'top-eur') === 'top-eur' ? 'is-active' : ''}" data-food-products-tab="top-eur">Top €</button><button type="button" class="finFoodMiniTab ${(cfg.tab || 'top-eur') === 'top-count' ? 'is-active' : ''}" data-food-products-tab="top-count">Top #</button><button type="button" class="finFoodMiniTab" data-food-merge-open="">Fusionar</button></div>
+    </section>
+    <section class="finFoodProductsList">${listVisible.map((row) => `<button type="button" class="finFoodProductsRow" data-food-item-detail="${escapeHtml(row.canonicalId)}"><strong>${escapeHtml(row.canonicalName)}</strong><span>${fmtCurrency(row.total)} · ${row.percentOfFood.toFixed(1)}%</span><span>${(cfg.tab || 'top-eur') === 'top-count' ? `${row.count} veces` : `${row.purchases} compras`}</span><span>${row.cheapestVendorKey ? `Más barato en ${escapeHtml(row.cheapestVendorKey)} (${Number(row.cheapestPrice || 0).toFixed(2)} €/ud)` : 'Sin comparativa'}</span><small>${row.lastVendor ? `Último ${Number(row.lastPrice || 0).toFixed(2)} €/ud · ${escapeHtml(row.lastVendor)}` : ''}</small></button>`).join('') || '<p class="finance-empty">Sin productos en este rango.</p>'}</section>
+  </div>`;
+}
+
+async function mergeFoodProducts(selection = [], destinationId = '') {
+  const ids = [...new Set(selection.map((id) => String(id || '').trim()).filter(Boolean))];
+  if (ids.length < 2) return false;
+  const canonicalId = destinationId || ids[0];
+  const canonicalName = state.food.itemsById?.[canonicalId]?.displayName || state.food.itemsById?.[canonicalId]?.name || canonicalId;
+  const canonicalPayload = { name: canonicalName, createdAt: Number(state.foodCatalog.canonicals?.[canonicalId]?.createdAt || nowTs()), updatedAt: nowTs() };
+  await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/canonicals/${canonicalId}`), canonicalPayload));
+  state.foodCatalog.canonicals[canonicalId] = canonicalPayload;
+  for (const id of ids) {
+    const item = state.food.itemsById?.[id] || {};
+    const aliases = [...new Set([item.name, item.displayName, ...(item.aliases || [])].map((v) => normalizeFoodName(v)).filter(Boolean))];
+    const vendors = Object.keys(item.vendorAliases || {}).length ? Object.keys(item.vendorAliases || {}) : ['unknown'];
+    for (const vendorKey of vendors) {
+      for (const aliasRaw of aliases) {
+        const aliasKey = normalizeAliasKey(aliasRaw);
+        const payload = { canonicalId, aliasRaw, updatedAt: nowTs() };
+        await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/aliases/${vendorKey}/${aliasKey}`), payload));
+        if (!state.foodCatalog.aliases[vendorKey]) state.foodCatalog.aliases[vendorKey] = {};
+        state.foodCatalog.aliases[vendorKey][aliasKey] = payload;
+      }
+    }
+    if (id !== canonicalId) {
+      await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/merges/${id}`), canonicalId));
+      state.foodCatalog.merges[id] = canonicalId;
+    }
+  }
+  return true;
+}
+
 function normalizeFoodExtras(rawExtras = {}, amount = 0) {
   if (!rawExtras || typeof rawExtras !== 'object') return null;
   const extras = { ...rawExtras };
@@ -1177,6 +1411,21 @@ function foodDetailViewModel(food = {}, fallbackName = '') {
 
 function renderFoodPriceHistorySection(food = {}, options = {}) {
   const view = foodDetailViewModel(food, options?.presetName || '');
+  const vendorRows = (view.history || []).reduce((acc, row) => {
+    const key = firebaseSafeKey(row.vendor || 'unknown') || 'unknown';
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(row);
+    return acc;
+  }, {});
+  const compareRows = Object.entries(vendorRows).map(([vendor, rows]) => {
+    const latest = rows.slice().sort((a, b) => b.ts - a.ts)[0] || null;
+    const avg = rows.length ? rows.reduce((sum, item) => sum + Number(item.unitPrice || item.price || 0), 0) / rows.length : null;
+    const min = rows.length ? Math.min(...rows.map((item) => Number(item.unitPrice || item.price || 0)).filter((n) => Number.isFinite(n) && n > 0)) : null;
+    const aliases = Array.isArray(food?.vendorAliases?.[vendor]) ? food.vendorAliases[vendor].join(', ') : '—';
+    return { vendor, aliases, latest, avg, min, count: rows.length };
+  }).sort((a, b) => (a.avg ?? Infinity) - (b.avg ?? Infinity));
+  const cheapest = compareRows.find((row) => Number.isFinite(row.avg));
+  const pricy = compareRows.slice().reverse().find((row) => Number.isFinite(row.avg));
   const currentRows = view.tableRows.map((row) => `<tr data-food-vendor-row="${escapeHtml(row.vendor)}"><td><button type="button" class="finFoodLinkBtn" data-food-focus-vendor="${escapeHtml(row.vendor)}">${escapeHtml(row.vendor)}</button></td><td><button type="button" class="finFoodAliasBtn" data-food-alias-edit="${escapeHtml(row.vendor)}" data-food-current-alias="${escapeHtml(row.aliasText)}">${escapeHtml(row.aliasText || '—')}</button></td><td><strong>${row.latestPriceLabel}</strong></td><td>${row.latestDateLabel}</td><td><div class="finFoodTableActions"><button type="button" class="finFoodIconAction" data-food-price-add-vendor="${escapeHtml(row.vendor)}" aria-label="Registrar precio en ${escapeHtml(row.vendor)}">＋</button>${row.latestEntry ? `<button type="button" class="finFoodIconAction finFoodIconAction--danger" data-food-price-delete="${escapeHtml(row.vendor)}:${escapeHtml(row.latestEntry.entryId || '')}" aria-label="Borrar último registro de ${escapeHtml(row.vendor)}">🗑</button>` : ''}</div></td></tr>`).join('');
   const vendorChips = view.vendors.map((vendor) => `<span class="finFoodChip">${escapeHtml(vendor)}</span>`).join('') || '<span class="finFoodChip">Sin vendor</span>';
   const overviewSub = [food?.mealType || 'Sin categoría', view.vendors.length ? `${view.vendors.length} vendor${view.vendors.length > 1 ? 's' : ''}` : 'Sin vendors', view.latestLine].join(' · ');
@@ -1196,48 +1445,74 @@ function renderFoodPriceHistorySection(food = {}, options = {}) {
       <button type="button" class="finFoodChip finFoodChip--action" data-food-scroll-to="aliases">Aliases</button>
       <button type="button" class="finFoodChip finFoodChip--action" data-food-toggle-register>+ Precio</button>
       <button type="button" class="finFoodChip finFoodChip--action" data-food-view-purchases="${escapeHtml(food.id || '')}">Ver compras</button>
+      <button type="button" class="finFoodChip finFoodChip--action" data-food-open-products>Food / Productos</button>
     </section>
 
-    <section class="finFoodDetailSection finFoodCard" data-food-detail-card="evolution">
-      <div class="finFoodCardTitleRow"><h4>Evolución</h4><div class="finFoodMiniTabs"><button type="button" class="finFoodMiniTab is-active" data-food-chart-type="line">Línea</button><button type="button" class="finFoodMiniTab" data-food-chart-type="bar">Barras</button></div></div>
-      <div class="finFoodMiniTabs" data-food-vendor-legend></div>
-      <div class="finFoodMiniTabs" data-food-range-tabs><button type="button" class="finFoodMiniTab" data-food-chart-range="30d">30d</button><button type="button" class="finFoodMiniTab" data-food-chart-range="90d">90d</button><button type="button" class="finFoodMiniTab is-active" data-food-chart-range="total">Total</button></div>
-      ${view.history.length
-        ? `<div class="finFoodInfo__chartWrap" data-food-history-chart data-food-chart-type="line" data-food-chart-range="total" data-food-history-series='${escapeHtml(JSON.stringify(view.chartByVendor))}'></div>`
-        : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin historial. Registra un precio para ver evolución.</span></div>'}
-    </section>
+    <details class="finFoodDetailSection finFoodCard" data-food-detail-card="compare">
+      <summary class="finFoodDetailSummary">Comparativa por supermercado</summary>
+      <div class="finFoodDetailBody">
+        <div class="finFoodChipRow">
+          <span class="finFoodChip finFoodChip--glow">Más barato: ${cheapest ? `${escapeHtml(cheapest.vendor)} — ${Number(cheapest.avg || 0).toFixed(2)} €/ud` : '—'}</span>
+          <span class="finFoodChip finFoodChip--glow">Más caro: ${pricy ? `${escapeHtml(pricy.vendor)} — ${Number(pricy.avg || 0).toFixed(2)} €/ud` : '—'}</span>
+        </div>
+        ${compareRows.length ? `<div class="finFoodPriceTableWrap"><table class="finFoodPriceTable"><thead><tr><th>Supermercado</th><th>Alias</th><th>Último precio</th><th>Media</th><th># compras</th><th>Min</th></tr></thead><tbody>${compareRows.map((row) => `<tr><td>${escapeHtml(row.vendor)}</td><td>${escapeHtml(row.aliases || '—')}</td><td>${row.latest ? `${Number(row.latest.unitPrice || row.latest.price || 0).toFixed(2)} €/` + `${escapeHtml(row.latest.unit || 'ud')}` : '—'}</td><td>${Number.isFinite(row.avg) ? `${Number(row.avg).toFixed(2)} €/ud` : '—'}</td><td>${row.count}</td><td>${Number.isFinite(row.min) ? `${Number(row.min).toFixed(2)} €/ud` : '—'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="finance-empty">Sin comparativa disponible.</p>'}
+      </div>
+    </details>
 
-    <section class="finFoodDetailSection finFoodCard" data-food-detail-card="prices">
-      <div class="finFoodCardTitleRow"><h4>Precios</h4><button type="button" class="food-history-btn" data-food-toggle-register>+ registrar precio</button></div>
-      <div class="finFoodInlineRegister" data-food-register-inline hidden>
-        <div class="food-form-grid finFoodRegisterGrid">
-          <div class="food-form-row"><label class="food-form-label" for="food-register-vendor">Supermercado</label><select id="food-register-vendor" class="food-control" data-food-register-vendor><option value="">Seleccionar</option>${vendorOptions}</select></div>
-          <div class="food-form-row"><label class="food-form-label" for="food-register-price">Precio</label><input id="food-register-price" class="food-control" type="number" min="0" step="0.01" data-food-register-price placeholder="0.00" /></div>
-          <div class="food-form-row"><label class="food-form-label" for="food-register-date">Fecha</label><input id="food-register-date" class="food-control" type="date" data-food-register-date value="${escapeHtml(dayKeyFromTs(nowTs()))}" /></div>
-          <div class="food-form-row finFoodRegisterAction"><button type="button" class="food-history-btn" data-food-register-submit="${escapeHtml(food.id || '')}">Guardar precio</button></div>
+    <details class="finFoodDetailSection finFoodCard" data-food-detail-card="history">
+      <summary class="finFoodDetailSummary">Historial de precios</summary>
+      <div class="finFoodDetailBody">
+        <div class="finFoodMiniTabs"><button type="button" class="finFoodMiniTab is-active" data-food-chart-type="line">Línea</button><button type="button" class="finFoodMiniTab" data-food-chart-type="bar">Barras</button></div>
+        <div class="finFoodMiniTabs" data-food-vendor-legend></div>
+        <div class="finFoodMiniTabs" data-food-range-tabs><button type="button" class="finFoodMiniTab" data-food-chart-range="30d">30d</button><button type="button" class="finFoodMiniTab" data-food-chart-range="90d">90d</button><button type="button" class="finFoodMiniTab is-active" data-food-chart-range="total">Total</button></div>
+        ${view.history.length
+          ? `<div class="finFoodInfo__chartWrap" data-food-history-chart data-food-chart-type="line" data-food-chart-range="total" data-food-history-series='${escapeHtml(JSON.stringify(view.chartByVendor))}'></div>`
+          : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin historial. Registra un precio para ver evolución.</span></div>'}
+      </div>
+    </details>
+
+    <details class="finFoodDetailSection finFoodCard" data-food-detail-card="prices">
+      <summary class="finFoodDetailSummary">Precios</summary>
+      <div class="finFoodDetailBody">
+        <div class="finFoodInlineRegister" data-food-register-inline hidden>
+          <div class="food-form-grid finFoodRegisterGrid">
+            <div class="food-form-row"><label class="food-form-label" for="food-register-vendor">Supermercado</label><select id="food-register-vendor" class="food-control" data-food-register-vendor><option value="">Seleccionar</option>${vendorOptions}</select></div>
+            <div class="food-form-row"><label class="food-form-label" for="food-register-price">Precio</label><input id="food-register-price" class="food-control" type="number" min="0" step="0.01" data-food-register-price placeholder="0.00" /></div>
+            <div class="food-form-row"><label class="food-form-label" for="food-register-date">Fecha</label><input id="food-register-date" class="food-control" type="date" data-food-register-date value="${escapeHtml(dayKeyFromTs(nowTs()))}" /></div>
+            <div class="food-form-row finFoodRegisterAction"><button type="button" class="food-history-btn" data-food-register-submit="${escapeHtml(food.id || '')}">Guardar precio</button></div>
+          </div>
+        </div>
+        ${view.tableRows.length
+          ? `<div class="finFoodPriceTableWrap"><table class="finFoodPriceTable"><thead><tr><th>Supermercado</th><th>Alias</th><th>Último precio</th><th>Última fecha</th><th>Acciones</th></tr></thead><tbody>${currentRows}</tbody></table></div>`
+          : '<p class="finance-empty">Sin precios registrados todavía.</p>'}
+      </div>
+    </details>
+
+    <details class="finFoodDetailSection finFoodCard" data-food-detail-card="manage">
+      <summary class="finFoodDetailSummary">Gestión: Aliases y Merge</summary>
+      <div class="finFoodDetailBody">
+        <div class="finFoodChipRow">
+          <button type="button" class="finFoodChip finFoodChip--action" data-food-merge-open="${escapeHtml(food.id || '')}">Fusionar productos</button>
+          <button type="button" class="finFoodChip finFoodChip--action" data-food-scroll-to="aliases">Gestionar aliases</button>
+          <button type="button" class="finFoodChip finFoodChip--action" data-food-ignore-product="${escapeHtml(food.id || '')}">Ignorar producto</button>
         </div>
       </div>
-      ${view.tableRows.length
-        ? `<div class="finFoodPriceTableWrap"><table class="finFoodPriceTable"><thead><tr><th>Supermercado</th><th>Alias</th><th>Último precio</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>${currentRows}</tbody></table></div>`
-        : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin historial</span></div>'}
-    </section>
+    </details>
 
-    <details class="finFoodDetailSection finFoodCard" data-food-detail-card="data">
-      <summary class="finFoodDetailSummary">Datos</summary>
+    <details class="finFoodDetailSection finFoodCard" data-food-detail-card="data" id="food-detail-data">
+      <summary class="finFoodDetailSummary">Datos del producto</summary>
       <div class="finFoodDetailBody food-form-grid foodX-stack">
-      
       <div class="meta-vista-detalle-producto">
         <div class="food-form-row"><label class="food-form-label" for="food-name-input">Nombre</label><input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(food?.name || options?.presetName || '')}" /></div>        
         <div class="food-form-row"><label class="food-form-label" for="food-displayName-input">Display name</label><input id="food-displayName-input" class="food-control" name="displayName" value="${escapeHtml(food?.displayName || options?.presetName || '')}" data-food-display-name /></div>       
         <div class="food-form-row"><label class="food-form-label" for="food-defaultPrice-input">Precio</label><input id="food-defaultPrice-input" class="food-control" name="defaultPrice" type="number" step="0.01" min="0" value="${Number(food?.defaultPrice || 0) || ''}" /></div>
       </div>
-
       <div class= "selectores-ficha-detalle-producto">
         <div class="food-form-row"><label class="food-form-label" for="food-mealType-input">Categoría <button type="button" class="finFoodLabelAction" data-food-add="typeOfMeal">+ Añadir</button></label><select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>        
         <div class="food-form-row"><label class="food-form-label" for="food-cuisine-input">Saludable <button type="button" class="finFoodLabelAction" data-food-add="cuisine">+ Añadir</button></label><select id="food-cuisine-input" class="food-control" name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.cuisine || food?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>
         <div class="food-form-row"><label class="food-form-label" for="food-place-input">Dónde <button type="button" class="finFoodLabelAction" data-food-add="place">+ Añadir</button></label><select id="food-place-input" class="food-control" name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>
-      </div>  
-        </div>
+      </div>
+      </div>
     </details>
 
     <details class="finFoodDetailSection finFoodCard" data-food-detail-card="aliases" id="food-detail-aliases">
@@ -2938,7 +3213,7 @@ function renderFinanceBalance() {
         ${foodOptionList('typeOfMeal').length ? foodOptionList('typeOfMeal').map((name) => `<div class="financeStats__manageRow"><span>${escapeHtml(name)}</span><button class="financeStats__deleteBtn" data-finance-manage-delete="typeOfMeal" data-finance-manage-value="${escapeHtml(name)}">❌</button></div>`).join('') : '<p class="finance-empty">Sin tipos.</p>'}
         <div class="financeStats__manageRow"><strong>Saludable</strong></div>
         ${foodOptionList('cuisine').length ? foodOptionList('cuisine').map((name) => `<div class="financeStats__manageRow"><span>${escapeHtml(name)}</span><button class="financeStats__deleteBtn" data-finance-manage-delete="cuisine" data-finance-manage-value="${escapeHtml(name)}">❌</button></div>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
-        <div class="financeStats__manageRow"><strong>Productos</strong></div>
+        <div class="financeStats__manageRow"><strong>Productos</strong><button type="button" class="finance-pill finance-pill--mini" data-food-open-products>Food / Productos</button></div>
         ${foodItemsList().length ? foodItemsList().sort((a, b) => a.name.localeCompare(b.name, 'es')).map((item) => `<div class="financeStats__manageRow"><span>${escapeHtml(item.name)}</span><button type="button" class="food-iconbtn" data-food-item-detail="${escapeHtml(item.id)}" aria-label="Abrir ficha de ${escapeHtml(item.name)}">📈</button></div>`).join('') : '<p class="finance-empty">Sin productos.</p>'}
       </div>
     </details>
@@ -3724,6 +3999,22 @@ if (form) {
     <button class="finance-pill" type="submit">Crear</button></form></div>`;
     return;
   }
+  if (state.modal.type === 'food-products') {
+    ensureFoodCatalogLoaded();
+    ensureFoodMetaCatalogLoaded();
+    backdrop.innerHTML = renderFoodProductsModal();
+    return;
+  }
+  if (state.modal.type === 'food-merge') {
+    ensureFoodCatalogLoaded();
+    ensureFoodMetaCatalogLoaded();
+    const selected = Array.isArray(state.modal.selected) ? state.modal.selected : [];
+    const search = String(state.modal.search || '').toLowerCase();
+    const options = foodItemsList().filter((item) => !search || item.name.toLowerCase().includes(search));
+    const selectedSet = new Set(selected);
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>Fusionar productos</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header><section class="finFoodDetailSection finFoodCard"><input class="food-control" type="search" placeholder="Buscar producto" value="${escapeHtml(state.modal.search || '')}" data-food-merge-search /><div class="finFoodMergeList">${options.map((item) => `<label class="finFoodMergeRow"><input type="checkbox" data-food-merge-select="${escapeHtml(item.id)}" ${selectedSet.has(item.id) ? 'checked' : ''}> <span>${escapeHtml(item.name)}</span></label>`).join('')}</div><div class="finFoodChipRow"><button type="button" class="food-history-btn" data-food-merge-confirm ${selected.length < 2 ? 'disabled' : ''}>Fusionar seleccionados</button></div></section></div>`;
+    return;
+  }
   if (state.modal.type === 'food-item') {
   const editing = state.modal.foodId
     ? (state.food.itemsById?.[state.modal.foodId] || resolveFoodItemByAnyKey(state.modal.foodId) || null)
@@ -4419,6 +4710,52 @@ function bindEvents() {
       await openProductDetail(legendProductKey);
       return;
     }
+    if (target.closest('[data-food-open-products]')) {
+      await ensureFoodCatalogLoaded();
+      await ensureFoodMetaCatalogLoaded();
+      state.modal = { type: 'food-products' };
+      triggerRender();
+      return;
+    }
+    const foodProductsTab = target.closest('[data-food-products-tab]')?.dataset.foodProductsTab;
+    if (foodProductsTab) {
+      state.foodProductsView = { ...state.foodProductsView, tab: foodProductsTab };
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-food-merge-open]')) {
+      const seed = String(target.closest('[data-food-merge-open]')?.dataset.foodMergeOpen || '').trim();
+      state.modal = { type: 'food-merge', selected: seed ? [seed] : [], search: '' };
+      triggerRender();
+      return;
+    }
+    const mergeCheck = target.closest('[data-food-merge-select]')?.dataset.foodMergeSelect;
+    if (mergeCheck) {
+      const selected = new Set(Array.isArray(state.modal.selected) ? state.modal.selected : []);
+      if (target.matches('input[type="checkbox"]') ? target.checked : !selected.has(mergeCheck)) selected.add(mergeCheck);
+      else selected.delete(mergeCheck);
+      state.modal = { ...state.modal, selected: [...selected] };
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-food-merge-confirm]')) {
+      const selected = Array.isArray(state.modal.selected) ? state.modal.selected : [];
+      if (selected.length < 2) return;
+      if (!window.confirm(`Vas a fusionar ${selected.length} productos en 1 canonical. ¿Continuar?`)) return;
+      await mergeFoodProducts(selected, selected[0]);
+      toast('Productos fusionados');
+      state.modal = { type: 'food-products' };
+      triggerRender();
+      return;
+    }
+    const ignoreFoodId = target.closest('[data-food-ignore-product]')?.dataset.foodIgnoreProduct;
+    if (ignoreFoodId) {
+      await safeFirebase(() => set(ref(db, `${state.financePath}/foodCatalog/ignored/${ignoreFoodId}`), true));
+      state.foodCatalog.ignored[ignoreFoodId] = true;
+      toast('Producto ocultado en rankings');
+      triggerRender();
+      return;
+    }
     const foodDetailId = target.closest('[data-food-item-detail]')?.dataset.foodItemDetail;
     if (foodDetailId) {
       state.modal = { type: 'food-item', foodId: foodDetailId, mode: 'detail', source: 'stats-list-detail' };
@@ -4850,6 +5187,12 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-balance-category]')) { state.balanceFilterCategory = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
     if (event.target.matches('[data-balance-account]')) { state.balanceAccountFilter = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
     if (event.target.matches('[data-finance-stats-group]')) { state.balanceStatsGroupBy = event.target.value; state.balanceStatsActiveSegment = null; triggerRender(); }
+    if (event.target.matches('[data-food-products-range]')) { state.foodProductsView = { ...state.foodProductsView, range: event.target.value }; triggerRender(); }
+    if (event.target.matches('[data-food-products-vendor]')) { state.foodProductsView = { ...state.foodProductsView, vendor: event.target.value }; triggerRender(); }
+    if (event.target.matches('[data-food-products-account]')) { state.foodProductsView = { ...state.foodProductsView, account: event.target.value }; triggerRender(); }
+    if (event.target.matches('[data-food-products-items-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyWithItems: !!event.target.checked }; triggerRender(); }
+    if (event.target.matches('[data-food-products-custom-start]')) { state.foodProductsView = { ...state.foodProductsView, customStart: event.target.value }; triggerRender(); }
+    if (event.target.matches('[data-food-products-custom-end]')) { state.foodProductsView = { ...state.foodProductsView, customEnd: event.target.value }; triggerRender(); }
     if (event.target.matches('[data-finance-stats-include-unlined]')) { state.balanceStatsIncludeUnlined = !!event.target.checked; state.balanceStatsActiveSegment = null; triggerRender(); }
 
     if (event.target.matches('[data-finance-stats-legend-details]')) {
@@ -4890,6 +5233,12 @@ view.addEventListener('focusout', async (event) => {
       const form = event.target.closest('[data-balance-form]');
       maybeToggleCategoryCreate(form);
       persistBalanceFormState(form);
+      return;
+    }
+
+    if (event.target.matches('[data-food-merge-search]')) {
+      state.modal = { ...state.modal, search: String(event.target.value || '') };
+      triggerRender();
       return;
     }
 

@@ -2270,3 +2270,13 @@ header.food-sheet-header h3{
   text-align: center;
   margin: 0px;
 }
+.financeTab .finFoodChip--glow{background:linear-gradient(135deg,rgba(122,240,200,.25),rgba(125,189,255,.25));box-shadow:0 0 0.6rem rgba(125,189,255,.35);border-color:rgba(125,189,255,.45)}
+.financeTab .finFoodProductsHead{position:sticky;top:0;z-index:2;background:rgba(12,17,36,.92);backdrop-filter:blur(8px);padding:8px;border-radius:12px;display:grid;gap:8px}
+.financeTab .finFoodFilters{display:grid;grid-template-columns:1fr;gap:8px}
+.financeTab .finFoodCustomRange{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.financeTab .finFoodProductsList{display:grid;gap:8px;max-height:52vh;overflow:auto;padding:8px 0}
+.financeTab .finFoodProductsRow{display:grid;gap:2px;border:1px solid rgba(125,189,255,.25);background:rgba(125,189,255,.08);border-radius:12px;padding:10px;text-align:left;color:inherit;box-shadow:0 0 .7rem rgba(125,189,255,.14)}
+.financeTab .finFoodProductsRow strong{font-size:14px}
+.financeTab .finFoodProductsRow span,.financeTab .finFoodProductsRow small{font-size:12px;opacity:.9}
+.financeTab .finFoodMergeList{display:grid;gap:8px;max-height:46vh;overflow:auto;margin-top:8px}
+.financeTab .finFoodMergeRow{display:flex;gap:8px;align-items:center;padding:8px;border-radius:10px;background:rgba(255,255,255,.05)}

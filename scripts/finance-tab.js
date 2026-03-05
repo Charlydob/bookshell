@@ -39,6 +39,7 @@ function monthDiffFromNow(monthKey) {
   const now = new Date();
   return (target.getFullYear() - now.getFullYear()) * 12 + (target.getMonth() - now.getMonth());
 }
+
 function offsetMonthKey(monthKey, offset) { const d = parseMonthKey(monthKey); d.setMonth(d.getMonth() + offset); return getMonthKeyFromDate(d); }
 function monthLabelByKey(monthKey) { return new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(parseMonthKey(monthKey)); }
 function capitalizeFirst(value = '') { return value ? value.charAt(0).toUpperCase() + value.slice(1) : ''; }
@@ -4571,14 +4572,20 @@ async function render() {
 }
 
 function bindEvents() {
+  
   const view = document.getElementById('view-finance'); if (!view || view.dataset.financeBound === '1') return; view.dataset.financeBound = '1';
   state.eventsAbortController = new AbortController();
   const evtOpts = { signal: state.eventsAbortController.signal };
   view.addEventListener('click', async (event) => {
     const target = event.target;
+
     const formButton = target.closest('button:not([type]), button[type="submit"]');
     if (formButton) { event.preventDefault(); event.stopPropagation(); }
-    const fakeLink = target.closest('a[href=if (ticketImportRawEl && state.modal?.type === 'tx') {
+    
+    const fakeLink = target.closest('a[href]');
+    const ticketImportRawEl = document.querySelector('[data-ticket-import-raw]');
+
+if (ticketImportRawEl && state.modal?.type === 'tx') {
       state.modal = {
         ...state.modal,
         ticketImport: {

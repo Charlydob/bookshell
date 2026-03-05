@@ -2173,88 +2173,58 @@ function calendarYearData(accounts, totalSeries) {
 }
 
 function balanceTxList() {
-  const fromNew = Object.entries(state.balance.transactions || {}).map(([id, row]) => ({
-    id,
-    ...row,
-    __src: 'transactions',
-    __path: `${state.financePath}/transactions/${id}`,
-    type: normalizeTxType(row?.type),
-    amount: Number(row?.amount || 0),
-    accountId: String(row?.accountId || ''),
-    fromAccountId: String(row?.fromAccountId || ''),
-    toAccountId: String(row?.toAccountId || ''),
-    date: String(row?.date || isoToDay(row?.dateISO || '') || ''),
-    dateISO: String(row?.dateISO || ''),
-    monthKey: String(row?.monthKey || String(row?.date || isoToDay(row?.dateISO || '') || '').slice(0, 7)),
-    category: String(row?.category || ''),
-    note: String(row?.note || ''),
-    linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
-    personalRatio: Number.isFinite(Number(row?.personalRatio)) ? clamp01(row?.personalRatio, 1) : null,
-    allocation: normalizeTxAllocation(row?.allocation || {}, String(row?.date || isoToDay(row?.dateISO || '') || '')),
-    createdAt: Number(row?.createdAt || 0),
-    updatedAt: Number(row?.updatedAt || 0),
-    extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
-  }));
+  const normalizeBalanceRow = (id, row = {}, source = 'transactions', fallbackPath = '', fallbackMonthKey = '') => {
+    const dateISO = String(row?.dateISO || '');
+    const date = String(row?.date || isoToDay(dateISO || row?.date || '') || '');
+    const monthKey = String(row?.monthKey || date.slice(0, 7) || fallbackMonthKey || '');
+    const parsedTs = new Date(date || dateISO || 0).getTime();
+    if (FINANCE_DEBUG && !Number.isFinite(parsedTs) && (date || dateISO)) {
+      console.log('[BALANCE] invalid date row', { source, id, date, dateISO, monthKey });
+    }
+    return {
+      id,
+      ...row,
+      __src: source,
+      __path: row?.__path || fallbackPath,
+      type: normalizeTxType(row?.type),
+      amount: Number(row?.amount || 0),
+      accountId: String(row?.accountId || ''),
+      fromAccountId: String(row?.fromAccountId || ''),
+      toAccountId: String(row?.toAccountId || ''),
+      date,
+      dateISO,
+      monthKey,
+      category: String(row?.category || ''),
+      note: String(row?.note || ''),
+      linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
+      personalRatio: Number.isFinite(Number(row?.personalRatio)) ? clamp01(row?.personalRatio, 1) : null,
+      allocation: normalizeTxAllocation(row?.allocation || {}, String(date || isoToDay(dateISO || '') || '')),
+      createdAt: Number(row?.createdAt || 0),
+      updatedAt: Number(row?.updatedAt || 0),
+      extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
+    };
+  };
 
-  // ✅ Si ya existen transactions, NO mezcles legacy (evita el doble fantasma)
-  if (fromNew.length) {
-    return fromNew
-      .filter((row) => Number.isFinite(row.amount) && row.monthKey)
-      .sort((a, b) => (txSortTs(b) - txSortTs(a)) || (Number(b.createdAt || 0) - Number(a.createdAt || 0)));
-  }
+  const fromNew = Object.entries(state.balance.transactions || {}).map(([id, row]) => normalizeBalanceRow(id, row, 'transactions', `${state.financePath}/transactions/${id}`));
 
   const fromLegacy = [];
   Object.entries(state.balance.movements || {}).forEach(([monthKey, rows]) => {
     Object.entries(rows || {}).forEach(([id, row]) => {
-      fromLegacy.push({
-        id,
-        ...row,
-        __src: 'movements',
-        __path: `${state.financePath}/movements/${monthKey}/${id}`,
-        type: normalizeTxType(row?.type),
-        amount: Number(row?.amount || 0),
-        accountId: String(row?.accountId || ''),
-        fromAccountId: String(row?.fromAccountId || ''),
-        toAccountId: String(row?.toAccountId || ''),
-        date: String(isoToDay(row?.dateISO || row?.date || '')),
-        dateISO: String(row?.dateISO || ''),
-        monthKey: String(row?.monthKey || monthKey),
-        category: String(row?.category || ''),
-        note: String(row?.note || ''),
-        linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
-        personalRatio: Number.isFinite(Number(row?.personalRatio)) ? clamp01(row?.personalRatio, 1) : null,
-        allocation: normalizeTxAllocation(row?.allocation || {}, String(isoToDay(row?.dateISO || row?.date || '') || '')),
-        createdAt: Number(row?.createdAt || 0),
-        updatedAt: Number(row?.updatedAt || 0),
-        extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
-      });
+      fromLegacy.push(normalizeBalanceRow(id, row, 'movements', `${state.financePath}/movements/${monthKey}/${id}`, monthKey));
     });
   });
 
-  const legacyTx = Object.entries(state.balance.tx || {}).map(([id, row]) => ({
-    id,
-    ...row,
-    __src: 'tx',
-    __path: `${state.financePath}/tx/${id}`,
-    type: normalizeTxType(row?.type),
-    amount: Number(row?.amount || 0),
-    accountId: String(row?.accountId || ''),
-    fromAccountId: String(row?.fromAccountId || ''),
-    toAccountId: String(row?.toAccountId || ''),
-    date: String(row?.date || isoToDay(row?.dateISO || '')),
-    dateISO: String(row?.dateISO || ''),
-    monthKey: String(row?.monthKey || String(row?.date || isoToDay(row?.dateISO || '') || '').slice(0, 7)),
-    category: String(row?.category || ''),
-    note: String(row?.note || ''),
-    linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
-    personalRatio: Number.isFinite(Number(row?.personalRatio)) ? clamp01(row?.personalRatio, 1) : null,
-    allocation: normalizeTxAllocation(row?.allocation || {}, String(row?.date || isoToDay(row?.dateISO || '') || '')),
-    createdAt: Number(row?.createdAt || 0),
-    updatedAt: Number(row?.updatedAt || 0),
-    extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(row?.amount || 0))
-  }));
+  const legacyTx = Object.entries(state.balance.tx || {}).map(([id, row]) => normalizeBalanceRow(id, row, 'tx', `${state.financePath}/tx/${id}`));
+  const newIds = new Set(fromNew.map((row) => String(row.id)));
+  const legacyRows = [...fromLegacy, ...legacyTx].filter((row) => !fromNew.length || !newIds.has(String(row.id)));
+  const rows = [...fromNew, ...legacyRows];
+  const dedup = new Map();
+  rows.forEach((row) => {
+    const uniqueKey = row.__path || `${row.__src}:${row.id}`;
+    if (!dedup.has(uniqueKey)) dedup.set(uniqueKey, row);
+  });
 
-  return [...fromLegacy, ...legacyTx]
+  return [...dedup.values()]
     .filter((row) => Number.isFinite(row.amount) && row.monthKey)
     .sort((a, b) => (txSortTs(b) - txSortTs(a)) || (Number(b.createdAt || 0) - Number(a.createdAt || 0)));
 }
@@ -3061,6 +3031,14 @@ function renderFinanceCalendar(accounts, totalSeries) {
 
 function renderFinanceBalance() {
   const monthKey = getSelectedBalanceMonthKey();
+  if (FINANCE_DEBUG) {
+    const txNew = Object.keys(state.balance.transactions || {}).length;
+    const movLegacyMonths = Object.keys(state.balance.movements || {}).length;
+    const txLegacy = Object.keys(state.balance.tx || {}).length;
+    const monthCount = balanceTxList().filter((row) => row.monthKey === monthKey).length;
+    console.log('[BALANCE] sources', { txNew, movLegacyMonths, txLegacy });
+    console.log('[BALANCE] month', monthKey, 'rows', monthCount);
+  }
   const categories = categoriesList();
   const accounts = buildAccountModels();
   const accountsById = Object.fromEntries(accounts.map((account) => [account.id, account]));
@@ -4545,12 +4523,12 @@ function applyRemoteData(val = {}, replace = false) {
   state.accounts = Object.values(accountsMap).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   state.legacyEntries = root.accountsEntries || root.entries || fallbackEntries;
   state.balance = {
-    tx: root.balance?.tx || (replace ? {} : state.balance.tx),
-    movements: root.movements || (replace ? {} : state.balance.movements),
-    transactions: root.transactions || (replace ? {} : state.balance.transactions),
+    tx: root.balance?.tx || root.tx || (replace ? {} : state.balance.tx),
+    movements: root.movements || root.balance?.movements || root.balance?.movement || (replace ? {} : state.balance.movements),
+    transactions: root.transactions || root.balance?.transactions || root.balance?.tx2 || (replace ? {} : state.balance.transactions),
     categories: root.catalog?.categories || root.balance?.categories || (replace ? {} : state.balance.categories),
     budgets: root.budgets || root.balance?.budgets || (replace ? {} : state.balance.budgets),
-    snapshots: root.balance?.snapshots || (replace ? {} : state.balance.snapshots),
+    snapshots: root.balance?.snapshots || root.snapshots || (replace ? {} : state.balance.snapshots),
     recurring: root.recurring || root.balance?.recurring || (replace ? {} : state.balance.recurring),
     defaultAccountId: root.balance?.defaultAccountId || (replace ? '' : state.balance.defaultAccountId),
     aggregates: root.aggregates || root.balance?.aggregates || (replace ? {} : state.balance.aggregates),

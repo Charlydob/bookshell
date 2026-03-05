@@ -255,6 +255,11 @@ function clampRatio(value, fallback = 1) {
   if (!Number.isFinite(ratio)) return fallback;
   return Math.min(1, Math.max(0.1, ratio));
 }
+function clamp01(value, fallback = 1) {
+  const ratio = Number(value);
+  if (!Number.isFinite(ratio)) return fallback;
+  return Math.min(1, Math.max(0, ratio));
+}
 function isShared(account = {}) {
   return Boolean(account?.shared);
 }
@@ -269,17 +274,23 @@ function normalizeAccountShare(account = {}) {
   const sharedRatio = getRatio(account);
   return { shared, sharedRatio };
 }
+function personalRatioForTx(tx = {}, accountsById = {}) {
+  if (Number.isFinite(Number(tx?.personalRatio))) return clamp01(tx?.personalRatio, 1);
+  const account = accountsById?.[tx?.accountId];
+  if (!account?.shared) return 1;
+  const type = normalizeTxType(tx?.type);
+  if (type === 'expense') return clampRatio(account?.sharedRatio, 0.5);
+  if (type === 'income') return 0;
+  return 0;
+}
 function personalDeltaForTx(tx = {}, accountsById = {}) {
   const safeType = normalizeTxType(tx?.type);
   const amount = Number(tx?.amount || 0);
   if (!Number.isFinite(amount)) return 0;
-  if (safeType === 'income') return shareAmount(accountsById[tx?.accountId], amount);
-  if (safeType === 'expense') return -shareAmount(accountsById[tx?.accountId], amount);
-  if (safeType === 'transfer') {
-    const fromPart = shareAmount(accountsById[tx?.fromAccountId], amount);
-    const toPart = shareAmount(accountsById[tx?.toAccountId], amount);
-    return toPart - fromPart;
-  }
+  const ratio = personalRatioForTx(tx, accountsById);
+  if (safeType === 'income') return amount * ratio;
+  if (safeType === 'expense') return -amount * ratio;
+  if (safeType === 'transfer') return 0;
   return 0;
 }
 function movementSign(type) { return type === 'income' ? 1 : -1; }
@@ -1235,7 +1246,8 @@ function recurringForMonth(monthKey = getSelectedBalanceMonthKey()) {
       dateISO,
       monthKey,
       amount: Number(rec.amount || 0),
-      type: normalizeTxType(rec.type)
+      type: normalizeTxType(rec.type),
+      personalRatio: Number.isFinite(Number(rec?.personalRatio)) ? clamp01(rec.personalRatio, 1) : null
     });
   });
   return rows;
@@ -2177,6 +2189,7 @@ function balanceTxList() {
     category: String(row?.category || ''),
     note: String(row?.note || ''),
     linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
+    personalRatio: Number.isFinite(Number(row?.personalRatio)) ? clamp01(row?.personalRatio, 1) : null,
     allocation: normalizeTxAllocation(row?.allocation || {}, String(row?.date || isoToDay(row?.dateISO || '') || '')),
     createdAt: Number(row?.createdAt || 0),
     updatedAt: Number(row?.updatedAt || 0),
@@ -2209,6 +2222,7 @@ function balanceTxList() {
         category: String(row?.category || ''),
         note: String(row?.note || ''),
         linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
+        personalRatio: Number.isFinite(Number(row?.personalRatio)) ? clamp01(row?.personalRatio, 1) : null,
         allocation: normalizeTxAllocation(row?.allocation || {}, String(isoToDay(row?.dateISO || row?.date || '') || '')),
         createdAt: Number(row?.createdAt || 0),
         updatedAt: Number(row?.updatedAt || 0),
@@ -2233,6 +2247,7 @@ function balanceTxList() {
     category: String(row?.category || ''),
     note: String(row?.note || ''),
     linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
+    personalRatio: Number.isFinite(Number(row?.personalRatio)) ? clamp01(row?.personalRatio, 1) : null,
     allocation: normalizeTxAllocation(row?.allocation || {}, String(row?.date || isoToDay(row?.dateISO || '') || '')),
     createdAt: Number(row?.createdAt || 0),
     updatedAt: Number(row?.updatedAt || 0),
@@ -2249,16 +2264,16 @@ function getSelectedBalanceMonthKey() {
 function summaryForMonth(monthKey, accountsById = {}) {
   const resolvedAccountsById = Object.keys(accountsById || {}).length ? accountsById : Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
   const rows = [...balanceTxList().filter((tx) => tx.monthKey === monthKey), ...recurringForMonth(monthKey)];
-  const income = rows.filter((tx) => tx.type === 'income').reduce((s, tx) => s + shareAmount(resolvedAccountsById[tx.accountId], tx.amount), 0);
-  const expense = rows.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + shareAmount(resolvedAccountsById[tx.accountId], tx.amount), 0);
-  const transferImpact = rows.filter((tx) => tx.type === 'transfer').reduce((s, tx) => s + personalDeltaForTx(tx, resolvedAccountsById), 0);
-  return { income, expense, transferImpact, net: income - expense + transferImpact };
+  const income = rows.filter((tx) => tx.type === 'income').reduce((s, tx) => s + (Number(tx.amount || 0) * personalRatioForTx(tx, resolvedAccountsById)), 0);
+  const expense = rows.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + (Number(tx.amount || 0) * personalRatioForTx(tx, resolvedAccountsById)), 0);
+  const transferImpact = 0;
+  return { income, expense, transferImpact, net: income - expense };
 }
 
 function calcAggForBucket(txListBucket = [], accountsById = {}) {
-  const incomeMy = txListBucket.filter((tx) => tx.type === 'income').reduce((s, tx) => s + shareAmount(accountsById[tx.accountId], tx.amount), 0);
-  const expenseMy = txListBucket.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + shareAmount(accountsById[tx.accountId], tx.amount), 0);
-  const transferImpactMy = txListBucket.filter((tx) => tx.type === 'transfer').reduce((s, tx) => s + personalDeltaForTx(tx, accountsById), 0);
+  const incomeMy = txListBucket.filter((tx) => tx.type === 'income').reduce((s, tx) => s + (Number(tx.amount || 0) * personalRatioForTx(tx, accountsById)), 0);
+  const expenseMy = txListBucket.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + (Number(tx.amount || 0) * personalRatioForTx(tx, accountsById)), 0);
+  const transferImpactMy = 0;
   const incomeTotal = txListBucket.filter((tx) => tx.type === 'income').reduce((s, tx) => s + Number(tx.amount || 0), 0);
   const expenseTotal = txListBucket.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + Number(tx.amount || 0), 0);
   const transferImpactTotal = 0;
@@ -2267,7 +2282,7 @@ function calcAggForBucket(txListBucket = [], accountsById = {}) {
     expenseMy,
     netOperativeMy: incomeMy - expenseMy,
     transferImpactMy,
-    netWealthMy: incomeMy - expenseMy + transferImpactMy,
+    netWealthMy: incomeMy - expenseMy,
     incomeTotal,
     expenseTotal,
     netOperativeTotal: incomeTotal - expenseTotal,
@@ -2388,7 +2403,7 @@ function buildBalanceStats(rows, accountsById) {
   let totalFoodSpentGlobal = 0;
   rows.forEach((row) => {
     const amountGlobal = Math.abs(Number(row.amount || 0));
-    const amountPersonal = Math.abs(shareAmount(accountsById[row.accountId], row.amount));
+    const amountPersonal = Math.abs(personalDeltaForTx(row, accountsById));
     if (!amountPersonal && !amountGlobal) return;
     const category = row.category || 'Sin categoría';
     if (row.type === 'expense') {
@@ -2602,7 +2617,7 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
     if (row.type !== txMode) return;
     const amount = scope === 'global'
       ? Math.abs(Number(row.amount || 0))
-      : Math.abs(shareAmount(accountsById[row.accountId], row.amount));
+      : Math.abs(personalDeltaForTx(row, accountsById));
     if (!amount) return;
     let key = 'Sin datos';
     if (groupBy === 'account') key = accountsById[row.accountId]?.name || 'Sin cuenta';
@@ -2629,7 +2644,7 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
     const scopedAmountByTx = {};
     rows.forEach((row) => {
       if (row.type !== txMode) return;
-      const scopedAmount = scope === 'global' ? Math.abs(Number(row.amount || 0)) : Math.abs(shareAmount(accountsById[row.accountId], row.amount));
+      const scopedAmount = scope === 'global' ? Math.abs(Number(row.amount || 0)) : Math.abs(personalDeltaForTx(row, accountsById));
       if (!scopedAmount) return;
       scopedAmountByTx[row.id] = scopedAmount;
     });
@@ -3658,6 +3673,9 @@ function renderModal() {
   const defaultFoodResultsScrollTop = Number(state.balanceFormState.foodResultsScrollTop || 0);
   const defaultFrom = txEdit?.fromAccountId || state.balanceFormState.fromAccountId || defaultAccountId;
   const defaultTo = txEdit?.toAccountId || state.balanceFormState.toAccountId || accounts[1]?.id || accounts[0]?.id || '';
+  const defaultPersonalRatioMode = Number.isFinite(Number(txEdit?.personalRatio)) ? 'custom' : (state.balanceFormState.personalRatioMode || 'auto');
+  const defaultPersonalRatioPercent = Number.isFinite(Number(txEdit?.personalRatio)) ? String(Math.round(clamp01(txEdit.personalRatio, 1) * 100)) : (state.balanceFormState.personalRatioPercent || '');
+  const defaultPersonalRatioAdvanced = Number.isFinite(Number(txEdit?.personalRatio)) || !!state.balanceFormState.personalRatioAdvanced;
   const accountOptions = accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
   const categories = categoriesList();
   const ticketImportState = state.modal.ticketImport || { raw: '', parsed: null, error: '', warnings: [], open: false };
@@ -3776,6 +3794,21 @@ function renderModal() {
         /div>
       </div>
 
+      <div class="fm-field fin-move-field" data-personal-ratio-block>
+        <label><input type="checkbox" name="personalRatioAdvanced" data-personal-ratio-advanced ${defaultPersonalRatioAdvanced ? 'checked' : ''}/> Ajuste avanzado</label>
+        <div data-personal-ratio-wrap hidden>
+          <label class="fm-label" for="fm-tx-personal-ratio-mode">Mi porcentaje</label>
+          <select id="fm-tx-personal-ratio-mode" class="fm-control fm-control--select" name="personalRatioMode" data-personal-ratio-mode>
+            <option value="auto" ${defaultPersonalRatioMode === 'auto' ? 'selected' : ''}>Automático</option>
+            <option value="custom" ${defaultPersonalRatioMode === 'custom' ? 'selected' : ''}>Manual</option>
+          </select>
+          <div data-personal-ratio-manual-wrap hidden>
+            <input class="fm-control" type="range" min="0" max="100" step="1" name="personalRatioPercent" data-personal-ratio-percent value="${escapeHtml(defaultPersonalRatioPercent || '50')}"/>
+          </div>
+          <small>Imputado a mí: <strong data-personal-ratio-preview>—</strong></small>
+        </div>
+      </div>
+
 <details class="fm-details fin-move-extras" ${ticketImportState.open ? 'open' : ''}>
   <summary class="fm-details__summary">
     <span class="fm-details__title">Import</span>
@@ -3874,6 +3907,10 @@ function renderModal() {
   typeSel?.addEventListener('change', () => {
     syncTxTypeFields(form);
   });
+  form.querySelector('select[name="accountId"]')?.addEventListener('change', () => syncPersonalRatioFields(form));
+  form.querySelector('[data-personal-ratio-advanced]')?.addEventListener('change', () => syncPersonalRatioFields(form));
+  form.querySelector('[data-personal-ratio-mode]')?.addEventListener('change', () => syncPersonalRatioFields(form));
+  form.querySelector('[data-personal-ratio-percent]')?.addEventListener('input', () => syncPersonalRatioFields(form));
   catSel?.addEventListener('change', () => {
     void toggleFoodExtras(form);
   });
@@ -3883,6 +3920,7 @@ function renderModal() {
   // aplicar estado inicial (después de setear defaults)
   syncTxTypeFields(form);
   syncAllocationFields(form);
+  syncPersonalRatioFields(form);
   void toggleFoodExtras(form);
 }
 if (form) {
@@ -3898,10 +3936,15 @@ if (form) {
 
   const to = form.querySelector('select[name="toAccountId"]');
   if (to) to.value = defaultTo || '';
+  const ratioMode = form.querySelector('select[name="personalRatioMode"]');
+  if (ratioMode) ratioMode.value = defaultPersonalRatioMode;
+  const ratioPercent = form.querySelector('input[name="personalRatioPercent"]');
+  if (ratioPercent && defaultPersonalRatioPercent) ratioPercent.value = defaultPersonalRatioPercent;
 
   // primero: que la UI refleje tipo + categoría
   syncTxTypeFields(form);
   syncAllocationFields(form);
+  syncPersonalRatioFields(form);
   void toggleFoodExtras(form);
   maybeToggleCategoryCreate(form);
 
@@ -3953,7 +3996,9 @@ if (form) {
     const accountName = (id) => escapeHtml(accounts.find((a) => a.id === id)?.name || 'Sin cuenta');
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Movimientos del día ${escapeHtml(day)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><div class="financeTxList">${rows.map((row) => {
       const accountText = row.type === 'transfer' ? `${accountName(row.fromAccountId)} → ${accountName(row.toAccountId)}` : accountName(row.accountId);
-      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${row.recurringVirtual ? '<small> · recurrente</small>' : ''}</span><strong class="${toneClass(personalDeltaForTx(row, Object.fromEntries(accounts.map((a) => [a.id, a]))))}">${fmtCurrency(row.amount)}</strong><span class="finance-row">${row.recurringVirtual ? '' : `<button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button>`}</span></div>`;
+      const ratioMy = personalRatioForTx(row, Object.fromEntries(accounts.map((a) => [a.id, a])));
+      const ratioBadge = row.type === 'transfer' ? '' : `<small> · Imputado a mí: ${Math.round(ratioMy * 100)}%</small>`;
+      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${ratioBadge}${row.recurringVirtual ? '<small> · recurrente</small>' : ''}</span><strong class="${toneClass(personalDeltaForTx(row, Object.fromEntries(accounts.map((a) => [a.id, a]))))}">${fmtCurrency(row.amount)}</strong><span class="finance-row">${row.recurringVirtual ? '' : `<button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button>`}</span></div>`;
     }).join('') || '<p class="finance-empty">Sin movimientos.</p>'}</div></div>`;
     return;
   }
@@ -4329,8 +4374,36 @@ function syncTxTypeFields(form) {
   // Origen / destino
   elFrom.style.display = isTransfer ? '' : 'none';
   elTo.style.display = isTransfer ? '' : 'none';
+
+  syncPersonalRatioFields(form);
 }
 
+function syncPersonalRatioFields(form) {
+  const block = form?.querySelector('[data-personal-ratio-block]');
+  const wrap = form?.querySelector('[data-personal-ratio-wrap]');
+  const advanced = form?.querySelector('[data-personal-ratio-advanced]');
+  const typeSel = form?.querySelector('[data-tx-type]');
+  const accountSel = form?.querySelector('select[name="accountId"]');
+  const modeSel = form?.querySelector('[data-personal-ratio-mode]');
+  const manualWrap = form?.querySelector('[data-personal-ratio-manual-wrap]');
+  const percentInput = form?.querySelector('[data-personal-ratio-percent]');
+  const preview = form?.querySelector('[data-personal-ratio-preview]');
+  if (!block || !wrap || !advanced || !typeSel || !accountSel || !modeSel || !manualWrap || !percentInput || !preview) return;
+
+  const type = normalizeTxType(typeSel.value || 'expense');
+  const accountId = String(accountSel.value || '');
+  const account = (state.accounts || []).find((row) => row.id === accountId);
+  const isSharedAccount = !!account?.shared;
+  const visible = type !== 'transfer' && (isSharedAccount || advanced.checked);
+  block.style.display = type === 'transfer' ? 'none' : '';
+  wrap.hidden = !visible;
+
+  const autoRatio = personalRatioForTx({ type, accountId }, Object.fromEntries((state.accounts || []).map((row) => [row.id, row])));
+  const isManual = modeSel.value === 'custom';
+  manualWrap.hidden = !isManual;
+  const ratio = isManual ? clamp01(Number(percentInput.value || 0) / 100, autoRatio) : autoRatio;
+  preview.textContent = `${Math.round(ratio * 100)}%`;
+}
 
 function syncAllocationFields(form) {
   const linked = form?.querySelector('[data-linked-habit-select]');
@@ -4395,6 +4468,9 @@ function persistBalanceFormState(form) {
     allocationAnchorDate: String(fd.get('allocationAnchorDate') || ''),
     allocationCustomStart: String(fd.get('allocationCustomStart') || ''),
     allocationCustomEnd: String(fd.get('allocationCustomEnd') || ''),
+    personalRatioMode: String(fd.get('personalRatioMode') || 'auto'),
+    personalRatioPercent: String(fd.get('personalRatioPercent') || ''),
+    personalRatioAdvanced: fd.get('personalRatioAdvanced') === 'on',
     foodMealType: String(fd.get('foodMealType') || ''),
     foodCuisine: String(fd.get('foodCuisine') || ''),
     foodPlace: String(fd.get('foodPlace') || ''),
@@ -4423,6 +4499,43 @@ async function migrateLegacy(entriesMap = {}, accounts = []) {
     });
   });
   if (writes) await safeFirebase(() => update(ref(db), updatesMap));
+}
+
+async function ensurePersonalRatioMigrationV1() {
+  const migrationPath = `${state.financePath}/meta/migrations/personalRatioV1`;
+  const migrationSnap = await safeFirebase(() => get(ref(db, migrationPath)));
+  if (migrationSnap?.exists()) return;
+
+  const updatesMap = {};
+  const accountsById = Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
+  const txRows = balanceTxList();
+  txRows.forEach((tx) => {
+    const type = normalizeTxType(tx?.type);
+    if (type !== 'income' && type !== 'expense') return;
+    if (Number.isFinite(Number(tx?.personalRatio))) return;
+    const ratio = personalRatioForTx(tx, accountsById);
+    if (!tx?.__path) return;
+    updatesMap[`${tx.__path}/personalRatio`] = ratio;
+    if (tx.__src === 'transactions' && state.balance.transactions?.[tx.id]) state.balance.transactions[tx.id].personalRatio = ratio;
+    if (tx.__src === 'movements' && state.balance.movements?.[tx.monthKey]?.[tx.id]) state.balance.movements[tx.monthKey][tx.id].personalRatio = ratio;
+    if (tx.__src === 'tx' && state.balance.tx?.[tx.id]) state.balance.tx[tx.id].personalRatio = ratio;
+  });
+
+  Object.entries(state.balance.recurring || {}).forEach(([id, rec]) => {
+    const type = normalizeTxType(rec?.type);
+    if (type !== 'income' && type !== 'expense') return;
+    if (Number.isFinite(Number(rec?.personalRatio))) return;
+    const ratio = personalRatioForTx(rec, accountsById);
+    updatesMap[`${state.financePath}/recurring/${id}/personalRatio`] = ratio;
+    if (state.balance.recurring?.[id]) state.balance.recurring[id].personalRatio = ratio;
+  });
+
+  updatesMap[migrationPath] = nowTs();
+  if (Object.keys(updatesMap).length) {
+    updatesMap[`${state.financePath}/aggregates`] = null;
+    await safeFirebase(() => update(ref(db), updatesMap));
+    scheduleAggregateRebuild();
+  }
 }
 
 function applyRemoteData(val = {}, replace = false) {
@@ -5573,6 +5686,8 @@ view.addEventListener('focusout', async (event) => {
       const accountId = String(form.get('accountId') || '');
       const fromAccountId = String(form.get('fromAccountId') || '');
       const toAccountId = String(form.get('toAccountId') || '');
+      const personalRatioMode = String(form.get('personalRatioMode') || 'auto');
+      const personalRatioPercent = Number(form.get('personalRatioPercent') || 0);
       const linkedHabitId = String(form.get('linkedHabitId') || '').trim() || null;
       const allocationModeRaw = String(form.get('allocationMode') || 'point');
       const allocationAnchorDate = String(form.get('allocationAnchorDate') || dateISO);
@@ -5639,6 +5754,10 @@ view.addEventListener('focusout', async (event) => {
       const recurringStart = toIsoDay(String(form.get('recurringStart') || dateISO)) || dateISO;
       const recurringEndRaw = toIsoDay(String(form.get('recurringEnd') || ''));
 
+      const nextPersonalRatio = (type === 'transfer' || personalRatioMode !== 'custom')
+        ? null
+        : clamp01(personalRatioPercent / 100, 1);
+
       const payload = {
         type,
         amount,
@@ -5649,6 +5768,7 @@ view.addEventListener('focusout', async (event) => {
         toAccountId: type === 'transfer' ? toAccountId : '',
         category,
         note,
+        ...(Number.isFinite(nextPersonalRatio) ? { personalRatio: nextPersonalRatio } : {}),
         linkedHabitId,
         allocation,
         extras: extras || null,
@@ -5674,6 +5794,7 @@ view.addEventListener('focusout', async (event) => {
           toAccountId: type === 'transfer' ? toAccountId : '',
           category,
           note,
+          ...(Number.isFinite(nextPersonalRatio) ? { personalRatio: nextPersonalRatio } : {}),
           linkedHabitId,
           allocation,
           extras: extras || null,
@@ -5785,6 +5906,7 @@ async function boot() {
   log('init ok', { financePath: state.financePath });
   bindEvents();
   await loadDataOnce();
+  await ensurePersonalRatioMigrationV1();
   subscribe();
   await render();
 }

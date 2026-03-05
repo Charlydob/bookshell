@@ -44,6 +44,8 @@ export const state = {
   unsubscribe: null,
   saveTimers: {},
   food: { loaded: false, loading: false, options: { typeOfMeal: {}, cuisine: {}, place: {} }, items: {}, itemsById: {}, nameToId: {} },
+  foodCatalog: { loaded: false, loading: false, canonicals: {}, aliases: {}, ignored: {}, merges: {} },
+  foodProductsView: { range: '30d', vendor: 'all', account: 'all', onlyWithItems: false, tab: 'top-eur', customStart: '', customEnd: '' },
   hydratedFromRemote: false,
   btcEurPrice: 0,
   btcPriceTs: 0,

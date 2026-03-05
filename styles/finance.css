@@ -2271,12 +2271,17 @@ header.food-sheet-header h3{
   margin: 0px;
 }
 .financeTab .finFoodChip--glow{background:linear-gradient(135deg,rgba(122,240,200,.25),rgba(125,189,255,.25));box-shadow:0 0 0.6rem rgba(125,189,255,.35);border-color:rgba(125,189,255,.45)}
-.financeTab .finFoodProductsHead{position:sticky;top:0;z-index:2;background:rgba(12,17,36,.92);backdrop-filter:blur(8px);padding:8px;border-radius:12px;display:grid;gap:8px}
-.financeTab .finFoodFilters{display:grid;grid-template-columns:1fr;gap:8px}
-.financeTab .finFoodCustomRange{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.financeTab .finFoodProductsList{display:grid;gap:8px;max-height:52vh;overflow:auto;padding:8px 0}
-.financeTab .finFoodProductsRow{display:grid;gap:2px;border:1px solid rgba(125,189,255,.25);background:rgba(125,189,255,.08);border-radius:12px;padding:10px;text-align:left;color:inherit;box-shadow:0 0 .7rem rgba(125,189,255,.14)}
-.financeTab .finFoodProductsRow strong{font-size:14px}
-.financeTab .finFoodProductsRow span,.financeTab .finFoodProductsRow small{font-size:12px;opacity:.9}
+.financeTab .finFoodProductsHead{position:sticky;top:0;z-index:2;background:rgba(12,17,36,.92);backdrop-filter:blur(8px);padding:8px;border-radius:12px;display:grid;gap:6px;max-width:100%;overflow-x:hidden}
+.financeTab .finFoodFilters{display:grid;grid-template-columns:1fr 1fr;gap:6px;align-items:center}
+.financeTab .finFoodCustomRange{display:grid;grid-template-columns:1fr 1fr;gap:6px;grid-column:1/-1}
+.financeTab .finFoodProductsList{display:grid;gap:6px;max-height:52vh;overflow:auto;padding:2px 0 0;margin-top:0;max-width:100%;overflow-x:hidden}
+.financeTab .finFoodProductsRow{display:grid;gap:2px;border:1px solid rgba(125,189,255,.25);background:rgba(125,189,255,.08);border-radius:10px;padding:8px 9px;min-height:auto;text-align:left;color:inherit;box-shadow:0 0 .5rem rgba(125,189,255,.12)}
+.financeTab .finFoodProductsRow strong{font-size:13px;line-height:1.2}
+.financeTab .finFoodProductsRow span,.financeTab .finFoodProductsRow small{font-size:11px;opacity:.9;line-height:1.25}
 .financeTab .finFoodMergeList{display:grid;gap:8px;max-height:46vh;overflow:auto;margin-top:8px}
 .financeTab .finFoodMergeRow{display:flex;gap:8px;align-items:center;padding:8px;border-radius:10px;background:rgba(255,255,255,.05)}
+
+.financeTab .finFoodChipRow{display:flex;flex-wrap:wrap;gap:8px}
+.financeTab .finFoodChip{padding:3px 8px;font-size:11px}
+.financeTab .finFoodMiniTabs{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.financeTab .finFoodMiniTab{min-height:24px;padding:0 9px;font-size:11px}

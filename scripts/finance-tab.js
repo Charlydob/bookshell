@@ -820,41 +820,50 @@ async function ensureFoodMetaCatalogLoaded(force = false) {
   await loadFoodMetaCatalog(force);
 }
 
-function resolveFoodRangeBounds(range = '30d', customStart = '', customEnd = '') {
-  const now = Date.now();
-  if (range === 'month') {
-    const d = new Date(now);
-    return { start: new Date(d.getFullYear(), d.getMonth(), 1).getTime(), end: now + 1 };
-  }
-  if (range === '90d') return { start: now - (90 * 86400000), end: now + 1 };
-  if (range === 'year') {
-    const d = new Date(now);
-    return { start: new Date(d.getFullYear(), 0, 1).getTime(), end: now + 1 };
-  }
-  if (range === 'total') {
-    const rows = balanceTxList().filter((row) => normalizeTxType(row?.type) === 'expense');
-    const tsList = rows.map((row) => txTs(row)).filter((ts) => Number.isFinite(ts) && ts > 0);
-    if (!tsList.length) return { start: now - (30 * 86400000), end: now + 1 };
-    return { start: Math.min(...tsList), end: Math.max(...tsList) + 1 };
-  }
+const DEBUG_FINANCE_PRODUCTS = FINANCE_DEBUG;
+
+function resolveProductsRangeRows(filters = {}) {
+  const allTxRows = balanceTxList();
+  const range = ['day', 'week', 'month', 'year', 'total', 'custom'].includes(String(filters.range || ''))
+    ? String(filters.range)
+    : String(state.balanceStatsRange || 'month');
+  let rows = [];
+  let start = null;
+  let end = null;
   if (range === 'custom') {
-    const start = parseDayKey(customStart || dayKeyFromTs(now - (30 * 86400000)));
-    const end = parseDayKey(customEnd || dayKeyFromTs(now)) + 86400000;
-    return { start: Math.min(start, end - 86400000), end: Math.max(end, start + 86400000) };
+    const now = Date.now();
+    const startTs = parseDayKey(filters.customStart || dayKeyFromTs(now - (30 * 86400000)));
+    const endTs = parseDayKey(filters.customEnd || dayKeyFromTs(now)) + 86400000;
+    start = Math.min(startTs, endTs - 86400000);
+    end = Math.max(endTs, startTs + 86400000);
+    rows = allTxRows.filter((row) => {
+      const ts = txTs(row);
+      return Number.isFinite(ts) && ts >= start && ts < end;
+    });
+  } else if (range === 'month') {
+    const monthKey = offsetMonthKey(state.balanceMonthOffset || 0);
+    rows = allTxRows.filter((row) => row.monthKey === monthKey);
+    start = parseDayKey(`${monthKey}-01`);
+    end = new Date(new Date(start).getFullYear(), new Date(start).getMonth() + 1, 1).getTime();
+  } else {
+    rows = filterTxByRange(allTxRows, range);
+    const txTimestamps = rows.map((row) => txTs(row)).filter((ts) => Number.isFinite(ts) && ts > 0);
+    start = txTimestamps.length ? Math.min(...txTimestamps) : null;
+    end = txTimestamps.length ? (Math.max(...txTimestamps) + 1) : null;
   }
-  return { start: now - (30 * 86400000), end: now + 1 };
+  return { rows, start, end, range };
 }
 
-function buildFoodLines(range = '30d', filters = {}) {
-  const { start, end } = resolveFoodRangeBounds(range, filters.customStart, filters.customEnd);
+function buildFoodLines(rows = [], filters = {}) {
   const vendorFilter = String(filters.vendor || 'all');
   const accountFilter = String(filters.account || 'all');
+  const foodOnly = !!filters.onlyFood;
   const lines = [];
   let purchaseCount = 0;
-  balanceTxList().forEach((row) => {
+  rows.forEach((row) => {
     if (normalizeTxType(row?.type) !== 'expense') return;
     const ts = txTs(row);
-    if (!Number.isFinite(ts) || ts < start || ts >= end) return;
+    if (!Number.isFinite(ts) || ts <= 0) return;
     if (accountFilter !== 'all' && String(row?.accountId || '') !== accountFilter) return;
     purchaseCount += 1;
     const items = foodItemsFromTx(row).filter((item) => normalizeFoodName(item?.name || ''));
@@ -875,6 +884,7 @@ function buildFoodLines(range = '30d', filters = {}) {
         nameRaw: normalizeFoodName(item?.name || ''),
         foodId: String(item?.foodId || ''),
         productKey: String(item?.productKey || ''),
+        itemCategory: String(item?.category || item?.category_app || row?.category || ''),
         qty,
         unit,
         totalPrice,
@@ -883,6 +893,7 @@ function buildFoodLines(range = '30d', filters = {}) {
     }).filter((line) => line.totalPrice > 0);
     valid.forEach((line) => {
       if (vendorFilter !== 'all' && line.vendorKey !== vendorFilter) return;
+      if (foodOnly && !isFoodCategory(line.itemCategory || '')) return;
       lines.push(line);
     });
   });
@@ -960,78 +971,103 @@ function aggregateProducts(lines = [], purchaseCount = 0) {
   return { products, totalFood, purchaseCount, itemsCount: lines.length, topVendor: topVendor ? { key: topVendor[0], total: topVendor[1] } : null };
 }
 
-
-function renderFoodProductsModal() {
-  const cfg = state.foodProductsView || {};
-  const { lines, purchaseCount } = buildFoodLines(cfg.range || '30d', cfg);
-  const agg = aggregateProducts(lines, purchaseCount);
-  const list = agg.products.slice().sort((a, b) => {
-    if ((cfg.tab || 'top-eur') === 'top-count') return b.count - a.count || b.total - a.total;
+function buildProductsViewModel(cfg = {}) {
+  const effectiveCfg = {
+    ...cfg,
+    range: cfg.range || state.balanceStatsRange || 'month',
+    scope: (cfg.scope === 'global' ? 'global' : (state.balanceStatsScope === 'global' ? 'global' : 'personal'))
+  };
+  const accountsById = Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
+  const { rows: rangeRows, start, end } = resolveProductsRangeRows(effectiveCfg);
+  const donutAgg = aggregateStatsGroup(rangeRows, 'product', 'expense', effectiveCfg.scope, accountsById, { includeUnlined: false });
+  const donutTotal = Object.values(donutAgg.breakdown || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+  const legendRows = donutSegments(donutAgg.breakdown || {}, donutTotal, { productKeyByLabel: donutAgg.productKeyByLabel || {} });
+  const { lines, purchaseCount } = buildFoodLines(rangeRows, effectiveCfg);
+  const detailAgg = aggregateProducts(lines, purchaseCount);
+  const detailByProductKey = detailAgg.products.reduce((acc, row) => {
+    acc[String(row.canonicalId || '')] = row;
+    return acc;
+  }, {});
+  const productRows = legendRows.map((row) => {
+    const detail = detailByProductKey[row.productKey] || detailAgg.products.find((item) => normalizeFoodName(item.canonicalName) === normalizeFoodName(row.label)) || null;
+    return {
+      ...row,
+      canonicalId: row.productKey,
+      canonicalName: row.label,
+      total: Number(row.value || 0),
+      percentOfFood: Number(row.pct || 0),
+      count: Number(state.balanceStatsProductMeta?.[row.label]?.purchaseCount || detail?.count || 0),
+      purchases: Number(detail?.purchases || 0),
+      cheapestVendorKey: detail?.cheapestVendorKey || '',
+      cheapestPrice: detail?.cheapestPrice ?? null,
+      lastVendor: detail?.lastVendor || '',
+      lastPrice: detail?.lastPrice ?? null
+    };
+  });
+  const sortedRows = productRows.slice().sort((a, b) => {
+    if ((effectiveCfg.tab || 'top-eur') === 'top-count') return b.count - a.count || b.total - a.total;
     return b.total - a.total || b.count - a.count;
   });
-  const listVisible = cfg.onlyWithItems ? list.filter((row) => row.count > 0) : list;
-  const rangeOptions = [['month', 'Mes'], ['30d', '30d'], ['90d', '90d'], ['year', 'Año'], ['total', 'Total'], ['custom', 'Custom']];
-  const vendorOptions = ['all', ...new Set(lines.map((line) => line.vendorKey))];
+  const listVisible = effectiveCfg.onlyWithItems ? sortedRows.filter((row) => row.count > 0) : sortedRows;
+  if (DEBUG_FINANCE_PRODUCTS) {
+    console.log('[Productos] range', { start, end }, 'itemsLines', lines.length);
+    console.log('[Productos] agg keys', Object.keys(detailAgg || {}), 'rows', (legendRows || []).length);
+  }
+  return {
+    cfg: effectiveCfg,
+    lines,
+    rangeRows,
+    legendRows,
+    listVisible,
+    totalFood: donutTotal,
+    purchaseCount: detailAgg.purchaseCount,
+    itemsCount: lines.length,
+    topVendor: detailAgg.topVendor
+  };
+}
+
+function renderProductsView(isModal = false) {
+  const model = buildProductsViewModel(state.foodProductsView || {});
+  const { cfg, lines, listVisible, totalFood, purchaseCount, itemsCount, topVendor } = model;
+  const rangeOptions = [['day', 'Día'], ['week', 'Semana'], ['month', 'Mes'], ['year', 'Año'], ['total', 'Total'], ['custom', 'Custom']];
+  const vendorOptions = ['all', ...new Set(lines.map((line) => line.vendorKey))].sort((a, b) => a.localeCompare(b, 'es'));
   const accountOptions = ['all', ...new Set(balanceTxList().filter((row) => normalizeTxType(row?.type) === 'expense').map((row) => String(row.accountId || '')).filter(Boolean))];
-  const totalAverage = agg.purchaseCount > 0 ? agg.totalFood / agg.purchaseCount : 0;
-  return `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1">
-    <header class="food-sheet-header">
-      <h3>Food / Productos</h3>
-      <button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button>
-    </header>
-    <section class="finFoodProductsHead">
+  const totalAverage = purchaseCount > 0 ? totalFood / purchaseCount : 0;
+  const listHtml = listVisible.length
+    ? listVisible.map((row) => `<button type="button" class="finFoodProductsRow" data-food-item-detail="${escapeHtml(row.canonicalId)}"><strong>${escapeHtml(row.canonicalName)}</strong><span>${fmtCurrency(row.total)} · ${row.percentOfFood.toFixed(1)}%</span><span>${(cfg.tab || 'top-eur') === 'top-count' ? `${row.count} veces` : `${row.purchases} compras`}</span><span>${row.cheapestVendorKey ? `Más barato en ${escapeHtml(row.cheapestVendorKey)} (${Number(row.cheapestPrice || 0).toFixed(2)} €/ud)` : 'Sin comparativa'}</span><small>${row.lastVendor ? `Último ${Number(row.lastPrice || 0).toFixed(2)} €/ud · ${escapeHtml(row.lastVendor)}` : ''}</small></button>`).join('')
+    : '<p class="finance-empty">Sin productos en este rango.</p>';
+  const content = `<section class="finFoodProductsHead">
       <div class="finFoodFilters">
         <select class="food-control" data-food-products-range>${rangeOptions.map(([key, label]) => `<option value="${key}" ${cfg.range === key ? 'selected' : ''}>${label}</option>`).join('')}</select>
         <select class="food-control" data-food-products-vendor>${vendorOptions.map((vendor) => `<option value="${escapeHtml(vendor)}" ${cfg.vendor === vendor ? 'selected' : ''}>${escapeHtml(vendor === 'all' ? 'Todos vendors' : vendor)}</option>`).join('')}</select>
         <select class="food-control" data-food-products-account>${accountOptions.map((id) => `<option value="${escapeHtml(id)}" ${cfg.account === id ? 'selected' : ''}>${escapeHtml(id === 'all' ? 'Todas cuentas' : (state.accounts.find((acc) => acc.id === id)?.name || id))}</option>`).join('')}</select>
         <label class="financeStats__checkbox"><input type="checkbox" data-food-products-items-only ${cfg.onlyWithItems ? 'checked' : ''}> solo con items</label>
+        <label class="financeStats__checkbox"><input type="checkbox" data-food-products-food-only ${cfg.onlyFood ? 'checked' : ''}> Solo comida</label>
         ${cfg.range === 'custom' ? `<div class="finFoodCustomRange"><input type="date" class="food-control" data-food-products-custom-start value="${escapeHtml(cfg.customStart || '')}" /><input type="date" class="food-control" data-food-products-custom-end value="${escapeHtml(cfg.customEnd || '')}" /></div>` : ''}
       </div>
       <div class="finFoodChipRow">
-        <span class="finFoodChip finFoodChip--glow">Total € comida: ${fmtCurrency(agg.totalFood)}</span>
-        <span class="finFoodChip">Compras: ${agg.purchaseCount}</span>
-        <span class="finFoodChip">Items: ${agg.itemsCount}</span>
+        <span class="finFoodChip finFoodChip--glow">Total items: ${fmtCurrency(totalFood)}</span>
+        <span class="finFoodChip">Compras: ${purchaseCount}</span>
+        <span class="finFoodChip">Items: ${itemsCount}</span>
         <span class="finFoodChip">Media compra: ${fmtCurrency(totalAverage)}</span>
-        <span class="finFoodChip">Top vendor: ${agg.topVendor ? `${escapeHtml(agg.topVendor.key)} (${fmtCurrency(agg.topVendor.total)})` : '—'}</span>
+        <span class="finFoodChip">Top vendor: ${topVendor ? `${escapeHtml(topVendor.key)} (${fmtCurrency(topVendor.total)})` : '—'}</span>
       </div>
       <div class="finFoodMiniTabs"><button type="button" class="finFoodMiniTab ${(cfg.tab || 'top-eur') === 'top-eur' ? 'is-active' : ''}" data-food-products-tab="top-eur">Top €</button><button type="button" class="finFoodMiniTab ${(cfg.tab || 'top-eur') === 'top-count' ? 'is-active' : ''}" data-food-products-tab="top-count">Top #</button><button type="button" class="finFoodMiniTab" data-food-merge-open="">Fusionar</button></div>
     </section>
-    <section class="finFoodProductsList">${listVisible.map((row) => `<button type="button" class="finFoodProductsRow" data-food-item-detail="${escapeHtml(row.canonicalId)}"><strong>${escapeHtml(row.canonicalName)}</strong><span>${fmtCurrency(row.total)} · ${row.percentOfFood.toFixed(1)}%</span><span>${(cfg.tab || 'top-eur') === 'top-count' ? `${row.count} veces` : `${row.purchases} compras`}</span><span>${row.cheapestVendorKey ? `Más barato en ${escapeHtml(row.cheapestVendorKey)} (${Number(row.cheapestPrice || 0).toFixed(2)} €/ud)` : 'Sin comparativa'}</span><small>${row.lastVendor ? `Último ${Number(row.lastPrice || 0).toFixed(2)} €/ud · ${escapeHtml(row.lastVendor)}` : ''}</small></button>`).join('') || '<p class="finance-empty">Sin productos en este rango.</p>'}</section>
-  </div>`;
+    <section class="finFoodProductsList">${listHtml}</section>`;
+  if (isModal) {
+    return `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>Food / Productos</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header>${content}</div>`;
+  }
+  return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Productos</h2></header>${content}</section>`;
+}
+
+
+function renderFoodProductsModal() {
+  return renderProductsView(true);
 }
 
 function renderFinanceProducts() {
-  const cfg = state.foodProductsView || {};
-  const { lines, purchaseCount } = buildFoodLines(cfg.range || '30d', cfg);
-  const agg = aggregateProducts(lines, purchaseCount);
-  const vendorTotals = agg?.vendorTotals && typeof agg.vendorTotals === 'object' ? agg.vendorTotals : {};
-  const vendorKeys = Object.keys(vendorTotals);
-  const rangeOptions = [['month', 'Mes'], ['30d', '30d'], ['90d', '90d'], ['year', 'Año'], ['custom', 'Custom']];
-  const list = (cfg.tab || 'top-eur') === 'top-count' ? (agg?.topByCount || []) : (agg?.topByTotal || []);
-  const listVisible = cfg.onlyWithItems ? list.filter((row) => row.count > 0) : list;
-  const vendorOptions = ['all', ...vendorKeys.sort((a, b) => a.localeCompare(b, 'es'))];
-  const accountOptions = ['all', ...new Set(balanceTxList().map((row) => String(row.accountId || '')).filter(Boolean))];
-  const totalAverage = agg?.purchaseCount > 0 ? agg.totalFood / agg.purchaseCount : 0;
-  return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Productos</h2></header>
-    <section class="finFoodProductsHead">
-      <div class="finFoodFilters">
-        <select class="food-control" data-food-products-range>${rangeOptions.map(([key, label]) => `<option value="${key}" ${cfg.range === key ? 'selected' : ''}>${label}</option>`).join('')}</select>
-        <select class="food-control" data-food-products-vendor>${vendorOptions.map((vendor) => `<option value="${escapeHtml(vendor)}" ${cfg.vendor === vendor ? 'selected' : ''}>${escapeHtml(vendor === 'all' ? 'Todos vendors' : vendor)}</option>`).join('')}</select>
-        <select class="food-control" data-food-products-account>${accountOptions.map((id) => `<option value="${escapeHtml(id)}" ${cfg.account === id ? 'selected' : ''}>${escapeHtml(id === 'all' ? 'Todas cuentas' : (state.accounts.find((acc) => acc.id === id)?.name || id))}</option>`).join('')}</select>
-        <label class="financeStats__checkbox"><input type="checkbox" data-food-products-items-only ${cfg.onlyWithItems ? 'checked' : ''}> solo con items</label>
-        ${cfg.range === 'custom' ? `<div class="finFoodCustomRange"><input type="date" class="food-control" data-food-products-custom-start value="${escapeHtml(cfg.customStart || '')}" /><input type="date" class="food-control" data-food-products-custom-end value="${escapeHtml(cfg.customEnd || '')}" /></div>` : ''}
-      </div>
-      <div class="finFoodChipRow">
-        <span class="finFoodChip finFoodChip--glow">Total € comida: ${fmtCurrency(agg.totalFood)}</span>
-        <span class="finFoodChip">Compras: ${agg.purchaseCount}</span>
-        <span class="finFoodChip">Items: ${agg.itemsCount}</span>
-        <span class="finFoodChip">Media compra: ${fmtCurrency(totalAverage)}</span>
-        <span class="finFoodChip">Top vendor: ${agg.topVendor ? `${escapeHtml(agg.topVendor.key)} (${fmtCurrency(agg.topVendor.total)})` : '—'}</span>
-      </div>
-      <div class="finFoodMiniTabs"><button type="button" class="finFoodMiniTab ${(cfg.tab || 'top-eur') === 'top-eur' ? 'is-active' : ''}" data-food-products-tab="top-eur">Top €</button><button type="button" class="finFoodMiniTab ${(cfg.tab || 'top-eur') === 'top-count' ? 'is-active' : ''}" data-food-products-tab="top-count">Top #</button><button type="button" class="finFoodMiniTab" data-food-merge-open="">Fusionar</button></div>
-    </section>
-    <section class="finFoodProductsList">${listVisible.map((row) => `<button type="button" class="finFoodProductsRow" data-food-item-detail="${escapeHtml(row.canonicalId)}"><strong>${escapeHtml(row.canonicalName)}</strong><span>${fmtCurrency(row.total)} · ${row.percentOfFood.toFixed(1)}%</span><span>${(cfg.tab || 'top-eur') === 'top-count' ? `${row.count} veces` : `${row.purchases} compras`}</span><span>${row.cheapestVendorKey ? `Más barato en ${escapeHtml(row.cheapestVendorKey)} (${Number(row.cheapestPrice || 0).toFixed(2)} €/ud)` : 'Sin comparativa'}</span><small>${row.lastVendor ? `Último ${Number(row.lastPrice || 0).toFixed(2)} €/ud · ${escapeHtml(row.lastVendor)}` : ''}</small></button>`).join('') || '<p class="finance-empty">Sin productos en este rango.</p>'}</section>
-  </section>`;
+  return renderProductsView(false);
 }
 
 async function mergeFoodProducts(selection = [], destinationId = '') {
@@ -5187,6 +5223,7 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-food-products-vendor]')) { state.foodProductsView = { ...state.foodProductsView, vendor: event.target.value }; triggerRender(); }
     if (event.target.matches('[data-food-products-account]')) { state.foodProductsView = { ...state.foodProductsView, account: event.target.value }; triggerRender(); }
     if (event.target.matches('[data-food-products-items-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyWithItems: !!event.target.checked }; triggerRender(); }
+    if (event.target.matches('[data-food-products-food-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyFood: !!event.target.checked }; triggerRender(); }
     if (event.target.matches('[data-food-products-custom-start]')) { state.foodProductsView = { ...state.foodProductsView, customStart: event.target.value }; triggerRender(); }
     if (event.target.matches('[data-food-products-custom-end]')) { state.foodProductsView = { ...state.foodProductsView, customEnd: event.target.value }; triggerRender(); }
     if (event.target.matches('[data-finance-stats-include-unlined]')) { state.balanceStatsIncludeUnlined = !!event.target.checked; state.balanceStatsActiveSegment = null; triggerRender(); }

@@ -2886,6 +2886,131 @@ function moveQuickCounter(habitId, dir) {
   saveUI({ quickCounters: arr });
 }
 
+function saveQuickCounterOrderFromDom() {
+  if (!$quickCountersGrid) return;
+  const orderedIds = [...$quickCountersGrid.querySelectorAll(".quick-counter-btn[data-habit-id]")]
+    .map((node) => String(node.dataset.habitId || ""))
+    .filter(Boolean);
+  if (!orderedIds.length) return;
+  saveUI({ quickCounters: orderedIds });
+}
+
+function renderQuickCounterPicker(counterMap, quickIds) {
+  if (!$quickCountersSelect) return;
+  const term = String($quickCountersSearch?.value || "").trim().toLowerCase();
+  const pinned = new Set(quickIds);
+  const candidates = [...counterMap.values()]
+    .filter((habit) => !pinned.has(habit.id))
+    .filter((habit) => !term || `${habit.emoji || ""} ${habit.name || ""}`.toLowerCase().includes(term))
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+
+  $quickCountersSelect.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = candidates.length ? "Selecciona contador…" : "Sin resultados";
+  $quickCountersSelect.appendChild(placeholder);
+
+  candidates.forEach((habit) => {
+    const opt = document.createElement("option");
+    opt.value = habit.id;
+    opt.textContent = `${habit.emoji || "🏷️"} ${habit.name || "Contador"}`;
+    $quickCountersSelect.appendChild(opt);
+  });
+
+  $quickCountersSelect.value = "";
+  $quickCountersSelect.disabled = candidates.length === 0;
+  if ($quickCountersAdd) $quickCountersAdd.disabled = candidates.length === 0;
+}
+
+function attachQuickCounterGestures(btn, habitId) {
+  if (!btn || !habitId) return;
+  const MOVE_DELAY_MS = 2000;
+  const DELETE_DELAY_MS = 5000;
+  const MOVE_THRESHOLD_PX = 8;
+
+  btn.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+
+    btn.dataset.blockClick = "0";
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let moved = false;
+    let moveReady = false;
+    let dragging = false;
+
+    const cleanup = () => {
+      window.clearTimeout(moveTimer);
+      window.clearTimeout(deleteTimer);
+      btn.classList.remove("is-move-ready", "is-dragging");
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+    };
+
+    const moveTimer = window.setTimeout(() => {
+      if (moved) return;
+      moveReady = true;
+      btn.classList.add("is-move-ready");
+      navigator.vibrate?.(10);
+    }, MOVE_DELAY_MS);
+
+    const deleteTimer = window.setTimeout(() => {
+      if (moved || dragging) return;
+      btn.dataset.blockClick = "1";
+      cleanup();
+      if (window.confirm("¿Eliminar contador de rápidos?")) {
+        setQuickCounterPinned(habitId, false);
+      }
+    }, DELETE_DELAY_MS);
+
+    const onMove = (moveEvent) => {
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+      const distance = Math.hypot(dx, dy);
+      if (distance <= MOVE_THRESHOLD_PX) return;
+
+      if (!moved) {
+        moved = true;
+        btn.dataset.blockClick = "1";
+        window.clearTimeout(deleteTimer);
+      }
+
+      if (!moveReady) {
+        window.clearTimeout(moveTimer);
+        return;
+      }
+
+      if (!dragging) {
+        dragging = true;
+        btn.classList.add("is-dragging");
+      }
+
+      const over = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest(".quick-counter-btn");
+      if (!over || over === btn || over.parentElement !== $quickCountersGrid) return;
+      const rect = over.getBoundingClientRect();
+      const placeAfter = (moveEvent.clientY > rect.top + rect.height / 2)
+        || (moveEvent.clientX > rect.left + rect.width / 2);
+      if (placeAfter) {
+        over.after(btn);
+      } else {
+        over.before(btn);
+      }
+    };
+
+    const onUp = () => {
+      const hadDrag = dragging;
+      cleanup();
+      if (hadDrag) {
+        saveQuickCounterOrderFromDom();
+      }
+    };
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+  });
+}
+
 function loadHeatmapYear() {
   try {
     const stored = Number(localStorage.getItem(HEATMAP_YEAR_STORAGE));
@@ -3546,6 +3671,9 @@ const $habitQuickSessionsRow = document.getElementById("habit-quick-sessions-row
 const $habitQuickSessionsEmpty = document.getElementById("habit-quick-sessions-empty");
 const $quickCountersWrap = document.querySelector(".quick-counters-wrap");
 const $quickCountersBody = document.getElementById("quick-counters-body");
+const $quickCountersSearch = document.getElementById("quick-counters-search");
+const $quickCountersSelect = document.getElementById("quick-counters-select");
+const $quickCountersAdd = document.getElementById("quick-counters-add");
 const $quickCountersGrid = document.getElementById("quick-counters-grid");
 const $quickCounterCount = document.getElementById("quick-counter-count");
 
@@ -9684,6 +9812,8 @@ function renderQuickCounters() {
     $quickCounterCount.textContent = `(${quickIds.length} fijado${quickIds.length === 1 ? "" : "s"})`;
   }
 
+  renderQuickCounterPicker(counterMap, quickIds);
+
   quickIds.forEach((id) => {
     const habit = counterMap.get(id);
     if (!habit) return;
@@ -9711,7 +9841,15 @@ function renderQuickCounters() {
       ${countToday > 0 ? `<span class="quick-counter-badge" aria-label="Contado hoy">${countToday}</span>` : ""}
     `;
 
-    btn.onclick = () => incrementCounterHabit(habit.id);
+    btn.addEventListener("click", (event) => {
+      if (btn.dataset.blockClick === "1") {
+        event.preventDefault();
+        btn.dataset.blockClick = "0";
+        return;
+      }
+      incrementCounterHabit(habit.id);
+    });
+    attachQuickCounterGestures(btn, habit.id);
 
     $quickCountersGrid.appendChild(btn);
   });
@@ -11431,6 +11569,23 @@ function bindEvents() {
     habitPrefs = { ...habitPrefs, quickSessions: [...current, habitId] };
     persistHabitPrefs();
     renderQuickSessions();
+  });
+
+  $quickCountersSearch?.addEventListener("input", () => {
+    renderQuickCounters();
+  });
+
+  $quickCountersAdd?.addEventListener("click", () => {
+    const habitId = $quickCountersSelect?.value || "";
+    if (!habitId) return;
+    const current = Array.isArray(habitUI?.quickCounters) ? habitUI.quickCounters : [];
+    if (current.includes(habitId)) {
+      showHabitToast("Ese contador ya está en rápidos");
+      if ($quickCountersSelect) $quickCountersSelect.value = "";
+      return;
+    }
+    setQuickCounterPinned(habitId, true);
+    if ($quickCountersSelect) $quickCountersSelect.value = "";
   });
 
   $habitManualClose?.addEventListener("click", closeManualTimeModal);

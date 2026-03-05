@@ -209,6 +209,18 @@ body.is-session-detail-open #app {
   appearance: none;
 }
 
+.habit-quick-sessions-controls input[type="search"] {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.08);
+  color: var(--txt);
+  font-size: 13px;
+  box-shadow: 0 8px 18px rgba(20, 20, 40, 0.16);
+}
+
 .habit-quick-sessions-controls select:disabled {
   opacity: 0.6;
 }
@@ -370,6 +382,17 @@ body.is-session-detail-open #app {
 
 .quick-counter-btn.is-pop {
   animation: quick-counter-pop 0.18s ease-out;
+}
+
+.quick-counter-btn.is-move-ready {
+  transform: scale(1.02);
+  box-shadow: 0 10px 22px rgba(20, 20, 40, 0.28);
+}
+
+.quick-counter-btn.is-dragging {
+  opacity: 0.92;
+  transform: scale(1.05);
+  box-shadow: 0 14px 26px rgba(20, 20, 40, 0.32);
 }
 
 .quick-counter-badge {

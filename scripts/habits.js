@@ -2923,38 +2923,165 @@ function renderQuickCounterPicker(counterMap, quickIds) {
 }
 
 function attachQuickCounterGestures(btn, habitId) {
-  if (!btn || !habitId) return;
-  const MOVE_DELAY_MS = 2000;
-  const DELETE_DELAY_MS = 5000;
-  const MOVE_THRESHOLD_PX = 8;
+  if (!btn || !habitId || !$quickCountersGrid) return;
+
+  const MOVE_DELAY_MS = 500;     // long press para poder mover
+  const DELETE_DELAY_MS = 5000;  // long press para borrar
+  const MOVE_THRESHOLD_PX = 4;
 
   btn.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
 
+    // IMPORTANTÍSIMO en iOS/Android: que el "up" no genere click al de debajo
+    event.preventDefault();
+
+    btn.setPointerCapture?.(event.pointerId);
+
     btn.dataset.blockClick = "0";
+
     const startX = event.clientX;
     const startY = event.clientY;
+
     let moved = false;
     let moveReady = false;
     let dragging = false;
 
-    const cleanup = () => {
-      window.clearTimeout(moveTimer);
-      window.clearTimeout(deleteTimer);
-      btn.classList.remove("is-move-ready", "is-dragging");
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.removeEventListener("pointercancel", onUp);
+    let offsetX = 0;
+    let offsetY = 0;
+
+    let lastX = startX;
+    let lastY = startY;
+
+    let ph = null; // placeholder
+    let moveTimer = 0;
+    let deleteTimer = 0;
+
+    const persistOrder = () => {
+      const ids = [...$quickCountersGrid.querySelectorAll(".quick-counter-btn")]
+        .map((el) => el.dataset.habitId)
+        .filter(Boolean);
+
+      habitUI = { ...habitUI, quickCounters: ids };
+      saveUI({ quickCounters: ids });
     };
 
-    const moveTimer = window.setTimeout(() => {
+    const makePlaceholder = (w, h) => {
+      const el = document.createElement("div");
+      el.className = "quick-counter-ph";
+      el.style.width = `${w}px`;
+      el.style.height = `${h}px`;
+      el.style.borderRadius = "16px"; // o inherit si te va bien
+      el.style.opacity = "0.12";
+      return el;
+    };
+
+    const startDragging = () => {
+      dragging = true;
+      btn.dataset.blockClick = "1"; // bloquea sumas
+
+      btn.classList.add("is-dragging");
+
+      const r = btn.getBoundingClientRect();
+      offsetX = startX - r.left;
+      offsetY = startY - r.top;
+
+      // placeholder mantiene el hueco DENTRO del grid
+      ph = makePlaceholder(r.width, r.height);
+      btn.replaceWith(ph);
+
+      // el botón se saca al body para que sea "flotante" de verdad
+      document.body.appendChild(btn);
+
+      btn.style.position = "fixed";
+      btn.style.left = "0px";
+      btn.style.top = "0px";
+      btn.style.width = `${r.width}px`;
+      btn.style.zIndex = "999999";
+      btn.style.pointerEvents = "none"; // para que elementFromPoint vea lo de debajo
+
+      updateTransform();
+      navigator.vibrate?.(8);
+    };
+
+    const updateTransform = () => {
+      const x = lastX - offsetX;
+      const y = lastY - offsetY;
+      btn.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    };
+
+    const reorderPlaceholderUnderFinger = () => {
+      // buscamos el tile de debajo del dedo (ignora el flotante porque pointerEvents:none)
+      const over = document.elementFromPoint(lastX, lastY)?.closest(".quick-counter-btn");
+      if (!over || over.parentElement !== $quickCountersGrid) return;
+
+      const rect = over.getBoundingClientRect();
+      const placeAfter =
+        (lastY > rect.top + rect.height / 2) ||
+        (lastX > rect.left + rect.width / 2);
+
+      if (!ph) return;
+      if (placeAfter) over.after(ph);
+      else over.before(ph);
+    };
+
+    const cleanup = (upEvent) => {
+      window.clearTimeout(moveTimer);
+      window.clearTimeout(deleteTimer);
+
+      // Si estábamos arrastrando: traga el "up/click fantasma"
+      if (dragging) {
+        upEvent?.preventDefault?.();
+        upEvent?.stopPropagation?.();
+        upEvent?.stopImmediatePropagation?.();
+      }
+
+      // DROP real: volver el botón al grid EN el sitio del placeholder
+      if (ph) {
+        ph.replaceWith(btn);
+        ph = null;
+      } else {
+        // fallback: si por lo que sea no había placeholder, asegúrate de que vuelva al grid
+        if (btn.parentElement !== $quickCountersGrid) {
+          $quickCountersGrid.appendChild(btn);
+        }
+      }
+
+      // Persistimos el orden SOLO si hubo drag
+      if (dragging) persistOrder();
+
+      // reset estilos flotantes SIEMPRE (esto arregla el “superpuesto a todo”)
+      btn.classList.remove("is-move-ready", "is-dragging");
+      btn.style.transform = "";
+      btn.style.zIndex = "";
+      btn.style.position = "";
+      btn.style.left = "";
+      btn.style.top = "";
+      btn.style.width = "";
+      btn.style.pointerEvents = "";
+
+      // deja blockClick un momento para comerse eventos sintetizados
+      if (dragging) {
+        btn.dataset.blockClick = "1";
+        window.setTimeout(() => (btn.dataset.blockClick = "0"), 350);
+      } else {
+        btn.dataset.blockClick = "0";
+      }
+
+      btn.releasePointerCapture?.(event.pointerId);
+
+      document.removeEventListener("pointermove", onMove, { capture: true });
+      document.removeEventListener("pointerup", onUp, { capture: true });
+      document.removeEventListener("pointercancel", onUp, { capture: true });
+    };
+
+    moveTimer = window.setTimeout(() => {
       if (moved) return;
       moveReady = true;
       btn.classList.add("is-move-ready");
       navigator.vibrate?.(10);
     }, MOVE_DELAY_MS);
 
-    const deleteTimer = window.setTimeout(() => {
+    deleteTimer = window.setTimeout(() => {
       if (moved || dragging) return;
       btn.dataset.blockClick = "1";
       cleanup();
@@ -2964,10 +3091,14 @@ function attachQuickCounterGestures(btn, habitId) {
     }, DELETE_DELAY_MS);
 
     const onMove = (moveEvent) => {
-      const dx = moveEvent.clientX - startX;
-      const dy = moveEvent.clientY - startY;
-      const distance = Math.hypot(dx, dy);
-      if (distance <= MOVE_THRESHOLD_PX) return;
+      lastX = moveEvent.clientX;
+      lastY = moveEvent.clientY;
+
+      const dx = lastX - startX;
+      const dy = lastY - startY;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist <= MOVE_THRESHOLD_PX) return;
 
       if (!moved) {
         moved = true;
@@ -2980,35 +3111,19 @@ function attachQuickCounterGestures(btn, habitId) {
         return;
       }
 
-      if (!dragging) {
-        dragging = true;
-        btn.classList.add("is-dragging");
-      }
+      if (!dragging) startDragging();
 
-      const over = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest(".quick-counter-btn");
-      if (!over || over === btn || over.parentElement !== $quickCountersGrid) return;
-      const rect = over.getBoundingClientRect();
-      const placeAfter = (moveEvent.clientY > rect.top + rect.height / 2)
-        || (moveEvent.clientX > rect.left + rect.width / 2);
-      if (placeAfter) {
-        over.after(btn);
-      } else {
-        over.before(btn);
-      }
+      updateTransform();
+      reorderPlaceholderUnderFinger();
     };
 
-    const onUp = () => {
-      const hadDrag = dragging;
-      cleanup();
-      if (hadDrag) {
-        saveQuickCounterOrderFromDom();
-      }
-    };
+    const onUp = (e) => cleanup(e);
 
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-    document.addEventListener("pointercancel", onUp);
-  });
+    // CAPTURA y NO pasivo para poder prevenir y parar la propagación
+    document.addEventListener("pointermove", onMove, { capture: true, passive: false });
+    document.addEventListener("pointerup", onUp, { capture: true, passive: false });
+    document.addEventListener("pointercancel", onUp, { capture: true, passive: false });
+  }, { passive: false });
 }
 
 function loadHeatmapYear() {
@@ -9841,14 +9956,15 @@ function renderQuickCounters() {
       ${countToday > 0 ? `<span class="quick-counter-badge" aria-label="Contado hoy">${countToday}</span>` : ""}
     `;
 
-    btn.addEventListener("click", (event) => {
-      if (btn.dataset.blockClick === "1") {
-        event.preventDefault();
-        btn.dataset.blockClick = "0";
-        return;
-      }
-      incrementCounterHabit(habit.id);
-    });
+btn.addEventListener("pointerup", (event) => {
+  if (btn.dataset.blockClick === "1") {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+    return;
+  }
+  incrementCounterHabit(habit.id);
+});
     attachQuickCounterGestures(btn, habit.id);
 
     $quickCountersGrid.appendChild(btn);

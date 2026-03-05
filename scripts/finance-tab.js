@@ -1225,13 +1225,19 @@ function renderFoodPriceHistorySection(food = {}, options = {}) {
     <details class="finFoodDetailSection finFoodCard" data-food-detail-card="data">
       <summary class="finFoodDetailSummary">Datos</summary>
       <div class="finFoodDetailBody food-form-grid foodX-stack">
-        <div class="food-form-row"><label class="food-form-label" for="food-name-input">Nombre</label><input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(food?.name || options?.presetName || '')}" /></div>
-        <div class="food-form-row"><label class="food-form-label" for="food-displayName-input">Display name</label><input id="food-displayName-input" class="food-control" name="displayName" value="${escapeHtml(food?.displayName || options?.presetName || '')}" data-food-display-name /></div>
-        <div class="food-form-row"><label class="food-form-label" for="food-mealType-input">Categoría <button type="button" class="finFoodLabelAction" data-food-add="typeOfMeal">+ Añadir</button></label><select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>
+      
+      <div class="meta-vista-detalle-producto">
+        <div class="food-form-row"><label class="food-form-label" for="food-name-input">Nombre</label><input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(food?.name || options?.presetName || '')}" /></div>        
+        <div class="food-form-row"><label class="food-form-label" for="food-displayName-input">Display name</label><input id="food-displayName-input" class="food-control" name="displayName" value="${escapeHtml(food?.displayName || options?.presetName || '')}" data-food-display-name /></div>       
+        <div class="food-form-row"><label class="food-form-label" for="food-defaultPrice-input">Precio</label><input id="food-defaultPrice-input" class="food-control" name="defaultPrice" type="number" step="0.01" min="0" value="${Number(food?.defaultPrice || 0) || ''}" /></div>
+      </div>
+
+      <div class= "selectores-ficha-detalle-producto">
+        <div class="food-form-row"><label class="food-form-label" for="food-mealType-input">Categoría <button type="button" class="finFoodLabelAction" data-food-add="typeOfMeal">+ Añadir</button></label><select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>        
         <div class="food-form-row"><label class="food-form-label" for="food-cuisine-input">Saludable <button type="button" class="finFoodLabelAction" data-food-add="cuisine">+ Añadir</button></label><select id="food-cuisine-input" class="food-control" name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.cuisine || food?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>
         <div class="food-form-row"><label class="food-form-label" for="food-place-input">Dónde <button type="button" class="finFoodLabelAction" data-food-add="place">+ Añadir</button></label><select id="food-place-input" class="food-control" name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>
-        <div class="food-form-row"><label class="food-form-label" for="food-defaultPrice-input">Precio por defecto</label><input id="food-defaultPrice-input" class="food-control" name="defaultPrice" type="number" step="0.01" min="0" value="${Number(food?.defaultPrice || 0) || ''}" /></div>
-      </div>
+      </div>  
+        </div>
     </details>
 
     <details class="finFoodDetailSection finFoodCard" data-food-detail-card="aliases" id="food-detail-aliases">
@@ -1250,7 +1256,7 @@ function renderFoodAliasEditor(editing = {}) {
   return `<div class="finFoodAliasEditor" data-food-alias-editor>
     <input type="hidden" name="aliases" value="${escapeHtml(aliases.join(', '))}" data-food-aliases-hidden />
     <div class="finFoodChipRow" data-food-aliases-chips>${aliases.map((alias, index) => `<button type="button" class="finFoodChip finFoodChip--remove" data-food-alias-remove="${index}">${escapeHtml(alias)} ×</button>`).join('') || '<span class="finFoodChip">Sin alias</span>'}</div>
-    <div class="food-form-inline"><input class="food-control" type="text" data-food-alias-input placeholder="Añadir alias" /><button type="button" class="finFoodInlineAddBtn" data-food-alias-add>Añadir</button></div>
+    <div class="food-form-inline"><input class="food-control" type="text" data-food-alias-input placeholder="Añadir alias" /><button type="button" class="finFoodInlineAddBtn" data-food-alias-add>➕</button></div>
   </div>`;
 }
 
@@ -2373,7 +2379,7 @@ function updateCalloutFromSlice(params) {
   const calloutTo = { x: 50 + (Math.cos(sliceMidAngle) * calloutOuterRadius), y: 50 + (Math.sin(sliceMidAngle) * calloutOuterRadius) };
   const rawX = 50 + (Math.cos(sliceMidAngle) * calloutBoxRadius);
   const rawY = 50 + (Math.sin(sliceMidAngle) * calloutBoxRadius);
-  const margin = 8;
+  const margin = 25;
   const calloutBox = { x: Math.max(margin, Math.min(100 - margin, rawX)), y: Math.max(margin, Math.min(100 - margin, rawY)) };
   line.setAttribute('points', `${calloutFrom.x},${calloutFrom.y} ${calloutTo.x},${calloutTo.y} ${calloutBox.x},${calloutBox.y}`);
   callout.style.left = `calc(${calloutBox.x}% )`;

@@ -1294,7 +1294,11 @@ summary.fm-details__summary{
 .financeTab .financeStats__row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .financeTab .financeStats__rankRow { width: 100%; min-height: 46px; border: 1px solid transparent; border-radius: 10px; background: rgba(255,255,255,.02); color: inherit; padding: 4px 8px; text-align: left; cursor: pointer; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; }
 .financeTab .financeStats__rankRow.is-active { border-color: rgba(125,190,255,.5); background: rgba(95,165,255,.15); box-shadow: 0 0 0 1px rgba(125,190,255,.2) inset; }
-.financeTab .financeStats__name { display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+.financeTab .financeStats__name { display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 150px; max-width: 150px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; 
+font-size: 14px; font-weight: 500; }
+
+
 .financeTab .financeStats__meta { opacity: .92; font-weight: 600; font-size: 12px; white-space: nowrap; }
 .financeTab .financeStats__micro { font-size: .78rem; opacity: .85; white-space: nowrap; }
 .financeTab .financeStats__rank { min-width: 24px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: rgba(90,120,190,.25); border: 1px solid rgba(110,150,220,.45); font-size: 11px; }
@@ -1316,8 +1320,8 @@ summary.fm-details__summary{
   height: 34px;
   min-width: 34px;
   border-radius: 9px;
-  border: 1px solid rgba(125,190,255,.45);
-  background: rgba(95,165,255,.18);
+  border: 0px solid rgba(125,190,255,.45);
+  background: transparent;
   color: #eaf4ff;
   display:grid;
   place-items:center;
@@ -2041,7 +2045,7 @@ margin: 0px;
   grid-template-columns: minmax(0, 1fr);
 }
 .financeTab .financeStats__rankRow {
-width: 80%;
+width: 100%;
 min-height: 46px;
 border: 1px solid transparent;
 border-radius: 10px;
@@ -2060,6 +2064,7 @@ font-size: 10px;
   justify-content: space-between;
   padding: 4px 0 10px;
   backdrop-filter: blur(12px);
+  margin-bottom: 10px;
 }
 .finFoodDetailSummary{
   cursor:pointer;
@@ -2187,4 +2192,81 @@ font-size: 10px;
 }
 .financeTab .food-sheet-modal .food-sheet-footer {
   padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+}
+.financeTab .food-sheet-modal .food-form-grid.foodX-stack .meta-vista-detalle-producto {
+  display: grid;
+    grid-template-columns: repeat(3, minmax(95px, 95px));
+    justify-content: space-between;
+    justify-self: space-between;
+    justify-items: center;
+    align-self: center;
+    align-items: center;
+    align-content: center;
+    text-align: center;
+}
+.selectores-ficha-detalle-producto{
+  display: grid;
+    grid-template-columns: repeat(3, minmax(95px, 95px));
+    justify-content: space-between;
+    justify-self: space-between;
+    justify-items: center;
+    align-self: center;
+    align-items: center;
+    align-content: center;
+    text-align: center;
+}
+.financeTab .food-sheet-modal .food-form-grid.foodX-stack{
+  display: grid;
+  grid-template-columns: 1fr;
+}
+#food-name-input, #food-displayName-input, #food-mealType-input, #food-cuisine-input, #food-place-input, #food-defaultPrice-input {
+  max-width: 85px;
+  min-width: 85px;
+}
+header.food-sheet-header{
+  background-color: transparent;
+  backdrop-filter: blur(0px);
+  border-radius: 10px;
+  padding: 0;
+  z-index: 1;
+}
+header.food-sheet-header h3{
+  margin-left: 10px;
+
+}
+.selectores-ficha-detalle-producto{
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  justify-items: center;
+}
+
+.finFoodDetailBody{
+  display: grid;
+    grid-template-columns: repeat(3, minmax(95px, 95px));
+    justify-content: space-between;
+    justify-self: space-between;
+    justify-items: center;
+    align-self: center;
+    align-items: center;
+    align-content: center;
+    text-align: center;
+}
+
+.financeTab .food-sheet-modal .finFoodInlineAddBtn{
+  border: 0px;
+  background: transparent;
+  padding: 0px;
+}
+.financeTab .food-form-inline{
+  justify-content: center;
+  padding: 0px;
+  margin-left: 0px;
+  display: grid;
+  grid-template-columns: 60px 8px;
+}
+.food-control{
+  padding: 0px;
+  text-align: center;
+  margin: 0px;
 }

@@ -366,6 +366,10 @@ body.is-session-detail-open #app {
   cursor: default;
   transition: transform 0.08s ease, box-shadow 0.16s ease, border-color 0.16s ease;
   padding: 0;
+
+  user-select: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
 }
 
 .quick-counter-btn:active {
@@ -387,10 +391,11 @@ body.is-session-detail-open #app {
 .quick-counter-btn.is-move-ready {
   transform: scale(1.02);
   box-shadow: 0 10px 22px rgba(20, 20, 40, 0.28);
+    opacity: 0.52;
 }
 
 .quick-counter-btn.is-dragging {
-  opacity: 0.92;
+  opacity: 0.52;
   transform: scale(1.05);
   box-shadow: 0 14px 26px rgba(20, 20, 40, 0.32);
 }
@@ -415,6 +420,27 @@ body.is-session-detail-open #app {
   backdrop-filter: blur(8px) saturate(130%);
   pointer-events: none;
 }
+
+.quick-counter-btn{
+  touch-action: none;           /* evita scroll/gestos raros mientras arrastras */
+  -webkit-tap-highlight-color: transparent;
+  will-change: transform;
+    touch-action: none;
+}
+.quick-counter-ph{
+  border-radius: inherit;
+  opacity: .15;
+}
+.quick-counter-btn.is-dragging{
+  cursor: grabbing;
+}
+.quick-counter-btn{
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.quick-counter-ph{ opacity:.12; }
 
 @keyframes quick-counter-pop {
   0% { transform: scale(0.98); }

@@ -14,13 +14,16 @@ async function ensureFinanceLoaded() {
   ({ db } = await import('./firebase-shared.js'));
 }
 
-import { LEGACY_PATH, DEVICE_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
+import { DEVICE_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
 import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './finance/ui.js';
-import { resolveFinancePath } from './finance/data.js';
+import { resolveFinancePath, resolveFinancePathCandidates } from './finance/data.js';
 import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, firebaseSafeKey, TICKET_IMPORT_SAMPLE_V1, resolveTicketMovementCategory } from './finance/import.js';
 
 let productsSearchTimer = null;
 let mergeSearchTimer = null;
+let unsubscribeLegacyFinance = null;
+let financeRootsCache = { newRoot: {}, legacyRoot: {} };
+let financeNeedsLegacyAccountsMerge = false;
 
 function log(...parts) { console.log('[finance]', ...parts); }
 function warnMissing(id) { console.warn(`[finance] missing DOM node ${id}`); }
@@ -3031,6 +3034,7 @@ function renderFinanceCalendar(accounts, totalSeries) {
 
 function renderFinanceBalance() {
   const monthKey = getSelectedBalanceMonthKey();
+  console.log('[BALANCE] tx', Object.keys(state.balance.transactions || {}).length);
   if (FINANCE_DEBUG) {
     const txNew = Object.keys(state.balance.transactions || {}).length;
     const movLegacyMonths = Object.keys(state.balance.movements || {}).length;
@@ -4537,27 +4541,79 @@ function applyRemoteData(val = {}, replace = false) {
   state.goals = { goals: root.goals?.goals || (replace ? {} : state.goals.goals) };
 }
 
+function hasData(value) {
+  if (!value || typeof value !== 'object') return false;
+  return Array.isArray(value) ? value.length > 0 : Object.keys(value).length > 0;
+}
+
+function mergeFinanceRoots(newRoot = {}, legacyRoot = {}) {
+  const rootNew = newRoot && typeof newRoot === 'object' ? newRoot : {};
+  const rootLegacy = legacyRoot && typeof legacyRoot === 'object' ? legacyRoot : {};
+  const pick = (key, preferNew = true) => {
+    if (preferNew && hasData(rootNew[key])) return rootNew[key];
+    if (hasData(rootLegacy[key])) return rootLegacy[key];
+    return rootNew[key] ?? rootLegacy[key];
+  };
+  return {
+    ...rootLegacy,
+    ...rootNew,
+    transactions: pick('transactions', true),
+    budgets: pick('budgets', true),
+    tx: pick('tx', true),
+    movements: pick('movements', true),
+    recurring: pick('recurring', true),
+    accounts: pick('accounts', true),
+    snapshots: pick('snapshots', true),
+    catalog: pick('catalog', true),
+    foodItems: pick('foodItems', true),
+    goals: pick('goals', true),
+    accountsEntries: pick('accountsEntries', true),
+    entries: pick('entries', true)
+  };
+}
+
+function chooseFinancePath(newPath, legacyPath, newRoot = {}, legacyRoot = {}) {
+  const newHasTransactions = hasData(newRoot?.transactions);
+  const newHasAccounts = hasData(newRoot?.accounts);
+  const legacyHasTransactions = hasData(legacyRoot?.transactions);
+  const legacyHasAccounts = hasData(legacyRoot?.accounts);
+  if (newHasTransactions) return newPath;
+  if (newHasAccounts) return newPath;
+  if (legacyHasTransactions || legacyHasAccounts) return legacyPath;
+  return newPath;
+}
+
+async function probeFinanceRoots() {
+  const [newPath, legacyPath] = resolveFinancePathCandidates();
+  const [newSnap, legacySnap] = await Promise.all([
+    safeFirebase(() => get(ref(db, newPath))),
+    safeFirebase(() => get(ref(db, legacyPath)))
+  ]);
+  const newRoot = newSnap?.val() || {};
+  const legacyRoot = legacySnap?.val() || {};
+  const chosenPath = chooseFinancePath(newPath, legacyPath, newRoot, legacyRoot);
+  return { newPath, legacyPath, newRoot, legacyRoot, chosenPath };
+}
+
 async function loadDataOnce() {
-  console.log('[FINANCE][BALANCE] load from firebase', state.financePath);
-  const snap = await safeFirebase(() => get(ref(db, state.financePath)));
-  const val = snap?.val();
-  if (val && typeof val === 'object') applyRemoteData(val, true);
-  else applyRemoteData({}, true);
-  const legacySnap = await safeFirebase(() => get(ref(db, LEGACY_PATH)));
-  if (!state.accounts.length && legacySnap?.exists()) {
-    const fallback = legacySnap.val() || {};
-    const fallbackAccounts = Object.values(fallback.accounts || {}).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-    if (fallbackAccounts.length) {
-      state.accounts = fallbackAccounts;
-      state.legacyEntries = fallback.accountsEntries || fallback.entries || {};
-    }
-  }
+  const { newRoot, legacyRoot } = financeRootsCache;
+  const mergedRoot = mergeFinanceRoots(newRoot, legacyRoot);
+  applyRemoteData(mergedRoot, true);
+  financeNeedsLegacyAccountsMerge = !hasData(newRoot?.accounts) && hasData(legacyRoot?.accounts);
+  console.log('[FINANCE] counts', {
+    accounts: Object.keys((mergedRoot.accounts || {})).length,
+    transactions: Object.keys((mergedRoot.transactions || {})).length
+  });
   state.hydratedFromRemote = true;
   log('loaded accounts:', state.accounts.length);
 }
 
 function subscribe() {
   if (state.unsubscribe) state.unsubscribe();
+  if (unsubscribeLegacyFinance) {
+    unsubscribeLegacyFinance();
+    unsubscribeLegacyFinance = null;
+  }
   console.log('[FINANCE][BALANCE] subscribe firebase', state.financePath);
   state.unsubscribe = onValue(ref(db, state.financePath), (snap) => {
     const val = snap.val();
@@ -4565,10 +4621,25 @@ function subscribe() {
       triggerRender();
       return;
     }
-    applyRemoteData(val || {}, false);
+    if (state.financePath === resolveFinancePath()) financeRootsCache.newRoot = val || {};
+    else financeRootsCache.legacyRoot = val || {};
+    const mergedRoot = mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
+    applyRemoteData(mergedRoot, true);
     state.hydratedFromRemote = true;
     triggerRender();
   }, (error) => { state.error = String(error?.message || error); triggerRender(); });
+
+  if (financeNeedsLegacyAccountsMerge) {
+    const legacyPath = resolveFinancePathCandidates()[1];
+    console.log('[FINANCE][BALANCE] subscribe firebase legacy merge', legacyPath);
+    unsubscribeLegacyFinance = onValue(ref(db, legacyPath), (snap) => {
+      financeRootsCache.legacyRoot = snap.val() || {};
+      const mergedRoot = mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
+      applyRemoteData(mergedRoot, true);
+      state.hydratedFromRemote = true;
+      triggerRender();
+    }, (error) => { state.error = String(error?.message || error); triggerRender(); });
+  }
 }
 
 async function addAccount({ name, shared = false, sharedRatio = 0.5, isBitcoin = false, btcUnits = 0, cardLast4 = '' }) {
@@ -5880,7 +5951,10 @@ async function boot() {
   });
   state.deviceId = getDeviceId();
   console.log('[finance] deviceId', state.deviceId);
-  state.financePath = resolveFinancePath();
+  const pathProbe = await probeFinanceRoots();
+  financeRootsCache = { newRoot: pathProbe.newRoot, legacyRoot: pathProbe.legacyRoot };
+  state.financePath = pathProbe.chosenPath;
+  console.log('[FINANCE] chosen financePath', state.financePath);
   log('init ok', { financePath: state.financePath });
   bindEvents();
   await loadDataOnce();
@@ -5912,6 +5986,10 @@ export function destroy() {
   if (state.unsubscribe) {
     state.unsubscribe();
     state.unsubscribe = null;
+  }
+  if (unsubscribeLegacyFinance) {
+    unsubscribeLegacyFinance();
+    unsubscribeLegacyFinance = null;
   }
   if (state.aggregateRebuildTimer) {
     clearTimeout(state.aggregateRebuildTimer);

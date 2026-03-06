@@ -19,7 +19,8 @@ if (!$viewMain) {
 
   const fmt = (n) => new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1 }).format(Number(n || 0));
   const money = (n) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(Number(n || 0));
-  const signed = (n) => `${Number(n || 0) >= 0 ? '+' : '-'}${money(Math.abs(Number(n || 0)))}`;
+  const formatCurrencyDelta = (n) => `${Number(n || 0) >= 0 ? '+' : '-'}${money(Math.abs(Number(n || 0)))}`;
+  const formatPointsDelta = (n) => `${Number(n || 0) >= 0 ? '+' : '-'}${fmt(Math.abs(Number(n || 0)))} pts`;
 
   const cache = initIndexedDBSafe({
     dbName: 'bookshell-dashboard',
@@ -476,8 +477,8 @@ if (!$viewMain) {
       </div>
       <div class="rpg-hero-gold-corner">
         <div class="rpg-gold-main">💰 ${money(headerFinance.gold)}</div>
-        <small>Hoy <span class="${headerFinance.dayDelta >= 0 ? 'is-up' : 'is-down'}">${signed(headerFinance.dayDelta)}</span></small>
-        <small>Mes <span class="${headerFinance.monthDelta >= 0 ? 'is-up' : 'is-down'}">${signed(headerFinance.monthDelta)}</span></small>
+        <small>Hoy <span class="${headerFinance.dayDelta >= 0 ? 'is-up' : 'is-down'}">${formatCurrencyDelta(headerFinance.dayDelta)}</span></small>
+        <small>Mes <span class="${headerFinance.monthDelta >= 0 ? 'is-up' : 'is-down'}">${formatCurrencyDelta(headerFinance.monthDelta)}</span></small>
       </div>
       <div class="rpg-hero-main">
         <div class="rpg-hero-name">${escapeHtml(nameLabel)}</div>
@@ -487,11 +488,11 @@ if (!$viewMain) {
         </div>
       </div>
       <div class="rpg-health-block">
-        <div class="rpg-health-head"><span>❤️ Salud</span><b>${fmt(health.value)} / ${fmt(health.max)}</b><small class="${health.todayDelta >= 0 ? 'is-up' : 'is-down'}">${signed(health.todayDelta)}</small></div>
+        <div class="rpg-health-head"><span>❤️ Salud</span><b>${fmt(health.value)} / ${fmt(health.max)}</b><small class="${health.todayDelta >= 0 ? 'is-up' : 'is-down'}">${formatPointsDelta(health.todayDelta)}</small></div>
         <div class="rpg-health-bar"><i style="width:${Math.round((health.progress || 0) * 100)}%"></i></div>
       </div>
       <div class="rpg-health-block rpg-stamina-block">
-        <div class="rpg-health-head"><span>⚡ Estamina</span><b>${fmt(stamina.value)} / ${fmt(stamina.max)}</b><small class="${stamina.todayDelta >= 0 ? 'is-up' : 'is-down'}">${signed(stamina.todayDelta)}</small></div>
+        <div class="rpg-health-head"><span>⚡ Estamina</span><b>${fmt(stamina.value)} / ${fmt(stamina.max)}</b><small class="${stamina.todayDelta >= 0 ? 'is-up' : 'is-down'}">${formatPointsDelta(stamina.todayDelta)}</small></div>
         <div class="rpg-health-bar rpg-stamina-bar"><i style="width:${Math.round((stamina.progress || 0) * 100)}%"></i></div>
       </div>
       <div class="rpg-hero-summary-grid">
@@ -609,7 +610,7 @@ if (!$viewMain) {
           <div><small>Balance</small><strong>${money(sheet.resources.gold)}</strong></div>
           <div><small>Ingresos</small><strong>${money(sheet.resources.income)}</strong></div>
           <div><small>Gastos</small><strong>${money(sheet.resources.expense)}</strong></div>
-          <div><small>Delta neto</small><strong class="${sheet.resources.delta >= 0 ? 'is-up' : 'is-down'}">${signed(sheet.resources.delta)}</strong></div>
+          <div><small>Delta neto</small><strong class="${sheet.resources.delta >= 0 ? 'is-up' : 'is-down'}">${formatCurrencyDelta(sheet.resources.delta)}</strong></div>
         </div>
       </div>`;
 

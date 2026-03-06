@@ -154,10 +154,10 @@ function computeEntryRankProgress(value = 0, rankConfig = {}) {
   };
 }
 
-function deriveModuleEntries(snapshot = {}, range = 'week') {
-  const resources = computeResources(snapshot, range);
-  const resourcesToday = computeResources(snapshot, 'day');
-  const resourcesMonth = computeResources(snapshot, 'month');
+function deriveModuleEntries(snapshot = {}, range = 'week', scope = 'my') {
+  const resources = computeResources(snapshot, range, scope);
+  const resourcesToday = computeResources(snapshot, 'day', scope);
+  const resourcesMonth = computeResources(snapshot, 'month', scope);
   const world = computeWorldStats(snapshot);
   const gym = computeGymSourceMetrics(snapshot);
 
@@ -276,6 +276,136 @@ function normalizeEntry(raw = {}, idx = 0) {
   };
 }
 
+
+
+function normalizeHealthEntry(entry = {}, idx = 0) {
+  if (entry) {
+    return normalizeEntry({
+      id: 'entry-health',
+      type: 'attribute',
+      name: 'Salud',
+      icon: '❤️',
+      description: 'Estado de salud asociado a hábitos sanos/insanos.',
+      sourceMode: 'manual',
+      manualValue: 70,
+      rankConfig: { enabled: false, basePoints: 100, growth: 5 },
+      order: -70,
+      ...entry
+    }, idx);
+  }
+  return normalizeEntry({
+    id: 'entry-health',
+    type: 'attribute',
+    name: 'Salud',
+    icon: '❤️',
+    description: 'Estado de salud asociado a hábitos sanos/insanos.',
+    sourceMode: 'manual',
+    manualValue: 70,
+    rankConfig: { enabled: false, basePoints: 100, growth: 5 },
+    order: -70
+  }, idx);
+}
+
+function isComparableEntry(entry = {}) {
+  if (entry.visible === false) return false;
+  if (entry.type === 'language') return false;
+  if (String(entry.name || '').toLowerCase() === 'oro') return false;
+  if (String(entry.id || '').toLowerCase() === 'module-gold') return false;
+  return true;
+}
+
+export function computeCharacterPowerLevel(entries = []) {
+  return entries
+    .filter(isComparableEntry)
+    .reduce((sum, entry) => {
+      if (entry.rankProgress?.enabled) return sum + toNum(entry.rankProgress.rank || 0);
+      const v = Math.max(0, toNum(entry.value));
+      return sum + Math.floor(v / 100);
+    }, 0);
+}
+
+function getDateRangeBounds(range = 'day') {
+  const now = new Date();
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (range === 'day') return { startMs: dayStart.getTime(), endMs: dayStart.getTime() + 86400000 - 1 };
+  return { startMs: Number.NEGATIVE_INFINITY, endMs: Number.POSITIVE_INFINITY };
+}
+
+function buildHabitMetricsForRange(snapshot = {}, range = 'day') {
+  const habitsRoot = snapshot.habits || {};
+  const defs = habitsRoot.habits || {};
+  const sessions = habitsRoot.habitSessions || {};
+  const counts = habitsRoot.habitCounts || {};
+  const checks = habitsRoot.habitChecks || {};
+  const map = {};
+  const bounds = getDateRangeBounds(range);
+
+  entries(defs).forEach(([id, def]) => {
+    map[id] = { id, name: String(def?.name || def?.title || id).trim(), minutes: 0, hours: 0, sessions: 0, count: 0 };
+  });
+
+  entries(sessions).forEach(([habitId, byDay]) => {
+    if (!map[habitId]) map[habitId] = { id: habitId, name: habitId, minutes: 0, hours: 0, sessions: 0, count: 0 };
+    entries(byDay || {}).forEach(([day, sec]) => {
+      const ts = new Date(`${day}T00:00:00`).getTime();
+      if (!Number.isFinite(ts) || ts < bounds.startMs || ts > bounds.endMs) return;
+      const mins = toNum(sec) / 60;
+      map[habitId].minutes += mins;
+      map[habitId].hours += mins / 60;
+      if (mins > 0) map[habitId].sessions += 1;
+    });
+  });
+
+  entries(counts).forEach(([habitId, byDay]) => {
+    if (!map[habitId]) map[habitId] = { id: habitId, name: habitId, minutes: 0, hours: 0, sessions: 0, count: 0 };
+    entries(byDay || {}).forEach(([day, n]) => {
+      const ts = new Date(`${day}T00:00:00`).getTime();
+      if (!Number.isFinite(ts) || ts < bounds.startMs || ts > bounds.endMs) return;
+      map[habitId].count += toNum(n);
+    });
+  });
+
+  entries(checks).forEach(([habitId, byDay]) => {
+    if (!map[habitId]) map[habitId] = { id: habitId, name: habitId, minutes: 0, hours: 0, sessions: 0, count: 0 };
+    entries(byDay || {}).forEach(([day, v]) => {
+      const ts = new Date(`${day}T00:00:00`).getTime();
+      if (!Number.isFinite(ts) || ts < bounds.startMs || ts > bounds.endMs) return;
+      if (v === true || toNum(v) > 0) map[habitId].sessions += 1;
+    });
+  });
+
+  return map;
+}
+
+export function computeHealthDeltaToday(sheet = {}, snapshot = {}) {
+  return computeCharacterHealth(sheet, snapshot).todayDelta || 0;
+}
+
+export function computeCharacterHealth(sheet = {}, snapshot = {}) {
+  const healthEntry = (sheet.entries || []).find((entry) => String(entry.name || '').toLowerCase() === 'salud' || String(entry.id || '') === 'entry-health');
+  if (!healthEntry) return { value: 0, progress: 0, max: 100, todayDelta: 0 };
+
+  const todaySourceData = {
+    habits: buildHabitMetricsForRange(snapshot, 'day'),
+    counters: buildCounterMetrics(snapshot),
+    moduleMetrics: {
+      'finance:gold': sheet.resources?.gold || 0,
+      'gym:strength': (sheet.entries || []).find((x) => x.id === 'module-strength')?.value || 0,
+      'world:exploration': (sheet.entries || []).find((x) => x.id === 'module-exploration')?.value || 0
+    }
+  };
+  const entrySources = Array.isArray(sheet.config?.entrySources) ? sheet.config.entrySources : [];
+  const todayComputed = computeEntryValue({ ...healthEntry, manualValue: 0 }, entrySources, todaySourceData);
+  const max = Math.max(100, Math.round(Math.max(healthEntry.value || 0, 100)));
+  const value = Math.max(0, toNum(healthEntry.value));
+  return {
+    value,
+    max,
+    progress: Math.max(0, Math.min(1, value / max)),
+    todayDelta: Math.round((todayComputed.derivedValue || 0) * 100) / 100
+  };
+}
+
 export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') {
   const legacyIdentity = {
     name: config.name,
@@ -312,7 +442,15 @@ export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') 
     }, userEntries.length));
   }
 
-  const moduleEntries = deriveModuleEntries(snapshot, range);
+  const healthIndex = userEntries.findIndex((entry) => String(entry.name || '').toLowerCase() === 'salud' || String(entry.id || '') === 'entry-health');
+  if (healthIndex === -1) {
+    userEntries.push(normalizeHealthEntry(null, userEntries.length));
+  } else {
+    userEntries[healthIndex] = normalizeHealthEntry(userEntries[healthIndex], healthIndex);
+  }
+
+  const financeScope = config.financeScope === 'total' ? 'total' : 'my';
+  const moduleEntries = deriveModuleEntries(snapshot, range, financeScope);
   const allEntries = moduleEntries.concat(userEntries).sort((a, b) => a.order - b.order);
 
   const sourceData = {
@@ -356,9 +494,10 @@ export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') 
     };
   }).filter((entry) => entry.visible !== false);
 
-  const resources = moduleEntries.find((x) => x.id === 'module-gold')?.moduleData || computeResources(snapshot, range);
+  const resources = moduleEntries.find((x) => x.id === 'module-gold')?.moduleData || computeResources(snapshot, range, financeScope);
+  const powerLevel = computeCharacterPowerLevel(computedEntries);
 
-  return {
+  const baseSheet = {
     identity: {
       ...characterIdentity,
       level,
@@ -368,8 +507,8 @@ export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') 
     resources,
     headerFinance: {
       gold: resources.gold,
-      dayDelta: resources.dayDelta ?? computeResources(snapshot, 'day').delta,
-      monthDelta: resources.monthDelta ?? computeResources(snapshot, 'month').delta
+      dayDelta: resources.dayDelta ?? computeResources(snapshot, 'day', financeScope).delta,
+      monthDelta: resources.monthDelta ?? computeResources(snapshot, 'month', financeScope).delta
     },
     world: moduleEntries.find((x) => x.id === 'module-exploration')?.moduleData || computeWorldStats(snapshot),
     entries: computedEntries,
@@ -388,6 +527,9 @@ export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') 
       entrySources
     }
   };
+
+  const health = computeCharacterHealth(baseSheet, snapshot);
+  return { ...baseSheet, powerLevel, health };
 }
 
 export { computeEntryRankProgress };

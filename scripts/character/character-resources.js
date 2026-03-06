@@ -50,16 +50,60 @@ function getFinanceRoot(snapshot = {}) {
   return snapshot.finance?.finance || snapshot.finance || {};
 }
 
-export function computeResources(snapshot = {}, range = 'week') {
+function clampRatio(value, fallback = 1) {
+  const ratio = Number(value);
+  if (!Number.isFinite(ratio)) return fallback;
+  return Math.min(1, Math.max(0.1, ratio));
+}
+
+function clamp01(value, fallback = 1) {
+  const ratio = Number(value);
+  if (!Number.isFinite(ratio)) return fallback;
+  return Math.min(1, Math.max(0, ratio));
+}
+
+function normalizeTxType(type = '') {
+  const safe = String(type || '').trim().toLowerCase();
+  if (safe === 'ingreso' || safe === 'ingresos') return 'income';
+  if (safe === 'gasto' || safe === 'gastos' || safe === 'egreso' || safe === 'egresos' || safe === 'invest') return 'expense';
+  if (safe === 'transferencia' || safe === 'traspaso') return 'transfer';
+  if (safe === 'income' || safe === 'expense' || safe === 'transfer') return safe;
+  return 'expense';
+}
+
+function personalRatioForTx(tx = {}, accountsById = {}) {
+  if (tx?.personalRatio !== null && tx?.personalRatio !== undefined && String(tx.personalRatio).trim() !== '' && Number.isFinite(Number(tx.personalRatio))) {
+    return clamp01(tx.personalRatio, 1);
+  }
+  const account = accountsById?.[tx?.accountId];
+  if (!account?.shared) return 1;
+  const type = normalizeTxType(tx?.type);
+  if (type === 'expense') return clampRatio(account?.sharedRatio, 0.5);
+  if (type === 'income') return 0;
+  return 0;
+}
+
+export function computeResources(snapshot = {}, range = 'week', scope = 'my') {
   const finance = getFinanceRoot(snapshot);
   const accounts = finance.accounts || {};
   const accountList = Array.isArray(accounts) ? accounts : values(accounts);
+  const accountsById = Object.fromEntries(accountList.map((acc) => [acc?.id, acc]));
+
+  const accountBalanceByScope = (acc = {}) => {
+    const baseBalance = Number.isFinite(Number(acc?.balance))
+      ? toNum(acc.balance)
+      : (() => {
+          const snaps = values(acc?.snapshots || {});
+          const last = snaps.sort((a, b) => toNum(a?.ts || a?.createdAt) - toNum(b?.ts || b?.createdAt)).at(-1);
+          return last ? toNum(last?.value || last?.balance) : 0;
+        })();
+    if (scope === 'total') return baseBalance;
+    if (acc?.shared) return baseBalance * clampRatio(acc?.sharedRatio, 0.5);
+    return baseBalance;
+  };
+
   const gold = accountList.reduce((sum, acc) => {
-    if (Number.isFinite(Number(acc?.balance))) return sum + toNum(acc.balance);
-    const snaps = values(acc?.snapshots || {});
-    const last = snaps.sort((a, b) => toNum(a?.ts || a?.createdAt) - toNum(b?.ts || b?.createdAt)).at(-1);
-    if (last) return sum + toNum(last?.value || last?.balance);
-    return sum;
+    return sum + accountBalanceByScope(acc);
   }, 0);
 
   const transactions = finance.balance?.transactions || finance.transactions || finance.balance?.tx || {};
@@ -71,16 +115,38 @@ export function computeResources(snapshot = {}, range = 'week') {
 
   const signed = (tx) => {
     const amount = Math.abs(toNum(tx?.amount));
-    const type = String(tx?.type || '').toLowerCase();
-    return type === 'income' ? amount : type === 'expense' ? -amount : toNum(tx?.signedAmount);
+    const type = normalizeTxType(tx?.type);
+    if (scope === 'total') return type === 'income' ? amount : type === 'expense' ? -amount : toNum(tx?.signedAmount);
+    const ratio = personalRatioForTx(tx, accountsById);
+    if (type === 'income') return ratio > 0.99 ? amount : 0;
+    if (type === 'expense') return -amount * ratio;
+    return 0;
   };
+
+  const income = txList.reduce((acc, tx) => {
+    const type = normalizeTxType(tx?.type);
+    if (type !== 'income') return acc;
+    const amount = Math.abs(toNum(tx?.amount));
+    if (scope === 'total') return acc + amount;
+    const ratio = personalRatioForTx(tx, accountsById);
+    return acc + (ratio > 0.99 ? amount : 0);
+  }, 0);
+
+  const expense = txList.reduce((acc, tx) => {
+    const type = normalizeTxType(tx?.type);
+    if (type !== 'expense') return acc;
+    const amount = Math.abs(toNum(tx?.amount));
+    if (scope === 'total') return acc + amount;
+    return acc + amount * personalRatioForTx(tx, accountsById);
+  }, 0);
 
   return {
     gold,
     range,
+    scope,
     delta: txList.reduce((acc, tx) => acc + signed(tx), 0),
-    income: txList.reduce((acc, tx) => acc + (String(tx?.type || '').toLowerCase() === 'income' ? Math.abs(toNum(tx?.amount)) : 0), 0),
-    expense: txList.reduce((acc, tx) => acc + (String(tx?.type || '').toLowerCase() === 'expense' ? Math.abs(toNum(tx?.amount)) : 0), 0)
+    income,
+    expense
   };
 }
 

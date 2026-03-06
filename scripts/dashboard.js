@@ -32,6 +32,7 @@ if (!$viewMain) {
   let lastSnapshot = {};
   let lastConfig = {};
   let selectedRange = 'week';
+  let selectedScope = 'my';
 
   function showWarning(message) {
     const id = 'rpg-warning';
@@ -137,22 +138,37 @@ if (!$viewMain) {
     const level = id.hasBirthdate ? `Nivel ${id.level}` : 'Nivel pendiente';
     const nameLabel = id.alias ? `${id.name} · ${id.alias}` : id.name;
     const headerFinance = sheet.headerFinance || { gold: 0, dayDelta: 0, monthDelta: 0 };
+    const powerLevel = Number(sheet.powerLevel || 0);
+    const health = sheet.health || { value: 0, max: 100, progress: 0, todayDelta: 0 };
+    const topBadges = (sheet.entries || [])
+      .filter((entry) => entry.type !== 'language' && entry.id !== 'module-gold' && String(entry.name || '').toLowerCase() !== 'salud')
+      .sort((a, b) => (b.rankProgress?.rank || 0) - (a.rankProgress?.rank || 0))
+      .slice(0, 6)
+      .map((entry) => `<span class="rpg-mini-badge">${entry.icon || statIcon(entry.type, entry.name)} R${entry.rankProgress?.rank || 1}</span>`)
+      .join('');
+
     $hero.innerHTML = `
-      <div class="rpg-hero-top">
-        <button type="button" class="rpg-hero-identity" id="rpg-open-identity">🧾 ${nameLabel}</button>
+      <div class="rpg-hero-actions">
+        <button type="button" class="rpg-hero-identity" id="rpg-open-identity">✏️ Editar</button>
         <button type="button" class="rpg-add-btn" id="rpg-open-add">+ Añadir</button>
       </div>
-      <div class="rpg-hero-meta">${level}</div>
-      <div class="rpg-hero-money">
-        <div class="rpg-money-main">
-          <small>Oro total</small>
-          <strong>${money(headerFinance.gold)}</strong>
+      <div class="rpg-hero-gold-corner">
+        <div class="rpg-gold-main">💰 ${money(headerFinance.gold)}</div>
+        <small>Hoy <span class="${headerFinance.dayDelta >= 0 ? 'is-up' : 'is-down'}">${signed(headerFinance.dayDelta)}</span></small>
+        <small>Mes <span class="${headerFinance.monthDelta >= 0 ? 'is-up' : 'is-down'}">${signed(headerFinance.monthDelta)}</span></small>
+      </div>
+      <div class="rpg-hero-main">
+        <div class="rpg-hero-name">${nameLabel}</div>
+        <div class="rpg-hero-levels">
+          <span>${level}</span>
+          <span>Poder total ${fmt(powerLevel)}</span>
         </div>
-        <div class="rpg-money-deltas">
-          <div><small>Hoy</small><span class="${headerFinance.dayDelta >= 0 ? 'is-up' : 'is-down'}">${signed(headerFinance.dayDelta)}</span></div>
-          <div><small>Mes actual</small><span class="${headerFinance.monthDelta >= 0 ? 'is-up' : 'is-down'}">${signed(headerFinance.monthDelta)}</span></div>
-        </div>
-      </div>`;
+      </div>
+      <div class="rpg-health-block">
+        <div class="rpg-health-head"><span>❤️ Salud</span><b>${fmt(health.value)} / ${fmt(health.max)}</b><small class="${health.todayDelta >= 0 ? 'is-up' : 'is-down'}">${signed(health.todayDelta)}</small></div>
+        <div class="rpg-health-bar"><i style="width:${Math.round((health.progress || 0) * 100)}%"></i></div>
+      </div>
+      <div class="rpg-hero-badges">${topBadges || '<span class="rpg-mini-badge">Añade aptitudes para ver rangos</span>'}</div>`;
 
     $hero.querySelector('#rpg-open-identity')?.addEventListener('click', () => {
       const identity = sheet.identity;
@@ -186,6 +202,7 @@ if (!$viewMain) {
           <button class="btn" data-add-type="language">Añadir idioma</button>
           <button class="btn" data-add-type="skill">Añadir habilidad/CV</button>
           <button class="btn" data-add-type="popularidad">Añadir Popularidad</button>
+          <button class="btn" data-add-type="health">Añadir/activar Salud</button>
           <button class="btn" data-close-modal="1">Cancelar</button>
         </div>
       `, (root) => {
@@ -193,10 +210,19 @@ if (!$viewMain) {
           const type = btn.dataset.addType;
           const defaults = type === 'popularidad'
             ? { type: 'attribute', name: 'Popularidad', icon: '📣', description: 'Seguidores y visitas manuales.', sourceMode: 'manual', manualValue: 0, extraFields: { followers: 0, views: 0 }, rankConfig: { enabled: true, basePoints: 200, growth: 20 } }
-            : defaultEntryByType(type);
+            : type === 'health'
+              ? { id: 'entry-health', type: 'attribute', name: 'Salud', icon: '❤️', description: 'Estado de salud asociado a hábitos sanos/insanos.', sourceMode: 'manual', manualValue: 70, rankConfig: { enabled: false, basePoints: 100, growth: 5 } }
+              : defaultEntryByType(type);
           await persistAndRender((next) => {
+            if (type === 'health') {
+              const existing = next.characterEntries.find((x) => x.id === 'entry-health' || String(x.name || '').toLowerCase() === 'salud');
+              if (existing) {
+                existing.visible = true;
+                return;
+              }
+            }
             const idBase = slug(defaults.name || type) || type;
-            const id = `${idBase}-${Date.now()}`;
+            const id = defaults.id || `${idBase}-${Date.now()}`;
             next.characterEntries.push({
               id,
               ...defaults,
@@ -241,7 +267,7 @@ if (!$viewMain) {
       if (!entry) return;
       const habitOptions = sheet.sourceCatalog.habits.map((h) => `<option value="${h.id}">${h.name || h.id}</option>`).join('');
       const counterOptions = sheet.sourceCatalog.counters.map((c) => `<option value="${c.id}">${c.name || c.id}</option>`).join('');
-      const sourceRows = entry.sourceRows?.map((src) => `<li>${src.sourceType}:${src.sourceId} · ${src.sign === 'subtract' ? '-' : '+'}${fmt(src.weight)} · ${src.unitMode || 'count'} · aporte ${fmt(src.contribution)}</li>`).join('') || '<li>Sin fuentes asociadas</li>';
+      const sourceRows = entry.sourceRows?.map((src) => `<article class="rpg-source-row" data-source-id="${src.id || ''}"><div><b>${src.sourceType}:${src.sourceId}</b><small>${src.unitMode || 'count'} · aporte ${fmt(src.contribution)}</small></div><div class="rpg-source-meta"><span>${src.sign === 'subtract' ? '−' : '+'}${fmt(src.weight)}</span><button class="btn ghost danger" type="button" data-delete-source="${src.id || ''}">Quitar</button></div></article>`).join('') || '<div class="rpg-empty">Sin fuentes asociadas</div>'; 
       const moduleData = entry.moduleData || {};
       const extraInfo = entry.id === 'module-strength'
         ? `<p><b>Gym real:</b> ${fmt(moduleData.workoutSessions)} sesiones fuerza · ${fmt(moduleData.cardioSessions)} cardio · ${fmt(moduleData.workoutMinutes)} min · volumen ${fmt(moduleData.volume)} kg</p>`
@@ -250,8 +276,9 @@ if (!$viewMain) {
           : '';
 
       openSheet(`
-        <h3>CharacterEntryDetailModal(${entry.name})</h3>
-        <p><b>Valor actual:</b> ${entry.name === 'Oro' ? money(entry.value) : fmt(entry.value)}</p>
+        <div class="rpg-detail-header"><div class="rpg-detail-title"><span class="rpg-detail-icon">${entry.icon || statIcon(entry.type, entry.name)}</span><div><h3>${entry.name}</h3><small>${entry.description || 'Sin descripción'}</small></div></div><button class="icon-btn" type="button" data-close-modal="1">✕</button></div>
+        <div class="rpg-detail-kpi"><div><small>Valor actual</small><strong>${entry.name === 'Oro' ? money(entry.value) : fmt(entry.value)}</strong></div><div><small>Rango actual</small><strong>${entry.rankProgress?.enabled ? `R${entry.rankProgress.rank}` : 'Sin rango'}</strong></div></div>
+        <div class="rpg-detail-progress">${renderRank(entry)}</div>
         ${extraInfo}
         <form id="rpg-entry-form" class="rpg-modal-form">
           <label>Nombre<input name="name" value="${entry.name || ''}" required ${entry.type === 'moduleDerived' ? 'disabled' : ''} /></label>
@@ -268,7 +295,7 @@ if (!$viewMain) {
         </form>
         ${entry.type === 'moduleDerived' ? '' : `<hr/>
         <h4>Fuentes asociadas</h4>
-        <ul>${sourceRows}</ul>
+        <div class="rpg-source-list">${sourceRows}</div>
         <form id="rpg-source-form" class="rpg-modal-form">
           <label>Tipo de fuente
             <select name="sourceType">
@@ -300,6 +327,7 @@ if (!$viewMain) {
           <button class="btn" type="submit">Añadir fuente</button>
         </form>`}
       `, (root) => {
+        root.querySelector('[data-close-modal]')?.addEventListener('click', closeModal);
         root.querySelector('#rpg-entry-form')?.addEventListener('submit', async (e) => {
           e.preventDefault();
           const fd = new FormData(e.target);
@@ -335,6 +363,15 @@ if (!$viewMain) {
           closeModal();
         });
 
+        root.querySelectorAll('[data-delete-source]').forEach((node) => node.addEventListener('click', async () => {
+          const sourceId = node.dataset.deleteSource;
+          if (!sourceId) return;
+          await persistAndRender((next) => {
+            next.entrySources = next.entrySources.filter((src) => src.id !== sourceId);
+          });
+          closeModal();
+        }));
+
         root.querySelector('#rpg-source-form')?.addEventListener('submit', async (e) => {
           e.preventDefault();
           const fd = new FormData(e.target);
@@ -367,11 +404,18 @@ if (!$viewMain) {
   }
 
   function renderResources(sheet) {
+    const scopeLabel = selectedScope === 'total' ? 'Total' : 'Mi parte';
     $resources.innerHTML = `
       <div class="rpg-resource rpg-resource-money">
         <div class="rpg-resource-header">
-          <span>💰 Dinero / Finance</span>
-          ${renderRangeSelector(selectedRange)}
+          <span>💰 Recursos reales · ${scopeLabel}</span>
+          <div class="rpg-resource-controls">
+            <div class="rpg-scope-toggle">
+              <button type="button" class="rpg-range-btn ${selectedScope === 'my' ? 'active' : ''}" data-scope="my">Mi parte</button>
+              <button type="button" class="rpg-range-btn ${selectedScope === 'total' ? 'active' : ''}" data-scope="total">Total</button>
+            </div>
+            ${renderRangeSelector(selectedRange)}
+          </div>
         </div>
         <div class="rpg-resource-grid">
           <div><small>Balance</small><strong>${money(sheet.resources.gold)}</strong></div>
@@ -383,6 +427,10 @@ if (!$viewMain) {
 
     $resources.querySelectorAll('[data-range]').forEach((btn) => btn.addEventListener('click', async () => {
       selectedRange = btn.dataset.range;
+      await render();
+    }));
+    $resources.querySelectorAll('[data-scope]').forEach((btn) => btn.addEventListener('click', async () => {
+      selectedScope = btn.dataset.scope === 'total' ? 'total' : 'my';
       await render();
     }));
   }
@@ -416,7 +464,7 @@ if (!$viewMain) {
       lastConfig = (await cache.getItem(uid)) || { characterIdentity: {}, characterEntries: [], entrySources: [] };
       showWarning('Usando configuración local temporal por fallo de persistencia.');
     }
-    return buildCharacterSheet(lastSnapshot, lastConfig, selectedRange);
+    return buildCharacterSheet(lastSnapshot, { ...lastConfig, financeScope: selectedScope }, selectedRange);
   }
 
   async function render() {

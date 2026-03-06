@@ -1655,6 +1655,8 @@ body.is-session-detail-open #app {
   border-radius: var(--radius-pill);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(var(--hclr-rgb, 127, 93, 255), 0.25);
+    margin-bottom: 20px;
+
 }
 
 .habit-session-pill::before {

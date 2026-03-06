@@ -228,6 +228,7 @@ body {
   box-sizing: border-box;
   border: 1px solid rgb(255, 255, 255);
   border-radius: 99px;
+  margin-bottom: 20px;
 }
 
 .nav-btn {
@@ -356,9 +357,6 @@ body.has-open-modal {
     border-radius: 22px;
     max-height: calc(100dvh - 24px);
   }
-}
-@media (min-width: 561px){
-  .modal-handle{ display: none; }
 }
 
 
@@ -613,9 +611,6 @@ body.has-open-modal {
   height: 22px;
 }
 
-@media (max-width: 360px){
-  .form-grid.row-2{ grid-template-columns: 1fr; }
-}
 
 /* Time split */
 .time-split{

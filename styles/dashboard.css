@@ -391,8 +391,8 @@
   }
 }
 .app-shell{
-  max-height: 1px;
-  min-height: 1px;
+  max-height: none;
+  min-height: none;
 }
 
 .view#view-main.view-active{

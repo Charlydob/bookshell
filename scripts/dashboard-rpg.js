@@ -1,253 +1,320 @@
-const clamp = (n, min = 0, max = 100) => Math.min(max, Math.max(min, n));
 const toNum = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-const nowTs = () => Date.now();
 const DAY = 86400000;
+const nowTs = () => Date.now();
+const entries = (obj) => (obj && typeof obj === 'object' ? Object.entries(obj) : []);
+const values = (obj) => (obj && typeof obj === 'object' ? Object.values(obj) : []);
 
-function entries(obj) { return obj && typeof obj === 'object' ? Object.entries(obj) : []; }
-function values(obj) { return obj && typeof obj === 'object' ? Object.values(obj) : []; }
-function dateToTs(v) {
-  if (typeof v === 'number') return v;
-  if (!v) return 0;
-  const t = new Date(String(v)).getTime();
+export const ATTRIBUTE_KEYS = [
+  'vida',
+  'estamina',
+  'fuerza',
+  'inteligencia',
+  'enfoque',
+  'creatividad',
+  'oro',
+  'exploracion',
+  'supervivencia',
+  'combate'
+];
+
+export const ATTRIBUTE_LABELS = {
+  vida: 'Vida',
+  estamina: 'Estamina',
+  fuerza: 'Fuerza',
+  inteligencia: 'Inteligencia',
+  enfoque: 'Enfoque',
+  creatividad: 'Creatividad',
+  oro: 'Oro',
+  exploracion: 'Exploración',
+  supervivencia: 'Cocina / Alquimia / Supervivencia',
+  combate: 'Combate / Táctica'
+};
+
+const DEFAULT_MAPPING_RULES = [
+  { pattern: /(dorm|sueñ|sleep)/i, attribute: 'estamina', weight: 6 },
+  { pattern: /(medit|mindful|respira)/i, attribute: 'vida', weight: 4 },
+  { pattern: /(leer|read|alem|ruso|idioma|estudi)/i, attribute: 'inteligencia', weight: 4 },
+  { pattern: /(gym|fuerza|pesas|run|correr|cardio|entren)/i, attribute: 'fuerza', weight: 4 },
+  { pattern: /(editar|edit|video|guion|script|write|escrib)/i, attribute: 'creatividad', weight: 3 },
+  { pattern: /(editar|edit|video|deep|focus|concentr)/i, attribute: 'enfoque', weight: 3 },
+  { pattern: /(caf|coffee)/i, attribute: 'estamina', weight: 1 }
+];
+
+function parseDay(dayKey = '') {
+  const t = new Date(`${dayKey}T00:00:00`).getTime();
   return Number.isFinite(t) ? t : 0;
 }
 
-function countByRange(dayMap = {}, days = 7) {
-  const min = nowTs() - days * DAY;
-  return entries(dayMap).reduce((acc, [k, val]) => {
-    const ts = dateToTs(k + 'T00:00:00');
-    return ts >= min ? acc + toNum(val) : acc;
-  }, 0);
+function habitName(def = {}) {
+  return String(def?.name || def?.title || '').trim();
 }
 
-function safeName(s = '') { return String(s || '').trim(); }
+function getFinanceRoot(snapshot = {}) {
+  return snapshot.finance?.finance || snapshot.finance || {};
+}
+
+function getRangeTx(transactions = {}, days = 7) {
+  const min = nowTs() - days * DAY;
+  return values(transactions).filter((tx) => {
+    const t = new Date(String(tx?.dateISO || tx?.date || tx?.createdAt || 0)).getTime();
+    return Number.isFinite(t) && t >= min;
+  });
+}
+
+export function computeCharacterLevelFromBirthdate(birthdate) {
+  if (!birthdate) return null;
+  const b = new Date(`${birthdate}T00:00:00`);
+  if (!Number.isFinite(b.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - b.getFullYear();
+  const m = now.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age -= 1;
+  return age >= 0 ? age : null;
+}
 
 export function computeCharacterResources(snapshot = {}) {
-  const finance = snapshot.finance || {};
+  const finance = getFinanceRoot(snapshot);
   const accounts = finance.accounts || {};
-  const tx = finance.transactions || {};
-  const accountValues = values(accounts).map((acc) => {
-    const snaps = values(acc?.snapshots || {}).map((r) => toNum(r?.value));
-    const entriesVals = values(acc?.entries || acc?.daily || {}).map((r) => toNum(r?.value));
-    return toNum(snaps.at(-1)) || toNum(entriesVals.at(-1)) || 0;
-  });
-  const gold = accountValues.reduce((a, b) => a + b, 0);
-  let income = 0;
-  let expense = 0;
-  const min = nowTs() - 30 * DAY;
-  values(tx).forEach((row) => {
-    const ts = dateToTs(row?.dateISO || row?.date);
-    if (ts && ts < min) return;
-    const amount = Math.abs(toNum(row?.amount));
-    if ((row?.type || '').toLowerCase() === 'income') income += amount;
-    if ((row?.type || '').toLowerCase() === 'expense') expense += amount;
-  });
+  const accountList = Array.isArray(accounts) ? accounts : values(accounts);
+  const gold = accountList.reduce((sum, acc) => {
+    if (Number.isFinite(Number(acc?.balance))) return sum + toNum(acc.balance);
+    const snaps = values(acc?.snapshots || {});
+    const last = snaps.sort((a, b) => toNum(a?.ts || a?.createdAt) - toNum(b?.ts || b?.createdAt)).at(-1);
+    if (last) return sum + toNum(last?.value || last?.balance);
+    return sum;
+  }, 0);
+
+  const transactions = finance.balance?.transactions || finance.transactions || finance.balance?.tx || {};
+  const txDay = getRangeTx(transactions, 1);
+  const txWeek = getRangeTx(transactions, 7);
+  const sumSigned = (arr) => arr.reduce((acc, tx) => {
+    const amount = Math.abs(toNum(tx?.amount));
+    const type = String(tx?.type || '').toLowerCase();
+    return acc + (type === 'income' ? amount : type === 'expense' ? -amount : toNum(tx?.signedAmount));
+  }, 0);
+
   return {
     gold,
-    income,
-    expense,
-    treasury: Math.max(0, gold - expense * 0.35),
-    source: 'finance'
+    changeToday: sumSigned(txDay),
+    changeWeek: sumSigned(txWeek),
+    incomeWeek: txWeek.reduce((a, tx) => a + (String(tx?.type || '').toLowerCase() === 'income' ? Math.abs(toNum(tx?.amount)) : 0), 0),
+    expenseWeek: txWeek.reduce((a, tx) => a + (String(tx?.type || '').toLowerCase() === 'expense' ? Math.abs(toNum(tx?.amount)) : 0), 0)
   };
 }
 
-function computeHabits(snapshot = {}) {
+export function computeCharacterWorldStats(snapshot = {}) {
+  const trips = snapshot.trips || {};
+  const visits = values(trips.visits || trips.places || trips.entries || {});
+  const fallback = (() => {
+    try { return JSON.parse(localStorage.getItem('world_visits_v1') || '[]'); } catch (_) { return []; }
+  })();
+  const rows = visits.length ? visits : fallback;
+  const countries = new Set();
+  const cities = new Set();
+  rows.forEach((v) => {
+    if (v?.countryCode) countries.add(String(v.countryCode).toUpperCase());
+    if (v?.city || v?.placeName || v?.label) cities.add(String(v.city || v.placeName || v.label));
+  });
+  return { countries: countries.size, cities: cities.size, visits: rows.length };
+}
+
+function computeHabitTotals(snapshot = {}) {
   const habitsRoot = snapshot.habits || {};
   const defs = habitsRoot.habits || {};
   const sessions = habitsRoot.habitSessions || {};
   const counts = habitsRoot.habitCounts || {};
   const checks = habitsRoot.habitChecks || {};
-  const names = Object.fromEntries(entries(defs).map(([id, h]) => [id, safeName(h?.name).toLowerCase()]));
-  const totals = { sleepHours: 0, coffeeToday: 0, sessionHoursWeek: 0, checksWeek: 0 };
-  entries(sessions).forEach(([hid, byDay]) => {
-    const habitName = names[hid] || '';
+
+  const out = {};
+  entries(defs).forEach(([id, def]) => {
+    out[id] = {
+      id,
+      name: habitName(def),
+      sessionHoursTotal: 0,
+      sessionHoursWeek: 0,
+      countTotal: 0,
+      countWeek: 0,
+      checksWeek: 0,
+      todayCount: 0,
+      lastDayHours: 0
+    };
+  });
+
+  entries(sessions).forEach(([habitId, byDay]) => {
+    if (!out[habitId]) out[habitId] = { id: habitId, name: habitId, sessionHoursTotal: 0, sessionHoursWeek: 0, countTotal: 0, countWeek: 0, checksWeek: 0, todayCount: 0, lastDayHours: 0 };
     entries(byDay || {}).forEach(([day, sec]) => {
       const hours = toNum(sec) / 3600;
-      const ts = dateToTs(day + 'T00:00:00');
-      if (ts >= nowTs() - 7 * DAY) totals.sessionHoursWeek += hours;
-      if (/sueñ|dorm|sleep/.test(habitName) && ts >= nowTs() - DAY * 2) totals.sleepHours += hours;
+      const ts = parseDay(day);
+      out[habitId].sessionHoursTotal += hours;
+      if (ts >= nowTs() - 7 * DAY) out[habitId].sessionHoursWeek += hours;
+      if (ts >= nowTs() - 2 * DAY) out[habitId].lastDayHours += hours;
     });
   });
-  entries(counts).forEach(([hid, byDay]) => {
-    const habitName = names[hid] || '';
-    const today = new Date().toISOString().slice(0, 10);
-    totals.checksWeek += countByRange(byDay, 7);
-    if (/caf|coffee/.test(habitName)) totals.coffeeToday += toNum(byDay?.[today]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  entries(counts).forEach(([habitId, byDay]) => {
+    if (!out[habitId]) out[habitId] = { id: habitId, name: habitId, sessionHoursTotal: 0, sessionHoursWeek: 0, countTotal: 0, countWeek: 0, checksWeek: 0, todayCount: 0, lastDayHours: 0 };
+    entries(byDay || {}).forEach(([day, n]) => {
+      const value = toNum(n);
+      out[habitId].countTotal += value;
+      if (day === today) out[habitId].todayCount += value;
+      if (parseDay(day) >= nowTs() - 7 * DAY) out[habitId].countWeek += value;
+    });
   });
-  entries(checks).forEach(([, byDay]) => { totals.checksWeek += countByRange(byDay, 7); });
-  return totals;
+
+  entries(checks).forEach(([habitId, byDay]) => {
+    if (!out[habitId]) out[habitId] = { id: habitId, name: habitId, sessionHoursTotal: 0, sessionHoursWeek: 0, countTotal: 0, countWeek: 0, checksWeek: 0, todayCount: 0, lastDayHours: 0 };
+    entries(byDay || {}).forEach(([day, v]) => {
+      if (parseDay(day) >= nowTs() - 7 * DAY && (v === true || toNum(v) > 0)) out[habitId].checksWeek += 1;
+    });
+  });
+
+  return out;
 }
 
-function computeBooks(snapshot = {}) {
-  const root = snapshot.books || {};
-  const books = root.books || {};
-  const readingLog = root.readingLog || {};
-  const list = values(books);
-  const finished = list.filter((b) => /termin|finish|read|done|complet/i.test(String(b?.status || '')) || toNum(b?.progress) >= 100).length;
-  const pages = values(readingLog).reduce((acc, row) => acc + toNum(row?.pages || row?.pagesRead || row?.amount), 0);
-  return { finished, pages, totalBooks: list.length };
+export function getHabitAttributeMappings(snapshot = {}, config = {}) {
+  const habits = computeHabitTotals(snapshot);
+  const confMappings = config?.habitMappings && typeof config.habitMappings === 'object' ? config.habitMappings : {};
+  const resolved = {};
+
+  ATTRIBUTE_KEYS.forEach((attr) => { resolved[attr] = {}; });
+  ATTRIBUTE_KEYS.forEach((attr) => {
+    entries(confMappings[attr] || {}).forEach(([habitId, weight]) => {
+      resolved[attr][habitId] = Math.max(0, toNum(weight) || 1);
+    });
+  });
+
+  entries(habits).forEach(([habitId, info]) => {
+    const name = String(info.name || '').toLowerCase();
+    DEFAULT_MAPPING_RULES.forEach((rule) => {
+      if (!rule.pattern.test(name)) return;
+      if (!resolved[rule.attribute][habitId]) resolved[rule.attribute][habitId] = rule.weight;
+    });
+  });
+
+  return resolved;
 }
 
-function computeGym(snapshot = {}) {
+export function computeCharacterAttributes(snapshot = {}, config = {}) {
+  const habitTotals = computeHabitTotals(snapshot);
+  const mappings = getHabitAttributeMappings(snapshot, config);
+
+  const books = snapshot.books || {};
+  const booksList = values(books.books || books.items || {});
+  const readingLog = values(books.readingLog || {});
+  const finishedBooks = booksList.filter((b) => /termin|finish|read|done|complet/i.test(String(b?.status || '')) || toNum(b?.progress) >= 100).length;
+  const pagesRead = readingLog.reduce((a, row) => a + toNum(row?.pages || row?.pagesRead || row?.amount), 0);
+
   const gym = snapshot.gym || {};
-  const workouts = gym.workouts || {};
-  const cardio = gym.cardio || {};
-  let sessions = values(workouts).length + values(cardio).length;
-  let minutes = 0;
-  values(workouts).forEach((w) => { minutes += toNum(w?.durationMin || w?.duration || w?.minutes); });
-  values(cardio).forEach((c) => { minutes += toNum(c?.minutes || c?.durationMin || c?.duration); });
-  return { sessions, minutes };
-}
+  const workoutMinutes = values(gym.workouts || {}).reduce((a, row) => a + toNum(row?.durationMin || row?.duration || row?.minutes), 0)
+    + values(gym.cardio || {}).reduce((a, row) => a + toNum(row?.durationMin || row?.duration || row?.minutes), 0);
 
-function computeVideos(snapshot = {}) {
-  const v = snapshot.videos || {};
-  const videos = values(v.videos || {});
-  const work = values(v.videoWorkLog || {}).reduce((a, b) => a + toNum(b), 0);
-  const published = videos.filter((x) => /publish|publicad|done|complet/i.test(String(x?.status || x?.stage || ''))).length;
-  return { total: videos.length, published, workHours: work / 3600 };
-}
+  const videos = snapshot.videos || {};
+  const videoWorkLog = values(videos.videoWorkLog || {});
+  const videoWorkHours = videoWorkLog.reduce((a, sec) => a + toNum(sec), 0) / 3600;
+  const videoList = values(videos.videos || {});
 
-function computeGames(snapshot = {}) {
-  const g = snapshot.games || {};
-  const modes = values(g.games?.modes || {});
-  const agg = modes.reduce((a, m) => {
-    a.wins += toNum(m?.wins); a.losses += toNum(m?.losses);
-    a.kills += toNum(m?.kills); a.deaths += toNum(m?.deaths);
-    a.hours += toNum(m?.hours || m?.playHours || 0);
+  const recipes = values(snapshot.recipes?.recipes || snapshot.recipes?.items || snapshot.recipes?.list || {});
+  const recipesUsed = recipes.reduce((a, r) => a + (Array.isArray(r?.cookedDates) ? r.cookedDates.length : (r?.lastCooked ? 1 : 0)), 0);
+
+  const gamesModes = values(snapshot.games?.games?.modes || {});
+  const games = gamesModes.reduce((a, mode) => {
+    a.kills += toNum(mode?.kills);
+    a.deaths += toNum(mode?.deaths);
+    a.wins += toNum(mode?.wins);
+    a.losses += toNum(mode?.losses);
+    a.hours += toNum(mode?.hours || mode?.playHours);
     return a;
-  }, { wins: 0, losses: 0, kills: 0, deaths: 0, hours: 0 });
-  return agg;
-}
+  }, { kills: 0, deaths: 0, wins: 0, losses: 0, hours: 0 });
 
-function computeTrips(snapshot = {}) {
-  const trips = snapshot.trips || {};
-  const visits = values(trips.visits || trips.places || trips.entries || {});
-  const countries = new Set();
-  const cities = new Set();
-  visits.forEach((v) => {
-    if (v?.countryCode) countries.add(String(v.countryCode).toUpperCase());
-    if (v?.city || v?.placeName) cities.add(String(v.city || v.placeName));
+  const resources = computeCharacterResources(snapshot);
+  const exploration = computeCharacterWorldStats(snapshot);
+
+  const attrs = Object.fromEntries(ATTRIBUTE_KEYS.map((k) => [k, 0]));
+  ATTRIBUTE_KEYS.forEach((attr) => {
+    entries(mappings[attr]).forEach(([habitId, weight]) => {
+      const h = habitTotals[habitId];
+      if (!h) return;
+      const base = h.sessionHoursTotal * 10 + h.countTotal * 2 + h.checksWeek;
+      attrs[attr] += base * toNum(weight || 1);
+    });
   });
-  return { countries: countries.size, cities: cities.size, visits: visits.length };
-}
 
-function computeRecipes(snapshot = {}) {
-  const recipesRoot = snapshot.recipes || {};
-  const recipes = values(recipesRoot.recipes || recipesRoot.items || recipesRoot.list || {});
-  const categories = new Set();
-  recipes.forEach((r) => { if (r?.meal) categories.add(r.meal); if (r?.health) categories.add(r.health); });
-  return { total: recipes.length, variety: categories.size };
-}
+  attrs.inteligencia += finishedBooks * 35 + pagesRead * 0.35;
+  attrs.fuerza += workoutMinutes * 0.45;
+  attrs.enfoque += videoWorkHours * 8;
+  attrs.creatividad += videoWorkHours * 5 + videoList.length * 6;
+  attrs.supervivencia += recipes.length * 10 + recipesUsed * 2;
+  const winRate = games.wins + games.losses > 0 ? games.wins / (games.wins + games.losses) : 0;
+  attrs.combate += games.kills * 1.8 + games.hours * 5 + winRate * 120 - Math.max(0, games.deaths - games.kills) * 1.5;
+  attrs.exploracion += exploration.countries * 25 + exploration.cities * 7 + exploration.visits * 2;
+  attrs.oro = resources.gold;
 
-export function computeCharacterStats(snapshot = {}) {
-  const habits = computeHabits(snapshot);
-  const books = computeBooks(snapshot);
-  const gym = computeGym(snapshot);
-  const videos = computeVideos(snapshot);
-  const games = computeGames(snapshot);
-  const trips = computeTrips(snapshot);
-  const recipes = computeRecipes(snapshot);
-  const resources = computeCharacterResources(snapshot);
+  const sleepHabit = values(habitTotals).find((h) => /(dorm|sueñ|sleep)/i.test(String(h.name || '').toLowerCase()));
+  const coffeeHabit = values(habitTotals).find((h) => /(caf|coffee)/i.test(String(h.name || '').toLowerCase()));
+  const sleepHours = sleepHabit?.lastDayHours || 0;
+  const coffeeToday = coffeeHabit?.todayCount || 0;
+  const staminaState = sleepHours < 5 ? 'agotado' : sleepHours < 6.5 ? 'bajo' : sleepHours < 8 ? 'estable' : sleepHours < 9.5 ? 'alto' : 'rebosante';
+  attrs.estamina = Math.max(0, sleepHours * 22 + Math.min(8, coffeeToday * 1.5));
 
-  const staminaBase = habits.sleepHours < 5 ? 25 : habits.sleepHours < 6.5 ? 45 : habits.sleepHours < 8 ? 75 : 88;
-  const stamina = clamp(staminaBase + Math.min(8, habits.coffeeToday * 2));
+  attrs.vida += (values(habitTotals).reduce((a, h) => a + h.checksWeek, 0) * 2) + (sleepHours * 6) + (workoutMinutes * 0.08);
 
-  const stats = {
-    vida: clamp(35 + gym.sessions * 3 + Math.min(20, habits.checksWeek)),
-    estamina: stamina,
-    fuerza: clamp(20 + gym.minutes / 12),
-    inteligencia: clamp(20 + books.finished * 12 + books.pages / 40),
-    enfoque: clamp(15 + videos.workHours * 2 + habits.sessionHoursWeek * 1.5),
-    creatividad: clamp(10 + videos.total * 4 + videos.published * 8),
-    oro: clamp(resources.gold / 120),
-    exploracion: clamp(trips.countries * 12 + trips.cities * 2),
-    supervivencia: clamp(recipes.total * 4 + recipes.variety * 7),
-    combate: clamp(games.kills * 1.8 + games.hours * 2 - Math.max(0, games.deaths - games.kills) * 0.8)
-  };
-
-  return { stats, inputs: { habits, books, gym, videos, games, trips, recipes, resources } };
-}
-
-export function computeCharacterClass(computed = {}) {
-  const s = computed.stats || {};
-  const map = {
-    Erudito: (s.inteligencia || 0) + (s.enfoque || 0) * 0.4,
-    Forjador: (s.fuerza || 0) + (s.vida || 0) * 0.5,
-    Estratega: (s.combate || 0) + (s.enfoque || 0) * 0.6,
-    Creador: (s.creatividad || 0) + (s.inteligencia || 0) * 0.3,
-    Viajero: (s.exploracion || 0),
-    Alquimista: (s.supervivencia || 0) + (s.creatividad || 0) * 0.2
-  };
-  const ranked = Object.entries(map).sort((a, b) => b[1] - a[1]);
-  if (!ranked.length || ranked[0][1] - (ranked[1]?.[1] || 0) < 8) return 'Híbrido';
-  return ranked[0][0];
-}
-
-export function computeCharacterDailyState(computed = {}) {
-  const stamina = computed.stats?.estamina || 0;
-  if (stamina < 35) return 'Fatigado';
-  if (stamina < 60) return 'Funcional';
-  if (stamina < 80) return 'En forma';
-  return 'Imparable';
-}
-
-export function computeCharacterTraits(computed = {}) {
-  const i = computed.inputs || {};
-  const traits = [];
-  if ((i.books?.finished || 0) >= 3) traits.push('Ratón de biblioteca');
-  if ((i.gym?.sessions || 0) >= 4) traits.push('Forjador constante');
-  if ((i.trips?.countries || 0) >= 2) traits.push('Viajero del mapa');
-  if ((i.resources?.income || 0) > 0) traits.push('Minero disciplinado');
-  if ((i.recipes?.total || 0) >= 8) traits.push('Alquimista doméstico');
-  if ((i.games?.wins || 0) > (i.games?.losses || 0)) traits.push('Cazador competitivo');
-  if ((i.videos?.published || 0) >= 2) traits.push('Director obsesivo');
-  return traits.slice(0, 6);
-}
-
-export function buildCharacterProfile(snapshot = {}, meta = {}) {
-  const computed = computeCharacterStats(snapshot);
-  const className = computeCharacterClass(computed);
-  const dailyState = computeCharacterDailyState(computed);
-  const traits = computeCharacterTraits(computed);
-  const resources = computeCharacterResources(snapshot);
-  const statVals = Object.values(computed.stats);
-  const level = Math.max(1, Math.round(statVals.reduce((a, b) => a + b, 0) / statVals.length / 4));
+  ATTRIBUTE_KEYS.forEach((k) => { attrs[k] = Math.max(0, Math.round(attrs[k])); });
   return {
-    name: meta.name || 'Aventurero',
+    attributes: attrs,
+    staminaState,
+    modules: { resources, exploration, games, recipes: { total: recipes.length, used: recipesUsed }, videos: { total: videoList.length, workHours: videoWorkHours }, books: { finishedBooks, pagesRead }, habits: habitTotals },
+    mappings
+  };
+}
+
+export function computeCharacterRecentDeltas(snapshot = {}) {
+  const resources = computeCharacterResources(snapshot);
+  return {
+    goldToday: resources.changeToday,
+    goldWeek: resources.changeWeek,
+    incomeWeek: resources.incomeWeek,
+    expenseWeek: resources.expenseWeek
+  };
+}
+
+export function buildCharacterSheetData(snapshot = {}, config = {}) {
+  const computed = computeCharacterAttributes(snapshot, config);
+  const ageLevel = computeCharacterLevelFromBirthdate(config.birthdate);
+  const topAttributes = Object.entries(computed.attributes)
+    .filter(([k]) => !['oro', 'estamina'].includes(k))
+    .sort((a, b) => b[1] - a[1]);
+  const top = topAttributes[0]?.[0] || 'vida';
+  const second = topAttributes[1]?.[0] || 'inteligencia';
+
+  const classByAttr = {
+    inteligencia: 'Erudito',
+    fuerza: 'Forjador',
+    combate: 'Estratega',
+    creatividad: 'Creador',
+    exploracion: 'Viajero',
+    supervivencia: 'Alquimista'
+  };
+  const className = classByAttr[top] || classByAttr[second] || 'Híbrido';
+
+  return {
+    name: config.name || 'Aventurero',
+    level: ageLevel,
+    hasBirthdate: !!config.birthdate,
     className,
-    level,
-    dailyState,
-    lore: `Has dejado huella en ${computed.inputs?.trips?.countries || 0} reinos y forjado ${computed.inputs?.books?.finished || 0} tomos completados.`,
-    stats: computed.stats,
-    traits,
-    resources,
-    ranking: {
-      dominantAttribute: Object.entries(computed.stats).sort((a, b) => b[1] - a[1])[0]?.[0] || 'vida',
-      weakArea: Object.entries(computed.stats).sort((a, b) => a[1] - b[1])[0]?.[0] || 'vida',
-      mainDiscipline: className,
-      strongestResource: resources.gold >= resources.treasury ? 'Oro líquido' : 'Tesoro'
-    },
-    deltas: [
-      { label: 'Fuerza', value: Math.round(computed.inputs.gym.minutes / 10) },
-      { label: 'Inteligencia', value: Math.round(computed.inputs.books.pages / 50 + computed.inputs.books.finished * 2) },
-      { label: 'Creatividad', value: Math.round(computed.inputs.videos.workHours * 1.5) },
-      { label: 'Oro', value: Math.round(resources.income / 20) },
-      { label: 'Estamina', value: -Math.max(0, Math.round((6.5 - computed.inputs.habits.sleepHours) * 8)) }
-    ],
-    activity: [
-      `📚 ${computed.inputs.books.finished} libros terminados / ${Math.round(computed.inputs.books.pages)} páginas registradas`,
-      `🏋️ ${computed.inputs.gym.sessions} sesiones de gym y ${Math.round(computed.inputs.gym.minutes)} min activos`,
-      `🎬 ${computed.inputs.videos.published}/${computed.inputs.videos.total} vídeos en estado final`,
-      `🌍 ${computed.inputs.trips.countries} países y ${computed.inputs.trips.cities} ciudades descubiertas`,
-      `🎮 ${computed.inputs.games.kills} kills, ${computed.inputs.games.deaths} muertes, ${computed.inputs.games.wins} victorias`
-    ],
-    formulas: {
-      estamina: 'Se basa en horas de sueño recientes (<5h muy baja, 5-6.5h baja, 6.5-8h buena, >8h alta) y un boost limitado por café diario.',
-      inteligencia: 'Combina libros completados (peso alto) y páginas leídas (peso moderado).',
-      fuerza: 'Deriva de minutos y sesiones de gym registradas.',
-      combate: 'Combina kills + horas jugadas y penaliza exceso de muertes frente a kills.',
-      recursos: 'Oro y botín vienen de finance/accounts + transactions del periodo reciente.'
-    },
-    details: computed.inputs
+    resources: computed.modules.resources,
+    deltas: computeCharacterRecentDeltas(snapshot),
+    world: computed.modules.exploration,
+    attributes: computed.attributes,
+    staminaState: computed.staminaState,
+    mappings: computed.mappings,
+    details: computed.modules,
+    explain: {
+      nivel: 'El nivel se calcula usando tu fecha de nacimiento (edad real actual).',
+      oro: 'Oro = balance total real de cuentas en Finance + deltas por transacciones reales.',
+      exploracion: 'Exploración = países/ciudades/visitas reales en World/Trips.',
+      atributos: 'Atributos = suma ponderada de hábitos mapeados + módulos reales (books/gym/videos/recipes/games).',
+      estamina: 'Estamina = sueño reciente como base + modificador suave por café.'
+    }
   };
 }

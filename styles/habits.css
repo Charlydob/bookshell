@@ -4472,3 +4472,9 @@ align-items: center;
   gap: 6px;
   flex-wrap: wrap;
 }
+.habits-wrapper{
+  margin-bottom: 0px;
+}
+#view-habits{
+  margin-bottom: 0px;
+}

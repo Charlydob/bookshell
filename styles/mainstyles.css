@@ -226,6 +226,8 @@ body {
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: var(--shadow-soft);
   box-sizing: border-box;
+  border: 1px solid rgb(255, 255, 255);
+  border-radius: 99px;
 }
 
 .nav-btn {

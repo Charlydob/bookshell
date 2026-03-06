@@ -1,6 +1,7 @@
 #view-main {
-  padding: 10px 10px 95px;
-  overflow: visible;
+  padding: 10px 10px calc(12px + var(--nav-h) + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .rpg-shell {
@@ -388,16 +389,4 @@
   .rpg-hero-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-}
-.app-shell{
-  display:none;
-}
-
-.view#view-main.view-active{
-  display:block;
-}
-
-.view#view-main.view-active ~ .app-shell,
-body:has(#view-main.view-active) .app-shell{
-  display:block;
 }

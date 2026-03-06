@@ -122,6 +122,14 @@ const VIEW_MODULE = {
 const loaded = new Map();
 let currentViewId = null;
 
+
+function syncViewportHeightVar() {
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  const px = Math.max(1, Math.round(viewportHeight * 100) / 100);
+  document.documentElement.style.setProperty('--app-dvh', `${px}px`);
+}
+
+
 function isValidView(viewId) {
   return !!(viewId && document.getElementById(viewId) && VIEW_MODULE[viewId]);
 }
@@ -255,6 +263,10 @@ function loadStyleOnce(href) {
 
 (function boot() {
   bindNav();
+  syncViewportHeightVar();
+  window.addEventListener('resize', syncViewportHeightVar, { passive: true });
+  window.visualViewport?.addEventListener('resize', syncViewportHeightVar, { passive: true });
+
 
   onAuthStateChanged(auth, async (user) => {
     if (!user) {

@@ -306,6 +306,34 @@ function normalizeHealthEntry(entry = {}, idx = 0) {
   }, idx);
 }
 
+function normalizeStaminaEntry(entry = {}, idx = 0) {
+  if (entry) {
+    return normalizeEntry({
+      id: 'entry-stamina',
+      type: 'attribute',
+      name: 'Estamina',
+      icon: '⚡',
+      description: 'Estado de energía diaria asociado a hábitos de descanso/activación.',
+      sourceMode: 'manual',
+      manualValue: 65,
+      rankConfig: { enabled: false, basePoints: 100, growth: 5 },
+      order: -69,
+      ...entry
+    }, idx);
+  }
+  return normalizeEntry({
+    id: 'entry-stamina',
+    type: 'attribute',
+    name: 'Estamina',
+    icon: '⚡',
+    description: 'Estado de energía diaria asociado a hábitos de descanso/activación.',
+    sourceMode: 'manual',
+    manualValue: 65,
+    rankConfig: { enabled: false, basePoints: 100, growth: 5 },
+    order: -69
+  }, idx);
+}
+
 function isComparableEntry(entry = {}) {
   if (entry.visible === false) return false;
   if (entry.type === 'language') return false;
@@ -406,6 +434,56 @@ export function computeCharacterHealth(sheet = {}, snapshot = {}) {
   };
 }
 
+export function computeCharacterStaminaToday(sheet = {}, snapshot = {}) {
+  const staminaEntry = (sheet.entries || []).find((entry) => String(entry.name || '').toLowerCase() === 'estamina' || String(entry.id || '') === 'entry-stamina');
+  if (!staminaEntry) return { value: 0, progress: 0, max: 100, todayDelta: 0 };
+
+  const todaySourceData = {
+    habits: buildHabitMetricsForRange(snapshot, 'day'),
+    counters: buildCounterMetrics(snapshot),
+    moduleMetrics: {
+      'finance:gold': sheet.resources?.gold || 0,
+      'gym:strength': (sheet.entries || []).find((x) => x.id === 'module-strength')?.value || 0,
+      'world:exploration': (sheet.entries || []).find((x) => x.id === 'module-exploration')?.value || 0
+    }
+  };
+  const entrySources = Array.isArray(sheet.config?.entrySources) ? sheet.config.entrySources : [];
+  const todayComputed = computeEntryValue({ ...staminaEntry, manualValue: 0 }, entrySources, todaySourceData);
+  const max = Math.max(100, Math.round(Math.max(staminaEntry.value || 0, 100)));
+  const value = Math.max(0, toNum(staminaEntry.value));
+  return {
+    value,
+    max,
+    progress: Math.max(0, Math.min(1, value / max)),
+    todayDelta: Math.round((todayComputed.derivedValue || 0) * 100) / 100
+  };
+}
+
+export function computeGamesProfileSummary(snapshot = {}) {
+  const gamesRoot = snapshot.games || {};
+  const groups = gamesRoot.games?.groups || {};
+  const legacyModes = gamesRoot.games?.modes || {};
+  const counters = gamesRoot.counters || {};
+
+  const acc = { wins: 0, losses: 0, kills: 0, deaths: 0 };
+  const addRow = (row = {}) => {
+    acc.wins += toNum(row.wins);
+    acc.losses += toNum(row.losses);
+    acc.kills += toNum(row.kills ?? row.k);
+    acc.deaths += toNum(row.deaths ?? row.d);
+  };
+
+  values(legacyModes).forEach(addRow);
+  values(counters).forEach((dayMap) => values(dayMap || {}).forEach(addRow));
+  values(groups).forEach((group) => values(group?.modes || {}).forEach((mode) => {
+    addRow(mode?.base || mode);
+    values(mode?.daily || {}).forEach(addRow);
+  }));
+
+  Object.keys(acc).forEach((key) => { acc[key] = Math.round(acc[key]); });
+  return acc;
+}
+
 export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') {
   const legacyIdentity = {
     name: config.name,
@@ -447,6 +525,13 @@ export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') 
     userEntries.push(normalizeHealthEntry(null, userEntries.length));
   } else {
     userEntries[healthIndex] = normalizeHealthEntry(userEntries[healthIndex], healthIndex);
+  }
+
+  const staminaIndex = userEntries.findIndex((entry) => String(entry.name || '').toLowerCase() === 'estamina' || String(entry.id || '') === 'entry-stamina');
+  if (staminaIndex === -1) {
+    userEntries.push(normalizeStaminaEntry(null, userEntries.length));
+  } else {
+    userEntries[staminaIndex] = normalizeStaminaEntry(userEntries[staminaIndex], staminaIndex);
   }
 
   const financeScope = config.financeScope === 'total' ? 'total' : 'my';
@@ -529,7 +614,9 @@ export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') 
   };
 
   const health = computeCharacterHealth(baseSheet, snapshot);
-  return { ...baseSheet, powerLevel, health };
+  const stamina = computeCharacterStaminaToday(baseSheet, snapshot);
+  const gamesSummary = computeGamesProfileSummary(snapshot);
+  return { ...baseSheet, powerLevel, health, stamina, gamesSummary };
 }
 
 export { computeEntryRankProgress };

@@ -822,33 +822,29 @@ body.has-open-modal {
 .video-card.is-collapsed .update-toggle{
   display: none !important;
 }
-/* Quita el “suelo blanco” del body y fuerza altura real */
-html, body {
-  height: 100%;
-  margin: 0;
-  background: #0b0c10; /* o tu --bg */
-}
-
+/* Layout global: una sola superficie scrollable por vista */
 :root { --nav-h: 56px; }
 
-/* Tu app wrapper (ajusta selector si es otro) */
-#app, .app, .app-shell, main {
+#app, .app, .app-shell {
   min-height: 100dvh;
   padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom));
   background: inherit;
 }
 
-.view-scroll,
-.view,
-.page,
-.tab,
-.tab-panel,
-.screen-page {
-  height: 100dvh;
+.app-main,
+main {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.view {
+  height: 100%;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom));
-  background: inherit;
 }
 
 .book-detail-quotes {

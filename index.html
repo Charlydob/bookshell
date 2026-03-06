@@ -3134,20 +3134,26 @@ window.addEventListener("error", (e) => {
   const msg =
     e?.error?.stack ||
     `${e?.message || "Error"} @ ${e?.filename || ""}:${e?.lineno || ""}:${e?.colno || ""}`;
+  if (/indexed\s*db|indexed\s*database|idb/i.test(String(msg))) {
+    console.warn("[BOOT] IndexedDB error captured", msg);
+    return;
+  }
   showOverlay(msg);
 });
+
+const isIndexedDbMsg = (value) => /indexed\s*db|indexed\s*database|idb/i.test(String(value || ""));
 
 window.addEventListener("unhandledrejection", (e) => {
   const r = e?.reason;
   const msg = r?.stack || r?.message || String(r || "Unhandled rejection");
+  if (isIndexedDbMsg(msg)) {
+    e.preventDefault();
+    console.warn("[BOOT] IndexedDB rejection captured", msg);
+    return;
+  }
   showOverlay(msg);
 });
 
-  window.addEventListener("unhandledrejection", (e) => {
-    const r = e?.reason;
-    const msg = r?.stack || (typeof r === "string" ? r : JSON.stringify(r));
-    showOverlay("UnhandledPromiseRejection: " + msg);
-  });
 
   const deepLinkParams = new URLSearchParams(location.search);
   const deepLinkDebug = deepLinkParams.has("debugDeepLink") || window.__bookshellDebugDeepLink;

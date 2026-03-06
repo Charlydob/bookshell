@@ -396,10 +396,10 @@
 }
 
 .view#view-main.view-active{
-  display:block;
+  display:flex;
 }
 
 .view#view-main.view-active ~ .app-shell,
 body:has(#view-main.view-active) .app-shell{
-  display:block;
+  display:flex;
 }

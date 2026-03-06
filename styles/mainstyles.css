@@ -112,7 +112,7 @@ body {
 }
 
 .view-active {
-  display: block;
+  display: none;
 }
 
 .btn {

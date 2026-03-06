@@ -5,6 +5,7 @@
 }
 
 :root {
+  --app-dvh: 100dvh;
   --bg-1: #0e1116;
   --bg-2: #0b0d12;
   --glass: rgba(255, 255, 255, 0.06);
@@ -47,14 +48,13 @@ body {
 }
 
 .app-shell {
-  min-height: 100vh;
+  min-height: var(--app-dvh);
   max-width: 480px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   background: linear-gradient(145deg, var(--bg-1), var(--bg-2));
   position: relative;
-  padding-bottom: 64px; /* espacio nav bottom */
 }
 
 .app-header {
@@ -98,9 +98,9 @@ body {
 
 .app-main {
   flex: 1;
-  padding: 8px 10px 12px;
-  overflow: hidden;
   min-height: 0;
+  padding: 8px 10px 0;
+  overflow: hidden;
 }
 
 .view {
@@ -211,21 +211,21 @@ body {
 
 .bottom-nav {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 20px;
-  height: 35px;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 0;
+  width: min(480px, 100%);
+  min-height: var(--nav-h);
   z-index: 50;
   display: flex;
   align-items: center;
   justify-content: space-around;
-  padding: 10px 1px ;
-  background: rgba(32, 43, 107, 0.281);
+  padding: 8px 4px calc(8px + env(safe-area-inset-bottom));
+  background: rgba(10, 14, 24, 0.92);
   backdrop-filter: blur(var(--blur-nav, 8px));
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: var(--shadow-soft);
   box-sizing: border-box;
-  border-radius: 100px;
 }
 
 .nav-btn {
@@ -826,8 +826,7 @@ body.has-open-modal {
 :root { --nav-h: 56px; }
 
 #app, .app, .app-shell {
-  min-height: 100dvh;
-  padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom));
+  min-height: var(--app-dvh);
   background: inherit;
 }
 

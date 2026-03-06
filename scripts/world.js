@@ -1,6 +1,9 @@
 // scripts/world.js
 import { renderCountryHeatmap } from "./world-heatmap.js";
 import { getCountryEnglishName, getCountryOptions } from "./countries.js";
+import { ref, onValue, set, get } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { db, auth } from "./firebase-shared.js";
+import { resolveTripsRoot, resolveTripsPathCandidates } from "./data-roots.js";
 
 const LS_VISITS = "world_visits_v1";
 const LS_WATCH = "world_watchlist_v1";
@@ -10,6 +13,8 @@ const worldState = {
   initialized: false,
   abortController: null,
   searchCache: new Map(),
+  unsubscribeFirebase: null,
+  syncingRemote: false,
 };
 
 const COUNTRY_NAME_OVERRIDES = {
@@ -61,6 +66,86 @@ function saveJson(key, value) {
 
 function uniq(arr) {
   return [...new Set(arr)];
+}
+
+function isRouteDebugEnabled() {
+  try { return localStorage.getItem("bookshell.debug.routes") === "1"; } catch (_) { return false; }
+}
+
+function routeLog(...a) {
+  if (!isRouteDebugEnabled()) return;
+  try { console.debug("[world][route]", ...a); } catch (_) {}
+}
+
+function currentUid() {
+  return auth.currentUser?.uid || null;
+}
+
+function resolveTripsFirebaseRoot() {
+  const uid = currentUid();
+  if (!uid) return null;
+  return resolveTripsRoot(uid);
+}
+
+function normalizeTripsVisits(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === "object") return Object.values(raw);
+  return [];
+}
+
+function normalizeTripsWatch(raw) {
+  if (raw && typeof raw === "object") return raw;
+  return {};
+}
+
+async function readFirstTripsCandidate() {
+  const uid = currentUid();
+  if (!uid) return null;
+  const candidates = resolveTripsPathCandidates(uid);
+  routeLog("uid", uid, "candidates", candidates);
+
+  for (const candidate of candidates) {
+    try {
+      const snap = await get(ref(db, candidate));
+      const val = snap.val();
+      if (!val || typeof val !== "object") continue;
+      const visits = normalizeTripsVisits(val.visits || val.entries || val.places || val);
+      const watch = normalizeTripsWatch(val.watchlist || val.watch || {});
+      if (!visits.length && !Object.keys(watch).length) continue;
+      routeLog("loaded candidate", candidate, "visits", visits.length, "watch", Object.keys(watch).length);
+      return { candidate, visits, watch };
+    } catch (e) {
+      console.warn("[world] firebase candidate read failed", candidate, e);
+    }
+  }
+  return null;
+}
+
+async function bindTripsFirebase({ onData }) {
+  const root = resolveTripsFirebaseRoot();
+  if (!root) {
+    console.warn("[world] UID no disponible, se omite binding Firebase");
+    return null;
+  }
+
+  const initial = await readFirstTripsCandidate();
+  if (initial?.candidate && initial.candidate !== root) {
+    try {
+      await set(ref(db, root), { visits: initial.visits, watchlist: initial.watch });
+      routeLog("migrated legacy data", initial.candidate, "->", root);
+    } catch (e) {
+      console.warn("[world] firebase migration failed", e);
+    }
+  }
+
+  routeLog("binding onValue", root);
+  return onValue(ref(db, root), (snap) => {
+    const val = snap.val() || {};
+    const visits = normalizeTripsVisits(val.visits || val.entries || val.places || []);
+    const watch = normalizeTripsWatch(val.watchlist || val.watch || {});
+    routeLog("remote update", root, "visits", visits.length, "watch", Object.keys(watch).length);
+    onData({ visits, watch });
+  });
 }
 
 function startOfMonth(d) {
@@ -676,6 +761,17 @@ if ($backBtn) {
   let visits = parseJson(LS_VISITS, []);
   let watch = parseJson(LS_WATCH, {}); // {ES:{code,label}}
 
+  const pushTripsToFirebase = async () => {
+    const root = resolveTripsFirebaseRoot();
+    if (!root) return;
+    try {
+      routeLog("write", root, "visits", visits.length, "watch", Object.keys(watch || {}).length);
+      await set(ref(db, root), { visits, watchlist: watch, updatedAt: Date.now() });
+    } catch (e) {
+      console.warn("[world] firebase write failed", e);
+    }
+  };
+
   const TOTAL_COUNTRIES = (() => {
     try { return (getCountryOptions()?.length || 0); } catch (_) { return 0; }
   })();
@@ -686,6 +782,7 @@ if ($backBtn) {
   function persist() {
     saveJson(LS_VISITS, visits);
     saveJson(LS_WATCH, watch);
+    if (!worldState.syncingRemote) void pushTripsToFirebase();
   }
 
 function formatPctSmart(pct, sig = 4) {
@@ -1136,10 +1233,31 @@ chart.setOption({
 
   $filter.addEventListener("change", renderAll, evtOpts);
 
-  await renderAll();
+  worldState.unsubscribeFirebase = await bindTripsFirebase({
+    onData: async ({ visits: remoteVisits, watch: remoteWatch }) => {
+      worldState.syncingRemote = true;
+      try {
+        visits = Array.isArray(remoteVisits) ? remoteVisits : [];
+        watch = (remoteWatch && typeof remoteWatch === "object") ? remoteWatch : {};
+        saveJson(LS_VISITS, visits);
+        saveJson(LS_WATCH, watch);
+        await renderAll();
+      } finally {
+        worldState.syncingRemote = false;
+      }
+    }
+  });
+
+  if (!worldState.unsubscribeFirebase) {
+    await renderAll();
+  }
 }
 
 export function destroy() {
+  if (typeof worldState.unsubscribeFirebase === "function") {
+    worldState.unsubscribeFirebase();
+    worldState.unsubscribeFirebase = null;
+  }
   if (worldState.abortController) {
     worldState.abortController.abort();
     worldState.abortController = null;
@@ -1156,5 +1274,6 @@ export function getListenerCount() {
   let count = 0;
   if (worldState.abortController) count += 1;
   if (nominatimAbort) count += 1;
+  if (worldState.unsubscribeFirebase) count += 1;
   return count;
 }

@@ -31,13 +31,11 @@ export const ATTRIBUTE_LABELS = {
 };
 
 const DEFAULT_MAPPING_RULES = [
-  { pattern: /(dorm|sueñ|sleep)/i, attribute: 'estamina', weight: 6 },
   { pattern: /(medit|mindful|respira)/i, attribute: 'vida', weight: 4 },
   { pattern: /(leer|read|alem|ruso|idioma|estudi)/i, attribute: 'inteligencia', weight: 4 },
   { pattern: /(gym|fuerza|pesas|run|correr|cardio|entren)/i, attribute: 'fuerza', weight: 4 },
   { pattern: /(editar|edit|video|guion|script|write|escrib)/i, attribute: 'creatividad', weight: 3 },
   { pattern: /(editar|edit|video|deep|focus|concentr)/i, attribute: 'enfoque', weight: 3 },
-  { pattern: /(caf|coffee)/i, attribute: 'estamina', weight: 1 }
 ];
 
 function parseDay(dayKey = '') {
@@ -91,13 +89,19 @@ function getHabitMetricValue(habitTotals, habitId, metric = 'todayCount') {
   }
 }
 
+const STAMINA_ALLOWED_METRICS = new Set(['sessionHoursToday', 'todayCount', 'checksWeek']);
+const STAMINA_DEBUG = true;
+
 function normalizeStaminaInput(raw = {}) {
+  const sourceMetric = String(raw?.metric || raw?.source || 'todayCount').trim() || 'todayCount';
+  const metric = STAMINA_ALLOWED_METRICS.has(sourceMetric) ? sourceMetric : 'todayCount';
+
   return {
     habitId: String(raw?.habitId || raw?.id || '').trim(),
-    metric: String(raw?.metric || raw?.source || 'todayCount').trim() || 'todayCount',
+    metric,
     weight: toNum(raw?.weight ?? raw?.value ?? 1),
     maxContribution: raw?.maxContribution == null ? null : toNum(raw.maxContribution),
-    minContribution: raw?.minContribution == null ? null : toNum(raw.minContribution)
+    sourceMetric
   };
 }
 
@@ -127,12 +131,13 @@ function computeStaminaFromConfig(habitTotals = {}, config = {}) {
   };
 
   positiveInputs.forEach((raw) => {
-    const habitId = String(raw?.habitId || raw?.id || '').trim();
+    const input = normalizeStaminaInput(raw);
+    const habitId = input.habitId;
     if (!habitId) return;
 
-    const metric = String(raw?.metric || 'todayCount').trim() || 'todayCount';
-    const weight = toNum(raw?.weight ?? 0);
-    const cap = raw?.maxContribution == null ? null : toNum(raw.maxContribution);
+    const metric = input.metric;
+    const weight = toNum(input.weight);
+    const cap = input.maxContribution;
 
     const rawValue = getHabitMetricValue(habitTotals, habitId, metric);
     let contribution = rawValue * weight;
@@ -142,21 +147,20 @@ function computeStaminaFromConfig(habitTotals = {}, config = {}) {
 
     positive += contribution;
     breakdown.positive.push({
-      habitId,
-      metric,
-      weight,
+      ...input,
       rawValue,
       contribution
     });
   });
 
   negativeInputs.forEach((raw) => {
-    const habitId = String(raw?.habitId || raw?.id || '').trim();
+    const input = normalizeStaminaInput(raw);
+    const habitId = input.habitId;
     if (!habitId) return;
 
-    const metric = String(raw?.metric || 'todayCount').trim() || 'todayCount';
-    const weight = toNum(raw?.weight ?? 0);
-    const cap = raw?.maxContribution == null ? null : toNum(raw.maxContribution);
+    const metric = input.metric;
+    const weight = toNum(input.weight);
+    const cap = input.maxContribution;
 
     const rawValue = getHabitMetricValue(habitTotals, habitId, metric);
     let contribution = rawValue * weight;
@@ -166,9 +170,7 @@ function computeStaminaFromConfig(habitTotals = {}, config = {}) {
 
     negative += contribution;
     breakdown.negative.push({
-      habitId,
-      metric,
-      weight,
+      ...input,
       rawValue,
       contribution
     });
@@ -380,20 +382,41 @@ ATTRIBUTE_KEYS.forEach((attr) => {
   attrs.exploracion += exploration.countries * 25 + exploration.cities * 7 + exploration.visits * 2;
   attrs.oro = resources.gold;
 
-const staminaComputed = computeStaminaFromConfig(habitTotals, config);
-attrs.estamina = staminaComputed.total;
+  const staminaComputed = computeStaminaFromConfig(habitTotals, config);
+  attrs.estamina = staminaComputed.total;
 
-const sleepHabitId = String(config?.sleepHabitId || '').trim();
-const sleepHours = sleepHabitId && habitTotals[sleepHabitId]
-  ? toNum(habitTotals[sleepHabitId].sessionHoursToday)
-  : 0;
+  const sleepHabitId = String(config?.sleepHabitId || '').trim();
+  const sleepHours = sleepHabitId && habitTotals[sleepHabitId]
+    ? toNum(habitTotals[sleepHabitId].sessionHoursToday)
+    : 0;
 
-const staminaState =
-  sleepHours < 5 ? 'agotado' :
-  sleepHours < 6.5 ? 'bajo' :
-  sleepHours < 8 ? 'estable' :
-  sleepHours < 9.5 ? 'alto' :
-  'rebosante';
+  const staminaState =
+    sleepHours < 5 ? 'agotado' :
+    sleepHours < 6.5 ? 'bajo' :
+    sleepHours < 8 ? 'estable' :
+    sleepHours < 9.5 ? 'alto' :
+    'rebosante';
+
+  if (STAMINA_DEBUG) {
+    const staminaHabitIds = [
+      ...staminaComputed.breakdown.positive.map((row) => row.habitId),
+      ...staminaComputed.breakdown.negative.map((row) => row.habitId),
+      sleepHabitId
+    ].filter(Boolean);
+
+    const relevantHabitTotals = Object.fromEntries(
+      [...new Set(staminaHabitIds)]
+        .map((habitId) => [habitId, habitTotals[habitId]])
+        .filter(([, totals]) => !!totals)
+    );
+
+    console.groupCollapsed('[RPG][stamina-debug]');
+    console.log('config.stamina recibido', config?.stamina || null);
+    console.log('habitTotals relevantes', relevantHabitTotals);
+    console.log('staminaComputed', staminaComputed);
+    console.log('attrs.estamina final', attrs.estamina);
+    console.groupEnd();
+  }
 
   attrs.vida += (values(habitTotals).reduce((a, h) => a + h.checksWeek, 0) * 2) + (sleepHours * 6) + (workoutMinutes * 0.08);
 

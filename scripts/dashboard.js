@@ -59,6 +59,15 @@ if (!$viewMain) {
     return String(value).toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9áéíóúüñ-]/gi, '').slice(0, 42);
   }
 
+  function escapeHtml(value = '') {
+    return String(value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
   function defaultEntryByType(type = 'attribute') {
     if (type === 'language') {
       return { type, name: '', icon: '🗣️', manualLevel: 'A1', description: '', sourceMode: 'manual', manualValue: 0, rankConfig: { enabled: false, basePoints: 120, growth: 8 } };
@@ -102,9 +111,23 @@ if (!$viewMain) {
     modal = document.createElement('div');
     modal.id = 'rpg-sheet-modal';
     modal.className = 'rpg-sheet-modal hidden';
-    modal.innerHTML = '<div class="rpg-sheet-card"><button class="icon-btn rpg-sheet-close" type="button">✕</button><div id="rpg-sheet-content"></div></div>';
+    modal.innerHTML = '<div class="rpg-sheet-card"><div id="rpg-sheet-content"></div></div>';
     modal.addEventListener('click', (e) => {
-      if (e.target === modal || e.target.closest('.rpg-sheet-close')) modal.classList.add('hidden');
+      if (e.target === modal || e.target.closest('[data-close-modal]')) modal.classList.add('hidden');
+    });
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  function ensureSourceEditorModal() {
+    let modal = document.getElementById('rpg-source-editor-modal');
+    if (modal) return modal;
+    modal = document.createElement('div');
+    modal.id = 'rpg-source-editor-modal';
+    modal.className = 'rpg-sheet-modal hidden rpg-sheet-modal-sub';
+    modal.innerHTML = '<div class="rpg-sheet-card rpg-sheet-card-sub"><div id="rpg-source-editor-content"></div></div>';
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal || e.target.closest('[data-close-source-modal]')) modal.classList.add('hidden');
     });
     document.body.appendChild(modal);
     return modal;
@@ -114,11 +137,22 @@ if (!$viewMain) {
     ensureSheetModal().classList.add('hidden');
   }
 
+  function closeSourceEditorModal() {
+    ensureSourceEditorModal().classList.add('hidden');
+  }
+
   function openSheet(html, onBind) {
     const modal = ensureSheetModal();
     modal.querySelector('#rpg-sheet-content').innerHTML = html;
     modal.classList.remove('hidden');
     if (typeof onBind === 'function') onBind(modal.querySelector('#rpg-sheet-content'));
+  }
+
+  function openSourceSheet(html, onBind) {
+    const modal = ensureSourceEditorModal();
+    modal.querySelector('#rpg-source-editor-content').innerHTML = html;
+    modal.classList.remove('hidden');
+    if (typeof onBind === 'function') onBind(modal.querySelector('#rpg-source-editor-content'));
   }
 
   async function persistAndRender(mutator) {
@@ -133,6 +167,291 @@ if (!$viewMain) {
     await render();
   }
 
+  function sourceLabel(src = {}, sheet = {}) {
+    if (src.sourceType === 'habit') return sheet.sourceCatalog.habits.find((h) => h.id === src.sourceId)?.name || src.sourceId;
+    if (src.sourceType === 'counter') return sheet.sourceCatalog.counters.find((h) => h.id === src.sourceId)?.name || src.sourceId;
+    if (src.sourceType === 'moduleMetric') return sheet.sourceCatalog.moduleMetrics.find((m) => m.id === src.sourceId)?.label || src.sourceId;
+    return 'Manual';
+  }
+
+  function renderEntrySourceList(entry, sheet) {
+    const rows = (entry.sourceRows || []).map((src) => `
+      <article class="rpg-source-card" data-source-id="${src.id || ''}">
+        <div class="rpg-source-card-head">
+          <span class="rpg-source-type">${escapeHtml(src.sourceType || 'manual')}</span>
+          <label class="rpg-source-switch">
+            <input type="checkbox" data-toggle-source="${src.id || ''}" ${src.enabled !== false ? 'checked' : ''}/>
+            <span>${src.enabled !== false ? 'Activo' : 'Inactivo'}</span>
+          </label>
+        </div>
+        <div><b>${escapeHtml(sourceLabel(src, sheet))}</b></div>
+        <small>${escapeHtml(src.unitMode || 'count')} · peso ${fmt(src.weight)} · ${src.sign === 'subtract' ? '−' : '+'} · aporte ${fmt(src.contribution)}</small>
+        <div class="rpg-source-card-actions">
+          <button class="btn ghost" type="button" data-edit-source="${src.id || ''}">Editar</button>
+          <button class="btn ghost danger" type="button" data-delete-source="${src.id || ''}">Eliminar</button>
+        </div>
+      </article>
+    `).join('');
+    return rows || '<div class="rpg-empty">Sin fuentes asociadas</div>';
+  }
+
+  async function saveEntrySource(entry, payload, sourceId = '') {
+    await persistAndRender((next) => {
+      if (sourceId) {
+        const idx = next.entrySources.findIndex((src) => src.id === sourceId && src.entryId === entry.id);
+        if (idx >= 0) next.entrySources[idx] = { ...next.entrySources[idx], ...payload };
+        return;
+      }
+      next.entrySources.push({
+        id: `src-${Date.now()}`,
+        entryId: entry.id,
+        enabled: true,
+        ...payload
+      });
+    });
+  }
+
+  async function deleteEntrySource(entry, sourceId = '') {
+    if (!sourceId) return;
+    await persistAndRender((next) => {
+      next.entrySources = next.entrySources.filter((src) => !(src.id === sourceId && src.entryId === entry.id));
+    });
+  }
+
+  function renderEntrySourceEditorModal(entry, sheet, sourceId = '') {
+    const current = (lastConfig.entrySources || []).find((src) => src.id === sourceId && src.entryId === entry.id) || {};
+    const sourceType = current.sourceType || 'habit';
+    const habitOptions = sheet.sourceCatalog.habits.map((h) => `<option value="${h.id}" ${h.id === current.sourceId ? 'selected' : ''}>${escapeHtml(h.name || h.id)}</option>`).join('');
+    const counterOptions = sheet.sourceCatalog.counters.map((c) => `<option value="${c.id}" ${c.id === current.sourceId ? 'selected' : ''}>${escapeHtml(c.name || c.id)}</option>`).join('');
+
+    openSourceSheet(`
+      <div class="rpg-submodal-header">
+        <div>
+          <h4>${sourceId ? 'Editar fuente' : 'Añadir fuente'}</h4>
+          <small>${escapeHtml(entry.icon || '✨')} ${escapeHtml(entry.name || 'Aptitud')}</small>
+        </div>
+        <button class="icon-btn" type="button" data-close-source-modal="1">✕</button>
+      </div>
+      <form id="rpg-source-editor-form" class="rpg-modal-form">
+        <div class="rpg-form-grid-2">
+          <label>Tipo de fuente
+            <select name="sourceType">
+              <option value="habit" ${sourceType === 'habit' ? 'selected' : ''}>Hábito</option>
+              <option value="counter" ${sourceType === 'counter' ? 'selected' : ''}>Contador</option>
+              <option value="manual" ${sourceType === 'manual' ? 'selected' : ''}>Manual</option>
+              <option value="moduleMetric" ${sourceType === 'moduleMetric' ? 'selected' : ''}>Métrica de módulo</option>
+            </select>
+          </label>
+          <label>Unidad
+            <select name="unitMode">
+              <option value="minute" ${current.unitMode === 'minute' ? 'selected' : ''}>por minuto</option>
+              <option value="hour" ${current.unitMode === 'hour' ? 'selected' : ''}>por hora</option>
+              <option value="session" ${current.unitMode === 'session' ? 'selected' : ''}>por sesión</option>
+              <option value="count" ${(current.unitMode || 'count') === 'count' ? 'selected' : ''}>por unidad</option>
+            </select>
+          </label>
+          <label>Hábito
+            <select name="habitId"><option value="">—</option>${habitOptions}</select>
+          </label>
+          <label>Contador
+            <select name="counterId"><option value="">—</option>${counterOptions}</select>
+          </label>
+          <label>Módulo
+            <select name="moduleMetricId">
+              <option value="">—</option>
+              <option value="gym:strength" ${current.sourceId === 'gym:strength' ? 'selected' : ''}>Gym · Fuerza</option>
+              <option value="world:exploration" ${current.sourceId === 'world:exploration' ? 'selected' : ''}>World · Exploración</option>
+              <option value="finance:gold" ${current.sourceId === 'finance:gold' ? 'selected' : ''}>Finance · Oro</option>
+            </select>
+          </label>
+          <label>Peso<input type="number" step="0.1" name="weight" value="${Number(current.weight ?? 1)}" /></label>
+          <label>Signo
+            <select name="sign">
+              <option value="add" ${(current.sign || 'add') === 'add' ? 'selected' : ''}>Suma</option>
+              <option value="subtract" ${current.sign === 'subtract' ? 'selected' : ''}>Resta</option>
+            </select>
+          </label>
+          <label>Valor manual<input type="number" step="0.1" name="manualValue" value="${Number(current.manualValue || 0)}" /></label>
+        </div>
+        <div class="rpg-modal-footer-actions">
+          <button class="btn ghost" type="button" data-close-source-modal="1">Cancelar</button>
+          <button class="btn primary" type="submit">${sourceId ? 'Guardar fuente' : 'Añadir fuente'}</button>
+        </div>
+      </form>
+    `, (root) => {
+      root.querySelector('#rpg-source-editor-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const selectedType = String(fd.get('sourceType') || 'habit');
+        const selectedSourceId = selectedType === 'habit'
+          ? String(fd.get('habitId') || '').trim()
+          : selectedType === 'counter'
+            ? String(fd.get('counterId') || '').trim()
+            : selectedType === 'moduleMetric'
+              ? String(fd.get('moduleMetricId') || '').trim()
+              : `manual-${Date.now()}`;
+        if (!selectedSourceId) return;
+
+        await saveEntrySource(entry, {
+          sourceType: selectedType,
+          sourceId: selectedSourceId,
+          unitMode: String(fd.get('unitMode') || 'minute'),
+          weight: Number(fd.get('weight') || 1),
+          sign: String(fd.get('sign') || 'add'),
+          manualValue: Number(fd.get('manualValue') || 0),
+          enabled: true
+        }, sourceId);
+        closeSourceEditorModal();
+        const refreshed = buildCharacterSheet(lastSnapshot, { ...lastConfig, financeScope: selectedScope }, selectedRange);
+        const freshEntry = refreshed.entries.find((row) => row.id === entry.id);
+        if (freshEntry) renderCharacterEntryDetailModal(freshEntry, refreshed);
+      });
+    });
+  }
+
+  function openEntrySourceEditorModal(entry, sheet, sourceId = '') {
+    renderEntrySourceEditorModal(entry, sheet, sourceId);
+  }
+
+  function renderRank(entry) {
+    const rp = entry.rankProgress || { enabled: false };
+    if (!rp.enabled) return '<div class="rpg-rank rpg-rank-off">Sin rango</div>';
+    return `<div class="rpg-rank"><span>Rango ${rp.rank}</span><span>${fmt(rp.current)}/${fmt(rp.required)}</span></div><div class="rpg-progress"><i style="width:${Math.round(rp.progress * 100)}%"></i></div>`;
+  }
+
+  function entryDetailExtraFields(entry) {
+    if (String(entry.name || '').toLowerCase() !== 'popularidad') return '';
+    const extra = entry.extraFields || {};
+    return `
+      <label>Seguidores<input type="number" name="followers" value="${Number(extra.followers || 0)}" /></label>
+      <label>Visitas<input type="number" name="views" value="${Number(extra.views || 0)}" /></label>`;
+  }
+
+  function renderCharacterEntryDetailModal(entry, sheet) {
+    const moduleData = entry.moduleData || {};
+    const extraInfo = entry.id === 'module-strength'
+      ? `<p><b>Gym real:</b> ${fmt(moduleData.workoutSessions)} sesiones fuerza · ${fmt(moduleData.cardioSessions)} cardio · ${fmt(moduleData.workoutMinutes)} min · volumen ${fmt(moduleData.volume)} kg</p>`
+      : entry.id === 'module-exploration'
+        ? `<p><b>World real:</b> ${fmt(moduleData.countries)} países · ${fmt(moduleData.cities)} ciudades · ${fmt(moduleData.places || 0)} lugares · ${fmt(moduleData.visits)} visitas</p>`
+        : '';
+
+    openSheet(`
+      <div class="rpg-detail-header rpg-detail-header-new">
+        <div class="rpg-detail-title">
+          <span class="rpg-detail-icon rpg-detail-icon-big">${entry.icon || statIcon(entry.type, entry.name)}</span>
+          <div>
+            <h3>${escapeHtml(entry.name || 'Entrada')}</h3>
+            <small>${escapeHtml(entry.description || 'Sin descripción')}</small>
+          </div>
+        </div>
+        <button class="icon-btn" type="button" data-close-modal="1">✕</button>
+      </div>
+
+      <div class="rpg-detail-kpi rpg-detail-kpi-new">
+        <div><small>Valor actual</small><strong>${entry.name === 'Oro' ? money(entry.value) : fmt(entry.value)}</strong></div>
+        <div><small>Rango actual</small><strong>${entry.rankProgress?.enabled ? `R${entry.rankProgress.rank}` : 'Sin rango'}</strong></div>
+      </div>
+      <div class="rpg-detail-progress">${renderRank(entry)}</div>
+      ${extraInfo}
+
+      <form id="rpg-entry-form" class="rpg-entry-form-layout ${entry.type === 'moduleDerived' ? 'is-derived' : ''}">
+        <section class="rpg-detail-column">
+          <label>Nombre<input name="name" value="${escapeHtml(entry.name || '')}" required ${entry.type === 'moduleDerived' ? 'disabled' : ''} /></label>
+          <label>Icono<input name="icon" value="${escapeHtml(entry.icon || '')}" ${entry.type === 'moduleDerived' ? 'disabled' : ''} /></label>
+          <label>Descripción<textarea name="description" ${entry.type === 'moduleDerived' ? 'disabled' : ''}>${escapeHtml(entry.description || '')}</textarea></label>
+          <label>Valor manual<input type="number" step="0.1" name="manualValue" value="${entry.manualValue || 0}" ${entry.type === 'moduleDerived' ? 'disabled' : ''} /></label>
+          ${entry.type === 'language' ? `<label>Nivel manual<input name="manualLevel" value="${escapeHtml(entry.manualLevel || '')}" placeholder="A1, B2, C1..." /></label>` : ''}
+          ${entryDetailExtraFields(entry)}
+        </section>
+
+        <section class="rpg-detail-column">
+          <label><input type="checkbox" name="rankEnabled" ${entry.rankProgress?.enabled ? 'checked' : ''} ${entry.type === 'moduleDerived' ? 'disabled' : ''}/> Usar sistema de rangos</label>
+          <label>Puntos base por rango<input type="number" step="1" name="rankBase" value="${entry.rankConfig?.basePoints || 120}" ${entry.type === 'moduleDerived' ? 'disabled' : ''}/></label>
+          <label>Crecimiento por rango<input type="number" step="1" name="rankGrowth" value="${entry.rankConfig?.growth || 8}" ${entry.type === 'moduleDerived' ? 'disabled' : ''}/></label>
+          <div class="rpg-rank-preview">${renderRank(entry)}</div>
+        </section>
+      </form>
+
+      ${entry.type === 'moduleDerived' ? '' : `
+      <section class="rpg-source-section">
+        <div class="rpg-source-section-head">
+          <h4>Fuentes asociadas</h4>
+          <div class="rpg-source-section-actions">
+            <button class="btn ghost" type="button" data-manage-sources="1">Gestionar fuentes</button>
+            <button class="btn" type="button" data-add-source="1">Añadir fuente</button>
+          </div>
+        </div>
+        <div class="rpg-source-list">${renderEntrySourceList(entry, sheet)}</div>
+      </section>`}
+
+      <div class="rpg-modal-footer-actions">
+        ${entry.type === 'moduleDerived' ? '' : '<button class="btn primary" type="button" id="rpg-entry-save">Guardar cambios</button>'}
+        ${entry.type === 'moduleDerived' ? '' : '<button class="btn ghost danger" type="button" id="rpg-entry-delete">Eliminar aptitud</button>'}
+        <button class="btn ghost" type="button" data-close-modal="1">Cancelar</button>
+      </div>
+    `, (root) => {
+      root.querySelector('#rpg-entry-save')?.addEventListener('click', async () => {
+        const form = root.querySelector('#rpg-entry-form');
+        const fd = new FormData(form);
+        await persistAndRender((next) => {
+          const row = next.characterEntries.find((r) => r.id === entry.id);
+          if (!row) return;
+          row.name = String(fd.get('name') || '').trim();
+          row.icon = String(fd.get('icon') || '').trim() || row.icon;
+          row.description = String(fd.get('description') || '').trim();
+          row.manualValue = Number(fd.get('manualValue') || 0);
+          row.manualLevel = String(fd.get('manualLevel') || '').trim();
+          row.rankConfig = {
+            enabled: fd.get('rankEnabled') === 'on',
+            basePoints: Number(fd.get('rankBase') || 120),
+            growth: Number(fd.get('rankGrowth') || 8)
+          };
+          if (String(entry.name || '').toLowerCase() === 'popularidad') {
+            row.extraFields = {
+              ...(row.extraFields || {}),
+              followers: Number(fd.get('followers') || 0),
+              views: Number(fd.get('views') || 0)
+            };
+          }
+        });
+        closeModal();
+      });
+
+      root.querySelector('#rpg-entry-delete')?.addEventListener('click', async () => {
+        await persistAndRender((next) => {
+          next.characterEntries = next.characterEntries.filter((row) => row.id !== entry.id);
+          next.entrySources = next.entrySources.filter((src) => src.entryId !== entry.id);
+        });
+        closeModal();
+      });
+
+      root.querySelector('[data-manage-sources]')?.addEventListener('click', () => openEntrySourceEditorModal(entry, sheet));
+      root.querySelector('[data-add-source]')?.addEventListener('click', () => openEntrySourceEditorModal(entry, sheet));
+
+      root.querySelectorAll('[data-edit-source]').forEach((node) => node.addEventListener('click', () => {
+        openEntrySourceEditorModal(entry, sheet, node.dataset.editSource || '');
+      }));
+
+      root.querySelectorAll('[data-delete-source]').forEach((node) => node.addEventListener('click', async () => {
+        await deleteEntrySource(entry, node.dataset.deleteSource || '');
+        const refreshed = buildCharacterSheet(lastSnapshot, { ...lastConfig, financeScope: selectedScope }, selectedRange);
+        const freshEntry = refreshed.entries.find((row) => row.id === entry.id);
+        if (freshEntry) renderCharacterEntryDetailModal(freshEntry, refreshed);
+      }));
+
+      root.querySelectorAll('[data-toggle-source]').forEach((node) => node.addEventListener('change', async () => {
+        const sourceId = node.dataset.toggleSource;
+        await persistAndRender((next) => {
+          const src = next.entrySources.find((row) => row.id === sourceId && row.entryId === entry.id);
+          if (src) src.enabled = !!node.checked;
+        });
+        const refreshed = buildCharacterSheet(lastSnapshot, { ...lastConfig, financeScope: selectedScope }, selectedRange);
+        const freshEntry = refreshed.entries.find((row) => row.id === entry.id);
+        if (freshEntry) renderCharacterEntryDetailModal(freshEntry, refreshed);
+      }));
+    });
+  }
+
   function renderHero(sheet) {
     const id = sheet.identity;
     const level = id.hasBirthdate ? `Nivel ${id.level}` : 'Nivel pendiente';
@@ -140,8 +459,11 @@ if (!$viewMain) {
     const headerFinance = sheet.headerFinance || { gold: 0, dayDelta: 0, monthDelta: 0 };
     const powerLevel = Number(sheet.powerLevel || 0);
     const health = sheet.health || { value: 0, max: 100, progress: 0, todayDelta: 0 };
+    const stamina = sheet.stamina || { value: 0, max: 100, progress: 0, todayDelta: 0 };
+    const games = sheet.gamesSummary || { wins: 0, losses: 0, kills: 0, deaths: 0 };
+
     const topBadges = (sheet.entries || [])
-      .filter((entry) => entry.type !== 'language' && entry.id !== 'module-gold' && String(entry.name || '').toLowerCase() !== 'salud')
+      .filter((entry) => entry.type !== 'language' && entry.id !== 'module-gold' && !['salud', 'estamina'].includes(String(entry.name || '').toLowerCase()))
       .sort((a, b) => (b.rankProgress?.rank || 0) - (a.rankProgress?.rank || 0))
       .slice(0, 6)
       .map((entry) => `<span class="rpg-mini-badge">${entry.icon || statIcon(entry.type, entry.name)} R${entry.rankProgress?.rank || 1}</span>`)
@@ -158,7 +480,7 @@ if (!$viewMain) {
         <small>Mes <span class="${headerFinance.monthDelta >= 0 ? 'is-up' : 'is-down'}">${signed(headerFinance.monthDelta)}</span></small>
       </div>
       <div class="rpg-hero-main">
-        <div class="rpg-hero-name">${nameLabel}</div>
+        <div class="rpg-hero-name">${escapeHtml(nameLabel)}</div>
         <div class="rpg-hero-levels">
           <span>${level}</span>
           <span>Poder total ${fmt(powerLevel)}</span>
@@ -168,15 +490,25 @@ if (!$viewMain) {
         <div class="rpg-health-head"><span>❤️ Salud</span><b>${fmt(health.value)} / ${fmt(health.max)}</b><small class="${health.todayDelta >= 0 ? 'is-up' : 'is-down'}">${signed(health.todayDelta)}</small></div>
         <div class="rpg-health-bar"><i style="width:${Math.round((health.progress || 0) * 100)}%"></i></div>
       </div>
+      <div class="rpg-health-block rpg-stamina-block">
+        <div class="rpg-health-head"><span>⚡ Estamina</span><b>${fmt(stamina.value)} / ${fmt(stamina.max)}</b><small class="${stamina.todayDelta >= 0 ? 'is-up' : 'is-down'}">${signed(stamina.todayDelta)}</small></div>
+        <div class="rpg-health-bar rpg-stamina-bar"><i style="width:${Math.round((stamina.progress || 0) * 100)}%"></i></div>
+      </div>
+      <div class="rpg-hero-summary-grid">
+        <div class="rpg-mini-summary"><span>🏆 Victorias</span><b>${fmt(games.wins)}</b></div>
+        <div class="rpg-mini-summary"><span>💀 Derrotas</span><b>${fmt(games.losses)}</b></div>
+        <div class="rpg-mini-summary"><span>🎯 Kills</span><b>${fmt(games.kills)}</b></div>
+        <div class="rpg-mini-summary"><span>☠️ Deaths</span><b>${fmt(games.deaths)}</b></div>
+      </div>
       <div class="rpg-hero-badges">${topBadges || '<span class="rpg-mini-badge">Añade aptitudes para ver rangos</span>'}</div>`;
 
     $hero.querySelector('#rpg-open-identity')?.addEventListener('click', () => {
       const identity = sheet.identity;
       openSheet(`
-        <h3>CharacterIdentityModal</h3>
+        <div class="rpg-modal-only-head"><h3>Identidad del personaje</h3><button class="icon-btn" type="button" data-close-modal="1">✕</button></div>
         <form id="rpg-identity-form" class="rpg-modal-form">
-          <label>Nombre<input name="name" value="${identity.name || ''}" required /></label>
-          <label>Alias opcional<input name="alias" value="${identity.alias || ''}" /></label>
+          <label>Nombre<input name="name" value="${escapeHtml(identity.name || '')}" required /></label>
+          <label>Alias opcional<input name="alias" value="${escapeHtml(identity.alias || '')}" /></label>
           <label>Fecha de nacimiento<input type="date" name="birthdate" value="${identity.birthdate || ''}" /></label>
           <button class="btn primary" type="submit">Guardar</button>
         </form>
@@ -196,13 +528,14 @@ if (!$viewMain) {
 
     $hero.querySelector('#rpg-open-add')?.addEventListener('click', () => {
       openSheet(`
-        <h3>CharacterAddEntryModal</h3>
+        <div class="rpg-modal-only-head"><h3>Añadir entrada</h3><button class="icon-btn" type="button" data-close-modal="1">✕</button></div>
         <div class="rpg-modal-actions">
           <button class="btn" data-add-type="attribute">Añadir aptitud</button>
           <button class="btn" data-add-type="language">Añadir idioma</button>
           <button class="btn" data-add-type="skill">Añadir habilidad/CV</button>
           <button class="btn" data-add-type="popularidad">Añadir Popularidad</button>
           <button class="btn" data-add-type="health">Añadir/activar Salud</button>
+          <button class="btn" data-add-type="stamina">Añadir/activar Estamina</button>
           <button class="btn" data-close-modal="1">Cancelar</button>
         </div>
       `, (root) => {
@@ -212,10 +545,14 @@ if (!$viewMain) {
             ? { type: 'attribute', name: 'Popularidad', icon: '📣', description: 'Seguidores y visitas manuales.', sourceMode: 'manual', manualValue: 0, extraFields: { followers: 0, views: 0 }, rankConfig: { enabled: true, basePoints: 200, growth: 20 } }
             : type === 'health'
               ? { id: 'entry-health', type: 'attribute', name: 'Salud', icon: '❤️', description: 'Estado de salud asociado a hábitos sanos/insanos.', sourceMode: 'manual', manualValue: 70, rankConfig: { enabled: false, basePoints: 100, growth: 5 } }
-              : defaultEntryByType(type);
+              : type === 'stamina'
+                ? { id: 'entry-stamina', type: 'attribute', name: 'Estamina', icon: '⚡', description: 'Estado de energía diaria asociado a hábitos de descanso/activación.', sourceMode: 'manual', manualValue: 65, rankConfig: { enabled: false, basePoints: 100, growth: 5 } }
+                : defaultEntryByType(type);
           await persistAndRender((next) => {
-            if (type === 'health') {
-              const existing = next.characterEntries.find((x) => x.id === 'entry-health' || String(x.name || '').toLowerCase() === 'salud');
+            if (type === 'health' || type === 'stamina') {
+              const wanted = type === 'health' ? 'entry-health' : 'entry-stamina';
+              const wantedName = type === 'health' ? 'salud' : 'estamina';
+              const existing = next.characterEntries.find((x) => x.id === wanted || String(x.name || '').toLowerCase() === wantedName);
               if (existing) {
                 existing.visible = true;
                 return;
@@ -233,173 +570,24 @@ if (!$viewMain) {
           });
           closeModal();
         }));
-        root.querySelector('[data-close-modal]')?.addEventListener('click', closeModal);
       });
     });
-  }
-
-  function renderRank(entry) {
-    const rp = entry.rankProgress || { enabled: false };
-    if (!rp.enabled) return '<div class="rpg-rank rpg-rank-off">Sin rango</div>';
-    return `<div class="rpg-rank"><span>Rango ${rp.rank}</span><span>${fmt(rp.current)}/${fmt(rp.required)}</span></div><div class="rpg-progress"><i style="width:${Math.round(rp.progress * 100)}%"></i></div>`;
-  }
-
-  function entryDetailExtraFields(entry) {
-    if (String(entry.name || '').toLowerCase() !== 'popularidad') return '';
-    const extra = entry.extraFields || {};
-    return `
-      <label>Seguidores<input type="number" name="followers" value="${Number(extra.followers || 0)}" /></label>
-      <label>Visitas<input type="number" name="views" value="${Number(extra.views || 0)}" /></label>`;
   }
 
   function renderStats(sheet) {
     $stats.innerHTML = sheet.entries.map((entry) => `
       <article class="rpg-stat" data-entry="${entry.id}">
-        <button type="button" class="rpg-stat-open" data-entry-open="${entry.id}">${entry.icon || statIcon(entry.type, entry.name)} ${entry.name}</button>
+        <button type="button" class="rpg-stat-open" data-entry-open="${entry.id}">${entry.icon || statIcon(entry.type, entry.name)} ${escapeHtml(entry.name)}</button>
         <div class="rpg-stat-head"><span>${entry.type === 'language' ? 'Nivel' : 'Valor total'}</span><strong>${entry.type === 'language' ? (entry.manualLevel || '—') : fmt(entry.value)}</strong></div>
         ${renderRank(entry)}
-        <small>${entry.description || 'Sin descripción'}</small>
+        <small>${escapeHtml(entry.description || 'Sin descripción')}</small>
       </article>
     `).join('');
 
     $stats.querySelectorAll('[data-entry-open]').forEach((btn) => btn.addEventListener('click', () => {
       const entry = sheet.entries.find((row) => row.id === btn.dataset.entryOpen);
       if (!entry) return;
-      const habitOptions = sheet.sourceCatalog.habits.map((h) => `<option value="${h.id}">${h.name || h.id}</option>`).join('');
-      const counterOptions = sheet.sourceCatalog.counters.map((c) => `<option value="${c.id}">${c.name || c.id}</option>`).join('');
-      const sourceRows = entry.sourceRows?.map((src) => `<article class="rpg-source-row" data-source-id="${src.id || ''}"><div><b>${src.sourceType}:${src.sourceId}</b><small>${src.unitMode || 'count'} · aporte ${fmt(src.contribution)}</small></div><div class="rpg-source-meta"><span>${src.sign === 'subtract' ? '−' : '+'}${fmt(src.weight)}</span><button class="btn ghost danger" type="button" data-delete-source="${src.id || ''}">Quitar</button></div></article>`).join('') || '<div class="rpg-empty">Sin fuentes asociadas</div>'; 
-      const moduleData = entry.moduleData || {};
-      const extraInfo = entry.id === 'module-strength'
-        ? `<p><b>Gym real:</b> ${fmt(moduleData.workoutSessions)} sesiones fuerza · ${fmt(moduleData.cardioSessions)} cardio · ${fmt(moduleData.workoutMinutes)} min · volumen ${fmt(moduleData.volume)} kg</p>`
-        : entry.id === 'module-exploration'
-          ? `<p><b>World real:</b> ${fmt(moduleData.countries)} países · ${fmt(moduleData.cities)} ciudades · ${fmt(moduleData.places || 0)} lugares · ${fmt(moduleData.visits)} visitas</p>`
-          : '';
-
-      openSheet(`
-        <div class="rpg-detail-header"><div class="rpg-detail-title"><span class="rpg-detail-icon">${entry.icon || statIcon(entry.type, entry.name)}</span><div><h3>${entry.name}</h3><small>${entry.description || 'Sin descripción'}</small></div></div><button class="icon-btn" type="button" data-close-modal="1">✕</button></div>
-        <div class="rpg-detail-kpi"><div><small>Valor actual</small><strong>${entry.name === 'Oro' ? money(entry.value) : fmt(entry.value)}</strong></div><div><small>Rango actual</small><strong>${entry.rankProgress?.enabled ? `R${entry.rankProgress.rank}` : 'Sin rango'}</strong></div></div>
-        <div class="rpg-detail-progress">${renderRank(entry)}</div>
-        ${extraInfo}
-        <form id="rpg-entry-form" class="rpg-modal-form">
-          <label>Nombre<input name="name" value="${entry.name || ''}" required ${entry.type === 'moduleDerived' ? 'disabled' : ''} /></label>
-          <label>Icono<input name="icon" value="${entry.icon || ''}" ${entry.type === 'moduleDerived' ? 'disabled' : ''} /></label>
-          <label>Descripción<textarea name="description" ${entry.type === 'moduleDerived' ? 'disabled' : ''}>${entry.description || ''}</textarea></label>
-          <label>Valor manual<input type="number" step="0.1" name="manualValue" value="${entry.manualValue || 0}" ${entry.type === 'moduleDerived' ? 'disabled' : ''} /></label>
-          ${entry.type === 'language' ? `<label>Nivel manual<input name="manualLevel" value="${entry.manualLevel || ''}" placeholder="A1, B2, C1..." /></label>` : ''}
-          ${entryDetailExtraFields(entry)}
-          <label><input type="checkbox" name="rankEnabled" ${entry.rankProgress?.enabled ? 'checked' : ''} ${entry.type === 'moduleDerived' ? 'disabled' : ''}/> Usar sistema de rangos</label>
-          <label>Puntos base por rango<input type="number" step="1" name="rankBase" value="${entry.rankConfig?.basePoints || 120}" ${entry.type === 'moduleDerived' ? 'disabled' : ''}/></label>
-          <label>Crecimiento por rango<input type="number" step="1" name="rankGrowth" value="${entry.rankConfig?.growth || 8}" ${entry.type === 'moduleDerived' ? 'disabled' : ''}/></label>
-          ${entry.type === 'moduleDerived' ? '' : '<button class="btn primary" type="submit">Guardar cambios</button>'}
-          ${entry.type === 'moduleDerived' ? '' : '<button class="btn danger" type="button" id="rpg-entry-delete">Eliminar</button>'}
-        </form>
-        ${entry.type === 'moduleDerived' ? '' : `<hr/>
-        <h4>Fuentes asociadas</h4>
-        <div class="rpg-source-list">${sourceRows}</div>
-        <form id="rpg-source-form" class="rpg-modal-form">
-          <label>Tipo de fuente
-            <select name="sourceType">
-              <option value="habit">Hábito</option>
-              <option value="counter">Contador</option>
-              <option value="manual">Manual</option>
-              <option value="moduleMetric">Métrica de módulo</option>
-            </select>
-          </label>
-          <label>Hábito<select name="habitId"><option value="">—</option>${habitOptions}</select></label>
-          <label>Contador<select name="counterId"><option value="">—</option>${counterOptions}</select></label>
-          <label>Módulo<select name="moduleMetricId"><option value="">—</option><option value="gym:strength">Gym · Fuerza</option><option value="world:exploration">World · Exploración</option><option value="finance:gold">Finance · Oro</option></select></label>
-          <label>Unidad
-            <select name="unitMode">
-              <option value="minute">por minuto</option>
-              <option value="hour">por hora</option>
-              <option value="session">por sesión</option>
-              <option value="count">por unidad</option>
-            </select>
-          </label>
-          <label>Peso<input type="number" step="0.1" name="weight" value="1" /></label>
-          <label>Signo
-            <select name="sign">
-              <option value="add">Suma</option>
-              <option value="subtract">Resta</option>
-            </select>
-          </label>
-          <label>Valor manual fuente<input type="number" step="0.1" name="manualSourceValue" value="0" /></label>
-          <button class="btn" type="submit">Añadir fuente</button>
-        </form>`}
-      `, (root) => {
-        root.querySelector('[data-close-modal]')?.addEventListener('click', closeModal);
-        root.querySelector('#rpg-entry-form')?.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const fd = new FormData(e.target);
-          await persistAndRender((next) => {
-            const row = next.characterEntries.find((r) => r.id === entry.id);
-            if (!row) return;
-            row.name = String(fd.get('name') || '').trim();
-            row.icon = String(fd.get('icon') || '').trim() || row.icon;
-            row.description = String(fd.get('description') || '').trim();
-            row.manualValue = Number(fd.get('manualValue') || 0);
-            row.manualLevel = String(fd.get('manualLevel') || '').trim();
-            row.rankConfig = {
-              enabled: fd.get('rankEnabled') === 'on',
-              basePoints: Number(fd.get('rankBase') || 120),
-              growth: Number(fd.get('rankGrowth') || 8)
-            };
-            if (String(entry.name || '').toLowerCase() === 'popularidad') {
-              row.extraFields = {
-                ...(row.extraFields || {}),
-                followers: Number(fd.get('followers') || 0),
-                views: Number(fd.get('views') || 0)
-              };
-            }
-          });
-          closeModal();
-        });
-
-        root.querySelector('#rpg-entry-delete')?.addEventListener('click', async () => {
-          await persistAndRender((next) => {
-            next.characterEntries = next.characterEntries.filter((row) => row.id !== entry.id);
-            next.entrySources = next.entrySources.filter((src) => src.entryId !== entry.id);
-          });
-          closeModal();
-        });
-
-        root.querySelectorAll('[data-delete-source]').forEach((node) => node.addEventListener('click', async () => {
-          const sourceId = node.dataset.deleteSource;
-          if (!sourceId) return;
-          await persistAndRender((next) => {
-            next.entrySources = next.entrySources.filter((src) => src.id !== sourceId);
-          });
-          closeModal();
-        }));
-
-        root.querySelector('#rpg-source-form')?.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const fd = new FormData(e.target);
-          const sourceType = String(fd.get('sourceType') || 'habit');
-          const sourceId = sourceType === 'habit'
-            ? String(fd.get('habitId') || '').trim()
-            : sourceType === 'counter'
-              ? String(fd.get('counterId') || '').trim()
-              : sourceType === 'moduleMetric'
-                ? String(fd.get('moduleMetricId') || '').trim()
-                : `manual-${Date.now()}`;
-          if (!sourceId) return;
-          await persistAndRender((next) => {
-            next.entrySources.push({
-              id: `src-${Date.now()}`,
-              entryId: entry.id,
-              sourceType,
-              sourceId,
-              unitMode: String(fd.get('unitMode') || 'minute'),
-              weight: Number(fd.get('weight') || 1),
-              sign: String(fd.get('sign') || 'add'),
-              enabled: true,
-              manualValue: Number(fd.get('manualSourceValue') || 0)
-            });
-          });
-          closeModal();
-        });
-      });
+      renderCharacterEntryDetailModal(entry, sheet);
     }));
   }
 
@@ -436,20 +624,21 @@ if (!$viewMain) {
   }
 
   function renderPanels(sheet) {
-    $delta.innerHTML = '<div class="rpg-delta-item">✅ Identidad + oro arriba, detalle financiero abajo y rangos por entrada.</div>';
+    $delta.innerHTML = '<div class="rpg-delta-item">✅ Layout limpio: modal principal + submodal de fuentes + una única superficie de scroll por vista.</div>';
     $ranking.innerHTML = `
       <div><b>Exploración real:</b> ${fmt(sheet.world.countries)} países · ${fmt(sheet.world.cities)} ciudades · ${fmt(sheet.world.places || 0)} lugares · ${fmt(sheet.world.visits)} visitas.</div>
+      <div><b>Games:</b> ${fmt(sheet.gamesSummary?.wins)}W · ${fmt(sheet.gamesSummary?.losses)}L · ${fmt(sheet.gamesSummary?.kills)}K · ${fmt(sheet.gamesSummary?.deaths)}D</div>
       <div><b>Entradas visibles:</b> ${sheet.entries.length}</div>`;
 
     const languages = sheet.entries.filter((entry) => entry.type === 'language');
     const skills = sheet.entries.filter((entry) => entry.type === 'skill' || entry.type === 'attribute');
     $activity.innerHTML = `
       <div class="rpg-section-title">Aptitudes / Habilidades / CV</div>
-      <ul>${skills.map((entry) => `<li>${entry.icon || '✨'} <b>${entry.name}</b> · ${fmt(entry.value)} ${entry.rankProgress?.enabled ? `· R${entry.rankProgress.rank}` : ''}</li>`).join('') || '<li>Sin entradas manuales todavía</li>'}</ul>
+      <ul>${skills.map((entry) => `<li>${entry.icon || '✨'} <b>${escapeHtml(entry.name)}</b> · ${fmt(entry.value)} ${entry.rankProgress?.enabled ? `· R${entry.rankProgress.rank}` : ''}</li>`).join('') || '<li>Sin entradas manuales todavía</li>'}</ul>
       <div class="rpg-section-title">Idiomas</div>
-      <ul>${languages.map((entry) => `<li>${entry.icon || '🗣️'} <b>${entry.name}</b> · ${entry.manualLevel || 'sin nivel'} · ${fmt(entry.value)}h</li>`).join('') || '<li>Sin idiomas manuales todavía</li>'}</ul>`;
+      <ul>${languages.map((entry) => `<li>${entry.icon || '🗣️'} <b>${escapeHtml(entry.name)}</b> · ${escapeHtml(entry.manualLevel || 'sin nivel')} · ${fmt(entry.value)}h</li>`).join('') || '<li>Sin idiomas manuales todavía</li>'}</ul>`;
 
-    $formulas.innerHTML = '<ul><li>Valor final = valor manual + suma/resta de fuentes configuradas por peso.</li><li>Si activas rangos: progreso abierto sin tope global, con puntos base + crecimiento por rango.</li></ul>';
+    $formulas.innerHTML = '<ul><li>Valor final = valor manual + suma/resta de fuentes configuradas por peso.</li><li>Salud y Estamina calculan delta diario por fuentes del día.</li><li>Resumen de Games agrega victorias, derrotas, kills y deaths reales.</li></ul>';
     $config.innerHTML = '';
   }
 

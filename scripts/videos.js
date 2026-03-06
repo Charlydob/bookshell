@@ -3877,7 +3877,10 @@ function createVideoCard(id) {
   btnScript.textContent = "📖";
   btnScript.setAttribute("aria-label", "Abrir guion");
   btnScript.title = "Abrir guion";
+  btnScript.dataset.openScript = id;
   btnScript.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     console.log('[VIDEOS] click abrir guion', { videoId: id, source: 'video-card', button: event.currentTarget?.textContent || '' });
     openScriptView(id);
   });
@@ -3995,6 +3998,16 @@ function createVideoCard(id) {
     $videosEmpty.style.display = idsAll.length ? "none" : "block";
   }
 }
+
+  $videosList?.addEventListener("click", (event) => {
+    const btn = event.target?.closest?.('[data-open-script]');
+    if (!btn) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const videoId = String(btn.dataset.openScript || '').trim();
+    if (!videoId) return;
+    openScriptView(videoId);
+  });
 
   function renderIdeas() {
     renderVideos();

@@ -1,5 +1,14 @@
 const FALLBACK_KEY = 'bookshell:indexeddb:fallback';
 
+function safeReadFallbackMap() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(FALLBACK_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
 function isIndexedDbIssue(err) {
   const msg = String(err?.message || err || '').toLowerCase();
   return msg.includes('indexed database server lost')
@@ -119,7 +128,7 @@ export function initIndexedDBSafe({ dbName = 'bookshell-cache', storeName = 'kv'
   }
 
   const persistFallback = async (key, value) => {
-    const payload = { ...(JSON.parse(localStorage.getItem(FALLBACK_KEY) || '{}')), [key]: value };
+    const payload = { ...safeReadFallbackMap(), [key]: value };
     localStorage.setItem(FALLBACK_KEY, JSON.stringify(payload));
     await memory.setItem(key, value);
   };
@@ -132,7 +141,7 @@ export function initIndexedDBSafe({ dbName = 'bookshell-cache', storeName = 'kv'
     },
     async getItem(key) {
       if (status === 'fallback') {
-        const data = JSON.parse(localStorage.getItem(FALLBACK_KEY) || '{}');
+        const data = safeReadFallbackMap();
         return data[key] ?? memory.getItem(key);
       }
       const value = await withStore('readonly', (store, done, fail) => {
@@ -141,7 +150,7 @@ export function initIndexedDBSafe({ dbName = 'bookshell-cache', storeName = 'kv'
         req.onerror = () => fail(req.error);
       });
       if (value == null) {
-        const data = JSON.parse(localStorage.getItem(FALLBACK_KEY) || '{}');
+        const data = safeReadFallbackMap();
         return data[key] ?? null;
       }
       return value;
@@ -157,7 +166,7 @@ export function initIndexedDBSafe({ dbName = 'bookshell-cache', storeName = 'kv'
     },
     async removeItem(key) {
       if (status === 'fallback') {
-        const data = JSON.parse(localStorage.getItem(FALLBACK_KEY) || '{}');
+        const data = safeReadFallbackMap();
         delete data[key];
         localStorage.setItem(FALLBACK_KEY, JSON.stringify(data));
         await memory.removeItem(key);

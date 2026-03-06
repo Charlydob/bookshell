@@ -5,25 +5,11 @@
 // - Modal: añadir (checkbox) + modal editar (JS)
 // - Sync: localStorage + Firebase RTDB (merge anti-pisotón)
 
-import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, onValue, runTransaction, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { ref, onValue, runTransaction, set, get } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { TMDB_API_KEY, TMDB_READ_TOKEN } from "../config/tmdb.js";
+import { db, auth } from "./firebase-shared.js";
+import { resolveMediaRoot, resolveMediaPathCandidates } from "./data-roots.js";
 
-/* ------------------------- Firebase ------------------------- */
-const firebaseConfig = {
-  apiKey: "AIzaSyC1oqRk7GpYX854RfcGrYHt6iRun5TfuYE",
-  authDomain: "bookshell-59703.firebaseapp.com",
-  databaseURL: "https://bookshell-59703-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "bookshell-59703",
-  storageBucket: "bookshell-59703.appspot.com",
-  messagingSenderId: "554557230752",
-  appId: "1:554557230752:web:37c24e287210433cf883c5"
-};
-
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-const db = getDatabase(app);
-
-const MEDIA_PATH = "media";
 const LS_KEY = "bookshell.media.v3";
 const FILTERS_LS_KEY = "bookshell.media.filters.v1";
 const TMDB_CACHE_KEY = "bookshell.media.tmdb.v1";
@@ -65,6 +51,13 @@ const state = {
 };
 
 function log(...a) { try { console.debug("[media]", ...a); } catch (_) {} }
+function isRouteDebugEnabled() {
+  try { return localStorage.getItem("bookshell.debug.routes") === "1"; } catch (_) { return false; }
+}
+function routeLog(...a) {
+  if (!isRouteDebugEnabled()) return;
+  try { console.debug("[media][route]", ...a); } catch (_) {}
+}
 
 /* ------------------------- Utils ------------------------- */
 function uid() {
@@ -642,8 +635,41 @@ async function tmdbFetchDetails(id, type) {
 }
 
 /* ------------------------- Cache + Firebase merge ------------------------- */
+function currentUid() {
+  return auth.currentUser?.uid || null;
+}
+
+function firebaseRoot() {
+  const uid = currentUid();
+  if (!uid) return null;
+  return resolveMediaRoot(uid);
+}
+
 function firebasePath(id = "") {
-  return id ? `${MEDIA_PATH}/${id}` : MEDIA_PATH;
+  const root = firebaseRoot();
+  if (!root) return null;
+  return id ? `${root}/${id}` : root;
+}
+
+async function readFirstMediaCandidate() {
+  const uid = currentUid();
+  if (!uid) return null;
+  const candidates = resolveMediaPathCandidates(uid);
+  routeLog("uid", uid, "candidates", candidates);
+
+  for (const candidate of candidates) {
+    try {
+      const snap = await get(ref(db, candidate));
+      const val = snap.val();
+      if (!val || typeof val !== "object") continue;
+      const count = Array.isArray(val) ? val.length : Object.keys(val).length;
+      routeLog("loaded candidate", candidate, "count", count);
+      return { candidate, value: val };
+    } catch (e) {
+      console.warn("[media] firebase candidate read failed", candidate, e);
+    }
+  }
+  return null;
 }
 
 function loadCache() {
@@ -690,12 +716,30 @@ function markPending(id, updatedAt) {
   pendingWrites.set(String(id), Number(updatedAt) || nowTs());
 }
 
-function bindFirebaseOnce() {
+async function bindFirebaseOnce() {
   if (firebaseBound) return;
+
+  const root = firebasePath();
+  if (!root) {
+    console.warn("[media] UID no disponible, se omite binding Firebase");
+    return;
+  }
+
   firebaseBound = true;
 
+  const initial = await readFirstMediaCandidate();
+  if (initial?.candidate && initial.candidate !== root) {
+    try {
+      await set(ref(db, root), initial.value);
+      routeLog("migrated legacy data", initial.candidate, "->", root);
+    } catch (e) {
+      console.warn("[media] firebase migration failed", e);
+    }
+  }
+
   try {
-    onValue(ref(db, firebasePath()), (snap) => {
+    routeLog("binding onValue", root);
+    onValue(ref(db, root), (snap) => {
       const val = snap.val();
 
       // remoto vacío => opcional: bootstrap desde cache
@@ -704,7 +748,7 @@ function bindFirebaseOnce() {
           try {
             const obj = {};
             for (const it of items) obj[it.id] = it;
-            set(ref(db, firebasePath()), obj);
+            set(ref(db, root), obj);
             window.__mediaBootstrapDone = true;
             log("firebase bootstrap", items.length);
           } catch (e) {
@@ -751,18 +795,24 @@ function bindFirebaseOnce() {
 }
 
 function pushItemToFirebase(item) {
+  const path = firebasePath(item?.id);
+  if (!path) return;
   try {
     markPending(item?.id, item?.updatedAt);
-    set(ref(db, firebasePath(item.id)), item);
+    routeLog("write", path);
+    set(ref(db, path), item);
   } catch (e) {
     console.warn("[media] firebase set failed", e);
   }
 }
 
 function deleteItemFromFirebase(id) {
+  const path = firebasePath(id);
+  if (!path) return;
   try {
     pendingWrites.set(String(id), Number.MAX_SAFE_INTEGER);
-    set(ref(db, firebasePath(id)), null);
+    routeLog("delete", path);
+    set(ref(db, path), null);
   } catch (e) {
     console.warn("[media] firebase delete failed", e);
   }
@@ -3123,7 +3173,9 @@ function scheduleProgressSave() {
 async function adjustSeenCountFromModal(delta) {
   const id = editModal?.dataset?.id;
   if (!id || !delta) return;
-  const itemRef = ref(db, firebasePath(id));
+  const itemPath = firebasePath(id);
+  if (!itemPath) return;
+  const itemRef = ref(db, itemPath);
   try {
     await runTransaction(itemRef, (current) => {
       if (!current || typeof current !== "object") return current;

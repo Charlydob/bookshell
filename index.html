@@ -43,98 +43,44 @@
 <main class="app-main">
 <!-- Vista LIBROS -->
 <section class="view view-active" id="view-main">
-<div class="dash-header">
-<div>
-<div class="dash-title">Hoy</div>
-<div class="dash-subtitle">Tu resumen, sin rodeos.</div>
-</div>
-</div>
-<div class="dash-grid">
-<div class="dash-card">
-<div class="dash-card-inner">
-<div class="dash-card-head">
-<div class="dash-card-title">Tiempo por hábito</div>
-<div class="dash-actions">
-<button class="dash-btn primary" id="dash-habit-session" type="button">Empezar sesión</button>
-<button class="dash-btn" id="dash-habit-open" type="button">Abrir Hábitos</button>
-</div>
-</div>
-<div aria-label="Rango" class="dash-chiprow" id="dash-range"></div>
-<div class="dash-donut-wrap">
-<div class="dash-donut" id="dash-donut"></div>
-<div aria-label="Unidad de tiempo" class="dash-unit" id="dash-unit"></div>
-</div>
-<details class="dash-accordion">
-<summary>Desglose por hábito</summary>
-<div class="dash-legend" id="dash-legend"></div>
-</details>
-</div>
-</div>
-<div class="dash-card dash-shelf-card">
-<div class="dash-card-inner">
-<div class="dash-card-head">
-<div class="dash-card-title">En marcha</div>
-<div class="dash-actions">
-<button class="dash-btn" id="dash-shelf-open-books" type="button">Libros</button>
-<button class="dash-btn" id="dash-shelf-open-recipes" type="button">Recetas</button>
-</div>
-</div>
-<div class="dash-shelf">
-<div class="dash-shelf-side">
-<div class="dash-shelf-label">Último libro</div>
-<div class="dash-shelf-slot" id="dash-shelf-book"></div>
-</div>
-<div aria-hidden="true" class="dash-shelf-pillar"></div>
-<div class="dash-shelf-side">
-<div class="dash-shelf-label">Receta</div>
-<div class="dash-shelf-slot" id="dash-shelf-recipe"></div>
-</div>
-<div aria-hidden="true" class="dash-shelf-plank"></div>
-</div>
-</div>
-</div>
-</div>
-<div class="dash-card">
-<div class="dash-card-inner">
-<div class="dash-card-head">
-<div class="dash-card-title">Último vídeo</div>
-<div class="dash-actions">
-<button class="dash-btn" id="dash-video-open" type="button">Editar</button>
-</div>
-</div>
-<div class="dash-row">
-<div class="dash-kpi">
-<div class="kpi-value" id="dash-video-title">—</div>
-<div class="kpi-label" id="dash-video-meta">—</div>
-</div>
-<div class="dash-actions">
-<button class="dash-btn primary" id="dash-video-timer" type="button">Empezar cronómetro</button>
-</div>
-</div>
-</div>
-</div>
+  <div class="rpg-shell" id="rpg-dashboard">
+    <header class="rpg-hero" id="rpg-hero"></header>
+    <section class="rpg-panel">
+      <div class="rpg-panel-title">Atributos principales</div>
+      <div class="rpg-stats" id="rpg-stats"></div>
+    </section>
+    <section class="rpg-panel">
+      <div class="rpg-panel-title">Recursos</div>
+      <div class="rpg-resources" id="rpg-resources"></div>
+    </section>
+    <section class="rpg-panel">
+      <div class="rpg-panel-title">Resumen del periodo</div>
+      <div class="rpg-delta" id="rpg-delta"></div>
+    </section>
+    <section class="rpg-panel">
+      <div class="rpg-panel-title">Rasgos activos</div>
+      <div class="rpg-traits" id="rpg-traits"></div>
+    </section>
+    <section class="rpg-panel">
+      <div class="rpg-panel-title">Ficha técnica</div>
+      <div class="rpg-ranking" id="rpg-ranking"></div>
+    </section>
+    <details class="rpg-panel rpg-collapsible" open>
+      <summary>Actividad reciente</summary>
+      <div class="rpg-activity" id="rpg-activity"></div>
+    </details>
+    <details class="rpg-panel rpg-collapsible">
+      <summary>Cómo se interpreta esta ficha</summary>
+      <div class="rpg-formulas" id="rpg-formulas"></div>
+    </details>
+  </div>
 
-<div class="dash-card dash-map-card">
-<div class="dash-card-inner">
-<div class="dash-card-head">
-<div class="dash-card-title">Mapa</div>
-<div class="dash-actions">
-<select class="dash-map-select" id="dash-map-select" aria-label="Elegir mapa">
-<option value="media">Pantalla</option>
-<option value="books">Libros</option>
-<option value="recipes">Recetas</option>
-<option value="world">Mundo</option></select>
-</div>
-</div>
-<div class="dash-map-host" id="dash-map-host">
-<div class="dash-map-empty" id="dash-map-empty" style="display:none;">No hay mapa aún. Abre esa pestaña una vez para inicializarlo.</div>
-</div>
-
-<div class="dash-map-breakdown-host" id="dash-map-breakdown-host">
-  <div class="dash-map-breakdown-empty" id="dash-map-breakdown-empty" style="display:none">No hay desglose aún.</div>
-</div>
-</div>
-</div>
+  <dialog class="rpg-modal" id="rpg-stat-modal">
+    <div class="rpg-modal-card">
+      <button class="rpg-modal-close" id="rpg-modal-close" type="button">✕</button>
+      <div id="rpg-modal-content"></div>
+    </div>
+  </dialog>
 </section></main></div>
 
 <section class="view" id="view-books">

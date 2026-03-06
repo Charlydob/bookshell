@@ -2102,16 +2102,28 @@ function extraerNotas(rawText) {
     scheduleScriptAnnotationHighlighting();
     dumpScriptStructure();
   }
+let quillLoadPromise = null;
 
-  function openScriptView(videoId) {
+function ensureQuillLoaded() {
+  if (window.Quill) return Promise.resolve(window.Quill);
+  if (quillLoadPromise) return quillLoadPromise;
+
+  quillLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js';
+    script.onload = () => resolve(window.Quill);
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+
+  return quillLoadPromise;
+}
+async function openScriptView(videoId) {
     if (!videoId) {
       console.error('[VIDEOS] openScriptView sin videoId', { videoId });
       return;
     }
-    if (!window.Quill) {
-      console.error("Quill no cargado");
-      return;
-    }
+    await ensureQuillLoaded();
     const video = videos?.[videoId];
     if (!video) {
       console.error('[VIDEOS] openScriptView video no encontrado', { videoId, known: Object.keys(videos || {}).length });

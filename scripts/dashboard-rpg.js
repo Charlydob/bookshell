@@ -61,6 +61,132 @@ function getRangeTx(transactions = {}, days = 7) {
   });
 }
 
+function makeEmptyHabitTotals(id, name = '') {
+  return {
+    id,
+    name: String(name || id || '').trim(),
+    sessionHoursTotal: 0,
+    sessionHoursWeek: 0,
+    sessionHoursToday: 0,
+    countTotal: 0,
+    countWeek: 0,
+    todayCount: 0,
+    checksWeek: 0
+  };
+}
+
+function getHabitMetricValue(habitTotals, habitId, metric = 'todayCount') {
+  if (!habitId || !habitTotals?.[habitId]) return 0;
+  const row = habitTotals[habitId];
+
+  switch (metric) {
+    case 'sessionHoursToday': return toNum(row.sessionHoursToday);
+    case 'sessionHoursWeek': return toNum(row.sessionHoursWeek);
+    case 'sessionHoursTotal': return toNum(row.sessionHoursTotal);
+    case 'todayCount': return toNum(row.todayCount);
+    case 'countWeek': return toNum(row.countWeek);
+    case 'countTotal': return toNum(row.countTotal);
+    case 'checksWeek': return toNum(row.checksWeek);
+    default: return toNum(row[metric]);
+  }
+}
+
+function normalizeStaminaInput(raw = {}) {
+  return {
+    habitId: String(raw?.habitId || raw?.id || '').trim(),
+    metric: String(raw?.metric || raw?.source || 'todayCount').trim() || 'todayCount',
+    weight: toNum(raw?.weight ?? raw?.value ?? 1),
+    maxContribution: raw?.maxContribution == null ? null : toNum(raw.maxContribution),
+    minContribution: raw?.minContribution == null ? null : toNum(raw.minContribution)
+  };
+}
+
+function computeStaminaFromConfig(habitTotals = {}, config = {}) {
+  const staminaConfig = config?.stamina && typeof config.stamina === 'object'
+    ? config.stamina
+    : {};
+
+  const positiveInputs = Array.isArray(staminaConfig.positiveInputs)
+    ? staminaConfig.positiveInputs
+    : [];
+
+  const negativeInputs = Array.isArray(staminaConfig.negativeInputs)
+    ? staminaConfig.negativeInputs
+    : [];
+
+  const base = toNum(staminaConfig.base ?? 0);
+  const min = Number.isFinite(Number(staminaConfig.min)) ? toNum(staminaConfig.min) : 0;
+  const max = Number.isFinite(Number(staminaConfig.max)) ? toNum(staminaConfig.max) : 100;
+
+  let positive = 0;
+  let negative = 0;
+
+  const breakdown = {
+    positive: [],
+    negative: []
+  };
+
+  positiveInputs.forEach((raw) => {
+    const habitId = String(raw?.habitId || raw?.id || '').trim();
+    if (!habitId) return;
+
+    const metric = String(raw?.metric || 'todayCount').trim() || 'todayCount';
+    const weight = toNum(raw?.weight ?? 0);
+    const cap = raw?.maxContribution == null ? null : toNum(raw.maxContribution);
+
+    const rawValue = getHabitMetricValue(habitTotals, habitId, metric);
+    let contribution = rawValue * weight;
+
+    if (cap != null) contribution = Math.min(cap, contribution);
+    contribution = Math.max(0, contribution);
+
+    positive += contribution;
+    breakdown.positive.push({
+      habitId,
+      metric,
+      weight,
+      rawValue,
+      contribution
+    });
+  });
+
+  negativeInputs.forEach((raw) => {
+    const habitId = String(raw?.habitId || raw?.id || '').trim();
+    if (!habitId) return;
+
+    const metric = String(raw?.metric || 'todayCount').trim() || 'todayCount';
+    const weight = toNum(raw?.weight ?? 0);
+    const cap = raw?.maxContribution == null ? null : toNum(raw.maxContribution);
+
+    const rawValue = getHabitMetricValue(habitTotals, habitId, metric);
+    let contribution = rawValue * weight;
+
+    if (cap != null) contribution = Math.min(cap, contribution);
+    contribution = Math.max(0, contribution);
+
+    negative += contribution;
+    breakdown.negative.push({
+      habitId,
+      metric,
+      weight,
+      rawValue,
+      contribution
+    });
+  });
+
+  const total = Math.max(min, Math.min(max, base + positive - negative));
+
+  return {
+    total,
+    base,
+    min,
+    max,
+    positive,
+    negative,
+    breakdown
+  };
+}
+
 export function computeCharacterLevelFromBirthdate(birthdate) {
   if (!birthdate) return null;
   const b = new Date(`${birthdate}T00:00:00`);
@@ -119,6 +245,7 @@ export function computeCharacterWorldStats(snapshot = {}) {
 }
 
 function computeHabitTotals(snapshot = {}) {
+  
   const habitsRoot = snapshot.habits || {};
   const defs = habitsRoot.habits || {};
   const sessions = habitsRoot.habitSessions || {};
@@ -126,46 +253,44 @@ function computeHabitTotals(snapshot = {}) {
   const checks = habitsRoot.habitChecks || {};
 
   const out = {};
+  const today = new Date().toISOString().slice(0, 10);
+
   entries(defs).forEach(([id, def]) => {
-    out[id] = {
-      id,
-      name: habitName(def),
-      sessionHoursTotal: 0,
-      sessionHoursWeek: 0,
-      countTotal: 0,
-      countWeek: 0,
-      checksWeek: 0,
-      todayCount: 0,
-      lastDayHours: 0
-    };
+    out[id] = makeEmptyHabitTotals(id, habitName(def));
   });
 
   entries(sessions).forEach(([habitId, byDay]) => {
-    if (!out[habitId]) out[habitId] = { id: habitId, name: habitId, sessionHoursTotal: 0, sessionHoursWeek: 0, countTotal: 0, countWeek: 0, checksWeek: 0, todayCount: 0, lastDayHours: 0 };
+    if (!out[habitId]) out[habitId] = makeEmptyHabitTotals(habitId, habitId);
+
     entries(byDay || {}).forEach(([day, sec]) => {
       const hours = toNum(sec) / 3600;
       const ts = parseDay(day);
+
       out[habitId].sessionHoursTotal += hours;
       if (ts >= nowTs() - 7 * DAY) out[habitId].sessionHoursWeek += hours;
-      if (ts >= nowTs() - 2 * DAY) out[habitId].lastDayHours += hours;
+      if (day === today) out[habitId].sessionHoursToday += hours;
     });
   });
 
-  const today = new Date().toISOString().slice(0, 10);
   entries(counts).forEach(([habitId, byDay]) => {
-    if (!out[habitId]) out[habitId] = { id: habitId, name: habitId, sessionHoursTotal: 0, sessionHoursWeek: 0, countTotal: 0, countWeek: 0, checksWeek: 0, todayCount: 0, lastDayHours: 0 };
+    if (!out[habitId]) out[habitId] = makeEmptyHabitTotals(habitId, habitId);
+
     entries(byDay || {}).forEach(([day, n]) => {
       const value = toNum(n);
+
       out[habitId].countTotal += value;
-      if (day === today) out[habitId].todayCount += value;
       if (parseDay(day) >= nowTs() - 7 * DAY) out[habitId].countWeek += value;
+      if (day === today) out[habitId].todayCount += value;
     });
   });
 
   entries(checks).forEach(([habitId, byDay]) => {
-    if (!out[habitId]) out[habitId] = { id: habitId, name: habitId, sessionHoursTotal: 0, sessionHoursWeek: 0, countTotal: 0, countWeek: 0, checksWeek: 0, todayCount: 0, lastDayHours: 0 };
+    if (!out[habitId]) out[habitId] = makeEmptyHabitTotals(habitId, habitId);
+
     entries(byDay || {}).forEach(([day, v]) => {
-      if (parseDay(day) >= nowTs() - 7 * DAY && (v === true || toNum(v) > 0)) out[habitId].checksWeek += 1;
+      if (parseDay(day) >= nowTs() - 7 * DAY && (v === true || toNum(v) > 0)) {
+        out[habitId].checksWeek += 1;
+      }
     });
   });
 
@@ -231,39 +356,64 @@ export function computeCharacterAttributes(snapshot = {}, config = {}) {
   const exploration = computeCharacterWorldStats(snapshot);
 
   const attrs = Object.fromEntries(ATTRIBUTE_KEYS.map((k) => [k, 0]));
-  ATTRIBUTE_KEYS.forEach((attr) => {
-    entries(mappings[attr]).forEach(([habitId, weight]) => {
-      const h = habitTotals[habitId];
-      if (!h) return;
-      const base = h.sessionHoursTotal * 10 + h.countTotal * 2 + h.checksWeek;
-      attrs[attr] += base * toNum(weight || 1);
-    });
+
+
+
+ATTRIBUTE_KEYS.forEach((attr) => {
+  if (attr === 'estamina') return;
+  entries(mappings[attr]).forEach(([habitId, weight]) => {
+    const h = habitTotals[habitId];
+    if (!h) return;
+    const base = h.sessionHoursTotal * 10 + h.countTotal * 2 + h.checksWeek;
+    attrs[attr] += base * toNum(weight || 1);
   });
+});
 
   attrs.inteligencia += finishedBooks * 35 + pagesRead * 0.35;
   attrs.fuerza += workoutMinutes * 0.45;
   attrs.enfoque += videoWorkHours * 8;
   attrs.creatividad += videoWorkHours * 5 + videoList.length * 6;
   attrs.supervivencia += recipes.length * 10 + recipesUsed * 2;
+
   const winRate = games.wins + games.losses > 0 ? games.wins / (games.wins + games.losses) : 0;
   attrs.combate += games.kills * 1.8 + games.hours * 5 + winRate * 120 - Math.max(0, games.deaths - games.kills) * 1.5;
   attrs.exploracion += exploration.countries * 25 + exploration.cities * 7 + exploration.visits * 2;
   attrs.oro = resources.gold;
 
-  const sleepHabit = values(habitTotals).find((h) => /(dorm|sueñ|sleep)/i.test(String(h.name || '').toLowerCase()));
-  const coffeeHabit = values(habitTotals).find((h) => /(caf|coffee)/i.test(String(h.name || '').toLowerCase()));
-  const sleepHours = sleepHabit?.lastDayHours || 0;
-  const coffeeToday = coffeeHabit?.todayCount || 0;
-  const staminaState = sleepHours < 5 ? 'agotado' : sleepHours < 6.5 ? 'bajo' : sleepHours < 8 ? 'estable' : sleepHours < 9.5 ? 'alto' : 'rebosante';
-  attrs.estamina = Math.max(0, sleepHours * 22 + Math.min(8, coffeeToday * 1.5));
+const staminaComputed = computeStaminaFromConfig(habitTotals, config);
+attrs.estamina = staminaComputed.total;
+
+const sleepHabitId = String(config?.sleepHabitId || '').trim();
+const sleepHours = sleepHabitId && habitTotals[sleepHabitId]
+  ? toNum(habitTotals[sleepHabitId].sessionHoursToday)
+  : 0;
+
+const staminaState =
+  sleepHours < 5 ? 'agotado' :
+  sleepHours < 6.5 ? 'bajo' :
+  sleepHours < 8 ? 'estable' :
+  sleepHours < 9.5 ? 'alto' :
+  'rebosante';
 
   attrs.vida += (values(habitTotals).reduce((a, h) => a + h.checksWeek, 0) * 2) + (sleepHours * 6) + (workoutMinutes * 0.08);
 
-  ATTRIBUTE_KEYS.forEach((k) => { attrs[k] = Math.max(0, Math.round(attrs[k])); });
+  ATTRIBUTE_KEYS.forEach((k) => {
+    attrs[k] = Math.max(0, Math.round(attrs[k]));
+  });
+
   return {
     attributes: attrs,
     staminaState,
-    modules: { resources, exploration, games, recipes: { total: recipes.length, used: recipesUsed }, videos: { total: videoList.length, workHours: videoWorkHours }, books: { finishedBooks, pagesRead }, habits: habitTotals },
+    modules: {
+      resources,
+      exploration,
+      games,
+      recipes: { total: recipes.length, used: recipesUsed },
+      videos: { total: videoList.length, workHours: videoWorkHours },
+      books: { finishedBooks, pagesRead },
+      habits: habitTotals,
+      stamina: staminaComputed
+    },
     mappings
   };
 }
@@ -314,7 +464,7 @@ export function buildCharacterSheetData(snapshot = {}, config = {}) {
       oro: 'Oro = balance total real de cuentas en Finance + deltas por transacciones reales.',
       exploracion: 'Exploración = países/ciudades/visitas reales en World/Trips.',
       atributos: 'Atributos = suma ponderada de hábitos mapeados + módulos reales (books/gym/videos/recipes/games).',
-      estamina: 'Estamina = sueño reciente como base + modificador suave por café.'
+      estamina: 'Estamina = cálculo diario configurable con inputs positivos y negativos elegidos por ti.'
     }
   };
 }

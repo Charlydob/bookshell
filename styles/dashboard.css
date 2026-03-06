@@ -26,14 +26,14 @@
 .rpg-hero-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .rpg-hero-gold-corner {
   position: absolute;
-  right: 12px;
-  top: 12px;
+  right: 10px;
+  top: 10px;
   background: #120f0d;
   border: 1px solid #7a6147;
   border-radius: 10px;
-  padding: 7px 9px;
+  padding: 2px 7px;
   text-align: right;
-  min-width: 122px;
+  min-width: 112px;
 }
 .rpg-gold-main { font-size: 15px; color: #ffd28b; font-weight: 900; }
 .rpg-hero-gold-corner small { display: block; font-size: 10px; color: #c6b08a; }
@@ -388,4 +388,16 @@
   .rpg-hero-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+.app-shell{
+  display:none;
+}
+
+.view#view-main.view-active{
+  display:block;
+}
+
+.view#view-main.view-active ~ .app-shell,
+body:has(#view-main.view-active) .app-shell{
+  display:block;
 }

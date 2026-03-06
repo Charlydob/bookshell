@@ -142,3 +142,67 @@
   padding: 8px 10px;
   z-index: 1400;
 }
+
+.rpg-hero-money {
+  margin-top: 12px;
+  border: 1px solid #7f6548;
+  border-radius: 10px;
+  padding: 10px;
+  background: #120f0d;
+  display: grid;
+  gap: 8px;
+}
+
+.rpg-money-main small,
+.rpg-money-deltas small {
+  font-size: 10px;
+  color: #bca57d;
+  display: block;
+}
+
+.rpg-money-main strong {
+  font-size: 24px;
+  color: #ffd28b;
+}
+
+.rpg-money-deltas {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.rpg-money-deltas span,
+.rpg-resource strong.is-up,
+.rpg-resource strong.is-down {
+  font-weight: 800;
+}
+
+.is-up { color: #66e3a3; }
+.is-down { color: #ff8f8f; }
+
+.rpg-rank {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #e7d5b2;
+  margin-top: 6px;
+}
+
+.rpg-rank-off {
+  color: #9b8c74;
+}
+
+.rpg-progress {
+  margin-top: 4px;
+  height: 8px;
+  border-radius: 999px;
+  background: #30241c;
+  overflow: hidden;
+  border: 1px solid #5e4834;
+}
+
+.rpg-progress i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #f59e0b, #f97316);
+}

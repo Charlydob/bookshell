@@ -78,6 +78,16 @@ function buildCounterMetrics(snapshot = {}) {
   return counters;
 }
 
+function buildCounterMetricsForDay(snapshot = {}, dayKey = '') {
+  const counters = {};
+  if (!dayKey) return counters;
+  const habitsRoot = snapshot.habits || {};
+  entries(habitsRoot.habitCounts || {}).forEach(([habitId, byDay]) => {
+    counters[habitId] = toNum(byDay?.[dayKey]);
+  });
+  return counters;
+}
+
 function flattenByDateRows(node = {}) {
   return entries(node).flatMap(([, byId]) => values(byId || {}));
 }
@@ -438,9 +448,10 @@ export function computeCharacterStaminaToday(sheet = {}, snapshot = {}) {
   const staminaEntry = (sheet.entries || []).find((entry) => String(entry.name || '').toLowerCase() === 'estamina' || String(entry.id || '') === 'entry-stamina');
   if (!staminaEntry) return { value: 0, progress: 0, max: 100, todayDelta: 0 };
 
+  const todayDayKey = new Date().toISOString().slice(0, 10);
   const todaySourceData = {
     habits: buildHabitMetricsForRange(snapshot, 'day'),
-    counters: buildCounterMetrics(snapshot),
+    counters: buildCounterMetricsForDay(snapshot, todayDayKey),
     moduleMetrics: {
       'finance:gold': sheet.resources?.gold || 0,
       'gym:strength': (sheet.entries || []).find((x) => x.id === 'module-strength')?.value || 0,
@@ -461,24 +472,40 @@ export function computeCharacterStaminaToday(sheet = {}, snapshot = {}) {
 
 export function computeGamesProfileSummary(snapshot = {}) {
   const gamesRoot = snapshot.games || {};
-  const groups = gamesRoot.games?.groups || {};
-  const legacyModes = gamesRoot.games?.modes || {};
+  const gameGroups = gamesRoot.gameGroups || gamesRoot.games?.groups || {};
+  const modes = gamesRoot.games?.modes || {};
+  const dailyByMode = gamesRoot.gameModeDaily || {};
   const counters = gamesRoot.counters || {};
 
   const acc = { wins: 0, losses: 0, kills: 0, deaths: 0 };
   const addRow = (row = {}) => {
-    acc.wins += toNum(row.wins);
-    acc.losses += toNum(row.losses);
+    acc.wins += toNum(row.wins ?? row.w);
+    acc.losses += toNum(row.losses ?? row.l);
     acc.kills += toNum(row.kills ?? row.k);
     acc.deaths += toNum(row.deaths ?? row.d);
   };
 
-  values(legacyModes).forEach(addRow);
+  values(modes).forEach((mode) => {
+    addRow(mode);
+    addRow(mode?.base);
+    addRow(mode?.bases);
+  });
+
+  values(dailyByMode).forEach((byDay) => {
+    values(byDay || {}).forEach(addRow);
+  });
+
   values(counters).forEach((dayMap) => values(dayMap || {}).forEach(addRow));
-  values(groups).forEach((group) => values(group?.modes || {}).forEach((mode) => {
-    addRow(mode?.base || mode);
-    values(mode?.daily || {}).forEach(addRow);
-  }));
+
+  values(gameGroups).forEach((group) => {
+    addRow(group);
+    values(group?.modes || {}).forEach((mode) => {
+      addRow(mode);
+      addRow(mode?.base);
+      addRow(mode?.bases);
+      values(mode?.daily || {}).forEach(addRow);
+    });
+  });
 
   Object.keys(acc).forEach((key) => { acc[key] = Math.round(acc[key]); });
   return acc;

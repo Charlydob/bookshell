@@ -3864,6 +3864,7 @@ function createVideoCard(id) {
 
   const btnEdit = document.createElement("button");
   btnEdit.className = "btn";
+  btnEdit.type = "button";
   btnEdit.textContent = "✏️";
   btnEdit.setAttribute("aria-label", "Editar");
   btnEdit.title = "Editar";
@@ -3874,10 +3875,12 @@ function createVideoCard(id) {
 
   const btnScript = document.createElement("button");
   btnScript.className = "btn";
+  btnScript.type = "button";
   btnScript.textContent = "📖";
   btnScript.setAttribute("aria-label", "Abrir guion");
   btnScript.title = "Abrir guion";
   btnScript.dataset.openScript = id;
+  btnScript.dataset.videoId = id;
   btnScript.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -3887,6 +3890,7 @@ function createVideoCard(id) {
 
   const btnConvert = document.createElement("button");
   btnConvert.className = "btn";
+  btnConvert.type = "button";
   btnConvert.textContent = "Convertir a vídeo";
   btnConvert.addEventListener("click", async () => {
     try {
@@ -3902,6 +3906,7 @@ function createVideoCard(id) {
 
   const btnPublish = document.createElement("button");
   btnPublish.className = "btn";
+  btnPublish.type = "button";
   btnPublish.textContent = "✅";
   btnPublish.setAttribute("aria-label", "Marcar publicado");
   btnPublish.title = "Marcar publicado";

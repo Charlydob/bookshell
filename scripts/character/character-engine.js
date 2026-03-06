@@ -78,19 +78,88 @@ function buildCounterMetrics(snapshot = {}) {
   return counters;
 }
 
-function computeGymStrength(snapshot = {}) {
-  const gym = snapshot.gym || {};
-  const workouts = values(gym.workouts || {});
-  const cardio = values(gym.cardio || {});
+function flattenByDateRows(node = {}) {
+  return entries(node).flatMap(([, byId]) => values(byId || {}));
+}
+
+function computeGymSourceMetrics(snapshot = {}) {
+  const gymRoot = snapshot.gym?.gym || snapshot.gym || {};
+  const workouts = flattenByDateRows(gymRoot.workouts || {});
+  const cardio = flattenByDateRows(gymRoot.cardio || {});
+
   const workoutMinutes = workouts.reduce((sum, row) => sum + toNum(row?.durationMin || row?.duration || row?.minutes), 0);
-  const cardioMinutes = cardio.reduce((sum, row) => sum + toNum(row?.durationMin || row?.duration || row?.minutes), 0);
-  return Math.round(workoutMinutes * 0.45 + cardioMinutes * 0.2);
+  const cardioMinutes = cardio.reduce((sum, row) => sum + toNum(row?.durationMin || row?.duration || row?.minutes || row?.durationSec / 60), 0);
+  const workoutSessions = workouts.length;
+  const cardioSessions = cardio.length;
+  const volume = workouts.reduce((sum, row) => sum + toNum(row?.totalVolume || row?.volumeKg || row?.kg), 0);
+
+  const strength = Math.round(workoutMinutes * 0.45 + cardioMinutes * 0.2 + workoutSessions * 12 + cardioSessions * 6 + volume * 0.02);
+  return { strength, workoutMinutes, cardioMinutes, workoutSessions, cardioSessions, volume };
+}
+
+function getPopularidadDefault() {
+  return {
+    followers: 0,
+    views: 0,
+    likes: 0,
+    primaryField: 'followers',
+    followersWeight: 1,
+    viewsWeight: 0.1,
+    likesWeight: 0.2
+  };
+}
+
+function computePopularidad(entry = {}) {
+  const extra = { ...getPopularidadDefault(), ...(entry.extraFields || {}) };
+  const followers = toNum(extra.followers);
+  const views = toNum(extra.views);
+  const likes = toNum(extra.likes);
+  const value = followers * toNum(extra.followersWeight || 1)
+    + views * toNum(extra.viewsWeight || 0.1)
+    + likes * toNum(extra.likesWeight || 0.2);
+  return {
+    extraFields: { ...extra, followers, views, likes },
+    computedPrimary: extra.primaryField === 'views' ? views : extra.primaryField === 'likes' ? likes : followers,
+    value: Math.round(value * 100) / 100
+  };
+}
+
+function computeEntryRankProgress(value = 0, rankConfig = {}) {
+  const cfg = {
+    enabled: false,
+    basePoints: 120,
+    growth: 8,
+    ...rankConfig
+  };
+  if (!cfg.enabled) {
+    return { enabled: false, rank: null, current: 0, required: 0, progress: 0 };
+  }
+  const base = Math.max(1, toNum(cfg.basePoints) || 120);
+  const growth = Math.max(0, toNum(cfg.growth) || 0);
+  let total = Math.max(0, toNum(value));
+  let rank = 1;
+  let need = base;
+  while (total >= need) {
+    total -= need;
+    rank += 1;
+    need = Math.max(1, Math.round(base + growth * (rank - 1)));
+    if (rank > 100000) break;
+  }
+  return {
+    enabled: true,
+    rank,
+    current: Math.round(total * 100) / 100,
+    required: need,
+    progress: Math.max(0, Math.min(1, total / need))
+  };
 }
 
 function deriveModuleEntries(snapshot = {}, range = 'week') {
   const resources = computeResources(snapshot, range);
+  const resourcesToday = computeResources(snapshot, 'day');
+  const resourcesMonth = computeResources(snapshot, 'month');
   const world = computeWorldStats(snapshot);
-  const strength = computeGymStrength(snapshot);
+  const gym = computeGymSourceMetrics(snapshot);
 
   return [
     {
@@ -103,10 +172,11 @@ function deriveModuleEntries(snapshot = {}, range = 'week') {
       sourceMode: 'derived',
       manualValue: 0,
       manualLevel: '',
+      rankConfig: { enabled: true, basePoints: 200, growth: 25 },
       derivedConfig: { module: 'finance', metric: 'gold', range },
       order: -100,
       computedValue: resources.gold,
-      moduleData: resources
+      moduleData: { ...resources, dayDelta: resourcesToday.delta, monthDelta: resourcesMonth.delta }
     },
     {
       id: 'module-strength',
@@ -118,9 +188,11 @@ function deriveModuleEntries(snapshot = {}, range = 'week') {
       sourceMode: 'derived',
       manualValue: 0,
       manualLevel: '',
+      rankConfig: { enabled: true, basePoints: 100, growth: 10 },
       derivedConfig: { module: 'gym', metric: 'strength' },
       order: -90,
-      computedValue: strength
+      computedValue: gym.strength,
+      moduleData: gym
     },
     {
       id: 'module-exploration',
@@ -132,9 +204,11 @@ function deriveModuleEntries(snapshot = {}, range = 'week') {
       sourceMode: 'derived',
       manualValue: 0,
       manualLevel: '',
+      extraFields: { countryWeight: 100, cityWeight: 20, placeWeight: 5 },
+      rankConfig: { enabled: true, basePoints: 140, growth: 14 },
       derivedConfig: { module: 'world', metric: 'exploration' },
       order: -80,
-      computedValue: world.countries * 25 + world.cities * 7 + world.visits * 2,
+      computedValue: world.countries * 100 + world.cities * 20 + (world.places || world.visits) * 5,
       moduleData: world
     }
   ];
@@ -191,6 +265,12 @@ function normalizeEntry(raw = {}, idx = 0) {
     sourceMode: raw.sourceMode || 'manual',
     manualValue: toNum(raw.manualValue),
     manualLevel: raw.manualLevel || '',
+    extraFields: raw.extraFields || {},
+    rankConfig: {
+      enabled: raw.rankConfig?.enabled === true,
+      basePoints: toNum(raw.rankConfig?.basePoints) || 120,
+      growth: toNum(raw.rankConfig?.growth) || 8
+    },
     derivedConfig: raw.derivedConfig || {},
     order: Number.isFinite(Number(raw.order)) ? Number(raw.order) : idx
   };
@@ -215,6 +295,23 @@ export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') 
   const userEntries = Array.isArray(config.characterEntries)
     ? config.characterEntries.map(normalizeEntry)
     : [];
+
+  const hasPopularidad = userEntries.some((entry) => String(entry.name || '').toLowerCase() === 'popularidad');
+  if (!hasPopularidad) {
+    userEntries.push(normalizeEntry({
+      id: 'entry-popularidad',
+      type: 'attribute',
+      name: 'Popularidad',
+      icon: '📣',
+      description: 'Seguidores y visitas cargadas manualmente.',
+      sourceMode: 'manual',
+      manualValue: 0,
+      extraFields: getPopularidadDefault(),
+      rankConfig: { enabled: true, basePoints: 200, growth: 20 },
+      order: 999
+    }, userEntries.length));
+  }
+
   const moduleEntries = deriveModuleEntries(snapshot, range);
   const allEntries = moduleEntries.concat(userEntries).sort((a, b) => a.order - b.order);
 
@@ -232,16 +329,34 @@ export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') 
 
   const computedEntries = allEntries.map((entry) => {
     if (entry.type === 'moduleDerived') {
+      const value = Math.round(toNum(entry.computedValue) * 100) / 100;
       return {
         ...entry,
-        value: Math.round(toNum(entry.computedValue) * 100) / 100,
-        derivedValue: Math.round(toNum(entry.computedValue) * 100) / 100,
-        sourceRows: []
+        value,
+        derivedValue: value,
+        sourceRows: [],
+        rankProgress: computeEntryRankProgress(value, entry.rankConfig)
       };
     }
     const computed = computeEntryValue(entry, entrySources, sourceData);
-    return { ...entry, ...computed };
+    let next = { ...entry, ...computed };
+    if (String(entry.name || '').toLowerCase() === 'popularidad') {
+      const p = computePopularidad(entry);
+      next = {
+        ...next,
+        extraFields: p.extraFields,
+        manualValue: p.value,
+        value: Math.round((p.value + toNum(next.derivedValue)) * 100) / 100,
+        computedPrimary: p.computedPrimary
+      };
+    }
+    return {
+      ...next,
+      rankProgress: computeEntryRankProgress(next.value, entry.rankConfig)
+    };
   }).filter((entry) => entry.visible !== false);
+
+  const resources = moduleEntries.find((x) => x.id === 'module-gold')?.moduleData || computeResources(snapshot, range);
 
   return {
     identity: {
@@ -250,7 +365,12 @@ export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') 
       hasBirthdate: !!characterIdentity.birthdate
     },
     range,
-    resources: moduleEntries.find((x) => x.id === 'module-gold')?.moduleData || computeResources(snapshot, range),
+    resources,
+    headerFinance: {
+      gold: resources.gold,
+      dayDelta: resources.dayDelta ?? computeResources(snapshot, 'day').delta,
+      monthDelta: resources.monthDelta ?? computeResources(snapshot, 'month').delta
+    },
     world: moduleEntries.find((x) => x.id === 'module-exploration')?.moduleData || computeWorldStats(snapshot),
     entries: computedEntries,
     sourceCatalog: {
@@ -269,3 +389,5 @@ export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') 
     }
   };
 }
+
+export { computeEntryRankProgress };

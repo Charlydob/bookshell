@@ -282,7 +282,9 @@ function normalizeAccountShare(account = {}) {
   return { shared, sharedRatio };
 }
 function personalRatioForTx(tx = {}, accountsById = {}) {
-  if (Number.isFinite(Number(tx?.personalRatio))) return clamp01(tx?.personalRatio, 1);
+  if (tx?.personalRatio !== null && tx?.personalRatio !== undefined && String(tx.personalRatio).trim() !== '' && Number.isFinite(Number(tx.personalRatio))) {
+  return clamp01(tx.personalRatio, 1);
+}
   const account = accountsById?.[tx?.accountId];
   if (!account?.shared) return 1;
   const type = normalizeTxType(tx?.type);
@@ -295,8 +297,11 @@ function personalDeltaForTx(tx = {}, accountsById = {}) {
   const amount = Number(tx?.amount || 0);
   if (!Number.isFinite(amount)) return 0;
   const ratio = personalRatioForTx(tx, accountsById);
-  if (safeType === 'income') return amount * ratio;
-  if (safeType === 'expense') return -amount * ratio;
+if (safeType === 'income') {
+  const acc = accountsById[tx?.accountId];
+  if (acc?.shared) return 0;
+  return amount;
+}  if (safeType === 'expense') return -amount * ratio;
   if (safeType === 'transfer') return 0;
   return 0;
 }
@@ -315,13 +320,13 @@ function normalizeTxType(type = '') {
 }
 function normalizeTxRow(raw = {}, id = '') {
   const row = raw && typeof raw === 'object' ? raw : {};
-  const type = normalizeTxType(row.type);
+  const type = normalizeTxType(row.type ?? row?.extras?.type);
   let amount = row.amount;
   amount = (typeof amount === 'number') ? amount : parseMoney(String(amount ?? ''));
   amount = Number.isFinite(amount) ? amount : 0;
   const dateISO = toIsoDay(String(row.date || row.dateISO || '')) || '';
   const date = dateISO || String(row.date || row.dateISO || '');
-  const monthKey = String(row.monthKey || (dateISO ? dateISO.slice(0, 7) : '') || '').slice(0, 7);
+  const monthKey = String(row.monthKey ?? row?.extras?.monthKey ?? (dateISO ? dateISO.slice(0, 7) : '') ?? '').slice(0, 7);
   return {
     id: String(row.id || id || ''),
     ...row,
@@ -2218,15 +2223,17 @@ function balanceTxList() {
       __src: source,
       __path: row?.__path || fallbackPath,
       accountId: String(row?.accountId || ''),
-      fromAccountId: String(row?.fromAccountId || ''),
-      toAccountId: String(row?.toAccountId || ''),
+      fromAccountId: String(row?.fromAccountId ?? row?.extras?.fromAccountId ?? ''),
+toAccountId: String(row?.toAccountId ?? row?.extras?.toAccountId ?? ''),
+note: String(row?.note ?? row?.extras?.note ?? ''),
       date,
       dateISO,
       monthKey,
       category: String(row?.category || ''),
-      note: String(row?.note || ''),
       linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
-      personalRatio: Number.isFinite(Number(row?.personalRatio)) ? clamp01(row?.personalRatio, 1) : null,
+      personalRatio: (row?.personalRatio !== null && row?.personalRatio !== undefined && String(row.personalRatio).trim() !== '' && Number.isFinite(Number(row.personalRatio)))
+  ? clamp01(row.personalRatio, 1)
+  : null,
       allocation: normalizeTxAllocation(row?.allocation || {}, String(date || isoToDay(dateISO || '') || '')),
       createdAt: Number(row?.createdAt || 0),
       updatedAt: Number(row?.updatedAt || 0),
@@ -2270,31 +2277,20 @@ function summaryForMonth(monthKey, accountsById = {}) {
 }
 
 function calcAggForBucket(txListBucket = [], accountsById = {}) {
-  let incomeMy = 0;
-  let expenseMy = 0;
-  let incomeTotal = 0;
-  let expenseTotal = 0;
-  let transferImpactMy = 0;
+  const incomeMy = txListBucket
+    .filter((tx) => normalizeTxType(tx.type) === 'income')
+    .reduce((s, tx) => s + Math.max(0, personalDeltaForTx(tx, accountsById)), 0);
 
-  for (const raw of txListBucket) {
-    const tx = normalizeTxRow(raw, raw?.id);
-    const t = tx.type;
-    const a = tx.amount;
-    if (!Number.isFinite(a) || a <= 0) continue;
-    if (t === 'income') {
-      incomeMy += shareAmount(accountsById[tx.accountId], a);
-      incomeTotal += a;
-      continue;
-    }
-    if (t === 'expense') {
-      expenseMy += shareAmount(accountsById[tx.accountId], a);
-      expenseTotal += a;
-      continue;
-    }
-    if (t === 'transfer') {
-      transferImpactMy += personalDeltaForTx(tx, accountsById);
-    }
-  }
+  const expenseMy = txListBucket
+    .filter((tx) => normalizeTxType(tx.type) === 'expense')
+    .reduce((s, tx) => s + Math.max(0, -personalDeltaForTx(tx, accountsById)), 0);
+
+  const transferImpactMy = txListBucket
+    .filter((tx) => normalizeTxType(tx.type) === 'transfer')
+    .reduce((s, tx) => s + personalDeltaForTx(tx, accountsById), 0);
+
+  const incomeTotal = txListBucket.filter((tx) => normalizeTxType(tx.type) === 'income').reduce((s, tx) => s + Number(tx.amount || 0), 0);
+  const expenseTotal = txListBucket.filter((tx) => normalizeTxType(tx.type) === 'expense').reduce((s, tx) => s + Number(tx.amount || 0), 0);
 
   return {
     incomeMy,
@@ -2478,24 +2474,29 @@ function buildBalanceStats(rows, accountsById) {
   };
 }
 
-function rangeStartByMode(mode = 'month') {
-  const now = new Date();
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
+function rangeStartByMode(mode = 'month', anchorDate = '') {
+  const baseIso = toIsoDay(anchorDate) || dayKeyFromTs(Date.now());
+  const [y, m, d] = baseIso.split('-').map(Number);
+  const start = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+
   if (mode === 'day') return start.getTime();
+
   if (mode === 'week') {
     const day = (start.getDay() + 6) % 7;
     start.setDate(start.getDate() - day);
     return start.getTime();
   }
+
   if (mode === 'year') {
     start.setMonth(0, 1);
     return start.getTime();
   }
+
   if (mode === 'month') {
     start.setDate(1);
     return start.getTime();
   }
+
   return null;
 }
 
@@ -4830,8 +4831,14 @@ function bindEvents() {
     const target = event.target;
 
     const formButton = target.closest('button:not([type]), button[type="submit"]');
-    if (formButton) { event.preventDefault(); event.stopPropagation(); }
-    
+if (formButton) {
+  const form = formButton.closest('form');
+  // Si el botón está dentro de un form, NO bloquees: deja que dispare submit
+  if (!form) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}
     const fakeLink = target.closest('a[href]');
     const ticketImportRawEl = document.querySelector('[data-ticket-import-raw]');
 
@@ -5849,7 +5856,12 @@ view.addEventListener('focusout', async (event) => {
         customStart: allocationCustomStart,
         customEnd: allocationCustomEnd
       } : { mode: 'point', period: 'day', anchorDate: dateISO }, dateISO);
-      if (!Number.isFinite(amount) || amount <= 0) { toast('Cantidad inválida'); return; }
+      if (!Number.isFinite(amount) || amount <= 0) { 
+          console.warn('[FINANCE][BALANCE] invalid amount', form.get('amount'), amount);
+
+        toast('Cantidad inválida'); 
+        
+        return; }
       if ((type === 'income' || type === 'expense') && !accountId) { toast('Selecciona una cuenta'); return; }
       if (type === 'transfer' && (!fromAccountId || !toAccountId || fromAccountId === toAccountId)) { toast('Transferencia inválida'); return; }
       const mealType = normalizeFoodName(String(form.get('foodMealType') || ''));

@@ -5,25 +5,18 @@
 // - Modal: añadir (checkbox) + modal editar (JS)
 // - Sync: localStorage + Firebase RTDB (merge anti-pisotón)
 
-import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, onValue, runTransaction, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { db, auth } from "./firebase-shared.js";
+import { ref, onValue, runTransaction, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { TMDB_API_KEY, TMDB_READ_TOKEN } from "../config/tmdb.js";
 
-/* ------------------------- Firebase ------------------------- */
-const firebaseConfig = {
-  apiKey: "AIzaSyC1oqRk7GpYX854RfcGrYHt6iRun5TfuYE",
-  authDomain: "bookshell-59703.firebaseapp.com",
-  databaseURL: "https://bookshell-59703-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "bookshell-59703",
-  storageBucket: "bookshell-59703.appspot.com",
-  messagingSenderId: "554557230752",
-  appId: "1:554557230752:web:37c24e287210433cf883c5"
-};
+const MEDIA_PATH = (userId) => `v2/users/${userId}/movies/media`;
 
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-const db = getDatabase(app);
+const userId = auth?.currentUser?.uid;
+if (!userId) throw new Error("Missing userId");
 
-const MEDIA_PATH = "media";
+const mediaBasePath = MEDIA_PATH(userId);
+const mediaRef = ref(db, mediaBasePath);
+
 const LS_KEY = "bookshell.media.v3";
 const FILTERS_LS_KEY = "bookshell.media.filters.v1";
 const TMDB_CACHE_KEY = "bookshell.media.tmdb.v1";
@@ -67,7 +60,7 @@ const state = {
 function log(...a) { try { console.debug("[media]", ...a); } catch (_) {} }
 
 /* ------------------------- Utils ------------------------- */
-function uid() {
+function newId() {
   return (crypto?.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
 }
 function nowTs() { return Date.now(); }
@@ -643,7 +636,7 @@ async function tmdbFetchDetails(id, type) {
 
 /* ------------------------- Cache + Firebase merge ------------------------- */
 function firebasePath(id = "") {
-  return id ? `${MEDIA_PATH}/${id}` : MEDIA_PATH;
+  return id ? `${mediaBasePath}/${id}` : mediaBasePath;
 }
 
 function loadCache() {
@@ -695,8 +688,8 @@ function bindFirebaseOnce() {
   firebaseBound = true;
 
   try {
-    onValue(ref(db, firebasePath()), (snap) => {
-      const val = snap.val();
+    onValue(mediaRef, (snap) => {
+      const val = snap.val() || null;
 
       // remoto vacío => opcional: bootstrap desde cache
       if (!val || typeof val !== "object") {
@@ -783,7 +776,7 @@ function normalizeItem(it) {
   if (!it || typeof it !== "object") return it;
 
   const out = { ...it };
-  out.id = String(out.id || uid());
+  out.id = String(out.id || newId());
 
   out.title = norm(out.title);
   out.type = (out.type === "series" || out.type === "anime") ? out.type : "movie";
@@ -2073,7 +2066,7 @@ function importLetterboxdRows(rows) {
     }
 
     const it = normalizeItem({
-      id: uid(),
+      id: newId(),
       title,
       type: "movie",
       rating: 0,
@@ -2182,7 +2175,7 @@ function addItem(patch) {
     : { season: 0, episode: 0 };
 
   const it = normalizeItem({
-    id: uid(),
+    id: newId(),
     title: patch.title,
     type,
     rating: clamp(patch.rating, 0, 5),

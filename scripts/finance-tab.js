@@ -2134,6 +2134,37 @@ function publishFinanceTotals(accounts = []) {
   try { window.dispatchEvent(new CustomEvent('bookshell:finance-totals', { detail: payload })); } catch (_) {}
 }
 
+async function maybeAutoBitcoinDailySnapshots(accounts = []) {
+  const btcPrice = Number(state.btcEurPrice || 0);
+  if (!Number.isFinite(btcPrice) || btcPrice <= 0) return;
+
+  const todayKey = dayKeyFromTs(Date.now());
+  if (!todayKey) return;
+
+  const candidates = (accounts || []).filter((acc) => Boolean(acc?.isBitcoin));
+  for (const account of candidates) {
+    const btcUnits = Number(account?.btcUnits || 0);
+    if (!Number.isFinite(btcUnits) || btcUnits <= 0) continue;
+
+    const snapshots = account?.snapshots || {};
+    const hasSnapshotToday = !!snapshots?.[todayKey] || normalizeSnapshots(snapshots).some((row) => row.day === todayKey);
+    if (hasSnapshotToday) continue;
+
+    const value = Math.round((btcUnits * btcPrice) * 100) / 100;
+    if (!Number.isFinite(value) || value <= 0) continue;
+
+    await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${account.id}/snapshots/${todayKey}`), {
+      value,
+      updatedAt: nowTs(),
+      source: 'btcAuto',
+      btcUnits,
+      btcEurPrice: btcPrice
+    }));
+
+    await recomputeAccountEntries(account.id, todayKey);
+  }
+}
+
 function ensureLineChartTooltip(container) {
   if (!container) return null;
   let node = container.querySelector('.finance-lineChart-tooltip');
@@ -4882,6 +4913,7 @@ async function render() {
     if (state.error) { host.innerHTML = `<article class=\"finance-panel\"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`; return; }
     await ensureBtcEurPrice();
     const accounts = buildAccountModels(); const totalSeries = buildTotalSeries(accounts);
+    await maybeAutoBitcoinDailySnapshots(state.accounts);
     publishFinanceTotals(accounts);
     if (state.activeView === 'balance') {
       await ensureFoodCatalogLoaded();

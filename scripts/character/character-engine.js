@@ -1,4 +1,4 @@
-import { computeResources, computeWorldStats } from './character-resources.js';
+import { computeFinanceBalanceDelta, computeResources, computeWorldStats } from './character-resources.js';
 
 const toNum = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const entries = (obj) => (obj && typeof obj === 'object' ? Object.entries(obj) : []);
@@ -698,7 +698,7 @@ export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') 
     resources,
     headerFinance: {
       gold: resources.gold,
-      dayDelta: resources.dayDelta ?? computeResources(snapshot, 'day', financeScope).delta,
+      dayDelta: computeFinanceBalanceDelta(snapshot, 'day', financeScope),
       monthDelta: resources.monthDelta ?? computeResources(snapshot, 'month', financeScope).delta
     },
     world: moduleEntries.find((x) => x.id === 'module-exploration')?.moduleData || computeWorldStats(snapshot),

@@ -423,3 +423,6 @@
 body:has(#view-main.view-active) .app-shell{
   display:flex;
 }
+#rpg-dashboard{
+  margin-top: 40px;
+}

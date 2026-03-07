@@ -62,6 +62,76 @@ function clamp01(value, fallback = 1) {
   return Math.min(1, Math.max(0, ratio));
 }
 
+function parseDayKey(key = '') {
+  const safe = String(key || '').slice(0, 10);
+  const t = new Date(`${safe}T00:00:00`).getTime();
+  return Number.isFinite(t) ? t : NaN;
+}
+
+function closePointBefore(series, tsExclusive) {
+  for (let i = series.length - 1; i >= 0; i -= 1) {
+    if (series[i].ts < tsExclusive) return series[i];
+  }
+  return null;
+}
+
+function balanceDeltaByBounds(series, startTs, endTsExclusive) {
+  const prev = closePointBefore(series, startTs);
+  const end = closePointBefore(series, endTsExclusive);
+  if (!prev && !end) return 0;
+  const startValue = Number(prev?.value ?? end?.value ?? 0);
+  const endValue = Number(end?.value ?? startValue);
+  return endValue - startValue;
+}
+
+function accountShareRatio(acc = {}, scope = 'my') {
+  if (scope === 'total') return 1;
+  if (acc?.shared) return clampRatio(acc?.sharedRatio, 0.5);
+  return 1;
+}
+
+function buildAccountDayMap(acc = {}) {
+  const entriesNode = acc?.entries && typeof acc.entries === 'object' ? acc.entries : null;
+  const snapshotsNode = acc?.snapshots && typeof acc.snapshots === 'object' ? acc.snapshots : null;
+  const source = (entriesNode && Object.keys(entriesNode).length)
+    ? entriesNode
+    : (snapshotsNode && Object.keys(snapshotsNode).length ? snapshotsNode : null);
+  if (!source) return {};
+
+  const map = {};
+  Object.entries(source).forEach(([dayKey, row]) => {
+    const day = String(dayKey || '').slice(0, 10);
+    const value = toNum(row?.value ?? row?.balance);
+    if (!day || !Number.isFinite(value)) return;
+    map[day] = value;
+  });
+  return map;
+}
+
+function buildTotalBalanceSeries(snapshot = {}, scope = 'my') {
+  const finance = getFinanceRoot(snapshot);
+  const accounts = finance.accounts || {};
+  const accountList = Array.isArray(accounts) ? accounts : values(accounts);
+  const perAcc = accountList.map((acc) => {
+    return { id: acc?.id || '', ratio: accountShareRatio(acc, scope), byDay: buildAccountDayMap(acc) };
+  }).filter((row) => row.id && row.byDay && Object.keys(row.byDay).length);
+
+  const daySet = new Set();
+  perAcc.forEach((row) => Object.keys(row.byDay).forEach((d) => daySet.add(d)));
+  const days = [...daySet].sort();
+  if (!days.length) return [];
+
+  const running = Object.fromEntries(perAcc.map((row) => [row.id, 0]));
+  return days.map((day) => {
+    perAcc.forEach((row) => {
+      const v = row.byDay[day];
+      if (v != null) running[row.id] = toNum(v) * row.ratio;
+    });
+    const total = perAcc.reduce((sum, row) => sum + toNum(running[row.id]), 0);
+    return { day, ts: parseDayKey(day), value: total };
+  }).filter((p) => Number.isFinite(p.ts));
+}
+
 function normalizeTxType(type = '') {
   const safe = String(type || '').trim().toLowerCase();
   if (safe === 'ingreso' || safe === 'ingresos') return 'income';
@@ -151,6 +221,15 @@ export function computeResources(snapshot = {}, range = 'week', scope = 'my') {
     income,
     expense
   };
+}
+
+export function computeFinanceBalanceDelta(snapshot = {}, range = 'day', scope = 'my') {
+  if (range !== 'day') return 0;
+  const series = buildTotalBalanceSeries(snapshot, scope);
+  if (!series.length) return 0;
+  const bounds = getCurrentDayRange(new Date());
+  const endExclusive = (Number(bounds.endMs) || 0) + 1;
+  return balanceDeltaByBounds(series, Number(bounds.startMs) || 0, endExclusive);
 }
 
 export function computeWorldStats(snapshot = {}) {

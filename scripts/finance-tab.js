@@ -19,8 +19,6 @@ import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './f
 import { resolveFinancePath, resolveFinancePathCandidates } from './finance/data.js';
 import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, firebaseSafeKey, TICKET_IMPORT_SAMPLE_V1, resolveTicketMovementCategory } from './finance/import.js';
 
-let productsSearchTimer = null;
-let mergeSearchTimer = null;
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
 let financeNeedsLegacyAccountsMerge = false;
@@ -343,6 +341,11 @@ function isFoodCategory(category = '') {
 }
 function normalizeFoodName(value = '') {
   return String(value || '').trim().replace(/\s+/g, ' ');
+}
+function normalizeFoodCompareKey(value = '') {
+  return normalizeFoodName(value)
+    .toLowerCase()
+    .replace(/^[\s\-_,.;:¡!¿?()\[\]{}"'`]+|[\s\-_,.;:¡!¿?()\[\]{}"'`]+$/g, '');
 }
 function ticketCategoryToTxCategory(category = '') {
   const safe = String(category || '').trim().toLowerCase();
@@ -918,7 +921,8 @@ function buildFoodLines(rows = [], filters = {}) {
     const items = foodItemsFromTx(row).filter((item) => normalizeFoodName(item?.name || ''));
     if (!items.length) return;
     const txVendor = firebaseSafeKey(normalizeFoodName(row?.extras?.filters?.place || row?.extras?.place || 'unknown')) || 'unknown';
-    const valid = items.map((item) => {
+    const txAmount = Math.abs(Number(row?.amount || 0));
+    let valid = items.map((item) => {
       const totalPrice = Math.abs(Number(item?.totalPrice ?? item?.amount ?? item?.price ?? 0));
       const qty = Math.max(1, Number(item?.qty || 1));
       const unit = String(item?.unit || 'ud').trim() || 'ud';
@@ -939,7 +943,21 @@ function buildFoodLines(rows = [], filters = {}) {
         totalPrice,
         unitPrice: Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : totalPrice,
       };
-    }).filter((line) => line.totalPrice > 0);
+    });
+    const hasDirectLinePrices = valid.some((line) => line.totalPrice > 0);
+    if (!hasDirectLinePrices && txAmount > 0 && valid.length) {
+      const totalQty = valid.reduce((sum, line) => sum + Math.max(1, Number(line.qty || 1)), 0) || valid.length;
+      valid = valid.map((line) => {
+        const weight = Math.max(1, Number(line.qty || 1)) / totalQty;
+        const fallbackTotal = txAmount * weight;
+        return {
+          ...line,
+          totalPrice: fallbackTotal,
+          unitPrice: computeUnitPrice(fallbackTotal, line.qty)
+        };
+      });
+    }
+    valid = valid.filter((line) => line.totalPrice > 0);
     valid.forEach((line) => {
       if (vendorFilter !== 'all' && line.vendorKey !== vendorFilter) return;
       if (foodOnly && !isFoodCategory(line.itemCategory || '')) return;
@@ -951,7 +969,7 @@ function buildFoodLines(rows = [], filters = {}) {
 
 function resolveCanonicalForLine(line = {}) {
   const vendorKey = line.vendorKey || 'unknown';
-  const aliasKey = normalizeAliasKey(line.nameRaw || line.productKey || '');
+  const aliasKey = normalizeAliasKey(normalizeFoodCompareKey(line.nameRaw || line.productKey || ''));
   const byVendor = state.foodCatalog.aliases?.[vendorKey] || {};
   const fromAlias = byVendor?.[aliasKey]?.canonicalId;
   if (fromAlias) return String(fromAlias);
@@ -1037,25 +1055,51 @@ function buildProductsViewModel(cfg = {}) {
     acc[String(row.canonicalId || '')] = row;
     return acc;
   }, {});
-  const productRows = legendRows.map((row) => {
-    const detail = detailByProductKey[row.productKey] || detailAgg.products.find((item) => normalizeFoodName(item.canonicalName) === normalizeFoodName(row.label)) || null;
+  const donutByProductKey = legendRows.reduce((acc, row) => {
+    acc[String(row.productKey || '')] = row;
+    return acc;
+  }, {});
+  const productRowsFromDetail = detailAgg.products.map((detail) => {
+    const donut = donutByProductKey[String(detail.canonicalId || '')] || null;
     return {
-      ...row,
+      canonicalId: detail.canonicalId,
+      canonicalName: detail.canonicalName,
+      total: Number(detail.total || donut?.value || 0),
+      percentOfFood: totalFood > 0 ? ((Number(detail.total || 0) / totalFood) * 100) : Number(donut?.pct || 0),
+      count: Number(detail.count || 0),
+      purchases: Number(detail.purchases || 0),
+      cheapestVendorKey: detail.cheapestVendorKey || '',
+      cheapestPrice: detail.cheapestPrice ?? null,
+      lastVendor: detail.lastVendor || '',
+      lastPrice: detail.lastPrice ?? null,
+      aliases: Array.isArray(detail.aliases) ? detail.aliases : []
+    };
+  });
+  const missingDonutRows = legendRows
+    .filter((row) => !detailByProductKey[String(row.productKey || '')])
+    .map((row) => ({
       canonicalId: row.productKey,
       canonicalName: row.label,
       total: Number(row.value || 0),
       percentOfFood: Number(row.pct || 0),
-      count: Number(state.balanceStatsProductMeta?.[row.label]?.purchaseCount || detail?.count || 0),
-      purchases: Number(detail?.purchases || 0),
-      cheapestVendorKey: detail?.cheapestVendorKey || '',
-      cheapestPrice: detail?.cheapestPrice ?? null,
-      lastVendor: detail?.lastVendor || '',
-      lastPrice: detail?.lastPrice ?? null
-    };
-  });
+      count: Number(state.balanceStatsProductMeta?.[row.label]?.purchaseCount || 0),
+      purchases: 0,
+      cheapestVendorKey: '',
+      cheapestPrice: null,
+      lastVendor: '',
+      lastPrice: null,
+      aliases: []
+    }));
+  const productRows = [...productRowsFromDetail, ...missingDonutRows];
   const productsQuery = normalizeFoodName(effectiveCfg.productsQuery || '');
+  const productsQueryKey = normalizeFoodCompareKey(productsQuery);
   const queryFilteredRows = productsQuery
-    ? productRows.filter((row) => normalizeFoodName(row.canonicalName || '').includes(productsQuery))
+    ? productRows.filter((row) => {
+      const nameKey = normalizeFoodCompareKey(row.canonicalName || '');
+      if (nameKey.includes(productsQueryKey)) return true;
+      return Array.isArray(row.aliases)
+        && row.aliases.some((alias) => normalizeFoodCompareKey(alias).includes(productsQueryKey));
+    })
     : productRows;
   const sortedRows = queryFilteredRows.slice().sort((a, b) => {
     if ((effectiveCfg.tab || 'top-eur') === 'top-count') return b.count - a.count || b.total - a.total;
@@ -1072,7 +1116,7 @@ function buildProductsViewModel(cfg = {}) {
     rangeRows,
     legendRows,
     listVisible,
-    totalFood: donutTotal,
+    totalFood,
     purchaseCount: detailAgg.purchaseCount,
     itemsCount: lines.length,
     topVendor: detailAgg.topVendor
@@ -4276,10 +4320,15 @@ if (form) {
     ensureFoodCatalogLoaded();
     ensureFoodMetaCatalogLoaded();
     const selected = Array.isArray(state.modal.selected) ? state.modal.selected : [];
-    const search = String(state.modal.search || '').toLowerCase();
-    const options = foodItemsList().filter((item) => !search || item.name.toLowerCase().includes(search));
+    const destinationId = String(state.modal.destinationId || selected[0] || '');
+    const search = normalizeFoodCompareKey(state.modal.search || '');
+    const destinationSearch = normalizeFoodCompareKey(state.modal.destinationSearch || '');
+    const options = foodItemsList().filter((item) => !search || normalizeFoodCompareKey(item.name).includes(search));
+    const selectedOptions = foodItemsList()
+      .filter((item) => selected.includes(item.id))
+      .filter((item) => !destinationSearch || normalizeFoodCompareKey(item.name).includes(destinationSearch));
     const selectedSet = new Set(selected);
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>Fusionar productos</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header><section class="finFoodDetailSection finFoodCard"><input class="food-control" type="search" placeholder="Buscar producto" value="${escapeHtml(state.modal.search || '')}" data-food-merge-search /><div class="finFoodMergeList">${options.map((item) => `<label class="finFoodMergeRow"><input type="checkbox" data-food-merge-select="${escapeHtml(item.id)}" ${selectedSet.has(item.id) ? 'checked' : ''}> <span>${escapeHtml(item.name)}</span></label>`).join('')}</div><div class="finFoodChipRow"><button type="button" class="food-history-btn" data-food-merge-confirm ${selected.length < 2 ? 'disabled' : ''}>Fusionar seleccionados</button></div></section></div>`;
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>Fusionar productos</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header><section class="finFoodDetailSection finFoodCard"><input class="food-control" type="search" placeholder="Buscar productos a fusionar" value="${escapeHtml(state.modal.search || '')}" data-food-merge-search /><div class="finFoodMergeList">${options.map((item) => `<label class="finFoodMergeRow"><input type="checkbox" data-food-merge-select="${escapeHtml(item.id)}" ${selectedSet.has(item.id) ? 'checked' : ''}> <span>${escapeHtml(item.name)}</span></label>`).join('')}</div><label class="financeStats__checkbox">Producto destino</label><input class="food-control" type="search" placeholder="Buscar destino" value="${escapeHtml(state.modal.destinationSearch || '')}" data-food-merge-destination-search /><div class="finFoodMergeList">${selectedOptions.map((item) => `<label class="finFoodMergeRow"><input type="radio" name="food-merge-destination" data-food-merge-destination="${escapeHtml(item.id)}" ${destinationId === item.id ? 'checked' : ''}> <span>${escapeHtml(item.name)}</span></label>`).join('') || '<p class="finance-empty">Selecciona al menos 2 productos para elegir destino.</p>'}</div><div class="finFoodChipRow"><button type="button" class="food-history-btn" data-food-merge-confirm ${(selected.length < 2 || !destinationId || !selectedSet.has(destinationId)) ? 'disabled' : ''}>Fusionar seleccionados</button></div></section></div>`;
     return;
   }
   if (state.modal.type === 'food-item') {
@@ -5287,7 +5336,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     }
     if (target.closest('[data-food-merge-open]')) {
       const seed = String(target.closest('[data-food-merge-open]')?.dataset.foodMergeOpen || '').trim();
-      state.modal = { type: 'food-merge', selected: seed ? [seed] : [], search: '' };
+      state.modal = { type: 'food-merge', selected: seed ? [seed] : [], destinationId: seed || '', search: '', destinationSearch: '' };
       triggerRender();
       return;
     }
@@ -5296,15 +5345,25 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       const selected = new Set(Array.isArray(state.modal.selected) ? state.modal.selected : []);
       if (target.matches('input[type="checkbox"]') ? target.checked : !selected.has(mergeCheck)) selected.add(mergeCheck);
       else selected.delete(mergeCheck);
-      state.modal = { ...state.modal, selected: [...selected] };
+      const selectedList = [...selected];
+      const currentDestination = String(state.modal.destinationId || '');
+      const destinationId = selected.has(currentDestination) ? currentDestination : (selectedList[0] || '');
+      state.modal = { ...state.modal, selected: selectedList, destinationId };
+      triggerRender();
+      return;
+    }
+    const mergeDestination = target.closest('[data-food-merge-destination]')?.dataset.foodMergeDestination;
+    if (mergeDestination) {
+      state.modal = { ...state.modal, destinationId: String(mergeDestination || '').trim() };
       triggerRender();
       return;
     }
     if (target.closest('[data-food-merge-confirm]')) {
       const selected = Array.isArray(state.modal.selected) ? state.modal.selected : [];
+      const destinationId = String(state.modal.destinationId || selected[0] || '').trim();
       if (selected.length < 2) return;
       if (!window.confirm(`Vas a fusionar ${selected.length} productos en 1 canonical. ¿Continuar?`)) return;
-      await mergeFoodProducts(selected, selected[0]);
+      await mergeFoodProducts(selected, destinationId);
       toast('Productos fusionados');
       state.modal = state.activeView === 'products' ? { type: null } : { type: 'food-products' };
       triggerRender();
@@ -5824,16 +5883,21 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-food-merge-search]')) {
       const value = String(event.target.value || '');
       state.modal = { ...state.modal, search: value };
-      clearTimeout(mergeSearchTimer);
-      mergeSearchTimer = setTimeout(() => triggerRender(), 150);
+      triggerRender();
+      return;
+    }
+
+    if (event.target.matches('[data-food-merge-destination-search]')) {
+      const value = String(event.target.value || '');
+      state.modal = { ...state.modal, destinationSearch: value };
+      triggerRender();
       return;
     }
 
     if (event.target.matches('[data-food-products-search]')) {
       const value = String(event.target.value || '');
       state.foodProductsView = { ...state.foodProductsView, productsQuery: value };
-      clearTimeout(productsSearchTimer);
-      productsSearchTimer = setTimeout(() => triggerRender(), 150);
+      triggerRender();
       return;
     }
 

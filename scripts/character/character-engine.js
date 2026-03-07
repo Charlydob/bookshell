@@ -4,6 +4,45 @@ const toNum = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const entries = (obj) => (obj && typeof obj === 'object' ? Object.entries(obj) : []);
 const values = (obj) => (obj && typeof obj === 'object' ? Object.values(obj) : []);
 
+function parseDayKeyToMs(dayKey) {
+  if (dayKey === null || dayKey === undefined) return NaN;
+
+  const raw = String(dayKey).trim();
+  if (!raw) return NaN;
+
+  if (/^\d+$/.test(raw)) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return NaN;
+
+    if (raw.length === 8) {
+      const y = Number(raw.slice(0, 4));
+      const m = Number(raw.slice(4, 6));
+      const d = Number(raw.slice(6, 8));
+      if (y >= 1900 && y <= 3000 && m >= 1 && m <= 12 && d >= 1 && d <= 31) return new Date(y, m - 1, d).getTime();
+    }
+
+    if (n > 1e12) return n; // ms
+    if (n > 1e9) return n * 1000; // seconds
+  }
+
+  const ddmmyyyy = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (ddmmyyyy) {
+    const d = Number(ddmmyyyy[1]);
+    const m = Number(ddmmyyyy[2]);
+    const y = Number(ddmmyyyy[3]);
+    const t = new Date(y, m - 1, d).getTime();
+    return Number.isFinite(t) ? t : NaN;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const t = new Date(`${raw}T00:00:00`).getTime();
+    return Number.isFinite(t) ? t : NaN;
+  }
+
+  const t = new Date(raw).getTime();
+  return Number.isFinite(t) ? t : NaN;
+}
+
 export function computeLevelFromBirthdate(birthdate) {
   if (!birthdate) return null;
   const b = new Date(`${birthdate}T00:00:00`);
@@ -84,6 +123,20 @@ function buildCounterMetricsForDay(snapshot = {}, dayKey = '') {
   const habitsRoot = snapshot.habits || {};
   entries(habitsRoot.habitCounts || {}).forEach(([habitId, byDay]) => {
     counters[habitId] = toNum(byDay?.[dayKey]);
+  });
+  return counters;
+}
+
+function buildCounterMetricsForRange(snapshot = {}, range = 'day') {
+  const counters = {};
+  const bounds = getDateRangeBounds(range);
+  const habitsRoot = snapshot.habits || {};
+  entries(habitsRoot.habitCounts || {}).forEach(([habitId, byDay]) => {
+    counters[habitId] = entries(byDay || {}).reduce((sum, [day, n]) => {
+      const ts = parseDayKeyToMs(day);
+      if (!Number.isFinite(ts) || ts < bounds.startMs || ts > bounds.endMs) return sum;
+      return sum + toNum(n);
+    }, 0);
   });
   return counters;
 }
@@ -237,12 +290,27 @@ function computeEntryValue(entry = {}, entrySources = [], sourceData = {}) {
   const sourceRows = (entrySources || [])
     .filter((src) => src && src.entryId === entry.id && src.enabled !== false)
     .map((src) => {
+      const timeWindow = src.timeWindow === 'monthToDate'
+        ? 'monthToDate'
+        : src.timeWindow === 'day'
+          ? 'day'
+          : 'total';
+      const habitsSource = timeWindow === 'day'
+        ? (sourceData.habitsDay || sourceData.habits)
+        : timeWindow === 'monthToDate'
+          ? (sourceData.habitsMonthToDate || sourceData.habits)
+          : sourceData.habits;
+      const countersSource = timeWindow === 'day'
+        ? (sourceData.countersDay || sourceData.counters)
+        : timeWindow === 'monthToDate'
+          ? (sourceData.countersMonthToDate || sourceData.counters)
+          : sourceData.counters;
       let unitValue = 0;
       if (src.sourceType === 'habit') {
-        const metric = sourceData.habits[src.sourceId] || {};
+        const metric = habitsSource?.[src.sourceId] || {};
         unitValue = mapMetricByUnit(metric, src.unitMode || 'minute');
       } else if (src.sourceType === 'counter') {
-        unitValue = toNum(sourceData.counters[src.sourceId]);
+        unitValue = toNum(countersSource?.[src.sourceId]);
       } else if (src.sourceType === 'moduleMetric') {
         unitValue = toNum(sourceData.moduleMetrics[src.sourceId]);
       } else if (src.sourceType === 'manual') {
@@ -366,6 +434,10 @@ function getDateRangeBounds(range = 'day') {
   const now = new Date();
   const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (range === 'day') return { startMs: dayStart.getTime(), endMs: dayStart.getTime() + 86400000 - 1 };
+  if (range === 'monthToDate') {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { startMs: start.getTime(), endMs: dayStart.getTime() + 86400000 - 1 };
+  }
   return { startMs: Number.NEGATIVE_INFINITY, endMs: Number.POSITIVE_INFINITY };
 }
 
@@ -385,7 +457,7 @@ function buildHabitMetricsForRange(snapshot = {}, range = 'day') {
   entries(sessions).forEach(([habitId, byDay]) => {
     if (!map[habitId]) map[habitId] = { id: habitId, name: habitId, minutes: 0, hours: 0, sessions: 0, count: 0 };
     entries(byDay || {}).forEach(([day, sec]) => {
-      const ts = new Date(`${day}T00:00:00`).getTime();
+      const ts = parseDayKeyToMs(day);
       if (!Number.isFinite(ts) || ts < bounds.startMs || ts > bounds.endMs) return;
       const mins = toNum(sec) / 60;
       map[habitId].minutes += mins;
@@ -397,7 +469,7 @@ function buildHabitMetricsForRange(snapshot = {}, range = 'day') {
   entries(counts).forEach(([habitId, byDay]) => {
     if (!map[habitId]) map[habitId] = { id: habitId, name: habitId, minutes: 0, hours: 0, sessions: 0, count: 0 };
     entries(byDay || {}).forEach(([day, n]) => {
-      const ts = new Date(`${day}T00:00:00`).getTime();
+      const ts = parseDayKeyToMs(day);
       if (!Number.isFinite(ts) || ts < bounds.startMs || ts > bounds.endMs) return;
       map[habitId].count += toNum(n);
     });
@@ -406,7 +478,7 @@ function buildHabitMetricsForRange(snapshot = {}, range = 'day') {
   entries(checks).forEach(([habitId, byDay]) => {
     if (!map[habitId]) map[habitId] = { id: habitId, name: habitId, minutes: 0, hours: 0, sessions: 0, count: 0 };
     entries(byDay || {}).forEach(([day, v]) => {
-      const ts = new Date(`${day}T00:00:00`).getTime();
+      const ts = parseDayKeyToMs(day);
       if (!Number.isFinite(ts) || ts < bounds.startMs || ts > bounds.endMs) return;
       if (v === true || toNum(v) > 0) map[habitId].sessions += 1;
     });
@@ -433,7 +505,7 @@ export function computeCharacterHealth(sheet = {}, snapshot = {}) {
     }
   };
   const entrySources = Array.isArray(sheet.config?.entrySources) ? sheet.config.entrySources : [];
-  const todayComputed = computeEntryValue({ ...healthEntry, manualValue: 0 }, entrySources, todaySourceData);
+  const todayComputed = computeEntryValue({ ...healthEntry, manualValue: 0 }, entrySources.map((src) => ({ ...src, timeWindow: 'total' })), todaySourceData);
   const max = Math.max(100, Math.round(Math.max(healthEntry.value || 0, 100)));
   const value = Math.max(0, toNum(healthEntry.value));
   return {
@@ -448,10 +520,9 @@ export function computeCharacterStaminaToday(sheet = {}, snapshot = {}) {
   const staminaEntry = (sheet.entries || []).find((entry) => String(entry.name || '').toLowerCase() === 'estamina' || String(entry.id || '') === 'entry-stamina');
   if (!staminaEntry) return { value: 0, progress: 0, max: 100, todayDelta: 0 };
 
-  const todayDayKey = new Date().toISOString().slice(0, 10);
   const todaySourceData = {
     habits: buildHabitMetricsForRange(snapshot, 'day'),
-    counters: buildCounterMetricsForDay(snapshot, todayDayKey),
+    counters: buildCounterMetricsForRange(snapshot, 'day'),
     moduleMetrics: {
       'finance:gold': sheet.resources?.gold || 0,
       'gym:strength': (sheet.entries || []).find((x) => x.id === 'module-strength')?.value || 0,
@@ -459,7 +530,7 @@ export function computeCharacterStaminaToday(sheet = {}, snapshot = {}) {
     }
   };
   const entrySources = Array.isArray(sheet.config?.entrySources) ? sheet.config.entrySources : [];
-  const todayComputed = computeEntryValue({ ...staminaEntry, manualValue: 0 }, entrySources, todaySourceData);
+  const todayComputed = computeEntryValue({ ...staminaEntry, manualValue: 0 }, entrySources.map((src) => ({ ...src, timeWindow: 'total' })), todaySourceData);
   const max = Math.max(100, Math.round(Math.max(staminaEntry.value || 0, 100)));
   const value = Math.max(0, toNum(staminaEntry.value));
   return {
@@ -526,6 +597,10 @@ export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') 
   const level = computeLevelFromBirthdate(characterIdentity.birthdate);
   const habits = buildHabitMetrics(snapshot);
   const counters = buildCounterMetrics(snapshot);
+  const habitsDay = buildHabitMetricsForRange(snapshot, 'day');
+  const countersDay = buildCounterMetricsForRange(snapshot, 'day');
+  const habitsMonthToDate = buildHabitMetricsForRange(snapshot, 'monthToDate');
+  const countersMonthToDate = buildCounterMetricsForRange(snapshot, 'monthToDate');
 
   const userEntries = Array.isArray(config.characterEntries)
     ? config.characterEntries.map(normalizeEntry)
@@ -568,6 +643,10 @@ export function buildCharacterSheet(snapshot = {}, config = {}, range = 'week') 
   const sourceData = {
     habits,
     counters,
+    habitsDay,
+    countersDay,
+    habitsMonthToDate,
+    countersMonthToDate,
     moduleMetrics: {
       'finance:gold': moduleEntries.find((x) => x.id === 'module-gold')?.computedValue || 0,
       'gym:strength': moduleEntries.find((x) => x.id === 'module-strength')?.computedValue || 0,

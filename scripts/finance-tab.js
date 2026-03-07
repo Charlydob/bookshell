@@ -2122,6 +2122,89 @@ function chartModelForRange(series, mode) {
   const delta = computeDeltaForRange(points.map((point) => ({ ...point, value: point.value })), 'total').delta;
   return { points, tone: toneClass(delta) };
 }
+
+const FINANCE_TOTALS_CACHE_KEY = 'bookshell:finance:totals:v1';
+
+function publishFinanceTotals(accounts = []) {
+  const myTotal = accounts.reduce((sum, account) => sum + Number(account.current || 0), 0);
+  const totalReal = accounts.reduce((sum, account) => sum + Number(account.currentReal || 0), 0);
+  const payload = { myTotal, totalReal, ts: Date.now() };
+  try { localStorage.setItem(FINANCE_TOTALS_CACHE_KEY, JSON.stringify(payload)); } catch (_) {}
+  try { window.__bookshellFinanceTotals = payload; } catch (_) {}
+  try { window.dispatchEvent(new CustomEvent('bookshell:finance-totals', { detail: payload })); } catch (_) {}
+}
+
+function ensureLineChartTooltip(container) {
+  if (!container) return null;
+  let node = container.querySelector('.finance-lineChart-tooltip');
+  if (!node) {
+    node = document.createElement('div');
+    node.className = 'finance-lineChart-tooltip';
+    container.appendChild(node);
+  }
+  return node;
+}
+
+function ensureLineChartDot(container) {
+  if (!container) return null;
+  let node = container.querySelector('.finance-lineChart-dot');
+  if (!node) {
+    node = document.createElement('div');
+    node.className = 'finance-lineChart-dot';
+    container.appendChild(node);
+  }
+  return node;
+}
+
+function closestLineChartPoint(points, chartEl, clientX) {
+  if (!points?.length || !chartEl) return null;
+  const rect = chartEl.getBoundingClientRect();
+  const relX = Math.min(Math.max(0, (clientX || 0) - rect.left), rect.width || 0);
+  const ratio = rect.width ? relX / rect.width : 0;
+  const idx = Math.round(ratio * Math.max(points.length - 1, 0));
+  const point = points[idx] || null;
+  return point ? { point, idx } : null;
+}
+
+function lineChartCoords(points = [], idx = 0, width = 320, height = 120, pad = 10) {
+  const safeIdx = Math.max(0, Math.min(idx, Math.max(points.length - 1, 0)));
+  const vals = points.map((p) => Number(p?.value || 0));
+  const min = vals.length ? Math.min(...vals) : 0;
+  const max = vals.length ? Math.max(...vals) : 0;
+  const spread = max - min || 1;
+  const innerH = Math.max(1, height - pad * 2);
+  const x = (safeIdx / Math.max(points.length - 1, 1)) * width;
+  const v = Number(points[safeIdx]?.value || 0);
+  const y = pad + (innerH - ((v - min) / spread) * innerH);
+  return { x, y, width, height };
+}
+
+function showLineChartPoint(chartEl, point, idx, points) {
+  if (!chartEl || !point) return;
+  const tooltip = ensureLineChartTooltip(chartEl);
+  const dot = ensureLineChartDot(chartEl);
+  if (!tooltip) return;
+  tooltip.textContent = `${new Date(point.ts).toLocaleDateString('es-ES')} - ${fmtCurrency(point.value)}`;
+  tooltip.classList.add('is-open');
+  clearTimeout(tooltip.__hideTimer);
+  tooltip.__hideTimer = setTimeout(() => tooltip.classList.remove('is-open'), 1400);
+
+  if (dot && Array.isArray(points) && Number.isFinite(Number(idx))) {
+    const svg = chartEl.querySelector('svg');
+    const svgRect = svg?.getBoundingClientRect?.();
+    const chartRect = chartEl.getBoundingClientRect();
+    if (svgRect?.width && svgRect?.height && chartRect?.width && chartRect?.height) {
+      const { x, y } = lineChartCoords(points, idx);
+      const left = (svgRect.left - chartRect.left) + (x / 320) * svgRect.width;
+      const top = (svgRect.top - chartRect.top) + (y / 120) * svgRect.height;
+      dot.style.left = `${left}px`;
+      dot.style.top = `${top}px`;
+      dot.classList.add('is-open');
+      clearTimeout(dot.__hideTimer);
+      dot.__hideTimer = setTimeout(() => dot.classList.remove('is-open'), 1400);
+    }
+  }
+}
 function linePath(points, width = 320, height = 120, tension = 0.7, pad = 10) {
   if (!points.length) return '';
 
@@ -3021,6 +3104,7 @@ function renderFinanceHome(accounts, totalSeries) {
   const totalReal = accounts.reduce((sum, account) => sum + Number(account.currentReal || 0), 0);
   const totalRange = computeDeltaForRange(totalSeries, state.rangeMode);
   const chart = chartModelForRange(totalSeries, state.rangeMode);
+  state.lineChart = { points: chart.points || [], mode: state.rangeMode, kind: 'total' };
   const compareBounds = getRangeBounds(state.compareMode);
   const compareCurrent = computeDeltaWithinBounds(totalSeries, compareBounds);
   const previousBounds = { start: compareBounds.start - (compareBounds.end - compareBounds.start), end: compareBounds.start };
@@ -3605,6 +3689,7 @@ function renderModal() {
     const account = accounts.find((item) => item.id === state.modal.accountId);
     if (!account) { state.modal = { type: null }; triggerRender(); return; }
     const chart = chartModelForRange(account.daily, 'total');
+    state.lineChart = { points: chart.points || [], mode: 'total', kind: 'account', accountId: account.id, accountName: account.name };
     const preview = state.modal.importPreview;
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3> ${escapeHtml(account.name)}</h3><div class="finance-row"><button class="finance-pill finance-pill--mini" data-edit-account="${account.id}">Editar cuenta</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header>
       <p>Saldo real: <strong>${fmtCurrency(account.currentReal)}</strong>${account.shared ? ` · Mi parte: <strong>${fmtCurrency(account.current)}</strong>` : ''}</p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos.</div>'}</div>
@@ -4797,6 +4882,7 @@ async function render() {
     if (state.error) { host.innerHTML = `<article class=\"finance-panel\"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`; return; }
     await ensureBtcEurPrice();
     const accounts = buildAccountModels(); const totalSeries = buildTotalSeries(accounts);
+    publishFinanceTotals(accounts);
     if (state.activeView === 'balance') {
       await ensureFoodCatalogLoaded();
       host.innerHTML = renderFinanceBalance();
@@ -4827,12 +4913,87 @@ function bindEvents() {
   const view = document.getElementById('view-finance'); if (!view || view.dataset.financeBound === '1') return; view.dataset.financeBound = '1';
   state.eventsAbortController = new AbortController();
   const evtOpts = { signal: state.eventsAbortController.signal };
+  const chartEvtOpts = { signal: state.eventsAbortController.signal, passive: false };
+  const unlockFinanceScroll = () => {
+    if (!view.dataset.__scrollLocked) return;
+    view.dataset.__scrollLocked = '';
+    if (view.dataset.__prevOverflowY != null) view.style.overflowY = view.dataset.__prevOverflowY;
+    else view.style.overflowY = '';
+  };
+  const lockFinanceScroll = () => {
+    if (view.dataset.__scrollLocked === '1') return;
+    view.dataset.__scrollLocked = '1';
+    view.dataset.__prevOverflowY = view.style.overflowY || '';
+    view.style.overflowY = 'hidden';
+  };
+  let chartPointerId = null;
+  let chartPointerActive = false;
+  let chartPointerEl = null;
+
+  view.addEventListener('pointerdown', (event) => {
+    const target = event.target;
+    const chartEl = target?.closest?.('#finance-lineChart');
+    if (!chartEl) return;
+
+    const points = state.lineChart?.points || [];
+    if (!points.length) return;
+
+    chartPointerActive = true;
+    chartPointerId = event.pointerId;
+    chartPointerEl = chartEl;
+    lockFinanceScroll();
+
+    try { chartEl.style.touchAction = 'none'; } catch (_) {}
+    try { chartEl.setPointerCapture?.(event.pointerId); } catch (_) {}
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const hit = closestLineChartPoint(points, chartEl, event.clientX);
+    if (hit) showLineChartPoint(chartEl, hit.point, hit.idx, points);
+  }, chartEvtOpts);
+
+  view.addEventListener('pointermove', (event) => {
+    if (!chartPointerActive) return;
+    if (chartPointerId != null && event.pointerId !== chartPointerId) return;
+    if (!chartPointerEl) return;
+
+    const points = state.lineChart?.points || [];
+    if (!points.length) return;
+
+    event.preventDefault();
+    const hit = closestLineChartPoint(points, chartPointerEl, event.clientX);
+    if (hit) showLineChartPoint(chartPointerEl, hit.point, hit.idx, points);
+  }, chartEvtOpts);
+
+  const endPointer = (event) => {
+    if (!chartPointerActive) return;
+    if (chartPointerId != null && event.pointerId !== chartPointerId) return;
+    chartPointerActive = false;
+    chartPointerId = null;
+    chartPointerEl = null;
+    unlockFinanceScroll();
+  };
+
+  view.addEventListener('pointerup', (event) => { endPointer(event); }, chartEvtOpts);
+  view.addEventListener('pointercancel', (event) => { endPointer(event); }, chartEvtOpts);
+
   view.addEventListener('click', async (event) => {
     const target = event.target;
 
+    const lineChart = target?.closest?.('#finance-lineChart');
+    if (lineChart) {
+      const points = state.lineChart?.points || [];
+      if (!points.length) { toast('Sin datos para este gráfico'); return; }
+      const hit = closestLineChartPoint(points, lineChart, event.clientX);
+      if (!hit) { toast('Sin datos para este punto'); return; }
+      showLineChartPoint(lineChart, hit.point, hit.idx, points);
+      return;
+    }
+
     const formButton = target.closest('button:not([type]), button[type="submit"]');
-if (formButton) {
-  const form = formButton.closest('form');
+ if (formButton) {
+   const form = formButton.closest('form');
   // Si el botón está dentro de un form, NO bloquees: deja que dispare submit
   if (!form) {
     event.preventDefault();

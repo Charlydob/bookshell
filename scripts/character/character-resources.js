@@ -93,9 +93,12 @@ export function computeResources(snapshot = {}, range = 'week', scope = 'my') {
     const baseBalance = Number.isFinite(Number(acc?.balance))
       ? toNum(acc.balance)
       : (() => {
-          const snaps = values(acc?.snapshots || {});
-          const last = snaps.sort((a, b) => toNum(a?.ts || a?.createdAt) - toNum(b?.ts || b?.createdAt)).at(-1);
-          return last ? toNum(last?.value || last?.balance) : 0;
+          const snaps = Object.entries(acc?.snapshots || {}).map(([day, row]) => {
+            const ts = toDateTs(row?.ts || row?.createdAt || row?.updatedAt || day);
+            return { ts, value: toNum(row?.value ?? row?.balance) };
+          }).filter((row) => Number.isFinite(row.ts));
+          const last = snaps.sort((a, b) => a.ts - b.ts).at(-1);
+          return last ? toNum(last.value) : 0;
         })();
     if (scope === 'total') return baseBalance;
     if (acc?.shared) return baseBalance * clampRatio(acc?.sharedRatio, 0.5);

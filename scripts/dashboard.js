@@ -34,6 +34,26 @@ if (!$viewMain) {
   let lastConfig = {};
   let selectedRange = 'week';
   let selectedScope = 'my';
+  const FINANCE_TOTALS_CACHE_KEY = 'bookshell:finance:totals:v1';
+  let cachedFinanceTotals = null;
+
+  function readFinanceTotalsCache() {
+    if (cachedFinanceTotals) return cachedFinanceTotals;
+    try {
+      const raw = localStorage.getItem(FINANCE_TOTALS_CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      cachedFinanceTotals = parsed;
+      return parsed;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  window.addEventListener?.('bookshell:finance-totals', (event) => {
+    cachedFinanceTotals = event?.detail || null;
+  });
 
   function showWarning(message) {
     const id = 'rpg-warning';
@@ -67,6 +87,21 @@ if (!$viewMain) {
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;')
       .replaceAll("'", '&#39;');
+  }
+
+  function parseEurCurrencyText(raw = '') {
+    const value = String(raw || '').trim();
+    if (!value) return NaN;
+    const cleaned = value
+      .replace(/\s/g, '')
+      .replace('€', '')
+      .replace(/[^\d,.\-]/g, '');
+    if (!cleaned) return NaN;
+    const normalized = cleaned.includes(',')
+      ? cleaned.replace(/\./g, '').replace(',', '.')
+      : cleaned;
+    const n = Number.parseFloat(normalized);
+    return Number.isFinite(n) ? n : NaN;
   }
 
   function defaultEntryByType(type = 'attribute') {
@@ -222,6 +257,11 @@ if (!$viewMain) {
   function renderEntrySourceEditorModal(entry, sheet, sourceId = '') {
     const current = (lastConfig.entrySources || []).find((src) => src.id === sourceId && src.entryId === entry.id) || {};
     const sourceType = current.sourceType || 'habit';
+    const timeWindow = current.timeWindow === 'monthToDate'
+      ? 'monthToDate'
+      : current.timeWindow === 'day'
+        ? 'day'
+        : 'total';
     const habitOptions = sheet.sourceCatalog.habits.map((h) => `<option value="${h.id}" ${h.id === current.sourceId ? 'selected' : ''}>${escapeHtml(h.name || h.id)}</option>`).join('');
     const counterOptions = sheet.sourceCatalog.counters.map((c) => `<option value="${c.id}" ${c.id === current.sourceId ? 'selected' : ''}>${escapeHtml(c.name || c.id)}</option>`).join('');
 
@@ -265,6 +305,13 @@ if (!$viewMain) {
               <option value="finance:gold" ${current.sourceId === 'finance:gold' ? 'selected' : ''}>Finance · Oro</option>
             </select>
           </label>
+          <label>Rango temporal
+            <select name="timeWindow">
+              <option value="total" ${timeWindow === 'total' ? 'selected' : ''}>Total</option>
+              <option value="day" ${timeWindow === 'day' ? 'selected' : ''}>Hoy (24h)</option>
+              <option value="monthToDate" ${timeWindow === 'monthToDate' ? 'selected' : ''}>Mes actual (hasta hoy)</option>
+            </select>
+          </label>
           <label>Peso<input type="number" step="0.1" name="weight" value="${Number(current.weight ?? 1)}" /></label>
           <label>Signo
             <select name="sign">
@@ -297,6 +344,7 @@ if (!$viewMain) {
           sourceType: selectedType,
           sourceId: selectedSourceId,
           unitMode: String(fd.get('unitMode') || 'minute'),
+          timeWindow: String(fd.get('timeWindow') || 'total'),
           weight: Number(fd.get('weight') || 1),
           sign: String(fd.get('sign') || 'add'),
           manualValue: Number(fd.get('manualValue') || 0),
@@ -458,10 +506,34 @@ if (!$viewMain) {
     const level = id.hasBirthdate ? `Nivel ${id.level}` : 'Nivel pendiente';
     const nameLabel = id.alias ? `${id.name} · ${id.alias}` : id.name;
     const headerFinance = sheet.headerFinance || { gold: 0, dayDelta: 0, monthDelta: 0 };
+    const financeCache = readFinanceTotalsCache();
+    const cachedGold = selectedScope === 'total' ? Number(financeCache?.totalReal) : Number(financeCache?.myTotal);
+    if (selectedScope !== 'total') {
+      const node = document.getElementById('finance-totalValue');
+      const fromDom = parseEurCurrencyText(node?.textContent || '');
+      if (Number.isFinite(fromDom)) headerFinance.gold = fromDom;
+      else if (Number.isFinite(cachedGold)) headerFinance.gold = cachedGold;
+    } else if (Number.isFinite(cachedGold)) {
+      headerFinance.gold = cachedGold;
+    }
     const powerLevel = Number(sheet.powerLevel || 0);
     const health = sheet.health || { value: 0, max: 100, progress: 0, todayDelta: 0 };
     const stamina = sheet.stamina || { value: 0, max: 100, progress: 0, todayDelta: 0 };
     const games = sheet.gamesSummary || { wins: 0, losses: 0, kills: 0, deaths: 0 };
+
+    const staminaMaxUi = 1000;
+    const staminaValue = Math.max(0, Number(stamina.value || 0));
+    const staminaDelta = Number(stamina.todayDelta || 0);
+    const staminaProgressUi = Math.max(0, Math.min(1, staminaValue / staminaMaxUi));
+    const staminaOvercharged = staminaValue > staminaMaxUi;
+    const staminaSpent = staminaDelta < 0 ? Math.abs(staminaDelta) : 0;
+    const staminaBeforeSpend = staminaSpent > 0 ? staminaValue + staminaSpent : staminaValue;
+    const staminaDeltaLabel = staminaSpent > 0
+      ? `-${fmt(staminaSpent)} pts (${fmt(staminaBeforeSpend)} â†’ ${fmt(staminaValue)})`
+      : formatPointsDelta(staminaDelta);
+    const staminaDeltaLabelUi = staminaSpent > 0
+      ? `-${fmt(staminaSpent)} pts (${fmt(staminaBeforeSpend)} -> ${fmt(staminaValue)})`
+      : formatPointsDelta(staminaDelta);
 
     const topBadges = (sheet.entries || [])
       .filter((entry) => entry.type !== 'language' && entry.id !== 'module-gold' && !['salud', 'estamina'].includes(String(entry.name || '').toLowerCase()))
@@ -491,7 +563,7 @@ if (!$viewMain) {
         <div class="rpg-health-head"><span>❤️ Salud</span><b>${fmt(health.value)} / ${fmt(health.max)}</b><small class="${health.todayDelta >= 0 ? 'is-up' : 'is-down'}">${formatPointsDelta(health.todayDelta)}</small></div>
         <div class="rpg-health-bar"><i style="width:${Math.round((health.progress || 0) * 100)}%"></i></div>
       </div>
-      <div class="rpg-health-block rpg-stamina-block">
+      <div class="rpg-health-block rpg-stamina-block ${staminaOvercharged ? 'is-overcharged' : ''}">
         <div class="rpg-health-head"><span>⚡ Estamina</span><b>${fmt(stamina.value)} / ${fmt(stamina.max)}</b><small class="${stamina.todayDelta >= 0 ? 'is-up' : 'is-down'}">${formatPointsDelta(stamina.todayDelta)}</small></div>
         <div class="rpg-health-bar rpg-stamina-bar"><i style="width:${Math.round((stamina.progress || 0) * 100)}%"></i></div>
       </div>
@@ -502,6 +574,28 @@ if (!$viewMain) {
         <div class="rpg-mini-summary"><span>☠️ Deaths</span><b>${fmt(games.deaths)}</b></div>
       </div>
       <div class="rpg-hero-badges">${topBadges || '<span class="rpg-mini-badge">Añade aptitudes para ver rangos</span>'}</div>`;
+
+    const $staminaBlock = $hero.querySelector('.rpg-stamina-block');
+    if ($staminaBlock) {
+      $staminaBlock.classList.toggle('is-overcharged', staminaOvercharged);
+      const $staminaHead = $staminaBlock.querySelector('.rpg-health-head');
+      const $staminaValueNode = $staminaHead?.querySelector('b');
+      if ($staminaValueNode) $staminaValueNode.textContent = `${fmt(staminaValue)} / ${fmt(staminaMaxUi)}`;
+
+      const $deltaNode = $staminaHead?.querySelector('small');
+      if ($deltaNode) {
+        $deltaNode.classList.toggle('is-up', staminaDelta >= 0);
+        $deltaNode.classList.toggle('is-down', staminaDelta < 0);
+        $deltaNode.textContent = staminaDeltaLabelUi;
+      }
+
+      const $bar = $staminaBlock.querySelector('.rpg-stamina-bar');
+      if ($bar) {
+        $bar.classList.toggle('is-overcharged', staminaOvercharged);
+        const $fill = $bar.querySelector('i');
+        if ($fill) $fill.style.width = `${Math.round(staminaProgressUi * 100)}%`;
+      }
+    }
 
     $hero.querySelector('#rpg-open-identity')?.addEventListener('click', () => {
       const identity = sheet.identity;
@@ -547,7 +641,7 @@ if (!$viewMain) {
             : type === 'health'
               ? { id: 'entry-health', type: 'attribute', name: 'Salud', icon: '❤️', description: 'Estado de salud asociado a hábitos sanos/insanos.', sourceMode: 'manual', manualValue: 70, rankConfig: { enabled: false, basePoints: 100, growth: 5 } }
               : type === 'stamina'
-                ? { id: 'entry-stamina', type: 'attribute', name: 'Estamina', icon: '⚡', description: 'Estado de energía diaria asociado a hábitos de descanso/activación.', sourceMode: 'manual', manualValue: 65, rankConfig: { enabled: false, basePoints: 100, growth: 5 } }
+                ? { id: 'entry-stamina', type: 'attribute', name: 'Estamina', icon: '⚡', description: 'Estado de energía diaria asociado a hábitos de descanso/activación.', sourceMode: 'manual', manualValue: 0, rankConfig: { enabled: false, basePoints: 100, growth: 5 } }
                 : defaultEntryByType(type);
           await persistAndRender((next) => {
             if (type === 'health' || type === 'stamina') {
@@ -637,9 +731,10 @@ if (!$viewMain) {
       <div class="rpg-section-title">Aptitudes / Habilidades / CV</div>
       <ul>${skills.map((entry) => `<li>${entry.icon || '✨'} <b>${escapeHtml(entry.name)}</b> · ${fmt(entry.value)} ${entry.rankProgress?.enabled ? `· R${entry.rankProgress.rank}` : ''}</li>`).join('') || '<li>Sin entradas manuales todavía</li>'}</ul>
       <div class="rpg-section-title">Idiomas</div>
-      <ul>${languages.map((entry) => `<li>${entry.icon || '🗣️'} <b>${escapeHtml(entry.name)}</b> · ${escapeHtml(entry.manualLevel || 'sin nivel')} · ${fmt(entry.value)}h</li>`).join('') || '<li>Sin idiomas manuales todavía</li>'}</ul>`;
+      <ul>${languages.map((entry) => `<li>${entry.icon || '🗣️'} <b>${escapeHtml(entry.name)}</b> · ${escapeHtml(entry.manualLevel || 'sin nivel')} · ${fmt(entry.value)}xp</li>`).join('') || '<li>Sin idiomas manuales todavía</li>'}</ul>`;
 
     $formulas.innerHTML = '<ul><li>Valor final = valor manual + suma/resta de fuentes configuradas por peso.</li><li>Salud y Estamina calculan delta diario por fuentes del día.</li><li>Resumen de Games agrega victorias, derrotas, kills y deaths reales.</li></ul>';
+    $activity.innerHTML = $activity.innerHTML.replaceAll('xp</li>', 'h</li>');
     $config.innerHTML = '';
   }
 
@@ -672,4 +767,10 @@ if (!$viewMain) {
 
   window.__bookshellDashboard = { render, buildCharacterSheet, getCharacterConfig, saveCharacterConfig };
   render();
+}
+
+export async function onShow() {
+  try {
+    await window.__bookshellDashboard?.render?.();
+  } catch (_) {}
 }

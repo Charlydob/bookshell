@@ -347,6 +347,14 @@ function normalizeFoodCompareKey(value = '') {
     .toLowerCase()
     .replace(/^[\s\-_,.;:¡!¿?()\[\]{}"'`]+|[\s\-_,.;:¡!¿?()\[\]{}"'`]+$/g, '');
 }
+
+function normalizeProductItemLabel(value = '') {
+  return normalizeFoodName(value);
+}
+
+function normalizeProductItemKey(value = '') {
+  return normalizeFoodCompareKey(value);
+}
 function ticketCategoryToTxCategory(category = '') {
   const safe = String(category || '').trim().toLowerCase();
   if (!safe || safe === 'otros' || safe === 'hogar' || safe === 'higiene' || safe === 'mascotas') return 'Otros';
@@ -395,39 +403,94 @@ function appendPriceHistoryPoint(pointsByVendorAndDate = {}, row = {}) {
   return pointsByVendorAndDate;
 }
 
-function accumulateSpendByProduct(rows = [], amountByTxId = {}, productsById = {}) {
-  const spend = {};
-  const productKeyByLabel = {};
-  const statsByProduct = {};
+function getProductItemRows(rows = [], options = {}) {
+  const amountByTxId = options?.amountByTxId || {};
+  const productsById = options?.productsById || {};
+  const vendorFilter = String(options?.vendor || 'all');
+  const accountFilter = String(options?.account || 'all');
+  const onlyFood = !!options?.onlyFood;
+  const output = [];
   rows.forEach((row) => {
+    if (normalizeTxType(row?.type) !== 'expense') return;
     const txAmount = Math.abs(Number(amountByTxId[row.id] ?? row.amount ?? 0));
     if (!txAmount) return;
-    const items = foodItemsFromTx(row);
-    const validLines = items.map((item) => {
+    const ts = txTs(row);
+    if (!Number.isFinite(ts) || ts <= 0) return;
+    if (accountFilter !== 'all' && String(row?.accountId || '') !== accountFilter) return;
+    const txVendor = firebaseSafeKey(normalizeFoodName(row?.extras?.filters?.place || row?.extras?.place || 'unknown')) || 'unknown';
+    const validLines = foodItemsFromTx(row).map((item) => {
+      const displayName = normalizeProductItemLabel(item?.name || item?.item || item?.productName || '');
       const totalPrice = Math.abs(Number(item?.totalPrice ?? item?.amount ?? item?.price ?? 0));
       const qty = Math.max(1, Number(item?.qty || 1));
       const unit = String(item?.unit || 'ud').trim() || 'ud';
       const unitPrice = Number(item?.unitPrice || computeUnitPrice(totalPrice, qty));
-      return { item, totalPrice, qty, unit, unitPrice };
-    }).filter((line) => line.totalPrice > 0 && normalizeFoodName(line.item?.name || ''));
+      const vendorKey = firebaseSafeKey(normalizeFoodName(item?.place || txVendor || 'unknown')) || 'unknown';
+      const productId = resolveProductIdentity(item, productsById);
+      const canonicalName = normalizeProductItemLabel(productsById?.[productId]?.displayName || productsById?.[productId]?.name || displayName || productId || 'Sin datos') || 'Sin datos';
+      return {
+        txId: String(row?.id || ''),
+        accountId: String(row?.accountId || ''),
+        ts,
+        date: dayKeyFromTs(ts),
+        vendorKey,
+        itemCategory: String(item?.category || item?.category_app || row?.category || ''),
+        nameRaw: displayName,
+        foodId: String(item?.foodId || ''),
+        productKey: String(item?.productKey || ''),
+        productId: String(productId || ''),
+        canonicalName,
+        qty,
+        unit,
+        totalPrice,
+        unitPrice: Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : totalPrice,
+      };
+    }).filter((line) => line.nameRaw);
     if (!validLines.length) return;
-    const linesTotal = validLines.reduce((sum, line) => sum + line.totalPrice, 0) || 1;
-    validLines.forEach((line) => {
-      const productId = resolveProductIdentity(line.item, productsById);
-      const canonicalName = productsById?.[productId]?.displayName || productsById?.[productId]?.name || line.item?.name || productId || 'Sin datos';
-      const label = normalizeFoodName(canonicalName) || 'Sin datos';
-      const scopedLineAmount = txAmount * (line.totalPrice / linesTotal);
-      spend[label] = (spend[label] || 0) + scopedLineAmount;
-      productKeyByLabel[label] = productId || line.item?.productKey || firebaseSafeKey(label);
-      const prev = statsByProduct[label] || { purchaseCount: 0, sumUnitPriceWeighted: 0, sumQty: 0, units: new Set() };
-      prev.purchaseCount += 1;
-      prev.sumUnitPriceWeighted += line.unitPrice * line.qty;
-      prev.sumQty += line.qty;
-      prev.units.add(line.unit);
-      statsByProduct[label] = prev;
+    const hasDirectLinePrices = validLines.some((line) => line.totalPrice > 0);
+    const normalizedLines = hasDirectLinePrices
+      ? validLines
+      : (() => {
+        const totalQty = validLines.reduce((sum, line) => sum + Math.max(1, Number(line.qty || 1)), 0) || validLines.length;
+        return validLines.map((line) => {
+          const weight = Math.max(1, Number(line.qty || 1)) / totalQty;
+          const fallbackTotal = txAmount * weight;
+          return {
+            ...line,
+            totalPrice: fallbackTotal,
+            unitPrice: computeUnitPrice(fallbackTotal, line.qty)
+          };
+        });
+      })();
+    const linesTotal = normalizedLines.reduce((sum, line) => sum + Number(line.totalPrice || 0), 0) || 1;
+    normalizedLines.forEach((line) => {
+      if (vendorFilter !== 'all' && line.vendorKey !== vendorFilter) return;
+      if (onlyFood && !isFoodCategory(line.itemCategory || '')) return;
+      output.push({
+        ...line,
+        scopedAmount: txAmount * (Number(line.totalPrice || 0) / linesTotal)
+      });
     });
   });
-  return { spend, productKeyByLabel, statsByProduct };
+  return output;
+}
+
+function accumulateSpendByProduct(rows = [], amountByTxId = {}, productsById = {}) {
+  const spend = {};
+  const productKeyByLabel = {};
+  const statsByProduct = {};
+  const productItemRows = getProductItemRows(rows, { amountByTxId, productsById });
+  productItemRows.forEach((line) => {
+      const label = normalizeProductItemLabel(line.canonicalName || line.nameRaw || line.productId || 'Sin datos') || 'Sin datos';
+      spend[label] = (spend[label] || 0) + Number(line.scopedAmount || 0);
+      productKeyByLabel[label] = line.productId || line.productKey || firebaseSafeKey(label);
+      const prev = statsByProduct[label] || { purchaseCount: 0, sumUnitPriceWeighted: 0, sumQty: 0, units: new Set() };
+      prev.purchaseCount += 1;
+      prev.sumUnitPriceWeighted += Number(line.unitPrice || 0) * Number(line.qty || 1);
+      prev.sumQty += Number(line.qty || 1);
+      prev.units.add(line.unit || 'ud');
+      statsByProduct[label] = prev;
+  });
+  return { spend, productKeyByLabel, statsByProduct, rows: productItemRows };
 }
 
 function normalizeCardLast4(value = '') {
@@ -1046,11 +1109,26 @@ function buildProductsViewModel(cfg = {}) {
   };
   const accountsById = Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
   const { rows: rangeRows, start, end } = resolveProductsRangeRows(effectiveCfg);
+  const scopedAmountByTx = {};
+  rangeRows.forEach((row) => {
+    if (row.type !== 'expense') return;
+    const scopedAmount = effectiveCfg.scope === 'global' ? Math.abs(Number(row.amount || 0)) : Math.abs(personalDeltaForTx(row, accountsById));
+    if (!scopedAmount) return;
+    scopedAmountByTx[row.id] = scopedAmount;
+  });
   const donutAgg = aggregateStatsGroup(rangeRows, 'product', 'expense', effectiveCfg.scope, accountsById, { includeUnlined: false });
   const donutTotal = Object.values(donutAgg.breakdown || {}).reduce((sum, value) => sum + Number(value || 0), 0);
   const legendRows = donutSegments(donutAgg.breakdown || {}, donutTotal, { productKeyByLabel: donutAgg.productKeyByLabel || {} });
-  const { lines, purchaseCount } = buildFoodLines(rangeRows, effectiveCfg);
+  const lines = getProductItemRows(rangeRows, {
+    amountByTxId: scopedAmountByTx,
+    productsById: state.food.itemsById || {},
+    vendor: effectiveCfg.vendor || 'all',
+    account: effectiveCfg.account || 'all',
+    onlyFood: !!effectiveCfg.onlyFood
+  });
+  const purchaseCount = new Set(lines.map((line) => line.txId)).size;
   const detailAgg = aggregateProducts(lines, purchaseCount);
+  const totalFood = Number(detailAgg.totalFood || 0);
   const detailByProductKey = detailAgg.products.reduce((acc, row) => {
     acc[String(row.canonicalId || '')] = row;
     return acc;
@@ -1092,13 +1170,13 @@ function buildProductsViewModel(cfg = {}) {
     }));
   const productRows = [...productRowsFromDetail, ...missingDonutRows];
   const productsQuery = normalizeFoodName(effectiveCfg.productsQuery || '');
-  const productsQueryKey = normalizeFoodCompareKey(productsQuery);
+  const productsQueryKey = normalizeProductItemKey(productsQuery);
   const queryFilteredRows = productsQuery
     ? productRows.filter((row) => {
-      const nameKey = normalizeFoodCompareKey(row.canonicalName || '');
+      const nameKey = normalizeProductItemKey(row.canonicalName || '');
       if (nameKey.includes(productsQueryKey)) return true;
       return Array.isArray(row.aliases)
-        && row.aliases.some((alias) => normalizeFoodCompareKey(alias).includes(productsQueryKey));
+        && row.aliases.some((alias) => normalizeProductItemKey(alias).includes(productsQueryKey));
     })
     : productRows;
   const sortedRows = queryFilteredRows.slice().sort((a, b) => {
@@ -1131,7 +1209,13 @@ function renderProductsView(isModal = false) {
   const accountOptions = ['all', ...new Set(balanceTxList().filter((row) => normalizeTxType(row?.type) === 'expense').map((row) => String(row.accountId || '')).filter(Boolean))];
   const totalAverage = purchaseCount > 0 ? totalFood / purchaseCount : 0;
   const listHtml = listVisible.length
-    ? listVisible.map((row) => `<button type="button" class="finFoodProductsRow" data-food-item-detail="${escapeHtml(row.canonicalId)}"><strong>${escapeHtml(row.canonicalName)}</strong><span>${fmtCurrency(row.total)} · ${row.percentOfFood.toFixed(1)}%</span><span>${(cfg.tab || 'top-eur') === 'top-count' ? `${row.count} uds` : `${row.purchases} compras`}</span><span>${row.cheapestVendorKey ? `Más barato en ${escapeHtml(row.cheapestVendorKey)} (${Number(row.cheapestPrice || 0).toFixed(2)} €/ud)` : 'Sin comparativa'}</span><small>${row.lastVendor ? `Último ${Number(row.lastPrice || 0).toFixed(2)} €/ud · ${escapeHtml(row.lastVendor)}` : ''}</small></button>`).join('')
+    ? listVisible.map((row) => {
+      const searchParts = [row.canonicalName, ...(Array.isArray(row.aliases) ? row.aliases : [])]
+        .map((part) => normalizeProductItemKey(part))
+        .filter(Boolean)
+        .join(' ');
+      return `<button type="button" class="finFoodProductsRow" data-food-item-detail="${escapeHtml(row.canonicalId)}" data-food-product-row data-food-product-search="${escapeHtml(searchParts)}"><strong>${escapeHtml(row.canonicalName)}</strong><span>${fmtCurrency(row.total)} · ${row.percentOfFood.toFixed(1)}%</span><span>${(cfg.tab || 'top-eur') === 'top-count' ? `${row.count} uds` : `${row.purchases} compras`}</span><span>${row.cheapestVendorKey ? `Más barato en ${escapeHtml(row.cheapestVendorKey)} (${Number(row.cheapestPrice || 0).toFixed(2)} €/ud)` : 'Sin comparativa'}</span><small>${row.lastVendor ? `Último ${Number(row.lastPrice || 0).toFixed(2)} €/ud · ${escapeHtml(row.lastVendor)}` : ''}</small></button>`;
+    }).join('')
     : '<p class="finance-empty">Sin productos en este rango.</p>';
   const content = `<div class="financeProductsView"><section class="finFoodProductsHead">
       <div class="finFoodFilters">
@@ -1168,6 +1252,26 @@ function renderFinanceProducts() {
   return renderProductsView(false);
 }
 
+function applyProductsSearchFilter(inputEl) {
+  const root = inputEl?.closest('.financeProductsView') || document;
+  if (!inputEl || !root) return;
+  const queryKey = normalizeProductItemKey(inputEl.value || '');
+  root.querySelectorAll('[data-food-product-row]').forEach((row) => {
+    const haystack = String(row.dataset.foodProductSearch || '');
+    row.style.display = !queryKey || haystack.includes(queryKey) ? '' : 'none';
+  });
+}
+
+function applyMergeSearchFilter(inputEl, selector) {
+  if (!inputEl) return;
+  const queryKey = normalizeProductItemKey(inputEl.value || '');
+  const scope = inputEl.closest('#finance-modal') || document;
+  scope.querySelectorAll(selector).forEach((row) => {
+    const haystack = String(row.dataset.foodMergeName || '');
+    row.style.display = !queryKey || haystack.includes(queryKey) ? '' : 'none';
+  });
+}
+
 function firebaseSafeKeyLoose(s) {
   return String(s ?? '')
     .trim()
@@ -1193,6 +1297,7 @@ async function mergeFoodProducts(selection = [], destinationId = '') {
   const ids = [...new Set(selection.map((id) => String(id || '').trim()).filter(Boolean))];
   if (ids.length < 2) return false;
   const canonicalId = firebaseSafeKeyLoose(destinationId || ids[0]);
+  if (!ids.includes(canonicalId)) return false;
   const canonicalName = state.food.itemsById?.[canonicalId]?.displayName || state.food.itemsById?.[canonicalId]?.name || canonicalId;
   const canonicalPayload = firebaseClean({
     name: String(canonicalName || canonicalId),
@@ -4328,7 +4433,7 @@ if (form) {
       .filter((item) => selected.includes(item.id))
       .filter((item) => !destinationSearch || normalizeFoodCompareKey(item.name).includes(destinationSearch));
     const selectedSet = new Set(selected);
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>Fusionar productos</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header><section class="finFoodDetailSection finFoodCard"><input class="food-control" type="search" placeholder="Buscar productos a fusionar" value="${escapeHtml(state.modal.search || '')}" data-food-merge-search /><div class="finFoodMergeList">${options.map((item) => `<label class="finFoodMergeRow"><input type="checkbox" data-food-merge-select="${escapeHtml(item.id)}" ${selectedSet.has(item.id) ? 'checked' : ''}> <span>${escapeHtml(item.name)}</span></label>`).join('')}</div><label class="financeStats__checkbox">Producto destino</label><input class="food-control" type="search" placeholder="Buscar destino" value="${escapeHtml(state.modal.destinationSearch || '')}" data-food-merge-destination-search /><div class="finFoodMergeList">${selectedOptions.map((item) => `<label class="finFoodMergeRow"><input type="radio" name="food-merge-destination" data-food-merge-destination="${escapeHtml(item.id)}" ${destinationId === item.id ? 'checked' : ''}> <span>${escapeHtml(item.name)}</span></label>`).join('') || '<p class="finance-empty">Selecciona al menos 2 productos para elegir destino.</p>'}</div><div class="finFoodChipRow"><button type="button" class="food-history-btn" data-food-merge-confirm ${(selected.length < 2 || !destinationId || !selectedSet.has(destinationId)) ? 'disabled' : ''}>Fusionar seleccionados</button></div></section></div>`;
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>Fusionar productos</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header><section class="finFoodDetailSection finFoodCard"><input class="food-control" type="search" placeholder="Buscar productos a fusionar" value="${escapeHtml(state.modal.search || '')}" data-food-merge-search /><div class="finFoodMergeList">${options.map((item) => `<label class="finFoodMergeRow" data-food-merge-option data-food-merge-name="${escapeHtml(normalizeProductItemKey(item.name))}"><input type="checkbox" data-food-merge-select="${escapeHtml(item.id)}" ${selectedSet.has(item.id) ? 'checked' : ''}> <span>${escapeHtml(item.name)}</span></label>`).join('')}</div><label class="financeStats__checkbox">Producto destino</label><input class="food-control" type="search" placeholder="Buscar destino" value="${escapeHtml(state.modal.destinationSearch || '')}" data-food-merge-destination-search /><div class="finFoodMergeList">${selectedOptions.map((item) => `<label class="finFoodMergeRow" data-food-merge-destination-option data-food-merge-name="${escapeHtml(normalizeProductItemKey(item.name))}"><input type="radio" name="food-merge-destination" data-food-merge-destination="${escapeHtml(item.id)}" ${destinationId === item.id ? 'checked' : ''}> <span>${escapeHtml(item.name)}</span></label>`).join('') || '<p class="finance-empty">Selecciona al menos 2 productos para elegir destino.</p>'}</div><div class="finFoodChipRow"><button type="button" class="food-history-btn" data-food-merge-confirm ${(selected.length < 2 || !destinationId || !selectedSet.has(destinationId)) ? 'disabled' : ''}>Fusionar seleccionados</button></div></section></div>`;
     return;
   }
   if (state.modal.type === 'food-item') {
@@ -5362,6 +5467,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       const selected = Array.isArray(state.modal.selected) ? state.modal.selected : [];
       const destinationId = String(state.modal.destinationId || selected[0] || '').trim();
       if (selected.length < 2) return;
+      if (!destinationId || !selected.includes(destinationId)) return;
       if (!window.confirm(`Vas a fusionar ${selected.length} productos en 1 canonical. ¿Continuar?`)) return;
       await mergeFoodProducts(selected, destinationId);
       toast('Productos fusionados');
@@ -5883,21 +5989,21 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-food-merge-search]')) {
       const value = String(event.target.value || '');
       state.modal = { ...state.modal, search: value };
-      triggerRender();
+      applyMergeSearchFilter(event.target, '[data-food-merge-option]');
       return;
     }
 
     if (event.target.matches('[data-food-merge-destination-search]')) {
       const value = String(event.target.value || '');
       state.modal = { ...state.modal, destinationSearch: value };
-      triggerRender();
+      applyMergeSearchFilter(event.target, '[data-food-merge-destination-option]');
       return;
     }
 
     if (event.target.matches('[data-food-products-search]')) {
       const value = String(event.target.value || '');
       state.foodProductsView = { ...state.foodProductsView, productsQuery: value };
-      triggerRender();
+      applyProductsSearchFilter(event.target);
       return;
     }
 

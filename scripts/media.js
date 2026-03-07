@@ -37,6 +37,13 @@ let watchedModalItemId = null;
 let watchedModalRating = 0;
 let editProgressDebounceTimer = 0;
 
+let needsRefreshOnShow = false;
+let _mediaLastActive = false;
+let _mediaShowRaf = 0;
+let _lastListLayoutKey = "";
+let _lastDonutLayoutKey = "";
+let _lastMapLayoutKey = "";
+
 
 /* ------------------------- State ------------------------- */
 const state = {
@@ -1615,13 +1622,29 @@ function bindDom() {
   fab?.addEventListener("click", (e) => e.stopPropagation());
 
   // resize/repaint cuando la vista se active
+  _mediaLastActive = isActiveView();
   const mo = new MutationObserver(() => {
-    if (!isActiveView()) return;
-    requestAnimationFrame(() => {
+    const active = isActiveView();
+    if (active === _mediaLastActive) return;
+    _mediaLastActive = active;
+    if (!active) return;
+
+    if (_mediaShowRaf) cancelAnimationFrame(_mediaShowRaf);
+    _mediaShowRaf = requestAnimationFrame(() => {
+      _mediaShowRaf = 0;
       donutChart?.resize?.();
       mapChart?.resize?.();
-      renderVirtual();
-      refreshChartsMaybe();
+      els.mapHost?.__geoChart?.resize?.();
+
+      if (needsRefreshOnShow) {
+        refresh({ force: true });
+        return;
+      }
+
+      if (state.view === "list") {
+        const key = layoutKey(els.list);
+        if (key !== _lastListLayoutKey) renderVirtual();
+      }
     });
   });
   mo.observe(els.view, { attributes: true, attributeFilter: ["class", "style"] });
@@ -1751,6 +1774,13 @@ function applyAutofillData(details, mode) {
 
 function isActiveView() {
   return els.view?.classList?.contains("view-active");
+}
+
+function layoutKey(el) {
+  if (!el) return "0x0";
+  const w = el.clientWidth || 0;
+  const h = el.clientHeight || 0;
+  return `${w}x${h}`;
 }
 
 function setActiveViewBtns() {
@@ -2395,6 +2425,7 @@ function renderVirtual() {
     rEl.setAttribute("aria-valuenow", String(it.rating || 0));
 
   }
+  _lastListLayoutKey = layoutKey(els.list);
 }
 
 function ensureWatchedModal() {
@@ -2932,6 +2963,7 @@ function renderDonut() {
   }, { notMerge: true });
 
   donutChart.resize();
+  _lastDonutLayoutKey = layoutKey(els.donutHost);
 }
 
 /* ------------------------- Map (origen) ------------------------- */
@@ -3008,6 +3040,7 @@ function renderMap() {
       });
       const chart = els.mapHost.__geoChart;
       if (chart?.setOption) chart.setOption({ title: { show: false } });
+      _lastMapLayoutKey = layoutKey(els.mapHost);
       return;
     } catch (e) {
       log("renderCountryHeatmap failed, fallback", e);
@@ -3045,6 +3078,7 @@ function renderMap() {
     }, { notMerge: true });
 
     mapChart.resize();
+    _lastMapLayoutKey = layoutKey(els.mapHost);
   } catch (e) {
     if (els.mapHint) {
       els.mapHint.style.display = "";
@@ -4779,7 +4813,12 @@ function refreshChartsMaybe() {
   if (state.view === "map") renderMap();
 }
 
-function refresh() {
+function refresh({ force = false } = {}) {
+  if (!force && !isActiveView()) {
+    needsRefreshOnShow = true;
+    return;
+  }
+  needsRefreshOnShow = false;
   applyFilters();
   renderVirtual();
   refreshChartsMaybe();

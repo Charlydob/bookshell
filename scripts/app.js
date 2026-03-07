@@ -121,6 +121,8 @@ const VIEW_MODULE = {
 
 const loaded = new Map();
 let currentViewId = null;
+const viewScrollTop = new Map();
+const initOnceDone = new Set();
 
 
 function syncViewportHeightVar() {
@@ -182,8 +184,20 @@ async function getModule(viewId) {
 async function destroyCurrentView(nextViewId) {
   if (!currentViewId || currentViewId === nextViewId) return;
   const currentMod = loaded.get(currentViewId);
-  if (typeof currentMod?.destroy === "function") {
-    await currentMod.destroy();
+  const currentEl = document.getElementById(currentViewId);
+  if (currentEl) viewScrollTop.set(currentViewId, currentEl.scrollTop || 0);
+
+  if (typeof currentMod?.onHide === "function") {
+    await currentMod.onHide({ viewId: currentViewId, nextViewId });
+  }
+
+  const cacheEnabled = (currentMod?.cache !== false);
+  const destroyOnHide = (currentMod?.destroyOnHide === true);
+  if (!cacheEnabled || destroyOnHide) {
+    if (typeof currentMod?.destroy === "function") {
+      await currentMod.destroy();
+    }
+    initOnceDone.delete(currentViewId);
   }
   console.log("[perf] listeners", currentViewId, countTabListeners(currentMod));
 }
@@ -200,12 +214,21 @@ async function loadAndInit(viewId) {
 
   const mod = await getModule(viewId);
 
-  if (typeof mod.init === "function") {
+  const initOnce = (mod?.initOnce === true);
+  const shouldInit = !initOnce || !initOnceDone.has(viewId);
+  if (shouldInit && typeof mod.init === "function") {
     await mod.init({ viewId, setView, loadScriptOnce, loadStyleOnce });
+    if (initOnce) initOnceDone.add(viewId);
   }
 
   if (typeof mod.onShow === "function") {
     await mod.onShow({ viewId, setView });
+  }
+
+  const viewEl = document.getElementById(viewId);
+  const restoreTop = viewScrollTop.get(viewId);
+  if (viewEl && typeof restoreTop === "number") {
+    requestAnimationFrame(() => { try { viewEl.scrollTop = restoreTop; } catch (_) {} });
   }
 
   currentViewId = viewId;

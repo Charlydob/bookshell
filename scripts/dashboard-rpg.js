@@ -341,7 +341,9 @@ export function computeCharacterAttributes(snapshot = {}, config = {}) {
   const videoWorkHours = videoWorkLog.reduce((a, sec) => a + toNum(sec), 0) / 3600;
   const videoList = values(videos.videos || {});
 
-  const recipes = values(snapshot.recipes?.recipes || snapshot.recipes?.items || snapshot.recipes?.list || {});
+  const recipesNode = snapshot.recipes || {};
+  const recipesObj = recipesNode.recipes || recipesNode.items || recipesNode.list || recipesNode || {};
+  const recipes = values(recipesObj).filter((r) => r && typeof r === 'object' && r.id);
   const recipesUsed = recipes.reduce((a, r) => a + (Array.isArray(r?.cookedDates) ? r.cookedDates.length : (r?.lastCooked ? 1 : 0)), 0);
 
   const gamesModes = values(snapshot.games?.games?.modes || {});

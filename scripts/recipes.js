@@ -7,36 +7,21 @@ import {
   normalizeCountryInput
 } from "./countries.js";
 import { renderCountryHeatmap, renderCountryList } from "./world-heatmap.js";
+import { auth, db } from "./firebase-shared.js";
 import {
-  initializeApp,
-  getApps,
-  getApp
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import {
-  getDatabase,
   ref,
   onValue,
   set,
   remove
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const $viewRecipes = document.getElementById("view-recipes");
 if ($viewRecipes) {
-  const STORAGE_KEY = "bookshell.recipes.v1";
-  const RECIPES_PATH = "recipes";
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyC1oqRk7GpYX854RfcGrYHt6iRun5TfuYE",
-    authDomain: "bookshell-59703.firebaseapp.com",
-    databaseURL: "https://bookshell-59703-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "bookshell-59703",
-    storageBucket: "bookshell-59703.appspot.com",
-    messagingSenderId: "554557230752",
-    appId: "1:554557230752:web:37c24e287210433cf883c5"
-  };
-
-  const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-  const db = getDatabase(app);
+  const STORAGE_KEY_LEGACY = "bookshell.recipes.v1";
+  const STORAGE_KEY_PREFIX = "bookshell.recipes.v2";
+  const RECIPES_NODE_KEY = "recipes";
+  let currentUid = null;
 
   const MEAL_TYPES = ["desayuno", "comida", "cena", "snack"];
   const HEALTH_TYPES = ["sana", "equilibrada", "insana"];
@@ -343,9 +328,17 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   let _recipePhotoObjectUrl = null;
 
 
+  function recipesRootPath(uid = currentUid) {
+    return uid ? `v2/users/${uid}/${RECIPES_NODE_KEY}` : null;
+  }
+
+  function getStorageKey(uid = currentUid) {
+    return uid ? `${STORAGE_KEY_PREFIX}.${uid}` : STORAGE_KEY_LEGACY;
+  }
+
   function loadRecipes() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(getStorageKey());
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) return parsed.map(normalizeRecipeFields);
@@ -358,13 +351,13 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   function cacheRecipes() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(recipes));
+      localStorage.setItem(getStorageKey(), JSON.stringify(recipes));
     } catch (err) {
       console.warn("No se pudo guardar recetas", err);
     }
   }
 
-  function serializeRecipes(list = []) {
+  function serializeRecipesMap(list = []) {
     return (list || []).reduce((acc, recipe) => {
       if (!recipe || !recipe.id) return acc;
       acc[recipe.id] = normalizeRecipeFields(recipe);
@@ -372,10 +365,19 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     }, {});
   }
 
+  function extractRemoteRecipes(data) {
+    if (!data || typeof data !== "object") return [];
+    return Object.entries(data)
+      .filter(([key, value]) => key !== "_init" && value && typeof value === "object")
+      .map(([, value]) => normalizeRecipeFields(value))
+      .filter((r) => r && r.id);
+  }
+
   function persistRecipe(id, data) {
     if (!id || !data) return;
+    const root = recipesRootPath();
     try {
-      set(ref(db, `${RECIPES_PATH}/${id}`), normalizeRecipeFields(data));
+      if (root) set(ref(db, `${root}/${id}`), normalizeRecipeFields(data));
     } catch (err) {
       console.warn("No se pudo sincronizar receta", err);
     }
@@ -384,8 +386,9 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   function removeRecipeRemote(id) {
     if (!id) return;
+    const root = recipesRootPath();
     try {
-      remove(ref(db, `${RECIPES_PATH}/${id}`));
+      if (root) remove(ref(db, `${root}/${id}`));
     } catch (err) {
       console.warn("No se pudo borrar receta remota", err);
     }
@@ -393,33 +396,75 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   }
 
   function listenRemoteRecipes() {
+    let unsubscribe = null;
     let bootstrapped = false;
-    onValue(
-      ref(db, RECIPES_PATH),
-      (snapshot) => {
-        const data = snapshot.val() || null;
-        const hasRemote = data && Object.keys(data).length;
-        if (!hasRemote && !bootstrapped) {
-          bootstrapped = true;
-          if (recipes.length) {
-            set(ref(db, RECIPES_PATH), serializeRecipes(recipes));
-          }
-          return;
-        }
 
-        bootstrapped = true;
-        const remoteList = hasRemote
-          ? Object.values(data).map(normalizeRecipeFields)
-          : [];
-        recipes = remoteList;
-        cacheRecipes();
-        refreshUI();
-        if (detailRecipeId) renderRecipeDetail(detailRecipeId);
-      },
-      (err) => {
-        console.warn("No se pudo escuchar recetas remotas", err);
+    const attach = (uid) => {
+      const root = recipesRootPath(uid);
+      if (!root) return;
+
+      unsubscribe = onValue(
+        ref(db, root),
+        (snapshot) => {
+          const data = snapshot.val() || null;
+          const remoteList = extractRemoteRecipes(data);
+          const hasRemoteRecipes = remoteList.length > 0;
+
+          if (!hasRemoteRecipes && !bootstrapped) {
+            bootstrapped = true;
+            if (recipes.length) {
+              const initFlag =
+                data && typeof data === "object" && Object.prototype.hasOwnProperty.call(data, "_init")
+                  ? data._init
+                  : true;
+              set(ref(db, root), { _init: initFlag, ...serializeRecipesMap(recipes) });
+            }
+            return;
+          }
+
+          bootstrapped = true;
+          recipes = remoteList;
+          cacheRecipes();
+          refreshUI();
+          if (detailRecipeId) renderRecipeDetail(detailRecipeId);
+        },
+        (err) => {
+          console.warn("No se pudo escuchar recetas remotas", err);
+        }
+      );
+    };
+
+    onAuthStateChanged(auth, (user) => {
+      const nextUid = user?.uid || null;
+      if (nextUid === currentUid) return;
+
+      currentUid = nextUid;
+      bootstrapped = false;
+
+      if (typeof unsubscribe === "function") {
+        try { unsubscribe(); } catch (_) {}
+        unsubscribe = null;
       }
-    );
+
+      if (!currentUid) return;
+
+      try {
+        const perUserRaw = localStorage.getItem(getStorageKey(currentUid));
+        if (!perUserRaw) {
+          const legacyRaw = localStorage.getItem(STORAGE_KEY_LEGACY);
+          if (legacyRaw) localStorage.setItem(getStorageKey(currentUid), legacyRaw);
+        } else {
+          const parsed = JSON.parse(perUserRaw);
+          if (Array.isArray(parsed)) {
+            recipes = parsed.map(normalizeRecipeFields);
+            refreshUI();
+            if (detailRecipeId) renderRecipeDetail(detailRecipeId);
+          }
+        }
+      } catch (_) {}
+
+      attach(currentUid);
+    });
   }
 
 

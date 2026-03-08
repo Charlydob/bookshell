@@ -294,6 +294,8 @@ if ($viewRecipes) {
   const $macroScanPanel = document.getElementById("macro-scan-panel");
   const $macroManualPanel = document.getElementById("macro-manual-panel");
   const $macroScanStart = document.getElementById("macro-scan-start");
+  const $macroScanCapture = document.getElementById("macro-scan-capture");
+  const $macroScanAuto = document.getElementById("macro-scan-auto");
   const $macroScanReadNumber = document.getElementById("macro-scan-read-number");
   const $macroScanStop = document.getElementById("macro-scan-stop");
   const $macroScanManual = document.getElementById("macro-scan-manual");
@@ -3558,24 +3560,19 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanStream = null;
   let _macroScanRunning = false;
   let _macroScanDetector = null;
+  let _macroScanZxingModule = null;
   let _macroScanLastValue = "";
   let _macroScanLastAt = 0;
   let _macroScanTimer = null;
-  let _macroScanOcrTimer = null;
   let _macroScanPendingProduct = null;
   let _macroScanSupportsAutoDetection = false;
-  let _macroScanFallbackTriggered = false;
   let _macroScanStartedAt = 0;
   let _macroScanFrameCanvas = null;
-  let _macroScanOcrInFlight = false;
-  let _macroScanOcrModule = null;
-  let _macroScanOcrRetryCount = 0;
+  let _macroScanLiveEnabled = false;
+  let _macroScanDecodeInFlight = false;
   let _macroScanSessionId = 0;
 
-  const MACRO_SCAN_BARCODE_TIMEOUT_MS = 5000;
-  const MACRO_SCAN_POLL_MS = 220;
-  const MACRO_SCAN_OCR_AUTO_MS = 2600;
-  const MACRO_SCAN_MAX_OCR_RETRIES = 1;
+  const MACRO_SCAN_POLL_MS = 320;
 
   function logMacroScan(event, meta) {
     try {
@@ -3698,91 +3695,79 @@ $recipeImportBtn?.addEventListener("click", () => {
     return _macroScanFrameCanvas;
   }
 
-  async function loadMacroScanOcrModule() {
-    if (_macroScanOcrModule) return _macroScanOcrModule;
-    logMacroScan("Cargando motor OCR (lazy)");
-    try {
-      _macroScanOcrModule = await import("https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js");
-      return _macroScanOcrModule;
-    } catch (err) {
-      logMacroScan("No se pudo cargar OCR", err?.name || err?.message || err);
-      throw err;
-    }
+  function normalizeDetectedBarcode(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    if ([8, 12, 13].includes(digits.length)) return digits;
+    return "";
   }
 
-  async function runMacroScanOcrPass(reason = "auto") {
-    if (_macroScanOcrInFlight) return null;
-    _macroScanOcrInFlight = true;
+  function isIosLikeEnvironment() {
+    const ua = String(navigator.userAgent || "");
+    const platform = String(navigator.platform || "");
+    const maxTouchPoints = Number(navigator.maxTouchPoints || 0);
+    const isIOS = /iPhone|iPad|iPod/i.test(ua)
+      || (/Mac/i.test(platform) && maxTouchPoints > 1);
+    const isStandalone = Boolean(window.matchMedia?.("(display-mode: standalone)")?.matches || navigator.standalone);
+    const isMobileSafari = /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua) && /Mobile/i.test(ua);
+    return isIOS || (isStandalone && isMobileSafari);
+  }
+
+  async function loadMacroScanZxingModule() {
+    if (_macroScanZxingModule) return _macroScanZxingModule;
+    logMacroScan("Cargando ZXing (lazy)");
+    _macroScanZxingModule = await import("https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm");
+    return _macroScanZxingModule;
+  }
+
+  async function decodeMacroScanFrame(reason = "snapshot") {
+    if (_macroScanDecodeInFlight) return null;
+    _macroScanDecodeInFlight = true;
+    let reader = null;
     try {
       const frame = captureMacroScanFrame();
       if (!frame) {
-        logMacroScan("OCR sin frame válido", { reason, readyState: $macroScanVideo?.readyState || 0 });
+        logMacroScan("Snapshot sin frame válido", { reason, readyState: $macroScanVideo?.readyState || 0 });
         return null;
       }
-      const mod = await loadMacroScanOcrModule();
-      const workerLike = mod?.createWorker ? mod : (mod?.default || null);
-      if (!workerLike?.recognize) {
-        logMacroScan("OCR módulo sin recognize()", { reason });
-        return null;
-      }
-      logMacroScan("OCR ejecutándose", { reason, width: frame.width, height: frame.height });
-      const ocrResult = await workerLike.recognize(frame, "eng", {
-        logger: (m) => {
-          if (m?.status === "recognizing text" && Number(m?.progress) > 0.98) {
-            logMacroScan("OCR casi completado", { reason, progress: Number(m.progress.toFixed(2)) });
-          }
-        },
-      });
-      const rawText = String(ocrResult?.data?.text || "");
-      logMacroScan("OCR texto bruto", rawText ? rawText.slice(0, 180) : "(vacío)");
-      const ranked = extractBarcodeCandidatesFromOcrText(rawText);
-      logMacroScan("OCR candidatos", ranked.slice(0, 5));
-      const best = ranked.find((it) => it.score > 20) || null;
-      if (!best) {
-        logMacroScan("OCR sin candidato válido", { reason });
-        return null;
-      }
-      return best.value;
+      const mod = await loadMacroScanZxingModule();
+      const {
+        BrowserMultiFormatReader,
+        BarcodeFormat,
+        DecodeHintType,
+        NotFoundException,
+      } = mod || {};
+
+      const hints = new Map();
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+        BarcodeFormat.EAN_13,
+        BarcodeFormat.EAN_8,
+        BarcodeFormat.UPC_A,
+        BarcodeFormat.UPC_E,
+      ]);
+
+      reader = new BrowserMultiFormatReader(hints);
+      const result = await reader.decodeFromCanvas(frame);
+      const clean = normalizeDetectedBarcode(result?.getText?.() || result?.text || "");
+      if (!clean) return null;
+      logMacroScan("Snapshot detectado", { reason, value: clean });
+      return clean;
     } catch (err) {
-      logMacroScan("OCR fallo", { reason, error: err?.name || err?.message || err });
+      if (err?.name !== "NotFoundException") {
+        logMacroScan("Snapshot decode error", { reason, error: err?.name || err?.message || err });
+      }
       return null;
     } finally {
-      _macroScanOcrInFlight = false;
+      try { reader?.reset?.(); } catch (_) {}
+      _macroScanDecodeInFlight = false;
     }
   }
 
-  async function triggerMacroScanOcrFallback(reason = "timeout") {
-    if (!_macroScanRunning) return false;
-    _macroScanFallbackTriggered = true;
-    setMacroScanStatus("Probando lectura alternativa…");
-    const ocrCode = await runMacroScanOcrPass(reason);
-    if (ocrCode) {
-      if ($macroScanManual) $macroScanManual.value = ocrCode;
-      setMacroScanStatus(`Número detectado por OCR: ${ocrCode}. Buscando…`);
-      logMacroScan("OCR aceptado", { reason, code: ocrCode });
-      await stopMacroBarcodeScan();
-      await handleBarcodeFound(ocrCode);
-      return true;
-    }
-    setMacroScanStatus("No pude leer el número automáticamente. Puedes reintentar o escribirlo manualmente.");
-    logMacroScan("OCR sin resultado útil", { reason });
-    if (_macroScanRunning) {
-      _macroScanOcrRetryCount += 1;
-      if (_macroScanOcrRetryCount > MACRO_SCAN_MAX_OCR_RETRIES) {
-        logMacroScan("OCR agotado: desactivo escaneo automático", { reason, retries: _macroScanOcrRetryCount });
-        await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
-        setMacroScanStatus("No pude leer el código automáticamente. Usa la búsqueda manual (sin cámara activa).");
-        return false;
-      }
-      if (_macroScanOcrTimer) {
-        try { clearTimeout(_macroScanOcrTimer); } catch (_) {}
-      }
-      _macroScanOcrTimer = setTimeout(() => {
-        if (!_macroScanRunning) return;
-        triggerMacroScanOcrFallback("ocr_retry_auto");
-      }, MACRO_SCAN_OCR_AUTO_MS);
-    }
-    return false;
+  async function runMacroScanOcrPass(reason = "manual") {
+    if (!_macroScanRunning) return null;
+    setMacroScanStatus("Intentando leer número impreso…");
+    const code = await decodeMacroScanFrame(reason);
+    if (code) return code;
+    return null;
   }
 
   function getBarcodeDetectorCtor() {
@@ -3875,15 +3860,12 @@ $recipeImportBtn?.addEventListener("click", () => {
     const { keepStatus = false, keepPendingProduct = false } = options || {};
     _macroScanRunning = false;
     _macroScanSupportsAutoDetection = false;
+    _macroScanLiveEnabled = false;
     if (!keepPendingProduct) hideMacroScanAddProduct();
 
     if (_macroScanTimer) {
       try { clearTimeout(_macroScanTimer); } catch (_) {}
       _macroScanTimer = null;
-    }
-    if (_macroScanOcrTimer) {
-      try { clearTimeout(_macroScanOcrTimer); } catch (_) {}
-      _macroScanOcrTimer = null;
     }
 
     if (_macroScanStream) {
@@ -3896,18 +3878,57 @@ $recipeImportBtn?.addEventListener("click", () => {
       try { $macroScanVideo.srcObject = null; } catch (_) {}
       try { $macroScanVideo.removeAttribute("src"); } catch (_) {}
     }
-    _macroScanFallbackTriggered = false;
     _macroScanStartedAt = 0;
-    _macroScanOcrRetryCount = 0;
-    _macroScanOcrInFlight = false;
+    _macroScanDecodeInFlight = false;
     _macroScanDetector = null;
     if (!keepStatus) setMacroScanStatus("");
+  }
+
+  function scheduleMacroScanLiveTick() {
+    if (_macroScanTimer) {
+      try { clearTimeout(_macroScanTimer); } catch (_) {}
+      _macroScanTimer = null;
+    }
+    if (!_macroScanRunning || !_macroScanLiveEnabled) return;
+
+    const tick = async () => {
+      if (!_macroScanRunning || !_macroScanLiveEnabled) return;
+      if (!_macroScanDetector || !$macroScanVideo || $macroScanVideo.readyState < 2) {
+        _macroScanTimer = setTimeout(tick, MACRO_SCAN_POLL_MS);
+        return;
+      }
+      try {
+        const codes = await _macroScanDetector.detect($macroScanVideo);
+        const first = codes && codes[0] ? String(codes[0].rawValue || "") : "";
+        const clean = normalizeDetectedBarcode(first);
+        if (clean) {
+          const now = Date.now();
+          const isSame = clean === _macroScanLastValue && (now - _macroScanLastAt) < 1600;
+          if (!isSame) {
+            _macroScanLastValue = clean;
+            _macroScanLastAt = now;
+            setMacroScanStatus(`Detectado en vivo: ${clean}. Buscando…`);
+            await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
+            await handleBarcodeFound(clean);
+            return;
+          }
+        }
+      } catch (err) {
+        logMacroScan("Fallo en detect()", err?.name || err?.message || err);
+        _macroScanLiveEnabled = false;
+        setMacroScanStatus("La detección en vivo falló. Usa “Escanear” (captura) o entrada manual.");
+        return;
+      }
+      _macroScanTimer = setTimeout(tick, MACRO_SCAN_POLL_MS);
+    };
+
+    _macroScanTimer = setTimeout(tick, MACRO_SCAN_POLL_MS);
   }
 
   async function handleBarcodeFound(barcode, options = {}) {
     const { fromManual = false } = options || {};
     logMacroScan("Procesando barcode", { barcode: String(barcode || "").trim(), fromManual });
-    const clean = String(barcode || "").trim();
+    const clean = normalizeDetectedBarcode(barcode) || String(barcode || "").trim();
     if (!clean) return;
     if (fromManual) {
       await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
@@ -3915,7 +3936,6 @@ $recipeImportBtn?.addEventListener("click", () => {
 
     const found = await lookupProductByBarcode(clean);
     if (found) {
-      logMacroScan("Producto local encontrado", { productId: found.id, name: found.name });
       closeMacroAddModal();
       openMacroProductModal(found, macroModalState.meal, 100);
       setMacroScanStatus("Producto encontrado. Ajusta cantidad y añade.");
@@ -3926,7 +3946,6 @@ $recipeImportBtn?.addEventListener("click", () => {
     const off = await lookupOpenFoodFactsByBarcode(clean);
     if (off) {
       _macroScanPendingProduct = off;
-      logMacroScan("Producto OpenFoodFacts encontrado", { name: off.name, barcode: clean });
       setMacroScanStatus(`Encontrado: ${off.name}${off.brand ? ` · ${off.brand}` : ""}. Pulsa “Abrir ficha”.`);
       showMacroScanAddProduct({ barcode: clean, mode: "off", label: "Abrir ficha" });
       if ($macroManualBarcode) $macroManualBarcode.value = clean;
@@ -3943,6 +3962,38 @@ $recipeImportBtn?.addEventListener("click", () => {
     setMacroScanStatus("No encontrado. Pulsa “Crear producto manual”.");
     showMacroScanAddProduct({ barcode: clean, mode: "manual", label: "Crear producto manual" });
     if ($macroManualBarcode) $macroManualBarcode.value = clean;
+  }
+
+  async function runMacroSnapshotScanAndSearch() {
+    if (!_macroScanRunning) {
+      await startMacroBarcodeScan();
+      if (!_macroScanRunning) return;
+    }
+    hideMacroScanAddProduct();
+    setMacroScanStatus("Capturando imagen…");
+    const code = await decodeMacroScanFrame("scan_button");
+    if (!code) {
+      setMacroScanStatus("No detecté un EAN/UPC. Reintenta o escribe el código manualmente.");
+      return;
+    }
+    if ($macroScanManual) $macroScanManual.value = code;
+    setMacroScanStatus(`Código detectado: ${code}. Buscando…`);
+    await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
+    await handleBarcodeFound(code);
+  }
+
+  async function enableMacroScanLiveMode() {
+    if (!_macroScanRunning) {
+      await startMacroBarcodeScan();
+      if (!_macroScanRunning) return;
+    }
+    if (!_macroScanDetector) {
+      setMacroScanStatus("Detección en vivo no disponible aquí. Usa “Escanear” (captura).");
+      return;
+    }
+    _macroScanLiveEnabled = true;
+    setMacroScanStatus("Detección en vivo activa. Puedes detenerla o usar “Escanear”.");
+    scheduleMacroScanLiveTick();
   }
 
   async function startMacroBarcodeScan() {
@@ -3966,11 +4017,11 @@ $recipeImportBtn?.addEventListener("click", () => {
     }
 
     if (!navigator.mediaDevices?.getUserMedia) {
-      setMacroScanStatus("getUserMedia no disponible. Usa entrada manual.");
+      setMacroScanStatus("La cámara no está disponible. Usa entrada manual.");
       return;
     }
 
-    await stopMacroBarcodeScan({ keepStatus: true });
+    await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
 
     _macroScanDetector = null;
     try {
@@ -3980,98 +4031,37 @@ $recipeImportBtn?.addEventListener("click", () => {
       _macroScanDetector = null;
     }
     _macroScanSupportsAutoDetection = Boolean(_macroScanDetector);
-    logMacroScan("Detector preparado", { autoDetection: _macroScanSupportsAutoDetection });
 
     try {
       _macroScanStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" } },
         audio: false,
       });
-      logMacroScan("Cámara abierta", {
-        tracks: _macroScanStream?.getVideoTracks?.().map((track) => ({
-          label: track.label,
-          readyState: track.readyState,
-          muted: track.muted,
-        })) || [],
-      });
       $macroScanVideo.srcObject = _macroScanStream;
       await $macroScanVideo.play();
-      logMacroScan("Vídeo reproduciendo", {
-        readyState: $macroScanVideo.readyState,
-        width: $macroScanVideo.videoWidth,
-        height: $macroScanVideo.videoHeight,
-      });
     } catch (err) {
-      logMacroScan("Error al abrir cámara", err?.name || err?.message || err);
       setMacroScanStatus(`No pude abrir la cámara: ${err?.name || err?.message || "error"}`);
       await stopMacroBarcodeScan();
       return;
     }
 
-    setMacroScanStatus("Cámara lista. Intentando detección automática; si falla, usa búsqueda manual.");
+    const preferSnapshot = isIosLikeEnvironment();
     _macroScanRunning = true;
-    _macroScanFallbackTriggered = false;
+    _macroScanLiveEnabled = false;
     _macroScanLastValue = "";
     _macroScanLastAt = 0;
     _macroScanStartedAt = Date.now();
-    _macroScanOcrRetryCount = 0;
 
-    _macroScanOcrTimer = setTimeout(() => {
-      if (!_macroScanRunning || _macroScanFallbackTriggered) return;
-      logMacroScan("Timeout de barcode: paso a OCR", { elapsedMs: Date.now() - _macroScanStartedAt });
-      triggerMacroScanOcrFallback("timeout");
-    }, MACRO_SCAN_BARCODE_TIMEOUT_MS);
+    if ($macroScanAuto) $macroScanAuto.classList.toggle("hidden", preferSnapshot);
 
-    const tick = async () => {
-      if (!_macroScanRunning) return;
-      if (!_macroScanDetector) {
-        if (!_macroScanFallbackTriggered) {
-          logMacroScan("Detector ausente durante tick, disparo OCR", {
-            hasBarcodeDetectorApi: Boolean(getBarcodeDetectorCtor()),
-            readyState: $macroScanVideo?.readyState || 0,
-          });
-          await triggerMacroScanOcrFallback("detector_missing");
-        }
-        _macroScanTimer = setTimeout(tick, MACRO_SCAN_POLL_MS);
-        return;
-      }
-      if ($macroScanVideo.readyState < 2) {
-        _macroScanTimer = setTimeout(tick, MACRO_SCAN_POLL_MS);
-        return;
-      }
-      try {
-        const codes = await _macroScanDetector.detect($macroScanVideo);
-        logMacroScan("Detect tick", {
-          readyState: $macroScanVideo.readyState,
-          codeCount: Array.isArray(codes) ? codes.length : 0,
-          elapsedMs: _macroScanStartedAt ? (Date.now() - _macroScanStartedAt) : 0,
-        });
-        const first = codes && codes[0] ? String(codes[0].rawValue || "") : "";
-        const now = Date.now();
-        const clean = first.trim();
-        if (clean) {
-          const isSame = clean === _macroScanLastValue && (now - _macroScanLastAt) < 2000;
-          if (!isSame) {
-            _macroScanLastValue = clean;
-            _macroScanLastAt = now;
-            setMacroScanStatus(`Detectado: ${clean}`);
-            logMacroScan("Código detectado", clean);
-            await stopMacroBarcodeScan();
-            await handleBarcodeFound(clean);
-            return;
-          }
-        }
-      } catch (err) {
-        logMacroScan("Fallo en detect()", err?.name || err?.message || err);
-        if (!_macroScanFallbackTriggered) {
-          await triggerMacroScanOcrFallback("detect_error");
-        }
-      }
+    if (!preferSnapshot && _macroScanSupportsAutoDetection) {
+      _macroScanLiveEnabled = true;
+      setMacroScanStatus("Cámara lista. Detección en vivo activada; también puedes usar “Escanear” (captura). ");
+      scheduleMacroScanLiveTick();
+      return;
+    }
 
-      _macroScanTimer = setTimeout(tick, MACRO_SCAN_POLL_MS);
-    };
-
-    _macroScanTimer = setTimeout(tick, MACRO_SCAN_POLL_MS);
+    setMacroScanStatus("Cámara lista. Pulsa “Escanear” para capturar y leer el código.");
   }
 
   function upsertBarcodeMapping(barcode, productId) {
@@ -4395,11 +4385,17 @@ $recipeImportBtn?.addEventListener("click", () => {
   $macroScanStart?.addEventListener("click", async () => {
     await startMacroBarcodeScan();
   });
+  $macroScanCapture?.addEventListener("click", async () => {
+    await runMacroSnapshotScanAndSearch();
+  });
+  $macroScanAuto?.addEventListener("click", async () => {
+    await enableMacroScanLiveMode();
+  });
   $macroScanManualBtn?.addEventListener("click", async () => {
     hideMacroScanAddProduct();
     const barcodeInput = String($macroScanManual?.value || "").trim();
     if (!barcodeInput) {
-      setMacroScanStatus("Introduce un codigo de barras.");
+      setMacroScanStatus("Introduce un código de barras.");
       return;
     }
     setMacroScanStatus("Buscando...");
@@ -4418,12 +4414,19 @@ $recipeImportBtn?.addEventListener("click", () => {
   });
   $macroScanReadNumber?.addEventListener("click", async () => {
     if (!_macroScanRunning) {
-      setMacroScanStatus("Primero abre la cámara para leer el número del código.");
+      setMacroScanStatus("Primero abre la cámara para leer el número.");
       return;
     }
     hideMacroScanAddProduct();
-    setMacroScanStatus("Capturando frame y leyendo número…");
-    await triggerMacroScanOcrFallback("manual_button");
+    const ocrCode = await runMacroScanOcrPass("manual_button");
+    if (!ocrCode) {
+      setMacroScanStatus("No pude leer el número. Reintenta o escribe manualmente.");
+      return;
+    }
+    if ($macroScanManual) $macroScanManual.value = ocrCode;
+    setMacroScanStatus(`Número detectado: ${ocrCode}. Buscando…`);
+    await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
+    await handleBarcodeFound(ocrCode);
   });
   $macroScanAddProduct?.addEventListener("click", () => {
     const mode = String($macroScanAddProduct?.dataset?.mode || "manual");
@@ -4435,15 +4438,6 @@ $recipeImportBtn?.addEventListener("click", () => {
       logMacroScan("Abrir ficha desde resultado OFF", { barcode, name: pendingProduct?.name || "" });
       closeMacroAddModal();
       openMacroProductModal(pendingProduct, macroModalState.meal, 100);
-      return;
-      const saved = saveProduct(_macroScanPendingProduct);
-      if (saved) {
-        addProductToMeal(macroModalState.meal, saved, 100);
-        setMacroScanStatus("Producto añadido y guardado.");
-        closeMacroAddModal();
-      } else {
-        setMacroScanStatus("No pude guardar el producto. Revisa “Crear manual”.");
-      }
       return;
     }
 

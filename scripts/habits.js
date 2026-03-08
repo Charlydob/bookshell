@@ -12081,6 +12081,10 @@ window.__bookshellHabits = {
   isRunning: () => !!runningSession,
   getTimeShareByHabit: (range) => timeShareByHabit(range),
   getHoursByHabitId,
+  adjustHabitCountForDate: async (habitId, dateKey, delta = 0) => {
+    adjustHabitCount(habitId, dateKey, delta);
+    return true;
+  },
   rangeLabel,
   debugComputeTimeByHabit
 };

@@ -1797,3 +1797,13 @@
   .macro-stats-select { grid-column: 1 / -1; }
   .macro-stats-row { grid-template-columns: 1fr; gap:3px; }
 }
+element.style {
+    position: absolute;
+    border-width: 96px 83px;
+    border-style: solid;
+    border-color: rgba(0, 0, 0, 0.48);
+    box-sizing: border-box;
+    inset: 0px;
+    margin-bottom: 47px;
+    margin-top: -32px;
+}

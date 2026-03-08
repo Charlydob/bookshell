@@ -3579,9 +3579,27 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanPendingLookup = null;
   let _macroScanEngineRunId = 0;
   let _macroScanUiLogs = [];
+  let _macroScanUiRenderScheduled = false;
+  const _macroScanNoResultLastAt = { zxing: 0, html5: 0 };
+  const MACRO_SCAN_NO_RESULT_LOG_EVERY_MS = 1200;
 
   function ensureMacroScanLogPanel() {
     return $macroScanLogPanel || null;
+  }
+
+  function scheduleMacroScanUiLogsRender() {
+    if (_macroScanUiRenderScheduled) return;
+    _macroScanUiRenderScheduled = true;
+    const run = () => {
+      _macroScanUiRenderScheduled = false;
+      renderMacroScanUiLogs();
+    };
+    try {
+      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") window.requestAnimationFrame(run);
+      else setTimeout(run, 0);
+    } catch (_) {
+      try { setTimeout(run, 0); } catch (_) {}
+    }
   }
 
   function renderMacroScanUiLogs() {
@@ -3594,6 +3612,16 @@ $recipeImportBtn?.addEventListener("click", () => {
   function clearMacroScanUiLogs() {
     _macroScanUiLogs = [];
     renderMacroScanUiLogs();
+  }
+
+  function logMacroScanNoResult(engine) {
+    const key = String(engine || "").trim();
+    if (!key) return;
+    const now = Date.now();
+    const prev = Number(_macroScanNoResultLastAt[key]) || 0;
+    if (now - prev < MACRO_SCAN_NO_RESULT_LOG_EVERY_MS) return;
+    _macroScanNoResultLastAt[key] = now;
+    logMacroScan("sin resultado", { engine: key });
   }
 
   function fmtMacroMeta(meta) {
@@ -3612,7 +3640,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       const enginePrefix = _macroScanEngine && _macroScanEngine !== "none" ? `[${(_macroScanEngine === "html5" ? "html5-qrcode" : _macroScanEngine === "quagga" ? "Quagga" : "ZXing")}]` : "[Scan]";
       _macroScanUiLogs.push(`<strong>${enginePrefix}</strong> ${event}${fmtMacroMeta(meta)}`);
       if (_macroScanUiLogs.length > 60) _macroScanUiLogs = _macroScanUiLogs.slice(-60);
-      renderMacroScanUiLogs();
+      scheduleMacroScanUiLogsRender();
     } catch (_) {}
   }
 
@@ -3861,7 +3889,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     logMacroScan("loop de detección arrancado", { engine: "zxing", ok: true });
     reader.decodeFromVideoElementContinuously($macroScanVideo, (result, err) => {
       if (result) onMacroEngineDetected(result.getText?.() || "", "zxing", runId);
-      if (err && err instanceof NotFoundException) logMacroScan("sin resultado", { engine: "zxing" });
+      if (err && err instanceof NotFoundException) logMacroScanNoResult("zxing");
       if (err && !(err instanceof NotFoundException)) logMacroScan("error concreto", { engine: "zxing", error: err?.message || err?.name || err });
     });
   }
@@ -3885,7 +3913,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         onMacroEngineDetected(decodedText, "html5", runId);
       },
       (errorMessage) => {
-        if (/not found/i.test(String(errorMessage || ""))) logMacroScan("sin resultado", { engine: "html5" });
+        if (/not found/i.test(String(errorMessage || ""))) logMacroScanNoResult("html5");
         else logMacroScan("error concreto", { engine: "html5", error: errorMessage });
       }
     );

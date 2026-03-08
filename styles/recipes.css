@@ -1003,10 +1003,26 @@
 .macro-scan-overlay{
   position:absolute;
   inset:0;
-  background:
-    linear-gradient(transparent 62%, rgba(0,0,0,.45)),
-    radial-gradient(circle at 50% 50%, transparent 0 46%, rgba(0,0,0,.38) 60%);
   pointer-events:none;
+}
+.macro-scan-overlay::before,
+.macro-scan-overlay::after{
+  content:"";
+  position:absolute;
+  left: 4%;
+  right: 4%;
+  border-radius: 12px;
+}
+.macro-scan-overlay::before{
+  top: 38%;
+  height: 24%;
+  border: 2px solid rgba(128, 236, 180, .8);
+  box-shadow: 0 0 0 9999px rgba(0,0,0,.38);
+}
+.macro-scan-overlay::after{
+  top: 50%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(128,236,180,.95), transparent);
 }
 
 .macro-scan-log-panel{

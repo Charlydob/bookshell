@@ -976,20 +976,22 @@
 
 .macro-scan-video-wrap{
   position: relative;
-  border-radius: 14px;
+  /* Modo "sin estilo": solo la imagen de cámara, sin marcos/overlay */
+  border-radius: 0;
   overflow: hidden;
-  border: 1px solid rgba(255,255,255,.10);
-  background: rgba(255,255,255,.02);
-  aspect-ratio: 16 / 9;
-  margin: 10px 0;
+  border: none;
+  background: transparent;
+  margin: 0;
+  /* Necesitamos tamaño para que html5-qrcode pueda montar su <video> */
+  height: min(30vh, 520px);
 }
 .macro-scan-video{
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center center;
   display:block;
-  background: rgba(0,0,0,.35);
+  background: #000;
 }
 .macro-scan-html5-host{
   position: absolute;
@@ -999,13 +1001,15 @@
 .macro-scan-html5-host video{
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center center;
+  background: #000;
 }
 .macro-scan-overlay{
   position:absolute;
   inset:0;
-  z-index: 3;
+  /* Desactivado: el overlay visual puede tapar/confundir el lector */
+  display: none;
   pointer-events:none;
   --scan-left: 4%;
   --scan-top: 38%;
@@ -1828,9 +1832,21 @@ element.style {
     position: absolute;
     border-width: 96px 83px;
     border-style: solid;
-    border-color: rgba(0, 0, 0, 0.48);
+    border-color: transparent;
     box-sizing: border-box;
     inset: 0px;
     margin-bottom: 47px;
     margin-top: -32px;
+}
+#qr-shaded-region {
+  border-width: 20px 20px !important;   /* reduce el sombreado */
+  border-color: rgba(0,0,0,0) !important;
+  opacity: 1 !important;
+}
+
+/* zona de vídeo más limpia */
+#macro-scan-html5-host video {
+  object-fit: cover;
+  width: 10%;
+  height: 100%;
 }

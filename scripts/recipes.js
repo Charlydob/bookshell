@@ -3860,28 +3860,40 @@ $recipeImportBtn?.addEventListener("click", () => {
     _macroScanHtml5Instance = new Html5Qrcode("macro-scan-html5-host");
     logMacroScan("inicialización del motor", { engine: "html5", libreriaCargada: true, instanceCreated: Boolean(_macroScanHtml5Instance) });
     logMacroScan("loop de detección arrancado", { engine: "html5", ok: true });
-    await _macroScanHtml5Instance.start(
-      { facingMode: { exact: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
-      {
-        fps: 12,
-        qrbox: (viewfinderWidth, viewfinderHeight) => {
-          const width = Math.max(260, Math.min(Math.round(viewfinderWidth * 0.92), 760));
-          const height = Math.max(90, Math.min(Math.round(viewfinderHeight * 0.24), 180));
-          return { width, height };
-        },
-        aspectRatio: 1.777,
-        disableFlip: true,
-        formatsToSupport: [mod.Html5QrcodeSupportedFormats.EAN_13, mod.Html5QrcodeSupportedFormats.EAN_8, mod.Html5QrcodeSupportedFormats.UPC_A, mod.Html5QrcodeSupportedFormats.UPC_E],
+    const startConfig = {
+      fps: 12,
+      qrbox: (viewfinderWidth, viewfinderHeight) => {
+        const width = Math.max(260, Math.min(Math.round(viewfinderWidth * 0.92), 760));
+        const height = Math.max(90, Math.min(Math.round(viewfinderHeight * 0.24), 180));
+        return { width, height };
       },
-      (decodedText) => {
-        if (decodedText) logMacroScan("resultado detectado", { engine: "html5", detected: true });
-        onMacroEngineDetected(decodedText, "html5", runId);
-      },
-      (errorMessage) => {
-        if (/not found/i.test(String(errorMessage || ""))) logMacroScanNoResult("html5");
-        else logMacroScan("error concreto", { engine: "html5", error: errorMessage });
-      }
-    );
+      aspectRatio: 1.777,
+      disableFlip: true,
+      formatsToSupport: [mod.Html5QrcodeSupportedFormats.EAN_13, mod.Html5QrcodeSupportedFormats.EAN_8, mod.Html5QrcodeSupportedFormats.UPC_A, mod.Html5QrcodeSupportedFormats.UPC_E],
+    };
+    const onDecoded = (decodedText) => {
+      if (decodedText) logMacroScan("resultado detectado", { engine: "html5", detected: true });
+      onMacroEngineDetected(decodedText, "html5", runId);
+    };
+    const onDecodeError = (errorMessage) => {
+      if (/not found/i.test(String(errorMessage || ""))) logMacroScanNoResult("html5");
+      else logMacroScan("error concreto", { engine: "html5", error: errorMessage });
+    };
+
+    // html5-qrcode exige que el "cameraIdOrConfig" (si es objeto) tenga exactamente 1 clave.
+    // Evitamos pasar width/height aquÃ­ para que no falle con "found 3 keys".
+    try {
+      await _macroScanHtml5Instance.start({ facingMode: "environment" }, startConfig, onDecoded, onDecodeError);
+    } catch (err) {
+      logMacroScan("fallo al abrir con facingMode, reintento por id", { engine: "html5", error: err?.name || err?.message || err });
+      const getCameras = Html5Qrcode?.getCameras || mod?.Html5Qrcode?.getCameras;
+      if (typeof getCameras !== "function") throw err;
+      const cameras = await getCameras();
+      const chosen = cameras?.[cameras.length - 1]?.id || cameras?.[0]?.id || "";
+      if (!chosen) throw err;
+      logMacroScan("reintento con cameraId", { engine: "html5", cameras: cameras.length, selected: chosen });
+      await _macroScanHtml5Instance.start(chosen, startConfig, onDecoded, onDecodeError);
+    }
     logMacroScan("cámara abierta", { ok: true, engine: "html5", streamActive: true, videoDimsOk: true });
   }
 

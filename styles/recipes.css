@@ -990,6 +990,16 @@
   display:block;
   background: rgba(0,0,0,.35);
 }
+.macro-scan-html5-host{
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.macro-scan-html5-host video{
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+}
 .macro-scan-overlay{
   position:absolute;
   inset:0;
@@ -997,6 +1007,9 @@
     linear-gradient(transparent 62%, rgba(0,0,0,.45)),
     radial-gradient(circle at 50% 50%, transparent 0 46%, rgba(0,0,0,.38) 60%);
   pointer-events:none;
+}
+#macro-scan-engine-status{
+  margin-top: 6px;
 }
 
 .macro-product-add-row{

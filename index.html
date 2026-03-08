@@ -2460,17 +2460,19 @@ Crear “<span id="gym-create-cta-text"></span>”
         <div class="section-hint">Apunta al código, pulsa “Escanear” y, si no sale, busca manualmente.</div>
         <div class="macro-scan-video-wrap">
           <video id="macro-scan-video" class="macro-scan-video" muted playsinline></video>
+          <div id="macro-scan-html5-host" class="macro-scan-html5-host hidden"></div>
           <div class="macro-scan-overlay" aria-hidden="true"></div>
         </div>
         <div class="macro-inline-actions">
-          <button class="btn ghost btn-compact" id="macro-scan-start" type="button">Abrir cámara</button>
-          <button class="btn primary btn-compact" id="macro-scan-capture" type="button">Escanear</button>
-          <button class="btn ghost btn-compact" id="macro-scan-auto" type="button">Probar detección en vivo</button>
+          <button class="btn ghost btn-compact" id="macro-scan-engine-zxing" type="button">Escanear con ZXing</button>
+          <button class="btn ghost btn-compact" id="macro-scan-engine-html5" type="button">Escanear con html5-qrcode</button>
+          <button class="btn ghost btn-compact" id="macro-scan-engine-quagga" type="button">Escanear con Quagga</button>
           <button class="btn ghost btn-compact" id="macro-scan-read-number" type="button">Leer número</button>
           <input id="macro-scan-manual" placeholder="Código de barras" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" />
           <button class="btn ghost btn-compact" id="macro-scan-manual-btn" type="button">Buscar</button>
           <button class="btn ghost btn-compact" id="macro-scan-stop" type="button">Detener</button>
         </div>
+        <div class="hint" id="macro-scan-engine-status">Motor activo: ninguno</div>
         <div class="hint" id="macro-scan-status"></div>
         <button class="btn primary btn-compact hidden" id="macro-scan-add-product" type="button">+ AÃ±adir producto</button>
       </div>

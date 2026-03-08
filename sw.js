@@ -1,4 +1,4 @@
-const STATIC_CACHE = "bookshell-static-v6";
+const STATIC_CACHE = "bookshell-static-v7";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -55,18 +55,31 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (isFirebaseRequest(url)) return;
 
+  const isNavigate = request.mode === "navigate";
   const isStaticAsset = request.destination === "style"
     || request.destination === "script"
     || request.destination === "image"
-    || request.destination === "font"
-    || request.mode === "navigate";
+    || request.destination === "font";
 
-  if (!isStaticAsset) return;
+  if (!isNavigate && !isStaticAsset) return;
 
   event.respondWith((async () => {
     const cache = await caches.open(STATIC_CACHE);
-    const cached = await cache.match(request);
 
+    if (isNavigate) {
+      try {
+        const networkResponse = await fetch(request, { cache: "no-store" });
+        if (networkResponse && networkResponse.ok) {
+          cache.put(request, networkResponse.clone());
+          cache.put(resolveAppUrl("./index.html"), networkResponse.clone());
+        }
+        return networkResponse;
+      } catch (_) {
+        return (await cache.match(request)) || (await cache.match(resolveAppUrl("./index.html")));
+      }
+    }
+
+    const cached = await cache.match(request);
     const networkFetch = fetch(request)
       .then((response) => {
         if (response && response.ok) {

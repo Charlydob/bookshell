@@ -604,13 +604,31 @@
 
 .detail-check {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto auto 1fr auto;
   gap: 10px;
   align-items: center;
   padding: 6px 8px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.detail-ing-qty {
+  font-size: 11px;
+  color: var(--txt-soft);
+  min-width: 44px;
+}
+
+.detail-ing-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-ing-info {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
 }
 
 .recipe-detail-steps {
@@ -1673,6 +1691,22 @@
 
 .macro-field-span-2{
   grid-column:span 2;
+}
+
+.macro-select {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.25);
+  color: var(--txt);
+}
+
+.macro-link-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .recipes-subtabs {

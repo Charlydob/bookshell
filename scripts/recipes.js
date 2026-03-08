@@ -8,9 +8,11 @@ import {
 } from "./countries.js";
 import { renderCountryHeatmap, renderCountryList } from "./world-heatmap.js";
 import { auth, db } from "./firebase-shared.js";
+import { resolveFinancePathCandidates } from "./finance/data.js";
 import {
   ref,
   onValue,
+  get,
   set,
   remove
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
@@ -323,6 +325,13 @@ if ($viewRecipes) {
   const $macroProductGrams = document.getElementById("macro-product-grams");
   const $macroProductSummary = document.getElementById("macro-product-summary");
   const $macroProductEditToggle = document.getElementById("macro-product-edit-toggle");
+  const $macroProductScanBtn = document.getElementById("macro-product-scan-btn");
+  const $macroProductFinanceSelect = document.getElementById("macro-product-finance-select");
+  const $macroProductFinanceUnlink = document.getElementById("macro-product-finance-unlink");
+  const $macroProductFinanceHint = document.getElementById("macro-product-finance-hint");
+  const $macroProductHabitSelect = document.getElementById("macro-product-habit-select");
+  const $macroProductHabitUnlink = document.getElementById("macro-product-habit-unlink");
+  const $macroProductHabitHint = document.getElementById("macro-product-habit-hint");
   const $macroProductKpiCarbs = document.getElementById("macro-product-kpi-carbs");
   const $macroProductKpiProtein = document.getElementById("macro-product-kpi-protein");
   const $macroProductKpiFat = document.getElementById("macro-product-kpi-fat");
@@ -384,6 +393,9 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   const mealOrder = ["breakfast", "lunch", "dinner", "snacks"];
   const mealLabels = { breakfast: "Desayuno", lunch: "Almuerzo", dinner: "Cena", snacks: "Snacks" };
   let nutritionProducts = [];
+  let financeProducts = [];
+  let financeProductsLoaded = false;
+  let habitSyncQueue = Promise.resolve();
   let dailyLogsByDate = {};
   let nutritionGoals = { ...defaultGoals };
   let selectedMacroDate = toISODate(new Date());
@@ -526,6 +538,8 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
       currentUid = nextUid;
       bootstrapped = false;
+      financeProductsLoaded = false;
+      financeProducts = [];
 
       if (typeof unsubscribe === "function") {
         try { unsubscribe(); } catch (_) {}
@@ -550,6 +564,10 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       } catch (_) {}
 
       attach(currentUid);
+      loadFinanceProductsCatalog().then(() => {
+        renderMacrosView();
+        if (detailRecipeId) renderRecipeDetail(detailRecipeId);
+      });
     });
   }
 
@@ -620,6 +638,9 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       ? recipe.ingredients.map((ing) => ({
           id: ing.id || generateId(),
           text: String(ing.text || "").trim(),
+          quantity: String(ing.quantity || "").trim(),
+          name: String(ing.name || "").trim(),
+          productId: String(ing.productId || "").trim(),
           done: !!ing.done,
         }))
       : [];
@@ -646,6 +667,28 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       })) : [],
       nutritionTotals: normalizeMacros(recipe.nutritionTotals),
       nutritionPerServing: normalizeMacros(recipe.nutritionPerServing),
+    };
+  }
+
+  function splitIngredientText(raw = "") {
+    const text = String(raw || "").trim();
+    if (!text) return { quantity: "", name: "" };
+    const match = text.match(/^([\d.,\/\s]+(?:kg|g|mg|ml|l|cl|ud|uds|cda|cdta|taza|vaso|pieza|piezas|huevo|huevos)?)\s+(.+)$/i);
+    if (!match) return { quantity: "", name: text };
+    return { quantity: String(match[1] || "").trim(), name: String(match[2] || "").trim() };
+  }
+
+  function resolveIngredientDisplay(ing = {}) {
+    const parsed = splitIngredientText(ing.text || "");
+    const quantity = String(ing.quantity || parsed.quantity || "").trim();
+    const fallbackName = String(ing.name || parsed.name || ing.text || "Ingrediente").trim();
+    const linked = nutritionProducts.find((p) => p.id === ing.productId)
+      || nutritionProducts.find((p) => !ing.productId && p.name && p.name.toLowerCase() === fallbackName.toLowerCase())
+      || null;
+    return {
+      quantity,
+      name: linked?.name || fallbackName,
+      product: linked,
     };
   }
 
@@ -1984,11 +2027,18 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
   function collectIngredientRows() {
     if (!$recipeIngredientsList) return [];
     return Array.from($recipeIngredientsList.querySelectorAll(".ingredient-row"))
-      .map((row) => ({
-        id: row.dataset.id || generateId(),
-        text: row.querySelector("input[type='text']")?.value.trim() || "",
-        done: row.querySelector("input[type='checkbox']")?.checked || false,
-      }))
+      .map((row) => {
+        const text = row.querySelector("input[type='text']")?.value.trim() || "";
+        const parsed = splitIngredientText(text);
+        return {
+          id: row.dataset.id || generateId(),
+          text,
+          quantity: parsed.quantity,
+          name: parsed.name || text,
+          productId: String(row.dataset.productId || "").trim(),
+          done: row.querySelector("input[type='checkbox']")?.checked || false,
+        };
+      })
       .filter((ing) => ing.text);
   }
 
@@ -2134,6 +2184,10 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
         { label: "Laura", value: recipe.laura ? "Sí" : "No" },
         { label: "Calorías", value: `${roundMacro(recipe.nutritionTotals?.kcal || 0)} kcal` },
       ];
+      const cost = computeRecipeEstimatedCost(recipe);
+      if (cost.covered > 0) {
+        items.push({ label: "Coste estimado", value: `~${roundMacro(cost.total)}€ (${cost.covered}/${cost.totalIngredients || 0} ing.)` });
+      }
       items.forEach((item) => {
         const block = document.createElement("div");
         block.className = "spec-item";
@@ -2172,16 +2226,40 @@ notesRow.innerHTML = `<div class="spec-label">Notas</div><div class="spec-value"
         (ing) => {
           const label = document.createElement("label");
           label.className = "detail-check";
+          const display = resolveIngredientDisplay(ing);
           const check = document.createElement("input");
           check.type = "checkbox";
           check.checked = !!ing.done;
           check.addEventListener("change", (e) =>
             toggleChecklistItem(recipe.id, ing.id, e.target.checked, "ingredient")
           );
+          const qty = document.createElement("span");
+          qty.className = "detail-ing-qty";
+          qty.textContent = display.quantity || "—";
           const text = document.createElement("span");
-          text.textContent = ing.text || "Ingrediente";
+          text.className = "detail-ing-name";
+          text.textContent = display.name || "Ingrediente";
+          const infoBtn = document.createElement("button");
+          infoBtn.type = "button";
+          infoBtn.className = "icon-btn icon-btn-small detail-ing-info";
+          infoBtn.textContent = "i";
+          infoBtn.title = "Abrir ficha del ingrediente";
+          infoBtn.addEventListener("click", (ev) => {
+            try { ev.preventDefault(); ev.stopPropagation(); } catch (_) {}
+            const linked = display.product || nutritionProducts.find((p) => p.id === ing.productId) || null;
+            const draft = linked || {
+              id: ing.productId || undefined,
+              name: display.name || ing.text || "",
+              source: "recipe",
+              macros: normalizeMacros({}),
+              servingBaseGrams: 100,
+            };
+            openMacroProductModal(draft, "breakfast", 100, null, { ingredientTarget: { recipeId: recipe.id, ingredientId: ing.id } });
+          });
           label.appendChild(check);
+          label.appendChild(qty);
           label.appendChild(text);
+          label.appendChild(infoBtn);
           $recipeDetailIngredients.appendChild(label);
         }
       );
@@ -2635,6 +2713,10 @@ $recipeImportBtn?.addEventListener("click", () => {
             grams: Math.max(0, Number(entry?.grams) || 0),
             servings: Math.max(0, Number(entry?.servings) || 0),
             macrosSnapshot: normalizeMacros(entry?.macrosSnapshot || {}),
+            habitSync: {
+              habitId: String(entry?.habitSync?.habitId || "").trim(),
+              amount: Math.max(0, Number(entry?.habitSync?.amount) || 0),
+            },
             createdAt: Number(entry?.createdAt) || Date.now(),
           })),
         };
@@ -2644,12 +2726,26 @@ $recipeImportBtn?.addEventListener("click", () => {
     return normalized;
   }
 
+  function normalizeNutritionProductEntry(product = {}) {
+    return {
+      ...product,
+      id: String(product.id || generateId()).trim(),
+      name: String(product.name || "").trim(),
+      brand: String(product.brand || "").trim(),
+      barcode: String(product.barcode || "").trim(),
+      servingBaseGrams: Math.max(1, Number(product.servingBaseGrams) || 100),
+      macros: normalizeMacros(product.macros),
+      financeProductId: String(product.financeProductId || "").trim(),
+      linkedHabitId: String(product.linkedHabitId || "").trim(),
+    };
+  }
+
   function loadNutritionCache() {
     try {
       const raw = localStorage.getItem(`${getStorageKey()}.nutrition`);
       if (!raw) return;
       const parsed = JSON.parse(raw);
-      nutritionProducts = Array.isArray(parsed.products) ? parsed.products : [];
+      nutritionProducts = Array.isArray(parsed.products) ? parsed.products.map(normalizeNutritionProductEntry).filter((p) => p.name) : [];
       dailyLogsByDate = normalizeDailyLogs(parsed.dailyLogsByDate && typeof parsed.dailyLogsByDate === "object" ? parsed.dailyLogsByDate : {});
       nutritionGoals = { ...defaultGoals, ...(parsed.goals || {}) };
       nutritionSyncMeta = {
@@ -2683,7 +2779,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       if (!root) return;
       nutritionUnsubscribe = onValue(ref(db, root), (snap) => {
         const data = snap.val() || {};
-        const remoteProducts = Array.isArray(data.products) ? data.products : [];
+        const remoteProducts = Array.isArray(data.products) ? data.products.map(normalizeNutritionProductEntry).filter((p) => p.name) : [];
         const remoteLogs = normalizeDailyLogs(data.dailyLogsByDate && typeof data.dailyLogsByDate === "object" ? data.dailyLogsByDate : {});
         const remoteGoals = { ...defaultGoals, ...(data.goals || {}) };
         nutritionSyncMeta = {
@@ -3076,6 +3172,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroProductMeal = "breakfast";
   let _macroProductDraft = null;
   let _macroProductEntryTarget = null; // { meal, idx } cuando se edita una entrada consumida
+  let _macroProductRecipeIngredientTarget = null; // { recipeId, ingredientId }
 
   function setMacroProductEditing(editing) {
     $macroProductModalBackdrop?.classList.toggle("is-editing", !!editing);
@@ -3091,6 +3188,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   function closeMacroProductModal() {
     $macroProductModalBackdrop?.classList.add("hidden");
     _macroProductDraft = null;
+    _macroProductRecipeIngredientTarget = null;
     setMacroProductEntryTarget(null);
     setMacroProductEditing(false);
   }
@@ -3104,6 +3202,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       name: $macroProductName?.value,
       brand: $macroProductBrand?.value,
       barcode: $macroProductBarcode?.value,
+      financeProductId: $macroProductFinanceSelect?.value || _macroProductDraft?.financeProductId || "",
+      linkedHabitId: $macroProductHabitSelect?.value || _macroProductDraft?.linkedHabitId || "",
       servingBaseGrams: base,
       macros: {
         carbs: Number($macroProductCarbs?.value) || 0,
@@ -3158,14 +3258,39 @@ $recipeImportBtn?.addEventListener("click", () => {
     applySeg($macroProductDonutFat, segFat);
   }
 
-  function openMacroProductModal(product, meal, grams = 100, entryTarget = null) {
+  async function openMacroProductModal(product, meal, grams = 100, entryTarget = null, options = {}) {
     if (!$macroProductModalBackdrop) return;
     if (!product) return;
 
     _macroProductMeal = meal || "breakfast";
     _macroProductDraft = product;
+    _macroProductRecipeIngredientTarget = options?.ingredientTarget || null;
     setMacroProductEntryTarget(entryTarget);
     setMacroProductEditing(false);
+
+    await loadFinanceProductsCatalog();
+    const habits = listHabitsForProductLink();
+    if ($macroProductFinanceSelect) {
+      const opts = ['<option value="">Sin vincular</option>']
+        .concat(financeProducts.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}${row.lastPrice ? ` · ${roundMacro(row.lastPrice)}€` : ""}</option>`));
+      $macroProductFinanceSelect.innerHTML = opts.join("");
+      $macroProductFinanceSelect.value = String(product.financeProductId || "");
+    }
+    if ($macroProductFinanceHint) {
+      const linkedFin = financeProducts.find((f) => f.id === String(product.financeProductId || ""));
+      $macroProductFinanceHint.textContent = linkedFin ? `Vinculado a ${linkedFin.name}${linkedFin.lastPrice ? ` · último ${roundMacro(linkedFin.lastPrice)}€` : ""}` : "Sin producto de Finanzas";
+    }
+
+    if ($macroProductHabitSelect) {
+      const opts = ['<option value="">Sin vincular</option>']
+        .concat(habits.map((h) => `<option value="${escapeHtml(h.id)}">${escapeHtml(`${h.emoji || "🏷️"} ${h.name || h.id}`)}</option>`));
+      $macroProductHabitSelect.innerHTML = opts.join("");
+      $macroProductHabitSelect.value = String(product.linkedHabitId || "");
+    }
+    if ($macroProductHabitHint) {
+      const linkedHabit = habits.find((h) => h.id === String(product.linkedHabitId || ""));
+      $macroProductHabitHint.textContent = linkedHabit ? `Vinculado a ${linkedHabit.emoji || "🏷️"} ${linkedHabit.name}` : "Sin hábito vinculado";
+    }
 
     if ($macroProductName) $macroProductName.value = product.name || "";
     if ($macroProductBrand) $macroProductBrand.value = product.brand || "";
@@ -3273,16 +3398,22 @@ $recipeImportBtn?.addEventListener("click", () => {
   function addProductToMeal(meal, product, grams = 100) {
     if (!product) return;
     const macrosSnapshot = normalizeMacros(calcProductMacros(product, grams));
-    getDailyLog(selectedMacroDate).meals[meal].entries.unshift({
+    const entry = {
       type: "product",
       refId: product.id,
       nameSnapshot: product.name,
       grams,
       macrosSnapshot,
+      habitSync: {
+        habitId: String(product.linkedHabitId || "").trim(),
+        amount: String(product.linkedHabitId || "").trim() ? 1 : 0,
+      },
       createdAt: Date.now(),
-    });
+    };
+    getDailyLog(selectedMacroDate).meals[meal].entries.unshift(entry);
     persistNutrition();
     renderMacrosView();
+    applyEntryHabitImpact(entry, selectedMacroDate, 1);
   }
 
   function addRecipeToMeal(meal, recipe, servings = 1) {
@@ -3315,6 +3446,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       barcode: String(product.barcode || "").trim(),
       servingBaseGrams: Math.max(1, Number(product.servingBaseGrams) || 100),
       macros: normalizeMacros(product.macros),
+      financeProductId: String(product.financeProductId || "").trim(),
+      linkedHabitId: String(product.linkedHabitId || "").trim(),
       source: product.source || "manual",
       createdAt: product.createdAt || now,
       updatedAt: now,
@@ -3335,6 +3468,90 @@ $recipeImportBtn?.addEventListener("click", () => {
     const local = nutritionProducts.find((p) => p.barcode && p.barcode === clean);
     if (local) return local;
     return null;
+  }
+
+  function listHabitsForProductLink() {
+    try {
+      return Array.isArray(window.__bookshellHabits?.listActiveHabits?.())
+        ? window.__bookshellHabits.listActiveHabits()
+        : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  async function adjustHabitCountForDate(habitId, dateKey, delta = 0) {
+    const safeHabitId = String(habitId || "").trim();
+    const safeDate = String(dateKey || "").trim();
+    const safeDelta = Number(delta) || 0;
+    if (!safeHabitId || !safeDate || !safeDelta) return;
+    habitSyncQueue = habitSyncQueue.then(async () => {
+      try {
+        await window.__bookshellHabits?.adjustHabitCountForDate?.(safeHabitId, safeDate, safeDelta);
+      } catch (_) {}
+    });
+    return habitSyncQueue;
+  }
+
+  async function applyEntryHabitImpact(entry, dateKey, direction = 1) {
+    const habitId = String(entry?.habitSync?.habitId || "").trim();
+    if (!habitId) return;
+    const amount = Math.max(0, Number(entry?.habitSync?.amount) || 0);
+    const delta = Math.round(amount * direction);
+    if (!delta) return;
+    await adjustHabitCountForDate(habitId, dateKey, delta);
+  }
+
+  async function loadFinanceProductsCatalog(force = false) {
+    if (!currentUid || (financeProductsLoaded && !force)) return financeProducts;
+    financeProductsLoaded = true;
+    let chosen = [];
+    try {
+      const [primary, legacy] = resolveFinancePathCandidates(currentUid);
+      const candidates = [primary, legacy].filter(Boolean);
+      for (const root of candidates) {
+        try {
+          const snap = await get(ref(db, `${root}/foodItems`));
+          const val = snap?.val();
+          if (val && typeof val === "object" && Object.keys(val).length) {
+            chosen = Object.entries(val).map(([id, row]) => {
+              const priceHistory = row?.priceHistory && typeof row.priceHistory === "object" ? row.priceHistory : {};
+              const latest = Object.values(priceHistory).flatMap((vendorRows) => Object.values(vendorRows || {})).reduce((best, it) => {
+                const ts = Number(it?.ts) || 0;
+                if (!best || ts > best.ts) return { ts, price: Number(it?.unitPrice || it?.price || 0), vendor: String(it?.vendor || "").trim() };
+                return best;
+              }, null);
+              return {
+                id,
+                name: String(row?.displayName || row?.name || id || "").trim(),
+                lastPrice: latest?.price || Number(row?.defaultPrice || 0) || 0,
+                lastPriceTs: latest?.ts || 0,
+                lastVendor: latest?.vendor || "",
+              };
+            }).filter((it) => it.name);
+            break;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    financeProducts = chosen;
+    return financeProducts;
+  }
+
+  function computeRecipeEstimatedCost(recipe) {
+    const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+    let covered = 0;
+    let total = 0;
+    ingredients.forEach((ing) => {
+      const linked = nutritionProducts.find((p) => p.id === ing.productId);
+      if (!linked?.financeProductId) return;
+      const fin = financeProducts.find((f) => f.id === linked.financeProductId);
+      const price = Number(fin?.lastPrice) || 0;
+      if (!price) return;
+      covered += 1;
+      total += price;
+    });
+    return { total, covered, totalIngredients: ingredients.length };
   }
 
   let _macroScanStream = null;
@@ -3686,9 +3903,10 @@ $recipeImportBtn?.addEventListener("click", () => {
       const log = getDailyLog(selectedMacroDate);
       const i = Number(idx);
       if (log.meals?.[meal]?.entries?.[i]) {
-        log.meals[meal].entries.splice(i, 1);
+        const removed = log.meals[meal].entries.splice(i, 1)[0];
         persistNutrition();
         renderMacrosView();
+        applyEntryHabitImpact(removed, selectedMacroDate, -1);
       }
       return;
     }
@@ -3769,6 +3987,44 @@ $recipeImportBtn?.addEventListener("click", () => {
       $macroProductAdd?.click();
     }
   });
+  $macroProductScanBtn?.addEventListener("click", async () => {
+    const raw = window.prompt("Escanear / pegar código de barras", String($macroProductBarcode?.value || "").trim());
+    if (raw == null) return;
+    const code = String(raw || "").trim();
+    if (!code) return;
+    if ($macroProductBarcode) $macroProductBarcode.value = code;
+    const local = await lookupProductByBarcode(code);
+    const off = local || (await lookupOpenFoodFactsByBarcode(code));
+    if (!off) {
+      if ($macroProductSummary) $macroProductSummary.textContent = "Código guardado. Sin coincidencias nutricionales automáticas.";
+      return;
+    }
+    if ($macroProductName && !$macroProductName.value.trim()) $macroProductName.value = off.name || "";
+    if ($macroProductBrand && !$macroProductBrand.value.trim()) $macroProductBrand.value = off.brand || "";
+    if ($macroProductBase) $macroProductBase.value = String(Number(off.servingBaseGrams) || 100);
+    if ($macroProductCarbs) $macroProductCarbs.value = String(Number(off.macros?.carbs) || 0);
+    if ($macroProductProtein) $macroProductProtein.value = String(Number(off.macros?.protein) || 0);
+    if ($macroProductFat) $macroProductFat.value = String(Number(off.macros?.fat) || 0);
+    if ($macroProductKcal) $macroProductKcal.value = String(Number(off.macros?.kcal) || 0);
+    renderMacroProductSummary();
+  });
+  $macroProductFinanceSelect?.addEventListener("change", () => {
+    const row = financeProducts.find((f) => f.id === String($macroProductFinanceSelect.value || ""));
+    if ($macroProductFinanceHint) $macroProductFinanceHint.textContent = row ? `Vinculado a ${row.name}${row.lastPrice ? ` · último ${roundMacro(row.lastPrice)}€` : ""}` : "Sin producto de Finanzas";
+  });
+  $macroProductFinanceUnlink?.addEventListener("click", () => {
+    if ($macroProductFinanceSelect) $macroProductFinanceSelect.value = "";
+    if ($macroProductFinanceHint) $macroProductFinanceHint.textContent = "Sin producto de Finanzas";
+  });
+  $macroProductHabitSelect?.addEventListener("change", () => {
+    const habits = listHabitsForProductLink();
+    const row = habits.find((h) => h.id === String($macroProductHabitSelect.value || ""));
+    if ($macroProductHabitHint) $macroProductHabitHint.textContent = row ? `Vinculado a ${row.emoji || "🏷️"} ${row.name}` : "Sin hábito vinculado";
+  });
+  $macroProductHabitUnlink?.addEventListener("click", () => {
+    if ($macroProductHabitSelect) $macroProductHabitSelect.value = "";
+    if ($macroProductHabitHint) $macroProductHabitHint.textContent = "Sin hábito vinculado";
+  });
   $macroProductModalClose?.addEventListener("click", closeMacroProductModal);
   $macroProductCancel?.addEventListener("click", closeMacroProductModal);
   $macroProductModalBackdrop?.addEventListener("click", (e) => { if (e.target === $macroProductModalBackdrop) closeMacroProductModal(); });
@@ -3789,18 +4045,40 @@ $recipeImportBtn?.addEventListener("click", () => {
     }
 
     if (saved.barcode) upsertBarcodeMapping(saved.barcode, saved.id);
+    if (_macroProductRecipeIngredientTarget?.recipeId && _macroProductRecipeIngredientTarget?.ingredientId) {
+      const targetRecipe = recipes.find((r) => r.id === _macroProductRecipeIngredientTarget.recipeId);
+      if (targetRecipe) {
+        const ingredients = (targetRecipe.ingredients || []).map((ing) => {
+          if (ing.id !== _macroProductRecipeIngredientTarget.ingredientId) return ing;
+          const parsed = splitIngredientText(ing.text || "");
+          return {
+            ...ing,
+            productId: saved.id,
+            name: saved.name || parsed.name || ing.name || ing.text,
+            quantity: ing.quantity || parsed.quantity || "",
+          };
+        });
+        updateRecipe(targetRecipe.id, { ingredients, updatedAt: Date.now() });
+      }
+    }
     if (_macroProductEntryTarget) {
       const { meal, idx } = _macroProductEntryTarget;
       const log = getDailyLog(selectedMacroDate);
       const entry = log?.meals?.[meal]?.entries?.[Number(idx)];
       if (entry) {
+        const prevHabit = { ...entry.habitSync };
         entry.type = "product";
         entry.refId = saved.id;
         entry.nameSnapshot = saved.name;
         entry.grams = grams;
         entry.macrosSnapshot = normalizeMacros(calcProductMacros(saved, grams));
+        entry.habitSync = {
+          habitId: String(saved.linkedHabitId || "").trim(),
+          amount: String(saved.linkedHabitId || "").trim() ? 1 : 0,
+        };
         persistNutrition();
         renderMacrosView();
+        applyEntryHabitImpact({ habitSync: prevHabit }, selectedMacroDate, -1).then(() => applyEntryHabitImpact(entry, selectedMacroDate, 1));
       }
     } else {
       addProductToMeal(_macroProductMeal || macroModalState.meal || "breakfast", saved, grams);

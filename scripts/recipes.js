@@ -3569,18 +3569,38 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanFrameCanvas = null;
   let _macroScanOcrInFlight = false;
   let _macroScanOcrModule = null;
+  let _macroScanOcrRetryCount = 0;
+  let _macroScanSessionId = 0;
 
   const MACRO_SCAN_BARCODE_TIMEOUT_MS = 5000;
   const MACRO_SCAN_POLL_MS = 220;
   const MACRO_SCAN_OCR_AUTO_MS = 2600;
+  const MACRO_SCAN_MAX_OCR_RETRIES = 1;
 
   function logMacroScan(event, meta) {
     try {
+      const prefix = `[MacroScan#${_macroScanSessionId || "-"}]`;
       if (meta !== undefined) {
-        console.info(`[MacroScan] ${event}`, meta);
+        console.info(`${prefix} ${event}`, meta);
       } else {
-        console.info(`[MacroScan] ${event}`);
+        console.info(`${prefix} ${event}`);
       }
+    } catch (_) {}
+  }
+
+  function beginMacroScanLogSession(reason = "scan") {
+    _macroScanSessionId += 1;
+    try {
+      console.groupCollapsed(`[MacroScan#${_macroScanSessionId}] ${reason}`);
+      console.info("Entorno", {
+        ua: navigator.userAgent,
+        secure: window.isSecureContext,
+        standalone: window.matchMedia?.("(display-mode: standalone)")?.matches || navigator.standalone || false,
+        visibility: document.visibilityState,
+        hasGetUserMedia: Boolean(navigator.mediaDevices?.getUserMedia),
+        hasBarcodeDetector: Boolean(getBarcodeDetectorCtor()),
+      });
+      console.groupEnd();
     } catch (_) {}
   }
 
@@ -3747,6 +3767,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     setMacroScanStatus("No pude leer el número automáticamente. Puedes reintentar o escribirlo manualmente.");
     logMacroScan("OCR sin resultado útil", { reason });
     if (_macroScanRunning) {
+      _macroScanOcrRetryCount += 1;
+      if (_macroScanOcrRetryCount > MACRO_SCAN_MAX_OCR_RETRIES) {
+        logMacroScan("OCR agotado: desactivo escaneo automático", { reason, retries: _macroScanOcrRetryCount });
+        await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
+        setMacroScanStatus("No pude leer el código automáticamente. Usa la búsqueda manual (sin cámara activa).");
+        return false;
+      }
       if (_macroScanOcrTimer) {
         try { clearTimeout(_macroScanOcrTimer); } catch (_) {}
       }
@@ -3844,10 +3871,11 @@ $recipeImportBtn?.addEventListener("click", () => {
     }
   }
 
-  async function stopMacroBarcodeScan() {
+  async function stopMacroBarcodeScan(options = {}) {
+    const { keepStatus = false, keepPendingProduct = false } = options || {};
     _macroScanRunning = false;
     _macroScanSupportsAutoDetection = false;
-    hideMacroScanAddProduct();
+    if (!keepPendingProduct) hideMacroScanAddProduct();
 
     if (_macroScanTimer) {
       try { clearTimeout(_macroScanTimer); } catch (_) {}
@@ -3870,14 +3898,24 @@ $recipeImportBtn?.addEventListener("click", () => {
     }
     _macroScanFallbackTriggered = false;
     _macroScanStartedAt = 0;
+    _macroScanOcrRetryCount = 0;
+    _macroScanOcrInFlight = false;
+    _macroScanDetector = null;
+    if (!keepStatus) setMacroScanStatus("");
   }
 
-  async function handleBarcodeFound(barcode) {
+  async function handleBarcodeFound(barcode, options = {}) {
+    const { fromManual = false } = options || {};
+    logMacroScan("Procesando barcode", { barcode: String(barcode || "").trim(), fromManual });
     const clean = String(barcode || "").trim();
     if (!clean) return;
+    if (fromManual) {
+      await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
+    }
 
     const found = await lookupProductByBarcode(clean);
     if (found) {
+      logMacroScan("Producto local encontrado", { productId: found.id, name: found.name });
       closeMacroAddModal();
       openMacroProductModal(found, macroModalState.meal, 100);
       setMacroScanStatus("Producto encontrado. Ajusta cantidad y añade.");
@@ -3888,6 +3926,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     const off = await lookupOpenFoodFactsByBarcode(clean);
     if (off) {
       _macroScanPendingProduct = off;
+      logMacroScan("Producto OpenFoodFacts encontrado", { name: off.name, barcode: clean });
       setMacroScanStatus(`Encontrado: ${off.name}${off.brand ? ` · ${off.brand}` : ""}. Pulsa “Abrir ficha”.`);
       showMacroScanAddProduct({ barcode: clean, mode: "off", label: "Abrir ficha" });
       if ($macroManualBarcode) $macroManualBarcode.value = clean;
@@ -3907,6 +3946,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   async function startMacroBarcodeScan() {
+    beginMacroScanLogSession("inicio");
     hideMacroScanAddProduct();
     logMacroScan("Inicio de escaneo solicitado", {
       secure: window.isSecureContext,
@@ -3930,7 +3970,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       return;
     }
 
-    await stopMacroBarcodeScan();
+    await stopMacroBarcodeScan({ keepStatus: true });
 
     _macroScanDetector = null;
     try {
@@ -3968,12 +4008,13 @@ $recipeImportBtn?.addEventListener("click", () => {
       return;
     }
 
-    setMacroScanStatus("Apunta al código de barras. Intentando detección automática…");
+    setMacroScanStatus("Cámara lista. Intentando detección automática; si falla, usa búsqueda manual.");
     _macroScanRunning = true;
     _macroScanFallbackTriggered = false;
     _macroScanLastValue = "";
     _macroScanLastAt = 0;
     _macroScanStartedAt = Date.now();
+    _macroScanOcrRetryCount = 0;
 
     _macroScanOcrTimer = setTimeout(() => {
       if (!_macroScanRunning || _macroScanFallbackTriggered) return;
@@ -4362,11 +4403,11 @@ $recipeImportBtn?.addEventListener("click", () => {
       return;
     }
     setMacroScanStatus("Buscando...");
-    await handleBarcodeFound(barcodeInput);
+    await handleBarcodeFound(barcodeInput, { fromManual: true });
   });
 
   $macroScanStop?.addEventListener("click", async () => {
-    await stopMacroBarcodeScan();
+    await stopMacroBarcodeScan({ keepPendingProduct: true });
     setMacroScanStatus("Escaneo detenido.");
   });
   $macroScanManual?.addEventListener("keydown", (e) => {
@@ -4390,8 +4431,10 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (barcode && $macroManualBarcode) $macroManualBarcode.value = barcode;
 
     if (mode === "off" && _macroScanPendingProduct) {
+      const pendingProduct = { ..._macroScanPendingProduct };
+      logMacroScan("Abrir ficha desde resultado OFF", { barcode, name: pendingProduct?.name || "" });
       closeMacroAddModal();
-      openMacroProductModal(_macroScanPendingProduct, macroModalState.meal, 100);
+      openMacroProductModal(pendingProduct, macroModalState.meal, 100);
       return;
       const saved = saveProduct(_macroScanPendingProduct);
       if (saved) {

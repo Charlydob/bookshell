@@ -987,6 +987,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center center;
   display:block;
   background: rgba(0,0,0,.35);
 }
@@ -999,28 +1000,37 @@
   width: 100% !important;
   height: 100% !important;
   object-fit: cover;
+  object-position: center center;
 }
 .macro-scan-overlay{
   position:absolute;
   inset:0;
+  z-index: 3;
   pointer-events:none;
+  --scan-left: 4%;
+  --scan-top: 38%;
+  --scan-width: 92%;
+  --scan-height: 24%;
+  --scan-line-top: 50%;
 }
 .macro-scan-overlay::before,
 .macro-scan-overlay::after{
   content:"";
   position:absolute;
-  left: 4%;
-  right: 4%;
   border-radius: 12px;
 }
 .macro-scan-overlay::before{
-  top: 38%;
-  height: 24%;
+  left: var(--scan-left);
+  top: var(--scan-top);
+  width: var(--scan-width);
+  height: var(--scan-height);
   border: 2px solid rgba(128, 236, 180, .8);
   box-shadow: 0 0 0 9999px rgba(0,0,0,.38);
 }
 .macro-scan-overlay::after{
-  top: 50%;
+  left: var(--scan-left);
+  top: var(--scan-line-top);
+  width: var(--scan-width);
   height: 2px;
   background: linear-gradient(90deg, transparent, rgba(128,236,180,.95), transparent);
 }

@@ -302,6 +302,8 @@ if ($viewRecipes) {
   const $macroScanStatus = document.getElementById("macro-scan-status");
   const $macroScanVideo = document.getElementById("macro-scan-video");
   const $macroScanHtml5Host = document.getElementById("macro-scan-html5-host");
+  const $macroScanVideoWrap = document.querySelector(".macro-scan-video-wrap");
+  const $macroScanOverlay = document.querySelector(".macro-scan-overlay");
   const $macroScanAddProduct = document.getElementById("macro-scan-add-product");
   const $macroScanLogPanel = document.getElementById("macro-scan-log-panel");
   const $macroManualName = document.getElementById("macro-manual-name");
@@ -3576,7 +3578,13 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanUiLogs = [];
   let _macroScanUiRenderScheduled = false;
   const _macroScanNoResultLastAt = { html5: 0 };
-  const MACRO_SCAN_NO_RESULT_LOG_EVERY_MS = 1200;
+  let _macroScanViewfinderPx = null; // { width, height }
+  let _macroScanQrBoxPx = null; // { left, top, width, height, lineTop }
+  let _macroScanLayoutLastAt = 0;
+  let _macroScanResizeListenerBound = false;
+
+  const MACRO_SCAN_NO_RESULT_LOG_EVERY_MS = 6000;
+  const MACRO_SCAN_LAYOUT_LOG_EVERY_MS = 1600;
   const MACRO_SCAN_REPEAT_BLOCK_MS = 3500;
   const OFF_PRODUCT_ENDPOINT = "https://world.openfoodfacts.org/api/v2/product";
 
@@ -3611,14 +3619,103 @@ $recipeImportBtn?.addEventListener("click", () => {
     renderMacroScanUiLogs();
   }
 
-  function logMacroScanNoResult(engine) {
+  function setMacroScanOverlayBox(box = null) {
+    if (!$macroScanOverlay) return;
+    if (!box) {
+      try {
+        $macroScanOverlay.style.removeProperty("--scan-left");
+        $macroScanOverlay.style.removeProperty("--scan-top");
+        $macroScanOverlay.style.removeProperty("--scan-width");
+        $macroScanOverlay.style.removeProperty("--scan-height");
+        $macroScanOverlay.style.removeProperty("--scan-line-top");
+      } catch (_) {}
+      return;
+    }
+    try {
+      $macroScanOverlay.style.setProperty("--scan-left", `${Math.max(0, Math.round(box.left || 0))}px`);
+      $macroScanOverlay.style.setProperty("--scan-top", `${Math.max(0, Math.round(box.top || 0))}px`);
+      $macroScanOverlay.style.setProperty("--scan-width", `${Math.max(0, Math.round(box.width || 0))}px`);
+      $macroScanOverlay.style.setProperty("--scan-height", `${Math.max(0, Math.round(box.height || 0))}px`);
+      $macroScanOverlay.style.setProperty("--scan-line-top", `${Math.max(0, Math.round(box.lineTop || 0))}px`);
+    } catch (_) {}
+  }
+
+  function rectToShort(rect) {
+    if (!rect) return null;
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      w: Math.round(rect.width),
+      h: Math.round(rect.height),
+    };
+  }
+
+  function logMacroScanLayout(reason = "layout") {
+    const now = Date.now();
+    if (now - _macroScanLayoutLastAt < MACRO_SCAN_LAYOUT_LOG_EVERY_MS) return;
+    _macroScanLayoutLastAt = now;
+    const hostRect = $macroScanHtml5Host?.getBoundingClientRect?.() || null;
+    const wrapRect = $macroScanVideoWrap?.getBoundingClientRect?.() || null;
+    const videoEl = $macroScanHtml5Host?.querySelector?.("video") || $macroScanVideo || null;
+    const videoRect = videoEl?.getBoundingClientRect?.() || null;
+    logMacroScan("layout", {
+      reason,
+      viewfinder: _macroScanViewfinderPx,
+      qrbox: _macroScanQrBoxPx,
+      rects: {
+        wrap: rectToShort(wrapRect),
+        host: rectToShort(hostRect),
+        video: rectToShort(videoRect),
+      },
+      dpr: Number(window.devicePixelRatio || 1),
+    });
+  }
+
+  function hideHtml5QrcodeInternalOverlay() {
+    if (!$macroScanHtml5Host) return;
+    const videoEl = $macroScanHtml5Host?.querySelector?.("video") || null;
+    if (!videoEl) return;
+    let hidden = 0;
+    try {
+      const all = Array.from($macroScanHtml5Host.querySelectorAll("*"));
+      all.forEach((el) => {
+        if (!el || el === videoEl) return;
+        if (typeof el.contains === "function" && el.contains(videoEl)) return;
+        if (String(el.tagName || "").toUpperCase() === "CANVAS") {
+          el.style.display = "none";
+          hidden += 1;
+          return;
+        }
+        el.style.opacity = "0";
+        el.style.pointerEvents = "none";
+        el.style.userSelect = "none";
+        hidden += 1;
+      });
+    } catch (_) {}
+    if (hidden) logMacroScan("overlay interno oculto", { engine: "html5", hidden });
+  }
+
+  function isMacroScanNoReadMessage(message = "") {
+    const msg = String(message || "");
+    if (!msg) return false;
+    return (
+      /no multiformat readers/i.test(msg) ||
+      /qr code parse error/i.test(msg) ||
+      /notfoundexception/i.test(msg) ||
+      /no code found/i.test(msg)
+    );
+  }
+
+  function logMacroScanNoResult(engine, detail = "") {
     const key = String(engine || "").trim();
     if (!key) return;
     const now = Date.now();
     const prev = Number(_macroScanNoResultLastAt[key]) || 0;
     if (now - prev < MACRO_SCAN_NO_RESULT_LOG_EVERY_MS) return;
     _macroScanNoResultLastAt[key] = now;
-    logMacroScan("sin resultado", { engine: key });
+    if (_macroScanRunning && _macroScanEngine === key) setMacroScanStatus("Buscando codigo...");
+    const short = String(detail || "").slice(0, 120);
+    logMacroScan("buscando codigo...", { engine: key, detail: short });
   }
 
   function fmtMacroMeta(meta) {
@@ -3825,6 +3922,9 @@ $recipeImportBtn?.addEventListener("click", () => {
 
     _macroScanStartedAt = 0;
     _macroScanDecodeInFlight = false;
+    _macroScanViewfinderPx = null;
+    _macroScanQrBoxPx = null;
+    setMacroScanOverlayBox(null);
     setMacroScanEngineStatus("none");
     if (!keepStatus) setMacroScanStatus("");
     logMacroScan("limpieza", { motorDetenido: stoppingEngine || "none", streamDetenido: true, timersListenersLimpiados: true, streamActive: Boolean(_macroScanStream?.active) });
@@ -3863,8 +3963,20 @@ $recipeImportBtn?.addEventListener("click", () => {
     const startConfig = {
       fps: 12,
       qrbox: (viewfinderWidth, viewfinderHeight) => {
-        const width = Math.max(260, Math.min(Math.round(viewfinderWidth * 0.92), 760));
-        const height = Math.max(90, Math.min(Math.round(viewfinderHeight * 0.24), 180));
+        const vfW = Math.max(0, Math.round(Number(viewfinderWidth) || 0));
+        const vfH = Math.max(0, Math.round(Number(viewfinderHeight) || 0));
+        _macroScanViewfinderPx = { width: vfW, height: vfH };
+
+        // Banda horizontal (retail) para EAN/UPC: muy ancha, poco alta.
+        // Evitamos clamps agresivos para que overlay y regiÃ³n real no diverjan en pantallas grandes/pequeÃ±as.
+        const width = Math.max(260, Math.min(Math.round(vfW * 0.92), vfW));
+        const height = Math.max(84, Math.min(Math.round(vfH * 0.22), 160));
+        const left = Math.max(0, Math.round((vfW - width) / 2));
+        const top = Math.max(0, Math.round((vfH - height) / 2));
+        const box = { left, top, width, height, lineTop: top + Math.round(height / 2) };
+        _macroScanQrBoxPx = box;
+        setMacroScanOverlayBox(box);
+        logMacroScanLayout("qrbox");
         return { width, height };
       },
       aspectRatio: 1.777,
@@ -3876,8 +3988,12 @@ $recipeImportBtn?.addEventListener("click", () => {
       onMacroEngineDetected(decodedText, "html5", runId);
     };
     const onDecodeError = (errorMessage) => {
-      if (/not found/i.test(String(errorMessage || ""))) logMacroScanNoResult("html5");
-      else logMacroScan("error concreto", { engine: "html5", error: errorMessage });
+      const msg = String(errorMessage || "");
+      if (/not found/i.test(msg) || isMacroScanNoReadMessage(msg)) {
+        logMacroScanNoResult("html5", msg);
+        return;
+      }
+      logMacroScan("error motor", { engine: "html5", error: msg });
     };
 
     // html5-qrcode exige que el "cameraIdOrConfig" (si es objeto) tenga exactamente 1 clave.
@@ -3894,6 +4010,14 @@ $recipeImportBtn?.addEventListener("click", () => {
       logMacroScan("reintento con cameraId", { engine: "html5", cameras: cameras.length, selected: chosen });
       await _macroScanHtml5Instance.start(chosen, startConfig, onDecoded, onDecodeError);
     }
+    logMacroScanLayout("post_start");
+    try {
+      setTimeout(() => {
+        if (!(_macroScanRunning && _macroScanEngine === "html5" && runId === _macroScanEngineRunId)) return;
+        logMacroScanLayout("post_start_delay");
+        hideHtml5QrcodeInternalOverlay();
+      }, 450);
+    } catch (_) {}
     logMacroScan("cámara abierta", { ok: true, engine: "html5", streamActive: true, videoDimsOk: true });
   }
 
@@ -3925,10 +4049,21 @@ $recipeImportBtn?.addEventListener("click", () => {
     logMacroScan("motor seleccionado", { engine: selectedEngine });
     logMacroScan("arranque de detección/búsqueda", { engine: selectedEngine, runId });
 
+    setMacroScanStatus("Inicializando camara...");
+    logMacroScanLayout("pre_start");
+
+    if (!_macroScanResizeListenerBound) {
+      _macroScanResizeListenerBound = true;
+      try {
+        window.addEventListener("resize", () => { if (_macroScanRunning) logMacroScanLayout("resize"); }, { passive: true });
+        window.addEventListener("orientationchange", () => { if (_macroScanRunning) logMacroScanLayout("orientationchange"); }, { passive: true });
+      } catch (_) {}
+    }
+
     try {
       await startHtml5Scan(runId);
-      setMacroScanStatus("Motor html5-qrcode activo. Esperando código…");
-      logMacroScan("detección iniciada", { engine: selectedEngine, ok: true, phase: "esperando código" });
+      setMacroScanStatus("Buscando codigo...");
+      logMacroScan("deteccion iniciada", { engine: selectedEngine, ok: true, phase: "buscando" });
     } catch (err) {
       logMacroScan("error concreto", { engine: selectedEngine, error: err?.name || err?.message || err });
       setMacroScanStatus(`Error en ${selectedEngine}: ${err?.name || err?.message || "falló"}`);

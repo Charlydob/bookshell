@@ -29,7 +29,7 @@ const LAST_VIEW_KEY = "bookshell:lastView";
 // ✅ app.js ya registra SW; si quieres dejarlo aquí, ok, pero evita duplicar.
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
   });
 }
 

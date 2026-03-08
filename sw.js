@@ -1,32 +1,37 @@
-const STATIC_CACHE = "bookshell-static-v4";
+const STATIC_CACHE = "bookshell-static-v5";
 const APP_SHELL = [
-  "/",
-  "/index.html",
-  "/manifest.webmanifest",
-  "/styles/mainstyles.css",
-  "/styles/mainpage.css",
-  "/styles/dashboard.css",
-  "/styles/videos.css",
-  "/styles/recipes.css",
-  "/styles/habits.css",
-  "/styles/media.css",
-  "/styles/world.css",
-  "/styles/gym.css",
-  "/styles/finance.css",
-  "/styles/main.css",
-  "/scripts/app.js",
-  "/scripts/recipes.js",
-  "/scripts/countries.js",
-  "/scripts/world-heatmap.js",
-  "/scripts/firebase-shared.js",
-  "/icons/favicon-16.png",
-  "/icons/favicon-32.png",
-  "/icons/icon-192.png",
-  "/icons/icon-512.png"
+  "./",
+  "./index.html",
+  "./manifest.webmanifest",
+  "./styles/mainstyles.css",
+  "./styles/mainpage.css",
+  "./styles/dashboard.css",
+  "./styles/videos.css",
+  "./styles/recipes.css",
+  "./styles/habits.css",
+  "./styles/media.css",
+  "./styles/world.css",
+  "./styles/gym.css",
+  "./styles/finance.css",
+  "./styles/main.css",
+  "./scripts/app.js",
+  "./scripts/recipes.js",
+  "./scripts/countries.js",
+  "./scripts/world-heatmap.js",
+  "./scripts/firebase-shared.js",
+  "./icons/favicon-16.png",
+  "./icons/favicon-32.png",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png"
 ];
 
+function resolveAppUrl(path = "./") {
+  return new URL(path, self.registration.scope).toString();
+}
+
+
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(STATIC_CACHE).then((cache) => cache.addAll(APP_SHELL)));
+  event.waitUntil(caches.open(STATIC_CACHE).then((cache) => cache.addAll(APP_SHELL.map((path) => resolveAppUrl(path)))));
   self.skipWaiting();
 });
 
@@ -69,7 +74,7 @@ self.addEventListener("fetch", (event) => {
         }
         return response;
       })
-      .catch(() => cached || caches.match("/index.html"));
+      .catch(() => cached || caches.match(resolveAppUrl("./index.html")));
 
     return cached || networkFetch;
   })());

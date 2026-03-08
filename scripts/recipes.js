@@ -293,9 +293,7 @@ if ($viewRecipes) {
   const $macroAddChips = document.getElementById("macro-add-chips");
   const $macroScanPanel = document.getElementById("macro-scan-panel");
   const $macroManualPanel = document.getElementById("macro-manual-panel");
-  const $macroScanEngineZxing = document.getElementById("macro-scan-engine-zxing");
   const $macroScanEngineHtml5 = document.getElementById("macro-scan-engine-html5");
-  const $macroScanEngineQuagga = document.getElementById("macro-scan-engine-quagga");
   const $macroScanReadNumber = document.getElementById("macro-scan-read-number");
   const $macroScanStop = document.getElementById("macro-scan-stop");
   const $macroScanManual = document.getElementById("macro-scan-manual");
@@ -3563,10 +3561,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanStream = null;
   let _macroScanRunning = false;
   let _macroScanEngine = "none";
-  let _macroScanZxingModule = null;
   let _macroScanHtml5Module = null;
-  let _macroScanQuaggaModule = null;
-  let _macroScanZxingReader = null;
   let _macroScanHtml5Instance = null;
   let _macroScanLastValue = "";
   let _macroScanLastAt = 0;
@@ -3580,8 +3575,10 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanEngineRunId = 0;
   let _macroScanUiLogs = [];
   let _macroScanUiRenderScheduled = false;
-  const _macroScanNoResultLastAt = { zxing: 0, html5: 0 };
+  const _macroScanNoResultLastAt = { html5: 0 };
   const MACRO_SCAN_NO_RESULT_LOG_EVERY_MS = 1200;
+  const MACRO_SCAN_REPEAT_BLOCK_MS = 3500;
+  const OFF_PRODUCT_ENDPOINT = "https://world.openfoodfacts.org/api/v2/product";
 
   function ensureMacroScanLogPanel() {
     return $macroScanLogPanel || null;
@@ -3637,7 +3634,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       const prefix = `[MacroScan#${_macroScanSessionId || "-"}]`;
       if (meta !== undefined) console.info(`${prefix} ${event}`, meta);
       else console.info(`${prefix} ${event}`);
-      const enginePrefix = _macroScanEngine && _macroScanEngine !== "none" ? `[${(_macroScanEngine === "html5" ? "html5-qrcode" : _macroScanEngine === "quagga" ? "Quagga" : "ZXing")}]` : "[Scan]";
+      const enginePrefix = _macroScanEngine && _macroScanEngine !== "none" ? `[${(_macroScanEngine === "html5" ? "html5-qrcode" : _macroScanEngine)}]` : "[Scan]";
       _macroScanUiLogs.push(`<strong>${enginePrefix}</strong> ${event}${fmtMacroMeta(meta)}`);
       if (_macroScanUiLogs.length > 60) _macroScanUiLogs = _macroScanUiLogs.slice(-60);
       scheduleMacroScanUiLogsRender();
@@ -3679,13 +3676,11 @@ $recipeImportBtn?.addEventListener("click", () => {
   function setMacroScanEngineStatus(engine = "none") {
     _macroScanEngine = engine || "none";
     if ($macroScanEngineStatus) {
-      const labels = { none: "ninguno", zxing: "ZXing", html5: "html5-qrcode", quagga: "Quagga" };
+      const labels = { none: "ninguno", html5: "html5-qrcode" };
       $macroScanEngineStatus.textContent = `Motor activo: ${labels[_macroScanEngine] || _macroScanEngine}`;
     }
     const map = [
-      [$macroScanEngineZxing, "zxing"],
       [$macroScanEngineHtml5, "html5"],
-      [$macroScanEngineQuagga, "quagga"],
     ];
     map.forEach(([btn, value]) => btn?.classList.toggle("primary", _macroScanEngine === value));
   }
@@ -3733,12 +3728,6 @@ $recipeImportBtn?.addEventListener("click", () => {
     return _macroScanFrameCanvas;
   }
 
-  async function loadMacroScanZxingModule() {
-    if (_macroScanZxingModule) return _macroScanZxingModule;
-    _macroScanZxingModule = await import("https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm");
-    logMacroScan("dependencia del motor cargada", { engine: "zxing", ok: Boolean(_macroScanZxingModule) });
-    return _macroScanZxingModule;
-  }
 
   async function loadMacroScanHtml5Module() {
     if (_macroScanHtml5Module) return _macroScanHtml5Module;
@@ -3747,12 +3736,6 @@ $recipeImportBtn?.addEventListener("click", () => {
     return _macroScanHtml5Module;
   }
 
-  async function loadMacroScanQuaggaModule() {
-    if (_macroScanQuaggaModule) return _macroScanQuaggaModule;
-    _macroScanQuaggaModule = await import("https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga2.esm.min.js");
-    logMacroScan("dependencia del motor cargada", { engine: "quagga", ok: Boolean(_macroScanQuaggaModule) });
-    return _macroScanQuaggaModule;
-  }
 
   async function waitForMacroScanVideoReady(videoEl) {
     if (!videoEl) throw new Error("Elemento de vídeo no disponible.");
@@ -3818,10 +3801,6 @@ $recipeImportBtn?.addEventListener("click", () => {
       _macroScanTimer = null;
     }
 
-    if (_macroScanZxingReader) {
-      try { _macroScanZxingReader.stopContinuousDecode?.(); } catch (_) {}
-      try { _macroScanZxingReader = null; } catch (_) {}
-    }
 
     if (_macroScanHtml5Instance) {
       try { await _macroScanHtml5Instance.stop(); } catch (_) {}
@@ -3829,10 +3808,6 @@ $recipeImportBtn?.addEventListener("click", () => {
       _macroScanHtml5Instance = null;
     }
 
-    if (_macroScanQuaggaModule?.default?.stop) {
-      try { _macroScanQuaggaModule.default.offDetected?.(onMacroQuaggaDetected); } catch (_) {}
-      try { _macroScanQuaggaModule.default.stop(); } catch (_) {}
-    }
 
     if (_macroScanStream) {
       try { _macroScanStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
@@ -3860,7 +3835,10 @@ $recipeImportBtn?.addEventListener("click", () => {
     const clean = normalizeDetectedBarcode(rawCode) || String(rawCode || "").trim();
     if (!clean) return;
     const now = Date.now();
-    if (clean === _macroScanLastValue && (now - _macroScanLastAt) < 1400) return;
+    if (clean === _macroScanLastValue && (now - _macroScanLastAt) < MACRO_SCAN_REPEAT_BLOCK_MS) {
+      logMacroScan("código ignorado por repetición", { engine, code: clean });
+      return;
+    }
     _macroScanLastValue = clean;
     _macroScanLastAt = now;
     logMacroScan("código detectado", { engine, code: clean });
@@ -3870,29 +3848,6 @@ $recipeImportBtn?.addEventListener("click", () => {
     await handleBarcodeFound(clean, { fromManual: false, sourceEngine: engine });
   }
 
-  function onMacroQuaggaDetected(result) {
-    const code = String(result?.codeResult?.code || "").trim();
-    logMacroScan("intento de detección ejecutado", { engine: "quagga", result: code ? "detectado" : "sin resultado" });
-    onMacroEngineDetected(code, "quagga", _macroScanEngineRunId);
-  }
-
-  async function startZxingScan(runId) {
-    await openMacroScanCamera();
-    logMacroScan("inicio motor", { engine: "zxing", instanceCreated: false });
-    const mod = await loadMacroScanZxingModule();
-    const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType, NotFoundException } = mod || {};
-    const hints = new Map();
-    hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E]);
-    const reader = new BrowserMultiFormatReader(hints);
-    _macroScanZxingReader = reader;
-    logMacroScan("inicialización del motor", { engine: "zxing", libreriaCargada: true, instanceCreated: Boolean(reader) });
-    logMacroScan("loop de detección arrancado", { engine: "zxing", ok: true });
-    reader.decodeFromVideoElementContinuously($macroScanVideo, (result, err) => {
-      if (result) onMacroEngineDetected(result.getText?.() || "", "zxing", runId);
-      if (err && err instanceof NotFoundException) logMacroScanNoResult("zxing");
-      if (err && !(err instanceof NotFoundException)) logMacroScan("error concreto", { engine: "zxing", error: err?.message || err?.name || err });
-    });
-  }
 
   async function startHtml5Scan(runId) {
     if (!$macroScanHtml5Host) throw new Error("Contenedor html5-qrcode no disponible.");
@@ -3906,10 +3861,20 @@ $recipeImportBtn?.addEventListener("click", () => {
     logMacroScan("inicialización del motor", { engine: "html5", libreriaCargada: true, instanceCreated: Boolean(_macroScanHtml5Instance) });
     logMacroScan("loop de detección arrancado", { engine: "html5", ok: true });
     await _macroScanHtml5Instance.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 250, height: 120 }, formatsToSupport: [mod.Html5QrcodeSupportedFormats.EAN_13, mod.Html5QrcodeSupportedFormats.EAN_8, mod.Html5QrcodeSupportedFormats.UPC_A, mod.Html5QrcodeSupportedFormats.UPC_E] },
+      { facingMode: { exact: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      {
+        fps: 12,
+        qrbox: (viewfinderWidth, viewfinderHeight) => {
+          const width = Math.max(260, Math.min(Math.round(viewfinderWidth * 0.92), 760));
+          const height = Math.max(90, Math.min(Math.round(viewfinderHeight * 0.24), 180));
+          return { width, height };
+        },
+        aspectRatio: 1.777,
+        disableFlip: true,
+        formatsToSupport: [mod.Html5QrcodeSupportedFormats.EAN_13, mod.Html5QrcodeSupportedFormats.EAN_8, mod.Html5QrcodeSupportedFormats.UPC_A, mod.Html5QrcodeSupportedFormats.UPC_E],
+      },
       (decodedText) => {
-        logMacroScan("intento de detección ejecutado", { engine: "html5", result: decodedText ? "detectado" : "sin resultado" });
+        if (decodedText) logMacroScan("resultado detectado", { engine: "html5", detected: true });
         onMacroEngineDetected(decodedText, "html5", runId);
       },
       (errorMessage) => {
@@ -3920,36 +3885,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     logMacroScan("cámara abierta", { ok: true, engine: "html5", streamActive: true, videoDimsOk: true });
   }
 
-  async function startQuaggaScan(runId) {
-    await openMacroScanCamera();
-    logMacroScan("inicio motor", { engine: "quagga", instanceCreated: false });
-    const mod = await loadMacroScanQuaggaModule();
-    const Quagga = mod?.default || mod;
-    if (!Quagga?.init) throw new Error("Quagga no disponible.");
-    logMacroScan("inicialización del motor", { engine: "quagga", libreriaCargada: true, instanceCreated: true });
-    await new Promise((resolve, reject) => {
-      Quagga.init({
-        inputStream: {
-          type: "LiveStream",
-          target: $macroScanVideo,
-          constraints: { facingMode: "environment" },
-        },
-        locator: { patchSize: "medium", halfSample: true },
-        numOfWorkers: 0,
-        decoder: { readers: ["ean_reader", "ean_8_reader", "upc_reader", "upc_e_reader"] },
-        locate: true,
-      }, (err) => (err ? reject(err) : resolve()));
-    });
-    Quagga.offDetected?.(onMacroQuaggaDetected);
-    Quagga.onDetected(onMacroQuaggaDetected);
-    Quagga.start();
-    logMacroScan("loop de detección arrancado", { engine: "quagga", ok: true });
-  }
 
-  async function startMacroBarcodeScan(engine = "zxing") {
-    beginMacroScanLogSession(`inicio_${engine}`);
+  async function startMacroBarcodeScan(engine = "html5") {
+    const selectedEngine = "html5";
+    if (engine !== "html5") logMacroScan("motor no disponible, se usa html5-qrcode", { requestedEngine: engine });
+    beginMacroScanLogSession(`inicio_${selectedEngine}`);
     logMacroScan("startMacroBarcodeScan llamado", {
-      engine,
+      engine: selectedEngine,
       argsLength: arguments.length,
       dom: {
         panel: Boolean($macroScanPanel),
@@ -3967,20 +3909,17 @@ $recipeImportBtn?.addEventListener("click", () => {
     _macroScanLastAt = 0;
     _macroScanEngineRunId += 1;
     const runId = _macroScanEngineRunId;
-    setMacroScanEngineStatus(engine);
-    logMacroScan("motor seleccionado", { engine });
-    logMacroScan("arranque de detección/búsqueda", { engine, runId });
+    setMacroScanEngineStatus(selectedEngine);
+    logMacroScan("motor seleccionado", { engine: selectedEngine });
+    logMacroScan("arranque de detección/búsqueda", { engine: selectedEngine, runId });
 
     try {
-      if (engine === "zxing") await startZxingScan(runId);
-      else if (engine === "html5") await startHtml5Scan(runId);
-      else if (engine === "quagga") await startQuaggaScan(runId);
-      else throw new Error("Motor no soportado");
-      setMacroScanStatus(`Motor ${engine} activo. Esperando código…`);
-      logMacroScan("detección iniciada", { engine, ok: true });
+      await startHtml5Scan(runId);
+      setMacroScanStatus("Motor html5-qrcode activo. Esperando código…");
+      logMacroScan("detección iniciada", { engine: selectedEngine, ok: true, phase: "esperando código" });
     } catch (err) {
-      logMacroScan("error concreto", { engine, error: err?.name || err?.message || err });
-      setMacroScanStatus(`Error en ${engine}: ${err?.name || err?.message || "falló"}`);
+      logMacroScan("error concreto", { engine: selectedEngine, error: err?.name || err?.message || err });
+      setMacroScanStatus(`Error en ${selectedEngine}: ${err?.name || err?.message || "falló"}`);
       await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
     }
   }
@@ -4002,13 +3941,13 @@ $recipeImportBtn?.addEventListener("click", () => {
       return;
     }
 
-    setMacroScanStatus("Buscando en OpenFoodFacts…");
+    setMacroScanStatus("Buscando en Open Food Facts…");
     const off = await lookupOpenFoodFactsByBarcode(clean);
     logMacroScan("resultado encontrado", { fuente: "openfoodfacts", ok: Boolean(off) });
     if (off) {
       _macroScanPendingProduct = off;
       logMacroScan("producto pendiente guardado", { ok: true, name: off?.name || "" });
-      setMacroScanStatus(`Encontrado: ${off.name}${off.brand ? ` · ${off.brand}` : ""}. Pulsa “Abrir ficha”.`);
+      setMacroScanStatus(`Encontrado en Open Food Facts: ${off.name}${off.brand ? ` · ${off.brand}` : ""}. Pulsa “Abrir ficha”.`);
       showMacroScanAddProduct({ barcode: clean, mode: "off", label: "Abrir ficha", pendingProduct: off });
       if ($macroManualBarcode) $macroManualBarcode.value = clean;
       if ($macroManualName) $macroManualName.value = off.name;
@@ -4021,8 +3960,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       return;
     }
 
-    logMacroScan("resultado encontrado", { ok: false, codigo: clean });
-    setMacroScanStatus("No encontrado. Pulsa “Crear producto manual”.");
+    logMacroScan("resultado encontrado", { ok: false, codigo: clean, reason: "not_found_open_food_facts" });
+    setMacroScanStatus("No encontrado en Open Food Facts. Pulsa “Crear producto manual”.");
     showMacroScanAddProduct({ barcode: clean, mode: "manual", label: "Crear producto manual" });
     if ($macroManualBarcode) $macroManualBarcode.value = clean;
   }
@@ -4033,21 +3972,94 @@ $recipeImportBtn?.addEventListener("click", () => {
     try {
       const frame = captureMacroScanFrame();
       if (!frame) return "";
-      const mod = await loadMacroScanZxingModule();
-      const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType, NotFoundException } = mod || {};
-      const hints = new Map();
-      hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E]);
-      const reader = new BrowserMultiFormatReader(hints);
-      const result = await reader.decodeFromCanvas(frame);
+      const mod = await loadMacroScanHtml5Module();
+      const Html5Qrcode = mod?.Html5Qrcode || mod?.default?.Html5Qrcode || mod?.default;
+      if (!Html5Qrcode?.scanFileV2) return "";
+      const data = frame.toDataURL("image/jpeg", 0.95);
+      const result = await Html5Qrcode.scanFileV2(data, true);
       const clean = normalizeDetectedBarcode(result?.getText?.() || "");
       if (clean) return clean;
       return "";
     } catch (err) {
-      if (String(err?.name || "") !== "NotFoundException") logMacroScan("OCR falló", { reason, error: err?.name || err?.message || err });
+      if (String(err?.name || "") !== "NotFoundException") logMacroScan("lectura puntual falló", { reason, error: err?.name || err?.message || err });
       return "";
     } finally {
       _macroScanDecodeInFlight = false;
     }
+  }
+
+
+  function normalizeOffProductPayload(payload = {}, barcode = "") {
+    const product = payload?.product && typeof payload.product === "object" ? payload.product : null;
+    if (!product) return null;
+    const productName = String(product.product_name_es || product.product_name || "").trim();
+    if (!productName) return null;
+    const carbs = Number(product.nutriments?.carbohydrates_100g);
+    const protein = Number(product.nutriments?.proteins_100g);
+    const fat = Number(product.nutriments?.fat_100g);
+    const kcal = Number(product.nutriments?.["energy-kcal_100g"] ?? product.nutriments?.energy_kcal_100g ?? product.nutriments?.["energy-kcal"]);
+    return {
+      id: product.code || String(barcode || "").trim() || generateId(),
+      source: "openfoodfacts",
+      name: productName,
+      brand: String(product.brands || "").split(",")[0]?.trim() || "",
+      barcode: String(product.code || barcode || "").trim(),
+      servingBaseGrams: 100,
+      macros: {
+        carbs: Number.isFinite(carbs) ? carbs : 0,
+        protein: Number.isFinite(protein) ? protein : 0,
+        fat: Number.isFinite(fat) ? fat : 0,
+        kcal: Number.isFinite(kcal) ? kcal : 0,
+      },
+    };
+  }
+
+  async function lookupOpenFoodFactsByBarcode(barcode) {
+    const clean = normalizeDetectedBarcode(barcode) || String(barcode || "").trim();
+    if (!clean) {
+      logMacroScan("búsqueda OFF descartada", { reason: "barcode_invalido", barcode: String(barcode || "") });
+      return null;
+    }
+    const endpoint = `${OFF_PRODUCT_ENDPOINT}/${encodeURIComponent(clean)}.json`;
+    logMacroScan("búsqueda OFF lanzada", { barcode: clean, endpoint });
+    let response = null;
+    try {
+      response = await fetch(endpoint, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        mode: "cors",
+        cache: "no-store",
+      });
+    } catch (err) {
+      logMacroScan("búsqueda OFF error", { barcode: clean, endpoint, stage: "request", error: err?.message || err?.name || err });
+      return null;
+    }
+    logMacroScan("respuesta OFF recibida", { barcode: clean, status: response.status, ok: response.ok });
+    if (!response.ok) {
+      logMacroScan("búsqueda OFF sin producto", { barcode: clean, reason: `http_${response.status}` });
+      return null;
+    }
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (err) {
+      logMacroScan("búsqueda OFF error", { barcode: clean, stage: "parse_json", error: err?.message || err?.name || err });
+      return null;
+    }
+    if (Number(payload?.status) !== 1 || !payload?.product) {
+      logMacroScan("búsqueda OFF sin producto", {
+        barcode: clean,
+        reason: payload?.status_verbose || payload?.status || "not_found",
+      });
+      return null;
+    }
+    const normalized = normalizeOffProductPayload(payload, clean);
+    if (!normalized) {
+      logMacroScan("búsqueda OFF error", { barcode: clean, stage: "normalize_product", reason: "payload_incompleto" });
+      return null;
+    }
+    logMacroScan("producto OFF normalizado", { barcode: clean, name: normalized.name, found: true });
+    return normalized;
   }
 
   function upsertBarcodeMapping(barcode, productId) {
@@ -4210,7 +4222,8 @@ $recipeImportBtn?.addEventListener("click", () => {
     renderMacroModalResults();
     if (macroModalState.source === "scan") {
       setMacroScanEngineStatus("none");
-      setMacroScanStatus("Selecciona un motor para iniciar el escaneo.");
+      setMacroScanStatus("Escáner listo (html5-qrcode). Pulsa “Iniciar escaneo”.");
+      startMacroBarcodeScan("html5").catch(() => {});
     }
   });
   $macroAddResults?.addEventListener("click", (e) => {
@@ -4369,14 +4382,8 @@ $recipeImportBtn?.addEventListener("click", () => {
     closeMacroProductModal();
   });
 
-  $macroScanEngineZxing?.addEventListener("click", async () => {
-    await startMacroBarcodeScan("zxing");
-  });
   $macroScanEngineHtml5?.addEventListener("click", async () => {
     await startMacroBarcodeScan("html5");
-  });
-  $macroScanEngineQuagga?.addEventListener("click", async () => {
-    await startMacroBarcodeScan("quagga");
   });
   $macroScanManualBtn?.addEventListener("click", async () => {
     hideMacroScanAddProduct();
@@ -4387,7 +4394,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       return;
     }
     setMacroScanStatus("Buscando...");
-    await handleBarcodeFound(barcodeInput, { fromManual: true });
+    await handleBarcodeFound(barcodeInput, { fromManual: true, sourceEngine: "manual" });
   });
 
   $macroScanStop?.addEventListener("click", async () => {

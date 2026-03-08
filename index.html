@@ -2457,13 +2457,14 @@ Crear “<span id="gym-create-cta-text"></span>”
       </div>
       <div class="macro-modal-results" id="macro-add-results"></div>
       <div class="macro-modal-scan hidden" id="macro-scan-panel">
-        <div class="section-hint">Escaneo con BarcodeDetector (sin API key) + fallback manual.</div>
+        <div class="section-hint">Escaneo automático con fallback visual/OCR y entrada manual como último recurso.</div>
         <div class="macro-scan-video-wrap">
           <video id="macro-scan-video" class="macro-scan-video" muted playsinline></video>
           <div class="macro-scan-overlay" aria-hidden="true"></div>
         </div>
         <div class="macro-inline-actions">
           <button class="btn ghost btn-compact" id="macro-scan-start" type="button">Reiniciar cámara</button>
+          <button class="btn ghost btn-compact" id="macro-scan-read-number" type="button">Leer número del código</button>
           <input id="macro-scan-manual" placeholder="Código de barras" type="text" />
           <button class="btn ghost btn-compact" id="macro-scan-manual-btn" type="button">Buscar</button>
           <button class="btn ghost btn-compact" id="macro-scan-stop" type="button">Detener</button>

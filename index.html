@@ -570,6 +570,11 @@
 <button class="btn primary" id="btn-add-recipe">+ Añadir receta</button>
 <button class="btn ghost btn-compact" id="recipes-start-session" type="button">▶ Iniciar sesión</button>
 </div>
+<div class="recipes-subtabs" role="tablist" aria-label="Subvistas de recetas">
+<button class="recipes-subtab is-active" id="recipes-subtab-library" data-recipes-panel="library" aria-selected="true" type="button">Recetas</button>
+<button class="recipes-subtab" id="recipes-subtab-macros" data-recipes-panel="macros" aria-selected="false" type="button">Macros</button>
+</div>
+<div class="recipes-panel is-active" id="recipes-panel-library">
 <div class="books-filters is-collapsed" id="recipes-filters">
 <div class="books-filters-header" id="recipes-filters-header">
 <div class="filter-row filter-search-row">
@@ -646,6 +651,19 @@
 <div class="empty-state" id="recipes-empty">
             Aún no has añadido recetas.
           </div>
+</div>
+</div>
+<div class="recipes-panel" id="recipes-panel-macros">
+  <div class="macro-header-card">
+    <div class="macro-date-row">
+      <button class="btn ghost btn-compact" type="button" id="macro-date-prev">◀</button>
+      <input type="date" id="macro-date-input" class="macro-date-input" />
+      <button class="btn ghost btn-compact" type="button" id="macro-date-next">▶</button>
+    </div>
+    <div class="macro-kcal-summary" id="macro-kcal-summary">0 kcal consumidas · 0 restantes</div>
+    <div class="macro-summary-grid" id="macro-summary-grid"></div>
+  </div>
+  <div class="macro-meals" id="macro-meals"></div>
 </div>
 </section>
 <!-- Vista HÁBITOS -->
@@ -2353,6 +2371,50 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 </div>
 </div>
+
+<div class="modal-backdrop hidden" id="macro-add-modal-backdrop">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title" id="macro-add-modal-title">Añadir alimento</div>
+      <button class="icon-btn" id="macro-add-modal-close" type="button">✕</button>
+    </div>
+    <div class="modal-scroll sheet-body">
+      <div class="macro-modal-search-row">
+        <input autocomplete="off" class="filter-search-input" id="macro-add-search" placeholder="Buscar producto o receta" type="search" />
+      </div>
+      <div class="macro-modal-chips" id="macro-add-chips">
+        <button class="macro-chip is-active" data-macro-source="products" type="button">Productos</button>
+        <button class="macro-chip" data-macro-source="recipes" type="button">Recetas</button>
+        <button class="macro-chip" data-macro-source="scan" type="button">Escanear</button>
+        <button class="macro-chip" data-macro-source="manual" type="button">Crear manual</button>
+      </div>
+      <div class="macro-modal-results" id="macro-add-results"></div>
+      <div class="macro-modal-scan hidden" id="macro-scan-panel">
+        <div class="section-hint">Escaneo preparado con BarcodeDetector y fallback manual.</div>
+        <div class="macro-inline-actions">
+          <button class="btn ghost btn-compact" id="macro-scan-start" type="button">Iniciar detector</button>
+          <input id="macro-scan-manual" placeholder="Código de barras" type="text" />
+          <button class="btn ghost btn-compact" id="macro-scan-manual-btn" type="button">Buscar</button>
+        </div>
+        <div class="hint" id="macro-scan-status"></div>
+      </div>
+      <div class="macro-modal-manual hidden" id="macro-manual-panel">
+        <div class="form-grid row-2">
+          <label class="field"><span class="field-label">Nombre</span><input id="macro-manual-name" type="text" /></label>
+          <label class="field"><span class="field-label">Marca</span><input id="macro-manual-brand" type="text" /></label>
+          <label class="field"><span class="field-label">Barcode</span><input id="macro-manual-barcode" type="text" /></label>
+          <label class="field"><span class="field-label">Gramos base</span><input id="macro-manual-base" type="number" value="100" /></label>
+          <label class="field"><span class="field-label">Carbs</span><input id="macro-manual-carbs" type="number" value="0" /></label>
+          <label class="field"><span class="field-label">Proteína</span><input id="macro-manual-protein" type="number" value="0" /></label>
+          <label class="field"><span class="field-label">Grasa</span><input id="macro-manual-fat" type="number" value="0" /></label>
+          <label class="field"><span class="field-label">Kcal</span><input id="macro-manual-kcal" type="number" value="0" /></label>
+        </div>
+        <button class="btn primary btn-compact" id="macro-manual-save" type="button">Guardar producto</button>
+      </div>
+    </div>
+  </div>
+</div>
 <!-- MODAL RECETA -->
 <div class="modal-backdrop hidden" id="recipe-modal-backdrop">
 <div class="modal">
@@ -2450,6 +2512,20 @@ Crear “<span id="gym-create-cta-text"></span>”
 <span>Aprobación de Laura</span>
 </label>
 </div>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Nutrición</div>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Raciones</span>
+<input id="recipe-servings" min="1" step="1" type="number" value="1"/>
+</label>
+</div>
+<div class="builder-header">
+<div><div class="builder-title">Ingredientes nutricionales</div><div class="builder-subtitle">Producto + gramos</div></div>
+<button class="btn ghost btn-compact" id="recipe-add-nutri-ingredient" type="button">+ Ingrediente</button>
+</div>
+<div class="recipe-ingredients-list" id="recipe-nutri-ingredients-list"></div>
 </div>
 <div class="sheet-section">
 <div class="sheet-section-title">Receta editable</div>

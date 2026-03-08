@@ -1,15 +1,31 @@
 // scripts/world.js
 import { renderCountryHeatmap } from "./world-heatmap.js";
 import { getCountryEnglishName, getCountryOptions } from "./countries.js";
+import { db, auth } from "./firebase-shared.js";
+import {
+  ref,
+  get,
+  onValue,
+  set,
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 const LS_VISITS = "world_visits_v1";
 const LS_WATCH = "world_watchlist_v1";
+const WORLD_PATH = (uid) => `v2/users/${uid}/world`;
+const LEGACY_WORLD_PATHS = (uid) => [
+  `v2/users/${uid}/trips`,
+];
 
 
 const worldState = {
   initialized: false,
   abortController: null,
   searchCache: new Map(),
+  firebaseUid: null,
+  firebaseUnsub: null,
+  firebaseRef: null,
+  remoteWriteTimer: 0,
+  hasResolvedFirstRemoteSnapshot: false,
 };
 
 const COUNTRY_NAME_OVERRIDES = {
@@ -57,6 +73,81 @@ function parseJson(key, fallback) {
 
 function saveJson(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function normalizeWorldPayload(raw) {
+  const visitsRaw = Array.isArray(raw?.visits) ? raw.visits : [];
+  const visits = visitsRaw
+    .filter((v) => v && typeof v === "object")
+    .map((v) => ({
+      id: String(v.id || `${Number(v.ts) || Date.now()}_${Math.random().toString(16).slice(2)}`),
+      ts: Number(v.ts) || 0,
+      dateKey: String(v.dateKey || ""),
+      kind: v.kind === "country" ? "country" : "place",
+      countryCode: iso2(v.countryCode),
+      placeName: String(v.placeName || ""),
+      lat: Number.isFinite(Number(v.lat)) ? Number(v.lat) : null,
+      lon: Number.isFinite(Number(v.lon)) ? Number(v.lon) : null,
+    }))
+    .filter((v) => v.countryCode);
+
+  const watchRaw = raw?.watch && typeof raw.watch === "object" ? raw.watch : {};
+  const watch = {};
+  for (const [k, value] of Object.entries(watchRaw)) {
+    const code = iso2(k || value?.code);
+    if (!code) continue;
+    watch[code] = {
+      code,
+      label: String(value?.label || getCountryEnglishName(code) || code),
+    };
+  }
+
+  return { visits, watch };
+}
+
+function mergeVisits(localVisits, remoteVisits) {
+  const byId = new Map();
+  const put = (visit) => {
+    if (!visit?.id) return;
+    const prev = byId.get(visit.id);
+    if (!prev || (Number(visit.ts) || 0) >= (Number(prev.ts) || 0)) {
+      byId.set(visit.id, visit);
+    }
+  };
+  (localVisits || []).forEach(put);
+  (remoteVisits || []).forEach(put);
+  return Array.from(byId.values()).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+}
+
+function mergeWatch(localWatch, remoteWatch) {
+  return {
+    ...(remoteWatch || {}),
+    ...(localWatch || {}),
+  };
+}
+
+function worldPayloadForDb(visits, watch) {
+  return {
+    visits: Array.isArray(visits) ? visits : [],
+    watch: watch && typeof watch === "object" ? watch : {},
+    updatedAt: Date.now(),
+  };
+}
+
+async function readLegacyWorldPayload(uid) {
+  for (const path of LEGACY_WORLD_PATHS(uid)) {
+    try {
+      const snap = await get(ref(db, path));
+      if (!snap.exists()) continue;
+      return {
+        legacyPath: path,
+        payload: normalizeWorldPayload(snap.val()),
+      };
+    } catch (err) {
+      console.warn("[world] legacy read failed", path, err);
+    }
+  }
+  return null;
 }
 
 function uniq(arr) {
@@ -683,9 +774,77 @@ if ($backBtn) {
 
   let pendingPick = null;
 
-  function persist() {
+  function persistLocal() {
     saveJson(LS_VISITS, visits);
     saveJson(LS_WATCH, watch);
+  }
+
+  async function persistRemoteNow() {
+    const uid = worldState.firebaseUid || auth.currentUser?.uid;
+    if (!uid || !worldState.firebaseRef) return;
+    try {
+      await set(worldState.firebaseRef, worldPayloadForDb(visits, watch));
+    } catch (err) {
+      console.warn("[world] remote save failed", err);
+    }
+  }
+
+  function scheduleRemotePersist() {
+    if (worldState.remoteWriteTimer) clearTimeout(worldState.remoteWriteTimer);
+    worldState.remoteWriteTimer = setTimeout(() => {
+      worldState.remoteWriteTimer = 0;
+      persistRemoteNow();
+    }, 250);
+  }
+
+  function persist({ remote = true } = {}) {
+    persistLocal();
+    if (remote) scheduleRemotePersist();
+  }
+
+  async function initFirebaseSync() {
+    const uid = auth.currentUser?.uid;
+    if (!uid) {
+      console.warn("[world] Firebase sync disabled: no authenticated user.");
+      return;
+    }
+
+    worldState.firebaseUid = uid;
+    worldState.firebaseRef = ref(db, WORLD_PATH(uid));
+
+    const legacy = await readLegacyWorldPayload(uid);
+
+    worldState.firebaseUnsub = onValue(worldState.firebaseRef, (snap) => {
+      const remote = snap.exists() ? normalizeWorldPayload(snap.val()) : { visits: [], watch: {} };
+
+      if (!worldState.hasResolvedFirstRemoteSnapshot) {
+        worldState.hasResolvedFirstRemoteSnapshot = true;
+
+        let mergedVisits = mergeVisits(visits, remote.visits);
+        let mergedWatch = mergeWatch(watch, remote.watch);
+
+        if (legacy?.payload) {
+          mergedVisits = mergeVisits(mergedVisits, legacy.payload.visits);
+          mergedWatch = mergeWatch(mergedWatch, legacy.payload.watch);
+        }
+
+        visits = mergedVisits;
+        watch = mergedWatch;
+        persistLocal();
+        renderAll();
+
+        const shouldBackfill = !snap.exists() || Boolean(legacy?.payload) || mergedVisits.length !== remote.visits.length || Object.keys(mergedWatch).length !== Object.keys(remote.watch || {}).length;
+        if (shouldBackfill) {
+          persistRemoteNow();
+        }
+        return;
+      }
+
+      visits = mergeVisits(visits, remote.visits);
+      watch = mergeWatch(watch, remote.watch);
+      persistLocal();
+      renderAll();
+    });
   }
 
 function formatPctSmart(pct, sig = 4) {
@@ -1136,6 +1295,7 @@ chart.setOption({
 
   $filter.addEventListener("change", renderAll, evtOpts);
 
+  await initFirebaseSync();
   await renderAll();
 }
 
@@ -1144,6 +1304,17 @@ export function destroy() {
     worldState.abortController.abort();
     worldState.abortController = null;
   }
+  if (worldState.firebaseUnsub) {
+    worldState.firebaseUnsub();
+    worldState.firebaseUnsub = null;
+  }
+  if (worldState.remoteWriteTimer) {
+    clearTimeout(worldState.remoteWriteTimer);
+    worldState.remoteWriteTimer = 0;
+  }
+  worldState.firebaseUid = null;
+  worldState.firebaseRef = null;
+  worldState.hasResolvedFirstRemoteSnapshot = false;
   if (nominatimAbort) {
     nominatimAbort.abort();
     nominatimAbort = null;
@@ -1156,5 +1327,7 @@ export function getListenerCount() {
   let count = 0;
   if (worldState.abortController) count += 1;
   if (nominatimAbort) count += 1;
+  if (worldState.firebaseUnsub) count += 1;
+  if (worldState.remoteWriteTimer) count += 1;
   return count;
 }

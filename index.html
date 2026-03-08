@@ -654,7 +654,7 @@
 </div>
 </div>
 <div class="recipes-panel" id="recipes-panel-macros">
-  <div class="macro-header-card">
+  <div class="macro-header-card-wrapper">
     <div class="macro-date-row">
       <button class="btn ghost btn-compact" type="button" id="macro-date-prev">◀</button>
       <input type="date" id="macro-date-input" class="macro-date-input" />
@@ -2391,13 +2391,19 @@ Crear “<span id="gym-create-cta-text"></span>”
       </div>
       <div class="macro-modal-results" id="macro-add-results"></div>
       <div class="macro-modal-scan hidden" id="macro-scan-panel">
-        <div class="section-hint">Escaneo preparado con BarcodeDetector y fallback manual.</div>
+        <div class="section-hint">Escaneo con BarcodeDetector (sin API key) + fallback manual.</div>
+        <div class="macro-scan-video-wrap">
+          <video id="macro-scan-video" class="macro-scan-video" muted playsinline></video>
+          <div class="macro-scan-overlay" aria-hidden="true"></div>
+        </div>
         <div class="macro-inline-actions">
-          <button class="btn ghost btn-compact" id="macro-scan-start" type="button">Iniciar detector</button>
+          <button class="btn ghost btn-compact" id="macro-scan-start" type="button">Reiniciar cámara</button>
           <input id="macro-scan-manual" placeholder="Código de barras" type="text" />
           <button class="btn ghost btn-compact" id="macro-scan-manual-btn" type="button">Buscar</button>
+          <button class="btn ghost btn-compact" id="macro-scan-stop" type="button">Detener</button>
         </div>
         <div class="hint" id="macro-scan-status"></div>
+        <button class="btn primary btn-compact hidden" id="macro-scan-add-product" type="button">+ AÃ±adir producto</button>
       </div>
       <div class="macro-modal-manual hidden" id="macro-manual-panel">
         <div class="form-grid row-2">
@@ -2412,6 +2418,36 @@ Crear “<span id="gym-create-cta-text"></span>”
         </div>
         <button class="btn primary btn-compact" id="macro-manual-save" type="button">Guardar producto</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="macro-product-modal-backdrop">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title" id="macro-product-modal-title">Producto</div>
+      <button class="icon-btn" id="macro-product-modal-close" type="button">Ã¢Å“â€¢</button>
+    </div>
+    <div class="modal-scroll sheet-body">
+      <div class="form-grid row-2">
+        <label class="field"><span class="field-label">Nombre</span><input id="macro-product-name" type="text" /></label>
+        <label class="field"><span class="field-label">Marca</span><input id="macro-product-brand" type="text" /></label>
+        <label class="field"><span class="field-label">Barcode</span><input id="macro-product-barcode" type="text" /></label>
+        <label class="field"><span class="field-label">Gramos base</span><input id="macro-product-base" type="number" value="100" /></label>
+        <label class="field"><span class="field-label">Carbs</span><input id="macro-product-carbs" type="number" value="0" /></label>
+        <label class="field"><span class="field-label">ProteÃƒÂ­na</span><input id="macro-product-protein" type="number" value="0" /></label>
+        <label class="field"><span class="field-label">Grasa</span><input id="macro-product-fat" type="number" value="0" /></label>
+        <label class="field"><span class="field-label">Kcal</span><input id="macro-product-kcal" type="number" value="0" /></label>
+      </div>
+      <div class="macro-product-add-row">
+        <label class="field"><span class="field-label">Cantidad a aÃ±adir (g)</span><input id="macro-product-grams" type="number" value="100" /></label>
+        <div class="hint" id="macro-product-summary"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn ghost" id="macro-product-cancel" type="button">Cancelar</button>
+      <button class="btn primary" id="macro-product-add" type="button">AÃ±adir</button>
     </div>
   </div>
 </div>

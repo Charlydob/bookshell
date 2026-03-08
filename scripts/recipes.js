@@ -278,9 +278,12 @@ if ($viewRecipes) {
   const $macroScanPanel = document.getElementById("macro-scan-panel");
   const $macroManualPanel = document.getElementById("macro-manual-panel");
   const $macroScanStart = document.getElementById("macro-scan-start");
+  const $macroScanStop = document.getElementById("macro-scan-stop");
   const $macroScanManual = document.getElementById("macro-scan-manual");
   const $macroScanManualBtn = document.getElementById("macro-scan-manual-btn");
   const $macroScanStatus = document.getElementById("macro-scan-status");
+  const $macroScanVideo = document.getElementById("macro-scan-video");
+  const $macroScanAddProduct = document.getElementById("macro-scan-add-product");
   const $macroManualName = document.getElementById("macro-manual-name");
   const $macroManualBrand = document.getElementById("macro-manual-brand");
   const $macroManualBarcode = document.getElementById("macro-manual-barcode");
@@ -290,6 +293,20 @@ if ($viewRecipes) {
   const $macroManualFat = document.getElementById("macro-manual-fat");
   const $macroManualKcal = document.getElementById("macro-manual-kcal");
   const $macroManualSave = document.getElementById("macro-manual-save");
+  const $macroProductModalBackdrop = document.getElementById("macro-product-modal-backdrop");
+  const $macroProductModalClose = document.getElementById("macro-product-modal-close");
+  const $macroProductCancel = document.getElementById("macro-product-cancel");
+  const $macroProductAdd = document.getElementById("macro-product-add");
+  const $macroProductName = document.getElementById("macro-product-name");
+  const $macroProductBrand = document.getElementById("macro-product-brand");
+  const $macroProductBarcode = document.getElementById("macro-product-barcode");
+  const $macroProductBase = document.getElementById("macro-product-base");
+  const $macroProductCarbs = document.getElementById("macro-product-carbs");
+  const $macroProductProtein = document.getElementById("macro-product-protein");
+  const $macroProductFat = document.getElementById("macro-product-fat");
+  const $macroProductKcal = document.getElementById("macro-product-kcal");
+  const $macroProductGrams = document.getElementById("macro-product-grams");
+  const $macroProductSummary = document.getElementById("macro-product-summary");
   const $recipeServings = document.getElementById("recipe-servings");
   const $recipeNutriIngredientsList = document.getElementById("recipe-nutri-ingredients-list");
   const $recipeAddNutriIngredient = document.getElementById("recipe-add-nutri-ingredient");
@@ -2688,13 +2705,50 @@ $recipeImportBtn?.addEventListener("click", () => {
       { key: "kcal", label: "Calorías", unit: "kcal" },
     ];
     $macroDateInput.value = selectedMacroDate;
-    $macroSummaryGrid.innerHTML = items.map((item) => {
-      const value = roundMacro(totals[item.key]);
-      const goal = roundMacro(nutritionGoals[item.key] || 0);
+    const buildStatHtml = ({ key, label, unit, step }) => {
+      const value = roundMacro(totals[key]);
+      const goal = roundMacro(nutritionGoals[key] || 0);
       const pct = goal > 0 ? Math.min(140, Math.round((value / goal) * 100)) : 0;
       const excess = goal > 0 && value > goal;
-      return `<div class="macro-stat ${excess ? "is-excess" : ""}"><div class="macro-stat-title">${item.label}</div><div class="macro-stat-value">${value}${item.unit} / ${goal}${item.unit}</div><div class="macro-progress"><span style="width:${pct}%"></span></div></div>`;
-    }).join("");
+      return `
+        <div class="macro-stat ${excess ? "is-excess" : ""}">
+          <div class="macro-stat-title">${label}</div>
+          <div class="macro-stat-value">
+            <span class="macro-consumed">${value}${unit}</span>
+            <span class="macro-sep">/</span>
+            <input
+              class="macro-goal-input"
+              type="number"
+              min="0"
+              step="${step}"
+              inputmode="decimal"
+              placeholder="${goal}"
+              value=""
+              data-macro-goal="${key}"
+              aria-label="Objetivo ${label}"
+            />
+            <span class="macro-unit">${unit}</span>
+          </div>
+          <div class="macro-progress"><span style="width:${pct}%"></span></div>
+        </div>
+      `;
+    };
+
+    const macroItems = [
+      { key: "carbs", label: "Carb. netos", unit: "g", step: 1 },
+      { key: "protein", label: "Proteínas", unit: "g", step: 1 },
+      { key: "fat", label: "Grasas", unit: "g", step: 1 },
+    ];
+    const kcalItems = [{ key: "kcal", label: "Calorías", unit: "kcal", step: 10 }];
+
+    $macroSummaryGrid.innerHTML = `
+      <div class="macro-summary-group macro-summary-group-macros">
+        ${macroItems.map(buildStatHtml).join("")}
+      </div>
+      <div class="macro-summary-group macro-summary-group-kcal">
+        ${kcalItems.map(buildStatHtml).join("")}
+      </div>
+    `;
     const kcalGoal = Number(nutritionGoals.kcal) || 0;
     const delta = roundMacro(kcalGoal - totals.kcal);
     $macroKcalSummary.textContent = `${roundMacro(totals.kcal)} kcal consumidas · ${delta >= 0 ? `${delta} restantes` : `${Math.abs(delta)} exceso`}`;
@@ -2718,7 +2772,67 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   function closeMacroAddModal() {
+    try { stopMacroBarcodeScan(); } catch (_) {}
     $macroAddModalBackdrop?.classList.add("hidden");
+  }
+
+  let _macroProductMeal = "breakfast";
+  let _macroProductDraft = null;
+
+  function closeMacroProductModal() {
+    $macroProductModalBackdrop?.classList.add("hidden");
+    _macroProductDraft = null;
+  }
+
+  function readMacroProductDraftFromForm() {
+    const base = Math.max(1, Number($macroProductBase?.value) || 100);
+    return {
+      id: _macroProductDraft?.id,
+      source: _macroProductDraft?.source || "manual",
+      createdAt: _macroProductDraft?.createdAt,
+      name: $macroProductName?.value,
+      brand: $macroProductBrand?.value,
+      barcode: $macroProductBarcode?.value,
+      servingBaseGrams: base,
+      macros: {
+        carbs: Number($macroProductCarbs?.value) || 0,
+        protein: Number($macroProductProtein?.value) || 0,
+        fat: Number($macroProductFat?.value) || 0,
+        kcal: Number($macroProductKcal?.value) || 0,
+      },
+    };
+  }
+
+  function renderMacroProductSummary() {
+    if (!$macroProductSummary) return;
+    const grams = Math.max(0, Number($macroProductGrams?.value) || 0);
+    const draft = readMacroProductDraftFromForm();
+    const m = calcProductMacros(draft, grams);
+    $macroProductSummary.textContent = grams
+      ? `Para ${roundMacro(grams)}g: ${roundMacro(m.kcal)} kcal · C ${roundMacro(m.carbs)} · P ${roundMacro(m.protein)} · G ${roundMacro(m.fat)}`
+      : "Indica una cantidad para ver el resumen.";
+  }
+
+  function openMacroProductModal(product, meal, grams = 100) {
+    if (!$macroProductModalBackdrop) return;
+    if (!product) return;
+
+    _macroProductMeal = meal || "breakfast";
+    _macroProductDraft = product;
+
+    if ($macroProductName) $macroProductName.value = product.name || "";
+    if ($macroProductBrand) $macroProductBrand.value = product.brand || "";
+    if ($macroProductBarcode) $macroProductBarcode.value = product.barcode || "";
+    if ($macroProductBase) $macroProductBase.value = String(Number(product.servingBaseGrams) || 100);
+    if ($macroProductCarbs) $macroProductCarbs.value = String(Number(product.macros?.carbs) || 0);
+    if ($macroProductProtein) $macroProductProtein.value = String(Number(product.macros?.protein) || 0);
+    if ($macroProductFat) $macroProductFat.value = String(Number(product.macros?.fat) || 0);
+    if ($macroProductKcal) $macroProductKcal.value = String(Number(product.macros?.kcal) || 0);
+    if ($macroProductGrams) $macroProductGrams.value = String(Number(grams) || 0);
+
+    $macroProductModalBackdrop.classList.remove("hidden");
+    renderMacroProductSummary();
+    try { $macroProductGrams?.focus(); } catch (_) {}
   }
 
   function renderMacroModalResults() {
@@ -2726,9 +2840,15 @@ $recipeImportBtn?.addEventListener("click", () => {
     const q = (macroModalState.query || "").toLowerCase();
     const showProducts = macroModalState.source === "products";
     const showRecipes = macroModalState.source === "recipes";
+    const showScan = macroModalState.source === "scan";
     $macroScanPanel?.classList.toggle("hidden", macroModalState.source !== "scan");
     $macroManualPanel?.classList.toggle("hidden", macroModalState.source !== "manual");
     $macroAddResults.style.display = (showProducts || showRecipes) ? "block" : "none";
+    if (!showScan) {
+      try { stopMacroBarcodeScan(); } catch (_) {}
+    } else {
+      hideMacroScanAddProduct();
+    }
     if (showProducts) {
       const list = nutritionProducts.filter((p) => !q || `${p.name} ${p.brand || ""} ${p.barcode || ""}`.toLowerCase().includes(q));
       $macroAddResults.innerHTML = list.map((p) => `<button class="macro-result" data-add-product="${p.id}" type="button"><span>${p.name}</span><span class="hint">${p.brand || ""} · ${p.macros?.kcal || 0} kcal / ${p.servingBaseGrams || 100}g</span></button>`).join("") || '<div class="hint">No hay productos.</div>';
@@ -2807,6 +2927,220 @@ $recipeImportBtn?.addEventListener("click", () => {
     return null;
   }
 
+  let _macroScanStream = null;
+  let _macroScanRunning = false;
+  let _macroScanDetector = null;
+  let _macroScanLastValue = "";
+  let _macroScanLastAt = 0;
+  let _macroScanTimer = null;
+  let _macroScanPendingProduct = null;
+
+  function setMacroScanStatus(msg) {
+    if ($macroScanStatus) $macroScanStatus.textContent = msg || "";
+  }
+
+  function hideMacroScanAddProduct() {
+    if (!$macroScanAddProduct) return;
+    $macroScanAddProduct.classList.add("hidden");
+    delete $macroScanAddProduct.dataset.barcode;
+    delete $macroScanAddProduct.dataset.mode;
+    _macroScanPendingProduct = null;
+  }
+
+  function showMacroScanAddProduct({ barcode, mode, label }) {
+    if (!$macroScanAddProduct) return;
+    $macroScanAddProduct.dataset.barcode = String(barcode || "").trim();
+    $macroScanAddProduct.dataset.mode = mode || "manual";
+    if (label) $macroScanAddProduct.textContent = label;
+    $macroScanAddProduct.classList.remove("hidden");
+  }
+
+  function offToNumber(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  async function lookupOpenFoodFactsByBarcode(barcode) {
+    const clean = String(barcode || "").trim();
+    if (!clean) return null;
+
+    const url = `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(clean)}.json?lc=es&fields=code,product_name,product_name_es,brands,nutriments,status`;
+
+    try {
+      const res = await fetch(url, { method: "GET" });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data?.status !== 1) return null;
+      const product = data?.product;
+      if (!product) return null;
+
+      const name = String(product.product_name_es || product.product_name || "").trim();
+      if (!name) return null;
+
+      const brand = String(product.brands || "").split(",")[0]?.trim() || "";
+      const n = product.nutriments || {};
+      const carbs = offToNumber(n.carbohydrates_100g ?? n.carbohydrates);
+      const protein = offToNumber(n.proteins_100g ?? n.proteins);
+      const fat = offToNumber(n.fat_100g ?? n.fat);
+      const kcalRaw = n["energy-kcal_100g"] ?? n["energy-kcal"] ?? null;
+      const kjRaw = n["energy-kj_100g"] ?? n["energy-kj"] ?? n.energy_100g ?? n.energy ?? null;
+      const kcal = kcalRaw != null ? offToNumber(kcalRaw) : (kjRaw != null ? offToNumber(kjRaw) / 4.184 : 0);
+
+      return {
+        name,
+        brand,
+        barcode: clean,
+        servingBaseGrams: 100,
+        macros: { carbs, protein, fat, kcal },
+        source: "openfoodfacts",
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function stopMacroBarcodeScan() {
+    _macroScanRunning = false;
+    hideMacroScanAddProduct();
+
+    if (_macroScanTimer) {
+      try { clearTimeout(_macroScanTimer); } catch (_) {}
+      _macroScanTimer = null;
+    }
+
+    if (_macroScanStream) {
+      try { _macroScanStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+      _macroScanStream = null;
+    }
+
+    if ($macroScanVideo) {
+      try { $macroScanVideo.pause(); } catch (_) {}
+      try { $macroScanVideo.srcObject = null; } catch (_) {}
+      try { $macroScanVideo.removeAttribute("src"); } catch (_) {}
+    }
+  }
+
+  async function handleBarcodeFound(barcode) {
+    const clean = String(barcode || "").trim();
+    if (!clean) return;
+
+    const found = await lookupProductByBarcode(clean);
+    if (found) {
+      closeMacroAddModal();
+      openMacroProductModal(found, macroModalState.meal, 100);
+      setMacroScanStatus("Producto encontrado. Ajusta cantidad y añade.");
+      return;
+    }
+
+    setMacroScanStatus("Buscando en OpenFoodFacts…");
+    const off = await lookupOpenFoodFactsByBarcode(clean);
+    if (off) {
+      _macroScanPendingProduct = off;
+      setMacroScanStatus(`Encontrado: ${off.name}${off.brand ? ` · ${off.brand}` : ""}. Pulsa “Abrir ficha”.`);
+      showMacroScanAddProduct({ barcode: clean, mode: "off", label: "Abrir ficha" });
+      if ($macroManualBarcode) $macroManualBarcode.value = clean;
+      if ($macroManualName) $macroManualName.value = off.name;
+      if ($macroManualBrand) $macroManualBrand.value = off.brand || "";
+      if ($macroManualCarbs) $macroManualCarbs.value = String(off.macros?.carbs ?? 0);
+      if ($macroManualProtein) $macroManualProtein.value = String(off.macros?.protein ?? 0);
+      if ($macroManualFat) $macroManualFat.value = String(off.macros?.fat ?? 0);
+      if ($macroManualKcal) $macroManualKcal.value = String(off.macros?.kcal ?? 0);
+      if ($macroManualBase) $macroManualBase.value = "100";
+      return;
+    }
+
+    setMacroScanStatus("No encontrado. Pulsa “Crear producto manual”.");
+    showMacroScanAddProduct({ barcode: clean, mode: "manual", label: "Crear producto manual" });
+    if ($macroManualBarcode) $macroManualBarcode.value = clean;
+  }
+
+  async function startMacroBarcodeScan() {
+    hideMacroScanAddProduct();
+
+    if (!$macroScanVideo) {
+      setMacroScanStatus("No hay vista de cámara disponible.");
+      return;
+    }
+
+    if (!window.isSecureContext) {
+      setMacroScanStatus("La cámara requiere HTTPS o localhost.");
+      return;
+    }
+
+    if (false && !("BarcodeDetector" in window)) {
+      setMacroScanStatus("BarcodeDetector no disponible en este navegador. Usa entrada manual o “Crear manual”.");
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMacroScanStatus("getUserMedia no disponible. Usa entrada manual.");
+      return;
+    }
+
+    await stopMacroBarcodeScan();
+
+    _macroScanDetector = null;
+    if ("BarcodeDetector" in window) {
+      try {
+        const formats = (window.BarcodeDetector?.getSupportedFormats
+          ? await window.BarcodeDetector.getSupportedFormats()
+          : ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"]);
+        _macroScanDetector = new BarcodeDetector({ formats });
+      } catch (_) {
+        _macroScanDetector = new BarcodeDetector();
+      }
+    }
+
+    try {
+      _macroScanStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      $macroScanVideo.srcObject = _macroScanStream;
+      await $macroScanVideo.play();
+      if (!_macroScanDetector) {
+        _macroScanRunning = false;
+        setMacroScanStatus("Cámara abierta, pero este navegador no soporta detección automática. Escribe el código y pulsa Buscar.");
+        return;
+      }
+    } catch (err) {
+      setMacroScanStatus(`No pude abrir la cámara: ${err?.name || err?.message || "error"}`);
+      await stopMacroBarcodeScan();
+      return;
+    }
+
+    setMacroScanStatus("Escaneando… apunta al código de barras.");
+    _macroScanRunning = true;
+    _macroScanLastValue = "";
+    _macroScanLastAt = 0;
+
+    const tick = async () => {
+      if (!_macroScanRunning) return;
+      if (!_macroScanDetector) return;
+      try {
+        const codes = await _macroScanDetector.detect($macroScanVideo);
+        const first = codes && codes[0] ? String(codes[0].rawValue || "") : "";
+        const now = Date.now();
+        const clean = first.trim();
+        if (clean) {
+          const isSame = clean === _macroScanLastValue && (now - _macroScanLastAt) < 2000;
+          if (!isSame) {
+            _macroScanLastValue = clean;
+            _macroScanLastAt = now;
+            setMacroScanStatus(`Detectado: ${clean}`);
+            await stopMacroBarcodeScan();
+            await handleBarcodeFound(clean);
+            return;
+          }
+        }
+      } catch (_) {}
+
+      _macroScanTimer = setTimeout(tick, 220);
+    };
+
+    _macroScanTimer = setTimeout(tick, 220);
+  }
+
   function upsertBarcodeMapping(barcode, productId) {
     const root = nutritionRootPath();
     if (!root || !barcode || !productId) return;
@@ -2859,6 +3193,48 @@ $recipeImportBtn?.addEventListener("click", () => {
   $macroDateInput?.addEventListener("change", (e) => { selectedMacroDate = e.target.value || toISODate(new Date()); renderMacrosView(); });
   $macroDatePrev?.addEventListener("click", () => { const d = new Date(`${selectedMacroDate}T00:00:00`); d.setDate(d.getDate() - 1); selectedMacroDate = toISODate(d); renderMacrosView(); });
   $macroDateNext?.addEventListener("click", () => { const d = new Date(`${selectedMacroDate}T00:00:00`); d.setDate(d.getDate() + 1); selectedMacroDate = toISODate(d); renderMacrosView(); });
+  $macroSummaryGrid?.addEventListener("focusin", (e) => {
+    const input = e.target?.closest?.("input[data-macro-goal]");
+    if (!input) return;
+    if (input.dataset.cleared === "1") return;
+    input.dataset.cleared = "1";
+    try {
+      input.value = "";
+      input.select?.();
+    } catch (_) {}
+  });
+  $macroSummaryGrid?.addEventListener("focusout", (e) => {
+    const input = e.target?.closest?.("input[data-macro-goal]");
+    if (!input) return;
+    input.dataset.cleared = "0";
+  });
+  $macroSummaryGrid?.addEventListener("keydown", (e) => {
+    const input = e.target?.closest?.("input[data-macro-goal]");
+    if (!input) return;
+    if (e.key === "Enter") {
+      try { e.preventDefault(); } catch (_) {}
+      input.blur();
+    }
+  });
+  $macroSummaryGrid?.addEventListener("change", (e) => {
+    const input = e.target?.closest?.("input[data-macro-goal]");
+    if (!input) return;
+    const key = input.dataset.macroGoal;
+    if (!key) return;
+    const raw = String(input.value || "").trim();
+    if (!raw) {
+      renderMacrosView();
+      return;
+    }
+    const nextNum = Number(raw);
+    if (!Number.isFinite(nextNum)) {
+      renderMacrosView();
+      return;
+    }
+    nutritionGoals[key] = Math.max(0, nextNum);
+    persistNutrition();
+    renderMacrosView();
+  });
   $macroMeals?.addEventListener("click", (e) => {
     const addBtn = e.target.closest("[data-macro-add]");
     if (addBtn) return openMacroAddModal(addBtn.dataset.macroAdd);
@@ -2883,13 +3259,17 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (!chip) return;
     macroModalState.source = chip.dataset.macroSource;
     renderMacroModalResults();
+    if (macroModalState.source === "scan") {
+      startMacroBarcodeScan();
+    }
   });
   $macroAddResults?.addEventListener("click", (e) => {
     const pBtn = e.target.closest("[data-add-product]");
     if (pBtn) {
       const p = nutritionProducts.find((x) => x.id === pBtn.dataset.addProduct);
-      addProductToMeal(macroModalState.meal, p, 100);
-      return closeMacroAddModal();
+      closeMacroAddModal();
+      openMacroProductModal(p, macroModalState.meal, 100);
+      return;
     }
     const rBtn = e.target.closest("[data-add-recipe]");
     if (rBtn) {
@@ -2910,12 +3290,56 @@ $recipeImportBtn?.addEventListener("click", () => {
     });
     if (pdt) {
       upsertBarcodeMapping(pdt.barcode, pdt.id);
-      macroModalState.source = "products";
-      renderMacroModalResults();
+      closeMacroAddModal();
+      openMacroProductModal(pdt, macroModalState.meal, 100);
     }
   });
 
+  const _macroProductInputs = [
+    $macroProductName,
+    $macroProductBrand,
+    $macroProductBarcode,
+    $macroProductBase,
+    $macroProductCarbs,
+    $macroProductProtein,
+    $macroProductFat,
+    $macroProductKcal,
+    $macroProductGrams,
+  ].filter(Boolean);
+  _macroProductInputs.forEach((el) => el.addEventListener("input", renderMacroProductSummary));
+  $macroProductGrams?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      try { e.preventDefault(); } catch (_) {}
+      $macroProductAdd?.click();
+    }
+  });
+  $macroProductModalClose?.addEventListener("click", closeMacroProductModal);
+  $macroProductCancel?.addEventListener("click", closeMacroProductModal);
+  $macroProductModalBackdrop?.addEventListener("click", (e) => { if (e.target === $macroProductModalBackdrop) closeMacroProductModal(); });
+  $macroProductAdd?.addEventListener("click", () => {
+    const grams = Math.max(0, Number($macroProductGrams?.value) || 0);
+    if (!grams) {
+      if ($macroProductSummary) $macroProductSummary.textContent = "Indica una cantidad mayor que 0g.";
+      try { $macroProductGrams?.focus(); } catch (_) {}
+      return;
+    }
+
+    const draft = readMacroProductDraftFromForm();
+    const saved = saveProduct(draft);
+    if (!saved) {
+      if ($macroProductSummary) $macroProductSummary.textContent = "Pon un nombre para guardar el producto.";
+      try { $macroProductName?.focus(); } catch (_) {}
+      return;
+    }
+
+    if (saved.barcode) upsertBarcodeMapping(saved.barcode, saved.id);
+    addProductToMeal(_macroProductMeal || macroModalState.meal || "breakfast", saved, grams);
+    closeMacroProductModal();
+  });
+
   $macroScanStart?.addEventListener("click", async () => {
+    await startMacroBarcodeScan();
+    return;
     if ("BarcodeDetector" in window) {
       $macroScanStatus.textContent = "Detector disponible. Usa entrada manual para confirmar en esta versión.";
     } else {
@@ -2923,6 +3347,17 @@ $recipeImportBtn?.addEventListener("click", () => {
     }
   });
   $macroScanManualBtn?.addEventListener("click", async () => {
+    hideMacroScanAddProduct();
+    const barcodeInput = String($macroScanManual?.value || "").trim();
+    if (!barcodeInput) {
+      setMacroScanStatus("Introduce un codigo de barras.");
+      return;
+      setMacroScanStatus("Introduce un cÃƒÂ³digo de barras.");
+      return;
+    }
+    setMacroScanStatus("Buscando...");
+    await handleBarcodeFound(barcodeInput);
+    return;
     const barcode = $macroScanManual?.value || "";
     const found = await lookupProductByBarcode(barcode);
     if (found) {
@@ -2933,6 +3368,41 @@ $recipeImportBtn?.addEventListener("click", () => {
       $macroScanStatus.textContent = "Sin valores asociados. Completa Crear manual.";
       if ($macroManualBarcode) $macroManualBarcode.value = barcode;
     }
+  });
+
+  $macroScanStop?.addEventListener("click", async () => {
+    await stopMacroBarcodeScan();
+    setMacroScanStatus("Escaneo detenido.");
+  });
+  $macroScanManual?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      try { e.preventDefault(); } catch (_) {}
+      $macroScanManualBtn?.click();
+    }
+  });
+  $macroScanAddProduct?.addEventListener("click", () => {
+    const mode = String($macroScanAddProduct?.dataset?.mode || "manual");
+    const barcode = String($macroScanAddProduct?.dataset?.barcode || $macroManualBarcode?.value || "").trim();
+    if (barcode && $macroManualBarcode) $macroManualBarcode.value = barcode;
+
+    if (mode === "off" && _macroScanPendingProduct) {
+      closeMacroAddModal();
+      openMacroProductModal(_macroScanPendingProduct, macroModalState.meal, 100);
+      return;
+      const saved = saveProduct(_macroScanPendingProduct);
+      if (saved) {
+        addProductToMeal(macroModalState.meal, saved, 100);
+        setMacroScanStatus("Producto añadido y guardado.");
+        closeMacroAddModal();
+      } else {
+        setMacroScanStatus("No pude guardar el producto. Revisa “Crear manual”.");
+      }
+      return;
+    }
+
+    macroModalState.source = "manual";
+    renderMacroModalResults();
+    try { $macroManualName?.focus(); } catch (_) {}
   });
 
   // Inicial

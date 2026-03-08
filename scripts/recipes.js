@@ -3616,6 +3616,29 @@ $recipeImportBtn?.addEventListener("click", () => {
     map.forEach(([btn, value]) => btn?.classList.toggle("primary", _macroScanEngine === value));
   }
 
+  function hideMacroScanAddProduct() {
+    _macroScanPendingLookup = null;
+    if (!$macroScanAddProduct) return;
+    $macroScanAddProduct.classList.add("hidden");
+    $macroScanAddProduct.dataset.mode = "";
+    $macroScanAddProduct.dataset.barcode = "";
+    $macroScanAddProduct.dataset.pendingLookupId = "";
+    $macroScanAddProduct.textContent = "Abrir ficha";
+  }
+
+  function showMacroScanAddProduct({ barcode = "", mode = "manual", label = "Crear producto manual", pendingProduct = null } = {}) {
+    if (!$macroScanAddProduct) return;
+    const lookupId = (pendingProduct && mode === "off") ? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}` : "";
+    _macroScanPendingLookup = lookupId
+      ? { id: lookupId, product: { ...pendingProduct } }
+      : null;
+    $macroScanAddProduct.dataset.mode = String(mode || "manual");
+    $macroScanAddProduct.dataset.barcode = String(barcode || "").trim();
+    $macroScanAddProduct.dataset.pendingLookupId = lookupId;
+    $macroScanAddProduct.textContent = label || (mode === "off" ? "Abrir ficha" : "Crear producto manual");
+    $macroScanAddProduct.classList.remove("hidden");
+  }
+
   function normalizeDetectedBarcode(value) {
     const digits = String(value || "").replace(/\D/g, "");
     if ([8, 12, 13].includes(digits.length)) return digits;
@@ -3639,30 +3662,63 @@ $recipeImportBtn?.addEventListener("click", () => {
   async function loadMacroScanZxingModule() {
     if (_macroScanZxingModule) return _macroScanZxingModule;
     _macroScanZxingModule = await import("https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm");
+    logMacroScan("dependencia del motor cargada", { engine: "zxing", ok: Boolean(_macroScanZxingModule) });
     return _macroScanZxingModule;
   }
 
   async function loadMacroScanHtml5Module() {
     if (_macroScanHtml5Module) return _macroScanHtml5Module;
     _macroScanHtml5Module = await import("https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/+esm");
+    logMacroScan("dependencia del motor cargada", { engine: "html5", ok: Boolean(_macroScanHtml5Module) });
     return _macroScanHtml5Module;
   }
 
   async function loadMacroScanQuaggaModule() {
     if (_macroScanQuaggaModule) return _macroScanQuaggaModule;
     _macroScanQuaggaModule = await import("https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga2.esm.min.js");
+    logMacroScan("dependencia del motor cargada", { engine: "quagga", ok: Boolean(_macroScanQuaggaModule) });
     return _macroScanQuaggaModule;
   }
 
+  async function waitForMacroScanVideoReady(videoEl) {
+    if (!videoEl) throw new Error("Elemento de vídeo no disponible.");
+    if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) return;
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error("El vídeo no recibió dimensiones válidas."));
+      }, 1800);
+      const onReady = () => {
+        cleanup();
+        resolve();
+      };
+      const cleanup = () => {
+        clearTimeout(timeout);
+        videoEl.removeEventListener("loadedmetadata", onReady);
+        videoEl.removeEventListener("canplay", onReady);
+      };
+      videoEl.addEventListener("loadedmetadata", onReady, { once: true });
+      videoEl.addEventListener("canplay", onReady, { once: true });
+    });
+  }
+
   async function openMacroScanCamera() {
+    logMacroScan("apertura de cámara iniciada", {
+      hasVideoElement: Boolean($macroScanVideo),
+      hasGetUserMedia: Boolean(navigator.mediaDevices?.getUserMedia),
+      secureContext: window.isSecureContext,
+    });
+    if (!$macroScanVideo) throw new Error("No existe el elemento de vídeo para escaneo.");
     if (!window.isSecureContext) throw new Error("La cámara requiere HTTPS o localhost.");
     if (!navigator.mediaDevices?.getUserMedia) throw new Error("La cámara no está disponible.");
     _macroScanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
-    if ($macroScanVideo) {
-      $macroScanVideo.classList.remove("hidden");
-      $macroScanVideo.srcObject = _macroScanStream;
-      await $macroScanVideo.play();
-    }
+    $macroScanVideo.classList.remove("hidden");
+    $macroScanVideo.muted = true;
+    $macroScanVideo.setAttribute("playsinline", "");
+    $macroScanVideo.setAttribute("autoplay", "");
+    $macroScanVideo.srcObject = _macroScanStream;
+    await $macroScanVideo.play();
+    await waitForMacroScanVideoReady($macroScanVideo);
     const track = _macroScanStream.getVideoTracks?.()[0] || null;
     logMacroScan("cámara abierta", {
       ok: true,
@@ -3718,7 +3774,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     _macroScanDecodeInFlight = false;
     setMacroScanEngineStatus("none");
     if (!keepStatus) setMacroScanStatus("");
-    logMacroScan("limpieza correcta al cambiar/detener", { stoppingEngine, streamActive: Boolean(_macroScanStream?.active) });
+    logMacroScan("limpieza del motor anterior", { ok: true, stoppingEngine, streamActive: Boolean(_macroScanStream?.active) });
   }
 
   async function onMacroEngineDetected(rawCode, engine, runId) {
@@ -3802,6 +3858,17 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   async function startMacroBarcodeScan(engine = "zxing") {
     beginMacroScanLogSession(`inicio_${engine}`);
+    logMacroScan("startMacroBarcodeScan llamado", {
+      engine,
+      argsLength: arguments.length,
+      dom: {
+        panel: Boolean($macroScanPanel),
+        video: Boolean($macroScanVideo),
+        html5Host: Boolean($macroScanHtml5Host),
+        manualInput: Boolean($macroScanManual),
+        addProductButton: Boolean($macroScanAddProduct),
+      },
+    });
     hideMacroScanAddProduct();
     await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
     _macroScanRunning = true;

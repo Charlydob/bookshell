@@ -264,12 +264,26 @@ if ($viewRecipes) {
   const $recipesSubtabs = document.querySelectorAll(".recipes-subtab");
   const $recipesPanelLibrary = document.getElementById("recipes-panel-library");
   const $recipesPanelMacros = document.getElementById("recipes-panel-macros");
+  const $recipesPanelStatistics = document.getElementById("recipes-panel-statistics");
   const $macroDateInput = document.getElementById("macro-date-input");
   const $macroDatePrev = document.getElementById("macro-date-prev");
   const $macroDateNext = document.getElementById("macro-date-next");
   const $macroSummaryGrid = document.getElementById("macro-summary-grid");
   const $macroMeals = document.getElementById("macro-meals");
   const $macroKcalSummary = document.getElementById("macro-kcal-summary");
+  const $macroStatsPeriods = document.getElementById("macro-stats-periods");
+  const $macroStatsPrev = document.getElementById("macro-stats-prev");
+  const $macroStatsNext = document.getElementById("macro-stats-next");
+  const $macroStatsAnchor = document.getElementById("macro-stats-anchor");
+  const $macroStatsMainMetric = document.getElementById("macro-stats-main-metric");
+  const $macroStatsKpis = document.getElementById("macro-stats-kpis");
+  const $macroStatsMainChart = document.getElementById("macro-stats-main-chart");
+  const $macroStatsMainLabel = document.getElementById("macro-stats-main-label");
+  const $macroStatsDonutKcal = document.getElementById("macro-stats-donut-kcal");
+  const $macroStatsDonutMacros = document.getElementById("macro-stats-donut-macros");
+  const $macroStatsDonutMeals = document.getElementById("macro-stats-donut-meals");
+  const $macroStatsTopRecipes = document.getElementById("macro-stats-top-recipes");
+  const $macroStatsTopProducts = document.getElementById("macro-stats-top-products");
   const $macroAddModalBackdrop = document.getElementById("macro-add-modal-backdrop");
   const $macroAddModalClose = document.getElementById("macro-add-modal-close");
   const $macroAddSearch = document.getElementById("macro-add-search");
@@ -374,6 +388,9 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   let nutritionGoals = { ...defaultGoals };
   let selectedMacroDate = toISODate(new Date());
   const macroModalState = { meal: "breakfast", source: "products", query: "" };
+  const macroStatsState = { period: "week", anchorDate: selectedMacroDate, metric: "macros" };
+  let nutritionSyncMeta = { version: 2, migratedAt: 0, updatedAt: 0 };
+  let nutritionUnsubscribe = null;
 
   ensureCountryDatalist();
 
@@ -1877,6 +1894,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     renderCharts();
     renderCalendar();
     renderMacrosView();
+    renderStatisticsView();
   }
 
   function renderIngredientRows(list = []) {
@@ -2601,14 +2619,44 @@ $recipeImportBtn?.addEventListener("click", () => {
     return root ? `${root}/nutrition` : null;
   }
 
+  function normalizeDailyLogs(rawLogs = {}) {
+    const normalized = {};
+    if (!rawLogs || typeof rawLogs !== "object") return normalized;
+    Object.entries(rawLogs).forEach(([date, log]) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+      const meals = {};
+      mealOrder.forEach((meal) => {
+        const entries = Array.isArray(log?.meals?.[meal]?.entries) ? log.meals[meal].entries : [];
+        meals[meal] = {
+          entries: entries.map((entry) => ({
+            type: entry?.type === "recipe" ? "recipe" : "product",
+            refId: entry?.refId || "",
+            nameSnapshot: String(entry?.nameSnapshot || "").trim(),
+            grams: Math.max(0, Number(entry?.grams) || 0),
+            servings: Math.max(0, Number(entry?.servings) || 0),
+            macrosSnapshot: normalizeMacros(entry?.macrosSnapshot || {}),
+            createdAt: Number(entry?.createdAt) || Date.now(),
+          })),
+        };
+      });
+      normalized[date] = { meals };
+    });
+    return normalized;
+  }
+
   function loadNutritionCache() {
     try {
       const raw = localStorage.getItem(`${getStorageKey()}.nutrition`);
       if (!raw) return;
       const parsed = JSON.parse(raw);
       nutritionProducts = Array.isArray(parsed.products) ? parsed.products : [];
-      dailyLogsByDate = parsed.dailyLogsByDate && typeof parsed.dailyLogsByDate === "object" ? parsed.dailyLogsByDate : {};
+      dailyLogsByDate = normalizeDailyLogs(parsed.dailyLogsByDate && typeof parsed.dailyLogsByDate === "object" ? parsed.dailyLogsByDate : {});
       nutritionGoals = { ...defaultGoals, ...(parsed.goals || {}) };
+      nutritionSyncMeta = {
+        version: Number(parsed?.syncMeta?.version) || 2,
+        migratedAt: Number(parsed?.syncMeta?.migratedAt) || 0,
+        updatedAt: Number(parsed?.syncMeta?.updatedAt) || 0,
+      };
     } catch (_) {}
   }
 
@@ -2616,8 +2664,9 @@ $recipeImportBtn?.addEventListener("click", () => {
     try {
       localStorage.setItem(`${getStorageKey()}.nutrition`, JSON.stringify({
         products: nutritionProducts,
-        dailyLogsByDate,
+        dailyLogsByDate: normalizeDailyLogs(dailyLogsByDate),
         goals: nutritionGoals,
+        syncMeta: nutritionSyncMeta,
       }));
     } catch (_) {}
   }
@@ -2625,25 +2674,65 @@ $recipeImportBtn?.addEventListener("click", () => {
   function listenNutritionRemote() {
     onAuthStateChanged(auth, (user) => {
       const uid = user?.uid;
+      if (nutritionUnsubscribe) {
+        try { nutritionUnsubscribe(); } catch (_) {}
+        nutritionUnsubscribe = null;
+      }
       if (!uid) return;
       const root = nutritionRootPath(uid);
       if (!root) return;
-      onValue(ref(db, root), (snap) => {
+      nutritionUnsubscribe = onValue(ref(db, root), (snap) => {
         const data = snap.val() || {};
-        nutritionProducts = Array.isArray(data.products) ? data.products : nutritionProducts;
-        dailyLogsByDate = data.dailyLogsByDate && typeof data.dailyLogsByDate === "object" ? data.dailyLogsByDate : dailyLogsByDate;
-        nutritionGoals = { ...defaultGoals, ...(data.goals || nutritionGoals) };
+        const remoteProducts = Array.isArray(data.products) ? data.products : [];
+        const remoteLogs = normalizeDailyLogs(data.dailyLogsByDate && typeof data.dailyLogsByDate === "object" ? data.dailyLogsByDate : {});
+        const remoteGoals = { ...defaultGoals, ...(data.goals || {}) };
+        nutritionSyncMeta = {
+          version: Number(data?.syncMeta?.version) || 2,
+          migratedAt: Number(data?.syncMeta?.migratedAt) || nutritionSyncMeta.migratedAt || Date.now(),
+          updatedAt: Number(data?.syncMeta?.updatedAt) || Number(data?.updatedAt) || Date.now(),
+        };
+
+        const hasRemoteData = remoteProducts.length || Object.keys(remoteLogs).length || Object.keys(data?.goals || {}).length;
+        if (!hasRemoteData) {
+          const hasLocalData = nutritionProducts.length || Object.keys(dailyLogsByDate || {}).length;
+          if (hasLocalData) {
+            persistNutrition();
+            return;
+          }
+        }
+
+        nutritionProducts = remoteProducts;
+        dailyLogsByDate = remoteLogs;
+        nutritionGoals = remoteGoals;
         cacheNutrition();
+        recalcAllRecipesNutrition();
+        refreshUI();
         renderMacrosView();
+        renderStatisticsView();
+      }, (err) => {
+        console.warn("No se pudo escuchar nutrición remota", err);
       });
     });
   }
 
   function persistNutrition() {
+    dailyLogsByDate = normalizeDailyLogs(dailyLogsByDate);
+    nutritionSyncMeta = {
+      version: 2,
+      migratedAt: nutritionSyncMeta.migratedAt || Date.now(),
+      updatedAt: Date.now(),
+    };
+    const payload = {
+      products: nutritionProducts,
+      dailyLogsByDate,
+      goals: nutritionGoals,
+      syncMeta: nutritionSyncMeta,
+      updatedAt: nutritionSyncMeta.updatedAt,
+    };
     const root = nutritionRootPath();
     if (root) {
       try {
-        set(ref(db, root), { products: nutritionProducts, dailyLogsByDate, goals: nutritionGoals, updatedAt: Date.now() });
+        set(ref(db, root), payload);
       } catch (err) { console.warn("No se pudo sincronizar nutrición", err); }
     }
     cacheNutrition();
@@ -2692,16 +2781,194 @@ $recipeImportBtn?.addEventListener("click", () => {
     return mealOrder.reduce((acc, meal) => plusMacros(acc, computeMealTotals(log.meals[meal].entries)), normalizeMacros({}));
   }
 
+  function getPeriodBounds(period, anchorIso) {
+    const anchor = new Date(`${anchorIso}T00:00:00`);
+    if (Number.isNaN(anchor.getTime())) return { start: anchorIso, end: anchorIso };
+    let start = new Date(anchor);
+    let end = new Date(anchor);
+    if (period === "day") {
+      // same day
+    } else if (period === "week") {
+      const dow = (anchor.getDay() + 6) % 7;
+      start.setDate(anchor.getDate() - dow);
+      end = new Date(start);
+      end.setDate(start.getDate() + 6);
+    } else if (period === "month") {
+      start = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+      end = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0);
+    } else if (period === "year") {
+      start = new Date(anchor.getFullYear(), 0, 1);
+      end = new Date(anchor.getFullYear(), 11, 31);
+    }
+    return { start: toISODate(start), end: toISODate(end) };
+  }
+
+  function listDatesInPeriod(period, anchorIso) {
+    const { start, end } = getPeriodBounds(period, anchorIso);
+    const out = [];
+    const cursor = new Date(`${start}T00:00:00`);
+    const endDate = new Date(`${end}T00:00:00`);
+    while (cursor <= endDate) {
+      out.push(toISODate(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return out;
+  }
+
+  function summarizeStatistics(period = macroStatsState.period, anchorIso = macroStatsState.anchorDate) {
+    const dates = listDatesInPeriod(period, anchorIso);
+    const byRecipe = new Map();
+    const byProduct = new Map();
+    const daySeries = [];
+    let totals = normalizeMacros({});
+    let mealCount = 0;
+    let recipeCount = 0;
+    let maxDay = { date: null, kcal: 0 };
+    const mealKcal = { breakfast: 0, lunch: 0, dinner: 0, snacks: 0 };
+
+    dates.forEach((date) => {
+      const log = getDailyLog(date);
+      const dayTotals = computeDailyTotals(date);
+      daySeries.push({ date, totals: dayTotals });
+      totals = plusMacros(totals, dayTotals);
+      if (dayTotals.kcal > maxDay.kcal) maxDay = { date, kcal: dayTotals.kcal };
+      mealOrder.forEach((meal) => {
+        const entries = log.meals?.[meal]?.entries || [];
+        if (entries.length) mealCount += 1;
+        const mt = computeMealTotals(entries);
+        mealKcal[meal] += mt.kcal;
+        entries.forEach((entry) => {
+          const key = entry.refId || entry.nameSnapshot;
+          const target = entry.type === "recipe" ? byRecipe : byProduct;
+          const prev = target.get(key) || {
+            name: entry.nameSnapshot || (entry.type === "recipe" ? "Receta" : "Producto"),
+            count: 0,
+            grams: 0,
+            servings: 0,
+            macros: normalizeMacros({}),
+          };
+          prev.count += 1;
+          prev.grams += Number(entry.grams) || 0;
+          prev.servings += Number(entry.servings) || 0;
+          prev.macros = plusMacros(prev.macros, entry.macrosSnapshot || {});
+          target.set(key, prev);
+          if (entry.type === "recipe") recipeCount += 1;
+        });
+      });
+    });
+
+    const avg = {
+      carbs: totals.carbs / Math.max(1, dates.length),
+      protein: totals.protein / Math.max(1, dates.length),
+      fat: totals.fat / Math.max(1, dates.length),
+      kcal: totals.kcal / Math.max(1, dates.length),
+    };
+
+    const topRecipes = Array.from(byRecipe.values()).sort((a, b) => b.count - a.count || b.macros.kcal - a.macros.kcal).slice(0, 8);
+    const topProducts = Array.from(byProduct.values()).sort((a, b) => b.count - a.count || b.macros.kcal - a.macros.kcal).slice(0, 8);
+
+    return { dates, daySeries, totals, avg, mealCount, recipeCount, topRecipes, topProducts, maxDay, mealKcal };
+  }
+
+  function renderSimpleDonut(host, segments = []) {
+    if (!host) return;
+    const total = segments.reduce((acc, s) => acc + Math.max(0, Number(s.value) || 0), 0);
+    const radius = 44;
+    const circumference = 2 * Math.PI * radius;
+    if (!total) {
+      host.innerHTML = `<circle cx="60" cy="60" r="44" fill="none" stroke="rgba(255,255,255,.16)" stroke-width="14"></circle><text x="60" y="65" text-anchor="middle" fill="rgba(255,255,255,.65)" font-size="10">Sin datos</text>`;
+      return;
+    }
+    let offset = 0;
+    const arcs = segments.map((seg) => {
+      const ratio = Math.max(0, Number(seg.value) || 0) / total;
+      const len = circumference * ratio;
+      const arc = `<circle cx="60" cy="60" r="44" fill="none" stroke="${seg.color}" stroke-width="14" stroke-dasharray="${len} ${circumference-len}" stroke-dashoffset="${-offset}" transform="rotate(-90 60 60)"></circle>`;
+      offset += len;
+      return arc;
+    }).join("");
+    host.innerHTML = `<circle cx="60" cy="60" r="44" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="14"></circle>${arcs}<text x="60" y="58" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">${roundMacro(total)}</text><text x="60" y="72" text-anchor="middle" fill="rgba(255,255,255,.65)" font-size="9">total</text>`;
+  }
+
+  function renderStatisticsView() {
+    if (!$recipesPanelStatistics || !$macroStatsKpis) return;
+    const summary = summarizeStatistics();
+    const metricLabelMap = { macros: "Carbs, proteína y grasas", kcal: "Calorías", carbs: "Carbohidratos", protein: "Proteínas", fat: "Grasas" };
+
+    if ($macroStatsAnchor) $macroStatsAnchor.value = macroStatsState.anchorDate;
+    $macroStatsPeriods?.querySelectorAll("[data-stats-period]").forEach((btn) => {
+      btn.classList.toggle("is-active", btn.dataset.statsPeriod === macroStatsState.period);
+    });
+    if ($macroStatsMainMetric) $macroStatsMainMetric.value = macroStatsState.metric;
+    if ($macroStatsMainLabel) $macroStatsMainLabel.textContent = `${metricLabelMap[macroStatsState.metric] || "Métrica"} · ${summary.dates[0] || "-"} → ${summary.dates[summary.dates.length - 1] || "-"}`;
+
+    $macroStatsKpis.innerHTML = [
+      ["Kcal totales", `${roundMacro(summary.totals.kcal)}`],
+      ["Media kcal/día", `${roundMacro(summary.avg.kcal)}`],
+      ["Carbs totales", `${roundMacro(summary.totals.carbs)}g`],
+      ["Proteínas totales", `${roundMacro(summary.totals.protein)}g`],
+      ["Grasas totales", `${roundMacro(summary.totals.fat)}g`],
+      ["Comidas registradas", `${summary.mealCount}`],
+      ["Recetas consumidas", `${summary.recipeCount}`],
+      ["Plato más repetido", `${summary.topRecipes[0]?.name || "—"}`],
+      ["Día más calórico", `${summary.maxDay.date || "—"} (${roundMacro(summary.maxDay.kcal)} kcal)`],
+      ["Media macros/día", `C ${roundMacro(summary.avg.carbs)} · P ${roundMacro(summary.avg.protein)} · G ${roundMacro(summary.avg.fat)}`],
+    ].map(([k, v]) => `<article class="macro-stats-kpi"><div class="macro-stats-kpi-label">${k}</div><div class="macro-stats-kpi-value">${v}</div></article>`).join("");
+
+    if ($macroStatsMainChart) {
+      const w = 760, h = 260, pad = { l: 42, r: 18, t: 16, b: 30 };
+      const points = summary.daySeries;
+      const labels = points.map((p) => p.date.slice(5));
+      const series = macroStatsState.metric === "macros"
+        ? [
+            { key: "carbs", color: "#44d492", name: "Carbs" },
+            { key: "protein", color: "#66a3ff", name: "Proteínas" },
+            { key: "fat", color: "#ffb84d", name: "Grasas" },
+          ]
+        : [{ key: macroStatsState.metric, color: "#f5e6a6", name: metricLabelMap[macroStatsState.metric] || "Métrica" }];
+      const maxVal = Math.max(1, ...points.flatMap((p) => series.map((s) => Number(p.totals?.[s.key]) || 0)));
+      const xStep = (w - pad.l - pad.r) / Math.max(1, points.length - 1);
+      const y = (v) => h - pad.b - (Math.max(0, v) / maxVal) * (h - pad.t - pad.b);
+      const lines = series.map((s) => {
+        const d = points.map((p, i) => `${i ? "L" : "M"}${pad.l + i * xStep},${y(Number(p.totals?.[s.key]) || 0)}`).join(" ");
+        return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="3" stroke-linecap="round"></path>`;
+      }).join("");
+      const xTicks = labels.map((lb, i) => `<text x="${pad.l + i * xStep}" y="${h - 8}" text-anchor="middle" fill="rgba(255,255,255,.65)" font-size="9">${lb}</text>`).join("");
+      const legend = series.map((s, i) => `<text x="${pad.l + i * 130}" y="12" fill="${s.color}" font-size="10">● ${s.name}</text>`).join("");
+      $macroStatsMainChart.innerHTML = `<rect x="0" y="0" width="${w}" height="${h}" fill="transparent"></rect><line x1="${pad.l}" y1="${h-pad.b}" x2="${w-pad.r}" y2="${h-pad.b}" stroke="rgba(255,255,255,.15)"></line>${lines}${xTicks}${legend}`;
+    }
+
+    renderSimpleDonut($macroStatsDonutMacros, [
+      { value: summary.totals.carbs, color: "#44d492" },
+      { value: summary.totals.protein, color: "#66a3ff" },
+      { value: summary.totals.fat, color: "#ffb84d" },
+    ]);
+    renderSimpleDonut($macroStatsDonutKcal, [
+      { value: summary.totals.carbs * 4, color: "#44d492" },
+      { value: summary.totals.protein * 4, color: "#66a3ff" },
+      { value: summary.totals.fat * 9, color: "#ffb84d" },
+    ]);
+    renderSimpleDonut($macroStatsDonutMeals, mealOrder.map((meal, i) => ({ value: summary.mealKcal[meal], color: ["#6fddff", "#b79bff", "#f7b0ff", "#ffd166"][i] })));
+
+    const row = (item) => `<div class="macro-stats-row"><strong>${escapeHtml(item.name)}</strong><span>${item.count} veces</span><span>${roundMacro(item.grams || item.servings)} ${item.grams ? "g" : "rac"}</span><span>${roundMacro(item.macros?.kcal)} kcal</span><span>C ${roundMacro(item.macros?.carbs)} · P ${roundMacro(item.macros?.protein)} · G ${roundMacro(item.macros?.fat)}</span></div>`;
+    if ($macroStatsTopRecipes) $macroStatsTopRecipes.innerHTML = summary.topRecipes.map(row).join("") || '<div class="hint">Sin recetas en el periodo.</div>';
+    if ($macroStatsTopProducts) $macroStatsTopProducts.innerHTML = summary.topProducts.map(row).join("") || '<div class="hint">Sin productos en el periodo.</div>';
+  }
+
   function switchRecipesPanel(panel = "library") {
+    const isLibrary = panel === "library";
     const isMacros = panel === "macros";
-    $recipesPanelLibrary?.classList.toggle("is-active", !isMacros);
+    const isStatistics = panel === "statistics";
+    $recipesPanelLibrary?.classList.toggle("is-active", isLibrary);
     $recipesPanelMacros?.classList.toggle("is-active", isMacros);
+    $recipesPanelStatistics?.classList.toggle("is-active", isStatistics);
     $recipesSubtabs.forEach((btn) => {
       const active = btn.dataset.recipesPanel === panel;
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-selected", active ? "true" : "false");
     });
     if (isMacros) renderMacrosView();
+    if (isStatistics) renderStatisticsView();
   }
 
   function renderMacrosView() {
@@ -2788,6 +3055,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       <h4>${mealLabels[meal]}</h4>
       <div class="hint">${roundMacro(mt.kcal)} kcal · C ${roundMacro(mt.carbs)} · P ${roundMacro(mt.protein)} · G ${roundMacro(mt.fat)}</div></div><div class="macro-meal-entries">${entryHtml}</div><button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
     }).join("");
+    if ($recipesPanelStatistics?.classList.contains("is-active")) renderStatisticsView();
   }
 
   function openMacroAddModal(meal) {
@@ -3332,9 +3600,41 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   $recipesSubtabs.forEach((btn) => btn.addEventListener("click", () => switchRecipesPanel(btn.dataset.recipesPanel || "library")));
-  $macroDateInput?.addEventListener("change", (e) => { selectedMacroDate = e.target.value || toISODate(new Date()); renderMacrosView(); });
-  $macroDatePrev?.addEventListener("click", () => { const d = new Date(`${selectedMacroDate}T00:00:00`); d.setDate(d.getDate() - 1); selectedMacroDate = toISODate(d); renderMacrosView(); });
-  $macroDateNext?.addEventListener("click", () => { const d = new Date(`${selectedMacroDate}T00:00:00`); d.setDate(d.getDate() + 1); selectedMacroDate = toISODate(d); renderMacrosView(); });
+  $macroDateInput?.addEventListener("change", (e) => { selectedMacroDate = e.target.value || toISODate(new Date()); macroStatsState.anchorDate = selectedMacroDate; renderMacrosView(); });
+  $macroStatsPeriods?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-stats-period]");
+    if (!btn) return;
+    macroStatsState.period = btn.dataset.statsPeriod || "week";
+    renderStatisticsView();
+  });
+  $macroStatsAnchor?.addEventListener("change", (e) => {
+    macroStatsState.anchorDate = e.target.value || toISODate(new Date());
+    renderStatisticsView();
+  });
+  $macroStatsMainMetric?.addEventListener("change", (e) => {
+    macroStatsState.metric = e.target.value || "macros";
+    renderStatisticsView();
+  });
+  $macroStatsPrev?.addEventListener("click", () => {
+    const d = new Date(`${macroStatsState.anchorDate}T00:00:00`);
+    if (macroStatsState.period === "day") d.setDate(d.getDate() - 1);
+    else if (macroStatsState.period === "week") d.setDate(d.getDate() - 7);
+    else if (macroStatsState.period === "month") d.setMonth(d.getMonth() - 1);
+    else d.setFullYear(d.getFullYear() - 1);
+    macroStatsState.anchorDate = toISODate(d);
+    renderStatisticsView();
+  });
+  $macroStatsNext?.addEventListener("click", () => {
+    const d = new Date(`${macroStatsState.anchorDate}T00:00:00`);
+    if (macroStatsState.period === "day") d.setDate(d.getDate() + 1);
+    else if (macroStatsState.period === "week") d.setDate(d.getDate() + 7);
+    else if (macroStatsState.period === "month") d.setMonth(d.getMonth() + 1);
+    else d.setFullYear(d.getFullYear() + 1);
+    macroStatsState.anchorDate = toISODate(d);
+    renderStatisticsView();
+  });
+  $macroDatePrev?.addEventListener("click", () => { const d = new Date(`${selectedMacroDate}T00:00:00`); d.setDate(d.getDate() - 1); selectedMacroDate = toISODate(d); macroStatsState.anchorDate = selectedMacroDate; renderMacrosView(); });
+  $macroDateNext?.addEventListener("click", () => { const d = new Date(`${selectedMacroDate}T00:00:00`); d.setDate(d.getDate() + 1); selectedMacroDate = toISODate(d); macroStatsState.anchorDate = selectedMacroDate; renderMacrosView(); });
   $macroSummaryGrid?.addEventListener("focusin", (e) => {
     const input = e.target?.closest?.("input[data-macro-goal]");
     if (!input) return;
@@ -3578,8 +3878,10 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   // Inicial
   loadNutritionCache();
+  macroStatsState.anchorDate = selectedMacroDate;
   recalcAllRecipesNutrition();
   refreshUI();
+  renderStatisticsView();
   listenRemoteRecipes();
   listenNutritionRemote();
   switchRecipesPanel("library");

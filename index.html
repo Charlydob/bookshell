@@ -573,6 +573,7 @@
 <div class="recipes-subtabs" role="tablist" aria-label="Subvistas de recetas">
 <button class="recipes-subtab is-active" id="recipes-subtab-library" data-recipes-panel="library" aria-selected="true" type="button">Recetas</button>
 <button class="recipes-subtab" id="recipes-subtab-macros" data-recipes-panel="macros" aria-selected="false" type="button">Macros</button>
+<button class="recipes-subtab" id="recipes-subtab-statistics" data-recipes-panel="statistics" aria-selected="false" type="button">Estadística</button>
 </div>
 <div class="recipes-panel is-active" id="recipes-panel-library">
 <div class="books-filters is-collapsed" id="recipes-filters">
@@ -664,6 +665,71 @@
     <div class="macro-summary-grid" id="macro-summary-grid"></div>
   </div>
   <div class="macro-meals" id="macro-meals"></div>
+</div>
+<div class="recipes-panel" id="recipes-panel-statistics">
+  <div class="macro-stats-shell">
+    <div class="macro-stats-toolbar">
+      <div class="macro-stats-periods" id="macro-stats-periods" role="tablist" aria-label="Periodo de estadística">
+        <button class="macro-stats-period is-active" data-stats-period="day" type="button">Día</button>
+        <button class="macro-stats-period" data-stats-period="week" type="button">Semana</button>
+        <button class="macro-stats-period" data-stats-period="month" type="button">Mes</button>
+        <button class="macro-stats-period" data-stats-period="year" type="button">Año</button>
+      </div>
+      <div class="macro-stats-controls">
+        <button class="btn ghost btn-compact" type="button" id="macro-stats-prev">◀</button>
+        <input type="date" id="macro-stats-anchor" class="macro-date-input" />
+        <button class="btn ghost btn-compact" type="button" id="macro-stats-next">▶</button>
+        <select id="macro-stats-main-metric" class="macro-stats-select">
+          <option value="macros">Macros (C/P/G)</option>
+          <option value="kcal">Kcal</option>
+          <option value="carbs">Carbohidratos</option>
+          <option value="protein">Proteínas</option>
+          <option value="fat">Grasas</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="macro-stats-grid" id="macro-stats-kpis"></div>
+
+    <div class="macro-stats-panels">
+      <section class="macro-stats-card macro-stats-main-chart-card">
+        <header class="macro-stats-card-head">
+          <h4>Evolución nutricional</h4>
+          <span class="hint" id="macro-stats-main-label"></span>
+        </header>
+        <svg id="macro-stats-main-chart" class="macro-stats-main-chart" viewBox="0 0 760 260" preserveAspectRatio="none"></svg>
+      </section>
+
+      <section class="macro-stats-card macro-stats-donut-card">
+        <header class="macro-stats-card-head"><h4>Distribuciones del periodo</h4></header>
+        <div class="macro-stats-donut-grid">
+          <div class="macro-stats-donut-box">
+            <svg id="macro-stats-donut-kcal" viewBox="0 0 120 120" class="macro-stats-donut"></svg>
+            <div class="macro-stats-donut-title">Calorías por macro</div>
+          </div>
+          <div class="macro-stats-donut-box">
+            <svg id="macro-stats-donut-macros" viewBox="0 0 120 120" class="macro-stats-donut"></svg>
+            <div class="macro-stats-donut-title">Reparto C/P/G (g)</div>
+          </div>
+          <div class="macro-stats-donut-box">
+            <svg id="macro-stats-donut-meals" viewBox="0 0 120 120" class="macro-stats-donut"></svg>
+            <div class="macro-stats-donut-title">Consumo por comida</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="macro-stats-lists">
+      <section class="macro-stats-card">
+        <header class="macro-stats-card-head"><h4>Top recetas y platos</h4></header>
+        <div id="macro-stats-top-recipes" class="macro-stats-list"></div>
+      </section>
+      <section class="macro-stats-card">
+        <header class="macro-stats-card-head"><h4>Top productos</h4></header>
+        <div id="macro-stats-top-products" class="macro-stats-list"></div>
+      </section>
+    </div>
+  </div>
 </div>
 </section>
 <!-- Vista HÁBITOS -->

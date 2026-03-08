@@ -2172,14 +2172,15 @@ notesRow.innerHTML = `<div class="spec-label">Notas</div><div class="spec-value"
     if ($recipeDetailNotesWrapper && $recipeDetailNotes) {
       const hasNotes = !!(recipe.notes || "").trim();
       $recipeDetailNotesWrapper.style.display = hasNotes ? "block" : "none";
-$recipeDetailNotes.innerHTML = linkifyNotesHtml(recipe.notes || "");
+ $recipeDetailNotes.innerHTML = linkifyNotesHtml(recipe.notes || "");
     }
-  }
-
 
     if ($recipeDetailDelete) {
       $recipeDetailDelete.dataset.recipeId = recipe.id;
     }
+  }
+
+
   function closeRecipeDetail() {
     if ($recipeDetailBackdrop) $recipeDetailBackdrop.classList.add("hidden");
     detailRecipeId = null;

@@ -1,4 +1,4 @@
-const STATIC_CACHE = "bookshell-static-v2";
+const STATIC_CACHE = "bookshell-static-v3";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -15,6 +15,10 @@ const APP_SHELL = [
   "/styles/finance.css",
   "/styles/main.css",
   "/scripts/app.js",
+  "/scripts/recipes.js",
+  "/scripts/countries.js",
+  "/scripts/world-heatmap.js",
+  "/scripts/firebase-shared.js",
   "/icons/favicon-16.png",
   "/icons/favicon-32.png",
   "/icons/icon-192.png",

@@ -1008,6 +1008,27 @@
     radial-gradient(circle at 50% 50%, transparent 0 46%, rgba(0,0,0,.38) 60%);
   pointer-events:none;
 }
+
+.macro-scan-log-panel{
+  margin-top: 8px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 10px;
+  background: rgba(0,0,0,.28);
+  max-height: 160px;
+  overflow: auto;
+  padding: 6px 8px;
+  display: grid;
+  gap: 4px;
+}
+.macro-scan-log-row{
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--txt-soft);
+  word-break: break-word;
+}
+.macro-scan-log-row strong{
+  color: #d8f4ff;
+}
 #macro-scan-engine-status{
   margin-top: 6px;
 }

@@ -307,6 +307,15 @@ if ($viewRecipes) {
   const $macroProductKcal = document.getElementById("macro-product-kcal");
   const $macroProductGrams = document.getElementById("macro-product-grams");
   const $macroProductSummary = document.getElementById("macro-product-summary");
+  const $macroProductEditToggle = document.getElementById("macro-product-edit-toggle");
+  const $macroProductKpiCarbs = document.getElementById("macro-product-kpi-carbs");
+  const $macroProductKpiProtein = document.getElementById("macro-product-kpi-protein");
+  const $macroProductKpiFat = document.getElementById("macro-product-kpi-fat");
+  const $macroProductKpiKcal = document.getElementById("macro-product-kpi-kcal");
+  const $macroProductDonutCarbs = document.getElementById("macro-product-donut-carbs");
+  const $macroProductDonutProtein = document.getElementById("macro-product-donut-protein");
+  const $macroProductDonutFat = document.getElementById("macro-product-donut-fat");
+  const $macroProductDonutKcal = document.getElementById("macro-product-donut-kcal");
   const $recipeServings = document.getElementById("recipe-servings");
   const $recipeNutriIngredientsList = document.getElementById("recipe-nutri-ingredients-list");
   const $recipeAddNutriIngredient = document.getElementById("recipe-add-nutri-ingredient");
@@ -1934,7 +1943,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
 
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.className = "icon-btn icon-btn-small";
+    remove.className = "icon-btn-eliminar-comida";
     remove.textContent = "✕";
     remove.addEventListener("click", () => row.remove());
 
@@ -2711,7 +2720,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       const pct = goal > 0 ? Math.min(140, Math.round((value / goal) * 100)) : 0;
       const excess = goal > 0 && value > goal;
       return `
-        <div class="macro-stat ${excess ? "is-excess" : ""}">
+        <div class="macro-stat macro-stat-${key} ${excess ? "is-excess" : ""}">
           <div class="macro-stat-title">${label}</div>
           <div class="macro-stat-value">
             <span class="macro-consumed">${value}${unit}</span>
@@ -2729,7 +2738,9 @@ $recipeImportBtn?.addEventListener("click", () => {
             />
             <span class="macro-unit">${unit}</span>
           </div>
-          <div class="macro-progress"><span style="width:${pct}%"></span></div>
+          <div class="macro-progress">
+          <span style="width:${pct}%"></span>
+          </div>
         </div>
       `;
     };
@@ -2742,12 +2753,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     const kcalItems = [{ key: "kcal", label: "Calorías", unit: "kcal", step: 10 }];
 
     $macroSummaryGrid.innerHTML = `
-      <div class="macro-summary-group macro-summary-group-macros">
-        ${macroItems.map(buildStatHtml).join("")}
-      </div>
       <div class="macro-summary-group macro-summary-group-kcal">
         ${kcalItems.map(buildStatHtml).join("")}
       </div>
+      <div class="macro-summary-group macro-summary-group-macros">
+        ${macroItems.map(buildStatHtml).join("")}
+      </div>
+      
     `;
     const kcalGoal = Number(nutritionGoals.kcal) || 0;
     const delta = roundMacro(kcalGoal - totals.kcal);
@@ -2756,8 +2768,22 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroMeals.innerHTML = mealOrder.map((meal) => {
       const entries = log.meals[meal].entries || [];
       const mt = computeMealTotals(entries);
-      const entryHtml = entries.map((entry, idx) => `<div class="macro-entry"><div><strong>${entry.nameSnapshot}</strong><div class="hint">${entry.type === "recipe" ? `${roundMacro(entry.servings || 1)} raciones` : `${roundMacro(entry.grams || 0)}g`}</div></div><div class="macro-entry-right">${roundMacro(entry.macrosSnapshot.kcal)} kcal<button class="icon-btn icon-btn-small" data-macro-delete="${meal}:${idx}" type="button">✕</button></div></div>`).join("") || '<div class="hint">Sin entradas</div>';
-      return `<article class="macro-meal-card"><div class="macro-meal-head"><h4>${mealLabels[meal]}</h4><div class="hint">${roundMacro(mt.kcal)} kcal · C ${roundMacro(mt.carbs)} · P ${roundMacro(mt.protein)} · G ${roundMacro(mt.fat)}</div></div><div class="macro-meal-entries">${entryHtml}</div><button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
+      const entryHtml = entries.map((entry, idx) => `
+      <div class="macro-entry">
+      <div class="contenido-comida-lista">
+      <strong>${entry.nameSnapshot}</strong>
+      <div class="hint">${entry.type === "recipe" ? `${roundMacro(entry.servings || 1)} rac` : `${roundMacro(entry.grams || 0)}g`}
+      </div>
+      </div>
+      <div class="macro-entry-right">
+      <div class="kcals-dato">
+      ${roundMacro(entry.macrosSnapshot.kcal)} kcal
+      </div>
+      <button class="icon-btn-eliminar-comida" data-macro-delete="${meal}:${idx}" type="button">✕</button></div></div>`).join("") || '<div class="hint">Sin entradas</div>';
+      return `<article class="macro-meal-card">
+      <div class="macro-meal-head">
+      <h4>${mealLabels[meal]}</h4>
+      <div class="hint">${roundMacro(mt.kcal)} kcal · C ${roundMacro(mt.carbs)} · P ${roundMacro(mt.protein)} · G ${roundMacro(mt.fat)}</div></div><div class="macro-meal-entries">${entryHtml}</div><button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
     }).join("");
   }
 
@@ -2779,9 +2805,15 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroProductMeal = "breakfast";
   let _macroProductDraft = null;
 
+  function setMacroProductEditing(editing) {
+    $macroProductModalBackdrop?.classList.toggle("is-editing", !!editing);
+    if ($macroProductEditToggle) $macroProductEditToggle.textContent = editing ? "Listo" : "Editar";
+  }
+
   function closeMacroProductModal() {
     $macroProductModalBackdrop?.classList.add("hidden");
     _macroProductDraft = null;
+    setMacroProductEditing(false);
   }
 
   function readMacroProductDraftFromForm() {
@@ -2808,9 +2840,43 @@ $recipeImportBtn?.addEventListener("click", () => {
     const grams = Math.max(0, Number($macroProductGrams?.value) || 0);
     const draft = readMacroProductDraftFromForm();
     const m = calcProductMacros(draft, grams);
-    $macroProductSummary.textContent = grams
-      ? `Para ${roundMacro(grams)}g: ${roundMacro(m.kcal)} kcal · C ${roundMacro(m.carbs)} · P ${roundMacro(m.protein)} · G ${roundMacro(m.fat)}`
-      : "Indica una cantidad para ver el resumen.";
+
+    if (grams) {
+      $macroProductSummary.textContent = `Para ${roundMacro(grams)}g: ${roundMacro(m.kcal)} kcal · C ${roundMacro(m.carbs)} · P ${roundMacro(m.protein)} · G ${roundMacro(m.fat)}`;
+    } else {
+      $macroProductSummary.textContent = "Indica una cantidad para ver el resumen.";
+    }
+
+    if ($macroProductKpiCarbs) $macroProductKpiCarbs.textContent = `${roundMacro(m.carbs)}g`;
+    if ($macroProductKpiProtein) $macroProductKpiProtein.textContent = `${roundMacro(m.protein)}g`;
+    if ($macroProductKpiFat) $macroProductKpiFat.textContent = `${roundMacro(m.fat)}g`;
+    if ($macroProductKpiKcal) $macroProductKpiKcal.textContent = `${roundMacro(m.kcal)}`;
+    if ($macroProductDonutKcal) $macroProductDonutKcal.textContent = `${roundMacro(m.kcal)}`;
+
+    const radius = 38;
+    const c = 2 * Math.PI * radius;
+    const carbs = Math.max(0, Number(m.carbs) || 0);
+    const protein = Math.max(0, Number(m.protein) || 0);
+    const fat = Math.max(0, Number(m.fat) || 0);
+    const total = carbs + protein + fat;
+
+    const segCarbs = total > 0 ? (carbs / total) * c : 0;
+    const segProtein = total > 0 ? (protein / total) * c : 0;
+    const segFat = total > 0 ? (fat / total) * c : 0;
+
+    let offset = 0;
+    const applySeg = (el, len) => {
+      if (!el) return;
+      const cleanLen = Math.max(0, Math.min(c, Number(len) || 0));
+      el.style.strokeDasharray = `${cleanLen} ${Math.max(0, c - cleanLen)}`;
+      el.style.strokeDashoffset = `${-offset}`;
+      offset += cleanLen;
+    };
+
+    offset = 0;
+    applySeg($macroProductDonutCarbs, segCarbs);
+    applySeg($macroProductDonutProtein, segProtein);
+    applySeg($macroProductDonutFat, segFat);
   }
 
   function openMacroProductModal(product, meal, grams = 100) {
@@ -2819,6 +2885,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
     _macroProductMeal = meal || "breakfast";
     _macroProductDraft = product;
+    setMacroProductEditing(false);
 
     if ($macroProductName) $macroProductName.value = product.name || "";
     if ($macroProductBrand) $macroProductBrand.value = product.brand || "";
@@ -3307,6 +3374,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroProductGrams,
   ].filter(Boolean);
   _macroProductInputs.forEach((el) => el.addEventListener("input", renderMacroProductSummary));
+  $macroProductEditToggle?.addEventListener("click", () => {
+    const next = !$macroProductModalBackdrop?.classList.contains("is-editing");
+    setMacroProductEditing(next);
+    if (next) {
+      try { ($macroProductBarcode || $macroProductBase || $macroProductCarbs)?.focus(); } catch (_) {}
+    }
+  });
   $macroProductGrams?.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       try { e.preventDefault(); } catch (_) {}

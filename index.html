@@ -2373,7 +2373,7 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 
 <div class="modal-backdrop hidden" id="macro-add-modal-backdrop">
-  <div class="modal">
+  <div class="modal-comida">
     <div class="modal-handle"></div>
     <div class="modal-header">
       <div class="modal-title" id="macro-add-modal-title">Añadir alimento</div>
@@ -2423,31 +2423,120 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 
 <div class="modal-backdrop hidden" id="macro-product-modal-backdrop">
-  <div class="modal">
-    <div class="modal-handle"></div>
-    <div class="modal-header">
-      <div class="modal-title" id="macro-product-modal-title">Producto</div>
-      <button class="icon-btn" id="macro-product-modal-close" type="button">Ã¢Å“â€¢</button>
+  <div class="macro-modal macro-product-modal" role="dialog" aria-modal="true" aria-labelledby="macro-product-modal-title">
+    <div class="macro-modal-handle"></div>
+
+    <div class="macro-product-topbar">
+      <button class="macro-icon-btn macro-product-topbar-btn" id="macro-product-modal-close" type="button" aria-label="Cerrar">✕</button>
+      <h3 class="macro-product-topbar-title" id="macro-product-modal-title">Producto</h3>
+      <button class="macro-icon-btn macro-product-topbar-btn" id="macro-product-edit-toggle" type="button">Editar</button>
     </div>
-    <div class="modal-scroll sheet-body">
-      <div class="form-grid row-2">
-        <label class="field"><span class="field-label">Nombre</span><input id="macro-product-name" type="text" /></label>
-        <label class="field"><span class="field-label">Marca</span><input id="macro-product-brand" type="text" /></label>
-        <label class="field"><span class="field-label">Barcode</span><input id="macro-product-barcode" type="text" /></label>
-        <label class="field"><span class="field-label">Gramos base</span><input id="macro-product-base" type="number" value="100" /></label>
-        <label class="field"><span class="field-label">Carbs</span><input id="macro-product-carbs" type="number" value="0" /></label>
-        <label class="field"><span class="field-label">ProteÃƒÂ­na</span><input id="macro-product-protein" type="number" value="0" /></label>
-        <label class="field"><span class="field-label">Grasa</span><input id="macro-product-fat" type="number" value="0" /></label>
-        <label class="field"><span class="field-label">Kcal</span><input id="macro-product-kcal" type="number" value="0" /></label>
-      </div>
-      <div class="macro-product-add-row">
-        <label class="field"><span class="field-label">Cantidad a aÃ±adir (g)</span><input id="macro-product-grams" type="number" value="100" /></label>
-        <div class="hint" id="macro-product-summary"></div>
-      </div>
+
+    <div class="macro-modal-body">
+      <section class="macro-card macro-product-hero-card">
+        <div class="macro-grid macro-grid-2">
+          <label class="macro-field macro-field-span-2">
+            <span class="macro-label">Nombre</span>
+            <input id="macro-product-name" type="text" placeholder="Ej. Arroz a la paella" />
+          </label>
+
+          <label class="macro-field">
+            <span class="macro-label">Marca</span>
+            <input id="macro-product-brand" type="text" placeholder="Opcional" />
+          </label>
+
+          <label class="macro-field macro-product-barcode-field">
+            <span class="macro-label">Código de barras</span>
+            <input id="macro-product-barcode" type="text" inputmode="numeric" placeholder="8410..." />
+          </label>
+        </div>
+
+        <div class="macro-product-hero-visual" aria-hidden="true">
+          <div class="macro-product-donut">
+            <svg class="macro-donut" viewBox="0 0 100 100">
+              <circle class="macro-donut-track" cx="50" cy="50" r="38"></circle>
+              <circle class="macro-donut-seg macro-donut-carbs" id="macro-product-donut-carbs" cx="50" cy="50" r="38"></circle>
+              <circle class="macro-donut-seg macro-donut-protein" id="macro-product-donut-protein" cx="50" cy="50" r="38"></circle>
+              <circle class="macro-donut-seg macro-donut-fat" id="macro-product-donut-fat" cx="50" cy="50" r="38"></circle>
+            </svg>
+            <div class="macro-donut-center">
+              <div class="macro-donut-kcal" id="macro-product-donut-kcal">0</div>
+              <div class="macro-donut-kcal-unit">kcal</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="macro-product-kpis">
+          <div class="macro-kpi macro-kpi-carbs">
+            <div class="macro-kpi-label">Carb.</div>
+            <div class="macro-kpi-value" id="macro-product-kpi-carbs">0g</div>
+          </div>
+          <div class="macro-kpi macro-kpi-protein">
+            <div class="macro-kpi-label">Prot.</div>
+            <div class="macro-kpi-value" id="macro-product-kpi-protein">0g</div>
+          </div>
+          <div class="macro-kpi macro-kpi-fat">
+            <div class="macro-kpi-label">Grasa</div>
+            <div class="macro-kpi-value" id="macro-product-kpi-fat">0g</div>
+          </div>
+          <div class="macro-kpi macro-kpi-kcal">
+            <div class="macro-kpi-label">Kcal</div>
+            <div class="macro-kpi-value" id="macro-product-kpi-kcal">0</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="macro-card macro-product-nutrition-card">
+        <div class="macro-section-head">
+          <span class="macro-section-title">Valores nutricionales</span>
+          <span class="macro-chip">Base 100 g</span>
+        </div>
+
+        <div class="macro-grid macro-grid-2">
+          <label class="macro-field">
+            <span class="macro-label">Gramos base</span>
+            <input id="macro-product-base" type="number" value="100" />
+          </label>
+
+          <label class="macro-field">
+            <span class="macro-label">Kcal</span>
+            <input id="macro-product-kcal" type="number" value="0" />
+          </label>
+
+          <label class="macro-field">
+            <span class="macro-label">Carbohidratos</span>
+            <input id="macro-product-carbs" type="number" step="0.1" value="0" />
+          </label>
+
+          <label class="macro-field">
+            <span class="macro-label">Proteína</span>
+            <input id="macro-product-protein" type="number" step="0.1" value="0" />
+          </label>
+
+          <label class="macro-field macro-field-span-2">
+            <span class="macro-label">Grasa</span>
+            <input id="macro-product-fat" type="number" step="0.1" value="0" />
+          </label>
+        </div>
+      </section>
+
+      <section class="macro-card macro-add-card macro-product-action-card">
+        <div class="macro-grid macro-grid-1">
+          <label class="macro-field">
+            <span class="macro-label">Cantidad a añadir (g)</span>
+            <input id="macro-product-grams" type="number" value="100" />
+          </label>
+        </div>
+
+        <div class="macro-summary" id="macro-product-summary">
+          
+        </div>
+      </section>
     </div>
-    <div class="modal-footer">
-      <button class="btn ghost" id="macro-product-cancel" type="button">Cancelar</button>
-      <button class="btn primary" id="macro-product-add" type="button">AÃ±adir</button>
+
+    <div class="macro-modal-footer">
+      <button class="macro-btn macro-btn-ghost" id="macro-product-cancel" type="button">Cancelar</button>
+      <button class="macro-btn macro-btn-primary" id="macro-product-add" type="button">Añadir</button>
     </div>
   </div>
 </div>

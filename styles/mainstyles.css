@@ -344,7 +344,7 @@ body.has-open-modal {
     width: 100%;
     max-width: 560px;
     border-radius: 22px 22px 0 0;
-    max-height: calc(100vh - 16px);
+    max-height: 900px;
   }
   .modal-handle{
     display: block;
@@ -868,4 +868,11 @@ main {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.modal-comida{
+  min-height: 700px;
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 22px;
+  background: transparent;
+  backdrop-filter: blur(1px);
 }

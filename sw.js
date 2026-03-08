@@ -1,4 +1,4 @@
-const STATIC_CACHE = "bookshell-static-v7";
+const STATIC_CACHE = "bookshell-static-v8";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -89,6 +89,11 @@ self.addEventListener("fetch", (event) => {
       })
       .catch(() => cached || caches.match(resolveAppUrl("./index.html")));
 
-    return cached || networkFetch;
+    // Stale-while-revalidate para estÃ¡ticos: evita quedarnos "pegados" a una versiÃ³n antigua.
+    if (cached) {
+      event.waitUntil(networkFetch);
+      return cached;
+    }
+    return networkFetch;
   })());
 });

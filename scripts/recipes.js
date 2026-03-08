@@ -3582,11 +3582,20 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanQrBoxPx = null; // { left, top, width, height, lineTop }
   let _macroScanLayoutLastAt = 0;
   let _macroScanResizeListenerBound = false;
+  let _macroScanResizeRestartTimer = null;
+  let _macroScanLastHostPx = null; // { width, height }
 
   const MACRO_SCAN_NO_RESULT_LOG_EVERY_MS = 6000;
   const MACRO_SCAN_LAYOUT_LOG_EVERY_MS = 1600;
   const MACRO_SCAN_REPEAT_BLOCK_MS = 3500;
   const OFF_PRODUCT_ENDPOINT = "https://world.openfoodfacts.org/api/v2/product";
+  const MACRO_SCAN_DEBUG = (() => {
+    try {
+      return Boolean(window?.__MACRO_SCAN_DEBUG || window?.localStorage?.getItem("bookshell.macroScanDebug") === "1");
+    } catch (_) {
+      return false;
+    }
+  })();
 
   function ensureMacroScanLogPanel() {
     return $macroScanLogPanel || null;
@@ -3650,6 +3659,67 @@ $recipeImportBtn?.addEventListener("click", () => {
     };
   }
 
+  function elementBoxSnapshot(el) {
+    if (!el) return null;
+    const rect = el.getBoundingClientRect?.() || null;
+    let cs = null;
+    try {
+      cs = window.getComputedStyle?.(el) || null;
+    } catch (_) {
+      cs = null;
+    }
+    const tag = String(el.tagName || "").toLowerCase();
+    return {
+      tag,
+      id: el.id || "",
+      class: typeof el.className === "string" ? el.className : "",
+      rect: rectToShort(rect),
+      box: {
+        client: { w: el.clientWidth || 0, h: el.clientHeight || 0 },
+        offset: { w: el.offsetWidth || 0, h: el.offsetHeight || 0 },
+        scroll: { w: el.scrollWidth || 0, h: el.scrollHeight || 0 },
+      },
+      style: cs
+        ? {
+            display: cs.display,
+            position: cs.position,
+            top: cs.top,
+            right: cs.right,
+            bottom: cs.bottom,
+            left: cs.left,
+            width: cs.width,
+            height: cs.height,
+            maxWidth: cs.maxWidth,
+            maxHeight: cs.maxHeight,
+            overflow: cs.overflow,
+            overflowX: cs.overflowX,
+            overflowY: cs.overflowY,
+            transform: cs.transform,
+            objectFit: cs.objectFit,
+            objectPosition: cs.objectPosition,
+            borderRadius: cs.borderRadius,
+            padding: cs.padding,
+          }
+        : null,
+    };
+  }
+
+  function overlayVarsSnapshot() {
+    if (!$macroScanOverlay) return null;
+    try {
+      const cs = window.getComputedStyle($macroScanOverlay);
+      return {
+        left: cs.getPropertyValue("--scan-left").trim(),
+        top: cs.getPropertyValue("--scan-top").trim(),
+        width: cs.getPropertyValue("--scan-width").trim(),
+        height: cs.getPropertyValue("--scan-height").trim(),
+        lineTop: cs.getPropertyValue("--scan-line-top").trim(),
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
   function logMacroScanLayout(reason = "layout") {
     const now = Date.now();
     if (now - _macroScanLayoutLastAt < MACRO_SCAN_LAYOUT_LOG_EVERY_MS) return;
@@ -3669,6 +3739,75 @@ $recipeImportBtn?.addEventListener("click", () => {
       },
       dpr: Number(window.devicePixelRatio || 1),
     });
+  }
+
+  function logMacroScanLayoutDeep(reason = "layout_deep") {
+    if (!MACRO_SCAN_DEBUG) return;
+    const videoEl = $macroScanHtml5Host?.querySelector?.("video") || $macroScanVideo || null;
+    const track = _macroScanStream?.getVideoTracks?.()?.[0] || null;
+    const trackSettings = track?.getSettings?.() || null;
+    const trackConstraints = track?.getConstraints?.() || null;
+    logMacroScan("layout+", {
+      reason,
+      overlayVars: overlayVarsSnapshot(),
+      wrap: elementBoxSnapshot($macroScanVideoWrap),
+      host: elementBoxSnapshot($macroScanHtml5Host),
+      overlay: elementBoxSnapshot($macroScanOverlay),
+      video: elementBoxSnapshot(videoEl),
+      videoIntrinsic: videoEl
+        ? {
+            readyState: videoEl.readyState || 0,
+            w: videoEl.videoWidth || 0,
+            h: videoEl.videoHeight || 0,
+          }
+        : null,
+      viewfinder: _macroScanViewfinderPx,
+      qrbox: _macroScanQrBoxPx,
+      trackSettings,
+      trackConstraints,
+      dpr: Number(window.devicePixelRatio || 1),
+    });
+  }
+
+  function readMacroScanHostPx() {
+    const rect = $macroScanHtml5Host?.getBoundingClientRect?.() || null;
+    if (!rect) return null;
+    return { width: Math.round(rect.width), height: Math.round(rect.height) };
+  }
+
+  function hasMeaningfulMacroScanHostResize(prev, next) {
+    if (!prev || !next) return true;
+    const dw = Math.abs(Number(next.width) - Number(prev.width));
+    const dh = Math.abs(Number(next.height) - Number(prev.height));
+    return dw >= 24 || dh >= 24;
+  }
+
+  async function restartHtml5ScanInPlace(reason = "resize") {
+    if (!_macroScanRunning || _macroScanEngine !== "html5") return;
+    const prevRun = _macroScanEngineRunId;
+    _macroScanEngineRunId += 1;
+    const runId = _macroScanEngineRunId;
+    logMacroScan("reinicio motor (layout)", { engine: "html5", reason, prevRun, runId });
+
+    if (_macroScanHtml5Instance) {
+      try { await _macroScanHtml5Instance.stop(); } catch (_) {}
+      try { await _macroScanHtml5Instance.clear(); } catch (_) {}
+      _macroScanHtml5Instance = null;
+    }
+    if ($macroScanHtml5Host) {
+      try { $macroScanHtml5Host.innerHTML = ""; } catch (_) {}
+      try { $macroScanHtml5Host.classList.remove("hidden"); } catch (_) {}
+    }
+
+    // Mantiene el flujo y logs; solo recalcula viewfinder/qrbox al reiniciar.
+    try {
+      await startHtml5Scan(runId);
+      setMacroScanStatus("Buscando codigo...");
+    } catch (err) {
+      logMacroScan("error concreto", { engine: "html5", error: err?.name || err?.message || err });
+      setMacroScanStatus(`Error en html5: ${err?.name || err?.message || "fallo"}`);
+      await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
+    }
   }
 
   function hideHtml5QrcodeInternalOverlay() {
@@ -3714,8 +3853,11 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (now - prev < MACRO_SCAN_NO_RESULT_LOG_EVERY_MS) return;
     _macroScanNoResultLastAt[key] = now;
     if (_macroScanRunning && _macroScanEngine === key) setMacroScanStatus("Buscando codigo...");
+    // No es un error: es simplemente "sin lectura" en este frame.
+    // Para evitar spam visual, solo lo mostramos en el panel si estÃ¡ activado el debug.
+    if (!MACRO_SCAN_DEBUG) return;
     const short = String(detail || "").slice(0, 120);
-    logMacroScan("buscando codigo...", { engine: key, detail: short });
+    logMacroScan("sin lectura", { engine: key, detail: short });
   }
 
   function fmtMacroMeta(meta) {
@@ -3897,6 +4039,10 @@ $recipeImportBtn?.addEventListener("click", () => {
       try { clearTimeout(_macroScanTimer); } catch (_) {}
       _macroScanTimer = null;
     }
+    if (_macroScanResizeRestartTimer) {
+      try { clearTimeout(_macroScanResizeRestartTimer); } catch (_) {}
+      _macroScanResizeRestartTimer = null;
+    }
 
 
     if (_macroScanHtml5Instance) {
@@ -3924,6 +4070,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     _macroScanDecodeInFlight = false;
     _macroScanViewfinderPx = null;
     _macroScanQrBoxPx = null;
+    _macroScanLastHostPx = null;
     setMacroScanOverlayBox(null);
     setMacroScanEngineStatus("none");
     if (!keepStatus) setMacroScanStatus("");
@@ -3953,6 +4100,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (!$macroScanHtml5Host) throw new Error("Contenedor html5-qrcode no disponible.");
     $macroScanVideo?.classList.add("hidden");
     $macroScanHtml5Host.classList.remove("hidden");
+    logMacroScanLayoutDeep("host_visible");
     logMacroScan("inicio motor", { engine: "html5", instanceCreated: false });
     const mod = await loadMacroScanHtml5Module();
     const Html5Qrcode = mod?.Html5Qrcode || mod?.default?.Html5Qrcode || mod?.default;
@@ -3977,6 +4125,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         _macroScanQrBoxPx = box;
         setMacroScanOverlayBox(box);
         logMacroScanLayout("qrbox");
+        logMacroScanLayoutDeep("qrbox");
         return { width, height };
       },
       aspectRatio: 1.777,
@@ -4011,11 +4160,15 @@ $recipeImportBtn?.addEventListener("click", () => {
       await _macroScanHtml5Instance.start(chosen, startConfig, onDecoded, onDecodeError);
     }
     logMacroScanLayout("post_start");
+    logMacroScanLayoutDeep("post_start");
+    _macroScanLastHostPx = readMacroScanHostPx();
     try {
       setTimeout(() => {
         if (!(_macroScanRunning && _macroScanEngine === "html5" && runId === _macroScanEngineRunId)) return;
         logMacroScanLayout("post_start_delay");
         hideHtml5QrcodeInternalOverlay();
+        logMacroScanLayoutDeep("post_start_delay");
+        _macroScanLastHostPx = readMacroScanHostPx();
       }, 450);
     } catch (_) {}
     logMacroScan("cámara abierta", { ok: true, engine: "html5", streamActive: true, videoDimsOk: true });
@@ -4055,8 +4208,40 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (!_macroScanResizeListenerBound) {
       _macroScanResizeListenerBound = true;
       try {
-        window.addEventListener("resize", () => { if (_macroScanRunning) logMacroScanLayout("resize"); }, { passive: true });
-        window.addEventListener("orientationchange", () => { if (_macroScanRunning) logMacroScanLayout("orientationchange"); }, { passive: true });
+        window.addEventListener("resize", () => {
+          if (!_macroScanRunning) return;
+          logMacroScanLayout("resize");
+          logMacroScanLayoutDeep("resize");
+          if (_macroScanEngine !== "html5") return;
+          if ((Date.now() - (_macroScanStartedAt || 0)) < 900) return;
+          const next = readMacroScanHostPx();
+          if (!hasMeaningfulMacroScanHostResize(_macroScanLastHostPx, next)) return;
+          _macroScanLastHostPx = next;
+          if (_macroScanResizeRestartTimer) {
+            try { clearTimeout(_macroScanResizeRestartTimer); } catch (_) {}
+          }
+          _macroScanResizeRestartTimer = setTimeout(() => {
+            _macroScanResizeRestartTimer = null;
+            restartHtml5ScanInPlace("resize");
+          }, 240);
+        }, { passive: true });
+        window.addEventListener("orientationchange", () => {
+          if (!_macroScanRunning) return;
+          logMacroScanLayout("orientationchange");
+          logMacroScanLayoutDeep("orientationchange");
+          if (_macroScanEngine !== "html5") return;
+          if ((Date.now() - (_macroScanStartedAt || 0)) < 900) return;
+          const next = readMacroScanHostPx();
+          if (!hasMeaningfulMacroScanHostResize(_macroScanLastHostPx, next)) return;
+          _macroScanLastHostPx = next;
+          if (_macroScanResizeRestartTimer) {
+            try { clearTimeout(_macroScanResizeRestartTimer); } catch (_) {}
+          }
+          _macroScanResizeRestartTimer = setTimeout(() => {
+            _macroScanResizeRestartTimer = null;
+            restartHtml5ScanInPlace("orientationchange");
+          }, 240);
+        }, { passive: true });
       } catch (_) {}
     }
 

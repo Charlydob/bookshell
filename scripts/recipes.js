@@ -261,6 +261,39 @@ if ($viewRecipes) {
   const $recipeAddStep = document.getElementById("recipe-add-step");
   const $recipeDelete = document.getElementById("recipe-delete");
 
+  const $recipesSubtabs = document.querySelectorAll(".recipes-subtab");
+  const $recipesPanelLibrary = document.getElementById("recipes-panel-library");
+  const $recipesPanelMacros = document.getElementById("recipes-panel-macros");
+  const $macroDateInput = document.getElementById("macro-date-input");
+  const $macroDatePrev = document.getElementById("macro-date-prev");
+  const $macroDateNext = document.getElementById("macro-date-next");
+  const $macroSummaryGrid = document.getElementById("macro-summary-grid");
+  const $macroMeals = document.getElementById("macro-meals");
+  const $macroKcalSummary = document.getElementById("macro-kcal-summary");
+  const $macroAddModalBackdrop = document.getElementById("macro-add-modal-backdrop");
+  const $macroAddModalClose = document.getElementById("macro-add-modal-close");
+  const $macroAddSearch = document.getElementById("macro-add-search");
+  const $macroAddResults = document.getElementById("macro-add-results");
+  const $macroAddChips = document.getElementById("macro-add-chips");
+  const $macroScanPanel = document.getElementById("macro-scan-panel");
+  const $macroManualPanel = document.getElementById("macro-manual-panel");
+  const $macroScanStart = document.getElementById("macro-scan-start");
+  const $macroScanManual = document.getElementById("macro-scan-manual");
+  const $macroScanManualBtn = document.getElementById("macro-scan-manual-btn");
+  const $macroScanStatus = document.getElementById("macro-scan-status");
+  const $macroManualName = document.getElementById("macro-manual-name");
+  const $macroManualBrand = document.getElementById("macro-manual-brand");
+  const $macroManualBarcode = document.getElementById("macro-manual-barcode");
+  const $macroManualBase = document.getElementById("macro-manual-base");
+  const $macroManualCarbs = document.getElementById("macro-manual-carbs");
+  const $macroManualProtein = document.getElementById("macro-manual-protein");
+  const $macroManualFat = document.getElementById("macro-manual-fat");
+  const $macroManualKcal = document.getElementById("macro-manual-kcal");
+  const $macroManualSave = document.getElementById("macro-manual-save");
+  const $recipeServings = document.getElementById("recipe-servings");
+  const $recipeNutriIngredientsList = document.getElementById("recipe-nutri-ingredients-list");
+  const $recipeAddNutriIngredient = document.getElementById("recipe-add-nutri-ingredient");
+
   const $recipeImageFile = document.getElementById("recipe-image-file");
   const $recipeImagePreview = document.getElementById("recipe-image-preview");
   const $recipeImageCamera = document.getElementById("recipe-image-camera");
@@ -305,6 +338,15 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     favoritesOnly: false,
     lauraOnly: false,
   };
+
+  const defaultGoals = { carbs: 180, protein: 140, fat: 65, kcal: 2200 };
+  const mealOrder = ["breakfast", "lunch", "dinner", "snacks"];
+  const mealLabels = { breakfast: "Desayuno", lunch: "Almuerzo", dinner: "Cena", snacks: "Snacks" };
+  let nutritionProducts = [];
+  let dailyLogsByDate = {};
+  let nutritionGoals = { ...defaultGoals };
+  let selectedMacroDate = toISODate(new Date());
+  const macroModalState = { meal: "breakfast", source: "products", query: "" };
 
   ensureCountryDatalist();
 
@@ -552,7 +594,58 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       imageURL: recipe.imageURL || null,
       ingredients,
       steps,
+      servings: Math.max(1, Number(recipe.servings) || 1),
+      nutritionIngredients: Array.isArray(recipe.nutritionIngredients) ? recipe.nutritionIngredients.map((it) => ({
+        id: it.id || generateId(),
+        productId: it.productId || "",
+        grams: Math.max(0, Number(it.grams) || 0),
+      })) : [],
+      nutritionTotals: normalizeMacros(recipe.nutritionTotals),
+      nutritionPerServing: normalizeMacros(recipe.nutritionPerServing),
     };
+  }
+
+  function toISODate(d = new Date()) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${dd}`;
+  }
+
+  function normalizeMacros(macros = {}) {
+    return {
+      carbs: Number(macros.carbs) || 0,
+      protein: Number(macros.protein) || 0,
+      fat: Number(macros.fat) || 0,
+      kcal: Number(macros.kcal) || 0,
+    };
+  }
+
+  function plusMacros(a, b) {
+    const aa = normalizeMacros(a);
+    const bb = normalizeMacros(b);
+    return {
+      carbs: aa.carbs + bb.carbs,
+      protein: aa.protein + bb.protein,
+      fat: aa.fat + bb.fat,
+      kcal: aa.kcal + bb.kcal,
+    };
+  }
+
+  function calcProductMacros(product, grams = 0) {
+    const p = product || {};
+    const base = Math.max(1, Number(p.servingBaseGrams) || 100);
+    const ratio = Math.max(0, Number(grams) || 0) / base;
+    return {
+      carbs: (Number(p.macros?.carbs) || 0) * ratio,
+      protein: (Number(p.macros?.protein) || 0) * ratio,
+      fat: (Number(p.macros?.fat) || 0) * ratio,
+      kcal: (Number(p.macros?.kcal) || 0) * ratio,
+    };
+  }
+
+  function roundMacro(value) {
+    return Math.round((Number(value) || 0) * 10) / 10;
   }
 
   function normalizeDate(dateStr) {
@@ -941,6 +1034,7 @@ function linkifyNotesHtml(input) {
         <div class="recipe-meta-item"><strong>País</strong><br>${countryLabel}</div>
         <div class="recipe-meta-item"><strong>Última vez</strong><br>${recipe.lastCooked || "—"}</div>
         <div class="recipe-meta-item"><strong>Valoración</strong><br>${recipe.rating ?? 0} ★</div>
+        <div class="recipe-meta-item"><strong>Nutrición</strong><br>${roundMacro(recipe.nutritionTotals?.kcal || 0)} kcal</div>
       `;
 
       const actions = document.createElement("div");
@@ -987,10 +1081,21 @@ function linkifyNotesHtml(input) {
         openRecipeDetail(recipe.id);
       });
 
+      const mealBtn = document.createElement("button");
+      mealBtn.className = "btn ghost btn-compact";
+      mealBtn.type = "button";
+      mealBtn.textContent = "Añadir a comida";
+      mealBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        switchRecipesPanel("macros");
+        addRecipeToMeal("lunch", recipe, 1);
+      });
+
       actions.appendChild(lauraToggle);
       actions.appendChild(favToggle);
       actions.appendChild(editBtn);
       actions.appendChild(openBtn);
+      actions.appendChild(mealBtn);
 
       if (recipe.notes) {
         const notes = document.createElement("div");
@@ -1616,6 +1721,8 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       $recipeLaura.checked = !!recipe.laura;
       renderIngredientRows(recipe.ingredients && recipe.ingredients.length ? recipe.ingredients : [DEFAULT_INGREDIENT()]);
       renderStepRows(recipe.steps && recipe.steps.length ? recipe.steps : [DEFAULT_STEP()]);
+      if ($recipeServings) $recipeServings.value = String(Math.max(1, Number(recipe.servings) || 1));
+      renderNutriIngredientRows(recipe.nutritionIngredients && recipe.nutritionIngredients.length ? recipe.nutritionIngredients : []);
     } else {
       $modalTitle.textContent = "Nueva receta";
       $recipeId.value = "";
@@ -1631,6 +1738,8 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       $recipeLaura.checked = false;
       renderIngredientRows([DEFAULT_INGREDIENT()]);
       renderStepRows([DEFAULT_STEP()]);
+      if ($recipeServings) $recipeServings.value = "1";
+      renderNutriIngredientRows([]);
     }
   }
 
@@ -1681,6 +1790,8 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       cookedDates,
       ingredients: collectIngredientRows(),
       steps: collectStepRows(),
+      servings: Math.max(1, Number($recipeServings?.value) || 1),
+      nutritionIngredients: collectNutriIngredientRows(),
     };
 
     if (!payload.title) return;
@@ -1716,7 +1827,9 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       }
     }
 
-    const normalizedPayload = normalizeRecipeFields(payload);
+    let normalizedPayload = normalizeRecipeFields(payload);
+    const calculatedNutrition = recalcRecipeNutrition(normalizedPayload);
+    normalizedPayload = normalizeRecipeFields({ ...normalizedPayload, nutritionTotals: calculatedNutrition.totals, nutritionPerServing: calculatedNutrition.perServing });
 
     let nextRecipe = normalizedPayload;
     if (existing) {
@@ -1736,6 +1849,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     renderStats();
     renderCharts();
     renderCalendar();
+    renderMacrosView();
   }
 
   function renderIngredientRows(list = []) {
@@ -1973,6 +2087,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
         { label: "Última vez", value: recipe.lastCooked || "—" },
         { label: "Favorita", value: recipe.favorite ? "Sí" : "No" },
         { label: "Laura", value: recipe.laura ? "Sí" : "No" },
+        { label: "Calorías", value: `${roundMacro(recipe.nutritionTotals?.kcal || 0)} kcal` },
       ];
       items.forEach((item) => {
         const block = document.createElement("div");
@@ -1988,6 +2103,8 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
         { label: "Tipo de comida", value: recipe.meal },
         { label: "País / origen", value: recipe.countryLabel || recipe.country || "—" },
         { label: "Etiquetas", value: (recipe.tags || []).join(", ") || "—" },
+        { label: "Macros", value: `C ${roundMacro(recipe.nutritionTotals?.carbs || 0)} · P ${roundMacro(recipe.nutritionTotals?.protein || 0)} · G ${roundMacro(recipe.nutritionTotals?.fat || 0)}` },
+        { label: "Por ración", value: `${roundMacro(recipe.nutritionPerServing?.kcal || 0)} kcal` },
       ];
       gridItems.forEach((item) => {
         const row = document.createElement("div");
@@ -2059,6 +2176,10 @@ $recipeDetailNotes.innerHTML = linkifyNotesHtml(recipe.notes || "");
     }
   }
 
+
+    if ($recipeDetailDelete) {
+      $recipeDetailDelete.dataset.recipeId = recipe.id;
+    }
   function closeRecipeDetail() {
     if ($recipeDetailBackdrop) $recipeDetailBackdrop.classList.add("hidden");
     detailRecipeId = null;
@@ -2313,6 +2434,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     $recipeIngredientsList?.appendChild(buildIngredientRow())
   );
   $recipeAddStep?.addEventListener("click", () => $recipeStepsList?.appendChild(buildStepRow()));
+  $recipeAddNutriIngredient?.addEventListener("click", () => $recipeNutriIngredientsList?.appendChild(buildNutriIngredientRow()));
   $recipeDelete?.addEventListener("click", () => {
     const id = $recipeId.value;
     if (id) deleteRecipe(id);
@@ -2422,6 +2544,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       }
     }
     renderCalendar();
+    renderMacrosView();
   });
 
   $calNext?.addEventListener("click", () => {
@@ -2435,16 +2558,389 @@ $recipeImportBtn?.addEventListener("click", () => {
       }
     }
     renderCalendar();
+    renderMacrosView();
   });
 
   $calViewMode?.addEventListener("change", (e) => {
     calViewMode = e.target.value;
     renderCalendar();
+    renderMacrosView();
+  });
+
+
+  function nutritionRootPath(uid = currentUid) {
+    const root = recipesRootPath(uid);
+    return root ? `${root}/nutrition` : null;
+  }
+
+  function loadNutritionCache() {
+    try {
+      const raw = localStorage.getItem(`${getStorageKey()}.nutrition`);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      nutritionProducts = Array.isArray(parsed.products) ? parsed.products : [];
+      dailyLogsByDate = parsed.dailyLogsByDate && typeof parsed.dailyLogsByDate === "object" ? parsed.dailyLogsByDate : {};
+      nutritionGoals = { ...defaultGoals, ...(parsed.goals || {}) };
+    } catch (_) {}
+  }
+
+  function cacheNutrition() {
+    try {
+      localStorage.setItem(`${getStorageKey()}.nutrition`, JSON.stringify({
+        products: nutritionProducts,
+        dailyLogsByDate,
+        goals: nutritionGoals,
+      }));
+    } catch (_) {}
+  }
+
+  function listenNutritionRemote() {
+    onAuthStateChanged(auth, (user) => {
+      const uid = user?.uid;
+      if (!uid) return;
+      const root = nutritionRootPath(uid);
+      if (!root) return;
+      onValue(ref(db, root), (snap) => {
+        const data = snap.val() || {};
+        nutritionProducts = Array.isArray(data.products) ? data.products : nutritionProducts;
+        dailyLogsByDate = data.dailyLogsByDate && typeof data.dailyLogsByDate === "object" ? data.dailyLogsByDate : dailyLogsByDate;
+        nutritionGoals = { ...defaultGoals, ...(data.goals || nutritionGoals) };
+        cacheNutrition();
+        renderMacrosView();
+      });
+    });
+  }
+
+  function persistNutrition() {
+    const root = nutritionRootPath();
+    if (root) {
+      try {
+        set(ref(db, root), { products: nutritionProducts, dailyLogsByDate, goals: nutritionGoals, updatedAt: Date.now() });
+      } catch (err) { console.warn("No se pudo sincronizar nutrición", err); }
+    }
+    cacheNutrition();
+  }
+
+  function recalcRecipeNutrition(recipe) {
+    const list = Array.isArray(recipe?.nutritionIngredients) ? recipe.nutritionIngredients : [];
+    const totals = list.reduce((acc, it) => {
+      const product = nutritionProducts.find((p) => p.id === it.productId);
+      return plusMacros(acc, calcProductMacros(product, it.grams));
+    }, normalizeMacros({}));
+    const servings = Math.max(1, Number(recipe?.servings) || 1);
+    const perServing = {
+      carbs: totals.carbs / servings,
+      protein: totals.protein / servings,
+      fat: totals.fat / servings,
+      kcal: totals.kcal / servings,
+    };
+    return { totals, perServing };
+  }
+
+  function recalcAllRecipesNutrition() {
+    recipes = recipes.map((r) => {
+      const calc = recalcRecipeNutrition(r);
+      return normalizeRecipeFields({ ...r, nutritionTotals: calc.totals, nutritionPerServing: calc.perServing });
+    });
+  }
+
+  function getDailyLog(date = selectedMacroDate) {
+    if (!dailyLogsByDate[date]) {
+      dailyLogsByDate[date] = { meals: { breakfast: { entries: [] }, lunch: { entries: [] }, dinner: { entries: [] }, snacks: { entries: [] } } };
+    }
+    mealOrder.forEach((meal) => {
+      if (!dailyLogsByDate[date].meals?.[meal]) dailyLogsByDate[date].meals[meal] = { entries: [] };
+      if (!Array.isArray(dailyLogsByDate[date].meals[meal].entries)) dailyLogsByDate[date].meals[meal].entries = [];
+    });
+    return dailyLogsByDate[date];
+  }
+
+  function computeMealTotals(entries = []) {
+    return entries.reduce((acc, e) => plusMacros(acc, e.macrosSnapshot || {}), normalizeMacros({}));
+  }
+
+  function computeDailyTotals(date = selectedMacroDate) {
+    const log = getDailyLog(date);
+    return mealOrder.reduce((acc, meal) => plusMacros(acc, computeMealTotals(log.meals[meal].entries)), normalizeMacros({}));
+  }
+
+  function switchRecipesPanel(panel = "library") {
+    const isMacros = panel === "macros";
+    $recipesPanelLibrary?.classList.toggle("is-active", !isMacros);
+    $recipesPanelMacros?.classList.toggle("is-active", isMacros);
+    $recipesSubtabs.forEach((btn) => {
+      const active = btn.dataset.recipesPanel === panel;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    if (isMacros) renderMacrosView();
+  }
+
+  function renderMacrosView() {
+    if (!$recipesPanelMacros || !$macroSummaryGrid || !$macroMeals) return;
+    const log = getDailyLog(selectedMacroDate);
+    const totals = computeDailyTotals(selectedMacroDate);
+    const items = [
+      { key: "carbs", label: "Carb. netos", unit: "g" },
+      { key: "protein", label: "Proteínas", unit: "g" },
+      { key: "fat", label: "Grasas", unit: "g" },
+      { key: "kcal", label: "Calorías", unit: "kcal" },
+    ];
+    $macroDateInput.value = selectedMacroDate;
+    $macroSummaryGrid.innerHTML = items.map((item) => {
+      const value = roundMacro(totals[item.key]);
+      const goal = roundMacro(nutritionGoals[item.key] || 0);
+      const pct = goal > 0 ? Math.min(140, Math.round((value / goal) * 100)) : 0;
+      const excess = goal > 0 && value > goal;
+      return `<div class="macro-stat ${excess ? "is-excess" : ""}"><div class="macro-stat-title">${item.label}</div><div class="macro-stat-value">${value}${item.unit} / ${goal}${item.unit}</div><div class="macro-progress"><span style="width:${pct}%"></span></div></div>`;
+    }).join("");
+    const kcalGoal = Number(nutritionGoals.kcal) || 0;
+    const delta = roundMacro(kcalGoal - totals.kcal);
+    $macroKcalSummary.textContent = `${roundMacro(totals.kcal)} kcal consumidas · ${delta >= 0 ? `${delta} restantes` : `${Math.abs(delta)} exceso`}`;
+
+    $macroMeals.innerHTML = mealOrder.map((meal) => {
+      const entries = log.meals[meal].entries || [];
+      const mt = computeMealTotals(entries);
+      const entryHtml = entries.map((entry, idx) => `<div class="macro-entry"><div><strong>${entry.nameSnapshot}</strong><div class="hint">${entry.type === "recipe" ? `${roundMacro(entry.servings || 1)} raciones` : `${roundMacro(entry.grams || 0)}g`}</div></div><div class="macro-entry-right">${roundMacro(entry.macrosSnapshot.kcal)} kcal<button class="icon-btn icon-btn-small" data-macro-delete="${meal}:${idx}" type="button">✕</button></div></div>`).join("") || '<div class="hint">Sin entradas</div>';
+      return `<article class="macro-meal-card"><div class="macro-meal-head"><h4>${mealLabels[meal]}</h4><div class="hint">${roundMacro(mt.kcal)} kcal · C ${roundMacro(mt.carbs)} · P ${roundMacro(mt.protein)} · G ${roundMacro(mt.fat)}</div></div><div class="macro-meal-entries">${entryHtml}</div><button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
+    }).join("");
+  }
+
+  function openMacroAddModal(meal) {
+    macroModalState.meal = meal;
+    macroModalState.query = "";
+    macroModalState.source = "products";
+    if ($macroAddSearch) $macroAddSearch.value = "";
+    $macroAddModalBackdrop?.classList.remove("hidden");
+    renderMacroModalResults();
+    $macroAddSearch?.focus();
+  }
+
+  function closeMacroAddModal() {
+    $macroAddModalBackdrop?.classList.add("hidden");
+  }
+
+  function renderMacroModalResults() {
+    if (!$macroAddResults) return;
+    const q = (macroModalState.query || "").toLowerCase();
+    const showProducts = macroModalState.source === "products";
+    const showRecipes = macroModalState.source === "recipes";
+    $macroScanPanel?.classList.toggle("hidden", macroModalState.source !== "scan");
+    $macroManualPanel?.classList.toggle("hidden", macroModalState.source !== "manual");
+    $macroAddResults.style.display = (showProducts || showRecipes) ? "block" : "none";
+    if (showProducts) {
+      const list = nutritionProducts.filter((p) => !q || `${p.name} ${p.brand || ""} ${p.barcode || ""}`.toLowerCase().includes(q));
+      $macroAddResults.innerHTML = list.map((p) => `<button class="macro-result" data-add-product="${p.id}" type="button"><span>${p.name}</span><span class="hint">${p.brand || ""} · ${p.macros?.kcal || 0} kcal / ${p.servingBaseGrams || 100}g</span></button>`).join("") || '<div class="hint">No hay productos.</div>';
+    }
+    if (showRecipes) {
+      const list = recipes.filter((r) => !q || `${r.title} ${(r.tags || []).join(" ")}`.toLowerCase().includes(q));
+      $macroAddResults.innerHTML = list.map((r) => `<button class="macro-result" data-add-recipe="${r.id}" type="button"><span>${r.title}</span><span class="hint">${roundMacro(r.nutritionTotals?.kcal || 0)} kcal total</span></button>`).join("") || '<div class="hint">No hay recetas.</div>';
+    }
+    $macroAddChips?.querySelectorAll(".macro-chip").forEach((chip) => chip.classList.toggle("is-active", chip.dataset.macroSource === macroModalState.source));
+  }
+
+  function addProductToMeal(meal, product, grams = 100) {
+    if (!product) return;
+    const macrosSnapshot = normalizeMacros(calcProductMacros(product, grams));
+    getDailyLog(selectedMacroDate).meals[meal].entries.unshift({
+      type: "product",
+      refId: product.id,
+      nameSnapshot: product.name,
+      grams,
+      macrosSnapshot,
+      createdAt: Date.now(),
+    });
+    persistNutrition();
+    renderMacrosView();
+  }
+
+  function addRecipeToMeal(meal, recipe, servings = 1) {
+    if (!recipe) return;
+    const base = normalizeMacros(recipe.nutritionPerServing || recipe.nutritionTotals || {});
+    const macrosSnapshot = {
+      carbs: base.carbs * servings,
+      protein: base.protein * servings,
+      fat: base.fat * servings,
+      kcal: base.kcal * servings,
+    };
+    getDailyLog(selectedMacroDate).meals[meal].entries.unshift({
+      type: "recipe",
+      refId: recipe.id,
+      nameSnapshot: recipe.title,
+      servings,
+      macrosSnapshot,
+      createdAt: Date.now(),
+    });
+    persistNutrition();
+    renderMacrosView();
+  }
+
+  function saveProduct(product) {
+    const now = Date.now();
+    const normalized = {
+      id: product.id || generateId(),
+      name: String(product.name || "").trim(),
+      brand: String(product.brand || "").trim(),
+      barcode: String(product.barcode || "").trim(),
+      servingBaseGrams: Math.max(1, Number(product.servingBaseGrams) || 100),
+      macros: normalizeMacros(product.macros),
+      source: product.source || "manual",
+      createdAt: product.createdAt || now,
+      updatedAt: now,
+    };
+    if (!normalized.name) return null;
+    const i = nutritionProducts.findIndex((p) => p.id === normalized.id || (normalized.barcode && p.barcode === normalized.barcode));
+    if (i >= 0) nutritionProducts[i] = { ...nutritionProducts[i], ...normalized };
+    else nutritionProducts.unshift(normalized);
+    persistNutrition();
+    recalcAllRecipesNutrition();
+    refreshUI();
+    return normalized;
+  }
+
+  async function lookupProductByBarcode(barcode) {
+    const clean = String(barcode || "").trim();
+    if (!clean) return null;
+    const local = nutritionProducts.find((p) => p.barcode && p.barcode === clean);
+    if (local) return local;
+    return null;
+  }
+
+  function upsertBarcodeMapping(barcode, productId) {
+    const root = nutritionRootPath();
+    if (!root || !barcode || !productId) return;
+    try { set(ref(db, `${root}/barcodeMap/${barcode}`), productId); } catch (_) {}
+  }
+
+  function buildNutriIngredientRow(item = { id: generateId(), productId: "", grams: 100 }) {
+    const row = document.createElement("div");
+    row.className = "builder-row ingredient-row";
+    row.dataset.id = item.id || generateId();
+    const select = document.createElement("select");
+    select.className = "builder-input";
+    select.innerHTML = `<option value="">Selecciona producto</option>` + nutritionProducts.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("");
+    select.value = item.productId || "";
+    const grams = document.createElement("input");
+    grams.type = "number";
+    grams.className = "builder-input";
+    grams.min = "0";
+    grams.step = "1";
+    grams.value = String(item.grams || 100);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "icon-btn icon-btn-small";
+    remove.textContent = "✕";
+    remove.addEventListener("click", () => row.remove());
+    row.appendChild(select);
+    row.appendChild(grams);
+    row.appendChild(remove);
+    return row;
+  }
+
+  function renderNutriIngredientRows(list = []) {
+    if (!$recipeNutriIngredientsList) return;
+    const frag = document.createDocumentFragment();
+    list.forEach((item) => frag.appendChild(buildNutriIngredientRow(item)));
+    $recipeNutriIngredientsList.innerHTML = "";
+    $recipeNutriIngredientsList.appendChild(frag);
+  }
+
+  function collectNutriIngredientRows() {
+    if (!$recipeNutriIngredientsList) return [];
+    return Array.from($recipeNutriIngredientsList.querySelectorAll(".ingredient-row")).map((row) => ({
+      id: row.dataset.id || generateId(),
+      productId: row.querySelector("select")?.value || "",
+      grams: Math.max(0, Number(row.querySelector("input[type='number']")?.value) || 0),
+    })).filter((it) => it.productId);
+  }
+
+  $recipesSubtabs.forEach((btn) => btn.addEventListener("click", () => switchRecipesPanel(btn.dataset.recipesPanel || "library")));
+  $macroDateInput?.addEventListener("change", (e) => { selectedMacroDate = e.target.value || toISODate(new Date()); renderMacrosView(); });
+  $macroDatePrev?.addEventListener("click", () => { const d = new Date(`${selectedMacroDate}T00:00:00`); d.setDate(d.getDate() - 1); selectedMacroDate = toISODate(d); renderMacrosView(); });
+  $macroDateNext?.addEventListener("click", () => { const d = new Date(`${selectedMacroDate}T00:00:00`); d.setDate(d.getDate() + 1); selectedMacroDate = toISODate(d); renderMacrosView(); });
+  $macroMeals?.addEventListener("click", (e) => {
+    const addBtn = e.target.closest("[data-macro-add]");
+    if (addBtn) return openMacroAddModal(addBtn.dataset.macroAdd);
+    const delBtn = e.target.closest("[data-macro-delete]");
+    if (delBtn) {
+      const [meal, idx] = String(delBtn.dataset.macroDelete || "").split(":");
+      const log = getDailyLog(selectedMacroDate);
+      const i = Number(idx);
+      if (log.meals?.[meal]?.entries?.[i]) {
+        log.meals[meal].entries.splice(i, 1);
+        persistNutrition();
+        renderMacrosView();
+      }
+    }
+  });
+
+  $macroAddModalClose?.addEventListener("click", closeMacroAddModal);
+  $macroAddModalBackdrop?.addEventListener("click", (e) => { if (e.target === $macroAddModalBackdrop) closeMacroAddModal(); });
+  $macroAddSearch?.addEventListener("input", (e) => { macroModalState.query = e.target.value || ""; renderMacroModalResults(); });
+  $macroAddChips?.addEventListener("click", (e) => {
+    const chip = e.target.closest("[data-macro-source]");
+    if (!chip) return;
+    macroModalState.source = chip.dataset.macroSource;
+    renderMacroModalResults();
+  });
+  $macroAddResults?.addEventListener("click", (e) => {
+    const pBtn = e.target.closest("[data-add-product]");
+    if (pBtn) {
+      const p = nutritionProducts.find((x) => x.id === pBtn.dataset.addProduct);
+      addProductToMeal(macroModalState.meal, p, 100);
+      return closeMacroAddModal();
+    }
+    const rBtn = e.target.closest("[data-add-recipe]");
+    if (rBtn) {
+      const r = recipes.find((x) => x.id === rBtn.dataset.addRecipe);
+      addRecipeToMeal(macroModalState.meal, r, 1);
+      return closeMacroAddModal();
+    }
+  });
+
+  $macroManualSave?.addEventListener("click", () => {
+    const pdt = saveProduct({
+      name: $macroManualName?.value,
+      brand: $macroManualBrand?.value,
+      barcode: $macroManualBarcode?.value,
+      servingBaseGrams: Number($macroManualBase?.value) || 100,
+      macros: { carbs: Number($macroManualCarbs?.value) || 0, protein: Number($macroManualProtein?.value) || 0, fat: Number($macroManualFat?.value) || 0, kcal: Number($macroManualKcal?.value) || 0 },
+      source: "manual",
+    });
+    if (pdt) {
+      upsertBarcodeMapping(pdt.barcode, pdt.id);
+      macroModalState.source = "products";
+      renderMacroModalResults();
+    }
+  });
+
+  $macroScanStart?.addEventListener("click", async () => {
+    if ("BarcodeDetector" in window) {
+      $macroScanStatus.textContent = "Detector disponible. Usa entrada manual para confirmar en esta versión.";
+    } else {
+      $macroScanStatus.textContent = "BarcodeDetector no disponible. Fallback manual activo (preparado para ZXing).";
+    }
+  });
+  $macroScanManualBtn?.addEventListener("click", async () => {
+    const barcode = $macroScanManual?.value || "";
+    const found = await lookupProductByBarcode(barcode);
+    if (found) {
+      addProductToMeal(macroModalState.meal, found, 100);
+      closeMacroAddModal();
+      $macroScanStatus.textContent = "Producto local encontrado y añadido.";
+    } else {
+      $macroScanStatus.textContent = "Sin valores asociados. Completa Crear manual.";
+      if ($macroManualBarcode) $macroManualBarcode.value = barcode;
+    }
   });
 
   // Inicial
+  loadNutritionCache();
+  recalcAllRecipesNutrition();
   refreshUI();
   listenRemoteRecipes();
+  listenNutritionRemote();
+  switchRecipesPanel("library");
 }
 function parseRecipeV1(raw){
   const lines = String(raw || "").replace(/\r/g, "").split("\n");

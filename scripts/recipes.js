@@ -3571,6 +3571,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanLiveEnabled = false;
   let _macroScanDecodeInFlight = false;
   let _macroScanSessionId = 0;
+  let _macroScanPendingLookup = null;
 
   const MACRO_SCAN_POLL_MS = 320;
 
@@ -3596,7 +3597,22 @@ $recipeImportBtn?.addEventListener("click", () => {
         visibility: document.visibilityState,
         hasGetUserMedia: Boolean(navigator.mediaDevices?.getUserMedia),
         hasBarcodeDetector: Boolean(getBarcodeDetectorCtor()),
+        isPwa: window.matchMedia?.("(display-mode: standalone)")?.matches || navigator.standalone || false,
+        hostname: window.location.hostname,
+        path: window.location.pathname,
+        base: document.baseURI,
       });
+      navigator.serviceWorker?.getRegistration?.()
+        .then((reg) => {
+          if (!reg) return;
+          console.info("ServiceWorker", {
+            scope: reg.scope,
+            active: Boolean(reg.active),
+            installing: Boolean(reg.installing),
+            waiting: Boolean(reg.waiting),
+          });
+        })
+        .catch(() => {});
       console.groupEnd();
     } catch (_) {}
   }
@@ -3714,9 +3730,45 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   async function loadMacroScanZxingModule() {
     if (_macroScanZxingModule) return _macroScanZxingModule;
-    logMacroScan("Cargando ZXing (lazy)");
-    _macroScanZxingModule = await import("https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm");
-    return _macroScanZxingModule;
+    const cdnCandidates = [
+      "https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm",
+      "https://unpkg.com/@zxing/browser@0.1.5/esm/index.js",
+    ];
+    let lastError = null;
+    for (const src of cdnCandidates) {
+      try {
+        logMacroScan("Cargando ZXing (lazy)", { src });
+        _macroScanZxingModule = await import(src);
+        if (_macroScanZxingModule) return _macroScanZxingModule;
+      } catch (err) {
+        lastError = err;
+        logMacroScan("Fallo al cargar ZXing", { src, error: err?.name || err?.message || err });
+      }
+    }
+    throw lastError || new Error("ZXing no se pudo cargar");
+  }
+
+  function getFrameDiagnostics(frame) {
+    if (!frame) return { ok: false, reason: "frame_null" };
+    const ctx = frame.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return { ok: false, reason: "ctx_null" };
+    const sampleW = Math.min(24, frame.width || 0);
+    const sampleH = Math.min(24, frame.height || 0);
+    if (!sampleW || !sampleH) return { ok: false, reason: "frame_size_invalid" };
+    const pixels = ctx.getImageData(0, 0, sampleW, sampleH).data;
+    let nonBlack = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      const brightness = pixels[i] + pixels[i + 1] + pixels[i + 2];
+      if (brightness > 10) nonBlack += 1;
+    }
+    return {
+      ok: nonBlack > 0,
+      reason: nonBlack > 0 ? "ok" : "empty_or_black_frame",
+      nonBlack,
+      sampled: pixels.length / 4,
+      width: frame.width,
+      height: frame.height,
+    };
   }
 
   async function decodeMacroScanFrame(reason = "snapshot") {
@@ -3729,6 +3781,23 @@ $recipeImportBtn?.addEventListener("click", () => {
         logMacroScan("Snapshot sin frame válido", { reason, readyState: $macroScanVideo?.readyState || 0 });
         return null;
       }
+      const frameDiag = getFrameDiagnostics(frame);
+      logMacroScan("Captura de frame", { reason, ...frameDiag });
+      if (!frameDiag.ok) return null;
+
+      if (_macroScanDetector?.detect) {
+        try {
+          const detectorCodes = await _macroScanDetector.detect(frame);
+          const detectorValue = normalizeDetectedBarcode(detectorCodes?.[0]?.rawValue || "");
+          if (detectorValue) {
+            logMacroScan("Snapshot detectado por BarcodeDetector", { reason, value: detectorValue });
+            return detectorValue;
+          }
+        } catch (err) {
+          logMacroScan("Snapshot BarcodeDetector falló", { reason, error: err?.name || err?.message || err });
+        }
+      }
+
       const mod = await loadMacroScanZxingModule();
       const {
         BrowserMultiFormatReader,
@@ -3801,13 +3870,24 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroScanAddProduct.classList.add("hidden");
     delete $macroScanAddProduct.dataset.barcode;
     delete $macroScanAddProduct.dataset.mode;
+    delete $macroScanAddProduct.dataset.pendingLookupId;
     _macroScanPendingProduct = null;
+    _macroScanPendingLookup = null;
   }
 
-  function showMacroScanAddProduct({ barcode, mode, label }) {
+  function showMacroScanAddProduct({ barcode, mode, label, pendingProduct = null }) {
     if (!$macroScanAddProduct) return;
     $macroScanAddProduct.dataset.barcode = String(barcode || "").trim();
     $macroScanAddProduct.dataset.mode = mode || "manual";
+    const lookupId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    $macroScanAddProduct.dataset.pendingLookupId = lookupId;
+    _macroScanPendingLookup = {
+      id: lookupId,
+      barcode: String(barcode || "").trim(),
+      mode: mode || "manual",
+      product: pendingProduct ? { ...pendingProduct } : null,
+      at: Date.now(),
+    };
     if (label) $macroScanAddProduct.textContent = label;
     $macroScanAddProduct.classList.remove("hidden");
   }
@@ -3869,7 +3949,11 @@ $recipeImportBtn?.addEventListener("click", () => {
     }
 
     if (_macroScanStream) {
-      try { _macroScanStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+      try {
+        const tracks = _macroScanStream.getTracks();
+        tracks.forEach((t) => t.stop());
+        logMacroScan("Tracks detenidas", tracks.map((t) => ({ kind: t.kind, readyState: t.readyState, enabled: t.enabled })));
+      } catch (_) {}
       _macroScanStream = null;
     }
 
@@ -3947,7 +4031,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (off) {
       _macroScanPendingProduct = off;
       setMacroScanStatus(`Encontrado: ${off.name}${off.brand ? ` · ${off.brand}` : ""}. Pulsa “Abrir ficha”.`);
-      showMacroScanAddProduct({ barcode: clean, mode: "off", label: "Abrir ficha" });
+      showMacroScanAddProduct({ barcode: clean, mode: "off", label: "Abrir ficha", pendingProduct: off });
       if ($macroManualBarcode) $macroManualBarcode.value = clean;
       if ($macroManualName) $macroManualName.value = off.name;
       if ($macroManualBrand) $macroManualBrand.value = off.brand || "";
@@ -4037,8 +4121,19 @@ $recipeImportBtn?.addEventListener("click", () => {
         video: { facingMode: { ideal: "environment" } },
         audio: false,
       });
+      const track = _macroScanStream.getVideoTracks?.()[0] || null;
+      logMacroScan("Stream recibido", {
+        hasStream: Boolean(_macroScanStream),
+        trackSettings: track?.getSettings?.() || null,
+        trackConstraints: track?.getConstraints?.() || null,
+      });
       $macroScanVideo.srcObject = _macroScanStream;
       await $macroScanVideo.play();
+      logMacroScan("Video reproduciendo", {
+        readyState: $macroScanVideo.readyState,
+        videoWidth: $macroScanVideo.videoWidth,
+        videoHeight: $macroScanVideo.videoHeight,
+      });
     } catch (err) {
       setMacroScanStatus(`No pude abrir la cámara: ${err?.name || err?.message || "error"}`);
       await stopMacroBarcodeScan();
@@ -4431,10 +4526,20 @@ $recipeImportBtn?.addEventListener("click", () => {
   $macroScanAddProduct?.addEventListener("click", () => {
     const mode = String($macroScanAddProduct?.dataset?.mode || "manual");
     const barcode = String($macroScanAddProduct?.dataset?.barcode || $macroManualBarcode?.value || "").trim();
+    const pendingLookupId = String($macroScanAddProduct?.dataset?.pendingLookupId || "").trim();
     if (barcode && $macroManualBarcode) $macroManualBarcode.value = barcode;
 
-    if (mode === "off" && _macroScanPendingProduct) {
-      const pendingProduct = { ..._macroScanPendingProduct };
+    if (mode === "off") {
+      const pendingProduct = (pendingLookupId && _macroScanPendingLookup?.id === pendingLookupId && _macroScanPendingLookup?.product)
+        ? { ..._macroScanPendingLookup.product }
+        : (_macroScanPendingProduct ? { ..._macroScanPendingProduct } : null);
+      if (!pendingProduct) {
+        logMacroScan("Abrir ficha cancelado: producto pendiente no disponible", { mode, barcode, pendingLookupId });
+        setMacroScanStatus("No tengo el producto en memoria. Repite la búsqueda o crea manualmente.");
+        macroModalState.source = "manual";
+        renderMacroModalResults();
+        return;
+      }
       logMacroScan("Abrir ficha desde resultado OFF", { barcode, name: pendingProduct?.name || "" });
       closeMacroAddModal();
       openMacroProductModal(pendingProduct, macroModalState.meal, 100);

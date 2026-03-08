@@ -295,6 +295,7 @@ if ($viewRecipes) {
   const $macroManualSave = document.getElementById("macro-manual-save");
   const $macroProductModalBackdrop = document.getElementById("macro-product-modal-backdrop");
   const $macroProductModalClose = document.getElementById("macro-product-modal-close");
+  const $macroProductModalTitle = document.getElementById("macro-product-modal-title");
   const $macroProductCancel = document.getElementById("macro-product-cancel");
   const $macroProductAdd = document.getElementById("macro-product-add");
   const $macroProductName = document.getElementById("macro-product-name");
@@ -2726,7 +2727,7 @@ $recipeImportBtn?.addEventListener("click", () => {
             <span class="macro-consumed">${value}${unit}</span>
             <span class="macro-sep">/</span>
             <input
-              class="macro-goal-input"
+              class="macro-goal-input-stats"
               type="number"
               min="0"
               step="${step}"
@@ -2770,11 +2771,13 @@ $recipeImportBtn?.addEventListener("click", () => {
       const mt = computeMealTotals(entries);
       const entryHtml = entries.map((entry, idx) => `
       <div class="macro-entry">
+      <button class="macro-entry-open" data-macro-open="${meal}:${idx}" type="button" aria-label="Abrir ficha de ${entry.nameSnapshot}">
       <div class="contenido-comida-lista">
       <strong>${entry.nameSnapshot}</strong>
       <div class="hint">${entry.type === "recipe" ? `${roundMacro(entry.servings || 1)} rac` : `${roundMacro(entry.grams || 0)}g`}
       </div>
       </div>
+      </button>
       <div class="macro-entry-right">
       <div class="kcals-dato">
       ${roundMacro(entry.macrosSnapshot.kcal)} kcal
@@ -2804,15 +2807,23 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   let _macroProductMeal = "breakfast";
   let _macroProductDraft = null;
+  let _macroProductEntryTarget = null; // { meal, idx } cuando se edita una entrada consumida
 
   function setMacroProductEditing(editing) {
     $macroProductModalBackdrop?.classList.toggle("is-editing", !!editing);
     if ($macroProductEditToggle) $macroProductEditToggle.textContent = editing ? "Listo" : "Editar";
   }
 
+  function setMacroProductEntryTarget(target) {
+    _macroProductEntryTarget = target || null;
+    if ($macroProductAdd) $macroProductAdd.textContent = _macroProductEntryTarget ? "Guardar" : "Añadir";
+    if ($macroProductModalTitle) $macroProductModalTitle.textContent = _macroProductEntryTarget ? "Producto (consumo)" : "Producto";
+  }
+
   function closeMacroProductModal() {
     $macroProductModalBackdrop?.classList.add("hidden");
     _macroProductDraft = null;
+    setMacroProductEntryTarget(null);
     setMacroProductEditing(false);
   }
 
@@ -2879,12 +2890,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     applySeg($macroProductDonutFat, segFat);
   }
 
-  function openMacroProductModal(product, meal, grams = 100) {
+  function openMacroProductModal(product, meal, grams = 100, entryTarget = null) {
     if (!$macroProductModalBackdrop) return;
     if (!product) return;
 
     _macroProductMeal = meal || "breakfast";
     _macroProductDraft = product;
+    setMacroProductEntryTarget(entryTarget);
     setMacroProductEditing(false);
 
     if ($macroProductName) $macroProductName.value = product.name || "";
@@ -2900,6 +2912,69 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroProductModalBackdrop.classList.remove("hidden");
     renderMacroProductSummary();
     try { $macroProductGrams?.focus(); } catch (_) {}
+  }
+
+  function openMacroEntryEditor(meal, idx) {
+    const log = getDailyLog(selectedMacroDate);
+    const i = Number(idx);
+    const entry = log?.meals?.[meal]?.entries?.[i];
+    if (!entry) return;
+
+    if (entry.type === "product") {
+      const found = nutritionProducts.find((p) => p.id === entry.refId);
+      const grams = Math.max(0, Number(entry.grams) || 0);
+      const snapshotPer100 = (grams > 0 && entry.macrosSnapshot)
+        ? {
+          carbs: (Number(entry.macrosSnapshot.carbs) || 0) / grams * 100,
+          protein: (Number(entry.macrosSnapshot.protein) || 0) / grams * 100,
+          fat: (Number(entry.macrosSnapshot.fat) || 0) / grams * 100,
+          kcal: (Number(entry.macrosSnapshot.kcal) || 0) / grams * 100,
+        }
+        : { carbs: 0, protein: 0, fat: 0, kcal: 0 };
+      const fallback = {
+        id: entry.refId,
+        name: entry.nameSnapshot,
+        brand: "",
+        barcode: "",
+        servingBaseGrams: 100,
+        macros: snapshotPer100,
+        source: "snapshot",
+      };
+      openMacroProductModal(found || fallback, meal, grams || 100, { meal, idx: i });
+      return;
+    }
+
+    if (entry.type === "recipe") {
+      const current = Math.max(0.01, Number(entry.servings) || 1);
+      const raw = window.prompt(`Raciones para "${entry.nameSnapshot}"`, String(current));
+      if (raw == null) return;
+      const next = Number(String(raw).trim().replace(",", "."));
+      if (!Number.isFinite(next) || next <= 0) return;
+
+      const recipe = recipes.find((r) => r.id === entry.refId);
+      if (recipe) {
+        const base = normalizeMacros(recipe.nutritionPerServing || recipe.nutritionTotals || {});
+        entry.servings = next;
+        entry.macrosSnapshot = normalizeMacros({
+          carbs: (Number(base.carbs) || 0) * next,
+          protein: (Number(base.protein) || 0) * next,
+          fat: (Number(base.fat) || 0) * next,
+          kcal: (Number(base.kcal) || 0) * next,
+        });
+      } else {
+        const factor = current > 0 ? (next / current) : 1;
+        entry.servings = next;
+        entry.macrosSnapshot = normalizeMacros({
+          carbs: (Number(entry.macrosSnapshot?.carbs) || 0) * factor,
+          protein: (Number(entry.macrosSnapshot?.protein) || 0) * factor,
+          fat: (Number(entry.macrosSnapshot?.fat) || 0) * factor,
+          kcal: (Number(entry.macrosSnapshot?.kcal) || 0) * factor,
+        });
+      }
+
+      persistNutrition();
+      renderMacrosView();
+    }
   }
 
   function renderMacroModalResults() {
@@ -3315,6 +3390,13 @@ $recipeImportBtn?.addEventListener("click", () => {
         persistNutrition();
         renderMacrosView();
       }
+      return;
+    }
+
+    const openBtn = e.target.closest("[data-macro-open]");
+    if (openBtn) {
+      const [meal, idx] = String(openBtn.dataset.macroOpen || "").split(":");
+      openMacroEntryEditor(meal, idx);
     }
   });
 
@@ -3407,7 +3489,22 @@ $recipeImportBtn?.addEventListener("click", () => {
     }
 
     if (saved.barcode) upsertBarcodeMapping(saved.barcode, saved.id);
-    addProductToMeal(_macroProductMeal || macroModalState.meal || "breakfast", saved, grams);
+    if (_macroProductEntryTarget) {
+      const { meal, idx } = _macroProductEntryTarget;
+      const log = getDailyLog(selectedMacroDate);
+      const entry = log?.meals?.[meal]?.entries?.[Number(idx)];
+      if (entry) {
+        entry.type = "product";
+        entry.refId = saved.id;
+        entry.nameSnapshot = saved.name;
+        entry.grams = grams;
+        entry.macrosSnapshot = normalizeMacros(calcProductMacros(saved, grams));
+        persistNutrition();
+        renderMacrosView();
+      }
+    } else {
+      addProductToMeal(_macroProductMeal || macroModalState.meal || "breakfast", saved, grams);
+    }
     closeMacroProductModal();
   });
 

@@ -902,16 +902,25 @@
   margin: 0;
   justify-content: end;
 }
-
-.macro-goal-input::placeholder{ 
+.macro-goal-input-stats{
+  width: 50px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  border: 0px solid rgba(255,255,255,.14);
+  background: transparent;
+  color: var(--txt);
+  margin: 0;
+  justify-content: end;
+}
+.macro-goal-input-stats::placeholder{ 
   color: rgb(255, 255, 255);
   font-weight: 500;
   justify-content: end;
   text-align: end;
-  min-width: 20px;
+  min-width: 40px;
   max-width: 20px;
 }
-.macro-goal-input:focus{ outline: none; border-color: rgba(245,230,166,.55); box-shadow: 0 0 0 3px rgba(245,230,166,.12); }
+.macro-goal-input-stats:focus{ outline: none; border-color: rgba(245,230,166,.55); box-shadow: 0 0 0 3px rgba(245,230,166,.12); }
 .macro-stat { 
   background: rgba(255,255,255,.03); 
   border: 1px solid rgba(255,255,255,.08); 
@@ -939,7 +948,8 @@
   margin-top: 2px; 
   justify-content: center;
 }
-.macro-consumed{ font-weight: 700; }
+.macro-consumed{ font-weight: 700;
+ }
 .macro-sep{ opacity: .7; }
 .macro-unit{ opacity: .85; }
 .macro-progress { margin-top: 6px; height: 6px; border-radius: 999px; background: rgba(255,255,255,.1); overflow: hidden; }
@@ -995,11 +1005,30 @@
 }
 .macro-entry { 
   display:flex; 
-  justify-content:center; 
+  justify-content:space-between; 
+  align-items: center;
   gap:8px; 
   padding:1px; 
   border-radius: 10px; 
   background: transparent;
+}
+.macro-entry-open{
+  flex: 1;
+  display: block;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 6px 8px;
+  border-radius: 10px;
+  color: inherit;
+  cursor: pointer;
+}
+.macro-entry-open:hover{
+  background: rgba(255,255,255,.04);
+}
+.macro-entry-open:focus-visible{
+  outline: 2px solid rgba(245,230,166,.45);
+  outline-offset: 2px;
 }
 .icon-btn-eliminar-comida{
   background: transparent;
@@ -1037,7 +1066,8 @@
   align-items:start;
   gap:6px;
   justify-content:space-between;
-  width:100%;
+  width:auto;
+  margin-left: auto;
 }
 .kcals-dato{ 
   font-size: 14px; 
@@ -1589,3 +1619,58 @@
   font-size: 16px;
 }
 
+.macro-product-nutrition-card{
+  padding:14px;
+  border-radius:14px;
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.06);
+}
+
+.macro-section-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:12px;
+}
+
+.macro-section-title{
+  font-size:15px;
+  font-weight:600;
+}
+
+.macro-chip{
+  font-size:11px;
+  padding:4px 8px;
+  border-radius:999px;
+  background:rgba(255,255,255,0.08);
+}
+
+.macro-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+}
+
+.macro-field{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+
+.macro-label{
+  font-size:11px;
+  opacity:.7;
+}
+
+.macro-field input{
+  height:34px;
+  padding:0 10px;
+  border-radius:8px;
+  border:1px solid rgba(255,255,255,0.08);
+  background:rgba(0,0,0,0.25);
+  font-size:13px;
+}
+
+.macro-field-span-2{
+  grid-column:span 2;
+}

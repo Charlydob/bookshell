@@ -1,4 +1,5 @@
 import { db, auth } from "./firebase-shared.js";
+import { MET_CATALOG } from "./met-catalog.js";
 
 import {
   ref,
@@ -122,6 +123,7 @@ if ($viewGym) {
   const $gymCreateStrengthTypeField = document.getElementById("gym-create-strength-type-field");
   const $gymCreateStrengthType = document.getElementById("gym-create-strength-type");
   const $gymCreateTitle = $gymCreateModal?.querySelector(".modal-title");
+  const $gymCreateMetCategory = document.getElementById("gym-create-met-category");
 
   const $gymTemplateModal = document.getElementById("gym-template-modal");
   const $gymTemplateClose = document.getElementById("gym-template-close");
@@ -199,8 +201,10 @@ const basePath = `v2/users/${uid}/gym/gym`;
     renderMuscleChips();
     renderCreateMuscleChips();
     bindEvents();
+    populateMetCategoryOptions();
     restoreGymScreen();
     subscribeData();
+    exposeGymIntegrationApi();
     initBodyweightForm();
     window.addEventListener("online", () => {
       drainGymOutbox();
@@ -297,6 +301,7 @@ function bindEvents() {
       type: exerciseType,
       strengthType: exerciseType === "strength" ? strengthType : null,
       unilateral: Boolean($gymCreateUnilateral?.checked),
+      metCategoryId: String($gymCreateMetCategory?.value || "").trim(),
       updatedAt: now
     };
 
@@ -349,6 +354,9 @@ function bindEvents() {
     const workout = ensureWorkoutDraft();
     if (!workout) return;
     workout.name = $gymWorkoutName.value;
+    activeSet.updatedAt = Date.now();
+    activeSet.updatedAt = Date.now();
+    activeSet.updatedAt = Date.now();
     scheduleWorkoutSave();
     renderMetrics();
   });
@@ -418,19 +426,20 @@ function bindEvents() {
     const setIndex = Number(row.dataset.setIndex);
     if (!exercise.sets || !exercise.sets[setIndex]) return;
 
+    const activeSet = exercise.sets[setIndex];
     if (field === "done") {
       const wasDone = areAllSetsDone(exercise);
       if (target.checked) {
         const exerciseType = getExerciseType(exercise, exerciseId);
         if (exerciseType !== "cardio") {
-          fillFromPlaceholdersIfEmpty(row, exercise.sets[setIndex], {
+          fillFromPlaceholdersIfEmpty(row, activeSet, {
             exerciseType,
             unilateral: getExerciseUnilateral(exercise, exerciseId),
             useBodyweight: getExerciseUseBodyweight(exercise)
           });
         }
       }
-      exercise.sets[setIndex].done = target.checked;
+      activeSet.done = target.checked;
       const isDone = areAllSetsDone(exercise);
       exercise.collapsed = isDone;
       shouldReorder = wasDone !== isDone;
@@ -438,12 +447,13 @@ function bindEvents() {
     } else if (field === "timeText") {
       const { sec, text } = parseDurationFromDigits(target.value);
       target.value = text;
-      exercise.sets[setIndex].timeSec = sec;
+      activeSet.timeSec = sec;
     } else {
       const value = parseSetInput(field, target.value);
-      exercise.sets[setIndex][field] = value;
+      activeSet[field] = value;
     }
 
+    activeSet.updatedAt = Date.now();
     scheduleWorkoutSave();
     renderMetrics();
     updateExerciseCardState(exerciseId, card);
@@ -1884,6 +1894,7 @@ function bindEvents() {
     }
     updateCreateExerciseTypeUI();
     $gymCreateUnilateral.checked = Boolean(exercise.unilateral);
+    if ($gymCreateMetCategory) $gymCreateMetCategory.value = String(exercise.metCategoryId || "");
     updateActiveChipsMulti($gymCreateMuscleChips, createMuscles);
     if ($gymCreateTitle) {
       $gymCreateTitle.textContent = "Editar ejercicio";
@@ -1935,6 +1946,7 @@ function bindEvents() {
     if ($gymCreateStrengthType) {
       $gymCreateStrengthType.value = "reps";
     }
+    if ($gymCreateMetCategory) $gymCreateMetCategory.value = "";
     updateCreateExerciseTypeUI();
     if ($gymCreateTitle) {
       $gymCreateTitle.textContent = "Crear ejercicio";
@@ -1953,6 +1965,7 @@ function bindEvents() {
     if ($gymCreateStrengthType) {
       $gymCreateStrengthType.value = "reps";
     }
+    if ($gymCreateMetCategory) $gymCreateMetCategory.value = "";
     updateCreateExerciseTypeUI();
     if ($gymCreateTitle) {
       $gymCreateTitle.textContent = "Crear ejercicio";
@@ -2034,6 +2047,7 @@ function bindEvents() {
         unilateralSnapshot: unilateral,
         typeSnapshot: kind,
         strengthTypeSnapshot: kind === "strength" ? strengthType : null,
+        metCategoryIdSnapshot: String(exercise.metCategoryId || "").trim(),
         originalIndex: index,
         useBodyweight: false,
         sets
@@ -3271,6 +3285,7 @@ function bindEvents() {
       unilateralSnapshot: unilateral,
       typeSnapshot: kind,
       strengthTypeSnapshot: kind === "strength" ? strengthType : null,
+      metCategoryIdSnapshot: String(exercise.metCategoryId || "").trim(),
       originalIndex: getNextExerciseOriginalIndex(workout),
       useBodyweight: false,
       sets: buildSetsFromHistory(exerciseId, workout?.id, { exerciseType, unilateral })
@@ -3366,6 +3381,13 @@ function bindEvents() {
       $gymCreateMuscleChips.appendChild(chip);
     });
     updateActiveChipsMulti($gymCreateMuscleChips, createMuscles);
+  }
+
+  function populateMetCategoryOptions() {
+    if (!$gymCreateMetCategory) return;
+    const options = ['<option value="">Sin categoría MET</option>']
+      .concat(MET_CATALOG.map((item) => `<option value="${item.id}">${item.label} · MET ${item.metValue}</option>`));
+    $gymCreateMetCategory.innerHTML = options.join("");
   }
 
   function updateActiveChips(container, value) {
@@ -4067,4 +4089,26 @@ function bindEvents() {
     }
     return "🔥";
   }
+  function getBodyWeightKgForDate(dateKey) {
+    const direct = Number(bodyweightByDate?.[dateKey]?.weightKg);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const keys = Object.keys(bodyweightByDate || {}).filter((key) => key <= dateKey).sort();
+    for (let i = keys.length - 1; i >= 0; i -= 1) {
+      const value = Number(bodyweightByDate?.[keys[i]]?.weightKg);
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+    return null;
+  }
+
+  function exposeGymIntegrationApi() {
+    try {
+      window.__bookshellGym = {
+        getExercisesCatalog: () => ({ ...(exercises || {}) }),
+        getWorkoutsByDate: () => ({ ...(workoutsByDate || {}) }),
+        getBodyWeightKgForDate,
+        getLatestBodyWeightKg: () => getBodyWeightKgForDate(dateKeyLocal(new Date())),
+      };
+    } catch (_) {}
+  }
+
 }

@@ -4458,24 +4458,128 @@ $recipeImportBtn?.addEventListener("click", () => {
     return { ok, zoom: current ?? zoom, min, max };
   }
 
-  function captureMacroScanFrame() {
+  function parseCssLengthToPx(value, basePx = 0) {
+    const raw = String(value || "").trim();
+    if (!raw) return 0;
+    if (raw.endsWith("%")) {
+      const pct = Number.parseFloat(raw.slice(0, -1));
+      return Number.isFinite(pct) ? (basePx * pct) / 100 : 0;
+    }
+    const px = Number.parseFloat(raw);
+    return Number.isFinite(px) ? px : 0;
+  }
+
+  function getScannerGuideRect(wrapperRect) {
+    if (!$macroScanOverlay || !wrapperRect?.width || !wrapperRect?.height) return null;
+    const styles = window.getComputedStyle($macroScanOverlay);
+    const hidden = styles.display === "none" || styles.visibility === "hidden" || Number(styles.opacity || 1) === 0;
+    if (hidden) return null;
+    const left = parseCssLengthToPx(styles.getPropertyValue("--scan-left"), wrapperRect.width);
+    const top = parseCssLengthToPx(styles.getPropertyValue("--scan-top"), wrapperRect.height);
+    const width = parseCssLengthToPx(styles.getPropertyValue("--scan-width"), wrapperRect.width);
+    const height = parseCssLengthToPx(styles.getPropertyValue("--scan-height"), wrapperRect.height);
+    if (width < 2 || height < 2) return null;
+    return {
+      left: Math.max(0, Math.min(wrapperRect.width, left)),
+      top: Math.max(0, Math.min(wrapperRect.height, top)),
+      width: Math.max(1, Math.min(wrapperRect.width, width)),
+      height: Math.max(1, Math.min(wrapperRect.height, height)),
+    };
+  }
+
+  function captureVisibleScannerFrame({ useGuide = true } = {}) {
     const srcVideo = ($macroScanVideo && $macroScanVideo.videoWidth && $macroScanVideo.videoHeight)
       ? $macroScanVideo
       : ($macroScanHtml5Host?.querySelector?.("video") || null);
     if (!srcVideo || !srcVideo.videoWidth || !srcVideo.videoHeight) return null;
+    const wrapper = $macroScanVideoWrap || srcVideo.parentElement || null;
+    const wrapperRect = wrapper?.getBoundingClientRect?.();
+    const videoRect = srcVideo.getBoundingClientRect?.();
+    if (!wrapperRect?.width || !wrapperRect?.height || !videoRect?.width || !videoRect?.height) return ensureCanvasFromSource(srcVideo);
+
+    const srcW = srcVideo.videoWidth;
+    const srcH = srcVideo.videoHeight;
+    const fit = String(window.getComputedStyle(srcVideo).objectFit || "contain").trim().toLowerCase();
+    const normFit = ["cover", "contain", "fill", "none", "scale-down"].includes(fit) ? fit : "contain";
+    const scaleContain = Math.min(wrapperRect.width / srcW, wrapperRect.height / srcH);
+    const scaleCover = Math.max(wrapperRect.width / srcW, wrapperRect.height / srcH);
+    let renderScale = normFit === "cover" ? scaleCover : scaleContain;
+    if (normFit === "fill") {
+      renderScale = null;
+    } else if (normFit === "none") {
+      renderScale = 1;
+    } else if (normFit === "scale-down") {
+      renderScale = Math.min(1, scaleContain);
+    }
+
+    const renderedW = normFit === "fill" ? wrapperRect.width : srcW * (renderScale || 1);
+    const renderedH = normFit === "fill" ? wrapperRect.height : srcH * (renderScale || 1);
+    const renderedLeft = (wrapperRect.width - renderedW) / 2;
+    const renderedTop = (wrapperRect.height - renderedH) / 2;
+
+    logMacroEvent(["scanner", "capture", "geometry"], "geometría de captura calculada", {
+      source: `${srcW}x${srcH}`,
+      wrap: `${Math.round(wrapperRect.width)}x${Math.round(wrapperRect.height)}`,
+      rendered: `${Math.round(renderedW)}x${Math.round(renderedH)}`,
+      fit: normFit,
+    }, "info");
+
+    const visibleRect = {
+      left: 0,
+      top: 0,
+      width: wrapperRect.width,
+      height: wrapperRect.height,
+    };
+    const guideRect = useGuide ? getScannerGuideRect(wrapperRect) : null;
+    const targetRect = guideRect || visibleRect;
+
+    const clipLeft = Math.max(targetRect.left, renderedLeft);
+    const clipTop = Math.max(targetRect.top, renderedTop);
+    const clipRight = Math.min(targetRect.left + targetRect.width, renderedLeft + renderedW);
+    const clipBottom = Math.min(targetRect.top + targetRect.height, renderedTop + renderedH);
+    const clipW = Math.max(1, clipRight - clipLeft);
+    const clipH = Math.max(1, clipBottom - clipTop);
+
+    const toSourceX = srcW / renderedW;
+    const toSourceY = srcH / renderedH;
+    const sx = Math.max(0, Math.min(srcW - 1, (clipLeft - renderedLeft) * toSourceX));
+    const sy = Math.max(0, Math.min(srcH - 1, (clipTop - renderedTop) * toSourceY));
+    const sWidth = Math.max(1, Math.min(srcW - sx, clipW * toSourceX));
+    const sHeight = Math.max(1, Math.min(srcH - sy, clipH * toSourceY));
+
     if (!_macroScanFrameCanvas) _macroScanFrameCanvas = document.createElement("canvas");
-    _macroScanFrameCanvas.width = srcVideo.videoWidth;
-    _macroScanFrameCanvas.height = srcVideo.videoHeight;
+    _macroScanFrameCanvas.width = Math.round(sWidth);
+    _macroScanFrameCanvas.height = Math.round(sHeight);
     const ctx = _macroScanFrameCanvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return null;
-    ctx.drawImage(srcVideo, 0, 0, srcVideo.videoWidth, srcVideo.videoHeight);
-    logMacroEvent(["scanner", "camera", "resolution"], "frame congelado para OCR/barcode", {
-      source: `${srcVideo.videoWidth}x${srcVideo.videoHeight}`,
-      canvas: `${_macroScanFrameCanvas.width}x${_macroScanFrameCanvas.height}`,
+    ctx.drawImage(
+      srcVideo,
+      sx,
+      sy,
+      sWidth,
+      sHeight,
+      0,
+      0,
+      _macroScanFrameCanvas.width,
+      _macroScanFrameCanvas.height,
+    );
+    logMacroEvent(["scanner", "capture", "crop"], "crop visible aplicado", {
+      sx: Math.round(sx),
+      sy: Math.round(sy),
+      sWidth: Math.round(sWidth),
+      sHeight: Math.round(sHeight),
+      guide: guideRect ? `${Math.round(guideRect.width)}x${Math.round(guideRect.height)}` : "off",
+    }, "info");
+    logMacroEvent(["scanner", "capture", "success"], "captura visible lista para análisis", {
+      output: `${_macroScanFrameCanvas.width}x${_macroScanFrameCanvas.height}`,
     }, "info");
     _macroScanOcrDebugState.source = _macroScanFrameCanvas;
     updateMacroScanOcrDebugCanvases();
     return _macroScanFrameCanvas;
+  }
+
+  function captureMacroScanFrame() {
+    return captureVisibleScannerFrame({ useGuide: true });
   }
 
 

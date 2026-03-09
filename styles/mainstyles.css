@@ -367,6 +367,7 @@ body.has-open-modal {
 }
 
 .modal-scroll{
+  min-height: 0;
   padding: 8px 12px 14px;
   overflow:auto;
   -webkit-overflow-scrolling: touch;
@@ -447,6 +448,7 @@ body.has-open-modal {
 }
 
 .modal-scroll{
+  min-height: 0;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
 }
@@ -870,9 +872,14 @@ main {
   gap: 8px;
 }
 .modal-comida{
-  min-height: 700px;
+  width: min(100%, 520px);
+  min-height: min(82dvh, 620px);
+  max-height: min(92dvh, 760px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border: 1px solid rgba(255,255,255,0.10);
   border-radius: 22px;
-  background: transparent;
-  backdrop-filter: blur(1px);
+  background: rgba(10, 14, 22, 0.94);
+  backdrop-filter: blur(8px);
 }

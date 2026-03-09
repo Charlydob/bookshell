@@ -213,6 +213,8 @@ if ($viewRecipes) {
   const $filterLaura = document.getElementById("recipes-filter-laura");
 
   const $shelfSearch = document.getElementById("recipes-shelf-search");
+  const $recipesViewToggle = document.getElementById("recipes-view-toggle");
+  const $recipesViewButtons = document.querySelectorAll("[data-recipes-view]");
   const $shelfResults = document.getElementById("recipes-shelf-results");
   const $shelfEmpty = document.getElementById("recipes-shelf-empty");
   const $shelfList = document.getElementById("recipes-list");
@@ -422,6 +424,9 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     favoritesOnly: false,
     lauraOnly: false,
   };
+  const RECIPE_VIEW_MODE_STORAGE_KEY = `${getStorageKey()}.ui.viewMode`;
+  const allowedRecipeViews = new Set(["shelf", "cards"]);
+  let recipesViewMode = "shelf";
 
   const defaultGoals = { carbs: 180, protein: 140, fat: 65, kcal: 2200 };
   const defaultIntegrationConfig = { linkedWorkHabitIds: [], workCaloriesPerMatchedDay: 700, bodyWeightKg: null };
@@ -448,6 +453,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     excess: "#ff6666",
   };
   let nutritionSyncMeta = { version: 2, migratedAt: 0, updatedAt: 0 };
+  recipesViewMode = getRecipeViewModePreference();
   let nutritionUnsubscribe = null;
   const MACRO_USAGE_KEY_PREFIX = "bookshell.macro.usage.v1";
   const getMacroUsageKey = (uid = currentUid) => uid ? `${MACRO_USAGE_KEY_PREFIX}.${uid}` : MACRO_USAGE_KEY_PREFIX;
@@ -997,44 +1003,73 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return `${roundMacro(n)}${suffix}`;
   }
 
-  function renderRecipeListPreview(list = []) {
+  function getRecipeViewModePreference() {
+    try {
+      const raw = String(localStorage.getItem(RECIPE_VIEW_MODE_STORAGE_KEY) || "").trim();
+      return allowedRecipeViews.has(raw) ? raw : "shelf";
+    } catch (_) {
+      return "shelf";
+    }
+  }
+
+  function persistRecipeViewMode(mode) {
+    if (!allowedRecipeViews.has(mode)) return;
+    try { localStorage.setItem(RECIPE_VIEW_MODE_STORAGE_KEY, mode); } catch (_) {}
+  }
+
+  function renderRecipesViewToggle() {
+    $recipesViewButtons.forEach((btn) => {
+      const active = btn.dataset.recipesView === recipesViewMode;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    });
+  }
+
+  function buildRecipeKpiChip(type, text, muted = false) {
+    const mutedClass = muted ? " is-muted" : "";
+    return `<span class="recipe-kpi-chip recipe-kpi-chip-${type}${mutedClass}">${escapeHtml(text)}</span>`;
+  }
+
+  function renderRecipeCardRow(recipe) {
+    const nutrition = getRecipeNutritionSummary(recipe);
+    const cost = getRecipeCostSummary(recipe);
+    const metadata = [recipe.meal, recipe.health, ...(Array.isArray(recipe.tags) ? recipe.tags : [])].filter(Boolean).join(" · ");
+    const hasImage = Boolean(String(recipe.imageURL || "").trim());
+    const imageMarkup = hasImage
+      ? `<div class="recipe-row-media"><img src="${escapeAttr(recipe.imageURL)}" alt="${escapeAttr(recipe.title || "Receta")}" loading="lazy"/></div>`
+      : "";
+    return `
+      <article class="recipe-row-card" data-open-recipe="${escapeAttr(recipe.id)}">
+        ${imageMarkup}
+        <div class="recipe-row-body">
+          <h4 class="recipe-row-title">${escapeHtml(recipe.title || "Receta")}</h4>
+          ${metadata ? `<p class="recipe-row-meta">${escapeHtml(metadata)}</p>` : ""}
+          <div class="recipe-row-metrics">
+            ${buildRecipeKpiChip("kcal", nutrition.hasData ? `${formatMetricValue(nutrition.totals.kcal, " kcal")}` : "— kcal", !nutrition.hasData)}
+            ${buildRecipeKpiChip("carbs", nutrition.hasData ? `C ${formatMetricValue(nutrition.totals.carbs, "g")}` : "C —", !nutrition.hasData)}
+            ${buildRecipeKpiChip("protein", nutrition.hasData ? `P ${formatMetricValue(nutrition.totals.protein, "g")}` : "P —", !nutrition.hasData)}
+            ${buildRecipeKpiChip("fat", nutrition.hasData ? `G ${formatMetricValue(nutrition.totals.fat, "g")}` : "G —", !nutrition.hasData)}
+            ${buildRecipeKpiChip("cost", cost.hasData ? formatCurrency(cost.total) : "—", !cost.hasData)}
+          </div>
+        </div>
+      </article>
+    `;
+  }
+
+  function renderRecipeCardsView(list = []) {
     if (!$recipesListPreview) return;
     if (!list.length) {
       $recipesListPreview.innerHTML = '<div class="recipe-row-empty">No hay recetas que coincidan</div>';
       return;
     }
-    const rows = list.map((recipe) => {
-      const nutrition = getRecipeNutritionSummary(recipe);
-      const cost = getRecipeCostSummary(recipe);
-      const metadata = [recipe.meal, recipe.health, ...(Array.isArray(recipe.tags) ? recipe.tags.slice(0, 2) : [])]
-        .filter(Boolean)
-        .join(" · ");
-      const hasImage = Boolean(String(recipe.imageURL || "").trim());
-      const imageMarkup = hasImage
-        ? `<div class="recipe-row-media"><img src="${escapeAttr(recipe.imageURL)}" alt="${escapeAttr(recipe.title || "Receta")}" loading="lazy"/></div>`
-        : "";
-      const costText = cost.hasData ? formatCurrency(cost.total) : "—";
-      return `
-        <article class="recipe-row-card" data-open-recipe="${escapeAttr(recipe.id)}">
-          ${imageMarkup}
-          <div class="recipe-row-body">
-            <h4 class="recipe-row-title">${escapeHtml(recipe.title || "Receta")}</h4>
-            ${metadata ? `<p class="recipe-row-meta">${escapeHtml(metadata)}</p>` : ""}
-            <div class="recipe-row-metrics">
-              <span class="recipe-row-metric">${nutrition.hasData ? formatMetricValue(nutrition.totals.kcal, " kcal") : "— kcal"}</span>
-              <span class="recipe-row-metric">C ${nutrition.hasData ? formatMetricValue(nutrition.totals.carbs, "g") : "—"}</span>
-              <span class="recipe-row-metric">P ${nutrition.hasData ? formatMetricValue(nutrition.totals.protein, "g") : "—"}</span>
-              <span class="recipe-row-metric">G ${nutrition.hasData ? formatMetricValue(nutrition.totals.fat, "g") : "—"}</span>
-              <span class="recipe-row-metric recipe-row-metric-cost">${costText}</span>
-            </div>
-          </div>
-        </article>
-      `;
-    });
-    $recipesListPreview.innerHTML = rows.join("");
+    $recipesListPreview.innerHTML = list.map((recipe) => renderRecipeCardRow(recipe)).join("");
     $recipesListPreview.querySelectorAll("[data-open-recipe]").forEach((node) => {
       node.addEventListener("click", () => openRecipeDetail(node.getAttribute("data-open-recipe")));
     });
+  }
+
+  function renderRecipeListPreview(list = []) {
+    renderRecipeCardsView(list);
   }
 
   function resolveRecipeServings(recipe) {
@@ -1312,7 +1347,7 @@ function linkifyNotesHtml(input) {
     });
   }
 
-  function renderShelf() {
+  function renderRecipeShelf() {
     if (!$shelfList) return;
     const shelfQuery = (filterState.shelfQuery || "").trim().toLowerCase();
     const filtered = filterRecipes().filter((r) => {
@@ -1361,9 +1396,22 @@ function linkifyNotesHtml(input) {
     if ($shelfEmpty) {
       $shelfEmpty.style.display = filtered.length ? "none" : "block";
     }
-    renderRecipeListPreview(filtered);
+    if (recipesViewMode === "cards") renderRecipeCardsView(filtered);
+    else renderRecipeListPreview(filtered);
     if ($empty) {
       $empty.style.display = recipes.length ? "none" : "block";
+    }
+  }
+
+  function renderRecipeLibraryViews() {
+    renderRecipesViewToggle();
+    renderRecipeShelf();
+    const showCards = recipesViewMode === "cards";
+    if ($shelfList) $shelfList.style.display = showCards ? "none" : "";
+    if ($shelfFavoritesSection && showCards) $shelfFavoritesSection.style.display = "none";
+    if ($recipesListPreview) {
+      const panel = $recipesListPreview.closest(".recipes-list-panel");
+      if (panel) panel.style.display = showCards ? "" : "none";
     }
   }
 
@@ -1922,7 +1970,7 @@ notes.innerHTML = `<strong>Notas</strong><br>${linkifyNotesHtml(recipe.notes)}`;
       }
       clearRecipeDonutSelection();
       renderChips();
-      renderShelf();
+      renderRecipeLibraryViews();
       renderCharts();
       return;
     }
@@ -1944,7 +1992,7 @@ notes.innerHTML = `<strong>Notas</strong><br>${linkifyNotesHtml(recipe.notes)}`;
     filterState.chips = next;
 
     renderChips();
-    renderShelf();
+    renderRecipeLibraryViews();
     renderCharts();
   }
 
@@ -2293,7 +2341,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
 
   function refreshUI() {
     renderChips();
-    renderShelf();
+    renderRecipeLibraryViews();
     renderStats();
     renderCharts();
     renderCalendar();
@@ -2855,12 +2903,22 @@ function toggleChecklistItem(recipeId, itemId, value, type) {
 
   $filterSearch?.addEventListener("input", (e) => {
     filterState.query = e.target.value || "";
-    renderShelf();
+    renderRecipeLibraryViews();
   });
 
   $shelfSearch?.addEventListener("input", (e) => {
     filterState.shelfQuery = e.target.value || "";
-    renderShelf();
+    renderRecipeLibraryViews();
+  });
+
+  $recipesViewToggle?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-recipes-view]");
+    if (!btn) return;
+    const mode = String(btn.dataset.recipesView || "");
+    if (!allowedRecipeViews.has(mode) || mode === recipesViewMode) return;
+    recipesViewMode = mode;
+    persistRecipeViewMode(mode);
+    renderRecipeLibraryViews();
   });
 
   $filterFavorites?.addEventListener("change", (e) => {
@@ -2884,7 +2942,7 @@ function toggleChecklistItem(recipeId, itemId, value, type) {
       filterState.chips.add(key);
       chip.classList.add("is-active");
     }
-    renderShelf();
+    renderRecipeLibraryViews();
     renderCharts();
   });
 

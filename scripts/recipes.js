@@ -3805,6 +3805,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanLookupSeq = 0;
   let _macroScanLookupTimer = null;
   let _macroScanOcrDebugState = { source: null, crop: null, final: null };
+  let _macroScanNativeBarcodeSupport = null;
   let _macroScanLookupQueued = null; // { barcode, options }
   let _macroScanLastLookupCode = "";
   let _macroScanLastLookupAt = 0;
@@ -4461,13 +4462,188 @@ $recipeImportBtn?.addEventListener("click", () => {
     const ctx = _macroScanFrameCanvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return null;
     ctx.drawImage(srcVideo, 0, 0, srcVideo.videoWidth, srcVideo.videoHeight);
-    logMacroEvent(["scanner", "camera", "resolution"], "frame congelado para OCR", {
+    logMacroEvent(["scanner", "camera", "resolution"], "frame congelado para OCR/barcode", {
       source: `${srcVideo.videoWidth}x${srcVideo.videoHeight}`,
       canvas: `${_macroScanFrameCanvas.width}x${_macroScanFrameCanvas.height}`,
     }, "info");
     _macroScanOcrDebugState.source = _macroScanFrameCanvas;
     updateMacroScanOcrDebugCanvases();
     return _macroScanFrameCanvas;
+  }
+
+  function createMacroScanCenterCrop(sourceCanvas, cfg = { name: "center_band", xPct: 0.14, yPct: 0.36, wPct: 0.72, hPct: 0.28 }) {
+    const w = Math.max(1, Number(sourceCanvas?.width) || 0);
+    const h = Math.max(1, Number(sourceCanvas?.height) || 0);
+    if (!w || !h) return null;
+    const crop = {
+      name: String(cfg?.name || "center_band"),
+      x: Math.max(0, Math.round(w * (Number(cfg?.xPct) || 0))),
+      y: Math.max(0, Math.round(h * (Number(cfg?.yPct) || 0))),
+      width: Math.max(80, Math.round(w * (Number(cfg?.wPct) || 0.72))),
+      height: Math.max(56, Math.round(h * (Number(cfg?.hPct) || 0.28))),
+    };
+    if (crop.x + crop.width > w) crop.width = Math.max(1, w - crop.x);
+    if (crop.y + crop.height > h) crop.height = Math.max(1, h - crop.y);
+    const canvas = document.createElement("canvas");
+    canvas.width = crop.width;
+    canvas.height = crop.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(sourceCanvas, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
+    return { crop, canvas };
+  }
+
+  async function getMacroScanNativeBarcodeSupport() {
+    if (_macroScanNativeBarcodeSupport) return _macroScanNativeBarcodeSupport;
+    const preferred = ["ean_8", "ean_13", "upc_a", "upc_e"];
+    const hasDetector = typeof window !== "undefined" && typeof window.BarcodeDetector === "function";
+    logMacroEvent(["scanner", "barcode", "native"], "disponibilidad BarcodeDetector evaluada", { available: hasDetector }, "info");
+    if (!hasDetector) {
+      _macroScanNativeBarcodeSupport = { available: false, supportedFormats: [], preferredFormats: preferred };
+      return _macroScanNativeBarcodeSupport;
+    }
+    let supportedFormats = [];
+    try {
+      if (typeof window.BarcodeDetector.getSupportedFormats === "function") {
+        supportedFormats = await window.BarcodeDetector.getSupportedFormats();
+      }
+    } catch (err) {
+      logMacroEvent(["scanner", "barcode", "native", "warn"], "error leyendo formatos soportados", { error: err?.name || err?.message || err }, "warn");
+    }
+    const list = Array.isArray(supportedFormats) ? supportedFormats.map((f) => String(f || "").toLowerCase()).filter(Boolean) : [];
+    const prioritized = preferred.filter((fmt) => list.includes(fmt));
+    logMacroEvent(["scanner", "barcode", "native"], "formatos soportados leídos", {
+      supportedFormats: list,
+      prioritizedFormats: prioritized,
+      preferred,
+    }, "info");
+    _macroScanNativeBarcodeSupport = { available: true, supportedFormats: list, preferredFormats: prioritized };
+    return _macroScanNativeBarcodeSupport;
+  }
+
+  function pickValidBarcodeFromDetections(detections = [], stage = "native") {
+    for (const item of (Array.isArray(detections) ? detections : [])) {
+      const raw = String(item?.rawValue || item?.raw || "").trim();
+      const clean = normalizeDetectedBarcode(raw);
+      if (!clean) {
+        logMacroEvent(["scanner", "barcode", stage, "warn"], "detección descartada por parse", { raw }, "warn");
+        continue;
+      }
+      const validation = validateBarcodeByType(clean);
+      if (!validation.valid) {
+        logMacroEvent(["scanner", "barcode", stage, "warn"], "detección descartada por checksum", {
+          raw,
+          clean,
+          type: validation.type || "unknown",
+          reason: validation.reason,
+          expected: validation.expected,
+          actual: validation.actual,
+        }, "warn");
+        continue;
+      }
+      return { code: clean, raw };
+    }
+    return null;
+  }
+
+  async function runMacroScanNativeBarcodePass(reason = "manual_button") {
+    logMacroEvent(["scanner", "barcode", "native"], "inicio detección nativa", { reason }, "info");
+    const support = await getMacroScanNativeBarcodeSupport();
+    if (!support.available) {
+      logMacroEvent(["scanner", "barcode", "native", "warn"], "BarcodeDetector no compatible", { reason }, "warn");
+      return "";
+    }
+    if (!support.preferredFormats.length) {
+      logMacroEvent(["scanner", "barcode", "native", "warn"], "sin formatos EAN/UPC soportados por navegador", { supportedFormats: support.supportedFormats }, "warn");
+      return "";
+    }
+    const frame = captureMacroScanFrame();
+    if (!frame) {
+      logMacroEvent(["scanner", "barcode", "native", "error"], "sin frame congelado", { reason }, "error");
+      return "";
+    }
+    _macroScanOcrDebugState.source = frame;
+    const detector = new window.BarcodeDetector({ formats: support.preferredFormats });
+    const attempts = [{ label: "full_frame", canvas: frame }];
+    const centerCrop = createMacroScanCenterCrop(frame);
+    if (centerCrop?.canvas) attempts.push({ label: centerCrop.crop.name, canvas: centerCrop.canvas, crop: centerCrop.crop });
+
+    for (const attempt of attempts) {
+      try {
+        if (attempt.canvas !== frame) _macroScanOcrDebugState.crop = attempt.canvas;
+        updateMacroScanOcrDebugCanvases();
+        logMacroEvent(["scanner", "barcode", "native"], "intentando detección", {
+          reason,
+          attempt: attempt.label,
+          frame: `${attempt.canvas.width}x${attempt.canvas.height}`,
+          crop: attempt.crop ? `${attempt.crop.x},${attempt.crop.y},${attempt.crop.width},${attempt.crop.height}` : "none",
+        }, "info");
+        const detections = await detector.detect(attempt.canvas);
+        const winner = pickValidBarcodeFromDetections(detections, "native");
+        if (winner?.code) {
+          logMacroEvent(["scanner", "barcode", "native", "success"], "barcode detectado con detector nativo", {
+            code: winner.code,
+            rawValue: winner.raw,
+            attempt: attempt.label,
+          }, "info");
+          return winner.code;
+        }
+        logMacroEvent(["scanner", "barcode", "native", "warn"], "sin lectura válida en intento", { attempt: attempt.label, detections: detections?.length || 0 }, "warn");
+      } catch (err) {
+        logMacroEvent(["scanner", "barcode", "native", "error"], "fallo detectando en frame congelado", {
+          attempt: attempt.label,
+          error: err?.name || err?.message || err,
+        }, "error");
+      }
+    }
+    return "";
+  }
+
+  async function runMacroScanImageDecodePass(reason = "manual_button") {
+    logMacroEvent(["scanner", "barcode", "image"], "inicio decode sobre imagen fija", { reason }, "info");
+    const frame = captureMacroScanFrame();
+    if (!frame) {
+      logMacroEvent(["scanner", "barcode", "image", "error"], "sin frame congelado", { reason }, "error");
+      return "";
+    }
+    const mod = await loadMacroScanHtml5Module();
+    const Html5Qrcode = mod?.Html5Qrcode || mod?.default?.Html5Qrcode || mod?.default;
+    if (!Html5Qrcode?.scanFileV2) {
+      logMacroEvent(["scanner", "barcode", "image", "warn"], "html5-qrcode scanFileV2 no disponible", { reason }, "warn");
+      return "";
+    }
+    const attempts = [{ label: "full_frame", canvas: frame }];
+    const centerCrop = createMacroScanCenterCrop(frame, { name: "center_band_image", xPct: 0.16, yPct: 0.34, wPct: 0.68, hPct: 0.30 });
+    if (centerCrop?.canvas) attempts.push({ label: centerCrop.crop.name, canvas: centerCrop.canvas, crop: centerCrop.crop });
+    for (const attempt of attempts) {
+      try {
+        _macroScanOcrDebugState.crop = attempt.canvas;
+        updateMacroScanOcrDebugCanvases();
+        logMacroEvent(["scanner", "barcode", "image"], "intentando decode de imagen", {
+          attempt: attempt.label,
+          frame: `${attempt.canvas.width}x${attempt.canvas.height}`,
+          crop: attempt.crop ? `${attempt.crop.x},${attempt.crop.y},${attempt.crop.width},${attempt.crop.height}` : "none",
+        }, "info");
+        const scanRes = await Html5Qrcode.scanFileV2(attempt.canvas.toDataURL("image/jpeg", 0.95), true);
+        const raw = String(scanRes?.getText?.() || "");
+        const winner = pickValidBarcodeFromDetections([{ rawValue: raw }], "image");
+        if (winner?.code) {
+          logMacroEvent(["scanner", "barcode", "image", "success"], "barcode detectado por decode de imagen", {
+            code: winner.code,
+            rawValue: winner.raw,
+            attempt: attempt.label,
+          }, "info");
+          return winner.code;
+        }
+        logMacroEvent(["scanner", "barcode", "image", "warn"], "decode devolvió valor inválido", { attempt: attempt.label, rawValue: raw }, "warn");
+      } catch (err) {
+        logMacroEvent(["scanner", "barcode", "image", "warn"], "decode sobre imagen sin lectura", {
+          attempt: attempt.label,
+          error: err?.name || err?.message || err,
+        }, "warn");
+      }
+    }
+    return "";
   }
 
 
@@ -4829,6 +5005,9 @@ $recipeImportBtn?.addEventListener("click", () => {
         addProductButton: Boolean($macroScanAddProduct),
       },
     });
+    try {
+      await getMacroScanNativeBarcodeSupport();
+    } catch (_) {}
     hideMacroScanAddProduct();
     await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
     _macroScanRunning = true;
@@ -5239,21 +5418,6 @@ $recipeImportBtn?.addEventListener("click", () => {
         logMacroEvent(["scanner", "ocr", "warn"], "frame base de OCR con baja resolución", { source: `${frame.width}x${frame.height}` }, "warn");
       }
       logMacroEvent(["scanner", "ocr", "crop"], "dimensiones de fuente", { source: `${frame.width}x${frame.height}` }, "info");
-
-      try {
-        const mod = await loadMacroScanHtml5Module();
-        const Html5Qrcode = mod?.Html5Qrcode || mod?.default?.Html5Qrcode || mod?.default;
-        if (Html5Qrcode?.scanFileV2) {
-          const scanRes = await Html5Qrcode.scanFileV2(frame.toDataURL("image/jpeg", 0.95), true);
-          const code = normalizeDetectedBarcode(scanRes?.getText?.() || "");
-          if (code) {
-            logMacroEvent(["scanner", "ocr", "success"], "número detectado por decode de frame", { code, path: "scanFileV2" }, "info");
-            return code;
-          }
-        }
-      } catch (err) {
-        logMacroEvent(["scanner", "ocr", "warn"], "decode directo de frame no encontró código", { error: err?.name || err?.message || err }, "warn");
-      }
 
       const crops = createBarcodeNumberCropVariants(frame);
       const ocrMod = await loadMacroScanOcrModule();
@@ -5751,12 +5915,25 @@ $recipeImportBtn?.addEventListener("click", () => {
     const barcodeInput = String($macroScanManual?.value || "").trim();
     const normalized = normalizeDetectedBarcode(barcodeInput);
     const validation = validateBarcodeByType(normalized || barcodeInput.replace(/\D/g, ""));
+    logMacroEvent(["scanner", "manual"], "intento manual", {
+      raw: barcodeInput,
+      normalized,
+      type: validation.type || "unknown",
+      valid: validation.valid,
+    }, "info");
     logLookup("ruta manual", { barcode: barcodeInput || "", lookupRequested: Boolean(barcodeInput) });
     if (!barcodeInput) {
       setMacroScanStatus("Introduce un código de barras.");
       return;
     }
     if (!validation.valid) {
+      logMacroEvent(["scanner", "manual"], "código manual inválido por checksum", {
+        raw: barcodeInput,
+        normalized,
+        type: validation.type || "unknown",
+        expected: validation.expected,
+        actual: validation.actual,
+      }, "warn");
       setMacroScanStatus("Código manual inválido. Revisa checksum o escribe otro.");
       return;
     }
@@ -5780,13 +5957,31 @@ $recipeImportBtn?.addEventListener("click", () => {
       return;
     }
     hideMacroScanAddProduct();
+    setMacroScanStatus("Intentando detector nativo...");
+    const nativeCode = await runMacroScanNativeBarcodePass("manual_button");
+    if (nativeCode) {
+      if ($macroScanManual) $macroScanManual.value = nativeCode;
+      setMacroScanStatus(`Barcode detectado (nativo): ${nativeCode}`);
+      await handleBarcodeFound(nativeCode, { fromManual: false, sourceEngine: "barcode_native" });
+      return;
+    }
+    setMacroScanStatus("Detector nativo sin lectura. Intentando decoder sobre imagen...");
+    const imageCode = await runMacroScanImageDecodePass("manual_button");
+    if (imageCode) {
+      if ($macroScanManual) $macroScanManual.value = imageCode;
+      setMacroScanStatus(`Barcode detectado (imagen): ${imageCode}`);
+      await handleBarcodeFound(imageCode, { fromManual: false, sourceEngine: "barcode_image" });
+      return;
+    }
+    setMacroScanStatus("Fallback a OCR...");
     const ocrCode = await runMacroScanOcrPass("manual_button");
     if (!ocrCode) {
-      setMacroScanStatus("No pude leer el número. Reintenta o escribe manualmente.");
+      logMacroEvent(["scanner", "manual"], "barcode no detectado: solicitar entrada manual", { reason: "native+image+ocr_fail" }, "warn");
+      setMacroScanStatus("Introduce el código manualmente.");
       return;
     }
     if ($macroScanManual) $macroScanManual.value = ocrCode;
-    setMacroScanStatus(`NÃºmero detectado: ${ocrCode}`);
+    setMacroScanStatus(`Número detectado por OCR: ${ocrCode}`);
     await handleBarcodeFound(ocrCode, { fromManual: false, sourceEngine: "ocr" });
   });
   $macroScanAddProduct?.addEventListener("click", () => {

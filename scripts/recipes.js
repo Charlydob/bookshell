@@ -342,6 +342,7 @@ if ($viewRecipes) {
   const $macroProductKcal = document.getElementById("macro-product-kcal");
   const $macroProductGrams = document.getElementById("macro-product-grams");
   const $macroProductSummary = document.getElementById("macro-product-summary");
+  const $macroProductPriceUsed = document.getElementById("macro-product-price-used");
   const $macroProductEditToggle = document.getElementById("macro-product-edit-toggle");
   const $macroProductScanBtn = document.getElementById("macro-product-scan-btn");
   const $macroProductFinanceSelect = document.getElementById("macro-product-finance-select");
@@ -821,16 +822,52 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return null;
   }
 
+  function findLinkedFinanceProduct(product) {
+    const financeProductId = String(product?.financeProductId || "").trim();
+    if (!financeProductId) return null;
+    return financeProducts.find((row) => row.id === financeProductId) || null;
+  }
+
+  function getEffectiveProductPrice(product) {
+    const linked = findLinkedFinanceProduct(product);
+    const financePrice = Number(linked?.lastPrice);
+    if (financePrice > 0) return financePrice;
+    const manualPrice = Number(product?.price);
+    if (manualPrice > 0) return manualPrice;
+    return null;
+  }
+
+  function getEffectiveProductPriceSource(product) {
+    const linked = findLinkedFinanceProduct(product);
+    const financePrice = Number(linked?.lastPrice);
+    if (financePrice > 0) return "finance-linked-last-price";
+    const manualPrice = Number(product?.price);
+    if (manualPrice > 0) return "manual-price";
+    return null;
+  }
+
+  function resolveProductPriceBase(product) {
+    const configuredBaseQty = Number(product?.priceBaseQty);
+    const configuredBaseUnit = normalizeCostUnit(product?.priceBaseUnit);
+    if (configuredBaseQty > 0 && configuredBaseUnit) {
+      return { qty: configuredBaseQty, unit: configuredBaseUnit };
+    }
+    const legacyBaseGrams = Number(product?.servingBaseGrams);
+    if (legacyBaseGrams > 0) {
+      return { qty: legacyBaseGrams, unit: "g" };
+    }
+    return null;
+  }
+
   function calculateProductConsumedCost(product, consumedQty, consumedUnit) {
-    const price = Number(product?.price);
-    const baseQty = Number(product?.priceBaseQty);
-    const baseUnit = normalizeCostUnit(product?.priceBaseUnit);
+    const effectivePrice = getEffectiveProductPrice(product);
     const intakeUnit = normalizeCostUnit(consumedUnit);
     const intakeQty = Number(consumedQty);
-    if (!(price > 0) || !(baseQty > 0) || !baseUnit || !(intakeQty >= 0) || !intakeUnit) return null;
-    const normalizedBaseQty = normalizeQtyByUnit(baseQty, baseUnit, intakeUnit);
+    const base = resolveProductPriceBase(product);
+    if (!(effectivePrice > 0) || !base || !(intakeQty >= 0) || !intakeUnit) return null;
+    const normalizedBaseQty = normalizeQtyByUnit(base.qty, base.unit, intakeUnit);
     if (!(normalizedBaseQty > 0)) return null;
-    return (intakeQty / normalizedBaseQty) * price;
+    return (intakeQty / normalizedBaseQty) * effectivePrice;
   }
 
   function resolveRecipeServings(recipe) {
@@ -3420,6 +3457,14 @@ $recipeImportBtn?.addEventListener("click", () => {
     const grams = Math.max(0, Number($macroProductGrams?.value) || 0);
     const draft = readMacroProductDraftFromForm();
     const m = calcProductMacros(draft, grams);
+    const effectivePrice = getEffectiveProductPrice(draft);
+    const priceSource = getEffectiveProductPriceSource(draft);
+
+    if ($macroProductPriceUsed) {
+      if (effectivePrice == null) $macroProductPriceUsed.textContent = "Sin precio disponible";
+      else if (priceSource === "finance-linked-last-price") $macroProductPriceUsed.textContent = `Precio usado: ${roundMacro(effectivePrice)} € (Finanzas)`;
+      else $macroProductPriceUsed.textContent = `Precio usado: ${roundMacro(effectivePrice)} € (Manual)`;
+    }
 
     if (grams) {
       const cost = calculateProductConsumedCost(draft, grams, "g");
@@ -6275,10 +6320,12 @@ $recipeImportBtn?.addEventListener("click", () => {
   $macroProductFinanceSelect?.addEventListener("change", () => {
     const row = financeProducts.find((f) => f.id === String($macroProductFinanceSelect.value || ""));
     if ($macroProductFinanceHint) $macroProductFinanceHint.textContent = row ? `Vinculado a ${row.name}${row.lastPrice ? ` · último ${roundMacro(row.lastPrice)}€` : ""}` : "Sin producto de Finanzas";
+    renderMacroProductSummary();
   });
   $macroProductFinanceUnlink?.addEventListener("click", () => {
     if ($macroProductFinanceSelect) $macroProductFinanceSelect.value = "";
     if ($macroProductFinanceHint) $macroProductFinanceHint.textContent = "Sin producto de Finanzas";
+    renderMacroProductSummary();
   });
   $macroProductHabitSelect?.addEventListener("change", () => {
     const habits = listHabitsForProductLink();

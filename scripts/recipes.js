@@ -3778,6 +3778,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanRunning = false;
   let _macroScanEngine = "none";
   let _macroScanHtml5Module = null;
+  let _macroScanZxingModule = null;
   let _macroScanHtml5Instance = null;
   let _macroScanLastValue = "";
   let _macroScanLastAt = 0;
@@ -4646,12 +4647,130 @@ $recipeImportBtn?.addEventListener("click", () => {
     return "";
   }
 
+  async function runMacroScanZxingBarcodePass(reason = "manual_button") {
+    logMacroEvent(["scanner", "barcode", "zxing"], "inicio decode de barras sobre frame congelado", { reason }, "info");
+    const frame = captureMacroScanFrame();
+    if (!frame) {
+      logMacroEvent(["scanner", "barcode", "zxing", "error"], "sin frame congelado", { reason }, "error");
+      return "";
+    }
+    let mod = null;
+    try {
+      mod = await loadMacroScanZxingModule();
+    } catch (err) {
+      logMacroEvent(["scanner", "barcode", "zxing", "error"], "no se pudo cargar ZXing", { error: err?.name || err?.message || err }, "error");
+      return "";
+    }
+    const BrowserMultiFormatReader = mod?.BrowserMultiFormatReader || mod?.default?.BrowserMultiFormatReader;
+    const DecodeHintType = mod?.DecodeHintType || mod?.default?.DecodeHintType;
+    const BarcodeFormat = mod?.BarcodeFormat || mod?.default?.BarcodeFormat;
+    if (!BrowserMultiFormatReader) {
+      logMacroEvent(["scanner", "barcode", "zxing", "error"], "módulo ZXing inválido", { hasReader: false }, "error");
+      return "";
+    }
+
+    const hints = new Map();
+    if (DecodeHintType?.POSSIBLE_FORMATS && BarcodeFormat) {
+      const possibleFormats = [BarcodeFormat.EAN_13, BarcodeFormat.EAN_8].filter((v) => typeof v !== "undefined");
+      if (possibleFormats.length) hints.set(DecodeHintType.POSSIBLE_FORMATS, possibleFormats);
+    }
+    const reader = new BrowserMultiFormatReader(hints, 500);
+
+    const attempts = [{ label: "full_frame", mode: "full", canvas: frame }];
+    const cropDefs = [
+      { name: "center_band_main", xPct: 0.14, yPct: 0.36, wPct: 0.72, hPct: 0.28 },
+      { name: "center_band_tight", xPct: 0.20, yPct: 0.40, wPct: 0.60, hPct: 0.22 },
+      { name: "center_band_wide", xPct: 0.08, yPct: 0.33, wPct: 0.84, hPct: 0.34 },
+    ];
+    cropDefs.forEach((def) => {
+      const centerCrop = createMacroScanCenterCrop(frame, def);
+      if (centerCrop?.canvas) attempts.push({ label: centerCrop.crop.name, mode: "crop", canvas: centerCrop.canvas, crop: centerCrop.crop });
+    });
+
+    for (const attempt of attempts) {
+      try {
+        _macroScanOcrDebugState.crop = attempt.canvas;
+        updateMacroScanOcrDebugCanvases();
+        logMacroEvent(["scanner", "barcode", "zxing", "image"], "intentando decode", {
+          reason,
+          mode: attempt.mode,
+          attempt: attempt.label,
+          frame: `${attempt.canvas.width}x${attempt.canvas.height}`,
+          sourceFrame: `${frame.width}x${frame.height}`,
+          crop: attempt.crop ? `${attempt.crop.x},${attempt.crop.y},${attempt.crop.width},${attempt.crop.height}` : "none",
+        }, "info");
+
+        let result = null;
+        if (typeof reader.decodeFromCanvas === "function") {
+          result = await reader.decodeFromCanvas(attempt.canvas);
+        } else if (typeof reader.decodeFromImageElement === "function") {
+          const img = new Image();
+          img.src = attempt.canvas.toDataURL("image/jpeg", 0.95);
+          await new Promise((resolve, reject) => {
+            img.onload = () => resolve();
+            img.onerror = (err) => reject(err || new Error("image_load_error"));
+          });
+          result = await reader.decodeFromImageElement(img);
+        } else {
+          throw new Error("zxing_reader_no_image_decode_api");
+        }
+
+        const raw = String(result?.getText?.() || "").trim();
+        const clean = normalizeDetectedBarcode(raw);
+        const validation = validateBarcodeByType(clean || raw);
+        if (clean && validation.valid) {
+          logMacroEvent(["scanner", "barcode", "success"], "barcode detectado por ZXing", {
+            engine: "zxing",
+            mode: attempt.mode,
+            attempt: attempt.label,
+            raw,
+            clean,
+            checksum: validation.valid,
+            type: validation.type || "unknown",
+            sourceFrame: `${frame.width}x${frame.height}`,
+          }, "info");
+          return clean;
+        }
+        logMacroEvent(["scanner", "barcode", "warn"], "ZXing devolvió código inválido", {
+          engine: "zxing",
+          mode: attempt.mode,
+          attempt: attempt.label,
+          raw,
+          clean,
+          checksum: validation.valid,
+          type: validation.type || "unknown",
+          reason: validation.reason,
+        }, "warn");
+      } catch (err) {
+        logMacroEvent(["scanner", "barcode", "zxing", "warn"], "sin lectura válida en intento", {
+          mode: attempt.mode,
+          attempt: attempt.label,
+          error: err?.name || err?.message || err,
+        }, "warn");
+      }
+    }
+    logMacroEvent(["scanner", "barcode", "error"], "ZXing no encontró EAN válido en frame congelado", {
+      engine: "zxing",
+      reason,
+      attempts: attempts.map((a) => `${a.label}:${a.mode}`).join(","),
+      sourceFrame: `${frame.width}x${frame.height}`,
+    }, "error");
+    return "";
+  }
+
 
   async function loadMacroScanHtml5Module() {
     if (_macroScanHtml5Module) return _macroScanHtml5Module;
     _macroScanHtml5Module = await import("https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/+esm");
     logMacroScan("dependencia del motor cargada", { engine: "html5", ok: Boolean(_macroScanHtml5Module) });
     return _macroScanHtml5Module;
+  }
+
+  async function loadMacroScanZxingModule() {
+    if (_macroScanZxingModule) return _macroScanZxingModule;
+    _macroScanZxingModule = await import("https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm");
+    logMacroEvent(["scanner", "barcode", "zxing"], "dependencia ZXing cargada", { ok: Boolean(_macroScanZxingModule) }, "info");
+    return _macroScanZxingModule;
   }
 
   async function loadMacroScanOcrModule() {
@@ -5957,26 +6076,19 @@ $recipeImportBtn?.addEventListener("click", () => {
       return;
     }
     hideMacroScanAddProduct();
-    setMacroScanStatus("Intentando detector nativo...");
-    const nativeCode = await runMacroScanNativeBarcodePass("manual_button");
-    if (nativeCode) {
-      if ($macroScanManual) $macroScanManual.value = nativeCode;
-      setMacroScanStatus(`Barcode detectado (nativo): ${nativeCode}`);
-      await handleBarcodeFound(nativeCode, { fromManual: false, sourceEngine: "barcode_native" });
+    setMacroScanStatus("Decodificando barras en frame congelado (ZXing)...");
+    const zxingCode = await runMacroScanZxingBarcodePass("manual_button");
+    if (zxingCode) {
+      if ($macroScanManual) $macroScanManual.value = zxingCode;
+      setMacroScanStatus(`Barcode detectado (ZXing): ${zxingCode}`);
+      await handleBarcodeFound(zxingCode, { fromManual: false, sourceEngine: "barcode_zxing" });
       return;
     }
-    setMacroScanStatus("Detector nativo sin lectura. Intentando decoder sobre imagen...");
-    const imageCode = await runMacroScanImageDecodePass("manual_button");
-    if (imageCode) {
-      if ($macroScanManual) $macroScanManual.value = imageCode;
-      setMacroScanStatus(`Barcode detectado (imagen): ${imageCode}`);
-      await handleBarcodeFound(imageCode, { fromManual: false, sourceEngine: "barcode_image" });
-      return;
-    }
-    setMacroScanStatus("Fallback a OCR...");
+    setMacroScanStatus("ZXing sin lectura. Intentando OCR del número...");
+    logMacroEvent(["scanner", "ocr"], "fallback OCR tras fallo decode de barras", { previousEngine: "zxing", reason: "zxing_fail" }, "info");
     const ocrCode = await runMacroScanOcrPass("manual_button");
     if (!ocrCode) {
-      logMacroEvent(["scanner", "manual"], "barcode no detectado: solicitar entrada manual", { reason: "native+image+ocr_fail" }, "warn");
+      logMacroEvent(["scanner", "manual"], "barcode no detectado: solicitar entrada manual", { reason: "zxing+ocr_fail" }, "warn");
       setMacroScanStatus("Introduce el código manualmente.");
       return;
     }

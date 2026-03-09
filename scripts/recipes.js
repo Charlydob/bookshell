@@ -9,6 +9,7 @@ import {
 import { renderCountryHeatmap, renderCountryList } from "./world-heatmap.js";
 import { auth, db } from "./firebase-shared.js";
 import { resolveFinancePathCandidates } from "./finance/data.js";
+import { FOODREPO_API_BASE, FOODREPO_API_TOKEN } from "../config/foodrepo.js";
 import {
   ref,
   onValue,
@@ -3712,11 +3713,15 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanLookupQueued = null; // { barcode, options }
   let _macroScanLastLookupCode = "";
   let _macroScanLastLookupAt = 0;
+  let _macroScanParseFailLastAt = 0;
+  const _macroScanLookupInFlight = new Map(); // barcode -> Promise
 
   const MACRO_SCAN_NO_RESULT_LOG_EVERY_MS = 6000;
   const MACRO_SCAN_LAYOUT_LOG_EVERY_MS = 1600;
   // No bloqueamos lecturas "repetidas" durante segundos: solo una ventana pequeÃ±a para evitar spam por frame.
   const MACRO_SCAN_REPEAT_BLOCK_MS = 220;
+  const MACRO_SCAN_LOOKUP_COOLDOWN_MS = 1800; // obligatorio: anti-duplicados (mismo código ~2s)
+  const MACRO_SCAN_LOOKUP_TIMEOUT_MS = 6500;
   const OFF_PRODUCT_ENDPOINT = "https://world.openfoodfacts.org/api/v2/product";
   const MACRO_SCAN_DEBUG = (() => {
     try {
@@ -3933,7 +3938,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       await startHtml5Scan(runId);
       setMacroScanStatus("Buscando codigo...");
     } catch (err) {
-      logMacroScan("error concreto", { engine: "html5", error: err?.name || err?.message || err });
+      logScannerError("falló el reinicio del motor", { engine: "html5", error: err?.name || err?.message || err });
       setMacroScanStatus(`Error en html5: ${err?.name || err?.message || "fallo"}`);
       await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
     }
@@ -3984,9 +3989,12 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (_macroScanRunning && _macroScanEngine === key) setMacroScanStatus("Buscando codigo...");
     // No es un error: es simplemente "sin lectura" en este frame.
     // Para evitar spam visual, solo lo mostramos en el panel si estÃ¡ activado el debug.
-    if (!MACRO_SCAN_DEBUG) return;
     const short = String(detail || "").slice(0, 120);
-    logMacroScan("sin lectura", { engine: key, detail: short });
+    if (!MACRO_SCAN_DEBUG) {
+      try { console.info("[scanner] sin lectura (frame)", { engine: key }); } catch (_) {}
+      return;
+    }
+    logMacroEvent(["scanner"], "sin lectura (frame)", { engine: key, detail: short }, "info");
   }
 
   function fmtMacroMeta(meta) {
@@ -3997,17 +4005,41 @@ $recipeImportBtn?.addEventListener("click", () => {
     return pairs.length ? ` · ${pairs.join(" · ")}` : "";
   }
 
-  function logMacroScan(event, meta) {
+  function logMacroEvent(tags = ["scanner"], message = "", meta, level = "info") {
+    const safeTags = Array.isArray(tags) ? tags.filter(Boolean).map((t) => String(t).trim()).filter(Boolean) : ["scanner"];
+    const prefix = safeTags.length ? safeTags.map((t) => `[${t}]`).join("") : "[log]";
+    const line = `${prefix} ${String(message || "").trim()}`.trim();
     try {
-      const prefix = `[MacroScan#${_macroScanSessionId || "-"}]`;
-      if (meta !== undefined) console.info(`${prefix} ${event}`, meta);
-      else console.info(`${prefix} ${event}`);
-      const enginePrefix = _macroScanEngine && _macroScanEngine !== "none" ? `[${(_macroScanEngine === "html5" ? "html5-qrcode" : _macroScanEngine)}]` : "[Scan]";
-      _macroScanUiLogs.push(`<strong>${enginePrefix}</strong> ${event}${fmtMacroMeta(meta)}`);
+      const fn = level === "error" ? console.error : (level === "warn" ? console.warn : console.info);
+      if (meta !== undefined) fn(line, meta);
+      else fn(line);
+    } catch (_) {}
+    try {
+      _macroScanUiLogs.push(`<strong>${prefix}</strong> ${String(message || "").trim()}${fmtMacroMeta(meta)}`);
       if (_macroScanUiLogs.length > 60) _macroScanUiLogs = _macroScanUiLogs.slice(-60);
       scheduleMacroScanUiLogsRender();
     } catch (_) {}
   }
+
+  function logScanner(message, meta) { logMacroEvent(["scanner"], message, meta, "info"); }
+  function logScannerSuccess(message, meta) { logMacroEvent(["scanner", "success"], message, meta, "info"); }
+  function logScannerWarn(message, meta) { logMacroEvent(["scanner"], message, meta, "warn"); }
+  function logScannerError(message, meta) { logMacroEvent(["scanner", "error"], message, meta, "error"); }
+
+  function logLookup(message, meta) { logMacroEvent(["lookup"], message, meta, "info"); }
+  function logLookupSuccess(message, meta) { logMacroEvent(["lookup", "success"], message, meta, "info"); }
+  function logLookupWarn(message, meta) { logMacroEvent(["lookup"], message, meta, "warn"); }
+  function logLookupError(message, meta) { logMacroEvent(["lookup", "error"], message, meta, "error"); }
+
+  function logLookupOff(message, meta, level = "info") {
+    logMacroEvent(level === "error" ? ["lookup", "openfoodfacts", "error"] : ["lookup", "openfoodfacts"], message, meta, level);
+  }
+  function logLookupFoodRepo(message, meta, level = "info") {
+    logMacroEvent(level === "error" ? ["lookup", "foodrepo", "error"] : ["lookup", "foodrepo"], message, meta, level);
+  }
+
+  // Compat: si queda algún logMacroScan antiguo, lo tratamos como scanner.
+  function logMacroScan(event, meta) { logScanner(String(event || ""), meta); }
 
   function beginMacroScanLogSession(reason = "scan") {
     _macroScanSessionId += 1;
@@ -4016,7 +4048,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     const isIOS = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
     const standalone = Boolean(window.matchMedia?.("(display-mode: standalone)")?.matches || navigator.standalone);
     try {
-      console.groupCollapsed(`[MacroScan#${_macroScanSessionId}] ${reason}`);
+      console.groupCollapsed(`[scanner] sesión #${_macroScanSessionId} · ${reason}`);
       console.info("Entorno", {
         ua,
         secure: window.isSecureContext,
@@ -4029,7 +4061,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       });
       console.groupEnd();
     } catch (_) {}
-    logMacroScan("entorno", {
+    logScanner("entorno", {
       selectedEngine: _macroScanEngine,
       ua: ua.slice(0, 120),
       isIOS,
@@ -4208,16 +4240,25 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   async function onMacroEngineDetected(rawCode, engine, runId) {
     if (!_macroScanRunning || _macroScanEngine !== engine || runId !== _macroScanEngineRunId) return;
-    const clean = normalizeDetectedBarcode(rawCode) || String(rawCode || "").trim();
-    if (!clean) return;
+    const raw = String(rawCode || "").trim();
+    const clean = normalizeDetectedBarcode(raw);
+    if (!clean) {
+      // Caso B: el motor devuelve algo pero no es EAN/UPC válido.
+      const now = Date.now();
+      if (raw && (now - (_macroScanParseFailLastAt || 0)) > 4000) {
+        _macroScanParseFailLastAt = now;
+        logScannerWarn("código detectado pero inválido (parse falló)", { engine, raw: raw.slice(0, 40), rawLen: raw.length });
+      }
+      return;
+    }
     const now = Date.now();
     if (clean === _macroScanLastValue && (now - _macroScanLastAt) < MACRO_SCAN_REPEAT_BLOCK_MS) {
-      logMacroScan("código ignorado por repetición", { engine, code: clean });
+      logScanner("código ignorado por repetición", { engine, code: clean, windowMs: MACRO_SCAN_REPEAT_BLOCK_MS });
       return;
     }
     _macroScanLastValue = clean;
     _macroScanLastAt = now;
-    logMacroScan("código detectado", { engine, code: clean });
+    logScannerSuccess("código detectado", { engine, code: clean });
     if ($macroScanManual) $macroScanManual.value = clean;
     setMacroScanStatus(`CÃ³digo detectado: ${clean}`);
 
@@ -4233,7 +4274,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         _macroScanLookupQueued = null;
         if (!queued?.barcode) return;
         handleBarcodeFound(queued.barcode, queued.options).catch((err) => {
-          logMacroScan("bÃºsqueda en segundo plano fallÃ³", { error: err?.name || err?.message || err });
+          logLookupError("búsqueda en segundo plano falló", { error: err?.name || err?.message || err });
         });
       }, 80);
     } catch (_) {}
@@ -4245,13 +4286,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroScanVideo?.classList.add("hidden");
     $macroScanHtml5Host.classList.remove("hidden");
     logMacroScanLayoutDeep("host_visible");
-    logMacroScan("inicio motor", { engine: "html5", instanceCreated: false });
+    logScanner("inicio motor", { engine: "html5", instanceCreated: false });
     const mod = await loadMacroScanHtml5Module();
     const Html5Qrcode = mod?.Html5Qrcode || mod?.default?.Html5Qrcode || mod?.default;
     if (!Html5Qrcode) throw new Error("html5-qrcode no disponible.");
     _macroScanHtml5Instance = new Html5Qrcode("macro-scan-html5-host");
-    logMacroScan("inicialización del motor", { engine: "html5", libreriaCargada: true, instanceCreated: Boolean(_macroScanHtml5Instance) });
-    logMacroScan("loop de detección arrancado", { engine: "html5", ok: true });
+    logScanner("inicialización del motor", { engine: "html5", libreriaCargada: true, instanceCreated: Boolean(_macroScanHtml5Instance) });
+    logScanner("loop de detección arrancado", { engine: "html5", ok: true });
     const startConfig = {
       fps: 18,
       qrbox: (viewfinderWidth, viewfinderHeight) => {
@@ -4277,7 +4318,6 @@ $recipeImportBtn?.addEventListener("click", () => {
       formatsToSupport: [mod.Html5QrcodeSupportedFormats.EAN_13, mod.Html5QrcodeSupportedFormats.EAN_8, mod.Html5QrcodeSupportedFormats.UPC_A, mod.Html5QrcodeSupportedFormats.UPC_E],
     };
     const onDecoded = (decodedText) => {
-      if (decodedText) logMacroScan("resultado detectado", { engine: "html5", detected: true });
       onMacroEngineDetected(decodedText, "html5", runId);
     };
     const onDecodeError = (errorMessage) => {
@@ -4286,7 +4326,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         logMacroScanNoResult("html5", msg);
         return;
       }
-      logMacroScan("error motor", { engine: "html5", error: msg });
+      logScannerError("error motor", { engine: "html5", error: msg });
     };
 
     // html5-qrcode exige que el "cameraIdOrConfig" (si es objeto) tenga exactamente 1 clave.
@@ -4294,13 +4334,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     try {
       await _macroScanHtml5Instance.start({ facingMode: "environment" }, startConfig, onDecoded, onDecodeError);
     } catch (err) {
-      logMacroScan("fallo al abrir con facingMode, reintento por id", { engine: "html5", error: err?.name || err?.message || err });
+      logScannerWarn("fallo al abrir con facingMode, reintento por id", { engine: "html5", error: err?.name || err?.message || err });
       const getCameras = Html5Qrcode?.getCameras || mod?.Html5Qrcode?.getCameras;
       if (typeof getCameras !== "function") throw err;
       const cameras = await getCameras();
       const chosen = cameras?.[cameras.length - 1]?.id || cameras?.[0]?.id || "";
       if (!chosen) throw err;
-      logMacroScan("reintento con cameraId", { engine: "html5", cameras: cameras.length, selected: chosen });
+      logScanner("reintento con cameraId", { engine: "html5", cameras: cameras.length, selected: chosen });
       await _macroScanHtml5Instance.start(chosen, startConfig, onDecoded, onDecodeError);
     }
     logMacroScanLayout("post_start");
@@ -4315,15 +4355,15 @@ $recipeImportBtn?.addEventListener("click", () => {
         _macroScanLastHostPx = readMacroScanHostPx();
       }, 450);
     } catch (_) {}
-    logMacroScan("cámara abierta", { ok: true, engine: "html5", streamActive: true, videoDimsOk: true });
+    logScannerSuccess("cámara abierta", { ok: true, engine: "html5", streamActive: true, videoDimsOk: true });
   }
 
 
   async function startMacroBarcodeScan(engine = "html5") {
     const selectedEngine = "html5";
-    if (engine !== "html5") logMacroScan("motor no disponible, se usa html5-qrcode", { requestedEngine: engine });
+    if (engine !== "html5") logScannerWarn("motor no disponible, se usa html5-qrcode", { requestedEngine: engine });
     beginMacroScanLogSession(`inicio_${selectedEngine}`);
-    logMacroScan("startMacroBarcodeScan llamado", {
+    logScanner("startScanner llamado", {
       engine: selectedEngine,
       argsLength: arguments.length,
       dom: {
@@ -4343,8 +4383,8 @@ $recipeImportBtn?.addEventListener("click", () => {
     _macroScanEngineRunId += 1;
     const runId = _macroScanEngineRunId;
     setMacroScanEngineStatus(selectedEngine);
-    logMacroScan("motor seleccionado", { engine: selectedEngine });
-    logMacroScan("arranque de detección/búsqueda", { engine: selectedEngine, runId });
+    logScanner("motor seleccionado", { engine: selectedEngine });
+    logScanner("arranque de detección/búsqueda", { engine: selectedEngine, runId });
 
     setMacroScanStatus("Inicializando camara...");
     logMacroScanLayout("pre_start");
@@ -4392,64 +4432,321 @@ $recipeImportBtn?.addEventListener("click", () => {
     try {
       await startHtml5Scan(runId);
       setMacroScanStatus("Buscando codigo...");
-      logMacroScan("deteccion iniciada", { engine: selectedEngine, ok: true, phase: "buscando" });
+      logScannerSuccess("detección iniciada", { engine: selectedEngine, ok: true, phase: "buscando" });
     } catch (err) {
-      logMacroScan("error concreto", { engine: selectedEngine, error: err?.name || err?.message || err });
+      logScannerError("falló la inicialización del escáner", { engine: selectedEngine, error: err?.name || err?.message || err });
       setMacroScanStatus(`Error en ${selectedEngine}: ${err?.name || err?.message || "falló"}`);
       await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
     }
   }
 
+  // Alias pedidos (arquitectura): no rompe rutas existentes.
+  async function startScanner() { return startMacroBarcodeScan("html5"); }
+  async function stopScanner() { return stopMacroBarcodeScan(); }
+
+  function getFoodRepoToken() {
+    const fromConst = String(FOODREPO_API_TOKEN || "").trim();
+    if (fromConst) return fromConst;
+    try {
+      const fromWindow = String(window?.__FOODREPO_API_TOKEN || "").trim();
+      if (fromWindow) return fromWindow;
+    } catch (_) {}
+    try {
+      const fromStorage = String(window?.localStorage?.getItem?.("bookshell.foodrepoToken") || "").trim();
+      if (fromStorage) return fromStorage;
+    } catch (_) {}
+    return "";
+  }
+
+  async function fetchJsonWithTimeout(url, options = {}, timeoutMs = MACRO_SCAN_LOOKUP_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    const timer = setTimeout(() => {
+      try { controller.abort(); } catch (_) {}
+    }, Math.max(500, Number(timeoutMs) || MACRO_SCAN_LOOKUP_TIMEOUT_MS));
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      let json = null;
+      try {
+        json = await res.json();
+      } catch (err) {
+        return { ok: false, res, json: null, ms: Date.now() - startedAt, error: err, stage: "parse_json" };
+      }
+      return { ok: true, res, json, ms: Date.now() - startedAt, error: null, stage: "ok" };
+    } catch (err) {
+      const isAbort = String(err?.name || "") === "AbortError";
+      return { ok: false, res: null, json: null, ms: Date.now() - startedAt, error: err, stage: isAbort ? "timeout_or_abort" : "request" };
+    } finally {
+      try { clearTimeout(timer); } catch (_) {}
+    }
+  }
+
+  function normalizeProductData(raw, source, barcode = "") {
+    const cleanBarcode = normalizeDetectedBarcode(barcode) || String(barcode || "").trim() || "";
+    const src = String(source || "").trim();
+
+    if (src === "openfoodfacts") {
+      const product = raw?.product && typeof raw.product === "object" ? raw.product : null;
+      if (!product) return null;
+      const name = String(product.product_name_es || product.product_name || "").trim();
+      if (!name) return null;
+      return {
+        barcode: String(product.code || cleanBarcode || "").trim(),
+        name,
+        brand: String(product.brands || "").split(",")[0]?.trim() || "",
+        image: String(product.image_front_url || product.image_url || "").trim() || null,
+        quantity: String(product.quantity || "").trim() || null,
+        nutriments: (product.nutriments && typeof product.nutriments === "object") ? product.nutriments : null,
+        source: "openfoodfacts",
+      };
+    }
+
+    if (src === "foodrepo") {
+      const item = Array.isArray(raw?.data) ? raw.data[0] : (raw?.data && typeof raw.data === "object" ? raw.data : null);
+      const attrs = item?.attributes && typeof item.attributes === "object" ? item.attributes : (item && typeof item === "object" ? item : null);
+      if (!attrs) return null;
+      const nameTranslations = attrs?.name_translations && typeof attrs.name_translations === "object" ? attrs.name_translations : null;
+      const name = String(nameTranslations?.es || nameTranslations?.en || nameTranslations?.fr || attrs?.name || "").trim();
+      if (!name) return null;
+      const brand = String(attrs?.brand || attrs?.brands || "").trim();
+      const image = String(attrs?.image_url || attrs?.image || attrs?.front_image_url || "").trim() || null;
+      const quantity = String(attrs?.quantity || attrs?.package_size || attrs?.weight || "").trim() || null;
+      const nutriments = (attrs?.nutrients && typeof attrs.nutrients === "object") ? attrs.nutrients : (attrs?.nutriments && typeof attrs.nutriments === "object" ? attrs.nutriments : null);
+      return {
+        barcode: String(attrs?.barcode || attrs?.code || cleanBarcode || "").trim(),
+        name,
+        brand,
+        image,
+        quantity,
+        nutriments,
+        source: "foodrepo",
+      };
+    }
+
+    return null;
+  }
+
+  function extractMacrosFromNutriments(nutriments) {
+    const n = nutriments && typeof nutriments === "object" ? nutriments : null;
+    const num = (v) => {
+      const x = Number(v);
+      return Number.isFinite(x) ? x : null;
+    };
+    const carbs = num(n?.carbohydrates_100g ?? n?.carbohydrates);
+    const protein = num(n?.proteins_100g ?? n?.proteins);
+    const fat = num(n?.fat_100g ?? n?.fat);
+    const kcal = num(n?.["energy-kcal_100g"] ?? n?.energy_kcal_100g ?? n?.["energy-kcal"] ?? n?.kcal);
+    return { carbs: carbs ?? 0, protein: protein ?? 0, fat: fat ?? 0, kcal: kcal ?? 0 };
+  }
+
+  function externalToMacroProduct(external) {
+    if (!external) return null;
+    const barcode = String(external.barcode || "").trim();
+    const name = String(external.name || "").trim();
+    if (!name) return null;
+    return {
+      id: barcode || generateId(),
+      source: external.source || "manual",
+      name,
+      brand: String(external.brand || "").trim(),
+      barcode,
+      image: external.image || null,
+      quantity: external.quantity || null,
+      nutriments: external.nutriments || null,
+      servingBaseGrams: 100,
+      macros: extractMacrosFromNutriments(external.nutriments),
+    };
+  }
+
+  async function lookupOpenFoodFacts(barcode) {
+    const clean = normalizeDetectedBarcode(barcode) || String(barcode || "").trim();
+    if (!clean) {
+      logLookupOff("descartado (barcode inválido)", { barcode: String(barcode || ""), reason: "invalid_barcode" }, "warn");
+      return { ok: false, reason: "invalid_barcode", product: null };
+    }
+    const endpoint = `${OFF_PRODUCT_ENDPOINT}/${encodeURIComponent(clean)}.json`;
+    logLookupOff("request", { barcode: clean, endpoint });
+    const { ok, res, json, ms, error, stage } = await fetchJsonWithTimeout(endpoint, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      mode: "cors",
+      cache: "no-store",
+    }, MACRO_SCAN_LOOKUP_TIMEOUT_MS);
+
+    if (!ok) {
+      const reason = stage === "timeout_or_abort" ? "timeout" : (stage === "parse_json" ? "invalid_json" : "network");
+      logLookupOff("error", { barcode: clean, endpoint, reason, ms, error: error?.name || error?.message || error }, "error");
+      return { ok: false, reason, product: null };
+    }
+
+    logLookupOff("response", { barcode: clean, status: res.status, ok: res.ok, ms });
+    if (!res.ok) {
+      const reason = res.status === 429 ? "rate_limit" : (res.status === 404 ? "not_found" : `http_${res.status}`);
+      const level = (res.status >= 500 || res.status === 429) ? "error" : "warn";
+      logLookupOff("http_not_ok", { barcode: clean, status: res.status, reason, ms }, level);
+      return { ok: false, reason, product: null, status: res.status };
+    }
+
+    const status = Number(json?.status);
+    if (status !== 1 || !json?.product) {
+      logLookupOff("not_found", { barcode: clean, reason: json?.status_verbose || json?.status || "not_found" }, "warn");
+      return { ok: false, reason: "not_found", product: null };
+    }
+
+    const external = normalizeProductData(json, "openfoodfacts", clean);
+    const product = externalToMacroProduct(external);
+    if (!product) {
+      logLookupOff("invalid_payload", { barcode: clean, reason: "normalize_failed" }, "error");
+      return { ok: false, reason: "invalid_payload", product: null };
+    }
+    logLookupOff("success", { barcode: clean, name: product.name });
+    return { ok: true, reason: "ok", product };
+  }
+
+  async function lookupFoodRepo(barcode) {
+    const clean = normalizeDetectedBarcode(barcode) || String(barcode || "").trim();
+    if (!clean) {
+      logLookupFoodRepo("descartado (barcode inválido)", { barcode: String(barcode || ""), reason: "invalid_barcode" }, "warn");
+      return { ok: false, reason: "invalid_barcode", product: null };
+    }
+
+    const token = getFoodRepoToken();
+    if (!token) {
+      logLookupFoodRepo("sin token; fallback deshabilitado", { barcode: clean, reason: "missing_token" }, "error");
+      return { ok: false, reason: "missing_token", product: null };
+    }
+
+    const base = String(FOODREPO_API_BASE || "https://www.foodrepo.org/api/v3").replace(/\\/+$/g, "");
+    const endpoint = `${base}/products?barcodes=${encodeURIComponent(clean)}`;
+    const authValue = /^Token\\s+/i.test(token) ? token : `Token token=${token}`;
+    logLookupFoodRepo("request", { barcode: clean, endpoint });
+
+    const { ok, res, json, ms, error, stage } = await fetchJsonWithTimeout(endpoint, {
+      method: "GET",
+      headers: { Accept: "application/json", Authorization: authValue },
+      mode: "cors",
+      cache: "no-store",
+    }, MACRO_SCAN_LOOKUP_TIMEOUT_MS);
+
+    if (!ok) {
+      const reason = stage === "timeout_or_abort" ? "timeout" : (stage === "parse_json" ? "invalid_json" : "network");
+      logLookupFoodRepo("error", { barcode: clean, endpoint, reason, ms, error: error?.name || error?.message || error }, "error");
+      return { ok: false, reason, product: null };
+    }
+
+    logLookupFoodRepo("response", { barcode: clean, status: res.status, ok: res.ok, ms });
+    if (!res.ok) {
+      const reason = (res.status === 401 || res.status === 403) ? "unauthorized" : (res.status === 429 ? "rate_limit" : `http_${res.status}`);
+      logLookupFoodRepo("http_not_ok", { barcode: clean, status: res.status, reason, ms }, "error");
+      return { ok: false, reason, product: null, status: res.status };
+    }
+
+    const external = normalizeProductData(json, "foodrepo", clean);
+    const product = externalToMacroProduct(external);
+    if (!product) {
+      logLookupFoodRepo("not_found", { barcode: clean, reason: "empty_or_unparseable" }, "warn");
+      return { ok: false, reason: "not_found", product: null };
+    }
+
+    logLookupFoodRepo("success", { barcode: clean, name: product.name });
+    return { ok: true, reason: "ok", product };
+  }
+
+  async function lookupProduct(barcode) {
+    const clean = normalizeDetectedBarcode(barcode) || String(barcode || "").trim();
+    if (!clean) return { ok: false, reason: "invalid_barcode", product: null };
+
+    // Local primero (sin red); no cuenta como API.
+    const local = await lookupProductByBarcode(clean);
+    if (local) {
+      logLookupSuccess("local_hit", { barcode: clean, productId: local.id || "" });
+      return { ok: true, reason: "local", product: local, source: "local" };
+    }
+
+    const off = await lookupOpenFoodFacts(clean);
+    if (off.ok && off.product) return { ok: true, reason: "openfoodfacts", product: off.product, source: "openfoodfacts" };
+
+    // Caso F: fallback FoodRepo
+    logLookupWarn("fallback -> FoodRepo", { barcode: clean, offReason: off.reason || "" });
+    const fr = await lookupFoodRepo(clean);
+    if (fr.ok && fr.product) return { ok: true, reason: "foodrepo", product: fr.product, source: "foodrepo" };
+
+    return { ok: false, reason: `openfoodfacts:${off.reason || "fail"}; foodrepo:${fr.reason || "fail"}`, product: null };
+  }
+
+  function applyLookupResultToUi(product, barcode, { fromManual = false, sourceEngine = "manual", source = "" } = {}) {
+    if (!product) return;
+    _macroScanPendingProduct = product;
+    const src = String(source || product.source || "").trim();
+    logMacroEvent(["ui"], "producto listo para UI", { barcode, source: src, name: product.name, fromManual, sourceEngine }, "info");
+    setMacroScanStatus(`Producto encontrado (${src || "ok"}): ${product.name}${product.brand ? ` · ${product.brand}` : ""}. Pulsa “Abrir ficha”.`);
+    showMacroScanAddProduct({ barcode, mode: "off", label: "Abrir ficha", pendingProduct: product });
+
+    if ($macroManualBarcode) $macroManualBarcode.value = barcode;
+    if ($macroManualName) $macroManualName.value = product.name || "";
+    if ($macroManualBrand) $macroManualBrand.value = product.brand || "";
+    if ($macroManualCarbs) $macroManualCarbs.value = String(product.macros?.carbs ?? 0);
+    if ($macroManualProtein) $macroManualProtein.value = String(product.macros?.protein ?? 0);
+    if ($macroManualFat) $macroManualFat.value = String(product.macros?.fat ?? 0);
+    if ($macroManualKcal) $macroManualKcal.value = String(product.macros?.kcal ?? 0);
+    if ($macroManualBase) $macroManualBase.value = "100";
+  }
+
   async function handleBarcodeFound(barcode, options = {}) {
     const { fromManual = false, sourceEngine = "manual" } = options || {};
-    logMacroScan("Procesando barcode", { barcode: String(barcode || "").trim(), fromManual, sourceEngine });
-    const clean = normalizeDetectedBarcode(barcode) || String(barcode || "").trim();
-    if (!clean) return;
+    const raw = String(barcode || "").trim();
+    const clean = normalizeDetectedBarcode(raw);
+    if (!clean) {
+      // Caso B: detectado pero inválido.
+      if (raw) logLookupWarn("barcode inválido (parse)", { raw: raw.slice(0, 40), rawLen: raw.length, fromManual, sourceEngine });
+      return;
+    }
+
+    logLookup("handleDetectedBarcode", { barcode: clean, fromManual, sourceEngine });
 
     // Evita repetir la misma bÃºsqueda en bucle mientras apuntas al mismo cÃ³digo.
     const now = Date.now();
-    if (!fromManual && clean === _macroScanLastLookupCode && (now - (_macroScanLastLookupAt || 0)) < 2500) return;
+    if (!fromManual && clean === _macroScanLastLookupCode && (now - (_macroScanLastLookupAt || 0)) < MACRO_SCAN_LOOKUP_COOLDOWN_MS) {
+      logLookup("ignorado por cooldown", { barcode: clean, cooldownMs: MACRO_SCAN_LOOKUP_COOLDOWN_MS });
+      return;
+    }
     _macroScanLastLookupCode = clean;
     _macroScanLastLookupAt = now;
 
+    // Obligatorio: si el lookup de ese barcode sigue en curso, no repetir petición.
+    if (_macroScanLookupInFlight.has(clean)) {
+      logLookup("ignorado (lookup en curso)", { barcode: clean, fromManual, sourceEngine });
+      return;
+    }
+
     const lookupSeq = (_macroScanLookupSeq += 1);
 
-    logMacroScan("bÃºsqueda lanzada", { codigo: clean, sourceEngine, fromManual, lookupSeq });
-    setMacroScanStatus("Buscando...");
-    const found = await lookupProductByBarcode(clean);
+    logLookup("búsqueda lanzada", { barcode: clean, sourceEngine, fromManual, lookupSeq });
+    setMacroScanStatus("Buscando producto...");
+
+    const p = (async () => lookupProduct(clean))();
+    _macroScanLookupInFlight.set(clean, p);
+    const result = await p.finally(() => {
+      try { _macroScanLookupInFlight.delete(clean); } catch (_) {}
+    });
+
     if (lookupSeq !== _macroScanLookupSeq) return;
-    if (found) {
-      logMacroScan("resultado encontrado", { fuente: "local", ok: true, productId: found.id || "" });
-      _macroScanPendingProduct = found;
-      setMacroScanStatus(`Encontrado: ${found.name}${found.brand ? ` · ${found.brand}` : ""}. Pulsa "Abrir ficha".`);
-      showMacroScanAddProduct({ barcode: clean, mode: "off", label: "Abrir ficha", pendingProduct: found });
+
+    if (result?.ok && result?.product) {
+      logLookupSuccess("producto encontrado", { barcode: clean, source: result.source || result.reason || "" });
+      applyLookupResultToUi(result.product, clean, { fromManual, sourceEngine, source: result.source || "" });
       return;
     }
 
-    setMacroScanStatus("Buscando en Open Food Facts…");
-    const off = await lookupOpenFoodFactsByBarcode(clean);
-    if (lookupSeq !== _macroScanLookupSeq) return;
-    logMacroScan("resultado encontrado", { fuente: "openfoodfacts", ok: Boolean(off) });
-    if (off) {
-      _macroScanPendingProduct = off;
-      logMacroScan("producto pendiente guardado", { ok: true, name: off?.name || "" });
-      setMacroScanStatus(`Encontrado en Open Food Facts: ${off.name}${off.brand ? ` · ${off.brand}` : ""}. Pulsa “Abrir ficha”.`);
-      showMacroScanAddProduct({ barcode: clean, mode: "off", label: "Abrir ficha", pendingProduct: off });
-      if ($macroManualBarcode) $macroManualBarcode.value = clean;
-      if ($macroManualName) $macroManualName.value = off.name;
-      if ($macroManualBrand) $macroManualBrand.value = off.brand || "";
-      if ($macroManualCarbs) $macroManualCarbs.value = String(off.macros?.carbs ?? 0);
-      if ($macroManualProtein) $macroManualProtein.value = String(off.macros?.protein ?? 0);
-      if ($macroManualFat) $macroManualFat.value = String(off.macros?.fat ?? 0);
-      if ($macroManualKcal) $macroManualKcal.value = String(off.macros?.kcal ?? 0);
-      if ($macroManualBase) $macroManualBase.value = "100";
-      return;
-    }
-
-    logMacroScan("resultado encontrado", { ok: false, codigo: clean, reason: "not_found_open_food_facts" });
-    setMacroScanStatus("No encontrado en Open Food Facts. Pulsa “Crear producto manual”.");
+    logLookupError("producto no encontrado / lookup falló", { barcode: clean, reason: result?.reason || "unknown" });
+    setMacroScanStatus("Producto no encontrado. Pulsa “Crear producto manual”.");
     showMacroScanAddProduct({ barcode: clean, mode: "manual", label: "Crear producto manual" });
     if ($macroManualBarcode) $macroManualBarcode.value = clean;
+  }
+
+  // Alias pedido (arquitectura): handler único para barcode detectado.
+  async function handleDetectedBarcode(barcode, options = {}) {
+    return handleBarcodeFound(barcode, options);
   }
 
   async function runMacroScanOcrPass(reason = "ocr") {
@@ -4467,7 +4764,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       if (clean) return clean;
       return "";
     } catch (err) {
-      if (String(err?.name || "") !== "NotFoundException") logMacroScan("lectura puntual falló", { reason, error: err?.name || err?.message || err });
+      if (String(err?.name || "") !== "NotFoundException") logScannerWarn("lectura puntual falló", { reason, error: err?.name || err?.message || err });
       return "";
     } finally {
       _macroScanDecodeInFlight = false;
@@ -4501,51 +4798,8 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   async function lookupOpenFoodFactsByBarcode(barcode) {
-    const clean = normalizeDetectedBarcode(barcode) || String(barcode || "").trim();
-    if (!clean) {
-      logMacroScan("búsqueda OFF descartada", { reason: "barcode_invalido", barcode: String(barcode || "") });
-      return null;
-    }
-    const endpoint = `${OFF_PRODUCT_ENDPOINT}/${encodeURIComponent(clean)}.json`;
-    logMacroScan("búsqueda OFF lanzada", { barcode: clean, endpoint });
-    let response = null;
-    try {
-      response = await fetch(endpoint, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        mode: "cors",
-        cache: "no-store",
-      });
-    } catch (err) {
-      logMacroScan("búsqueda OFF error", { barcode: clean, endpoint, stage: "request", error: err?.message || err?.name || err });
-      return null;
-    }
-    logMacroScan("respuesta OFF recibida", { barcode: clean, status: response.status, ok: response.ok });
-    if (!response.ok) {
-      logMacroScan("búsqueda OFF sin producto", { barcode: clean, reason: `http_${response.status}` });
-      return null;
-    }
-    let payload = null;
-    try {
-      payload = await response.json();
-    } catch (err) {
-      logMacroScan("búsqueda OFF error", { barcode: clean, stage: "parse_json", error: err?.message || err?.name || err });
-      return null;
-    }
-    if (Number(payload?.status) !== 1 || !payload?.product) {
-      logMacroScan("búsqueda OFF sin producto", {
-        barcode: clean,
-        reason: payload?.status_verbose || payload?.status || "not_found",
-      });
-      return null;
-    }
-    const normalized = normalizeOffProductPayload(payload, clean);
-    if (!normalized) {
-      logMacroScan("búsqueda OFF error", { barcode: clean, stage: "normalize_product", reason: "payload_incompleto" });
-      return null;
-    }
-    logMacroScan("producto OFF normalizado", { barcode: clean, name: normalized.name, found: true });
-    return normalized;
+    const res = await lookupOpenFoodFacts(barcode);
+    return res?.ok && res?.product ? res.product : null;
   }
 
   function upsertBarcodeMapping(barcode, productId) {
@@ -4774,20 +5028,23 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (raw == null) return;
     const code = String(raw || "").trim();
     if (!code) return;
-    if ($macroProductBarcode) $macroProductBarcode.value = code;
-    const local = await lookupProductByBarcode(code);
-    const off = local || (await lookupOpenFoodFactsByBarcode(code));
-    if (!off) {
+    const normalized = normalizeDetectedBarcode(code) || code;
+    if ($macroProductBarcode) $macroProductBarcode.value = normalized;
+    logLookup("lookup desde modal producto", { barcode: normalized, sourceEngine: "prompt" });
+    const result = await lookupProduct(normalized);
+    const pdt = result?.ok ? result.product : null;
+    if (!pdt) {
       if ($macroProductSummary) $macroProductSummary.textContent = "Código guardado. Sin coincidencias nutricionales automáticas.";
       return;
     }
-    if ($macroProductName && !$macroProductName.value.trim()) $macroProductName.value = off.name || "";
-    if ($macroProductBrand && !$macroProductBrand.value.trim()) $macroProductBrand.value = off.brand || "";
-    if ($macroProductBase) $macroProductBase.value = String(Number(off.servingBaseGrams) || 100);
-    if ($macroProductCarbs) $macroProductCarbs.value = String(Number(off.macros?.carbs) || 0);
-    if ($macroProductProtein) $macroProductProtein.value = String(Number(off.macros?.protein) || 0);
-    if ($macroProductFat) $macroProductFat.value = String(Number(off.macros?.fat) || 0);
-    if ($macroProductKcal) $macroProductKcal.value = String(Number(off.macros?.kcal) || 0);
+    logLookupSuccess("modal producto: datos recibidos", { barcode: normalized, source: result?.source || "" });
+    if ($macroProductName && !$macroProductName.value.trim()) $macroProductName.value = pdt.name || "";
+    if ($macroProductBrand && !$macroProductBrand.value.trim()) $macroProductBrand.value = pdt.brand || "";
+    if ($macroProductBase) $macroProductBase.value = String(Number(pdt.servingBaseGrams) || 100);
+    if ($macroProductCarbs) $macroProductCarbs.value = String(Number(pdt.macros?.carbs) || 0);
+    if ($macroProductProtein) $macroProductProtein.value = String(Number(pdt.macros?.protein) || 0);
+    if ($macroProductFat) $macroProductFat.value = String(Number(pdt.macros?.fat) || 0);
+    if ($macroProductKcal) $macroProductKcal.value = String(Number(pdt.macros?.kcal) || 0);
     renderMacroProductSummary();
   });
   $macroProductFinanceSelect?.addEventListener("change", () => {
@@ -4874,7 +5131,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   $macroScanManualBtn?.addEventListener("click", async () => {
     hideMacroScanAddProduct();
     const barcodeInput = String($macroScanManual?.value || "").trim();
-    logMacroScan("ruta manual", { codigo: barcodeInput || "(vacío)", busquedaLanzada: Boolean(barcodeInput) });
+    logLookup("ruta manual", { barcode: barcodeInput || "", lookupRequested: Boolean(barcodeInput) });
     if (!barcodeInput) {
       setMacroScanStatus("Introduce un código de barras.");
       return;
@@ -4919,13 +5176,13 @@ $recipeImportBtn?.addEventListener("click", () => {
         ? { ..._macroScanPendingLookup.product }
         : (_macroScanPendingProduct ? { ..._macroScanPendingProduct } : null);
       if (!pendingProduct) {
-        logMacroScan("Abrir ficha", { clickRecibido: true, pendingProductExiste: false, aperturaLlamada: false, mode, barcode, pendingLookupId });
+        logMacroEvent(["ui"], "Abrir ficha (sin producto en memoria)", { clickReceived: true, pendingProductExists: false, openCalled: false, mode, barcode, pendingLookupId }, "warn");
         setMacroScanStatus("No tengo el producto en memoria. Repite la búsqueda o crea manualmente.");
         macroModalState.source = "manual";
         renderMacroModalResults();
         return;
       }
-      logMacroScan("Abrir ficha", { clickRecibido: true, pendingProductExiste: Boolean(pendingProduct), aperturaLlamada: true, barcode, name: pendingProduct?.name || "" });
+      logMacroEvent(["ui"], "Abrir ficha", { clickReceived: true, pendingProductExists: Boolean(pendingProduct), openCalled: true, barcode, name: pendingProduct?.name || "" }, "info");
       closeMacroAddModal();
       openMacroProductModal(pendingProduct, macroModalState.meal, 100);
       return;

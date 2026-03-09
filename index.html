@@ -684,6 +684,7 @@
         <select id="macro-stats-main-metric" class="macro-stats-select">
           <option value="macros">Macros (C/P/G)</option>
           <option value="kcal">Kcal</option>
+          <option value="cost">Coste (€)</option>
           <option value="carbs">Carbohidratos</option>
           <option value="protein">Proteínas</option>
           <option value="fat">Grasas</option>
@@ -699,23 +700,19 @@
           <h4>Evolución nutricional</h4>
           <span class="hint" id="macro-stats-main-label"></span>
         </header>
+        <div class="macro-stats-chart-legend"></div>
+        <div id="macro-stats-main-tooltip" class="macro-stats-main-tooltip hidden"></div>
         <svg id="macro-stats-main-chart" class="macro-stats-main-chart" viewBox="0 0 760 260" preserveAspectRatio="none"></svg>
       </section>
 
       <section class="macro-stats-card macro-stats-donut-card">
         <header class="macro-stats-card-head"><h4>Distribuciones del periodo</h4></header>
+        <div class="macro-stats-donut-mode" id="macro-stats-donut-mode"></div>
         <div class="macro-stats-donut-grid">
           <div class="macro-stats-donut-box">
-            <svg id="macro-stats-donut-kcal" viewBox="0 0 120 120" class="macro-stats-donut"></svg>
-            <div class="macro-stats-donut-title">Calorías por macro</div>
-          </div>
-          <div class="macro-stats-donut-box">
-            <svg id="macro-stats-donut-macros" viewBox="0 0 120 120" class="macro-stats-donut"></svg>
-            <div class="macro-stats-donut-title">Reparto C/P/G (g)</div>
-          </div>
-          <div class="macro-stats-donut-box">
-            <svg id="macro-stats-donut-meals" viewBox="0 0 120 120" class="macro-stats-donut"></svg>
-            <div class="macro-stats-donut-title">Consumo por comida</div>
+            <svg id="macro-stats-donut-main" viewBox="0 0 120 120" class="macro-stats-donut"></svg>
+            <div class="macro-stats-donut-title" id="macro-stats-donut-title">Calorías por macro</div>
+            <div class="macro-stats-donut-legend" id="macro-stats-donut-legend"></div>
           </div>
         </div>
       </section>

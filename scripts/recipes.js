@@ -285,10 +285,12 @@ if ($viewRecipes) {
   const $macroStatsMainMetric = document.getElementById("macro-stats-main-metric");
   const $macroStatsKpis = document.getElementById("macro-stats-kpis");
   const $macroStatsMainChart = document.getElementById("macro-stats-main-chart");
+  const $macroStatsMainTooltip = document.getElementById("macro-stats-main-tooltip");
   const $macroStatsMainLabel = document.getElementById("macro-stats-main-label");
-  const $macroStatsDonutKcal = document.getElementById("macro-stats-donut-kcal");
-  const $macroStatsDonutMacros = document.getElementById("macro-stats-donut-macros");
-  const $macroStatsDonutMeals = document.getElementById("macro-stats-donut-meals");
+  const $macroStatsDonutMain = document.getElementById("macro-stats-donut-main");
+  const $macroStatsDonutTitle = document.getElementById("macro-stats-donut-title");
+  const $macroStatsDonutLegend = document.getElementById("macro-stats-donut-legend");
+  const $macroStatsDonutMode = document.getElementById("macro-stats-donut-mode");
   const $macroStatsTopRecipes = document.getElementById("macro-stats-top-recipes");
   const $macroStatsTopProducts = document.getElementById("macro-stats-top-products");
   const $macroAddModalBackdrop = document.getElementById("macro-add-modal-backdrop");
@@ -422,7 +424,15 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   let nutritionGoals = { ...defaultGoals };
   let selectedMacroDate = toISODate(new Date());
   const macroModalState = { meal: "breakfast", source: "products", query: "" };
-  const macroStatsState = { period: "week", anchorDate: selectedMacroDate, metric: "macros" };
+  const macroStatsState = { period: "week", anchorDate: selectedMacroDate, metric: "macros", donutMode: "kcal-macros" };
+  const macroPalette = {
+    carbs: "#ff4bd1",
+    protein: "#5aa4ff",
+    fat: "#ffc247",
+    kcal: "#f5e6a6",
+    cost: "#79f3b2",
+    excess: "#ff6666",
+  };
   let nutritionSyncMeta = { version: 2, migratedAt: 0, updatedAt: 0 };
   let nutritionUnsubscribe = null;
   const MACRO_USAGE_KEY_PREFIX = "bookshell.macro.usage.v1";
@@ -791,6 +801,12 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   function roundMacro(value) {
     return Math.round((Number(value) || 0) * 10) / 10;
+  }
+
+  function formatCurrency(value) {
+    const safe = Number(value);
+    if (!Number.isFinite(safe)) return "—";
+    return `${safe.toFixed(2)} €`;
   }
 
   function sortByVisibleNameEs(list = [], getLabel = (row) => row?.name || "") {
@@ -2365,8 +2381,8 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       ];
       const cost = computeRecipeEstimatedCost(recipe);
       if (cost.covered > 0) {
-        const perServing = cost.perServing == null ? "" : ` · ${roundMacro(cost.perServing)}€/ración`;
-        items.push({ label: "Coste estimado", value: `~${roundMacro(cost.total)}€${perServing} (${cost.covered}/${cost.totalIngredients || 0} ing.)` });
+        const perServing = cost.perServing == null ? "" : ` · ${formatCurrency(cost.perServing)}/ración`;
+        items.push({ label: "Coste estimado", value: `~${formatCurrency(cost.total)}${perServing} (${cost.covered}/${cost.totalIngredients || 0} ing.)` });
       }
       items.forEach((item) => {
         const block = document.createElement("div");
@@ -3146,14 +3162,21 @@ $recipeImportBtn?.addEventListener("click", () => {
     let mealCount = 0;
     let recipeCount = 0;
     let maxDay = { date: null, kcal: 0 };
+    let maxCostDay = { date: null, cost: 0 };
+    let totalCost = 0;
+    let totalMissingPrice = 0;
     const mealKcal = { breakfast: 0, lunch: 0, dinner: 0, snacks: 0 };
 
     dates.forEach((date) => {
       const log = getDailyLog(date);
       const dayTotals = computeDailyTotals(date);
-      daySeries.push({ date, totals: dayTotals });
+      const dayCost = computeDailyCostSummary(date);
+      daySeries.push({ date, totals: dayTotals, cost: Number(dayCost.total) || 0, missingPrice: Number(dayCost.missing) || 0 });
       totals = plusMacros(totals, dayTotals);
+      totalCost += Number(dayCost.total) || 0;
+      totalMissingPrice += Number(dayCost.missing) || 0;
       if (dayTotals.kcal > maxDay.kcal) maxDay = { date, kcal: dayTotals.kcal };
+      if ((Number(dayCost.total) || 0) > maxCostDay.cost) maxCostDay = { date, cost: Number(dayCost.total) || 0 };
       mealOrder.forEach((meal) => {
         const entries = log.meals?.[meal]?.entries || [];
         if (entries.length) mealCount += 1;
@@ -3184,17 +3207,20 @@ $recipeImportBtn?.addEventListener("click", () => {
       protein: totals.protein / Math.max(1, dates.length),
       fat: totals.fat / Math.max(1, dates.length),
       kcal: totals.kcal / Math.max(1, dates.length),
+      cost: totalCost / Math.max(1, dates.length),
     };
 
     const topRecipes = Array.from(byRecipe.values()).sort((a, b) => b.count - a.count || b.macros.kcal - a.macros.kcal).slice(0, 8);
     const topProducts = Array.from(byProduct.values()).sort((a, b) => b.count - a.count || b.macros.kcal - a.macros.kcal).slice(0, 8);
 
-    return { dates, daySeries, totals, avg, mealCount, recipeCount, topRecipes, topProducts, maxDay, mealKcal };
+    return { dates, daySeries, totals, avg, mealCount, recipeCount, topRecipes, topProducts, maxDay, maxCostDay, mealKcal, totalCost, totalMissingPrice };
   }
 
-  function renderSimpleDonut(host, segments = []) {
+  function renderSimpleDonut(host, segments = [], options = {}) {
     if (!host) return;
     const total = segments.reduce((acc, s) => acc + Math.max(0, Number(s.value) || 0), 0);
+    const valueFormatter = options.valueFormatter || ((value) => roundMacro(value));
+    const subtitle = options.subtitle || "total";
     const radius = 44;
     const circumference = 2 * Math.PI * radius;
     if (!total) {
@@ -3209,13 +3235,14 @@ $recipeImportBtn?.addEventListener("click", () => {
       offset += len;
       return arc;
     }).join("");
-    host.innerHTML = `<circle cx="60" cy="60" r="44" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="14"></circle>${arcs}<text x="60" y="58" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">${roundMacro(total)}</text><text x="60" y="72" text-anchor="middle" fill="rgba(255,255,255,.65)" font-size="9">total</text>`;
+    const centerValue = valueFormatter(total);
+    host.innerHTML = `<circle cx="60" cy="60" r="44" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="14"></circle>${arcs}<text x="60" y="58" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">${centerValue}</text><text x="60" y="72" text-anchor="middle" fill="rgba(255,255,255,.65)" font-size="9">${subtitle}</text>`;
   }
 
   function renderStatisticsView() {
     if (!$recipesPanelStatistics || !$macroStatsKpis) return;
     const summary = summarizeStatistics();
-    const metricLabelMap = { macros: "Carbs, proteína y grasas", kcal: "Calorías", carbs: "Carbohidratos", protein: "Proteínas", fat: "Grasas" };
+    const metricLabelMap = { macros: "Macros", kcal: "Calorías", cost: "Coste", carbs: "Carbohidratos", protein: "Proteínas", fat: "Grasas" };
 
     if ($macroStatsAnchor) $macroStatsAnchor.value = macroStatsState.anchorDate;
     $macroStatsPeriods?.querySelectorAll("[data-stats-period]").forEach((btn) => {
@@ -3224,59 +3251,146 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroStatsMainMetric) $macroStatsMainMetric.value = macroStatsState.metric;
     if ($macroStatsMainLabel) $macroStatsMainLabel.textContent = `${metricLabelMap[macroStatsState.metric] || "Métrica"} · ${summary.dates[0] || "-"} → ${summary.dates[summary.dates.length - 1] || "-"}`;
 
-    $macroStatsKpis.innerHTML = [
-      ["Kcal totales", `${roundMacro(summary.totals.kcal)}`],
-      ["Media kcal/día", `${roundMacro(summary.avg.kcal)}`],
-      ["Carbs totales", `${roundMacro(summary.totals.carbs)}g`],
-      ["Proteínas totales", `${roundMacro(summary.totals.protein)}g`],
-      ["Grasas totales", `${roundMacro(summary.totals.fat)}g`],
+    const primaryKpis = [
+      ["Gasto total", formatCurrency(summary.totalCost), "primary"],
+      ["Media €/día", formatCurrency(summary.avg.cost), "primary"],
+      ["Día de mayor gasto", summary.maxCostDay.date ? `${summary.maxCostDay.date} · ${formatCurrency(summary.maxCostDay.cost)}` : "—", "primary"],
+      ["Elementos sin precio", `${summary.totalMissingPrice}`, "primary"],
+    ];
+    const secondaryKpis = [
+      ["Kcal totales", `${roundMacro(summary.totals.kcal)} kcal`],
+      ["Media kcal/día", `${roundMacro(summary.avg.kcal)} kcal`],
+      ["Macros/día", `C ${roundMacro(summary.avg.carbs)} · P ${roundMacro(summary.avg.protein)} · G ${roundMacro(summary.avg.fat)}`],
       ["Comidas registradas", `${summary.mealCount}`],
       ["Recetas consumidas", `${summary.recipeCount}`],
-      ["Plato más repetido", `${summary.topRecipes[0]?.name || "—"}`],
       ["Día más calórico", `${summary.maxDay.date || "—"} (${roundMacro(summary.maxDay.kcal)} kcal)`],
-      ["Media macros/día", `C ${roundMacro(summary.avg.carbs)} · P ${roundMacro(summary.avg.protein)} · G ${roundMacro(summary.avg.fat)}`],
-    ].map(([k, v]) => `<article class="macro-stats-kpi"><div class="macro-stats-kpi-label">${k}</div><div class="macro-stats-kpi-value">${v}</div></article>`).join("");
+    ];
+    $macroStatsKpis.innerHTML = `
+      <div class="macro-stats-kpi-primary-wrap">${primaryKpis.map(([k, v, cls]) => `<article class="macro-stats-kpi ${cls || ""}"><div class="macro-stats-kpi-label">${k}</div><div class="macro-stats-kpi-value">${v}</div></article>`).join("")}</div>
+      <div class="macro-stats-kpi-chips">${secondaryKpis.map(([k, v]) => `<article class="macro-stats-kpi-chip"><span>${k}</span><strong>${v}</strong></article>`).join("")}</div>
+    `;
 
     if ($macroStatsMainChart) {
-      const w = 760, h = 260, pad = { l: 42, r: 18, t: 16, b: 30 };
+      const w = 760, h = 260, pad = { l: 20, r: 20, t: 18, b: 18 };
       const points = summary.daySeries;
-      const labels = points.map((p) => p.date.slice(5));
       const series = macroStatsState.metric === "macros"
         ? [
-            { key: "carbs", color: "#44d492", name: "Carbs" },
-            { key: "protein", color: "#66a3ff", name: "Proteínas" },
-            { key: "fat", color: "#ffb84d", name: "Grasas" },
+            { key: "carbs", color: macroPalette.carbs, name: "Carbs", formatter: (v) => `${roundMacro(v)} g` },
+            { key: "protein", color: macroPalette.protein, name: "Proteínas", formatter: (v) => `${roundMacro(v)} g` },
+            { key: "fat", color: macroPalette.fat, name: "Grasas", formatter: (v) => `${roundMacro(v)} g` },
           ]
-        : [{ key: macroStatsState.metric, color: "#f5e6a6", name: metricLabelMap[macroStatsState.metric] || "Métrica" }];
-      const maxVal = Math.max(1, ...points.flatMap((p) => series.map((s) => Number(p.totals?.[s.key]) || 0)));
+        : [{ key: macroStatsState.metric, color: macroPalette[macroStatsState.metric] || "#f5e6a6", name: metricLabelMap[macroStatsState.metric] || "Métrica", formatter: macroStatsState.metric === "cost" ? (v) => formatCurrency(v) : (v) => `${roundMacro(v)}${macroStatsState.metric === "kcal" ? " kcal" : " g"}` }];
+
+      const maxVal = Math.max(1, ...points.flatMap((p) => series.map((s) => Number(s.key === "cost" ? p.cost : p.totals?.[s.key]) || 0)));
       const xStep = (w - pad.l - pad.r) / Math.max(1, points.length - 1);
-      const y = (v) => h - pad.b - (Math.max(0, v) / maxVal) * (h - pad.t - pad.b);
-      const lines = series.map((s) => {
-        const d = points.map((p, i) => `${i ? "L" : "M"}${pad.l + i * xStep},${y(Number(p.totals?.[s.key]) || 0)}`).join(" ");
-        return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="3" stroke-linecap="round"></path>`;
+      const yPos = (v) => h - pad.b - (Math.max(0, v) / maxVal) * (h - pad.t - pad.b);
+      const toPoint = (idx, val) => ({ x: pad.l + idx * xStep, y: yPos(val) });
+      const smoothPath = (pts) => {
+        if (pts.length < 2) return "";
+        return pts.map((p, i) => {
+          if (i === 0) return `M${p.x},${p.y}`;
+          const prev = pts[i - 1];
+          const cpx = (prev.x + p.x) / 2;
+          return `C${cpx},${prev.y} ${cpx},${p.y} ${p.x},${p.y}`;
+        }).join(" ");
+      };
+
+      const lines = series.map((s, idx) => {
+        const pts = points.map((p, i) => toPoint(i, Number(s.key === "cost" ? p.cost : p.totals?.[s.key]) || 0));
+        const path = smoothPath(pts);
+        return `<g data-series-index="${idx}"><path d="${path}" fill="none" stroke="${s.color}" stroke-width="6" opacity=".18" stroke-linecap="round"></path><path d="${path}" fill="none" stroke="${s.color}" stroke-width="2.8" stroke-linecap="round"></path></g>`;
       }).join("");
-      const xTicks = labels.map((lb, i) => `<text x="${pad.l + i * xStep}" y="${h - 8}" text-anchor="middle" fill="rgba(255,255,255,.65)" font-size="9">${lb}</text>`).join("");
-      const legend = series.map((s, i) => `<text x="${pad.l + i * 130}" y="12" fill="${s.color}" font-size="10">● ${s.name}</text>`).join("");
-      $macroStatsMainChart.innerHTML = `<rect x="0" y="0" width="${w}" height="${h}" fill="transparent"></rect><line x1="${pad.l}" y1="${h-pad.b}" x2="${w-pad.r}" y2="${h-pad.b}" stroke="rgba(255,255,255,.15)"></line>${lines}${xTicks}${legend}`;
+
+      const grid = [0.25, 0.5, 0.75].map((r) => {
+        const y = h - pad.b - (h - pad.t - pad.b) * r;
+        return `<line x1="${pad.l}" y1="${y}" x2="${w - pad.r}" y2="${y}" stroke="rgba(255,255,255,.06)" />`;
+      }).join("");
+      const legend = series.map((s, i) => `<button class="macro-stats-legend-chip" type="button" data-macro-series="${i}"><i style="background:${s.color}"></i>${s.name}</button>`).join("");
+      $macroStatsMainChart.innerHTML = `<rect x="0" y="0" width="${w}" height="${h}" fill="transparent"></rect>${grid}${lines}`;
+      if ($macroStatsDonutMode) {
+        const legendHost = $macroStatsMainChart.closest('.macro-stats-main-chart-card')?.querySelector('.macro-stats-chart-legend');
+        if (legendHost) legendHost.innerHTML = legend;
+      }
+
+      $macroStatsMainChart.onmousemove = (evt) => {
+        if (!$macroStatsMainTooltip || !points.length) return;
+        const rect = $macroStatsMainChart.getBoundingClientRect();
+        const relX = evt.clientX - rect.left - pad.l;
+        const idx = Math.max(0, Math.min(points.length - 1, Math.round(relX / Math.max(1, xStep))));
+        const point = points[idx];
+        const rows = series.map((s) => {
+          const raw = Number(s.key === "cost" ? point.cost : point.totals?.[s.key]) || 0;
+          return `<div><span style="color:${s.color}">●</span> ${s.name}: <strong>${s.formatter(raw)}</strong></div>`;
+        }).join("");
+        $macroStatsMainTooltip.innerHTML = `<div class="macro-stats-tooltip-date">${point.date}</div>${rows}`;
+        $macroStatsMainTooltip.classList.remove('hidden');
+      };
+      $macroStatsMainChart.onmouseleave = () => { $macroStatsMainTooltip?.classList.add('hidden'); };
     }
 
-    renderSimpleDonut($macroStatsDonutMacros, [
-      { value: summary.totals.carbs, color: "#44d492" },
-      { value: summary.totals.protein, color: "#66a3ff" },
-      { value: summary.totals.fat, color: "#ffb84d" },
-    ]);
-    renderSimpleDonut($macroStatsDonutKcal, [
-      { value: summary.totals.carbs * 4, color: "#44d492" },
-      { value: summary.totals.protein * 4, color: "#66a3ff" },
-      { value: summary.totals.fat * 9, color: "#ffb84d" },
-    ]);
-    renderSimpleDonut($macroStatsDonutMeals, mealOrder.map((meal, i) => ({ value: summary.mealKcal[meal], color: ["#6fddff", "#b79bff", "#f7b0ff", "#ffd166"][i] })));
+    const donutConfigs = {
+      "kcal-macros": {
+        title: "Calorías por macro",
+        subtitle: "kcal",
+        valueFormatter: (v) => roundMacro(v),
+        segments: [
+          { label: "Carbohidratos", value: summary.totals.carbs * 4, color: macroPalette.carbs },
+          { label: "Proteínas", value: summary.totals.protein * 4, color: macroPalette.protein },
+          { label: "Grasas", value: summary.totals.fat * 9, color: macroPalette.fat },
+        ],
+      },
+      "grams-macros": {
+        title: "Gramos por macro",
+        subtitle: "g",
+        valueFormatter: (v) => roundMacro(v),
+        segments: [
+          { label: "Carbohidratos", value: summary.totals.carbs, color: macroPalette.carbs },
+          { label: "Proteínas", value: summary.totals.protein, color: macroPalette.protein },
+          { label: "Grasas", value: summary.totals.fat, color: macroPalette.fat },
+        ],
+      },
+      "cost-meal": {
+        title: "Coste por comida",
+        subtitle: "€",
+        valueFormatter: (v) => Number(v).toFixed(2),
+        segments: mealOrder.map((meal, i) => ({ label: mealLabels[meal], value: summary.daySeries.reduce((acc, day) => {
+          const log = getDailyLog(day.date);
+          const mealCost = computeMealCostSummary(log?.meals?.[meal]?.entries || []);
+          return acc + (Number(mealCost.total) || 0);
+        }, 0), color: ["#6fddff", "#b79bff", "#f7b0ff", "#ffd166"][i] })),
+      },
+    };
+
+    if (!donutConfigs[macroStatsState.donutMode] || donutConfigs[macroStatsState.donutMode].segments.every((s) => !(Number(s.value) > 0))) {
+      macroStatsState.donutMode = "kcal-macros";
+    }
+    const donutCfg = donutConfigs[macroStatsState.donutMode];
+    if ($macroStatsDonutTitle) $macroStatsDonutTitle.textContent = donutCfg.title;
+    renderSimpleDonut($macroStatsDonutMain, donutCfg.segments, { valueFormatter: donutCfg.valueFormatter, subtitle: donutCfg.subtitle });
+    const donutTotal = donutCfg.segments.reduce((acc, s) => acc + (Number(s.value) || 0), 0);
+    if ($macroStatsDonutLegend) {
+      $macroStatsDonutLegend.innerHTML = donutCfg.segments.filter((seg) => Number(seg.value) > 0).map((seg) => {
+        const pct = donutTotal > 0 ? ((Number(seg.value) || 0) / donutTotal) * 100 : 0;
+        return `<button class="macro-stats-donut-row" type="button"><i style="background:${seg.color}"></i><span>${seg.label}</span><strong>${donutCfg.valueFormatter(seg.value)}</strong><em>${roundMacro(pct)}%</em></button>`;
+      }).join("") || '<div class="hint">Sin datos en este modo.</div>';
+    }
+
+    if ($macroStatsDonutMode) {
+      const modes = [
+        { key: "kcal-macros", label: "Calorías por macro" },
+        { key: "grams-macros", label: "Gramos por macro" },
+        { key: "cost-meal", label: "Coste por comida" },
+      ];
+      $macroStatsDonutMode.innerHTML = modes.map((mode) => {
+        const disabled = donutConfigs[mode.key].segments.every((s) => !(Number(s.value) > 0));
+        return `<button type="button" class="macro-stats-period ${macroStatsState.donutMode === mode.key ? "is-active" : ""}" data-donut-mode="${mode.key}" ${disabled ? "disabled" : ""}>${mode.label}</button>`;
+      }).join("");
+    }
 
     const row = (item) => `<div class="macro-stats-row"><strong>${escapeHtml(item.name)}</strong><span>${item.count} veces</span><span>${roundMacro(item.grams || item.servings)} ${item.grams ? "g" : "rac"}</span><span>${roundMacro(item.macros?.kcal)} kcal</span><span>C ${roundMacro(item.macros?.carbs)} · P ${roundMacro(item.macros?.protein)} · G ${roundMacro(item.macros?.fat)}</span></div>`;
     if ($macroStatsTopRecipes) $macroStatsTopRecipes.innerHTML = summary.topRecipes.map(row).join("") || '<div class="hint">Sin recetas en el periodo.</div>';
     if ($macroStatsTopProducts) $macroStatsTopProducts.innerHTML = summary.topProducts.map(row).join("") || '<div class="hint">Sin productos en el periodo.</div>';
   }
-
   function switchRecipesPanel(panel = "library") {
     const isLibrary = panel === "library";
     const isMacros = panel === "macros";
@@ -3314,7 +3428,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         <div class="macro-stat macro-stat-${key} ${excess ? "is-excess" : ""}">
           <div class="macro-stat-title">${label}</div>
           <div class="macro-stat-value">
-            <span class="macro-consumed">${value}${unit}</span>
+            <span class="macro-consumed ${excess ? "is-excess" : ""}">${value}${unit}</span>
             <span class="macro-sep">/</span>
             <input
               class="macro-goal-input-stats"
@@ -3353,8 +3467,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       <div class="macro-summary-group macro-summary-group-cost">
         <div class="macro-stat macro-stat-cost">
           <div class="macro-stat-title">Gasto comida (estimado)</div>
-          <div class="macro-stat-value"><span class="macro-consumed">${roundMacro(dayCost.total)}€</span></div>
-          <div class="hint">${dayCost.missing ? `${dayCost.missing} elementos sin precio` : "Sin elementos pendientes de precio"}</div>
+          <div class="macro-stat-value"><span class="macro-consumed">${formatCurrency(dayCost.total)}</span></div>
+          <div class="hint ${dayCost.missing ? "macro-cost-warning" : ""}">${dayCost.missing ? `${dayCost.missing} elementos sin precio` : ""}</div>
         </div>
       </div>
     `;
@@ -3379,12 +3493,12 @@ $recipeImportBtn?.addEventListener("click", () => {
       <div class="kcals-dato">
       ${roundMacro(entry.macrosSnapshot.kcal)} kcal
       </div>
-      <div class="hint macro-entry-cost">${calculateEntryFoodCost(entry).cost == null ? "Coste n/d" : `~${roundMacro(calculateEntryFoodCost(entry).cost)}€`}</div>
+      <div class="hint macro-entry-cost">${calculateEntryFoodCost(entry).cost == null ? "Coste n/d" : `~${formatCurrency(calculateEntryFoodCost(entry).cost)}`}</div>
       <button class="icon-btn-eliminar-comida" data-macro-delete="${meal}:${idx}" type="button">✕</button></div></div>`).join("") || '<div class="hint">Sin entradas</div>';
       return `<article class="macro-meal-card">
       <div class="macro-meal-head">
       <h4>${mealLabels[meal]}</h4>
-      <div class="hint">${roundMacro(mt.kcal)} kcal · C ${roundMacro(mt.carbs)} · P ${roundMacro(mt.protein)} · G ${roundMacro(mt.fat)} · ${roundMacro(mealCost.total)}€${mealCost.missing ? ` · ${mealCost.missing} s/p` : ""}</div></div><div class="macro-meal-entries">${entryHtml}</div><button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
+      <div class="hint">${roundMacro(mt.kcal)} kcal · C ${roundMacro(mt.carbs)} · P ${roundMacro(mt.protein)} · G ${roundMacro(mt.fat)} · ${formatCurrency(mealCost.total)}${mealCost.missing ? ` · ${mealCost.missing} s/p` : ""}</div></div><div class="macro-meal-entries">${entryHtml}</div><button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
     }).join("");
     if ($recipesPanelStatistics?.classList.contains("is-active")) renderStatisticsView();
   }
@@ -3462,13 +3576,13 @@ $recipeImportBtn?.addEventListener("click", () => {
 
     if ($macroProductPriceUsed) {
       if (effectivePrice == null) $macroProductPriceUsed.textContent = "Sin precio disponible";
-      else if (priceSource === "finance-linked-last-price") $macroProductPriceUsed.textContent = `Precio usado: ${roundMacro(effectivePrice)} € (Finanzas)`;
-      else $macroProductPriceUsed.textContent = `Precio usado: ${roundMacro(effectivePrice)} € (Manual)`;
+      else if (priceSource === "finance-linked-last-price") $macroProductPriceUsed.textContent = `Precio usado: ${formatCurrency(effectivePrice)} (Finanzas)`;
+      else $macroProductPriceUsed.textContent = `Precio usado: ${formatCurrency(effectivePrice)} (Manual)`;
     }
 
     if (grams) {
       const cost = calculateProductConsumedCost(draft, grams, "g");
-      const costLabel = cost == null ? " · Coste n/d" : ` · ~${roundMacro(cost)}€`;
+      const costLabel = cost == null ? " · Coste n/d" : ` · ~${formatCurrency(cost)}`;
       $macroProductSummary.textContent = `Para ${roundMacro(grams)}g: ${roundMacro(m.kcal)} kcal · C ${roundMacro(m.carbs)} · P ${roundMacro(m.protein)} · G ${roundMacro(m.fat)}${costLabel}`;
     } else {
       $macroProductSummary.textContent = "Indica una cantidad para ver el resumen.";
@@ -3521,13 +3635,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     const sortedFinanceProducts = sortByVisibleNameEs(financeProducts, (row) => row?.name || "");
     if ($macroProductFinanceSelect) {
       const opts = ['<option value="">Sin vincular</option>']
-        .concat(sortedFinanceProducts.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}${row.lastPrice ? ` · ${roundMacro(row.lastPrice)}€` : ""}</option>`));
+        .concat(sortedFinanceProducts.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}${row.lastPrice ? ` · ${formatCurrency(row.lastPrice)}` : ""}</option>`));
       $macroProductFinanceSelect.innerHTML = opts.join("");
       $macroProductFinanceSelect.value = String(product.financeProductId || "");
     }
     if ($macroProductFinanceHint) {
       const linkedFin = financeProducts.find((f) => f.id === String(product.financeProductId || ""));
-      $macroProductFinanceHint.textContent = linkedFin ? `Vinculado a ${linkedFin.name}${linkedFin.lastPrice ? ` · último ${roundMacro(linkedFin.lastPrice)}€` : ""}` : "Sin producto de Finanzas";
+      $macroProductFinanceHint.textContent = linkedFin ? `Vinculado a ${linkedFin.name}${linkedFin.lastPrice ? ` · último ${formatCurrency(linkedFin.lastPrice)}` : ""}` : "Sin producto de Finanzas";
     }
 
     if ($macroProductHabitSelect) {
@@ -6129,6 +6243,12 @@ $recipeImportBtn?.addEventListener("click", () => {
     macroStatsState.metric = e.target.value || "macros";
     renderStatisticsView();
   });
+  $macroStatsDonutMode?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-donut-mode]");
+    if (!btn || btn.hasAttribute("disabled")) return;
+    macroStatsState.donutMode = btn.dataset.donutMode || "kcal-macros";
+    renderStatisticsView();
+  });
   $macroStatsPrev?.addEventListener("click", () => {
     const d = new Date(`${macroStatsState.anchorDate}T00:00:00`);
     if (macroStatsState.period === "day") d.setDate(d.getDate() - 1);
@@ -6319,7 +6439,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   });
   $macroProductFinanceSelect?.addEventListener("change", () => {
     const row = financeProducts.find((f) => f.id === String($macroProductFinanceSelect.value || ""));
-    if ($macroProductFinanceHint) $macroProductFinanceHint.textContent = row ? `Vinculado a ${row.name}${row.lastPrice ? ` · último ${roundMacro(row.lastPrice)}€` : ""}` : "Sin producto de Finanzas";
+    if ($macroProductFinanceHint) $macroProductFinanceHint.textContent = row ? `Vinculado a ${row.name}${row.lastPrice ? ` · último ${formatCurrency(row.lastPrice)}` : ""}` : "Sin producto de Finanzas";
     renderMacroProductSummary();
   });
   $macroProductFinanceUnlink?.addEventListener("click", () => {

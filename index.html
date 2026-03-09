@@ -542,40 +542,42 @@
 <!-- Vista RECETAS -->
 <section class="view" id="view-recipes">
 <div class="recipes-wrapper">
-<div class="recipes-top">
-<div class="stats-cards recipes-stats-cards">
-<div class="stat-card">
-<div class="stat-label">Recetas</div>
-<div class="stat-value" id="recipe-stat-total">0</div>
-</div>
-<div class="stat-card">
-<div class="stat-label">Favoritas</div>
-<div class="stat-value" id="recipe-stat-favorites">0</div>
-</div>
-<div class="stat-card">
-<div class="stat-label">Saludables</div>
-<div class="stat-value" id="recipe-stat-healthy">0</div>
-</div>
-<div class="stat-card">
-<div class="stat-label">⭐</div>
-<div class="stat-value" id="recipe-stat-rating">0.0</div>
-</div>
-<div class="stat-card">
-<div class="stat-label">L. Check</div>
-<div class="stat-value" id="recipe-stat-laura-positive">0</div>
-</div>
-</div>
-</div>
-<div class="recipes-toolbar">
-<button class="btn primary" id="btn-add-recipe">+ Añadir receta</button>
-<button class="btn ghost btn-compact" id="recipes-start-session" type="button">▶ Iniciar sesión</button>
-</div>
+
 <div class="recipes-subtabs" role="tablist" aria-label="Subvistas de recetas">
 <button class="recipes-subtab is-active" id="recipes-subtab-library" data-recipes-panel="library" aria-selected="true" type="button">Recetas</button>
 <button class="recipes-subtab" id="recipes-subtab-macros" data-recipes-panel="macros" aria-selected="false" type="button">Macros</button>
 <button class="recipes-subtab" id="recipes-subtab-statistics" data-recipes-panel="statistics" aria-selected="false" type="button">Estadística</button>
 </div>
 <div class="recipes-panel is-active" id="recipes-panel-library">
+  <div class="recipes-top">
+    <div class="stats-cards recipes-stats-cards">
+    <div class="stat-card">
+    <div class="stat-label">Recetas</div>
+    <div class="stat-value" id="recipe-stat-total">0</div>
+    </div>
+    <div class="stat-card">
+    <div class="stat-label">Favoritas</div>
+    <div class="stat-value" id="recipe-stat-favorites">0</div>
+    </div>
+    <div class="stat-card">
+    <div class="stat-label">Saludables</div>
+    <div class="stat-value" id="recipe-stat-healthy">0</div>
+    </div>
+    <div class="stat-card">
+    <div class="stat-label">⭐</div>
+    <div class="stat-value" id="recipe-stat-rating">0.0</div>
+    </div>
+    <div class="stat-card">
+    <div class="stat-label">L. Check</div>
+    <div class="stat-value" id="recipe-stat-laura-positive">0</div>
+    </div>
+    </div>
+</div>
+<div class="recipes-toolbar">
+<button class="btn primary" id="btn-add-recipe">+ Añadir receta</button>
+<button class="btn ghost btn-compact" id="recipes-start-session" type="button">▶ Iniciar sesión</button>
+</div>
+
 <div class="books-filters is-collapsed" id="recipes-filters">
 <div class="books-filters-header" id="recipes-filters-header">
 <div class="filter-row filter-search-row">
@@ -2759,6 +2761,11 @@ Crear “<span id="gym-create-cta-text"></span>”
 <div class="builder-subtitle">Añade tantos como necesites</div>
 </div>
 <button class="btn ghost btn-compact" id="recipe-add-ingredient" type="button">+ Ingrediente</button>
+</div>
+<div class="recipe-ingredient-picker" id="recipe-ingredient-picker">
+<select id="recipe-ingredient-product" class="builder-input"></select>
+<input id="recipe-ingredient-grams" class="builder-input" type="number" min="0" step="1" value="100"/>
+<button class="btn ghost btn-compact" id="recipe-ingredient-add-product" type="button">AÃ±adir producto</button>
 </div>
 <div class="recipe-ingredients-list" id="recipe-ingredients-list"></div>
 </div>

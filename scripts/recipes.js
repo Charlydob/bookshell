@@ -1,4 +1,4 @@
-// recipes.js
+﻿// recipes.js
 // Pestaña de recetas con estética de estantería y gráficos adaptados
 
 import {
@@ -262,6 +262,10 @@ if ($viewRecipes) {
   const $recipeAddIngredient = document.getElementById("recipe-add-ingredient");
   const $recipeAddStep = document.getElementById("recipe-add-step");
   const $recipeDelete = document.getElementById("recipe-delete");
+  const $recipeIngredientPicker = document.getElementById("recipe-ingredient-picker");
+  const $recipeIngredientProduct = document.getElementById("recipe-ingredient-product");
+  const $recipeIngredientGrams = document.getElementById("recipe-ingredient-grams");
+  const $recipeIngredientAddProduct = document.getElementById("recipe-ingredient-add-product");
 
   const $recipesSubtabs = document.querySelectorAll(".recipes-subtab");
   const $recipesPanelLibrary = document.getElementById("recipes-panel-library");
@@ -409,6 +413,41 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   const macroStatsState = { period: "week", anchorDate: selectedMacroDate, metric: "macros" };
   let nutritionSyncMeta = { version: 2, migratedAt: 0, updatedAt: 0 };
   let nutritionUnsubscribe = null;
+  const MACRO_USAGE_KEY_PREFIX = "bookshell.macro.usage.v1";
+  const getMacroUsageKey = (uid = currentUid) => uid ? `${MACRO_USAGE_KEY_PREFIX}.${uid}` : MACRO_USAGE_KEY_PREFIX;
+  const clampUsageValue = (value, fallback = 0) => {
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
+  const loadMacroUsage = () => {
+    try {
+      const raw = localStorage.getItem(getMacroUsageKey());
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (!parsed || typeof parsed !== "object") throw new Error("usage_invalid");
+      const products = parsed.products && typeof parsed.products === "object" ? parsed.products : {};
+      const recipes = parsed.recipes && typeof parsed.recipes === "object" ? parsed.recipes : {};
+      return { products, recipes };
+    } catch (_) {
+      return { products: {}, recipes: {} };
+    }
+  };
+  const saveMacroUsage = () => {
+    try {
+      localStorage.setItem(getMacroUsageKey(), JSON.stringify(macroUsage));
+    } catch (_) {}
+  };
+  const bumpMacroUsage = (kind, id) => {
+    const key = String(id || "").trim();
+    if (!key) return;
+    const bucket = kind === "recipes" ? macroUsage.recipes : macroUsage.products;
+    const prev = bucket[key] && typeof bucket[key] === "object" ? bucket[key] : {};
+    bucket[key] = {
+      count: clampUsageValue(prev.count, 0) + 1,
+      lastAt: Date.now(),
+    };
+    saveMacroUsage();
+  };
+  let macroUsage = loadMacroUsage();
 
   ensureCountryDatalist();
 
@@ -543,6 +582,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       if (nextUid === currentUid) return;
 
       currentUid = nextUid;
+      macroUsage = loadMacroUsage();
       bootstrapped = false;
       financeProductsLoaded = false;
       financeProducts = [];
@@ -1834,6 +1874,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       if ($recipeServings) $recipeServings.value = "1";
       renderNutriIngredientRows([]);
     }
+    renderRecipeIngredientProductPicker();
   }
 
   function closeRecipeModal() {
@@ -2565,6 +2606,20 @@ $recipeImportBtn?.addEventListener("click", () => {
   );
   $recipeAddStep?.addEventListener("click", () => $recipeStepsList?.appendChild(buildStepRow()));
   $recipeAddNutriIngredient?.addEventListener("click", () => $recipeNutriIngredientsList?.appendChild(buildNutriIngredientRow()));
+  $recipeIngredientAddProduct?.addEventListener("click", () => {
+    const productId = String($recipeIngredientProduct?.value || "").trim();
+    if (!productId) return;
+    const product = nutritionProducts.find((p) => p.id === productId);
+    if (!product) return;
+    const grams = Math.max(0, Number($recipeIngredientGrams?.value) || 0) || 100;
+
+    $recipeNutriIngredientsList?.appendChild(buildNutriIngredientRow({ id: generateId(), productId, grams }));
+    const label = `${product.name}${product.brand ? ` (${product.brand})` : ""} ${Math.round(grams)}g`;
+    $recipeIngredientsList?.appendChild(buildIngredientRow({ id: generateId(), text: label, done: false }));
+
+    if ($recipeIngredientProduct) $recipeIngredientProduct.value = "";
+    if ($recipeIngredientGrams) $recipeIngredientGrams.value = "100";
+  });
   $recipeDelete?.addEventListener("click", () => {
     const id = $recipeId.value;
     if (id) deleteRecipe(id);
@@ -2809,6 +2864,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         cacheNutrition();
         recalcAllRecipesNutrition();
         refreshUI();
+        if ($modalBackdrop && !$modalBackdrop.classList.contains("hidden")) renderRecipeIngredientProductPicker();
         renderMacrosView();
         renderStatisticsView();
       }, (err) => {
@@ -3391,14 +3447,79 @@ $recipeImportBtn?.addEventListener("click", () => {
       hideMacroScanAddProduct();
     }
     if (showProducts) {
-      const list = nutritionProducts.filter((p) => !q || `${p.name} ${p.brand || ""} ${p.barcode || ""}`.toLowerCase().includes(q));
+      const list = nutritionProducts
+        .filter((p) => !q || `${p.name} ${p.brand || ""} ${p.barcode || ""}`.toLowerCase().includes(q))
+        .slice()
+        .sort((a, b) => {
+          const aHay = `${a.name} ${a.brand || ""} ${a.barcode || ""}`.toLowerCase();
+          const bHay = `${b.name} ${b.brand || ""} ${b.barcode || ""}`.toLowerCase();
+          const aIdx = q ? aHay.indexOf(q) : 0;
+          const bIdx = q ? bHay.indexOf(q) : 0;
+          if (q && aIdx !== bIdx) return aIdx - bIdx;
+
+          const au = macroUsage.products?.[a.id] || null;
+          const bu = macroUsage.products?.[b.id] || null;
+          const aCount = clampUsageValue(au?.count, 0);
+          const bCount = clampUsageValue(bu?.count, 0);
+          if (aCount !== bCount) return bCount - aCount;
+          const aLast = clampUsageValue(au?.lastAt, 0);
+          const bLast = clampUsageValue(bu?.lastAt, 0);
+          if (aLast !== bLast) return bLast - aLast;
+          return String(a.name || "").localeCompare(String(b.name || ""));
+        });
       $macroAddResults.innerHTML = list.map((p) => `<button class="macro-result" data-add-product="${p.id}" type="button"><span>${p.name}</span><span class="hint">${p.brand || ""} · ${p.macros?.kcal || 0} kcal / ${p.servingBaseGrams || 100}g</span></button>`).join("") || '<div class="hint">No hay productos.</div>';
     }
     if (showRecipes) {
-      const list = recipes.filter((r) => !q || `${r.title} ${(r.tags || []).join(" ")}`.toLowerCase().includes(q));
+      const list = recipes
+        .filter((r) => !q || `${r.title} ${(r.tags || []).join(" ")}`.toLowerCase().includes(q))
+        .slice()
+        .sort((a, b) => {
+          const aHay = `${a.title} ${(a.tags || []).join(" ")}`.toLowerCase();
+          const bHay = `${b.title} ${(b.tags || []).join(" ")}`.toLowerCase();
+          const aIdx = q ? aHay.indexOf(q) : 0;
+          const bIdx = q ? bHay.indexOf(q) : 0;
+          if (q && aIdx !== bIdx) return aIdx - bIdx;
+
+          const au = macroUsage.recipes?.[a.id] || null;
+          const bu = macroUsage.recipes?.[b.id] || null;
+          const aCount = clampUsageValue(au?.count, 0);
+          const bCount = clampUsageValue(bu?.count, 0);
+          if (aCount !== bCount) return bCount - aCount;
+          const aLast = clampUsageValue(au?.lastAt, 0);
+          const bLast = clampUsageValue(bu?.lastAt, 0);
+          if (aLast !== bLast) return bLast - aLast;
+          return String(a.title || "").localeCompare(String(b.title || ""));
+        });
       $macroAddResults.innerHTML = list.map((r) => `<button class="macro-result" data-add-recipe="${r.id}" type="button"><span>${r.title}</span><span class="hint">${roundMacro(r.nutritionTotals?.kcal || 0)} kcal total</span></button>`).join("") || '<div class="hint">No hay recetas.</div>';
     }
     $macroAddChips?.querySelectorAll(".macro-chip").forEach((chip) => chip.classList.toggle("is-active", chip.dataset.macroSource === macroModalState.source));
+  }
+
+  function renderRecipeIngredientProductPicker() {
+    if ($recipeIngredientPicker) {
+      $recipeIngredientPicker.style.display = nutritionProducts.length ? "grid" : "none";
+    }
+    if (!$recipeIngredientProduct) return;
+    const options = nutritionProducts
+      .slice()
+      .sort((a, b) => {
+        const au = macroUsage.products?.[a.id] || null;
+        const bu = macroUsage.products?.[b.id] || null;
+        const aCount = clampUsageValue(au?.count, 0);
+        const bCount = clampUsageValue(bu?.count, 0);
+        if (aCount !== bCount) return bCount - aCount;
+        const aLast = clampUsageValue(au?.lastAt, 0);
+        const bLast = clampUsageValue(bu?.lastAt, 0);
+        if (aLast !== bLast) return bLast - aLast;
+        return String(a.name || "").localeCompare(String(b.name || ""));
+      })
+      .map((p) => {
+        const label = `${p.name}${p.brand ? ` (${p.brand})` : ""}`;
+        return `<option value="${escapeHtml(p.id)}">${escapeHtml(label)}</option>`;
+      })
+      .join("");
+    $recipeIngredientProduct.innerHTML = `<option value="">AÃ±adir desde productosâ€¦</option>${options}`;
+    if ($recipeIngredientGrams && !$recipeIngredientGrams.value) $recipeIngredientGrams.value = "100";
   }
 
   function addProductToMeal(meal, product, grams = 100) {
@@ -3417,6 +3538,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       createdAt: Date.now(),
     };
     getDailyLog(selectedMacroDate).meals[meal].entries.unshift(entry);
+    bumpMacroUsage("products", product.id);
     persistNutrition();
     renderMacrosView();
     applyEntryHabitImpact(entry, selectedMacroDate, 1);
@@ -3439,6 +3561,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       macrosSnapshot,
       createdAt: Date.now(),
     });
+    bumpMacroUsage("recipes", recipe.id);
     persistNutrition();
     renderMacrosView();
   }
@@ -3584,10 +3707,16 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanResizeListenerBound = false;
   let _macroScanResizeRestartTimer = null;
   let _macroScanLastHostPx = null; // { width, height }
+  let _macroScanLookupSeq = 0;
+  let _macroScanLookupTimer = null;
+  let _macroScanLookupQueued = null; // { barcode, options }
+  let _macroScanLastLookupCode = "";
+  let _macroScanLastLookupAt = 0;
 
   const MACRO_SCAN_NO_RESULT_LOG_EVERY_MS = 6000;
   const MACRO_SCAN_LAYOUT_LOG_EVERY_MS = 1600;
-  const MACRO_SCAN_REPEAT_BLOCK_MS = 3500;
+  // No bloqueamos lecturas "repetidas" durante segundos: solo una ventana pequeÃ±a para evitar spam por frame.
+  const MACRO_SCAN_REPEAT_BLOCK_MS = 220;
   const OFF_PRODUCT_ENDPOINT = "https://world.openfoodfacts.org/api/v2/product";
   const MACRO_SCAN_DEBUG = (() => {
     try {
@@ -3949,7 +4078,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function normalizeDetectedBarcode(value) {
     const digits = String(value || "").replace(/\D/g, "");
-    if ([8, 12, 13].includes(digits.length)) return digits;
+    if ([8, 12, 13, 14].includes(digits.length)) return digits;
     return "";
   }
 
@@ -4090,9 +4219,24 @@ $recipeImportBtn?.addEventListener("click", () => {
     _macroScanLastAt = now;
     logMacroScan("código detectado", { engine, code: clean });
     if ($macroScanManual) $macroScanManual.value = clean;
-    setMacroScanStatus(`${engine} detectó ${clean}. Buscando…`);
-    await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
-    await handleBarcodeFound(clean, { fromManual: false, sourceEngine: engine });
+    setMacroScanStatus(`CÃ³digo detectado: ${clean}`);
+
+    // La detecciÃ³n debe ser rÃ¡pida: hacemos la bÃºsqueda en segundo plano y no detenemos el escÃ¡ner.
+    try {
+      _macroScanLookupQueued = { barcode: clean, options: { fromManual: false, sourceEngine: engine } };
+      if (_macroScanLookupTimer) {
+        try { clearTimeout(_macroScanLookupTimer); } catch (_) {}
+      }
+      _macroScanLookupTimer = setTimeout(() => {
+        _macroScanLookupTimer = null;
+        const queued = _macroScanLookupQueued;
+        _macroScanLookupQueued = null;
+        if (!queued?.barcode) return;
+        handleBarcodeFound(queued.barcode, queued.options).catch((err) => {
+          logMacroScan("bÃºsqueda en segundo plano fallÃ³", { error: err?.name || err?.message || err });
+        });
+      }, 80);
+    } catch (_) {}
   }
 
 
@@ -4109,7 +4253,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     logMacroScan("inicialización del motor", { engine: "html5", libreriaCargada: true, instanceCreated: Boolean(_macroScanHtml5Instance) });
     logMacroScan("loop de detección arrancado", { engine: "html5", ok: true });
     const startConfig = {
-      fps: 12,
+      fps: 18,
       qrbox: (viewfinderWidth, viewfinderHeight) => {
         const vfW = Math.max(0, Math.round(Number(viewfinderWidth) || 0));
         const vfH = Math.max(0, Math.round(Number(viewfinderHeight) || 0));
@@ -4261,20 +4405,30 @@ $recipeImportBtn?.addEventListener("click", () => {
     logMacroScan("Procesando barcode", { barcode: String(barcode || "").trim(), fromManual, sourceEngine });
     const clean = normalizeDetectedBarcode(barcode) || String(barcode || "").trim();
     if (!clean) return;
-    if (fromManual) await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
 
-    logMacroScan("búsqueda lanzada", { codigo: clean, sourceEngine, fromManual });
+    // Evita repetir la misma bÃºsqueda en bucle mientras apuntas al mismo cÃ³digo.
+    const now = Date.now();
+    if (!fromManual && clean === _macroScanLastLookupCode && (now - (_macroScanLastLookupAt || 0)) < 2500) return;
+    _macroScanLastLookupCode = clean;
+    _macroScanLastLookupAt = now;
+
+    const lookupSeq = (_macroScanLookupSeq += 1);
+
+    logMacroScan("bÃºsqueda lanzada", { codigo: clean, sourceEngine, fromManual, lookupSeq });
+    setMacroScanStatus("Buscando...");
     const found = await lookupProductByBarcode(clean);
+    if (lookupSeq !== _macroScanLookupSeq) return;
     if (found) {
       logMacroScan("resultado encontrado", { fuente: "local", ok: true, productId: found.id || "" });
-      closeMacroAddModal();
-      openMacroProductModal(found, macroModalState.meal, 100);
-      setMacroScanStatus("Producto encontrado. Ajusta cantidad y añade.");
+      _macroScanPendingProduct = found;
+      setMacroScanStatus(`Encontrado: ${found.name}${found.brand ? ` · ${found.brand}` : ""}. Pulsa "Abrir ficha".`);
+      showMacroScanAddProduct({ barcode: clean, mode: "off", label: "Abrir ficha", pendingProduct: found });
       return;
     }
 
     setMacroScanStatus("Buscando en Open Food Facts…");
     const off = await lookupOpenFoodFactsByBarcode(clean);
+    if (lookupSeq !== _macroScanLookupSeq) return;
     logMacroScan("resultado encontrado", { fuente: "openfoodfacts", ok: Boolean(off) });
     if (off) {
       _macroScanPendingProduct = off;
@@ -4751,9 +4905,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       return;
     }
     if ($macroScanManual) $macroScanManual.value = ocrCode;
-    setMacroScanStatus(`Número detectado: ${ocrCode}. Buscando…`);
-    await stopMacroBarcodeScan({ keepStatus: true, keepPendingProduct: true });
-    await handleBarcodeFound(ocrCode);
+    setMacroScanStatus(`NÃºmero detectado: ${ocrCode}`);
+    await handleBarcodeFound(ocrCode, { fromManual: false, sourceEngine: "ocr" });
   });
   $macroScanAddProduct?.addEventListener("click", () => {
     const mode = String($macroScanAddProduct?.dataset?.mode || "manual");

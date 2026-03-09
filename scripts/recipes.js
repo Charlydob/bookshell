@@ -733,6 +733,32 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
           quantity: String(ing.quantity || "").trim(),
           name: String(ing.name || "").trim(),
           productId: String(ing.productId || "").trim(),
+          linkedFinanceProductId: String(ing.linkedFinanceProductId || "").trim(),
+          linkedHabitId: String(ing.linkedHabitId || "").trim(),
+          priceSource: ing.priceSource || null,
+          nutritionSnapshot: ing.nutritionSnapshot && typeof ing.nutritionSnapshot === "object"
+            ? {
+              productId: String(ing.nutritionSnapshot.productId || "").trim(),
+              servingBaseQty: Math.max(1, Number(ing.nutritionSnapshot.servingBaseQty) || 100),
+              servingBaseUnit: normalizeCostUnit(ing.nutritionSnapshot.servingBaseUnit || "g") || "g",
+              macrosPerBase: normalizeMacros(ing.nutritionSnapshot.macrosPerBase || {}),
+            }
+            : null,
+          pricingSnapshot: ing.pricingSnapshot && typeof ing.pricingSnapshot === "object"
+            ? {
+              productId: String(ing.pricingSnapshot.productId || "").trim(),
+              linkedFinanceProductId: String(ing.pricingSnapshot.linkedFinanceProductId || "").trim(),
+              priceSource: ing.pricingSnapshot.priceSource || null,
+              price: Number(ing.pricingSnapshot.price) > 0 ? Number(ing.pricingSnapshot.price) : null,
+              baseQty: Number(ing.pricingSnapshot.baseQty) > 0 ? Number(ing.pricingSnapshot.baseQty) : null,
+              baseUnit: normalizeCostUnit(ing.pricingSnapshot.baseUnit || ""),
+            }
+            : null,
+          computedCost: Number(ing.computedCost) || 0,
+          computedKcal: Number(ing.computedKcal) || 0,
+          computedCarbs: Number(ing.computedCarbs) || 0,
+          computedProtein: Number(ing.computedProtein) || 0,
+          computedFat: Number(ing.computedFat) || 0,
           done: !!ing.done,
         }))
       : [];
@@ -907,6 +933,142 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return null;
   }
 
+  function buildNutritionSnapshot(product) {
+    if (!product) return null;
+    return {
+      productId: String(product.id || "").trim(),
+      servingBaseQty: Math.max(1, Number(product.servingBaseGrams) || 100),
+      servingBaseUnit: "g",
+      macrosPerBase: normalizeMacros(product.macros || {}),
+    };
+  }
+
+  function buildPricingSnapshot(product) {
+    if (!product) return null;
+    const base = resolveProductPriceBase(product);
+    const effectivePrice = getEffectiveProductPrice(product);
+    if (!base && !(effectivePrice > 0)) return null;
+    return {
+      productId: String(product.id || "").trim(),
+      linkedFinanceProductId: String(product.financeProductId || "").trim(),
+      priceSource: getEffectiveProductPriceSource(product),
+      price: effectivePrice,
+      baseQty: Number(base?.qty) > 0 ? Number(base.qty) : null,
+      baseUnit: normalizeCostUnit(base?.unit || ""),
+    };
+  }
+
+  function getIngredientLinkedProduct(ingredient) {
+    const productId = String(ingredient?.productId || "").trim();
+    if (!productId) return null;
+    return nutritionProducts.find((p) => p.id === productId) || null;
+  }
+
+  function computeIngredientNutrition(ingredient, product = null) {
+    const qty = normalizeIngredientQty(ingredient?.qty);
+    const unit = normalizeCostUnit(ingredient?.unit);
+    if (!qty || !unit) return { calculable: false, totals: normalizeMacros({}) };
+    const nutritionSnapshot = ingredient?.nutritionSnapshot || buildNutritionSnapshot(product);
+    const macrosPerBase = normalizeMacros(nutritionSnapshot?.macrosPerBase || {});
+    const baseQty = Number(nutritionSnapshot?.servingBaseQty) > 0 ? Number(nutritionSnapshot.servingBaseQty) : 100;
+    const baseUnit = normalizeCostUnit(nutritionSnapshot?.servingBaseUnit || "g");
+    const normalizedQty = normalizeQtyByUnit(qty, unit, baseUnit);
+    if (!(normalizedQty >= 0) || !(baseQty > 0)) return { calculable: false, totals: normalizeMacros({}) };
+    const ratio = normalizedQty / baseQty;
+    return {
+      calculable: true,
+      totals: normalizeMacros({
+        carbs: macrosPerBase.carbs * ratio,
+        protein: macrosPerBase.protein * ratio,
+        fat: macrosPerBase.fat * ratio,
+        kcal: macrosPerBase.kcal * ratio,
+      }),
+    };
+  }
+
+  function computeIngredientCost(ingredient, product = null) {
+    const qty = normalizeIngredientQty(ingredient?.qty);
+    const unit = normalizeCostUnit(ingredient?.unit);
+    if (!qty || !unit) return { calculable: false, value: null };
+    const pricingSnapshot = ingredient?.pricingSnapshot || buildPricingSnapshot(product);
+    const price = Number(pricingSnapshot?.price);
+    const baseQty = Number(pricingSnapshot?.baseQty);
+    const baseUnit = normalizeCostUnit(pricingSnapshot?.baseUnit || "");
+    if (!(price > 0) || !(baseQty > 0) || !baseUnit) return { calculable: false, value: null };
+    const normalizedBaseQty = normalizeQtyByUnit(baseQty, baseUnit, unit);
+    if (!(normalizedBaseQty > 0)) return { calculable: false, value: null };
+    return { calculable: true, value: (qty / normalizedBaseQty) * price };
+  }
+
+  function buildRecipeIngredientFromProduct(product, draft = {}) {
+    const qty = normalizeIngredientQty(draft.qty);
+    const unit = normalizeCostUnit(draft.unit || "") || "g";
+    const parsed = splitIngredientText(draft.text || "");
+    const baseIngredient = {
+      ...draft,
+      id: draft.id || generateId(),
+      productId: String(product?.id || draft.productId || "").trim(),
+      label: String(draft.label || product?.name || parsed.name || draft.name || draft.text || "").trim(),
+      name: String(draft.name || product?.name || parsed.name || draft.label || draft.text || "").trim(),
+      qty: qty == null ? "" : qty,
+      unit,
+      linkedFinanceProductId: String(product?.financeProductId || draft.linkedFinanceProductId || "").trim(),
+      linkedHabitId: String(product?.linkedHabitId || draft.linkedHabitId || "").trim(),
+      nutritionSnapshot: buildNutritionSnapshot(product) || draft.nutritionSnapshot || null,
+      pricingSnapshot: buildPricingSnapshot(product) || draft.pricingSnapshot || null,
+      priceSource: getEffectiveProductPriceSource(product) || draft.priceSource || null,
+    };
+    const nutrition = computeIngredientNutrition(baseIngredient, product);
+    const cost = computeIngredientCost(baseIngredient, product);
+    return {
+      ...baseIngredient,
+      computedKcal: nutrition.calculable ? nutrition.totals.kcal : 0,
+      computedCarbs: nutrition.calculable ? nutrition.totals.carbs : 0,
+      computedProtein: nutrition.calculable ? nutrition.totals.protein : 0,
+      computedFat: nutrition.calculable ? nutrition.totals.fat : 0,
+      computedCost: cost.calculable ? Number(cost.value) || 0 : 0,
+    };
+  }
+
+  function recalculateRecipeDerivedData(recipe) {
+    const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+    let totals = normalizeMacros({});
+    let totalCost = 0;
+    let calculableNutrition = 0;
+    let calculableCost = 0;
+    const normalizedIngredients = ingredients.map((ing) => {
+      const product = getIngredientLinkedProduct(ing);
+      const normalized = buildRecipeIngredientFromProduct(product, ing);
+      const nutrition = computeIngredientNutrition(normalized, product);
+      const cost = computeIngredientCost(normalized, product);
+      if (nutrition.calculable) {
+        totals = plusMacros(totals, nutrition.totals);
+        calculableNutrition += 1;
+      }
+      if (cost.calculable) {
+        totalCost += Number(cost.value) || 0;
+        calculableCost += 1;
+      }
+      return normalized;
+    });
+    const servings = resolveRecipeServings(recipe);
+    const perServing = {
+      carbs: servings > 0 ? totals.carbs / servings : 0,
+      protein: servings > 0 ? totals.protein / servings : 0,
+      fat: servings > 0 ? totals.fat / servings : 0,
+      kcal: servings > 0 ? totals.kcal / servings : 0,
+    };
+    return {
+      ...recipe,
+      ingredients: normalizedIngredients,
+      nutritionTotals: normalizeMacros(totals),
+      nutritionPerServing: normalizeMacros(perServing),
+      totalCost: Number(totalCost) || 0,
+      calculableNutrition,
+      calculableCost,
+    };
+  }
+
   function calculateProductConsumedCost(product, consumedQty, consumedUnit) {
     const effectivePrice = getEffectiveProductPrice(product);
     const intakeUnit = normalizeCostUnit(consumedUnit);
@@ -919,19 +1081,13 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   }
 
   function calculateStructuredIngredientNutrition(ingredient, product) {
-    const qty = normalizeIngredientQty(ingredient?.qty);
-    const unit = normalizeCostUnit(ingredient?.unit);
-    if (!product || !qty || !unit) return null;
-    const grams = normalizeQtyByUnit(qty, unit, "g");
-    if (!(grams >= 0)) return null;
-    return normalizeMacros(calcProductMacros(product, grams));
+    const computed = computeIngredientNutrition(ingredient, product);
+    return computed.calculable ? computed.totals : null;
   }
 
   function calculateStructuredIngredientCost(ingredient, product) {
-    const qty = normalizeIngredientQty(ingredient?.qty);
-    const unit = normalizeCostUnit(ingredient?.unit);
-    if (!product || !qty || !unit) return null;
-    return calculateProductConsumedCost(product, qty, unit);
+    const computed = computeIngredientCost(ingredient, product);
+    return computed.calculable ? computed.value : null;
   }
 
   function getRecipePerServingValues(recipe, totals) {
@@ -944,32 +1100,19 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   }
 
   function calculateRecipeTotals(recipe) {
-    const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
-    const result = {
-      totals: normalizeMacros({}),
-      totalCost: 0,
-      calculableNutrition: 0,
-      calculableCost: 0,
+    const recalculated = recalculateRecipeDerivedData(recipe || {});
+    const ingredients = Array.isArray(recalculated.ingredients) ? recalculated.ingredients : [];
+    const perServing = getRecipePerServingValues(recalculated, { kcal: recalculated.nutritionTotals?.kcal || 0, cost: recalculated.totalCost || 0 });
+    return {
+      totals: normalizeMacros(recalculated.nutritionTotals || {}),
+      totalCost: Number(recalculated.totalCost) || 0,
+      calculableNutrition: Number(recalculated.calculableNutrition) || 0,
+      calculableCost: Number(recalculated.calculableCost) || 0,
       ingredientsTotal: ingredients.length,
-      missingNutrition: 0,
-      missingCost: 0,
+      missingNutrition: Math.max(0, ingredients.length - (Number(recalculated.calculableNutrition) || 0)),
+      missingCost: Math.max(0, ingredients.length - (Number(recalculated.calculableCost) || 0)),
+      perServing,
     };
-    ingredients.forEach((ing) => {
-      const product = nutritionProducts.find((p) => p.id === String(ing?.productId || "").trim());
-      const nutri = calculateStructuredIngredientNutrition(ing, product);
-      const cost = calculateStructuredIngredientCost(ing, product);
-      if (nutri) {
-        result.totals = plusMacros(result.totals, nutri);
-        result.calculableNutrition += 1;
-      } else result.missingNutrition += 1;
-      if (cost == null) result.missingCost += 1;
-      else {
-        result.totalCost += cost;
-        result.calculableCost += 1;
-      }
-    });
-    const perServing = getRecipePerServingValues(recipe, { kcal: result.totals.kcal, cost: result.totalCost });
-    return { ...result, perServing };
   }
 
   function getRecipeNutritionSummary(recipe) {
@@ -2248,7 +2391,11 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     const ts = Date.now();
     try { localStorage.setItem("bookshell.lastRecipeId", String(id)); localStorage.setItem("bookshell.lastRecipeAt", String(ts)); } catch (_) {}
     const mergedPatch = { ...(patch || {}), updatedAt: ts };
-    recipes = recipes.map((r) => (r.id === id ? normalizeRecipeFields({ ...r, ...mergedPatch }) : r));
+    recipes = recipes.map((r) => {
+      if (r.id !== id) return r;
+      const merged = normalizeRecipeFields({ ...r, ...mergedPatch });
+      return normalizeRecipeFields({ ...recalculateRecipeDerivedData(merged), updatedAt: ts });
+    });
     const updated = recipes.find((r) => r.id === id);
     if (updated) persistRecipe(id, updated);
     refreshUI();
@@ -2324,8 +2471,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     }
 
     let normalizedPayload = normalizeRecipeFields(payload);
-    const calculatedNutrition = recalcRecipeNutrition(normalizedPayload);
-    normalizedPayload = normalizeRecipeFields({ ...normalizedPayload, nutritionTotals: calculatedNutrition.totals, nutritionPerServing: calculatedNutrition.perServing });
+    normalizedPayload = normalizeRecipeFields(recalculateRecipeDerivedData(normalizedPayload));
 
     let nextRecipe = normalizedPayload;
     if (existing) {
@@ -2491,7 +2637,9 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
         const qty = normalizeIngredientQty(qtyRaw);
         const text = [qty ? String(qty) : "", unit, label].filter(Boolean).join(" ").trim() || label;
         const parsed = splitIngredientText(text);
-        return {
+        const productId = String(row.querySelector(".ingredient-product")?.value || row.dataset.productId || "").trim();
+        const product = nutritionProducts.find((p) => p.id === productId) || null;
+        const baseIngredient = {
           id: row.dataset.id || generateId(),
           text,
           label,
@@ -2500,9 +2648,10 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
           notes,
           quantity: parsed.quantity,
           name: label || parsed.name || text,
-          productId: String(row.querySelector(".ingredient-product")?.value || row.dataset.productId || "").trim(),
+          productId,
           done: row.querySelector("input[type='checkbox']")?.checked || false,
         };
+        return buildRecipeIngredientFromProduct(product, baseIngredient);
       })
       .filter((ing) => ing.text || ing.productId);
   }
@@ -2725,7 +2874,10 @@ notesRow.innerHTML = `<div class="spec-label">Notas</div><div class="spec-value"
               macros: normalizeMacros({}),
               servingBaseGrams: 100,
             };
-            openMacroProductModal(draft, "breakfast", 100, null, { ingredientTarget: { recipeId: recipe.id, ingredientId: ing.id } });
+            const ingredientQty = normalizeIngredientQty(ing.qty);
+            const ingredientUnit = normalizeCostUnit(ing.unit || "");
+            const grams = ingredientQty && ingredientUnit ? (normalizeQtyByUnit(ingredientQty, ingredientUnit, "g") ?? ingredientQty) : 100;
+            openMacroProductModal(draft, "breakfast", grams, null, { ingredientTarget: { recipeId: recipe.id, ingredientId: ing.id } });
           });
           label.appendChild(check);
           label.appendChild(qty);
@@ -3050,7 +3202,8 @@ $recipeImportBtn?.addEventListener("click", () => {
 
     $recipeNutriIngredientsList?.appendChild(buildNutriIngredientRow({ id: generateId(), productId, grams }));
     const label = `${product.name}${product.brand ? ` (${product.brand})` : ""} ${Math.round(grams)}g`;
-    $recipeIngredientsList?.appendChild(buildIngredientRow({ id: generateId(), text: label, label: product.name || label, qty: grams, unit: "g", productId, done: false }));
+    const recipeIngredient = buildRecipeIngredientFromProduct(product, { id: generateId(), text: label, label: product.name || label, qty: grams, unit: "g", productId, done: false });
+    $recipeIngredientsList?.appendChild(buildIngredientRow(recipeIngredient));
 
     if ($recipeIngredientProduct) $recipeIngredientProduct.value = "";
     if ($recipeIngredientGrams) $recipeIngredientGrams.value = "100";
@@ -3365,33 +3518,15 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   function recalcRecipeNutrition(recipe) {
-    const structured = calculateRecipeTotals(recipe);
-    if (structured.calculableNutrition > 0) {
-      const servings = Math.max(1, Number(recipe?.servings) || 1);
-      return {
-        totals: structured.totals,
-        perServing: {
-          carbs: structured.totals.carbs / servings,
-          protein: structured.totals.protein / servings,
-          fat: structured.totals.fat / servings,
-          kcal: structured.totals.kcal / servings,
-        },
-      };
-    }
-    const list = Array.isArray(recipe?.nutritionIngredients) ? recipe.nutritionIngredients : [];
-    const totals = list.reduce((acc, it) => {
-      const product = nutritionProducts.find((p) => p.id === it.productId);
-      return plusMacros(acc, calcProductMacros(product, it.grams));
-    }, normalizeMacros({}));
-    const servings = Math.max(1, Number(recipe?.servings) || 1);
-    return { totals, perServing: { carbs: totals.carbs / servings, protein: totals.protein / servings, fat: totals.fat / servings, kcal: totals.kcal / servings } };
+    const recalculated = recalculateRecipeDerivedData(recipe || {});
+    return {
+      totals: normalizeMacros(recalculated.nutritionTotals || {}),
+      perServing: normalizeMacros(recalculated.nutritionPerServing || {}),
+    };
   }
 
   function recalcAllRecipesNutrition() {
-    recipes = recipes.map((r) => {
-      const calc = recalcRecipeNutrition(r);
-      return normalizeRecipeFields({ ...r, nutritionTotals: calc.totals, nutritionPerServing: calc.perServing });
-    });
+    recipes = recipes.map((r) => normalizeRecipeFields(recalculateRecipeDerivedData(r)));
   }
 
   function getDailyLog(date = selectedMacroDate) {
@@ -6943,15 +7078,15 @@ $recipeImportBtn?.addEventListener("click", () => {
         const ingredients = (targetRecipe.ingredients || []).map((ing) => {
           if (ing.id !== _macroProductRecipeIngredientTarget.ingredientId) return ing;
           const parsed = splitIngredientText(ing.text || "");
-          return {
+          return buildRecipeIngredientFromProduct(saved, {
             ...ing,
             productId: saved.id,
             label: saved.name || parsed.name || ing.label || ing.name || ing.text,
             name: saved.name || parsed.name || ing.name || ing.text,
-            quantity: ing.quantity || parsed.quantity || "",
-            qty: ing.qty || normalizeIngredientQty(parsed.quantity),
-            unit: ing.unit || "g",
-          };
+            quantity: `${roundMacro(grams)} g`,
+            qty: grams,
+            unit: "g",
+          });
         });
         updateRecipe(targetRecipe.id, { ingredients, updatedAt: Date.now() });
       }

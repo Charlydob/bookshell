@@ -305,6 +305,7 @@ if ($viewRecipes) {
   const $macroScanManualBtn = document.getElementById("macro-scan-manual-btn");
   const $macroScanEngineStatus = document.getElementById("macro-scan-engine-status");
   const $macroScanStatus = document.getElementById("macro-scan-status");
+  const $macroScanPlacementHint = document.getElementById("macro-scan-placement-hint");
   const $macroScanVideo = document.getElementById("macro-scan-video");
   const $macroScanHtml5Host = document.getElementById("macro-scan-html5-host");
   const $macroScanVideoWrap = document.querySelector(".macro-scan-video-wrap");
@@ -3784,6 +3785,8 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanPendingProduct = null;
   let _macroScanStartedAt = 0;
   let _macroScanFrameCanvas = null;
+  let _macroScanCameraTrack = null;
+  let _macroScanCameraProfile = null;
   let _macroScanOcrModule = null;
   let _macroScanOcrInFlight = false;
   let _macroScanDecodeInFlight = false;
@@ -4029,7 +4032,8 @@ $recipeImportBtn?.addEventListener("click", () => {
     // Mantiene el flujo y logs; solo recalcula viewfinder/qrbox al reiniciar.
     try {
       await startHtml5Scan(runId);
-      setMacroScanStatus("Buscando codigo...");
+      if ($macroScanPlacementHint) $macroScanPlacementHint.classList.remove("is-warning");
+      setMacroScanStatus("Buscando codigo... Acerca el producto para que el número se vea grande y nítido.");
     } catch (err) {
       logScannerError("falló el reinicio del motor", { engine: "html5", error: err?.name || err?.message || err });
       setMacroScanStatus(`Error en html5: ${err?.name || err?.message || "fallo"}`);
@@ -4320,6 +4324,132 @@ $recipeImportBtn?.addEventListener("click", () => {
     draw($macroScanOcrFinal, _macroScanOcrDebugState.final);
   }
 
+  function pickMacroScanRearCamera(devices = []) {
+    const list = Array.isArray(devices) ? devices.filter((d) => d?.kind === "videoinput") : [];
+    if (!list.length) return null;
+    const scoreLabel = (label = "") => {
+      const low = String(label || "").toLowerCase();
+      let score = 0;
+      if (/back|rear|environment|trase|trasera/.test(low)) score += 90;
+      if (/wide|ultra|macro|tele|zoom|focus/.test(low)) score += 12;
+      if (/front|user|facetime|selfie/.test(low)) score -= 120;
+      return score;
+    };
+    const sorted = [...list].sort((a, b) => scoreLabel(b?.label) - scoreLabel(a?.label));
+    return sorted[0] || null;
+  }
+
+  function getMacroScanActiveVideoTrack() {
+    const hostVideo = $macroScanHtml5Host?.querySelector?.("video") || null;
+    const hostStream = hostVideo?.srcObject || null;
+    const hostTrack = hostStream?.getVideoTracks?.()?.[0] || null;
+    const ownTrack = _macroScanStream?.getVideoTracks?.()?.[0] || null;
+    return hostTrack || ownTrack || _macroScanCameraTrack || null;
+  }
+
+  function logMacroScanTrackDiagnostics(track, source = "track") {
+    if (!track) {
+      logMacroEvent(["scanner", "camera", "warn"], "sin track de vídeo activo", { source }, "warn");
+      return;
+    }
+    const capabilities = typeof track.getCapabilities === "function" ? (track.getCapabilities() || {}) : {};
+    const settings = typeof track.getSettings === "function" ? (track.getSettings() || {}) : {};
+    logMacroEvent(["scanner", "camera", "capabilities"], "capabilities del track", {
+      source,
+      zoom: capabilities.zoom || null,
+      focusMode: capabilities.focusMode || null,
+      torch: capabilities.torch || null,
+      width: capabilities.width || null,
+      height: capabilities.height || null,
+    }, "info");
+    logMacroEvent(["scanner", "camera", "settings"], "settings del track", {
+      source,
+      zoom: settings.zoom ?? null,
+      focusMode: settings.focusMode || null,
+      torch: settings.torch ?? null,
+      width: settings.width || null,
+      height: settings.height || null,
+      frameRate: settings.frameRate || null,
+      deviceId: settings.deviceId || null,
+      facingMode: settings.facingMode || null,
+    }, "info");
+  }
+
+  async function applyMacroScanTrackConstraint(track, advancedConstraint = {}, tag = "camera") {
+    if (!track || typeof track.applyConstraints !== "function") return false;
+    try {
+      await track.applyConstraints({ advanced: [advancedConstraint] });
+      logMacroEvent(["scanner", "camera", tag], "constraint aplicada", { advanced: advancedConstraint }, "info");
+      return true;
+    } catch (err) {
+      logMacroEvent(["scanner", "camera", tag, "warn"], "no se pudo aplicar constraint", {
+        advanced: advancedConstraint,
+        error: err?.name || err?.message || err,
+      }, "warn");
+      return false;
+    }
+  }
+
+  async function configureMacroScanTrack(track) {
+    if (!track) return;
+    _macroScanCameraTrack = track;
+    const capabilities = typeof track.getCapabilities === "function" ? (track.getCapabilities() || {}) : {};
+
+    await applyMacroScanTrackConstraint(track, { width: 1920, height: 1080, aspectRatio: 16 / 9 }, "resolution");
+    await applyMacroScanTrackConstraint(track, { width: 1280, height: 720 }, "resolution");
+
+    const focusModes = Array.isArray(capabilities.focusMode) ? capabilities.focusMode : [];
+    if (focusModes.length) {
+      const preferred = focusModes.includes("continuous")
+        ? "continuous"
+        : (focusModes.includes("single-shot") ? "single-shot" : focusModes[0]);
+      if (preferred) {
+        await applyMacroScanTrackConstraint(track, { focusMode: preferred }, "focus");
+      }
+    } else {
+      logMacroEvent(["scanner", "camera", "focus"], "focusMode no soportado por el dispositivo", {}, "info");
+    }
+
+    const zoomCaps = capabilities.zoom;
+    if (zoomCaps && Number.isFinite(Number(zoomCaps.max))) {
+      const min = Number.isFinite(Number(zoomCaps.min)) ? Number(zoomCaps.min) : 1;
+      const max = Number(zoomCaps.max);
+      const step = Number.isFinite(Number(zoomCaps.step)) ? Number(zoomCaps.step) : 0;
+      const targetBase = max >= 2 ? 2 : max;
+      let target = Math.max(min, Math.min(max, targetBase));
+      if (step > 0) {
+        const n = Math.round((target - min) / step);
+        target = min + n * step;
+      }
+      await applyMacroScanTrackConstraint(track, { zoom: target }, "zoom");
+      logMacroEvent(["scanner", "camera", "zoom"], "zoom inicial evaluado", { min, max, step, requested: targetBase, applied: target }, "info");
+    } else {
+      logMacroEvent(["scanner", "camera", "zoom"], "zoom no soportado por el dispositivo", {}, "info");
+    }
+
+    const settings = typeof track.getSettings === "function" ? (track.getSettings() || {}) : {};
+    _macroScanCameraProfile = { capabilities, settings };
+    logMacroScanTrackDiagnostics(track, "configured");
+  }
+
+  async function setMacroScanZoom(targetZoom) {
+    const track = getMacroScanActiveVideoTrack();
+    if (!track) return { ok: false, reason: "no-track" };
+    const caps = typeof track.getCapabilities === "function" ? (track.getCapabilities() || {}) : {};
+    if (!caps.zoom || !Number.isFinite(Number(caps.zoom.max))) {
+      logMacroEvent(["scanner", "camera", "zoom"], "set zoom omitido: no soportado", { requested: targetZoom }, "info");
+      return { ok: false, reason: "no-zoom-capability" };
+    }
+    const min = Number.isFinite(Number(caps.zoom.min)) ? Number(caps.zoom.min) : 1;
+    const max = Number(caps.zoom.max);
+    const requested = Number.isFinite(Number(targetZoom)) ? Number(targetZoom) : max;
+    const zoom = Math.max(min, Math.min(max, requested));
+    const ok = await applyMacroScanTrackConstraint(track, { zoom }, "zoom");
+    const current = track.getSettings?.()?.zoom;
+    logMacroEvent(["scanner", "camera", "zoom"], ok ? "zoom aplicado programáticamente" : "zoom no aplicado", { requested, applied: current ?? zoom, min, max }, ok ? "info" : "warn");
+    return { ok, zoom: current ?? zoom, min, max };
+  }
+
   function captureMacroScanFrame() {
     const srcVideo = ($macroScanVideo && $macroScanVideo.videoWidth && $macroScanVideo.videoHeight)
       ? $macroScanVideo
@@ -4331,6 +4461,10 @@ $recipeImportBtn?.addEventListener("click", () => {
     const ctx = _macroScanFrameCanvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return null;
     ctx.drawImage(srcVideo, 0, 0, srcVideo.videoWidth, srcVideo.videoHeight);
+    logMacroEvent(["scanner", "camera", "resolution"], "frame congelado para OCR", {
+      source: `${srcVideo.videoWidth}x${srcVideo.videoHeight}`,
+      canvas: `${_macroScanFrameCanvas.width}x${_macroScanFrameCanvas.height}`,
+    }, "info");
     _macroScanOcrDebugState.source = _macroScanFrameCanvas;
     updateMacroScanOcrDebugCanvases();
     return _macroScanFrameCanvas;
@@ -4349,6 +4483,16 @@ $recipeImportBtn?.addEventListener("click", () => {
     _macroScanOcrModule = await import("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.esm.min.js");
     logMacroEvent(["scanner", "ocr"], "dependencia OCR cargada", { ok: Boolean(_macroScanOcrModule) }, "info");
     return _macroScanOcrModule;
+  }
+
+  function isMacroScanCropTooSmall(crop = {}, frame = {}) {
+    const cropW = Number(crop?.width) || 0;
+    const cropH = Number(crop?.height) || 0;
+    const frameW = Number(frame?.width) || 0;
+    const frameH = Number(frame?.height) || 0;
+    if (!cropW || !cropH || !frameW || !frameH) return true;
+    const areaRatio = (cropW * cropH) / Math.max(1, frameW * frameH);
+    return cropW < 220 || cropH < 72 || areaRatio < 0.045;
   }
 
   function createBarcodeNumberCropVariants(sourceCanvas) {
@@ -4523,6 +4667,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     setMacroScanOverlayBox(null);
     setMacroScanEngineStatus("none");
     if (!keepStatus) setMacroScanStatus("");
+    if ($macroScanPlacementHint) $macroScanPlacementHint.classList.remove("is-warning");
     logMacroScan("limpieza", { motorDetenido: stoppingEngine || "none", streamDetenido: true, timersListenersLimpiados: true, streamActive: Boolean(_macroScanStream?.active) });
   }
 
@@ -4618,18 +4763,29 @@ $recipeImportBtn?.addEventListener("click", () => {
     };
 
     // html5-qrcode exige que el "cameraIdOrConfig" (si es objeto) tenga exactamente 1 clave.
-    // Evitamos pasar width/height aquÃ­ para que no falle con "found 3 keys".
-    try {
-      await _macroScanHtml5Instance.start({ facingMode: "environment" }, startConfig, onDecoded, onDecodeError);
-    } catch (err) {
-      logMacroEvent(["scanner", "camera", "warn"], "fallo al abrir con facingMode, reintento por id", { engine: "html5", error: err?.name || err?.message || err }, "warn");
-      const getCameras = Html5Qrcode?.getCameras || mod?.Html5Qrcode?.getCameras;
-      if (typeof getCameras !== "function") throw err;
+    // Priorizamos cámara trasera por deviceId (si existe) y, si no, usamos facingMode environment.
+    let selectedCameraId = "";
+    const getCameras = Html5Qrcode?.getCameras || mod?.Html5Qrcode?.getCameras;
+    if (typeof getCameras === "function") {
       const cameras = await getCameras();
-      const chosen = cameras?.[cameras.length - 1]?.id || cameras?.[0]?.id || "";
-      if (!chosen) throw err;
-      logMacroEvent(["scanner", "camera"], "reintento con cameraId", { engine: "html5", cameras: cameras.length, selected: chosen }, "info");
-      await _macroScanHtml5Instance.start(chosen, startConfig, onDecoded, onDecodeError);
+      const preferred = pickMacroScanRearCamera(cameras);
+      selectedCameraId = String(preferred?.id || "");
+      logMacroEvent(["scanner", "camera"], "enumerateDevices completado", {
+        total: cameras.length,
+        selected: selectedCameraId || "facingMode:environment",
+        labels: cameras.map((c) => c?.label || "(sin etiqueta)").slice(0, 6),
+      }, "info");
+    }
+    try {
+      if (selectedCameraId) await _macroScanHtml5Instance.start(selectedCameraId, startConfig, onDecoded, onDecodeError);
+      else await _macroScanHtml5Instance.start({ facingMode: "environment" }, startConfig, onDecoded, onDecodeError);
+    } catch (err) {
+      logMacroEvent(["scanner", "camera", "warn"], "fallo al abrir cámara preferida, fallback", {
+        engine: "html5",
+        selectedCameraId,
+        error: err?.name || err?.message || err,
+      }, "warn");
+      await _macroScanHtml5Instance.start({ facingMode: "environment" }, startConfig, onDecoded, onDecodeError);
     }
     logMacroScanLayout("post_start");
     logMacroScanLayoutDeep("post_start");
@@ -4643,7 +4799,18 @@ $recipeImportBtn?.addEventListener("click", () => {
         _macroScanLastHostPx = readMacroScanHostPx();
       }, 450);
     } catch (_) {}
-    logMacroEvent(["scanner", "camera"], "cámara abierta", { ok: true, engine: "html5", streamActive: true, videoDimsOk: true }, "info");
+    const activeTrack = getMacroScanActiveVideoTrack();
+    await configureMacroScanTrack(activeTrack);
+    logMacroEvent(["scanner", "camera"], "cámara abierta", {
+      ok: true,
+      engine: "html5",
+      streamActive: true,
+      videoDimsOk: true,
+      finalVideoSize: `${$macroScanHtml5Host?.querySelector?.("video")?.videoWidth || 0}x${$macroScanHtml5Host?.querySelector?.("video")?.videoHeight || 0}`,
+      zoomSupported: Boolean(activeTrack?.getCapabilities?.()?.zoom),
+      focusModeSupported: Boolean((activeTrack?.getCapabilities?.()?.focusMode || []).length),
+      zoomApplied: activeTrack?.getSettings?.()?.zoom ?? null,
+    }, "info");
   }
 
 
@@ -4719,7 +4886,8 @@ $recipeImportBtn?.addEventListener("click", () => {
 
     try {
       await startHtml5Scan(runId);
-      setMacroScanStatus("Buscando codigo...");
+      if ($macroScanPlacementHint) $macroScanPlacementHint.classList.remove("is-warning");
+      setMacroScanStatus("Buscando codigo... Acerca el producto para que el número se vea grande y nítido.");
       logScannerSuccess("detección iniciada", { engine: selectedEngine, ok: true, phase: "buscando" });
     } catch (err) {
       logScannerError("falló la inicialización del escáner", { engine: selectedEngine, error: err?.name || err?.message || err });
@@ -5067,6 +5235,9 @@ $recipeImportBtn?.addEventListener("click", () => {
         logMacroEvent(["scanner", "ocr", "error"], "sin frame de cámara para OCR", { reason }, "error");
         return "";
       }
+      if (Math.min(frame.width, frame.height) < 540) {
+        logMacroEvent(["scanner", "ocr", "warn"], "frame base de OCR con baja resolución", { source: `${frame.width}x${frame.height}` }, "warn");
+      }
       logMacroEvent(["scanner", "ocr", "crop"], "dimensiones de fuente", { source: `${frame.width}x${frame.height}` }, "info");
 
       try {
@@ -5093,6 +5264,17 @@ $recipeImportBtn?.addEventListener("click", () => {
       }
 
       for (const { crop, canvas } of crops) {
+        if (isMacroScanCropTooSmall(crop, frame)) {
+          setMacroScanStatus("Acerca más el producto: el código se ve demasiado pequeño.");
+          if ($macroScanPlacementHint) $macroScanPlacementHint.classList.add("is-warning");
+          logMacroEvent(["scanner", "ocr", "warn"], "crop demasiado pequeño para OCR fiable", {
+            crop: `${crop.width}x${crop.height}`,
+            frame: `${frame.width}x${frame.height}`,
+            name: crop.name,
+          }, "warn");
+          continue;
+        }
+        if ($macroScanPlacementHint) $macroScanPlacementHint.classList.remove("is-warning");
         logMacroEvent(["scanner", "ocr", "crop"], "crop generado", {
           name: crop.name,
           source: `${frame.width}x${frame.height}`,

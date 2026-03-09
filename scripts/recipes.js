@@ -216,6 +216,7 @@ if ($viewRecipes) {
   const $shelfResults = document.getElementById("recipes-shelf-results");
   const $shelfEmpty = document.getElementById("recipes-shelf-empty");
   const $shelfList = document.getElementById("recipes-list");
+  const $recipesListPreview = document.getElementById("recipes-list-preview");
   const $shelfFavorites = document.getElementById("recipes-list-favorites");
   const $shelfFavoritesSection = document.getElementById("recipes-favorites-section");
   const $shelfFavoritesCount = document.getElementById("recipes-favorites-count");
@@ -965,6 +966,77 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return { ...result, perServing };
   }
 
+  function getRecipeNutritionSummary(recipe) {
+    const structured = calculateRecipeTotals(recipe);
+    const hasStructured = structured.calculableNutrition > 0;
+    if (hasStructured) {
+      return {
+        totals: normalizeMacros(structured.totals),
+        hasData: true,
+      };
+    }
+    const fallback = normalizeMacros(recipe?.nutritionTotals || recipe?.nutritionPerServing || {});
+    const hasFallback = fallback.kcal > 0 || fallback.carbs > 0 || fallback.protein > 0 || fallback.fat > 0;
+    return {
+      totals: fallback,
+      hasData: hasFallback,
+    };
+  }
+
+  function getRecipeCostSummary(recipe) {
+    const cost = calculateRecipeCost(recipe, resolveRecipeServings(recipe));
+    return {
+      total: Number(cost?.total) || 0,
+      hasData: Boolean(cost?.covered),
+    };
+  }
+
+  function formatMetricValue(value, suffix = "") {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return "—";
+    return `${roundMacro(n)}${suffix}`;
+  }
+
+  function renderRecipeListPreview(list = []) {
+    if (!$recipesListPreview) return;
+    if (!list.length) {
+      $recipesListPreview.innerHTML = '<div class="recipe-row-empty">No hay recetas que coincidan</div>';
+      return;
+    }
+    const rows = list.map((recipe) => {
+      const nutrition = getRecipeNutritionSummary(recipe);
+      const cost = getRecipeCostSummary(recipe);
+      const metadata = [recipe.meal, recipe.health, ...(Array.isArray(recipe.tags) ? recipe.tags.slice(0, 2) : [])]
+        .filter(Boolean)
+        .join(" · ");
+      const hasImage = Boolean(String(recipe.imageURL || "").trim());
+      const imageMarkup = hasImage
+        ? `<div class="recipe-row-media"><img src="${escapeAttr(recipe.imageURL)}" alt="${escapeAttr(recipe.title || "Receta")}" loading="lazy"/></div>`
+        : "";
+      const costText = cost.hasData ? formatCurrency(cost.total) : "—";
+      return `
+        <article class="recipe-row-card" data-open-recipe="${escapeAttr(recipe.id)}">
+          ${imageMarkup}
+          <div class="recipe-row-body">
+            <h4 class="recipe-row-title">${escapeHtml(recipe.title || "Receta")}</h4>
+            ${metadata ? `<p class="recipe-row-meta">${escapeHtml(metadata)}</p>` : ""}
+            <div class="recipe-row-metrics">
+              <span class="recipe-row-metric">${nutrition.hasData ? formatMetricValue(nutrition.totals.kcal, " kcal") : "— kcal"}</span>
+              <span class="recipe-row-metric">C ${nutrition.hasData ? formatMetricValue(nutrition.totals.carbs, "g") : "—"}</span>
+              <span class="recipe-row-metric">P ${nutrition.hasData ? formatMetricValue(nutrition.totals.protein, "g") : "—"}</span>
+              <span class="recipe-row-metric">G ${nutrition.hasData ? formatMetricValue(nutrition.totals.fat, "g") : "—"}</span>
+              <span class="recipe-row-metric recipe-row-metric-cost">${costText}</span>
+            </div>
+          </div>
+        </article>
+      `;
+    });
+    $recipesListPreview.innerHTML = rows.join("");
+    $recipesListPreview.querySelectorAll("[data-open-recipe]").forEach((node) => {
+      node.addEventListener("click", () => openRecipeDetail(node.getAttribute("data-open-recipe")));
+    });
+  }
+
   function resolveRecipeServings(recipe) {
     return Math.max(1, Number(recipe?.servings || recipe?.yield || recipe?.portions) || 1);
   }
@@ -1289,6 +1361,7 @@ function linkifyNotesHtml(input) {
     if ($shelfEmpty) {
       $shelfEmpty.style.display = filtered.length ? "none" : "block";
     }
+    renderRecipeListPreview(filtered);
     if ($empty) {
       $empty.style.display = recipes.length ? "none" : "block";
     }

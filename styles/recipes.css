@@ -44,6 +44,121 @@
   gap: 10px;
 }
 
+.recipes-list-panel {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+  box-shadow: 0 12px 26px rgba(5, 7, 10, 0.35);
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.recipes-list-panel-head {
+  display: grid;
+  gap: 2px;
+}
+
+.recipes-list-panel-title {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #f3f6ff;
+}
+
+.recipes-list-panel-subtitle {
+  margin: 0;
+  font-size: 0.74rem;
+  color: rgba(236, 244, 255, 0.68);
+}
+
+.recipes-list-panel-body {
+  display: grid;
+  gap: 8px;
+}
+
+.recipe-row-card {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(14, 18, 26, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 16px rgba(0, 0, 0, 0.24);
+  padding: 8px;
+  min-width: 0;
+}
+
+.recipe-row-media {
+  flex: 0 0 84px;
+  width: 84px;
+  min-height: 84px;
+}
+
+.recipe-row-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.recipe-row-body {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.recipe-row-title {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #f4f7ff;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.recipe-row-meta {
+  margin: 0;
+  font-size: 0.73rem;
+  color: rgba(233, 241, 255, 0.64);
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recipe-row-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.recipe-row-metric {
+  font-size: 0.72rem;
+  color: rgba(246, 249, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.recipe-row-metric-cost {
+  color: #c0ffd8;
+  border-color: rgba(121, 243, 178, 0.45);
+}
+
+.recipe-row-empty {
+  border-radius: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  color: rgba(229, 238, 255, 0.7);
+  text-align: center;
+  font-size: 0.84rem;
+  padding: 12px;
+}
+
 /* --- Estantería: wrap real + barra por cada línea (sin ensanchar la app) --- */
 .recipes-shelf,
 #recipes-list,

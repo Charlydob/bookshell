@@ -2459,16 +2459,18 @@ Crear “<span id="gym-create-cta-text"></span>”
       </div>
       <div class="macro-modal-results" id="macro-add-results"></div>
       <div class="macro-modal-scan hidden" id="macro-scan-panel">
-        <div class="section-hint">Apunta al código, pulsa “Iniciar escaneo” y, si no sale, busca manualmente.</div>
+        <div class="section-hint">Apunta al código, pulsa “Capturar” y, si no sale, busca manualmente.</div>
         <div class="section-hint" id="macro-scan-placement-hint">Guía: acerca el producto hasta que el código y el número inferior ocupen gran parte del recuadro y se vean nítidos.</div>
         <div class="macro-scan-video-wrap">
           <video id="macro-scan-video" class="macro-scan-video" muted playsinline></video>
+          <canvas id="macro-scan-frozen" class="macro-scan-frozen hidden" aria-hidden="true"></canvas>
           <div id="macro-scan-html5-host" class="macro-scan-html5-host hidden"></div>
           <div class="macro-scan-overlay" aria-hidden="true"></div>
         </div>
         <div class="macro-inline-actions">
-          <button class="btn ghost btn-compact" id="macro-scan-engine-html5" type="button">Iniciar escaneo</button>
-          <button class="btn ghost btn-compact" id="macro-scan-read-number" type="button">Leer número</button>
+          <button class="btn ghost btn-compact" id="macro-scan-engine-html5" type="button">Abrir cámara</button>
+          <button class="btn ghost btn-compact" id="macro-scan-capture" type="button">Capturar</button>
+          <button class="btn ghost btn-compact hidden" id="macro-scan-retry" type="button">Reintentar</button>
           <input id="macro-scan-manual" placeholder="Código de barras" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" />
           <button class="btn ghost btn-compact" id="macro-scan-manual-btn" type="button">Buscar</button>
           <button class="btn ghost btn-compact" id="macro-scan-stop" type="button">Detener</button>

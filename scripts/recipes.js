@@ -2779,6 +2779,15 @@ $recipeImportBtn?.addEventListener("click", () => {
               habitId: String(entry?.habitSync?.habitId || "").trim(),
               amount: Math.max(0, Number(entry?.habitSync?.amount) || 0),
             },
+            sideEffects: {
+              habits: Array.isArray(entry?.sideEffects?.habits) ? entry.sideEffects.habits.map((h) => ({
+                habitId: String(h?.habitId || "").trim(),
+                amount: Math.max(0, Number(h?.amount) || 0),
+              })).filter((h) => h.habitId && h.amount) : [],
+              financeCost: Math.max(0, Number(entry?.sideEffects?.financeCost) || 0),
+              productsResolved: Math.max(0, Number(entry?.sideEffects?.productsResolved) || 0),
+              productsTotal: Math.max(0, Number(entry?.sideEffects?.productsTotal) || 0),
+            },
             createdAt: Number(entry?.createdAt) || Date.now(),
           })),
         };
@@ -3410,6 +3419,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       const recipe = recipes.find((r) => r.id === entry.refId);
       if (recipe) {
         const base = normalizeMacros(recipe.nutritionPerServing || recipe.nutritionTotals || {});
+        const prevEffects = entry?.sideEffects || buildRecipeSideEffects(recipe, current);
         entry.servings = next;
         entry.macrosSnapshot = normalizeMacros({
           carbs: (Number(base.carbs) || 0) * next,
@@ -3417,6 +3427,9 @@ $recipeImportBtn?.addEventListener("click", () => {
           fat: (Number(base.fat) || 0) * next,
           kcal: (Number(base.kcal) || 0) * next,
         });
+        entry.sideEffects = buildRecipeSideEffects(recipe, next);
+        applyRecipeSideEffects(prevEffects, selectedMacroDate, -1, "recipe_servings_old");
+        applyRecipeSideEffects(entry.sideEffects, selectedMacroDate, 1, "recipe_servings_new");
       } else {
         const factor = current > 0 ? (next / current) : 1;
         entry.servings = next;
@@ -3523,9 +3536,70 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($recipeIngredientGrams && !$recipeIngredientGrams.value) $recipeIngredientGrams.value = "100";
   }
 
+  function buildProductSideEffects(product, quantityFactor = 1) {
+    const safeFactor = Math.max(0, Number(quantityFactor) || 0);
+    const habitId = String(product?.linkedHabitId || "").trim();
+    const habits = habitId ? [{ habitId, amount: safeFactor }] : [];
+    let financeCost = 0;
+    if (String(product?.financeProductId || "").trim()) {
+      const fin = financeProducts.find((f) => f.id === String(product.financeProductId || "").trim());
+      const price = Number(fin?.lastPrice) || 0;
+      financeCost = price > 0 ? price * safeFactor : 0;
+    }
+    return { habits, financeCost };
+  }
+
+  function buildRecipeSideEffects(recipe, servings = 1) {
+    const safeServings = Math.max(0, Number(servings) || 0);
+    const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+    const summary = { habits: [], financeCost: 0, productsResolved: 0, productsTotal: ingredients.length };
+    ingredients.forEach((ing) => {
+      const linked = nutritionProducts.find((p) => p.id === ing?.productId);
+      if (!linked) return;
+      summary.productsResolved += 1;
+      const productFx = buildProductSideEffects(linked, safeServings);
+      summary.financeCost += Number(productFx.financeCost) || 0;
+      productFx.habits.forEach((h) => summary.habits.push({ ...h }));
+    });
+    return summary;
+  }
+
+  function applyRecipeSideEffects(sideEffects, dateKey, direction = 1, context = "recipe") {
+    const sign = direction >= 0 ? 1 : -1;
+    const habits = Array.isArray(sideEffects?.habits) ? sideEffects.habits : [];
+    habits.forEach((h) => {
+      const delta = Math.round((Number(h?.amount) || 0) * sign);
+      if (!delta || !h?.habitId) return;
+      logMacroEvent(["recipe", "habit"], "aplicando impacto de hábito", { context, habitId: h.habitId, delta, dateKey }, "info");
+      adjustHabitCountForDate(String(h.habitId || "").trim(), dateKey, delta);
+    });
+
+    const financeDelta = (Number(sideEffects?.financeCost) || 0) * sign;
+    if (financeDelta) {
+      const payload = {
+        dateKey,
+        context,
+        delta: financeDelta,
+        ts: Date.now(),
+      };
+      try {
+        window.__bookshellRecipeFinanceImpact = window.__bookshellRecipeFinanceImpact || [];
+        window.__bookshellRecipeFinanceImpact.push(payload);
+      } catch (_) {}
+      try {
+        const key = `${getStorageKey()}.recipeFinanceImpact`;
+        const list = JSON.parse(localStorage.getItem(key) || "[]");
+        list.push(payload);
+        localStorage.setItem(key, JSON.stringify(list.slice(-200)));
+      } catch (_) {}
+      logMacroEvent(["recipe", "finance"], "aplicando impacto financiero", { context, dateKey, delta: roundMacro(financeDelta) }, "info");
+    }
+  }
+
   function addProductToMeal(meal, product, grams = 100) {
     if (!product) return;
     const macrosSnapshot = normalizeMacros(calcProductMacros(product, grams));
+    const sideEffects = buildProductSideEffects(product, 1);
     const entry = {
       type: "product",
       refId: product.id,
@@ -3536,13 +3610,14 @@ $recipeImportBtn?.addEventListener("click", () => {
         habitId: String(product.linkedHabitId || "").trim(),
         amount: String(product.linkedHabitId || "").trim() ? 1 : 0,
       },
+      sideEffects,
       createdAt: Date.now(),
     };
     getDailyLog(selectedMacroDate).meals[meal].entries.unshift(entry);
     bumpMacroUsage("products", product.id);
     persistNutrition();
     renderMacrosView();
-    applyEntryHabitImpact(entry, selectedMacroDate, 1);
+    applyRecipeSideEffects(sideEffects, selectedMacroDate, 1, "product");
   }
 
   function addRecipeToMeal(meal, recipe, servings = 1) {
@@ -3554,17 +3629,22 @@ $recipeImportBtn?.addEventListener("click", () => {
       fat: base.fat * servings,
       kcal: base.kcal * servings,
     };
-    getDailyLog(selectedMacroDate).meals[meal].entries.unshift({
+    const sideEffects = buildRecipeSideEffects(recipe, servings);
+    const entry = {
       type: "recipe",
       refId: recipe.id,
       nameSnapshot: recipe.title,
       servings,
       macrosSnapshot,
+      sideEffects,
       createdAt: Date.now(),
-    });
+    };
+    getDailyLog(selectedMacroDate).meals[meal].entries.unshift(entry);
     bumpMacroUsage("recipes", recipe.id);
     persistNutrition();
     renderMacrosView();
+    logMacroEvent(["recipe"], "receta añadida con side effects", { recipeId: recipe.id, servings, productsResolved: sideEffects.productsResolved, productsTotal: sideEffects.productsTotal }, "info");
+    applyRecipeSideEffects(sideEffects, selectedMacroDate, 1, "recipe");
   }
 
   function saveProduct(product) {
@@ -3624,12 +3704,17 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   async function applyEntryHabitImpact(entry, dateKey, direction = 1) {
-    const habitId = String(entry?.habitSync?.habitId || "").trim();
-    if (!habitId) return;
-    const amount = Math.max(0, Number(entry?.habitSync?.amount) || 0);
-    const delta = Math.round(amount * direction);
-    if (!delta) return;
-    await adjustHabitCountForDate(habitId, dateKey, delta);
+    const habits = Array.isArray(entry?.sideEffects?.habits) && entry.sideEffects.habits.length
+      ? entry.sideEffects.habits
+      : [{ habitId: String(entry?.habitSync?.habitId || "").trim(), amount: Math.max(0, Number(entry?.habitSync?.amount) || 0) }];
+    await Promise.all(habits.map(async (row) => {
+      const habitId = String(row?.habitId || "").trim();
+      if (!habitId) return;
+      const amount = Math.max(0, Number(row?.amount) || 0);
+      const delta = Math.round(amount * direction);
+      if (!delta) return;
+      await adjustHabitCountForDate(habitId, dateKey, delta);
+    }));
   }
 
   async function loadFinanceProductsCatalog(force = false) {
@@ -3695,6 +3780,8 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanPendingProduct = null;
   let _macroScanStartedAt = 0;
   let _macroScanFrameCanvas = null;
+  let _macroScanOcrModule = null;
+  let _macroScanOcrInFlight = false;
   let _macroScanDecodeInFlight = false;
   let _macroScanSessionId = 0;
   let _macroScanPendingLookup = null;
@@ -4023,12 +4110,12 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function logScanner(message, meta) { logMacroEvent(["scanner"], message, meta, "info"); }
   function logScannerSuccess(message, meta) { logMacroEvent(["scanner", "success"], message, meta, "info"); }
-  function logScannerWarn(message, meta) { logMacroEvent(["scanner"], message, meta, "warn"); }
+  function logScannerWarn(message, meta) { logMacroEvent(["scanner", "warn"], message, meta, "warn"); }
   function logScannerError(message, meta) { logMacroEvent(["scanner", "error"], message, meta, "error"); }
 
   function logLookup(message, meta) { logMacroEvent(["lookup"], message, meta, "info"); }
   function logLookupSuccess(message, meta) { logMacroEvent(["lookup", "success"], message, meta, "info"); }
-  function logLookupWarn(message, meta) { logMacroEvent(["lookup"], message, meta, "warn"); }
+  function logLookupWarn(message, meta) { logMacroEvent(["lookup", "warn"], message, meta, "warn"); }
   function logLookupError(message, meta) { logMacroEvent(["lookup", "error"], message, meta, "error"); }
 
   function logLookupOff(message, meta, level = "info") {
@@ -4108,10 +4195,35 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroScanAddProduct.classList.remove("hidden");
   }
 
+  function isValidBarcodeChecksum(digits = "") {
+    const code = String(digits || "").trim();
+    if (!/^\d+$/.test(code)) return false;
+    const len = code.length;
+    if (![8, 12, 13, 14].includes(len)) return false;
+    const body = code.slice(0, -1);
+    const check = Number(code.slice(-1));
+    if (!Number.isFinite(check)) return false;
+    const fromRight = body.split("").reverse();
+    const sum = fromRight.reduce((acc, ch, idx) => {
+      const n = Number(ch) || 0;
+      if (len === 8) return acc + n * (idx % 2 === 0 ? 3 : 1);
+      return acc + n * (idx % 2 === 0 ? 3 : 1);
+    }, 0);
+    const expected = (10 - (sum % 10)) % 10;
+    return expected === check;
+  }
+
+  function normalizeBarcodeText(value, { strict = true } = {}) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const digits = raw.replace(/\D/g, "");
+    if (![8, 12, 13, 14].includes(digits.length)) return "";
+    if (strict && !isValidBarcodeChecksum(digits)) return "";
+    return digits;
+  }
+
   function normalizeDetectedBarcode(value) {
-    const digits = String(value || "").replace(/\D/g, "");
-    if ([8, 12, 13, 14].includes(digits.length)) return digits;
-    return "";
+    return normalizeBarcodeText(value, { strict: true }) || normalizeBarcodeText(value, { strict: false }) || "";
   }
 
   function captureMacroScanFrame() {
@@ -4134,6 +4246,39 @@ $recipeImportBtn?.addEventListener("click", () => {
     _macroScanHtml5Module = await import("https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/+esm");
     logMacroScan("dependencia del motor cargada", { engine: "html5", ok: Boolean(_macroScanHtml5Module) });
     return _macroScanHtml5Module;
+  }
+
+  async function loadMacroScanOcrModule() {
+    if (_macroScanOcrModule) return _macroScanOcrModule;
+    _macroScanOcrModule = await import("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.esm.min.js");
+    logMacroEvent(["scanner", "ocr"], "dependencia OCR cargada", { ok: Boolean(_macroScanOcrModule) }, "info");
+    return _macroScanOcrModule;
+  }
+
+  function preprocessMacroScanFrame(canvas) {
+    if (!canvas) return null;
+    const out = document.createElement("canvas");
+    const w = Math.max(1, Number(canvas.width) || 0);
+    const h = Math.max(1, Number(canvas.height) || 0);
+    const cropH = Math.max(60, Math.round(h * 0.26));
+    const cropY = Math.max(0, Math.round((h - cropH) / 2));
+    out.width = w * 2;
+    out.height = cropH * 2;
+    const ctx = out.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(canvas, 0, cropY, w, cropH, 0, 0, out.width, out.height);
+    const img = ctx.getImageData(0, 0, out.width, out.height);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const gray = Math.round(d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114);
+      const bin = gray > 128 ? 255 : 0;
+      d[i] = bin;
+      d[i + 1] = bin;
+      d[i + 2] = bin;
+      d[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    return out;
   }
 
 
@@ -4258,7 +4403,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     }
     _macroScanLastValue = clean;
     _macroScanLastAt = now;
-    logScannerSuccess("código detectado", { engine, code: clean });
+    logMacroEvent(["scanner", "decode"], "código detectado", { engine, code: clean }, "info");
     if ($macroScanManual) $macroScanManual.value = clean;
     setMacroScanStatus(`CÃ³digo detectado: ${clean}`);
 
@@ -4286,13 +4431,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroScanVideo?.classList.add("hidden");
     $macroScanHtml5Host.classList.remove("hidden");
     logMacroScanLayoutDeep("host_visible");
-    logScanner("inicio motor", { engine: "html5", instanceCreated: false });
+    logMacroEvent(["scanner", "decode"], "inicio motor", { engine: "html5", instanceCreated: false }, "info");
     const mod = await loadMacroScanHtml5Module();
     const Html5Qrcode = mod?.Html5Qrcode || mod?.default?.Html5Qrcode || mod?.default;
     if (!Html5Qrcode) throw new Error("html5-qrcode no disponible.");
     _macroScanHtml5Instance = new Html5Qrcode("macro-scan-html5-host");
-    logScanner("inicialización del motor", { engine: "html5", libreriaCargada: true, instanceCreated: Boolean(_macroScanHtml5Instance) });
-    logScanner("loop de detección arrancado", { engine: "html5", ok: true });
+    logMacroEvent(["scanner", "decode"], "inicialización del motor", { engine: "html5", libreriaCargada: true, instanceCreated: Boolean(_macroScanHtml5Instance) }, "info");
+    logMacroEvent(["scanner", "decode"], "loop de detección arrancado", { engine: "html5", ok: true }, "info");
     const startConfig = {
       fps: 18,
       qrbox: (viewfinderWidth, viewfinderHeight) => {
@@ -4326,7 +4471,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         logMacroScanNoResult("html5", msg);
         return;
       }
-      logScannerError("error motor", { engine: "html5", error: msg });
+      logMacroEvent(["scanner", "decode", "error"], "error motor", { engine: "html5", error: msg }, "error");
     };
 
     // html5-qrcode exige que el "cameraIdOrConfig" (si es objeto) tenga exactamente 1 clave.
@@ -4334,13 +4479,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     try {
       await _macroScanHtml5Instance.start({ facingMode: "environment" }, startConfig, onDecoded, onDecodeError);
     } catch (err) {
-      logScannerWarn("fallo al abrir con facingMode, reintento por id", { engine: "html5", error: err?.name || err?.message || err });
+      logMacroEvent(["scanner", "camera", "warn"], "fallo al abrir con facingMode, reintento por id", { engine: "html5", error: err?.name || err?.message || err }, "warn");
       const getCameras = Html5Qrcode?.getCameras || mod?.Html5Qrcode?.getCameras;
       if (typeof getCameras !== "function") throw err;
       const cameras = await getCameras();
       const chosen = cameras?.[cameras.length - 1]?.id || cameras?.[0]?.id || "";
       if (!chosen) throw err;
-      logScanner("reintento con cameraId", { engine: "html5", cameras: cameras.length, selected: chosen });
+      logMacroEvent(["scanner", "camera"], "reintento con cameraId", { engine: "html5", cameras: cameras.length, selected: chosen }, "info");
       await _macroScanHtml5Instance.start(chosen, startConfig, onDecoded, onDecodeError);
     }
     logMacroScanLayout("post_start");
@@ -4355,7 +4500,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         _macroScanLastHostPx = readMacroScanHostPx();
       }, 450);
     } catch (_) {}
-    logScannerSuccess("cámara abierta", { ok: true, engine: "html5", streamActive: true, videoDimsOk: true });
+    logMacroEvent(["scanner", "camera"], "cámara abierta", { ok: true, engine: "html5", streamActive: true, videoDimsOk: true }, "info");
   }
 
 
@@ -4692,8 +4837,12 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroManualBase) $macroManualBase.value = "100";
   }
 
+  function applyProductToUI(product, barcode, options = {}) {
+    return applyLookupResultToUi(product, barcode, options);
+  }
+
   async function handleBarcodeFound(barcode, options = {}) {
-    const { fromManual = false, sourceEngine = "manual" } = options || {};
+    const { fromManual = false, sourceEngine = "manual", triedOcrFallback = false } = options || {};
     const raw = String(barcode || "").trim();
     const clean = normalizeDetectedBarcode(raw);
     if (!clean) {
@@ -4739,6 +4888,19 @@ $recipeImportBtn?.addEventListener("click", () => {
     }
 
     logLookupError("producto no encontrado / lookup falló", { barcode: clean, reason: result?.reason || "unknown" });
+
+    if (!fromManual && sourceEngine === "html5" && !triedOcrFallback) {
+      logMacroEvent(["scanner", "ocr"], "fallback OCR tras fallo de lookup html5", { barcode: clean }, "info");
+      setMacroScanStatus("No encontrado por escaneo. Intentando lectura OCR del número...");
+      const ocrCode = await tryOcrBarcodeNumber("fallback_after_html5_lookup_fail");
+      if (ocrCode && ocrCode !== clean) {
+        if ($macroScanManual) $macroScanManual.value = ocrCode;
+        logMacroEvent(["scanner", "ocr"], "fallback OCR encontró nuevo código", { from: clean, to: ocrCode }, "info");
+        return handleBarcodeFound(ocrCode, { fromManual: false, sourceEngine: "ocr", triedOcrFallback: true });
+      }
+      logMacroEvent(["scanner", "ocr", "warn"], "fallback OCR no mejoró resultado", { barcode: clean, ocrCode: ocrCode || "" }, "warn");
+    }
+
     setMacroScanStatus("Producto no encontrado. Pulsa “Crear producto manual”.");
     showMacroScanAddProduct({ barcode: clean, mode: "manual", label: "Crear producto manual" });
     if ($macroManualBarcode) $macroManualBarcode.value = clean;
@@ -4750,26 +4912,79 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   async function runMacroScanOcrPass(reason = "ocr") {
-    if (_macroScanDecodeInFlight) return "";
-    _macroScanDecodeInFlight = true;
+    if (_macroScanOcrInFlight) {
+      logMacroEvent(["scanner", "ocr", "warn"], "OCR ya en curso", { reason }, "warn");
+      return "";
+    }
+    _macroScanOcrInFlight = true;
     try {
+      logMacroEvent(["scanner", "ocr"], "inicio OCR", { reason }, "info");
       const frame = captureMacroScanFrame();
-      if (!frame) return "";
-      const mod = await loadMacroScanHtml5Module();
-      const Html5Qrcode = mod?.Html5Qrcode || mod?.default?.Html5Qrcode || mod?.default;
-      if (!Html5Qrcode?.scanFileV2) return "";
-      const data = frame.toDataURL("image/jpeg", 0.95);
-      const result = await Html5Qrcode.scanFileV2(data, true);
-      const clean = normalizeDetectedBarcode(result?.getText?.() || "");
-      if (clean) return clean;
+      if (!frame) {
+        logMacroEvent(["scanner", "ocr", "error"], "sin frame de cámara para OCR", { reason }, "error");
+        return "";
+      }
+
+      try {
+        const mod = await loadMacroScanHtml5Module();
+        const Html5Qrcode = mod?.Html5Qrcode || mod?.default?.Html5Qrcode || mod?.default;
+        if (Html5Qrcode?.scanFileV2) {
+          const scanRes = await Html5Qrcode.scanFileV2(frame.toDataURL("image/jpeg", 0.95), true);
+          const code = normalizeDetectedBarcode(scanRes?.getText?.() || "");
+          if (code) {
+            logMacroEvent(["scanner", "ocr"], "número detectado por decode de frame", { code, path: "scanFileV2" }, "info");
+            return code;
+          }
+        }
+      } catch (err) {
+        logMacroEvent(["scanner", "ocr", "warn"], "decode directo de frame no encontró código", { error: err?.name || err?.message || err }, "warn");
+      }
+
+      const processed = preprocessMacroScanFrame(frame) || frame;
+      const ocrMod = await loadMacroScanOcrModule();
+      const recognize = ocrMod?.recognize || ocrMod?.default?.recognize;
+      if (typeof recognize !== "function") {
+        logMacroEvent(["scanner", "ocr", "error"], "módulo OCR inválido", { hasRecognize: false }, "error");
+        return "";
+      }
+      const ocrRes = await recognize(processed, "eng", {
+        logger: (m) => {
+          if (m?.status === "recognizing text" && Number(m?.progress) > 0.98) {
+            logMacroEvent(["scanner", "ocr"], "OCR casi completado", { progress: Number(m.progress || 0).toFixed(2) }, "info");
+          }
+        },
+      });
+      const text = String(ocrRes?.data?.text || "");
+      const candidates = text.match(/\d[\d\s-]{6,20}\d/g) || [];
+      for (const candidate of candidates) {
+        const strictCode = normalizeBarcodeText(candidate, { strict: true });
+        if (strictCode) {
+          logMacroEvent(["scanner", "ocr"], "número OCR válido", { code: strictCode, strict: true }, "info");
+          return strictCode;
+        }
+      }
+      for (const candidate of candidates) {
+        const relaxedCode = normalizeBarcodeText(candidate, { strict: false });
+        if (relaxedCode) {
+          logMacroEvent(["scanner", "ocr", "warn"], "número OCR plausible sin checksum", { code: relaxedCode, strict: false }, "warn");
+          return relaxedCode;
+        }
+      }
+
+      logMacroEvent(["scanner", "ocr", "warn"], "OCR sin número válido", { textSample: text.slice(0, 80), candidates: candidates.length }, "warn");
       return "";
     } catch (err) {
-      if (String(err?.name || "") !== "NotFoundException") logScannerWarn("lectura puntual falló", { reason, error: err?.name || err?.message || err });
+      logMacroEvent(["scanner", "ocr", "error"], "OCR falló", { reason, error: err?.name || err?.message || err }, "error");
       return "";
     } finally {
-      _macroScanDecodeInFlight = false;
+      _macroScanOcrInFlight = false;
     }
   }
+
+  async function tryOcrBarcodeNumber(reason = "ocr") {
+    return runMacroScanOcrPass(reason);
+  }
+
 
 
   function normalizeOffProductPayload(payload = {}, barcode = "") {
@@ -4940,7 +5155,8 @@ $recipeImportBtn?.addEventListener("click", () => {
         const removed = log.meals[meal].entries.splice(i, 1)[0];
         persistNutrition();
         renderMacrosView();
-        applyEntryHabitImpact(removed, selectedMacroDate, -1);
+        if (removed?.sideEffects) applyRecipeSideEffects(removed.sideEffects, selectedMacroDate, -1, removed.type || "entry");
+        else applyEntryHabitImpact(removed, selectedMacroDate, -1);
       }
       return;
     }
@@ -5105,7 +5321,10 @@ $recipeImportBtn?.addEventListener("click", () => {
       const log = getDailyLog(selectedMacroDate);
       const entry = log?.meals?.[meal]?.entries?.[Number(idx)];
       if (entry) {
-        const prevHabit = { ...entry.habitSync };
+        const prevEffects = {
+          habits: Array.isArray(entry?.sideEffects?.habits) ? entry.sideEffects.habits : [{ habitId: String(entry?.habitSync?.habitId || "").trim(), amount: Math.max(0, Number(entry?.habitSync?.amount) || 0) }],
+          financeCost: Math.max(0, Number(entry?.sideEffects?.financeCost) || 0),
+        };
         entry.type = "product";
         entry.refId = saved.id;
         entry.nameSnapshot = saved.name;
@@ -5115,9 +5334,11 @@ $recipeImportBtn?.addEventListener("click", () => {
           habitId: String(saved.linkedHabitId || "").trim(),
           amount: String(saved.linkedHabitId || "").trim() ? 1 : 0,
         };
+        entry.sideEffects = buildProductSideEffects(saved, 1);
         persistNutrition();
         renderMacrosView();
-        applyEntryHabitImpact({ habitSync: prevHabit }, selectedMacroDate, -1).then(() => applyEntryHabitImpact(entry, selectedMacroDate, 1));
+        applyRecipeSideEffects(prevEffects, selectedMacroDate, -1, "entry_edit_old");
+        applyRecipeSideEffects(entry.sideEffects, selectedMacroDate, 1, "entry_edit_new");
       }
     } else {
       addProductToMeal(_macroProductMeal || macroModalState.meal || "breakfast", saved, grams);

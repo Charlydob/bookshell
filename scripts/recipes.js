@@ -279,6 +279,9 @@ if ($viewRecipes) {
   const $macroSummaryGrid = document.getElementById("macro-summary-grid");
   const $macroMeals = document.getElementById("macro-meals");
   const $macroKcalSummary = document.getElementById("macro-kcal-summary");
+  const $macroIntegrationOpen = document.getElementById("macro-integration-open");
+  const $macroIntegrationModalBackdrop = document.getElementById("macro-integration-modal-backdrop");
+  const $macroIntegrationModalClose = document.getElementById("macro-integration-modal-close");
   const $macroBodyweightKg = document.getElementById("macro-bodyweight-kg");
   const $macroWorkKcal = document.getElementById("macro-work-kcal");
   const $macroWorkHabits = document.getElementById("macro-work-habits");
@@ -3540,8 +3543,11 @@ $recipeImportBtn?.addEventListener("click", () => {
       const pct = goal > 0 ? Math.min(140, Math.round((value / goal) * 100)) : 0;
       const excess = goal > 0 && value > goal;
       if (key === "kcal") {
-        const netPct = goal > 0 ? Math.min(140, Math.round((Math.max(0, netKcal) / goal) * 100)) : 0;
-        const burnedPct = Math.max(0, pct - netPct);
+        const ingestedRatio = goal > 0 ? Math.max(0, Math.min(1, totals.kcal / goal)) : 0;
+        const burnedWithinIngestedRatio = goal > 0 ? Math.max(0, Math.min(ingestedRatio, totalBurned / goal)) : 0;
+        const ingestedPct = Math.min(140, Math.round(ingestedRatio * 100));
+        const burnedStartPct = Math.max(0, (ingestedRatio - burnedWithinIngestedRatio) * 100);
+        const burnedWidthPct = Math.max(0, burnedWithinIngestedRatio * 100);
         return `
           <div class="macro-stat macro-stat-${key} ${excess ? "is-excess" : ""}">
             <div class="macro-stat-title">${label}</div>
@@ -3553,8 +3559,8 @@ $recipeImportBtn?.addEventListener("click", () => {
             </div>
             <div class="hint">${roundMacro(totals.kcal)} ingeridas · -${roundMacro(totalBurned)} quemadas</div>
             <div class="macro-progress macro-progress-kcal">
-              <span style="width:${pct}%"></span>
-              <i class="macro-progress-burn" style="width:${burnedPct}%"></i>
+              <span style="width:${ingestedPct}%"></span>
+              <i class="macro-progress-burn" style="left:${burnedStartPct}%; width:${burnedWidthPct}%"></i>
             </div>
           </div>
         `;
@@ -3599,7 +3605,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     const delta = roundMacro(kcalGoal - netKcal);
     const workBurned = getWorkCaloriesBurnedForDate(selectedMacroDate);
     const gymBurned = getGymCaloriesBurnedForDate(selectedMacroDate);
-    $macroKcalSummary.textContent = `${roundMacro(netKcal)} / ${roundMacro(kcalGoal)} kcal netas · ${roundMacro(totals.kcal)} ingeridas · -${roundMacro(totalBurned)} quemadas (${roundMacro(workBurned)} trabajo + ${roundMacro(gymBurned)} gym) · ${delta >= 0 ? `${delta} restantes` : `${Math.abs(delta)} exceso`}`;
+    $macroKcalSummary.textContent = `${Number(netKcal).toFixed(2)} kcal / ${Number(kcalGoal).toFixed(2)} kcal · ${Number(totals.kcal).toFixed(2)} ingeridas · -${Number(totalBurned).toFixed(2)} quemadas (${roundMacro(workBurned)} trabajo + ${roundMacro(gymBurned)} gym) · ${delta >= 0 ? `${delta} restantes` : `${Math.abs(delta)} exceso`}`;
 
     renderMacroIntegrationSettings();
 
@@ -3628,6 +3634,16 @@ $recipeImportBtn?.addEventListener("click", () => {
       <div class="hint">${roundMacro(mt.kcal)} kcal · C ${roundMacro(mt.carbs)} · P ${roundMacro(mt.protein)} · G ${roundMacro(mt.fat)} · ${formatCurrency(mealCost.total)}${mealCost.missing ? ` · ${mealCost.missing} s/p` : ""}</div></div><div class="macro-meal-entries">${entryHtml}</div><button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
     }).join("");
     if ($recipesPanelStatistics?.classList.contains("is-active")) renderStatisticsView();
+  }
+
+
+  function openMacroIntegrationModal() {
+    renderMacroIntegrationSettings();
+    $macroIntegrationModalBackdrop?.classList.remove("hidden");
+  }
+
+  function closeMacroIntegrationModal() {
+    $macroIntegrationModalBackdrop?.classList.add("hidden");
   }
 
 
@@ -6448,6 +6464,11 @@ $recipeImportBtn?.addEventListener("click", () => {
     nutritionGoals[key] = Math.max(0, nextNum);
     persistNutrition();
     renderMacrosView();
+  });
+  $macroIntegrationOpen?.addEventListener("click", openMacroIntegrationModal);
+  $macroIntegrationModalClose?.addEventListener("click", closeMacroIntegrationModal);
+  $macroIntegrationModalBackdrop?.addEventListener("click", (e) => {
+    if (e.target === $macroIntegrationModalBackdrop) closeMacroIntegrationModal();
   });
   $macroWorkKcal?.addEventListener("change", (e) => {
     nutritionIntegrationConfig.workCaloriesPerMatchedDay = Math.max(0, Number(e.target.value) || 0);

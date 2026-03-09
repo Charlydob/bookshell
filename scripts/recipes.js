@@ -30,7 +30,8 @@ if ($viewRecipes) {
   const MEAL_TYPES = ["desayuno", "comida", "cena", "snack"];
   const HEALTH_TYPES = ["sana", "equilibrada", "insana"];
   const palette = ["#f4d35e", "#9ad5ff", "#ff89c6", "#7dffb4", "#c8a4ff"];
-  const DEFAULT_INGREDIENT = () => ({ id: generateId(), text: "", done: false });
+  const STRUCTURED_INGREDIENT_UNITS = ["g", "kg", "ml", "l", "unit"];
+  const DEFAULT_INGREDIENT = () => ({ id: generateId(), text: "", label: "", qty: "", unit: "", notes: "", productId: "", done: false });
   const DEFAULT_STEP = () => ({
     id: generateId(),
     title: "",
@@ -268,6 +269,7 @@ if ($viewRecipes) {
   const $recipeIngredientProduct = document.getElementById("recipe-ingredient-product");
   const $recipeIngredientGrams = document.getElementById("recipe-ingredient-grams");
   const $recipeIngredientAddProduct = document.getElementById("recipe-ingredient-add-product");
+  const $recipeCalcSummary = document.getElementById("recipe-calc-summary");
 
   const $recipesSubtabs = document.querySelectorAll(".recipes-subtab");
   const $recipesPanelLibrary = document.getElementById("recipes-panel-library");
@@ -717,6 +719,10 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       ? recipe.ingredients.map((ing) => ({
           id: ing.id || generateId(),
           text: String(ing.text || "").trim(),
+          label: String(ing.label || "").trim(),
+          qty: ing.qty == null || ing.qty === "" ? "" : Math.max(0, Number(ing.qty) || 0),
+          unit: normalizeCostUnit(ing.unit || ""),
+          notes: String(ing.notes || "").trim(),
           quantity: String(ing.quantity || "").trim(),
           name: String(ing.name || "").trim(),
           productId: String(ing.productId || "").trim(),
@@ -749,6 +755,12 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     };
   }
 
+  function normalizeIngredientQty(value) {
+    const qty = Number(value);
+    if (!Number.isFinite(qty) || qty <= 0) return null;
+    return qty;
+  }
+
   function splitIngredientText(raw = "") {
     const text = String(raw || "").trim();
     if (!text) return { quantity: "", name: "" };
@@ -759,8 +771,10 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   function resolveIngredientDisplay(ing = {}) {
     const parsed = splitIngredientText(ing.text || "");
-    const quantity = String(ing.quantity || parsed.quantity || "").trim();
-    const fallbackName = String(ing.name || parsed.name || ing.text || "Ingrediente").trim();
+    const qty = normalizeIngredientQty(ing.qty);
+    const unit = normalizeCostUnit(ing.unit || "");
+    const quantity = qty && unit ? `${qty} ${unit}` : String(ing.quantity || parsed.quantity || "").trim();
+    const fallbackName = String(ing.label || ing.name || parsed.name || ing.text || "Ingrediente").trim();
     const linked = nutritionProducts.find((p) => p.id === ing.productId)
       || nutritionProducts.find((p) => !ing.productId && p.name && p.name.toLowerCase() === fallbackName.toLowerCase())
       || null;
@@ -897,11 +911,78 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return (intakeQty / normalizedBaseQty) * effectivePrice;
   }
 
+  function calculateStructuredIngredientNutrition(ingredient, product) {
+    const qty = normalizeIngredientQty(ingredient?.qty);
+    const unit = normalizeCostUnit(ingredient?.unit);
+    if (!product || !qty || !unit) return null;
+    const grams = normalizeQtyByUnit(qty, unit, "g");
+    if (!(grams >= 0)) return null;
+    return normalizeMacros(calcProductMacros(product, grams));
+  }
+
+  function calculateStructuredIngredientCost(ingredient, product) {
+    const qty = normalizeIngredientQty(ingredient?.qty);
+    const unit = normalizeCostUnit(ingredient?.unit);
+    if (!product || !qty || !unit) return null;
+    return calculateProductConsumedCost(product, qty, unit);
+  }
+
+  function getRecipePerServingValues(recipe, totals) {
+    const servings = resolveRecipeServings(recipe);
+    return {
+      kcal: servings > 0 ? (Number(totals?.kcal) || 0) / servings : 0,
+      cost: servings > 0 ? (Number(totals?.cost) || 0) / servings : 0,
+      servings,
+    };
+  }
+
+  function calculateRecipeTotals(recipe) {
+    const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+    const result = {
+      totals: normalizeMacros({}),
+      totalCost: 0,
+      calculableNutrition: 0,
+      calculableCost: 0,
+      ingredientsTotal: ingredients.length,
+      missingNutrition: 0,
+      missingCost: 0,
+    };
+    ingredients.forEach((ing) => {
+      const product = nutritionProducts.find((p) => p.id === String(ing?.productId || "").trim());
+      const nutri = calculateStructuredIngredientNutrition(ing, product);
+      const cost = calculateStructuredIngredientCost(ing, product);
+      if (nutri) {
+        result.totals = plusMacros(result.totals, nutri);
+        result.calculableNutrition += 1;
+      } else result.missingNutrition += 1;
+      if (cost == null) result.missingCost += 1;
+      else {
+        result.totalCost += cost;
+        result.calculableCost += 1;
+      }
+    });
+    const perServing = getRecipePerServingValues(recipe, { kcal: result.totals.kcal, cost: result.totalCost });
+    return { ...result, perServing };
+  }
+
   function resolveRecipeServings(recipe) {
     return Math.max(1, Number(recipe?.servings || recipe?.yield || recipe?.portions) || 1);
   }
 
   function calculateRecipeCost(recipe, servings = 1) {
+    const structured = calculateRecipeTotals(recipe);
+    if (structured.calculableCost > 0) {
+      const recipeServings = resolveRecipeServings(recipe);
+      const multiplier = Math.max(0, Number(servings) || 0) / recipeServings;
+      const total = structured.totalCost * multiplier;
+      return {
+        total,
+        perServing: structured.perServing.cost,
+        missing: structured.missingCost,
+        covered: structured.calculableCost,
+        ingredientsTotal: structured.ingredientsTotal,
+      };
+    }
     const ingredients = Array.isArray(recipe?.nutritionIngredients) ? recipe.nutritionIngredients : [];
     const recipeServings = resolveRecipeServings(recipe);
     const multiplier = Math.max(0, Number(servings) || 0) / recipeServings;
@@ -2034,6 +2115,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       renderNutriIngredientRows([]);
     }
     renderRecipeIngredientProductPicker();
+    updateRecipeCalcSummary();
   }
 
   function closeRecipeModal() {
@@ -2152,6 +2234,15 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     list.forEach((item) => frag.appendChild(buildIngredientRow(item)));
     $recipeIngredientsList.innerHTML = "";
     $recipeIngredientsList.appendChild(frag);
+    updateRecipeCalcSummary();
+  }
+
+  function updateRecipeCalcSummary() {
+    if (!$recipeCalcSummary) return;
+    const draft = { ingredients: collectIngredientRows(), servings: Math.max(1, Number($recipeServings?.value) || 1) };
+    const totals = calculateRecipeTotals(draft);
+    const perServing = totals.perServing;
+    $recipeCalcSummary.textContent = `${roundMacro(totals.totals.kcal)} kcal · ${formatCurrency(totals.totalCost)} · calc kcal ${totals.calculableNutrition}/${totals.ingredientsTotal || 0} · calc coste ${totals.calculableCost}/${totals.ingredientsTotal || 0} · ${roundMacro(perServing.kcal)} kcal/rac · ${formatCurrency(perServing.cost)}/rac`;
   }
 
   function renderStepRows(list = []) {
@@ -2166,26 +2257,64 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     const row = document.createElement("div");
     row.className = "builder-row ingredient-row";
     row.dataset.id = item.id || generateId();
+    row.dataset.productId = String(item.productId || "").trim();
 
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.className = "builder-check";
     checkbox.checked = !!item.done;
 
-    const input = document.createElement("input");
-    input.type = "text";
-    input.placeholder = "Ingrediente";
-    input.value = item.text || "";
-    input.className = "builder-input";
+    const product = document.createElement("select");
+    product.className = "builder-input ingredient-product";
+    product.innerHTML = `<option value="">Producto (opcional)</option>${nutritionProducts.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("")}`;
+    product.value = String(item.productId || "").trim();
+    product.addEventListener("change", () => {
+      row.dataset.productId = product.value || "";
+      updateRecipeCalcSummary();
+    });
+
+    const qty = document.createElement("input");
+    qty.type = "number";
+    qty.className = "builder-input ingredient-qty";
+    qty.placeholder = "Cant.";
+    qty.min = "0";
+    qty.step = "0.01";
+    qty.value = item.qty == null || item.qty === "" ? "" : String(item.qty);
+    qty.addEventListener("input", updateRecipeCalcSummary);
+
+    const unit = document.createElement("select");
+    unit.className = "builder-input ingredient-unit";
+    unit.innerHTML = `<option value="">Unidad</option>${STRUCTURED_INGREDIENT_UNITS.map((u) => `<option value="${u}">${u}</option>`).join("")}`;
+    unit.value = normalizeCostUnit(item.unit || "");
+    unit.addEventListener("change", updateRecipeCalcSummary);
+
+    const label = document.createElement("input");
+    label.type = "text";
+    label.placeholder = "Ingrediente / texto";
+    label.value = item.label || item.name || item.text || "";
+    label.className = "builder-input ingredient-label";
+
+    const notes = document.createElement("input");
+    notes.type = "text";
+    notes.placeholder = "Notas";
+    notes.value = item.notes || "";
+    notes.className = "builder-input ingredient-notes";
 
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "icon-btn icon-btn-small";
     remove.textContent = "✕";
-    remove.addEventListener("click", () => row.remove());
+    remove.addEventListener("click", () => {
+      row.remove();
+      updateRecipeCalcSummary();
+    });
 
     row.appendChild(checkbox);
-    row.appendChild(input);
+    row.appendChild(product);
+    row.appendChild(qty);
+    row.appendChild(unit);
+    row.appendChild(label);
+    row.appendChild(notes);
     row.appendChild(remove);
     return row;
   }
@@ -2234,18 +2363,27 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     if (!$recipeIngredientsList) return [];
     return Array.from($recipeIngredientsList.querySelectorAll(".ingredient-row"))
       .map((row) => {
-        const text = row.querySelector("input[type='text']")?.value.trim() || "";
+        const label = row.querySelector(".ingredient-label")?.value.trim() || "";
+        const notes = row.querySelector(".ingredient-notes")?.value.trim() || "";
+        const qtyRaw = row.querySelector(".ingredient-qty")?.value;
+        const unit = row.querySelector(".ingredient-unit")?.value || "";
+        const qty = normalizeIngredientQty(qtyRaw);
+        const text = [qty ? String(qty) : "", unit, label].filter(Boolean).join(" ").trim() || label;
         const parsed = splitIngredientText(text);
         return {
           id: row.dataset.id || generateId(),
           text,
+          label,
+          qty: qty == null ? "" : qty,
+          unit: normalizeCostUnit(unit),
+          notes,
           quantity: parsed.quantity,
-          name: parsed.name || text,
-          productId: String(row.dataset.productId || "").trim(),
+          name: label || parsed.name || text,
+          productId: String(row.querySelector(".ingredient-product")?.value || row.dataset.productId || "").trim(),
           done: row.querySelector("input[type='checkbox']")?.checked || false,
         };
       })
-      .filter((ing) => ing.text);
+      .filter((ing) => ing.text || ing.productId);
   }
 
   function collectStepRows() {
@@ -2380,6 +2518,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       });
     }
 
+    const structuredTotals = calculateRecipeTotals(recipe);
     if ($recipeDetailMeta) {
       $recipeDetailMeta.innerHTML = "";
       const items = [
@@ -2394,6 +2533,9 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       if (cost.covered > 0) {
         const perServing = cost.perServing == null ? "" : ` · ${formatCurrency(cost.perServing)}/ración`;
         items.push({ label: "Coste estimado", value: `~${formatCurrency(cost.total)}${perServing} (${cost.covered}/${cost.totalIngredients || 0} ing.)` });
+      }
+      if (structuredTotals.ingredientsTotal > 0) {
+        items.push({ label: "Calculables", value: `kcal ${structuredTotals.calculableNutrition}/${structuredTotals.ingredientsTotal} · coste ${structuredTotals.calculableCost}/${structuredTotals.ingredientsTotal}` });
       }
       items.forEach((item) => {
         const block = document.createElement("div");
@@ -2410,7 +2552,8 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
         { label: "País / origen", value: recipe.countryLabel || recipe.country || "—" },
         { label: "Etiquetas", value: (recipe.tags || []).join(", ") || "—" },
         { label: "Macros", value: `C ${roundMacro(recipe.nutritionTotals?.carbs || 0)} · P ${roundMacro(recipe.nutritionTotals?.protein || 0)} · G ${roundMacro(recipe.nutritionTotals?.fat || 0)}` },
-        { label: "Por ración", value: `${roundMacro(recipe.nutritionPerServing?.kcal || 0)} kcal` },
+        { label: "Por ración", value: `${roundMacro(recipe.nutritionPerServing?.kcal || 0)} kcal · ${formatCurrency(structuredTotals.perServing.cost)}` },
+        { label: "Coste total", value: formatCurrency(structuredTotals.totalCost) },
       ];
       gridItems.forEach((item) => {
         const row = document.createElement("div");
@@ -2761,9 +2904,10 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (e.target === $modalBackdrop) closeRecipeModal();
   });
   $recipeForm?.addEventListener("submit", upsertRecipeFromForm);
-  $recipeAddIngredient?.addEventListener("click", () =>
-    $recipeIngredientsList?.appendChild(buildIngredientRow())
-  );
+  $recipeAddIngredient?.addEventListener("click", () => {
+    $recipeIngredientsList?.appendChild(buildIngredientRow());
+    updateRecipeCalcSummary();
+  });
   $recipeAddStep?.addEventListener("click", () => $recipeStepsList?.appendChild(buildStepRow()));
   $recipeAddNutriIngredient?.addEventListener("click", () => $recipeNutriIngredientsList?.appendChild(buildNutriIngredientRow()));
   $recipeIngredientAddProduct?.addEventListener("click", () => {
@@ -2775,11 +2919,13 @@ $recipeImportBtn?.addEventListener("click", () => {
 
     $recipeNutriIngredientsList?.appendChild(buildNutriIngredientRow({ id: generateId(), productId, grams }));
     const label = `${product.name}${product.brand ? ` (${product.brand})` : ""} ${Math.round(grams)}g`;
-    $recipeIngredientsList?.appendChild(buildIngredientRow({ id: generateId(), text: label, done: false }));
+    $recipeIngredientsList?.appendChild(buildIngredientRow({ id: generateId(), text: label, label: product.name || label, qty: grams, unit: "g", productId, done: false }));
 
     if ($recipeIngredientProduct) $recipeIngredientProduct.value = "";
     if ($recipeIngredientGrams) $recipeIngredientGrams.value = "100";
+    updateRecipeCalcSummary();
   });
+  $recipeServings?.addEventListener("input", updateRecipeCalcSummary);
   $recipeDelete?.addEventListener("click", () => {
     const id = $recipeId.value;
     if (id) deleteRecipe(id);
@@ -3088,19 +3234,26 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   function recalcRecipeNutrition(recipe) {
+    const structured = calculateRecipeTotals(recipe);
+    if (structured.calculableNutrition > 0) {
+      const servings = Math.max(1, Number(recipe?.servings) || 1);
+      return {
+        totals: structured.totals,
+        perServing: {
+          carbs: structured.totals.carbs / servings,
+          protein: structured.totals.protein / servings,
+          fat: structured.totals.fat / servings,
+          kcal: structured.totals.kcal / servings,
+        },
+      };
+    }
     const list = Array.isArray(recipe?.nutritionIngredients) ? recipe.nutritionIngredients : [];
     const totals = list.reduce((acc, it) => {
       const product = nutritionProducts.find((p) => p.id === it.productId);
       return plusMacros(acc, calcProductMacros(product, it.grams));
     }, normalizeMacros({}));
     const servings = Math.max(1, Number(recipe?.servings) || 1);
-    const perServing = {
-      carbs: totals.carbs / servings,
-      protein: totals.protein / servings,
-      fat: totals.fat / servings,
-      kcal: totals.kcal / servings,
-    };
-    return { totals, perServing };
+    return { totals, perServing: { carbs: totals.carbs / servings, protein: totals.protein / servings, fat: totals.fat / servings, kcal: totals.kcal / servings } };
   }
 
   function recalcAllRecipesNutrition() {
@@ -3952,7 +4105,7 @@ $recipeImportBtn?.addEventListener("click", () => {
           if (aLast !== bLast) return bLast - aLast;
           return String(a.title || "").localeCompare(String(b.title || ""));
         });
-      $macroAddResults.innerHTML = list.map((r) => `<button class="macro-result" data-add-recipe="${r.id}" type="button"><span>${r.title}</span><span class="hint">${roundMacro(r.nutritionTotals?.kcal || 0)} kcal total</span></button>`).join("") || '<div class="hint">No hay recetas.</div>';
+      $macroAddResults.innerHTML = list.map((r) => { const t = calculateRecipeTotals(r); return `<button class="macro-result" data-add-recipe="${r.id}" type="button"><span>${r.title}</span><span class="hint">${roundMacro(r.nutritionPerServing?.kcal || r.nutritionTotals?.kcal || 0)} kcal/rac · ${formatCurrency(t.perServing.cost)}/rac</span></button>`; }).join("") || '<div class="hint">No hay recetas.</div>';
     }
     $macroAddChips?.querySelectorAll(".macro-chip").forEach((chip) => chip.classList.toggle("is-active", chip.dataset.macroSource === macroModalState.source));
   }
@@ -6662,8 +6815,11 @@ $recipeImportBtn?.addEventListener("click", () => {
           return {
             ...ing,
             productId: saved.id,
+            label: saved.name || parsed.name || ing.label || ing.name || ing.text,
             name: saved.name || parsed.name || ing.name || ing.text,
             quantity: ing.quantity || parsed.quantity || "",
+            qty: ing.qty || normalizeIngredientQty(parsed.quantity),
+            unit: ing.unit || "g",
           };
         });
         updateRecipe(targetRecipe.id, { ingredients, updatedAt: Date.now() });

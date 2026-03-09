@@ -432,6 +432,20 @@
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
+.ingredient-row{
+  grid-template-columns: auto minmax(120px,1fr) 84px 74px minmax(130px,1.4fr) minmax(90px,1fr) auto;
+}
+
+@media (max-width: 720px){
+  .ingredient-row{
+    grid-template-columns: auto 1fr 72px 72px;
+  }
+  .ingredient-row .ingredient-label,
+  .ingredient-row .ingredient-notes{
+    grid-column: 2 / -2;
+  }
+}
+
 .recipe-ingredient-picker{
   display: grid;
   grid-template-columns: minmax(0, 1fr) 92px auto;

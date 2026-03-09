@@ -1923,3 +1923,11 @@
 #recipes-panel-statistics{
   margin-bottom: 200px;
 }
+
+.macro-progress-kcal{ position: relative; }
+.macro-progress-burn{ position:absolute; right:0; top:0; height:100%; background: linear-gradient(90deg, rgba(255,128,128,.45), #ff6b6b); display:block; }
+.macro-integration-settings{ margin-top:10px; display:grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap:8px; }
+.macro-integration-field{ display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--txt-soft); }
+.macro-integration-field input,
+.macro-integration-field select{ margin:0; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); color:var(--txt); border-radius:10px; padding:6px 8px; }
+.macro-integration-field select[multiple]{ min-height:68px; }

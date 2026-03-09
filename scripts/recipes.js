@@ -10,6 +10,7 @@ import { renderCountryHeatmap, renderCountryList } from "./world-heatmap.js";
 import { auth, db } from "./firebase-shared.js";
 import { resolveFinancePathCandidates } from "./finance/data.js";
 import { FOODREPO_API_BASE, FOODREPO_API_TOKEN } from "../config/foodrepo.js";
+import { getMetCategoryById } from "./met-catalog.js";
 import {
   ref,
   onValue,
@@ -278,6 +279,9 @@ if ($viewRecipes) {
   const $macroSummaryGrid = document.getElementById("macro-summary-grid");
   const $macroMeals = document.getElementById("macro-meals");
   const $macroKcalSummary = document.getElementById("macro-kcal-summary");
+  const $macroBodyweightKg = document.getElementById("macro-bodyweight-kg");
+  const $macroWorkKcal = document.getElementById("macro-work-kcal");
+  const $macroWorkHabits = document.getElementById("macro-work-habits");
   const $macroStatsPeriods = document.getElementById("macro-stats-periods");
   const $macroStatsPrev = document.getElementById("macro-stats-prev");
   const $macroStatsNext = document.getElementById("macro-stats-next");
@@ -414,6 +418,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   };
 
   const defaultGoals = { carbs: 180, protein: 140, fat: 65, kcal: 2200 };
+  const defaultIntegrationConfig = { linkedWorkHabitIds: [], workCaloriesPerMatchedDay: 700, bodyWeightKg: null };
   const mealOrder = ["breakfast", "lunch", "dinner", "snacks"];
   const mealLabels = { breakfast: "Desayuno", lunch: "Almuerzo", dinner: "Cena", snacks: "Snacks" };
   let nutritionProducts = [];
@@ -422,6 +427,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   let habitSyncQueue = Promise.resolve();
   let dailyLogsByDate = {};
   let nutritionGoals = { ...defaultGoals };
+  let nutritionIntegrationConfig = { ...defaultIntegrationConfig };
   let selectedMacroDate = toISODate(new Date());
   const macroModalState = { meal: "breakfast", source: "products", query: "" };
   const macroStatsState = { period: "week", anchorDate: selectedMacroDate, metric: "macros", donutMode: "kcal-macros" };
@@ -431,6 +437,8 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     fat: "#ffc247",
     kcal: "#f5e6a6",
     cost: "#79f3b2",
+    burned: "#ff6b6b",
+    net: "#9be27a",
     excess: "#ff6666",
   };
   let nutritionSyncMeta = { version: 2, migratedAt: 0, updatedAt: 0 };
@@ -2962,6 +2970,20 @@ $recipeImportBtn?.addEventListener("click", () => {
     };
   }
 
+
+  function normalizeIntegrationConfig(raw = {}) {
+    const linkedWorkHabitIds = Array.isArray(raw?.linkedWorkHabitIds)
+      ? raw.linkedWorkHabitIds.map((id) => String(id || "").trim()).filter(Boolean)
+      : [];
+    const workCaloriesPerMatchedDay = Math.max(0, Number(raw?.workCaloriesPerMatchedDay) || defaultIntegrationConfig.workCaloriesPerMatchedDay);
+    const bodyWeightKg = Number(raw?.bodyWeightKg);
+    return {
+      linkedWorkHabitIds: Array.from(new Set(linkedWorkHabitIds)),
+      workCaloriesPerMatchedDay,
+      bodyWeightKg: Number.isFinite(bodyWeightKg) && bodyWeightKg > 0 ? bodyWeightKg : null,
+    };
+  }
+
   function loadNutritionCache() {
     try {
       const raw = localStorage.getItem(`${getStorageKey()}.nutrition`);
@@ -2970,6 +2992,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       nutritionProducts = Array.isArray(parsed.products) ? parsed.products.map(normalizeNutritionProductEntry).filter((p) => p.name) : [];
       dailyLogsByDate = normalizeDailyLogs(parsed.dailyLogsByDate && typeof parsed.dailyLogsByDate === "object" ? parsed.dailyLogsByDate : {});
       nutritionGoals = { ...defaultGoals, ...(parsed.goals || {}) };
+      nutritionIntegrationConfig = normalizeIntegrationConfig(parsed.integrationConfig || {});
       nutritionSyncMeta = {
         version: Number(parsed?.syncMeta?.version) || 2,
         migratedAt: Number(parsed?.syncMeta?.migratedAt) || 0,
@@ -2984,6 +3007,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         products: nutritionProducts,
         dailyLogsByDate: normalizeDailyLogs(dailyLogsByDate),
         goals: nutritionGoals,
+        integrationConfig: nutritionIntegrationConfig,
         syncMeta: nutritionSyncMeta,
       }));
     } catch (_) {}
@@ -3004,6 +3028,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         const remoteProducts = Array.isArray(data.products) ? data.products.map(normalizeNutritionProductEntry).filter((p) => p.name) : [];
         const remoteLogs = normalizeDailyLogs(data.dailyLogsByDate && typeof data.dailyLogsByDate === "object" ? data.dailyLogsByDate : {});
         const remoteGoals = { ...defaultGoals, ...(data.goals || {}) };
+        const remoteIntegrationConfig = normalizeIntegrationConfig(data.integrationConfig || {});
         nutritionSyncMeta = {
           version: Number(data?.syncMeta?.version) || 2,
           migratedAt: Number(data?.syncMeta?.migratedAt) || nutritionSyncMeta.migratedAt || Date.now(),
@@ -3022,6 +3047,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         nutritionProducts = remoteProducts;
         dailyLogsByDate = remoteLogs;
         nutritionGoals = remoteGoals;
+        nutritionIntegrationConfig = remoteIntegrationConfig;
         cacheNutrition();
         recalcAllRecipesNutrition();
         refreshUI();
@@ -3045,6 +3071,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       products: nutritionProducts,
       dailyLogsByDate,
       goals: nutritionGoals,
+      integrationConfig: nutritionIntegrationConfig,
       syncMeta: nutritionSyncMeta,
       updatedAt: nutritionSyncMeta.updatedAt,
     };
@@ -3119,6 +3146,78 @@ $recipeImportBtn?.addEventListener("click", () => {
     return mealOrder.reduce((acc, meal) => plusMacros(acc, computeMealTotals(log.meals[meal].entries)), normalizeMacros({}));
   }
 
+
+  function getExerciseMetValue(exerciseLog = {}, exerciseDef = null) {
+    const explicit = getMetCategoryById(exerciseLog?.metCategoryIdSnapshot || exerciseLog?.metCategoryId || exerciseDef?.metCategoryId);
+    return Number(explicit?.metValue) > 0 ? Number(explicit.metValue) : null;
+  }
+
+  function getExerciseDurationMs(exerciseLog = {}) {
+    const sets = Array.isArray(exerciseLog?.sets) ? exerciseLog.sets : [];
+    const stamps = sets
+      .map((set) => Number(set?.updatedAt || set?.createdAt || 0))
+      .filter((ts) => Number.isFinite(ts) && ts > 0)
+      .sort((a, b) => a - b);
+    if (stamps.length < 2) return 0;
+    return Math.max(0, stamps[stamps.length - 1] - stamps[0]);
+  }
+
+  function calculateExerciseCaloriesBurned(exerciseLog, metValue, bodyWeightKg) {
+    const met = Number(metValue);
+    const weight = Number(bodyWeightKg);
+    if (!(met > 0) || !(weight > 0)) return 0;
+    const durationMs = getExerciseDurationMs(exerciseLog);
+    if (!(durationMs > 0)) return 0;
+    const durationHours = durationMs / (1000 * 60 * 60);
+    return met * weight * durationHours;
+  }
+
+  function getWorkCaloriesBurnedForDate(dateKey) {
+    const linkedIds = Array.isArray(nutritionIntegrationConfig?.linkedWorkHabitIds)
+      ? nutritionIntegrationConfig.linkedWorkHabitIds
+      : [];
+    if (!linkedIds.length) return 0;
+    const matched = linkedIds.some((habitId) => !!window.__bookshellHabits?.isHabitCompletedOnDateById?.(habitId, dateKey));
+    if (!matched) return 0;
+    return Math.max(0, Number(nutritionIntegrationConfig?.workCaloriesPerMatchedDay) || 0);
+  }
+
+  function getBodyWeightForDate(dateKey) {
+    const byGym = Number(window.__bookshellGym?.getBodyWeightKgForDate?.(dateKey));
+    if (Number.isFinite(byGym) && byGym > 0) return byGym;
+    const configured = Number(nutritionIntegrationConfig?.bodyWeightKg);
+    if (Number.isFinite(configured) && configured > 0) return configured;
+    const latestGym = Number(window.__bookshellGym?.getLatestBodyWeightKg?.());
+    if (Number.isFinite(latestGym) && latestGym > 0) return latestGym;
+    return null;
+  }
+
+  function getGymCaloriesBurnedForDate(dateKey) {
+    const bodyWeightKg = getBodyWeightForDate(dateKey);
+    if (!(bodyWeightKg > 0)) return 0;
+    const workoutsByDate = window.__bookshellGym?.getWorkoutsByDate?.() || {};
+    const exercisesCatalog = window.__bookshellGym?.getExercisesCatalog?.() || {};
+    const workouts = Object.values(workoutsByDate?.[dateKey] || {});
+    return workouts.reduce((dayAcc, workout) => {
+      const exerciseEntries = Object.entries(workout?.exercises || {});
+      const workoutBurned = exerciseEntries.reduce((acc, [exerciseId, exerciseLog]) => {
+        const metValue = getExerciseMetValue(exerciseLog, exercisesCatalog?.[exerciseId] || null);
+        if (!(metValue > 0)) return acc;
+        return acc + calculateExerciseCaloriesBurned(exerciseLog, metValue, bodyWeightKg);
+      }, 0);
+      return dayAcc + workoutBurned;
+    }, 0);
+  }
+
+  function getTotalCaloriesBurnedForDate(dateKey) {
+    return getWorkCaloriesBurnedForDate(dateKey) + getGymCaloriesBurnedForDate(dateKey);
+  }
+
+  function getNetCaloriesForDate(dateKey) {
+    const consumed = Number(computeDailyTotals(dateKey).kcal) || 0;
+    return consumed - getTotalCaloriesBurnedForDate(dateKey);
+  }
+
   function getPeriodBounds(period, anchorIso) {
     const anchor = new Date(`${anchorIso}T00:00:00`);
     if (Number.isNaN(anchor.getTime())) return { start: anchorIso, end: anchorIso };
@@ -3163,7 +3262,11 @@ $recipeImportBtn?.addEventListener("click", () => {
     let recipeCount = 0;
     let maxDay = { date: null, kcal: 0 };
     let maxCostDay = { date: null, cost: 0 };
+    let maxBurnedDay = { date: null, kcal: 0 };
     let totalCost = 0;
+    let totalBurned = 0;
+    let totalWorkBurned = 0;
+    let totalGymBurned = 0;
     let totalMissingPrice = 0;
     const mealKcal = { breakfast: 0, lunch: 0, dinner: 0, snacks: 0 };
 
@@ -3171,12 +3274,20 @@ $recipeImportBtn?.addEventListener("click", () => {
       const log = getDailyLog(date);
       const dayTotals = computeDailyTotals(date);
       const dayCost = computeDailyCostSummary(date);
-      daySeries.push({ date, totals: dayTotals, cost: Number(dayCost.total) || 0, missingPrice: Number(dayCost.missing) || 0 });
+      const workBurned = getWorkCaloriesBurnedForDate(date);
+      const gymBurned = getGymCaloriesBurnedForDate(date);
+      const burned = workBurned + gymBurned;
+      const netKcal = dayTotals.kcal - burned;
+      daySeries.push({ date, totals: dayTotals, cost: Number(dayCost.total) || 0, missingPrice: Number(dayCost.missing) || 0, burned, netKcal, workBurned, gymBurned });
       totals = plusMacros(totals, dayTotals);
       totalCost += Number(dayCost.total) || 0;
+      totalBurned += burned;
+      totalWorkBurned += workBurned;
+      totalGymBurned += gymBurned;
       totalMissingPrice += Number(dayCost.missing) || 0;
       if (dayTotals.kcal > maxDay.kcal) maxDay = { date, kcal: dayTotals.kcal };
       if ((Number(dayCost.total) || 0) > maxCostDay.cost) maxCostDay = { date, cost: Number(dayCost.total) || 0 };
+      if (burned > maxBurnedDay.kcal) maxBurnedDay = { date, kcal: burned };
       mealOrder.forEach((meal) => {
         const entries = log.meals?.[meal]?.entries || [];
         if (entries.length) mealCount += 1;
@@ -3208,12 +3319,14 @@ $recipeImportBtn?.addEventListener("click", () => {
       fat: totals.fat / Math.max(1, dates.length),
       kcal: totals.kcal / Math.max(1, dates.length),
       cost: totalCost / Math.max(1, dates.length),
+      burned: totalBurned / Math.max(1, dates.length),
+      netKcal: (totals.kcal - totalBurned) / Math.max(1, dates.length),
     };
 
     const topRecipes = Array.from(byRecipe.values()).sort((a, b) => b.count - a.count || b.macros.kcal - a.macros.kcal).slice(0, 8);
     const topProducts = Array.from(byProduct.values()).sort((a, b) => b.count - a.count || b.macros.kcal - a.macros.kcal).slice(0, 8);
 
-    return { dates, daySeries, totals, avg, mealCount, recipeCount, topRecipes, topProducts, maxDay, maxCostDay, mealKcal, totalCost, totalMissingPrice };
+    return { dates, daySeries, totals, avg, mealCount, recipeCount, topRecipes, topProducts, maxDay, maxCostDay, maxBurnedDay, mealKcal, totalCost, totalBurned, totalWorkBurned, totalGymBurned, totalMissingPrice };
   }
 
   function renderSimpleDonut(host, segments = [], options = {}) {
@@ -3242,7 +3355,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   function renderStatisticsView() {
     if (!$recipesPanelStatistics || !$macroStatsKpis) return;
     const summary = summarizeStatistics();
-    const metricLabelMap = { macros: "Macros", kcal: "Calorías", cost: "Coste", carbs: "Carbohidratos", protein: "Proteínas", fat: "Grasas" };
+    const metricLabelMap = { macros: "Macros", kcal: "Calorías", cost: "Coste", burned: "Quemadas", net: "Netas", carbs: "Carbohidratos", protein: "Proteínas", fat: "Grasas" };
 
     if ($macroStatsAnchor) $macroStatsAnchor.value = macroStatsState.anchorDate;
     $macroStatsPeriods?.querySelectorAll("[data-stats-period]").forEach((btn) => {
@@ -3258,12 +3371,12 @@ $recipeImportBtn?.addEventListener("click", () => {
       ["Elementos sin precio", `${summary.totalMissingPrice}`, "primary"],
     ];
     const secondaryKpis = [
-      ["Kcal totales", `${roundMacro(summary.totals.kcal)} kcal`],
-      ["Media kcal/día", `${roundMacro(summary.avg.kcal)} kcal`],
-      ["Macros/día", `C ${roundMacro(summary.avg.carbs)} · P ${roundMacro(summary.avg.protein)} · G ${roundMacro(summary.avg.fat)}`],
-      ["Comidas registradas", `${summary.mealCount}`],
-      ["Recetas consumidas", `${summary.recipeCount}`],
-      ["Día más calórico", `${summary.maxDay.date || "—"} (${roundMacro(summary.maxDay.kcal)} kcal)`],
+      ["Kcal ingeridas", `${roundMacro(summary.totals.kcal)} kcal`],
+      ["Kcal quemadas", `${roundMacro(summary.totalBurned)} kcal`],
+      ["Media neta/día", `${roundMacro(summary.avg.netKcal)} kcal`],
+      ["Trabajo (total)", `${roundMacro(summary.totalWorkBurned)} kcal`],
+      ["Gym (total)", `${roundMacro(summary.totalGymBurned)} kcal`],
+      ["Día mayor gasto", `${summary.maxBurnedDay.date || "—"} (${roundMacro(summary.maxBurnedDay.kcal)} kcal)`],
     ];
     $macroStatsKpis.innerHTML = `
       <div class="macro-stats-kpi-primary-wrap">${primaryKpis.map(([k, v, cls]) => `<article class="macro-stats-kpi ${cls || ""}"><div class="macro-stats-kpi-label">${k}</div><div class="macro-stats-kpi-value">${v}</div></article>`).join("")}</div>
@@ -3273,15 +3386,21 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroStatsMainChart) {
       const w = 760, h = 260, pad = { l: 20, r: 20, t: 18, b: 18 };
       const points = summary.daySeries;
+      const getPointValue = (point, key) => {
+        if (key === "cost") return Number(point.cost) || 0;
+        if (key === "burned") return Number(point.burned) || 0;
+        if (key === "net") return Number(point.netKcal) || 0;
+        return Number(point.totals?.[key]) || 0;
+      };
       const series = macroStatsState.metric === "macros"
         ? [
             { key: "carbs", color: macroPalette.carbs, name: "Carbs", formatter: (v) => `${roundMacro(v)} g` },
             { key: "protein", color: macroPalette.protein, name: "Proteínas", formatter: (v) => `${roundMacro(v)} g` },
             { key: "fat", color: macroPalette.fat, name: "Grasas", formatter: (v) => `${roundMacro(v)} g` },
           ]
-        : [{ key: macroStatsState.metric, color: macroPalette[macroStatsState.metric] || "#f5e6a6", name: metricLabelMap[macroStatsState.metric] || "Métrica", formatter: macroStatsState.metric === "cost" ? (v) => formatCurrency(v) : (v) => `${roundMacro(v)}${macroStatsState.metric === "kcal" ? " kcal" : " g"}` }];
+        : [{ key: macroStatsState.metric, color: macroPalette[macroStatsState.metric] || "#f5e6a6", name: metricLabelMap[macroStatsState.metric] || "Métrica", formatter: macroStatsState.metric === "cost" ? (v) => formatCurrency(v) : (v) => `${roundMacro(v)}${["kcal","burned","net"].includes(macroStatsState.metric) ? " kcal" : " g"}` }];
 
-      const maxVal = Math.max(1, ...points.flatMap((p) => series.map((s) => Number(s.key === "cost" ? p.cost : p.totals?.[s.key]) || 0)));
+      const maxVal = Math.max(1, ...points.flatMap((p) => series.map((seriesItem) => getPointValue(p, seriesItem.key))));
       const xStep = (w - pad.l - pad.r) / Math.max(1, points.length - 1);
       const yPos = (v) => h - pad.b - (Math.max(0, v) / maxVal) * (h - pad.t - pad.b);
       const toPoint = (idx, val) => ({ x: pad.l + idx * xStep, y: yPos(val) });
@@ -3296,7 +3415,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       };
 
       const lines = series.map((s, idx) => {
-        const pts = points.map((p, i) => toPoint(i, Number(s.key === "cost" ? p.cost : p.totals?.[s.key]) || 0));
+        const pts = points.map((p, i) => toPoint(i, getPointValue(p, s.key)));
         const path = smoothPath(pts);
         return `<g data-series-index="${idx}"><path d="${path}" fill="none" stroke="${s.color}" stroke-width="6" opacity=".18" stroke-linecap="round"></path><path d="${path}" fill="none" stroke="${s.color}" stroke-width="2.8" stroke-linecap="round"></path></g>`;
       }).join("");
@@ -3319,7 +3438,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         const idx = Math.max(0, Math.min(points.length - 1, Math.round(relX / Math.max(1, xStep))));
         const point = points[idx];
         const rows = series.map((s) => {
-          const raw = Number(s.key === "cost" ? point.cost : point.totals?.[s.key]) || 0;
+          const raw = getPointValue(point, s.key);
           return `<div><span style="color:${s.color}">●</span> ${s.name}: <strong>${s.formatter(raw)}</strong></div>`;
         }).join("");
         $macroStatsMainTooltip.innerHTML = `<div class="macro-stats-tooltip-date">${point.date}</div>${rows}`;
@@ -3412,40 +3531,44 @@ $recipeImportBtn?.addEventListener("click", () => {
     const log = getDailyLog(selectedMacroDate);
     const totals = computeDailyTotals(selectedMacroDate);
     const dayCost = computeDailyCostSummary(selectedMacroDate);
-    const items = [
-      { key: "carbs", label: "Carb. netos", unit: "g" },
-      { key: "protein", label: "Proteínas", unit: "g" },
-      { key: "fat", label: "Grasas", unit: "g" },
-      { key: "kcal", label: "Calorías", unit: "kcal" },
-    ];
+    const totalBurned = getTotalCaloriesBurnedForDate(selectedMacroDate);
+    const netKcal = totals.kcal - totalBurned;
     $macroDateInput.value = selectedMacroDate;
     const buildStatHtml = ({ key, label, unit, step }) => {
       const value = roundMacro(totals[key]);
       const goal = roundMacro(nutritionGoals[key] || 0);
       const pct = goal > 0 ? Math.min(140, Math.round((value / goal) * 100)) : 0;
       const excess = goal > 0 && value > goal;
+      if (key === "kcal") {
+        const netPct = goal > 0 ? Math.min(140, Math.round((Math.max(0, netKcal) / goal) * 100)) : 0;
+        const burnedPct = Math.max(0, pct - netPct);
+        return `
+          <div class="macro-stat macro-stat-${key} ${excess ? "is-excess" : ""}">
+            <div class="macro-stat-title">${label}</div>
+            <div class="macro-stat-value">
+              <span class="macro-consumed ${excess ? "is-excess" : ""}">${roundMacro(netKcal)}${unit}</span>
+              <span class="macro-sep">/</span>
+              <input class="macro-goal-input-stats" type="number" min="0" step="${step}" inputmode="decimal" placeholder="${goal}" value="" data-macro-goal="${key}" aria-label="Objetivo ${label}" />
+              <span class="macro-unit">${unit}</span>
+            </div>
+            <div class="hint">${roundMacro(totals.kcal)} ingeridas · -${roundMacro(totalBurned)} quemadas</div>
+            <div class="macro-progress macro-progress-kcal">
+              <span style="width:${pct}%"></span>
+              <i class="macro-progress-burn" style="width:${burnedPct}%"></i>
+            </div>
+          </div>
+        `;
+      }
       return `
         <div class="macro-stat macro-stat-${key} ${excess ? "is-excess" : ""}">
           <div class="macro-stat-title">${label}</div>
           <div class="macro-stat-value">
             <span class="macro-consumed ${excess ? "is-excess" : ""}">${value}${unit}</span>
             <span class="macro-sep">/</span>
-            <input
-              class="macro-goal-input-stats"
-              type="number"
-              min="0"
-              step="${step}"
-              inputmode="decimal"
-              placeholder="${goal}"
-              value=""
-              data-macro-goal="${key}"
-              aria-label="Objetivo ${label}"
-            />
+            <input class="macro-goal-input-stats" type="number" min="0" step="${step}" inputmode="decimal" placeholder="${goal}" value="" data-macro-goal="${key}" aria-label="Objetivo ${label}" />
             <span class="macro-unit">${unit}</span>
           </div>
-          <div class="macro-progress">
-          <span style="width:${pct}%"></span>
-          </div>
+          <div class="macro-progress"><span style="width:${pct}%"></span></div>
         </div>
       `;
     };
@@ -3473,8 +3596,12 @@ $recipeImportBtn?.addEventListener("click", () => {
       </div>
     `;
     const kcalGoal = Number(nutritionGoals.kcal) || 0;
-    const delta = roundMacro(kcalGoal - totals.kcal);
-    $macroKcalSummary.textContent = `${roundMacro(totals.kcal)} kcal consumidas · ${delta >= 0 ? `${delta} restantes` : `${Math.abs(delta)} exceso`}`;
+    const delta = roundMacro(kcalGoal - netKcal);
+    const workBurned = getWorkCaloriesBurnedForDate(selectedMacroDate);
+    const gymBurned = getGymCaloriesBurnedForDate(selectedMacroDate);
+    $macroKcalSummary.textContent = `${roundMacro(netKcal)} / ${roundMacro(kcalGoal)} kcal netas · ${roundMacro(totals.kcal)} ingeridas · -${roundMacro(totalBurned)} quemadas (${roundMacro(workBurned)} trabajo + ${roundMacro(gymBurned)} gym) · ${delta >= 0 ? `${delta} restantes` : `${Math.abs(delta)} exceso`}`;
+
+    renderMacroIntegrationSettings();
 
     $macroMeals.innerHTML = mealOrder.map((meal) => {
       const entries = log.meals[meal].entries || [];
@@ -3501,6 +3628,17 @@ $recipeImportBtn?.addEventListener("click", () => {
       <div class="hint">${roundMacro(mt.kcal)} kcal · C ${roundMacro(mt.carbs)} · P ${roundMacro(mt.protein)} · G ${roundMacro(mt.fat)} · ${formatCurrency(mealCost.total)}${mealCost.missing ? ` · ${mealCost.missing} s/p` : ""}</div></div><div class="macro-meal-entries">${entryHtml}</div><button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
     }).join("");
     if ($recipesPanelStatistics?.classList.contains("is-active")) renderStatisticsView();
+  }
+
+
+  function renderMacroIntegrationSettings() {
+    const habits = sortByVisibleNameEs(listHabitsForProductLink(), (h) => `${h?.emoji || ""} ${h?.name || h?.id || ""}`);
+    if ($macroWorkHabits) {
+      const current = new Set(nutritionIntegrationConfig.linkedWorkHabitIds || []);
+      $macroWorkHabits.innerHTML = habits.map((h) => `<option value="${escapeHtml(h.id)}" ${current.has(h.id) ? "selected" : ""}>${escapeHtml(`${h.emoji || "🏷️"} ${h.name || h.id}`)}</option>`).join("");
+    }
+    if ($macroWorkKcal) $macroWorkKcal.value = String(Math.max(0, Number(nutritionIntegrationConfig.workCaloriesPerMatchedDay) || defaultIntegrationConfig.workCaloriesPerMatchedDay));
+    if ($macroBodyweightKg) $macroBodyweightKg.value = nutritionIntegrationConfig.bodyWeightKg == null ? "" : String(nutritionIntegrationConfig.bodyWeightKg);
   }
 
   function openMacroAddModal(meal) {
@@ -6311,6 +6449,24 @@ $recipeImportBtn?.addEventListener("click", () => {
     persistNutrition();
     renderMacrosView();
   });
+  $macroWorkKcal?.addEventListener("change", (e) => {
+    nutritionIntegrationConfig.workCaloriesPerMatchedDay = Math.max(0, Number(e.target.value) || 0);
+    persistNutrition();
+    renderMacrosView();
+  });
+  $macroBodyweightKg?.addEventListener("change", (e) => {
+    const n = Number(e.target.value);
+    nutritionIntegrationConfig.bodyWeightKg = Number.isFinite(n) && n > 0 ? n : null;
+    persistNutrition();
+    renderMacrosView();
+  });
+  $macroWorkHabits?.addEventListener("change", () => {
+    const selected = Array.from($macroWorkHabits.selectedOptions || []).map((opt) => String(opt.value || "").trim()).filter(Boolean);
+    nutritionIntegrationConfig.linkedWorkHabitIds = Array.from(new Set(selected));
+    persistNutrition();
+    renderMacrosView();
+  });
+
   $macroMeals?.addEventListener("click", (e) => {
     const addBtn = e.target.closest("[data-macro-add]");
     if (addBtn) return openMacroAddModal(addBtn.dataset.macroAdd);

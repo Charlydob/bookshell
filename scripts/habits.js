@@ -12085,6 +12085,12 @@ window.__bookshellHabits = {
     adjustHabitCount(habitId, dateKey, delta);
     return true;
   },
+  isHabitCompletedOnDateById: (habitId, dateKey) => {
+    const id = String(habitId || "").trim();
+    const key = String(dateKey || "").trim();
+    if (!id || !key || !habits?.[id]) return false;
+    return isHabitCompletedOnDate(habits[id], key);
+  },
   rangeLabel,
   debugComputeTimeByHabit
 };

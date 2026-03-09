@@ -665,6 +665,20 @@
     </div>
     <div class="macro-kcal-summary" id="macro-kcal-summary">0 kcal consumidas · 0 restantes</div>
     <div class="macro-summary-grid" id="macro-summary-grid"></div>
+    <div class="macro-integration-settings">
+      <label class="macro-integration-field">
+        <span>Peso corporal (kg)</span>
+        <input type="number" id="macro-bodyweight-kg" min="0" step="0.1" placeholder="Opcional" />
+      </label>
+      <label class="macro-integration-field">
+        <span>Gasto por día trabajado (kcal)</span>
+        <input type="number" id="macro-work-kcal" min="0" step="10" value="700" />
+      </label>
+      <label class="macro-integration-field">
+        <span>Hábitos de trabajo vinculados</span>
+        <select id="macro-work-habits" multiple></select>
+      </label>
+    </div>
   </div>
   <div class="macro-meals" id="macro-meals"></div>
 </div>
@@ -685,6 +699,8 @@
           <option value="macros">Macros (C/P/G)</option>
           <option value="kcal">Kcal</option>
           <option value="cost">Coste (€)</option>
+          <option value="burned">Quemadas (kcal)</option>
+          <option value="net">Netas (kcal)</option>
           <option value="carbs">Carbohidratos</option>
           <option value="protein">Proteínas</option>
           <option value="fat">Grasas</option>
@@ -1943,6 +1959,10 @@ Crear “<span id="gym-create-cta-text"></span>”
       <option value="reps">Repeticiones</option>
       <option value="time">Tiempo</option>
       </select>
+      </label>
+      <label class="gym-field">
+      <span></span>
+      <select id="gym-create-met-category" class="gym-select"></select>
       </label>
     </div>
 <div class="gym-chip-row" id="gym-create-muscle-chips"></div>

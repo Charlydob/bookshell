@@ -922,7 +922,31 @@ function getMergeEligibleProducts({ hideResolved = false, searchTerm = '', selec
     if (item.mergeMeta.canonicalId && item.mergeMeta.canonicalId !== item.id) return false;
     return true;
   });
-  return { origin, destination, all, pendingCount };
+  return {
+    origin: sortProductsForMergeList(origin),
+    destination: sortProductsForMergeList(destination),
+    all,
+    pendingCount
+  };
+}
+
+function sortProductsForMergeList(products = []) {
+  const collator = new Intl.Collator('es', {
+    usage: 'sort',
+    sensitivity: 'base',
+    numeric: true,
+    ignorePunctuation: true
+  });
+  return (Array.isArray(products) ? products : [])
+    .map((product, index) => ({ product, index }))
+    .sort((a, b) => {
+      const nameA = String(a.product?.name || '').normalize('NFC').trim();
+      const nameB = String(b.product?.name || '').normalize('NFC').trim();
+      const byName = collator.compare(nameA, nameB);
+      if (byName !== 0) return byName;
+      return a.index - b.index;
+    })
+    .map(({ product }) => product);
 }
 
 function topFoodItems(limit = 5) {

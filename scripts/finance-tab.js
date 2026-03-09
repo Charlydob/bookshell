@@ -1353,28 +1353,65 @@ function firebaseClean(obj) {
 
 async function mergeFoodProducts(selection = [], destinationId = '') {
   const ids = [...new Set(selection.map((id) => String(id || '').trim()).filter(Boolean))];
-  console.log('[mergeFoodProducts] selected products before merge', ids);
+  console.log('[mergeFoodProducts] selected product ids/names', ids.map((id) => ({ id, name: state.food.itemsById?.[id]?.displayName || state.food.itemsById?.[id]?.name || id })));
   if (ids.length < 2) return false;
-  const canonicalId = String(destinationId || ids[0]).trim();
-  const canonicalItem = state.food.itemsById?.[canonicalId] || {};
-  const canonicalName = canonicalItem.displayName || canonicalItem.name || canonicalId;
-  const sourceIds = ids.filter((id) => id !== canonicalId);
-  console.log('[mergeFoodProducts] canonical target id/name', { canonicalId, canonicalName });
-  console.log('[mergeFoodProducts] source products to absorb', sourceIds);
-  if (!ids.includes(canonicalId)) return false;
-  const prevCanonical = state.foodCatalog.canonicals?.[canonicalId] || {};
-  const aliasesByStore = prevCanonical.aliasesByStore && typeof prevCanonical.aliasesByStore === 'object' ? { ...prevCanonical.aliasesByStore } : {};
-  const pricesByStore = prevCanonical.pricesByStore && typeof prevCanonical.pricesByStore === 'object' ? { ...prevCanonical.pricesByStore } : {};
-  const updatesToCommit = {};
-  const absorbedIds = [];
-  const aliasesBeforeMerge = Object.fromEntries(Object.entries(aliasesByStore).map(([store, list]) => [store, [...new Set((Array.isArray(list) ? list : []).map((it) => normalizeFoodName(it)).filter(Boolean))]]));
-  console.log('[mergeFoodProducts] aliases before merge', aliasesBeforeMerge);
 
-  for (const id of ids) {
-    const item = state.food.itemsById?.[id] || {};
-    const baseAliases = [...new Set([item.name, item.displayName, ...(Array.isArray(item.aliases) ? item.aliases : [])].map((v) => normalizeFoodName(v)).filter(Boolean))];
+  const canonicalId = String(destinationId || ids[0]).trim();
+  if (!ids.includes(canonicalId)) return false;
+
+  const canonicalItem = state.food.itemsById?.[canonicalId] || {};
+  const canonicalName = normalizeFoodName(canonicalItem.displayName || canonicalItem.name || canonicalId) || canonicalId;
+  const canonicalIdKey = String(canonicalItem.idKey || firebaseSafeKey(canonicalName) || canonicalId).trim();
+  const sourceIds = ids.filter((id) => id !== canonicalId);
+  const sourceItems = sourceIds.map((id) => ({ id, ...(state.food.itemsById?.[id] || {}) }));
+  const prevCanonical = state.foodCatalog.canonicals?.[canonicalId] || {};
+  const canonicalSnapshotBefore = JSON.parse(JSON.stringify(prevCanonical || {}));
+  const sourceSnapshotsBefore = sourceItems.map((item) => ({
+    id: item.id,
+    name: item.displayName || item.name || item.id,
+    aliases: Array.isArray(item.aliases) ? item.aliases : [],
+    vendorAliases: item.vendorAliases || {},
+    priceHistoryStores: Object.keys(item.priceHistory || {}),
+    mergedInto: item.mergedInto || null,
+    hiddenMerged: !!item.hiddenMerged
+  }));
+
+  console.log('[mergeFoodProducts] target product id/name', { canonicalId, canonicalName });
+  console.log('[mergeFoodProducts] source snapshot before merge', sourceSnapshotsBefore);
+  console.log('[mergeFoodProducts] target snapshot before merge', canonicalSnapshotBefore);
+
+  const aliasesByStore = prevCanonical.aliasesByStore && typeof prevCanonical.aliasesByStore === 'object' ? JSON.parse(JSON.stringify(prevCanonical.aliasesByStore)) : {};
+  const pricesByStore = prevCanonical.pricesByStore && typeof prevCanonical.pricesByStore === 'object' ? JSON.parse(JSON.stringify(prevCanonical.pricesByStore)) : {};
+  const updatesToCommit = {};
+  const nextAliasesState = JSON.parse(JSON.stringify(state.foodCatalog.aliases || {}));
+  const nextMergesState = JSON.parse(JSON.stringify(state.foodCatalog.merges || {}));
+  const now = nowTs();
+
+  const normalizedSourceNames = new Set();
+  const normalizedSourceKeys = new Set();
+  sourceItems.forEach((item) => {
+    normalizedSourceKeys.add(String(item.id || '').trim());
+    normalizedSourceKeys.add(String(item.idKey || '').trim());
+    [item.name, item.displayName, ...(Array.isArray(item.aliases) ? item.aliases : [])]
+      .map((v) => normalizeFoodName(v))
+      .filter(Boolean)
+      .forEach((alias) => {
+        normalizedSourceNames.add(normalizeFoodCompareKey(alias));
+        normalizedSourceKeys.add(firebaseSafeKey(alias));
+      });
+  });
+
+  const preRebuild = buildProductsViewModel(state.foodProductsCfg || {});
+  const preProducts = preRebuild?.products || [];
+  const preTargetTotal = Number(preProducts.find((row) => row.canonicalId === canonicalId)?.total || 0);
+  const preSourceTotal = preProducts.filter((row) => sourceIds.includes(row.canonicalId)).reduce((sum, row) => sum + Number(row.total || 0), 0);
+  console.log('[mergeFoodProducts] source totals before merge', { preTargetTotal, preSourceTotal });
+
+  for (const item of [{ id: canonicalId, ...canonicalItem }, ...sourceItems]) {
+    const baseAliases = [...new Set([item.name, item.displayName, ...(Array.isArray(item.aliases) ? item.aliases : []), item.id].map((v) => normalizeFoodName(v)).filter(Boolean))];
     const vendorAliases = item.vendorAliases && typeof item.vendorAliases === 'object' ? item.vendorAliases : {};
     const vendorKeys = new Set(['unknown', normalizeFoodName(item.place || ''), normalizeFoodName(item.createdFromVendor || ''), ...Object.keys(vendorAliases || {}), ...Object.keys(item.priceHistory || {})]);
+
     for (const vendorRaw of vendorKeys) {
       if (!vendorRaw) continue;
       const vendorKey = firebaseSafeKeyLoose(vendorRaw || 'unknown');
@@ -1384,52 +1421,165 @@ async function mergeFoodProducts(selection = [], destinationId = '') {
       ])];
       if (!aliasesByStore[vendorKey]) aliasesByStore[vendorKey] = [];
       aliasesByStore[vendorKey] = [...new Set([...(aliasesByStore[vendorKey] || []), ...aliasesForVendor])];
+
       for (const aliasRaw of aliasesForVendor) {
-        const aliasKey = firebaseSafeKeyLoose(normalizeAliasKey(aliasRaw));
-        const payload = firebaseClean({ canonicalId, aliasRaw: String(aliasRaw || ''), updatedAt: nowTs() });
-        updatesToCommit[`${state.financePath}/foodCatalog/aliases/${vendorKey}/${aliasKey}`] = payload;
-        if (!state.foodCatalog.aliases[vendorKey]) state.foodCatalog.aliases[vendorKey] = {};
-        state.foodCatalog.aliases[vendorKey][aliasKey] = payload;
+        const aliasCandidates = [...new Set([
+          normalizeAliasKey(aliasRaw),
+          normalizeAliasKey(normalizeFoodCompareKey(aliasRaw))
+        ].filter(Boolean))];
+        for (const aliasKey of aliasCandidates) {
+          const payload = firebaseClean({ canonicalId, aliasRaw: String(aliasRaw || ''), updatedAt: now });
+          updatesToCommit[`${state.financePath}/foodCatalog/aliases/${vendorKey}/${aliasKey}`] = payload;
+          if (!nextAliasesState[vendorKey]) nextAliasesState[vendorKey] = {};
+          nextAliasesState[vendorKey][aliasKey] = payload;
+        }
       }
+
       const vendorRows = item.priceHistory?.[vendorRaw] || item.priceHistory?.[vendorKey] || {};
       const numericPrices = Object.values(vendorRows || {}).map((row) => Number(row?.unitPrice || row?.price || 0)).filter((v) => Number.isFinite(v) && v > 0);
       if (!pricesByStore[vendorKey]) pricesByStore[vendorKey] = [];
       pricesByStore[vendorKey] = [...pricesByStore[vendorKey], ...numericPrices].slice(-250);
     }
+  }
 
-    if (id !== canonicalId) {
-      absorbedIds.push(id);
-      const mergeFromId = firebaseSafeKeyLoose(id);
-      const mergePayload = firebaseClean({ canonicalId, updatedAt: nowTs() });
-      updatesToCommit[`${state.financePath}/foodCatalog/merges/${id}`] = mergePayload;
-      updatesToCommit[`${state.financePath}/foodCatalog/merges/${mergeFromId}`] = mergePayload;
-      state.foodCatalog.merges[id] = mergePayload;
-      state.foodCatalog.merges[mergeFromId] = mergePayload;
-    }
+  if (!sourceItems.every((item) => {
+    const name = normalizeFoodName(item.displayName || item.name || item.id);
+    return Object.values(aliasesByStore).some((list) => Array.isArray(list) && list.includes(name));
+  })) {
+    console.error('[mergeFoodProducts] abort: alias migration incomplete', { sourceIds, aliasesByStore });
+    return false;
+  }
+
+  const txRows = balanceTxList().filter((row) => normalizeTxType(row?.type) === 'expense');
+  const txPatchByPath = {};
+  let sourceHistoricalLines = 0;
+  let migratedHistoricalLines = 0;
+
+  txRows.forEach((row) => {
+    const items = foodItemsFromTx(row);
+    if (!items.length || !row.__path) return;
+    let touched = false;
+    const nextItems = items.map((item) => {
+      const itemFoodId = String(item?.foodId || '').trim();
+      const itemProductKey = String(item?.productKey || '').trim();
+      const itemNameKey = normalizeFoodCompareKey(item?.name || '');
+      const matchesSource = sourceIds.includes(itemFoodId)
+        || normalizedSourceKeys.has(itemProductKey)
+        || normalizedSourceNames.has(itemNameKey)
+        || normalizedSourceKeys.has(itemFoodId);
+      if (!matchesSource) return item;
+      sourceHistoricalLines += 1;
+      touched = true;
+      migratedHistoricalLines += 1;
+      return {
+        ...item,
+        foodId: canonicalId,
+        productKey: canonicalIdKey
+      };
+    });
+    if (!touched) return;
+    const nextExtras = {
+      ...(row.extras && typeof row.extras === 'object' ? row.extras : {}),
+      items: nextItems,
+      migratedAt: now,
+      migratedToCanonicalId: canonicalId
+    };
+    txPatchByPath[row.__path] = nextExtras;
+    updatesToCommit[`${row.__path}/extras`] = nextExtras;
+  });
+
+  if (sourceHistoricalLines !== migratedHistoricalLines) {
+    console.error('[mergeFoodProducts] abort: historical migration mismatch', { sourceHistoricalLines, migratedHistoricalLines });
+    return false;
   }
 
   const canonicalPayload = {
     name: String(canonicalName || canonicalId),
-    createdAt: Number(prevCanonical?.createdAt || nowTs()),
-    updatedAt: nowTs(),
+    createdAt: Number(prevCanonical?.createdAt || now),
+    updatedAt: now,
     aliasesByStore: Object.fromEntries(Object.entries(aliasesByStore).map(([store, list]) => [store, [...new Set((Array.isArray(list) ? list : []).map((it) => normalizeFoodName(it)).filter(Boolean))]])),
     pricesByStore: Object.fromEntries(Object.entries(pricesByStore).map(([store, list]) => [store, (Array.isArray(list) ? list : []).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0).slice(-250)]))
   };
 
-  console.log('[mergeFoodProducts] aliases after merge', canonicalPayload.aliasesByStore);
+  console.log('[mergeFoodProducts] merged aliases result', canonicalPayload.aliasesByStore);
+  console.log('[mergeFoodProducts] merged price stores result', Object.fromEntries(Object.entries(canonicalPayload.pricesByStore || {}).map(([k, v]) => [k, (Array.isArray(v) ? v.length : 0)])));
+
   updatesToCommit[`${state.financePath}/foodCatalog/canonicals/${canonicalId}`] = canonicalPayload;
-  await safeFirebase(() => update(ref(db), updatesToCommit));
+
+  sourceIds.forEach((id) => {
+    const mergeFromId = firebaseSafeKeyLoose(id);
+    const mergePayload = firebaseClean({ canonicalId, updatedAt: now });
+    updatesToCommit[`${state.financePath}/foodCatalog/merges/${id}`] = mergePayload;
+    updatesToCommit[`${state.financePath}/foodCatalog/merges/${mergeFromId}`] = mergePayload;
+    updatesToCommit[`${state.financePath}/foodItems/${id}/mergedInto`] = canonicalId;
+    updatesToCommit[`${state.financePath}/foodItems/${id}/hiddenMerged`] = true;
+    updatesToCommit[`${state.financePath}/foodItems/${id}/updatedAt`] = now;
+    nextMergesState[id] = mergePayload;
+    nextMergesState[mergeFromId] = mergePayload;
+  });
+
+  if (!Object.keys(updatesToCommit).length) {
+    console.error('[mergeFoodProducts] abort: empty persistence payload');
+    return false;
+  }
+
+  console.log('[mergeFoodProducts] persistence payload', { paths: Object.keys(updatesToCommit).length, sourceIds, canonicalId, migratedHistoricalLines });
+
+  try {
+    await safeFirebase(() => update(ref(db), updatesToCommit));
+  } catch (error) {
+    console.error('[mergeFoodProducts] abort: persistence failed, no local mutation applied', error);
+    return false;
+  }
+
   state.foodCatalog.canonicals[canonicalId] = canonicalPayload;
-  const activeProductsCfg = state.foodProductsCfg || {};
-  const rebuild = buildProductsViewModel(activeProductsCfg);
+  state.foodCatalog.aliases = nextAliasesState;
+  state.foodCatalog.merges = nextMergesState;
+  sourceIds.forEach((id) => {
+    if (!state.food.itemsById?.[id]) return;
+    state.food.itemsById[id] = { ...state.food.itemsById[id], mergedInto: canonicalId, hiddenMerged: true, updatedAt: now };
+  });
+
+  Object.entries(txPatchByPath).forEach(([path, extras]) => {
+    const match = path.match(/\/(transactions|tx)\/([^/]+)$/);
+    if (match && state.balance?.[match[1]]?.[match[2]]) {
+      state.balance[match[1]][match[2]] = { ...state.balance[match[1]][match[2]], extras };
+      return;
+    }
+    const legacyMatch = path.match(/\/movements\/([^/]+)\/([^/]+)$/);
+    if (legacyMatch && state.balance?.movements?.[legacyMatch[1]]?.[legacyMatch[2]]) {
+      state.balance.movements[legacyMatch[1]][legacyMatch[2]] = { ...state.balance.movements[legacyMatch[1]][legacyMatch[2]], extras };
+    }
+  });
+
+  const rebuild = buildProductsViewModel(state.foodProductsCfg || {});
   const visibleCanonicalIds = (rebuild?.products || []).map((row) => row.canonicalId);
   const canonicalStats = (rebuild?.products || []).find((row) => row.canonicalId === canonicalId) || null;
-  console.log('[mergeFoodProducts] stores affected', Object.keys(canonicalPayload.aliasesByStore || {}));
-  console.log('[mergeFoodProducts] absorbed product ids', absorbedIds);
-  console.log('[mergeFoodProducts] remaining visible products after rebuild', visibleCanonicalIds);
-  console.log('[mergeFoodProducts] stats rebuild result for canonical product', canonicalStats);
-  console.log('[mergeFoodProducts] persistencia final', { canonicalId, merged: ids.length, stores: Object.keys(canonicalPayload.aliasesByStore || {}).length });
-  return true;
+  const postTargetTotal = Number(canonicalStats?.total || 0);
+  const targetAliasesFlat = Object.values(canonicalPayload.aliasesByStore || {}).flatMap((list) => Array.isArray(list) ? list : []);
+  const expectedAliasNames = sourceItems.map((item) => normalizeFoodName(item.displayName || item.name || item.id)).filter(Boolean);
+  const aliasesVerified = expectedAliasNames.every((name) => targetAliasesFlat.includes(name));
+  const totalsVerified = postTargetTotal + 0.0001 >= (preTargetTotal + preSourceTotal);
+  const sourceHiddenVerified = sourceIds.every((id) => !visibleCanonicalIds.includes(id));
+
+  console.log('[mergeFoodProducts] merged totals result', { preTargetTotal, preSourceTotal, postTargetTotal });
+  console.log('[mergeFoodProducts] source redirect/hidden status after merge', sourceIds.map((id) => ({ id, mergedInto: state.food.itemsById?.[id]?.mergedInto, hiddenMerged: state.food.itemsById?.[id]?.hiddenMerged })));
+  console.log('[mergeFoodProducts] rebuilt stats for target', canonicalStats);
+  console.log('[mergeFoodProducts] visible products after rebuild', visibleCanonicalIds);
+
+  if (!aliasesVerified || !totalsVerified || !sourceHiddenVerified) {
+    console.error('[mergeFoodProducts][CRITICAL] post-merge verification failed', {
+      aliasesVerified,
+      totalsVerified,
+      sourceHiddenVerified,
+      expectedAliasNames,
+      postTargetTotal,
+      expectedMinTotal: preTargetTotal + preSourceTotal,
+      visibleCanonicalIds
+    });
+  }
+
+  return aliasesVerified && totalsVerified;
 }
 
 function normalizeFoodExtras(rawExtras = {}, amount = 0) {
@@ -5569,7 +5719,11 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       if (selected.length < 2) return;
       if (!destinationId || !selected.includes(destinationId)) return;
       if (!window.confirm(`Vas a fusionar ${selected.length} productos en 1 canonical. ¿Continuar?`)) return;
-      await mergeFoodProducts(selected, destinationId);
+      const mergedOk = await mergeFoodProducts(selected, destinationId);
+      if (!mergedOk) {
+        toast('No se pudo completar la fusión de forma segura');
+        return;
+      }
       toast('Productos fusionados');
       state.modal = state.activeView === 'products' ? { type: null } : { type: 'food-products' };
       triggerRender();

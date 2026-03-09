@@ -347,6 +347,9 @@ if ($viewRecipes) {
   const $macroProductFinanceSelect = document.getElementById("macro-product-finance-select");
   const $macroProductFinanceUnlink = document.getElementById("macro-product-finance-unlink");
   const $macroProductFinanceHint = document.getElementById("macro-product-finance-hint");
+  const $macroProductPrice = document.getElementById("macro-product-price");
+  const $macroProductPriceBaseQty = document.getElementById("macro-product-price-base-qty");
+  const $macroProductPriceBaseUnit = document.getElementById("macro-product-price-base-unit");
   const $macroProductHabitSelect = document.getElementById("macro-product-habit-select");
   const $macroProductHabitUnlink = document.getElementById("macro-product-habit-unlink");
   const $macroProductHabitHint = document.getElementById("macro-product-habit-hint");
@@ -787,6 +790,90 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   function roundMacro(value) {
     return Math.round((Number(value) || 0) * 10) / 10;
+  }
+
+  function sortByVisibleNameEs(list = [], getLabel = (row) => row?.name || "") {
+    return (Array.isArray(list) ? list.slice() : []).sort((a, b) =>
+      String(getLabel(a) || "").localeCompare(String(getLabel(b) || ""), "es", { sensitivity: "base" })
+    );
+  }
+
+  function normalizeCostUnit(unit) {
+    const clean = String(unit || "").trim().toLowerCase();
+    if (["g", "gram", "grams", "gr"].includes(clean)) return "g";
+    if (["kg", "kilo", "kilogram", "kilograms"].includes(clean)) return "kg";
+    if (["ml", "milliliter", "milliliters"].includes(clean)) return "ml";
+    if (["l", "lt", "liter", "liters"].includes(clean)) return "l";
+    if (["unit", "units", "ud", "uds", "unidad", "unidades"].includes(clean)) return "unit";
+    return "";
+  }
+
+  function normalizeQtyByUnit(quantity, fromUnit, toUnit) {
+    const qty = Number(quantity);
+    const from = normalizeCostUnit(fromUnit);
+    const to = normalizeCostUnit(toUnit);
+    if (!Number.isFinite(qty) || qty < 0 || !from || !to) return null;
+    if (from === to) return qty;
+    if (from === "kg" && to === "g") return qty * 1000;
+    if (from === "g" && to === "kg") return qty / 1000;
+    if (from === "l" && to === "ml") return qty * 1000;
+    if (from === "ml" && to === "l") return qty / 1000;
+    return null;
+  }
+
+  function calculateProductConsumedCost(product, consumedQty, consumedUnit) {
+    const price = Number(product?.price);
+    const baseQty = Number(product?.priceBaseQty);
+    const baseUnit = normalizeCostUnit(product?.priceBaseUnit);
+    const intakeUnit = normalizeCostUnit(consumedUnit);
+    const intakeQty = Number(consumedQty);
+    if (!(price > 0) || !(baseQty > 0) || !baseUnit || !(intakeQty >= 0) || !intakeUnit) return null;
+    const normalizedBaseQty = normalizeQtyByUnit(baseQty, baseUnit, intakeUnit);
+    if (!(normalizedBaseQty > 0)) return null;
+    return (intakeQty / normalizedBaseQty) * price;
+  }
+
+  function resolveRecipeServings(recipe) {
+    return Math.max(1, Number(recipe?.servings || recipe?.yield || recipe?.portions) || 1);
+  }
+
+  function calculateRecipeCost(recipe, servings = 1) {
+    const ingredients = Array.isArray(recipe?.nutritionIngredients) ? recipe.nutritionIngredients : [];
+    const recipeServings = resolveRecipeServings(recipe);
+    const multiplier = Math.max(0, Number(servings) || 0) / recipeServings;
+    let total = 0;
+    let missing = 0;
+    let covered = 0;
+    ingredients.forEach((it) => {
+      const product = nutritionProducts.find((p) => p.id === it?.productId);
+      const grams = Math.max(0, Number(it?.grams) || 0);
+      const itemCost = calculateProductConsumedCost(product, grams * multiplier, "g");
+      if (itemCost == null) missing += 1;
+      else {
+        covered += 1;
+        total += itemCost;
+      }
+    });
+    const fullRecipeTotal = multiplier > 0 ? total / multiplier : 0;
+    const perServing = recipeServings > 0 ? fullRecipeTotal / recipeServings : null;
+    return { total, perServing, missing, covered, ingredientsTotal: ingredients.length };
+  }
+
+  function calculateEntryFoodCost(entry) {
+    if (!entry) return { cost: null, missing: 1 };
+    if (entry.type === "product") {
+      const p = nutritionProducts.find((x) => x.id === entry.refId);
+      const grams = Math.max(0, Number(entry.grams) || 0);
+      const cost = calculateProductConsumedCost(p, grams, "g");
+      return { cost, missing: cost == null ? 1 : 0 };
+    }
+    if (entry.type === "recipe") {
+      const recipe = recipes.find((x) => x.id === entry.refId);
+      const servings = Math.max(0, Number(entry.servings) || 0);
+      const rc = calculateRecipeCost(recipe, servings);
+      return { cost: rc.covered ? rc.total : null, missing: rc.missing || 0 };
+    }
+    return { cost: null, missing: 0 };
   }
 
   function normalizeDate(dateStr) {
@@ -2241,7 +2328,8 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       ];
       const cost = computeRecipeEstimatedCost(recipe);
       if (cost.covered > 0) {
-        items.push({ label: "Coste estimado", value: `~${roundMacro(cost.total)}€ (${cost.covered}/${cost.totalIngredients || 0} ing.)` });
+        const perServing = cost.perServing == null ? "" : ` · ${roundMacro(cost.perServing)}€/ración`;
+        items.push({ label: "Coste estimado", value: `~${roundMacro(cost.total)}€${perServing} (${cost.covered}/${cost.totalIngredients || 0} ing.)` });
       }
       items.forEach((item) => {
         const block = document.createElement("div");
@@ -2815,6 +2903,9 @@ $recipeImportBtn?.addEventListener("click", () => {
       macros: normalizeMacros(product.macros),
       financeProductId: String(product.financeProductId || "").trim(),
       linkedHabitId: String(product.linkedHabitId || "").trim(),
+      price: Number(product.price) > 0 ? Number(product.price) : null,
+      priceBaseQty: Number(product.priceBaseQty) > 0 ? Number(product.priceBaseQty) : null,
+      priceBaseUnit: normalizeCostUnit(product.priceBaseUnit || ""),
     };
   }
 
@@ -2949,6 +3040,25 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function computeMealTotals(entries = []) {
     return entries.reduce((acc, e) => plusMacros(acc, e.macrosSnapshot || {}), normalizeMacros({}));
+  }
+
+  function computeMealCostSummary(entries = []) {
+    return entries.reduce((acc, entry) => {
+      const res = calculateEntryFoodCost(entry);
+      if (res.cost == null) acc.missing += Number(res.missing) || 0;
+      else acc.total += Number(res.cost) || 0;
+      return acc;
+    }, { total: 0, missing: 0 });
+  }
+
+  function computeDailyCostSummary(date = selectedMacroDate) {
+    const log = getDailyLog(date);
+    return mealOrder.reduce((acc, meal) => {
+      const sum = computeMealCostSummary(log?.meals?.[meal]?.entries || []);
+      acc.total += sum.total;
+      acc.missing += sum.missing;
+      return acc;
+    }, { total: 0, missing: 0 });
   }
 
   function computeDailyTotals(date = selectedMacroDate) {
@@ -3150,6 +3260,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (!$recipesPanelMacros || !$macroSummaryGrid || !$macroMeals) return;
     const log = getDailyLog(selectedMacroDate);
     const totals = computeDailyTotals(selectedMacroDate);
+    const dayCost = computeDailyCostSummary(selectedMacroDate);
     const items = [
       { key: "carbs", label: "Carb. netos", unit: "g" },
       { key: "protein", label: "Proteínas", unit: "g" },
@@ -3202,7 +3313,13 @@ $recipeImportBtn?.addEventListener("click", () => {
       <div class="macro-summary-group macro-summary-group-macros">
         ${macroItems.map(buildStatHtml).join("")}
       </div>
-      
+      <div class="macro-summary-group macro-summary-group-cost">
+        <div class="macro-stat macro-stat-cost">
+          <div class="macro-stat-title">Gasto comida (estimado)</div>
+          <div class="macro-stat-value"><span class="macro-consumed">${roundMacro(dayCost.total)}€</span></div>
+          <div class="hint">${dayCost.missing ? `${dayCost.missing} elementos sin precio` : "Sin elementos pendientes de precio"}</div>
+        </div>
+      </div>
     `;
     const kcalGoal = Number(nutritionGoals.kcal) || 0;
     const delta = roundMacro(kcalGoal - totals.kcal);
@@ -3211,6 +3328,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroMeals.innerHTML = mealOrder.map((meal) => {
       const entries = log.meals[meal].entries || [];
       const mt = computeMealTotals(entries);
+      const mealCost = computeMealCostSummary(entries);
       const entryHtml = entries.map((entry, idx) => `
       <div class="macro-entry">
       <button class="macro-entry-open" data-macro-open="${meal}:${idx}" type="button" aria-label="Abrir ficha de ${entry.nameSnapshot}">
@@ -3224,11 +3342,12 @@ $recipeImportBtn?.addEventListener("click", () => {
       <div class="kcals-dato">
       ${roundMacro(entry.macrosSnapshot.kcal)} kcal
       </div>
+      <div class="hint macro-entry-cost">${calculateEntryFoodCost(entry).cost == null ? "Coste n/d" : `~${roundMacro(calculateEntryFoodCost(entry).cost)}€`}</div>
       <button class="icon-btn-eliminar-comida" data-macro-delete="${meal}:${idx}" type="button">✕</button></div></div>`).join("") || '<div class="hint">Sin entradas</div>';
       return `<article class="macro-meal-card">
       <div class="macro-meal-head">
       <h4>${mealLabels[meal]}</h4>
-      <div class="hint">${roundMacro(mt.kcal)} kcal · C ${roundMacro(mt.carbs)} · P ${roundMacro(mt.protein)} · G ${roundMacro(mt.fat)}</div></div><div class="macro-meal-entries">${entryHtml}</div><button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
+      <div class="hint">${roundMacro(mt.kcal)} kcal · C ${roundMacro(mt.carbs)} · P ${roundMacro(mt.protein)} · G ${roundMacro(mt.fat)} · ${roundMacro(mealCost.total)}€${mealCost.missing ? ` · ${mealCost.missing} s/p` : ""}</div></div><div class="macro-meal-entries">${entryHtml}</div><button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
     }).join("");
     if ($recipesPanelStatistics?.classList.contains("is-active")) renderStatisticsView();
   }
@@ -3283,6 +3402,9 @@ $recipeImportBtn?.addEventListener("click", () => {
       barcode: $macroProductBarcode?.value,
       financeProductId: $macroProductFinanceSelect?.value || _macroProductDraft?.financeProductId || "",
       linkedHabitId: $macroProductHabitSelect?.value || _macroProductDraft?.linkedHabitId || "",
+      price: Number($macroProductPrice?.value) > 0 ? Number($macroProductPrice.value) : null,
+      priceBaseQty: Number($macroProductPriceBaseQty?.value) > 0 ? Number($macroProductPriceBaseQty.value) : null,
+      priceBaseUnit: normalizeCostUnit($macroProductPriceBaseUnit?.value || ""),
       servingBaseGrams: base,
       macros: {
         carbs: Number($macroProductCarbs?.value) || 0,
@@ -3300,7 +3422,9 @@ $recipeImportBtn?.addEventListener("click", () => {
     const m = calcProductMacros(draft, grams);
 
     if (grams) {
-      $macroProductSummary.textContent = `Para ${roundMacro(grams)}g: ${roundMacro(m.kcal)} kcal · C ${roundMacro(m.carbs)} · P ${roundMacro(m.protein)} · G ${roundMacro(m.fat)}`;
+      const cost = calculateProductConsumedCost(draft, grams, "g");
+      const costLabel = cost == null ? " · Coste n/d" : ` · ~${roundMacro(cost)}€`;
+      $macroProductSummary.textContent = `Para ${roundMacro(grams)}g: ${roundMacro(m.kcal)} kcal · C ${roundMacro(m.carbs)} · P ${roundMacro(m.protein)} · G ${roundMacro(m.fat)}${costLabel}`;
     } else {
       $macroProductSummary.textContent = "Indica una cantidad para ver el resumen.";
     }
@@ -3348,10 +3472,11 @@ $recipeImportBtn?.addEventListener("click", () => {
     setMacroProductEditing(false);
 
     await loadFinanceProductsCatalog();
-    const habits = listHabitsForProductLink();
+    const habits = sortByVisibleNameEs(listHabitsForProductLink(), (h) => `${h?.emoji || ""} ${h?.name || h?.id || ""}`);
+    const sortedFinanceProducts = sortByVisibleNameEs(financeProducts, (row) => row?.name || "");
     if ($macroProductFinanceSelect) {
       const opts = ['<option value="">Sin vincular</option>']
-        .concat(financeProducts.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}${row.lastPrice ? ` · ${roundMacro(row.lastPrice)}€` : ""}</option>`));
+        .concat(sortedFinanceProducts.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}${row.lastPrice ? ` · ${roundMacro(row.lastPrice)}€` : ""}</option>`));
       $macroProductFinanceSelect.innerHTML = opts.join("");
       $macroProductFinanceSelect.value = String(product.financeProductId || "");
     }
@@ -3379,6 +3504,9 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductProtein) $macroProductProtein.value = String(Number(product.macros?.protein) || 0);
     if ($macroProductFat) $macroProductFat.value = String(Number(product.macros?.fat) || 0);
     if ($macroProductKcal) $macroProductKcal.value = String(Number(product.macros?.kcal) || 0);
+    if ($macroProductPrice) $macroProductPrice.value = product.price == null ? "" : String(Number(product.price) || 0);
+    if ($macroProductPriceBaseQty) $macroProductPriceBaseQty.value = product.priceBaseQty == null ? "" : String(Number(product.priceBaseQty) || 0);
+    if ($macroProductPriceBaseUnit) $macroProductPriceBaseUnit.value = normalizeCostUnit(product.priceBaseUnit || "");
     if ($macroProductGrams) $macroProductGrams.value = String(Number(grams) || 0);
 
     $macroProductModalBackdrop.classList.remove("hidden");
@@ -3665,6 +3793,9 @@ $recipeImportBtn?.addEventListener("click", () => {
       macros: normalizeMacros(product.macros),
       financeProductId: String(product.financeProductId || "").trim(),
       linkedHabitId: String(product.linkedHabitId || "").trim(),
+      price: Number(product.price) > 0 ? Number(product.price) : null,
+      priceBaseQty: Number(product.priceBaseQty) > 0 ? Number(product.priceBaseQty) : null,
+      priceBaseUnit: normalizeCostUnit(product.priceBaseUnit || ""),
       source: product.source || "manual",
       createdAt: product.createdAt || now,
       updatedAt: now,
@@ -3761,19 +3892,9 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   function computeRecipeEstimatedCost(recipe) {
-    const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
-    let covered = 0;
-    let total = 0;
-    ingredients.forEach((ing) => {
-      const linked = nutritionProducts.find((p) => p.id === ing.productId);
-      if (!linked?.financeProductId) return;
-      const fin = financeProducts.find((f) => f.id === linked.financeProductId);
-      const price = Number(fin?.lastPrice) || 0;
-      if (!price) return;
-      covered += 1;
-      total += price;
-    });
-    return { total, covered, totalIngredients: ingredients.length };
+    const servings = resolveRecipeServings(recipe);
+    const cost = calculateRecipeCost(recipe, servings);
+    return { total: cost.total, covered: cost.covered, totalIngredients: cost.ingredientsTotal, perServing: cost.perServing, missing: cost.missing };
   }
 
   let _macroScanStream = null;
@@ -6081,12 +6202,15 @@ $recipeImportBtn?.addEventListener("click", () => {
   });
 
   $macroManualSave?.addEventListener("click", () => {
-    const pdt = saveProduct({
+      const pdt = saveProduct({
       name: $macroManualName?.value,
       brand: $macroManualBrand?.value,
       barcode: $macroManualBarcode?.value,
       servingBaseGrams: Number($macroManualBase?.value) || 100,
       macros: { carbs: Number($macroManualCarbs?.value) || 0, protein: Number($macroManualProtein?.value) || 0, fat: Number($macroManualFat?.value) || 0, kcal: Number($macroManualKcal?.value) || 0 },
+      price: null,
+      priceBaseQty: null,
+      priceBaseUnit: "",
       source: "manual",
     });
     if (pdt) {
@@ -6105,6 +6229,9 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroProductProtein,
     $macroProductFat,
     $macroProductKcal,
+    $macroProductPrice,
+    $macroProductPriceBaseQty,
+    $macroProductPriceBaseUnit,
     $macroProductGrams,
   ].filter(Boolean);
   _macroProductInputs.forEach((el) => el.addEventListener("input", renderMacroProductSummary));

@@ -2629,6 +2629,27 @@ Crear “<span id="gym-create-cta-text"></span>”
       <section class="macro-card macro-product-links-card">
         <div class="macro-grid macro-grid-1">
           <button class="macro-btn macro-btn-ghost" id="macro-product-scan-btn" type="button">Escanear código</button>
+          <div class="macro-inline-cost-grid">
+            <label class="macro-field">
+              <span class="macro-label">Precio envase (€)</span>
+              <input id="macro-product-price" type="number" step="0.01" min="0" placeholder="Opcional" />
+            </label>
+            <label class="macro-field">
+              <span class="macro-label">Cantidad base precio</span>
+              <input id="macro-product-price-base-qty" type="number" step="0.01" min="0" placeholder="Ej. 1000" />
+            </label>
+            <label class="macro-field">
+              <span class="macro-label">Unidad base</span>
+              <select id="macro-product-price-base-unit" class="macro-select">
+                <option value="">Sin unidad</option>
+                <option value="g">g</option>
+                <option value="kg">kg</option>
+                <option value="ml">ml</option>
+                <option value="l">l</option>
+                <option value="unit">unidad</option>
+              </select>
+            </label>
+          </div>
           <label class="macro-field">
             <span class="macro-label">Vincular producto de Finanzas</span>
             <select id="macro-product-finance-select" class="macro-select"></select>

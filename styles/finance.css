@@ -2325,6 +2325,12 @@ header.food-sheet-header h3{
 .financeTab .finFoodProductsRow span,.financeTab .finFoodProductsRow small{font-size:11px;opacity:.9;line-height:1.25}
 .financeTab .finFoodMergeList{display:grid;gap:8px;max-height:46vh;overflow:auto;margin-top:8px}
 .financeTab .finFoodMergeRow{display:flex;gap:8px;align-items:center;padding:8px;border-radius:10px;background:rgba(255,255,255,.05)}
+.financeTab .finFoodMergeHead{display:grid;gap:8px}
+.financeTab .finFoodMergeCounter{opacity:.85;font-size:11px}
+.financeTab .finFoodMergeBadgeRow{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+.financeTab .finFoodMergeBadge{border:1px solid rgba(255,255,255,.22);border-radius:999px;padding:2px 6px;font-size:10px;line-height:1}
+.financeTab .finFoodMergeBadge--resolved{border-color:rgba(125,189,255,.5);background:rgba(125,189,255,.15)}
+.financeTab .finFoodMergeBadge--absorbed{border-color:rgba(255,127,127,.55);background:rgba(255,127,127,.14)}
 
 .financeTab .finFoodChipRow{display:flex;flex-wrap:wrap;gap:8px}
 .financeTab .finFoodChip{padding:3px 8px;font-size:11px}

@@ -2475,6 +2475,20 @@ Crear “<span id="gym-create-cta-text"></span>”
         <div class="hint" id="macro-scan-engine-status">Motor activo: ninguno</div>
         <div class="hint" id="macro-scan-status"></div>
         <div class="macro-scan-log-panel" id="macro-scan-log-panel" aria-live="polite"></div>
+        <div class="macro-scan-ocr-debug hidden" id="macro-scan-ocr-debug" aria-live="polite">
+          <div class="macro-scan-ocr-debug-item">
+            <span>OCR source</span>
+            <canvas id="macro-scan-ocr-source" width="160" height="90"></canvas>
+          </div>
+          <div class="macro-scan-ocr-debug-item">
+            <span>OCR crop</span>
+            <canvas id="macro-scan-ocr-crop" width="160" height="90"></canvas>
+          </div>
+          <div class="macro-scan-ocr-debug-item">
+            <span>OCR preprocess</span>
+            <canvas id="macro-scan-ocr-final" width="160" height="90"></canvas>
+          </div>
+        </div>
         <button class="btn primary btn-compact hidden" id="macro-scan-add-product" type="button">+ AÃ±adir producto</button>
       </div>
       <div class="macro-modal-manual hidden" id="macro-manual-panel">

@@ -1067,6 +1067,27 @@
 .macro-scan-log-row strong{
   color: #d8f4ff;
 }
+.macro-scan-ocr-debug{
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+.macro-scan-ocr-debug-item{
+  display: grid;
+  gap: 6px;
+}
+.macro-scan-ocr-debug-item span{
+  font-size: 11px;
+  color: var(--txt-soft);
+}
+.macro-scan-ocr-debug-item canvas{
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.15);
+  background: rgba(0,0,0,.45);
+}
 #macro-scan-engine-status{
   margin-top: 6px;
 }

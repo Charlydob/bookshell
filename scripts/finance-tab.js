@@ -921,10 +921,19 @@ async function loadFoodMetaCatalog(force = false) {
   try {
     const snap = await safeFirebase(() => get(ref(db, `${state.financePath}/foodCatalog`)));
     const val = snap?.val() || {};
-    state.foodCatalog.canonicals = val.canonicals && typeof val.canonicals === 'object' ? val.canonicals : {};
+    state.foodCatalog.canonicals = Object.entries(val.canonicals && typeof val.canonicals === 'object' ? val.canonicals : {}).reduce((acc, [id, row]) => {
+      const aliasesByStore = row?.aliasesByStore && typeof row.aliasesByStore === 'object' ? row.aliasesByStore : {};
+      const pricesByStore = row?.pricesByStore && typeof row.pricesByStore === 'object' ? row.pricesByStore : {};
+      acc[id] = { ...row, aliasesByStore, pricesByStore };
+      return acc;
+    }, {});
     state.foodCatalog.aliases = val.aliases && typeof val.aliases === 'object' ? val.aliases : {};
     state.foodCatalog.ignored = val.ignored && typeof val.ignored === 'object' ? val.ignored : {};
-    state.foodCatalog.merges = val.merges && typeof val.merges === 'object' ? val.merges : {};
+    state.foodCatalog.merges = Object.entries(val.merges && typeof val.merges === 'object' ? val.merges : {}).reduce((acc, [id, row]) => {
+      if (typeof row === 'string') { acc[id] = { canonicalId: row }; return acc; }
+      if (row && typeof row === 'object' && row.canonicalId) { acc[id] = row; return acc; }
+      return acc;
+    }, {});
     state.foodCatalog.loaded = true;
   } finally {
     state.foodCatalog.loading = false;
@@ -937,11 +946,26 @@ async function ensureFoodMetaCatalogLoaded(force = false) {
 
 const DEBUG_FINANCE_PRODUCTS = FINANCE_DEBUG;
 
-function resolveProductsRangeRows(filters = {}) {
+function parseProductsRangeValue(rangeType = 'month', rangeValue = '') {
+  const safeType = ['day', 'week', 'month', 'year', 'total', 'custom'].includes(String(rangeType || '')) ? String(rangeType) : 'month';
+  const rawValue = String(rangeValue || '').trim();
+  const now = new Date();
+  if (!rawValue) {
+    if (safeType === 'day' || safeType === 'week') return dayKeyFromTs(now.getTime());
+    if (safeType === 'month') return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    if (safeType === 'year') return String(now.getFullYear());
+    return '';
+  }
+  if (safeType === 'day' || safeType === 'week') return toIsoDay(rawValue) || dayKeyFromTs(now.getTime());
+  if (safeType === 'month') return /^\d{4}-\d{2}$/.test(rawValue) ? rawValue : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  if (safeType === 'year') return /^\d{4}$/.test(rawValue) ? rawValue : String(now.getFullYear());
+  return rawValue;
+}
+
+function getProductRowsForRange(rangeType = 'month', rangeValue = '', filters = {}) {
   const allTxRows = balanceTxList();
-  const range = ['day', 'week', 'month', 'year', 'total', 'custom'].includes(String(filters.range || ''))
-    ? String(filters.range)
-    : String(state.balanceStatsRange || 'month');
+  const range = ['day', 'week', 'month', 'year', 'total', 'custom'].includes(String(rangeType || '')) ? String(rangeType) : 'month';
+  const safeValue = parseProductsRangeValue(range, rangeValue);
   let rows = [];
   let start = null;
   let end = null;
@@ -955,18 +979,52 @@ function resolveProductsRangeRows(filters = {}) {
       const ts = txTs(row);
       return Number.isFinite(ts) && ts >= start && ts < end;
     });
+  } else if (range === 'day') {
+    start = parseDayKey(safeValue || dayKeyFromTs(Date.now()));
+    end = start + 86400000;
+    rows = allTxRows.filter((row) => {
+      const ts = txTs(row);
+      return Number.isFinite(ts) && ts >= start && ts < end;
+    });
+  } else if (range === 'week') {
+    start = isoWeekStartTs(safeValue || dayKeyFromTs(Date.now()));
+    end = start + (7 * 86400000);
+    rows = allTxRows.filter((row) => {
+      const ts = txTs(row);
+      return Number.isFinite(ts) && ts >= start && ts < end;
+    });
   } else if (range === 'month') {
-    const monthKey = offsetMonthKey(state.balanceMonthOffset || 0);
-    rows = allTxRows.filter((row) => row.monthKey === monthKey);
-    start = parseDayKey(`${monthKey}-01`);
-    end = new Date(new Date(start).getFullYear(), new Date(start).getMonth() + 1, 1).getTime();
+    const [year, month] = String(safeValue || '').split('-').map(Number);
+    start = new Date(year, (month || 1) - 1, 1, 0, 0, 0, 0).getTime();
+    end = new Date(year, (month || 1), 1, 0, 0, 0, 0).getTime();
+    rows = allTxRows.filter((row) => {
+      const ts = txTs(row);
+      return Number.isFinite(ts) && ts >= start && ts < end;
+    });
+  } else if (range === 'year') {
+    const year = Number(safeValue || new Date().getFullYear());
+    start = new Date(year, 0, 1, 0, 0, 0, 0).getTime();
+    end = new Date(year + 1, 0, 1, 0, 0, 0, 0).getTime();
+    rows = allTxRows.filter((row) => {
+      const ts = txTs(row);
+      return Number.isFinite(ts) && ts >= start && ts < end;
+    });
   } else {
-    rows = filterTxByRange(allTxRows, range);
+    rows = allTxRows.slice();
     const txTimestamps = rows.map((row) => txTs(row)).filter((ts) => Number.isFinite(ts) && ts > 0);
     start = txTimestamps.length ? Math.min(...txTimestamps) : null;
     end = txTimestamps.length ? (Math.max(...txTimestamps) + 1) : null;
   }
-  return { rows, start, end, range };
+  console.log('[Productos][Rango] dataset resuelto', { range, rangeValue: safeValue, rows: rows.length, start, end });
+  return { rows, start, end, range, rangeValue: safeValue };
+}
+
+function resolveProductsRangeRows(filters = {}) {
+  const range = ['day', 'week', 'month', 'year', 'total', 'custom'].includes(String(filters.range || ''))
+    ? String(filters.range)
+    : 'month';
+  const rangeValue = String(filters.rangeValue || '');
+  return getProductRowsForRange(range, rangeValue, filters);
 }
 
 function buildFoodLines(rows = [], filters = {}) {
@@ -1030,15 +1088,26 @@ function buildFoodLines(rows = [], filters = {}) {
   return { lines, purchaseCount };
 }
 
+function resolveMergeCanonicalId(rawId = '') {
+  const safeId = String(rawId || '').trim();
+  if (!safeId) return '';
+  const mergeValue = state.foodCatalog.merges?.[safeId];
+  if (!mergeValue) return safeId;
+  if (typeof mergeValue === 'string') return String(mergeValue || safeId);
+  if (mergeValue && typeof mergeValue === 'object' && mergeValue.canonicalId) return String(mergeValue.canonicalId || safeId);
+  return safeId;
+}
+
 function resolveCanonicalForLine(line = {}) {
-  const vendorKey = line.vendorKey || 'unknown';
+  const vendorKey = firebaseSafeKey(line.vendorKey || 'unknown') || 'unknown';
   const aliasKey = normalizeAliasKey(normalizeFoodCompareKey(line.nameRaw || line.productKey || ''));
   const byVendor = state.foodCatalog.aliases?.[vendorKey] || {};
-  const fromAlias = byVendor?.[aliasKey]?.canonicalId;
-  if (fromAlias) return String(fromAlias);
-  if (line.foodId && state.food.itemsById?.[line.foodId]) return String(line.foodId);
+  const byUnknown = state.foodCatalog.aliases?.unknown || {};
+  const fromAlias = byVendor?.[aliasKey]?.canonicalId || byUnknown?.[aliasKey]?.canonicalId;
+  if (fromAlias) return resolveMergeCanonicalId(String(fromAlias));
+  if (line.foodId) return resolveMergeCanonicalId(String(line.foodId));
   const resolvedFood = resolveFoodItemByAnyKey(line.nameRaw || line.productKey || '');
-  if (resolvedFood?.id) return String(resolvedFood.id);
+  if (resolvedFood?.id) return resolveMergeCanonicalId(String(resolvedFood.id));
   return `pseudo_${aliasKey || normalizeAliasKey('sin-datos')}`;
 }
 
@@ -1104,21 +1173,21 @@ function aggregateProducts(lines = [], purchaseCount = 0) {
 function buildProductsViewModel(cfg = {}) {
   const effectiveCfg = {
     ...cfg,
-    range: cfg.range || state.balanceStatsRange || 'month',
-    scope: (cfg.scope === 'global' ? 'global' : (state.balanceStatsScope === 'global' ? 'global' : 'personal'))
+    range: ['day', 'week', 'month', 'year', 'total', 'custom'].includes(String(cfg.range || '')) ? String(cfg.range) : 'month',
+    rangeValue: String(cfg.rangeValue || ''),
+    scope: cfg.scope === 'global' ? 'global' : 'personal'
   };
   const accountsById = Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
-  const { rows: rangeRows, start, end } = resolveProductsRangeRows(effectiveCfg);
+  const rangeData = getProductRowsForRange(effectiveCfg.range, effectiveCfg.rangeValue, effectiveCfg);
+  const { rows: rangeRows, start, end, rangeValue } = rangeData;
+  effectiveCfg.rangeValue = rangeValue;
   const scopedAmountByTx = {};
   rangeRows.forEach((row) => {
-    if (row.type !== 'expense') return;
+    if (normalizeTxType(row?.type) !== 'expense') return;
     const scopedAmount = effectiveCfg.scope === 'global' ? Math.abs(Number(row.amount || 0)) : Math.abs(personalDeltaForTx(row, accountsById));
     if (!scopedAmount) return;
     scopedAmountByTx[row.id] = scopedAmount;
   });
-  const donutAgg = aggregateStatsGroup(rangeRows, 'product', 'expense', effectiveCfg.scope, accountsById, { includeUnlined: false });
-  const donutTotal = Object.values(donutAgg.breakdown || {}).reduce((sum, value) => sum + Number(value || 0), 0);
-  const legendRows = donutSegments(donutAgg.breakdown || {}, donutTotal, { productKeyByLabel: donutAgg.productKeyByLabel || {} });
   const lines = getProductItemRows(rangeRows, {
     amountByTxId: scopedAmountByTx,
     productsById: state.food.itemsById || {},
@@ -1129,46 +1198,20 @@ function buildProductsViewModel(cfg = {}) {
   const purchaseCount = new Set(lines.map((line) => line.txId)).size;
   const detailAgg = aggregateProducts(lines, purchaseCount);
   const totalFood = Number(detailAgg.totalFood || 0);
-  const detailByProductKey = detailAgg.products.reduce((acc, row) => {
-    acc[String(row.canonicalId || '')] = row;
-    return acc;
-  }, {});
-  const donutByProductKey = legendRows.reduce((acc, row) => {
-    acc[String(row.productKey || '')] = row;
-    return acc;
-  }, {});
-  const productRowsFromDetail = detailAgg.products.map((detail) => {
-    const donut = donutByProductKey[String(detail.canonicalId || '')] || null;
-    return {
-      canonicalId: detail.canonicalId,
-      canonicalName: detail.canonicalName,
-      total: Number(detail.total || donut?.value || 0),
-      percentOfFood: totalFood > 0 ? ((Number(detail.total || 0) / totalFood) * 100) : Number(donut?.pct || 0),
-      count: Number(detail.count || 0),
-      purchases: Number(detail.purchases || 0),
-      cheapestVendorKey: detail.cheapestVendorKey || '',
-      cheapestPrice: detail.cheapestPrice ?? null,
-      lastVendor: detail.lastVendor || '',
-      lastPrice: detail.lastPrice ?? null,
-      aliases: Array.isArray(detail.aliases) ? detail.aliases : []
-    };
-  });
-  const missingDonutRows = legendRows
-    .filter((row) => !detailByProductKey[String(row.productKey || '')])
-    .map((row) => ({
-      canonicalId: row.productKey,
-      canonicalName: row.label,
-      total: Number(row.value || 0),
-      percentOfFood: Number(row.pct || 0),
-      count: Number(state.balanceStatsProductMeta?.[row.label]?.purchaseCount || 0),
-      purchases: 0,
-      cheapestVendorKey: '',
-      cheapestPrice: null,
-      lastVendor: '',
-      lastPrice: null,
-      aliases: []
-    }));
-  const productRows = [...productRowsFromDetail, ...missingDonutRows];
+  const productRows = detailAgg.products.map((detail) => ({
+    canonicalId: detail.canonicalId,
+    canonicalName: detail.canonicalName,
+    total: Number(detail.total || 0),
+    percentOfFood: totalFood > 0 ? ((Number(detail.total || 0) / totalFood) * 100) : 0,
+    count: Number(detail.count || 0),
+    purchases: Number(detail.purchases || 0),
+    cheapestVendorKey: detail.cheapestVendorKey || '',
+    cheapestPrice: detail.cheapestPrice ?? null,
+    lastVendor: detail.lastVendor || '',
+    lastPrice: detail.lastPrice ?? null,
+    aliases: Array.isArray(detail.aliases) ? detail.aliases : []
+  }));
+  console.log('[Productos][Stats] reconstrucción canónica', { products: productRows.length, lines: lines.length, purchaseCount, totalFood });
   const productsQuery = normalizeFoodName(effectiveCfg.productsQuery || '');
   const productsQueryKey = normalizeProductItemKey(productsQuery);
   const queryFilteredRows = productsQuery
@@ -1185,14 +1228,13 @@ function buildProductsViewModel(cfg = {}) {
   });
   const listVisible = effectiveCfg.onlyWithItems ? sortedRows.filter((row) => row.count > 0) : sortedRows;
   if (DEBUG_FINANCE_PRODUCTS) {
-    console.log('[Productos] range', { start, end }, 'itemsLines', lines.length);
-    console.log('[Productos] agg keys', Object.keys(detailAgg || {}), 'rows', (legendRows || []).length);
+    console.log('[Productos] range', { start, end, rangeValue }, 'itemsLines', lines.length);
   }
   return {
     cfg: effectiveCfg,
     lines,
     rangeRows,
-    legendRows,
+    legendRows: [],
     listVisible,
     totalFood,
     purchaseCount: detailAgg.purchaseCount,
@@ -1295,41 +1337,63 @@ function firebaseClean(obj) {
 
 async function mergeFoodProducts(selection = [], destinationId = '') {
   const ids = [...new Set(selection.map((id) => String(id || '').trim()).filter(Boolean))];
+  console.log('[mergeFoodProducts] selección origen', ids);
   if (ids.length < 2) return false;
-  const canonicalId = firebaseSafeKeyLoose(destinationId || ids[0]);
+  const canonicalId = String(destinationId || ids[0]).trim();
+  console.log('[mergeFoodProducts] producto objetivo', canonicalId);
   if (!ids.includes(canonicalId)) return false;
-  const canonicalName = state.food.itemsById?.[canonicalId]?.displayName || state.food.itemsById?.[canonicalId]?.name || canonicalId;
-  const canonicalPayload = firebaseClean({
-    name: String(canonicalName || canonicalId),
-    createdAt: Number(state.foodCatalog.canonicals?.[canonicalId]?.createdAt || nowTs()),
-    updatedAt: nowTs()
-  });
-  console.log('[mergeFoodProducts] payload', canonicalPayload);
-  await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/canonicals/${canonicalId}`), canonicalPayload));
-  state.foodCatalog.canonicals[canonicalId] = canonicalPayload;
+  const canonicalItem = state.food.itemsById?.[canonicalId] || {};
+  const canonicalName = canonicalItem.displayName || canonicalItem.name || canonicalId;
+  const prevCanonical = state.foodCatalog.canonicals?.[canonicalId] || {};
+  const aliasesByStore = prevCanonical.aliasesByStore && typeof prevCanonical.aliasesByStore === 'object' ? { ...prevCanonical.aliasesByStore } : {};
+  const pricesByStore = prevCanonical.pricesByStore && typeof prevCanonical.pricesByStore === 'object' ? { ...prevCanonical.pricesByStore } : {};
+
   for (const id of ids) {
     const item = state.food.itemsById?.[id] || {};
-    const aliases = [...new Set([item.name, item.displayName, ...(item.aliases || [])].map((v) => normalizeFoodName(v)).filter(Boolean))];
-    const vendors = Object.keys(item.vendorAliases || {}).length ? Object.keys(item.vendorAliases || {}) : ['unknown'];
-    for (const vendorRaw of vendors) {
-      const vendorKey = firebaseSafeKeyLoose(vendorRaw);
-      for (const aliasRaw of aliases) {
+    const baseAliases = [...new Set([item.name, item.displayName, ...(Array.isArray(item.aliases) ? item.aliases : [])].map((v) => normalizeFoodName(v)).filter(Boolean))];
+    const vendorAliases = item.vendorAliases && typeof item.vendorAliases === 'object' ? item.vendorAliases : {};
+    const vendorKeys = new Set(['unknown', ...Object.keys(vendorAliases || {}), ...Object.keys(item.priceHistory || {})]);
+    for (const vendorRaw of vendorKeys) {
+      const vendorKey = firebaseSafeKeyLoose(vendorRaw || 'unknown');
+      const aliasesForVendor = [...new Set([
+        ...baseAliases,
+        ...((Array.isArray(vendorAliases[vendorRaw]) ? vendorAliases[vendorRaw] : []).map((v) => normalizeFoodName(v)).filter(Boolean))
+      ])];
+      if (!aliasesByStore[vendorKey]) aliasesByStore[vendorKey] = [];
+      aliasesByStore[vendorKey] = [...new Set([...(aliasesByStore[vendorKey] || []), ...aliasesForVendor])];
+      for (const aliasRaw of aliasesForVendor) {
         const aliasKey = firebaseSafeKeyLoose(normalizeAliasKey(aliasRaw));
         const payload = firebaseClean({ canonicalId, aliasRaw: String(aliasRaw || ''), updatedAt: nowTs() });
-        console.log('[mergeFoodProducts] payload', payload);
         await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/aliases/${vendorKey}/${aliasKey}`), payload));
         if (!state.foodCatalog.aliases[vendorKey]) state.foodCatalog.aliases[vendorKey] = {};
         state.foodCatalog.aliases[vendorKey][aliasKey] = payload;
       }
+      const vendorRows = item.priceHistory?.[vendorRaw] || item.priceHistory?.[vendorKey] || {};
+      const numericPrices = Object.values(vendorRows || {}).map((row) => Number(row?.unitPrice || row?.price || 0)).filter((v) => Number.isFinite(v) && v > 0);
+      if (!pricesByStore[vendorKey]) pricesByStore[vendorKey] = [];
+      pricesByStore[vendorKey] = [...pricesByStore[vendorKey], ...numericPrices].slice(-250);
     }
+
     if (id !== canonicalId) {
       const mergeFromId = firebaseSafeKeyLoose(id);
-      const mergePayload = firebaseClean({ canonicalId });
-      console.log('[mergeFoodProducts] payload', mergePayload);
+      const mergePayload = firebaseClean({ canonicalId, updatedAt: nowTs() });
       await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/merges/${mergeFromId}`), mergePayload));
-      state.foodCatalog.merges[mergeFromId] = canonicalId;
+      state.foodCatalog.merges[mergeFromId] = mergePayload;
     }
   }
+
+  const canonicalPayload = {
+    name: String(canonicalName || canonicalId),
+    createdAt: Number(prevCanonical?.createdAt || nowTs()),
+    updatedAt: nowTs(),
+    aliasesByStore: Object.fromEntries(Object.entries(aliasesByStore).map(([store, list]) => [store, [...new Set((Array.isArray(list) ? list : []).map((it) => normalizeFoodName(it)).filter(Boolean))]])),
+    pricesByStore: Object.fromEntries(Object.entries(pricesByStore).map(([store, list]) => [store, (Array.isArray(list) ? list : []).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0).slice(-250)]))
+  };
+
+  console.log('[mergeFoodProducts] aliases generados', canonicalPayload.aliasesByStore);
+  await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/canonicals/${canonicalId}`), canonicalPayload));
+  state.foodCatalog.canonicals[canonicalId] = canonicalPayload;
+  console.log('[mergeFoodProducts] persistencia final', { canonicalId, merged: ids.length, stores: Object.keys(canonicalPayload.aliasesByStore || {}).length });
   return true;
 }
 
@@ -5453,6 +5517,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       const selectedList = [...selected];
       const currentDestination = String(state.modal.destinationId || '');
       const destinationId = selected.has(currentDestination) ? currentDestination : (selectedList[0] || '');
+      console.log('[mergeFoodProducts] selección UI', { selected: selectedList, destinationId });
       state.modal = { ...state.modal, selected: selectedList, destinationId };
       triggerRender();
       return;
@@ -5936,7 +6001,7 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-balance-category]')) { state.balanceFilterCategory = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
     if (event.target.matches('[data-balance-account]')) { state.balanceAccountFilter = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
     if (event.target.matches('[data-finance-stats-group]')) { state.balanceStatsGroupBy = event.target.value; state.balanceStatsActiveSegment = null; triggerRender(); }
-    if (event.target.matches('[data-food-products-range]')) { state.foodProductsView = { ...state.foodProductsView, range: event.target.value }; triggerRender(); }
+    if (event.target.matches('[data-food-products-range]')) { state.foodProductsView = { ...state.foodProductsView, range: event.target.value, rangeValue: '' }; triggerRender(); }
     if (event.target.matches('[data-food-products-vendor]')) { state.foodProductsView = { ...state.foodProductsView, vendor: event.target.value }; triggerRender(); }
     if (event.target.matches('[data-food-products-account]')) { state.foodProductsView = { ...state.foodProductsView, account: event.target.value }; triggerRender(); }
     if (event.target.matches('[data-food-products-items-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyWithItems: !!event.target.checked }; triggerRender(); }

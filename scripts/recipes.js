@@ -3819,6 +3819,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   const MACRO_SCAN_REPEAT_BLOCK_MS = 220;
   const MACRO_SCAN_LOOKUP_COOLDOWN_MS = 1800; // obligatorio: anti-duplicados (mismo código ~2s)
   const MACRO_SCAN_LOOKUP_TIMEOUT_MS = 6500;
+  const MACRO_SCAN_ZXING_MAX_ATTEMPTS = 3;
   const OFF_PRODUCT_ENDPOINT = "https://world.openfoodfacts.org/api/v2/product";
   const MACRO_SCAN_DEBUG = (() => {
     try {
@@ -4647,6 +4648,21 @@ $recipeImportBtn?.addEventListener("click", () => {
     return "";
   }
 
+  function rotateCanvas90(sourceCanvas) {
+    const srcW = Math.max(1, Number(sourceCanvas?.width) || 0);
+    const srcH = Math.max(1, Number(sourceCanvas?.height) || 0);
+    if (!srcW || !srcH) return null;
+    const rotated = document.createElement("canvas");
+    rotated.width = srcH;
+    rotated.height = srcW;
+    const ctx = rotated.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.translate(rotated.width / 2, rotated.height / 2);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(sourceCanvas, -srcW / 2, -srcH / 2, srcW, srcH);
+    return rotated;
+  }
+
   async function runMacroScanZxingBarcodePass(reason = "manual_button") {
     logMacroEvent(["scanner", "barcode", "zxing"], "inicio decode de barras sobre frame congelado", { reason }, "info");
     const frame = captureMacroScanFrame();
@@ -4671,23 +4687,33 @@ $recipeImportBtn?.addEventListener("click", () => {
 
     const hints = new Map();
     if (DecodeHintType?.POSSIBLE_FORMATS && BarcodeFormat) {
-      const possibleFormats = [BarcodeFormat.EAN_13, BarcodeFormat.EAN_8].filter((v) => typeof v !== "undefined");
+      const possibleFormats = [
+        BarcodeFormat.EAN_8,
+        BarcodeFormat.EAN_13,
+        BarcodeFormat.UPC_A,
+        BarcodeFormat.UPC_E,
+      ].filter((v) => typeof v !== "undefined");
       if (possibleFormats.length) hints.set(DecodeHintType.POSSIBLE_FORMATS, possibleFormats);
     }
     const reader = new BrowserMultiFormatReader(hints, 500);
 
-    const attempts = [{ label: "full_frame", mode: "full", canvas: frame }];
-    const cropDefs = [
-      { name: "center_band_main", xPct: 0.14, yPct: 0.36, wPct: 0.72, hPct: 0.28 },
-      { name: "center_band_tight", xPct: 0.20, yPct: 0.40, wPct: 0.60, hPct: 0.22 },
-      { name: "center_band_wide", xPct: 0.08, yPct: 0.33, wPct: 0.84, hPct: 0.34 },
-    ];
-    cropDefs.forEach((def) => {
-      const centerCrop = createMacroScanCenterCrop(frame, def);
-      if (centerCrop?.canvas) attempts.push({ label: centerCrop.crop.name, mode: "crop", canvas: centerCrop.canvas, crop: centerCrop.crop });
-    });
+    const attempts = [{ label: "full_frame", mode: "full", canvas: frame, rotated: false }];
+    const centerCrop = createMacroScanCenterCrop(frame, { name: "center_band", xPct: 0.14, yPct: 0.36, wPct: 0.72, hPct: 0.28 });
+    if (centerCrop?.canvas) attempts.push({ label: centerCrop.crop.name, mode: "crop_center", canvas: centerCrop.canvas, crop: centerCrop.crop, rotated: false });
+    const lowerCrop = createMacroScanCenterCrop(frame, { name: "lower_band", xPct: 0.10, yPct: 0.62, wPct: 0.80, hPct: 0.28 });
+    if (lowerCrop?.canvas) {
+      const rotatedLower = rotateCanvas90(lowerCrop.canvas);
+      attempts.push({
+        label: "lower_band_rot90",
+        mode: "crop_lower",
+        canvas: rotatedLower || lowerCrop.canvas,
+        crop: lowerCrop.crop,
+        rotated: Boolean(rotatedLower),
+      });
+    }
+    const attemptsToRun = attempts.slice(0, MACRO_SCAN_ZXING_MAX_ATTEMPTS);
 
-    for (const attempt of attempts) {
+    for (const attempt of attemptsToRun) {
       try {
         _macroScanOcrDebugState.crop = attempt.canvas;
         updateMacroScanOcrDebugCanvases();
@@ -4695,6 +4721,7 @@ $recipeImportBtn?.addEventListener("click", () => {
           reason,
           mode: attempt.mode,
           attempt: attempt.label,
+          rotated90: attempt.rotated,
           frame: `${attempt.canvas.width}x${attempt.canvas.height}`,
           sourceFrame: `${frame.width}x${frame.height}`,
           crop: attempt.crop ? `${attempt.crop.x},${attempt.crop.y},${attempt.crop.width},${attempt.crop.height}` : "none",
@@ -4723,6 +4750,7 @@ $recipeImportBtn?.addEventListener("click", () => {
             engine: "zxing",
             mode: attempt.mode,
             attempt: attempt.label,
+            rotated90: attempt.rotated,
             raw,
             clean,
             checksum: validation.valid,
@@ -4735,6 +4763,7 @@ $recipeImportBtn?.addEventListener("click", () => {
           engine: "zxing",
           mode: attempt.mode,
           attempt: attempt.label,
+          rotated90: attempt.rotated,
           raw,
           clean,
           checksum: validation.valid,
@@ -4745,6 +4774,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         logMacroEvent(["scanner", "barcode", "zxing", "warn"], "sin lectura válida en intento", {
           mode: attempt.mode,
           attempt: attempt.label,
+          rotated90: attempt.rotated,
           error: err?.name || err?.message || err,
         }, "warn");
       }
@@ -4752,7 +4782,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     logMacroEvent(["scanner", "barcode", "error"], "ZXing no encontró EAN válido en frame congelado", {
       engine: "zxing",
       reason,
-      attempts: attempts.map((a) => `${a.label}:${a.mode}`).join(","),
+      attempts: attemptsToRun.map((a) => `${a.label}:${a.mode}:rot90=${a.rotated ? "1" : "0"}`).join(","),
       sourceFrame: `${frame.width}x${frame.height}`,
     }, "error");
     return "";
@@ -4768,7 +4798,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   async function loadMacroScanZxingModule() {
     if (_macroScanZxingModule) return _macroScanZxingModule;
-    _macroScanZxingModule = await import("https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm");
+    _macroScanZxingModule = await import("https://cdn.jsdelivr.net/npm/@zxing/library@latest/+esm");
     logMacroEvent(["scanner", "barcode", "zxing"], "dependencia ZXing cargada", { ok: Boolean(_macroScanZxingModule) }, "info");
     return _macroScanZxingModule;
   }
@@ -6076,15 +6106,15 @@ $recipeImportBtn?.addEventListener("click", () => {
       return;
     }
     hideMacroScanAddProduct();
-    setMacroScanStatus("Decodificando barras en frame congelado (ZXing)...");
+    setMacroScanStatus("Analizando barras...");
     const zxingCode = await runMacroScanZxingBarcodePass("manual_button");
     if (zxingCode) {
       if ($macroScanManual) $macroScanManual.value = zxingCode;
-      setMacroScanStatus(`Barcode detectado (ZXing): ${zxingCode}`);
+      setMacroScanStatus(`Barcode detectado: ${zxingCode}`);
       await handleBarcodeFound(zxingCode, { fromManual: false, sourceEngine: "barcode_zxing" });
       return;
     }
-    setMacroScanStatus("ZXing sin lectura. Intentando OCR del número...");
+    setMacroScanStatus("No se detectó barcode, intentando OCR...");
     logMacroEvent(["scanner", "ocr"], "fallback OCR tras fallo decode de barras", { previousEngine: "zxing", reason: "zxing_fail" }, "info");
     const ocrCode = await runMacroScanOcrPass("manual_button");
     if (!ocrCode) {

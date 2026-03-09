@@ -311,6 +311,10 @@ if ($viewRecipes) {
   const $macroScanOverlay = document.querySelector(".macro-scan-overlay");
   const $macroScanAddProduct = document.getElementById("macro-scan-add-product");
   const $macroScanLogPanel = document.getElementById("macro-scan-log-panel");
+  const $macroScanOcrDebug = document.getElementById("macro-scan-ocr-debug");
+  const $macroScanOcrSource = document.getElementById("macro-scan-ocr-source");
+  const $macroScanOcrCrop = document.getElementById("macro-scan-ocr-crop");
+  const $macroScanOcrFinal = document.getElementById("macro-scan-ocr-final");
   const $macroManualName = document.getElementById("macro-manual-name");
   const $macroManualBrand = document.getElementById("macro-manual-brand");
   const $macroManualBarcode = document.getElementById("macro-manual-barcode");
@@ -3797,6 +3801,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   let _macroScanLastHostPx = null; // { width, height }
   let _macroScanLookupSeq = 0;
   let _macroScanLookupTimer = null;
+  let _macroScanOcrDebugState = { source: null, crop: null, final: null };
   let _macroScanLookupQueued = null; // { barcode, options }
   let _macroScanLastLookupCode = "";
   let _macroScanLastLookupAt = 0;
@@ -3819,6 +3824,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   })();
 
   function ensureMacroScanLogPanel() {
+    updateMacroScanOcrDebugCanvases();
     return $macroScanLogPanel || null;
   }
 
@@ -4195,35 +4201,123 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroScanAddProduct.classList.remove("hidden");
   }
 
-  function isValidBarcodeChecksum(digits = "") {
-    const code = String(digits || "").trim();
-    if (!/^\d+$/.test(code)) return false;
+  function computeModulo10CheckDigit(body = "") {
+    const digits = String(body || "").replace(/\D/g, "");
+    if (!digits) return null;
+    const sum = digits
+      .split("")
+      .reverse()
+      .reduce((acc, ch, idx) => {
+        const n = Number(ch) || 0;
+        return acc + n * (idx % 2 === 0 ? 3 : 1);
+      }, 0);
+    return (10 - (sum % 10)) % 10;
+  }
+
+  function validateBarcodeByType(digits = "") {
+    const code = String(digits || "").replace(/\D/g, "");
+    if (!code) return { valid: false, type: "", reason: "empty" };
     const len = code.length;
-    if (![8, 12, 13, 14].includes(len)) return false;
+    const type = len === 13 ? "ean13" : (len === 8 ? "ean8" : (len === 12 ? "upca" : ""));
+    if (!type) return { valid: false, type: "", reason: `unsupported_length_${len}` };
     const body = code.slice(0, -1);
     const check = Number(code.slice(-1));
-    if (!Number.isFinite(check)) return false;
-    const fromRight = body.split("").reverse();
-    const sum = fromRight.reduce((acc, ch, idx) => {
-      const n = Number(ch) || 0;
-      if (len === 8) return acc + n * (idx % 2 === 0 ? 3 : 1);
-      return acc + n * (idx % 2 === 0 ? 3 : 1);
-    }, 0);
-    const expected = (10 - (sum % 10)) % 10;
-    return expected === check;
+    if (!Number.isFinite(check)) return { valid: false, type, reason: "invalid_check_digit" };
+    const expected = computeModulo10CheckDigit(body);
+    const valid = Number(expected) === check;
+    return {
+      valid,
+      type,
+      reason: valid ? "ok" : "checksum_mismatch",
+      expected,
+      actual: check,
+      digits: code,
+    };
+  }
+
+  function isValidBarcodeChecksum(digits = "") {
+    return validateBarcodeByType(digits).valid;
   }
 
   function normalizeBarcodeText(value, { strict = true } = {}) {
     const raw = String(value || "").trim();
     if (!raw) return "";
     const digits = raw.replace(/\D/g, "");
-    if (![8, 12, 13, 14].includes(digits.length)) return "";
-    if (strict && !isValidBarcodeChecksum(digits)) return "";
+    const check = validateBarcodeByType(digits);
+    if (!check.type) return "";
+    if (strict && !check.valid) return "";
     return digits;
   }
 
   function normalizeDetectedBarcode(value) {
     return normalizeBarcodeText(value, { strict: true }) || normalizeBarcodeText(value, { strict: false }) || "";
+  }
+
+  function extractOcrDigitCandidates(rawText = "") {
+    const raw = String(rawText || "");
+    const blocks = raw.match(/[0-9OolI|\s\-_.:,;]{6,40}/g) || [];
+    const expanded = blocks.length ? blocks : [raw];
+    const fromTokens = [];
+    expanded.forEach((block) => {
+      const normalizedBlock = String(block || "").replace(/[Oo]/g, "0").replace(/[Il|]/g, "1");
+      const tokens = normalizedBlock.split(/\s+/).filter(Boolean);
+      if (tokens.length > 1) {
+        for (let i = 0; i < tokens.length; i += 1) {
+          for (let j = i + 1; j <= tokens.length; j += 1) {
+            fromTokens.push(tokens.slice(i, j).join(""));
+          }
+        }
+      }
+      fromTokens.push(normalizedBlock);
+    });
+    const all = [...expanded, ...fromTokens]
+      .map((part) => String(part || "").replace(/[Oo]/g, "0").replace(/[Il|]/g, "1").replace(/[^\d]/g, ""))
+      .filter((v) => v.length >= 7);
+    const uniq = [...new Set(all)];
+    const candidates = [];
+    uniq.forEach((digits) => {
+      [13, 12, 8].forEach((len) => {
+        if (digits.length < len) return;
+        for (let i = 0; i <= digits.length - len; i += 1) {
+          candidates.push(digits.slice(i, i + len));
+        }
+      });
+    });
+    return [...new Set(candidates)];
+  }
+
+  function ensureCanvasFromSource(source) {
+    if (!source) return null;
+    if (source instanceof HTMLCanvasElement) return source;
+    if (!(source instanceof HTMLVideoElement) && !(source instanceof HTMLImageElement)) return null;
+    const w = Number(source.videoWidth || source.naturalWidth || source.width) || 0;
+    const h = Number(source.videoHeight || source.naturalHeight || source.height) || 0;
+    if (!w || !h) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(source, 0, 0, w, h);
+    return canvas;
+  }
+
+  function updateMacroScanOcrDebugCanvases() {
+    if (!$macroScanOcrDebug || !$macroScanOcrSource || !$macroScanOcrCrop || !$macroScanOcrFinal) return;
+    $macroScanOcrDebug.classList.toggle("hidden", !MACRO_SCAN_DEBUG);
+    if (!MACRO_SCAN_DEBUG) return;
+    const draw = (target, source) => {
+      if (!target) return;
+      const ctx = target.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return;
+      const srcCanvas = ensureCanvasFromSource(source);
+      ctx.clearRect(0, 0, target.width, target.height);
+      if (!srcCanvas) return;
+      ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, target.width, target.height);
+    };
+    draw($macroScanOcrSource, _macroScanOcrDebugState.source);
+    draw($macroScanOcrCrop, _macroScanOcrDebugState.crop);
+    draw($macroScanOcrFinal, _macroScanOcrDebugState.final);
   }
 
   function captureMacroScanFrame() {
@@ -4237,6 +4331,8 @@ $recipeImportBtn?.addEventListener("click", () => {
     const ctx = _macroScanFrameCanvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return null;
     ctx.drawImage(srcVideo, 0, 0, srcVideo.videoWidth, srcVideo.videoHeight);
+    _macroScanOcrDebugState.source = _macroScanFrameCanvas;
+    updateMacroScanOcrDebugCanvases();
     return _macroScanFrameCanvas;
   }
 
@@ -4255,29 +4351,76 @@ $recipeImportBtn?.addEventListener("click", () => {
     return _macroScanOcrModule;
   }
 
-  function preprocessMacroScanFrame(canvas) {
-    if (!canvas) return null;
-    const out = document.createElement("canvas");
-    const w = Math.max(1, Number(canvas.width) || 0);
-    const h = Math.max(1, Number(canvas.height) || 0);
-    const cropH = Math.max(60, Math.round(h * 0.26));
-    const cropY = Math.max(0, Math.round((h - cropH) / 2));
-    out.width = w * 2;
-    out.height = cropH * 2;
-    const ctx = out.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return null;
-    ctx.drawImage(canvas, 0, cropY, w, cropH, 0, 0, out.width, out.height);
-    const img = ctx.getImageData(0, 0, out.width, out.height);
-    const d = img.data;
-    for (let i = 0; i < d.length; i += 4) {
-      const gray = Math.round(d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114);
-      const bin = gray > 128 ? 255 : 0;
-      d[i] = bin;
-      d[i + 1] = bin;
-      d[i + 2] = bin;
-      d[i + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
+  function createBarcodeNumberCropVariants(sourceCanvas) {
+    const w = Math.max(1, Number(sourceCanvas?.width) || 0);
+    const h = Math.max(1, Number(sourceCanvas?.height) || 0);
+    if (!w || !h) return [];
+    const defs = [
+      { name: "lower_band", xPct: 0.08, yPct: 0.66, wPct: 0.84, hPct: 0.22 },
+      { name: "center_lower_band", xPct: 0.12, yPct: 0.58, wPct: 0.76, hPct: 0.20 },
+      { name: "lower_wide_band", xPct: 0.03, yPct: 0.60, wPct: 0.94, hPct: 0.30 },
+    ];
+    return defs.map((cfg) => {
+      const crop = {
+        name: cfg.name,
+        x: Math.max(0, Math.round(w * cfg.xPct)),
+        y: Math.max(0, Math.round(h * cfg.yPct)),
+        width: Math.max(40, Math.round(w * cfg.wPct)),
+        height: Math.max(32, Math.round(h * cfg.hPct)),
+      };
+      if (crop.x + crop.width > w) crop.width = Math.max(1, w - crop.x);
+      if (crop.y + crop.height > h) crop.height = Math.max(1, h - crop.y);
+      const canvas = document.createElement("canvas");
+      canvas.width = crop.width;
+      canvas.height = crop.height;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (ctx) ctx.drawImage(sourceCanvas, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
+      return { crop, canvas };
+    });
+  }
+
+  function preprocessCropVariants(cropCanvas) {
+    const out = [];
+    const base = ensureCanvasFromSource(cropCanvas);
+    if (!base) return out;
+    const makeVariant = (name, threshold = 138, upscale = 1, invert = false) => {
+      const src = ensureCanvasFromSource(base);
+      if (!src) return;
+      const ctx = src.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return;
+      const img = ctx.getImageData(0, 0, src.width, src.height);
+      const d = img.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const gray = Math.round(d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114);
+        let boosted = Math.max(0, Math.min(255, (gray - 128) * 1.8 + 128));
+        const bin = boosted > threshold ? 255 : 0;
+        const val = invert ? (255 - bin) : bin;
+        d[i] = val;
+        d[i + 1] = val;
+        d[i + 2] = val;
+        d[i + 3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+      if (upscale <= 1) {
+        out.push({ name, canvas: src });
+        return;
+      }
+      const up = document.createElement("canvas");
+      up.width = Math.max(1, Math.round(src.width * upscale));
+      up.height = Math.max(1, Math.round(src.height * upscale));
+      const upCtx = up.getContext("2d", { willReadFrequently: true });
+      if (!upCtx) return;
+      upCtx.imageSmoothingEnabled = false;
+      upCtx.drawImage(src, 0, 0, src.width, src.height, 0, 0, up.width, up.height);
+      out.push({ name, canvas: up });
+    };
+
+    out.push({ name: "original_crop", canvas: base });
+    makeVariant("grayscale_threshold", 130, 1, false);
+    makeVariant("threshold_high_contrast", 156, 1, false);
+    makeVariant("threshold_upscale_2x", 148, 2, false);
+    makeVariant("threshold_upscale_3x", 150, 3, false);
+    makeVariant("threshold_inverted_2x", 148, 2, true);
     return out;
   }
 
@@ -4924,6 +5067,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         logMacroEvent(["scanner", "ocr", "error"], "sin frame de cámara para OCR", { reason }, "error");
         return "";
       }
+      logMacroEvent(["scanner", "ocr", "crop"], "dimensiones de fuente", { source: `${frame.width}x${frame.height}` }, "info");
 
       try {
         const mod = await loadMacroScanHtml5Module();
@@ -4932,7 +5076,7 @@ $recipeImportBtn?.addEventListener("click", () => {
           const scanRes = await Html5Qrcode.scanFileV2(frame.toDataURL("image/jpeg", 0.95), true);
           const code = normalizeDetectedBarcode(scanRes?.getText?.() || "");
           if (code) {
-            logMacroEvent(["scanner", "ocr"], "número detectado por decode de frame", { code, path: "scanFileV2" }, "info");
+            logMacroEvent(["scanner", "ocr", "success"], "número detectado por decode de frame", { code, path: "scanFileV2" }, "info");
             return code;
           }
         }
@@ -4940,46 +5084,96 @@ $recipeImportBtn?.addEventListener("click", () => {
         logMacroEvent(["scanner", "ocr", "warn"], "decode directo de frame no encontró código", { error: err?.name || err?.message || err }, "warn");
       }
 
-      const processed = preprocessMacroScanFrame(frame) || frame;
+      const crops = createBarcodeNumberCropVariants(frame);
       const ocrMod = await loadMacroScanOcrModule();
       const recognize = ocrMod?.recognize || ocrMod?.default?.recognize;
       if (typeof recognize !== "function") {
         logMacroEvent(["scanner", "ocr", "error"], "módulo OCR inválido", { hasRecognize: false }, "error");
         return "";
       }
-      const ocrRes = await recognize(processed, "eng", {
-        logger: (m) => {
-          if (m?.status === "recognizing text" && Number(m?.progress) > 0.98) {
-            logMacroEvent(["scanner", "ocr"], "OCR casi completado", { progress: Number(m.progress || 0).toFixed(2) }, "info");
+
+      for (const { crop, canvas } of crops) {
+        logMacroEvent(["scanner", "ocr", "crop"], "crop generado", {
+          name: crop.name,
+          source: `${frame.width}x${frame.height}`,
+          crop: `${crop.width}x${crop.height}`,
+          origin: `${crop.x},${crop.y}`,
+        }, "info");
+        _macroScanOcrDebugState.crop = canvas;
+        const variants = preprocessCropVariants(canvas);
+        logMacroEvent(["scanner", "ocr", "preprocess"], "variantes preparadas", { crop: crop.name, variants: variants.map((v) => v.name).join(",") }, "info");
+
+        for (const variant of variants) {
+          _macroScanOcrDebugState.final = variant.canvas;
+          updateMacroScanOcrDebugCanvases();
+          logMacroEvent(["scanner", "ocr", "preprocess"], "variant", {
+            crop: crop.name,
+            variant: variant.name,
+            size: `${variant.canvas.width}x${variant.canvas.height}`,
+          }, "info");
+          const ocrRes = await recognize(variant.canvas, "eng", {
+            logger: (m) => {
+              if (m?.status === "recognizing text" && Number(m?.progress) > 0.98) {
+                logMacroEvent(["scanner", "ocr"], "OCR casi completado", { progress: Number(m.progress || 0).toFixed(2), crop: crop.name, variant: variant.name }, "info");
+              }
+            },
+            tessedit_pageseg_mode: "7",
+            tessedit_char_whitelist: "0123456789",
+          });
+          const rawText = String(ocrRes?.data?.text || "");
+          const candidates = extractOcrDigitCandidates(rawText);
+          if (!candidates.length) {
+            logMacroEvent(["scanner", "ocr", "candidate", "warn"], "sin candidatos numéricos", { crop: crop.name, variant: variant.name, raw: rawText.slice(0, 90) }, "warn");
+            continue;
           }
-        },
-      });
-      const text = String(ocrRes?.data?.text || "");
-      const candidates = text.match(/\d[\d\s-]{6,20}\d/g) || [];
-      for (const candidate of candidates) {
-        const strictCode = normalizeBarcodeText(candidate, { strict: true });
-        if (strictCode) {
-          logMacroEvent(["scanner", "ocr"], "número OCR válido", { code: strictCode, strict: true }, "info");
-          return strictCode;
-        }
-      }
-      for (const candidate of candidates) {
-        const relaxedCode = normalizeBarcodeText(candidate, { strict: false });
-        if (relaxedCode) {
-          logMacroEvent(["scanner", "ocr", "warn"], "número OCR plausible sin checksum", { code: relaxedCode, strict: false }, "warn");
-          return relaxedCode;
+
+          const evaluated = candidates.map((digits) => {
+            const check = validateBarcodeByType(digits);
+            return { digits, ...check };
+          });
+
+          evaluated.forEach((item) => {
+            const status = item.valid ? "valid" : "invalid";
+            logMacroEvent(["scanner", "ocr", "candidate"], "evaluación", {
+              crop: crop.name,
+              variant: variant.name,
+              raw: rawText.slice(0, 90),
+              digits: item.digits,
+              type: item.type || "unknown",
+              status,
+              reason: item.reason,
+              expected: item.expected,
+              actual: item.actual,
+            }, item.valid ? "info" : "warn");
+          });
+
+          const valid = evaluated
+            .filter((c) => c.valid)
+            .sort((a, b) => (b.digits.length - a.digits.length) || a.digits.localeCompare(b.digits));
+          if (valid.length) {
+            const winner = valid[0];
+            logMacroEvent(["scanner", "ocr", "success"], "barcode detectado por OCR", {
+              code: winner.digits,
+              type: winner.type,
+              crop: crop.name,
+              variant: variant.name,
+            }, "info");
+            return winner.digits;
+          }
         }
       }
 
-      logMacroEvent(["scanner", "ocr", "warn"], "OCR sin número válido", { textSample: text.slice(0, 80), candidates: candidates.length }, "warn");
+      logMacroEvent(["scanner", "ocr", "warn"], "OCR sin número válido", { reason, triedCrops: crops.length }, "warn");
       return "";
     } catch (err) {
       logMacroEvent(["scanner", "ocr", "error"], "OCR falló", { reason, error: err?.name || err?.message || err }, "error");
       return "";
     } finally {
       _macroScanOcrInFlight = false;
+      updateMacroScanOcrDebugCanvases();
     }
   }
+
 
   async function tryOcrBarcodeNumber(reason = "ocr") {
     return runMacroScanOcrPass(reason);
@@ -5349,16 +5543,43 @@ $recipeImportBtn?.addEventListener("click", () => {
   $macroScanEngineHtml5?.addEventListener("click", async () => {
     await startMacroBarcodeScan("html5");
   });
+
+  function updateManualBarcodeValidationHint() {
+    const raw = String($macroScanManual?.value || "").trim();
+    if (!raw) return;
+    const digits = raw.replace(/\D/g, "");
+    const validation = validateBarcodeByType(digits);
+    if (!validation.type) {
+      setMacroScanStatus("Código manual: usa EAN-8, UPC-A o EAN-13.");
+      return;
+    }
+    if (validation.valid) {
+      setMacroScanStatus(`Código manual válido (${validation.type.toUpperCase()}).`);
+      return;
+    }
+    setMacroScanStatus(`Código manual inválido: checksum no cuadra para ${validation.type.toUpperCase()}.`);
+  }
+
+  $macroScanManual?.addEventListener("input", () => {
+    updateManualBarcodeValidationHint();
+  });
+
   $macroScanManualBtn?.addEventListener("click", async () => {
     hideMacroScanAddProduct();
     const barcodeInput = String($macroScanManual?.value || "").trim();
+    const normalized = normalizeDetectedBarcode(barcodeInput);
+    const validation = validateBarcodeByType(normalized || barcodeInput.replace(/\D/g, ""));
     logLookup("ruta manual", { barcode: barcodeInput || "", lookupRequested: Boolean(barcodeInput) });
     if (!barcodeInput) {
       setMacroScanStatus("Introduce un código de barras.");
       return;
     }
+    if (!validation.valid) {
+      setMacroScanStatus("Código manual inválido. Revisa checksum o escribe otro.");
+      return;
+    }
     setMacroScanStatus("Buscando...");
-    await handleBarcodeFound(barcodeInput, { fromManual: true, sourceEngine: "manual" });
+    await handleBarcodeFound(normalized || barcodeInput, { fromManual: true, sourceEngine: "manual" });
   });
 
   $macroScanStop?.addEventListener("click", async () => {

@@ -1293,10 +1293,14 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   function calculateEntryFoodCost(entry) {
     if (!entry) return { cost: null, missing: 1 };
+    if (Number.isFinite(Number(entry?.computedCost)) && Number(entry.computedCost) >= 0) {
+      return { cost: Number(entry.computedCost), missing: 0 };
+    }
     if (entry.type === "product") {
       const p = nutritionProducts.find((x) => x.id === entry.refId);
-      const grams = Math.max(0, Number(entry.grams) || 0);
-      const cost = calculateProductConsumedCost(p, grams, "g");
+      const amount = Math.max(0, Number(entry.amount) || Number(entry.grams) || 0);
+      const unit = normalizeUnit(entry.unit || "g") || "g";
+      const cost = calculateProductConsumedCost(p, amount, unit);
       return { cost, missing: cost == null ? 1 : 0 };
     }
     if (entry.type === "recipe") {
@@ -1306,6 +1310,83 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       return { cost: rc.covered ? rc.total : null, missing: rc.missing || 0 };
     }
     return { cost: null, missing: 0 };
+  }
+
+  function computeConsumptionEntryCost(product, amount, unit) {
+    const cost = calculateProductConsumedCost(product, amount, unit);
+    if (!(Number.isFinite(Number(cost)) && Number(cost) >= 0)) {
+      return { computedCost: null, costSource: null, pricingSnapshot: buildPricingSnapshot(product) || null };
+    }
+    const costSource = getEffectiveProductPriceSource(product) || "snapshot";
+    return {
+      computedCost: Number(cost),
+      costSource,
+      pricingSnapshot: {
+        ...(buildPricingSnapshot(product) || {}),
+        computedCost: Number(cost),
+      },
+    };
+  }
+
+  function buildConsumptionEntryFromEditor({ product, amount, unit, meal }) {
+    const safeAmount = Math.max(0, Number(amount) || 0);
+    const safeUnit = normalizeUnit(unit || product?.baseUnit || "g") || "g";
+    const safeMeal = mealOrder.includes(meal) ? meal : "breakfast";
+    const baseUnit = normalizeUnit(product?.baseUnit || product?.servingBaseUnit || "g") || "g";
+    const normalizedAmount = convertAmount(safeAmount, safeUnit, baseUnit);
+    const macrosSnapshot = normalizedAmount == null
+      ? normalizeMacros({})
+      : normalizeMacros(calcProductMacros({ ...product, servingBaseGrams: Number(product?.baseQuantity || product?.servingBaseGrams) || 100 }, normalizedAmount));
+    const cost = computeConsumptionEntryCost(product, safeAmount, safeUnit);
+    const linkedHabitId = String(product?.linkedHabitId || "").trim();
+    return {
+      type: "product",
+      mealSlot: safeMeal,
+      refId: String(product?.id || "").trim(),
+      productId: String(product?.id || "").trim(),
+      productName: String(product?.name || "").trim(),
+      nameSnapshot: String(product?.name || "").trim(),
+      grams: convertAmount(safeAmount, safeUnit, "g") ?? 0,
+      amount: safeAmount,
+      unit: safeUnit,
+      amountUnit: safeUnit,
+      detectedUnitType: product?.detectedUnitType || (["ml", "l"].includes(baseUnit) ? "volume" : "mass"),
+      linkedFinanceProductId: String(product?.financeProductId || "").trim(),
+      linkedHabitId,
+      habitSync: {
+        habitId: linkedHabitId,
+        amount: linkedHabitId ? 1 : 0,
+      },
+      nutritionSnapshot: buildNutritionSnapshot(product) || null,
+      pricingSnapshot: cost.pricingSnapshot,
+      priceSource: getEffectiveProductPriceSource(product) || null,
+      costSource: cost.costSource,
+      computedCost: Number.isFinite(Number(cost.computedCost)) ? Number(cost.computedCost) : null,
+      macrosSnapshot,
+      sideEffects: {
+        habits: linkedHabitId ? [{ habitId: linkedHabitId, amount: 1 }] : [],
+        financeCost: Number.isFinite(Number(cost.computedCost)) ? Number(cost.computedCost) : 0,
+        productsResolved: 1,
+        productsTotal: 1,
+      },
+      createdAt: Date.now(),
+    };
+  }
+
+  function persistConsumptionEntry(entry, { meal, entryTarget = null, date = selectedMacroDate } = {}) {
+    const log = getDailyLog(date);
+    const safeMeal = mealOrder.includes(meal || entry?.mealSlot) ? (meal || entry.mealSlot) : "breakfast";
+    if (entryTarget && Number.isFinite(Number(entryTarget.idx))) {
+      const idx = Number(entryTarget.idx);
+      if (log?.meals?.[safeMeal]?.entries?.[idx]) {
+        log.meals[safeMeal].entries[idx] = { ...log.meals[safeMeal].entries[idx], ...entry, mealSlot: safeMeal };
+      }
+    } else {
+      log.meals[safeMeal].entries.unshift({ ...entry, mealSlot: safeMeal });
+    }
+    persistNutrition();
+    renderMacrosView();
+    return { meal: safeMeal };
   }
 
   function normalizeDate(dateStr) {
@@ -3396,13 +3477,42 @@ $recipeImportBtn?.addEventListener("click", () => {
         meals[meal] = {
           entries: entries.map((entry) => ({
             type: entry?.type === "recipe" ? "recipe" : "product",
+            mealSlot: meal,
             refId: entry?.refId || "",
+            productId: String(entry?.productId || entry?.refId || "").trim(),
+            productName: String(entry?.productName || entry?.nameSnapshot || "").trim(),
             nameSnapshot: String(entry?.nameSnapshot || "").trim(),
             grams: Math.max(0, Number(entry?.grams) || 0),
             amount: Math.max(0, Number(entry?.amount) || Number(entry?.grams) || 0),
             unit: normalizeUnit(entry?.unit || "g") || "g",
+            amountUnit: normalizeUnit(entry?.amountUnit || entry?.unit || "g") || "g",
             servings: Math.max(0, Number(entry?.servings) || 0),
             macrosSnapshot: normalizeMacros(entry?.macrosSnapshot || {}),
+            nutritionSnapshot: entry?.nutritionSnapshot && typeof entry.nutritionSnapshot === "object"
+              ? {
+                productId: String(entry.nutritionSnapshot.productId || entry?.refId || "").trim(),
+                servingBaseQty: Math.max(1, Number(entry.nutritionSnapshot.servingBaseQty) || 100),
+                servingBaseUnit: normalizeUnit(entry.nutritionSnapshot.servingBaseUnit || "g") || "g",
+                macrosPerBase: normalizeMacros(entry.nutritionSnapshot.macrosPerBase || {}),
+              }
+              : null,
+            pricingSnapshot: entry?.pricingSnapshot && typeof entry.pricingSnapshot === "object"
+              ? {
+                productId: String(entry.pricingSnapshot.productId || entry?.refId || "").trim(),
+                linkedFinanceProductId: String(entry.pricingSnapshot.linkedFinanceProductId || "").trim(),
+                priceSource: entry.pricingSnapshot.priceSource || null,
+                price: Number(entry.pricingSnapshot.price) > 0 ? Number(entry.pricingSnapshot.price) : null,
+                baseQty: Number(entry.pricingSnapshot.baseQty) > 0 ? Number(entry.pricingSnapshot.baseQty) : null,
+                baseUnit: normalizeCostUnit(entry.pricingSnapshot.baseUnit || ""),
+                computedCost: Number(entry.pricingSnapshot.computedCost) >= 0 ? Number(entry.pricingSnapshot.computedCost) : null,
+              }
+              : null,
+            linkedFinanceProductId: String(entry?.linkedFinanceProductId || entry?.pricingSnapshot?.linkedFinanceProductId || "").trim(),
+            linkedHabitId: String(entry?.linkedHabitId || entry?.habitSync?.habitId || "").trim(),
+            priceSource: entry?.priceSource || entry?.pricingSnapshot?.priceSource || null,
+            costSource: entry?.costSource || null,
+            computedCost: Number(entry?.computedCost) >= 0 ? Number(entry.computedCost) : null,
+            detectedUnitType: String(entry?.detectedUnitType || "").trim() || null,
             habitSync: {
               habitId: String(entry?.habitSync?.habitId || "").trim(),
               amount: Math.max(0, Number(entry?.habitSync?.amount) || 0),
@@ -3412,7 +3522,7 @@ $recipeImportBtn?.addEventListener("click", () => {
                 habitId: String(h?.habitId || "").trim(),
                 amount: Math.max(0, Number(h?.amount) || 0),
               })).filter((h) => h.habitId && h.amount) : [],
-              financeCost: Math.max(0, Number(entry?.sideEffects?.financeCost) || 0),
+              financeCost: Math.max(0, Number(entry?.sideEffects?.financeCost ?? entry?.computedCost) || 0),
               productsResolved: Math.max(0, Number(entry?.sideEffects?.productsResolved) || 0),
               productsTotal: Math.max(0, Number(entry?.sideEffects?.productsTotal) || 0),
             },
@@ -4202,6 +4312,8 @@ $recipeImportBtn?.addEventListener("click", () => {
   function readMacroProductDraftFromForm() {
     const base = Math.max(1, Number($macroProductBase?.value) || 100);
     const baseUnit = normalizeUnit($macroProductBaseUnit?.value || "g") || "g";
+    const hasFinanceSelection = !!$macroProductFinanceSelect;
+    const hasHabitSelection = !!$macroProductHabitSelect;
     return {
       id: _macroProductDraft?.id,
       source: _macroProductDraft?.source || "manual",
@@ -4209,8 +4321,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       name: $macroProductName?.value,
       brand: $macroProductBrand?.value,
       barcode: $macroProductBarcode?.value,
-      financeProductId: $macroProductFinanceSelect?.value || _macroProductDraft?.financeProductId || "",
-      linkedHabitId: $macroProductHabitSelect?.value || _macroProductDraft?.linkedHabitId || "",
+      financeProductId: hasFinanceSelection ? String($macroProductFinanceSelect?.value || "") : (_macroProductDraft?.financeProductId || ""),
+      linkedHabitId: hasHabitSelection ? String($macroProductHabitSelect?.value || "") : (_macroProductDraft?.linkedHabitId || ""),
       price: Number($macroProductPrice?.value) > 0 ? Number($macroProductPrice.value) : null,
       priceBaseQty: Number($macroProductPriceBaseQty?.value) > 0 ? Number($macroProductPriceBaseQty.value) : null,
       priceBaseUnit: normalizeCostUnit($macroProductPriceBaseUnit?.value || ""),
@@ -4565,28 +4677,10 @@ $recipeImportBtn?.addEventListener("click", () => {
   function addProductToMeal(meal, product, grams = 100) {
     if (!product) return;
     const baseUnit = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
-    const normalizedAmount = convertAmount(grams, baseUnit, baseUnit);
-    const macrosSnapshot = normalizeMacros(calcProductMacros({ ...product, servingBaseGrams: Number(product.baseQuantity || product.servingBaseGrams) || 100 }, normalizedAmount == null ? 0 : normalizedAmount));
-    const sideEffects = buildProductSideEffects(product, 1);
-    const entry = {
-      type: "product",
-      refId: product.id,
-      nameSnapshot: product.name,
-      grams,
-      amount: grams,
-      unit: baseUnit,
-      macrosSnapshot,
-      habitSync: {
-        habitId: String(product.linkedHabitId || "").trim(),
-        amount: String(product.linkedHabitId || "").trim() ? 1 : 0,
-      },
-      sideEffects,
-      createdAt: Date.now(),
-    };
-    getDailyLog(selectedMacroDate).meals[meal].entries.unshift(entry);
+    const entry = buildConsumptionEntryFromEditor({ product, amount: grams, unit: baseUnit, meal });
+    const sideEffects = entry.sideEffects || buildProductSideEffects(product, 1);
+    persistConsumptionEntry(entry, { meal });
     bumpMacroUsage("products", product.id);
-    persistNutrition();
-    renderMacrosView();
     applyRecipeSideEffects(sideEffects, selectedMacroDate, 1, "product");
   }
 
@@ -6432,6 +6526,8 @@ $recipeImportBtn?.addEventListener("click", () => {
         brand: String(product.brands || "").split(",")[0]?.trim() || "",
         image: String(product.image_front_url || product.image_url || "").trim() || null,
         quantity: String(product.quantity || "").trim() || null,
+        servingSize: String(product.serving_size || "").trim() || null,
+        nutritionDataPer: String(product.nutrition_data_per || product.nutriment_data_per || "").trim() || null,
         nutriments: (product.nutriments && typeof product.nutriments === "object") ? product.nutriments : null,
         source: "openfoodfacts",
       };
@@ -6447,6 +6543,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       const brand = String(attrs?.brand || attrs?.brands || "").trim();
       const image = String(attrs?.image_url || attrs?.image || attrs?.front_image_url || "").trim() || null;
       const quantity = String(attrs?.quantity || attrs?.package_size || attrs?.weight || "").trim() || null;
+      const servingSize = String(attrs?.serving_size || attrs?.servingSize || "").trim() || null;
+      const nutritionDataPer = String(attrs?.nutrition_data_per || attrs?.nutriment_data_per || "").trim() || null;
       const nutriments = (attrs?.nutrients && typeof attrs.nutrients === "object") ? attrs.nutrients : (attrs?.nutriments && typeof attrs.nutriments === "object" ? attrs.nutriments : null);
       return {
         barcode: String(attrs?.barcode || attrs?.code || cleanBarcode || "").trim(),
@@ -6454,6 +6552,8 @@ $recipeImportBtn?.addEventListener("click", () => {
         brand,
         image,
         quantity,
+        servingSize,
+        nutritionDataPer,
         nutriments,
         source: "foodrepo",
       };
@@ -6468,11 +6568,57 @@ $recipeImportBtn?.addEventListener("click", () => {
       const x = Number(v);
       return Number.isFinite(x) ? x : null;
     };
-    const carbs = num(n?.carbohydrates_100g ?? n?.carbohydrates);
-    const protein = num(n?.proteins_100g ?? n?.proteins);
-    const fat = num(n?.fat_100g ?? n?.fat);
-    const kcal = num(n?.["energy-kcal_100g"] ?? n?.energy_kcal_100g ?? n?.["energy-kcal"] ?? n?.kcal);
+    const carbs = num(n?.carbohydrates_100ml ?? n?.carbohydrates_100g ?? n?.carbohydrates);
+    const protein = num(n?.proteins_100ml ?? n?.proteins_100g ?? n?.proteins);
+    const fat = num(n?.fat_100ml ?? n?.fat_100g ?? n?.fat);
+    const kcal = num(n?.["energy-kcal_100ml"] ?? n?.energy_kcal_100ml ?? n?.["energy-kcal_100g"] ?? n?.energy_kcal_100g ?? n?.["energy-kcal"] ?? n?.kcal);
     return { carbs: carbs ?? 0, protein: protein ?? 0, fat: fat ?? 0, kcal: kcal ?? 0 };
+  }
+
+  function parseNumberAndUnit(raw = "") {
+    const text = String(raw || "").trim().toLowerCase();
+    if (!text) return null;
+    const match = text.match(/(\d+(?:[\.,]\d+)?)\s*(kg|g|gr|gram(?:s)?|l|lt|liter(?:s)?|litre(?:s)?|ml|milliliter(?:s)?|millilitre(?:s)?|cl)\b/i);
+    if (!match) return null;
+    const qty = Number(String(match[1] || "").replace(",", "."));
+    if (!Number.isFinite(qty) || qty <= 0) return null;
+    const unitRaw = String(match[2] || "").toLowerCase();
+    if (unitRaw === "cl") return { qty: qty * 10, unit: "ml" };
+    const unit = normalizeCostUnit(unitRaw);
+    if (!unit) return null;
+    return { qty, unit };
+  }
+
+  function inferExternalBaseFromNutritionData(external = {}) {
+    const n = external?.nutriments && typeof external.nutriments === "object" ? external.nutriments : {};
+    const nutritionDataPer = String(external?.nutritionDataPer || n?.nutrition_data_per || n?.nutriment_data_per || "").trim().toLowerCase();
+    if (nutritionDataPer.includes("100ml") || nutritionDataPer === "ml") return { qty: 100, unit: "ml", source: "nutrition_data_per" };
+    if (nutritionDataPer.includes("100g") || nutritionDataPer === "g") return { qty: 100, unit: "g", source: "nutrition_data_per" };
+
+    if (Number.isFinite(Number(n?.carbohydrates_100ml)) || Number.isFinite(Number(n?.proteins_100ml)) || Number.isFinite(Number(n?.fat_100ml)) || Number.isFinite(Number(n?.["energy-kcal_100ml"] ?? n?.energy_kcal_100ml))) {
+      return { qty: 100, unit: "ml", source: "nutriments_100ml" };
+    }
+    if (Number.isFinite(Number(n?.carbohydrates_100g)) || Number.isFinite(Number(n?.proteins_100g)) || Number.isFinite(Number(n?.fat_100g)) || Number.isFinite(Number(n?.["energy-kcal_100g"] ?? n?.energy_kcal_100g))) {
+      return { qty: 100, unit: "g", source: "nutriments_100g" };
+    }
+    return null;
+  }
+
+  function inferExternalBaseMeasurement(external = {}) {
+    const quantityCandidate = parseNumberAndUnit(external?.quantity || external?.productQuantity || "");
+    if (quantityCandidate && ["ml", "l"].includes(quantityCandidate.unit)) {
+      return { ...quantityCandidate, source: "quantity" };
+    }
+    if (quantityCandidate && ["g", "kg"].includes(quantityCandidate.unit)) {
+      return { ...quantityCandidate, source: "quantity" };
+    }
+
+    const servingCandidate = parseNumberAndUnit(external?.servingSize || external?.serving_size || "");
+    if (servingCandidate && ["ml", "l", "g", "kg"].includes(servingCandidate.unit)) {
+      return { ...servingCandidate, source: "serving_size" };
+    }
+
+    return inferExternalBaseFromNutritionData(external);
   }
 
   function externalToMacroProduct(external) {
@@ -6480,6 +6626,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     const barcode = String(external.barcode || "").trim();
     const name = String(external.name || "").trim();
     if (!name) return null;
+    const inferred = inferExternalBaseMeasurement(external) || { qty: 100, unit: "g", source: "fallback" };
     return {
       id: barcode || generateId(),
       source: external.source || "manual",
@@ -6488,8 +6635,15 @@ $recipeImportBtn?.addEventListener("click", () => {
       barcode,
       image: external.image || null,
       quantity: external.quantity || null,
+      servingSize: external.servingSize || null,
+      nutritionDataPer: external.nutritionDataPer || null,
       nutriments: external.nutriments || null,
-      servingBaseGrams: 100,
+      servingBaseGrams: inferred.qty,
+      servingBaseUnit: inferred.unit,
+      baseQuantity: inferred.qty,
+      baseUnit: inferred.unit,
+      baseUnitSource: inferred.source,
+      detectedUnitType: ["ml", "l"].includes(inferred.unit) ? "volume" : "mass",
       macros: extractMacrosFromNutriments(external.nutriments),
     };
   }
@@ -7209,23 +7363,10 @@ $recipeImportBtn?.addEventListener("click", () => {
           habits: Array.isArray(entry?.sideEffects?.habits) ? entry.sideEffects.habits : [{ habitId: String(entry?.habitSync?.habitId || "").trim(), amount: Math.max(0, Number(entry?.habitSync?.amount) || 0) }],
           financeCost: Math.max(0, Number(entry?.sideEffects?.financeCost) || 0),
         };
-        entry.type = "product";
-        entry.refId = saved.id;
-        entry.nameSnapshot = saved.name;
-        entry.grams = convertAmount(grams, gramsUnit, "g") ?? 0;
-        entry.amount = grams;
-        entry.unit = gramsUnit;
-        const normalizedAmount = convertAmount(grams, gramsUnit, normalizeUnit(saved.baseUnit || saved.servingBaseUnit || "g") || "g");
-        entry.macrosSnapshot = normalizedAmount == null ? normalizeMacros({}) : normalizeMacros(calcProductMacros({ ...saved, servingBaseGrams: Number(saved.baseQuantity || saved.servingBaseGrams) || 100 }, normalizedAmount));
-        entry.habitSync = {
-          habitId: String(saved.linkedHabitId || "").trim(),
-          amount: String(saved.linkedHabitId || "").trim() ? 1 : 0,
-        };
-        entry.sideEffects = buildProductSideEffects(saved, 1);
-        persistNutrition();
-        renderMacrosView();
+        const rebuiltEntry = buildConsumptionEntryFromEditor({ product: saved, amount: grams, unit: gramsUnit, meal });
+        persistConsumptionEntry(rebuiltEntry, { meal, entryTarget: { idx: Number(idx) } });
         applyRecipeSideEffects(prevEffects, selectedMacroDate, -1, "entry_edit_old");
-        applyRecipeSideEffects(entry.sideEffects, selectedMacroDate, 1, "entry_edit_new");
+        applyRecipeSideEffects(rebuiltEntry.sideEffects || buildProductSideEffects(saved, 1), selectedMacroDate, 1, "entry_edit_new");
       }
     } else {
       const baseUnit = normalizeUnit(saved.baseUnit || saved.servingBaseUnit || "g") || "g";

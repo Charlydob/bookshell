@@ -914,6 +914,27 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return "—";
   }
 
+  function normalizeEntryServingsCount(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 1;
+    return Math.max(1, Math.round(parsed));
+  }
+
+  function getEntryServingsCount(entry) {
+    return normalizeEntryServingsCount(entry?.servingsCount);
+  }
+
+  function getEntryMacrosTotal(entry) {
+    const base = normalizeMacros(entry?.macrosSnapshot || {});
+    const count = getEntryServingsCount(entry);
+    return normalizeMacros({
+      carbs: (Number(base.carbs) || 0) * count,
+      protein: (Number(base.protein) || 0) * count,
+      fat: (Number(base.fat) || 0) * count,
+      kcal: (Number(base.kcal) || 0) * count,
+    });
+  }
+
   function normalizeQtyByUnit(quantity, fromUnit, toUnit) {
     const qty = Number(quantity);
     const from = normalizeCostUnit(fromUnit);
@@ -1293,21 +1314,22 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   function calculateEntryFoodCost(entry) {
     if (!entry) return { cost: null, missing: 1 };
+    const servingsCount = getEntryServingsCount(entry);
     if (Number.isFinite(Number(entry?.computedCost)) && Number(entry.computedCost) >= 0) {
-      return { cost: Number(entry.computedCost), missing: 0 };
+      return { cost: Number(entry.computedCost) * servingsCount, missing: 0 };
     }
     if (entry.type === "product") {
       const p = nutritionProducts.find((x) => x.id === entry.refId);
       const amount = Math.max(0, Number(entry.amount) || Number(entry.grams) || 0);
       const unit = normalizeUnit(entry.unit || "g") || "g";
       const cost = calculateProductConsumedCost(p, amount, unit);
-      return { cost, missing: cost == null ? 1 : 0 };
+      return { cost: cost == null ? null : Number(cost) * servingsCount, missing: cost == null ? 1 : 0 };
     }
     if (entry.type === "recipe") {
       const recipe = recipes.find((x) => x.id === entry.refId);
       const servings = Math.max(0, Number(entry.servings) || 0);
       const rc = calculateRecipeCost(recipe, servings);
-      return { cost: rc.covered ? rc.total : null, missing: rc.missing || 0 };
+      return { cost: rc.covered ? (Number(rc.total) || 0) * servingsCount : null, missing: rc.missing || 0 };
     }
     return { cost: null, missing: 0 };
   }
@@ -1363,6 +1385,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       costSource: cost.costSource,
       computedCost: Number.isFinite(Number(cost.computedCost)) ? Number(cost.computedCost) : null,
       macrosSnapshot,
+      servingsCount: 1,
       sideEffects: {
         habits: linkedHabitId ? [{ habitId: linkedHabitId, amount: 1 }] : [],
         financeCost: Number.isFinite(Number(cost.computedCost)) ? Number(cost.computedCost) : 0,
@@ -3487,6 +3510,7 @@ $recipeImportBtn?.addEventListener("click", () => {
             unit: normalizeUnit(entry?.unit || "g") || "g",
             amountUnit: normalizeUnit(entry?.amountUnit || entry?.unit || "g") || "g",
             servings: Math.max(0, Number(entry?.servings) || 0),
+            servingsCount: normalizeEntryServingsCount(entry?.servingsCount),
             macrosSnapshot: normalizeMacros(entry?.macrosSnapshot || {}),
             nutritionSnapshot: entry?.nutritionSnapshot && typeof entry.nutritionSnapshot === "object"
               ? {
@@ -3695,7 +3719,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   function computeMealTotals(entries = []) {
-    return entries.reduce((acc, e) => plusMacros(acc, e.macrosSnapshot || {}), normalizeMacros({}));
+    return entries.reduce((acc, e) => plusMacros(acc, getEntryMacrosTotal(e)), normalizeMacros({}));
   }
 
   function computeMealCostSummary(entries = []) {
@@ -3881,19 +3905,20 @@ $recipeImportBtn?.addEventListener("click", () => {
             amountUnit: "",
             macros: normalizeMacros({}),
           };
-          prev.count += 1;
-          prev.grams += Number(entry.grams) || 0;
-          prev.servings += Number(entry.servings) || 0;
+          const servingsCount = getEntryServingsCount(entry);
+          prev.count += servingsCount;
+          prev.grams += (Number(entry.grams) || 0) * servingsCount;
+          prev.servings += (Number(entry.servings) || 0) * servingsCount;
           if ((Number(entry.amount) || 0) > 0 && normalizeUnit(entry.unit)) {
             if (!prev.amountUnit) prev.amountUnit = normalizeUnit(entry.unit);
-            if (prev.amountUnit === normalizeUnit(entry.unit)) prev.amount += Number(entry.amount) || 0;
+            if (prev.amountUnit === normalizeUnit(entry.unit)) prev.amount += (Number(entry.amount) || 0) * servingsCount;
           } else if ((Number(entry.grams) || 0) > 0) {
             if (!prev.amountUnit) prev.amountUnit = "g";
-            if (prev.amountUnit === "g") prev.amount += Number(entry.grams) || 0;
+            if (prev.amountUnit === "g") prev.amount += (Number(entry.grams) || 0) * servingsCount;
           }
-          prev.macros = plusMacros(prev.macros, entry.macrosSnapshot || {});
+          prev.macros = plusMacros(prev.macros, getEntryMacrosTotal(entry));
           target.set(key, prev);
-          if (entry.type === "recipe") recipeCount += 1;
+          if (entry.type === "recipe") recipeCount += servingsCount;
         });
       });
     });
@@ -4160,7 +4185,7 @@ $recipeImportBtn?.addEventListener("click", () => {
           <div class="macro-stat macro-stat-${key} ${excess ? "is-excess" : ""}">
             <div class="macro-stat-title">${label}</div>
             <div class="macro-stat-value">
-              <span class="macro-consumed ${excess ? "is-excess" : ""}">${roundMacro(netKcal)}${unit}</span>
+              <span class="macro-consumed ${excess ? "is-excess" : ""}">${roundMacro(totals.kcal)}${unit}</span>
               <span class="macro-sep">/</span>
               <input class="macro-goal-input-stats" type="number" min="0" step="${step}" inputmode="decimal" placeholder="${goal}" value="" data-macro-goal="${key}" aria-label="Objetivo ${label}" />
               <span class="macro-unit">${unit}</span>
@@ -4210,10 +4235,10 @@ $recipeImportBtn?.addEventListener("click", () => {
       </div>
     `;
     const kcalGoal = Number(nutritionGoals.kcal) || 0;
-    const delta = roundMacro(kcalGoal - netKcal);
+    const delta = roundMacro(kcalGoal - totals.kcal);
     const workBurned = getWorkCaloriesBurnedForDate(selectedMacroDate);
     const gymBurned = getGymCaloriesBurnedForDate(selectedMacroDate);
-    $macroKcalSummary.textContent = `${Number(netKcal).toFixed(2)} kcal / ${Number(kcalGoal).toFixed(2)} kcal · ${Number(totals.kcal).toFixed(2)} ingeridas · -${Number(totalBurned).toFixed(2)} quemadas (${roundMacro(workBurned)} trabajo + ${roundMacro(gymBurned)} gym) · ${delta >= 0 ? `${delta} restantes` : `${Math.abs(delta)} exceso`}`;
+    $macroKcalSummary.textContent = `${Number(totals.kcal).toFixed(2)} kcal / ${Number(kcalGoal).toFixed(2)} kcal · ${Number(totals.kcal).toFixed(2)} ingeridas · -${Number(totalBurned).toFixed(2)} quemadas (${roundMacro(workBurned)} trabajo + ${roundMacro(gymBurned)} gym) · ${delta >= 0 ? `${delta} restantes` : `${Math.abs(delta)} exceso`}`;
 
     renderMacroIntegrationSettings();
 
@@ -4225,20 +4250,23 @@ $recipeImportBtn?.addEventListener("click", () => {
         const quantityLabel = entry.type === "recipe"
           ? `${roundMacro(entry.servings || 1)} rac`
           : formatAmountWithUnit(Number(entry.amount) || Number(entry.grams) || 0, entry.unit || "g");
+        const servingsCount = getEntryServingsCount(entry);
+        const entryCost = calculateEntryFoodCost(entry);
+        const entryMacros = getEntryMacrosTotal(entry);
         return `
       <div class="macro-entry">
+      <input class="macro-entry-count-input" type="number" min="1" step="1" inputmode="numeric" value="${servingsCount}" data-macro-count="${meal}:${idx}" aria-label="Unidades de ${entry.nameSnapshot}" />
       <button class="macro-entry-open" data-macro-open="${meal}:${idx}" type="button" aria-label="Abrir ficha de ${entry.nameSnapshot}">
       <div class="contenido-comida-lista">
       <strong>${entry.nameSnapshot}</strong>
-      <div class="hint">${quantityLabel}
-      </div>
+      <div class="hint">${quantityLabel}</div>
       </div>
       </button>
       <div class="macro-entry-right">
       <div class="kcals-dato">
-      ${roundMacro(entry.macrosSnapshot.kcal)} kcal
+      ${roundMacro(entryMacros.kcal)} kcal
       </div>
-      <div class="hint macro-entry-cost">${calculateEntryFoodCost(entry).cost == null ? "Coste n/d" : `~${formatCurrency(calculateEntryFoodCost(entry).cost)}`}</div>
+      <div class="hint macro-entry-cost">${entryCost.cost == null ? "Coste n/d" : `~${formatCurrency(entryCost.cost)}`}</div>
       <button class="icon-btn-eliminar-comida" data-macro-delete="${meal}:${idx}" type="button">✕</button></div></div>`;
       }).join("") || '<div class="hint">Sin entradas</div>';
       return `<article class="macro-meal-card">
@@ -4703,6 +4731,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       refId: recipe.id,
       nameSnapshot: recipe.title,
       servings,
+      servingsCount: 1,
       macrosSnapshot,
       computedCost,
       sideEffects,
@@ -7168,6 +7197,19 @@ $recipeImportBtn?.addEventListener("click", () => {
   $macroWorkHabits?.addEventListener("change", () => {
     const selected = Array.from($macroWorkHabits.selectedOptions || []).map((opt) => String(opt.value || "").trim()).filter(Boolean);
     nutritionIntegrationConfig.linkedWorkHabitIds = Array.from(new Set(selected));
+    persistNutrition();
+    renderMacrosView();
+  });
+
+  $macroMeals?.addEventListener("change", (e) => {
+    const countInput = e.target.closest("input[data-macro-count]");
+    if (!countInput) return;
+    const [meal, idx] = String(countInput.dataset.macroCount || "").split(":");
+    const log = getDailyLog(selectedMacroDate);
+    const i = Number(idx);
+    const entry = log?.meals?.[meal]?.entries?.[i];
+    if (!entry) return;
+    entry.servingsCount = normalizeEntryServingsCount(countInput.value);
     persistNutrition();
     renderMacrosView();
   });

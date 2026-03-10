@@ -1354,6 +1354,15 @@
   border-radius: 10px; 
   background: transparent;
 }
+.macro-entry-count-input{
+  width: 52px;
+  min-width: 52px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.2);
+  background: rgba(0,0,0,.25);
+  color: #fff;
+}
 .macro-entry-open{
   flex: 1;
   display: block;
@@ -1380,20 +1389,11 @@
 }
 .contenido-comida-lista{
   display:grid;
-  grid-template-columns: 150px 50px;
-  align-items: baseline;
-  gap:4px;
-  font-size: 13px;
-  justify-content: start;
-}
-
-.contenido-comida-lista{
-  display:grid;
-  grid-template-columns: 200px 50px;
+  grid-template-columns: minmax(120px, 1fr);
   gap:4px;
   font-size:13px;
-  justify-content: space-between;
 }
+
 
 .contenido-comida-lista strong{
   white-space:nowrap;

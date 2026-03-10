@@ -4686,6 +4686,10 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function addRecipeToMeal(meal, recipe, servings = 1) {
     if (!recipe) return;
+    const recipeCost = calculateRecipeCost(recipe, servings);
+    const computedCost = Number.isFinite(Number(recipeCost?.total)) && Number(recipeCost.total) >= 0
+      ? Number(recipeCost.total)
+      : null;
     const base = normalizeMacros(recipe.nutritionPerServing || recipe.nutritionTotals || {});
     const macrosSnapshot = {
       carbs: base.carbs * servings,
@@ -4700,6 +4704,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       nameSnapshot: recipe.title,
       servings,
       macrosSnapshot,
+      computedCost,
       sideEffects,
       createdAt: Date.now(),
     };

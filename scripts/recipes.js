@@ -875,6 +875,62 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     );
   }
 
+  function normalizeEntityName(value = "") {
+    return String(value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function levenshteinDistance(a = "", b = "") {
+    const aa = String(a);
+    const bb = String(b);
+    if (aa === bb) return 0;
+    if (!aa.length) return bb.length;
+    if (!bb.length) return aa.length;
+    const matrix = Array.from({ length: aa.length + 1 }, () => Array(bb.length + 1).fill(0));
+    for (let i = 0; i <= aa.length; i++) matrix[i][0] = i;
+    for (let j = 0; j <= bb.length; j++) matrix[0][j] = j;
+    for (let i = 1; i <= aa.length; i++) {
+      for (let j = 1; j <= bb.length; j++) {
+        const cost = aa[i - 1] === bb[j - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost
+        );
+      }
+    }
+    return matrix[aa.length][bb.length];
+  }
+
+  function fuzzyMatchByName(targetName = "", list = [], getName = (row) => row?.name || "") {
+    const normalizedTarget = normalizeEntityName(targetName);
+    if (!normalizedTarget) return null;
+    let best = null;
+    let bestScore = -1;
+    list.forEach((row) => {
+      const candidateName = normalizeEntityName(getName(row));
+      if (!candidateName) return;
+      let score = 0;
+      if (candidateName === normalizedTarget) score = 1;
+      else if (candidateName.includes(normalizedTarget) || normalizedTarget.includes(candidateName)) score = 0.9;
+      else {
+        const dist = levenshteinDistance(normalizedTarget, candidateName);
+        const maxLen = Math.max(normalizedTarget.length, candidateName.length, 1);
+        score = 1 - (dist / maxLen);
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = row;
+      }
+    });
+    return bestScore >= 0.72 ? best : null;
+  }
+
   function normalizeCostUnit(unit) {
     const clean = String(unit || "").trim().toLowerCase();
     if (["g", "gram", "grams", "gr"].includes(clean)) return "g";
@@ -1088,6 +1144,37 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     };
   }
 
+  function autoLinkIngredientFacets(ingredient = {}) {
+    const baseName = String(ingredient?.name || ingredient?.label || ingredient?.text || "").trim();
+    const matchedMacro = ingredient.productId
+      ? nutritionProducts.find((p) => p.id === ingredient.productId) || null
+      : fuzzyMatchByName(baseName, nutritionProducts, (p) => p?.name || "");
+    const matchedFinance = ingredient.linkedFinanceProductId
+      ? financeProducts.find((f) => f.id === ingredient.linkedFinanceProductId) || null
+      : fuzzyMatchByName(baseName, financeProducts, (f) => f?.name || "");
+    return {
+      ...ingredient,
+      productId: String(matchedMacro?.id || ingredient.productId || "").trim(),
+      linkedFinanceProductId: String(matchedFinance?.id || ingredient.linkedFinanceProductId || "").trim(),
+    };
+  }
+
+
+
+  function refreshRecipeLinkDatalists() {
+    const macroList = document.getElementById("recipe-macro-products-list");
+    if (macroList) {
+      macroList.innerHTML = sortByVisibleNameEs(nutritionProducts, (p) => p?.name || "")
+        .map((p) => `<option value="${escapeHtml(p.name)}" data-id="${escapeHtml(p.id)}"></option>`)
+        .join("");
+    }
+    const financeList = document.getElementById("recipe-finance-products-list");
+    if (financeList) {
+      financeList.innerHTML = sortByVisibleNameEs(financeProducts, (f) => f?.name || "")
+        .map((f) => `<option value="${escapeHtml(f.name)}" data-id="${escapeHtml(f.id)}"></option>`)
+        .join("");
+    }
+  }
   function recalculateRecipeDerivedData(recipe) {
     const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
     let totals = normalizeMacros({});
@@ -2484,6 +2571,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     setRecipePhotoStatus("");
     const isEditing = !!recipe;
     if ($recipeDelete) $recipeDelete.style.display = isEditing ? "inline-flex" : "none";
+    loadFinanceProductsCatalog().then(() => refreshRecipeLinkDatalists()).catch(() => {});
     if (recipe) {
       $recipeId.value = recipe.id;
       $modalTitle.textContent = "Editar receta";
@@ -2638,8 +2726,9 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
 
   function renderIngredientRows(list = []) {
     if (!$recipeIngredientsList) return;
+    refreshRecipeLinkDatalists();
     const frag = document.createDocumentFragment();
-    list.forEach((item) => frag.appendChild(buildIngredientRow(item)));
+    list.forEach((item) => frag.appendChild(buildIngredientRow(autoLinkIngredientFacets(item))));
     $recipeIngredientsList.innerHTML = "";
     $recipeIngredientsList.appendChild(frag);
     updateRecipeCalcSummary();
@@ -2666,20 +2755,10 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     row.className = "builder-row ingredient-row";
     row.dataset.id = item.id || generateId();
     row.dataset.productId = String(item.productId || "").trim();
+    row.dataset.financeProductId = String(item.linkedFinanceProductId || "").trim();
 
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.className = "builder-check";
-    checkbox.checked = !!item.done;
-
-    const product = document.createElement("select");
-    product.className = "builder-input ingredient-product";
-    product.innerHTML = `<option value="">Producto (opcional)</option>${nutritionProducts.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("")}`;
-    product.value = String(item.productId || "").trim();
-    product.addEventListener("change", () => {
-      row.dataset.productId = product.value || "";
-      updateRecipeCalcSummary();
-    });
+    const top = document.createElement("div");
+    top.className = "ingredient-main-row";
 
     const qty = document.createElement("input");
     qty.type = "number";
@@ -2690,40 +2769,110 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     qty.value = item.qty == null || item.qty === "" ? "" : String(item.qty);
     qty.addEventListener("input", updateRecipeCalcSummary);
 
-    const unit = document.createElement("select");
+    const unit = document.createElement("input");
+    unit.type = "text";
     unit.className = "builder-input ingredient-unit";
-    unit.innerHTML = `<option value="">Unidad</option>${STRUCTURED_INGREDIENT_UNITS.map((u) => `<option value="${u}">${u}</option>`).join("")}`;
-    unit.value = normalizeCostUnit(item.unit || "");
-    unit.addEventListener("change", updateRecipeCalcSummary);
+    unit.placeholder = "Unidad";
+    unit.value = item.unit || "";
+    unit.addEventListener("input", updateRecipeCalcSummary);
 
     const label = document.createElement("input");
     label.type = "text";
-    label.placeholder = "Ingrediente / texto";
+    label.placeholder = "Ingrediente";
     label.value = item.label || item.name || item.text || "";
     label.className = "builder-input ingredient-label";
-
-    const notes = document.createElement("input");
-    notes.type = "text";
-    notes.placeholder = "Notas";
-    notes.value = item.notes || "";
-    notes.className = "builder-input ingredient-notes";
+    label.addEventListener("input", updateRecipeCalcSummary);
 
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.className = "icon-btn icon-btn-small";
+    remove.className = "icon-btn icon-btn-small ingredient-remove";
     remove.textContent = "✕";
+    remove.setAttribute("aria-label", "Eliminar ingrediente");
     remove.addEventListener("click", () => {
       row.remove();
       updateRecipeCalcSummary();
     });
 
-    row.appendChild(checkbox);
-    row.appendChild(product);
-    row.appendChild(qty);
-    row.appendChild(unit);
-    row.appendChild(label);
+    top.appendChild(qty);
+    top.appendChild(unit);
+    top.appendChild(label);
+    top.appendChild(remove);
+
+    const notes = document.createElement("input");
+    notes.type = "text";
+    notes.placeholder = "Notas (opcional)";
+    notes.value = item.notes || "";
+    notes.className = "builder-input ingredient-notes";
+
+    const links = document.createElement("div");
+    links.className = "ingredient-links-row";
+
+    const macroInput = document.createElement("input");
+    macroInput.type = "search";
+    macroInput.className = "builder-input ingredient-link-search";
+    macroInput.placeholder = "Vincular macro…";
+    macroInput.setAttribute("list", "recipe-macro-products-list");
+    const macroLinked = nutritionProducts.find((p) => p.id === row.dataset.productId);
+    macroInput.value = macroLinked?.name || "";
+    macroInput.addEventListener("change", () => {
+      const found = fuzzyMatchByName(macroInput.value || "", nutritionProducts, (p) => p?.name || "");
+      row.dataset.productId = found?.id ? String(found.id) : "";
+      updateRecipeCalcSummary();
+      renderIngredientLinkState();
+    });
+
+    const financeInput = document.createElement("input");
+    financeInput.type = "search";
+    financeInput.className = "builder-input ingredient-link-search";
+    financeInput.placeholder = "Vincular finanzas…";
+    financeInput.setAttribute("list", "recipe-finance-products-list");
+    const financeLinked = financeProducts.find((f) => f.id === row.dataset.financeProductId);
+    financeInput.value = financeLinked?.name || "";
+    financeInput.addEventListener("change", () => {
+      const found = fuzzyMatchByName(financeInput.value || "", financeProducts, (f) => f?.name || "");
+      row.dataset.financeProductId = found?.id ? String(found.id) : "";
+      renderIngredientLinkState();
+    });
+
+    const createMacroBtn = document.createElement("button");
+    createMacroBtn.type = "button";
+    createMacroBtn.className = "btn ghost btn-compact ingredient-create-product";
+    createMacroBtn.textContent = "Crear macro";
+    createMacroBtn.addEventListener("click", () => {
+      const draft = {
+        id: generateId(),
+        name: String(label.value || item.name || "").trim() || "Nuevo producto",
+        baseQuantity: Math.max(1, Number(qty.value) || 100),
+        baseUnit: normalizeUnit(unit.value || "g") || "g",
+        servingBaseGrams: Math.max(1, Number(qty.value) || 100),
+        servingBaseUnit: normalizeUnit(unit.value || "g") || "g",
+        macros: { carbs: 0, protein: 0, fat: 0, kcal: 0 },
+        source: "manual",
+      };
+      openMacroProductModal(draft, macroModalState.meal || "breakfast", Number(qty.value) || 100, null, {
+        ingredientTarget: { recipeId: String($recipeId?.value || ""), ingredientId: row.dataset.id }
+      });
+    });
+
+    links.appendChild(macroInput);
+    links.appendChild(financeInput);
+    links.appendChild(createMacroBtn);
+
+    const status = document.createElement("div");
+    status.className = "ingredient-link-status";
+
+    const renderIngredientLinkState = () => {
+      const chips = [];
+      if (!String(row.dataset.productId || "").trim()) chips.push('<span class="ingredient-link-chip">Sin macro</span>');
+      if (!String(row.dataset.financeProductId || "").trim()) chips.push('<span class="ingredient-link-chip">Sin finanzas</span>');
+      status.innerHTML = chips.join("");
+    };
+
+    row.appendChild(top);
     row.appendChild(notes);
-    row.appendChild(remove);
+    row.appendChild(links);
+    row.appendChild(status);
+    renderIngredientLinkState();
     return row;
   }
 
@@ -2778,23 +2927,25 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
         const qty = normalizeIngredientQty(qtyRaw);
         const text = [qty ? String(qty) : "", unit, label].filter(Boolean).join(" ").trim() || label;
         const parsed = splitIngredientText(text);
-        const productId = String(row.querySelector(".ingredient-product")?.value || row.dataset.productId || "").trim();
-        const product = nutritionProducts.find((p) => p.id === productId) || null;
+        const productId = String(row.dataset.productId || "").trim();
+        const product = nutritionProducts.find((p) => p.id === productId) || fuzzyMatchByName(label, nutritionProducts, (p) => p?.name || "") || null;
+        const financeMatch = String(row.dataset.financeProductId || "").trim() || String(fuzzyMatchByName(label, financeProducts, (f) => f?.name || "")?.id || "");
         const baseIngredient = {
           id: row.dataset.id || generateId(),
           text,
           label,
           qty: qty == null ? "" : qty,
-          unit: normalizeCostUnit(unit),
+          unit: normalizeCostUnit(unit) || String(unit || "").trim(),
           notes,
           quantity: parsed.quantity,
           name: label || parsed.name || text,
           productId,
-          done: row.querySelector("input[type='checkbox']")?.checked || false,
+          linkedFinanceProductId: financeMatch,
+          done: false,
         };
-        return buildRecipeIngredientFromProduct(product, baseIngredient);
+        return autoLinkIngredientFacets(buildRecipeIngredientFromProduct(product, baseIngredient));
       })
-      .filter((ing) => ing.text || ing.productId);
+      .filter((ing) => ing.text || ing.productId || ing.linkedFinanceProductId);
   }
 
   function collectStepRows() {
@@ -3299,11 +3450,20 @@ $recipeImportBtn?.addEventListener("click", () => {
 
     // Ingredientes
     const ingRows = (data.ingredients || []).map((i) => {
-      const left = [i.amount, i.unit].map((v) => (v || "").trim()).filter(Boolean).join(" ");
-      const name = (i.name || "").trim();
-      const note = (i.note || "").trim();
-      const txt = [left, name].filter(Boolean).join(" ").trim() + (note ? ` (${note})` : "");
-      return { id: generateId(), text: txt, done: false };
+      const name = String(i.name || "").trim();
+      const unitToken = String(i.unit || "").trim();
+      const qtyToken = String(i.amount || "").trim();
+      const qty = normalizeIngredientQty(qtyToken);
+      const candidate = autoLinkIngredientFacets({
+        id: generateId(),
+        name,
+        label: name,
+        qty: qty == null ? "" : qty,
+        unit: qty == null ? unitToken : normalizeCostUnit(unitToken) || unitToken,
+        notes: String(i.note || "").trim(),
+        text: [qtyToken, unitToken, name].filter(Boolean).join(" ").trim(),
+      });
+      return candidate;
     });
     renderIngredientRows(ingRows.length ? ingRows : [DEFAULT_INGREDIENT()]);
 
@@ -7602,9 +7762,20 @@ function parseRecipeV1(raw){
     const withoutBullet = line.replace(/^-+\s*/, "");
     const cleanLine = collapseSpaces(withoutBullet);
     if (!cleanLine) return null;
-    const parts = cleanLine.split("|").slice(0, 4).map(collapseSpaces);
-    if (cleanLine.includes("|") && parts.length >= 3 && parts[2]) {
-      const [amount = "", unit = "", name = "", note = ""] = [...parts, "", "", "", ""].slice(0, 4);
+    const parts = cleanLine.split("|").map(collapseSpaces);
+    if (parts.length >= 2) {
+      const left = String(parts[0] || "").trim();
+      const name = String(parts[1] || "").trim();
+      const note = String(parts.slice(2).join(" | ") || "").trim();
+      let amount = "";
+      let unit = "";
+      const leftMatch = left.match(/^([0-9]+(?:[.,][0-9]+)?)\s*(.*)$/);
+      if (leftMatch) {
+        amount = String(leftMatch[1] || "").replace(",", ".").trim();
+        unit = String(leftMatch[2] || "").trim();
+      } else {
+        unit = left;
+      }
       return { amount, unit, name, note };
     }
     return { amount: "", unit: "", name: cleanLine, note: "" };

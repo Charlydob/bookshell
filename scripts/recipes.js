@@ -4111,12 +4111,16 @@ $recipeImportBtn?.addEventListener("click", () => {
       const entries = log.meals[meal].entries || [];
       const mt = computeMealTotals(entries);
       const mealCost = computeMealCostSummary(entries);
-      const entryHtml = entries.map((entry, idx) => `
+      const entryHtml = entries.map((entry, idx) => {
+        const quantityLabel = entry.type === "recipe"
+          ? `${roundMacro(entry.servings || 1)} rac`
+          : formatAmountWithUnit(Number(entry.amount) || Number(entry.grams) || 0, entry.unit || "g");
+        return `
       <div class="macro-entry">
       <button class="macro-entry-open" data-macro-open="${meal}:${idx}" type="button" aria-label="Abrir ficha de ${entry.nameSnapshot}">
       <div class="contenido-comida-lista">
       <strong>${entry.nameSnapshot}</strong>
-      <div class="hint">${entry.type === "recipe" ? `${roundMacro(entry.servings || 1)} rac` : `${formatAmountWithUnit(Number(entry.amount) || Number(entry.grams) || 0, entry.unit || "g")`}
+      <div class="hint">${quantityLabel}
       </div>
       </div>
       </button>
@@ -4125,7 +4129,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       ${roundMacro(entry.macrosSnapshot.kcal)} kcal
       </div>
       <div class="hint macro-entry-cost">${calculateEntryFoodCost(entry).cost == null ? "Coste n/d" : `~${formatCurrency(calculateEntryFoodCost(entry).cost)}`}</div>
-      <button class="icon-btn-eliminar-comida" data-macro-delete="${meal}:${idx}" type="button">✕</button></div></div>`).join("") || '<div class="hint">Sin entradas</div>';
+      <button class="icon-btn-eliminar-comida" data-macro-delete="${meal}:${idx}" type="button">✕</button></div></div>`;
+      }).join("") || '<div class="hint">Sin entradas</div>';
       return `<article class="macro-meal-card">
       <div class="macro-meal-head">
       <h4>${mealLabels[meal]}</h4>

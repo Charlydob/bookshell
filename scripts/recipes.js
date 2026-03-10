@@ -2750,131 +2750,143 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     $recipeStepsList.appendChild(frag);
   }
 
-  function buildIngredientRow(item = DEFAULT_INGREDIENT()) {
-    const row = document.createElement("div");
-    row.className = "builder-row ingredient-row";
-    row.dataset.id = item.id || generateId();
-    row.dataset.productId = String(item.productId || "").trim();
-    row.dataset.financeProductId = String(item.linkedFinanceProductId || "").trim();
+ function buildIngredientRow(item = DEFAULT_INGREDIENT()) {
+  const row = document.createElement("div");
+  row.className = "builder-row ingredient-row";
+  row.dataset.id = item.id || generateId();
+  row.dataset.productId = String(item.productId || "").trim();
+  row.dataset.financeProductId = String(item.linkedFinanceProductId || "").trim();
 
-    const top = document.createElement("div");
-    top.className = "ingredient-main-row";
+  const macroLinked = nutritionProducts.find((p) => p.id === row.dataset.productId);
+  const financeLinked = financeProducts.find((f) => f.id === row.dataset.financeProductId);
 
-    const qty = document.createElement("input");
-    qty.type = "number";
-    qty.className = "builder-input ingredient-qty";
-    qty.placeholder = "Cant.";
-    qty.min = "0";
-    qty.step = "0.01";
-    qty.value = item.qty == null || item.qty === "" ? "" : String(item.qty);
-    qty.addEventListener("input", updateRecipeCalcSummary);
+  row.innerHTML = `
+    <div class="ingredient-main-row">
+      <input
+        type="number"
+        class="builder-input ingredient-qty"
+        placeholder="Cant."
+        min="0"
+        step="0.01"
+        value="${item.qty == null || item.qty === "" ? "" : String(item.qty)}"
+      />
+      <input
+        type="text"
+        class="builder-input ingredient-unit"
+        placeholder="Unidad"
+        value="${escapeHtml(item.unit || "")}"
+      />
+      <input
+        type="text"
+        class="builder-input ingredient-label"
+        placeholder="Ingrediente"
+        value="${escapeHtml(item.label || item.name || item.text || "")}"
+      />
+      <button
+        type="button"
+        class="icon-btn icon-btn-small ingredient-remove"
+        aria-label="Eliminar ingrediente"
+      >✕</button>
+    </div>
 
-    const unit = document.createElement("input");
-    unit.type = "text";
-    unit.className = "builder-input ingredient-unit";
-    unit.placeholder = "Unidad";
-    unit.value = item.unit || "";
-    unit.addEventListener("input", updateRecipeCalcSummary);
+    <div class="ingredient-links-row">
+      <input
+        type="select"
+        class="builder-input ingredient-link-search ingredient-link-macro"
+        placeholder="Vincular macro…"
+        list="recipe-macro-products-list"
+        value="${escapeHtml(macroLinked?.name || "")}"
+      />
+      <input
+        type="select"
+        class="builder-input ingredient-link-search ingredient-link-finance"
+        placeholder="Vincular finanzas…"
+        list="recipe-finance-products-list"
+        value="${escapeHtml(financeLinked?.name || "")}"
+      />
+      
+    </div>
+<button
+        type="button"
+        class="btn ghost btn-compact ingredient-create-product"
+      >Crear macro</button>
+    <div class="ingredient-link-status"></div>
+  `;
 
-    const label = document.createElement("input");
-    label.type = "text";
-    label.placeholder = "Ingrediente";
-    label.value = item.label || item.name || item.text || "";
-    label.className = "builder-input ingredient-label";
-    label.addEventListener("input", updateRecipeCalcSummary);
+  const qty = row.querySelector(".ingredient-qty");
+  const unit = row.querySelector(".ingredient-unit");
+  const label = row.querySelector(".ingredient-label");
+  const notes = row.querySelector(".ingredient-notes");
+  const macroInput = row.querySelector(".ingredient-link-macro");
+  const financeInput = row.querySelector(".ingredient-link-finance");
+  const remove = row.querySelector(".ingredient-remove");
+  const createMacroBtn = row.querySelector(".ingredient-create-product");
+  const status = row.querySelector(".ingredient-link-status");
 
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "icon-btn icon-btn-small ingredient-remove";
-    remove.textContent = "✕";
-    remove.setAttribute("aria-label", "Eliminar ingrediente");
-    remove.addEventListener("click", () => {
-      row.remove();
-      updateRecipeCalcSummary();
-    });
+  const renderIngredientLinkState = () => {
+    const chips = [];
+    if (!String(row.dataset.productId || "").trim()) {
+      chips.push('<span class="ingredient-link-chip">Sin macro</span>');
+    }
+    if (!String(row.dataset.financeProductId || "").trim()) {
+      chips.push('<span class="ingredient-link-chip">Sin finanzas</span>');
+    }
+    status.innerHTML = chips.join("");
+  };
 
-    top.appendChild(qty);
-    top.appendChild(unit);
-    top.appendChild(label);
-    top.appendChild(remove);
+  qty.addEventListener("input", updateRecipeCalcSummary);
+  unit.addEventListener("input", updateRecipeCalcSummary);
+  label.addEventListener("input", updateRecipeCalcSummary);
 
-    const notes = document.createElement("input");
-    notes.type = "text";
-    notes.placeholder = "Notas (opcional)";
-    notes.value = item.notes || "";
-    notes.className = "builder-input ingredient-notes";
+  remove.addEventListener("click", () => {
+    row.remove();
+    updateRecipeCalcSummary();
+  });
 
-    const links = document.createElement("div");
-    links.className = "ingredient-links-row";
+  macroInput.addEventListener("change", () => {
+    const found = fuzzyMatchByName(macroInput.value || "", nutritionProducts, (p) => p?.name || "");
+    row.dataset.productId = found?.id ? String(found.id) : "";
+    updateRecipeCalcSummary();
+    renderIngredientLinkState();
+  });
 
-    const macroInput = document.createElement("input");
-    macroInput.type = "search";
-    macroInput.className = "builder-input ingredient-link-search";
-    macroInput.placeholder = "Vincular macro…";
-    macroInput.setAttribute("list", "recipe-macro-products-list");
-    const macroLinked = nutritionProducts.find((p) => p.id === row.dataset.productId);
-    macroInput.value = macroLinked?.name || "";
-    macroInput.addEventListener("change", () => {
-      const found = fuzzyMatchByName(macroInput.value || "", nutritionProducts, (p) => p?.name || "");
-      row.dataset.productId = found?.id ? String(found.id) : "";
-      updateRecipeCalcSummary();
-      renderIngredientLinkState();
-    });
+  financeInput.addEventListener("change", () => {
+    const found = fuzzyMatchByName(financeInput.value || "", financeProducts, (f) => f?.name || "");
+    row.dataset.financeProductId = found?.id ? String(found.id) : "";
+    renderIngredientLinkState();
+  });
 
-    const financeInput = document.createElement("input");
-    financeInput.type = "search";
-    financeInput.className = "builder-input ingredient-link-search";
-    financeInput.placeholder = "Vincular finanzas…";
-    financeInput.setAttribute("list", "recipe-finance-products-list");
-    const financeLinked = financeProducts.find((f) => f.id === row.dataset.financeProductId);
-    financeInput.value = financeLinked?.name || "";
-    financeInput.addEventListener("change", () => {
-      const found = fuzzyMatchByName(financeInput.value || "", financeProducts, (f) => f?.name || "");
-      row.dataset.financeProductId = found?.id ? String(found.id) : "";
-      renderIngredientLinkState();
-    });
-
-    const createMacroBtn = document.createElement("button");
-    createMacroBtn.type = "button";
-    createMacroBtn.className = "btn ghost btn-compact ingredient-create-product";
-    createMacroBtn.textContent = "Crear macro";
-    createMacroBtn.addEventListener("click", () => {
-      const draft = {
-        id: generateId(),
-        name: String(label.value || item.name || "").trim() || "Nuevo producto",
-        baseQuantity: Math.max(1, Number(qty.value) || 100),
-        baseUnit: normalizeUnit(unit.value || "g") || "g",
-        servingBaseGrams: Math.max(1, Number(qty.value) || 100),
-        servingBaseUnit: normalizeUnit(unit.value || "g") || "g",
-        macros: { carbs: 0, protein: 0, fat: 0, kcal: 0 },
-        source: "manual",
-      };
-      openMacroProductModal(draft, macroModalState.meal || "breakfast", Number(qty.value) || 100, null, {
-        ingredientTarget: { recipeId: String($recipeId?.value || ""), ingredientId: row.dataset.id }
-      });
-    });
-
-    links.appendChild(macroInput);
-    links.appendChild(financeInput);
-    links.appendChild(createMacroBtn);
-
-    const status = document.createElement("div");
-    status.className = "ingredient-link-status";
-
-    const renderIngredientLinkState = () => {
-      const chips = [];
-      if (!String(row.dataset.productId || "").trim()) chips.push('<span class="ingredient-link-chip">Sin macro</span>');
-      if (!String(row.dataset.financeProductId || "").trim()) chips.push('<span class="ingredient-link-chip">Sin finanzas</span>');
-      status.innerHTML = chips.join("");
+  createMacroBtn.addEventListener("click", () => {
+    const draft = {
+      id: generateId(),
+      name: String(label.value || item.name || "").trim() || "Nuevo producto",
+      baseQuantity: Math.max(1, Number(qty.value) || 100),
+      baseUnit: normalizeUnit(unit.value || "g") || "g",
+      servingBaseGrams: Math.max(1, Number(qty.value) || 100),
+      servingBaseUnit: normalizeUnit(unit.value || "g") || "g",
+      macros: { carbs: 0, protein: 0, fat: 0, kcal: 0 },
+      source: "manual",
     };
 
-    row.appendChild(top);
-    row.appendChild(notes);
-    row.appendChild(links);
-    row.appendChild(status);
-    renderIngredientLinkState();
-    return row;
-  }
+    openMacroProductModal(
+      draft,
+      macroModalState.meal || "breakfast",
+      Number(qty.value) || 100,
+      null,
+      {
+        ingredientTarget: {
+          recipeId: String($recipeId?.value || ""),
+          ingredientId: row.dataset.id,
+        },
+      }
+    );
+  });
+
+  renderIngredientLinkState();
+  return row;
+}
+
+
 
   function buildStepRow(item = DEFAULT_STEP()) {
     const row = document.createElement("div");

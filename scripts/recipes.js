@@ -1279,9 +1279,12 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   function getRecipeCostSummary(recipe) {
     const cost = calculateRecipeCost(recipe, resolveRecipeServings(recipe));
+    const perServing = Number(cost?.perServing);
+    const total = Number(cost?.total);
     return {
-      total: Number(cost?.total) || 0,
-      hasData: Boolean(cost?.covered),
+      total: Number.isFinite(total) ? total : 0,
+      perServing: Number.isFinite(perServing) ? perServing : null,
+      hasData: Number(cost?.covered) > 0 && Number.isFinite(perServing),
     };
   }
 
@@ -1324,10 +1327,13 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     const metadata = [recipe.meal, recipe.health, ...(Array.isArray(recipe.tags) ? recipe.tags : [])].filter(Boolean).join(" · ");
     const hasImage = Boolean(String(recipe.imageURL || "").trim());
     const imageMarkup = hasImage
-      ? `<div class="recipe-row-media"><img src="${escapeAttr(recipe.imageURL)}" alt="${escapeAttr(recipe.title || "Receta")}" loading="lazy"/></div>`
+      ? `<div class="recipe-row-media">
+          <img class="recipe-row-media-bleed" src="${escapeAttr(recipe.imageURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async"/>
+          <img class="recipe-row-media-img" src="${escapeAttr(recipe.imageURL)}" alt="${escapeAttr(recipe.title || "Receta")}" loading="lazy" decoding="async"/>
+        </div>`
       : "";
     return `
-      <article class="recipe-row-card" data-open-recipe="${escapeAttr(recipe.id)}">
+      <article class="recipe-row-card${hasImage ? " has-image" : ""}" data-open-recipe="${escapeAttr(recipe.id)}">
         ${imageMarkup}
         <div class="recipe-row-body">
           <h4 class="recipe-row-title">${escapeHtml(recipe.title || "Receta")}</h4>
@@ -1337,7 +1343,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
             ${buildRecipeKpiChip("carbs", nutrition.hasData ? `C ${formatMetricValue(nutrition.totals.carbs, "g")}` : "C —", !nutrition.hasData)}
             ${buildRecipeKpiChip("protein", nutrition.hasData ? `P ${formatMetricValue(nutrition.totals.protein, "g")}` : "P —", !nutrition.hasData)}
             ${buildRecipeKpiChip("fat", nutrition.hasData ? `G ${formatMetricValue(nutrition.totals.fat, "g")}` : "G —", !nutrition.hasData)}
-            ${buildRecipeKpiChip("cost", cost.hasData ? formatCurrency(cost.total) : "—", !cost.hasData)}
+            ${buildRecipeKpiChip("cost", cost.hasData ? formatCurrency(cost.perServing) : "—", !cost.hasData)}
           </div>
         </div>
       </article>

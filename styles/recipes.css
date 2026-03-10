@@ -104,6 +104,7 @@
 }
 
 .recipe-row-card {
+  --recipe-row-media-w: 76px;
   display: flex;
   align-items: stretch;
   gap: 10px;
@@ -114,20 +115,85 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 16px rgba(0, 0, 0, 0.24);
   padding: 8px;
   min-width: 0;
+  position: relative;
 }
 
 .recipe-row-media {
-  flex: 0 0 76px;
-  width: 76px;
-  min-height: 76px;
+  flex: 0 0 var(--recipe-row-media-w);
+  width: var(--recipe-row-media-w);
+  height: 76px;
+  position: relative;
+  z-index: 0;
 }
 
-.recipe-row-media img {
+.recipe-row-media-img {
   display: block;
+  position: relative;
+  z-index: 2;
   width: 100%;
   height: 100%;
   object-fit: cover;
   border-radius: 10px;
+}
+
+.recipe-row-media-bleed {
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: calc(100% + 240px);
+  max-width: none;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 10px;
+  filter: blur(14px) saturate(1.05);
+  opacity: 0.78;
+  transform: translateZ(0);
+  -webkit-mask-image: linear-gradient(
+    to right,
+    rgba(0,0,0,0.0) 0%,
+    rgba(0,0,0,0.0) 26%,
+    rgba(0,0,0,0.12) 38%,
+    rgba(0,0,0,0.35) 46%,
+    rgba(0,0,0,0.70) 58%,
+    rgba(0,0,0,0.45) 78%,
+    rgba(0,0,0,0.0) 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    rgba(0,0,0,0.0) 0%,
+    rgba(0,0,0,0.0) 26%,
+    rgba(0,0,0,0.12) 38%,
+    rgba(0,0,0,0.35) 46%,
+    rgba(0,0,0,0.70) 58%,
+    rgba(0,0,0,0.45) 78%,
+    rgba(0,0,0,0.0) 100%
+  );
+}
+
+.recipe-row-card.has-image {
+  overflow: hidden;
+}
+
+.recipe-row-card.has-image::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  bottom: 8px;
+  left: calc(20px + var(--recipe-row-media-w) - 10px);
+  border-radius: 0 10px 10px 0;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(
+    to right,
+    rgba(14, 18, 26, 0.0) 0%,
+    rgba(14, 18, 26, 0.06) 22%,
+    rgba(14, 18, 26, 0.22) 46%,
+    rgba(14, 18, 26, 0.58) 80%,
+    rgba(14, 18, 26, 0.90) 100%
+  );
+  backdrop-filter: blur(12px) saturate(112%);
 }
 
 .recipe-row-body {
@@ -135,6 +201,8 @@
   min-width: 0;
   display: grid;
   gap: 6px;
+  position: relative;
+  z-index: 2;
 }
 
 .recipe-row-title {
@@ -2063,6 +2131,10 @@
   gap:10px;
 }
 
+.macro-grid-4{
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .macro-field{
   display:flex;
   flex-direction:column;
@@ -2274,4 +2346,59 @@ border: 0px;
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.06);
     background: rgba(0, 0, 0, 0.10);
+}
+
+#valores-nutricionales.macro-grid.macro-grid-4{
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+#macro-product-modal-backdrop #macro-product-kcal,
+#macro-product-modal-backdrop #macro-product-carbs,
+#macro-product-modal-backdrop #macro-product-protein,
+#macro-product-modal-backdrop #macro-product-fat{
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+#macro-product-kcal{
+  background-color: rgba(173, 245, 255, 0.281);
+  backdrop-filter: blur(12px);
+  border: -1px;
+  border-color: rgba(255, 255, 255, 0.438);
+}
+
+#macro-product-carbs{
+  background-color: rgba(245, 139, 240, 0.281);
+  backdrop-filter: blur(12px);
+  border: -1px;
+  border-color: rgba(255, 101, 222, 0.438);
+  gap: 4px;
+  padding: 0px;
+}
+
+#macro-product-protein{
+  background-color: rgba(139, 176, 245, 0.281);
+  backdrop-filter: blur(12px);
+  border: -1px;
+  border-color: rgba(101, 111, 255, 0.438);
+  gap: 4px;
+  padding: 0px;
+}
+
+#macro-product-fat{
+  background-color: rgba(245, 243, 139, 0.281);
+  backdrop-filter: blur(12px);
+  border: -1px;
+  border-color: rgba(255, 245, 101, 0.438);
+  gap: 4px;
+  padding: 0px;
+}
+
+#macro-product-modal-backdrop .macro-product-nutrition-card .macro-field input {
+    width: 110px;
+    height: 40px;
+    padding: 0 5px;
+    border-radius: 12px;
+    text-align: right;
 }

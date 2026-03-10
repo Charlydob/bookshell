@@ -2632,8 +2632,17 @@ Crear “<span id="gym-create-cta-text"></span>”
   <div class="macro-grid macro-grid-2">
 
     <label class="macro-field">
-      <span class="macro-label">Base (g)</span>
-      <input id="macro-product-base" type="number" value="100">
+      <span class="macro-label">Base nutricional</span>
+      <div class="macro-inline-qty">
+        <input id="macro-product-base" type="number" value="100">
+        <select id="macro-product-base-unit" class="macro-select">
+          <option value="g">g</option>
+          <option value="kg">kg</option>
+          <option value="ml">ml</option>
+          <option value="l">l</option>
+          <option value="unit">unidad</option>
+        </select>
+      </div>
     </label>
 
     <label class="macro-field">
@@ -2663,8 +2672,17 @@ Crear “<span id="gym-create-cta-text"></span>”
       <section class="macro-card macro-add-card macro-product-action-card">
         <div class="macro-grid macro-grid-1">
           <label class="macro-field">
-            <span class="macro-label">Cantidad a añadir (g)</span>
-            <input id="macro-product-grams" type="number" value="100" />
+            <span class="macro-label">Cantidad a añadir</span>
+            <div class="macro-inline-qty">
+              <input id="macro-product-grams" type="number" value="100" />
+              <select id="macro-product-grams-unit" class="macro-select">
+                <option value="g">g</option>
+                <option value="kg">kg</option>
+                <option value="ml">ml</option>
+                <option value="l">l</option>
+                <option value="unit">unidad</option>
+              </select>
+            </div>
           </label>
         </div>
 

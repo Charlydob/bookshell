@@ -444,6 +444,9 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   let selectedMacroDate = toISODate(new Date());
   const macroModalState = { meal: "breakfast", source: "products", query: "" };
   const macroStatsState = { period: "week", anchorDate: selectedMacroDate, metric: "macros", donutMode: "kcal-macros" };
+  const macroSelectionState = { meal: null, selectedIds: new Set() };
+  const macroExpandedRecipes = new Set();
+  const macroLongPressState = { timer: null, meal: null, entryId: null, pointerId: null, startX: 0, startY: 0, active: false };
   const macroPalette = {
     carbs: "#ff4bd1",
     protein: "#5aa4ff",
@@ -980,6 +983,35 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return normalizeEntryServingsCount(entry?.servingsCount);
   }
 
+  function ensureMacroEntryId(entry = {}) {
+    const raw = String(entry?.entryId || entry?.id || "").trim();
+    if (raw) return raw;
+    return generateId();
+  }
+
+  function getRecipeSnapshotFromEntry(entry = {}) {
+    if (entry.type !== "recipe") return null;
+    const fromEntry = entry.recipeSnapshot && typeof entry.recipeSnapshot === "object" ? entry.recipeSnapshot : null;
+    if (fromEntry) return fromEntry;
+    const linked = recipes.find((r) => r.id === entry.refId) || null;
+    if (linked) return linked;
+    return {
+      id: String(entry.refId || "").trim(),
+      title: String(entry.nameSnapshot || "Receta").trim(),
+      ingredients: Array.isArray(entry.ingredientsSnapshot) ? entry.ingredientsSnapshot : [],
+      nutritionTotals: normalizeMacros(entry.macrosSnapshot || {}),
+      nutritionPerServing: normalizeMacros(entry.macrosSnapshot || {}),
+      servings: Math.max(1, Number(entry.servings) || 1),
+      totalCost: Number(entry.computedCost) || 0,
+    };
+  }
+
+  function getRecipeIngredientsFromEntry(entry = {}) {
+    if (Array.isArray(entry.ingredientsSnapshot) && entry.ingredientsSnapshot.length) return entry.ingredientsSnapshot;
+    const recipe = getRecipeSnapshotFromEntry(entry);
+    return Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+  }
+
   function getEntryMacrosTotal(entry) {
     const base = normalizeMacros(entry?.macrosSnapshot || {});
     const count = getEntryServingsCount(entry);
@@ -1455,6 +1487,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     const cost = computeConsumptionEntryCost(product, safeAmount, safeUnit);
     const linkedHabitId = String(product?.linkedHabitId || "").trim();
     return {
+      entryId: generateId(),
       type: "product",
       mealSlot: safeMeal,
       refId: String(product?.id || "").trim(),
@@ -3684,6 +3717,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         const entries = Array.isArray(log?.meals?.[meal]?.entries) ? log.meals[meal].entries : [];
         meals[meal] = {
           entries: entries.map((entry) => ({
+            entryId: ensureMacroEntryId(entry),
             type: entry?.type === "recipe" ? "recipe" : "product",
             mealSlot: meal,
             refId: entry?.refId || "",
@@ -3726,6 +3760,13 @@ $recipeImportBtn?.addEventListener("click", () => {
               habitId: String(entry?.habitSync?.habitId || "").trim(),
               amount: Math.max(0, Number(entry?.habitSync?.amount) || 0),
             },
+            recipeSnapshot: entry?.recipeSnapshot && typeof entry.recipeSnapshot === "object"
+              ? normalizeRecipeFields(entry.recipeSnapshot)
+              : null,
+            ingredientsSnapshot: Array.isArray(entry?.ingredientsSnapshot)
+              ? entry.ingredientsSnapshot.map((ing) => buildRecipeIngredientFromProduct(getIngredientLinkedProduct(ing), ing))
+              : [],
+            expanded: !!entry?.expanded,
             sideEffects: {
               habits: Array.isArray(entry?.sideEffects?.habits) ? entry.sideEffects.habits.map((h) => ({
                 habitId: String(h?.habitId || "").trim(),
@@ -4350,6 +4391,12 @@ $recipeImportBtn?.addEventListener("click", () => {
   function renderMacrosView() {
     if (!$recipesPanelMacros || !$macroSummaryGrid || !$macroMeals) return;
     const log = getDailyLog(selectedMacroDate);
+    if (macroSelectionState.meal) {
+      const mealEntries = log?.meals?.[macroSelectionState.meal]?.entries || [];
+      const validIds = new Set(mealEntries.map((entry) => ensureMacroEntryId(entry)));
+      macroSelectionState.selectedIds = new Set(Array.from(macroSelectionState.selectedIds).filter((id) => validIds.has(id)));
+      if (!macroSelectionState.selectedIds.size) clearMacroSelection(macroSelectionState.meal);
+    }
     const totals = computeDailyTotals(selectedMacroDate);
     const dayCost = computeDailyCostSummary(selectedMacroDate);
     const totalBurned = getTotalCaloriesBurnedForDate(selectedMacroDate);
@@ -4431,29 +4478,53 @@ $recipeImportBtn?.addEventListener("click", () => {
       const entries = log.meals[meal].entries || [];
       const mt = computeMealTotals(entries);
       const mealCost = computeMealCostSummary(entries);
+      const isSelectionMode = macroSelectionState.meal === meal;
       const entryHtml = entries.map((entry, idx) => {
-        const quantityLabel = entry.type === "recipe"
+        const entryId = ensureMacroEntryId(entry);
+        const isSelected = isSelectionMode && macroSelectionState.selectedIds.has(entryId);
+        const isRecipe = entry.type === "recipe";
+        const quantityLabel = isRecipe
           ? `${roundMacro(entry.servings || 1)} rac`
           : formatAmountWithUnit(Number(entry.amount) || Number(entry.grams) || 0, entry.unit || "g");
         const servingsCount = getEntryServingsCount(entry);
         const entryCost = calculateEntryFoodCost(entry);
         const entryMacros = getEntryMacrosTotal(entry);
+        const isExpanded = isRecipe && (macroExpandedRecipes.has(entryId) || entry.expanded);
+        const ingredients = isRecipe ? getRecipeIngredientsFromEntry(entry) : [];
+        const ingredientsHtml = isRecipe && isExpanded
+          ? `<div class="macro-recipe-ingredients">${ingredients.map((ing) => {
+            const product = getIngredientLinkedProduct(ing);
+            const nutrition = computeIngredientNutrition(ing, product);
+            const cost = computeIngredientCost(ing, product);
+            const qty = normalizeIngredientQty(ing?.qty);
+            const unit = normalizeCostUnit(ing?.unit || "");
+            const qtyLabel = qty && unit ? `${roundMacro(qty)} ${unit}` : (resolveIngredientDisplay(ing).quantity || "—");
+            return `<div class="macro-recipe-ingredient-row"><strong>${escapeHtml(String(ing?.label || ing?.name || "Ingrediente"))}</strong><span>${escapeHtml(qtyLabel)}</span><span>${roundMacro(nutrition.totals.kcal)} kcal</span><span>C ${roundMacro(nutrition.totals.carbs)} · P ${roundMacro(nutrition.totals.protein)} · G ${roundMacro(nutrition.totals.fat)}</span><span>${cost.calculable ? formatCurrency(cost.value) : "Coste n/d"}</span></div>`;
+          }).join("") || '<div class="hint">Sin ingredientes</div>'}</div>`
+          : "";
         return `
-      <div class="macro-entry">
-      <input class="macro-entry-count-input" type="number" min="1" step="1" inputmode="numeric" value="${servingsCount}" data-macro-count="${meal}:${idx}" aria-label="Unidades de ${entry.nameSnapshot}" />
-      <button class="macro-entry-open" data-macro-open="${meal}:${idx}" type="button" aria-label="Abrir ficha de ${entry.nameSnapshot}">
+      <div class="macro-entry ${isSelected ? "is-selected" : ""} ${isRecipe ? "macro-entry-recipe" : ""}">
+      <input class="macro-entry-count-input" type="number" min="1" step="1" inputmode="numeric" value="${servingsCount}" data-macro-count="${meal}:${idx}" aria-label="Unidades de ${escapeHtml(entry.nameSnapshot)}" />
+      ${isSelectionMode && !isRecipe ? `<button class="macro-entry-select-toggle" data-macro-select-toggle="${meal}:${idx}" type="button" aria-label="Seleccionar ${escapeHtml(entry.nameSnapshot)}">${isSelected ? "✓" : "○"}</button>` : ""}
+      <button class="macro-entry-open" data-macro-open="${meal}:${idx}" data-macro-entry-id="${entryId}" type="button" aria-label="Abrir ficha de ${escapeHtml(entry.nameSnapshot)}">
       <div class="contenido-comida-lista">
-      <strong>${entry.nameSnapshot}</strong>
+      <strong>${escapeHtml(entry.nameSnapshot)}</strong>
       <div class="hint" id="cantidad-comida">${quantityLabel}</div>
+      ${isRecipe ? `<div class="hint macro-recipe-inline-kpis">C ${roundMacro(entryMacros.carbs)} · P ${roundMacro(entryMacros.protein)} · G ${roundMacro(entryMacros.fat)} · ${entryCost.cost == null ? "Coste n/d" : formatCurrency(entryCost.cost)}</div>` : ""}
       </div>
       </button>
       <div class="macro-entry-right">
-      <div class="kcals-dato">
-      ${roundMacro(entryMacros.kcal)} kcal
-      </div>
+      <div class="kcals-dato">${roundMacro(entryMacros.kcal)} kcal</div>
       <div class="hint macro-entry-cost">${entryCost.cost == null ? "Coste n/d" : `~${formatCurrency(entryCost.cost)}`}</div>
-      <button class="icon-btn-eliminar-comida" data-macro-delete="${meal}:${idx}" type="button">✕</button></div></div>`;
+      ${isRecipe ? `<button class="macro-entry-expand" data-macro-toggle-recipe="${meal}:${idx}" type="button" aria-label="${isExpanded ? "Contraer" : "Expandir"} receta">${isExpanded ? "▾" : "▸"}</button>` : ""}
+      <button class="icon-btn-eliminar-comida" data-macro-delete="${meal}:${idx}" type="button">✕</button></div>
+      ${ingredientsHtml}
+      </div>`;
       }).join("") || '<div class="hint">Sin entradas</div>';
+      const selectedCount = isSelectionMode ? getMacroSelectionEntries().length : 0;
+      const selectionBar = isSelectionMode
+        ? `<div class="macro-selection-bar"><span>${selectedCount} seleccionados</span><div class="macro-selection-actions"><button class="btn ghost btn-compact" data-macro-selection-cancel="${meal}" type="button">Cancelar</button><button class="btn btn-compact" data-macro-selection-create="${meal}" type="button" ${selectedCount ? "" : "disabled"}>Crear receta</button></div></div>`
+        : "";
       return `<article class="macro-meal-card">
       <div class="macro-meal-head">
       <h4>${mealLabels[meal]}</h4>
@@ -4464,7 +4535,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         <span class="macro-meal-kpi macro-meal-kpi-fat"><span class="macro-meal-kpi-label">G</span><strong class="macro-meal-kpi-value">${roundMacro(mt.fat)}</strong></span>
         <span class="macro-meal-kpi macro-meal-kpi-cost"><span class="macro-meal-kpi-label">Coste</span><strong class="macro-meal-kpi-value">${formatCurrency(mealCost.total)}</strong></span>
         ${mealCost.missing ? `<span class="macro-meal-kpi macro-meal-kpi-missing"><strong class="macro-meal-kpi-value">${mealCost.missing}</strong><span class="macro-meal-kpi-label">s/p</span></span>` : ""}
-      </div></div><div class="macro-meal-entries">${entryHtml}</div><button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
+      </div></div><div class="macro-meal-entries">${entryHtml}</div>${selectionBar}<button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
     }).join("");
     if ($recipesPanelStatistics?.classList.contains("is-active")) renderStatisticsView();
   }
@@ -4839,6 +4910,115 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($recipeIngredientGrams && !$recipeIngredientGrams.value) $recipeIngredientGrams.value = "100";
   }
 
+  function clearMacroSelection(meal = null) {
+    if (meal && macroSelectionState.meal && macroSelectionState.meal !== meal) return;
+    macroSelectionState.meal = null;
+    macroSelectionState.selectedIds = new Set();
+  }
+
+  function getMacroSelectionEntries() {
+    if (!macroSelectionState.meal) return [];
+    const log = getDailyLog(selectedMacroDate);
+    const entries = log?.meals?.[macroSelectionState.meal]?.entries || [];
+    return entries.filter((entry) => macroSelectionState.selectedIds.has(ensureMacroEntryId(entry)));
+  }
+
+  function createRecipeFromMealSelection(meal) {
+    const log = getDailyLog(selectedMacroDate);
+    const entries = log?.meals?.[meal]?.entries || [];
+    const selected = entries.filter((entry) => entry.type === "product" && macroSelectionState.selectedIds.has(ensureMacroEntryId(entry)));
+    if (!selected.length) return;
+    const rawName = window.prompt("Nombre de la receta");
+    const title = String(rawName || "").trim();
+    if (!title) return;
+    const now = Date.now();
+    const ingredients = selected.map((entry) => {
+      const linked = nutritionProducts.find((p) => p.id === entry.refId) || null;
+      const amount = Math.max(0, Number(entry.amount) || Number(entry.grams) || 0);
+      const unit = normalizeUnit(entry.unit || "g") || "g";
+      return buildRecipeIngredientFromProduct(linked, {
+        productId: String(entry.refId || "").trim(),
+        label: String(entry.nameSnapshot || entry.productName || "Producto").trim(),
+        name: String(entry.nameSnapshot || entry.productName || "Producto").trim(),
+        qty: amount,
+        unit,
+        linkedFinanceProductId: String(entry.linkedFinanceProductId || "").trim(),
+        linkedHabitId: String(entry.linkedHabitId || "").trim(),
+        nutritionSnapshot: entry.nutritionSnapshot || null,
+        pricingSnapshot: entry.pricingSnapshot || null,
+        computedKcal: Number(entry.macrosSnapshot?.kcal) || 0,
+        computedCarbs: Number(entry.macrosSnapshot?.carbs) || 0,
+        computedProtein: Number(entry.macrosSnapshot?.protein) || 0,
+        computedFat: Number(entry.macrosSnapshot?.fat) || 0,
+        computedCost: Number(entry.computedCost) || 0,
+      });
+    });
+    const draftRecipe = normalizeRecipeFields(recalculateRecipeDerivedData({
+      id: generateId(),
+      title,
+      meal: mealLabels[meal] || "",
+      tags: ["Macros"],
+      servings: 1,
+      ingredients,
+      steps: [],
+      notes: "",
+      createdAt: now,
+      updatedAt: now,
+    }));
+    recipes.unshift(draftRecipe);
+    persistRecipe(draftRecipe.id, draftRecipe);
+
+    const sideEffects = selected.reduce((acc, entry) => {
+      const fx = entry?.sideEffects || { habits: [], financeCost: Number(entry.computedCost) || 0, productsResolved: 0, productsTotal: 0 };
+      acc.financeCost += Number(fx.financeCost) || 0;
+      acc.productsResolved += Number(fx.productsResolved) || 0;
+      acc.productsTotal += Number(fx.productsTotal) || 0;
+      (Array.isArray(fx.habits) ? fx.habits : []).forEach((h) => {
+        if (!h?.habitId) return;
+        acc.habits.push({ habitId: String(h.habitId), amount: Number(h.amount) || 0 });
+      });
+      return acc;
+    }, { habits: [], financeCost: 0, productsResolved: 0, productsTotal: 0 });
+
+    const recipeEntry = {
+      entryId: generateId(),
+      type: "recipe",
+      mealSlot: meal,
+      refId: draftRecipe.id,
+      nameSnapshot: draftRecipe.title,
+      servings: 1,
+      servingsCount: 1,
+      macrosSnapshot: normalizeMacros(draftRecipe.nutritionTotals || {}),
+      computedCost: Number(draftRecipe.totalCost) || null,
+      sideEffects,
+      recipeSnapshot: draftRecipe,
+      ingredientsSnapshot: draftRecipe.ingredients || [],
+      expanded: true,
+      createdAt: now,
+    };
+
+    const selectedIds = new Set(selected.map((entry) => ensureMacroEntryId(entry)));
+    const nextEntries = [];
+    let inserted = false;
+    entries.forEach((entry) => {
+      const id = ensureMacroEntryId(entry);
+      if (!selectedIds.has(id)) {
+        nextEntries.push(entry);
+        return;
+      }
+      if (!inserted) {
+        nextEntries.push(recipeEntry);
+        inserted = true;
+      }
+    });
+    log.meals[meal].entries = nextEntries;
+    macroExpandedRecipes.add(recipeEntry.entryId);
+    clearMacroSelection(meal);
+    persistNutrition();
+    renderMacrosView();
+    refreshUI();
+  }
+
   function buildProductSideEffects(product, quantityFactor = 1) {
     const safeFactor = Math.max(0, Number(quantityFactor) || 0);
     const habitId = String(product?.linkedHabitId || "").trim();
@@ -4924,7 +5104,9 @@ $recipeImportBtn?.addEventListener("click", () => {
     };
     const sideEffects = buildRecipeSideEffects(recipe, servings);
     const entry = {
+      entryId: generateId(),
       type: "recipe",
+      mealSlot: meal,
       refId: recipe.id,
       nameSnapshot: recipe.title,
       servings,
@@ -4932,6 +5114,9 @@ $recipeImportBtn?.addEventListener("click", () => {
       macrosSnapshot,
       computedCost,
       sideEffects,
+      recipeSnapshot: recipe,
+      ingredientsSnapshot: Array.isArray(recipe.ingredients) ? recipe.ingredients : [],
+      expanded: false,
       createdAt: Date.now(),
     };
     getDailyLog(selectedMacroDate).meals[meal].entries.unshift(entry);
@@ -7411,9 +7596,98 @@ $recipeImportBtn?.addEventListener("click", () => {
     renderMacrosView();
   });
 
+  $macroMeals?.addEventListener("pointerdown", (e) => {
+    const openBtn = e.target.closest("[data-macro-open]");
+    if (!openBtn) return;
+    const meal = String(openBtn.dataset.macroOpen || "").split(":")[0];
+    const idx = Number(String(openBtn.dataset.macroOpen || "").split(":")[1]);
+    const log = getDailyLog(selectedMacroDate);
+    const entry = log?.meals?.[meal]?.entries?.[idx];
+    if (!entry || entry.type !== "product") return;
+    if (macroLongPressState.timer) clearTimeout(macroLongPressState.timer);
+    macroLongPressState.active = false;
+    macroLongPressState.meal = meal;
+    macroLongPressState.entryId = ensureMacroEntryId(entry);
+    macroLongPressState.pointerId = e.pointerId;
+    macroLongPressState.startX = Number(e.clientX) || 0;
+    macroLongPressState.startY = Number(e.clientY) || 0;
+    macroLongPressState.timer = setTimeout(() => {
+      macroLongPressState.active = true;
+      macroSelectionState.meal = meal;
+      macroSelectionState.selectedIds = new Set([macroLongPressState.entryId]);
+      renderMacrosView();
+    }, 450);
+  });
+
+  $macroMeals?.addEventListener("pointermove", (e) => {
+    if (!macroLongPressState.timer) return;
+    const dx = Math.abs((Number(e.clientX) || 0) - macroLongPressState.startX);
+    const dy = Math.abs((Number(e.clientY) || 0) - macroLongPressState.startY);
+    if (dx > 10 || dy > 10) {
+      clearTimeout(macroLongPressState.timer);
+      macroLongPressState.timer = null;
+    }
+  });
+
+  const cancelMacroLongPress = () => {
+    if (macroLongPressState.timer) clearTimeout(macroLongPressState.timer);
+    macroLongPressState.timer = null;
+    macroLongPressState.pointerId = null;
+  };
+  $macroMeals?.addEventListener("pointerup", cancelMacroLongPress);
+  $macroMeals?.addEventListener("pointercancel", cancelMacroLongPress);
+  $macroMeals?.addEventListener("contextmenu", (e) => {
+    if (e.target.closest("[data-macro-open]")) {
+      try { e.preventDefault(); } catch (_) {}
+    }
+  });
+
   $macroMeals?.addEventListener("click", (e) => {
+    const cancelSelBtn = e.target.closest("[data-macro-selection-cancel]");
+    if (cancelSelBtn) {
+      clearMacroSelection(cancelSelBtn.dataset.macroSelectionCancel);
+      renderMacrosView();
+      return;
+    }
+    const createSelBtn = e.target.closest("[data-macro-selection-create]");
+    if (createSelBtn) {
+      createRecipeFromMealSelection(createSelBtn.dataset.macroSelectionCreate);
+      return;
+    }
+    const selectToggleBtn = e.target.closest("[data-macro-select-toggle]");
+    if (selectToggleBtn) {
+      const [meal, idx] = String(selectToggleBtn.dataset.macroSelectToggle || "").split(":");
+      const entry = getDailyLog(selectedMacroDate)?.meals?.[meal]?.entries?.[Number(idx)];
+      if (!entry) return;
+      const entryId = ensureMacroEntryId(entry);
+      if (macroSelectionState.meal !== meal) {
+        macroSelectionState.meal = meal;
+        macroSelectionState.selectedIds = new Set();
+      }
+      if (macroSelectionState.selectedIds.has(entryId)) macroSelectionState.selectedIds.delete(entryId);
+      else macroSelectionState.selectedIds.add(entryId);
+      if (!macroSelectionState.selectedIds.size) clearMacroSelection(meal);
+      renderMacrosView();
+      return;
+    }
+
+    const recipeToggleBtn = e.target.closest("[data-macro-toggle-recipe]");
+    if (recipeToggleBtn) {
+      const [meal, idx] = String(recipeToggleBtn.dataset.macroToggleRecipe || "").split(":");
+      const entry = getDailyLog(selectedMacroDate)?.meals?.[meal]?.entries?.[Number(idx)];
+      if (!entry) return;
+      const entryId = ensureMacroEntryId(entry);
+      if (macroExpandedRecipes.has(entryId)) macroExpandedRecipes.delete(entryId);
+      else macroExpandedRecipes.add(entryId);
+      entry.expanded = macroExpandedRecipes.has(entryId);
+      persistNutrition();
+      renderMacrosView();
+      return;
+    }
+
     const addBtn = e.target.closest("[data-macro-add]");
     if (addBtn) return openMacroAddModal(addBtn.dataset.macroAdd);
+
     const delBtn = e.target.closest("[data-macro-delete]");
     if (delBtn) {
       const [meal, idx] = String(delBtn.dataset.macroDelete || "").split(":");
@@ -7432,6 +7706,23 @@ $recipeImportBtn?.addEventListener("click", () => {
     const openBtn = e.target.closest("[data-macro-open]");
     if (openBtn) {
       const [meal, idx] = String(openBtn.dataset.macroOpen || "").split(":");
+      const entry = getDailyLog(selectedMacroDate)?.meals?.[meal]?.entries?.[Number(idx)];
+      if (!entry) return;
+      if (macroLongPressState.active || macroSelectionState.meal === meal) {
+        if (entry.type === "product") {
+          const entryId = ensureMacroEntryId(entry);
+          if (macroSelectionState.meal !== meal) {
+            macroSelectionState.meal = meal;
+            macroSelectionState.selectedIds = new Set();
+          }
+          if (macroSelectionState.selectedIds.has(entryId)) macroSelectionState.selectedIds.delete(entryId);
+          else macroSelectionState.selectedIds.add(entryId);
+          if (!macroSelectionState.selectedIds.size) clearMacroSelection(meal);
+          renderMacrosView();
+        }
+        macroLongPressState.active = false;
+        return;
+      }
       openMacroEntryEditor(meal, idx);
     }
   });

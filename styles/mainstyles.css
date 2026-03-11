@@ -35,7 +35,7 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
-  min-height: 100dvh;
+  min-height: 10dvh;
   overflow: hidden;
   background: radial-gradient(circle at top, #161a22, #05060a 60%);
   background-color: #05060a;

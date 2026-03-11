@@ -2658,7 +2658,7 @@ border: 0px;
 }
 #view-recipes {
   padding: 2px 1px;
-  padding-bottom: calc(20px + var(--nav-h) + var(--nav-gap, 20px) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(20px + var(--nav-total-h) + var(--nav-gap, 20px));
   overflow-y: auto;
   overflow-x: hidden;
 }

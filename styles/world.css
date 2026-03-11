@@ -6,7 +6,7 @@
   flex-direction: column;
   gap: 14px;
   padding: 45px 1px;
-  padding-bottom: calc(46px + var(--nav-h) + var(--nav-gap, 20px) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(46px + var(--nav-total-h) + var(--nav-gap, 20px));
   --w-txt: var(--txt, #eef0ff);
   --w-muted: rgba(238,240,255,.70);
   --w-dim: rgba(238,240,255,.55);

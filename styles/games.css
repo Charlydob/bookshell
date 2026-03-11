@@ -924,3 +924,6 @@ max-height: 740px;
   overflow-y: auto;
   overflow-x: hidden;
 }
+.games-view{
+  margin-bottom: 400px;
+}

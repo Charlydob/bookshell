@@ -422,3 +422,6 @@ body:has(#view-main.view-active) .app-shell{
 #rpg-dashboard{
   margin-top: 40px;
 }
+.rpg-collapsible{
+  margin-bottom: 200px;
+}

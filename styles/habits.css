@@ -4490,3 +4490,10 @@ align-items: center;
     overflow-y: auto;
     overflow-x: hidden;
 }
+#habits-today-acc-count{
+  margin-bottom: 200px;
+}
+
+.habits-views{
+  margin-bottom: 500px;
+}

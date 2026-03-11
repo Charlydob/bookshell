@@ -1183,3 +1183,6 @@ font-size: 12px;
   overflow-y: auto;
   overflow-x: hidden;
 }
+#gym-history-list, #gym-workout{
+  margin-bottom: 200px;
+}

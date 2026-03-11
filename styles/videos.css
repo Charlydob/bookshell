@@ -1580,6 +1580,10 @@
   filter: saturate(.9);
 }
 
+.video-finished{
+  
+}
+
 .video-finished-empty{
   padding: 10px 6px;
   color: var(--txt-soft);

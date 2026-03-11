@@ -505,7 +505,7 @@
 @media (max-width: 420px){
   .media-modal-grid{ grid-template-columns: 1fr; }
   .media-modal-grid--meta{ grid-template-columns: 1fr 1fr; }
-  .media-fab{ bottom: calc(env(safe-area-inset-bottom, 0px) + 119px); }
+  .media-fab{ bottom: calc(env(safe-area-inset-bottom, 0px) + 99px); }
 }
 
 .media-title-row{
@@ -1024,4 +1024,7 @@ button.media-entity-item:focus-visible{ outline: 2px solid rgba(167,139,250,.35)
   padding-bottom: calc(20px + var(--nav-total-h) + var(--nav-gap, 20px));
   overflow-y: auto;
   overflow-x: hidden;
+}
+.media-wrapper{
+  margin-bottom: 500px;
 }

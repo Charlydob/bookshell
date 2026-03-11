@@ -24,7 +24,7 @@
 #btn-add-recipe {
   position: fixed;
   left: 50%;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 124px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 104px);
   transform: translateX(-50%);
   width: 55px;
   height: 55px;
@@ -2661,4 +2661,12 @@ border: 0px;
   padding-bottom: calc(20px + var(--nav-total-h) + var(--nav-gap, 20px));
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+#recipes-charts-section{
+  margin-bottom: 500px;
+}
+
+#recipes-panel-macros, .macro-stats-shell{
+  margin-bottom: 500px;
 }

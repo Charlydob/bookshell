@@ -2387,3 +2387,6 @@ header.food-sheet-header h3{
   overflow-y: auto;
   overflow-x: hidden;
 }
+#finance-content {
+  margin-bottom: 500px;
+}

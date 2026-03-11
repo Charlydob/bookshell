@@ -4,12 +4,7 @@ body {
   overflow: hidden;
 }
 
-.app-main {
-  overflow-y: auto;
-  height: 100%;
-  margin-bottom: 0;
-  
-}
+/* Nota: `.app-main` layout/scroll está centralizado en `styles/mainstyles.css`. */
 
 .finance-scope * ,
 .finance-scope *::before ,

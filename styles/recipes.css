@@ -2605,7 +2605,7 @@ border: 0px;
   color: rgb(9, 255, 0);
 }
 #view-recipes {
-  padding: 10px 10px 200px;
+  padding: 20px 10px 200px;;
   overflow-y: auto;
   overflow-x: hidden;
 }

@@ -783,6 +783,8 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       ingredients,
       steps,
       servings: Math.max(1, Number(recipe.servings) || 1),
+      usageCount: Math.max(0, Number(recipe.usageCount) || 0),
+      lastUsedAt: Number(recipe.lastUsedAt) > 0 ? Number(recipe.lastUsedAt) : 0,
       nutritionIngredients: Array.isArray(recipe.nutritionIngredients) ? recipe.nutritionIngredients.map((it) => ({
         id: it.id || generateId(),
         productId: it.productId || "",
@@ -1368,7 +1370,10 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       <article class="recipe-row-card${hasImage ? " has-image" : ""}" data-open-recipe="${escapeAttr(recipe.id)}">
         ${imageMarkup}
         <div class="recipe-row-body">
-          <h4 class="recipe-row-title">${escapeHtml(recipe.title || "Receta")}</h4>
+          <div class="recipe-row-title-wrap">
+            <h4 class="recipe-row-title">${escapeHtml(recipe.title || "Receta")}</h4>
+            <button class="recipe-row-favorite-toggle" type="button" data-toggle-recipe-favorite="${escapeAttr(recipe.id)}" aria-label="${recipe.favorite ? "Quitar de favoritas" : "Añadir a favoritas"}">${recipe.favorite ? "★" : "☆"}</button>
+          </div>
           ${metadata ? `<p class="recipe-row-meta">${escapeHtml(metadata)}</p>` : ""}
           <div class="recipe-row-metrics">
             ${buildRecipeKpiChip("kcal", nutrition.hasData ? `${formatMetricValue(nutrition.totals.kcal, " kcal")}` : "— kcal", !nutrition.hasData)}
@@ -1382,15 +1387,53 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     `;
   }
 
+  function sortRecipesForGlobalView(list = []) {
+    const favorites = list
+      .filter((r) => r?.favorite)
+      .sort((a, b) => {
+        const usageDelta = (Number(a?.usageCount) || 0) - (Number(b?.usageCount) || 0);
+        if (usageDelta !== 0) return usageDelta;
+        const lastUsedDelta = (Number(a?.lastUsedAt) || 0) - (Number(b?.lastUsedAt) || 0);
+        if (lastUsedDelta !== 0) return lastUsedDelta;
+        return String(a?.title || "").localeCompare(String(b?.title || ""), "es", { sensitivity: "base" });
+      });
+    const regular = list
+      .filter((r) => !r?.favorite)
+      .sort((a, b) => String(a?.title || "").localeCompare(String(b?.title || ""), "es", { sensitivity: "base" }));
+    return { favorites, regular, merged: [...favorites, ...regular] };
+  }
+
   function renderRecipeCardsView(list = []) {
     if (!$recipesListPreview) return;
-    if (!list.length) {
+    const grouped = sortRecipesForGlobalView(list);
+    if (!grouped.merged.length) {
       $recipesListPreview.innerHTML = '<div class="recipe-row-empty">No hay recetas que coincidan</div>';
       return;
     }
-    $recipesListPreview.innerHTML = list.map((recipe) => renderRecipeCardRow(recipe)).join("");
+    const sections = [];
+    if (grouped.favorites.length) {
+      sections.push(`<div class="recipe-row-group-title">Favoritas (${grouped.favorites.length})</div>`);
+      sections.push(grouped.favorites.map((recipe) => renderRecipeCardRow(recipe)).join(""));
+    }
+    if (grouped.regular.length) {
+      sections.push(`<div class="recipe-row-group-title">Todas (${grouped.regular.length})</div>`);
+      sections.push(grouped.regular.map((recipe) => renderRecipeCardRow(recipe)).join(""));
+    }
+    $recipesListPreview.innerHTML = sections.join("");
     $recipesListPreview.querySelectorAll("[data-open-recipe]").forEach((node) => {
-      node.addEventListener("click", () => openRecipeDetail(node.getAttribute("data-open-recipe")));
+      node.addEventListener("click", (event) => {
+        if (event.target.closest("[data-toggle-recipe-favorite]")) return;
+        openRecipeDetail(node.getAttribute("data-open-recipe"));
+      });
+    });
+    $recipesListPreview.querySelectorAll("[data-toggle-recipe-favorite]").forEach((btn) => {
+      btn.addEventListener("click", (event) => {
+        try { event.stopPropagation(); } catch (_) {}
+        const recipeId = btn.getAttribute("data-toggle-recipe-favorite");
+        const recipe = recipes.find((item) => item.id === recipeId);
+        if (!recipe) return;
+        updateRecipe(recipeId, { favorite: !recipe.favorite });
+      });
     });
   }
 
@@ -1768,8 +1811,9 @@ function linkifyNotesHtml(input) {
       return text.includes(shelfQuery);
     });
 
-    const favorites = filtered.filter((r) => r.favorite);
-    const regular = filtered.filter((r) => !r.favorite);
+    const grouped = sortRecipesForGlobalView(filtered);
+    const favorites = grouped.favorites;
+    const regular = grouped.regular;
 
     const SHELF_SIZE = 9;
     const buildShelfRows = (arr) => {
@@ -4287,21 +4331,36 @@ $recipeImportBtn?.addEventListener("click", () => {
         $macroStatsMainTooltip.classList.remove('hidden');
       };
 
-      $macroStatsMainChart.onmousemove = (evt) => {
+      const resolveSvgX = (clientX, clientY) => {
+        const svg = $macroStatsMainChart;
+        if (!svg) return null;
+        const ctm = svg.getScreenCTM?.();
+        if (!ctm) return null;
+        const point = svg.createSVGPoint();
+        point.x = Number(clientX) || 0;
+        point.y = Number(clientY) || 0;
+        const local = point.matrixTransform(ctm.inverse());
+        return Number(local.x);
+      };
+      const activateFromPointer = (clientX, clientY) => {
         if (!$macroStatsMainTooltip || !points.length) return;
-        const rect = $macroStatsMainChart.getBoundingClientRect();
-        const relX = evt.clientX - rect.left - pad.l;
+        const x = resolveSvgX(clientX, clientY);
+        if (!Number.isFinite(x)) return;
+        const relX = x - pad.l;
         const idx = Math.max(0, Math.min(points.length - 1, Math.round(relX / Math.max(1, xStep))));
         activatePoint(idx);
       };
+
+      $macroStatsMainChart.onpointerdown = (evt) => {
+        activateFromPointer(evt.clientX, evt.clientY);
+      };
+      $macroStatsMainChart.onpointermove = (evt) => {
+        activateFromPointer(evt.clientX, evt.clientY);
+      };
       $macroStatsMainChart.ontouchstart = (evt) => {
-        if (!$macroStatsMainTooltip || !points.length) return;
         const touch = evt.touches?.[0];
         if (!touch) return;
-        const rect = $macroStatsMainChart.getBoundingClientRect();
-        const relX = touch.clientX - rect.left - pad.l;
-        const idx = Math.max(0, Math.min(points.length - 1, Math.round(relX / Math.max(1, xStep))));
-        activatePoint(idx);
+        activateFromPointer(touch.clientX, touch.clientY);
       };
       $macroStatsMainChart.onmouseleave = () => {
         $macroStatsMainTooltip?.classList.add('hidden');
@@ -4492,31 +4551,31 @@ $recipeImportBtn?.addEventListener("click", () => {
         const isExpanded = isRecipe && (macroExpandedRecipes.has(entryId) || entry.expanded);
         const ingredients = isRecipe ? getRecipeIngredientsFromEntry(entry) : [];
         const ingredientsHtml = isRecipe && isExpanded
-          ? `<div class="macro-recipe-ingredients">${ingredients.map((ing) => {
+          ? `<div class="macro-recipe-ingredients"><div class="macro-recipe-expanded-title">${escapeHtml(entry.nameSnapshot || "Receta")}</div>${ingredients.map((ing, ingIdx) => {
             const product = getIngredientLinkedProduct(ing);
             const nutrition = computeIngredientNutrition(ing, product);
             const cost = computeIngredientCost(ing, product);
             const qty = normalizeIngredientQty(ing?.qty);
             const unit = normalizeCostUnit(ing?.unit || "");
             const qtyLabel = qty && unit ? `${roundMacro(qty)} ${unit}` : (resolveIngredientDisplay(ing).quantity || "—");
-            return `<div class="macro-recipe-ingredient-row"><strong>${escapeHtml(String(ing?.label || ing?.name || "Ingrediente"))}</strong><span>${escapeHtml(qtyLabel)}</span><span>${roundMacro(nutrition.totals.kcal)} kcal</span><span>C ${roundMacro(nutrition.totals.carbs)} · P ${roundMacro(nutrition.totals.protein)} · G ${roundMacro(nutrition.totals.fat)}</span><span>${cost.calculable ? formatCurrency(cost.value) : "Coste n/d"}</span></div>`;
+            const unitOptions = STRUCTURED_INGREDIENT_UNITS.map((opt) => `<option value="${opt}" ${unit === opt ? "selected" : ""}>${opt}</option>`).join("");
+            return `<div class="macro-recipe-ingredient-row" data-macro-recipe-ingredient="${meal}:${idx}:${ingIdx}"><div class="macro-recipe-ingredient-main"><strong>${escapeHtml(String(ing?.label || ing?.name || "Ingrediente"))}</strong><span>${roundMacro(nutrition.totals.kcal)} kcal · C ${roundMacro(nutrition.totals.carbs)} · P ${roundMacro(nutrition.totals.protein)} · G ${roundMacro(nutrition.totals.fat)} · ${cost.calculable ? formatCurrency(cost.value) : "Coste n/d"}</span></div><div class="macro-recipe-ingredient-controls"><input class="macro-recipe-ingredient-qty" type="number" min="0" step="0.1" inputmode="decimal" value="${qty == null ? "" : qty}" data-macro-ingredient-qty="${meal}:${idx}:${ingIdx}" aria-label="Cantidad ingrediente"/><select class="macro-recipe-ingredient-unit" data-macro-ingredient-unit="${meal}:${idx}:${ingIdx}" aria-label="Unidad ingrediente">${unitOptions}</select><span class="hint">${escapeHtml(qtyLabel)}</span></div></div>`;
           }).join("") || '<div class="hint">Sin ingredientes</div>'}</div>`
           : "";
         return `
-      <div class="macro-entry ${isSelected ? "is-selected" : ""} ${isRecipe ? "macro-entry-recipe" : ""}">
+      <div class="macro-entry ${isSelected ? "is-selected" : ""} ${isRecipe ? "macro-entry-recipe" : ""} ${isExpanded ? "is-expanded" : ""}">
       <input class="macro-entry-count-input" type="number" min="1" step="1" inputmode="numeric" value="${servingsCount}" data-macro-count="${meal}:${idx}" aria-label="Unidades de ${escapeHtml(entry.nameSnapshot)}" />
       ${isSelectionMode && !isRecipe ? `<button class="macro-entry-select-toggle" data-macro-select-toggle="${meal}:${idx}" type="button" aria-label="Seleccionar ${escapeHtml(entry.nameSnapshot)}">${isSelected ? "✓" : "○"}</button>` : ""}
       <button class="macro-entry-open" data-macro-open="${meal}:${idx}" data-macro-entry-id="${entryId}" type="button" aria-label="Abrir ficha de ${escapeHtml(entry.nameSnapshot)}">
       <div class="contenido-comida-lista">
       <strong>${escapeHtml(entry.nameSnapshot)}</strong>
       <div class="hint" id="cantidad-comida">${quantityLabel}</div>
-      ${isRecipe ? `<div class="hint macro-recipe-inline-kpis">C ${roundMacro(entryMacros.carbs)} · P ${roundMacro(entryMacros.protein)} · G ${roundMacro(entryMacros.fat)} · ${entryCost.cost == null ? "Coste n/d" : formatCurrency(entryCost.cost)}</div>` : ""}
+      <div class="hint macro-recipe-inline-kpis">C ${roundMacro(entryMacros.carbs)} · P ${roundMacro(entryMacros.protein)} · G ${roundMacro(entryMacros.fat)} · ${entryCost.cost == null ? "Coste n/d" : formatCurrency(entryCost.cost)}</div>
       </div>
       </button>
       <div class="macro-entry-right">
       <div class="kcals-dato">${roundMacro(entryMacros.kcal)} kcal</div>
       <div class="hint macro-entry-cost">${entryCost.cost == null ? "Coste n/d" : `~${formatCurrency(entryCost.cost)}`}</div>
-      ${isRecipe ? `<button class="macro-entry-expand" data-macro-toggle-recipe="${meal}:${idx}" type="button" aria-label="${isExpanded ? "Contraer" : "Expandir"} receta">${isExpanded ? "▾" : "▸"}</button>` : ""}
       <button class="icon-btn-eliminar-comida" data-macro-delete="${meal}:${idx}" type="button">✕</button></div>
       ${ingredientsHtml}
       </div>`;
@@ -5120,11 +5179,73 @@ $recipeImportBtn?.addEventListener("click", () => {
       createdAt: Date.now(),
     };
     getDailyLog(selectedMacroDate).meals[meal].entries.unshift(entry);
+    updateRecipe(recipe.id, {
+      usageCount: (Number(recipe.usageCount) || 0) + 1,
+      lastUsedAt: Date.now(),
+    });
     bumpMacroUsage("recipes", recipe.id);
     persistNutrition();
     renderMacrosView();
     logMacroEvent(["recipe"], "receta añadida con side effects", { recipeId: recipe.id, servings, productsResolved: sideEffects.productsResolved, productsTotal: sideEffects.productsTotal }, "info");
     applyRecipeSideEffects(sideEffects, selectedMacroDate, 1, "recipe");
+  }
+
+  function updateRecipeEntryFromIngredients(entry, ingredients) {
+    if (!entry || entry.type !== "recipe") return;
+    const baseRecipe = normalizeRecipeFields(getRecipeSnapshotFromEntry(entry) || {});
+    const nextRecipe = recalculateRecipeDerivedData({
+      ...baseRecipe,
+      ingredients: Array.isArray(ingredients) ? ingredients : [],
+      updatedAt: Date.now(),
+    });
+    const servings = Math.max(0, Number(entry.servings) || 0);
+    const perServing = normalizeMacros(nextRecipe.nutritionPerServing || nextRecipe.nutritionTotals || {});
+    entry.recipeSnapshot = nextRecipe;
+    entry.ingredientsSnapshot = Array.isArray(nextRecipe.ingredients) ? nextRecipe.ingredients : [];
+    entry.nameSnapshot = nextRecipe.title || entry.nameSnapshot;
+    entry.macrosSnapshot = normalizeMacros({
+      carbs: perServing.carbs * servings,
+      protein: perServing.protein * servings,
+      fat: perServing.fat * servings,
+      kcal: perServing.kcal * servings,
+    });
+    entry.computedCost = Number.isFinite(Number(nextRecipe.totalCost)) ? Number(nextRecipe.totalCost) : null;
+    entry.sideEffects = buildRecipeSideEffects(nextRecipe, servings);
+    if (nextRecipe.id) {
+      const idx = recipes.findIndex((row) => row.id === nextRecipe.id);
+      if (idx >= 0) {
+        recipes[idx] = { ...recipes[idx], ...nextRecipe, updatedAt: Date.now() };
+        persistRecipe(nextRecipe.id, recipes[idx]);
+      }
+    }
+  }
+
+  function updateMacroRecipeIngredient(meal, idx, ingredientIndex, patch = {}) {
+    const log = getDailyLog(selectedMacroDate);
+    const entry = log?.meals?.[meal]?.entries?.[Number(idx)];
+    if (!entry || entry.type !== "recipe") return;
+    const ingredients = getRecipeIngredientsFromEntry(entry).map((ing) => ({ ...ing }));
+    const targetIdx = Number(ingredientIndex);
+    if (!Number.isInteger(targetIdx) || !ingredients[targetIdx]) return;
+    const current = ingredients[targetIdx];
+    const nextQtyRaw = patch.qty;
+    let nextQty = current.qty;
+    if (nextQtyRaw !== undefined) {
+      const parsed = Number(nextQtyRaw);
+      nextQty = Number.isFinite(parsed) && parsed >= 0 ? parsed : "";
+    }
+    const nextUnit = patch.unit !== undefined
+      ? (normalizeCostUnit(patch.unit) || normalizeCostUnit(current.unit) || "g")
+      : (normalizeCostUnit(current.unit) || "g");
+    const updated = buildRecipeIngredientFromProduct(getIngredientLinkedProduct(current), {
+      ...current,
+      qty: nextQty,
+      unit: nextUnit,
+    });
+    ingredients[targetIdx] = updated;
+    updateRecipeEntryFromIngredients(entry, ingredients);
+    persistNutrition();
+    renderMacrosView();
   }
 
   function saveProduct(product) {
@@ -7594,6 +7715,21 @@ $recipeImportBtn?.addEventListener("click", () => {
     entry.servingsCount = normalizeEntryServingsCount(countInput.value);
     persistNutrition();
     renderMacrosView();
+    return;
+  });
+
+  $macroMeals?.addEventListener("change", (e) => {
+    const qtyInput = e.target.closest("[data-macro-ingredient-qty]");
+    if (qtyInput) {
+      const [meal, idx, ingIdx] = String(qtyInput.dataset.macroIngredientQty || "").split(":");
+      updateMacroRecipeIngredient(meal, Number(idx), Number(ingIdx), { qty: qtyInput.value });
+      return;
+    }
+    const unitSelect = e.target.closest("[data-macro-ingredient-unit]");
+    if (unitSelect) {
+      const [meal, idx, ingIdx] = String(unitSelect.dataset.macroIngredientUnit || "").split(":");
+      updateMacroRecipeIngredient(meal, Number(idx), Number(ingIdx), { unit: unitSelect.value });
+    }
   });
 
   $macroMeals?.addEventListener("pointerdown", (e) => {
@@ -7671,20 +7807,6 @@ $recipeImportBtn?.addEventListener("click", () => {
       return;
     }
 
-    const recipeToggleBtn = e.target.closest("[data-macro-toggle-recipe]");
-    if (recipeToggleBtn) {
-      const [meal, idx] = String(recipeToggleBtn.dataset.macroToggleRecipe || "").split(":");
-      const entry = getDailyLog(selectedMacroDate)?.meals?.[meal]?.entries?.[Number(idx)];
-      if (!entry) return;
-      const entryId = ensureMacroEntryId(entry);
-      if (macroExpandedRecipes.has(entryId)) macroExpandedRecipes.delete(entryId);
-      else macroExpandedRecipes.add(entryId);
-      entry.expanded = macroExpandedRecipes.has(entryId);
-      persistNutrition();
-      renderMacrosView();
-      return;
-    }
-
     const addBtn = e.target.closest("[data-macro-add]");
     if (addBtn) return openMacroAddModal(addBtn.dataset.macroAdd);
 
@@ -7721,6 +7843,15 @@ $recipeImportBtn?.addEventListener("click", () => {
           renderMacrosView();
         }
         macroLongPressState.active = false;
+        return;
+      }
+      if (entry.type === "recipe") {
+        const entryId = ensureMacroEntryId(entry);
+        if (macroExpandedRecipes.has(entryId)) macroExpandedRecipes.delete(entryId);
+        else macroExpandedRecipes.add(entryId);
+        entry.expanded = macroExpandedRecipes.has(entryId);
+        persistNutrition();
+        renderMacrosView();
         return;
       }
       openMacroEntryEditor(meal, idx);

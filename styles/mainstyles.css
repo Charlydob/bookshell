@@ -50,6 +50,7 @@ body {
 }
 
 .app-shell {
+  height: 100dvh;
   min-height: 100dvh;
   max-width: 480px;
   margin: 0 auto;
@@ -228,7 +229,7 @@ body {
   justify-content: space-around;
   /* Estrategia única: el safe-area inferior SOLO se aplica aquí. */
   padding: 0 0 var(--nav-safe-b);
-  background: transparent;
+  background: rgba(10, 14, 24, 0.92);
   backdrop-filter: blur(var(--blur-nav, 8px));
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: var(--shadow-soft);
@@ -852,6 +853,7 @@ body.has-open-modal {
 }
 
 #app, .app, .app-shell {
+  height: 100dvh;
   min-height: 100dvh;
   background: inherit;
 }

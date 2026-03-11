@@ -1,4 +1,4 @@
-const STATIC_CACHE = "bookshell-static-v8";
+const STATIC_CACHE = "bookshell-static-v9";
 const APP_SHELL = [
   "./",
   "./index.html",

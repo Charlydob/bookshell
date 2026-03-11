@@ -34,8 +34,11 @@ html,
 body {
   margin: 0;
   padding: 0;
-  height: 100%;
+  height: 120%;
+  /* iOS PWA: evita “documento corto” (100%/dvh se comportan distinto según modo). */
+  min-height: 100vh;
   min-height: 100dvh;
+  min-height: -webkit-fill-available;
   overflow: hidden;
   background: radial-gradient(circle at top, #161a22, #05060a 60%);
   background-color: #05060a;
@@ -50,8 +53,7 @@ body {
 }
 
 .app-shell {
-  height: 100dvh;
-  min-height: 100dvh;
+  min-height: 1000dvh;
   max-width: 480px;
   margin: 0 auto;
   display: flex;
@@ -109,7 +111,9 @@ body {
 
 .view {
   display: none;
-  height: 100%;
+  height: 100vh;
+  height: 100dvh;
+  height: -webkit-fill-available;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
@@ -218,25 +222,23 @@ body {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  /* FIX iOS PWA: el hueco negro venía de separar la barra del borde (bottom + margin). */
-  bottom: var(--nav-gap);
+  bottom: 45px;
   width: min(480px, 100%);
-  height: var(--nav-total-h);
   min-height: 10px;
   z-index: 50;
   display: flex;
   align-items: center;
   justify-content: space-around;
-  /* Estrategia única: el safe-area inferior SOLO se aplica aquí. */
-  padding: 0 0 var(--nav-safe-b);
-  background: rgba(10, 14, 24, 0.92);
+  padding:0px;
+ background: radial-gradient(circle at top, rgba(124, 216, 255, 0.316),#340bff00,  #029aff29);
   backdrop-filter: blur(var(--blur-nav, 8px));
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: var(--shadow-soft);
   box-sizing: border-box;
   border: 1px solid rgb(255, 255, 255);
   border-radius: 99px;
-  margin-bottom: 0;
+  margin-bottom: var(--nav-gap, 20px);
+
 }
 .datos-sesion{
   display: grid;
@@ -840,20 +842,13 @@ body.has-open-modal {
   display: none !important;
 }
 /* Layout global: una sola superficie scrollable por vista */
-:root {
-  --nav-h: 56px;
-  /* Mantén la barra pegada al borde por defecto (evita franja en iOS PWA). */
-  --nav-gap: 0px;
-  --nav-safe-b: env(safe-area-inset-bottom, 0px);
-  --nav-total-h: calc(var(--nav-h) + var(--nav-safe-b));
-}
+:root { --nav-h: 56px; --nav-gap: 20px; }
 
-@media (display-mode: browser) {
-  :root { --nav-gap: 20px; }
+@media (display-mode: standalone) {
+  :root { --nav-gap: 0px; }
 }
 
 #app, .app, .app-shell {
-  height: 100dvh;
   min-height: 100dvh;
   background: inherit;
 }
@@ -861,16 +856,18 @@ body.has-open-modal {
 .app-main,
 main {
   min-height: 0;
+  height: 100%;
   overflow: hidden;
 }
 
 .view {
-  height: 100%;
+  height: 100vh;
+  height: 100dvh;
+  height: -webkit-fill-available;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
-  /* Reserva SOLO la altura total de la barra (incluye safe-area) + gap si aplica. */
   padding-bottom: calc(6px + var(--nav-total-h) + var(--nav-gap));
 }
 

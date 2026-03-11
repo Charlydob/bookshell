@@ -204,7 +204,7 @@
 
 /* === Guion fullscreen === */
 .video-script-shell {
-  min-height: 100vh;
+  min-height: 100dvh;
   padding: 10px 10px 220px;
   display: flex;
   flex-direction: column;
@@ -946,7 +946,7 @@
 }
 
 .video-links-shell {
-  min-height: 100vh;
+  min-height: 100dvh;
   padding: 12px 12px 70px;
   display: flex;
   flex-direction: column;
@@ -1133,7 +1133,7 @@
 
 /* === Teleprompter === */
 .video-teleprompter-shell {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   background: #05060b;
@@ -1205,7 +1205,7 @@
 
 /* === Día calendario === */
 .video-day-shell {
-  min-height: 100vh;
+  min-height: 100dvh;
   padding: 14px 12px 60px;
   display: flex;
   flex-direction: column;
@@ -1277,7 +1277,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-bottom: 64px;
+  padding-bottom: 0;
 }
 
 .videos-empty {
@@ -1735,7 +1735,8 @@
 
 
 #view-videos {
-  padding: 20px 10px 200px;;
+  padding: 20px 10px;
+  padding-bottom: calc(20px + var(--nav-h) + var(--nav-gap, 20px) + env(safe-area-inset-bottom, 0px));
   overflow-y: auto;
   overflow-x: hidden;
 }

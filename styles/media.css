@@ -67,8 +67,8 @@
   background: var(--media-surface);
   border-radius: 16px;
 }
-.media-chart-card{ padding: 12px; margin-bottom: 200px; }
-.media-geo{ padding: 12px;  margin-bottom: 200px;}
+.media-chart-card{ padding: 12px; margin-bottom: 12px; }
+.media-geo{ padding: 12px;  margin-bottom: 12px;}
 
 .media-chart-head{
   display:flex;
@@ -181,7 +181,7 @@
 /* Lista virtual */
 .media-list-card{ 
   overflow:hidden;
-  margin-bottom: 200px;
+  margin-bottom: 12px;
  }
 .media-list-head{
   padding: 10px 12px;
@@ -1020,7 +1020,8 @@ button.media-entity-item:focus-visible{ outline: 2px solid rgba(167,139,250,.35)
   max-width: 260px;
 }
 #view-media {
-  padding: 20px 10px 200px;;
+  padding: 2px 1px;
+  padding-bottom: calc(20px + var(--nav-h) + var(--nav-gap, 20px) + env(safe-area-inset-bottom, 0px));
   overflow-y: auto;
   overflow-x: hidden;
 }

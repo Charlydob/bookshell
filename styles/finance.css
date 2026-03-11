@@ -2382,7 +2382,8 @@ header.food-sheet-header h3{
   padding: 0 8px;
 }
 #view-finance {
-  padding: 20px 10px 200px;;
+  padding: 2px 1px;
+  padding-bottom: calc(20px + var(--nav-h) + var(--nav-gap, 20px) + env(safe-area-inset-bottom, 0px));
   overflow-y: auto;
   overflow-x: hidden;
 }

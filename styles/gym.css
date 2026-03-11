@@ -1178,7 +1178,8 @@ font-size: 12px;
   min-width: 220px;
 }
 #view-gym {
-  padding: 40px 10px 200px;
+  padding: 2px 1px;
+  padding-bottom: calc(40px + var(--nav-h) + var(--nav-gap, 20px) + env(safe-area-inset-bottom, 0px));
   overflow-y: auto;
   overflow-x: hidden;
 }

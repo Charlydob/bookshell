@@ -1352,7 +1352,31 @@
 #stat-card-receta .stat-label,
 #stat-card-kcal .stat-label{
   color: var(--stat-subtext, rgba(255,255,255,.78));
-  letter-spacing: .02em;
+  letter-spacing: .0em;
+  font-size: 8px;
+}
+.recipes-stats-cards{
+  display: grid;
+  grid-template-columns: repeat(5, 70px);
+  justify-self: center;
+  align-items: center;
+  justify-content: start;
+
+  overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+.recipe-row-metrics{
+    display: grid;
+  grid-template-columns: repeat(5, 70px);
+  justify-self: center;
+  align-items: center;
+  justify-content: start;
+  overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
 }
 
 #stat-card-cost .stat-value,
@@ -1362,6 +1386,7 @@
 #stat-card-kcal .stat-value{
   color: var(--stat-text, #fff);
   font-weight: 900;
+  font-size: 12px;
   text-shadow: 0 10px 26px rgba(0,0,0,.35);
 }
 
@@ -1655,7 +1680,7 @@
   text-overflow:ellipsis;
 }
 #recipes-panel-macros{
-  margin-bottom: 200px;
+  margin-bottom: 12px;
 }
 
 .macro-entry.is-selected{ border-color: rgba(245,230,166,.6); background: rgba(245,230,166,.1); }
@@ -2449,7 +2474,7 @@ border: 0px;
 
 /* zona de vídeo más limpia */
 #recipes-panel-statistics{
-  margin-bottom: 200px;
+  margin-bottom: 12px;
 }
 
 .macro-progress-kcal{ position: relative; }
@@ -2632,7 +2657,8 @@ border: 0px;
   color: rgb(9, 255, 0);
 }
 #view-recipes {
-  padding: 20px 10px 200px;;
+  padding: 2px 1px;
+  padding-bottom: calc(20px + var(--nav-h) + var(--nav-gap, 20px) + env(safe-area-inset-bottom, 0px));
   overflow-y: auto;
   overflow-x: hidden;
 }

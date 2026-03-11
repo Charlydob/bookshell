@@ -6,8 +6,8 @@ body {
 
 .app-main {
   overflow-y: auto;
-  height: 80vh;
-  margin-bottom: 200px;
+  height: 100%;
+  margin-bottom: 0;
   
 }
 
@@ -41,7 +41,7 @@ body {
 /* ===== Body / contenedor app ===== */
 .finance-scope {
   margin: 0;
-  min-height: 100vh;
+  min-height: 100dvh;
   color: #e5e7eb;
   overflow-x: hidden;
   font-family: "Poppins", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
@@ -2460,7 +2460,8 @@ margin-top: 0px;
 }
 
 #view-books {
-  padding: 20px 10px 200px;;
+  padding: 1px 10px;
+  padding-bottom: calc(10px + var(--nav-h) + var(--nav-gap, 20px) + env(safe-area-inset-bottom, 0px));
   overflow-y: auto;
   overflow-x: hidden;
 }

@@ -125,13 +125,6 @@ const viewScrollTop = new Map();
 const initOnceDone = new Set();
 
 
-function syncViewportHeightVar() {
-  const viewportHeight = window.visualViewport?.height || window.innerHeight;
-  const px = Math.max(1, Math.round(viewportHeight * 100) / 100);
-  document.documentElement.style.setProperty('--app-dvh', `${px}px`);
-}
-
-
 function isValidView(viewId) {
   return !!(viewId && document.getElementById(viewId) && VIEW_MODULE[viewId]);
 }
@@ -286,9 +279,6 @@ function loadStyleOnce(href) {
 
 (function boot() {
   bindNav();
-  syncViewportHeightVar();
-  window.addEventListener('resize', syncViewportHeightVar, { passive: true });
-  window.visualViewport?.addEventListener('resize', syncViewportHeightVar, { passive: true });
 
 
   onAuthStateChanged(auth, async (user) => {

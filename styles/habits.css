@@ -1648,7 +1648,7 @@ body.is-session-detail-open #app {
     --hclr-rgb: 127, 93, 255;
     pointer-events: auto;
     display: grid;
-    grid-template-columns: 161px 79px 81px;
+    grid-template-columns: 100px 156px 81px;
     align-items: center;
     top: 100px;
     gap: 12px;
@@ -1670,6 +1670,10 @@ body.is-session-detail-open #app {
   background: rgba(var(--hclr-rgb, 127, 93, 255), 0.22);
   pointer-events: none;
   z-index: -1;
+}
+#habit-session-stop{
+  padding: 1px;
+  height: 35px;
 }
 
 .habit-session-label {

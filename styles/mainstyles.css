@@ -5,7 +5,7 @@
 }
 
 :root {
-  --app-dvh: 100dvh;
+  --app-dvh: 120dvh;
   --bg-1: #0e1116;
   --bg-2: #0b0d12;
   --glass: rgba(255, 255, 255, 0.06);
@@ -34,7 +34,7 @@
 html,
 body {
   margin: 0;
-  padding: 0;
+  padding: 10px 10px 10px;
   height: 100%;
   background: radial-gradient(circle at top, #161a22, #05060a 60%);
   color: var(--txt);
@@ -99,8 +99,7 @@ body {
 .app-main {
   flex: 1;
   min-height: 0;
-  height: calc(var(--app-dvh) - var(--nav-h) - env(safe-area-inset-bottom, 0px));
-  padding: calc(8px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  height:100px;
   overflow: hidden;
 }
 
@@ -114,7 +113,7 @@ body {
 }
 
 .view-active {
-  display: block;
+  display: flex;
 }
 
 .btn {

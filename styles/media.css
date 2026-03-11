@@ -329,20 +329,23 @@
 .media-fab{
   position: fixed;
   left: 50%;
+  bottom: 50%;
   transform: translateX(-50%);
   bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
   height: 52px;
   width: 52px;
   border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.16);
-  background: radial-gradient(110% 110% at 30% 20%, rgba(255,255,255,.16), rgba(255,255,255,.06) 45%, rgba(0,0,0,.18) 100%);
+  border: 1px solid rgba(55, 0, 255, 0.918);
+  background: radial-gradient(110% 110% at 30% 20%, rgba(70, 95, 240, 0.616), rgba(255,255,255,.06) 45%, rgba(20, 34, 228, 0.897) 100%);
   box-shadow: 0 10px 30px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.06) inset;
   display:flex;
   align-items:center;
+  backdrop-filter: blur(4px);
   justify-content:center;
   font-size: 26px;
+  font-weight: 700;
   line-height: 1;
-  color: inherit;
+  color: rgb(255, 255, 255);
   z-index: 2200;
   cursor:pointer;
   pointer-events: auto;
@@ -502,7 +505,7 @@
 @media (max-width: 420px){
   .media-modal-grid{ grid-template-columns: 1fr; }
   .media-modal-grid--meta{ grid-template-columns: 1fr 1fr; }
-  .media-fab{ bottom: calc(env(safe-area-inset-bottom, 0px) + 76px); }
+  .media-fab{ bottom: calc(env(safe-area-inset-bottom, 0px) + 119px); }
 }
 
 .media-title-row{
@@ -1015,4 +1018,9 @@ button.media-entity-item:focus-visible{ outline: 2px solid rgba(167,139,250,.35)
   font-size: 11px;
   opacity: .65;
   max-width: 260px;
+}
+#view-media {
+  padding: 10px 10px 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }

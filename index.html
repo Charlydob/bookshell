@@ -551,60 +551,60 @@
 <div class="recipes-panel is-active" id="recipes-panel-library">
   <div class="recipes-top">
     <div class="stats-cards recipes-stats-cards">
-    <div class="stat-card">
+    <div class="stat-card" id="stat-card-receta">
     <div class="stat-label">Recetas</div>
     <div class="stat-value" id="recipe-stat-total">0</div>
     </div>
-    <div class="stat-card">
-    <div class="stat-label">Favoritas</div>
-    <div class="stat-value" id="recipe-stat-favorites">0</div>
+    <div class="stat-card" id="stat-card-products">
+    <div class="stat-label">Productos</div>
+    <div class="stat-value" id="recipe-stat-products">0</div>
     </div>
-    <div class="stat-card">
-    <div class="stat-label">Saludables</div>
-    <div class="stat-value" id="recipe-stat-healthy">0</div>
+    <div class="stat-card" id="stat-card-cost">
+    <div class="stat-label">Gasto</div>
+    <div class="stat-value" id="recipe-stat-cost">0</div>
     </div>
-    <div class="stat-card">
-    <div class="stat-label">⭐</div>
-    <div class="stat-value" id="recipe-stat-rating">0.0</div>
+    <div class="stat-card" id="stat-card-kcal">
+    <div class="stat-label">Kcal</div>
+    <div class="stat-value" id="recipe-stat-kcal">0</div>
     </div>
-    <div class="stat-card">
+    <div class="stat-card" id="stat-card-laura">
     <div class="stat-label">L. Check</div>
     <div class="stat-value" id="recipe-stat-laura-positive">0</div>
     </div>
     </div>
 </div>
 <div class="recipes-toolbar">
-<button class="btn primary" id="btn-add-recipe">+ Añadir receta</button>
+<button class="btn primary" id="btn-add-recipe">🥞</button>
 <button class="btn ghost btn-compact" id="recipes-start-session" type="button">▶ Iniciar sesión</button>
 </div>
 
 <div class="books-filters is-collapsed" id="recipes-filters">
-<div class="books-filters-header" id="recipes-filters-header">
-<div class="filter-row filter-search-row">
-<label class="field-label" for="recipes-filter-search">Buscar</label>
-<input autocomplete="off" class="filter-search-input" id="recipes-filter-search" inputmode="search" placeholder="Nombre del plato, etiquetas o tipo de comida" type="search"/>
-</div>
-<button aria-controls="recipes-filters-body" aria-expanded="false" class="filters-toggle-btn" id="recipes-filters-toggle" type="button">
-<span class="filters-toggle-text">Mostrar filtros</span>
-<span aria-hidden="true" class="filters-toggle-icon">⌄</span>
-</button>
-</div>
-<div class="books-filters-body" id="recipes-filters-body">
-<div class="filter-row">
-<div class="filter-label">Filtros rápidos</div>
-<div aria-label="Filtros dinámicos" class="filter-chip-groups" id="recipes-filter-chips"></div>
-</div>
-<div class="filter-row filter-toggles">
-<label class="toggle-pill">
-<input id="recipes-filter-favorites" type="checkbox"/>
-<span>Solo favoritas</span>
-</label>
-<label class="toggle-pill">
-<input id="recipes-filter-laura" type="checkbox"/>
-<span>Con check de Laura</span>
-</label>
-</div>
-</div>
+  <div class="books-filters-header" id="recipes-filters-header">
+  <div class="filter-row filter-search-row">
+  <label class="field-label" id="label-buscador"for="recipes-filter-search">Buscar</label>
+  <input autocomplete="off" class="filter-search-input" id="recipes-filter-search" inputmode="search" placeholder="Nombre del plato, etiquetas o tipo de comida" type="search"/>
+  </div>
+  <button aria-controls="recipes-filters-body" aria-expanded="false" class="filters-toggle-btn" id="recipes-filters-toggle" type="button">
+  <span class="filters-toggle-text">Mostrar filtros</span>
+  <span aria-hidden="true" class="filters-toggle-icon">⌄</span>
+  </button>
+  </div>
+  <div class="books-filters-body" id="recipes-filters-body">
+  <div class="filter-row">
+  <div class="filter-label">Filtros rápidos</div>
+  <div aria-label="Filtros dinámicos" class="filter-chip-groups" id="recipes-filter-chips"></div>
+  </div>
+  <div class="filter-row filter-toggles">
+  <label class="toggle-pill">
+  <input id="recipes-filter-favorites" type="checkbox"/>
+  <span>Solo favoritas</span>
+  </label>
+  <label class="toggle-pill">
+  <input id="recipes-filter-laura" type="checkbox"/>
+  <span>Con check de Laura</span>
+  </label>
+  </div>
+  </div>
 </div>
 <div class="recipes-shelf-wrapper">
 <div class="recipes-shelf-toolbar">

@@ -1177,3 +1177,8 @@ font-size: 12px;
 #gym-create-met-category {
   min-width: 220px;
 }
+#view-gym {
+  padding: 40px 10px 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}

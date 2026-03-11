@@ -4477,6 +4477,8 @@ align-items: center;
 .habits-wrapper{
   margin-bottom: 0px;
 }
-#view-habits{
-  margin-bottom: 0px;
+#view-habits {
+  padding: 10px 10px 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }

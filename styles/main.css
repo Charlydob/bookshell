@@ -1,4 +1,16 @@
 /* ===== Reset + layout móvil estricto ===== */
+
+body {
+  overflow: hidden;
+}
+
+.app-main {
+  overflow-y: auto;
+  height: 80vh;
+  margin-bottom: 200px;
+  
+}
+
 .finance-scope * ,
 .finance-scope *::before ,
 .finance-scope *::after {
@@ -2447,3 +2459,8 @@ margin-top: 0px;
   -webkit-overflow-scrolling: touch;
 }
 
+#view-books {
+  padding: 10px 10px 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}

@@ -1731,3 +1731,11 @@
   }
 }
 .script-annotation-card .annotation-text { white-space: pre-wrap; }
+
+
+
+#view-videos {
+  padding: 10px 10px 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}

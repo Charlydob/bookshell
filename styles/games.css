@@ -918,3 +918,8 @@ max-height: 740px;
 .sandbox-days-inline:placeholder-shown{
   opacity: .35;
 }
+#view-games {
+  padding: 10px 10px 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}

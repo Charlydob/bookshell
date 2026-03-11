@@ -229,9 +229,9 @@ if ($viewRecipes) {
   const $empty = document.getElementById("recipes-empty");
 
   const $statTotal = document.getElementById("recipe-stat-total");
-  const $statFavorites = document.getElementById("recipe-stat-favorites");
-  const $statHealthy = document.getElementById("recipe-stat-healthy");
-  const $statRating = document.getElementById("recipe-stat-rating");
+  const $statProducts = document.getElementById("recipe-stat-products");
+  const $statCost = document.getElementById("recipe-stat-cost");
+  const $statKcal = document.getElementById("recipe-stat-kcal");
   const $statLauraPositive = document.getElementById("recipe-stat-laura-positive");
 
   const $chartMeal = document.getElementById("recipe-chart-meal");
@@ -1991,17 +1991,24 @@ notes.innerHTML = `<strong>Notas</strong><br>${linkifyNotesHtml(recipe.notes)}`;
   }
 
   function renderStats() {
-    const total = recipes.length;
-    const favorites = recipes.filter((r) => r.favorite).length;
-    const healthy = recipes.filter((r) => r.health === "sana").length;
-    const rating =
-      recipes.reduce((acc, r) => acc + (Number(r.rating) || 0), 0) / (total || 1);
-    if ($statTotal) $statTotal.textContent = String(total);
-    if ($statFavorites) $statFavorites.textContent = String(favorites);
-    if ($statHealthy) $statHealthy.textContent = String(healthy);
-    if ($statRating) $statRating.textContent = `${rating.toFixed(1)} `;
+    const totalRecipes = recipes.length;
+    const totalProducts = nutritionProducts.length;
+    const summary = summarizeStatistics();
+    const totalCost = Number(summary?.totalCost) || 0;
+    const totalKcal = Number(summary?.totals?.kcal) || 0;
+
+    if ($statTotal) $statTotal.textContent = String(totalRecipes);
+    if ($statProducts) $statProducts.textContent = String(totalProducts);
+    if ($statCost) {
+      $statCost.textContent = formatCurrency(totalCost);
+      $statCost.title = `Gasto total (segun la estadistica): ${formatCurrency(totalCost)}.`;
+    }
+    if ($statKcal) {
+      $statKcal.textContent = String(roundMacro(totalKcal));
+      $statKcal.title = `Kcal ingeridas (segun la estadistica): ${roundMacro(totalKcal)} kcal.`;
+    }
+
     const lauraChecksTotal = recipes.filter((r) => r.laura).length;
-    const lauraChecksFavorites = recipes.filter((r) => r.laura && r.favorite).length;
     if ($statLauraPositive) {
   $statLauraPositive.textContent = String(lauraChecksTotal);
   $statLauraPositive.title = `Total con check de Laura: ${lauraChecksTotal}.`;
@@ -4407,7 +4414,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       <div class="macro-summary-group macro-summary-group-cost">
         <div class="macro-stat macro-stat-cost">
           <div class="macro-stat-title">Gasto comida (estimado)</div>
-          <div class="macro-stat-value"><span class="macro-consumed">${formatCurrency(dayCost.total)}</span></div>
+          <div class="macro-stat-value" id="gasto-diario-comida"><span class="macro-consumed" id="gasto-diario-comida">${formatCurrency(dayCost.total)}</span></div>
           <div class="hint ${dayCost.missing ? "macro-cost-warning" : ""}">${dayCost.missing ? `${dayCost.missing} elementos sin precio` : ""}</div>
         </div>
       </div>
@@ -4437,7 +4444,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       <button class="macro-entry-open" data-macro-open="${meal}:${idx}" type="button" aria-label="Abrir ficha de ${entry.nameSnapshot}">
       <div class="contenido-comida-lista">
       <strong>${entry.nameSnapshot}</strong>
-      <div class="hint">${quantityLabel}</div>
+      <div class="hint" id="cantidad-comida">${quantityLabel}</div>
       </div>
       </button>
       <div class="macro-entry-right">
@@ -4450,7 +4457,14 @@ $recipeImportBtn?.addEventListener("click", () => {
       return `<article class="macro-meal-card">
       <div class="macro-meal-head">
       <h4>${mealLabels[meal]}</h4>
-      <div class="hint">${roundMacro(mt.kcal)} kcal · C ${roundMacro(mt.carbs)} · P ${roundMacro(mt.protein)} · G ${roundMacro(mt.fat)} · ${formatCurrency(mealCost.total)}${mealCost.missing ? ` · ${mealCost.missing} s/p` : ""}</div></div><div class="macro-meal-entries">${entryHtml}</div><button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
+      <div class="hint macro-meal-kpis">
+        <span class="macro-meal-kpi macro-meal-kpi-kcal"><span class="macro-meal-kpi-label">Kcal</span><strong class="macro-meal-kpi-value">${roundMacro(mt.kcal)}</strong></span>
+        <span class="macro-meal-kpi macro-meal-kpi-carbs"><span class="macro-meal-kpi-label">C</span><strong class="macro-meal-kpi-value">${roundMacro(mt.carbs)}</strong></span>
+        <span class="macro-meal-kpi macro-meal-kpi-protein"><span class="macro-meal-kpi-label">P</span><strong class="macro-meal-kpi-value">${roundMacro(mt.protein)}</strong></span>
+        <span class="macro-meal-kpi macro-meal-kpi-fat"><span class="macro-meal-kpi-label">G</span><strong class="macro-meal-kpi-value">${roundMacro(mt.fat)}</strong></span>
+        <span class="macro-meal-kpi macro-meal-kpi-cost"><span class="macro-meal-kpi-label">Coste</span><strong class="macro-meal-kpi-value">${formatCurrency(mealCost.total)}</strong></span>
+        ${mealCost.missing ? `<span class="macro-meal-kpi macro-meal-kpi-missing"><strong class="macro-meal-kpi-value">${mealCost.missing}</strong><span class="macro-meal-kpi-label">s/p</span></span>` : ""}
+      </div></div><div class="macro-meal-entries">${entryHtml}</div><button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
     }).join("");
     if ($recipesPanelStatistics?.classList.contains("is-active")) renderStatisticsView();
   }
@@ -4615,6 +4629,11 @@ $recipeImportBtn?.addEventListener("click", () => {
     _macroProductRecipeIngredientTarget = options?.ingredientTarget || null;
     setMacroProductEntryTarget(entryTarget);
     setMacroProductEditing(false);
+
+    if (_macroProductRecipeIngredientTarget?.recipeId && _macroProductRecipeIngredientTarget?.ingredientId && !entryTarget) {
+      if ($macroProductAdd) $macroProductAdd.textContent = "AÃ±adir a receta";
+      if ($macroProductModalTitle) $macroProductModalTitle.textContent = "Producto (receta)";
+    }
 
     await loadFinanceProductsCatalog();
     const habits = sortByVisibleNameEs(listHabitsForProductLink(), (h) => `${h?.emoji || ""} ${h?.name || h?.id || ""}`);
@@ -7562,22 +7581,26 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (saved.barcode) upsertBarcodeMapping(saved.barcode, saved.id);
     if (_macroProductRecipeIngredientTarget?.recipeId && _macroProductRecipeIngredientTarget?.ingredientId) {
       const targetRecipe = recipes.find((r) => r.id === _macroProductRecipeIngredientTarget.recipeId);
-      if (targetRecipe) {
-        const ingredients = (targetRecipe.ingredients || []).map((ing) => {
-          if (ing.id !== _macroProductRecipeIngredientTarget.ingredientId) return ing;
-          const parsed = splitIngredientText(ing.text || "");
-          return buildRecipeIngredientFromProduct(saved, {
-            ...ing,
-            productId: saved.id,
-            label: saved.name || parsed.name || ing.label || ing.name || ing.text,
-            name: saved.name || parsed.name || ing.name || ing.text,
-            quantity: formatAmountWithUnit(grams, gramsUnit),
-            qty: grams,
-            unit: gramsUnit,
-          });
-        });
-        updateRecipe(targetRecipe.id, { ingredients, updatedAt: Date.now() });
+      if (!targetRecipe) {
+        if ($macroProductSummary) $macroProductSummary.textContent = "No se encuentra la receta destino para este ingrediente.";
+        return;
       }
+      const ingredients = (targetRecipe.ingredients || []).map((ing) => {
+        if (ing.id !== _macroProductRecipeIngredientTarget.ingredientId) return ing;
+        const parsed = splitIngredientText(ing.text || "");
+        return buildRecipeIngredientFromProduct(saved, {
+          ...ing,
+          productId: saved.id,
+          label: saved.name || parsed.name || ing.label || ing.name || ing.text,
+          name: saved.name || parsed.name || ing.name || ing.text,
+          quantity: formatAmountWithUnit(grams, gramsUnit),
+          qty: grams,
+          unit: gramsUnit,
+        });
+      });
+      updateRecipe(targetRecipe.id, { ingredients, updatedAt: Date.now() });
+      closeMacroProductModal();
+      return;
     }
     if (_macroProductEntryTarget) {
       const { meal, idx } = _macroProductEntryTarget;

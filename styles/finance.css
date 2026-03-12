@@ -2390,3 +2390,108 @@ header.food-sheet-header h3{
 #finance-content {
   margin-bottom: 500px;
 }
+/* --- Fix layout modal: Nueva cuenta (solo estructura, sin rediseño global) --- */
+.financeTab #finance-modal.finance-modal--new-account {
+  width: min(560px, calc(100vw - 20px));
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.financeTab #finance-modal.finance-modal--new-account > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.financeTab #finance-modal.finance-modal--new-account > header h3 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.financeTab #modal-cuenta-nueva.finance-entry-form {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  border-radius: 16px;
+  border: 1px solid rgba(160, 182, 228, .15);
+  padding: 12px;
+  background: rgba(9, 19, 43, .35);
+  overflow-x: hidden;
+}
+
+.financeTab #modal-cuenta-nueva.finance-entry-form > * {
+  min-width: 0;
+}
+
+.financeTab #modal-cuenta-nueva .financeAccountForm__field {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+
+.financeTab #modal-cuenta-nueva .financeAccountForm__label {
+  font-size: 12px;
+  line-height: 1.25;
+  color: var(--fin-muted);
+  overflow-wrap: anywhere;
+}
+
+.financeTab #modal-cuenta-nueva input[type="text"],
+.financeTab #modal-cuenta-nueva input[type="number"] {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+.financeTab #modal-cuenta-nueva .financeAccountForm__toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.financeTab #modal-cuenta-nueva .financeAccountForm__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid rgba(165, 187, 238, .2);
+  border-radius: 999px;
+  background: rgba(3, 12, 31, .55);
+  max-width: 100%;
+}
+
+.financeTab #modal-cuenta-nueva .financeAccountForm__toggle input {
+  margin: 0;
+  max-width: none;
+}
+
+.financeTab #modal-cuenta-nueva .financeAccountForm__toggle span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.financeTab #modal-cuenta-nueva .financeAccountForm__hint {
+  display: block;
+  line-height: 1.3;
+  color: var(--fin-muted);
+  overflow-wrap: anywhere;
+}
+
+.financeTab #modal-cuenta-nueva .financeAccountForm__actions {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.financeTab #modal-cuenta-nueva .financeAccountForm__actions .finance-pill {
+  min-width: 108px;
+}

@@ -4739,20 +4739,30 @@ if (form) {
   }
   if (state.modal.type === 'new-account') {
     backdrop.innerHTML = 
-    `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header>
+    `<div id="finance-modal" class="finance-modal finance-modal--new-account" role="dialog" aria-modal="true" tabindex="-1"><header>
     <h3>Nueva cuenta</h3>
-    <button class="finance-pill" data-close-modal>❌</button></header>
-    <form class="finance-entry-form" id="modal-cuenta-nueva" data-new-account-form><input type="text" name="name" data-account-name-input placeholder="Nombre de la cuenta" required /><label>
-    <input type="checkbox" name="shared" /> 🫂</label><select name="sharedRatio">
-    <option value="0.5">50%</option>
-    </select>
-    <label><input type="checkbox" name="isBitcoin" /> Cuenta Bitcoin</label>
-    <input type="number" name="btcUnits" step="0.00000001" min="0" value="0" placeholder="BTC unidades" />
-    <label>Tarjeta (últimos 4)
-    <input type="text" name="cardLast4" data-card-last4-input inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="1234" />
-    </label>
-    <small>BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(0)}</small>
-    <button class="finance-pill" type="submit">Crear</button></form></div>`;
+    <button class="finance-pill finance-pill--mini" type="button" data-close-modal>Cerrar</button></header>
+    <form class="finance-entry-form" id="modal-cuenta-nueva" data-new-account-form>
+      <label class="financeAccountForm__field">
+        <span class="financeAccountForm__label">Nombre</span>
+        <input type="text" name="name" data-account-name-input placeholder="Nombre de la cuenta" required />
+      </label>
+      <div class="financeAccountForm__toggles" role="group" aria-label="Opciones de cuenta">
+        <label class="financeAccountForm__toggle"><input type="checkbox" name="shared" /> <span>🫂 Compartida</span></label>
+        <label class="financeAccountForm__toggle"><input type="checkbox" name="isBitcoin" /> <span>Cuenta Bitcoin</span></label>
+      </div>
+      <input type="hidden" name="sharedRatio" value="0.5" />
+      <label class="financeAccountForm__field">
+        <span class="financeAccountForm__label">BTC unidades</span>
+        <input type="number" name="btcUnits" step="0.00000001" min="0" value="0" placeholder="BTC unidades" />
+      </label>
+      <label class="financeAccountForm__field">
+        <span class="financeAccountForm__label">Tarjeta (últimos 4)</span>
+        <input type="text" name="cardLast4" data-card-last4-input inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="1234" />
+      </label>
+      <small class="financeAccountForm__hint">BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(0)}</small>
+      <div class="financeAccountForm__actions"><button class="finance-pill" type="submit">Crear</button></div>
+    </form></div>`;
     return;
   }
   if (state.modal.type === 'food-products') {

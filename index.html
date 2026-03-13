@@ -1762,8 +1762,18 @@
 <div class="label">Lugares</div>
 <div class="value" id="world-places">0</div>
 </div>
+<div class="world-kpi">
+<div class="label">Subdivisiones</div>
+<div class="value"><span id="world-subdivisions">0</span><span class="sub" id="world-subdivisions-total-wrap">/ <span id="world-subdivisions-total">0</span></span></div>
+</div>
 </div>
 <div class="world-controls">
+<select id="world-status-filter">
+<option selected="" value="all">Todos</option>
+<option value="visited">Visitado</option>
+<option value="lived">Vivido</option>
+<option value="wishlist">Wishlist</option>
+</select>
 <select id="world-filter">
 <option value="day">Día</option>
 <option value="week">Semana</option>
@@ -1771,13 +1781,15 @@
 <option value="year">Año</option>
 <option selected="" value="total">Total</option>
 </select>
+<button class="btn" id="world-mark-current" type="button">📍 Ubicación actual</button>
 <label class="btn primary" for="world-add-toggle">+ Añadir</label>
 </div>
 </div>
 <div class="world-map-wrap">
 <div id="world-map"></div>
 </div>
-<div class="world-bottom"><details class="world-card"><summary class="world-summary"><h3>Últimas visitas</h3><span class="world-count" id="world-visits-count">0</span></summary><div class="world-list" id="world-visits-list"></div></details><details class="world-card"><summary class="world-summary"><h3>Watchlist</h3><span class="world-count" id="world-watch-count">0</span></summary><div class="world-list"><div class="world-watch-row"><input autocomplete="off" id="world-watch-q" placeholder="Añadir país a watchlist…" type="search"/><button class="btn primary" id="world-watch-add" type="button">Añadir</button></div><div class="world-list" id="world-watch-list"></div></div></details></div>
+<div class="world-country-panel" id="world-country-panel"><div class="world-country-detail-title" id="world-country-title">Detalle de país</div><div class="world-country-detail-grid" id="world-country-detail-grid"></div><div class="world-list" id="world-subdivision-list"></div></div>
+<div class="world-bottom"><details class="world-card" open><summary class="world-summary"><h3>Registros</h3><span class="world-count" id="world-visits-count">0</span></summary><div class="world-list" id="world-visits-list"></div></details><details class="world-card"><summary class="world-summary"><h3>Timeline</h3><span class="world-count" id="world-timeline-count">0</span></summary><div class="world-list" id="world-timeline-list"></div></details><details class="world-card"><summary class="world-summary"><h3>Pins personalizados</h3><span class="world-count" id="world-pins-count">0</span></summary><div class="world-list"><div class="world-watch-row"><input autocomplete="off" id="world-pin-folder-filter" placeholder="Filtrar por carpeta…" type="search"/></div><div class="world-list" id="world-pins-list"></div></div></details><details class="world-card"><summary class="world-summary"><h3>Watchlist</h3><span class="world-count" id="world-watch-count">0</span></summary><div class="world-list"><div class="world-watch-row"><input autocomplete="off" id="world-watch-q" placeholder="Añadir país a watchlist…" type="search"/><button class="btn primary" id="world-watch-add" type="button">Añadir</button></div><div class="world-list" id="world-watch-list"></div></div></details></div>
 <!-- Modal toggle + modal -->
 <input class="world-modal-toggle" hidden="" id="world-add-toggle" type="checkbox"/>
 <div class="world-modal">
@@ -1790,12 +1802,22 @@
 <div class="world-modal-grid">
 <select id="world-kind">
 <option value="country">País</option>
+<option value="subdivision">Subdivisión</option>
 <option selected="" value="city">Ciudad</option>
 <option value="town">Pueblo</option>
+<option value="pin">Pin personalizado</option>
 </select>
+<select id="world-record-status"><option selected="" value="visited">Visitado</option><option value="lived">Vivido</option><option value="wishlist">Wishlist</option><option value="other">Otro</option></select>
 <input autocomplete="off" id="world-place-q" placeholder="Buscar (usa el mapa del mundo real)..."/>
+<input autocomplete="off" id="world-place-subdivision" placeholder="Subdivisión (estado/provincia/región)"/>
+<input autocomplete="off" id="world-place-city" placeholder="Ciudad (opcional)"/>
+<div class="world-modal-grid world-modal-grid-2"><input id="world-date-start" type="date"/><input id="world-date-end" type="date"/></div>
+<input autocomplete="off" id="world-pin-emoji" maxlength="3" placeholder="Emoji (opcional)"/>
+<input autocomplete="off" id="world-pin-folder" placeholder="Carpeta/categoría (opcional)"/>
+<input autocomplete="off" id="world-note" placeholder="Nota (opcional)"/>
 <div class="world-list" id="world-place-results"></div>
 <div class="world-modal-actions">
+<button class="btn" id="world-place-delete" style="display:none" type="button">Eliminar</button>
 <button class="btn primary" id="world-place-save" type="button">Guardar</button>
 </div>
 </div>

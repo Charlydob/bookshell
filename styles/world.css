@@ -36,7 +36,7 @@
 
 #view-world .world-kpis{
   display:grid;
-  grid-template-columns: repeat(3, minmax(0,1fr));
+  grid-template-columns: repeat(4, minmax(0,1fr));
   gap: 10px;
 }
 
@@ -392,4 +392,28 @@
   #view-world .world-kpi{ padding: 9px 10px 8px; border-radius: 16px; }
   #view-world .world-kpi .value{ font-size: 13px; }
   #view-world .world-controls select{ flex-basis: 140px; }
+}
+
+
+#view-world .world-country-panel{
+  border:1px solid rgba(255,255,255,.1);
+  border-radius:18px;
+  padding:12px;
+  background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015));
+  box-shadow: var(--w-shadow-soft);
+}
+#view-world .world-country-detail-title{font-weight:800; margin-bottom:8px; color:var(--w-txt)}
+#view-world .world-country-detail-grid{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-bottom:8px}
+#view-world .world-country-detail-grid .world-item{padding:8px 10px}
+#view-world .world-timeline-year{font-size:12px; color:var(--w-dim); margin-top:6px}
+#view-world .world-modal-grid-2{display:grid;grid-template-columns:1fr 1fr; gap:10px;}
+#view-world .world-item .badge{font-size:11px; border:1px solid rgba(255,255,255,.2); border-radius:999px; padding:2px 8px; opacity:.9}
+#view-world .world-item .badge.visited{border-color:rgba(79,208,255,.45)}
+#view-world .world-item .badge.lived{border-color:rgba(111,255,174,.45)}
+#view-world .world-item .badge.wishlist{border-color:rgba(255,206,102,.5)}
+#view-world .world-controls{flex-wrap:wrap}
+#view-world #world-status-filter{flex:1 1 130px}
+#view-world #world-mark-current{flex:0 1 auto}
+@media (max-width:700px){
+  #view-world .world-kpis{grid-template-columns:repeat(2,minmax(0,1fr));}
 }

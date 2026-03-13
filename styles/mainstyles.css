@@ -34,7 +34,7 @@ html,
 body {
   margin: 0;
   padding: 0;
-  overflow: hidden;
+  overflow: auto;
   background: radial-gradient(circle at top, #161a22, #05060a 60%);
   background-color: #05060a;
   color: var(--txt);

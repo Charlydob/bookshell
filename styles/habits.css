@@ -1789,8 +1789,10 @@ body.is-session-detail-open #app {
 .habit-session-detail-timer {
   margin-top: 40%;
   text-align: center;
-  font-size: clamp(104px, 10vw, 108px);
+  font-size: clamp(76px, 10vw, 108px);
   font-weight: 900;
+  min-width: 20px;
+  max-width: 20px;
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
 }

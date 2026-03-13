@@ -1,4 +1,8 @@
-
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
 :root {
   --bg-1: #0e1116;
@@ -898,4 +902,8 @@ main {
   backdrop-filter: blur(8px);
 }
 
+/* --- Fix PWA iOS: evitar franja negra inferior / anclar navegación al safe-area --- */
+:root {
+  --nav-total-h: 72px;
+}
 

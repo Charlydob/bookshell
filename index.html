@@ -34,6 +34,19 @@
   .view.view-active{display:block !important;}
 </style>
 
+<script>
+  (function () {
+    var isStandalone = false;
+    try {
+      isStandalone = !!(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+    } catch (e) {}
+    var isIOSStandalone = !!window.navigator.standalone;
+    if (isStandalone || isIOSStandalone) {
+      document.documentElement.classList.add("is-standalone");
+    }
+  })();
+</script>
+
 </head>
 <body>
 <header class="app-header">

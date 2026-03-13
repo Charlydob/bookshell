@@ -1,8 +1,4 @@
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
+
 
 :root {
   --bg-1: #0e1116;
@@ -34,8 +30,6 @@ html,
 body {
   margin: 0;
   padding: 0;
-  height: 100%;
-  min-height: 100%;
   overflow: hidden;
   background: radial-gradient(circle at top, #161a22, #05060a 60%);
   background-color: #05060a;
@@ -904,33 +898,4 @@ main {
   backdrop-filter: blur(8px);
 }
 
-/* --- Fix PWA iOS: evitar franja negra inferior / anclar navegación al safe-area --- */
-:root {
-  --nav-total-h: 72px;
-}
 
-@media (display-mode: standalone) {
-  html,
-  body {
-    min-height: 100dvh;
-    height: 100dvh;
-  }
-
-
-
-  .view {
-    padding-bottom: calc(8px + var(--nav-total-h) + env(safe-area-inset-bottom, 0px));
-  }
-}
-
-html.is-standalone,
-html.is-standalone body {
-  min-height: 100dvh;
-  height: 100dvh;
-}
-
-
-
-html.is-standalone .view {
-  padding-bottom: calc(8px + var(--nav-total-h) + env(safe-area-inset-bottom, 0px));
-}

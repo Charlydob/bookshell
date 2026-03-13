@@ -4461,7 +4461,9 @@ $recipeImportBtn?.addEventListener("click", () => {
     }
     const totals = computeDailyTotals(selectedMacroDate);
     const dayCost = computeDailyCostSummary(selectedMacroDate);
-    const totalBurned = getTotalCaloriesBurnedForDate(selectedMacroDate);
+    const workBurned = getWorkCaloriesBurnedForDate(selectedMacroDate);
+    const gymBurned = getGymCaloriesBurnedForDate(selectedMacroDate);
+    const totalBurned = workBurned + gymBurned;
     const netKcal = totals.kcal - totalBurned;
     $macroDateInput.value = selectedMacroDate;
     const buildStatHtml = ({ key, label, unit, step }) => {
@@ -4475,6 +4477,15 @@ $recipeImportBtn?.addEventListener("click", () => {
         const ingestedPct = Math.min(140, Math.round(ingestedRatio * 100));
         const burnedStartPct = Math.max(0, (ingestedRatio - burnedWithinIngestedRatio) * 100);
         const burnedWidthPct = Math.max(0, burnedWithinIngestedRatio * 100);
+        const remaining = goal > 0 ? roundMacro(goal - totals.kcal) : null;
+        const remainingLabel = remaining == null
+          ? ""
+          : (remaining >= 0 ? `${remaining} restantes` : `${Math.abs(remaining)} exceso`);
+        const burnParts = [
+          `-${roundMacro(totalBurned)} quemadas`,
+          (workBurned || gymBurned) ? `(${roundMacro(workBurned)} trabajo + ${roundMacro(gymBurned)} gym)` : "",
+          remainingLabel
+        ].filter(Boolean).join(" · ");
         return `
           <div class="macro-stat macro-stat-${key} ${excess ? "is-excess" : ""}">
             <div class="macro-stat-title">${label}</div>
@@ -4484,7 +4495,7 @@ $recipeImportBtn?.addEventListener("click", () => {
               <input class="macro-goal-input-stats" type="number" min="0" step="${step}" inputmode="decimal" placeholder="${goal}" value="" data-macro-goal="${key}" aria-label="Objetivo ${label}" />
               <span class="macro-unit">${unit}</span>
             </div>
-            <div class="hint">${roundMacro(totals.kcal)} ingeridas · -${roundMacro(totalBurned)} quemadas</div>
+            <div class="hint">${burnParts || `-${roundMacro(totalBurned)} quemadas`}</div>
             <div class="macro-progress macro-progress-kcal">
               <span style="width:${ingestedPct}%"></span>
               <i class="macro-progress-burn" style="left:${burnedStartPct}%; width:${burnedWidthPct}%"></i>
@@ -4529,10 +4540,11 @@ $recipeImportBtn?.addEventListener("click", () => {
       </div>
     `;
     const kcalGoal = Number(nutritionGoals.kcal) || 0;
-    const delta = roundMacro(kcalGoal - totals.kcal);
-    const workBurned = getWorkCaloriesBurnedForDate(selectedMacroDate);
-    const gymBurned = getGymCaloriesBurnedForDate(selectedMacroDate);
-    $macroKcalSummary.textContent = `${Number(totals.kcal).toFixed(2)} kcal / ${Number(kcalGoal).toFixed(2)} kcal · ${Number(totals.kcal).toFixed(2)} ingeridas · -${Number(totalBurned).toFixed(2)} quemadas (${roundMacro(workBurned)} trabajo + ${roundMacro(gymBurned)} gym) · ${delta >= 0 ? `${delta} restantes` : `${Math.abs(delta)} exceso`}`;
+    if ($macroKcalSummary) {
+      $macroKcalSummary.textContent = kcalGoal > 0
+        ? `${Number(totals.kcal).toFixed(2)} kcal / ${Number(kcalGoal).toFixed(2)} kcal`
+        : `${Number(totals.kcal).toFixed(2)} kcal`;
+    }
 
     renderMacroIntegrationSettings();
 
@@ -7706,6 +7718,24 @@ $recipeImportBtn?.addEventListener("click", () => {
     persistNutrition();
     renderMacrosView();
   });
+
+  let _macroExternalRefreshTimer = null;
+  function scheduleMacroExternalRefresh() {
+    if (_macroExternalRefreshTimer) window.clearTimeout(_macroExternalRefreshTimer);
+    _macroExternalRefreshTimer = window.setTimeout(() => {
+      _macroExternalRefreshTimer = null;
+      if ($recipesPanelMacros?.classList.contains("is-active")) {
+        renderMacrosView();
+        return;
+      }
+      if ($recipesPanelStatistics?.classList.contains("is-active")) {
+        renderStatisticsView();
+      }
+    }, 120);
+  }
+  try {
+    window.addEventListener("bookshell:data", scheduleMacroExternalRefresh);
+  } catch (_) {}
 
   $macroMeals?.addEventListener("change", (e) => {
     const countInput = e.target.closest("input[data-macro-count]");

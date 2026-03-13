@@ -722,6 +722,7 @@ function bindEvents() {
       refreshStatsIfActive({ includeControls: gymStatsSelection.kind === "exercise" });
       persistGymCache();
       refreshExerciseDetailIfOpen();
+      emitBookshellData("remote:exercises");
     });
 
     onValue(templatesRef, (snap) => {
@@ -747,6 +748,7 @@ function bindEvents() {
       }
       refreshStatsIfActive({ includeControls: gymStatsSelection.kind === "exercise" });
       persistGymCache();
+      emitBookshellData("remote:workouts");
     });
 
     onValue(bodyweightRef, (snap) => {
@@ -755,6 +757,7 @@ function bindEvents() {
       renderWorkoutEditor();
       refreshStatsIfActive();
       persistGymCache();
+      emitBookshellData("remote:bodyweight");
     });
 
     onValue(cardioRef, (snap) => {
@@ -765,7 +768,16 @@ function bindEvents() {
       }
       refreshStatsIfActive({ includeControls: gymStatsSelection.kind === "cardio" });
       persistGymCache();
+      emitBookshellData("remote:cardio");
     });
+  }
+
+  function emitBookshellData(reason = "") {
+    try {
+      window.dispatchEvent(new CustomEvent("bookshell:data", { detail: { source: "gym", reason } }));
+      return;
+    } catch (_) {}
+    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
   }
 
   function getDeviceId() {
@@ -3535,6 +3547,7 @@ function bindEvents() {
     bodyweightByDate[dateKey] = payload;
     writeGymSet(path, payload);
     persistGymCache();
+    emitBookshellData("local:bodyweight");
   }
 
   function saveWorkout() {
@@ -3549,6 +3562,7 @@ function bindEvents() {
     upsertWorkoutLocal(workout);
     writeGymUpdate(path, workout);
     persistGymCache();
+    emitBookshellData("local:workout");
   }
 
   function flushWorkoutSave() {

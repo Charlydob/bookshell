@@ -215,7 +215,7 @@ body {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: 45px;
+  bottom: 25px;
   width: min(480px, 100%);
   min-height: 10px;
   z-index: 50;

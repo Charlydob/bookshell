@@ -1,1333 +1,262 @@
-// scripts/world.js
 import { renderCountryHeatmap } from "./world-heatmap.js";
 import { getCountryEnglishName, getCountryOptions } from "./countries.js";
 import { db, auth } from "./firebase-shared.js";
-import {
-  ref,
-  get,
-  onValue,
-  set,
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { ref, get, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 const LS_VISITS = "world_visits_v1";
 const LS_WATCH = "world_watchlist_v1";
 const WORLD_PATH = (uid) => `v2/users/${uid}/world`;
-const LEGACY_WORLD_PATHS = (uid) => [
-  `v2/users/${uid}/trips`,
-];
+const LEGACY_WORLD_PATHS = (uid) => [`v2/users/${uid}/trips`];
+const SUBDIV_GEOJSON_BASE = "https://raw.githubusercontent.com/codeforgermany/click_that_hood/main/public/data/";
 
+const worldState = { initialized:false, abortController:null, searchCache:new Map(), firebaseUnsub:null, firebaseRef:null, remoteWriteTimer:0, hasResolvedFirstRemoteSnapshot:false, firebaseUid:null, editId:null, countrySubdivCache:new Map() };
 
-const worldState = {
-  initialized: false,
-  abortController: null,
-  searchCache: new Map(),
-  firebaseUid: null,
-  firebaseUnsub: null,
-  firebaseRef: null,
-  remoteWriteTimer: 0,
-  hasResolvedFirstRemoteSnapshot: false,
-};
+function $id(id){ return document.getElementById(id); }
+const iso2=(v)=>String(v||"").trim().toUpperCase();
+const esc=(s)=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
+const todayKey=()=>new Date().toISOString().slice(0,10);
+const parseJson=(k,f)=>{ try{return JSON.parse(localStorage.getItem(k)||"")??f;}catch{return f;} };
+const saveJson=(k,v)=>localStorage.setItem(k, JSON.stringify(v));
+const uid=()=>auth.currentUser?.uid || worldState.firebaseUid;
+const statusLabel=(s)=>({visited:'Visitado',lived:'Vivido',wishlist:'Wishlist',other:'Otro'})[s]||'Visitado';
 
-const COUNTRY_NAME_OVERRIDES = {
-  US: "United States of America",
-  RU: "Russia",
-  IR: "Iran",
-  SY: "Syria",
-  CZ: "Czech Republic",
-  GB: "United Kingdom",
-  KR: "South Korea",
-  KP: "North Korea",
-  VN: "Vietnam",
-  LA: "Laos",
-  CD: "Democratic Republic of the Congo",
-  CG: "Republic of the Congo",
-  CI: "Ivory Coast",
-  BO: "Bolivia",
-  VE: "Venezuela",
-  TZ: "Tanzania",
-};
-
-function $id(id) { return document.getElementById(id); }
-
-function esc(s) {
-  return String(s ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, '&#39;');
-}
-
-function todayKey() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const da = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${da}`;
-}
-
-function parseJson(key, fallback) {
-  try { return JSON.parse(localStorage.getItem(key) || "") ?? fallback; }
-  catch { return fallback; }
-}
-
-function saveJson(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
-}
-
-function normalizeWorldPayload(raw) {
+function normalizeWorldPayload(raw){
   const visitsRaw = Array.isArray(raw?.visits) ? raw.visits : [];
-  const visits = visitsRaw
-    .filter((v) => v && typeof v === "object")
-    .map((v) => ({
-      id: String(v.id || `${Number(v.ts) || Date.now()}_${Math.random().toString(16).slice(2)}`),
-      ts: Number(v.ts) || 0,
-      dateKey: String(v.dateKey || ""),
-      kind: v.kind === "country" ? "country" : "place",
-      countryCode: iso2(v.countryCode),
-      placeName: String(v.placeName || ""),
-      lat: Number.isFinite(Number(v.lat)) ? Number(v.lat) : null,
-      lon: Number.isFinite(Number(v.lon)) ? Number(v.lon) : null,
-    }))
-    .filter((v) => v.countryCode);
+  const customPinsRaw = Array.isArray(raw?.customPins) ? raw.customPins : [];
+  const areaVisitsRaw = Array.isArray(raw?.areaVisits) ? raw.areaVisits : [];
+  const timelineRaw = Array.isArray(raw?.timelineEntries) ? raw.timelineEntries : [];
+  const watchRaw = raw?.watch && typeof raw.watch==='object' ? raw.watch : {};
 
-  const watchRaw = raw?.watch && typeof raw.watch === "object" ? raw.watch : {};
-  const watch = {};
-  for (const [k, value] of Object.entries(watchRaw)) {
-    const code = iso2(k || value?.code);
-    if (!code) continue;
-    watch[code] = {
-      code,
-      label: String(value?.label || getCountryEnglishName(code) || code),
-    };
-  }
+  const normalizeRec=(v)=>({
+    id:String(v?.id || `${Number(v?.ts)||Date.now()}_${Math.random().toString(16).slice(2)}`),
+    ts:Number(v?.ts)||Date.now(),
+    dateKey:String(v?.dateKey || v?.startDate || ""),
+    startDate:String(v?.startDate || v?.dateKey || ""),
+    endDate:String(v?.endDate || ""),
+    note:String(v?.note || v?.notes || ""),
+    status:["visited","lived","wishlist","other"].includes(v?.status) ? v.status : "visited",
+    kind:String(v?.kind || "place"),
+    countryCode:iso2(v?.countryCode),
+    subdivision:String(v?.subdivision || v?.admin1 || ""),
+    subdivisionType:String(v?.subdivisionType || "subdivision"),
+    city:String(v?.city || ""),
+    placeName:String(v?.placeName || v?.name || ""),
+    lat:Number.isFinite(Number(v?.lat)) ? Number(v.lat) : null,
+    lon:Number.isFinite(Number(v?.lon)) ? Number(v.lon) : null,
+    emoji:String(v?.emoji || ""),
+    folder:String(v?.folder || ""),
+    source:String(v?.source || "record"),
+  });
 
-  return { visits, watch };
+  const visits=visitsRaw.filter(Boolean).map(normalizeRec).filter(v=>v.countryCode);
+  const customPins=customPinsRaw.filter(Boolean).map(v=>normalizeRec({...v,kind:'pin',source:'pin'})).filter(v=>Number.isFinite(v.lat)&&Number.isFinite(v.lon));
+  const areaVisits=areaVisitsRaw.filter(Boolean).map(v=>normalizeRec({...v,kind:'subdivision',source:'area'})).filter(v=>v.countryCode&&v.subdivision);
+  const timelineEntries=timelineRaw.filter(Boolean).map(v=>normalizeRec({...v,source:'timeline'}));
+  const watch={};
+  for (const [k,val] of Object.entries(watchRaw)){ const code=iso2(k||val?.code); if(code) watch[code]={code,label:String(val?.label||getCountryEnglishName(code)||code)}; }
+  return { visits, watch, customPins, areaVisits, timelineEntries };
 }
 
-function mergeVisits(localVisits, remoteVisits) {
-  const byId = new Map();
-  const put = (visit) => {
-    if (!visit?.id) return;
-    const prev = byId.get(visit.id);
-    if (!prev || (Number(visit.ts) || 0) >= (Number(prev.ts) || 0)) {
-      byId.set(visit.id, visit);
-    }
-  };
-  (localVisits || []).forEach(put);
-  (remoteVisits || []).forEach(put);
-  return Array.from(byId.values()).sort((a, b) => (b.ts || 0) - (a.ts || 0));
-}
+function mergeById(...lists){ const m=new Map(); lists.flat().forEach(v=>{ if(v?.id) m.set(v.id,{...(m.get(v.id)||{}),...v}); }); return [...m.values()].sort((a,b)=>(b.ts||0)-(a.ts||0)); }
+function mergeWatch(local,remote){ return {...(remote||{}), ...(local||{})}; }
 
-function mergeWatch(localWatch, remoteWatch) {
+function worldPatchPayload(data){
   return {
-    ...(remoteWatch || {}),
-    ...(localWatch || {}),
-  };
-}
-
-function worldPayloadForDb(visits, watch) {
-  return {
-    visits: Array.isArray(visits) ? visits : [],
-    watch: watch && typeof watch === "object" ? watch : {},
+    visits: Array.isArray(data.visits)?data.visits:[],
+    watch: data.watch && typeof data.watch==='object' ? data.watch : {},
+    customPins: Array.isArray(data.customPins)?data.customPins:[],
+    areaVisits: Array.isArray(data.areaVisits)?data.areaVisits:[],
+    timelineEntries: Array.isArray(data.timelineEntries)?data.timelineEntries:[],
     updatedAt: Date.now(),
   };
 }
 
-async function readLegacyWorldPayload(uid) {
-  for (const path of LEGACY_WORLD_PATHS(uid)) {
-    try {
-      const snap = await get(ref(db, path));
-      if (!snap.exists()) continue;
-      return {
-        legacyPath: path,
-        payload: normalizeWorldPayload(snap.val()),
-      };
-    } catch (err) {
-      console.warn("[world] legacy read failed", path, err);
-    }
+async function readLegacyWorldPayload(userId){
+  for (const path of LEGACY_WORLD_PATHS(userId)) {
+    try { const snap=await get(ref(db,path)); if (snap.exists()) return normalizeWorldPayload(snap.val()); } catch {}
   }
   return null;
 }
 
-function uniq(arr) {
-  return [...new Set(arr)];
+let nominatimAbort=null;
+async function nominatimSearch(q){
+  const normalized=String(q||'').trim().toLowerCase(); if(normalized.length<2) return [];
+  if(worldState.searchCache.has(normalized)) return worldState.searchCache.get(normalized);
+  if(nominatimAbort) nominatimAbort.abort(); nominatimAbort=new AbortController();
+  const u=new URL('https://nominatim.openstreetmap.org/search');
+  u.searchParams.set('format','json');u.searchParams.set('addressdetails','1');u.searchParams.set('limit','8');u.searchParams.set('accept-language','es');u.searchParams.set('q',normalized);
+  try{ const r=await fetch(u.toString(),{signal:nominatimAbort.signal,headers:{Accept:'application/json'}}); if(!r.ok) return []; const d=await r.json(); worldState.searchCache.set(normalized,d); return d; }catch(e){ if(e?.name==='AbortError') return []; return []; }
+}
+const isCountryishResult=(r)=> String(r?.class||'')==='boundary' || ['country','administrative'].includes(String(r?.type||''));
+const isPlaceResult=(r)=>!isCountryishResult(r);
+
+function formatDateRange(v){ const s=v.startDate||v.dateKey||''; const e=v.endDate||''; if(!s&&!e) return 'sin fecha'; if(s&&!e) return s; if(!s&&e) return `— ${e}`; return `${s} — ${e}`; }
+
+function renderWatchlist($list, watch){
+  $list.innerHTML=''; const items=Object.values(watch||{}).sort((a,b)=>(a.label||'').localeCompare(b.label||''));
+  if(!items.length){ $list.innerHTML='<div class="geo-empty">Sin watchlist.</div>'; return; }
+  items.forEach(it=>{ const row=document.createElement('div'); row.className='world-item'; row.innerHTML=`<div><div class="name">${esc(it.label)}</div><div class="meta">${esc(it.code)}</div></div><div class="actions"><button class="btn" data-act="remove-watch" data-code="${it.code}">Quitar</button></div>`; $list.appendChild(row); });
 }
 
-function startOfMonth(d) {
-  return new Date(d.getFullYear(), d.getMonth(), 1);
+function groupByCountry(visits){ const m=new Map(); visits.forEach(v=>{ const c=iso2(v.countryCode); if(!c) return; if(!m.has(c)) m.set(c,[]); m.get(c).push(v); }); return m; }
+function aggCountsByCountry(visits){ const m=groupByCountry(visits); return [...m.entries()].map(([code,rows])=>({code,value:rows.length,label:getCountryEnglishName(code)||code,mapName:getCountryEnglishName(code)||code})); }
+
+function countrySlugFromISO2(code){ return (getCountryEnglishName(code)||code||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,''); }
+async function fetchSubdivGeoJSON(code){
+  const c=iso2(code); if(!c) return null;
+  if(worldState.countrySubdivCache.has(c)) return worldState.countrySubdivCache.get(c);
+  const known={ES:['spain-provinces.geojson','spain-communities.geojson']};
+  const slug=countrySlugFromISO2(c);
+  const candidates=[...(known[c]||[]),`${slug}.geojson`,`${slug}-provinces.geojson`,`${slug}-states.geojson`,`${slug}-regions.geojson`];
+  for(const file of candidates){ try{ const r=await fetch(SUBDIV_GEOJSON_BASE+file,{cache:'force-cache'}); if(!r.ok) continue; const j=await r.json(); (j.features||[]).forEach(f=>{ if(!f.properties) f.properties={}; f.properties.name=String(f.properties.name||f.properties.NAME||f.properties.NAME_1||f.properties.region||f.properties.state||f.properties.province||'—');}); worldState.countrySubdivCache.set(c,j); return j; }catch{} }
+  worldState.countrySubdivCache.set(c,null); return null;
 }
 
-function startOfYear(d) {
-  return new Date(d.getFullYear(), 0, 1);
-}
+function filterByTime(rows,mode){ if(mode==='total') return rows.slice(); const now=new Date(); const start=mode==='day'?new Date(now.getFullYear(),now.getMonth(),now.getDate()):mode==='week'?new Date(now.getTime()-6*86400000):mode==='month'?new Date(now.getFullYear(),now.getMonth(),1):new Date(now.getFullYear(),0,1); const ms=start.getTime(); return rows.filter(v=>(Number(v.ts)||0)>=ms); }
+function filterByStatus(rows,status){ return status==='all' ? rows : rows.filter(v=>String(v.status||'visited')===status); }
 
-function filterVisitsByMode(visits, mode) {
-  const now = new Date();
-  const t0 = (() => {
-    if (mode === "day") return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    if (mode === "week") return new Date(now.getTime() - 6 * 24 * 3600 * 1000);
-    if (mode === "month") return startOfMonth(now);
-    if (mode === "year") return startOfYear(now);
-    return null; // total
-  })();
+export async function init(){
+  if(worldState.initialized) return; worldState.initialized=true; worldState.abortController=new AbortController(); const evtOpts={signal:worldState.abortController.signal};
 
-  if (!t0) return visits.slice();
-  const ms0 = t0.getTime();
-  return visits.filter(v => (Number(v.ts) || 0) >= ms0);
-}
+  const $map=$id('world-map'),$pct=$id('world-pct'),$countries=$id('world-countries'),$countriesTotal=$id('world-countries-total'),$places=$id('world-places'),$subs=$id('world-subdivisions'),$subsTotal=$id('world-subdivisions-total');
+  const $filter=$id('world-filter'),$statusFilter=$id('world-status-filter'),$visitsList=$id('world-visits-list'),$watchList=$id('world-watch-list'),$watchInput=$id('world-watch-q'),$watchAdd=$id('world-watch-add');
+  const $visitsCount=$id('world-visits-count'),$watchCount=$id('world-watch-count'),$timelineList=$id('world-timeline-list'),$timelineCount=$id('world-timeline-count'),$pinsList=$id('world-pins-list'),$pinsCount=$id('world-pins-count'),$pinFolderFilter=$id('world-pin-folder-filter');
+  const $countryTitle=$id('world-country-title'),$countryGrid=$id('world-country-detail-grid'),$subdivisionList=$id('world-subdivision-list');
+  const $addKind=$id('world-kind'),$addQuery=$id('world-place-q'),$addSubdiv=$id('world-place-subdivision'),$addCity=$id('world-place-city'),$addStart=$id('world-date-start'),$addEnd=$id('world-date-end'),$addNote=$id('world-note'),$addStatus=$id('world-record-status'),$addEmoji=$id('world-pin-emoji'),$addFolder=$id('world-pin-folder'),$addResults=$id('world-place-results'),$addSave=$id('world-place-save'),$addDelete=$id('world-place-delete'),$addToggle=$id('world-add-toggle'),$markCurrent=$id('world-mark-current');
 
-function iso2(code) {
-  return String(code || "").trim().toUpperCase();
-}
+  let state={ visits:parseJson(LS_VISITS,[]), watch:parseJson(LS_WATCH,{}), customPins:[], areaVisits:[], timelineEntries:[] };
+  let pendingPick=null, selectedCountryForDetail=null;
 
-function countryMapNameFromISO2(code) {
-  const c = iso2(code);
-  return COUNTRY_NAME_OVERRIDES[c] || getCountryEnglishName(c) || c;
-}
+  function persistLocal(){ saveJson(LS_VISITS,state.visits); saveJson(LS_WATCH,state.watch); }
+  async function persistRemoteNow(){ if(!uid()||!worldState.firebaseRef) return; try{ await update(worldState.firebaseRef, worldPatchPayload(state)); }catch(e){ console.warn('[world] remote save failed',e);} }
+  function scheduleRemote(){ clearTimeout(worldState.remoteWriteTimer); worldState.remoteWriteTimer=setTimeout(()=>persistRemoteNow(),260); }
+  function persist(){ persistLocal(); scheduleRemote(); }
 
-/* ---- Nominatim ---- */
-let nominatimAbort = null;
-async function nominatimSearch(q) {
-  const normalized = String(q || "").trim().toLowerCase();
-  if (normalized.length < 2) return [];
-  if (worldState.searchCache.has(normalized)) {
-    return worldState.searchCache.get(normalized);
-  }
-  if (nominatimAbort) nominatimAbort.abort();
-  nominatimAbort = new AbortController();
-
-  const url = new URL("https://nominatim.openstreetmap.org/search");
-  url.searchParams.set("format", "json");
-  url.searchParams.set("addressdetails", "1");
-  url.searchParams.set("limit", "8");
-  url.searchParams.set("accept-language", "es");
-  url.searchParams.set("q", normalized);
-
-  try {
-    const res = await fetch(url.toString(), {
-      signal: nominatimAbort.signal,
-      headers: { "Accept": "application/json" },
+  async function initFirebaseSync(){
+    if(!uid()) return; worldState.firebaseUid=uid(); worldState.firebaseRef=ref(db,WORLD_PATH(uid()));
+    const legacy=await readLegacyWorldPayload(uid());
+    worldState.firebaseUnsub=onValue(worldState.firebaseRef,(snap)=>{
+      const remote=snap.exists()?normalizeWorldPayload(snap.val()):{visits:[],watch:{},customPins:[],areaVisits:[],timelineEntries:[]};
+      if(!worldState.hasResolvedFirstRemoteSnapshot){
+        worldState.hasResolvedFirstRemoteSnapshot=true;
+        state={
+          visits: mergeById(state.visits,remote.visits,legacy?.visits||[]),
+          watch: mergeWatch(state.watch,remote.watch),
+          customPins: mergeById(state.customPins,remote.customPins,legacy?.customPins||[]),
+          areaVisits: mergeById(state.areaVisits,remote.areaVisits,legacy?.areaVisits||[]),
+          timelineEntries: mergeById(state.timelineEntries,remote.timelineEntries,legacy?.timelineEntries||[]),
+        };
+        persistLocal(); renderAll(); persistRemoteNow(); return;
+      }
+      state.visits=mergeById(state.visits,remote.visits);
+      state.watch=mergeWatch(state.watch,remote.watch);
+      state.customPins=mergeById(state.customPins,remote.customPins);
+      state.areaVisits=mergeById(state.areaVisits,remote.areaVisits);
+      state.timelineEntries=mergeById(state.timelineEntries,remote.timelineEntries);
+      persistLocal(); renderAll();
     });
-    if (!res.ok) return [];
-    const data = await res.json();
-    worldState.searchCache.set(normalized, data);
-    if (worldState.searchCache.size > 100) {
-      const firstKey = worldState.searchCache.keys().next().value;
-      worldState.searchCache.delete(firstKey);
-    }
-    return data;
-  } catch (err) {
-    if (err?.name === "AbortError") return [];
-    console.warn("Nominatim error", err);
-    return [];
   }
-}
 
-function isPlaceResult(r) {
-  const cls = String(r?.class || "");
-  const t = String(r?.type || "");
-  const a = r?.address || {};
-
-  const hasSubCountry = !!(
-    a.city || a.town || a.village || a.hamlet || a.municipality ||
-    a.suburb || a.locality || a.county || a.state || a.region ||
-    a.province || a.state_district
-  );
-
-  // evita meter un país como “ciudad”
-  if (t === "country") return false;
-  if (!hasSubCountry && cls === "boundary" && t === "administrative") return false;
-
-  if (["city","town","village","hamlet","municipality","suburb","locality","county"].includes(t)) return true;
-  if (cls === "boundary" && t === "administrative" && hasSubCountry) return true;
-
-  // algunos resultados vienen como class=place (neighbourhood etc.)
-  if (cls === "place") return true;
-
-  return false;
-}
-
-function isCountryishResult(r) {
-  const cls = String(r?.class || "");
-  const t = String(r?.type || "");
-  // Nominatim es variable: esto cubre bastante
-  return cls === "boundary" || t === "country" || t === "administrative";
-}
-
-/* ---- Área relativa desde GeoJSON (aprox, pero consistente) ---- */
-let areaCache = null;
-
-function ringAreaWeight(coords) {
-  // coords: [[lon,lat],...]
-  if (!Array.isArray(coords) || coords.length < 3) return 0;
-  let avgLat = 0;
-  let n = 0;
-  for (const p of coords) {
-    const lat = Number(p?.[1]);
-    if (!Number.isFinite(lat)) continue;
-    avgLat += lat;
-    n++;
-  }
-  if (!n) return 0;
-  avgLat /= n;
-  const k = Math.cos((avgLat * Math.PI) / 180);
-
-  let sum = 0;
-  for (let i = 0; i < coords.length; i++) {
-    const a = coords[i];
-    const b = coords[(i + 1) % coords.length];
-    const ax = (Number(a?.[0]) * Math.PI) / 180 * k;
-    const ay = (Number(a?.[1]) * Math.PI) / 180;
-    const bx = (Number(b?.[0]) * Math.PI) / 180 * k;
-    const by = (Number(b?.[1]) * Math.PI) / 180;
-    if (![ax,ay,bx,by].every(Number.isFinite)) continue;
-    sum += ax * by - bx * ay;
-  }
-  return Math.abs(sum) / 2;
-}
-
-function polygonAreaWeight(poly) {
-  // poly: [ring1, ring2(holes)...]
-  if (!Array.isArray(poly) || !poly.length) return 0;
-  const outer = ringAreaWeight(poly[0]);
-  let holes = 0;
-  for (let i = 1; i < poly.length; i++) holes += ringAreaWeight(poly[i]);
-  return Math.max(0, outer - holes);
-}
-
-function featureAreaWeight(f) {
-  const name = String(f?.properties?.name || "");
-  if (name === "Antarctica") return 0;
-
-  const g = f?.geometry;
-  if (!g) return 0;
-
-  if (g.type === "Polygon") return polygonAreaWeight(g.coordinates);
-  if (g.type === "MultiPolygon") {
-    let sum = 0;
-    for (const p of g.coordinates) sum += polygonAreaWeight(p);
-    return sum;
-  }
-  return 0;
-}
-
-function ensureAreaCacheFromECharts() {
-  const echartsLib = window?.echarts;
-  const geoJson = echartsLib?.getMap?.("world")?.geoJson;
-  const feats = geoJson?.features || [];
-  if (!feats.length) return null;
-
-  const map = new Map();
-  let total = 0;
-  for (const f of feats) {
-    const name = String(f?.properties?.name || "");
-    const w = featureAreaWeight(f);
-    if (!w) continue;
-    map.set(name, w);
-    total += w;
-  }
-  return { map, total };
-}
-
-/* ---- UI ---- */
-function renderWatchlist($list, watch) {
-  $list.innerHTML = "";
-  const items = Object.values(watch || {}).sort((a,b)=> (a.label||"").localeCompare(b.label||""));
-  if (!items.length) {
-    $list.innerHTML = `<div class="geo-empty">Sin watchlist.</div>`;
-    return;
-  }
-  for (const it of items) {
-    const row = document.createElement("div");
-    row.className = "world-item";
-    row.innerHTML = `
-      <div>
-        <div class="name">${it.label || it.code}</div>
-        <div class="meta">${it.code}</div>
-      </div>
-      <div class="actions">
-        <button class="btn" data-act="remove-watch" data-code="${it.code}">Quitar</button>
-      </div>
+  async function renderCountryDetail(code, filtered){
+    const c=iso2(code); if(!c){ $countryTitle.textContent='Detalle de país'; $countryGrid.innerHTML=''; $subdivisionList.innerHTML=''; return; }
+    const rows=filtered.filter(v=>iso2(v.countryCode)===c);
+    const countryName=getCountryEnglishName(c)||c; $countryTitle.textContent=`${countryName} (${c})`;
+    const subdivVisited=[...new Set(rows.map(v=>String(v.subdivision||'').trim()).filter(Boolean))];
+    const gj=await fetchSubdivGeoJSON(c);
+    const total=(gj?.features||[]).length;
+    const coverage=total?Math.round((subdivVisited.length/total)*100):0;
+    $countryGrid.innerHTML=`
+      <div class="world-item"><div><div class="name">Estado</div><div class="meta">${esc(statusLabel(rows[0]?.status||'visited'))}</div></div></div>
+      <div class="world-item"><div><div class="name">Capital</div><div class="meta">No disponible</div></div></div>
+      <div class="world-item"><div><div class="name">Subdivisiones</div><div class="meta">${subdivVisited.length} / ${total||'—'}</div></div></div>
+      <div class="world-item"><div><div class="name">Cobertura</div><div class="meta">${total?coverage+'%':'N/D'}</div></div></div>
     `;
-    $list.appendChild(row);
+    if(!gj){ $subdivisionList.innerHTML='<div class="geo-empty">Sin subdivisiones homogéneas para este país en la fuente pública actual (fallback a nivel país).</div>'; return; }
+    const names=(gj.features||[]).map(f=>String(f.properties?.name||'—'));
+    $subdivisionList.innerHTML=names.slice(0,120).map(n=>`<div class="world-item"><div><div class="name">${esc(n)}</div><div class="meta">${subdivVisited.includes(n)?'Visitada':'Sin registrar'}</div></div><div class="actions"><button class="btn" data-act="mark-subdivision" data-code="${c}" data-name="${esc(n)}">Marcar</button></div></div>`).join('');
   }
-}
 
-function groupVisitsByCountry(visits) {
-  const m = new Map(); // code -> {code,label,items:[]}
-  for (const v of visits) {
-    const code = iso2(v.countryCode);
-    if (!code) continue;
-    if (!m.has(code)) {
-      const label = getCountryEnglishName(code) || code;
-      m.set(code, { code, label, items: [] });
+  function renderTimeline(rows){
+    const merged=mergeById(rows, state.timelineEntries, state.areaVisits, state.customPins);
+    const byYear=new Map();
+    merged.forEach(v=>{ const y=(v.startDate||v.dateKey||'sin-fecha').slice(0,4) || 'sin-fecha'; if(!byYear.has(y)) byYear.set(y,[]); byYear.get(y).push(v); });
+    const years=[...byYear.keys()].sort((a,b)=>String(b).localeCompare(String(a)));
+    $timelineList.innerHTML='';
+    years.forEach(y=>{ const hdr=document.createElement('div'); hdr.className='world-timeline-year'; hdr.textContent=y; $timelineList.appendChild(hdr); byYear.get(y).sort((a,b)=>(b.ts||0)-(a.ts||0)).forEach(v=>{ const row=document.createElement('div'); row.className='world-item'; row.innerHTML=`<div><div class="name">${esc(v.placeName||v.subdivision||getCountryEnglishName(v.countryCode)||v.countryCode)}</div><div class="meta">${esc(formatDateRange(v))} · ${esc(statusLabel(v.status))}${v.note?` · ${esc(v.note)}`:''}</div></div></div>`; $timelineList.appendChild(row); }); });
+    $timelineCount.textContent=String(merged.length);
+  }
+
+  function renderPins(filtered){
+    const folderQ=String($pinFolderFilter?.value||'').toLowerCase().trim();
+    const pins=state.customPins.filter(p=>!folderQ || String(p.folder||'').toLowerCase().includes(folderQ));
+    $pinsList.innerHTML = pins.length ? pins.map(p=>`<div class="world-item"><div><div class="name">${esc((p.emoji||'📍')+' '+(p.placeName||'Pin'))}</div><div class="meta">${esc((p.folder||'sin carpeta')+' · '+formatDateRange(p))}</div></div><div class="actions"><button class="btn" data-act="edit-record" data-id="${p.id}" data-source="pin">Editar</button><button class="btn" data-act="del-record" data-id="${p.id}" data-source="pin">Borrar</button></div></div>`).join('') : '<div class="geo-empty">Sin pins.</div>';
+    $pinsCount.textContent=String(pins.length);
+  }
+
+  async function renderAll(){
+    const mode=$filter.value||'total'; const stat=$statusFilter.value||'all';
+    const filtered=filterByStatus(filterByTime(state.visits,mode),stat);
+    const entries=aggCountsByCountry(filtered);
+    $countriesTotal.textContent=String(getCountryOptions()?.length||0);
+    $countries.textContent=String(new Set(filtered.map(v=>iso2(v.countryCode)).filter(Boolean)).size);
+    $places.textContent=String(new Set(filtered.filter(v=>v.kind!=='country').map(v=>`${v.countryCode}:${v.placeName}:${v.lat},${v.lon}`)).size);
+    const visitedSubdivisions=new Set(filterByStatus(state.areaVisits,stat).map(v=>`${v.countryCode}:${v.subdivision}`));
+    $subs.textContent=String(visitedSubdivisions.size);
+    $subsTotal.textContent=selectedCountryForDetail ? String((await fetchSubdivGeoJSON(selectedCountryForDetail))?.features?.length||0) : '0';
+    $visitsCount.textContent=String(filtered.length); $watchCount.textContent=String(Object.keys(state.watch||{}).length);
+    await renderCountryHeatmap($map, entries, { emptyLabel: 'Aún no hay visitas', showCallouts: false });
+    if(window.echarts && $map.__geoChart){
+      const points=[...state.customPins,...filtered].filter(v=>Number.isFinite(v.lon)&&Number.isFinite(v.lat)).map(v=>({name:v.placeName||v.subdivision||v.countryCode, value:[v.lon,v.lat,1]}));
+      const base=($map.__geoChart.getOption()?.series||[]).length;
+      $map.__geoChart.setOption({series:[...Array.from({length:base},()=>({})),{id:'custom-points',type:'scatter',coordinateSystem:'geo',z:22,symbolSize:(p)=>8,itemStyle:{color:'#8cf0ff'},label:{show:false},data:points,tooltip:{show:false},silent:true}]});
+      if(!$map.__geoClickBound){ $map.__geoClickBound=true; $map.__geoChart.on('click', async (params)=>{ const name=params?.name; const opt=getCountryOptions()||[]; const found=opt.find(o=>(getCountryEnglishName(o.code)||o.name)===name); if(found){ selectedCountryForDetail=found.code; await renderCountryDetail(found.code, filtered); } }); }
     }
-    m.get(code).items.push(v);
-  }
-  // sort: countries by most recent visit, items by ts desc
-  const groups = Array.from(m.values());
-  for (const g of groups) g.items.sort((a,b)=>(b.ts||0)-(a.ts||0));
-  groups.sort((a,b)=>(b.items?.[0]?.ts||0)-(a.items?.[0]?.ts||0));
-  return groups;
-}
+    const pct=((new Set(filtered.map(v=>v.countryCode)).size)/Math.max(1,(getCountryOptions()?.length||1)))*100; $pct.textContent=`${pct.toFixed(2)}%`;
 
-function renderVisitsMiniGrouped($list, visits, { limit = 60 } = {}) {
-  $list.innerHTML = "";
-
-  const sorted = visits.slice().sort((a,b)=>(b.ts||0)-(a.ts||0));
-  const top = sorted.slice(0, limit);
-
-  if (!top.length) {
-    $list.innerHTML = `<div class="geo-empty">Aún no hay visitas.</div>`;
-    return;
+    $visitsList.innerHTML = filtered.length ? filtered.slice().sort((a,b)=>(b.ts||0)-(a.ts||0)).map(v=>`<div class="world-item"><div><div class="name">${esc(v.placeName||getCountryEnglishName(v.countryCode)||v.countryCode)}</div><div class="meta">${esc(v.countryCode)} · ${esc(formatDateRange(v))} · <span class="badge ${esc(v.status)}">${esc(statusLabel(v.status))}</span></div></div><div class="actions"><button class="btn" data-act="edit-record" data-id="${v.id}" data-source="visit">Editar</button><button class="btn" data-act="del-record" data-id="${v.id}" data-source="visit">Borrar</button></div></div>`).join('') : '<div class="geo-empty">Aún no hay visitas.</div>';
+    renderWatchlist($watchList,state.watch); renderTimeline(filtered); renderPins(filtered);
+    if(selectedCountryForDetail) await renderCountryDetail(selectedCountryForDetail, filtered);
   }
 
-  const groups = groupVisitsByCountry(top);
+  function openEdit(rec, source='visit'){ worldState.editId=rec?.id||null; $addKind.value=rec?.kind||'city'; $addQuery.value=rec?.placeName||''; $addSubdiv.value=rec?.subdivision||''; $addCity.value=rec?.city||''; $addStart.value=rec?.startDate||''; $addEnd.value=rec?.endDate||''; $addNote.value=rec?.note||''; $addStatus.value=rec?.status||'visited'; $addEmoji.value=rec?.emoji||''; $addFolder.value=rec?.folder||''; pendingPick=rec?{code:rec.countryCode,name:rec.placeName,lon:rec.lon,lat:rec.lat}:null; $addDelete.style.display='inline-flex'; $addToggle.checked=true; $addDelete.dataset.source=source; }
 
-  for (const g of groups) {
-    const last = g.items?.[0];
-    const lastLabel = last?.placeName ? last.placeName : countryMapNameFromISO2(g.code);
+  $watchInput.addEventListener('input', async ()=>{ const q=$watchInput.value.trim(); if(q.length<2) return; const rs=(await nominatimSearch(q)).filter(isCountryishResult).slice(0,8); let dl=$id('world-watch-dl'); if(!dl){ dl=document.createElement('datalist'); dl.id='world-watch-dl'; document.body.appendChild(dl); $watchInput.setAttribute('list','world-watch-dl'); } dl.innerHTML=rs.map(r=>`<option value="${esc(r.display_name?.split(',')?.[0]||'')}"></option>`).join(''); }, evtOpts);
+  $watchAdd.addEventListener('click', async ()=>{ const q=$watchInput.value.trim(); const r=(await nominatimSearch(q)).find(isCountryishResult); const code=iso2(r?.address?.country_code||r?.country_code); if(!code) return; state.watch[code]={code,label:r?.display_name?.split(',')?.[0]||getCountryEnglishName(code)||code}; persist(); $watchInput.value=''; renderAll(); }, evtOpts);
 
-    const det = document.createElement("details");
-    det.className = "world-country";
-    const isFirst = (g === groups[0]);
-    det.open = isFirst;
+  $watchList.addEventListener('click',e=>{ const b=e.target.closest('button[data-act="remove-watch"]'); if(!b) return; delete state.watch[iso2(b.dataset.code)]; persist(); renderAll(); }, evtOpts);
 
-    det.innerHTML = `
-      <summary class="world-country-summary">
-        <div class="world-country-name">${esc(g.label)}</div>
-        <div class="world-country-meta">${esc(g.code)} · ${g.items.length} · últ: ${esc(lastLabel)}</div>
-      </summary>
-      <div class="world-country-body"></div>
-    `;
-
-    const renderBody = () => {
-      if (!det.open) return;
-      const body = det.querySelector(".world-country-body");
-      if (!body || body.dataset.ready === "1") return;
-      body.dataset.ready = "1";
-
-      const frag = document.createDocumentFragment();
-      for (const v of g.items) {
-        const label = v.placeName ? v.placeName : countryMapNameFromISO2(g.code);
-        const row = document.createElement("div");
-        row.className = "world-item";
-        row.innerHTML = `
-          <div>
-            <div class="name">${esc(label)}</div>
-            <div class="meta">${esc(g.code)} · ${esc(v.dateKey || "—")}</div>
-          </div>
-          <div class="actions">
-            <button class="btn" data-act="del-visit" data-id="${v.id}">Borrar</button>
-          </div>
-        `;
-        frag.appendChild(row);
-      }
-      body.appendChild(frag);
-    };
-
-    det.addEventListener("toggle", renderBody);
-    if (isFirst) renderBody();
-
-    $list.appendChild(det);
-  }
-}
-
-function aggCountsByCountry(visits) {
-  const m = new Map();
-  for (const v of visits) {
-    const code = iso2(v.countryCode);
-    if (!code) continue;
-    m.set(code, (m.get(code) || 0) + 1);
-  }
-  const out = [];
-  for (const [code, value] of m.entries()) {
-    out.push({
-      code,
-      value,
-      label: getCountryEnglishName(code) || code,
-      mapName: countryMapNameFromISO2(code),
-    });
-  }
-  out.sort((a,b)=>b.value-a.value);
-  return out;
-}
-
-function buildPlacePoints(visits) {
-  const pts = [];
-  for (const v of visits) {
-    const lon = Number(v.lon);
-    const lat = Number(v.lat);
-    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
-    const code = iso2(v.countryCode);
-    pts.push({
-      name: v.placeName || countryMapNameFromISO2(code),
-      value: [lon, lat, 1],
-      raw: { code, dateKey: v.dateKey || "", name: v.placeName || "" },
-    });
-  }
-  return pts;
-}
-
-
-// Aproximación razonable: países añadidos como “país” cuentan área del país;
-// ciudades/pueblos cuentan un “disco urbano” (evita sumar el país entero por meter una ciudad).
-const EARTH_LAND_KM2 = 148_940_000; // ~ superficie terrestre sin océanos (aprox)
-const PLACE_RADIUS_KM = {
-  city: 15,
-  town: 8,
-  village: 6,
-  hamlet: 5,
-  suburb: 6,
-  locality: 6,
-  default: 6,
-};
-
-function round2(n) {
-  return Math.round(Number(n) * 100) / 100;
-}
-
-function circleKm2(rKm) {
-  const r = Number(rKm) || 0;
-  return r > 0 ? Math.PI * r * r : 0;
-}
-
-function countryAreaKm2(code) {
-  if (!areaCache) areaCache = ensureAreaCacheFromECharts();
-  if (!areaCache || !areaCache.total) return 0;
-  const name = countryMapNameFromISO2(code);
-  const w = areaCache.map.get(name);
-  if (!w) return 0;
-  return (w / areaCache.total) * EARTH_LAND_KM2;
-}
-
-function placeKm2FromVisit(v) {
-  const kind = String(v?.kind || "").toLowerCase();
-  // Nominatim da type en r.type, pero nosotros guardamos el kind del selector.
-  const r = (kind === "place") ? PLACE_RADIUS_KM.default : (PLACE_RADIUS_KM[kind] ?? PLACE_RADIUS_KM.default);
-  // cap suave por si entra algo raro
-  return Math.min(circleKm2(r), 4000);
-}
-
-function computeVisitedAreaFromVisits(visits) {
-  if (!Array.isArray(visits) || !visits.length) return { km2: 0, pct: 0 };
-
-  // 1) países completos (solo si se guardaron como kind="country")
-  const fullCountries = new Set();
-
-  // 2) lugares: dedupe por celda (lat/lon redondeada) para no sumar 50 veces el mismo sitio
-  const places = new Set();
-
-  let km2 = 0;
-  for (const v of visits) {
-    const code = iso2(v.countryCode);
-    if (!code) continue;
-
-    if (v.kind === "country") {
-      if (fullCountries.has(code)) continue;
-      fullCountries.add(code);
-      km2 += countryAreaKm2(code);
-      continue;
-    }
-
-    const lat = Number(v.lat);
-    const lon = Number(v.lon);
-    const key = `${code}:${v.kind || "place"}:${round2(lat)},${round2(lon)}:${String(v.placeName || "").slice(0, 24)}`;
-    if (places.has(key)) continue;
-    places.add(key);
-    km2 += placeKm2FromVisit(v);
-  }
-
-  const pct = EARTH_LAND_KM2 ? (km2 / EARTH_LAND_KM2) * 100 : 0;
-  return { km2, pct: Math.max(0, Math.min(100, pct)) };
-}
-
-/* ---- Drill-down (país -> provincias/estados/cantones) ---- */
-const SUBDIV_GEOJSON_BASE = "https://raw.githubusercontent.com/codeforgermany/click_that_hood/main/public/data/";
-
-function countrySlugFromISO2(code) {
-  const nm = (getCountryEnglishName(code) || code || "").toLowerCase();
-  return nm
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-async function fetchSubdivGeoJSON(iso2Code) {
-  const code = iso2(iso2Code);
-  if (!code) return null;
-
-  // atajos “conocidos”
-  const known = {
-    ES: ["spain-provinces.geojson", "spain-communities.geojson"],
-  };
-
-  const slug = countrySlugFromISO2(code);
-
-  const candidates = [
-    ...(known[code] || []),
-    `${slug}.geojson`,
-    `${slug}-provinces.geojson`,
-    `${slug}-states.geojson`,
-    `${slug}-regions.geojson`,
-    `${slug}-departments.geojson`,
-    `${slug}-counties.geojson`,
-    `${slug}-cantons.geojson`,
-  ].filter(Boolean);
-
-  for (const file of candidates) {
-    try {
-      const url = SUBDIV_GEOJSON_BASE + file;
-      const res = await fetch(url, { cache: "force-cache" });
-      if (!res.ok) continue;
-      const gj = await res.json();
-      return normalizeSubdivGeoJSON(gj);
-    } catch (_) {}
-  }
-  return null;
-}
-
-function featureNameGuess(f) {
-  const p = f?.properties || {};
-  return String(
-    p.name ??
-      p.NAME ??
-      p.NOM ??
-      p.nom ??
-      p.NAME_1 ??
-      p.name_1 ??
-      p.state ??
-      p.province ??
-      p.region ??
-      p.county ??
-      p.COUNTY ??
-      ""
-  ).trim();
-}
-
-function normalizeSubdivGeoJSON(gj) {
-  const feats = gj?.features;
-  if (!Array.isArray(feats)) return gj;
-  for (const f of feats) {
-    if (!f.properties) f.properties = {};
-    if (!f.properties.name) f.properties.name = featureNameGuess(f) || "—";
-  }
-  return gj;
-}
-
-function bboxFromCoords(coords) {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const pt of coords) {
-    const x = pt?.[0], y = pt?.[1];
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    if (x < minX) minX = x;
-    if (y < minY) minY = y;
-    if (x > maxX) maxX = x;
-    if (y > maxY) maxY = y;
-  }
-  return [minX, minY, maxX, maxY];
-}
-
-function geometryBBox(geom) {
-  if (!geom) return null;
-  if (geom.type === "Polygon") return bboxFromCoords(geom.coordinates?.[0] || []);
-  if (geom.type === "MultiPolygon") {
-    let bb = null;
-    for (const poly of geom.coordinates || []) {
-      const b = bboxFromCoords(poly?.[0] || []);
-      if (!bb) bb = b;
-      else {
-        bb[0] = Math.min(bb[0], b[0]);
-        bb[1] = Math.min(bb[1], b[1]);
-        bb[2] = Math.max(bb[2], b[2]);
-        bb[3] = Math.max(bb[3], b[3]);
-      }
-    }
-    return bb;
-  }
-  return null;
-}
-
-function pointInRing(pt, ring) {
-  const x = pt[0], y = pt[1];
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const xi = ring[i][0], yi = ring[i][1];
-    const xj = ring[j][0], yj = ring[j][1];
-    const intersect =
-      (yi > y) !== (yj > y) &&
-      x < ((xj - xi) * (y - yi)) / ((yj - yi) || 1e-12) + xi;
-    if (intersect) inside = !inside;
-  }
-  return inside;
-}
-
-function pointInPolygon(pt, poly) {
-  if (!poly?.length) return false;
-  if (!pointInRing(pt, poly[0])) return false;
-  for (let h = 1; h < poly.length; h++) {
-    if (pointInRing(pt, poly[h])) return false; // hole
-  }
-  return true;
-}
-
-function pointInGeometry(pt, geom) {
-  if (!geom) return false;
-  if (geom.type === "Polygon") return pointInPolygon(pt, geom.coordinates);
-  if (geom.type === "MultiPolygon") {
-    for (const p of geom.coordinates || []) {
-      if (pointInPolygon(pt, p)) return true;
-    }
-  }
-  return false;
-}
-
-function computeSubdivisionCounts(geojson, points) {
-  const feats = geojson?.features || [];
-  const enriched = feats.map((f) => ({
-    f,
-    name: String(f?.properties?.name || "—"),
-    bb: geometryBBox(f?.geometry),
-  }));
-
-  const counts = new Map();
-  for (const pt of points) {
-    const x = pt?.[0], y = pt?.[1];
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-
-    for (const it of enriched) {
-      const bb = it.bb;
-      if (!bb) continue;
-      if (x < bb[0] || y < bb[1] || x > bb[2] || y > bb[3]) continue;
-      if (pointInGeometry([x, y], it.f.geometry)) {
-        counts.set(it.name, (counts.get(it.name) || 0) + 1);
-        break;
-      }
-    }
-  }
-  return counts;
-}
-
-export async function init() {
-  const $view = $id("view-world");
-  if (!$view || worldState.initialized) return;
-  worldState.initialized = true;
-  worldState.abortController = new AbortController();
-  const evtOpts = { signal: worldState.abortController.signal };
-
-  const $map = $id("world-map");
-  const $pct = $id("world-pct");
-  const $countriesDone = $id("world-countries");
-  const $countriesTotal = $id("world-countries-total");
-  const $placesDone = $id("world-places");
-  const $filter = $id("world-filter");
-  const $visitsList = $id("world-visits-list");
-
-const $visitsCount = $id("world-visits-count");
-const $watchCount = $id("world-watch-count");
-
-const $mapWrap = $map?.closest?.(".world-map-wrap") || $map?.parentElement || null;
-
-const drill = { active: false, code: null, geojson: null, mapKey: null };
-
-let $backBtn = $mapWrap?.querySelector?.(".world-back-btn") || null;
-if (!$backBtn && $mapWrap) {
-  $backBtn = document.createElement("button");
-  $backBtn.type = "button";
-  $backBtn.className = "world-back-btn";
-  $backBtn.textContent = "🌏";
-  $mapWrap.appendChild($backBtn);
-}
-const showBackBtn = (on) => {
-  if (!$backBtn) return;
-  $backBtn.style.display = on ? "flex" : "none";
-};
-if ($backBtn) {
-  $backBtn.addEventListener("click", () => {
-    drill.active = false;
-    drill.code = null;
-    drill.geojson = null;
-    drill.mapKey = null;
-    showBackBtn(false);
-    renderAll();
-  }, evtOpts);
-}
-
-  const $watchInput = $id("world-watch-q");
-  const $watchList = $id("world-watch-list");
-  const $watchAdd = $id("world-watch-add");
-
-  const $addKind = $id("world-kind");
-  const $addQuery = $id("world-place-q");
-  const $addResults = $id("world-place-results");
-  const $addSave = $id("world-place-save");
-  const $addToggle = $id("world-add-toggle");
-
-  let visits = parseJson(LS_VISITS, []);
-  let watch = parseJson(LS_WATCH, {}); // {ES:{code,label}}
-
-  const TOTAL_COUNTRIES = (() => {
-    try { return (getCountryOptions()?.length || 0); } catch (_) { return 0; }
-  })();
-  if ($countriesTotal) $countriesTotal.textContent = String(TOTAL_COUNTRIES || 0);
-
-  let pendingPick = null;
-
-  function persistLocal() {
-    saveJson(LS_VISITS, visits);
-    saveJson(LS_WATCH, watch);
-  }
-
-  async function persistRemoteNow() {
-    const uid = worldState.firebaseUid || auth.currentUser?.uid;
-    if (!uid || !worldState.firebaseRef) return;
-    try {
-      await set(worldState.firebaseRef, worldPayloadForDb(visits, watch));
-    } catch (err) {
-      console.warn("[world] remote save failed", err);
-    }
-  }
-
-  function scheduleRemotePersist() {
-    if (worldState.remoteWriteTimer) clearTimeout(worldState.remoteWriteTimer);
-    worldState.remoteWriteTimer = setTimeout(() => {
-      worldState.remoteWriteTimer = 0;
-      persistRemoteNow();
-    }, 250);
-  }
-
-  function persist({ remote = true } = {}) {
-    persistLocal();
-    if (remote) scheduleRemotePersist();
-  }
-
-  async function initFirebaseSync() {
-    const uid = auth.currentUser?.uid;
-    if (!uid) {
-      console.warn("[world] Firebase sync disabled: no authenticated user.");
-      return;
-    }
-
-    worldState.firebaseUid = uid;
-    worldState.firebaseRef = ref(db, WORLD_PATH(uid));
-
-    const legacy = await readLegacyWorldPayload(uid);
-
-    worldState.firebaseUnsub = onValue(worldState.firebaseRef, (snap) => {
-      const remote = snap.exists() ? normalizeWorldPayload(snap.val()) : { visits: [], watch: {} };
-
-      if (!worldState.hasResolvedFirstRemoteSnapshot) {
-        worldState.hasResolvedFirstRemoteSnapshot = true;
-
-        let mergedVisits = mergeVisits(visits, remote.visits);
-        let mergedWatch = mergeWatch(watch, remote.watch);
-
-        if (legacy?.payload) {
-          mergedVisits = mergeVisits(mergedVisits, legacy.payload.visits);
-          mergedWatch = mergeWatch(mergedWatch, legacy.payload.watch);
-        }
-
-        visits = mergedVisits;
-        watch = mergedWatch;
-        persistLocal();
-        renderAll();
-
-        const shouldBackfill = !snap.exists() || Boolean(legacy?.payload) || mergedVisits.length !== remote.visits.length || Object.keys(mergedWatch).length !== Object.keys(remote.watch || {}).length;
-        if (shouldBackfill) {
-          persistRemoteNow();
-        }
-        return;
-      }
-
-      visits = mergeVisits(visits, remote.visits);
-      watch = mergeWatch(watch, remote.watch);
-      persistLocal();
-      renderAll();
-    });
-  }
-
-function formatPctSmart(pct, sig = 4) {
-  const x = Number(pct || 0);
-  if (!Number.isFinite(x) || x === 0) return "0.0000%";
-  const ax = Math.abs(x);
-
-  if (ax >= 0.01) return `${x.toFixed(2)}%`;
-
-  const zeros = Math.max(0, Math.floor(-Math.log10(ax)) - 1);
-  let dec = zeros + sig;
-  dec = Math.min(12, Math.max(4, dec));
-  return `${x.toFixed(dec)}%`;
-}
-
-function setPctValue(p, km2 = 0) {
-  if (!$pct) return;
-  $pct.textContent = formatPctSmart(p, 4);
-  const km2txt = (km2 > 0)
-    ? `${Math.round(km2).toLocaleString("es-ES")} km²`
-    : "0 km²";
-  $pct.title = `Aprox. tierra visitada: ${km2txt}. Países = país completo; ciudades/pueblos = área urbana estimada.`;
-}
-
-
- 
-async function renderAll() {
-  const mode = $filter.value;
-  const filtered = filterVisitsByMode(visits, mode);
-  const entries = aggCountsByCountry(filtered);
-
-  // KPIs
-  const visitedCountries = uniq(filtered.map((v) => iso2(v.countryCode)).filter(Boolean));
-  if ($countriesDone) $countriesDone.textContent = String(visitedCountries.length);
-
-  const placeKeys = new Set();
-  for (const v of filtered) {
-    if (v.kind === "country") continue;
-    const code = iso2(v.countryCode);
-    const name = String(v.placeName || "").trim();
-    const lat = Number(v.lat), lon = Number(v.lon);
-    placeKeys.add(`${code}:${name || "?"}:${round2(lat)},${round2(lon)}`);
-  }
-  if ($placesDone) $placesDone.textContent = String(placeKeys.size);
-
-  if ($visitsCount) $visitsCount.textContent = String(filtered.length);
-  if ($watchCount) $watchCount.textContent = String(Object.keys(watch || {}).length);
-
-  const pad = (n) => Array.from({ length: n }, () => ({}));
-  const mapNameToCode = new Map();
-  try {
-    (getCountryOptions() || []).forEach((o) => {
-      if (o?.code) mapNameToCode.set(countryMapNameFromISO2(o.code), iso2(o.code));
-    });
-  } catch (_) {}
-
-  const echartsLib = window?.echarts;
-
-  const ensureChart = () => {
-    if ($map.__geoChart) return $map.__geoChart;
-    if (!echartsLib) return null;
-    $map.__geoChart = echartsLib.init($map);
-    return $map.__geoChart;
-  };
-
-  // nada: salimos y limpiamos drill
-  if (!entries.length) {
-    drill.active = false;
-    drill.code = null;
-    drill.geojson = null;
-    drill.mapKey = null;
-    showBackBtn(false);
-
-    setPctValue(0);
-    renderVisitsMiniGrouped($visitsList, filtered);
-
-    await renderCountryHeatmap($map, [], {
-      emptyLabel: "Aún no hay visitas",
-      showCallouts: false,
-    });
-
-    const chart = $map.__geoChart;
-    if (chart) {
-      if (chart.__worldClickHandler) {
-        chart.off("click", chart.__worldClickHandler);
-        chart.__worldClickHandler = null;
-      }
-      chart.setOption({ tooltip: { show: false } });
-
-      // overlay watchlist incluso sin visitas
-     
-    }
-
-  }
-
-  // --- Drill mode ---
-  if (drill.active && drill.code) {
-    showBackBtn(true);
-
-    const chart = ensureChart();
-    if (!chart || !echartsLib) {
-      drill.active = false;
-      showBackBtn(false);
-    } else {
-      if (!drill.geojson) drill.geojson = await fetchSubdivGeoJSON(drill.code);
-
-      if (!drill.geojson) {
-        drill.active = false;
-        drill.code = null;
-        showBackBtn(false);
-      } else {
-        const code = iso2(drill.code);
-        const mapKey = `subdiv-${code}`;
-        drill.mapKey = mapKey;
-        echartsLib.registerMap(mapKey, drill.geojson);
-
-        const pts = filtered
-          .filter((v) => iso2(v.countryCode) === code)
-          .map((v) => [Number(v.lon), Number(v.lat)])
-          .filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
-
-        const counts = computeSubdivisionCounts(drill.geojson, pts);
-        const data = Array.from(counts.entries()).map(([name, value]) => ({
-          name,
-          value,
-        }));
-        const max = Math.max(1, ...data.map((d) => d.value || 0));
-
-        chart.clear();
-
-        const hiData = Array.from(counts.entries())
-          .filter(([, v]) => (v || 0) > 0)
-          .map(([name]) => ({
-            name,
-            value: 1,
-            itemStyle: { areaColor: "rgba(245,230,166,0.98)" },
-          }));
-
-        chart.setOption({
-          backgroundColor: "transparent",
-          tooltip: { show: false },
-          visualMap: {
-            min: 0,
-            max,
-            show: false,
-            inRange: {
-              color: [
-                "rgba(255,255,255,0.05)",
-                "rgba(255,255,255,0.25)",
-              ],
-            },
-          },
-          series: [
-            {
-              id: "sub-map",
-              type: "map",
-              map: mapKey,
-              roam: true,
-              nameProperty: "name",
-              label: {
-                show: true,
-                color: "rgba(255,255,255,0.72)",
-                fontSize: 10,
-                fontWeight: 700,
-              },
-              labelLayout: { hideOverlap: true },
-              emphasis: { label: { show: true } },
-              itemStyle: {
-                borderColor: "rgba(255,255,255,0.10)",
-                borderWidth: 0.8,
-              },
-              data,
-            },
-            {
-              id: "sub-hi",
-              type: "map",
-              map: mapKey,
-              roam: true,
-              nameProperty: "name",
-              silent: true,
-              z: 5,
-              label: { show: false },
-              emphasis: { label: { show: false } },
-              itemStyle: {
-                borderColor: "rgba(245,230,166,0.55)",
-                borderWidth: 1.2,
-                areaColor: "rgba(245,230,166,0.98)",
-              },
-              data: hiData,
-            },
-          ],
-        });
-
-        if (chart.__worldClickHandler) {
-          chart.off("click", chart.__worldClickHandler);
-          chart.__worldClickHandler = null;
-        }
-      }
-    }
-  }
-
-  // --- World mode ---
-  if (!drill.active) {
-    showBackBtn(false);
-
-    await renderCountryHeatmap($map, entries, {
-      emptyLabel: "Aún no hay visitas",
-      showCallouts: false,
-    });
-
-    const chart = $map.__geoChart;
-    if (chart) {
-      chart.setOption({ tooltip: { show: false } });
-
-// puntos (ciudad/pueblo) sin texto (independiente del watchlist)
-const points = buildPlacePoints(filtered);
-
-const baseLenNoExtra = () =>
-  (chart.getOption()?.series || []).filter((s) => !["places"].includes(s?.id)).length;
-
-const placesSeries = {
-  id: "places",
-  type: "scatter",
-  coordinateSystem: "geo",
-  z: 20,
-  symbolSize: 1.5,
-  itemStyle: { color: "rgb(255, 0, 0)" },
-  label: { show: false },
-  data: points,
-  tooltip: { show: false },
-  silent: true,
-};
-
-chart.setOption({
-  series: [...pad(baseLenNoExtra()), placesSeries],
-});
-
-
-      const clickHandler = async (params) => {
-        if (drill.active) return;
-        if (params?.componentType !== "series") return;
-        if (params?.seriesType !== "map") return;
-        const code = mapNameToCode.get(params?.name);
-        if (!code) return;
-
-        drill.active = true;
-        drill.code = code;
-        drill.geojson = null;
-        drill.mapKey = null;
-
-        showBackBtn(true);
-        await renderAll();
-      };
-
-      if (chart.__worldClickHandler) chart.off("click", chart.__worldClickHandler);
-      chart.__worldClickHandler = clickHandler;
-      chart.on("click", clickHandler);
-    }
-  }
-
-  const { km2, pct } = computeVisitedAreaFromVisits(filtered);
-  setPctValue(pct, km2);
-
-  renderVisitsMiniGrouped($visitsList, filtered);
-  renderWatchlist($watchList, watch);
-}
-
-  // --- Watchlist add (Nominatim) ---
-  const SEARCH_DEBOUNCE_MS = 200;
-  let watchT = 0;
-  async function handleWatchSuggest() {
-    clearTimeout(watchT);
-    watchT = setTimeout(async () => {
-      const q = $watchInput.value.trim();
-      if (q.length < 2) return;
-
-      const results = await nominatimSearch(q);
-      const countries = results.filter(isCountryishResult).slice(0, 6);
-
-      // pequeño menú inline reutilizando datalist-like
-      let html = "";
-      for (const r of countries) {
-        const code = iso2(r?.address?.country_code || r?.country_code);
-        if (!code) continue;
-        const label = r?.display_name?.split(",")?.[0]?.trim() || getCountryEnglishName(code) || code;
-        html += `<option value="${label}" data-code="${code}"></option>`;
-      }
-      // crea/actualiza datalist
-      let dl = $id("world-watch-dl");
-      if (!dl) {
-        dl = document.createElement("datalist");
-        dl.id = "world-watch-dl";
-        document.body.appendChild(dl);
-        $watchInput.setAttribute("list", "world-watch-dl");
-      }
-      dl.innerHTML = html;
-    }, SEARCH_DEBOUNCE_MS);
-  }
-
-  $watchInput.addEventListener("input", handleWatchSuggest, evtOpts);
-
-  $watchAdd.addEventListener("click", async () => {
-    const q = $watchInput.value.trim();
-    if (q.length < 2) return;
-
-    const results = await nominatimSearch(q);
-    const r = results.find(isCountryishResult);
-    if (!r) return;
-
-    const code = iso2(r?.address?.country_code || r?.country_code);
-    if (!code) return;
-
-    const label = r?.display_name?.split(",")?.[0]?.trim() || getCountryEnglishName(code) || code;
-    watch[code] = { code, label };
-    persist();
-    $watchInput.value = "";
-    renderWatchlist($watchList, watch);
+  $addQuery.addEventListener('input', async ()=>{ pendingPick=null; $addResults.innerHTML=''; const q=$addQuery.value.trim(); if(q.length<2) return; const kind=$addKind.value; const rs=await nominatimSearch(q); const items=(kind==='country'?rs.filter(isCountryishResult):rs.filter(isPlaceResult)).slice(0,8); $addResults.innerHTML=items.map((r,i)=>`<div class="world-item"><div><div class="name">${esc((r.display_name||'—').split(',')[0])}</div><div class="meta">${esc((r.address?.country_code||'').toUpperCase())} · ${esc(r.type||'')}</div></div><div class="actions"><button class="btn" data-pick="${i}">Elegir</button></div></div>`).join('')||'<div class="geo-empty">Sin resultados.</div>';
+    $addResults.querySelectorAll('button[data-pick]').forEach(btn=>btn.addEventListener('click',()=>{ const r=items[Number(btn.dataset.pick)||0]; pendingPick={code:iso2(r?.address?.country_code||r?.country_code),name:(r.display_name||'—').split(',')[0],lon:Number(r.lon),lat:Number(r.lat)}; $addQuery.value=pendingPick.name; }, {once:true}));
   }, evtOpts);
 
-  $watchList.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-act]");
-    if (!btn) return;
-    const act = btn.dataset.act;
-    const code = iso2(btn.dataset.code);
-    if (act === "remove-watch" && code && watch[code]) {
-      delete watch[code];
-      persist();
-      renderWatchlist($watchList, watch);
-    }
+  $addSave.addEventListener('click', async ()=>{
+    const kind=$addKind.value; const now=Date.now(); const sourceId=worldState.editId;
+    const rec={ id: sourceId || `${now}_${Math.random().toString(16).slice(2)}`, ts: now, dateKey: $addStart.value||todayKey(), startDate:$addStart.value||'', endDate:$addEnd.value||'', note:$addNote.value.trim(), status:$addStatus.value||'visited', kind, countryCode: iso2(pendingPick?.code), subdivision:$addSubdiv.value.trim(), city:$addCity.value.trim(), placeName:$addQuery.value.trim(), lat:Number.isFinite(Number(pendingPick?.lat))?Number(pendingPick.lat):null, lon:Number.isFinite(Number(pendingPick?.lon))?Number(pendingPick.lon):null, emoji:$addEmoji.value.trim(), folder:$addFolder.value.trim() };
+    if(!rec.countryCode && kind!=='pin') return;
+
+    const upsert=(arr)=>{ const i=arr.findIndex(v=>v.id===rec.id); if(i>=0) arr[i]={...arr[i],...rec}; else arr.push(rec); };
+    if(kind==='pin'){ upsert(state.customPins); }
+    else if(kind==='subdivision'){ upsert(state.areaVisits); upsert(state.timelineEntries); }
+    else { upsert(state.visits); upsert(state.timelineEntries); }
+
+    persist(); worldState.editId=null; $addDelete.style.display='none'; $addToggle.checked=false; $addResults.innerHTML=''; await renderAll();
   }, evtOpts);
 
-  // --- Modal add visit ---
-  let addT = 0;
-  $addQuery.addEventListener("input", () => {
-    clearTimeout(addT);
-    addT = setTimeout(async () => {
-      pendingPick = null;
-      $addResults.innerHTML = "";
-
-      const q = $addQuery.value.trim();
-      if (q.length < 2) return;
-
-      const kind = $addKind.value;
-      const res = await nominatimSearch(q);
-
-      const filtered = (kind === "country")
-        ? res.filter(isCountryishResult)
-        : res.filter(isPlaceResult);
-
-      const items = filtered.slice(0, 8);
-      if (!items.length) {
-        $addResults.innerHTML = `<div class="geo-empty">Sin resultados.</div>`;
-        return;
-      }
-
-      for (const r of items) {
-        const code = iso2(r?.address?.country_code || r?.country_code);
-        if (!code) continue;
-
-        const title = r?.display_name || "—";
-        const name = title.split(",")[0].trim();
-        const lon = Number(r?.lon);
-        const lat = Number(r?.lat);
-
-        const row = document.createElement("div");
-        row.className = "world-item";
-        row.innerHTML = `
-          <div>
-            <div class="name">${name}</div>
-            <div class="meta">${code} · ${String(r?.type || "")}</div>
-          </div>
-          <div class="actions">
-            <button class="btn" data-act="pick">Elegir</button>
-          </div>
-        `;
-        row.querySelector('button[data-act="pick"]').addEventListener("click", () => {
-          pendingPick = { code, name, lon, lat };
-          // feedback mínimo
-          $addQuery.value = name;
-          $addResults.innerHTML = `<div class="geo-empty">Seleccionado: <b>${name}</b> (${code})</div>`;
-        });
-
-        $addResults.appendChild(row);
-      }
-    }, SEARCH_DEBOUNCE_MS);
+  $addDelete.addEventListener('click', async ()=>{
+    const id=worldState.editId; if(!id) return;
+    state.visits=state.visits.filter(v=>v.id!==id); state.customPins=state.customPins.filter(v=>v.id!==id); state.areaVisits=state.areaVisits.filter(v=>v.id!==id); state.timelineEntries=state.timelineEntries.filter(v=>v.id!==id);
+    persist(); worldState.editId=null; $addDelete.style.display='none'; $addToggle.checked=false; await renderAll();
   }, evtOpts);
 
-  $addSave.addEventListener("click", async () => {
-    const kind = $addKind.value;
-    const dk = todayKey();
-    const ts = Date.now();
+  $visitsList.addEventListener('click',e=>{ const btn=e.target.closest('button[data-act]'); if(!btn) return; const id=btn.dataset.id; const rec=state.visits.find(v=>v.id===id); if(!rec) return; if(btn.dataset.act==='del-record'){ state.visits=state.visits.filter(v=>v.id!==id); state.timelineEntries=state.timelineEntries.filter(v=>v.id!==id); persist(); renderAll(); return; } if(btn.dataset.act==='edit-record') openEdit(rec,'visit'); }, evtOpts);
+  $pinsList.addEventListener('click',e=>{ const btn=e.target.closest('button[data-act]'); if(!btn) return; const id=btn.dataset.id; const rec=state.customPins.find(v=>v.id===id); if(!rec) return; if(btn.dataset.act==='del-record'){ state.customPins=state.customPins.filter(v=>v.id!==id); state.timelineEntries=state.timelineEntries.filter(v=>v.id!==id); persist(); renderAll(); return; } if(btn.dataset.act==='edit-record') openEdit(rec,'pin'); }, evtOpts);
+  $subdivisionList.addEventListener('click', e=>{ const btn=e.target.closest('button[data-act="mark-subdivision"]'); if(!btn) return; $addKind.value='subdivision'; $addQuery.value=getCountryEnglishName(btn.dataset.code)||btn.dataset.code; pendingPick={code:btn.dataset.code,name:$addQuery.value,lon:null,lat:null}; $addSubdiv.value=btn.dataset.name; $addToggle.checked=true; }, evtOpts);
 
-    let payload = null;
+  $markCurrent?.addEventListener('click', ()=>{ if(!navigator.geolocation) return; navigator.geolocation.getCurrentPosition((pos)=>{ $addKind.value='pin'; pendingPick={code:'',name:'Ubicación actual',lat:pos.coords.latitude,lon:pos.coords.longitude}; $addQuery.value='Ubicación actual'; $addToggle.checked=true; }, ()=>{}); }, evtOpts);
 
-    if (kind === "country") {
-      // intenta resolver país desde búsqueda
-      const q = $addQuery.value.trim();
-      const res = await nominatimSearch(q);
-      const r = res.find(isCountryishResult);
-      if (!r) return;
-
-      const code = iso2(r?.address?.country_code || r?.country_code);
-      if (!code) return;
-
-      const label = r?.display_name?.split(",")?.[0]?.trim() || getCountryEnglishName(code) || code;
-      payload = { countryCode: code, placeName: label };
-    } else {
-      if (!pendingPick) return;
-      payload = {
-        countryCode: pendingPick.code,
-        placeName: pendingPick.name,
-        lon: pendingPick.lon,
-        lat: pendingPick.lat,
-      };
-    }
-
-    const v = {
-      id: `${ts}_${Math.random().toString(16).slice(2)}`,
-      ts,
-      dateKey: dk,
-      kind,
-      ...payload,
-    };
-
-    visits.push(v);
-    persist();
-
-    // cierra modal
-    $addToggle.checked = false;
-    pendingPick = null;
-    $addQuery.value = "";
-    $addResults.innerHTML = "";
-
-    await renderAll();
-  }, evtOpts);
-
-  // borrar visitas
-  $visitsList.addEventListener("click", async (e) => {
-    const btn = e.target.closest("button[data-act]");
-    if (!btn) return;
-    if (btn.dataset.act !== "del-visit") return;
-    const id = btn.dataset.id;
-    if (!id) return;
-    visits = visits.filter(v => v.id !== id);
-    persist();
-    await renderAll();
-  }, evtOpts);
-
-  $filter.addEventListener("change", renderAll, evtOpts);
-
-  await initFirebaseSync();
-  await renderAll();
+  $filter.addEventListener('change',renderAll,evtOpts); $statusFilter.addEventListener('change',renderAll,evtOpts); $pinFolderFilter.addEventListener('input',renderAll,evtOpts);
+  await initFirebaseSync(); await renderAll();
 }
 
-export function destroy() {
-  if (worldState.abortController) {
-    worldState.abortController.abort();
-    worldState.abortController = null;
-  }
-  if (worldState.firebaseUnsub) {
-    worldState.firebaseUnsub();
-    worldState.firebaseUnsub = null;
-  }
-  if (worldState.remoteWriteTimer) {
-    clearTimeout(worldState.remoteWriteTimer);
-    worldState.remoteWriteTimer = 0;
-  }
-  worldState.firebaseUid = null;
-  worldState.firebaseRef = null;
-  worldState.hasResolvedFirstRemoteSnapshot = false;
-  if (nominatimAbort) {
-    nominatimAbort.abort();
-    nominatimAbort = null;
-  }
-  worldState.initialized = false;
-  console.log("[perf] listeners view-world", getListenerCount());
-}
-
-export function getListenerCount() {
-  let count = 0;
-  if (worldState.abortController) count += 1;
-  if (nominatimAbort) count += 1;
-  if (worldState.firebaseUnsub) count += 1;
-  if (worldState.remoteWriteTimer) count += 1;
-  return count;
-}
+export function destroy(){ if(worldState.abortController){ worldState.abortController.abort(); worldState.abortController=null; } if(worldState.firebaseUnsub){ worldState.firebaseUnsub(); worldState.firebaseUnsub=null; } if(worldState.remoteWriteTimer){ clearTimeout(worldState.remoteWriteTimer); worldState.remoteWriteTimer=0; } if(nominatimAbort){ nominatimAbort.abort(); nominatimAbort=null; } worldState.hasResolvedFirstRemoteSnapshot=false; worldState.initialized=false; }
+export function getListenerCount(){ let count=0; if(worldState.abortController) count++; if(worldState.firebaseUnsub) count++; if(worldState.remoteWriteTimer) count++; return count; }

@@ -1634,8 +1634,8 @@
   background: transparent;
 }
 .macro-entry-count-input{
-  width: 38px;
-  min-width: 38px;
+  width: 46px;
+  min-width: 46px;
   padding: 2px 4px;
   border-radius: 8px;
   border: 1px solid rgba(255,255,255,.2);
@@ -1701,7 +1701,7 @@
 @media (max-width:640px){
   .macro-entry{ gap:6px; }
   .macro-entry-recipe{ grid-template-columns: 38px 1fr auto; }
-  .macro-entry-count-input{ width:34px; min-width:34px; }
+  .macro-entry-count-input{ width:40px; min-width:40px; }
   .macro-selection-bar{ flex-direction:column; align-items:stretch; }
 }
 .macro-entry-right{

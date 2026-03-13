@@ -976,9 +976,12 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   }
 
   function normalizeEntryServingsCount(value) {
-    const parsed = Number(value);
+    const raw = String(value ?? "").trim();
+    if (!raw) return 1;
+    const parsed = Number(raw.replace(",", "."));
     if (!Number.isFinite(parsed)) return 1;
-    return Math.max(1, Math.round(parsed));
+    const rounded = Math.round(parsed * 100) / 100;
+    return Math.max(0.01, rounded);
   }
 
   function getEntryServingsCount(entry) {
@@ -4564,7 +4567,7 @@ $recipeImportBtn?.addEventListener("click", () => {
           : "";
         return `
       <div class="macro-entry ${isSelected ? "is-selected" : ""} ${isRecipe ? "macro-entry-recipe" : ""} ${isExpanded ? "is-expanded" : ""}">
-      <input class="macro-entry-count-input" type="number" min="1" step="1" inputmode="numeric" value="${servingsCount}" data-macro-count="${meal}:${idx}" aria-label="Unidades de ${escapeHtml(entry.nameSnapshot)}" />
+      <input class="macro-entry-count-input" type="number" min="0.01" step="0.01" inputmode="decimal" value="${servingsCount}" data-macro-count="${meal}:${idx}" aria-label="Unidades de ${escapeHtml(entry.nameSnapshot)}" />
       ${isSelectionMode && !isRecipe ? `<button class="macro-entry-select-toggle" data-macro-select-toggle="${meal}:${idx}" type="button" aria-label="Seleccionar ${escapeHtml(entry.nameSnapshot)}">${isSelected ? "✓" : "○"}</button>` : ""}
       <button class="macro-entry-open" data-macro-open="${meal}:${idx}" data-macro-entry-id="${entryId}" type="button" aria-label="Abrir ficha de ${escapeHtml(entry.nameSnapshot)}">
       <div class="contenido-comida-lista">

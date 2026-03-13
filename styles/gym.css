@@ -1187,5 +1187,10 @@ font-size: 12px;
   margin-bottom: 200px;
 }
 .view-gym{
-margin-top: 40px;
+margin-top: 0px;
+}
+@media (max-width: 640px) {
+    .macro-entry-recipe {
+        grid-template-columns: 56px 1fr auto;
+    }
 }

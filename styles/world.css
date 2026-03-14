@@ -84,6 +84,16 @@
   margin-bottom: 10px;
 }
 
+#view-world .world-view-scope{
+  margin: 0 2px 8px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  color: var(--w-muted);
+  font-size: 12px;
+}
+
 #view-world .world-controls select{
   flex: 0 1 160px;
 }

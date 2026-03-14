@@ -1790,7 +1790,23 @@
 <div id="world-map"></div>
 </div>
 <div class="world-country-panel" id="world-country-panel"><div class="world-country-detail-title" id="world-country-title">Detalle de país</div><div class="world-country-detail-grid" id="world-country-detail-grid"></div><div class="world-list" id="world-subdivision-list"></div></div>
-<div class="world-bottom"><details class="world-card" open><summary class="world-summary"><h3>Registros</h3><span class="world-count" id="world-visits-count">0</span></summary><div class="world-list" id="world-visits-list"></div></details><details class="world-card"><summary class="world-summary"><h3>Timeline</h3><span class="world-count" id="world-timeline-count">0</span></summary><div class="world-list" id="world-timeline-list"></div></details><details class="world-card"><summary class="world-summary"><h3>Pins personalizados</h3><span class="world-count" id="world-pins-count">0</span></summary><div class="world-list"><div class="world-watch-row"><input autocomplete="off" id="world-pin-folder-filter" placeholder="Filtrar por carpeta…" type="search"/></div><div class="world-list" id="world-pins-list"></div></div></details><details class="world-card"><summary class="world-summary"><h3>Watchlist</h3><span class="world-count" id="world-watch-count">0</span></summary><div class="world-list"><div class="world-watch-row"><input autocomplete="off" id="world-watch-q" placeholder="Añadir país a watchlist…" type="search"/><button class="btn primary" id="world-watch-add" type="button">Añadir</button></div><div class="world-list" id="world-watch-list"></div></div></details></div>
+<div class="world-windows-nav" role="tablist" aria-label="Ventanas Mundo">
+<button aria-selected="true" class="world-window-tab active" data-window="main" type="button">Principal</button>
+<button aria-selected="false" class="world-window-tab" data-window="records" type="button">Registros</button>
+<button aria-selected="false" class="world-window-tab" data-window="timeline" type="button">Timeline</button>
+</div>
+<div class="world-bottom">
+<section class="world-window-panel active" data-window-panel="main">
+<details class="world-card" open><summary class="world-summary"><h3>Pins personalizados</h3><span class="world-count" id="world-pins-count">0</span></summary><div class="world-list"><div class="world-watch-row"><input autocomplete="off" id="world-pin-folder-filter" placeholder="Filtrar por carpeta…" type="search"/></div><div class="world-list" id="world-pins-list"></div></div></details>
+<details class="world-card" open><summary class="world-summary"><h3>Watchlist</h3><span class="world-count" id="world-watch-count">0</span></summary><div class="world-list"><div class="world-watch-row"><input autocomplete="off" id="world-watch-q" placeholder="Añadir país a watchlist…" type="search"/><button class="btn primary" id="world-watch-add" type="button">Añadir</button></div><div class="world-list" id="world-watch-list"></div></div></details>
+</section>
+<section class="world-window-panel" data-window-panel="records">
+<details class="world-card" open><summary class="world-summary"><h3>Registros</h3><span class="world-count" id="world-visits-count">0</span></summary><div class="world-list" id="world-visits-list"></div></details>
+</section>
+<section class="world-window-panel" data-window-panel="timeline">
+<details class="world-card" open><summary class="world-summary"><h3>Timeline</h3><span class="world-count" id="world-timeline-count">0</span></summary><div class="world-list world-timeline" id="world-timeline-list"></div></details>
+</section>
+</div>
 <!-- Modal toggle + modal -->
 <input class="world-modal-toggle" hidden="" id="world-add-toggle" type="checkbox"/>
 <div class="world-modal">
@@ -1801,6 +1817,14 @@
 <label class="btn" for="world-add-toggle">Cerrar</label>
 </div>
 <div class="world-modal-grid">
+<div class="world-modal-section">
+<div class="world-modal-section-title">Selección geográfica</div>
+<input autocomplete="off" id="world-place-q" placeholder="Buscar país, provincia, ciudad…"/>
+<div class="world-modal-grid world-modal-grid-2"><input autocomplete="off" id="world-place-subdivision" placeholder="Subdivisión (estado/provincia/región)"/><input autocomplete="off" id="world-place-city" placeholder="Ciudad / municipio / comarca"/></div>
+</div>
+<div class="world-modal-section">
+<div class="world-modal-section-title">Tipo de registro</div>
+<div class="world-modal-grid world-modal-grid-2">
 <select id="world-kind">
 <option value="country">País</option>
 <option value="subdivision">Subdivisión</option>
@@ -1809,19 +1833,34 @@
 <option value="pin">Pin personalizado</option>
 </select>
 <select id="world-record-status"><option selected="" value="visited">Visitado</option><option value="lived">Vivido</option><option value="wishlist">Wishlist</option><option value="other">Otro</option></select>
-<input autocomplete="off" id="world-place-q" placeholder="Buscar (usa el mapa del mundo real)..."/>
-<input autocomplete="off" id="world-place-subdivision" placeholder="Subdivisión (estado/provincia/región)"/>
-<input autocomplete="off" id="world-place-city" placeholder="Ciudad (opcional)"/>
+</div>
+</div>
+<div class="world-modal-section">
+<div class="world-modal-section-title">Fechas</div>
 <div class="world-modal-grid world-modal-grid-2"><input id="world-date-start" type="date"/><input id="world-date-end" type="date"/></div>
-<input autocomplete="off" id="world-pin-emoji" maxlength="3" placeholder="Emoji (opcional)"/>
-<input autocomplete="off" id="world-pin-folder" placeholder="Carpeta/categoría (opcional)"/>
+</div>
+<div class="world-modal-section">
+<div class="world-modal-section-title">Metadatos</div>
+<div class="world-modal-grid world-modal-grid-2"><input autocomplete="off" id="world-pin-emoji" maxlength="3" placeholder="Emoji (opcional)"/><input autocomplete="off" id="world-pin-folder" placeholder="Carpeta/categoría (opcional)"/></div>
 <input autocomplete="off" id="world-note" placeholder="Nota (opcional)"/>
+</div>
+<div class="world-modal-section">
+<div class="world-modal-section-title">Resultados y sugerencias</div>
 <div class="world-list" id="world-place-results"></div>
+</div>
 <div class="world-modal-actions">
 <button class="btn" id="world-place-delete" style="display:none" type="button">Eliminar</button>
 <button class="btn primary" id="world-place-save" type="button">Guardar</button>
 </div>
 </div>
+</div>
+</div>
+<div class="world-map-sheet" id="world-map-sheet" hidden="">
+<label class="world-map-sheet-backdrop" for="world-map-sheet-close"></label>
+<div class="world-map-sheet-panel">
+<div class="world-modal-header"><div class="title" id="world-map-sheet-title">Acciones rápidas</div><button class="btn" id="world-map-sheet-close" type="button">Cerrar</button></div>
+<div class="world-map-sheet-state" id="world-map-sheet-state"></div>
+<div class="world-map-sheet-actions" id="world-map-sheet-actions"></div>
 </div>
 </div>
 </section>

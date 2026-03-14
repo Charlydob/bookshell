@@ -560,6 +560,7 @@
 <button class="recipes-subtab is-active" id="recipes-subtab-library" data-recipes-panel="library" aria-selected="true" type="button">Recetas</button>
 <button class="recipes-subtab" id="recipes-subtab-macros" data-recipes-panel="macros" aria-selected="false" type="button">Macros</button>
 <button class="recipes-subtab" id="recipes-subtab-statistics" data-recipes-panel="statistics" aria-selected="false" type="button">Estadística</button>
+<button class="recipes-subtab" id="recipes-subtab-shopping" data-recipes-panel="shopping" aria-selected="false" type="button">Compra</button>
 </div>
 <div class="recipes-panel is-active" id="recipes-panel-library">
   <div class="recipes-top">
@@ -773,6 +774,13 @@
           </div>
         </div>
       </section>
+
+      <section class="macro-stats-card macro-stats-targets-card">
+        <header class="macro-stats-card-head">
+          <h4>Objetivo de reparto de macros</h4>
+        </header>
+        <div class="macro-target-editor" id="macro-target-editor"></div>
+      </section>
     </div>
 
     <div class="macro-stats-lists">
@@ -785,6 +793,16 @@
         <div id="macro-stats-top-products" class="macro-stats-list"></div>
       </section>
     </div>
+  </div>
+</div>
+<div class="recipes-panel" id="recipes-panel-shopping">
+  <div class="macro-stats-shell">
+    <section class="macro-stats-card">
+      <header class="macro-stats-card-head">
+        <h4>Estimación de reposición</h4>
+      </header>
+      <div class="macro-shopping-groups" id="macro-shopping-groups"></div>
+    </section>
   </div>
 </div>
 </section>
@@ -2776,6 +2794,21 @@ Crear “<span id="gym-create-cta-text"></span>”
 <button class="macro-btn macro-btn-ghost" id="macro-product-scan-btn" type="button">Escanear código</button>
 
  <div class="macro-inline-cost-grid">
+            <label class="macro-field">
+              <span class="macro-label">Tamaño del paquete</span>
+              <input id="macro-product-package-amount" type="number" step="0.01" min="0" placeholder="Ej. 1" />
+            </label>
+            <label class="macro-field">
+              <span class="macro-label">Unidad del paquete</span>
+              <select id="macro-product-package-unit" class="macro-select">
+                <option value="">Sin unidad</option>
+                <option value="g">g</option>
+                <option value="kg">kg</option>
+                <option value="ml">ml</option>
+                <option value="l">l</option>
+                <option value="unit">unidad</option>
+              </select>
+            </label>
             <label class="macro-field">
               <span class="macro-label">Precio envase (€)</span>
               <input id="macro-product-price" type="number" step="0.01" min="0" placeholder="Opcional" />

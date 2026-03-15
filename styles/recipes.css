@@ -2450,6 +2450,27 @@
 .macro-stats-row-name{ font-size:13px; line-height:1.2; color:#fff; }
 .macro-stats-row-summary{ color:var(--txt-soft); line-height:1.25; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
 
+
+
+.macro-weight-diff-grid{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:10px;
+  margin-top:8px;
+}
+.macro-weight-diff-grid .macro-field input.is-invalid{
+  border-color:#ff6b6b;
+  box-shadow:0 0 0 2px rgba(255,107,107,.2);
+}
+#macro-product-weight-diff-hint{
+  min-height:16px;
+}
+@media (max-width: 720px){
+  .macro-weight-diff-grid{
+    grid-template-columns: 1fr;
+    gap:8px;
+  }
+}
 .macro-inline-qty{
 
   display:grid;

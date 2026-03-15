@@ -1243,7 +1243,7 @@
   max-width: 320px;
   justify-self: center;
   justify-content: center;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 120px 120px 120px;
 }
 .macro-summary-group-kcal{
   display: flex;

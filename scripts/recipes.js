@@ -5170,7 +5170,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     setMacroProductEditing(false);
 
     if (_macroProductRecipeIngredientTarget?.recipeId && _macroProductRecipeIngredientTarget?.ingredientId && !entryTarget) {
-      if ($macroProductAdd) $macroProductAdd.textContent = "AÃ±adir a receta";
+      if ($macroProductAdd) $macroProductAdd.textContent = "Añadir a receta";
       if ($macroProductModalTitle) $macroProductModalTitle.textContent = "Producto (receta)";
     }
 
@@ -5400,7 +5400,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         return `<option value="${escapeHtml(p.id)}">${escapeHtml(label)}</option>`;
       })
       .join("");
-    $recipeIngredientProduct.innerHTML = `<option value="">AÃ±adir desde productosâ€¦</option>${options}`;
+    $recipeIngredientProduct.innerHTML = `<option value="">Añadir desde productosâ€¦</option>${options}`;
     if ($recipeIngredientGrams && !$recipeIngredientGrams.value) $recipeIngredientGrams.value = "100";
   }
 

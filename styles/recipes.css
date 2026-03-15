@@ -2571,7 +2571,7 @@ border: 0px;
   margin-top: 5px;
 }
 
-#macro-product-price, #macro-product-price-base-qty, #macro-product-price-base-unit{
+#macro-product-price, #macro-product-package-amount, #macro-product-package-unit{
   background-color: transparent;
   min-width: 80px;
   max-width: 80px;

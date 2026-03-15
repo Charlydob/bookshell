@@ -2745,22 +2745,22 @@ Crear “<span id="gym-create-cta-text"></span>”
 
     <label class="macro-field">
       <span class="macro-label">Kcal</span>
-      <input id="macro-product-kcal" type="number" value="0">
+      <input id="macro-product-kcal" type="number" placeholder="0" value="">
     </label>
 
     <label class="macro-field">
       <span class="macro-label">Carbs (g)</span>
-      <input id="macro-product-carbs" type="number" step="0.1" value="0">
+      <input id="macro-product-carbs" type="number" step="0.1" placeholder="0" value="">
     </label>
 
     <label class="macro-field">
       <span class="macro-label">Protein (g)</span>
-      <input id="macro-product-protein" type="number" step="0.1" value="0">
+      <input id="macro-product-protein" type="number" step="0.1" placeholder="0" value="">
     </label>
 
     <label class="macro-field">
       <span class="macro-label">Fat (g)</span>
-      <input id="macro-product-fat" type="number" step="0.1" value="0">
+      <input id="macro-product-fat" type="number" step="0.1" placeholder="0" value="">
     </label>
 
   </div>
@@ -2838,21 +2838,6 @@ Crear “<span id="gym-create-cta-text"></span>”
             <label class="macro-field">
               <span class="macro-label">Precio envase (€)</span>
               <input id="macro-product-price" type="number" step="0.01" min="0" placeholder="Opcional" />
-            </label>
-            <label class="macro-field">
-              <span class="macro-label">Cantidad base precio</span>
-              <input id="macro-product-price-base-qty" type="number" step="0.01" min="0" placeholder="Ej. 1000" />
-            </label>
-            <label class="macro-field">
-              <span class="macro-label">Unidad base</span>
-              <select id="macro-product-price-base-unit" class="macro-select">
-                <option value="">Sin unidad</option>
-                <option value="g">g</option>
-                <option value="kg">kg</option>
-                <option value="ml">ml</option>
-                <option value="l">l</option>
-                <option value="unit">unidad</option>
-              </select>
             </label>
           </div>
           
@@ -2993,7 +2978,8 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 </div>
 <div class="sheet-section">
-<div class="sheet-section-title">Nutrición</div>
+<div class="sheet-section-title">Receta editable</div>
+<p class="section-hint">Organiza ingredientes y pasos para que aparezcan en el recetario a pantalla completa.</p>
 <div class="form-grid row-2">
 <label class="field">
 <span class="field-label">Raciones</span>
@@ -3001,15 +2987,6 @@ Crear “<span id="gym-create-cta-text"></span>”
 </label>
 </div>
 <div class="hint" id="recipe-calc-summary">0 kcal · 0.00 €</div>
-<div class="builder-header">
-<div><div class="builder-title">Ingredientes nutricionales</div><div class="builder-subtitle">Producto + gramos</div></div>
-<button class="btn ghost btn-compact" id="recipe-add-nutri-ingredient" type="button">+ Ingrediente</button>
-</div>
-<div class="recipe-ingredients-list" id="recipe-nutri-ingredients-list"></div>
-</div>
-<div class="sheet-section">
-<div class="sheet-section-title">Receta editable</div>
-<p class="section-hint">Organiza ingredientes y pasos para que aparezcan en el recetario a pantalla completa.</p>
 <div class="recipe-builder-grid">
 <div class="recipe-builder-column">
 <div class="builder-header">

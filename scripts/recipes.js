@@ -32,6 +32,14 @@ if ($viewRecipes) {
   const palette = ["#f4d35e", "#9ad5ff", "#ff89c6", "#7dffb4", "#c8a4ff"];
   const STRUCTURED_INGREDIENT_UNITS = ["g", "kg", "ml", "l", "unit"];
   const DEFAULT_INGREDIENT = () => ({ id: generateId(), text: "", label: "", qty: "", unit: "", notes: "", productId: "", done: false });
+  const isBlankIngredientRow = (ing = {}) => {
+    const hasText = !!String(ing?.text || "").trim();
+    const hasLabel = !!String(ing?.label || "").trim();
+    const hasQty = Number(ing?.qty) > 0;
+    const hasUnit = !!String(ing?.unit || "").trim();
+    const hasProduct = !!String(ing?.productId || "").trim();
+    return !(hasText || hasLabel || hasQty || hasUnit || hasProduct);
+  };
   const DEFAULT_STEP = () => ({
     id: generateId(),
     title: "",
@@ -378,8 +386,6 @@ if ($viewRecipes) {
   const $macroProductPrice = document.getElementById("macro-product-price");
   const $macroProductPackageAmount = document.getElementById("macro-product-package-amount");
   const $macroProductPackageUnit = document.getElementById("macro-product-package-unit");
-  const $macroProductPriceBaseQty = document.getElementById("macro-product-price-base-qty");
-  const $macroProductPriceBaseUnit = document.getElementById("macro-product-price-base-unit");
   const $macroProductHabitSelect = document.getElementById("macro-product-habit-select");
   const $macroProductHabitUnlink = document.getElementById("macro-product-habit-unlink");
   const $macroProductHabitHint = document.getElementById("macro-product-habit-hint");
@@ -392,8 +398,6 @@ if ($viewRecipes) {
   const $macroProductDonutFat = document.getElementById("macro-product-donut-fat");
   const $macroProductDonutKcal = document.getElementById("macro-product-donut-kcal");
   const $recipeServings = document.getElementById("recipe-servings");
-  const $recipeNutriIngredientsList = document.getElementById("recipe-nutri-ingredients-list");
-  const $recipeAddNutriIngredient = document.getElementById("recipe-add-nutri-ingredient");
 
   const $recipeImageFile = document.getElementById("recipe-image-file");
   const $recipeImagePreview = document.getElementById("recipe-image-preview");
@@ -748,12 +752,12 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   function normalizeRecipeFields(recipe) {
     const country = normalizeRecipeCountry(recipe.country, recipe.countryLabel);
-    const ingredients = Array.isArray(recipe.ingredients)
+    let ingredients = Array.isArray(recipe.ingredients)
       ? recipe.ingredients.map((ing) => ({
-          id: ing.id || generateId(),
-          text: String(ing.text || "").trim(),
-          label: String(ing.label || "").trim(),
-          qty: ing.qty == null || ing.qty === "" ? "" : Math.max(0, Number(ing.qty) || 0),
+           id: ing.id || generateId(),
+           text: String(ing.text || "").trim(),
+           label: String(ing.label || "").trim(),
+           qty: ing.qty == null || ing.qty === "" ? "" : Math.max(0, Number(ing.qty) || 0),
           unit: normalizeCostUnit(ing.unit || ""),
           notes: String(ing.notes || "").trim(),
           quantity: String(ing.quantity || "").trim(),
@@ -785,17 +789,58 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
           computedCarbs: Number(ing.computedCarbs) || 0,
           computedProtein: Number(ing.computedProtein) || 0,
           computedFat: Number(ing.computedFat) || 0,
-          done: !!ing.done,
-        }))
+           done: !!ing.done,
+         }))
       : [];
     const steps = Array.isArray(recipe.steps)
       ? recipe.steps.map((step) => ({
-          id: step.id || generateId(),
-          title: String(step.title || "").trim(),
-          description: String(step.description || "").trim(),
-          done: !!step.done,
-        }))
+           id: step.id || generateId(),
+           title: String(step.title || "").trim(),
+           description: String(step.description || "").trim(),
+           done: !!step.done,
+         }))
       : [];
+
+    const legacyNutritionIngredients = Array.isArray(recipe.nutritionIngredients)
+      ? recipe.nutritionIngredients.map((it) => ({
+        id: it.id || generateId(),
+        productId: String(it.productId || "").trim(),
+        grams: Math.max(0, Number(it.grams) || 0),
+      })).filter((it) => it.productId && it.grams >= 0)
+      : [];
+
+    const shouldMigrateLegacyNutrition = legacyNutritionIngredients.length
+      && (ingredients.length === 0 || (ingredients.length === 1 && isBlankIngredientRow(ingredients[0])));
+
+    if (shouldMigrateLegacyNutrition) {
+      ingredients = legacyNutritionIngredients.map((it) => {
+        const linked = nutritionProducts.find((p) => p.id === it.productId) || null;
+        const name = String(linked?.name || "").trim();
+        const label = name || "Producto";
+        return {
+          id: it.id || generateId(),
+          text: label,
+          label,
+          qty: Math.max(0, Number(it.grams) || 0),
+          unit: "g",
+          notes: "",
+          quantity: "",
+          name: label,
+          productId: it.productId,
+          linkedFinanceProductId: "",
+          linkedHabitId: "",
+          priceSource: null,
+          nutritionSnapshot: null,
+          pricingSnapshot: null,
+          computedCost: 0,
+          computedKcal: 0,
+          computedCarbs: 0,
+          computedProtein: 0,
+          computedFat: 0,
+          done: false,
+        };
+      });
+    }
     return {
       ...recipe,
       country: country?.code || null,
@@ -806,11 +851,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       servings: Math.max(1, Number(recipe.servings) || 1),
       usageCount: Math.max(0, Number(recipe.usageCount) || 0),
       lastUsedAt: Number(recipe.lastUsedAt) > 0 ? Number(recipe.lastUsedAt) : 0,
-      nutritionIngredients: Array.isArray(recipe.nutritionIngredients) ? recipe.nutritionIngredients.map((it) => ({
-        id: it.id || generateId(),
-        productId: it.productId || "",
-        grams: Math.max(0, Number(it.grams) || 0),
-      })) : [],
+      nutritionIngredients: shouldMigrateLegacyNutrition ? [] : legacyNutritionIngredients,
       nutritionTotals: normalizeMacros(recipe.nutritionTotals),
       nutritionPerServing: normalizeMacros(recipe.nutritionPerServing),
     };
@@ -971,6 +1012,18 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return normalizeCostUnit(unit);
   }
 
+  function resolveProductPackageSpec(product) {
+    const directAmount = Number(product?.packageAmount);
+    const directUnit = normalizeCostUnit(product?.packageUnit);
+    if (directAmount > 0 && directUnit) return { amount: directAmount, unit: directUnit };
+
+    const legacyAmount = Number(product?.priceBaseQty);
+    const legacyUnit = normalizeCostUnit(product?.priceBaseUnit);
+    if (legacyAmount > 0 && legacyUnit) return { amount: legacyAmount, unit: legacyUnit };
+
+    return { amount: null, unit: "" };
+  }
+
   function formatAmountWithUnit(value, unit) {
     const qty = Number(value);
     const safeUnit = normalizeUnit(unit);
@@ -984,7 +1037,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   }
 
   function getDisplayUnitForProduct(product) {
-    return normalizeUnit(product?.baseUnit || product?.servingBaseUnit || product?.priceBaseUnit || "g") || "g";
+    return normalizeUnit(product?.baseUnit || product?.servingBaseUnit || product?.packageUnit || "g") || "g";
   }
 
   function getDisplayAmountForStats(entry) {
@@ -1087,11 +1140,8 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   }
 
   function resolveProductPriceBase(product) {
-    const configuredBaseQty = Number(product?.priceBaseQty);
-    const configuredBaseUnit = normalizeCostUnit(product?.priceBaseUnit);
-    if (configuredBaseQty > 0 && configuredBaseUnit) {
-      return { qty: configuredBaseQty, unit: configuredBaseUnit };
-    }
+    const pkg = resolveProductPackageSpec(product);
+    if (pkg.amount > 0 && pkg.unit) return { qty: pkg.amount, unit: pkg.unit };
     const baseQty = Number(product?.baseQuantity || product?.servingBaseGrams);
     const baseUnit = normalizeUnit(product?.baseUnit || product?.servingBaseUnit || "");
     if (baseQty > 0 && baseUnit) {
@@ -2702,7 +2752,6 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       renderIngredientRows(recipe.ingredients && recipe.ingredients.length ? recipe.ingredients : [DEFAULT_INGREDIENT()]);
       renderStepRows(recipe.steps && recipe.steps.length ? recipe.steps : [DEFAULT_STEP()]);
       if ($recipeServings) $recipeServings.value = String(Math.max(1, Number(recipe.servings) || 1));
-      renderNutriIngredientRows(recipe.nutritionIngredients && recipe.nutritionIngredients.length ? recipe.nutritionIngredients : []);
     } else {
       $modalTitle.textContent = "Nueva receta";
       $recipeId.value = "";
@@ -2719,7 +2768,6 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       renderIngredientRows([DEFAULT_INGREDIENT()]);
       renderStepRows([DEFAULT_STEP()]);
       if ($recipeServings) $recipeServings.value = "1";
-      renderNutriIngredientRows([]);
     }
     renderRecipeIngredientProductPicker();
     updateRecipeCalcSummary();
@@ -2777,7 +2825,6 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       ingredients: collectIngredientRows(),
       steps: collectStepRows(),
       servings: Math.max(1, Number($recipeServings?.value) || 1),
-      nutritionIngredients: collectNutriIngredientRows(),
     };
 
     if (!payload.title) return;
@@ -3620,15 +3667,12 @@ $recipeImportBtn?.addEventListener("click", () => {
     updateRecipeCalcSummary();
   });
   $recipeAddStep?.addEventListener("click", () => $recipeStepsList?.appendChild(buildStepRow()));
-  $recipeAddNutriIngredient?.addEventListener("click", () => $recipeNutriIngredientsList?.appendChild(buildNutriIngredientRow()));
   $recipeIngredientAddProduct?.addEventListener("click", () => {
     const productId = String($recipeIngredientProduct?.value || "").trim();
     if (!productId) return;
     const product = nutritionProducts.find((p) => p.id === productId);
     if (!product) return;
     const grams = Math.max(0, Number($recipeIngredientGrams?.value) || 0) || 100;
-
-    $recipeNutriIngredientsList?.appendChild(buildNutriIngredientRow({ id: generateId(), productId, grams }));
     const label = `${product.name}${product.brand ? ` (${product.brand})` : ""} ${Math.round(grams)}g`;
     const recipeIngredient = buildRecipeIngredientFromProduct(product, { id: generateId(), text: label, label: product.name || label, qty: grams, unit: "g", productId, done: false });
     $recipeIngredientsList?.appendChild(buildIngredientRow(recipeIngredient));
@@ -3857,6 +3901,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   function normalizeNutritionProductEntry(product = {}) {
     const normalizedBaseUnit = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
     const normalizedBaseQuantity = Math.max(1, Number(product.baseQuantity || product.servingBaseGrams) || 100);
+    const pkg = resolveProductPackageSpec(product);
     return {
       ...product,
       id: String(product.id || generateId()).trim(),
@@ -3870,11 +3915,11 @@ $recipeImportBtn?.addEventListener("click", () => {
       macros: normalizeMacros(product.macros),
       financeProductId: String(product.financeProductId || "").trim(),
       linkedHabitId: String(product.linkedHabitId || "").trim(),
-      packageAmount: Number(product.packageAmount) > 0 ? Number(product.packageAmount) : null,
-      packageUnit: normalizeUnit(product.packageUnit || ""),
+      packageAmount: pkg.amount,
+      packageUnit: pkg.unit,
       price: Number(product.price) > 0 ? Number(product.price) : null,
-      priceBaseQty: Number(product.priceBaseQty) > 0 ? Number(product.priceBaseQty) : null,
-      priceBaseUnit: normalizeCostUnit(product.priceBaseUnit || ""),
+      priceBaseQty: pkg.amount,
+      priceBaseUnit: pkg.unit,
     };
   }
 
@@ -4959,6 +5004,8 @@ $recipeImportBtn?.addEventListener("click", () => {
     const baseUnit = normalizeUnit($macroProductBaseUnit?.value || "g") || "g";
     const hasFinanceSelection = !!$macroProductFinanceSelect;
     const hasHabitSelection = !!$macroProductHabitSelect;
+    const packageAmount = Number($macroProductPackageAmount?.value) > 0 ? Number($macroProductPackageAmount.value) : null;
+    const packageUnit = normalizeUnit($macroProductPackageUnit?.value || "");
     return {
       id: _macroProductDraft?.id,
       source: _macroProductDraft?.source || "manual",
@@ -4968,11 +5015,11 @@ $recipeImportBtn?.addEventListener("click", () => {
       barcode: $macroProductBarcode?.value,
       financeProductId: hasFinanceSelection ? String($macroProductFinanceSelect?.value || "") : (_macroProductDraft?.financeProductId || ""),
       linkedHabitId: hasHabitSelection ? String($macroProductHabitSelect?.value || "") : (_macroProductDraft?.linkedHabitId || ""),
-      packageAmount: Number($macroProductPackageAmount?.value) > 0 ? Number($macroProductPackageAmount.value) : null,
-      packageUnit: normalizeUnit($macroProductPackageUnit?.value || ""),
+      packageAmount,
+      packageUnit,
       price: Number($macroProductPrice?.value) > 0 ? Number($macroProductPrice.value) : null,
-      priceBaseQty: Number($macroProductPriceBaseQty?.value) > 0 ? Number($macroProductPriceBaseQty.value) : null,
-      priceBaseUnit: normalizeCostUnit($macroProductPriceBaseUnit?.value || ""),
+      priceBaseQty: packageAmount,
+      priceBaseUnit: packageUnit,
       baseQuantity: base,
       baseUnit,
       servingBaseUnit: baseUnit,
@@ -5157,15 +5204,26 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductBarcode) $macroProductBarcode.value = product.barcode || "";
     if ($macroProductBase) $macroProductBase.value = String(Number(product.baseQuantity || product.servingBaseGrams) || 100);
     if ($macroProductBaseUnit) $macroProductBaseUnit.value = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
-    if ($macroProductCarbs) $macroProductCarbs.value = String(Number(product.macros?.carbs) || 0);
-    if ($macroProductProtein) $macroProductProtein.value = String(Number(product.macros?.protein) || 0);
-    if ($macroProductFat) $macroProductFat.value = String(Number(product.macros?.fat) || 0);
-    if ($macroProductKcal) $macroProductKcal.value = String(Number(product.macros?.kcal) || 0);
-    if ($macroProductPackageAmount) $macroProductPackageAmount.value = product.packageAmount == null ? "" : String(Number(product.packageAmount) || 0);
-    if ($macroProductPackageUnit) $macroProductPackageUnit.value = normalizeUnit(product.packageUnit || "");
+    if ($macroProductCarbs) {
+      const v = Number(product.macros?.carbs);
+      $macroProductCarbs.value = Number.isFinite(v) && v > 0 ? String(v) : "";
+    }
+    if ($macroProductProtein) {
+      const v = Number(product.macros?.protein);
+      $macroProductProtein.value = Number.isFinite(v) && v > 0 ? String(v) : "";
+    }
+    if ($macroProductFat) {
+      const v = Number(product.macros?.fat);
+      $macroProductFat.value = Number.isFinite(v) && v > 0 ? String(v) : "";
+    }
+    if ($macroProductKcal) {
+      const v = Number(product.macros?.kcal);
+      $macroProductKcal.value = Number.isFinite(v) && v > 0 ? String(v) : "";
+    }
+    const pkg = resolveProductPackageSpec(product);
+    if ($macroProductPackageAmount) $macroProductPackageAmount.value = pkg.amount == null ? "" : String(Number(pkg.amount) || 0);
+    if ($macroProductPackageUnit) $macroProductPackageUnit.value = pkg.unit || "";
     if ($macroProductPrice) $macroProductPrice.value = product.price == null ? "" : String(Number(product.price) || 0);
-    if ($macroProductPriceBaseQty) $macroProductPriceBaseQty.value = product.priceBaseQty == null ? "" : String(Number(product.priceBaseQty) || 0);
-    if ($macroProductPriceBaseUnit) $macroProductPriceBaseUnit.value = normalizeCostUnit(product.priceBaseUnit || "");
     if ($macroProductGrams) $macroProductGrams.value = String(Number(grams) || 0);
     if ($macroProductGramsUnit) $macroProductGramsUnit.value = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
     if ($macroProductWeightStart) {
@@ -5627,6 +5685,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function saveProduct(product) {
     const now = Date.now();
+    const pkg = resolveProductPackageSpec(product);
     const normalized = {
       id: product.id || generateId(),
       name: String(product.name || "").trim(),
@@ -5639,11 +5698,11 @@ $recipeImportBtn?.addEventListener("click", () => {
       macros: normalizeMacros(product.macros),
       financeProductId: String(product.financeProductId || "").trim(),
       linkedHabitId: String(product.linkedHabitId || "").trim(),
-      packageAmount: Number(product.packageAmount) > 0 ? Number(product.packageAmount) : null,
-      packageUnit: normalizeUnit(product.packageUnit || ""),
+      packageAmount: pkg.amount,
+      packageUnit: pkg.unit,
       price: Number(product.price) > 0 ? Number(product.price) : null,
-      priceBaseQty: Number(product.priceBaseQty) > 0 ? Number(product.priceBaseQty) : null,
-      priceBaseUnit: normalizeCostUnit(product.priceBaseUnit || ""),
+      priceBaseQty: pkg.amount,
+      priceBaseUnit: pkg.unit,
       source: product.source || "manual",
       createdAt: product.createdAt || now,
       updatedAt: now,
@@ -7934,48 +7993,6 @@ $recipeImportBtn?.addEventListener("click", () => {
     try { set(ref(db, `${root}/barcodeMap/${barcode}`), productId); } catch (_) {}
   }
 
-  function buildNutriIngredientRow(item = { id: generateId(), productId: "", grams: 100 }) {
-    const row = document.createElement("div");
-    row.className = "builder-row ingredient-row";
-    row.dataset.id = item.id || generateId();
-    const select = document.createElement("select");
-    select.className = "builder-input";
-    select.innerHTML = `<option value="">Selecciona producto</option>` + nutritionProducts.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("");
-    select.value = item.productId || "";
-    const grams = document.createElement("input");
-    grams.type = "number";
-    grams.className = "builder-input";
-    grams.min = "0";
-    grams.step = "1";
-    grams.value = String(item.grams || 100);
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "icon-btn icon-btn-small";
-    remove.textContent = "✕";
-    remove.addEventListener("click", () => row.remove());
-    row.appendChild(select);
-    row.appendChild(grams);
-    row.appendChild(remove);
-    return row;
-  }
-
-  function renderNutriIngredientRows(list = []) {
-    if (!$recipeNutriIngredientsList) return;
-    const frag = document.createDocumentFragment();
-    list.forEach((item) => frag.appendChild(buildNutriIngredientRow(item)));
-    $recipeNutriIngredientsList.innerHTML = "";
-    $recipeNutriIngredientsList.appendChild(frag);
-  }
-
-  function collectNutriIngredientRows() {
-    if (!$recipeNutriIngredientsList) return [];
-    return Array.from($recipeNutriIngredientsList.querySelectorAll(".ingredient-row")).map((row) => ({
-      id: row.dataset.id || generateId(),
-      productId: row.querySelector("select")?.value || "",
-      grams: Math.max(0, Number(row.querySelector("input[type='number']")?.value) || 0),
-    })).filter((it) => it.productId);
-  }
-
   $recipesSubtabs.forEach((btn) => btn.addEventListener("click", () => switchRecipesPanel(btn.dataset.recipesPanel || "library")));
   $macroDateInput?.addEventListener("change", (e) => { selectedMacroDate = e.target.value || toISODate(new Date()); macroStatsState.anchorDate = selectedMacroDate; renderMacrosView(); });
   $macroStatsPeriods?.addEventListener("click", (e) => {
@@ -8298,6 +8315,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       servingBaseGrams: Number($macroManualBase?.value) || 100,
       macros: { carbs: Number($macroManualCarbs?.value) || 0, protein: Number($macroManualProtein?.value) || 0, fat: Number($macroManualFat?.value) || 0, kcal: Number($macroManualKcal?.value) || 0 },
       price: null,
+      packageAmount: null,
+      packageUnit: "",
       priceBaseQty: null,
       priceBaseUnit: "",
       source: "manual",
@@ -8322,8 +8341,6 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroProductPackageAmount,
     $macroProductPackageUnit,
     $macroProductPrice,
-    $macroProductPriceBaseQty,
-    $macroProductPriceBaseUnit,
     $macroProductGrams,
     $macroProductGramsUnit,
   ].filter(Boolean);

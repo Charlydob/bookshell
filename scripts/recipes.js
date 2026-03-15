@@ -362,6 +362,11 @@ if ($viewRecipes) {
   const $macroProductGramsUnit = document.getElementById("macro-product-grams-unit");
   const $macroProductSummary = document.getElementById("macro-product-summary");
   const $macroProductPriceUsed = document.getElementById("macro-product-price-used");
+  const $macroProductWeightStart = document.getElementById("macro-product-weight-start");
+  const $macroProductWeightEnd = document.getElementById("macro-product-weight-end");
+  const $macroProductWeightStartUnit = document.getElementById("macro-product-weight-start-unit");
+  const $macroProductWeightEndUnit = document.getElementById("macro-product-weight-end-unit");
+  const $macroProductWeightDiffHint = document.getElementById("macro-product-weight-diff-hint");
   const $macroProductEditToggle = document.getElementById("macro-product-edit-toggle");
   const $macroProductScanBtn = document.getElementById("macro-product-scan-btn");
   const $macroProductFinanceSelect = document.getElementById("macro-product-finance-select");
@@ -4978,6 +4983,59 @@ $recipeImportBtn?.addEventListener("click", () => {
     };
   }
 
+  function parseLoosePositiveNumber(raw) {
+    if (raw == null) return null;
+    const clean = String(raw)
+      .trim()
+      .replace(/\s+/g, "")
+      .replace(/,/g, ".")
+      .replace(/[^\d.\-]/g, "");
+    if (!clean || clean === "." || clean === "-" || clean === "-." ) return null;
+    const normalized = clean.replace(/(\..*)\./g, "$1");
+    const num = Number(normalized);
+    if (!Number.isFinite(num) || num < 0) return null;
+    return num;
+  }
+
+  function roundAmountForInput(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return "";
+    return String(Math.round(n * 1000) / 1000);
+  }
+
+  function updateWeightDiffUnitLabels() {
+    const activeUnit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
+    const unitLabel = activeUnit === "unit" ? "ud" : activeUnit;
+    if ($macroProductWeightStartUnit) $macroProductWeightStartUnit.textContent = `(${unitLabel})`;
+    if ($macroProductWeightEndUnit) $macroProductWeightEndUnit.textContent = `(${unitLabel})`;
+  }
+
+  function syncAmountFromWeightDifference() {
+    const start = parseLoosePositiveNumber($macroProductWeightStart?.value);
+    const end = parseLoosePositiveNumber($macroProductWeightEnd?.value);
+
+    if ($macroProductWeightStart) $macroProductWeightStart.classList.remove("is-invalid");
+    if ($macroProductWeightEnd) $macroProductWeightEnd.classList.remove("is-invalid");
+
+    if (!$macroProductWeightDiffHint) return;
+    if (start == null || end == null) {
+      $macroProductWeightDiffHint.textContent = "";
+      return;
+    }
+
+    const diff = start - end;
+    if (!Number.isFinite(diff) || diff < 0) {
+      if ($macroProductWeightStart) $macroProductWeightStart.classList.add("is-invalid");
+      if ($macroProductWeightEnd) $macroProductWeightEnd.classList.add("is-invalid");
+      $macroProductWeightDiffHint.textContent = "Peso final no puede ser mayor que peso inicial.";
+      return;
+    }
+
+    if ($macroProductGrams) $macroProductGrams.value = roundAmountForInput(diff);
+    const unit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
+    $macroProductWeightDiffHint.textContent = `Cantidad deducida automáticamente: ${formatAmountWithUnit(diff, unit)}.`;
+  }
+
   function renderMacroProductSummary() {
     if (!$macroProductSummary) return;
     const amount = Math.max(0, Number($macroProductGrams?.value) || 0);
@@ -5095,6 +5153,16 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductPriceBaseUnit) $macroProductPriceBaseUnit.value = normalizeCostUnit(product.priceBaseUnit || "");
     if ($macroProductGrams) $macroProductGrams.value = String(Number(grams) || 0);
     if ($macroProductGramsUnit) $macroProductGramsUnit.value = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
+    if ($macroProductWeightStart) {
+      $macroProductWeightStart.value = "";
+      $macroProductWeightStart.classList.remove("is-invalid");
+    }
+    if ($macroProductWeightEnd) {
+      $macroProductWeightEnd.value = "";
+      $macroProductWeightEnd.classList.remove("is-invalid");
+    }
+    if ($macroProductWeightDiffHint) $macroProductWeightDiffHint.textContent = "";
+    updateWeightDiffUnitLabels();
 
     $macroProductModalBackdrop.classList.remove("hidden");
     renderMacroProductSummary();
@@ -8242,6 +8310,17 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroProductGramsUnit,
   ].filter(Boolean);
   _macroProductInputs.forEach((el) => el.addEventListener("input", renderMacroProductSummary));
+  $macroProductGramsUnit?.addEventListener("change", () => {
+    updateWeightDiffUnitLabels();
+    syncAmountFromWeightDifference();
+    renderMacroProductSummary();
+  });
+  [$macroProductWeightStart, $macroProductWeightEnd].filter(Boolean).forEach((el) => {
+    el.addEventListener("input", () => {
+      syncAmountFromWeightDifference();
+      renderMacroProductSummary();
+    });
+  });
   $macroProductEditToggle?.addEventListener("click", () => {
     const next = !$macroProductModalBackdrop?.classList.contains("is-editing");
     setMacroProductEditing(next);

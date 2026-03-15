@@ -278,6 +278,7 @@ if ($viewRecipes) {
   const $recipesPanelLibrary = document.getElementById("recipes-panel-library");
   const $recipesPanelMacros = document.getElementById("recipes-panel-macros");
   const $recipesPanelStatistics = document.getElementById("recipes-panel-statistics");
+  const $recipesPanelShopping = document.getElementById("recipes-panel-shopping");
   const $macroDateInput = document.getElementById("macro-date-input");
   const $macroDatePrev = document.getElementById("macro-date-prev");
   const $macroDateNext = document.getElementById("macro-date-next");
@@ -303,6 +304,8 @@ if ($viewRecipes) {
   const $macroStatsDonutTitle = document.getElementById("macro-stats-donut-title");
   const $macroStatsDonutLegend = document.getElementById("macro-stats-donut-legend");
   const $macroStatsDonutMode = document.getElementById("macro-stats-donut-mode");
+  const $macroTargetEditor = document.getElementById("macro-target-editor");
+  const $macroShoppingGroups = document.getElementById("macro-shopping-groups");
   const $macroStatsTopRecipes = document.getElementById("macro-stats-top-recipes");
   const $macroStatsTopProducts = document.getElementById("macro-stats-top-products");
   const $macroAddModalBackdrop = document.getElementById("macro-add-modal-backdrop");
@@ -359,12 +362,22 @@ if ($viewRecipes) {
   const $macroProductGramsUnit = document.getElementById("macro-product-grams-unit");
   const $macroProductSummary = document.getElementById("macro-product-summary");
   const $macroProductPriceUsed = document.getElementById("macro-product-price-used");
+  const $macroProductWeightStart = document.getElementById("macro-product-weight-start");
+  const $macroProductWeightEnd = document.getElementById("macro-product-weight-end");
+  const $macroProductWeightStartUnit = document.getElementById("macro-product-weight-start-unit");
+  const $macroProductWeightEndUnit = document.getElementById("macro-product-weight-end-unit");
+  const $macroProductPackWeight = document.getElementById("macro-product-pack-weight");
+  const $macroProductPackUnits = document.getElementById("macro-product-pack-units");
+  const $macroProductPackConsumed = document.getElementById("macro-product-pack-consumed");
+  const $macroProductWeightDiffHint = document.getElementById("macro-product-weight-diff-hint");
   const $macroProductEditToggle = document.getElementById("macro-product-edit-toggle");
   const $macroProductScanBtn = document.getElementById("macro-product-scan-btn");
   const $macroProductFinanceSelect = document.getElementById("macro-product-finance-select");
   const $macroProductFinanceUnlink = document.getElementById("macro-product-finance-unlink");
   const $macroProductFinanceHint = document.getElementById("macro-product-finance-hint");
   const $macroProductPrice = document.getElementById("macro-product-price");
+  const $macroProductPackageAmount = document.getElementById("macro-product-package-amount");
+  const $macroProductPackageUnit = document.getElementById("macro-product-package-unit");
   const $macroProductPriceBaseQty = document.getElementById("macro-product-price-base-qty");
   const $macroProductPriceBaseUnit = document.getElementById("macro-product-price-base-unit");
   const $macroProductHabitSelect = document.getElementById("macro-product-habit-select");
@@ -430,7 +443,15 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   const allowedRecipeViews = new Set(["shelf", "cards"]);
   let recipesViewMode = "shelf";
 
-  const defaultGoals = { carbs: 180, protein: 140, fat: 65, kcal: 2200 };
+  const defaultMacroTargets = {
+    kcalTarget: 2200,
+    carbs_g: 180,
+    protein_g: 140,
+    fat_g: 65,
+    carbs_pct: 0.33,
+    protein_pct: 0.26,
+    fat_pct: 0.41,
+  };
   const defaultIntegrationConfig = { linkedWorkHabitIds: [], workCaloriesPerMatchedDay: 700, bodyWeightKg: null };
   const mealOrder = ["breakfast", "lunch", "dinner", "snacks"];
   const mealLabels = { breakfast: "Desayuno", lunch: "Almuerzo", dinner: "Cena", snacks: "Snacks" };
@@ -439,7 +460,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   let financeProductsLoaded = false;
   let habitSyncQueue = Promise.resolve();
   let dailyLogsByDate = {};
-  let nutritionGoals = { ...defaultGoals };
+  let macroTargets = normalizeMacroTargets(defaultMacroTargets);
   let nutritionIntegrationConfig = { ...defaultIntegrationConfig };
   let selectedMacroDate = toISODate(new Date());
   const macroModalState = { meal: "breakfast", source: "products", query: "" };
@@ -2815,6 +2836,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     renderCalendar();
     renderMacrosView();
     renderStatisticsView();
+    renderShoppingView();
   }
 
   function renderIngredientRows(list = []) {
@@ -3848,6 +3870,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       macros: normalizeMacros(product.macros),
       financeProductId: String(product.financeProductId || "").trim(),
       linkedHabitId: String(product.linkedHabitId || "").trim(),
+      packageAmount: Number(product.packageAmount) > 0 ? Number(product.packageAmount) : null,
+      packageUnit: normalizeUnit(product.packageUnit || ""),
       price: Number(product.price) > 0 ? Number(product.price) : null,
       priceBaseQty: Number(product.priceBaseQty) > 0 ? Number(product.priceBaseQty) : null,
       priceBaseUnit: normalizeCostUnit(product.priceBaseUnit || ""),
@@ -3868,6 +3892,93 @@ $recipeImportBtn?.addEventListener("click", () => {
     };
   }
 
+  function clamp01(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    if (n <= 0) return 0;
+    if (n >= 1) return 1;
+    return n;
+  }
+
+  function normalizeMacroTargets(raw = {}) {
+    const kcalTarget = Math.max(0, Number(raw?.kcalTarget ?? raw?.kcal) || defaultMacroTargets.kcalTarget);
+    let carbs_g = Math.max(0, Number(raw?.carbs_g ?? raw?.carbs) || 0);
+    let protein_g = Math.max(0, Number(raw?.protein_g ?? raw?.protein) || 0);
+    let fat_g = Math.max(0, Number(raw?.fat_g ?? raw?.fat) || 0);
+
+    let carbs_pct = Number(raw?.carbs_pct);
+    let protein_pct = Number(raw?.protein_pct);
+    let fat_pct = Number(raw?.fat_pct);
+    const pctDefined = Number.isFinite(carbs_pct) && Number.isFinite(protein_pct) && Number.isFinite(fat_pct);
+
+    if (pctDefined) {
+      const total = carbs_pct + protein_pct + fat_pct;
+      if (total > 0) {
+        carbs_pct = carbs_pct / total;
+        protein_pct = protein_pct / total;
+        fat_pct = fat_pct / total;
+      } else {
+        carbs_pct = 0;
+        protein_pct = 0;
+        fat_pct = 0;
+      }
+      carbs_g = kcalTarget > 0 ? (kcalTarget * carbs_pct) / 4 : 0;
+      protein_g = kcalTarget > 0 ? (kcalTarget * protein_pct) / 4 : 0;
+      fat_g = kcalTarget > 0 ? (kcalTarget * fat_pct) / 9 : 0;
+    } else {
+      const carbsKcal = carbs_g * 4;
+      const proteinKcal = protein_g * 4;
+      const fatKcal = fat_g * 9;
+      if (kcalTarget > 0) {
+        carbs_pct = carbsKcal / kcalTarget;
+        protein_pct = proteinKcal / kcalTarget;
+        fat_pct = fatKcal / kcalTarget;
+      } else {
+        carbs_pct = 0;
+        protein_pct = 0;
+        fat_pct = 0;
+      }
+      const pctTotal = carbs_pct + protein_pct + fat_pct;
+      if (pctTotal > 0) {
+        carbs_pct /= pctTotal;
+        protein_pct /= pctTotal;
+        fat_pct /= pctTotal;
+      }
+    }
+
+    return {
+      kcalTarget,
+      carbs_g,
+      protein_g,
+      fat_g,
+      carbs_pct: clamp01(carbs_pct),
+      protein_pct: clamp01(protein_pct),
+      fat_pct: clamp01(fat_pct),
+    };
+  }
+
+  function setMacroTargetsFromPercentages(patch = {}) {
+    const merged = {
+      ...macroTargets,
+      carbs_pct: patch.carbs_pct ?? macroTargets.carbs_pct,
+      protein_pct: patch.protein_pct ?? macroTargets.protein_pct,
+      fat_pct: patch.fat_pct ?? macroTargets.fat_pct,
+      kcalTarget: patch.kcalTarget ?? macroTargets.kcalTarget,
+    };
+    macroTargets = normalizeMacroTargets(merged);
+  }
+
+  function setMacroTargetsFromGrams(patch = {}) {
+    const merged = {
+      ...macroTargets,
+      carbs_g: patch.carbs_g ?? macroTargets.carbs_g,
+      protein_g: patch.protein_g ?? macroTargets.protein_g,
+      fat_g: patch.fat_g ?? macroTargets.fat_g,
+      kcalTarget: patch.kcalTarget ?? macroTargets.kcalTarget,
+    };
+    macroTargets = normalizeMacroTargets(merged);
+  }
+
   function loadNutritionCache() {
     try {
       const raw = localStorage.getItem(`${getStorageKey()}.nutrition`);
@@ -3875,7 +3986,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       const parsed = JSON.parse(raw);
       nutritionProducts = Array.isArray(parsed.products) ? parsed.products.map(normalizeNutritionProductEntry).filter((p) => p.name) : [];
       dailyLogsByDate = normalizeDailyLogs(parsed.dailyLogsByDate && typeof parsed.dailyLogsByDate === "object" ? parsed.dailyLogsByDate : {});
-      nutritionGoals = { ...defaultGoals, ...(parsed.goals || {}) };
+      macroTargets = normalizeMacroTargets(parsed.macroTargets || parsed.goals || {});
       nutritionIntegrationConfig = normalizeIntegrationConfig(parsed.integrationConfig || {});
       nutritionSyncMeta = {
         version: Number(parsed?.syncMeta?.version) || 2,
@@ -3890,7 +4001,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       localStorage.setItem(`${getStorageKey()}.nutrition`, JSON.stringify({
         products: nutritionProducts,
         dailyLogsByDate: normalizeDailyLogs(dailyLogsByDate),
-        goals: nutritionGoals,
+        macroTargets,
         integrationConfig: nutritionIntegrationConfig,
         syncMeta: nutritionSyncMeta,
       }));
@@ -3911,7 +4022,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         const data = snap.val() || {};
         const remoteProducts = Array.isArray(data.products) ? data.products.map(normalizeNutritionProductEntry).filter((p) => p.name) : [];
         const remoteLogs = normalizeDailyLogs(data.dailyLogsByDate && typeof data.dailyLogsByDate === "object" ? data.dailyLogsByDate : {});
-        const remoteGoals = { ...defaultGoals, ...(data.goals || {}) };
+        const remoteMacroTargets = normalizeMacroTargets(data.macroTargets || data.goals || {});
         const remoteIntegrationConfig = normalizeIntegrationConfig(data.integrationConfig || {});
         nutritionSyncMeta = {
           version: Number(data?.syncMeta?.version) || 2,
@@ -3919,7 +4030,7 @@ $recipeImportBtn?.addEventListener("click", () => {
           updatedAt: Number(data?.syncMeta?.updatedAt) || Number(data?.updatedAt) || Date.now(),
         };
 
-        const hasRemoteData = remoteProducts.length || Object.keys(remoteLogs).length || Object.keys(data?.goals || {}).length;
+        const hasRemoteData = remoteProducts.length || Object.keys(remoteLogs).length || Object.keys(data?.macroTargets || data?.goals || {}).length;
         if (!hasRemoteData) {
           const hasLocalData = nutritionProducts.length || Object.keys(dailyLogsByDate || {}).length;
           if (hasLocalData) {
@@ -3930,7 +4041,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
         nutritionProducts = remoteProducts;
         dailyLogsByDate = remoteLogs;
-        nutritionGoals = remoteGoals;
+        macroTargets = remoteMacroTargets;
         nutritionIntegrationConfig = remoteIntegrationConfig;
         cacheNutrition();
         recalcAllRecipesNutrition();
@@ -3954,7 +4065,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     const payload = {
       products: nutritionProducts,
       dailyLogsByDate,
-      goals: nutritionGoals,
+      macroTargets,
       integrationConfig: nutritionIntegrationConfig,
       syncMeta: nutritionSyncMeta,
       updatedAt: nutritionSyncMeta.updatedAt,
@@ -3966,6 +4077,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       } catch (err) { console.warn("No se pudo sincronizar nutrición", err); }
     }
     cacheNutrition();
+    if ($recipesPanelShopping?.classList.contains("is-active")) renderShoppingView();
   }
 
   function recalcRecipeNutrition(recipe) {
@@ -4430,17 +4542,182 @@ $recipeImportBtn?.addEventListener("click", () => {
       }).join("");
     }
 
+    renderMacroTargetEditor();
+
     const row = (item) => `<div class="macro-stats-row"><strong class="macro-stats-row-name">${escapeHtml(item.name)}</strong><span class="macro-stats-row-summary">${item.count} ${item.count === 1 ? "vez" : "veces"} · ${getDisplayAmountForStats(item)} · ${roundMacro(item.macros?.kcal)} kcal · C ${roundMacro(item.macros?.carbs)} · P ${roundMacro(item.macros?.protein)} · G ${roundMacro(item.macros?.fat)}</span></div>`;
     if ($macroStatsTopRecipes) $macroStatsTopRecipes.innerHTML = summary.topRecipes.map(row).join("") || '<div class="hint">Sin recetas en el periodo.</div>';
     if ($macroStatsTopProducts) $macroStatsTopProducts.innerHTML = summary.topProducts.map(row).join("") || '<div class="hint">Sin productos en el periodo.</div>';
   }
+
+  function buildMacroTargetDonutSegments() {
+    return [
+      { key: "carbs_pct", label: "Carbohidratos", color: macroPalette.carbs },
+      { key: "protein_pct", label: "Proteínas", color: macroPalette.protein },
+      { key: "fat_pct", label: "Grasas", color: macroPalette.fat },
+    ].map((row) => ({ ...row, value: Math.max(0, Number(macroTargets[row.key]) || 0) * 100 }));
+  }
+
+  function renderMacroTargetEditor() {
+    if (!$macroTargetEditor) return;
+    const segments = buildMacroTargetDonutSegments();
+    const totalPct = segments.reduce((acc, s) => acc + s.value, 0) || 1;
+    const donutSvg = '<svg id="macro-target-donut" viewBox="0 0 120 120" class="macro-stats-donut"></svg>';
+    const sliders = segments.map((seg) => {
+      const pct = (Number(macroTargets[seg.key]) || 0) * 100;
+      const gramsKey = seg.key.replace('_pct', '_g');
+      const grams = Number(macroTargets[gramsKey]) || 0;
+      return `<label class="macro-target-row" data-macro-pct-key="${seg.key}"><div class="macro-target-row-head"><strong style="color:${seg.color}">${seg.label}</strong><span>${roundMacro(pct)}% · ${roundMacro(grams)}g</span></div><input type="range" min="0" max="100" step="0.1" value="${pct}" data-macro-pct-input="${seg.key}" /></label>`;
+    }).join('');
+    $macroTargetEditor.innerHTML = `<div class="macro-target-editor-grid"><div class="macro-target-donut-wrap">${donutSvg}<div class="macro-target-kcal">${roundMacro(macroTargets.kcalTarget)} kcal</div></div><div class="macro-target-sliders">${sliders}</div></div>`;
+    const donutHost = document.getElementById('macro-target-donut');
+    renderSimpleDonut(donutHost, segments.map((s) => ({ label: s.label, value: s.value, color: s.color })), { valueFormatter: (v) => `${roundMacro(v)}%`, subtitle: 'reparto' });
+    const inputs = $macroTargetEditor.querySelectorAll('input[data-macro-pct-input]');
+    inputs.forEach((input) => {
+      input.addEventListener('input', () => {
+        const key = input.dataset.macroPctInput;
+        const next = Math.max(0, Number(input.value) || 0) / 100;
+        const draft = {
+          carbs_pct: key === 'carbs_pct' ? next : macroTargets.carbs_pct,
+          protein_pct: key === 'protein_pct' ? next : macroTargets.protein_pct,
+          fat_pct: key === 'fat_pct' ? next : macroTargets.fat_pct,
+        };
+        const rest = Math.max(0, 1 - next);
+        if (key === 'carbs_pct') {
+          const other = Math.max(0, macroTargets.protein_pct) + Math.max(0, macroTargets.fat_pct);
+          draft.protein_pct = other > 0 ? (macroTargets.protein_pct / other) * rest : rest / 2;
+          draft.fat_pct = Math.max(0, rest - draft.protein_pct);
+        } else if (key === 'protein_pct') {
+          const other = Math.max(0, macroTargets.carbs_pct) + Math.max(0, macroTargets.fat_pct);
+          draft.carbs_pct = other > 0 ? (macroTargets.carbs_pct / other) * rest : rest / 2;
+          draft.fat_pct = Math.max(0, rest - draft.carbs_pct);
+        } else {
+          const other = Math.max(0, macroTargets.carbs_pct) + Math.max(0, macroTargets.protein_pct);
+          draft.carbs_pct = other > 0 ? (macroTargets.carbs_pct / other) * rest : rest / 2;
+          draft.protein_pct = Math.max(0, rest - draft.carbs_pct);
+        }
+        setMacroTargetsFromPercentages(draft);
+        persistNutrition();
+        renderMacroTargetEditor();
+        renderMacrosView();
+      });
+    });
+  }
+
+  function buildProductConsumptionSeries(product, now = new Date()) {
+    const packageAmount = Number(product?.packageAmount);
+    const packageUnit = normalizeUnit(product?.packageUnit || '');
+    if (!(packageAmount > 0) || !packageUnit) return null;
+    const dates = [];
+    for (let i = 29; i >= 0; i -= 1) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      dates.push(toISODate(d));
+    }
+    const byDate = new Map(dates.map((d) => [d, 0]));
+    dates.forEach((date) => {
+      const log = dailyLogsByDate?.[date];
+      if (!log?.meals) return;
+      mealOrder.forEach((meal) => {
+        const entries = log.meals?.[meal]?.entries || [];
+        entries.forEach((entry) => {
+          if (entry.type === 'product' && String(entry.refId || '') === String(product.id || '')) {
+            const qty = Number(entry.amount) || Number(entry.grams) || 0;
+            const unit = normalizeUnit(entry.unit || entry.amountUnit || product.baseUnit || '');
+            const converted = normalizeQtyByUnit(qty, unit, packageUnit);
+            if (converted != null) byDate.set(date, (byDate.get(date) || 0) + Math.max(0, converted));
+          }
+          if (entry.type === 'recipe') {
+            const ingredients = getRecipeIngredientsFromEntry(entry);
+            const servings = Math.max(0, Number(entry.servings) || 0);
+            ingredients.forEach((ing) => {
+              if (String(ing?.productId || '') !== String(product.id || '')) return;
+              const qty = Number(ing?.qty) || 0;
+              const unit = normalizeUnit(ing?.unit || '');
+              if (!(qty > 0) || !unit) return;
+              const consumedIngredientQty = qty * servings;
+              const converted = normalizeQtyByUnit(consumedIngredientQty, unit, packageUnit);
+              if (converted != null) byDate.set(date, (byDate.get(date) || 0) + Math.max(0, converted));
+            });
+          }
+        });
+      });
+    });
+    const series = dates.map((date) => ({ date, amount: byDate.get(date) || 0 }));
+    return { packageAmount, packageUnit, series };
+  }
+
+  function estimateProductShopping(product) {
+    const built = buildProductConsumptionSeries(product);
+    if (!built) return { status: 'insufficient', reason: 'package', product };
+    const { packageAmount, packageUnit, series } = built;
+    const totalConsumed30 = series.reduce((acc, row) => acc + row.amount, 0);
+    const activeDays = series.filter((row) => row.amount > 0).length;
+    const dailyMeanWindow = totalConsumed30 / 30;
+    const dailyMeanActive = activeDays > 0 ? totalConsumed30 / activeDays : 0;
+    let estimatedDailyUse = 0;
+    let weak = false;
+    if (activeDays >= 8) estimatedDailyUse = dailyMeanWindow * 0.7 + dailyMeanActive * 0.3;
+    else if (activeDays >= 3) estimatedDailyUse = dailyMeanWindow * 0.85 + dailyMeanActive * 0.15;
+    else {
+      estimatedDailyUse = totalConsumed30 / 30;
+      weak = true;
+    }
+    const last7 = series.slice(-7);
+    const mean30 = dailyMeanWindow;
+    const mean7 = last7.reduce((acc, row) => acc + row.amount, 0) / 7;
+    const finalDailyUse = (mean30 > 0 && mean7 > 0) ? (mean30 * 0.7 + mean7 * 0.3) : estimatedDailyUse;
+    if (!(finalDailyUse > 0)) return { status: 'insufficient', reason: 'history', product, packageAmount, packageUnit, activeDays, totalConsumed30 };
+    const daysPerPackage = packageAmount / finalDailyUse;
+    const nextRestockDays = Math.max(0, daysPerPackage - 1);
+    return { status: weak ? 'weak' : 'ok', product, packageAmount, packageUnit, activeDays, totalConsumed30, dailyUse: finalDailyUse, daysPerPackage, nextRestockDays };
+  }
+
+  function getShoppingBucket(daysPerPackage, status) {
+    if (status === 'insufficient') return 'Datos insuficientes';
+    if (daysPerPackage <= 3) return 'Muy frecuente';
+    if (daysPerPackage <= 10) return 'Semanal';
+    if (daysPerPackage <= 20) return 'Quincenal';
+    if (daysPerPackage <= 45) return 'Mensual';
+    return 'Ocasional';
+  }
+
+  function renderShoppingView() {
+    if (!$macroShoppingGroups) return;
+    const estimates = nutritionProducts.map((product) => estimateProductShopping(product));
+    const groups = new Map([
+      ['Muy frecuente', []],
+      ['Semanal', []],
+      ['Quincenal', []],
+      ['Mensual', []],
+      ['Ocasional', []],
+      ['Datos insuficientes', []],
+    ]);
+    estimates.forEach((est) => {
+      const bucket = getShoppingBucket(est.daysPerPackage, est.status);
+      groups.get(bucket)?.push(est);
+    });
+    const renderCard = (est) => {
+      if (est.status === 'insufficient') {
+        return `<article class="macro-shopping-card"><h5>${escapeHtml(est.product?.name || 'Producto')}</h5><p class="hint">Sin datos suficientes de paquete o consumo.</p></article>`;
+      }
+      return `<article class="macro-shopping-card"><h5>${escapeHtml(est.product?.name || 'Producto')}</h5><div class="macro-shopping-meta">${roundMacro(est.dailyUse)} ${est.packageUnit}/día · pack ${roundMacro(est.packageAmount)} ${est.packageUnit}</div><div class="macro-shopping-meta">Dura ~${roundMacro(est.daysPerPackage)} días · próxima reposición ~${roundMacro(est.nextRestockDays)} días${est.status === 'weak' ? ' · estimación débil' : ''}</div></article>`;
+    };
+    const order = ['Muy frecuente','Semanal','Quincenal','Mensual','Ocasional','Datos insuficientes'];
+    $macroShoppingGroups.innerHTML = order.map((name) => {
+      const rows = (groups.get(name) || []).sort((a,b) => (Number(a.daysPerPackage)||9999) - (Number(b.daysPerPackage)||9999));
+      return `<section class="macro-shopping-group"><h5>${name}</h5><div class="macro-shopping-list">${rows.map(renderCard).join('') || '<div class="hint">Sin productos</div>'}</div></section>`;
+    }).join('');
+  }
+
   function switchRecipesPanel(panel = "library") {
     const isLibrary = panel === "library";
     const isMacros = panel === "macros";
     const isStatistics = panel === "statistics";
+    const isShopping = panel === "shopping";
     $recipesPanelLibrary?.classList.toggle("is-active", isLibrary);
     $recipesPanelMacros?.classList.toggle("is-active", isMacros);
     $recipesPanelStatistics?.classList.toggle("is-active", isStatistics);
+    $recipesPanelShopping?.classList.toggle("is-active", isShopping);
     $recipesSubtabs.forEach((btn) => {
       const active = btn.dataset.recipesPanel === panel;
       btn.classList.toggle("is-active", active);
@@ -4448,6 +4725,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     });
     if (isMacros) renderMacrosView();
     if (isStatistics) renderStatisticsView();
+    if (isShopping) renderShoppingView();
   }
 
   function renderMacrosView() {
@@ -4468,7 +4746,8 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroDateInput.value = selectedMacroDate;
     const buildStatHtml = ({ key, label, unit, step }) => {
       const value = roundMacro(totals[key]);
-      const goal = roundMacro(nutritionGoals[key] || 0);
+      const goalKey = key === "kcal" ? "kcalTarget" : `${key}_g`;
+      const goal = roundMacro(macroTargets[goalKey] || 0);
       const pct = goal > 0 ? Math.min(140, Math.round((value / goal) * 100)) : 0;
       const excess = goal > 0 && value > goal;
       if (key === "kcal") {
@@ -4503,9 +4782,10 @@ $recipeImportBtn?.addEventListener("click", () => {
           </div>
         `;
       }
+      const initial = key === "carbs" ? "C" : (key === "protein" ? "P" : "G");
       return `
         <div class="macro-stat macro-stat-${key} ${excess ? "is-excess" : ""}">
-          <div class="macro-stat-title">${label}</div>
+          <div class="macro-stat-initial">${initial}</div>
           <div class="macro-stat-value">
             <span class="macro-consumed ${excess ? "is-excess" : ""}">${value}${unit}</span>
             <span class="macro-sep">/</span>
@@ -4539,7 +4819,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         </div>
       </div>
     `;
-    const kcalGoal = Number(nutritionGoals.kcal) || 0;
+    const kcalGoal = Number(macroTargets.kcalTarget) || 0;
     if ($macroKcalSummary) {
       $macroKcalSummary.textContent = kcalGoal > 0
         ? `${Number(totals.kcal).toFixed(2)} kcal / ${Number(kcalGoal).toFixed(2)} kcal`
@@ -4688,6 +4968,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       barcode: $macroProductBarcode?.value,
       financeProductId: hasFinanceSelection ? String($macroProductFinanceSelect?.value || "") : (_macroProductDraft?.financeProductId || ""),
       linkedHabitId: hasHabitSelection ? String($macroProductHabitSelect?.value || "") : (_macroProductDraft?.linkedHabitId || ""),
+      packageAmount: Number($macroProductPackageAmount?.value) > 0 ? Number($macroProductPackageAmount.value) : null,
+      packageUnit: normalizeUnit($macroProductPackageUnit?.value || ""),
       price: Number($macroProductPrice?.value) > 0 ? Number($macroProductPrice.value) : null,
       priceBaseQty: Number($macroProductPriceBaseQty?.value) > 0 ? Number($macroProductPriceBaseQty.value) : null,
       priceBaseUnit: normalizeCostUnit($macroProductPriceBaseUnit?.value || ""),
@@ -4702,6 +4984,71 @@ $recipeImportBtn?.addEventListener("click", () => {
         kcal: Number($macroProductKcal?.value) || 0,
       },
     };
+  }
+
+  function parseLoosePositiveNumber(raw) {
+    if (raw == null) return null;
+    const clean = String(raw)
+      .trim()
+      .replace(/\s+/g, "")
+      .replace(/,/g, ".")
+      .replace(/[^\d.\-]/g, "");
+    if (!clean || clean === "." || clean === "-" || clean === "-." ) return null;
+    const normalized = clean.replace(/(\..*)\./g, "$1");
+    const num = Number(normalized);
+    if (!Number.isFinite(num) || num < 0) return null;
+    return num;
+  }
+
+  function roundAmountForInput(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return "";
+    return String(Math.round(n * 1000) / 1000);
+  }
+
+  function updateWeightDiffUnitLabels() {
+    const activeUnit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
+    const unitLabel = activeUnit === "unit" ? "ud" : activeUnit;
+    if ($macroProductWeightStartUnit) $macroProductWeightStartUnit.textContent = `(${unitLabel})`;
+    if ($macroProductWeightEndUnit) $macroProductWeightEndUnit.textContent = `(${unitLabel})`;
+  }
+
+  function syncAmountFromAutoCalculation() {
+    const start = parseLoosePositiveNumber($macroProductWeightStart?.value);
+    const end = parseLoosePositiveNumber($macroProductWeightEnd?.value);
+    const packageWeight = parseLoosePositiveNumber($macroProductPackWeight?.value);
+    const packageUnits = parseLoosePositiveNumber($macroProductPackUnits?.value);
+    const consumedUnits = parseLoosePositiveNumber($macroProductPackConsumed?.value);
+
+    if ($macroProductWeightStart) $macroProductWeightStart.classList.remove("is-invalid");
+    if ($macroProductWeightEnd) $macroProductWeightEnd.classList.remove("is-invalid");
+
+    if (!$macroProductWeightDiffHint) return;
+    $macroProductWeightDiffHint.textContent = "";
+
+    if (start != null && end != null) {
+      const diff = start - end;
+      if (!Number.isFinite(diff) || diff < 0) {
+        if ($macroProductWeightStart) $macroProductWeightStart.classList.add("is-invalid");
+        if ($macroProductWeightEnd) $macroProductWeightEnd.classList.add("is-invalid");
+        $macroProductWeightDiffHint.textContent = "Peso final no puede ser mayor que peso inicial.";
+        return;
+      }
+      if ($macroProductGrams) $macroProductGrams.value = roundAmountForInput(diff);
+      const unit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
+      $macroProductWeightDiffHint.textContent = `Cantidad deducida automáticamente: ${formatAmountWithUnit(diff, unit)}.`;
+      return;
+    }
+
+    if (packageWeight != null && packageUnits != null && consumedUnits != null && packageUnits > 0) {
+      const perUnitGrams = packageWeight / packageUnits;
+      const totalGrams = perUnitGrams * consumedUnits;
+      const targetUnit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
+      const converted = convertAmount(totalGrams, "g", targetUnit);
+      const calculatedAmount = converted == null ? totalGrams : converted;
+      if ($macroProductGrams) $macroProductGrams.value = roundAmountForInput(calculatedAmount);
+      $macroProductWeightDiffHint.textContent = `Cantidad deducida automáticamente por paquete: ${formatAmountWithUnit(calculatedAmount, targetUnit)}.`;
+    }
   }
 
   function renderMacroProductSummary() {
@@ -4814,11 +5161,26 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductProtein) $macroProductProtein.value = String(Number(product.macros?.protein) || 0);
     if ($macroProductFat) $macroProductFat.value = String(Number(product.macros?.fat) || 0);
     if ($macroProductKcal) $macroProductKcal.value = String(Number(product.macros?.kcal) || 0);
+    if ($macroProductPackageAmount) $macroProductPackageAmount.value = product.packageAmount == null ? "" : String(Number(product.packageAmount) || 0);
+    if ($macroProductPackageUnit) $macroProductPackageUnit.value = normalizeUnit(product.packageUnit || "");
     if ($macroProductPrice) $macroProductPrice.value = product.price == null ? "" : String(Number(product.price) || 0);
     if ($macroProductPriceBaseQty) $macroProductPriceBaseQty.value = product.priceBaseQty == null ? "" : String(Number(product.priceBaseQty) || 0);
     if ($macroProductPriceBaseUnit) $macroProductPriceBaseUnit.value = normalizeCostUnit(product.priceBaseUnit || "");
     if ($macroProductGrams) $macroProductGrams.value = String(Number(grams) || 0);
     if ($macroProductGramsUnit) $macroProductGramsUnit.value = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
+    if ($macroProductWeightStart) {
+      $macroProductWeightStart.value = "";
+      $macroProductWeightStart.classList.remove("is-invalid");
+    }
+    if ($macroProductWeightEnd) {
+      $macroProductWeightEnd.value = "";
+      $macroProductWeightEnd.classList.remove("is-invalid");
+    }
+    if ($macroProductWeightDiffHint) $macroProductWeightDiffHint.textContent = "";
+    if ($macroProductPackWeight) $macroProductPackWeight.value = "";
+    if ($macroProductPackUnits) $macroProductPackUnits.value = "";
+    if ($macroProductPackConsumed) $macroProductPackConsumed.value = "";
+    updateWeightDiffUnitLabels();
 
     $macroProductModalBackdrop.classList.remove("hidden");
     renderMacroProductSummary();
@@ -5277,6 +5639,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       macros: normalizeMacros(product.macros),
       financeProductId: String(product.financeProductId || "").trim(),
       linkedHabitId: String(product.linkedHabitId || "").trim(),
+      packageAmount: Number(product.packageAmount) > 0 ? Number(product.packageAmount) : null,
+      packageUnit: normalizeUnit(product.packageUnit || ""),
       price: Number(product.price) > 0 ? Number(product.price) : null,
       priceBaseQty: Number(product.priceBaseQty) > 0 ? Number(product.priceBaseQty) : null,
       priceBaseUnit: normalizeCostUnit(product.priceBaseUnit || ""),
@@ -7692,9 +8056,11 @@ $recipeImportBtn?.addEventListener("click", () => {
       renderMacrosView();
       return;
     }
-    nutritionGoals[key] = Math.max(0, nextNum);
+    if (key === "kcal") setMacroTargetsFromGrams({ kcalTarget: Math.max(0, nextNum) });
+    else setMacroTargetsFromGrams({ [`${key}_g`]: Math.max(0, nextNum) });
     persistNutrition();
     renderMacrosView();
+    renderStatisticsView();
   });
   $macroIntegrationOpen?.addEventListener("click", openMacroIntegrationModal);
   $macroIntegrationModalClose?.addEventListener("click", closeMacroIntegrationModal);
@@ -7730,6 +8096,9 @@ $recipeImportBtn?.addEventListener("click", () => {
       }
       if ($recipesPanelStatistics?.classList.contains("is-active")) {
         renderStatisticsView();
+      }
+      if ($recipesPanelShopping?.classList.contains("is-active")) {
+        renderShoppingView();
       }
     }, 120);
   }
@@ -7950,6 +8319,8 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroProductProtein,
     $macroProductFat,
     $macroProductKcal,
+    $macroProductPackageAmount,
+    $macroProductPackageUnit,
     $macroProductPrice,
     $macroProductPriceBaseQty,
     $macroProductPriceBaseUnit,
@@ -7957,6 +8328,17 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroProductGramsUnit,
   ].filter(Boolean);
   _macroProductInputs.forEach((el) => el.addEventListener("input", renderMacroProductSummary));
+  $macroProductGramsUnit?.addEventListener("change", () => {
+    updateWeightDiffUnitLabels();
+    syncAmountFromAutoCalculation();
+    renderMacroProductSummary();
+  });
+  [$macroProductWeightStart, $macroProductWeightEnd, $macroProductPackWeight, $macroProductPackUnits, $macroProductPackConsumed].filter(Boolean).forEach((el) => {
+    el.addEventListener("input", () => {
+      syncAmountFromAutoCalculation();
+      renderMacroProductSummary();
+    });
+  });
   $macroProductEditToggle?.addEventListener("click", () => {
     const next = !$macroProductModalBackdrop?.classList.contains("is-editing");
     setMacroProductEditing(next);

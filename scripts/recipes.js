@@ -366,6 +366,9 @@ if ($viewRecipes) {
   const $macroProductWeightEnd = document.getElementById("macro-product-weight-end");
   const $macroProductWeightStartUnit = document.getElementById("macro-product-weight-start-unit");
   const $macroProductWeightEndUnit = document.getElementById("macro-product-weight-end-unit");
+  const $macroProductPackWeight = document.getElementById("macro-product-pack-weight");
+  const $macroProductPackUnits = document.getElementById("macro-product-pack-units");
+  const $macroProductPackConsumed = document.getElementById("macro-product-pack-consumed");
   const $macroProductWeightDiffHint = document.getElementById("macro-product-weight-diff-hint");
   const $macroProductEditToggle = document.getElementById("macro-product-edit-toggle");
   const $macroProductScanBtn = document.getElementById("macro-product-scan-btn");
@@ -5010,30 +5013,42 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductWeightEndUnit) $macroProductWeightEndUnit.textContent = `(${unitLabel})`;
   }
 
-  function syncAmountFromWeightDifference() {
+  function syncAmountFromAutoCalculation() {
     const start = parseLoosePositiveNumber($macroProductWeightStart?.value);
     const end = parseLoosePositiveNumber($macroProductWeightEnd?.value);
+    const packageWeight = parseLoosePositiveNumber($macroProductPackWeight?.value);
+    const packageUnits = parseLoosePositiveNumber($macroProductPackUnits?.value);
+    const consumedUnits = parseLoosePositiveNumber($macroProductPackConsumed?.value);
 
     if ($macroProductWeightStart) $macroProductWeightStart.classList.remove("is-invalid");
     if ($macroProductWeightEnd) $macroProductWeightEnd.classList.remove("is-invalid");
 
     if (!$macroProductWeightDiffHint) return;
-    if (start == null || end == null) {
-      $macroProductWeightDiffHint.textContent = "";
+    $macroProductWeightDiffHint.textContent = "";
+
+    if (start != null && end != null) {
+      const diff = start - end;
+      if (!Number.isFinite(diff) || diff < 0) {
+        if ($macroProductWeightStart) $macroProductWeightStart.classList.add("is-invalid");
+        if ($macroProductWeightEnd) $macroProductWeightEnd.classList.add("is-invalid");
+        $macroProductWeightDiffHint.textContent = "Peso final no puede ser mayor que peso inicial.";
+        return;
+      }
+      if ($macroProductGrams) $macroProductGrams.value = roundAmountForInput(diff);
+      const unit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
+      $macroProductWeightDiffHint.textContent = `Cantidad deducida automáticamente: ${formatAmountWithUnit(diff, unit)}.`;
       return;
     }
 
-    const diff = start - end;
-    if (!Number.isFinite(diff) || diff < 0) {
-      if ($macroProductWeightStart) $macroProductWeightStart.classList.add("is-invalid");
-      if ($macroProductWeightEnd) $macroProductWeightEnd.classList.add("is-invalid");
-      $macroProductWeightDiffHint.textContent = "Peso final no puede ser mayor que peso inicial.";
-      return;
+    if (packageWeight != null && packageUnits != null && consumedUnits != null && packageUnits > 0) {
+      const perUnitGrams = packageWeight / packageUnits;
+      const totalGrams = perUnitGrams * consumedUnits;
+      const targetUnit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
+      const converted = convertAmount(totalGrams, "g", targetUnit);
+      const calculatedAmount = converted == null ? totalGrams : converted;
+      if ($macroProductGrams) $macroProductGrams.value = roundAmountForInput(calculatedAmount);
+      $macroProductWeightDiffHint.textContent = `Cantidad deducida automáticamente por paquete: ${formatAmountWithUnit(calculatedAmount, targetUnit)}.`;
     }
-
-    if ($macroProductGrams) $macroProductGrams.value = roundAmountForInput(diff);
-    const unit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
-    $macroProductWeightDiffHint.textContent = `Cantidad deducida automáticamente: ${formatAmountWithUnit(diff, unit)}.`;
   }
 
   function renderMacroProductSummary() {
@@ -5162,6 +5177,9 @@ $recipeImportBtn?.addEventListener("click", () => {
       $macroProductWeightEnd.classList.remove("is-invalid");
     }
     if ($macroProductWeightDiffHint) $macroProductWeightDiffHint.textContent = "";
+    if ($macroProductPackWeight) $macroProductPackWeight.value = "";
+    if ($macroProductPackUnits) $macroProductPackUnits.value = "";
+    if ($macroProductPackConsumed) $macroProductPackConsumed.value = "";
     updateWeightDiffUnitLabels();
 
     $macroProductModalBackdrop.classList.remove("hidden");
@@ -8312,12 +8330,12 @@ $recipeImportBtn?.addEventListener("click", () => {
   _macroProductInputs.forEach((el) => el.addEventListener("input", renderMacroProductSummary));
   $macroProductGramsUnit?.addEventListener("change", () => {
     updateWeightDiffUnitLabels();
-    syncAmountFromWeightDifference();
+    syncAmountFromAutoCalculation();
     renderMacroProductSummary();
   });
-  [$macroProductWeightStart, $macroProductWeightEnd].filter(Boolean).forEach((el) => {
+  [$macroProductWeightStart, $macroProductWeightEnd, $macroProductPackWeight, $macroProductPackUnits, $macroProductPackConsumed].filter(Boolean).forEach((el) => {
     el.addEventListener("input", () => {
-      syncAmountFromWeightDifference();
+      syncAmountFromAutoCalculation();
       renderMacroProductSummary();
     });
   });

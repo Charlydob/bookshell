@@ -2790,11 +2790,25 @@ Crear “<span id="gym-create-cta-text"></span>”
         <div class="macro-weight-diff-grid" aria-label="Diferencia de peso para cantidad">
           <label class="macro-field">
             <span class="macro-label">Peso inicial <span id="macro-product-weight-start-unit">(g)</span></span>
-            <input id="macro-product-weight-start" type="text" inputmode="decimal" placeholder="Ej. 108" />
+            <input id="macro-product-weight-start" type="number" step="0.01" placeholder="Ej. 108" />
           </label>
           <label class="macro-field">
             <span class="macro-label">Peso final <span id="macro-product-weight-end-unit">(g)</span></span>
-            <input id="macro-product-weight-end" type="text" inputmode="decimal" placeholder="Ej. 82" />
+            <input id="macro-product-weight-end" type="number" step="0.01" placeholder="Ej. 82" />
+          </label>
+        </div>
+        <div class="macro-package-calc-grid" aria-label="Cálculo por unidades de paquete">
+          <label class="macro-field">
+            <span class="macro-label">Peso total paquete (g)</span>
+            <input id="macro-product-pack-weight" type="number" step="0.01" min="0" placeholder="Ej. 125" />
+          </label>
+          <label class="macro-field">
+            <span class="macro-label">Unidades en el paquete</span>
+            <input id="macro-product-pack-units" type="number" step="0.01" min="0" placeholder="Ej. 10" />
+          </label>
+          <label class="macro-field">
+            <span class="macro-label">Cantidad consumida</span>
+            <input id="macro-product-pack-consumed" type="number" step="0.01" min="0" placeholder="Ej. 3" />
           </label>
         </div>
         <div class="hint" id="macro-product-weight-diff-hint"></div>

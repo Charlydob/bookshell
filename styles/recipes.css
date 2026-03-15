@@ -2455,7 +2455,13 @@
 .macro-weight-diff-grid{
   display:grid;
   grid-template-columns: 1fr 1fr;
-  gap:10px;
+  gap:8px;
+  margin-top:8px;
+}
+.macro-package-calc-grid{
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap:8px;
   margin-top:8px;
 }
 .macro-weight-diff-grid .macro-field input.is-invalid{
@@ -2469,6 +2475,9 @@
   .macro-weight-diff-grid{
     grid-template-columns: 1fr;
     gap:8px;
+  }
+  .macro-package-calc-grid{
+    grid-template-columns: 1fr;
   }
 }
 .macro-inline-qty{

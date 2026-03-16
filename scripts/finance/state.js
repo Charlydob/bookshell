@@ -27,6 +27,7 @@ export const state = {
   balanceFilterCategory: 'all',
   balanceAccountFilter: 'all',
   balanceShowAllTx: false,
+  balanceTxDetailsOpen: false,
   balanceStatsMode: 'expense',
   balanceStatsRange: 'month',
   balanceRoiMode: 'balance',

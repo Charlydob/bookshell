@@ -166,6 +166,7 @@ let scheduleCoinSpenderState = null;
 let habitDetailScheduleSelection = { types: ["Libre"], dows: [] };
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
+let habitTodayCustomGroupsOpen = {};
 
 const DEBUG_HABITS_SYNC = (() => {
   try {
@@ -5521,7 +5522,14 @@ function renderToday() {
   $habitTodayCountDone.innerHTML = "";
   $habitTodayTimePending.innerHTML = "";
   $habitTodayTimeDone.innerHTML = "";
-  if ($habitCustomGroups) $habitCustomGroups.innerHTML = "";
+  if ($habitCustomGroups) {
+    $habitCustomGroups.querySelectorAll('details.habit-custom-group[data-group-id]').forEach((details) => {
+      const id = details.dataset.groupId;
+      if (!id) return;
+      habitTodayCustomGroupsOpen[id] = details.open;
+    });
+    $habitCustomGroups.innerHTML = "";
+  }
 
   const shouldCollapseDefaults = !hasRenderedTodayOnce;
   const resetGroup = (wrap, list) => {
@@ -5610,6 +5618,7 @@ function renderToday() {
         const details = document.createElement("details");
         details.className = "habit-custom-group habit-accordion";
         details.dataset.groupId = group.id;
+        if (habitTodayCustomGroupsOpen[group.id]) details.open = true;
         const pendingCount = bucket.pending.length;
         const doneCount = bucket.done.length;
         details.innerHTML = `

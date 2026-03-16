@@ -542,8 +542,6 @@ body.finance-modal-open { overflow: hidden; }
   display:grid;
   gap:10px;
 }
-
-.fm-grid--top{ grid-template-columns: 1fr 1fr; }
 .fm-grid--meta{ grid-template-columns: 1fr; }
 
 @media (min-width: 420px){
@@ -607,7 +605,7 @@ button.finance-pill.fm-modal__close{
   display:flex;
   align-items:center;
   gap:10px;
-  padding: 12px;
+  padding: 2px;
 }
 
 .fm-details__summary::-webkit-details-marker{ display:none; }
@@ -645,7 +643,10 @@ button.finance-pill.fm-modal__close{
   padding: 12px;
 }
 .financeTab .fin-move-header{ margin-bottom: 10px; }
-.financeTab .fin-move-grid{ gap: 8px; }
+.financeTab .fin-move-grid input,
+.financeTab .fin-move-grid button{
+  height: 40px;
+}
 .financeTab .fin-move-grid--meta{ align-items: end; }
 .financeTab .fin-move-inline{
   display:flex;
@@ -654,7 +655,7 @@ button.finance-pill.fm-modal__close{
 }
 .financeTab .fin-move-input{ min-width: 0; }
 .financeTab .fin-move-footer{ padding-top: 2px; }
-.financeTab .fin-move-extras .fm-details__body{ padding-top: 10px; }
+.financeTab .fin-move-extras .fm-details__body{ padding-top: 1px; }
 
 .finance-tx-form{
 display: flex;
@@ -1013,11 +1014,13 @@ input[type="date"]::-webkit-calendar-picker-indicator{ opacity:.7; }
 }
 .fin-move-grid{
   display:grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
   gap:14px;
 }
 
 .fm-grid--top{
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: 188px 120px;
 }
 
 .fm-grid--meta{
@@ -1059,9 +1062,9 @@ input[type="date"]::-webkit-calendar-picker-indicator{ opacity:.7; }
   margin-top:6px;
 }
 .fin-move-extras{
-  margin-top:18px;
+  margin-top:0px;
   border-top:1px solid rgba(255,255,255,.05);
-  padding-top:12px;
+  padding-top:0px;
 }
 
 .fm-details__summary{
@@ -1170,7 +1173,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{ opacity:.7; }
 .fm-field--account, .fm-field--date, .fm-field--amount, .fm-field--type{
   display: flex;
   min-width: none;
-  max-width: 170px;
+  max-width: 187px;
   align-items: center;
   justify-content: center;
 
@@ -1181,7 +1184,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{ opacity:.7; }
 }
 
 summary.fm-details__summary{
-  padding: 10px;
+  padding: 3px;
 }
 #fm-tx-amount, #fm-tx-date{
   min-width: none;
@@ -2567,12 +2570,33 @@ header.food-sheet-header h3{
   line-height: 1;
   display: grid;
   place-items: center;
+  position: relative;
+  overflow: hidden;
+  transform: translateY(0);
+  transition: transform .12s ease, box-shadow .12s ease, background .12s ease, border-color .12s ease;
+}
+.financeTab #finance-modal.fin-move-modal .finTypeBtn::before{
+  content: "";
+  position: absolute;
+  inset: -60% -60%;
+  background: radial-gradient(45% 45% at 28% 18%, rgba(255,255,255,.20), rgba(255,255,255,0) 65%);
+  opacity: 0;
+  transition: opacity .12s ease;
+  pointer-events: none;
 }
 .financeTab #finance-modal.fin-move-modal .finTypeBtn.is-active{
   border-color: rgb(6, 223, 252);
-  box-shadow: 0 0 0 3px rgba(0, 255, 247, 0.07);
-  background: radial-gradient(120% 120% at 20% 10%, rgb(30, 163, 208), rgba(8, 14, 28, 0.55));
+  transform: translateY(-1px);
+  box-shadow:
+    0 12px 22px rgba(0,0,0,.42),
+    0 0 0 1px rgba(6, 223, 252, .30),
+    0 0 0 3px rgba(0, 255, 247, 0.09),
+    inset 0 1px 0 rgba(255,255,255,.16),
+    inset 0 -10px 18px rgba(0,0,0,.35);
+  background: radial-gradient(120% 120% at 20% 10%, rgba(30, 163, 208, .95), rgba(8, 14, 28, 0.55));
+  text-shadow: 0 1px 0 rgba(0,0,0,.35);
 }
+.financeTab #finance-modal.fin-move-modal .finTypeBtn.is-active::before{ opacity: 1; }
 
 .financeTab #finance-modal.fin-move-modal .finCatScreenTop{
   display: flex;
@@ -2703,4 +2727,29 @@ header.food-sheet-header h3{
   color: #fff;
   min-height: 40px;
   padding: 0 12px;
+}
+.tipo-y-cantidad{
+  display: grid;
+    grid-template-columns: 180px 108px;
+    font-size: 24px;
+}
+#fm-tx-date {
+    margin-top: 15px;
+    background: transparent;
+    border: 0px;
+    justify-content: center;
+    text-justify: center;
+    text-align: center;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.53);
+}
+#fm-tx-account{
+  background: transparent;
+  border: 0px;
+  font-size: 21px;
+  width: 231px;
+}
+
+.fm-field.fm-field--type{
+  font-size: 28px;
 }

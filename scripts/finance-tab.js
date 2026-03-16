@@ -3864,7 +3864,7 @@ function renderFinanceBalance() {
   <div class="finance-chip ${toneClass(prevSummary.net)}">Mes anterior: ${fmtSignedCurrency(prevSummary.net)}</div></article>
   
   
-<details class="financeGlassCard">
+ <details class="financeGlassCard" id="finance-balance-tx-details" data-balance-tx-details ${state.balanceTxDetailsOpen ? 'open' : ''}>
 
   <summary class="financeAccordion__summary">
     <span>Transacciones</span>
@@ -4431,7 +4431,22 @@ function renderModal() {
       <div class="fm-grid fm-grid--top fin-move-grid">
 
 
-        <div class="fm-field fm-field--type">
+        
+      <div class="fm-field fm-field--account" data-tx-account-single>
+        <select id="fm-tx-account" class="fm-control fm-control--account fm-control--select" name="accountId" aria-label="Cuenta">
+        <option value="">Cuenta</option>${accountOptions}</select>
+      </div>
+
+      
+
+      <div class="fm-field fm-field--date">
+        <input id="fm-tx-date" class="fm-control fm-control--date" name="dateISO" type="date" value="${defaultDate}" aria-label="Fecha"/>
+      </div>
+        
+
+      </div>
+      <div class="tipo-y-cantidad">
+<div class="fm-field fm-field--type">
           <div class="finTypeChoices" role="group" aria-label="Tipo de movimiento">
             <button type="button" class="finTypeBtn ${defaultType === 'income' ? 'is-active' : ''}" data-tx-type-pick="income" aria-label="Ingreso">🤑</button>
             <button type="button" class="finTypeBtn ${defaultType === 'expense' ? 'is-active' : ''}" data-tx-type-pick="expense" aria-label="Gasto">💀</button>
@@ -4444,22 +4459,9 @@ function renderModal() {
           </select>
         </div>
 
-      <div class="fm-field fm-field--account" data-tx-account-single>
-        <select id="fm-tx-account" class="fm-control fm-control--account fm-control--select" name="accountId" aria-label="Cuenta">
-        <option value="">Cuenta</option>${accountOptions}</select>
-      </div>
-
-      
-
-      <div class="fm-field fm-field--date">
-        <input id="fm-tx-date" class="fm-control fm-control--date" name="dateISO" type="date" value="${defaultDate}" aria-label="Fecha"/>
-      </div>
-        
       <div class="fm-field fm-field--amount">
         <input id="fm-tx-amount" class="fm-control fm-control--amount" required name="amount" type="number" step="0.01" placeholder="Cantidad (€)" value="${escapeHtml(defaultAmount)}" aria-label="Cantidad"/>
-      </div>
-
-        
+        </div>
       <div class="fm-field fm-field--account" data-tx-account-from hidden>
         <label class="fm-label-cuenta-origen" for="fm-tx-account-from">Cuenta origen</label>
         
@@ -5543,6 +5545,10 @@ function restoreFinanceUiState(snapshot) {
 
 function triggerRender(options = {}) {
   const preserveUi = options.preserveUi !== false;
+  const txDetails = document.getElementById('finance-balance-tx-details');
+  if (txDetails && txDetails.tagName === 'DETAILS') {
+    state.balanceTxDetailsOpen = !!txDetails.open;
+  }
   const uiSnapshot = preserveUi ? captureFinanceUiState() : null;
   render().then(() => {
     if (preserveUi) restoreFinanceUiState(uiSnapshot);
@@ -6706,6 +6712,9 @@ view.addEventListener('focusout', async (event) => {
   view.addEventListener('toggle', (event) => {
     if (event.target.matches('[data-finance-stats-legend-details]')) {
       state.balanceStatsLegendExpanded = !!event.target.open;
+    }
+    if (event.target.matches('[data-balance-tx-details]')) {
+      state.balanceTxDetailsOpen = !!event.target.open;
     }
   });
 

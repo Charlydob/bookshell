@@ -4499,3 +4499,6 @@ align-items: center;
 .habits-views{
   margin-bottom: 500px;
 }
+#habit-today-search-input.habit-search-input {
+    min-width: 270px;
+}

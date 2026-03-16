@@ -5104,6 +5104,53 @@ $recipeImportBtn?.addEventListener("click", () => {
     return String(Math.round(n * 1000) / 1000);
   }
 
+  const MACRO_WEIGHT_DIFF_PERSIST_KEY = "bookshell_macro_weight_diff_start_v1";
+
+  function readMacroWeightDiffPersist() {
+    try {
+      const raw = localStorage.getItem(MACRO_WEIGHT_DIFF_PERSIST_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function writeMacroWeightDiffPersist(next) {
+    try {
+      localStorage.setItem(MACRO_WEIGHT_DIFF_PERSIST_KEY, JSON.stringify(next || {}));
+    } catch (_) {}
+  }
+
+  function getPersistedWeightStart(productId) {
+    const id = String(productId || "").trim();
+    if (!id) return null;
+    const map = readMacroWeightDiffPersist();
+    const entry = map?.[id];
+    if (!entry || typeof entry !== "object") return null;
+    const start = Number(entry.start);
+    if (!(Number.isFinite(start) && start >= 0)) return null;
+    return { start, unit: String(entry.unit || ""), updatedAt: Number(entry.updatedAt) || 0 };
+  }
+
+  function setPersistedWeightStart(productId, start, unit) {
+    const id = String(productId || "").trim();
+    const value = Number(start);
+    if (!id || !(Number.isFinite(value) && value >= 0)) return;
+    const map = readMacroWeightDiffPersist();
+    map[id] = { start: value, unit: String(unit || ""), updatedAt: Date.now() };
+    writeMacroWeightDiffPersist(map);
+  }
+
+  function clearPersistedWeightStart(productId) {
+    const id = String(productId || "").trim();
+    if (!id) return;
+    const map = readMacroWeightDiffPersist();
+    if (!map?.[id]) return;
+    delete map[id];
+    writeMacroWeightDiffPersist(map);
+  }
+
   function updateWeightDiffUnitLabels() {
     const activeUnit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
     const unitLabel = activeUnit === "unit" ? "ud" : activeUnit;
@@ -5278,7 +5325,8 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductGrams) $macroProductGrams.value = String(Number(grams) || 0);
     if ($macroProductGramsUnit) $macroProductGramsUnit.value = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
     if ($macroProductWeightStart) {
-      $macroProductWeightStart.value = "";
+      const persisted = getPersistedWeightStart(product.id);
+      $macroProductWeightStart.value = persisted ? roundAmountForInput(persisted.start) : "";
       $macroProductWeightStart.classList.remove("is-invalid");
     }
     if ($macroProductWeightEnd) {
@@ -8407,6 +8455,26 @@ $recipeImportBtn?.addEventListener("click", () => {
       renderMacroProductSummary();
     });
   });
+
+  function syncPersistedMacroWeightDiffStart() {
+    const productId = String(_macroProductDraft?.id || "").trim();
+    if (!productId) return;
+    const end = parseLoosePositiveNumber($macroProductWeightEnd?.value);
+    if (end != null) {
+      clearPersistedWeightStart(productId);
+      return;
+    }
+    const start = parseLoosePositiveNumber($macroProductWeightStart?.value);
+    if (start == null) {
+      clearPersistedWeightStart(productId);
+      return;
+    }
+    const unit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
+    setPersistedWeightStart(productId, start, unit);
+  }
+
+  $macroProductWeightStart?.addEventListener("input", syncPersistedMacroWeightDiffStart);
+  $macroProductWeightEnd?.addEventListener("input", syncPersistedMacroWeightDiffStart);
   $macroProductEditToggle?.addEventListener("click", () => {
     const next = !$macroProductModalBackdrop?.classList.contains("is-editing");
     setMacroProductEditing(next);

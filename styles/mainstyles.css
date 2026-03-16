@@ -287,6 +287,16 @@ body.has-open-modal {
   overflow: hidden;
 }
 
+/* Cuando hay un modal abierto, bloquea el scroll de las vistas (el scroll real está en `.view`) */
+body.has-open-modal .view {
+  overflow: hidden !important;
+}
+
+/* Evita interacciones con la nav inferior mientras hay modal */
+body.has-open-modal .bottom-nav {
+  pointer-events: none;
+}
+
 .modal {
   width: min(560px, 100%);
   max-height: calc(100dvh - 32px - env(safe-area-inset-bottom));

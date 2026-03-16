@@ -930,10 +930,51 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return Math.round((Number(value) || 0) * 10) / 10;
   }
 
+  function formatNumberEs(value, { minimumFractionDigits = 0, maximumFractionDigits = 1 } = {}) {
+    const safe = Number(value);
+    if (!Number.isFinite(safe)) return "—";
+    try {
+      return new Intl.NumberFormat("es-ES", { minimumFractionDigits, maximumFractionDigits }).format(safe);
+    } catch (_) {
+      const fixed = safe.toFixed(Math.max(0, Math.min(10, Number(maximumFractionDigits) || 0)));
+      return String(fixed).replace(".", ",");
+    }
+  }
+
   function formatCurrency(value) {
     const safe = Number(value);
     if (!Number.isFinite(safe)) return "—";
-    return `${safe.toFixed(2)} €`;
+    try {
+      return new Intl.NumberFormat("es-ES", {
+        style: "currency",
+        currency: "EUR",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(safe);
+    } catch (_) {
+      return `${safe.toFixed(2)} €`;
+    }
+  }
+
+  function formatCompactWithUnit(value, { unit = "", threshold = 10000, decimals = 1, smallMaxDecimals = 1 } = {}) {
+    const safe = Number(value);
+    if (!Number.isFinite(safe)) return "—";
+    const abs = Math.abs(safe);
+    let scaled = safe;
+    let suffix = "";
+    let maxDecimals = smallMaxDecimals;
+    if (abs >= 1_000_000) {
+      scaled = safe / 1_000_000;
+      suffix = "M";
+      maxDecimals = decimals;
+    } else if (abs >= threshold) {
+      scaled = safe / 1_000;
+      suffix = "K";
+      maxDecimals = decimals;
+    }
+    const num = formatNumberEs(scaled, { minimumFractionDigits: 0, maximumFractionDigits: maxDecimals });
+    const base = `${num}${suffix}`;
+    return unit ? `${base} ${unit}` : base;
   }
 
   function sortByVisibleNameEs(list = [], getLabel = (row) => row?.name || "") {
@@ -1561,14 +1602,16 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       return { cost: Number(entry.computedCost) * servingsCount, missing: 0 };
     }
     if (entry.type === "product") {
-      const p = nutritionProducts.find((x) => x.id === entry.refId);
+      const productId = String(entry.refId || entry.productId || "").trim();
+      const p = nutritionProducts.find((x) => x.id === productId);
       const amount = Math.max(0, Number(entry.amount) || Number(entry.grams) || 0);
       const unit = normalizeUnit(entry.unit || "g") || "g";
       const cost = calculateProductConsumedCost(p, amount, unit);
       return { cost: cost == null ? null : Number(cost) * servingsCount, missing: cost == null ? 1 : 0 };
     }
     if (entry.type === "recipe") {
-      const recipe = recipes.find((x) => x.id === entry.refId);
+      const recipeId = String(entry.refId || entry.recipeSnapshot?.id || "").trim();
+      const recipe = recipes.find((x) => x.id === recipeId);
       const servings = Math.max(0, Number(entry.servings) || 0);
       const rc = calculateRecipeCost(recipe, servings);
       return { cost: rc.covered ? (Number(rc.total) || 0) * servingsCount : null, missing: rc.missing || 0 };
@@ -2144,19 +2187,21 @@ notes.innerHTML = `<strong>Notas</strong><br>${linkifyNotesHtml(recipe.notes)}`;
   function renderStats() {
     const totalRecipes = recipes.length;
     const totalProducts = nutritionProducts.length;
-    const summary = summarizeStatistics();
+    const summary = summarizeStatistics("all");
     const totalCost = Number(summary?.totalCost) || 0;
     const totalKcal = Number(summary?.totals?.kcal) || 0;
 
     if ($statTotal) $statTotal.textContent = String(totalRecipes);
     if ($statProducts) $statProducts.textContent = String(totalProducts);
     if ($statCost) {
-      $statCost.textContent = formatCurrency(totalCost);
-      $statCost.title = `Gasto total (segun la estadistica): ${formatCurrency(totalCost)}.`;
+      $statCost.textContent = Math.abs(totalCost) >= 10000
+        ? formatCompactWithUnit(totalCost, { unit: "€", threshold: 10000, decimals: 1, smallMaxDecimals: 0 })
+        : formatCurrency(totalCost);
+      $statCost.title = `Gasto total (histórico): ${formatCurrency(totalCost)}.`;
     }
     if ($statKcal) {
-      $statKcal.textContent = String(roundMacro(totalKcal));
-      $statKcal.title = `Kcal ingeridas (segun la estadistica): ${roundMacro(totalKcal)} kcal.`;
+      $statKcal.textContent = formatCompactWithUnit(totalKcal, { unit: "kcal", threshold: 10000, decimals: 1, smallMaxDecimals: 1 });
+      $statKcal.title = `Kcal ingeridas (histórico): ${formatNumberEs(totalKcal, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} kcal.`;
     }
 
     const lauraChecksTotal = recipes.filter((r) => r.laura).length;
@@ -3833,8 +3878,8 @@ $recipeImportBtn?.addEventListener("click", () => {
             entryId: ensureMacroEntryId(entry),
             type: entry?.type === "recipe" ? "recipe" : "product",
             mealSlot: meal,
-            refId: entry?.refId || "",
-            productId: String(entry?.productId || entry?.refId || "").trim(),
+            refId: String(entry?.refId || entry?.productId || entry?.recipeId || "").trim(),
+            productId: String(entry?.productId || entry?.refId || entry?.recipeId || "").trim(),
             productName: String(entry?.productName || entry?.nameSnapshot || "").trim(),
             nameSnapshot: String(entry?.nameSnapshot || "").trim(),
             grams: Math.max(0, Number(entry?.grams) || 0),
@@ -3843,10 +3888,10 @@ $recipeImportBtn?.addEventListener("click", () => {
             amountUnit: normalizeUnit(entry?.amountUnit || entry?.unit || "g") || "g",
             servings: Math.max(0, Number(entry?.servings) || 0),
             servingsCount: normalizeEntryServingsCount(entry?.servingsCount),
-            macrosSnapshot: normalizeMacros(entry?.macrosSnapshot || {}),
+            macrosSnapshot: normalizeMacros(entry?.macrosSnapshot || entry?.macros || entry?.macroSnapshot || {}),
             nutritionSnapshot: entry?.nutritionSnapshot && typeof entry.nutritionSnapshot === "object"
               ? {
-                productId: String(entry.nutritionSnapshot.productId || entry?.refId || "").trim(),
+                productId: String(entry.nutritionSnapshot.productId || entry?.refId || entry?.productId || "").trim(),
                 servingBaseQty: Math.max(1, Number(entry.nutritionSnapshot.servingBaseQty) || 100),
                 servingBaseUnit: normalizeUnit(entry.nutritionSnapshot.servingBaseUnit || "g") || "g",
                 macrosPerBase: normalizeMacros(entry.nutritionSnapshot.macrosPerBase || {}),
@@ -3854,7 +3899,7 @@ $recipeImportBtn?.addEventListener("click", () => {
               : null,
             pricingSnapshot: entry?.pricingSnapshot && typeof entry.pricingSnapshot === "object"
               ? {
-                productId: String(entry.pricingSnapshot.productId || entry?.refId || "").trim(),
+                productId: String(entry.pricingSnapshot.productId || entry?.refId || entry?.productId || "").trim(),
                 linkedFinanceProductId: String(entry.pricingSnapshot.linkedFinanceProductId || "").trim(),
                 priceSource: entry.pricingSnapshot.priceSource || null,
                 price: Number(entry.pricingSnapshot.price) > 0 ? Number(entry.pricingSnapshot.price) : null,
@@ -4282,8 +4327,14 @@ $recipeImportBtn?.addEventListener("click", () => {
     return out;
   }
 
+  function listAllLoggedDates() {
+    const isoDateRe = /^\d{4}-\d{2}-\d{2}$/;
+    return Object.keys(dailyLogsByDate || {}).filter((key) => isoDateRe.test(key)).sort();
+  }
+
   function summarizeStatistics(period = macroStatsState.period, anchorIso = macroStatsState.anchorDate) {
-    const dates = listDatesInPeriod(period, anchorIso);
+    const dates = period === "all" ? listAllLoggedDates() : listDatesInPeriod(period, anchorIso);
+    if (!dates.length) dates.push(anchorIso);
     const byRecipe = new Map();
     const byProduct = new Map();
     const daySeries = [];

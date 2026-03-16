@@ -124,6 +124,58 @@ let currentViewId = null;
 const viewScrollTop = new Map();
 const initOnceDone = new Set();
 
+let _globalModalLockInstalled = false;
+function installGlobalModalScrollLock() {
+  if (_globalModalLockInstalled) return;
+  _globalModalLockInstalled = true;
+
+  const isElementVisible = (el) => {
+    if (!el) return false;
+    if (el.classList?.contains("hidden")) return false;
+    const ariaHidden = el.getAttribute?.("aria-hidden");
+    if (ariaHidden === "true") return false;
+    // getClientRects covers display:none and 0-sized in most cases
+    try { return el.getClientRects().length > 0; } catch (_) { return true; }
+  };
+
+  const hasAnyOpenModal = () => {
+    if (document.body.classList.contains("finance-modal-open")) return true;
+    if (document.body.classList.contains("is-session-detail-open")) return true;
+    if (document.querySelector(".modal-backdrop:not(.hidden)")) return true;
+    const ariaModals = document.querySelectorAll('[aria-modal="true"]');
+    for (const el of ariaModals) {
+      if (isElementVisible(el)) return true;
+    }
+    return false;
+  };
+
+  const sync = () => {
+    document.body.classList.toggle("has-open-modal", hasAnyOpenModal());
+  };
+
+  let scheduled = false;
+  const scheduleSync = () => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      sync();
+    });
+  };
+
+  // Initial sync (covers any HTML modals already visible)
+  scheduleSync();
+
+  // React to DOM mutations (most modals toggle `.hidden`, `aria-hidden`, or are injected)
+  const mo = new MutationObserver(scheduleSync);
+  mo.observe(document.body, { subtree: true, childList: true, attributes: true });
+
+  // React to checkbox-controlled modals (e.g. media/world sheets) and user interactions
+  document.addEventListener("change", scheduleSync, true);
+  document.addEventListener("click", scheduleSync, true);
+  document.addEventListener("keydown", scheduleSync, true);
+}
+
 
 function isValidView(viewId) {
   return !!(viewId && document.getElementById(viewId) && VIEW_MODULE[viewId]);
@@ -279,6 +331,7 @@ function loadStyleOnce(href) {
 
 (function boot() {
   bindNav();
+  installGlobalModalScrollLock();
 
 
   onAuthStateChanged(auth, async (user) => {

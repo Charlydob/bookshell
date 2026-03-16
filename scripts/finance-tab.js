@@ -3517,6 +3517,59 @@ function categoriesList() {
   const fromTx = [...new Set(balanceTxList().map((tx) => tx.category).filter((name) => name && String(name).toLowerCase() !== 'transfer'))];
   return [...new Set([...dynamic, ...fromTx])].sort((a, b) => a.localeCompare(b, 'es'));
 }
+
+const CATEGORY_EMOJI_FALLBACK = {
+  comida: '🍔',
+  supermercados: '🧺',
+  super: '🧺',
+  casa: '🏠',
+  alquiler: '🏠',
+  luz: '💡',
+  agua: '🚰',
+  gas: '🔥',
+  internet: '📶',
+  telefono: '📱',
+  transporte: '🚗',
+  gasolina: '⛽',
+  salud: '🩺',
+  farmacia: '💊',
+  ocio: '🎮',
+  regalos: '🎁',
+  ropa: '👕',
+  suscripciones: '🔁',
+  viaje: '✈️',
+  formacion: '📚',
+  impuestos: '🧾',
+  otros: '🧩',
+};
+
+function normalizeTxWizardStep(value) {
+  const v = String(value || '').trim().toLowerCase();
+  if (v === 'base' || v === 'category' || v === 'food') return v;
+  return 'base';
+}
+
+function isFoodCategoryName(name) {
+  const v = String(name || '').trim().toLowerCase();
+  return v === 'comida' || v.includes('comida');
+}
+
+function categoryEmojiForName(name) {
+  const key = String(name || '').trim();
+  if (!key) return '';
+  const direct = state.balance.categories?.[key]?.emoji;
+  if (direct) return String(direct);
+  const lower = key.toLowerCase();
+  return CATEGORY_EMOJI_FALLBACK[lower] || '';
+}
+
+function categoriesMetaList() {
+  return categoriesList().map((name) => ({
+    name,
+    emoji: categoryEmojiForName(name),
+    hasCustomEmoji: Boolean(state.balance.categories?.[name]?.emoji),
+  }));
+}
 function getBudgetItems(monthKey = getSelectedBalanceMonthKey()) {
   const monthBudgets = state.balance.budgets?.[monthKey] || {};
   return Object.entries(monthBudgets).map(([id, payload]) => {
@@ -3784,7 +3837,7 @@ function renderFinanceBalance() {
   });
   const roiTotals = roiData.totals;
 
-  return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2><button class="finance-pill" data-open-modal="tx">+ Añadir</button></header>
+  return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2></header>
   <article class="financeGlassCard">
   <div class="finance-row">
   <button class="boton-calendario" data-balance-month="-1">◀</button>
@@ -4281,6 +4334,39 @@ function renderModal() {
 </section>`;
     return;
   }
+  if (state.modal.type === 'categories') {
+    const rows = categoriesMetaList();
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal fm-modal" role="dialog" aria-modal="true" tabindex="-1" data-category-editor-modal>
+      <header class="fm-modal__header">
+        <h3 class="fm-modal__title">Categorías</h3>
+        <button class="finance-pill fm-modal__close" type="button" data-category-editor-back>Volver</button>
+      </header>
+      <form class="fm-form finCatForm" data-category-editor-form>
+        <div class="finCatForm__hint">Asigna un emoji a cada categoría (se usa en el selector rápido).</div>
+        <div class="finCatGrid">
+          ${rows.length ? rows.map((row) => `
+            <div class="finCatRow" data-category-row="${escapeHtml(row.name)}">
+              <div class="finCatEmojiBox">${escapeHtml(row.emoji || '⬜')}</div>
+              <div class="finCatName">${escapeHtml(row.name)}</div>
+              <input class="finCatEmojiInput" type="text" inputmode="text" maxlength="4" placeholder="😀" value="${escapeHtml(row.emoji || '')}" data-category-emoji="${escapeHtml(row.name)}" aria-label="Emoji para ${escapeHtml(row.name)}" />
+              <button type="button" class="finance-pill finance-pill--mini finCatDelete" data-category-delete="${escapeHtml(row.name)}" aria-label="Eliminar ${escapeHtml(row.name)}">🗑️</button>
+            </div>
+          `).join('') : '<p class="finance-empty">Sin categorías.</p>'}
+        </div>
+
+        <div class="finCatAdd">
+          <input class="finCatAdd__name" type="text" placeholder="Nueva categoría" autocomplete="off" data-category-add-name />
+          <input class="finCatAdd__emoji" type="text" placeholder="Emoji" autocomplete="off" maxlength="4" data-category-add-emoji />
+          <button type="button" class="finance-pill finCatAdd__btn" data-category-add>+ Añadir</button>
+        </div>
+
+        <div class="fm-actions">
+          <button class="finance-pill fm-action fm-action--submit" type="submit">Guardar</button>
+        </div>
+      </form>
+    </div>`;
+    return;
+  }
   if (state.modal.type === 'tx') {
   const accountsById = Object.fromEntries(accounts.map((a) => [a.id, a]));
   const txEdit = state.modal.txId ? balanceTxList().find((row) => row.id === state.modal.txId) : null;
@@ -4321,12 +4407,21 @@ function renderModal() {
   const rawPreviewHead = rawText.slice(0, 80);
   const rawPreviewTail = rawText.length > 80 ? rawText.slice(-80) : '';
   const ticketCardPreview = resolveTicketCardAccountPreview(ticketPreview, accounts);
+  const selectedIsFood = isFoodCategoryName(defaultCategory);
+  const wizardStepDraft = normalizeTxWizardStep(state.balanceFormState.txWizardStep);
+  const wizardStep = wizardStepDraft === 'food' && !selectedIsFood ? 'category' : wizardStepDraft;
+  const stepLabel = wizardStep === 'base' ? '1/3' : wizardStep === 'category' ? '2/3' : '3/3';
+  const categoriesMeta = categoriesMetaList();
   backdrop.innerHTML = 
   
-  `<div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1">
+  `<div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1" data-tx-step="${escapeHtml(wizardStep)}" data-tx-food="${selectedIsFood ? '1' : '0'}">
     <header class="fm-modal__header fin-move-header">
+      <div class="finWizardHeader">
+        <button type="button" class="finance-pill finance-pill--mini finWizardBack" data-tx-step-back ${wizardStep === 'base' ? 'hidden' : ''} aria-label="Volver">←</button>
       <h3 class="fm-modal__title fin-move-title">${txEdit ? 'Editar movimiento' : 'Añadir movimiento'}</h3>
       
+        <div class="finWizardStep">${escapeHtml(stepLabel)}</div>
+      </div>
       <button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button>
     </header>
 
@@ -4337,33 +4432,31 @@ function renderModal() {
 
 
         <div class="fm-field fm-field--type">
-          <label class="fm-label-tipo" for="fm-tx-type">Tipo</label>
-        
-          <select id="fm-tx-type" name="type" class="finance-pill fm-control fm-control--select" data-tx-type>
-        
-         <option value="expense" ${defaultType === 'expense' ? 'selected' : ''}>Gasto</option>
-          <option value="income" ${defaultType === 'income' ? 'selected' : ''}>Ingreso</option>
-          <option value="transfer" ${defaultType === 'transfer' ? 'selected' : ''}>Transferencia</option>
+          <div class="finTypeChoices" role="group" aria-label="Tipo de movimiento">
+            <button type="button" class="finTypeBtn ${defaultType === 'income' ? 'is-active' : ''}" data-tx-type-pick="income" aria-label="Ingreso">🤑</button>
+            <button type="button" class="finTypeBtn ${defaultType === 'expense' ? 'is-active' : ''}" data-tx-type-pick="expense" aria-label="Gasto">💀</button>
+            <button type="button" class="finTypeBtn ${defaultType === 'transfer' ? 'is-active' : ''}" data-tx-type-pick="transfer" aria-label="Transferencia">🔁</button>
+          </div>
+          <select id="fm-tx-type" name="type" class="finance-pill fm-control fm-control--select" data-tx-type hidden aria-hidden="true">
+            <option value="expense" ${defaultType === 'expense' ? 'selected' : ''}>Gasto</option>
+            <option value="income" ${defaultType === 'income' ? 'selected' : ''}>Ingreso</option>
+            <option value="transfer" ${defaultType === 'transfer' ? 'selected' : ''}>Transferencia</option>
           </select>
         </div>
 
       <div class="fm-field fm-field--account" data-tx-account-single>
-        <label class="fm-label-cuenta" for="fm-tx-account">Cuenta</label>
-        
-        <select id="fm-tx-account" class="fm-control fm-control--account fm-control--select" name="accountId">
-        <option value="">Selecciona cuenta</option>${accountOptions}</select>
+        <select id="fm-tx-account" class="fm-control fm-control--account fm-control--select" name="accountId" aria-label="Cuenta">
+        <option value="">Cuenta</option>${accountOptions}</select>
       </div>
 
       
 
       <div class="fm-field fm-field--date">
-        <label class="fm-label-fecha" for="fm-tx-date">Fecha</label>
-        <input id="fm-tx-date" class="fm-control fm-control--date" name="dateISO" type="date" value="${defaultDate}"/>
+        <input id="fm-tx-date" class="fm-control fm-control--date" name="dateISO" type="date" value="${defaultDate}" aria-label="Fecha"/>
       </div>
         
       <div class="fm-field fm-field--amount">
-        <label class="fm-label-cantidad" for="fm-tx-amount">Cantidad</label>
-        <input id="fm-tx-amount" class="fm-control fm-control--amount" required name="amount" type="number" step="0.01" placeholder="Cantidad €" value="${escapeHtml(defaultAmount)}"/>
+        <input id="fm-tx-amount" class="fm-control fm-control--amount" required name="amount" type="number" step="0.01" placeholder="Cantidad (€)" value="${escapeHtml(defaultAmount)}" aria-label="Cantidad"/>
       </div>
 
         
@@ -4413,20 +4506,27 @@ function renderModal() {
         </div>
 
         <div class="fm-field fm-field--category fin-move-field" data-category-block>
-        <label class="fm-label-categoria" for="fm-tx-category">Categoría</label>
+          <div class="finCatScreenTop">
+            <div class="finCatScreenTitle">Categoría</div>
+            <button type="button" class="finance-pill finance-pill--mini" data-tx-edit-categories>Editar</button>
+          </div>
 
-        <select id="fm-tx-category" class="fm-control fm-control--category fm-control--select fin-move-select" name="category">
-        <option value="">Seleccionar</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
-        
-        <div class="fin-move-inline"><input class="fm-control fin-move-input" type="text" placeholder="Nueva categoría" data-category-new />
-        
-        <button type="button" class="finance-anadir-categoria" data-category-create>+</button></div></div>
+          <select id="fm-tx-category" class="fm-control fm-control--category fm-control--select fin-move-select" name="category" hidden aria-hidden="true">
+            <option value="">Seleccionar</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+          </select>
+
+          <div class="finCatPicker" role="listbox" aria-label="Selecciona categoría">
+            ${categoriesMeta.map((row) => `
+              <button type="button" class="finCatTile ${String(defaultCategory || '').toLowerCase() === String(row.name || '').toLowerCase() ? 'is-selected' : ''}" data-tx-category-pick="${escapeHtml(row.name)}" aria-label="${escapeHtml(row.name)}">
+                <span class="finCatTile__emoji" aria-hidden="true">${escapeHtml(row.emoji || '⬜')}</span>
+              </button>
+            `).join('')}
+          </div>
+        </div>
         
         <div class="fm-field fm-field--note">
-        <label class="fm-label-nota" for="fm-tx-note">Nota</label>
-        <input id="fm-tx-note" class="fm-control fm-control--note" name="note" type="text" placeholder="Notas" value="${escapeHtml(defaultNote)}"/><
-        
-        /div>
+          <input id="fm-tx-note" class="fm-control fm-control--note" name="note" type="text" placeholder="Nota (opcional)" value="${escapeHtml(defaultNote)}" aria-label="Nota"/>
+        </div>
       </div>
 
       <div class="fm-field fin-move-field" data-personal-ratio-block>
@@ -4528,13 +4628,16 @@ function renderModal() {
   </div>
 
 </details>
-      <div class="fm-actions fin-move-footer">
-      <button class="finance-pill fm-action fm-action--submit" type="submit">${txEdit ? 'Guardar cambios' : 'Añadir movimiento'}</button></div>
+      <div class="fm-actions fin-move-footer finWizardFooter">
+        <button class="finance-pill finWizardNext" type="button" data-tx-step-next>Continuar</button>
+        <button class="finance-pill fm-action fm-action--submit finWizardSubmit" type="submit">${txEdit ? 'Guardar cambios' : 'Añadir movimiento'}</button>
+      </div>
     </form>
   </div>`;
 
   const form = backdrop.querySelector('[data-balance-form]');
   if (form) {
+  ensureTxAdvancedDetails(form);
   const typeSel = form.querySelector('[data-tx-type]');
   const catSel = form.querySelector('select[name="category"]');
 
@@ -5083,6 +5186,35 @@ function maybeToggleCategoryCreate(form) {
   btn.disabled = !value || exists;
   btn.textContent = value ? `+ añadir "${value}"` : '+';
 }
+
+function ensureTxAdvancedDetails(form) {
+  if (!form || form.querySelector('[data-tx-advanced]')) return;
+
+  const linkedField = form.querySelector('#fm-tx-linked-habit')?.closest('.fm-field') || null;
+  const allocationField = form.querySelector('[data-allocation-block]') || null;
+  const personalRatioField = form.querySelector('[data-personal-ratio-block]') || null;
+  const recurringDetails = form.querySelector('details.finFixed__wrap') || null;
+  const nodes = [linkedField, allocationField, personalRatioField, recurringDetails].filter(Boolean);
+  if (!nodes.length) return;
+
+  const details = document.createElement('details');
+  details.className = 'fm-details finWizardAdvanced';
+  details.dataset.txAdvanced = '1';
+  details.innerHTML = `
+    <summary class="fm-details__summary">
+      <span class="fm-details__title">Ajustes avanzados</span>
+      <span class="fm-details__hint">Opcional</span>
+      <span class="fm-details__chev" aria-hidden="true">⌄</span>
+    </summary>
+    <div class="fm-details__body"></div>
+  `;
+  const body = details.querySelector('.fm-details__body');
+  nodes.forEach((node) => body.appendChild(node));
+
+  const importDetails = form.querySelector('details.fin-move-extras:not([data-section="food-extras"])');
+  if (importDetails) importDetails.insertAdjacentElement('beforebegin', details);
+  else form.appendChild(details);
+}
 async function toggleFoodExtras(form) {
   const catSel = form.querySelector('select[name="category"]');
   const foodBox = form.querySelector('[data-section="food-extras"]');
@@ -5103,8 +5235,9 @@ async function toggleFoodExtras(form) {
 }
 function persistBalanceFormState(form) {
   if (!form) return;
+  const prev = state.balanceFormState || {};
   const fd = new FormData(form);
-  state.balanceFormState = {
+  const next = {
     type: String(fd.get('type') || ''),
     amount: String(fd.get('amount') || ''),
     dateISO: String(fd.get('dateISO') || ''),
@@ -5129,6 +5262,14 @@ function persistBalanceFormState(form) {
     foodId: String(fd.get('foodId') || ''),
     foodExtrasOpen: !!form.querySelector('[data-section="food-extras"]')?.open,
     foodResultsScrollTop: Number(form.querySelector('[data-food-item-results]')?.scrollTop || 0)
+  };
+
+  // Preserva campos del wizard/import que no existen como inputs del form
+  state.balanceFormState = {
+    ...prev,
+    ...next,
+    txWizardStep: prev.txWizardStep || 'base',
+    importedFoodItems: prev.importedFoodItems,
   };
 }
 
@@ -5411,6 +5552,24 @@ function triggerRender(options = {}) {
   });
 }
 
+function ensureFinanceAddTxFab() {
+  const view = document.getElementById('view-finance');
+  if (!view) return null;
+  let fab = document.getElementById('anadir-gastos');
+  if (!fab) {
+    fab = document.createElement('button');
+    fab.id = 'anadir-gastos';
+    view.appendChild(fab);
+  }
+  fab.type = 'button';
+  fab.className = 'finance-fab';
+  fab.dataset.openModal = 'tx';
+  fab.textContent = '💲';
+  fab.title = 'Añadir gasto';
+  fab.setAttribute('aria-label', 'Añadir gasto');
+  return fab;
+}
+
 async function render() {
   try {
     const host = ensureFinanceHost($opt, $req);
@@ -5439,6 +5598,7 @@ async function render() {
     }
     renderModal();
     renderToast();
+    ensureFinanceAddTxFab();
   } catch (err) {
     console.error('[finance] render crashed', err);
     showFinanceBootError($opt, err);
@@ -5760,6 +5920,136 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       }
       return;
     }
+
+    const txTypePick = target.closest('[data-tx-type-pick]')?.dataset.txTypePick;
+    if (txTypePick) {
+      const form = document.querySelector('#finance-modal [data-balance-form]');
+      const sel = form?.querySelector('[data-tx-type]');
+      if (sel) {
+        sel.value = String(txTypePick);
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      const buttons = [...document.querySelectorAll('#finance-modal [data-tx-type-pick]')];
+      buttons.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.txTypePick === String(txTypePick)));
+      if (form) persistBalanceFormState(form);
+      return;
+    }
+
+    if (target.closest('[data-tx-step-back]')) {
+      const form = document.querySelector('#finance-modal [data-balance-form]');
+      if (form) persistBalanceFormState(form);
+      const step = normalizeTxWizardStep(state.balanceFormState.txWizardStep);
+      state.balanceFormState = {
+        ...state.balanceFormState,
+        txWizardStep: step === 'food' ? 'category' : step === 'category' ? 'base' : 'base'
+      };
+      triggerRender();
+      return;
+    }
+
+    if (target.closest('[data-tx-step-next]')) {
+      const formEl = document.querySelector('#finance-modal [data-balance-form]');
+      if (!formEl) return;
+      persistBalanceFormState(formEl);
+      const fd = new FormData(formEl);
+      const type = normalizeTxType(String(fd.get('type') || 'expense'));
+      const amountRaw = String(fd.get('amount') || '').trim();
+      const dateRaw = String(fd.get('dateISO') || '').trim();
+      const accountId = String(fd.get('accountId') || '').trim();
+      const fromAccountId = String(fd.get('fromAccountId') || '').trim();
+      const toAccountId = String(fd.get('toAccountId') || '').trim();
+      const category = String(fd.get('category') || '').trim();
+
+      const step = normalizeTxWizardStep(state.balanceFormState.txWizardStep);
+      if (step === 'base') {
+        if (!dateRaw) { toast('Falta la fecha'); return; }
+        if (!amountRaw) { toast('Falta la cantidad'); return; }
+        if (type === 'transfer') {
+          if (!fromAccountId || !toAccountId) { toast('Faltan cuentas'); return; }
+        } else if (!accountId) {
+          toast('Falta la cuenta');
+          return;
+        }
+        state.balanceFormState = { ...state.balanceFormState, txWizardStep: 'category' };
+        triggerRender();
+        return;
+      }
+
+      if (step === 'category') {
+        if (!category) { toast('Selecciona una categoría'); return; }
+        if (isFoodCategoryName(category)) {
+          state.balanceFormState = { ...state.balanceFormState, txWizardStep: 'food' };
+          triggerRender();
+          return;
+        }
+        formEl.requestSubmit();
+        return;
+      }
+
+      formEl.requestSubmit();
+      return;
+    }
+
+    const txCategoryPick = target.closest('[data-tx-category-pick]')?.dataset.txCategoryPick;
+    if (txCategoryPick) {
+      const form = document.querySelector('#finance-modal [data-balance-form]');
+      const sel = form?.querySelector('select[name="category"]');
+      if (sel) {
+        sel.value = String(txCategoryPick);
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      if (form) persistBalanceFormState(form);
+      state.balanceFormState = {
+        ...state.balanceFormState,
+        txWizardStep: isFoodCategoryName(txCategoryPick) ? 'food' : 'category'
+      };
+      triggerRender();
+      return;
+    }
+
+    if (target.closest('[data-tx-edit-categories]')) {
+      const form = document.querySelector('#finance-modal [data-balance-form]');
+      if (form) persistBalanceFormState(form);
+      const returnModal = { ...state.modal };
+      state.modal = { type: 'categories', returnModal };
+      triggerRender();
+      return;
+    }
+
+    if (target.closest('[data-category-editor-back]')) {
+      state.modal = state.modal?.returnModal ? { ...state.modal.returnModal } : { type: null };
+      triggerRender();
+      return;
+    }
+
+    if (target.closest('[data-category-add]') && state.modal?.type === 'categories') {
+      const nameRaw = document.querySelector('[data-category-add-name]')?.value || '';
+      const emojiRaw = document.querySelector('[data-category-add-emoji]')?.value || '';
+      const name = normalizeFoodName(String(nameRaw || ''));
+      const emoji = String(emojiRaw || '').trim();
+      if (!name) { toast('Nombre obligatorio'); return; }
+      await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${name}`), { name, emoji, lastUsedAt: nowTs() }));
+      state.balance.categories[name] = { ...(state.balance.categories[name] || {}), name, emoji, lastUsedAt: nowTs() };
+      toast('Categoría añadida');
+      triggerRender();
+      return;
+    }
+
+    const categoryDelete = target.closest('[data-category-delete]')?.dataset.categoryDelete;
+    if (categoryDelete && state.modal?.type === 'categories') {
+      const name = String(categoryDelete || '').trim();
+      if (!name) return;
+      if (!window.confirm(`¿Eliminar "${name}"?`)) return;
+      await safeFirebase(() => remove(ref(db, `${state.financePath}/catalog/categories/${name}`)));
+      if (state.balance?.categories?.[name]) delete state.balance.categories[name];
+      if (state.modal?.returnModal?.type === 'tx' && String(state.balanceFormState.category || '').toLowerCase() === name.toLowerCase()) {
+        state.balanceFormState = { ...state.balanceFormState, category: '' };
+      }
+      toast('Categoría eliminada');
+      triggerRender();
+      return;
+    }
+
     const segmentToggle = target.closest('[data-finance-stats-segment]')?.dataset.financeStatsSegment;
     if (segmentToggle && !target.closest('[data-finance-product-stats]')) {
       state.balanceStatsActiveSegment = state.balanceStatsActiveSegment === segmentToggle ? null : segmentToggle;
@@ -6138,7 +6428,12 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       return;
     }
     const txEdit = target.closest('[data-tx-edit]')?.dataset.txEdit;
-    if (txEdit) { state.modal = { type: 'tx', txId: txEdit }; triggerRender(); return; }
+    if (txEdit) {
+      state.balanceFormState = { ...state.balanceFormState, txWizardStep: 'base' };
+      state.modal = { type: 'tx', txId: txEdit };
+      triggerRender();
+      return;
+    }
 const txDelete = target.closest('[data-tx-delete]')?.dataset.txDelete;
 if (txDelete && window.confirm('¿Eliminar movimiento?')) {
   const existing = balanceTxList().find((row) => row.id === txDelete);
@@ -6242,13 +6537,19 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
     const drilldownAdd = target.closest('[data-drilldown-add]')?.dataset.drilldownAdd;
     if (drilldownAdd && state.modal.type === 'balance-drilldown') {
       const monthKey = offsetMonthKey(getMonthKeyFromDate(), Number(state.modal.monthOffset || 0));
-      state.balanceFormState = { ...state.balanceFormState, type: drilldownAdd, dateISO: `${monthKey}-01` };
+      state.balanceFormState = { ...state.balanceFormState, type: drilldownAdd, dateISO: `${monthKey}-01`, txWizardStep: 'base' };
       state.modal = { type: 'tx', txType: drilldownAdd };
       triggerRender();
       return;
     }
     if (target.closest('[data-balance-showmore]')) { state.balanceShowAllTx = !state.balanceShowAllTx; triggerRender(); return; }
-    const openModal = target.closest('[data-open-modal]')?.dataset.openModal; if (openModal) { state.modal = { type: openModal, budgetId: null }; triggerRender(); return; }
+    const openModal = target.closest('[data-open-modal]')?.dataset.openModal;
+    if (openModal) {
+      if (openModal === 'tx') state.balanceFormState = { ...state.balanceFormState, txWizardStep: 'base' };
+      state.modal = { type: openModal, budgetId: null };
+      triggerRender();
+      return;
+    }
     const openGoal = target.closest('[data-open-goal]')?.dataset.openGoal; if (openGoal) { state.modal = { type: 'goal-detail', goalId: openGoal }; triggerRender(); return; }
     const delGoal = target.closest('[data-delete-goal]')?.dataset.deleteGoal; if (delGoal && window.confirm('¿Borrar objetivo?')) { await safeFirebase(() => remove(ref(db, `${state.financePath}/goals/goals/${delGoal}`))); return; }
   });
@@ -6437,6 +6738,23 @@ view.addEventListener('focusout', async (event) => {
   });
 
   view.addEventListener('submit', async (event) => {
+    if (event.target.matches('[data-category-editor-form]')) {
+      event.preventDefault();
+      const formEl = event.target;
+      const inputs = [...formEl.querySelectorAll('[data-category-emoji]')];
+      const updatesMap = {};
+      inputs.forEach((input) => {
+        const name = String(input.dataset.categoryEmoji || '').trim();
+        if (!name) return;
+        const emoji = String(input.value || '').trim();
+        updatesMap[`${state.financePath}/catalog/categories/${name}/emoji`] = emoji || null;
+        state.balance.categories[name] = { ...(state.balance.categories[name] || {}), name, emoji: emoji || '' };
+      });
+      await safeFirebase(() => update(ref(db), updatesMap));
+      toast('Categorías guardadas');
+      triggerRender();
+      return;
+    }
     if (event.target.matches('[data-food-item-form]')) {
       event.preventDefault();
       const form = new FormData(event.target);

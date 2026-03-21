@@ -34,6 +34,7 @@ html,
 body {
   margin: 0;
   padding: 0;
+  height: 120%;
   overflow: auto;
   background: radial-gradient(circle at top, #161a22, #05060a 60%);
   background-color: #05060a;
@@ -853,14 +854,16 @@ body.has-open-modal .bottom-nav {
 
 
 #app, .app, .app-shell {
+  min-height: 100vh;
   min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
   background: inherit;
 }
 
 .app-main,
 main {
   min-height: 0;
-  height: 100%;
   overflow: hidden;
 }
 

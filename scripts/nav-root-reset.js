@@ -47,10 +47,6 @@ function clickByIds(ids = []) {
 }
 
 const TAB_RESETTERS = {
-  'view-main': () => {
-    hideElement(document.getElementById('rpg-sheet-modal'));
-    hideElement(document.getElementById('rpg-source-editor-modal'));
-  },
   'view-books': () => {
     closeByIds(['book-modal-backdrop', 'book-detail-backdrop']);
     forceMainView('view-books');

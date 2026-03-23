@@ -3541,7 +3541,6 @@ if ($videoForm) {
     renderVideoStats();
     renderVideoCalendar();
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
-    try { window.__bookshellDashboard?.render?.(); } catch (_) {}
   });
 
   onValue(ref(db, VIDEO_LOG_PATH), (snap) => {

@@ -385,6 +385,8 @@ if ($viewRecipes) {
   const $macroProductNutriSegmented = document.getElementById("macro-product-nutri-segmented");
   const $macroProductGrams = document.getElementById("macro-product-grams");
   const $macroProductGramsUnit = document.getElementById("macro-product-grams-unit");
+  const $macroProductUnitWeight = document.getElementById("macro-product-unit-weight");
+  const $macroProductUnitWeightUnit = document.getElementById("macro-product-unit-weight-unit");
   const $macroProductSummary = document.getElementById("macro-product-summary");
   const $macroProductPriceUsed = document.getElementById("macro-product-price-used");
   const $macroProductWeightStart = document.getElementById("macro-product-weight-start");
@@ -1184,6 +1186,46 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return null;
   }
 
+  function resolveUnitWeightSpec(product) {
+    if (!product) return null;
+    const qty = Number(product?.unitWeightQty);
+    const unit = normalizeCostUnit(product?.unitWeightUnit);
+    if (!(qty > 0) || !unit) return null;
+    return { qty, unit };
+  }
+
+  function convertQtyByUnitWithUnitWeight(quantity, fromUnit, toUnit, unitWeightSpec = null) {
+    const basic = normalizeQtyByUnit(quantity, fromUnit, toUnit);
+    if (basic != null) return basic;
+
+    const qty = Number(quantity);
+    const from = normalizeCostUnit(fromUnit);
+    const to = normalizeCostUnit(toUnit);
+    if (!Number.isFinite(qty) || qty < 0 || !from || !to) return null;
+
+    if (!unitWeightSpec || !(Number(unitWeightSpec.qty) > 0) || !normalizeCostUnit(unitWeightSpec.unit)) return null;
+    const perUnitQty = Number(unitWeightSpec.qty);
+    const perUnitUnit = normalizeCostUnit(unitWeightSpec.unit);
+
+    if (from === "unit") {
+      const perUnitInTarget = normalizeQtyByUnit(perUnitQty, perUnitUnit, to);
+      if (!(perUnitInTarget >= 0)) return null;
+      return qty * perUnitInTarget;
+    }
+
+    if (to === "unit") {
+      const perUnitInFrom = normalizeQtyByUnit(perUnitQty, perUnitUnit, from);
+      if (!(perUnitInFrom > 0)) return null;
+      return qty / perUnitInFrom;
+    }
+
+    return null;
+  }
+
+  function convertAmountWithProduct(product, value, fromUnit, toUnit) {
+    return convertQtyByUnitWithUnitWeight(value, fromUnit, toUnit, resolveUnitWeightSpec(product));
+  }
+
   function findLinkedFinanceProduct(product) {
     const financeProductId = String(product?.financeProductId || "").trim();
     if (!financeProductId) return null;
@@ -1230,6 +1272,8 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       servingBaseQty: Math.max(1, Number(product.baseQuantity || product.servingBaseGrams) || 100),
       servingBaseUnit: normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g",
       macrosPerBase: normalizeMacros(product.macros || {}),
+      unitWeightQty: Number(product?.unitWeightQty) > 0 ? Number(product.unitWeightQty) : null,
+      unitWeightUnit: normalizeCostUnit(product?.unitWeightUnit || ""),
     };
   }
 
@@ -1245,6 +1289,8 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       price: effectivePrice,
       baseQty: Number(base?.qty) > 0 ? Number(base.qty) : null,
       baseUnit: normalizeCostUnit(base?.unit || ""),
+      unitWeightQty: Number(product?.unitWeightQty) > 0 ? Number(product.unitWeightQty) : null,
+      unitWeightUnit: normalizeCostUnit(product?.unitWeightUnit || ""),
     };
   }
 
@@ -1262,7 +1308,8 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     const macrosPerBase = normalizeMacros(nutritionSnapshot?.macrosPerBase || {});
     const baseQty = Number(nutritionSnapshot?.servingBaseQty) > 0 ? Number(nutritionSnapshot.servingBaseQty) : 100;
     const baseUnit = normalizeCostUnit(nutritionSnapshot?.servingBaseUnit || "g");
-    const normalizedQty = normalizeQtyByUnit(qty, unit, baseUnit);
+    const unitWeightSpec = resolveUnitWeightSpec(nutritionSnapshot) || resolveUnitWeightSpec(product);
+    const normalizedQty = convertQtyByUnitWithUnitWeight(qty, unit, baseUnit, unitWeightSpec);
     if (!(normalizedQty >= 0) || !(baseQty > 0)) return { calculable: false, totals: normalizeMacros({}) };
     const ratio = normalizedQty / baseQty;
     return {
@@ -1285,9 +1332,10 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     const baseQty = Number(pricingSnapshot?.baseQty);
     const baseUnit = normalizeCostUnit(pricingSnapshot?.baseUnit || "");
     if (!(price > 0) || !(baseQty > 0) || !baseUnit) return { calculable: false, value: null };
-    const normalizedBaseQty = normalizeQtyByUnit(baseQty, baseUnit, unit);
-    if (!(normalizedBaseQty > 0)) return { calculable: false, value: null };
-    return { calculable: true, value: (qty / normalizedBaseQty) * price };
+    const unitWeightSpec = resolveUnitWeightSpec(pricingSnapshot) || resolveUnitWeightSpec(product);
+    const normalizedQtyInBase = convertQtyByUnitWithUnitWeight(qty, unit, baseUnit, unitWeightSpec);
+    if (!(normalizedQtyInBase >= 0)) return { calculable: false, value: null };
+    return { calculable: true, value: (normalizedQtyInBase / baseQty) * price };
   }
 
   function buildRecipeIngredientFromProduct(product, draft = {}) {
@@ -1397,9 +1445,10 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     const intakeQty = Number(consumedQty);
     const base = resolveProductPriceBase(product);
     if (!(effectivePrice > 0) || !base || !(intakeQty >= 0) || !intakeUnit) return null;
-    const normalizedBaseQty = normalizeQtyByUnit(base.qty, base.unit, intakeUnit);
-    if (!(normalizedBaseQty > 0)) return null;
-    return (intakeQty / normalizedBaseQty) * effectivePrice;
+    const unitWeightSpec = resolveUnitWeightSpec(product);
+    const intakeInBaseUnit = convertQtyByUnitWithUnitWeight(intakeQty, intakeUnit, base.unit, unitWeightSpec);
+    if (!(intakeInBaseUnit >= 0) || !(Number(base.qty) > 0)) return null;
+    return (intakeInBaseUnit / Number(base.qty)) * effectivePrice;
   }
 
   function calculateStructuredIngredientNutrition(ingredient, product) {
@@ -1668,7 +1717,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     const safeUnit = normalizeUnit(unit || product?.baseUnit || "g") || "g";
     const safeMeal = mealOrder.includes(meal) ? meal : "breakfast";
     const baseUnit = normalizeUnit(product?.baseUnit || product?.servingBaseUnit || "g") || "g";
-    const normalizedAmount = convertAmount(safeAmount, safeUnit, baseUnit);
+    const normalizedAmount = convertAmountWithProduct(product, safeAmount, safeUnit, baseUnit);
     const macrosSnapshot = normalizedAmount == null
       ? normalizeMacros({})
       : normalizeMacros(calcProductMacros({ ...product, servingBaseGrams: Number(product?.baseQuantity || product?.servingBaseGrams) || 100 }, normalizedAmount));
@@ -1682,7 +1731,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       productId: String(product?.id || "").trim(),
       productName: String(product?.name || "").trim(),
       nameSnapshot: String(product?.name || "").trim(),
-      grams: convertAmount(safeAmount, safeUnit, "g") ?? 0,
+      grams: convertAmountWithProduct(product, safeAmount, safeUnit, "g") ?? 0,
       amount: safeAmount,
       unit: safeUnit,
       amountUnit: safeUnit,
@@ -3413,11 +3462,14 @@ notesRow.innerHTML = `<div class="spec-label">Notas</div><div class="spec-value"
               macros: normalizeMacros({}),
               servingBaseGrams: 100,
             };
-            const ingredientQty = normalizeIngredientQty(ing.qty);
-            const ingredientUnit = normalizeCostUnit(ing.unit || "");
-            const grams = ingredientQty && ingredientUnit ? (normalizeQtyByUnit(ingredientQty, ingredientUnit, "g") ?? ingredientQty) : 100;
-            openMacroProductModal(draft, "breakfast", grams, null, { ingredientTarget: { recipeId: recipe.id, ingredientId: ing.id } });
-          });
+	            const ingredientQty = normalizeIngredientQty(ing.qty);
+	            const ingredientUnit = normalizeCostUnit(ing.unit || "");
+	            const baseUnit = normalizeUnit(draft.baseUnit || draft.servingBaseUnit || "g") || "g";
+	            const amountInBase = ingredientQty && ingredientUnit
+	              ? (convertAmountWithProduct(draft, ingredientQty, ingredientUnit, baseUnit) ?? ingredientQty)
+	              : 100;
+	            openMacroProductModal(draft, "breakfast", amountInBase, null, { ingredientTarget: { recipeId: recipe.id, ingredientId: ing.id } });
+	          });
           label.appendChild(check);
           label.appendChild(qty);
           label.appendChild(text);
@@ -4799,7 +4851,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function getNutriScoreLabel(score) {
     const normalized = String(score || "").toLowerCase();
-    return normalized ? normalized.toUpperCase() : "Sin Nutri-Score";
+    return normalized ? normalized.toUpperCase() : "¿?";
   }
 
   function getNutriHealthLabel(score) {
@@ -4907,7 +4959,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       const m = item.macrosPer100;
       const unitLabel = m?.unitLabel || "100 g";
       const healthLabel = getNutriHealthLabel(item.nutriScore);
-      const priceLabel = item.effectivePrice == null ? "Precio n/d" : formatCurrency(item.effectivePrice);
+      const priceLabel = item.effectivePrice == null ? "¿?" : formatCurrency(item.effectivePrice);
       const media = item.image
         ? `<img src="${escapeAttr(item.image)}" alt="${escapeAttr(item.name)}" loading="lazy" decoding="async" />`
         : `<div class="macro-shopping-thumb-placeholder" aria-hidden="true">🍽️</div>`;
@@ -5317,6 +5369,8 @@ $recipeImportBtn?.addEventListener("click", () => {
     const hasHabitSelection = !!$macroProductHabitSelect;
     const packageAmount = Number($macroProductPackageAmount?.value) > 0 ? Number($macroProductPackageAmount.value) : null;
     const packageUnit = normalizeUnit($macroProductPackageUnit?.value || "");
+    const unitWeightQty = Number($macroProductUnitWeight?.value) > 0 ? Number($macroProductUnitWeight.value) : null;
+    const unitWeightUnit = normalizeUnit($macroProductUnitWeightUnit?.value || "");
     return {
       id: _macroProductDraft?.id,
       source: _macroProductDraft?.source || "manual",
@@ -5335,6 +5389,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       baseUnit,
       servingBaseUnit: baseUnit,
       servingBaseGrams: base,
+      unitWeightQty,
+      unitWeightUnit,
       manualNutriScore: normalizeNutriScoreValue($macroProductNutriSegmented?.dataset.value || ""),
       importedNutriScore: normalizeNutriScoreValue(_macroProductDraft?.importedNutriScore || _macroProductDraft?.nutriScore || ""),
       macros: {
@@ -5451,6 +5507,13 @@ $recipeImportBtn?.addEventListener("click", () => {
       const perUnitGrams = packageWeight / packageUnits;
       const totalGrams = perUnitGrams * consumedUnits;
       const targetUnit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
+      if (targetUnit === "unit") {
+        if ($macroProductUnitWeight) $macroProductUnitWeight.value = roundAmountForInput(perUnitGrams);
+        if ($macroProductUnitWeightUnit) $macroProductUnitWeightUnit.value = "g";
+        if ($macroProductGrams) $macroProductGrams.value = roundAmountForInput(consumedUnits);
+        $macroProductWeightDiffHint.textContent = `Cantidad deducida automáticamente por paquete: ${formatAmountWithUnit(consumedUnits, "unit")} (≈ ${formatAmountWithUnit(totalGrams, "g")}).`;
+        return;
+      }
       const converted = convertAmount(totalGrams, "g", targetUnit);
       const calculatedAmount = converted == null ? totalGrams : converted;
       if ($macroProductGrams) $macroProductGrams.value = roundAmountForInput(calculatedAmount);
@@ -5464,7 +5527,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     const amountUnit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
     const draft = readMacroProductDraftFromForm();
     const baseUnit = normalizeUnit(draft.baseUnit || "g") || "g";
-    const convertedAmount = convertAmount(amount, amountUnit, baseUnit);
+    const convertedAmount = convertAmountWithProduct(draft, amount, amountUnit, baseUnit);
     const m = convertedAmount == null ? normalizeMacros({}) : calcProductMacros({ ...draft, servingBaseGrams: draft.baseQuantity }, convertedAmount);
     const effectivePrice = getEffectiveProductPrice(draft);
     const priceSource = getEffectiveProductPriceSource(draft);
@@ -5479,7 +5542,13 @@ $recipeImportBtn?.addEventListener("click", () => {
       const cost = calculateProductConsumedCost(draft, amount, amountUnit);
       const costLabel = cost == null ? " · Coste n/d" : ` · ~${formatCurrency(cost)}`;
       if (convertedAmount == null) {
-        $macroProductSummary.textContent = `Para ${formatAmountWithUnit(amount, amountUnit)}: no calculable con la unidad base (${baseUnit}).${costLabel}`;
+        const unitWeight = resolveUnitWeightSpec(draft);
+        const needsUnitWeight = (amountUnit === "unit" || baseUnit === "unit") && amountUnit !== baseUnit;
+        if (needsUnitWeight && !unitWeight) {
+          $macroProductSummary.textContent = `Para ${formatAmountWithUnit(amount, amountUnit)}: falta "Peso por unidad" para convertir con la unidad base (${baseUnit}).${costLabel}`;
+        } else {
+          $macroProductSummary.textContent = `Para ${formatAmountWithUnit(amount, amountUnit)}: no calculable con la unidad base (${baseUnit}).${costLabel}`;
+        }
       } else {
         $macroProductSummary.textContent = `Para ${formatAmountWithUnit(amount, amountUnit)}: ${roundMacro(m.kcal)} kcal · C ${roundMacro(m.carbs)} · P ${roundMacro(m.protein)} · G ${roundMacro(m.fat)}${costLabel}`;
       }
@@ -5594,6 +5663,15 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductPrice) $macroProductPrice.value = product.price == null ? "" : String(Number(product.price) || 0);
     if ($macroProductGrams) $macroProductGrams.value = String(Number(grams) || 0);
     if ($macroProductGramsUnit) $macroProductGramsUnit.value = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
+    const productBaseUnit = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
+    const defaultUnitWeightUnit = (productBaseUnit === "ml" || productBaseUnit === "l") ? "ml" : "g";
+    if ($macroProductUnitWeight) {
+      const v = Number(product?.unitWeightQty);
+      $macroProductUnitWeight.value = (Number.isFinite(v) && v > 0) ? roundAmountForInput(v) : "";
+    }
+    if ($macroProductUnitWeightUnit) {
+      $macroProductUnitWeightUnit.value = normalizeCostUnit(product?.unitWeightUnit || "") || defaultUnitWeightUnit;
+    }
     if ($macroProductWeightStart) {
       const persisted = getPersistedWeightStart(product.id);
       $macroProductWeightStart.value = persisted ? roundAmountForInput(persisted.start) : "";
@@ -5624,7 +5702,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       const found = nutritionProducts.find((p) => p.id === entry.refId);
       const consumedAmount = Math.max(0, Number(entry.amount) || Number(entry.grams) || 0);
       const consumedUnit = normalizeUnit(entry.unit || "g") || "g";
-      const normalizedForPer100 = convertAmount(consumedAmount, consumedUnit, "g");
+      const normalizedForPer100 = convertAmountWithProduct(found || entry?.nutritionSnapshot || null, consumedAmount, consumedUnit, "g");
       const snapshotPer100 = (normalizedForPer100 > 0 && entry.macrosSnapshot)
         ? {
           carbs: (Number(entry.macrosSnapshot.carbs) || 0) / normalizedForPer100 * 100,
@@ -6055,6 +6133,16 @@ $recipeImportBtn?.addEventListener("click", () => {
   function saveProduct(product) {
     const now = Date.now();
     const pkg = resolveProductPackageSpec(product);
+    let unitWeightQty = Number(product?.unitWeightQty);
+    let unitWeightUnit = normalizeCostUnit(product?.unitWeightUnit);
+    if (Number.isFinite(unitWeightQty) && unitWeightQty > 0 && unitWeightUnit) {
+      if (unitWeightUnit === "kg") { unitWeightQty *= 1000; unitWeightUnit = "g"; }
+      if (unitWeightUnit === "l") { unitWeightQty *= 1000; unitWeightUnit = "ml"; }
+      if (unitWeightUnit !== "g" && unitWeightUnit !== "ml") {
+        unitWeightQty = NaN;
+        unitWeightUnit = "";
+      }
+    }
     const normalized = {
       id: product.id || generateId(),
       name: String(product.name || "").trim(),
@@ -6064,6 +6152,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       baseUnit: normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g",
       servingBaseGrams: Math.max(1, Number(product.baseQuantity || product.servingBaseGrams) || 100),
       servingBaseUnit: normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g",
+      unitWeightQty: (Number.isFinite(unitWeightQty) && unitWeightQty > 0) ? unitWeightQty : null,
+      unitWeightUnit: (Number.isFinite(unitWeightQty) && unitWeightQty > 0 && unitWeightUnit) ? unitWeightUnit : "",
       macros: normalizeMacros(product.macros),
       financeProductId: String(product.financeProductId || "").trim(),
       linkedHabitId: String(product.linkedHabitId || "").trim(),
@@ -8370,6 +8460,37 @@ $recipeImportBtn?.addEventListener("click", () => {
     try { set(ref(db, `${root}/barcodeMap/${barcode}`), productId); } catch (_) {}
   }
 
+  function enableClearOnPointerForInputs() {
+    const selector = "input[data-clear-on-pointer='true']";
+
+    const clearInput = (input) => {
+      if (!input || input.disabled || input.readOnly) return;
+      if (input.dataset.clearedOnPointer === "1") return;
+      input.dataset.clearedOnPointer = "1";
+      input.value = "";
+      try { input.dispatchEvent(new Event("input", { bubbles: true })); } catch (_) {}
+      try { input.dispatchEvent(new Event("change", { bubbles: true })); } catch (_) {}
+    };
+
+    const onPointerDown = (e) => {
+      const input = e?.target?.closest?.(selector);
+      if (!input) return;
+      clearInput(input);
+    };
+
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("touchstart", onPointerDown, { capture: true, passive: true });
+
+    document.addEventListener("focusout", (e) => {
+      const input = e?.target?.closest?.(selector);
+      if (!input) return;
+      try { delete input.dataset.clearedOnPointer; } catch (_) {}
+    }, true);
+  }
+
+  enableClearOnPointerForInputs();
+
   $recipesSubtabs.forEach((btn) => btn.addEventListener("click", () => switchRecipesPanel(btn.dataset.recipesPanel || "library")));
   $macroShoppingMode?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-shopping-mode]");
@@ -8781,8 +8902,11 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroProductPrice,
     $macroProductGrams,
     $macroProductGramsUnit,
+    $macroProductUnitWeight,
+    $macroProductUnitWeightUnit,
   ].filter(Boolean);
   _macroProductInputs.forEach((el) => el.addEventListener("input", renderMacroProductSummary));
+  $macroProductUnitWeightUnit?.addEventListener("change", renderMacroProductSummary);
   $macroProductGramsUnit?.addEventListener("change", () => {
     updateWeightDiffUnitLabels();
     syncAmountFromAutoCalculation();
@@ -8942,15 +9066,21 @@ $recipeImportBtn?.addEventListener("click", () => {
         applyRecipeSideEffects(prevEffects, selectedMacroDate, -1, "entry_edit_old");
         applyRecipeSideEffects(rebuiltEntry.sideEffects || buildProductSideEffects(saved, 1), selectedMacroDate, 1, "entry_edit_new");
       }
-    } else {
-      const baseUnit = normalizeUnit(saved.baseUnit || saved.servingBaseUnit || "g") || "g";
-      const amountInBaseUnit = convertAmount(grams, gramsUnit, baseUnit);
-      if (amountInBaseUnit == null) {
-        if ($macroProductSummary) $macroProductSummary.textContent = `No se puede convertir ${gramsUnit} a ${baseUnit} para este producto.`;
-        return;
-      }
-      addProductToMeal(_macroProductMeal || macroModalState.meal || "breakfast", saved, amountInBaseUnit);
-    }
+	    } else {
+	      const baseUnit = normalizeUnit(saved.baseUnit || saved.servingBaseUnit || "g") || "g";
+	      const amountInBaseUnit = convertAmountWithProduct(saved, grams, gramsUnit, baseUnit);
+	      if (amountInBaseUnit == null) {
+	        const unitWeight = resolveUnitWeightSpec(saved);
+	        const needsUnitWeight = (gramsUnit === "unit" || baseUnit === "unit") && gramsUnit !== baseUnit;
+	        if ($macroProductSummary) {
+	          $macroProductSummary.textContent = needsUnitWeight && !unitWeight
+	            ? `Falta "Peso por unidad" para convertir ${formatAmountWithUnit(grams, gramsUnit)} a ${baseUnit}.`
+	            : `No se puede convertir ${gramsUnit} a ${baseUnit} para este producto.`;
+	        }
+	        return;
+	      }
+	      addProductToMeal(_macroProductMeal || macroModalState.meal || "breakfast", saved, amountInBaseUnit);
+	    }
     closeMacroProductModal();
   });
 

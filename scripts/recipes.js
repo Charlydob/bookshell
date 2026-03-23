@@ -4799,6 +4799,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   function buildShoppingProductViewModel(product = {}) {
     const macrosPer100 = getProductMacrosPer100(product);
     const nutriScore = resolveProductNutriScore(product);
+    const effectivePrice = getEffectiveProductPrice(product);
     const searchHaystack = `${product?.name || ""} ${product?.brand || ""}`.toLowerCase();
     return {
       product,
@@ -4808,6 +4809,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       image: String(product?.image || "").trim() || null,
       nutriScore,
       macrosPer100,
+      effectivePrice,
       searchHaystack,
     };
   }
@@ -4835,7 +4837,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     const normalized = String(score || "").toLowerCase();
     const label = getNutriScoreLabel(normalized);
     const cls = normalized ? `score-${normalized}` : "score-none";
-    return `<span class="macro-shopping-score-badge ${cls}">${escapeHtml(label)}</span>`;
+    return `<span class="macro-shopping-score-badge ${cls}" aria-label="Nutri-Score ${escapeAttr(label)}">Nutri ${escapeHtml(label)}</span>`;
   }
 
   function formatShoppingMetric(value, suffix = "") {
@@ -4866,26 +4868,32 @@ $recipeImportBtn?.addEventListener("click", () => {
       const m = item.macrosPer100;
       const unitLabel = m?.unitLabel || "100 g";
       const healthLabel = getNutriHealthLabel(item.nutriScore);
+      const priceLabel = item.effectivePrice == null ? "Precio n/d" : formatCurrency(item.effectivePrice);
       const media = item.image
         ? `<img src="${escapeAttr(item.image)}" alt="${escapeAttr(item.name)}" loading="lazy" decoding="async" />`
-        : `<div class="macro-shopping-thumb-placeholder" aria-hidden="true">🥗</div>`;
-      return `<article class="macro-shopping-product-card">
+        : `<div class="macro-shopping-thumb-placeholder" aria-hidden="true">🍽️</div>`;
+      return `<article class="macro-shopping-product-card" data-shopping-open-product="${escapeAttr(item.id)}" role="button" tabindex="0" aria-label="Abrir ficha de ${escapeAttr(item.name)}">
         <div class="macro-shopping-product-top">
           <div class="macro-shopping-thumb">${media}</div>
           <div class="macro-shopping-product-head">
             <div class="macro-shopping-product-title">${escapeHtml(item.name)}</div>
-            <div class="macro-shopping-product-brand">${escapeHtml(item.brand || "Marca no disponible")}</div>
+            <div class="macro-shopping-product-brand">${escapeHtml(item.brand || "Origen no disponible")}</div>
             <div class="macro-shopping-product-score">
               ${buildNutriScoreBadge(item.nutriScore)}
               <span class="macro-shopping-health-pill">${escapeHtml(healthLabel)}</span>
             </div>
           </div>
         </div>
-        <div class="macro-shopping-metrics">
-          <div class="macro-shopping-metric"><span>Calorías</span><strong>${m ? `${formatShoppingMetric(m.kcal, "kcal")}` : "—"}</strong></div>
-          <div class="macro-shopping-metric"><span>Grasas</span><strong>${m ? `${formatShoppingMetric(m.fat, "g")}` : "—"}</strong></div>
-          <div class="macro-shopping-metric"><span>Proteínas</span><strong>${m ? `${formatShoppingMetric(m.protein, "g")}` : "—"}</strong></div>
-          <div class="macro-shopping-metric"><span>Carbohidratos</span><strong>${m ? `${formatShoppingMetric(m.carbs, "g")}` : "—"}</strong></div>
+        <div class="macro-shopping-pill-scroller">
+          <div class="macro-shopping-pill-row">
+            <span class="macro-shopping-macro-pill macro-shopping-macro-pill-kcal"><b>kcal</b>${m ? `${formatShoppingMetric(m.kcal)}` : "—"}</span>
+            <span class="macro-shopping-macro-pill macro-shopping-macro-pill-carbs"><b>C</b>${m ? `${formatShoppingMetric(m.carbs, "g")}` : "—"}</span>
+            <span class="macro-shopping-macro-pill macro-shopping-macro-pill-protein"><b>P</b>${m ? `${formatShoppingMetric(m.protein, "g")}` : "—"}</span>
+            <span class="macro-shopping-macro-pill macro-shopping-macro-pill-fat"><b>G</b>${m ? `${formatShoppingMetric(m.fat, "g")}` : "—"}</span>
+            <span class="macro-shopping-macro-pill macro-shopping-macro-pill-price${item.effectivePrice == null ? " is-muted" : ""}">
+              <b>€</b>${escapeHtml(priceLabel)}
+            </span>
+          </div>
         </div>
         <div class="macro-shopping-per-note">Valores por ${escapeHtml(unitLabel)}</div>
       </article>`;
@@ -4932,6 +4940,15 @@ $recipeImportBtn?.addEventListener("click", () => {
     return "=";
   }
 
+  function getNutriScoreRank(score) {
+    const normalized = String(score || "").toLowerCase();
+    return ({ a: 5, b: 4, c: 3, d: 2, e: 1 }[normalized] || 0);
+  }
+
+  function buildNutriScoreCell(score) {
+    return buildNutriScoreBadge(score);
+  }
+
   function renderShoppingCompareTable() {
     if (!$macroShoppingCompareTableBody) return;
     const left = getShoppingCompareProduct("left");
@@ -4945,12 +4962,15 @@ $recipeImportBtn?.addEventListener("click", () => {
     const rightM = getProductMacrosPer100(right);
     const leftScore = resolveProductNutriScore(left);
     const rightScore = resolveProductNutriScore(right);
+    const leftPrice = getEffectiveProductPrice(left);
+    const rightPrice = getEffectiveProductPrice(right);
     const rows = [
       { label: "Calorías (kcal)", left: leftM?.kcal, right: rightM?.kcal, format: (v) => formatShoppingMetric(v, "kcal") },
       { label: "Grasas (g)", left: leftM?.fat, right: rightM?.fat, format: (v) => formatShoppingMetric(v, "g") },
       { label: "Proteínas (g)", left: leftM?.protein, right: rightM?.protein, format: (v) => formatShoppingMetric(v, "g") },
       { label: "Carbohidratos (g)", left: leftM?.carbs, right: rightM?.carbs, format: (v) => formatShoppingMetric(v, "g") },
-      { label: "Nutri-Score", left: getNutriScoreOrder(leftScore), right: getNutriScoreOrder(rightScore), format: (_, sideScore) => getNutriScoreLabel(sideScore), leftScore, rightScore, scoreRow: true },
+      { label: "Nutri-Score", left: getNutriScoreRank(leftScore), right: getNutriScoreRank(rightScore), format: (_, sideScore) => buildNutriScoreCell(sideScore), leftScore, rightScore, scoreRow: true, html: true },
+      { label: "Precio", left: leftPrice, right: rightPrice, format: (v) => v == null ? "—" : formatCurrency(v) },
     ];
     if ($macroShoppingCompareLeftTitle) $macroShoppingCompareLeftTitle.textContent = left.name || "Producto A";
     if ($macroShoppingCompareRightTitle) $macroShoppingCompareRightTitle.textContent = right.name || "Producto B";
@@ -4960,9 +4980,9 @@ $recipeImportBtn?.addEventListener("click", () => {
       const rightLabel = row.scoreRow ? row.format(row.right, row.rightScore) : row.format(row.right);
       return `<tr>
         <th>${escapeHtml(row.label)}</th>
-        <td>${escapeHtml(leftLabel)}</td>
+        <td>${row.html ? leftLabel : escapeHtml(leftLabel)}</td>
         <td class="macro-shopping-compare-sign">${escapeHtml(sign)}</td>
-        <td>${escapeHtml(rightLabel)}</td>
+        <td>${row.html ? rightLabel : escapeHtml(rightLabel)}</td>
       </tr>`;
     }).join("");
     if ($macroShoppingCompareTableWrap) $macroShoppingCompareTableWrap.classList.remove("hidden");
@@ -8297,6 +8317,24 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (!btn) return;
     shoppingState.nutriFilter = btn.dataset.shoppingScoreFilter || "all";
     renderShoppingView();
+  });
+  const openShoppingProductCard = (productId) => {
+    const product = nutritionProducts.find((p) => String(p.id || "") === String(productId || ""));
+    if (!product) return;
+    openMacroProductModal(product, "breakfast", 100, null, {});
+  };
+  $macroShoppingResults?.addEventListener("click", (e) => {
+    if (e.target.closest(".macro-shopping-pill-scroller")) return;
+    const card = e.target.closest("[data-shopping-open-product]");
+    if (!card) return;
+    openShoppingProductCard(card.dataset.shoppingOpenProduct || "");
+  });
+  $macroShoppingResults?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const card = e.target.closest("[data-shopping-open-product]");
+    if (!card) return;
+    e.preventDefault();
+    openShoppingProductCard(card.dataset.shoppingOpenProduct || "");
   });
   $macroShoppingCompareLeftSearch?.addEventListener("input", (e) => {
     shoppingState.compare.leftQuery = String(e.target.value || "");

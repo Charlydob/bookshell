@@ -177,138 +177,6 @@ function installGlobalModalScrollLock() {
   document.addEventListener("keydown", scheduleSync, true);
 }
 
-let _layoutMetricsInstalled = false;
-function installLayoutMetricsSync() {
-  if (_layoutMetricsInstalled) return;
-  _layoutMetricsInstalled = true;
-
-  const isVisible = (el) => {
-    if (!el) return false;
-    if (el.classList?.contains("hidden")) return false;
-    if (el.getAttribute?.("aria-hidden") === "true") return false;
-    const style = window.getComputedStyle(el);
-    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
-    const rect = el.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
-  };
-
-  const readOcclusion = (el) => {
-    if (!isVisible(el)) return 0;
-    const rect = el.getBoundingClientRect();
-    return Math.max(0, window.innerHeight - rect.top);
-  };
-
-  const readSessionOcclusion = () => {
-    const overlay = document.getElementById("habit-session-overlay");
-    if (!isVisible(overlay)) return 0;
-    // El contenedor ocupa más alto de lo que se ve por offsets internos del pill.
-    // Para el padding real de las vistas, medimos el nodo visual que tapa contenido.
-    const pill = overlay.querySelector(".habit-session-pill");
-    return readOcclusion(isVisible(pill) ? pill : overlay);
-  };
-
-  const sync = () => {
-    const nav = document.querySelector(".bottom-nav");
-    const navOcclusion = readOcclusion(nav);
-    const sessionOcclusion = readSessionOcclusion();
-    const totalBottomOcclusion = Math.max(navOcclusion, sessionOcclusion);
-
-    const root = document.documentElement;
-    root.style.setProperty("--nav-total-h", `${Math.round(totalBottomOcclusion)}px`);
-    root.style.setProperty("--session-overlay-h", `${Math.round(sessionOcclusion)}px`);
-  };
-
-  let rafId = 0;
-  const scheduleSync = () => {
-    if (rafId) return;
-    rafId = requestAnimationFrame(() => {
-      rafId = 0;
-      sync();
-    });
-  };
-
-  const buildProbeNode = (selector, el) => {
-    if (!el) return { selector, found: false };
-    const cs = window.getComputedStyle(el);
-    const rect = el.getBoundingClientRect();
-    return {
-      selector,
-      found: true,
-      clientHeight: el.clientHeight,
-      offsetHeight: el.offsetHeight,
-      scrollHeight: el.scrollHeight,
-      rectTop: Number(rect.top.toFixed(2)),
-      rectBottom: Number(rect.bottom.toFixed(2)),
-      rectHeight: Number(rect.height.toFixed(2)),
-      paddingTop: cs.paddingTop,
-      paddingBottom: cs.paddingBottom,
-      overflowY: cs.overflowY,
-      flex: cs.flex,
-      minHeight: cs.minHeight,
-      height: cs.height
-    };
-  };
-
-  window.__bookshellLayoutProbe = () => {
-    const activeView = document.querySelector(".view.view-active");
-    const viewScrollable = activeView ? activeView.querySelector("*") : null;
-    const nestedScrollable = activeView
-      ? Array.from(activeView.querySelectorAll("*")).find((el) => {
-          const cs = window.getComputedStyle(el);
-          return /(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight;
-        })
-      : null;
-    const realScrollable = nestedScrollable || activeView || viewScrollable;
-
-    const nodes = [
-      ["html", document.documentElement],
-      ["body", document.body],
-      ["#app", document.getElementById("app")],
-      [".app-shell", document.querySelector(".app-shell")],
-      [".app-main", document.querySelector(".app-main")],
-      [".view.view-active", activeView],
-      ["active-scrollable", realScrollable],
-      [".bottom-nav", document.querySelector(".bottom-nav")],
-      ["#habit-session-overlay", document.getElementById("habit-session-overlay")]
-    ].map(([selector, el]) => buildProbeNode(selector, el));
-
-    const cssVars = window.getComputedStyle(document.documentElement);
-    const metrics = {
-      viewport: {
-        innerHeight: window.innerHeight,
-        visualViewportHeight: window.visualViewport?.height || null
-      },
-      safeAreaInsets: {
-        top: cssVars.getPropertyValue("env(safe-area-inset-top)") || "n/a",
-        bottom: cssVars.getPropertyValue("env(safe-area-inset-bottom)") || "n/a"
-      },
-      cssVars: {
-        navTotalH: cssVars.getPropertyValue("--nav-total-h").trim(),
-        navGap: cssVars.getPropertyValue("--nav-gap").trim(),
-        navVisualGap: cssVars.getPropertyValue("--nav-visual-gap").trim()
-      },
-      nodes
-    };
-
-    console.table(nodes);
-    console.log("[layout-probe]", metrics);
-    return metrics;
-  };
-
-  const mo = new MutationObserver(scheduleSync);
-  mo.observe(document.body, {
-    subtree: true,
-    childList: true,
-    attributes: true,
-    attributeFilter: ["class", "style", "aria-hidden"]
-  });
-  window.addEventListener("resize", scheduleSync, { passive: true });
-  window.visualViewport?.addEventListener("resize", scheduleSync, { passive: true });
-  window.visualViewport?.addEventListener("scroll", scheduleSync, { passive: true });
-  document.addEventListener("click", scheduleSync, true);
-  scheduleSync();
-}
-
 
 function isValidView(viewId) {
   return !!(viewId && document.getElementById(viewId) && VIEW_MODULE[viewId]);
@@ -338,13 +206,6 @@ function setView(viewId, { pushHash = true } = {}) {
       catch { location.hash = next; }
     }
   }
-  requestAnimationFrame(() => {
-    if (typeof window.__bookshellLayoutProbe === "function") {
-      const root = document.documentElement;
-      const navTotal = getComputedStyle(root).getPropertyValue("--nav-total-h").trim();
-      if (!navTotal) window.__bookshellLayoutProbe();
-    }
-  });
 }
 
 function getInitialView() {
@@ -482,7 +343,6 @@ function loadStyleOnce(href) {
 (function boot() {
   bindNav();
   installGlobalModalScrollLock();
-  installLayoutMetricsSync();
 
 
   onAuthStateChanged(auth, async (user) => {

@@ -313,7 +313,23 @@ if ($viewRecipes) {
   const $macroStatsDonutLegend = document.getElementById("macro-stats-donut-legend");
   const $macroStatsDonutMode = document.getElementById("macro-stats-donut-mode");
   const $macroTargetEditor = document.getElementById("macro-target-editor");
-  const $macroShoppingGroups = document.getElementById("macro-shopping-groups");
+  const $macroShoppingMode = document.getElementById("macro-shopping-mode");
+  const $macroShoppingListView = document.getElementById("macro-shopping-list-view");
+  const $macroShoppingCompareView = document.getElementById("macro-shopping-compare-view");
+  const $macroShoppingSearch = document.getElementById("macro-shopping-search");
+  const $macroShoppingScoreFilters = document.getElementById("macro-shopping-score-filters");
+  const $macroShoppingResultsCount = document.getElementById("macro-shopping-results-count");
+  const $macroShoppingResults = document.getElementById("macro-shopping-results");
+  const $macroShoppingEmpty = document.getElementById("macro-shopping-empty");
+  const $macroShoppingCompareLeftSearch = document.getElementById("macro-shopping-compare-left-search");
+  const $macroShoppingCompareRightSearch = document.getElementById("macro-shopping-compare-right-search");
+  const $macroShoppingCompareLeftOptions = document.getElementById("macro-shopping-compare-left-options");
+  const $macroShoppingCompareRightOptions = document.getElementById("macro-shopping-compare-right-options");
+  const $macroShoppingCompareTableWrap = document.getElementById("macro-shopping-compare-table-wrap");
+  const $macroShoppingCompareTableBody = document.getElementById("macro-shopping-compare-table-body");
+  const $macroShoppingCompareLeftTitle = document.getElementById("macro-shopping-compare-left-title");
+  const $macroShoppingCompareRightTitle = document.getElementById("macro-shopping-compare-right-title");
+  const $macroShoppingCompareEmpty = document.getElementById("macro-shopping-compare-empty");
   const $macroStatsTopRecipes = document.getElementById("macro-stats-top-recipes");
   const $macroStatsTopProducts = document.getElementById("macro-stats-top-products");
   const $macroAddModalBackdrop = document.getElementById("macro-add-modal-backdrop");
@@ -470,6 +486,17 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   const macroModalState = { meal: "breakfast", source: "products", query: "" };
   const macroStatsState = { period: "week", anchorDate: selectedMacroDate, metric: "macros", donutMode: "kcal-macros" };
   const macroSelectionState = { meal: null, selectedIds: new Set() };
+  const shoppingState = {
+    mode: "list",
+    query: "",
+    nutriFilter: "all",
+    compare: {
+      leftQuery: "",
+      rightQuery: "",
+      leftProductId: "",
+      rightProductId: "",
+    },
+  };
   const macroExpandedRecipes = new Set();
   const macroLongPressState = { timer: null, meal: null, entryId: null, pointerId: null, startX: 0, startY: 0, active: false };
   const macroPalette = {
@@ -3958,6 +3985,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       servingBaseGrams: normalizedBaseQuantity,
       servingBaseUnit: normalizedBaseUnit,
       macros: normalizeMacros(product.macros),
+      nutriScore: resolveProductNutriScore(product),
       financeProductId: String(product.financeProductId || "").trim(),
       linkedHabitId: String(product.linkedHabitId || "").trim(),
       packageAmount: pkg.amount,
@@ -4699,110 +4727,267 @@ $recipeImportBtn?.addEventListener("click", () => {
     });
   }
 
-  function buildProductConsumptionSeries(product, now = new Date()) {
-    const packageAmount = Number(product?.packageAmount);
-    const packageUnit = normalizeUnit(product?.packageUnit || '');
-    if (!(packageAmount > 0) || !packageUnit) return null;
-    const dates = [];
-    for (let i = 29; i >= 0; i -= 1) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      dates.push(toISODate(d));
+  const NUTRI_SCORE_FILTERS = [
+    { id: "all", label: "Todos" },
+    { id: "a", label: "A" },
+    { id: "b", label: "B" },
+    { id: "c", label: "C" },
+    { id: "d", label: "D" },
+    { id: "e", label: "E" },
+    { id: "none", label: "Sin dato" },
+  ];
+
+  function resolveProductNutriScore(product = {}) {
+    const raw = String(
+      product?.nutriScore
+      || product?.nutri_score
+      || product?.nutriscore
+      || product?.nutriscore_grade
+      || product?.nutritionGrade
+      || product?.nutrition_grade_fr
+      || product?.nutriments?.nutriscore_grade
+      || product?.nutriments?.nutrition_grades
+      || ""
+    ).trim().toLowerCase();
+    if (["a", "b", "c", "d", "e"].includes(raw)) return raw;
+    return null;
+  }
+
+  function getNutriScoreOrder(score) {
+    const normalized = String(score || "").toLowerCase();
+    return ({ a: 1, b: 2, c: 3, d: 4, e: 5 }[normalized] || 99);
+  }
+
+  function getNutriScoreLabel(score) {
+    const normalized = String(score || "").toLowerCase();
+    return normalized ? normalized.toUpperCase() : "Sin Nutri-Score";
+  }
+
+  function getNutriHealthLabel(score) {
+    const normalized = String(score || "").toLowerCase();
+    if (normalized === "a" || normalized === "b") return "Más saludable";
+    if (normalized === "c") return "Intermedio";
+    if (normalized === "d" || normalized === "e") return "Menos saludable";
+    return "Sin clasificar";
+  }
+
+  function getProductMacrosPer100(product = {}) {
+    const baseQtyRaw = Number(product?.baseQuantity || product?.servingBaseGrams);
+    const baseUnitRaw = normalizeUnit(product?.baseUnit || product?.servingBaseUnit || "g") || "g";
+    const macros = normalizeMacros(product?.macros || {});
+    if (!(baseQtyRaw > 0)) return null;
+    let normalizedBaseQty = baseQtyRaw;
+    let normalizedBaseUnit = baseUnitRaw;
+    if (baseUnitRaw === "kg") {
+      normalizedBaseQty = baseQtyRaw * 1000;
+      normalizedBaseUnit = "g";
+    } else if (baseUnitRaw === "l") {
+      normalizedBaseQty = baseQtyRaw * 1000;
+      normalizedBaseUnit = "ml";
     }
-    const byDate = new Map(dates.map((d) => [d, 0]));
-    dates.forEach((date) => {
-      const log = dailyLogsByDate?.[date];
-      if (!log?.meals) return;
-      mealOrder.forEach((meal) => {
-        const entries = log.meals?.[meal]?.entries || [];
-        entries.forEach((entry) => {
-          if (entry.type === 'product' && String(entry.refId || '') === String(product.id || '')) {
-            const qty = Number(entry.amount) || Number(entry.grams) || 0;
-            const unit = normalizeUnit(entry.unit || entry.amountUnit || product.baseUnit || '');
-            const converted = normalizeQtyByUnit(qty, unit, packageUnit);
-            if (converted != null) byDate.set(date, (byDate.get(date) || 0) + Math.max(0, converted));
-          }
-          if (entry.type === 'recipe') {
-            const ingredients = getRecipeIngredientsFromEntry(entry);
-            const servings = Math.max(0, Number(entry.servings) || 0);
-            ingredients.forEach((ing) => {
-              if (String(ing?.productId || '') !== String(product.id || '')) return;
-              const qty = Number(ing?.qty) || 0;
-              const unit = normalizeUnit(ing?.unit || '');
-              if (!(qty > 0) || !unit) return;
-              const consumedIngredientQty = qty * servings;
-              const converted = normalizeQtyByUnit(consumedIngredientQty, unit, packageUnit);
-              if (converted != null) byDate.set(date, (byDate.get(date) || 0) + Math.max(0, converted));
-            });
-          }
-        });
+    if (!(normalizedBaseQty > 0) || !["g", "ml"].includes(normalizedBaseUnit)) return null;
+    const factor = 100 / normalizedBaseQty;
+    return {
+      kcal: Math.max(0, macros.kcal * factor),
+      fat: Math.max(0, macros.fat * factor),
+      protein: Math.max(0, macros.protein * factor),
+      carbs: Math.max(0, macros.carbs * factor),
+      unitLabel: normalizedBaseUnit === "ml" ? "100 ml" : "100 g",
+    };
+  }
+
+  function buildShoppingProductViewModel(product = {}) {
+    const macrosPer100 = getProductMacrosPer100(product);
+    const nutriScore = resolveProductNutriScore(product);
+    const searchHaystack = `${product?.name || ""} ${product?.brand || ""}`.toLowerCase();
+    return {
+      product,
+      id: String(product?.id || "").trim(),
+      name: String(product?.name || "").trim() || "Producto",
+      brand: String(product?.brand || "").trim(),
+      image: String(product?.image || "").trim() || null,
+      nutriScore,
+      macrosPer100,
+      searchHaystack,
+    };
+  }
+
+  function getFilteredShoppingProducts() {
+    const q = String(shoppingState.query || "").trim().toLowerCase();
+    const filter = shoppingState.nutriFilter;
+    return nutritionProducts
+      .map((p) => buildShoppingProductViewModel(p))
+      .filter((item) => item.name)
+      .filter((item) => !q || item.searchHaystack.includes(q))
+      .filter((item) => {
+        if (filter === "all") return true;
+        if (filter === "none") return !item.nutriScore;
+        return item.nutriScore === filter;
+      })
+      .sort((a, b) => {
+        const scoreDiff = getNutriScoreOrder(a.nutriScore) - getNutriScoreOrder(b.nutriScore);
+        if (scoreDiff !== 0) return scoreDiff;
+        return a.name.localeCompare(b.name, "es", { sensitivity: "base" });
       });
-    });
-    const series = dates.map((date) => ({ date, amount: byDate.get(date) || 0 }));
-    return { packageAmount, packageUnit, series };
   }
 
-  function estimateProductShopping(product) {
-    const built = buildProductConsumptionSeries(product);
-    if (!built) return { status: 'insufficient', reason: 'package', product };
-    const { packageAmount, packageUnit, series } = built;
-    const totalConsumed30 = series.reduce((acc, row) => acc + row.amount, 0);
-    const activeDays = series.filter((row) => row.amount > 0).length;
-    const dailyMeanWindow = totalConsumed30 / 30;
-    const dailyMeanActive = activeDays > 0 ? totalConsumed30 / activeDays : 0;
-    let estimatedDailyUse = 0;
-    let weak = false;
-    if (activeDays >= 8) estimatedDailyUse = dailyMeanWindow * 0.7 + dailyMeanActive * 0.3;
-    else if (activeDays >= 3) estimatedDailyUse = dailyMeanWindow * 0.85 + dailyMeanActive * 0.15;
-    else {
-      estimatedDailyUse = totalConsumed30 / 30;
-      weak = true;
+  function buildNutriScoreBadge(score) {
+    const normalized = String(score || "").toLowerCase();
+    const label = getNutriScoreLabel(normalized);
+    const cls = normalized ? `score-${normalized}` : "score-none";
+    return `<span class="macro-shopping-score-badge ${cls}">${escapeHtml(label)}</span>`;
+  }
+
+  function formatShoppingMetric(value, suffix = "") {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "—";
+    const cleanSuffix = String(suffix || "").trim();
+    return `${formatNumberEs(n, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}${cleanSuffix ? ` ${cleanSuffix}` : ""}`;
+  }
+
+  function renderShoppingScoreFilters() {
+    if (!$macroShoppingScoreFilters) return;
+    $macroShoppingScoreFilters.innerHTML = NUTRI_SCORE_FILTERS.map((filter) => {
+      const active = shoppingState.nutriFilter === filter.id;
+      return `<button class="macro-shopping-chip${active ? " is-active" : ""}" data-shopping-score-filter="${filter.id}" type="button">${filter.label}</button>`;
+    }).join("");
+  }
+
+  function renderShoppingProductCards() {
+    if (!$macroShoppingResults) return;
+    const list = getFilteredShoppingProducts();
+    if ($macroShoppingResultsCount) {
+      $macroShoppingResultsCount.textContent = list.length
+        ? `${list.length} producto${list.length === 1 ? "" : "s"}`
+        : "0 productos";
     }
-    const last7 = series.slice(-7);
-    const mean30 = dailyMeanWindow;
-    const mean7 = last7.reduce((acc, row) => acc + row.amount, 0) / 7;
-    const finalDailyUse = (mean30 > 0 && mean7 > 0) ? (mean30 * 0.7 + mean7 * 0.3) : estimatedDailyUse;
-    if (!(finalDailyUse > 0)) return { status: 'insufficient', reason: 'history', product, packageAmount, packageUnit, activeDays, totalConsumed30 };
-    const daysPerPackage = packageAmount / finalDailyUse;
-    const nextRestockDays = Math.max(0, daysPerPackage - 1);
-    return { status: weak ? 'weak' : 'ok', product, packageAmount, packageUnit, activeDays, totalConsumed30, dailyUse: finalDailyUse, daysPerPackage, nextRestockDays };
+    if ($macroShoppingEmpty) $macroShoppingEmpty.classList.toggle("hidden", list.length > 0);
+    $macroShoppingResults.innerHTML = list.map((item) => {
+      const m = item.macrosPer100;
+      const unitLabel = m?.unitLabel || "100 g";
+      const healthLabel = getNutriHealthLabel(item.nutriScore);
+      const media = item.image
+        ? `<img src="${escapeAttr(item.image)}" alt="${escapeAttr(item.name)}" loading="lazy" decoding="async" />`
+        : `<div class="macro-shopping-thumb-placeholder" aria-hidden="true">🥗</div>`;
+      return `<article class="macro-shopping-product-card">
+        <div class="macro-shopping-product-top">
+          <div class="macro-shopping-thumb">${media}</div>
+          <div class="macro-shopping-product-head">
+            <div class="macro-shopping-product-title">${escapeHtml(item.name)}</div>
+            <div class="macro-shopping-product-brand">${escapeHtml(item.brand || "Marca no disponible")}</div>
+            <div class="macro-shopping-product-score">
+              ${buildNutriScoreBadge(item.nutriScore)}
+              <span class="macro-shopping-health-pill">${escapeHtml(healthLabel)}</span>
+            </div>
+          </div>
+        </div>
+        <div class="macro-shopping-metrics">
+          <div class="macro-shopping-metric"><span>Calorías</span><strong>${m ? `${formatShoppingMetric(m.kcal, "kcal")}` : "—"}</strong></div>
+          <div class="macro-shopping-metric"><span>Grasas</span><strong>${m ? `${formatShoppingMetric(m.fat, "g")}` : "—"}</strong></div>
+          <div class="macro-shopping-metric"><span>Proteínas</span><strong>${m ? `${formatShoppingMetric(m.protein, "g")}` : "—"}</strong></div>
+          <div class="macro-shopping-metric"><span>Carbohidratos</span><strong>${m ? `${formatShoppingMetric(m.carbs, "g")}` : "—"}</strong></div>
+        </div>
+        <div class="macro-shopping-per-note">Valores por ${escapeHtml(unitLabel)}</div>
+      </article>`;
+    }).join("");
   }
 
-  function getShoppingBucket(daysPerPackage, status) {
-    if (status === 'insufficient') return 'Datos insuficientes';
-    if (daysPerPackage <= 3) return 'Muy frecuente';
-    if (daysPerPackage <= 10) return 'Semanal';
-    if (daysPerPackage <= 20) return 'Quincenal';
-    if (daysPerPackage <= 45) return 'Mensual';
-    return 'Ocasional';
+  function getShoppingCompareCandidates(query = "") {
+    const q = String(query || "").trim().toLowerCase();
+    return nutritionProducts
+      .map((product) => buildShoppingProductViewModel(product))
+      .filter((item) => !q || item.searchHaystack.includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }))
+      .slice(0, 8);
+  }
+
+  function getShoppingCompareProduct(side = "left") {
+    const productId = side === "left" ? shoppingState.compare.leftProductId : shoppingState.compare.rightProductId;
+    if (!productId) return null;
+    return nutritionProducts.find((p) => String(p.id || "") === productId) || null;
+  }
+
+  function renderShoppingCompareOptions(side = "left") {
+    const isLeft = side === "left";
+    const host = isLeft ? $macroShoppingCompareLeftOptions : $macroShoppingCompareRightOptions;
+    const query = isLeft ? shoppingState.compare.leftQuery : shoppingState.compare.rightQuery;
+    const selectedId = isLeft ? shoppingState.compare.leftProductId : shoppingState.compare.rightProductId;
+    if (!host) return;
+    const list = getShoppingCompareCandidates(query);
+    host.innerHTML = list.map((item) => {
+      const active = selectedId && selectedId === item.id;
+      return `<button class="macro-shopping-compare-option${active ? " is-active" : ""}" data-shopping-compare-pick="${side}:${escapeAttr(item.id)}" type="button">
+        <span>${escapeHtml(item.name)}</span>
+        <small>${escapeHtml(item.brand || "Sin marca")} · ${getNutriScoreLabel(item.nutriScore)}</small>
+      </button>`;
+    }).join("") || '<div class="hint">Sin resultados</div>';
+  }
+
+  function getComparisonSign(leftValue, rightValue) {
+    const left = Number(leftValue);
+    const right = Number(rightValue);
+    if (!Number.isFinite(left) || !Number.isFinite(right)) return "—";
+    if (left > right) return ">";
+    if (left < right) return "<";
+    return "=";
+  }
+
+  function renderShoppingCompareTable() {
+    if (!$macroShoppingCompareTableBody) return;
+    const left = getShoppingCompareProduct("left");
+    const right = getShoppingCompareProduct("right");
+    if (!left || !right) {
+      if ($macroShoppingCompareTableWrap) $macroShoppingCompareTableWrap.classList.add("hidden");
+      if ($macroShoppingCompareEmpty) $macroShoppingCompareEmpty.classList.remove("hidden");
+      return;
+    }
+    const leftM = getProductMacrosPer100(left);
+    const rightM = getProductMacrosPer100(right);
+    const leftScore = resolveProductNutriScore(left);
+    const rightScore = resolveProductNutriScore(right);
+    const rows = [
+      { label: "Calorías (kcal)", left: leftM?.kcal, right: rightM?.kcal, format: (v) => formatShoppingMetric(v, "kcal") },
+      { label: "Grasas (g)", left: leftM?.fat, right: rightM?.fat, format: (v) => formatShoppingMetric(v, "g") },
+      { label: "Proteínas (g)", left: leftM?.protein, right: rightM?.protein, format: (v) => formatShoppingMetric(v, "g") },
+      { label: "Carbohidratos (g)", left: leftM?.carbs, right: rightM?.carbs, format: (v) => formatShoppingMetric(v, "g") },
+      { label: "Nutri-Score", left: getNutriScoreOrder(leftScore), right: getNutriScoreOrder(rightScore), format: (_, sideScore) => getNutriScoreLabel(sideScore), leftScore, rightScore, scoreRow: true },
+    ];
+    if ($macroShoppingCompareLeftTitle) $macroShoppingCompareLeftTitle.textContent = left.name || "Producto A";
+    if ($macroShoppingCompareRightTitle) $macroShoppingCompareRightTitle.textContent = right.name || "Producto B";
+    $macroShoppingCompareTableBody.innerHTML = rows.map((row) => {
+      const sign = row.scoreRow ? getComparisonSign(row.left, row.right) : getComparisonSign(row.left, row.right);
+      const leftLabel = row.scoreRow ? row.format(row.left, row.leftScore) : row.format(row.left);
+      const rightLabel = row.scoreRow ? row.format(row.right, row.rightScore) : row.format(row.right);
+      return `<tr>
+        <th>${escapeHtml(row.label)}</th>
+        <td>${escapeHtml(leftLabel)}</td>
+        <td class="macro-shopping-compare-sign">${escapeHtml(sign)}</td>
+        <td>${escapeHtml(rightLabel)}</td>
+      </tr>`;
+    }).join("");
+    if ($macroShoppingCompareTableWrap) $macroShoppingCompareTableWrap.classList.remove("hidden");
+    if ($macroShoppingCompareEmpty) $macroShoppingCompareEmpty.classList.add("hidden");
   }
 
   function renderShoppingView() {
-    if (!$macroShoppingGroups) return;
-    const estimates = nutritionProducts.map((product) => estimateProductShopping(product));
-    const groups = new Map([
-      ['Muy frecuente', []],
-      ['Semanal', []],
-      ['Quincenal', []],
-      ['Mensual', []],
-      ['Ocasional', []],
-      ['Datos insuficientes', []],
-    ]);
-    estimates.forEach((est) => {
-      const bucket = getShoppingBucket(est.daysPerPackage, est.status);
-      groups.get(bucket)?.push(est);
+    if (!$recipesPanelShopping) return;
+    if (shoppingState.compare.leftProductId && !nutritionProducts.some((p) => String(p.id || "") === shoppingState.compare.leftProductId)) shoppingState.compare.leftProductId = "";
+    if (shoppingState.compare.rightProductId && !nutritionProducts.some((p) => String(p.id || "") === shoppingState.compare.rightProductId)) shoppingState.compare.rightProductId = "";
+    const isCompare = shoppingState.mode === "compare";
+    if ($macroShoppingSearch && $macroShoppingSearch.value !== shoppingState.query) $macroShoppingSearch.value = shoppingState.query;
+    if ($macroShoppingCompareLeftSearch && $macroShoppingCompareLeftSearch.value !== shoppingState.compare.leftQuery) $macroShoppingCompareLeftSearch.value = shoppingState.compare.leftQuery;
+    if ($macroShoppingCompareRightSearch && $macroShoppingCompareRightSearch.value !== shoppingState.compare.rightQuery) $macroShoppingCompareRightSearch.value = shoppingState.compare.rightQuery;
+    $macroShoppingListView?.classList.toggle("hidden", isCompare);
+    $macroShoppingCompareView?.classList.toggle("hidden", !isCompare);
+    $macroShoppingMode?.querySelectorAll("[data-shopping-mode]").forEach((btn) => {
+      const active = btn.dataset.shoppingMode === shoppingState.mode;
+      btn.classList.toggle("is-active", active);
     });
-    const renderCard = (est) => {
-      if (est.status === 'insufficient') {
-        return `<article class="macro-shopping-card"><h5>${escapeHtml(est.product?.name || 'Producto')}</h5><p class="hint">Sin datos suficientes de paquete o consumo.</p></article>`;
-      }
-      return `<article class="macro-shopping-card"><h5>${escapeHtml(est.product?.name || 'Producto')}</h5><div class="macro-shopping-meta">${roundMacro(est.dailyUse)} ${est.packageUnit}/día · pack ${roundMacro(est.packageAmount)} ${est.packageUnit}</div><div class="macro-shopping-meta">Dura ~${roundMacro(est.daysPerPackage)} días · próxima reposición ~${roundMacro(est.nextRestockDays)} días${est.status === 'weak' ? ' · estimación débil' : ''}</div></article>`;
-    };
-    const order = ['Muy frecuente','Semanal','Quincenal','Mensual','Ocasional','Datos insuficientes'];
-    $macroShoppingGroups.innerHTML = order.map((name) => {
-      const rows = (groups.get(name) || []).sort((a,b) => (Number(a.daysPerPackage)||9999) - (Number(b.daysPerPackage)||9999));
-      return `<section class="macro-shopping-group"><h5>${name}</h5><div class="macro-shopping-list">${rows.map(renderCard).join('') || '<div class="hint">Sin productos</div>'}</div></section>`;
-    }).join('');
+    renderShoppingScoreFilters();
+    renderShoppingProductCards();
+    renderShoppingCompareOptions("left");
+    renderShoppingCompareOptions("right");
+    renderShoppingCompareTable();
   }
 
   function switchRecipesPanel(panel = "library") {
@@ -7602,6 +7787,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         quantity: String(product.quantity || "").trim() || null,
         servingSize: String(product.serving_size || "").trim() || null,
         nutritionDataPer: String(product.nutrition_data_per || product.nutriment_data_per || "").trim() || null,
+        nutriScore: String(product.nutriscore_grade || product.nutrition_grades || "").trim() || null,
         nutriments: (product.nutriments && typeof product.nutriments === "object") ? product.nutriments : null,
         source: "openfoodfacts",
       };
@@ -7619,6 +7805,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       const quantity = String(attrs?.quantity || attrs?.package_size || attrs?.weight || "").trim() || null;
       const servingSize = String(attrs?.serving_size || attrs?.servingSize || "").trim() || null;
       const nutritionDataPer = String(attrs?.nutrition_data_per || attrs?.nutriment_data_per || "").trim() || null;
+      const nutriScore = String(attrs?.nutriscore_grade || attrs?.nutrition_grades || "").trim() || null;
       const nutriments = (attrs?.nutrients && typeof attrs.nutrients === "object") ? attrs.nutrients : (attrs?.nutriments && typeof attrs.nutriments === "object" ? attrs.nutriments : null);
       return {
         barcode: String(attrs?.barcode || attrs?.code || cleanBarcode || "").trim(),
@@ -7628,6 +7815,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         quantity,
         servingSize,
         nutritionDataPer,
+        nutriScore,
         nutriments,
         source: "foodrepo",
       };
@@ -7711,6 +7899,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       quantity: external.quantity || null,
       servingSize: external.servingSize || null,
       nutritionDataPer: external.nutritionDataPer || null,
+      nutriScore: resolveProductNutriScore(external),
       nutriments: external.nutriments || null,
       servingBaseGrams: inferred.qty,
       servingBaseUnit: inferred.unit,
@@ -8093,6 +8282,49 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   $recipesSubtabs.forEach((btn) => btn.addEventListener("click", () => switchRecipesPanel(btn.dataset.recipesPanel || "library")));
+  $macroShoppingMode?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-shopping-mode]");
+    if (!btn) return;
+    shoppingState.mode = btn.dataset.shoppingMode === "compare" ? "compare" : "list";
+    renderShoppingView();
+  });
+  $macroShoppingSearch?.addEventListener("input", (e) => {
+    shoppingState.query = String(e.target.value || "");
+    renderShoppingView();
+  });
+  $macroShoppingScoreFilters?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-shopping-score-filter]");
+    if (!btn) return;
+    shoppingState.nutriFilter = btn.dataset.shoppingScoreFilter || "all";
+    renderShoppingView();
+  });
+  $macroShoppingCompareLeftSearch?.addEventListener("input", (e) => {
+    shoppingState.compare.leftQuery = String(e.target.value || "");
+    renderShoppingCompareOptions("left");
+  });
+  $macroShoppingCompareRightSearch?.addEventListener("input", (e) => {
+    shoppingState.compare.rightQuery = String(e.target.value || "");
+    renderShoppingCompareOptions("right");
+  });
+  const onComparePick = (e) => {
+    const btn = e.target.closest("[data-shopping-compare-pick]");
+    if (!btn) return;
+    const [side, productId] = String(btn.dataset.shoppingComparePick || "").split(":");
+    const product = nutritionProducts.find((p) => String(p.id || "") === String(productId || ""));
+    if (!product) return;
+    if (side === "left") {
+      shoppingState.compare.leftProductId = String(product.id || "");
+      shoppingState.compare.leftQuery = product.name || "";
+      renderShoppingCompareOptions("left");
+    } else {
+      shoppingState.compare.rightProductId = String(product.id || "");
+      shoppingState.compare.rightQuery = product.name || "";
+      renderShoppingCompareOptions("right");
+    }
+    renderShoppingCompareTable();
+  };
+  $macroShoppingCompareLeftOptions?.addEventListener("click", onComparePick);
+  $macroShoppingCompareRightOptions?.addEventListener("click", onComparePick);
   $macroDateInput?.addEventListener("change", (e) => { selectedMacroDate = e.target.value || toISODate(new Date()); macroStatsState.anchorDate = selectedMacroDate; renderMacrosView(); });
   $macroStatsPeriods?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-stats-period]");

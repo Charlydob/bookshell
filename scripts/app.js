@@ -12,6 +12,7 @@ import {
   get,
   update
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { isActiveTabReselect, resetTabToRoot } from "./nav-root-reset.js";
 
 function ensureLoginUI() {
   if (document.getElementById("loginBox")) return;
@@ -287,6 +288,16 @@ function bindNav() {
     e.preventDefault();
     const viewId = btn.dataset.view;
     if (!isValidView(viewId)) return;
+
+    if (isActiveTabReselect(viewId)) {
+      setView(viewId);
+      void (async () => {
+        const mod = await getModule(viewId);
+        await resetTabToRoot(viewId, { module: mod });
+        await loadAndInit(viewId);
+      })();
+      return;
+    }
 
     setView(viewId);
     loadAndInit(viewId);

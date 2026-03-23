@@ -2602,6 +2602,31 @@ border: 0px;
   max-width: none;
 }
 
+#macro-product-modal-backdrop .macro-product-nutri-field{
+  margin-top: 8px;
+}
+#macro-product-modal-backdrop .macro-nutri-segmented{
+  display:grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap:6px;
+}
+#macro-product-modal-backdrop .macro-nutri-option{
+  border:1px solid rgba(255,255,255,.16);
+  border-radius:999px;
+  background:rgba(255,255,255,.05);
+  color:#eef2ff;
+  font-size:12px;
+  font-weight:700;
+  line-height:1;
+  min-height:34px;
+  padding:8px 6px;
+}
+#macro-product-modal-backdrop .macro-nutri-option.is-active{
+  border-color:rgba(245,230,166,.55);
+  background:linear-gradient(135deg, rgba(245,230,166,.25), rgba(176,156,92,.26));
+  box-shadow:0 8px 18px rgba(176,156,92,.22), inset 0 0 0 1px rgba(255,255,255,.18);
+}
+
 #macro-product-kcal{
   background-color: rgba(173, 245, 255, 0.281);
   backdrop-filter: blur(12px);
@@ -2918,6 +2943,26 @@ border: 0px;
 .macro-shopping-compare-table td{ padding:8px; border-bottom:1px solid rgba(255,255,255,.07); text-align:left; }
 .macro-shopping-compare-table td.macro-shopping-compare-sign{ text-align:center; width:34px; font-weight:700; color:#f5e6a6; }
 .macro-shopping-compare-table td .macro-shopping-score-badge{ vertical-align:middle; }
+.macro-shopping-compare-cell .macro-shopping-compare-cell-inner{
+  border-radius:10px;
+  padding:8px 10px;
+  border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.03);
+}
+.macro-shopping-compare-cell.is-better .macro-shopping-compare-cell-inner{
+  border-color:rgba(84,203,138,.46);
+  background:linear-gradient(135deg, rgba(84,203,138,.24), rgba(42,132,90,.16));
+  box-shadow:0 10px 18px rgba(49,135,92,.18);
+}
+.macro-shopping-compare-cell.is-worse .macro-shopping-compare-cell-inner{
+  border-color:rgba(226,114,114,.44);
+  background:linear-gradient(135deg, rgba(226,114,114,.22), rgba(148,64,64,.16));
+  box-shadow:0 10px 18px rgba(118,45,45,.16);
+}
+.macro-shopping-compare-cell.is-neutral .macro-shopping-compare-cell-inner{
+  border-color:rgba(190,196,214,.26);
+  background:linear-gradient(135deg, rgba(190,196,214,.11), rgba(130,138,161,.12));
+}
 .macro-shopping-compare-empty{
   border:1px dashed rgba(255,255,255,.14);
   border-radius:12px;

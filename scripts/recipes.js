@@ -382,6 +382,7 @@ if ($viewRecipes) {
   const $macroProductProtein = document.getElementById("macro-product-protein");
   const $macroProductFat = document.getElementById("macro-product-fat");
   const $macroProductKcal = document.getElementById("macro-product-kcal");
+  const $macroProductNutriSegmented = document.getElementById("macro-product-nutri-segmented");
   const $macroProductGrams = document.getElementById("macro-product-grams");
   const $macroProductGramsUnit = document.getElementById("macro-product-grams-unit");
   const $macroProductSummary = document.getElementById("macro-product-summary");
@@ -3985,6 +3986,22 @@ $recipeImportBtn?.addEventListener("click", () => {
       servingBaseGrams: normalizedBaseQuantity,
       servingBaseUnit: normalizedBaseUnit,
       macros: normalizeMacros(product.macros),
+      importedNutriScore: normalizeNutriScoreValue(
+        product.importedNutriScore
+        || product.imported_nutri_score
+        || product.nutriScore
+        || product.nutri_score
+        || product.nutriscore
+        || product.nutriscore_grade
+        || product.nutritionGrade
+        || product.nutrition_grade_fr
+      ),
+      manualNutriScore: normalizeNutriScoreValue(
+        product.manualNutriScore
+        || product.manual_nutri_score
+        || product.nutriScoreManual
+        || product.nutri_score_manual
+      ),
       nutriScore: resolveProductNutriScore(product),
       financeProductId: String(product.financeProductId || "").trim(),
       linkedHabitId: String(product.linkedHabitId || "").trim(),
@@ -4737,9 +4754,34 @@ $recipeImportBtn?.addEventListener("click", () => {
     { id: "none", label: "Sin dato" },
   ];
 
+  function normalizeNutriScoreValue(value) {
+    const raw = String(value || "").trim().toLowerCase();
+    return ["a", "b", "c", "d", "e"].includes(raw) ? raw : null;
+  }
+
+  function computeNutriScoreIfReliable(product = {}) {
+    // Fórmula oficial Nutri-Score requiere más variables (azúcares, sal/sodio, fibra, % frutas/verduras,
+    // grasas saturadas, etc.). Con el modelo local (kcal, grasas, carbs y proteína) no se puede
+    // calcular de forma seria ni reproducible. Por eso, aquí no aproximamos y devolvemos null.
+    // Si en el futuro se amplían datos mínimos oficiales, este helper es el punto de extensión.
+    void product;
+    return null;
+  }
+
   function resolveProductNutriScore(product = {}) {
-    const raw = String(
-      product?.nutriScore
+    const manual = normalizeNutriScoreValue(
+      product?.manualNutriScore
+      || product?.manual_nutri_score
+      || product?.nutriScoreManual
+      || product?.nutri_score_manual
+    );
+    if (manual) return manual;
+    const computed = computeNutriScoreIfReliable(product);
+    if (computed) return computed;
+    return normalizeNutriScoreValue(
+      product?.importedNutriScore
+      || product?.imported_nutri_score
+      || product?.nutriScore
       || product?.nutri_score
       || product?.nutriscore
       || product?.nutriscore_grade
@@ -4747,10 +4789,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       || product?.nutrition_grade_fr
       || product?.nutriments?.nutriscore_grade
       || product?.nutriments?.nutrition_grades
-      || ""
-    ).trim().toLowerCase();
-    if (["a", "b", "c", "d", "e"].includes(raw)) return raw;
-    return null;
+    );
   }
 
   function getNutriScoreOrder(score) {
@@ -4771,7 +4810,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     return "Sin clasificar";
   }
 
-  function getProductMacrosPer100(product = {}) {
+  function resolveProductNutritionPer100(product = {}) {
     const baseQtyRaw = Number(product?.baseQuantity || product?.servingBaseGrams);
     const baseUnitRaw = normalizeUnit(product?.baseUnit || product?.servingBaseUnit || "g") || "g";
     const macros = normalizeMacros(product?.macros || {});
@@ -4797,7 +4836,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   function buildShoppingProductViewModel(product = {}) {
-    const macrosPer100 = getProductMacrosPer100(product);
+    const macrosPer100 = resolveProductNutritionPer100(product);
     const nutriScore = resolveProductNutriScore(product);
     const effectivePrice = getEffectiveProductPrice(product);
     const searchHaystack = `${product?.name || ""} ${product?.brand || ""}`.toLowerCase();
@@ -4931,15 +4970,6 @@ $recipeImportBtn?.addEventListener("click", () => {
     }).join("") || '<div class="hint">Sin resultados</div>';
   }
 
-  function getComparisonSign(leftValue, rightValue) {
-    const left = Number(leftValue);
-    const right = Number(rightValue);
-    if (!Number.isFinite(left) || !Number.isFinite(right)) return "—";
-    if (left > right) return ">";
-    if (left < right) return "<";
-    return "=";
-  }
-
   function getNutriScoreRank(score) {
     const normalized = String(score || "").toLowerCase();
     return ({ a: 5, b: 4, c: 3, d: 2, e: 1 }[normalized] || 0);
@@ -4947,6 +4977,30 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function buildNutriScoreCell(score) {
     return buildNutriScoreBadge(score);
+  }
+
+  function compareMetricValues(leftValue, rightValue, type = "lower-better") {
+    const left = Number(leftValue);
+    const right = Number(rightValue);
+    const leftValid = Number.isFinite(left);
+    const rightValid = Number.isFinite(right);
+    if (!leftValid && !rightValid) return { leftState: "unknown", rightState: "unknown", sign: "—" };
+    if (!leftValid && rightValid) return { leftState: "unknown", rightState: type === "nutri-score" ? "better" : "unknown", sign: "—" };
+    if (leftValid && !rightValid) return { leftState: type === "nutri-score" ? "better" : "unknown", rightState: "unknown", sign: "—" };
+    if (left === right) return { leftState: "equal", rightState: "equal", sign: "=" };
+    const leftWins = type === "higher-better" ? left > right : left < right;
+    const sign = left > right ? ">" : "<";
+    return {
+      leftState: leftWins ? "better" : "worse",
+      rightState: leftWins ? "worse" : "better",
+      sign,
+    };
+  }
+
+  function getComparisonCellClass(state = "unknown") {
+    if (state === "better") return "is-better";
+    if (state === "worse") return "is-worse";
+    return "is-neutral";
   }
 
   function renderShoppingCompareTable() {
@@ -4958,31 +5012,32 @@ $recipeImportBtn?.addEventListener("click", () => {
       if ($macroShoppingCompareEmpty) $macroShoppingCompareEmpty.classList.remove("hidden");
       return;
     }
-    const leftM = getProductMacrosPer100(left);
-    const rightM = getProductMacrosPer100(right);
+    const leftM = resolveProductNutritionPer100(left);
+    const rightM = resolveProductNutritionPer100(right);
     const leftScore = resolveProductNutriScore(left);
     const rightScore = resolveProductNutriScore(right);
     const leftPrice = getEffectiveProductPrice(left);
     const rightPrice = getEffectiveProductPrice(right);
     const rows = [
-      { label: "Calorías (kcal)", left: leftM?.kcal, right: rightM?.kcal, format: (v) => formatShoppingMetric(v, "kcal") },
-      { label: "Grasas (g)", left: leftM?.fat, right: rightM?.fat, format: (v) => formatShoppingMetric(v, "g") },
-      { label: "Proteínas (g)", left: leftM?.protein, right: rightM?.protein, format: (v) => formatShoppingMetric(v, "g") },
-      { label: "Carbohidratos (g)", left: leftM?.carbs, right: rightM?.carbs, format: (v) => formatShoppingMetric(v, "g") },
-      { label: "Nutri-Score", left: getNutriScoreRank(leftScore), right: getNutriScoreRank(rightScore), format: (_, sideScore) => buildNutriScoreCell(sideScore), leftScore, rightScore, scoreRow: true, html: true },
-      { label: "Precio", left: leftPrice, right: rightPrice, format: (v) => v == null ? "—" : formatCurrency(v) },
+      { label: "Calorías (kcal)", left: leftM?.kcal, right: rightM?.kcal, type: "lower-better", format: (v) => formatShoppingMetric(v, "kcal") },
+      { label: "Grasas (g)", left: leftM?.fat, right: rightM?.fat, type: "lower-better", format: (v) => formatShoppingMetric(v, "g") },
+      { label: "Proteínas (g)", left: leftM?.protein, right: rightM?.protein, type: "higher-better", format: (v) => formatShoppingMetric(v, "g") },
+      { label: "Carbohidratos (g)", left: leftM?.carbs, right: rightM?.carbs, type: "lower-better", format: (v) => formatShoppingMetric(v, "g") },
+      { label: "Nutri-Score", left: getNutriScoreRank(leftScore), right: getNutriScoreRank(rightScore), type: "nutri-score", format: (_, sideScore) => buildNutriScoreCell(sideScore), leftScore, rightScore, html: true },
+      { label: "Precio", left: leftPrice, right: rightPrice, type: "lower-better", format: (v) => v == null ? "—" : formatCurrency(v) },
     ];
     if ($macroShoppingCompareLeftTitle) $macroShoppingCompareLeftTitle.textContent = left.name || "Producto A";
     if ($macroShoppingCompareRightTitle) $macroShoppingCompareRightTitle.textContent = right.name || "Producto B";
     $macroShoppingCompareTableBody.innerHTML = rows.map((row) => {
-      const sign = row.scoreRow ? getComparisonSign(row.left, row.right) : getComparisonSign(row.left, row.right);
-      const leftLabel = row.scoreRow ? row.format(row.left, row.leftScore) : row.format(row.left);
-      const rightLabel = row.scoreRow ? row.format(row.right, row.rightScore) : row.format(row.right);
+      const comparison = compareMetricValues(row.left, row.right, row.type || "lower-better");
+      const sign = comparison.sign;
+      const leftLabel = row.leftScore !== undefined ? row.format(row.left, row.leftScore) : row.format(row.left);
+      const rightLabel = row.rightScore !== undefined ? row.format(row.right, row.rightScore) : row.format(row.right);
       return `<tr>
         <th>${escapeHtml(row.label)}</th>
-        <td>${row.html ? leftLabel : escapeHtml(leftLabel)}</td>
+        <td class="macro-shopping-compare-cell ${getComparisonCellClass(comparison.leftState)}"><div class="macro-shopping-compare-cell-inner">${row.html ? leftLabel : escapeHtml(leftLabel)}</div></td>
         <td class="macro-shopping-compare-sign">${escapeHtml(sign)}</td>
-        <td>${row.html ? rightLabel : escapeHtml(rightLabel)}</td>
+        <td class="macro-shopping-compare-cell ${getComparisonCellClass(comparison.rightState)}"><div class="macro-shopping-compare-cell-inner">${row.html ? rightLabel : escapeHtml(rightLabel)}</div></td>
       </tr>`;
     }).join("");
     if ($macroShoppingCompareTableWrap) $macroShoppingCompareTableWrap.classList.remove("hidden");
@@ -5280,6 +5335,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       baseUnit,
       servingBaseUnit: baseUnit,
       servingBaseGrams: base,
+      manualNutriScore: normalizeNutriScoreValue($macroProductNutriSegmented?.dataset.value || ""),
+      importedNutriScore: normalizeNutriScoreValue(_macroProductDraft?.importedNutriScore || _macroProductDraft?.nutriScore || ""),
       macros: {
         carbs: Number($macroProductCarbs?.value) || 0,
         protein: Number($macroProductProtein?.value) || 0,
@@ -5522,6 +5579,14 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductKcal) {
       const v = Number(product.macros?.kcal);
       $macroProductKcal.value = Number.isFinite(v) && v > 0 ? String(v) : "";
+    }
+    if ($macroProductNutriSegmented) {
+      const manualNutri = normalizeNutriScoreValue(product.manualNutriScore || "");
+      $macroProductNutriSegmented.dataset.value = manualNutri || "";
+      $macroProductNutriSegmented.querySelectorAll("[data-nutri-value]").forEach((btn) => {
+        const current = normalizeNutriScoreValue(btn.dataset.nutriValue || "") || "";
+        btn.classList.toggle("is-active", current === (manualNutri || ""));
+      });
     }
     const pkg = resolveProductPackageSpec(product);
     if ($macroProductPackageAmount) $macroProductPackageAmount.value = pkg.amount == null ? "" : String(Number(pkg.amount) || 0);
@@ -6007,6 +6072,9 @@ $recipeImportBtn?.addEventListener("click", () => {
       price: Number(product.price) > 0 ? Number(product.price) : null,
       priceBaseQty: pkg.amount,
       priceBaseUnit: pkg.unit,
+      manualNutriScore: normalizeNutriScoreValue(product.manualNutriScore),
+      importedNutriScore: normalizeNutriScoreValue(product.importedNutriScore || product.nutriScore),
+      nutriScore: resolveProductNutriScore(product),
       source: product.source || "manual",
       createdAt: product.createdAt || now,
       updatedAt: now,
@@ -7919,6 +7987,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       quantity: external.quantity || null,
       servingSize: external.servingSize || null,
       nutritionDataPer: external.nutritionDataPer || null,
+      importedNutriScore: normalizeNutriScoreValue(external.nutriScore),
       nutriScore: resolveProductNutriScore(external),
       nutriments: external.nutriments || null,
       servingBaseGrams: inferred.qty,
@@ -8780,6 +8849,10 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductProtein) $macroProductProtein.value = String(Number(pdt.macros?.protein) || 0);
     if ($macroProductFat) $macroProductFat.value = String(Number(pdt.macros?.fat) || 0);
     if ($macroProductKcal) $macroProductKcal.value = String(Number(pdt.macros?.kcal) || 0);
+    _macroProductDraft = {
+      ...(_macroProductDraft || {}),
+      importedNutriScore: normalizeNutriScoreValue(pdt.importedNutriScore || pdt.nutriScore),
+    };
     renderMacroProductSummary();
   });
   $macroProductFinanceSelect?.addEventListener("change", () => {
@@ -8800,6 +8873,16 @@ $recipeImportBtn?.addEventListener("click", () => {
   $macroProductHabitUnlink?.addEventListener("click", () => {
     if ($macroProductHabitSelect) $macroProductHabitSelect.value = "";
     if ($macroProductHabitHint) $macroProductHabitHint.textContent = "Sin hábito vinculado";
+  });
+  $macroProductNutriSegmented?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-nutri-value]");
+    if (!btn) return;
+    const value = normalizeNutriScoreValue(btn.dataset.nutriValue || "") || "";
+    $macroProductNutriSegmented.dataset.value = value;
+    $macroProductNutriSegmented.querySelectorAll("[data-nutri-value]").forEach((opt) => {
+      const optValue = normalizeNutriScoreValue(opt.dataset.nutriValue || "") || "";
+      opt.classList.toggle("is-active", optValue === value);
+    });
   });
   $macroProductModalClose?.addEventListener("click", closeMacroProductModal);
   $macroProductCancel?.addEventListener("click", closeMacroProductModal);

@@ -104,7 +104,7 @@ body {
   flex: 1;
   min-height: 0;
   /* El scroll vive en `.view` para evitar doble scroll (body no scrollea). */
-  padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 10px;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 10px 6px;
   overflow: hidden;
 }
 
@@ -876,7 +876,7 @@ main {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
-  padding-bottom: calc(6px + var(--nav-total-h) + var(--nav-gap));
+  padding-bottom: calc(6px + var(--nav-total-h));
 }
 
 .book-detail-quotes {

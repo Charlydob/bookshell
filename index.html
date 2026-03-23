@@ -797,11 +797,58 @@
 </div>
 <div class="recipes-panel" id="recipes-panel-shopping">
   <div class="macro-stats-shell">
-    <section class="macro-stats-card">
+    <section class="macro-stats-card macro-shopping-shell">
       <header class="macro-stats-card-head">
-        <h4>Estimación de reposición</h4>
+        <h4>Compra inteligente</h4>
+        <div class="macro-shopping-mode" id="macro-shopping-mode">
+          <button class="macro-shopping-mode-btn is-active" id="macro-shopping-mode-list" data-shopping-mode="list" type="button">Explorar</button>
+          <button class="macro-shopping-mode-btn" id="macro-shopping-mode-compare" data-shopping-mode="compare" type="button">Comparar</button>
+        </div>
       </header>
-      <div class="macro-shopping-groups" id="macro-shopping-groups"></div>
+      <div class="macro-shopping-list-view" id="macro-shopping-list-view">
+        <div class="macro-shopping-search-wrap">
+          <span aria-hidden="true">🔎</span>
+          <input id="macro-shopping-search" type="search" placeholder="Buscar producto por nombre…" autocomplete="off" />
+        </div>
+        <div class="macro-shopping-score-filters" id="macro-shopping-score-filters" role="group" aria-label="Filtro Nutri-Score"></div>
+        <div class="macro-shopping-results-meta" id="macro-shopping-results-count"></div>
+        <div class="macro-shopping-results" id="macro-shopping-results"></div>
+        <div class="macro-shopping-empty hidden" id="macro-shopping-empty">
+          <div class="macro-shopping-empty-icon" aria-hidden="true">🧺</div>
+          <div class="macro-shopping-empty-title">No encontramos productos</div>
+          <p>Prueba con otro nombre o cambia el filtro de Nutri-Score.</p>
+        </div>
+      </div>
+      <div class="macro-shopping-compare-view hidden" id="macro-shopping-compare-view">
+        <div class="macro-shopping-compare-pickers">
+          <article class="macro-shopping-compare-picker">
+            <h5>Producto izquierda</h5>
+            <input id="macro-shopping-compare-left-search" type="search" placeholder="Buscar producto…" autocomplete="off" />
+            <div class="macro-shopping-compare-options" id="macro-shopping-compare-left-options"></div>
+          </article>
+          <article class="macro-shopping-compare-picker">
+            <h5>Producto derecha</h5>
+            <input id="macro-shopping-compare-right-search" type="search" placeholder="Buscar producto…" autocomplete="off" />
+            <div class="macro-shopping-compare-options" id="macro-shopping-compare-right-options"></div>
+          </article>
+        </div>
+        <div class="macro-shopping-compare-table-wrap hidden" id="macro-shopping-compare-table-wrap">
+          <table class="macro-shopping-compare-table">
+            <thead>
+              <tr>
+                <th>Métrica</th>
+                <th id="macro-shopping-compare-left-title">Producto A</th>
+                <th>Comparación</th>
+                <th id="macro-shopping-compare-right-title">Producto B</th>
+              </tr>
+            </thead>
+            <tbody id="macro-shopping-compare-table-body"></tbody>
+          </table>
+        </div>
+        <div class="macro-shopping-compare-empty" id="macro-shopping-compare-empty">
+          Selecciona dos productos para ver la comparación por 100 g/ml.
+        </div>
+      </div>
     </section>
   </div>
 </div>

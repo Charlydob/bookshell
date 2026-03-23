@@ -198,11 +198,19 @@ function installLayoutMetricsSync() {
     return Math.max(0, window.innerHeight - rect.top);
   };
 
+  const readSessionOcclusion = () => {
+    const overlay = document.getElementById("habit-session-overlay");
+    if (!isVisible(overlay)) return 0;
+    // El contenedor ocupa más alto de lo que se ve por offsets internos del pill.
+    // Para el padding real de las vistas, medimos el nodo visual que tapa contenido.
+    const pill = overlay.querySelector(".habit-session-pill");
+    return readOcclusion(isVisible(pill) ? pill : overlay);
+  };
+
   const sync = () => {
     const nav = document.querySelector(".bottom-nav");
-    const sessionOverlay = document.getElementById("habit-session-overlay");
     const navOcclusion = readOcclusion(nav);
-    const sessionOcclusion = readOcclusion(sessionOverlay);
+    const sessionOcclusion = readSessionOcclusion();
     const totalBottomOcclusion = Math.max(navOcclusion, sessionOcclusion);
 
     const root = document.documentElement;

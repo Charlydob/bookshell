@@ -106,9 +106,17 @@ async function ensureUserSchema(uid) {
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const APP_BOOT_TS = performance.now();
+const bootSplash = window.__bookshellBootSplash || null;
+
+function setBootPhase(text, progressHint) {
+  try { bootSplash?.setPhase?.(text, progressHint); } catch (_) {}
+}
+
+function finishBootSplash() {
+  try { bootSplash?.done?.(); } catch (_) {}
+}
 
 const VIEW_MODULE = {
-  "view-main":   () => import("./dashboard.js"),
   "view-books":  () => import("./books.js"),
   "view-videos": () => import("./videos.js"),
   "view-recipes":() => import("./recipes.js"),
@@ -215,7 +223,7 @@ function getInitialView() {
   const saved = localStorage.getItem(LAST_VIEW_KEY);
   if (isValidView(saved)) return saved;
 
-  return "view-main";
+  return "view-books";
 }
 
 async function getModule(viewId) {
@@ -343,13 +351,17 @@ function loadStyleOnce(href) {
 (function boot() {
   bindNav();
   installGlobalModalScrollLock();
-
+  setBootPhase("Inicializando…", 12);
 
   onAuthStateChanged(auth, async (user) => {
     if (!user) {
+      setBootPhase("Conectando…", 32);
       ensureLoginUI();
+      finishBootSplash();
       return;
     }
+
+    setBootPhase("Conectando…", 38);
 
     // seed esquema v2 si hace falta
     try { await ensureUserSchema(user.uid); }
@@ -360,7 +372,14 @@ function loadStyleOnce(href) {
 
     const viewId = getInitialView();
     setView(viewId, { pushHash: true });
-    loadAndInit(viewId);
+    setBootPhase("Cargando datos…", 62);
+
+    try {
+      await loadAndInit(viewId);
+      setBootPhase("Preparando interfaz…", 78);
+    } finally {
+      requestAnimationFrame(() => finishBootSplash());
+    }
 
     console.log("[auth] uid", user.uid);
     console.log("[perf] app-initial-load-ms", Math.round(performance.now() - APP_BOOT_TS));

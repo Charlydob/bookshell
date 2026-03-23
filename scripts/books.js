@@ -357,9 +357,6 @@ const activateView = (viewId, { persist = true, scroll = true } = {}) => {
     renderCalendar();
   }
 
-  if (viewId === "view-main") {
-    try { window.__bookshellDashboard?.render?.(); } catch (_) {}
-  }
 };
 
 if (!location.hash) {
@@ -1206,7 +1203,6 @@ onValue(ref(db, BOOKS_PATH), (snap) => {
   books = snap.val() || {};
   renderBooks();
   try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
-  try { window.__bookshellDashboard?.render?.(); } catch (_) {}
 });
 
 // Escucha log lectura

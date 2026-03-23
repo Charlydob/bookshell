@@ -11889,7 +11889,6 @@ function listenRemote() {
     saveCache();
     rerender();
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
-    try { window.__bookshellDashboard?.render?.(); } catch (_) {}
   });
 
   onValue(ref(db, HABIT_COUNTS_PATH), (snap) => {
@@ -11899,7 +11898,6 @@ function listenRemote() {
     saveCache();
     rerender();
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
-    try { window.__bookshellDashboard?.render?.(); } catch (_) {}
   });
 
   onValue(ref(db, HABIT_ACTIVE_SESSIONS_PATH), (snap) => {
@@ -11929,7 +11927,6 @@ function listenRemote() {
     saveCache();
     rerender();
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
-    try { window.__bookshellDashboard?.render?.(); } catch (_) {}
   });
 }
 

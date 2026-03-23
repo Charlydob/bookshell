@@ -10,7 +10,7 @@
 <meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"/>
 <meta content="Bookshell" name="apple-mobile-web-app-title"/>
 <link href="styles/mainstyles.css" rel="stylesheet"/>
-<link href="styles/mainpage.css" rel="stylesheet"/><link href="styles/dashboard.css" rel="stylesheet"/>
+<link href="styles/mainpage.css" rel="stylesheet"/>
 <link href="styles/videos.css" rel="stylesheet"/>
 <link href="styles/recipes.css" rel="stylesheet"/>
 <link href="styles/habits.css" rel="stylesheet"/>
@@ -47,44 +47,126 @@
   })();
 </script>
 
+
+<style id="boot-splash-style">
+  body.boot-loading { overflow: hidden; background: #05060a; }
+  #boot-splash {
+    position: fixed; inset: 0; z-index: 1000000;
+    display: grid; place-items: center;
+    padding: max(env(safe-area-inset-top), 20px) 20px max(env(safe-area-inset-bottom), 20px);
+    background: radial-gradient(1200px 600px at 50% -20%, rgba(89, 163, 255, .16), transparent 68%), #05060a;
+    color: #e8edf9;
+    font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    transition: opacity .28s ease, visibility .28s ease;
+  }
+  #boot-splash.boot-splash-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+  .boot-splash-card { width: min(360px, 92vw); display: grid; gap: 12px; }
+  .boot-splash-title { font-size: 17px; font-weight: 700; letter-spacing: .01em; }
+  .boot-splash-status { font-size: 13px; opacity: .88; min-height: 1.4em; }
+  .boot-splash-progress { height: 4px; border-radius: 999px; background: rgba(255,255,255,.14); overflow: hidden; }
+  .boot-splash-progress > i { display: block; height: 100%; width: 20%; border-radius: inherit; background: linear-gradient(90deg, #8ab8ff, #5b90ff); transform-origin: 0 50%; transform: scaleX(.08); transition: transform .32s ease; }
+  .boot-splash-note { font-size: 12px; color: #ffcd7a; opacity: 0; transition: opacity .2s ease; min-height: 1.3em; }
+  #boot-splash[data-slow='1'] .boot-splash-note { opacity: .95; }
+</style>
+
+<script>
+  (function () {
+    var splash, statusEl, progressEl;
+    var value = 0;
+    var timer = null;
+    var done = false;
+    var phases = [
+      { at: 0, text: 'Inicializando…' },
+      { at: 24, text: 'Conectando…' },
+      { at: 52, text: 'Cargando datos…' },
+      { at: 76, text: 'Preparando interfaz…' }
+    ];
+
+    function ensure() {
+      if (splash) return true;
+      splash = document.getElementById('boot-splash');
+      if (!splash) return false;
+      statusEl = splash.querySelector('[data-role="status"]');
+      progressEl = splash.querySelector('[data-role="bar"]');
+      return true;
+    }
+
+    function apply() {
+      if (!ensure()) return;
+      if (progressEl) {
+        var clamped = Math.max(0, Math.min(100, value));
+        progressEl.style.transform = 'scaleX(' + (clamped / 100) + ')';
+      }
+      if (statusEl) {
+        for (var i = phases.length - 1; i >= 0; i--) {
+          if (value >= phases[i].at) { statusEl.textContent = phases[i].text; break; }
+        }
+      }
+    }
+
+    function tick() {
+      if (done) return;
+      var target = value < 60 ? 82 : 93;
+      value += (target - value) * 0.12 + 0.35;
+      if (value > 94) value = 94;
+      apply();
+      timer = window.setTimeout(tick, 140);
+    }
+
+    function setPhase(text, hintValue) {
+      if (typeof hintValue === 'number') value = Math.max(value, hintValue);
+      apply();
+      if (ensure() && statusEl && text) statusEl.textContent = text;
+    }
+
+    function finish() {
+      if (done) return;
+      done = true;
+      window.clearTimeout(timer);
+      value = 100;
+      apply();
+      if (!ensure()) return;
+      splash.classList.add('boot-splash-hidden');
+      document.body.classList.remove('boot-loading');
+      window.setTimeout(function () { splash.remove(); }, 360);
+    }
+
+    function markSlow() {
+      if (!ensure()) return;
+      splash.dataset.slow = '1';
+    }
+
+    window.__bookshellBootSplash = { setPhase: setPhase, done: finish, markSlow: markSlow };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () {
+        document.body.classList.add('boot-loading');
+        tick();
+        window.setTimeout(markSlow, 9000);
+      }, { once: true });
+    } else {
+      document.body.classList.add('boot-loading');
+      tick();
+      window.setTimeout(markSlow, 9000);
+    }
+  })();
+</script>
+
 </head>
 <body>
+<div id="boot-splash" role="status" aria-live="polite" aria-label="Carga inicial de Bookshell">
+  <div class="boot-splash-card">
+    <div class="boot-splash-title">Bookshell</div>
+    <div class="boot-splash-status" data-role="status">Inicializando…</div>
+    <div class="boot-splash-progress" aria-hidden="true"><i data-role="bar"></i></div>
+    <div class="boot-splash-note">La carga está tardando más de lo normal…</div>
+  </div>
+</div>
 <header class="app-header">
 <div class="header-title"></div>
 </header>
 <!-- Vista LIBROS -->
-<section class="view view-active" id="view-main">
-  <div class="rpg-shell" id="rpg-dashboard">
-    <div class="rpg-hero" id="rpg-hero"></div>
-    <section class="rpg-panel">
-      <div class="rpg-panel-title">Character Sheet</div>
-      <div class="rpg-stats" id="rpg-stats"></div>
-    </section>
-    <section class="rpg-panel">
-      <div class="rpg-panel-title">Recursos reales</div>
-      <div class="rpg-resources" id="rpg-resources"></div>
-    </section>
-    <section class="rpg-panel">
-      <div class="rpg-panel-title">Resumen reciente</div>
-      <div class="rpg-delta" id="rpg-delta"></div>
-    </section>
-    <section class="rpg-panel">
-      <div class="rpg-panel-title">Ficha técnica</div>
-      <div class="rpg-ranking" id="rpg-ranking"></div>
-    </section>
-    <details class="rpg-panel rpg-collapsible" open>
-      <summary>Actividad conectada</summary>
-      <div class="rpg-activity" id="rpg-activity"></div>
-    </details>
-    <details class="rpg-panel rpg-collapsible" open>
-      <summary>Cómo se calcula</summary>
-      <div class="rpg-formulas" id="rpg-formulas"></div>
-    </details>
-    <div id="rpg-config" hidden></div>
-  </div>
-</section>
-
-<section class="view" id="view-books">
+<section class="view view-active" id="view-books">
 <!-- STATS + CALENDARIO DE LIBROS (ANTES ESTABA EN view-stats) -->
 <div class="stats-wrapper">
 <div class="stats-cards">
@@ -2250,8 +2332,7 @@ Crear “<span id="gym-create-cta-text"></span>”
 </section>
 
 
-<nav class="bottom-nav"><button class="nav-btn nav-btn-active" data-view="view-main">🏠</button>
-<button class="nav-btn" data-view="view-books">📖</button>
+<nav class="bottom-nav"><button class="nav-btn nav-btn-active" data-view="view-books">📖</button>
 <button class="nav-btn" data-view="view-videos">📹</button>
 <button class="nav-btn" data-view="view-recipes">🍳</button>
 <button class="nav-btn" data-view="view-habits">✅</button>

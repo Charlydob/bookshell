@@ -28,19 +28,14 @@
   --work-evening: rgba(255,59,48,.85);
   --work-free: rgba(52,199,89,.85);
   --work-unknown: rgba(142,142,147,.55);
-  --nav-total-h: 72px;
-  --nav-gap: 0px;
-  --nav-visual-gap: 20px;
 }
 
 html,
 body {
   margin: 0;
   padding: 0;
-  width: 100%;
-  height: 100%;
-  min-height: 100dvh;
-  overflow: hidden;
+  height: 120%;
+  overflow: auto;
   background: radial-gradient(circle at top, #161a22, #05060a 60%);
   background-color: #05060a;
   color: var(--txt);
@@ -51,7 +46,6 @@ body {
 body {
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
-  position: relative;
 }
 
 .app-shell {
@@ -107,7 +101,7 @@ body {
   flex: 1;
   min-height: 0;
   /* El scroll vive en `.view` para evitar doble scroll (body no scrollea). */
-  padding: calc(16px + env(safe-area-inset-top, 0px)) 10px 6px;
+  padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 10px;
   overflow: hidden;
 }
 
@@ -237,7 +231,7 @@ body {
   box-sizing: border-box;
   border: 1px solid rgb(255, 255, 255);
   border-radius: 99px;
-  margin-bottom: var(--nav-visual-gap, 20px);
+  margin-bottom: var(--nav-gap, 20px);
 
 }
 .datos-sesion{
@@ -852,7 +846,7 @@ body.has-open-modal .bottom-nav {
   display: none !important;
 }
 /* Layout global: una sola superficie scrollable por vista */
-:root { --nav-h: 56px; --nav-gap: 0px; --nav-visual-gap: 20px; }
+:root { --nav-h: 56px; --nav-gap: 20px; }
 
 @media (display-mode: standalone) {
   :root { --nav-gap: 0px; }
@@ -879,7 +873,7 @@ main {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
-  padding-bottom: calc(6px + var(--nav-total-h));
+  padding-bottom: calc(6px + var(--nav-total-h) + var(--nav-gap));
 }
 
 .book-detail-quotes {
@@ -922,3 +916,7 @@ main {
 }
 
 /* --- Fix PWA iOS: evitar franja negra inferior / anclar navegación al safe-area --- */
+:root {
+  --nav-total-h: 72px;
+}
+

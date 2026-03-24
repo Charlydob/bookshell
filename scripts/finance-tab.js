@@ -5969,7 +5969,6 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       const step = normalizeTxWizardStep(state.balanceFormState.txWizardStep);
       if (step === 'base') {
         if (!dateRaw) { toast('Falta la fecha'); return; }
-        if (!amountRaw) { toast('Falta la cantidad'); return; }
         if (type === 'transfer') {
           if (!fromAccountId || !toAccountId) { toast('Faltan cuentas'); return; }
         } else if (!accountId) {

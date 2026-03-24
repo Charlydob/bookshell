@@ -1792,14 +1792,14 @@
 
 #macro-add-modal-backdrop .macro-modal-manual{
   display:grid;
-  gap:14px;
+  gap:10px;
 }
 
 #macro-add-modal-backdrop .macro-manual-builder{
   display:grid;
-  gap:14px;
-  padding:14px;
-  border-radius:22px;
+  gap:10px;
+  padding:12px;
+  border-radius:20px;
   border:1px solid rgba(255,255,255,.1);
   background:
     radial-gradient(circle at top right, rgba(255,194,71,.16), transparent 30%),
@@ -1810,9 +1810,9 @@
 
 #macro-add-modal-backdrop .macro-manual-hero{
   display:grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap:12px;
-  align-items:start;
+  grid-template-columns:auto minmax(0,1fr) 94px;
+  gap:10px;
+  align-items:center;
 }
 
 #macro-add-modal-backdrop .macro-manual-eyebrow{
@@ -1831,26 +1831,19 @@
 }
 
 #macro-add-modal-backdrop .macro-manual-hero h4{
-  margin:8px 0 6px;
-  font-size:1.1rem;
+  margin:0;
+  font-size:.98rem;
   line-height:1.1;
   color:#fff6dd;
 }
 
-#macro-add-modal-backdrop .macro-manual-hero p{
-  margin:0;
-  color:rgba(235,240,255,.72);
-  font-size:.88rem;
-  line-height:1.45;
-}
-
 #macro-add-modal-backdrop .macro-manual-base-pill{
-  min-width:108px;
+  min-width:94px;
   display:grid;
-  gap:6px;
+  gap:4px;
   justify-items:center;
-  padding:12px 12px 10px;
-  border-radius:18px;
+  padding:8px 8px 7px;
+  border-radius:16px;
   border:1px solid rgba(255,194,71,.22);
   background:linear-gradient(180deg, rgba(255,194,71,.18), rgba(255,194,71,.08));
   box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
@@ -1865,49 +1858,56 @@
 
 #macro-add-modal-backdrop .macro-manual-base-pill input{
   width:100%;
-  height:42px;
+  height:34px;
   border:1px solid rgba(255,255,255,.12);
-  border-radius:14px;
+  border-radius:12px;
   background:rgba(9,12,20,.72);
   color:#fff;
   text-align:center;
   font-weight:800;
-  font-size:1rem;
+  font-size:.95rem;
 }
 
 #macro-add-modal-backdrop .macro-manual-grid{
   display:grid;
-  grid-template-columns:repeat(2, minmax(0, 1fr));
-  gap:12px;
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  gap:8px;
 }
 
 #macro-add-modal-backdrop .macro-manual-field{
   display:grid;
-  gap:7px;
-  padding:12px;
-  border-radius:18px;
+  gap:5px;
+  padding:10px;
+  border-radius:14px;
   border:1px solid rgba(255,255,255,.08);
   background:rgba(255,255,255,.035);
-}
-
-#macro-add-modal-backdrop .macro-manual-field-span-2{
-  grid-column:span 2;
+  min-width:0;
+  align-content:start;
+  overflow:hidden;
 }
 
 #macro-add-modal-backdrop .macro-manual-label{
   color:rgba(255,255,255,.72);
-  font-size:.78rem;
+  font-size:.72rem;
   font-weight:700;
+  line-height:1.15;
+  min-width:0;
 }
 
 #macro-add-modal-backdrop .macro-manual-field input{
   width:100%;
-  height:44px;
+  min-width:0;
+  max-width:100%;
+  height:38px;
   border:1px solid rgba(255,255,255,.1);
-  border-radius:14px;
+  border-radius:12px;
   background:rgba(8,11,20,.72);
   color:#fff;
-  padding:0 13px;
+  padding:0 10px;
+  box-sizing:border-box;
+  font-size:.89rem;
+  overflow:hidden;
+  text-overflow:ellipsis;
 }
 
 #macro-add-modal-backdrop .macro-manual-field input:focus,
@@ -1920,41 +1920,56 @@
 
 #macro-add-modal-backdrop .macro-manual-macro-grid{
   display:grid;
-  grid-template-columns:repeat(4, minmax(0, 1fr));
-  gap:12px;
+  grid-template-columns:repeat(5, minmax(0, 1fr));
+  gap:8px;
 }
 
 #macro-add-modal-backdrop .macro-manual-metric{
   display:grid;
-  gap:8px;
-  padding:14px 12px 12px;
-  border-radius:20px;
+  gap:4px;
+  padding:10px;
+  border-radius:15px;
   border:1px solid rgba(255,255,255,.1);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+  min-width:0;
+  align-content:start;
+  overflow:hidden;
 }
 
 #macro-add-modal-backdrop .macro-manual-metric-label{
-  font-size:.78rem;
+  font-size:.72rem;
   font-weight:800;
   color:#fff;
+  line-height:1.1;
+  min-width:0;
 }
 
 #macro-add-modal-backdrop .macro-manual-metric input{
   width:100%;
-  height:44px;
-  border-radius:14px;
+  min-width:0;
+  max-width:100%;
+  height:36px;
+  border-radius:12px;
   border:1px solid rgba(255,255,255,.14);
   background:rgba(10,13,22,.72);
   color:#fff;
-  padding:0 12px;
-  font-size:1rem;
+  padding:0 10px;
+  font-size:.95rem;
   font-weight:800;
+  box-sizing:border-box;
+  text-align:center;
 }
 
 #macro-add-modal-backdrop .macro-manual-metric small{
   color:rgba(255,255,255,.66);
-  font-size:.74rem;
+  font-size:.68rem;
   font-weight:700;
+  line-height:1;
+}
+
+#macro-add-modal-backdrop .macro-manual-field input::placeholder,
+#macro-add-modal-backdrop .macro-manual-metric input::placeholder{
+  color:rgba(255,255,255,.34);
 }
 
 #macro-add-modal-backdrop .macro-manual-metric-kcal{
@@ -1979,17 +1994,24 @@
 
 #macro-add-modal-backdrop .macro-manual-nutri{
   display:grid;
-  gap:8px;
-  padding:12px;
-  border-radius:18px;
+  gap:6px;
+  padding:10px;
+  border-radius:14px;
   border:1px solid rgba(255,255,255,.08);
   background:rgba(255,255,255,.035);
+}
+
+#macro-add-modal-backdrop .macro-manual-bottom-row{
+  display:grid;
+  grid-template-columns:minmax(0, 1fr) 108px;
+  gap:8px;
+  align-items:stretch;
 }
 
 #macro-add-modal-backdrop .macro-nutri-segmented{
   display:grid;
   grid-template-columns:repeat(6, minmax(0, 1fr));
-  gap:6px;
+  gap:4px;
 }
 
 #macro-add-modal-backdrop .macro-nutri-option{
@@ -1997,9 +2019,9 @@
   border-radius:999px;
   background:rgba(255,255,255,.05);
   color:#eef2ff;
-  min-height:36px;
-  padding:8px 6px;
-  font-size:12px;
+  min-height:32px;
+  padding:6px 4px;
+  font-size:11px;
   font-weight:800;
 }
 
@@ -2011,30 +2033,35 @@
 
 #macro-add-modal-backdrop .macro-manual-save-btn{
   width:100%;
+  height:auto;
+  min-height:100%;
+  border-radius:14px;
 }
 
 @media (max-width: 640px){
   #macro-add-modal-backdrop .macro-manual-hero{
-    grid-template-columns:1fr;
+    grid-template-columns:1fr 84px;
   }
 
-  #macro-add-modal-backdrop .macro-manual-base-pill{
-    justify-items:start;
+  #macro-add-modal-backdrop .macro-manual-eyebrow{
+    grid-column:1 / -1;
+  }
+
+  #macro-add-modal-backdrop .macro-manual-grid{
+    grid-template-columns:repeat(2, minmax(0, 1fr));
   }
 
   #macro-add-modal-backdrop .macro-manual-macro-grid{
-    grid-template-columns:repeat(2, minmax(0, 1fr));
+    grid-template-columns:repeat(3, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 420px){
+  #macro-add-modal-backdrop .macro-manual-hero,
+  #macro-add-modal-backdrop .macro-manual-bottom-row,
   #macro-add-modal-backdrop .macro-manual-grid,
   #macro-add-modal-backdrop .macro-manual-macro-grid{
     grid-template-columns:1fr;
-  }
-
-  #macro-add-modal-backdrop .macro-manual-field-span-2{
-    grid-column:auto;
   }
 }
 
@@ -3226,4 +3253,80 @@ border: 0px;
   .macro-shopping-results{ grid-template-columns: 1fr; }
   .macro-shopping-mode{ width:100%; justify-content:space-between; }
   .macro-shopping-mode-btn{ flex:1; }
+}
+div#meta-inputs.macro-manual-grid{
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+div#macros-inputs.macro-manual-macro-grid{
+  
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+}
+/* PATCH: arregla sizing interno del modo "Crear manual" sin tocar la estructura de columnas */
+
+#macro-add-modal-backdrop div#meta-inputs.macro-manual-grid,
+#macro-add-modal-backdrop div#macros-inputs.macro-manual-macro-grid{
+  align-items: stretch;
+}
+
+#macro-add-modal-backdrop div#meta-inputs.macro-manual-grid > .macro-manual-field,
+#macro-add-modal-backdrop div#macros-inputs.macro-manual-macro-grid > .macro-manual-metric{
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  align-content: start;
+}
+
+#macro-add-modal-backdrop div#meta-inputs.macro-manual-grid > .macro-manual-field{
+  gap: 6px;
+  padding: 10px;
+}
+
+#macro-add-modal-backdrop div#macros-inputs.macro-manual-macro-grid > .macro-manual-metric{
+  gap: 4px;
+  padding: 10px;
+}
+
+#macro-add-modal-backdrop div#meta-inputs.macro-manual-grid .macro-manual-label,
+#macro-add-modal-backdrop div#macros-inputs.macro-manual-macro-grid .macro-manual-metric-label,
+#macro-add-modal-backdrop div#macros-inputs.macro-manual-macro-grid .macro-manual-metric small{
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+#macro-add-modal-backdrop div#meta-inputs.macro-manual-grid input,
+#macro-add-modal-backdrop div#macros-inputs.macro-manual-macro-grid input{
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  overflow: hidden;
+}
+
+#macro-add-modal-backdrop div#meta-inputs.macro-manual-grid input{
+  height: 38px;
+  padding: 0 10px;
+}
+
+#macro-add-modal-backdrop div#macros-inputs.macro-manual-macro-grid input{
+  height: 36px;
+  padding: 0 10px;
+  text-align: center;
+}
+
+#macro-add-modal-backdrop div#meta-inputs.macro-manual-grid input::placeholder,
+#macro-add-modal-backdrop div#macros-inputs.macro-manual-macro-grid input::placeholder{
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

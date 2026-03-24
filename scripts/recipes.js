@@ -367,6 +367,7 @@ if ($viewRecipes) {
   const $macroManualProtein = document.getElementById("macro-manual-protein");
   const $macroManualFat = document.getElementById("macro-manual-fat");
   const $macroManualKcal = document.getElementById("macro-manual-kcal");
+  const $macroManualNutriSegmented = document.getElementById("macro-manual-nutri-segmented");
   const $macroManualSave = document.getElementById("macro-manual-save");
   const $macroProductModalBackdrop = document.getElementById("macro-product-modal-backdrop");
   const $macroProductModalClose = document.getElementById("macro-product-modal-close");
@@ -5323,10 +5324,23 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroBodyweightKg) $macroBodyweightKg.value = nutritionIntegrationConfig.bodyWeightKg == null ? "" : String(nutritionIntegrationConfig.bodyWeightKg);
   }
 
+  function resetMacroManualForm() {
+    setInputCurrentPlaceholder($macroManualName, "", "Ej. Yogur natural proteico");
+    setInputCurrentPlaceholder($macroManualBrand, "", "Opcional");
+    setInputCurrentPlaceholder($macroManualBarcode, "", "Opcional");
+    setInputCurrentPlaceholder($macroManualBase, "100", "100");
+    setInputCurrentPlaceholder($macroManualCarbs, "0", "0");
+    setInputCurrentPlaceholder($macroManualProtein, "0", "0");
+    setInputCurrentPlaceholder($macroManualFat, "0", "0");
+    setInputCurrentPlaceholder($macroManualKcal, "0", "0");
+    setNutriSegmentedValue($macroManualNutriSegmented, "");
+  }
+
   function openMacroAddModal(meal) {
     macroModalState.meal = meal;
     macroModalState.query = "";
     macroModalState.source = "products";
+    resetMacroManualForm();
     if ($macroAddSearch) $macroAddSearch.value = "";
     $macroAddModalBackdrop?.classList.remove("hidden");
     renderMacroModalResults();
@@ -5363,26 +5377,29 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   function readMacroProductDraftFromForm() {
-    const base = Math.max(1, Number($macroProductBase?.value) || 100);
+    const base = Math.max(1, getInputNumberOrCurrent($macroProductBase, 100) || 100);
     const baseUnit = normalizeUnit($macroProductBaseUnit?.value || "g") || "g";
     const hasFinanceSelection = !!$macroProductFinanceSelect;
     const hasHabitSelection = !!$macroProductHabitSelect;
-    const packageAmount = Number($macroProductPackageAmount?.value) > 0 ? Number($macroProductPackageAmount.value) : null;
+    const packageAmountValue = getInputNumberOrCurrent($macroProductPackageAmount, null);
+    const packageAmount = packageAmountValue > 0 ? packageAmountValue : null;
     const packageUnit = normalizeUnit($macroProductPackageUnit?.value || "");
-    const unitWeightQty = Number($macroProductUnitWeight?.value) > 0 ? Number($macroProductUnitWeight.value) : null;
+    const unitWeightValue = getInputNumberOrCurrent($macroProductUnitWeight, null);
+    const unitWeightQty = unitWeightValue > 0 ? unitWeightValue : null;
     const unitWeightUnit = normalizeUnit($macroProductUnitWeightUnit?.value || "");
+    const priceValue = getInputNumberOrCurrent($macroProductPrice, null);
     return {
       id: _macroProductDraft?.id,
       source: _macroProductDraft?.source || "manual",
       createdAt: _macroProductDraft?.createdAt,
-      name: $macroProductName?.value,
-      brand: $macroProductBrand?.value,
-      barcode: $macroProductBarcode?.value,
+      name: getInputValueOrCurrent($macroProductName),
+      brand: getInputValueOrCurrent($macroProductBrand),
+      barcode: getInputValueOrCurrent($macroProductBarcode),
       financeProductId: hasFinanceSelection ? String($macroProductFinanceSelect?.value || "") : (_macroProductDraft?.financeProductId || ""),
       linkedHabitId: hasHabitSelection ? String($macroProductHabitSelect?.value || "") : (_macroProductDraft?.linkedHabitId || ""),
       packageAmount,
       packageUnit,
-      price: Number($macroProductPrice?.value) > 0 ? Number($macroProductPrice.value) : null,
+      price: priceValue > 0 ? priceValue : null,
       priceBaseQty: packageAmount,
       priceBaseUnit: packageUnit,
       baseQuantity: base,
@@ -5394,10 +5411,10 @@ $recipeImportBtn?.addEventListener("click", () => {
       manualNutriScore: normalizeNutriScoreValue($macroProductNutriSegmented?.dataset.value || ""),
       importedNutriScore: normalizeNutriScoreValue(_macroProductDraft?.importedNutriScore || _macroProductDraft?.nutriScore || ""),
       macros: {
-        carbs: Number($macroProductCarbs?.value) || 0,
-        protein: Number($macroProductProtein?.value) || 0,
-        fat: Number($macroProductFat?.value) || 0,
-        kcal: Number($macroProductKcal?.value) || 0,
+        carbs: getInputNumberOrCurrent($macroProductCarbs, 0) || 0,
+        protein: getInputNumberOrCurrent($macroProductProtein, 0) || 0,
+        fat: getInputNumberOrCurrent($macroProductFat, 0) || 0,
+        kcal: getInputNumberOrCurrent($macroProductKcal, 0) || 0,
       },
     };
   }
@@ -5414,6 +5431,50 @@ $recipeImportBtn?.addEventListener("click", () => {
     const num = Number(normalized);
     if (!Number.isFinite(num) || num < 0) return null;
     return num;
+  }
+
+  function ensureInputDefaultPlaceholder(input) {
+    if (!input) return "";
+    if (input.dataset.defaultPlaceholder == null) {
+      input.dataset.defaultPlaceholder = input.getAttribute("placeholder") || "";
+    }
+    return input.dataset.defaultPlaceholder || "";
+  }
+
+  function setInputCurrentPlaceholder(input, value, fallbackPlaceholder = null) {
+    if (!input) return;
+    const defaultPlaceholder = ensureInputDefaultPlaceholder(input);
+    const hasCurrentValue = value != null && String(value) !== "";
+    input.dataset.currentValue = hasCurrentValue ? String(value) : "";
+    input.value = "";
+    input.placeholder = hasCurrentValue
+      ? String(value)
+      : (fallbackPlaceholder != null ? String(fallbackPlaceholder) : defaultPlaceholder);
+  }
+
+  function getInputValueOrCurrent(input, { trim = true } = {}) {
+    if (!input) return "";
+    const typed = String(input.value ?? "");
+    if ((trim ? typed.trim() : typed) !== "") return trim ? typed.trim() : typed;
+    const current = String(input.dataset.currentValue || "");
+    return trim ? current.trim() : current;
+  }
+
+  function getInputNumberOrCurrent(input, fallback = null) {
+    const raw = getInputValueOrCurrent(input);
+    if (!raw) return fallback;
+    const parsed = Number(String(raw).replace(",", "."));
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function setNutriSegmentedValue(segmented, value) {
+    if (!segmented) return;
+    const normalized = normalizeNutriScoreValue(value || "") || "";
+    segmented.dataset.value = normalized;
+    segmented.querySelectorAll("[data-nutri-value]").forEach((btn) => {
+      const current = normalizeNutriScoreValue(btn.dataset.nutriValue || "") || "";
+      btn.classList.toggle("is-active", current === normalized);
+    });
   }
 
   function roundAmountForInput(value) {
@@ -5521,11 +5582,28 @@ $recipeImportBtn?.addEventListener("click", () => {
     }
   }
 
+  function resolveMacroProductAmountState(draft = null) {
+    const currentDraft = draft || readMacroProductDraftFromForm();
+    const amount = Math.max(0, getInputNumberOrCurrent($macroProductGrams, 0) || 0);
+    const typedAmount = String($macroProductGrams?.value || "").trim();
+    const storedAmount = String($macroProductGrams?.dataset.currentValue || "").trim();
+    const amountUnit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
+    if (amount > 0 && (typedAmount !== "" || storedAmount !== "")) {
+      return { amount, unit: amountUnit, source: "manual" };
+    }
+    const unitWeight = resolveUnitWeightSpec(currentDraft);
+    if (unitWeight) {
+      return { amount: 1, unit: "unit", source: "unit-weight-default" };
+    }
+    return { amount: 0, unit: amountUnit, source: "missing" };
+  }
+
   function renderMacroProductSummary() {
     if (!$macroProductSummary) return;
-    const amount = Math.max(0, Number($macroProductGrams?.value) || 0);
-    const amountUnit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
     const draft = readMacroProductDraftFromForm();
+    const amountState = resolveMacroProductAmountState(draft);
+    const amount = amountState.amount;
+    const amountUnit = amountState.unit;
     const baseUnit = normalizeUnit(draft.baseUnit || "g") || "g";
     const convertedAmount = convertAmountWithProduct(draft, amount, amountUnit, baseUnit);
     const m = convertedAmount == null ? normalizeMacros({}) : calcProductMacros({ ...draft, servingBaseGrams: draft.baseQuantity }, convertedAmount);
@@ -5550,7 +5628,8 @@ $recipeImportBtn?.addEventListener("click", () => {
           $macroProductSummary.textContent = `Para ${formatAmountWithUnit(amount, amountUnit)}: no calculable con la unidad base (${baseUnit}).${costLabel}`;
         }
       } else {
-        $macroProductSummary.textContent = `Para ${formatAmountWithUnit(amount, amountUnit)}: ${roundMacro(m.kcal)} kcal · C ${roundMacro(m.carbs)} · P ${roundMacro(m.protein)} · G ${roundMacro(m.fat)}${costLabel}`;
+        const autoUnitHint = amountState.source === "unit-weight-default" ? " (por peso/unidad)" : "";
+        $macroProductSummary.textContent = `Para ${formatAmountWithUnit(amount, amountUnit)}${autoUnitHint}: ${roundMacro(m.kcal)} kcal · C ${roundMacro(m.carbs)} · P ${roundMacro(m.protein)} · G ${roundMacro(m.fat)}${costLabel}`;
       }
     } else {
       $macroProductSummary.textContent = "Indica una cantidad para ver el resumen.";
@@ -5628,27 +5707,15 @@ $recipeImportBtn?.addEventListener("click", () => {
       $macroProductHabitHint.textContent = linkedHabit ? `Vinculado a ${linkedHabit.emoji || "🏷️"} ${linkedHabit.name}` : "Sin hábito vinculado";
     }
 
-    if ($macroProductName) $macroProductName.value = product.name || "";
-    if ($macroProductBrand) $macroProductBrand.value = product.brand || "";
-    if ($macroProductBarcode) $macroProductBarcode.value = product.barcode || "";
-    if ($macroProductBase) $macroProductBase.value = String(Number(product.baseQuantity || product.servingBaseGrams) || 100);
+    setInputCurrentPlaceholder($macroProductName, product.name || "", "Ej. Arroz a la paella");
+    setInputCurrentPlaceholder($macroProductBrand, product.brand || "", "Opcional");
+    setInputCurrentPlaceholder($macroProductBarcode, product.barcode || "", "8410...");
+    setInputCurrentPlaceholder($macroProductBase, String(Number(product.baseQuantity || product.servingBaseGrams) || 100), "100");
     if ($macroProductBaseUnit) $macroProductBaseUnit.value = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
-    if ($macroProductCarbs) {
-      const v = Number(product.macros?.carbs);
-      $macroProductCarbs.value = Number.isFinite(v) && v > 0 ? String(v) : "";
-    }
-    if ($macroProductProtein) {
-      const v = Number(product.macros?.protein);
-      $macroProductProtein.value = Number.isFinite(v) && v > 0 ? String(v) : "";
-    }
-    if ($macroProductFat) {
-      const v = Number(product.macros?.fat);
-      $macroProductFat.value = Number.isFinite(v) && v > 0 ? String(v) : "";
-    }
-    if ($macroProductKcal) {
-      const v = Number(product.macros?.kcal);
-      $macroProductKcal.value = Number.isFinite(v) && v > 0 ? String(v) : "";
-    }
+    setInputCurrentPlaceholder($macroProductCarbs, Number.isFinite(Number(product.macros?.carbs)) ? String(Number(product.macros?.carbs) || 0) : "", "0");
+    setInputCurrentPlaceholder($macroProductProtein, Number.isFinite(Number(product.macros?.protein)) ? String(Number(product.macros?.protein) || 0) : "", "0");
+    setInputCurrentPlaceholder($macroProductFat, Number.isFinite(Number(product.macros?.fat)) ? String(Number(product.macros?.fat) || 0) : "", "0");
+    setInputCurrentPlaceholder($macroProductKcal, Number.isFinite(Number(product.macros?.kcal)) ? String(Number(product.macros?.kcal) || 0) : "", "0");
     if ($macroProductNutriSegmented) {
       const manualNutri = normalizeNutriScoreValue(product.manualNutriScore || "");
       $macroProductNutriSegmented.dataset.value = manualNutri || "";
@@ -5658,16 +5725,18 @@ $recipeImportBtn?.addEventListener("click", () => {
       });
     }
     const pkg = resolveProductPackageSpec(product);
-    if ($macroProductPackageAmount) $macroProductPackageAmount.value = pkg.amount == null ? "" : String(Number(pkg.amount) || 0);
+    setInputCurrentPlaceholder($macroProductPackageAmount, pkg.amount == null ? "" : String(Number(pkg.amount) || 0), "Ej. 1");
     if ($macroProductPackageUnit) $macroProductPackageUnit.value = pkg.unit || "";
-    if ($macroProductPrice) $macroProductPrice.value = product.price == null ? "" : String(Number(product.price) || 0);
-    if ($macroProductGrams) $macroProductGrams.value = String(Number(grams) || 0);
+    setInputCurrentPlaceholder($macroProductPrice, product.price == null ? "" : String(Number(product.price) || 0), "Opcional");
+    const hasUnitWeight = !!resolveUnitWeightSpec(product);
+    const shouldDefaultToUnitWeight = hasUnitWeight && !entryTarget && !_macroProductRecipeIngredientTarget;
+    setInputCurrentPlaceholder($macroProductGrams, shouldDefaultToUnitWeight ? "" : String(Number(grams) || 0), shouldDefaultToUnitWeight ? "" : "100");
     if ($macroProductGramsUnit) $macroProductGramsUnit.value = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
     const productBaseUnit = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
     const defaultUnitWeightUnit = (productBaseUnit === "ml" || productBaseUnit === "l") ? "ml" : "g";
     if ($macroProductUnitWeight) {
       const v = Number(product?.unitWeightQty);
-      $macroProductUnitWeight.value = (Number.isFinite(v) && v > 0) ? roundAmountForInput(v) : "";
+      setInputCurrentPlaceholder($macroProductUnitWeight, (Number.isFinite(v) && v > 0) ? roundAmountForInput(v) : "", "Ej. 30");
     }
     if ($macroProductUnitWeightUnit) {
       $macroProductUnitWeightUnit.value = normalizeCostUnit(product?.unitWeightUnit || "") || defaultUnitWeightUnit;
@@ -8214,14 +8283,15 @@ $recipeImportBtn?.addEventListener("click", () => {
     setMacroScanStatus(`Producto encontrado (${src || "ok"}): ${product.name}${product.brand ? ` · ${product.brand}` : ""}. Pulsa “Abrir ficha”.`);
     showMacroScanAddProduct({ barcode, mode: "off", label: "Abrir ficha", pendingProduct: product });
 
-    if ($macroManualBarcode) $macroManualBarcode.value = barcode;
-    if ($macroManualName) $macroManualName.value = product.name || "";
-    if ($macroManualBrand) $macroManualBrand.value = product.brand || "";
-    if ($macroManualCarbs) $macroManualCarbs.value = String(product.macros?.carbs ?? 0);
-    if ($macroManualProtein) $macroManualProtein.value = String(product.macros?.protein ?? 0);
-    if ($macroManualFat) $macroManualFat.value = String(product.macros?.fat ?? 0);
-    if ($macroManualKcal) $macroManualKcal.value = String(product.macros?.kcal ?? 0);
-    if ($macroManualBase) $macroManualBase.value = "100";
+    setInputCurrentPlaceholder($macroManualBarcode, barcode, "");
+    setInputCurrentPlaceholder($macroManualName, product.name || "", "");
+    setInputCurrentPlaceholder($macroManualBrand, product.brand || "", "");
+    setInputCurrentPlaceholder($macroManualCarbs, String(product.macros?.carbs ?? 0), "0");
+    setInputCurrentPlaceholder($macroManualProtein, String(product.macros?.protein ?? 0), "0");
+    setInputCurrentPlaceholder($macroManualFat, String(product.macros?.fat ?? 0), "0");
+    setInputCurrentPlaceholder($macroManualKcal, String(product.macros?.kcal ?? 0), "0");
+    setInputCurrentPlaceholder($macroManualBase, "100", "100");
+    setNutriSegmentedValue($macroManualNutriSegmented, product.manualNutriScore || product.importedNutriScore || product.nutriScore || "");
   }
 
   function applyProductToUI(product, barcode, options = {}) {
@@ -8868,11 +8938,17 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   $macroManualSave?.addEventListener("click", () => {
       const pdt = saveProduct({
-      name: $macroManualName?.value,
-      brand: $macroManualBrand?.value,
-      barcode: $macroManualBarcode?.value,
-      servingBaseGrams: Number($macroManualBase?.value) || 100,
-      macros: { carbs: Number($macroManualCarbs?.value) || 0, protein: Number($macroManualProtein?.value) || 0, fat: Number($macroManualFat?.value) || 0, kcal: Number($macroManualKcal?.value) || 0 },
+      name: getInputValueOrCurrent($macroManualName),
+      brand: getInputValueOrCurrent($macroManualBrand),
+      barcode: getInputValueOrCurrent($macroManualBarcode),
+      servingBaseGrams: getInputNumberOrCurrent($macroManualBase, 100) || 100,
+      macros: {
+        carbs: getInputNumberOrCurrent($macroManualCarbs, 0) || 0,
+        protein: getInputNumberOrCurrent($macroManualProtein, 0) || 0,
+        fat: getInputNumberOrCurrent($macroManualFat, 0) || 0,
+        kcal: getInputNumberOrCurrent($macroManualKcal, 0) || 0,
+      },
+      manualNutriScore: normalizeNutriScoreValue($macroManualNutriSegmented?.dataset.value || ""),
       price: null,
       packageAmount: null,
       packageUnit: "",
@@ -8952,12 +9028,12 @@ $recipeImportBtn?.addEventListener("click", () => {
     }
   });
   $macroProductScanBtn?.addEventListener("click", async () => {
-    const raw = window.prompt("Escanear / pegar código de barras", String($macroProductBarcode?.value || "").trim());
+    const raw = window.prompt("Escanear / pegar código de barras", getInputValueOrCurrent($macroProductBarcode));
     if (raw == null) return;
     const code = String(raw || "").trim();
     if (!code) return;
     const normalized = normalizeDetectedBarcode(code) || code;
-    if ($macroProductBarcode) $macroProductBarcode.value = normalized;
+    setInputCurrentPlaceholder($macroProductBarcode, normalized, "8410...");
     logLookup("lookup desde modal producto", { barcode: normalized, sourceEngine: "prompt" });
     const result = await lookupProduct(normalized);
     const pdt = result?.ok ? result.product : null;
@@ -8966,13 +9042,13 @@ $recipeImportBtn?.addEventListener("click", () => {
       return;
     }
     logLookupSuccess("modal producto: datos recibidos", { barcode: normalized, source: result?.source || "" });
-    if ($macroProductName && !$macroProductName.value.trim()) $macroProductName.value = pdt.name || "";
-    if ($macroProductBrand && !$macroProductBrand.value.trim()) $macroProductBrand.value = pdt.brand || "";
-    if ($macroProductBase) $macroProductBase.value = String(Number(pdt.servingBaseGrams) || 100);
-    if ($macroProductCarbs) $macroProductCarbs.value = String(Number(pdt.macros?.carbs) || 0);
-    if ($macroProductProtein) $macroProductProtein.value = String(Number(pdt.macros?.protein) || 0);
-    if ($macroProductFat) $macroProductFat.value = String(Number(pdt.macros?.fat) || 0);
-    if ($macroProductKcal) $macroProductKcal.value = String(Number(pdt.macros?.kcal) || 0);
+    if ($macroProductName && !getInputValueOrCurrent($macroProductName)) setInputCurrentPlaceholder($macroProductName, pdt.name || "", "Ej. Arroz a la paella");
+    if ($macroProductBrand && !getInputValueOrCurrent($macroProductBrand)) setInputCurrentPlaceholder($macroProductBrand, pdt.brand || "", "Opcional");
+    setInputCurrentPlaceholder($macroProductBase, String(Number(pdt.servingBaseGrams) || 100), "100");
+    setInputCurrentPlaceholder($macroProductCarbs, String(Number(pdt.macros?.carbs) || 0), "0");
+    setInputCurrentPlaceholder($macroProductProtein, String(Number(pdt.macros?.protein) || 0), "0");
+    setInputCurrentPlaceholder($macroProductFat, String(Number(pdt.macros?.fat) || 0), "0");
+    setInputCurrentPlaceholder($macroProductKcal, String(Number(pdt.macros?.kcal) || 0), "0");
     _macroProductDraft = {
       ...(_macroProductDraft || {}),
       importedNutriScore: normalizeNutriScoreValue(pdt.importedNutriScore || pdt.nutriScore),
@@ -8998,29 +9074,30 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductHabitSelect) $macroProductHabitSelect.value = "";
     if ($macroProductHabitHint) $macroProductHabitHint.textContent = "Sin hábito vinculado";
   });
+  $macroManualNutriSegmented?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-nutri-value]");
+    if (!btn) return;
+    setNutriSegmentedValue($macroManualNutriSegmented, btn.dataset.nutriValue || "");
+  });
   $macroProductNutriSegmented?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-nutri-value]");
     if (!btn) return;
-    const value = normalizeNutriScoreValue(btn.dataset.nutriValue || "") || "";
-    $macroProductNutriSegmented.dataset.value = value;
-    $macroProductNutriSegmented.querySelectorAll("[data-nutri-value]").forEach((opt) => {
-      const optValue = normalizeNutriScoreValue(opt.dataset.nutriValue || "") || "";
-      opt.classList.toggle("is-active", optValue === value);
-    });
+    setNutriSegmentedValue($macroProductNutriSegmented, btn.dataset.nutriValue || "");
   });
   $macroProductModalClose?.addEventListener("click", closeMacroProductModal);
   $macroProductCancel?.addEventListener("click", closeMacroProductModal);
   $macroProductModalBackdrop?.addEventListener("click", (e) => { if (e.target === $macroProductModalBackdrop) closeMacroProductModal(); });
   $macroProductAdd?.addEventListener("click", () => {
-    const grams = Math.max(0, Number($macroProductGrams?.value) || 0);
-    const gramsUnit = normalizeUnit($macroProductGramsUnit?.value || "g") || "g";
+    const draft = readMacroProductDraftFromForm();
+    const amountState = resolveMacroProductAmountState(draft);
+    const grams = amountState.amount;
+    const gramsUnit = amountState.unit;
     if (!grams) {
       if ($macroProductSummary) $macroProductSummary.textContent = "Indica una cantidad mayor que 0.";
       try { $macroProductGrams?.focus(); } catch (_) {}
       return;
     }
 
-    const draft = readMacroProductDraftFromForm();
     const saved = saveProduct(draft);
     if (!saved) {
       if ($macroProductSummary) $macroProductSummary.textContent = "Pon un nombre para guardar el producto.";
@@ -9180,9 +9257,9 @@ $recipeImportBtn?.addEventListener("click", () => {
   });
   $macroScanAddProduct?.addEventListener("click", () => {
     const mode = String($macroScanAddProduct?.dataset?.mode || "manual");
-    const barcode = String($macroScanAddProduct?.dataset?.barcode || $macroManualBarcode?.value || "").trim();
+    const barcode = String($macroScanAddProduct?.dataset?.barcode || getInputValueOrCurrent($macroManualBarcode) || "").trim();
     const pendingLookupId = String($macroScanAddProduct?.dataset?.pendingLookupId || "").trim();
-    if (barcode && $macroManualBarcode) $macroManualBarcode.value = barcode;
+    if (barcode) setInputCurrentPlaceholder($macroManualBarcode, barcode, "");
 
     if (mode === "off") {
       const pendingProduct = (pendingLookupId && _macroScanPendingLookup?.id === pendingLookupId && _macroScanPendingLookup?.product)

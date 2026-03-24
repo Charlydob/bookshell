@@ -2768,17 +2768,70 @@ Crear “<span id="gym-create-cta-text"></span>”
         <button class="btn primary btn-compact hidden" id="macro-scan-add-product" type="button">+ Añadir producto</button>
       </div>
       <div class="macro-modal-manual hidden" id="macro-manual-panel">
-        <div class="form-grid row-2">
-          <label class="field"><span class="field-label">Nombre</span><input id="macro-manual-name" type="text" /></label>
-          <label class="field"><span class="field-label">Marca</span><input id="macro-manual-brand" type="text" /></label>
-          <label class="field"><span class="field-label">Barcode</span><input id="macro-manual-barcode" type="text" /></label>
-          <label class="field"><span class="field-label">Gramos base</span><input id="macro-manual-base" type="number" value="100" /></label>
-          <label class="field"><span class="field-label">Carbs</span><input id="macro-manual-carbs" type="number" value="0" /></label>
-          <label class="field"><span class="field-label">Proteína</span><input id="macro-manual-protein" type="number" value="0" /></label>
-          <label class="field"><span class="field-label">Grasa</span><input id="macro-manual-fat" type="number" value="0" /></label>
-          <label class="field"><span class="field-label">Kcal</span><input id="macro-manual-kcal" type="number" value="0" /></label>
+        <div class="macro-manual-builder">
+          <section class="macro-manual-hero">
+            <div>
+              <span class="macro-manual-eyebrow">Alta rápida</span>
+              <h4>Crear alimento manualmente</h4>
+              <p>Rellena la base nutricional, colorea los macros y deja el producto listo para añadirlo al momento.</p>
+            </div>
+            <div class="macro-manual-base-pill">
+              <span>Base</span>
+              <input id="macro-manual-base" type="number" value="100" />
+              <strong>g</strong>
+            </div>
+          </section>
+
+          <div class="macro-manual-grid">
+            <label class="macro-manual-field macro-manual-field-span-2">
+              <span class="macro-manual-label">Nombre</span>
+              <input id="macro-manual-name" type="text" placeholder="Ej. Yogur natural proteico" />
+            </label>
+            <label class="macro-manual-field">
+              <span class="macro-manual-label">Marca</span>
+              <input id="macro-manual-brand" type="text" placeholder="Opcional" />
+            </label>
+            <label class="macro-manual-field">
+              <span class="macro-manual-label">Código de barras</span>
+              <input id="macro-manual-barcode" type="text" inputmode="numeric" placeholder="Opcional" />
+            </label>
+          </div>
+
+          <div class="macro-manual-macro-grid">
+            <label class="macro-manual-metric macro-manual-metric-kcal">
+              <span class="macro-manual-metric-label">Kcal</span>
+              <input id="macro-manual-kcal" type="number" value="0" />
+            </label>
+            <label class="macro-manual-metric macro-manual-metric-carbs">
+              <span class="macro-manual-metric-label">Carbs</span>
+              <input id="macro-manual-carbs" type="number" value="0" />
+              <small>g</small>
+            </label>
+            <label class="macro-manual-metric macro-manual-metric-protein">
+              <span class="macro-manual-metric-label">Proteína</span>
+              <input id="macro-manual-protein" type="number" value="0" />
+              <small>g</small>
+            </label>
+            <label class="macro-manual-metric macro-manual-metric-fat">
+              <span class="macro-manual-metric-label">Grasa</span>
+              <input id="macro-manual-fat" type="number" value="0" />
+              <small>g</small>
+            </label>
+          </div>
+
+          <label class="macro-manual-nutri">
+            <span class="macro-manual-label">Nutri-Score</span>
+            <div class="macro-nutri-segmented" id="macro-manual-nutri-segmented" role="group" aria-label="Nutri-Score manual">
+              <button type="button" class="macro-nutri-option is-active" data-nutri-value="">—</button>
+              <button type="button" class="macro-nutri-option" data-nutri-value="a">A</button>
+              <button type="button" class="macro-nutri-option" data-nutri-value="b">B</button>
+              <button type="button" class="macro-nutri-option" data-nutri-value="c">C</button>
+              <button type="button" class="macro-nutri-option" data-nutri-value="d">D</button>
+              <button type="button" class="macro-nutri-option" data-nutri-value="e">E</button>
+            </div>
+          </label>
         </div>
-        <button class="btn primary btn-compact" id="macro-manual-save" type="button">Guardar producto</button>
+        <button class="macro-btn macro-btn-primary macro-manual-save-btn" id="macro-manual-save" type="button">Guardar producto</button>
       </div>
     </div>
   </div>

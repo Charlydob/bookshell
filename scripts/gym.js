@@ -718,8 +718,7 @@ function bindEvents() {
   $gymDayModal?.addEventListener("click", (event) => {
     if (event.target === $gymDayModal) closeDayWorkoutsModal();
   });
-
-
+}
 
   function subscribeData() {
     onValue(exercisesRef, (snap) => {

@@ -292,6 +292,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding: 10px 24px 12px;
+  overflow-x: hidden;
 }
 
 .watchlist-list{
@@ -763,10 +765,12 @@ margin-top: 40px;
 }
 
 .books-list-finished{
-  padding: 10px 12px 12px;
+  padding: 10px 24px 12px;
+  padding-right: 28px;
   display: flex;
   flex-direction: column;
   gap: 14px;
+  overflow-x: hidden;
 }
 
 .book-card-finished{
@@ -831,8 +835,15 @@ margin-top: 40px;
   display: flex;
   flex-wrap: nowrap;
   align-items: flex-end;
-  gap: 10px;
+  gap: 8px;
   padding-bottom: 16px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x mandatory;
 }
 .books-shelf-row-watchlist{
   padding-top: 10px;
@@ -895,6 +906,7 @@ margin-top: 40px;
   cursor: pointer;
   transition: transform .12s ease, box-shadow .12s ease;
   overflow: hidden;
+  scroll-snap-align: start;
 }
 
 .book-spine::before{
@@ -948,6 +960,9 @@ margin-top: 40px;
   letter-spacing: 0.03em;
   line-height: 1.1;
   text-shadow: 0 1px 1px rgba(255,255,255,.5), 0 0 10px rgba(0,0,0,.32);
+  font-weight: 700;
+  font-size: 12px;
+  color: rgba(5,6,12,.92);
 }
 .book-spine-meta-pendiente{
   display:none;
@@ -1003,12 +1018,6 @@ margin-top: 40px;
   justify-content: flex-start;
   gap: 10px;
   padding-top: 10px;
-}
-
-.book-spine-title{
-  font-weight: 700;
-  font-size: 12px;
-  color: rgba(5,6,12,.92);
 }
 
 .book-spine-pct{
@@ -1117,6 +1126,7 @@ margin-top: 40px;
   color: #f7f7ff;
 }
 .book-detail-footer{
+  --detail-footer-h: 72px; /* ajusta si tu footer mide más */
   display: flex;
   gap: 8px;
   justify-content: center;
@@ -1148,96 +1158,22 @@ margin-top: 40px;
     ),
     var(--spine-depth),
     linear-gradient(160deg, var(--spine-color-1), var(--spine-color-2));
+  justify-content: space-between;
+  padding-top: 18px;
+  gap: 10px;
 }
 
 /* Marcador superior */
 .book-bookmark{
   position: absolute;
-  top: -14px;
   left: 50%;
   transform: translateX(-50%);
-  width: 44px;
-
-  /* más aire arriba porque ahora el corte va arriba */
-  padding: 10px 8px 8px;
-
-  border-radius: 16px 16px 14px 14px;
   border: 1px solid rgba(255,255,255,0.16);
-  background:
-    radial-gradient(circle at 30% 20%, rgba(127, 93, 255, 0.18), transparent),
-    rgba(9, 11, 20, 0.92);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.12),
-    0 10px 18px rgba(0,0,0,0.55);
   color: rgba(255,255,255,0.92);
-  display: grid;
-  gap: 4px;
   z-index: 2;
-
-  /* 👇 M hacia ARRIBA */
-  clip-path: polygon(
-    0 0,
-    100% 0,
-    100% 100%,
-    0 100%,
-    0 0,
-    50% 22%,
-    100% 0
-  );
-}
-
-
-.book-bookmark::after{
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: -8px;
-  transform: translateX(-50%);
-  width: 16px;
-  height: 10px;
-  background: rgba(9, 11, 20, 0.92);
-  border-left: 1px solid rgba(255,255,255,0.14);
-  border-right: 1px solid rgba(255,255,255,0.14);
-  border-bottom: 1px solid rgba(255,255,255,0.14);
-  border-radius: 0 0 10px 10px;
-  filter: drop-shadow(0 6px 8px rgba(0,0,0,0.35));
-}
-
-.book-bookmark-top{
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  font-size: 10px;
-  line-height: 1.1;
-}
-
-.book-bookmark-title{
-  min-width: 0;
-  max-width: 46px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  opacity: 0.95;
-}
-
-.book-bookmark-pct{
-  font-weight: 700;
-  opacity: 0.9;
-}
-
-.book-bookmark-bottom{
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
-  gap: 4px;
-  font-size: 10px;
-  opacity: 0.92;
 }
 
 .book-bookmark-input{
-  width: 100%;
-  max-width: 6ch;
   background: transparent;
   border: none;
   outline: none;
@@ -1246,7 +1182,6 @@ margin-top: 40px;
   padding: 0;
   text-align: center;
   appearance: textfield;
-  border-bottom: 1px solid rgba(255,255,255,0.16);
 }
 
 .book-bookmark-input::-webkit-outer-spin-button,
@@ -1260,24 +1195,9 @@ margin-top: 40px;
   opacity: 0.95;
 }
 
-.book-bookmark-input:focus{
-  border-bottom-color: rgba(255,255,255,0.32);
-}
-
-.book-bookmark-total,
-.book-bookmark-sep{
-  opacity: 0.85;
-}
-
 /* =========================
    Ajustes: marcador tipo 🔖 + stats verticales
 ========================= */
-.book-spine-reading{
-  justify-content: space-between;
-  padding-top: 18px;
-  gap: 10px;
-}
-
 .book-spine-reading .book-spine-title{
   flex: 1;
   display: flex;
@@ -1336,20 +1256,13 @@ margin-top: 40px;
     0 10px 18px rgba(255, 255, 255, 0.398);
 }
 
-.book-bookmark::after{ content: none; }
-
 .book-bookmark-input{
   width: 18px;
   height: 46px;
-  border: none;
-  border-bottom: none;
-  background: transparent;
   color: rgba(255,255,255,.92);
   font-weight: 800;
   font-size: 12px;
   letter-spacing: .02em;
-  text-align: center;
-  appearance: textfield;
   writing-mode: vertical-rl;
   text-orientation: mixed;
   transform: rotate(180deg);
@@ -1607,86 +1520,6 @@ margin-top: 40px;
 
 .geo-header{display:flex;}
 .geo-map{flex:1 1 auto; min-width:0; width:100%; height:320px;}
-/* 1) Cada balda = 1 sola línea (sin wrap) */
-.books-shelf-row{
-  position: relative;
-  display: flex;
-  flex-wrap: nowrap;        /* <-- FIX */
-  align-items: flex-end;
-  gap: 10px;
-  padding-bottom: 16px;
-  overflow: visible;        /* sombras no se cortan dentro de la fila */
-}
-
-/* 2) Ancho variable por JS */
-.book-spine{
-  width: var(--spine-width, 46px);     /* <-- FIX */
-  min-width: var(--spine-width, 46px); /* <-- FIX */
-}
-
-/* 3) Evita recorte por la card contenedora */
-.books-finished, .books-watchlist{
-  overflow: visible;        /* <-- FIX (antes hidden) */
-}
-
-/* 4) Margen interior extra para que NUNCA roce el borde */
-.books-list-finished{
-  padding: 10px 24px 12px;  /* <-- FIX (antes 10px 12px 12px) */
-}
-
-/* Watchlist: dale el mismo aire lateral */
-.watchlist-body{
-  padding: 10px 24px 12px;  /* <-- NUEVO */
-}
-/* La fila ocupa exactamente el ancho útil del contenedor */
-.books-shelf-row{
-  display: flex;
-  flex-wrap: nowrap;
-  width: 100%;
-  gap: 8px;
-  overflow-x: hidden;   /* no se sale */
-  overflow-y: visible;  /* sombras ok */
-}
-.books-shelf-row{
-  display: flex;
-  flex-wrap: nowrap;
-
-  overflow-x: auto;
-  overflow-y: hidden;
-
-  -webkit-overflow-scrolling: touch;
-}
-.book-spine{
-  flex: 0 0 auto;
-}
-
-.books-shelf-row{
-  scroll-snap-type: x mandatory;
-}
-
-.book-spine{
-  scroll-snap-align: start;
-}
-
-/* Un pelín de aire a la derecha para que jamás “muerda” el borde */
-.books-list-finished{
-  padding-right: 28px; /* antes 12px */
-}
-/* Evita que los lomos se “salgan” por la derecha */
-.books-list-finished,
-.watchlist-body{
-  overflow-x: hidden;
-}
-
-/* La fila no puede medir más que su contenedor */
-.books-shelf-row{
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
-}
-.books-finished, .books-watchlist{
-  overflow: hidden;
-}
 #book-detail-backdrop{
   padding: 0;
 }
@@ -1708,7 +1541,7 @@ margin-top: 40px;
   min-height: 0;
 
   padding: 12px;
-  padding-bottom: 24px;
+  padding-bottom: calc(12px + var(--detail-footer-h, 72px) + env(safe-area-inset-bottom));
 
   background: rgba(255,255,255,0.03);
   border-radius: 14px;
@@ -1722,18 +1555,6 @@ padding: 8px;
 color: white;
 border: 1px solid rgba(255,255,255,0.12);
 background-color: transparent;
-}
-.book-detail-quotes-body{
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  min-height: 0;
-  flex: 1 1 auto;
-
-  padding: 12px;
-  padding-bottom: calc(12px + var(--detail-footer-h, 72px) + env(safe-area-inset-bottom));
-}
-.book-detail-footer{
-  --detail-footer-h: 72px; /* ajusta si tu footer mide más */
 }
 .book-detail-quote-item:last-child{
   margin-bottom: 0;

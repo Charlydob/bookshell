@@ -1194,3 +1194,97 @@ margin-top: 0px;
         grid-template-columns: 56px 1fr auto;
     }
 }
+/* --- Gym hardening / UI refresh --- */
+.view-gym {
+  height: calc(var(--app-dvh, 100dvh));
+  overflow: hidden;
+  padding-top: calc(26px + env(safe-area-inset-top));
+}
+
+.view-gym .gym-wrap.scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: calc(18px + var(--nav-h) + env(safe-area-inset-bottom));
+}
+
+#view-gym,
+#gym-history-list,
+#gym-workout {
+  margin-bottom: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+.gym-wrap {
+  gap: 16px;
+  padding: 10px 10px 24px;
+}
+
+.gym-history-group {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+}
+
+.gym-history-group-summary {
+  padding: 2px;
+}
+
+.gym-history-group-body {
+  padding-top: 8px;
+}
+
+.gym-history-card {
+  background: rgba(9, 12, 22, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+}
+
+.gym-history-card:active {
+  transform: scale(0.99);
+}
+
+.gym-calendar-day.has-workout {
+  cursor: pointer;
+}
+
+button.gym-calendar-day {
+  border: 1px solid transparent;
+  font: inherit;
+}
+
+.gym-stats-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gym-stats-kpis.hidden {
+  display: none;
+}
+
+.gym-create-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gym-create-form .gym-field {
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gym-create-form .gym-field:first-child {
+  grid-column: 1 / -1;
+}
+
+#gym-create-name {
+  max-width: 100%;
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .gym-create-form {
+    grid-template-columns: 1fr;
+  }
+}

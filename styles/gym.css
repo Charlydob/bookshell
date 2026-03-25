@@ -1183,7 +1183,7 @@ font-size: 12px;
   overflow-y: auto;
   overflow-x: hidden;
 }
-#gym-history-list, #gym-workout{
+#gym-history-list, #gym-session-view{
   margin-bottom: 200px;
 }
 .view-gym{
@@ -1209,7 +1209,7 @@ margin-top: 0px;
 
 #view-gym,
 #gym-history-list,
-#gym-workout {
+#gym-session-view {
   margin-bottom: 0 !important;
   padding-bottom: 0 !important;
 }
@@ -1266,15 +1266,15 @@ button.gym-calendar-day {
 .gym-create-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
-.gym-create-form .gym-field {
+.gym-create-form .gym-create-field {
   flex-direction: column;
   gap: 6px;
 }
 
-.gym-create-form .gym-field:first-child {
+.gym-create-form .gym-create-field-name {
   grid-column: 1 / -1;
 }
 
@@ -1283,7 +1283,7 @@ button.gym-calendar-day {
   width: 100%;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 420px) {
   .gym-create-form {
     grid-template-columns: 1fr;
   }

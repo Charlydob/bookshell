@@ -2015,7 +2015,7 @@
 
 <section class="view view-gym" id="view-gym">
 <div class="gym-wrap scroll">
-<div class="gym-screen gym-screen-active" id="gym-home">
+<div class="gym-screen gym-screen-active" id="gym-main-view">
 <div class="gym-hero">
 <div>
 <div class="gym-title">Gym</div>
@@ -2074,7 +2074,7 @@
 </div>
 </div>
 
-<div class="gym-screen" id="gym-workout">
+<div class="gym-screen" id="gym-session-view">
 <div class="gym-workout-header gym-header">
 <button class="icon-btn icon-btn-small" id="gym-back" type="button">‹</button>
 <div class="gym-workout-title">
@@ -2128,7 +2128,7 @@
 </div>
 </div>
 
-<div class="gym-screen" id="gym-stats">
+<div class="gym-screen" id="gym-stats-view">
 <div class="gym-workout-header gym-header">
 <button class="icon-btn icon-btn-small" id="gym-stats-back" type="button">‹</button>
 <div class="gym-workout-title">
@@ -2187,32 +2187,31 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 <div class="modal-scroll gym-modal-body">
     <div class="gym-create-form">
-      <label class="gym-field">
-      <span></span>
+      <label class="gym-field gym-create-field gym-create-field-name">
+      <span>Nombre</span>
       <input id="gym-create-name" placeholder="Nombre del ejercicio" type="text"/>
       </label>
-      <label class="gym-field">
-      <span></span>
+      <label class="gym-field gym-create-field">
+      <span>Tipo</span>
       <select id="gym-create-type" class="gym-select">
       <option value="strength">Fuerza</option>
-      <option value="cardio">Cardio</option>
       </select>
       </label>
-      <label class="gym-field" id="gym-create-strength-type-field">
-      <span></span>
+      <label class="gym-field gym-create-field" id="gym-create-strength-type-field">
+      <span>Modalidad</span>
       <select id="gym-create-strength-type" class="gym-select">
       <option value="reps">Repeticiones</option>
       <option value="time">Tiempo</option>
       </select>
       </label>
-      <label class="gym-field">
-      <span></span>
+      <label class="gym-field gym-create-field">
+      <span>Categoría MET</span>
       <select id="gym-create-met-category" class="gym-select"></select>
       </label>
     </div>
 <div class="gym-chip-row" id="gym-create-muscle-chips"></div>
-<div class="gym-field">
-<span></span>
+<div class="gym-field gym-create-unilateral-field">
+<span>Lateralidad</span>
 <label class="favorite-toggle">
 <input id="gym-create-unilateral" type="checkbox"/>
 <span aria-hidden="true" class="favorite-icon">↔</span>
@@ -2273,17 +2272,6 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 </div>
 
-<div class="modal-backdrop hidden" id="gym-day-modal">
-<div class="modal gym-modal">
-<div class="modal-header">
-<div class="modal-title" id="gym-day-modal-title">Sesiones del día</div>
-<button class="icon-btn" id="gym-day-modal-close" type="button">✕</button>
-</div>
-<div class="modal-scroll gym-modal-body">
-<div class="gym-template-list" id="gym-day-modal-list"></div>
-</div>
-</div>
-</div>
 </section>
 
 <div class="modal-backdrop hidden" id="gym-cardio-modal">

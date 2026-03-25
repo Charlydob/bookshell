@@ -2059,17 +2059,6 @@
 
 <div class="gym-section">
 <div class="gym-section-header">
-<div class="gym-section-title">Cardio</div>
-<button class="gym-btn gym-btn-ghost" id="gym-cardio-new" type="button">+ Nueva sesión</button>
-</div>
-<div class="gym-card">
-<div class="gym-cardio-list" id="gym-cardio-list"></div>
-<div class="gym-empty hidden" id="gym-cardio-empty">No tienes sesiones de cardio registradas.</div>
-</div>
-</div>
-
-<div class="gym-section">
-<div class="gym-section-header">
 <div class="gym-section-title">Historial</div>
 </div>
 <div class="gym-calendar">
@@ -2151,13 +2140,14 @@
 <label class="gym-field">
 <span>Sección</span>
 <select class="gym-select" id="gym-stats-kind">
+<option value="overview">Resumen gym</option>
 <option value="body">Peso corporal</option>
-<option value="cardio">Cardio</option>
 <option value="exercise">Ejercicio</option>
 </select>
 </label>
 </div>
 <div id="gym-stats-controls"></div>
+<div class="gym-stats-kpis" id="gym-stats-kpis"></div>
 <div class="gym-card">
 <div class="gym-stats-chart" id="gym-stats-chart"></div>
 <div class="gym-empty hidden" id="gym-stats-empty">No hay datos suficientes para mostrar estadísticas.</div>
@@ -2279,6 +2269,18 @@ Crear “<span id="gym-create-cta-text"></span>”
 <button class="gym-btn gym-btn-primary" id="gym-create-empty" type="button">Crear nuevo</button>
 <div class="gym-template-list" id="gym-template-list"></div>
 <div class="gym-empty hidden" id="gym-template-empty">No tienes plantillas guardadas.</div>
+</div>
+</div>
+</div>
+
+<div class="modal-backdrop hidden" id="gym-day-modal">
+<div class="modal gym-modal">
+<div class="modal-header">
+<div class="modal-title" id="gym-day-modal-title">Sesiones del día</div>
+<button class="icon-btn" id="gym-day-modal-close" type="button">✕</button>
+</div>
+<div class="modal-scroll gym-modal-body">
+<div class="gym-template-list" id="gym-day-modal-list"></div>
 </div>
 </div>
 </div>

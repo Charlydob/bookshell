@@ -81,6 +81,7 @@ if ($viewGym) {
   const $gymStatsBack = document.getElementById("gym-stats-back");
   const $gymStatsKind = document.getElementById("gym-stats-kind");
   const $gymStatsControls = document.getElementById("gym-stats-controls");
+  const $gymStatsKpis = document.getElementById("gym-stats-kpis");
   const $gymStatsChartHost = document.getElementById("gym-stats-chart");
   const $gymStatsEmpty = document.getElementById("gym-stats-empty");
   const $gymExDetailModal = document.getElementById("gym-exercise-detail-modal");
@@ -131,6 +132,10 @@ if ($viewGym) {
   const $gymCreateEmpty = document.getElementById("gym-create-empty");
   const $gymTemplateList = document.getElementById("gym-template-list");
   const $gymTemplateEmpty = document.getElementById("gym-template-empty");
+  const $gymDayModal = document.getElementById("gym-day-modal");
+  const $gymDayModalTitle = document.getElementById("gym-day-modal-title");
+  const $gymDayModalClose = document.getElementById("gym-day-modal-close");
+  const $gymDayModalList = document.getElementById("gym-day-modal-list");
 
   const $gymCardioModal = document.getElementById("gym-cardio-modal");
   const $gymCardioClose = document.getElementById("gym-cardio-close");
@@ -176,7 +181,7 @@ const basePath = `v2/users/${uid}/gym/gym`;
   let gymStatsChart = null;
   let gymExDetailChart = null;
   let gymStatsSelection = {
-    kind: "body",
+    kind: "overview",
     cardioName: "",
     cardioMetric: "distanceKm",
     exerciseId: "",
@@ -354,9 +359,6 @@ function bindEvents() {
     const workout = ensureWorkoutDraft();
     if (!workout) return;
     workout.name = $gymWorkoutName.value;
-    activeSet.updatedAt = Date.now();
-    activeSet.updatedAt = Date.now();
-    activeSet.updatedAt = Date.now();
     scheduleWorkoutSave();
     renderMetrics();
   });
@@ -671,47 +673,52 @@ function bindEvents() {
     input.addEventListener("blur", () => flushBodyweightSave());
   });
 
-  $gymCardioNew.addEventListener("click", () => {
+  $gymCardioNew?.addEventListener("click", () => {
     const cardio = createCardioSession();
     openCardioModal(cardio);
   });
 
-  $gymCardioClose.addEventListener("click", () => {
+  $gymCardioClose?.addEventListener("click", () => {
     closeCardioModal();
   });
 
-  $gymCardioName.addEventListener("input", () => {
+  $gymCardioName?.addEventListener("input", () => {
     if (!cardioDraft) return;
     cardioDraft.name = $gymCardioName.value;
     scheduleCardioSave();
     renderCardioList();
   });
 
-  $gymCardioDate.addEventListener("change", () => {
+  $gymCardioDate?.addEventListener("change", () => {
     if (!cardioDraft) return;
     const nextDate = $gymCardioDate.value;
     if (nextDate && nextDate !== cardioDraft.date) moveCardioDate(nextDate);
   });
 
-  $gymCardioTarget.addEventListener("input", () => {
+  $gymCardioTarget?.addEventListener("input", () => {
     if (!cardioDraft) return;
     cardioDraft.targetDistanceKm = parseDecimalInput($gymCardioTarget.value);
     scheduleCardioSave();
     renderCardioSummary();
   });
 
-  $gymCardioDistance.addEventListener("input", () => {
+  $gymCardioDistance?.addEventListener("input", () => {
     if (!cardioDraft) return;
     cardioDraft.distanceKm = parseDecimalInput($gymCardioDistance.value);
     scheduleCardioSave();
     renderCardioSummary();
   });
 
-  $gymCardioStart.addEventListener("click", () => startCardioTimer());
-  $gymCardioPause.addEventListener("click", () => pauseCardioTimer());
-  $gymCardioResume.addEventListener("click", () => resumeCardioTimer());
-  $gymCardioFinish.addEventListener("click", () => finishCardioSession());
-}
+  $gymCardioStart?.addEventListener("click", () => startCardioTimer());
+  $gymCardioPause?.addEventListener("click", () => pauseCardioTimer());
+  $gymCardioResume?.addEventListener("click", () => resumeCardioTimer());
+  $gymCardioFinish?.addEventListener("click", () => finishCardioSession());
+
+  $gymDayModalClose?.addEventListener("click", () => closeDayWorkoutsModal());
+  $gymDayModal?.addEventListener("click", (event) => {
+    if (event.target === $gymDayModal) closeDayWorkoutsModal();
+  });
+
 
 
   function subscribeData() {
@@ -1299,40 +1306,7 @@ function bindEvents() {
     const kind = gymStatsSelection.kind || "body";
     $gymStatsKind.value = kind;
     $gymStatsControls.innerHTML = "";
-    if (kind === "cardio") {
-      const names = getCardioNameOptions();
-      if (names.length && !names.includes(gymStatsSelection.cardioName)) {
-        gymStatsSelection.cardioName = names[0];
-      }
-      if (!gymStatsSelection.cardioName) {
-        gymStatsSelection.cardioName = names[0] || "";
-      }
-      const metrics = [
-        { value: "distanceKm", label: "Distancia (km)" },
-        { value: "durationSec", label: "Duración (min)" },
-        { value: "avgPaceSecPerKm", label: "Ritmo (min/km)" },
-        { value: "avgSpeedKmh", label: "Velocidad (km/h)" }
-      ];
-      if (!gymStatsSelection.cardioMetric) {
-        gymStatsSelection.cardioMetric = "distanceKm";
-      }
-      const row = document.createElement("div");
-      row.className = "gym-stats-row";
-      row.appendChild(buildSelectField({
-        id: "gym-stats-cardio-name",
-        label: "Actividad",
-        options: names.map((name) => ({ value: name, label: name })),
-        value: gymStatsSelection.cardioName,
-        disabled: !names.length,
-        emptyLabel: "Sin datos"
-      }));
-      row.appendChild(buildSelectField({
-        id: "gym-stats-cardio-metric",
-        label: "",
-        options: metrics,
-        value: gymStatsSelection.cardioMetric
-      }));
-      $gymStatsControls.appendChild(row);
+    if (kind === "overview") {
       return;
     }
     if (kind === "exercise") {
@@ -1441,7 +1415,8 @@ function bindEvents() {
   function renderStatsChart() {
     if (!$gymStatsChartHost || !$gymStatsEmpty) return;
     initGymStatsChart();
-    const { labels, values, yLabel } = buildStatsSeries();
+    const { labels, values, yLabel, compareValues = null, compareLabel = "" } = buildStatsSeries();
+    renderStatsKpis();
     const hasData = labels.length && values.length;
     $gymStatsEmpty.classList.toggle("hidden", hasData);
     $gymStatsChartHost.classList.toggle("hidden", !hasData);
@@ -1465,29 +1440,128 @@ function bindEvents() {
         axisLabel: { color: "#9aa4b2" },
         splitLine: { show: false }
       },
-      series: [
-        {
-          type: "line",
-          smooth: true,
-          data: values,
-          lineStyle: { width: 2 },
-          symbol: "circle",
-          symbolSize: 6,
-          itemStyle: { color: "#f7b541" }
-        }
-      ]
+      legend: compareValues ? { top: 0, textStyle: { color: "#9aa4b2" } } : undefined,
+      series: compareValues
+        ? [
+            { type: "bar", data: values, barMaxWidth: 22, itemStyle: { color: "#f7b541", borderRadius: [6, 6, 0, 0] }, name: "Periodo actual" },
+            { type: "bar", data: compareValues, barMaxWidth: 22, itemStyle: { color: "#6f7b8f", borderRadius: [6, 6, 0, 0] }, name: compareLabel || "Periodo anterior" }
+          ]
+        : [
+            {
+              type: "line",
+              smooth: true,
+              data: values,
+              lineStyle: { width: 2 },
+              symbol: "circle",
+              symbolSize: 6,
+              itemStyle: { color: "#f7b541" }
+            }
+          ]
     });
   }
 
   function buildStatsSeries() {
     const kind = gymStatsSelection.kind || "body";
-    if (kind === "cardio") {
-      return buildCardioSeries();
+    if (kind === "overview") {
+      return buildOverviewSeries();
     }
     if (kind === "exercise") {
       return buildExerciseSeries();
     }
     return buildBodyweightSeries();
+  }
+
+  function renderStatsKpis() {
+    if (!$gymStatsKpis) return;
+    const kind = gymStatsSelection.kind || "overview";
+    if (kind !== "overview") {
+      $gymStatsKpis.innerHTML = "";
+      $gymStatsKpis.classList.add("hidden");
+      return;
+    }
+    const summary = buildOverviewSummary();
+    const cards = [
+      { label: "Volumen total", value: `${Math.round(summary.totalVolume)} kg` },
+      { label: "Sesiones", value: String(summary.totalSessions) },
+      { label: "Veces gym", value: String(summary.totalDays) },
+      { label: "Semana vs ant.", value: summary.weekDeltaLabel },
+      { label: "Mes vs ant.", value: summary.monthDeltaLabel }
+    ];
+    $gymStatsKpis.classList.remove("hidden");
+    $gymStatsKpis.innerHTML = cards.map((card) => `
+      <article class="gym-card gym-kpi-card">
+        <div class="gym-kpi-label">${card.label}</div>
+        <div class="gym-kpi-value">${card.value}</div>
+      </article>
+    `).join("");
+  }
+
+  function percentDeltaLabel(current, previous) {
+    if (!current && !previous) return "0%";
+    if (!previous) return "+100%";
+    const delta = ((current - previous) / previous) * 100;
+    const prefix = delta > 0 ? "+" : "";
+    return `${prefix}${Math.round(delta)}%`;
+  }
+
+  function buildOverviewSummary() {
+    const workouts = flattenWorkouts();
+    const totalVolume = workouts.reduce((acc, w) => acc + (Number(w.totalVolumeKg) || 0), 0);
+    const totalSessions = workouts.length;
+    const totalDays = new Set(workouts.map((w) => w.date).filter(Boolean)).size;
+    const week = getPeriodTotals(7);
+    const month = getPeriodTotals(30);
+    return {
+      totalVolume,
+      totalSessions,
+      totalDays,
+      weekDeltaLabel: `${Math.round(week.currentVolume)}kg · ${percentDeltaLabel(week.currentVolume, week.previousVolume)}`,
+      monthDeltaLabel: `${Math.round(month.currentVolume)}kg · ${percentDeltaLabel(month.currentVolume, month.previousVolume)}`
+    };
+  }
+
+  function getPeriodTotals(days) {
+    const now = new Date();
+    const currentStart = new Date(now);
+    currentStart.setDate(now.getDate() - (days - 1));
+    const prevStart = new Date(currentStart);
+    prevStart.setDate(currentStart.getDate() - days);
+    const prevEnd = new Date(currentStart);
+    prevEnd.setDate(currentStart.getDate() - 1);
+    let currentVolume = 0;
+    let previousVolume = 0;
+    flattenWorkouts().forEach((w) => {
+      const d = new Date(`${w.date}T00:00:00`);
+      const vol = Number(w.totalVolumeKg) || 0;
+      if (d >= currentStart && d <= now) currentVolume += vol;
+      else if (d >= prevStart && d <= prevEnd) previousVolume += vol;
+    });
+    return { currentVolume, previousVolume };
+  }
+
+  function buildOverviewSeries() {
+    const weekCurrent = aggregateByWeek(6, 0);
+    const weekPrevious = aggregateByWeek(6, 7);
+    return {
+      labels: weekCurrent.map((i) => i.label),
+      values: weekCurrent.map((i) => Math.round(i.volume)),
+      compareValues: weekPrevious.map((i) => Math.round(i.volume)),
+      compareLabel: "Semana anterior",
+      yLabel: "Volumen (kg)"
+    };
+  }
+
+  function aggregateByWeek(slots, offsetDays) {
+    const today = new Date();
+    const result = [];
+    for (let i = slots - 1; i >= 0; i -= 1) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - (i + offsetDays));
+      const key = dateKeyLocal(d);
+      const volume = Object.values(workoutsByDate?.[key] || {}).reduce((acc, w) => acc + (Number(w.totalVolumeKg) || 0), 0);
+      result.push({ label: d.toLocaleDateString("es-ES", { weekday: "short" }), volume });
+    }
+    return result;
   }
 
   function buildBodyweightSeries() {
@@ -2184,7 +2258,7 @@ function bindEvents() {
   }
 
   function renderCardioList() {
-    if (!$gymCardioList) return;
+    if (!$gymCardioList || !$gymCardioEmpty) return;
     const sessions = flattenCardioSessions();
     $gymCardioList.innerHTML = "";
     if (!sessions.length) {
@@ -2214,6 +2288,7 @@ function bindEvents() {
   }
 
   function openCardioModal(session) {
+    if (!$gymCardioModal) return;
     cardioDraft = cloneCardioSession(session);
     cardioRunning = false;
     cardioResumeAt = null;
@@ -2228,6 +2303,7 @@ function bindEvents() {
   }
 
   function closeCardioModal() {
+    if (!$gymCardioModal) return;
     if (cardioRunning) {
       pauseCardioTimer();
     }
@@ -2276,6 +2352,7 @@ function bindEvents() {
   }
 
   function renderCardioControls() {
+    if (!$gymCardioStart || !$gymCardioPause || !$gymCardioResume || !$gymCardioFinish) return;
     const hasStarted = Boolean(cardioDraft?.startedAt);
     const isFinished = Boolean(cardioDraft?.finishedAt);
     $gymCardioStart.classList.toggle("hidden", hasStarted);
@@ -2351,7 +2428,7 @@ function bindEvents() {
   }
 
   function renderCardioSummary() {
-    if (!cardioDraft) return;
+    if (!cardioDraft || !$gymCardioSummary || !$gymCardioProgress) return;
     const duration = cardioDraft.durationSec || 0;
     const distance = cardioDraft.distanceKm || 0;
     let summary = "Introduce distancia para calcular ritmo o velocidad.";
@@ -2456,13 +2533,54 @@ function bindEvents() {
       const classes = ["gym-calendar-day"];
       if (hasWorkout) classes.push("has-workout");
       if (dateKey === todayKey) classes.push("is-today");
-      const cell = document.createElement("div");
+      const cell = document.createElement(hasWorkout ? "button" : "div");
       cell.className = classes.join(" ");
       cell.textContent = getCalendarCellLabel(day, workoutEmojiMap[dateKey] || null);
+      if (hasWorkout) {
+        cell.type = "button";
+        cell.addEventListener("click", () => openWorkoutFromCalendar(dateKey));
+      }
       fragment.appendChild(cell);
     }
     $gymCalGrid.innerHTML = "";
     $gymCalGrid.appendChild(fragment);
+  }
+
+  function openWorkoutFromCalendar(dateKey) {
+    const workouts = Object.values(workoutsByDate?.[dateKey] || {}).sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+    if (!workouts.length) return;
+    if (workouts.length === 1) {
+      openWorkout(workouts[0].id);
+      return;
+    }
+    openDayWorkoutsModal(dateKey, workouts);
+  }
+
+  function openDayWorkoutsModal(dateKey, workouts) {
+    if (!$gymDayModal || !$gymDayModalList) return;
+    $gymDayModalTitle.textContent = `Sesiones · ${formatDateLabel(dateKey)}`;
+    $gymDayModalList.innerHTML = "";
+    workouts.forEach((workout) => {
+      const row = document.createElement("div");
+      row.className = "gym-template-row";
+      row.innerHTML = `
+        <div>
+          <div class="gym-template-name">${workout.name || "Entrenamiento"}</div>
+          <div class="gym-history-group-meta">Vol ${Math.round(workout.totalVolumeKg || 0)} kg · Reps ${Math.round(workout.totalReps || 0)}</div>
+        </div>
+        <button class="gym-btn gym-btn-ghost" type="button">Abrir</button>
+      `;
+      row.querySelector("button")?.addEventListener("click", () => {
+        closeDayWorkoutsModal();
+        openWorkout(workout.id);
+      });
+      $gymDayModalList.appendChild(row);
+    });
+    $gymDayModal.classList.remove("hidden");
+  }
+
+  function closeDayWorkoutsModal() {
+    $gymDayModal?.classList.add("hidden");
   }
 
   function openWorkout(workoutId) {

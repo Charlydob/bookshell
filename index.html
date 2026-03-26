@@ -336,62 +336,61 @@
 </section>
 <!-- Vista VÍDEOS -->
 <section class="view" id="view-videos">
-<div class="videos-wrapper">
-<!-- STATS -->
-<div class="video-stats-cards">
-<div class="video-stat-card">
-<div class="video-stat-label">Vídeos publicados</div>
-<div class="video-stat-value" id="video-stat-count">0</div>
-</div>
-<div class="video-stat-card">
-<div class="video-stat-label">Racha días</div>
-<div class="video-stat-value" id="video-stat-streak">0</div>
-</div>
-<div class="video-stat-card">
-<div class="video-stat-label">Palabras totales</div>
-<div class="video-stat-value" id="video-stat-words">0</div>
-</div>
-<div class="video-stat-card">
-<div class="video-stat-label">Ideas creadas</div>
-<div class="video-stat-value" id="video-stat-time">0</div>
-</div>
-</div>
-<!-- CALENDARIO -->
-<div class="video-calendar-section">
-<div class="video-calendar-header">
-<div class="video-calendar-nav">
-<button class="icon-btn" id="video-cal-prev">&lt;</button>
-<div class="video-cal-label" id="video-cal-label"></div>
-<button class="icon-btn" id="video-cal-next">&gt;</button>
-</div>
-<select aria-label="Vista del calendario de vídeos" class="calendar-view-select" id="video-cal-view-mode">
-<option selected="" value="month">Mes</option>
-<option value="year">Año</option>
-</select>
-</div>
-<div class="calendar-summary" id="video-calendar-summary"></div>
-<div class="video-calendar-grid" id="video-calendar-grid">
-<!-- Rellenado por JS -->
-</div>
-<div class="video-calendar-legend">
-<span class="video-dot video-dot-work"></span> Trabajo ese día
-              <span class="video-dot video-dot-streak"></span> Día en racha
-              <span class="video-dot video-dot-publish"></span> Fecha propuesta de publicación
-            </div>
-</div>
-<!-- TOOLBAR + LISTA -->
-<div class="videos-toolbar">
-<button class="btn primary" id="btn-add-video">+ Añadir vídeo</button>
-<button class="btn" id="btn-add-idea">+ Idea</button>
-<button class="btn" id="btn-open-links">Links</button>
-<button class="btn ghost btn-compact" id="videos-start-session" type="button">▶ Iniciar sesión</button>
-</div>
-<div class="videos-list" id="videos-list">
-<!-- Tarjetas de vídeos por JS -->
-</div>
-<div class="videos-empty" id="videos-empty">
-            Aún no has añadido ningún vídeo.
-          </div>
+<div class="videosWorkspace" id="videos-workspace">
+  <header class="videosWorkspace__head">
+    <div class="videosWorkspace__titleBlock">
+      <p class="videosWorkspace__eyebrow">Vídeos</p>
+      <h2 class="videosWorkspace__title">Producción</h2>
+    </div>
+    <div class="videosWorkspace__actions">
+      <button class="videosWorkspace__action" id="btn-add-video" type="button">+ Vídeo</button>
+      <button class="videosWorkspace__action" id="btn-add-idea" type="button">+ Idea</button>
+      <button class="videosWorkspace__action" id="btn-open-links" type="button">Links</button>
+      <button class="videosWorkspace__action videosWorkspace__action--ghost" id="videos-start-session" type="button">▶ Sesión</button>
+    </div>
+  </header>
+
+  <div class="videosWorkspace__kpi" aria-label="Métricas clave">
+    <div class="videosWorkspace__kpiItem"><span>Palabras</span><strong id="video-stat-words">0</strong></div>
+    <div class="videosWorkspace__kpiItem"><span>Publicados</span><strong id="video-stat-count">0</strong></div>
+    <div class="videosWorkspace__kpiItem"><span>Ideas</span><strong id="video-stat-time">0</strong></div>
+    <div class="videosWorkspace__kpiItem"><span>Min editados</span><strong id="video-stat-streak">0</strong></div>
+  </div>
+
+  <section class="videosWorkspace__analytics" aria-label="Analítica de vídeos">
+    <div class="videosWorkspace__analyticsTop">
+      <div class="videosWorkspace__range" role="tablist" aria-label="Rango temporal">
+        <button type="button" class="videosWorkspace__rangeBtn is-active" data-video-range="7d">Semana</button>
+        <button type="button" class="videosWorkspace__rangeBtn" data-video-range="30d">Mes</button>
+        <button type="button" class="videosWorkspace__rangeBtn" data-video-range="365d">Año</button>
+      </div>
+      <div class="videosWorkspace__selectors">
+        <select id="video-cal-view-mode" aria-label="Rango">
+          <option value="7d">Semana</option>
+          <option value="30d" selected>Mes</option>
+          <option value="365d">Año</option>
+        </select>
+        <select id="video-chart-mode" aria-label="Visualización">
+          <option value="line" selected>Línea</option>
+          <option value="bars">Barras</option>
+        </select>
+        <select id="video-metric-mode" aria-label="Métrica">
+          <option value="words" selected>Palabras</option>
+          <option value="publish">Publicados</option>
+          <option value="seconds">Min editados</option>
+          <option value="ideas">Ideas</option>
+        </select>
+      </div>
+    </div>
+    <div class="videosWorkspace__summary" id="video-calendar-summary"></div>
+    <div class="videosWorkspace__compare" id="video-activity-compare"></div>
+    <div class="videosWorkspace__chart" id="video-calendar-grid"></div>
+    <div class="videosWorkspace__chartLegend" id="video-chart-legend"></div>
+    <div class="videosWorkspace__chartFooter" id="video-activity-footer"></div>
+  </section>
+
+  <div class="videosWorkspace__list" id="videos-list"></div>
+  <div class="videosWorkspace__empty" id="videos-empty">Aún no has añadido ningún vídeo.</div>
 </div>
 </section>
 <section class="view" id="view-video-script">

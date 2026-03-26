@@ -28,6 +28,9 @@
   --work-evening: rgba(255,59,48,.85);
   --work-free: rgba(52,199,89,.85);
   --work-unknown: rgba(142,142,147,.55);
+
+  /* Fix PWA iOS: evitar franja negra inferior / anclar navegación al safe-area */
+  --nav-total-h: 72px;
 }
 
 html,
@@ -112,6 +115,7 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(6px + var(--nav-total-h) + var(--nav-gap));
 }
 
 .view-active {
@@ -388,6 +392,7 @@ body.has-open-modal .bottom-nav {
 .modal-form{
   display:flex;
   flex-direction:column;
+  min-height: 0;
   max-height: 82vh;
 }
 
@@ -464,18 +469,6 @@ body.has-open-modal .bottom-nav {
   background: rgba(255,255,255,.06);
   border-color: rgba(255,255,255,.16);
   box-shadow: 0 8px 24px rgba(0,0,0,.35);
-}
-
-.modal-form{
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.modal-scroll{
-  min-height: 0;
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
 }
 
 .sheet-body{
@@ -700,7 +693,7 @@ body.has-open-modal .bottom-nav {
 .video-title.card-toggle{
   cursor: pointer;
   position: relative;
-  padding-right: 18px;
+  padding-right: 16px;
   user-select: none;
 }
 
@@ -709,11 +702,12 @@ body.has-open-modal .bottom-nav {
 .video-title.card-toggle::after{
   content: "▾";
   position: absolute;
-  right: 0;
-  top: 0;
+  right: -2px;
+  top: 50%;
   opacity: .55;
   font-size: 14px;
   line-height: 1.2;
+  transform: translateY(-50%);
 }
 
 .book-card.is-collapsed .book-title.card-toggle::after,
@@ -747,18 +741,6 @@ body.has-open-modal .bottom-nav {
   --progress-fill: rgba(46, 234, 123, 0.28);
 }
 
-
-/* --- VIDEO collapsed: deja solo progreso + título + botón Publicado --- */
-.video-card.is-collapsed .video-meta,
-.video-card.is-collapsed .video-bars,
-.video-card.is-collapsed .video-remaining,
-.video-card.is-collapsed .video-input-group{
-  display: none !important;
-}
-
-.video-card.is-collapsed .video-actions{
-  margin-top: 8px;
-}
 
 .video-card.is-collapsed .btn-secondary-action{
   display: none !important; /* oculta Editar */
@@ -826,18 +808,6 @@ body.has-open-modal .bottom-nav {
 }
 
 
-/* Afinado: que el chevron no rompa el truncado del título */
-.book-title.card-toggle,
-.video-title.card-toggle{
-  padding-right: 16px;
-}
-
-.book-title.card-toggle::after,
-.video-title.card-toggle::after{
-  right: -2px;
-  top: 50%;
-  transform: translateY(-50%);
-}
 /* Oculta el plegable "Actualizar progreso" en tarjetas plegadas */
 .video-card.is-collapsed details,
 .video-card.is-collapsed summary,
@@ -866,15 +836,6 @@ body.has-open-modal .bottom-nav {
 main {
   min-height: 0;
   overflow: hidden;
-}
-
-.view {
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
-  padding-bottom: calc(6px + var(--nav-total-h) + var(--nav-gap));
 }
 
 .book-detail-quotes {
@@ -915,9 +876,3 @@ main {
   background: rgba(10, 14, 22, 0.94);
   backdrop-filter: blur(8px);
 }
-
-/* --- Fix PWA iOS: evitar franja negra inferior / anclar navegación al safe-area --- */
-:root {
-  --nav-total-h: 72px;
-}
-

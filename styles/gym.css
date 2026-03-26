@@ -9,12 +9,11 @@
 
 .view-gym{
   min-height: 100dvh;
-  height: 100dvh;
+  height: calc(var(--app-dvh, 100dvh));
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding-top: calc(12px + env(safe-area-inset-top));
-  padding-bottom: calc(12px + var(--nav-h) + env(safe-area-inset-bottom));
+  padding-top: calc(26px + env(safe-area-inset-top));
 }
 
 .view-gym .scroll{
@@ -24,8 +23,14 @@
   -webkit-overflow-scrolling: touch;
   max-height: none;
   contain: none; /* evita blanks/bugs iOS */
+  overscroll-behavior: contain;
 }
-.view-gym{ overflow-y:auto; -webkit-overflow-scrolling:touch; }
+
+#view-gym {
+  padding: 2px 1px 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
 
 @supports (-webkit-touch-callout: none) {
   .view-gym .scroll {
@@ -36,8 +41,12 @@
 .gym-wrap {
   display: block;
   flex-direction: column;
-  gap: 20px;
-  padding: 8px 6px 20px;
+  gap: 16px;
+  padding: 10px 10px 24px;
+}
+
+.view-gym .gym-wrap.scroll {
+  padding-bottom: calc(18px + var(--nav-h) + env(safe-area-inset-bottom));
 }
 
 .gym-screen {
@@ -169,9 +178,6 @@
   justify-items: center;
   align-self: center;
 }
-.gym-workout-title input {
-  width: 10px;
-}
 
 .gym-select {
   padding: 8px 12px;
@@ -231,6 +237,7 @@
   background: var(--gym-accent-soft);
   color: #fbead0;
   border-color: rgba(245, 166, 35, 0.4);
+  cursor: pointer;
 }
 
 .gym-calendar-day.is-today {
@@ -242,10 +249,6 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.gym-history-card {
-  cursor: pointer;
 }
 
 .gym-history-header {
@@ -319,10 +322,7 @@
   font-size: 14px;
 }
 
-.gym-title {
-  height: 44px;
-  width: 100px;
-}
+.gym-header .gym-title { height: 44px; }
 
 .gym-header .gym-date {
   height: 44px;
@@ -532,19 +532,6 @@
   gap: 6px;
 }
 
-.gym-sets-header,
-.gym-sets-row{
-  display:grid;
-  grid-template-columns: 34px 70px 64px 120px 44px; /* Set, Max, Reps, Kg(+BW), ✔ */
-  gap:10px;
-  align-items:center;
-}
-
-.gym-sets-header.is-cardio,
-.gym-sets-row.is-cardio {
-  grid-template-columns: 34px minmax(84px, 1fr) minmax(72px, 1fr) minmax(84px, 1fr) 44px;
-}
-
 .gym-sets-header {
   color: var(--txt-soft);
   text-transform: uppercase;
@@ -597,10 +584,6 @@
   padding: 0 6px;
 }
 
-.gym-sets-row > * {
-  min-width: 0;
-}
-
 .gym-set-previous {
   color: var(--txt-soft);
   font-size: 11px;
@@ -625,14 +608,6 @@
   display: none;
 }
 
-.gym-kg-cell{
-  display: grid;
-  grid-template-columns: 1fr 44px; /* input primero, BW a la derecha */
-  align-items: center;
-  gap: 6px;
-}
-.gym-bw-toggle{ justify-self: end; }
-
 .gym-bw-toggle {
   border: 1px solid var(--gym-border);
   background: rgba(255, 255, 255, 0.05);
@@ -642,9 +617,9 @@
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  width: 38px;
+  width: 30px;
   height: 28px;
-  justify-self: center;
+  justify-self: end;
 }
 
 .gym-bw-toggle.is-active {
@@ -808,23 +783,14 @@
 #gym-create-name {
   padding: 6px;
   font-size: 18px;
-  max-width: 180px;
-}
-
-.gym-create-form {
-  display: flex;
-  flex-direction: row;
-  gap: 0px;
+  width: 100%;
+  max-width: 100%;
 }
 .gym-input-uni {
   height: 36px;
   padding: 0 6px;
   font-size: 14px;
 }
-.gym-input.kg {
-  min-width: 120px;
-}
-
 .gym-exercise-list-modal {
   display: flex;
   flex-direction: column;
@@ -973,21 +939,14 @@
   flex-wrap: wrap;
 }
 
-@media (max-width: 380px){
-  .gym-sets-header,
-  .gym-sets-row{
-    grid-template-columns: 30px 62px 56px 104px 40px;
-    gap:8px;
-  }
+.gym-input.kg {
+  height: 34px;
+  border-radius: 11px;
+  padding: 0px;
+  min-width: 60px;
+  max-width: 50px !important;
+  gap: 0px !important;
 }
-
-  .gym-input.kg {
-    height: 34px;
-    border-radius: 11px;
-    padding: 0px;
-    max-width: 40px;
-    min-width: 60px;
-  }
 
 /* 1) Que las celdas puedan encoger (CLAVE) */
 .gym-sets-row > *, .gym-sets-header > * { min-width: 0; }
@@ -1065,14 +1024,7 @@
   grid-template-columns: minmax(0, 1fr) 10px; /* input + BW */
   gap: 2px;
   align-items: center;
-}
-.gym-bw-toggle{ width: 30px; justify-self: end; }
-.gym-kg-cell{
   max-width: 150px;
-}
-.gym-input.kg {
-  max-width: 50px !important;
-  gap: 0px !important;
 }
 .gym-input[data-field="kg"]{ max-width: 150px; }
 #gym-finish-workout {
@@ -1105,6 +1057,7 @@
   position: relative;  /* 👈 crea capa */
   z-index: 1;          /* 👈 delante */
   transform: translateX(0); /* por si acaso */
+  width: 100%;
 }
 .gym-set-swipe-under{
   opacity: 0;
@@ -1116,8 +1069,6 @@
   opacity: 1;
   pointer-events: auto;
 }
-.gym-set-swipe-front{ position: relative; z-index: 1; width: 100%; }
-.gym-set-swipe-under{ position: absolute; inset: 0; z-index: 0; }
 .gym-sets-header.is-unilateral{
   max-width: 220px;
   min-width: 220px;
@@ -1134,6 +1085,10 @@ font-size: 12px;
 
 .gym-history-group {
   overflow: hidden;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
 }
 
 .gym-history-group-summary {
@@ -1143,6 +1098,7 @@ font-size: 12px;
   gap: 12px;
   cursor: pointer;
   align-items: center;
+  padding: 2px;
 }
 
 .gym-history-group-summary::-webkit-details-marker {
@@ -1236,17 +1192,20 @@ margin-top: 0px;
 }
 
 .gym-history-card {
+  cursor: pointer;
+  padding: 12px;
+  border-radius: 14px;
   background: rgba(9, 12, 22, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
+  transition: transform .2s ease, opacity .2s ease;
 }
 
 .gym-history-card:active {
   transform: scale(0.99);
 }
 
-.gym-calendar-day.has-workout {
-  cursor: pointer;
+#gym-create-met-category {
+  min-width: 220px;
 }
 
 button.gym-calendar-day {
@@ -1279,16 +1238,12 @@ button.gym-calendar-day {
   grid-column: 1 / -1;
 }
 
-#gym-create-name {
-  max-width: 100%;
-  width: 100%;
-}
-
 @media (max-width: 420px) {
   .gym-create-form {
     grid-template-columns: 1fr;
   }
 }
+
 #view-gym,
 .view-gym {
   height: 100%;
@@ -1308,4 +1263,11 @@ button.gym-calendar-day {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+
+@media (max-width: 640px) {
+  .macro-entry-recipe {
+    grid-template-columns: 56px 1fr auto;
+  }
 }

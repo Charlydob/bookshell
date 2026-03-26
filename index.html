@@ -587,6 +587,7 @@
 <option value="__none__">Sin libro</option>
 </select>
 </div>
+<div class="video-links-overview" id="video-links-overview"></div>
 <div class="video-links-list" id="video-links-list"></div>
 <div class="video-links-empty" id="video-links-empty">Aún no has guardado links.</div>
 </div>
@@ -2334,7 +2335,7 @@ Crear “<span id="gym-create-cta-text"></span>”
 
 <!-- MODAL LIBRO -->
 <div class="modal-backdrop hidden" id="book-modal-backdrop">
-<div class="modal">
+<div class="modal videosWorkspace__modal">
 <div class="modal-handle"></div>
 <div class="modal-header">
 <div class="modal-title" id="book-modal-title">Nuevo libro</div>
@@ -2513,7 +2514,7 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 <!-- MODAL VÍDEO -->
 <div class="modal-backdrop hidden" id="video-modal-backdrop">
-<div class="modal">
+<div class="modal videosWorkspace__modal">
 <div class="modal-handle"></div>
 <div class="modal-header">
 <div class="modal-title" id="video-modal-title">Nuevo vídeo</div>
@@ -2531,6 +2532,10 @@ Crear “<span id="gym-create-cta-text"></span>”
 <label class="field">
 <span class="field-label">Palabras de guion <em class="hint">(objetivo 2000)</em></span>
 <input id="video-script-words" inputmode="numeric" min="0" type="number" value="0"/>
+</label>
+<label class="field">
+<span class="field-label">Objetivo palabras</span>
+<input id="video-script-target" inputmode="numeric" min="1" type="number" value="2000"/>
 </label>
 </div>
 <div class="sheet-section">
@@ -2552,6 +2557,10 @@ Crear “<span id="gym-create-cta-text"></span>”
 <input class="time-input" id="video-edited-sec" inputmode="numeric" max="59" min="0" placeholder="seg" type="number"/>
 </div>
 </label>
+<label class="field">
+<span class="field-label">Objetivo (min)</span>
+<input id="video-duration-target-min" inputmode="numeric" min="0" placeholder="12" type="number"/>
+</label>
 </div>
 </div>
 <div class="sheet-section">
@@ -2560,6 +2569,10 @@ Crear “<span id="gym-create-cta-text"></span>”
 <label class="field">
 <span class="field-label">Fecha propuesta</span>
 <input id="video-publish-date" type="date"/>
+</label>
+<label class="field">
+<span class="field-label">Hora objetivo</span>
+<input id="video-publish-time" type="time"/>
 </label>
 <label class="field">
 <span class="field-label">Estado</span>

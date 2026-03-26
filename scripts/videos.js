@@ -22,6 +22,7 @@ const VIDEO_WORK_PATH  = `v2/users/${uid}/videos/videoWorkLog`;
 const LINKS_PATH       = `v2/users/${uid}/videos/links`;
 const BOOKS_PATH       = `v2/users/${uid}/videos/books`;
 const QUOTE_BOOKS_PATH = `v2/users/${uid}/videos/quoteBooks`;
+const CATEGORY_GROUPS_PATH = `v2/users/${uid}/videos/categoryGroups`;
 
 // Ejemplo de uso:
 // onValue(ref(db, VIDEO_LOG_PATH), (snap) => { ... });
@@ -67,6 +68,7 @@ let videoUi = { toolbarOpen: false, countOpen: false, countMiniMode: "pct", last
 let links = {};
 let books = {};
 let quoteBooks = {};
+let categoryGroups = {};
 const videoSectionCollapseState = Object.create(null);
 const videoItemExpandState = Object.create(null);
 let linkPickerMode = "script";
@@ -199,6 +201,43 @@ function formatTagsForDisplay(raw) {
   if (!str) return "";
   if (str.includes("#")) return str;
   return formatTagsForStorage(str);
+}
+
+function normalizeCategoryGroupKey(raw) {
+  return String(raw || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function getCategoryGroupsNormalized() {
+  return Object.entries(categoryGroups || {}).reduce((acc, [key, value]) => {
+    const safeKey = normalizeCategoryGroupKey(key) || key;
+    const name = String(value?.name || key || "").trim();
+    const options = Array.isArray(value?.options)
+      ? value.options.map((opt) => String(opt || "").trim()).filter(Boolean)
+      : [];
+    if (!name) return acc;
+    acc[safeKey] = { name, options: Array.from(new Set(options)) };
+    return acc;
+  }, {});
+}
+
+function getVideoCategoryAssignments(video) {
+  const raw = video?.categoryAssignments;
+  if (!raw || typeof raw !== "object") return {};
+  const out = {};
+  Object.entries(raw).forEach(([groupKey, values]) => {
+    const safeKey = normalizeCategoryGroupKey(groupKey);
+    if (!safeKey) return;
+    const arr = Array.isArray(values) ? values : [values];
+    const cleaned = arr.map((v) => String(v || "").trim()).filter(Boolean);
+    if (cleaned.length) out[safeKey] = Array.from(new Set(cleaned));
+  });
+  return out;
 }
 
 
@@ -638,6 +677,7 @@ if ($viewVideos) {
 
   setupVideoDashboard();
   if (!$videoMetricMode) $videoMetricMode = document.getElementById("video-metric-mode");
+  refreshVideoMetricOptions();
 
   const $videoRangeButtons = Array.from($viewVideos.querySelectorAll("[data-video-range]"));
   const syncVideoRangeButtons = () => {
@@ -1170,7 +1210,7 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       const ed = splitSeconds(v.editedSeconds || 0);
       $videoEditedMin.value = ed.min;
       $videoEditedSec.value = ed.sec;
-      if ($videoDurationTargetMin) $videoDurationTargetMin.value = Math.max(0, Number(v.durationTargetMinutes) || Math.round((v.durationSeconds || 0) / 60));
+      if ($videoDurationTargetMin) $videoDurationTargetMin.value = Math.max(0, Number(v.durationTargetSeconds) ? Math.floor(Number(v.durationTargetSeconds) / 60) : (Number(v.durationTargetMinutes) || Math.round((v.durationSeconds || 0) / 60)));
 
       $videoPublishDate.value = v.publishDate || "";
       if ($videoPublishTime) $videoPublishTime.value = v.publishTime || "";
@@ -3751,6 +3791,7 @@ if ($videoForm) {
     const publishTime = ($videoPublishTime?.value || "").trim() || null;
     const status = ($videoStatus?.value || "").trim() || "script";
     const durationTargetMinutes = Math.max(0, Number($videoDurationTargetMin?.value) || 0);
+    const durationTargetSeconds = durationTargetMinutes * 60;
 
     const now = Date.now();
     const data = {
@@ -3760,6 +3801,7 @@ if ($videoForm) {
       scriptTarget,
       durationSeconds: durationSec,
       durationTargetMinutes,
+      durationTargetSeconds,
       editedSeconds: editedSec,
       publishDate,
       publishTime,
@@ -3858,6 +3900,13 @@ if ($videoForm) {
     refreshBooksDatalist();
   });
 
+  onValue(ref(db, CATEGORY_GROUPS_PATH), (snap) => {
+    categoryGroups = snap.val() || {};
+    refreshVideoMetricOptions();
+    renderVideoCalendar();
+    renderVideos();
+  });
+
   // === Render tarjetas ===
   const STATUS_LABELS = {
     idea: "Idea",
@@ -3908,21 +3957,39 @@ if ($videoForm) {
   }
 
 function inferVideoPhase(video) {
-  if (!video || isIdeaVideo(video)) return { status: "idea", scriptDone: 0, recordingDone: 0, editDone: 0, published: false };
+  if (!video || isIdeaVideo(video)) {
+    return {
+      status: "idea",
+      scriptDone: 0,
+      editDone: 0,
+      publishDone: 0,
+      currentPhase: "script",
+      currentPct: 0,
+      published: false
+    };
+  }
   const words = Math.max(0, Number(video?.script?.wordCount ?? video?.scriptWords) || 0);
   const target = Math.max(1, Number(video?.scriptTarget) || 2000);
   const scriptPct = clampPct((words / target) * 100);
-  const hasEdit = Math.max(0, Number(video.editedSeconds) || 0) > 0 || video.status === "editing" || video.status === "published";
-  const recordingDone = hasEdit || video.status === "recording" || video.status === "editing" || video.status === "published";
-  const duration = Math.max(0, Number(video.durationSeconds) || 0);
+  const durationTargetSec = Math.max(
+    1,
+    Math.round(Math.max(0, Number(video.durationTargetSeconds) || 0))
+      || Math.round(Math.max(0, Number(video.durationTargetMinutes) || 0) * 60)
+      || Math.round(Math.max(0, Number(video.durationSeconds) || 0))
+  );
   const edited = Math.max(0, Number(video.editedSeconds) || 0);
-  const editPct = duration > 0 ? clampPct((edited / duration) * 100) : (video.status === "published" ? 100 : 0);
-  const isPublished = video.status === "published" || (video.publishDate && normalizeDateKey(video.publishDate) <= todayKey() && (editPct >= 100 || edited > 0));
+  const editPct = clampPct((edited / durationTargetSec) * 100);
+  const isPublished = video.status === "published" || !!video.published;
+  const publishPct = isPublished ? 100 : 0;
+  const currentPhase = isPublished ? "published" : ((edited > 0 || scriptPct >= 100) ? "editing" : "script");
+  const currentPct = currentPhase === "published" ? publishPct : (currentPhase === "editing" ? editPct : scriptPct);
   return {
-    status: isPublished ? "published" : (video.status || "script"),
+    status: isPublished ? "published" : (currentPhase === "editing" ? "editing" : "script"),
     scriptDone: scriptPct,
-    recordingDone: recordingDone ? 100 : (scriptPct >= 100 ? 65 : 15),
-    editDone: isPublished ? 100 : editPct,
+    editDone: editPct,
+    publishDone: publishPct,
+    currentPhase,
+    currentPct,
     published: isPublished
   };
 }
@@ -3934,8 +4001,15 @@ function createVideoWorkspaceItem(id) {
   const words = Math.max(0, Number(v?.script?.wordCount ?? v?.scriptWords) || 0);
   const edited = Math.max(0, Number(v?.editedSeconds) || 0);
   const splitEdited = splitSeconds(edited);
-  const publishTimeLabel = v.publishTime ? ` ${v.publishTime}` : "";
-  const targetMin = Math.max(0, Number(v?.durationTargetMinutes) || 0);
+  const splitTarget = splitSeconds(
+    Math.round(Math.max(0, Number(v?.durationTargetSeconds) || 0))
+    || Math.round(Math.max(0, Number(v?.durationTargetMinutes) || 0) * 60)
+    || Math.round(Math.max(0, Number(v?.durationSeconds) || 0))
+  );
+  const tags = tagsInputToArray(v.tags);
+  const groups = getCategoryGroupsNormalized();
+  const assignments = getVideoCategoryAssignments(v);
+  const phaseLabel = phase.currentPhase === "published" ? "Publicado" : (phase.currentPhase === "editing" ? "Edición" : "Guión");
 
   const row = document.createElement("article");
   row.className = "videosWorkspace__item";
@@ -3945,10 +4019,10 @@ function createVideoWorkspaceItem(id) {
   const rings = document.createElement("div");
   rings.className = "videosWorkspace__rings";
   rings.innerHTML = `
-    <i class="videosWorkspace__ring videosWorkspace__ring--outer" style="--pct:${phase.editDone};--tone:${phase.published ? '#38d27f' : '#6fb2ff'}"></i>
-    <i class="videosWorkspace__ring videosWorkspace__ring--mid" style="--pct:${phase.recordingDone}"></i>
+    <i class="videosWorkspace__ring videosWorkspace__ring--outer" style="--pct:${phase.publishDone};--tone:#38d27f"></i>
+    <i class="videosWorkspace__ring videosWorkspace__ring--mid" style="--pct:${phase.editDone};--tone:#6fb2ff"></i>
     <i class="videosWorkspace__ring videosWorkspace__ring--inner" style="--pct:${phase.scriptDone}"></i>
-    <i class="videosWorkspace__ringHole"></i>
+    <div class="videosWorkspace__ringHole"><strong>${Math.round(phase.currentPct)}%</strong><span>${phaseLabel}</span></div>
   `;
 
   const main = document.createElement("div");
@@ -3956,68 +4030,198 @@ function createVideoWorkspaceItem(id) {
   main.innerHTML = `
     <div class="videosWorkspace__titleRow">
       <div class="videosWorkspace__videoTitle">${escapeHtml(v.title || "Sin título")}</div>
-      <span class="videosWorkspace__videoMeta">${isIdea ? "Idea" : (phase.published ? "Publicado" : "En curso")}</span>
+      <span class="videosWorkspace__videoMeta">${isIdea ? "Idea" : phaseLabel}</span>
     </div>
-    <div class="videosWorkspace__videoMeta">${v.publishDate || "Sin fecha"}${publishTimeLabel} · ${words.toLocaleString("es-ES")} palabras · ${splitEdited.min}m ${splitEdited.sec}s editados${targetMin ? ` · objetivo ${targetMin}m` : ""}</div>
+    <div class="videosWorkspace__videoMeta">${v.publishDate || "Sin fecha"} · ${words.toLocaleString("es-ES")} palabras · ${splitEdited.min}m ${String(splitEdited.sec).padStart(2, "0")}s editados · objetivo ${splitTarget.min}m ${String(splitTarget.sec).padStart(2, "0")}s</div>
   `;
 
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "videosWorkspace__itemToggle";
   toggle.textContent = "⋯";
-  toggle.title = "Expandir o plegar";
-  toggle.setAttribute("aria-expanded", String(!!videoItemExpandState[id]));
+  toggle.title = "Acciones";
+  toggle.setAttribute("aria-haspopup", "menu");
+  toggle.setAttribute("aria-expanded", "false");
+
+  const menu = document.createElement("div");
+  menu.className = "videosWorkspace__itemMenu";
+  menu.innerHTML = `
+    <button type="button" data-role="menu-edit">Editar</button>
+    <button type="button" data-role="menu-script">Guion</button>
+    <button type="button" data-role="menu-delete">Eliminar</button>
+  `;
 
   const body = document.createElement("div");
   body.className = "videosWorkspace__itemBody";
+  const groupFields = Object.entries(groups).map(([groupKey, group]) => {
+    const selected = assignments[groupKey]?.[0] || "";
+    const options = [`<option value="">Sin asignar</option>`]
+      .concat(group.options.map((option) => `<option value="${escapeHtml(option)}" ${selected === option ? "selected" : ""}>${escapeHtml(option)}</option>`));
+    return `
+      <label class="videosWorkspace__field videosWorkspace__field--compact">
+        <span>${escapeHtml(group.name)}</span>
+        <select data-role="category-group" data-group-key="${escapeHtml(groupKey)}">${options.join("")}</select>
+      </label>
+    `;
+  }).join("");
   body.innerHTML = `
-    <label class="videosWorkspace__field"><span>Objetivo</span><input data-role="target" type="number" min="1" value="${Math.max(1, Number(v.scriptTarget) || 2000)}"></label>
-    <label class="videosWorkspace__field"><span>Palabras</span><input data-role="words" type="number" min="0" value="${words}"></label>
-    <label class="videosWorkspace__field"><span>Edición mm:ss</span><input data-role="edited" type="text" value="${formatMinutesSecondsInput(edited)}"></label>
-    <label class="videosWorkspace__field"><span>Fecha</span><input data-role="date" type="date" value="${v.publishDate || ""}"></label>
-    <label class="videosWorkspace__field"><span>Hora</span><input data-role="time" type="time" value="${v.publishTime || ""}"></label>
-    <label class="videosWorkspace__field"><span>Objetivo min</span><input data-role="duration-target" type="number" min="0" value="${Math.max(0, Number(v.durationTargetMinutes) || 0)}"></label>
-    <div class="videosWorkspace__checks">
-      <label><input data-role="publish" type="checkbox" ${phase.published ? "checked" : ""}> Publicado</label>
+    <section class="videosWorkspace__editorBlock">
+      <h4>Identidad</h4>
+      <label class="videosWorkspace__field videosWorkspace__field--wide"><span>Título</span><input data-role="title" type="text" value="${escapeHtml(v.title || "")}"></label>
+      <label class="videosWorkspace__field"><span>Fecha</span><input data-role="date" type="date" value="${v.publishDate || ""}"></label>
+      <label class="videosWorkspace__toggle"><input data-role="publish" type="checkbox" ${phase.published ? "checked" : ""}><span>Publicado</span></label>
+    </section>
+    <section class="videosWorkspace__editorBlock">
+      <h4>Progreso real</h4>
+      <label class="videosWorkspace__field"><span>Palabras objetivo</span><input data-role="target" type="number" min="1" value="${Math.max(1, Number(v.scriptTarget) || 2000)}"></label>
+      <label class="videosWorkspace__field"><span>Palabras actuales</span><input data-role="words" type="number" min="0" value="${words}"></label>
+      <div class="videosWorkspace__durationRow">
+        <label class="videosWorkspace__field"><span>Editado (mm:ss)</span><div class="videosWorkspace__timeSplit"><input data-role="edited-min" type="number" min="0" value="${splitEdited.min}"><small>:</small><input data-role="edited-sec" type="number" min="0" max="59" value="${splitEdited.sec}"></div></label>
+        <label class="videosWorkspace__field"><span>Objetivo (mm:ss)</span><div class="videosWorkspace__timeSplit"><input data-role="target-min" type="number" min="0" value="${splitTarget.min}"><small>:</small><input data-role="target-sec" type="number" min="0" max="59" value="${splitTarget.sec}"></div></label>
+      </div>
+    </section>
+    <section class="videosWorkspace__editorBlock">
+      <h4>Clasificación</h4>
+      <label class="videosWorkspace__field videosWorkspace__field--wide"><span>Tags</span><input data-role="tags" type="text" placeholder="productividad, análisis" value="${escapeHtml(tagsToCsv(tags))}"></label>
+      <div class="videosWorkspace__categoryGrid">${groupFields || '<div class="videosWorkspace__hint">Sin grupos todavía.</div>'}</div>
+      <div class="videosWorkspace__categoryActions">
+        <button class="videosWorkspace__action" data-role="add-group" type="button">+ Grupo</button>
+        <button class="videosWorkspace__action" data-role="add-option" type="button">+ Opción</button>
+      </div>
+    </section>
+    <section class="videosWorkspace__editorActions">
+      <button class="videosWorkspace__action" data-role="save" type="button">Guardar</button>
       <button class="videosWorkspace__action" data-role="script" type="button">Guion</button>
-    </div>
-  `;
+      <button class="videosWorkspace__action" data-role="toggle-publish" type="button">${phase.published ? "Despublicar" : "Publicar"}</button>
+    </section>`;
 
+  const inputTitle = body.querySelector('[data-role="title"]');
   const inputWords = body.querySelector('[data-role="words"]');
-  const inputEdited = body.querySelector('[data-role="edited"]');
+  const inputEditedMin = body.querySelector('[data-role="edited-min"]');
+  const inputEditedSec = body.querySelector('[data-role="edited-sec"]');
+  const inputTargetMin = body.querySelector('[data-role="target-min"]');
+  const inputTargetSec = body.querySelector('[data-role="target-sec"]');
   const inputDate = body.querySelector('[data-role="date"]');
-  const inputTime = body.querySelector('[data-role="time"]');
-  const inputDurationTarget = body.querySelector('[data-role="duration-target"]');
   const inputTarget = body.querySelector('[data-role="target"]');
+  const inputTags = body.querySelector('[data-role="tags"]');
   const chkPublished = body.querySelector('[data-role="publish"]');
+  const btnSave = body.querySelector('[data-role="save"]');
   const btnScript = body.querySelector('[data-role="script"]');
+  const btnTogglePublish = body.querySelector('[data-role="toggle-publish"]');
+  const btnAddGroup = body.querySelector('[data-role="add-group"]');
+  const btnAddOption = body.querySelector('[data-role="add-option"]');
+  const groupSelects = Array.from(body.querySelectorAll('[data-role="category-group"]'));
 
   const persist = async () => {
     if (isIdea) return;
+    const nextTitle = (inputTitle?.value || "").trim() || (v.title || "Sin título");
     const nextWords = Math.max(0, Number(inputWords.value) || 0);
-    const nextEdited = parseMinutesSecondsInput(inputEdited.value);
+    const nextEdited = toSeconds(inputEditedMin?.value, Math.min(59, Number(inputEditedSec?.value) || 0));
+    const nextTargetSec = toSeconds(inputTargetMin?.value, Math.min(59, Number(inputTargetSec?.value) || 0));
+    const nextAssignments = {};
+    groupSelects.forEach((select) => {
+      const key = normalizeCategoryGroupKey(select.dataset.groupKey);
+      const value = String(select.value || "").trim();
+      if (key && value) nextAssignments[key] = [value];
+    });
     await updateVideoProgress(id, nextWords, nextEdited);
     await update(ref(db, `${VIDEOS_PATH}/${id}`), {
+      title: nextTitle,
       scriptTarget: Math.max(1, Number(inputTarget.value) || 2000),
-      durationTargetMinutes: Math.max(0, Number(inputDurationTarget.value) || 0),
+      durationTargetMinutes: Math.floor(nextTargetSec / 60),
+      durationTargetSeconds: nextTargetSec,
       publishDate: (inputDate.value || "").trim() || null,
-      publishTime: (inputTime.value || "").trim() || null,
-      status: chkPublished.checked ? "published" : (nextEdited > 0 ? "editing" : (nextWords >= Math.max(1, Number(inputTarget.value) || 2000) ? "recording" : "script")),
+      tags: formatTagsForStorage(inputTags?.value || ""),
+      categoryAssignments: nextAssignments,
+      published: !!chkPublished.checked,
+      status: chkPublished.checked ? "published" : (nextEdited > 0 || nextWords >= Math.max(1, Number(inputTarget.value) || 2000) ? "editing" : "script"),
       updatedAt: Date.now()
     });
+    setVideoWorkspaceItemExpanded(id, true);
+    renderVideos();
+    renderVideoCalendar();
   };
 
-  [inputWords, inputEdited, inputDate, inputTime, inputDurationTarget, inputTarget, chkPublished].forEach((el) => {
+  [inputWords, inputEditedMin, inputEditedSec, inputTargetMin, inputTargetSec, inputDate, inputTarget, chkPublished, inputTitle, inputTags].forEach((el) => {
+    if (!el) return;
     el.addEventListener("change", persist);
     el.addEventListener("blur", persist);
   });
 
   btnScript.addEventListener("click", (event) => {
     event.preventDefault();
+    event.stopPropagation();
     openScriptView(id);
   });
 
-  row.append(rings, main, toggle, body);
+  btnSave?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    persist();
+  });
+
+  btnTogglePublish?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    chkPublished.checked = !chkPublished.checked;
+    persist();
+  });
+
+  btnAddGroup?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const name = window.prompt("Nombre del grupo (ej: Tema)");
+    if (!name) return;
+    const key = normalizeCategoryGroupKey(name);
+    if (!key) return;
+    const optionsRaw = window.prompt("Opciones separadas por coma");
+    const options = (optionsRaw || "").split(",").map((v2) => v2.trim()).filter(Boolean);
+    await update(ref(db, `${CATEGORY_GROUPS_PATH}/${key}`), { name: name.trim(), options });
+  });
+
+  btnAddOption?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const normalized = getCategoryGroupsNormalized();
+    const firstGroup = Object.keys(normalized)[0];
+    if (!firstGroup) return;
+    const key = normalizeCategoryGroupKey(window.prompt(`Grupo destino (${Object.values(normalized).map((g) => g.name).join(", ")})`) || firstGroup) || firstGroup;
+    const option = (window.prompt("Nueva opción") || "").trim();
+    if (!option) return;
+    const existing = normalized[key] || { name: key, options: [] };
+    const options = Array.from(new Set([...(existing.options || []), option]));
+    await update(ref(db, `${CATEGORY_GROUPS_PATH}/${key}`), { name: existing.name || key, options });
+  });
+
+  toggle.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const isOpen = menu.classList.toggle("is-open");
+    toggle.setAttribute("aria-expanded", String(isOpen));
+  });
+  menu.querySelector('[data-role="menu-edit"]')?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    menu.classList.remove("is-open");
+    toggle.setAttribute("aria-expanded", "false");
+    setVideoWorkspaceItemExpanded(id, true);
+  });
+  menu.querySelector('[data-role="menu-script"]')?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    menu.classList.remove("is-open");
+    toggle.setAttribute("aria-expanded", "false");
+    openScriptView(id);
+  });
+  menu.querySelector('[data-role="menu-delete"]')?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    menu.classList.remove("is-open");
+    toggle.setAttribute("aria-expanded", "false");
+    await remove(ref(db, `${VIDEOS_PATH}/${id}`));
+  });
+
+  row.append(rings, main, toggle, menu, body);
   return row;
 }
 
@@ -4087,7 +4291,7 @@ function renderVideos() {
   $videosList?.addEventListener("click", (event) => {
     const row = event.target?.closest?.(".videosWorkspace__item");
     if (!row || !$videosList?.contains(row)) return;
-    if (event.target?.closest?.("input, select, textarea, label, .videosWorkspace__action, a")) return;
+    if (event.target?.closest?.("input, select, textarea, label, button, .videosWorkspace__itemMenu, .videosWorkspace__action, a")) return;
     const videoId = String(row.dataset.id || "").trim();
     if (!videoId) return;
     const nextState = !row.classList.contains("is-open");
@@ -4903,12 +5107,80 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
     if ($btnAddIdea) $btnAddIdea.textContent = `+ Idea (${totalIdeas})`;
   }
 
+  function refreshVideoMetricOptions() {
+    const metricSelect = document.getElementById("video-metric-mode");
+    if (!metricSelect) return;
+    const prevValue = metricSelect.value || "words";
+    const baseOptions = [
+      { value: "words", label: "Palabras" },
+      { value: "publish", label: "Publicados" },
+      { value: "seconds", label: "Tiempo editado" },
+      { value: "ideas", label: "Ideas" }
+    ];
+    const dynamic = Object.entries(getCategoryGroupsNormalized()).map(([key, group]) => ({
+      value: `group:${key}`,
+      label: `Categoría · ${group.name}`
+    }));
+    metricSelect.innerHTML = baseOptions.concat(dynamic)
+      .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+      .join("");
+    metricSelect.value = Array.from(metricSelect.options).some((opt) => opt.value === prevValue) ? prevValue : "words";
+  }
+
   function renderVideoCalendar() {
     if (!$videoCalGrid) return;
     const rangeKey = $videoCalViewMode?.value || "30d";
     const metric = (document.getElementById("video-metric-mode")?.value || "words");
     const chartMode = (document.getElementById("video-chart-mode")?.value || "line");
     const { range, buckets } = buildActivityBuckets(rangeKey, todayKey());
+    const isCategoryMetric = metric.startsWith("group:");
+    const selectedGroupKey = isCategoryMetric ? normalizeCategoryGroupKey(metric.slice(6)) : "";
+
+    if (isCategoryMetric) {
+      const group = getCategoryGroupsNormalized()[selectedGroupKey];
+      const distribution = {};
+      Object.values(videos || {}).forEach((video) => {
+        if (!video || isIdeaVideo(video)) return;
+        const values = getVideoCategoryAssignments(video)[selectedGroupKey] || [];
+        if (!values.length) distribution["Sin asignar"] = (distribution["Sin asignar"] || 0) + 1;
+        values.forEach((value) => {
+          distribution[value] = (distribution[value] || 0) + 1;
+        });
+      });
+      const entries = Object.entries(distribution).sort((a, b) => b[1] - a[1]);
+      const total = entries.reduce((sum, [, count]) => sum + count, 0) || 1;
+      const colors = ["#6ea8ff", "#48d6b0", "#ff8abf", "#f4c16f", "#9a8cff", "#70d1ff", "#ff9f6b"];
+      let angle = -Math.PI / 2;
+      const segments = entries.map(([label, count], index) => {
+        const ratio = count / total;
+        const nextAngle = angle + (ratio * Math.PI * 2);
+        const largeArc = ratio > 0.5 ? 1 : 0;
+        const x1 = 110 + (88 * Math.cos(angle));
+        const y1 = 110 + (88 * Math.sin(angle));
+        const x2 = 110 + (88 * Math.cos(nextAngle));
+        const y2 = 110 + (88 * Math.sin(nextAngle));
+        const path = `M 110 110 L ${x1.toFixed(2)} ${y1.toFixed(2)} A 88 88 0 ${largeArc} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z`;
+        const tone = colors[index % colors.length];
+        angle = nextAngle;
+        return { label, count, ratio, path, tone };
+      });
+      const legend = segments.map((segment) => `<div class="videosWorkspace__donutItem"><i style="background:${segment.tone}"></i><span>${escapeHtml(segment.label)}</span><strong>${Math.round(segment.ratio * 100)}%</strong><small>${segment.count}</small></div>`).join("");
+      if ($videoCalendarSummary) $videoCalendarSummary.textContent = `${group?.name || "Categoría"} · ${entries.length} opción(es)`;
+      if ($videoActivityCompare) $videoActivityCompare.textContent = `Distribución total: ${total.toLocaleString("es-ES")} vídeo(s).`;
+      if ($videoChartLegend) $videoChartLegend.textContent = "Donut por clasificación";
+      if ($videoActivityFooter) $videoActivityFooter.textContent = "Fuente: metadatos de vídeos";
+      $videoCalGrid.innerHTML = `
+        <div class="videosWorkspace__donutWrap">
+          <svg viewBox="0 0 220 220" role="img" aria-label="Distribución por ${(group?.name || "categoría")}">
+            ${segments.map((segment) => `<path d="${segment.path}" fill="${segment.tone}"></path>`).join("")}
+            <circle cx="110" cy="110" r="54" fill="rgba(17,24,39,.96)"></circle>
+            <text x="110" y="102" text-anchor="middle" fill="#e8edf7" font-size="19" font-weight="700">${total}</text>
+            <text x="110" y="121" text-anchor="middle" fill="rgba(232,237,247,.74)" font-size="10">vídeos</text>
+          </svg>
+          <div class="videosWorkspace__donutLegend">${legend}</div>
+        </div>`;
+      return;
+    }
 
     const previousEndKey = shiftDateKey(range.startKey, -1);
     const previousStartKey = shiftDateKey(previousEndKey, -(range.days - 1));
@@ -4934,12 +5206,12 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
     if ($videoChartLegend) $videoChartLegend.textContent = `Actual (${metricLabel}) · Previo (${metricLabel})`;
     if ($videoActivityFooter) $videoActivityFooter.textContent = `${range.startKey} → ${range.endKey}`;
 
-    const width = 1080;
-    const height = 620;
-    const padLeft = 74;
-    const padRight = 20;
-    const padTop = 16;
-    const padBottom = 58;
+    const width = 1200;
+    const height = 520;
+    const padLeft = 86;
+    const padRight = 28;
+    const padTop = 28;
+    const padBottom = 66;
     const plotWidth = width - padLeft - padRight;
     const plotHeight = height - padTop - padBottom;
     const step = buckets.length > 1 ? plotWidth / (buckets.length - 1) : plotWidth;
@@ -4949,31 +5221,31 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
     const previousPoints = previousSeries.map((v, i) => ({ x: x(i), y: y(v), label: formatBucketAxisLabel(buckets[i], range.days) }));
     const currentPath = smoothLinePath(currentPoints);
     const previousPath = smoothLinePath(previousPoints);
-    const yTicks = [0, 0.33, 0.66, 1].map((r) => Math.round(maxValue * r));
+    const yTicks = [0, 0.25, 0.5, 0.75, 1].map((r) => Math.round(maxValue * r));
     const yGrid = yTicks.map((tick) => {
       const yy = y(tick).toFixed(2);
-      return `<line x1="${padLeft}" y1="${yy}" x2="${(width - padRight).toFixed(2)}" y2="${yy}" stroke="rgba(255,255,255,.1)" stroke-width="1"/><text x="${(padLeft - 10)}" y="${(Number(yy) + 4).toFixed(2)}" fill="rgba(255,255,255,.72)" font-size="12" text-anchor="end">${fmt(tick)}</text>`;
+      return `<line x1="${padLeft}" y1="${yy}" x2="${(width - padRight).toFixed(2)}" y2="${yy}" stroke="rgba(137,155,180,.28)" stroke-width="1.1"/><text x="${(padLeft - 12)}" y="${(Number(yy) + 5).toFixed(2)}" fill="rgba(216,225,238,.9)" font-size="14" text-anchor="end">${fmt(tick)}</text>`;
     }).join("");
     const axisLabels = currentPoints.map((pt, i) => {
       const maxXLabels = range.days <= 7 ? 7 : range.days <= 31 ? 6 : 8;
       const labelStep = Math.max(1, Math.ceil(currentPoints.length / maxXLabels));
       const isLast = i === currentPoints.length - 1;
       if (!(i % labelStep === 0 || isLast)) return "";
-      return `<text x="${pt.x.toFixed(2)}" y="${(height - 20).toFixed(2)}" fill="rgba(255,255,255,.72)" font-size="12" text-anchor="middle">${escapeHtml(pt.label)}</text>`;
+      return `<text x="${pt.x.toFixed(2)}" y="${(height - 18).toFixed(2)}" fill="rgba(216,225,238,.9)" font-size="13.5" text-anchor="middle">${escapeHtml(pt.label)}</text>`;
     }).join("");
-    const xMarks = currentPoints.map((pt) => `<line x1="${pt.x.toFixed(2)}" y1="${(padTop + plotHeight).toFixed(2)}" x2="${pt.x.toFixed(2)}" y2="${(padTop + plotHeight + 6).toFixed(2)}" stroke="rgba(255,255,255,.22)" stroke-width="1"/>`).join("");
-    const baseAxis = `<line x1="${padLeft}" y1="${(padTop + plotHeight).toFixed(2)}" x2="${(width - padRight).toFixed(2)}" y2="${(padTop + plotHeight).toFixed(2)}" stroke="rgba(255,255,255,.24)" stroke-width="1.2"/>`;
+    const xMarks = currentPoints.map((pt) => `<line x1="${pt.x.toFixed(2)}" y1="${(padTop + plotHeight).toFixed(2)}" x2="${pt.x.toFixed(2)}" y2="${(padTop + plotHeight + 7).toFixed(2)}" stroke="rgba(182,195,214,.56)" stroke-width="1.1"/>`).join("");
+    const baseAxis = `<line x1="${padLeft}" y1="${(padTop + plotHeight).toFixed(2)}" x2="${(width - padRight).toFixed(2)}" y2="${(padTop + plotHeight).toFixed(2)}" stroke="rgba(182,195,214,.68)" stroke-width="1.4"/>`;
 
     if (chartMode === "bars") {
       const slot = plotWidth / Math.max(1, buckets.length);
       const barW = Math.max(10, slot * 0.45);
       const offset = Math.max(0.9, slot * 0.02);
-      const barsCurrent = currentSeries.map((v, i) => `<rect x="${(x(i)-barW-offset).toFixed(2)}" y="${y(v).toFixed(2)}" width="${barW.toFixed(2)}" height="${(padTop + plotHeight - y(v)).toFixed(2)}" rx="7" ry="7" fill="rgba(103,187,255,.94)"/>`).join("");
-      const barsPrev = previousSeries.map((v, i) => `<rect x="${(x(i)+offset).toFixed(2)}" y="${y(v).toFixed(2)}" width="${barW.toFixed(2)}" height="${(padTop + plotHeight - y(v)).toFixed(2)}" rx="7" ry="7" fill="rgba(192,127,255,.6)"/>`).join("");
+      const barsCurrent = currentSeries.map((v, i) => `<rect x="${(x(i)-barW-offset).toFixed(2)}" y="${y(v).toFixed(2)}" width="${barW.toFixed(2)}" height="${(padTop + plotHeight - y(v)).toFixed(2)}" rx="7" ry="7" fill="#4da3ff"/>`).join("");
+      const barsPrev = previousSeries.map((v, i) => `<rect x="${(x(i)+offset).toFixed(2)}" y="${y(v).toFixed(2)}" width="${barW.toFixed(2)}" height="${(padTop + plotHeight - y(v)).toFixed(2)}" rx="7" ry="7" fill="rgba(161,120,236,.72)"/>`).join("");
       $videoCalGrid.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Barras ${metricLabel}">${yGrid}${baseAxis}${xMarks}${barsPrev}${barsCurrent}${axisLabels}</svg>`;
     } else {
-      const points = currentPoints.map((pt) => `<circle cx="${pt.x.toFixed(2)}" cy="${pt.y.toFixed(2)}" r="4" fill="rgba(103,187,255,.98)"/>`).join("");
-      $videoCalGrid.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Linea ${metricLabel}">${yGrid}${baseAxis}${xMarks}<path d="${previousPath}" fill="none" stroke="rgba(192,127,255,.76)" stroke-width="4.1" stroke-linecap="round" stroke-linejoin="round"/><path d="${currentPath}" fill="none" stroke="rgba(103,187,255,1)" stroke-width="5.4" stroke-linecap="round" stroke-linejoin="round"/>${points}${axisLabels}</svg>`;
+      const points = currentPoints.map((pt) => `<circle cx="${pt.x.toFixed(2)}" cy="${pt.y.toFixed(2)}" r="4.5" fill="#4da3ff"/>`).join("");
+      $videoCalGrid.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Linea ${metricLabel}">${yGrid}${baseAxis}${xMarks}<path d="${previousPath}" fill="none" stroke="rgba(161,120,236,.75)" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/><path d="${currentPath}" fill="none" stroke="#4da3ff" stroke-width="5.6" stroke-linecap="round" stroke-linejoin="round"/>${points}${axisLabels}</svg>`;
     }
   }
 

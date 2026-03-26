@@ -34,7 +34,7 @@
 }
 
 .gym-wrap {
-  display: flex;
+  display: block;
   flex-direction: column;
   gap: 20px;
   padding: 8px 6px 20px;
@@ -1205,6 +1205,7 @@ margin-top: 0px;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-bottom: calc(18px + var(--nav-h) + env(safe-area-inset-bottom));
+  min-height: 0;
 }
 
 #view-gym,
@@ -1287,4 +1288,24 @@ button.gym-calendar-day {
   .gym-create-form {
     grid-template-columns: 1fr;
   }
+}
+#view-gym,
+.view-gym {
+  height: 100%;
+  min-height: 0;
+}
+
+.view-gym .gym-wrap.scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: calc(var(--nav-h) + var(--nav-gap, 20px) + 32px + env(safe-area-inset-bottom));
+}
+
+.view-gym {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }

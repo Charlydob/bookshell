@@ -4030,23 +4030,22 @@ function renderVideos() {
   }
   if ($videosEmpty) $videosEmpty.style.display = "none";
 
-  const grouped = { script: [], recording: [], editing: [], published: [] };
+  const grouped = { script: [], editing: [], published: [] };
   idsAll.forEach((id) => {
     const status = inferVideoPhase(videos[id]).status;
     if (status === "published") grouped.published.push(id);
     else if (status === "editing") grouped.editing.push(id);
-    else if (status === "recording") grouped.recording.push(id);
     else grouped.script.push(id);
   });
 
   const frag = document.createDocumentFragment();
-  [["script","Guion"],["recording","Grabación"],["editing","Edición"],["published","Publicado"]].forEach(([key,label]) => {
+  [["script","Guión"],["editing","Edición"],["published","Publicado"]].forEach(([key,label]) => {
     const ids = grouped[key] || [];
     if (!ids.length) return;
     const storageKey = `bookshell_videos_group_${key}_collapsed_v1`;
     if (!(key in videoSectionCollapseState)) {
       const storedState = localStorage.getItem(storageKey);
-      videoSectionCollapseState[key] = storedState == null ? true : storedState === "1";
+      videoSectionCollapseState[key] = storedState == null ? false : storedState === "1";
     }
     const collapsed = !!videoSectionCollapseState[key];
     const header = document.createElement("div");
@@ -4914,11 +4913,11 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
     if ($videoChartLegend) $videoChartLegend.textContent = `Actual (${metricLabel}) · Previo (${metricLabel})`;
     if ($videoActivityFooter) $videoActivityFooter.textContent = `${range.startKey} → ${range.endKey}`;
 
-    const width = 980;
-    const height = 336;
-    const padX = 44;
-    const padTop = 22;
-    const padBottom = 52;
+    const width = 1080;
+    const height = 460;
+    const padX = 50;
+    const padTop = 26;
+    const padBottom = 60;
     const plotWidth = width - (padX * 2);
     const plotHeight = height - padTop - padBottom;
     const step = buckets.length > 1 ? plotWidth / (buckets.length - 1) : plotWidth;
@@ -4945,14 +4944,14 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
 
     if (chartMode === "bars") {
       const slot = plotWidth / Math.max(1, buckets.length);
-      const barW = Math.max(7, slot * 0.42);
-      const offset = Math.max(1.2, slot * 0.045);
-      const barsCurrent = currentSeries.map((v, i) => `<rect x="${(x(i)-barW-offset).toFixed(2)}" y="${y(v).toFixed(2)}" width="${barW.toFixed(2)}" height="${(padTop + plotHeight - y(v)).toFixed(2)}" rx="4" ry="4" fill="rgba(111,178,255,.88)"/>`).join("");
-      const barsPrev = previousSeries.map((v, i) => `<rect x="${(x(i)+offset).toFixed(2)}" y="${y(v).toFixed(2)}" width="${barW.toFixed(2)}" height="${(padTop + plotHeight - y(v)).toFixed(2)}" rx="4" ry="4" fill="rgba(175,145,255,.54)"/>`).join("");
+      const barW = Math.max(10, slot * 0.45);
+      const offset = Math.max(0.9, slot * 0.02);
+      const barsCurrent = currentSeries.map((v, i) => `<rect x="${(x(i)-barW-offset).toFixed(2)}" y="${y(v).toFixed(2)}" width="${barW.toFixed(2)}" height="${(padTop + plotHeight - y(v)).toFixed(2)}" rx="7" ry="7" fill="rgba(103,187,255,.94)"/>`).join("");
+      const barsPrev = previousSeries.map((v, i) => `<rect x="${(x(i)+offset).toFixed(2)}" y="${y(v).toFixed(2)}" width="${barW.toFixed(2)}" height="${(padTop + plotHeight - y(v)).toFixed(2)}" rx="7" ry="7" fill="rgba(192,127,255,.6)"/>`).join("");
       $videoCalGrid.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Barras ${metricLabel}">${yGrid}${baseAxis}${xMarks}${barsPrev}${barsCurrent}${axisLabels}</svg>`;
     } else {
-      const points = currentPoints.map((pt) => `<circle cx="${pt.x.toFixed(2)}" cy="${pt.y.toFixed(2)}" r="3.2" fill="rgba(111,178,255,.96)"/>`).join("");
-      $videoCalGrid.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Linea ${metricLabel}">${yGrid}${baseAxis}${xMarks}<path d="${previousPath}" fill="none" stroke="rgba(175,145,255,.7)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/><path d="${currentPath}" fill="none" stroke="rgba(111,178,255,.98)" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>${points}${axisLabels}</svg>`;
+      const points = currentPoints.map((pt) => `<circle cx="${pt.x.toFixed(2)}" cy="${pt.y.toFixed(2)}" r="4" fill="rgba(103,187,255,.98)"/>`).join("");
+      $videoCalGrid.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Linea ${metricLabel}">${yGrid}${baseAxis}${xMarks}<path d="${previousPath}" fill="none" stroke="rgba(192,127,255,.76)" stroke-width="4.1" stroke-linecap="round" stroke-linejoin="round"/><path d="${currentPath}" fill="none" stroke="rgba(103,187,255,1)" stroke-width="5.4" stroke-linecap="round" stroke-linejoin="round"/>${points}${axisLabels}</svg>`;
     }
   }
 

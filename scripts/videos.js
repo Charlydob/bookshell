@@ -67,6 +67,7 @@ let videoUi = { toolbarOpen: false, countOpen: false, countMiniMode: "pct", last
 let links = {};
 let books = {};
 let quoteBooks = {};
+const videoSectionCollapseState = Object.create(null);
 let linkPickerMode = "script";
 let linkPickerSelectHandler = null;
 let insertType = "link";
@@ -888,6 +889,7 @@ if ($viewVideos) {
   const $videoLinksBack = document.getElementById("video-links-back");
   const $videoLinksNew = document.getElementById("video-links-new");
   const $videoLinksList = document.getElementById("video-links-list");
+  const $videoLinksOverview = document.getElementById("video-links-overview");
   const $videoLinksEmpty = document.getElementById("video-links-empty");
   const $viewLinksNew = document.getElementById("view-links-new");
   const $videoLinksNewBack = document.getElementById("video-links-new-back");
@@ -933,14 +935,19 @@ if ($viewVideos) {
   const $videoId = document.getElementById("video-id");
   const $videoTitle = document.getElementById("video-title");
   const $videoScriptWords = document.getElementById("video-script-words");
+  const $videoScriptTarget = document.getElementById("video-script-target");
   const $videoDurationMin = document.getElementById("video-duration-min");
   const $videoDurationSec = document.getElementById("video-duration-sec");
   const $videoEditedMin = document.getElementById("video-edited-min");
   const $videoEditedSec = document.getElementById("video-edited-sec");
+  const $videoDurationTargetMin = document.getElementById("video-duration-target-min");
+  const $videoPublishTime = document.getElementById("video-publish-time");
   normalizeNumberField($videoDurationMin);
   normalizeNumberField($videoDurationSec, 59);
   normalizeNumberField($videoEditedMin);
   normalizeNumberField($videoEditedSec, 59);
+  normalizeNumberField($videoScriptTarget);
+  normalizeNumberField($videoDurationTargetMin);
 
   const $videoPublishDate = document.getElementById("video-publish-date");
   const $videoStatus = document.getElementById("video-status");
@@ -1153,6 +1160,7 @@ if ($viewVideos) {
       if ($videoFormSave) $videoFormSave.textContent = "Guardar cambios";
       $videoTitle.value = v.title || "";
 $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
+      if ($videoScriptTarget) $videoScriptTarget.value = Math.max(1, Number(v.scriptTarget) || 2000);
 
       const dur = splitSeconds(v.durationSeconds || 0);
       $videoDurationMin.value = dur.min;
@@ -1161,8 +1169,10 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       const ed = splitSeconds(v.editedSeconds || 0);
       $videoEditedMin.value = ed.min;
       $videoEditedSec.value = ed.sec;
+      if ($videoDurationTargetMin) $videoDurationTargetMin.value = Math.max(0, Number(v.durationTargetMinutes) || Math.round((v.durationSeconds || 0) / 60));
 
       $videoPublishDate.value = v.publishDate || "";
+      if ($videoPublishTime) $videoPublishTime.value = v.publishTime || "";
       $videoStatus.value = v.status || "script";
     } else {
       $videoModalTitle.textContent = "Nuevo vídeo";
@@ -1170,10 +1180,13 @@ $videoScriptWords.value = v.script?.wordCount ?? v.scriptWords ?? 0;
       $videoForm.reset();
       if ($videoFormSave) $videoFormSave.textContent = "Guardar";
       $videoScriptWords.value = 0;
+      if ($videoScriptTarget) $videoScriptTarget.value = 2000;
       $videoDurationMin.value = 0;
       $videoDurationSec.value = 0;
       $videoEditedMin.value = 0;
       $videoEditedSec.value = 0;
+      if ($videoDurationTargetMin) $videoDurationTargetMin.value = 0;
+      if ($videoPublishTime) $videoPublishTime.value = "";
       $videoStatus.value = "script";
     }
 
@@ -2685,9 +2698,18 @@ const LINK_CATEGORY_LABELS = {
       });
     if (!items.length) {
       $videoLinksList.innerHTML = "";
+      if ($videoLinksOverview) $videoLinksOverview.innerHTML = "";
       $videoLinksEmpty.textContent = search ? "No hay links que coincidan." : "Aún no has guardado links.";
       $videoLinksEmpty.style.display = "block";
       return;
+    }
+    if ($videoLinksOverview) {
+      const counts = LINK_CATEGORY_ORDER
+        .map((category) => ({ category, total: items.filter((item) => normalizeLinkCategory(item.category) === category).length }))
+        .filter((entry) => entry.total > 0);
+      $videoLinksOverview.innerHTML = counts
+        .map((entry) => `<button type="button" class="video-links-chip" data-jump-category="${entry.category}">${LINK_CATEGORY_LABELS[entry.category] || "Otro"} · ${entry.total}</button>`)
+        .join("");
     }
     $videoLinksEmpty.style.display = "none";
     const frag = document.createDocumentFragment();
@@ -2696,6 +2718,7 @@ const LINK_CATEGORY_LABELS = {
       if (!grouped.length) return;
       const details = document.createElement("details");
       details.className = "video-links-section";
+      details.dataset.category = category;
       const storageKey = `bookshell_videos_links_section_${category}_v1`;
       const storedOpen = localStorage.getItem(storageKey);
       details.open = search ? true : (storedOpen ? storedOpen === "1" : true);
@@ -3602,6 +3625,17 @@ const LINK_CATEGORY_LABELS = {
   if ($videoLinksBookFilter) {
     $videoLinksBookFilter.addEventListener("change", () => renderLinksList());
   }
+  if ($videoLinksOverview) {
+    $videoLinksOverview.addEventListener("click", (event) => {
+      const chip = event.target.closest("[data-jump-category]");
+      if (!chip) return;
+      const category = String(chip.dataset.jumpCategory || "");
+      const section = $videoLinksList?.querySelector(`details[data-category="${category}"]`);
+      if (!section) return;
+      section.open = true;
+      section.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
 
   if ($videoLinkBookTitle) {
     const syncCreateLabel = () => {
@@ -3706,23 +3740,28 @@ if ($videoForm) {
     if (!title) return;
 
     const scriptWords = Math.max(0, Number($videoScriptWords?.value) || 0);
+    const scriptTarget = Math.max(1, Number($videoScriptTarget?.value) || 2000);
 
     let durationSec = toSeconds($videoDurationMin?.value, $videoDurationSec?.value);
     let editedSec   = toSeconds($videoEditedMin?.value,  $videoEditedSec?.value);
     if (editedSec > durationSec) durationSec = editedSec;
 
     const publishDate = ($videoPublishDate?.value || "").trim() || null;
+    const publishTime = ($videoPublishTime?.value || "").trim() || null;
     const status = ($videoStatus?.value || "").trim() || "script";
+    const durationTargetMinutes = Math.max(0, Number($videoDurationTargetMin?.value) || 0);
 
     const now = Date.now();
     const data = {
       title,
       type: id ? (videos?.[id]?.type || "video") : "video",
       scriptWords,
-      scriptTarget: id ? (videos?.[id]?.scriptTarget || 2000) : 2000,
+      scriptTarget,
       durationSeconds: durationSec,
+      durationTargetMinutes,
       editedSeconds: editedSec,
       publishDate,
+      publishTime,
       status,
       updatedAt: now
     };
@@ -3894,6 +3933,8 @@ function createVideoWorkspaceItem(id) {
   const words = Math.max(0, Number(v?.script?.wordCount ?? v?.scriptWords) || 0);
   const edited = Math.max(0, Number(v?.editedSeconds) || 0);
   const splitEdited = splitSeconds(edited);
+  const publishTimeLabel = v.publishTime ? ` ${v.publishTime}` : "";
+  const targetMin = Math.max(0, Number(v?.durationTargetMinutes) || 0);
 
   const row = document.createElement("article");
   row.className = "videosWorkspace__item";
@@ -3915,13 +3956,14 @@ function createVideoWorkspaceItem(id) {
       <div class="videosWorkspace__videoTitle">${escapeHtml(v.title || "Sin título")}</div>
       <span class="videosWorkspace__videoMeta">${isIdea ? "Idea" : (phase.published ? "Publicado" : "En curso")}</span>
     </div>
-    <div class="videosWorkspace__videoMeta">${v.publishDate || "Sin fecha"} · ${words.toLocaleString("es-ES")} palabras · ${splitEdited.min}m ${splitEdited.sec}s editados</div>
+    <div class="videosWorkspace__videoMeta">${v.publishDate || "Sin fecha"}${publishTimeLabel} · ${words.toLocaleString("es-ES")} palabras · ${splitEdited.min}m ${splitEdited.sec}s editados${targetMin ? ` · objetivo ${targetMin}m` : ""}</div>
   `;
 
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "videosWorkspace__itemToggle";
-  toggle.textContent = "⌄";
+  toggle.textContent = "⋯";
+  toggle.title = "Editar vídeo";
 
   const body = document.createElement("div");
   body.className = "videosWorkspace__itemBody";
@@ -3930,20 +3972,21 @@ function createVideoWorkspaceItem(id) {
     <label class="videosWorkspace__field"><span>Palabras</span><input data-role="words" type="number" min="0" value="${words}"></label>
     <label class="videosWorkspace__field"><span>Edición mm:ss</span><input data-role="edited" type="text" value="${formatMinutesSecondsInput(edited)}"></label>
     <label class="videosWorkspace__field"><span>Fecha</span><input data-role="date" type="date" value="${v.publishDate || ""}"></label>
+    <label class="videosWorkspace__field"><span>Hora</span><input data-role="time" type="time" value="${v.publishTime || ""}"></label>
+    <label class="videosWorkspace__field"><span>Objetivo min</span><input data-role="duration-target" type="number" min="0" value="${Math.max(0, Number(v.durationTargetMinutes) || 0)}"></label>
     <div class="videosWorkspace__checks">
       <label><input data-role="publish" type="checkbox" ${phase.published ? "checked" : ""}> Publicado</label>
       <button class="videosWorkspace__action" data-role="script" type="button">Guion</button>
     </div>
   `;
 
-  toggle.addEventListener("click", () => {
-    row.classList.toggle("is-open");
-    toggle.textContent = row.classList.contains("is-open") ? "⌃" : "⌄";
-  });
+  toggle.addEventListener("click", () => openVideoModal(id));
 
   const inputWords = body.querySelector('[data-role="words"]');
   const inputEdited = body.querySelector('[data-role="edited"]');
   const inputDate = body.querySelector('[data-role="date"]');
+  const inputTime = body.querySelector('[data-role="time"]');
+  const inputDurationTarget = body.querySelector('[data-role="duration-target"]');
   const inputTarget = body.querySelector('[data-role="target"]');
   const chkPublished = body.querySelector('[data-role="publish"]');
   const btnScript = body.querySelector('[data-role="script"]');
@@ -3955,13 +3998,15 @@ function createVideoWorkspaceItem(id) {
     await updateVideoProgress(id, nextWords, nextEdited);
     await update(ref(db, `${VIDEOS_PATH}/${id}`), {
       scriptTarget: Math.max(1, Number(inputTarget.value) || 2000),
+      durationTargetMinutes: Math.max(0, Number(inputDurationTarget.value) || 0),
       publishDate: (inputDate.value || "").trim() || null,
+      publishTime: (inputTime.value || "").trim() || null,
       status: chkPublished.checked ? "published" : (nextEdited > 0 ? "editing" : (nextWords >= Math.max(1, Number(inputTarget.value) || 2000) ? "recording" : "script")),
       updatedAt: Date.now()
     });
   };
 
-  [inputWords, inputEdited, inputDate, inputTarget, chkPublished].forEach((el) => {
+  [inputWords, inputEdited, inputDate, inputTime, inputDurationTarget, inputTarget, chkPublished].forEach((el) => {
     el.addEventListener("change", persist);
     el.addEventListener("blur", persist);
   });
@@ -3998,16 +4043,36 @@ function renderVideos() {
   [["script","Guion"],["recording","Grabación"],["editing","Edición"],["published","Publicado"]].forEach(([key,label]) => {
     const ids = grouped[key] || [];
     if (!ids.length) return;
+    const storageKey = `bookshell_videos_group_${key}_collapsed_v1`;
+    if (!(key in videoSectionCollapseState)) {
+      const storedState = localStorage.getItem(storageKey);
+      videoSectionCollapseState[key] = storedState == null ? true : storedState === "1";
+    }
+    const collapsed = !!videoSectionCollapseState[key];
     const header = document.createElement("div");
     header.className = "videosWorkspace__groupHeader";
-    header.innerHTML = `<span>${label}</span><span>${ids.length}</span>`;
+    header.innerHTML = `<button type="button" class="videosWorkspace__groupToggle" data-group="${key}" aria-expanded="${String(!collapsed)}"><span>${label}</span><span>${ids.length}</span><span>${collapsed ? "＋" : "−"}</span></button>`;
     frag.appendChild(header);
-    ids.sort((a,b)=>(videos[b]?.updatedAt||0)-(videos[a]?.updatedAt||0)).forEach((id)=>frag.appendChild(createVideoWorkspaceItem(id)));
+    const groupBody = document.createElement("div");
+    groupBody.className = "videosWorkspace__groupBody";
+    if (collapsed) groupBody.classList.add("is-collapsed");
+    ids.sort((a,b)=>(videos[b]?.updatedAt||0)-(videos[a]?.updatedAt||0)).forEach((id)=>groupBody.appendChild(createVideoWorkspaceItem(id)));
+    frag.appendChild(groupBody);
   });
 
   $videosList.innerHTML = "";
   $videosList.appendChild(frag);
 }
+
+  $videosList?.addEventListener("click", (event) => {
+    const btn = event.target?.closest?.(".videosWorkspace__groupToggle");
+    if (!btn) return;
+    const key = String(btn.dataset.group || "");
+    if (!key) return;
+    videoSectionCollapseState[key] = !videoSectionCollapseState[key];
+    localStorage.setItem(`bookshell_videos_group_${key}_collapsed_v1`, videoSectionCollapseState[key] ? "1" : "0");
+    renderVideos();
+  });
 
   $videosList?.addEventListener("click", (event) => {
     const btn = event.target?.closest?.('[data-open-script]');
@@ -4199,9 +4264,32 @@ function renderVideos() {
 
   function formatCompactMetric(value) {
     const safe = Math.max(0, Number(value) || 0);
-    if (safe >= 1000000) return `${(safe / 1000000).toFixed(1)}M`;
-    if (safe >= 1000) return `${(safe / 1000).toFixed(1)}k`;
     return String(Math.round(safe));
+  }
+
+  function smoothLinePath(points = []) {
+    if (!points.length) return "";
+    if (points.length === 1) return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+    let d = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i - 1] || points[i];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = points[i + 2] || p2;
+      const c1x = p1.x + ((p2.x - p0.x) / 6);
+      const c1y = p1.y + ((p2.y - p0.y) / 6);
+      const c2x = p2.x - ((p3.x - p1.x) / 6);
+      const c2y = p2.y - ((p3.y - p1.y) / 6);
+      d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+    }
+    return d;
+  }
+
+  function formatBucketAxisLabel(bucket, rangeDays) {
+    const start = parseDateKey(bucket.startKey);
+    if (rangeDays <= 7) return start.toLocaleDateString("es-ES", { weekday: "short" }).replace(".", "");
+    if (rangeDays <= 31) return start.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit" });
+    return start.toLocaleDateString("es-ES", { month: "short" }).replace(".", "");
   }
 
   function clampPct(value) {
@@ -4786,10 +4874,13 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
   function renderVideoStats() {
     const overview = computeVideoOverviewMetrics();
     const editedMinutes = Math.round((Number(overview.editDone) || 0) / 60);
+    const totalIdeas = Object.values(links || {}).filter((item) => normalizeLinkCategory(item?.category) === "idea").length;
     if ($videoStatCount) $videoStatCount.textContent = formatCompactMetric(overview.videosPublished);
     if ($videoStatWords) $videoStatWords.textContent = formatCompactMetric(overview.totalWords);
     if ($videoStatTime) $videoStatTime.textContent = formatCompactMetric(overview.ideasCreated);
     if ($videoStatStreak) $videoStatStreak.textContent = formatCompactMetric(editedMinutes);
+    if ($btnOpenLinks) $btnOpenLinks.textContent = `Links (${Object.keys(links || {}).length})`;
+    if ($btnAddIdea) $btnAddIdea.textContent = `+ Idea (${totalIdeas})`;
   }
 
   function renderVideoCalendar() {
@@ -4823,25 +4914,45 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
     if ($videoChartLegend) $videoChartLegend.textContent = `Actual (${metricLabel}) · Previo (${metricLabel})`;
     if ($videoActivityFooter) $videoActivityFooter.textContent = `${range.startKey} → ${range.endKey}`;
 
-    const width = 900;
-    const height = 300;
-    const padX = 36;
-    const padTop = 16;
-    const padBottom = 30;
+    const width = 980;
+    const height = 336;
+    const padX = 44;
+    const padTop = 22;
+    const padBottom = 52;
     const plotWidth = width - (padX * 2);
     const plotHeight = height - padTop - padBottom;
     const step = buckets.length > 1 ? plotWidth / (buckets.length - 1) : plotWidth;
     const y = (val) => padTop + plotHeight - ((val / maxValue) * plotHeight);
     const x = (i) => padX + (step * i);
-    const path = (series) => series.map((v, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(2)} ${y(v).toFixed(2)}`).join(" ");
+    const currentPoints = currentSeries.map((v, i) => ({ x: x(i), y: y(v), label: formatBucketAxisLabel(buckets[i], range.days) }));
+    const previousPoints = previousSeries.map((v, i) => ({ x: x(i), y: y(v), label: formatBucketAxisLabel(buckets[i], range.days) }));
+    const currentPath = smoothLinePath(currentPoints);
+    const previousPath = smoothLinePath(previousPoints);
+    const yTicks = [0, 0.25, 0.5, 0.75, 1].map((r) => Math.round(maxValue * r));
+    const yGrid = yTicks.map((tick) => {
+      const yy = y(tick).toFixed(2);
+      return `<line x1="${padX}" y1="${yy}" x2="${(width - padX).toFixed(2)}" y2="${yy}" stroke="rgba(255,255,255,.08)" stroke-width="1"/><text x="${(padX - 8)}" y="${(Number(yy) + 4).toFixed(2)}" fill="rgba(255,255,255,.56)" font-size="10" text-anchor="end">${fmt(tick)}</text>`;
+    }).join("");
+    const axisLabels = currentPoints.map((pt, i) => {
+      const showWeekly = range.days <= 7;
+      const showMonthly = range.days <= 31 && (i % 2 === 0 || i === currentPoints.length - 1);
+      const showYearly = range.days > 31;
+      if (!(showWeekly || showMonthly || showYearly)) return "";
+      return `<text x="${pt.x.toFixed(2)}" y="${(height - 16).toFixed(2)}" fill="rgba(255,255,255,.62)" font-size="10" text-anchor="middle">${escapeHtml(pt.label)}</text>`;
+    }).join("");
+    const xMarks = currentPoints.map((pt) => `<line x1="${pt.x.toFixed(2)}" y1="${(padTop + plotHeight).toFixed(2)}" x2="${pt.x.toFixed(2)}" y2="${(padTop + plotHeight + 6).toFixed(2)}" stroke="rgba(255,255,255,.22)" stroke-width="1"/>`).join("");
+    const baseAxis = `<line x1="${padX}" y1="${(padTop + plotHeight).toFixed(2)}" x2="${(width - padX).toFixed(2)}" y2="${(padTop + plotHeight).toFixed(2)}" stroke="rgba(255,255,255,.24)" stroke-width="1.2"/>`;
 
     if (chartMode === "bars") {
-      const barW = Math.max(5, (plotWidth / buckets.length) * 0.35);
-      const barsCurrent = currentSeries.map((v, i) => `<rect x="${(x(i)-barW-1).toFixed(2)}" y="${y(v).toFixed(2)}" width="${barW.toFixed(2)}" height="${(padTop + plotHeight - y(v)).toFixed(2)}" fill="rgba(111,178,255,.85)"/>`).join("");
-      const barsPrev = previousSeries.map((v, i) => `<rect x="${(x(i)+1).toFixed(2)}" y="${y(v).toFixed(2)}" width="${barW.toFixed(2)}" height="${(padTop + plotHeight - y(v)).toFixed(2)}" fill="rgba(175,145,255,.5)"/>`).join("");
-      $videoCalGrid.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Barras ${metricLabel}">${barsPrev}${barsCurrent}</svg>`;
+      const slot = plotWidth / Math.max(1, buckets.length);
+      const barW = Math.max(7, slot * 0.42);
+      const offset = Math.max(1.2, slot * 0.045);
+      const barsCurrent = currentSeries.map((v, i) => `<rect x="${(x(i)-barW-offset).toFixed(2)}" y="${y(v).toFixed(2)}" width="${barW.toFixed(2)}" height="${(padTop + plotHeight - y(v)).toFixed(2)}" rx="4" ry="4" fill="rgba(111,178,255,.88)"/>`).join("");
+      const barsPrev = previousSeries.map((v, i) => `<rect x="${(x(i)+offset).toFixed(2)}" y="${y(v).toFixed(2)}" width="${barW.toFixed(2)}" height="${(padTop + plotHeight - y(v)).toFixed(2)}" rx="4" ry="4" fill="rgba(175,145,255,.54)"/>`).join("");
+      $videoCalGrid.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Barras ${metricLabel}">${yGrid}${baseAxis}${xMarks}${barsPrev}${barsCurrent}${axisLabels}</svg>`;
     } else {
-      $videoCalGrid.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Linea ${metricLabel}"><path d="${path(previousSeries)}" fill="none" stroke="rgba(175,145,255,.6)" stroke-width="2.5"/><path d="${path(currentSeries)}" fill="none" stroke="rgba(111,178,255,.95)" stroke-width="3"/></svg>`;
+      const points = currentPoints.map((pt) => `<circle cx="${pt.x.toFixed(2)}" cy="${pt.y.toFixed(2)}" r="3.2" fill="rgba(111,178,255,.96)"/>`).join("");
+      $videoCalGrid.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Linea ${metricLabel}">${yGrid}${baseAxis}${xMarks}<path d="${previousPath}" fill="none" stroke="rgba(175,145,255,.7)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/><path d="${currentPath}" fill="none" stroke="rgba(111,178,255,.98)" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>${points}${axisLabels}</svg>`;
     }
   }
 

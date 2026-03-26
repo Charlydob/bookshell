@@ -352,6 +352,25 @@ function splitSeconds(total) {
   return { min, sec };
 }
 
+function formatMinutesSecondsInput(totalSeconds) {
+  const total = Math.max(0, Number(totalSeconds) || 0);
+  const min = Math.floor(total / 60);
+  const sec = total % 60;
+  return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+function parseMinutesSecondsInput(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return 0;
+  const sanitized = value.replace(/[^\d:]/g, "");
+  if (!sanitized) return 0;
+  if (!sanitized.includes(":")) return Math.max(0, Number(sanitized) || 0) * 60;
+  const [minRaw, secRaw = "0"] = sanitized.split(":");
+  const min = Math.max(0, Number(minRaw) || 0);
+  const sec = Math.min(59, Math.max(0, Number(secRaw) || 0));
+  return (min * 60) + sec;
+}
+
 function formatWorkTime(totalSeconds) {
   const s = Math.max(0, Number(totalSeconds) || 0);
   if (s < 3600) {
@@ -446,6 +465,8 @@ if ($viewVideos) {
   let $videoProgressPublish = null;
   let $videoActivityCompare = null;
   let $videoActivityFooter = null;
+  let $videoMetricMode = null;
+  let $videoChartLegend = null;
 
   function setupVideoDashboard() {
     if (!$videosWrapper || !$videoStatsCards || !$videoCalendarSection) return;
@@ -463,8 +484,8 @@ if ($viewVideos) {
         <div class="video-overview-kicker">Video workspace</div>
         <div class="video-overview-title-row">
           <div>
-            <h2 class="video-overview-title">Panel de produccion</h2>
-            <p class="video-overview-copy">Resumen premium del flujo de videos con progreso visual, actividad reciente y acceso rapido a las cifras clave.</p>
+            <h2 class="video-overview-title">Produccion de videos</h2>
+            <p class="video-overview-copy">Vista compacta: KPIs clave, progreso global y comparativa real por periodo.</p>
           </div>
           <div class="video-overview-pulse" id="video-overview-pulse">Sincronizando actividad</div>
         </div>
@@ -531,8 +552,8 @@ if ($viewVideos) {
       header.innerHTML = `
         <div class="video-activity-header-copy">
           <div class="video-activity-kicker">Actividad</div>
-          <h3 class="video-activity-title">Ritmo y comparativa</h3>
-          <p class="video-activity-copy">El calendario desaparece en favor de una lectura mas rapida del ritmo real de produccion.</p>
+          <h3 class="video-activity-title">Grafico comparativo</h3>
+          <p class="video-activity-copy">Periodo actual frente al anterior con una metrica seleccionable.</p>
         </div>
       `;
 
@@ -542,6 +563,16 @@ if ($viewVideos) {
       nav.className = "video-calendar-nav";
       nav.append($videoCalPrev, $videoCalLabel, $videoCalNext);
       controls.append(nav, $videoCalViewMode);
+      const metric = document.createElement("select");
+      metric.className = "video-activity-select";
+      metric.id = "video-metric-mode";
+      metric.innerHTML = `
+        <option value="words" selected>Palabras</option>
+        <option value="seconds">Trabajo</option>
+        <option value="publish">Publicaciones</option>
+        <option value="ideas">Ideas</option>
+      `;
+      controls.appendChild(metric);
       header.appendChild(controls);
 
       $videoCalViewMode.className = "video-activity-select";
@@ -559,11 +590,15 @@ if ($viewVideos) {
       compare.className = "video-activity-compare";
       compare.id = "video-activity-compare";
 
+      const legend = document.createElement("div");
+      legend.className = "video-activity-legend";
+      legend.id = "video-chart-legend";
+
       const footer = document.createElement("div");
       footer.className = "video-activity-footer";
       footer.id = "video-activity-footer";
 
-      activity.append(header, $videoCalendarSummary, compare, $videoCalGrid, footer);
+      activity.append(header, $videoCalendarSummary, compare, legend, $videoCalGrid, footer);
       shell.append(overview, activity);
       $videosWrapper.insertBefore(shell, $videosWrapper.firstChild);
 
@@ -585,6 +620,8 @@ if ($viewVideos) {
     $videoProgressPublish = document.getElementById("video-progress-publish");
     $videoActivityCompare = document.getElementById("video-activity-compare");
     $videoActivityFooter = document.getElementById("video-activity-footer");
+    $videoMetricMode = document.getElementById("video-metric-mode");
+    $videoChartLegend = document.getElementById("video-chart-legend");
   }
 
   setupVideoDashboard();
@@ -4352,60 +4389,41 @@ function createVideoCardV2(id) {
     quick.className = "video-quick-editor";
     quick.innerHTML = `
       <div class="video-quick-grid">
-        <label class="video-quick-field video-quick-field-wide video-quick-field-metric" data-kind="words">
+        <label class="video-quick-field video-quick-field-metric" data-kind="words">
           <span class="video-quick-field-label">Palabras</span>
-          <div class="video-quick-field-display">
-            <input data-role="words" type="number" min="0" inputmode="numeric" value="${scriptWords}">
-          </div>
-          <small>Objetivo ${scriptTarget}</small>
+          <input data-role="words" type="number" min="0" inputmode="numeric" value="${scriptWords}">
+          <small>Obj. ${scriptTarget}</small>
         </label>
-        <label class="video-quick-field video-quick-field-metric" data-kind="minutes">
-          <span class="video-quick-field-label">Min editados</span>
-          <div class="video-quick-field-display">
-            <input data-role="minutes" type="number" min="0" inputmode="numeric" value="${edSplit.min}">
-          </div>
-        </label>
-        <label class="video-quick-field video-quick-field-metric" data-kind="seconds">
-          <span class="video-quick-field-label">Seg</span>
-          <div class="video-quick-field-display">
-            <input data-role="seconds" type="number" min="0" max="59" inputmode="numeric" value="${edSplit.sec}">
-          </div>
+        <label class="video-quick-field video-quick-field-metric" data-kind="edited">
+          <span class="video-quick-field-label">Edicion (mm:ss)</span>
+          <input data-role="edited-time" type="text" inputmode="numeric" value="${formatMinutesSecondsInput(editedSec)}" placeholder="00:00">
+          <small>Total ${formatMinutesSecondsInput(durationTotal)}</small>
         </label>
         <label class="video-quick-field">
           <span class="video-quick-field-label">Fecha</span>
-          <div class="video-quick-field-display video-quick-field-display-compact">
-            <input data-role="date" type="date" value="${v.publishDate || ""}">
-          </div>
+          <input data-role="date" type="date" value="${v.publishDate || ""}">
         </label>
         <label class="video-quick-field">
           <span class="video-quick-field-label">Estado</span>
-          <div class="video-quick-field-display video-quick-field-display-compact">
-            <select data-role="status">
+          <select data-role="status">
             <option value="script"${v.status === "script" || v.status === "in_progress" ? " selected" : ""}>Guion</option>
             <option value="recording"${v.status === "recording" ? " selected" : ""}>Grabacion</option>
             <option value="editing"${v.status === "editing" ? " selected" : ""}>Edicion</option>
             <option value="scheduled"${v.status === "scheduled" || v.status === "planned" ? " selected" : ""}>Programado</option>
             <option value="published"${v.status === "published" ? " selected" : ""}>Publicado</option>
             </select>
-          </div>
         </label>
-      </div>
-      <div class="video-quick-actions">
-        <div class="video-quick-hint">Actualiza progreso y plan sin abrir el modal.</div>
-        <button class="btn primary" type="button" data-role="save">Guardar cambios</button>
+        <button class="btn primary video-quick-save" type="button" data-role="save">Guardar</button>
       </div>
     `;
 
     const inputWords = quick.querySelector('[data-role="words"]');
-    const inputMin = quick.querySelector('[data-role="minutes"]');
-    const inputSec = quick.querySelector('[data-role="seconds"]');
+    const inputEditedTime = quick.querySelector('[data-role="edited-time"]');
     const inputDate = quick.querySelector('[data-role="date"]');
     const inputStatus = quick.querySelector('[data-role="status"]');
     const saveBtn = quick.querySelector('[data-role="save"]');
 
     normalizeNumberField(inputWords);
-    normalizeNumberField(inputMin);
-    normalizeNumberField(inputSec, 59);
 
     let baseline = {
       words: scriptWords,
@@ -4417,11 +4435,7 @@ function createVideoCardV2(id) {
 
     const syncSaveState = () => {
       const nextWords = Math.max(0, Number(inputWords.value) || 0);
-      const nextMin = Math.max(0, Number(inputMin.value) || 0);
-      let nextSec = Math.max(0, Number(inputSec.value) || 0);
-      if (nextSec > 59) nextSec = 59;
-      inputSec.value = nextSec;
-      const nextEdited = toSeconds(nextMin, nextSec);
+      const nextEdited = parseMinutesSecondsInput(inputEditedTime.value);
       const nextDate = (inputDate.value || "").trim();
       const nextStatus = (inputStatus.value || "script").trim() || "script";
       const isDirty =
@@ -4437,11 +4451,15 @@ function createVideoCardV2(id) {
 
     const onQuickInput = () => {
       inputWords.value = Math.max(0, Number(inputWords.value) || 0);
-      inputMin.value = Math.max(0, Number(inputMin.value) || 0);
       syncSaveState();
     };
 
-    [inputWords, inputMin, inputSec, inputDate, inputStatus].forEach((field) => {
+    inputEditedTime.addEventListener("blur", () => {
+      inputEditedTime.value = formatMinutesSecondsInput(parseMinutesSecondsInput(inputEditedTime.value));
+      syncSaveState();
+    });
+
+    [inputWords, inputEditedTime, inputDate, inputStatus].forEach((field) => {
       field.addEventListener("input", onQuickInput);
       field.addEventListener("change", onQuickInput);
     });
@@ -4476,7 +4494,7 @@ function createVideoCardV2(id) {
         showVideoToast("No se pudo guardar");
       } finally {
         saving = false;
-        saveBtn.textContent = "Guardar cambios";
+        saveBtn.textContent = "Guardar";
         syncSaveState();
       }
     });
@@ -5386,14 +5404,36 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
     const previousStartKey = shiftDateKey(previousEndKey, -(range.days - 1));
     const currentTotals = computeActivityTotalsForRange(range.startKey, range.endKey);
     const previousTotals = computeActivityTotalsForRange(previousStartKey, previousEndKey);
-    const maxScore = Math.max(...buckets.map((bucket) => bucket.score), 1);
+    const metric = $videoMetricMode?.value || "words";
+    const metricLabel = metric === "seconds"
+      ? "Trabajo"
+      : metric === "publish"
+        ? "Publicaciones"
+        : metric === "ideas"
+          ? "Ideas"
+          : "Palabras";
+    const currentSeries = buckets.map((bucket) => Number(bucket?.[metric]) || 0);
+    const previousSeries = buckets.map((bucket) => {
+      const prevStart = shiftDateKey(bucket.startKey, -range.days);
+      const prevEnd = shiftDateKey(bucket.endKey, -range.days);
+      const prev = computeActivityTotalsForRange(prevStart, prevEnd);
+      return Number(prev?.[metric]) || 0;
+    });
+    const maxValue = Math.max(...currentSeries, ...previousSeries, 1);
 
     if ($videoCalLabel) $videoCalLabel.textContent = `${range.startKey.slice(5)} -> ${range.endKey.slice(5)}`;
     if ($videoCalendarSummary) {
+      const currentMetricValue = Number(currentTotals?.[metric]) || 0;
+      const previousMetricValue = Number(previousTotals?.[metric]) || 0;
+      const delta = currentMetricValue - previousMetricValue;
+      const formatMetric = (value) => {
+        if (metric === "seconds") return formatWorkTime(value);
+        return Number(value || 0).toLocaleString("es-ES");
+      };
       $videoCalendarSummary.innerHTML = `
         <div class="video-activity-summary-main">
-          <strong>${currentTotals.words.toLocaleString("es-ES")} palabras</strong>
-          <span>${formatWorkTime(currentTotals.seconds)} de trabajo · ${currentTotals.ideas} ideas · ${currentTotals.publish} publicaciones</span>
+          <strong>${metricLabel}: ${formatMetric(currentMetricValue)}</strong>
+          <span>Periodo previo: ${formatMetric(previousMetricValue)} · Δ ${delta >= 0 ? "+" : ""}${formatMetric(delta)}</span>
         </div>
       `;
     }
@@ -5411,46 +5451,74 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
       $videoActivityCompare.className = `video-activity-compare ${deltaClass}`;
       $videoActivityCompare.innerHTML = `
         <div class="video-activity-compare-chip">
-          <span>vs periodo previo</span>
-          <strong>${deltaWords >= 0 ? "+" : ""}${formatCompactMetric(deltaWords)} palabras</strong>
+          <span>Palabras</span>
+          <strong>${deltaWords >= 0 ? "+" : ""}${formatCompactMetric(deltaWords)}</strong>
         </div>
         <div class="video-activity-compare-chip">
           <span>Trabajo</span>
           <strong>${deltaSeconds >= 0 ? "+" : "-"}${formatWorkTime(Math.abs(deltaSeconds))}</strong>
         </div>
         <div class="video-activity-compare-chip">
-          <span>Ideas / publicaciones</span>
-          <strong>${deltaIdeas >= 0 ? "+" : ""}${deltaIdeas} ideas · ${deltaPublish >= 0 ? "+" : ""}${deltaPublish} pubs</strong>
+          <span>Ideas</span>
+          <strong>${deltaIdeas >= 0 ? "+" : ""}${deltaIdeas}</strong>
         </div>
+        <div class="video-activity-compare-chip">
+          <span>Publicaciones</span>
+          <strong>${deltaPublish >= 0 ? "+" : ""}${deltaPublish}</strong>
+        </div>
+      `;
+    }
+    if ($videoChartLegend) {
+      $videoChartLegend.innerHTML = `
+        <span><i class="video-legend-dot video-legend-current"></i>Actual (${metricLabel})</span>
+        <span><i class="video-legend-dot video-legend-previous"></i>Previo (${metricLabel})</span>
       `;
     }
     if ($videoActivityFooter) $videoActivityFooter.textContent = `${range.label} · comparativa contra ${previousStartKey.slice(5)} -> ${previousEndKey.slice(5)}.`;
 
-    const frag = document.createDocumentFragment();
-    buckets.forEach((bucket) => {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "video-activity-bar";
-      if (bucket.score <= 0) item.classList.add("is-idle");
-      item.style.setProperty("--video-activity-bar", `${Math.max(10, Math.round((bucket.score / maxScore) * 100))}%`);
-      item.innerHTML = `
-        <span class="video-activity-bar-top">
-          <span class="video-activity-bar-value">${bucket.words > 0 ? formatCompactMetric(bucket.words) : bucket.publish > 0 ? `${bucket.publish} pub` : bucket.ideas > 0 ? `${bucket.ideas} idea` : "0"}</span>
-          <span class="video-activity-bar-hint">${bucket.publish > 0 ? `${bucket.publish} pub` : bucket.ideas > 0 ? `${bucket.ideas} idea` : formatWorkTime(bucket.seconds)}</span>
-        </span>
-        <span class="video-activity-bar-rail"><span class="video-activity-bar-fill"></span></span>
-        <span class="video-activity-bar-label">${bucket.label}</span>
-      `;
-      item.title = `${bucket.startKey} -> ${bucket.endKey} · ${bucket.words} palabras · ${formatWorkTime(bucket.seconds)} · ${bucket.ideas} ideas · ${bucket.publish} publicaciones`;
-      if (bucket.startKey === bucket.endKey) item.addEventListener("click", () => openVideoDayView(bucket.startKey));
-      else item.disabled = true;
-      frag.appendChild(item);
-    });
-    $videoCalGrid.innerHTML = "";
-    $videoCalGrid.appendChild(frag);
-    Array.from($videoCalGrid.querySelectorAll(".video-activity-bar")).forEach((item) => {
-      item.title = String(item.title || "").replace(/Â·|Ã‚Â·/g, "|");
-    });
+    const width = 760;
+    const height = 240;
+    const padX = 30;
+    const padTop = 18;
+    const padBottom = 30;
+    const plotWidth = width - (padX * 2);
+    const plotHeight = height - padTop - padBottom;
+    const step = buckets.length > 1 ? plotWidth / (buckets.length - 1) : plotWidth;
+    const toY = (value) => padTop + plotHeight - ((value / maxValue) * plotHeight);
+    const pointX = (index) => padX + (step * index);
+    const toPath = (series) => series
+      .map((value, index) => `${index === 0 ? "M" : "L"} ${pointX(index).toFixed(2)} ${toY(value).toFixed(2)}`)
+      .join(" ");
+
+    const labelIndexes = [...new Set([0, Math.floor((buckets.length - 1) / 2), buckets.length - 1])];
+    const labels = labelIndexes.map((sourceIndex) => {
+      const x = pointX(sourceIndex);
+      return `<text x="${x.toFixed(2)}" y="${height - 10}" text-anchor="middle">${buckets[sourceIndex]?.label || ""}</text>`;
+    }).join("");
+
+    const currentPoints = currentSeries.map((value, index) => `
+      <circle cx="${pointX(index).toFixed(2)}" cy="${toY(value).toFixed(2)}" r="3.2">
+        <title>${buckets[index].startKey} · actual: ${value}</title>
+      </circle>
+    `).join("");
+    const previousPoints = previousSeries.map((value, index) => `
+      <circle cx="${pointX(index).toFixed(2)}" cy="${toY(value).toFixed(2)}" r="2.4">
+        <title>${shiftDateKey(buckets[index].startKey, -range.days)} · previo: ${value}</title>
+      </circle>
+    `).join("");
+
+    $videoCalGrid.innerHTML = `
+      <svg class="video-activity-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Grafico comparativo de ${metricLabel}">
+        <line x1="${padX}" y1="${toY(maxValue)}" x2="${width - padX}" y2="${toY(maxValue)}" class="video-grid-line"/>
+        <line x1="${padX}" y1="${toY(maxValue * 0.5)}" x2="${width - padX}" y2="${toY(maxValue * 0.5)}" class="video-grid-line"/>
+        <line x1="${padX}" y1="${toY(0)}" x2="${width - padX}" y2="${toY(0)}" class="video-grid-line"/>
+        <path d="${toPath(previousSeries)}" class="video-series video-series-previous"/>
+        <path d="${toPath(currentSeries)}" class="video-series video-series-current"/>
+        <g class="video-series-points video-series-points-previous">${previousPoints}</g>
+        <g class="video-series-points video-series-points-current">${currentPoints}</g>
+        <g class="video-axis-labels">${labels}</g>
+      </svg>
+    `;
     cleanupVideoMojibake($videoCalendarSummary);
     cleanupVideoMojibake($videoActivityCompare);
     cleanupVideoMojibake($videoActivityFooter);
@@ -5481,6 +5549,9 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
       if (!videoCalMonth || typeof videoCalMonth !== "string") videoCalMonth = todayKey();
       renderVideoCalendar();
     });
+  }
+  if ($videoMetricMode) {
+    $videoMetricMode.addEventListener("change", () => renderVideoCalendar());
   }
 
   // === API para Dashboard (Inicio) ===

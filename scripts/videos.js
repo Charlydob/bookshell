@@ -68,6 +68,7 @@ let links = {};
 let books = {};
 let quoteBooks = {};
 const videoSectionCollapseState = Object.create(null);
+const videoItemExpandState = Object.create(null);
 let linkPickerMode = "script";
 let linkPickerSelectHandler = null;
 let insertType = "link";
@@ -3939,6 +3940,7 @@ function createVideoWorkspaceItem(id) {
   const row = document.createElement("article");
   row.className = "videosWorkspace__item";
   row.dataset.id = id;
+  if (videoItemExpandState[id]) row.classList.add("is-open");
 
   const rings = document.createElement("div");
   rings.className = "videosWorkspace__rings";
@@ -3963,7 +3965,8 @@ function createVideoWorkspaceItem(id) {
   toggle.type = "button";
   toggle.className = "videosWorkspace__itemToggle";
   toggle.textContent = "⋯";
-  toggle.title = "Editar vídeo";
+  toggle.title = "Expandir o plegar";
+  toggle.setAttribute("aria-expanded", String(!!videoItemExpandState[id]));
 
   const body = document.createElement("div");
   body.className = "videosWorkspace__itemBody";
@@ -3979,8 +3982,6 @@ function createVideoWorkspaceItem(id) {
       <button class="videosWorkspace__action" data-role="script" type="button">Guion</button>
     </div>
   `;
-
-  toggle.addEventListener("click", () => openVideoModal(id));
 
   const inputWords = body.querySelector('[data-role="words"]');
   const inputEdited = body.querySelector('[data-role="edited"]');
@@ -4018,6 +4019,16 @@ function createVideoWorkspaceItem(id) {
 
   row.append(rings, main, toggle, body);
   return row;
+}
+
+function setVideoWorkspaceItemExpanded(videoId, expanded) {
+  if (!videoId) return;
+  videoItemExpandState[videoId] = !!expanded;
+  const row = $videosList?.querySelector(`.videosWorkspace__item[data-id="${CSS.escape(videoId)}"]`);
+  if (!row) return;
+  row.classList.toggle("is-open", !!expanded);
+  const toggle = row.querySelector(".videosWorkspace__itemToggle");
+  if (toggle) toggle.setAttribute("aria-expanded", String(!!expanded));
 }
 
 function renderVideos() {
@@ -4071,6 +4082,16 @@ function renderVideos() {
     videoSectionCollapseState[key] = !videoSectionCollapseState[key];
     localStorage.setItem(`bookshell_videos_group_${key}_collapsed_v1`, videoSectionCollapseState[key] ? "1" : "0");
     renderVideos();
+  });
+
+  $videosList?.addEventListener("click", (event) => {
+    const row = event.target?.closest?.(".videosWorkspace__item");
+    if (!row || !$videosList?.contains(row)) return;
+    if (event.target?.closest?.("input, select, textarea, label, .videosWorkspace__action, a")) return;
+    const videoId = String(row.dataset.id || "").trim();
+    if (!videoId) return;
+    const nextState = !row.classList.contains("is-open");
+    setVideoWorkspaceItemExpanded(videoId, nextState);
   });
 
   $videosList?.addEventListener("click", (event) => {
@@ -4914,33 +4935,34 @@ totalWords += Number(v?.script?.wordCount ?? v?.scriptWords ?? 0);
     if ($videoActivityFooter) $videoActivityFooter.textContent = `${range.startKey} → ${range.endKey}`;
 
     const width = 1080;
-    const height = 460;
-    const padX = 50;
-    const padTop = 26;
-    const padBottom = 60;
-    const plotWidth = width - (padX * 2);
+    const height = 620;
+    const padLeft = 74;
+    const padRight = 20;
+    const padTop = 16;
+    const padBottom = 58;
+    const plotWidth = width - padLeft - padRight;
     const plotHeight = height - padTop - padBottom;
     const step = buckets.length > 1 ? plotWidth / (buckets.length - 1) : plotWidth;
     const y = (val) => padTop + plotHeight - ((val / maxValue) * plotHeight);
-    const x = (i) => padX + (step * i);
+    const x = (i) => padLeft + (step * i);
     const currentPoints = currentSeries.map((v, i) => ({ x: x(i), y: y(v), label: formatBucketAxisLabel(buckets[i], range.days) }));
     const previousPoints = previousSeries.map((v, i) => ({ x: x(i), y: y(v), label: formatBucketAxisLabel(buckets[i], range.days) }));
     const currentPath = smoothLinePath(currentPoints);
     const previousPath = smoothLinePath(previousPoints);
-    const yTicks = [0, 0.25, 0.5, 0.75, 1].map((r) => Math.round(maxValue * r));
+    const yTicks = [0, 0.33, 0.66, 1].map((r) => Math.round(maxValue * r));
     const yGrid = yTicks.map((tick) => {
       const yy = y(tick).toFixed(2);
-      return `<line x1="${padX}" y1="${yy}" x2="${(width - padX).toFixed(2)}" y2="${yy}" stroke="rgba(255,255,255,.08)" stroke-width="1"/><text x="${(padX - 8)}" y="${(Number(yy) + 4).toFixed(2)}" fill="rgba(255,255,255,.56)" font-size="10" text-anchor="end">${fmt(tick)}</text>`;
+      return `<line x1="${padLeft}" y1="${yy}" x2="${(width - padRight).toFixed(2)}" y2="${yy}" stroke="rgba(255,255,255,.1)" stroke-width="1"/><text x="${(padLeft - 10)}" y="${(Number(yy) + 4).toFixed(2)}" fill="rgba(255,255,255,.72)" font-size="12" text-anchor="end">${fmt(tick)}</text>`;
     }).join("");
     const axisLabels = currentPoints.map((pt, i) => {
-      const showWeekly = range.days <= 7;
-      const showMonthly = range.days <= 31 && (i % 2 === 0 || i === currentPoints.length - 1);
-      const showYearly = range.days > 31;
-      if (!(showWeekly || showMonthly || showYearly)) return "";
-      return `<text x="${pt.x.toFixed(2)}" y="${(height - 16).toFixed(2)}" fill="rgba(255,255,255,.62)" font-size="10" text-anchor="middle">${escapeHtml(pt.label)}</text>`;
+      const maxXLabels = range.days <= 7 ? 7 : range.days <= 31 ? 6 : 8;
+      const labelStep = Math.max(1, Math.ceil(currentPoints.length / maxXLabels));
+      const isLast = i === currentPoints.length - 1;
+      if (!(i % labelStep === 0 || isLast)) return "";
+      return `<text x="${pt.x.toFixed(2)}" y="${(height - 20).toFixed(2)}" fill="rgba(255,255,255,.72)" font-size="12" text-anchor="middle">${escapeHtml(pt.label)}</text>`;
     }).join("");
     const xMarks = currentPoints.map((pt) => `<line x1="${pt.x.toFixed(2)}" y1="${(padTop + plotHeight).toFixed(2)}" x2="${pt.x.toFixed(2)}" y2="${(padTop + plotHeight + 6).toFixed(2)}" stroke="rgba(255,255,255,.22)" stroke-width="1"/>`).join("");
-    const baseAxis = `<line x1="${padX}" y1="${(padTop + plotHeight).toFixed(2)}" x2="${(width - padX).toFixed(2)}" y2="${(padTop + plotHeight).toFixed(2)}" stroke="rgba(255,255,255,.24)" stroke-width="1.2"/>`;
+    const baseAxis = `<line x1="${padLeft}" y1="${(padTop + plotHeight).toFixed(2)}" x2="${(width - padRight).toFixed(2)}" y2="${(padTop + plotHeight).toFixed(2)}" stroke="rgba(255,255,255,.24)" stroke-width="1.2"/>`;
 
     if (chartMode === "bars") {
       const slot = plotWidth / Math.max(1, buckets.length);

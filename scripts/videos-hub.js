@@ -4,7 +4,8 @@ import {
   onValue,
   push,
   set,
-  update
+  update,
+  remove
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 const STATUS_LABELS = {
@@ -52,6 +53,24 @@ function formatDate(ts) {
 
 function fmtNumber(n) {
   return Number(n || 0).toLocaleString("es-ES");
+}
+
+
+function toDateInputValue(ts) {
+  if (!ts) return "";
+  const dt = new Date(Number(ts));
+  if (Number.isNaN(dt.getTime())) return "";
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function dateInputToTs(value) {
+  if (!value) return null;
+  const parsed = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.getTime();
 }
 
 function getVideosArray() {
@@ -135,11 +154,7 @@ function renderList() {
         </div>
         <div class="videosHub__meta">
           <span>${video.category || "Sin categoría"}</span>
-          <span>Actualizado: ${formatDate(video.updatedAt || video.createdAt)}</span>
-        </div>
-        <div class="videosHub__meta">
-          <span>${fmtNumber(video.wordCount)} palabras</span>
-          <span>+${fmtNumber(todayWords)} hoy</span>
+          <span>${fmtNumber(video.wordCount)} palabras · +${fmtNumber(todayWords)} hoy</span>
         </div>
         <div class="videosHub__progressTrack"><i style="width:${progress}%"></i></div>
       </article>
@@ -151,15 +166,16 @@ function renderDetail() {
   const video = getActiveVideo();
   const disabled = !video;
 
-  [els.title, els.status, els.category, els.target, els.script].forEach((el) => {
+  [els.title, els.status, els.category, els.target, els.date, els.script, els.deleteBtn].forEach((el) => {
     if (el) el.disabled = disabled;
   });
 
   if (!video) {
     if (els.title) els.title.value = "";
-    if (els.status) els.status.value = "idea";
+    if (els.status) els.status.value = "";
     if (els.category) els.category.value = "";
     if (els.target) els.target.value = "";
+    if (els.date) els.date.value = "";
     if (els.script) els.script.value = "";
     if (els.wordCount) els.wordCount.textContent = "0 palabras";
     if (els.metrics) {
@@ -169,9 +185,10 @@ function renderDetail() {
   }
 
   if (document.activeElement !== els.title) els.title.value = video.title || "";
-  if (document.activeElement !== els.status) els.status.value = video.status || "idea";
+  if (document.activeElement !== els.status) els.status.value = video.status || "";
   if (document.activeElement !== els.category) els.category.value = video.category || "";
   if (document.activeElement !== els.target) els.target.value = Number(video.targetWords) > 0 ? String(video.targetWords) : "";
+  if (document.activeElement !== els.date) els.date.value = toDateInputValue(video.createdAt);
   if (document.activeElement !== els.script) els.script.value = video.script || "";
 
   const todayWords = Number(video?.dailyWordHistory?.[getTodayKey()] || 0);
@@ -185,7 +202,7 @@ function renderDetail() {
       <div class="videosHub__metric"><small>Palabras totales</small><strong>${fmtNumber(words)}</strong></div>
       <div class="videosHub__metric"><small>Palabras hoy</small><strong>${fmtNumber(todayWords)}</strong></div>
       <div class="videosHub__metric"><small>Última edición</small><strong>${formatDate(video.updatedAt)}</strong></div>
-      <div class="videosHub__metric"><small>Ritmo estimado</small><strong>${fmtNumber(pace)} / día</strong></div>
+      <div class="videosHub__metric"><small>Ritmo</small><strong>${fmtNumber(pace)} /día</strong></div>
     `;
   }
 }
@@ -427,13 +444,13 @@ async function createVideo() {
   const now = Date.now();
   const newRef = push(ref(db, `${state.path}/videos`));
   const record = {
-    title: `Nuevo vídeo ${new Date().toLocaleDateString("es-ES")}`,
-    status: "idea",
-    category: "Sin categoría",
+    title: "",
+    status: "",
+    category: "",
     script: "",
     notes: "",
     wordCount: 0,
-    targetWords: 1200,
+    targetWords: 0,
     dailyWordHistory: {},
     createdAt: now,
     updatedAt: now,
@@ -443,6 +460,24 @@ async function createVideo() {
   state.selectedVideoId = newRef.key;
   state.viewTab = "detail";
   renderAll();
+  els.script?.focus();
+}
+
+async function deleteActiveVideo() {
+  const video = getActiveVideo();
+  if (!video) return;
+  const title = video.title?.trim() || "este vídeo";
+  const shouldDelete = window.confirm(`¿Eliminar ${title}?`);
+  if (!shouldDelete) return;
+
+  try {
+    await remove(ref(db, `${state.path}/videos/${video.id}`));
+    state.selectedVideoId = "";
+    state.viewTab = "list";
+    renderAll();
+  } catch (err) {
+    console.error("[videos-hub] error eliminando vídeo", err);
+  }
 }
 
 function bindEvents() {
@@ -484,10 +519,21 @@ function bindEvents() {
     renderList();
   });
 
-  els.title?.addEventListener("change", () => updateVideoMeta({ title: els.title.value.trim() || "Sin título" }));
-  els.status?.addEventListener("change", () => updateVideoMeta({ status: els.status.value || "idea" }));
-  els.category?.addEventListener("change", () => updateVideoMeta({ category: els.category.value.trim() || "Sin categoría" }));
+  els.backBtn?.addEventListener("click", () => {
+    state.viewTab = "list";
+    renderTabs();
+  });
+  els.deleteBtn?.addEventListener("click", () => { void deleteActiveVideo(); });
+
+  els.title?.addEventListener("change", () => updateVideoMeta({ title: els.title.value.trim() }));
+  els.status?.addEventListener("change", () => updateVideoMeta({ status: els.status.value || "" }));
+  els.category?.addEventListener("change", () => updateVideoMeta({ category: els.category.value.trim() }));
   els.target?.addEventListener("change", () => updateVideoMeta({ targetWords: Math.max(0, Number(els.target.value) || 0) }));
+  els.date?.addEventListener("change", () => {
+    const manualDate = dateInputToTs(els.date.value || "");
+    if (!manualDate) return;
+    updateVideoMeta({ createdAt: manualDate });
+  });
   els.script?.addEventListener("input", () => {
     const words = countWords(els.script.value || "");
     if (els.wordCount) els.wordCount.textContent = `${fmtNumber(words)} palabras`;
@@ -533,10 +579,13 @@ function cacheElements() {
   els.filterCategory = document.getElementById("videos-hub-filter-category");
   els.sort = document.getElementById("videos-hub-sort");
 
+  els.backBtn = document.getElementById("videos-hub-back-btn");
+  els.deleteBtn = document.getElementById("videos-hub-delete-btn");
   els.title = document.getElementById("videos-hub-title");
   els.status = document.getElementById("videos-hub-status");
   els.category = document.getElementById("videos-hub-category");
   els.target = document.getElementById("videos-hub-target");
+  els.date = document.getElementById("videos-hub-date");
   els.script = document.getElementById("videos-hub-script");
   els.wordCount = document.getElementById("videos-hub-word-count");
   els.autosave = document.getElementById("videos-hub-autosave");

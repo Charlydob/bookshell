@@ -94,6 +94,7 @@ async function ensureUserSchema(uid) {
 
     books:   { _init: true },
     videos:  { _init: true },
+    videosHub: { _init: true },
     recipes: { _init: true },
     habits:  { _init: true },
     games:   { _init: true },
@@ -119,6 +120,7 @@ function finishBootSplash() {
 const VIEW_MODULE = {
   "view-books":  () => import("./books.js"),
   "view-videos": () => import("./videos.js"),
+  "view-videos-hub": () => import("./videos-hub.js"),
   "view-recipes":() => import("./recipes.js"),
   "view-habits": () => import("./habits.js"),
   "view-games":  () => import("./games.js"),

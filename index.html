@@ -2341,37 +2341,38 @@ Crear “<span id="gym-create-cta-text"></span>”
     <section class="videosHub__panel is-active" data-hub-panel="list">
       <div class="videosHub__filters glassCard">
         <input id="videos-hub-search" type="search" placeholder="Buscar por título o guion" autocomplete="off"/>
-        <div class="videosHub__filterRow">
-          <select id="videos-hub-filter-status">
-            <option value="all">Todos estados</option>
-            <option value="idea">Idea</option>
-            <option value="drafting">Borrador</option>
-            <option value="editing">Edición</option>
-            <option value="published">Publicado</option>
-          </select>
-          <select id="videos-hub-filter-category">
-            <option value="all">Todas categorías</option>
-          </select>
-          <select id="videos-hub-sort">
-            <option value="recent">Más reciente</option>
-            <option value="words">Más palabras</option>
-            <option value="progress">Más progreso</option>
-          </select>
-        </div>
+        <select id="videos-hub-filter-status">
+          <option value="all">Todos estados</option>
+          <option value="idea">Idea</option>
+          <option value="drafting">Borrador</option>
+          <option value="editing">Edición</option>
+          <option value="published">Publicado</option>
+        </select>
+        <select id="videos-hub-filter-category">
+          <option value="all">Todas categorías</option>
+        </select>
+        <select id="videos-hub-sort">
+          <option value="recent">Más reciente</option>
+          <option value="words">Más palabras</option>
+          <option value="progress">Más progreso</option>
+        </select>
       </div>
       <div class="videosHub__list" id="videos-hub-list"></div>
     </section>
 
     <section class="videosHub__panel" data-hub-panel="detail">
       <form class="videosHub__detailForm" id="videos-hub-detail-form">
+        <div class="glassCard videosHub__detailHead">
+          <button class="btn ghost videosHub__iconBtn" id="videos-hub-back-btn" type="button" aria-label="Volver a vídeos">←</button>
+          <input id="videos-hub-title" type="text" placeholder="Título del vídeo" autocomplete="off"/>
+          <button class="btn ghost videosHub__iconBtn videosHub__iconBtn--danger" id="videos-hub-delete-btn" type="button" aria-label="Eliminar vídeo">🗑</button>
+        </div>
+
         <div class="glassCard videosHub__metaGrid">
-          <label>
-            <span>Título</span>
-            <input id="videos-hub-title" type="text" placeholder="Título del vídeo"/>
-          </label>
           <label>
             <span>Estado</span>
             <select id="videos-hub-status">
+              <option value="" selected>Seleccionar estado</option>
               <option value="idea">Idea</option>
               <option value="drafting">Borrador</option>
               <option value="editing">Edición</option>
@@ -2380,19 +2381,22 @@ Crear “<span id="gym-create-cta-text"></span>”
           </label>
           <label>
             <span>Categoría</span>
-            <input id="videos-hub-category" type="text" placeholder="Ej. Finanzas"/>
+            <input id="videos-hub-category" type="text" placeholder="Categoría" autocomplete="off"/>
           </label>
           <label>
             <span>Objetivo palabras</span>
-            <input id="videos-hub-target" type="number" min="0" step="50" placeholder="1200"/>
+            <input id="videos-hub-target" type="number" min="0" step="50" placeholder="Objetivo"/>
+          </label>
+          <label>
+            <span>Fecha</span>
+            <input id="videos-hub-date" type="date"/>
           </label>
         </div>
 
         <div class="glassCard videosHub__metrics" id="videos-hub-metrics"></div>
 
         <label class="glassCard videosHub__scriptWrap">
-          <span class="videosHub__scriptLabel">Guion</span>
-          <textarea id="videos-hub-script" placeholder="Empieza a escribir tu guion…"></textarea>
+          <textarea id="videos-hub-script" placeholder="Empieza a escribir el guion…"></textarea>
           <div class="videosHub__scriptFoot">
             <span id="videos-hub-word-count">0 palabras</span>
             <span id="videos-hub-autosave">Guardado automático</span>

@@ -55,6 +55,9 @@ const TAB_RESETTERS = {
     forceMainView('view-videos');
     closeByIds(['video-count-sheet-backdrop', 'video-link-picker-backdrop']);
   },
+  'view-videos-hub': () => {
+    forceMainView('view-videos-hub');
+  },
   'view-recipes': () => {
     closeByIds([
       'recipe-modal-backdrop',

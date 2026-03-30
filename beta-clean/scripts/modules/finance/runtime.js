@@ -1,0 +1,7188 @@
+let get;
+let onValue;
+let auth;
+let onUserChange;
+let push;
+let ref;
+let remove;
+let set;
+let update;
+let db;
+
+async function ensureFinanceLoaded() {
+  if (db && get && onValue && ref && auth && onUserChange) return;
+  const dbMod = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js');
+  ({ get, onValue, push, ref, remove, set, update } = dbMod);
+  ({ db, auth, onUserChange } = await import('../../shared/firebase/index.js'));
+}
+
+import { DEVICE_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
+import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './finance/ui.js';
+import { resolveFinancePath, resolveFinancePathCandidates } from './finance/data.js';
+import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, firebaseSafeKey, TICKET_IMPORT_SAMPLE_V1, resolveTicketMovementCategory } from './finance/import.js';
+
+let unsubscribeLegacyFinance = null;
+let financeRootsCache = { newRoot: {}, legacyRoot: {} };
+let financeNeedsLegacyAccountsMerge = false;
+
+function log(...parts) { console.log('[finance]', ...parts); }
+function warnMissing(id) { console.warn(`[finance] missing DOM node ${id}`); }
+function $req(sel, ctx = document) {
+  const el = ctx.querySelector(sel);
+  if (!el) throw new Error(`[finance] Missing element: ${sel}`);
+  return el;
+}
+function $opt(sel, ctx = document) { return ctx.querySelector(sel); }
+
+function nowTs() { return Date.now(); }
+function getMonthKeyFromDate(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
+function parseMonthKey(monthKey) { const [y, m] = String(monthKey).split('-').map(Number); return new Date(y, (m || 1) - 1, 1); }
+function monthDiffFromNow(monthKey) {
+  const target = parseMonthKey(monthKey);
+  const now = new Date();
+  return (target.getFullYear() - now.getFullYear()) * 12 + (target.getMonth() - now.getMonth());
+}
+
+function offsetMonthKey(monthKey, offset) { const d = parseMonthKey(monthKey); d.setMonth(d.getMonth() + offset); return getMonthKeyFromDate(d); }
+function monthLabelByKey(monthKey) { return new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(parseMonthKey(monthKey)); }
+function capitalizeFirst(value = '') { return value ? value.charAt(0).toUpperCase() + value.slice(1) : ''; }
+function escapeHtml(value = '') { return String(value).replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s])); }
+function fmtCurrency(value) { return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(Number(value || 0)); }
+function fmtSignedCurrency(value) { const num = Number(value || 0); return `${num > 0 ? '+' : ''}${fmtCurrency(num)}`; }
+function fmtSignedPercent(value) { const num = Number(value || 0); return `${num > 0 ? '+' : ''}${num.toFixed(2)}%`; }
+function toneClass(value) { if (value > 0) return 'is-positive'; if (value < 0) return 'is-negative'; return 'is-neutral'; }
+function dayKeyFromTs(ts) { const d = new Date(Number(ts || Date.now())); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function parseDayKey(key) { return new Date(`${key}T00:00:00`).getTime(); }
+function isoWeekKeyFromDate(value) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + 3 - ((date.getDay() + 6) % 7));
+  const week1 = new Date(date.getFullYear(), 0, 4);
+  const weekNo = 1 + Math.round((((date.getTime() - week1.getTime()) / 86400000) - 3 + ((week1.getDay() + 6) % 7)) / 7);
+  return `${date.getFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+}
+function bucketKeyForDay(dayKey, mode = 'day') {
+  if (!dayKey) return '';
+  if (mode === 'day') return dayKey;
+  const d = new Date(`${dayKey}T00:00:00`);
+  if (mode === 'week') return isoWeekKeyFromDate(d);
+  if (mode === 'month') return dayKey.slice(0, 7);
+  if (mode === 'year') return dayKey.slice(0, 4);
+  return 'all';
+}
+function bucketKeyForTx(tx = {}, mode = 'day') {
+  const day = String(tx.date || isoToDay(tx.dateISO || '') || '');
+  return bucketKeyForDay(day, mode);
+}
+function bucketRange(mode = 'month', bucketKey = '') {
+  if (mode === 'total') {
+    const accountTs = (state.accounts || []).flatMap((account) => {
+      const snapshotsTs = normalizeSnapshots(account?.snapshots || {}).map((row) => parseDayKey(row.day));
+      const entriesTs = normalizeDaily(account?.entries || account?.daily || {}).map((row) => Number(row.ts || parseDayKey(row.day)));
+      return [...snapshotsTs, ...entriesTs].filter((ts) => Number.isFinite(ts));
+    });
+    const movementTs = balanceTxList().map((row) => txTs(row)).filter((ts) => Number.isFinite(ts) && ts > 0);
+    const allTs = [...accountTs, ...movementTs];
+    if (!allTs.length) {
+      const now = Date.now();
+      return { start: now, end: now + 1 };
+    }
+    const start = Math.min(...allTs);
+    const end = Math.max(...allTs) + 1;
+    return { start, end };
+  }
+  if (mode === 'day') {
+    const start = parseDayKey(bucketKey);
+    return { start, end: start + 86400000 };
+  }
+  if (mode === 'week') {
+    const match = String(bucketKey).match(/^(\d{4})-W(\d{2})$/);
+    if (!match) return { start: 0, end: 0 };
+    const year = Number(match[1]);
+    const week = Number(match[2]);
+    const simple = new Date(Date.UTC(year, 0, 1 + (week - 1) * 7));
+    const dow = simple.getUTCDay() || 7;
+    const start = new Date(simple);
+    if (dow <= 4) start.setUTCDate(simple.getUTCDate() - dow + 1);
+    else start.setUTCDate(simple.getUTCDate() + 8 - dow);
+    return { start: start.getTime(), end: start.getTime() + (7 * 86400000) };
+  }
+  if (mode === 'month') {
+    const [y, m] = String(bucketKey).split('-').map(Number);
+    const start = new Date(y, (m || 1) - 1, 1).getTime();
+    return { start, end: new Date(y, (m || 1), 1).getTime() };
+  }
+  const year = Number(bucketKey || new Date().getFullYear());
+  return { start: new Date(year, 0, 1).getTime(), end: new Date(year + 1, 0, 1).getTime() };
+}
+function pctDelta(curr = 0, prev = 0) {
+  const c = Number(curr || 0);
+  const p = Number(prev || 0);
+  if (!Number.isFinite(p) || p === 0) return null;
+  return ((c - p) / Math.abs(p)) * 100;
+}
+function toIsoDay(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const slash = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (!slash) return null;
+  const day = Number(slash[1]);
+  const month = Number(slash[2]);
+  const year = Number(slash[3]);
+  if (!day || !month || !year || month > 12 || day > 31) return null;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function normalizeTxAllocation(raw = {}, fallbackDate = '') {
+  const mode = raw?.mode === 'period' ? 'period' : 'point';
+  const period = ['day', 'week', 'month', 'year', 'custom'].includes(raw?.period) ? raw.period : 'day';
+  const anchorDate = toIsoDay(String(raw?.anchorDate || fallbackDate || '')) || toIsoDay(fallbackDate) || dayKeyFromTs(Date.now());
+  const customStart = toIsoDay(String(raw?.customStart || '')) || null;
+  const customEnd = toIsoDay(String(raw?.customEnd || '')) || null;
+  if (mode !== 'period') {
+    return { mode: 'point', period: 'day', anchorDate };
+  }
+  if (period === 'custom') {
+    const start = customStart || anchorDate;
+    const end = customEnd || start;
+    return { mode, period, anchorDate, customStart: start, customEnd: end };
+  }
+  return { mode, period, anchorDate };
+}
+
+function localStartOfDayTs(day = '') {
+  const normalized = toIsoDay(day);
+  if (!normalized) return 0;
+  const [y, m, d] = normalized.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0).getTime();
+}
+
+function rangeBoundsForMode(mode = 'month') {
+  if (mode === 'month') {
+    const key = getSelectedBalanceMonthKey();
+    const [year, month] = String(key).split('-').map(Number);
+    const start = new Date(year, (month || 1) - 1, 1, 0, 0, 0, 0).getTime();
+    const end = new Date(year, (month || 1), 1, 0, 0, 0, 0).getTime();
+    return { start, end };
+  }
+  if (mode === 'total') {
+    const rows = balanceTxList();
+    if (!rows.length) {
+      const now = Date.now();
+      return { start: now, end: now + 86400000 };
+    }
+    const dates = rows
+      .map((row) => localStartOfDayTs(row?.date || isoToDay(row?.dateISO || '')))
+      .filter((ts) => Number.isFinite(ts) && ts > 0);
+    const start = Math.min(...dates);
+    const end = Math.max(...dates) + 86400000;
+    return { start, end };
+  }
+  const start = rangeStartByMode(mode);
+  if (!Number.isFinite(start)) {
+    const now = Date.now();
+    return { start: now, end: now + 86400000 };
+  }
+  if (mode === 'day') return { start, end: start + 86400000 };
+  if (mode === 'week') return { start, end: start + (7 * 86400000) };
+  if (mode === 'year') {
+    const d = new Date(start);
+    return { start, end: new Date(d.getFullYear() + 1, 0, 1, 0, 0, 0, 0).getTime() };
+  }
+  return { start, end: Date.now() + 1 };
+}
+
+function isoWeekStartTs(anchorIso = '') {
+  const date = new Date(`${anchorIso}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return 0;
+  const day = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - day);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function allocationWindowBounds(allocation = {}, fallbackDate = '') {
+  const normalized = normalizeTxAllocation(allocation, fallbackDate);
+  const anchorDay = normalized.anchorDate;
+  if (normalized.mode !== 'period') {
+    const start = localStartOfDayTs(anchorDay);
+    return { start, end: start + 86400000 };
+  }
+  if (normalized.period === 'week') {
+    const start = isoWeekStartTs(anchorDay);
+    return { start, end: start + (7 * 86400000) };
+  }
+  if (normalized.period === 'month') {
+    const [y, m] = anchorDay.split('-').map(Number);
+    const start = new Date(y, (m || 1) - 1, 1, 0, 0, 0, 0).getTime();
+    return { start, end: new Date(y, (m || 1), 1, 0, 0, 0, 0).getTime() };
+  }
+  if (normalized.period === 'year') {
+    const [y] = anchorDay.split('-').map(Number);
+    const start = new Date(y, 0, 1, 0, 0, 0, 0).getTime();
+    return { start, end: new Date(y + 1, 0, 1, 0, 0, 0, 0).getTime() };
+  }
+  if (normalized.period === 'custom') {
+    const start = localStartOfDayTs(normalized.customStart || anchorDay);
+    const end = localStartOfDayTs(normalized.customEnd || normalized.customStart || anchorDay) + 86400000;
+    return { start: Math.min(start, end - 86400000), end: Math.max(end, start + 86400000) };
+  }
+  const start = localStartOfDayTs(anchorDay);
+  return { start, end: start + 86400000 };
+}
+
+function overlapDays(windowBounds = {}, rangeBounds = {}) {
+  const start = Math.max(Number(windowBounds.start || 0), Number(rangeBounds.start || 0));
+  const end = Math.min(Number(windowBounds.end || 0), Number(rangeBounds.end || 0));
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+  return (end - start) / 86400000;
+}
+function parseEuroNumber(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return NaN;
+  const clean = raw.replace(/[^\d,.-]/g, '');
+  if (!clean) return NaN;
+  const hasComma = clean.includes(',');
+  const hasDot = clean.includes('.');
+  let normalized = clean;
+  if (hasComma && hasDot) {
+    normalized = clean.lastIndexOf(',') > clean.lastIndexOf('.') ? clean.replace(/\./g, '').replace(',', '.') : clean.replace(/,/g, '');
+  } else if (hasComma) {
+    normalized = clean.replace(/\./g, '').replace(',', '.');
+  }
+  return Number(normalized);
+}
+function parseMoney(value = '') {
+  const parsed = parseEuroNumber(value);
+  return Number.isFinite(parsed) ? parsed : Number(value);
+}
+function clampRatio(value, fallback = 1) {
+  const ratio = Number(value);
+  if (!Number.isFinite(ratio)) return fallback;
+  return Math.min(1, Math.max(0.1, ratio));
+}
+function clamp01(value, fallback = 1) {
+  const ratio = Number(value);
+  if (!Number.isFinite(ratio)) return fallback;
+  return Math.min(1, Math.max(0, ratio));
+}
+function isShared(account = {}) {
+  return Boolean(account?.shared);
+}
+function getRatio(account = {}) {
+  return isShared(account) ? clampRatio(account?.sharedRatio, 0.5) : 1;
+}
+function shareAmount(account = {}, amount = 0) {
+  return Number(amount || 0) * getRatio(account);
+}
+function normalizeAccountShare(account = {}) {
+  const shared = isShared(account);
+  const sharedRatio = getRatio(account);
+  return { shared, sharedRatio };
+}
+function personalRatioForTx(tx = {}, accountsById = {}) {
+  if (tx?.personalRatio !== null && tx?.personalRatio !== undefined && String(tx.personalRatio).trim() !== '' && Number.isFinite(Number(tx.personalRatio))) {
+  return clamp01(tx.personalRatio, 1);
+}
+  const account = accountsById?.[tx?.accountId];
+  if (!account?.shared) return 1;
+  const type = normalizeTxType(tx?.type);
+  if (type === 'expense') return clampRatio(account?.sharedRatio, 0.5);
+  if (type === 'income') return 0;
+  return 0;
+}
+function personalDeltaForTx(tx = {}, accountsById = {}) {
+  const safeType = normalizeTxType(tx?.type);
+  const amount = Number(tx?.amount || 0);
+  if (!Number.isFinite(amount)) return 0;
+  const ratio = personalRatioForTx(tx, accountsById);
+if (safeType === 'income') {
+  const acc = accountsById[tx?.accountId];
+  if (acc?.shared) return 0;
+  return amount;
+}  if (safeType === 'expense') return -amount * ratio;
+  if (safeType === 'transfer') return 0;
+  return 0;
+}
+function movementSign(type) { return type === 'income' ? 1 : -1; }
+function txSortTs(row) {
+  return new Date(row?.date || row?.dateISO || 0).getTime() || 0;
+}
+function normalizeTxType(type = '') {
+  const safe = String(type || '').trim().toLowerCase();
+  if (safe === 'ingreso' || safe === 'ingresos') return 'income';
+  if (safe === 'gasto' || safe === 'gastos' || safe === 'egreso' || safe === 'egresos') return 'expense';
+  if (safe === 'transferencia' || safe === 'traspaso') return 'transfer';
+  if (safe === 'income' || safe === 'expense' || safe === 'transfer') return safe;
+  if (safe === 'invest') return 'expense';
+  return 'expense';
+}
+function normalizeTxRow(raw = {}, id = '') {
+  const row = raw && typeof raw === 'object' ? raw : {};
+  const type = normalizeTxType(row.type ?? row?.extras?.type);
+  let amount = row.amount;
+  amount = (typeof amount === 'number') ? amount : parseMoney(String(amount ?? ''));
+  amount = Number.isFinite(amount) ? amount : 0;
+  const dateISO = toIsoDay(String(row.date || row.dateISO || '')) || '';
+  const date = dateISO || String(row.date || row.dateISO || '');
+  const monthKey = String(row.monthKey ?? row?.extras?.monthKey ?? (dateISO ? dateISO.slice(0, 7) : '') ?? '').slice(0, 7);
+  return {
+    id: String(row.id || id || ''),
+    ...row,
+    type,
+    amount,
+    date: dateISO || date,
+    dateISO: dateISO || date,
+    monthKey
+  };
+}
+function isFoodCategory(category = '') {
+  const normalized = String(category || '').trim().toLowerCase();
+  return normalized === 'comida' || normalized === 'food';
+}
+function normalizeFoodName(value = '') {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+function normalizeFoodCompareKey(value = '') {
+  return normalizeFoodName(value)
+    .toLowerCase()
+    .replace(/^[\s\-_,.;:¡!¿?()\[\]{}"'`]+|[\s\-_,.;:¡!¿?()\[\]{}"'`]+$/g, '');
+}
+
+function normalizeProductItemLabel(value = '') {
+  return normalizeFoodName(value);
+}
+
+function normalizeProductItemKey(value = '') {
+  return normalizeFoodCompareKey(value);
+}
+function ticketCategoryToTxCategory(category = '') {
+  const safe = String(category || '').trim().toLowerCase();
+  if (!safe || safe === 'otros' || safe === 'hogar' || safe === 'higiene' || safe === 'mascotas') return 'Otros';
+  return 'Comida';
+}
+
+
+function resolveProductIdentity(item = {}, productsById = {}) {
+  const explicitId = String(item?.foodId || item?.productId || '').trim();
+  if (explicitId && productsById[explicitId]) return explicitId;
+  const productKey = String(item?.productKey || firebaseSafeKey(item?.name || '')).trim();
+  if (!productKey) return '';
+  const found = Object.values(productsById || {}).find((product) => {
+    if (!product) return false;
+    if (String(product.idKey || '') === productKey) return true;
+    if (firebaseSafeKey(product?.name || '') === productKey) return true;
+    if (firebaseSafeKey(product?.displayName || '') === productKey) return true;
+    return Array.isArray(product?.aliases) && product.aliases.some((alias) => firebaseSafeKey(alias || '') === productKey);
+  });
+  return String(found?.id || productKey);
+}
+
+function computeUnitPrice(totalPriceInput, qtyInput) {
+  const totalPrice = Number(totalPriceInput || 0);
+  const qty = Number(qtyInput || 0);
+  if (!Number.isFinite(totalPrice) || totalPrice <= 0) return 0;
+  if (!Number.isFinite(qty) || qty <= 0) return Number(totalPrice.toFixed(2));
+  return Number((totalPrice / qty).toFixed(2));
+}
+
+function appendPriceHistoryPoint(pointsByVendorAndDate = {}, row = {}) {
+  const vendor = firebaseSafeKey(row?.vendor || 'unknown') || 'unknown';
+  const ts = Number(row?.ts || 0);
+  const date = String(row?.date || dayKeyFromTs(ts));
+  if (!vendor || !date) return pointsByVendorAndDate;
+  const key = `${vendor}__${date}`;
+  const current = pointsByVendorAndDate[key];
+  if (!current || ts >= Number(current.ts || 0)) {
+    pointsByVendorAndDate[key] = {
+      ...row,
+      vendor,
+      date,
+      ts: Number.isFinite(ts) && ts > 0 ? ts : parseDayKey(date)
+    };
+  }
+  return pointsByVendorAndDate;
+}
+
+function getProductItemRows(rows = [], options = {}) {
+  const amountByTxId = options?.amountByTxId || {};
+  const productsById = options?.productsById || {};
+  const vendorFilter = String(options?.vendor || 'all');
+  const accountFilter = String(options?.account || 'all');
+  const onlyFood = !!options?.onlyFood;
+  const output = [];
+  rows.forEach((row) => {
+    if (normalizeTxType(row?.type) !== 'expense') return;
+    const txAmount = Math.abs(Number(amountByTxId[row.id] ?? row.amount ?? 0));
+    if (!txAmount) return;
+    const ts = txTs(row);
+    if (!Number.isFinite(ts) || ts <= 0) return;
+    if (accountFilter !== 'all' && String(row?.accountId || '') !== accountFilter) return;
+    const txVendor = firebaseSafeKey(normalizeFoodName(row?.extras?.filters?.place || row?.extras?.place || 'unknown')) || 'unknown';
+    const validLines = foodItemsFromTx(row).map((item) => {
+      const displayName = normalizeProductItemLabel(item?.name || item?.item || item?.productName || '');
+      const totalPrice = Math.abs(Number(item?.totalPrice ?? item?.amount ?? item?.price ?? 0));
+      const qty = Math.max(1, Number(item?.qty || 1));
+      const unit = String(item?.unit || 'ud').trim() || 'ud';
+      const unitPrice = Number(item?.unitPrice || computeUnitPrice(totalPrice, qty));
+      const vendorKey = firebaseSafeKey(normalizeFoodName(item?.place || txVendor || 'unknown')) || 'unknown';
+      const productId = resolveProductIdentity(item, productsById);
+      const canonicalName = normalizeProductItemLabel(productsById?.[productId]?.displayName || productsById?.[productId]?.name || displayName || productId || 'Sin datos') || 'Sin datos';
+      return {
+        txId: String(row?.id || ''),
+        accountId: String(row?.accountId || ''),
+        ts,
+        date: dayKeyFromTs(ts),
+        vendorKey,
+        itemCategory: String(item?.category || item?.category_app || row?.category || ''),
+        nameRaw: displayName,
+        foodId: String(item?.foodId || ''),
+        productKey: String(item?.productKey || ''),
+        productId: String(productId || ''),
+        canonicalName,
+        qty,
+        unit,
+        totalPrice,
+        unitPrice: Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : totalPrice,
+      };
+    }).filter((line) => line.nameRaw);
+    if (!validLines.length) return;
+    const hasDirectLinePrices = validLines.some((line) => line.totalPrice > 0);
+    const normalizedLines = hasDirectLinePrices
+      ? validLines
+      : (() => {
+        const totalQty = validLines.reduce((sum, line) => sum + Math.max(1, Number(line.qty || 1)), 0) || validLines.length;
+        return validLines.map((line) => {
+          const weight = Math.max(1, Number(line.qty || 1)) / totalQty;
+          const fallbackTotal = txAmount * weight;
+          return {
+            ...line,
+            totalPrice: fallbackTotal,
+            unitPrice: computeUnitPrice(fallbackTotal, line.qty)
+          };
+        });
+      })();
+    const linesTotal = normalizedLines.reduce((sum, line) => sum + Number(line.totalPrice || 0), 0) || 1;
+    normalizedLines.forEach((line) => {
+      if (vendorFilter !== 'all' && line.vendorKey !== vendorFilter) return;
+      if (onlyFood && !isFoodCategory(line.itemCategory || '')) return;
+      output.push({
+        ...line,
+        scopedAmount: txAmount * (Number(line.totalPrice || 0) / linesTotal)
+      });
+    });
+  });
+  return output;
+}
+
+function accumulateSpendByProduct(rows = [], amountByTxId = {}, productsById = {}) {
+  const spend = {};
+  const productKeyByLabel = {};
+  const statsByProduct = {};
+  const productItemRows = getProductItemRows(rows, { amountByTxId, productsById });
+  productItemRows.forEach((line) => {
+      const label = normalizeProductItemLabel(line.canonicalName || line.nameRaw || line.productId || 'Sin datos') || 'Sin datos';
+      spend[label] = (spend[label] || 0) + Number(line.scopedAmount || 0);
+      productKeyByLabel[label] = line.productId || line.productKey || firebaseSafeKey(label);
+      const prev = statsByProduct[label] || { purchaseCount: 0, sumUnitPriceWeighted: 0, sumQty: 0, units: new Set() };
+      prev.purchaseCount += 1;
+      prev.sumUnitPriceWeighted += Number(line.unitPrice || 0) * Number(line.qty || 1);
+      prev.sumQty += Number(line.qty || 1);
+      prev.units.add(line.unit || 'ud');
+      statsByProduct[label] = prev;
+  });
+  return { spend, productKeyByLabel, statsByProduct, rows: productItemRows };
+}
+
+function normalizeCardLast4(value = '') {
+  const digits = String(value || '').replace(/\D/g, '').slice(0, 4);
+  return /^\d{4}$/.test(digits) ? digits : '';
+}
+
+function getCardLast4Duplicates(cardLast4 = '', currentAccountId = '') {
+  const normalized = normalizeCardLast4(cardLast4);
+  if (!normalized) return [];
+  return (state.accounts || []).filter((account) => String(account?.id || '') !== String(currentAccountId || '') && normalizeCardLast4(account?.cardLast4 || '') === normalized);
+}
+
+function resolveTicketCardAccountPreview(ticket = null, accounts = []) {
+  const cardLast4 = String(ticket?.purchase?.card_last4 || '').trim();
+  if (!/^\d{4}$/.test(cardLast4)) return { cardLast4: '', matches: [], selected: null, status: 'none' };
+  const matches = accounts.filter((account) => normalizeCardLast4(account?.cardLast4 || '') === cardLast4);
+  if (matches.length === 1) return { cardLast4, matches, selected: matches[0], status: 'single' };
+  if (matches.length > 1) return { cardLast4, matches, selected: null, status: 'multiple' };
+  return { cardLast4, matches: [], selected: null, status: 'zero' };
+}
+function isTicketExtraLike(name = '') {
+  const safe = normalizeFoodName(name).toLowerCase();
+  return /bolsa|descuento|cupon|cupón|redondeo|deposito|depósito/.test(safe);
+}
+function toTicketPriceLine(item = {}) {
+  const fromGuess = escapeHtml(String(item.category_guess || 'otros'));
+  const toApp = escapeHtml(String(item.category_app || mapTicketCategoryToApp(item.category_guess || 'otros')));
+  const inferredNote = item.category_inferred ? ' ⚠ heurística' : '';
+  return `${escapeHtml(item.name_norm || item.name_raw || 'Producto')} — ${fromGuess} → ${toApp}${inferredNote} · ${Number(item.qty || 1)} × ${fmtCurrency(item.total_price || 0)}`;
+}
+function normalizeFoodMap(map = {}) {
+  const out = {};
+  Object.entries(map || {}).forEach(([name, payload]) => {
+    const safeName = normalizeFoodName(name);
+    if (!safeName) return;
+    out[safeName] = {
+      createdAt: Number(payload?.createdAt || 0) || nowTs(),
+      count: Number(payload?.count || 0),
+      lastUsedAt: Number(payload?.lastUsedAt || 0),
+      lastPrice: Number(payload?.lastPrice || 0),
+      lastCategory: String(payload?.lastCategory || ''),
+      lastAccountId: String(payload?.lastAccountId || ''),
+      lastNote: String(payload?.lastNote || ''),
+      lastExtras: payload?.lastExtras || {}
+    };
+  });
+  return out;
+}
+function financeDebug(...parts) {
+  if (!FINANCE_DEBUG) return;
+  console.log('[FINANCE][DEBUG]', ...parts);
+}
+function normalizeFoodEntityMap(map = {}) {
+  const out = {};
+  const nameToId = {};
+  Object.entries(map || {}).forEach(([id, payload]) => {
+    const safeId = String(id || '').trim();
+    if (!safeId) return;
+    const safeName = normalizeFoodName(payload?.name || '');
+    if (!safeName) return;
+    out[safeId] = {
+      id: safeId,
+      idKey: String(payload?.idKey || firebaseSafeKey(safeName)),
+      name: safeName,
+      displayName: String(payload?.displayName || safeName),
+      aliases: Array.isArray(payload?.aliases) ? payload.aliases.map((alias) => normalizeFoodName(alias)).filter(Boolean) : [],
+      vendorAliases: payload?.vendorAliases && typeof payload.vendorAliases === 'object' ? payload.vendorAliases : {},
+      createdFromVendor: String(payload?.createdFromVendor || ''),
+      mealType: normalizeFoodName(payload?.mealType || payload?.foodMealType || ''),
+      cuisine: normalizeFoodName(payload?.cuisine || payload?.healthy || payload?.foodCuisine || ''),
+      healthy: normalizeFoodName(payload?.healthy || payload?.cuisine || ''),
+      place: normalizeFoodName(payload?.place || payload?.foodPlace || ''),
+      defaultPrice: Number(payload?.defaultPrice || 0),
+      priceHistory: normalizeFoodPriceHistory(payload?.priceHistory || {}),
+      countUsed: Number(payload?.countUsed || payload?.count || 0),
+      createdAt: Number(payload?.createdAt || 0) || nowTs(),
+      updatedAt: Number(payload?.updatedAt || 0) || nowTs()
+    };
+    nameToId[safeName.toLowerCase()] = safeId;
+  });
+  return { out, nameToId };
+}
+
+function normalizeFoodPriceHistory(map = {}) {
+  const out = {};
+  const entries = Object.entries(map || {});
+  const looksLikeLegacy = entries.some(([, value]) => Number.isFinite(Number(value?.price)));
+  if (looksLikeLegacy) {
+    out.unknown = {};
+    entries.forEach(([entryId, value]) => {
+      const price = Number(value?.price);
+      const ts = Number(value?.ts || 0);
+      if (!entryId || !Number.isFinite(price) || !Number.isFinite(ts) || ts <= 0) return;
+      out.unknown[entryId] = {
+        price,
+        ts,
+        date: String(value?.date || dayKeyFromTs(ts)),
+        source: String(value?.source || ''),
+        expenseId: String(value?.expenseId || ''),
+        vendor: 'unknown',
+        unitPrice: Number(value?.unitPrice || price),
+        linePrice: Number(value?.linePrice || price)
+      };
+    });
+    return out;
+  }
+  entries.forEach(([vendorRaw, vendorRows]) => {
+    const vendor = firebaseSafeKey(vendorRaw) || 'unknown';
+    out[vendor] = {};
+    Object.entries(vendorRows || {}).forEach(([entryId, value]) => {
+      const price = Number(value?.price);
+      const ts = Number(value?.ts || 0);
+      if (!entryId || !Number.isFinite(price) || !Number.isFinite(ts) || ts <= 0) return;
+      out[vendor][entryId] = {
+        price,
+        ts,
+        date: String(value?.date || dayKeyFromTs(ts)),
+        source: String(value?.source || ''),
+        expenseId: String(value?.expenseId || ''),
+        vendor,
+        unitPrice: Number(value?.unitPrice || price),
+        linePrice: Number(value?.linePrice || price)
+      };
+    });
+  });
+  return out;
+}
+
+function foodPriceHistoryList(food = {}) {
+  return Object.entries(food?.priceHistory || {}).flatMap(([vendorKey, vendorRows]) => Object.entries(vendorRows || {}).map(([entryId, row]) => ({
+      entryId: String(entryId || ''),
+      vendor: firebaseSafeKey(vendorKey) || 'unknown',
+      price: Number(row?.price),
+      unitPrice: Number(row?.unitPrice || row?.price || 0),
+      linePrice: Number(row?.linePrice || row?.price || 0),
+      ts: Number(row?.ts),
+      date: String(row?.date || dayKeyFromTs(Number(row?.ts || 0))),
+      source: String(row?.source || ''),
+      expenseId: String(row?.expenseId || '')
+    })))
+    .filter((row) => Number.isFinite(Number(row?.price)) && Number.isFinite(Number(row?.ts)))
+    .sort((a, b) => a.ts - b.ts);
+}
+
+function resolveFoodItemByAnyKey(rawKey = '') {
+  const safeKey = String(rawKey || '').trim();
+  if (!safeKey) return null;
+  if (state.food.itemsById?.[safeKey]) return state.food.itemsById[safeKey];
+  const normalized = firebaseSafeKey(safeKey);
+  return Object.values(state.food.itemsById || {}).find((item) => {
+    if (!item) return false;
+    if (String(item.id || '') === safeKey) return true;
+    if (String(item.idKey || '') === safeKey) return true;
+    if (firebaseSafeKey(item?.name || '') === safeKey) return true;
+    if (firebaseSafeKey(item?.displayName || '') === safeKey) return true;
+    return normalized && (String(item.idKey || '') === normalized || firebaseSafeKey(item?.name || '') === normalized);
+  }) || null;
+}
+
+function foodHistoryFromTransactions(food = {}) {
+  const byKey = {};
+  const foodId = String(food?.id || '');
+  const foodName = normalizeFoodName(food?.name || '').toLowerCase();
+  const foodDisplay = normalizeFoodName(food?.displayName || '').toLowerCase();
+  const foodIdKey = String(food?.idKey || firebaseSafeKey(food?.name || '') || '');
+  balanceTxList().forEach((row) => {
+    if (normalizeTxType(row?.type) !== 'expense') return;
+    const txItems = foodItemsFromTx(row);
+    txItems.forEach((item) => {
+      const itemFoodId = String(item?.foodId || '');
+      const itemName = normalizeFoodName(item?.name || '').toLowerCase();
+      const itemKey = String(item?.productKey || firebaseSafeKey(item?.name || '') || '');
+      const matches = (foodId && itemFoodId === foodId)
+        || (foodIdKey && itemKey === foodIdKey)
+        || (foodName && itemName === foodName)
+        || (foodDisplay && itemName === foodDisplay);
+      if (!matches) return;
+      const ts = Number(row?.date ? parseDayKey(row.date) : txSortTs(row));
+
+const totalPriceRaw = item?.totalPrice ?? item?.amount ?? item?.price ?? 0;
+const totalPrice = Number(totalPriceRaw);
+
+if (!Number.isFinite(ts) || ts <= 0 || !Number.isFinite(totalPrice) || totalPrice <= 0) return;
+
+const qty = Math.max(1, Number(item?.qty ?? 1));
+const unitPrice = Number(item?.unitPrice ?? computeUnitPrice(totalPrice, qty) ?? 0);
+
+const vendor =
+  firebaseSafeKey(
+    item?.place ??
+    row?.extras?.filters?.place ??
+    row?.extras?.place ??
+    food?.place ??
+    "unknown"
+  ) || "unknown";
+
+const key = `${vendor}__${String(row?.id ?? "") || ts}`;
+
+byKey[key] = {
+  vendor,
+  price: unitPrice,
+  unitPrice,
+  qty,
+  unit: String(item?.unit ?? "ud").trim() || "ud",
+  totalPrice,
+  linePrice: totalPrice,
+  ts,
+  date: String(row?.date ?? dayKeyFromTs(ts)),
+  source: "expense-line",
+  expenseId: String(row?.id ?? "")
+};
+    });
+  });
+  return Object.values(byKey).sort((a, b) => a.ts - b.ts);
+}
+
+function mergedFoodHistory(food = {}) {
+  const explicit = foodPriceHistoryList(food);
+  const implicit = foodHistoryFromTransactions(food);
+  const byVendorAndDate = {};
+
+  [...explicit, ...implicit].forEach((row) => {
+    const unitPriceRaw = row?.unitPrice ?? row?.price ?? 0;
+    const totalPriceRaw = row?.totalPrice ?? row?.linePrice ?? row?.price ?? 0;
+    const linePriceRaw  = row?.linePrice  ?? row?.totalPrice ?? row?.price ?? 0;
+
+    const qty = Math.max(1, Number(row?.qty ?? 1));
+    const unit = String(row?.unit ?? "ud").trim() || "ud"; // aquí sí usamos || por si trim() da ''
+
+    const normalized = {
+      ...row,
+      price: Number(unitPriceRaw),
+      unitPrice: Number(unitPriceRaw),
+      totalPrice: Number(totalPriceRaw),
+      linePrice: Number(linePriceRaw),
+      qty,
+      unit
+    };
+
+    appendPriceHistoryPoint(byVendorAndDate, normalized);
+  });
+
+  return Object.values(byVendorAndDate)
+    .filter((row) =>
+      Number.isFinite(row.ts) &&
+      row.ts > 0 &&
+      Number.isFinite(Number(row.unitPrice ?? row.price)) &&
+      Number(row.unitPrice ?? row.price) > 0
+    )
+    .sort((a, b) => a.ts - b.ts);
+}
+
+function shouldAppendFoodPricePoint(food = {}, priceInput) {
+  const price = Number(priceInput);
+  if (!Number.isFinite(price) || price <= 0) return false;
+
+  const history = foodPriceHistoryList(food);
+  if (!history.length) return true;
+
+  return Math.abs(Number(history[history.length - 1]?.price ?? 0) - price) > 0.001;
+}
+
+async function recordFoodPricePoint(foodId, priceInput, source = "expense", options = {}) {
+  const safeFoodId = String(foodId ?? "").trim();
+  const price = Number(priceInput);
+  if (!safeFoodId || !Number.isFinite(price) || price <= 0) return;
+
+  const ts = Number(options?.ts ?? nowTs());
+  const vendor = firebaseSafeKey(options?.vendor ?? "unknown") || "unknown";
+  const date = String(options?.date ?? dayKeyFromTs(ts));
+  const expenseId = String(options?.expenseId ?? "").trim();
+
+  const food = state.food.itemsById?.[safeFoodId] ?? null;
+
+  if (expenseId) {
+    const exists = Object.values(food?.priceHistory ?? {}).some((vendorRows) =>
+      Object.values(vendorRows ?? {}).some((entry) => String(entry?.expenseId ?? "") === expenseId)
+    );
+    if (exists) return;
+  }
+
+  const entryId = push(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${vendor}`)).key;
+
+  const qty = Math.max(1, Number(options?.qty ?? 1));
+  const unit = String(options?.unit ?? "ud").trim() || "ud";
+
+  const totalPrice = Number(options?.totalPrice ?? options?.linePrice ?? price);
+  const unitPrice = Number(options?.unitPrice ?? computeUnitPrice(totalPrice, qty) ?? price);
+
+  const payload = {
+    price: unitPrice,
+    unitPrice,
+    qty,
+    unit,
+    totalPrice,
+    linePrice: totalPrice,
+    ts: Number.isFinite(ts) && ts > 0 ? ts : nowTs(),
+    date,
+    vendor,
+    source: String(source ?? ""),
+    ...(expenseId ? { expenseId } : {})
+  };
+
+  await safeFirebase(() =>
+    set(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${vendor}/${entryId}`), payload)
+  );
+
+  if (!state.food.itemsById?.[safeFoodId]) return;
+
+  if (!state.food.itemsById[safeFoodId].priceHistory?.[vendor]) {
+    state.food.itemsById[safeFoodId].priceHistory[vendor] = {};
+  }
+
+  state.food.itemsById[safeFoodId].priceHistory = {
+    ...(state.food.itemsById[safeFoodId].priceHistory ?? {}),
+    [vendor]: {
+      ...(state.food.itemsById[safeFoodId].priceHistory?.[vendor] ?? {}),
+      [entryId]: payload
+    }
+  };
+}
+
+async function deleteFoodPricePoint(foodId, vendor, entryId) {
+  const safeFoodId = String(foodId ?? "").trim();
+  const safeVendor = firebaseSafeKey(vendor ?? "unknown") || "unknown";
+  const safeEntryId = String(entryId ?? "").trim();
+  if (!safeFoodId || !safeEntryId) return false;
+
+  await safeFirebase(() =>
+    remove(ref(db, `${state.financePath}/foodItems/${safeFoodId}/priceHistory/${safeVendor}/${safeEntryId}`))
+  );
+
+  if (!state.food.itemsById?.[safeFoodId]?.priceHistory?.[safeVendor]) return true;
+
+  const nextVendorRows = { ...(state.food.itemsById[safeFoodId].priceHistory[safeVendor] ?? {}) };
+  delete nextVendorRows[safeEntryId];
+
+  state.food.itemsById[safeFoodId].priceHistory = {
+    ...(state.food.itemsById[safeFoodId].priceHistory ?? {}),
+    [safeVendor]: nextVendorRows
+  };
+
+  if (!Object.keys(nextVendorRows).length) {
+    delete state.food.itemsById[safeFoodId].priceHistory[safeVendor];
+  }
+  return true;
+}
+
+function getFoodByName(name = '') {
+  const safe = normalizeFoodName(name).toLowerCase();
+  if (!safe) return null;
+  const id = state.food.nameToId?.[safe];
+  return id ? state.food.itemsById?.[id] || null : null;
+}
+function foodOptionList(kind) {
+  return Object.keys(state.food.options?.[kind] || {}).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+}
+function foodItemsList() {
+  return Object.values(state.food.itemsById || {}).map((item) => ({
+    id: item.id,
+    name: item.name,
+    count: Number(item.countUsed || 0),
+    lastUsedAt: Number(item.updatedAt || 0),
+    meta: item
+  }));
+}
+
+function buildMergeProductDiagnostics() {
+  const items = foodItemsList();
+  const groups = {};
+  items.forEach((item) => {
+    const canonicalId = resolveMergeCanonicalId(item.id);
+    if (!groups[canonicalId]) groups[canonicalId] = new Set();
+    groups[canonicalId].add(item.id);
+  });
+  return { groups };
+}
+
+function isResolvedProductForMerge(product = {}, diagnostics = {}) {
+  const id = String(product.id || '').trim();
+  if (!id) return { resolved: false, canonicalId: '', reasons: [], aliasCount: 0, groupSize: 1, absorbed: false };
+  const meta = product.meta || state.food.itemsById?.[id] || {};
+  const canonicalId = resolveMergeCanonicalId(id);
+  const mergedInto = String(meta.mergedInto || '').trim();
+  const hiddenMerged = !!meta.hiddenMerged;
+  const redirectedToCanonical = !!canonicalId && canonicalId !== id;
+  const groupSize = Number(diagnostics?.groups?.[canonicalId]?.size || 1);
+  const aliasCount = new Set([
+    ...(Array.isArray(meta.aliases) ? meta.aliases : []),
+    ...(Object.values(state.foodCatalog.canonicals?.[id]?.aliasesByStore || {}).flatMap((list) => Array.isArray(list) ? list : []))
+  ].map((alias) => normalizeFoodName(alias)).filter(Boolean)).size;
+  const hasLinkedGroup = groupSize > 1;
+  const hasUsefulAliases = aliasCount > 1;
+  const absorbed = hiddenMerged || !!mergedInto || redirectedToCanonical;
+  const reasons = [];
+  if (hiddenMerged) reasons.push('hiddenMerged');
+  if (mergedInto) reasons.push('mergedInto');
+  if (redirectedToCanonical) reasons.push('redirected');
+  if (hasLinkedGroup) reasons.push('grouped');
+  if (hasUsefulAliases) reasons.push('aliases');
+  return {
+    resolved: absorbed || hasLinkedGroup || hasUsefulAliases,
+    canonicalId,
+    reasons,
+    aliasCount,
+    groupSize,
+    absorbed
+  };
+}
+
+function getMergeEligibleProducts({ hideResolved = false, searchTerm = '', selectedIds = [] } = {}) {
+  const selectedSet = new Set((Array.isArray(selectedIds) ? selectedIds : []).map((id) => String(id || '').trim()).filter(Boolean));
+  const diagnostics = buildMergeProductDiagnostics();
+  const query = normalizeFoodCompareKey(searchTerm || '');
+  const all = foodItemsList().map((item) => {
+    const mergeMeta = isResolvedProductForMerge(item, diagnostics);
+    return { ...item, mergeMeta };
+  });
+  const origin = all.filter((item) => {
+    if (item.mergeMeta.absorbed) return false;
+    if (hideResolved && item.mergeMeta.resolved && !selectedSet.has(item.id)) return false;
+    if (query && !normalizeFoodCompareKey(item.name).includes(query)) return false;
+    return true;
+  });
+  const pendingCount = all.filter((item) => !item.mergeMeta.resolved && !item.mergeMeta.absorbed).length;
+  const destination = all.filter((item) => {
+    if (item.mergeMeta.absorbed) return false;
+    if (item.mergeMeta.canonicalId && item.mergeMeta.canonicalId !== item.id) return false;
+    return true;
+  });
+  return {
+    origin: sortProductsForMergeList(origin),
+    destination: sortProductsForMergeList(destination),
+    all,
+    pendingCount
+  };
+}
+
+function sortProductsForMergeList(products = []) {
+  const collator = new Intl.Collator('es', {
+    usage: 'sort',
+    sensitivity: 'base',
+    numeric: true,
+    ignorePunctuation: true
+  });
+  return (Array.isArray(products) ? products : [])
+    .map((product, index) => ({ product, index }))
+    .sort((a, b) => {
+      const nameA = String(a.product?.name || '').normalize('NFC').trim();
+      const nameB = String(b.product?.name || '').normalize('NFC').trim();
+      const byName = collator.compare(nameA, nameB);
+      if (byName !== 0) return byName;
+      return a.index - b.index;
+    })
+    .map(({ product }) => product);
+}
+
+function topFoodItems(limit = 5) {
+  return foodItemsList().sort((a, b) => (b.count - a.count) || (b.lastUsedAt - a.lastUsedAt) || a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })).slice(0, limit);
+}
+
+async function loadFoodCatalog(force = false) {
+  if (state.food.loading) return;
+  if (state.food.loaded && !force) return;
+  state.food.loading = true;
+  try {
+    const snap = await safeFirebase(() => get(ref(db, `${state.financePath}/catalog`)));
+    const val = snap?.val() || {};
+    state.food.options = {
+      typeOfMeal: normalizeFoodMap(val.foodOptions?.typeOfMeal || {}),
+      cuisine: normalizeFoodMap(val.foodOptions?.cuisine || {}),
+      place: normalizeFoodMap(val.foodOptions?.place || {})
+    };
+    state.food.items = normalizeFoodMap(val.foodItems || {});
+    const foodSnap = await safeFirebase(() => get(ref(db, `${state.financePath}/foodItems`)));
+    const entityMap = foodSnap?.val() || {};
+    const normalizedEntities = normalizeFoodEntityMap(entityMap);
+    if (!Object.keys(normalizedEntities.out).length && Object.keys(state.food.items || {}).length) {
+      Object.entries(state.food.items || {}).forEach(([key, legacy]) => {
+        const id = window.crypto?.randomUUID?.() || `food-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+        normalizedEntities.out[id] = {
+          id,
+          name: normalizeFoodName(legacy?.name || key || ''),
+          mealType: normalizeFoodName(legacy?.lastExtras?.mealType || ''),
+          cuisine: normalizeFoodName(legacy?.lastExtras?.cuisine || ''),
+          healthy: normalizeFoodName(legacy?.lastExtras?.healthy || legacy?.lastExtras?.cuisine || ''),
+          place: normalizeFoodName(legacy?.lastExtras?.place || ''),
+          defaultPrice: Number(legacy?.lastPrice || 0),
+          countUsed: Number(legacy?.count || 0),
+          createdAt: Number(legacy?.createdAt || 0) || nowTs(),
+          updatedAt: Number(legacy?.lastUsedAt || 0) || nowTs()
+        };
+        if (normalizedEntities.out[id].name) normalizedEntities.nameToId[normalizedEntities.out[id].name.toLowerCase()] = id;
+      });
+      financeDebug('migrated legacy foodItems into entities', { count: Object.keys(normalizedEntities.out).length });
+    }
+    state.food.itemsById = normalizedEntities.out;
+    state.food.nameToId = normalizedEntities.nameToId;
+    financeDebug('food catalog loaded', { options: Object.keys(state.food.options?.typeOfMeal || {}).length, items: Object.keys(state.food.itemsById || {}).length });
+    state.food.loaded = true;
+  } finally {
+    state.food.loading = false;
+  }
+}
+
+async function ensureFoodCatalogLoaded(force = false) {
+  await loadFoodCatalog(force);
+}
+
+function normalizeAliasKey(value = '') {
+  return firebaseSafeKey(normalizeFoodName(value).toLowerCase());
+}
+
+async function loadFoodMetaCatalog(force = false) {
+  if (state.foodCatalog.loading) return;
+  if (state.foodCatalog.loaded && !force) return;
+  state.foodCatalog.loading = true;
+  try {
+    const snap = await safeFirebase(() => get(ref(db, `${state.financePath}/foodCatalog`)));
+    const val = snap?.val() || {};
+    state.foodCatalog.canonicals = Object.entries(val.canonicals && typeof val.canonicals === 'object' ? val.canonicals : {}).reduce((acc, [id, row]) => {
+      const aliasesByStore = row?.aliasesByStore && typeof row.aliasesByStore === 'object' ? row.aliasesByStore : {};
+      const pricesByStore = row?.pricesByStore && typeof row.pricesByStore === 'object' ? row.pricesByStore : {};
+      acc[id] = { ...row, aliasesByStore, pricesByStore };
+      return acc;
+    }, {});
+    state.foodCatalog.aliases = val.aliases && typeof val.aliases === 'object' ? val.aliases : {};
+    state.foodCatalog.ignored = val.ignored && typeof val.ignored === 'object' ? val.ignored : {};
+    state.foodCatalog.merges = Object.entries(val.merges && typeof val.merges === 'object' ? val.merges : {}).reduce((acc, [id, row]) => {
+      if (typeof row === 'string') { acc[id] = { canonicalId: row }; return acc; }
+      if (row && typeof row === 'object' && row.canonicalId) { acc[id] = row; return acc; }
+      return acc;
+    }, {});
+    state.foodCatalog.loaded = true;
+  } finally {
+    state.foodCatalog.loading = false;
+  }
+}
+
+async function ensureFoodMetaCatalogLoaded(force = false) {
+  await loadFoodMetaCatalog(force);
+}
+
+const DEBUG_FINANCE_PRODUCTS = FINANCE_DEBUG;
+
+function parseProductsRangeValue(rangeType = 'month', rangeValue = '') {
+  const safeType = ['day', 'week', 'month', 'year', 'total', 'custom'].includes(String(rangeType || '')) ? String(rangeType) : 'month';
+  const rawValue = String(rangeValue || '').trim();
+  const now = new Date();
+  if (!rawValue) {
+    if (safeType === 'day' || safeType === 'week') return dayKeyFromTs(now.getTime());
+    if (safeType === 'month') return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    if (safeType === 'year') return String(now.getFullYear());
+    return '';
+  }
+  if (safeType === 'day' || safeType === 'week') return toIsoDay(rawValue) || dayKeyFromTs(now.getTime());
+  if (safeType === 'month') return /^\d{4}-\d{2}$/.test(rawValue) ? rawValue : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  if (safeType === 'year') return /^\d{4}$/.test(rawValue) ? rawValue : String(now.getFullYear());
+  return rawValue;
+}
+
+function getProductRowsForRange(rangeType = 'month', rangeValue = '', filters = {}) {
+  const allTxRows = balanceTxList();
+  const range = ['day', 'week', 'month', 'year', 'total', 'custom'].includes(String(rangeType || '')) ? String(rangeType) : 'month';
+  const safeValue = parseProductsRangeValue(range, rangeValue);
+  let rows = [];
+  let start = null;
+  let end = null;
+  if (range === 'custom') {
+    const now = Date.now();
+    const startTs = parseDayKey(filters.customStart || dayKeyFromTs(now - (30 * 86400000)));
+    const endTs = parseDayKey(filters.customEnd || dayKeyFromTs(now)) + 86400000;
+    start = Math.min(startTs, endTs - 86400000);
+    end = Math.max(endTs, startTs + 86400000);
+    rows = allTxRows.filter((row) => {
+      const ts = txTs(row);
+      return Number.isFinite(ts) && ts >= start && ts < end;
+    });
+  } else if (range === 'day') {
+    start = parseDayKey(safeValue || dayKeyFromTs(Date.now()));
+    end = start + 86400000;
+    rows = allTxRows.filter((row) => {
+      const ts = txTs(row);
+      return Number.isFinite(ts) && ts >= start && ts < end;
+    });
+  } else if (range === 'week') {
+    start = isoWeekStartTs(safeValue || dayKeyFromTs(Date.now()));
+    end = start + (7 * 86400000);
+    rows = allTxRows.filter((row) => {
+      const ts = txTs(row);
+      return Number.isFinite(ts) && ts >= start && ts < end;
+    });
+  } else if (range === 'month') {
+    const [year, month] = String(safeValue || '').split('-').map(Number);
+    start = new Date(year, (month || 1) - 1, 1, 0, 0, 0, 0).getTime();
+    end = new Date(year, (month || 1), 1, 0, 0, 0, 0).getTime();
+    rows = allTxRows.filter((row) => {
+      const ts = txTs(row);
+      return Number.isFinite(ts) && ts >= start && ts < end;
+    });
+  } else if (range === 'year') {
+    const year = Number(safeValue || new Date().getFullYear());
+    start = new Date(year, 0, 1, 0, 0, 0, 0).getTime();
+    end = new Date(year + 1, 0, 1, 0, 0, 0, 0).getTime();
+    rows = allTxRows.filter((row) => {
+      const ts = txTs(row);
+      return Number.isFinite(ts) && ts >= start && ts < end;
+    });
+  } else {
+    rows = allTxRows.slice();
+    const txTimestamps = rows.map((row) => txTs(row)).filter((ts) => Number.isFinite(ts) && ts > 0);
+    start = txTimestamps.length ? Math.min(...txTimestamps) : null;
+    end = txTimestamps.length ? (Math.max(...txTimestamps) + 1) : null;
+  }
+  console.log('[Productos][Rango] dataset resuelto', { range, rangeValue: safeValue, rows: rows.length, start, end });
+  return { rows, start, end, range, rangeValue: safeValue };
+}
+
+function resolveProductsRangeRows(filters = {}) {
+  const range = ['day', 'week', 'month', 'year', 'total', 'custom'].includes(String(filters.range || ''))
+    ? String(filters.range)
+    : 'month';
+  const rangeValue = String(filters.rangeValue || '');
+  return getProductRowsForRange(range, rangeValue, filters);
+}
+
+function buildFoodLines(rows = [], filters = {}) {
+  const vendorFilter = String(filters.vendor || 'all');
+  const accountFilter = String(filters.account || 'all');
+  const foodOnly = !!filters.onlyFood;
+  const lines = [];
+  let purchaseCount = 0;
+  rows.forEach((row) => {
+    if (normalizeTxType(row?.type) !== 'expense') return;
+    const ts = txTs(row);
+    if (!Number.isFinite(ts) || ts <= 0) return;
+    if (accountFilter !== 'all' && String(row?.accountId || '') !== accountFilter) return;
+    purchaseCount += 1;
+    const items = foodItemsFromTx(row).filter((item) => normalizeFoodName(item?.name || ''));
+    if (!items.length) return;
+    const txVendor = firebaseSafeKey(normalizeFoodName(row?.extras?.filters?.place || row?.extras?.place || 'unknown')) || 'unknown';
+    const txAmount = Math.abs(Number(row?.amount || 0));
+    let valid = items.map((item) => {
+      const totalPrice = Math.abs(Number(item?.totalPrice ?? item?.amount ?? item?.price ?? 0));
+      const qty = Math.max(1, Number(item?.qty || 1));
+      const unit = String(item?.unit || 'ud').trim() || 'ud';
+      const unitPrice = Number(item?.unitPrice || computeUnitPrice(totalPrice, qty));
+      const vendorKey = firebaseSafeKey(normalizeFoodName(item?.place || txVendor || 'unknown')) || 'unknown';
+      return {
+        txId: row.id,
+        accountId: String(row?.accountId || ''),
+        ts,
+        date: dayKeyFromTs(ts),
+        vendorKey,
+        nameRaw: normalizeFoodName(item?.name || ''),
+        foodId: String(item?.foodId || ''),
+        productKey: String(item?.productKey || ''),
+        itemCategory: String(item?.category || item?.category_app || row?.category || ''),
+        qty,
+        unit,
+        totalPrice,
+        unitPrice: Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : totalPrice,
+      };
+    });
+    const hasDirectLinePrices = valid.some((line) => line.totalPrice > 0);
+    if (!hasDirectLinePrices && txAmount > 0 && valid.length) {
+      const totalQty = valid.reduce((sum, line) => sum + Math.max(1, Number(line.qty || 1)), 0) || valid.length;
+      valid = valid.map((line) => {
+        const weight = Math.max(1, Number(line.qty || 1)) / totalQty;
+        const fallbackTotal = txAmount * weight;
+        return {
+          ...line,
+          totalPrice: fallbackTotal,
+          unitPrice: computeUnitPrice(fallbackTotal, line.qty)
+        };
+      });
+    }
+    valid = valid.filter((line) => line.totalPrice > 0);
+    valid.forEach((line) => {
+      if (vendorFilter !== 'all' && line.vendorKey !== vendorFilter) return;
+      if (foodOnly && !isFoodCategory(line.itemCategory || '')) return;
+      lines.push(line);
+    });
+  });
+  return { lines, purchaseCount };
+}
+
+function resolveMergeCanonicalId(rawId = '') {
+  const safeId = String(rawId || '').trim();
+  if (!safeId) return '';
+  const visited = new Set();
+  let currentId = safeId;
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const mergeValue = state.foodCatalog.merges?.[currentId] || state.foodCatalog.merges?.[firebaseSafeKeyLoose(currentId)];
+    if (!mergeValue) return currentId;
+    if (typeof mergeValue === 'string') {
+      const nextId = String(mergeValue || currentId).trim();
+      if (!nextId || nextId === currentId) return currentId;
+      currentId = nextId;
+      continue;
+    }
+    if (mergeValue && typeof mergeValue === 'object' && mergeValue.canonicalId) {
+      const nextId = String(mergeValue.canonicalId || currentId).trim();
+      if (!nextId || nextId === currentId) return currentId;
+      currentId = nextId;
+      continue;
+    }
+    return currentId;
+  }
+  return currentId || safeId;
+}
+
+function resolveCanonicalForLine(line = {}) {
+  const vendorKey = firebaseSafeKey(line.vendorKey || 'unknown') || 'unknown';
+  const aliasKey = normalizeAliasKey(normalizeFoodCompareKey(line.nameRaw || line.productKey || ''));
+  const byVendor = state.foodCatalog.aliases?.[vendorKey] || {};
+  const byUnknown = state.foodCatalog.aliases?.unknown || {};
+  const fromAlias = byVendor?.[aliasKey]?.canonicalId || byUnknown?.[aliasKey]?.canonicalId;
+  if (fromAlias) return resolveMergeCanonicalId(String(fromAlias));
+  if (line.foodId) return resolveMergeCanonicalId(String(line.foodId));
+  const resolvedFood = resolveFoodItemByAnyKey(line.nameRaw || line.productKey || '');
+  if (resolvedFood?.id) return resolveMergeCanonicalId(String(resolvedFood.id));
+  return `pseudo_${aliasKey || normalizeAliasKey('sin-datos')}`;
+}
+
+function aggregateProducts(lines = [], purchaseCount = 0) {
+  const acc = {};
+  const totalFood = lines.reduce((sum, line) => sum + Number(line.totalPrice || 0), 0);
+  lines.forEach((line) => {
+    const canonicalId = resolveCanonicalForLine(line);
+    const canonicalMeta = state.foodCatalog.canonicals?.[canonicalId] || state.food.itemsById?.[canonicalId] || {};
+    const canonicalName = normalizeFoodName(canonicalMeta?.name || canonicalMeta?.displayName || line.nameRaw || canonicalId.replace(/^pseudo_/, '')) || 'Sin datos';
+    if (!acc[canonicalId]) {
+      acc[canonicalId] = { canonicalId, canonicalName, total: 0, count: 0, purchases: new Set(), vendors: {}, lastTs: 0, lastPrice: null, lastVendor: '', aliases: new Set() };
+    }
+    const row = acc[canonicalId];
+    row.total += Number(line.totalPrice || 0);
+    row.count += Math.max(1, Number(line.qty || 1));
+    row.purchases.add(line.txId);
+    row.aliases.add(line.nameRaw);
+    if (line.ts >= row.lastTs) {
+      row.lastTs = line.ts;
+      row.lastPrice = line.unitPrice || line.totalPrice;
+      row.lastVendor = line.vendorKey;
+    }
+    if (!row.vendors[line.vendorKey]) row.vendors[line.vendorKey] = { aliasSet: new Set(), prices: [], count: 0, lastTs: 0, lastPrice: null, unit: line.unit || 'ud' };
+    const vendor = row.vendors[line.vendorKey];
+    vendor.aliasSet.add(line.nameRaw);
+    vendor.prices.push(line.unitPrice || line.totalPrice);
+    vendor.count += 1;
+    if (line.ts >= vendor.lastTs) {
+      vendor.lastTs = line.ts;
+      vendor.lastPrice = line.unitPrice || line.totalPrice;
+      vendor.unit = line.unit || vendor.unit || 'ud';
+    }
+  });
+  const products = Object.values(acc).map((row) => {
+    const vendorRows = Object.entries(row.vendors).map(([vendorKey, meta]) => {
+      const avg = meta.prices.length ? (meta.prices.reduce((sum, p) => sum + Number(p || 0), 0) / meta.prices.length) : null;
+      const minPrice = meta.prices.length ? Math.min(...meta.prices) : null;
+      return { vendorKey, aliasText: [...meta.aliasSet].join(', '), count: meta.count, lastPrice: meta.lastPrice, avgPrice: avg, minPrice, unit: meta.unit || 'ud', lastTs: meta.lastTs };
+    }).sort((a, b) => (a.avgPrice ?? Infinity) - (b.avgPrice ?? Infinity));
+    const cheapest = vendorRows.find((v) => Number.isFinite(v.avgPrice));
+    const pricy = vendorRows.slice().reverse().find((v) => Number.isFinite(v.avgPrice));
+    return {
+      ...row,
+      purchases: row.purchases.size,
+      aliases: [...row.aliases],
+      percentOfFood: totalFood > 0 ? (row.total / totalFood) * 100 : 0,
+      vendorRows,
+      cheapestVendorKey: cheapest?.vendorKey || '',
+      cheapestPrice: cheapest?.avgPrice ?? null,
+      pricyVendorKey: pricy?.vendorKey || '',
+      pricyPrice: pricy?.avgPrice ?? null
+    };
+  }).filter((row) => !state.foodCatalog.ignored?.[row.canonicalId]);
+  const topVendorByEur = lines.reduce((accVendor, line) => {
+    accVendor[line.vendorKey] = (accVendor[line.vendorKey] || 0) + Number(line.totalPrice || 0);
+    return accVendor;
+  }, {});
+  const topVendor = Object.entries(topVendorByEur).sort((a, b) => b[1] - a[1])[0] || null;
+  return { products, totalFood, purchaseCount, itemsCount: lines.length, topVendor: topVendor ? { key: topVendor[0], total: topVendor[1] } : null };
+}
+
+function buildProductsViewModel(cfg = {}) {
+  const effectiveCfg = {
+    ...cfg,
+    range: ['day', 'week', 'month', 'year', 'total', 'custom'].includes(String(cfg.range || '')) ? String(cfg.range) : 'month',
+    rangeValue: String(cfg.rangeValue || ''),
+    scope: cfg.scope === 'global' ? 'global' : 'personal'
+  };
+  const accountsById = Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
+  const rangeData = getProductRowsForRange(effectiveCfg.range, effectiveCfg.rangeValue, effectiveCfg);
+  const { rows: rangeRows, start, end, rangeValue } = rangeData;
+  effectiveCfg.rangeValue = rangeValue;
+  const scopedAmountByTx = {};
+  rangeRows.forEach((row) => {
+    if (normalizeTxType(row?.type) !== 'expense') return;
+    const scopedAmount = effectiveCfg.scope === 'global' ? Math.abs(Number(row.amount || 0)) : Math.abs(personalDeltaForTx(row, accountsById));
+    if (!scopedAmount) return;
+    scopedAmountByTx[row.id] = scopedAmount;
+  });
+  const lines = getProductItemRows(rangeRows, {
+    amountByTxId: scopedAmountByTx,
+    productsById: state.food.itemsById || {},
+    vendor: effectiveCfg.vendor || 'all',
+    account: effectiveCfg.account || 'all',
+    onlyFood: !!effectiveCfg.onlyFood
+  });
+  const purchaseCount = new Set(lines.map((line) => line.txId)).size;
+  const detailAgg = aggregateProducts(lines, purchaseCount);
+  const totalFood = Number(detailAgg.totalFood || 0);
+  const productRows = detailAgg.products.map((detail) => ({
+    canonicalId: detail.canonicalId,
+    canonicalName: detail.canonicalName,
+    total: Number(detail.total || 0),
+    percentOfFood: totalFood > 0 ? ((Number(detail.total || 0) / totalFood) * 100) : 0,
+    count: Number(detail.count || 0),
+    purchases: Number(detail.purchases || 0),
+    cheapestVendorKey: detail.cheapestVendorKey || '',
+    cheapestPrice: detail.cheapestPrice ?? null,
+    lastVendor: detail.lastVendor || '',
+    lastPrice: detail.lastPrice ?? null,
+    aliases: Array.isArray(detail.aliases) ? detail.aliases : []
+  }));
+  console.log('[Productos][Stats] reconstrucción canónica', { products: productRows.length, lines: lines.length, purchaseCount, totalFood });
+  const productsQuery = normalizeFoodName(effectiveCfg.productsQuery || '');
+  const productsQueryKey = normalizeProductItemKey(productsQuery);
+  const queryFilteredRows = productsQuery
+    ? productRows.filter((row) => {
+      const nameKey = normalizeProductItemKey(row.canonicalName || '');
+      if (nameKey.includes(productsQueryKey)) return true;
+      return Array.isArray(row.aliases)
+        && row.aliases.some((alias) => normalizeProductItemKey(alias).includes(productsQueryKey));
+    })
+    : productRows;
+  const sortedRows = queryFilteredRows.slice().sort((a, b) => {
+    if ((effectiveCfg.tab || 'top-eur') === 'top-count') return b.count - a.count || b.total - a.total;
+    return b.total - a.total || b.count - a.count;
+  });
+  const listVisible = effectiveCfg.onlyWithItems ? sortedRows.filter((row) => row.count > 0) : sortedRows;
+  if (DEBUG_FINANCE_PRODUCTS) {
+    console.log('[Productos] range', { start, end, rangeValue }, 'itemsLines', lines.length);
+  }
+  return {
+    cfg: effectiveCfg,
+    lines,
+    rangeRows,
+    legendRows: [],
+    listVisible,
+    totalFood,
+    purchaseCount: detailAgg.purchaseCount,
+    itemsCount: lines.length,
+    topVendor: detailAgg.topVendor
+  };
+}
+
+function renderProductsView(isModal = false) {
+  const model = buildProductsViewModel(state.foodProductsView || {});
+  const { cfg, lines, listVisible, totalFood, purchaseCount, itemsCount, topVendor } = model;
+  const rangeOptions = [['day', 'Día'], ['week', 'Semana'], ['month', 'Mes'], ['year', 'Año'], ['total', 'Total'], ['custom', 'Custom']];
+  const vendorOptions = ['all', ...new Set(lines.map((line) => line.vendorKey))].sort((a, b) => a.localeCompare(b, 'es'));
+  const accountOptions = ['all', ...new Set(balanceTxList().filter((row) => normalizeTxType(row?.type) === 'expense').map((row) => String(row.accountId || '')).filter(Boolean))];
+  const totalAverage = purchaseCount > 0 ? totalFood / purchaseCount : 0;
+  const listHtml = listVisible.length
+    ? listVisible.map((row) => {
+      const searchParts = [row.canonicalName, ...(Array.isArray(row.aliases) ? row.aliases : [])]
+        .map((part) => normalizeProductItemKey(part))
+        .filter(Boolean)
+        .join(' ');
+      return `<button type="button" class="finFoodProductsRow" data-food-item-detail="${escapeHtml(row.canonicalId)}" data-food-product-row data-food-product-search="${escapeHtml(searchParts)}"><strong>${escapeHtml(row.canonicalName)}</strong><span>${fmtCurrency(row.total)} · ${row.percentOfFood.toFixed(1)}%</span><span>${(cfg.tab || 'top-eur') === 'top-count' ? `${row.count} uds` : `${row.purchases} compras`}</span><span>${row.cheapestVendorKey ? `Más barato en ${escapeHtml(row.cheapestVendorKey)} (${Number(row.cheapestPrice || 0).toFixed(2)} €/ud)` : 'Sin comparativa'}</span><small>${row.lastVendor ? `Último ${Number(row.lastPrice || 0).toFixed(2)} €/ud · ${escapeHtml(row.lastVendor)}` : ''}</small></button>`;
+    }).join('')
+    : '<p class="finance-empty">Sin productos en este rango.</p>';
+  const content = `<div class="financeProductsView"><section class="finFoodProductsHead">
+      <div class="finFoodFilters">
+        <select class="food-control" data-food-products-range>${rangeOptions.map(([key, label]) => `<option value="${key}" ${cfg.range === key ? 'selected' : ''}>${label}</option>`).join('')}</select>
+        <select class="food-control" data-food-products-vendor>${vendorOptions.map((vendor) => `<option value="${escapeHtml(vendor)}" ${cfg.vendor === vendor ? 'selected' : ''}>${escapeHtml(vendor === 'all' ? 'Todos vendors' : vendor)}</option>`).join('')}</select>
+        <input class="food-control" type="search" placeholder="Buscar producto" value="${escapeHtml(cfg.productsQuery || '')}" data-food-products-search />
+        <select class="food-control" data-food-products-account>${accountOptions.map((id) => `<option value="${escapeHtml(id)}" ${cfg.account === id ? 'selected' : ''}>${escapeHtml(id === 'all' ? 'Todas cuentas' : (state.accounts.find((acc) => acc.id === id)?.name || id))}</option>`).join('')}</select>
+        <label class="financeStats__checkbox"><input type="checkbox" data-food-products-items-only ${cfg.onlyWithItems ? 'checked' : ''}> solo con items</label>
+        <label class="financeStats__checkbox"><input type="checkbox" data-food-products-food-only ${cfg.onlyFood ? 'checked' : ''}> Solo comida</label>
+        ${cfg.range === 'custom' ? `<div class="finFoodCustomRange"><input type="date" class="food-control" data-food-products-custom-start value="${escapeHtml(cfg.customStart || '')}" /><input type="date" class="food-control" data-food-products-custom-end value="${escapeHtml(cfg.customEnd || '')}" /></div>` : ''}
+      </div>
+      <div class="finFoodChipRow">
+        <span class="finFoodChip finFoodChip--glow">Total items: ${fmtCurrency(totalFood)}</span>
+        <span class="finFoodChip">Compras: ${purchaseCount}</span>
+        <span class="finFoodChip">Items: ${itemsCount}</span>
+        <span class="finFoodChip">Media compra: ${fmtCurrency(totalAverage)}</span>
+        <span class="finFoodChip">Top vendor: ${topVendor ? `${escapeHtml(topVendor.key)} (${fmtCurrency(topVendor.total)})` : '—'}</span>
+      </div>
+      <div class="finFoodMiniTabs"><button type="button" class="finFoodMiniTab ${(cfg.tab || 'top-eur') === 'top-eur' ? 'is-active' : ''}" data-food-products-tab="top-eur">Top €</button><button type="button" class="finFoodMiniTab ${(cfg.tab || 'top-eur') === 'top-count' ? 'is-active' : ''}" data-food-products-tab="top-count">Top #</button><button type="button" class="finFoodMiniTab" data-food-merge-open="">Fusionar</button></div>
+    </section>
+    <section class="finFoodProductsScroll" data-finance-products-scroll><section class="finFoodProductsList">${listHtml}</section></section></div>`;
+  if (isModal) {
+    return `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>Food / Productos</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header>${content}</div>`;
+  }
+  return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Productos</h2></header>${content}</section>`;
+}
+
+
+function renderFoodProductsModal() {
+  return renderProductsView(true);
+}
+
+function renderFinanceProducts() {
+  return renderProductsView(false);
+}
+
+function applyProductsSearchFilter(inputEl) {
+  const root = inputEl?.closest('.financeProductsView') || document;
+  if (!inputEl || !root) return;
+  const queryKey = normalizeProductItemKey(inputEl.value || '');
+  root.querySelectorAll('[data-food-product-row]').forEach((row) => {
+    const haystack = String(row.dataset.foodProductSearch || '');
+    row.style.display = !queryKey || haystack.includes(queryKey) ? '' : 'none';
+  });
+}
+
+function applyMergeSearchFilter(inputEl, selector) {
+  if (!inputEl) return;
+  const queryKey = normalizeProductItemKey(inputEl.value || '');
+  const scope = inputEl.closest('#finance-modal') || document;
+  scope.querySelectorAll(selector).forEach((row) => {
+    const haystack = String(row.dataset.foodMergeName || '');
+    row.style.display = !queryKey || haystack.includes(queryKey) ? '' : 'none';
+  });
+}
+
+function firebaseSafeKeyLoose(s) {
+  return String(s ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[.#$\[\]\/]/g, '_')
+    .replace(/\s+/g, ' ')
+    .slice(0, 120) || 'unknown';
+}
+
+function firebaseClean(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (v === undefined) continue;
+    if (Number.isNaN(v)) continue;
+    if (v === Infinity || v === -Infinity) continue;
+    if (v instanceof Date || v instanceof Map || v instanceof Set || Array.isArray(v) || (v && typeof v === 'object')) continue;
+    out[k] = v === null ? null : v;
+  }
+  return out;
+}
+
+async function mergeFoodProducts(selection = [], destinationId = '') {
+  const ids = [...new Set(selection.map((id) => String(id || '').trim()).filter(Boolean))];
+  console.log('[mergeFoodProducts] selected product ids/names', ids.map((id) => ({ id, name: state.food.itemsById?.[id]?.displayName || state.food.itemsById?.[id]?.name || id })));
+  if (ids.length < 2) return false;
+
+  const canonicalId = String(destinationId || ids[0]).trim();
+  if (!ids.includes(canonicalId)) return false;
+
+  const canonicalItem = state.food.itemsById?.[canonicalId] || {};
+  const canonicalName = normalizeFoodName(canonicalItem.displayName || canonicalItem.name || canonicalId) || canonicalId;
+  const canonicalIdKey = String(canonicalItem.idKey || firebaseSafeKey(canonicalName) || canonicalId).trim();
+  const sourceIds = ids.filter((id) => id !== canonicalId);
+  const sourceItems = sourceIds.map((id) => ({ id, ...(state.food.itemsById?.[id] || {}) }));
+  const prevCanonical = state.foodCatalog.canonicals?.[canonicalId] || {};
+  const canonicalSnapshotBefore = JSON.parse(JSON.stringify(prevCanonical || {}));
+  const sourceSnapshotsBefore = sourceItems.map((item) => ({
+    id: item.id,
+    name: item.displayName || item.name || item.id,
+    aliases: Array.isArray(item.aliases) ? item.aliases : [],
+    vendorAliases: item.vendorAliases || {},
+    priceHistoryStores: Object.keys(item.priceHistory || {}),
+    mergedInto: item.mergedInto || null,
+    hiddenMerged: !!item.hiddenMerged
+  }));
+
+  console.log('[mergeFoodProducts] target product id/name', { canonicalId, canonicalName });
+  console.log('[mergeFoodProducts] source snapshot before merge', sourceSnapshotsBefore);
+  console.log('[mergeFoodProducts] target snapshot before merge', canonicalSnapshotBefore);
+
+  const aliasesByStore = prevCanonical.aliasesByStore && typeof prevCanonical.aliasesByStore === 'object' ? JSON.parse(JSON.stringify(prevCanonical.aliasesByStore)) : {};
+  const pricesByStore = prevCanonical.pricesByStore && typeof prevCanonical.pricesByStore === 'object' ? JSON.parse(JSON.stringify(prevCanonical.pricesByStore)) : {};
+  const updatesToCommit = {};
+  const nextAliasesState = JSON.parse(JSON.stringify(state.foodCatalog.aliases || {}));
+  const nextMergesState = JSON.parse(JSON.stringify(state.foodCatalog.merges || {}));
+  const now = nowTs();
+
+  const normalizedSourceNames = new Set();
+  const normalizedSourceKeys = new Set();
+  sourceItems.forEach((item) => {
+    normalizedSourceKeys.add(String(item.id || '').trim());
+    normalizedSourceKeys.add(String(item.idKey || '').trim());
+    [item.name, item.displayName, ...(Array.isArray(item.aliases) ? item.aliases : [])]
+      .map((v) => normalizeFoodName(v))
+      .filter(Boolean)
+      .forEach((alias) => {
+        normalizedSourceNames.add(normalizeFoodCompareKey(alias));
+        normalizedSourceKeys.add(firebaseSafeKey(alias));
+      });
+  });
+
+  const preRebuild = buildProductsViewModel(state.foodProductsCfg || {});
+  const preProducts = preRebuild?.products || [];
+  const preTargetTotal = Number(preProducts.find((row) => row.canonicalId === canonicalId)?.total || 0);
+  const preSourceTotal = preProducts.filter((row) => sourceIds.includes(row.canonicalId)).reduce((sum, row) => sum + Number(row.total || 0), 0);
+  console.log('[mergeFoodProducts] source totals before merge', { preTargetTotal, preSourceTotal });
+
+  for (const item of [{ id: canonicalId, ...canonicalItem }, ...sourceItems]) {
+    const baseAliases = [...new Set([item.name, item.displayName, ...(Array.isArray(item.aliases) ? item.aliases : []), item.id].map((v) => normalizeFoodName(v)).filter(Boolean))];
+    const vendorAliases = item.vendorAliases && typeof item.vendorAliases === 'object' ? item.vendorAliases : {};
+    const vendorKeys = new Set(['unknown', normalizeFoodName(item.place || ''), normalizeFoodName(item.createdFromVendor || ''), ...Object.keys(vendorAliases || {}), ...Object.keys(item.priceHistory || {})]);
+
+    for (const vendorRaw of vendorKeys) {
+      if (!vendorRaw) continue;
+      const vendorKey = firebaseSafeKeyLoose(vendorRaw || 'unknown');
+      const aliasesForVendor = [...new Set([
+        ...baseAliases,
+        ...((Array.isArray(vendorAliases[vendorRaw]) ? vendorAliases[vendorRaw] : []).map((v) => normalizeFoodName(v)).filter(Boolean))
+      ])];
+      if (!aliasesByStore[vendorKey]) aliasesByStore[vendorKey] = [];
+      aliasesByStore[vendorKey] = [...new Set([...(aliasesByStore[vendorKey] || []), ...aliasesForVendor])];
+
+      for (const aliasRaw of aliasesForVendor) {
+        const aliasCandidates = [...new Set([
+          normalizeAliasKey(aliasRaw),
+          normalizeAliasKey(normalizeFoodCompareKey(aliasRaw))
+        ].filter(Boolean))];
+        for (const aliasKey of aliasCandidates) {
+          const payload = firebaseClean({ canonicalId, aliasRaw: String(aliasRaw || ''), updatedAt: now });
+          updatesToCommit[`${state.financePath}/foodCatalog/aliases/${vendorKey}/${aliasKey}`] = payload;
+          if (!nextAliasesState[vendorKey]) nextAliasesState[vendorKey] = {};
+          nextAliasesState[vendorKey][aliasKey] = payload;
+        }
+      }
+
+      const vendorRows = item.priceHistory?.[vendorRaw] || item.priceHistory?.[vendorKey] || {};
+      const numericPrices = Object.values(vendorRows || {}).map((row) => Number(row?.unitPrice || row?.price || 0)).filter((v) => Number.isFinite(v) && v > 0);
+      if (!pricesByStore[vendorKey]) pricesByStore[vendorKey] = [];
+      pricesByStore[vendorKey] = [...pricesByStore[vendorKey], ...numericPrices].slice(-250);
+    }
+  }
+
+  if (!sourceItems.every((item) => {
+    const name = normalizeFoodName(item.displayName || item.name || item.id);
+    return Object.values(aliasesByStore).some((list) => Array.isArray(list) && list.includes(name));
+  })) {
+    console.error('[mergeFoodProducts] abort: alias migration incomplete', { sourceIds, aliasesByStore });
+    return false;
+  }
+
+  const txRows = balanceTxList().filter((row) => normalizeTxType(row?.type) === 'expense');
+  const txPatchByPath = {};
+  let sourceHistoricalLines = 0;
+  let migratedHistoricalLines = 0;
+
+  txRows.forEach((row) => {
+    const items = foodItemsFromTx(row);
+    if (!items.length || !row.__path) return;
+    let touched = false;
+    const nextItems = items.map((item) => {
+      const itemFoodId = String(item?.foodId || '').trim();
+      const itemProductKey = String(item?.productKey || '').trim();
+      const itemNameKey = normalizeFoodCompareKey(item?.name || '');
+      const matchesSource = sourceIds.includes(itemFoodId)
+        || normalizedSourceKeys.has(itemProductKey)
+        || normalizedSourceNames.has(itemNameKey)
+        || normalizedSourceKeys.has(itemFoodId);
+      if (!matchesSource) return item;
+      sourceHistoricalLines += 1;
+      touched = true;
+      migratedHistoricalLines += 1;
+      return {
+        ...item,
+        foodId: canonicalId,
+        productKey: canonicalIdKey
+      };
+    });
+    if (!touched) return;
+    const nextExtras = {
+      ...(row.extras && typeof row.extras === 'object' ? row.extras : {}),
+      items: nextItems,
+      migratedAt: now,
+      migratedToCanonicalId: canonicalId
+    };
+    txPatchByPath[row.__path] = nextExtras;
+    updatesToCommit[`${row.__path}/extras`] = nextExtras;
+  });
+
+  if (sourceHistoricalLines !== migratedHistoricalLines) {
+    console.error('[mergeFoodProducts] abort: historical migration mismatch', { sourceHistoricalLines, migratedHistoricalLines });
+    return false;
+  }
+
+  const canonicalPayload = {
+    name: String(canonicalName || canonicalId),
+    createdAt: Number(prevCanonical?.createdAt || now),
+    updatedAt: now,
+    aliasesByStore: Object.fromEntries(Object.entries(aliasesByStore).map(([store, list]) => [store, [...new Set((Array.isArray(list) ? list : []).map((it) => normalizeFoodName(it)).filter(Boolean))]])),
+    pricesByStore: Object.fromEntries(Object.entries(pricesByStore).map(([store, list]) => [store, (Array.isArray(list) ? list : []).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0).slice(-250)]))
+  };
+
+  console.log('[mergeFoodProducts] merged aliases result', canonicalPayload.aliasesByStore);
+  console.log('[mergeFoodProducts] merged price stores result', Object.fromEntries(Object.entries(canonicalPayload.pricesByStore || {}).map(([k, v]) => [k, (Array.isArray(v) ? v.length : 0)])));
+
+  updatesToCommit[`${state.financePath}/foodCatalog/canonicals/${canonicalId}`] = canonicalPayload;
+
+  sourceIds.forEach((id) => {
+    const mergeFromId = firebaseSafeKeyLoose(id);
+    const mergePayload = firebaseClean({ canonicalId, updatedAt: now });
+    updatesToCommit[`${state.financePath}/foodCatalog/merges/${id}`] = mergePayload;
+    updatesToCommit[`${state.financePath}/foodCatalog/merges/${mergeFromId}`] = mergePayload;
+    updatesToCommit[`${state.financePath}/foodItems/${id}/mergedInto`] = canonicalId;
+    updatesToCommit[`${state.financePath}/foodItems/${id}/hiddenMerged`] = true;
+    updatesToCommit[`${state.financePath}/foodItems/${id}/updatedAt`] = now;
+    nextMergesState[id] = mergePayload;
+    nextMergesState[mergeFromId] = mergePayload;
+  });
+
+  if (!Object.keys(updatesToCommit).length) {
+    console.error('[mergeFoodProducts] abort: empty persistence payload');
+    return false;
+  }
+
+  console.log('[mergeFoodProducts] persistence payload', { paths: Object.keys(updatesToCommit).length, sourceIds, canonicalId, migratedHistoricalLines });
+
+  try {
+    await safeFirebase(() => update(ref(db), updatesToCommit));
+  } catch (error) {
+    console.error('[mergeFoodProducts] abort: persistence failed, no local mutation applied', error);
+    return false;
+  }
+
+  state.foodCatalog.canonicals[canonicalId] = canonicalPayload;
+  state.foodCatalog.aliases = nextAliasesState;
+  state.foodCatalog.merges = nextMergesState;
+  sourceIds.forEach((id) => {
+    if (!state.food.itemsById?.[id]) return;
+    state.food.itemsById[id] = { ...state.food.itemsById[id], mergedInto: canonicalId, hiddenMerged: true, updatedAt: now };
+  });
+
+  Object.entries(txPatchByPath).forEach(([path, extras]) => {
+    const match = path.match(/\/(transactions|tx)\/([^/]+)$/);
+    if (match && state.balance?.[match[1]]?.[match[2]]) {
+      state.balance[match[1]][match[2]] = { ...state.balance[match[1]][match[2]], extras };
+      return;
+    }
+    const legacyMatch = path.match(/\/movements\/([^/]+)\/([^/]+)$/);
+    if (legacyMatch && state.balance?.movements?.[legacyMatch[1]]?.[legacyMatch[2]]) {
+      state.balance.movements[legacyMatch[1]][legacyMatch[2]] = { ...state.balance.movements[legacyMatch[1]][legacyMatch[2]], extras };
+    }
+  });
+
+  const rebuild = buildProductsViewModel(state.foodProductsCfg || {});
+  const visibleCanonicalIds = (rebuild?.products || []).map((row) => row.canonicalId);
+  const canonicalStats = (rebuild?.products || []).find((row) => row.canonicalId === canonicalId) || null;
+  const postTargetTotal = Number(canonicalStats?.total || 0);
+  const targetAliasesFlat = Object.values(canonicalPayload.aliasesByStore || {}).flatMap((list) => Array.isArray(list) ? list : []);
+  const expectedAliasNames = sourceItems.map((item) => normalizeFoodName(item.displayName || item.name || item.id)).filter(Boolean);
+  const aliasesVerified = expectedAliasNames.every((name) => targetAliasesFlat.includes(name));
+  const totalsVerified = postTargetTotal + 0.0001 >= (preTargetTotal + preSourceTotal);
+  const sourceHiddenVerified = sourceIds.every((id) => !visibleCanonicalIds.includes(id));
+
+  console.log('[mergeFoodProducts] merged totals result', { preTargetTotal, preSourceTotal, postTargetTotal });
+  console.log('[mergeFoodProducts] source redirect/hidden status after merge', sourceIds.map((id) => ({ id, mergedInto: state.food.itemsById?.[id]?.mergedInto, hiddenMerged: state.food.itemsById?.[id]?.hiddenMerged })));
+  console.log('[mergeFoodProducts] rebuilt stats for target', canonicalStats);
+  console.log('[mergeFoodProducts] visible products after rebuild', visibleCanonicalIds);
+
+  if (!aliasesVerified || !totalsVerified || !sourceHiddenVerified) {
+    console.error('[mergeFoodProducts][CRITICAL] post-merge verification failed', {
+      aliasesVerified,
+      totalsVerified,
+      sourceHiddenVerified,
+      expectedAliasNames,
+      postTargetTotal,
+      expectedMinTotal: preTargetTotal + preSourceTotal,
+      visibleCanonicalIds
+    });
+  }
+
+  return aliasesVerified && totalsVerified;
+}
+
+function normalizeFoodExtras(rawExtras = {}, amount = 0) {
+  if (!rawExtras || typeof rawExtras !== 'object') return null;
+  const extras = { ...rawExtras };
+  const items = Array.isArray(extras.items)
+    ? extras.items.map((item) => ({
+      foodId: String(item?.foodId || ''),
+      productKey: String(item?.productKey || ''),
+      name: normalizeFoodName(item?.name || item?.item || item?.productName || ''),
+      qty: Math.max(1, Number(item?.qty || 1)),
+      unit: String(item?.unit || 'ud').trim() || 'ud',
+      amount: Number((item?.amount ?? item?.totalPrice ?? item?.price) || 0),
+      totalPrice: Number((item?.totalPrice ?? item?.amount ?? item?.price) || 0),
+      price: Number((item?.price ?? item?.totalPrice ?? item?.amount) || 0),
+      unitPrice: Number((item?.unitPrice ?? item?.unit_price) || computeUnitPrice((item?.totalPrice ?? item?.amount ?? item?.price), item?.qty || 1)),
+      mealType: normalizeFoodName(item?.mealType || item?.typeOfMeal || ''),
+      cuisine: normalizeFoodName(item?.cuisine || ''),
+      place: normalizeFoodName(item?.place || ''),
+      healthy: String(item?.healthy || '')
+    })).filter((item) => item.name)
+    : [];
+  if (!items.length) {
+    const legacyName = normalizeFoodName(extras.item || extras.productName || extras.name || '');
+    if (legacyName) {
+      items.push({
+        foodId: String(extras.foodId || ''),
+        productKey: String(extras.productKey || ''),
+        name: legacyName,
+        qty: Math.max(1, Number(extras.qty || 1)),
+        unit: String(extras.unit || 'ud').trim() || 'ud',
+        amount: Number((extras.amount ?? extras.totalPrice ?? extras.price ?? amount) || 0),
+        totalPrice: Number((extras.totalPrice ?? extras.amount ?? extras.price ?? amount) || 0),
+        price: Number((extras.price ?? extras.totalPrice ?? extras.amount ?? amount) || 0),
+        unitPrice: Number((extras.unitPrice ?? extras.unit_price) || computeUnitPrice((extras.totalPrice ?? extras.amount ?? extras.price ?? amount), extras.qty || 1)),
+        mealType: normalizeFoodName(extras.mealType || extras.foodType || ''),
+        cuisine: normalizeFoodName(extras.cuisine || ''),
+        place: normalizeFoodName(extras.place || ''),
+        healthy: String(extras.healthy || '')
+      });
+    }
+  }
+  if (!items.length) return null;
+  return {
+    items,
+    filters: {
+      mealType: normalizeFoodName(extras.filters?.mealType || extras.mealType || extras.foodType || items[0]?.mealType || ''),
+      cuisine: normalizeFoodName(extras.filters?.cuisine || extras.cuisine || items[0]?.cuisine || ''),
+      place: normalizeFoodName(extras.filters?.place || extras.place || items.find((item) => item?.place)?.place || ''),
+      healthy: String(extras.healthy || items[0]?.healthy || '')
+    }
+  };
+}
+
+function foodItemsFromTx(row = {}) {
+  return normalizeFoodExtras(row.extras || row.food || {}, row.amount)?.items || [];
+}
+
+function groupTxByDay(txList = [], accountsById = {}, scope = 'personal') {
+  const grouped = {};
+  txList.forEach((rawRow) => {
+    const row = normalizeTxRow(rawRow, rawRow?.id);
+    const day = isoToDay(row.date || row.dateISO || '');
+    if (!day) return;
+    if (!grouped[day]) grouped[day] = { dayISO: day, rows: [], totalIncome: 0, totalExpense: 0, net: 0 };
+    const amount = Number.isFinite(row.amount) ? row.amount : 0;
+    const impact = scope === 'global'
+      ? (row.type === 'income' ? amount : (row.type === 'expense' ? -amount : 0))
+      : personalDeltaForTx(row, accountsById);
+    grouped[day].rows.push(row);
+    if (impact >= 0) grouped[day].totalIncome += impact;
+    else grouped[day].totalExpense += Math.abs(impact);
+    grouped[day].net += impact;
+  });
+  return Object.values(grouped).sort((a, b) => b.dayISO.localeCompare(a.dayISO));
+}
+
+function recurringForMonth(monthKey = getSelectedBalanceMonthKey()) {
+  const [year, month] = monthKey.split('-').map(Number);
+  const rows = [];
+  Object.entries(state.balance.recurring || {}).forEach(([id, rec]) => {
+    if (!rec || rec.disabled) return;
+    const schedule = rec.schedule || {};
+    const frequency = schedule.frequency || 'monthly';
+    if (frequency !== 'monthly') return;
+    const day = Math.max(1, Math.min(31, Number(schedule.dayOfMonth || 1)));
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const safeDay = Math.min(day, daysInMonth);
+    const dateISO = `${monthKey}-${String(safeDay).padStart(2, '0')}`;
+    if (schedule.startDate && dateISO < String(schedule.startDate)) return;
+    if (schedule.endDate && dateISO > String(schedule.endDate)) return;
+    rows.push(normalizeTxRow({
+      id: `rec-${id}-${monthKey}`,
+      recurringId: id,
+      recurringVirtual: true,
+      ...rec,
+      date: dateISO,
+      dateISO,
+      monthKey,
+      personalRatio: Number.isFinite(Number(rec?.personalRatio)) ? clamp01(rec.personalRatio, 1) : null
+    }, `rec-${id}-${monthKey}`));
+  });
+  return rows;
+}
+
+async function upsertFoodOption(kind, value, incrementCount = false) {
+  const name = normalizeFoodName(value);
+  if (!name) return '';
+  if (!state.food.options[kind]) state.food.options[kind] = {};
+  const prev = state.food.options[kind][name] || {};
+  const payload = {
+    createdAt: Number(prev.createdAt || 0) || nowTs(),
+    count: Number(prev.count || 0) + (incrementCount ? 1 : 0)
+  };
+  state.food.options[kind][name] = payload;
+  await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/foodOptions/${kind}/${name}`), payload));
+  return name;
+}
+
+async function upsertFoodItem(value, incrementCount = false, patch = {}) {
+  const payloadInput = typeof value === 'object' && value ? value : { name: value };
+  const name = normalizeFoodName(payloadInput.name || '');
+  if (!name) return '';
+  const existingId = payloadInput.id || state.food.nameToId?.[name.toLowerCase()] || '';
+  const foodId = existingId || (window.crypto?.randomUUID?.() || `food-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`);
+  const prevEntity = state.food.itemsById?.[foodId] || getFoodByName(name) || {};
+  const payload = {
+    id: foodId,
+    idKey: firebaseSafeKey(name),
+    name,
+    displayName: String(payloadInput.displayName || prevEntity.displayName || name).trim() || name,
+    aliases: Array.isArray(payloadInput.aliases) ? payloadInput.aliases.map((alias) => normalizeFoodName(alias)).filter(Boolean) : (prevEntity.aliases || []),
+    vendorAliases: payloadInput.vendorAliases && typeof payloadInput.vendorAliases === 'object' ? payloadInput.vendorAliases : (prevEntity.vendorAliases || {}),
+    createdFromVendor: String(payloadInput.createdFromVendor || prevEntity.createdFromVendor || ''),
+    mealType: normalizeFoodName(payloadInput.mealType ?? patch.lastExtras?.mealType ?? prevEntity.mealType ?? ''),
+    cuisine: normalizeFoodName(payloadInput.cuisine ?? patch.lastExtras?.cuisine ?? prevEntity.cuisine ?? ''),
+    healthy: normalizeFoodName(payloadInput.healthy ?? patch.lastExtras?.healthy ?? prevEntity.healthy ?? ''),
+    place: normalizeFoodName(payloadInput.place ?? patch.lastExtras?.place ?? prevEntity.place ?? ''),
+    defaultPrice: Number(payloadInput.defaultPrice ?? patch.lastPrice ?? prevEntity.defaultPrice ?? 0),
+    priceHistory: prevEntity.priceHistory || {},
+    countUsed: Number(prevEntity.countUsed || 0) + (incrementCount ? 1 : 0),
+    createdAt: Number(prevEntity.createdAt || 0) || nowTs(),
+    updatedAt: nowTs()
+  };
+  state.food.itemsById[foodId] = payload;
+  state.food.nameToId[name.toLowerCase()] = foodId;
+  financeDebug('upsert food item', { foodId, name, incrementCount, payload });
+  await safeFirebase(() => set(ref(db, `${state.financePath}/foodItems/${foodId}`), payload));
+  const legacyKey = firebaseSafeKey(name);
+  const prev = state.food.items[legacyKey] || state.food.items[name] || {};
+  const legacyPayload = {
+    name,
+    key: legacyKey,
+    createdAt: Number(prev.createdAt || 0) || nowTs(),
+    count: Number(prev.count || 0) + (incrementCount ? 1 : 0),
+    lastUsedAt: incrementCount ? nowTs() : Number(prev.lastUsedAt || 0),
+    lastPrice: Number(payload.defaultPrice || patch.lastPrice || prev.lastPrice || 0),
+    lastCategory: String(patch.lastCategory ?? prev.lastCategory ?? ''),
+    lastAccountId: String(patch.lastAccountId ?? prev.lastAccountId ?? ''),
+    lastNote: String(patch.lastNote ?? prev.lastNote ?? ''),
+    lastExtras: { mealType: payload.mealType, cuisine: payload.cuisine, place: payload.place, healthy: payload.healthy }
+  };
+  state.food.items[legacyKey] = legacyPayload;
+  await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/foodItems/${legacyKey}`), legacyPayload));
+  return foodId;
+}
+
+async function deleteManagedStatItem(kind, rawName) {
+  const name = normalizeFoodName(rawName);
+  if (!name) return;
+  if (kind === 'category') {
+    const updatesMap = {};
+    const replacement = '(Eliminado)';
+    balanceTxList().forEach((row) => {
+      if (String(row.category || '').trim().toLowerCase() !== name.toLowerCase()) return;
+      updatesMap[`${state.financePath}/transactions/${row.id}/category`] = replacement;
+      updatesMap[`${state.financePath}/transactions/${row.id}/updatedAt`] = nowTs();
+    });
+    updatesMap[`${state.financePath}/catalog/categories/${name}`] = null;
+    if (Object.keys(updatesMap).length) await safeFirebase(() => update(ref(db), updatesMap));
+    delete state.balance.categories[name];
+    toast('Categoría eliminada (migrada a "(Eliminado)")');
+    return;
+  }
+  if (kind === 'place' || kind === 'typeOfMeal' || kind === 'cuisine') {
+    await safeFirebase(() => remove(ref(db, `${state.financePath}/catalog/foodOptions/${kind}/${name}`)));
+    if (state.food.options?.[kind]) delete state.food.options[kind][name];
+    toast('Elemento eliminado del selector');
+  }
+}
+
+function renderFoodOptionField(kind, label, selectName) {
+  const options = foodOptionList(kind);
+  return `
+    <div class="food-extra-field" data-food-kind="${kind}">
+      <label class="finFood__label">${label}</label>
+      <select class="food-control" name="${selectName}" data-food-select="${kind}">
+        <option value="">Elegir</option>
+        ${options.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}
+      </select>
+      <button type="button" class="food-mini-btn foodX-mini" data-food-add="${kind}" aria-label="Añadir ${escapeHtml(label)}">+</button>
+    </div>`;
+}
+
+function renderFoodExtrasSection() {
+  const topItems = topFoodItems(5);
+  return `
+    <div class="finFood">
+      <div class="finFood__head">
+        <h4 class="finFood__title">Extras de comida</h4>
+      </div>
+
+   <details class="finFood__dropdown">
+  <summary class="finFood__dropdownSummary">Extras de comida</summary>
+
+  <section class="finFood__quick foodX-grid" data-food-extra>
+    ${renderFoodOptionField('typeOfMeal', 'Tipo', 'foodMealType')}
+    ${renderFoodOptionField('cuisine', 'Saludable', 'foodCuisine')}
+    ${renderFoodOptionField('place', 'Dónde', 'foodPlace')}
+  </section>
+</details>
+
+      <section class="finFood__card">
+
+        
+
+        <div class="finFood__block">
+          <label class="finFood__label">Buscar</label>
+<div class="busqueda-precio foodX-inline">
+          <input class="finFood__search" type="search" data-food-item-search placeholder="Buscar plato (ej: pollo)" autocomplete="off" />
+          <input class="finFood__price" type="number" step="0.01" min="0" placeholder="Precio" data-food-item-price />
+</div>
+          <div class="finFood__results" data-food-item-results>
+          </div>
+        </div>
+
+        <div class="finFood__draft foodX-inline">
+          <button type="button" class="finance-pill finFood__btn" data-food-item-add>Añadir</button>
+          <button type="button" class="finance-pill finance-pill--mini finFood__btn finFood__btn--ghost" data-food-reset-amount>Reset €</button>
+        </div>
+
+        <div class="finFood__selected" data-food-items-list>
+          <small class="finance-empty">Sin productos añadidos.</small>
+        </div>
+
+        <input type="hidden" name="foodItems" data-food-items-json value="[]" />
+        <input type="hidden" name="foodItem" data-food-item-value />
+        <input type="hidden" name="foodId" data-food-id-value />
+      </section>
+    </div>
+
+    <div class="finFood__block">
+          <div class="finFood__labelRow">
+            <label class="finFood__label">Producto / Plato</label>
+            <span class="finFood__tag">Habituales</span>
+          </div>
+
+          <div class="food-list food-items-grid" data-food-top>
+            ${
+  topItems.map(item => `
+    <div class="food-item">
+      
+      <div class="food-pill" data-food-top-item="${escapeHtml(item.id)}">
+        
+        <button type="button" class="food-pill__main">
+          <span class="food-pill__name">${escapeHtml(item.name)}</span>
+          <small class="food-pill__count">×${item.count}</small>
+        </button>
+        <button type="button"
+            class="food-iconbtn"
+            data-food-item-info="${escapeHtml(item.id)}"
+            title="Ficha del producto"
+            aria-label="Ficha del producto">
+            ℹ️
+          </button>
+          <button type="button"
+            class="food-iconbtn"
+            data-food-item-detail="${escapeHtml(item.id)}"
+            title="Detalle de precios"
+            aria-label="Detalle de precios">
+            📈
+          </button>
+
+          <button type="button"
+            class="food-iconbtn"
+            data-food-item-edit="${escapeHtml(item.id)}"
+            title="Editar comida"
+            aria-label="Editar comida">
+            ✏️
+          </button>
+
+      </div>
+
+    </div>
+  `).join('') || `<small class="finance-empty">Sin habituales aún.</small>`
+}
+          </div>
+        </div>
+  `;
+}
+
+function foodChartSeriesByVendor(history = [], range = 'total') {
+  const now = Date.now();
+  const days = range === '30d' ? 30 : (range === '90d' ? 90 : 0);
+  const minTs = days ? (now - (days * 86400000)) : 0;
+  const filtered = history.filter((row) => !days || Number(row.ts || 0) >= minTs);
+  const byVendor = filtered.reduce((acc, row) => {
+    const vendor = firebaseSafeKey(row.vendor || 'unknown') || 'unknown';
+    if (!acc[vendor]) acc[vendor] = [];
+    acc[vendor].push(row);
+    return acc;
+  }, {});
+  Object.values(byVendor).forEach((rows) => rows.sort((a, b) => a.ts - b.ts));
+  return byVendor;
+}
+
+function foodDetailViewModel(food = {}, fallbackName = '') {
+  const name = normalizeFoodName(food?.name || fallbackName || '');
+  const displayName = String(food?.displayName || name || food?.idKey || 'Producto').trim() || 'Producto';
+  const history = mergedFoodHistory(food);
+  const explicitHistory = foodPriceHistoryList(food);
+  const byVendor = history.reduce((acc, row) => {
+    const vendor = firebaseSafeKey(row.vendor || 'unknown') || 'unknown';
+    if (!acc[vendor]) acc[vendor] = [];
+    acc[vendor].push(row);
+    return acc;
+  }, {});
+  const vendors = Object.keys(byVendor);
+  const latestByVendor = vendors.map((vendor) => {
+    const last = (byVendor[vendor] || []).slice().sort((a, b) => b.ts - a.ts)[0] || null;
+    return last ? { vendor, ...last } : null;
+  }).filter(Boolean).sort((a, b) => b.ts - a.ts);
+  const latest = latestByVendor[0] || null;
+  const totalQty = history.reduce((sum, row) => sum + Math.max(1, Number(row.qty || 1)), 0);
+  const weightedAvgUnitPrice = totalQty > 0
+    ? history.reduce((sum, row) => sum + (Number(row.unitPrice || row.price || 0) * Math.max(1, Number(row.qty || 1))), 0) / totalQty
+    : null;
+  const uniqueUnits = [...new Set(history.map((row) => String(row.unit || 'ud').trim() || 'ud'))];
+  const hasSingleUnit = uniqueUnits.length === 1;
+  const unitLabel = hasSingleUnit ? uniqueUnits[0] : '';
+  const latestLine = latest
+    ? `Último: ${Number(latest.unitPrice || latest.price || 0).toFixed(2)} €/` + `${latest.unit || 'ud'} · Media: ${hasSingleUnit && Number.isFinite(weightedAvgUnitPrice) ? `${weightedAvgUnitPrice.toFixed(2)} €/` + unitLabel : '—'} · Compras: ${history.length}`
+    : 'Último: — · Media: — · Compras: 0';
+  const vendorAliases = food?.vendorAliases && typeof food.vendorAliases === 'object' ? food.vendorAliases : {};
+  const vendorSet = new Set([...vendors, ...Object.keys(vendorAliases || {})]);
+  const allVendors = [...vendorSet].filter(Boolean).sort((a, b) => a.localeCompare(b, 'es'));
+  const latestByVendorMap = latestByVendor.reduce((acc, row) => ({ ...acc, [row.vendor]: row }), {});
+  const explicitByVendor = explicitHistory.reduce((acc, row) => {
+    const vendor = firebaseSafeKey(row.vendor || 'unknown') || 'unknown';
+    if (!acc[vendor]) acc[vendor] = [];
+    acc[vendor].push(row);
+    return acc;
+  }, {});
+  const tableRows = allVendors.map((vendor) => {
+    const latestVendor = latestByVendorMap[vendor] || null;
+    const aliases = Array.isArray(vendorAliases[vendor]) ? vendorAliases[vendor] : [];
+    const explicitRows = (explicitByVendor[vendor] || []).slice().sort((a, b) => b.ts - a.ts);
+    return {
+      vendor,
+      aliases,
+      aliasText: aliases.join(', '),
+      latest: latestVendor,
+      latestDateLabel: latestVendor ? new Date(latestVendor.ts).toLocaleDateString('es-ES') : '—',
+      latestPriceLabel: latestVendor ? `${Number(latestVendor.unitPrice || latestVendor.price || 0).toFixed(2)} €/` + `${latestVendor.unit || 'ud'}` : '—',
+      latestEntry: explicitRows[0] || null,
+      hasExplicit: !!explicitRows.length
+    };
+  });
+  return {
+    name,
+    displayName,
+    history,
+    byVendor,
+    vendors,
+    latest,
+    latestByVendor,
+    latestLine,
+    chartByVendor: foodChartSeriesByVendor(history, 'total'),
+    vendorAliases,
+    tableRows
+  };
+}
+
+function renderFoodPriceHistorySection(food = {}, options = {}) {
+  const view = foodDetailViewModel(food, options?.presetName || '');
+  const currentRows = view.tableRows.map((row) => `<tr data-food-vendor-row="${escapeHtml(row.vendor)}"><td><button type="button" class="finFoodLinkBtn" data-food-focus-vendor="${escapeHtml(row.vendor)}">${escapeHtml(row.vendor)}</button></td><td><button type="button" class="finFoodAliasBtn" data-food-alias-edit="${escapeHtml(row.vendor)}" data-food-current-alias="${escapeHtml(row.aliasText)}">${escapeHtml(row.aliasText || '—')}</button></td><td><strong>${row.latestPriceLabel}</strong></td><td>${row.latestDateLabel}</td><td><div class="finFoodTableActions"><button type="button" class="finFoodIconAction" data-food-price-add-vendor="${escapeHtml(row.vendor)}" aria-label="Registrar precio en ${escapeHtml(row.vendor)}">＋</button>${row.latestEntry ? `<button type="button" class="finFoodIconAction finFoodIconAction--danger" data-food-price-delete="${escapeHtml(row.vendor)}:${escapeHtml(row.latestEntry.entryId || '')}" aria-label="Borrar último registro de ${escapeHtml(row.vendor)}">🗑</button>` : ''}</div></td></tr>`).join('');
+  const vendorChips = view.vendors.map((vendor) => `<span class="finFoodChip">${escapeHtml(vendor)}</span>`).join('') || '<span class="finFoodChip">Sin vendor</span>';
+  const overviewSub = [food?.mealType || 'Sin categoría', view.vendors.length ? `${view.vendors.length} vendor${view.vendors.length > 1 ? 's' : ''}` : 'Sin vendors', view.latestLine].join(' · ');
+  const vendorOptions = ['unknown', ...new Set(view.tableRows.map((row) => row.vendor))].map((vendor) => `<option value="${escapeHtml(vendor)}">${escapeHtml(vendor)}</option>`).join('');
+  return `
+    <section class="finFoodDetailHead finFoodCard">
+      <div class="finFoodCardTitleRow">
+        <div>
+          <h2>🍽️ ${escapeHtml(view.displayName)}</h2>
+          <p>${escapeHtml(overviewSub)}</p>
+        </div>
+        <button type="button" class="food-history-btn" data-food-open-edit="${escapeHtml(food.id || '')}">Editar</button>
+      </div>
+    </section>
+
+    <section class="finFoodDetailSection finFoodDetailSection--chips finFoodCard">
+      <button type="button" class="finFoodChip finFoodChip--action" data-food-scroll-to="aliases">Aliases</button>
+      <button type="button" class="finFoodChip finFoodChip--action" data-food-toggle-register>+ Precio</button>
+      <button type="button" class="finFoodChip finFoodChip--action" data-food-view-purchases="${escapeHtml(food.id || '')}">Ver compras</button>
+    </section>
+
+    <section class="finFoodDetailSection finFoodCard" data-food-detail-card="evolution">
+      <div class="finFoodCardTitleRow"><h4>Evolución</h4><div class="finFoodMiniTabs"><button type="button" class="finFoodMiniTab is-active" data-food-chart-type="line">Línea</button><button type="button" class="finFoodMiniTab" data-food-chart-type="bar">Barras</button></div></div>
+      <div class="finFoodMiniTabs" data-food-vendor-legend></div>
+      <div class="finFoodMiniTabs" data-food-range-tabs><button type="button" class="finFoodMiniTab" data-food-chart-range="30d">30d</button><button type="button" class="finFoodMiniTab" data-food-chart-range="90d">90d</button><button type="button" class="finFoodMiniTab is-active" data-food-chart-range="total">Total</button></div>
+      ${view.history.length
+        ? `<div class="finFoodInfo__chartWrap" data-food-history-chart data-food-chart-type="line" data-food-chart-range="total" data-food-history-series='${escapeHtml(JSON.stringify(view.chartByVendor))}'></div>`
+        : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin historial. Registra un precio para ver evolución.</span></div>'}
+    </section>
+
+    <section class="finFoodDetailSection finFoodCard" data-food-detail-card="prices">
+      <div class="finFoodCardTitleRow"><h4>Precios</h4><button type="button" class="food-history-btn" data-food-toggle-register>+ registrar precio</button></div>
+      <div class="finFoodInlineRegister" data-food-register-inline hidden>
+        <div class="food-form-grid finFoodRegisterGrid">
+          <div class="food-form-row"><label class="food-form-label" for="food-register-vendor">Supermercado</label><select id="food-register-vendor" class="food-control" data-food-register-vendor><option value="">Seleccionar</option>${vendorOptions}</select></div>
+          <div class="food-form-row"><label class="food-form-label" for="food-register-price">Precio</label><input id="food-register-price" class="food-control" type="number" min="0" step="0.01" data-food-register-price placeholder="0.00" /></div>
+          <div class="food-form-row"><label class="food-form-label" for="food-register-date">Fecha</label><input id="food-register-date" class="food-control" type="date" data-food-register-date value="${escapeHtml(dayKeyFromTs(nowTs()))}" /></div>
+          <div class="food-form-row finFoodRegisterAction"><button type="button" class="food-history-btn" data-food-register-submit="${escapeHtml(food.id || '')}">Guardar precio</button></div>
+        </div>
+      </div>
+      ${view.tableRows.length
+        ? `<div class="finFoodPriceTableWrap"><table class="finFoodPriceTable"><thead><tr><th>Supermercado</th><th>Alias</th><th>Último precio</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>${currentRows}</tbody></table></div>`
+        : '<div class="finFoodInfo__chartWrap finFoodInfo__chartWrap--empty"><span>Sin historial</span></div>'}
+    </section>
+
+    <details class="finFoodDetailSection finFoodCard" data-food-detail-card="data">
+      <summary class="finFoodDetailSummary">Datos</summary>
+      <div class="finFoodDetailBody food-form-grid foodX-stack">
+      
+      <div class="meta-vista-detalle-producto">
+        <div class="food-form-row"><label class="food-form-label" for="food-name-input">Nombre</label><input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(food?.name || options?.presetName || '')}" /></div>        
+        <div class="food-form-row"><label class="food-form-label" for="food-displayName-input">Display name</label><input id="food-displayName-input" class="food-control" name="displayName" value="${escapeHtml(food?.displayName || options?.presetName || '')}" data-food-display-name /></div>       
+        <div class="food-form-row"><label class="food-form-label" for="food-defaultPrice-input">Precio</label><input id="food-defaultPrice-input" class="food-control" name="defaultPrice" type="number" step="0.01" min="0" value="${Number(food?.defaultPrice || 0) || ''}" /></div>
+      </div>
+
+      <div class= "selectores-ficha-detalle-producto">
+        <div class="food-form-row"><label class="food-form-label" for="food-mealType-input">Categoría <button type="button" class="finFoodLabelAction" data-food-add="typeOfMeal">+ Añadir</button></label><select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>        
+        <div class="food-form-row"><label class="food-form-label" for="food-cuisine-input">Saludable <button type="button" class="finFoodLabelAction" data-food-add="cuisine">+ Añadir</button></label><select id="food-cuisine-input" class="food-control" name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.cuisine || food?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>
+        <div class="food-form-row"><label class="food-form-label" for="food-place-input">Dónde <button type="button" class="finFoodLabelAction" data-food-add="place">+ Añadir</button></label><select id="food-place-input" class="food-control" name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (food?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>
+      </div>  
+        </div>
+    </details>
+
+    <details class="finFoodDetailSection finFoodCard" data-food-detail-card="aliases" id="food-detail-aliases">
+      <summary class="finFoodDetailSummary">Aliases</summary>
+      <div class="finFoodDetailBody">
+        ${renderFoodAliasEditor(food || {})}
+        <div class="food-form-row"><label class="food-form-label" for="food-vendorAliases-input">Alias por súper</label><input id="food-vendorAliases-input" class="food-control" name="vendorAliases" value="${escapeHtml(options.vendorAliasList || '')}" placeholder="mercadona:coca cola|coke" /></div>
+        <div class="finFoodAliasPicker">
+          <div class="food-form-row"><label class="food-form-label" for="food-alias-canonical-picker">Producto existente</label><input id="food-alias-canonical-picker" class="food-control" type="search" list="food-alias-canonical-list" placeholder="Buscar canonical" data-food-alias-canonical-picker /></div>
+          <div class="food-form-row"><label class="food-form-label" for="food-alias-vendor-picker">Supermercado</label><input id="food-alias-vendor-picker" class="food-control" type="search" list="food-alias-vendor-list" placeholder="Buscar vendor" data-food-alias-vendor-picker /></div>
+          <button type="button" class="food-history-btn" data-food-alias-associate="${escapeHtml(food?.id || '')}" ${food?.id ? '' : 'disabled'}>Asociar</button>
+          <datalist id="food-alias-canonical-list">${Object.values(state.food.itemsById || {}).map((item) => `<option value="${escapeHtml(item.id || '')}">${escapeHtml(item.displayName || item.name || item.id || '')}</option>`).join('')}</datalist>
+          <datalist id="food-alias-vendor-list">${[...new Set(Object.keys(view.byVendor || {}).concat(Object.keys(view.vendorAliases || {})))].filter(Boolean).sort((a,b)=>a.localeCompare(b,'es')).map((vendor) => `<option value="${escapeHtml(vendor)}"></option>`).join('')}</datalist>
+        </div>
+        <div class="finFoodChipRow">${vendorChips}</div>
+      </div>
+    </details>
+  `;
+}
+
+function renderFoodAliasEditor(editing = {}) {
+  const aliases = Array.isArray(editing?.aliases) ? editing.aliases : [];
+  return `<div class="finFoodAliasEditor" data-food-alias-editor>
+    <input type="hidden" name="aliases" value="${escapeHtml(aliases.join(', '))}" data-food-aliases-hidden />
+    <div class="finFoodChipRow" data-food-aliases-chips>${aliases.map((alias, index) => `<button type="button" class="finFoodChip finFoodChip--remove" data-food-alias-remove="${index}">${escapeHtml(alias)} ×</button>`).join('') || '<span class="finFoodChip">Sin alias</span>'}</div>
+    <div class="food-form-inline"><input class="food-control" type="text" data-food-alias-input placeholder="Añadir alias" /><button type="button" class="finFoodInlineAddBtn" data-food-alias-add>➕</button></div>
+  </div>`;
+}
+
+function renderFoodItemModalForm(editing, presetName, mode = 'edit') {
+  const isDetail = mode === 'detail';
+  const isInfo = mode === 'info' || isDetail;
+  const displayName = String(editing?.displayName || presetName || '');
+  const vendorAliasList = editing?.vendorAliases && typeof editing.vendorAliases === 'object'
+    ? Object.entries(editing.vendorAliases).map(([vendor, list]) => `${vendor}:${Array.isArray(list) ? list.join('|') : ''}`).join(', ')
+    : '';
+  const detailBody = renderFoodPriceHistorySection(editing || { name: presetName, displayName }, { presetName, vendorAliasList });
+  return `<form class="food-sheet-form" data-food-item-form data-food-item-mode="${isDetail ? 'detail' : (isInfo ? 'info' : 'edit')}">
+        <input type="hidden" name="foodId" value="${escapeHtml(editing?.id || '')}" />
+        ${isDetail ? detailBody : `
+        <section class="finFoodDetailSection">
+          <h4>Header</h4>
+          <div class="food-form-grid foodX-stack">
+            <div class="food-form-row"><label class="food-form-label" for="food-name-input">Nombre</label><input id="food-name-input" class="food-control" name="name" required value="${escapeHtml(presetName)}" /></div>
+            <div class="food-form-row"><label class="food-form-label" for="food-displayName-input">Display name</label><input id="food-displayName-input" class="food-control" name="displayName" value="${escapeHtml(displayName)}" data-food-display-name /></div>
+          </div>
+        </section>
+        <details class="finFoodDetailSection finFoodDetailSection--aliases">
+  <summary class="finFoodDetailSummary">
+    Aliases
+  </summary>
+
+  <div class="finFoodDetailBody">
+    ${renderFoodAliasEditor(editing || {})}
+
+    <div class="food-form-row">
+      <label class="food-form-label" for="food-vendorAliases-input">
+        Alias por súper
+      </label>
+
+      <input
+        id="food-vendorAliases-input"
+        class="food-control"
+        name="vendorAliases"
+        value="${escapeHtml(vendorAliasList)}"
+        placeholder="mercadona:coca cola|coke"
+      />
+    </div>
+  </div>
+</details>
+        <section class="finFoodDetailSection">
+          <h4>Atributos</h4>
+          <div class="food-form-grid foodX-stack">
+            <div class="food-form-row"><label class="food-form-label" for="food-mealType-input">Tipo</label><div class="food-form-inline"><select id="food-mealType-input" class="food-control" name="mealType"><option value="">Seleccionar</option>${foodOptionList('typeOfMeal').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.mealType || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="typeOfMeal" aria-label="Añadir nuevo tipo">+</button></div></div>
+            <div class="food-form-row"><label class="food-form-label" for="food-cuisine-input">Saludable</label><div class="food-form-inline"><select id="food-cuisine-input" class="food-control" name="cuisine"><option value="">Seleccionar</option>${foodOptionList('cuisine').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.cuisine || editing?.healthy || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="cuisine" aria-label="Añadir nuevo saludable">+</button></div></div>
+            <div class="food-form-row"><label class="food-form-label" for="food-place-input">Dónde</label><div class="food-form-inline"><select id="food-place-input" class="food-control" name="place"><option value="">Seleccionar</option>${foodOptionList('place').map((name) => `<option value="${escapeHtml(name)}" ${name === (editing?.place || '') ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="food-mini-btn" data-food-add="place" aria-label="Añadir nuevo dónde">+</button></div></div>
+            <div class="food-form-row"><label class="food-form-label" for="food-defaultPrice-input">Precio por defecto</label><input id="food-defaultPrice-input" class="food-control" name="defaultPrice" type="number" step="0.01" min="0" value="${Number(editing?.defaultPrice || 0) || ''}" /></div>
+          </div>
+        </section>
+        ${isInfo ? `<input type="hidden" name="saveMode" value="info" />${detailBody}` : ''}`}
+        <footer class="food-sheet-footer"><button class="finance-pill food-sheet-submit" type="submit" ${isDetail ? 'data-food-save disabled' : ''}>Guardar</button></footer>
+      </form>`;
+}
+
+function renderFoodHistoryVendorChart() {
+  const host = document.querySelector('[data-food-history-chart]');
+  if (!host || typeof echarts === 'undefined') return;
+  let byVendor = {};
+  try { byVendor = JSON.parse(host.dataset.foodHistorySeries || '{}'); } catch (_) { byVendor = {}; }
+  const vendorKeys = Object.keys(byVendor || {});
+  if (!vendorKeys.length) return;
+  const chartType = host.dataset.foodChartType === 'bar' ? 'bar' : 'line';
+  const range = host.dataset.foodChartRange || 'total';
+  const points = Object.entries(byVendor).flatMap(([vendor, rows]) => (rows || []).map((row) => ({ ...row, vendor })));
+  const filtered = foodChartSeriesByVendor(points, range);
+  const vendors = Object.keys(filtered);
+  if (!vendors.length) return;
+  const hiddenVendors = new Set(String(host.dataset.foodHiddenVendors || '').split(',').map((v) => firebaseSafeKey(v || '')).filter(Boolean));
+  const palette = ['#7dbdff', '#7af0c8', '#f9b571', '#dba4ff', '#ff7d9f', '#ffe082'];
+  const legendHost = document.querySelector('[data-food-vendor-legend]');
+  if (legendHost) {
+    legendHost.innerHTML = vendors.map((vendor, index) => {
+      const isHidden = hiddenVendors.has(vendor);
+      return `<button type="button" class="finFoodMiniTab ${isHidden ? '' : 'is-active'}" data-food-vendor-toggle="${escapeHtml(vendor)}" style="--vendor-color:${palette[index % palette.length]}">${escapeHtml(vendor)}</button>`;
+    }).join('');
+  }
+  const series = vendors.map((vendor, index) => ({
+    name: vendor,
+    type: chartType,
+    showSymbol: chartType === 'line',
+    smooth: false,
+    lineStyle: { width: 2 },
+    itemStyle: { color: palette[index % palette.length] },
+    data: hiddenVendors.has(vendor) ? [] : (filtered[vendor] || []).map((row) => [String(row.date || dayKeyFromTs(row.ts)), Number(row.unitPrice || row.price || 0), row])
+  }));
+  const chart = echarts.getInstanceByDom(host) || echarts.init(host);
+chart.setOption({
+  animation: false,
+  backgroundColor: 'transparent',
+  tooltip: {
+    trigger: 'axis',
+    confine: true,
+    borderRadius: 10,
+    padding: [6, 8],
+    backgroundColor: '#0d1329',
+    borderColor: 'rgba(125,190,255,.35)',
+    textStyle: { color: '#f4f8ff', fontSize: 11 },
+    formatter: (points = []) => {
+      if (!points.length) return '';
+      const date = points[0]?.axisValueLabel || '';
+      const lines = points.map((point) => {
+        const payload = point?.data?.[2] || {};
+        const unit = payload?.unit || 'ud';
+        const qty = Number(payload?.qty || 1);
+        const total = Number(payload?.totalPrice || payload?.linePrice || 0);
+        return `${point.marker}${point.seriesName}: <strong>${Number(point.value?.[1] || 0).toFixed(2)} €/` + `${unit}</strong><br/><small>qty: ${qty} · total: ${fmtCurrency(total)}</small>`;
+      });
+      return `<strong>${date}</strong><br/>${lines.join('<br/>')}`;
+    }
+  },
+  legend: { show: false },
+
+  grid: { left: 36, right: 16, top: 18, bottom: 34, containLabel: true },
+
+  xAxis: {
+    type: 'time',
+    axisLabel: {
+      color: '#9fb2da',
+      hideOverlap: true,
+      interval: 'auto',
+      margin: 10,
+      formatter: (v) => {
+        const d = new Date(v);
+        return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+      }
+    },
+    axisTick: { show: false },
+    splitLine: { show: false }
+  },
+
+  yAxis: {
+    type: 'value',
+    axisLabel: { color: '#9fb2da', margin: 10, fontSize: 11 },
+    axisTick: { show: false },
+    splitLine: { show: false } // 👈 adiós líneas intermedias
+  },
+
+  series
+}, { notMerge: true });
+}
+
+function snapshotFoodDetailForm(formEl) {
+  if (!formEl) return '{}';
+  const fd = new FormData(formEl);
+  const keys = ['foodId', 'name', 'displayName', 'aliases', 'vendorAliases', 'mealType', 'cuisine', 'place', 'defaultPrice'];
+  const snap = keys.reduce((acc, key) => {
+    acc[key] = String(fd.get(key) || '').trim();
+    return acc;
+  }, {});
+  return JSON.stringify(snap);
+}
+
+function updateFoodDetailSaveState(formEl) {
+  if (!formEl || formEl.dataset.foodItemMode !== 'detail') return;
+  const saveBtn = formEl.querySelector('[data-food-save]');
+  if (!saveBtn) return;
+  if (!formEl.dataset.foodInitialSnapshot) formEl.dataset.foodInitialSnapshot = snapshotFoodDetailForm(formEl);
+  const dirty = formEl.dataset.foodInitialSnapshot !== snapshotFoodDetailForm(formEl);
+  saveBtn.disabled = !dirty;
+}
+
+function initFoodDetailInteractions() {
+  const formEl = document.querySelector('[data-food-item-form][data-food-item-mode="detail"]');
+  if (!formEl) return;
+  formEl.dataset.foodInitialSnapshot = snapshotFoodDetailForm(formEl);
+  updateFoodDetailSaveState(formEl);
+}
+
+function isoToDay(dateISO = '') { return String(dateISO).slice(0, 10); }
+
+function getDeviceId() {
+  const existing = localStorage.getItem(DEVICE_KEY);
+  if (existing) return existing;
+  const generated = window.crypto?.randomUUID?.() || `dev-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  localStorage.setItem(DEVICE_KEY, generated);
+  return generated;
+}
+
+function calendarAnchorDate() {
+  const date = new Date();
+  date.setMonth(date.getMonth() + state.calendarMonthOffset);
+  return date;
+}
+
+function calendarSourceSeries(accounts, totalSeries) {
+  if (state.calendarAccountId === 'total') return totalSeries.map((point, idx, arr) => ({ ...point, delta: idx ? point.value - arr[idx - 1].value : 0 }));
+  return accounts.find((acc) => acc.id === state.calendarAccountId)?.daily || [];
+}
+
+function closePointBefore(series, tsExclusive) {
+  for (let i = series.length - 1; i >= 0; i -= 1) {
+    if (series[i].ts < tsExclusive) return series[i];
+  }
+  return null;
+}
+
+function deltaByBounds(series, startTs, endTs) {
+  const prev = closePointBefore(series, startTs);
+  const end = closePointBefore(series, endTs);
+  if (!prev && !end) return { delta: 0, deltaPct: 0, isEmpty: true };
+  const startValue = Number(prev?.value ?? end?.value ?? 0);
+  const endValue = Number(end?.value ?? startValue);
+  const delta = endValue - startValue;
+  const deltaPct = startValue ? (delta / startValue) * 100 : 0;
+  return { delta, deltaPct, isEmpty: false };
+}
+
+function safeFirebase(action, fallback = null) {
+  return action().catch((error) => {
+    log('firebase error', error);
+    toast('No se pudo guardar en Firebase');
+    return fallback;
+  });
+}
+
+function normalizeDaily(daily = {}) {
+  return Object.entries(daily).map(([day, record]) => ({ day, ts: Number(record?.ts || parseDayKey(day)), value: Number(record?.value || 0) }))
+    .filter((item) => Number.isFinite(item.value) && item.day).sort((a, b) => a.ts - b.ts);
+}
+function normalizeSnapshots(snapshots = {}) {
+  return Object.entries(snapshots || {}).map(([day, row]) => ({ day, value: Number(row?.value), updatedAt: Number(row?.updatedAt || 0) }))
+    .filter((row) => row.day && Number.isFinite(row.value)).sort((a, b) => parseDayKey(a.day) - parseDayKey(b.day));
+}
+function movementRowsByAccount(accountId) {
+  return balanceTxList().filter((row) => row.accountId === accountId);
+}
+async function recomputeAccountEntries(accountId, fromDay) {
+  if (!accountId) return;
+  const snap = await safeFirebase(() => get(ref(db, `${state.financePath}`)));
+  const root = snap?.val() || {};
+  const account = root.accounts?.[accountId] || state.accounts.find((item) => item.id === accountId);
+  if (!account) return;
+  const snapshots = normalizeSnapshots(account.snapshots || {});
+  const txRows = balanceTxList().filter((row) => (
+    row.accountId === accountId || row.fromAccountId === accountId || row.toAccountId === accountId
+  ));
+  const movements = txRows.sort((a, b) => txSortTs(a) - txSortTs(b));
+  const daySet = new Set([
+    ...snapshots.map((row) => row.day),
+    ...movements.map((row) => String(row.date || isoToDay(row.dateISO || '')))
+  ].filter(Boolean));
+  if (fromDay) daySet.add(fromDay);
+  const allDays = [...daySet].sort();
+  if (!allDays.length) return;
+  const normalizedFromDay = toIsoDay(fromDay || '') || fromDay;
+  const startDay = normalizedFromDay || allDays[0];
+  console.debug('[FINANCE] recompute account entries', { accountId, startDay, txCount: movements.length });
+
+  const dayEvents = {};
+  movements.forEach((row) => {
+    const day = String(row.date || isoToDay(row.dateISO || ''));
+    if (!day) return;
+    let delta = 0;
+    if (row.type === 'income' && row.accountId === accountId) delta = Number(row.amount || 0);
+    else if (row.type === 'expense' && row.accountId === accountId) delta = -Number(row.amount || 0);
+    else if (row.type === 'transfer') {
+      if (row.fromAccountId === accountId) delta = -Number(row.amount || 0);
+      if (row.toAccountId === accountId) delta += Number(row.amount || 0);
+    }
+    if (!delta) return;
+    if (!dayEvents[day]) dayEvents[day] = [];
+    const ts = Number(row.ts || row.timestamp || row.createdAt || row.updatedAt || 0);
+    dayEvents[day].push({ kind: 'tx', ts: Number.isFinite(ts) ? ts : 0, delta });
+  });
+  snapshots.forEach((row) => {
+    if (!dayEvents[row.day]) dayEvents[row.day] = [];
+    const ts = Number(row.updatedAt || 0);
+    dayEvents[row.day].push({ kind: 'snapshot', ts: Number.isFinite(ts) && ts > 0 ? ts : Number.MAX_SAFE_INTEGER, value: row.value });
+  });
+
+  const existingEntries = account.entries || account.daily || {};
+  let carry = 0;
+  const prevDays = Object.keys(existingEntries).filter((day) => day < startDay).sort();
+  if (prevDays.length) carry = Number(existingEntries[prevDays.at(-1)]?.value || 0);
+  else {
+    const prevSnapshot = snapshots.filter((row) => row.day < startDay).at(-1);
+    if (prevSnapshot) carry = prevSnapshot.value;
+  }
+
+  const updatesMap = {};
+  const targetDays = allDays.filter((day) => day >= startDay);
+  targetDays.forEach((day) => {
+    let value = carry;
+    const events = (dayEvents[day] || []).sort((a, b) => {
+      if (a.ts !== b.ts) return a.ts - b.ts;
+      if (a.kind === b.kind) return 0;
+      return a.kind === 'tx' ? -1 : 1;
+    });
+    if (!events.length) {
+      value = carry;
+    } else {
+      events.forEach((event) => {
+        if (event.kind === 'snapshot') value = Number(event.value || 0);
+        else value += Number(event.delta || 0);
+      });
+    }
+    carry = value;
+    updatesMap[`${state.financePath}/accounts/${accountId}/entries/${day}`] = {
+      dateISO: `${day}T00:00:00.000Z`,
+      value,
+      updatedAt: nowTs(),
+      source: events.some((event) => event.kind === 'snapshot') ? 'snapshot' : 'derived'
+    };
+  });
+  updatesMap[`${state.financePath}/accounts/${accountId}/updatedAt`] = nowTs();
+  await safeFirebase(() => update(ref(db), updatesMap));
+}
+function normalizeLegacyEntries(entriesMap = {}) {
+  const grouped = {};
+  Object.values(entriesMap || {}).forEach((entry) => {
+    const ts = Number(entry?.ts || 0);
+    const value = Number(entry?.value);
+    if (!Number.isFinite(ts) || !Number.isFinite(value)) return;
+    const day = dayKeyFromTs(ts);
+    if (!grouped[day] || grouped[day].ts < ts) grouped[day] = { ts, value };
+  });
+  return grouped;
+}
+
+function getRangeBounds(mode, anchorDate = new Date()) {
+  const now = new Date(anchorDate);
+  if (mode === 'total') return { start: -Infinity, end: Infinity };
+  if (mode === 'week') {
+    const day = now.getDay() || 7;
+    const start = new Date(now); start.setDate(now.getDate() - day + 1); start.setHours(0, 0, 0, 0);
+    const end = new Date(start); end.setDate(start.getDate() + 7);
+    return { start: start.getTime(), end: end.getTime() };
+  }
+  if (mode === 'year') return { start: new Date(now.getFullYear(), 0, 1).getTime(), end: new Date(now.getFullYear() + 1, 0, 1).getTime() };
+  return { start: new Date(now.getFullYear(), now.getMonth(), 1).getTime(), end: new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime() };
+}
+function computeDeltaForRange(series, mode) {
+  if (!series.length) return { delta: 0, deltaPct: 0, startValue: 0, endValue: 0 };
+  const { start, end } = getRangeBounds(mode);
+  const startPoint = series.find((point) => point.ts >= start) || series[0];
+  const endPoint = [...series].reverse().find((point) => point.ts < end) || series.at(-1);
+  const delta = endPoint.value - startPoint.value;
+  const deltaPct = startPoint.value ? (delta / startPoint.value) * 100 : 0;
+  return { delta, deltaPct, startValue: startPoint.value, endValue: endPoint.value };
+}
+function computeDeltaWithinBounds(series, bounds) {
+  if (!series.length) return { delta: 0, deltaPct: 0, startValue: 0, endValue: 0 };
+  const startPoint = series.find((point) => point.ts >= bounds.start) || series[0];
+  const endPoint = [...series].reverse().find((point) => point.ts < bounds.end) || series.at(-1);
+  const delta = endPoint.value - startPoint.value;
+  const deltaPct = startPoint.value ? (delta / startPoint.value) * 100 : 0;
+  return { delta, deltaPct, startValue: startPoint.value, endValue: endPoint.value };
+}
+
+function accountValueForDay(account = {}, day = '') {
+  const safeDay = toIsoDay(day) || String(day || '').slice(0, 10);
+  if (!safeDay) return 0;
+  const snapshots = normalizeSnapshots(account.snapshots || {});
+  const exactSnapshot = snapshots.find((row) => row.day === safeDay);
+  if (exactSnapshot) return Number(exactSnapshot.value || 0);
+  const previousSnapshot = snapshots.filter((row) => row.day < safeDay).at(-1);
+  if (previousSnapshot) return Number(previousSnapshot.value || 0);
+  const entries = normalizeDaily(account.entries || account.daily || {});
+  const prevEntry = entries.filter((row) => row.day <= safeDay).at(-1);
+  return Number(prevEntry?.value || 0);
+}
+
+function readCachedBtcPrice() {
+  try {
+    const raw = localStorage.getItem(BTC_PRICE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Number.isFinite(parsed?.price) || !Number.isFinite(parsed?.ts)) return null;
+    if ((Date.now() - parsed.ts) > BTC_PRICE_CACHE_TTL_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function ensureBtcEurPrice(force = false) {
+  const cached = readCachedBtcPrice();
+  if (!force && cached) {
+    state.btcEurPrice = Number(cached.price || 0);
+    state.btcPriceTs = Number(cached.ts || 0);
+    return state.btcEurPrice;
+  }
+  try {
+    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=eur');
+    const json = await res.json();
+    const price = Number(json?.bitcoin?.eur || 0);
+    if (Number.isFinite(price) && price > 0) {
+      state.btcEurPrice = price;
+      state.btcPriceTs = Date.now();
+      localStorage.setItem(BTC_PRICE_CACHE_KEY, JSON.stringify({ price, ts: state.btcPriceTs }));
+      return price;
+    }
+  } catch (error) {
+    log('btc price fetch failed', error);
+  }
+  if (cached?.price) {
+    state.btcEurPrice = Number(cached.price);
+    state.btcPriceTs = Number(cached.ts || 0);
+  }
+  return state.btcEurPrice || 0;
+}
+
+function buildAccountModels() {
+  return state.accounts.map((account) => {
+    const share = normalizeAccountShare(account);
+
+
+    const sourceEntries = Object.keys(account.entries || {}).length ? (account.entries || {}) : (account.daily || {});
+    const modernDaily = normalizeDaily(sourceEntries);
+    const modernByDay = Object.fromEntries(modernDaily.map((item) => [item.day, { value: item.value, ts: item.ts, source: item.source || 'derived' }]));
+    const legacyDaily = normalizeLegacyEntries(state.legacyEntries[account.id] || {});
+    Object.entries(legacyDaily).forEach(([day, record]) => {
+      if (!modernByDay[day] || modernByDay[day].ts < record.ts) modernByDay[day] = { ...record, source: 'legacy' };
+    });
+    const dailyReal = Object.entries(modernByDay).map(([day, record]) => ({ day, ts: Number(record.ts || parseDayKey(day)), value: Number(record.value || 0), source: record.source || 'derived' }))
+      .sort((a, b) => a.ts - b.ts);
+    const btcUnits = Number(account?.btcUnits || 0);
+    const btcPrice = Number(state.btcEurPrice || 0);
+    const hasBtc = Boolean(account?.isBitcoin);
+    let currentReal = dailyReal.at(-1)?.value ?? 0;
+    if (hasBtc) currentReal = btcUnits * btcPrice;
+    const current = currentReal * share.sharedRatio;
+
+
+
+    const daily = dailyReal.map((point, index, arr) => {
+      const prev = arr[index - 1];
+      const myValue = point.value * share.sharedRatio;
+      const prevValue = prev ? prev.value * share.sharedRatio : 0;
+      const delta = prev ? myValue - prevValue : 0;
+      const deltaPct = prevValue ? (delta / prevValue) * 100 : 0;
+      return { ...point, value: myValue, realValue: point.value, delta, deltaPct };
+    });
+    const range = computeDeltaForRange(daily, state.rangeMode);
+    
+    if (share.shared) log(`account sharedRatio=${share.sharedRatio} applied`, { accountId: account.id });
+
+    return { ...account, ...share, daily, dailyReal, current, currentReal, btcPrice, range, };
+  });
+}
+
+function buildTotalSeries(accounts) {
+  const daySet = new Set();
+  accounts.forEach((account) => account.daily.forEach((point) => daySet.add(point.day)));
+  const days = [...daySet].sort();
+  if (!days.length) return [];
+  const perAccount = Object.fromEntries(accounts.map((account) => [account.id, Object.fromEntries(account.daily.map((p) => [p.day, p.value]))]));
+  const running = Object.fromEntries(accounts.map((account) => [account.id, 0]));
+  return days.map((day) => {
+    accounts.forEach((account) => { if (perAccount[account.id][day] != null) running[account.id] = perAccount[account.id][day]; });
+    return { day, ts: parseDayKey(day), value: Object.values(running).reduce((sum, val) => sum + Number(val || 0), 0) };
+  });
+}
+function filterSeriesByRange(series, mode) {
+  if (mode === 'total') return series;
+  const { start, end } = getRangeBounds(mode);
+  const filtered = series.filter((point) => point.ts >= start && point.ts < end);
+  return filtered.length ? filtered : series.slice(-1);
+}
+function chartModelForRange(series, mode) {
+  const points = filterSeriesByRange(series, mode);
+  const delta = computeDeltaForRange(points.map((point) => ({ ...point, value: point.value })), 'total').delta;
+  return { points, tone: toneClass(delta) };
+}
+
+const FINANCE_TOTALS_CACHE_KEY = 'bookshell:finance:totals:v1';
+
+function publishFinanceTotals(accounts = []) {
+  const myTotal = accounts.reduce((sum, account) => sum + Number(account.current || 0), 0);
+  const totalReal = accounts.reduce((sum, account) => sum + Number(account.currentReal || 0), 0);
+  const payload = { myTotal, totalReal, ts: Date.now() };
+  try { localStorage.setItem(FINANCE_TOTALS_CACHE_KEY, JSON.stringify(payload)); } catch (_) {}
+  try { window.__bookshellFinanceTotals = payload; } catch (_) {}
+  try { window.dispatchEvent(new CustomEvent('bookshell:finance-totals', { detail: payload })); } catch (_) {}
+}
+
+async function maybeAutoBitcoinDailySnapshots(accounts = []) {
+  const btcPrice = Number(state.btcEurPrice || 0);
+  if (!Number.isFinite(btcPrice) || btcPrice <= 0) return;
+
+  const todayKey = dayKeyFromTs(Date.now());
+  if (!todayKey) return;
+
+  const candidates = (accounts || []).filter((acc) => Boolean(acc?.isBitcoin));
+  for (const account of candidates) {
+    const btcUnits = Number(account?.btcUnits || 0);
+    if (!Number.isFinite(btcUnits) || btcUnits <= 0) continue;
+
+    const snapshots = account?.snapshots || {};
+    const hasSnapshotToday = !!snapshots?.[todayKey] || normalizeSnapshots(snapshots).some((row) => row.day === todayKey);
+    if (hasSnapshotToday) continue;
+
+    const value = Math.round((btcUnits * btcPrice) * 100) / 100;
+    if (!Number.isFinite(value) || value <= 0) continue;
+
+    await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${account.id}/snapshots/${todayKey}`), {
+      value,
+      updatedAt: nowTs(),
+      source: 'btcAuto',
+      btcUnits,
+      btcEurPrice: btcPrice
+    }));
+
+    await recomputeAccountEntries(account.id, todayKey);
+  }
+}
+
+function ensureLineChartTooltip(container) {
+  if (!container) return null;
+  let node = container.querySelector('.finance-lineChart-tooltip');
+  if (!node) {
+    node = document.createElement('div');
+    node.className = 'finance-lineChart-tooltip';
+    container.appendChild(node);
+  }
+  return node;
+}
+
+function ensureLineChartDot(container) {
+  if (!container) return null;
+  let node = container.querySelector('.finance-lineChart-dot');
+  if (!node) {
+    node = document.createElement('div');
+    node.className = 'finance-lineChart-dot';
+    container.appendChild(node);
+  }
+  return node;
+}
+
+function closestLineChartPoint(points, chartEl, clientX) {
+  if (!points?.length || !chartEl) return null;
+  const rect = chartEl.getBoundingClientRect();
+  const relX = Math.min(Math.max(0, (clientX || 0) - rect.left), rect.width || 0);
+  const ratio = rect.width ? relX / rect.width : 0;
+  const idx = Math.round(ratio * Math.max(points.length - 1, 0));
+  const point = points[idx] || null;
+  return point ? { point, idx } : null;
+}
+
+function lineChartCoords(points = [], idx = 0, width = 320, height = 120, pad = 10) {
+  const safeIdx = Math.max(0, Math.min(idx, Math.max(points.length - 1, 0)));
+  const vals = points.map((p) => Number(p?.value || 0));
+  const min = vals.length ? Math.min(...vals) : 0;
+  const max = vals.length ? Math.max(...vals) : 0;
+  const spread = max - min || 1;
+  const innerH = Math.max(1, height - pad * 2);
+  const x = (safeIdx / Math.max(points.length - 1, 1)) * width;
+  const v = Number(points[safeIdx]?.value || 0);
+  const y = pad + (innerH - ((v - min) / spread) * innerH);
+  return { x, y, width, height };
+}
+
+function showLineChartPoint(chartEl, point, idx, points) {
+  if (!chartEl || !point) return;
+  const tooltip = ensureLineChartTooltip(chartEl);
+  const dot = ensureLineChartDot(chartEl);
+  if (!tooltip) return;
+  tooltip.textContent = `${new Date(point.ts).toLocaleDateString('es-ES')} - ${fmtCurrency(point.value)}`;
+  tooltip.classList.add('is-open');
+  clearTimeout(tooltip.__hideTimer);
+  tooltip.__hideTimer = setTimeout(() => tooltip.classList.remove('is-open'), 1400);
+
+  if (dot && Array.isArray(points) && Number.isFinite(Number(idx))) {
+    const svg = chartEl.querySelector('svg');
+    const svgRect = svg?.getBoundingClientRect?.();
+    const chartRect = chartEl.getBoundingClientRect();
+    if (svgRect?.width && svgRect?.height && chartRect?.width && chartRect?.height) {
+      const { x, y } = lineChartCoords(points, idx);
+      const left = (svgRect.left - chartRect.left) + (x / 320) * svgRect.width;
+      const top = (svgRect.top - chartRect.top) + (y / 120) * svgRect.height;
+      dot.style.left = `${left}px`;
+      dot.style.top = `${top}px`;
+      dot.classList.add('is-open');
+      clearTimeout(dot.__hideTimer);
+      dot.__hideTimer = setTimeout(() => dot.classList.remove('is-open'), 1400);
+    }
+  }
+}
+function linePath(points, width = 320, height = 120, tension = 0.7, pad = 10) {
+  if (!points.length) return '';
+
+  const vals = points.map(p => p.value);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const spread = max - min || 1;
+
+  const innerH = Math.max(1, height - pad * 2);
+
+  const coords = points.map((point, index) => {
+    const x = (index / Math.max(points.length - 1, 1)) * width;
+    const y = pad + (innerH - ((point.value - min) / spread) * innerH);
+    return { x, y };
+  });
+
+  if (coords.length < 2) return `M${coords[0].x.toFixed(1)},${coords[0].y.toFixed(1)}`;
+
+  let d = `M${coords[0].x.toFixed(1)},${coords[0].y.toFixed(1)}`;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const p0 = coords[i - 1] || coords[i];
+    const p1 = coords[i];
+    const p2 = coords[i + 1];
+    const p3 = coords[i + 2] || p2;
+
+    const c1x = p1.x + (p2.x - p0.x) / 6 * tension;
+    const c1y = p1.y + (p2.y - p0.y) / 6 * tension;
+    const c2x = p2.x - (p3.x - p1.x) / 6 * tension;
+    const c2y = p2.y - (p3.y - p1.y) / 6 * tension;
+
+    d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+function calendarData(accounts, totalSeries) {
+  const date = calendarAnchorDate();
+  const year = date.getFullYear(); const month = date.getMonth();
+  const monthStartDate = new Date(year, month, 1); const monthStart = monthStartDate.getTime(); const monthEnd = new Date(year, month + 1, 1).getTime();
+  const daysInMonth = new Date(year, month + 1, 0).getDate(); const firstWeekdayOffset = (monthStartDate.getDay() + 6) % 7;
+  const source = calendarSourceSeries(accounts, totalSeries);
+  const pointsByDay = {};
+  source.filter((point) => point.ts >= monthStart && point.ts < monthEnd).forEach((point) => {
+    const prev = source.filter((i) => i.ts < point.ts).at(-1); const delta = prev ? point.value - prev.value : point.delta || 0; const deltaPct = prev?.value ? (delta / prev.value) * 100 : 0;
+    pointsByDay[new Date(point.ts).getDate()] = { ...point, delta, deltaPct };
+  });
+  const cells = []; for (let i = 0; i < firstWeekdayOffset; i += 1) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const dayKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    cells.push(pointsByDay[day] ? { ...pointsByDay[day], dayNumber: day, dayKey } : { dayNumber: day, dayKey, delta: 0, deltaPct: 0, isEmpty: true });
+  }
+  return { cells, year, month };
+}
+
+function calendarMonthData(accounts, totalSeries) {
+  const date = calendarAnchorDate();
+  const year = date.getFullYear();
+  const source = calendarSourceSeries(accounts, totalSeries);
+  const months = Array.from({ length: 12 }, (_, index) => {
+    const monthStart = new Date(year, index, 1).getTime();
+    const monthEnd = new Date(year, index + 1, 1).getTime();
+    const deltaRow = deltaByBounds(source, monthStart, monthEnd);
+    return {
+      month: index,
+      monthKey: `${year}-${String(index + 1).padStart(2, '0')}`,
+      label: new Intl.DateTimeFormat('es-ES', { month: 'long' }).format(new Date(year, index, 1)),
+      ...deltaRow
+    };
+  });
+  return { year, months };
+}
+
+function calendarYearData(accounts, totalSeries) {
+  const source = calendarSourceSeries(accounts, totalSeries);
+  const years = [...new Set(source.map((point) => new Date(point.ts).getFullYear()))].sort((a, b) => a - b);
+  if (!years.length) years.push(new Date().getFullYear());
+  return years.map((year) => {
+    const start = new Date(year, 0, 1).getTime();
+    const end = new Date(year + 1, 0, 1).getTime();
+    const deltaRow = deltaByBounds(source, start, end);
+    return { year, ...deltaRow };
+  });
+}
+
+function balanceTxList() {
+  const normalizeBalanceRow = (id, row = {}, source = 'transactions', fallbackPath = '', fallbackMonthKey = '') => {
+    const normalized = normalizeTxRow(row, id);
+    const dateISO = String(normalized?.dateISO || '');
+    const date = String(normalized?.date || isoToDay(dateISO || normalized?.date || '') || '');
+    const monthKey = String(normalized?.monthKey || date.slice(0, 7) || fallbackMonthKey || '');
+    const parsedTs = new Date(date || dateISO || 0).getTime();
+    if (FINANCE_DEBUG && !Number.isFinite(parsedTs) && (date || dateISO)) {
+      console.log('[BALANCE] invalid date row', { source, id, date, dateISO, monthKey });
+    }
+    return {
+      id,
+      ...row,
+      ...normalized,
+      __src: source,
+      __path: row?.__path || fallbackPath,
+      accountId: String(row?.accountId || ''),
+      fromAccountId: String(row?.fromAccountId ?? row?.extras?.fromAccountId ?? ''),
+toAccountId: String(row?.toAccountId ?? row?.extras?.toAccountId ?? ''),
+note: String(row?.note ?? row?.extras?.note ?? ''),
+      date,
+      dateISO,
+      monthKey,
+      category: String(row?.category || ''),
+      linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
+      personalRatio: (row?.personalRatio !== null && row?.personalRatio !== undefined && String(row.personalRatio).trim() !== '' && Number.isFinite(Number(row.personalRatio)))
+  ? clamp01(row.personalRatio, 1)
+  : null,
+      allocation: normalizeTxAllocation(row?.allocation || {}, String(date || isoToDay(dateISO || '') || '')),
+      createdAt: Number(row?.createdAt || 0),
+      updatedAt: Number(row?.updatedAt || 0),
+      extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(normalized?.amount || 0))
+    };
+  };
+
+  const fromNew = Object.entries(state.balance.transactions || {}).map(([id, row]) => normalizeBalanceRow(id, row, 'transactions', `${state.financePath}/transactions/${id}`));
+
+  const fromLegacy = [];
+  Object.entries(state.balance.movements || {}).forEach(([monthKey, rows]) => {
+    Object.entries(rows || {}).forEach(([id, row]) => {
+      fromLegacy.push(normalizeBalanceRow(id, row, 'movements', `${state.financePath}/movements/${monthKey}/${id}`, monthKey));
+    });
+  });
+
+  const legacyTx = Object.entries(state.balance.tx || {}).map(([id, row]) => normalizeBalanceRow(id, row, 'tx', `${state.financePath}/tx/${id}`));
+  const newIds = new Set(fromNew.map((row) => String(row.id)));
+  const legacyRows = [...fromLegacy, ...legacyTx].filter((row) => !fromNew.length || !newIds.has(String(row.id)));
+  const rows = [...fromNew, ...legacyRows];
+  const dedup = new Map();
+  rows.forEach((row) => {
+    const uniqueKey = row.__path || `${row.__src}:${row.id}`;
+    if (!dedup.has(uniqueKey)) dedup.set(uniqueKey, row);
+  });
+
+  return [...dedup.values()]
+    .filter((row) => Number.isFinite(row.amount) && row.monthKey)
+    .sort((a, b) => (txSortTs(b) - txSortTs(a)) || (Number(b.createdAt || 0) - Number(a.createdAt || 0)));
+}
+function getSelectedBalanceMonthKey() {
+  return offsetMonthKey(getMonthKeyFromDate(), state.balanceMonthOffset);
+}
+function summaryForMonth(monthKey, accountsById = {}) {
+  const resolvedAccountsById = Object.keys(accountsById || {}).length ? accountsById : Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
+  const rows = [...balanceTxList().filter((tx) => tx.monthKey === monthKey), ...recurringForMonth(monthKey)];
+  const income = rows.filter((tx) => tx.type === 'income').reduce((s, tx) => s + (Number(tx.amount || 0) * personalRatioForTx(tx, resolvedAccountsById)), 0);
+  const expense = rows.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + (Number(tx.amount || 0) * personalRatioForTx(tx, resolvedAccountsById)), 0);
+  const transferImpact = 0;
+  return { income, expense, transferImpact, net: income - expense };
+}
+
+function calcAggForBucket(txListBucket = [], accountsById = {}) {
+  const incomeMy = txListBucket
+    .filter((tx) => normalizeTxType(tx.type) === 'income')
+    .reduce((s, tx) => s + Math.max(0, personalDeltaForTx(tx, accountsById)), 0);
+
+  const expenseMy = txListBucket
+    .filter((tx) => normalizeTxType(tx.type) === 'expense')
+    .reduce((s, tx) => s + Math.max(0, -personalDeltaForTx(tx, accountsById)), 0);
+
+  const transferImpactMy = txListBucket
+    .filter((tx) => normalizeTxType(tx.type) === 'transfer')
+    .reduce((s, tx) => s + personalDeltaForTx(tx, accountsById), 0);
+
+  const incomeTotal = txListBucket.filter((tx) => normalizeTxType(tx.type) === 'income').reduce((s, tx) => s + Number(tx.amount || 0), 0);
+  const expenseTotal = txListBucket.filter((tx) => normalizeTxType(tx.type) === 'expense').reduce((s, tx) => s + Number(tx.amount || 0), 0);
+
+  return {
+    incomeMy,
+    expenseMy,
+    netOperativeMy: incomeMy - expenseMy,
+    transferImpactMy,
+    netWealthMy: incomeMy - expenseMy + transferImpactMy,
+    incomeTotal,
+    expenseTotal,
+    netOperativeTotal: incomeTotal - expenseTotal,
+    transferImpactTotal: 0,
+    netWealthTotal: incomeTotal - expenseTotal
+  };
+}
+
+function accountValueByTs(account = {}, ts = 0) {
+  const day = dayKeyFromTs(ts);
+  return accountValueForDay(account, day);
+}
+
+function calcAccountsDeltaForBucket(mode = 'month', bucketKey = '', accounts = state.accounts) {
+  const bounds = bucketRange(mode, bucketKey);
+  const startTs = bounds.start;
+  const endTs = Math.max(bounds.start, bounds.end - 1);
+  return (accounts || []).reduce((sum, account) => {
+    const start = accountValueByTs(account, startTs);
+    const end = accountValueByTs(account, endTs);
+    return sum + (end - start);
+  }, 0);
+}
+
+function scheduleAggregateRebuild() {
+  clearTimeout(state.aggregateRebuildTimer);
+  state.aggregateRebuildTimer = setTimeout(() => {
+    rebuildAggregates().catch((error) => console.error('[finance] aggregate rebuild failed', error));
+  }, 250);
+}
+
+async function rebuildAggregates() {
+  const rows = balanceTxList();
+  const accountsById = Object.fromEntries(state.accounts.map((account) => [account.id, account]));
+  const grouped = { day: {}, week: {}, month: {}, year: {}, total: { all: rows } };
+  rows.forEach((tx) => {
+    ['day', 'week', 'month', 'year'].forEach((mode) => {
+      const key = bucketKeyForTx(tx, mode);
+      if (!key) return;
+      grouped[mode][key] = grouped[mode][key] || [];
+      grouped[mode][key].push(tx);
+    });
+  });
+  const updates = {};
+  AGG_MODES.forEach((mode) => {
+    Object.entries(grouped[mode] || {}).forEach(([bucketKey, list]) => {
+      const agg = calcAggForBucket(list, accountsById);
+      const accountsDeltaReal = calcAccountsDeltaForBucket(mode, bucketKey, state.accounts);
+      updates[`${state.financePath}/aggregates/${mode}/${bucketKey}`] = {
+        ...agg,
+        accountsDeltaReal,
+        updatedAt: nowTs()
+      };
+    });
+  });
+  if (Object.keys(updates).length) await safeFirebase(() => update(ref(db), updates));
+}
+
+function aggregateRowsForMode(mode = 'month') {
+  const map = state.balance.aggregates?.[mode] || {};
+  return Object.entries(map).map(([bucketKey, row]) => ({ bucketKey, ...row })).sort((a, b) => a.bucketKey.localeCompare(b.bucketKey));
+}
+
+function metricValue(row, scope = 'my', metric = 'netOperative') {
+  const suffix = scope === 'total' ? 'Total' : 'My';
+  const key = `${metric}${suffix}`;
+  return Number(row?.[key] || 0);
+}
+
+
+function openBalanceDrilldown(txType) {
+  if (txType !== 'income' && txType !== 'expense') return;
+  state.modal = {
+    type: 'balance-drilldown',
+    txType,
+    monthOffset: state.balanceMonthOffset,
+    importRaw: '',
+    importPreview: null,
+    importError: ''
+  };
+  triggerRender();
+}
+
+function buildDrilldownRows(txType, monthKey) {
+  return balanceTxList()
+    .filter((row) => row.type === txType && row.monthKey === monthKey)
+    .sort((a, b) => txSortTs(b) - txSortTs(a));
+}
+
+function monthlyNetRows(accountsById = {}) {
+  const resolvedAccountsById = Object.keys(accountsById || {}).length ? accountsById : Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
+  const grouped = {};
+  balanceTxList().forEach((tx) => {
+    if (!tx.monthKey) return;
+    grouped[tx.monthKey] = grouped[tx.monthKey] || [];
+    grouped[tx.monthKey].push(tx);
+  });
+  return Object.entries(grouped).map(([month, rows]) => {
+    const agg = calcAggForBucket(rows, resolvedAccountsById);
+    const accountsDeltaReal = calcAccountsDeltaForBucket('month', month, state.accounts);
+    return { month, netOperative: agg.netOperativeMy, netWealth: agg.netWealthMy, accountsDeltaReal };
+  }).sort((a, b) => b.month.localeCompare(a.month));
+}
+
+function categoryColor(index = 0) {
+  const palette = ['#65d8ff', '#8aff8a', '#ffcf66', '#ff8fb6', '#b7a1ff', '#75f0d6', '#ffc78a', '#9fb8ff'];
+  return palette[index % palette.length];
+}
+
+function buildBalanceStats(rows, accountsById) {
+  const spentByCategoryPersonal = {};
+  const incomeByCategoryPersonal = {};
+  const spentByCategoryGlobal = {};
+  const incomeByCategoryGlobal = {};
+  const foodByItemPersonal = {};
+  const foodByItemGlobal = {};
+  let totalFoodSpentPersonal = 0;
+  let totalFoodSpentGlobal = 0;
+  rows.forEach((row) => {
+    const amountGlobal = Math.abs(Number(row.amount || 0));
+    const amountPersonal = Math.abs(personalDeltaForTx(row, accountsById));
+    if (!amountPersonal && !amountGlobal) return;
+    const category = row.category || 'Sin categoría';
+    if (row.type === 'expense') {
+      spentByCategoryPersonal[category] = (spentByCategoryPersonal[category] || 0) + amountPersonal;
+      spentByCategoryGlobal[category] = (spentByCategoryGlobal[category] || 0) + amountGlobal;
+      if (isFoodCategory(category)) {
+        totalFoodSpentPersonal += amountPersonal;
+        totalFoodSpentGlobal += amountGlobal;
+      }
+      const foodItems = foodItemsFromTx(row);
+      if (foodItems.length) {
+        const personalFactor = amountGlobal ? (amountPersonal / amountGlobal) : getRatio(accountsById[row.accountId]);
+        foodItems.forEach((foodItem) => {
+          const spentGlobal = Number(foodItem.price || 0) > 0 ? Number(foodItem.price || 0) : amountGlobal;
+          const spentPersonal = spentGlobal * personalFactor;
+          foodByItemPersonal[foodItem.name] = foodByItemPersonal[foodItem.name] || { name: foodItem.name, total: 0, count: 0 };
+          foodByItemPersonal[foodItem.name].total += spentPersonal;
+          foodByItemPersonal[foodItem.name].count += 1;
+          foodByItemGlobal[foodItem.name] = foodByItemGlobal[foodItem.name] || { name: foodItem.name, total: 0, count: 0 };
+          foodByItemGlobal[foodItem.name].total += spentGlobal;
+          foodByItemGlobal[foodItem.name].count += 1;
+        });
+      }
+    }
+    if (row.type === 'income') {
+      incomeByCategoryPersonal[category] = (incomeByCategoryPersonal[category] || 0) + amountPersonal;
+      incomeByCategoryGlobal[category] = (incomeByCategoryGlobal[category] || 0) + amountGlobal;
+    }
+  });
+  const totalSpentPersonal = Object.values(spentByCategoryPersonal).reduce((sum, value) => sum + Number(value || 0), 0);
+  const totalIncomePersonal = Object.values(incomeByCategoryPersonal).reduce((sum, value) => sum + Number(value || 0), 0);
+  const totalSpentGlobal = Object.values(spentByCategoryGlobal).reduce((sum, value) => sum + Number(value || 0), 0);
+  const totalIncomeGlobal = Object.values(incomeByCategoryGlobal).reduce((sum, value) => sum + Number(value || 0), 0);
+  const topFoodItemsPersonal = Object.values(foodByItemPersonal)
+    .sort((a, b) => (b.total - a.total) || (b.count - a.count) || a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }))
+    .slice(0, 5);
+  const topFoodItemsGlobal = Object.values(foodByItemGlobal)
+    .sort((a, b) => (b.total - a.total) || (b.count - a.count) || a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }))
+    .slice(0, 5);
+  return {
+    spentByCategoryPersonal,
+    incomeByCategoryPersonal,
+    spentByCategoryGlobal,
+    incomeByCategoryGlobal,
+    totalSpentPersonal,
+    totalIncomePersonal,
+    totalSpentGlobal,
+    totalIncomeGlobal,
+    totalFoodSpentPersonal,
+    totalFoodSpentGlobal,
+    topFoodItemsPersonal,
+    topFoodItemsGlobal
+  };
+}
+
+function rangeStartByMode(mode = 'month', anchorDate = '') {
+  const baseIso = toIsoDay(anchorDate) || dayKeyFromTs(Date.now());
+  const [y, m, d] = baseIso.split('-').map(Number);
+  const start = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+
+  if (mode === 'day') return start.getTime();
+
+  if (mode === 'week') {
+    const day = (start.getDay() + 6) % 7;
+    start.setDate(start.getDate() - day);
+    return start.getTime();
+  }
+
+  if (mode === 'year') {
+    start.setMonth(0, 1);
+    return start.getTime();
+  }
+
+  if (mode === 'month') {
+    start.setDate(1);
+    return start.getTime();
+  }
+
+  return null;
+}
+
+function txTs(row = {}) {
+  return new Date(row.dateISO || row.date || 0).getTime() || 0;
+}
+
+function filterTxByRange(rows = [], mode = 'month') {
+  if (mode === 'total') return rows;
+  const start = rangeStartByMode(mode);
+  if (start == null) return rows;
+  const end = Date.now();
+  return rows.filter((row) => {
+    const ts = txTs(row);
+    return ts >= start && ts <= end;
+  });
+}
+
+function listHabitOptions() {
+  const apiList = window.__bookshellHabits?.listActiveHabits;
+  const habits = typeof apiList === 'function' ? apiList() : [];
+  if (!Array.isArray(habits)) return [];
+  return habits
+    .map((habit) => ({ id: String(habit?.id || ''), name: String(habit?.name || '').trim() }))
+    .filter((habit) => habit.id && habit.name);
+}
+
+function getHoursByHabitId(range = 'month', explicitBounds = null) {
+  const safeRange = ['day', 'week', 'month', 'year', 'total'].includes(range) ? range : 'month';
+  const reader = window.__bookshellHabits?.getHoursByHabitId;
+  if (typeof reader !== 'function') return {};
+  try {
+    const payload = explicitBounds && Number.isFinite(explicitBounds.start) && Number.isFinite(explicitBounds.end)
+      ? { range: safeRange, start: explicitBounds.start, end: explicitBounds.end }
+      : safeRange;
+    const hours = reader(payload);
+    if (!hours || typeof hours !== 'object') return {};
+    return Object.fromEntries(Object.entries(hours).map(([habitId, value]) => [habitId, Number(value || 0)]));
+  } catch (err) {
+    console.warn('[finance] getHoursByHabitId failed', err);
+    return {};
+  }
+}
+
+function amountAllocatedToRange(row = {}, rangeBounds = {}) {
+  const amount = Number(row?.amount || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const fallbackDate = String(row?.date || isoToDay(row?.dateISO || '') || '');
+  const allocation = normalizeTxAllocation(row?.allocation || {}, fallbackDate);
+  const txDayTs = localStartOfDayTs(fallbackDate || allocation.anchorDate);
+  if (allocation.mode === 'point') {
+    return txDayTs >= rangeBounds.start && txDayTs < rangeBounds.end ? amount : 0;
+  }
+  const windowBounds = allocationWindowBounds(allocation, fallbackDate);
+  const windowDays = overlapDays(windowBounds, windowBounds);
+  if (!windowDays) return 0;
+  const overlap = overlapDays(windowBounds, rangeBounds);
+  if (!overlap) return 0;
+  return amount * (overlap / windowDays);
+}
+
+function computeTransactionAmountInRange(row = {}, viewedRange = {}) {
+  return amountAllocatedToRange(row, viewedRange);
+}
+
+function computeHoursByHabitInRange(range = 'month', viewedRange = null) {
+  return getHoursByHabitId(range, viewedRange);
+}
+
+function buildHabitPerHourMetrics(rows = [], range = 'month') {
+  const safeRange = ['day', 'week', 'month', 'year', 'total'].includes(range) ? range : 'month';
+  const rangeBounds = rangeBoundsForMode(safeRange);
+  const sumIncome = {};
+  const sumExpense = {};
+  rows.forEach((row) => {
+    const habitId = String(row?.linkedHabitId || '').trim();
+    if (!habitId) return;
+    const inRangeAmount = computeTransactionAmountInRange(row, rangeBounds);
+    if (!Number.isFinite(inRangeAmount) || inRangeAmount <= 0) return;
+    if (row.type === 'income') sumIncome[habitId] = (sumIncome[habitId] || 0) + inRangeAmount;
+    if (row.type === 'expense') sumExpense[habitId] = (sumExpense[habitId] || 0) + inRangeAmount;
+  });
+
+  const hoursByHabitId = computeHoursByHabitInRange(safeRange, rangeBounds);
+  const habits = listHabitOptions();
+  const habitsById = Object.fromEntries(habits.map((habit) => [habit.id, habit]));
+  const ids = new Set([...Object.keys(hoursByHabitId), ...Object.keys(sumIncome), ...Object.keys(sumExpense)]);
+  const rowsByHabit = [...ids].map((habitId) => {
+    const hours = Number(hoursByHabitId[habitId] || 0);
+    const income = Number(sumIncome[habitId] || 0);
+    const expense = Number(sumExpense[habitId] || 0);
+    const balance = income - expense;
+    const hasHours = hours > 0;
+    return {
+      habitId,
+      habitName: habitsById[habitId]?.name || habitId,
+      hours,
+      income,
+      expense,
+      balance,
+      incomePerHour: hasHours ? income / hours : null,
+      expensePerHour: hasHours ? expense / hours : null,
+      balancePerHour: hasHours ? balance / hours : null
+    };
+  }).sort((a, b) => (b.balance - a.balance) || (b.income - a.income));
+
+  const totals = rowsByHabit.reduce((acc, row) => {
+    acc.income += row.income;
+    acc.expense += row.expense;
+    acc.hours += row.hours;
+    return acc;
+  }, { income: 0, expense: 0, hours: 0 });
+  const totalBalance = totals.income - totals.expense;
+  return {
+    rows: rowsByHabit,
+    totals: {
+      income: totals.income,
+      expense: totals.expense,
+      balance: totalBalance,
+      hours: totals.hours,
+      balancePerHour: totals.hours > 0 ? totalBalance / totals.hours : null
+    }
+  };
+}
+
+function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense', scope = 'personal', accountsById = {}, options = {}) {
+  const output = {};
+  const productKeyByLabel = {};
+  const ungroupedLabel = 'Importe sin líneas';
+  const includeUnlined = !!options.includeUnlined;
+  let unlinedTotal = 0;
+  const isMissingGroupedValue = (value = '') => {
+    const normalized = normalizeFoodName(value).toLowerCase();
+    if (!normalized) return true;
+    return normalized.startsWith('sin ');
+  };
+  rows.forEach((row) => {
+    if (row.type !== txMode) return;
+    const amount = scope === 'global'
+      ? Math.abs(Number(row.amount || 0))
+      : Math.abs(personalDeltaForTx(row, accountsById));
+    if (!amount) return;
+    let key = 'Sin datos';
+    if (groupBy === 'account') key = accountsById[row.accountId]?.name || 'Sin cuenta';
+    else if (groupBy === 'store') {
+      const items = foodItemsFromTx(row);
+      key = normalizeFoodName(row.extras?.filters?.place || row.extras?.place || items.find((item) => item?.place)?.place || '');
+      if (isMissingGroupedValue(key)) return;
+    } else if (groupBy === 'mealType') {
+      key = normalizeFoodName(row.extras?.filters?.mealType || row.extras?.mealType || '');
+      if (isMissingGroupedValue(key)) return;
+    }
+    else if (groupBy === 'product') {
+      const items = foodItemsFromTx(row);
+      const hasLines = items.some((item) => normalizeFoodName(item?.name || ''));
+      if (!hasLines) {
+        unlinedTotal += amount;
+        if (includeUnlined) output[ungroupedLabel] = (output[ungroupedLabel] || 0) + amount;
+      }
+      return;
+    } else key = row.category || 'Sin categoría';
+    output[key] = (output[key] || 0) + amount;
+  });
+  if (groupBy === 'product') {
+    const scopedAmountByTx = {};
+    rows.forEach((row) => {
+      if (row.type !== txMode) return;
+      const scopedAmount = scope === 'global' ? Math.abs(Number(row.amount || 0)) : Math.abs(personalDeltaForTx(row, accountsById));
+      if (!scopedAmount) return;
+      scopedAmountByTx[row.id] = scopedAmount;
+    });
+    const spendStats = accumulateSpendByProduct(rows.filter((row) => row.type === txMode), scopedAmountByTx, state.food.itemsById || {});
+    Object.entries(spendStats.spend || {}).forEach(([label, value]) => {
+      if (isMissingGroupedValue(label)) return;
+      output[label] = (output[label] || 0) + Number(value || 0);
+      if (!productKeyByLabel[label] && spendStats.productKeyByLabel?.[label]) productKeyByLabel[label] = spendStats.productKeyByLabel[label];
+    });
+    state.balanceStatsProductMeta = spendStats.statsByProduct || {};
+  } else {
+    state.balanceStatsProductMeta = {};
+  }
+  return { breakdown: output, unlinedTotal, productKeyByLabel };
+}
+
+function donutSegments(mapData = {}, total = 0, options = {}) {
+  if (!total) return [];
+  const productKeyByLabel = options?.productKeyByLabel || {};
+  let accumulatedRatio = 0;
+  return Object.entries(mapData)
+    .sort((a, b) => b[1] - a[1])
+    .map(([label, value], index) => {
+      const ratio = Number(value || 0) / total;
+      const startRatio = accumulatedRatio;
+      const endRatio = accumulatedRatio + ratio;
+      const midAngle = ((startRatio + endRatio) / 2) * (Math.PI * 2) - (Math.PI / 2);
+      const segment = {
+        label,
+        value,
+        color: categoryColor(index),
+        pct: ratio * 100,
+        midAngle,
+        key: `${firebaseSafeKey(label)}__${index}`,
+        _key: String(productKeyByLabel[label] || firebaseSafeKey(label)),
+        productKey: String(productKeyByLabel[label] || firebaseSafeKey(label))
+      };
+      accumulatedRatio = endRatio;
+      return segment;
+    });
+}
+
+let financeStatsDonutChart = null;
+
+function updateLegendSelection(selectedKey = '') {
+  const rows = document.querySelectorAll('[data-finance-stats-segment]');
+  rows.forEach((row) => {
+    row.classList.toggle('is-active', String(row.dataset.financeStatsSegment || '') === String(selectedKey || ''));
+  });
+}
+
+async function openProductDetail(productKey = '') {
+  const safeKey = String(productKey || '').trim();
+  if (!safeKey) return;
+  await ensureFoodCatalogLoaded();
+  const item = resolveFoodItemByAnyKey(safeKey);
+  state.modal = item
+    ? { type: 'food-item', foodId: item.id, mode: 'detail', source: 'stats-legend' }
+    : { type: 'food-item', foodId: safeKey, mode: 'detail', source: 'stats-legend' };
+  triggerRender();
+}
+
+function ensureFinanceStatsCallout(host) {
+  if (!host) return { callout: null, line: null };
+  let callout = host.querySelector('#financeStatsDonutCallout');
+  if (!callout) {
+    callout = document.createElement('div');
+    callout.id = 'financeStatsDonutCallout';
+    callout.className = 'financeStats__callout';
+    host.appendChild(callout);
+  }
+  let line = host.querySelector('#financeStatsDonutCalloutLine');
+  if (!line) line = host.querySelector('[data-finance-stats-callout-line]');
+  return { callout, line };
+}
+
+function updateCalloutFromSlice(params) {
+  const host = document.querySelector('[data-finance-stats-donut-wrap]');
+  if (!host) return;
+  const { callout, line } = ensureFinanceStatsCallout(host);
+  if (!callout || !line) return;
+  const hasValidData = Boolean(params?.data?.name) && params?.data?.value != null;
+  if (!hasValidData || !Number.isFinite(Number(params?.data?.midAngle))) {
+    callout.style.display = 'none';
+    callout.textContent = '';
+    line.style.display = 'none';
+    line.setAttribute('points', '');
+    return;
+  }
+  const sliceMidAngle = Number(params.data.midAngle);
+  const sliceLabel = String(params.data.name || '');
+  const sliceValue = Number(params.data.value || 0);
+  const slicePct = Number(params?.percent ?? params?.data?.pct ?? 0);
+  const calloutInnerRadius = 46;
+  const calloutOuterRadius = 56;
+  const calloutBoxRadius = 64;
+  const calloutFrom = { x: 50 + (Math.cos(sliceMidAngle) * calloutInnerRadius), y: 50 + (Math.sin(sliceMidAngle) * calloutInnerRadius) };
+  const calloutTo = { x: 50 + (Math.cos(sliceMidAngle) * calloutOuterRadius), y: 50 + (Math.sin(sliceMidAngle) * calloutOuterRadius) };
+  const rawX = 50 + (Math.cos(sliceMidAngle) * calloutBoxRadius);
+  const rawY = 50 + (Math.sin(sliceMidAngle) * calloutBoxRadius);
+  const margin = 25;
+  const calloutBox = { x: Math.max(margin, Math.min(100 - margin, rawX)), y: Math.max(margin, Math.min(100 - margin, rawY)) };
+  line.setAttribute('points', `${calloutFrom.x},${calloutFrom.y} ${calloutTo.x},${calloutTo.y} ${calloutBox.x},${calloutBox.y}`);
+  callout.style.left = `calc(${calloutBox.x}% )`;
+  callout.style.top = `calc(${calloutBox.y}% )`;
+  callout.innerHTML = `<strong>${escapeHtml(sliceLabel)}</strong><small>${fmtCurrency(sliceValue)} · ${slicePct.toFixed(1)}%</small>`;
+  callout.style.display = 'grid';
+  line.style.display = 'block';
+}
+
+function updateCallout(selectedKey = '') {
+  const host = document.querySelector('[data-finance-stats-donut-wrap]');
+  if (!host) return;
+  let segments = [];
+  try { segments = JSON.parse(host.dataset.financeStatsSegments || '[]'); } catch (_) { segments = []; }
+  const segment = segments.find((row) => String(row?._key || '') === String(selectedKey || '')) || null;
+  if (!segment) {
+    updateCalloutFromSlice(null);
+    return;
+  }
+  updateCalloutFromSlice({
+    data: {
+      name: segment.label,
+      value: Number(segment.value || 0),
+      pct: Number(segment.pct || 0),
+      midAngle: Number(segment.midAngle)
+    },
+    percent: Number(segment.pct || 0)
+  });
+}
+
+function disposeFinanceStatsDonutChart() {
+  if (!financeStatsDonutChart) return;
+  const zr = financeStatsDonutChart.getZr?.();
+  if (zr && financeStatsDonutChart.__financeBgClickHandler) {
+    zr.off('click', financeStatsDonutChart.__financeBgClickHandler);
+    financeStatsDonutChart.__financeBgClickHandler = null;
+  }
+  try { financeStatsDonutChart.dispose(); } catch (_) {}
+  financeStatsDonutChart = null;
+}
+
+function renderFinanceStatsDonutChart() {
+  const host = document.querySelector('[data-finance-stats-donut]');
+  if (!host || typeof echarts === 'undefined') {
+    disposeFinanceStatsDonutChart();
+    return;
+  }
+  let rows = [];
+  try { rows = JSON.parse(host.dataset.financeStatsDonut || '[]'); } catch (_) { rows = []; }
+  if (!Array.isArray(rows) || !rows.length) {
+    disposeFinanceStatsDonutChart();
+    return;
+  }
+  if (!financeStatsDonutChart || financeStatsDonutChart.getDom() !== host) {
+    disposeFinanceStatsDonutChart();
+    financeStatsDonutChart = echarts.init(host);
+  }
+financeStatsDonutChart.setOption({
+  animation: false,
+
+  tooltip: {
+    show: false
+  },
+
+  series: [{
+    type: 'pie',
+    radius: ['58%', '80%'],
+    avoidLabelOverlap: true,
+    label: { show: false },
+    labelLine: false ,
+    emphasis: { disabled: true },   // 👈 evita hover visual
+    itemStyle: {
+      borderColor: 'rgba(8,14,34,.9)',
+      borderWidth: 2
+    },
+    data: rows.map((row) => ({
+      name: row.name,
+      value: Number(row.value || 0),
+      _key: row._key,
+      productKey: row.productKey,
+      pct: Number(row.pct || 0),
+      midAngle: Number(row.midAngle || 0),
+      itemStyle: { color: row.color }
+    }))
+  }]
+}, { notMerge: true });
+
+  const resetSelection = ({ rerender = true } = {}) => {
+    financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
+    updateCallout('');
+    if (state.balanceStatsActiveSegment) {
+      state.balanceStatsActiveSegment = null;
+      state.balanceStatsSelectedSliceKey = null;
+      updateLegendSelection('');
+      updateCallout('');
+      if (rerender) triggerRender();
+    }
+  };
+
+  financeStatsDonutChart.off('click');
+  financeStatsDonutChart.on('click', (params) => {
+    if (params?.seriesType !== 'pie' || !params?.data) return;
+    const idx = Number(params.dataIndex);
+    const segmentKey = String(params.data._key || '');
+    if (!segmentKey || !Number.isInteger(idx) || idx < 0) return;
+    if (state.balanceStatsActiveSegment === segmentKey) {
+      resetSelection({ rerender: false });
+      return;
+    }
+    state.balanceStatsActiveSegment = segmentKey;
+    state.balanceStatsSelectedSliceKey = segmentKey;
+    financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
+    financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idx });
+    updateLegendSelection(segmentKey);
+    updateCalloutFromSlice(params);
+  });
+
+  const zr = financeStatsDonutChart.getZr?.();
+  if (zr && financeStatsDonutChart.__financeBgClickHandler) {
+    zr.off('click', financeStatsDonutChart.__financeBgClickHandler);
+  }
+  financeStatsDonutChart.__financeBgClickHandler = (event) => {
+    if (event?.target) return;
+    resetSelection();
+  };
+  if (zr) zr.on('click', financeStatsDonutChart.__financeBgClickHandler);
+
+  financeStatsDonutChart.resize();
+  updateCalloutFromSlice(null);
+  if (state.balanceStatsActiveSegment) {
+    const selectedIndex = rows.findIndex((row) => row._key === state.balanceStatsActiveSegment);
+    if (selectedIndex >= 0) {
+      financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
+      financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: selectedIndex });
+      updateLegendSelection(state.balanceStatsActiveSegment);
+      updateCallout(state.balanceStatsActiveSegment);
+    }
+  } else {
+    updateLegendSelection('');
+    updateCallout('');
+  }
+}
+
+function categoriesList() {
+  const dynamic = Object.values(state.balance.categories || {}).map((row) => String(row?.name || '')).filter(Boolean);
+  const fromTx = [...new Set(balanceTxList().map((tx) => tx.category).filter((name) => name && String(name).toLowerCase() !== 'transfer'))];
+  return [...new Set([...dynamic, ...fromTx])].sort((a, b) => a.localeCompare(b, 'es'));
+}
+
+const CATEGORY_EMOJI_FALLBACK = {
+  comida: '🍔',
+  supermercados: '🧺',
+  super: '🧺',
+  casa: '🏠',
+  alquiler: '🏠',
+  luz: '💡',
+  agua: '🚰',
+  gas: '🔥',
+  internet: '📶',
+  telefono: '📱',
+  transporte: '🚗',
+  gasolina: '⛽',
+  salud: '🩺',
+  farmacia: '💊',
+  ocio: '🎮',
+  regalos: '🎁',
+  ropa: '👕',
+  suscripciones: '🔁',
+  viaje: '✈️',
+  formacion: '📚',
+  impuestos: '🧾',
+  otros: '🧩',
+};
+
+function normalizeTxWizardStep(value) {
+  const v = String(value || '').trim().toLowerCase();
+  if (v === 'base' || v === 'category' || v === 'food') return v;
+  return 'base';
+}
+
+function isFoodCategoryName(name) {
+  const v = String(name || '').trim().toLowerCase();
+  return v === 'comida' || v.includes('comida');
+}
+
+function categoryEmojiForName(name) {
+  const key = String(name || '').trim();
+  if (!key) return '';
+  const direct = state.balance.categories?.[key]?.emoji;
+  if (direct) return String(direct);
+  const lower = key.toLowerCase();
+  return CATEGORY_EMOJI_FALLBACK[lower] || '';
+}
+
+function categoriesMetaList() {
+  return categoriesList().map((name) => ({
+    name,
+    emoji: categoryEmojiForName(name),
+    hasCustomEmoji: Boolean(state.balance.categories?.[name]?.emoji),
+  }));
+}
+function getBudgetItems(monthKey = getSelectedBalanceMonthKey()) {
+  const monthBudgets = state.balance.budgets?.[monthKey] || {};
+  return Object.entries(monthBudgets).map(([id, payload]) => {
+    if (!payload || typeof payload !== 'object') return null;
+    if (payload.category != null) return { id, category: String(payload.category), limit: Number(payload.limit || 0) };
+    if (id === '_total') return { id, category: 'Total', limit: Number(payload.limit || 0) };
+    if (payload.limit == null) return null;
+    return { id, category: id, limit: Number(payload.limit || 0) };
+  }).filter((row) => row && row.category);
+}
+
+function openAccountDetail(accountId) {
+  log(`openAccountDetail accountId=${accountId}`);
+  state.modal = { type: 'account-detail', accountId, importRaw: '', importPreview: null, importError: '' };
+  triggerRender();
+}
+
+function parseCsvRows(rawCsv = '') {
+  const lines = String(rawCsv || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return { rows: [], validRows: [], invalidRows: 0, totalRows: 0 };
+  const parseLine = (line) => {
+    const out = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') { current += '"'; i += 1; }
+        else inQuotes = !inQuotes;
+      } else if (ch === ',' && !inQuotes) {
+        out.push(current.trim());
+        current = '';
+      } else current += ch;
+    }
+    out.push(current.trim());
+    return out;
+  };
+  const firstCols = parseLine(lines[0]).map((col) => col.toLowerCase());
+  const hasHeader = firstCols.includes('date') || firstCols.includes('value');
+  const offset = hasHeader ? 1 : 0;
+  const sourceRows = lines.slice(offset).map(parseLine);
+  const mapped = sourceRows.map((cols, index) => {
+    const dateISO = toIsoDay(cols[0]);
+    const value = parseEuroNumber(cols[1]);
+    const valid = Boolean(dateISO) && Number.isFinite(value);
+    return { lineNumber: index + offset + 1, raw: cols, dateISO, value, valid };
+  });
+  const validRows = mapped.filter((row) => row.valid);
+  log(`import parsed rows=${mapped.length}`);
+  return { rows: mapped, validRows, invalidRows: mapped.length - validRows.length, totalRows: mapped.length };
+}
+
+async function applyImportRows(accountId, parsed) {
+  const byDay = {};
+  parsed.validRows.forEach((row) => { byDay[row.dateISO] = row.value; });
+  const days = Object.keys(byDay).sort();
+  if (!days.length) return 0;
+  const updatesMap = {};
+  days.forEach((day) => {
+    updatesMap[`${state.financePath}/accounts/${accountId}/snapshots/${day}`] = { value: byDay[day], updatedAt: nowTs() };
+  });
+  updatesMap[`${state.financePath}/accounts/${accountId}/updatedAt`] = nowTs();
+  updatesMap[`${state.financePath}/accounts/${accountId}/lastImportAt`] = nowTs();
+  await safeFirebase(() => update(ref(db), updatesMap));
+  await recomputeAccountEntries(accountId, days[0]);
+  log(`import applied days=${days.length}`);
+  return days.length;
+}
+
+async function maybeRolloverSnapshot() {
+  const currentMonthKey = getMonthKeyFromDate();
+  if (state.balance.lastSeenMonthKey === currentMonthKey) return;
+  const prevMonthKey = offsetMonthKey(currentMonthKey, -1);
+  const prev = summaryForMonth(prevMonthKey);
+  const updatesMap = {};
+  updatesMap[`${state.financePath}/balance/snapshots/${prevMonthKey}`] = prev;
+  updatesMap[`${state.financePath}/balance/lastSeenMonthKey`] = currentMonthKey;
+  await safeFirebase(() => update(ref(db), updatesMap));
+  toast(`Snapshot mensual ${prevMonthKey} guardado`);
+  log('balance init', { currentMonthKey, prevMonthKey, prev });
+}
+
+function renderFinanceNav() {
+  const nav = document.getElementById('finance-topnav');
+  if (!nav) return;
+  const items = [['home', 'Principal'], ['balance', 'Balance'], ['goals', 'Objetivos'], ['calendar', 'Calendario'], ['products', 'Productos']];
+  nav.innerHTML = `<div class="financeInnerNav">${items.map(([id, label]) => `<button type="button" class="finance-pill ${state.activeView === id ? 'is-active' : ''}" data-finance-view="${id}">${label}</button>`).join('')}</div>`;
+}
+
+function renderFinanceHome(accounts, totalSeries) {
+  console.group('[finance] renderFinanceHome');
+  console.log('state:', JSON.stringify(state));
+  console.log('root candidates:', {
+    financeRoot: document.getElementById('finance-root'),
+    tab: document.querySelector('[data-tab="finance"]'),
+    container: document.querySelector('#finance, #financeTab, .finance-tab, [data-view="finance"]'),
+  });
+  console.groupEnd();
+
+  const root = resolveFinanceRoot();
+  if (!root) throw new Error('[finance] finance root not available before renderFinanceHome');
+  if (!$opt('#finance-content')) ensureFinanceHost($opt, $req);
+
+  const total = accounts.reduce((sum, account) => sum + account.current, 0);
+  const totalReal = accounts.reduce((sum, account) => sum + Number(account.currentReal || 0), 0);
+  const totalRange = computeDeltaForRange(totalSeries, state.rangeMode);
+  const chart = chartModelForRange(totalSeries, state.rangeMode);
+  state.lineChart = { points: chart.points || [], mode: state.rangeMode, kind: 'total' };
+  const compareBounds = getRangeBounds(state.compareMode);
+  const compareCurrent = computeDeltaWithinBounds(totalSeries, compareBounds);
+  const previousBounds = { start: compareBounds.start - (compareBounds.end - compareBounds.start), end: compareBounds.start };
+  const comparePrev = computeDeltaWithinBounds(totalSeries, previousBounds);
+  return `
+    <section class="finance-home ${toneClass(totalRange.delta)}">
+      <article class="finance__hero"><p class="finance__eyebrow">TOTAL</p><h2 id="finance-totalValue">${fmtCurrency(total)}</h2>
+        <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedCurrency(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
+        <p>Saldo real: <strong>${fmtCurrency(totalReal)}</strong> · Mi parte: <strong>${fmtCurrency(total)}</strong></p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div></article>
+      <article class="finance__controls">
+        <select class="finance-pill" data-range><option value="total" ${state.rangeMode === 'total' ? 'selected' : ''}>Total</option><option value="month" ${state.rangeMode === 'month' ? 'selected' : ''}>Mes</option><option value="week" ${state.rangeMode === 'week' ? 'selected' : ''}>Semana</option><option value="year" ${state.rangeMode === 'year' ? 'selected' : ''}>Año</option></select>
+        <button class="finance-pill" data-history>Historial</button>
+        <select class="finance-pill" data-compare><option value="month" ${state.compareMode === 'month' ? 'selected' : ''}>Mes vs Mes</option><option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option></select></article>
+      <article class="finance__compareRow"><div class="finance-chip ${toneClass(compareCurrent.delta)}">Actual: ${fmtSignedCurrency(compareCurrent.delta)} (${fmtSignedPercent(compareCurrent.deltaPct)})</div><div class="finance-chip ${toneClass(comparePrev.delta)}">Anterior: ${fmtSignedCurrency(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div></article>
+      <article class="finance__accounts"><div class="finance__sectionHeader"><h2>Cuentas</h2><button class="finance-pill" data-new-account>+ Cuenta</button></div>
+      <div id="finance-accountsList">${accounts.map((account) => { const editableBalance = account.shared ? account.currentReal : account.current; return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'}</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${editableBalance.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${fmtCurrency(account.current)}</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">⋯</button></div></article>`; }).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
+    </section>`;
+}
+
+function renderFinanceCalendar(accounts, totalSeries) {
+  const weekdayLabels = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+  const dayCalendar = calendarData(accounts, totalSeries);
+  const monthCalendar = calendarMonthData(accounts, totalSeries);
+  const yearCalendar = calendarYearData(accounts, totalSeries);
+  const modeLabel = state.calendarMode === 'month'
+    ? `${monthCalendar.year}`
+    : (state.calendarMode === 'year' ? 'Años' : monthLabelByKey(offsetMonthKey(getMonthKeyFromDate(), state.calendarMonthOffset)));
+  let content = '';
+  if (state.calendarMode === 'month') {
+    content = `<div class="finance-calendar-months">${monthCalendar.months.map((point) => {
+      const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
+      return `<button class="financeCalCell ${tone}" data-calendar-open-month="${point.monthKey}"><strong>${escapeHtml(point.label)}</strong><span>${point.isEmpty ? '—' : fmtSignedCurrency(point.delta)}</span><span>${point.isEmpty ? '—' : fmtSignedPercent(point.deltaPct)}</span></button>`;
+    }).join('')}</div>`;
+  } else if (state.calendarMode === 'year') {
+    content = `<div class="finance-calendar-years">${yearCalendar.map((point) => {
+      const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
+      return `<button class="financeCalCell ${tone}" data-calendar-open-year="${point.year}"><strong>${point.year}</strong><span>${point.isEmpty ? '—' : fmtSignedCurrency(point.delta)}</span></button>`;
+    }).join('')}</div>`;
+  } else {
+    content = `<div class="finance-calendar-grid"><div class="finance-calendar-weekdays">${weekdayLabels.map((l) => `<span>${l}</span>`).join('')}</div><div class="finance-calendar-days">${dayCalendar.cells.map((point) => {
+      if (!point) return '<div class="financeCalCell financeCalCell--blank"></div>';
+      const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
+      return `<button class="financeCalCell ${tone}" data-calendar-day="${point.dayKey}"><strong>${point.dayNumber}</strong><span>${point.isEmpty ? '—' : fmtSignedCurrency(point.delta)}</span><span>${point.isEmpty ? '—' : fmtSignedPercent(point.deltaPct)}</span></button>`;
+    }).join('')}</div></div>`;
+  }
+  return `<section class="finance-home"><article class="finance__calendarPreview"><div class="finance__sectionHeader"><h2>Calendario</h2><span class="finance-month-label">${modeLabel}</span></div>
+
+  <div class="finance-calendar-controls">
+  
+  <button class="boton-calendario" data-month-shift="-1">◀</button>
+
+  <select class="finance-pill" data-calendar-account><option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select><select class="finance-pill" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>Día</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>Año</option></select>
+  
+  <button class="boton-calendario" data-month-shift="1">▶</button>
+  </div>
+  ${content}</article></section>`;
+}
+
+function renderFinanceBalance() {
+  const monthKey = getSelectedBalanceMonthKey();
+  console.log('[BALANCE] tx', Object.keys(state.balance.transactions || {}).length);
+  if (FINANCE_DEBUG) {
+    const txNew = Object.keys(state.balance.transactions || {}).length;
+    const movLegacyMonths = Object.keys(state.balance.movements || {}).length;
+    const txLegacy = Object.keys(state.balance.tx || {}).length;
+    const monthCount = balanceTxList().filter((row) => row.monthKey === monthKey).length;
+    console.log('[BALANCE] sources', { txNew, movLegacyMonths, txLegacy });
+    console.log('[BALANCE] month', monthKey, 'rows', monthCount);
+  }
+  const categories = categoriesList();
+  const accounts = buildAccountModels();
+  const accountsById = Object.fromEntries(accounts.map((account) => [account.id, account]));
+  const allMonthTx = [...balanceTxList().filter((row) => row.monthKey === monthKey), ...recurringForMonth(monthKey)];
+  const tx = allMonthTx
+    .filter((row) => state.balanceFilterType === 'all' || row.type === state.balanceFilterType)
+    .filter((row) => state.balanceFilterCategory === 'all' || row.category === state.balanceFilterCategory)
+    .filter((row) => {
+      if (state.balanceAccountFilter === 'all') return true;
+      return row.accountId === state.balanceAccountFilter || row.fromAccountId === state.balanceAccountFilter || row.toAccountId === state.balanceAccountFilter;
+    })
+    .filter((row) => {
+      if (!state.balanceFilterUnlinedOnly) return true;
+      if (row.type !== 'expense') return false;
+      return !foodItemsFromTx(row).length;
+    });
+  const monthSummary = summaryForMonth(monthKey, accountsById);
+  const prevSummary = summaryForMonth(offsetMonthKey(monthKey, -1), accountsById);
+  const monthAgg = calcAggForBucket(allMonthTx, accountsById);
+  console.log('[BALANCE] month', monthKey, 'rows', allMonthTx.length, 'agg', monthAgg);
+  const monthAccountsDeltaReal = calcAccountsDeltaForBucket('month', monthKey, state.accounts);
+  const prevMonthKey = offsetMonthKey(monthKey, -1);
+  const prevMonthRows = [...balanceTxList().filter((row) => row.monthKey === prevMonthKey), ...recurringForMonth(prevMonthKey)];
+  const prevMonthAgg = calcAggForBucket(prevMonthRows, accountsById);
+  const prevMonthAccountsDeltaReal = calcAccountsDeltaForBucket('month', prevMonthKey, state.accounts);
+  const statsMonth = buildBalanceStats(allMonthTx, accountsById);
+  const spentByCategory = statsMonth.spentByCategoryPersonal;
+  const totalSpent = statsMonth.totalSpentPersonal;
+  const budgetItems = getBudgetItems(monthKey);
+  const monthNetList = monthlyNetRows(accountsById);
+  const metricRows = [
+    { id: 'netOperative', label: 'Operativo', current: monthAgg.netOperativeMy, prev: prevMonthAgg.netOperativeMy },
+    { id: 'netWealth', label: 'Patrimonio', current: monthAgg.netWealthMy, prev: prevMonthAgg.netWealthMy },
+    { id: 'accountsDeltaReal', label: 'Δ Cuentas', current: monthAccountsDeltaReal, prev: prevMonthAccountsDeltaReal }
+  ];
+  const accountName = (id) => escapeHtml(accounts.find((a) => a.id === id)?.name || 'Sin cuenta');
+  const mode = state.balanceStatsMode === 'income' ? 'income' : 'expense';
+  const statsRange = ['day', 'week', 'month', 'year', 'total'].includes(state.balanceStatsRange) ? state.balanceStatsRange : 'month';
+  const statsScope = state.balanceStatsScope === 'global' ? 'global' : 'personal';
+  const statsGroupBy = ['category', 'account', 'store', 'mealType', 'product'].includes(state.balanceStatsGroupBy) ? state.balanceStatsGroupBy : 'category';
+  const includeUnlined = !!state.balanceStatsIncludeUnlined;
+  const allTxRows = balanceTxList();
+  const rangeRows = statsRange === 'month'
+    ? allTxRows.filter((row) => row.monthKey === monthKey)
+    : filterTxByRange(allTxRows, statsRange);
+  const rangeStats = buildBalanceStats(rangeRows, accountsById);
+  const donutAggregation = aggregateStatsGroup(rangeRows, statsGroupBy, mode, statsScope, accountsById, { includeUnlined: includeUnlined && statsGroupBy === 'product' });
+  const donutMap = donutAggregation.breakdown;
+  const unlinedTotal = donutAggregation.unlinedTotal;
+  const donutTotal = Object.values(donutMap).reduce((sum, value) => sum + Number(value || 0), 0);
+  const segments = donutSegments(donutMap, donutTotal, { productKeyByLabel: donutAggregation.productKeyByLabel });
+  const selectedSegment = segments.find((segment) => segment._key === state.balanceStatsActiveSegment) || null;
+  if (!selectedSegment && state.balanceStatsActiveSegment) state.balanceStatsActiveSegment = null;
+  const legendExpanded = state.balanceStatsLegendExpanded !== false;
+  const monthScopeLabel = statsRange === 'month' ? ` — ${capitalizeFirst(monthLabelByKey(monthKey))}` : '';
+  const totalIncome = statsScope === 'global' ? rangeStats.totalIncomeGlobal : rangeStats.totalIncomePersonal;
+  const totalSpentRange = statsScope === 'global' ? rangeStats.totalSpentGlobal : rangeStats.totalSpentPersonal;
+  const topFoodItems = statsScope === 'global' ? rangeStats.topFoodItemsGlobal : rangeStats.topFoodItemsPersonal;
+  const totalFoodSpent = statsScope === 'global' ? rangeStats.totalFoodSpentGlobal : rangeStats.totalFoodSpentPersonal;
+  const comparisonMax = Math.max(totalIncome, totalSpentRange, 1);
+  const groupLabel = ({ category: 'Categorías', account: 'Cuentas', store: 'Supermercado', mealType: 'Tipo comida', product: 'Producto / Item' })[statsGroupBy] || 'Categorías';
+  const showUnlinedNotice = statsGroupBy === 'product' && mode === 'expense' && unlinedTotal > 0;
+  const scopeLabel = statsScope === 'global' ? 'total global' : 'mi parte';
+  const txByDay = groupTxByDay(tx, accountsById, statsScope);
+  const aggMode = AGG_MODES.includes(state.balanceAggMode) ? state.balanceAggMode : 'month';
+  const aggScope = state.balanceAggScope === 'total' ? 'total' : 'my';
+  const aggRows = aggregateRowsForMode(aggMode);
+  const aggLast = aggRows.at(-1) || null;
+  const avgDiv = Math.max(aggRows.length, 1);
+  const aggAvg = {
+    netOperative: aggRows.reduce((s, row) => s + metricValue(row, aggScope, 'netOperative'), 0) / avgDiv,
+    netWealth: aggRows.reduce((s, row) => s + metricValue(row, aggScope, 'netWealth'), 0) / avgDiv,
+    accountsDeltaReal: aggRows.reduce((s, row) => s + Number(row.accountsDeltaReal || 0), 0) / avgDiv
+  };
+  const rankMetric = (metric, best = true) => aggRows.reduce((pick, row) => {
+    const value = metric === 'accountsDeltaReal' ? Number(row.accountsDeltaReal || 0) : metricValue(row, aggScope, metric);
+    if (!pick) return { bucketKey: row.bucketKey, value };
+    if (best ? value > pick.value : value < pick.value) return { bucketKey: row.bucketKey, value };
+    return pick;
+  }, null);
+  const roiMode = ['income', 'expense', 'balance'].includes(state.balanceRoiMode) ? state.balanceRoiMode : 'balance';
+  const roiData = buildHabitPerHourMetrics(allTxRows, statsRange);
+  const roiMetrics = roiData.rows.slice().sort((a, b) => {
+    const key = roiMode === 'income' ? 'incomePerHour' : roiMode === 'expense' ? 'expensePerHour' : 'balancePerHour';
+    const av = Number.isFinite(a[key]) ? Number(a[key]) : Number.NEGATIVE_INFINITY;
+    const bv = Number.isFinite(b[key]) ? Number(b[key]) : Number.NEGATIVE_INFINITY;
+    return bv - av;
+  });
+  const roiTotals = roiData.totals;
+
+  return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2></header>
+  <article class="financeGlassCard">
+  <div class="finance-row">
+  <button class="boton-calendario" data-balance-month="-1">◀</button>
+  <strong>${monthLabelByKey(monthKey)}</strong>
+  <button class="boton-calendario" data-balance-month="1">▶</button></div>
+
+  <div class="finAgg__scopeToggle">
+    <button class="finance-pill ${state.balanceAggScope === 'my' ? 'finAgg__active' : ''}" data-fin-agg-scope="my">Mi parte</button>
+    <button class="finance-pill ${state.balanceAggScope === 'total' ? 'finAgg__active' : ''}" data-fin-agg-scope="total">Total</button>
+  </div>
+  <div class="financeSummaryGrid">
+  <button class="dash-balance" type="button" data-balance-drilldown="income"><small class="pill-ingresos-mes">Ingresos (${aggScope === 'total' ? 'total' : 'mi parte'})</small><strong class="is-positive">${fmtCurrency(aggScope === 'total' ? monthAgg.incomeTotal : monthAgg.incomeMy)}</strong></button>
+  <button class="dash-balance" type="button" data-balance-drilldown="expense"><small class="pill-gastos-mes">Gastos (${aggScope === 'total' ? 'total' : 'mi parte'})</small><strong class="is-negative">${fmtCurrency(aggScope === 'total' ? monthAgg.expenseTotal : monthAgg.expenseMy)}</strong></button>
+    <div class="dash-balance">
+      <small>ΔNeto</small><strong class="${toneClass(aggScope === 'total' ? monthAgg.netOperativeTotal : monthAgg.netOperativeMy)}">${fmtCurrency(aggScope === 'total' ? monthAgg.netOperativeTotal : monthAgg.netOperativeMy)}</strong></div>
+    
+  
+
+    <div class="dash-balance"><small>Δ Cuentas (real)</small><strong class="${toneClass(monthAccountsDeltaReal)}">${fmtCurrency(monthAccountsDeltaReal)}</strong></div>
+    </div>
+  <div class="dash-balance-patrimonio"><small>ΔPatrimonio</small><strong class="${toneClass(aggScope === 'total' ? monthAgg.netWealthTotal : monthAgg.netWealthMy)}">${fmtCurrency(aggScope === 'total' ? monthAgg.netWealthTotal : monthAgg.netWealthMy)}</strong>
+    
+      <small>Imp.trans.: ${fmtSignedCurrency(aggScope === 'total' ? monthAgg.transferImpactTotal : monthAgg.transferImpactMy)}</small></div>
+  <div class="finance-chip ${toneClass(prevSummary.net)}">Mes anterior: ${fmtSignedCurrency(prevSummary.net)}</div></article>
+  
+  
+ <details class="financeGlassCard" id="finance-balance-tx-details" data-balance-tx-details ${state.balanceTxDetailsOpen ? 'open' : ''}>
+
+  <summary class="financeAccordion__summary">
+    <span>Transacciones</span>
+  </summary>
+
+
+    <div class="finance-row">
+    <h3>Transacciones</h3>
+    <div class="finance-row-transacciones">
+    <select class="finance-pill-transacciones" data-balance-type><option value="all">Todos</option><option value="expense" ${state.balanceFilterType === 'expense' ? 'selected' : ''}>Gasto</option><option value="income" ${state.balanceFilterType === 'income' ? 'selected' : ''}>Ingreso</option><option value="transfer" ${state.balanceFilterType === 'transfer' ? 'selected' : ''}>Transferencia</option></select>
+    <select class="finance-pill-transacciones" data-balance-category><option value="all">Todas</option>${categories.map((c) => `<option ${state.balanceFilterCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select>
+    <select class="finance-pill-transacciones" data-balance-account><option value="all">Cuentas</option>${accounts.map((a) => `<option value="${a.id}" ${state.balanceAccountFilter === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select>
+    ${state.balanceFilterUnlinedOnly ? '<button class="finance-pill finance-pill--mini" data-balance-filter-unlined-clear>Sin desglose ✕</button>' : ''}</div></div>
+    <div class="financeTxList financeTxList--scroll" style="max-height:260px;overflow-y:auto;">${(state.balanceShowAllTx ? txByDay : txByDay.slice(0, 10)).map((day) => {
+      const label = new Date(`${day.dayISO}T00:00:00`).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+      return `<button type="button" class="financeTxRow finTxDay__row" data-tx-day-open="${day.dayISO}"><span class="${toneClass(day.net)}">${label}</span><span class="${toneClass(day.net)}">${day.rows.length} movimientos</span><strong class="${toneClass(day.net)}">${fmtSignedCurrency(day.net)}</strong></button>`;
+    }).join('') || '<p class="finance-empty">Sin movimientos en este mes.</p>'}</div>${txByDay.length > 10 ? `<div class="finance-row"><button class="finance-pill finance-pill--mini" data-balance-showmore>${state.balanceShowAllTx ? 'Ver menos' : `Ver más (${txByDay.length - 10})`}</button></div>` : ''}
+</details>
+
+  <article class="financeGlassCard financeStats">
+    <div class="financeStats__header">
+      <h3 class="financeStats__title">Estadísticas${monthScopeLabel}</h3>
+      <div class="financeStats__mode">
+        
+      </div>
+    </div>
+
+    <div class="financeStats__scope">
+      <button class="financeStats__scopeBtn ${statsScope === 'personal' ? 'financeStats__scopeBtn--active' : ''}" data-finance-stats-scope="personal">Mi parte</button>
+
+      <button class="financeStats__scopeBtn ${statsScope === 'global' ? 'financeStats__scopeBtn--active' : ''}" data-finance-stats-scope="global">Total</button>
+
+      <button class="financeStats__modeBtn ${mode === 'expense' ? 'financeStats__modeBtn--active' : ''}" data-finance-stats-mode="expense">Gastos</button>
+        <button class="financeStats__modeBtn ${mode === 'income' ? 'financeStats__modeBtn--active' : ''}" data-finance-stats-mode="income">Ingresos</button>
+
+
+    </div>
+
+    <div class="financeStats__rangeBar">
+      ${[['day', 'Día'], ['week', 'Semana'], ['month', 'Mes'], ['year', 'Año'], ['total', 'Total']].map(([key, label]) => `<button class="financeStats__rangeBtn ${statsRange === key ? 'financeStats__rangeBtn--active' : ''}" data-finance-stats-range="${key}">${label}</button>`).join('')}
+    </div>
+    <div class="financeStats__group">
+      <label class="financeStats__groupLabel" for="financeStatsGroupSelect">Agrupar por</label>
+      <select id="financeStatsGroupSelect" class="financeStats__groupSelect" data-finance-stats-group>
+        <option value="category" ${statsGroupBy === 'category' ? 'selected' : ''}>Categorías</option>
+        <option value="account" ${statsGroupBy === 'account' ? 'selected' : ''}>Cuentas</option>
+        <option value="store" ${statsGroupBy === 'store' ? 'selected' : ''}>Supermercado</option>
+        <option value="mealType" ${statsGroupBy === 'mealType' ? 'selected' : ''}>Tipo comida</option>
+        <option value="product" ${statsGroupBy === 'product' ? 'selected' : ''}>Producto / Item</option>
+      </select>
+      ${statsGroupBy === 'product' && mode === 'expense' ? `<label class="financeStats__checkbox"><input type="checkbox" data-finance-stats-include-unlined ${includeUnlined ? 'checked' : ''}> Incluir gastos sin líneas</label>` : ''}
+    </div>
+
+    <div class="financeStats__donutWrap" data-finance-stats-donut-wrap data-finance-stats-segments='${escapeHtml(JSON.stringify(segments))}'>
+      <div
+        class="financeStats__donutChart"
+        data-finance-stats-donut="${escapeHtml(JSON.stringify(segments.map((segment) => ({
+          name: segment.label,
+          value: segment.value,
+          _key: segment._key,
+          productKey: segment.productKey,
+          pct: segment.pct,
+          midAngle: segment.midAngle,
+          color: segment.color
+        }))))}"
+        aria-label="Distribución por agrupación"
+      ></div>
+      <svg class="financeStats__calloutSvg" viewBox="0 0 0 0" aria-hidden="true"><polyline id="financeStatsDonutCalloutLine" class="financeStats__calloutLine" data-finance-stats-callout-line style="display:none"></polyline></svg>
+      <div id="financeStatsDonutCallout" class="financeStats__callout" data-finance-stats-callout style="display:none"></div>
+      <div class="financeStats__donutCenter">
+        <small>${statsGroupBy === 'product' ? `Total (${scopeLabel})` : `Total (${scopeLabel})`}</small>
+        <strong class="financeStats__donutValue">${fmtCurrency(donutTotal)}</strong>
+        <small class="financeStats__donutSub">${groupLabel.toLowerCase()}</small>
+      </div>
+      ${segments.length ? '' : '<p class="financeStats__emptyHint">Sin datos para agrupar.</p>'}
+    </div>
+    ${showUnlinedNotice ? `<div class="financeStats__unlinedNotice"><span>Aviso: ${fmtCurrency(unlinedTotal)} en gastos sin desglose (no incluidos en este gráfico)</span><button type="button" class="finance-pill finance-pill--mini" data-finance-stats-view-unlined>Ver</button></div>` : ''}
+
+    <details class="financeStats__details" data-finance-stats-legend-details ${legendExpanded ? 'open' : ''}>
+      <summary class="financeStats__detailsSummary" data-finance-stats-legend-summary>Leyenda</summary>
+      <div class="financeStats__detailsBody financeStats__legendGrid">
+        ${segments.length ? segments.map((segment, index) => {
+          const productMeta = state.balanceStatsProductMeta?.[segment.label] || null;
+          const hasSingleUnit = productMeta && productMeta.units instanceof Set && productMeta.units.size === 1;
+          const unit = hasSingleUnit ? [...productMeta.units][0] : '';
+          const avgUnitPrice = (productMeta && Number(productMeta.sumQty || 0) > 0 && hasSingleUnit)
+            ? (Number(productMeta.sumUnitPriceWeighted || 0) / Number(productMeta.sumQty || 1))
+            : null;
+          const micro = productMeta
+            ? `${fmtCurrency(segment.value)} · ${productMeta.purchaseCount} compras · ${Number.isFinite(avgUnitPrice) ? `${Number(avgUnitPrice).toFixed(2)} €/` + unit : 'Media: —'}`
+            : `${fmtCurrency(segment.value)} · ${segment.pct.toFixed(1)}%`;
+          return `<div class="financeStats__rankRow ${state.balanceStatsActiveSegment === segment._key ? 'is-active' : ''} financeLegendRow" data-finance-stats-segment="${escapeHtml(segment._key)}" data-product-key="${escapeHtml(segment.productKey || '')}"><div class="financeStats__left"><span class="financeStats__rank">${index + 1}</span><span class="financeStats__name"><i class="financeStats__dot" style="background:${segment.color}"></i>${escapeHtml(segment.label)}</span></div><div class="financeStats__right">${statsGroupBy === 'product' ? `<button type="button" class="financeProductStatsBtn" data-finance-product-stats="${escapeHtml(segment.productKey || segment._key)}" aria-label="Ver estadísticas del producto">📈</button>` : ''}<span class="financeStats__meta">${fmtCurrency(segment.value)} · ${segment.pct.toFixed(1)}%</span>${statsGroupBy === 'product' ? `<small class="financeStats__micro">${escapeHtml(micro)}</small>` : ''}</div></div>`;
+        }).join('') : '<p class="finance-empty">Sin datos.</p>'}
+      </div>
+    </details>
+
+    <div class="financeStats__compare">
+      <h4>Comparativa del período (${scopeLabel})</h4>
+      <div class="financeStats__compareRow">
+        <div class="financeStats__row"><span>Ingresos</span><strong>${fmtCurrency(totalIncome)}</strong></div>
+        <div class="financeStats__bar"><div class="financeStats__barFill financeStats__barFill--income" style="width:${(totalIncome / comparisonMax) * 100}%"></div></div>
+      </div>
+      <div class="financeStats__compareRow">
+        <div class="financeStats__row"><span>Gastos</span><strong>${fmtCurrency(totalSpentRange)}</strong></div>
+        <div class="financeStats__bar"><div class="financeStats__barFill financeStats__barFill--expense" style="width:${(totalSpentRange / comparisonMax) * 100}%"></div></div>
+      </div>
+    </div>
+
+    <details class="financeStats__foodsDetails">
+      <summary class="financeStats__detailsSummary">Productos/Comidas más comprados (${scopeLabel})</summary>
+      <div class="financeStats__detailsBody financeStats__foodsList">
+        ${topFoodItems.length ? topFoodItems.map((item) => `<div class="financeStats__foodRow"><span>${escapeHtml(item.name)} · x${item.count}</span><small>${(totalFoodSpent > 0 ? ((item.total / totalFoodSpent) * 100) : 0).toFixed(1)}%</small><strong>${fmtCurrency(item.total)}</strong><button type="button" class="food-iconbtn" data-food-item-detail-name="${escapeHtml(item.name)}" aria-label="Abrir ficha de ${escapeHtml(item.name)}">📈</button></div>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
+      </div>
+    </details>
+
+    <details class="financeStats__details financeStats__manage">
+      <summary class="financeStats__detailsSummary">Gestión</summary>
+      <div class="financeStats__detailsBody">
+        <div class="financeStats__manageRow"><strong>Categorías</strong></div>
+        ${Object.keys(state.balance.categories || {}).length ? Object.keys(state.balance.categories || {}).sort((a, b) => a.localeCompare(b, 'es')).map((name) => `<div class="financeStats__manageRow"><span>${escapeHtml(name)}</span><button class="financeStats__deleteBtn" data-finance-manage-delete="category" data-finance-manage-value="${escapeHtml(name)}">❌</button></div>`).join('') : '<p class="finance-empty">Sin categorías.</p>'}
+        <div class="financeStats__manageRow"><strong>Supermercados</strong></div>
+        ${foodOptionList('place').length ? foodOptionList('place').map((name) => `<div class="financeStats__manageRow"><span>${escapeHtml(name)}</span><button class="financeStats__deleteBtn" data-finance-manage-delete="place" data-finance-manage-value="${escapeHtml(name)}">❌</button></div>`).join('') : '<p class="finance-empty">Sin supermercados.</p>'}
+        <div class="financeStats__manageRow"><strong>Tipo comida</strong></div>
+        ${foodOptionList('typeOfMeal').length ? foodOptionList('typeOfMeal').map((name) => `<div class="financeStats__manageRow"><span>${escapeHtml(name)}</span><button class="financeStats__deleteBtn" data-finance-manage-delete="typeOfMeal" data-finance-manage-value="${escapeHtml(name)}">❌</button></div>`).join('') : '<p class="finance-empty">Sin tipos.</p>'}
+        <div class="financeStats__manageRow"><strong>Saludable</strong></div>
+        ${foodOptionList('cuisine').length ? foodOptionList('cuisine').map((name) => `<div class="financeStats__manageRow"><span>${escapeHtml(name)}</span><button class="financeStats__deleteBtn" data-finance-manage-delete="cuisine" data-finance-manage-value="${escapeHtml(name)}">❌</button></div>`).join('') : '<p class="finance-empty">Sin datos.</p>'}
+        <div class="financeStats__manageRow"><strong>Productos</strong><button type="button" class="finance-pill finance-pill--mini" data-finance-view="products">Food / Productos</button></div>
+        ${foodItemsList().length ? foodItemsList().sort((a, b) => a.name.localeCompare(b.name, 'es')).map((item) => `<div class="financeStats__manageRow"><span>${escapeHtml(item.name)}</span><button type="button" class="food-iconbtn" data-food-item-detail="${escapeHtml(item.id)}" aria-label="Abrir ficha de ${escapeHtml(item.name)}">📈</button></div>`).join('') : '<p class="finance-empty">Sin productos.</p>'}
+      </div>
+    </details>
+  </article>
+
+  <details class="financeGlassCard financeRoi" open>
+    <summary class="financeRoi__summary">
+      <div class="financeRoi__titleWrap">
+        <h3>€/h por hábitos</h3>
+        <button type="button" class="finance-pill finance-pill--mini" data-open-modal="roi-info" aria-label="Cómo se calcula €/h por hábito">i</button>
+      </div>
+      <div class="financeRoi__summaryStats">
+        <span>Ingresos <strong class="is-positive">${fmtCurrency(roiTotals.income)}</strong></span>
+        <span>Gastos <strong class="is-negative">${fmtCurrency(roiTotals.expense)}</strong></span>
+        <span>Balance <strong class="${toneClass(roiTotals.balance)}">${fmtSignedCurrency(roiTotals.balance)}</strong></span>
+        <span>Balance €/h <strong class="${toneClass(roiTotals.balancePerHour || 0)}">${Number.isFinite(roiTotals.balancePerHour) ? `${fmtSignedCurrency(roiTotals.balancePerHour)}/h` : 'N/A'}</strong></span>
+      </div>
+    </summary>
+    <div class="financeRoi__toggle" role="tablist" aria-label="Métrica €/h">
+      <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'income' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="income">Ingresos €/h</button>
+      <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'expense' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="expense">Gastos €/h</button>
+      <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'balance' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="balance">Balance €/h</button>
+    </div>
+    <div class="financeRoi__table">
+      <div class="financeRoi__row financeRoi__row--head"><span>Hábito</span><span>Horas</span><span>€ asignados</span><span>€/h</span></div>
+      ${roiMetrics.map((row) => {
+        const amount = roiMode === 'income' ? row.income : roiMode === 'expense' ? row.expense : row.balance;
+        const perHour = roiMode === 'income' ? row.incomePerHour : roiMode === 'expense' ? row.expensePerHour : row.balancePerHour;
+        return `<div class="financeRoi__row"><span>${escapeHtml(row.habitName)}</span><span>${row.hours.toFixed(2)} h</span><span class="${toneClass(amount)}">${fmtSignedCurrency(amount)}</span><span class="${toneClass(perHour || 0)}">${Number.isFinite(perHour) ? `${fmtSignedCurrency(perHour)}/h` : 'N/A'}</span></div>`;
+      }).join('') || '<p class="finance-empty">Sin hábitos vinculados en este rango.</p>'}
+      <div class="financeRoi__row financeRoi__row--total"><span>TOTAL</span><span>${roiTotals.hours.toFixed(2)} h</span><span class="${toneClass(roiMode === 'income' ? roiTotals.income : roiMode === 'expense' ? roiTotals.expense : roiTotals.balance)}">${fmtSignedCurrency(roiMode === 'income' ? roiTotals.income : roiMode === 'expense' ? roiTotals.expense : roiTotals.balance)}</span><span class="${toneClass(roiMode === 'income' ? roiTotals.income : roiMode === 'expense' ? roiTotals.expense : roiTotals.balancePerHour || 0)}">${Number.isFinite(roiMode === 'income' ? (roiTotals.hours > 0 ? roiTotals.income / roiTotals.hours : null) : roiMode === 'expense' ? (roiTotals.hours > 0 ? roiTotals.expense / roiTotals.hours : null) : roiTotals.balancePerHour) ? `${fmtSignedCurrency(roiMode === 'income' ? roiTotals.income / roiTotals.hours : roiMode === 'expense' ? roiTotals.expense / roiTotals.hours : roiTotals.balancePerHour)}/h` : 'N/A'}</span></div>
+    </div>
+  </details>
+
+  <article class="financeGlassCard finAgg__section">
+    <h3>Histórico / Agregados</h3>
+    <div class="finAgg__tabs">${[['day','Día'],['week','Semana'],['month','Mes'],['year','Año'],['total','Total']].map(([key,label]) => `<button class="finance-pill ${aggMode === key ? 'finAgg__active' : ''}" data-fin-agg-mode="${key}">${label}</button>`).join('')}</div>
+    <div class="finAgg__totals">
+
+      <div>
+      <small class="finAgg__totals-small">ΔNeto</small>
+
+      <strong class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${aggLast ? fmtCurrency(metricValue(aggLast, aggScope, 'netOperative')) : '—'}</strong>
+
+      </div>
+
+      <div>
+      <small class="finAgg__totals-small">ΔPatrimonio</small><strong class="${toneClass(metricValue(aggLast, aggScope, 'netWealth'))}">${aggLast ? fmtCurrency(metricValue(aggLast, aggScope, 'netWealth')) : '—'}</strong>
+      </div>
+      <div>
+      <small class="finAgg__totals-small">Δ Cuentas</small>
+      <strong class="${toneClass(Number(aggLast?.accountsDeltaReal || 0))}">${aggLast ? fmtCurrency(Number(aggLast.accountsDeltaReal || 0)) : '—'}</strong>
+      </div>
+    </div>
+
+<div class="finAgg__averages">
+  <small>Medias (${aggMode})</small>
+  <strong>
+    <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">ΔNeto ${fmtCurrency(aggAvg.netOperative)}</span>
+    <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">ΔPatrimonio ${fmtCurrency(aggAvg.netWealth)}</span>
+    <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">ΔCuentas ${fmtCurrency(aggAvg.accountsDeltaReal)}</span>
+  </strong>
+</div>
+
+    <div class="finRank__block">
+      <div>
+      Mejor: 
+      
+      <strong class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${rankMetric('netOperative', true)?.bucketKey || '—'} ${rankMetric('netOperative', true) ? `· ${fmtCurrency(rankMetric('netOperative', true).value)}` : ''}</strong>
+
+      </div>
+
+      <div>
+      Peor: 
+
+      <strong class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${rankMetric('netOperative', false)?.bucketKey || '—'} ${rankMetric('netOperative', false) ? `· ${fmtCurrency(rankMetric('netOperative', false).value)}` : ''}</strong>
+      
+      </div>
+    </div>
+
+
+
+
+
+    
+    <div class="finHist__list">${aggRows.slice().reverse().map((row, idx, arr) => {
+      const prev = arr[idx + 1];
+      const op = metricValue(row, aggScope, 'netOperative');
+      const nw = metricValue(row, aggScope, 'netWealth');
+      const dc = Number(row.accountsDeltaReal || 0);
+      const opPct = pctDelta(op, prev ? metricValue(prev, aggScope, 'netOperative') : 0);
+      const nwPct = pctDelta(nw, prev ? metricValue(prev, aggScope, 'netWealth') : 0);
+      const dcPct = pctDelta(dc, prev ? Number(prev.accountsDeltaReal || 0) : 0);
+      return `<div class="finHist__row">
+
+      <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${row.bucketKey}</span>
+      <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${fmtSignedCurrency(op)} ${opPct == null ? '' : `(${fmtSignedPercent(opPct)})`}</span>
+      <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${fmtSignedCurrency(nw)} ${nwPct == null ? '' : `(${fmtSignedPercent(nwPct)})`}</span>
+      <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${fmtSignedCurrency(dc)} ${dcPct == null ? '' : `(${fmtSignedPercent(dcPct)})`}</span>
+      
+      </div>`;
+    }).join('') || '<p class="finance-empty">Sin agregados guardados.</p>'}</div>
+  </article>
+
+  <article class="financeGlassCard"><div class="finance-row"><h3>Presupuestos</h3><button class="finance-pill" data-open-modal="budget">+ Presupuesto</button></div>
+  <div class="financeBudgetList">${budgetItems.length ? budgetItems.map((budget) => {
+    const spent = budget.category.toLowerCase() === 'total' ? totalSpent : Number(spentByCategory[budget.category] || 0);
+    const limit = Number(budget.limit || 0);
+    const pct = limit ? (spent / limit) * 100 : 0;
+
+return `<div class="financeBudgetRow">
+  <div class="finance-row">
+    <span>${escapeHtml(budget.category)}</span>
+    <div class="finance-row">
+      <button class="finance-pill finance-pill--mini" data-budget-menu="${budget.id}">✏️</button>
+      <button class="finance-pill finance-pill--mini" data-budget-delete="${budget.id}">❌</button>
+    </div>
+  </div>
+
+  <small>${fmtCurrency(spent)} / ${fmtCurrency(limit)} (${pct.toFixed(0)}%)</small>
+
+  <div class="financeProgress">
+    <div class="financeProgress__bar" style="width:${Math.max(0, Math.min(100, pct)).toFixed(2)}%"></div>
+  </div>
+</div>`;
+
+
+  }).join('') : '<p class="finance-empty">Sin presupuestos.</p>'}</div></article>
+
+
+
+  <article class="financeGlassCard">
+    <h3>Balance neto por mes</h3>
+    <div class="finAgg__totals">
+    
+    ${metricRows.map((metric) => {
+      const pct = pctDelta(metric.current, metric.prev);
+      const best = monthNetList.reduce((pick, row) => {
+        const value = Number(row[metric.id] || 0);
+        if (!pick || value > pick.value) return { month: row.month, value };
+        return pick;
+      }, null);
+      const worst = monthNetList.reduce((pick, row) => {
+        const value = Number(row[metric.id] || 0);
+        if (!pick || value < pick.value) return { month: row.month, value };
+        return pick;
+      }, null);
+      const avg = monthNetList.length ? monthNetList.reduce((sum, row) => sum + Number(row[metric.id] || 0), 0) / monthNetList.length : 0;
+      return `<div><small>${metric.label}</small><strong class="${toneClass(metric.current)}">${fmtCurrency(metric.current)}</strong><small>
+      Media ${fmtCurrency(avg)} 
+      
+      Mejor ${best ? `${best.month} ${fmtCurrency(best.value)}` : '—'} 
+
+       
+      Peor ${worst ? `${worst.month} ${fmtCurrency(worst.value)}` : '—'} ${pct == null ? '' : `· Δ% ${fmtSignedPercent(pct)}`}
+      </small>
+      
+      </div>`;
+    }).join('')}
+    
+  </div>
+
+  <div class="financeTxList" style="max-height:220px;overflow-y:auto;">${monthNetList.map((row) => `<div class="financeTxRow-balance-por-mes"><span>${row.month}</span><strong class="${toneClass(row.netOperative)}">Op ${fmtSignedCurrency(row.netOperative)}</strong><strong class="${toneClass(row.netWealth)}">Pat ${fmtSignedCurrency(row.netWealth)}</strong><strong class="${toneClass(row.accountsDeltaReal)}">ΔC ${fmtSignedCurrency(row.accountsDeltaReal)}</strong></div>`).join('') || '<p class="finance-empty">Sin meses con movimientos.</p>'}</div></article></section>`;
+}
+
+function renderFinanceGoals() {
+  const goals = Object.entries(state.goals.goals || {})
+    .map(([id, row]) => ({ id, ...row }))
+    .sort((a, b) => Number(a?.dueDateISO ? new Date(a.dueDateISO).getTime() : 0) - Number(b?.dueDateISO ? new Date(b.dueDateISO).getTime() : 0));
+
+  // saldo actual por cuenta (usa tu modelo ya calculado en pantalla)
+  const accounts = buildAccountModels();
+  const accountsById = Object.fromEntries(accounts.map(a => [a.id, a]));
+
+  const totalObjective = goals.reduce((sum, goal) => sum + Number(goal.targetAmount || 0), 0);
+  const contributingAccounts = new Set();
+  goals.forEach((goal) => (goal.accountsIncluded || []).forEach((id) => contributingAccounts.add(id)));
+  const totalPool = [...contributingAccounts].reduce((sum, id) => sum + Number(accountsById[id]?.current || 0), 0);
+  const globalPct = totalObjective > 0 ? Math.max(0, Math.min(100, (totalPool / totalObjective) * 100)) : 0;
+  const sortedGoals = goals.slice().sort((a, b) => {
+    const aDue = a?.dueDateISO ? new Date(a.dueDateISO).getTime() : Number.MAX_SAFE_INTEGER;
+    const bDue = b?.dueDateISO ? new Date(b.dueDateISO).getTime() : Number.MAX_SAFE_INTEGER;
+    if (aDue !== bDue) return aDue - bDue;
+    return Number(a.targetAmount || 0) - Number(b.targetAmount || 0);
+  });
+  const allocationByGoal = {};
+  let remainingPool = totalPool;
+  sortedGoals.forEach((goal) => {
+    const target = Math.max(0, Number(goal.targetAmount || 0));
+    const assigned = Math.max(0, Math.min(target, remainingPool));
+    allocationByGoal[goal.id] = assigned;
+    remainingPool -= assigned;
+  });
+
+  return `
+  <section class="financeBalanceView">
+    <header class="financeViewHeader">
+      <h2>Objetivos</h2>
+      <button class="finance-pill" data-open-modal="goal">+ Objetivo</button>
+    </header>
+
+    <article class="financeGlassCard">
+      <div class="financeSummaryGrid">
+        <div class="valoracion-mes"><small>Total objetivo</small><strong>${fmtCurrency(totalObjective)}</strong></div>
+        <div class="valoracion-mes"><small>Total ahorrado</small><strong class="${toneClass(totalPool)}">${fmtCurrency(totalPool)}</strong></div>
+      </div>
+      <div class="media-mensual">
+        <small>Progreso global</small>
+        <strong class="${toneClass(globalPct - 100)}">${globalPct.toFixed(2)}%</strong>
+      </div>
+      <div class="financeProgress"><div class="financeProgress__bar" style="width:${Math.max(0, Math.min(100, globalPct)).toFixed(2)}%"></div></div>
+    </article>
+
+    <article class="financeGlassCard">
+      <div class="financeBudgetList">
+        ${
+          goals.length
+            ? goals.map(goal => {
+                const target = Number(goal.targetAmount || 0);
+                const includedIds = goal.accountsIncluded || [];
+                const assigned = Number(allocationByGoal[goal.id] || 0);
+                const pct = target > 0 ? Math.max(0, Math.min(100, (assigned / target) * 100)) : 0;
+                const remaining = Math.max(0, target - assigned);
+                const complete = remaining <= 0.000001 && target > 0;
+
+                return `
+                  <div class="financeBudgetRow">
+                    <div class="finance-row">
+                      <strong>${escapeHtml(goal.title || 'Objetivo')}</strong>
+                      <div class="finance-row">
+                        <button class="finance-pill finance-pill--mini" data-open-goal="${goal.id}">✏️</button>
+                        <button class="finance-pill finance-pill--mini" data-delete-goal="${goal.id}">❌</button>
+                      </div>
+                    </div>
+
+                    <small>
+                      ${fmtCurrency(target)} ·
+                      asignado ${fmtCurrency(assigned)} (${pct.toFixed(0)}%) ·
+                      restante ${fmtCurrency(remaining)} ·
+                      vence ${goal.dueDateISO ? new Date(goal.dueDateISO).toLocaleDateString('es-ES') : 'sin fecha'} ·
+                      ${includedIds.length} cuentas ·
+                      ${complete ? 'completo' : 'pendiente'}
+                    </small>
+
+                    <div class="financeProgress">
+                      <div class="financeProgress__bar" style="width:${pct.toFixed(2)}%"></div>
+                    </div>
+                  </div>
+                `;
+              }).join('')
+            : `<p class="finance-empty">Sin objetivos todavía.</p>`
+        }
+      </div>
+    </article>
+  </section>`;
+}
+
+function renderModal() {
+  const backdrop = document.getElementById('finance-modalOverlay');
+  if (!backdrop) return;
+  const categories = categoriesList();
+  const accounts = buildAccountModels();
+  if (!state.modal.type) {
+    backdrop.classList.remove('is-open'); backdrop.classList.add('hidden'); backdrop.setAttribute('aria-hidden', 'true'); backdrop.innerHTML = ''; document.body.classList.remove('finance-modal-open'); return;
+  }
+  backdrop.classList.add('is-open'); backdrop.classList.remove('hidden'); backdrop.setAttribute('aria-hidden', 'false'); document.body.classList.add('finance-modal-open');
+  if (state.modal.type === 'account-detail') {
+    const account = accounts.find((item) => item.id === state.modal.accountId);
+    if (!account) { state.modal = { type: null }; triggerRender(); return; }
+    const chart = chartModelForRange(account.daily, 'total');
+    state.lineChart = { points: chart.points || [], mode: 'total', kind: 'account', accountId: account.id, accountName: account.name };
+    const preview = state.modal.importPreview;
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3> ${escapeHtml(account.name)}</h3><div class="finance-row"><button class="finance-pill finance-pill--mini" data-edit-account="${account.id}">Editar cuenta</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header>
+      <p>Saldo real: <strong>${fmtCurrency(account.currentReal)}</strong>${account.shared ? ` · Mi parte: <strong>${fmtCurrency(account.current)}</strong>` : ''}</p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos.</div>'}</div>
+      <form class="finance-entry-form" data-account-entry-form="${account.id}"><input name="day" type="date" value="${dayKeyFromTs(Date.now())}" required /><input name="value" type="number" step="0.01" placeholder="Valor real" required /><button class="finance-pill" id="guardar-dato-vista-detalle" type="submit">💳</button></form>
+      <div class="finance-table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ</th><th>Δ%</th><th></th></tr></thead><tbody>${account.daily.slice().reverse().map((row) => `<tr><td>${new Date(row.ts).toLocaleDateString('es-ES')}</td><td><form data-account-row-form="${account.id}:${row.day}"><input name="value" type="number" step="0.01" value="${Number(row.realValue || row.value || 0)}"/></form></td><td class="${toneClass(row.delta)}">${fmtSignedCurrency(row.delta)}</td><td class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</td><td>
+      <div class="boton-editar-borrar"><button class="finance-pill finance-pill--mini" data-save-day="${account.id}:${row.day}">✏️</button><button class="finance-pill finance-pill--mini" data-delete-day="${account.id}:${row.day}">❌</button></div></td></tr>`).join('') || '<tr><td colspan="5">Sin registros.</td></tr>'}</tbody></table></div>
+      <section class="financeImportBox">
+      
+      <section class="financeImportBox">
+  <details class="finance-import-details">
+    <summary class="finance-import-summary">
+      <span>Importar CSV</span>
+      <span class="finance-import-chevron">⌄</span>
+    </summary>
+
+    <div class="finance-import-body">
+
+      <form class="finance-budget-form" data-import-preview-form="${account.id}">
+        <input type="file" accept=".csv,text/csv" data-import-file="${account.id}" />
+
+        <textarea 
+          name="csvText" 
+          placeholder="date,value&#10;2026-01-01,1200.50"
+        >${escapeHtml(state.modal.importRaw || '')}</textarea>
+
+        <button class="finance-pill" type="submit">
+          Previsualizar
+        </button>
+      </form>
+
+      ${state.modal.importError 
+        ? `<p class="is-negative">${escapeHtml(state.modal.importError)}</p>` 
+        : ''}
+
+      ${preview ? `
+        <p>${preview.validRows.length} filas válidas / ${preview.totalRows}</p>
+
+        <div class="finance-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Fecha</th>
+                <th>Valor</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${
+                preview.validRows.slice(0, 10).map((row) => `
+                  <tr>
+                    <td>${row.lineNumber}</td>
+                    <td>${row.dateISO}</td>
+                    <td>${fmtCurrency(row.value)}</td>
+                  </tr>
+                `).join('') || 
+                `<tr><td colspan="3">Sin filas válidas.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+
+        <button class="finance-pill" data-import-apply="${account.id}">
+          Importar ahora
+        </button>
+      ` : ''}
+
+    </div>
+  </details>
+</section>`;
+    return;
+  }
+  if (state.modal.type === 'categories') {
+    const rows = categoriesMetaList();
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal fm-modal" role="dialog" aria-modal="true" tabindex="-1" data-category-editor-modal>
+      <header class="fm-modal__header">
+        <h3 class="fm-modal__title">Categorías</h3>
+        <button class="finance-pill fm-modal__close" type="button" data-category-editor-back>Volver</button>
+      </header>
+      <form class="fm-form finCatForm" data-category-editor-form>
+        <div class="finCatForm__hint">Asigna un emoji a cada categoría (se usa en el selector rápido).</div>
+        <div class="finCatGrid">
+          ${rows.length ? rows.map((row) => `
+            <div class="finCatRow" data-category-row="${escapeHtml(row.name)}">
+              <div class="finCatEmojiBox">${escapeHtml(row.emoji || '⬜')}</div>
+              <div class="finCatName">${escapeHtml(row.name)}</div>
+              <input class="finCatEmojiInput" type="text" inputmode="text" maxlength="4" placeholder="😀" value="${escapeHtml(row.emoji || '')}" data-category-emoji="${escapeHtml(row.name)}" aria-label="Emoji para ${escapeHtml(row.name)}" />
+              <button type="button" class="finance-pill finance-pill--mini finCatDelete" data-category-delete="${escapeHtml(row.name)}" aria-label="Eliminar ${escapeHtml(row.name)}">🗑️</button>
+            </div>
+          `).join('') : '<p class="finance-empty">Sin categorías.</p>'}
+        </div>
+
+        <div class="finCatAdd">
+          <input class="finCatAdd__name" type="text" placeholder="Nueva categoría" autocomplete="off" data-category-add-name />
+          <input class="finCatAdd__emoji" type="text" placeholder="Emoji" autocomplete="off" maxlength="4" data-category-add-emoji />
+          <button type="button" class="finance-pill finCatAdd__btn" data-category-add>+ Añadir</button>
+        </div>
+
+        <div class="fm-actions">
+          <button class="finance-pill fm-action fm-action--submit" type="submit">Guardar</button>
+        </div>
+      </form>
+    </div>`;
+    return;
+  }
+  if (state.modal.type === 'tx') {
+  const accountsById = Object.fromEntries(accounts.map((a) => [a.id, a]));
+  const txEdit = state.modal.txId ? balanceTxList().find((row) => row.id === state.modal.txId) : null;
+  const defaultAccountId = txEdit?.accountId || state.balanceFormState.accountId || state.lastMovementAccountId || state.balance.defaultAccountId || accounts[0]?.id || '';
+  const defaultType = txEdit?.type || state.balanceFormState.type || 'expense';
+  const defaultCategory = txEdit?.category || state.balanceFormState.category || '';
+  const defaultDate = txEdit?.date || isoToDay(txEdit?.dateISO || '') || state.balanceFormState.dateISO || dayKeyFromTs(Date.now());
+  const defaultAmount = txEdit?.amount || state.balanceFormState.amount || '';
+  const defaultNote = txEdit?.note || state.balanceFormState.note || '';
+  const defaultLinkedHabitId = (txEdit?.linkedHabitId || state.balanceFormState.linkedHabitId || '').trim();
+  const defaultAllocation = normalizeTxAllocation(txEdit?.allocation || {
+    mode: state.balanceFormState.allocationMode || 'point',
+    period: state.balanceFormState.allocationPeriod || 'day',
+    anchorDate: state.balanceFormState.allocationAnchorDate || defaultDate,
+    customStart: state.balanceFormState.allocationCustomStart || '',
+    customEnd: state.balanceFormState.allocationCustomEnd || ''
+  }, defaultDate);
+  const habitOptions = listHabitOptions();
+  const defaultFoodId = state.balanceFormState.foodId || '';
+  const defaultFoodItem = state.balanceFormState.foodItem || '';
+  const defaultFoodMealType = state.balanceFormState.foodMealType || '';
+  const defaultFoodCuisine = state.balanceFormState.foodCuisine || '';
+  const defaultFoodPlace = state.balanceFormState.foodPlace || '';
+  const defaultFoodExtrasOpen = !!state.balanceFormState.foodExtrasOpen;
+  const defaultFoodResultsScrollTop = Number(state.balanceFormState.foodResultsScrollTop || 0);
+  const defaultFrom = txEdit?.fromAccountId || state.balanceFormState.fromAccountId || defaultAccountId;
+  const defaultTo = txEdit?.toAccountId || state.balanceFormState.toAccountId || accounts[1]?.id || accounts[0]?.id || '';
+  const defaultPersonalRatioMode = Number.isFinite(Number(txEdit?.personalRatio)) ? 'custom' : (state.balanceFormState.personalRatioMode || 'auto');
+  const defaultPersonalRatioPercent = Number.isFinite(Number(txEdit?.personalRatio)) ? String(Math.round(clamp01(txEdit.personalRatio, 1) * 100)) : (state.balanceFormState.personalRatioPercent || '');
+  const defaultPersonalRatioAdvanced = Number.isFinite(Number(txEdit?.personalRatio)) || !!state.balanceFormState.personalRatioAdvanced;
+  const accountOptions = accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
+  const categories = categoriesList();
+  const ticketImportState = state.modal.ticketImport || { raw: '', parsed: null, error: '', warnings: [], open: false };
+  const ticketPreview = ticketImportState.parsed?.ok ? ticketImportState.parsed.data : null;
+  const ticketPreviewWarnings = [...(ticketImportState.parsed?.warnings || []), ...(ticketImportState.warnings || [])];
+  const diagnostic = ticketImportState.diagnostic || ticketImportState.parsed?.diagnostic || null;
+  const rawText = String(ticketImportState.raw || '');
+  const rawPreviewHead = rawText.slice(0, 80);
+  const rawPreviewTail = rawText.length > 80 ? rawText.slice(-80) : '';
+  const ticketCardPreview = resolveTicketCardAccountPreview(ticketPreview, accounts);
+  const selectedIsFood = isFoodCategoryName(defaultCategory);
+  const wizardStepDraft = normalizeTxWizardStep(state.balanceFormState.txWizardStep);
+  const wizardStep = wizardStepDraft === 'food' && !selectedIsFood ? 'category' : wizardStepDraft;
+  const stepLabel = wizardStep === 'base' ? '1/3' : wizardStep === 'category' ? '2/3' : '3/3';
+  const categoriesMeta = categoriesMetaList();
+  backdrop.innerHTML = 
+  
+  `<div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1" data-tx-step="${escapeHtml(wizardStep)}" data-tx-food="${selectedIsFood ? '1' : '0'}">
+    <header class="fm-modal__header fin-move-header">
+      <div class="finWizardHeader">
+        <button type="button" class="finance-pill finance-pill--mini finWizardBack" data-tx-step-back ${wizardStep === 'base' ? 'hidden' : ''} aria-label="Volver">←</button>
+      <h3 class="fm-modal__title fin-move-title">${txEdit ? 'Editar movimiento' : 'Añadir movimiento'}</h3>
+      
+        <div class="finWizardStep">${escapeHtml(stepLabel)}</div>
+      </div>
+      <button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button>
+    </header>
+
+    <form class="finance-entry-form finance-tx-form fm-form fin-move-form" data-balance-form>
+      <input type="hidden" name="txId" value="${escapeHtml(txEdit?.id || '')}" />
+
+      <div class="fm-grid fm-grid--top fin-move-grid">
+
+
+        
+      <div class="fm-field fm-field--account" data-tx-account-single>
+        <select id="fm-tx-account" class="fm-control fm-control--account fm-control--select" name="accountId" aria-label="Cuenta">
+        <option value="">Cuenta</option>${accountOptions}</select>
+      </div>
+
+      
+
+      <div class="fm-field fm-field--date">
+        <input id="fm-tx-date" class="fm-control fm-control--date" name="dateISO" type="date" value="${defaultDate}" aria-label="Fecha"/>
+      </div>
+        
+
+      </div>
+      <div class="tipo-y-cantidad">
+<div class="fm-field fm-field--type">
+          <div class="finTypeChoices" role="group" aria-label="Tipo de movimiento">
+            <button type="button" class="finTypeBtn ${defaultType === 'income' ? 'is-active' : ''}" data-tx-type-pick="income" aria-label="Ingreso">🤑</button>
+            <button type="button" class="finTypeBtn ${defaultType === 'expense' ? 'is-active' : ''}" data-tx-type-pick="expense" aria-label="Gasto">💀</button>
+            <button type="button" class="finTypeBtn ${defaultType === 'transfer' ? 'is-active' : ''}" data-tx-type-pick="transfer" aria-label="Transferencia">🔁</button>
+          </div>
+          <select id="fm-tx-type" name="type" class="finance-pill fm-control fm-control--select" data-tx-type hidden aria-hidden="true">
+            <option value="expense" ${defaultType === 'expense' ? 'selected' : ''}>Gasto</option>
+            <option value="income" ${defaultType === 'income' ? 'selected' : ''}>Ingreso</option>
+            <option value="transfer" ${defaultType === 'transfer' ? 'selected' : ''}>Transferencia</option>
+          </select>
+        </div>
+
+      <div class="fm-field fm-field--amount">
+        <input id="fm-tx-amount" class="fm-control fm-control--amount" required name="amount" type="number" step="0.01" placeholder="Cantidad (€)" value="${escapeHtml(defaultAmount)}" aria-label="Cantidad"/>
+        </div>
+      <div class="fm-field fm-field--account" data-tx-account-from hidden>
+        <label class="fm-label-cuenta-origen" for="fm-tx-account-from">Cuenta origen</label>
+        
+        <select id="fm-tx-account-from" class="fm-control fm-control--account fm-control--select" name="fromAccountId">
+        <option value="">Selecciona cuenta</option>${accountOptions}</select>
+      </div>
+
+      <div class="fm-field fm-field--account" data-tx-account-to hidden>
+        <label class="fm-label-cuenta-destino" for="fm-tx-account-to">Cuenta destino</label>
+        <select id="fm-tx-account-to" class="fm-control fm-control--account fm-control--select" name="toAccountId">
+        <option value="">Selecciona cuenta</option>${accountOptions}</select>
+      </div>
+
+    </div>
+
+
+      <div class="fm-grid fm-grid--meta fin-move-grid fin-move-grid--meta">
+
+        <div class="fm-field financeRoi__field">
+          <label class="fm-label" for="fm-tx-linked-habit">Vincular a hábito (opcional)</label>
+          <select id="fm-tx-linked-habit" class="fm-control fm-control--select" name="linkedHabitId" data-linked-habit-select>
+            <option value="">Sin vincular</option>
+            ${habitOptions.map((habit) => `<option value="${escapeHtml(habit.id)}" ${defaultLinkedHabitId === habit.id ? 'selected' : ''}>${escapeHtml(habit.name)}</option>`).join('')}
+          </select>
+        </div>
+
+        <div class="fm-field financeRoi__field" data-allocation-block ${defaultLinkedHabitId ? '' : 'hidden'}>
+          <label class="fm-label" for="fm-tx-allocation-mode">Distribución</label>
+          <select id="fm-tx-allocation-mode" class="fm-control fm-control--select" name="allocationMode" data-allocation-mode>
+            <option value="point" ${defaultAllocation.mode === 'point' ? 'selected' : ''}>Puntual (solo ese día)</option>
+            <option value="month" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'month') ? 'selected' : ''}>Mensual</option>
+            <option value="week" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'week') ? 'selected' : ''}>Semanal</option>
+            <option value="year" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'year') ? 'selected' : ''}>Anual</option>
+            <option value="custom" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'custom') ? 'selected' : ''}>Personalizado</option>
+          </select>
+          <label class="fm-label" data-allocation-anchor-label for="fm-tx-allocation-anchor" ${defaultAllocation.mode === 'point' ? 'hidden' : ''}>Periodo de referencia (ancla)</label>
+          <input id="fm-tx-allocation-anchor" type="date" class="fm-control" name="allocationAnchorDate" value="${escapeHtml(defaultAllocation.anchorDate || defaultDate)}" data-allocation-anchor ${defaultAllocation.mode === 'point' ? 'hidden' : ''} />
+          <div class="financeRoi__customDates" data-allocation-custom ${defaultAllocation.period === 'custom' && defaultAllocation.mode === 'period' ? '' : 'hidden'}>
+            <label class="fm-label" for="fm-tx-allocation-custom-start">Desde (incl.)</label>
+            <input id="fm-tx-allocation-custom-start" type="date" class="fm-control" name="allocationCustomStart" value="${escapeHtml(defaultAllocation.customStart || defaultAllocation.anchorDate || defaultDate)}" />
+            <label class="fm-label" for="fm-tx-allocation-custom-end">Hasta (incl.)</label>
+            <input id="fm-tx-allocation-custom-end" type="date" class="fm-control" name="allocationCustomEnd" value="${escapeHtml(defaultAllocation.customEnd || defaultAllocation.anchorDate || defaultDate)}" />
+          </div>
+        </div>
+
+        <div class="fm-field fm-field--category fin-move-field" data-category-block>
+          <div class="finCatScreenTop">
+            <div class="finCatScreenTitle">Categoría</div>
+            <button type="button" class="finance-pill finance-pill--mini" data-tx-edit-categories>Editar</button>
+          </div>
+
+          <select id="fm-tx-category" class="fm-control fm-control--category fm-control--select fin-move-select" name="category" hidden aria-hidden="true">
+            <option value="">Seleccionar</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+          </select>
+
+          <div class="finCatPicker" role="listbox" aria-label="Selecciona categoría">
+            ${categoriesMeta.map((row) => `
+              <button type="button" class="finCatTile ${String(defaultCategory || '').toLowerCase() === String(row.name || '').toLowerCase() ? 'is-selected' : ''}" data-tx-category-pick="${escapeHtml(row.name)}" aria-label="${escapeHtml(row.name)}">
+                <span class="finCatTile__emoji" aria-hidden="true">${escapeHtml(row.emoji || '⬜')}</span>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+        
+        <div class="fm-field fm-field--note">
+          <input id="fm-tx-note" class="fm-control fm-control--note" name="note" type="text" placeholder="Nota (opcional)" value="${escapeHtml(defaultNote)}" aria-label="Nota"/>
+        </div>
+      </div>
+
+      <div class="fm-field fin-move-field" data-personal-ratio-block>
+        <label><input type="checkbox" name="personalRatioAdvanced" data-personal-ratio-advanced ${defaultPersonalRatioAdvanced ? 'checked' : ''}/> Ajuste avanzado</label>
+        <div data-personal-ratio-wrap hidden>
+          <label class="fm-label" for="fm-tx-personal-ratio-mode">Mi porcentaje</label>
+          <select id="fm-tx-personal-ratio-mode" class="fm-control fm-control--select" name="personalRatioMode" data-personal-ratio-mode>
+            <option value="auto" ${defaultPersonalRatioMode === 'auto' ? 'selected' : ''}>Automático</option>
+            <option value="custom" ${defaultPersonalRatioMode === 'custom' ? 'selected' : ''}>Manual</option>
+          </select>
+          <div data-personal-ratio-manual-wrap hidden>
+            <input class="fm-control" type="range" min="0" max="100" step="1" name="personalRatioPercent" data-personal-ratio-percent value="${escapeHtml(defaultPersonalRatioPercent || '50')}"/>
+          </div>
+          <small>Imputado a mí: <strong data-personal-ratio-preview>—</strong></small>
+        </div>
+      </div>
+
+<details class="fm-details fin-move-extras" ${ticketImportState.open ? 'open' : ''}>
+  <summary class="fm-details__summary">
+    <span class="fm-details__title">Import</span>
+    <span class="fm-details__hint">Ticket JSON</span>
+    <span class="fm-details__chev" aria-hidden="true">⌄</span>
+  </summary>
+  <div class="fm-details__body">
+    <div class="finance-row" style="gap:8px;flex-wrap:wrap;">
+      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-preview>Preview</button>
+      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-paste>📋 Pegar</button>
+      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-sample>Pegar ejemplo</button>
+      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-cancel>Cancel</button>
+      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-copy-diagnostic>Copiar diagnóstico</button>
+    </div>
+    <textarea name="ticketImportRaw" data-ticket-import-raw rows="10" autocapitalize="off" autocorrect="off" spellcheck="false" style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escapeHtml(ticketImportState.raw || '')}</textarea>
+    <p class="finance-help" style="margin:6px 0 0 0;">raw.length=${rawText.length} · head=${escapeHtml(rawPreviewHead)}${rawPreviewTail ? ` · tail=${escapeHtml(rawPreviewTail)}` : ''}</p>
+    ${ticketImportState.error ? `<p class="is-negative">${escapeHtml(ticketImportState.error)}</p>` : ''}
+    ${diagnostic ? `
+      <div class="finance-mini-list" style="margin-top:8px;max-height:220px;overflow:auto;">
+        <p><strong>Diagnóstico</strong></p>
+        <p>stage: ${escapeHtml(String(diagnostic.stage || 'unknown'))}</p>
+        <p>raw.length: ${Number(diagnostic.raw_length || rawText.length)}</p>
+        <p>sanitized.length: ${Number(diagnostic.sanitized_length || 0)}</p>
+        <p>sanitize.changes: ${(diagnostic.sanitize_changes || []).map((it) => escapeHtml(String(it))).join(', ') || 'none'}</p>
+        ${Number.isFinite(Number(diagnostic.computed_total)) || Number.isFinite(Number(diagnostic.purchase_total))
+          ? `<p>computed_total: ${fmtCurrency(diagnostic.computed_total || 0)} · purchase.total: ${fmtCurrency(diagnostic.purchase_total || 0)}</p>`
+          : ''}
+        ${(diagnostic.validate_errors || []).map((entry) => `<p class="is-negative">• ${escapeHtml(String(entry.path || 'root'))}: ${escapeHtml(String(entry.message || entry.code || 'error'))}</p>`).join('')}
+        ${diagnostic.parse_error?.snippet ? `<p>snippet: ${escapeHtml(String(diagnostic.parse_error.snippet || ''))}</p>` : ''}
+        ${Array.isArray(diagnostic.parse_error?.charCodes) && diagnostic.parse_error.charCodes.length
+          ? `<p>charCodes: ${escapeHtml(diagnostic.parse_error.charCodes.map((row) => `${row.offset}:${row.code}`).join(', '))}</p>`
+          : ''}
+      </div>
+    ` : ''}
+    ${ticketPreview ? `
+      <div class="finance-mini-list" style="margin-top:8px;max-height:240px;overflow:auto;">
+        <p><strong>Supermercado:</strong> ${escapeHtml(ticketPreview.source?.vendor || 'unknown')}</p>
+        <p><strong>Fecha:</strong> ${escapeHtml(ticketPreview.purchase?.date || '—')}</p>
+        <p><strong>ticket_total:</strong> ${fmtCurrency(ticketPreview.purchase?.total || 0)}</p>
+        <p><strong>computed_total:</strong> ${fmtCurrency(ticketPreview.purchase?.computed_total || 0)}</p>
+        ${ticketCardPreview.cardLast4 ? `<p><strong>Pago:</strong> tarjeta ****${escapeHtml(ticketCardPreview.cardLast4)}</p>` : ''}
+        <p><strong>Cuenta sugerida:</strong> ${ticketCardPreview.status === 'single' ? escapeHtml(ticketCardPreview.selected?.name || '—') : 'No se pudo decidir'}</p>
+        ${(ticketPreviewWarnings || []).map((warning) => `<p class="is-negative">⚠ ${escapeHtml(warning)}</p>`).join('')}
+        <ul>${(ticketPreview.items || []).map((item) => `<li>${toTicketPriceLine(item)}</li>`).join('')}</ul>
+      </div>
+      <button type="button" class="finance-pill" data-ticket-import-apply>Apply Import</button>
+    ` : ''}
+  </div>
+</details>
+
+
+<details class="fm-details fm-details--extras fin-move-extras" data-section="food-extras" ${defaultFoodExtrasOpen ? 'open' : ''}>
+<summary class="fm-details__summary">
+<span class="fm-details__title">Extras</span>
+<span class="fm-details__hint">Opcional</span>
+<span class="fm-details__chev" aria-hidden="true">⌄</span>
+</summary>
+      
+      <div class="fm-details__body">${renderFoodExtrasSection()}</div></details>
+
+
+<details class="fm-details finFixed__wrap" >
+
+  <summary class="fm-details__summary">
+  <span class="fm-details__title">Recurrente / fijo</span>
+  </summary>
+  
+  <div class="fm-details__body finFixed__fields">
+<div class="boton-activar-programacion">
+  <label><input type="checkbox" name="isRecurring" ${txEdit?.recurringId ? "checked" : ""}/> Activar</label>
+  
+  <select name="recurringFrequency"><option value="monthly">Mensual</option></select>
+</div>
+<div class="seleccion-programacion">
+  <input type="number" name="recurringDay" min="1" max="31" placeholder="Día del mes" value="${escapeHtml(txEdit?.schedule?.dayOfMonth || "")}"/>
+  
+  <input type="date" name="recurringStart" value="${escapeHtml(txEdit?.schedule?.startDate || defaultDate)}"/>
+  
+  <input type="date" name="recurringEnd" value="${escapeHtml(txEdit?.schedule?.endDate || "")}"/>
+</div>
+
+  </div>
+
+</details>
+      <div class="fm-actions fin-move-footer finWizardFooter">
+        <button class="finance-pill finWizardNext" type="button" data-tx-step-next>Continuar</button>
+        <button class="finance-pill fm-action fm-action--submit finWizardSubmit" type="submit">${txEdit ? 'Guardar cambios' : 'Añadir movimiento'}</button>
+      </div>
+    </form>
+  </div>`;
+
+  const form = backdrop.querySelector('[data-balance-form]');
+  if (form) {
+  ensureTxAdvancedDetails(form);
+  const typeSel = form.querySelector('[data-tx-type]');
+  const catSel = form.querySelector('select[name="category"]');
+
+  // enganchar cambios
+  typeSel?.addEventListener('change', () => {
+    syncTxTypeFields(form);
+  });
+  form.querySelector('select[name="accountId"]')?.addEventListener('change', () => syncPersonalRatioFields(form));
+  form.querySelector('[data-personal-ratio-advanced]')?.addEventListener('change', () => syncPersonalRatioFields(form));
+  form.querySelector('[data-personal-ratio-mode]')?.addEventListener('change', () => syncPersonalRatioFields(form));
+  form.querySelector('[data-personal-ratio-percent]')?.addEventListener('input', () => syncPersonalRatioFields(form));
+  catSel?.addEventListener('change', () => {
+    void toggleFoodExtras(form);
+  });
+  form.querySelector('[data-linked-habit-select]')?.addEventListener('change', () => syncAllocationFields(form));
+  form.querySelector('[data-allocation-mode]')?.addEventListener('change', () => syncAllocationFields(form));
+
+  // aplicar estado inicial (después de setear defaults)
+  syncTxTypeFields(form);
+  syncAllocationFields(form);
+  syncPersonalRatioFields(form);
+  void toggleFoodExtras(form);
+}
+if (form) {
+  state.balanceAmountAuto = true;
+  const acc = form.querySelector('select[name="accountId"]');
+  if (acc) acc.value = defaultAccountId || '';
+
+  const cat = form.querySelector('select[name="category"]');
+  if (cat) cat.value = defaultCategory || '';
+
+  const from = form.querySelector('select[name="fromAccountId"]');
+  if (from) from.value = defaultFrom || '';
+
+  const to = form.querySelector('select[name="toAccountId"]');
+  if (to) to.value = defaultTo || '';
+  const ratioMode = form.querySelector('select[name="personalRatioMode"]');
+  if (ratioMode) ratioMode.value = defaultPersonalRatioMode;
+  const ratioPercent = form.querySelector('input[name="personalRatioPercent"]');
+  if (ratioPercent && defaultPersonalRatioPercent) ratioPercent.value = defaultPersonalRatioPercent;
+
+  // primero: que la UI refleje tipo + categoría
+  syncTxTypeFields(form);
+  syncAllocationFields(form);
+  syncPersonalRatioFields(form);
+  void toggleFoodExtras(form);
+  maybeToggleCategoryCreate(form);
+
+  // luego: extras (y vuelve a toggle por si categoría viene de txEdit)
+  if (Array.isArray(state.balanceFormState.importedFoodItems) && state.balanceFormState.importedFoodItems.length) {
+    writeFoodItemsToForm(form, state.balanceFormState.importedFoodItems);
+    recalcFoodAmount(form);
+    void toggleFoodExtras(form);
+  } else if (txEdit?.extras || txEdit?.food) {
+    const extras = normalizeFoodExtras(txEdit.extras || txEdit.food, txEdit.amount);
+    const refs = getFoodFormRefs(form);
+    if (refs.mealType) refs.mealType.value = extras?.filters?.mealType || '';
+    if (refs.cuisine) refs.cuisine.value = extras?.filters?.cuisine || '';
+    if (refs.place) refs.place.value = extras?.filters?.place || '';
+    const firstName = extras?.items?.[0]?.name || '';
+    if (refs.itemSearch) refs.itemSearch.value = firstName;
+    if (refs.itemValue) refs.itemValue.value = firstName;
+    writeFoodItemsToForm(form, extras?.items || []);
+    recalcFoodAmount(form);
+    void toggleFoodExtras(form);
+  } else {
+    writeFoodItemsToForm(form, []);
+    const refs = getFoodFormRefs(form);
+    if (refs.itemSearch) refs.itemSearch.value = defaultFoodItem;
+    if (refs.itemValue) refs.itemValue.value = defaultFoodItem;
+    if (refs.foodId) refs.foodId.value = defaultFoodId;
+    if (refs.mealType) refs.mealType.value = defaultFoodMealType;
+    if (refs.cuisine) refs.cuisine.value = defaultFoodCuisine;
+    if (refs.place) refs.place.value = defaultFoodPlace;
+  }
+  const foodDetails = form.querySelector('[data-section="food-extras"]');
+  foodDetails?.addEventListener('toggle', () => {
+    state.balanceFormState = { ...state.balanceFormState, foodExtrasOpen: !!foodDetails.open };
+  });
+  const refs = getFoodFormRefs(form);
+  if (refs.itemResults) {
+    refs.itemResults.scrollTop = Number.isFinite(defaultFoodResultsScrollTop) ? defaultFoodResultsScrollTop : 0;
+    refs.itemResults.addEventListener('scroll', () => {
+      state.balanceFormState = { ...state.balanceFormState, foodResultsScrollTop: refs.itemResults.scrollTop };
+    });
+  }
+}
+  return;
+}
+  if (state.modal.type === 'tx-day') {
+    const day = String(state.modal.day || '');
+    const monthKey = String(day).slice(0, 7);
+    const rows = [...balanceTxList().filter((row) => isoToDay(row.date || row.dateISO || '') === day), ...recurringForMonth(monthKey).filter((row) => row.date === day)].sort((a, b) => txSortTs(b) - txSortTs(a));
+    const accountName = (id) => escapeHtml(accounts.find((a) => a.id === id)?.name || 'Sin cuenta');
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Movimientos del día ${escapeHtml(day)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><div class="financeTxList">${rows.map((row) => {
+      const accountText = row.type === 'transfer' ? `${accountName(row.fromAccountId)} → ${accountName(row.toAccountId)}` : accountName(row.accountId);
+      const ratioMy = personalRatioForTx(row, Object.fromEntries(accounts.map((a) => [a.id, a])));
+      const ratioBadge = row.type === 'transfer' ? '' : `<small> · Imputado a mí: ${Math.round(ratioMy * 100)}%</small>`;
+      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${ratioBadge}${row.recurringVirtual ? '<small> · recurrente</small>' : ''}</span><strong class="${toneClass(personalDeltaForTx(row, Object.fromEntries(accounts.map((a) => [a.id, a]))))}">${fmtCurrency(row.amount)}</strong><span class="finance-row">${row.recurringVirtual ? '' : `<button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button>`}</span></div>`;
+    }).join('') || '<p class="finance-empty">Sin movimientos.</p>'}</div></div>`;
+    return;
+  }
+  if (state.modal.type === 'balance-drilldown') {
+    const txType = state.modal.txType === 'income' ? 'income' : 'expense';
+    const monthOffset = Number(state.modal.monthOffset || 0);
+    const monthKey = offsetMonthKey(getMonthKeyFromDate(), monthOffset);
+    const rows = buildDrilldownRows(txType, monthKey);
+    const title = txType === 'income' ? 'Ingresos' : 'Gastos';
+    const accountName = (id) => escapeHtml(accounts.find((a) => a.id === id)?.name || 'Sin cuenta');
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${title} · ${monthLabelByKey(monthKey)}</h3><div class="finance-row"><button class="finance-pill" data-drilldown-month="-1">◀</button><button class="finance-pill" data-drilldown-month="1">▶</button><button class="finance-pill" data-drilldown-add="${txType}">+ Añadir</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header><div class="financeTxList financeTxList--scroll" style="max-height:360px;overflow-y:auto;">${rows.map((row) => `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountName(row.accountId)}</span><strong class="${txType === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrency(row.amount)}</strong></div>`).join('') || '<p class="finance-empty">Sin registros en este mes.</p>'}</div></div>`;
+    return;
+  }
+  if (state.modal.type === 'calendar-day-edit') {
+    const day = String(state.modal.day || '').trim();
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar saldos · ${escapeHtml(day)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+      <form data-calendar-day-form="${escapeHtml(day)}">${accounts.map((account) => `<label>${escapeHtml(account.name)}<input name="acc_${account.id}" type="number" step="0.01" value="${accountValueForDay(account, day)}" /></label>`).join('') || '<p class="finance-empty">No hay cuentas.</p>'}<button class="finance-pill" type="submit">Guardar</button></form></div>`;
+    return;
+  }
+  if (state.modal.type === 'budget') {
+    const monthKey = getSelectedBalanceMonthKey();
+    const budget = state.modal.budgetId ? getBudgetItems(monthKey).find((item) => item.id === state.modal.budgetId) : null;
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${budget ? 'Editar' : 'Nuevo'} presupuesto (${monthKey})</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+ 
+    <form class="finance-budget-form-presupuesto" data-budget-form>
+    
+    <input name="category" list="finance-cat-list" value="${escapeHtml(budget?.category || '')}" placeholder="Categoría o Total" required />
+    
+    <datalist id="finance-cat-list">
+    
+    <option value="Total"></option>
+    
+    ${categories.map((c) => `
+      
+      <option value="${escapeHtml(c)}"></option>`).join('')}</datalist>
+      
+      <input name="limit" type="number" step="0.01" value="${Number(budget?.limit || 0)}" placeholder="Límite €" required />
+      <input name="monthKey" type="month" value="${monthKey}" required />
+      
+      <button class="finance-pill" type="submit">Guardar presupuesto</button>
+      </form>
+      ${budget ? `<button class="finance-pill" type="button" data-budget-delete="${budget.id}">Eliminar</button>` : ''}</div>`;
+    return;
+  }
+  if (state.modal.type === 'goal') {
+    const accountsOptions = accounts.map((a) => `<label><input type="checkbox" name="accountsIncluded" value="${a.id}" /> ${escapeHtml(a.name)}</label>`).join('');
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Nuevo objetivo</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+    <form class="finance-goal-form" data-goal-form><input name="title" required placeholder="Título" /><input name="targetAmount" required type="number" step="0.01" placeholder="Cantidad objetivo"/><input name="dueDateISO" required type="date" /><fieldset><legend>Cuentas incluidas</legend>${accountsOptions || '<p class="finance-empty">No hay cuentas.</p>'}</fieldset><button class="finance-pill" type="submit">Guardar</button></form></div>`;
+    return;
+  }
+  if (state.modal.type === 'goal-detail') {
+    const goal = state.goals.goals?.[state.modal.goalId]; if (!goal) { state.modal = { type: null }; triggerRender(); return; }
+    const selected = new Set(goal.accountsIncluded || []);
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${escapeHtml(goal.title)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+      <p>Meta ${fmtCurrency(goal.targetAmount)} · vence ${new Date(goal.dueDateISO).toLocaleDateString('es-ES')}</p><p>Prioridad por (dinero / días).</p>
+      <form data-goal-accounts-form="${state.modal.goalId}">${accounts.map((a) => `<label><input type="checkbox" value="${a.id}" ${selected.has(a.id) ? 'checked' : ''}/> ${escapeHtml(a.name)}</label>`).join('')}<button class="finance-pill" type="submit">Actualizar cuentas</button></form></div>`;
+    return;
+  }
+
+  if (state.modal.type === 'roi-info') {
+    const habits = listHabitOptions();
+    const hasGermanClassesHabit = habits.some((habit) => /alem[aá]n/i.test(habit.name) && /clase/i.test(habit.name));
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Cómo se calcula €/h por hábito</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+      <div class="finance-info-copy">
+        <p><strong>Distribución:</strong> Puntual cuenta solo el día del movimiento. Mensual/Semanal/Anual usan su periodo de referencia. Personalizado usa el rango [desde, hasta] (incluyentes).</p>
+        <p><strong>Rango visible:</strong> este panel usa solo las horas del hábito dentro del rango que estás viendo (día/semana/mes/año/total).</p>
+        <p><strong>Prorrateo:</strong> si tu rango visible cubre solo parte del periodo de una transacción, se imputa solo la parte proporcional por solape de días.</p>
+        <p><strong>Ejemplo:</strong> Ingreso mensual 300€ en febrero + 30h en febrero = 10€/h. Si luego registras más horas ese mes, el €/h baja.</p>
+        <p><strong>Horas = 0:</strong> se muestra N/A.</p>
+        <p><strong>Movimientos sin vínculo a hábito:</strong> no cuentan aquí.</p>
+        <hr />
+        <p><strong>Alemán recomendado en 2 hábitos:</strong></p>
+        <ul>
+          <li><strong>Alemán (clases):</strong> usa solo el botón “Clase” (1h por clase) y vincula aquí el gasto de clases.</li>
+          <li><strong>Alemán (autoestudio):</strong> Duolingo/otros, sin coste asociado.</li>
+        </ul>
+        <p>${hasGermanClassesHabit ? 'Las horas de “Alemán (clases)” salen del botón Clase (1h por pulsación).' : 'Si activas el botón “Clase”, las horas pueden contarse como 1h por pulsación en “Alemán (clases)”.'}</p>
+      </div>
+    </div>`;
+    return;
+  }
+
+  if (state.modal.type === 'history') {
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Historial</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><div class="finance-history-list">${accounts.map((account) => `<details class="finance-history-item" data-history-account="${account.id}"><summary><strong>${escapeHtml(account.name)}</strong><small>${account.daily.length} registros · ${fmtCurrency(account.current)}</small></summary><div class="finance-history-rows" data-history-rows="${account.id}"><p class="finance-empty">Pulsa para cargar…</p></div></details>`).join('') || '<p class="finance-empty">Sin historial.</p>'}</div></div>`;
+    return;
+  }
+  if (state.modal.type === 'edit-account') {
+    const account = accounts.find((item) => item.id === state.modal.accountId);
+    if (!account) { state.modal = { type: null }; triggerRender(); return; }
+    const duplicateCardAccounts = getCardLast4Duplicates(account.cardLast4, account.id);
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><form class="finance-entry-form" data-edit-account-form="${account.id}"><input type="text" name="name" value="${escapeHtml(account.name)}" required /><label>
+    <input type="checkbox" name="shared" ${account.shared ? 'checked' : ''} /> Cuenta compartida</label>
+    <select name="sharedRatio"><option value="0.5" ${(account.sharedRatio === 0.5) ? 'selected' : ''}>50%</option></select>
+    <label><input type="checkbox" name="isBitcoin" ${account.isBitcoin ? 'checked' : ''} /> Cuenta Bitcoin</label>
+    <input type="number" name="btcUnits" step="0.00000001" min="0" value="${Number(account.btcUnits || 0)}" placeholder="BTC unidades" />
+    <label>Tarjeta (últimos 4)
+    <input type="text" name="cardLast4" data-card-last4-input inputmode="numeric" maxlength="4" pattern="\\d{4}" value="${escapeHtml(normalizeCardLast4(account.cardLast4 || ''))}" placeholder="1234" />
+    </label>
+    ${duplicateCardAccounts.length ? '<small class="is-negative">⚠ last4 duplicado: el import no podrá decidir.</small>' : ''}
+    <small>BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(Number(account.btcUnits || 0) * Number(state.btcEurPrice || 0))}</small>
+    <button class="finance-pill" type="submit">Guardar</button></form></div>`;
+    return;
+  }
+  if (state.modal.type === 'new-account') {
+    backdrop.innerHTML = 
+    `<div id="finance-modal" class="finance-modal finance-modal--new-account" role="dialog" aria-modal="true" tabindex="-1"><header>
+    <h3>Nueva cuenta</h3>
+    <button class="finance-pill finance-pill--mini" type="button" data-close-modal>Cerrar</button></header>
+    <form class="finance-entry-form" id="modal-cuenta-nueva" data-new-account-form>
+      <label class="financeAccountForm__field">
+        <span class="financeAccountForm__label">Nombre</span>
+        <input type="text" name="name" data-account-name-input placeholder="Nombre de la cuenta" required />
+      </label>
+      <div class="financeAccountForm__toggles" role="group" aria-label="Opciones de cuenta">
+        <label class="financeAccountForm__toggle"><input type="checkbox" name="shared" /> <span>🫂 Compartida</span></label>
+        <label class="financeAccountForm__toggle"><input type="checkbox" name="isBitcoin" /> <span>Cuenta Bitcoin</span></label>
+      </div>
+      <input type="hidden" name="sharedRatio" value="0.5" />
+      <label class="financeAccountForm__field">
+        <span class="financeAccountForm__label">BTC unidades</span>
+        <input type="number" name="btcUnits" step="0.00000001" min="0" value="0" placeholder="BTC unidades" />
+      </label>
+      <label class="financeAccountForm__field">
+        <span class="financeAccountForm__label">Tarjeta (últimos 4)</span>
+        <input type="text" name="cardLast4" data-card-last4-input inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="1234" />
+      </label>
+      <small class="financeAccountForm__hint">BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(0)}</small>
+      <div class="financeAccountForm__actions"><button class="finance-pill" type="submit">Crear</button></div>
+    </form></div>`;
+    return;
+  }
+  if (state.modal.type === 'food-products') {
+    ensureFoodCatalogLoaded();
+    ensureFoodMetaCatalogLoaded();
+    backdrop.innerHTML = renderFoodProductsModal();
+    return;
+  }
+  if (state.modal.type === 'food-merge') {
+    ensureFoodCatalogLoaded();
+    ensureFoodMetaCatalogLoaded();
+    const selected = Array.isArray(state.modal.selected) ? state.modal.selected : [];
+    const destinationId = String(state.modal.destinationId || selected[0] || '');
+    const hideResolved = state.modal.hideResolved !== false;
+    const destinationSearch = normalizeFoodCompareKey(state.modal.destinationSearch || '');
+    const { origin, destination, all, pendingCount } = getMergeEligibleProducts({ hideResolved, searchTerm: state.modal.search || '', selectedIds: selected });
+    const options = origin;
+    const selectedOptions = destination
+      .filter((item) => selected.includes(item.id))
+      .filter((item) => !destinationSearch || normalizeFoodCompareKey(item.name).includes(destinationSearch));
+    const selectedSet = new Set(selected);
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>Fusionar productos</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header><section class="finFoodDetailSection finFoodCard"><div class="finFoodMergeHead"><input class="food-control" type="search" placeholder="Buscar productos a fusionar" value="${escapeHtml(state.modal.search || '')}" data-food-merge-search /><label class="financeStats__checkbox"><input type="checkbox" data-food-merge-hide-resolved ${hideResolved ? 'checked' : ''}> Solo pendientes</label><small class="finFoodMergeCounter">Mostrando ${options.length} de ${all.length} · pendientes: ${pendingCount}</small></div><div class="finFoodMergeList">${options.map((item) => `<label class="finFoodMergeRow" data-food-merge-option data-food-merge-name="${escapeHtml(normalizeProductItemKey(item.name))}"><input type="checkbox" data-food-merge-select="${escapeHtml(item.id)}" ${selectedSet.has(item.id) ? 'checked' : ''}> <span>${escapeHtml(item.name)}</span>${!hideResolved ? `<small class="finFoodMergeBadgeRow">${item.mergeMeta.absorbed ? '<span class="finFoodMergeBadge finFoodMergeBadge--absorbed">absorbido</span>' : ''}${item.mergeMeta.canonicalId === item.id ? '<span class="finFoodMergeBadge">canónico</span>' : ''}${item.mergeMeta.resolved && !item.mergeMeta.absorbed ? '<span class="finFoodMergeBadge finFoodMergeBadge--resolved">resuelto</span>' : ''}</small>` : ''}</label>`).join('') || '<p class="finance-empty">Sin productos para mostrar con el filtro actual.</p>'}</div><label class="financeStats__checkbox">Producto destino</label><input class="food-control" type="search" placeholder="Buscar destino" value="${escapeHtml(state.modal.destinationSearch || '')}" data-food-merge-destination-search /><div class="finFoodMergeList">${selectedOptions.map((item) => `<label class="finFoodMergeRow" data-food-merge-destination-option data-food-merge-name="${escapeHtml(normalizeProductItemKey(item.name))}"><input type="radio" name="food-merge-destination" data-food-merge-destination="${escapeHtml(item.id)}" ${destinationId === item.id ? 'checked' : ''}> <span>${escapeHtml(item.name)}</span></label>`).join('') || '<p class="finance-empty">Selecciona al menos 2 productos canónicos para elegir destino.</p>'}</div><div class="finFoodChipRow"><button type="button" class="food-history-btn" data-food-merge-confirm ${(selected.length < 2 || !destinationId || !selectedSet.has(destinationId)) ? 'disabled' : ''}>Fusionar seleccionados</button></div></section></div>`;
+    return;
+  }
+  if (state.modal.type === 'food-item') {
+  const editing = state.modal.foodId
+    ? (state.food.itemsById?.[state.modal.foodId] || resolveFoodItemByAnyKey(state.modal.foodId) || null)
+    : null;
+
+  const presetName = normalizeFoodName(state.modal.foodName || editing?.name || '');
+  const mode = state.modal.mode || 'edit';
+
+  // 👇 título = nombre del producto (fallback decente)
+  const productTitle = presetName || editing?.name || 'Producto';
+
+  const title =
+    (mode === 'info' || mode === 'detail')
+      ? escapeHtml(productTitle)
+      : (editing ? 'Editar comida' : 'Nueva comida');
+
+  backdrop.innerHTML = `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1">
+    <header class="food-sheet-header">
+      <h3>${title}</h3>
+      <button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button>
+    </header>
+    ${renderFoodItemModalForm(editing, presetName, mode)}
+  </div>`;
+
+  renderFoodHistoryVendorChart();
+  initFoodDetailInteractions();
+  return;
+}
+}
+
+function getFoodFormRefs(form) {
+  if (!form) return {};
+  return {
+    extra: form.querySelector('[data-food-extra]'),
+    category: form.querySelector('select[name="category"]'),
+    mealType: form.querySelector('select[name="foodMealType"]'),
+    cuisine: form.querySelector('select[name="foodCuisine"]'),
+    place: form.querySelector('select[name="foodPlace"]'),
+    itemSearch: form.querySelector('[data-food-item-search]'),
+    itemValue: form.querySelector('[data-food-item-value]'),
+    foodId: form.querySelector('[data-food-id-value]'),
+    itemResults: form.querySelector('[data-food-item-results]'),
+    itemPrice: form.querySelector('[data-food-item-price]'),
+    itemsJson: form.querySelector('[data-food-items-json]'),
+    itemsList: form.querySelector('[data-food-items-list]')
+  };
+}
+
+function clearFoodFormState(form) {
+  const refs = getFoodFormRefs(form);
+  if (refs.mealType) refs.mealType.value = '';
+  if (refs.cuisine) refs.cuisine.value = '';
+  if (refs.place) refs.place.value = '';
+  if (refs.itemSearch) refs.itemSearch.value = '';
+  if (refs.itemValue) refs.itemValue.value = '';
+  if (refs.foodId) refs.foodId.value = '';
+  if (refs.itemResults) refs.itemResults.innerHTML = '';
+}
+
+function keepFoodExtrasOpen(form) {
+  const details = form?.querySelector('[data-section="food-extras"]');
+  if (!details || details.hidden) return;
+  details.open = true;
+  state.balanceFormState = { ...state.balanceFormState, foodExtrasOpen: true };
+}
+
+function resetFoodEntryForm(form, { keepDropdownOpen = true } = {}) {
+  const refs = getFoodFormRefs(form);
+  if (refs.itemSearch) refs.itemSearch.value = '';
+  if (refs.itemValue) refs.itemValue.value = '';
+  if (refs.foodId) refs.foodId.value = '';
+  if (refs.itemPrice) refs.itemPrice.value = '';
+  if (refs.mealType) refs.mealType.value = '';
+  if (refs.cuisine) refs.cuisine.value = '';
+  if (refs.place) refs.place.value = '';
+  if (!keepDropdownOpen) {
+    const details = form?.querySelector('[data-section="food-extras"]');
+    if (details) details.open = false;
+  }
+}
+
+function readFoodItemsFromForm(form) {
+  const refs = getFoodFormRefs(form);
+  try {
+    const items = JSON.parse(refs.itemsJson?.value || '[]');
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeFoodItemsToForm(form, items = []) {
+  const refs = getFoodFormRefs(form);
+  if (refs.itemsJson) refs.itemsJson.value = JSON.stringify(items);
+  if (refs.itemsList) {
+    refs.itemsList.innerHTML = items.length
+      ? items.map((item, index) => `<div class="finFood__selectedItem"><span>${escapeHtml(item.name)} · ${fmtCurrency(item.price || 0)}</span><button type="button" class="finance-pill finance-pill--mini finance-pill-borrar-comida" data-food-item-remove="${index}">×</button></div>`).join('')
+      : '<small class="finance-empty">Sin productos añadidos.</small>';
+  }
+}
+
+function recalcFoodAmount(form) {
+  const amountInput = form?.querySelector('input[name="amount"]');
+  if (!amountInput || !state.balanceAmountAuto) return;
+  const sum = readFoodItemsFromForm(form).reduce((acc, item) => acc + Number(item?.price || 0), 0);
+  amountInput.value = sum ? String(sum.toFixed(2)) : '';
+}
+
+function renderFoodItemSearchResults(form) {
+  const refs = getFoodFormRefs(form);
+  if (!refs.itemResults) return;
+  const prevScrollTop = refs.itemResults.scrollTop;
+  const query = normalizeFoodName(refs.itemSearch?.value || '').toLowerCase();
+  const mealType = normalizeFoodName(refs.mealType?.value || '').toLowerCase();
+  const place = normalizeFoodName(refs.place?.value || '').toLowerCase();
+  const cuisine = normalizeFoodName(refs.cuisine?.value || '').toLowerCase();
+  const all = foodItemsList();
+  const filteredByMeta = all.filter((row) => {
+    const extras = row.meta || {};
+    if (mealType && normalizeFoodName(extras.mealType || '').toLowerCase() !== mealType) return false;
+    if (place && normalizeFoodName(extras.place || '').toLowerCase() !== place) return false;
+    if (cuisine && normalizeFoodName(extras.cuisine || '').toLowerCase() !== cuisine) return false;
+    return true;
+  });
+  const source = (mealType || place || cuisine) ? filteredByMeta : all;
+  const filtered = query ? source.filter((row) => row.name.toLowerCase().includes(query)) : source;
+  const rows = filtered.slice(0, 10).map((row) => { const selected = String(refs.foodId?.value || '') === String(row.id); return `
+<div class="food-item" id="panel-lista-platos">
+  <button type="button" class="food-pill ${selected ? 'is-selected' : ''}" data-food-item-select="${escapeHtml(row.id)}" id="plato-pill">
+
+    <span class="food-pill__name">${escapeHtml(row.name)}</span>
+
+    <small class="food-pill__count">×${row.count}</small>
+
+  <button type="button" class="food-iconbtn" data-food-item-info="${escapeHtml(row.id)}" title="Ficha del producto" aria-label="Ficha del producto">ℹ️</button>
+
+  <button type="button" class="food-iconbtn" data-food-item-edit="${escapeHtml(row.id)}" aria-label="Editar comida">✏️</button>
+
+  </button>
+
+</div>
+    
+    `; });
+  const canCreate = query && !all.some((row) => row.name.toLowerCase() === query);
+  if (canCreate) rows.push(`<button type="button" class="food-pill food-pill--create" data-food-item-create="${escapeHtml(refs.itemSearch?.value || '')}">Crear “${escapeHtml(refs.itemSearch?.value || '')}”</button>`);
+  refs.itemResults.innerHTML = rows.join('') || '<small class="finance-empty">Sin resultados.</small>';
+  const maxScrollTop = Math.max((refs.itemResults.scrollHeight || 0) - (refs.itemResults.clientHeight || 0), 0);
+  refs.itemResults.scrollTop = Math.min(prevScrollTop, maxScrollTop);
+  state.balanceFormState = { ...state.balanceFormState, foodResultsScrollTop: refs.itemResults.scrollTop };
+}
+
+function refreshFoodTopItems(form) {
+  const host = form?.querySelector('[data-food-top]');
+  if (!host) return;
+  const topItems = topFoodItems(5);
+  host.innerHTML = topItems.map((item) => 
+    `<div class="food-item" id="contenedor-habituales">
+
+  <div class="food-pill" data-food-top-item="${escapeHtml(item.id)}">
+
+    <button type="button" class="food-pill__main">
+      <span class="food-pill__name">${escapeHtml(item.name)}</span>
+      <small class="food-pill__count">×${item.count}</small>
+    </button>
+
+    <div class="food-pill__actions">
+      <button type="button"
+        class="food-iconbtn"
+        data-food-item-info="${escapeHtml(item.id)}"
+        title="Ficha del producto"
+        aria-label="Ficha del producto">
+        ℹ️
+      </button>
+
+      <button type="button"
+        class="food-iconbtn"
+        data-food-item-edit="${escapeHtml(item.id)}"
+        aria-label="Editar comida">
+        ✏️
+      </button>
+    </div>
+
+  </div>
+
+</div>`
+).join('') || '<small class="finance-empty">Sin habituales aún.</small>';
+}
+
+async function applyFoodItemPreset(form, foodIdOrName) {
+  const safeValue = normalizeFoodName(foodIdOrName);
+  if (!form || !safeValue) return;
+  const refs = getFoodFormRefs(form);
+  const preset = state.food.itemsById?.[safeValue] || getFoodByName(safeValue) || null;
+  const name = normalizeFoodName(preset?.name || safeValue);
+  if (refs.itemSearch) refs.itemSearch.value = name;
+  if (refs.itemValue) refs.itemValue.value = name;
+  if (refs.foodId) refs.foodId.value = preset?.id || '';
+  if (refs.itemPrice && Number(preset?.defaultPrice || 0) > 0 && !String(refs.itemPrice.value || '').trim()) refs.itemPrice.value = String(preset.defaultPrice);
+  const accountSelect = form.querySelector('select[name="accountId"]');
+  if (accountSelect && preset?.lastAccountId) accountSelect.value = preset.lastAccountId;
+  if (refs.mealType) refs.mealType.value = preset?.mealType || '';
+  if (refs.cuisine) refs.cuisine.value = preset?.cuisine || preset?.healthy || '';
+  if (refs.place) refs.place.value = preset?.place || '';
+  financeDebug('food selected in form', { foodId: preset?.id || null, name });
+  await toggleFoodExtras(form);
+  persistBalanceFormState(form);
+}
+
+async function syncFoodOptionsInForm(form) {
+  const refs = getFoodFormRefs(form);
+  [['typeOfMeal', refs.mealType], ['cuisine', refs.cuisine], ['place', refs.place]].forEach(([kind, select]) => {
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = `<option value="">Seleccionar (opcional)</option>${foodOptionList(kind).map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}`;
+    select.value = current;
+  });
+  refreshFoodTopItems(form);
+  renderFoodItemSearchResults(form);
+}
+
+
+
+
+function syncTxTypeFields(form) {
+  const typeSel = form.querySelector('[data-tx-type]');
+  const elSingle = form.querySelector('[data-tx-account-single]');
+  const elFrom = form.querySelector('[data-tx-account-from]');
+  const elTo = form.querySelector('[data-tx-account-to]');
+  if (!typeSel || !elSingle || !elFrom || !elTo) return;
+
+  const isTransfer = typeSel.value === 'transfer';
+
+  // Cuenta única
+  elSingle.style.display = isTransfer ? 'none' : '';
+
+  // Origen / destino
+  elFrom.style.display = isTransfer ? '' : 'none';
+  elTo.style.display = isTransfer ? '' : 'none';
+
+  syncPersonalRatioFields(form);
+}
+
+function syncPersonalRatioFields(form) {
+  const block = form?.querySelector('[data-personal-ratio-block]');
+  const wrap = form?.querySelector('[data-personal-ratio-wrap]');
+  const advanced = form?.querySelector('[data-personal-ratio-advanced]');
+  const typeSel = form?.querySelector('[data-tx-type]');
+  const accountSel = form?.querySelector('select[name="accountId"]');
+  const modeSel = form?.querySelector('[data-personal-ratio-mode]');
+  const manualWrap = form?.querySelector('[data-personal-ratio-manual-wrap]');
+  const percentInput = form?.querySelector('[data-personal-ratio-percent]');
+  const preview = form?.querySelector('[data-personal-ratio-preview]');
+  if (!block || !wrap || !advanced || !typeSel || !accountSel || !modeSel || !manualWrap || !percentInput || !preview) return;
+
+  const type = normalizeTxType(typeSel.value || 'expense');
+  const accountId = String(accountSel.value || '');
+  const account = (state.accounts || []).find((row) => row.id === accountId);
+  const isSharedAccount = !!account?.shared;
+  const visible = type !== 'transfer' && (isSharedAccount || advanced.checked);
+  block.style.display = type === 'transfer' ? 'none' : '';
+  wrap.hidden = !visible;
+
+  const autoRatio = personalRatioForTx({ type, accountId }, Object.fromEntries((state.accounts || []).map((row) => [row.id, row])));
+  const isManual = modeSel.value === 'custom';
+  manualWrap.hidden = !isManual;
+  const ratio = isManual ? clamp01(Number(percentInput.value || 0) / 100, autoRatio) : autoRatio;
+  preview.textContent = `${Math.round(ratio * 100)}%`;
+}
+
+function syncAllocationFields(form) {
+  const linked = form?.querySelector('[data-linked-habit-select]');
+  const block = form?.querySelector('[data-allocation-block]');
+  const modeSel = form?.querySelector('[data-allocation-mode]');
+  const customWrap = form?.querySelector('[data-allocation-custom]');
+  const anchorInput = form?.querySelector('[data-allocation-anchor]');
+  const anchorLabel = form?.querySelector('[data-allocation-anchor-label]');
+  if (!linked || !block || !modeSel || !customWrap || !anchorInput || !anchorLabel) return;
+  const hasHabit = !!String(linked.value || '').trim();
+  block.hidden = !hasHabit;
+  const mode = String(modeSel.value || 'point');
+  const isCustom = mode === 'custom';
+  const showAnchor = mode !== 'point' && !isCustom;
+  anchorInput.hidden = !showAnchor;
+  anchorLabel.hidden = !showAnchor;
+  customWrap.hidden = !(mode !== 'point' && isCustom);
+}
+
+function maybeToggleCategoryCreate(form) {
+  const input = form?.querySelector('[data-category-new]');
+  const btn = form?.querySelector('[data-category-create]');
+  if (!input || !btn) return;
+  const value = String(input.value || '').trim();
+  const exists = categoriesList().some((row) => row.toLowerCase() === value.toLowerCase());
+  btn.disabled = !value || exists;
+  btn.textContent = value ? `+ añadir "${value}"` : '+';
+}
+
+function ensureTxAdvancedDetails(form) {
+  if (!form || form.querySelector('[data-tx-advanced]')) return;
+
+  const linkedField = form.querySelector('#fm-tx-linked-habit')?.closest('.fm-field') || null;
+  const allocationField = form.querySelector('[data-allocation-block]') || null;
+  const personalRatioField = form.querySelector('[data-personal-ratio-block]') || null;
+  const recurringDetails = form.querySelector('details.finFixed__wrap') || null;
+  const nodes = [linkedField, allocationField, personalRatioField, recurringDetails].filter(Boolean);
+  if (!nodes.length) return;
+
+  const details = document.createElement('details');
+  details.className = 'fm-details finWizardAdvanced';
+  details.dataset.txAdvanced = '1';
+  details.innerHTML = `
+    <summary class="fm-details__summary">
+      <span class="fm-details__title">Ajustes avanzados</span>
+      <span class="fm-details__hint">Opcional</span>
+      <span class="fm-details__chev" aria-hidden="true">⌄</span>
+    </summary>
+    <div class="fm-details__body"></div>
+  `;
+  const body = details.querySelector('.fm-details__body');
+  nodes.forEach((node) => body.appendChild(node));
+
+  const importDetails = form.querySelector('details.fin-move-extras:not([data-section="food-extras"])');
+  if (importDetails) importDetails.insertAdjacentElement('beforebegin', details);
+  else form.appendChild(details);
+}
+async function toggleFoodExtras(form) {
+  const catSel = form.querySelector('select[name="category"]');
+  const foodBox = form.querySelector('[data-section="food-extras"]');
+  if (!foodBox) return;
+
+  const v = (catSel?.value || '').toLowerCase();
+  const isFood = v === 'comida' || v.includes('comida');
+  foodBox.hidden = !isFood;
+
+  if (!isFood) {
+    foodBox.removeAttribute('open');
+    state.balanceFormState = { ...state.balanceFormState, foodExtrasOpen: false };
+    return;
+  }
+  await ensureFoodCatalogLoaded();
+  await syncFoodOptionsInForm(form);
+  if (state.balanceFormState.foodExtrasOpen) foodBox.open = true;
+}
+function persistBalanceFormState(form) {
+  if (!form) return;
+  const prev = state.balanceFormState || {};
+  const fd = new FormData(form);
+  const next = {
+    type: String(fd.get('type') || ''),
+    amount: String(fd.get('amount') || ''),
+    dateISO: String(fd.get('dateISO') || ''),
+    accountId: String(fd.get('accountId') || ''),
+    fromAccountId: String(fd.get('fromAccountId') || ''),
+    toAccountId: String(fd.get('toAccountId') || ''),
+    category: String(fd.get('category') || ''),
+    note: String(fd.get('note') || ''),
+    linkedHabitId: String(fd.get('linkedHabitId') || ''),
+    allocationMode: String(fd.get('allocationMode') || 'point'),
+    allocationPeriod: String(fd.get('allocationMode') || 'point'),
+    allocationAnchorDate: String(fd.get('allocationAnchorDate') || ''),
+    allocationCustomStart: String(fd.get('allocationCustomStart') || ''),
+    allocationCustomEnd: String(fd.get('allocationCustomEnd') || ''),
+    personalRatioMode: String(fd.get('personalRatioMode') || 'auto'),
+    personalRatioPercent: String(fd.get('personalRatioPercent') || ''),
+    personalRatioAdvanced: fd.get('personalRatioAdvanced') === 'on',
+    foodMealType: String(fd.get('foodMealType') || ''),
+    foodCuisine: String(fd.get('foodCuisine') || ''),
+    foodPlace: String(fd.get('foodPlace') || ''),
+    foodItem: String(fd.get('foodItem') || ''),
+    foodId: String(fd.get('foodId') || ''),
+    foodExtrasOpen: !!form.querySelector('[data-section="food-extras"]')?.open,
+    foodResultsScrollTop: Number(form.querySelector('[data-food-item-results]')?.scrollTop || 0)
+  };
+
+  // Preserva campos del wizard/import que no existen como inputs del form
+  state.balanceFormState = {
+    ...prev,
+    ...next,
+    txWizardStep: prev.txWizardStep || 'base',
+    importedFoodItems: prev.importedFoodItems,
+  };
+}
+
+function renderToast() {
+  let el = document.getElementById('finance-toast');
+  if (!el) { el = document.createElement('div'); el.id = 'finance-toast'; el.className = 'finance-toast hidden'; document.getElementById('view-finance')?.append(el); }
+  if (!state.toast) { el.classList.add('hidden'); el.textContent = ''; return; }
+  el.textContent = state.toast; el.classList.remove('hidden');
+}
+function toast(message) { state.toast = message; renderToast(); clearTimeout(state.toastTimer); state.toastTimer = setTimeout(() => { state.toast = ''; renderToast(); }, 1800); }
+
+async function migrateLegacy(entriesMap = {}, accounts = []) {
+  const updatesMap = {}; let writes = 0;
+  accounts.forEach((account) => {
+    const legacyByDay = normalizeLegacyEntries(entriesMap[account.id] || {});
+    Object.entries(legacyByDay).forEach(([day, record]) => {
+      const current = account.daily?.[day];
+      if (!current || Number(current.ts || 0) < Number(record.ts)) { updatesMap[`${state.financePath}/accounts/${account.id}/entries/${day}`] = { value: record.value, ts: record.ts, source: 'legacy', updatedAt: nowTs(), dateISO: `${day}T00:00:00.000Z` }; writes += 1; }
+    });
+  });
+  if (writes) await safeFirebase(() => update(ref(db), updatesMap));
+}
+
+async function ensurePersonalRatioMigrationV1() {
+  const migrationPath = `${state.financePath}/meta/migrations/personalRatioV1`;
+  const migrationSnap = await safeFirebase(() => get(ref(db, migrationPath)));
+  if (migrationSnap?.exists()) return;
+
+  const updatesMap = {};
+  const accountsById = Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
+  const txRows = balanceTxList();
+  txRows.forEach((tx) => {
+    const type = normalizeTxType(tx?.type);
+    if (type !== 'income' && type !== 'expense') return;
+    if (Number.isFinite(Number(tx?.personalRatio))) return;
+    const ratio = personalRatioForTx(tx, accountsById);
+    if (!tx?.__path) return;
+    updatesMap[`${tx.__path}/personalRatio`] = ratio;
+    if (tx.__src === 'transactions' && state.balance.transactions?.[tx.id]) state.balance.transactions[tx.id].personalRatio = ratio;
+    if (tx.__src === 'movements' && state.balance.movements?.[tx.monthKey]?.[tx.id]) state.balance.movements[tx.monthKey][tx.id].personalRatio = ratio;
+    if (tx.__src === 'tx' && state.balance.tx?.[tx.id]) state.balance.tx[tx.id].personalRatio = ratio;
+  });
+
+  Object.entries(state.balance.recurring || {}).forEach(([id, rec]) => {
+    const type = normalizeTxType(rec?.type);
+    if (type !== 'income' && type !== 'expense') return;
+    if (Number.isFinite(Number(rec?.personalRatio))) return;
+    const ratio = personalRatioForTx(rec, accountsById);
+    updatesMap[`${state.financePath}/recurring/${id}/personalRatio`] = ratio;
+    if (state.balance.recurring?.[id]) state.balance.recurring[id].personalRatio = ratio;
+  });
+
+  updatesMap[migrationPath] = nowTs();
+  if (Object.keys(updatesMap).length) {
+    updatesMap[`${state.financePath}/aggregates`] = null;
+    await safeFirebase(() => update(ref(db), updatesMap));
+    scheduleAggregateRebuild();
+  }
+}
+
+function applyRemoteData(val = {}, replace = false) {
+  const root = val && typeof val === 'object' ? val : {};
+  const accountsMap = root.accounts || (replace ? {} : Object.fromEntries(state.accounts.map((acc) => [acc.id, acc])));
+  const fallbackEntries = replace ? {} : state.legacyEntries;
+  state.accounts = Object.values(accountsMap).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  state.legacyEntries = root.accountsEntries || root.entries || fallbackEntries;
+  state.balance = {
+    tx: root.balance?.tx || root.tx || (replace ? {} : state.balance.tx),
+    movements: root.movements || root.balance?.movements || root.balance?.movement || (replace ? {} : state.balance.movements),
+    transactions: root.transactions || root.balance?.transactions || root.balance?.tx2 || (replace ? {} : state.balance.transactions),
+    categories: root.catalog?.categories || root.balance?.categories || (replace ? {} : state.balance.categories),
+    budgets: root.budgets || root.balance?.budgets || (replace ? {} : state.balance.budgets),
+    snapshots: root.balance?.snapshots || root.snapshots || (replace ? {} : state.balance.snapshots),
+    recurring: root.recurring || root.balance?.recurring || (replace ? {} : state.balance.recurring),
+    defaultAccountId: root.balance?.defaultAccountId || (replace ? '' : state.balance.defaultAccountId),
+    aggregates: root.aggregates || root.balance?.aggregates || (replace ? {} : state.balance.aggregates),
+    lastSeenMonthKey: root.balance?.lastSeenMonthKey || (replace ? '' : state.balance.lastSeenMonthKey)
+  };
+  state.goals = { goals: root.goals?.goals || (replace ? {} : state.goals.goals) };
+  console.log('[BALANCE] sample tx', balanceTxList().slice(0, 5));
+}
+
+function hasData(value) {
+  if (!value || typeof value !== 'object') return false;
+  return Array.isArray(value) ? value.length > 0 : Object.keys(value).length > 0;
+}
+
+function mergeFinanceRoots(newRoot = {}, legacyRoot = {}) {
+  const rootNew = newRoot && typeof newRoot === 'object' ? newRoot : {};
+  const rootLegacy = legacyRoot && typeof legacyRoot === 'object' ? legacyRoot : {};
+  const pick = (key, preferNew = true) => {
+    if (preferNew && hasData(rootNew[key])) return rootNew[key];
+    if (hasData(rootLegacy[key])) return rootLegacy[key];
+    return rootNew[key] ?? rootLegacy[key];
+  };
+  return {
+    ...rootLegacy,
+    ...rootNew,
+    transactions: pick('transactions', true),
+    budgets: pick('budgets', true),
+    tx: pick('tx', true),
+    movements: pick('movements', true),
+    recurring: pick('recurring', true),
+    accounts: pick('accounts', true),
+    snapshots: pick('snapshots', true),
+    catalog: pick('catalog', true),
+    foodItems: pick('foodItems', true),
+    goals: pick('goals', true),
+    accountsEntries: pick('accountsEntries', true),
+    entries: pick('entries', true)
+  };
+}
+
+function chooseFinancePath(newPath, legacyPath, newRoot = {}, legacyRoot = {}) {
+  const newHasTransactions = hasData(newRoot?.transactions);
+  const newHasAccounts = hasData(newRoot?.accounts);
+  const legacyHasTransactions = hasData(legacyRoot?.transactions);
+  const legacyHasAccounts = hasData(legacyRoot?.accounts);
+  if (newHasTransactions) return newPath;
+  if (newHasAccounts) return newPath;
+  if (legacyHasTransactions || legacyHasAccounts) return legacyPath;
+  return newPath;
+}
+
+async function probeFinanceRoots() {
+  const [newPath, legacyPath] = resolveFinancePathCandidates();
+  const [newSnap, legacySnap] = await Promise.all([
+    safeFirebase(() => get(ref(db, newPath))),
+    safeFirebase(() => get(ref(db, legacyPath)))
+  ]);
+  const newRoot = newSnap?.val() || {};
+  const legacyRoot = legacySnap?.val() || {};
+  const chosenPath = chooseFinancePath(newPath, legacyPath, newRoot, legacyRoot);
+  return { newPath, legacyPath, newRoot, legacyRoot, chosenPath };
+}
+
+async function detectFinancePath(basePath) {
+  const candidates = [];
+  const add = (path) => {
+    if (path && !candidates.includes(path)) candidates.push(path);
+  };
+
+  add(basePath);
+  if (/\/finance\/?$/.test(basePath) && !/\/finance\/finance\/?$/.test(basePath)) {
+    add(basePath.replace(/\/finance\/?$/, '/finance/finance'));
+  }
+  if (/\/finance\/finance\/?$/.test(basePath)) {
+    add(basePath.replace(/\/finance\/finance\/?$/, '/finance'));
+  }
+  if (!/\/finance\/finance\/?$/.test(basePath)) {
+    add(basePath.replace(/\/$/, '') + '/finance');
+  }
+
+  for (const root of candidates) {
+    try {
+      const snap = await get(ref(db, `${root}/transactions`));
+      if (snap?.exists()) return root;
+    } catch (error) {
+      console.warn('[FINANCE] detectFinancePath probe failed', root, error?.message || error);
+    }
+  }
+
+  for (const root of candidates) {
+    try {
+      const snap = await get(ref(db, `${root}/accounts`));
+      if (snap?.exists()) return root;
+    } catch {
+      // noop
+    }
+  }
+
+  return basePath;
+}
+
+async function loadDataOnce() {
+  const { newRoot, legacyRoot } = financeRootsCache;
+  const mergedRoot = mergeFinanceRoots(newRoot, legacyRoot);
+  applyRemoteData(mergedRoot, true);
+  const txCount = Object.keys((state.balance.transactions || {})).length;
+  console.log('[FINANCE] after applyRemoteData txCount', txCount);
+  financeNeedsLegacyAccountsMerge = !hasData(newRoot?.accounts) && hasData(legacyRoot?.accounts);
+  console.log('[FINANCE] counts', {
+    accounts: Object.keys((mergedRoot.accounts || {})).length,
+    transactions: Object.keys((mergedRoot.transactions || {})).length
+  });
+  state.hydratedFromRemote = true;
+  log('loaded accounts:', state.accounts.length);
+}
+
+function subscribe() {
+  if (state.unsubscribe) state.unsubscribe();
+  if (unsubscribeLegacyFinance) {
+    unsubscribeLegacyFinance();
+    unsubscribeLegacyFinance = null;
+  }
+  console.log('[FINANCE][BALANCE] subscribe firebase', state.financePath);
+  state.unsubscribe = onValue(ref(db, state.financePath), (snap) => {
+    const val = snap.val();
+    if (!val && state.hydratedFromRemote) {
+      triggerRender();
+      return;
+    }
+    if (state.financePath === resolveFinancePath()) financeRootsCache.newRoot = val || {};
+    else financeRootsCache.legacyRoot = val || {};
+    const mergedRoot = mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
+    applyRemoteData(mergedRoot, true);
+    state.hydratedFromRemote = true;
+    triggerRender();
+  }, (error) => { state.error = String(error?.message || error); triggerRender(); });
+
+  if (financeNeedsLegacyAccountsMerge) {
+    const legacyPath = resolveFinancePathCandidates()[1];
+    console.log('[FINANCE][BALANCE] subscribe firebase legacy merge', legacyPath);
+    unsubscribeLegacyFinance = onValue(ref(db, legacyPath), (snap) => {
+      financeRootsCache.legacyRoot = snap.val() || {};
+      const mergedRoot = mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
+      applyRemoteData(mergedRoot, true);
+      state.hydratedFromRemote = true;
+      triggerRender();
+    }, (error) => { state.error = String(error?.message || error); triggerRender(); });
+  }
+}
+
+async function addAccount({ name, shared = false, sharedRatio = 0.5, isBitcoin = false, btcUnits = 0, cardLast4 = '' }) {
+  const id = push(ref(db, `${state.financePath}/accounts`)).key;
+  const ratio = shared ? clampRatio(sharedRatio, 0.5) : 1;
+  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), { id, name, shared, sharedRatio: ratio, isBitcoin: Boolean(isBitcoin), btcUnits: Number(btcUnits || 0), cardLast4: normalizeCardLast4(cardLast4), createdAt: nowTs(), updatedAt: nowTs(), entries: {}, snapshots: {} }));
+}
+async function updateAccountMeta(accountId, payload = {}) {
+  const shared = Boolean(payload.shared);
+  const sharedRatio = shared ? clampRatio(payload.sharedRatio, 0.5) : 1;
+  await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { ...payload, shared, sharedRatio, isBitcoin: Boolean(payload.isBitcoin), btcUnits: Number(payload.btcUnits || 0), cardLast4: normalizeCardLast4(payload.cardLast4), updatedAt: nowTs() }));
+}
+async function saveSnapshot(accountId, day, value) {
+  const parsedValue = parseEuroNumber(value);
+  if (!Number.isFinite(parsedValue) || !day) return false;
+  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${accountId}/snapshots/${day}`), { value: parsedValue, updatedAt: nowTs() }));
+  await recomputeAccountEntries(accountId, day);
+  toast('Guardado');
+  return true;
+}
+
+async function deleteDay(accountId, day) {
+  await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}/snapshots/${day}`)));
+  await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}/entries/${day}`)));
+  await recomputeAccountEntries(accountId, day);
+}
+async function deleteAccount(accountId) { await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}`))); }
+
+
+function captureFinanceUiState() {
+  const isProductsView = state.activeView === 'products' || state.modal?.type === 'food-products';
+  if (!isProductsView) return null;
+  const sc = document.querySelector('[data-finance-products-scroll]');
+  const openDetails = [...document.querySelectorAll('.financeTab details[id], #finance-modal details[id]')]
+    .map((el) => ({ id: el.id, open: !!el.open }));
+  return { y: sc?.scrollTop ?? 0, openDetails };
+}
+
+function restoreFinanceUiState(snapshot) {
+  if (!snapshot) return;
+  snapshot.openDetails.forEach((row) => {
+    const el = document.getElementById(row.id);
+    if (el) el.open = !!row.open;
+  });
+  requestAnimationFrame(() => {
+    const sc = document.querySelector('[data-finance-products-scroll]');
+    if (sc) sc.scrollTop = snapshot.y || 0;
+  });
+}
+
+function triggerRender(options = {}) {
+  const preserveUi = options.preserveUi !== false;
+  const txDetails = document.getElementById('finance-balance-tx-details');
+  if (txDetails && txDetails.tagName === 'DETAILS') {
+    state.balanceTxDetailsOpen = !!txDetails.open;
+  }
+  const uiSnapshot = preserveUi ? captureFinanceUiState() : null;
+  render().then(() => {
+    if (preserveUi) restoreFinanceUiState(uiSnapshot);
+  }).catch((e) => {
+    console.error('[finance] render top-level', e);
+    showFinanceBootError($opt, e);
+  });
+}
+
+function ensureFinanceAddTxFab() {
+  const view = document.getElementById('view-finance');
+  if (!view) return null;
+  let fab = document.getElementById('anadir-gastos');
+  if (!fab) {
+    fab = document.createElement('button');
+    fab.id = 'anadir-gastos';
+    view.appendChild(fab);
+  }
+  fab.type = 'button';
+  fab.className = 'finance-fab';
+  fab.dataset.openModal = 'tx';
+  fab.textContent = '💲';
+  fab.title = 'Añadir gasto';
+  fab.setAttribute('aria-label', 'Añadir gasto');
+  return fab;
+}
+
+async function render() {
+  try {
+    const host = ensureFinanceHost($opt, $req);
+    renderFinanceNav();
+    if (state.error) { host.innerHTML = `<article class=\"finance-panel\"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`; return; }
+    await ensureBtcEurPrice();
+    const accounts = buildAccountModels(); const totalSeries = buildTotalSeries(accounts);
+    await maybeAutoBitcoinDailySnapshots(state.accounts);
+    publishFinanceTotals(accounts);
+    if (state.activeView === 'balance') {
+      await ensureFoodCatalogLoaded();
+      host.innerHTML = renderFinanceBalance();
+      renderFinanceStatsDonutChart();
+      await maybeRolloverSnapshot();
+      if (!Object.keys(state.balance.aggregates || {}).length) scheduleAggregateRebuild();
+    } else if (state.activeView === 'products') {
+      disposeFinanceStatsDonutChart();
+      await ensureFoodCatalogLoaded();
+      await ensureFoodMetaCatalogLoaded();
+      host.innerHTML = renderFinanceProducts();
+    } else {
+      disposeFinanceStatsDonutChart();
+      if (state.activeView === 'goals') host.innerHTML = renderFinanceGoals();
+      else if (state.activeView === 'calendar') host.innerHTML = renderFinanceCalendar(accounts, totalSeries);
+      else host.innerHTML = renderFinanceHome(accounts, totalSeries);
+    }
+    renderModal();
+    renderToast();
+    ensureFinanceAddTxFab();
+  } catch (err) {
+    console.error('[finance] render crashed', err);
+    showFinanceBootError($opt, err);
+  }
+}
+
+function bindEvents() {
+  
+  const view = document.getElementById('view-finance'); if (!view || view.dataset.financeBound === '1') return; view.dataset.financeBound = '1';
+  state.eventsAbortController = new AbortController();
+  const evtOpts = { signal: state.eventsAbortController.signal };
+  const chartEvtOpts = { signal: state.eventsAbortController.signal, passive: false };
+  const unlockFinanceScroll = () => {
+    if (!view.dataset.__scrollLocked) return;
+    view.dataset.__scrollLocked = '';
+    if (view.dataset.__prevOverflowY != null) view.style.overflowY = view.dataset.__prevOverflowY;
+    else view.style.overflowY = '';
+  };
+  const lockFinanceScroll = () => {
+    if (view.dataset.__scrollLocked === '1') return;
+    view.dataset.__scrollLocked = '1';
+    view.dataset.__prevOverflowY = view.style.overflowY || '';
+    view.style.overflowY = 'hidden';
+  };
+  let chartPointerId = null;
+  let chartPointerActive = false;
+  let chartPointerEl = null;
+
+  view.addEventListener('pointerdown', (event) => {
+    const target = event.target;
+    const chartEl = target?.closest?.('#finance-lineChart');
+    if (!chartEl) return;
+
+    const points = state.lineChart?.points || [];
+    if (!points.length) return;
+
+    chartPointerActive = true;
+    chartPointerId = event.pointerId;
+    chartPointerEl = chartEl;
+    lockFinanceScroll();
+
+    try { chartEl.style.touchAction = 'none'; } catch (_) {}
+    try { chartEl.setPointerCapture?.(event.pointerId); } catch (_) {}
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const hit = closestLineChartPoint(points, chartEl, event.clientX);
+    if (hit) showLineChartPoint(chartEl, hit.point, hit.idx, points);
+  }, chartEvtOpts);
+
+  view.addEventListener('pointermove', (event) => {
+    if (!chartPointerActive) return;
+    if (chartPointerId != null && event.pointerId !== chartPointerId) return;
+    if (!chartPointerEl) return;
+
+    const points = state.lineChart?.points || [];
+    if (!points.length) return;
+
+    event.preventDefault();
+    const hit = closestLineChartPoint(points, chartPointerEl, event.clientX);
+    if (hit) showLineChartPoint(chartPointerEl, hit.point, hit.idx, points);
+  }, chartEvtOpts);
+
+  const endPointer = (event) => {
+    if (!chartPointerActive) return;
+    if (chartPointerId != null && event.pointerId !== chartPointerId) return;
+    chartPointerActive = false;
+    chartPointerId = null;
+    chartPointerEl = null;
+    unlockFinanceScroll();
+  };
+
+  view.addEventListener('pointerup', (event) => { endPointer(event); }, chartEvtOpts);
+  view.addEventListener('pointercancel', (event) => { endPointer(event); }, chartEvtOpts);
+
+  view.addEventListener('click', async (event) => {
+    const target = event.target;
+
+    const lineChart = target?.closest?.('#finance-lineChart');
+    if (lineChart) {
+      const points = state.lineChart?.points || [];
+      if (!points.length) { toast('Sin datos para este gráfico'); return; }
+      const hit = closestLineChartPoint(points, lineChart, event.clientX);
+      if (!hit) { toast('Sin datos para este punto'); return; }
+      showLineChartPoint(lineChart, hit.point, hit.idx, points);
+      return;
+    }
+
+    const formButton = target.closest('button:not([type]), button[type="submit"]');
+ if (formButton) {
+   const form = formButton.closest('form');
+  // Si el botón está dentro de un form, NO bloquees: deja que dispare submit
+  if (!form) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}
+    const fakeLink = target.closest('a[href]');
+    const ticketImportRawEl = document.querySelector('[data-ticket-import-raw]');
+
+if (ticketImportRawEl && state.modal?.type === 'tx') {
+      state.modal = {
+        ...state.modal,
+        ticketImport: {
+          ...(state.modal.ticketImport || {}),
+          raw: String(ticketImportRawEl.value || '')
+        }
+      };
+    }
+    if (target.closest('[data-ticket-import-paste]')) {
+      try {
+        const text = await navigator.clipboard.readText();
+        state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, raw: text, error: '', diagnostic: null } };
+      } catch {
+        state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, error: 'No se pudo leer el portapapeles' } };
+      }
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-ticket-import-sample]')) {
+      state.modal = { ...state.modal, ticketImport: { ...(state.modal.ticketImport || {}), open: true, raw: TICKET_IMPORT_SAMPLE_V1, error: '', diagnostic: null } };
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-ticket-import-cancel]')) {
+      state.modal = { ...state.modal, ticketImport: { raw: '', parsed: null, error: '', warnings: [], open: false, diagnostic: null } };
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-ticket-import-copy-diagnostic]')) {
+      try {
+        const diagnostic = state.modal.ticketImport?.diagnostic || state.modal.ticketImport?.parsed?.diagnostic || { message: 'Sin diagnóstico aún' };
+        await navigator.clipboard.writeText(JSON.stringify(diagnostic, null, 2));
+        toast('Diagnóstico copiado');
+      } catch {
+        toast('No se pudo copiar el diagnóstico');
+      }
+      return;
+    }
+    if (target.closest('[data-ticket-import-preview]')) {
+      const raw = String(ticketImportRawEl?.value || state.modal.ticketImport?.raw || '');
+      const parsed = parseTicketImport(raw);
+      state.modal = {
+        ...state.modal,
+        ticketImport: {
+          ...(state.modal.ticketImport || {}),
+          open: true,
+          raw,
+          parsed,
+          diagnostic: parsed.diagnostic || null,
+          error: parsed.ok ? '' : parsed.error,
+          warnings: []
+        }
+      };
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-ticket-import-apply]')) {
+      try {
+        const parsed = state.modal.ticketImport?.parsed;
+        if (!parsed?.ok) {
+          state.modal = {
+            ...state.modal,
+            ticketImport: {
+              ...(state.modal.ticketImport || {}),
+              error: parsed?.stage === 'validate'
+                ? 'No se pudo aplicar por validación. Revisa Diagnóstico.'
+                : 'No se pudo aplicar por parse. Revisa Diagnóstico.',
+              diagnostic: parsed?.diagnostic || { stage: 'apply', error: 'Primero genera un preview válido' }
+            }
+          };
+          triggerRender();
+          return;
+        }
+        await ensureFoodCatalogLoaded();
+        const currentDraft = {
+          amount: Number(state.balanceFormState.amount || 0),
+          note: state.balanceFormState.note || '',
+          dateISO: state.balanceFormState.dateISO || dayKeyFromTs(Date.now()),
+          accountId: state.balanceFormState.accountId || ''
+        };
+        const products = Object.values(state.food.itemsById || {});
+        const importResult = applyTicketImport(parsed.data, currentDraft, products, state.accounts || []);
+        const updatesMap = {};
+        const purchaseTs = parseDayKey(parsed.data?.purchase?.date || dayKeyFromTs(Date.now()));
+        importResult.createdProducts.forEach((product) => {
+          const productKey = firebaseSafeKey(product.name);
+          const id = window.crypto?.randomUUID?.() || `food-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+          const vendorKey = firebaseSafeKey(parsed.data?.source?.vendor || product.place || 'unknown') || 'unknown';
+          const payload = {
+            id,
+            idKey: productKey,
+            name: product.name,
+            displayName: String(product.displayName || product.name || '').trim() || product.name,
+            aliases: Array.isArray(product.aliases) ? product.aliases : [],
+            vendorAliases: product.vendorAliases && typeof product.vendorAliases === 'object' ? product.vendorAliases : {},
+            createdFromVendor: String(parsed.data?.source?.vendor || ''),
+            key: productKey,
+            mealType: '',
+            cuisine: String(product.cuisine || product.healthy || ''),
+            healthy: String(product.healthy || product.cuisine || ''),
+            place: String(product.place || parsed.data?.source?.vendor || 'unknown'),
+            defaultPrice: Number(product.defaultPrice || 0),
+            priceHistory: {
+              [vendorKey]: {}
+            },
+            countUsed: 0,
+            createdAt: nowTs(),
+            updatedAt: nowTs()
+          };
+          updatesMap[`${state.financePath}/foodItems/${id}`] = payload;
+          updatesMap[`${state.financePath}/catalog/foodItems/${productKey}`] = {
+            name: product.name,
+            key: productKey,
+            createdAt: nowTs(),
+            count: 0,
+            lastUsedAt: nowTs(),
+            lastPrice: Number(product.defaultPrice || 0),
+            lastCategory: 'Comida',
+            lastAccountId: '',
+            lastNote: 'Import ticket',
+            lastExtras: { mealType: '', cuisine: String(product.cuisine || product.healthy || ''), place: String(product.place || 'unknown'), healthy: String(product.healthy || product.cuisine || '') }
+          };
+        });
+        importResult.updatedProducts.forEach((product) => {
+          if (Number.isFinite(Number(product.defaultPrice))) {
+            updatesMap[`${state.financePath}/foodItems/${product.id}/defaultPrice`] = Number(product.defaultPrice || 0);
+          }
+          if (String(product.cuisine || '').trim()) {
+            updatesMap[`${state.financePath}/foodItems/${product.id}/cuisine`] = String(product.cuisine || '').trim();
+          }
+          if (String(product.healthy || '').trim()) {
+            updatesMap[`${state.financePath}/foodItems/${product.id}/healthy`] = String(product.healthy || '').trim();
+          }
+          updatesMap[`${state.financePath}/foodItems/${product.id}/updatedAt`] = nowTs();
+          const vendorKey = firebaseSafeKey(parsed.data?.source?.vendor || 'unknown') || 'unknown';
+          const entryId = push(ref(db, `${state.financePath}/foodItems/${product.id}/priceHistory/${vendorKey}`)).key;
+          updatesMap[`${state.financePath}/foodItems/${product.id}/priceHistory/${vendorKey}/${entryId}`] = {
+            price: Number(product.defaultPrice || 0),
+            unitPrice: Number(product.defaultPrice || 0),
+            linePrice: Number(product.defaultPrice || 0),
+            date: dayKeyFromTs(purchaseTs),
+            vendor: vendorKey,
+            ts: purchaseTs,
+            source: 'ticket_import'
+          };
+        });
+        if (Object.keys(updatesMap).length) await safeFirebase(() => update(ref(db), updatesMap));
+        await ensureFoodCatalogLoaded(true);
+        const importedItems = importResult.updatedDraft.importedItems.map((item) => {
+          const qty = Math.max(1, Number(item.qty || 1));
+          const totalPrice = Number(item.totalPrice || item.price || 0);
+          const unitPrice = Number(item.unitPrice || computeUnitPrice(totalPrice, qty));
+          return {
+            foodId: item.productId || (getFoodByName(item.name)?.id || ''),
+            productKey: String(item.productId || firebaseSafeKey(item.name)),
+            name: item.name,
+            qty,
+            unit: String(item.unit || 'ud').trim() || 'ud',
+            unitPrice,
+            amount: totalPrice,
+            totalPrice,
+            price: totalPrice,
+            mealType: '',
+            cuisine: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryApp || ''),
+            place: String(importResult.updatedDraft.importedVendor || 'unknown'),
+            healthy: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryApp || '')
+          };
+        });
+        const category = String(state.balanceFormState.category || '').trim().toLowerCase() === 'sin categoría' || !String(state.balanceFormState.category || '').trim()
+          ? resolveTicketMovementCategory(parsed.data)
+          : (state.balanceFormState.category || importResult.updatedDraft.category || 'Sin categoría');
+        state.balanceFormState = {
+          ...state.balanceFormState,
+          type: 'expense',
+          amount: String(importResult.updatedDraft.amount || 0),
+          dateISO: importResult.updatedDraft.dateISO || dayKeyFromTs(Date.now()),
+          note: importResult.updatedDraft.note || '',
+          accountId: importResult.updatedDraft.accountId || state.balanceFormState.accountId || '',
+          category,
+          foodPlace: String(importResult.updatedDraft.importedVendor || 'unknown'),
+          importedFoodItems: importedItems,
+          foodExtrasOpen: true
+        };
+        state.modal = {
+          ...state.modal,
+          ticketImport: {
+            ...(state.modal.ticketImport || {}),
+            open: true,
+            warnings: importResult.warnings,
+            error: '',
+            diagnostic: {
+              ...(parsed.diagnostic || {}),
+              stage: 'apply',
+              apply: 'ok',
+              warnings: importResult.warnings,
+              computed_total: parsed.data?.purchase?.computed_total,
+              purchase_total: parsed.data?.purchase?.total
+            }
+          }
+        };
+        triggerRender();
+        toast('Import aplicado');
+      } catch (error) {
+        state.modal = {
+          ...state.modal,
+          ticketImport: {
+            ...(state.modal.ticketImport || {}),
+            error: `No se pudo aplicar el import: ${error?.message || 'error desconocido'}`,
+            diagnostic: {
+              ...(state.modal.ticketImport?.diagnostic || state.modal.ticketImport?.parsed?.diagnostic || {}),
+              stage: 'apply',
+              apply_error: String(error?.message || 'error desconocido')
+            }
+          }
+        };
+        triggerRender();
+      }
+      return;
+    }
+
+    const txTypePick = target.closest('[data-tx-type-pick]')?.dataset.txTypePick;
+    if (txTypePick) {
+      const form = document.querySelector('#finance-modal [data-balance-form]');
+      const sel = form?.querySelector('[data-tx-type]');
+      if (sel) {
+        sel.value = String(txTypePick);
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      const buttons = [...document.querySelectorAll('#finance-modal [data-tx-type-pick]')];
+      buttons.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.txTypePick === String(txTypePick)));
+      if (form) persistBalanceFormState(form);
+      return;
+    }
+
+    if (target.closest('[data-tx-step-back]')) {
+      const form = document.querySelector('#finance-modal [data-balance-form]');
+      if (form) persistBalanceFormState(form);
+      const step = normalizeTxWizardStep(state.balanceFormState.txWizardStep);
+      state.balanceFormState = {
+        ...state.balanceFormState,
+        txWizardStep: step === 'food' ? 'category' : step === 'category' ? 'base' : 'base'
+      };
+      triggerRender();
+      return;
+    }
+
+    if (target.closest('[data-tx-step-next]')) {
+      const formEl = document.querySelector('#finance-modal [data-balance-form]');
+      if (!formEl) return;
+      persistBalanceFormState(formEl);
+      const fd = new FormData(formEl);
+      const type = normalizeTxType(String(fd.get('type') || 'expense'));
+      const amountRaw = String(fd.get('amount') || '').trim();
+      const dateRaw = String(fd.get('dateISO') || '').trim();
+      const accountId = String(fd.get('accountId') || '').trim();
+      const fromAccountId = String(fd.get('fromAccountId') || '').trim();
+      const toAccountId = String(fd.get('toAccountId') || '').trim();
+      const category = String(fd.get('category') || '').trim();
+
+      const step = normalizeTxWizardStep(state.balanceFormState.txWizardStep);
+      if (step === 'base') {
+        if (!dateRaw) { toast('Falta la fecha'); return; }
+        if (type === 'transfer') {
+          if (!fromAccountId || !toAccountId) { toast('Faltan cuentas'); return; }
+        } else if (!accountId) {
+          toast('Falta la cuenta');
+          return;
+        }
+        state.balanceFormState = { ...state.balanceFormState, txWizardStep: 'category' };
+        triggerRender();
+        return;
+      }
+
+      if (step === 'category') {
+        if (!category) { toast('Selecciona una categoría'); return; }
+        if (isFoodCategoryName(category)) {
+          state.balanceFormState = { ...state.balanceFormState, txWizardStep: 'food' };
+          triggerRender();
+          return;
+        }
+        formEl.requestSubmit();
+        return;
+      }
+
+      formEl.requestSubmit();
+      return;
+    }
+
+    const txCategoryPick = target.closest('[data-tx-category-pick]')?.dataset.txCategoryPick;
+    if (txCategoryPick) {
+      const form = document.querySelector('#finance-modal [data-balance-form]');
+      const sel = form?.querySelector('select[name="category"]');
+      if (sel) {
+        sel.value = String(txCategoryPick);
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      if (form) persistBalanceFormState(form);
+      state.balanceFormState = {
+        ...state.balanceFormState,
+        txWizardStep: isFoodCategoryName(txCategoryPick) ? 'food' : 'category'
+      };
+      triggerRender();
+      return;
+    }
+
+    if (target.closest('[data-tx-edit-categories]')) {
+      const form = document.querySelector('#finance-modal [data-balance-form]');
+      if (form) persistBalanceFormState(form);
+      const returnModal = { ...state.modal };
+      state.modal = { type: 'categories', returnModal };
+      triggerRender();
+      return;
+    }
+
+    if (target.closest('[data-category-editor-back]')) {
+      state.modal = state.modal?.returnModal ? { ...state.modal.returnModal } : { type: null };
+      triggerRender();
+      return;
+    }
+
+    if (target.closest('[data-category-add]') && state.modal?.type === 'categories') {
+      const nameRaw = document.querySelector('[data-category-add-name]')?.value || '';
+      const emojiRaw = document.querySelector('[data-category-add-emoji]')?.value || '';
+      const name = normalizeFoodName(String(nameRaw || ''));
+      const emoji = String(emojiRaw || '').trim();
+      if (!name) { toast('Nombre obligatorio'); return; }
+      await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${name}`), { name, emoji, lastUsedAt: nowTs() }));
+      state.balance.categories[name] = { ...(state.balance.categories[name] || {}), name, emoji, lastUsedAt: nowTs() };
+      toast('Categoría añadida');
+      triggerRender();
+      return;
+    }
+
+    const categoryDelete = target.closest('[data-category-delete]')?.dataset.categoryDelete;
+    if (categoryDelete && state.modal?.type === 'categories') {
+      const name = String(categoryDelete || '').trim();
+      if (!name) return;
+      if (!window.confirm(`¿Eliminar "${name}"?`)) return;
+      await safeFirebase(() => remove(ref(db, `${state.financePath}/catalog/categories/${name}`)));
+      if (state.balance?.categories?.[name]) delete state.balance.categories[name];
+      if (state.modal?.returnModal?.type === 'tx' && String(state.balanceFormState.category || '').toLowerCase() === name.toLowerCase()) {
+        state.balanceFormState = { ...state.balanceFormState, category: '' };
+      }
+      toast('Categoría eliminada');
+      triggerRender();
+      return;
+    }
+
+    const segmentToggle = target.closest('[data-finance-stats-segment]')?.dataset.financeStatsSegment;
+    if (segmentToggle && !target.closest('[data-finance-product-stats]')) {
+      state.balanceStatsActiveSegment = state.balanceStatsActiveSegment === segmentToggle ? null : segmentToggle;
+      state.balanceStatsSelectedSliceKey = state.balanceStatsActiveSegment;
+      updateLegendSelection(state.balanceStatsActiveSegment || '');
+      updateCallout(state.balanceStatsActiveSegment || '');
+      if (financeStatsDonutChart) {
+        financeStatsDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
+        const rows = (() => { try { return JSON.parse(document.querySelector('[data-finance-stats-donut]')?.dataset.financeStatsDonut || '[]'); } catch (_) { return []; } })();
+        const idx = rows.findIndex((row) => String(row?._key || '') === String(state.balanceStatsActiveSegment || ''));
+        if (idx >= 0) financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idx });
+      }
+      return;
+    }
+    const legendProductKey = target.closest('[data-finance-product-stats]')?.dataset.financeProductStats || target.closest('.financeLegendRow')?.dataset.productKey;
+    if (target.closest('[data-finance-product-stats]') && legendProductKey) {
+      await openProductDetail(legendProductKey);
+      return;
+    }
+    if (target.closest('[data-food-open-products]')) {
+      state.activeView = 'products';
+      triggerRender();
+      return;
+    }
+    const foodProductsTab = target.closest('[data-food-products-tab]')?.dataset.foodProductsTab;
+    if (foodProductsTab) {
+      state.foodProductsView = { ...state.foodProductsView, tab: foodProductsTab };
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-food-merge-open]')) {
+      const seed = String(target.closest('[data-food-merge-open]')?.dataset.foodMergeOpen || '').trim();
+      state.modal = { type: 'food-merge', selected: seed ? [seed] : [], destinationId: seed || '', search: '', destinationSearch: '', hideResolved: true };
+      triggerRender();
+      return;
+    }
+    const mergeCheck = target.closest('[data-food-merge-select]')?.dataset.foodMergeSelect;
+    if (mergeCheck) {
+      const selected = new Set(Array.isArray(state.modal.selected) ? state.modal.selected : []);
+      if (target.matches('input[type="checkbox"]') ? target.checked : !selected.has(mergeCheck)) selected.add(mergeCheck);
+      else selected.delete(mergeCheck);
+      const selectedList = [...selected];
+      const currentDestination = String(state.modal.destinationId || '');
+      const destinationId = selected.has(currentDestination) ? currentDestination : (selectedList[0] || '');
+      console.log('[mergeFoodProducts] selección UI', { selected: selectedList, destinationId });
+      state.modal = { ...state.modal, selected: selectedList, destinationId };
+      triggerRender();
+      return;
+    }
+    const mergeDestination = target.closest('[data-food-merge-destination]')?.dataset.foodMergeDestination;
+    if (mergeDestination) {
+      state.modal = { ...state.modal, destinationId: String(mergeDestination || '').trim() };
+      triggerRender();
+      return;
+    }
+    if (target.matches('[data-food-merge-hide-resolved]')) {
+      state.modal = { ...state.modal, hideResolved: !!target.checked };
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-food-merge-confirm]')) {
+      const selected = Array.isArray(state.modal.selected) ? state.modal.selected : [];
+      const destinationId = String(state.modal.destinationId || selected[0] || '').trim();
+      if (selected.length < 2) return;
+      if (!destinationId || !selected.includes(destinationId)) return;
+      if (!window.confirm(`Vas a fusionar ${selected.length} productos en 1 canonical. ¿Continuar?`)) return;
+      const mergedOk = await mergeFoodProducts(selected, destinationId);
+      if (!mergedOk) {
+        toast('No se pudo completar la fusión de forma segura');
+        return;
+      }
+      toast('Productos fusionados');
+      state.modal = state.activeView === 'products' ? { type: null } : { type: 'food-products' };
+      triggerRender();
+      return;
+    }
+    const ignoreFoodId = target.closest('[data-food-ignore-product]')?.dataset.foodIgnoreProduct;
+    if (ignoreFoodId) {
+      await safeFirebase(() => set(ref(db, `${state.financePath}/foodCatalog/ignored/${ignoreFoodId}`), true));
+      state.foodCatalog.ignored[ignoreFoodId] = true;
+      toast('Producto ocultado en rankings');
+      triggerRender();
+      return;
+    }
+    const foodDetailId = target.closest('[data-food-item-detail]')?.dataset.foodItemDetail;
+    if (foodDetailId) {
+      state.modal = { type: 'food-item', foodId: foodDetailId, mode: 'detail', source: 'stats-list-detail' };
+      triggerRender();
+      return;
+    }
+    const foodDetailName = target.closest('[data-food-item-detail-name]')?.dataset.foodItemDetailName;
+    if (foodDetailName) {
+      const found = getFoodByName(foodDetailName);
+      state.modal = found
+        ? { type: 'food-item', foodId: found.id, mode: 'detail', source: 'stats-list-detail-name' }
+        : { type: 'food-item', foodName: foodDetailName, mode: 'detail', source: 'stats-list-detail-name' };
+      triggerRender();
+      return;
+    }
+    if (state.balanceStatsActiveSegment && state.activeView === 'balance' && !target.closest('.financeStats')) {
+      state.balanceStatsActiveSegment = null;
+      triggerRender();
+    }
+    const aliasRemoveIndex = target.closest('[data-food-alias-remove]')?.dataset.foodAliasRemove;
+    const aliasAddBtn = target.closest('[data-food-alias-add]');
+    if (aliasRemoveIndex != null || aliasAddBtn) {
+      const formEl = target.closest('[data-food-item-form]');
+      const hidden = formEl?.querySelector('[data-food-aliases-hidden]');
+      const input = formEl?.querySelector('[data-food-alias-input]');
+      const chips = formEl?.querySelector('[data-food-aliases-chips]');
+      if (!hidden || !chips) return;
+      const aliases = String(hidden.value || '').split(',').map((row) => normalizeFoodName(row)).filter(Boolean);
+      if (aliasRemoveIndex != null) aliases.splice(Number(aliasRemoveIndex), 1);
+      if (aliasAddBtn) {
+        const alias = normalizeFoodName(String(input?.value || ''));
+        if (alias && !aliases.includes(alias)) aliases.push(alias);
+        if (input) input.value = '';
+      }
+      hidden.value = aliases.join(', ');
+      chips.innerHTML = aliases.length
+        ? aliases.map((alias, index) => `<button type="button" class="finFoodChip finFoodChip--remove" data-food-alias-remove="${index}">${escapeHtml(alias)} ×</button>`).join('')
+        : '<span class="finFoodChip">Sin alias</span>';
+      return;
+    }
+    const foodAdd = target.closest('[data-food-add]')?.dataset.foodAdd;
+    if (foodAdd) {
+      const hostForm = target.closest('[data-balance-form], [data-food-item-form]');
+      if (!hostForm) return;
+      const typed = window.prompt('Nuevo valor');
+      const name = normalizeFoodName(typed || '');
+      if (!name) return;
+      await loadFoodCatalog();
+      await upsertFoodOption(foodAdd, name, false);
+      if (hostForm.matches('[data-balance-form]')) {
+        await syncFoodOptionsInForm(hostForm);
+      } else {
+        triggerRender();
+      }
+      const select = hostForm.querySelector(`[data-food-select="${foodAdd}"], select[name="${foodAdd === 'typeOfMeal' ? 'mealType' : foodAdd}"]`);
+      if (select) select.value = name;
+      return;
+    }
+    const topItem = target.closest('[data-food-top-item]')?.dataset.foodTopItem;
+    if (topItem) {
+      const form = target.closest('[data-balance-form]');
+      if (!form) return;
+      await applyFoodItemPreset(form, topItem);
+      renderFoodItemSearchResults(form);
+      return;
+    }
+    const selectedItem = target.closest('[data-food-item-select]')?.dataset.foodItemSelect;
+    if (selectedItem) {
+      const form = target.closest('[data-balance-form]');
+      if (!form) return;
+      await applyFoodItemPreset(form, selectedItem);
+      renderFoodItemSearchResults(form);
+      return;
+    }
+    const createItem = target.closest('[data-food-item-create]')?.dataset.foodItemCreate;
+    if (createItem != null) {
+      const form = target.closest('[data-balance-form]');
+      if (!form) return;
+      const name = normalizeFoodName(createItem);
+      if (!name) return;
+      state.modal = { type: 'food-item', foodName: name, source: 'balance-form-create' };
+      triggerRender();
+      return;
+    }
+    const foodInfoId = target.closest('[data-food-item-info]')?.dataset.foodItemInfo;
+    if (foodInfoId) {
+      event.stopPropagation();
+      state.modal = { type: 'food-item', foodId: foodInfoId, mode: 'info', source: 'balance-form-info' };
+      triggerRender();
+      return;
+    }
+    const editFoodId = target.closest('[data-food-item-edit]')?.dataset.foodItemEdit;
+    if (editFoodId) {
+      event.stopPropagation();
+      state.modal = { type: 'food-item', foodId: editFoodId, source: 'balance-form-edit' };
+      triggerRender();
+      return;
+    }
+    const registerFoodHistory = target.closest('[data-food-history-register]')?.dataset.foodHistoryRegister;
+    if (registerFoodHistory) {
+      const registerInline = document.querySelector('[data-food-register-inline]');
+      if (registerInline) registerInline.hidden = false;
+      return;
+    }
+    const toggleInlineRegister = target.closest('[data-food-toggle-register]');
+    if (toggleInlineRegister) {
+      const registerInline = document.querySelector('[data-food-register-inline]');
+      if (!registerInline) return;
+      registerInline.hidden = !registerInline.hidden;
+      if (!registerInline.hidden) registerInline.querySelector('[data-food-register-price]')?.focus();
+      return;
+    }
+    const submitRegister = target.closest('[data-food-register-submit]')?.dataset.foodRegisterSubmit;
+    if (submitRegister) {
+      const registerWrap = document.querySelector('[data-food-register-inline]');
+      const vendor = String(document.querySelector('[data-food-register-vendor]')?.value || '').trim();
+      const price = parseEuroNumber(document.querySelector('[data-food-register-price]')?.value || '');
+      const date = String(document.querySelector('[data-food-register-date]')?.value || dayKeyFromTs(nowTs()));
+      if (!vendor) { toast('Selecciona supermercado'); return; }
+      if (!Number.isFinite(price) || price <= 0) { toast('Precio inválido'); return; }
+      await recordFoodPricePoint(submitRegister, price, 'manual', { vendor, date, ts: parseDayKey(date) || nowTs() });
+      if (registerWrap) registerWrap.hidden = true;
+      toast('Precio registrado');
+      triggerRender();
+      return;
+    }
+    const addVendorPrice = target.closest('[data-food-price-add-vendor]')?.dataset.foodPriceAddVendor;
+    if (addVendorPrice) {
+      const registerInline = document.querySelector('[data-food-register-inline]');
+      if (!registerInline) return;
+      registerInline.hidden = false;
+      const vendorInput = registerInline.querySelector('[data-food-register-vendor]');
+      if (vendorInput) vendorInput.value = addVendorPrice;
+      registerInline.querySelector('[data-food-register-price]')?.focus();
+      return;
+    }
+    const deletePriceKey = target.closest('[data-food-price-delete]')?.dataset.foodPriceDelete;
+    if (deletePriceKey) {
+      const [vendor, entryId] = String(deletePriceKey).split(':');
+      const foodId = state.modal.foodId || '';
+      if (!foodId || !vendor || !entryId) return;
+      if (!window.confirm('¿Borrar este precio?')) return;
+      await deleteFoodPricePoint(foodId, vendor, entryId);
+      toast('Registro eliminado');
+      triggerRender();
+      return;
+    }
+    const editVendorAlias = target.closest('[data-food-alias-edit]')?.dataset.foodAliasEdit;
+    if (editVendorAlias) {
+      const aliasesCard = document.querySelector('[data-food-detail-card="aliases"]');
+      if (aliasesCard && aliasesCard.tagName === 'DETAILS') aliasesCard.open = true;
+      const input = document.querySelector('#food-vendorAliases-input');
+      if (!input) return;
+      const key = firebaseSafeKey(editVendorAlias);
+      const map = String(input.value || '').split(',').reduce((acc, row) => {
+        const [rawVendor, rawVals] = String(row || '').split(':');
+        const vendor = firebaseSafeKey(rawVendor || '');
+        if (!vendor) return acc;
+        acc[vendor] = String(rawVals || '').split('|').map((it) => normalizeFoodName(it)).filter(Boolean);
+        return acc;
+      }, {});
+      if (!map[key]) map[key] = [];
+      input.value = Object.entries(map).map(([vendor, aliases]) => `${vendor}:${aliases.join('|')}`).join(', ');
+      input.focus();
+      toast(`Edita alias para ${editVendorAlias} y pulsa Guardar`);
+      return;
+    }
+    const aliasAssociateFoodId = target.closest('[data-food-alias-associate]')?.dataset.foodAliasAssociate;
+    if (aliasAssociateFoodId) {
+      const canonicalRaw = String(document.querySelector('[data-food-alias-canonical-picker]')?.value || '').trim();
+      const vendorRaw = String(document.querySelector('[data-food-alias-vendor-picker]')?.value || '').trim();
+      const currentFood = state.food.itemsById?.[aliasAssociateFoodId] || null;
+      const aliasRaw = normalizeFoodName(currentFood?.displayName || currentFood?.name || '');
+      const canonicalId = firebaseSafeKeyLoose(canonicalRaw || aliasAssociateFoodId);
+      const vendorKey = firebaseSafeKeyLoose(vendorRaw || 'unknown');
+      const aliasKey = firebaseSafeKeyLoose(normalizeAliasKey(aliasRaw));
+      if (!canonicalId || !aliasKey) { toast('Selecciona producto y vendor'); return; }
+      const payload = firebaseClean({ canonicalId, aliasRaw, updatedAt: nowTs() });
+      await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/aliases/${vendorKey}/${aliasKey}`), payload));
+      if (!state.foodCatalog.aliases[vendorKey]) state.foodCatalog.aliases[vendorKey] = {};
+      state.foodCatalog.aliases[vendorKey][aliasKey] = payload;
+      if (canonicalId !== aliasAssociateFoodId) {
+        await safeFirebase(() => update(ref(db, `${state.financePath}/foodCatalog/merges/${firebaseSafeKeyLoose(aliasAssociateFoodId)}`), firebaseClean({ canonicalId })));
+      }
+      toast('Alias asociado');
+      triggerRender();
+      return;
+    }
+
+    const vendorFocus = target.closest('[data-food-focus-vendor]')?.dataset.foodFocusVendor;
+    if (vendorFocus) {
+      const host = document.querySelector('[data-food-history-chart]');
+      if (!host) return;
+      host.dataset.foodHiddenVendors = Object.keys(JSON.parse(host.dataset.foodHistorySeries || '{}')).filter((vendor) => vendor !== vendorFocus).join(',');
+      renderFoodHistoryVendorChart();
+      return;
+    }
+    const vendorToggle = target.closest('[data-food-vendor-toggle]')?.dataset.foodVendorToggle;
+    if (vendorToggle) {
+      const host = document.querySelector('[data-food-history-chart]');
+      if (!host) return;
+      const hidden = new Set(String(host.dataset.foodHiddenVendors || '').split(',').map((row) => firebaseSafeKey(row || '')).filter(Boolean));
+      const vendorKey = firebaseSafeKey(vendorToggle || '');
+      if (!vendorKey) return;
+      if (hidden.has(vendorKey)) hidden.delete(vendorKey); else hidden.add(vendorKey);
+      host.dataset.foodHiddenVendors = [...hidden].join(',');
+      renderFoodHistoryVendorChart();
+      return;
+    }
+    const openFoodEdit = target.closest('[data-food-open-edit]')?.dataset.foodOpenEdit;
+    if (openFoodEdit) {
+      state.modal = { type: 'food-item', foodId: openFoodEdit, source: 'detail-edit' };
+      triggerRender();
+      return;
+    }
+    const chartTypeBtn = target.closest('[data-food-chart-type]');
+    if (chartTypeBtn) {
+      const host = document.querySelector('[data-food-history-chart]');
+      if (!host) return;
+      host.dataset.foodChartType = chartTypeBtn.dataset.foodChartType || 'line';
+      document.querySelectorAll('[data-food-chart-type]').forEach((el) => el.classList.toggle('is-active', el === chartTypeBtn));
+      renderFoodHistoryVendorChart();
+      return;
+    }
+    const chartRangeBtn = target.closest('[data-food-chart-range]');
+    if (chartRangeBtn) {
+      const host = document.querySelector('[data-food-history-chart]');
+      if (!host) return;
+      host.dataset.foodChartRange = chartRangeBtn.dataset.foodChartRange || 'total';
+      document.querySelectorAll('[data-food-chart-range]').forEach((el) => el.classList.toggle('is-active', el === chartRangeBtn));
+      renderFoodHistoryVendorChart();
+      return;
+    }
+    const scrollToCard = target.closest('[data-food-scroll-to]')?.dataset.foodScrollTo;
+    if (scrollToCard) {
+      document.querySelector(`[data-food-detail-card="${scrollToCard}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    const viewPurchasesFood = target.closest('[data-food-view-purchases]')?.dataset.foodViewPurchases;
+    if (viewPurchasesFood) {
+      toast('Filtra por producto desde “Movimientos” (próx. atajo directo)');
+      return;
+    }
+    const addFoodItem = target.closest('[data-food-item-add]');
+    if (addFoodItem) {
+      const form = target.closest('[data-balance-form]');
+      if (!form) return;
+      const refs = getFoodFormRefs(form);
+      const name = normalizeFoodName(refs.itemValue?.value || refs.itemSearch?.value || '');
+      if (!name) return;
+      const price = Number(refs.itemPrice?.value || 0);
+      const items = readFoodItemsFromForm(form);
+      items.push({
+        foodId: refs.foodId?.value || '',
+        name,
+        price: Number.isFinite(price) ? price : 0,
+        mealType: refs.mealType?.value || '',
+        cuisine: refs.cuisine?.value || '',
+        place: refs.place?.value || '',
+        healthy: refs.cuisine?.value || ''
+      });
+      writeFoodItemsToForm(form, items);
+      recalcFoodAmount(form);
+      resetFoodEntryForm(form, { keepDropdownOpen: true });
+      keepFoodExtrasOpen(form);
+      renderFoodItemSearchResults(form);
+      persistBalanceFormState(form);
+      return;
+    }
+    const removeFoodItem = target.closest('[data-food-item-remove]')?.dataset.foodItemRemove;
+    if (removeFoodItem != null) {
+      const form = target.closest('[data-balance-form]');
+      if (!form) return;
+      const items = readFoodItemsFromForm(form);
+      items.splice(Number(removeFoodItem), 1);
+      writeFoodItemsToForm(form, items);
+      recalcFoodAmount(form);
+      persistBalanceFormState(form);
+      return;
+    }
+    if (target.closest('[data-food-reset-amount]')) {
+      const form = target.closest('[data-balance-form]');
+      if (!form) return;
+      state.balanceAmountAuto = true;
+      recalcFoodAmount(form);
+      return;
+    }
+    const txDayOpen = target.closest('[data-tx-day-open]')?.dataset.txDayOpen;
+    if (txDayOpen) {
+      state.modal = { type: 'tx-day', day: txDayOpen, monthOffset: state.balanceMonthOffset };
+      triggerRender();
+      return;
+    }
+    const txEdit = target.closest('[data-tx-edit]')?.dataset.txEdit;
+    if (txEdit) {
+      state.balanceFormState = { ...state.balanceFormState, txWizardStep: 'base' };
+      state.modal = { type: 'tx', txId: txEdit };
+      triggerRender();
+      return;
+    }
+const txDelete = target.closest('[data-tx-delete]')?.dataset.txDelete;
+if (txDelete && window.confirm('¿Eliminar movimiento?')) {
+  const existing = balanceTxList().find((row) => row.id === txDelete);
+  if (!existing) return;
+
+  const path = existing.__path || `${state.financePath}/transactions/${txDelete}`;
+  console.log('[FINANCE][BALANCE] delete', path);
+
+  await safeFirebase(() => remove(ref(db, path)));
+
+  const touched = [existing.accountId, existing.fromAccountId, existing.toAccountId].filter(Boolean);
+  for (const accountId of [...new Set(touched)]) {
+    await recomputeAccountEntries(accountId, existing.date || isoToDay(existing.dateISO || ''));
+  }
+
+  toast('Movimiento eliminado');
+  scheduleAggregateRebuild();
+  triggerRender();
+  return;
+}
+    const createCategory = target.closest('[data-category-create]');
+    if (createCategory) {
+      const form = target.closest('[data-balance-form]');
+      const categoryInput = form?.querySelector('[data-category-new]');
+      const categorySelect = form?.querySelector('select[name="category"]');
+      const category = normalizeFoodName(String(categoryInput?.value || ''));
+      if (!category) return;
+      await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
+      state.balance.categories[category] = { name: category, lastUsedAt: nowTs() };
+      if (categorySelect && ![...categorySelect.options].some((opt) => opt.value === category)) {
+        categorySelect.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`);
+      }
+      if (categorySelect) categorySelect.value = category;
+      if (categoryInput) categoryInput.value = '';
+      maybeToggleCategoryCreate(form);
+      await toggleFoodExtras(form);
+      persistBalanceFormState(form);
+      toast('Categoría creada');
+      return;
+    }
+    const nextView = target.closest('[data-finance-view]')?.dataset.financeView; if (nextView) { state.activeView = nextView; triggerRender(); return; }
+    if (target.closest('[data-close-modal]') || target.id === 'finance-modalOverlay') { state.modal = { type: null }; triggerRender(); return; }
+    if (target.closest('[data-history]')) { state.modal = { type: 'history' }; triggerRender(); return; }
+    if (target.closest('[data-new-account]')) { state.modal = { type: 'new-account' }; triggerRender(); return; }
+    const openAccount = target.closest('[data-open-detail]')?.dataset.openDetail; if (openAccount && !target.closest('[data-account-input]') && !target.closest('[data-account-save]') && !target.closest('[data-delete-account]')) { openAccountDetail(openAccount); return; }
+    const delAcc = target.closest('[data-delete-account]')?.dataset.deleteAccount; if (delAcc && window.confirm('¿Eliminar esta cuenta y todos sus registros?')) { await deleteAccount(delAcc); return; }
+    const editAcc = target.closest('[data-edit-account]')?.dataset.editAccount; if (editAcc) { state.modal = { type: 'edit-account', accountId: editAcc }; triggerRender(); return; }
+    const saveAccountCard = target.closest('[data-account-save]')?.dataset.accountSave; if (saveAccountCard) { const input = view.querySelector(`[data-account-input="${saveAccountCard}"]`); await saveSnapshot(saveAccountCard, dayKeyFromTs(Date.now()), input?.value || ''); return; }
+    const delDay = target.closest('[data-delete-day]')?.dataset.deleteDay; if (delDay) { const [accountId, day] = delDay.split(':'); if (window.confirm(`¿Eliminar ${day}?`)) await deleteDay(accountId, day); return; }
+    const saveDay = target.closest('[data-save-day]')?.dataset.saveDay; if (saveDay) { const [accountId, day] = saveDay.split(':'); const form = view.querySelector(`[data-account-row-form="${saveDay}"]`); const val = form?.querySelector('[name="value"]')?.value; await saveSnapshot(accountId, day, val); return; }
+    const budgetMenu = target.closest('[data-budget-menu]')?.dataset.budgetMenu; if (budgetMenu) { state.modal = { type: 'budget', budgetId: budgetMenu }; triggerRender(); return; }
+    const budgetDelete = target.closest('[data-budget-delete]')?.dataset.budgetDelete; if (budgetDelete && window.confirm('¿Eliminar presupuesto?')) { const monthKey = getSelectedBalanceMonthKey(); await safeFirebase(() => remove(ref(db, `${state.financePath}/budgets/${monthKey}/${budgetDelete}`))); state.modal = { type: null }; toast('Presupuesto eliminado'); triggerRender(); return; }
+    const importApply = target.closest('[data-import-apply]')?.dataset.importApply; if (importApply) { const parsed = state.modal.importPreview; if (!parsed?.validRows?.length) { state.modal = { ...state.modal, importError: 'CSV sin filas válidas.' }; triggerRender(); return; } const imported = await applyImportRows(importApply, parsed); toast(`Importados ${imported} días`); openAccountDetail(importApply); return; }
+    const calendarDay = target.closest('[data-calendar-day]')?.dataset.calendarDay; if (calendarDay) { state.modal = { type: 'calendar-day-edit', day: calendarDay }; triggerRender(); return; }
+    const openMonth = target.closest('[data-calendar-open-month]')?.dataset.calendarOpenMonth; if (openMonth) {
+      state.calendarMonthOffset = monthDiffFromNow(openMonth);
+      state.calendarMode = 'day';
+      triggerRender();
+      return;
+    }
+    const openYear = target.closest('[data-calendar-open-year]')?.dataset.calendarOpenYear; if (openYear) {
+      state.calendarMonthOffset = monthDiffFromNow(`${openYear}-01`);
+      state.calendarMode = 'month';
+      triggerRender();
+      return;
+    }
+    const monthShift = target.closest('[data-month-shift]')?.dataset.monthShift; if (monthShift) {
+      const step = Number(monthShift);
+      if (state.calendarMode === 'month') state.calendarMonthOffset += (step * 12);
+      else if (state.calendarMode === 'year') state.calendarMonthOffset += (step * 120);
+      else state.calendarMonthOffset += step;
+      triggerRender();
+      return;
+    }
+    const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); state.balanceShowAllTx = false; state.balanceStatsActiveSegment = null; triggerRender(); return; }
+    const statsMode = target.closest('[data-finance-stats-mode]')?.dataset.financeStatsMode; if (statsMode) { state.balanceStatsMode = statsMode === 'income' ? 'income' : 'expense'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
+    const statsRange = target.closest('[data-finance-stats-range]')?.dataset.financeStatsRange; if (statsRange) { state.balanceStatsRange = statsRange; state.balanceStatsActiveSegment = null; triggerRender(); return; }
+    const roiMode = target.closest('[data-finance-roi-mode]')?.dataset.financeRoiMode; if (roiMode) { state.balanceRoiMode = ['income', 'expense', 'balance'].includes(roiMode) ? roiMode : 'balance'; triggerRender(); return; }
+    const statsScope = target.closest('[data-finance-stats-scope]')?.dataset.financeStatsScope; if (statsScope) { state.balanceStatsScope = statsScope === 'global' ? 'global' : 'personal'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
+    if (target.closest('[data-finance-stats-view-unlined]')) { state.balanceFilterType = 'expense'; state.balanceFilterCategory = 'all'; state.balanceFilterUnlinedOnly = true; state.balanceShowAllTx = true; triggerRender(); return; }
+    if (target.closest('[data-balance-filter-unlined-clear]')) { state.balanceFilterUnlinedOnly = false; triggerRender(); return; }
+    const manageDelete = target.closest('[data-finance-manage-delete]')?.dataset.financeManageDelete;
+    if (manageDelete) {
+      const encodedValue = target.closest('[data-finance-manage-value]')?.dataset.financeManageValue || target.dataset.financeManageValue || '';
+      const value = String(encodedValue || '').trim();
+      if (!value) return;
+      if (!window.confirm(`¿Eliminar "${value}"?`)) return;
+      await deleteManagedStatItem(manageDelete, value);
+      triggerRender();
+      return;
+    }
+    const drilldown = target.closest('[data-balance-drilldown]')?.dataset.balanceDrilldown; if (drilldown) { openBalanceDrilldown(drilldown); return; }
+    const aggMode = target.closest('[data-fin-agg-mode]')?.dataset.finAggMode; if (aggMode) { state.balanceAggMode = AGG_MODES.includes(aggMode) ? aggMode : 'month'; triggerRender(); return; }
+    const aggScope = target.closest('[data-fin-agg-scope]')?.dataset.finAggScope; if (aggScope) { state.balanceAggScope = aggScope === 'total' ? 'total' : 'my'; triggerRender(); return; }
+    const drilldownMonth = target.closest('[data-drilldown-month]')?.dataset.drilldownMonth;
+    if (drilldownMonth && state.modal.type === 'balance-drilldown') {
+      state.modal = { ...state.modal, monthOffset: Number(state.modal.monthOffset || 0) + Number(drilldownMonth) };
+      triggerRender();
+      return;
+    }
+    const drilldownAdd = target.closest('[data-drilldown-add]')?.dataset.drilldownAdd;
+    if (drilldownAdd && state.modal.type === 'balance-drilldown') {
+      const monthKey = offsetMonthKey(getMonthKeyFromDate(), Number(state.modal.monthOffset || 0));
+      state.balanceFormState = { ...state.balanceFormState, type: drilldownAdd, dateISO: `${monthKey}-01`, txWizardStep: 'base' };
+      state.modal = { type: 'tx', txType: drilldownAdd };
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-balance-showmore]')) { state.balanceShowAllTx = !state.balanceShowAllTx; triggerRender(); return; }
+    const openModal = target.closest('[data-open-modal]')?.dataset.openModal;
+    if (openModal) {
+      if (openModal === 'tx') state.balanceFormState = { ...state.balanceFormState, txWizardStep: 'base' };
+      state.modal = { type: openModal, budgetId: null };
+      triggerRender();
+      return;
+    }
+    const openGoal = target.closest('[data-open-goal]')?.dataset.openGoal; if (openGoal) { state.modal = { type: 'goal-detail', goalId: openGoal }; triggerRender(); return; }
+    const delGoal = target.closest('[data-delete-goal]')?.dataset.deleteGoal; if (delGoal && window.confirm('¿Borrar objetivo?')) { await safeFirebase(() => remove(ref(db, `${state.financePath}/goals/goals/${delGoal}`))); return; }
+  });
+view.addEventListener('focusin', (event) => {
+  if (event.target.matches('[data-account-input]')) {
+    event.target.dataset.prev = event.target.value;
+    event.target.value = '';
+  }
+}, evtOpts);
+
+view.addEventListener('focusout', async (event) => {
+  if (event.target.matches('[data-account-input]')) {
+    const accountId = event.target.dataset.accountInput;
+    const value = event.target.value.trim();
+    const prev = String(event.target.dataset.prev || '').trim();
+    if (!value) {
+      event.target.value = prev;
+      return;
+    }
+    const nextNum = parseEuroNumber(value);
+    const prevNum = parseEuroNumber(prev);
+    if (!Number.isFinite(nextNum) || (Number.isFinite(prevNum) && Math.abs(nextNum - prevNum) < 0.000001)) {
+      event.target.value = prev;
+      return;
+    }
+    const saved = await saveSnapshot(accountId, dayKeyFromTs(Date.now()), nextNum);
+    if (saved) {
+      event.target.value = String(nextNum.toFixed(2));
+      event.target.dataset.prev = event.target.value;
+      triggerRender();
+    }
+  }
+});
+  view.addEventListener('keydown', async (event) => {
+    if (!event.target.matches('[data-account-input]')) return;
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    event.target.blur();
+  });
+  view.addEventListener('change', async (event) => {
+    if (event.target.matches('[data-range]')) { state.rangeMode = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-compare]')) { state.compareMode = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-calendar-account]')) { state.calendarAccountId = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-calendar-mode]')) { state.calendarMode = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-balance-type]')) { state.balanceFilterType = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
+    if (event.target.matches('[data-balance-category]')) { state.balanceFilterCategory = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
+    if (event.target.matches('[data-balance-account]')) { state.balanceAccountFilter = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
+    if (event.target.matches('[data-finance-stats-group]')) { state.balanceStatsGroupBy = event.target.value; state.balanceStatsActiveSegment = null; triggerRender(); }
+    if (event.target.matches('[data-food-products-range]')) { state.foodProductsView = { ...state.foodProductsView, range: event.target.value, rangeValue: '' }; triggerRender(); }
+    if (event.target.matches('[data-food-products-vendor]')) { state.foodProductsView = { ...state.foodProductsView, vendor: event.target.value }; triggerRender(); }
+    if (event.target.matches('[data-food-products-account]')) { state.foodProductsView = { ...state.foodProductsView, account: event.target.value }; triggerRender(); }
+    if (event.target.matches('[data-food-products-items-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyWithItems: !!event.target.checked }; triggerRender(); }
+    if (event.target.matches('[data-food-products-food-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyFood: !!event.target.checked }; triggerRender(); }
+    if (event.target.matches('[data-food-products-custom-start]')) { state.foodProductsView = { ...state.foodProductsView, customStart: event.target.value }; triggerRender(); }
+    if (event.target.matches('[data-food-products-custom-end]')) { state.foodProductsView = { ...state.foodProductsView, customEnd: event.target.value }; triggerRender(); }
+    if (event.target.matches('[data-finance-stats-include-unlined]')) { state.balanceStatsIncludeUnlined = !!event.target.checked; state.balanceStatsActiveSegment = null; triggerRender(); }
+
+    if (event.target.matches('[data-finance-stats-legend-details]')) {
+      state.balanceStatsLegendExpanded = !!event.target.open;
+    }
+    if (event.target.matches('[data-import-file]')) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const raw = await file.text();
+      const parsed = parseCsvRows(raw);
+      state.modal = { ...state.modal, importRaw: raw, importPreview: parsed, importError: parsed.validRows.length ? '' : 'CSV inválido o sin filas válidas.' };
+      triggerRender();
+    }
+    if (event.target.matches('[data-balance-form] select[name="category"]')) {
+      const form = event.target.closest('[data-balance-form]');
+      await toggleFoodExtras(form);
+      maybeToggleCategoryCreate(form);
+    }
+    if (event.target.matches('[data-tx-type]')) {
+      syncTxTypeFields(event.target.closest('[data-balance-form]'));
+    }
+    if (event.target.matches('[data-linked-habit-select], [data-allocation-mode]')) {
+      const form = event.target.closest('[data-balance-form]');
+      syncAllocationFields(form);
+      persistBalanceFormState(form);
+    }
+    if (event.target.closest('[data-food-item-form][data-food-item-mode="detail"]')) {
+      updateFoodDetailSaveState(event.target.closest('[data-food-item-form]'));
+    }
+  }, evtOpts);
+
+  view.addEventListener('input', async (event) => {
+    if (event.target.matches('[data-card-last4-input]')) {
+      const cleaned = String(event.target.value || '').replace(/\D/g, '').slice(0, 4);
+      if (event.target.value !== cleaned) event.target.value = cleaned;
+    }
+    if (event.target.matches('[data-balance-form] [data-category-new]')) {
+      const form = event.target.closest('[data-balance-form]');
+      maybeToggleCategoryCreate(form);
+      persistBalanceFormState(form);
+      return;
+    }
+
+    if (event.target.matches('[data-food-merge-search]')) {
+      const value = String(event.target.value || '');
+      state.modal = { ...state.modal, search: value };
+      applyMergeSearchFilter(event.target, '[data-food-merge-option]');
+      return;
+    }
+
+    if (event.target.matches('[data-food-merge-destination-search]')) {
+      const value = String(event.target.value || '');
+      state.modal = { ...state.modal, destinationSearch: value };
+      applyMergeSearchFilter(event.target, '[data-food-merge-destination-option]');
+      return;
+    }
+
+    if (event.target.matches('[data-food-products-search]')) {
+      const value = String(event.target.value || '');
+      state.foodProductsView = { ...state.foodProductsView, productsQuery: value };
+      applyProductsSearchFilter(event.target);
+      return;
+    }
+
+    if (event.target.matches('[data-ticket-import-raw]') && state.modal?.type === 'tx') {
+      state.modal = {
+        ...state.modal,
+        ticketImport: {
+          ...(state.modal.ticketImport || {}),
+          raw: String(event.target.value || '')
+        }
+      };
+      return;
+    }
+
+    if (event.target.closest('[data-balance-form]')) {
+      persistBalanceFormState(event.target.closest('[data-balance-form]'));
+    }
+    if (event.target.matches('[data-balance-form] input[name="amount"]')) {
+      state.balanceAmountAuto = false;
+    }
+    if (event.target.matches('[data-balance-form] select[name="foodMealType"], [data-balance-form] select[name="foodCuisine"], [data-balance-form] select[name="foodPlace"]')) {
+      const form = event.target.closest('[data-balance-form]');
+      renderFoodItemSearchResults(form);
+    }
+    if (event.target.matches('[data-food-item-search]')) {
+      const form = event.target.closest('[data-balance-form]');
+      if (!form) return;
+      const refs = getFoodFormRefs(form);
+      if (refs.itemValue) refs.itemValue.value = normalizeFoodName(event.target.value);
+      if (refs.foodId) refs.foodId.value = '';
+      renderFoodItemSearchResults(form);
+    }
+    if (event.target.closest('[data-food-item-form][data-food-item-mode="detail"]')) {
+      updateFoodDetailSaveState(event.target.closest('[data-food-item-form]'));
+    }
+  });
+
+  view.addEventListener('toggle', (event) => {
+    if (event.target.matches('[data-finance-stats-legend-details]')) {
+      state.balanceStatsLegendExpanded = !!event.target.open;
+    }
+    if (event.target.matches('[data-balance-tx-details]')) {
+      state.balanceTxDetailsOpen = !!event.target.open;
+    }
+  });
+
+
+  view.addEventListener('focusout', async (event) => {
+    if (!event.target.matches('[data-food-display-name]')) return;
+    const formEl = event.target.closest('[data-food-item-form][data-food-item-mode="detail"]');
+    if (!formEl) return;
+    const idInput = formEl.querySelector('input[name="foodId"]');
+    const nameInput = formEl.querySelector('input[name="name"]');
+    const foodId = String(idInput?.value || '');
+    const name = normalizeFoodName(String(nameInput?.value || ''));
+    const displayName = String(event.target.value || '').trim() || name;
+    if (!foodId || !name || !displayName) return;
+    const prevFood = state.food.itemsById?.[foodId] || null;
+    if (prevFood && String(prevFood.displayName || '') === displayName) return;
+    await upsertFoodItem({
+      id: foodId,
+      name,
+      displayName,
+      aliases: Array.isArray(prevFood?.aliases) ? prevFood.aliases : [],
+      vendorAliases: prevFood?.vendorAliases && typeof prevFood.vendorAliases === 'object' ? prevFood.vendorAliases : {},
+      mealType: prevFood?.mealType || '',
+      cuisine: prevFood?.cuisine || prevFood?.healthy || '',
+      healthy: prevFood?.cuisine || prevFood?.healthy || '',
+      place: prevFood?.place || '',
+      defaultPrice: Number(prevFood?.defaultPrice || 0)
+    }, false);
+    toast('Display name guardado');
+  });
+
+  view.addEventListener('submit', async (event) => {
+    if (event.target.matches('[data-category-editor-form]')) {
+      event.preventDefault();
+      const formEl = event.target;
+      const inputs = [...formEl.querySelectorAll('[data-category-emoji]')];
+      const updatesMap = {};
+      inputs.forEach((input) => {
+        const name = String(input.dataset.categoryEmoji || '').trim();
+        if (!name) return;
+        const emoji = String(input.value || '').trim();
+        updatesMap[`${state.financePath}/catalog/categories/${name}/emoji`] = emoji || null;
+        state.balance.categories[name] = { ...(state.balance.categories[name] || {}), name, emoji: emoji || '' };
+      });
+      await safeFirebase(() => update(ref(db), updatesMap));
+      toast('Categorías guardadas');
+      triggerRender();
+      return;
+    }
+    if (event.target.matches('[data-food-item-form]')) {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const foodId = String(form.get('foodId') || '');
+      const name = normalizeFoodName(String(form.get('name') || ''));
+      if (!name) { toast('Nombre obligatorio'); return; }
+      const mealType = normalizeFoodName(String(form.get('mealTypeNew') || form.get('mealType') || ''));
+      const cuisine = normalizeFoodName(String(form.get('cuisineNew') || form.get('cuisine') || ''));
+      const place = normalizeFoodName(String(form.get('placeNew') || form.get('place') || ''));
+      const displayName = String(form.get('displayName') || name).trim() || name;
+      const aliases = String(form.get('aliases') || '').split(',').map((row) => normalizeFoodName(row)).filter(Boolean);
+      const vendorAliases = String(form.get('vendorAliases') || '').split(',').reduce((acc, row) => {
+        const [rawVendor, rawVals] = String(row || '').split(':');
+        const vendor = firebaseSafeKey(rawVendor || '');
+        if (!vendor) return acc;
+        acc[vendor] = String(rawVals || '').split('|').map((it) => normalizeFoodName(it)).filter(Boolean);
+        return acc;
+      }, {});
+      const defaultPrice = Number(form.get('defaultPrice') || 0);
+      const saveMode = String(form.get('saveMode') || '');
+      const prevFood = foodId ? (state.food.itemsById?.[foodId] || null) : null;
+      const savedFoodId = await upsertFoodItem({ id: foodId, name, displayName, aliases, vendorAliases, mealType, cuisine, healthy: cuisine, place, defaultPrice }, false);
+      if (!prevFood && Number.isFinite(defaultPrice) && defaultPrice > 0) {
+        await recordFoodPricePoint(savedFoodId, defaultPrice, 'create');
+      } else if (saveMode === 'info' && shouldAppendFoodPricePoint(prevFood || {}, defaultPrice)) {
+        await recordFoodPricePoint(savedFoodId, defaultPrice, 'sheet');
+      }
+      if (mealType) await upsertFoodOption('typeOfMeal', mealType, false);
+      if (cuisine) await upsertFoodOption('cuisine', cuisine, false);
+      if (place) await upsertFoodOption('place', place, false);
+      financeDebug('food modal saved', { foodId: foodId || state.food.nameToId?.[name.toLowerCase()] || null, name });
+      state.balanceFormState = {
+        ...state.balanceFormState,
+        foodItem: name,
+        foodId: state.food.nameToId?.[name.toLowerCase()] || savedFoodId || foodId,
+        foodMealType: mealType,
+        foodCuisine: cuisine,
+        foodPlace: place,
+        foodExtrasOpen: true
+      };
+      if (state.modal.type === 'food-item' && ['detail', 'info'].includes(state.modal.mode || '')) {
+        state.modal = { ...state.modal, foodId: savedFoodId || foodId || state.modal.foodId };
+        triggerRender();
+      } else {
+        state.modal = { type: 'tx', txId: state.modal.txId || '' };
+        triggerRender();
+      }
+      return;
+    }
+    if (event.target.matches('[data-new-account-form]')) {
+      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 0.5); const isBitcoin = form.get('isBitcoin') === 'on'; const btcUnits = Number(form.get('btcUnits') || 0); const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); if (name) { const duplicates = getCardLast4Duplicates(cardLast4); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); await addAccount({ name, shared, sharedRatio, isBitcoin, btcUnits, cardLast4 }); } state.modal = { type: null }; triggerRender(); return;
+    }
+    if (event.target.matches('[data-calendar-day-form]')) {
+      event.preventDefault();
+      const day = String(event.target.dataset.calendarDayForm || '').trim();
+      if (!day) { toast('Fecha inválida'); return; }
+      const updatesMap = {};
+      const touched = [];
+      buildAccountModels().forEach((account) => {
+        const raw = event.target.querySelector(`[name="acc_${account.id}"]`)?.value;
+        if (raw == null || raw === '') return;
+        const parsed = Number(String(raw).replace(',', '.'));
+        if (!Number.isFinite(parsed)) return;
+        updatesMap[`${state.financePath}/accounts/${account.id}/snapshots/${day}`] = { value: parsed, updatedAt: nowTs() };
+        updatesMap[`${state.financePath}/accounts/${account.id}/updatedAt`] = nowTs();
+        touched.push(account.id);
+      });
+      if (!touched.length) { toast('Sin cambios'); return; }
+      await safeFirebase(() => update(ref(db), updatesMap));
+      for (const accountId of touched) await recomputeAccountEntries(accountId, day);
+      state.modal = { type: null };
+      toast('Saldos guardados');
+      triggerRender();
+      return;
+    }
+    if (event.target.matches('[data-account-entry-form]')) {
+      event.preventDefault();
+      const accountId = event.target.dataset.accountEntryForm;
+      const form = new FormData(event.target);
+      const day = String(form.get('day') || '').trim();
+      const value = form.get('value');
+      if (!day) { toast('Fecha inválida'); return; }
+      await saveSnapshot(accountId, day, value);
+      openAccountDetail(accountId);
+      return;
+    }
+    if (event.target.matches('[data-edit-account-form]')) {
+      event.preventDefault();
+      const accountId = event.target.dataset.editAccountForm;
+      const form = new FormData(event.target);
+      const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); const duplicates = getCardLast4Duplicates(cardLast4, accountId); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); await updateAccountMeta(accountId, { name: String(form.get('name') || '').trim(), shared: form.get('shared') === 'on', sharedRatio: Number(form.get('sharedRatio') || 0.5), isBitcoin: form.get('isBitcoin') === 'on', btcUnits: Number(form.get('btcUnits') || 0), cardLast4 });
+      state.modal = { type: null };
+      triggerRender();
+      return;
+    }
+    if (event.target.matches('[data-import-preview-form]')) {
+      event.preventDefault();
+      const accountId = event.target.dataset.importPreviewForm;
+      const textCsv = event.target.querySelector('textarea[name="csvText"]')?.value || '';
+      const parsed = parseCsvRows(textCsv);
+      state.modal = { ...state.modal, accountId, importRaw: textCsv, importPreview: parsed, importError: parsed.validRows.length ? '' : 'CSV inválido o sin filas válidas.' };
+      triggerRender();
+      return;
+    }
+    if (event.target.matches('[data-balance-form]')) {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const txId = String(form.get('txId') || '').trim();
+      const type = normalizeTxType(String(form.get('type') || 'expense'));
+      const amount = parseMoney(String(form.get('amount') || ''));
+      const dateISO = toIsoDay(String(form.get('dateISO') || dayKeyFromTs(Date.now()))) || dayKeyFromTs(Date.now());
+      const pickedCategory = String(form.get('category') || '').trim();
+      const category = type === 'transfer' ? 'transfer' : (pickedCategory || 'Sin categoría');
+      const note = String(form.get('note') || '').trim();
+      const accountId = String(form.get('accountId') || '');
+      const fromAccountId = String(form.get('fromAccountId') || '');
+      const toAccountId = String(form.get('toAccountId') || '');
+      const personalRatioMode = String(form.get('personalRatioMode') || 'auto');
+      const personalRatioPercent = Number(form.get('personalRatioPercent') || 0);
+      const linkedHabitId = String(form.get('linkedHabitId') || '').trim() || null;
+      const allocationModeRaw = String(form.get('allocationMode') || 'point');
+      const allocationAnchorDate = String(form.get('allocationAnchorDate') || dateISO);
+      const allocationCustomStart = String(form.get('allocationCustomStart') || '');
+      const allocationCustomEnd = String(form.get('allocationCustomEnd') || '');
+      if (linkedHabitId && allocationModeRaw === 'custom') {
+        if (!allocationCustomStart || !allocationCustomEnd) {
+          toast('Completa Desde y Hasta para una distribución personalizada');
+          return;
+        }
+        const startTs = localStartOfDayTs(allocationCustomStart);
+        const endTs = localStartOfDayTs(allocationCustomEnd);
+        if (!startTs || !endTs || startTs > endTs) {
+          toast('Rango personalizado inválido: "Desde" debe ser menor o igual a "Hasta"');
+          return;
+        }
+      }
+      const allocation = normalizeTxAllocation(linkedHabitId ? {
+        mode: allocationModeRaw === 'point' ? 'point' : 'period',
+        period: allocationModeRaw === 'point' ? 'day' : allocationModeRaw,
+        anchorDate: allocationAnchorDate,
+        customStart: allocationCustomStart,
+        customEnd: allocationCustomEnd
+      } : { mode: 'point', period: 'day', anchorDate: dateISO }, dateISO);
+      if (!Number.isFinite(amount) || amount <= 0) { 
+          console.warn('[FINANCE][BALANCE] invalid amount', form.get('amount'), amount);
+
+        toast('Cantidad inválida'); 
+        
+        return; }
+      if ((type === 'income' || type === 'expense') && !accountId) { toast('Selecciona una cuenta'); return; }
+      if (type === 'transfer' && (!fromAccountId || !toAccountId || fromAccountId === toAccountId)) { toast('Transferencia inválida'); return; }
+      const mealType = normalizeFoodName(String(form.get('foodMealType') || ''));
+      const cuisine = normalizeFoodName(String(form.get('foodCuisine') || ''));
+      const place = normalizeFoodName(String(form.get('foodPlace') || ''));
+      const item = normalizeFoodName(String(form.get('foodItem') || ''));
+      const foodIdFromForm = String(form.get('foodId') || '').trim();
+      const foodItemsRaw = (() => {
+        try { return JSON.parse(String(form.get('foodItems') || '[]')); } catch { return []; }
+      })();
+      const foodItems = Array.isArray(foodItemsRaw) ? foodItemsRaw.map((row) => {
+        const qty = Math.max(1, Number(row?.qty || 1));
+        const totalPrice = Number((row?.totalPrice ?? row?.amount ?? row?.price) || 0);
+        const unitPrice = Number((row?.unitPrice ?? row?.unit_price) || computeUnitPrice(totalPrice, qty));
+        return {
+          foodId: String(row?.foodId || foodIdFromForm || ''),
+          productKey: String(row?.productKey || ''),
+          name: normalizeFoodName(row?.name || row?.item || row?.productName || item),
+          qty,
+          unit: String(row?.unit || 'ud').trim() || 'ud',
+          unitPrice,
+          amount: totalPrice,
+          totalPrice,
+          price: totalPrice,
+          mealType: normalizeFoodName(row?.mealType || mealType),
+          cuisine: normalizeFoodName(row?.cuisine || cuisine),
+          place: normalizeFoodName(row?.place || place),
+          healthy: String(row?.healthy || cuisine || '')
+        };
+      }).filter((row) => row.name) : [];
+      const extras = isFoodCategory(category)
+        ? { items: foodItems.length ? foodItems : (item ? [{ foodId: foodIdFromForm || '', productKey: firebaseSafeKey(item), name: item, qty: 1, unit: 'ud', unitPrice: amount, amount, totalPrice: amount, price: amount, mealType, cuisine, place, healthy: cuisine }] : []), filters: { mealType: mealType || '', cuisine: cuisine || '', place: place || '', healthy: cuisine || '' } }
+        : undefined;
+      const saveId = txId || push(ref(db, `${state.financePath}/transactions`)).key;
+      const prev = txId ? balanceTxList().find((row) => row.id === txId) : null;
+      const isRecurring = form.get('isRecurring') === 'on';
+      const recurringFrequency = String(form.get('recurringFrequency') || 'monthly');
+      const recurringDay = Number(form.get('recurringDay') || 1);
+      const recurringStart = toIsoDay(String(form.get('recurringStart') || dateISO)) || dateISO;
+      const recurringEndRaw = toIsoDay(String(form.get('recurringEnd') || ''));
+
+      const nextPersonalRatio = (type === 'transfer' || personalRatioMode !== 'custom')
+        ? null
+        : clamp01(personalRatioPercent / 100, 1);
+
+      const payload = {
+        type,
+        amount,
+        date: dateISO,
+        monthKey: dateISO.slice(0, 7),
+        accountId: type === 'transfer' ? '' : accountId,
+        fromAccountId: type === 'transfer' ? fromAccountId : '',
+        toAccountId: type === 'transfer' ? toAccountId : '',
+        category,
+        note,
+        ...(Number.isFinite(nextPersonalRatio) ? { personalRatio: nextPersonalRatio } : {}),
+        linkedHabitId,
+        allocation,
+        extras: extras || null,
+        updatedAt: nowTs(),
+        createdAt: Number(prev?.createdAt || 0) || nowTs()
+      };
+      console.log('[FINANCE][BALANCE] save transaction', `${state.financePath}/transactions/${saveId}`);
+      if (window?.BOOKSHELL_DEV || window?.localStorage?.getItem('bookshell_debug_expense_payload') === '1') {
+        console.log('[FINANCE][DEBUG] expense payload', payload);
+      }
+      await safeFirebase(() => set(ref(db, `${state.financePath}/transactions/${saveId}`), payload));
+      if (type !== 'transfer') {
+        if (!state.balance.categories?.[category]) await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
+        await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
+      }
+      if (isRecurring) {
+        const recId = prev?.recurringId || push(ref(db, `${state.financePath}/recurring`)).key;
+        await safeFirebase(() => set(ref(db, `${state.financePath}/recurring/${recId}`), {
+          type,
+          amount,
+          accountId: type === 'transfer' ? '' : accountId,
+          fromAccountId: type === 'transfer' ? fromAccountId : '',
+          toAccountId: type === 'transfer' ? toAccountId : '',
+          category,
+          note,
+          ...(Number.isFinite(nextPersonalRatio) ? { personalRatio: nextPersonalRatio } : {}),
+          linkedHabitId,
+          allocation,
+          extras: extras || null,
+          schedule: { frequency: recurringFrequency, dayOfMonth: recurringDay, startDate: recurringStart, endDate: recurringEndRaw || '' },
+          updatedAt: nowTs(),
+          createdAt: Number(prev?.createdAt || 0) || nowTs()
+        }));
+      }
+      if (extras?.items?.length) {
+        await ensureFoodCatalogLoaded();
+        for (const foodItem of extras.items) {
+          const savedFoodId = await upsertFoodItem({
+            id: foodItem.foodId || '',
+            name: foodItem.name,
+            mealType: foodItem.mealType || mealType,
+            cuisine: foodItem.cuisine || cuisine,
+            healthy: foodItem.healthy || foodItem.cuisine || cuisine,
+            place: foodItem.place || place,
+            defaultPrice: Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount)
+          }, true, { lastCategory: category, lastAccountId: accountId, lastNote: note });
+          foodItem.foodId = savedFoodId;
+          await recordFoodPricePoint(savedFoodId, Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount), 'expense', {
+            ts: dateISO ? parseDayKey(dateISO) : nowTs(),
+            date: dateISO || dayKeyFromTs(nowTs()),
+            vendor: foodItem.place || place || 'unknown',
+            unitPrice: Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount),
+            qty: Math.max(1, Number(foodItem.qty || 1)),
+            unit: String(foodItem.unit || 'ud').trim() || 'ud',
+            totalPrice: Number(foodItem.totalPrice || foodItem.amount || foodItem.price || amount),
+            linePrice: Number(foodItem.totalPrice || foodItem.amount || foodItem.price || amount),
+            expenseId: saveId
+          });
+          financeDebug('transaction food usage saved', { txId: saveId, foodId: savedFoodId, name: foodItem.name });
+          if (foodItem.mealType || mealType) await upsertFoodOption('typeOfMeal', foodItem.mealType || mealType, true);
+          if (foodItem.cuisine || cuisine) await upsertFoodOption('cuisine', foodItem.cuisine || cuisine, true);
+          if (foodItem.place || place) await upsertFoodOption('place', foodItem.place || place, true);
+        }
+      }
+      const touched = new Set([payload.accountId, payload.fromAccountId, payload.toAccountId, prev?.accountId, prev?.fromAccountId, prev?.toAccountId].filter(Boolean));
+      const recomputeStart = [dateISO, prev?.date, isoToDay(prev?.dateISO || '')].filter(Boolean).sort()[0] || dateISO;
+      for (const account of touched) await recomputeAccountEntries(account, recomputeStart);
+      scheduleAggregateRebuild();
+      localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId || fromAccountId || '');
+      state.lastMovementAccountId = accountId || fromAccountId || '';
+      state.balanceFormState = {};
+      state.modal = { type: null };
+      toast(txId ? 'Movimiento actualizado' : 'Movimiento guardado');
+      triggerRender();
+      return;
+    }
+    if (event.target.matches('[data-budget-form]')) {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const category = String(form.get('category') || '').trim();
+      const limit = Number(form.get('limit') || 0);
+      const monthKey = String(form.get('monthKey') || getSelectedBalanceMonthKey());
+      if (!category || !monthKey || !Number.isFinite(limit)) { toast('Datos de presupuesto inválidos'); return; }
+      const budgetId = state.modal.budgetId || push(ref(db, `${state.financePath}/budgets/${monthKey}`)).key;
+      await safeFirebase(() => set(ref(db, `${state.financePath}/budgets/${monthKey}/${budgetId}`), { category, limit, createdAt: nowTs(), updatedAt: nowTs() }));
+      state.modal = { type: null }; toast('Presupuesto guardado'); triggerRender(); return;
+    }
+    if (event.target.matches('[data-goal-form]')) {
+      event.preventDefault(); const form = new FormData(event.target); const goalId = push(ref(db, `${state.financePath}/goals/goals`)).key;
+      const payload = { title: String(form.get('title') || '').trim(), targetAmount: Number(form.get('targetAmount') || 0), dueDateISO: `${form.get('dueDateISO')}T00:00:00.000Z`, accountsIncluded: form.getAll('accountsIncluded'), createdAt: nowTs(), updatedAt: nowTs() };
+      await safeFirebase(() => set(ref(db, `${state.financePath}/goals/goals/${goalId}`), payload)); state.modal = { type: null }; toast('Objetivo creado'); triggerRender(); return;
+    }
+    const goalAccountsId = event.target.dataset.goalAccountsForm;
+    if (goalAccountsId) {
+      event.preventDefault(); const ids = [...event.target.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value);
+      await safeFirebase(() => update(ref(db, `${state.financePath}/goals/goals/${goalAccountsId}`), { accountsIncluded: ids, updatedAt: nowTs() }));
+      state.modal = { type: null }; triggerRender();
+    }
+  }, evtOpts);
+
+  view.addEventListener('toggle', (event) => {
+    const foodDetails = event.target.closest('[data-section="food-extras"]');
+    if (foodDetails?.open) {
+      const form = foodDetails.closest('[data-balance-form]');
+      if (form) void toggleFoodExtras(form);
+    }
+    const details = event.target.closest('[data-history-account]'); if (!details || !details.open) return;
+    const accountId = details.dataset.historyAccount; const host = view.querySelector(`[data-history-rows="${accountId}"]`); if (!host || host.dataset.loaded === '1') return;
+    const account = buildAccountModels().find((item) => item.id === accountId); host.dataset.loaded = '1';
+    host.innerHTML = account?.daily?.length ? account.daily.slice().reverse().map((row) => `<div class="finance-history-row"><span>${new Date(row.ts).toLocaleDateString('es-ES')}</span><span>${fmtCurrency(row.value)}</span><span class="${toneClass(row.delta)}">${fmtSignedCurrency(row.delta)}</span><span class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</span></div>`).join('') : '<p class="finance-empty">Sin registros.</p>';
+  }, { ...evtOpts, capture: true });
+}
+
+function financeDomReady() {
+  return Boolean(resolveFinanceRoot() || $opt('#view-finance') || $opt('#tab-finance'));
+}
+
+async function boot() {
+  if (state.booted) return;
+  await ensureFinanceLoaded();
+  if (!auth?.currentUser) {
+    log('boot deferred: auth not ready yet');
+    return;
+  }
+  if (!financeDomReady()) {
+    log('boot deferred: finance DOM not ready yet');
+    return;
+  }
+  state.booted = true;
+  const financeRoot = resolveFinanceRoot($opt, $req);
+  log('dom root resolved', {
+    missingFinanceRootId: !$opt('#finance-root'),
+    missingDataTabFinance: !$opt('[data-tab="finance"]'),
+    missingLegacyContainerSelector: !$opt('#finance, #financeTab, .finance-tab, [data-view="finance"]'),
+    resolvedRoot: financeRoot?.id || financeRoot?.className || financeRoot?.tagName || null,
+  });
+  state.deviceId = getDeviceId();
+  console.log('[finance] deviceId', state.deviceId);
+  const pathProbe = await probeFinanceRoots();
+  financeRootsCache = { newRoot: pathProbe.newRoot, legacyRoot: pathProbe.legacyRoot };
+  const rawPath = resolveFinancePath();
+  state.financePath = await detectFinancePath(rawPath);
+  console.log('[FINANCE] financePath resolved', { rawPath, financePath: state.financePath });
+  log('init ok', { financePath: state.financePath });
+  bindEvents();
+  await loadDataOnce();
+  await ensurePersonalRatioMigrationV1();
+  subscribe();
+  await render();
+}
+
+function bootFinance() {
+  boot().catch((e) => {
+    console.error('[finance] boot crashed', e);
+    showFinanceBootError($opt, e);
+  });
+}
+
+
+export async function init() {
+  const financeStart = performance.now();
+  await ensureFinanceLoaded();
+  await boot();
+  if (!state.booted && auth?.currentUser == null) {
+    await new Promise((resolve) => {
+      const stop = onUserChange((user) => {
+        if (!user) return;
+        try { stop?.(); } catch (_) {}
+        resolve();
+      });
+    });
+    await boot();
+  }
+  if (!state.firstInitDone) {
+    state.firstInitDone = true;
+    console.log('[perf] finance-first-open-ms', Math.round(performance.now() - financeStart));
+  }
+  console.log('[perf] listeners view-finance', getFinanceListenerCount());
+}
+
+export function destroy() {
+  if (state.unsubscribe) {
+    state.unsubscribe();
+    state.unsubscribe = null;
+  }
+  if (unsubscribeLegacyFinance) {
+    unsubscribeLegacyFinance();
+    unsubscribeLegacyFinance = null;
+  }
+  if (state.aggregateRebuildTimer) {
+    clearTimeout(state.aggregateRebuildTimer);
+    state.aggregateRebuildTimer = null;
+  }
+  if (state.toastTimer) {
+    clearTimeout(state.toastTimer);
+    state.toastTimer = null;
+  }
+  if (state.eventsAbortController) {
+    state.eventsAbortController.abort();
+    state.eventsAbortController = null;
+  }
+  const view = document.getElementById('view-finance');
+  if (view) delete view.dataset.financeBound;
+  state.booted = false;
+  console.log('[finance] destroy completed');
+  console.log('[perf] listeners view-finance', getFinanceListenerCount());
+}
+
+function getFinanceListenerCount() {
+  let count = 0;
+  if (state.unsubscribe) count += 1;
+  if (state.eventsAbortController) count += 1;
+  if (state.aggregateRebuildTimer) count += 1;
+  if (state.toastTimer) count += 1;
+  return count;
+}

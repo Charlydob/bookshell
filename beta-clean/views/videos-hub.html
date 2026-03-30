@@ -1,0 +1,123 @@
+<div class="videosHub">
+  <header class="videosHub__header">
+    <div>
+      <p class="videosHub__eyebrow">YouTube · Workbench</p>
+      <h2 class="videosHub__title">Vídeos Hub</h2>
+    </div>
+    <button class="btn primary videosHub__createBtn" id="videos-hub-create-btn" type="button">+ Nuevo</button>
+  </header>
+
+  <nav class="videosHub__tabs" aria-label="Secciones vídeos hub">
+    <button class="videosHub__tab is-active" data-hub-tab="list" type="button">Vídeos</button>
+    <button class="videosHub__tab" data-hub-tab="detail" type="button">Detalle</button>
+    <button class="videosHub__tab" data-hub-tab="stats" type="button">Estadísticas</button>
+  </nav>
+
+  <section class="videosHub__panel is-active" data-hub-panel="list">
+    <div class="videosHub__filters glassCard">
+      <input id="videos-hub-search" type="search" placeholder="Buscar por título o guion" autocomplete="off" />
+      <select id="videos-hub-filter-status">
+        <option value="all">Todos estados</option>
+        <option value="idea">Idea</option>
+        <option value="drafting">Borrador</option>
+        <option value="editing">Edición</option>
+        <option value="published">Publicado</option>
+      </select>
+      <select id="videos-hub-filter-category">
+        <option value="all">Todas categorías</option>
+      </select>
+      <select id="videos-hub-sort">
+        <option value="recent">Más reciente</option>
+        <option value="words">Más palabras</option>
+        <option value="progress">Más progreso</option>
+      </select>
+    </div>
+    <div class="videosHub__list" id="videos-hub-list"></div>
+  </section>
+
+  <section class="videosHub__panel" data-hub-panel="detail">
+    <form class="videosHub__detailForm" id="videos-hub-detail-form">
+      <div class="glassCard videosHub__detailHead">
+        <button class="btn ghost videosHub__iconBtn" id="videos-hub-back-btn" type="button" aria-label="Volver a vídeos">←</button>
+        <input id="videos-hub-title" type="text" placeholder="Título del vídeo" autocomplete="off" />
+        <button class="btn ghost videosHub__iconBtn videosHub__iconBtn--danger" id="videos-hub-delete-btn" type="button" aria-label="Eliminar vídeo">🗑</button>
+      </div>
+
+      <div class="glassCard videosHub__metaGrid">
+        <label>
+          <span>Estado</span>
+          <select id="videos-hub-status">
+            <option value="" selected>Seleccionar estado</option>
+            <option value="idea">Idea</option>
+            <option value="drafting">Borrador</option>
+            <option value="editing">Edición</option>
+            <option value="published">Publicado</option>
+          </select>
+        </label>
+        <label>
+          <span>Categoría</span>
+          <input id="videos-hub-category" type="text" placeholder="Categoría" autocomplete="off" />
+        </label>
+        <label>
+          <span>Objetivo palabras</span>
+          <input id="videos-hub-target" type="number" min="0" step="50" placeholder="Objetivo" />
+        </label>
+        <label>
+          <span>Fecha</span>
+          <input id="videos-hub-date" type="date" />
+        </label>
+      </div>
+
+      <div class="glassCard videosHub__metrics" id="videos-hub-metrics"></div>
+
+      <label class="glassCard videosHub__scriptWrap">
+        <textarea id="videos-hub-script" placeholder="Empieza a escribir el guion…"></textarea>
+        <div class="videosHub__scriptFoot">
+          <span id="videos-hub-word-count">0 palabras</span>
+          <span id="videos-hub-autosave">Guardado automático</span>
+        </div>
+      </label>
+    </form>
+  </section>
+
+  <section class="videosHub__panel" data-hub-panel="stats">
+    <div class="videosHub__statsFilters glassCard">
+      <div class="videosHub__filterRow">
+        <select id="videos-hub-stats-range">
+          <option value="7">Últimos 7 días</option>
+          <option value="30" selected>Últimos 30 días</option>
+          <option value="90">Últimos 90 días</option>
+        </select>
+        <select id="videos-hub-stats-status">
+          <option value="all">Todos estados</option>
+          <option value="idea">Idea</option>
+          <option value="drafting">Borrador</option>
+          <option value="editing">Edición</option>
+          <option value="published">Publicado</option>
+        </select>
+        <select id="videos-hub-stats-category">
+          <option value="all">Todas categorías</option>
+        </select>
+      </div>
+    </div>
+    <div class="videosHub__kpis" id="videos-hub-kpis"></div>
+    <div class="videosHub__charts">
+      <article class="glassCard">
+        <h3>Palabras por día</h3>
+        <svg id="videos-hub-chart-line" viewBox="0 0 360 160"></svg>
+      </article>
+      <article class="glassCard">
+        <h3>Semanas / meses</h3>
+        <div id="videos-hub-chart-bars" class="videosHub__bars"></div>
+      </article>
+      <article class="glassCard">
+        <h3>Categorías</h3>
+        <div id="videos-hub-chart-donut" class="videosHub__donut"></div>
+      </article>
+      <article class="glassCard">
+        <h3>Comparativa por vídeo</h3>
+        <div id="videos-hub-video-compare" class="videosHub__compare"></div>
+      </article>
+    </div>
+  </section>
+</div>

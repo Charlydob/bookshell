@@ -1,0 +1,870 @@
+<div class="recipes-wrapper">
+
+<div class="recipes-subtabs" role="tablist" aria-label="Subvistas de recetas">
+<button class="recipes-subtab is-active" id="recipes-subtab-library" data-recipes-panel="library" aria-selected="true" type="button">Recetas</button>
+<button class="recipes-subtab" id="recipes-subtab-macros" data-recipes-panel="macros" aria-selected="false" type="button">Macros</button>
+<button class="recipes-subtab" id="recipes-subtab-statistics" data-recipes-panel="statistics" aria-selected="false" type="button">Estadística</button>
+<button class="recipes-subtab" id="recipes-subtab-shopping" data-recipes-panel="shopping" aria-selected="false" type="button">Compra</button>
+</div>
+<div class="recipes-panel is-active" id="recipes-panel-library">
+  <div class="recipes-top">
+    <div class="stats-cards recipes-stats-cards">
+    <div class="stat-card" id="stat-card-receta">
+    <div class="stat-label">Recetas</div>
+    <div class="stat-value" id="recipe-stat-total">0</div>
+    </div>
+    <div class="stat-card" id="stat-card-products">
+    <div class="stat-label">Productos</div>
+    <div class="stat-value" id="recipe-stat-products">0</div>
+    </div>
+    <div class="stat-card" id="stat-card-cost">
+    <div class="stat-label">Gasto</div>
+    <div class="stat-value" id="recipe-stat-cost">0</div>
+    </div>
+    <div class="stat-card" id="stat-card-kcal">
+    <div class="stat-label">Kcal</div>
+    <div class="stat-value" id="recipe-stat-kcal">0</div>
+    </div>
+    <div class="stat-card" id="stat-card-laura">
+    <div class="stat-label">L. Check</div>
+    <div class="stat-value" id="recipe-stat-laura-positive">0</div>
+    </div>
+    </div>
+</div>
+<div class="recipes-toolbar">
+<button class="btn primary" id="btn-add-recipe">🥞</button>
+<button class="btn ghost btn-compact" id="recipes-start-session" type="button">▶ Iniciar sesión</button>
+</div>
+
+<div class="books-filters is-collapsed" id="recipes-filters">
+  <div class="books-filters-header" id="recipes-filters-header">
+  <div class="filter-row filter-search-row">
+  <label class="field-label" id="label-buscador"for="recipes-filter-search">Buscar</label>
+  <input autocomplete="off" class="filter-search-input" id="recipes-filter-search" inputmode="search" placeholder="Nombre del plato, etiquetas o tipo de comida" type="search"/>
+  </div>
+  <button aria-controls="recipes-filters-body" aria-expanded="false" class="filters-toggle-btn" id="recipes-filters-toggle" type="button">
+  <span class="filters-toggle-text">Mostrar filtros</span>
+  <span aria-hidden="true" class="filters-toggle-icon">⌄</span>
+  </button>
+  </div>
+  <div class="books-filters-body" id="recipes-filters-body">
+  <div class="filter-row">
+  <div class="filter-label">Filtros rápidos</div>
+  <div aria-label="Filtros dinámicos" class="filter-chip-groups" id="recipes-filter-chips"></div>
+  </div>
+  <div class="filter-row filter-toggles">
+  <label class="toggle-pill">
+  <input id="recipes-filter-favorites" type="checkbox"/>
+  <span>Solo favoritas</span>
+  </label>
+  <label class="toggle-pill">
+  <input id="recipes-filter-laura" type="checkbox"/>
+  <span>Con check de Laura</span>
+  </label>
+  </div>
+  </div>
+</div>
+<div class="recipes-shelf-wrapper">
+<div class="recipes-shelf-toolbar">
+<label class="field-label shelf-search-label" for="recipes-shelf-search">Buscar en la estantería</label>
+<input class="shelf-search-input" id="recipes-shelf-search" placeholder="Nombre, tipo, etiquetas..." type="search"/>
+<div class="recipes-view-toggle" id="recipes-view-toggle" role="tablist" aria-label="Modo de vista de recetas">
+<button class="recipes-view-toggle-btn is-active" data-recipes-view="shelf" role="tab" aria-selected="true" type="button">Estantería</button>
+<button class="recipes-view-toggle-btn" data-recipes-view="cards" role="tab" aria-selected="false" type="button">Tarjetas</button>
+</div>
+<div class="books-shelf-results" id="recipes-shelf-results"></div>
+</div>
+<section class="recipes-list-panel" id="recipes-list-panel" aria-label="Vista de recetas">
+<div class="recipes-list-panel-head">
+<h3 class="recipes-list-panel-title">Vista de recetas</h3>
+<p class="recipes-list-panel-subtitle">Previsualización compacta de cada receta visible</p>
+</div>
+<div class="recipes-list-panel-body" id="recipes-list-preview"></div>
+</section>
+<div class="books-shelf-empty" id="recipes-shelf-empty" style="display:none;">
+              No hay recetas que coincidan con la búsqueda.
+            </div>
+<div class="books-list recipes-shelf" id="recipes-list"></div>
+<details class="books-finished" id="recipes-favorites-section" style="display:none;">
+<summary class="books-finished-summary">
+<span>Favoritas</span>
+<span class="books-finished-count" id="recipes-favorites-count">0</span>
+</summary>
+<div class="books-list-finished" id="recipes-list-favorites"></div>
+</details>
+</div>
+<section class="geo-section" id="recipes-geo-section" style="display:none;">
+<div class="geo-card">
+<div class="geo-header">
+<div>
+<div class="geo-title">Mapa de recetas</div>
+<div class="geo-subtitle">Intensidad según número de platos</div>
+</div>
+</div>
+<div class="geo-map" id="recipes-world-map"></div>
+<details aria-label="Listado de países (recetas)" class="geo-list" id="recipes-country-panel">
+<summary class="geo-list-summary">Países y número de platos</summary>
+<div class="geo-list-body" id="recipes-country-list"></div>
+</details>
+</div>
+</section>
+<section class="books-charts" id="recipes-charts-section">
+<div class="books-charts-grid">
+<div class="chart-card">
+<div class="chart-card-title">Tipo de comida</div>
+<div class="donut-host" id="recipe-chart-meal"></div>
+</div>
+<div class="chart-card">
+<div class="chart-card-title">Saludable/Insana</div>
+<div class="donut-host" id="recipe-chart-health"></div>
+</div>
+</div>
+</section>
+<div class="empty-state" id="recipes-empty">
+            Aún no has añadido recetas.
+          </div>
+</div>
+</div>
+<div class="recipes-panel" id="recipes-panel-macros">
+  <div class="macro-header-card-wrapper">
+    <div class="macro-settings-trigger-row">
+      <button class="macro-settings-trigger" type="button" id="macro-integration-open" aria-label="Abrir configuración avanzada de macros" title="Configuración avanzada">i</button>
+    </div>
+    <div class="macro-date-row">
+      <button class="btn ghost btn-compact" type="button" id="macro-date-prev">◀</button>
+      <input type="date" id="macro-date-input" class="macro-date-input" />
+      <button class="btn ghost btn-compact" type="button" id="macro-date-next">▶</button>
+    </div>
+    <div class="macro-kcal-summary" id="macro-kcal-summary">0 kcal / 0 kcal</div>
+    <div class="macro-summary-grid" id="macro-summary-grid"></div>
+  </div>
+  <div class="macro-meals" id="macro-meals"></div>
+</div>
+<div class="modal-backdrop hidden" id="macro-integration-modal-backdrop">
+  <div class="macro-modal macro-integration-modal" role="dialog" aria-modal="true" aria-labelledby="macro-integration-modal-title">
+    <div class="macro-modal-handle"></div>
+    <div class="macro-modal-header">
+      <div>
+        <h3 class="macro-modal-title" id="macro-integration-modal-title">Configuración avanzada</h3>
+        <p class="macro-modal-subtitle">Ajustes de gasto calórico e integración Gym/Hábitos</p>
+      </div>
+      <button class="icon-btn" type="button" id="macro-integration-modal-close" aria-label="Cerrar">✕</button>
+    </div>
+    <div class="macro-modal-body">
+      <div class="macro-integration-settings">
+        <label class="macro-integration-field">
+          <span>Peso corporal (kg)</span>
+          <input type="number" id="macro-bodyweight-kg" min="0" step="0.1" placeholder="Opcional" />
+        </label>
+        <label class="macro-integration-field">
+          <span>Gasto por día trabajado (kcal)</span>
+          <input type="number" id="macro-work-kcal" min="0" step="10" value="700" />
+        </label>
+        <label class="macro-integration-field">
+          <span>Hábitos de trabajo vinculados</span>
+          <select id="macro-work-habits" multiple></select>
+        </label>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="recipes-panel" id="recipes-panel-statistics">
+  <div class="macro-stats-shell">
+    <div class="macro-stats-toolbar">
+      <div class="macro-stats-periods" id="macro-stats-periods" role="tablist" aria-label="Periodo de estadística">
+        <button class="macro-stats-period is-active" data-stats-period="day" type="button">Día</button>
+        <button class="macro-stats-period" data-stats-period="week" type="button">Semana</button>
+        <button class="macro-stats-period" data-stats-period="month" type="button">Mes</button>
+        <button class="macro-stats-period" data-stats-period="year" type="button">Año</button>
+      </div>
+      <div class="macro-stats-controls">
+        <button class="btn ghost btn-compact" type="button" id="macro-stats-prev">◀</button>
+        <input type="date" id="macro-stats-anchor" class="macro-date-input" />
+        <button class="btn ghost btn-compact" type="button" id="macro-stats-next">▶</button>
+        <select id="macro-stats-main-metric" class="macro-stats-select">
+          <option value="macros">Macros (C/P/G)</option>
+          <option value="kcal">Kcal</option>
+          <option value="cost">Coste (€)</option>
+          <option value="burned">Quemadas (kcal)</option>
+          <option value="net">Netas (kcal)</option>
+          <option value="carbs">Carbohidratos</option>
+          <option value="protein">Proteínas</option>
+          <option value="fat">Grasas</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="macro-stats-grid" id="macro-stats-kpis"></div>
+
+    <div class="macro-stats-panels">
+      <section class="macro-stats-card macro-stats-main-chart-card">
+        <header class="macro-stats-card-head">
+          <h4>Evolución nutricional</h4>
+          <span class="hint" id="macro-stats-main-label"></span>
+        </header>
+        <div class="macro-stats-chart-legend"></div>
+        <div id="macro-stats-main-tooltip" class="macro-stats-main-tooltip hidden"></div>
+        <svg id="macro-stats-main-chart" class="macro-stats-main-chart" viewBox="0 0 760 260" preserveAspectRatio="none"></svg>
+      </section>
+
+      <section class="macro-stats-card macro-stats-donut-card">
+        <header class="macro-stats-card-head"><h4>Distribuciones del periodo</h4></header>
+        <div class="macro-stats-donut-mode" id="macro-stats-donut-mode"></div>
+        <div class="macro-stats-donut-grid">
+          <div class="macro-stats-donut-box">
+            <svg id="macro-stats-donut-main" viewBox="0 0 120 120" class="macro-stats-donut"></svg>
+            <div class="macro-stats-donut-title" id="macro-stats-donut-title">Calorías por macro</div>
+            <div class="macro-stats-donut-legend" id="macro-stats-donut-legend"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="macro-stats-card macro-stats-targets-card">
+        <header class="macro-stats-card-head">
+          <h4>Objetivo de reparto de macros</h4>
+        </header>
+        <div class="macro-target-editor" id="macro-target-editor"></div>
+      </section>
+    </div>
+
+    <div class="macro-stats-lists">
+      <section class="macro-stats-card">
+        <header class="macro-stats-card-head"><h4>Top recetas y platos</h4></header>
+        <div id="macro-stats-top-recipes" class="macro-stats-list"></div>
+      </section>
+      <section class="macro-stats-card">
+        <header class="macro-stats-card-head"><h4>Top productos</h4></header>
+        <div id="macro-stats-top-products" class="macro-stats-list"></div>
+      </section>
+    </div>
+  </div>
+</div>
+<div class="recipes-panel" id="recipes-panel-shopping">
+  <div class="macro-stats-shell">
+    <section class="macro-stats-card macro-shopping-shell">
+      <header class="macro-stats-card-head">
+        <h4>Compra inteligente</h4>
+        <div class="macro-shopping-mode" id="macro-shopping-mode">
+          <button class="macro-shopping-mode-btn is-active" id="macro-shopping-mode-list" data-shopping-mode="list" type="button">Explorar</button>
+          <button class="macro-shopping-mode-btn" id="macro-shopping-mode-compare" data-shopping-mode="compare" type="button">Comparar</button>
+        </div>
+      </header>
+      <div class="macro-shopping-list-view" id="macro-shopping-list-view">
+        <div class="macro-shopping-search-wrap">
+          <span aria-hidden="true">🔎</span>
+          <input id="macro-shopping-search" type="search" placeholder="Buscar producto por nombre…" autocomplete="off" />
+        </div>
+        <div class="macro-shopping-score-filters" id="macro-shopping-score-filters" role="group" aria-label="Filtro Nutri-Score"></div>
+        <div class="macro-shopping-results-meta" id="macro-shopping-results-count"></div>
+        <div class="macro-shopping-results" id="macro-shopping-results"></div>
+        <div class="macro-shopping-empty hidden" id="macro-shopping-empty">
+          <div class="macro-shopping-empty-icon" aria-hidden="true">🧺</div>
+          <div class="macro-shopping-empty-title">No encontramos productos</div>
+          <p>Prueba con otro nombre o cambia el filtro de Nutri-Score.</p>
+        </div>
+      </div>
+      <div class="macro-shopping-compare-view hidden" id="macro-shopping-compare-view">
+        <div class="macro-shopping-compare-pickers">
+          <article class="macro-shopping-compare-picker">
+            <h5>Producto izquierda</h5>
+            <input id="macro-shopping-compare-left-search" type="search" placeholder="Buscar producto…" autocomplete="off" />
+            <div class="macro-shopping-compare-options" id="macro-shopping-compare-left-options"></div>
+          </article>
+          <article class="macro-shopping-compare-picker">
+            <h5>Producto derecha</h5>
+            <input id="macro-shopping-compare-right-search" type="search" placeholder="Buscar producto…" autocomplete="off" />
+            <div class="macro-shopping-compare-options" id="macro-shopping-compare-right-options"></div>
+          </article>
+        </div>
+        <div class="macro-shopping-compare-table-wrap hidden" id="macro-shopping-compare-table-wrap">
+          <table class="macro-shopping-compare-table">
+            <thead>
+              <tr>
+                <th>Métrica</th>
+                <th id="macro-shopping-compare-left-title">Producto A</th>
+                <th>Comparación</th>
+                <th id="macro-shopping-compare-right-title">Producto B</th>
+              </tr>
+            </thead>
+            <tbody id="macro-shopping-compare-table-body"></tbody>
+          </table>
+        </div>
+        <div class="macro-shopping-compare-empty" id="macro-shopping-compare-empty">
+          Selecciona dos productos para ver la comparación por 100 g/ml.
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="macro-add-modal-backdrop">
+  <div class="modal-comida">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title" id="macro-add-modal-title">Añadir alimento</div>
+      <button class="icon-btn" id="macro-add-modal-close" type="button">✕</button>
+    </div>
+    <div class="modal-scroll sheet-body">
+      <div class="macro-modal-search-row">
+        <input autocomplete="off" class="filter-search-input" id="macro-add-search" placeholder="Buscar producto o receta" type="search" />
+      </div>
+    <div class="macro-modal-chips" id="macro-add-chips">
+        <button class="macro-chip is-active" data-macro-source="products" type="button">Productos</button>
+        <button class="macro-chip" data-macro-source="recipes" type="button">Recetas</button>
+        <button class="macro-chip" data-macro-source="scan" type="button">Escanear</button>
+        <button class="macro-chip" data-macro-source="manual" type="button">Crear manual</button>
+      </div>
+      <div class="macro-product-picker-results" id="macro-product-picker-results">
+        <div class="macro-modal-results" id="macro-add-results"></div>
+      </div>
+      <div class="macro-modal-scan hidden" id="macro-scan-panel">
+        <div class="section-hint">Apunta al código, pulsa “Capturar” y, si no sale, busca manualmente.</div>
+        <div class="section-hint" id="macro-scan-placement-hint">Guía: acerca el producto hasta que el código y el número inferior ocupen gran parte del recuadro y se vean nítidos.</div>
+        <div class="macro-scan-video-wrap">
+          <video id="macro-scan-video" class="macro-scan-video" muted playsinline></video>
+          <canvas id="macro-scan-frozen" class="macro-scan-frozen hidden" aria-hidden="true"></canvas>
+          <div id="macro-scan-html5-host" class="macro-scan-html5-host hidden"></div>
+          <div class="macro-scan-overlay" aria-hidden="true"></div>
+        </div>
+        <div class="macro-inline-actions">
+          <button class="btn ghost btn-compact" id="macro-scan-engine-html5" type="button">Abrir cámara</button>
+          <button class="btn ghost btn-compact" id="macro-scan-capture" type="button">Capturar</button>
+          <button class="btn ghost btn-compact hidden" id="macro-scan-retry" type="button">Reintentar</button>
+          <input id="macro-scan-manual" placeholder="Código de barras" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" />
+          <button class="btn ghost btn-compact" id="macro-scan-manual-btn" type="button">Buscar</button>
+          <button class="btn ghost btn-compact" id="macro-scan-stop" type="button">Detener</button>
+        </div>
+        <div class="hint" id="macro-scan-engine-status">Motor activo: ninguno</div>
+        <div class="hint" id="macro-scan-status"></div>
+        <div class="macro-scan-log-panel" id="macro-scan-log-panel" aria-live="polite"></div>
+        <div class="macro-scan-ocr-debug hidden" id="macro-scan-ocr-debug" aria-live="polite">
+          <div class="macro-scan-ocr-debug-item">
+            <span>OCR source</span>
+            <canvas id="macro-scan-ocr-source" width="160" height="90"></canvas>
+          </div>
+          <div class="macro-scan-ocr-debug-item">
+            <span>OCR crop</span>
+            <canvas id="macro-scan-ocr-crop" width="160" height="90"></canvas>
+          </div>
+          <div class="macro-scan-ocr-debug-item">
+            <span>OCR preprocess</span>
+            <canvas id="macro-scan-ocr-final" width="160" height="90"></canvas>
+          </div>
+        </div>
+        <button class="btn primary btn-compact hidden" id="macro-scan-add-product" type="button">+ Añadir producto</button>
+      </div>
+      <div class="macro-modal-manual hidden" id="macro-manual-panel">
+        <div class="macro-manual-builder">
+          <section class="macro-manual-hero">
+            <span class="macro-manual-eyebrow">Alta rápida</span>
+            <h4>Crear alimento manualmente</h4>
+            <div class="macro-manual-base-pill">
+              <span>Base</span>
+              <input id="macro-manual-base" type="number" value="100" />
+              <strong>g</strong>
+            </div>
+          </section>
+
+          <div class="macro-manual-grid" id="meta-inputs">
+            <label class="macro-manual-field">
+              <span class="macro-manual-label">Nombre</span>
+              <input id="macro-manual-name" type="text" placeholder="Ej. Yogur natural proteico" />
+            </label>
+            <label class="macro-manual-field">
+              <span class="macro-manual-label">Marca</span>
+              <input id="macro-manual-brand" type="text" placeholder="Opcional" />
+            </label>
+            <label class="macro-manual-field">
+              <span class="macro-manual-label">Código de barras</span>
+              <input id="macro-manual-barcode" type="text" inputmode="numeric" placeholder="Opcional" />
+            </label>
+          </div>
+
+          <div class="macro-manual-macro-grid" id="macros-inputs">
+            <label class="macro-manual-metric macro-manual-metric-kcal">
+              <span class="macro-manual-metric-label">Kcal</span>
+              <input id="macro-manual-kcal" type="number" value="0" />
+            </label>
+            <label class="macro-manual-metric macro-manual-metric-carbs">
+              <span class="macro-manual-metric-label">Carbs</span>
+              <input id="macro-manual-carbs" type="number" value="0" />
+              
+            </label>
+            <label class="macro-manual-metric macro-manual-metric-protein">
+              <span class="macro-manual-metric-label">Proteína</span>
+              <input id="macro-manual-protein" type="number" value="0" />
+            </label>
+            <label class="macro-manual-metric macro-manual-metric-fat">
+              <span class="macro-manual-metric-label">Grasa</span>
+              <input id="macro-manual-fat" type="number" value="0" />
+            </label>
+          </div>
+
+          <div class="macro-manual-bottom-row">
+            <label class="macro-manual-nutri">
+              <span class="macro-manual-label">Nutri-Score</span>
+              <div class="macro-nutri-segmented" id="macro-manual-nutri-segmented" role="group" aria-label="Nutri-Score manual">
+                <button type="button" class="macro-nutri-option is-active" data-nutri-value="">—</button>
+                <button type="button" class="macro-nutri-option" data-nutri-value="a">A</button>
+                <button type="button" class="macro-nutri-option" data-nutri-value="b">B</button>
+                <button type="button" class="macro-nutri-option" data-nutri-value="c">C</button>
+                <button type="button" class="macro-nutri-option" data-nutri-value="d">D</button>
+                <button type="button" class="macro-nutri-option" data-nutri-value="e">E</button>
+              </div>
+            </label>
+            <button class="macro-btn macro-btn-primary macro-manual-save-btn" id="macro-manual-save" type="button">Guardar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="macro-product-modal-backdrop">
+  <div class="macro-modal macro-product-modal" role="dialog" aria-modal="true" aria-labelledby="macro-product-modal-title">
+    <div class="macro-modal-handle"></div>
+
+    <div class="macro-product-topbar">
+      <button class="macro-icon-btn macro-product-topbar-btn" id="macro-product-modal-close" type="button" aria-label="Cerrar">✕</button>
+      <h3 class="macro-product-topbar-title" id="macro-product-modal-title">Producto</h3>
+      <button class="macro-icon-btn macro-product-topbar-btn" id="macro-product-edit-toggle" type="button">Editar</button>
+    </div>
+
+    <div class="macro-modal-body">
+      <section class="macro-card macro-product-hero-card">
+        <div class="macro-grid macro-grid-2">
+          <label class="macro-field macro-field-span-2">
+            <span class="macro-label">Nombre</span>
+            <input id="macro-product-name" type="text" placeholder="Ej. Arroz a la paella" />
+          </label>
+
+          <label class="macro-field">
+            <span class="macro-label">Marca</span>
+            <input id="macro-product-brand" type="text" placeholder="Opcional" />
+          </label>
+
+          <label class="macro-field macro-product-barcode-field">
+            <span class="macro-label">Código de barras</span>
+            <input id="macro-product-barcode" type="text" inputmode="numeric" placeholder="8410..." />
+          </label>
+        </div>
+
+        <div class="macro-product-hero-visual" aria-hidden="true">
+          <div class="macro-product-donut">
+            <svg class="macro-donut" viewBox="0 0 100 100">
+              <circle class="macro-donut-track" cx="50" cy="50" r="38"></circle>
+              <circle class="macro-donut-seg macro-donut-carbs" id="macro-product-donut-carbs" cx="50" cy="50" r="38"></circle>
+              <circle class="macro-donut-seg macro-donut-protein" id="macro-product-donut-protein" cx="50" cy="50" r="38"></circle>
+              <circle class="macro-donut-seg macro-donut-fat" id="macro-product-donut-fat" cx="50" cy="50" r="38"></circle>
+            </svg>
+            <div class="macro-donut-center">
+              <div class="macro-donut-kcal" id="macro-product-donut-kcal">0</div>
+              <div class="macro-donut-kcal-unit">kcal</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="macro-product-kpis">
+          <div class="macro-kpi macro-kpi-carbs">
+            <div class="macro-kpi-label">Carb.</div>
+            <div class="macro-kpi-value" id="macro-product-kpi-carbs">0g</div>
+          </div>
+          <div class="macro-kpi macro-kpi-protein">
+            <div class="macro-kpi-label">Prot.</div>
+            <div class="macro-kpi-value" id="macro-product-kpi-protein">0g</div>
+          </div>
+          <div class="macro-kpi macro-kpi-fat">
+            <div class="macro-kpi-label">Grasa</div>
+            <div class="macro-kpi-value" id="macro-product-kpi-fat">0g</div>
+          </div>
+          <div class="macro-kpi macro-kpi-kcal">
+            <div class="macro-kpi-label">Kcal</div>
+            <div class="macro-kpi-value" id="macro-product-kpi-kcal">0</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="macro-card macro-product-nutrition-card">
+
+  <div class="macro-section-head">
+    <span class="macro-section-title">Valores nutricionales</span>
+    <span class="macro-chip">Base 100 g</span>
+  </div>
+    <label class="macro-field">
+      <span class="macro-label">Base nutricional</span>
+      <div class="macro-inline-qty">
+        <input id="macro-product-base" type="number" value="100">
+        <select id="macro-product-base-unit" class="macro-select">
+          <option value="g">g</option>
+          <option value="kg">kg</option>
+          <option value="ml">ml</option>
+          <option value="l">l</option>
+          <option value="unit">unidad</option>
+        </select>
+      </div>
+    </label>
+  <div class="macro-grid macro-grid-4" id="valores-nutricionales">
+
+
+
+    <label class="macro-field">
+      <span class="macro-label">Kcal</span>
+      <input id="macro-product-kcal" type="number" placeholder="0" value="">
+    </label>
+
+    <label class="macro-field">
+      <span class="macro-label">Carbs (g)</span>
+      <input id="macro-product-carbs" type="number" step="0.1" placeholder="0" value="">
+    </label>
+
+    <label class="macro-field">
+      <span class="macro-label">Protein (g)</span>
+      <input id="macro-product-protein" type="number" step="0.1" placeholder="0" value="">
+    </label>
+
+    <label class="macro-field">
+      <span class="macro-label">Fat (g)</span>
+      <input id="macro-product-fat" type="number" step="0.1" placeholder="0" value="">
+    </label>
+
+  </div>
+  <label class="macro-field macro-field-span-2 macro-product-nutri-field">
+    <span class="macro-label">Nutri-Score</span>
+    <div class="macro-nutri-segmented" id="macro-product-nutri-segmented" role="group" aria-label="Nutri-Score manual">
+      <button type="button" class="macro-nutri-option is-active" data-nutri-value="">—</button>
+      <button type="button" class="macro-nutri-option" data-nutri-value="a">A</button>
+      <button type="button" class="macro-nutri-option" data-nutri-value="b">B</button>
+      <button type="button" class="macro-nutri-option" data-nutri-value="c">C</button>
+      <button type="button" class="macro-nutri-option" data-nutri-value="d">D</button>
+      <button type="button" class="macro-nutri-option" data-nutri-value="e">E</button>
+    </div>
+  </label>
+
+</section>
+
+      <section class="macro-card macro-add-card macro-product-action-card">
+        <div class="macro-grid macro-grid-1">
+          <label class="macro-field">
+            <span class="macro-label">Cantidad a añadir</span>
+            <div class="macro-inline-qty">
+              <input id="macro-product-grams" type="number" value="100" />
+              <select id="macro-product-grams-unit" class="macro-select">
+                <option value="g">g</option>
+                <option value="kg">kg</option>
+                <option value="ml">ml</option>
+                <option value="l">l</option>
+                <option value="unit">unidad</option>
+              </select>
+            </div>
+          </label>
+          <label class="macro-field">
+            <span class="macro-label">Peso por unidad (opcional)</span>
+            <div class="macro-inline-qty">
+              <input id="macro-product-unit-weight" type="number" step="0.01" min="0" placeholder="Ej. 30" />
+              <select id="macro-product-unit-weight-unit" class="macro-select">
+                <option value="g">g</option>
+                <option value="ml">ml</option>
+              </select>
+            </div>
+            <div class="hint">Si añades en "unidad", se convierte automáticamente usando este valor.</div>
+          </label>
+        </div>
+
+        <div class="macro-summary" id="macro-product-summary">
+          
+        </div>
+        <div class="hint" id="macro-product-price-used">Sin precio disponible</div>
+        <div class="macro-weight-diff-grid" aria-label="Diferencia de peso para cantidad">
+          <label class="macro-field">
+            <span class="macro-label">Peso inicial <span id="macro-product-weight-start-unit">(g)</span></span>
+            <input id="macro-product-weight-start" type="number" step="0.01" placeholder="Ej. 108" />
+          </label>
+          <label class="macro-field">
+            <span class="macro-label">Peso final <span id="macro-product-weight-end-unit">(g)</span></span>
+            <input id="macro-product-weight-end" type="number" step="0.01" placeholder="Ej. 82" />
+          </label>
+        </div>
+        <div class="macro-package-calc-grid" aria-label="Cálculo por unidades de paquete">
+          <label class="macro-field">
+            <span class="macro-label">Peso total paquete (g)</span>
+            <input id="macro-product-pack-weight" type="number" step="0.01" min="0" placeholder="Ej. 125" />
+          </label>
+          <label class="macro-field">
+            <span class="macro-label">Unidades en el paquete</span>
+            <input id="macro-product-pack-units" type="number" step="0.01" min="0" placeholder="Ej. 10" />
+          </label>
+          <label class="macro-field">
+            <span class="macro-label">Cantidad consumida</span>
+            <input id="macro-product-pack-consumed" type="number" step="0.01" min="0" placeholder="Ej. 3" />
+          </label>
+        </div>
+        <div class="hint" id="macro-product-weight-diff-hint"></div>
+      </section>
+
+      <section class="macro-card macro-product-links-card">
+
+<button class="macro-btn macro-btn-ghost" id="macro-product-scan-btn" type="button">Escanear código</button>
+
+ <div class="macro-inline-cost-grid">
+            <label class="macro-field">
+              <span class="macro-label">Tamaño del paquete</span>
+              <input id="macro-product-package-amount" type="number" step="0.01" min="0" placeholder="Ej. 1" />
+            </label>
+            <label class="macro-field">
+              <span class="macro-label">Unidad del paquete</span>
+              <select id="macro-product-package-unit" class="macro-select">
+                <option value="">Sin unidad</option>
+                <option value="g">g</option>
+                <option value="kg">kg</option>
+                <option value="ml">ml</option>
+                <option value="l">l</option>
+                <option value="unit">unidad</option>
+              </select>
+            </label>
+            <label class="macro-field">
+              <span class="macro-label">Precio envase (€)</span>
+              <input id="macro-product-price" type="number" step="0.01" min="0" placeholder="Opcional" />
+            </label>
+          </div>
+          
+        <div class="macro-grid macro-grid-1">
+          
+
+         
+
+
+          <label class="macro-field">
+            <span class="macro-label">Vincular producto de Finanzas</span>
+            <select id="macro-product-finance-select" class="macro-select"></select>
+          </label>
+
+
+          <div class="macro-link-row">
+            <span class="hint" id="macro-product-finance-hint">Sin producto de Finanzas</span>
+            <button class="macro-btn macro-btn-ghost btn-compact" id="macro-product-finance-unlink" type="button">Desvincular</button>
+          </div>
+
+          <label class="macro-field">
+            <span class="macro-label">Vincular a hábito</span>
+            <select id="macro-product-habit-select" class="macro-select"></select>
+          </label>
+
+          <div class="macro-link-row">
+            <span class="hint" id="macro-product-habit-hint">Sin hábito vinculado</span>
+            <button class="macro-btn macro-btn-ghost btn-compact" id="macro-product-habit-unlink" type="button">Desvincular</button>
+          </div>
+
+
+        </div>
+      </section>
+    </div>
+
+    <div class="macro-modal-footer">
+      <button class="macro-btn macro-btn-ghost" id="macro-product-cancel" type="button">Cancelar</button>
+      <button class="macro-btn macro-btn-primary" id="macro-product-add" type="button">Añadir</button>
+    </div>
+  </div>
+</div>
+<!-- MODAL RECETA -->
+<div class="modal-backdrop hidden" id="recipe-modal-backdrop">
+<div class="modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="recipe-modal-title">Nueva receta</div>
+<button class="icon-btn" id="recipe-modal-close">✕</button>
+</div>
+<form class="modal-form" id="recipe-form">
+<input id="recipe-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Datos clave</div>
+<div class="recipe-import">
+<button class="btn ghost btn-compact" id="recipe-import-toggle" type="button">
+    Importar
+  </button>
+<div class="recipe-import-box hidden" id="recipe-import-box">
+<textarea class="builder-textarea recipe-import-text" id="recipe-import-text" placeholder="Pega aquí el bloque RECETA_V1… (desde ChatGPT)" rows="7"></textarea>
+<div class="recipe-import-actions">
+<button class="btn primary btn-compact" id="recipe-import-btn" type="button">Aplicar</button>
+<button class="btn ghost btn-compact" id="recipe-import-clear" type="button">Limpiar</button>
+<div class="recipe-import-status" id="recipe-import-status"></div>
+</div>
+</div>
+</div>
+<label class="field">
+<span class="field-label">Nombre del plato</span>
+<input id="recipe-name" required="" type="text"/>
+</label>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Tipo de comida</span>
+<select id="recipe-meal" required="">
+<option value="desayuno">Desayuno</option>
+<option value="comida">Comida</option>
+<option value="cena">Cena</option>
+<option value="snack">Snack</option>
+</select>
+</label>
+<label class="field">
+<span class="field-label">Saludable</span>
+<select id="recipe-health" required="">
+<option value="sana">Sana</option>
+<option value="equilibrada">Equilibrada</option>
+<option value="insana">Insana</option>
+</select>
+</label>
+</div>
+<label class="field">
+<span class="field-label">Etiquetas (separadas por coma)</span>
+<input id="recipe-tags" placeholder="rápida, horno, pasta..." type="text"/>
+</label>
+<label class="field">
+<span class="field-label">País / origen</span>
+<input id="recipe-country" list="country-options" placeholder="Italia, Perú, Estados Unidos..." type="text"/>
+</label>
+<div class="field recipe-photo-field">
+  <span class="field-label">Foto</span>
+  <div class="recipe-photo-wrap">
+    <img id="recipe-image-preview" class="recipe-photo-preview" alt="Foto de la receta" />
+    <div class="recipe-photo-actions">
+      <button class="btn ghost btn-compact" id="recipe-image-camera" type="button">📷 Cámara</button>
+      <button class="btn ghost btn-compact" id="recipe-image-gallery" type="button">🖼️ Galería</button>
+      <button class="btn ghost danger btn-compact" id="recipe-image-remove" type="button">Quitar</button>
+    </div>
+    <div class="hint recipe-photo-status" id="recipe-image-status"></div>
+    <input id="recipe-image-file" type="file" accept="image/*" hidden />
+  </div>
+</div>
+
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Valoración</span>
+<input id="recipe-rating" max="5" min="0" step="0.5" type="number" value="4"/>
+</label>
+<label class="field">
+<span class="field-label">Última vez cocinada</span>
+<input id="recipe-last-cooked" type="date"/>
+</label>
+</div>
+<label class="field">
+<span class="field-label">Notas</span>
+<textarea id="recipe-notes" placeholder="Notas rápidas, truco o acompañamiento..." rows="3"></textarea>
+</label>
+<div class="form-grid row-2">
+<label class="favorite-toggle">
+<input id="recipe-favorite" type="checkbox"/>
+<span aria-hidden="true" class="favorite-icon">★</span>
+<span>Marcar como favorita</span>
+</label>
+<label class="laura-check">
+<input id="recipe-laura" type="checkbox"/>
+<span aria-hidden="true" class="laura-check-mark"></span>
+<span>Aprobación de Laura</span>
+</label>
+</div>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Receta editable</div>
+<p class="section-hint">Organiza ingredientes y pasos para que aparezcan en el recetario a pantalla completa.</p>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Raciones</span>
+<input id="recipe-servings" min="1" step="1" type="number" value="1"/>
+</label>
+</div>
+<div class="hint" id="recipe-calc-summary">0 kcal · 0.00 €</div>
+<div class="recipe-builder-grid">
+<div class="recipe-builder-column">
+<div class="builder-header">
+<div>
+<div class="builder-title">Ingredientes</div>
+<div class="builder-subtitle">Añade tantos como necesites</div>
+</div>
+<button class="btn ghost btn-compact" id="recipe-add-ingredient" type="button">+ Ingrediente</button>
+</div>
+<div class="recipe-ingredient-picker" id="recipe-ingredient-picker">
+<select id="recipe-ingredient-product" class="builder-input"></select>
+<input id="recipe-ingredient-grams" class="builder-input" type="number" min="0" step="1" value="100"/>
+<button class="btn ghost btn-compact" id="recipe-ingredient-add-product" type="button">Añadir producto</button>
+</div>
+<div class="recipe-ingredients-list" id="recipe-ingredients-list"></div>
+<datalist id="recipe-macro-products-list"></datalist>
+<datalist id="recipe-finance-products-list"></datalist>
+</div>
+<div class="recipe-builder-column">
+<div class="builder-header">
+<div>
+<div class="builder-title">Pasos</div>
+<div class="builder-subtitle">Título y descripción para cada paso</div>
+</div>
+<button class="btn ghost btn-compact" id="recipe-add-step" type="button">+ Paso</button>
+</div>
+<div class="recipe-steps-list" id="recipe-steps-list"></div>
+</div>
+</div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost danger footer-start" id="recipe-delete" type="button">Eliminar</button>
+<button class="btn ghost" id="recipe-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+<!-- RECETARIO A PANTALLA COMPLETA -->
+<div class="recipe-detail-backdrop hidden" id="recipe-detail-backdrop">
+<article aria-modal="true" class="recipe-detail-card" role="dialog">
+<header class="recipe-detail-header">
+<div class="recipe-detail-top">
+<div class="recipe-detail-headings">
+<h2 class="recipe-detail-title" id="recipe-detail-title">Receta</h2>
+<div class="recipe-detail-chips">
+<div class="recipe-detail-chip" id="recipe-detail-meal"></div>
+<div class="recipe-detail-tags" id="recipe-detail-tags"></div>
+</div>
+</div>
+<div class="recipe-detail-actions">
+<button aria-label="Seguimiento" class="icon-btn icon-btn-large recipe-bookmark-btn" id="recipe-detail-bookmark">🔖</button>
+<button aria-label="Cerrar" class="icon-btn icon-btn-large" id="recipe-detail-close">✕</button>
+</div>
+</div>
+<div class="recipe-detail-hero" id="recipe-detail-hero" style="display:none;">
+  <img id="recipe-detail-image" alt="Foto de la receta" loading="lazy" />
+</div>
+<div class="recipe-detail-specs">
+<div class="spec-block">
+<div class="spec-block-title">Datos rápidos</div>
+<div class="spec-grid" id="recipe-detail-meta"></div>
+</div>
+<div class="spec-block">
+<div class="spec-block-title">Datos clave</div>
+<div class="spec-grid spec-grid-secondary" id="recipe-detail-grid"></div>
+</div>
+</div>
+</header>
+<div class="recipe-detail-body">
+<div aria-label="Contenido de la receta" class="recipe-detail-tabbar" id="recipe-detail-tabbar" role="tablist">
+<button aria-selected="true" class="recipe-tab is-active" data-target="ingredients" role="tab" type="button">Ingredientes</button>
+<button aria-selected="false" class="recipe-tab" data-target="steps" role="tab" type="button">Pasos</button>
+</div>
+<section class="recipe-detail-section recipe-detail-panel is-active" data-panel="ingredients" role="tabpanel">
+<div class="section-subtitle">Marca al preparar</div>
+<div class="recipe-detail-ingredients" id="recipe-detail-ingredients"></div>
+</section>
+<section aria-hidden="true" class="recipe-detail-section recipe-detail-panel" data-panel="steps" role="tabpanel">
+<div class="section-subtitle">Solo una lista visible</div>
+<div class="recipe-detail-steps" id="recipe-detail-steps"></div>
+</section>
+<section class="recipe-detail-section recipe-notes-section" id="recipe-detail-notes-wrapper" style="display:none;">
+<div class="spec-block-title">Notas</div>
+<p class="recipe-detail-notes" id="recipe-detail-notes"></p>
+</section>
+</div>
+<div class="recipe-detail-actions-bar">
+<button class="btn primary btn-compact" id="recipe-detail-edit">Editar</button>
+<button class="btn ghost danger btn-compact" id="recipe-detail-delete">Eliminar</button>
+<button class="btn ghost" id="recipe-detail-close-bottom">Cerrar</button>
+</div>
+</article>
+</div>

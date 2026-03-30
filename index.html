@@ -33,6 +33,22 @@
   /* Hard guarantee: solo una vista visible (evita que todo aparezca a la vez si falla JS/CSS) */
   .view{display:none !important;}
   .view.view-active{display:block !important;}
+
+  .version-switch-link{
+    position: fixed;
+    top: calc(env(safe-area-inset-top) + 10px);
+    right: 10px;
+    z-index: 9998;
+    padding: 8px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.16);
+    background: rgba(7,10,18,.72);
+    backdrop-filter: blur(10px);
+    color: #fff;
+    text-decoration: none;
+    font-size: 12px;
+    line-height: 1;
+  }
 </style>
 
 <script>
@@ -155,6 +171,7 @@
 
 </head>
 <body>
+<a class="version-switch-link" href="/beta-clean/index.html" id="version-switch-beta-clean">Probar beta-clean</a>
 <div id="boot-splash" role="status" aria-live="polite" aria-label="Carga inicial de Bookshell">
   <div class="boot-splash-card">
     <div class="boot-splash-title">Bookshell</div>
@@ -3963,6 +3980,18 @@ Crear “<span id="gym-create-cta-text"></span>”
 </div>
 </div>
 </div>
+
+<script>
+  (function () {
+    var link = document.getElementById("version-switch-beta-clean");
+    if (!link) return;
+    link.addEventListener("click", function (event) {
+      event.preventDefault();
+      var hash = window.location.hash || "";
+      window.location.href = "/beta-clean/index.html" + hash;
+    });
+  })();
+</script>
 
 <script>
 /* Bookshell BOOT: fallback de navegación + overlay de errores (no toca tus JS) */

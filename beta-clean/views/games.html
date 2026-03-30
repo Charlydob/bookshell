@@ -1,0 +1,219 @@
+<div class="games-view">
+<div class="games-header">
+<div>
+<div class="games-title">Juegos</div>
+<div class="games-subtitle">Contadores por juego y modo</div>
+</div>
+<button class="btn primary" id="game-add-mode" type="button">+ Añadir modo</button>
+</div>
+<div class="games-tabs" role="tablist" aria-label="Ventanas de juegos">
+<button class="games-tab-btn is-active" id="game-tab-counters" data-games-tab="counters" role="tab" aria-selected="true" type="button">Contadores</button>
+<button class="games-tab-btn" id="game-tab-stats" data-games-tab="stats" role="tab" aria-selected="false" type="button">Estadísticas</button>
+</div>
+<section class="games-stats-card hidden" id="game-stats-card" data-games-panel="stats">
+<div class="games-stats-head">
+<div>
+<div class="games-stats-title">Estadísticas</div>
+<div class="games-stats-sub" id="game-stats-sub">Global</div>
+</div>
+<div class="games-stats-actions">
+<button class="game-menu-btn" id="games-export-btn" type="button">Exportar CSV</button>
+<select id="game-stats-group-filter" class="games-stats-filter"></select>
+</div>
+</div>
+<div class="game-ranges" id="game-stats-ranges">
+<button class="game-range-btn" data-stats-range="day" type="button">Día</button>
+<button class="game-range-btn" data-stats-range="week" type="button">Semana</button>
+<button class="game-range-btn" data-stats-range="month" type="button">Mes</button>
+<button class="game-range-btn" data-stats-range="year" type="button">Año</button>
+<button class="game-range-btn is-active" data-stats-range="total" type="button">Total</button>
+</div>
+<div class="games-stats-totals" id="game-stats-totals">0 partidas · 0W / 0L / 0T</div>
+<div class="games-stats-grid">
+<div class="games-stats-left">
+<div class="games-rank-chips" id="games-rank-chips"></div>
+<div class="games-kpi-panel" id="games-kpi-panel">
+  <div class="games-kpi-row">
+    <span class="kpi kpi-k">K <b id="kpi-k">0</b></span>
+    <span class="kpi kpi-d">D <b id="kpi-d">0</b></span>
+    <span class="kpi kpi-a">A <b id="kpi-a">0</b></span>
+  </div>
+
+  <div class="games-kpi-row games-kpi-row2">
+    <span class="kpi kpi-w">W <b id="kpi-w">0</b></span>
+    <span class="kpi kpi-rf">R+ <b id="kpi-rf">0</b></span>
+    <span class="kpi kpi-ra">R- <b id="kpi-ra">0</b></span>
+  </div>
+</div>
+<div class="games-donut" id="game-stats-donut"></div>
+</div>
+<div class="games-line" id="game-stats-line"></div>
+</div>
+<div class="games-stats-breakdown" id="game-stats-breakdown"></div>
+</section>
+<div class="games-list" id="games-groups-list" data-games-panel="counters"></div>
+<div class="empty-state" id="games-empty">Aún no tienes juegos. Crea tu primer modo.</div>
+</div>
+<div class="modal-backdrop hidden" id="game-mode-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="game-mode-modal-title">Nuevo modo</div>
+<button class="icon-btn" id="game-mode-close" type="button">✕</button>
+</div>
+<form class="modal-form" id="game-mode-form">
+<div class="modal-scroll sheet-body game-modal-scroll">
+<label class="field">
+<span class="field-label">Grupo</span>
+<select id="game-group-choice">
+<option value="existing">Elegir grupo existente</option>
+<option value="new">Crear grupo nuevo</option>
+</select>
+</label>
+<label class="field" id="game-group-existing-wrap">
+<span class="field-label">Grupo existente</span>
+<select id="game-existing-group"></select>
+</label>
+<div class="form-grid row-2" id="game-group-new-wrap" style="display:none;">
+<label class="field">
+<span class="field-label">Nombre del grupo</span>
+<input id="game-group-name" type="text" placeholder="Ej. CS2"/>
+</label>
+<label class="field">
+<span class="field-label">Emoji del grupo</span>
+<input id="game-group-emoji" type="text" maxlength="3" placeholder="🎮"/>
+</label>
+</div>
+<label class="field" id="game-group-habit-wrap" style="display:none;">
+<span class="field-label">Vincular hábito (grupo)</span>
+<select id="game-group-linked-habit"></select>
+</label>
+<label class="field" id="game-group-category-wrap" style="display:none;">
+<span class="field-label">Categoría</span>
+<select id="game-group-category">
+<option value="other">Normal</option>
+<option value="shooter">Shooter</option>
+<option value="sandbox">Sandbox</option>
+</select>
+</label>
+<label class="field" id="game-group-ranktype-wrap" style="display:none;">
+<span class="field-label">Rango</span>
+<select id="game-group-ranktype">
+<option value="none">Sin rango</option>
+<option value="elo">ELO</option>
+<option value="rr">RR (Valorant)</option>
+<option value="days">Días</option>
+</select>
+</label>
+<label class="field" id="game-group-accent-wrap" style="display:none;">
+<span class="field-label">Color accent</span>
+<input id="game-group-accent" type="color" value="#8b5cf6"/>
+</label>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Nombre del modo</span>
+<input id="game-mode-name" required type="text" placeholder="Ej. Premier"/>
+</label>
+<label class="field">
+<span class="field-label">Emoji del modo (opcional)</span>
+<input id="game-mode-emoji" type="text" maxlength="3" placeholder="⚔️"/>
+</label>
+</div>
+<div id="game-mode-rank-base-wrap" style="display:none;">
+<div class="form-grid row-2" id="game-mode-base-elo-wrap" style="display:none;">
+<label class="field">
+<span class="field-label">Base ELO</span>
+<input id="game-mode-base-elo" type="number" step="1" inputmode="numeric" pattern="[0-9]*"/>
+</label>
+</div>
+<div class="form-grid row-3" id="game-mode-base-rr-wrap" style="display:none;">
+<label class="field">
+<span class="field-label">Base tier</span>
+<select id="game-mode-base-tier"></select>
+</label>
+<label class="field">
+<span class="field-label">Base rank</span>
+<select id="game-mode-base-rank"></select>
+</label>
+<label class="field">
+<span class="field-label">Base RR</span>
+<input id="game-mode-base-rr" type="number" min="0" max="100" step="1" inputmode="numeric" pattern="[0-9]*"/>
+</label>
+</div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="game-mode-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+
+<div class="modal-backdrop hidden" id="game-group-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title">Editar grupo</div>
+<button class="icon-btn" id="game-group-close" type="button">✕</button>
+</div>
+<form class="modal-form" id="game-group-form">
+<input id="game-group-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Nombre</span>
+<input id="game-group-edit-name" required type="text"/>
+</label>
+<label class="field">
+<span class="field-label">Emoji</span>
+<input id="game-group-edit-emoji" maxlength="3" type="text"/>
+</label>
+</div>
+<label class="field">
+<span class="field-label">Vincular hábito</span>
+<select id="game-group-edit-habit"></select>
+</label>
+<label class="field">
+<span class="field-label">Categoría</span>
+<select id="game-group-edit-category">
+<option value="other">Normal</option>
+<option value="shooter">Shooter</option>
+<option value="sandbox">Sandbox</option>
+</select>
+</label>
+<label class="field">
+<span class="field-label">Rango</span>
+<select id="game-group-edit-ranktype">
+<option value="none">Sin rango</option>
+<option value="elo">ELO</option>
+<option value="rr">RR (Valorant)</option>
+<option value="days">Días</option>
+</select>
+</label>
+<label class="field">
+<span class="field-label">Color accent</span>
+<input id="game-group-edit-accent" type="color" value="#8b5cf6"/>
+</label>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="game-group-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+
+<div class="modal-backdrop hidden" id="game-detail-modal">
+<div class="modal habit-modal game-detail-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="game-detail-title">Detalle modo</div>
+<button class="icon-btn" id="game-detail-close" type="button">✕</button>
+</div>
+<div class="modal-scroll sheet-body game-detail-body" id="game-detail-body"></div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="game-detail-cancel" type="button">Cerrar</button>
+</div>
+</div>
+</div>

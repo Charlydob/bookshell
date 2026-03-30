@@ -1,0 +1,233 @@
+<div class="media-wrapper">
+  <div class="media-head">
+    <div class="media-head-left">
+      <div class="media-title">Pantalla</div>
+      <div class="media-sub"></div>
+    </div>
+
+    <div class="media-viewbar" role="group" aria-label="Vista">
+      <button class="media-viewbtn is-active" data-media-view="list" type="button">Lista</button>
+      <button class="media-viewbtn" data-media-view="charts" type="button">Gráficos</button>
+      <button class="media-viewbtn" data-media-view="map" type="button">Mapa</button>
+    </div>
+    <button class="btn ghost btn-compact" id="media-start-session" type="button">▶ Iniciar sesión</button>
+  </div>
+
+  <div class="media-filters">
+    <div class="media-filter-row">
+      <input id="media-search" class="filter-search-input" type="search" inputmode="search" placeholder="Buscar título, género, país, actor, director…" autocomplete="off" />
+    </div>
+
+    <div class="media-type-pills" id="media-type-pills" aria-label="Tipo">
+      <button class="media-pill is-active" data-type="all" type="button">Todo</button>
+      <button class="media-pill" data-type="movie" type="button">Pelis</button>
+      <button class="media-pill" data-type="series" type="button">Series</button>
+      <button class="media-pill" data-type="anime" type="button">Anime</button>
+    </div>
+
+    <div class="media-filters-slot"></div>
+  </div>
+
+  <input class="media-modal-toggle" hidden id="media-add-toggle" type="checkbox" />
+  <label class="media-fab" id="media-fab-add" for="media-add-toggle" role="button" aria-label="Añadir">＋</label>
+
+  <div class="media-modal media-add-modal" aria-hidden="true">
+    <label class="media-modal-backdrop" for="media-add-toggle" aria-label="Cerrar"></label>
+
+    <div class="media-modal-sheet" role="dialog" aria-modal="true" aria-label="Añadir título">
+      <div class="media-modal-head">
+        <div class="media-modal-headtext">
+          <div class="media-modal-title">Añadir título</div>
+          <div class="media-modal-sub">Ficha rápida, datos sólidos.</div>
+        </div>
+        <label class="media-modal-close" for="media-add-toggle" role="button" title="Cerrar">✕</label>
+      </div>
+
+      <div class="media-modal-body">
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">Meta</div>
+          <label class="media-modal-field">
+            <span>Título</span>
+            <div class="media-title-row">
+              <input id="media-title" class="media-input" placeholder="Añadir título…" autocomplete="off" />
+              <button class="btn ghost btn-compact" id="media-autofill-btn" type="button" disabled>Autocompletar</button>
+            </div>
+          </label>
+          <div class="media-autocomplete-results" id="media-autofill-results" aria-live="polite"></div>
+
+          <div class="media-modal-grid media-modal-grid--meta">
+            <label class="media-modal-field">
+              <span>Tipo</span>
+              <select id="media-type" class="media-input">
+                <option value="movie">Peli</option>
+                <option value="series">Serie</option>
+                <option value="anime">Anime</option>
+              </select>
+            </label>
+
+            <label class="media-modal-field">
+              <span>Año</span>
+              <input id="media-year" class="media-input" type="number" inputmode="numeric" placeholder="Ej: 2024" />
+            </label>
+
+            <label class="media-modal-field">
+              <span>Origen</span>
+              <input id="media-country" class="media-input" list="country-options" placeholder="Ej: España" autocomplete="off" />
+            </label>
+          </div>
+        </section>
+
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">Detalles</div>
+
+          <details class="media-modal-accordion" open>
+            <summary>Géneros</summary>
+            <div class="media-modal-accordion-body">
+              <input id="media-genres" class="media-input" placeholder="acción, drama…" autocomplete="off" />
+              <div class="media-chip-preview" id="media-add-genres-preview"></div>
+            </div>
+          </details>
+
+          <details class="media-modal-accordion">
+            <summary>Director</summary>
+            <div class="media-modal-accordion-body">
+              <input id="media-director" class="media-input" placeholder="Opcional" autocomplete="off" />
+            </div>
+          </details>
+
+          <details class="media-modal-accordion">
+            <summary>Reparto</summary>
+            <div class="media-modal-accordion-body">
+              <input id="media-cast" class="media-input" placeholder="Opcional" autocomplete="off" />
+              <div class="media-chip-preview" id="media-add-cast-preview"></div>
+            </div>
+          </details>
+        </section>
+
+        <section class="media-modal-section" id="media-add-progress-section">
+          <div class="media-modal-section-title">Progreso</div>
+          <div class="media-modal-grid" id="media-seasonep">
+            <label class="media-modal-field">
+              <span>Temporada</span>
+              <input id="media-season" class="media-input" type="number" inputmode="numeric" placeholder="1" />
+            </label>
+            <label class="media-modal-field">
+              <span>Capítulo</span>
+              <input id="media-episode" class="media-input" type="number" inputmode="numeric" placeholder="1" />
+            </label>
+          </div>
+        </section>
+
+        <section class="media-modal-section">
+          <div class="media-modal-section-title">Vistas</div>
+          <div class="media-modal-toggles">
+            <label class="media-check">
+              <input id="media-watchlist" type="checkbox" />
+              <span>Watchlist</span>
+            </label>
+            <label class="media-check">
+              <input id="media-with-laura" type="checkbox" />
+              <span>Laura</span>
+            </label>
+            <label class="media-check">
+              <select id="media-rating" class="media-input media-input-compact">
+                <option value="0">0</option><option value="1">1</option><option value="2">2</option>
+                <option value="3">3</option><option value="4">4</option><option value="5">5</option>
+              </select>
+              <span>Rating</span>
+            </label>
+          </div>
+
+          <div class="media-watch-row">
+            <button class="btn ghost btn-compact" id="media-add-watchtoday" type="button">Visto hoy</button>
+            <div class="media-watch-meta" id="media-add-watch-meta">Se guardará como visto hoy.</div>
+          </div>
+        </section>
+      </div>
+
+      <div class="media-modal-foot">
+        <button class="btn ghost" id="media-add-cancel" type="button">Cancelar</button>
+        <button class="btn primary" id="media-add-confirm" type="button">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <section class="media-chart-card" id="media-chart-card" style="display:none">
+    <div class="media-chart-head">
+      <div>
+        <div class="media-chart-title">Distribución</div>
+        <div class="media-chart-sub" id="media-chart-sub">Top 16 (sin “otros”).</div>
+      </div>
+
+      <label class="chart-selector" for="media-chart-selector">
+        <span>Ver por</span>
+        <select class="chart-selector-input" id="media-chart-selector">
+          <option value="type" selected>Tipo</option>
+          <option value="genre">Género</option>
+          <option value="country">País</option>
+          <option value="actor">Actor</option>
+          <option value="director">Director</option>
+          <option value="year">Año</option>
+        </select>
+      </label>
+      <label class="chart-selector media-actor-filter" id="media-actor-filter" for="media-actor-filter-select" style="display:none">
+        <span>Actor/Actriz</span>
+        <select class="chart-selector-input" id="media-actor-filter-select">
+          <option value="all" selected>Todos</option>
+          <option value="male">Actores</option>
+          <option value="female">Actrices</option>
+        </select>
+      </label>
+    </div>
+    <div class="media-donut-host" id="media-donut"></div>
+
+    <details class="media-legend" id="media-legend" open>
+      <summary class="media-legend-summary">
+        <span>Desglose</span>
+        <span class="media-legend-meta" id="media-legend-meta">0</span>
+      </summary>
+      <div class="media-legend-body">
+        <div class="media-legend-search">
+          <input id="media-legend-search" class="media-input" type="search" placeholder="Buscar en desglose..." autocomplete="off" />
+        </div>
+        <div class="media-legend-list" id="media-donut-legend"></div>
+        <button class="btn ghost media-legend-more" id="media-legend-more" type="button" style="display:none">Mostrar más</button>
+      </div>
+    </details>
+
+    <div class="empty-state small" id="media-chart-empty" style="display:none">Aún no hay datos.</div>
+  </section>
+
+  <section class="media-geo" id="media-map-card" style="display:none">
+    <div class="geo-header">
+      <div>
+        <div class="geo-title">Mapa (origen)</div>
+        <div class="geo-subtitle">Intensidad según número de títulos</div>
+      </div>
+    </div>
+
+    <div class="geo-map" id="media-world-map"></div>
+
+    <details class="geo-list" id="media-country-panel">
+      <summary class="geo-list-summary">Países y número de títulos</summary>
+      <div class="geo-list-body" id="media-country-list"></div>
+    </details>
+
+    <div class="media-geo-hint" id="media-map-hint" style="display:none"></div>
+  </section>
+
+  <section class="media-list-card" id="media-list-card">
+    <div class="media-list-head">
+      <div class="media-list-title">Listado</div>
+      <div class="media-list-meta" id="media-count">0</div>
+    </div>
+    <div class="media-list-actions" id="media-list-actions" style="display:none">
+      <button class="btn ghost btn-compact" id="media-bulk-autofill" type="button">Autocompletar todos (en lote)</button>
+    </div>
+
+    <div class="media-list" id="media-list">
+      <div class="media-list-spacer" id="media-list-spacer"></div>
+      <div class="media-list-items" id="media-list-items"></div>
+    </div>
+  </section>
+</div>

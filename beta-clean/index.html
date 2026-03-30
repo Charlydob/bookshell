@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Bookshell</title>
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+  />
+  <meta name="theme-color" content="#05060a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Bookshell" />
+  <link rel="stylesheet" href="./styles/core/base.css" />
+  <link rel="stylesheet" href="./styles/core/shell.css" />
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+
+  <style>
+    .view {
+      display: none !important;
+    }
+
+    .view.view-active {
+      display: block !important;
+    }
+
+    .version-switch-link {
+      position: fixed;
+      top: calc(env(safe-area-inset-top) + 10px);
+      right: 10px;
+      z-index: 9998;
+      padding: 8px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(7,10,18,.72);
+      backdrop-filter: blur(10px);
+      color: #fff;
+      text-decoration: none;
+      font-size: 12px;
+      line-height: 1;
+    }
+  </style>
+
+  <script>
+    (function () {
+      var isStandalone = false;
+      try {
+        isStandalone = !!(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+      } catch (e) {}
+      var isIOSStandalone = !!window.navigator.standalone;
+      if (isStandalone || isIOSStandalone) {
+        document.documentElement.classList.add("is-standalone");
+      }
+    })();
+  </script>
+
+  <style id="boot-splash-style">
+    body.boot-loading { overflow: hidden; background: #05060a; }
+    #boot-splash {
+      position: fixed; inset: 0; z-index: 1000000;
+      display: grid; place-items: center;
+      padding: max(env(safe-area-inset-top), 20px) 20px max(env(safe-area-inset-bottom), 20px);
+      background: radial-gradient(1200px 600px at 50% -20%, rgba(89, 163, 255, .16), transparent 68%), #05060a;
+      color: #e8edf9;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      transition: opacity .28s ease, visibility .28s ease;
+    }
+    #boot-splash.boot-splash-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+    .boot-splash-card { width: min(360px, 92vw); display: grid; gap: 12px; }
+    .boot-splash-title { font-size: 17px; font-weight: 700; letter-spacing: .01em; }
+    .boot-splash-status { font-size: 13px; opacity: .88; min-height: 1.4em; }
+    .boot-splash-progress { height: 4px; border-radius: 999px; background: rgba(255,255,255,.14); overflow: hidden; }
+    .boot-splash-progress > i { display: block; height: 100%; width: 20%; border-radius: inherit; background: linear-gradient(90deg, #8ab8ff, #5b90ff); transform-origin: 0 50%; transform: scaleX(.08); transition: transform .32s ease; }
+    .boot-splash-note { font-size: 12px; color: #ffcd7a; opacity: 0; transition: opacity .2s ease; min-height: 1.3em; }
+    #boot-splash[data-slow='1'] .boot-splash-note { opacity: .95; }
+  </style>
+
+  <script>
+    (function () {
+      var splash, statusEl, progressEl;
+      var value = 0;
+      var timer = null;
+      var done = false;
+      var phases = [
+        { at: 0, text: 'Inicializando…' },
+        { at: 24, text: 'Conectando…' },
+        { at: 52, text: 'Cargando datos…' },
+        { at: 76, text: 'Preparando interfaz…' }
+      ];
+
+      function ensure() {
+        if (splash) return true;
+        splash = document.getElementById('boot-splash');
+        if (!splash) return false;
+        statusEl = splash.querySelector('[data-role="status"]');
+        progressEl = splash.querySelector('[data-role="bar"]');
+        return true;
+      }
+
+      function apply() {
+        if (!ensure()) return;
+        if (progressEl) {
+          var clamped = Math.max(0, Math.min(100, value));
+          progressEl.style.transform = 'scaleX(' + (clamped / 100) + ')';
+        }
+        if (statusEl) {
+          for (var i = phases.length - 1; i >= 0; i--) {
+            if (value >= phases[i].at) { statusEl.textContent = phases[i].text; break; }
+          }
+        }
+      }
+
+      function tick() {
+        if (done) return;
+        var target = value < 60 ? 82 : 93;
+        value += (target - value) * 0.12 + 0.35;
+        if (value > 94) value = 94;
+        apply();
+        timer = window.setTimeout(tick, 140);
+      }
+
+      function setPhase(text, hintValue) {
+        if (typeof hintValue === 'number') value = Math.max(value, hintValue);
+        apply();
+        if (ensure() && statusEl && text) statusEl.textContent = text;
+      }
+
+      function finish() {
+        if (done) return;
+        done = true;
+        window.clearTimeout(timer);
+        value = 100;
+        apply();
+        if (!ensure()) return;
+        splash.classList.add('boot-splash-hidden');
+        document.body.classList.remove('boot-loading');
+        window.setTimeout(function () { splash.remove(); }, 360);
+      }
+
+      function markSlow() {
+        if (!ensure()) return;
+        splash.dataset.slow = '1';
+      }
+
+      window.__bookshellBootSplash = { setPhase: setPhase, done: finish, markSlow: markSlow };
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function () {
+          document.body.classList.add('boot-loading');
+          tick();
+          window.setTimeout(markSlow, 9000);
+        }, { once: true });
+      } else {
+        document.body.classList.add('boot-loading');
+        tick();
+        window.setTimeout(markSlow, 9000);
+      }
+    })();
+  </script>
+</head>
+<body>
+  <a class="version-switch-link" href="/index.html" id="version-switch-beta">Volver a beta</a>
+  <div id="boot-splash" role="status" aria-live="polite" aria-label="Carga inicial de Bookshell">
+    <div class="boot-splash-card">
+      <div class="boot-splash-title">Bookshell</div>
+      <div class="boot-splash-status" data-role="status">Inicializando…</div>
+      <div class="boot-splash-progress" aria-hidden="true"><i data-role="bar"></i></div>
+      <div class="boot-splash-note">La carga está tardando más de lo normal…</div>
+    </div>
+  </div>
+
+  <header class="app-header">
+    <div class="header-title"></div>
+  </header>
+
+  <section class="view view-active" id="view-books" aria-hidden="false" data-module-view="books"></section>
+
+  <section class="view" id="view-videos" aria-hidden="true">
+    <div class="empty-state">
+      Vista base de videos lista para migracion controlada.
+    </div>
+  </section>
+
+  <section class="view" id="view-videos-hub" aria-hidden="true" data-module-view="videos-hub"></section>
+
+  <section class="view" id="view-recipes" aria-hidden="true" data-module-view="recipes"></section>
+
+  <section class="view" id="view-habits" aria-hidden="true" data-module-view="habits"></section>
+
+  <section class="view" id="view-games" aria-hidden="true" data-module-view="games"></section>
+
+  <section class="view" id="view-media" aria-hidden="true" data-module-view="media"></section>
+
+  <section class="view" id="view-world" aria-hidden="true" data-module-view="world"></section>
+
+  <section class="view" id="view-finance" aria-hidden="true" data-module-view="finance"></section>
+
+  <section class="view view-gym" id="view-gym" aria-hidden="true" data-module-view="gym"></section>
+
+  <nav class="bottom-nav" aria-label="Navegacion principal">
+    <button class="nav-btn nav-btn-active" data-view="view-books" aria-current="page" type="button">📖</button>
+    <button class="nav-btn" data-view="view-videos" type="button">📹</button>
+    <button class="nav-btn" data-view="view-videos-hub" title="Videos Hub" aria-label="Videos Hub" type="button">🎬</button>
+    <button class="nav-btn" data-view="view-recipes" type="button">🍳</button>
+    <button class="nav-btn" data-view="view-habits" type="button">✅</button>
+    <button class="nav-btn" data-view="view-games" title="Juegos" aria-label="Juegos" type="button">🎮</button>
+    <button class="nav-btn" data-view="view-media" type="button">🎞️</button>
+    <button class="nav-btn" data-view="view-world" type="button">🌍</button>
+    <button class="nav-btn" data-view="view-finance" title="Cuentas" aria-label="Cuentas" type="button">$</button>
+    <button class="nav-btn" data-view="view-gym" type="button">🏋️</button>
+  </nav>
+
+  <datalist id="country-options"></datalist>
+
+  <script>
+    (function () {
+      var link = document.getElementById("version-switch-beta");
+      if (!link) return;
+      link.addEventListener("click", function (event) {
+        event.preventDefault();
+        var hash = window.location.hash || "";
+        window.location.href = "/index.html" + hash;
+      });
+    })();
+  </script>
+
+  <script type="module" src="./scripts/app/main.js"></script>
+</body>
+</html>

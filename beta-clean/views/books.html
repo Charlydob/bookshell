@@ -1,0 +1,344 @@
+<!-- STATS + CALENDARIO DE LIBROS (ANTES ESTABA EN view-stats) -->
+<div class="stats-wrapper">
+<div class="stats-cards">
+<div class="stat-card">
+<div class="stat-label">Racha actual</div>
+<div class="stat-value" id="stat-streak-current">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">Mejor racha</div>
+<div class="stat-value" id="stat-streak-best">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">Páginas hoy</div>
+<div class="stat-value" id="stat-today-pages">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">Páginas totales</div>
+<div class="stat-value" id="stat-pages-total">0</div>
+</div>
+<div class="stat-card stat-card-clickable" id="stat-books-read-card">
+<div class="stat-label stat-label-row">
+<span>Libros leídos</span>
+<select aria-label="Rango libros leídos" class="stat-range-select" id="stat-books-read-range">
+<option selected="" value="total">Total</option>
+<option value="month">Mes</option>
+<option value="year">Año</option>
+<option value="week">Semana</option>
+</select>
+</div>
+<div class="stat-value" id="stat-books-read">0</div>
+</div>
+</div>
+<div class="calendar-section">
+<div class="calendar-header">
+<div class="calendar-nav">
+<button class="icon-btn" id="cal-prev">&lt;</button>
+<div class="cal-label" id="cal-label"></div>
+<button class="icon-btn" id="cal-next">&gt;</button>
+</div>
+<select aria-label="Vista del calendario" class="calendar-view-select" id="cal-view-mode">
+<option selected="" value="month">Mes</option>
+<option value="year">Año</option>
+</select>
+</div>
+<div class="calendar-summary" id="calendar-summary"></div>
+<div class="calendar-grid" id="calendar-grid">
+<!-- Calendario por JS -->
+</div>
+<div class="calendar-legend">
+<span class="dot dot-normal"></span> Páginas leídas
+              <span class="dot dot-streak"></span> Día de racha
+              <span class="dot dot-finished"></span> Libro terminado
+            </div>
+</div>
+</div>
+<!-- TOOLBAR + LISTA LIBROS -->
+<div class="books-toolbar">
+<button class="btn primary" id="btn-add-book">+ Añadir libro</button>
+<button class="btn ghost btn-compact" id="books-start-session" type="button">▶ Iniciar sesión</button>
+</div>
+<div class="books-filters is-collapsed" id="books-filters">
+<div class="books-filters-header" id="books-filters-header">
+<div class="filter-row filter-search-row">
+<label class="field-label" for="books-filter-search">Buscar</label>
+<input autocomplete="off" class="filter-search-input" id="books-filter-search" inputmode="search" placeholder="Título, autor, categoría, idioma o siglo" type="search"/>
+</div>
+<button aria-controls="books-filters-body" aria-expanded="false" class="filters-toggle-btn" id="books-filters-toggle" type="button">
+<span class="filters-toggle-text">Mostrar filtros</span>
+<span aria-hidden="true" class="filters-toggle-icon">⌄</span>
+</button>
+</div>
+<div class="books-filters-body" id="books-filters-body">
+
+  <div class="filter-row">
+
+    <div class="filter-label">Filtros rápidos</div> 
+    <div aria-label="Filtros dinámicos" class="filter-chip-groups" id="books-filter-chips"></div>
+
+  </div>
+
+<div class="filter-row filter-toggles">
+  <label class="toggle-pill">
+  <input id="books-filter-pending" type="checkbox"/>
+  <span>Solo pendientes</span>
+</label>
+<label class="toggle-pill">
+<input id="books-filter-finished" type="checkbox"/>
+<span>Solo terminados</span>
+</label>
+</div>
+</div>
+</div>
+<details class="books-watchlist" id="books-watchlist" style="display:none;">
+<summary class="watchlist-summary">
+<div>
+<div class="watchlist-title">Watchlist</div>
+<div class="watchlist-subtitle"></div>
+</div>
+<div class="watchlist-summary-meta">
+<span class="watchlist-count" id="books-watchlist-count">0</span>
+<span aria-hidden="true" class="watchlist-caret">⌄</span>
+</div>
+</summary>
+<div class="watchlist-body">
+<div class="watchlist-empty" id="books-watchlist-empty" style="display:none;">
+              No tienes libros pendientes ahora mismo.
+            </div>
+<div class="watchlist-list" id="books-watchlist-list"></div>
+</div>
+</details>
+<div class="books-list" id="books-list">
+<!-- Se rellenan las tarjetas por JS -->
+</div>
+<div class="empty-state" id="books-filter-empty" style="display:none;">
+          No hay libros que coincidan con los filtros.
+        </div>
+<details class="books-finished" id="books-finished-section" style="display:none;">
+<summary class="books-finished-summary">
+<span>Terminados</span>
+<span class="books-finished-count" id="books-finished-count">0</span>
+</summary>
+<div class="books-shelf-toolbar">
+<label class="field-label shelf-search-label" for="books-shelf-search">Buscar en la estantería</label>
+<input class="shelf-search-input" id="books-shelf-search" placeholder="Título, autor, idioma, categoría..." type="search"/>
+<div class="books-shelf-results" id="books-shelf-results"></div>
+</div>
+<div class="books-shelf-empty" id="books-shelf-empty" style="display:none;">
+    No hay libros que coincidan con la búsqueda.
+  </div>
+<div class="books-list-finished" id="books-list-finished"></div>
+</details>
+<section class="geo-section" id="books-geo-section" style="display:none;">
+<div class="geo-card">
+<div class="geo-header">
+<div>
+<div class="geo-title">Mapa de libros</div>
+<div class="geo-subtitle">Intensidad según número de libros</div>
+</div>
+</div>
+<div class="geo-map" id="books-world-map"></div>
+<details aria-label="Listado de países (libros)" class="geo-list" id="books-country-panel">
+<summary class="geo-list-summary">Países y número de libros</summary>
+<div class="geo-list-body" id="books-country-list"></div>
+</details>
+</div>
+</section>
+<section class="books-charts" id="books-charts-section" style="display:none;">
+<div class="chart-card">
+<div class="chart-card-header">
+<div class="chart-card-title" id="books-chart-title">Categoría</div>
+<label class="chart-selector" for="books-chart-selector">
+<span>Ver por</span>
+<select class="chart-selector-input" id="books-chart-selector">
+<option selected="" value="genre">Categoría</option>
+<option value="author">Autor</option>
+<option value="language">Idioma</option>
+<option value="century">Siglo</option>
+</select>
+</label>
+</div>
+<div class="donut-host" id="chart-active"></div>
+</div>
+</section>
+<div class="empty-state" id="books-empty">
+          Aún no has añadido ningún libro.
+        </div>
+<div class="modal-backdrop hidden" id="book-modal-backdrop">
+<div class="modal videosWorkspace__modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="book-modal-title">Nuevo libro</div>
+<button class="icon-btn" id="book-modal-close">✕</button>
+</div>
+<form class="modal-form" id="book-form">
+<input id="book-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Detalles</div>
+<div class="field">
+<span class="field-label">ISBN</span>
+<div class="isbn-input-row">
+<input autocomplete="off" id="book-isbn" inputmode="numeric" placeholder="978..." type="text"/>
+<button class="btn ghost btn-compact" id="book-isbn-search" type="button">Buscar</button>
+</div>
+<div class="isbn-status" id="book-isbn-status">Autocompleta título, autor, año y páginas.</div>
+<div class="isbn-results" id="book-isbn-results" style="display:none;"></div>
+</div>
+<label class="field">
+<span class="field-label">Título</span>
+<input id="book-title" required="" type="text"/>
+</label>
+<label class="favorite-toggle">
+<input id="book-favorite" type="checkbox"/>
+<span aria-hidden="true" class="favorite-icon">★</span>
+<span>Marcar como favorito</span>
+</label>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Autor</span>
+<input id="book-author" type="text"/>
+</label>
+<label class="field">
+<span class="field-label">Año</span>
+<input id="book-year" inputmode="numeric" type="number"/>
+</label>
+</div>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Categoría</span>
+<div class="field-inline">
+<select aria-label="Categoría" id="book-genre">
+<option value="">—</option>
+</select>
+<button aria-label="Eliminar categoría" class="icon-btn genre-remove-btn" id="genre-remove-btn" type="button">−</button>
+<button aria-label="Añadir categoría" class="icon-btn genre-add-btn" id="genre-add-btn" type="button">+</button>
+</div>
+</label>
+<label class="field">
+<span class="field-label">Idioma</span>
+<input id="book-language" type="text"/>
+</label>
+</div>
+<label class="field">
+<span class="field-label">País / origen</span>
+<input id="book-country" list="country-options" placeholder="España, México, Estados Unidos..." type="text"/>
+</label>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Progreso</div>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">N.º páginas</span>
+<input id="book-pages" inputmode="numeric" min="1" required="" type="number"/>
+</label>
+<label class="field">
+<span class="field-label">Página actual</span>
+<input id="book-current-page" inputmode="numeric" min="0" type="number" value="0"/>
+</label>
+</div>
+<label class="field">
+<span class="field-label">Estado</span>
+<select id="book-status">
+<option value="reading">Leyendo</option>
+<option value="planned">Pendiente</option>
+<option value="finished">Terminado</option>
+</select>
+</label>
+<label class="field checkbox-field">
+<div class="checkbox-field-row">
+<div>
+<div class="checkbox-field-title">Leído en el pasado</div>
+<div class="checkbox-field-hint">No registrará fecha de finalización</div>
+</div>
+<input id="book-finished-past" type="checkbox"/>
+</div>
+</label>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="book-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+<!-- FICHA LIBRO -->
+<div class="modal-backdrop hidden" id="book-detail-backdrop">
+<div class="modal book-detail-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="book-detail-title">Ficha del libro</div>
+<button class="icon-btn" id="book-detail-close">✕</button>
+</div>
+<div class="modal-body book-detail-body">
+<div class="book-detail-top">
+<label class="favorite-toggle">
+<input id="book-detail-favorite" type="checkbox"/>
+<span aria-hidden="true" class="favorite-icon">★</span>
+<span>Favorito</span>
+</label>
+<div class="book-detail-status" id="book-detail-status"></div>
+</div>
+<div class="spec-block compact">
+<div class="spec-block-title">Datos rápidos</div>
+<div class="spec-grid">
+<div class="spec-item">
+<span class="spec-label">Autor</span>
+<div class="spec-value" id="book-detail-author">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Año</span>
+<div class="spec-value" id="book-detail-year">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Siglo</span>
+<div class="spec-value" id="book-detail-century">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Género</span>
+<div class="spec-value" id="book-detail-genre">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Idioma</span>
+<div class="spec-value" id="book-detail-language">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">País</span>
+<div class="spec-value" id="book-detail-country">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Páginas</span>
+<div class="spec-value" id="book-detail-pages">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Progreso</span>
+<div class="spec-value" id="book-detail-progress">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Finalizado</span>
+<div class="spec-value" id="book-detail-finished">—</div>
+</div>
+<div class="spec-item spec-notes">
+<span class="spec-label">Notas</span>
+<div class="spec-value" id="book-detail-notes">Sin notas</div>
+</div>
+</div>
+</div>
+<details class="book-detail-quotes" id="book-detail-quotes" open>
+<summary>
+<span>Citas asociadas</span>
+<span class="books-finished-count" id="book-detail-quotes-count">0</span>
+</summary>
+<div class="book-detail-quotes-panel">
+<input class="book-detail-quotes-search" id="book-detail-quotes-search" type="search" placeholder="Buscar por texto o página"/>
+<div class="book-detail-quotes-body" id="book-detail-quotes-body"></div>
+</div>
+</details>
+</div>
+<div class="modal-footer book-detail-footer sticky-footer">
+<button class="btn primary btn-compact" id="book-detail-edit" type="button">Editar</button>
+<button class="btn ghost" id="book-detail-close-btn" type="button">Cerrar</button>
+</div>
+</div>
+</div>

@@ -1,0 +1,290 @@
+<div class="gym-wrap scroll">
+  <div class="gym-screen gym-screen-active" id="gym-main-view">
+    <div class="gym-hero">
+      <div>
+        <div class="gym-title">Gym</div>
+        <div class="gym-subtitle"></div>
+      </div>
+      <div class="gym-hero-actions">
+        <button class="gym-btn gym-btn-ghost" id="gym-open-stats" type="button">📊</button>
+        <button class="gym-btn gym-btn-ghost" id="gym-start-session" type="button">▶ Iniciar sesión</button>
+      </div>
+    </div>
+
+    <div class="gym-section">
+      <div class="gym-section-header">
+        <div class="gym-section-title">Workouts</div>
+        <select class="gym-select" id="gym-history-range">
+          <option value="all">Todo el tiempo</option>
+        </select>
+      </div>
+      <button class="gym-btn gym-btn-primary" id="gym-start-workout" type="button">Empezar un entrenamiento vacío</button>
+    </div>
+
+    <div class="gym-section">
+      <div class="gym-card gym-bodyweight-card">
+        <label class="gym-field">
+          <span>Fecha</span>
+          <input id="gym-body-date" type="date" />
+        </label>
+        <div class="gym-body-grid">
+          <label class="gym-field">
+            <span>Peso (kg)</span>
+            <input id="gym-body-weight" inputmode="decimal" placeholder="Ej: 72.5 Kg" type="text" />
+          </label>
+          <label class="gym-field">
+            <span>Altura (cm)</span>
+            <input id="gym-body-height" inputmode="numeric" placeholder="Ej: 178 cm" type="text" />
+          </label>
+        </div>
+        <div class="gym-body-meta" id="gym-body-meta">Registra tu peso y altura para usarlo en los sets.</div>
+      </div>
+    </div>
+
+    <div class="gym-section">
+      <div class="gym-section-header">
+        <div class="gym-section-title">Historial</div>
+      </div>
+      <div class="gym-calendar">
+        <div class="gym-calendar-header">
+          <button class="icon-btn icon-btn-small" id="gym-cal-prev" type="button">‹</button>
+          <div class="gym-calendar-title" id="gym-cal-label"></div>
+          <button class="icon-btn icon-btn-small" id="gym-cal-next" type="button">›</button>
+        </div>
+        <div class="gym-calendar-grid" id="gym-calendar-grid"></div>
+      </div>
+      <div class="gym-history-list" id="gym-history-list"></div>
+      <div class="gym-empty hidden" id="gym-history-empty">Aún no tienes entrenamientos registrados.</div>
+    </div>
+  </div>
+
+  <div class="gym-screen" id="gym-session-view">
+    <div class="gym-workout-header gym-header">
+      <button class="icon-btn icon-btn-small" id="gym-back" type="button">‹</button>
+      <div class="gym-workout-title">
+        <div class="gym-workout-name-row">
+          <input class="gym-title" id="gym-workout-name" placeholder="Nombre del entrenamiento" type="text" />
+          <button class="gym-emoji-btn" id="gym-workout-emoji" type="button" aria-label="Editar emoji de sesión">🙂</button>
+        </div>
+        <input class="gym-date" id="gym-workout-date" type="date" />
+      </div>
+      <button class="gym-btn gym-btn-primary" id="gym-finish-workout" type="button">Finalizar</button>
+    </div>
+    <div class="gym-metrics">
+      <div class="gym-metric">
+        <div class="gym-metric-label">Duración</div>
+        <div class="gym-metric-value" id="gym-metric-duration">
+          <span class="gym-metric-main" id="gym-metric-duration-main">0m</span>
+          <span class="gym-metric-pr" id="gym-metric-duration-pr" hidden>🏆</span>
+        </div>
+        <div class="gym-metric-sub" id="gym-metric-duration-sub">—</div>
+        <div class="gym-metric-progress" id="gym-metric-duration-progress" aria-hidden="true">
+          <span class="gym-metric-bar" id="gym-metric-duration-bar"></span>
+        </div>
+      </div>
+      <div class="gym-metric">
+        <div class="gym-metric-label">Volumen</div>
+        <div class="gym-metric-value" id="gym-metric-volume">
+          <span class="gym-metric-main" id="gym-metric-volume-main">0 kg</span>
+          <span class="gym-metric-pr" id="gym-metric-volume-pr" hidden>🏆</span>
+        </div>
+        <div class="gym-metric-sub" id="gym-metric-volume-sub">—</div>
+        <div class="gym-metric-progress" id="gym-metric-volume-progress" aria-hidden="true">
+          <span class="gym-metric-bar" id="gym-metric-volume-bar"></span>
+        </div>
+      </div>
+      <div class="gym-metric">
+        <div class="gym-metric-label">Ejercicios</div>
+        <div class="gym-metric-value" id="gym-metric-exercises">
+          <span class="gym-metric-main" id="gym-metric-exercises-main">0/0</span>
+          <span class="gym-metric-pr" id="gym-metric-exercises-pr" hidden>🏆</span>
+        </div>
+        <div class="gym-metric-sub" id="gym-metric-exercises-sub">max: —</div>
+        <div class="gym-metric-progress" id="gym-metric-exercises-progress" aria-hidden="true">
+          <span class="gym-metric-bar" id="gym-metric-exercises-bar"></span>
+        </div>
+      </div>
+    </div>
+    <div class="gym-exercise-list" id="gym-workout-exercises"></div>
+    <div class="gym-workout-actions">
+      <button class="gym-btn gym-btn-ghost" id="gym-discard-workout" type="button">Descartar</button>
+      <button class="gym-btn gym-btn-primary" id="gym-add-exercise" type="button">+ Añadir ejercicios</button>
+    </div>
+  </div>
+
+  <div class="gym-screen" id="gym-stats-view">
+    <div class="gym-workout-header gym-header">
+      <button class="icon-btn icon-btn-small" id="gym-stats-back" type="button">‹</button>
+      <div class="gym-workout-title">
+        <div class="gym-title">Estadísticas</div>
+      </div>
+    </div>
+    <div class="gym-section">
+      <div class="gym-section-header">
+        <label class="gym-field">
+          <span>Sección</span>
+          <select class="gym-select" id="gym-stats-kind">
+            <option value="overview">Resumen gym</option>
+            <option value="body">Peso corporal</option>
+            <option value="exercise">Ejercicio</option>
+          </select>
+        </label>
+      </div>
+      <div id="gym-stats-controls"></div>
+      <div class="gym-stats-kpis" id="gym-stats-kpis"></div>
+      <div class="gym-card">
+        <div class="gym-stats-chart" id="gym-stats-chart"></div>
+        <div class="gym-empty hidden" id="gym-stats-empty">No hay datos suficientes para mostrar estadísticas.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="gym-exercise-modal">
+  <div class="modal gym-modal">
+    <div class="modal-header">
+      <div class="modal-title">Añadir ejercicios</div>
+      <button class="icon-btn" id="gym-exercise-close" type="button">✕</button>
+    </div>
+    <div class="modal-scroll gym-modal-body">
+      <input class="gym-search" id="gym-exercise-search" placeholder="Buscar ejercicio" type="search" />
+      <div class="gym-chip-row" id="gym-muscle-chips"></div>
+      <div class="gym-exercise-list-modal" id="gym-exercise-list"></div>
+      <div class="gym-empty hidden" id="gym-exercise-empty">
+        <div>No encontramos ejercicios.</div>
+        <button class="gym-btn gym-btn-primary" id="gym-create-cta" type="button">
+          Crear “<span id="gym-create-cta-text"></span>”
+        </button>
+      </div>
+      <div class="addex-actions">
+        <button class="gym-btn gym-btn-primary" id="gym-create-toggle" type="button">+ Crear nuevo ejercicio</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden gym-modal-stacked" id="gym-create-modal">
+  <div class="modal gym-modal">
+    <div class="modal-header">
+      <div class="modal-title">Crear ejercicio</div>
+      <button class="icon-btn" id="gym-create-close" type="button">✕</button>
+    </div>
+    <div class="modal-scroll gym-modal-body">
+      <div class="gym-create-form">
+        <label class="gym-field gym-create-field gym-create-field-name">
+          <span>Nombre</span>
+          <input id="gym-create-name" placeholder="Nombre del ejercicio" type="text" />
+        </label>
+        <label class="gym-field gym-create-field">
+          <span>Tipo</span>
+          <select id="gym-create-type" class="gym-select">
+            <option value="strength">Fuerza</option>
+          </select>
+        </label>
+        <label class="gym-field gym-create-field" id="gym-create-strength-type-field">
+          <span>Modalidad</span>
+          <select id="gym-create-strength-type" class="gym-select">
+            <option value="reps">Repeticiones</option>
+            <option value="time">Tiempo</option>
+          </select>
+        </label>
+        <label class="gym-field gym-create-field">
+          <span>Categoría MET</span>
+          <select id="gym-create-met-category" class="gym-select"></select>
+        </label>
+      </div>
+      <div class="gym-chip-row" id="gym-create-muscle-chips"></div>
+      <div class="gym-field gym-create-unilateral-field">
+        <span>Lateralidad</span>
+        <label class="favorite-toggle">
+          <input id="gym-create-unilateral" type="checkbox" />
+          <span aria-hidden="true" class="favorite-icon">↔</span>
+          <span>Unilateral</span>
+        </label>
+      </div>
+      <button class="gym-btn gym-btn-primary" id="gym-create-exercise" type="button">Crear</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="gym-exercise-detail-modal">
+  <div class="modal gym-modal gym-exdetail">
+    <div class="modal-header gym-exdetail-head">
+      <div class="gym-exdetail-left">
+        <div class="gym-exdetail-emoji" id="gym-exdetail-emoji">💪</div>
+        <div class="gym-exdetail-titles">
+          <div class="modal-title" id="gym-exdetail-title">—</div>
+          <div class="gym-exdetail-sub" id="gym-exdetail-sub">—</div>
+        </div>
+      </div>
+      <div class="gym-exdetail-actions">
+        <button class="gym-btn gym-btn-ghost" id="gym-exdetail-edit" type="button">Editar</button>
+        <button class="icon-btn" id="gym-exdetail-close" type="button">✕</button>
+      </div>
+    </div>
+
+    <div class="modal-scroll gym-modal-body">
+      <div class="gym-exdetail-kpis" id="gym-exdetail-kpis"></div>
+      <div class="gym-exdetail-controls" id="gym-exdetail-controls"></div>
+      <div class="gym-card">
+        <div id="gym-exdetail-chart" class="gym-stats-chart"></div>
+        <div id="gym-exdetail-empty" class="gym-empty hidden">Sin datos aún.</div>
+      </div>
+      <button class="gym-btn" id="gym-exdetail-delete" type="button">Eliminar ejercicio</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="gym-template-modal">
+  <div class="modal gym-modal">
+    <div class="modal-header">
+      <div class="modal-title">Nuevo entrenamiento</div>
+      <button class="icon-btn" id="gym-template-close" type="button">✕</button>
+    </div>
+    <div class="modal-scroll gym-modal-body">
+      <label class="gym-field">
+        <span>Nombre</span>
+        <input id="gym-template-name" placeholder="Ej. Pierna" type="text" />
+      </label>
+      <button class="gym-btn gym-btn-primary" id="gym-create-empty" type="button">Crear nuevo</button>
+      <div class="gym-template-list" id="gym-template-list"></div>
+      <div class="gym-empty hidden" id="gym-template-empty">No tienes plantillas guardadas.</div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="gym-cardio-modal">
+  <div class="modal gym-modal">
+    <div class="modal-header">
+      <div class="modal-title">Sesión de cardio</div>
+      <button class="icon-btn" id="gym-cardio-close" type="button">✕</button>
+    </div>
+    <div class="modal-scroll gym-modal-body">
+      <label class="gym-field">
+        <span>Nombre</span>
+        <input id="gym-cardio-name" placeholder="Ej. Correr" type="text" />
+      </label>
+      <label class="gym-field">
+        <span>Fecha</span>
+        <input id="gym-cardio-date" type="date" />
+      </label>
+      <label class="gym-field">
+        <span>Objetivo (km)</span>
+        <input id="gym-cardio-target" inputmode="decimal" placeholder="Ej. 5" type="text" />
+      </label>
+      <label class="gym-field">
+        <span>Distancia (km)</span>
+        <input id="gym-cardio-distance" inputmode="decimal" placeholder="Ej. 4.2" type="text" />
+      </label>
+      <div class="gym-cardio-time" id="gym-cardio-time">00:00</div>
+      <div class="gym-cardio-controls">
+        <button class="gym-btn gym-btn-primary" id="gym-cardio-start" type="button">Start</button>
+        <button class="gym-btn gym-btn-ghost hidden" id="gym-cardio-pause" type="button">Pause</button>
+        <button class="gym-btn gym-btn-primary hidden" id="gym-cardio-resume" type="button">Resume</button>
+        <button class="gym-btn gym-btn-ghost hidden" id="gym-cardio-finish" type="button">Finish</button>
+      </div>
+      <div class="gym-body-meta" id="gym-cardio-summary">Introduce distancia para calcular ritmo o velocidad.</div>
+      <div class="gym-body-meta hidden" id="gym-cardio-progress"></div>
+    </div>
+  </div>
+</div>

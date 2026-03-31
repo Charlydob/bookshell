@@ -2753,3 +2753,113 @@ header.food-sheet-header h3{
 .fm-field.fm-field--type{
   font-size: 28px;
 }
+
+/* Finance topnav refresh */
+.financeTab #finance-topnav{
+  position: sticky;
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  z-index: 12;
+  width: min(100%, 520px);
+  max-width: 520px;
+  min-width: 0;
+  margin: 0 auto 18px;
+  padding: 8px 0 4px;
+  background: linear-gradient(180deg, rgba(3, 10, 26, 0.98), rgba(3, 10, 26, 0.78) 72%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.financeTab .financeInnerNav{
+  position: relative;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  border: 1px solid rgba(160, 190, 255, 0.16);
+  border-radius: 26px;
+  background:
+    linear-gradient(180deg, rgba(15, 30, 59, 0.94), rgba(7, 18, 42, 0.88)),
+    radial-gradient(circle at top, rgba(102, 172, 255, 0.14), transparent 58%);
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.financeTab .financeInnerNav::before{
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.22), transparent);
+  pointer-events: none;
+}
+
+.financeTab .financeInnerNav .finance-pill{
+  min-width: 0;
+  min-height: 44px;
+  height: 44px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+  color: rgba(236, 242, 255, 0.74);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: none;
+  transition:
+    transform 0.18s ease,
+    color 0.18s ease,
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.financeTab .financeInnerNav .finance-pill:hover{
+  transform: translateY(-1px);
+  color: #f8fbff;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.04));
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.18);
+}
+
+.financeTab .financeInnerNav .finance-pill.is-active{
+  color: #ffffff;
+  border-color: rgba(148, 203, 255, 0.42);
+  background:
+    linear-gradient(135deg, rgba(76, 133, 255, 0.36), rgba(46, 214, 176, 0.18)),
+    rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 12px 26px rgba(50, 106, 214, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+@media (max-width: 520px){
+  .financeTab #finance-topnav{
+    top: calc(env(safe-area-inset-top, 0px) + 4px);
+    margin-bottom: 14px;
+    padding-top: 4px;
+  }
+
+  .financeTab .financeInnerNav{
+    gap: 6px;
+    padding: 6px;
+    border-radius: 22px;
+  }
+
+  .financeTab .financeInnerNav .finance-pill{
+    min-height: 40px;
+    height: 40px;
+    padding: 0 8px;
+    border-radius: 15px;
+    font-size: 11px;
+  }
+}

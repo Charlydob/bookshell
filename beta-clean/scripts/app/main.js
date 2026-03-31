@@ -17,6 +17,21 @@ const DEFAULT_VIEW_ID = "view-books";
 const SHELL_STATE_KEY = "__bookshellCleanShellState";
 const APP_BOOT_TS = performance.now();
 const loadedStyles = new Set();
+
+function updateAppViewportHeightVar() {
+  const viewportHeight = window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 0;
+  if (!viewportHeight) return;
+  document.documentElement.style.setProperty("--app-dvh", `${Math.round(viewportHeight)}px`);
+}
+
+function bindViewportHeightVar() {
+  updateAppViewportHeightVar();
+  window.addEventListener("resize", updateAppViewportHeightVar, { passive: true });
+  window.addEventListener("orientationchange", updateAppViewportHeightVar, { passive: true });
+  window.visualViewport?.addEventListener("resize", updateAppViewportHeightVar, { passive: true });
+  window.visualViewport?.addEventListener("scroll", updateAppViewportHeightVar, { passive: true });
+}
+
 const viewModules = {
   "view-books": {
     htmlUrl: "../../views/books.html",
@@ -398,3 +413,4 @@ function bindAuthGate() {
 }
 
 bindAuthGate();
+bindViewportHeightVar();

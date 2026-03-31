@@ -27,10 +27,12 @@
 
 .view {
   position: fixed;
-  inset: 0 auto 0 auto;
+  top: 0;
+  bottom: auto;
   left: 50%;
   width: min(480px, 100%);
-  min-height: 0;
+  height: calc(var(--app-dvh, 100dvh));
+  min-height: calc(var(--app-dvh, 100dvh));
   padding:
     calc(8px + env(safe-area-inset-top, 0px))
     10px

@@ -1,5 +1,6 @@
 :root {
   color-scheme: dark;
+  --app-dvh: 100dvh;
   --bg-1: #0e1116;
   --bg-2: #0b0d12;
   --txt: #f5f7ff;
@@ -43,6 +44,7 @@ body {
 body {
   min-height: 100vh;
   min-height: 100dvh;
+  min-height: calc(var(--app-dvh, 100dvh));
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
   touch-action: manipulation;

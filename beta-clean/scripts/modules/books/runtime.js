@@ -964,7 +964,7 @@ function getBookLinkedQuotes(bookId, book) {
 
 function openQuoteInVideos(item) {
   if (!item) return;
-  window.__bookshellSetView?.("view-videos");
+  window.__bookshellSetView?.("view-videos-hub");
   window.__bookshellVideos?.openLinksNewView?.({ id: item.id, ...item });
 }
 

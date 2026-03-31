@@ -3,11 +3,22 @@
   align-items: center;
   justify-content: space-between;
   position: sticky;
-  top: 0;
+  top: 50px;
   z-index: 5;
   padding: 12px 16px 8px;
   background: transparent;
+  border-bottom: 0px solid rgba(255, 255, 255, 0.05);
+  isolation: isolate;
   margin-bottom: 25px;
+}
+
+.app-header::before{
+  display: none;
+  content:"";
+  position:absolute;
+  inset:0;
+  background: transparent;
+  z-index:-1;
 }
 
 .header-title {
@@ -47,8 +58,9 @@
 .empty-state {
   margin: 16px 4px;
   padding: 16px 18px;
-  border-radius: 18px;
-  background: var(--glass);
+  border-radius: var(--radius-lg);
+  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.02), transparent),
+    var(--glass);
   border: 1px dashed rgba(255, 255, 255, 0.16);
   color: var(--txt-soft);
   font-size: 14px;
@@ -70,8 +82,22 @@
   backdrop-filter: blur(var(--blur-nav, 8px));
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: var(--shadow-soft);
+  box-sizing: border-box;
   border: 1px solid rgb(255, 255, 255);
   border-radius: 99px;
+  margin-bottom: var(--nav-gap, 20px);
+}
+
+.datos-sesion{
+  display: grid;
+  grid-template-columns: 100px;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+}
+
+.habit-session-label{
+  display: none;
 }
 
 .nav-btn {
@@ -93,6 +119,6 @@
 }
 
 .nav-btn:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.55);
+  outline: 2px solid rgba(127,93,255,.6);
   outline-offset: 2px;
 }

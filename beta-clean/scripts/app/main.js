@@ -35,47 +35,38 @@ function bindViewportHeightVar() {
 const viewModules = {
   "view-books": {
     htmlUrl: "../../views/books.html",
-    cssUrl: "./styles/modules/books.css",
     moduleLoader: () => import("../modules/books/index.js"),
   },
   "view-videos-hub": {
     htmlUrl: "../../views/videos-hub.html",
-    cssUrl: "./styles/modules/videos-hub.css",
     moduleLoader: () => import("../modules/videos-hub/index.js"),
   },
   "view-world": {
     htmlUrl: "../../views/world.html",
-    cssUrl: "./styles/modules/world.css",
     moduleLoader: () => import("../modules/world/index.js"),
   },
   "view-media": {
     htmlUrl: "../../views/media.html",
-    cssUrl: "./styles/modules/media.css",
     moduleLoader: () => import("../modules/media/index.js"),
   },
   "view-recipes": {
     htmlUrl: "../../views/recipes.html",
-    cssUrl: "./styles/modules/recipes.css",
     moduleLoader: () => import("../modules/recipes/index.js"),
   },
   "view-habits": {
     htmlUrl: "../../views/habits.html",
-    cssUrl: "./styles/modules/habits.css",
     moduleLoader: () => import("../modules/habits/index.js"),
   },
   "view-games": {
     htmlUrl: "../../views/games.html",
-    cssUrl: "./styles/modules/games.css",
     moduleLoader: () => import("../modules/games/index.js"),
   },
   "view-finance": {
     htmlUrl: "../../views/finance.html",
-    cssUrl: "./styles/modules/finance.css",
     moduleLoader: () => import("../modules/finance/index.js"),
   },
   "view-gym": {
     htmlUrl: "../../views/gym.html",
-    cssUrl: "./styles/modules/gym.css",
     moduleLoader: () => import("../modules/gym/index.js"),
   },
 };

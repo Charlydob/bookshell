@@ -159,7 +159,7 @@
   </script>
 </head>
 <body>
-  <a class="version-switch-link" href="/index.html" id="version-switch-beta">Volver a beta</a>
+  <a class="version-switch-link" href="../index.html" id="version-switch-beta">Volver a beta</a>
   <div id="boot-splash" role="status" aria-live="polite" aria-label="Carga inicial de Bookshell">
     <div class="boot-splash-card">
       <div class="boot-splash-title">Bookshell</div>
@@ -219,7 +219,7 @@
       link.addEventListener("click", function (event) {
         event.preventDefault();
         var hash = window.location.hash || "";
-        window.location.href = "/index.html" + hash;
+        window.location.href = new URL("../index.html" + hash, window.location.href).href;
       });
     })();
   </script>

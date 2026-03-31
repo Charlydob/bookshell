@@ -171,7 +171,7 @@
 
 </head>
 <body>
-<a class="version-switch-link" href="/beta-clean/index.html" id="version-switch-beta-clean">Probar beta-clean</a>
+<a class="version-switch-link" href="./beta-clean/index.html" id="version-switch-beta-clean">Probar beta-clean</a>
 <div id="boot-splash" role="status" aria-live="polite" aria-label="Carga inicial de Bookshell">
   <div class="boot-splash-card">
     <div class="boot-splash-title">Bookshell</div>
@@ -3988,7 +3988,7 @@ Crear “<span id="gym-create-cta-text"></span>”
     link.addEventListener("click", function (event) {
       event.preventDefault();
       var hash = window.location.hash || "";
-      window.location.href = "/beta-clean/index.html" + hash;
+      window.location.href = new URL("./beta-clean/index.html" + hash, window.location.href).href;
     });
   })();
 </script>

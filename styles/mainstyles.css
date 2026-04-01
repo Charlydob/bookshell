@@ -222,7 +222,7 @@ body {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(var(--nav-gap, 0px) + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--nav-gap, 20px) + env(safe-area-inset-bottom, 0px));
   width: min(480px, 100%);
   min-height: 10px;
   pointer-events: auto;
@@ -822,13 +822,7 @@ body.has-open-modal .bottom-nav {
 :root { --nav-h: 56px; --nav-gap: 20px; }
 
 
-#app, .app, .app-shell {
-  min-height: 100vh;
-  min-height: 100dvh;
-  height: 100vh;
-  height: 100dvh;
-  background: inherit;
-}
+
 
 .app-main,
 main {

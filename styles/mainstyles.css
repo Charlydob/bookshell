@@ -112,11 +112,13 @@ body {
 
 .view {
   display: none;
-/*  height: 100%;*/
-  min-height: 0;
+  /* La vista necesita una altura de viewport propia para que su scroll interno exista,
+     sin volver a depender de `html/body { height:100% }`, que causaba la franja negra. */
+  height: 100dvh;
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
   padding-bottom: calc(6px + var(--nav-total-h) + var(--nav-gap));
 }
 

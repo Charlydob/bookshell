@@ -821,10 +821,6 @@ body.has-open-modal .bottom-nav {
 /* Layout global: una sola superficie scrollable por vista */
 :root { --nav-h: 56px; --nav-gap: 20px; }
 
-@media (display-mode: standalone) {
-  :root { --nav-gap: 0px; }
-}
-
 
 #app, .app, .app-shell {
   min-height: 100vh;

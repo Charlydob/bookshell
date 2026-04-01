@@ -23,12 +23,6 @@
   --nav-total-h: 72px;
 }
 
-@media (display-mode: standalone) {
-  :root {
-    --nav-gap: 0px;
-  }
-}
-
 *,
 *::before,
 *::after {

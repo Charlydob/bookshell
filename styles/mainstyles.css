@@ -30,7 +30,9 @@
   --work-unknown: rgba(142,142,147,.55);
 
   /* Fix PWA iOS: evitar franja negra inferior / anclar navegación al safe-area */
-  --nav-total-h: 72px;
+  --nav-h: 56px;
+  --nav-gap: 20px;
+  --nav-total-h: var(--nav-h);
 }
 
 html,
@@ -224,7 +226,8 @@ body {
   transform: translateX(-50%);
   bottom: calc(var(--nav-gap, 20px) + env(safe-area-inset-bottom, 0px));
   width: min(480px, 100%);
-  min-height: 10px;
+  min-height: var(--nav-h);
+  height: var(--nav-h);
   pointer-events: auto;
   z-index: 50;
   display: flex;
@@ -819,9 +822,6 @@ body.has-open-modal .bottom-nav {
   display: none !important;
 }
 /* Layout global: una sola superficie scrollable por vista */
-:root { --nav-h: 56px; --nav-gap: 20px; }
-
-
 #app, .app, .app-shell {
   min-height: 100vh;
   min-height: 100dvh;

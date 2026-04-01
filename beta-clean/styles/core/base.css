@@ -20,7 +20,7 @@
   --blur-modal: 10px;
   --nav-h: 56px;
   --nav-gap: 20px;
-  --nav-total-h: 72px;
+  --nav-total-h: var(--nav-h);
 }
 
 *,

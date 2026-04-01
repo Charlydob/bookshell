@@ -37,8 +37,10 @@ html,
 body {
   margin: 0;
   padding: 0;
-  height: 120%;
-  overflow: auto;
+  /* [scroll-fix] La shell nueva hace scroll dentro de `.view`.
+     Si `html/body` tambien scrollean, aparece una segunda superficie fantasma. */
+  height: 100%;
+  overflow: hidden;
   background: radial-gradient(circle at top, #161a22, #05060a 60%);
   background-color: #05060a;
   color: var(--txt);

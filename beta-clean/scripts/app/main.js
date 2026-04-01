@@ -11,6 +11,7 @@ import {
   ref,
   update,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { isActiveTabReselect, resetTabToRoot } from "./nav-root-reset.js";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const DEFAULT_VIEW_ID = "view-books";
@@ -236,6 +237,14 @@ function bindNav() {
     if (!isValidView(nextViewId)) return;
 
     event.preventDefault();
+    if (isActiveTabReselect(nextViewId)) {
+      void (async () => {
+        await resetTabToRoot(nextViewId);
+        await setView(nextViewId);
+      })();
+      return;
+    }
+
     void setView(nextViewId);
   }, true);
 

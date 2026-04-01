@@ -39,20 +39,20 @@
 .view {
   position: fixed;
   top: 0;
-  bottom: auto;
   left: 50%;
   width: min(480px, 100%);
-  height: calc(var(--app-dvh, 100dvh));
-  min-height: calc(var(--app-dvh, 100dvh));
+  height: var(--app-dvh, 100dvh);
   padding:
     calc(8px + env(safe-area-inset-top, 0px))
     10px
-    calc(6px + var(--nav-total-h) + var(--nav-gap) + env(safe-area-inset-bottom, 0px));
+    calc(var(--nav-total-h) + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
   transform: translateX(-50%);
+  display: none !important;
 }
 
 .empty-state {

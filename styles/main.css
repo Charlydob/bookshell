@@ -2,7 +2,8 @@
    Nota: se han eliminado bloques legacy (p.ej. `.finance-scope`) sin uso en el HTML/JS actual. */
 
 body {
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 /* ===== Accesibilidad foco ===== */
@@ -16,8 +17,7 @@ select:focus-visible {
 #view-books {
   padding: 1px 10px;
   padding-bottom: calc(10px + var(--nav-total-h) + var(--nav-gap, 20px));
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: visible;
 }
 
 #books-charts-section {

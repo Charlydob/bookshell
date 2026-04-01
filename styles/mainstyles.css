@@ -37,10 +37,7 @@ html,
 body {
   margin: 0;
   padding: 0;
-  /* [scroll-fix] La shell nueva hace scroll dentro de `.view`.
-     Si `html/body` tambien scrollean, aparece una segunda superficie fantasma. */
-  /*height: 100%;*/
-  overflow: hidden;
+  overflow-x: hidden;
   background: radial-gradient(circle at top, #161a22, #05060a 60%);
   background-color: #05060a;
   color: var(--txt);
@@ -50,7 +47,9 @@ body {
 
 body {
   -webkit-font-smoothing: antialiased;
-  overscroll-behavior-y: none;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: auto;
 }
 
 .app-shell {
@@ -112,14 +111,7 @@ body {
 
 .view {
   display: none;
-  /* Mantiene el look natural del contenido, pero limita la vista al viewport
-     para que `overflow-y:auto` siga funcionando sin forzar una altura rígida. */
-  max-height: 100vh;
-  max-height: 100dvh;
-  overflow-y: auto;
-  overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior-y: contain;
+  overflow: visible;
   padding-bottom: calc(6px + var(--nav-total-h) + var(--nav-gap));
 }
 
@@ -298,9 +290,9 @@ body.has-open-modal {
   overflow: hidden;
 }
 
-/* Cuando hay un modal abierto, bloquea el scroll de las vistas (el scroll real está en `.view`) */
+/* Con scroll estructural en `body`, los modales solo necesitan congelar el documento. */
 body.has-open-modal .view {
-  overflow: hidden !important;
+  overflow: visible !important;
 }
 
 /* Evita interacciones con la nav inferior mientras hay modal */

@@ -193,6 +193,7 @@ function syncViews(viewId) {
       view.scrollTop = 0;
     }
   });
+  window.scrollTo(0, 0);
 }
 
 async function setView(viewId, { pushHash = true } = {}) {

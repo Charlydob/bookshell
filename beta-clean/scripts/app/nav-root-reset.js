@@ -128,4 +128,5 @@ export async function resetTabToRoot(viewId) {
   const root = document.getElementById(viewId);
   closeScopedOverlays(root);
   if (root) root.scrollTop = 0;
+  window.scrollTo(0, 0);
 }

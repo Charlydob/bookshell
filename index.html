@@ -4069,6 +4069,7 @@ window.addEventListener("unhandledrejection", (e) => {
       b.classList.toggle("nav-btn-active", b.dataset.view === viewId);
       if (b.dataset.view === viewId) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current");
     });
+    window.scrollTo(0, 0);
 
   };
   const addLinkDeepLink = deepLinkParams.get("addLink") === "1";

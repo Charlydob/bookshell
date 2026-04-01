@@ -30,9 +30,7 @@
   --work-unknown: rgba(142,142,147,.55);
 
   /* Fix PWA iOS: evitar franja negra inferior / anclar navegación al safe-area */
-  --nav-h: 56px;
-  --nav-gap: 20px;
-  --nav-total-h: var(--nav-h);
+  --nav-total-h: 72px;
 }
 
 html,
@@ -41,7 +39,7 @@ body {
   padding: 0;
   /* [scroll-fix] La shell nueva hace scroll dentro de `.view`.
      Si `html/body` tambien scrollean, aparece una segunda superficie fantasma. */
-  height: 100%;
+  /*height: 100%;*/
   overflow: hidden;
   background: radial-gradient(circle at top, #161a22, #05060a 60%);
   background-color: #05060a;
@@ -56,7 +54,7 @@ body {
 }
 
 .app-shell {
-  min-height: 100%;
+ /* min-height: 100%;*/
   max-width: 480px;
   margin: 0 auto;
   display: flex;
@@ -114,7 +112,7 @@ body {
 
 .view {
   display: none;
-  height: 100%;
+  /*height: 100%;*/
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
@@ -224,10 +222,9 @@ body {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(var(--nav-gap, 20px) + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--nav-gap, 0px) + env(safe-area-inset-bottom, 0px));
   width: min(480px, 100%);
-  min-height: var(--nav-h);
-  height: var(--nav-h);
+  min-height: 10px;
   pointer-events: auto;
   z-index: 50;
   display: flex;
@@ -822,13 +819,10 @@ body.has-open-modal .bottom-nav {
   display: none !important;
 }
 /* Layout global: una sola superficie scrollable por vista */
-#app, .app, .app-shell {
-  min-height: 100vh;
-  min-height: 100dvh;
-  height: 100vh;
-  height: 100dvh;
-  background: inherit;
-}
+:root { --nav-h: 56px; --nav-gap: 20px; }
+
+
+
 
 .app-main,
 main {

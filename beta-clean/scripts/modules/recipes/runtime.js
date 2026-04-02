@@ -5446,10 +5446,19 @@ $recipeImportBtn?.addEventListener("click", () => {
     const defaultPlaceholder = ensureInputDefaultPlaceholder(input);
     const hasCurrentValue = value != null && String(value) !== "";
     input.dataset.currentValue = hasCurrentValue ? String(value) : "";
+    input.classList.toggle("has-current-placeholder", hasCurrentValue);
     input.value = "";
     input.placeholder = hasCurrentValue
       ? String(value)
       : (fallbackPlaceholder != null ? String(fallbackPlaceholder) : defaultPlaceholder);
+  }
+
+  function syncMacroProductPriceDrivenUnit() {
+    if (!$macroProductPrice || !$macroProductGramsUnit) return;
+    const priceValue = getInputNumberOrCurrent($macroProductPrice, null);
+    if (priceValue > 0) {
+      $macroProductGramsUnit.value = "unit";
+    }
   }
 
   function getInputValueOrCurrent(input, { trim = true } = {}) {
@@ -5600,6 +5609,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function renderMacroProductSummary() {
     if (!$macroProductSummary) return;
+    syncMacroProductPriceDrivenUnit();
     const draft = readMacroProductDraftFromForm();
     const amountState = resolveMacroProductAmountState(draft);
     const amount = amountState.amount;
@@ -5754,6 +5764,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductPackWeight) $macroProductPackWeight.value = "";
     if ($macroProductPackUnits) $macroProductPackUnits.value = "";
     if ($macroProductPackConsumed) $macroProductPackConsumed.value = "";
+    syncMacroProductPriceDrivenUnit();
     updateWeightDiffUnitLabels();
 
     $macroProductModalBackdrop.classList.remove("hidden");
@@ -8975,13 +8986,24 @@ $recipeImportBtn?.addEventListener("click", () => {
     $macroProductKcal,
     $macroProductPackageAmount,
     $macroProductPackageUnit,
-    $macroProductPrice,
     $macroProductGrams,
     $macroProductGramsUnit,
     $macroProductUnitWeight,
     $macroProductUnitWeightUnit,
   ].filter(Boolean);
   _macroProductInputs.forEach((el) => el.addEventListener("input", renderMacroProductSummary));
+  $macroProductPrice?.addEventListener("input", () => {
+    syncMacroProductPriceDrivenUnit();
+    updateWeightDiffUnitLabels();
+    syncAmountFromAutoCalculation();
+    renderMacroProductSummary();
+  });
+  $macroProductPrice?.addEventListener("change", () => {
+    syncMacroProductPriceDrivenUnit();
+    updateWeightDiffUnitLabels();
+    syncAmountFromAutoCalculation();
+    renderMacroProductSummary();
+  });
   $macroProductUnitWeightUnit?.addEventListener("change", renderMacroProductSummary);
   $macroProductGramsUnit?.addEventListener("change", () => {
     updateWeightDiffUnitLabels();

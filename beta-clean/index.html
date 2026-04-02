@@ -11,23 +11,22 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Bookshell" />
-  <link href="../styles/mainstyles.css" rel="stylesheet" />
-  <link href="../styles/mainpage.css" rel="stylesheet" />
-  <link href="../styles/videos.css" rel="stylesheet" />
-  <link href="../styles/recipes.css" rel="stylesheet" />
-  <link href="../styles/habits.css" rel="stylesheet" />
-  <link href="../styles/games.css" rel="stylesheet" />
-  <link href="../styles/media.css" rel="stylesheet" />
-  <link href="../styles/world.css" rel="stylesheet" />
-  <link href="../styles/gym.css" rel="stylesheet" />
-  <link href="../styles/videos-hub.css" rel="stylesheet" />
-  <link rel="stylesheet" href="../styles/main.css" />
-  <link rel="stylesheet" href="../styles/finance.css" />
-  <link href="../manifest.webmanifest" rel="manifest" />
-  <link href="../icons/favicon.ico" rel="icon" />
-  <link href="../icons/favicon-32.png" rel="icon" sizes="32x32" type="image/png" />
-  <link href="../icons/favicon-16.png" rel="icon" sizes="16x16" type="image/png" />
-  <link href="../icons/icon-512.png" rel="apple-touch-icon" sizes="180x180" />
+  <link href="./styles/core/base.css" rel="stylesheet" />
+  <link href="./styles/core/shell.css" rel="stylesheet" />
+  <link href="./styles/modules/books.css" rel="stylesheet" />
+  <link href="./styles/modules/finance.css" rel="stylesheet" />
+  <link href="./styles/modules/games.css" rel="stylesheet" />
+  <link href="./styles/modules/gym.css" rel="stylesheet" />
+  <link href="./styles/modules/habits.css" rel="stylesheet" />
+  <link href="./styles/modules/media.css" rel="stylesheet" />
+  <link href="./styles/modules/recipes.css" rel="stylesheet" />
+  <link href="./styles/modules/videos-hub.css" rel="stylesheet" />
+  <link href="./styles/modules/world.css" rel="stylesheet" />
+  <link href="./manifest.webmanifest" rel="manifest" />
+  <link href="./icons/favicon.ico" rel="icon" />
+  <link href="./icons/favicon-32.png" rel="icon" sizes="32x32" type="image/png" />
+  <link href="./icons/favicon-16.png" rel="icon" sizes="16x16" type="image/png" />
+  <link href="./icons/icon-512.png" rel="apple-touch-icon" sizes="180x180" />
   <link href="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.snow.css" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2/dist/echarts-gl.min.js"></script>
@@ -198,7 +197,7 @@
   </script>
 </head>
 <body>
-  <a class="version-switch-link" href="../index.html" id="version-switch-beta">Volver a beta</a>
+  <a class="version-switch-link" href="../beta/index.html" id="version-switch-beta">Volver a beta</a>
   <div id="boot-splash" role="status" aria-live="polite" aria-label="Carga inicial de Bookshell">
     <div class="boot-splash-card">
       <div class="boot-splash-title">Bookshell</div>
@@ -251,7 +250,7 @@
       link.addEventListener("click", function (event) {
         event.preventDefault();
         var hash = window.location.hash || "";
-        window.location.href = new URL("../index.html" + hash, window.location.href).href;
+        window.location.href = new URL("../beta/index.html" + hash, window.location.href).href;
       });
     })();
   </script>

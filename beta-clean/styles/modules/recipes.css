@@ -1365,7 +1365,7 @@
 }
 .recipes-stats-cards{
   display: grid;
-  grid-template-columns: repeat(5, 70px);
+  grid-template-columns: repeat(4, 94px);
   justify-self: center;
   align-items: center;
   justify-content: start;
@@ -1741,6 +1741,14 @@
 
 #macro-product-scan-btn.macro-btn.macro-inline-cost-ghost{
   justify-self: center;
+}
+
+#macro-product-scan-btn{
+  display: none;
+}
+#macro-product-edit-toggle, #macro-product-modal-close{
+  border: 0px;
+  background: transparent;
 }
 .macro-summary-group-cost .macro-stat{
   min-height: 100%;
@@ -2381,7 +2389,7 @@
 }
 
 #macro-product-modal-backdrop .macro-product-hero-card #macro-product-name {
-  height: auto;
+  min-height: 2.6em;
   padding: 0;
   border: 0;
   background: transparent;
@@ -2389,12 +2397,13 @@
   font-size: 1.25rem;
   font-weight: 900;
   letter-spacing: -0.02em;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  white-space: pre-wrap;
+  resize: none;
 }
 
-#macro-product-name{
-  min-width: 300px;
-  max-width: 200px;
-}
+
 .macro-card.macro-product-hero-card{
   min-height: 200px;
   max-height: 200px;
@@ -2409,6 +2418,34 @@
   color: rgba(255,255,255,0.72);
   font-size: 0.95rem;
   font-weight: 700;
+}
+
+#macro-product-modal-backdrop .macro-product-hero-card #macro-product-brand.has-current-placeholder,
+#macro-product-modal-backdrop .macro-product-hero-card #macro-product-brand:not(:placeholder-shown),
+#macro-product-modal-backdrop .macro-product-hero-card #macro-product-name.has-current-placeholder,
+#macro-product-modal-backdrop .macro-product-hero-card #macro-product-name:not(:placeholder-shown),
+#macro-product-base.has-current-placeholder,
+#macro-product-base:not(:placeholder-shown),
+#macro-product-package-amount.has-current-placeholder,
+#macro-product-package-amount:not(:placeholder-shown),
+#macro-product-grams.has-current-placeholder,
+#macro-product-grams:not(:placeholder-shown),
+#macro-product-unit-weight.has-current-placeholder,
+#macro-product-unit-weight:not(:placeholder-shown),
+#macro-product-price.has-current-placeholder,
+#macro-product-price:not(:placeholder-shown) {
+  color: #fff;
+}
+
+#macro-product-modal-backdrop .macro-product-hero-card #macro-product-brand.has-current-placeholder::placeholder,
+#macro-product-modal-backdrop .macro-product-hero-card #macro-product-name.has-current-placeholder::placeholder,
+#macro-product-base.has-current-placeholder::placeholder,
+#macro-product-package-amount.has-current-placeholder::placeholder,
+#macro-product-grams.has-current-placeholder::placeholder,
+#macro-product-unit-weight.has-current-placeholder::placeholder,
+#macro-product-price.has-current-placeholder::placeholder {
+  color: #fff;
+  opacity: 1;
 }
 
 #macro-product-modal-backdrop .macro-product-barcode-field {
@@ -2429,7 +2466,9 @@
   place-items: center;
   pointer-events: none;
 }
-
+.macro-product-hero-visual{
+  top: 120px;
+}
 #macro-product-modal-backdrop .macro-product-donut {
   position: relative;
   width: 132px;
@@ -2734,12 +2773,7 @@
   gap:8px;
   margin-top:8px;
 }
-.macro-package-calc-grid{
-  display:grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap:8px;
-  margin-top:8px;
-}
+
 .macro-weight-diff-grid .macro-field input.is-invalid{
   border-color:#ff6b6b;
   box-shadow:0 0 0 2px rgba(255,107,107,.2);
@@ -2752,9 +2786,7 @@
     grid-template-columns: 100px 100px;
     gap:8px;
   }
-  .macro-package-calc-grid{
-    grid-template-columns: 80px 80px 80px;
-  }
+  
 }
 .macro-inline-qty{
 
@@ -2765,10 +2797,23 @@
 
 }
 .macro-inline-qty .macro-select{ min-width:74px; }
-#macro-product-grams-unit{
+#macro-product-grams-unit, #macro-product-unit-weight-unit, #macro-product-base-unit, #macro-product-package-unit{
 background-color: transparent;
 border: 0px;
+min-width: 20px;
+width: 25px;
+padding: 0;
 
+}
+#macro-product-base{
+  border: 0;
+  background: transparent;
+  font-size: 24px;
+  color: white;
+}
+#macro-product-finance-unlink, #macro-product-habit-unlink{
+  border: 0;
+  background: transparent;
 }
 @media (max-width: 980px) {
   .macro-stats-kpi-primary-wrap { grid-template-columns: 1fr 1fr; }
@@ -3329,4 +3374,12 @@ div#macros-inputs.macro-manual-macro-grid{
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#macro-product-name{
+  min-width: 100px;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  white-space: pre-wrap;
+  max-width: 200px;
 }

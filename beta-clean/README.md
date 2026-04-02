@@ -15,9 +15,16 @@ Objetivos de esta carpeta:
 ```text
 beta-clean/
   index.html
+  manifest.webmanifest
   README.md
   docs/
     migration-log.md
+  icons/
+    favicon.ico
+    favicon-16.png
+    favicon-32.png
+    icon-192.png
+    icon-512.png
   styles/
     core/
       base.css

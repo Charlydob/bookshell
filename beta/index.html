@@ -1,0 +1,4141 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<title>Bookshell</title>
+<meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
+<meta content="#05060a" name="theme-color"/>
+<!-- iOS PWA -->
+<meta content="yes" name="mobile-web-app-capable"/>
+<meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"/>
+<meta content="Bookshell" name="apple-mobile-web-app-title"/>
+<link href="styles/mainstyles.css" rel="stylesheet"/>
+<link href="styles/mainpage.css" rel="stylesheet"/>
+<link href="styles/videos.css" rel="stylesheet"/>
+<link href="styles/recipes.css" rel="stylesheet"/>
+<link href="styles/habits.css" rel="stylesheet"/>
+<link href="styles/games.css" rel="stylesheet"/>
+<link href="styles/media.css" rel="stylesheet"/>
+<link href="styles/world.css" rel="stylesheet"/>
+<link href="styles/gym.css" rel="stylesheet"/>
+<link href="styles/videos-hub.css" rel="stylesheet"/>
+<link rel="stylesheet" href="styles/main.css">
+<link rel="stylesheet" href="styles/finance.css">
+<link href="manifest.webmanifest" rel="manifest"/>
+<link href="icons/favicon.ico" rel="icon"/>
+<link href="icons/favicon-32.png" rel="icon" sizes="32x32" type="image/png"/>
+<link href="icons/favicon-16.png" rel="icon" sizes="16x16" type="image/png"/>
+<link href="icons/icon-512.png" rel="apple-touch-icon" sizes="180x180"/>
+<link href="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.snow.css" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script><script src="https://cdn.jsdelivr.net/npm/echarts-gl@2/dist/echarts-gl.min.js"></script>
+
+<style>
+  /* Hard guarantee: solo una vista visible (evita que todo aparezca a la vez si falla JS/CSS) */
+  .view{display:none !important;}
+  .view.view-active{display:block !important;}
+
+  .version-switch-link{
+    position: fixed;
+    top: calc(env(safe-area-inset-top) + 10px);
+    right: 10px;
+    z-index: 9998;
+    padding: 8px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.16);
+    background: rgba(7,10,18,.72);
+    backdrop-filter: blur(10px);
+    color: #fff;
+    text-decoration: none;
+    font-size: 12px;
+    line-height: 1;
+  }
+</style>
+
+<script>
+  (function () {
+    var isStandalone = false;
+    try {
+      isStandalone = !!(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+    } catch (e) {}
+    var isIOSStandalone = !!window.navigator.standalone;
+    if (isStandalone || isIOSStandalone) {
+      document.documentElement.classList.add("is-standalone");
+    }
+  })();
+</script>
+
+
+<style id="boot-splash-style">
+  body.boot-loading { overflow: hidden; background: #05060a; }
+  #boot-splash {
+    position: fixed; inset: 0; z-index: 1000000;
+    display: grid; place-items: center;
+    padding: max(env(safe-area-inset-top), 20px) 20px max(env(safe-area-inset-bottom), 20px);
+    background: radial-gradient(1200px 600px at 50% -20%, rgba(89, 163, 255, .16), transparent 68%), #05060a;
+    color: #e8edf9;
+    font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    transition: opacity .28s ease, visibility .28s ease;
+  }
+  #boot-splash.boot-splash-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+  .boot-splash-card { width: min(360px, 92vw); display: grid; gap: 12px; }
+  .boot-splash-title { font-size: 17px; font-weight: 700; letter-spacing: .01em; }
+  .boot-splash-status { font-size: 13px; opacity: .88; min-height: 1.4em; }
+  .boot-splash-progress { height: 4px; border-radius: 999px; background: rgba(255,255,255,.14); overflow: hidden; }
+  .boot-splash-progress > i { display: block; height: 100%; width: 20%; border-radius: inherit; background: linear-gradient(90deg, #8ab8ff, #5b90ff); transform-origin: 0 50%; transform: scaleX(.08); transition: transform .32s ease; }
+  .boot-splash-note { font-size: 12px; color: #ffcd7a; opacity: 0; transition: opacity .2s ease; min-height: 1.3em; }
+  #boot-splash[data-slow='1'] .boot-splash-note { opacity: .95; }
+</style>
+
+<script>
+  (function () {
+    var splash, statusEl, progressEl;
+    var value = 0;
+    var timer = null;
+    var done = false;
+    var phases = [
+      { at: 0, text: 'Inicializando…' },
+      { at: 24, text: 'Conectando…' },
+      { at: 52, text: 'Cargando datos…' },
+      { at: 76, text: 'Preparando interfaz…' }
+    ];
+
+    function ensure() {
+      if (splash) return true;
+      splash = document.getElementById('boot-splash');
+      if (!splash) return false;
+      statusEl = splash.querySelector('[data-role="status"]');
+      progressEl = splash.querySelector('[data-role="bar"]');
+      return true;
+    }
+
+    function apply() {
+      if (!ensure()) return;
+      if (progressEl) {
+        var clamped = Math.max(0, Math.min(100, value));
+        progressEl.style.transform = 'scaleX(' + (clamped / 100) + ')';
+      }
+      if (statusEl) {
+        for (var i = phases.length - 1; i >= 0; i--) {
+          if (value >= phases[i].at) { statusEl.textContent = phases[i].text; break; }
+        }
+      }
+    }
+
+    function tick() {
+      if (done) return;
+      var target = value < 60 ? 82 : 93;
+      value += (target - value) * 0.12 + 0.35;
+      if (value > 94) value = 94;
+      apply();
+      timer = window.setTimeout(tick, 140);
+    }
+
+    function setPhase(text, hintValue) {
+      if (typeof hintValue === 'number') value = Math.max(value, hintValue);
+      apply();
+      if (ensure() && statusEl && text) statusEl.textContent = text;
+    }
+
+    function finish() {
+      if (done) return;
+      done = true;
+      window.clearTimeout(timer);
+      value = 100;
+      apply();
+      if (!ensure()) return;
+      splash.classList.add('boot-splash-hidden');
+      document.body.classList.remove('boot-loading');
+      window.setTimeout(function () { splash.remove(); }, 360);
+    }
+
+    function markSlow() {
+      if (!ensure()) return;
+      splash.dataset.slow = '1';
+    }
+
+    window.__bookshellBootSplash = { setPhase: setPhase, done: finish, markSlow: markSlow };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () {
+        document.body.classList.add('boot-loading');
+        tick();
+        window.setTimeout(markSlow, 9000);
+      }, { once: true });
+    } else {
+      document.body.classList.add('boot-loading');
+      tick();
+      window.setTimeout(markSlow, 9000);
+    }
+  })();
+</script>
+
+</head>
+<body>
+<a class="version-switch-link" href="../beta-clean/index.html" id="version-switch-beta-clean">Probar beta-clean</a>
+<div id="boot-splash" role="status" aria-live="polite" aria-label="Carga inicial de Bookshell">
+  <div class="boot-splash-card">
+    <div class="boot-splash-title">Bookshell</div>
+    <div class="boot-splash-status" data-role="status">Inicializando…</div>
+    <div class="boot-splash-progress" aria-hidden="true"><i data-role="bar"></i></div>
+    <div class="boot-splash-note">La carga está tardando más de lo normal…</div>
+  </div>
+</div>
+<header class="app-header">
+<div class="header-title"></div>
+</header>
+<!-- Vista LIBROS -->
+<section class="view view-active" id="view-books">
+<!-- STATS + CALENDARIO DE LIBROS (ANTES ESTABA EN view-stats) -->
+<div class="stats-wrapper">
+<div class="stats-cards">
+<div class="stat-card">
+<div class="stat-label">Racha actual</div>
+<div class="stat-value" id="stat-streak-current">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">Mejor racha</div>
+<div class="stat-value" id="stat-streak-best">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">Páginas hoy</div>
+<div class="stat-value" id="stat-today-pages">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">Páginas totales</div>
+<div class="stat-value" id="stat-pages-total">0</div>
+</div>
+<div class="stat-card stat-card-clickable" id="stat-books-read-card">
+<div class="stat-label stat-label-row">
+<span>Libros leídos</span>
+<select aria-label="Rango libros leídos" class="stat-range-select" id="stat-books-read-range">
+<option selected="" value="total">Total</option>
+<option value="month">Mes</option>
+<option value="year">Año</option>
+<option value="week">Semana</option>
+</select>
+</div>
+<div class="stat-value" id="stat-books-read">0</div>
+</div>
+</div>
+<div class="calendar-section">
+<div class="calendar-header">
+<div class="calendar-nav">
+<button class="icon-btn" id="cal-prev">&lt;</button>
+<div class="cal-label" id="cal-label"></div>
+<button class="icon-btn" id="cal-next">&gt;</button>
+</div>
+<select aria-label="Vista del calendario" class="calendar-view-select" id="cal-view-mode">
+<option selected="" value="month">Mes</option>
+<option value="year">Año</option>
+</select>
+</div>
+<div class="calendar-summary" id="calendar-summary"></div>
+<div class="calendar-grid" id="calendar-grid">
+<!-- Calendario por JS -->
+</div>
+<div class="calendar-legend">
+<span class="dot dot-normal"></span> Páginas leídas
+              <span class="dot dot-streak"></span> Día de racha
+              <span class="dot dot-finished"></span> Libro terminado
+            </div>
+</div>
+</div>
+<!-- TOOLBAR + LISTA LIBROS -->
+<div class="books-toolbar">
+<button class="btn primary" id="btn-add-book">+ Añadir libro</button>
+<button class="btn ghost btn-compact" id="books-start-session" type="button">▶ Iniciar sesión</button>
+</div>
+<div class="books-filters is-collapsed" id="books-filters">
+<div class="books-filters-header" id="books-filters-header">
+<div class="filter-row filter-search-row">
+<label class="field-label" for="books-filter-search">Buscar</label>
+<input autocomplete="off" class="filter-search-input" id="books-filter-search" inputmode="search" placeholder="Título, autor, categoría, idioma o siglo" type="search"/>
+</div>
+<button aria-controls="books-filters-body" aria-expanded="false" class="filters-toggle-btn" id="books-filters-toggle" type="button">
+<span class="filters-toggle-text">Mostrar filtros</span>
+<span aria-hidden="true" class="filters-toggle-icon">⌄</span>
+</button>
+</div>
+<div class="books-filters-body" id="books-filters-body">
+
+  <div class="filter-row">
+
+    <div class="filter-label">Filtros rápidos</div> 
+    <div aria-label="Filtros dinámicos" class="filter-chip-groups" id="books-filter-chips"></div>
+
+  </div>
+
+<div class="filter-row filter-toggles">
+  <label class="toggle-pill">
+  <input id="books-filter-pending" type="checkbox"/>
+  <span>Solo pendientes</span>
+</label>
+<label class="toggle-pill">
+<input id="books-filter-finished" type="checkbox"/>
+<span>Solo terminados</span>
+</label>
+</div>
+</div>
+</div>
+<details class="books-watchlist" id="books-watchlist" style="display:none;">
+<summary class="watchlist-summary">
+<div>
+<div class="watchlist-title">Watchlist</div>
+<div class="watchlist-subtitle"></div>
+</div>
+<div class="watchlist-summary-meta">
+<span class="watchlist-count" id="books-watchlist-count">0</span>
+<span aria-hidden="true" class="watchlist-caret">⌄</span>
+</div>
+</summary>
+<div class="watchlist-body">
+<div class="watchlist-empty" id="books-watchlist-empty" style="display:none;">
+              No tienes libros pendientes ahora mismo.
+            </div>
+<div class="watchlist-list" id="books-watchlist-list"></div>
+</div>
+</details>
+<div class="books-list" id="books-list">
+<!-- Se rellenan las tarjetas por JS -->
+</div>
+<div class="empty-state" id="books-filter-empty" style="display:none;">
+          No hay libros que coincidan con los filtros.
+        </div>
+<details class="books-finished" id="books-finished-section" style="display:none;">
+<summary class="books-finished-summary">
+<span>Terminados</span>
+<span class="books-finished-count" id="books-finished-count">0</span>
+</summary>
+<div class="books-shelf-toolbar">
+<label class="field-label shelf-search-label" for="books-shelf-search">Buscar en la estantería</label>
+<input class="shelf-search-input" id="books-shelf-search" placeholder="Título, autor, idioma, categoría..." type="search"/>
+<div class="books-shelf-results" id="books-shelf-results"></div>
+</div>
+<div class="books-shelf-empty" id="books-shelf-empty" style="display:none;">
+    No hay libros que coincidan con la búsqueda.
+  </div>
+<div class="books-list-finished" id="books-list-finished"></div>
+</details>
+<section class="geo-section" id="books-geo-section" style="display:none;">
+<div class="geo-card">
+<div class="geo-header">
+<div>
+<div class="geo-title">Mapa de libros</div>
+<div class="geo-subtitle">Intensidad según número de libros</div>
+</div>
+</div>
+<div class="geo-map" id="books-world-map"></div>
+<details aria-label="Listado de países (libros)" class="geo-list" id="books-country-panel">
+<summary class="geo-list-summary">Países y número de libros</summary>
+<div class="geo-list-body" id="books-country-list"></div>
+</details>
+</div>
+</section>
+<section class="books-charts" id="books-charts-section" style="display:none;">
+<div class="chart-card">
+<div class="chart-card-header">
+<div class="chart-card-title" id="books-chart-title">Categoría</div>
+<label class="chart-selector" for="books-chart-selector">
+<span>Ver por</span>
+<select class="chart-selector-input" id="books-chart-selector">
+<option selected="" value="genre">Categoría</option>
+<option value="author">Autor</option>
+<option value="language">Idioma</option>
+<option value="century">Siglo</option>
+</select>
+</label>
+</div>
+<div class="donut-host" id="chart-active"></div>
+</div>
+</section>
+<div class="empty-state" id="books-empty">
+          Aún no has añadido ningún libro.
+        </div>
+</section>
+<!-- Vista VÍDEOS -->
+<section class="view" id="view-videos">
+<div class="videosWorkspace" id="videos-workspace">
+  <header class="videosWorkspace__head">
+    <div class="videosWorkspace__titleBlock">
+      <p class="videosWorkspace__eyebrow">Vídeos</p>
+      <h2 class="videosWorkspace__title">Producción</h2>
+    </div>
+    <div class="videosWorkspace__actions">
+      <button class="videosWorkspace__action" id="btn-add-video" type="button">+ Vídeo</button>
+      <button class="videosWorkspace__action" id="btn-add-idea" type="button">+ Idea</button>
+      <button class="videosWorkspace__action" id="btn-open-links" type="button">Links</button>
+      <button class="videosWorkspace__action videosWorkspace__action--ghost" id="videos-start-session" type="button">▶ Sesión</button>
+    </div>
+  </header>
+
+  <div class="videosWorkspace__kpi" aria-label="Métricas clave">
+    <div class="videosWorkspace__kpiItem"><span>Palabras</span><strong id="video-stat-words">0</strong></div>
+    <div class="videosWorkspace__kpiItem"><span>Publicados</span><strong id="video-stat-count">0</strong></div>
+    <div class="videosWorkspace__kpiItem"><span>Ideas</span><strong id="video-stat-time">0</strong></div>
+    <div class="videosWorkspace__kpiItem"><span>Min editados</span><strong id="video-stat-streak">0</strong></div>
+  </div>
+
+  <section class="videosWorkspace__analytics" aria-label="Analítica de vídeos">
+    <div class="videosWorkspace__analyticsTop">
+      <div class="videosWorkspace__range" role="tablist" aria-label="Rango temporal">
+        <button type="button" class="videosWorkspace__rangeBtn is-active" data-video-range="7d">Semana</button>
+        <button type="button" class="videosWorkspace__rangeBtn" data-video-range="30d">Mes</button>
+        <button type="button" class="videosWorkspace__rangeBtn" data-video-range="365d">Año</button>
+      </div>
+      <div class="videosWorkspace__selectors">
+        <select id="video-cal-view-mode" aria-label="Rango">
+          <option value="7d">Semana</option>
+          <option value="30d" selected>Mes</option>
+          <option value="365d">Año</option>
+        </select>
+        <select id="video-chart-mode" aria-label="Visualización">
+          <option value="line" selected>Línea</option>
+          <option value="bars">Barras</option>
+        </select>
+        <select id="video-metric-mode" aria-label="Métrica">
+          <option value="words" selected>Palabras</option>
+          <option value="publish">Publicados</option>
+          <option value="seconds">Min editados</option>
+          <option value="ideas">Ideas</option>
+        </select>
+      </div>
+    </div>
+    <div class="videosWorkspace__summary" id="video-calendar-summary"></div>
+    <div class="videosWorkspace__compare" id="video-activity-compare"></div>
+    <div class="videosWorkspace__chart" id="video-calendar-grid"></div>
+    <div class="videosWorkspace__chartLegend" id="video-chart-legend"></div>
+    <div class="videosWorkspace__chartFooter" id="video-activity-footer"></div>
+  </section>
+
+  <div class="videosWorkspace__list" id="videos-list"></div>
+  <div class="videosWorkspace__empty" id="videos-empty">Aún no has añadido ningún vídeo.</div>
+</div>
+</section>
+<section class="view" id="view-video-script">
+<div class="video-script-shell">
+<div class="video-script-topbar">
+<button class="icon-btn" id="video-script-back" type="button">←</button>
+<div class="video-script-heading">
+<div class="video-script-title" id="video-script-title">Título del guion</div>
+<div class="video-script-subtitle" id="video-script-subtitle">Guion</div>
+</div>
+<div class="video-script-actions">
+<button class="btn ghost btn-compact" id="video-script-teleprompter" type="button">Teleprompter</button>
+</div>
+</div>
+<div class="video-script-count-header" id="video-script-count-header">
+<div class="video-script-count-badge" id="video-script-count-badge">Palabras: 0 · Progreso: 0%</div>
+<button class="btn ghost" id="video-script-count-toggle" type="button">⚙︎ Conteo</button>
+<button class="btn ghost btn-compact" id="video-script-insert-inline" type="button" title="Insertar recurso" aria-label="Insertar recurso">📎</button>
+</div>
+<details class="video-script-meta" id="video-script-meta">
+<summary class="video-script-meta-summary">Detalles del guion</summary>
+<div class="video-script-meta-grid">
+<div class="video-script-meta-block">
+<div class="video-script-meta-label">Duración estimada</div>
+<div class="video-script-meta-value" id="video-script-duration">0 min</div>
+</div>
+<label class="video-script-ppm">
+<span>PPM</span>
+<input id="video-script-ppm" inputmode="numeric" min="60" type="number" value="150"/>
+</label>
+</div>
+</details>
+
+  <div class="video-script-toolbar-floating">
+      <div class="video-script-toolbar" id="video-script-toolbar">
+        <div class="video-script-toolbar-main">
+          <button type="button" class="ql-bold" aria-label="Negrita">B</button>
+          <button type="button" class="ql-italic" aria-label="Cursiva">I</button>
+          <button type="button" class="ql-underline" aria-label="Subrayado">U</button>
+          <button type="button" class="ql-header" value="1" aria-label="Heading">H</button>
+          <button type="button" class="ql-list" value="bullet" aria-label="Lista">•</button>
+          <button type="button" class="ql-link" aria-label="Link">🔗</button>
+          <button type="button" class="ql-background" value="yellow" aria-label="Highlight">✦</button>
+          <button type="button" class="ql-undo" aria-label="Deshacer">↶</button>
+          <button type="button" class="ql-redo" aria-label="Rehacer">↷</button>
+          <button class="video-toolbar-more" id="video-toolbar-more-toggle" type="button">⋯</button>
+        </div>
+        <div class="video-script-toolbar-more-menu" id="video-toolbar-more-menu" aria-hidden="true">
+          <button type="button" class="ql-list" value="ordered">Lista num</button>
+          <button type="button" class="ql-header" value="2">H2</button>
+          <button type="button" class="ql-header" value="3">H3</button>
+          <button type="button" class="ql-blockquote">Cita</button>
+          <button type="button" class="ql-clean">Limpiar</button>
+        </div>
+      </div>
+  </div>
+
+
+<div class="video-script-editor" id="video-script-editor"></div>
+<button class="btn primary video-annotate-fab hidden" id="video-annotate-fab" type="button">Anotar</button>
+<details class="lista-anotaciones">
+  <summary>Anotaciones</summary>
+      <div class="lista-anotaciones" id="video-script-annotations"> <!-- Lista de anotaciones por JS --> 
+        <div class="video-inline-annotation-toggle hidden" id="video-inline-annotation-toggle">
+        <div class="video-inline-annotation-title">Anotación inline (#...#)</div>
+        <div class="video-inline-annotation-text" id="video-inline-annotation-text">—</div>
+        <label class="video-inline-annotation-switch">
+        <span>Cuenta para palabras</span>
+        <input id="video-inline-annotation-checkbox" type="checkbox" />
+        </label>
+        </div>
+    </div>
+</details>
+<div class="video-annotation-popup hidden" id="video-annotation-popup">
+<div class="video-annotation-popup-title" id="video-annotation-title">Nueva anotación</div>
+<div class="video-annotation-selection">
+<span class="video-annotation-selection-label">Texto seleccionado</span>
+<div class="video-annotation-selection-value" id="video-annotation-selection">—</div>
+</div>
+<textarea id="video-annotation-text" placeholder="Escribe tu anotación..." rows="3"></textarea>
+<div class="video-annotation-actions">
+<button class="btn ghost" id="video-annotation-cancel" type="button">Cerrar</button>
+<button class="btn ghost" id="video-annotation-delete" type="button">Borrar</button>
+<button class="btn primary" id="video-annotation-save" type="button">Guardar</button>
+</div>
+</div>
+<div class="video-sheet-backdrop" id="video-count-sheet-backdrop" aria-hidden="true">
+<div class="video-bottom-sheet" id="video-count-sheet">
+<div class="video-sheet-handle"></div>
+<div class="video-sheet-header">
+<div class="video-sheet-title">Conteo</div>
+<button class="btn ghost" id="video-count-sheet-close" type="button">Listo</button>
+</div>
+<div class="video-script-count-toggles" id="video-script-count-toggles"></div>
+<div class="video-script-count-summary" id="video-script-count-summary"></div>
+</div>
+</div>
+<div class="video-sheet-backdrop" id="video-link-picker-backdrop" aria-hidden="true">
+<div class="video-bottom-sheet" id="video-link-picker">
+<div class="video-sheet-handle"></div>
+<div class="video-sheet-header">
+<div class="video-sheet-title">Insertar recurso</div>
+<button class="btn ghost" id="video-link-picker-close" type="button">Listo</button>
+</div>
+<div class="video-insert-type-row" id="video-insert-type-row">
+<button class="btn ghost is-active" data-insert-type="link" type="button">Link</button>
+<button class="btn ghost" data-insert-type="note" type="button">Nota</button>
+<button class="btn ghost" data-insert-type="quote" type="button">Cita</button>
+</div>
+<div class="video-insert-pane" data-insert-pane="link">
+<label class="field-label" for="video-link-search">Buscar link</label>
+<input class="video-link-search" id="video-link-search" placeholder="Buscar por título, nota o URL" type="search"/>
+<div class="video-link-picker-list" id="video-link-picker-list"></div>
+</div>
+<div class="video-insert-pane hidden" data-insert-pane="note">
+<label class="field-label" for="video-insert-note-search">Buscar nota</label>
+<input class="video-link-search" id="video-insert-note-search" placeholder="Buscar por texto o título" type="search"/>
+<div class="video-link-picker-list" id="video-insert-note-list"></div>
+<details class="video-insert-create-block">
+<summary>Crear nueva nota</summary>
+<label class="field-label" for="video-insert-note-text">Texto de la nota</label>
+<textarea class="video-insert-textarea" id="video-insert-note-text" rows="4" placeholder="Escribe la nota..."></textarea>
+<button class="btn primary" id="video-insert-note-confirm" type="button">Insertar nota</button>
+</details>
+</div>
+<div class="video-insert-pane hidden" data-insert-pane="quote">
+<label class="field-label" for="video-insert-quote-search">Buscar cita</label>
+<input class="video-link-search" id="video-insert-quote-search" placeholder="Buscar por cita, libro o página" type="search"/>
+<div class="video-link-picker-list" id="video-insert-quote-list"></div>
+<details class="video-insert-create-block">
+<summary>Crear nueva cita</summary>
+<label class="field-label" for="video-insert-quote-book">Libro</label>
+<input class="video-link-search" id="video-insert-quote-book" list="video-books-datalist" placeholder="Buscar en tu biblioteca o escribir manualmente" type="search"/>
+<datalist id="video-books-datalist"></datalist>
+<label class="field-label" for="video-insert-quote-page">Página</label>
+<input class="video-link-search" id="video-insert-quote-page" min="1" inputmode="numeric" placeholder="Ej. 42" type="number"/>
+<label class="field-label" for="video-insert-quote-text">Texto de la cita</label>
+<textarea class="video-insert-textarea" id="video-insert-quote-text" rows="4" placeholder="Escribe la cita..."></textarea>
+<button class="btn primary" id="video-insert-quote-confirm" type="button">Insertar cita</button>
+</details>
+</div>
+</div>
+</div>
+</section>
+<section class="view" id="view-video-teleprompter">
+<div class="video-teleprompter-shell">
+<div class="video-teleprompter-topbar">
+<button class="icon-btn" id="video-teleprompter-back" type="button">←</button>
+<div class="video-teleprompter-title" id="video-teleprompter-title">Teleprompter</div>
+</div>
+<div class="video-teleprompter-controls">
+<button class="btn primary" id="video-teleprompter-play" type="button">Play</button>
+<label>
+<span>Velocidad (PPM)</span>
+<input id="video-teleprompter-speed" inputmode="numeric" min="60" type="number" value="150"/>
+</label>
+<label>
+<span>Tamaño</span>
+<input id="video-teleprompter-size" max="64" min="18" type="range" value="32"/>
+</label>
+<label class="toggle-pill">
+<input id="video-teleprompter-highlight" type="checkbox"/>
+<span>Resaltar frase</span>
+</label>
+</div>
+<div class="video-teleprompter-body" id="video-teleprompter-body">
+<div class="video-teleprompter-content" id="video-teleprompter-content"></div>
+</div>
+</div>
+</section>
+<section class="view" id="view-video-day">
+<div class="video-day-shell">
+<div class="video-day-topbar">
+<button class="icon-btn" id="video-day-back" type="button">←</button>
+<div class="video-day-title" id="video-day-title">Resumen del día</div>
+</div>
+<div class="video-day-summary" id="video-day-summary"></div>
+<div class="video-day-list" id="video-day-list"></div>
+</div>
+</section>
+<section class="view" id="view-links">
+<div class="video-links-shell">
+<div class="video-links-topbar">
+<button class="icon-btn" id="video-links-back" type="button">←</button>
+<div class="video-links-title">Links y recursos</div>
+<button class="btn primary" id="video-links-new" type="button">Nuevo link</button>
+</div>
+<div class="video-links-filters">
+<label class="field-label" for="video-links-search">Buscar</label>
+<input class="video-links-search" id="video-links-search" placeholder="Buscar por título, nota o categoría" type="search"/>
+<label class="field-label" for="video-links-book-filter">Filtrar por libro</label>
+<select class="video-links-search" id="video-links-book-filter">
+<option value="">Todos los libros</option>
+<option value="__none__">Sin libro</option>
+</select>
+</div>
+<div class="video-links-overview" id="video-links-overview"></div>
+<div class="video-links-list" id="video-links-list"></div>
+<div class="video-links-empty" id="video-links-empty">Aún no has guardado links.</div>
+</div>
+</section>
+<section class="view" id="view-links-new">
+<div class="video-links-shell">
+<div class="video-links-topbar">
+<button class="icon-btn" id="video-links-new-back" type="button">←</button>
+<div class="video-links-title" id="video-links-new-title">Nuevo link</div>
+</div>
+<form class="video-links-form" id="video-links-form">
+<input id="video-link-id" type="hidden"/>
+<div class="video-links-card">
+<div class="video-links-card-title">Guarda un recurso</div>
+<div class="hint">Si pegas una URL sin https://, la normalizamos automáticamente.</div>
+<label class="field-label" for="video-link-url">URL</label>
+<input id="video-link-url" name="url" placeholder="https://..." type="url"/>
+<label class="field-label" for="video-link-title">Título (opcional)</label>
+<input id="video-link-title" name="title" placeholder="Título corto" type="text"/>
+<label class="field-label" for="video-link-category">Categoría</label>
+<select id="video-link-category" name="category">
+<option value="cancion">Canción</option>
+<option value="visual">Visual</option>
+<option value="tema">Tema</option>
+<option value="bookQuote">Libro/Cita</option>
+<option value="idea">Ideas/Notas</option>
+<option value="otro">Otro</option>
+</select>
+<label class="field-label" for="video-link-note">Nota</label>
+<textarea id="video-link-note" name="note" placeholder="Idea rápida o por qué sirve" rows="3"></textarea>
+<div class="video-link-book-fields hidden" id="video-link-book-fields">
+<label class="field-label" for="video-link-book-title">Libro</label>
+<input id="video-link-book-title" list="video-books-datalist" name="bookTitle" placeholder="Título del libro" type="search"/>
+<label class="field-label" for="video-link-book-page">Página (opcional)</label>
+<input id="video-link-book-page" name="page" placeholder="p. 42" type="text"/>
+<button class="btn ghost btn-compact" id="video-link-book-create" type="button">+ Crear libro</button>
+</div>
+<div class="form-error" id="video-link-error" role="alert"></div>
+<div class="video-links-actions">
+<button class="btn ghost" id="video-links-cancel" type="button">Cancelar</button>
+<button class="btn primary" id="video-links-save" type="submit">Guardar</button>
+</div>
+</div>
+</form>
+</div>
+</section>
+<!-- Vista RECETAS -->
+<section class="view" id="view-recipes">
+<div class="recipes-wrapper">
+
+<div class="recipes-subtabs" role="tablist" aria-label="Subvistas de recetas">
+<button class="recipes-subtab is-active" id="recipes-subtab-library" data-recipes-panel="library" aria-selected="true" type="button">Recetas</button>
+<button class="recipes-subtab" id="recipes-subtab-macros" data-recipes-panel="macros" aria-selected="false" type="button">Macros</button>
+<button class="recipes-subtab" id="recipes-subtab-statistics" data-recipes-panel="statistics" aria-selected="false" type="button">Estadística</button>
+<button class="recipes-subtab" id="recipes-subtab-shopping" data-recipes-panel="shopping" aria-selected="false" type="button">Compra</button>
+</div>
+<div class="recipes-panel is-active" id="recipes-panel-library">
+  <div class="recipes-top">
+    <div class="stats-cards recipes-stats-cards">
+    <div class="stat-card" id="stat-card-receta">
+    <div class="stat-label">Recetas</div>
+    <div class="stat-value" id="recipe-stat-total">0</div>
+    </div>
+    <div class="stat-card" id="stat-card-products">
+    <div class="stat-label">Productos</div>
+    <div class="stat-value" id="recipe-stat-products">0</div>
+    </div>
+    <div class="stat-card" id="stat-card-cost">
+    <div class="stat-label">Gasto</div>
+    <div class="stat-value" id="recipe-stat-cost">0</div>
+    </div>
+    <div class="stat-card" id="stat-card-kcal">
+    <div class="stat-label">Kcal</div>
+    <div class="stat-value" id="recipe-stat-kcal">0</div>
+    </div>
+    <div class="stat-card" id="stat-card-laura">
+    <div class="stat-label">L. Check</div>
+    <div class="stat-value" id="recipe-stat-laura-positive">0</div>
+    </div>
+    </div>
+</div>
+<div class="recipes-toolbar">
+<button class="btn primary" id="btn-add-recipe">🥞</button>
+<button class="btn ghost btn-compact" id="recipes-start-session" type="button">▶ Iniciar sesión</button>
+</div>
+
+<div class="books-filters is-collapsed" id="recipes-filters">
+  <div class="books-filters-header" id="recipes-filters-header">
+  <div class="filter-row filter-search-row">
+  <label class="field-label" id="label-buscador"for="recipes-filter-search">Buscar</label>
+  <input autocomplete="off" class="filter-search-input" id="recipes-filter-search" inputmode="search" placeholder="Nombre del plato, etiquetas o tipo de comida" type="search"/>
+  </div>
+  <button aria-controls="recipes-filters-body" aria-expanded="false" class="filters-toggle-btn" id="recipes-filters-toggle" type="button">
+  <span class="filters-toggle-text">Mostrar filtros</span>
+  <span aria-hidden="true" class="filters-toggle-icon">⌄</span>
+  </button>
+  </div>
+  <div class="books-filters-body" id="recipes-filters-body">
+  <div class="filter-row">
+  <div class="filter-label">Filtros rápidos</div>
+  <div aria-label="Filtros dinámicos" class="filter-chip-groups" id="recipes-filter-chips"></div>
+  </div>
+  <div class="filter-row filter-toggles">
+  <label class="toggle-pill">
+  <input id="recipes-filter-favorites" type="checkbox"/>
+  <span>Solo favoritas</span>
+  </label>
+  <label class="toggle-pill">
+  <input id="recipes-filter-laura" type="checkbox"/>
+  <span>Con check de Laura</span>
+  </label>
+  </div>
+  </div>
+</div>
+<div class="recipes-shelf-wrapper">
+<div class="recipes-shelf-toolbar">
+<label class="field-label shelf-search-label" for="recipes-shelf-search">Buscar en la estantería</label>
+<input class="shelf-search-input" id="recipes-shelf-search" placeholder="Nombre, tipo, etiquetas..." type="search"/>
+<div class="recipes-view-toggle" id="recipes-view-toggle" role="tablist" aria-label="Modo de vista de recetas">
+<button class="recipes-view-toggle-btn is-active" data-recipes-view="shelf" role="tab" aria-selected="true" type="button">Estantería</button>
+<button class="recipes-view-toggle-btn" data-recipes-view="cards" role="tab" aria-selected="false" type="button">Tarjetas</button>
+</div>
+<div class="books-shelf-results" id="recipes-shelf-results"></div>
+</div>
+<section class="recipes-list-panel" id="recipes-list-panel" aria-label="Vista de recetas">
+<div class="recipes-list-panel-head">
+<h3 class="recipes-list-panel-title">Vista de recetas</h3>
+<p class="recipes-list-panel-subtitle">Previsualización compacta de cada receta visible</p>
+</div>
+<div class="recipes-list-panel-body" id="recipes-list-preview"></div>
+</section>
+<div class="books-shelf-empty" id="recipes-shelf-empty" style="display:none;">
+              No hay recetas que coincidan con la búsqueda.
+            </div>
+<div class="books-list recipes-shelf" id="recipes-list"></div>
+<details class="books-finished" id="recipes-favorites-section" style="display:none;">
+<summary class="books-finished-summary">
+<span>Favoritas</span>
+<span class="books-finished-count" id="recipes-favorites-count">0</span>
+</summary>
+<div class="books-list-finished" id="recipes-list-favorites"></div>
+</details>
+</div>
+<section class="geo-section" id="recipes-geo-section" style="display:none;">
+<div class="geo-card">
+<div class="geo-header">
+<div>
+<div class="geo-title">Mapa de recetas</div>
+<div class="geo-subtitle">Intensidad según número de platos</div>
+</div>
+</div>
+<div class="geo-map" id="recipes-world-map"></div>
+<details aria-label="Listado de países (recetas)" class="geo-list" id="recipes-country-panel">
+<summary class="geo-list-summary">Países y número de platos</summary>
+<div class="geo-list-body" id="recipes-country-list"></div>
+</details>
+</div>
+</section>
+<section class="books-charts" id="recipes-charts-section">
+<div class="books-charts-grid">
+<div class="chart-card">
+<div class="chart-card-title">Tipo de comida</div>
+<div class="donut-host" id="recipe-chart-meal"></div>
+</div>
+<div class="chart-card">
+<div class="chart-card-title">Saludable/Insana</div>
+<div class="donut-host" id="recipe-chart-health"></div>
+</div>
+</div>
+</section>
+<div class="empty-state" id="recipes-empty">
+            Aún no has añadido recetas.
+          </div>
+</div>
+</div>
+<div class="recipes-panel" id="recipes-panel-macros">
+  <div class="macro-header-card-wrapper">
+    <div class="macro-settings-trigger-row">
+      <button class="macro-settings-trigger" type="button" id="macro-integration-open" aria-label="Abrir configuración avanzada de macros" title="Configuración avanzada">i</button>
+    </div>
+    <div class="macro-date-row">
+      <button class="btn ghost btn-compact" type="button" id="macro-date-prev">◀</button>
+      <input type="date" id="macro-date-input" class="macro-date-input" />
+      <button class="btn ghost btn-compact" type="button" id="macro-date-next">▶</button>
+    </div>
+    <div class="macro-kcal-summary" id="macro-kcal-summary">0 kcal / 0 kcal</div>
+    <div class="macro-summary-grid" id="macro-summary-grid"></div>
+  </div>
+  <div class="macro-meals" id="macro-meals"></div>
+</div>
+<div class="modal-backdrop hidden" id="macro-integration-modal-backdrop">
+  <div class="macro-modal macro-integration-modal" role="dialog" aria-modal="true" aria-labelledby="macro-integration-modal-title">
+    <div class="macro-modal-handle"></div>
+    <div class="macro-modal-header">
+      <div>
+        <h3 class="macro-modal-title" id="macro-integration-modal-title">Configuración avanzada</h3>
+        <p class="macro-modal-subtitle">Ajustes de gasto calórico e integración Gym/Hábitos</p>
+      </div>
+      <button class="icon-btn" type="button" id="macro-integration-modal-close" aria-label="Cerrar">✕</button>
+    </div>
+    <div class="macro-modal-body">
+      <div class="macro-integration-settings">
+        <label class="macro-integration-field">
+          <span>Peso corporal (kg)</span>
+          <input type="number" id="macro-bodyweight-kg" min="0" step="0.1" placeholder="Opcional" />
+        </label>
+        <label class="macro-integration-field">
+          <span>Gasto por día trabajado (kcal)</span>
+          <input type="number" id="macro-work-kcal" min="0" step="10" value="700" />
+        </label>
+        <label class="macro-integration-field">
+          <span>Hábitos de trabajo vinculados</span>
+          <select id="macro-work-habits" multiple></select>
+        </label>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="recipes-panel" id="recipes-panel-statistics">
+  <div class="macro-stats-shell">
+    <div class="macro-stats-toolbar">
+      <div class="macro-stats-periods" id="macro-stats-periods" role="tablist" aria-label="Periodo de estadística">
+        <button class="macro-stats-period is-active" data-stats-period="day" type="button">Día</button>
+        <button class="macro-stats-period" data-stats-period="week" type="button">Semana</button>
+        <button class="macro-stats-period" data-stats-period="month" type="button">Mes</button>
+        <button class="macro-stats-period" data-stats-period="year" type="button">Año</button>
+      </div>
+      <div class="macro-stats-controls">
+        <button class="btn ghost btn-compact" type="button" id="macro-stats-prev">◀</button>
+        <input type="date" id="macro-stats-anchor" class="macro-date-input" />
+        <button class="btn ghost btn-compact" type="button" id="macro-stats-next">▶</button>
+        <select id="macro-stats-main-metric" class="macro-stats-select">
+          <option value="macros">Macros (C/P/G)</option>
+          <option value="kcal">Kcal</option>
+          <option value="cost">Coste (€)</option>
+          <option value="burned">Quemadas (kcal)</option>
+          <option value="net">Netas (kcal)</option>
+          <option value="carbs">Carbohidratos</option>
+          <option value="protein">Proteínas</option>
+          <option value="fat">Grasas</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="macro-stats-grid" id="macro-stats-kpis"></div>
+
+    <div class="macro-stats-panels">
+      <section class="macro-stats-card macro-stats-main-chart-card">
+        <header class="macro-stats-card-head">
+          <h4>Evolución nutricional</h4>
+          <span class="hint" id="macro-stats-main-label"></span>
+        </header>
+        <div class="macro-stats-chart-legend"></div>
+        <div id="macro-stats-main-tooltip" class="macro-stats-main-tooltip hidden"></div>
+        <svg id="macro-stats-main-chart" class="macro-stats-main-chart" viewBox="0 0 760 260" preserveAspectRatio="none"></svg>
+      </section>
+
+      <section class="macro-stats-card macro-stats-donut-card">
+        <header class="macro-stats-card-head"><h4>Distribuciones del periodo</h4></header>
+        <div class="macro-stats-donut-mode" id="macro-stats-donut-mode"></div>
+        <div class="macro-stats-donut-grid">
+          <div class="macro-stats-donut-box">
+            <svg id="macro-stats-donut-main" viewBox="0 0 120 120" class="macro-stats-donut"></svg>
+            <div class="macro-stats-donut-title" id="macro-stats-donut-title">Calorías por macro</div>
+            <div class="macro-stats-donut-legend" id="macro-stats-donut-legend"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="macro-stats-card macro-stats-targets-card">
+        <header class="macro-stats-card-head">
+          <h4>Objetivo de reparto de macros</h4>
+        </header>
+        <div class="macro-target-editor" id="macro-target-editor"></div>
+      </section>
+    </div>
+
+    <div class="macro-stats-lists">
+      <section class="macro-stats-card">
+        <header class="macro-stats-card-head"><h4>Top recetas y platos</h4></header>
+        <div id="macro-stats-top-recipes" class="macro-stats-list"></div>
+      </section>
+      <section class="macro-stats-card">
+        <header class="macro-stats-card-head"><h4>Top productos</h4></header>
+        <div id="macro-stats-top-products" class="macro-stats-list"></div>
+      </section>
+    </div>
+  </div>
+</div>
+<div class="recipes-panel" id="recipes-panel-shopping">
+  <div class="macro-stats-shell">
+    <section class="macro-stats-card macro-shopping-shell">
+      <header class="macro-stats-card-head">
+        <h4>Compra inteligente</h4>
+        <div class="macro-shopping-mode" id="macro-shopping-mode">
+          <button class="macro-shopping-mode-btn is-active" id="macro-shopping-mode-list" data-shopping-mode="list" type="button">Explorar</button>
+          <button class="macro-shopping-mode-btn" id="macro-shopping-mode-compare" data-shopping-mode="compare" type="button">Comparar</button>
+        </div>
+      </header>
+      <div class="macro-shopping-list-view" id="macro-shopping-list-view">
+        <div class="macro-shopping-search-wrap">
+          <span aria-hidden="true">🔎</span>
+          <input id="macro-shopping-search" type="search" placeholder="Buscar producto por nombre…" autocomplete="off" />
+        </div>
+        <div class="macro-shopping-score-filters" id="macro-shopping-score-filters" role="group" aria-label="Filtro Nutri-Score"></div>
+        <div class="macro-shopping-results-meta" id="macro-shopping-results-count"></div>
+        <div class="macro-shopping-results" id="macro-shopping-results"></div>
+        <div class="macro-shopping-empty hidden" id="macro-shopping-empty">
+          <div class="macro-shopping-empty-icon" aria-hidden="true">🧺</div>
+          <div class="macro-shopping-empty-title">No encontramos productos</div>
+          <p>Prueba con otro nombre o cambia el filtro de Nutri-Score.</p>
+        </div>
+      </div>
+      <div class="macro-shopping-compare-view hidden" id="macro-shopping-compare-view">
+        <div class="macro-shopping-compare-pickers">
+          <article class="macro-shopping-compare-picker">
+            <h5>Producto izquierda</h5>
+            <input id="macro-shopping-compare-left-search" type="search" placeholder="Buscar producto…" autocomplete="off" />
+            <div class="macro-shopping-compare-options" id="macro-shopping-compare-left-options"></div>
+          </article>
+          <article class="macro-shopping-compare-picker">
+            <h5>Producto derecha</h5>
+            <input id="macro-shopping-compare-right-search" type="search" placeholder="Buscar producto…" autocomplete="off" />
+            <div class="macro-shopping-compare-options" id="macro-shopping-compare-right-options"></div>
+          </article>
+        </div>
+        <div class="macro-shopping-compare-table-wrap hidden" id="macro-shopping-compare-table-wrap">
+          <table class="macro-shopping-compare-table">
+            <thead>
+              <tr>
+                <th>Métrica</th>
+                <th id="macro-shopping-compare-left-title">Producto A</th>
+                <th>Comparación</th>
+                <th id="macro-shopping-compare-right-title">Producto B</th>
+              </tr>
+            </thead>
+            <tbody id="macro-shopping-compare-table-body"></tbody>
+          </table>
+        </div>
+        <div class="macro-shopping-compare-empty" id="macro-shopping-compare-empty">
+          Selecciona dos productos para ver la comparación por 100 g/ml.
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+</section>
+<!-- Vista HÁBITOS -->
+<section class="view" id="view-habits">
+<div class="habits-wrapper">
+  <header class="habits-header">
+  <div class="habits-title"></div>
+  </header>
+<div class="habit-quick-actions habit-quick-actions-bar">
+<button class="btn ghost btn-compact habit-quick-btn" id="habit-add-time">+ Añadir tiempo</button>
+<button class="btn ghost btn-compact habit-quick-btn" id="habit-fab-add">+ Añadir hábito</button>
+<button class="btn ghost btn-compact habit-quick-btn" id="habit-session-toggle">▶︎ Empezar sesión</button>
+</div>
+<div aria-label="Vistas de hábitos" class="habits-subtabs" role="tablist">
+<button aria-selected="true" class="habit-subtab is-active" data-tab="today" role="tab">Hoy</button>
+<button aria-selected="false" class="habit-subtab" data-tab="week" role="tab">Semana</button>
+<button aria-selected="false" class="habit-subtab" data-tab="history" role="tab">Historial</button>
+<button aria-selected="false" class="habit-subtab" data-tab="schedule" role="tab">Horario</button>
+<button aria-selected="false" class="habit-subtab" data-tab="reports" role="tab">Reportes</button>
+</div>
+<div class="habits-views">
+<div class="habits-panel is-active" data-panel="today">
+<div class="habit-week-timeline" id="habit-week-timeline" aria-label="Semana actual"></div>
+<div class="habit-today-search" id="habit-today-search">
+  <span class="habit-search-icon" aria-hidden="true">🔍</span>
+  <input autocomplete="off" class="habit-search-input" id="habit-today-search-input" inputmode="search" placeholder="Buscar hábito…" type="search"/>
+  <button class="habit-search-clear" id="habit-today-search-clear" type="button" aria-label="Limpiar búsqueda">✕</button>
+</div>
+<div class="habit-search-empty" id="habit-today-search-empty" style="display:none;">
+  <div class="habit-search-empty-text">No hay hábitos que coincidan</div>
+  <button class="btn ghost btn-compact" id="habit-today-search-reset" type="button">Limpiar</button>
+</div>
+<details class="habit-accordion habit-quick-sessions" id="habit-quick-sessions" data-search-ignore="true">
+  <summary>
+    <div class="habit-accordion-title">Sesiones rápidas</div>
+    <div class="habit-accordion-meta" id="habit-quick-sessions-meta">—</div>
+    <div class="habit-accordion-preview" id="habit-quick-sessions-preview">Toca para añadir</div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-quick-sessions-controls">
+      <select id="habit-quick-sessions-select"></select>
+      <button class="btn ghost btn-compact" id="habit-quick-sessions-add" type="button">Añadir</button>
+    </div>
+    <div class="habit-quick-sessions-row" id="habit-quick-sessions-row"></div>
+    <div class="empty-state small" id="habit-quick-sessions-empty" style="display:none;">Añade hábitos de tiempo para iniciar sesiones con un toque.</div>
+  </div>
+</details>
+<div class="habit-group quick-counters-wrap" data-search-ignore="true">
+
+  <div class="habit-group-head" onclick="toggleQuickCounters()">
+    <span>Contadores rápidos</span>
+    <span class="habit-group-sub" id="quick-counter-count"></span>
+    <span class="chev">⌄</span>
+  </div>
+
+  <div class="habit-group-body" id="quick-counters-body">
+    <div class="habit-quick-sessions-controls">
+      <input autocomplete="off" id="quick-counters-search" inputmode="search" placeholder="Buscar hábito/contador…" type="search"/>
+      <select id="quick-counters-select"></select>
+      <button class="btn ghost btn-compact" id="quick-counters-add" type="button">Añadir</button>
+    </div>
+    <div class="quick-counters-grid" id="quick-counters-grid"></div>
+  </div>
+
+</div>
+<div class="habit-custom-groups" id="habit-custom-groups"></div>
+<details class="habit-accordion habit-today-accordion" id="habits-today-acc-count" open>
+<summary>
+<div class="habit-accordion-title">Contadores</div>
+<div class="habit-accordion-meta" id="habits-today-count-meta">—</div>
+<div class="habit-accordion-preview" id="habits-today-count-preview">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habits-subgroup">
+<div class="habits-subgroup-title">Pendientes</div>
+<div class="habit-card-list" id="habits-today-count-pending"></div>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-count-pending-private-wrap">
+  <summary>
+    <div class="habit-accordion-title">Privados</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-count-pending-private"></div>
+  </div>
+</details>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-count-pending-low-wrap">
+  <summary>
+    <div class="habit-accordion-title">Poco uso</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-count-pending-low"></div>
+  </div>
+</details>
+
+<div class="empty-state small" id="habits-today-count-empty">No tienes contadores pendientes hoy.</div>
+</div>
+<div class="habits-subgroup">
+<div class="habits-subgroup-title">Hechos</div>
+<div class="habit-card-list" id="habits-today-count-done"></div>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-count-done-private-wrap">
+  <summary>
+    <div class="habit-accordion-title">Privados</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-count-done-private"></div>
+  </div>
+</details>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-count-done-low-wrap">
+  <summary>
+    <div class="habit-accordion-title">Poco uso</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-count-done-low"></div>
+  </div>
+</details>
+
+<div class="empty-state small" id="habits-today-count-done-empty">Aún no has marcado ningún contador hoy.</div>
+</div>
+</div>
+</details>
+
+<details class="habit-accordion habit-today-accordion" id="habits-today-acc-time" open>
+<summary>
+<div class="habit-accordion-title">Por tiempo</div>
+<div class="habit-accordion-meta" id="habits-today-time-meta">—</div>
+<div class="habit-accordion-preview" id="habits-today-time-preview">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habits-subgroup">
+<div class="habits-subgroup-title">Pendientes</div>
+<div class="habit-card-list" id="habits-today-time-pending"></div>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-time-pending-private-wrap">
+  <summary>
+    <div class="habit-accordion-title">Privados</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-time-pending-private"></div>
+  </div>
+</details>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-time-pending-low-wrap">
+  <summary>
+    <div class="habit-accordion-title">Poco uso</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-time-pending-low"></div>
+  </div>
+</details>
+
+<div class="empty-state small" id="habits-today-time-empty">No tienes hábitos pendientes hoy.</div>
+</div>
+<div class="habits-subgroup">
+<div class="habits-subgroup-title">Hechos</div>
+<div class="habit-card-list" id="habits-today-time-done"></div>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-time-done-private-wrap">
+  <summary>
+    <div class="habit-accordion-title">Privados</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-time-done-private"></div>
+  </div>
+</details>
+
+<details class="habit-accordion habit-mini-group" id="habits-today-time-done-low-wrap">
+  <summary>
+    <div class="habit-accordion-title">Poco uso</div>
+    <div class="habit-accordion-meta"></div>
+  </summary>
+  <div class="habit-accordion-body">
+    <div class="habit-card-list" id="habits-today-time-done-low"></div>
+  </div>
+</details>
+
+<div class="empty-state small" id="habits-today-time-done-empty">Aún no has completado ningún hábito hoy.</div>
+</div>
+</div>
+</details>
+</div>
+<div class="habits-panel" data-panel="week">
+<div class="habits-week-list" id="habits-week-list"></div>
+<div class="empty-state small" id="habits-week-empty">Añade hábitos para empezar tu semana.</div>
+</div>
+<div class="habits-panel" data-panel="history">
+<div class="habit-heatmap-list" id="habits-history-list"></div>
+<div class="empty-state small" id="habits-history-empty">Sin historial aún.</div>
+</div>
+<div class="habits-panel" data-panel="schedule">
+<div class="habit-schedule" id="habit-schedule-view"></div>
+</div>
+<div class="habits-panel" data-panel="reports">
+<div class="habit-reports">
+<div class="habit-card-head">
+<div class="habit-card-title">Exportación</div>
+<button class="game-menu-btn" id="habits-export-btn" type="button">Exportar CSV</button>
+</div>
+<div class="habit-kpi-grid">
+<div class="habit-kpi-card">
+<div class="habit-kpi-label" id="habit-kpi-today-label">Hechos hoy</div>
+<div class="habit-kpi-value" id="habit-kpi-today">0</div>
+</div>
+<div class="habit-kpi-card">
+<div class="habit-kpi-label">Horas totales</div>
+<div class="habit-kpi-value" id="habit-kpi-total-hours">0h</div>
+<div class="habit-kpi-sub" id="habit-kpi-total-hours-range">—</div>
+</div>
+<div class="habit-kpi-card">
+<div class="habit-kpi-label" id="habit-kpi-active-days-label">Días contabilizados total</div>
+<div class="habit-kpi-value" id="habit-kpi-active-days-total">0</div>
+</div>
+<div class="habit-kpi-card">
+<div class="habit-kpi-label" id="habit-kpi-streak-label">Racha total</div>
+<div class="habit-kpi-value" id="habit-kpi-streak-total">0</div>
+<div class="habit-kpi-sub" id="habit-kpi-streak-total-sub">—</div>
+</div>
+</div>
+<div class="habit-kpi-grid habit-pin-grid">
+<div class="habit-kpi-card habit-pin-card">
+<div class="habit-kpi-label">Seguimiento · Contador</div>
+<div class="habit-kpi-value" id="habit-pin-count-today">—</div>
+<div class="habit-kpi-sub" id="habit-pin-count-range">—</div>
+<label class="habit-pin-select">
+<select aria-label="Elegir contador para pin 1" id="habit-pin-count-select"></select>
+</label>
+</div>
+<div class="habit-kpi-card habit-pin-card">
+<div class="habit-kpi-label">Seguimiento · Tiempo</div>
+<div class="habit-kpi-value" id="habit-pin-time-today">—</div>
+<div class="habit-kpi-sub" id="habit-pin-time-range">—</div>
+<label class="habit-pin-select">
+<select aria-label="Elegir hábito de tiempo para pin 2" id="habit-pin-time-select"></select>
+</label>
+</div>
+</div>
+<div class="habit-chart-card habit-shifts-card">
+<div class="habit-card-head">
+<div>
+<div class="habit-card-title">Turnos (Trabajo)</div>
+<div class="habit-card-sub" id="habit-shifts-range-meta">Rango Mes</div>
+</div>
+</div>
+<div class="habit-records-grid">
+<div class="habit-record-card habit-record-card-mañanas">
+<div class="habit-kpi-label">Mañanas</div>
+<div class="habit-kpi-value" id="habit-shifts-morning">0</div>
+</div>
+<div class="habit-record-card habit-record-card-tardes">
+<div class="habit-kpi-label">Tardes</div>
+<div class="habit-kpi-value" id="habit-shifts-evening">0</div>
+</div>
+<div class="habit-record-card habit-record-card-libres">
+<div class="habit-kpi-label">Días libres</div>
+<div class="habit-kpi-value" id="habit-shifts-free">0</div>
+</div>
+<div class="habit-record-card habit-record-card-desconocidos">
+<div class="habit-kpi-label">Desconocido</div>
+<div class="habit-kpi-value" id="habit-shifts-unknown">0</div>
+</div>
+</div>
+</div>
+<div class="habit-chart-card habit-records-card">
+<div class="habit-card-head">
+<div>
+<div class="habit-card-title">Récords</div>
+<div class="habit-card-sub" id="habit-records-sub">Últimos 30 días</div>
+</div>
+<div aria-label="Rango de récords" class="habit-range-toggle habit-records-range" role="group">
+<button class="habit-range-btn habit-records-range-btn" data-range="week">Semana</button>
+<button class="habit-range-btn habit-records-range-btn is-active" data-range="month">Mes</button>
+<button class="habit-range-btn habit-records-range-btn" data-range="year">Año</button>
+<button class="habit-range-btn habit-records-range-btn" data-range="total">Total</button>
+</div>
+</div>
+<div class="habit-records-grid">
+<div class="habit-record-card">
+<div class="habit-kpi-label">Racha actual (total)</div>
+<div class="habit-kpi-value" id="habit-records-current-streak">0</div>
+</div>
+<div class="habit-record-card">
+<div class="habit-kpi-label">Mejor racha (rango)</div>
+<div class="habit-kpi-value" id="habit-records-best-streak">0</div>
+</div>
+<div class="habit-record-card">
+<div class="habit-kpi-label">Completados</div>
+<div class="habit-kpi-value" id="habit-records-completed">0</div>
+<div class="habit-kpi-sub" id="habit-records-completed-sub">—</div>
+</div>
+<div class="habit-record-card">
+<div class="habit-kpi-label">% éxito</div>
+<div class="habit-kpi-value" id="habit-records-success">0%</div>
+</div>
+</div>
+</div>
+<div class="habit-chart-card habit-donut-card">
+<div class="habit-card-head">
+<div>
+<div class="habit-card-title" id="habit-donut-title">Tiempo por hábito</div>
+<div class="habit-card-sub" id="habit-donut-sub">Distribución diaria</div>
+</div>
+<label class="habit-select habit-select-compact" for="habit-donut-group">
+<span>Agrupar por</span>
+<select aria-label="Agrupar por" id="habit-donut-group">
+<option value="habit">Hábito</option>
+<option value="param">Parámetro</option>
+</select>
+</label>
+<div aria-label="Rango de tiempo" class="habit-range-toggle" role="group">
+<button class="habit-range-btn" data-range="day">Día</button>
+<button class="habit-range-btn" data-range="week">Semana</button>
+<button class="habit-range-btn" data-range="month">Mes</button>
+<button class="habit-range-btn" data-range="year">Año</button>
+<button class="habit-range-btn is-active" data-range="total">Total</button>
+</div>
+</div>
+<div class="habit-donut-body">
+<div class="habit-donut" id="habit-donut"></div>
+<div class="habit-donut-center" id="habit-donut-center">
+<div class="habit-donut-label">Tiempo</div>
+<div class="habit-donut-total" id="habit-donut-total">0m</div>
+</div>
+</div>
+  <div class="empty-state small" id="habit-donut-empty" style="display:none;">
+  No hay datos en este rango.
+</div>
+
+<details class="habit-donut-legend-wrap">
+  <summary>Leyenda</summary>
+  <div class="habit-donut-legend" id="habit-donut-legend"></div>
+</details>
+
+<div class="habit-chart-card habit-line-card" id="habit-line-card-grafico">
+<div class="habit-card-head habit-line-head">
+<div>
+<div class="habit-card-title">Evolución (min/día)</div>
+<div class="habit-card-sub" id="habit-line-sub">Últimos 7 días · Total</div>
+</div>
+<div class="habit-line-controls">
+<label class="habit-select" for="habit-evo-select">
+<span>Hábito</span>
+<select aria-label="Hábito para evolución" id="habit-evo-select"></select>
+</label>
+<label class="habit-select habit-select-compact" for="habit-evo-range">
+<span>Rango</span>
+<select aria-label="Rango evolución" id="habit-evo-range">
+<option selected="" value="total">Total</option>
+<option value="30d">30D</option>
+<option value="90d">90D</option>
+<option value="year">Año</option>
+<option value="7d">7D</option>
+</select>
+</label>
+</div>
+</div>
+<div class="habit-line-metrics" id="habit-line-metrics">
+<div class="habit-metric">
+<div class="habit-metric-label">Tiempo total (rango)</div>
+<div class="habit-metric-value" id="habit-line-total">0m</div>
+</div>
+<div class="habit-metric">
+<div class="habit-metric-label">Días activos (rango)</div>
+<div class="habit-metric-sub" id="habit-line-days">0</div>
+</div>
+</div>
+<div class="habit-line-body">
+<div class="habit-line-chart" id="habit-line-chart"></div>
+<div class="empty-state small" id="habit-line-empty" style="display:none;">No hay datos en este rango.</div>
+</div>
+</div>
+<details class="habit-accordion habit-analytics-accordion" id="habit-acc-donut-breakdown">
+<summary>
+<div class="habit-accordion-title">Desglose del gráfico circular</div>
+<div class="habit-accordion-meta" id="habit-acc-donut-breakdown-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-analytics-breakdown-head">
+  <div class="habit-unit" id="habit-unit" aria-label="Unidad de tiempo"></div>
+</div>
+<div class="habit-ranking-list habit-analytics-breakdown-list" id="habit-donut-breakdown-list"></div>
+</div>
+</details>
+<details class="habit-accordion habit-analytics-accordion" id="habit-acc-range-habits">
+<summary>
+<div class="habit-accordion-title">Hábitos (rango)</div>
+<div class="habit-accordion-meta" id="habit-acc-range-habits-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-range-goal-head">Objetivo para este rango</div>
+<div class="habit-range-habits-list" id="habit-range-habits-list"></div>
+<details class="habit-accordion habit-accordion-nested" id="habit-acc-range-unused">
+<summary>
+<div class="habit-accordion-title" id="habit-acc-range-unused-title">No usados (0)</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-range-habits-list" id="habit-range-unused-list"></div>
+</div>
+</details>
+</div>
+</details>
+<details class="habit-accordion" id="habit-acc-week">
+<summary>
+<div class="habit-accordion-title">Top minutos (semana)</div>
+<div class="habit-accordion-meta" id="habit-acc-week-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-ranking-list" id="habit-ranking-week"></div>
+</div>
+</details>
+<details class="habit-accordion" id="habit-acc-month">
+<summary>
+<div class="habit-accordion-title">Top minutos (mes)</div>
+<div class="habit-accordion-meta" id="habit-acc-month-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-ranking-list" id="habit-ranking-month"></div>
+</div>
+</details>
+<div class="habit-range-toggle habit-days-range">
+<button class="habit-range-btn habit-days-range-btn is-active" data-range="day">Día</button>
+<button class="habit-range-btn habit-days-range-btn" data-range="week">Semana</button>
+<button class="habit-range-btn habit-days-range-btn" data-range="month">Mes</button>
+<button class="habit-range-btn habit-days-range-btn" data-range="year">Año</button>
+<button class="habit-range-btn habit-days-range-btn" data-range="total">Total</button>
+</div>
+<details class="habit-accordion" id="habit-acc-total">
+<summary>
+<div class="habit-accordion-title">Totales por hábito</div>
+<div class="habit-accordion-meta" id="habit-acc-total-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-ranking-list" id="habit-totals-list"></div>
+</div>
+</details>
+<details class="habit-accordion" id="habit-acc-counts">
+<summary>
+<div class="habit-accordion-title">Contadores</div>
+<div class="habit-accordion-meta" id="habit-acc-counts-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-ranking-list" id="habit-counts-list"></div>
+</div>
+</details>
+<details class="habit-accordion" id="habit-acc-days">
+<summary>
+<div class="habit-accordion-title">Días hechos</div>
+<div class="habit-accordion-meta" id="habit-acc-days-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-ranking-list" id="habit-days-list"></div>
+</div>
+</details>
+<details class="habit-accordion" id="habit-acc-consistency">
+<summary>
+<div class="habit-accordion-title">Consistencia</div>
+<div class="habit-accordion-meta" id="habit-acc-consistency-meta">—</div>
+</summary>
+<div class="habit-accordion-body">
+<div class="habit-ranking-list" id="habit-ranking-consistency"></div>
+</div>
+</details>
+</div>
+</div>
+</div>
+</div>
+<div class="habit-session-overlay hidden" id="habit-session-overlay">
+<div class="habit-session-pill" id="habit-session-pill">
+
+
+<div class="habit-session-emoji" id="habit-session-emoji" aria-hidden="true"><span class="session-multi__pill-emoji">•</span></div>
+<div class="datos-sesion">
+<div class="habit-session-label">Sesión en curso</div>
+
+<div class="habit-session-time" id="habit-session-time">00:00</div>
+</div>
+<button class="btn danger btn-compact" id="habit-session-stop">⏹ Parar</button>
+</div>
+
+</div>
+<div class="habit-session-detail hidden" id="habit-session-detail" role="dialog" aria-modal="true" aria-hidden="true">
+<div class="habit-session-detail-panel">
+<header class="habit-session-detail-header">
+  <div class="habit-session-detail-head-main">
+  <div class="habit-session-detail-emoji" id="habit-session-detail-emoji">•</div>
+<div>
+<div class="habit-session-detail-title" id="habit-session-detail-title">Hábito</div>
+<div class="habit-session-detail-sub">Sesión en curso</div>
+</div>
+</div>
+
+  <button class="habit-session-detail-close" id="habit-session-detail-close" type="button" aria-label="Cerrar">✕</button>
+</header>
+<div class="habit-session-detail-timer" id="habit-session-detail-timer">00:00</div>
+<div class="habit-session-detail-controls">
+<button class="btn danger habit-session-btn-primary" id="habit-session-detail-stop" type="button">⏹ </button>
+<button class="btn ghost habit-session-btn-secondary" id="habit-session-detail-cancel" type="button">❌</button>
+<button class="btn habit-session-btn-secondary" id="habit-session-detail-pause" type="button">⏸️</button>
+<button class="btn ghost habit-session-btn-secondary" id="habit-session-detail-minus" type="button">−1</button>
+<button class="btn ghost habit-session-btn-secondary" id="habit-session-detail-plus" type="button">+1</button>
+</div>
+<section class="habit-session-multi" id="habit-session-detail-list" style="display:none;"></section>
+<section class="habit-session-stats" id="habit-session-stats"></section>
+<section class="habit-session-ranking" id="habit-session-ranking"></section>
+</div>
+</div>
+<div class="habit-detail-overlay hidden" id="habit-detail-overlay" role="dialog" aria-modal="true" aria-hidden="true">
+<div class="habit-detail-panel">
+<header class="habit-detail-header">
+<div class="habit-detail-head-main">
+<button class="habit-detail-emoji habit-icon" id="habit-detail-emoji" type="button" aria-label="Editar hábito">🏷️</button>
+<div class="habit-detail-head-text">
+<div class="habit-detail-title" id="habit-detail-title">Hábito</div>
+<div class="habit-detail-sub" id="habit-detail-meta">—</div>
+<div class="habit-detail-total" id="habit-detail-total">Total: —</div>
+</div>
+</div>
+<div class="habit-detail-head-actions">
+<button class="btn ghost btn-compact" id="habit-detail-edit" type="button">Editar</button>
+<button class="icon-btn" id="habit-detail-close" type="button" aria-label="Cerrar">✕</button>
+</div>
+</header>
+<div class="habit-detail-body">
+<div class="habit-detail-summary">
+<div class="habit-detail-chip" id="habit-detail-status">Pendiente hoy</div>
+<div class="habit-detail-chip" id="habit-detail-streak">🔥 0</div>
+<div class="habit-detail-chip" id="habit-detail-goal">—</div>
+</div>
+<div class="habit-detail-actions" id="habit-detail-actions"></div>
+<div aria-label="Rango de hábito" class="habit-range-toggle habit-detail-range" role="group">
+<button class="habit-range-btn" data-range="week" type="button">Semana</button>
+<button class="habit-range-btn is-active" data-range="month" type="button">Mes</button>
+<button class="habit-range-btn" data-range="year" type="button">Año</button>
+<button class="habit-range-btn" data-range="total" type="button">Total</button>
+</div>
+<section class="habit-detail-section">
+<div class="habit-detail-section-head">
+<div class="habit-detail-section-title">Calendario</div>
+<div class="habit-detail-section-sub" id="habit-detail-heatmap-sub">—</div>
+</div>
+<div class="habit-detail-heatmap" id="habit-detail-heatmap"></div>
+</section>
+<section class="habit-detail-section">
+<div class="habit-detail-section-head">
+<div class="habit-detail-section-title">Evolución</div>
+<div class="habit-detail-section-sub" id="habit-detail-chart-sub">—</div>
+</div>
+<div class="habit-detail-chart-controls">
+<div class="habit-range-toggle" id="habit-detail-chart-mode" role="group" aria-label="Tipo de gráfico">
+<button class="habit-range-btn is-active" data-mode="bar" type="button">Barras</button>
+<button class="habit-range-btn" data-mode="line" type="button">Línea</button>
+</div>
+<div class="habit-range-toggle" id="habit-detail-chart-range" role="group" aria-label="Rango del gráfico">
+<button class="habit-range-btn is-active" data-chart-range="30d" type="button">30d</button>
+<button class="habit-range-btn" data-chart-range="90d" type="button">90d</button>
+<button class="habit-range-btn" data-chart-range="total" type="button">Total</button>
+</div>
+</div>
+<div class="habit-detail-chart" id="habit-detail-chart"></div>
+<div class="habit-detail-chart-meta" id="habit-detail-chart-meta"></div>
+</section>
+<section class="habit-detail-section habit-detail-schedule-section">
+<div class="habit-detail-section-head">
+<div class="habit-detail-section-title">Horario</div>
+<div class="habit-detail-section-sub" id="habit-detail-schedule-status">No configurado</div>
+</div>
+<div class="habit-detail-schedule-chip-group">
+<div class="habit-detail-schedule-chip-label">Días</div>
+<div class="habit-detail-schedule-day-chips" id="habit-detail-schedule-day-chips"></div>
+<div class="habit-detail-schedule-quick-actions">
+<button class="btn ghost btn-compact" id="habit-detail-schedule-days-all" type="button">Todos</button>
+<button class="btn ghost btn-compact" id="habit-detail-schedule-days-work" type="button">Laborables</button>
+<button class="btn ghost btn-compact" id="habit-detail-schedule-days-weekend" type="button">Finde</button>
+<button class="btn ghost btn-compact" id="habit-detail-schedule-days-clear" type="button">Limpiar</button>
+</div>
+</div>
+<div class="habit-detail-schedule-chip-group">
+<div class="habit-detail-schedule-chip-label">Tipo de jornada</div>
+<div class="habit-detail-schedule-type-chips" id="habit-detail-schedule-type-chips"></div>
+</div>
+<div class="habit-detail-schedule-grid">
+<label class="habit-detail-schedule-field habit-detail-schedule-field--wide">
+<span>Modo</span>
+<select id="habit-detail-schedule-mode">
+<option value="targetMin">Objetivo tiempo (min)</option>
+<option value="targetCount">Objetivo count (x)</option>
+<option value="limitMin">Límite tiempo (min)</option>
+<option value="limitCount">Límite count (x)</option>
+<option value="neutralPlannedTime">Neutral planificado (min)</option>
+<option value="neutral">Neutral</option>
+</select>
+</label>
+<label class="habit-detail-schedule-field habit-detail-schedule-field--wide">
+<span>Valor</span>
+<input id="habit-detail-schedule-value" min="0" step="1" type="number" placeholder="0" />
+</label>
+</div>
+<div class="habit-detail-schedule-actions">
+<button class="btn ghost btn-compact" id="habit-detail-schedule-save" type="button">Aplicar</button>
+<button class="btn ghost btn-compact" id="habit-detail-schedule-remove" type="button">Quitar</button>
+</div>
+<label class="field checkbox-field habit-detail-credit-eligible-field">
+<div class="checkbox-field-row">
+<div>
+<div class="checkbox-field-title">Productivo (genera monedas aunque hoy esté neutral)</div>
+</div>
+<input id="habit-detail-credit-eligible" type="checkbox"/>
+</div>
+</label>
+</section>
+<section class="habit-detail-section">
+<div class="habit-detail-section-head">
+<div class="habit-detail-section-title">Objetivo mensual</div>
+<div class="habit-detail-section-sub" id="habit-detail-monthly-sub">Sin objetivo mensual</div>
+</div>
+<div class="habit-detail-monthly-grid">
+<label class="habit-detail-schedule-field habit-detail-schedule-field--wide">
+<span>Objetivo mensual</span>
+<input id="habit-detail-monthly-target" min="1" step="1" type="number" placeholder="Sin objetivo" />
+</label>
+</div>
+<div class="habit-detail-schedule-actions">
+<button class="btn ghost btn-compact" id="habit-detail-monthly-save" type="button">Guardar</button>
+<button class="btn ghost btn-compact" id="habit-detail-monthly-clear" type="button">Quitar objetivo</button>
+</div>
+<div class="habit-detail-monthly-progress" id="habit-detail-monthly-progress"></div>
+</section>
+<details class="habit-detail-section habit-detail-records-wrap" id="habit-detail-records-wrap">
+<summary class="habit-detail-records-summary">
+<div class="habit-detail-section-head">
+<div class="habit-detail-section-title">Registros</div>
+<div class="habit-detail-section-sub" id="habit-detail-records-sub">Ver registros</div>
+</div>
+<span aria-hidden="true" class="habit-detail-records-chevron">⌄</span>
+</summary>
+<div class="habit-detail-records-body">
+<div class="habit-detail-records" id="habit-detail-records"></div>
+<button class="btn ghost btn-compact habit-detail-records-more hidden" id="habit-detail-records-more" type="button">Ver más</button>
+</div>
+</details>
+<section class="habit-detail-section">
+<div class="habit-detail-section-head">
+<div class="habit-detail-section-title">Insights</div>
+<div class="habit-detail-section-sub" id="habit-detail-insights-sub">—</div>
+</div>
+<div class="habit-detail-insights" id="habit-detail-insights"></div>
+</section>
+</div>
+</div>
+</div>
+</section>
+
+<section class="view" id="view-games">
+<div class="games-view">
+<div class="games-header">
+<div>
+<div class="games-title">Juegos</div>
+<div class="games-subtitle">Contadores por juego y modo</div>
+</div>
+<button class="btn primary" id="game-add-mode" type="button">+ Añadir modo</button>
+</div>
+<div class="games-tabs" role="tablist" aria-label="Ventanas de juegos">
+<button class="games-tab-btn is-active" id="game-tab-counters" data-games-tab="counters" role="tab" aria-selected="true" type="button">Contadores</button>
+<button class="games-tab-btn" id="game-tab-stats" data-games-tab="stats" role="tab" aria-selected="false" type="button">Estadísticas</button>
+</div>
+<section class="games-stats-card hidden" id="game-stats-card" data-games-panel="stats">
+<div class="games-stats-head">
+<div>
+<div class="games-stats-title">Estadísticas</div>
+<div class="games-stats-sub" id="game-stats-sub">Global</div>
+</div>
+<div class="games-stats-actions">
+<button class="game-menu-btn" id="games-export-btn" type="button">Exportar CSV</button>
+<select id="game-stats-group-filter" class="games-stats-filter"></select>
+</div>
+</div>
+<div class="game-ranges" id="game-stats-ranges">
+<button class="game-range-btn" data-stats-range="day" type="button">Día</button>
+<button class="game-range-btn" data-stats-range="week" type="button">Semana</button>
+<button class="game-range-btn" data-stats-range="month" type="button">Mes</button>
+<button class="game-range-btn" data-stats-range="year" type="button">Año</button>
+<button class="game-range-btn is-active" data-stats-range="total" type="button">Total</button>
+</div>
+<div class="games-stats-totals" id="game-stats-totals">0 partidas · 0W / 0L / 0T</div>
+<div class="games-stats-grid">
+<div class="games-stats-left">
+<div class="games-rank-chips" id="games-rank-chips"></div>
+<div class="games-kpi-panel" id="games-kpi-panel">
+  <div class="games-kpi-row">
+    <span class="kpi kpi-k">K <b id="kpi-k">0</b></span>
+    <span class="kpi kpi-d">D <b id="kpi-d">0</b></span>
+    <span class="kpi kpi-a">A <b id="kpi-a">0</b></span>
+  </div>
+
+  <div class="games-kpi-row games-kpi-row2">
+    <span class="kpi kpi-w">W <b id="kpi-w">0</b></span>
+    <span class="kpi kpi-rf">R+ <b id="kpi-rf">0</b></span>
+    <span class="kpi kpi-ra">R- <b id="kpi-ra">0</b></span>
+  </div>
+</div>
+<div class="games-donut" id="game-stats-donut"></div>
+</div>
+<div class="games-line" id="game-stats-line"></div>
+</div>
+<div class="games-stats-breakdown" id="game-stats-breakdown"></div>
+</section>
+<div class="games-list" id="games-groups-list" data-games-panel="counters"></div>
+<div class="empty-state" id="games-empty">Aún no tienes juegos. Crea tu primer modo.</div>
+</div>
+</section>
+
+<section class="view" id="view-media">
+  <div class="media-wrapper">
+    <div class="media-head">
+      <div class="media-head-left">
+        <div class="media-title">Pantalla</div>
+        <div class="media-sub"></div>
+      </div>
+
+      <div class="media-viewbar" role="group" aria-label="Vista">
+        <button class="media-viewbtn is-active" data-media-view="list" type="button">Lista</button>
+        <button class="media-viewbtn" data-media-view="charts" type="button">Gráficos</button>
+        <button class="media-viewbtn" data-media-view="map" type="button">Mapa</button>
+      </div>
+      <button class="btn ghost btn-compact" id="media-start-session" type="button">▶ Iniciar sesión</button>
+    </div>
+
+    <div class="media-filters">
+      <div class="media-filter-row">
+        <input id="media-search" class="filter-search-input" type="search" inputmode="search"
+               placeholder="Buscar título, género, país, actor, director…" autocomplete="off" />
+      </div>
+
+      <div class="media-type-pills" id="media-type-pills" aria-label="Tipo">
+        <button class="media-pill is-active" data-type="all" type="button">Todo</button>
+        <button class="media-pill" data-type="movie" type="button">Pelis</button>
+        <button class="media-pill" data-type="series" type="button">Series</button>
+        <button class="media-pill" data-type="anime" type="button">Anime</button>
+      </div>
+
+      <div class="media-filters-slot"></div>
+    </div>
+
+    <!-- FAB (centro inferior, encima del nav) -->
+    <input class="media-modal-toggle" hidden id="media-add-toggle" type="checkbox" />
+    <label class="media-fab" id="media-fab-add" for="media-add-toggle" role="button" aria-label="Añadir">＋</label>
+
+    <!-- Modal: Añadir -->
+    <div class="media-modal media-add-modal" aria-hidden="true">
+      <label class="media-modal-backdrop" for="media-add-toggle" aria-label="Cerrar"></label>
+
+      <div class="media-modal-sheet" role="dialog" aria-modal="true" aria-label="Añadir título">
+        <div class="media-modal-head">
+          <div class="media-modal-headtext">
+            <div class="media-modal-title">Añadir título</div>
+            <div class="media-modal-sub">Ficha rápida, datos sólidos.</div>
+          </div>
+          <label class="media-modal-close" for="media-add-toggle" role="button" title="Cerrar">✕</label>
+        </div>
+
+        <div class="media-modal-body">
+          <section class="media-modal-section">
+            <div class="media-modal-section-title">Meta</div>
+            <label class="media-modal-field">
+              <span>Título</span>
+              <div class="media-title-row">
+                <input id="media-title" class="media-input" placeholder="Añadir título…" autocomplete="off" />
+                <button class="btn ghost btn-compact" id="media-autofill-btn" type="button" disabled>Autocompletar</button>
+              </div>
+            </label>
+            <div class="media-autocomplete-results" id="media-autofill-results" aria-live="polite"></div>
+
+            <div class="media-modal-grid media-modal-grid--meta">
+              <label class="media-modal-field">
+                <span>Tipo</span>
+                <select id="media-type" class="media-input">
+                  <option value="movie">Peli</option>
+                  <option value="series">Serie</option>
+                  <option value="anime">Anime</option>
+                </select>
+              </label>
+
+              <label class="media-modal-field">
+                <span>Año</span>
+                <input id="media-year" class="media-input" type="number" inputmode="numeric" placeholder="Ej: 2024" />
+              </label>
+
+              <label class="media-modal-field">
+                <span>Origen</span>
+                <input id="media-country" class="media-input" list="country-options" placeholder="Ej: España" autocomplete="off" />
+              </label>
+            </div>
+          </section>
+
+          <section class="media-modal-section">
+            <div class="media-modal-section-title">Detalles</div>
+
+            <details class="media-modal-accordion" open>
+              <summary>Géneros</summary>
+              <div class="media-modal-accordion-body">
+                <input id="media-genres" class="media-input" placeholder="acción, drama…" autocomplete="off" />
+                <div class="media-chip-preview" id="media-add-genres-preview"></div>
+              </div>
+            </details>
+
+            <details class="media-modal-accordion">
+              <summary>Director</summary>
+              <div class="media-modal-accordion-body">
+                <input id="media-director" class="media-input" placeholder="Opcional" autocomplete="off" />
+              </div>
+            </details>
+
+            <details class="media-modal-accordion">
+              <summary>Reparto</summary>
+              <div class="media-modal-accordion-body">
+                <input id="media-cast" class="media-input" placeholder="Opcional" autocomplete="off" />
+                <div class="media-chip-preview" id="media-add-cast-preview"></div>
+              </div>
+            </details>
+          </section>
+
+          <section class="media-modal-section" id="media-add-progress-section">
+            <div class="media-modal-section-title">Progreso</div>
+            <div class="media-modal-grid" id="media-seasonep">
+              <label class="media-modal-field">
+                <span>Temporada</span>
+                <input id="media-season" class="media-input" type="number" inputmode="numeric" placeholder="1" />
+              </label>
+              <label class="media-modal-field">
+                <span>Capítulo</span>
+                <input id="media-episode" class="media-input" type="number" inputmode="numeric" placeholder="1" />
+              </label>
+            </div>
+          </section>
+
+          <section class="media-modal-section">
+            <div class="media-modal-section-title">Vistas</div>
+            <div class="media-modal-toggles">
+              <label class="media-check">
+                <input id="media-watchlist" type="checkbox" />
+                <span>Watchlist</span>
+              </label>
+              <label class="media-check">
+                <input id="media-with-laura" type="checkbox" />
+                <span>Laura</span>
+              </label>
+              <label class="media-check">
+                <select id="media-rating" class="media-input media-input-compact">
+                  <option value="0">0</option><option value="1">1</option><option value="2">2</option>
+                  <option value="3">3</option><option value="4">4</option><option value="5">5</option>
+                </select>
+                <span>Rating</span>
+              </label>
+            </div>
+
+            <div class="media-watch-row">
+              <button class="btn ghost btn-compact" id="media-add-watchtoday" type="button">Visto hoy</button>
+              <div class="media-watch-meta" id="media-add-watch-meta">Se guardará como visto hoy.</div>
+            </div>
+          </section>
+        </div>
+
+        <div class="media-modal-foot">
+          <button class="btn ghost" id="media-add-cancel" type="button">Cancelar</button>
+          <button class="btn primary" id="media-add-confirm" type="button">Guardar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <section class="media-chart-card" id="media-chart-card" style="display:none">
+      <div class="media-chart-head">
+        <div>
+          <div class="media-chart-title">Distribución</div>
+          <div class="media-chart-sub" id="media-chart-sub">Top 16 (sin “otros”).</div>
+        </div>
+
+        <label class="chart-selector" for="media-chart-selector">
+          <span>Ver por</span>
+          <select class="chart-selector-input" id="media-chart-selector">
+            <option value="type" selected>Tipo</option>
+            <option value="genre">Género</option>
+            <option value="country">País</option>
+            <option value="actor">Actor</option>
+            <option value="director">Director</option>
+            <option value="year">Año</option>
+          </select>
+        </label>
+        <label class="chart-selector media-actor-filter" id="media-actor-filter" for="media-actor-filter-select" style="display:none">
+          <span>Actor/Actriz</span>
+          <select class="chart-selector-input" id="media-actor-filter-select">
+            <option value="all" selected>Todos</option>
+            <option value="male">Actores</option>
+            <option value="female">Actrices</option>
+          </select>
+        </label>
+      </div>
+      <div class="media-donut-host" id="media-donut"></div>
+
+      <details class="media-legend" id="media-legend" open>
+        <summary class="media-legend-summary">
+          <span>Desglose</span>
+          <span class="media-legend-meta" id="media-legend-meta">0</span>
+        </summary>
+        <div class="media-legend-body">
+          <div class="media-legend-search">
+            <input id="media-legend-search" class="media-input" type="search" placeholder="Buscar en desglose..." autocomplete="off" />
+          </div>
+          <div class="media-legend-list" id="media-donut-legend"></div>
+          <button class="btn ghost media-legend-more" id="media-legend-more" type="button" style="display:none">Mostrar más</button>
+        </div>
+      </details>
+
+      <div class="empty-state small" id="media-chart-empty" style="display:none">Aún no hay datos.</div>
+    </section>
+
+    <!-- Map -->
+    <section class="media-geo" id="media-map-card" style="display:none">
+      <div class="geo-header">
+        <div>
+          <div class="geo-title">Mapa (origen)</div>
+          <div class="geo-subtitle">Intensidad según número de títulos</div>
+        </div>
+      </div>
+
+      <div class="geo-map" id="media-world-map"></div>
+
+      <details class="geo-list" id="media-country-panel">
+        <summary class="geo-list-summary">Países y número de títulos</summary>
+        <div class="geo-list-body" id="media-country-list"></div>
+      </details>
+
+      <div class="media-geo-hint" id="media-map-hint" style="display:none"></div>
+    </section>
+
+    <!-- List -->
+    <section class="media-list-card" id="media-list-card">
+      <div class="media-list-head">
+        <div class="media-list-title">Listado</div>
+        <div class="media-list-meta" id="media-count">0</div>
+      </div>
+      <div class="media-list-actions" id="media-list-actions" style="display:none">
+        <button class="btn ghost btn-compact" id="media-bulk-autofill" type="button">Autocompletar todos (en lote)</button>
+      </div>
+
+      <div class="media-list" id="media-list">
+        <div class="media-list-spacer" id="media-list-spacer"></div>
+        <div class="media-list-items" id="media-list-items"></div>
+      </div>
+    </section>
+  </div>
+</section>
+
+<section class="view" id="view-world">
+<div class="world-header">
+<div class="world-kpis">
+<div class="world-kpi">
+<div class="label">Mundo visitado</div>
+<div class="value" id="world-pct">0.00%</div>
+</div>
+<div class="world-kpi">
+<div class="label">Países</div>
+<div class="value"><span id="world-countries">0</span><span class="sub">/ <span id="world-countries-total">0</span></span></div>
+</div>
+<div class="world-kpi">
+<div class="label">Lugares</div>
+<div class="value" id="world-places">0</div>
+</div>
+<div class="world-kpi">
+<div class="label">Subdivisiones</div>
+<div class="value"><span id="world-subdivisions">0</span><span class="sub" id="world-subdivisions-total-wrap">/ <span id="world-subdivisions-total">0</span></span></div>
+</div>
+</div>
+<div class="world-windows-nav" role="tablist" aria-label="Ventanas Mundo">
+<button aria-selected="true" class="world-window-tab active" data-window="main" type="button">Principal</button>
+<button aria-selected="false" class="world-window-tab" data-window="records" type="button">Registros</button>
+<button aria-selected="false" class="world-window-tab" data-window="timeline" type="button">Timeline</button>
+</div>
+<div class="world-controls">
+<select id="world-status-filter">
+<option selected="" value="all">Todos</option>
+<option value="visited">Visitado</option>
+<option value="lived">Vivido</option>
+<option value="wishlist">Wishlist</option>
+</select>
+<select id="world-filter">
+<option value="day">Día</option>
+<option value="week">Semana</option>
+<option value="month">Mes</option>
+<option value="year">Año</option>
+<option selected="" value="total">Total</option>
+</select>
+<button class="btn" id="world-mark-current" type="button">📍 Ubicación actual</button>
+<label class="btn primary" for="world-add-toggle">+ Añadir</label>
+</div>
+</div>
+<div class="world-view-scope" id="world-view-scope">Mundo</div>
+<div class="world-map-wrap">
+<div id="world-map"></div>
+</div>
+<div class="world-country-panel" id="world-country-panel"><div class="world-country-detail-title" id="world-country-title">Detalle de país</div><div class="world-country-detail-grid" id="world-country-detail-grid"></div><div class="world-list" id="world-subdivision-list"></div></div>
+
+<div class="world-bottom">
+<section class="world-window-panel active" data-window-panel="main">
+<details class="world-card" open><summary class="world-summary"><h3>Pins personalizados</h3><span class="world-count" id="world-pins-count">0</span></summary><div class="world-list"><div class="world-watch-row"><input autocomplete="off" id="world-pin-folder-filter" placeholder="Filtrar por carpeta…" type="search"/></div><div class="world-list" id="world-pins-list"></div></div></details>
+<details class="world-card" open><summary class="world-summary"><h3>Watchlist</h3><span class="world-count" id="world-watch-count">0</span></summary><div class="world-list"><div class="world-watch-row"><input autocomplete="off" id="world-watch-q" placeholder="Añadir país a watchlist…" type="search"/><button class="btn primary" id="world-watch-add" type="button">Añadir</button></div><div class="world-list" id="world-watch-list"></div></div></details>
+</section>
+<section class="world-window-panel" data-window-panel="records">
+<details class="world-card" open><summary class="world-summary"><h3>Registros</h3><span class="world-count" id="world-visits-count">0</span></summary><div class="world-list" id="world-visits-list"></div></details>
+</section>
+<section class="world-window-panel" data-window-panel="timeline">
+<details class="world-card" open><summary class="world-summary"><h3>Timeline</h3><span class="world-count" id="world-timeline-count">0</span></summary><div class="world-list world-timeline" id="world-timeline-list"></div></details>
+</section>
+</div>
+<!-- Modal toggle + modal -->
+<input class="world-modal-toggle" hidden="" id="world-add-toggle" type="checkbox"/>
+<div class="world-modal">
+<label class="world-modal-backdrop" for="world-add-toggle"></label>
+<div class="world-modal-sheet">
+<div class="world-modal-header">
+<div class="title">Añadir visita</div>
+<label class="btn" for="world-add-toggle">Cerrar</label>
+</div>
+<div class="world-modal-grid">
+<div class="world-modal-section">
+<div class="world-modal-section-title">Selección geográfica</div>
+<input autocomplete="off" id="world-place-q" placeholder="Buscar país, provincia, ciudad…"/>
+<div class="world-modal-grid world-modal-grid-2"><input autocomplete="off" id="world-place-subdivision" placeholder="Subdivisión (estado/provincia/región)"/><input autocomplete="off" id="world-place-city" placeholder="Ciudad / municipio / comarca"/></div>
+</div>
+<div class="world-modal-section">
+<div class="world-modal-section-title">Tipo de registro</div>
+<div class="world-modal-grid world-modal-grid-2">
+<select id="world-kind">
+<option value="country">País</option>
+<option value="subdivision">Subdivisión</option>
+<option selected="" value="city">Ciudad</option>
+<option value="town">Pueblo</option>
+<option value="pin">Pin personalizado</option>
+</select>
+<select id="world-record-status"><option selected="" value="visited">Visitado</option><option value="lived">Vivido</option><option value="wishlist">Wishlist</option><option value="other">Otro</option></select>
+</div>
+</div>
+<div class="world-modal-section">
+<div class="world-modal-section-title">Fechas</div>
+<div class="world-modal-grid world-modal-grid-2"><input id="world-date-start" type="date"/><input id="world-date-end" type="date"/></div>
+</div>
+<div class="world-modal-section">
+<div class="world-modal-section-title">Metadatos</div>
+<div class="world-modal-grid world-modal-grid-2"><input autocomplete="off" id="world-pin-emoji" maxlength="3" placeholder="Emoji (opcional)"/><input autocomplete="off" id="world-pin-folder" placeholder="Carpeta/categoría (opcional)"/></div>
+<input autocomplete="off" id="world-note" placeholder="Nota (opcional)"/>
+</div>
+<div class="world-modal-section">
+<div class="world-modal-section-title">Resultados y sugerencias</div>
+<div class="world-list" id="world-place-results"></div>
+</div>
+<div class="world-modal-actions">
+<button class="btn" id="world-place-delete" style="display:none" type="button">Eliminar</button>
+<button class="btn primary" id="world-place-save" type="button">Guardar</button>
+</div>
+</div>
+</div>
+</div>
+<div class="world-map-sheet" id="world-map-sheet" hidden="">
+<label class="world-map-sheet-backdrop" for="world-map-sheet-close"></label>
+<div class="world-map-sheet-panel">
+<div class="world-modal-header"><div class="title" id="world-map-sheet-title">Acciones rápidas</div><button class="btn" id="world-map-sheet-close" type="button">Cerrar</button></div>
+<div class="world-map-sheet-state" id="world-map-sheet-state"></div>
+<div class="world-map-sheet-actions" id="world-map-sheet-actions"></div>
+</div>
+</div>
+</section>
+
+<section class="view view-gym" id="view-gym">
+<div class="gym-wrap scroll">
+<div class="gym-screen gym-screen-active" id="gym-main-view">
+<div class="gym-hero">
+<div>
+<div class="gym-title">Gym</div>
+<div class="gym-subtitle"></div>
+</div>
+<div class="gym-hero-actions">
+<button class="gym-btn gym-btn-ghost" id="gym-open-stats" type="button">📊</button>
+<button class="gym-btn gym-btn-ghost" id="gym-start-session" type="button">▶ Iniciar sesión</button>
+</div>
+</div>
+
+<div class="gym-section">
+<div class="gym-section-header">
+<div class="gym-section-title">Workouts</div>
+<select class="gym-select" id="gym-history-range">
+<option value="all">Todo el tiempo</option>
+</select>
+</div>
+<button class="gym-btn gym-btn-primary" id="gym-start-workout" type="button">Empezar un entrenamiento vacío</button>
+</div>
+
+<div class="gym-section">
+<div class="gym-card gym-bodyweight-card">
+<label class="gym-field">
+<span>Fecha</span>
+<input id="gym-body-date" type="date"/>
+</label>
+<div class="gym-body-grid">
+<label class="gym-field">
+<span>Peso (kg)</span>
+<input id="gym-body-weight" inputmode="decimal" placeholder="Ej: 72.5 Kg" type="text"/>
+</label>
+<label class="gym-field">
+<span>Altura (cm)</span>
+<input id="gym-body-height" inputmode="numeric" placeholder="Ej: 178 cm" type="text"/>
+</label>
+</div>
+<div class="gym-body-meta" id="gym-body-meta">Registra tu peso y altura para usarlo en los sets.</div>
+</div>
+</div>
+
+<div class="gym-section">
+<div class="gym-section-header">
+<div class="gym-section-title">Historial</div>
+</div>
+<div class="gym-calendar">
+<div class="gym-calendar-header">
+<button class="icon-btn icon-btn-small" id="gym-cal-prev" type="button">‹</button>
+<div class="gym-calendar-title" id="gym-cal-label"></div>
+<button class="icon-btn icon-btn-small" id="gym-cal-next" type="button">›</button>
+</div>
+<div class="gym-calendar-grid" id="gym-calendar-grid"></div>
+</div>
+<div class="gym-history-list" id="gym-history-list"></div>
+<div class="gym-empty hidden" id="gym-history-empty">Aún no tienes entrenamientos registrados.</div>
+</div>
+</div>
+
+<div class="gym-screen" id="gym-session-view">
+<div class="gym-workout-header gym-header">
+<button class="icon-btn icon-btn-small" id="gym-back" type="button">‹</button>
+<div class="gym-workout-title">
+<div class="gym-workout-name-row">
+<input class="gym-title" id="gym-workout-name" placeholder="Nombre del entrenamiento" type="text"/>
+<button class="gym-emoji-btn" id="gym-workout-emoji" type="button" aria-label="Editar emoji de sesión">🙂</button>
+</div>
+<input class="gym-date" id="gym-workout-date" type="date"/>
+</div>
+<button class="gym-btn gym-btn-primary" id="gym-finish-workout" type="button">Finalizar</button>
+</div>
+<div class="gym-metrics">
+<div class="gym-metric">
+<div class="gym-metric-label">Duración</div>
+<div class="gym-metric-value" id="gym-metric-duration">
+<span class="gym-metric-main" id="gym-metric-duration-main">0m</span>
+<span class="gym-metric-pr" id="gym-metric-duration-pr" hidden>🏆</span>
+</div>
+<div class="gym-metric-sub" id="gym-metric-duration-sub">—</div>
+<div class="gym-metric-progress" id="gym-metric-duration-progress" aria-hidden="true">
+<span class="gym-metric-bar" id="gym-metric-duration-bar"></span>
+</div>
+</div>
+<div class="gym-metric">
+<div class="gym-metric-label">Volumen</div>
+<div class="gym-metric-value" id="gym-metric-volume">
+<span class="gym-metric-main" id="gym-metric-volume-main">0 kg</span>
+<span class="gym-metric-pr" id="gym-metric-volume-pr" hidden>🏆</span>
+</div>
+<div class="gym-metric-sub" id="gym-metric-volume-sub">—</div>
+<div class="gym-metric-progress" id="gym-metric-volume-progress" aria-hidden="true">
+<span class="gym-metric-bar" id="gym-metric-volume-bar"></span>
+</div>
+</div>
+<div class="gym-metric">
+<div class="gym-metric-label">Ejercicios</div>
+<div class="gym-metric-value" id="gym-metric-exercises">
+<span class="gym-metric-main" id="gym-metric-exercises-main">0/0</span>
+<span class="gym-metric-pr" id="gym-metric-exercises-pr" hidden>🏆</span>
+</div>
+<div class="gym-metric-sub" id="gym-metric-exercises-sub">max: —</div>
+<div class="gym-metric-progress" id="gym-metric-exercises-progress" aria-hidden="true">
+<span class="gym-metric-bar" id="gym-metric-exercises-bar"></span>
+</div>
+</div>
+</div>
+<div class="gym-exercise-list" id="gym-workout-exercises"></div>
+<div class="gym-workout-actions">
+<button class="gym-btn gym-btn-ghost" id="gym-discard-workout" type="button">Descartar</button>
+<button class="gym-btn gym-btn-primary" id="gym-add-exercise" type="button">+ Añadir ejercicios</button>
+</div>
+</div>
+
+<div class="gym-screen" id="gym-stats-view">
+<div class="gym-workout-header gym-header">
+<button class="icon-btn icon-btn-small" id="gym-stats-back" type="button">‹</button>
+<div class="gym-workout-title">
+<div class="gym-title">Estadísticas</div>
+</div>
+</div>
+<div class="gym-section">
+<div class="gym-section-header">
+<label class="gym-field">
+<span>Sección</span>
+<select class="gym-select" id="gym-stats-kind">
+<option value="overview">Resumen gym</option>
+<option value="body">Peso corporal</option>
+<option value="exercise">Ejercicio</option>
+</select>
+</label>
+</div>
+<div id="gym-stats-controls"></div>
+<div class="gym-stats-kpis" id="gym-stats-kpis"></div>
+<div class="gym-card">
+<div class="gym-stats-chart" id="gym-stats-chart"></div>
+<div class="gym-empty hidden" id="gym-stats-empty">No hay datos suficientes para mostrar estadísticas.</div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="modal-backdrop hidden" id="gym-exercise-modal">
+<div class="modal gym-modal">
+<div class="modal-header">
+<div class="modal-title">Añadir ejercicios</div>
+<button class="icon-btn" id="gym-exercise-close" type="button">✕</button>
+</div>
+<div class="modal-scroll gym-modal-body">
+<input class="gym-search" id="gym-exercise-search" placeholder="Buscar ejercicio" type="search"/>
+<div class="gym-chip-row" id="gym-muscle-chips"></div>
+<div class="gym-exercise-list-modal" id="gym-exercise-list"></div>
+<div class="gym-empty hidden" id="gym-exercise-empty">
+<div>No encontramos ejercicios.</div>
+<button class="gym-btn gym-btn-primary" id="gym-create-cta" type="button">
+Crear “<span id="gym-create-cta-text"></span>”
+</button>
+</div>
+<div class="addex-actions">
+<button class="gym-btn gym-btn-primary" id="gym-create-toggle" type="button">+ Crear nuevo ejercicio</button>
+</div>
+</div>
+</div>
+</div>
+
+<div class="modal-backdrop hidden gym-modal-stacked" id="gym-create-modal">
+<div class="modal gym-modal">
+<div class="modal-header">
+<div class="modal-title">Crear ejercicio</div>
+<button class="icon-btn" id="gym-create-close" type="button">✕</button>
+</div>
+<div class="modal-scroll gym-modal-body">
+    <div class="gym-create-form">
+      <label class="gym-field gym-create-field gym-create-field-name">
+      <span>Nombre</span>
+      <input id="gym-create-name" placeholder="Nombre del ejercicio" type="text"/>
+      </label>
+      <label class="gym-field gym-create-field">
+      <span>Tipo</span>
+      <select id="gym-create-type" class="gym-select">
+      <option value="strength">Fuerza</option>
+      </select>
+      </label>
+      <label class="gym-field gym-create-field" id="gym-create-strength-type-field">
+      <span>Modalidad</span>
+      <select id="gym-create-strength-type" class="gym-select">
+      <option value="reps">Repeticiones</option>
+      <option value="time">Tiempo</option>
+      </select>
+      </label>
+      <label class="gym-field gym-create-field">
+      <span>Categoría MET</span>
+      <select id="gym-create-met-category" class="gym-select"></select>
+      </label>
+    </div>
+<div class="gym-chip-row" id="gym-create-muscle-chips"></div>
+<div class="gym-field gym-create-unilateral-field">
+<span>Lateralidad</span>
+<label class="favorite-toggle">
+<input id="gym-create-unilateral" type="checkbox"/>
+<span aria-hidden="true" class="favorite-icon">↔</span>
+<span>Unilateral</span>
+</label>
+</div>
+<button class="gym-btn gym-btn-primary" id="gym-create-exercise" type="button">Crear</button>
+</div>
+</div>
+</div>
+
+<div class="modal-backdrop hidden" id="gym-exercise-detail-modal">
+<div class="modal gym-modal gym-exdetail">
+<div class="modal-header gym-exdetail-head">
+<div class="gym-exdetail-left">
+<div class="gym-exdetail-emoji" id="gym-exdetail-emoji">💪</div>
+<div class="gym-exdetail-titles">
+<div class="modal-title" id="gym-exdetail-title">—</div>
+<div class="gym-exdetail-sub" id="gym-exdetail-sub">—</div>
+</div>
+</div>
+<div class="gym-exdetail-actions">
+<button class="gym-btn gym-btn-ghost" id="gym-exdetail-edit" type="button">Editar</button>
+<button class="icon-btn" id="gym-exdetail-close" type="button">✕</button>
+</div>
+</div>
+
+<div class="modal-scroll gym-modal-body">
+<div class="gym-exdetail-kpis" id="gym-exdetail-kpis"></div>
+
+<div class="gym-exdetail-controls" id="gym-exdetail-controls"></div>
+
+<div class="gym-card">
+<div id="gym-exdetail-chart" class="gym-stats-chart"></div>
+<div id="gym-exdetail-empty" class="gym-empty hidden">Sin datos aún.</div>
+</div>
+
+<button class="gym-btn" id="gym-exdetail-delete" type="button">Eliminar ejercicio</button>
+</div>
+</div>
+</div>
+
+<div class="modal-backdrop hidden" id="gym-template-modal">
+<div class="modal gym-modal">
+<div class="modal-header">
+<div class="modal-title">Nuevo entrenamiento</div>
+<button class="icon-btn" id="gym-template-close" type="button">✕</button>
+</div>
+<div class="modal-scroll gym-modal-body">
+<label class="gym-field">
+<span>Nombre</span>
+<input id="gym-template-name" placeholder="Ej. Pierna" type="text"/>
+</label>
+<button class="gym-btn gym-btn-primary" id="gym-create-empty" type="button">Crear nuevo</button>
+<div class="gym-template-list" id="gym-template-list"></div>
+<div class="gym-empty hidden" id="gym-template-empty">No tienes plantillas guardadas.</div>
+</div>
+</div>
+</div>
+
+</section>
+
+<div class="modal-backdrop hidden" id="gym-cardio-modal">
+<div class="modal gym-modal">
+<div class="modal-header">
+<div class="modal-title">Sesión de cardio</div>
+<button class="icon-btn" id="gym-cardio-close" type="button">✕</button>
+</div>
+<div class="modal-scroll gym-modal-body">
+<label class="gym-field">
+<span>Nombre</span>
+<input id="gym-cardio-name" placeholder="Ej. Correr" type="text"/>
+</label>
+<label class="gym-field">
+<span>Fecha</span>
+<input id="gym-cardio-date" type="date"/>
+</label>
+<label class="gym-field">
+<span>Objetivo (km)</span>
+<input id="gym-cardio-target" inputmode="decimal" placeholder="Ej. 5" type="text"/>
+</label>
+<label class="gym-field">
+<span>Distancia (km)</span>
+<input id="gym-cardio-distance" inputmode="decimal" placeholder="Ej. 4.2" type="text"/>
+</label>
+<div class="gym-cardio-time" id="gym-cardio-time">00:00</div>
+<div class="gym-cardio-controls">
+<button class="gym-btn gym-btn-primary" id="gym-cardio-start" type="button">Start</button>
+<button class="gym-btn gym-btn-ghost hidden" id="gym-cardio-pause" type="button">Pause</button>
+<button class="gym-btn gym-btn-primary hidden" id="gym-cardio-resume" type="button">Resume</button>
+<button class="gym-btn gym-btn-ghost hidden" id="gym-cardio-finish" type="button">Finish</button>
+</div>
+<div class="gym-body-meta" id="gym-cardio-summary">Introduce distancia para calcular ritmo o velocidad.</div>
+<div class="gym-body-meta hidden" id="gym-cardio-progress"></div>
+</div>
+</div>
+</div>
+
+
+<section class="view" id="view-finance">
+  <section class="tab financeTab" id="tab-finance">
+    <div id="finance-topnav"></div>
+    <main id="finance-main">
+      <div id="finance-content"></div>
+    </main>
+    <div id="finance-modalOverlay" class="hidden" aria-hidden="true"></div>
+  </section>
+</section>
+
+<section class="view" id="view-videos-hub">
+  <div class="videosHub">
+    <header class="videosHub__header">
+      <div>
+        <p class="videosHub__eyebrow">YouTube · Workbench</p>
+        <h2 class="videosHub__title">Vídeos Hub</h2>
+      </div>
+      <button class="btn primary videosHub__createBtn" id="videos-hub-create-btn" type="button">+ Nuevo</button>
+    </header>
+
+    <nav class="videosHub__tabs" aria-label="Secciones vídeos hub">
+      <button class="videosHub__tab is-active" data-hub-tab="list" type="button">Vídeos</button>
+      <button class="videosHub__tab" data-hub-tab="detail" type="button">Detalle</button>
+      <button class="videosHub__tab" data-hub-tab="stats" type="button">Estadísticas</button>
+    </nav>
+
+    <section class="videosHub__panel is-active" data-hub-panel="list">
+      <div class="videosHub__filters glassCard">
+        <input id="videos-hub-search" type="search" placeholder="Buscar por título o guion" autocomplete="off"/>
+        <select id="videos-hub-filter-status">
+          <option value="all">Todos estados</option>
+          <option value="idea">Idea</option>
+          <option value="drafting">Borrador</option>
+          <option value="editing">Edición</option>
+          <option value="published">Publicado</option>
+        </select>
+        <select id="videos-hub-filter-category">
+          <option value="all">Todas categorías</option>
+        </select>
+        <select id="videos-hub-sort">
+          <option value="recent">Más reciente</option>
+          <option value="words">Más palabras</option>
+          <option value="progress">Más progreso</option>
+        </select>
+      </div>
+      <div class="videosHub__list" id="videos-hub-list"></div>
+    </section>
+
+    <section class="videosHub__panel" data-hub-panel="detail">
+      <form class="videosHub__detailForm" id="videos-hub-detail-form">
+        <div class="glassCard videosHub__detailHead">
+          <button class="btn ghost videosHub__iconBtn" id="videos-hub-back-btn" type="button" aria-label="Volver a vídeos">←</button>
+          <input id="videos-hub-title" type="text" placeholder="Título del vídeo" autocomplete="off"/>
+          <button class="btn ghost videosHub__iconBtn videosHub__iconBtn--danger" id="videos-hub-delete-btn" type="button" aria-label="Eliminar vídeo">🗑</button>
+        </div>
+
+        <div class="glassCard videosHub__metaGrid">
+          <label>
+            <span>Estado</span>
+            <select id="videos-hub-status">
+              <option value="" selected>Seleccionar estado</option>
+              <option value="idea">Idea</option>
+              <option value="drafting">Borrador</option>
+              <option value="editing">Edición</option>
+              <option value="published">Publicado</option>
+            </select>
+          </label>
+          <label>
+            <span>Categoría</span>
+            <input id="videos-hub-category" type="text" placeholder="Categoría" autocomplete="off"/>
+          </label>
+          <label>
+            <span>Objetivo palabras</span>
+            <input id="videos-hub-target" type="number" min="0" step="50" placeholder="Objetivo"/>
+          </label>
+          <label>
+            <span>Fecha</span>
+            <input id="videos-hub-date" type="date"/>
+          </label>
+        </div>
+
+        <div class="glassCard videosHub__metrics" id="videos-hub-metrics"></div>
+
+        <label class="glassCard videosHub__scriptWrap">
+          <textarea id="videos-hub-script" placeholder="Empieza a escribir el guion…"></textarea>
+          <div class="videosHub__scriptFoot">
+            <span id="videos-hub-word-count">0 palabras</span>
+            <span id="videos-hub-autosave">Guardado automático</span>
+          </div>
+        </label>
+      </form>
+    </section>
+
+    <section class="videosHub__panel" data-hub-panel="stats">
+      <div class="videosHub__statsFilters glassCard">
+        <div class="videosHub__filterRow">
+          <select id="videos-hub-stats-range">
+            <option value="7">Últimos 7 días</option>
+            <option value="30" selected>Últimos 30 días</option>
+            <option value="90">Últimos 90 días</option>
+          </select>
+          <select id="videos-hub-stats-status">
+            <option value="all">Todos estados</option>
+            <option value="idea">Idea</option>
+            <option value="drafting">Borrador</option>
+            <option value="editing">Edición</option>
+            <option value="published">Publicado</option>
+          </select>
+          <select id="videos-hub-stats-category">
+            <option value="all">Todas categorías</option>
+          </select>
+        </div>
+      </div>
+      <div class="videosHub__kpis" id="videos-hub-kpis"></div>
+      <div class="videosHub__charts">
+        <article class="glassCard">
+          <h3>Palabras por día</h3>
+          <svg id="videos-hub-chart-line" viewBox="0 0 360 160"></svg>
+        </article>
+        <article class="glassCard">
+          <h3>Semanas / meses</h3>
+          <div id="videos-hub-chart-bars" class="videosHub__bars"></div>
+        </article>
+        <article class="glassCard">
+          <h3>Categorías</h3>
+          <div id="videos-hub-chart-donut" class="videosHub__donut"></div>
+        </article>
+        <article class="glassCard">
+          <h3>Comparativa por vídeo</h3>
+          <div id="videos-hub-video-compare" class="videosHub__compare"></div>
+        </article>
+      </div>
+    </section>
+  </div>
+</section>
+
+<nav class="bottom-nav"><button class="nav-btn nav-btn-active" data-view="view-books">📖</button>
+<button class="nav-btn" data-view="view-videos">📹</button>
+<button class="nav-btn" data-view="view-videos-hub" title="Vídeos Hub" aria-label="Vídeos Hub">🎬</button>
+<button class="nav-btn" data-view="view-recipes">🍳</button>
+<button class="nav-btn" data-view="view-habits">✅</button>
+<button class="nav-btn" data-view="view-games" title="Juegos" aria-label="Juegos">🎮</button>
+<button class="nav-btn" data-view="view-media">🎞️</button>
+<button class="nav-btn" data-view="view-world">🌍</button>
+<button class="nav-btn" data-view="view-finance" title="Cuentas" aria-label="Cuentas">$</button>
+<button class="nav-btn" data-view="view-gym">🏋️</button>
+</nav>
+
+<!-- MODAL LIBRO -->
+<div class="modal-backdrop hidden" id="book-modal-backdrop">
+<div class="modal videosWorkspace__modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="book-modal-title">Nuevo libro</div>
+<button class="icon-btn" id="book-modal-close">✕</button>
+</div>
+<form class="modal-form" id="book-form">
+<input id="book-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Detalles</div>
+<div class="field">
+<span class="field-label">ISBN</span>
+<div class="isbn-input-row">
+<input autocomplete="off" id="book-isbn" inputmode="numeric" placeholder="978..." type="text"/>
+<button class="btn ghost btn-compact" id="book-isbn-search" type="button">Buscar</button>
+</div>
+<div class="isbn-status" id="book-isbn-status">Autocompleta título, autor, año y páginas.</div>
+<div class="isbn-results" id="book-isbn-results" style="display:none;"></div>
+</div>
+<label class="field">
+<span class="field-label">Título</span>
+<input id="book-title" required="" type="text"/>
+</label>
+<label class="favorite-toggle">
+<input id="book-favorite" type="checkbox"/>
+<span aria-hidden="true" class="favorite-icon">★</span>
+<span>Marcar como favorito</span>
+</label>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Autor</span>
+<input id="book-author" type="text"/>
+</label>
+<label class="field">
+<span class="field-label">Año</span>
+<input id="book-year" inputmode="numeric" type="number"/>
+</label>
+</div>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Categoría</span>
+<div class="field-inline">
+<select aria-label="Categoría" id="book-genre">
+<option value="">—</option>
+</select>
+<button aria-label="Eliminar categoría" class="icon-btn genre-remove-btn" id="genre-remove-btn" type="button">−</button>
+<button aria-label="Añadir categoría" class="icon-btn genre-add-btn" id="genre-add-btn" type="button">+</button>
+</div>
+</label>
+<label class="field">
+<span class="field-label">Idioma</span>
+<input id="book-language" type="text"/>
+</label>
+</div>
+<label class="field">
+<span class="field-label">País / origen</span>
+<input id="book-country" list="country-options" placeholder="España, México, Estados Unidos..." type="text"/>
+</label>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Progreso</div>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">N.º páginas</span>
+<input id="book-pages" inputmode="numeric" min="1" required="" type="number"/>
+</label>
+<label class="field">
+<span class="field-label">Página actual</span>
+<input id="book-current-page" inputmode="numeric" min="0" type="number" value="0"/>
+</label>
+</div>
+<label class="field">
+<span class="field-label">Estado</span>
+<select id="book-status">
+<option value="reading">Leyendo</option>
+<option value="planned">Pendiente</option>
+<option value="finished">Terminado</option>
+</select>
+</label>
+<label class="field checkbox-field">
+<div class="checkbox-field-row">
+<div>
+<div class="checkbox-field-title">Leído en el pasado</div>
+<div class="checkbox-field-hint">No registrará fecha de finalización</div>
+</div>
+<input id="book-finished-past" type="checkbox"/>
+</div>
+</label>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="book-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+<!-- FICHA LIBRO -->
+<div class="modal-backdrop hidden" id="book-detail-backdrop">
+<div class="modal book-detail-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="book-detail-title">Ficha del libro</div>
+<button class="icon-btn" id="book-detail-close">✕</button>
+</div>
+<div class="modal-body book-detail-body">
+<div class="book-detail-top">
+<label class="favorite-toggle">
+<input id="book-detail-favorite" type="checkbox"/>
+<span aria-hidden="true" class="favorite-icon">★</span>
+<span>Favorito</span>
+</label>
+<div class="book-detail-status" id="book-detail-status"></div>
+</div>
+<div class="spec-block compact">
+<div class="spec-block-title">Datos rápidos</div>
+<div class="spec-grid">
+<div class="spec-item">
+<span class="spec-label">Autor</span>
+<div class="spec-value" id="book-detail-author">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Año</span>
+<div class="spec-value" id="book-detail-year">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Siglo</span>
+<div class="spec-value" id="book-detail-century">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Género</span>
+<div class="spec-value" id="book-detail-genre">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Idioma</span>
+<div class="spec-value" id="book-detail-language">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">País</span>
+<div class="spec-value" id="book-detail-country">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Páginas</span>
+<div class="spec-value" id="book-detail-pages">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Progreso</span>
+<div class="spec-value" id="book-detail-progress">—</div>
+</div>
+<div class="spec-item">
+<span class="spec-label">Finalizado</span>
+<div class="spec-value" id="book-detail-finished">—</div>
+</div>
+<div class="spec-item spec-notes">
+<span class="spec-label">Notas</span>
+<div class="spec-value" id="book-detail-notes">Sin notas</div>
+</div>
+</div>
+</div>
+<details class="book-detail-quotes" id="book-detail-quotes" open>
+<summary>
+<span>Citas asociadas</span>
+<span class="books-finished-count" id="book-detail-quotes-count">0</span>
+</summary>
+<div class="book-detail-quotes-panel">
+<input class="book-detail-quotes-search" id="book-detail-quotes-search" type="search" placeholder="Buscar por texto o página"/>
+<div class="book-detail-quotes-body" id="book-detail-quotes-body"></div>
+</div>
+</details>
+</div>
+<div class="modal-footer book-detail-footer sticky-footer">
+<button class="btn primary btn-compact" id="book-detail-edit" type="button">Editar</button>
+<button class="btn ghost" id="book-detail-close-btn" type="button">Cerrar</button>
+</div>
+</div>
+</div>
+<!-- MODAL VÍDEO -->
+<div class="modal-backdrop hidden" id="video-modal-backdrop">
+<div class="modal videosWorkspace__modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="video-modal-title">Nuevo vídeo</div>
+<button class="icon-btn" id="video-modal-close">✕</button>
+</div>
+<form class="modal-form" id="video-form">
+<input id="video-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Básico</div>
+<label class="field">
+<span class="field-label">Título</span>
+<input id="video-title" required="" type="text"/>
+</label>
+<label class="field">
+<span class="field-label">Palabras de guion <em class="hint">(objetivo 2000)</em></span>
+<input id="video-script-words" inputmode="numeric" min="0" type="number" value="0"/>
+</label>
+<label class="field">
+<span class="field-label">Objetivo palabras</span>
+<input id="video-script-target" inputmode="numeric" min="1" type="number" value="2000"/>
+</label>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Duración</div>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Total</span>
+<div class="time-split">
+<input class="time-input" id="video-duration-min" inputmode="numeric" min="0" placeholder="min" type="number"/>
+<span class="time-sep">:</span>
+<input class="time-input" id="video-duration-sec" inputmode="numeric" max="59" min="0" placeholder="seg" type="number"/>
+</div>
+</label>
+<label class="field">
+<span class="field-label">Editado</span>
+<div class="time-split">
+<input class="time-input" id="video-edited-min" inputmode="numeric" min="0" placeholder="min" type="number"/>
+<span class="time-sep">:</span>
+<input class="time-input" id="video-edited-sec" inputmode="numeric" max="59" min="0" placeholder="seg" type="number"/>
+</div>
+</label>
+<label class="field">
+<span class="field-label">Objetivo (min)</span>
+<input id="video-duration-target-min" inputmode="numeric" min="0" placeholder="12" type="number"/>
+</label>
+</div>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Plan</div>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Fecha propuesta</span>
+<input id="video-publish-date" type="date"/>
+</label>
+<label class="field">
+<span class="field-label">Hora objetivo</span>
+<input id="video-publish-time" type="time"/>
+</label>
+<label class="field">
+<span class="field-label">Estado</span>
+<select id="video-status">
+<option value="script">Guion</option>
+<option value="recording">Grabación</option>
+<option value="editing">Edición</option>
+<option value="scheduled">Programado</option>
+<option value="published">Publicado</option>
+<option value="in_progress">Curso (legacy)</option>
+<option value="planned">Planificado (legacy)</option>
+</select>
+</label>
+</div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="video-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" id="video-form-save" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+<!-- MODAL REGISTRO -->
+<div class="modal-backdrop hidden" id="record-modal-backdrop">
+<div class="modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="record-modal-title">Editar registro</div>
+<button class="icon-btn" id="record-modal-close" aria-label="Cerrar">✕</button>
+</div>
+<form class="modal-form" id="record-form">
+<input id="record-id" type="hidden"/>
+<input id="record-day" type="hidden"/>
+<input id="record-video-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Registro</div>
+<label class="field">
+<span class="field-label">Palabras</span>
+<input id="record-words" inputmode="numeric" min="0" type="number" value="0"/>
+</label>
+<label class="field">
+<span class="field-label">Tiempo trabajado</span>
+<div class="time-split">
+<input class="time-input" id="record-time-min" inputmode="numeric" min="0" placeholder="min" type="number"/>
+<span class="time-sep">:</span>
+<input class="time-input" id="record-time-sec" inputmode="numeric" max="59" min="0" placeholder="seg" type="number"/>
+</div>
+</label>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="record-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" id="record-form-save" type="submit">Guardar cambios</button>
+</div>
+</form>
+</div>
+</div>
+<!-- MODAL ELIMINAR -->
+<div class="modal-backdrop hidden" id="confirm-delete-backdrop">
+<div class="modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="confirm-delete-title">Eliminar definitivamente</div>
+<button class="icon-btn" id="confirm-delete-close" aria-label="Cerrar">✕</button>
+</div>
+<div class="modal-body">
+<p id="confirm-delete-text">¿Eliminar definitivamente?</p>
+</div>
+<div class="modal-footer">
+<button class="btn ghost" id="confirm-delete-cancel" type="button">Cancelar</button>
+<button class="btn danger" id="confirm-delete-confirm" type="button">Eliminar</button>
+</div>
+</div>
+</div>
+<!-- MODAL IDEA -->
+<div class="modal-backdrop hidden" id="idea-modal-backdrop">
+<div class="modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="idea-modal-title">Nueva idea</div>
+<button class="icon-btn" id="idea-modal-close">✕</button>
+</div>
+<form class="modal-form" id="idea-form">
+<input id="idea-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Idea</div>
+<label class="field">
+<span class="field-label">Título <em class="hint">(obligatorio)</em></span>
+<input id="idea-title" required="" type="text"/>
+</label>
+<label class="field">
+<span class="field-label">Notas / preguion</span>
+<textarea id="idea-notes" placeholder="Escribe el preguion o ideas clave…" rows="5"></textarea>
+</label>
+<label class="field">
+<span class="field-label">Tags / hashtags</span>
+<input id="idea-tags" placeholder="amor, culpa, nietzsche" type="text"/>
+<span class="hint">Separados por comas. Se guardan como #tags.</span>
+</label>
+<label class="field">
+<span class="field-label">Link inspiración (opcional)</span>
+<div class="idea-link-row">
+<input id="idea-link" placeholder="https://..." type="url"/>
+<button class="btn ghost btn-compact" id="idea-add-resource" type="button">Añadir recurso</button>
+</div>
+</label>
+<div class="form-error" id="idea-form-error" role="alert"></div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="idea-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" id="idea-form-save" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+<!-- MODAL ASIGNAR TIEMPO A VÍDEO -->
+<div class="modal-backdrop hidden" id="assign-work-backdrop">
+<div class="modal">
+<div class="modal-header">
+<div class="modal-title">¿En qué vídeo has trabajado?</div>
+<button class="icon-btn" id="assign-work-close">✕</button>
+</div>
+<div class="modal-body">
+<div id="assign-work-summary" style="opacity:.75; margin-bottom:10px;"></div>
+<label class="field">
+<span>Vídeo</span>
+<select id="assign-work-select"></select>
+</label>
+</div>
+<div class="modal-footer">
+<button class="btn ghost" id="assign-work-skip" type="button">No asignar</button>
+<button class="btn primary" id="assign-work-save" type="button">Asignar</button>
+</div>
+</div>
+</div>
+
+<div class="modal-backdrop hidden" id="macro-add-modal-backdrop">
+  <div class="modal-comida">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title" id="macro-add-modal-title">Añadir alimento</div>
+      <button class="icon-btn" id="macro-add-modal-close" type="button">✕</button>
+    </div>
+    <div class="modal-scroll sheet-body">
+      <div class="macro-modal-search-row">
+        <input autocomplete="off" class="filter-search-input" id="macro-add-search" placeholder="Buscar producto o receta" type="search" />
+      </div>
+    <div class="macro-modal-chips" id="macro-add-chips">
+        <button class="macro-chip is-active" data-macro-source="products" type="button">Productos</button>
+        <button class="macro-chip" data-macro-source="recipes" type="button">Recetas</button>
+        <button class="macro-chip" data-macro-source="scan" type="button">Escanear</button>
+        <button class="macro-chip" data-macro-source="manual" type="button">Crear manual</button>
+      </div>
+      <div class="macro-product-picker-results" id="macro-product-picker-results">
+        <div class="macro-modal-results" id="macro-add-results"></div>
+      </div>
+      <div class="macro-modal-scan hidden" id="macro-scan-panel">
+        <div class="section-hint">Apunta al código, pulsa “Capturar” y, si no sale, busca manualmente.</div>
+        <div class="section-hint" id="macro-scan-placement-hint">Guía: acerca el producto hasta que el código y el número inferior ocupen gran parte del recuadro y se vean nítidos.</div>
+        <div class="macro-scan-video-wrap">
+          <video id="macro-scan-video" class="macro-scan-video" muted playsinline></video>
+          <canvas id="macro-scan-frozen" class="macro-scan-frozen hidden" aria-hidden="true"></canvas>
+          <div id="macro-scan-html5-host" class="macro-scan-html5-host hidden"></div>
+          <div class="macro-scan-overlay" aria-hidden="true"></div>
+        </div>
+        <div class="macro-inline-actions">
+          <button class="btn ghost btn-compact" id="macro-scan-engine-html5" type="button">Abrir cámara</button>
+          <button class="btn ghost btn-compact" id="macro-scan-capture" type="button">Capturar</button>
+          <button class="btn ghost btn-compact hidden" id="macro-scan-retry" type="button">Reintentar</button>
+          <input id="macro-scan-manual" placeholder="Código de barras" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" />
+          <button class="btn ghost btn-compact" id="macro-scan-manual-btn" type="button">Buscar</button>
+          <button class="btn ghost btn-compact" id="macro-scan-stop" type="button">Detener</button>
+        </div>
+        <div class="hint" id="macro-scan-engine-status">Motor activo: ninguno</div>
+        <div class="hint" id="macro-scan-status"></div>
+        <div class="macro-scan-log-panel" id="macro-scan-log-panel" aria-live="polite"></div>
+        <div class="macro-scan-ocr-debug hidden" id="macro-scan-ocr-debug" aria-live="polite">
+          <div class="macro-scan-ocr-debug-item">
+            <span>OCR source</span>
+            <canvas id="macro-scan-ocr-source" width="160" height="90"></canvas>
+          </div>
+          <div class="macro-scan-ocr-debug-item">
+            <span>OCR crop</span>
+            <canvas id="macro-scan-ocr-crop" width="160" height="90"></canvas>
+          </div>
+          <div class="macro-scan-ocr-debug-item">
+            <span>OCR preprocess</span>
+            <canvas id="macro-scan-ocr-final" width="160" height="90"></canvas>
+          </div>
+        </div>
+        <button class="btn primary btn-compact hidden" id="macro-scan-add-product" type="button">+ Añadir producto</button>
+      </div>
+      <div class="macro-modal-manual hidden" id="macro-manual-panel">
+        <div class="macro-manual-builder">
+          <section class="macro-manual-hero">
+            <span class="macro-manual-eyebrow">Alta rápida</span>
+            <h4>Crear alimento manualmente</h4>
+            <div class="macro-manual-base-pill">
+              <span>Base</span>
+              <input id="macro-manual-base" type="number" value="100" />
+              <strong>g</strong>
+            </div>
+          </section>
+
+          <div class="macro-manual-grid" id="meta-inputs">
+            <label class="macro-manual-field">
+              <span class="macro-manual-label">Nombre</span>
+              <input id="macro-manual-name" type="text" placeholder="Ej. Yogur natural proteico" />
+            </label>
+            <label class="macro-manual-field">
+              <span class="macro-manual-label">Marca</span>
+              <input id="macro-manual-brand" type="text" placeholder="Opcional" />
+            </label>
+            <label class="macro-manual-field">
+              <span class="macro-manual-label">Código de barras</span>
+              <input id="macro-manual-barcode" type="text" inputmode="numeric" placeholder="Opcional" />
+            </label>
+          </div>
+
+          <div class="macro-manual-macro-grid" id="macros-inputs">
+            <label class="macro-manual-metric macro-manual-metric-kcal">
+              <span class="macro-manual-metric-label">Kcal</span>
+              <input id="macro-manual-kcal" type="number" value="0" />
+            </label>
+            <label class="macro-manual-metric macro-manual-metric-carbs">
+              <span class="macro-manual-metric-label">Carbs</span>
+              <input id="macro-manual-carbs" type="number" value="0" />
+              
+            </label>
+            <label class="macro-manual-metric macro-manual-metric-protein">
+              <span class="macro-manual-metric-label">Proteína</span>
+              <input id="macro-manual-protein" type="number" value="0" />
+            </label>
+            <label class="macro-manual-metric macro-manual-metric-fat">
+              <span class="macro-manual-metric-label">Grasa</span>
+              <input id="macro-manual-fat" type="number" value="0" />
+            </label>
+          </div>
+
+          <div class="macro-manual-bottom-row">
+            <label class="macro-manual-nutri">
+              <span class="macro-manual-label">Nutri-Score</span>
+              <div class="macro-nutri-segmented" id="macro-manual-nutri-segmented" role="group" aria-label="Nutri-Score manual">
+                <button type="button" class="macro-nutri-option is-active" data-nutri-value="">—</button>
+                <button type="button" class="macro-nutri-option" data-nutri-value="a">A</button>
+                <button type="button" class="macro-nutri-option" data-nutri-value="b">B</button>
+                <button type="button" class="macro-nutri-option" data-nutri-value="c">C</button>
+                <button type="button" class="macro-nutri-option" data-nutri-value="d">D</button>
+                <button type="button" class="macro-nutri-option" data-nutri-value="e">E</button>
+              </div>
+            </label>
+            <button class="macro-btn macro-btn-primary macro-manual-save-btn" id="macro-manual-save" type="button">Guardar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="macro-product-modal-backdrop">
+  <div class="macro-modal macro-product-modal" role="dialog" aria-modal="true" aria-labelledby="macro-product-modal-title">
+    <div class="macro-modal-handle"></div>
+
+    <div class="macro-product-topbar">
+      <button class="macro-icon-btn macro-product-topbar-btn" id="macro-product-modal-close" type="button" aria-label="Cerrar">✕</button>
+      <h3 class="macro-product-topbar-title" id="macro-product-modal-title">Producto</h3>
+      <button class="macro-icon-btn macro-product-topbar-btn" id="macro-product-edit-toggle" type="button">Editar</button>
+    </div>
+
+    <div class="macro-modal-body">
+      <section class="macro-card macro-product-hero-card">
+        <div class="macro-grid macro-grid-2">
+          <label class="macro-field macro-field-span-2">
+            <span class="macro-label">Nombre</span>
+            <input id="macro-product-name" type="text" placeholder="Ej. Arroz a la paella" />
+          </label>
+
+          <label class="macro-field">
+            <span class="macro-label">Marca</span>
+            <input id="macro-product-brand" type="text" placeholder="Opcional" />
+          </label>
+
+          <label class="macro-field macro-product-barcode-field">
+            <span class="macro-label">Código de barras</span>
+            <input id="macro-product-barcode" type="text" inputmode="numeric" placeholder="8410..." />
+          </label>
+        </div>
+
+        <div class="macro-product-hero-visual" aria-hidden="true">
+          <div class="macro-product-donut">
+            <svg class="macro-donut" viewBox="0 0 100 100">
+              <circle class="macro-donut-track" cx="50" cy="50" r="38"></circle>
+              <circle class="macro-donut-seg macro-donut-carbs" id="macro-product-donut-carbs" cx="50" cy="50" r="38"></circle>
+              <circle class="macro-donut-seg macro-donut-protein" id="macro-product-donut-protein" cx="50" cy="50" r="38"></circle>
+              <circle class="macro-donut-seg macro-donut-fat" id="macro-product-donut-fat" cx="50" cy="50" r="38"></circle>
+            </svg>
+            <div class="macro-donut-center">
+              <div class="macro-donut-kcal" id="macro-product-donut-kcal">0</div>
+              <div class="macro-donut-kcal-unit">kcal</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="macro-product-kpis">
+          <div class="macro-kpi macro-kpi-carbs">
+            <div class="macro-kpi-label">Carb.</div>
+            <div class="macro-kpi-value" id="macro-product-kpi-carbs">0g</div>
+          </div>
+          <div class="macro-kpi macro-kpi-protein">
+            <div class="macro-kpi-label">Prot.</div>
+            <div class="macro-kpi-value" id="macro-product-kpi-protein">0g</div>
+          </div>
+          <div class="macro-kpi macro-kpi-fat">
+            <div class="macro-kpi-label">Grasa</div>
+            <div class="macro-kpi-value" id="macro-product-kpi-fat">0g</div>
+          </div>
+          <div class="macro-kpi macro-kpi-kcal">
+            <div class="macro-kpi-label">Kcal</div>
+            <div class="macro-kpi-value" id="macro-product-kpi-kcal">0</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="macro-card macro-product-nutrition-card">
+
+  <div class="macro-section-head">
+    <span class="macro-section-title">Valores nutricionales</span>
+    <span class="macro-chip">Base 100 g</span>
+  </div>
+    <label class="macro-field">
+      <span class="macro-label">Base nutricional</span>
+      <div class="macro-inline-qty">
+        <input id="macro-product-base" type="number" value="100">
+        <select id="macro-product-base-unit" class="macro-select">
+          <option value="g">g</option>
+          <option value="kg">kg</option>
+          <option value="ml">ml</option>
+          <option value="l">l</option>
+          <option value="unit">unidad</option>
+        </select>
+      </div>
+    </label>
+  <div class="macro-grid macro-grid-4" id="valores-nutricionales">
+
+
+
+    <label class="macro-field">
+      <span class="macro-label">Kcal</span>
+      <input id="macro-product-kcal" type="number" placeholder="0" value="">
+    </label>
+
+    <label class="macro-field">
+      <span class="macro-label">Carbs (g)</span>
+      <input id="macro-product-carbs" type="number" step="0.1" placeholder="0" value="">
+    </label>
+
+    <label class="macro-field">
+      <span class="macro-label">Protein (g)</span>
+      <input id="macro-product-protein" type="number" step="0.1" placeholder="0" value="">
+    </label>
+
+    <label class="macro-field">
+      <span class="macro-label">Fat (g)</span>
+      <input id="macro-product-fat" type="number" step="0.1" placeholder="0" value="">
+    </label>
+
+  </div>
+  <label class="macro-field macro-field-span-2 macro-product-nutri-field">
+    <span class="macro-label">Nutri-Score</span>
+    <div class="macro-nutri-segmented" id="macro-product-nutri-segmented" role="group" aria-label="Nutri-Score manual">
+      <button type="button" class="macro-nutri-option is-active" data-nutri-value="">—</button>
+      <button type="button" class="macro-nutri-option" data-nutri-value="a">A</button>
+      <button type="button" class="macro-nutri-option" data-nutri-value="b">B</button>
+      <button type="button" class="macro-nutri-option" data-nutri-value="c">C</button>
+      <button type="button" class="macro-nutri-option" data-nutri-value="d">D</button>
+      <button type="button" class="macro-nutri-option" data-nutri-value="e">E</button>
+    </div>
+  </label>
+
+</section>
+
+      <section class="macro-card macro-add-card macro-product-action-card">
+        <div class="macro-grid macro-grid-1">
+          <label class="macro-field">
+            <span class="macro-label">Cantidad a añadir</span>
+            <div class="macro-inline-qty">
+              <input id="macro-product-grams" type="number" value="100" />
+              <select id="macro-product-grams-unit" class="macro-select">
+                <option value="g">g</option>
+                <option value="kg">kg</option>
+                <option value="ml">ml</option>
+                <option value="l">l</option>
+                <option value="unit">unidad</option>
+              </select>
+            </div>
+          </label>
+          <label class="macro-field">
+            <span class="macro-label">Peso por unidad (opcional)</span>
+            <div class="macro-inline-qty">
+              <input id="macro-product-unit-weight" type="number" step="0.01" min="0" placeholder="Ej. 30" />
+              <select id="macro-product-unit-weight-unit" class="macro-select">
+                <option value="g">g</option>
+                <option value="ml">ml</option>
+              </select>
+            </div>
+            <div class="hint">Si añades en "unidad", se convierte automáticamente usando este valor.</div>
+          </label>
+        </div>
+
+        <div class="macro-summary" id="macro-product-summary">
+          
+        </div>
+        <div class="hint" id="macro-product-price-used">Sin precio disponible</div>
+        <div class="macro-weight-diff-grid" aria-label="Diferencia de peso para cantidad">
+          <label class="macro-field">
+            <span class="macro-label">Peso inicial <span id="macro-product-weight-start-unit">(g)</span></span>
+            <input id="macro-product-weight-start" type="number" step="0.01" placeholder="Ej. 108" />
+          </label>
+          <label class="macro-field">
+            <span class="macro-label">Peso final <span id="macro-product-weight-end-unit">(g)</span></span>
+            <input id="macro-product-weight-end" type="number" step="0.01" placeholder="Ej. 82" />
+          </label>
+        </div>
+        <div class="macro-package-calc-grid" aria-label="Cálculo por unidades de paquete">
+          <label class="macro-field">
+            <span class="macro-label">Peso total paquete (g)</span>
+            <input id="macro-product-pack-weight" type="number" step="0.01" min="0" placeholder="Ej. 125" />
+          </label>
+          <label class="macro-field">
+            <span class="macro-label">Unidades en el paquete</span>
+            <input id="macro-product-pack-units" type="number" step="0.01" min="0" placeholder="Ej. 10" />
+          </label>
+          <label class="macro-field">
+            <span class="macro-label">Cantidad consumida</span>
+            <input id="macro-product-pack-consumed" type="number" step="0.01" min="0" placeholder="Ej. 3" />
+          </label>
+        </div>
+        <div class="hint" id="macro-product-weight-diff-hint"></div>
+      </section>
+
+      <section class="macro-card macro-product-links-card">
+
+<button class="macro-btn macro-btn-ghost" id="macro-product-scan-btn" type="button">Escanear código</button>
+
+ <div class="macro-inline-cost-grid">
+            <label class="macro-field">
+              <span class="macro-label">Tamaño del paquete</span>
+              <input id="macro-product-package-amount" type="number" step="0.01" min="0" placeholder="Ej. 1" />
+            </label>
+            <label class="macro-field">
+              <span class="macro-label">Unidad del paquete</span>
+              <select id="macro-product-package-unit" class="macro-select">
+                <option value="">Sin unidad</option>
+                <option value="g">g</option>
+                <option value="kg">kg</option>
+                <option value="ml">ml</option>
+                <option value="l">l</option>
+                <option value="unit">unidad</option>
+              </select>
+            </label>
+            <label class="macro-field">
+              <span class="macro-label">Precio envase (€)</span>
+              <input id="macro-product-price" type="number" step="0.01" min="0" placeholder="Opcional" />
+            </label>
+          </div>
+          
+        <div class="macro-grid macro-grid-1">
+          
+
+         
+
+
+          <label class="macro-field">
+            <span class="macro-label">Vincular producto de Finanzas</span>
+            <select id="macro-product-finance-select" class="macro-select"></select>
+          </label>
+
+
+          <div class="macro-link-row">
+            <span class="hint" id="macro-product-finance-hint">Sin producto de Finanzas</span>
+            <button class="macro-btn macro-btn-ghost btn-compact" id="macro-product-finance-unlink" type="button">Desvincular</button>
+          </div>
+
+          <label class="macro-field">
+            <span class="macro-label">Vincular a hábito</span>
+            <select id="macro-product-habit-select" class="macro-select"></select>
+          </label>
+
+          <div class="macro-link-row">
+            <span class="hint" id="macro-product-habit-hint">Sin hábito vinculado</span>
+            <button class="macro-btn macro-btn-ghost btn-compact" id="macro-product-habit-unlink" type="button">Desvincular</button>
+          </div>
+
+
+        </div>
+      </section>
+    </div>
+
+    <div class="macro-modal-footer">
+      <button class="macro-btn macro-btn-ghost" id="macro-product-cancel" type="button">Cancelar</button>
+      <button class="macro-btn macro-btn-primary" id="macro-product-add" type="button">Añadir</button>
+    </div>
+  </div>
+</div>
+<!-- MODAL RECETA -->
+<div class="modal-backdrop hidden" id="recipe-modal-backdrop">
+<div class="modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="recipe-modal-title">Nueva receta</div>
+<button class="icon-btn" id="recipe-modal-close">✕</button>
+</div>
+<form class="modal-form" id="recipe-form">
+<input id="recipe-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Datos clave</div>
+<div class="recipe-import">
+<button class="btn ghost btn-compact" id="recipe-import-toggle" type="button">
+    Importar
+  </button>
+<div class="recipe-import-box hidden" id="recipe-import-box">
+<textarea class="builder-textarea recipe-import-text" id="recipe-import-text" placeholder="Pega aquí el bloque RECETA_V1… (desde ChatGPT)" rows="7"></textarea>
+<div class="recipe-import-actions">
+<button class="btn primary btn-compact" id="recipe-import-btn" type="button">Aplicar</button>
+<button class="btn ghost btn-compact" id="recipe-import-clear" type="button">Limpiar</button>
+<div class="recipe-import-status" id="recipe-import-status"></div>
+</div>
+</div>
+</div>
+<label class="field">
+<span class="field-label">Nombre del plato</span>
+<input id="recipe-name" required="" type="text"/>
+</label>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Tipo de comida</span>
+<select id="recipe-meal" required="">
+<option value="desayuno">Desayuno</option>
+<option value="comida">Comida</option>
+<option value="cena">Cena</option>
+<option value="snack">Snack</option>
+</select>
+</label>
+<label class="field">
+<span class="field-label">Saludable</span>
+<select id="recipe-health" required="">
+<option value="sana">Sana</option>
+<option value="equilibrada">Equilibrada</option>
+<option value="insana">Insana</option>
+</select>
+</label>
+</div>
+<label class="field">
+<span class="field-label">Etiquetas (separadas por coma)</span>
+<input id="recipe-tags" placeholder="rápida, horno, pasta..." type="text"/>
+</label>
+<label class="field">
+<span class="field-label">País / origen</span>
+<input id="recipe-country" list="country-options" placeholder="Italia, Perú, Estados Unidos..." type="text"/>
+</label>
+<div class="field recipe-photo-field">
+  <span class="field-label">Foto</span>
+  <div class="recipe-photo-wrap">
+    <img id="recipe-image-preview" class="recipe-photo-preview" alt="Foto de la receta" />
+    <div class="recipe-photo-actions">
+      <button class="btn ghost btn-compact" id="recipe-image-camera" type="button">📷 Cámara</button>
+      <button class="btn ghost btn-compact" id="recipe-image-gallery" type="button">🖼️ Galería</button>
+      <button class="btn ghost danger btn-compact" id="recipe-image-remove" type="button">Quitar</button>
+    </div>
+    <div class="hint recipe-photo-status" id="recipe-image-status"></div>
+    <input id="recipe-image-file" type="file" accept="image/*" hidden />
+  </div>
+</div>
+
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Valoración</span>
+<input id="recipe-rating" max="5" min="0" step="0.5" type="number" value="4"/>
+</label>
+<label class="field">
+<span class="field-label">Última vez cocinada</span>
+<input id="recipe-last-cooked" type="date"/>
+</label>
+</div>
+<label class="field">
+<span class="field-label">Notas</span>
+<textarea id="recipe-notes" placeholder="Notas rápidas, truco o acompañamiento..." rows="3"></textarea>
+</label>
+<div class="form-grid row-2">
+<label class="favorite-toggle">
+<input id="recipe-favorite" type="checkbox"/>
+<span aria-hidden="true" class="favorite-icon">★</span>
+<span>Marcar como favorita</span>
+</label>
+<label class="laura-check">
+<input id="recipe-laura" type="checkbox"/>
+<span aria-hidden="true" class="laura-check-mark"></span>
+<span>Aprobación de Laura</span>
+</label>
+</div>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Receta editable</div>
+<p class="section-hint">Organiza ingredientes y pasos para que aparezcan en el recetario a pantalla completa.</p>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Raciones</span>
+<input id="recipe-servings" min="1" step="1" type="number" value="1"/>
+</label>
+</div>
+<div class="hint" id="recipe-calc-summary">0 kcal · 0.00 €</div>
+<div class="recipe-builder-grid">
+<div class="recipe-builder-column">
+<div class="builder-header">
+<div>
+<div class="builder-title">Ingredientes</div>
+<div class="builder-subtitle">Añade tantos como necesites</div>
+</div>
+<button class="btn ghost btn-compact" id="recipe-add-ingredient" type="button">+ Ingrediente</button>
+</div>
+<div class="recipe-ingredient-picker" id="recipe-ingredient-picker">
+<select id="recipe-ingredient-product" class="builder-input"></select>
+<input id="recipe-ingredient-grams" class="builder-input" type="number" min="0" step="1" value="100"/>
+<button class="btn ghost btn-compact" id="recipe-ingredient-add-product" type="button">Añadir producto</button>
+</div>
+<div class="recipe-ingredients-list" id="recipe-ingredients-list"></div>
+<datalist id="recipe-macro-products-list"></datalist>
+<datalist id="recipe-finance-products-list"></datalist>
+</div>
+<div class="recipe-builder-column">
+<div class="builder-header">
+<div>
+<div class="builder-title">Pasos</div>
+<div class="builder-subtitle">Título y descripción para cada paso</div>
+</div>
+<button class="btn ghost btn-compact" id="recipe-add-step" type="button">+ Paso</button>
+</div>
+<div class="recipe-steps-list" id="recipe-steps-list"></div>
+</div>
+</div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost danger footer-start" id="recipe-delete" type="button">Eliminar</button>
+<button class="btn ghost" id="recipe-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+<!-- RECETARIO A PANTALLA COMPLETA -->
+<div class="recipe-detail-backdrop hidden" id="recipe-detail-backdrop">
+<article aria-modal="true" class="recipe-detail-card" role="dialog">
+<header class="recipe-detail-header">
+<div class="recipe-detail-top">
+<div class="recipe-detail-headings">
+<h2 class="recipe-detail-title" id="recipe-detail-title">Receta</h2>
+<div class="recipe-detail-chips">
+<div class="recipe-detail-chip" id="recipe-detail-meal"></div>
+<div class="recipe-detail-tags" id="recipe-detail-tags"></div>
+</div>
+</div>
+<div class="recipe-detail-actions">
+<button aria-label="Seguimiento" class="icon-btn icon-btn-large recipe-bookmark-btn" id="recipe-detail-bookmark">🔖</button>
+<button aria-label="Cerrar" class="icon-btn icon-btn-large" id="recipe-detail-close">✕</button>
+</div>
+</div>
+<div class="recipe-detail-hero" id="recipe-detail-hero" style="display:none;">
+  <img id="recipe-detail-image" alt="Foto de la receta" loading="lazy" />
+</div>
+<div class="recipe-detail-specs">
+<div class="spec-block">
+<div class="spec-block-title">Datos rápidos</div>
+<div class="spec-grid" id="recipe-detail-meta"></div>
+</div>
+<div class="spec-block">
+<div class="spec-block-title">Datos clave</div>
+<div class="spec-grid spec-grid-secondary" id="recipe-detail-grid"></div>
+</div>
+</div>
+</header>
+<div class="recipe-detail-body">
+<div aria-label="Contenido de la receta" class="recipe-detail-tabbar" id="recipe-detail-tabbar" role="tablist">
+<button aria-selected="true" class="recipe-tab is-active" data-target="ingredients" role="tab" type="button">Ingredientes</button>
+<button aria-selected="false" class="recipe-tab" data-target="steps" role="tab" type="button">Pasos</button>
+</div>
+<section class="recipe-detail-section recipe-detail-panel is-active" data-panel="ingredients" role="tabpanel">
+<div class="section-subtitle">Marca al preparar</div>
+<div class="recipe-detail-ingredients" id="recipe-detail-ingredients"></div>
+</section>
+<section aria-hidden="true" class="recipe-detail-section recipe-detail-panel" data-panel="steps" role="tabpanel">
+<div class="section-subtitle">Solo una lista visible</div>
+<div class="recipe-detail-steps" id="recipe-detail-steps"></div>
+</section>
+<section class="recipe-detail-section recipe-notes-section" id="recipe-detail-notes-wrapper" style="display:none;">
+<div class="spec-block-title">Notas</div>
+<p class="recipe-detail-notes" id="recipe-detail-notes"></p>
+</section>
+</div>
+<div class="recipe-detail-actions-bar">
+<button class="btn primary btn-compact" id="recipe-detail-edit">Editar</button>
+<button class="btn ghost danger btn-compact" id="recipe-detail-delete">Eliminar</button>
+<button class="btn ghost" id="recipe-detail-close-bottom">Cerrar</button>
+</div>
+</article>
+</div>
+<!-- MODAL HÁBITO -->
+<div class="modal-backdrop hidden" id="habit-modal-backdrop">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="habit-modal-title">Nuevo hábito</div>
+<button class="icon-btn" id="habit-modal-close">✕</button>
+</div>
+<form class="modal-form" id="habit-form">
+<input id="habit-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+    <div class="sheet-section">
+    <div class="sheet-section-title">Detalles</div>
+        <div class="habits-details">
+          <label class="field">
+          <span class="field-label">Nombre</span>
+          <input id="habit-name" required="" type="text"/>
+          </label>
+          <label class="field">
+          <span class="field-label">Emoji/Icono</span>
+          <input id="habit-emoji" inputmode="text" maxlength="4" placeholder="💪" type="text"/>
+          </label>
+          <label class="field">
+          <span class="field-label">Color</span>
+          <input id="habit-color" type="color" value="#7f5dff"/>
+          </label>
+          <label class="field field-inline-toggle">
+            <span class="field-label">Excluir de “dominante del día”</span>
+            <input id="habit-exclude-dominant" type="checkbox"/>
+          </label>
+
+          <label class="field">
+            <span class="field-label">Grupo</span>
+            <select id="habit-group-select"></select>
+          </label>
+        </div>
+
+    <div class="habit-group-manage">
+      <input id="habit-group-new" placeholder="Nuevo grupo" type="text"/>
+      <button class="btn ghost btn-compact" id="habit-group-create" type="button">Crear</button>
+    </div>
+    <div class="habit-group-manage">
+      <input id="habit-group-rename" placeholder="Renombrar grupo" type="text"/>
+      <button class="btn ghost btn-compact" id="habit-group-rename-btn" type="button">Renombrar</button>
+      <button class="btn ghost danger btn-compact" id="habit-group-delete-btn" type="button">Eliminar</button>
+    </div>
+
+    <label class="field checkbox-field">
+      <div class="checkbox-field-row">
+        <div>
+          <div class="checkbox-field-title">Agrupar en “Privados”</div>
+          <div class="checkbox-field-hint">Se mostrará en un desplegable cerrado por defecto (en Pendientes/Hechos).</div>
+        </div>
+        <input id="habit-group-private" type="checkbox"/>
+      </div>
+    </label>
+
+    <label class="field checkbox-field">
+      <div class="checkbox-field-row">
+        <div>
+          <div class="checkbox-field-title">Agrupar en “Poco uso”</div>
+          <div class="checkbox-field-hint">Se mostrará en un desplegable cerrado por defecto (en Pendientes/Hechos).</div>
+        </div>
+        <input id="habit-group-lowuse" type="checkbox"/>
+      </div>
+    </label>
+
+    </div>
+<div class="sheet-section habit-params-section">
+<div class="sheet-section-title">Parámetros</div>
+<label class="field">
+<span class="field-label">Añadir parámetro</span>
+<div class="habit-params-controls">
+<select id="habit-param-select">
+  <option value="">Selecciona un parámetro</option>
+  <option value="Laura: Sí">Laura: Sí</option>
+  <option value="Laura: No">Laura: No</option>
+  <option value="Lugar: Dentro">Lugar: Dentro</option>
+  <option value="Lugar: Fuera">Lugar: Fuera</option>
+  <option value="Tipo: Productivo">Tipo: Productivo</option>
+  <option value="Tipo: No productivo">Tipo: No productivo</option>
+  <option value="__new__">Crear nuevo…</option>
+</select>
+<button class="btn ghost btn-compact" id="habit-param-add" type="button">Añadir</button>
+</div>
+</label>
+<label class="field habit-param-new hidden" id="habit-param-new-wrap">
+<span class="field-label">Nuevo parámetro</span>
+<div class="habit-params-controls">
+<input id="habit-param-new" placeholder="Ej: Lugar: Fuera" type="text"/>
+<button class="btn ghost btn-compact" id="habit-param-create" type="button">Crear</button>
+</div>
+</label>
+<div class="habit-param-chips" id="habit-param-list"></div>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Objetivo</div>
+<div class="field">
+<span class="field-label">Tipo</span>
+<div class="pill-row">
+<label class="toggle-pill">
+<input checked="" name="habit-goal" type="radio" value="check"/>
+<span>Check</span>
+</label>
+<label class="toggle-pill">
+<input name="habit-goal" type="radio" value="time"/>
+<span>Tiempo</span>
+</label>
+<label class="toggle-pill">
+<input name="habit-goal" type="radio" value="count"/>
+<span>Conteo</span>
+</label>
+</div>
+</div>
+<label class="field" id="habit-target-minutes-wrap">
+<span class="field-label">Minutos objetivo (opcional)</span>
+<input id="habit-target-minutes" inputmode="numeric" min="0" placeholder="25" type="number"/>
+</label>
+<label class="field" id="habit-count-unit-minutes-wrap" style="display:none">
+  <span class="field-label">Minutos por vez (opcional)</span>
+  <input id="habit-count-unit-minutes" inputmode="numeric" min="0" placeholder="8" type="number"/>
+  <div class="checkbox-field-hint">Si pones 8 y cuentas 2, se registran 16m ese día.</div>
+</label>
+<label class="field checkbox-field" id="habit-credit-eligible-wrap">
+  <div class="checkbox-field-row">
+    <div>
+      <div class="checkbox-field-title">Permitir créditos fuera de plantilla</div>
+      <div class="checkbox-field-hint">Si hoy no está en objetivos, este hábito puede generar 🪙 al activarlo en Horario.</div>
+    </div>
+    <input id="habit-credit-eligible" type="checkbox"/>
+  </div>
+</label>
+
+<label class="field checkbox-field" id="habit-quick-counter-pinned-wrap" style="display:none;">
+  <div class="checkbox-field-row">
+    <div>
+      <div class="checkbox-field-title">Mostrar en contadores rápidos</div>
+      <div class="checkbox-field-hint">Fija este contador en el bloque rápido.</div>
+    </div>
+    <input id="habit-quick-counter-pinned" type="checkbox"/>
+  </div>
+</label>
+
+<div class="habit-quick-counter-order" id="habit-quick-counter-order-wrap" style="display:none;">
+  <button class="btn ghost btn-compact" id="habit-quick-counter-up" type="button">⬆ Subir</button>
+  <button class="btn ghost btn-compact" id="habit-quick-counter-down" type="button">⬇ Bajar</button>
+</div>
+
+<div class="sheet-subsection" id="habit-quick-adds-wrap" style="display:none">
+  <div class="sheet-section-title">Atajos</div>
+  <div class="quick-add-grid">
+    <label class="field">
+      <span class="field-label">Botón 1 (texto)</span>
+      <input id="habit-quick1-label" placeholder="+3 min" autocomplete="off"/>
+    </label>
+    <label class="field">
+      <span class="field-label">Botón 1 (min)</span>
+      <input id="habit-quick1-minutes" inputmode="numeric" min="0" placeholder="3" type="number"/>
+    </label>
+    <label class="field">
+      <span class="field-label">Botón 2 (texto)</span>
+      <input id="habit-quick2-label" placeholder="+1 h" autocomplete="off"/>
+    </label>
+    <label class="field">
+      <span class="field-label">Botón 2 (min)</span>
+      <input id="habit-quick2-minutes" inputmode="numeric" min="0" placeholder="60" type="number"/>
+    </label>
+  </div>
+</div>
+
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Frecuencia</div>
+<div class="pill-row">
+<label class="toggle-pill">
+<input checked="" name="habit-schedule" type="radio" value="daily"/>
+<span>Cada día</span>
+</label>
+<label class="toggle-pill">
+<input name="habit-schedule" type="radio" value="days"/>
+<span>Días concretos</span>
+</label>
+</div>
+<div class="habit-days-selector" id="habit-days-selector">
+<button data-day="1" type="button">L</button>
+<button data-day="2" type="button">M</button>
+<button data-day="3" type="button">X</button>
+<button data-day="4" type="button">J</button>
+<button data-day="5" type="button">V</button>
+<button data-day="6" type="button">S</button>
+<button data-day="0" type="button">D</button>
+</div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost danger footer-start" id="habit-delete" type="button">Eliminar hábito</button>
+<button class="btn ghost" id="habit-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+<!-- MODAL ASIGNAR SESIÓN -->
+<div class="modal-backdrop hidden" id="habit-session-modal">
+<div class="modal habit-session-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title">¿A qué hábito asignas esta sesión?</div>
+<button class="icon-btn" id="habit-session-close">✕</button>
+</div>
+<div class="modal-scroll sheet-body">
+<div class="field">
+<span class="field-label">Buscar</span>
+<input id="habit-session-search" placeholder="Nombre del hábito" type="search"/>
+</div>
+<div class="habit-session-last" id="habit-session-last" style="display:none;"></div>
+<div class="habit-session-list" id="habit-session-list"></div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-session-cancel">Cancelar</button>
+</div>
+</div>
+</div>
+<!-- MODAL TIEMPO MANUAL -->
+<div class="modal-backdrop hidden" id="habit-manual-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title">Añadir tiempo</div>
+<button class="icon-btn" id="habit-manual-close">✕</button>
+</div>
+<form class="modal-form" id="habit-manual-form">
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Sesión manual</div>
+<label class="field">
+<span class="field-label">Hábito</span>
+<select id="habit-manual-habit" required=""></select>
+</label>
+<div class="inputs">
+  <label class="field">
+    <span class="field-label">Minutos</span>
+    <input id="habit-manual-minutes" min="00:00" placeholder="00:25" required="" step="60" type="time"/>
+    </label>
+    <label class="field">
+    <span class="field-label">Fecha</span>
+    <input id="habit-manual-date" type="date"/>
+  </label>
+  </div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-manual-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+<!-- MODAL EDITAR REGISTROS -->
+<div class="modal-backdrop hidden" id="habit-entry-modal-backdrop">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title">Editar registros</div>
+<button class="icon-btn" id="habit-entry-close">✕</button>
+</div>
+<form class="modal-form" id="habit-entry-form">
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Día</div>
+<label class="field">
+<span class="field-label">Hábito</span>
+<select id="habit-entry-habit" required=""></select>
+</label>
+<label class="field">
+<span class="field-label">Fecha</span>
+<input id="habit-entry-date" required="" type="date"/>
+</label>
+<div id="habit-entry-check-wrap">
+<label class="field">
+<span class="field-label">Check</span>
+<input id="habit-entry-check" type="checkbox"/>
+</label>
+</div>
+<div id="habit-entry-count-wrap" style="display:none;">
+<div class="field">
+<span class="field-label">Conteo</span>
+<div class="pill-row">
+<button class="icon-btn" id="habit-entry-count-minus" type="button">−</button>
+<input id="habit-entry-count" inputmode="numeric" min="0" type="number" value="0"/>
+<button class="icon-btn" id="habit-entry-count-plus" type="button">+</button>
+</div>
+</div>
+</div>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Sesiones (tiempo)</div>
+<div id="habit-entry-sessions"></div>
+<div class="hint">Puedes ajustar minutos o borrar sesiones. Para añadir una nueva, usa “Añadir tiempo”.</div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-entry-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+
+<!-- MODAL DETALLE DEL DÍA -->
+<div class="modal-backdrop hidden" id="habit-day-detail-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="habit-day-detail-title">Detalle del día</div>
+<button class="icon-btn" id="habit-day-detail-close">✕</button>
+</div>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title" id="habit-day-detail-date">—</div>
+<div id="habit-day-detail-list"></div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-day-detail-cancel" type="button">Cerrar</button>
+<button class="btn primary" id="habit-day-detail-save" type="button">Guardar</button>
+</div>
+</div>
+</div>
+<!-- MODAL OBJETIVOS POR RANGO -->
+<div class="modal-backdrop hidden" id="habit-range-goals-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="habit-range-goals-title">Objetivos — Hábito</div>
+<button class="icon-btn" id="habit-range-goals-close" type="button">✕</button>
+</div>
+<form class="modal-form" id="habit-range-goals-form">
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title">Objetivos por rango (minutos)</div>
+<div class="habit-range-goals-grid" id="habit-range-goals-grid"></div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-range-goals-clear" type="button">Limpiar objetivos</button>
+<button class="btn ghost" id="habit-range-goals-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+<!-- MODAL RESUMEN HORARIO -->
+<div class="modal-backdrop hidden" id="habit-schedule-summary-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="habit-schedule-summary-title">Resumen del día</div>
+<button class="icon-btn" id="habit-schedule-summary-close" type="button">✕</button>
+</div>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div id="habit-schedule-summary-content"></div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-schedule-summary-cancel" type="button">Cerrar</button>
+</div>
+</div>
+</div>
+<!-- CONFIRMAR ELIMINACIÓN HÁBITO -->
+<div class="modal-backdrop hidden" id="habit-delete-confirm">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title">Eliminar hábito</div>
+<button class="icon-btn" id="habit-delete-close">✕</button>
+</div>
+<div class="modal-body sheet-body">
+<p>Vas a archivar el hábito <strong id="habit-delete-name"></strong>. Dejará de mostrarse y su actividad no contará en los reportes.</p>
+<div class="warning-text">Esta acción se puede revertir editando el hábito más adelante.</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-delete-cancel" type="button">Cancelar</button>
+<button class="btn danger" id="habit-delete-confirm-btn" type="button">Eliminar</button>
+</div>
+</div>
+</div>
+
+<div class="modal-backdrop hidden" id="game-mode-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="game-mode-modal-title">Nuevo modo</div>
+<button class="icon-btn" id="game-mode-close" type="button">✕</button>
+</div>
+<form class="modal-form" id="game-mode-form">
+<div class="modal-scroll sheet-body game-modal-scroll">
+<label class="field">
+<span class="field-label">Grupo</span>
+<select id="game-group-choice">
+<option value="existing">Elegir grupo existente</option>
+<option value="new">Crear grupo nuevo</option>
+</select>
+</label>
+<label class="field" id="game-group-existing-wrap">
+<span class="field-label">Grupo existente</span>
+<select id="game-existing-group"></select>
+</label>
+<div class="form-grid row-2" id="game-group-new-wrap" style="display:none;">
+<label class="field">
+<span class="field-label">Nombre del grupo</span>
+<input id="game-group-name" type="text" placeholder="Ej. CS2"/>
+</label>
+<label class="field">
+<span class="field-label">Emoji del grupo</span>
+<input id="game-group-emoji" type="text" maxlength="3" placeholder="🎮"/>
+</label>
+</div>
+<label class="field" id="game-group-habit-wrap" style="display:none;">
+<span class="field-label">Vincular hábito (grupo)</span>
+<select id="game-group-linked-habit"></select>
+</label>
+<label class="field" id="game-group-category-wrap" style="display:none;">
+<span class="field-label">Categoría</span>
+<select id="game-group-category">
+<option value="other">Normal</option>
+<option value="shooter">Shooter</option>
+<option value="sandbox">Sandbox</option>
+</select>
+</label>
+<label class="field" id="game-group-ranktype-wrap" style="display:none;">
+<span class="field-label">Rango</span>
+<select id="game-group-ranktype">
+<option value="none">Sin rango</option>
+<option value="elo">ELO</option>
+<option value="rr">RR (Valorant)</option>
+<option value="days">Días</option>
+</select>
+</label>
+<label class="field" id="game-group-accent-wrap" style="display:none;">
+<span class="field-label">Color accent</span>
+<input id="game-group-accent" type="color" value="#8b5cf6"/>
+</label>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Nombre del modo</span>
+<input id="game-mode-name" required type="text" placeholder="Ej. Premier"/>
+</label>
+<label class="field">
+<span class="field-label">Emoji del modo (opcional)</span>
+<input id="game-mode-emoji" type="text" maxlength="3" placeholder="⚔️"/>
+</label>
+</div>
+<div id="game-mode-rank-base-wrap" style="display:none;">
+<div class="form-grid row-2" id="game-mode-base-elo-wrap" style="display:none;">
+<label class="field">
+<span class="field-label">Base ELO</span>
+<input id="game-mode-base-elo" type="number" step="1" inputmode="numeric" pattern="[0-9]*"/>
+</label>
+</div>
+<div class="form-grid row-3" id="game-mode-base-rr-wrap" style="display:none;">
+<label class="field">
+<span class="field-label">Base tier</span>
+<select id="game-mode-base-tier"></select>
+</label>
+<label class="field">
+<span class="field-label">Base rank</span>
+<select id="game-mode-base-rank"></select>
+</label>
+<label class="field">
+<span class="field-label">Base RR</span>
+<input id="game-mode-base-rr" type="number" min="0" max="100" step="1" inputmode="numeric" pattern="[0-9]*"/>
+</label>
+</div>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="game-mode-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+
+<div class="modal-backdrop hidden" id="game-group-modal">
+<div class="modal habit-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title">Editar grupo</div>
+<button class="icon-btn" id="game-group-close" type="button">✕</button>
+</div>
+<form class="modal-form" id="game-group-form">
+<input id="game-group-id" type="hidden"/>
+<div class="modal-scroll sheet-body">
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Nombre</span>
+<input id="game-group-edit-name" required type="text"/>
+</label>
+<label class="field">
+<span class="field-label">Emoji</span>
+<input id="game-group-edit-emoji" maxlength="3" type="text"/>
+</label>
+</div>
+<label class="field">
+<span class="field-label">Vincular hábito</span>
+<select id="game-group-edit-habit"></select>
+</label>
+<label class="field">
+<span class="field-label">Categoría</span>
+<select id="game-group-edit-category">
+<option value="other">Normal</option>
+<option value="shooter">Shooter</option>
+<option value="sandbox">Sandbox</option>
+</select>
+</label>
+<label class="field">
+<span class="field-label">Rango</span>
+<select id="game-group-edit-ranktype">
+<option value="none">Sin rango</option>
+<option value="elo">ELO</option>
+<option value="rr">RR (Valorant)</option>
+<option value="days">Días</option>
+</select>
+</label>
+<label class="field">
+<span class="field-label">Color accent</span>
+<input id="game-group-edit-accent" type="color" value="#8b5cf6"/>
+</label>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="game-group-cancel" type="button">Cancelar</button>
+<button class="btn primary" type="submit">Guardar</button>
+</div>
+</form>
+</div>
+</div>
+
+<div class="modal-backdrop hidden" id="game-detail-modal">
+<div class="modal habit-modal game-detail-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title" id="game-detail-title">Detalle modo</div>
+<button class="icon-btn" id="game-detail-close" type="button">✕</button>
+</div>
+<div class="modal-scroll sheet-body game-detail-body" id="game-detail-body"></div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="game-detail-cancel" type="button">Cerrar</button>
+</div>
+</div>
+</div>
+
+<script>
+  (function () {
+    var link = document.getElementById("version-switch-beta-clean");
+    if (!link) return;
+    link.addEventListener("click", function (event) {
+      event.preventDefault();
+      var hash = window.location.hash || "";
+      window.location.href = new URL("../beta-clean/index.html" + hash, window.location.href).href;
+    });
+  })();
+</script>
+
+<script>
+/* Bookshell BOOT: fallback de navegación + overlay de errores (no toca tus JS) */
+(() => {
+const showOverlay = (msg) => {
+  try {
+    let ov = document.getElementById("boot-error-overlay");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "boot-error-overlay";
+      ov.style.cssText = [
+        "position:fixed","inset:0","z-index:999999",
+        "background:rgba(0,0,0,.92)","color:#fff",
+        "padding:14px",
+        "font:12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
+        "overflow:auto","white-space:pre-wrap"
+      ].join(";");
+
+      const head = document.createElement("div");
+      head.style.cssText = "display:flex;gap:10px;align-items:center;margin-bottom:10px;cursor:pointer;";
+      head.innerHTML = "<b style='font-size:13px'>⚠️ Error JS (BOOT)</b><span style='opacity:.75'>Toca para cerrar</span>";
+      ov.appendChild(head);
+
+      ov.addEventListener("click", () => ov.remove(), { passive: true });
+      (document.body || document.documentElement).appendChild(ov);
+    }
+    ov.appendChild(document.createTextNode("\n" + String(msg) + "\n"));
+    console.error(msg);
+  } catch (_) {}
+};
+
+window.addEventListener("error", (e) => {
+  const msg =
+    e?.error?.stack ||
+    `${e?.message || "Error"} @ ${e?.filename || ""}:${e?.lineno || ""}:${e?.colno || ""}`;
+  if (/indexed\s*db|indexed\s*database|idb/i.test(String(msg))) {
+    console.warn("[BOOT] IndexedDB error captured", msg);
+    return;
+  }
+  showOverlay(msg);
+});
+
+const isIndexedDbMsg = (value) => /indexed\s*db|indexed\s*database|idb/i.test(String(value || ""));
+
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e?.reason;
+  const msg = r?.stack || r?.message || String(r || "Unhandled rejection");
+  if (isIndexedDbMsg(msg)) {
+    e.preventDefault();
+    console.warn("[BOOT] IndexedDB rejection captured", msg);
+    return;
+  }
+  showOverlay(msg);
+});
+
+
+  const deepLinkParams = new URLSearchParams(location.search);
+  const deepLinkDebug = deepLinkParams.has("debugDeepLink") || window.__bookshellDebugDeepLink;
+  if (deepLinkDebug) window.__bookshellDebugDeepLink = true;
+  const logDeepLink = (...args) => {
+    if (deepLinkDebug) console.log("[BOOT][DeepLink]", ...args);
+  };
+  const logNav = (label, payload = {}) => {
+    if (!deepLinkDebug) return;
+    const stack = new Error().stack;
+    console.log("[NAV]", label, payload, stack);
+  };
+
+  const setView = (viewId) => {
+    const views = document.querySelectorAll(".view");
+    if (!views.length) return;
+    logNav("setView", { viewId, from: document.querySelector(".view.view-active")?.id || "" });
+    views.forEach(v => v.classList.toggle("view-active", v.id === viewId));
+    document.querySelectorAll(".bottom-nav .nav-btn").forEach(b => {
+      b.classList.toggle("nav-btn-active", b.dataset.view === viewId);
+      if (b.dataset.view === viewId) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current");
+    });
+    window.scrollTo(0, 0);
+
+  };
+  const addLinkDeepLink = deepLinkParams.get("addLink") === "1";
+  const deepLinkView = (() => {
+    const explicit = deepLinkParams.get("view");
+    if (explicit) return explicit;
+    if (addLinkDeepLink) return "view-links-new";
+    return "";
+  })();
+
+  if (addLinkDeepLink) {
+    console.log("[BOOT] deep link detectado", { search: location.search, hash: location.hash });
+    window.__bookshellAddLinkDeepLink = true;
+    if (!location.hash) {
+      try {
+        logNav("replaceState addLink hash", { to: "#view-links-new" });
+        history.replaceState(null, "", `${location.pathname}${location.search}#view-links-new`);
+      } catch {
+        logNav("location.hash addLink", { to: "#view-links-new" });
+        location.hash = "#view-links-new";
+      }
+    }
+  }
+
+  if (deepLinkView && document.getElementById(deepLinkView)) {
+    const nextHash = `#${deepLinkView}`;
+    if (location.hash !== nextHash) {
+      try {
+        logNav("replaceState deepLinkView", { to: nextHash });
+        history.replaceState(null, "", `${location.pathname}${location.search}${nextHash}`);
+      } catch {}
+    }
+    logDeepLink("prehash set", deepLinkView);
+  }
+
+
+  // click fallback (captura por si tu books.js muere)
+  document.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest(".bottom-nav .nav-btn[data-view]") : null;
+    if (!btn) return;
+    e.preventDefault();
+    logDeepLink("nav click fallback", btn.dataset.view);
+    setView(btn.dataset.view);
+  }, true);
+
+  // expone util por consola
+  window.__bookshellSetView = setView;
+const applyInitialView = () => {
+  const hash = (location.hash || "").replace("#", "");
+  const target = hash && document.getElementById(hash) ? hash : "";
+  logNav("applyInitialView", { hash, target });
+  if (target) setView(target);
+};
+
+// DOM listo -> aplica vista
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", applyInitialView, { once: true });
+} else {
+  applyInitialView();
+}
+
+  console.log("[BOOT] nav fallback listo");
+})();
+</script>
+
+<script src="scripts/app.js" type="module"></script>
+<datalist id="country-options"></datalist>
+</body>
+</html>

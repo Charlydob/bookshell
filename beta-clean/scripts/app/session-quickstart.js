@@ -2,10 +2,25 @@ const QUICKSTART_MODAL_ID = "quickstart-session-modal";
 
 const QUICKSTART_BUTTONS = {
   "books-start-session": { source: "books", defaultName: "Leer" },
+  "videos-start-session": { source: "videos", defaultName: "YouTube" },
   "media-start-session": { source: "media", defaultName: "Pelis" },
   "gym-start-session": { source: "gym", defaultName: "Gym" },
   "recipes-start-session": { source: "recipes", defaultName: "Cooking" },
 };
+
+async function waitForHabitsApi(ensureHabitsApi, timeoutMs = 8000) {
+  const start = Date.now();
+  while (Date.now() - start <= timeoutMs) {
+    const api = await ensureHabitsApi();
+    if (api && typeof api.startHabitSessionUniversal === "function") {
+      console.log("[quick-session] habits api lista");
+      return api;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 120));
+  }
+  console.warn("[quick-session] habits api no disponible tras esperar", { timeoutMs });
+  return null;
+}
 
 function foldKey(value) {
   return String(value || "")
@@ -162,8 +177,12 @@ async function maybeHandleRunningSession(api, nextHabitId, nextHabitName) {
 }
 
 async function startFromConfig(config, ensureHabitsApi) {
-  const api = await ensureHabitsApi();
-  if (!api) return;
+  console.log("[quick-session] iniciar flujo", { source: config?.source, defaultName: config?.defaultName });
+  const api = await waitForHabitsApi(ensureHabitsApi);
+  if (!api) {
+    console.warn("[quick-session] flujo cancelado: sin api de hábitos");
+    return;
+  }
 
   let resolvedName = config.defaultName;
   if (config.source === "media") {
@@ -173,6 +192,7 @@ async function startFromConfig(config, ensureHabitsApi) {
   }
 
   const result = api.resolveHabitIdByName?.(resolvedName);
+  console.log("[quick-session] resultado resolveHabitIdByName", { resolvedName, status: result?.status || null });
   let habitId = result?.habitId || null;
 
   if (result?.status === "multiple") {
@@ -198,6 +218,7 @@ async function startFromConfig(config, ensureHabitsApi) {
   const shouldContinue = await maybeHandleRunningSession(api, habitId, next?.name || resolvedName);
   if (!shouldContinue) return;
 
+  console.log("[quick-session] iniciando sesión", { habitId, source: config.source });
   await api.startHabitSessionUniversal?.(habitId, { source: config.source });
 }
 
@@ -212,6 +233,7 @@ export function initSessionQuickstart({ ensureHabitsApi }) {
     const config = QUICKSTART_BUTTONS[button.id];
     if (!config) return;
 
+    console.log("[quick-session] click quickstart", { buttonId: button.id, source: config.source });
     event.preventDefault();
     if (button.dataset.sessionBusy === "1") return;
 

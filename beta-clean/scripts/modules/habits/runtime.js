@@ -11733,7 +11733,7 @@ function bindEvents() {
   $habitSessionDetailCancel?.addEventListener("click", () => cancelRunningSession({ requireConfirm: true }));
   $habitSessionDetailClose?.addEventListener("click", closeSessionDetailOverlay);
   $habitSessionDetailPause?.addEventListener("click", () => togglePauseRunningSession());
-  $habitSessionDetailPlus?.addEventListener("click", () => adjustRunningSessionByMinutes(1));
+  $habitSessionDetailPlus?.addEventListener("click", () => adjustRunningSessionByMinutes(2));
   $habitSessionDetailMinus?.addEventListener("click", () => adjustRunningSessionByMinutes(-1));
   $habitSessionDetail?.addEventListener("click", (event) => {
     const selectBtn = event.target?.closest?.("[data-session-select]");

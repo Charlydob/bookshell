@@ -1876,11 +1876,15 @@
 }
 
 #macro-add-modal-backdrop #macro-add-search.filter-search-input {
-  width: 100%;
+  width: 80%;
   min-width: 0;
   max-width: none;
 }
 
+.version-switch-link{
+  border: 0px;
+  background: transparent;
+}
 .macro-product-picker-results {
   flex: 1 1 auto;
   min-height: 0;

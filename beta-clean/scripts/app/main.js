@@ -12,9 +12,11 @@ import {
   update,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { isActiveTabReselect, resetTabToRoot } from "./nav-root-reset.js";
+import { initSessionQuickstart } from "./session-quickstart.js";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const DEFAULT_VIEW_ID = "view-books";
+const HABITS_VIEW_ID = "view-habits";
 const SHELL_STATE_KEY = "__bookshellCleanShellState";
 const APP_BOOT_TS = performance.now();
 const loadedStyles = new Set();
@@ -110,7 +112,7 @@ function loadStyleOnce(href) {
   loadedStyles.add(absoluteUrl);
 }
 
-async function ensureViewModule(viewId) {
+async function ensureViewModule(viewId, { runOnShow = true } = {}) {
   const state = getShellState();
   const config = viewModules[viewId];
   if (!config) return null;
@@ -135,21 +137,28 @@ async function ensureViewModule(viewId) {
     loadStyleOnce(config.cssUrl);
   }
 
-  if (!moduleState.htmlLoaded) {
-    await loadHtmlInto(root, config.htmlUrl);
-    moduleState.htmlLoaded = true;
-  }
+  if (!moduleState.pending) {
+    moduleState.pending = (async () => {
+      if (!moduleState.htmlLoaded) {
+        await loadHtmlInto(root, config.htmlUrl);
+        moduleState.htmlLoaded = true;
+      }
 
-  if (!moduleState.module) {
-    moduleState.module = await config.moduleLoader();
-  }
+      if (!moduleState.module) {
+        moduleState.module = await config.moduleLoader();
+      }
 
-  if (!moduleState.initialized && typeof moduleState.module.init === "function") {
-    await moduleState.module.init({ root, viewId });
-    moduleState.initialized = true;
+      if (!moduleState.initialized && typeof moduleState.module.init === "function") {
+        await moduleState.module.init({ root, viewId });
+        moduleState.initialized = true;
+      }
+    })().finally(() => {
+      moduleState.pending = null;
+    });
   }
+  await moduleState.pending;
 
-  if (typeof moduleState.module.onShow === "function") {
+  if (runOnShow && typeof moduleState.module.onShow === "function") {
     await moduleState.module.onShow({ root, viewId });
   }
 
@@ -362,12 +371,55 @@ async function ensureUserSchema(uid) {
   });
 }
 
+function getActiveHabitSessionsPath(uid) {
+  return `v2/users/${uid}/habits/habits/activeSessions`;
+}
+
+async function hasRemoteActiveHabitSession(uid) {
+  if (!uid) return false;
+  try {
+    const snap = await get(ref(db, getActiveHabitSessionsPath(uid)));
+    const raw = snap.val();
+    return !!(raw && typeof raw === "object" && Object.keys(raw).length);
+  } catch (error) {
+    console.warn("[habits] no se pudo comprobar la sesión activa", error);
+    return false;
+  }
+}
+
+function preloadViewModule(viewId) {
+  const state = getShellState();
+  if (!state.preloadPromises) state.preloadPromises = {};
+  if (state.preloadPromises[viewId]) return state.preloadPromises[viewId];
+
+  state.preloadPromises[viewId] = ensureViewModule(viewId, { runOnShow: false })
+    .catch((error) => {
+      console.warn(`[shell] no se pudo precargar ${viewId}`, error);
+      return null;
+    })
+    .finally(() => {
+      state.preloadPromises[viewId] = null;
+    });
+
+  return state.preloadPromises[viewId];
+}
+
+async function ensureHabitsApiReady() {
+  const readyApi = window.__bookshellHabits;
+  if (readyApi && typeof readyApi.startHabitSessionUniversal === "function") {
+    return readyApi;
+  }
+
+  await preloadViewModule(HABITS_VIEW_ID);
+  const api = window.__bookshellHabits;
+  return (api && typeof api.startHabitSessionUniversal === "function") ? api : null;
+}
+
 function bootShell() {
   const state = getShellState();
   if (state.booted) return;
 
   bindNav();
-  void setView(getInitialView(), { pushHash: true });
   state.booted = true;
 }
 
@@ -396,11 +448,21 @@ function bindAuthGate() {
     document.getElementById("loginBox")?.remove();
 
     bootShell();
+    const hasActiveSession = await hasRemoteActiveHabitSession(user.uid);
+    if (hasActiveSession) {
+      setBootPhase("Recuperando sesión…", 54);
+      await preloadViewModule(HABITS_VIEW_ID);
+    }
     setBootPhase("Cargando datos…", 62);
 
     const viewId = getInitialView();
     try {
       await setView(viewId, { pushHash: true });
+      if (!hasActiveSession && viewId !== HABITS_VIEW_ID) {
+        window.setTimeout(() => {
+          void preloadViewModule(HABITS_VIEW_ID);
+        }, 0);
+      }
       setBootPhase("Preparando interfaz…", 78);
     } finally {
       requestAnimationFrame(() => finishBootSplash());
@@ -415,3 +477,5 @@ function bindAuthGate() {
 
 bindAuthGate();
 bindViewportHeightVar();
+initSessionQuickstart({ ensureHabitsApi: ensureHabitsApiReady });
+window.__bookshellEnsureHabitsApi = ensureHabitsApiReady;

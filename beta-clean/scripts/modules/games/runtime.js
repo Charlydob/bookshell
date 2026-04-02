@@ -2419,10 +2419,10 @@ async function handleGroupMenu(groupIdValue) {
   }
 }
 
-function toggleGroupSession(groupIdValue) {
+async function toggleGroupSession(groupIdValue) {
   const group = groups[groupIdValue];
   if (!group?.linkedHabitId) return alert("Vincula un habito al grupo para usar sesiones.");
-  const api = window.__bookshellHabits;
+  const api = window.__bookshellHabits || await window.__bookshellEnsureHabitsApi?.();
   if (!api) return;
   const running = getRunningSessionState();
   if (running) {

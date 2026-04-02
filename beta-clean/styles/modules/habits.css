@@ -1631,11 +1631,11 @@ body.is-session-detail-open #app {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: calc(var(--nav-total-h) + var(--nav-gap, 20px) + env(safe-area-inset-bottom, 0px) + 12px);
+  bottom: -12px;
   display: flex;
   justify-content: center;
   pointer-events: none;
-  z-index: 120;
+  z-index: 12;
 }
 
 .habit-session-overlay.hidden {
@@ -1648,15 +1648,15 @@ body.is-session-detail-open #app {
     --hclr-rgb: 127, 93, 255;
     pointer-events: auto;
     display: grid;
-    grid-template-columns: minmax(56px, auto) minmax(0, 1fr) auto;
+    grid-template-columns: minmax(88px, 100px) minmax(0, 156px) auto;
     align-items: center;
     gap: 12px;
-    padding: 12px 14px;
+    padding: 18px 14px;
     background: rgba(0, 0, 0, 0.14);
     border-radius: 13px;
     backdrop-filter: blur(8px);
     border: 1px solid rgba(var(--hclr-rgb), 0.25);
-    width: min(394px, calc(100vw - 24px));
+    width: 380px;
     z-index: 0;
 }
 
@@ -1929,7 +1929,7 @@ body.is-session-detail-open #app {
   }
 
   .habit-session-overlay {
-    bottom: 40px;
+    bottom: 24px;
   }
 }
 
@@ -4514,4 +4514,3 @@ align-items: center;
 #habit-today-search-input.habit-search-input {
     min-width: 270px;
 }
-

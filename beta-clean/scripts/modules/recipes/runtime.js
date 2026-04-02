@@ -337,6 +337,8 @@ if ($viewRecipes) {
   const $macroAddSearch = document.getElementById("macro-add-search");
   const $macroAddResults = document.getElementById("macro-add-results");
   const $macroAddChips = document.getElementById("macro-add-chips");
+  const $macroAddModalScroll = $macroAddModalBackdrop?.querySelector(".modal-scroll.sheet-body");
+  const $macroProductPickerResults = document.getElementById("macro-product-picker-results");
   const $macroScanPanel = document.getElementById("macro-scan-panel");
   const $macroManualPanel = document.getElementById("macro-manual-panel");
   const $macroScanEngineHtml5 = document.getElementById("macro-scan-engine-html5");
@@ -5272,7 +5274,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       ${isSelectionMode && !isRecipe ? `<button class="macro-entry-select-toggle" data-macro-select-toggle="${meal}:${idx}" type="button" aria-label="Seleccionar ${escapeHtml(entry.nameSnapshot)}">${isSelected ? "✓" : "○"}</button>` : ""}
       <button class="macro-entry-open" data-macro-open="${meal}:${idx}" data-macro-entry-id="${entryId}" type="button" aria-label="Abrir ficha de ${escapeHtml(entry.nameSnapshot)}">
       <div class="contenido-comida-lista">
-      <strong>${escapeHtml(entry.nameSnapshot)}</strong>
+      <strong id="nombre-alimento-lista">${escapeHtml(entry.nameSnapshot)}</strong>
       <div class="hint" id="cantidad-comida">${quantityLabel}</div>
       <div class="hint macro-recipe-inline-kpis">C ${roundMacro(entryMacros.carbs)} · P ${roundMacro(entryMacros.protein)} · G ${roundMacro(entryMacros.fat)} · ${entryCost.cost == null ? "Coste n/d" : formatCurrency(entryCost.cost)}</div>
       </div>
@@ -5298,7 +5300,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         <span class="macro-meal-kpi macro-meal-kpi-fat"><span class="macro-meal-kpi-label">G</span><strong class="macro-meal-kpi-value">${roundMacro(mt.fat)}</strong></span>
         <span class="macro-meal-kpi macro-meal-kpi-cost"><span class="macro-meal-kpi-label">Coste</span><strong class="macro-meal-kpi-value">${formatCurrency(mealCost.total)}</strong></span>
         ${mealCost.missing ? `<span class="macro-meal-kpi macro-meal-kpi-missing"><strong class="macro-meal-kpi-value">${mealCost.missing}</strong><span class="macro-meal-kpi-label">s/p</span></span>` : ""}
-      </div></div><div class="macro-meal-entries">${entryHtml}</div>${selectionBar}<button class="btn ghost btn-compact" data-macro-add="${meal}" type="button">+ Añadir alimento</button></article>`;
+      </div></div><div class="macro-meal-entries">${entryHtml}</div>${selectionBar}<button class="btn ghost btn-compact" id="btn-anadir-alimento" data-macro-add="${meal}" type="button">🍌</button></article>`;
     }).join("");
     if ($recipesPanelStatistics?.classList.contains("is-active")) renderStatisticsView();
   }
@@ -5342,14 +5344,20 @@ $recipeImportBtn?.addEventListener("click", () => {
     macroModalState.source = "products";
     resetMacroManualForm();
     if ($macroAddSearch) $macroAddSearch.value = "";
+    document.body.classList.add("has-open-modal");
     $macroAddModalBackdrop?.classList.remove("hidden");
     renderMacroModalResults();
-    $macroAddSearch?.focus();
+    updateMacroAddModalViewportPadding();
+    try { $macroAddSearch?.focus(); } catch (_) {}
   }
 
   function closeMacroAddModal() {
     try { stopMacroBarcodeScan(); } catch (_) {}
     $macroAddModalBackdrop?.classList.add("hidden");
+    resetMacroAddModalViewportPadding();
+    if (!$macroProductModalBackdrop || $macroProductModalBackdrop.classList.contains("hidden")) {
+      document.body.classList.remove("has-open-modal");
+    }
   }
 
   let _macroProductMeal = "breakfast";
@@ -5370,6 +5378,9 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function closeMacroProductModal() {
     $macroProductModalBackdrop?.classList.add("hidden");
+    if (!$macroAddModalBackdrop || $macroAddModalBackdrop.classList.contains("hidden")) {
+      document.body.classList.remove("has-open-modal");
+    }
     _macroProductDraft = null;
     _macroProductRecipeIngredientTarget = null;
     setMacroProductEntryTarget(null);
@@ -5453,11 +5464,18 @@ $recipeImportBtn?.addEventListener("click", () => {
       : (fallbackPlaceholder != null ? String(fallbackPlaceholder) : defaultPlaceholder);
   }
 
-  function syncMacroProductPriceDrivenUnit() {
-    if (!$macroProductPrice || !$macroProductGramsUnit) return;
-    const priceValue = getInputNumberOrCurrent($macroProductPrice, null);
-    if (priceValue > 0) {
-      $macroProductGramsUnit.value = "unit";
+  function syncMacroProductUnitSuggestion({ force = false } = {}) {
+    if (!$macroProductGramsUnit) return;
+    const unitWeightValue = getInputNumberOrCurrent($macroProductUnitWeight, null);
+    const hasUnitWeight = unitWeightValue > 0;
+    const currentUnit = normalizeUnit($macroProductGramsUnit.value || "g") || "g";
+    if (!hasUnitWeight && currentUnit === "unit") {
+      const fallbackUnit = normalizeUnit($macroProductBaseUnit?.value || _macroProductDraft?.baseUnit || _macroProductDraft?.servingBaseUnit || "g") || "g";
+      $macroProductGramsUnit.value = fallbackUnit === "unit" ? "g" : fallbackUnit;
+      return;
+    }
+    if (force && !hasUnitWeight && currentUnit !== "unit") {
+      updateWeightDiffUnitLabels();
     }
   }
 
@@ -5474,6 +5492,63 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (!raw) return fallback;
     const parsed = Number(String(raw).replace(",", "."));
     return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function normalizeSearchText(value) {
+    return String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+  }
+
+  function tokenizeMacroSearch(value) {
+    return normalizeSearchText(value).split(/\s+/).filter(Boolean);
+  }
+
+  function getMacroSearchMatchMeta(haystack, tokens) {
+    const normalizedHaystack = normalizeSearchText(haystack);
+    const queryTokens = Array.isArray(tokens) ? tokens : tokenizeMacroSearch(tokens);
+    if (!queryTokens.length) return { exact: false, startsWithHits: 0, firstIndex: 0 };
+    let firstIndex = Infinity;
+    let startsWithHits = 0;
+    for (const token of queryTokens) {
+      const idx = normalizedHaystack.indexOf(token);
+      if (idx === -1) return null;
+      firstIndex = Math.min(firstIndex, idx);
+      if (idx === 0 || normalizedHaystack.includes(` ${token}`)) startsWithHits += 1;
+    }
+    return {
+      exact: normalizedHaystack === queryTokens.join(" "),
+      startsWithHits,
+      firstIndex: Number.isFinite(firstIndex) ? firstIndex : 0
+    };
+  }
+
+  function updateMacroAddModalViewportPadding() {
+    if (!$macroAddModalBackdrop || $macroAddModalBackdrop.classList.contains("hidden")) return;
+    const viewport = window.visualViewport;
+    const layoutHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const viewportHeight = viewport?.height || layoutHeight;
+    const viewportOffsetTop = viewport?.offsetTop || 0;
+    const keyboardOffset = Math.max(0, layoutHeight - viewportHeight - viewportOffsetTop);
+    $macroAddModalBackdrop.style.setProperty("--macro-add-keyboard-offset", `${keyboardOffset}px`);
+    if ($macroAddModalScroll) {
+      $macroAddModalScroll.style.paddingBottom = keyboardOffset ? `${keyboardOffset + 18}px` : "";
+    }
+  }
+
+  function resetMacroAddModalViewportPadding() {
+    $macroAddModalBackdrop?.style.removeProperty("--macro-add-keyboard-offset");
+    if ($macroAddModalScroll) $macroAddModalScroll.style.paddingBottom = "";
+  }
+
+  function handleMacroAddModalFocus(event) {
+    const target = event.target;
+    if (!target || !(target instanceof HTMLElement)) return;
+    if (!["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName)) return;
+    updateMacroAddModalViewportPadding();
+    try { target.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (_) {}
   }
 
   function setNutriSegmentedValue(segmented, value) {
@@ -5609,7 +5684,6 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function renderMacroProductSummary() {
     if (!$macroProductSummary) return;
-    syncMacroProductPriceDrivenUnit();
     const draft = readMacroProductDraftFromForm();
     const amountState = resolveMacroProductAmountState(draft);
     const amount = amountState.amount;
@@ -5764,7 +5838,8 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductPackWeight) $macroProductPackWeight.value = "";
     if ($macroProductPackUnits) $macroProductPackUnits.value = "";
     if ($macroProductPackConsumed) $macroProductPackConsumed.value = "";
-    syncMacroProductPriceDrivenUnit();
+    document.body.classList.add("has-open-modal");
+    syncMacroProductUnitSuggestion();
     updateWeightDiffUnitLabels();
 
     $macroProductModalBackdrop.classList.remove("hidden");
@@ -5843,13 +5918,14 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function renderMacroModalResults() {
     if (!$macroAddResults) return;
-    const q = (macroModalState.query || "").toLowerCase();
+    const queryTokens = tokenizeMacroSearch(macroModalState.query || "");
     const showProducts = macroModalState.source === "products";
     const showRecipes = macroModalState.source === "recipes";
     const showScan = macroModalState.source === "scan";
     $macroScanPanel?.classList.toggle("hidden", macroModalState.source !== "scan");
     $macroManualPanel?.classList.toggle("hidden", macroModalState.source !== "manual");
     $macroAddResults.style.display = (showProducts || showRecipes) ? "block" : "none";
+    $macroProductPickerResults?.classList.toggle("hidden", !(showProducts || showRecipes));
     if (!showScan) {
       try { stopMacroBarcodeScan(); } catch (_) {}
     } else {
@@ -5857,49 +5933,61 @@ $recipeImportBtn?.addEventListener("click", () => {
     }
     if (showProducts) {
       const list = nutritionProducts
-        .filter((p) => !q || `${p.name} ${p.brand || ""} ${p.barcode || ""}`.toLowerCase().includes(q))
-        .slice()
+        .map((product) => {
+          const haystack = `${product.name} ${product.brand || ""} ${product.barcode || ""}`;
+          return {
+            product,
+            match: queryTokens.length ? getMacroSearchMatchMeta(haystack, queryTokens) : { exact: false, startsWithHits: 0, firstIndex: 0 }
+          };
+        })
+        .filter((entry) => !!entry.match)
         .sort((a, b) => {
-          const aHay = `${a.name} ${a.brand || ""} ${a.barcode || ""}`.toLowerCase();
-          const bHay = `${b.name} ${b.brand || ""} ${b.barcode || ""}`.toLowerCase();
-          const aIdx = q ? aHay.indexOf(q) : 0;
-          const bIdx = q ? bHay.indexOf(q) : 0;
-          if (q && aIdx !== bIdx) return aIdx - bIdx;
+          if (queryTokens.length) {
+            if (a.match.exact !== b.match.exact) return a.match.exact ? -1 : 1;
+            if (a.match.startsWithHits !== b.match.startsWithHits) return b.match.startsWithHits - a.match.startsWithHits;
+            if (a.match.firstIndex !== b.match.firstIndex) return a.match.firstIndex - b.match.firstIndex;
+          }
 
-          const au = macroUsage.products?.[a.id] || null;
-          const bu = macroUsage.products?.[b.id] || null;
+          const au = macroUsage.products?.[a.product.id] || null;
+          const bu = macroUsage.products?.[b.product.id] || null;
           const aCount = clampUsageValue(au?.count, 0);
           const bCount = clampUsageValue(bu?.count, 0);
           if (aCount !== bCount) return bCount - aCount;
           const aLast = clampUsageValue(au?.lastAt, 0);
           const bLast = clampUsageValue(bu?.lastAt, 0);
           if (aLast !== bLast) return bLast - aLast;
-          return String(a.name || "").localeCompare(String(b.name || ""));
+          return String(a.product.name || "").localeCompare(String(b.product.name || ""));
         });
-      $macroAddResults.innerHTML = list.map((p) => `<button class="macro-result" data-add-product="${p.id}" type="button"><span>${p.name}</span><span class="hint">${p.brand || ""} · ${p.macros?.kcal || 0} kcal / ${formatAmountWithUnit(Number(p.baseQuantity || p.servingBaseGrams) || 100, p.baseUnit || p.servingBaseUnit || "g")}</span></button>`).join("") || '<div class="hint">No hay productos.</div>';
+      $macroAddResults.innerHTML = list.map(({ product: p }) => `<button class="macro-result" data-add-product="${p.id}" type="button"><span>${p.name}</span><span class="hint">${p.brand || ""} · ${p.macros?.kcal || 0} kcal / ${formatAmountWithUnit(Number(p.baseQuantity || p.servingBaseGrams) || 100, p.baseUnit || p.servingBaseUnit || "g")}</span></button>`).join("") || '<div class="hint">No hay productos.</div>';
     }
     if (showRecipes) {
       const list = recipes
-        .filter((r) => !q || `${r.title} ${(r.tags || []).join(" ")}`.toLowerCase().includes(q))
-        .slice()
+        .map((recipe) => {
+          const haystack = `${recipe.title} ${(recipe.tags || []).join(" ")}`;
+          return {
+            recipe,
+            match: queryTokens.length ? getMacroSearchMatchMeta(haystack, queryTokens) : { exact: false, startsWithHits: 0, firstIndex: 0 }
+          };
+        })
+        .filter((entry) => !!entry.match)
         .sort((a, b) => {
-          const aHay = `${a.title} ${(a.tags || []).join(" ")}`.toLowerCase();
-          const bHay = `${b.title} ${(b.tags || []).join(" ")}`.toLowerCase();
-          const aIdx = q ? aHay.indexOf(q) : 0;
-          const bIdx = q ? bHay.indexOf(q) : 0;
-          if (q && aIdx !== bIdx) return aIdx - bIdx;
+          if (queryTokens.length) {
+            if (a.match.exact !== b.match.exact) return a.match.exact ? -1 : 1;
+            if (a.match.startsWithHits !== b.match.startsWithHits) return b.match.startsWithHits - a.match.startsWithHits;
+            if (a.match.firstIndex !== b.match.firstIndex) return a.match.firstIndex - b.match.firstIndex;
+          }
 
-          const au = macroUsage.recipes?.[a.id] || null;
-          const bu = macroUsage.recipes?.[b.id] || null;
+          const au = macroUsage.recipes?.[a.recipe.id] || null;
+          const bu = macroUsage.recipes?.[b.recipe.id] || null;
           const aCount = clampUsageValue(au?.count, 0);
           const bCount = clampUsageValue(bu?.count, 0);
           if (aCount !== bCount) return bCount - aCount;
           const aLast = clampUsageValue(au?.lastAt, 0);
           const bLast = clampUsageValue(bu?.lastAt, 0);
           if (aLast !== bLast) return bLast - aLast;
-          return String(a.title || "").localeCompare(String(b.title || ""));
+          return String(a.recipe.title || "").localeCompare(String(b.recipe.title || ""));
         });
-      $macroAddResults.innerHTML = list.map((r) => { const t = calculateRecipeTotals(r); return `<button class="macro-result" data-add-recipe="${r.id}" type="button"><span>${r.title}</span><span class="hint">${roundMacro(r.nutritionPerServing?.kcal || r.nutritionTotals?.kcal || 0)} kcal/rac · ${formatCurrency(t.perServing.cost)}/rac</span></button>`; }).join("") || '<div class="hint">No hay recetas.</div>';
+      $macroAddResults.innerHTML = list.map(({ recipe: r }) => { const t = calculateRecipeTotals(r); return `<button class="macro-result" data-add-recipe="${r.id}" type="button"><span>${r.title}</span><span class="hint">${roundMacro(r.nutritionPerServing?.kcal || r.nutritionTotals?.kcal || 0)} kcal/rac · ${formatCurrency(t.perServing.cost)}/rac</span></button>`; }).join("") || '<div class="hint">No hay recetas.</div>';
     }
     $macroAddChips?.querySelectorAll(".macro-chip").forEach((chip) => chip.classList.toggle("is-active", chip.dataset.macroSource === macroModalState.source));
   }
@@ -8919,7 +9007,10 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   $macroAddModalClose?.addEventListener("click", closeMacroAddModal);
   $macroAddModalBackdrop?.addEventListener("click", (e) => { if (e.target === $macroAddModalBackdrop) closeMacroAddModal(); });
+  $macroAddModalBackdrop?.addEventListener("focusin", handleMacroAddModalFocus);
   $macroAddSearch?.addEventListener("input", (e) => { macroModalState.query = e.target.value || ""; renderMacroModalResults(); });
+  window.visualViewport?.addEventListener("resize", updateMacroAddModalViewportPadding);
+  window.visualViewport?.addEventListener("scroll", updateMacroAddModalViewportPadding);
   $macroAddChips?.addEventListener("click", (e) => {
     const chip = e.target.closest("[data-macro-source]");
     if (!chip) return;
@@ -8993,13 +9084,13 @@ $recipeImportBtn?.addEventListener("click", () => {
   ].filter(Boolean);
   _macroProductInputs.forEach((el) => el.addEventListener("input", renderMacroProductSummary));
   $macroProductPrice?.addEventListener("input", () => {
-    syncMacroProductPriceDrivenUnit();
-    updateWeightDiffUnitLabels();
-    syncAmountFromAutoCalculation();
     renderMacroProductSummary();
   });
   $macroProductPrice?.addEventListener("change", () => {
-    syncMacroProductPriceDrivenUnit();
+    renderMacroProductSummary();
+  });
+  $macroProductUnitWeight?.addEventListener("input", () => {
+    syncMacroProductUnitSuggestion();
     updateWeightDiffUnitLabels();
     syncAmountFromAutoCalculation();
     renderMacroProductSummary();

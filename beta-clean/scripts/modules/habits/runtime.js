@@ -2762,6 +2762,27 @@ function normalizeActiveSessionsStore(raw) {
   return next;
 }
 
+function upsertActiveSessionLocal(sessionId, raw) {
+  const id = String(sessionId || "").trim();
+  if (!id) return null;
+  const session = normalizeRunningSession({ ...(raw || {}), sessionId: id });
+  if (!session) return null;
+  activeSessions = { ...(activeSessions || {}), [id]: session };
+  syncPrimaryRunningSession();
+  return session;
+}
+
+function removeActiveSessionLocal(sessionId) {
+  const id = String(sessionId || "").trim();
+  const current = id ? activeSessions?.[id] : null;
+  if (!current) return null;
+  const next = { ...(activeSessions || {}) };
+  delete next[id];
+  activeSessions = next;
+  syncPrimaryRunningSession();
+  return { ...current };
+}
+
 function getActiveSessionsList() {
   return Object.values(activeSessions || {}).sort((a, b) => {
     const aTs = Number(a?.firstStartedAt || a?.createdAt || a?.startedAt || 0);
@@ -4066,6 +4087,23 @@ function bindTimeInputDefault(input) {
 
 bindTimeInputDefault($habitManualMinutes);
 
+function syncHabitModalOpenState() {
+  const overlays = [
+    $habitModal,
+    $habitSessionModal,
+    $habitManualModal,
+    $habitEntryModal,
+    $habitDayDetailModal,
+    $habitScheduleSummaryModal,
+    $habitRangeGoalsModal,
+    $habitDeleteConfirm,
+    $habitDetailOverlay,
+    $habitSessionDetail
+  ];
+  const hasOpen = overlays.some((el) => el && !el.classList.contains("hidden"));
+  document.body.classList.toggle("has-open-modal", hasOpen);
+}
+
 // Delete confirm modal
 const $habitDeleteConfirm = document.getElementById("habit-delete-confirm");
 const $habitDeleteName = document.getElementById("habit-delete-name");
@@ -4283,6 +4321,7 @@ function deleteHabitGroup(groupId) {
 
 function openHabitModal(habit = null) {
   $habitModal.classList.remove("hidden");
+  syncHabitModalOpenState();
   $habitId.value = habit ? habit.id : "";
   $habitModalTitle.textContent = habit ? "Editar hábito" : "Nuevo hábito";
   $habitName.value = habit ? habit.name || "" : "";
@@ -4347,6 +4386,7 @@ function updateHabitGoalUI() {
 
 function closeHabitModal() {
   $habitModal.classList.add("hidden");
+  syncHabitModalOpenState();
 }
 
 function gatherHabitPayload() {
@@ -10362,10 +10402,19 @@ async function startSession(habitId = null, meta = null) {
     deviceId: uid,
     meta: meta && typeof meta === "object" ? { ...meta } : null
   };
-  await set(sessionRef, payload);
+  upsertActiveSessionLocal(sessionRef.key, payload);
   persistSessionSelection(sessionRef.key);
   updateSessionUI();
   updateCompareLiveInterval();
+  try {
+    await set(sessionRef, payload);
+  } catch (err) {
+    removeActiveSessionLocal(sessionRef.key);
+    updateSessionUI();
+    updateCompareLiveInterval();
+    console.warn("No se pudo iniciar la sesión activa", err);
+    return;
+  }
   scheduleCompareRefresh("session:start", { targetHabitId: targetHabitId || null });
 }
 
@@ -10383,7 +10432,21 @@ function stopHabitSessionUniversal() {
 
 async function patchSession(sessionId, patch = {}) {
   if (!sessionId) return;
-  await update(ref(db, `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`), { ...patch, updatedAt: Date.now() });
+  const previous = activeSessions?.[sessionId] ? { ...activeSessions[sessionId] } : null;
+  const nextPatch = { ...patch, updatedAt: Date.now() };
+  if (previous) {
+    upsertActiveSessionLocal(sessionId, { ...previous, ...nextPatch });
+    updateSessionUI();
+  }
+  try {
+    await update(ref(db, `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`), nextPatch);
+  } catch (err) {
+    if (previous) {
+      upsertActiveSessionLocal(sessionId, previous);
+      updateSessionUI();
+    }
+    console.warn("No se pudo actualizar la sesión activa", err);
+  }
 }
 
 async function pauseRunningSession(sessionId = runningSession?.sessionId) {
@@ -10444,11 +10507,22 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
   const startTs = Number(session.firstStartedAt || session.createdAt || session.startedAt || endTs);
   const dateKey = dateKeyLocal(new Date(startTs));
 
-  await set(ref(db, `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`), null);
-  if (runningSession?.sessionId === sessionId) closeSessionDetailOverlay();
-
+  const wasPrimarySession = runningSession?.sessionId === sessionId;
+  const removedSession = removeActiveSessionLocal(sessionId);
+  if (wasPrimarySession) closeSessionDetailOverlay();
   updateSessionUI();
   updateCompareLiveInterval();
+  try {
+    await set(ref(db, `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`), null);
+  } catch (err) {
+    if (removedSession) {
+      upsertActiveSessionLocal(sessionId, removedSession);
+      updateSessionUI();
+      updateCompareLiveInterval();
+    }
+    console.warn("No se pudo parar la sesión activa", err);
+    return;
+  }
   scheduleCompareRefresh("session:stop", { dateKey, durationSec: duration });
 
   if (target && habits?.[target] && !habits[target]?.archived) {
@@ -10488,12 +10562,24 @@ async function cancelRunningSession({ requireConfirm = true, sessionId = running
     if (!ok) return false;
   }
 
-  await set(ref(db, `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`), null);
+  const wasPrimarySession = runningSession?.sessionId === sessionId;
+  const removedSession = removeActiveSessionLocal(sessionId);
   pendingSessionDuration = 0;
-  if (runningSession?.sessionId === sessionId) closeSessionDetailOverlay();
+  if (wasPrimarySession) closeSessionDetailOverlay();
   closeSessionModal?.();
   updateSessionUI();
   updateCompareLiveInterval();
+  try {
+    await set(ref(db, `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`), null);
+  } catch (err) {
+    if (removedSession) {
+      upsertActiveSessionLocal(sessionId, removedSession);
+      updateSessionUI();
+      updateCompareLiveInterval();
+    }
+    console.warn("No se pudo cancelar la sesión activa", err);
+    return false;
+  }
   scheduleCompareRefresh("session:cancel");
   showHabitToast("Sesión cancelada");
   return true;
@@ -10503,16 +10589,21 @@ function ensureSessionOverlayInBody() {
   if ($habitOverlay && $habitOverlay.parentElement !== document.body) {
     document.body.appendChild($habitOverlay);
   }
+  if ($habitSessionDetail && $habitSessionDetail.parentElement !== document.body) {
+    document.body.appendChild($habitSessionDetail);
+  }
 }
 
 function openSessionDetailOverlay() {
   if (!runningSession || !$habitSessionDetail) return;
+  ensureSessionOverlayInBody();
   sessionDetailOpen = true;
   $habitSessionDetail.classList.remove("hidden");
   $habitSessionDetail.setAttribute("aria-hidden", "false");
   sessionBodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
   document.body.classList.add("is-session-detail-open");
+  syncHabitModalOpenState();
 }
 
 function closeSessionDetailOverlay() {
@@ -10523,6 +10614,7 @@ function closeSessionDetailOverlay() {
   document.body.style.overflow = sessionBodyOverflowBackup || "";
   sessionBodyOverflowBackup = "";
   document.body.classList.remove("is-session-detail-open");
+  syncHabitModalOpenState();
 }
 
 function buildSessionRanking() {
@@ -10633,11 +10725,10 @@ function updateSessionUI() {
   const isRunning = sessions.length > 0;
   if (isRunning) {
     const elapsed = getRunningElapsedSec(runningSession);
+    const timerLabel = formatTimer(elapsed);
     const { name, emoji, color } = getSessionHabitMeta(runningSession);
-    const globalStart = Math.min(...sessions.map((item) => Number(item.firstStartedAt || item.createdAt || item.startedAt || Date.now())));
-    const globalElapsed = Math.max(0, Math.round((Date.now() - globalStart) / 1000));
-    $habitOverlayTime.textContent = formatTimer(globalElapsed);
-    if ($habitSessionDetailTimer) $habitSessionDetailTimer.textContent = formatTimer(elapsed);
+    $habitOverlayTime.textContent = timerLabel;
+    if ($habitSessionDetailTimer) $habitSessionDetailTimer.textContent = timerLabel;
     if ($habitOverlayEmoji) {
       $habitOverlayEmoji.innerHTML = sessions.map((item) => {
         const itemMeta = getSessionHabitMeta(item);
@@ -10701,6 +10792,7 @@ function handleSessionModalFocus(event) {
 function openSessionModal() {
   renderSessionList();
   $habitSessionModal.classList.remove("hidden");
+  syncHabitModalOpenState();
   $habitSessionSearch.value = "";
   $habitSessionSearch.focus();
   updateSessionModalViewportPadding();
@@ -10710,6 +10802,7 @@ function closeSessionModal() {
   $habitSessionModal.classList.add("hidden");
   pendingSessionDuration = 0;
   resetSessionModalViewportPadding();
+  syncHabitModalOpenState();
 }
 
 function renderSessionList() {
@@ -10799,10 +10892,12 @@ function openManualTimeModal(dateKey = todayKey()) {
   $habitManualMinutes.value = "";
   $habitManualDate.value = dateKey;
   $habitManualModal.classList.remove("hidden");
+  syncHabitModalOpenState();
 }
 
 function closeManualTimeModal() {
   $habitManualModal?.classList.add("hidden");
+  syncHabitModalOpenState();
 }
 
 
@@ -10843,10 +10938,12 @@ function openEntryModal(habitId, dateKey = todayKey()) {
   if ($habitEntryDate) $habitEntryDate.value = dateKey || todayKey();
   refreshEntryModal();
   $habitEntryModal.classList.remove("hidden");
+  syncHabitModalOpenState();
 }
 
 function closeEntryModal() {
   $habitEntryModal?.classList.add("hidden");
+  syncHabitModalOpenState();
 }
 
 function refreshEntryModal() {
@@ -10939,10 +11036,12 @@ function openDayDetailModal(dateKey = todayKey(), focusHabitId = null) {
   if ($habitDayDetailDate) $habitDayDetailDate.textContent = formatShortDate(dayDetailDateKey, true);
   renderDayDetailModal();
   $habitDayDetailModal.classList.remove("hidden");
+  syncHabitModalOpenState();
 }
 
 function closeDayDetailModal() {
   $habitDayDetailModal?.classList.add("hidden");
+  syncHabitModalOpenState();
 }
 
 function computeDayDetailBreakdown(dateKey, list) {

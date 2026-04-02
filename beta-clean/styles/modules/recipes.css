@@ -1195,6 +1195,9 @@
   border-radius: 16px;
   padding: 12px;
 }
+.macro-meal-card{
+  padding-bottom: 25px;
+}
 .macro-header-card-wrapper {
   margin-top: 0px;
   background: transparent;
@@ -1365,7 +1368,7 @@
 }
 .recipes-stats-cards{
   display: grid;
-  grid-template-columns: repeat(4, 94px);
+  grid-template-columns: repeat(4, 1fr);
   justify-self: center;
   align-items: center;
   justify-content: start;
@@ -1588,14 +1591,23 @@
   opacity: .9;
 }
 .macro-meals { margin-top: 10px; display:grid; gap:10px; }
-.macro-meal-head { display:flex; justify-content:space-between; gap:8px; align-items:flex-start; }
-.macro-meal-head h4 { margin:0; }
+.macro-meal-head {
+  display:grid;
+  grid-template-rows: auto;
+  justify-content:space-between;
+  gap:8px; align-items:flex-start;
+}
+.macro-meal-head h4 {
+  justify-content: center;
+  align-items: center;
+  margin: 0; }
 .macro-meal-kpis{
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, auto);
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
 }
 .macro-meal-kpi{
   --kpi: rgba(255,255,255,.88);
@@ -1633,13 +1645,25 @@
   justify-items: center;
 }
 .macro-entry {
-  display:flex;
-  justify-content:space-between;
-  align-items:flex-start;
-  gap:6px;
+  display:grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  align-items:center;
+  column-gap:8px;
+  row-gap:4px;
   padding:4px 2px;
   border-radius: 10px;
   background: transparent;
+}
+
+#btn-anadir-alimento{
+  display: grid;
+  place-items: center;
+  align-self: center;
+  text-align: center;
+  justify-self: center;
+  font-size: 21px;
+  line-height: 1;
+  margin: 0 auto;
 }
 .macro-entry-count-input{
   width: 46px;
@@ -1651,12 +1675,12 @@
   color: #fff;
 }
 .macro-entry-open{
-  flex: 1;
+  min-width: 0;
   display: block;
   text-align: left;
   background: transparent;
   border: 0;
-  padding: 2px 6px;
+  padding: 2px 4px;
   border-radius: 10px;
   color: inherit;
   cursor: pointer;
@@ -1676,16 +1700,33 @@
 }
 .contenido-comida-lista{
   display:grid;
-  grid-template-columns: minmax(120px, 1fr);
-  gap:2px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title qty"
+    "meta meta";
+  align-items:center;
+  column-gap:8px;
+  row-gap:2px;
   font-size:13px;
+  min-width: 0;
 }
 
 
 .contenido-comida-lista strong{
+  grid-area: title;
+  display:block;
+  min-width:0;
   white-space:nowrap;
   overflow:hidden;
   text-overflow:ellipsis;
+}
+#cantidad-comida{
+  grid-area: qty;
+  justify-self: end;
+  white-space: nowrap;
+}
+.macro-recipe-inline-kpis{
+  grid-area: meta;
 }
 #recipes-panel-macros{
   margin-bottom: 12px;
@@ -1707,22 +1748,30 @@
 .macro-selection-bar{ margin:8px 0 2px; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-radius:12px; border:1px solid rgba(245,230,166,.35); background: rgba(245,230,166,.09); }
 .macro-selection-actions{ display:flex; gap:8px; }
 @media (max-width:640px){
-  .macro-entry{ gap:6px; }
+  .macro-entry{
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    column-gap:6px;
+  }
   .macro-entry-recipe{ grid-template-columns: 38px 1fr auto; }
-  .macro-entry-count-input{ width:40px; min-width:40px; }
+  .macro-entry-count-input{ width:4px; min-width:25px;  }
   .macro-selection-bar{ flex-direction:column; align-items:stretch; }
 }
 .macro-entry-right{
-  display:flex;
+  display:grid;
+  grid-template-columns:auto auto auto;
   align-items:center;
-  gap:4px;
-  justify-content:space-between;
-  width:auto;
+  gap:6px;
+  justify-content:end;
+  min-width:max-content;
   margin-left: auto;
+}
+#nombre-alimento-lista{
+  font-size: 11px;
 }
 .macro-entry-cost{
   color: var(--txt-soft);
   font-size: 10px;
+  white-space: nowrap;
 }
 .macro-entry .kcals-dato{ font-size:11px; white-space:nowrap; }
 .macro-entry.is-expanded{ padding-bottom:6px; }
@@ -1772,9 +1821,71 @@
 .macro-modal-chips { display:flex; gap:8px; flex-wrap:wrap; margin: 8px 0; }
 .macro-chip { border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.03); color:var(--txt-soft); border-radius:999px; padding: 6px 10px; }
 .macro-chip.is-active { color:#f5e6a6; border-color: rgba(245,230,166,.45); }
-.macro-product-picker-results {
+
+#macro-add-modal-backdrop.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom) + var(--macro-add-keyboard-offset, 0px));
+  background:
+    linear-gradient(to top, rgba(4, 6, 12, 0.82), rgba(4, 6, 12, 0.56));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: padding-bottom 0.18s ease;
+}
+
+#macro-add-modal-backdrop .modal-comida {
+  width: min(100%, 480px);
+  max-height: min(calc(var(--app-dvh, 100dvh) - 32px), 88vh);
+  border-radius: 28px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top, rgba(136, 106, 255, 0.18), transparent 38%),
+    linear-gradient(180deg, rgba(13,16,28,0.98), rgba(8,10,18,0.98));
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow:
+    0 24px 80px rgba(0,0,0,0.48),
+    inset 0 1px 0 rgba(255,255,255,0.06);
+  color: #f6f7fb;
+  display: flex;
+  flex-direction: column;
+}
+
+#macro-add-modal-backdrop .modal-scroll.sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   min-height: 0;
-  max-height: min(44dvh, 360px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(18px + env(safe-area-inset-bottom));
+  scroll-padding-top: 88px;
+}
+
+#macro-add-modal-backdrop .macro-modal-search-row {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding-bottom: 8px;
+  background: linear-gradient(180deg, rgba(13,16,28,0.98), rgba(13,16,28,0.9));
+}
+
+#macro-add-modal-backdrop #macro-add-search.filter-search-input {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+.macro-product-picker-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  min-height: 180px;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 8px;
@@ -2304,6 +2415,12 @@
 }
 
 @media (max-width: 420px) {
+  #macro-add-modal-backdrop .modal-comida {
+    width: 100%;
+    max-height: calc(var(--app-dvh, 100dvh) - 16px);
+    border-radius: 24px;
+  }
+
   .macro-modal {
     width: 100%;
     max-height: 92vh;

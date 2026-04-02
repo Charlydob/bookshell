@@ -1631,11 +1631,11 @@ body.is-session-detail-open #app {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 64px;
+  bottom: calc(var(--nav-total-h) + var(--nav-gap, 20px) + env(safe-area-inset-bottom, 0px) + 12px);
   display: flex;
   justify-content: center;
   pointer-events: none;
-  z-index: 40;
+  z-index: 120;
 }
 
 .habit-session-overlay.hidden {
@@ -1648,17 +1648,15 @@ body.is-session-detail-open #app {
     --hclr-rgb: 127, 93, 255;
     pointer-events: auto;
     display: grid;
-    grid-template-columns: 100px 156px 81px;
+    grid-template-columns: minmax(56px, auto) minmax(0, 1fr) auto;
     align-items: center;
-    top: 100px;
     gap: 12px;
-    padding: 22px 14px;
+    padding: 12px 14px;
     background: rgba(0, 0, 0, 0.14);
     border-radius: 13px;
     backdrop-filter: blur(8px);
     border: 1px solid rgba(var(--hclr-rgb), 0.25);
-    margin-bottom: 20px;
-    width: 394px;
+    width: min(394px, calc(100vw - 24px));
     z-index: 0;
 }
 
@@ -1701,6 +1699,10 @@ body.is-session-detail-open #app {
   gap: 2px;
 }
 
+.datos-sesion{
+  min-width: 0;
+}
+
 .habit-session-multi {
   display: grid;
   gap: 8px;
@@ -1735,7 +1737,7 @@ body.is-session-detail-open #app {
 .habit-session-detail {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: 1400;
   pointer-events: auto;
   display: flex;
   padding: 18px;
@@ -1764,6 +1766,9 @@ body.is-session-detail-open #app {
   gap: 14px;
   max-width: 520px;
   margin: 0 auto;
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
+  padding-bottom: calc(var(--nav-total-h) + env(safe-area-inset-bottom, 0px) + 16px);
 }
 
 .habit-session-detail-header { 
@@ -1787,14 +1792,21 @@ body.is-session-detail-open #app {
   font-size: 20px;
 }
 .habit-session-detail-timer {
-  margin-top: 40%;
+  margin-top: clamp(16px, 12vh, 120px);
+  display: inline-flex;
+  align-self: center;
+  justify-content: center;
+  margin-inline: auto;
   text-align: center;
   font-size: clamp(76px, 10vw, 108px);
   font-weight: 900;
-  min-width: 20px;
-  max-width: 20px;
+  width: max-content;
+  min-width: 5ch;
+  max-width: 100%;
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  white-space: nowrap;
 }
 .habit-session-detail-controls { display: grid;
   grid-template-columns: repeat(auto-fit, minmax(10px, 1fr));

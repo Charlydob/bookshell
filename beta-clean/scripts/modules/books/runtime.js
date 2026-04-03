@@ -3014,6 +3014,10 @@ if ($calViewMode) {
   };
 
   const clickNavTo = (viewId) => {
+    if (typeof window.__bookshellNavigateToView === "function") {
+      void window.__bookshellNavigateToView(viewId);
+      return;
+    }
     const btn = document.querySelector(`.nav-btn[data-view="${viewId}"]`);
     if (btn) btn.click();
   };

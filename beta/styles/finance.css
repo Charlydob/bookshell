@@ -1235,12 +1235,7 @@ summary.fm-details__summary{
   background: linear-gradient(90deg, rgba(124,92,255,.9), rgba(60,220,170,.9));
 }
 
-#finance-topnav{
-  
-  max-width: 300px;
-  min-width: 200px;
-  margin-left: 30px;
-}
+
 .financeTab .financeViewHeader, .financeInnerNav {
     max-width: 399px;
     min-width: 200px;
@@ -2755,18 +2750,20 @@ header.food-sheet-header h3{
 }
 
 /* Finance topnav refresh */
-.financeTab #finance-topnav{
-  position: sticky;
-  top: calc(env(safe-area-inset-top, 0px) + 8px);
-  z-index: 12;
-  width: min(100%, 520px);
+.financeTab #finance-main{
+  width: 100%;
   max-width: 520px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.financeTab #finance-topnav{
+  width: 100%;
   min-width: 0;
-  margin: 0 auto 18px;
-  padding: 8px 0 4px;
-  background: linear-gradient(180deg, rgba(3, 10, 26, 0.98), rgba(3, 10, 26, 0.78) 72%, transparent);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  margin: 0;
+  padding: 0;
 }
 
 .financeTab .financeInnerNav{
@@ -2777,7 +2774,7 @@ header.food-sheet-header h3{
   margin: 0;
   padding: 8px;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 100px));
   gap: 8px;
   border: 1px solid rgba(160, 190, 255, 0.16);
   border-radius: 26px;
@@ -2842,17 +2839,17 @@ header.food-sheet-header h3{
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
-@media (max-width: 520px){
-  .financeTab #finance-topnav{
-    top: calc(env(safe-area-inset-top, 0px) + 4px);
-    margin-bottom: 14px;
-    padding-top: 4px;
+
+  .financeTab #finance-main{
+    gap: 12px;
   }
 
   .financeTab .financeInnerNav{
     gap: 6px;
     padding: 6px;
     border-radius: 22px;
+    display: grid;
+    
   }
 
   .financeTab .financeInnerNav .finance-pill{
@@ -2861,5 +2858,13 @@ header.food-sheet-header h3{
     padding: 0 8px;
     border-radius: 15px;
     font-size: 11px;
+    
   }
+
+
+.financeInnerNav{
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+  width: 100%;
+  gap: 6px;
 }

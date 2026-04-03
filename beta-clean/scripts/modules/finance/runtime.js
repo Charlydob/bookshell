@@ -16,7 +16,7 @@ async function ensureFinanceLoaded() {
   ({ db, auth, onUserChange } = await import('../../shared/firebase/index.js'));
 }
 
-import { DEVICE_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
+import { DEVICE_KEY, HOME_PANEL_VIEW_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
 import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './finance/ui.js';
 import { resolveFinancePath, resolveFinancePathCandidates } from './finance/data.js';
 import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, firebaseSafeKey, TICKET_IMPORT_SAMPLE_V1, resolveTicketMovementCategory } from './finance/import.js';
@@ -46,6 +46,11 @@ function monthDiffFromNow(monthKey) {
 function offsetMonthKey(monthKey, offset) { const d = parseMonthKey(monthKey); d.setMonth(d.getMonth() + offset); return getMonthKeyFromDate(d); }
 function monthLabelByKey(monthKey) { return new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(parseMonthKey(monthKey)); }
 function capitalizeFirst(value = '') { return value ? value.charAt(0).toUpperCase() + value.slice(1) : ''; }
+function normalizeHomePanelView(value = '') { return value === 'calendar' ? 'calendar' : 'hero'; }
+function setHomePanelView(nextView = 'hero') {
+  state.homePanelView = normalizeHomePanelView(nextView);
+  try { localStorage.setItem(HOME_PANEL_VIEW_KEY, state.homePanelView); } catch (_) {}
+}
 function escapeHtml(value = '') { return String(value).replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s])); }
 function fmtCurrency(value) { return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(Number(value || 0)); }
 function fmtSignedCurrency(value) { const num = Number(value || 0); return `${num > 0 ? '+' : ''}${fmtCurrency(num)}`; }
@@ -3657,8 +3662,72 @@ async function maybeRolloverSnapshot() {
 function renderFinanceNav() {
   const nav = document.getElementById('finance-topnav');
   if (!nav) return;
-  const items = [['home', 'Principal'], ['balance', 'Balance'], ['goals', 'Objetivos'], ['calendar', 'Calendario'], ['products', 'Productos']];
-  nav.innerHTML = `<div class="financeInnerNav">${items.map(([id, label]) => `<button type="button" class="finance-pill ${state.activeView === id ? 'is-active' : ''}" data-finance-view="${id}">${label}</button>`).join('')}</div>`;
+  const items = [['home', '🪙'], ['balance', '⚖️'], ['goals', '🎯'], ['calendar', '📅'], ['products', '🛒']];
+  nav.innerHTML = `<div class="financeInnerNav" aria-label="Secciones de finanzas">${items.map(([id, label]) => `<button type="button" class="finance-topnav__btn ${state.activeView === id ? 'is-active' : ''}" data-finance-view="${id}" aria-pressed="${state.activeView === id ? 'true' : 'false'}">${label}</button>`).join('')}</div>`;
+}
+
+function renderFinanceHomePanelToggle(activeView = 'hero') {
+  const currentView = normalizeHomePanelView(activeView);
+  return `<div class="financePanelToggle" role="group" aria-label="Cambiar vista del panel principal">
+    <button type="button" class="financePanelToggle__btn ${currentView === 'hero' ? 'is-active' : ''}" data-home-panel-view="hero" aria-pressed="${currentView === 'hero' ? 'true' : 'false'}" title="Resumen">&#129297;</button>
+    <button type="button" class="financePanelToggle__btn ${currentView === 'calendar' ? 'is-active' : ''}" data-home-panel-view="calendar" aria-pressed="${currentView === 'calendar' ? 'true' : 'false'}" title="Calendario">&#128197;</button>
+  </div>`;
+}
+
+function renderFinanceHeroPanel({ total, totalReal, totalRange, chart }, { withToggle = false } = {}) {
+  const toggle = withToggle ? renderFinanceHomePanelToggle('hero') : '';
+  return `<article class="finance__hero">
+    <div class="financePanelTopbar">
+      <div class="financePanelHeading"><p class="finance__eyebrow">TOTAL</p></div>
+      ${toggle}
+    </div>
+    <h2 id="finance-totalValue">${fmtCurrency(total)}</h2>
+    <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedCurrency(totalRange.delta)} Â· ${fmtSignedPercent(totalRange.deltaPct)}</p>
+    <p>Saldo real: <strong>${fmtCurrency(totalReal)}</strong> Â· Mi parte: <strong>${fmtCurrency(total)}</strong></p>
+    <div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div>
+  </article>`;
+}
+
+function renderFinanceCalendarPanel(accounts, totalSeries, { withToggle = false } = {}) {
+  const weekdayLabels = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+  const dayCalendar = calendarData(accounts, totalSeries);
+  const monthCalendar = calendarMonthData(accounts, totalSeries);
+  const yearCalendar = calendarYearData(accounts, totalSeries);
+  const modeLabel = state.calendarMode === 'month'
+    ? `${monthCalendar.year}`
+    : (state.calendarMode === 'year' ? 'A&ntilde;os' : monthLabelByKey(offsetMonthKey(getMonthKeyFromDate(), state.calendarMonthOffset)));
+  const toggle = withToggle ? renderFinanceHomePanelToggle('calendar') : '';
+  let content = '';
+  if (state.calendarMode === 'month') {
+    content = `<div class="finance-calendar-months">${monthCalendar.months.map((point) => {
+      const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
+      return `<button class="financeCalCell ${tone}" data-calendar-open-month="${point.monthKey}"><strong>${escapeHtml(point.label)}</strong><span>${point.isEmpty ? '&mdash;' : fmtSignedCurrency(point.delta)}</span><span>${point.isEmpty ? '&mdash;' : fmtSignedPercent(point.deltaPct)}</span></button>`;
+    }).join('')}</div>`;
+  } else if (state.calendarMode === 'year') {
+    content = `<div class="finance-calendar-years">${yearCalendar.map((point) => {
+      const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
+      return `<button class="financeCalCell ${tone}" data-calendar-open-year="${point.year}"><strong>${point.year}</strong><span>${point.isEmpty ? '&mdash;' : fmtSignedCurrency(point.delta)}</span></button>`;
+    }).join('')}</div>`;
+  } else {
+    content = `<div class="finance-calendar-grid"><div class="finance-calendar-weekdays">${weekdayLabels.map((label) => `<span>${label}</span>`).join('')}</div><div class="finance-calendar-days">${dayCalendar.cells.map((point) => {
+      if (!point) return '<div class="financeCalCell financeCalCell--blank"></div>';
+      const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
+      return `<button class="financeCalCell ${tone}" data-calendar-day="${point.dayKey}"><strong>${point.dayNumber}</strong><span>${point.isEmpty ? '&mdash;' : fmtSignedCurrency(point.delta)}</span><span>${point.isEmpty ? '&mdash;' : fmtSignedPercent(point.deltaPct)}</span></button>`;
+    }).join('')}</div></div>`;
+  }
+  return `<article class="finance__calendarPreview">
+    <div class="financePanelTopbar">
+      <div class="financePanelHeading"><h2>Calendario</h2><span class="finance-month-label">${modeLabel}</span></div>
+      ${toggle}
+    </div>
+    <div class="finance-calendar-controls">
+      <button class="boton-calendario" data-month-shift="-1">&#9664;</button>
+      <select class="finance-pill" data-calendar-account><option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select>
+      <select class="finance-pill" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>D&iacute;a</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>A&ntilde;o</option></select>
+      <button class="boton-calendario" data-month-shift="1">&#9654;</button>
+    </div>
+    ${content}
+  </article>`;
 }
 
 function renderFinanceHome(accounts, totalSeries) {
@@ -3679,14 +3748,26 @@ function renderFinanceHome(accounts, totalSeries) {
   const totalReal = accounts.reduce((sum, account) => sum + Number(account.currentReal || 0), 0);
   const totalRange = computeDeltaForRange(totalSeries, state.rangeMode);
   const chart = chartModelForRange(totalSeries, state.rangeMode);
+  const homePanelView = normalizeHomePanelView(state.homePanelView);
   state.lineChart = { points: chart.points || [], mode: state.rangeMode, kind: 'total' };
   const compareBounds = getRangeBounds(state.compareMode);
   const compareCurrent = computeDeltaWithinBounds(totalSeries, compareBounds);
   const previousBounds = { start: compareBounds.start - (compareBounds.end - compareBounds.start), end: compareBounds.start };
   const comparePrev = computeDeltaWithinBounds(totalSeries, previousBounds);
+  const primaryPanel = homePanelView === 'calendar'
+    ? renderFinanceCalendarPanel(accounts, totalSeries, { withToggle: true })
+    : renderFinanceHeroPanel({ total, totalReal, totalRange, chart }, { withToggle: true });
+  if (homePanelView === 'calendar') {
+    return `
+      <section class="finance-home ${toneClass(totalRange.delta)} finance-home--${homePanelView}">
+        ${primaryPanel}
+        <article class="finance__accounts"><div class="finance__sectionHeader"><h2>Cuentas</h2><button class="finance-pill" data-new-account>+ Cuenta</button></div>
+        <div id="finance-accountsList">${accounts.map((account) => { const editableBalance = account.shared ? account.currentReal : account.current; return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'}</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${editableBalance.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% Â· Mi parte: ${fmtCurrency(account.current)}</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} Â· ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">â‹¯</button></div></article>`; }).join('') || '<p class="finance-empty">Sin cuentas todavÃ­a.</p>'}</div></article>
+      </section>`;
+  }
   return `
-    <section class="finance-home ${toneClass(totalRange.delta)}">
-      <article class="finance__hero"><p class="finance__eyebrow">TOTAL</p><h2 id="finance-totalValue">${fmtCurrency(total)}</h2>
+    <section class="finance-home ${toneClass(totalRange.delta)} finance-home--${homePanelView}">
+      <article class="finance__hero"><div class="financePanelTopbar"><div class="financePanelHeading"><p class="finance__eyebrow">TOTAL</p></div>${renderFinanceHomePanelToggle('hero')}</div><h2 id="finance-totalValue">${fmtCurrency(total)}</h2>
         <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedCurrency(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
         <p>Saldo real: <strong>${fmtCurrency(totalReal)}</strong> · Mi parte: <strong>${fmtCurrency(total)}</strong></p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div></article>
       <article class="finance__controls">
@@ -6479,6 +6560,15 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
       await toggleFoodExtras(form);
       persistBalanceFormState(form);
       toast('Categoría creada');
+      return;
+    }
+    const nextHomePanelView = target.closest('[data-home-panel-view]')?.dataset.homePanelView;
+    if (nextHomePanelView) {
+      const normalizedHomePanelView = normalizeHomePanelView(nextHomePanelView);
+      if (state.homePanelView !== normalizedHomePanelView) {
+        setHomePanelView(normalizedHomePanelView);
+        triggerRender();
+      }
       return;
     }
     const nextView = target.closest('[data-finance-view]')?.dataset.financeView; if (nextView) { state.activeView = nextView; triggerRender(); return; }

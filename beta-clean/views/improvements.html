@@ -1,0 +1,110 @@
+<div class="improvements">
+  <header class="glassCard improvements__hero">
+    <div class="improvements__heroCopy">
+      <p class="improvements__eyebrow">App workbench</p>
+      <h2 class="improvements__title">Mejoras</h2>
+      <p class="improvements__subtitle">
+        Notas de mejoras y fixes asociadas a las pestañas reales de la app, con prioridad visible y seguimiento de resueltos.
+        Tambien puedes usar categorias como General o crear otras nuevas desde el editor.
+      </p>
+    </div>
+  </header>
+
+  <section class="improvements__summary" id="improvements-summary"></section>
+
+  <section class="glassCard improvements__boardShell">
+    <div class="improvements__sectionHead">
+      <div>
+        <p class="improvements__sectionLabel">Categorias</p>
+        <h3 class="improvements__sectionTitle">Vistas y boards dinamicos</h3>
+      </div>
+      <span class="improvements__countBadge" id="improvements-tab-count">0</span>
+    </div>
+    <div class="improvements__boardRow">
+      <div class="improvements__boardTabs" id="improvements-board-tabs"></div>
+    </div>
+    <div class="improvements__boardMeta" id="improvements-board-meta"></div>
+  </section>
+
+  <div class="modal-backdrop improvements__editorBackdrop hidden" id="improvements-editor-backdrop" aria-hidden="true">
+    <div class="modal improvements__editorModal" role="dialog" aria-modal="true" aria-labelledby="improvements-editor-title">
+      <div class="modal-header improvements__editorHeader">
+        <div>
+          <p class="improvements__sectionLabel">Editor</p>
+          <h3 class="modal-title improvements__sectionTitle" id="improvements-editor-title">Nueva mejora</h3>
+        </div>
+        <button class="icon-btn icon-btn-small" id="improvements-close-editor-btn" type="button" aria-label="Cerrar">x</button>
+      </div>
+
+      <div class="modal-body">
+        <form class="improvements__editorForm improvements__editor" id="improvements-item-form">
+          <label class="field">
+            <span>Titulo</span>
+            <input id="improvements-title" maxlength="120" placeholder="Ejemplo: mejorar filtros de recetas" type="text" />
+          </label>
+
+          <label class="field">
+            <span>Descripcion</span>
+            <textarea id="improvements-details" maxlength="1200" placeholder="Anota el cambio, idea o fix pendiente..."></textarea>
+          </label>
+
+          <div class="improvements__editorGrid">
+            <label class="field">
+              <span>Categoria</span>
+              <select id="improvements-board-select"></select>
+            </label>
+
+            <label class="field">
+              <span>Prioridad</span>
+              <select id="improvements-priority">
+                <option value="critical">Critica</option>
+                <option value="high">Alta</option>
+                <option value="medium" selected>Media</option>
+                <option value="low">Baja</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Estado</span>
+              <select id="improvements-status">
+                <option value="pending" selected>Pendiente</option>
+                <option value="resolved">Resuelto</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="improvements__editorActions">
+            <button class="btn ghost btn-compact hidden" id="improvements-cancel-edit-btn" type="button">Nueva nota</button>
+            <button class="btn primary btn-compact" type="submit">Guardar mejora</button>
+            <button class="btn ghost danger btn-compact hidden" id="improvements-delete-item-btn" type="button">Eliminar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <section class="improvements__lists">
+    <article class="glassCard improvements__listBlock">
+      <div class="improvements__sectionHead">
+        <div>
+          <p class="improvements__sectionLabel" id="improvements-pending-label">Pendientes</p>
+          <h3 class="improvements__sectionTitle" id="improvements-pending-title">Fixes abiertos de la categoria</h3>
+        </div>
+        <span class="improvements__countBadge" id="improvements-pending-count">0</span>
+      </div>
+      <div class="improvements__list" id="improvements-pending-list"></div>
+    </article>
+
+    <article class="glassCard improvements__listBlock">
+      <div class="improvements__sectionHead">
+        <div>
+          <p class="improvements__sectionLabel" id="improvements-resolved-label">Resueltos</p>
+          <h3 class="improvements__sectionTitle" id="improvements-resolved-title">Fixes cerrados de la categoria</h3>
+        </div>
+        <span class="improvements__countBadge improvements__countBadge--resolved" id="improvements-resolved-count">0</span>
+      </div>
+      <div class="improvements__list" id="improvements-resolved-list"></div>
+    </article>
+  </section>
+  <button id="improvements-open-editor-btn" type="button" aria-label="Anadir fix" title="Anadir fix">Fix</button>
+</div>

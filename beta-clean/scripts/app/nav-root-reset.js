@@ -97,6 +97,13 @@ const TAB_RESETTERS = {
     }
     document.body.classList.remove("finance-modal-open");
   },
+  "view-improvements": () => {
+    try {
+      window.__bookshellImprovements?.closeEditorModal?.({ reset: true });
+    } catch (_) {}
+    hideElement(document.getElementById("improvements-editor-backdrop"));
+    document.body.classList.remove("has-open-modal");
+  },
   "view-gym": () => {
     clickByIds(["gym-back", "gym-stats-back"]);
     closeByIds([
@@ -110,6 +117,11 @@ const TAB_RESETTERS = {
 };
 
 export function isActiveTabReselect(viewId) {
+  const currentViewId = String(window.__bookshellCurrentViewId || document.documentElement.dataset.currentViewId || "").trim();
+  if (currentViewId) {
+    return Boolean(viewId) && currentViewId === viewId;
+  }
+
   const activeBtn = document.querySelector(".bottom-nav .nav-btn.nav-btn-active");
   const activeViewId = activeBtn?.dataset?.view || "";
   return Boolean(viewId) && activeViewId === viewId;

@@ -1884,6 +1884,8 @@
 .version-switch-link{
   border: 0px;
   background: transparent;
+  padding: 0;
+  font-size: 18px;
 }
 .macro-product-picker-results {
   flex: 1 1 auto;
@@ -2421,7 +2423,7 @@
 @media (max-width: 420px) {
   #macro-add-modal-backdrop .modal-comida {
     width: 100%;
-    max-height: calc(var(--app-dvh, 100dvh) - 16px);
+    max-height: 400px;
     border-radius: 24px;
   }
 

@@ -1,5 +1,6 @@
 export const LEGACY_PATH = 'finance';
 export const DEVICE_KEY = 'finance_deviceId';
+export const HOME_PANEL_VIEW_KEY = 'bookshell_finance_home_panel_view';
 export const RANGE_LABEL = { total: 'Total', month: 'Mes', week: 'Semana', year: 'Año' };
 export const BTC_PRICE_CACHE_KEY = 'bookshell_finance_btc_eur_cache_v1';
 export const BTC_PRICE_CACHE_TTL_MS = 20 * 60 * 1000;
@@ -12,6 +13,7 @@ export const state = {
   rangeMode: 'month',
   compareMode: 'month',
   activeView: 'home',
+  homePanelView: localStorage.getItem(HOME_PANEL_VIEW_KEY) === 'calendar' ? 'calendar' : 'hero',
   accounts: [],
   legacyEntries: {},
   balance: { tx: {}, movements: {}, transactions: {}, categories: {}, budgets: {}, snapshots: {}, recurring: {}, aggregates: {}, defaultAccountId: '', lastSeenMonthKey: '' },

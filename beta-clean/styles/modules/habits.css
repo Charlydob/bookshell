@@ -1631,11 +1631,11 @@ body.is-session-detail-open #app {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: -12px;
+  bottom: 64px;
   display: flex;
   justify-content: center;
   pointer-events: none;
-  z-index: 12;
+  z-index: 40;
 }
 
 .habit-session-overlay.hidden {
@@ -1648,15 +1648,17 @@ body.is-session-detail-open #app {
     --hclr-rgb: 127, 93, 255;
     pointer-events: auto;
     display: grid;
-    grid-template-columns: minmax(88px, 100px) minmax(0, 156px) auto;
+    grid-template-columns: 100px 156px 81px;
     align-items: center;
+    top: 100px;
     gap: 12px;
-    padding: 18px 14px;
+    padding: 22px 14px;
     background: rgba(0, 0, 0, 0.14);
     border-radius: 13px;
     backdrop-filter: blur(8px);
     border: 1px solid rgba(var(--hclr-rgb), 0.25);
-    width: 380px;
+    margin-bottom: 20px;
+    width: 394px;
     z-index: 0;
 }
 
@@ -1737,7 +1739,7 @@ body.is-session-detail-open #app {
 .habit-session-detail {
   position: fixed;
   inset: 0;
-  z-index: 1400;
+  z-index: 9999;
   pointer-events: auto;
   display: flex;
   padding: 18px;
@@ -1929,7 +1931,7 @@ body.is-session-detail-open #app {
   }
 
   .habit-session-overlay {
-    bottom: 24px;
+    bottom: 40px;
   }
 }
 

@@ -1277,6 +1277,7 @@ margin-top: 40px;
   writing-mode: vertical-rl;
   text-orientation: mixed;
   transform: rotate(180deg);
+  margin-left: 2px;
 }
 
 .book-bookmark-input:focus{

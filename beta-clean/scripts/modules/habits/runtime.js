@@ -10384,6 +10384,7 @@ function deleteHabit() {
 
 // Cronómetro
 async function startSession(habitId = null, meta = null) {
+  if (!currentUid || !HABIT_ACTIVE_SESSIONS_PATH) return null;
   const targetHabitId = (typeof habitId === "string" && habits?.[habitId] && !habits[habitId]?.archived)
     ? habitId
     : null;
@@ -10399,23 +10400,15 @@ async function startSession(habitId = null, meta = null) {
     pausedAt: null,
     accMs: 0,
     emoji: (targetHabitId && habits?.[targetHabitId]?.emoji) || meta?.habitEmoji || "•",
-    deviceId: uid,
+    deviceId: currentUid,
     meta: meta && typeof meta === "object" ? { ...meta } : null
   };
-  upsertActiveSessionLocal(sessionRef.key, payload);
+  await set(sessionRef, payload);
   persistSessionSelection(sessionRef.key);
   updateSessionUI();
   updateCompareLiveInterval();
-  try {
-    await set(sessionRef, payload);
-  } catch (err) {
-    removeActiveSessionLocal(sessionRef.key);
-    updateSessionUI();
-    updateCompareLiveInterval();
-    console.warn("No se pudo iniciar la sesión activa", err);
-    return;
-  }
   scheduleCompareRefresh("session:start", { targetHabitId: targetHabitId || null });
+  return sessionRef.key;
 }
 
 function getRunningHabitSession() {
@@ -12107,8 +12100,12 @@ function executeShortcutCmd(cmd, { silent = true } = {}) {
   if (!cmd) return false;
 
   if (cmd.view === "habits" || cmd.tab || cmd.action) {
-    const btn = document.querySelector('.nav-btn[data-view="view-habits"]');
-    btn?.click();
+    if (typeof window.__bookshellNavigateToView === "function") {
+      void window.__bookshellNavigateToView("view-habits");
+    } else {
+      const btn = document.querySelector('.nav-btn[data-view="view-habits"]');
+      btn?.click();
+    }
   }
 
   // tab

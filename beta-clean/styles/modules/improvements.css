@@ -245,6 +245,12 @@ body.has-open-modal #improvements-open-editor-btn {
   gap: 8px;
 }
 
+.improvements__sectionHeadActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .improvements__lists {
   display: grid;
   gap: 10px;
@@ -270,6 +276,23 @@ body.has-open-modal #improvements-open-editor-btn {
 .improvements__list {
   display: grid;
   gap: 10px;
+}
+
+#improvements-pending-list {
+  max-height: min(56vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 2px;
+}
+
+#improvements-pending-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+#improvements-pending-list::-webkit-scrollbar-thumb {
+  background: rgba(185, 204, 236, 0.28);
+  border-radius: 999px;
 }
 
 .improvements__empty {
@@ -842,6 +865,10 @@ body.has-open-modal #improvements-open-editor-btn {
 
 .improvements__exportModal {
   max-width: 680px;
+}
+
+.improvements__listBlock.is-collapsed #improvements-resolved-list {
+  display: none;
 }
 
 .improvements__exportBody {

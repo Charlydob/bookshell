@@ -122,7 +122,18 @@
           <p class="improvements__sectionLabel" id="improvements-resolved-label">Resueltos</p>
           <h3 class="improvements__sectionTitle" id="improvements-resolved-title">Fixes cerrados de la categoria</h3>
         </div>
-        <span class="improvements__countBadge improvements__countBadge--resolved" id="improvements-resolved-count">0</span>
+        <div class="improvements__sectionHeadActions">
+          <button
+            class="btn ghost btn-compact improvements__collapseBtn"
+            id="improvements-toggle-resolved-btn"
+            type="button"
+            aria-expanded="true"
+            aria-controls="improvements-resolved-list"
+          >
+            Plegar
+          </button>
+          <span class="improvements__countBadge improvements__countBadge--resolved" id="improvements-resolved-count">0</span>
+        </div>
       </div>
       <div class="improvements__list" id="improvements-resolved-list"></div>
     </article>

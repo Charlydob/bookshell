@@ -286,20 +286,6 @@ body.has-open-modal #improvements-open-editor-btn {
   padding-right: 2px;
 }
 
-.improvements.is-general-view #improvements-pending-list {
-  max-height: 55vh;
-  overflow-y: auto;
-  overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.improvements.is-general-view .improvements__listBlock {
-  overflow: visible;
-}
 
 #improvements-pending-list::-webkit-scrollbar {
   width: 8px;
@@ -326,17 +312,6 @@ body.has-open-modal #improvements-open-editor-btn {
   overflow: hidden;
 }
 
-.improvements.is-general-view .improvements__item {
-  min-height: 64px;
-  height: auto;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  overflow: visible;
-  pointer-events: auto;
-  z-index: 1;
-}
-
 .improvements__item::before {
   content: "";
   position: absolute;
@@ -344,11 +319,6 @@ body.has-open-modal #improvements-open-editor-btn {
   width: 4px;
   border-radius: 999px;
   background: var(--priority-color, rgba(255, 255, 255, 0.28));
-}
-
-.improvements.is-general-view .improvements__item::before,
-.improvements.is-general-view .improvements__item::after {
-  pointer-events: none;
 }
 
 .improvements__item--critical {

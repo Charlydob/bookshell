@@ -892,7 +892,6 @@ function renderFilteredLists() {
   const activeTab = getActiveTab();
   const activeLabel = activeTab?.label || "esta categoria";
   const isGeneralView = isGeneralBoardViewId(activeTab?.id);
-  state.root?.classList?.toggle("is-general-view", isGeneralView);
 
   if (els.pendingLabel) els.pendingLabel.textContent = "Pendientes";
   if (els.resolvedLabel) els.resolvedLabel.textContent = "Resueltos";
@@ -929,7 +928,7 @@ function renderFilteredLists() {
     isGeneralView
       ? "No hay mejoras pendientes."
       : `No hay mejoras pendientes en ${activeLabel}.`,
-    { selectable: true, defaultExpanded: isGeneralView }
+    { selectable: true }
   );
   renderCompactItemList(
     els.resolvedList,
@@ -937,7 +936,7 @@ function renderFilteredLists() {
     isGeneralView
       ? "Todavia no has marcado fixes como resueltos."
       : `Todavia no has marcado fixes como resueltos en ${activeLabel}.`,
-    { defaultExpanded: isGeneralView }
+    {}
   );
 }
 

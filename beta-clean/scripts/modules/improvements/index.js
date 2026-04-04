@@ -79,6 +79,7 @@ const state = {
   listeners: [],
   authUnsub: null,
   eventsBound: false,
+  resolvedPanelCollapsed: false,
 };
 
 const els = {};
@@ -708,7 +709,22 @@ function toggleItemExpanded(itemId) {
     state.expandedItems.add(nextItemId);
   }
 
-  renderAll();
+  const itemNode = state.root?.querySelector?.(`.improvements__item [data-item-action="expand"][data-item-id="${nextItemId}"]`)?.closest(".improvements__item");
+  if (!itemNode) {
+    renderFilteredLists();
+    return;
+  }
+
+  const body = itemNode.querySelector(".improvements__itemBody");
+  const foldButton = itemNode.querySelector('[data-item-action="expand"]');
+  const isExpanded = state.expandedItems.has(nextItemId);
+
+  itemNode.classList.toggle("is-expanded", isExpanded);
+  body?.classList.toggle("hidden", !isExpanded);
+  if (foldButton) {
+    foldButton.setAttribute("aria-expanded", String(isExpanded));
+    foldButton.setAttribute("title", isExpanded ? "Plegar fix" : "Desplegar fix");
+  }
 }
 
 function renderBoardTabsCompact() {
@@ -889,6 +905,7 @@ function renderFilteredLists() {
 
   if (els.pendingCount) els.pendingCount.textContent = String(pendingItems.length);
   if (els.resolvedCount) els.resolvedCount.textContent = String(resolvedItems.length);
+  renderResolvedPanelState();
 
   renderCompactItemList(
     els.pendingList,
@@ -905,6 +922,16 @@ function renderFilteredLists() {
       ? "Todavia no has marcado fixes como resueltos."
       : `Todavia no has marcado fixes como resueltos en ${activeLabel}.`
   );
+}
+
+function renderResolvedPanelState() {
+  if (!els.resolvedListBlock || !els.toggleResolvedBtn || !els.resolvedList) return;
+
+  const collapsed = Boolean(state.resolvedPanelCollapsed);
+  els.resolvedListBlock.classList.toggle("is-collapsed", collapsed);
+  els.resolvedList.classList.toggle("hidden", collapsed);
+  els.toggleResolvedBtn.setAttribute("aria-expanded", String(!collapsed));
+  els.toggleResolvedBtn.textContent = collapsed ? "Desplegar" : "Plegar";
 }
 
 function renderItemList(target, items, emptyText) {
@@ -1143,39 +1170,80 @@ async function saveItem() {
   const now = Date.now();
   const editingItem = getEditingItem();
 
+  const previousItems = { ...state.items };
+  const previousBoards = { ...state.boards };
+  const tempItemId = editingItem ? editingItem.id : `tmp-${now}`;
+  const resolvedAt = payload.status === "resolved"
+    ? (editingItem?.resolvedAt || now)
+    : null;
+
   if (isCustomBoard) {
-    await update(ref(db, `${state.path}/boards/${payload.viewId}`), {
-      name: boardLabel,
+    state.boards[payload.viewId] = createBoardRecord({
+      ...(state.boards[payload.viewId] || {}),
+      id: payload.viewId,
+      moduleKey: state.boards[payload.viewId]?.moduleKey || normalizeBoardSeed(payload.viewId) || "general",
       label: boardLabel,
       tone: boardTone,
+      isCustom: true,
       createdAt: Number(state.boards?.[payload.viewId]?.createdAt) || now,
       updatedAt: now,
     });
   }
 
-  if (editingItem) {
-    await update(ref(db, `${state.path}/items/${editingItem.id}`), {
-      ...itemPayload,
-      boardId: payload.viewId,
-      updatedAt: now,
-      resolvedAt: payload.status === "resolved"
-        ? (editingItem.resolvedAt || now)
-        : null,
-    });
-  } else {
+  state.items[tempItemId] = {
+    ...(editingItem || {}),
+    ...itemPayload,
+    createdAt: editingItem?.createdAt || now,
+    updatedAt: now,
+    resolvedAt,
+  };
+  state.activeViewId = payload.viewId;
+  closeEditorModal();
+  resetEditor({ viewId: payload.viewId });
+  renderAll();
+
+  try {
+    const updates = {};
+
+    if (isCustomBoard) {
+      updates[`boards/${payload.viewId}`] = {
+        name: boardLabel,
+        label: boardLabel,
+        tone: boardTone,
+        createdAt: Number(state.boards?.[payload.viewId]?.createdAt) || now,
+        updatedAt: now,
+      };
+    }
+
+    if (editingItem) {
+      updates[`items/${editingItem.id}`] = {
+        ...itemPayload,
+        boardId: payload.viewId,
+        updatedAt: now,
+        resolvedAt,
+      };
+      await update(ref(db, state.path), updates);
+      return;
+    }
+
     const newRef = push(ref(db, `${state.path}/items`));
     await set(newRef, {
       ...itemPayload,
       boardId: payload.viewId,
       createdAt: now,
       updatedAt: now,
-      resolvedAt: payload.status === "resolved" ? now : null,
+      resolvedAt,
     });
+    if (state.items[tempItemId]) {
+      delete state.items[tempItemId];
+      renderAll();
+    }
+  } catch (error) {
+    state.items = previousItems;
+    state.boards = previousBoards;
+    renderAll();
+    window.alert("No se pudo guardar la mejora. Revisa la conexion e intentalo de nuevo.");
   }
-
-  state.activeViewId = payload.viewId;
-  closeEditorModal();
-  resetEditor({ viewId: payload.viewId });
 }
 
 async function deleteItem(itemId) {
@@ -1184,10 +1252,22 @@ async function deleteItem(itemId) {
   const shouldDelete = window.confirm(`Eliminar "${item.title || "esta mejora"}"?`);
   if (!shouldDelete) return;
 
-  await remove(ref(db, `${state.path}/items/${itemId}`));
-  closeEditorModal();
-  if (state.editingItemId === itemId) {
-    resetEditor({ viewId: ensureActiveViewId() });
+  const previousItem = state.items[itemId];
+  delete state.items[itemId];
+  if (state.selectedItems.has(itemId)) state.selectedItems.delete(itemId);
+  if (state.expandedItems.has(itemId)) state.expandedItems.delete(itemId);
+  renderAll();
+
+  try {
+    await remove(ref(db, `${state.path}/items/${itemId}`));
+    closeEditorModal();
+    if (state.editingItemId === itemId) {
+      resetEditor({ viewId: ensureActiveViewId() });
+    }
+  } catch (_) {
+    state.items[itemId] = previousItem;
+    renderAll();
+    window.alert("No se pudo eliminar la mejora. Intentalo de nuevo.");
   }
 }
 
@@ -1197,11 +1277,30 @@ async function toggleItemResolved(itemId) {
   const nextStatus = item.status === "resolved" ? "pending" : "resolved";
   const now = Date.now();
 
-  await update(ref(db, `${state.path}/items/${itemId}`), {
+  const previous = { ...item };
+  state.items[itemId] = {
+    ...item,
     status: nextStatus,
     updatedAt: now,
     resolvedAt: nextStatus === "resolved" ? now : null,
-  });
+  };
+  if (nextStatus === "resolved") state.selectedItems.delete(itemId);
+  renderFilteredLists();
+  renderSummary();
+  renderBoardTabsCompact();
+  renderActiveBoardMeta();
+
+  try {
+    await update(ref(db, `${state.path}/items/${itemId}`), {
+      status: nextStatus,
+      updatedAt: now,
+      resolvedAt: nextStatus === "resolved" ? now : null,
+    });
+  } catch (_) {
+    state.items[itemId] = previous;
+    renderAll();
+    window.alert("No se pudo actualizar el estado. Intentalo de nuevo.");
+  }
 }
 
 function getPendingItemsForExport() {
@@ -1384,6 +1483,11 @@ function bindEvents() {
     void copyTextToClipboard(state.exportText);
   });
 
+  els.toggleResolvedBtn?.addEventListener("click", () => {
+    state.resolvedPanelCollapsed = !state.resolvedPanelCollapsed;
+    renderResolvedPanelState();
+  });
+
   const handleListAction = (event) => {
     const actionButton = event.target?.closest?.("[data-item-action][data-item-id]");
     if (!actionButton) return;
@@ -1475,7 +1579,9 @@ function cacheElements(root) {
   els.resolvedLabel = root.querySelector("#improvements-resolved-label");
   els.resolvedTitle = root.querySelector("#improvements-resolved-title");
   els.resolvedCount = root.querySelector("#improvements-resolved-count");
+  els.toggleResolvedBtn = root.querySelector("#improvements-toggle-resolved-btn");
   els.pendingList = root.querySelector("#improvements-pending-list");
+  els.resolvedListBlock = root.querySelector("#improvements-resolved-list")?.closest(".improvements__listBlock");
   els.resolvedList = root.querySelector("#improvements-resolved-list");
 }
 

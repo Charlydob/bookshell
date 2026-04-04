@@ -76,6 +76,7 @@ const state = {
   selectedItems: new Set(),
   exportText: "",
   expandedItems: new Set(),
+  collapsedItems: new Set(),
   listeners: [],
   authUnsub: null,
   eventsBound: false,
@@ -83,6 +84,13 @@ const state = {
 };
 
 const els = {};
+
+function isItemExpanded(itemId, { defaultExpanded = false } = {}) {
+  const nextItemId = String(itemId || "").trim();
+  if (!nextItemId) return false;
+  if (defaultExpanded) return !state.collapsedItems.has(nextItemId);
+  return state.expandedItems.has(nextItemId);
+}
 
 function escapeHtml(value) {
   return String(value || "").replace(/[&<>"']/g, (char) => {
@@ -702,8 +710,15 @@ function renderEmptyList(target, text) {
 function toggleItemExpanded(itemId) {
   const nextItemId = String(itemId || "").trim();
   if (!nextItemId) return;
+  const defaultExpanded = isGeneralBoardViewId(getActiveTab()?.id);
 
-  if (state.expandedItems.has(nextItemId)) {
+  if (defaultExpanded) {
+    if (state.collapsedItems.has(nextItemId)) {
+      state.collapsedItems.delete(nextItemId);
+    } else {
+      state.collapsedItems.add(nextItemId);
+    }
+  } else if (state.expandedItems.has(nextItemId)) {
     state.expandedItems.delete(nextItemId);
   } else {
     state.expandedItems.add(nextItemId);
@@ -717,7 +732,7 @@ function toggleItemExpanded(itemId) {
 
   const body = itemNode.querySelector(".improvements__itemBody");
   const foldButton = itemNode.querySelector('[data-item-action="expand"]');
-  const isExpanded = state.expandedItems.has(nextItemId);
+  const isExpanded = isItemExpanded(nextItemId, { defaultExpanded });
 
   itemNode.classList.toggle("is-expanded", isExpanded);
   body?.classList.toggle("hidden", !isExpanded);
@@ -795,7 +810,7 @@ function renderBoardSelectInput() {
   setBoardFieldValue(currentViewId);
 }
 
-function renderCompactItemList(target, items, emptyText, { selectable = false } = {}) {
+function renderCompactItemList(target, items, emptyText, { selectable = false, defaultExpanded = false } = {}) {
   if (!target) return;
   if (!items.length) {
     renderEmptyList(target, emptyText);
@@ -805,7 +820,7 @@ function renderCompactItemList(target, items, emptyText, { selectable = false } 
   target.innerHTML = items.map((item) => {
     const tab = findTabById(item.viewId) || buildFallbackBoard(item.viewId);
     const emoji = inferBoardEmoji(tab);
-    const isExpanded = state.expandedItems.has(item.id);
+    const isExpanded = isItemExpanded(item.id, { defaultExpanded });
     const stampLabel = item.status === "resolved" ? "Resuelto" : "Actualizado";
     const stampValue = item.status === "resolved" ? item.resolvedAt : item.updatedAt;
     const detailsHtml = item.details
@@ -877,6 +892,7 @@ function renderFilteredLists() {
   const activeTab = getActiveTab();
   const activeLabel = activeTab?.label || "esta categoria";
   const isGeneralView = isGeneralBoardViewId(activeTab?.id);
+  state.root?.classList?.toggle("is-general-view", isGeneralView);
 
   if (els.pendingLabel) els.pendingLabel.textContent = "Pendientes";
   if (els.resolvedLabel) els.resolvedLabel.textContent = "Resueltos";
@@ -913,14 +929,15 @@ function renderFilteredLists() {
     isGeneralView
       ? "No hay mejoras pendientes."
       : `No hay mejoras pendientes en ${activeLabel}.`,
-    { selectable: true }
+    { selectable: true, defaultExpanded: isGeneralView }
   );
   renderCompactItemList(
     els.resolvedList,
     resolvedItems,
     isGeneralView
       ? "Todavia no has marcado fixes como resueltos."
-      : `Todavia no has marcado fixes como resueltos en ${activeLabel}.`
+      : `Todavia no has marcado fixes como resueltos en ${activeLabel}.`,
+    { defaultExpanded: isGeneralView }
   );
 }
 
@@ -1091,6 +1108,9 @@ function subscribeData() {
     state.expandedItems = new Set(
       [...state.expandedItems].filter((itemId) => Boolean(state.items[itemId]))
     );
+    state.collapsedItems = new Set(
+      [...state.collapsedItems].filter((itemId) => Boolean(state.items[itemId]))
+    );
     state.selectedItems = new Set(
       [...state.selectedItems].filter((itemId) => Boolean(state.items[itemId]) && state.items[itemId].status !== "resolved")
     );
@@ -1111,6 +1131,7 @@ function setUnauthenticatedState() {
   state.boards = {};
   state.items = {};
   state.expandedItems = new Set();
+  state.collapsedItems = new Set();
   state.selectedItems = new Set();
   state.activeViewId = getDefaultViewId();
   state.editorOpen = false;

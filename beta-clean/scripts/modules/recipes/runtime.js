@@ -46,6 +46,12 @@ if ($viewRecipes) {
     description: "",
     done: false,
   });
+  const RECIPE_EMOJI_BY_MEAL = {
+    desayuno: "🥞",
+    comida: "🍽️",
+    cena: "🌙",
+    snack: "🍎",
+  };
 
   const defaultRecipes = [
     {
@@ -262,6 +268,7 @@ if ($viewRecipes) {
   const $recipeForm = document.getElementById("recipe-form");
   const $recipeId = document.getElementById("recipe-id");
   const $recipeName = document.getElementById("recipe-name");
+  const $recipeEmoji = document.getElementById("recipe-emoji");
   const $recipeMeal = document.getElementById("recipe-meal");
   const $recipeHealth = document.getElementById("recipe-health");
   const $recipeTags = document.getElementById("recipe-tags");
@@ -375,6 +382,7 @@ if ($viewRecipes) {
   const $macroProductModalClose = document.getElementById("macro-product-modal-close");
   const $macroProductModalTitle = document.getElementById("macro-product-modal-title");
   const $macroProductCancel = document.getElementById("macro-product-cancel");
+  const $macroProductAddMore = document.getElementById("macro-product-add-more");
   const $macroProductAdd = document.getElementById("macro-product-add");
   const $macroProductName = document.getElementById("macro-product-name");
   const $macroProductBrand = document.getElementById("macro-product-brand");
@@ -783,6 +791,24 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return null;
   }
 
+  function sanitizeRecipeEmoji(value) {
+    const clean = String(value || "").trim().replace(/\s+/g, "");
+    if (!clean) return "";
+    return Array.from(clean).slice(0, 2).join("");
+  }
+
+  function resolveRecipeEmoji(recipe = {}) {
+    const custom = sanitizeRecipeEmoji(recipe.emoji || "");
+    if (custom) return custom;
+    return "";
+  }
+
+  function formatRecipeTitle(recipe = {}) {
+    const title = String(recipe.title || "Receta").trim() || "Receta";
+    const emoji = resolveRecipeEmoji(recipe);
+    return emoji ? `${emoji} ${title}` : title;
+  }
+
   function normalizeRecipeFields(recipe) {
     const country = normalizeRecipeCountry(recipe.country, recipe.countryLabel);
     let ingredients = Array.isArray(recipe.ingredients)
@@ -876,6 +902,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     }
     return {
       ...recipe,
+      emoji: sanitizeRecipeEmoji(recipe.emoji),
       country: country?.code || null,
       countryLabel: country?.label || recipe.countryLabel || recipe.country || null,
       imageURL: recipe.imageURL || null,
@@ -1566,7 +1593,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
         ${imageMarkup}
         <div class="recipe-row-body">
           <div class="recipe-row-title-wrap">
-            <h4 class="recipe-row-title">${escapeHtml(recipe.title || "Receta")}</h4>
+            <h4 class="recipe-row-title">${escapeHtml(formatRecipeTitle(recipe))}</h4>
             <button class="recipe-row-favorite-toggle" type="button" data-toggle-recipe-favorite="${escapeAttr(recipe.id)}" aria-label="${recipe.favorite ? "Quitar de favoritas" : "Añadir a favoritas"}">${recipe.favorite ? "★" : "☆"}</button>
           </div>
           ${metadata ? `<p class="recipe-row-meta">${escapeHtml(metadata)}</p>` : ""}
@@ -2074,13 +2101,13 @@ function linkifyNotesHtml(input) {
     spine.style.setProperty("--spine-color-1", c1);
     spine.style.setProperty("--spine-color-2", c2);
     spine.style.setProperty("--spine-height", `${Math.min(170, height)}px`);
-    spine.title = `${recipe.title} · ${formatRatingStars(recipe.rating)}`;
+    spine.title = `${formatRecipeTitle(recipe)} · ${formatRatingStars(recipe.rating)}`;
     if (recipe.favorite) spine.classList.add("book-spine-favorite", "recipe-spine-favorite");
     if (recipe.laura) spine.classList.add("recipe-spine-laura");
 
     const title = document.createElement("span");
     title.className = "book-spine-title";
-    title.textContent = recipe.title;
+    title.textContent = formatRecipeTitle(recipe);
 
     const ratingBadge = document.createElement("span");
     ratingBadge.className = "recipe-spine-rating";
@@ -2127,7 +2154,7 @@ function linkifyNotesHtml(input) {
       const titleRow = document.createElement("div");
       titleRow.className = "recipe-card-title";
       const title = document.createElement("h3");
-      title.textContent = recipe.title;
+      title.textContent = formatRecipeTitle(recipe);
       titleRow.appendChild(title);
       if (recipe.laura) {
         const mark = document.createElement("span");
@@ -2865,6 +2892,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       $recipeId.value = recipe.id;
       $modalTitle.textContent = "Editar receta";
       $recipeName.value = recipe.title || "";
+      if ($recipeEmoji) $recipeEmoji.value = sanitizeRecipeEmoji(recipe.emoji || "");
       $recipeMeal.value = recipe.meal || "comida";
       $recipeHealth.value = recipe.health || "sana";
       $recipeTags.value = (recipe.tags || []).join(", ");
@@ -2881,6 +2909,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       $modalTitle.textContent = "Nueva receta";
       $recipeId.value = "";
       $recipeName.value = "";
+      if ($recipeEmoji) $recipeEmoji.value = "";
       $recipeMeal.value = "comida";
       $recipeHealth.value = "sana";
       $recipeTags.value = "";
@@ -2894,6 +2923,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       renderStepRows([DEFAULT_STEP()]);
       if ($recipeServings) $recipeServings.value = "1";
     }
+    if ($recipeEmoji) $recipeEmoji.placeholder = RECIPE_EMOJI_BY_MEAL[$recipeMeal?.value || ""] || "🍽️";
     renderRecipeIngredientProductPicker();
     updateRecipeCalcSummary();
   }
@@ -2930,6 +2960,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     const payload = {
       id,
       title: ($recipeName.value || "").trim(),
+      emoji: sanitizeRecipeEmoji($recipeEmoji?.value || ""),
       meal: $recipeMeal.value,
       health: $recipeHealth.value,
       tags: ($recipeTags.value || "")
@@ -3366,7 +3397,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       }
     }
 
-    if ($recipeDetailTitle) $recipeDetailTitle.textContent = recipe.title || "Receta";
+    if ($recipeDetailTitle) $recipeDetailTitle.textContent = formatRecipeTitle(recipe);
     if ($recipeDetailMeal) $recipeDetailMeal.textContent = recipe.meal || "";
     syncRecipeBookmarkButton(recipe);
     if ($recipeDetailTags) {
@@ -3693,6 +3724,14 @@ function toggleChecklistItem(recipeId, itemId, value, type) {
   });
 
   $btnAddRecipe?.addEventListener("click", () => openRecipeModal());
+  $recipeMeal?.addEventListener("change", () => {
+    if ($recipeEmoji && !sanitizeRecipeEmoji($recipeEmoji.value)) {
+      $recipeEmoji.placeholder = RECIPE_EMOJI_BY_MEAL[$recipeMeal.value] || "🍽️";
+    }
+  });
+  $recipeEmoji?.addEventListener("blur", () => {
+    $recipeEmoji.value = sanitizeRecipeEmoji($recipeEmoji.value || "");
+  });
   function setImportStatus(msg){
   if ($recipeImportStatus) $recipeImportStatus.textContent = msg || "";
 }
@@ -5373,6 +5412,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   function setMacroProductEntryTarget(target) {
     _macroProductEntryTarget = target || null;
     if ($macroProductAdd) $macroProductAdd.textContent = _macroProductEntryTarget ? "Guardar" : "Añadir";
+    if ($macroProductAddMore) $macroProductAddMore.style.display = _macroProductEntryTarget ? "" : "none";
     if ($macroProductModalTitle) $macroProductModalTitle.textContent = _macroProductEntryTarget ? "Producto (consumo)" : "Producto";
   }
 
@@ -5469,6 +5509,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     const unitWeightValue = getInputNumberOrCurrent($macroProductUnitWeight, null);
     const hasUnitWeight = unitWeightValue > 0;
     const currentUnit = normalizeUnit($macroProductGramsUnit.value || "g") || "g";
+    const hasTypedAmount = String($macroProductGrams?.value || "").trim() !== "" || String($macroProductGrams?.dataset.currentValue || "").trim() !== "";
+    const canAutoSwitchToUnit = !_macroProductEntryTarget && !_macroProductRecipeIngredientTarget;
+    if (hasUnitWeight && currentUnit !== "unit" && (force || (canAutoSwitchToUnit && !hasTypedAmount))) {
+      $macroProductGramsUnit.value = "unit";
+      updateWeightDiffUnitLabels();
+      return;
+    }
     if (!hasUnitWeight && currentUnit === "unit") {
       const fallbackUnit = normalizeUnit($macroProductBaseUnit?.value || _macroProductDraft?.baseUnit || _macroProductDraft?.servingBaseUnit || "g") || "g";
       $macroProductGramsUnit.value = fallbackUnit === "unit" ? "g" : fallbackUnit;
@@ -5815,7 +5862,11 @@ $recipeImportBtn?.addEventListener("click", () => {
     const hasUnitWeight = !!resolveUnitWeightSpec(product);
     const shouldDefaultToUnitWeight = hasUnitWeight && !entryTarget && !_macroProductRecipeIngredientTarget;
     setInputCurrentPlaceholder($macroProductGrams, shouldDefaultToUnitWeight ? "" : String(Number(grams) || 0), shouldDefaultToUnitWeight ? "" : "100");
-    if ($macroProductGramsUnit) $macroProductGramsUnit.value = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
+    const requestedUnit = normalizeUnit(options?.initialUnit || "");
+    const defaultAmountUnit = shouldDefaultToUnitWeight
+      ? "unit"
+      : (requestedUnit || normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g");
+    if ($macroProductGramsUnit) $macroProductGramsUnit.value = defaultAmountUnit;
     const productBaseUnit = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
     const defaultUnitWeightUnit = (productBaseUnit === "ml" || productBaseUnit === "l") ? "ml" : "g";
     if ($macroProductUnitWeight) {
@@ -5839,7 +5890,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductPackUnits) $macroProductPackUnits.value = "";
     if ($macroProductPackConsumed) $macroProductPackConsumed.value = "";
     document.body.classList.add("has-open-modal");
-    syncMacroProductUnitSuggestion();
+    syncMacroProductUnitSuggestion({ force: shouldDefaultToUnitWeight });
     updateWeightDiffUnitLabels();
 
     $macroProductModalBackdrop.classList.remove("hidden");
@@ -5875,7 +5926,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         macros: snapshotPer100,
         source: "snapshot",
       };
-      openMacroProductModal(found || fallback, meal, consumedAmount || 100, { meal, idx: i });
+      openMacroProductModal(found || fallback, meal, consumedAmount || 100, { meal, idx: i }, { initialUnit: consumedUnit });
       return;
     }
 
@@ -9200,12 +9251,12 @@ $recipeImportBtn?.addEventListener("click", () => {
   $macroProductModalClose?.addEventListener("click", closeMacroProductModal);
   $macroProductCancel?.addEventListener("click", closeMacroProductModal);
   $macroProductModalBackdrop?.addEventListener("click", (e) => { if (e.target === $macroProductModalBackdrop) closeMacroProductModal(); });
-  $macroProductAdd?.addEventListener("click", () => {
+  function submitMacroProductFromModal({ appendToExisting = false } = {}) {
     const draft = readMacroProductDraftFromForm();
     const amountState = resolveMacroProductAmountState(draft);
-    const grams = amountState.amount;
-    const gramsUnit = amountState.unit;
-    if (!grams) {
+    const rawAmount = amountState.amount;
+    const rawUnit = amountState.unit;
+    if (!rawAmount) {
       if ($macroProductSummary) $macroProductSummary.textContent = "Indica una cantidad mayor que 0.";
       try { $macroProductGrams?.focus(); } catch (_) {}
       return;
@@ -9233,9 +9284,9 @@ $recipeImportBtn?.addEventListener("click", () => {
           productId: saved.id,
           label: saved.name || parsed.name || ing.label || ing.name || ing.text,
           name: saved.name || parsed.name || ing.name || ing.text,
-          quantity: formatAmountWithUnit(grams, gramsUnit),
-          qty: grams,
-          unit: gramsUnit,
+          quantity: formatAmountWithUnit(rawAmount, rawUnit),
+          qty: rawAmount,
+          unit: rawUnit,
         });
       });
       updateRecipe(targetRecipe.id, { ingredients, updatedAt: Date.now() });
@@ -9247,32 +9298,61 @@ $recipeImportBtn?.addEventListener("click", () => {
       const log = getDailyLog(selectedMacroDate);
       const entry = log?.meals?.[meal]?.entries?.[Number(idx)];
       if (entry) {
+        let nextAmount = Math.max(0, Number(rawAmount) || 0);
+        let nextUnit = normalizeUnit(rawUnit || "g") || "g";
+        if (appendToExisting) {
+          const prevAmount = Math.max(0, Number(entry.amount) || Number(entry.grams) || 0);
+          const prevUnit = normalizeUnit(entry.unit || "g") || "g";
+          if (prevAmount > 0) {
+            if (prevUnit === nextUnit) {
+              nextAmount = prevAmount + nextAmount;
+              nextUnit = prevUnit;
+            } else {
+              const addedInPrevUnit = convertAmountWithProduct(saved, nextAmount, nextUnit, prevUnit);
+              if (addedInPrevUnit != null) {
+                nextAmount = prevAmount + addedInPrevUnit;
+                nextUnit = prevUnit;
+              } else {
+                const prevInNextUnit = convertAmountWithProduct(saved, prevAmount, prevUnit, nextUnit);
+                if (prevInNextUnit != null) {
+                  nextAmount = prevInNextUnit + nextAmount;
+                } else {
+                  if ($macroProductSummary) $macroProductSummary.textContent = "No se puede sumar: unidades incompatibles para este producto.";
+                  return;
+                }
+              }
+            }
+          }
+        }
         const prevEffects = {
           habits: Array.isArray(entry?.sideEffects?.habits) ? entry.sideEffects.habits : [{ habitId: String(entry?.habitSync?.habitId || "").trim(), amount: Math.max(0, Number(entry?.habitSync?.amount) || 0) }],
           financeCost: Math.max(0, Number(entry?.sideEffects?.financeCost) || 0),
         };
-        const rebuiltEntry = buildConsumptionEntryFromEditor({ product: saved, amount: grams, unit: gramsUnit, meal });
+        const rebuiltEntry = buildConsumptionEntryFromEditor({ product: saved, amount: nextAmount, unit: nextUnit, meal });
         persistConsumptionEntry(rebuiltEntry, { meal, entryTarget: { idx: Number(idx) } });
         applyRecipeSideEffects(prevEffects, selectedMacroDate, -1, "entry_edit_old");
         applyRecipeSideEffects(rebuiltEntry.sideEffects || buildProductSideEffects(saved, 1), selectedMacroDate, 1, "entry_edit_new");
       }
 	    } else {
 	      const baseUnit = normalizeUnit(saved.baseUnit || saved.servingBaseUnit || "g") || "g";
-	      const amountInBaseUnit = convertAmountWithProduct(saved, grams, gramsUnit, baseUnit);
+	      const amountInBaseUnit = convertAmountWithProduct(saved, rawAmount, rawUnit, baseUnit);
 	      if (amountInBaseUnit == null) {
 	        const unitWeight = resolveUnitWeightSpec(saved);
-	        const needsUnitWeight = (gramsUnit === "unit" || baseUnit === "unit") && gramsUnit !== baseUnit;
+	        const needsUnitWeight = (rawUnit === "unit" || baseUnit === "unit") && rawUnit !== baseUnit;
 	        if ($macroProductSummary) {
 	          $macroProductSummary.textContent = needsUnitWeight && !unitWeight
-	            ? `Falta "Peso por unidad" para convertir ${formatAmountWithUnit(grams, gramsUnit)} a ${baseUnit}.`
-	            : `No se puede convertir ${gramsUnit} a ${baseUnit} para este producto.`;
+	            ? `Falta "Peso por unidad" para convertir ${formatAmountWithUnit(rawAmount, rawUnit)} a ${baseUnit}.`
+	            : `No se puede convertir ${rawUnit} a ${baseUnit} para este producto.`;
 	        }
 	        return;
 	      }
 	      addProductToMeal(_macroProductMeal || macroModalState.meal || "breakfast", saved, amountInBaseUnit);
 	    }
     closeMacroProductModal();
-  });
+  }
+
+  $macroProductAdd?.addEventListener("click", () => submitMacroProductFromModal());
+  $macroProductAddMore?.addEventListener("click", () => submitMacroProductFromModal({ appendToExisting: true }));
 
   $macroScanEngineHtml5?.addEventListener("click", async () => {
     await startScannerPreview();

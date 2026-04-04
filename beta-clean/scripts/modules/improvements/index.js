@@ -1261,20 +1261,15 @@ function isVisualFix(item) {
 }
 
 function getExportClosing(items) {
-  const visualCount = items.filter((item) => isVisualFix(item)).length;
-  if (!visualCount) {
+  const hasVisualFix = items.some((item) => isVisualFix(item));
+  if (!hasVisualFix) {
     return "Aplícalos sin romper lo existente y respetando la estética y funcionamiento actuales.";
   }
-  if (visualCount === items.length) return "Aplícalos sin romper lo existente.";
   return "Aplícalos sin romper lo existente y respetando lo que no forme parte del cambio solicitado.";
 }
 
 function buildItemExportBody(item) {
-  const fragments = [item?.description, item?.details, item?.instructions]
-    .map((value) => normalizeExportText(value))
-    .filter(Boolean);
-  const unique = [...new Set(fragments)];
-  return unique.join(" | ");
+  return normalizeExportText(item?.details);
 }
 
 function buildExportPrompt(items, { board = getActiveTab() } = {}) {
@@ -1283,16 +1278,16 @@ function buildExportPrompt(items, { board = getActiveTab() } = {}) {
     .sort(sortPendingItems);
   if (!safeItems.length) return "";
 
-  const categoryLabel = board?.label || "General";
-  const intro = `Estamos trabajando en una web app/PWA desplegada en GitHub Pages, con guardado en Firebase. Queremos resolver los siguientes fixes de la pestaña ${categoryLabel}. ${getExportClosing(safeItems)}`;
+  const categoryLabel = normalizeExportText(board?.label || "General");
+  const intro = `Estamos trabajando en una web app/PWA desplegada en GitHub Pages, con guardado en Firebase. Queremos resolver los siguientes fixes de la pestaña [${categoryLabel}].`;
+  const closing = getExportClosing(safeItems);
   const lines = safeItems.map((item, index) => {
-    const title = String(item.title || "Sin titulo").trim();
+    const title = normalizeExportText(item?.title || "");
     const body = buildItemExportBody(item);
-    const context = body ? ` — ${body}` : "";
-    return `${index + 1}. ${title}${context}`;
+    return `${index + 1}. ${title} — ${body}`;
   });
 
-  return [intro, "", ...lines].join("\n");
+  return [intro, closing, "", ...lines].join("\n");
 }
 
 async function copyTextToClipboard(value) {

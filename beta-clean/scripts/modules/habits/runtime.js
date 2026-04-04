@@ -34,6 +34,7 @@ let HABIT_UI_PATH = null;
 let HABIT_UI_QUICK_COUNTERS_PATH = null;
 let remoteBound = false;
 let habitsRuntimeReady = false;
+let habitsRuntimeInitializing = false;
 
 function setUserPaths(uid) {
   currentUid = uid || null;
@@ -12201,28 +12202,33 @@ window.__bookshellHabits = {
 };
 async function initHabits() {
   if (!currentUid) return;
-  if (habitsRuntimeReady) return;
-  readCache();
-  loadSessionSelection();
-  loadHeatmapYear();
-  loadHistoryRange();
-  loadHabitCompareSettingsLocal();
-  ensureUnknownHabit(true);
-  ensureSessionOverlayInBody();
-  handleShortcutUrlOnce();
-  bindEvents();
-  await loadScheduleFromRemote();
-  listenRemote();
-  renderHabits();
-  maybeAutoCloseScheduleDay();
-  scheduleAutoCloseInterval = window.setInterval(maybeAutoCloseScheduleDay, 600000);
-  if (getActiveSessionsList().length) {
-    sessionInterval = setInterval(updateSessionUI, 500);
+  if (habitsRuntimeReady || habitsRuntimeInitializing) return;
+  habitsRuntimeInitializing = true;
+  try {
+    readCache();
+    loadSessionSelection();
+    loadHeatmapYear();
+    loadHistoryRange();
+    loadHabitCompareSettingsLocal();
+    ensureUnknownHabit(true);
+    ensureSessionOverlayInBody();
+    handleShortcutUrlOnce();
+    bindEvents();
+    await loadScheduleFromRemote();
+    listenRemote();
+    renderHabits();
+    maybeAutoCloseScheduleDay();
+    scheduleAutoCloseInterval = window.setInterval(maybeAutoCloseScheduleDay, 600000);
+    if (getActiveSessionsList().length) {
+      sessionInterval = setInterval(updateSessionUI, 500);
+    }
+    window.addEventListener("resize", () => {
+      if (habitDonutChart) habitDonutChart.resize();
+    });
+    habitsRuntimeReady = true;
+  } finally {
+    habitsRuntimeInitializing = false;
   }
-  window.addEventListener("resize", () => {
-    if (habitDonutChart) habitDonutChart.resize();
-  });
-  habitsRuntimeReady = true;
 }
 
 setUserPaths(currentUid);
@@ -12230,7 +12236,7 @@ initHabits();
 
 onUserChange((user) => {
   const nextUid = user?.uid ?? null;
-  if (!nextUid || habitsRuntimeReady) return;
+  if (!nextUid || habitsRuntimeReady || habitsRuntimeInitializing) return;
   setUserPaths(nextUid);
   initHabits();
 });

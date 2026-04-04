@@ -1391,19 +1391,36 @@ function buildItemExportBody(item) {
   return normalizeExportText(item?.details);
 }
 
+function resolveItemBoardForExport(item) {
+  if (!item || typeof item !== "object") return getGeneralBoard();
+  const tabs = getAvailableBoards({ sort: false });
+  const viewId = resolveLegacyViewId(item.viewId || item.boardId || item.tabId, tabs, state.boards);
+  return findTabById(viewId, tabs) || buildFallbackBoard(viewId);
+}
+
 function buildExportPrompt(items, { board = getActiveTab() } = {}) {
   const safeItems = (items || [])
     .filter((item) => item?.status !== "resolved")
     .sort(sortPendingItems);
   if (!safeItems.length) return "";
 
-  const categoryLabel = normalizeExportText(board?.label || "General");
-  const intro = `Estamos trabajando en una web app/PWA desplegada en GitHub Pages, con guardado en Firebase. Queremos resolver los siguientes fixes de la pestaña [${categoryLabel}].`;
+  const resolvedBoards = safeItems
+    .map((item) => resolveItemBoardForExport(item)?.id)
+    .filter(Boolean);
+  const uniqueBoards = Array.from(new Set(resolvedBoards));
+  const categoryLabel = uniqueBoards.length === 1
+    ? normalizeExportText(resolveItemBoardForExport(safeItems[0])?.label || board?.label || "General")
+    : "multicategoria";
+  const intro = uniqueBoards.length === 1
+    ? `Estamos trabajando en una web app/PWA desplegada en GitHub Pages, con guardado en Firebase. Queremos resolver los siguientes fixes de la pestaña [${categoryLabel}].`
+    : "Estamos trabajando en una web app/PWA desplegada en GitHub Pages, con guardado en Firebase. Queremos resolver los siguientes fixes agrupados por su pestaña real.";
   const closing = getExportClosing(safeItems);
   const lines = safeItems.map((item, index) => {
     const title = normalizeExportText(item?.title || "");
     const body = buildItemExportBody(item);
-    return `${index + 1}. ${title} — ${body}`;
+    const itemBoard = resolveItemBoardForExport(item);
+    const itemBoardLabel = normalizeExportText(itemBoard?.label || "General");
+    return `${index + 1}. [${itemBoardLabel}] ${title} — ${body}`;
   });
 
   return [intro, closing, "", ...lines].join("\n");

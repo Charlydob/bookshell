@@ -7072,7 +7072,6 @@ view.addEventListener('focusout', async (event) => {
       }
       await safeFirebase(() => set(ref(db, `${state.financePath}/transactions/${saveId}`), payload));
       if (type !== 'transfer') {
-        if (!state.balance.categories?.[category]) await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
         await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
       }
       if (isRecurring) {
@@ -7126,7 +7125,7 @@ view.addEventListener('focusout', async (event) => {
       }
       const touched = new Set([payload.accountId, payload.fromAccountId, payload.toAccountId, prev?.accountId, prev?.fromAccountId, prev?.toAccountId].filter(Boolean));
       const recomputeStart = [dateISO, prev?.date, isoToDay(prev?.dateISO || '')].filter(Boolean).sort()[0] || dateISO;
-      for (const account of touched) await recomputeAccountEntries(account, recomputeStart);
+      await Promise.all(Array.from(touched).map((account) => recomputeAccountEntries(account, recomputeStart)));
       scheduleAggregateRebuild();
       localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId || fromAccountId || '');
       state.lastMovementAccountId = accountId || fromAccountId || '';

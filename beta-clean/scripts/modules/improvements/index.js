@@ -72,6 +72,9 @@ const state = {
   activeViewId: DEFAULT_VIEW_ID,
   editingItemId: "",
   editorOpen: false,
+  exportOpen: false,
+  selectedItems: new Set(),
+  exportText: "",
   expandedItems: new Set(),
   listeners: [],
   authUnsub: null,
@@ -517,7 +520,11 @@ function getEditingItem() {
 function sortPendingItems(a, b) {
   const priorityDiff = (PRIORITY_ORDER[b.priority] || 0) - (PRIORITY_ORDER[a.priority] || 0);
   if (priorityDiff) return priorityDiff;
-  return (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0);
+  const createdDiff = (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0);
+  if (createdDiff) return createdDiff;
+  const updatedDiff = (Number(a.updatedAt) || 0) - (Number(b.updatedAt) || 0);
+  if (updatedDiff) return updatedDiff;
+  return String(a.id || "").localeCompare(String(b.id || ""), "es", { sensitivity: "base" });
 }
 
 function sortResolvedItems(a, b) {
@@ -663,7 +670,21 @@ function renderEditorModal() {
   if (!els.editorBackdrop) return;
   els.editorBackdrop.classList.toggle("hidden", !state.editorOpen);
   els.editorBackdrop.setAttribute("aria-hidden", String(!state.editorOpen));
-  document.body.classList.toggle("has-open-modal", state.editorOpen);
+  document.body.classList.toggle("has-open-modal", state.editorOpen || state.exportOpen);
+}
+
+function renderExportModal() {
+  if (!els.exportBackdrop) return;
+  const hasPrompt = Boolean(state.exportText);
+  els.exportBackdrop.classList.toggle("hidden", !state.exportOpen);
+  els.exportBackdrop.setAttribute("aria-hidden", String(!state.exportOpen));
+  if (els.exportText) {
+    els.exportText.value = state.exportText;
+  }
+  if (els.copyExportBtn) {
+    els.copyExportBtn.disabled = !hasPrompt;
+  }
+  document.body.classList.toggle("has-open-modal", state.editorOpen || state.exportOpen);
 }
 
 function renderEmptyList(target, text) {
@@ -752,7 +773,7 @@ function renderBoardSelectInput() {
   setBoardFieldValue(currentViewId);
 }
 
-function renderCompactItemList(target, items, emptyText) {
+function renderCompactItemList(target, items, emptyText, { selectable = false } = {}) {
   if (!target) return;
   if (!items.length) {
     renderEmptyList(target, emptyText);
@@ -772,6 +793,18 @@ function renderCompactItemList(target, items, emptyText) {
     return `
       <article class="improvements__item improvements__item--${item.priority} ${item.status === "resolved" ? "is-resolved" : ""} ${isExpanded ? "is-expanded" : ""}">
         <div class="improvements__itemShell">
+          ${selectable ? `
+            <label class="improvements__itemPick" aria-label="Seleccionar fix para exportar">
+              <input
+                class="improvements__itemPickInput"
+                data-item-action="select"
+                data-item-id="${item.id}"
+                type="checkbox"
+                ${state.selectedItems.has(item.id) ? "checked" : ""}
+              />
+              <span class="improvements__itemPickUi" aria-hidden="true"></span>
+            </label>
+          ` : ""}
           <button
             class="improvements__itemFold"
             data-item-action="expand"
@@ -808,6 +841,7 @@ function renderCompactItemList(target, items, emptyText) {
             <span class="improvements__itemStamp">${stampLabel}: ${escapeHtml(formatDateTime(stampValue))}</span>
           </div>
           <div class="improvements__itemActions">
+            <button class="btn ghost btn-compact" data-item-action="export" data-item-id="${item.id}" type="button">Exportar</button>
             <button class="btn ghost btn-compact" data-item-action="edit" data-item-id="${item.id}" type="button">Editar</button>
             <button class="btn ghost danger btn-compact" data-item-action="delete" data-item-id="${item.id}" type="button">Eliminar</button>
           </div>
@@ -855,7 +889,8 @@ function renderFilteredLists() {
     pendingItems,
     isGeneralView
       ? "No hay mejoras pendientes."
-      : `No hay mejoras pendientes en ${activeLabel}.`
+      : `No hay mejoras pendientes en ${activeLabel}.`,
+    { selectable: true }
   );
   renderCompactItemList(
     els.resolvedList,
@@ -935,6 +970,7 @@ function renderAll() {
   renderBoardSelectInput();
   renderEditorState();
   renderEditorModal();
+  renderExportModal();
   renderFilteredLists();
 }
 
@@ -955,6 +991,21 @@ function closeEditorModal({ reset = false } = {}) {
   if (reset) {
     resetEditor({ viewId: ensureActiveViewId() });
   }
+}
+
+function openExportModal(promptText) {
+  state.exportText = String(promptText || "").trim();
+  state.exportOpen = true;
+  renderExportModal();
+  requestAnimationFrame(() => {
+    els.exportText?.focus();
+    els.exportText?.setSelectionRange(0, 0);
+  });
+}
+
+function closeExportModal() {
+  state.exportOpen = false;
+  renderExportModal();
 }
 
 function resetEditor({ focus = false, viewId = ensureActiveViewId() } = {}) {
@@ -1007,6 +1058,9 @@ function subscribeData() {
     state.expandedItems = new Set(
       [...state.expandedItems].filter((itemId) => Boolean(state.items[itemId]))
     );
+    state.selectedItems = new Set(
+      [...state.selectedItems].filter((itemId) => Boolean(state.items[itemId]) && state.items[itemId].status !== "resolved")
+    );
 
     if (state.editingItemId && !state.items[state.editingItemId]) {
       resetEditor({ viewId: ensureActiveViewId() });
@@ -1024,8 +1078,11 @@ function setUnauthenticatedState() {
   state.boards = {};
   state.items = {};
   state.expandedItems = new Set();
+  state.selectedItems = new Set();
   state.activeViewId = getDefaultViewId();
   state.editorOpen = false;
+  state.exportOpen = false;
+  state.exportText = "";
   resetEditor({ viewId: state.activeViewId });
   renderAll();
 }
@@ -1141,6 +1198,75 @@ async function toggleItemResolved(itemId) {
   });
 }
 
+function getPendingItemsForExport() {
+  const activeViewId = ensureActiveViewId();
+  const visiblePending = getItemList(activeViewId)
+    .filter((item) => item.status !== "resolved")
+    .sort(sortPendingItems);
+
+  const selectedPending = visiblePending.filter((item) => state.selectedItems.has(item.id));
+  if (selectedPending.length) return selectedPending;
+  return visiblePending;
+}
+
+function buildExportPrompt(items, { board = getActiveTab() } = {}) {
+  const safeItems = (items || [])
+    .filter((item) => item?.status !== "resolved")
+    .sort(sortPendingItems);
+  if (!safeItems.length) return "";
+
+  const categoryLabel = board?.label || "General";
+  const intro = `Estamos trabajando en una web app/PWA desplegada en GitHub Pages, con guardado en Firebase. Queremos resolver los siguientes fixes de la pestaña ${categoryLabel}. Aplícalos sin romper lo existente y respetando la estética y funcionamiento actuales.`;
+  const lines = safeItems.map((item, index) => {
+    const title = String(item.title || "Sin titulo").trim();
+    const details = String(item.details || "").trim().replace(/\s+/g, " ");
+    const context = details ? ` — ${details}` : "";
+    return `${index + 1}. ${title}${context}`;
+  });
+
+  return [intro, "", ...lines].join("\n");
+}
+
+async function copyTextToClipboard(value) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+
+  if (!els.exportText) return false;
+  els.exportText.value = text;
+  els.exportText.focus();
+  els.exportText.select();
+  return document.execCommand("copy");
+}
+
+async function exportFixes(items, board) {
+  const prompt = buildExportPrompt(items, { board });
+  if (!prompt) {
+    window.alert("No hay fixes pendientes para exportar con los filtros actuales.");
+    return;
+  }
+
+  try {
+    await copyTextToClipboard(prompt);
+  } catch (_) {}
+
+  openExportModal(prompt);
+}
+
+function toggleItemSelection(itemId, selected) {
+  const item = state.items[itemId];
+  if (!item || item.status === "resolved") {
+    state.selectedItems.delete(itemId);
+    return;
+  }
+
+  if (selected) state.selectedItems.add(itemId);
+  else state.selectedItems.delete(itemId);
+}
+
 function bindEvents() {
   if (state.eventsBound || !state.root) return;
 
@@ -1173,10 +1299,26 @@ function bindEvents() {
     renderAll();
   });
 
+  els.exportBtn?.addEventListener("click", () => {
+    const items = getPendingItemsForExport();
+    void exportFixes(items, getActiveTab());
+  });
+
   els.editorBackdrop?.addEventListener("click", (event) => {
     if (event.target === els.editorBackdrop || event.target?.closest?.("#improvements-close-editor-btn")) {
       closeEditorModal({ reset: true });
     }
+  });
+
+  els.exportBackdrop?.addEventListener("click", (event) => {
+    if (event.target === els.exportBackdrop || event.target?.closest?.("#improvements-close-export-btn")) {
+      closeExportModal();
+    }
+  });
+
+  els.copyExportBtn?.addEventListener("click", () => {
+    if (!state.exportText) return;
+    void copyTextToClipboard(state.exportText);
   });
 
   const handleListAction = (event) => {
@@ -1190,6 +1332,13 @@ function bindEvents() {
       startEditingItem(itemId);
       return;
     }
+    if (action === "export") {
+      const item = state.items[itemId];
+      if (!item) return;
+      const board = findTabById(item.viewId) || getActiveTab();
+      void exportFixes([{ id: itemId, ...item }], board);
+      return;
+    }
     if (action === "expand") {
       toggleItemExpanded(itemId);
       return;
@@ -1200,6 +1349,14 @@ function bindEvents() {
   };
 
   const handleListToggle = (event) => {
+    const selectionInput = event.target?.closest?.('input[data-item-action="select"][data-item-id]');
+    if (selectionInput) {
+      const itemId = String(selectionInput.dataset.itemId || "").trim();
+      if (!itemId) return;
+      toggleItemSelection(itemId, Boolean(selectionInput.checked));
+      return;
+    }
+
     const checkbox = event.target?.closest?.('input[data-item-action="toggle"][data-item-id]');
     if (!checkbox) return;
     const itemId = String(checkbox.dataset.itemId || "").trim();
@@ -1213,8 +1370,14 @@ function bindEvents() {
   els.resolvedList?.addEventListener("change", handleListToggle);
 
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || !state.editorOpen) return;
-    closeEditorModal({ reset: true });
+    if (event.key !== "Escape") return;
+    if (state.editorOpen) {
+      closeEditorModal({ reset: true });
+      return;
+    }
+    if (state.exportOpen) {
+      closeExportModal();
+    }
   });
 
   state.eventsBound = true;
@@ -1227,7 +1390,11 @@ function cacheElements(root) {
   els.boardTabs = root.querySelector("#improvements-board-tabs");
   els.boardMeta = root.querySelector("#improvements-board-meta");
   els.editorBackdrop = root.querySelector("#improvements-editor-backdrop");
+  els.exportBackdrop = root.querySelector("#improvements-export-backdrop");
   els.openEditorBtn = root.querySelector("#improvements-open-editor-btn");
+  els.exportBtn = root.querySelector("#improvements-export-btn");
+  els.exportText = root.querySelector("#improvements-export-text");
+  els.copyExportBtn = root.querySelector("#improvements-copy-export-btn");
   els.itemForm = root.querySelector("#improvements-item-form");
   els.itemSubmit = root.querySelector('#improvements-item-form button[type="submit"]');
   els.cancelEditBtn = root.querySelector("#improvements-cancel-edit-btn");

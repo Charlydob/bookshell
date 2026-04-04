@@ -239,6 +239,12 @@ body.has-open-modal #improvements-open-editor-btn {
   gap: 10px;
 }
 
+.improvements__boardHeadActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .improvements__lists {
   display: grid;
   gap: 10px;
@@ -649,6 +655,53 @@ body.has-open-modal #improvements-open-editor-btn {
   gap: 10px;
 }
 
+.improvements__itemPick {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+}
+
+.improvements__itemPickInput {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.improvements__itemPickUi {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(196, 213, 240, 0.46);
+  background: rgba(255, 255, 255, 0.04);
+  display: block;
+  position: relative;
+}
+
+.improvements__itemPickUi::after {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 4px;
+  width: 6px;
+  height: 12px;
+  border-right: 2px solid #082114;
+  border-bottom: 2px solid #082114;
+  transform: rotate(45deg) scale(0.7);
+  opacity: 0;
+}
+
+.improvements__itemPickInput:checked + .improvements__itemPickUi {
+  background: linear-gradient(180deg, #89f0c4, #45c994);
+  border-color: rgba(95, 218, 171, 0.8);
+}
+
+.improvements__itemPickInput:checked + .improvements__itemPickUi::after {
+  opacity: 1;
+}
+
 .improvements__itemFold {
   flex: 1;
   min-width: 0;
@@ -785,6 +838,22 @@ body.has-open-modal #improvements-open-editor-btn {
 .improvements__itemDetails {
   font-size: 12.5px;
   line-height: 1.45;
+}
+
+.improvements__exportModal {
+  max-width: 680px;
+}
+
+.improvements__exportBody {
+  display: grid;
+  gap: 10px;
+}
+
+#improvements-export-text {
+  min-height: 220px;
+  resize: vertical;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 @media (max-width: 640px) {

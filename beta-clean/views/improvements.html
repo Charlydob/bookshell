@@ -18,7 +18,10 @@
         <p class="improvements__sectionLabel">Categorias</p>
         <h3 class="improvements__sectionTitle">Vistas y boards dinamicos</h3>
       </div>
-      <span class="improvements__countBadge" id="improvements-tab-count">0</span>
+      <div class="improvements__boardHeadActions">
+        <button class="btn ghost btn-compact" id="improvements-export-btn" type="button">Exportar</button>
+        <span class="improvements__countBadge" id="improvements-tab-count">0</span>
+      </div>
     </div>
     <div class="improvements__boardRow">
       <div class="improvements__boardTabs" id="improvements-board-tabs"></div>
@@ -79,6 +82,24 @@
             <button class="btn ghost danger btn-compact hidden" id="improvements-delete-item-btn" type="button">Eliminar</button>
           </div>
         </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop improvements__exportBackdrop hidden" id="improvements-export-backdrop" aria-hidden="true">
+    <div class="modal improvements__exportModal" role="dialog" aria-modal="true" aria-labelledby="improvements-export-title">
+      <div class="modal-header improvements__editorHeader">
+        <div>
+          <p class="improvements__sectionLabel">Exportar prompts</p>
+          <h3 class="modal-title improvements__sectionTitle" id="improvements-export-title">Prompt para ChatGPT / Codex</h3>
+        </div>
+        <button class="icon-btn icon-btn-small" id="improvements-close-export-btn" type="button" aria-label="Cerrar">x</button>
+      </div>
+      <div class="modal-body improvements__exportBody">
+        <textarea id="improvements-export-text" readonly></textarea>
+        <div class="improvements__editorActions">
+          <button class="btn primary btn-compact" id="improvements-copy-export-btn" type="button">Copiar prompt</button>
+        </div>
       </div>
     </div>
   </div>

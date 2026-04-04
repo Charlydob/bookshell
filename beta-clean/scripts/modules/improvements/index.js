@@ -1199,14 +1199,76 @@ async function toggleItemResolved(itemId) {
 }
 
 function getPendingItemsForExport() {
+  const selectedPending = Object.entries(state.items)
+    .map(([id, item]) => ({ id, ...item }))
+    .filter((item) => item.status !== "resolved" && state.selectedItems.has(item.id))
+    .sort(sortPendingItems);
+  if (selectedPending.length) return selectedPending;
+
   const activeViewId = ensureActiveViewId();
-  const visiblePending = getItemList(activeViewId)
+  return getItemList(activeViewId)
     .filter((item) => item.status !== "resolved")
     .sort(sortPendingItems);
+}
 
-  const selectedPending = visiblePending.filter((item) => state.selectedItems.has(item.id));
-  if (selectedPending.length) return selectedPending;
-  return visiblePending;
+function normalizeExportText(value) {
+  return String(value || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function isVisualFix(item) {
+  const directType = normalizeToken(item?.type || item?.fixType || item?.category || item?.kind);
+  if (directType) {
+    if (["visual", "ui", "ux", "estetico", "estetica", "diseno", "style", "styling"].some((token) => directType.includes(token))) {
+      return true;
+    }
+    if (["functional", "funcional", "technical", "tecnico", "comportamiento", "behavior"].some((token) => directType.includes(token))) {
+      return false;
+    }
+  }
+
+  const rawText = normalizeToken([
+    item?.title,
+    item?.description,
+    item?.details,
+    item?.instructions,
+  ].filter(Boolean).join(" "));
+
+  if (!rawText) return false;
+  return [
+    "visual",
+    "estetica",
+    "estetico",
+    "diseno",
+    "maquet",
+    "layout",
+    "ui",
+    "css",
+    "estilo",
+    "color",
+    "tipografia",
+    "animacion",
+  ].some((token) => rawText.includes(token));
+}
+
+function getExportClosing(items) {
+  const visualCount = items.filter((item) => isVisualFix(item)).length;
+  if (!visualCount) {
+    return "Aplícalos sin romper lo existente y respetando la estética y funcionamiento actuales.";
+  }
+  if (visualCount === items.length) return "Aplícalos sin romper lo existente.";
+  return "Aplícalos sin romper lo existente y respetando lo que no forme parte del cambio solicitado.";
+}
+
+function buildItemExportBody(item) {
+  const fragments = [item?.description, item?.details, item?.instructions]
+    .map((value) => normalizeExportText(value))
+    .filter(Boolean);
+  const unique = [...new Set(fragments)];
+  return unique.join(" | ");
 }
 
 function buildExportPrompt(items, { board = getActiveTab() } = {}) {
@@ -1216,11 +1278,11 @@ function buildExportPrompt(items, { board = getActiveTab() } = {}) {
   if (!safeItems.length) return "";
 
   const categoryLabel = board?.label || "General";
-  const intro = `Estamos trabajando en una web app/PWA desplegada en GitHub Pages, con guardado en Firebase. Queremos resolver los siguientes fixes de la pestaña ${categoryLabel}. Aplícalos sin romper lo existente y respetando la estética y funcionamiento actuales.`;
+  const intro = `Estamos trabajando en una web app/PWA desplegada en GitHub Pages, con guardado en Firebase. Queremos resolver los siguientes fixes de la pestaña ${categoryLabel}. ${getExportClosing(safeItems)}`;
   const lines = safeItems.map((item, index) => {
     const title = String(item.title || "Sin titulo").trim();
-    const details = String(item.details || "").trim().replace(/\s+/g, " ");
-    const context = details ? ` — ${details}` : "";
+    const body = buildItemExportBody(item);
+    const context = body ? ` — ${body}` : "";
     return `${index + 1}. ${title}${context}`;
   });
 

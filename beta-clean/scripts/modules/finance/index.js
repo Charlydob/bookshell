@@ -9,9 +9,9 @@ export async function init() {
 }
 
 export async function onShow() {
-  try {
-    window.dispatchEvent(new Event("resize"));
-  } catch (_) {}
+  if (typeof runtimeModule?.onShow === "function") {
+    await runtimeModule.onShow();
+  }
 }
 
 export function destroy() {}

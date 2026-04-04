@@ -551,11 +551,18 @@
   box-shadow: 0 0 0 1px rgba(245, 197, 66, 0.35), 0 8px 18px rgba(245, 197, 66, 0.18);
 }
 
+.gym-sets-row.set--done {
+  background: rgba(34, 197, 94, 0.16);
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.28), 0 8px 18px rgba(34, 197, 94, 0.12);
+}
+
 .gym-set-check {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   justify-self: end;
+  min-width: 0;
+  position: relative;
 }
 
 .gym-set-pr-icon {
@@ -658,7 +665,30 @@
   place-items: center;
   background: rgba(255, 255, 255, 0.06);
   max-width: 38px;
-  
+}
+
+.gym-set-check.is-unilateral {
+  width: 100%;
+  justify-self: stretch;
+  justify-content: center;
+  gap: 0;
+}
+
+.gym-set-check.is-unilateral .gym-checkbox {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  height: 34px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.gym-set-check.is-unilateral .gym-set-pr-icon {
+  position: absolute;
+  top: -5px;
+  right: -3px;
+  font-size: 11px;
+  line-height: 1;
 }
 #gym-body-height, #gym-body-weight {
   max-width:80px;
@@ -973,11 +1003,11 @@
 .gym-sets-header.is-unilateral,
 .gym-sets-row.is-unilateral{
   grid-template-columns:
-    34px 46px
-    44px 68px
-    44px 68px
-    44px;
-  gap: 6px;
+    28px 56px
+    minmax(38px, 0.9fr) minmax(54px, 1.1fr)
+    minmax(38px, 0.9fr) minmax(54px, 1.1fr)
+    46px;
+  gap: 4px;
 }
 
 .gym-sets-row.is-unilateral > *{
@@ -992,7 +1022,7 @@
 
 .gym-sets-row.is-unilateral .gym-input-uni[data-field="kgR"],
 .gym-sets-row.is-unilateral .gym-input-uni[data-field="kgL"]{
-  max-width: 38px;
+  max-width: none;
 }
 
 .gym-uni-label{
@@ -1011,9 +1041,10 @@
 .gym-input-uni{
   height: 34px;
   padding: 0 6px;
-  font-size: 14px;
-  max-width: 40px;
-  min-width: 10px; ;
+  width: 100%;
+  font-size: 13px;
+  max-width: none;
+  min-width: 0;
 }
 .gym-set-swipe-front.is-unilateral {
   gap: 0;
@@ -1070,17 +1101,17 @@
   pointer-events: auto;
 }
 .gym-sets-header.is-unilateral{
-  max-width: 220px;
-  min-width: 220px;
-  gap: 0px;
+  max-width: none;
+  min-width: 0;
+  gap: 4px;
 }
 .gym-sets-row.gym-set-swipe-front.is-unilateral{
-  gap: 0px;
+  gap: 4px;
 }
 input.gym-input.gym-input-uni.kg{
-  max-width: 8px;
-  min-width: 8px;
-font-size: 12px;
+  max-width: none;
+  min-width: 0;
+  font-size: 12px;
 }
 
 .gym-history-group {
@@ -1204,6 +1235,33 @@ margin-top: 0px;
   background: rgba(9, 12, 22, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.08);
   transition: transform .2s ease, opacity .2s ease;
+}
+
+.gym-history-card--deletable {
+  position: relative;
+  padding-right: 52px;
+}
+
+.gym-history-delete {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.gym-history-delete:active {
+  transform: scale(0.96);
 }
 
 .gym-history-card:active {

@@ -1693,11 +1693,6 @@ function bindAuthGate() {
     const viewId = getInitialView();
     try {
       await setView(viewId, { pushHash: true });
-      if (!hasActiveSession && viewId !== HABITS_VIEW_ID) {
-        window.setTimeout(() => {
-          void preloadViewModule(HABITS_VIEW_ID);
-        }, 0);
-      }
       setBootPhase("Preparando interfaz…", 78);
     } finally {
       requestAnimationFrame(() => finishBootSplash());

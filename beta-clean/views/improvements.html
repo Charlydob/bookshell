@@ -10,23 +10,140 @@
     </div>
   </header>
 
-  <section class="improvements__summary" id="improvements-summary"></section>
+  <div class="improvements__windowTabs" role="tablist" aria-label="Vistas de mejoras">
+    <button class="improvements__windowTab is-active" data-window="main" aria-selected="true" type="button">Principal</button>
+    <button class="improvements__windowTab" data-window="stats" aria-selected="false" type="button">Estadistica</button>
+  </div>
 
-  <section class="glassCard improvements__boardShell">
-    <div class="improvements__sectionHead">
-      <div>
-        <p class="improvements__sectionLabel">Categorias</p>
-        <h3 class="improvements__sectionTitle">Vistas y boards dinamicos</h3>
+  <section class="improvements__windowPanel is-active" data-window-panel="main">
+    <section class="improvements__summary" id="improvements-summary"></section>
+
+    <section class="glassCard improvements__boardShell">
+      <div class="improvements__sectionHead">
+        <div>
+          <p class="improvements__sectionLabel">Categorias</p>
+          <h3 class="improvements__sectionTitle">Vistas y boards dinamicos</h3>
+        </div>
+        <div class="improvements__boardHeadActions">
+          <button class="btn ghost btn-compact" id="improvements-export-btn" type="button">Exportar</button>
+          <span class="improvements__countBadge" id="improvements-tab-count">0</span>
+        </div>
       </div>
-      <div class="improvements__boardHeadActions">
-        <button class="btn ghost btn-compact" id="improvements-export-btn" type="button">Exportar</button>
-        <span class="improvements__countBadge" id="improvements-tab-count">0</span>
+      <div class="improvements__boardRow">
+        <div class="improvements__boardTabs" id="improvements-board-tabs"></div>
       </div>
-    </div>
-    <div class="improvements__boardRow">
-      <div class="improvements__boardTabs" id="improvements-board-tabs"></div>
-    </div>
-    <div class="improvements__boardMeta" id="improvements-board-meta"></div>
+      <div class="improvements__boardMeta" id="improvements-board-meta"></div>
+    </section>
+
+    <section class="glassCard improvements__filtersShell">
+      <div class="improvements__sectionHead">
+        <div>
+          <p class="improvements__sectionLabel">Filtros</p>
+          <h3 class="improvements__sectionTitle">Agrupar por tipo</h3>
+        </div>
+        <button class="btn ghost btn-compact hidden" id="improvements-clear-type-filters-btn" type="button">Limpiar</button>
+      </div>
+      <div class="improvements__typeFilters" id="improvements-type-filters"></div>
+    </section>
+
+    <section class="improvements__lists">
+      <article class="glassCard improvements__listBlock">
+        <div class="improvements__sectionHead">
+          <div>
+            <p class="improvements__sectionLabel" id="improvements-pending-label">Pendientes</p>
+            <h3 class="improvements__sectionTitle" id="improvements-pending-title">Fixes abiertos de la categoria</h3>
+          </div>
+          <span class="improvements__countBadge" id="improvements-pending-count">0</span>
+        </div>
+        <div class="improvements__list" id="improvements-pending-list"></div>
+      </article>
+
+      <article class="glassCard improvements__listBlock">
+        <div class="improvements__sectionHead">
+          <div>
+            <p class="improvements__sectionLabel" id="improvements-resolved-label">Resueltos</p>
+            <h3 class="improvements__sectionTitle" id="improvements-resolved-title">Fixes cerrados de la categoria</h3>
+          </div>
+          <div class="improvements__sectionHeadActions">
+            <button
+              class="btn ghost btn-compact improvements__collapseBtn"
+              id="improvements-toggle-resolved-btn"
+              type="button"
+              aria-expanded="true"
+              aria-controls="improvements-resolved-list"
+            >
+              Plegar
+            </button>
+            <span class="improvements__countBadge improvements__countBadge--resolved" id="improvements-resolved-count">0</span>
+          </div>
+        </div>
+        <div class="improvements__list" id="improvements-resolved-list"></div>
+      </article>
+    </section>
+  </section>
+
+  <section class="improvements__windowPanel" data-window-panel="stats">
+    <section class="glassCard improvements__statsShell">
+      <div class="improvements__sectionHead improvements__statsHead">
+        <div>
+          <p class="improvements__sectionLabel">Vista global</p>
+          <h3 class="improvements__sectionTitle">Estado, carga, tipos y ritmo</h3>
+        </div>
+        <p class="improvements__statsSubtitle" id="improvements-stats-subtitle">
+          Vista global por categoria, estado, tipo y ritmo de cierre.
+        </p>
+      </div>
+
+      <div class="improvements__statsKpis" id="improvements-stats-kpis"></div>
+      <div class="improvements__statsInsights" id="improvements-stats-insights"></div>
+      <section class="improvements__statsTypeBlock">
+        <div class="improvements__statsChartHead improvements__statsTypeHead">
+          <div>
+            <p class="improvements__sectionLabel">Tipos</p>
+            <h4 class="improvements__statsChartTitle">Reparto por tipo</h4>
+          </div>
+          <span class="improvements__statsChartHint">Pendientes, resueltos y riesgo por clasificacion</span>
+        </div>
+        <div class="improvements__statsTypes" id="improvements-stats-types"></div>
+      </section>
+
+      <div class="improvements__statsCharts">
+        <article class="improvements__statsChartCard improvements__statsChartCard--donut">
+          <div class="improvements__statsChartHead">
+            <div>
+              <p class="improvements__sectionLabel">Circular</p>
+              <h4 class="improvements__statsChartTitle">Estado global</h4>
+            </div>
+            <span class="improvements__statsChartHint">Pendientes frente a resueltos</span>
+          </div>
+          <div class="improvements__statsChartHost improvements__statsChartHost--donut" id="improvements-stats-donut"></div>
+        </article>
+
+        <article class="improvements__statsChartCard improvements__statsChartCard--bar">
+          <div class="improvements__statsChartHead">
+            <div>
+              <p class="improvements__sectionLabel">Barras</p>
+              <h4 class="improvements__statsChartTitle">Carga por categoria</h4>
+            </div>
+            <span class="improvements__statsChartHint">Pendientes y resueltos por tablero</span>
+          </div>
+          <div class="improvements__statsChartHost improvements__statsChartHost--bar" id="improvements-stats-bar"></div>
+        </article>
+
+        <article class="improvements__statsChartCard improvements__statsChartCard--line">
+          <div class="improvements__statsChartHead">
+            <div>
+              <p class="improvements__sectionLabel">Lineal</p>
+              <h4 class="improvements__statsChartTitle">Ritmo de entrada y cierre</h4>
+            </div>
+            <span class="improvements__statsChartHint">Ultimos meses con backlog acumulado</span>
+          </div>
+          <div class="improvements__statsChartHost improvements__statsChartHost--line" id="improvements-stats-line"></div>
+        </article>
+      </div>
+
+      <div class="improvements__statsBreakdown" id="improvements-stats-breakdown"></div>
+    </section>
   </section>
 
   <div class="modal-backdrop improvements__editorBackdrop hidden" id="improvements-editor-backdrop" aria-hidden="true">
@@ -55,6 +172,20 @@
             <label class="field">
               <span>Categoria</span>
               <select id="improvements-board-select"></select>
+            </label>
+
+            <label class="field">
+              <span>Tipo</span>
+              <select id="improvements-fix-type">
+                <option value="sin-tipo" selected>Sin tipo</option>
+                <option value="estetico">Estetico</option>
+                <option value="logico">Logico</option>
+                <option value="ux">UX</option>
+                <option value="datos">Datos</option>
+                <option value="rendimiento">Rendimiento</option>
+                <option value="contenido">Contenido</option>
+                <option value="otro">Otro</option>
+              </select>
             </label>
 
             <label class="field">
@@ -104,39 +235,5 @@
     </div>
   </div>
 
-  <section class="improvements__lists">
-    <article class="glassCard improvements__listBlock">
-      <div class="improvements__sectionHead">
-        <div>
-          <p class="improvements__sectionLabel" id="improvements-pending-label">Pendientes</p>
-          <h3 class="improvements__sectionTitle" id="improvements-pending-title">Fixes abiertos de la categoria</h3>
-        </div>
-        <span class="improvements__countBadge" id="improvements-pending-count">0</span>
-      </div>
-      <div class="improvements__list" id="improvements-pending-list"></div>
-    </article>
-
-    <article class="glassCard improvements__listBlock">
-      <div class="improvements__sectionHead">
-        <div>
-          <p class="improvements__sectionLabel" id="improvements-resolved-label">Resueltos</p>
-          <h3 class="improvements__sectionTitle" id="improvements-resolved-title">Fixes cerrados de la categoria</h3>
-        </div>
-        <div class="improvements__sectionHeadActions">
-          <button
-            class="btn ghost btn-compact improvements__collapseBtn"
-            id="improvements-toggle-resolved-btn"
-            type="button"
-            aria-expanded="true"
-            aria-controls="improvements-resolved-list"
-          >
-            Plegar
-          </button>
-          <span class="improvements__countBadge improvements__countBadge--resolved" id="improvements-resolved-count">0</span>
-        </div>
-      </div>
-      <div class="improvements__list" id="improvements-resolved-list"></div>
-    </article>
-  </section>
   <button id="improvements-open-editor-btn" type="button" aria-label="Anadir fix" title="Anadir fix">Fix</button>
 </div>

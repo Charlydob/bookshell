@@ -427,6 +427,8 @@ function bindEvents() {
           updatedAt: now
         });
       }
+      persistGymCache();
+      emitBookshellData("local:exercises");
       scheduleWorkoutSave();
       renderWorkoutEditor();
       renderMetrics();
@@ -446,7 +448,7 @@ function bindEvents() {
           fillFromPlaceholdersIfEmpty(row, activeSet, {
             exerciseType,
             unilateral: getExerciseUnilateral(exercise, exerciseId),
-            useBodyweight: getExerciseUseBodyweight(exercise)
+            useBodyweight: getExerciseUseBodyweight(exercise, exerciseId)
           });
         }
       }
@@ -540,8 +542,17 @@ function bindEvents() {
   // --- swipe to delete sets ---
   let openSwipe = null;
   let swipe = null;
+  let sessionBackSwipe = null;
 
   const ACTION_W = 92;
+  const SESSION_BACK_SWIPE_EDGE_PX = 28;
+  const SESSION_BACK_SWIPE_MIN_PX = 84;
+
+  function isSessionBackSwipeEdge(clientX) {
+    if (currentGymScreen !== "session" || !$gymSessionView) return false;
+    const rect = $gymSessionView.getBoundingClientRect();
+    return (clientX - rect.left) <= SESSION_BACK_SWIPE_EDGE_PX;
+  }
 
   function closeSwipe(el) {
     if (!el) return;
@@ -568,6 +579,7 @@ function bindEvents() {
   $gymWorkoutExercises.addEventListener(
     "pointerdown",
     (e) => {
+      if (isSessionBackSwipeEdge(e.clientX)) return;
       const front = e.target.closest(".gym-set-swipe-front");
       if (!front) return;
       if (e.target.closest("input, button, select, textarea, label")) return;
@@ -649,6 +661,69 @@ function bindEvents() {
 
   $gymWorkoutExercises.addEventListener("pointerup", endSwipe, { passive: true });
   $gymWorkoutExercises.addEventListener("pointercancel", endSwipe, { passive: true });
+
+  $gymSessionView?.addEventListener(
+    "pointerdown",
+    (e) => {
+      if (!isSessionBackSwipeEdge(e.clientX)) return;
+      if (e.target.closest("input, button, select, textarea, label")) return;
+      sessionBackSwipe = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        dx: 0,
+        locked: false,
+        horizontal: false,
+        captured: false
+      };
+    },
+    { passive: true }
+  );
+
+  $gymSessionView?.addEventListener(
+    "pointermove",
+    (e) => {
+      if (!sessionBackSwipe || e.pointerId !== sessionBackSwipe.pointerId) return;
+      const dx = e.clientX - sessionBackSwipe.startX;
+      const dy = e.clientY - sessionBackSwipe.startY;
+      if (!sessionBackSwipe.locked) {
+        const adx = Math.abs(dx);
+        const ady = Math.abs(dy);
+        if (adx < 6 && ady < 6) return;
+        sessionBackSwipe.locked = true;
+        sessionBackSwipe.horizontal = dx > 0 && adx > ady;
+        if (!sessionBackSwipe.horizontal) {
+          sessionBackSwipe = null;
+          return;
+        }
+        if (!sessionBackSwipe.captured) {
+          $gymSessionView.setPointerCapture(e.pointerId);
+          sessionBackSwipe.captured = true;
+        }
+      }
+      sessionBackSwipe.dx = Math.max(0, dx);
+      if (sessionBackSwipe.dx > 12) {
+        e.preventDefault();
+      }
+    },
+    { passive: false }
+  );
+
+  function endSessionBackSwipe(e) {
+    if (!sessionBackSwipe || e.pointerId !== sessionBackSwipe.pointerId) return;
+    const shouldGoBack = sessionBackSwipe.horizontal
+      && sessionBackSwipe.dx >= SESSION_BACK_SWIPE_MIN_PX;
+    if (sessionBackSwipe.captured && $gymSessionView.hasPointerCapture(e.pointerId)) {
+      $gymSessionView.releasePointerCapture(e.pointerId);
+    }
+    sessionBackSwipe = null;
+    if (shouldGoBack) {
+      showScreen("main");
+    }
+  }
+
+  $gymSessionView?.addEventListener("pointerup", endSessionBackSwipe, { passive: true });
+  $gymSessionView?.addEventListener("pointercancel", endSessionBackSwipe, { passive: true });
 
   // tap fuera cierra
   $gymWorkoutExercises.addEventListener(
@@ -1151,7 +1226,7 @@ function bindEvents() {
         }
         const exerciseType = getExerciseType(data, exerciseId);
         if (exerciseType === "cardio") return;
-        const useBodyweight = getExerciseUseBodyweight(data);
+        const useBodyweight = getExerciseUseBodyweight(data, exerciseId);
         const unilateral = getExerciseUnilateral(data, exerciseId);
         const useRepsForMax = useBodyweight && exerciseType !== "time";
         (data?.sets || []).forEach((set) => {
@@ -1411,7 +1486,7 @@ function bindEvents() {
 
   function getCatalogExerciseUseBodyweight(exerciseId) {
     const exercise = exercises?.[exerciseId];
-    return getExerciseUseBodyweight(exercise);
+    return getExerciseUseBodyweight(exercise, exerciseId);
   }
 
   function getExerciseMetricOptions(exerciseId, exerciseType) {
@@ -1663,7 +1738,7 @@ function bindEvents() {
       const exerciseType = getExerciseType(exerciseData, exerciseId);
       if (exerciseType === "cardio") return;
       const unilateral = getExerciseUnilateral(exerciseData, exerciseId);
-      const useBodyweight = getExerciseUseBodyweight(exerciseData);
+      const useBodyweight = getExerciseUseBodyweight(exerciseData, exerciseId);
       let maxKgEff = null;
       let volumeKg = 0;
       let reps = 0;
@@ -1898,7 +1973,7 @@ function bindEvents() {
       if (!exerciseData?.sets?.length) return;
       const type = getExerciseType(exerciseData, exerciseId);
       const unilateral = getExerciseUnilateral(exerciseData, exerciseId);
-      const useBodyweight = getExerciseUseBodyweight(exerciseData);
+      const useBodyweight = getExerciseUseBodyweight(exerciseData, exerciseId);
       exerciseData.sets.forEach((set) => {
         if (!set?.done) return;
         setsCount += 1;
@@ -2160,7 +2235,7 @@ function bindEvents() {
         strengthTypeSnapshot: kind === "strength" ? strengthType : null,
         metCategoryIdSnapshot: String(exercise.metCategoryId || "").trim(),
         originalIndex: index,
-        useBodyweight: false,
+        useBodyweight: getExerciseUseBodyweight(exercise, exerciseId),
         sets
       };
     });
@@ -2242,9 +2317,12 @@ function bindEvents() {
         const exerciseNames = Object.values(workout.exercises || {}).map((ex) => ex.nameSnapshot).filter(Boolean);
         const chipList = exerciseNames.slice(0, 2);
         const card = document.createElement("div");
-        card.className = "gym-history-card";
+        card.className = `gym-history-card${workout.finishedAt ? " gym-history-card--deletable" : ""}`;
         card.dataset.workoutId = workout.id;
         card.innerHTML = `
+          ${workout.finishedAt
+            ? '<button class="gym-history-delete" data-action="delete-workout" type="button" aria-label="Eliminar sesión" title="Eliminar sesión">❌</button>'
+            : ""}
           <div class="gym-history-header">
             <div>
               <div class="gym-history-title">${workout.name || "Entrenamiento"}</div>
@@ -2259,6 +2337,11 @@ function bindEvents() {
             ${chipList.map((name) => `<span class="gym-chip">${name}</span>`).join("")}
           </div>
         `;
+        const deleteBtn = card.querySelector("[data-action='delete-workout']");
+        deleteBtn?.addEventListener("click", (event) => {
+          event.stopPropagation();
+          deleteFinishedWorkout(workout.id);
+        });
         card.addEventListener("click", () => {
           openWorkout(workout.id);
         });
@@ -2666,7 +2749,7 @@ function bindEvents() {
         const lastDoneSet = stats.lastDoneSet || null;
         const exerciseType = getExerciseType(exerciseData, exerciseId);
         const isCardio = exerciseType === "cardio";
-        const useBodyweight = isCardio ? false : getExerciseUseBodyweight(exerciseData);
+        const useBodyweight = isCardio ? false : getExerciseUseBodyweight(exerciseData, exerciseId);
         const unilateral = isCardio ? false : getExerciseUnilateral(exerciseData, exerciseId);
         const maxLabel = isCardio
           ? "—"
@@ -2697,7 +2780,7 @@ function bindEvents() {
         const rows = (exerciseData.sets || []).map((set, index) => {
           const prevText = prevLabel;
           const timePlaceholder = formatDurationInput(lastDoneSet?.timeSec) || "mm:ss";
-          const repsPlaceholder = lastDoneSet?.reps ?? "reps";
+          const repsPlaceholder = getPositivePlaceholderNumber(lastDoneSet?.reps) ?? "reps";
           const repsPlaceholderR = getRepsPlaceholderSide(lastDoneSet, "repsR", "R");
           const repsPlaceholderL = getRepsPlaceholderSide(lastDoneSet, "repsL", "L");
           const kgPlaceholder = getKgPlaceholder(lastDoneSet, useBodyweight);
@@ -2705,9 +2788,9 @@ function bindEvents() {
           const kgPlaceholderL = getKgPlaceholderSide(lastDoneSet, useBodyweight, "kgL");
           const repsRValue = getSetSideValue(set?.repsR, set?.reps ?? set?.repsL);
           const repsLValue = getSetSideValue(set?.repsL, set?.reps ?? set?.repsR);
-          const kgRValue = getSetSideValue(set?.kgR, set?.kg ?? set?.kgL ?? set?.extraKg) ?? "";
-          const kgLValue = getSetSideValue(set?.kgL, set?.kg ?? set?.kgR ?? set?.extraKg) ?? "";
-          const kgValue = set.kg ?? set.extraKg ?? "";
+          const kgRValue = getDraftUnilateralKgInputValue(set, "kgR", "kgL", { useBodyweight }) ?? "";
+          const kgLValue = getDraftUnilateralKgInputValue(set, "kgL", "kgR", { useBodyweight }) ?? "";
+          const kgValue = getDraftKgInputValue(set?.kg, set?.extraKg, { useBodyweight }) ?? "";
           const timeValue = formatDurationInput(set.timeSec);
           const distanceValue = formatDecimalInput(set?.distanceKm);
           const paceLabel = formatPace(getCardioSetPaceSecPerKm(set));
@@ -2756,11 +2839,11 @@ function bindEvents() {
       </button>
     </div>
 
-    <div class="gym-sets-row gym-set-swipe-front${isCardio ? " is-cardio" : ""}${isUnilateralReps ? " is-unilateral" : ""}${isPr ? " set--pr" : ""}" data-set-index="${index}">
+    <div class="gym-sets-row gym-set-swipe-front${isCardio ? " is-cardio" : ""}${isUnilateralReps ? " is-unilateral" : ""}${set.done ? " set--done" : ""}${isPr ? " set--pr" : ""}" data-set-index="${index}">
       <span>${index + 1}</span>
       ${isCardio ? "" : `<span class="gym-set-previous">${prevText}</span>`}
       ${setInputs}
-      <div class="gym-set-check">
+      <div class="gym-set-check${isUnilateralReps ? " is-unilateral" : ""}">
         <input class="gym-checkbox" data-field="done" type="checkbox" ${set.done ? "checked" : ""}/>
         <span class="gym-set-pr-icon" aria-hidden="true">🏆</span>
       </div>
@@ -3094,7 +3177,7 @@ function bindEvents() {
     Object.entries(workout.exercises || {}).forEach(([exerciseId, exercise]) => {
       const unilateral = getExerciseUnilateral(exercise, exerciseId);
       const exerciseType = getExerciseType(exercise, exerciseId);
-      const useBodyweight = getExerciseUseBodyweight(exercise);
+      const useBodyweight = getExerciseUseBodyweight(exercise, exerciseId);
       (exercise.sets || []).forEach((set) => {
         if (!set.done) return;
         if (exerciseType === "cardio") {
@@ -3174,7 +3257,7 @@ function bindEvents() {
   function computeExerciseSummary(exercise, exerciseId, workoutDate) {
     const unilateral = getExerciseUnilateral(exercise, exerciseId);
     const exerciseType = getExerciseType(exercise, exerciseId);
-    const useBodyweight = getExerciseUseBodyweight(exercise);
+    const useBodyweight = getExerciseUseBodyweight(exercise, exerciseId);
     let maxReps = null;
     let maxKgRaw = null;
     let totalVolumeKg = 0;
@@ -3320,6 +3403,7 @@ function bindEvents() {
         prevBestRepsByKg: prevStats.bestRepsByKg,
         unilateral
       });
+      row.classList.toggle("set--done", Boolean(set.done));
       row.classList.toggle("set--pr", isPr);
     });
   }
@@ -3338,6 +3422,7 @@ function bindEvents() {
     if (!workout?.exercises?.[exerciseId]) return;
     const exercise = workout.exercises[exerciseId];
     const exerciseType = getExerciseType(exercise, exerciseId);
+    const useBodyweight = exerciseType === "cardio" ? false : getExerciseUseBodyweight(exercise, exerciseId);
     const unilateral = exerciseType === "cardio" ? false : getExerciseUnilateral(exercise, exerciseId);
     exercise.sets = exercise.sets || [];
     let nextSet = createEmptySet(exerciseType, { unilateral });
@@ -3354,8 +3439,8 @@ function bindEvents() {
         : exerciseType === "time"
           ? {
             timeSec: prevSet?.timeSec ?? null,
-            kg: prevSet?.kg ?? null,
-            extraKg: prevSet?.extraKg ?? null,
+            kg: getDraftKgInputValue(prevSet?.kg, prevSet?.extraKg, { useBodyweight }),
+            extraKg: getDraftKgInputValue(prevSet?.extraKg, null, { useBodyweight }),
             rpe: null,
             done: false
           }
@@ -3363,16 +3448,16 @@ function bindEvents() {
             ? {
               repsR: getSetSideValue(prevSet?.repsR, prevSet?.reps),
               repsL: getSetSideValue(prevSet?.repsL, prevSet?.reps),
-              kgR: getSetSideValue(prevSet?.kgR, prevSet?.kg ?? prevSet?.extraKg),
-              kgL: getSetSideValue(prevSet?.kgL, prevSet?.kg ?? prevSet?.extraKg),
-              extraKg: prevSet?.extraKg ?? null,
+              kgR: getDraftUnilateralKgInputValue(prevSet, "kgR", "kgL", { useBodyweight }),
+              kgL: getDraftUnilateralKgInputValue(prevSet, "kgL", "kgR", { useBodyweight }),
+              extraKg: getDraftKgInputValue(prevSet?.extraKg, null, { useBodyweight }),
               rpe: null,
               done: false
             }
             : {
               reps: prevSet?.reps ?? null,
-              kg: prevSet?.kg ?? null,
-              extraKg: prevSet?.extraKg ?? null,
+              kg: getDraftKgInputValue(prevSet?.kg, prevSet?.extraKg, { useBodyweight }),
+              extraKg: getDraftKgInputValue(prevSet?.extraKg, null, { useBodyweight }),
               rpe: null,
               done: false
             };
@@ -3403,7 +3488,7 @@ function bindEvents() {
     const { kind, strengthType } = normalizeExerciseDefinition(exercise);
     const exerciseType = kind === "cardio" ? "cardio" : strengthType;
     const unilateral = Boolean(exercise.unilateral);
-    const useBodyweight = getExerciseUseBodyweight(exercise);
+    const useBodyweight = getExerciseUseBodyweight(exercise, exerciseId);
     workout.exercises[exerciseId] = {
       nameSnapshot: exercise.name,
       muscleGroupsSnapshot: getExerciseMuscleGroups(exercise),
@@ -3530,7 +3615,7 @@ function bindEvents() {
   function migrateWorkoutExerciseData(workout) {
     if (!workout?.exercises) return;
     Object.entries(workout.exercises).forEach(([exerciseId, exercise], index) => {
-      let useBodyweight = Boolean(exercise.useBodyweight);
+      let useBodyweight = getExerciseUseBodyweight(exercise, exerciseId);
       if (!Number.isFinite(exercise.originalIndex)) {
         exercise.originalIndex = index;
       }
@@ -3549,6 +3634,25 @@ function bindEvents() {
         if (set?.useBodyweight || set?.bodyweight) {
           useBodyweight = true;
         }
+        if (useBodyweight) {
+          if (toNumber(set?.kg) === 0) set.kg = null;
+          if (toNumber(set?.extraKg) === 0) set.extraKg = null;
+          if (toNumber(set?.kgR) === 0) set.kgR = null;
+          if (toNumber(set?.kgL) === 0) set.kgL = null;
+        }
+        if (unilateral && !set?.done) {
+          const sharedKg = toNumber(set?.kg);
+          const extraKg = toNumber(set?.extraKg);
+          const hasSharedKgContext = sharedKg != null || (extraKg != null && extraKg !== 0);
+          const kgR = toNumber(set?.kgR);
+          const kgL = toNumber(set?.kgL);
+          if (kgR === 0 && !hasSharedKgContext && (kgL == null || kgL === 0)) {
+            set.kgR = null;
+          }
+          if (kgL === 0 && !hasSharedKgContext && (kgR == null || kgR === 0)) {
+            set.kgL = null;
+          }
+        }
         if (useBodyweight && set?.kg == null && set?.extraKg != null) {
           set.kg = set.extraKg;
         }
@@ -3560,7 +3664,7 @@ function bindEvents() {
           if (set?.repsL == null && repsFallback != null) {
             set.repsL = repsFallback;
           }
-          const kgFallback = getSetSideValue(set?.kg, set?.extraKg);
+          const kgFallback = getDraftKgInputValue(set?.kg, set?.extraKg, { useBodyweight });
           if (set?.kgR == null && kgFallback != null) {
             set.kgR = kgFallback;
           }
@@ -3732,6 +3836,31 @@ function bindEvents() {
     showScreen("main");
   }
 
+  function deleteFinishedWorkout(workoutId) {
+    const workout = findWorkoutById(workoutId);
+    if (!workout?.finishedAt) return;
+    const workoutLabel = (workout.name || "Entrenamiento").trim() || "Entrenamiento";
+    const confirmed = window.confirm(`¿Eliminar la sesión "${workoutLabel}" del ${formatDateLabel(workout.date)}?`);
+    if (!confirmed) return;
+    const isCurrentWorkout = currentWorkout?.id === workout.id || workoutDraft?.id === workout.id;
+    removeWorkoutLocal(workout.date, workout.id);
+    writeGymRemove(`${basePath}/workouts/${workout.date}/${workout.id}`);
+    persistGymCache();
+    emitBookshellData("local:workout");
+    if (isCurrentWorkout) {
+      currentWorkout = null;
+      workoutDraft = null;
+      showScreen("main");
+    } else if (isHomeActive()) {
+      renderHistory();
+      renderCalendar();
+      pendingHomeRerender = false;
+    } else {
+      pendingHomeRerender = true;
+    }
+    refreshStatsIfActive({ includeControls: gymStatsSelection.kind === "exercise" });
+  }
+
   function moveWorkoutDate(newDate) {
     const workout = ensureWorkoutDraft();
     if (!workout) return;
@@ -3816,9 +3945,9 @@ function bindEvents() {
   function parseBwPlaceholder(value) {
     const trimmed = String(value || "").trim();
     if (!trimmed || !/^BW/i.test(trimmed)) return null;
-    const match = trimmed.match(/BW(?:\(\+([^)]+)\))?/i);
+    const match = trimmed.match(/BW(?:\(\+([^)]+)\)|\+(.+))?/i);
     if (!match) return null;
-    const extraLabel = match[1];
+    const extraLabel = match[1] ?? match[2];
     if (!extraLabel) {
       return { extra: 0, fillInput: false };
     }
@@ -3899,8 +4028,8 @@ function bindEvents() {
       if (useBodyweight) {
         const bwData = parseBwPlaceholder(placeholder);
         if (bwData) {
-          update(bwData.extra);
-          if (bwData.fillInput) {
+          if (bwData.fillInput && bwData.extra !== 0) {
+            update(bwData.extra);
             input.value = String(bwData.extra);
           }
           return;
@@ -3969,8 +4098,43 @@ function bindEvents() {
   }
 
   function toNumber(value) {
+    if (value == null) return null;
+    if (typeof value === "string" && !value.trim()) return null;
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  function getPositivePlaceholderNumber(value) {
+    const numeric = toNumber(value);
+    return numeric != null && numeric > 0 ? numeric : null;
+  }
+
+  function getDraftUnilateralKgInputValue(set, primaryField, siblingField, { useBodyweight = false } = {}) {
+    const primaryValue = toNumber(set?.[primaryField]);
+    if (primaryValue != null) {
+      if (useBodyweight && primaryValue === 0) return null;
+      return primaryValue;
+    }
+    const sharedKg = toNumber(set?.kg);
+    if (sharedKg != null) {
+      if (useBodyweight && sharedKg === 0) return null;
+      return sharedKg;
+    }
+    const siblingValue = toNumber(set?.[siblingField]);
+    if (siblingValue != null) {
+      if (useBodyweight && siblingValue === 0) return null;
+      return siblingValue;
+    }
+    const extraKg = toNumber(set?.extraKg);
+    if (extraKg == null || extraKg === 0) return null;
+    return extraKg;
+  }
+
+  function getDraftKgInputValue(primary, fallback, { useBodyweight = false } = {}) {
+    const numeric = getSetSideValue(primary, fallback);
+    if (numeric == null) return null;
+    if (useBodyweight && numeric === 0) return null;
+    return numeric;
   }
 
   function getSetSideValue(primary, fallback) {
@@ -4078,27 +4242,34 @@ function bindEvents() {
 
   function getKgPlaceholder(lastSet, useBodyweight) {
     if (useBodyweight) {
-      const extra = Number(lastSet?.kg ?? lastSet?.extraKg) || 0;
-      return extra ? `BW(+${formatKgValue(extra)})` : "BW(+kg)";
+      const extra = toNumber(lastSet?.kg ?? lastSet?.extraKg);
+      if (extra != null) {
+        return extra ? `BW(+${formatKgValue(extra)})` : "BW";
+      }
+      return "BW(+kg)";
     }
-    const fallback = lastSet?.kg ?? lastSet?.extraKg ?? null;
+    const fallback = getPositivePlaceholderNumber(lastSet?.kg ?? lastSet?.extraKg);
     return fallback != null ? formatKgValue(fallback) : "kg";
   }
 
   function getKgPlaceholderSide(lastSet, useBodyweight, sideField) {
-    const sideFallback = toNumber(lastSet?.[sideField]);
+    const sideFallback = useBodyweight
+      ? toNumber(lastSet?.[sideField])
+      : getPositivePlaceholderNumber(lastSet?.[sideField]);
     if (useBodyweight) {
       const sideValue = sideFallback ?? getSetSideValue(lastSet?.kg, lastSet?.extraKg);
-      const extra = Number(sideValue) || 0;
-      return extra ? `BW(+${formatKgValue(extra)})` : "BW(+kg)";
+      if (sideValue != null) {
+        return sideValue ? `BW+${formatKgValue(sideValue)}` : "BW";
+      }
+      return "BW+kg";
     }
-    const fallback = sideFallback ?? getSetSideValue(lastSet?.kg, lastSet?.extraKg);
+    const fallback = sideFallback ?? getPositivePlaceholderNumber(lastSet?.kg ?? lastSet?.extraKg);
     return fallback != null ? formatKgValue(fallback) : "kg";
   }
 
   function getRepsPlaceholderSide(lastSet, sideField, fallbackLabel) {
-    const sideFallback = toNumber(lastSet?.[sideField]);
-    const fallback = sideFallback ?? toNumber(lastSet?.reps);
+    const sideFallback = getPositivePlaceholderNumber(lastSet?.[sideField]);
+    const fallback = sideFallback ?? getPositivePlaceholderNumber(lastSet?.reps);
     return fallback != null ? String(fallback) : fallbackLabel;
   }
 
@@ -4139,24 +4310,32 @@ function bindEvents() {
     return getExerciseStrengthType(exerciseData, exerciseId);
   }
 
-  function getExerciseUseBodyweight(exerciseData) {
-    if (!exerciseData) return false;
+  function getExerciseUseBodyweight(exerciseData, exerciseId) {
+    if (!exerciseData && !exerciseId) return false;
+    const resolvedExerciseId = String(exerciseData?.id || exerciseId || "").trim();
+    const catalogExercise = resolvedExerciseId
+      && exercises?.[resolvedExerciseId]
+      && exercises[resolvedExerciseId] !== exerciseData
+      ? exercises[resolvedExerciseId]
+      : null;
+    const fallbackToCatalog = catalogExercise
+      ? getExerciseUseBodyweight(catalogExercise)
+      : false;
+    if (!exerciseData) return fallbackToCatalog;
     if (exerciseData.useBodyweight !== undefined) {
-      return Boolean(exerciseData.useBodyweight);
+      return Boolean(exerciseData.useBodyweight) || fallbackToCatalog;
     }
     if (exerciseData.bw !== undefined) {
-      return Boolean(exerciseData.bw);
+      return Boolean(exerciseData.bw) || fallbackToCatalog;
     }
     if (exerciseData.isBodyweight !== undefined) {
-      return Boolean(exerciseData.isBodyweight);
+      return Boolean(exerciseData.isBodyweight) || fallbackToCatalog;
     }
     if (exerciseData.bodyweight !== undefined) {
-      return Boolean(exerciseData.bodyweight);
+      return Boolean(exerciseData.bodyweight) || fallbackToCatalog;
     }
-    if (exerciseData.id && exercises?.[exerciseData.id] && exercises[exerciseData.id] !== exerciseData) {
-      return getExerciseUseBodyweight(exercises[exerciseData.id]);
-    }
-    return (exerciseData.sets || []).some((set) => set?.useBodyweight || set?.bodyweight);
+    return (exerciseData.sets || []).some((set) => set?.useBodyweight || set?.bodyweight)
+      || fallbackToCatalog;
   }
 
   function getExerciseUnilateral(exerciseData, exerciseId) {

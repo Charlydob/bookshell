@@ -5,7 +5,7 @@ export const RANGE_LABEL = { total: 'Total', month: 'Mes', week: 'Semana', year:
 export const BTC_PRICE_CACHE_KEY = 'bookshell_finance_btc_eur_cache_v1';
 export const BTC_PRICE_CACHE_TTL_MS = 20 * 60 * 1000;
 export const AGG_MODES = ['day', 'week', 'month', 'year', 'total'];
-export const FINANCE_DEBUG = true;
+export const FINANCE_DEBUG = false;
 
 export const state = {
   deviceId: '',

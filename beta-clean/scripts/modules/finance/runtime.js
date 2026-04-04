@@ -24,8 +24,21 @@ import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategory
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
 let financeNeedsLegacyAccountsMerge = false;
+let financeRenderPromise = null;
+let financeRenderQueued = false;
+let financePendingPreserveUi = true;
+const financeDerivedCache = {
+  txList: { balanceRef: null, financePath: '', rows: [] },
+  recurring: { recurringRef: null, monthMap: new Map() },
+  categories: { categoriesKey: '', txRowsRef: null, rows: [] },
+  accountModels: { accountsRef: null, legacyEntriesRef: null, btcEurPrice: Number.NaN, rangeMode: '', rows: [] },
+  totalSeries: { accountsRef: null, rows: [] },
+};
 
-function log(...parts) { console.log('[finance]', ...parts); }
+function log(...parts) {
+  if (!FINANCE_DEBUG) return;
+  console.log('[finance]', ...parts);
+}
 function warnMissing(id) { console.warn(`[finance] missing DOM node ${id}`); }
 function $req(sel, ctx = document) {
   const el = ctx.querySelector(sel);
@@ -33,6 +46,24 @@ function $req(sel, ctx = document) {
   return el;
 }
 function $opt(sel, ctx = document) { return ctx.querySelector(sel); }
+
+function clearFinanceDerivedCaches() {
+  financeDerivedCache.txList.balanceRef = null;
+  financeDerivedCache.txList.financePath = '';
+  financeDerivedCache.txList.rows = [];
+  financeDerivedCache.recurring.recurringRef = null;
+  financeDerivedCache.recurring.monthMap.clear();
+  financeDerivedCache.categories.categoriesKey = '';
+  financeDerivedCache.categories.txRowsRef = null;
+  financeDerivedCache.categories.rows = [];
+  financeDerivedCache.accountModels.accountsRef = null;
+  financeDerivedCache.accountModels.legacyEntriesRef = null;
+  financeDerivedCache.accountModels.btcEurPrice = Number.NaN;
+  financeDerivedCache.accountModels.rangeMode = '';
+  financeDerivedCache.accountModels.rows = [];
+  financeDerivedCache.totalSeries.accountsRef = null;
+  financeDerivedCache.totalSeries.rows = [];
+}
 
 function nowTs() { return Date.now(); }
 function getMonthKeyFromDate(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
@@ -1649,6 +1680,7 @@ async function mergeFoodProducts(selection = [], destinationId = '') {
       state.balance.movements[legacyMatch[1]][legacyMatch[2]] = { ...state.balance.movements[legacyMatch[1]][legacyMatch[2]], extras };
     }
   });
+  clearFinanceDerivedCaches();
 
   const rebuild = buildProductsViewModel(state.foodProductsCfg || {});
   const visibleCanonicalIds = (rebuild?.products || []).map((row) => row.canonicalId);
@@ -1756,6 +1788,14 @@ function groupTxByDay(txList = [], accountsById = {}, scope = 'personal') {
 }
 
 function recurringForMonth(monthKey = getSelectedBalanceMonthKey()) {
+  const cache = financeDerivedCache.recurring;
+  if (cache.recurringRef !== state.balance.recurring) {
+    cache.recurringRef = state.balance.recurring;
+    cache.monthMap.clear();
+  }
+  if (cache.monthMap.has(monthKey)) {
+    return cache.monthMap.get(monthKey);
+  }
   const [year, month] = monthKey.split('-').map(Number);
   const rows = [];
   Object.entries(state.balance.recurring || {}).forEach(([id, rec]) => {
@@ -1780,6 +1820,7 @@ function recurringForMonth(monthKey = getSelectedBalanceMonthKey()) {
       personalRatio: Number.isFinite(Number(rec?.personalRatio)) ? clamp01(rec.personalRatio, 1) : null
     }, `rec-${id}-${monthKey}`));
   });
+  cache.monthMap.set(monthKey, rows);
   return rows;
 }
 
@@ -1859,6 +1900,7 @@ async function deleteManagedStatItem(kind, rawName) {
     updatesMap[`${state.financePath}/catalog/categories/${name}`] = null;
     if (Object.keys(updatesMap).length) await safeFirebase(() => update(ref(db), updatesMap));
     delete state.balance.categories[name];
+    clearFinanceDerivedCaches();
     toast('Categoría eliminada (migrada a "(Eliminado)")');
     return;
   }
@@ -2532,7 +2574,9 @@ function readCachedBtcPrice() {
 async function ensureBtcEurPrice(force = false) {
   const cached = readCachedBtcPrice();
   if (!force && cached) {
-    state.btcEurPrice = Number(cached.price || 0);
+    const nextPrice = Number(cached.price || 0);
+    if (state.btcEurPrice !== nextPrice) clearFinanceDerivedCaches();
+    state.btcEurPrice = nextPrice;
     state.btcPriceTs = Number(cached.ts || 0);
     return state.btcEurPrice;
   }
@@ -2541,6 +2585,7 @@ async function ensureBtcEurPrice(force = false) {
     const json = await res.json();
     const price = Number(json?.bitcoin?.eur || 0);
     if (Number.isFinite(price) && price > 0) {
+      if (state.btcEurPrice !== price) clearFinanceDerivedCaches();
       state.btcEurPrice = price;
       state.btcPriceTs = Date.now();
       localStorage.setItem(BTC_PRICE_CACHE_KEY, JSON.stringify({ price, ts: state.btcPriceTs }));
@@ -2550,14 +2595,26 @@ async function ensureBtcEurPrice(force = false) {
     log('btc price fetch failed', error);
   }
   if (cached?.price) {
-    state.btcEurPrice = Number(cached.price);
+    const nextPrice = Number(cached.price);
+    if (state.btcEurPrice !== nextPrice) clearFinanceDerivedCaches();
+    state.btcEurPrice = nextPrice;
     state.btcPriceTs = Number(cached.ts || 0);
   }
   return state.btcEurPrice || 0;
 }
 
 function buildAccountModels() {
-  return state.accounts.map((account) => {
+  const cache = financeDerivedCache.accountModels;
+  if (
+    cache.accountsRef === state.accounts &&
+    cache.legacyEntriesRef === state.legacyEntries &&
+    cache.btcEurPrice === state.btcEurPrice &&
+    cache.rangeMode === state.rangeMode
+  ) {
+    return cache.rows;
+  }
+
+  const rows = state.accounts.map((account) => {
     const share = normalizeAccountShare(account);
 
 
@@ -2593,19 +2650,36 @@ function buildAccountModels() {
 
     return { ...account, ...share, daily, dailyReal, current, currentReal, btcPrice, range, };
   });
+
+  cache.accountsRef = state.accounts;
+  cache.legacyEntriesRef = state.legacyEntries;
+  cache.btcEurPrice = state.btcEurPrice;
+  cache.rangeMode = state.rangeMode;
+  cache.rows = rows;
+  return rows;
 }
 
 function buildTotalSeries(accounts) {
+  const cache = financeDerivedCache.totalSeries;
+  if (cache.accountsRef === accounts) {
+    return cache.rows;
+  }
   const daySet = new Set();
   accounts.forEach((account) => account.daily.forEach((point) => daySet.add(point.day)));
   const days = [...daySet].sort();
-  if (!days.length) return [];
+  if (!days.length) {
+    cache.accountsRef = accounts;
+    cache.rows = [];
+    return cache.rows;
+  }
   const perAccount = Object.fromEntries(accounts.map((account) => [account.id, Object.fromEntries(account.daily.map((p) => [p.day, p.value]))]));
   const running = Object.fromEntries(accounts.map((account) => [account.id, 0]));
-  return days.map((day) => {
+  cache.accountsRef = accounts;
+  cache.rows = days.map((day) => {
     accounts.forEach((account) => { if (perAccount[account.id][day] != null) running[account.id] = perAccount[account.id][day]; });
     return { day, ts: parseDayKey(day), value: Object.values(running).reduce((sum, val) => sum + Number(val || 0), 0) };
   });
+  return cache.rows;
 }
 function filterSeriesByRange(series, mode) {
   if (mode === 'total') return series;
@@ -2817,6 +2891,10 @@ function calendarYearData(accounts, totalSeries) {
 }
 
 function balanceTxList() {
+  const cache = financeDerivedCache.txList;
+  if (cache.balanceRef === state.balance && cache.financePath === state.financePath) {
+    return cache.rows;
+  }
   const normalizeBalanceRow = (id, row = {}, source = 'transactions', fallbackPath = '', fallbackMonthKey = '') => {
     const normalized = normalizeTxRow(row, id);
     const dateISO = String(normalized?.dateISO || '');
@@ -2870,16 +2948,19 @@ note: String(row?.note ?? row?.extras?.note ?? ''),
     if (!dedup.has(uniqueKey)) dedup.set(uniqueKey, row);
   });
 
-  return [...dedup.values()]
+  cache.balanceRef = state.balance;
+  cache.financePath = state.financePath;
+  cache.rows = [...dedup.values()]
     .filter((row) => Number.isFinite(row.amount) && row.monthKey)
     .sort((a, b) => (txSortTs(b) - txSortTs(a)) || (Number(b.createdAt || 0) - Number(a.createdAt || 0)));
+  return cache.rows;
 }
 function getSelectedBalanceMonthKey() {
   return offsetMonthKey(getMonthKeyFromDate(), state.balanceMonthOffset);
 }
-function summaryForMonth(monthKey, accountsById = {}) {
+function summaryForMonth(monthKey, accountsById = {}, txRows = balanceTxList()) {
   const resolvedAccountsById = Object.keys(accountsById || {}).length ? accountsById : Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
-  const rows = [...balanceTxList().filter((tx) => tx.monthKey === monthKey), ...recurringForMonth(monthKey)];
+  const rows = [...txRows.filter((tx) => tx.monthKey === monthKey), ...recurringForMonth(monthKey)];
   const income = rows.filter((tx) => tx.type === 'income').reduce((s, tx) => s + (Number(tx.amount || 0) * personalRatioForTx(tx, resolvedAccountsById)), 0);
   const expense = rows.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + (Number(tx.amount || 0) * personalRatioForTx(tx, resolvedAccountsById)), 0);
   const transferImpact = 0;
@@ -2997,10 +3078,10 @@ function buildDrilldownRows(txType, monthKey) {
     .sort((a, b) => txSortTs(b) - txSortTs(a));
 }
 
-function monthlyNetRows(accountsById = {}) {
+function monthlyNetRows(accountsById = {}, txRows = balanceTxList()) {
   const resolvedAccountsById = Object.keys(accountsById || {}).length ? accountsById : Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
   const grouped = {};
-  balanceTxList().forEach((tx) => {
+  txRows.forEach((tx) => {
     if (!tx.monthKey) return;
     grouped[tx.monthKey] = grouped[tx.monthKey] || [];
     grouped[tx.monthKey].push(tx);
@@ -3519,10 +3600,21 @@ financeStatsDonutChart.setOption({
   }
 }
 
-function categoriesList() {
+function categoriesList(txRows = balanceTxList()) {
+  const cache = financeDerivedCache.categories;
+  const categoryKey = Object.entries(state.balance.categories || {})
+    .map(([name, row]) => `${name}:${String(row?.emoji || '')}`)
+    .sort((a, b) => a.localeCompare(b, 'es'))
+    .join('|');
+  if (cache.categoriesKey === categoryKey && cache.txRowsRef === txRows) {
+    return cache.rows;
+  }
   const dynamic = Object.values(state.balance.categories || {}).map((row) => String(row?.name || '')).filter(Boolean);
-  const fromTx = [...new Set(balanceTxList().map((tx) => tx.category).filter((name) => name && String(name).toLowerCase() !== 'transfer'))];
-  return [...new Set([...dynamic, ...fromTx])].sort((a, b) => a.localeCompare(b, 'es'));
+  const fromTx = [...new Set(txRows.map((tx) => tx.category).filter((name) => name && String(name).toLowerCase() !== 'transfer'))];
+  cache.categoriesKey = categoryKey;
+  cache.txRowsRef = txRows;
+  cache.rows = [...new Set([...dynamic, ...fromTx])].sort((a, b) => a.localeCompare(b, 'es'));
+  return cache.rows;
 }
 
 const CATEGORY_EMOJI_FALLBACK = {
@@ -3731,15 +3823,6 @@ function renderFinanceCalendarPanel(accounts, totalSeries, { withToggle = false 
 }
 
 function renderFinanceHome(accounts, totalSeries) {
-  console.group('[finance] renderFinanceHome');
-  console.log('state:', JSON.stringify(state));
-  console.log('root candidates:', {
-    financeRoot: document.getElementById('finance-root'),
-    tab: document.querySelector('[data-tab="finance"]'),
-    container: document.querySelector('#finance, #financeTab, .finance-tab, [data-view="finance"]'),
-  });
-  console.groupEnd();
-
   const root = resolveFinanceRoot();
   if (!root) throw new Error('[finance] finance root not available before renderFinanceHome');
   if (!$opt('#finance-content')) ensureFinanceHost($opt, $req);
@@ -3819,21 +3902,18 @@ function renderFinanceCalendar(accounts, totalSeries) {
   ${content}</article></section>`;
 }
 
-function renderFinanceBalance() {
+function renderFinanceBalance(accounts = buildAccountModels(), categories = categoriesList(), txRows = balanceTxList()) {
   const monthKey = getSelectedBalanceMonthKey();
-  console.log('[BALANCE] tx', Object.keys(state.balance.transactions || {}).length);
   if (FINANCE_DEBUG) {
     const txNew = Object.keys(state.balance.transactions || {}).length;
     const movLegacyMonths = Object.keys(state.balance.movements || {}).length;
     const txLegacy = Object.keys(state.balance.tx || {}).length;
-    const monthCount = balanceTxList().filter((row) => row.monthKey === monthKey).length;
-    console.log('[BALANCE] sources', { txNew, movLegacyMonths, txLegacy });
-    console.log('[BALANCE] month', monthKey, 'rows', monthCount);
+    const monthCount = txRows.filter((row) => row.monthKey === monthKey).length;
+    financeDebug('balance sources', { txNew, movLegacyMonths, txLegacy });
+    financeDebug('balance month rows', { monthKey, monthCount });
   }
-  const categories = categoriesList();
-  const accounts = buildAccountModels();
   const accountsById = Object.fromEntries(accounts.map((account) => [account.id, account]));
-  const allMonthTx = [...balanceTxList().filter((row) => row.monthKey === monthKey), ...recurringForMonth(monthKey)];
+  const allMonthTx = [...txRows.filter((row) => row.monthKey === monthKey), ...recurringForMonth(monthKey)];
   const tx = allMonthTx
     .filter((row) => state.balanceFilterType === 'all' || row.type === state.balanceFilterType)
     .filter((row) => state.balanceFilterCategory === 'all' || row.category === state.balanceFilterCategory)
@@ -3846,20 +3926,20 @@ function renderFinanceBalance() {
       if (row.type !== 'expense') return false;
       return !foodItemsFromTx(row).length;
     });
-  const monthSummary = summaryForMonth(monthKey, accountsById);
-  const prevSummary = summaryForMonth(offsetMonthKey(monthKey, -1), accountsById);
+  const monthSummary = summaryForMonth(monthKey, accountsById, txRows);
+  const prevSummary = summaryForMonth(offsetMonthKey(monthKey, -1), accountsById, txRows);
   const monthAgg = calcAggForBucket(allMonthTx, accountsById);
-  console.log('[BALANCE] month', monthKey, 'rows', allMonthTx.length, 'agg', monthAgg);
+  financeDebug('balance aggregate', { monthKey, rows: allMonthTx.length, monthAgg });
   const monthAccountsDeltaReal = calcAccountsDeltaForBucket('month', monthKey, state.accounts);
   const prevMonthKey = offsetMonthKey(monthKey, -1);
-  const prevMonthRows = [...balanceTxList().filter((row) => row.monthKey === prevMonthKey), ...recurringForMonth(prevMonthKey)];
+  const prevMonthRows = [...txRows.filter((row) => row.monthKey === prevMonthKey), ...recurringForMonth(prevMonthKey)];
   const prevMonthAgg = calcAggForBucket(prevMonthRows, accountsById);
   const prevMonthAccountsDeltaReal = calcAccountsDeltaForBucket('month', prevMonthKey, state.accounts);
   const statsMonth = buildBalanceStats(allMonthTx, accountsById);
   const spentByCategory = statsMonth.spentByCategoryPersonal;
   const totalSpent = statsMonth.totalSpentPersonal;
   const budgetItems = getBudgetItems(monthKey);
-  const monthNetList = monthlyNetRows(accountsById);
+  const monthNetList = monthlyNetRows(accountsById, txRows);
   const metricRows = [
     { id: 'netOperative', label: 'Operativo', current: monthAgg.netOperativeMy, prev: prevMonthAgg.netOperativeMy },
     { id: 'netWealth', label: 'Patrimonio', current: monthAgg.netWealthMy, prev: prevMonthAgg.netWealthMy },
@@ -3871,10 +3951,10 @@ function renderFinanceBalance() {
   const statsScope = state.balanceStatsScope === 'global' ? 'global' : 'personal';
   const statsGroupBy = ['category', 'account', 'store', 'mealType', 'product'].includes(state.balanceStatsGroupBy) ? state.balanceStatsGroupBy : 'category';
   const includeUnlined = !!state.balanceStatsIncludeUnlined;
-  const allTxRows = balanceTxList();
+  const allTxRows = txRows;
   const rangeRows = statsRange === 'month'
-    ? allTxRows.filter((row) => row.monthKey === monthKey)
-    : filterTxByRange(allTxRows, statsRange);
+    ? txRows.filter((row) => row.monthKey === monthKey)
+    : filterTxByRange(txRows, statsRange);
   const rangeStats = buildBalanceStats(rangeRows, accountsById);
   const donutAggregation = aggregateStatsGroup(rangeRows, statsGroupBy, mode, statsScope, accountsById, { includeUnlined: includeUnlined && statsGroupBy === 'product' });
   const donutMap = donutAggregation.breakdown;
@@ -4240,13 +4320,12 @@ return `<div class="financeBudgetRow">
   <div class="financeTxList" style="max-height:220px;overflow-y:auto;">${monthNetList.map((row) => `<div class="financeTxRow-balance-por-mes"><span>${row.month}</span><strong class="${toneClass(row.netOperative)}">Op ${fmtSignedCurrency(row.netOperative)}</strong><strong class="${toneClass(row.netWealth)}">Pat ${fmtSignedCurrency(row.netWealth)}</strong><strong class="${toneClass(row.accountsDeltaReal)}">ΔC ${fmtSignedCurrency(row.accountsDeltaReal)}</strong></div>`).join('') || '<p class="finance-empty">Sin meses con movimientos.</p>'}</div></article></section>`;
 }
 
-function renderFinanceGoals() {
+function renderFinanceGoals(accounts = buildAccountModels()) {
   const goals = Object.entries(state.goals.goals || {})
     .map(([id, row]) => ({ id, ...row }))
     .sort((a, b) => Number(a?.dueDateISO ? new Date(a.dueDateISO).getTime() : 0) - Number(b?.dueDateISO ? new Date(b.dueDateISO).getTime() : 0));
 
   // saldo actual por cuenta (usa tu modelo ya calculado en pantalla)
-  const accounts = buildAccountModels();
   const accountsById = Object.fromEntries(accounts.map(a => [a.id, a]));
 
   const totalObjective = goals.reduce((sum, goal) => sum + Number(goal.targetAmount || 0), 0);
@@ -4332,17 +4411,18 @@ function renderFinanceGoals() {
   </section>`;
 }
 
-function renderModal() {
+function renderModal({ accounts = null, categories = null, txRows = null } = {}) {
   const backdrop = document.getElementById('finance-modalOverlay');
   if (!backdrop) return;
-  const categories = categoriesList();
-  const accounts = buildAccountModels();
   if (!state.modal.type) {
     backdrop.classList.remove('is-open'); backdrop.classList.add('hidden'); backdrop.setAttribute('aria-hidden', 'true'); backdrop.innerHTML = ''; document.body.classList.remove('finance-modal-open'); return;
   }
+  const resolvedAccounts = accounts || buildAccountModels();
+  const resolvedTxRows = txRows || balanceTxList();
+  const resolvedCategories = categories || categoriesList(resolvedTxRows);
   backdrop.classList.add('is-open'); backdrop.classList.remove('hidden'); backdrop.setAttribute('aria-hidden', 'false'); document.body.classList.add('finance-modal-open');
   if (state.modal.type === 'account-detail') {
-    const account = accounts.find((item) => item.id === state.modal.accountId);
+    const account = resolvedAccounts.find((item) => item.id === state.modal.accountId);
     if (!account) { state.modal = { type: null }; triggerRender(); return; }
     const chart = chartModelForRange(account.daily, 'total');
     state.lineChart = { points: chart.points || [], mode: 'total', kind: 'account', accountId: account.id, accountName: account.name };
@@ -4451,9 +4531,9 @@ function renderModal() {
     return;
   }
   if (state.modal.type === 'tx') {
-  const accountsById = Object.fromEntries(accounts.map((a) => [a.id, a]));
-  const txEdit = state.modal.txId ? balanceTxList().find((row) => row.id === state.modal.txId) : null;
-  const defaultAccountId = txEdit?.accountId || state.balanceFormState.accountId || state.lastMovementAccountId || state.balance.defaultAccountId || accounts[0]?.id || '';
+  const accountsById = Object.fromEntries(resolvedAccounts.map((a) => [a.id, a]));
+  const txEdit = state.modal.txId ? resolvedTxRows.find((row) => row.id === state.modal.txId) : null;
+  const defaultAccountId = txEdit?.accountId || state.balanceFormState.accountId || state.lastMovementAccountId || state.balance.defaultAccountId || resolvedAccounts[0]?.id || '';
   const defaultType = txEdit?.type || state.balanceFormState.type || 'expense';
   const defaultCategory = txEdit?.category || state.balanceFormState.category || '';
   const defaultDate = txEdit?.date || isoToDay(txEdit?.dateISO || '') || state.balanceFormState.dateISO || dayKeyFromTs(Date.now());
@@ -4476,12 +4556,11 @@ function renderModal() {
   const defaultFoodExtrasOpen = !!state.balanceFormState.foodExtrasOpen;
   const defaultFoodResultsScrollTop = Number(state.balanceFormState.foodResultsScrollTop || 0);
   const defaultFrom = txEdit?.fromAccountId || state.balanceFormState.fromAccountId || defaultAccountId;
-  const defaultTo = txEdit?.toAccountId || state.balanceFormState.toAccountId || accounts[1]?.id || accounts[0]?.id || '';
+  const defaultTo = txEdit?.toAccountId || state.balanceFormState.toAccountId || resolvedAccounts[1]?.id || resolvedAccounts[0]?.id || '';
   const defaultPersonalRatioMode = Number.isFinite(Number(txEdit?.personalRatio)) ? 'custom' : (state.balanceFormState.personalRatioMode || 'auto');
   const defaultPersonalRatioPercent = Number.isFinite(Number(txEdit?.personalRatio)) ? String(Math.round(clamp01(txEdit.personalRatio, 1) * 100)) : (state.balanceFormState.personalRatioPercent || '');
   const defaultPersonalRatioAdvanced = Number.isFinite(Number(txEdit?.personalRatio)) || !!state.balanceFormState.personalRatioAdvanced;
-  const accountOptions = accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
-  const categories = categoriesList();
+  const accountOptions = resolvedAccounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
   const ticketImportState = state.modal.ticketImport || { raw: '', parsed: null, error: '', warnings: [], open: false };
   const ticketPreview = ticketImportState.parsed?.ok ? ticketImportState.parsed.data : null;
   const ticketPreviewWarnings = [...(ticketImportState.parsed?.warnings || []), ...(ticketImportState.warnings || [])];
@@ -4489,7 +4568,7 @@ function renderModal() {
   const rawText = String(ticketImportState.raw || '');
   const rawPreviewHead = rawText.slice(0, 80);
   const rawPreviewTail = rawText.length > 80 ? rawText.slice(-80) : '';
-  const ticketCardPreview = resolveTicketCardAccountPreview(ticketPreview, accounts);
+  const ticketCardPreview = resolveTicketCardAccountPreview(ticketPreview, resolvedAccounts);
   const selectedIsFood = isFoodCategoryName(defaultCategory);
   const wizardStepDraft = normalizeTxWizardStep(state.balanceFormState.txWizardStep);
   const wizardStep = wizardStepDraft === 'food' && !selectedIsFood ? 'category' : wizardStepDraft;
@@ -4597,7 +4676,7 @@ function renderModal() {
           </div>
 
           <select id="fm-tx-category" class="fm-control fm-control--category fm-control--select fin-move-select" name="category" hidden aria-hidden="true">
-            <option value="">Seleccionar</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+            <option value="">Seleccionar</option>${resolvedCategories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
           </select>
 
           <div class="finCatPicker" role="listbox" aria-label="Selecciona categoría">
@@ -4815,13 +4894,14 @@ if (form) {
   if (state.modal.type === 'tx-day') {
     const day = String(state.modal.day || '');
     const monthKey = String(day).slice(0, 7);
-    const rows = [...balanceTxList().filter((row) => isoToDay(row.date || row.dateISO || '') === day), ...recurringForMonth(monthKey).filter((row) => row.date === day)].sort((a, b) => txSortTs(b) - txSortTs(a));
-    const accountName = (id) => escapeHtml(accounts.find((a) => a.id === id)?.name || 'Sin cuenta');
+    const rows = [...resolvedTxRows.filter((row) => isoToDay(row.date || row.dateISO || '') === day), ...recurringForMonth(monthKey).filter((row) => row.date === day)].sort((a, b) => txSortTs(b) - txSortTs(a));
+    const accountName = (id) => escapeHtml(resolvedAccounts.find((a) => a.id === id)?.name || 'Sin cuenta');
+    const ratioAccountsById = Object.fromEntries(resolvedAccounts.map((a) => [a.id, a]));
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Movimientos del día ${escapeHtml(day)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><div class="financeTxList">${rows.map((row) => {
       const accountText = row.type === 'transfer' ? `${accountName(row.fromAccountId)} → ${accountName(row.toAccountId)}` : accountName(row.accountId);
-      const ratioMy = personalRatioForTx(row, Object.fromEntries(accounts.map((a) => [a.id, a])));
+      const ratioMy = personalRatioForTx(row, ratioAccountsById);
       const ratioBadge = row.type === 'transfer' ? '' : `<small> · Imputado a mí: ${Math.round(ratioMy * 100)}%</small>`;
-      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${ratioBadge}${row.recurringVirtual ? '<small> · recurrente</small>' : ''}</span><strong class="${toneClass(personalDeltaForTx(row, Object.fromEntries(accounts.map((a) => [a.id, a]))))}">${fmtCurrency(row.amount)}</strong><span class="finance-row">${row.recurringVirtual ? '' : `<button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button>`}</span></div>`;
+      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${ratioBadge}${row.recurringVirtual ? '<small> · recurrente</small>' : ''}</span><strong class="${toneClass(personalDeltaForTx(row, ratioAccountsById))}">${fmtCurrency(row.amount)}</strong><span class="finance-row">${row.recurringVirtual ? '' : `<button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button>`}</span></div>`;
     }).join('') || '<p class="finance-empty">Sin movimientos.</p>'}</div></div>`;
     return;
   }
@@ -4831,14 +4911,14 @@ if (form) {
     const monthKey = offsetMonthKey(getMonthKeyFromDate(), monthOffset);
     const rows = buildDrilldownRows(txType, monthKey);
     const title = txType === 'income' ? 'Ingresos' : 'Gastos';
-    const accountName = (id) => escapeHtml(accounts.find((a) => a.id === id)?.name || 'Sin cuenta');
+    const accountName = (id) => escapeHtml(resolvedAccounts.find((a) => a.id === id)?.name || 'Sin cuenta');
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${title} · ${monthLabelByKey(monthKey)}</h3><div class="finance-row"><button class="finance-pill" data-drilldown-month="-1">◀</button><button class="finance-pill" data-drilldown-month="1">▶</button><button class="finance-pill" data-drilldown-add="${txType}">+ Añadir</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header><div class="financeTxList financeTxList--scroll" style="max-height:360px;overflow-y:auto;">${rows.map((row) => `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountName(row.accountId)}</span><strong class="${txType === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrency(row.amount)}</strong></div>`).join('') || '<p class="finance-empty">Sin registros en este mes.</p>'}</div></div>`;
     return;
   }
   if (state.modal.type === 'calendar-day-edit') {
     const day = String(state.modal.day || '').trim();
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar saldos · ${escapeHtml(day)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
-      <form data-calendar-day-form="${escapeHtml(day)}">${accounts.map((account) => `<label>${escapeHtml(account.name)}<input name="acc_${account.id}" type="number" step="0.01" value="${accountValueForDay(account, day)}" /></label>`).join('') || '<p class="finance-empty">No hay cuentas.</p>'}<button class="finance-pill" type="submit">Guardar</button></form></div>`;
+      <form data-calendar-day-form="${escapeHtml(day)}">${resolvedAccounts.map((account) => `<label>${escapeHtml(account.name)}<input name="acc_${account.id}" type="number" step="0.01" value="${accountValueForDay(account, day)}" /></label>`).join('') || '<p class="finance-empty">No hay cuentas.</p>'}<button class="finance-pill" type="submit">Guardar</button></form></div>`;
     return;
   }
   if (state.modal.type === 'budget') {
@@ -4854,7 +4934,7 @@ if (form) {
     
     <option value="Total"></option>
     
-    ${categories.map((c) => `
+    ${resolvedCategories.map((c) => `
       
       <option value="${escapeHtml(c)}"></option>`).join('')}</datalist>
       
@@ -4867,7 +4947,7 @@ if (form) {
     return;
   }
   if (state.modal.type === 'goal') {
-    const accountsOptions = accounts.map((a) => `<label><input type="checkbox" name="accountsIncluded" value="${a.id}" /> ${escapeHtml(a.name)}</label>`).join('');
+    const accountsOptions = resolvedAccounts.map((a) => `<label><input type="checkbox" name="accountsIncluded" value="${a.id}" /> ${escapeHtml(a.name)}</label>`).join('');
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Nuevo objetivo</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
     <form class="finance-goal-form" data-goal-form><input name="title" required placeholder="Título" /><input name="targetAmount" required type="number" step="0.01" placeholder="Cantidad objetivo"/><input name="dueDateISO" required type="date" /><fieldset><legend>Cuentas incluidas</legend>${accountsOptions || '<p class="finance-empty">No hay cuentas.</p>'}</fieldset><button class="finance-pill" type="submit">Guardar</button></form></div>`;
     return;
@@ -4877,7 +4957,7 @@ if (form) {
     const selected = new Set(goal.accountsIncluded || []);
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${escapeHtml(goal.title)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
       <p>Meta ${fmtCurrency(goal.targetAmount)} · vence ${new Date(goal.dueDateISO).toLocaleDateString('es-ES')}</p><p>Prioridad por (dinero / días).</p>
-      <form data-goal-accounts-form="${state.modal.goalId}">${accounts.map((a) => `<label><input type="checkbox" value="${a.id}" ${selected.has(a.id) ? 'checked' : ''}/> ${escapeHtml(a.name)}</label>`).join('')}<button class="finance-pill" type="submit">Actualizar cuentas</button></form></div>`;
+      <form data-goal-accounts-form="${state.modal.goalId}">${resolvedAccounts.map((a) => `<label><input type="checkbox" value="${a.id}" ${selected.has(a.id) ? 'checked' : ''}/> ${escapeHtml(a.name)}</label>`).join('')}<button class="finance-pill" type="submit">Actualizar cuentas</button></form></div>`;
     return;
   }
 
@@ -5409,6 +5489,7 @@ async function ensurePersonalRatioMigrationV1() {
 
   updatesMap[migrationPath] = nowTs();
   if (Object.keys(updatesMap).length) {
+    clearFinanceDerivedCaches();
     updatesMap[`${state.financePath}/aggregates`] = null;
     await safeFirebase(() => update(ref(db), updatesMap));
     scheduleAggregateRebuild();
@@ -5416,6 +5497,7 @@ async function ensurePersonalRatioMigrationV1() {
 }
 
 function applyRemoteData(val = {}, replace = false) {
+  clearFinanceDerivedCaches();
   const root = val && typeof val === 'object' ? val : {};
   const accountsMap = root.accounts || (replace ? {} : Object.fromEntries(state.accounts.map((acc) => [acc.id, acc])));
   const fallbackEntries = replace ? {} : state.legacyEntries;
@@ -5434,7 +5516,7 @@ function applyRemoteData(val = {}, replace = false) {
     lastSeenMonthKey: root.balance?.lastSeenMonthKey || (replace ? '' : state.balance.lastSeenMonthKey)
   };
   state.goals = { goals: root.goals?.goals || (replace ? {} : state.goals.goals) };
-  console.log('[BALANCE] sample tx', balanceTxList().slice(0, 5));
+  financeDebug('sample tx', balanceTxList().slice(0, 5));
 }
 
 function hasData(value) {
@@ -5534,9 +5616,9 @@ async function loadDataOnce() {
   const mergedRoot = mergeFinanceRoots(newRoot, legacyRoot);
   applyRemoteData(mergedRoot, true);
   const txCount = Object.keys((state.balance.transactions || {})).length;
-  console.log('[FINANCE] after applyRemoteData txCount', txCount);
+  financeDebug('after applyRemoteData txCount', txCount);
   financeNeedsLegacyAccountsMerge = !hasData(newRoot?.accounts) && hasData(legacyRoot?.accounts);
-  console.log('[FINANCE] counts', {
+  financeDebug('root counts', {
     accounts: Object.keys((mergedRoot.accounts || {})).length,
     transactions: Object.keys((mergedRoot.transactions || {})).length
   });
@@ -5550,7 +5632,7 @@ function subscribe() {
     unsubscribeLegacyFinance();
     unsubscribeLegacyFinance = null;
   }
-  console.log('[FINANCE][BALANCE] subscribe firebase', state.financePath);
+  financeDebug('subscribe firebase', state.financePath);
   state.unsubscribe = onValue(ref(db, state.financePath), (snap) => {
     const val = snap.val();
     if (!val && state.hydratedFromRemote) {
@@ -5567,7 +5649,7 @@ function subscribe() {
 
   if (financeNeedsLegacyAccountsMerge) {
     const legacyPath = resolveFinancePathCandidates()[1];
-    console.log('[FINANCE][BALANCE] subscribe firebase legacy merge', legacyPath);
+    financeDebug('subscribe firebase legacy merge', legacyPath);
     unsubscribeLegacyFinance = onValue(ref(db, legacyPath), (snap) => {
       financeRootsCache.legacyRoot = snap.val() || {};
       const mergedRoot = mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
@@ -5627,18 +5709,36 @@ function restoreFinanceUiState(snapshot) {
 }
 
 function triggerRender(options = {}) {
-  const preserveUi = options.preserveUi !== false;
-  const txDetails = document.getElementById('finance-balance-tx-details');
-  if (txDetails && txDetails.tagName === 'DETAILS') {
-    state.balanceTxDetailsOpen = !!txDetails.open;
+  financePendingPreserveUi = financePendingPreserveUi && options.preserveUi !== false;
+  if (financeRenderPromise) {
+    financeRenderQueued = true;
+    return financeRenderPromise;
   }
-  const uiSnapshot = preserveUi ? captureFinanceUiState() : null;
-  render().then(() => {
-    if (preserveUi) restoreFinanceUiState(uiSnapshot);
-  }).catch((e) => {
-    console.error('[finance] render top-level', e);
-    showFinanceBootError($opt, e);
+
+  financeRenderPromise = (async () => {
+    do {
+      financeRenderQueued = false;
+      const preserveUi = financePendingPreserveUi;
+      financePendingPreserveUi = true;
+      const txDetails = document.getElementById('finance-balance-tx-details');
+      if (txDetails && txDetails.tagName === 'DETAILS') {
+        state.balanceTxDetailsOpen = !!txDetails.open;
+      }
+      const uiSnapshot = preserveUi ? captureFinanceUiState() : null;
+      try {
+        await render();
+        if (preserveUi) restoreFinanceUiState(uiSnapshot);
+      } catch (e) {
+        console.error('[finance] render top-level', e);
+        showFinanceBootError($opt, e);
+      }
+    } while (financeRenderQueued);
+  })().finally(() => {
+    financeRenderPromise = null;
+    financePendingPreserveUi = true;
   });
+
+  return financeRenderPromise;
 }
 
 function ensureFinanceAddTxFab() {
@@ -5665,12 +5765,15 @@ async function render() {
     renderFinanceNav();
     if (state.error) { host.innerHTML = `<article class=\"finance-panel\"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`; return; }
     await ensureBtcEurPrice();
-    const accounts = buildAccountModels(); const totalSeries = buildTotalSeries(accounts);
+    const accounts = buildAccountModels();
+    const totalSeries = buildTotalSeries(accounts);
+    const txRows = balanceTxList();
+    const categories = (state.activeView === 'balance' || state.modal?.type) ? categoriesList(txRows) : [];
     await maybeAutoBitcoinDailySnapshots(state.accounts);
     publishFinanceTotals(accounts);
     if (state.activeView === 'balance') {
       await ensureFoodCatalogLoaded();
-      host.innerHTML = renderFinanceBalance();
+      host.innerHTML = renderFinanceBalance(accounts, categories, txRows);
       renderFinanceStatsDonutChart();
       await maybeRolloverSnapshot();
       if (!Object.keys(state.balance.aggregates || {}).length) scheduleAggregateRebuild();
@@ -5681,11 +5784,11 @@ async function render() {
       host.innerHTML = renderFinanceProducts();
     } else {
       disposeFinanceStatsDonutChart();
-      if (state.activeView === 'goals') host.innerHTML = renderFinanceGoals();
+      if (state.activeView === 'goals') host.innerHTML = renderFinanceGoals(accounts);
       else if (state.activeView === 'calendar') host.innerHTML = renderFinanceCalendar(accounts, totalSeries);
       else host.innerHTML = renderFinanceHome(accounts, totalSeries);
     }
-    renderModal();
+    renderModal({ accounts, categories, txRows });
     renderToast();
     ensureFinanceAddTxFab();
   } catch (err) {
@@ -7239,6 +7342,12 @@ export async function init() {
   console.log('[perf] listeners view-finance', getFinanceListenerCount());
 }
 
+export async function onShow() {
+  requestAnimationFrame(() => {
+    try { financeStatsDonutChart?.resize?.(); } catch (_) {}
+  });
+}
+
 export function destroy() {
   if (state.unsubscribe) {
     state.unsubscribe();
@@ -7262,6 +7371,10 @@ export function destroy() {
   }
   const view = document.getElementById('view-finance');
   if (view) delete view.dataset.financeBound;
+  financeRenderQueued = false;
+  financeRenderPromise = null;
+  financePendingPreserveUi = true;
+  clearFinanceDerivedCaches();
   state.booted = false;
   console.log('[finance] destroy completed');
   console.log('[perf] listeners view-finance', getFinanceListenerCount());

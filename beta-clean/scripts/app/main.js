@@ -22,7 +22,7 @@ const DEFAULT_VIEW_ID = "view-books";
 const HABITS_VIEW_ID = "view-habits";
 const SHELL_STATE_KEY = "__bookshellCleanShellState";
 const APP_BOOT_TS = performance.now();
-const loadedStyles = new Set();
+const loadedStyles = new Map();
 const NAV_DEFAULT_GROUP_LABEL = "Grupo";
 const NAV_GROUP_EMOJI_FALLBACK = "🗂️";
 const NAV_LONG_PRESS_MS = 420;
@@ -56,42 +56,52 @@ function bindViewportHeightVar() {
 
 const viewModules = {
   "view-books": {
+    cssUrl: "../../styles/modules/books.css",
     htmlUrl: "../../views/books.html",
     moduleLoader: () => import("../modules/books/index.js"),
   },
   "view-videos-hub": {
+    cssUrl: "../../styles/modules/videos-hub.css",
     htmlUrl: "../../views/videos-hub.html",
     moduleLoader: () => import("../modules/videos-hub/index.js"),
   },
   "view-world": {
+    cssUrl: "../../styles/modules/world.css",
     htmlUrl: "../../views/world.html",
     moduleLoader: () => import("../modules/world/index.js"),
   },
   "view-media": {
+    cssUrl: "../../styles/modules/media.css",
     htmlUrl: "../../views/media.html",
     moduleLoader: () => import("../modules/media/index.js"),
   },
   "view-recipes": {
+    cssUrl: "../../styles/modules/recipes.css",
     htmlUrl: "../../views/recipes.html",
     moduleLoader: () => import("../modules/recipes/index.js"),
   },
   "view-habits": {
+    cssUrl: "../../styles/modules/habits.css",
     htmlUrl: "../../views/habits.html",
     moduleLoader: () => import("../modules/habits/index.js"),
   },
   "view-games": {
+    cssUrl: "../../styles/modules/games.css",
     htmlUrl: "../../views/games.html",
     moduleLoader: () => import("../modules/games/index.js"),
   },
   "view-finance": {
+    cssUrl: "../../styles/modules/finance.css",
     htmlUrl: "../../views/finance.html",
     moduleLoader: () => import("../modules/finance/index.js"),
   },
   "view-improvements": {
+    cssUrl: "../../styles/modules/improvements.css",
     htmlUrl: "../../views/improvements.html",
     moduleLoader: () => import("../modules/improvements/index.js"),
   },
   "view-gym": {
+    cssUrl: "../../styles/modules/gym.css",
     htmlUrl: "../../views/gym.html",
     moduleLoader: () => import("../modules/gym/index.js"),
   },
@@ -104,6 +114,7 @@ function getShellState() {
       currentViewId: null,
       navBound: false,
       authBound: false,
+      bootSplashReleased: false,
     };
   }
 
@@ -114,25 +125,57 @@ function getViews() {
   return Array.from(document.querySelectorAll(".view[id]"));
 }
 
-async function loadHtmlInto(root, htmlUrl) {
+async function fetchHtml(htmlUrl) {
   const absoluteUrl = new URL(htmlUrl, import.meta.url);
   const response = await fetch(absoluteUrl);
   if (!response.ok) {
     throw new Error(`[shell] no se pudo cargar ${absoluteUrl.pathname}`);
   }
 
-  root.innerHTML = await response.text();
+  return response.text();
 }
 
 function loadStyleOnce(href) {
-  const absoluteUrl = new URL(href, window.location.href).href;
-  if (loadedStyles.has(absoluteUrl)) return;
+  const absoluteUrl = new URL(href, import.meta.url).href;
+  if (loadedStyles.has(absoluteUrl)) {
+    return loadedStyles.get(absoluteUrl);
+  }
+
+  const existing = document.querySelector(`link[rel="stylesheet"][href="${absoluteUrl}"]`);
+  if (existing) {
+    const resolved = Promise.resolve(existing);
+    loadedStyles.set(absoluteUrl, resolved);
+    return resolved;
+  }
 
   const link = document.createElement("link");
   link.rel = "stylesheet";
   link.href = absoluteUrl;
+
+  const pending = new Promise((resolve, reject) => {
+    link.addEventListener("load", () => resolve(link), { once: true });
+    link.addEventListener("error", () => {
+      loadedStyles.delete(absoluteUrl);
+      reject(new Error(`[shell] no se pudo cargar la hoja de estilos ${absoluteUrl}`));
+    }, { once: true });
+  });
+
   document.head.appendChild(link);
-  loadedStyles.add(absoluteUrl);
+  loadedStyles.set(absoluteUrl, pending);
+  return pending;
+}
+
+async function callViewHook(viewId, hookName) {
+  const moduleState = getShellState().moduleStates?.[viewId];
+  const root = document.getElementById(viewId);
+  const hook = moduleState?.module?.[hookName];
+  if (!root || typeof hook !== "function") return;
+
+  try {
+    await hook({ root, viewId });
+  } catch (error) {
+    console.warn(`[shell] falló ${hookName} en ${viewId}`, error);
+  }
 }
 
 async function ensureViewModule(viewId, { runOnShow = true } = {}) {
@@ -156,15 +199,18 @@ async function ensureViewModule(viewId, { runOnShow = true } = {}) {
   const root = document.getElementById(viewId);
   if (!root) return null;
 
-  if (config.cssUrl) {
-    loadStyleOnce(config.cssUrl);
-  }
-
   if (!moduleState.pending) {
     moduleState.pending = (async () => {
       if (!moduleState.htmlLoaded) {
-        await loadHtmlInto(root, config.htmlUrl);
+        const [html] = await Promise.all([
+          fetchHtml(config.htmlUrl),
+          config.cssUrl ? loadStyleOnce(config.cssUrl) : Promise.resolve(null),
+        ]);
+        root.innerHTML = await html;
         moduleState.htmlLoaded = true;
+        releaseBootSplashForShell(root);
+      } else if (config.cssUrl) {
+        await loadStyleOnce(config.cssUrl);
       }
 
       if (!moduleState.module) {
@@ -1310,6 +1356,11 @@ async function setView(viewId, { pushHash = true } = {}) {
     return;
   }
 
+  const previousViewId = state.currentViewId;
+  if (previousViewId) {
+    await callViewHook(previousViewId, "onHide");
+  }
+
   syncViews(viewId);
   syncNav(viewId);
   await ensureViewModule(viewId);
@@ -1500,9 +1551,17 @@ function setBootPhase(text, progressHint) {
 }
 
 function finishBootSplash() {
+  getShellState().bootSplashReleased = true;
   try {
     getBootSplash()?.done?.();
   } catch (_) {}
+}
+
+function releaseBootSplashForShell(root) {
+  const state = getShellState();
+  if (state.bootSplashReleased) return;
+  if (!root?.classList?.contains?.("view-active")) return;
+  requestAnimationFrame(() => finishBootSplash());
 }
 
 function ensureLoginUI() {
@@ -1651,6 +1710,16 @@ function bootShell() {
   state.booted = true;
 }
 
+function schedulePostBootTask(task, delayMs = 0) {
+  requestAnimationFrame(() => {
+    window.setTimeout(() => {
+      Promise.resolve(task()).catch((error) => {
+        console.warn("[shell] tarea post-boot falló", error);
+      });
+    }, delayMs);
+  });
+}
+
 function bindAuthGate() {
   const state = getShellState();
   if (state.authBound) return;
@@ -1659,6 +1728,11 @@ function bindAuthGate() {
 
   onUserChange(async (user) => {
     if (!user) {
+      if (state.currentViewId) {
+        await callViewHook(state.currentViewId, "onHide");
+        state.currentViewId = null;
+        syncCurrentViewState("");
+      }
       stopNavLayoutSync();
       closeNavComposeModal();
       closeNavGroups();
@@ -1671,23 +1745,21 @@ function bindAuthGate() {
 
     setBootPhase("Conectando…", 38);
 
-    try {
-      await ensureUserSchema(user.uid);
-    } catch (e) {
-      console.warn("[schema] seed failed", e);
-    }
-
-    await primeNavLayoutForUser(user.uid);
-    startNavLayoutSync(user.uid);
-
     document.getElementById("loginBox")?.remove();
-
     bootShell();
-    const hasActiveSession = await hasRemoteActiveHabitSession(user.uid);
-    if (hasActiveSession) {
-      setBootPhase("Recuperando sesión…", 54);
-      await preloadViewModule(HABITS_VIEW_ID);
-    }
+
+    void ensureUserSchema(user.uid).catch((error) => {
+      console.warn("[schema] seed failed", error);
+    });
+
+    void primeNavLayoutForUser(user.uid)
+      .catch((error) => {
+        console.warn("[shell] no se pudo preparar navLayout inicial", error);
+      })
+      .finally(() => {
+        startNavLayoutSync(user.uid);
+      });
+
     setBootPhase("Cargando datos…", 62);
 
     const viewId = getInitialView();
@@ -1697,6 +1769,14 @@ function bindAuthGate() {
     } finally {
       requestAnimationFrame(() => finishBootSplash());
     }
+
+    schedulePostBootTask(async () => {
+      if (auth.currentUser?.uid !== user.uid) return;
+      if (viewId === HABITS_VIEW_ID) return;
+      const hasActiveSession = await hasRemoteActiveHabitSession(user.uid);
+      if (!hasActiveSession) return;
+      await preloadViewModule(HABITS_VIEW_ID);
+    }, 180);
 
     console.log("[auth] uid", user.uid);
     console.log("[perf] app-initial-load-ms", Math.round(performance.now() - APP_BOOT_TS));

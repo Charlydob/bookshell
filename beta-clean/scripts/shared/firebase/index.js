@@ -1,5 +1,5 @@
 export { firebaseConfig, FIREBASE_MODULE_URLS, FIREBASE_SDK_VERSION } from "./config.js";
-export { firebaseApp, auth, db, storage } from "./app.js";
+export { firebaseApp, auth, db, getStorageService } from "./app.js";
 export {
   getCurrentUser,
   getCurrentUserId,

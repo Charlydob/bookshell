@@ -475,6 +475,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   };
   const RECIPE_VIEW_MODE_STORAGE_KEY = `${getStorageKey()}.ui.viewMode`;
   const allowedRecipeViews = new Set(["shelf", "cards"]);
+  const RECIPE_CARD_BATCH_SIZE = 18;
   let recipesViewMode = "shelf";
 
   const defaultMacroTargets = {
@@ -576,6 +577,12 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   let recipeDonutActiveType = null;
   let recipeDonutActiveLabel = null;
   let recipeDonutBackupChips = null;
+  let recipeCardsRenderToken = 0;
+  let recipeCardsRenderIdleId = null;
+  let recipeCardsRenderTimer = null;
+  let recipeLibraryVisualToken = 0;
+  let recipeLibraryVisualIdleId = null;
+  let recipeLibraryVisualTimer = null;
 
   const RECIPE_PHOTO_PLACEHOLDER = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1b1622"/><stop offset="1" stop-color="#0b0c14"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#g)"/><text x="50%" y="50%" fill="rgba(255,255,255,0.55)" font-family="system-ui, -apple-system, Segoe UI, Roboto" font-size="42" text-anchor="middle" dominant-baseline="middle">Sin foto</text></svg>'
@@ -723,10 +730,6 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       } catch (_) {}
 
       attach(currentUid);
-      loadFinanceProductsCatalog().then(() => {
-        renderMacrosView();
-        if (detailRecipeId) renderRecipeDetail(detailRecipeId);
-      });
     });
   }
 
@@ -748,6 +751,120 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
           };
 
     return fn(file);
+  }
+
+  function scheduleRecipeIdleWork(run, { timeout = 900, delay = 160 } = {}) {
+    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+      return { kind: "idle", id: window.requestIdleCallback(run, { timeout }) };
+    }
+    return { kind: "timer", id: window.setTimeout(run, delay) };
+  }
+
+  function clearScheduledRecipeIdleWork(handle) {
+    if (!handle || typeof window === "undefined") return;
+    if (handle.kind === "idle" && typeof window.cancelIdleCallback === "function") {
+      window.cancelIdleCallback(handle.id);
+      return;
+    }
+    window.clearTimeout(handle.id);
+  }
+
+  function buildCloudinaryRecipeImageUrl(url, {
+    width = 0,
+    height = 0,
+    crop = "fill",
+    gravity = "auto",
+    quality = "auto",
+  } = {}) {
+    const raw = String(url || "").trim();
+    if (!raw || !/^https?:\/\//i.test(raw) || !/res\.cloudinary\.com/i.test(raw)) return raw;
+    const marker = "/image/upload/";
+    const markerIndex = raw.indexOf(marker);
+    if (markerIndex === -1) return raw;
+    const prefix = raw.slice(0, markerIndex + marker.length);
+    const rest = raw.slice(markerIndex + marker.length).replace(/^\/+/, "");
+    const parts = ["f_auto", `q_${quality}`];
+    if (crop) parts.push(`c_${crop}`);
+    if (gravity) parts.push(`g_${gravity}`);
+    if (width) parts.push(`w_${Math.max(1, Math.round(width))}`);
+    if (height) parts.push(`h_${Math.max(1, Math.round(height))}`);
+    return `${prefix}${parts.join(",")}/${rest}`;
+  }
+
+  function getRecipeCardImageUrls(recipe) {
+    const original = String(recipe?.imageURL || "").trim();
+    if (!original) return { card: "", bleed: "" };
+    return {
+      card: buildCloudinaryRecipeImageUrl(original, { width: 240, height: 240 }),
+      bleed: buildCloudinaryRecipeImageUrl(original, { width: 480, height: 240 }),
+    };
+  }
+
+  function getRecipeDetailImageUrl(url) {
+    return buildCloudinaryRecipeImageUrl(url, { width: 1280, height: 720 });
+  }
+
+  function getRecipePreviewImageUrl(url) {
+    return buildCloudinaryRecipeImageUrl(url, { width: 960, height: 540 });
+  }
+
+  async function downscaleRecipeImageFile(file) {
+    if (!(file instanceof File) || !/^image\//i.test(file.type)) return file;
+
+    const type = /^image\/png$/i.test(file.type) ? "image/png" : "image/jpeg";
+    const maxEdge = 1600;
+    const quality = type === "image/png" ? undefined : 0.82;
+
+    let source = null;
+    let objectUrl = null;
+    try {
+      if (typeof createImageBitmap === "function") {
+        source = await createImageBitmap(file);
+      } else {
+        objectUrl = URL.createObjectURL(file);
+        source = await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = objectUrl;
+        });
+      }
+
+      const width = Number(source?.width || 0);
+      const height = Number(source?.height || 0);
+      if (!width || !height) return file;
+
+      const ratio = Math.min(1, maxEdge / width, maxEdge / height);
+      if (ratio >= 0.999 && file.size <= 900 * 1024) return file;
+
+      const nextWidth = Math.max(1, Math.round(width * ratio));
+      const nextHeight = Math.max(1, Math.round(height * ratio));
+      const canvas = document.createElement("canvas");
+      canvas.width = nextWidth;
+      canvas.height = nextHeight;
+      const ctx = canvas.getContext("2d", { alpha: type === "image/png" });
+      if (!ctx) return file;
+      ctx.drawImage(source, 0, 0, nextWidth, nextHeight);
+
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+      if (!blob) return file;
+      if (blob.size >= file.size && ratio >= 0.999) return file;
+
+      const nextName = type === "image/png"
+        ? String(file.name || "recipe-photo.png").replace(/\.[a-z0-9]+$/i, ".png")
+        : String(file.name || "recipe-photo.jpg").replace(/\.[a-z0-9]+$/i, ".jpg");
+      return new File([blob], nextName, {
+        type: blob.type || type,
+        lastModified: Date.now(),
+      });
+    } catch (_) {
+      return file;
+    } finally {
+      try { source?.close?.(); } catch (_) {}
+      if (objectUrl) {
+        try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+      }
+    }
   }
 
   function setRecipePhotoStatus(msg = "") {
@@ -1582,14 +1699,15 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     const cost = getRecipeCostSummary(recipe);
     const metadata = [recipe.meal, recipe.health, ...(Array.isArray(recipe.tags) ? recipe.tags : [])].filter(Boolean).join(" · ");
     const hasImage = Boolean(String(recipe.imageURL || "").trim());
+    const imageUrls = hasImage ? getRecipeCardImageUrls(recipe) : null;
     const imageMarkup = hasImage
       ? `<div class="recipe-row-media">
-          <img class="recipe-row-media-bleed" src="${escapeAttr(recipe.imageURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async"/>
-          <img class="recipe-row-media-img" src="${escapeAttr(recipe.imageURL)}" alt="${escapeAttr(recipe.title || "Receta")}" loading="lazy" decoding="async"/>
+          <img class="recipe-row-media-bleed" src="${escapeAttr(imageUrls.bleed || recipe.imageURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async" fetchpriority="low"/>
+          <img class="recipe-row-media-img" src="${escapeAttr(imageUrls.card || recipe.imageURL)}" alt="${escapeAttr(recipe.title || "Receta")}" loading="lazy" decoding="async" fetchpriority="low" width="76" height="76"/>
         </div>`
       : "";
     return `
-      <article class="recipe-row-card${hasImage ? " has-image" : ""}" data-open-recipe="${escapeAttr(recipe.id)}">
+      <article class="recipe-row-card${hasImage ? " has-image" : ""}" data-open-recipe="${escapeAttr(recipe.id)}" role="button" tabindex="0" aria-label="Abrir receta ${escapeAttr(formatRecipeTitle(recipe))}">
         ${imageMarkup}
         <div class="recipe-row-body">
           <div class="recipe-row-title-wrap">
@@ -1627,40 +1745,55 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   function renderRecipeCardsView(list = []) {
     if (!$recipesListPreview) return;
+    const renderToken = ++recipeCardsRenderToken;
+    if (recipeCardsRenderIdleId != null) {
+      clearScheduledRecipeIdleWork({ kind: "idle", id: recipeCardsRenderIdleId });
+      recipeCardsRenderIdleId = null;
+    }
+    if (recipeCardsRenderTimer != null) {
+      clearScheduledRecipeIdleWork({ kind: "timer", id: recipeCardsRenderTimer });
+      recipeCardsRenderTimer = null;
+    }
     const grouped = sortRecipesForGlobalView(list);
     if (!grouped.merged.length) {
       $recipesListPreview.innerHTML = '<div class="recipe-row-empty">No hay recetas que coincidan</div>';
       return;
     }
     const sections = [];
-    if (grouped.favorites.length) {
-      sections.push(`<div class="recipe-row-group-title">Favoritas (${grouped.favorites.length})</div>`);
-      sections.push(grouped.favorites.map((recipe) => renderRecipeCardRow(recipe)).join(""));
-    }
-    if (grouped.regular.length) {
-      sections.push(`<div class="recipe-row-group-title">Todas (${grouped.regular.length})</div>`);
-      sections.push(grouped.regular.map((recipe) => renderRecipeCardRow(recipe)).join(""));
-    }
-    $recipesListPreview.innerHTML = sections.join("");
-    $recipesListPreview.querySelectorAll("[data-open-recipe]").forEach((node) => {
-      node.addEventListener("click", (event) => {
-        if (event.target.closest("[data-toggle-recipe-favorite]")) return;
-        openRecipeDetail(node.getAttribute("data-open-recipe"));
-      });
-    });
-    $recipesListPreview.querySelectorAll("[data-toggle-recipe-favorite]").forEach((btn) => {
-      btn.addEventListener("click", (event) => {
-        try { event.stopPropagation(); } catch (_) {}
-        const recipeId = btn.getAttribute("data-toggle-recipe-favorite");
-        const recipe = recipes.find((item) => item.id === recipeId);
-        if (!recipe) return;
-        updateRecipe(recipeId, { favorite: !recipe.favorite });
-      });
-    });
-  }
+    if (grouped.favorites.length) sections.push({ title: `Favoritas (${grouped.favorites.length})`, items: grouped.favorites });
+    if (grouped.regular.length) sections.push({ title: `Todas (${grouped.regular.length})`, items: grouped.regular });
 
-  function renderRecipeListPreview(list = []) {
-    renderRecipeCardsView(list);
+    $recipesListPreview.innerHTML = "";
+    let sectionIndex = 0;
+    let itemIndex = 0;
+
+    const appendChunk = () => {
+      if (renderToken !== recipeCardsRenderToken) return;
+      let remaining = RECIPE_CARD_BATCH_SIZE;
+      let html = "";
+
+      while (sectionIndex < sections.length && remaining > 0) {
+        const section = sections[sectionIndex];
+        if (itemIndex === 0) html += `<div class="recipe-row-group-title">${escapeHtml(section.title)}</div>`;
+        const slice = section.items.slice(itemIndex, itemIndex + remaining);
+        html += slice.map((recipe) => renderRecipeCardRow(recipe)).join("");
+        itemIndex += slice.length;
+        remaining -= slice.length;
+        if (itemIndex >= section.items.length) {
+          sectionIndex += 1;
+          itemIndex = 0;
+        }
+      }
+
+      if (html) $recipesListPreview.insertAdjacentHTML("beforeend", html);
+      if (sectionIndex >= sections.length) return;
+
+      const handle = scheduleRecipeIdleWork(appendChunk, { timeout: 700, delay: 48 });
+      if (handle.kind === "idle") recipeCardsRenderIdleId = handle.id;
+      else recipeCardsRenderTimer = handle.id;
+    };
+
+    appendChunk();
   }
 
   function resolveRecipeServings(recipe) {
@@ -2024,17 +2157,53 @@ function linkifyNotesHtml(input) {
     });
   }
 
-  function renderRecipeShelf() {
-    if (!$shelfList) return;
+  function getRecipeLibraryFilteredList() {
     const shelfQuery = (filterState.shelfQuery || "").trim().toLowerCase();
-    const filtered = filterRecipes().filter((r) => {
+    return filterRecipes().filter((r) => {
       if (!shelfQuery) return true;
       const text = [r.title, r.meal, r.health, (r.tags || []).join(" "), r.countryLabel || r.country]
         .join(" ")
         .toLowerCase();
       return text.includes(shelfQuery);
     });
+  }
 
+  function updateRecipeLibraryResultState(filtered = []) {
+    if ($shelfResults) {
+      $shelfResults.textContent = filtered.length
+        ? `Recetas visibles: ${filtered.length}`
+        : "Sin coincidencias";
+    }
+    if ($shelfEmpty) {
+      $shelfEmpty.style.display = filtered.length ? "none" : "block";
+    }
+    if ($empty) {
+      $empty.style.display = recipes.length ? "none" : "block";
+    }
+  }
+
+  function clearRecipeCardsView() {
+    ++recipeCardsRenderToken;
+    if (recipeCardsRenderIdleId != null) {
+      clearScheduledRecipeIdleWork({ kind: "idle", id: recipeCardsRenderIdleId });
+      recipeCardsRenderIdleId = null;
+    }
+    if (recipeCardsRenderTimer != null) {
+      clearScheduledRecipeIdleWork({ kind: "timer", id: recipeCardsRenderTimer });
+      recipeCardsRenderTimer = null;
+    }
+    if ($recipesListPreview) $recipesListPreview.innerHTML = "";
+  }
+
+  function clearRecipeShelfView() {
+    if ($shelfList) $shelfList.innerHTML = "";
+    if ($shelfFavoritesSection) $shelfFavoritesSection.style.display = "none";
+    if ($shelfFavorites) $shelfFavorites.innerHTML = "";
+    if ($shelfFavoritesCount) $shelfFavoritesCount.textContent = "0";
+  }
+
+  function renderRecipeShelf(filtered = getRecipeLibraryFilteredList()) {
+    if (!$shelfList) return;
     const grouped = sortRecipesForGlobalView(filtered);
     const favorites = grouped.favorites;
     const regular = grouped.regular;
@@ -2065,26 +2234,20 @@ function linkifyNotesHtml(input) {
       $shelfFavorites.innerHTML = "";
       if ($shelfFavoritesCount) $shelfFavoritesCount.textContent = "0";
     }
-
-    if ($shelfResults) {
-      $shelfResults.textContent = filtered.length
-        ? `Recetas visibles: ${filtered.length}`
-        : "Sin coincidencias";
-    }
-    if ($shelfEmpty) {
-      $shelfEmpty.style.display = filtered.length ? "none" : "block";
-    }
-    if (recipesViewMode === "cards") renderRecipeCardsView(filtered);
-    else renderRecipeListPreview(filtered);
-    if ($empty) {
-      $empty.style.display = recipes.length ? "none" : "block";
-    }
   }
 
   function renderRecipeLibraryViews() {
     renderRecipesViewToggle();
-    renderRecipeShelf();
+    const filtered = getRecipeLibraryFilteredList();
     const showCards = recipesViewMode === "cards";
+    updateRecipeLibraryResultState(filtered);
+    if (showCards) {
+      clearRecipeShelfView();
+      renderRecipeCardsView(filtered);
+    } else {
+      clearRecipeCardsView();
+      renderRecipeShelf(filtered);
+    }
     if ($shelfList) $shelfList.style.display = showCards ? "none" : "";
     if ($shelfFavoritesSection && showCards) $shelfFavoritesSection.style.display = "none";
     if ($recipesListPreview) {
@@ -2289,6 +2452,53 @@ notes.innerHTML = `<strong>Notas</strong><br>${linkifyNotesHtml(recipe.notes)}`;
     $cardsHost.appendChild(frag);
 
     if ($empty) $empty.style.display = filtered.length ? "none" : "block";
+  }
+
+  function clearRecipeLibraryVisuals() {
+    if ($chartMeal) {
+      if (typeof $chartMeal.__recipeDonutCleanup === "function") $chartMeal.__recipeDonutCleanup();
+      delete $chartMeal.__recipeDonutCleanup;
+      $chartMeal.innerHTML = "";
+    }
+    if ($chartHealth) {
+      if (typeof $chartHealth.__recipeDonutCleanup === "function") $chartHealth.__recipeDonutCleanup();
+      delete $chartHealth.__recipeDonutCleanup;
+      $chartHealth.innerHTML = "";
+    }
+    if ($recipesCountryList) $recipesCountryList.innerHTML = "";
+    if ($recipesWorldMap) {
+      if (typeof $recipesWorldMap.__geoCleanup === "function") $recipesWorldMap.__geoCleanup();
+      delete $recipesWorldMap.__geoCleanup;
+      $recipesWorldMap.innerHTML = "";
+    }
+    if ($calGrid) $calGrid.innerHTML = "";
+  }
+
+  function cancelRecipeLibraryVisuals() {
+    ++recipeLibraryVisualToken;
+    if (recipeLibraryVisualIdleId != null) {
+      clearScheduledRecipeIdleWork({ kind: "idle", id: recipeLibraryVisualIdleId });
+      recipeLibraryVisualIdleId = null;
+    }
+    if (recipeLibraryVisualTimer != null) {
+      clearScheduledRecipeIdleWork({ kind: "timer", id: recipeLibraryVisualTimer });
+      recipeLibraryVisualTimer = null;
+    }
+  }
+
+  function scheduleRecipeLibraryVisuals() {
+    cancelRecipeLibraryVisuals();
+    const token = recipeLibraryVisualToken;
+    const run = () => {
+      if (token !== recipeLibraryVisualToken) return;
+      if (!$recipesPanelLibrary?.classList.contains("is-active")) return;
+      renderCharts();
+      if (token !== recipeLibraryVisualToken) return;
+      renderCalendar();
+    };
+    const handle = scheduleRecipeIdleWork(run, { timeout: 900, delay: 180 });
+    if (handle.kind === "idle") recipeLibraryVisualIdleId = handle.id;
+    else recipeLibraryVisualTimer = handle.id;
   }
 
   function renderStats() {
@@ -2883,7 +3093,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     _recipePhotoRemove = false;
     clearRecipePhotoObjectUrl();
     if ($recipeImageFile) $recipeImageFile.value = "";
-    setRecipePhotoPreview(recipe?.imageURL || null);
+    setRecipePhotoPreview(getRecipePreviewImageUrl(recipe?.imageURL || null) || recipe?.imageURL || null);
     setRecipePhotoStatus("");
     const isEditing = !!recipe;
     if ($recipeDelete) $recipeDelete.style.display = isEditing ? "inline-flex" : "none";
@@ -3004,7 +3214,8 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
 
       if (file) {
         setRecipePhotoStatus("Subiendo foto…");
-        nextUrl = await subirImagenACloudinarySafe(file);
+        const optimizedFile = await downscaleRecipeImageFile(file);
+        nextUrl = await subirImagenACloudinarySafe(optimizedFile);
         setRecipePhotoStatus("Foto subida ✅");
       }
 
@@ -3033,12 +3244,31 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
 
   function refreshUI() {
     renderChips();
-    renderRecipeLibraryViews();
-    renderStats();
-    renderCharts();
-    renderCalendar();
-    renderMacrosView();
-    renderStatisticsView();
+    const activePanel = $recipesPanelMacros?.classList.contains("is-active")
+      ? "macros"
+      : $recipesPanelStatistics?.classList.contains("is-active")
+        ? "statistics"
+        : $recipesPanelShopping?.classList.contains("is-active")
+          ? "shopping"
+          : "library";
+
+    if (activePanel === "library") {
+      renderRecipeLibraryViews();
+      renderStats();
+      scheduleRecipeLibraryVisuals();
+      return;
+    }
+
+    if (activePanel === "macros") {
+      renderMacrosView();
+      return;
+    }
+
+    if (activePanel === "statistics") {
+      renderStatisticsView();
+      return;
+    }
+
     renderShoppingView();
   }
 
@@ -3390,7 +3620,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       const url = recipe.imageURL || null;
       if (url) {
         $recipeDetailHero.style.display = "block";
-        $recipeDetailImage.src = url;
+        $recipeDetailImage.src = getRecipeDetailImageUrl(url) || url;
       } else {
         $recipeDetailHero.style.display = "none";
         $recipeDetailImage.removeAttribute("src");
@@ -3879,7 +4109,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     _recipePhotoRemove = false;
     _recipePhotoObjectUrl = URL.createObjectURL(file);
     setRecipePhotoPreview(_recipePhotoObjectUrl);
-    setRecipePhotoStatus("Lista ✅ (se sube al guardar)");
+    setRecipePhotoStatus("Lista ✅ (se optimiza al guardar)");
   });
 
   $recipeImageRemove?.addEventListener("click", () => {
@@ -3942,6 +4172,30 @@ $recipeImportBtn?.addEventListener("click", () => {
     try { console.debug("[recipes] tracking", { id: recipe.id, tracking: recipe.tracking, trackingAt: recipe.trackingAt }); } catch (_) {}
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
   });;
+
+  $recipesListPreview?.addEventListener("click", (event) => {
+    const favoriteBtn = event.target?.closest?.("[data-toggle-recipe-favorite]");
+    if (favoriteBtn) {
+      try { event.preventDefault(); event.stopPropagation(); } catch (_) {}
+      const recipeId = favoriteBtn.getAttribute("data-toggle-recipe-favorite");
+      const recipe = recipes.find((item) => item.id === recipeId);
+      if (!recipe) return;
+      updateRecipe(recipeId, { favorite: !recipe.favorite });
+      return;
+    }
+    const card = event.target?.closest?.("[data-open-recipe]");
+    if (!card) return;
+    openRecipeDetail(card.getAttribute("data-open-recipe"));
+  });
+
+  $recipesListPreview?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const card = event.target?.closest?.("[data-open-recipe]");
+    if (!card) return;
+    if (event.target?.closest?.("[data-toggle-recipe-favorite]")) return;
+    event.preventDefault();
+    openRecipeDetail(card.getAttribute("data-open-recipe"));
+  });
 
   $recipeDetailTabs?.forEach((tab) => {
     tab.addEventListener("click", () => setActiveRecipePanel(tab.dataset.target || "ingredients"));
@@ -4276,8 +4530,6 @@ $recipeImportBtn?.addEventListener("click", () => {
         recalcAllRecipesNutrition();
         refreshUI();
         if ($modalBackdrop && !$modalBackdrop.classList.contains("hidden")) renderRecipeIngredientProductPicker();
-        renderMacrosView();
-        renderStatisticsView();
       }, (err) => {
         console.warn("No se pudo escuchar nutrición remota", err);
       });
@@ -5003,7 +5255,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       const healthLabel = getNutriHealthLabel(item.nutriScore);
       const priceLabel = item.effectivePrice == null ? "¿?" : formatCurrency(item.effectivePrice);
       const media = item.image
-        ? `<img src="${escapeAttr(item.image)}" alt="${escapeAttr(item.name)}" loading="lazy" decoding="async" />`
+        ? `<img src="${escapeAttr(buildCloudinaryRecipeImageUrl(item.image, { width: 192, height: 192 }) || item.image)}" alt="${escapeAttr(item.name)}" loading="lazy" decoding="async" fetchpriority="low" width="64" height="64" />`
         : `<div class="macro-shopping-thumb-placeholder" aria-hidden="true">🍽️</div>`;
       return `<article class="macro-shopping-product-card" data-shopping-open-product="${escapeAttr(item.id)}" role="button" tabindex="0" aria-label="Abrir ficha de ${escapeAttr(item.name)}">
         <div class="macro-shopping-product-top">
@@ -5164,6 +5416,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     const isMacros = panel === "macros";
     const isStatistics = panel === "statistics";
     const isShopping = panel === "shopping";
+    renderChips();
     $recipesPanelLibrary?.classList.toggle("is-active", isLibrary);
     $recipesPanelMacros?.classList.toggle("is-active", isMacros);
     $recipesPanelStatistics?.classList.toggle("is-active", isStatistics);
@@ -5173,6 +5426,15 @@ $recipeImportBtn?.addEventListener("click", () => {
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-selected", active ? "true" : "false");
     });
+    if (isLibrary) {
+      renderRecipeLibraryViews();
+      renderStats();
+      scheduleRecipeLibraryVisuals();
+    }
+    else {
+      cancelRecipeLibraryVisuals();
+      clearRecipeLibraryVisuals();
+    }
     if (isMacros) renderMacrosView();
     if (isStatistics) renderStatisticsView();
     if (isShopping) renderShoppingView();
@@ -9480,8 +9742,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   loadNutritionCache();
   macroStatsState.anchorDate = selectedMacroDate;
   recalcAllRecipesNutrition();
-  refreshUI();
-  renderStatisticsView();
+  renderChips();
   listenRemoteRecipes();
   listenNutritionRemote();
   switchRecipesPanel("library");

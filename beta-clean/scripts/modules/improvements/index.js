@@ -135,6 +135,7 @@ const state = {
   root: null,
   uid: "",
   path: "",
+  viewVisible: false,
   boards: {},
   items: {},
   activeViewId: DEFAULT_VIEW_ID,
@@ -158,6 +159,19 @@ const state = {
   },
   statsResizeRaf: 0,
   handleWindowResize: null,
+  statsRenderIdleHandle: 0,
+  renderFrame: 0,
+  derived: {
+    dirty: true,
+    allItems: [],
+    itemsByView: new Map(),
+    countsByView: new Map(),
+    globalCounts: { pending: 0, resolved: 0 },
+    availableBoardsRaw: [],
+    availableBoardsSorted: [],
+    typeStatsByView: new Map(),
+    statsByView: new Map(),
+  },
 };
 
 const els = {};
@@ -225,8 +239,62 @@ function formatPercent(value) {
   return `${Math.round(Number(value) || 0)}%`;
 }
 
+function scheduleIdleTask(callback, timeout = 300) {
+  if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+    return window.requestIdleCallback(callback, { timeout });
+  }
+  return window.setTimeout(() => callback({ didTimeout: true, timeRemaining: () => 0 }), 1);
+}
+
+function cancelIdleTask(handle) {
+  if (!handle) return;
+  if (typeof window !== "undefined" && typeof window.cancelIdleCallback === "function") {
+    window.cancelIdleCallback(handle);
+    return;
+  }
+  window.clearTimeout(handle);
+}
+
+function scheduleImprovementRender() {
+  if (state.renderFrame) return;
+  if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+    renderAll();
+    return;
+  }
+  state.renderFrame = window.requestAnimationFrame(() => {
+    state.renderFrame = 0;
+    renderAll();
+  });
+}
+
+function cancelScheduledImprovementRender() {
+  if (!state.renderFrame) return;
+  if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+    window.cancelAnimationFrame(state.renderFrame);
+  }
+  state.renderFrame = 0;
+}
+
+function createImprovementDerivedState() {
+  return {
+    dirty: true,
+    allItems: [],
+    itemsByView: new Map(),
+    countsByView: new Map(),
+    globalCounts: { pending: 0, resolved: 0 },
+    availableBoardsRaw: [],
+    availableBoardsSorted: [],
+    typeStatsByView: new Map(),
+    statsByView: new Map(),
+  };
+}
+
+function invalidateImprovementDerivedData() {
+  state.derived = createImprovementDerivedState();
+}
+
 function getAllItems() {
-  return Object.entries(state.items || {}).map(([id, item]) => ({ id, ...(item || {}) }));
+  return ensureImprovementDerivedData().allItems;
 }
 
 function getPriorityWeight(priority) {
@@ -272,7 +340,7 @@ function shiftMonthKey(monthKey, offset = 0) {
 }
 
 function isStatsViewVisible() {
-  return Boolean(state.root?.classList?.contains("view-active") && state.currentWindow === "stats");
+  return Boolean(state.viewVisible && state.root?.classList?.contains("view-active") && state.currentWindow === "stats");
 }
 
 function normalizeToken(value) {
@@ -495,12 +563,14 @@ function compareBoards(a, b) {
   return String(a.label || "").localeCompare(String(b.label || ""), "es", { sensitivity: "base" });
 }
 
-function getAvailableBoards({ sort = true } = {}) {
-  const merged = new Map();
+function ensureImprovementDerivedData() {
+  if (!state.derived?.dirty) return state.derived;
+
+  const mergedBoards = new Map();
   const addBoard = (board) => {
     if (!board?.id) return;
-    const prev = merged.get(board.id);
-    merged.set(board.id, prev
+    const prev = mergedBoards.get(board.id);
+    mergedBoards.set(board.id, prev
       ? {
           ...prev,
           ...board,
@@ -513,13 +583,70 @@ function getAvailableBoards({ sort = true } = {}) {
   getShellTabs().forEach(addBoard);
   addBoard(getGeneralBoard());
   Object.values(state.boards || {}).forEach(addBoard);
-  Object.values(state.items || {}).forEach((item) => {
-    if (!item?.viewId) return;
-    addBoard(buildFallbackBoard(item.viewId));
+
+  const allItems = Object.entries(state.items || {}).map(([id, item]) => ({ id, ...(item || {}) }));
+  const itemsByView = new Map([[DEFAULT_BOARD_ID, allItems]]);
+  const countsByView = new Map([[DEFAULT_BOARD_ID, { pending: 0, resolved: 0 }]]);
+  const globalCounts = { pending: 0, resolved: 0 };
+
+  allItems.forEach((item) => {
+    if (item?.viewId) addBoard(buildFallbackBoard(item.viewId));
+    const viewId = String(item?.viewId || DEFAULT_BOARD_ID).trim() || DEFAULT_BOARD_ID;
+    if (!itemsByView.has(viewId)) itemsByView.set(viewId, []);
+    itemsByView.get(viewId).push(item);
+
+    if (!countsByView.has(viewId)) countsByView.set(viewId, { pending: 0, resolved: 0 });
+    const bucket = countsByView.get(viewId);
+    const status = sanitizeStatus(item?.status);
+    if (status === "resolved") {
+      bucket.resolved += 1;
+      globalCounts.resolved += 1;
+    } else {
+      bucket.pending += 1;
+      globalCounts.pending += 1;
+    }
   });
 
-  const boards = Array.from(merged.values());
-  return sort ? boards.sort(compareBoards) : boards;
+  countsByView.set(DEFAULT_BOARD_ID, { ...globalCounts });
+
+  const compareBoardsByCounts = (a, b) => {
+    const aIsGeneral = isGeneralBoardViewId(a?.id);
+    const bIsGeneral = isGeneralBoardViewId(b?.id);
+    if (aIsGeneral && !bIsGeneral) return -1;
+    if (!aIsGeneral && bIsGeneral) return 1;
+
+    const countsA = countsByView.get(a.id) || { pending: 0, resolved: 0 };
+    const countsB = countsByView.get(b.id) || { pending: 0, resolved: 0 };
+    const pendingDiff = countsB.pending - countsA.pending;
+    if (pendingDiff) return pendingDiff;
+
+    const totalDiff = (countsB.pending + countsB.resolved) - (countsA.pending + countsA.resolved);
+    if (totalDiff) return totalDiff;
+
+    const resolvedDiff = countsB.resolved - countsA.resolved;
+    if (resolvedDiff) return resolvedDiff;
+
+    return String(a.label || "").localeCompare(String(b.label || ""), "es", { sensitivity: "base" });
+  };
+
+  state.derived = {
+    dirty: false,
+    allItems,
+    itemsByView,
+    countsByView,
+    globalCounts,
+    availableBoardsRaw: Array.from(mergedBoards.values()),
+    availableBoardsSorted: Array.from(mergedBoards.values()).sort(compareBoardsByCounts),
+    typeStatsByView: new Map(),
+    statsByView: new Map(),
+  };
+
+  return state.derived;
+}
+
+function getAvailableBoards({ sort = true } = {}) {
+  const derived = ensureImprovementDerivedData();
+  return sort ? derived.availableBoardsSorted : derived.availableBoardsRaw;
 }
 
 function getDefaultViewId(tabs = getAvailableBoards({ sort: false })) {
@@ -694,27 +821,18 @@ function isGeneralBoardViewId(viewId) {
 }
 
 function getItemList(viewId = "") {
-  const items = Object.entries(state.items)
-    .map(([id, item]) => ({ id, ...(item || {}) }));
-
-  if (!viewId || isGeneralBoardViewId(viewId)) return items;
-  return items.filter((item) => item.viewId === viewId);
+  const derived = ensureImprovementDerivedData();
+  if (!viewId || isGeneralBoardViewId(viewId)) return derived.allItems;
+  return derived.itemsByView.get(viewId) || [];
 }
 
 function getTabCounts(viewId) {
-  return getItemList(viewId).reduce((acc, item) => {
-    if (item.status === "resolved") acc.resolved += 1;
-    else acc.pending += 1;
-    return acc;
-  }, { pending: 0, resolved: 0 });
+  const counts = ensureImprovementDerivedData().countsByView.get(String(viewId || DEFAULT_BOARD_ID).trim() || DEFAULT_BOARD_ID);
+  return counts ? { ...counts } : { pending: 0, resolved: 0 };
 }
 
 function getGlobalCounts() {
-  return Object.values(state.items).reduce((acc, item) => {
-    if (sanitizeStatus(item.status) === "resolved") acc.resolved += 1;
-    else acc.pending += 1;
-    return acc;
-  }, { pending: 0, resolved: 0 });
+  return { ...ensureImprovementDerivedData().globalCounts };
 }
 
 function compareFixTypeEntries(a, b) {
@@ -764,6 +882,17 @@ function buildFixTypeStats(items = []) {
   });
 
   return Array.from(typeMap.values()).sort(compareFixTypeEntries);
+}
+
+function getFixTypeStatsForView(viewId = DEFAULT_BOARD_ID) {
+  const safeViewId = String(viewId || DEFAULT_BOARD_ID).trim() || DEFAULT_BOARD_ID;
+  const derived = ensureImprovementDerivedData();
+  if (derived.typeStatsByView.has(safeViewId)) {
+    return derived.typeStatsByView.get(safeViewId);
+  }
+  const stats = buildFixTypeStats(getItemList(safeViewId));
+  derived.typeStatsByView.set(safeViewId, stats);
+  return stats;
 }
 
 function syncActiveTypeFilters(items = getItemList(ensureActiveViewId())) {
@@ -850,8 +979,15 @@ function buildImprovementTimeline(items = []) {
 }
 
 function buildImprovementStats() {
-  const items = getAllItems();
-  const tabs = getAvailableBoards({ sort: false });
+  const activeViewId = ensureActiveViewId();
+  const derived = ensureImprovementDerivedData();
+  const cacheKey = String(activeViewId || DEFAULT_BOARD_ID).trim() || DEFAULT_BOARD_ID;
+  if (derived.statsByView.has(cacheKey)) {
+    return derived.statsByView.get(cacheKey);
+  }
+
+  const items = derived.allItems;
+  const tabs = derived.availableBoardsRaw;
   const types = buildFixTypeStats(items);
   const totals = {
     total: items.length,
@@ -943,8 +1079,8 @@ function buildImprovementStats() {
     })[0]
     || null;
 
-  const activeCategory = !isGeneralBoardViewId(state.activeViewId)
-    ? (categories.find((category) => category.id === state.activeViewId) || null)
+  const activeCategory = !isGeneralBoardViewId(activeViewId)
+    ? (categories.find((category) => category.id === activeViewId) || null)
     : null;
   const topType = types.find((type) => type.pending > 0) || types[0] || null;
 
@@ -953,7 +1089,7 @@ function buildImprovementStats() {
   const recentCreated = recentTimeline.reduce((acc, point) => acc + (Number(point.created) || 0), 0);
   const recentResolved = recentTimeline.reduce((acc, point) => acc + (Number(point.resolved) || 0), 0);
 
-  return {
+  const result = {
     items,
     totals,
     categories,
@@ -970,6 +1106,8 @@ function buildImprovementStats() {
     recentCreated,
     recentResolved,
   };
+  derived.statsByView.set(cacheKey, result);
+  return result;
 }
 
 function getActiveTab() {
@@ -1105,181 +1243,22 @@ function resizeImprovementStatsCharts() {
   });
 }
 
-function renderImprovementStats() {
-  if (
-    !els.statsSubtitle
-    || !els.statsKpis
-    || !els.statsInsights
-    || !els.statsTypes
-    || !els.statsBreakdown
-  ) {
-    return;
-  }
+function cancelImprovementStatsRender() {
+  if (!state.statsRenderIdleHandle) return;
+  cancelIdleTask(state.statsRenderIdleHandle);
+  state.statsRenderIdleHandle = 0;
+}
 
-  const activeTab = getActiveTab();
-  const activeLabel = activeTab?.label || "Global";
+function scheduleImprovementStatsCharts(stats) {
+  cancelImprovementStatsRender();
+  state.statsRenderIdleHandle = scheduleIdleTask(() => {
+    state.statsRenderIdleHandle = 0;
+    if (!isStatsViewVisible()) return;
+    renderImprovementStatsCharts(stats);
+  }, 180);
+}
 
-  if (!state.uid) {
-    els.statsSubtitle.textContent = "Inicia sesion para ver el historico y las tendencias de fixes.";
-    els.statsKpis.innerHTML = '<div class="improvements__statsPanelEmpty">Las metricas aparecen cuando la cuenta tenga acceso a sus fixes.</div>';
-    els.statsInsights.innerHTML = '<div class="improvements__statsPanelEmpty">Sin sesion no se calcula la carga por categoria ni el ritmo de cierre.</div>';
-    els.statsTypes.innerHTML = '<div class="improvements__statsPanelEmpty">Sin sesion no se puede repartir la carga por tipo de fix.</div>';
-    els.statsBreakdown.innerHTML = '<div class="improvements__statsPanelEmpty">Los rankings por categoria se mostraran aqui cuando haya datos.</div>';
-    renderImprovementStatsChartEmpty(els.statsDonut, "donut", "Sin sesion activa.");
-    renderImprovementStatsChartEmpty(els.statsBar, "bar", "Sin sesion activa.");
-    renderImprovementStatsChartEmpty(els.statsLine, "line", "Sin sesion activa.");
-    return;
-  }
-
-  const stats = buildImprovementStats();
-  if (!stats.totals.total) {
-    els.statsSubtitle.textContent = "Todavia no hay fixes guardados para dibujar la radiografia.";
-    els.statsKpis.innerHTML = '<div class="improvements__statsPanelEmpty">Cuando empieces a crear fixes veras aqui volumen, backlog y riesgo.</div>';
-    els.statsInsights.innerHTML = '<div class="improvements__statsPanelEmpty">Tambien apareceran la categoria mas cargada y el fix mas bloqueado.</div>';
-    els.statsTypes.innerHTML = '<div class="improvements__statsPanelEmpty">Al clasificar fixes por tipo veras aqui su reparto.</div>';
-    els.statsBreakdown.innerHTML = '<div class="improvements__statsPanelEmpty">El desglose por categoria se llenara automaticamente.</div>';
-    renderImprovementStatsChartEmpty(els.statsDonut, "donut", "Todavia no hay datos.");
-    renderImprovementStatsChartEmpty(els.statsBar, "bar", "Todavia no hay categorias con fixes.");
-    renderImprovementStatsChartEmpty(els.statsLine, "line", "Todavia no hay actividad suficiente.");
-    return;
-  }
-
-  els.statsSubtitle.textContent = stats.activeCategory
-    ? `Vista global. Categoria activa: ${activeLabel}. El ranking inferior la marca para comparar contra el resto y el reparto por tipo mantiene el mismo backlog.`
-    : "Vista global de categorias y tipos. Las graficas combinan estado actual, carga por tablero, clasificacion y ritmo reciente.";
-
-  els.statsKpis.innerHTML = `
-    <article class="improvements__statsKpi" data-tone="blue">
-      <small>Total fixes</small>
-      <strong>${stats.totals.total}</strong>
-      <span>${stats.categories.length} categorias y ${stats.types.length} tipos con historial</span>
-    </article>
-    <article class="improvements__statsKpi" data-tone="amber">
-      <small>Aun pendientes</small>
-      <strong>${stats.totals.pending}</strong>
-      <span>${stats.openCategories} categorias con deuda abierta</span>
-    </article>
-    <article class="improvements__statsKpi" data-tone="green">
-      <small>Tasa resuelta</small>
-      <strong>${formatPercent(stats.resolvedRate)}</strong>
-      <span>${stats.totals.resolved} fixes cerrados hasta ahora</span>
-    </article>
-    <article class="improvements__statsKpi" data-tone="rose">
-      <small>Riesgo alto</small>
-      <strong>${stats.riskyPending}</strong>
-      <span>Criticos o altos todavia abiertos</span>
-    </article>
-  `;
-
-  els.statsTypes.innerHTML = stats.types.length
-    ? stats.types.map((type) => {
-        const isHot = stats.topType?.key === type.key && type.pending > 0;
-        return `
-          <article class="improvements__statsTypeCard ${isHot ? "is-hot" : ""}" data-fix-type="${type.key}">
-            <div class="improvements__statsTypeTop">
-              <span class="improvements__fixTypeChip improvements__fixTypeChip--${type.key}">${escapeHtml(type.label)}</span>
-              <strong>${type.pending} / ${type.total}</strong>
-            </div>
-            <p>${type.pending ? `${type.pending} abiertos ahora mismo.` : "Sin abiertos ahora mismo."} ${type.resolved} resueltos acumulados.</p>
-            <div class="improvements__statsTypeMeta">
-              <span>${type.resolved} resueltos</span>
-              <span>${type.criticalOpen} criticos</span>
-              <span>${type.highOpen} altos</span>
-            </div>
-          </article>
-        `;
-      }).join("")
-    : '<div class="improvements__statsPanelEmpty">Todavia no hay tipos clasificados.</div>';
-
-  const hotCategory = stats.topCategory;
-  const topPendingItem = stats.topPendingItem;
-  const trendImproving = stats.recentResolved >= stats.recentCreated;
-  const recentPeriodLabel = stats.timeline.length <= 1 ? "este mes" : "los ultimos 3 meses";
-  const oldestPendingText = stats.oldestPendingItem
-    ? `El abierto mas veterano lleva ${describeAgeDays(stats.oldestPendingItem.ageDays)}.`
-    : "No queda deuda historica abierta.";
-
-  els.statsInsights.innerHTML = `
-    <article class="improvements__statsInsight" data-tone="amber">
-      <div class="improvements__statsInsightTop">
-        <h4 class="improvements__statsInsightTitle">Categoria que mas aprieta</h4>
-        <span class="improvements__statsInsightBadge">${hotCategory?.pending || 0} P</span>
-      </div>
-      <p>${hotCategory
-        ? hotCategory.pending > 0
-          ? `${escapeHtml(hotCategory.label)} concentra ${hotCategory.pending} pendientes, ${hotCategory.criticalOpen} criticos y ${hotCategory.highOpen} altos abiertos.`
-          : `${escapeHtml(hotCategory.label)} lidera por volumen historico, pero ahora mismo no tiene backlog abierto.`
-        : "Todavia no hay suficiente informacion para destacar una categoria."
-      }</p>
-      <div class="improvements__statsInsightMeta">
-        <span>${hotCategory?.total || 0} total</span>
-        <span>${hotCategory?.resolved || 0} resueltos</span>
-        <span>${hotCategory ? formatPercent(hotCategory.resolutionRate) : "0%"} cerrados</span>
-      </div>
-    </article>
-    <article class="improvements__statsInsight" data-tone="rose">
-      <div class="improvements__statsInsightTop">
-        <h4 class="improvements__statsInsightTitle">Fix mas bloqueado</h4>
-        <span class="improvements__statsInsightBadge">${topPendingItem ? PRIORITY_LABELS[sanitizePriority(topPendingItem.priority)] : "Limpio"}</span>
-      </div>
-      <p>${topPendingItem
-        ? `${escapeHtml(topPendingItem.title || "Sin titulo")} sigue abierto desde hace ${describeAgeDays(topPendingItem.ageDays)} en ${escapeHtml(topPendingItem.board?.label || "General")}.`
-        : "No hay fixes pendientes ahora mismo."
-      }</p>
-      <div class="improvements__statsInsightMeta">
-        <span>${topPendingItem ? escapeHtml(topPendingItem.board?.label || "General") : "Sin backlog"}</span>
-        <span>${topPendingItem ? `Creado ${escapeHtml(formatShortDate(topPendingItem.createdAt))}` : "Todo al dia"}</span>
-        <span>${oldestPendingText}</span>
-      </div>
-    </article>
-    <article class="improvements__statsInsight" data-tone="blue">
-      <div class="improvements__statsInsightTop">
-        <h4 class="improvements__statsInsightTitle">Ritmo reciente</h4>
-        <span class="improvements__statsInsightBadge">${stats.recentResolved}/${stats.recentCreated}</span>
-      </div>
-      <p>En ${recentPeriodLabel} entraron ${stats.recentCreated} fixes y se cerraron ${stats.recentResolved}.${trendImproving ? " El backlog va aflojando." : " Sigue entrando mas carga de la que sale."}</p>
-      <div class="improvements__statsInsightMeta">
-        <span>${stats.totals.pending} backlog actual</span>
-        <span>${stats.timeline.length ? `${stats.timeline[stats.timeline.length - 1].label}` : "Sin serie"}</span>
-        <span>${trendImproving ? "Tendencia estable" : "Tendencia en tension"}</span>
-      </div>
-    </article>
-  `;
-
-  els.statsBreakdown.innerHTML = stats.categories.map((category) => {
-    const isActive = stats.activeCategory?.id === category.id;
-    const isHot = hotCategory?.id === category.id && category.pending > 0;
-    const accent = getBoardAccent(category);
-    return `
-      <article class="improvements__statsBreakdownRow ${isActive ? "is-active" : ""} ${isHot ? "is-hot" : ""}">
-        <div class="improvements__statsBreakdownTop">
-          <div class="improvements__statsBreakdownLabel">
-            <span class="improvements__statsBreakdownEmoji" style="border-color:${accent}55;background:${accent}1f;" aria-hidden="true">${escapeHtml(category.emoji || "")}</span>
-            <div class="improvements__statsBreakdownName">
-              <strong>${escapeHtml(category.label)}</strong>
-              <span>${category.pending ? `${category.pending} abiertos ahora` : "Sin deuda abierta"}</span>
-            </div>
-          </div>
-          <div class="improvements__statsBreakdownCounts">
-            <strong>${category.pending} / ${category.total}</strong>
-            <span>Pendientes / total</span>
-          </div>
-        </div>
-        <div class="improvements__statsProgress" style="--stats-progress:${Math.max(0, Math.min(100, category.resolutionRate))}%;">
-          <i></i>
-        </div>
-        <div class="improvements__statsBreakdownMeta">
-          <span>${category.resolved} resueltos</span>
-          <span>${formatPercent(category.resolutionRate)} cerrados</span>
-          <span>${category.criticalOpen} criticos</span>
-          <span>${category.highOpen} altos</span>
-          ${isActive ? '<span>Categoria activa</span>' : ""}
-          ${isHot ? '<span>Punto caliente</span>' : ""}
-        </div>
-      </article>
-    `;
-  }).join("");
-
+function renderImprovementStatsCharts(stats) {
   if (!isStatsViewVisible()) return;
 
   if (typeof window === "undefined" || typeof window.echarts === "undefined") {
@@ -1565,6 +1544,191 @@ function renderImprovementStats() {
   resizeImprovementStatsCharts();
 }
 
+function renderImprovementStats({ deferCharts = false } = {}) {
+  if (
+    !els.statsSubtitle
+    || !els.statsKpis
+    || !els.statsInsights
+    || !els.statsTypes
+    || !els.statsBreakdown
+  ) {
+    return;
+  }
+
+  const activeTab = getActiveTab();
+  const activeLabel = activeTab?.label || "Global";
+
+  if (!state.uid) {
+    els.statsSubtitle.textContent = "Inicia sesion para ver el historico y las tendencias de fixes.";
+    els.statsKpis.innerHTML = '<div class="improvements__statsPanelEmpty">Las metricas aparecen cuando la cuenta tenga acceso a sus fixes.</div>';
+    els.statsInsights.innerHTML = '<div class="improvements__statsPanelEmpty">Sin sesion no se calcula la carga por categoria ni el ritmo de cierre.</div>';
+    els.statsTypes.innerHTML = '<div class="improvements__statsPanelEmpty">Sin sesion no se puede repartir la carga por tipo de fix.</div>';
+    els.statsBreakdown.innerHTML = '<div class="improvements__statsPanelEmpty">Los rankings por categoria se mostraran aqui cuando haya datos.</div>';
+    renderImprovementStatsChartEmpty(els.statsDonut, "donut", "Sin sesion activa.");
+    renderImprovementStatsChartEmpty(els.statsBar, "bar", "Sin sesion activa.");
+    renderImprovementStatsChartEmpty(els.statsLine, "line", "Sin sesion activa.");
+    return;
+  }
+
+  const stats = buildImprovementStats();
+  if (!stats.totals.total) {
+    els.statsSubtitle.textContent = "Todavia no hay fixes guardados para dibujar la radiografia.";
+    els.statsKpis.innerHTML = '<div class="improvements__statsPanelEmpty">Cuando empieces a crear fixes veras aqui volumen, backlog y riesgo.</div>';
+    els.statsInsights.innerHTML = '<div class="improvements__statsPanelEmpty">Tambien apareceran la categoria mas cargada y el fix mas bloqueado.</div>';
+    els.statsTypes.innerHTML = '<div class="improvements__statsPanelEmpty">Al clasificar fixes por tipo veras aqui su reparto.</div>';
+    els.statsBreakdown.innerHTML = '<div class="improvements__statsPanelEmpty">El desglose por categoria se llenara automaticamente.</div>';
+    renderImprovementStatsChartEmpty(els.statsDonut, "donut", "Todavia no hay datos.");
+    renderImprovementStatsChartEmpty(els.statsBar, "bar", "Todavia no hay categorias con fixes.");
+    renderImprovementStatsChartEmpty(els.statsLine, "line", "Todavia no hay actividad suficiente.");
+    return;
+  }
+
+  els.statsSubtitle.textContent = stats.activeCategory
+    ? `Vista global. Categoria activa: ${activeLabel}. El ranking inferior la marca para comparar contra el resto y el reparto por tipo mantiene el mismo backlog.`
+    : "Vista global de categorias y tipos. Las graficas combinan estado actual, carga por tablero, clasificacion y ritmo reciente.";
+
+  els.statsKpis.innerHTML = `
+    <article class="improvements__statsKpi" data-tone="blue">
+      <small>Total fixes</small>
+      <strong>${stats.totals.total}</strong>
+      <span>${stats.categories.length} categorias y ${stats.types.length} tipos con historial</span>
+    </article>
+    <article class="improvements__statsKpi" data-tone="amber">
+      <small>Aun pendientes</small>
+      <strong>${stats.totals.pending}</strong>
+      <span>${stats.openCategories} categorias con deuda abierta</span>
+    </article>
+    <article class="improvements__statsKpi" data-tone="green">
+      <small>Tasa resuelta</small>
+      <strong>${formatPercent(stats.resolvedRate)}</strong>
+      <span>${stats.totals.resolved} fixes cerrados hasta ahora</span>
+    </article>
+    <article class="improvements__statsKpi" data-tone="rose">
+      <small>Riesgo alto</small>
+      <strong>${stats.riskyPending}</strong>
+      <span>Criticos o altos todavia abiertos</span>
+    </article>
+  `;
+
+  els.statsTypes.innerHTML = stats.types.length
+    ? stats.types.map((type) => {
+        const isHot = stats.topType?.key === type.key && type.pending > 0;
+        return `
+          <article class="improvements__statsTypeCard ${isHot ? "is-hot" : ""}" data-fix-type="${type.key}">
+            <div class="improvements__statsTypeTop">
+              <span class="improvements__fixTypeChip improvements__fixTypeChip--${type.key}">${escapeHtml(type.label)}</span>
+              <strong>${type.pending} / ${type.total}</strong>
+            </div>
+            <p>${type.pending ? `${type.pending} abiertos ahora mismo.` : "Sin abiertos ahora mismo."} ${type.resolved} resueltos acumulados.</p>
+            <div class="improvements__statsTypeMeta">
+              <span>${type.resolved} resueltos</span>
+              <span>${type.criticalOpen} criticos</span>
+              <span>${type.highOpen} altos</span>
+            </div>
+          </article>
+        `;
+      }).join("")
+    : '<div class="improvements__statsPanelEmpty">Todavia no hay tipos clasificados.</div>';
+
+  const hotCategory = stats.topCategory;
+  const topPendingItem = stats.topPendingItem;
+  const trendImproving = stats.recentResolved >= stats.recentCreated;
+  const recentPeriodLabel = stats.timeline.length <= 1 ? "este mes" : "los ultimos 3 meses";
+  const oldestPendingText = stats.oldestPendingItem
+    ? `El abierto mas veterano lleva ${describeAgeDays(stats.oldestPendingItem.ageDays)}.`
+    : "No queda deuda historica abierta.";
+
+  els.statsInsights.innerHTML = `
+    <article class="improvements__statsInsight" data-tone="amber">
+      <div class="improvements__statsInsightTop">
+        <h4 class="improvements__statsInsightTitle">Categoria que mas aprieta</h4>
+        <span class="improvements__statsInsightBadge">${hotCategory?.pending || 0} P</span>
+      </div>
+      <p>${hotCategory
+        ? hotCategory.pending > 0
+          ? `${escapeHtml(hotCategory.label)} concentra ${hotCategory.pending} pendientes, ${hotCategory.criticalOpen} criticos y ${hotCategory.highOpen} altos abiertos.`
+          : `${escapeHtml(hotCategory.label)} lidera por volumen historico, pero ahora mismo no tiene backlog abierto.`
+        : "Todavia no hay suficiente informacion para destacar una categoria."
+      }</p>
+      <div class="improvements__statsInsightMeta">
+        <span>${hotCategory?.total || 0} total</span>
+        <span>${hotCategory?.resolved || 0} resueltos</span>
+        <span>${hotCategory ? formatPercent(hotCategory.resolutionRate) : "0%"} cerrados</span>
+      </div>
+    </article>
+    <article class="improvements__statsInsight" data-tone="rose">
+      <div class="improvements__statsInsightTop">
+        <h4 class="improvements__statsInsightTitle">Fix mas bloqueado</h4>
+        <span class="improvements__statsInsightBadge">${topPendingItem ? PRIORITY_LABELS[sanitizePriority(topPendingItem.priority)] : "Limpio"}</span>
+      </div>
+      <p>${topPendingItem
+        ? `${escapeHtml(topPendingItem.title || "Sin titulo")} sigue abierto desde hace ${describeAgeDays(topPendingItem.ageDays)} en ${escapeHtml(topPendingItem.board?.label || "General")}.`
+        : "No hay fixes pendientes ahora mismo."
+      }</p>
+      <div class="improvements__statsInsightMeta">
+        <span>${topPendingItem ? escapeHtml(topPendingItem.board?.label || "General") : "Sin backlog"}</span>
+        <span>${topPendingItem ? `Creado ${escapeHtml(formatShortDate(topPendingItem.createdAt))}` : "Todo al dia"}</span>
+        <span>${oldestPendingText}</span>
+      </div>
+    </article>
+    <article class="improvements__statsInsight" data-tone="blue">
+      <div class="improvements__statsInsightTop">
+        <h4 class="improvements__statsInsightTitle">Ritmo reciente</h4>
+        <span class="improvements__statsInsightBadge">${stats.recentResolved}/${stats.recentCreated}</span>
+      </div>
+      <p>En ${recentPeriodLabel} entraron ${stats.recentCreated} fixes y se cerraron ${stats.recentResolved}.${trendImproving ? " El backlog va aflojando." : " Sigue entrando mas carga de la que sale."}</p>
+      <div class="improvements__statsInsightMeta">
+        <span>${stats.totals.pending} backlog actual</span>
+        <span>${stats.timeline.length ? `${stats.timeline[stats.timeline.length - 1].label}` : "Sin serie"}</span>
+        <span>${trendImproving ? "Tendencia estable" : "Tendencia en tension"}</span>
+      </div>
+    </article>
+  `;
+
+  els.statsBreakdown.innerHTML = stats.categories.map((category) => {
+    const isActive = stats.activeCategory?.id === category.id;
+    const isHot = hotCategory?.id === category.id && category.pending > 0;
+    const accent = getBoardAccent(category);
+    return `
+      <article class="improvements__statsBreakdownRow ${isActive ? "is-active" : ""} ${isHot ? "is-hot" : ""}">
+        <div class="improvements__statsBreakdownTop">
+          <div class="improvements__statsBreakdownLabel">
+            <span class="improvements__statsBreakdownEmoji" style="border-color:${accent}55;background:${accent}1f;" aria-hidden="true">${escapeHtml(category.emoji || "")}</span>
+            <div class="improvements__statsBreakdownName">
+              <strong>${escapeHtml(category.label)}</strong>
+              <span>${category.pending ? `${category.pending} abiertos ahora` : "Sin deuda abierta"}</span>
+            </div>
+          </div>
+          <div class="improvements__statsBreakdownCounts">
+            <strong>${category.pending} / ${category.total}</strong>
+            <span>Pendientes / total</span>
+          </div>
+        </div>
+        <div class="improvements__statsProgress" style="--stats-progress:${Math.max(0, Math.min(100, category.resolutionRate))}%;">
+          <i></i>
+        </div>
+        <div class="improvements__statsBreakdownMeta">
+          <span>${category.resolved} resueltos</span>
+          <span>${formatPercent(category.resolutionRate)} cerrados</span>
+          <span>${category.criticalOpen} criticos</span>
+          <span>${category.highOpen} altos</span>
+          ${isActive ? '<span>Categoria activa</span>' : ""}
+          ${isHot ? '<span>Punto caliente</span>' : ""}
+        </div>
+      </article>
+    `;
+  }).join("");
+
+  if (!isStatsViewVisible()) return;
+  if (deferCharts) {
+    scheduleImprovementStatsCharts(stats);
+    return;
+  }
+
+  cancelImprovementStatsRender();
+  renderImprovementStatsCharts(stats);
+}
+
 function renderBoardTabs() {
   if (!els.boardTabs) return;
   const tabs = getAvailableBoards();
@@ -1806,8 +1970,9 @@ function renderTypeFilters() {
     return;
   }
 
-  const items = getItemList(ensureActiveViewId());
-  const typeStats = buildFixTypeStats(items);
+  const activeViewId = ensureActiveViewId();
+  const items = getItemList(activeViewId);
+  const typeStats = getFixTypeStatsForView(activeViewId);
   syncActiveTypeFilters(items);
   const hasActiveFilters = state.activeTypeFilters.size > 0;
 
@@ -2021,6 +2186,11 @@ function renderFilteredLists() {
       : `No hay mejoras pendientes en ${activeLabel}.`,
     { selectable: true, forceGroups: shouldGroupByType }
   );
+  if (state.resolvedPanelCollapsed) {
+    if (els.resolvedList) els.resolvedList.innerHTML = "";
+    return;
+  }
+
   renderCompactItemList(
     els.resolvedList,
     resolvedItems,
@@ -2101,20 +2271,37 @@ function renderLists() {
   renderItemList(els.resolvedList, resolvedItems, "Todavia no has marcado fixes como resueltos aqui.");
 }
 
-function renderAll() {
-  if (!state.root) return;
-  ensureActiveViewId();
-  renderWindowNavigation();
+function renderMainWindow() {
   renderSummary();
-  renderImprovementStats();
   renderBoardTabsCompact();
   renderActiveBoardMeta();
   renderTypeFilters();
-  renderBoardSelectInput();
+  renderFilteredLists();
+}
+
+function renderActiveWindow() {
+  renderWindowNavigation();
   renderEditorState();
   renderEditorModal();
   renderExportModal();
-  renderFilteredLists();
+
+  if (state.currentWindow === "stats") {
+    renderImprovementStats({ deferCharts: true });
+    return;
+  }
+
+  cancelImprovementStatsRender();
+  disposeImprovementStatsCharts();
+  renderMainWindow();
+}
+
+function renderAll() {
+  if (!state.root) return;
+  ensureActiveViewId();
+  if (state.editorOpen || state.editingItemId) {
+    renderBoardSelectInput();
+  }
+  renderActiveWindow();
 }
 
 function openEditorModal({ focus = false } = {}) {
@@ -2195,6 +2382,7 @@ function stopDataSubscriptions() {
 function subscribeData() {
   if (!state.path) return;
   stopDataSubscriptions();
+  cancelScheduledImprovementRender();
 
   const stop = onValue(ref(db, state.path), (snap) => {
     const raw = snap.val() || {};
@@ -2214,7 +2402,8 @@ function subscribeData() {
       resetEditor({ viewId: ensureActiveViewId() });
     }
 
-    renderAll();
+    invalidateImprovementDerivedData();
+    scheduleImprovementRender();
   });
 
   state.listeners.push(stop);
@@ -2233,6 +2422,7 @@ function setUnauthenticatedState() {
   state.editorOpen = false;
   state.exportOpen = false;
   state.exportText = "";
+  invalidateImprovementDerivedData();
   resetEditor({ viewId: state.activeViewId });
   renderAll();
 }
@@ -2317,6 +2507,7 @@ async function saveItem() {
     resolvedAt,
   };
   state.activeViewId = payload.viewId;
+  invalidateImprovementDerivedData();
   closeEditorModal();
   resetEditor({ viewId: payload.viewId });
   renderAll();
@@ -2355,11 +2546,13 @@ async function saveItem() {
     });
     if (state.items[tempItemId]) {
       delete state.items[tempItemId];
+      invalidateImprovementDerivedData();
       renderAll();
     }
   } catch (error) {
     state.items = previousItems;
     state.boards = previousBoards;
+    invalidateImprovementDerivedData();
     renderAll();
     window.alert("No se pudo guardar la mejora. Revisa la conexion e intentalo de nuevo.");
   }
@@ -2375,6 +2568,7 @@ async function deleteItem(itemId) {
   delete state.items[itemId];
   if (state.selectedItems.has(itemId)) state.selectedItems.delete(itemId);
   if (state.expandedItems.has(itemId)) state.expandedItems.delete(itemId);
+  invalidateImprovementDerivedData();
   renderAll();
 
   try {
@@ -2385,6 +2579,7 @@ async function deleteItem(itemId) {
     }
   } catch (_) {
     state.items[itemId] = previousItem;
+    invalidateImprovementDerivedData();
     renderAll();
     window.alert("No se pudo eliminar la mejora. Intentalo de nuevo.");
   }
@@ -2404,12 +2599,12 @@ async function toggleItemResolved(itemId) {
     resolvedAt: nextStatus === "resolved" ? now : null,
   };
   if (nextStatus === "resolved") state.selectedItems.delete(itemId);
-  renderTypeFilters();
-  renderFilteredLists();
-  renderSummary();
-  renderImprovementStats();
-  renderBoardTabsCompact();
-  renderActiveBoardMeta();
+  invalidateImprovementDerivedData();
+  if (state.currentWindow === "stats") {
+    renderImprovementStats({ deferCharts: true });
+  } else {
+    renderMainWindow();
+  }
 
   try {
     await update(ref(db, `${state.path}/items/${itemId}`), {
@@ -2419,6 +2614,7 @@ async function toggleItemResolved(itemId) {
     });
   } catch (_) {
     state.items[itemId] = previous;
+    invalidateImprovementDerivedData();
     renderAll();
     window.alert("No se pudo actualizar el estado. Intentalo de nuevo.");
   }
@@ -2593,7 +2789,7 @@ function bindEvents() {
     if (!state.editingItemId && els.boardSelect) {
       setBoardFieldValue(state.activeViewId);
     }
-    renderAll();
+    renderMainWindow();
   });
 
   els.windowTabs?.addEventListener("click", (event) => {
@@ -2602,7 +2798,7 @@ function bindEvents() {
     const nextWindow = button.dataset.window === "stats" ? "stats" : "main";
     if (state.currentWindow === nextWindow) return;
     state.currentWindow = nextWindow;
-    renderAll();
+    renderActiveWindow();
     if (nextWindow === "stats") {
       requestAnimationFrame(() => {
         resizeImprovementStatsCharts();
@@ -2664,6 +2860,11 @@ function bindEvents() {
   els.toggleResolvedBtn?.addEventListener("click", () => {
     state.resolvedPanelCollapsed = !state.resolvedPanelCollapsed;
     renderResolvedPanelState();
+    if (state.resolvedPanelCollapsed) {
+      if (els.resolvedList) els.resolvedList.innerHTML = "";
+      return;
+    }
+    renderFilteredLists();
   });
 
   const handleListAction = (event) => {
@@ -2790,6 +2991,7 @@ export async function init({ root }) {
 
   cacheElements(root);
   bindEvents();
+  state.viewVisible = true;
   state.activeViewId = getDefaultViewId();
   resetEditor({ viewId: state.activeViewId });
 
@@ -2807,23 +3009,40 @@ export async function init({ root }) {
 }
 
 export async function onShow() {
+  state.viewVisible = true;
+  if (state.uid && state.path && !state.listeners.length) {
+    subscribeData();
+  }
   renderAll();
-  requestAnimationFrame(() => {
-    resizeImprovementStatsCharts();
-  });
+  if (state.currentWindow === "stats") {
+    requestAnimationFrame(() => {
+      resizeImprovementStatsCharts();
+    });
+  }
+}
+
+export async function onHide() {
+  state.viewVisible = false;
+  cancelImprovementStatsRender();
+  cancelScheduledImprovementRender();
+  stopDataSubscriptions();
+  disposeImprovementStatsCharts();
 }
 
 export function destroy() {
-  stopDataSubscriptions();
+  void onHide();
   state.editorOpen = false;
   state.exportOpen = false;
   state.currentWindow = "main";
+  state.viewVisible = false;
   syncModalBodyState();
+  cancelImprovementStatsRender();
   disposeImprovementStatsCharts();
   if (state.statsResizeRaf) {
     cancelAnimationFrame(state.statsResizeRaf);
     state.statsResizeRaf = 0;
   }
+  cancelScheduledImprovementRender();
   if (state.handleWindowResize) {
     window.removeEventListener("resize", state.handleWindowResize);
     window.removeEventListener("orientationchange", state.handleWindowResize);

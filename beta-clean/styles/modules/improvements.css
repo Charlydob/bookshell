@@ -241,6 +241,8 @@
   border: 1px solid rgba(255, 255, 255, 0.07);
   background: rgba(255, 255, 255, 0.025);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  content-visibility: auto;
+  contain-intrinsic-size: 148px;
 }
 
 .improvements__statsTypeCard.is-hot {
@@ -451,6 +453,8 @@
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(255, 255, 255, 0.025);
+  content-visibility: auto;
+  contain-intrinsic-size: 132px;
 }
 
 .improvements__statsBreakdownRow.is-active {
@@ -1194,6 +1198,8 @@ body.has-open-modal #improvements-open-editor-btn {
 .improvements__typeGroup {
   display: grid;
   gap: 8px;
+  content-visibility: auto;
+  contain-intrinsic-size: 240px;
 }
 
 .improvements__typeGroup + .improvements__typeGroup {
@@ -1223,6 +1229,8 @@ body.has-open-modal #improvements-open-editor-btn {
   gap: 10px;
   padding: 10px 12px;
   border-radius: 16px;
+  content-visibility: auto;
+  contain-intrinsic-size: 124px;
 }
 
 .improvements__item.is-expanded {

@@ -187,6 +187,23 @@
   flex-direction: column;
   gap: 8px;
   padding-bottom: 6px;
+  min-height: 260px;
+}
+
+.books-list[data-loading="1"] {
+  position: relative;
+}
+
+.books-list[data-loading="1"]::before {
+  content: "";
+  display: block;
+  min-height: 260px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(20, 17, 29, 0.92), rgba(8, 10, 18, 0.95)),
+    linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.07), rgba(255,255,255,0.03));
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.42);
 }
 
 .books-watchlist{
@@ -376,6 +393,7 @@
   flex-direction: column;
   gap: 10px;
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.58);
+  min-height: 146px;
 }
 
 .book-progress-line {
@@ -510,7 +528,8 @@
 
 .stats-wrapper {
   padding: 6px 4px 8px;
-margin-top: 40px;
+  margin-top: 40px;
+  min-height: 404px;
 }
 
 .stats-cards {
@@ -587,6 +606,20 @@ margin-top: 40px;
   padding: 4px 6px 8px;
   font-size: 12px;
   color: var(--txt-soft);
+  min-height: 28px;
+}
+
+.calendar-summary[data-loading="1"] {
+  color: transparent;
+}
+
+.calendar-summary[data-loading="1"]::before {
+  content: "";
+  display: block;
+  width: min(280px, 78%);
+  height: 14px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.11), rgba(255,255,255,0.06));
 }
 .books-shelf-toolbar{
   display: grid;
@@ -627,10 +660,33 @@ margin-top: 40px;
   grid-template-columns: repeat(7, 1fr);
   gap: 4px;
   font-size: 11px;
+  min-height: 198px;
+  align-content: start;
+}
+
+.calendar-grid[data-loading="1"] {
+  position: relative;
+}
+
+.calendar-grid[data-loading="1"]::before {
+  content: "";
+  display: block;
+  grid-column: 1 / -1;
+  min-height: 198px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(12, 14, 22, 0.76), rgba(7, 8, 14, 0.72)),
+    repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,0.03) 0 34px,
+      rgba(255,255,255,0.01) 34px 38px
+    );
 }
 
 .calendar-grid.calendar-year-grid {
   grid-template-columns: repeat(3, 1fr);
+  min-height: 248px;
 }
 
 .cal-cell {

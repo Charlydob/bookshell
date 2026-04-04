@@ -9,9 +9,20 @@ export async function init() {
 }
 
 export async function onShow() {
+  if (typeof runtimeModule?.init === "function") {
+    await runtimeModule.init();
+  }
   if (typeof runtimeModule?.onShow === "function") {
     await runtimeModule.onShow();
   }
 }
 
-export function destroy() {}
+export async function onHide() {
+  if (typeof runtimeModule?.destroy === "function") {
+    runtimeModule.destroy();
+  }
+}
+
+export function destroy() {
+  void onHide();
+}

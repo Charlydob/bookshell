@@ -1,5 +1,5 @@
 // books.js
-import { db, storage, auth, onUserChange } from "../../shared/firebase/index.js";
+import { db, auth, onUserChange, getStorageService } from "../../shared/firebase/index.js";
 
 import {
   ref,
@@ -12,17 +12,10 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 import {
-  ref as storageRef,
-  uploadBytes,
-  getDownloadURL
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
-
-import {
   ensureCountryDatalist,
   getCountryEnglishName,
   normalizeCountryInput
 } from "./countries.js";
-import { renderCountryHeatmap, renderCountryList } from "./world-heatmap.js";
 
 // En beta-clean la vista puede montarse antes de que Auth resuelva la sesion.
 let currentUid = auth.currentUser?.uid ?? null;
@@ -31,6 +24,32 @@ let READING_LOG_PATH = null;
 let LINKS_PATH = null;
 let META_GENRES_PATH = null; // o global: `v2/meta/genres`
 let dataBindingsReady = false;
+let storageApiPromise = null;
+let worldHeatmapModulePromise = null;
+let booksSnapshotHydrated = false;
+let readingLogSnapshotHydrated = false;
+
+function loadStorageApi() {
+  if (!storageApiPromise) {
+    storageApiPromise = Promise.all([
+      getStorageService(),
+      import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js"),
+    ]).then(([storage, storageApi]) => ({
+      storage,
+      storageRef: storageApi.ref,
+      uploadBytes: storageApi.uploadBytes,
+      getDownloadURL: storageApi.getDownloadURL,
+    }));
+  }
+  return storageApiPromise;
+}
+
+function loadWorldHeatmapModule() {
+  if (!worldHeatmapModulePromise) {
+    worldHeatmapModulePromise = import("./world-heatmap.js");
+  }
+  return worldHeatmapModulePromise;
+}
 
 function setUserPaths(uid) {
   currentUid = uid || null;
@@ -222,6 +241,27 @@ const $calLabel = document.getElementById("cal-label");
 const $calGrid = document.getElementById("calendar-grid");
 const $calViewMode = document.getElementById("cal-view-mode");
 const $calSummary = document.getElementById("calendar-summary");
+
+function setBooksShellLoading(isLoading) {
+  if ($booksList) {
+    if (isLoading) $booksList.setAttribute("data-loading", "1");
+    else $booksList.removeAttribute("data-loading");
+  }
+}
+
+function setCalendarShellLoading(isLoading) {
+  if ($calSummary) {
+    if (isLoading) $calSummary.setAttribute("data-loading", "1");
+    else $calSummary.removeAttribute("data-loading");
+  }
+  if ($calGrid) {
+    if (isLoading) $calGrid.setAttribute("data-loading", "1");
+    else $calGrid.removeAttribute("data-loading");
+  }
+}
+
+setBooksShellLoading(true);
+setCalendarShellLoading(true);
 
 // Selector rango libros leídos
 if ($statBooksReadRange) {
@@ -641,6 +681,10 @@ function bindDataSources() {
   // === Escucha Firebase libros ===
   onValue(ref(db, BOOKS_PATH), (snap) => {
     books = snap.val() || {};
+    if (!booksSnapshotHydrated) {
+      booksSnapshotHydrated = true;
+      setBooksShellLoading(false);
+    }
     renderBooks();
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
   });
@@ -648,6 +692,10 @@ function bindDataSources() {
   // Escucha log lectura
   onValue(ref(db, READING_LOG_PATH), (snap) => {
     readingLog = snap.val() || {};
+    if (!readingLogSnapshotHydrated) {
+      readingLogSnapshotHydrated = true;
+      setCalendarShellLoading(false);
+    }
     renderStats();
     renderCalendar();
   });
@@ -1149,6 +1197,12 @@ $bookForm.addEventListener("submit", async (e) => {
   if (file) {
     try {
       const safeId = id || push(ref(db, "_tmp")).key;
+      const {
+        storage,
+        storageRef,
+        uploadBytes,
+        getDownloadURL,
+      } = await loadStorageApi();
       const pdfRef = storageRef(storage, `pdfs/${safeId}.pdf`);
       await uploadBytes(pdfRef, file);
       const url = await getDownloadURL(pdfRef);
@@ -1808,7 +1862,51 @@ function buildBookCountryStats(ids) {
   );
 }
 
-function renderBooksGeo(ids) {
+let deferredBooksVisualToken = 0;
+let deferredBooksVisualTimer = 0;
+let deferredBooksVisualIdleId = 0;
+
+function cancelDeferredBooksVisuals() {
+  deferredBooksVisualToken += 1;
+  if (deferredBooksVisualTimer) {
+    clearTimeout(deferredBooksVisualTimer);
+    deferredBooksVisualTimer = 0;
+  }
+  if (deferredBooksVisualIdleId && typeof window.cancelIdleCallback === "function") {
+    window.cancelIdleCallback(deferredBooksVisualIdleId);
+    deferredBooksVisualIdleId = 0;
+  }
+}
+
+function scheduleFinishedVisuals(finishedIds) {
+  const ids = Array.isArray(finishedIds) ? [...finishedIds] : [];
+  cancelDeferredBooksVisuals();
+
+  const token = deferredBooksVisualToken;
+  const run = () => {
+    deferredBooksVisualTimer = 0;
+    deferredBooksVisualIdleId = 0;
+    if (token !== deferredBooksVisualToken) return;
+    if (!$viewBooks?.classList.contains("view-active")) return;
+    void renderBooksGeo(ids);
+    if (token !== deferredBooksVisualToken) return;
+    renderFinishedCharts(ids);
+  };
+
+  if (!ids.length) {
+    run();
+    return;
+  }
+
+  if (typeof window.requestIdleCallback === "function") {
+    deferredBooksVisualIdleId = window.requestIdleCallback(run, { timeout: 900 });
+    return;
+  }
+
+  deferredBooksVisualTimer = window.setTimeout(run, 220);
+}
+
+async function renderBooksGeo(ids) {
   if (!$booksGeoSection) return;
   const stats = buildBookCountryStats(ids);
   if (!stats.length) {
@@ -1831,8 +1929,16 @@ function renderBooksGeo(ids) {
       label: s.label,
       mapName: s.english
     }));
-  renderCountryHeatmap($booksWorldMap, mapData, { emptyLabel: "Añade el país de tus libros" });
-  renderCountryList($booksCountryList, stats, "libro");
+  try {
+    const {
+      renderCountryHeatmap,
+      renderCountryList,
+    } = await loadWorldHeatmapModule();
+    renderCountryHeatmap($booksWorldMap, mapData, { emptyLabel: "Añade el país de tus libros" });
+    renderCountryList($booksCountryList, stats, "libro");
+  } catch (error) {
+    console.warn("No se pudo cargar el mapa de países de libros", error);
+  }
 }
 
 function buildWatchlistSpine(id) {
@@ -2325,8 +2431,6 @@ if (inlineInput) {
       btnDone.disabled = true;
       btnDone.style.opacity = "0.7";
       btnDone.style.pointerEvents = "none";
-    } else {
-      btnDone.addEventListener("click", () => markBookFinished(id));
     }
 
 
@@ -2446,9 +2550,9 @@ const appendShelves = (list, isFavorite = false) => {
     }
   }
 
-  // Charts bajo “Terminados”
-  renderBooksGeo(finishedIdsAll); // mapa con libros terminados que tengan país
-  renderFinishedCharts(finishedIdsAll);
+  // Los visuales de terminados están por debajo del contenido principal.
+  // Los aplazamos para no competir con el primer render de la estantería.
+  scheduleFinishedVisuals(finishedIdsAll);
 }
 
 // === Actualizar progreso y log de lectura ===

@@ -209,6 +209,13 @@ let habitHistoryUpdatedAt = Date.now();
 let compareLiveTick = 0;
 let compareLiveInterval = null;
 let compareRefreshRaf = null;
+let habitRenderRaf = null;
+let habitRenderPreserveToday = false;
+let habitRenderPreservePanel = false;
+let reportsRenderHandle = null;
+let remoteUnsubscribers = [];
+let habitsResizeHandler = null;
+let habitsViewVisible = document.getElementById("view-habits")?.classList.contains("view-active") ?? true;
 const reportDebugLastByRange = new Map();
 
 function debugCompare(...args) {
@@ -234,12 +241,70 @@ function markHistoryDataChanged(reason = "unknown", details = null) {
   });
 }
 
+function isHabitsViewVisible() {
+  return !!habitsViewVisible;
+}
+
+function cancelHabitRenderRequest() {
+  if (habitRenderRaf == null) return;
+  window.cancelAnimationFrame(habitRenderRaf);
+  habitRenderRaf = null;
+  habitRenderPreserveToday = false;
+  habitRenderPreservePanel = false;
+}
+
+function requestHabitsRender({ preserveTodayUI = false, preservePanelUI = false } = {}) {
+  habitRenderPreserveToday = habitRenderPreserveToday || preserveTodayUI;
+  habitRenderPreservePanel = habitRenderPreservePanel || preservePanelUI;
+  if (habitRenderRaf != null) return;
+  habitRenderRaf = window.requestAnimationFrame(() => {
+    const useTodayUI = habitRenderPreserveToday;
+    const usePanelUI = habitRenderPreservePanel;
+    habitRenderRaf = null;
+    habitRenderPreserveToday = false;
+    habitRenderPreservePanel = false;
+    if (!isHabitsViewVisible()) return;
+    if (useTodayUI && activeTab === "today") {
+      renderHabitsPreservingTodayUI();
+      return;
+    }
+    if (usePanelUI) {
+      renderHabitsPreservingUI();
+      return;
+    }
+    renderHabits();
+  });
+}
+
+function requestActiveTabRender({ preserveUI = true } = {}) {
+  if (!isHabitsViewVisible()) return;
+  requestHabitsRender({
+    preserveTodayUI: preserveUI && activeTab === "today",
+    preservePanelUI: preserveUI && activeTab !== "today"
+  });
+}
+
+function scheduleIdleTask(callback, timeout = 300) {
+  if (typeof window.requestIdleCallback === "function") {
+    return window.requestIdleCallback(callback, { timeout });
+  }
+  return window.setTimeout(() => callback({ didTimeout: true, timeRemaining: () => 0 }), 1);
+}
+
+function cancelIdleTask(handle) {
+  if (handle == null) return;
+  if (typeof window.cancelIdleCallback === "function") {
+    window.cancelIdleCallback(handle);
+    return;
+  }
+  window.clearTimeout(handle);
+}
+
 function scheduleCompareRefresh(reason = "unknown", details = null) {
   if (compareRefreshRaf != null) return;
   compareRefreshRaf = window.requestAnimationFrame(() => {
     compareRefreshRaf = null;
-    const habitsViewVisible = document.getElementById("view-habits")?.classList.contains("view-active");
-    if (!habitsViewVisible) return;
+    if (!isHabitsViewVisible() || activeTab !== "history") return;
     renderHistory();
     debugCompare("refresh", {
       reason,
@@ -7730,117 +7795,6 @@ function renderHistory() {
   trendSection.body.appendChild(trendBody);
   insights.appendChild(trendSection.section);
 
-  const weekSection = createHistorySection("Semana vs Semana");
-  const weekBody = document.createElement("div");
-  weekBody.className = "habits-history-week-compare";
-  const weekComparison = buildWeekComparison(habitsList, habitHistoryMetric);
-
-  const weekSummary = document.createElement("div");
-  weekSummary.className = "habits-history-week-summary";
-  weekSummary.innerHTML = `
-    <div>
-      <div class="habits-history-kpi-label">Semana actual</div>
-      <div class="habits-history-kpi-value">${formatHistoryValue(weekComparison.currentTotal, habitHistoryMetric)}</div>
-    </div>
-    <div>
-      <div class="habits-history-kpi-label">Semana anterior</div>
-      <div class="habits-history-kpi-value">${formatHistoryValue(weekComparison.previousTotal, habitHistoryMetric)}</div>
-    </div>
-    <div>
-      <div class="habits-history-kpi-label">Delta</div>
-      <div class="habits-history-kpi-value ${weekComparison.delta > 0 ? "is-up" : (weekComparison.delta < 0 ? "is-down" : "")}">
-        ${weekComparison.delta >= 0 ? "+" : ""}${formatHistoryValue(Math.abs(weekComparison.delta), habitHistoryMetric)}
-        <span class="habits-history-kpi-sub">${weekComparison.deltaPercentLabel}</span>
-      </div>
-    </div>
-  `;
-  weekBody.appendChild(weekSummary);
-
-  const weekMoves = document.createElement("div");
-  weekMoves.className = "habits-history-week-moves";
-  weekMoves.appendChild(buildWeekMoveList("Suben", weekComparison.topUp, habitHistoryMetric));
-  weekMoves.appendChild(buildWeekMoveList("Bajan", weekComparison.topDown, habitHistoryMetric));
-  weekBody.appendChild(weekMoves);
-  weekSection.body.appendChild(weekBody);
-  insights.appendChild(weekSection.section);
-
-  const topDaysSection = createHistorySection("Top días");
-  const topDaysBody = document.createElement("div");
-  topDaysBody.className = "habits-history-top-days";
-  const topDays = buildTopDays(habitsList, start, end, habitHistoryMetric);
-  if (!topDays.length) {
-    const empty = document.createElement("div");
-    empty.className = "habits-history-empty";
-    empty.textContent = "No hay días con actividad en este rango.";
-    topDaysBody.appendChild(empty);
-  } else {
-    const list = document.createElement("div");
-    list.className = "habits-history-list";
-    topDays.forEach((item) => {
-      const row = document.createElement("div");
-      row.className = "habits-history-list-row";
-      const label = document.createElement("div");
-      label.className = "habits-history-list-title";
-      label.textContent = formatShortDate(item.dateKey, true);
-      const meta = document.createElement("div");
-      meta.className = "habits-history-list-meta";
-      if (item.topHabits.length) {
-        const topNames = item.topHabits.map((h) => `${h.habit.name} ${formatHistoryValue(h.value, habitHistoryMetric)}`).join(" · ");
-        meta.textContent = topNames;
-      } else {
-        meta.textContent = "—";
-      }
-      const value = document.createElement("div");
-      value.className = "habits-history-list-value";
-      value.textContent = formatHistoryValue(item.total, habitHistoryMetric);
-      const left = document.createElement("div");
-      left.appendChild(label);
-      left.appendChild(meta);
-      row.appendChild(left);
-      row.appendChild(value);
-      list.appendChild(row);
-    });
-    topDaysBody.appendChild(list);
-  }
-  topDaysSection.body.appendChild(topDaysBody);
-  insights.appendChild(topDaysSection.section);
-
-  const distributionSection = createHistorySection("Distribución");
-  const distributionBody = document.createElement("div");
-  distributionBody.className = "habits-history-distribution";
-  const distribution = buildWeekdayDistribution(habitsList, start, end, habitHistoryMetric);
-  if (!distribution.total) {
-    const empty = document.createElement("div");
-    empty.className = "habits-history-empty";
-    empty.textContent = "No hay datos para distribuir.";
-    distributionBody.appendChild(empty);
-  } else {
-    const list = document.createElement("div");
-    list.className = "habits-history-list";
-    distribution.items.forEach((item) => {
-      const row = document.createElement("div");
-      row.className = "habits-history-list-row";
-      const label = document.createElement("div");
-      label.className = "habits-history-list-title";
-      label.textContent = item.label;
-      const meta = document.createElement("div");
-      meta.className = "habits-history-list-meta";
-      meta.textContent = `${item.percent}%`;
-      const value = document.createElement("div");
-      value.className = "habits-history-list-value";
-      value.textContent = formatHistoryValue(item.total, habitHistoryMetric);
-      const left = document.createElement("div");
-      left.appendChild(label);
-      left.appendChild(meta);
-      row.appendChild(left);
-      row.appendChild(value);
-      list.appendChild(row);
-    });
-    distributionBody.appendChild(list);
-  }
-  distributionSection.body.appendChild(distributionBody);
-  insights.appendChild(distributionSection.section);
-
   const budgetSection = createHistorySection("Presupuestos");
   const budgetBody = document.createElement("div");
   budgetBody.className = "habits-history-budget";
@@ -8003,19 +7957,6 @@ function renderHistory() {
 
   const statsSection = renderHistoryStatsCard(habitsList);
   insights.appendChild(statsSection);
-
-  const sectionMap = {
-    trend: trendSection.section,
-    week: weekSection.section,
-    topDays: topDaysSection.section,
-    distribution: distributionSection.section,
-    budget: budgetSection.section,
-    stats: statsSection,
-  };
-
-  const order = ["trend", "budget", "stats"];
-  Object.values(sectionMap).forEach((el) => el.remove());
-  order.forEach((k) => insights.appendChild(sectionMap[k]));
 
   $habitHistoryList.appendChild(insights);
 }
@@ -10338,22 +10279,100 @@ function invalidateHabitRenderCaches() {
   if (window.renderedSnapshots && typeof window.renderedSnapshots.clear === "function") window.renderedSnapshots.clear();
 }
 
-function renderHabits() {
-  renderSubtabs();
-  renderToday();
-  renderWeek();
-  renderHistory();
-  renderSchedule("manual");
+function cancelReportsRender() {
+  if (reportsRenderHandle == null) return;
+  cancelIdleTask(reportsRenderHandle);
+  reportsRenderHandle = null;
+}
+
+function disposeHabitDonutChart() {
+  if (!habitDonutChart) return;
+  try {
+    habitDonutChart.dispose();
+  } catch (_) {}
+  habitDonutChart = null;
+}
+
+function clearWeekPanelContent() {
+  if ($habitWeekList) $habitWeekList.innerHTML = "";
+}
+
+function clearHistoryPanelContent() {
+  if ($habitHistoryList) $habitHistoryList.innerHTML = "";
+  if ($habitHistoryEmpty) $habitHistoryEmpty.style.display = "none";
+}
+
+function clearSchedulePanelContent() {
+  if ($habitScheduleView) $habitScheduleView.innerHTML = "";
+  scheduleCoinSpenderState = null;
+}
+
+function clearReportsPanelContent() {
+  cancelReportsRender();
+  disposeHabitDonutChart();
+  hideHabitLineTooltip();
+  if ($habitDonut) $habitDonut.innerHTML = "";
+  if ($habitDonutLegend) $habitDonutLegend.innerHTML = "";
+  if ($habitGlobalHeatmap) $habitGlobalHeatmap.innerHTML = "";
+  if ($habitRankingWeek) $habitRankingWeek.innerHTML = "";
+  if ($habitRankingMonth) $habitRankingMonth.innerHTML = "";
+  if ($habitRankingConsistency) $habitRankingConsistency.innerHTML = "";
+  if ($habitTotalsList) $habitTotalsList.innerHTML = "";
+  if ($habitCountsList) $habitCountsList.innerHTML = "";
+  if ($habitDaysList) $habitDaysList.innerHTML = "";
+  if ($habitLineChart) $habitLineChart.innerHTML = "";
+}
+
+function clearInactivePanels() {
+  if (activeTab !== "week") clearWeekPanelContent();
+  if (activeTab !== "history") clearHistoryPanelContent();
+  if (activeTab !== "schedule") clearSchedulePanelContent();
+  if (activeTab !== "reports") clearReportsPanelContent();
+}
+
+function scheduleReportsRender() {
+  cancelReportsRender();
+  reportsRenderHandle = scheduleIdleTask(() => {
+    reportsRenderHandle = null;
+    if (!isHabitsViewVisible() || activeTab !== "reports") return;
+    renderDonut();
+    renderWorkShiftReport();
+    renderLineChart();
+    renderGlobalHeatmap();
+    renderRanking();
+    renderDaysAccordion();
+  });
+}
+
+function renderReportsPanel() {
   renderKPIs();
   renderPins();
   renderRecordsCard();
   renderDonutGroupOptions();
-  renderDonut();
-  renderWorkShiftReport();
-  renderLineChart();
-  renderGlobalHeatmap();
-  renderRanking();
-  renderDaysAccordion();
+  scheduleReportsRender();
+}
+
+function renderHabits() {
+  renderSubtabs();
+  clearInactivePanels();
+  switch (activeTab) {
+    case "week":
+      renderWeek();
+      break;
+    case "history":
+      renderHistory();
+      break;
+    case "schedule":
+      renderSchedule("manual");
+      break;
+    case "reports":
+      renderReportsPanel();
+      break;
+    case "today":
+    default:
+      renderToday();
+      break;
+  }
   updateSessionUI();
   updateCompareLiveInterval();
   if (habitDetailId && $habitDetailOverlay && !$habitDetailOverlay.classList.contains("hidden")) {
@@ -10745,7 +10764,7 @@ function updateSessionUI() {
   $habitOverlay.classList.toggle("hidden", !isRunning);
   $habitFab.textContent = isRunning ? "⏹ Parar sesión" : "▶︎ Empezar sesión";
   if (sessionInterval) clearInterval(sessionInterval);
-  sessionInterval = isRunning ? setInterval(updateSessionUI, 500) : null;
+  sessionInterval = isRunning ? setInterval(updateSessionUI, 1000) : null;
   updateScheduleLiveInterval();
 }
 
@@ -11403,8 +11422,7 @@ function bindEvents() {
   $habitExportBtn?.addEventListener("click", onHabitsExportClick);
   $tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
-      activeTab = tab.dataset.tab;
-      renderHabits();
+      goHabitSubtab(tab.dataset.tab);
     });
   });
 
@@ -11918,9 +11936,19 @@ function bindEvents() {
 
 function listenRemote() {
   if (remoteBound) return;
-  const rerender = () => renderHabitsPreservingUI();
+  const rerender = () => requestActiveTabRender({ preserveUI: true });
+  const rerenderIfActiveTab = (tabs = []) => {
+    if (!isHabitsViewVisible()) return;
+    if (tabs.includes(activeTab)) rerender();
+  };
+  const bindRemote = (path, handler) => {
+    const unsubscribe = onValue(ref(db, path), handler);
+    if (typeof unsubscribe === "function") {
+      remoteUnsubscribers.push(unsubscribe);
+    }
+  };
 
-  onValue(ref(db, HABITS_PATH), (snap) => {
+  bindRemote(HABITS_PATH, (snap) => {
     habits = normalizeHabitsStore(snap.val() || {});
     invalidateDominantCache();
     markHistoryDataChanged("remote:habits");
@@ -11935,46 +11963,46 @@ function listenRemote() {
     rerender();
   });
 
-  onValue(ref(db, HABIT_GROUPS_PATH), (snap) => {
+  bindRemote(HABIT_GROUPS_PATH, (snap) => {
     habitGroups = snap.val() || {};
     saveCache();
     rerender();
   });
 
-  onValue(ref(db, HABIT_PREFS_PATH), (snap) => {
+  bindRemote(HABIT_PREFS_PATH, (snap) => {
     habitPrefs = snap.val() || { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
     if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
     habitDurationMode = ["auto", "min", "h", "d"].includes(habitPrefs.analyticsUnit) ? habitPrefs.analyticsUnit : "auto";
-      analyticsTimeUnitMode = habitDurationMode;
+    analyticsTimeUnitMode = habitDurationMode;
     saveCache();
-    renderPins();
-    renderQuickSessions();
+    rerenderIfActiveTab(["today", "reports"]);
   });
 
-  onValue(ref(db, HABIT_UI_QUICK_COUNTERS_PATH), (snap) => {
+  bindRemote(HABIT_UI_QUICK_COUNTERS_PATH, (snap) => {
     habitUI = normalizeHabitUI({ ...habitUI, quickCounters: snap.val() || [] });
     saveCache();
-    renderQuickCounters();
+    rerenderIfActiveTab(["today"]);
   });
 
-  onValue(ref(db, HABITS_SCHEDULE_PATH), (snap) => {
+  bindRemote(HABITS_SCHEDULE_PATH, (snap) => {
     console.warn("SCHEDULE UPDATE", "firebase:onValue");
     const raw = snap.val();
     scheduleState = raw && typeof raw === "object"
       ? normalizeHabitSchedule(raw)
       : createDefaultHabitSchedule();
     saveCache();
-    if (activeTab === "schedule") renderSchedule("remote:onValue");
+    rerenderIfActiveTab(["schedule"]);
   });
 
-  onValue(ref(db, HABIT_COMPARE_SETTINGS_PATH), (snap) => {    const remote = snap.val();
+  bindRemote(HABIT_COMPARE_SETTINGS_PATH, (snap) => {
+    const remote = snap.val();
     if (!remote) return;
     applyHabitCompareSettings(remote);
     saveHabitCompareSettingsLocal();
-    rerender();
+    rerenderIfActiveTab(["history"]);
   });
 
-  onValue(ref(db, HABIT_CHECKS_PATH), (snap) => {
+  bindRemote(HABIT_CHECKS_PATH, (snap) => {
     habitChecks = snap.val() || {};
     invalidateDominantCache();
     markHistoryDataChanged("remote:checks");
@@ -11983,7 +12011,7 @@ function listenRemote() {
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
   });
 
-  onValue(ref(db, HABIT_COUNTS_PATH), (snap) => {
+  bindRemote(HABIT_COUNTS_PATH, (snap) => {
     habitCounts = snap.val() || {};
     invalidateDominantCache();
     markHistoryDataChanged("remote:counts");
@@ -11992,12 +12020,14 @@ function listenRemote() {
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
   });
 
-  onValue(ref(db, HABIT_ACTIVE_SESSIONS_PATH), (snap) => {
+  bindRemote(HABIT_ACTIVE_SESSIONS_PATH, (snap) => {
     activeSessions = normalizeActiveSessionsStore(snap.val() || {});
     syncPrimaryRunningSession();
-    rerender();
+    updateSessionUI();
+    updateCompareLiveInterval();
+    rerenderIfActiveTab(["today", "schedule", "history"]);
   });
-  onValue(ref(db, HABIT_SESSIONS_PATH), (snap) => {
+  bindRemote(HABIT_SESSIONS_PATH, (snap) => {
     const raw = snap.val() || {};
     debugHabitsSync("onValue:habitSessions raw", raw);
     const work = activeHabits().find((h) => isWorkHabit(h));
@@ -12022,6 +12052,16 @@ function listenRemote() {
   });
 
   remoteBound = true;
+}
+
+function unlistenRemote() {
+  remoteUnsubscribers.forEach((unsubscribe) => {
+    try {
+      unsubscribe();
+    } catch (_) {}
+  });
+  remoteUnsubscribers = [];
+  remoteBound = false;
 }
 
 
@@ -12203,6 +12243,7 @@ window.__bookshellHabits = {
 async function initHabits() {
   if (!currentUid) return;
   if (habitsRuntimeReady || habitsRuntimeInitializing) return;
+  habitsViewVisible = true;
   habitsRuntimeInitializing = true;
   try {
     readCache();
@@ -12220,25 +12261,77 @@ async function initHabits() {
     maybeAutoCloseScheduleDay();
     scheduleAutoCloseInterval = window.setInterval(maybeAutoCloseScheduleDay, 600000);
     if (getActiveSessionsList().length) {
-      sessionInterval = setInterval(updateSessionUI, 500);
+      sessionInterval = setInterval(updateSessionUI, 1000);
     }
-    window.addEventListener("resize", () => {
+    habitsResizeHandler = () => {
       if (habitDonutChart) habitDonutChart.resize();
-    });
+    };
+    window.addEventListener("resize", habitsResizeHandler);
     habitsRuntimeReady = true;
   } finally {
     habitsRuntimeInitializing = false;
   }
 }
 
+export async function onShow() {
+  const nextUid = auth.currentUser?.uid ?? null;
+  if (nextUid && nextUid !== currentUid) setUserPaths(nextUid);
+  if (!habitsRuntimeReady && !habitsRuntimeInitializing) {
+    habitsViewVisible = true;
+    await initHabits();
+    return;
+  }
+  const wasHidden = !habitsViewVisible;
+  habitsViewVisible = true;
+  if (!wasHidden) return;
+  ensureSessionOverlayInBody();
+  if (currentUid && !remoteBound) listenRemote();
+  maybeAutoCloseScheduleDay();
+  if (!scheduleAutoCloseInterval) {
+    scheduleAutoCloseInterval = window.setInterval(maybeAutoCloseScheduleDay, 600000);
+  }
+  requestActiveTabRender({ preserveUI: true });
+  updateSessionUI();
+  updateCompareLiveInterval();
+  habitsResizeHandler?.();
+}
+
+export function onHide() {
+  habitsViewVisible = false;
+  cancelHabitRenderRequest();
+  cancelReportsRender();
+  if (compareRefreshRaf != null) {
+    window.cancelAnimationFrame(compareRefreshRaf);
+    compareRefreshRaf = null;
+  }
+  if (compareLiveInterval) {
+    clearInterval(compareLiveInterval);
+    compareLiveInterval = null;
+  }
+  if (scheduleTickInterval) {
+    window.clearInterval(scheduleTickInterval);
+    scheduleTickInterval = null;
+  }
+  if (scheduleAutoCloseInterval) {
+    window.clearInterval(scheduleAutoCloseInterval);
+    scheduleAutoCloseInterval = null;
+  }
+  unlistenRemote();
+  disposeHabitDonutChart();
+  clearWeekPanelContent();
+  clearHistoryPanelContent();
+  clearSchedulePanelContent();
+  clearReportsPanelContent();
+}
+
 setUserPaths(currentUid);
-initHabits();
+if (habitsViewVisible) initHabits();
 
 onUserChange((user) => {
   const nextUid = user?.uid ?? null;
   if (!nextUid || habitsRuntimeReady || habitsRuntimeInitializing) return;
   setUserPaths(nextUid);
-  initHabits();
+  if (habitsViewVisible) initHabits();
 });
 
 // TODO REMOVE: parse smoke check

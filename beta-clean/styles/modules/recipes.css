@@ -119,6 +119,8 @@
 .recipes-list-panel-body {
   display: grid;
   gap: 8px;
+  content-visibility: auto;
+  contain-intrinsic-size: 900px;
 }
 
 .recipe-row-card {
@@ -1156,6 +1158,7 @@
 /* Ficha a pantalla completa */
 .recipe-detail-hero{
   width: 100%;
+  aspect-ratio: 16 / 9;
   border-radius: 16px;
   overflow: hidden;
   border: 1px solid rgba(255,255,255,0.10);

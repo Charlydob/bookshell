@@ -437,7 +437,9 @@ function renderAll() {
   renderTabs();
   renderList();
   renderDetail();
-  renderStats();
+  if (state.viewTab === "stats") {
+    renderStats();
+  }
 }
 
 function scheduleScriptSave() {
@@ -694,11 +696,18 @@ export async function init({ root }) {
 }
 
 export async function onShow() {
+  if (state.uid && state.path && !state.listeners.length) {
+    subscribeData();
+  }
   renderAll();
 }
 
-export function destroy() {
+export async function onHide() {
   clearTimeout(state.saveTimer);
   clearTimeout(state.statusTimer);
   stopDataSubscriptions();
+}
+
+export function destroy() {
+  void onHide();
 }

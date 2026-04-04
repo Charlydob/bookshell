@@ -716,9 +716,16 @@ export function getListenerCount() {
 }
 
 export async function onShow() {
+  if (!worldState.initialized) {
+    await init();
+  }
   requestAnimationFrame(() => {
     try {
       document.getElementById("world-map")?.__geoChart?.resize?.();
     } catch (_) {}
   });
+}
+
+export async function onHide() {
+  destroy();
 }

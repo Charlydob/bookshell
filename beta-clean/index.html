@@ -24,7 +24,6 @@
   <link href="./styles/modules/videos-hub.css" rel="stylesheet" />
   <link href="./styles/modules/world.css" rel="stylesheet" />
   <link href="./manifest.webmanifest" rel="manifest" />
-  <link href="./icons/favicon.ico" rel="icon" />
   <link href="./icons/favicon-32.png" rel="icon" sizes="32x32" type="image/png" />
   <link href="./icons/favicon-16.png" rel="icon" sizes="16x16" type="image/png" />
   <link href="./icons/icon-512.png" rel="apple-touch-icon" sizes="180x180" />
@@ -63,21 +62,6 @@
       display: block !important;
     }
 
-    .version-switch-link {
-      position: fixed;
-      top: calc(env(safe-area-inset-top) + 10px);
-      left: 10px;
-      z-index: 9998;
-      padding: 8px 10px;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,.16);
-      background: rgba(7,10,18,.72);
-      backdrop-filter: blur(10px);
-      color: #fff;
-      text-decoration: none;
-      font-size: 12px;
-      line-height: 1;
-    }
   </style> 
 
   <script>
@@ -198,7 +182,6 @@
   </script>
 </head>
 <body>
-  <a class="version-switch-link" href="../beta/index.html" id="version-switch-beta">1️⃣​</a>
   <div id="boot-splash" role="status" aria-live="polite" aria-label="Carga inicial de Bookshell">
     <div class="boot-splash-card">
       <div class="boot-splash-title">Bookshell</div>
@@ -246,18 +229,6 @@
   </nav>
 
   <datalist id="country-options"></datalist>
-
-  <script>
-    (function () {
-      var link = document.getElementById("version-switch-beta");
-      if (!link) return;
-      link.addEventListener("click", function (event) {
-        event.preventDefault();
-        var hash = window.location.hash || "";
-        window.location.href = new URL("../beta/index.html" + hash, window.location.href).href;
-      });
-    })();
-  </script>
 
   <script type="module" src="./scripts/app/main.js"></script>
 </body>

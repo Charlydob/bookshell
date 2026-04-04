@@ -414,6 +414,19 @@ function bindEvents() {
 
     if (field === "useBodyweight") {
       exercise.useBodyweight = target.checked;
+      if (exercises?.[exerciseId]) {
+        const now = Date.now();
+        exercises[exerciseId] = {
+          ...exercises[exerciseId],
+          id: exerciseId,
+          useBodyweight: target.checked,
+          updatedAt: now
+        };
+        writeGymUpdate(`${basePath}/exercises/${exerciseId}`, {
+          useBodyweight: target.checked,
+          updatedAt: now
+        });
+      }
       scheduleWorkoutSave();
       renderWorkoutEditor();
       renderMetrics();
@@ -1319,19 +1332,13 @@ function bindEvents() {
         gymStatsSelection.exerciseId = exerciseIds[0] || "";
       }
       const exerciseType = getExerciseTypeFromCatalog(gymStatsSelection.exerciseId);
-      const metrics = exerciseType === "time"
-        ? [
-          { value: "maxKgEff", label: "Máximo (kg)" },
-          { value: "loadTime", label: "Carga-tiempo" },
-          { value: "timeSec", label: "Tiempo (min)" }
-        ]
-        : [
-          { value: "maxKgEff", label: "Máximo (kg)" },
-          { value: "volumeKg", label: "Volumen (kg)" },
-          { value: "reps", label: "Repeticiones" }
-        ];
+      const metrics = getExerciseMetricOptions(gymStatsSelection.exerciseId, exerciseType);
+      if (exerciseType !== "time" && getCatalogExerciseUseBodyweight(gymStatsSelection.exerciseId)
+        && gymStatsSelection.exerciseMetric === "maxKgEff") {
+        gymStatsSelection.exerciseMetric = "reps";
+      }
       if (!metrics.some((metric) => metric.value === gymStatsSelection.exerciseMetric)) {
-        gymStatsSelection.exerciseMetric = "maxKgEff";
+        gymStatsSelection.exerciseMetric = metrics[0]?.value || "maxKgEff";
       }
       const row = document.createElement("div");
       row.className = "gym-stats-row";
@@ -1400,6 +1407,27 @@ function bindEvents() {
     if (!exercise) return "reps";
     const { kind, strengthType } = normalizeExerciseDefinition(exercise);
     return kind === "cardio" ? "cardio" : strengthType;
+  }
+
+  function getCatalogExerciseUseBodyweight(exerciseId) {
+    const exercise = exercises?.[exerciseId];
+    return getExerciseUseBodyweight(exercise);
+  }
+
+  function getExerciseMetricOptions(exerciseId, exerciseType) {
+    if (exerciseType === "time") {
+      return [
+        { value: "maxKgEff", label: "Máximo (kg)" },
+        { value: "loadTime", label: "Carga-tiempo" },
+        { value: "timeSec", label: "Tiempo (min)" }
+      ];
+    }
+    const isBodyweight = getCatalogExerciseUseBodyweight(exerciseId);
+    return [
+      { value: isBodyweight ? "reps" : "maxKgEff", label: isBodyweight ? "Máx reps" : "Máximo (kg)" },
+      { value: "volumeKg", label: "Volumen (kg)" },
+      { value: "reps", label: "Repeticiones" }
+    ];
   }
 
   function getCardioNameOptions() {
@@ -1706,7 +1734,9 @@ function bindEvents() {
       values.push(entry.value);
     });
     const labelMap = {
-      maxKgEff: "Máximo (kg)",
+      maxKgEff: getExerciseTypeFromCatalog(exerciseId) === "time"
+        ? "Máximo (kg)"
+        : getCatalogExerciseUseBodyweight(exerciseId) ? "Máx reps" : "Máximo (kg)",
       volumeKg: "Volumen (kg)",
       reps: "Repeticiones",
       loadTime: "Carga-tiempo",
@@ -1726,17 +1756,11 @@ function bindEvents() {
     gymExDetailSelection.exerciseId = exerciseId;
     const exerciseType = getExerciseTypeFromCatalog(exerciseId);
     if (exerciseType === "cardio") return;
-    const metricOptions = exerciseType === "time"
-      ? [
-        { value: "maxKgEff", label: "Máximo (kg)" },
-        { value: "loadTime", label: "Carga-tiempo" },
-        { value: "timeSec", label: "Tiempo (min)" }
-      ]
-      : [
-        { value: "maxKgEff", label: "Máximo (kg)" },
-        { value: "volumeKg", label: "Volumen (kg)" },
-        { value: "reps", label: "Repeticiones" }
-      ];
+    const metricOptions = getExerciseMetricOptions(exerciseId, exerciseType);
+    if (exerciseType !== "time" && getCatalogExerciseUseBodyweight(exerciseId)
+      && gymExDetailSelection.metric === "maxKgEff") {
+      gymExDetailSelection.metric = "reps";
+    }
     if (!metricOptions.some((metric) => metric.value === gymExDetailSelection.metric)) {
       gymExDetailSelection.metric = metricOptions[0]?.value || "maxKgEff";
     }
@@ -1792,13 +1816,16 @@ function bindEvents() {
     const volumeLabel = summary.volumeTotalKg ? `${Math.round(summary.volumeTotalKg)} kg` : "0 kg";
     const maxKgLabel = summary.maxKgEff != null ? `${formatKgValue(summary.maxKgEff)} kg` : "—";
     const avgKgLabel = summary.avgKgEff != null ? `${formatKgValue(summary.avgKgEff)} kg` : "—";
+    const isBodyweight = getCatalogExerciseUseBodyweight(exerciseId) && summary.exerciseType !== "time";
+    const primaryMaxLabel = isBodyweight ? "Reps máximas" : "Peso máximo";
+    const primaryMaxValue = isBodyweight ? (summary.maxReps != null ? `${summary.maxReps} reps` : "—") : maxKgLabel;
     const activityLabel = summary.exerciseType === "time" ? timeLabel : repsLabel;
     const activityTitle = summary.exerciseType === "time" ? "Tiempo total" : "Reps totales";
     const kpis = [
       { label: "Sets totales", value: String(summary.setsCount) },
       { label: activityTitle, value: activityLabel },
       { label: "Volumen total", value: volumeLabel },
-      { label: "Peso máximo", value: maxKgLabel },
+      { label: primaryMaxLabel, value: primaryMaxValue },
       { label: "Peso medio", value: avgKgLabel }
     ];
     $gymExDetailKpis.innerHTML = kpis.map((kpi) => `
@@ -1863,6 +1890,7 @@ function bindEvents() {
     let timeSecTotal = 0;
     let volumeTotalKg = 0;
     let maxKgEff = null;
+    let maxReps = null;
     let sumKgEff = 0;
     let kgEffCount = 0;
     flattenWorkouts().forEach((workout) => {
@@ -1890,10 +1918,12 @@ function bindEvents() {
           const { repsR, repsL } = getUnilateralReps(set);
           const repsRight = repsR || 0;
           const repsLeft = repsL || 0;
+          const repsSet = repsRight + repsLeft;
           const { kgR, kgL } = getUnilateralKg(set);
           const kgEffR = getSetEffectiveKg(set, workout.date, useBodyweight, kgR);
           const kgEffL = getSetEffectiveKg(set, workout.date, useBodyweight, kgL);
-          repsTotal += repsRight + repsLeft;
+          repsTotal += repsSet;
+          maxReps = maxReps === null ? repsSet : Math.max(maxReps, repsSet);
           if (kgEffR != null) volumeTotalKg += repsRight * kgEffR;
           if (kgEffL != null) volumeTotalKg += repsLeft * kgEffL;
           if (kgEffR != null || kgEffL != null) {
@@ -1915,6 +1945,7 @@ function bindEvents() {
         }
         const repsValue = Number(set.reps) || 0;
         repsTotal += repsValue;
+        maxReps = maxReps === null ? repsValue : Math.max(maxReps, repsValue);
         if (kgEff != null) {
           volumeTotalKg += repsValue * kgEff;
         }
@@ -1928,6 +1959,7 @@ function bindEvents() {
       timeSecTotal,
       volumeTotalKg,
       maxKgEff,
+      maxReps,
       avgKgEff
     };
   }
@@ -1945,17 +1977,11 @@ function bindEvents() {
       closeExerciseDetailModal();
       return;
     }
-    const metricOptions = exerciseType === "time"
-      ? [
-        { value: "maxKgEff", label: "Máximo (kg)" },
-        { value: "loadTime", label: "Carga-tiempo" },
-        { value: "timeSec", label: "Tiempo (min)" }
-      ]
-      : [
-        { value: "maxKgEff", label: "Máximo (kg)" },
-        { value: "volumeKg", label: "Volumen (kg)" },
-        { value: "reps", label: "Repeticiones" }
-      ];
+    const metricOptions = getExerciseMetricOptions(exerciseId, exerciseType);
+    if (exerciseType !== "time" && getCatalogExerciseUseBodyweight(exerciseId)
+      && gymExDetailSelection.metric === "maxKgEff") {
+      gymExDetailSelection.metric = "reps";
+    }
     if (!metricOptions.some((metric) => metric.value === gymExDetailSelection.metric)) {
       gymExDetailSelection.metric = metricOptions[0]?.value || "maxKgEff";
     }
@@ -3377,6 +3403,7 @@ function bindEvents() {
     const { kind, strengthType } = normalizeExerciseDefinition(exercise);
     const exerciseType = kind === "cardio" ? "cardio" : strengthType;
     const unilateral = Boolean(exercise.unilateral);
+    const useBodyweight = getExerciseUseBodyweight(exercise);
     workout.exercises[exerciseId] = {
       nameSnapshot: exercise.name,
       muscleGroupsSnapshot: getExerciseMuscleGroups(exercise),
@@ -3385,7 +3412,7 @@ function bindEvents() {
       strengthTypeSnapshot: kind === "strength" ? strengthType : null,
       metCategoryIdSnapshot: String(exercise.metCategoryId || "").trim(),
       originalIndex: getNextExerciseOriginalIndex(workout),
-      useBodyweight: false,
+      useBodyweight,
       sets: buildSetsFromHistory(exerciseId, workout?.id, { exerciseType, unilateral })
     };
     scheduleWorkoutSave();
@@ -4059,21 +4086,19 @@ function bindEvents() {
   }
 
   function getKgPlaceholderSide(lastSet, useBodyweight, sideField) {
-    const oppositeSideField = sideField === "kgR" ? "kgL" : "kgR";
-    const sideFallback = getSetSideValue(lastSet?.[sideField], lastSet?.[oppositeSideField]);
+    const sideFallback = toNumber(lastSet?.[sideField]);
     if (useBodyweight) {
-      const sideValue = getSetSideValue(sideFallback, lastSet?.kg ?? lastSet?.extraKg);
+      const sideValue = sideFallback ?? getSetSideValue(lastSet?.kg, lastSet?.extraKg);
       const extra = Number(sideValue) || 0;
       return extra ? `BW(+${formatKgValue(extra)})` : "BW(+kg)";
     }
-    const fallback = getSetSideValue(sideFallback, lastSet?.kg ?? lastSet?.extraKg);
+    const fallback = sideFallback ?? getSetSideValue(lastSet?.kg, lastSet?.extraKg);
     return fallback != null ? formatKgValue(fallback) : "kg";
   }
 
   function getRepsPlaceholderSide(lastSet, sideField, fallbackLabel) {
-    const oppositeSideField = sideField === "repsR" ? "repsL" : "repsR";
-    const sideFallback = getSetSideValue(lastSet?.[sideField], lastSet?.[oppositeSideField]);
-    const fallback = getSetSideValue(sideFallback, lastSet?.reps);
+    const sideFallback = toNumber(lastSet?.[sideField]);
+    const fallback = sideFallback ?? toNumber(lastSet?.reps);
     return fallback != null ? String(fallback) : fallbackLabel;
   }
 
@@ -4118,6 +4143,18 @@ function bindEvents() {
     if (!exerciseData) return false;
     if (exerciseData.useBodyweight !== undefined) {
       return Boolean(exerciseData.useBodyweight);
+    }
+    if (exerciseData.bw !== undefined) {
+      return Boolean(exerciseData.bw);
+    }
+    if (exerciseData.isBodyweight !== undefined) {
+      return Boolean(exerciseData.isBodyweight);
+    }
+    if (exerciseData.bodyweight !== undefined) {
+      return Boolean(exerciseData.bodyweight);
+    }
+    if (exerciseData.id && exercises?.[exerciseData.id] && exercises[exerciseData.id] !== exerciseData) {
+      return getExerciseUseBodyweight(exercises[exerciseData.id]);
     }
     return (exerciseData.sets || []).some((set) => set?.useBodyweight || set?.bodyweight);
   }

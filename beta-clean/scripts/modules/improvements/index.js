@@ -435,7 +435,13 @@ function normalizeItems(rawItems, rawBoards = null) {
     const status = sanitizeStatus(item.status);
     nextItems[id] = {
       title: String(item.title || "").trim().slice(0, 120),
+      description: String(item.description || "").trim().slice(0, 1200),
       details: String(item.details || "").trim().slice(0, 1200),
+      instructions: String(item.instructions || "").trim().slice(0, 1200),
+      type: String(item.type || "").trim().slice(0, 120),
+      fixType: String(item.fixType || "").trim().slice(0, 120),
+      category: String(item.category || "").trim().slice(0, 120),
+      kind: String(item.kind || "").trim().slice(0, 120),
       viewId: resolveLegacyViewId(item.viewId || item.boardId || item.tabId, tabs, rawBoards),
       priority: sanitizePriority(item.priority),
       status,

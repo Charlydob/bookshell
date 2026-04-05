@@ -18,7 +18,13 @@
   
 <div class="habit-today-month-calendar" id="habit-today-month-calendar" data-search-ignore="true"></div>
 
-<details class="habit-accordion habit-quick-sessions" id="habit-quick-sessions" data-search-ignore="true">
+<div class="habit-quick-toggle" data-search-ignore="true">
+  <div class="habit-quick-tabs" role="tablist" aria-label="Accesos rápidos de hábitos">
+    <button class="habit-quick-tab-btn is-active" id="habit-quick-tab-sessions" data-habit-quick-tab="sessions" role="tab" aria-selected="true" type="button">Sesiones</button>
+    <button class="habit-quick-tab-btn" id="habit-quick-tab-counters" data-habit-quick-tab="counters" role="tab" aria-selected="false" type="button">Contadores</button>
+  </div>
+
+<details class="habit-accordion habit-quick-sessions" id="habit-quick-sessions" data-search-ignore="true" data-habit-quick-panel="sessions" open>
   <summary>
     <div class="habit-accordion-title">Sesiones rápidas</div>
     <div class="habit-accordion-meta" id="habit-quick-sessions-meta">—</div>
@@ -33,9 +39,9 @@
     <div class="empty-state small" id="habit-quick-sessions-empty" style="display:none;">Añade hábitos de tiempo para iniciar sesiones con un toque.</div>
   </div>
 </details>
-<div class="habit-group quick-counters-wrap" data-search-ignore="true">
+<div class="habit-group quick-counters-wrap" id="quick-counters-wrap" data-search-ignore="true" data-habit-quick-panel="counters">
 
-  <div class="habit-group-head" onclick="toggleQuickCounters()">
+  <div class="habit-group-head">
     <span>Contadores rápidos</span>
     <span class="habit-group-sub" id="quick-counter-count"></span>
     <span class="chev"></span>
@@ -51,6 +57,7 @@
   </div>
 
 </div>
+</div>
 
     <div class="habit-today-search" id="habit-today-search">
     <span class="habit-search-icon" aria-hidden="true">🔍</span>
@@ -61,8 +68,14 @@
       <div class="habit-search-empty-text">No hay hábitos que coincidan</div>
       <button class="btn ghost btn-compact" id="habit-today-search-reset" type="button">Limpiar</button>
     </div>
-<div class="habit-custom-groups" id="habit-custom-groups"></div>
-<details class="habit-accordion habit-today-accordion" id="habits-today-acc-count" open>
+<details class="habit-accordion habit-today-results-accordion" id="habits-today-results">
+<summary>
+<div class="habit-accordion-title">Habitos de hoy</div>
+<div class="habit-accordion-meta">Contadores, tiempo y grupos</div>
+<div class="habit-accordion-preview">Toca para ver tus habitos</div>
+</summary>
+<div class="habit-accordion-body habit-today-results-body">
+<details class="habit-accordion habit-today-accordion" id="habits-today-acc-count">
 <summary>
 <div class="habit-accordion-title">Contadores</div>
 <div class="habit-accordion-meta" id="habits-today-count-meta">—</div>
@@ -124,7 +137,7 @@
 </div>
 </details>
 
-<details class="habit-accordion habit-today-accordion" id="habits-today-acc-time" open>
+<details class="habit-accordion habit-today-accordion" id="habits-today-acc-time">
 <summary>
 <div class="habit-accordion-title">Por tiempo</div>
 <div class="habit-accordion-meta" id="habits-today-time-meta">—</div>
@@ -183,6 +196,9 @@
 
 <div class="empty-state small" id="habits-today-time-done-empty">Aún no has completado ningún hábito hoy.</div>
 </div>
+</div>
+</details>
+<div class="habit-custom-groups" id="habit-custom-groups"></div>
 </div>
 </details>
 </div>

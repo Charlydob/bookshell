@@ -9,23 +9,15 @@
 </div>
 <div aria-label="Vistas de hábitos" class="habits-subtabs" role="tablist">
 <button aria-selected="true" class="habit-subtab is-active" data-tab="today" role="tab">Hoy</button>
-<button aria-selected="false" class="habit-subtab" data-tab="week" role="tab">Semana</button>
 <button aria-selected="false" class="habit-subtab" data-tab="history" role="tab">Historial</button>
 <button aria-selected="false" class="habit-subtab" data-tab="schedule" role="tab">Horario</button>
 <button aria-selected="false" class="habit-subtab" data-tab="reports" role="tab">Reportes</button>
 </div>
 <div class="habits-views">
 <div class="habits-panel is-active" data-panel="today">
-<div class="habit-week-timeline" id="habit-week-timeline" aria-label="Semana actual"></div>
-<div class="habit-today-search" id="habit-today-search">
-  <span class="habit-search-icon" aria-hidden="true">🔍</span>
-  <input autocomplete="off" class="habit-search-input" id="habit-today-search-input" inputmode="search" placeholder="Buscar hábito…" type="search"/>
-  <button class="habit-search-clear" id="habit-today-search-clear" type="button" aria-label="Limpiar búsqueda">✕</button>
-</div>
-<div class="habit-search-empty" id="habit-today-search-empty" style="display:none;">
-  <div class="habit-search-empty-text">No hay hábitos que coincidan</div>
-  <button class="btn ghost btn-compact" id="habit-today-search-reset" type="button">Limpiar</button>
-</div>
+  
+<div class="habit-today-month-calendar" id="habit-today-month-calendar" data-search-ignore="true"></div>
+
 <details class="habit-accordion habit-quick-sessions" id="habit-quick-sessions" data-search-ignore="true">
   <summary>
     <div class="habit-accordion-title">Sesiones rápidas</div>
@@ -46,7 +38,7 @@
   <div class="habit-group-head" onclick="toggleQuickCounters()">
     <span>Contadores rápidos</span>
     <span class="habit-group-sub" id="quick-counter-count"></span>
-    <span class="chev">⌄</span>
+    <span class="chev"></span>
   </div>
 
   <div class="habit-group-body" id="quick-counters-body">
@@ -59,6 +51,16 @@
   </div>
 
 </div>
+
+    <div class="habit-today-search" id="habit-today-search">
+    <span class="habit-search-icon" aria-hidden="true">🔍</span>
+    <input autocomplete="off" class="habit-search-input" id="habit-today-search-input" inputmode="search" placeholder="Buscar hábito…" type="search"/>
+    <button class="habit-search-clear" id="habit-today-search-clear" type="button" aria-label="Limpiar búsqueda">✕</button>
+    </div>
+    <div class="habit-search-empty" id="habit-today-search-empty" style="display:none;">
+      <div class="habit-search-empty-text">No hay hábitos que coincidan</div>
+      <button class="btn ghost btn-compact" id="habit-today-search-reset" type="button">Limpiar</button>
+    </div>
 <div class="habit-custom-groups" id="habit-custom-groups"></div>
 <details class="habit-accordion habit-today-accordion" id="habits-today-acc-count" open>
 <summary>
@@ -183,10 +185,6 @@
 </div>
 </div>
 </details>
-</div>
-<div class="habits-panel" data-panel="week">
-<div class="habits-week-list" id="habits-week-list"></div>
-<div class="empty-state small" id="habits-week-empty">Añade hábitos para empezar tu semana.</div>
 </div>
 <div class="habits-panel" data-panel="history">
 <div class="habit-heatmap-list" id="habits-history-list"></div>
@@ -373,97 +371,6 @@
 <div class="empty-state small" id="habit-line-empty" style="display:none;">No hay datos en este rango.</div>
 </div>
 </div>
-<details class="habit-accordion habit-analytics-accordion" id="habit-acc-donut-breakdown">
-<summary>
-<div class="habit-accordion-title">Desglose del gráfico circular</div>
-<div class="habit-accordion-meta" id="habit-acc-donut-breakdown-meta">—</div>
-</summary>
-<div class="habit-accordion-body">
-<div class="habit-analytics-breakdown-head">
-  <div class="habit-unit" id="habit-unit" aria-label="Unidad de tiempo"></div>
-</div>
-<div class="habit-ranking-list habit-analytics-breakdown-list" id="habit-donut-breakdown-list"></div>
-</div>
-</details>
-<details class="habit-accordion habit-analytics-accordion" id="habit-acc-range-habits">
-<summary>
-<div class="habit-accordion-title">Hábitos (rango)</div>
-<div class="habit-accordion-meta" id="habit-acc-range-habits-meta">—</div>
-</summary>
-<div class="habit-accordion-body">
-<div class="habit-range-goal-head">Objetivo para este rango</div>
-<div class="habit-range-habits-list" id="habit-range-habits-list"></div>
-<details class="habit-accordion habit-accordion-nested" id="habit-acc-range-unused">
-<summary>
-<div class="habit-accordion-title" id="habit-acc-range-unused-title">No usados (0)</div>
-</summary>
-<div class="habit-accordion-body">
-<div class="habit-range-habits-list" id="habit-range-unused-list"></div>
-</div>
-</details>
-</div>
-</details>
-<details class="habit-accordion" id="habit-acc-week">
-<summary>
-<div class="habit-accordion-title">Top minutos (semana)</div>
-<div class="habit-accordion-meta" id="habit-acc-week-meta">—</div>
-</summary>
-<div class="habit-accordion-body">
-<div class="habit-ranking-list" id="habit-ranking-week"></div>
-</div>
-</details>
-<details class="habit-accordion" id="habit-acc-month">
-<summary>
-<div class="habit-accordion-title">Top minutos (mes)</div>
-<div class="habit-accordion-meta" id="habit-acc-month-meta">—</div>
-</summary>
-<div class="habit-accordion-body">
-<div class="habit-ranking-list" id="habit-ranking-month"></div>
-</div>
-</details>
-<div class="habit-range-toggle habit-days-range">
-<button class="habit-range-btn habit-days-range-btn is-active" data-range="day">Día</button>
-<button class="habit-range-btn habit-days-range-btn" data-range="week">Semana</button>
-<button class="habit-range-btn habit-days-range-btn" data-range="month">Mes</button>
-<button class="habit-range-btn habit-days-range-btn" data-range="year">Año</button>
-<button class="habit-range-btn habit-days-range-btn" data-range="total">Total</button>
-</div>
-<details class="habit-accordion" id="habit-acc-total">
-<summary>
-<div class="habit-accordion-title">Totales por hábito</div>
-<div class="habit-accordion-meta" id="habit-acc-total-meta">—</div>
-</summary>
-<div class="habit-accordion-body">
-<div class="habit-ranking-list" id="habit-totals-list"></div>
-</div>
-</details>
-<details class="habit-accordion" id="habit-acc-counts">
-<summary>
-<div class="habit-accordion-title">Contadores</div>
-<div class="habit-accordion-meta" id="habit-acc-counts-meta">—</div>
-</summary>
-<div class="habit-accordion-body">
-<div class="habit-ranking-list" id="habit-counts-list"></div>
-</div>
-</details>
-<details class="habit-accordion" id="habit-acc-days">
-<summary>
-<div class="habit-accordion-title">Días hechos</div>
-<div class="habit-accordion-meta" id="habit-acc-days-meta">—</div>
-</summary>
-<div class="habit-accordion-body">
-<div class="habit-ranking-list" id="habit-days-list"></div>
-</div>
-</details>
-<details class="habit-accordion" id="habit-acc-consistency">
-<summary>
-<div class="habit-accordion-title">Consistencia</div>
-<div class="habit-accordion-meta" id="habit-acc-consistency-meta">—</div>
-</summary>
-<div class="habit-accordion-body">
-<div class="habit-ranking-list" id="habit-ranking-consistency"></div>
-</div>
-</details>
 </div>
 </div>
 </div>
@@ -979,29 +886,6 @@
 <button class="btn ghost" id="habit-day-detail-cancel" type="button">Cerrar</button>
 <button class="btn primary" id="habit-day-detail-save" type="button">Guardar</button>
 </div>
-</div>
-</div>
-<!-- MODAL OBJETIVOS POR RANGO -->
-<div class="modal-backdrop hidden" id="habit-range-goals-modal">
-<div class="modal habit-modal">
-<div class="modal-handle"></div>
-<div class="modal-header">
-<div class="modal-title" id="habit-range-goals-title">Objetivos — Hábito</div>
-<button class="icon-btn" id="habit-range-goals-close" type="button">✕</button>
-</div>
-<form class="modal-form" id="habit-range-goals-form">
-<div class="modal-scroll sheet-body">
-<div class="sheet-section">
-<div class="sheet-section-title">Objetivos por rango (minutos)</div>
-<div class="habit-range-goals-grid" id="habit-range-goals-grid"></div>
-</div>
-</div>
-<div class="modal-footer sheet-footer">
-<button class="btn ghost" id="habit-range-goals-clear" type="button">Limpiar objetivos</button>
-<button class="btn ghost" id="habit-range-goals-cancel" type="button">Cancelar</button>
-<button class="btn primary" type="submit">Guardar</button>
-</div>
-</form>
 </div>
 </div>
 <!-- MODAL RESUMEN HORARIO -->

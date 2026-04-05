@@ -54,7 +54,7 @@ const NAV_VIEW_META = {
   "view-gym": { label: "Gym" },
 };
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
-const HABITS_MODULE_VERSION = "2026-04-05-v5";
+const HABITS_MODULE_VERSION = "2026-04-05-v7";
 
 function getAppPerfStore() {
   if (!window[APP_PERF_STORE_KEY]) {
@@ -430,8 +430,8 @@ const viewModules = {
     moduleLoader: () => import("../modules/recipes/index.js"),
   },
   "view-habits": {
-    cssUrl: "../../styles/modules/habits.css",
-    htmlUrl: "../../views/habits.html",
+    cssUrl: `../../styles/modules/habits.css?v=${HABITS_MODULE_VERSION}`,
+    htmlUrl: `../../views/habits.html?v=${HABITS_MODULE_VERSION}`,
     moduleLoader: () => import(`../modules/habits/index.js?v=${HABITS_MODULE_VERSION}`),
   },
   "view-games": {

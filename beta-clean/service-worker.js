@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-04-05-v2";
+const APP_VERSION = "2026-04-05-v4";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -98,13 +98,13 @@ async function putInCache(cacheName, request, response) {
 }
 
 async function matchAnyCache(request) {
-  const staticCache = await caches.open(STATIC_CACHE);
   const runtimeCache = await caches.open(RUNTIME_CACHE);
+  const staticCache = await caches.open(STATIC_CACHE);
   const [staticMatch, runtimeMatch] = await Promise.all([
-    staticCache.match(request),
     runtimeCache.match(request),
+    staticCache.match(request),
   ]);
-  return staticMatch || runtimeMatch || null;
+  return runtimeMatch || staticMatch || null;
 }
 
 async function precacheLocalAssets() {
@@ -143,6 +143,15 @@ async function networkFirst(request) {
   }
 }
 
+function isLocalCodeRequest(request, url) {
+  if (url.origin !== self.location.origin) return false;
+  if (request.mode === "navigate") return true;
+  if (request.destination === "script" || request.destination === "style" || request.destination === "worker") {
+    return true;
+  }
+  return /\.(?:html|js|mjs|css)$/i.test(url.pathname);
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     precacheLocalAssets().then(() => self.skipWaiting()),
@@ -170,6 +179,11 @@ self.addEventListener("fetch", (event) => {
   if (!isCacheableAsset(request, url)) return;
 
   if (request.mode === "navigate") {
+    event.respondWith(networkFirst(request));
+    return;
+  }
+
+  if (isLocalCodeRequest(request, url)) {
     event.respondWith(networkFirst(request));
     return;
   }

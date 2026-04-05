@@ -1,5 +1,5 @@
 let runtimeModule = null;
-const HABITS_RUNTIME_VERSION = "2026-04-05-v5";
+const HABITS_RUNTIME_VERSION = "2026-04-05-v7";
 
 function logHabitsModule(phase, extra = {}, level = "info") {
   const payload = {

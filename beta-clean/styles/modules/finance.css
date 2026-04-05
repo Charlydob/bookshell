@@ -1464,7 +1464,6 @@ font-size: 14px; font-weight: 500; }
 .finTxDay__row{width:100%;text-align:left;background:transparent;border:0}
 .finFixed__fields{display:grid;gap:.5rem}
 
-.financeTab .finAgg__section { display:grid; gap:10px; }
 .financeTab .finAgg__tabs { display:flex; gap:6px; flex-wrap:wrap; }
 .financeTab .finAgg__scopeToggle { display:flex; gap:8px; margin:10px 0; }
 .financeTab .finAgg__active { outline: 1px solid rgba(120,255,200,.65); }
@@ -2037,10 +2036,6 @@ margin: 0px;
   min-width: 0;
 }
 
-.financeRoi {
-  display: grid;
-  gap: 10px;
-}
 
 .financeRoi__header {
   align-items: flex-start;

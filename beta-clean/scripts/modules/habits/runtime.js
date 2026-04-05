@@ -119,6 +119,7 @@ const SESSION_SELECTED_KEY = "bookshell-habit-selected-session";
 const LAST_HABIT_KEY = "bookshell-habits-last-used";
 const HEATMAP_YEAR_STORAGE = "bookshell-habits-heatmap-year";
 const HISTORY_RANGE_STORAGE = "bookshell-habits-history-range:v1";
+const HISTORY_CALENDAR_VIEW_STORAGE = "bookshell-habits-calendar-view:v3";
 const COMPARE_SETTINGS_STORAGE = "bookshell-habits-compare-settings:v1";
 const HABITS_SCHEDULE_STORAGE = "bookshell-habits-schedule-cache:v1";
 const HABITS_SCHEDULE_VIEW_MODE_STORAGE = "scheduleViewMode";
@@ -172,6 +173,7 @@ let habitHistoryMetric = "time";
 let habitHistoryGroupMode = { kind: "habit", cat: null };
 let historyCalYear = null;
 let historyCalMonth = null;
+let historyCalView = "week";
 let habitDeleteTarget = null;
 let habitToastEl = null;
 let habitToastTimeout = null;
@@ -3391,6 +3393,26 @@ function saveHistoryRange() {
   }
 }
 
+function loadHistoryCalendarView() {
+  try {
+    const stored = String(localStorage.getItem(HISTORY_CALENDAR_VIEW_STORAGE) || "");
+    historyCalView = stored === "month" || stored === "year" ? stored : "week";
+  } catch (err) {
+    console.warn("No se pudo leer vista del calendario", err);
+  }
+}
+
+function saveHistoryCalendarView() {
+  try {
+    localStorage.setItem(
+      HISTORY_CALENDAR_VIEW_STORAGE,
+      historyCalView === "month" || historyCalView === "year" ? historyCalView : "week"
+    );
+  } catch (err) {
+    console.warn("No se pudo guardar vista del calendario", err);
+  }
+}
+
 function normalizeHabitCompareSettings(raw) {
   const source = raw && typeof raw === "object" ? raw : {};
   const scaleMode = source.scaleMode === "global" ? "global" : "relative";
@@ -3989,7 +4011,7 @@ function scoreToHeatLevel(score) {
 const $tabs = document.querySelectorAll(".habit-subtab");
 const $panels = document.querySelectorAll(".habits-panel");
 const $btnAddTime = document.getElementById("habit-add-time");
-const $habitWeekTimeline = document.getElementById("habit-week-timeline");
+const $habitTodayMonthCalendar = document.getElementById("habit-today-month-calendar");
 const $habitFabAdd = document.getElementById("habit-fab-add");
 const $habitCustomGroups = document.getElementById("habit-custom-groups");
 
@@ -4045,8 +4067,6 @@ const $todayTimeDonePrivateWrap = document.getElementById("habits-today-time-don
 const $todayTimeDonePrivate = document.getElementById("habits-today-time-done-private");
 const $todayTimeDoneLowWrap = document.getElementById("habits-today-time-done-low-wrap");
 const $todayTimeDoneLow = document.getElementById("habits-today-time-done-low");
-const $habitWeekList = document.getElementById("habits-week-list");
-const $habitWeekEmpty = document.getElementById("habits-week-empty");
 const $habitHistoryList = document.getElementById("habits-history-list");
 const $habitHistoryEmpty = document.getElementById("habits-history-empty");
 const $habitExportBtn = document.getElementById("habits-export-btn");
@@ -4080,31 +4100,11 @@ const $habitEvoSelect = document.getElementById("habit-evo-select");
 const $habitEvoRange = document.getElementById("habit-evo-range");
 const $habitLineTotal = document.getElementById("habit-line-total");
 const $habitLineDays = document.getElementById("habit-line-days");
-const $habitUnit = document.getElementById("habit-unit");
-const $habitDonutBreakdownList = document.getElementById("habit-donut-breakdown-list");
-const $habitAccDonutBreakdownMeta = document.getElementById("habit-acc-donut-breakdown-meta");
-const $habitRangeHabitsList = document.getElementById("habit-range-habits-list");
-const $habitAccRangeHabitsMeta = document.getElementById("habit-acc-range-habits-meta");
-const $habitRangeUnusedList = document.getElementById("habit-range-unused-list");
-const $habitAccRangeUnusedTitle = document.getElementById("habit-acc-range-unused-title");
-const $habitAccRangeUnused = document.getElementById("habit-acc-range-unused");
 const $habitGlobalHeatmap = document.getElementById("habit-global-heatmap");
 const $habitHeatmapYear = document.getElementById("habit-heatmap-year");
 const $habitHeatmapSub = document.getElementById("habit-heatmap-sub");
 const $habitHeatmapPrev = document.getElementById("habit-heatmap-prev");
 const $habitHeatmapNext = document.getElementById("habit-heatmap-next");
-const $habitRankingWeek = document.getElementById("habit-ranking-week");
-const $habitRankingMonth = document.getElementById("habit-ranking-month");
-const $habitRankingConsistency = document.getElementById("habit-ranking-consistency");
-const $habitTotalsList = document.getElementById("habit-totals-list");
-const $habitAccCounts = document.getElementById("habit-acc-counts");
-const $habitAccCountsMeta = document.getElementById("habit-acc-counts-meta");
-const $habitCountsList = document.getElementById("habit-counts-list");
-const $habitAccWeekMeta = document.getElementById("habit-acc-week-meta");
-const $habitAccMonthMeta = document.getElementById("habit-acc-month-meta");
-const $habitAccTotalMeta = document.getElementById("habit-acc-total-meta");
-const $habitAccConsistencyMeta = document.getElementById("habit-acc-consistency-meta");
-const $habitAccDaysMeta = document.getElementById("habit-acc-days-meta");
 const $habitDonut = document.getElementById("habit-donut");
 const $habitDonutLegend = document.getElementById("habit-donut-legend");
 const $habitDonutCenter = document.getElementById("habit-donut-center");
@@ -4114,7 +4114,6 @@ const $habitDonutTotal = document.querySelector("#habit-donut-center .habit-donu
 const $habitDonutTitle = document.getElementById("habit-donut-title");
 const $habitDonutGroup = document.getElementById("habit-donut-group");
 const $habitRangeButtons = document.querySelectorAll(".habit-donut-card .habit-range-btn");
-const $habitDaysRangeButtons = document.querySelectorAll(".habit-days-range-btn");
 const $habitFab = document.getElementById("habit-session-toggle");
 const $habitOverlay = document.getElementById("habit-session-overlay");
 const $habitOverlayTime = document.getElementById("habit-session-time");
@@ -4133,7 +4132,6 @@ const $habitSessionDetailMinus = document.getElementById("habit-session-detail-m
 const $habitSessionDetailPlus = document.getElementById("habit-session-detail-plus");
 const $habitSessionStats = document.getElementById("habit-session-stats");
 const $habitSessionRanking = document.getElementById("habit-session-ranking");
-const $habitDaysList = document.getElementById("habit-days-list");
 const $habitDetailOverlay = document.getElementById("habit-detail-overlay");
 const $habitDetailClose = document.getElementById("habit-detail-close");
 const $habitDetailEmoji = document.getElementById("habit-detail-emoji");
@@ -4268,13 +4266,6 @@ const $habitScheduleSummaryClose = document.getElementById("habit-schedule-summa
 const $habitScheduleSummaryCancel = document.getElementById("habit-schedule-summary-cancel");
 const $habitManualClose = document.getElementById("habit-manual-close");
 const $habitManualCancel = document.getElementById("habit-manual-cancel");
-const $habitRangeGoalsModal = document.getElementById("habit-range-goals-modal");
-const $habitRangeGoalsTitle = document.getElementById("habit-range-goals-title");
-const $habitRangeGoalsClose = document.getElementById("habit-range-goals-close");
-const $habitRangeGoalsCancel = document.getElementById("habit-range-goals-cancel");
-const $habitRangeGoalsClear = document.getElementById("habit-range-goals-clear");
-const $habitRangeGoalsForm = document.getElementById("habit-range-goals-form");
-const $habitRangeGoalsGrid = document.getElementById("habit-range-goals-grid");
 
 const DEFAULT_TIME_INPUT_VALUE = "00:00";
 
@@ -4298,7 +4289,6 @@ function syncHabitModalOpenState() {
     $habitEntryModal,
     $habitDayDetailModal,
     $habitScheduleSummaryModal,
-    $habitRangeGoalsModal,
     $habitDeleteConfirm,
     $habitDetailOverlay,
     $habitSessionDetail
@@ -4731,15 +4721,15 @@ function renderSubtabs() {
   });
 }
 
-function renderWeekTimeline() {
-  if (!$habitWeekTimeline) return;
-  const baseDate = parseDateKey(selectedDateKey) || new Date();
+function renderWeekTimeline(target, anchorDate = null, onDateChange = null) {
+  if (!(target instanceof HTMLElement)) return;
+  const baseDate = anchorDate instanceof Date ? anchorDate : (parseDateKey(selectedDateKey) || new Date());
   const start = startOfWeek(baseDate);
   const today = todayKey();
   const labels = ["L", "M", "X", "J", "V", "S", "D"];
   const actives = activeHabits();
   const workHabit = actives.find((h) => isWorkHabit(h));
-  $habitWeekTimeline.innerHTML = "";
+  target.innerHTML = "";
   for (let i = 0; i < 7; i++) {
     const date = addDays(start, i);
     const dateKey = dateKeyLocal(date);
@@ -4779,9 +4769,11 @@ function renderWeekTimeline() {
     `;
     btn.addEventListener("click", () => {
       selectedDateKey = dateKey;
-      renderToday();
+      if (typeof onDateChange === "function") {
+        onDateChange(dateKey);
+      }
     });
-    $habitWeekTimeline.appendChild(btn);
+    target.appendChild(btn);
   }
 }
 
@@ -5764,8 +5756,8 @@ function renderToday() {
   if (!parseDateKey(selectedDateKey)) {
     selectedDateKey = todayKey();
   }
-  renderWeekTimeline();
   const selectedDate = parseDateKey(selectedDateKey) || new Date();
+  renderTodayMonthCalendar(selectedDate);
   const dateKey = selectedDateKey || todayKey();
 
   // clear
@@ -5967,6 +5959,7 @@ function formatDaysLabel(days = []) {
 }
 
 function renderWeek() {
+  return;
   $habitWeekList.innerHTML = "";
   const start = startOfWeek(new Date());
   let any = false;
@@ -6658,37 +6651,14 @@ function compareSelectionIncludesToday(mode, selection) {
 }
 
 function updateCompareLiveInterval() {
-  const shouldTick = !!(
-    activeTab === "history"
-    && runningSession
-    && (
-      compareSelectionIncludesToday(habitCompareMode, habitCompareSelectionA)
-      || compareSelectionIncludesToday(habitCompareMode, habitCompareSelectionB)
-    )
-  );
-
-  if (!shouldTick) {
-    if (compareLiveInterval) {
-      clearInterval(compareLiveInterval);
-      compareLiveInterval = null;
-      debugCompare("live tick stopped");
-    }
-    return;
-  }
-
-  if (compareLiveInterval) return;
-  compareLiveInterval = setInterval(() => {
-    compareLiveTick += 1;
-    invalidateCompareCache();
-    debugCompare("live tick", { compareLiveTick, mode: habitCompareMode });
-    if (activeTab === "history") renderHistory();
-  }, 10000);
-  debugCompare("live tick started", { mode: habitCompareMode });
+  if (!compareLiveInterval) return;
+  clearInterval(compareLiveInterval);
+  compareLiveInterval = null;
 }
 
 function renderHistoryCompareCard(habitsList) {
   const card = document.createElement("section");
-  card.className = "habits-history-section habit-compare-card";
+  card.className = "habits-history-section";
 
   const header = document.createElement("div");
   header.className = "habits-history-section-header";
@@ -7635,6 +7605,58 @@ function formatHistoryMonthLabel(year, month) {
   return date.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
 }
 
+function getHistoryWeekAnchorDate() {
+  return parseDateKey(selectedDateKey) || new Date();
+}
+
+function formatHistoryWeekLabel(anchorDate = new Date()) {
+  const start = startOfWeek(anchorDate);
+  const end = addDays(start, 6);
+  const sameYear = start.getFullYear() === end.getFullYear();
+  const sameMonth = sameYear && start.getMonth() === end.getMonth();
+  if (sameMonth) {
+    return `${start.getDate()} - ${end.getDate()} ${end.toLocaleDateString("es-ES", { month: "short", year: "numeric" })}`.replace(/\./g, "");
+  }
+  if (sameYear) {
+    return `${start.toLocaleDateString("es-ES", { day: "numeric", month: "short" })} - ${end.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}`.replace(/\./g, "");
+  }
+  return `${start.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })} - ${end.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}`.replace(/\./g, "");
+}
+
+function formatHistoryYearLabel(year) {
+  return `Año ${year}`;
+}
+
+function formatHistoryCompactMonthLabel(year, month) {
+  const date = new Date(year, month, 1);
+  return date.toLocaleDateString("es-ES", { month: "short" }).replace(".", "");
+}
+
+function createHistoryWeekdayHeader(className = "habit-month-weekdays") {
+  const weekdayHeader = document.createElement("div");
+  weekdayHeader.className = className;
+  ["L", "M", "X", "J", "V", "S", "D"].forEach((label) => {
+    const day = document.createElement("span");
+    day.textContent = label;
+    weekdayHeader.appendChild(day);
+  });
+  return weekdayHeader;
+}
+
+function debugHistoryCalendar(...args) {
+  try {
+    if (window.__bookshellDebugHabitsCalendar || localStorage.getItem("bookshell.debug.habitsCalendar") === "1") {
+      console.log("[habits:calendar]", ...args);
+    }
+  } catch (_) {}
+}
+
+function setCalendarViewVisibility(element, visible) {
+  if (!(element instanceof HTMLElement)) return;
+  element.hidden = !visible;
+  element.classList.toggle("hidden", !visible);
+}
+
 function normalizeHistoryMonthState(anchorDate = new Date()) {
   if (Number.isInteger(historyCalYear) && Number.isInteger(historyCalMonth)) return;
   historyCalYear = anchorDate.getFullYear();
@@ -7647,7 +7669,51 @@ function shiftHistoryMonth(delta) {
   historyCalMonth = next.getMonth();
 }
 
-function renderHistoryMonthGrid(year, month, grid) {
+function shiftHistoryCalendar(delta) {
+  if (historyCalView === "week") {
+    const next = addDays(getHistoryWeekAnchorDate(), delta * 7);
+    historyCalYear = next.getFullYear();
+    historyCalMonth = next.getMonth();
+    selectedDateKey = dateKeyLocal(next);
+    return;
+  }
+  if (historyCalView === "year") {
+    historyCalYear += delta;
+    return;
+  }
+  shiftHistoryMonth(delta);
+}
+
+function createHistoryMonthEmptyCell(compact = false) {
+  const empty = document.createElement("div");
+  empty.className = `history-month-cell is-out${compact ? " history-month-cell--mini" : ""}`;
+  return empty;
+}
+
+function createHistoryMonthCell(year, month, day, compact = false) {
+  const date = new Date(year, month, day);
+  const key = dateKeyLocal(date);
+  const shiftClass = getShiftClassForDate(key);
+  const dominant = getDayDominantHabit(key);
+
+  const cell = document.createElement("button");
+  cell.type = "button";
+  cell.className = `history-month-cell ${shiftClass}${compact ? " history-month-cell--mini" : ""}`;
+
+  if (dominant?.habit?.color) {
+    cell.style.setProperty("--dom-rgb", hexToRgbString(dominant.habit.color));
+    cell.classList.add("has-dominant");
+  }
+
+  cell.innerHTML =
+    `<span class="month-day-num">${day}</span>` +
+    `<span class="month-day-emoji">${dominant?.habit?.emoji || ""}</span>`;
+
+  cell.addEventListener("click", () => openDayDetailModal(key));
+  return cell;
+}
+
+function renderHistoryMonthGrid(year, month, grid, { compact = false } = {}) {
   if (!grid) return;
   grid.innerHTML = "";
   const start = new Date(year, month, 1);
@@ -7655,49 +7721,51 @@ function renderHistoryMonthGrid(year, month, grid) {
   const offset = (start.getDay() + 6) % 7;
 
   for (let i = 0; i < offset; i += 1) {
-    const empty = document.createElement("div");
-    empty.className = "history-month-cell is-out";
-    grid.appendChild(empty);
+    grid.appendChild(createHistoryMonthEmptyCell(compact));
   }
 
   for (let d = 1; d <= end.getDate(); d += 1) {
-    const date = new Date(year, month, d);
-    const key = dateKeyLocal(date);
-    const shiftClass = getShiftClassForDate(key);
-    const dominant = getDayDominantHabit(key);
-
-    const cell = document.createElement("button");
-    cell.type = "button";
-    cell.className = `history-month-cell ${shiftClass}`;
-
-    if (dominant?.habit?.color) {
-      cell.style.setProperty("--dom-rgb", hexToRgbString(dominant.habit.color));
-      cell.classList.add("has-dominant");
-    }
-
-    cell.innerHTML =
-      `<span class="month-day-num">${d}</span>` +
-      `<span class="month-day-emoji">${dominant?.habit?.emoji || ""}</span>`;
-
-    cell.addEventListener("click", () => openDayDetailModal(key));
-    grid.appendChild(cell);
+    grid.appendChild(createHistoryMonthCell(year, month, d, compact));
   }
 
   while (grid.children.length < 42) {
-    const empty = document.createElement("div");
-    empty.className = "history-month-cell is-out";
-    grid.appendChild(empty);
+    grid.appendChild(createHistoryMonthEmptyCell(compact));
+  }
+}
+
+function renderHistoryYearGrid(year, host) {
+  if (!host) return;
+  host.innerHTML = "";
+  for (let month = 0; month < 12; month += 1) {
+    const monthCard = document.createElement("section");
+    monthCard.className = "history-year-month";
+
+    const monthLabel = document.createElement("div");
+    monthLabel.className = "history-year-month-label";
+    monthLabel.textContent = formatHistoryCompactMonthLabel(year, month);
+
+    const weekdayHeader = createHistoryWeekdayHeader("habit-month-weekdays habit-month-weekdays--mini");
+    const monthGrid = document.createElement("div");
+    monthGrid.className = "history-month-grid history-month-grid--mini";
+    renderHistoryMonthGrid(year, month, monthGrid, { compact: true });
+
+    monthCard.appendChild(monthLabel);
+    monthCard.appendChild(weekdayHeader);
+    monthCard.appendChild(monthGrid);
+    host.appendChild(monthCard);
   }
 }
 
 
-function buildHistoryMonthCalendar(anchorDate = new Date()) {
+function buildHistoryMonthCalendar(anchorDate = new Date(), { onDateChange = null } = {}) {
   normalizeHistoryMonthState(anchorDate);
   const wrap = document.createElement("section");
-  wrap.className = "habits-history-section";
+  wrap.className = "habits-history-section habits-history-calendar-section";
   const header = document.createElement("div");
-  header.className = "habits-history-section-header";
-  header.innerHTML = '<div class="habits-history-section-title">Calendario mensual</div>';
+  header.className = "habits-history-section-header habits-history-calendar-header";
+  header.innerHTML = '<div class="habits-history-section-title" id="calendario-habitos">Calendario</div>';
+  const actions = document.createElement("div");
+  actions.className = "habits-history-calendar-actions";
   const nav = document.createElement("div");
   nav.className = "habits-history-month-nav";
   const prevBtn = document.createElement("button");
@@ -7715,39 +7783,119 @@ function buildHistoryMonthCalendar(anchorDate = new Date()) {
   nav.appendChild(prevBtn);
   nav.appendChild(monthLabel);
   nav.appendChild(nextBtn);
-  header.appendChild(nav);
-  const body = document.createElement("div");
-  body.className = "habits-history-section-body";
-  const weekdayHeader = document.createElement("div");
-  weekdayHeader.className = "habit-month-weekdays";
-  ["L", "M", "X", "J", "V", "S", "D"].forEach((label) => {
-    const day = document.createElement("span");
-    day.textContent = label;
-    weekdayHeader.appendChild(day);
+  actions.appendChild(nav);
+
+  const viewToggle = document.createElement("div");
+  viewToggle.className = "habits-history-toggle";
+  const toggleButtons = {};
+  [
+    { key: "week", label: "Semana" },
+    { key: "month", label: "Mes" },
+    { key: "year", label: "Año" }
+  ].forEach(({ key, label }) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "habits-history-toggle-btn";
+    btn.textContent = label;
+    btn.addEventListener("click", () => {
+      if (historyCalView === key) return;
+      historyCalView = key;
+      saveHistoryCalendarView();
+      updateCalendar();
+    });
+    toggleButtons[key] = btn;
+    viewToggle.appendChild(btn);
   });
-  body.appendChild(weekdayHeader);
+  actions.appendChild(viewToggle);
+  header.appendChild(actions);
+
+  const body = document.createElement("div");
+  body.className = "habits-history-section-body habits-history-calendar-body";
+
+  const handleDateChange = () => {
+    const selectedDate = parseDateKey(selectedDateKey) || new Date();
+    historyCalYear = selectedDate.getFullYear();
+    historyCalMonth = selectedDate.getMonth();
+    if (typeof onDateChange === "function") {
+      onDateChange(selectedDateKey);
+      return;
+    }
+    updateCalendar();
+  };
+
+  const weekTimeline = document.createElement("div");
+  weekTimeline.className = "habit-week-timeline habit-week-timeline--calendar";
+  weekTimeline.setAttribute("aria-label", "Semana seleccionada");
+
+  const weekdayHeader = createHistoryWeekdayHeader("habit-month-weekdays habits-history-calendar-weekdays");
   const grid = document.createElement("div");
   grid.className = "history-month-grid";
+  const yearGrid = document.createElement("div");
+  yearGrid.className = "habits-history-year-grid";
 
   const updateCalendar = () => {
-    monthLabel.textContent = formatHistoryMonthLabel(historyCalYear, historyCalMonth);
+    const isWeekView = historyCalView === "week";
+    const isMonthView = historyCalView === "month";
+    const isYearView = historyCalView === "year";
+    monthLabel.textContent = isWeekView
+      ? formatHistoryWeekLabel(getHistoryWeekAnchorDate())
+      : (isYearView ? formatHistoryYearLabel(historyCalYear) : formatHistoryMonthLabel(historyCalYear, historyCalMonth));
+    prevBtn.setAttribute("aria-label", isWeekView ? "Semana anterior" : (isYearView ? "Año anterior" : "Mes anterior"));
+    nextBtn.setAttribute("aria-label", isWeekView ? "Semana siguiente" : (isYearView ? "Año siguiente" : "Mes siguiente"));
+    Object.entries(toggleButtons).forEach(([key, btn]) => {
+      const active = historyCalView === key;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    setCalendarViewVisibility(weekTimeline, isWeekView);
+    setCalendarViewVisibility(weekdayHeader, isMonthView);
+    setCalendarViewVisibility(grid, isMonthView);
+    setCalendarViewVisibility(yearGrid, isYearView);
+    debugHistoryCalendar("update", {
+      view: historyCalView,
+      label: monthLabel.textContent,
+      weekHidden: weekTimeline.hidden,
+      weekClassHidden: weekTimeline.classList.contains("hidden"),
+      monthWeekdaysHidden: weekdayHeader.hidden,
+      monthGridHidden: grid.hidden,
+      yearHidden: yearGrid.hidden,
+    });
+    if (isWeekView) {
+      renderWeekTimeline(weekTimeline, getHistoryWeekAnchorDate(), handleDateChange);
+      return;
+    }
+    if (isYearView) {
+      renderHistoryYearGrid(historyCalYear, yearGrid);
+      return;
+    }
     renderHistoryMonthGrid(historyCalYear, historyCalMonth, grid);
   };
 
   prevBtn.addEventListener("click", () => {
-    shiftHistoryMonth(-1);
-    updateCalendar();
+    shiftHistoryCalendar(-1);
+    handleDateChange();
   });
   nextBtn.addEventListener("click", () => {
-    shiftHistoryMonth(1);
-    updateCalendar();
+    shiftHistoryCalendar(1);
+    handleDateChange();
   });
 
   updateCalendar();
+  body.appendChild(weekTimeline);
+  body.appendChild(weekdayHeader);
   body.appendChild(grid);
+  body.appendChild(yearGrid);
   wrap.appendChild(header);
   wrap.appendChild(body);
   return wrap;
+}
+
+function renderTodayMonthCalendar(anchorDate = new Date()) {
+  if (!$habitTodayMonthCalendar) return;
+  $habitTodayMonthCalendar.innerHTML = "";
+  $habitTodayMonthCalendar.appendChild(buildHistoryMonthCalendar(anchorDate, {
+    onDateChange: () => renderToday()
+  }));
 }
 
 function renderHistory() {
@@ -7796,8 +7944,7 @@ function renderHistory() {
 
   const insights = document.createElement("div");
   insights.className = "habits-history-insights";
-  insights.appendChild(buildHistoryMonthCalendar());
-  if (hasHabits) insights.appendChild(renderHistoryCompareCard(habitsList));
+  insights.appendChild(buildHistoryMonthCalendar(getHistoryWeekAnchorDate()));
   if (!hasData) {
     $habitHistoryList.appendChild(insights);
     return;
@@ -8329,6 +8476,7 @@ function renderLineChart() {
 
 
 function renderHabitUnitSelector() {
+  return;
   if (!$habitUnit) return;
   const opts = [
     { value: "auto", label: "Auto" },
@@ -8423,6 +8571,7 @@ function renderHabitProgressRow(habit, progressMin, goalMin, options = {}) {
 }
 
 function openRangeGoalsModal(habit) {
+  return;
   if (!habit || !$habitRangeGoalsModal) return;
   $habitRangeGoalsModal.dataset.habitId = habit.id;
   if ($habitRangeGoalsTitle) $habitRangeGoalsTitle.textContent = `Objetivos — ${habit.emoji || "🏷️"} ${habit.name || "Hábito"}`;
@@ -8446,12 +8595,14 @@ function openRangeGoalsModal(habit) {
 }
 
 function closeRangeGoalsModal() {
+  return;
   if (!$habitRangeGoalsModal) return;
   $habitRangeGoalsModal.classList.add("hidden");
   delete $habitRangeGoalsModal.dataset.habitId;
 }
 
 function saveRangeGoalsModal({ clear = false } = {}) {
+  return;
   const habitId = $habitRangeGoalsModal?.dataset?.habitId;
   if (!habitId || !habits[habitId]) return;
   const habit = habits[habitId];
@@ -8486,6 +8637,7 @@ function promptRangeGoalEdit(habit) {
 }
 
 function renderAnalyticsRangePanels() {
+  return;
   const { start, end } = getRangeBounds(habitDonutRange);
 
   const allHabits = activeHabits()
@@ -8611,6 +8763,7 @@ function daysRangeLabel(range) {
 }
 
 function renderDaysAccordion() {
+  return;
   if (!$habitDaysList) return;
   const { start, end } = getDaysRangeBounds(habitDaysRange);
   const data = activeHabits()
@@ -8787,10 +8940,10 @@ function changeHeatmapYear(delta) {
   renderGlobalHeatmap();
   renderHistory();
   renderLineChart();
-  renderDaysAccordion();
 }
 
 function renderRanking() {
+  return;
   const weekData = minutesByHabitRange("week");
   const monthData = minutesByHabitRange("month");
   const consistency = consistencyByHabit(30);
@@ -9494,6 +9647,7 @@ function renderRankingList(container, items, unit) {
 }
 
 function renderTotalsList() {
+  return;
   if (!$habitTotalsList) return;
   const data = totalsByHabit(habitDonutRange);
   updateAccordionMeta($habitAccTotalMeta, data);
@@ -9538,6 +9692,7 @@ function renderTotalsList() {
 
 
 function renderCountsList() {
+  return;
   if (!$habitCountsList || !$habitAccCounts) return;
   const data = countsByHabit(habitDonutRange);
 
@@ -9658,8 +9813,6 @@ function renderDonut() {
     if ($habitDonutCenter) $habitDonutCenter.style.display = "none";
     if ($habitDonutLegend) $habitDonutLegend.innerHTML = "";
     if ($habitDonutEmpty) $habitDonutEmpty.style.display = "block";
-    renderAnalyticsRangePanels();
-    renderHabitUnitSelector();
     return;
   }
 
@@ -9744,8 +9897,6 @@ function renderDonut() {
   habitLastDonutBreakdown = data
     .map((item) => ({ ...item, percent: totalSec ? (item.totalSec / totalSec) * 100 : 0 }))
     .sort((a, b) => b.totalSec - a.totalSec);
-  renderAnalyticsRangePanels();
-  renderHabitUnitSelector();
 }
 
 function renderDonutLegend(data, totalSec, groups = null, groupColorByKey = null) {
@@ -10442,7 +10593,7 @@ function disposeHabitDonutChart() {
 }
 
 function clearWeekPanelContent() {
-  if ($habitWeekList) $habitWeekList.innerHTML = "";
+  return;
 }
 
 function clearHistoryPanelContent() {
@@ -10462,17 +10613,10 @@ function clearReportsPanelContent() {
   if ($habitDonut) $habitDonut.innerHTML = "";
   if ($habitDonutLegend) $habitDonutLegend.innerHTML = "";
   if ($habitGlobalHeatmap) $habitGlobalHeatmap.innerHTML = "";
-  if ($habitRankingWeek) $habitRankingWeek.innerHTML = "";
-  if ($habitRankingMonth) $habitRankingMonth.innerHTML = "";
-  if ($habitRankingConsistency) $habitRankingConsistency.innerHTML = "";
-  if ($habitTotalsList) $habitTotalsList.innerHTML = "";
-  if ($habitCountsList) $habitCountsList.innerHTML = "";
-  if ($habitDaysList) $habitDaysList.innerHTML = "";
   if ($habitLineChart) $habitLineChart.innerHTML = "";
 }
 
 function clearInactivePanels() {
-  if (activeTab !== "week") clearWeekPanelContent();
   if (activeTab !== "history") clearHistoryPanelContent();
   if (activeTab !== "schedule") clearSchedulePanelContent();
   if (activeTab !== "reports") clearReportsPanelContent();
@@ -10487,8 +10631,6 @@ function scheduleReportsRender() {
     renderWorkShiftReport();
     renderLineChart();
     renderGlobalHeatmap();
-    renderRanking();
-    renderDaysAccordion();
   });
 }
 
@@ -10504,9 +10646,6 @@ function renderHabits() {
   renderSubtabs();
   clearInactivePanels();
   switch (activeTab) {
-    case "week":
-      renderWeek();
-      break;
     case "history":
       renderHistory();
       break;
@@ -11987,16 +12126,6 @@ function bindEvents() {
 
   $habitEntryClose?.addEventListener("click", closeEntryModal);
   $habitEntryCancel?.addEventListener("click", closeEntryModal);
-  $habitRangeGoalsClose?.addEventListener("click", closeRangeGoalsModal);
-  $habitRangeGoalsCancel?.addEventListener("click", closeRangeGoalsModal);
-  $habitRangeGoalsClear?.addEventListener("click", () => saveRangeGoalsModal({ clear: true }));
-  $habitRangeGoalsForm?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    saveRangeGoalsModal();
-  });
-  $habitRangeGoalsModal?.addEventListener("click", (event) => {
-    if (event.target === $habitRangeGoalsModal) closeRangeGoalsModal();
-  });
   $habitEntryForm?.addEventListener("submit", handleEntrySubmit);
   $habitEntryHabit?.addEventListener("change", refreshEntryModal);
   $habitEntryDate?.addEventListener("change", refreshEntryModal);
@@ -12025,8 +12154,6 @@ function bindEvents() {
       btn.classList.add("is-active");
       habitDonutRange = btn.dataset.range || "day";
       renderDonut();
-      renderTotalsList();
-      renderCountsList();
       renderKPIs();
       renderPins();
     });
@@ -12049,15 +12176,6 @@ function bindEvents() {
       habitDonutGroupMode = { kind: "habit" };
     }
     renderDonut();
-  });
-
-  $habitDaysRangeButtons.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      $habitDaysRangeButtons.forEach((b) => b.classList.remove("is-active"));
-      btn.classList.add("is-active");
-      habitDaysRange = btn.dataset.range || "day";
-      renderDaysAccordion();
-    });
   });
 
   $habitEvoSelect?.addEventListener("change", (e) => {
@@ -12140,14 +12258,6 @@ function listenRemoteLegacy() {
       : createDefaultHabitSchedule();
     saveCache();
     rerenderIfActiveTab(["schedule"]);
-  });
-
-  bindRemote(HABIT_COMPARE_SETTINGS_PATH, (snap) => {
-    const remote = snap.val();
-    if (!remote) return;
-    applyHabitCompareSettings(remote);
-    saveHabitCompareSettingsLocal();
-    rerenderIfActiveTab(["history"]);
   });
 
   bindRemote(HABIT_CHECKS_PATH, (snap) => {
@@ -12663,14 +12773,6 @@ function listenRemote() {
     rerenderIfActiveTab(["schedule"]);
   });
 
-  bindRemote(HABIT_COMPARE_SETTINGS_PATH, (snap) => {
-    const remote = snap.val();
-    if (!remote) return;
-    applyHabitCompareSettings(remote);
-    saveHabitCompareSettingsLocal();
-    rerenderIfActiveTab(["history"]);
-  });
-
   bindRemote(HABIT_CHECKS_PATH, (snap) => {
     habitChecks = applyQueuedHabitRemoteValue(HABIT_CHECKS_PATH, snap.val() || {}) || {};
     invalidateDominantCache();
@@ -12746,8 +12848,8 @@ async function initHabitsLegacy() {
     await traceHabitsInitStep("loadHistoryRange", () => {
       loadHistoryRange();
     });
-    await traceHabitsInitStep("loadCompareSettings", () => {
-      loadHabitCompareSettingsLocal();
+    await traceHabitsInitStep("loadHistoryCalendarView", () => {
+      loadHistoryCalendarView();
     });
     await traceHabitsInitStep("ensureUnknownHabit", () => {
       ensureUnknownHabit(true);
@@ -12798,7 +12900,7 @@ async function initHabitsLegacy() {
 
 
 function goHabitSubtab(tab) {
-  const allowed = new Set(["today", "week", "history", "schedule", "reports"]);
+  const allowed = new Set(["today", "history", "schedule", "reports"]);
   activeTab = allowed.has(tab) ? tab : "today";
   if (activeTab !== "reports") hideHabitLineTooltip();
   renderHabits();
@@ -12992,8 +13094,8 @@ async function initHabits() {
     await traceHabitsInitStep("loadHistoryRange", () => {
       loadHistoryRange();
     });
-    await traceHabitsInitStep("loadCompareSettings", () => {
-      loadHabitCompareSettingsLocal();
+    await traceHabitsInitStep("loadHistoryCalendarView", () => {
+      loadHistoryCalendarView();
     });
     await traceHabitsInitStep("ensureUnknownHabit", () => {
       ensureUnknownHabit(true);

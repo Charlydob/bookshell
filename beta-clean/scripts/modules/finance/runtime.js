@@ -3500,11 +3500,6 @@ async function rebuildAggregates() {
   if (Object.keys(updates).length) await safeFirebase(() => update(ref(db), updates));
 }
 
-function aggregateRowsForMode(mode = 'month') {
-  const map = state.balance.aggregates?.[mode] || {};
-  return Object.entries(map).map(([bucketKey, row]) => ({ bucketKey, ...row })).sort((a, b) => a.bucketKey.localeCompare(b.bucketKey));
-}
-
 function metricValue(row, scope = 'my', metric = 'netOperative') {
   const suffix = scope === 'total' ? 'Total' : 'My';
   const key = `${metric}${suffix}`;
@@ -3704,66 +3699,6 @@ function amountAllocatedToRange(row = {}, rangeBounds = {}) {
 
 function computeTransactionAmountInRange(row = {}, viewedRange = {}) {
   return amountAllocatedToRange(row, viewedRange);
-}
-
-function computeHoursByHabitInRange(range = 'month', viewedRange = null) {
-  return getHoursByHabitId(range, viewedRange);
-}
-
-function buildHabitPerHourMetrics(rows = [], range = 'month') {
-  const safeRange = ['day', 'week', 'month', 'year', 'total'].includes(range) ? range : 'month';
-  const rangeBounds = rangeBoundsForMode(safeRange);
-  const sumIncome = {};
-  const sumExpense = {};
-  rows.forEach((row) => {
-    const habitId = String(row?.linkedHabitId || '').trim();
-    if (!habitId) return;
-    const inRangeAmount = computeTransactionAmountInRange(row, rangeBounds);
-    if (!Number.isFinite(inRangeAmount) || inRangeAmount <= 0) return;
-    if (row.type === 'income') sumIncome[habitId] = (sumIncome[habitId] || 0) + inRangeAmount;
-    if (row.type === 'expense') sumExpense[habitId] = (sumExpense[habitId] || 0) + inRangeAmount;
-  });
-
-  const hoursByHabitId = computeHoursByHabitInRange(safeRange, rangeBounds);
-  const habits = listHabitOptions();
-  const habitsById = Object.fromEntries(habits.map((habit) => [habit.id, habit]));
-  const ids = new Set([...Object.keys(hoursByHabitId), ...Object.keys(sumIncome), ...Object.keys(sumExpense)]);
-  const rowsByHabit = [...ids].map((habitId) => {
-    const hours = Number(hoursByHabitId[habitId] || 0);
-    const income = Number(sumIncome[habitId] || 0);
-    const expense = Number(sumExpense[habitId] || 0);
-    const balance = income - expense;
-    const hasHours = hours > 0;
-    return {
-      habitId,
-      habitName: habitsById[habitId]?.name || habitId,
-      hours,
-      income,
-      expense,
-      balance,
-      incomePerHour: hasHours ? income / hours : null,
-      expensePerHour: hasHours ? expense / hours : null,
-      balancePerHour: hasHours ? balance / hours : null
-    };
-  }).sort((a, b) => (b.balance - a.balance) || (b.income - a.income));
-
-  const totals = rowsByHabit.reduce((acc, row) => {
-    acc.income += row.income;
-    acc.expense += row.expense;
-    acc.hours += row.hours;
-    return acc;
-  }, { income: 0, expense: 0, hours: 0 });
-  const totalBalance = totals.income - totals.expense;
-  return {
-    rows: rowsByHabit,
-    totals: {
-      income: totals.income,
-      expense: totals.expense,
-      balance: totalBalance,
-      hours: totals.hours,
-      balancePerHour: totals.hours > 0 ? totalBalance / totals.hours : null
-    }
-  };
 }
 
 function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense', scope = 'personal', accountsById = {}, options = {}) {
@@ -4485,31 +4420,7 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
   const showUnlinedNotice = statsGroupBy === 'product' && mode === 'expense' && unlinedTotal > 0;
   const scopeLabel = statsScope === 'global' ? 'total global' : 'mi parte';
   const txByDay = groupTxByDay(tx, accountsById, statsScope);
-  const aggMode = AGG_MODES.includes(state.balanceAggMode) ? state.balanceAggMode : 'month';
   const aggScope = state.balanceAggScope === 'total' ? 'total' : 'my';
-  const aggRows = aggregateRowsForMode(aggMode);
-  const aggLast = aggRows.at(-1) || null;
-  const avgDiv = Math.max(aggRows.length, 1);
-  const aggAvg = {
-    netOperative: aggRows.reduce((s, row) => s + metricValue(row, aggScope, 'netOperative'), 0) / avgDiv,
-    netWealth: aggRows.reduce((s, row) => s + metricValue(row, aggScope, 'netWealth'), 0) / avgDiv,
-    accountsDeltaReal: aggRows.reduce((s, row) => s + Number(row.accountsDeltaReal || 0), 0) / avgDiv
-  };
-  const rankMetric = (metric, best = true) => aggRows.reduce((pick, row) => {
-    const value = metric === 'accountsDeltaReal' ? Number(row.accountsDeltaReal || 0) : metricValue(row, aggScope, metric);
-    if (!pick) return { bucketKey: row.bucketKey, value };
-    if (best ? value > pick.value : value < pick.value) return { bucketKey: row.bucketKey, value };
-    return pick;
-  }, null);
-  const roiMode = ['income', 'expense', 'balance'].includes(state.balanceRoiMode) ? state.balanceRoiMode : 'balance';
-  const roiData = buildHabitPerHourMetrics(allTxRows, statsRange);
-  const roiMetrics = roiData.rows.slice().sort((a, b) => {
-    const key = roiMode === 'income' ? 'incomePerHour' : roiMode === 'expense' ? 'expensePerHour' : 'balancePerHour';
-    const av = Number.isFinite(a[key]) ? Number(a[key]) : Number.NEGATIVE_INFINITY;
-    const bv = Number.isFinite(b[key]) ? Number(b[key]) : Number.NEGATIVE_INFINITY;
-    return bv - av;
-  });
-  const roiTotals = roiData.totals;
 
   return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2></header>
   <article class="financeGlassCard">
@@ -4669,105 +4580,6 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
         ${foodItemsList().length ? foodItemsList().sort((a, b) => a.name.localeCompare(b.name, 'es')).map((item) => `<div class="financeStats__manageRow"><span>${escapeHtml(item.name)}</span><button type="button" class="food-iconbtn" data-food-item-detail="${escapeHtml(item.id)}" aria-label="Abrir ficha de ${escapeHtml(item.name)}">📈</button></div>`).join('') : '<p class="finance-empty">Sin productos.</p>'}
       </div>
     </details>
-  </article>
-
-  <details class="financeGlassCard financeRoi" open>
-    <summary class="financeRoi__summary">
-      <div class="financeRoi__titleWrap">
-        <h3>€/h por hábitos</h3>
-        <button type="button" class="finance-pill finance-pill--mini" data-open-modal="roi-info" aria-label="Cómo se calcula €/h por hábito">i</button>
-      </div>
-      <div class="financeRoi__summaryStats">
-        <span>Ingresos <strong class="is-positive">${fmtCurrency(roiTotals.income)}</strong></span>
-        <span>Gastos <strong class="is-negative">${fmtCurrency(roiTotals.expense)}</strong></span>
-        <span>Balance <strong class="${toneClass(roiTotals.balance)}">${fmtSignedCurrency(roiTotals.balance)}</strong></span>
-        <span>Balance €/h <strong class="${toneClass(roiTotals.balancePerHour || 0)}">${Number.isFinite(roiTotals.balancePerHour) ? `${fmtSignedCurrency(roiTotals.balancePerHour)}/h` : 'N/A'}</strong></span>
-      </div>
-    </summary>
-    <div class="financeRoi__toggle" role="tablist" aria-label="Métrica €/h">
-      <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'income' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="income">Ingresos €/h</button>
-      <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'expense' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="expense">Gastos €/h</button>
-      <button type="button" class="finance-pill financeRoi__btn ${roiMode === 'balance' ? 'financeRoi__btn--active' : ''}" data-finance-roi-mode="balance">Balance €/h</button>
-    </div>
-    <div class="financeRoi__table">
-      <div class="financeRoi__row financeRoi__row--head"><span>Hábito</span><span>Horas</span><span>€ asignados</span><span>€/h</span></div>
-      ${roiMetrics.map((row) => {
-        const amount = roiMode === 'income' ? row.income : roiMode === 'expense' ? row.expense : row.balance;
-        const perHour = roiMode === 'income' ? row.incomePerHour : roiMode === 'expense' ? row.expensePerHour : row.balancePerHour;
-        return `<div class="financeRoi__row"><span>${escapeHtml(row.habitName)}</span><span>${row.hours.toFixed(2)} h</span><span class="${toneClass(amount)}">${fmtSignedCurrency(amount)}</span><span class="${toneClass(perHour || 0)}">${Number.isFinite(perHour) ? `${fmtSignedCurrency(perHour)}/h` : 'N/A'}</span></div>`;
-      }).join('') || '<p class="finance-empty">Sin hábitos vinculados en este rango.</p>'}
-      <div class="financeRoi__row financeRoi__row--total"><span>TOTAL</span><span>${roiTotals.hours.toFixed(2)} h</span><span class="${toneClass(roiMode === 'income' ? roiTotals.income : roiMode === 'expense' ? roiTotals.expense : roiTotals.balance)}">${fmtSignedCurrency(roiMode === 'income' ? roiTotals.income : roiMode === 'expense' ? roiTotals.expense : roiTotals.balance)}</span><span class="${toneClass(roiMode === 'income' ? roiTotals.income : roiMode === 'expense' ? roiTotals.expense : roiTotals.balancePerHour || 0)}">${Number.isFinite(roiMode === 'income' ? (roiTotals.hours > 0 ? roiTotals.income / roiTotals.hours : null) : roiMode === 'expense' ? (roiTotals.hours > 0 ? roiTotals.expense / roiTotals.hours : null) : roiTotals.balancePerHour) ? `${fmtSignedCurrency(roiMode === 'income' ? roiTotals.income / roiTotals.hours : roiMode === 'expense' ? roiTotals.expense / roiTotals.hours : roiTotals.balancePerHour)}/h` : 'N/A'}</span></div>
-    </div>
-  </details>
-
-  <article class="financeGlassCard finAgg__section">
-    <h3>Histórico / Agregados</h3>
-    <div class="finAgg__tabs">${[['day','Día'],['week','Semana'],['month','Mes'],['year','Año'],['total','Total']].map(([key,label]) => `<button class="finance-pill ${aggMode === key ? 'finAgg__active' : ''}" data-fin-agg-mode="${key}">${label}</button>`).join('')}</div>
-    <div class="finAgg__totals">
-
-      <div>
-      <small class="finAgg__totals-small">ΔNeto</small>
-
-      <strong class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${aggLast ? fmtCurrency(metricValue(aggLast, aggScope, 'netOperative')) : '—'}</strong>
-
-      </div>
-
-      <div>
-      <small class="finAgg__totals-small">ΔPatrimonio</small><strong class="${toneClass(metricValue(aggLast, aggScope, 'netWealth'))}">${aggLast ? fmtCurrency(metricValue(aggLast, aggScope, 'netWealth')) : '—'}</strong>
-      </div>
-      <div>
-      <small class="finAgg__totals-small">Δ Cuentas</small>
-      <strong class="${toneClass(Number(aggLast?.accountsDeltaReal || 0))}">${aggLast ? fmtCurrency(Number(aggLast.accountsDeltaReal || 0)) : '—'}</strong>
-      </div>
-    </div>
-
-<div class="finAgg__averages">
-  <small>Medias (${aggMode})</small>
-  <strong>
-    <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">ΔNeto ${fmtCurrency(aggAvg.netOperative)}</span>
-    <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">ΔPatrimonio ${fmtCurrency(aggAvg.netWealth)}</span>
-    <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">ΔCuentas ${fmtCurrency(aggAvg.accountsDeltaReal)}</span>
-  </strong>
-</div>
-
-    <div class="finRank__block">
-      <div>
-      Mejor: 
-      
-      <strong class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${rankMetric('netOperative', true)?.bucketKey || '—'} ${rankMetric('netOperative', true) ? `· ${fmtCurrency(rankMetric('netOperative', true).value)}` : ''}</strong>
-
-      </div>
-
-      <div>
-      Peor: 
-
-      <strong class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${rankMetric('netOperative', false)?.bucketKey || '—'} ${rankMetric('netOperative', false) ? `· ${fmtCurrency(rankMetric('netOperative', false).value)}` : ''}</strong>
-      
-      </div>
-    </div>
-
-
-
-
-
-    
-    <div class="finHist__list">${aggRows.slice().reverse().map((row, idx, arr) => {
-      const prev = arr[idx + 1];
-      const op = metricValue(row, aggScope, 'netOperative');
-      const nw = metricValue(row, aggScope, 'netWealth');
-      const dc = Number(row.accountsDeltaReal || 0);
-      const opPct = pctDelta(op, prev ? metricValue(prev, aggScope, 'netOperative') : 0);
-      const nwPct = pctDelta(nw, prev ? metricValue(prev, aggScope, 'netWealth') : 0);
-      const dcPct = pctDelta(dc, prev ? Number(prev.accountsDeltaReal || 0) : 0);
-      return `<div class="finHist__row">
-
-      <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${row.bucketKey}</span>
-      <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${fmtSignedCurrency(op)} ${opPct == null ? '' : `(${fmtSignedPercent(opPct)})`}</span>
-      <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${fmtSignedCurrency(nw)} ${nwPct == null ? '' : `(${fmtSignedPercent(nwPct)})`}</span>
-      <span class="${toneClass(metricValue(aggLast, aggScope, 'netOperative'))}">${fmtSignedCurrency(dc)} ${dcPct == null ? '' : `(${fmtSignedPercent(dcPct)})`}</span>
-      
-      </div>`;
-    }).join('') || '<p class="finance-empty">Sin agregados guardados.</p>'}</div>
   </article>
 
   <article class="financeGlassCard"><div class="finance-row"><h3>Presupuestos</h3><button class="finance-pill" data-open-modal="budget">+ Presupuesto</button></div>
@@ -7966,7 +7778,6 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
     const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); state.balanceShowAllTx = false; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const statsMode = target.closest('[data-finance-stats-mode]')?.dataset.financeStatsMode; if (statsMode) { state.balanceStatsMode = statsMode === 'income' ? 'income' : 'expense'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const statsRange = target.closest('[data-finance-stats-range]')?.dataset.financeStatsRange; if (statsRange) { state.balanceStatsRange = statsRange; state.balanceStatsActiveSegment = null; triggerRender(); return; }
-    const roiMode = target.closest('[data-finance-roi-mode]')?.dataset.financeRoiMode; if (roiMode) { state.balanceRoiMode = ['income', 'expense', 'balance'].includes(roiMode) ? roiMode : 'balance'; triggerRender(); return; }
     const statsScope = target.closest('[data-finance-stats-scope]')?.dataset.financeStatsScope; if (statsScope) { state.balanceStatsScope = statsScope === 'global' ? 'global' : 'personal'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     if (target.closest('[data-finance-stats-view-unlined]')) { state.balanceFilterType = 'expense'; state.balanceFilterCategory = 'all'; state.balanceFilterUnlinedOnly = true; state.balanceShowAllTx = true; triggerRender(); return; }
     if (target.closest('[data-balance-filter-unlined-clear]')) { state.balanceFilterUnlinedOnly = false; triggerRender(); return; }
@@ -7981,7 +7792,6 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
       return;
     }
     const drilldown = target.closest('[data-balance-drilldown]')?.dataset.balanceDrilldown; if (drilldown) { openBalanceDrilldown(drilldown); return; }
-    const aggMode = target.closest('[data-fin-agg-mode]')?.dataset.finAggMode; if (aggMode) { state.balanceAggMode = AGG_MODES.includes(aggMode) ? aggMode : 'month'; triggerRender(); return; }
     const aggScope = target.closest('[data-fin-agg-scope]')?.dataset.finAggScope; if (aggScope) { state.balanceAggScope = aggScope === 'total' ? 'total' : 'my'; triggerRender(); return; }
     const drilldownMonth = target.closest('[data-drilldown-month]')?.dataset.drilldownMonth;
     if (drilldownMonth && state.modal.type === 'balance-drilldown') {

@@ -47,11 +47,30 @@ if ($viewRecipes) {
     done: false,
   });
   const RECIPE_EMOJI_BY_MEAL = {
-    desayuno: "🥞",
-    comida: "🍽️",
-    cena: "🌙",
-    snack: "🍎",
+    desayuno: "🥐",
+    comida: "🍛",
+    cena: "🍲",
+    snack: "🍿",
   };
+  const RECIPE_EMOJI_KEYWORDS = [
+    { emoji: "🥗", keywords: ["ensalada", "salad", "poke", "poké"] },
+    { emoji: "🍝", keywords: ["pasta", "espagueti", "espaguetis", "spaghetti", "macarron", "macarrones", "lasaña", "lasagna", "ravioli", "fideos", "noodles"] },
+    { emoji: "🍕", keywords: ["pizza", "pinsa"] },
+    { emoji: "🍔", keywords: ["hamburguesa", "burger", "smash"] },
+    { emoji: "🍗", keywords: ["pollo", "alitas", "nuggets", "pavo"] },
+    { emoji: "🍚", keywords: ["arroz", "paella", "risotto"] },
+    { emoji: "🍜", keywords: ["sopa", "crema", "ramen", "caldo", "gazpacho", "salmorejo"] },
+    { emoji: "🍰", keywords: ["postre", "dulce", "tarta", "pastel", "bizcocho", "brownie", "helado", "flan", "cheesecake"] },
+    { emoji: "🍪", keywords: ["galleta", "cookie", "cookies"] },
+    { emoji: "🥤", keywords: ["bebida", "batido", "smoothie", "zumo", "jugo", "refresco", "limonada"] },
+    { emoji: "☕", keywords: ["cafe", "café", "latte", "capuccino", "capuchino", "te", "té", "infusion", "infusión"] },
+    { emoji: "🍎", keywords: ["fruta", "manzana", "platano", "plátano", "banana", "fresa", "pera", "naranja", "sandia", "sandía", "melon", "melón", "kiwi"] },
+    { emoji: "🥦", keywords: ["verdura", "vegetal", "brocoli", "brócoli", "coliflor", "berenjena", "calabacin", "calabacín", "espinaca", "zanahoria"] },
+    { emoji: "🐟", keywords: ["pescado", "salmon", "salmón", "atun", "atún", "merluza", "bacalao", "marisco", "gambas", "langostinos"] },
+    { emoji: "🥩", keywords: ["carne", "ternera", "vacuno", "cerdo", "chuleta", "filete", "costilla", "cordero"] },
+    { emoji: "🍳", keywords: ["desayuno", "brunch", "huevo", "huevos", "tostada", "tostadas", "omelette", "tortilla", "pancake", "pancakes", "crepe", "crêpe", "waffle"] },
+    { emoji: "🍿", keywords: ["snack", "aperitivo", "picoteo", "palomitas", "nachos"] },
+  ];
 
   const defaultRecipes = [
     {
@@ -914,16 +933,61 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return Array.from(clean).slice(0, 2).join("");
   }
 
-  function resolveRecipeEmoji(recipe = {}) {
+  function normalizeRecipeEmojiText(value) {
+    return String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  }
+
+  function getRecipeEmoji(recipe = {}) {
     const custom = sanitizeRecipeEmoji(recipe.emoji || "");
     if (custom) return custom;
-    return "";
+    const meal = normalizeRecipeEmojiText(
+      recipe.meal || recipe.type || recipe.category || recipe.kind || ""
+    );
+    const tags = Array.isArray(recipe.tags) ? recipe.tags.join(" ") : String(recipe.tags || "");
+    const context = normalizeRecipeEmojiText([
+      recipe.title,
+      recipe.subtitle,
+      recipe.type,
+      recipe.category,
+      recipe.kind,
+      recipe.meal,
+      tags,
+    ].filter(Boolean).join(" "));
+    for (const rule of RECIPE_EMOJI_KEYWORDS) {
+      if (rule.keywords.some((keyword) => context.includes(normalizeRecipeEmojiText(keyword)))) {
+        return rule.emoji;
+      }
+    }
+    if (meal && RECIPE_EMOJI_BY_MEAL[meal]) return RECIPE_EMOJI_BY_MEAL[meal];
+    return "🍽️";
+  }
+
+  function resolveRecipeEmoji(recipe = {}) {
+    return getRecipeEmoji(recipe);
   }
 
   function formatRecipeTitle(recipe = {}) {
     const title = String(recipe.title || "Receta").trim() || "Receta";
     const emoji = resolveRecipeEmoji(recipe);
     return emoji ? `${emoji} ${title}` : title;
+  }
+
+  function updateRecipeEmojiPlaceholder() {
+    if (!$recipeEmoji) return;
+    const tags = ($recipeTags?.value || "")
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+    $recipeEmoji.placeholder = getRecipeEmoji({
+      title: $recipeName?.value || "",
+      meal: $recipeMeal?.value || "",
+      tags,
+    });
   }
 
   function normalizeRecipeFields(recipe) {
@@ -3133,7 +3197,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       renderStepRows([DEFAULT_STEP()]);
       if ($recipeServings) $recipeServings.value = "1";
     }
-    if ($recipeEmoji) $recipeEmoji.placeholder = RECIPE_EMOJI_BY_MEAL[$recipeMeal?.value || ""] || "🍽️";
+    updateRecipeEmojiPlaceholder();
     renderRecipeIngredientProductPicker();
     updateRecipeCalcSummary();
   }
@@ -3316,6 +3380,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
         placeholder="Cant."
         min="0"
         step="0.01"
+        inputmode="decimal"
         value="${item.qty == null || item.qty === "" ? "" : String(item.qty)}"
       />
       <input
@@ -3956,11 +4021,18 @@ function toggleChecklistItem(recipeId, itemId, value, type) {
   $btnAddRecipe?.addEventListener("click", () => openRecipeModal());
   $recipeMeal?.addEventListener("change", () => {
     if ($recipeEmoji && !sanitizeRecipeEmoji($recipeEmoji.value)) {
-      $recipeEmoji.placeholder = RECIPE_EMOJI_BY_MEAL[$recipeMeal.value] || "🍽️";
+      updateRecipeEmojiPlaceholder();
     }
+  });
+  $recipeName?.addEventListener("input", () => {
+    if ($recipeEmoji && !sanitizeRecipeEmoji($recipeEmoji.value)) updateRecipeEmojiPlaceholder();
+  });
+  $recipeTags?.addEventListener("input", () => {
+    if ($recipeEmoji && !sanitizeRecipeEmoji($recipeEmoji.value)) updateRecipeEmojiPlaceholder();
   });
   $recipeEmoji?.addEventListener("blur", () => {
     $recipeEmoji.value = sanitizeRecipeEmoji($recipeEmoji.value || "");
+    if (!$recipeEmoji.value) updateRecipeEmojiPlaceholder();
   });
   function setImportStatus(msg){
   if ($recipeImportStatus) $recipeImportStatus.textContent = msg || "";

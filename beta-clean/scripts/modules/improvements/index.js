@@ -7,6 +7,8 @@ import {
   set,
   update,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { ensureEcharts } from "../../shared/vendors/echarts.js";
+import { subscribeSyncState } from "../../shared/services/sync-manager.js?v=2026-04-05-v5";
 
 const DEFAULT_VIEW_ID = "view-books";
 const DEFAULT_BOARD_ID = "board-general";
@@ -161,6 +163,15 @@ const state = {
   handleWindowResize: null,
   statsRenderIdleHandle: 0,
   renderFrame: 0,
+  syncUnsubscribe: null,
+  syncState: null,
+  performance: {
+    busy: false,
+    status: "idle",
+    statusText: "La auditoria solo se ejecuta manualmente.",
+    result: null,
+    lastRunAt: 0,
+  },
   derived: {
     dirty: true,
     allItems: [],
@@ -173,6 +184,110 @@ const state = {
     statsByView: new Map(),
   },
 };
+
+let improvementsEchartsPromise = null;
+let improvementsPerformanceAuditPromise = null;
+
+function ensureImprovementsEchartsReady() {
+  if (window.echarts?.init) {
+    return Promise.resolve(window.echarts);
+  }
+  if (!improvementsEchartsPromise) {
+    improvementsEchartsPromise = ensureEcharts().finally(() => {
+      improvementsEchartsPromise = null;
+    });
+  }
+  return improvementsEchartsPromise;
+}
+
+function ensureImprovementsPerformanceAuditReady() {
+  if (!improvementsPerformanceAuditPromise) {
+    improvementsPerformanceAuditPromise = import("./performance-audit.js");
+  }
+  return improvementsPerformanceAuditPromise;
+}
+
+function waitForAnimationFrames(count = 2) {
+  const total = Math.max(1, Math.floor(Number(count) || 1));
+  return new Promise((resolve) => {
+    let remaining = total;
+    const tick = () => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        resolve();
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+async function measureImprovementMainRender() {
+  const startedAt = performance.now();
+  renderMainWindow();
+  await waitForAnimationFrames(2);
+  return Math.round(performance.now() - startedAt);
+}
+
+async function measureImprovementStatsRender() {
+  const startedAt = performance.now();
+  renderImprovementStats({ deferCharts: false });
+  await waitForAnimationFrames(2);
+  if (state.currentWindow !== "stats") {
+    disposeImprovementStatsCharts();
+  }
+  return Math.round(performance.now() - startedAt);
+}
+
+async function measureImprovementEditorOpen() {
+  if (!els.editorBackdrop || state.editorOpen) return null;
+  const previousVisibility = els.editorBackdrop.style.visibility;
+  const startedAt = performance.now();
+  els.editorBackdrop.style.visibility = "hidden";
+  openEditorModal({ focus: false });
+  await waitForAnimationFrames(2);
+  closeEditorModal({ reset: false });
+  els.editorBackdrop.style.visibility = previousVisibility;
+  return Math.round(performance.now() - startedAt);
+}
+
+async function runPerformanceAudit() {
+  if (state.performance.busy) return;
+  state.performance.busy = true;
+  state.performance.status = "preparing";
+  state.performance.statusText = "Preparando muestras de shell, UI y datos...";
+  renderPerformanceWindow();
+
+  try {
+    const { runBookshellPerformanceAudit } = await ensureImprovementsPerformanceAuditReady();
+    const result = await runBookshellPerformanceAudit({
+      auth,
+      db,
+      itemCount: getAllItems().length,
+      currentViewId: ensureActiveViewId(),
+      onStageChange: (stage, label) => {
+        state.performance.status = stage;
+        state.performance.statusText = label;
+        renderPerformanceWindow();
+      },
+      measureListRender: measureImprovementMainRender,
+      measureStatsRender: measureImprovementStatsRender,
+      measureModalOpen: measureImprovementEditorOpen,
+    });
+    state.performance.result = result;
+    state.performance.lastRunAt = Number(result?.executedAt) || Date.now();
+    state.performance.status = "done";
+    state.performance.statusText = "Auditoria terminada. Puedes recalcular cuando quieras.";
+  } catch (error) {
+    state.performance.status = "error";
+    state.performance.statusText = String(error?.message || error || "La auditoria no pudo completarse.");
+    console.warn("[improvements] performance audit failed", error);
+  } finally {
+    state.performance.busy = false;
+    renderPerformanceWindow();
+  }
+}
 
 const els = {};
 
@@ -1262,9 +1377,17 @@ function renderImprovementStatsCharts(stats) {
   if (!isStatsViewVisible()) return;
 
   if (typeof window === "undefined" || typeof window.echarts === "undefined") {
-    renderImprovementStatsChartEmpty(els.statsDonut, "donut", "No se encontro la libreria de graficas.");
-    renderImprovementStatsChartEmpty(els.statsBar, "bar", "No se encontro la libreria de graficas.");
-    renderImprovementStatsChartEmpty(els.statsLine, "line", "No se encontro la libreria de graficas.");
+    void ensureImprovementsEchartsReady()
+      .then(() => {
+        if (!isStatsViewVisible()) return;
+        renderImprovementStatsCharts(stats);
+      })
+      .catch((error) => {
+        console.warn("[improvements] no se pudo cargar ECharts", error);
+        renderImprovementStatsChartEmpty(els.statsDonut, "donut", "No se encontro la libreria de graficas.");
+        renderImprovementStatsChartEmpty(els.statsBar, "bar", "No se encontro la libreria de graficas.");
+        renderImprovementStatsChartEmpty(els.statsLine, "line", "No se encontro la libreria de graficas.");
+      });
     return;
   }
 
@@ -2279,6 +2402,125 @@ function renderMainWindow() {
   renderFilteredLists();
 }
 
+function renderPerformanceWindow() {
+  if (
+    !els.performanceRunBtn
+    || !els.performanceSync
+    || !els.performanceStatus
+    || !els.performanceSummary
+    || !els.performanceMetrics
+    || !els.performanceFindings
+  ) {
+    return;
+  }
+
+  els.performanceRunBtn.disabled = state.performance.busy;
+  els.performanceRunBtn.textContent = state.performance.busy
+    ? "Midiendo..."
+    : "Calcular rendimiento";
+
+  const sync = state.syncState || {};
+  const syncTone = (Number(sync.failedCount) || 0) > 0
+    ? "rose"
+    : (Number(sync.totalCount) || 0) > 0
+      ? (sync.rtdbConnected ? "blue" : "amber")
+      : (!sync.appOnline || !sync.rtdbConnected)
+        ? "amber"
+        : "green";
+  const syncLabel = (Number(sync.failedCount) || 0) > 0
+    ? `${sync.failedCount} con error`
+    : (Number(sync.totalCount) || 0) > 0
+      ? `${sync.totalCount} pendiente${sync.totalCount === 1 ? "" : "s"}`
+      : (!sync.appOnline || !sync.rtdbConnected)
+        ? "Sin conexiÃ³n"
+        : "Sincronizado";
+
+  els.performanceSync.innerHTML = `
+    <article class="improvements__perfSyncCard" data-tone="${syncTone}">
+      <small>Sync</small>
+      <strong>${escapeHtml(syncLabel)}</strong>
+      <span>${escapeHtml(sync.lastSyncAt ? `Ultimo sync ${formatDateTime(sync.lastSyncAt)}` : "Sin actividad reciente.")}</span>
+    </article>
+    <article class="improvements__perfSyncCard" data-tone="${(Number(sync.totalCount) || 0) > 0 ? "blue" : "green"}">
+      <small>Cola</small>
+      <strong>${Number(sync.totalCount) || 0}</strong>
+      <span>${Number(sync.syncingCount) || 0} sincronizando · ${Number(sync.failedCount) || 0} con error</span>
+    </article>
+    <article class="improvements__perfSyncCard" data-tone="${sync.appOnline && sync.rtdbConnected ? "green" : "amber"}">
+      <small>Conexion</small>
+      <strong>${sync.appOnline && sync.rtdbConnected ? "RTDB OK" : "Limitada"}</strong>
+      <span>${sync.appOnline ? "Browser online" : "Browser offline"} · ${sync.rtdbConnected ? "socket activo" : "socket caido"}</span>
+    </article>
+  `;
+
+  const statusState = state.performance.busy
+    ? "running"
+    : state.performance.status === "error"
+      ? "error"
+      : state.performance.result
+        ? "done"
+        : "idle";
+  els.performanceStatus.innerHTML = `
+    <div class="improvements__perfStatusCard" data-state="${statusState}">
+      <span class="improvements__perfStatusDot" aria-hidden="true"></span>
+      <span>${escapeHtml(state.performance.statusText || "La auditoria solo se ejecuta manualmente.")}</span>
+    </div>
+  `;
+
+  if (!state.performance.result) {
+    els.performanceSummary.innerHTML = '<div class="improvements__perfEmpty">Pulsa "Calcular rendimiento" para lanzar una medicion breve y controlada.</div>';
+    els.performanceMetrics.innerHTML = '<div class="improvements__perfEmpty">Las submetricas apareceran aqui en cuanto termine la auditoria.</div>';
+    els.performanceFindings.innerHTML = '<div class="improvements__perfEmpty">Los hallazgos accionables se mostraran aqui cuando haya resultados.</div>';
+    return;
+  }
+
+  const result = state.performance.result;
+  const overallTone = result.overallScore >= 85
+    ? "green"
+    : result.overallScore >= 65
+      ? "blue"
+      : result.overallScore >= 45
+        ? "amber"
+        : "rose";
+
+  els.performanceSummary.innerHTML = `
+    <article class="improvements__perfSummaryCard improvements__perfSummaryMain" data-tone="${overallTone}">
+      <small>Score global</small>
+      <strong>${result.overallScore}</strong>
+      <span>${escapeHtml(result.summaryText || "Medicion completada.")}</span>
+    </article>
+    <div class="improvements__perfSummaryBreakdown">
+      <article class="improvements__perfSummaryCard" data-tone="blue">
+        <small>Ultimo calculo</small>
+        <strong>${escapeHtml(formatDateTime(state.performance.lastRunAt))}</strong>
+        <span>${escapeHtml(result.sampleText || "Muestras breves sobre shell, UI y datos.")}</span>
+      </article>
+      <article class="improvements__perfSummaryCard" data-tone="${(result.longTaskCount || 0) > 0 ? "amber" : "green"}">
+        <small>Long tasks</small>
+        <strong>${result.longTaskCount || 0}</strong>
+        <span>${escapeHtml(result.longTaskText || "Sin tareas largas en la ventana medida.")}</span>
+      </article>
+    </div>
+  `;
+
+  els.performanceMetrics.innerHTML = (result.categories || []).map((category) => `
+    <article class="improvements__perfMetricCard">
+      <small>${escapeHtml(category.label || category.key || "Categoria")}</small>
+      <strong>${escapeHtml(String(category.score ?? "--"))}</strong>
+      <span>${escapeHtml(category.summary || "Sin observaciones.")}</span>
+    </article>
+  `).join("");
+
+  els.performanceFindings.innerHTML = (result.findings || []).length
+    ? result.findings.map((finding) => `
+      <article class="improvements__perfFinding" data-tone="${escapeHtml(finding.tone || "blue")}">
+        <h4>${escapeHtml(finding.title || "Observacion")}</h4>
+        <p>${escapeHtml(finding.message || "")}</p>
+      </article>
+    `).join("")
+    : '<div class="improvements__perfEmpty">No se han detectado hallazgos relevantes en esta pasada.</div>';
+}
+
 function renderActiveWindow() {
   renderWindowNavigation();
   renderEditorState();
@@ -2287,6 +2529,13 @@ function renderActiveWindow() {
 
   if (state.currentWindow === "stats") {
     renderImprovementStats({ deferCharts: true });
+    return;
+  }
+
+  if (state.currentWindow === "performance") {
+    cancelImprovementStatsRender();
+    disposeImprovementStatsCharts();
+    renderPerformanceWindow();
     return;
   }
 
@@ -2795,7 +3044,9 @@ function bindEvents() {
   els.windowTabs?.addEventListener("click", (event) => {
     const button = event.target?.closest?.("[data-window]");
     if (!button) return;
-    const nextWindow = button.dataset.window === "stats" ? "stats" : "main";
+    const nextWindow = ["stats", "performance"].includes(button.dataset.window)
+      ? button.dataset.window
+      : "main";
     if (state.currentWindow === nextWindow) return;
     state.currentWindow = nextWindow;
     renderActiveWindow();
@@ -2809,6 +3060,10 @@ function bindEvents() {
   els.exportBtn?.addEventListener("click", () => {
     const items = getPendingItemsForExport();
     void exportFixes(items, getActiveTab());
+  });
+
+  els.performanceRunBtn?.addEventListener("click", () => {
+    void runPerformanceAudit();
   });
 
   els.typeFilters?.addEventListener("click", (event) => {
@@ -2951,6 +3206,12 @@ function cacheElements(root) {
   els.statsBar = root.querySelector("#improvements-stats-bar");
   els.statsLine = root.querySelector("#improvements-stats-line");
   els.statsBreakdown = root.querySelector("#improvements-stats-breakdown");
+  els.performanceRunBtn = root.querySelector("#improvements-performance-run-btn");
+  els.performanceSync = root.querySelector("#improvements-performance-sync");
+  els.performanceStatus = root.querySelector("#improvements-performance-status");
+  els.performanceSummary = root.querySelector("#improvements-performance-summary");
+  els.performanceMetrics = root.querySelector("#improvements-performance-metrics");
+  els.performanceFindings = root.querySelector("#improvements-performance-findings");
   els.tabCount = root.querySelector("#improvements-tab-count");
   els.boardTabs = root.querySelector("#improvements-board-tabs");
   els.boardMeta = root.querySelector("#improvements-board-meta");
@@ -2991,6 +3252,14 @@ export async function init({ root }) {
 
   cacheElements(root);
   bindEvents();
+  if (!state.syncUnsubscribe) {
+    state.syncUnsubscribe = subscribeSyncState((snapshot) => {
+      state.syncState = snapshot;
+      if (state.currentWindow === "performance") {
+        renderPerformanceWindow();
+      }
+    });
+  }
   state.viewVisible = true;
   state.activeViewId = getDefaultViewId();
   resetEditor({ viewId: state.activeViewId });
@@ -3047,6 +3316,10 @@ export function destroy() {
     window.removeEventListener("resize", state.handleWindowResize);
     window.removeEventListener("orientationchange", state.handleWindowResize);
     state.handleWindowResize = null;
+  }
+  if (state.syncUnsubscribe) {
+    state.syncUnsubscribe();
+    state.syncUnsubscribe = null;
   }
   if (window.__bookshellImprovements?.closeEditorModal) {
     delete window.__bookshellImprovements;

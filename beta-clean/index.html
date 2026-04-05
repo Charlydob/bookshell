@@ -13,11 +13,11 @@
   <meta name="apple-mobile-web-app-title" content="Bookshell" />
   <link href="./styles/core/base.css" rel="stylesheet" />
   <link href="./styles/core/shell.css" rel="stylesheet" />
+  <link href="./styles/modules/books.css" rel="preload" as="style" fetchpriority="high" />
   <link href="./manifest.webmanifest" rel="manifest" />
   <link href="./icons/favicon-32.png" rel="icon" sizes="32x32" type="image/png" />
   <link href="./icons/favicon-16.png" rel="icon" sizes="16x16" type="image/png" />
   <link href="./icons/icon-512.png" rel="apple-touch-icon" sizes="180x180" />
-  <script defer src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 
   <style>
     html,
@@ -194,6 +194,18 @@
   <header class="app-header">
     <div class="header-title"></div>
   </header>
+
+  <div class="app-sync-indicator-wrap" aria-live="polite">
+    <button
+      class="app-sync-indicator hidden"
+      id="app-sync-indicator"
+      type="button"
+      aria-expanded="false"
+      aria-label="Estado de sincronización"
+    >
+      <span class="sync-text"></span>
+    </button>
+  </div>
 
   <section class="view view-active" id="view-books" aria-hidden="false" data-module-view="books"></section>
 

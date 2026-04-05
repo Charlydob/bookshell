@@ -3,6 +3,7 @@ import { db, auth, onUserChange } from "../../shared/firebase/index.js";
 import { ref, onValue, set, update, push, remove, runTransaction, get } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { getRangeBounds, dateFromKey } from "./range-helpers.js";
 import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";
+import { ensureEcharts } from "../../shared/vendors/echarts.js";
 
 const DBG = true;
 
@@ -54,6 +55,19 @@ let HABITS_PATH = null;
 let HABIT_SESSIONS_PATH = null;
 let remoteBound = false;
 let runtimeReady = false;
+let gamesEchartsPromise = null;
+
+function ensureGamesEchartsReady() {
+  if (window.echarts?.init) {
+    return Promise.resolve(window.echarts);
+  }
+  if (!gamesEchartsPromise) {
+    gamesEchartsPromise = ensureEcharts().finally(() => {
+      gamesEchartsPromise = null;
+    });
+  }
+  return gamesEchartsPromise;
+}
 
 function setUserPaths(uid) {
   currentUid = uid || null;
@@ -1140,8 +1154,27 @@ function createGamesLineOption(points) {
 
 function renderLineChart($el, points, chartRef = "stats") {
   if (!$el) return;
-  $el.style.minHeight = "220px";
   const hasData = points.some(([, v]) => Number(v.wins || 0) || Number(v.losses || 0) || Number(v.ties || 0));
+  if (typeof echarts === "undefined") {
+    if (!hasData) {
+      let chart = chartRef === "stats" ? statsLineChart : detailLineChart;
+      chart?.dispose();
+      if (chartRef === "stats") statsLineChart = null;
+      else detailLineChart = null;
+      if (!$el.querySelector('.empty-state')) $el.innerHTML = "<div class='empty-state small'>Sin datos...</div>";
+      return;
+    }
+    void ensureGamesEchartsReady()
+      .then(() => {
+        if (!document.body.contains($el)) return;
+        renderLineChart($el, points, chartRef);
+      })
+      .catch((error) => {
+        console.warn("[games] no se pudo cargar ECharts para line chart", error);
+      });
+    return;
+  }
+  $el.style.minHeight = "220px";
   let chart = chartRef === "stats" ? statsLineChart : detailLineChart;
   if (chart && chart.getDom?.() !== $el) {
     chart.dispose();
@@ -1440,6 +1473,29 @@ function renderDonut($el, vals, selectable = false, chartRef = "stats") {
   const activeKey = chartRef === "detail" ? selectedDonutKey : statsDonutKey;
   const activeVal = vals[activeKey] || 0;
   const activePct = total ? Math.round((activeVal / total) * 100) : 0;
+  if (typeof echarts === "undefined") {
+    if (!total) {
+      const oldChart = chartRef === "detail" ? detailDonutChart : statsDonutChart;
+      oldChart?.dispose();
+      if (chartRef === "detail") detailDonutChart = null;
+      else statsDonutChart = null;
+      $el.innerHTML = `<div class="games-donut-echart"></div>
+  <div class="games-donut-center">
+    <div class="games-donut-total">0</div>
+    <div>${labels[activeKey]} ${activeVal} (${activePct}%)</div>
+  </div>`;
+      return;
+    }
+    void ensureGamesEchartsReady()
+      .then(() => {
+        if (!document.body.contains($el)) return;
+        renderDonut($el, vals, selectable, chartRef);
+      })
+      .catch((error) => {
+        console.warn("[games] no se pudo cargar ECharts para donut", error);
+      });
+    return;
+  }
   const oldChart = chartRef === "detail" ? detailDonutChart : statsDonutChart;
   oldChart?.dispose();
   if (chartRef === "detail") detailDonutChart = null;

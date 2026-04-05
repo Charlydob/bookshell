@@ -16,6 +16,11 @@ import {
 import { computeTimeByHabitDataset, debugComputeTimeByHabit, resolveFirstRecordTs } from "./time-by-habit.js";
 import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";
 import { computeDayCreditsAndScores } from "./schedule-credits.js";
+import { ensureEcharts } from "../../shared/vendors/echarts.js";
+import { canWriteDirectly } from "../../shared/services/sync-manager.js?v=2026-04-05-v5";
+import { applyQueuedWritesToPath } from "../../shared/storage/offline-queue.js?v=2026-04-05-v5";
+import { readModuleSnapshot, writeModuleSnapshot } from "../../shared/storage/offline-snapshots.js?v=2026-04-05-v5";
+import { createOfflinePushId, writeRtdbWithOfflineQueue } from "../../shared/firebase/offline-rtdb.js?v=2026-04-05-v5";
 
 let currentUid = auth.currentUser?.uid ?? null;
 let BASE = null;
@@ -35,6 +40,58 @@ let HABIT_UI_QUICK_COUNTERS_PATH = null;
 let remoteBound = false;
 let habitsRuntimeReady = false;
 let habitsRuntimeInitializing = false;
+let habitsEchartsPromise = null;
+
+function logHabitsInitStep(step, extra = {}, level = "info") {
+  const payload = {
+    step,
+    online: navigator.onLine,
+    serviceWorkerControlled: !!navigator.serviceWorker?.controller,
+    uid: currentUid || "",
+    remoteBound,
+    runtimeReady: habitsRuntimeReady,
+    runtimeInitializing: habitsRuntimeInitializing,
+    at: new Date().toISOString(),
+    ...extra,
+  };
+  if (!Array.isArray(window.__bookshellHabitsInitLog)) {
+    window.__bookshellHabitsInitLog = [];
+  }
+  window.__bookshellHabitsInitLog.push(payload);
+  const logger = typeof console[level] === "function" ? console[level] : console.log;
+  logger.call(console, `[habits:init] ${step}`, payload);
+}
+
+async function traceHabitsInitStep(step, action) {
+  const startedAt = performance.now();
+  logHabitsInitStep(`${step}:start`);
+  try {
+    const result = await action();
+    logHabitsInitStep(`${step}:ready`, {
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+    return result;
+  } catch (error) {
+    logHabitsInitStep(`${step}:error`, {
+      durationMs: Math.round(performance.now() - startedAt),
+      message: error?.message || String(error || ""),
+      stack: error?.stack || "",
+    }, "error");
+    throw error;
+  }
+}
+
+function ensureHabitsEchartsReady() {
+  if (window.echarts?.init) {
+    return Promise.resolve(window.echarts);
+  }
+  if (!habitsEchartsPromise) {
+    habitsEchartsPromise = ensureEcharts().finally(() => {
+      habitsEchartsPromise = null;
+    });
+  }
+  return habitsEchartsPromise;
+}
 
 function setUserPaths(uid) {
   currentUid = uid || null;
@@ -216,6 +273,7 @@ let reportsRenderHandle = null;
 let remoteUnsubscribers = [];
 let habitsResizeHandler = null;
 let habitsViewVisible = document.getElementById("view-habits")?.classList.contains("view-active") ?? true;
+let habitSnapshotPersistTimer = null;
 const reportDebugLastByRange = new Map();
 
 function debugCompare(...args) {
@@ -1191,6 +1249,11 @@ function persistDayUsage(dayKey, usagePercent, extraStats = {}) {
   persistHabitScheduleLocal();
   refreshScheduleCalendarDay(dayKey, source);
 
+  if (!canWriteDirectly()) {
+    pendingDayUsageWrites.delete(dayKey);
+    return;
+  }
+
   auditScheduleWrite(`${HABITS_SCHEDULE_PATH}/summaries/${dayKey}`, payload);
   update(ref(db, `${HABITS_SCHEDULE_PATH}/summaries`), { [dayKey]: payload })
     .then(() => {
@@ -1497,6 +1560,10 @@ function inferBulkEntryFromSelection(habitId, selectedTypes = [], selectedDows =
 
 async function applyHabitScheduleBulk(habitId, selectedDows = [], selectedTypes = [], mode = "neutral", value = 0) {
   if (!habitId) return false;
+  if (!canWriteDirectly()) {
+    showHabitToast("El horario avanzado requiere conexion.");
+    return false;
+  }
   const safeTypes = sanitizeScheduleTypes(selectedTypes);
   if (!safeTypes.length) throw new Error("missing-type");
   const safeDows = sanitizeScheduleDows(selectedDows);
@@ -1527,6 +1594,10 @@ async function applyHabitScheduleBulk(habitId, selectedDows = [], selectedTypes 
 
 async function removeHabitScheduleBulk(habitId, selectedDows = [], selectedTypes = []) {
   if (!habitId) return false;
+  if (!canWriteDirectly()) {
+    showHabitToast("El horario avanzado requiere conexion.");
+    return false;
+  }
   const safeTypes = sanitizeScheduleTypes(selectedTypes);
   if (!safeTypes.length) throw new Error("missing-type");
   const safeDows = sanitizeScheduleDows(selectedDows);
@@ -1958,6 +2029,10 @@ function renderSchedule(reason = "manual") {
   });
   $habitScheduleView.querySelector('[data-role="schedule-save-config"]')?.addEventListener("click", () => {
     if (!isEditingTemplates || !draftState) return;
+    if (!canWriteDirectly()) {
+      showHabitToast("Guardar plantillas de horario requiere conexion.");
+      return;
+    }
     const type = $habitScheduleView.querySelector('[data-role="schedule-type"]')?.value || "M";
     const day = $habitScheduleView.querySelector('[data-role="schedule-day"]')?.value || "base";
     const previousMap = day === "base"
@@ -2576,7 +2651,7 @@ function setHabitDailyMinutes(habitId, dateKey, minutes, options = {}) {
   setHabitTimeSec(habitId, dateKey, min * 60, options);
 }
 
-function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
+function setHabitTimeSecLegacy(habitId, dateKey, totalSec, options = {}) {
   if (!habitId || !dateKey) return;
   const habit = habits[habitId];
   if (!habit || habit.archived) return;
@@ -2718,25 +2793,81 @@ function readCache() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      habits = normalizeHabitsStore(parsed.habits || {});
-      habitChecks = parsed.habitChecks || {};
-      habitSessions = parsed.habitSessions || {};
-      habitCounts = parsed.habitCounts || {};
-      habitGroups = parsed.habitGroups || {};
-      habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
-      if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
-      habitDurationMode = ["auto", "min", "h", "d"].includes(habitPrefs.analyticsUnit) ? habitPrefs.analyticsUnit : "auto";
-      analyticsTimeUnitMode = habitDurationMode;
-      habitUI = normalizeHabitUI(parsed.habitUI || {});
-      scheduleState = normalizeHabitSchedule(parsed.scheduleState || parsed.habitSchedule || createDefaultHabitSchedule());
-      const norm = normalizeSessionsStore(habitSessions, false);
-      habitSessions = norm.normalized;
-      habitSessionTimeline = norm.timeline || {};
-      habitSessionTimelineCoverage = norm.coverage || {};
-      if (norm.changed) saveCache();
+      applyHabitsCachePayload(parsed, { persistNormalized: true });
     }
   } catch (err) {
     console.warn("No se pudo leer cache de hábitos", err);
+  }
+}
+
+function buildHabitsCachePayload() {
+  return {
+    habits,
+    habitChecks,
+    habitSessions,
+    habitCounts,
+    habitGroups,
+    habitPrefs,
+    habitUI,
+    scheduleState,
+    activeSessions,
+  };
+}
+
+function applyHabitsCachePayload(raw = {}, { persistNormalized = false } = {}) {
+  const parsed = raw && typeof raw === "object" ? raw : {};
+  habits = normalizeHabitsStore(parsed.habits || {});
+  habitChecks = parsed.habitChecks || {};
+  habitSessions = parsed.habitSessions || {};
+  habitCounts = parsed.habitCounts || {};
+  habitGroups = parsed.habitGroups || {};
+  habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
+  if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
+  habitDurationMode = ["auto", "min", "h", "d"].includes(habitPrefs.analyticsUnit) ? habitPrefs.analyticsUnit : "auto";
+  analyticsTimeUnitMode = habitDurationMode;
+  habitUI = normalizeHabitUI(parsed.habitUI || {});
+  scheduleState = normalizeHabitSchedule(parsed.scheduleState || parsed.habitSchedule || createDefaultHabitSchedule());
+  activeSessions = normalizeActiveSessionsStore(parsed.activeSessions || {});
+  syncPrimaryRunningSession();
+
+  const norm = normalizeSessionsStore(habitSessions, false);
+  habitSessions = norm.normalized;
+  habitSessionTimeline = norm.timeline || {};
+  habitSessionTimelineCoverage = norm.coverage || {};
+  if (persistNormalized && norm.changed) saveCache();
+}
+
+function schedulePersistHabitOfflineSnapshot() {
+  if (!currentUid || typeof window === "undefined") return;
+  if (habitSnapshotPersistTimer) {
+    window.clearTimeout(habitSnapshotPersistTimer);
+  }
+  habitSnapshotPersistTimer = window.setTimeout(() => {
+    habitSnapshotPersistTimer = null;
+    void writeModuleSnapshot({
+      moduleName: "habits",
+      uid: currentUid,
+      data: buildHabitsCachePayload(),
+      updatedAt: Date.now(),
+      metadata: {
+        activeSessionCount: Object.keys(activeSessions || {}).length,
+      },
+    }).catch((error) => {
+      console.warn("[habits] no se pudo persistir snapshot offline", error);
+    });
+  }, 120);
+}
+
+async function hydrateHabitsFromOfflineSnapshot() {
+  if (!currentUid) return false;
+  try {
+    const snapshot = await readModuleSnapshot({ moduleName: "habits", uid: currentUid });
+    if (!snapshot?.data) return false;
+    applyHabitsCachePayload(snapshot.data);
+    return true;
+  } catch (error) {
+    console.warn("[habits] no se pudo rehidratar snapshot offline", error);
+    return false;
   }
 }
 
@@ -2745,9 +2876,10 @@ function saveCache() {
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ habits, habitChecks, habitSessions, habitCounts, habitGroups, habitPrefs, habitUI, scheduleState })
+      JSON.stringify(buildHabitsCachePayload())
     );
     localStorage.setItem(HABITS_SCHEDULE_STORAGE, JSON.stringify(scheduleState));
+    schedulePersistHabitOfflineSnapshot();
   } catch (err) {
     console.warn("No se pudo guardar cache de hábitos", err);
   }
@@ -2776,7 +2908,7 @@ async function loadScheduleFromRemote() {
     saveCache();
   } catch (err) {
     console.warn("No se pudo leer horario remoto", err);
-    scheduleState = createDefaultHabitSchedule();
+    scheduleState = normalizeHabitSchedule(scheduleState || createDefaultHabitSchedule());
   }
 }
 function loadSessionSelection() {
@@ -2912,7 +3044,7 @@ function sortedHabitGroups() {
     .sort((a, b) => a.name.localeCompare(b.name, "es"));
 }
 
-function persistHabitGroup(group) {
+function persistHabitGroupLegacy(group) {
   if (!group?.id) return;
   try {
     set(ref(db, `${HABIT_GROUPS_PATH}/${group.id}`), group);
@@ -2921,7 +3053,7 @@ function persistHabitGroup(group) {
   }
 }
 
-function removeHabitGroupRemote(groupId) {
+function removeHabitGroupRemoteLegacy(groupId) {
   if (!groupId) return;
   try {
     set(ref(db, `${HABIT_GROUPS_PATH}/${groupId}`), null);
@@ -2930,7 +3062,7 @@ function removeHabitGroupRemote(groupId) {
   }
 }
 
-function persistHabitPrefs() {
+function persistHabitPrefsLegacy() {
   saveCache();
   try {
     set(ref(db, HABIT_PREFS_PATH), habitPrefs || {});
@@ -2947,7 +3079,7 @@ function normalizeHabitUI(raw) {
   return { quickCounters };
 }
 
-function saveUI(partial = {}) {
+function saveUILegacy(partial = {}) {
   const merged = normalizeHabitUI({ ...habitUI, ...(partial || {}) });
   habitUI = merged;
   saveCache();
@@ -3313,11 +3445,16 @@ function loadHabitCompareSettingsLocal() {
 
 function persistHabitCompareSettings() {
   saveHabitCompareSettingsLocal();
-  try {
-    set(ref(db, HABIT_COMPARE_SETTINGS_PATH), getHabitCompareSettingsPayload());
-  } catch (err) {
-    console.warn("No se pudo guardar ajustes de comparativa en remoto", err);
-  }
+  void writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "habitCompareSettings",
+    actionType: "save-compare-settings",
+    firebasePath: HABIT_COMPARE_SETTINGS_PATH,
+    payload: getHabitCompareSettingsPayload(),
+    writeType: "set",
+    dedupeKey: "habit-compare-settings",
+  }).then((result) => reportQueuedWriteError("No se pudo guardar ajustes de comparativa en remoto", result));
 }
 
 function isSystemHabit(habit) {
@@ -4208,7 +4345,7 @@ function toggleDay(habitId, dateKey) {
   renderHabitsPreservingTodayUI();
 }
 
-function persistHabitCheck(habitId, dateKey, value) {
+function persistHabitCheckLegacy(habitId, dateKey, value) {
   try {
     const path = `${HABIT_CHECKS_PATH}/${habitId}/${dateKey}`;
     if (value) {
@@ -4266,7 +4403,7 @@ function adjustHabitCount(habitId, dateKey, delta) {
   setHabitCount(habitId, dateKey, current + Number(delta || 0));
 }
 
-function persistHabitCount(habitId, dateKey, value) {
+function persistHabitCountLegacy(habitId, dateKey, value) {
   if (!habitId || !dateKey) return;
   try {
     const path = `${HABIT_COUNTS_PATH}/${habitId}/${dateKey}`;
@@ -4523,7 +4660,7 @@ function gatherHabitPayload() {
   };
 }
 
-function persistHabit(habit) {
+function persistHabitLegacy(habit) {
   try {
     set(ref(db, `${HABITS_PATH}/${habit.id}`), habit);
   } catch (err) {
@@ -4531,7 +4668,7 @@ function persistHabit(habit) {
   }
 }
 
-function removeHabitRemote(habitId) {
+function removeHabitRemoteLegacy(habitId) {
   try {
     set(ref(db, `${HABITS_PATH}/${habitId}`), null);
   } catch (err) {
@@ -9483,7 +9620,7 @@ function buildDonutOuterRuns(habitData, catName, groupColorByKey = new Map()) {
 
 
 function renderDonut() {
-  if (!$habitDonut || typeof echarts === "undefined") return;
+  if (!$habitDonut) return;
   const entries = buildTimeEntries(habitDonutRange);
   const isGrouped = habitDonutGroupMode.kind === "cat" && habitDonutGroupMode.cat;
   const paramModel = isGrouped
@@ -9529,6 +9666,17 @@ function renderDonut() {
   if ($habitDonutEmpty) $habitDonutEmpty.style.display = "none";
   $habitDonut.style.display = "block";
   if ($habitDonutCenter) $habitDonutCenter.style.display = "flex";
+  if (typeof echarts === "undefined") {
+    void ensureHabitsEchartsReady()
+      .then(() => {
+        if (!document.body.contains($habitDonut)) return;
+        renderDonut();
+      })
+      .catch((error) => {
+        console.warn("[habits] no se pudo cargar ECharts para donut", error);
+      });
+    return;
+  }
   if (!habitDonutChart) habitDonutChart = echarts.init($habitDonut);
   if ($habitDonutTotal) $habitDonutTotal.textContent = formatDuration(totalMinutes, analyticsTimeUnitMode);
 
@@ -10010,7 +10158,7 @@ function toggleQuickCounters() {
 }
 window.toggleQuickCounters = toggleQuickCounters;
 
-function incrementCounterHabit(habitId) {
+function incrementCounterHabitLegacy(habitId) {
   if (!habitId) return;
 
   const habit = habits[habitId];
@@ -10403,7 +10551,7 @@ function deleteHabit() {
 }
 
 // Cronómetro
-async function startSession(habitId = null, meta = null) {
+async function startSessionLegacy(habitId = null, meta = null) {
   if (!currentUid || !HABIT_ACTIVE_SESSIONS_PATH) return null;
   const targetHabitId = (typeof habitId === "string" && habits?.[habitId] && !habits[habitId]?.archived)
     ? habitId
@@ -10443,7 +10591,7 @@ function stopHabitSessionUniversal() {
   return stopSession(null, true);
 }
 
-async function patchSession(sessionId, patch = {}) {
+async function patchSessionLegacy(sessionId, patch = {}) {
   if (!sessionId) return;
   const previous = activeSessions?.[sessionId] ? { ...activeSessions[sessionId] } : null;
   const nextPatch = { ...patch, updatedAt: Date.now() };
@@ -10503,7 +10651,7 @@ async function adjustRunningSessionByMinutes(deltaMin = 0, sessionId = runningSe
   updateSessionUI();
 }
 
-async function stopSession(assignHabitId = null, silent = false, sessionId = runningSession?.sessionId) {
+async function stopSessionLegacy(assignHabitId = null, silent = false, sessionId = runningSession?.sessionId) {
   if (assignHabitId && typeof assignHabitId === "object" && assignHabitId.type) {
     assignHabitId = null;
     silent = false;
@@ -10567,7 +10715,7 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
   openSessionModal();
 }
 
-async function cancelRunningSession({ requireConfirm = true, sessionId = runningSession?.sessionId } = {}) {
+async function cancelRunningSessionLegacy({ requireConfirm = true, sessionId = runningSession?.sessionId } = {}) {
   const session = sessionId ? activeSessions?.[sessionId] : null;
   if (!session) return false;
   if (requireConfirm) {
@@ -11934,7 +12082,7 @@ function bindEvents() {
 
 // Firebase listeners
 
-function listenRemote() {
+function listenRemoteLegacy() {
   if (remoteBound) return;
   const rerender = () => requestActiveTabRender({ preserveUI: true });
   const rerenderIfActiveTab = (tabs = []) => {
@@ -12062,6 +12210,589 @@ function unlistenRemote() {
   });
   remoteUnsubscribers = [];
   remoteBound = false;
+}
+
+function applyQueuedHabitRemoteValue(basePath, value) {
+  return applyQueuedWritesToPath(basePath, value, { uid: currentUid });
+}
+
+function reportQueuedWriteError(message, result) {
+  if (!result?.ok) {
+    console.warn(message, result?.error);
+  }
+}
+
+function persistHabitGroup(group) {
+  if (!group?.id) return;
+  void writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "habitGroup",
+    actionType: "save-group",
+    firebasePath: `${HABIT_GROUPS_PATH}/${group.id}`,
+    payload: group,
+    writeType: "set",
+    dedupeKey: `habit-group:${group.id}`,
+  }).then((result) => reportQueuedWriteError("No se pudo guardar grupo de hÃ¡bitos", result));
+}
+
+function removeHabitGroupRemote(groupId) {
+  if (!groupId) return;
+  void writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "habitGroup",
+    actionType: "remove-group",
+    firebasePath: `${HABIT_GROUPS_PATH}/${groupId}`,
+    payload: null,
+    writeType: "set",
+    dedupeKey: `habit-group:${groupId}`,
+  }).then((result) => reportQueuedWriteError("No se pudo borrar grupo de hÃ¡bitos", result));
+}
+
+function persistHabitPrefs() {
+  saveCache();
+  void writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "habitPrefs",
+    actionType: "save-prefs",
+    firebasePath: HABIT_PREFS_PATH,
+    payload: habitPrefs || {},
+    writeType: "set",
+    dedupeKey: "habit-prefs",
+  }).then((result) => reportQueuedWriteError("No se pudo guardar preferencias de hÃ¡bitos", result));
+}
+
+function saveUI(partial = {}) {
+  const merged = normalizeHabitUI({ ...habitUI, ...(partial || {}) });
+  habitUI = merged;
+  saveCache();
+  void writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "habitUi",
+    actionType: "save-quick-counters",
+    firebasePath: HABIT_UI_QUICK_COUNTERS_PATH,
+    payload: merged.quickCounters || [],
+    writeType: "set",
+    dedupeKey: "habit-ui-quick-counters",
+  }).then((result) => reportQueuedWriteError("No se pudo guardar UI de hÃ¡bitos", result));
+  renderQuickCounters();
+}
+
+function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
+  if (!habitId || !dateKey) return;
+  const habit = habits[habitId];
+  if (!habit || habit.archived) return;
+
+  const sec = Math.max(0, Math.round(Number(totalSec) || 0));
+  if (!habitSessions[habitId] || typeof habitSessions[habitId] !== "object") habitSessions[habitId] = {};
+
+  const isWork = isWorkHabit(habit);
+  const existing = readDayMinutesAndShift(habitSessions[habitId][dateKey], isWork);
+  const shiftOpt = (options && options.shift != null)
+    ? normalizeShiftValue(options.shift)
+    : existing.shift;
+
+  let payloadToWrite = null;
+
+  if (isWork) {
+    const minutes = Math.max(0, Math.round(sec / 60));
+    if (minutes > 0 || shiftOpt) {
+      payloadToWrite = buildWorkDayPayload(minutes, shiftOpt);
+      habitSessions[habitId][dateKey] = payloadToWrite;
+    } else {
+      delete habitSessions[habitId][dateKey];
+    }
+  } else {
+    payloadToWrite = sec > 0 ? sec : null;
+    if (sec > 0) habitSessions[habitId][dateKey] = sec;
+    else delete habitSessions[habitId][dateKey];
+  }
+
+  queuePendingSessionWrite(habitId, dateKey, payloadToWrite);
+  saveCache();
+  void writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "habitSession",
+    actionType: "set-day-time",
+    firebasePath: `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`,
+    payload: payloadToWrite,
+    writeType: "set",
+    dedupeKey: `habit-session-day:${habitId}:${dateKey}`,
+    metadata: { habitId, dateKey },
+  }).then((result) => reportQueuedWriteError("No se pudo guardar tiempo diario", result));
+  if (habitId !== UNKNOWN_HABIT_ID) { try { recomputeUnknownForDate(dateKey, true); } catch (_) {} }
+  invalidateDominantCache(dateKey);
+  markHistoryDataChanged("setHabitTimeSec", { habitId, dateKey, totalSec: sec });
+  schedulePersistDayUsage(dateKey, "session-edit");
+}
+
+function persistHabitCheck(habitId, dateKey, value) {
+  if (!habitId || !dateKey) return;
+  void writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "habitCheck",
+    actionType: "set-check",
+    firebasePath: `${HABIT_CHECKS_PATH}/${habitId}/${dateKey}`,
+    payload: value ? true : null,
+    writeType: "set",
+    dedupeKey: `habit-check:${habitId}:${dateKey}`,
+    metadata: { habitId, dateKey },
+  }).then((result) => reportQueuedWriteError("No se pudo sincronizar check de hÃ¡bito", result));
+}
+
+function persistHabitCount(habitId, dateKey, value) {
+  if (!habitId || !dateKey) return;
+  void writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "habitCount",
+    actionType: "set-count",
+    firebasePath: `${HABIT_COUNTS_PATH}/${habitId}/${dateKey}`,
+    payload: value,
+    writeType: "set",
+    dedupeKey: `habit-count:${habitId}:${dateKey}`,
+    metadata: { habitId, dateKey },
+  }).then((result) => reportQueuedWriteError("No se pudo guardar conteo en remoto", result));
+}
+
+function persistHabit(habit) {
+  if (!habit?.id) return;
+  void writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "habit",
+    actionType: "save-habit",
+    firebasePath: `${HABITS_PATH}/${habit.id}`,
+    payload: habit,
+    writeType: "set",
+    dedupeKey: `habit:${habit.id}`,
+  }).then((result) => reportQueuedWriteError("No se pudo guardar hÃ¡bito en remoto", result));
+}
+
+function removeHabitRemote(habitId) {
+  if (!habitId) return;
+  void writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "habit",
+    actionType: "remove-habit",
+    firebasePath: `${HABITS_PATH}/${habitId}`,
+    payload: null,
+    writeType: "set",
+    dedupeKey: `habit:${habitId}`,
+  }).then((result) => reportQueuedWriteError("No se pudo borrar hÃ¡bito remoto", result));
+}
+
+function incrementCounterHabit(habitId) {
+  if (!habitId) return;
+  adjustHabitCount(habitId, todayKey(), 1);
+  globalThis.playClickSound?.();
+}
+
+async function startSession(habitId = null, meta = null) {
+  if (!currentUid || !HABIT_ACTIVE_SESSIONS_PATH) return null;
+  const targetHabitId = (typeof habitId === "string" && habits?.[habitId] && !habits[habitId]?.archived)
+    ? habitId
+    : null;
+  const now = Date.now();
+  const sessionId = createOfflinePushId(HABIT_ACTIVE_SESSIONS_PATH) || `session-${now.toString(36)}`;
+  const payload = {
+    habitId: targetHabitId,
+    startedAt: now,
+    firstStartedAt: now,
+    createdAt: now,
+    updatedAt: now,
+    status: "running",
+    pausedAt: null,
+    accMs: 0,
+    emoji: (targetHabitId && habits?.[targetHabitId]?.emoji) || meta?.habitEmoji || "â€¢",
+    deviceId: currentUid,
+    meta: meta && typeof meta === "object" ? { ...meta } : null
+  };
+
+  upsertActiveSessionLocal(sessionId, payload);
+  saveCache();
+  persistSessionSelection(sessionId);
+  updateSessionUI();
+  updateCompareLiveInterval();
+  scheduleCompareRefresh("session:start", { targetHabitId: targetHabitId || null });
+
+  const result = await writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "activeSession",
+    actionType: "start-session",
+    firebasePath: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
+    payload,
+    writeType: "set",
+    dedupeKey: `active-session:${sessionId}`,
+    metadata: { sessionId, targetHabitId },
+  });
+
+  if (!result?.ok) {
+    removeActiveSessionLocal(sessionId);
+    saveCache();
+    persistSessionSelection(null);
+    updateSessionUI();
+    updateCompareLiveInterval();
+    return null;
+  }
+
+  return sessionId;
+}
+
+async function patchSession(sessionId, patch = {}) {
+  if (!sessionId) return;
+  const previous = activeSessions?.[sessionId] ? { ...activeSessions[sessionId] } : null;
+  const nextPatch = { ...patch, updatedAt: Date.now() };
+
+  if (previous) {
+    upsertActiveSessionLocal(sessionId, { ...previous, ...nextPatch });
+    saveCache();
+    updateSessionUI();
+  }
+
+  const result = await writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "activeSession",
+    actionType: "patch-session",
+    firebasePath: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
+    payload: nextPatch,
+    writeType: "update",
+    dedupeKey: `active-session-patch:${sessionId}`,
+    metadata: { sessionId },
+  });
+
+  if (!result?.ok) {
+    if (previous) {
+      upsertActiveSessionLocal(sessionId, previous);
+      saveCache();
+      updateSessionUI();
+    }
+    console.warn("No se pudo actualizar la sesiÃ³n activa", result?.error);
+  }
+}
+
+async function stopSession(assignHabitId = null, silent = false, sessionId = runningSession?.sessionId) {
+  if (assignHabitId && typeof assignHabitId === "object" && assignHabitId.type) {
+    assignHabitId = null;
+    silent = false;
+  }
+
+  const session = sessionId ? activeSessions?.[sessionId] : null;
+  if (!session) return;
+
+  const endTs = Date.now();
+  const duration = Math.max(1, Math.round(getRunningElapsedMs(session, endTs) / 1000));
+  const target = (typeof assignHabitId === "string" && assignHabitId)
+    ? assignHabitId
+    : (session?.habitId || session?.targetHabitId || null);
+  const startTs = Number(session.firstStartedAt || session.createdAt || session.startedAt || endTs);
+  const dateKey = dateKeyLocal(new Date(startTs));
+
+  const wasPrimarySession = runningSession?.sessionId === sessionId;
+  const removedSession = removeActiveSessionLocal(sessionId);
+  saveCache();
+  if (wasPrimarySession) closeSessionDetailOverlay();
+  updateSessionUI();
+  updateCompareLiveInterval();
+
+  const result = await writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "activeSession",
+    actionType: "stop-session",
+    firebasePath: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
+    payload: null,
+    writeType: "set",
+    dedupeKey: `active-session:${sessionId}`,
+    metadata: { sessionId },
+  });
+
+  if (!result?.ok) {
+    if (removedSession) {
+      upsertActiveSessionLocal(sessionId, removedSession);
+      saveCache();
+      updateSessionUI();
+      updateCompareLiveInterval();
+    }
+    console.warn("No se pudo parar la sesiÃ³n activa", result?.error);
+    return;
+  }
+
+  scheduleCompareRefresh("session:stop", { dateKey, durationSec: duration });
+
+  if (target && habits?.[target] && !habits[target]?.archived) {
+    const splitByDay = splitSessionByDay(startTs, endTs);
+    const splitSummary = {};
+    let totalSplitSec = 0;
+    splitByDay.forEach((minutes) => { totalSplitSec += Math.max(0, Math.round(minutes * 60)); });
+    const scale = totalSplitSec > 0 ? duration / totalSplitSec : 1;
+    splitByDay.forEach((minutes, day) => {
+      const sec = Math.max(0, Math.round(minutes * 60 * scale));
+      if (sec > 0) {
+        splitSummary[day] = sec;
+        addHabitTimeSec(target, day, sec, { startTs, endTs });
+      }
+    });
+    const savedPayload = { targetHabitId: target, startTs, endTs, durationSec: duration, splitByDay: splitSummary };
+    console.warn("[STOP] saved session", savedPayload);
+    console.log("[HABIT] session stop", { startTs, endTs, splitByDay: splitSummary });
+    localStorage.setItem(LAST_HABIT_KEY, target);
+    pendingSessionDuration = 0;
+    invalidateHabitRenderCaches();
+    if (!silent) showHabitToast(`Asignado: ${habits[target]?.name || "hÃ¡bito"} Â· ${Math.round(duration / 60)}m`);
+    closeSessionModal?.();
+    renderHabits();
+    return;
+  }
+
+  pendingSessionDuration = duration;
+  openSessionModal();
+}
+
+async function cancelRunningSession({ requireConfirm = true, sessionId = runningSession?.sessionId } = {}) {
+  const session = sessionId ? activeSessions?.[sessionId] : null;
+  if (!session) return false;
+  if (requireConfirm) {
+    const ok = window.confirm("Â¿Cancelar esta sesiÃ³n activa? Se perderÃ¡ el tiempo en curso y no se registrarÃ¡.");
+    if (!ok) return false;
+  }
+
+  const wasPrimarySession = runningSession?.sessionId === sessionId;
+  const removedSession = removeActiveSessionLocal(sessionId);
+  pendingSessionDuration = 0;
+  saveCache();
+  if (wasPrimarySession) closeSessionDetailOverlay();
+  closeSessionModal?.();
+  updateSessionUI();
+  updateCompareLiveInterval();
+
+  const result = await writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "activeSession",
+    actionType: "cancel-session",
+    firebasePath: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
+    payload: null,
+    writeType: "set",
+    dedupeKey: `active-session:${sessionId}`,
+    metadata: { sessionId },
+  });
+
+  if (!result?.ok) {
+    if (removedSession) {
+      upsertActiveSessionLocal(sessionId, removedSession);
+      saveCache();
+      updateSessionUI();
+      updateCompareLiveInterval();
+    }
+    console.warn("No se pudo cancelar la sesiÃ³n activa", result?.error);
+    return false;
+  }
+
+  scheduleCompareRefresh("session:cancel");
+  showHabitToast("SesiÃ³n cancelada");
+  return true;
+}
+
+function listenRemote() {
+  if (remoteBound) return;
+  const rerender = () => requestActiveTabRender({ preserveUI: true });
+  const rerenderIfActiveTab = (tabs = []) => {
+    if (!isHabitsViewVisible()) return;
+    if (tabs.includes(activeTab)) rerender();
+  };
+  const bindRemote = (path, handler) => {
+    const unsubscribe = onValue(ref(db, path), handler);
+    if (typeof unsubscribe === "function") {
+      remoteUnsubscribers.push(unsubscribe);
+    }
+  };
+
+  bindRemote(HABITS_PATH, (snap) => {
+    habits = normalizeHabitsStore(applyQueuedHabitRemoteValue(HABITS_PATH, snap.val() || {}) || {});
+    invalidateDominantCache();
+    markHistoryDataChanged("remote:habits");
+    ensureUnknownHabit(true);
+    if (_pendingShortcutCmd) {
+      try {
+        const ok = executeShortcutCmd(_pendingShortcutCmd, { silent: true });
+        if (ok) _pendingShortcutCmd = null;
+      } catch (_) {}
+    }
+    saveCache();
+    rerender();
+  });
+
+  bindRemote(HABIT_GROUPS_PATH, (snap) => {
+    habitGroups = applyQueuedHabitRemoteValue(HABIT_GROUPS_PATH, snap.val() || {}) || {};
+    saveCache();
+    rerender();
+  });
+
+  bindRemote(HABIT_PREFS_PATH, (snap) => {
+    habitPrefs = applyQueuedHabitRemoteValue(HABIT_PREFS_PATH, snap.val() || {}) || { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
+    if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
+    habitDurationMode = ["auto", "min", "h", "d"].includes(habitPrefs.analyticsUnit) ? habitPrefs.analyticsUnit : "auto";
+    analyticsTimeUnitMode = habitDurationMode;
+    saveCache();
+    rerenderIfActiveTab(["today", "reports"]);
+  });
+
+  bindRemote(HABIT_UI_QUICK_COUNTERS_PATH, (snap) => {
+    const quickCounters = applyQueuedHabitRemoteValue(HABIT_UI_QUICK_COUNTERS_PATH, snap.val() || []);
+    habitUI = normalizeHabitUI({ ...habitUI, quickCounters: quickCounters || [] });
+    saveCache();
+    rerenderIfActiveTab(["today"]);
+  });
+
+  bindRemote(HABITS_SCHEDULE_PATH, (snap) => {
+    console.warn("SCHEDULE UPDATE", "firebase:onValue");
+    const raw = applyQueuedHabitRemoteValue(HABITS_SCHEDULE_PATH, snap.val());
+    scheduleState = raw && typeof raw === "object"
+      ? normalizeHabitSchedule(raw)
+      : createDefaultHabitSchedule();
+    saveCache();
+    rerenderIfActiveTab(["schedule"]);
+  });
+
+  bindRemote(HABIT_COMPARE_SETTINGS_PATH, (snap) => {
+    const remote = snap.val();
+    if (!remote) return;
+    applyHabitCompareSettings(remote);
+    saveHabitCompareSettingsLocal();
+    rerenderIfActiveTab(["history"]);
+  });
+
+  bindRemote(HABIT_CHECKS_PATH, (snap) => {
+    habitChecks = applyQueuedHabitRemoteValue(HABIT_CHECKS_PATH, snap.val() || {}) || {};
+    invalidateDominantCache();
+    markHistoryDataChanged("remote:checks");
+    saveCache();
+    rerender();
+    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+  });
+
+  bindRemote(HABIT_COUNTS_PATH, (snap) => {
+    habitCounts = applyQueuedHabitRemoteValue(HABIT_COUNTS_PATH, snap.val() || {}) || {};
+    invalidateDominantCache();
+    markHistoryDataChanged("remote:counts");
+    saveCache();
+    rerender();
+    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+  });
+
+  bindRemote(HABIT_ACTIVE_SESSIONS_PATH, (snap) => {
+    activeSessions = normalizeActiveSessionsStore(applyQueuedHabitRemoteValue(HABIT_ACTIVE_SESSIONS_PATH, snap.val() || {}) || {});
+    syncPrimaryRunningSession();
+    saveCache();
+    updateSessionUI();
+    updateCompareLiveInterval();
+    rerenderIfActiveTab(["today", "schedule", "history"]);
+  });
+
+  bindRemote(HABIT_SESSIONS_PATH, (snap) => {
+    const raw = applyQueuedHabitRemoteValue(HABIT_SESSIONS_PATH, snap.val() || {}) || {};
+    debugHabitsSync("onValue:habitSessions raw", raw);
+    const work = activeHabits().find((h) => isWorkHabit(h));
+    if (work) {
+      debugWorkShift("[WORK] onValue workShifts", null);
+      debugWorkShift("[WORK] onValue habitSessions(work)", {
+        dateKey: selectedDateKey,
+        value: raw?.[work.id]?.[selectedDateKey] ?? null
+      });
+    }
+    applyPendingSessionWrites(raw);
+    const norm = normalizeSessionsStore(raw, true);
+    habitSessions = norm.normalized;
+    habitSessionTimeline = norm.timeline || {};
+    habitSessionTimelineCoverage = norm.coverage || {};
+    debugHabitsSync("onValue:habitSessions normalized", habitSessions);
+    invalidateDominantCache();
+    markHistoryDataChanged("remote:sessions");
+    saveCache();
+    rerender();
+    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+  });
+
+  remoteBound = true;
+}
+
+async function initHabitsLegacy() {
+  if (!currentUid) return;
+  if (habitsRuntimeReady || habitsRuntimeInitializing) return;
+  habitsViewVisible = true;
+  habitsRuntimeInitializing = true;
+  const startedAt = performance.now();
+  logHabitsInitStep("init:start");
+  try {
+    await traceHabitsInitStep("readCache", () => {
+      readCache();
+    });
+    await traceHabitsInitStep("hydrateOfflineSnapshot", () => hydrateHabitsFromOfflineSnapshot());
+    await traceHabitsInitStep("loadSessionSelection", () => {
+      loadSessionSelection();
+    });
+    await traceHabitsInitStep("loadHeatmapYear", () => {
+      loadHeatmapYear();
+    });
+    await traceHabitsInitStep("loadHistoryRange", () => {
+      loadHistoryRange();
+    });
+    await traceHabitsInitStep("loadCompareSettings", () => {
+      loadHabitCompareSettingsLocal();
+    });
+    await traceHabitsInitStep("ensureUnknownHabit", () => {
+      ensureUnknownHabit(true);
+    });
+    await traceHabitsInitStep("ensureSessionOverlay", () => {
+      ensureSessionOverlayInBody();
+    });
+    await traceHabitsInitStep("handleShortcutUrl", () => {
+      handleShortcutUrlOnce();
+    });
+    await traceHabitsInitStep("bindEvents", () => {
+      bindEvents();
+    });
+    await traceHabitsInitStep("loadScheduleFromRemote", () => loadScheduleFromRemote());
+    await traceHabitsInitStep("listenRemote", () => {
+      listenRemote();
+    });
+    await traceHabitsInitStep("renderHabits", () => {
+      renderHabits();
+    });
+    await traceHabitsInitStep("maybeAutoCloseScheduleDay", () => {
+      maybeAutoCloseScheduleDay();
+    });
+    scheduleAutoCloseInterval = window.setInterval(maybeAutoCloseScheduleDay, 600000);
+    if (getActiveSessionsList().length) {
+      sessionInterval = setInterval(updateSessionUI, 1000);
+    }
+    habitsResizeHandler = () => {
+      if (habitDonutChart) habitDonutChart.resize();
+    };
+    window.addEventListener("resize", habitsResizeHandler);
+    habitsRuntimeReady = true;
+    logHabitsInitStep("init:ready", {
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+  } catch (error) {
+    logHabitsInitStep("init:error", {
+      durationMs: Math.round(performance.now() - startedAt),
+      message: error?.message || String(error || ""),
+      stack: error?.stack || "",
+    }, "error");
+    throw error;
+  } finally {
+    habitsRuntimeInitializing = false;
+  }
 }
 
 
@@ -12245,20 +12976,47 @@ async function initHabits() {
   if (habitsRuntimeReady || habitsRuntimeInitializing) return;
   habitsViewVisible = true;
   habitsRuntimeInitializing = true;
+  const startedAt = performance.now();
+  logHabitsInitStep("init:start");
   try {
-    readCache();
-    loadSessionSelection();
-    loadHeatmapYear();
-    loadHistoryRange();
-    loadHabitCompareSettingsLocal();
-    ensureUnknownHabit(true);
-    ensureSessionOverlayInBody();
-    handleShortcutUrlOnce();
-    bindEvents();
-    await loadScheduleFromRemote();
-    listenRemote();
-    renderHabits();
-    maybeAutoCloseScheduleDay();
+    await traceHabitsInitStep("readCache", () => {
+      readCache();
+    });
+    await traceHabitsInitStep("hydrateOfflineSnapshot", () => hydrateHabitsFromOfflineSnapshot());
+    await traceHabitsInitStep("loadSessionSelection", () => {
+      loadSessionSelection();
+    });
+    await traceHabitsInitStep("loadHeatmapYear", () => {
+      loadHeatmapYear();
+    });
+    await traceHabitsInitStep("loadHistoryRange", () => {
+      loadHistoryRange();
+    });
+    await traceHabitsInitStep("loadCompareSettings", () => {
+      loadHabitCompareSettingsLocal();
+    });
+    await traceHabitsInitStep("ensureUnknownHabit", () => {
+      ensureUnknownHabit(true);
+    });
+    await traceHabitsInitStep("ensureSessionOverlay", () => {
+      ensureSessionOverlayInBody();
+    });
+    await traceHabitsInitStep("handleShortcutUrl", () => {
+      handleShortcutUrlOnce();
+    });
+    await traceHabitsInitStep("bindEvents", () => {
+      bindEvents();
+    });
+    await traceHabitsInitStep("loadScheduleFromRemote", () => loadScheduleFromRemote());
+    await traceHabitsInitStep("listenRemote", () => {
+      listenRemote();
+    });
+    await traceHabitsInitStep("renderHabits", () => {
+      renderHabits();
+    });
+    await traceHabitsInitStep("maybeAutoCloseScheduleDay", () => {
+      maybeAutoCloseScheduleDay();
+    });
     scheduleAutoCloseInterval = window.setInterval(maybeAutoCloseScheduleDay, 600000);
     if (getActiveSessionsList().length) {
       sessionInterval = setInterval(updateSessionUI, 1000);
@@ -12268,6 +13026,16 @@ async function initHabits() {
     };
     window.addEventListener("resize", habitsResizeHandler);
     habitsRuntimeReady = true;
+    logHabitsInitStep("init:ready", {
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+  } catch (error) {
+    logHabitsInitStep("init:error", {
+      durationMs: Math.round(performance.now() - startedAt),
+      message: error?.message || String(error || ""),
+      stack: error?.stack || "",
+    }, "error");
+    throw error;
   } finally {
     habitsRuntimeInitializing = false;
   }
@@ -12275,15 +13043,28 @@ async function initHabits() {
 
 export async function onShow() {
   const nextUid = auth.currentUser?.uid ?? null;
+  logHabitsInitStep("view:onShow:start", {
+    nextUid: nextUid || "",
+    currentUid: currentUid || "",
+  });
   if (nextUid && nextUid !== currentUid) setUserPaths(nextUid);
   if (!habitsRuntimeReady && !habitsRuntimeInitializing) {
     habitsViewVisible = true;
     await initHabits();
+    logHabitsInitStep("view:onShow:ready", {
+      hydratedFromInit: true,
+    });
     return;
   }
   const wasHidden = !habitsViewVisible;
   habitsViewVisible = true;
-  if (!wasHidden) return;
+  if (!wasHidden) {
+    logHabitsInitStep("view:onShow:ready", {
+      hydratedFromInit: false,
+      alreadyVisible: true,
+    });
+    return;
+  }
   ensureSessionOverlayInBody();
   if (currentUid && !remoteBound) listenRemote();
   maybeAutoCloseScheduleDay();
@@ -12294,6 +13075,10 @@ export async function onShow() {
   updateSessionUI();
   updateCompareLiveInterval();
   habitsResizeHandler?.();
+  logHabitsInitStep("view:onShow:ready", {
+    hydratedFromInit: false,
+    alreadyVisible: false,
+  });
 }
 
 export function onHide() {

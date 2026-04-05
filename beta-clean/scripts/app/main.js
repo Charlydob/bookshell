@@ -12,8 +12,11 @@ import {
   ref,
   update,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-import { isActiveTabReselect, resetTabToRoot } from "./nav-root-reset.js";
-import { initSessionQuickstart } from "./session-quickstart.js";
+import {
+  initSyncManager,
+  notifySyncUserChanged,
+  subscribeSyncState,
+} from "../shared/services/sync-manager.js?v=2026-04-05-v5";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -22,7 +25,18 @@ const DEFAULT_VIEW_ID = "view-books";
 const HABITS_VIEW_ID = "view-habits";
 const SHELL_STATE_KEY = "__bookshellCleanShellState";
 const APP_BOOT_TS = performance.now();
+const ECHARTS_LIKELY_VIEW_IDS = new Set([
+  "view-finance",
+  "view-games",
+  "view-habits",
+  "view-media",
+  "view-gym",
+  "view-improvements",
+  "view-world",
+]);
 const loadedStyles = new Map();
+let navRootResetApiPromise = null;
+let sessionQuickstartPromise = null;
 const NAV_DEFAULT_GROUP_LABEL = "Grupo";
 const NAV_GROUP_EMOJI_FALLBACK = "🗂️";
 const NAV_LONG_PRESS_MS = 420;
@@ -39,11 +53,304 @@ const NAV_VIEW_META = {
   "view-improvements": { label: "Mejoras" },
   "view-gym": { label: "Gym" },
 };
+const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
+const HABITS_MODULE_VERSION = "2026-04-05-v5";
+
+function getAppPerfStore() {
+  if (!window[APP_PERF_STORE_KEY]) {
+    window[APP_PERF_STORE_KEY] = {
+      appBootStartedAt: Date.now(),
+      appBootStartedPerf: APP_BOOT_TS,
+      boot: {
+        initialLoadMs: 0,
+      },
+      views: {},
+    };
+  }
+
+  return window[APP_PERF_STORE_KEY];
+}
+
+function recordAppBootMetrics(patch = {}) {
+  const store = getAppPerfStore();
+  store.boot = {
+    ...store.boot,
+    ...patch,
+  };
+}
+
+function recordViewMetrics(viewId, patch = {}) {
+  const safeViewId = String(viewId || "").trim();
+  if (!safeViewId) return;
+  const store = getAppPerfStore();
+  const current = store.views[safeViewId] || {};
+  store.views[safeViewId] = {
+    label: NAV_VIEW_META[safeViewId]?.label || safeViewId,
+    ...current,
+    ...patch,
+  };
+}
+
+function buildViewInitDebug(viewId, extra = {}) {
+  return {
+    viewId,
+    online: navigator.onLine,
+    serviceWorkerControlled: !!navigator.serviceWorker?.controller,
+    currentViewId: getCurrentViewId?.() || "",
+    at: new Date().toISOString(),
+    ...extra,
+  };
+}
+
+function logViewInit(viewId, phase, extra = {}, level = "info") {
+  const payload = buildViewInitDebug(viewId, { phase, ...extra });
+  const state = getShellState();
+  if (!Array.isArray(state.viewInitLog)) {
+    state.viewInitLog = [];
+  }
+  state.viewInitLog.push(payload);
+  window.__bookshellViewInitLog = state.viewInitLog;
+
+  const logger = typeof console[level] === "function" ? console[level] : console.log;
+  logger.call(console, `[view:init] ${viewId} ${phase}`, payload);
+}
+
+function logNetworkDebug(phase, extra = {}, level = "info") {
+  const payload = {
+    phase,
+    online: navigator.onLine,
+    serviceWorkerControlled: !!navigator.serviceWorker?.controller,
+    currentViewId: getCurrentViewId?.() || "",
+    uid: auth.currentUser?.uid || "",
+    at: new Date().toISOString(),
+    ...extra,
+  };
+  const state = getShellState();
+  if (!Array.isArray(state.networkLog)) {
+    state.networkLog = [];
+  }
+  state.networkLog.push(payload);
+  window.__bookshellNetworkLog = state.networkLog;
+
+  const logger = typeof console[level] === "function" ? console[level] : console.log;
+  logger.call(console, `[network] ${phase}`, payload);
+}
+
+function renderViewUnavailableFallback(root, viewId, message = "") {
+  if (!root) return;
+  const label = NAV_VIEW_META[viewId]?.label || "vista";
+  const isOnline = navigator.onLine;
+  const eyebrow = isOnline ? "Carga pendiente" : "Modo offline";
+  const fallbackDetail = String(message || "").trim() || (isOnline
+    ? "Esta vista no se pudo inicializar en este momento."
+    : "El contenido de esta vista no esta disponible sin conexion en este dispositivo.");
+  logViewInit(viewId, "fallback:rendered", {
+    eyebrow,
+    message: fallbackDetail,
+  }, isOnline ? "warn" : "info");
+  const detail = String(message || "").trim() || "El contenido de esta vista no estÃ¡ disponible sin conexiÃ³n en este dispositivo.";
+  root.innerHTML = `
+    <section class="shell-view-fallback">
+      <p class="shell-view-fallback-eyebrow">${escapeHtml(eyebrow)}</p>
+      <h3>${escapeHtml(label)}</h3>
+      <p>${escapeHtml(fallbackDetail)}</p>
+    </section>
+  `;
+}
+
+function formatSyncTimestamp(ts) {
+  const value = Number(ts) || 0;
+  if (!value) return "";
+  try {
+    return new Date(value).toLocaleTimeString("es-ES", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch (_) {
+    return "";
+  }
+}
+
+function ensureSyncIndicatorTextNode(indicator) {
+  if (!(indicator instanceof HTMLElement)) return null;
+
+  let textNode = indicator.querySelector(".sync-text");
+  if (textNode) return textNode;
+
+  textNode = document.createElement("span");
+  textNode.className = "sync-text";
+
+  Array.from(indicator.childNodes).forEach((node) => {
+    if (node.nodeType !== Node.TEXT_NODE) return;
+    const value = node.textContent || "";
+    if (value.trim()) {
+      textNode.textContent = [textNode.textContent, value.trim()].filter(Boolean).join(" ");
+    }
+    indicator.removeChild(node);
+  });
+
+  indicator.append(textNode);
+
+  return textNode;
+}
+
+function setSyncIndicatorExpanded(indicator, isOpen) {
+  if (!(indicator instanceof HTMLElement)) return;
+  indicator.classList.toggle("is-open", isOpen);
+  indicator.setAttribute("aria-expanded", String(isOpen));
+}
+
+function prepareSyncIndicator(indicator) {
+  if (!(indicator instanceof HTMLElement)) return null;
+
+  const textNode = ensureSyncIndicatorTextNode(indicator);
+  if (!indicator.hasAttribute("aria-label")) {
+    indicator.setAttribute("aria-label", "Estado de sincronización");
+  }
+
+  if (indicator instanceof HTMLButtonElement) {
+    indicator.type = "button";
+  } else {
+    indicator.setAttribute("role", "button");
+    if (!indicator.hasAttribute("tabindex")) {
+      indicator.tabIndex = 0;
+    }
+  }
+
+  if (!indicator.hasAttribute("aria-expanded")) {
+    indicator.setAttribute("aria-expanded", "false");
+  }
+
+  return textNode;
+}
+
+function toggleSyncIndicator(indicator) {
+  if (!(indicator instanceof HTMLElement) || indicator.classList.contains("hidden")) return;
+  prepareSyncIndicator(indicator);
+  setSyncIndicatorExpanded(indicator, !indicator.classList.contains("is-open"));
+}
+
+function renderGlobalSyncIndicator(snapshot) {
+  const indicator = document.getElementById("app-sync-indicator");
+  if (!indicator) return;
+
+  const textNode = prepareSyncIndicator(indicator);
+  if (!textNode) return;
+
+  const isAuthenticated = Boolean(auth.currentUser?.uid);
+  const hasChanges = (Number(snapshot?.totalCount) || 0) > 0;
+  if (!isAuthenticated && !hasChanges) {
+    setSyncIndicatorExpanded(indicator, false);
+    indicator.classList.add("hidden");
+    return;
+  }
+
+  let text = "Sincronizado";
+  let tone = "synced";
+  if (snapshot?.syncing || (Number(snapshot?.syncingCount) || 0) > 0) {
+    text = "Sincronizando...";
+    tone = "syncing";
+  } else if ((Number(snapshot?.failedCount) || 0) > 0) {
+    text = `${snapshot.failedCount} con error`;
+    tone = "error";
+  } else if ((Number(snapshot?.totalCount) || 0) > 0) {
+    text = `${snapshot.totalCount} pendiente${snapshot.totalCount === 1 ? "" : "s"}`;
+    tone = snapshot?.rtdbConnected ? "pending" : "offline";
+  } else if (!snapshot?.appOnline || !snapshot?.rtdbConnected) {
+    text = "Sin conexiÃ³n";
+    tone = "offline";
+  }
+
+  const timeLabel = formatSyncTimestamp(snapshot?.lastSyncAt);
+  const indicatorText = timeLabel && tone === "synced" ? `${text} · ${timeLabel}` : text;
+  indicator.dataset.state = tone;
+  textNode.textContent = indicatorText;
+  indicator.setAttribute("aria-label", `Estado de sincronización: ${indicatorText}`);
+  indicator.classList.remove("hidden");
+}
+
+function bindSyncIndicatorToggles() {
+  const state = getShellState();
+  if (state.syncIndicatorToggleBound) return;
+
+  document.querySelectorAll(".app-sync-indicator").forEach((indicator) => {
+    prepareSyncIndicator(indicator);
+    setSyncIndicatorExpanded(indicator, indicator.classList.contains("is-open"));
+  });
+
+  document.addEventListener("click", (event) => {
+    const indicator = event.target?.closest?.(".app-sync-indicator");
+    if (!(indicator instanceof HTMLElement)) return;
+    toggleSyncIndicator(indicator);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    const indicator = event.target?.closest?.(".app-sync-indicator");
+    if (!(indicator instanceof HTMLElement) || indicator instanceof HTMLButtonElement) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggleSyncIndicator(indicator);
+  });
+
+  state.syncIndicatorToggleBound = true;
+}
+
+function bindGlobalSyncIndicator() {
+  const state = getShellState();
+  if (state.syncIndicatorUnsubscribe) return;
+  logNetworkDebug("sync:subscribe:start");
+  state.syncIndicatorUnsubscribe = subscribeSyncState((snapshot) => {
+    logNetworkDebug("sync:state", {
+      connected: Boolean(snapshot?.connected),
+      syncing: Boolean(snapshot?.syncing),
+      totalCount: Number(snapshot?.totalCount) || 0,
+      pendingCount: Number(snapshot?.pendingCount) || 0,
+      failedCount: Number(snapshot?.failedCount) || 0,
+    });
+    renderGlobalSyncIndicator(snapshot);
+  });
+}
+
+function bindNetworkDebug() {
+  const state = getShellState();
+  if (state.networkDebugBound) return;
+
+  const handleOnline = () => {
+    logNetworkDebug("browser:online");
+  };
+  const handleOffline = () => {
+    logNetworkDebug("browser:offline", {}, "warn");
+  };
+
+  window.addEventListener("online", handleOnline);
+  window.addEventListener("offline", handleOffline);
+  logNetworkDebug("boot");
+  state.networkDebugBound = true;
+}
 
 function updateAppViewportHeightVar() {
   const viewportHeight = window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 0;
   if (!viewportHeight) return;
   document.documentElement.style.setProperty("--app-dvh", `${Math.round(viewportHeight)}px`);
+}
+
+function scheduleIdleTask(task, { delayMs = 0, timeout = 4000 } = {}) {
+  requestAnimationFrame(() => {
+    window.setTimeout(() => {
+      const runTask = () => {
+        Promise.resolve(task()).catch((error) => {
+          console.warn("[shell] tarea idle fallo", error);
+        });
+      };
+
+      if (typeof window.requestIdleCallback === "function") {
+        window.requestIdleCallback(runTask, { timeout });
+        return;
+      }
+
+      runTask();
+    }, delayMs);
+  });
 }
 
 function bindViewportHeightVar() {
@@ -52,6 +359,48 @@ function bindViewportHeightVar() {
   window.addEventListener("orientationchange", updateAppViewportHeightVar, { passive: true });
   window.visualViewport?.addEventListener("resize", updateAppViewportHeightVar, { passive: true });
   window.visualViewport?.addEventListener("scroll", updateAppViewportHeightVar, { passive: true });
+}
+
+function shouldWarmLikelyHeavyVendors(viewId) {
+  const candidateIds = new Set([
+    String(viewId || "").trim(),
+    String(getInitialView() || "").trim(),
+    String(window.localStorage.getItem(LAST_VIEW_KEY) || "").trim(),
+  ]);
+  if (![...candidateIds].some((candidateId) => ECHARTS_LIKELY_VIEW_IDS.has(candidateId))) {
+    return false;
+  }
+
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
+  if (connection?.saveData) return false;
+  return document.visibilityState !== "hidden";
+}
+
+function scheduleLikelyVendorWarmup(viewId) {
+  if (!shouldWarmLikelyHeavyVendors(viewId)) return;
+
+  const state = getShellState();
+  if (state.echartsWarmScheduled) return;
+  state.echartsWarmScheduled = true;
+
+  scheduleIdleTask(async () => {
+    state.echartsWarmScheduled = false;
+    const { warmEcharts } = await import("../shared/vendors/echarts.js");
+    warmEcharts({ idle: false });
+  }, { delayMs: 1200, timeout: 5000 });
+}
+
+async function registerAppServiceWorker() {
+  if (!("serviceWorker" in navigator)) return null;
+  try {
+    const swUrl = new URL("../../service-worker.js", import.meta.url);
+    return await navigator.serviceWorker.register(swUrl, {
+      scope: new URL("../../", import.meta.url).pathname,
+    });
+  } catch (error) {
+    console.warn("[shell] no se pudo registrar el service worker", error);
+    return null;
+  }
 }
 
 const viewModules = {
@@ -83,7 +432,7 @@ const viewModules = {
   "view-habits": {
     cssUrl: "../../styles/modules/habits.css",
     htmlUrl: "../../views/habits.html",
-    moduleLoader: () => import("../modules/habits/index.js"),
+    moduleLoader: () => import(`../modules/habits/index.js?v=${HABITS_MODULE_VERSION}`),
   },
   "view-games": {
     cssUrl: "../../styles/modules/games.css",
@@ -125,9 +474,60 @@ function getViews() {
   return Array.from(document.querySelectorAll(".view[id]"));
 }
 
-async function fetchHtml(htmlUrl) {
+function getViewModuleState(viewId) {
+  const state = getShellState();
+  if (!state.moduleStates) {
+    state.moduleStates = {};
+  }
+
+  if (!state.moduleStates[viewId]) {
+    state.moduleStates[viewId] = {
+      htmlLoaded: false,
+      initialized: false,
+      module: null,
+      pending: null,
+      shellPending: null,
+      shellFailed: false,
+    };
+  }
+
+  return state.moduleStates[viewId];
+}
+
+function getCurrentViewId() {
+  return String(window.__bookshellCurrentViewId || document.documentElement.dataset.currentViewId || "").trim();
+}
+
+async function getNavRootResetApi() {
+  if (!navRootResetApiPromise) {
+    navRootResetApiPromise = import("./nav-root-reset.js").catch((error) => {
+      navRootResetApiPromise = null;
+      throw error;
+    });
+  }
+
+  return navRootResetApiPromise;
+}
+
+function ensureSessionQuickstartReady() {
+  if (!sessionQuickstartPromise) {
+    sessionQuickstartPromise = import("./session-quickstart.js")
+      .then(({ initSessionQuickstart }) => {
+        initSessionQuickstart({ ensureHabitsApi: ensureHabitsApiReady });
+        return true;
+      })
+      .catch((error) => {
+        sessionQuickstartPromise = null;
+        throw error;
+      });
+  }
+
+  return sessionQuickstartPromise;
+}
+
+async function fetchHtml(htmlUrl, { highPriority = false } = {}) {
   const absoluteUrl = new URL(htmlUrl, import.meta.url);
-  const response = await fetch(absoluteUrl);
+  const response = await fetch(absoluteUrl, highPriority ? { priority: "high" } : undefined);
   if (!response.ok) {
     throw new Error(`[shell] no se pudo cargar ${absoluteUrl.pathname}`);
   }
@@ -135,7 +535,7 @@ async function fetchHtml(htmlUrl) {
   return response.text();
 }
 
-function loadStyleOnce(href) {
+function loadStyleOnce(href, { highPriority = false } = {}) {
   const absoluteUrl = new URL(href, import.meta.url).href;
   if (loadedStyles.has(absoluteUrl)) {
     return loadedStyles.get(absoluteUrl);
@@ -151,6 +551,9 @@ function loadStyleOnce(href) {
   const link = document.createElement("link");
   link.rel = "stylesheet";
   link.href = absoluteUrl;
+  if (highPriority && "fetchPriority" in link) {
+    link.fetchPriority = "high";
+  }
 
   const pending = new Promise((resolve, reject) => {
     link.addEventListener("load", () => resolve(link), { once: true });
@@ -178,60 +581,156 @@ async function callViewHook(viewId, hookName) {
   }
 }
 
-async function ensureViewModule(viewId, { runOnShow = true } = {}) {
-  const state = getShellState();
+async function ensureViewShell(viewId, { highPriority = false } = {}) {
   const config = viewModules[viewId];
   if (!config) return null;
 
-  if (!state.moduleStates) {
-    state.moduleStates = {};
-  }
-
-  if (!state.moduleStates[viewId]) {
-    state.moduleStates[viewId] = {
-      htmlLoaded: false,
-      initialized: false,
-      module: null,
-    };
-  }
-
-  const moduleState = state.moduleStates[viewId];
+  const moduleState = getViewModuleState(viewId);
   const root = document.getElementById(viewId);
   if (!root) return null;
 
-  if (!moduleState.pending) {
-    moduleState.pending = (async () => {
-      if (!moduleState.htmlLoaded) {
-        const [html] = await Promise.all([
-          fetchHtml(config.htmlUrl),
-          config.cssUrl ? loadStyleOnce(config.cssUrl) : Promise.resolve(null),
-        ]);
-        root.innerHTML = await html;
-        moduleState.htmlLoaded = true;
+  if (!moduleState.shellPending) {
+    moduleState.shellPending = (async () => {
+      if (!moduleState.htmlLoaded || moduleState.shellFailed) {
+        const shellStartedAt = performance.now();
+        logViewInit(viewId, "shell:start", { highPriority });
+        try {
+          const html = await fetchHtml(config.htmlUrl, { highPriority });
+          if (config.cssUrl) {
+            try {
+              await loadStyleOnce(config.cssUrl, { highPriority });
+            } catch (styleError) {
+              console.warn(`[shell] no se pudo cargar la hoja de ${viewId}`, styleError);
+            }
+          }
+          root.innerHTML = html;
+          moduleState.htmlLoaded = true;
+          moduleState.shellFailed = false;
+          recordViewMetrics(viewId, {
+            shellLoadMs: Math.round(performance.now() - shellStartedAt),
+            shellReadyAt: Date.now(),
+            shellOfflineFallback: false,
+          });
+          logViewInit(viewId, "shell:ready", {
+            shellLoadMs: Math.round(performance.now() - shellStartedAt),
+          });
+        } catch (error) {
+          moduleState.htmlLoaded = false;
+          moduleState.shellFailed = true;
+          renderViewUnavailableFallback(
+            root,
+            viewId,
+            navigator.onLine
+              ? "No se pudo reconstruir esta vista ahora mismo. Puedes seguir usando el resto de la app."
+              : "Esta vista no estÃ¡ cacheada todavÃ­a. Cuando vuelvas a tener red se cargarÃ¡ automÃ¡ticamente.",
+          );
+          recordViewMetrics(viewId, {
+            shellLoadMs: Math.round(performance.now() - shellStartedAt),
+            shellReadyAt: Date.now(),
+            shellOfflineFallback: true,
+            lastError: String(error?.message || error || ""),
+          });
+          logViewInit(viewId, "shell:error", {
+            message: String(error?.message || error || ""),
+            stack: String(error?.stack || ""),
+          }, "error");
+        }
         releaseBootSplashForShell(root);
       } else if (config.cssUrl) {
-        await loadStyleOnce(config.cssUrl);
+        await loadStyleOnce(config.cssUrl, { highPriority });
       }
+      return root;
+    })().finally(() => {
+      moduleState.shellPending = null;
+    });
+  }
 
-      if (!moduleState.module) {
-        moduleState.module = await config.moduleLoader();
-      }
+  return moduleState.shellPending;
+}
 
-      if (!moduleState.initialized && typeof moduleState.module.init === "function") {
-        await moduleState.module.init({ root, viewId });
-        moduleState.initialized = true;
+async function ensureViewModule(viewId, { runOnShow = true, highPriority = false } = {}) {
+  const config = viewModules[viewId];
+  if (!config) return null;
+
+  const root = await ensureViewShell(viewId, { highPriority });
+  if (!root) return null;
+
+  const moduleState = getViewModuleState(viewId);
+  if (!moduleState.pending) {
+    moduleState.pending = (async () => {
+      try {
+        if (!moduleState.module) {
+          logViewInit(viewId, "module:import:start", { highPriority });
+          moduleState.module = await config.moduleLoader();
+          logViewInit(viewId, "module:import:ready", {
+            exports: Object.keys(moduleState.module || {}),
+          });
+        }
+
+        if (!moduleState.initialized && typeof moduleState.module.init === "function") {
+          const initStartedAt = performance.now();
+          logViewInit(viewId, "module:init:start");
+          await moduleState.module.init({ root, viewId });
+          moduleState.initialized = true;
+          recordViewMetrics(viewId, {
+            moduleInitMs: Math.round(performance.now() - initStartedAt),
+            moduleReadyAt: Date.now(),
+            moduleOfflineFallback: false,
+          });
+          logViewInit(viewId, "module:init:ready", {
+            moduleInitMs: Math.round(performance.now() - initStartedAt),
+          });
+        }
+        return moduleState.module;
+      } catch (error) {
+        moduleState.module = null;
+        moduleState.initialized = false;
+        renderViewUnavailableFallback(
+          root,
+          viewId,
+          navigator.onLine
+            ? "Esta vista no se pudo inicializar ahora mismo. Si acabas de actualizar la app, recarga para refrescar los modulos en cache."
+            : "La shell estÃ¡ disponible, pero esta vista necesita recursos que aÃºn no se han cacheado.",
+        );
+        recordViewMetrics(viewId, {
+          moduleReadyAt: Date.now(),
+          moduleOfflineFallback: true,
+          lastError: String(error?.message || error || ""),
+        });
+        logViewInit(viewId, "module:error", {
+          message: String(error?.message || error || ""),
+          stack: String(error?.stack || ""),
+        }, "error");
+        console.warn(`[shell] no se pudo inicializar ${viewId}`, error);
+        return null;
       }
     })().finally(() => {
       moduleState.pending = null;
     });
   }
-  await moduleState.pending;
 
-  if (runOnShow && typeof moduleState.module.onShow === "function") {
-    await moduleState.module.onShow({ root, viewId });
+  const module = await moduleState.pending;
+  if (!module) return null;
+
+  if (runOnShow && typeof module.onShow === "function") {
+    const onShowStartedAt = performance.now();
+    logViewInit(viewId, "module:onShow:start");
+    try {
+      await module.onShow({ root, viewId });
+      logViewInit(viewId, "module:onShow:ready", {
+        onShowMs: Math.round(performance.now() - onShowStartedAt),
+      });
+    } catch (error) {
+      logViewInit(viewId, "module:onShow:error", {
+        message: String(error?.message || error || ""),
+        stack: String(error?.stack || ""),
+        onShowMs: Math.round(performance.now() - onShowStartedAt),
+      }, "error");
+      throw error;
+    }
   }
 
-  return moduleState.module;
+  return module;
 }
 
 function isValidView(viewId) {
@@ -1344,15 +1843,31 @@ function syncViews(viewId) {
   window.scrollTo(0, 0);
 }
 
-async function setView(viewId, { pushHash = true } = {}) {
+async function maybeResetTabToRoot(viewId) {
+  if (!viewId || getCurrentViewId() !== String(viewId).trim()) return;
+
+  try {
+    const { resetTabToRoot } = await getNavRootResetApi();
+    await resetTabToRoot(viewId);
+  } catch (error) {
+    console.warn("[shell] no se pudo resetear la pestaña", error);
+  }
+}
+
+async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
   if (!isValidView(viewId)) return;
 
   const state = getShellState();
+  const viewSwitchStartedAt = performance.now();
   closeNavGroups();
   if (state.currentViewId === viewId) {
     syncNav(viewId);
     syncViews(viewId);
-    await ensureViewModule(viewId);
+    await ensureViewModule(viewId, { highPriority });
+    recordViewMetrics(viewId, {
+      lastShowMs: Math.round(performance.now() - viewSwitchStartedAt),
+      lastShownAt: Date.now(),
+    });
     return;
   }
 
@@ -1363,10 +1878,15 @@ async function setView(viewId, { pushHash = true } = {}) {
 
   syncViews(viewId);
   syncNav(viewId);
-  await ensureViewModule(viewId);
+  await ensureViewModule(viewId, { highPriority });
+  recordViewMetrics(viewId, {
+    lastShowMs: Math.round(performance.now() - viewSwitchStartedAt),
+    lastShownAt: Date.now(),
+  });
 
   state.currentViewId = viewId;
   window.localStorage.setItem(LAST_VIEW_KEY, viewId);
+  scheduleLikelyVendorWarmup(viewId);
 
   if (pushHash) {
     const nextHash = `#${viewId}`;
@@ -1427,14 +1947,10 @@ function bindNav() {
       event.preventDefault();
       const nextViewId = String(portalViewButton.dataset.navPortalView || "").trim();
       if (!isValidView(nextViewId)) return;
-      if (isActiveTabReselect(nextViewId)) {
-        void (async () => {
-          await resetTabToRoot(nextViewId);
-          await setView(nextViewId);
-        })();
-        return;
-      }
-      void setView(nextViewId);
+      void (async () => {
+        await maybeResetTabToRoot(nextViewId);
+        await setView(nextViewId);
+      })();
       return;
     }
 
@@ -1477,15 +1993,10 @@ function bindNav() {
     if (!isValidView(nextViewId)) return;
 
     event.preventDefault();
-    if (isActiveTabReselect(nextViewId)) {
-      void (async () => {
-        await resetTabToRoot(nextViewId);
-        await setView(nextViewId);
-      })();
-      return;
-    }
-
-    void setView(nextViewId);
+    void (async () => {
+      await maybeResetTabToRoot(nextViewId);
+      await setView(nextViewId);
+    })();
   }, true);
 
   document.addEventListener("pointerdown", (event) => {
@@ -1562,6 +2073,15 @@ function releaseBootSplashForShell(root) {
   if (state.bootSplashReleased) return;
   if (!root?.classList?.contains?.("view-active")) return;
   requestAnimationFrame(() => finishBootSplash());
+}
+
+function warmInitialViewShell() {
+  const viewId = getInitialView();
+  if (!isValidView(viewId)) return;
+
+  void ensureViewShell(viewId, { highPriority: true }).catch((error) => {
+    console.warn(`[shell] no se pudo adelantar la shell de ${viewId}`, error);
+  });
 }
 
 function ensureLoginUI() {
@@ -1707,6 +2227,7 @@ function bootShell() {
 
   initNavCustomization();
   bindNav();
+  bindGlobalSyncIndicator();
   state.booted = true;
 }
 
@@ -1728,6 +2249,7 @@ function bindAuthGate() {
 
   onUserChange(async (user) => {
     if (!user) {
+      void notifySyncUserChanged();
       if (state.currentViewId) {
         await callViewHook(state.currentViewId, "onHide");
         state.currentViewId = null;
@@ -1745,8 +2267,8 @@ function bindAuthGate() {
 
     setBootPhase("Conectando…", 38);
 
+    void notifySyncUserChanged();
     document.getElementById("loginBox")?.remove();
-    bootShell();
 
     void ensureUserSchema(user.uid).catch((error) => {
       console.warn("[schema] seed failed", error);
@@ -1764,11 +2286,21 @@ function bindAuthGate() {
 
     const viewId = getInitialView();
     try {
-      await setView(viewId, { pushHash: true });
+      await setView(viewId, { pushHash: true, highPriority: true });
       setBootPhase("Preparando interfaz…", 78);
     } finally {
       requestAnimationFrame(() => finishBootSplash());
     }
+
+    schedulePostBootTask(() => {
+      if (auth.currentUser?.uid !== user.uid) return;
+      bootShell();
+    }, 0);
+
+    schedulePostBootTask(() => {
+      if (auth.currentUser?.uid !== user.uid) return;
+      return ensureSessionQuickstartReady();
+    }, 0);
 
     schedulePostBootTask(async () => {
       if (auth.currentUser?.uid !== user.uid) return;
@@ -1778,6 +2310,11 @@ function bindAuthGate() {
       await preloadViewModule(HABITS_VIEW_ID);
     }, 180);
 
+    recordAppBootMetrics({
+      initialLoadMs: Math.round(performance.now() - APP_BOOT_TS),
+      authenticatedAt: Date.now(),
+      initialViewId: viewId,
+    });
     console.log("[auth] uid", user.uid);
     console.log("[perf] app-initial-load-ms", Math.round(performance.now() - APP_BOOT_TS));
   });
@@ -1785,7 +2322,15 @@ function bindAuthGate() {
   state.authBound = true;
 }
 
+warmInitialViewShell();
+void initSyncManager({
+  db,
+  getUserId: () => auth.currentUser?.uid || "",
+});
+bindSyncIndicatorToggles();
 bindAuthGate();
 bindViewportHeightVar();
-initSessionQuickstart({ ensureHabitsApi: ensureHabitsApiReady });
+bindNetworkDebug();
+bindGlobalSyncIndicator();
+scheduleIdleTask(() => registerAppServiceWorker(), { delayMs: 600, timeout: 3000 });
 window.__bookshellEnsureHabitsApi = ensureHabitsApiReady;

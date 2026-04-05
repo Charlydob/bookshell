@@ -1,5 +1,6 @@
 import { db, auth } from "../../shared/firebase/index.js";
 import { MET_CATALOG } from "./met-catalog.js";
+import { ensureEcharts } from "../../shared/vendors/echarts.js";
 
 import {
   ref,
@@ -15,6 +16,19 @@ if (!uid) throw new Error("[gym] No hay usuario autenticado");
 
 const $viewGym = document.getElementById("view-gym");
 if ($viewGym) {
+  let gymEchartsPromise = null;
+
+  function ensureGymEchartsReady() {
+    if (window.echarts?.init) {
+      return Promise.resolve(window.echarts);
+    }
+    if (!gymEchartsPromise) {
+      gymEchartsPromise = ensureEcharts().finally(() => {
+        gymEchartsPromise = null;
+      });
+    }
+    return gymEchartsPromise;
+  }
 
 
   const DEVICE_ID_KEY = "bookshell:gym:deviceId:v1";
@@ -1385,8 +1399,21 @@ function bindEvents() {
   }
 
   function initGymStatsChart() {
-    if (gymStatsChart || !$gymStatsChartHost) return;
+    if (gymStatsChart || !$gymStatsChartHost) return Boolean(gymStatsChart);
+    if (typeof echarts === "undefined") {
+      void ensureGymEchartsReady()
+        .then(() => {
+          if (!$gymStatsChartHost || !document.body.contains($gymStatsChartHost)) return;
+          initGymStatsChart();
+          renderStatsChart();
+        })
+        .catch((error) => {
+          console.warn("[gym] no se pudo cargar ECharts para stats", error);
+        });
+      return false;
+    }
     gymStatsChart = echarts.init($gymStatsChartHost);
+    return true;
   }
 
   function renderStatsControls() {
@@ -1517,7 +1544,6 @@ function bindEvents() {
 
   function renderStatsChart() {
     if (!$gymStatsChartHost || !$gymStatsEmpty) return;
-    initGymStatsChart();
     const { labels, values, yLabel, compareValues = null, compareLabel = "" } = buildStatsSeries();
     renderStatsKpis();
     const hasData = labels.length && values.length;
@@ -1527,6 +1553,7 @@ function bindEvents() {
       gymStatsChart?.clear();
       return;
     }
+    if (!initGymStatsChart()) return;
     gymStatsChart.setOption({
       grid: { left: 44, right: 18, top: 16, bottom: 32 },
       tooltip: { trigger: "axis" },
@@ -1821,8 +1848,21 @@ function bindEvents() {
   }
 
   function initGymExDetailChart() {
-    if (gymExDetailChart || !$gymExDetailChartHost) return;
+    if (gymExDetailChart || !$gymExDetailChartHost) return Boolean(gymExDetailChart);
+    if (typeof echarts === "undefined") {
+      void ensureGymEchartsReady()
+        .then(() => {
+          if (!$gymExDetailChartHost || !document.body.contains($gymExDetailChartHost)) return;
+          initGymExDetailChart();
+          renderExerciseDetailChart();
+        })
+        .catch((error) => {
+          console.warn("[gym] no se pudo cargar ECharts para detalle de ejercicio", error);
+        });
+      return false;
+    }
     gymExDetailChart = echarts.init($gymExDetailChartHost);
+    return true;
   }
 
   function openExerciseDetailModal(exerciseId) {
@@ -1913,7 +1953,6 @@ function bindEvents() {
 
   function renderExerciseDetailChart() {
     if (!$gymExDetailChartHost || !$gymExDetailEmpty) return;
-    initGymExDetailChart();
     const { labels, values, yLabel } = buildExerciseSeriesFor(
       gymExDetailSelection.exerciseId,
       gymExDetailSelection.metric
@@ -1925,6 +1964,7 @@ function bindEvents() {
       gymExDetailChart?.clear();
       return;
     }
+    if (!initGymExDetailChart()) return;
     gymExDetailChart.setOption({
       grid: { left: 44, right: 18, top: 16, bottom: 32 },
       tooltip: { trigger: "axis" },

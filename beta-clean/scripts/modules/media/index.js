@@ -7,10 +7,24 @@
 
 import { db, auth } from "../../shared/firebase/index.js";
 import { ref, onValue, runTransaction, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { ensureEcharts } from "../../shared/vendors/echarts.js";
 import { TMDB_API_KEY, TMDB_READ_TOKEN } from "./tmdb.js";
 
 const MEDIA_PATH = (userId) => `v2/users/${userId}/movies/media`;
 let moduleInitialized = false;
+let mediaEchartsPromise = null;
+
+function ensureMediaEchartsReady() {
+  if (window.echarts?.init) {
+    return Promise.resolve(window.echarts);
+  }
+  if (!mediaEchartsPromise) {
+    mediaEchartsPromise = ensureEcharts().finally(() => {
+      mediaEchartsPromise = null;
+    });
+  }
+  return mediaEchartsPromise;
+}
 
 const LS_KEY = "bookshell.media.v3";
 const FILTERS_LS_KEY = "bookshell.media.filters.v1";
@@ -2918,6 +2932,18 @@ function renderDonut() {
   _legendSum = sumAll;
   renderDonutLegend();
 
+  if (typeof echarts === "undefined") {
+    void ensureMediaEchartsReady()
+      .then(() => {
+        if (!els.donutHost || !document.body.contains(els.donutHost)) return;
+        renderDonut();
+      })
+      .catch((error) => {
+        log("echarts donut load failed", error);
+      });
+    return;
+  }
+
   if (!donutChart) donutChart = echarts.init(els.donutHost);
 
   donutChart.setOption({
@@ -3030,6 +3056,12 @@ function renderMap() {
     label: r.es || r.en
   }));
 
+  if (!entries.length) {
+    try { mapChart?.dispose?.(); } catch (_) {}
+    mapChart = null;
+    return;
+  }
+
   // Si existe helper global (tu app ya lo usa en libros/recetas), úsalo
   if (typeof window.renderCountryHeatmap === "function") {
     try {
@@ -3048,6 +3080,17 @@ function renderMap() {
 
   // Fallback ECharts: requiere 'world' ya registrado por tu app
   try {
+    if (typeof echarts === "undefined") {
+      void ensureMediaEchartsReady()
+        .then(() => {
+          if (!els.mapHost || !document.body.contains(els.mapHost)) return;
+          renderMap();
+        })
+        .catch((error) => {
+          log("echarts map load failed", error);
+        });
+      return;
+    }
     if (!mapChart) mapChart = echarts.init(els.mapHost);
 
     const max = Math.max(1, ...entries.map(e => Number(e.value) || 0));

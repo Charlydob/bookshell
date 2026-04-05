@@ -1244,6 +1244,26 @@ onUserChange((user) => {
   bindDataSources();
 });
 
+function rerenderBooksViewOnShow() {
+  if (booksSnapshotHydrated) {
+    setBooksShellLoading(false);
+    renderBooks();
+  }
+
+  if (readingLogSnapshotHydrated) {
+    setCalendarShellLoading(false);
+    renderStats();
+    renderCalendar();
+  }
+}
+
+export function onShow() {
+  rerenderBooksViewOnShow();
+  requestAnimationFrame(() => {
+    rerenderBooksViewOnShow();
+  });
+}
+
 // === Render libros ===
 function isBookFinished(b) {
   const total = Number(b?.pages) || 0;

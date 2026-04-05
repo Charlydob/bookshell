@@ -2,6 +2,7 @@ import { renderCountryHeatmap } from "./world-heatmap.js";
 import { getCountryEnglishName, getCountryOptions, normalizeCountryInput } from "./countries.js";
 import { auth, db } from "../../shared/firebase/index.js";
 import { ref, get, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { ensureEcharts } from "../../shared/vendors/echarts.js";
 
 const LS_VISITS = "world_visits_v1";
 const LS_WATCH = "world_watchlist_v1";
@@ -374,7 +375,15 @@ export async function init() {
   }
 
   async function renderGeoPanel(geoJson, onFeatureClick, onSelection) {
-    if (!window.echarts || !geoJson?.features?.length) return false;
+    if (!geoJson?.features?.length) return false;
+    if (!window.echarts?.init) {
+      try {
+        await ensureEcharts();
+      } catch (error) {
+        console.warn("[world] no se pudo cargar ECharts para subdivisiones", error);
+        return false;
+      }
+    }
     if (typeof $map.__geoCleanup === "function") $map.__geoCleanup();
     $map.innerHTML = "";
     const mapId = `world-sub-${Date.now()}`;

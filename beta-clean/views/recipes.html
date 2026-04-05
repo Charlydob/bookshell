@@ -150,11 +150,11 @@
       <div class="macro-integration-settings">
         <label class="macro-integration-field">
           <span>Peso corporal (kg)</span>
-          <input type="number" id="macro-bodyweight-kg" min="0" step="0.1" placeholder="Opcional" />
+          <input type="number" id="macro-bodyweight-kg" min="0" step="0.1" inputmode="decimal" placeholder="Opcional" />
         </label>
         <label class="macro-integration-field">
           <span>Gasto por día trabajado (kcal)</span>
-          <input type="number" id="macro-work-kcal" min="0" step="10" value="700" />
+          <input type="number" id="macro-work-kcal" min="0" step="10" inputmode="numeric" value="700" />
         </label>
         <label class="macro-integration-field">
           <span>Hábitos de trabajo vinculados</span>
@@ -356,7 +356,7 @@
             <h4>Crear alimento manualmente</h4>
             <div class="macro-manual-base-pill">
               <span>Base</span>
-              <input id="macro-manual-base" type="number" value="100" />
+              <input id="macro-manual-base" type="number" inputmode="decimal" value="100" />
               <strong>g</strong>
             </div>
           </section>
@@ -372,27 +372,27 @@
             </label>
             <label class="macro-manual-field">
               <span class="macro-manual-label">Código de barras</span>
-              <input id="macro-manual-barcode" type="text" inputmode="numeric" placeholder="Opcional" />
+              <input id="macro-manual-barcode" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Opcional" />
             </label>
           </div>
 
           <div class="macro-manual-macro-grid" id="macros-inputs">
             <label class="macro-manual-metric macro-manual-metric-kcal">
               <span class="macro-manual-metric-label">Kcal</span>
-              <input id="macro-manual-kcal" type="number" value="0" />
+              <input id="macro-manual-kcal" type="number" inputmode="numeric" value="0" />
             </label>
             <label class="macro-manual-metric macro-manual-metric-carbs">
               <span class="macro-manual-metric-label">Carbs</span>
-              <input id="macro-manual-carbs" type="number" value="0" />
+              <input id="macro-manual-carbs" type="number" inputmode="decimal" value="0" />
               
             </label>
             <label class="macro-manual-metric macro-manual-metric-protein">
               <span class="macro-manual-metric-label">Proteína</span>
-              <input id="macro-manual-protein" type="number" value="0" />
+              <input id="macro-manual-protein" type="number" inputmode="decimal" value="0" />
             </label>
             <label class="macro-manual-metric macro-manual-metric-fat">
               <span class="macro-manual-metric-label">Grasa</span>
-              <input id="macro-manual-fat" type="number" value="0" />
+              <input id="macro-manual-fat" type="number" inputmode="decimal" value="0" />
             </label>
           </div>
 
@@ -441,7 +441,7 @@
 
           <label class="macro-field macro-product-barcode-field">
             <span class="macro-label">Código de barras</span>
-            <input id="macro-product-barcode" type="text" inputmode="numeric" placeholder="8410..." />
+            <input id="macro-product-barcode" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="8410..." />
           </label>
         </div>
 
@@ -489,7 +489,7 @@
     <label class="macro-field">
       <span class="macro-label">Base nutricional</span>
       <div class="macro-inline-qty">
-        <input id="macro-product-base" type="number" value="100">
+        <input id="macro-product-base" type="number" inputmode="decimal" value="100">
         <select id="macro-product-base-unit" class="macro-select">
           <option value="g">g</option>
           <option value="kg">kg</option>
@@ -505,22 +505,22 @@
 
     <label class="macro-field">
       <span class="macro-label">Kcal</span>
-      <input id="macro-product-kcal" type="number" placeholder="0" value="">
+      <input id="macro-product-kcal" type="number" inputmode="numeric" placeholder="0" value="">
     </label>
 
     <label class="macro-field">
       <span class="macro-label">Carbs</span>
-      <input id="macro-product-carbs" type="number" step="0.1" placeholder="0" value="">
+      <input id="macro-product-carbs" type="number" step="0.1" inputmode="decimal" placeholder="0" value="">
     </label>
 
     <label class="macro-field">
       <span class="macro-label">Protein</span>
-      <input id="macro-product-protein" type="number" step="0.1" placeholder="0" value="">
+      <input id="macro-product-protein" type="number" step="0.1" inputmode="decimal" placeholder="0" value="">
     </label>
 
     <label class="macro-field">
       <span class="macro-label">Fat</span>
-      <input id="macro-product-fat" type="number" step="0.1" placeholder="0" value="">
+      <input id="macro-product-fat" type="number" step="0.1" inputmode="decimal" placeholder="0" value="">
     </label>
 
   </div>
@@ -547,7 +547,7 @@
           <label class="macro-field">
             <span class="macro-label">Cantidad a añadir</span>
             <div class="macro-inline-qty">
-              <input id="macro-product-grams" type="number" value="100" />
+              <input id="macro-product-grams" type="number" inputmode="decimal" value="100" />
               <select id="macro-product-grams-unit" class="macro-select">
                 <option value="g">g</option>
                 <option value="kg">kg</option>
@@ -560,7 +560,7 @@
           <label class="macro-field">
             <span class="macro-label">Peso por unidad</span>
             <div class="macro-inline-qty">
-              <input id="macro-product-unit-weight" type="number" step="0.01" min="0" placeholder="Ej. 30" />
+              <input id="macro-product-unit-weight" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Ej. 30" />
               <select id="macro-product-unit-weight-unit" class="macro-select">
                 <option value="g">g</option>
                 <option value="ml">ml</option>
@@ -574,11 +574,11 @@
         <div class="macro-weight-diff-grid" aria-label="Diferencia de peso para cantidad">
           <label class="macro-field">
             <span class="macro-label">Peso inicial <span id="macro-product-weight-start-unit">(g)</span></span>
-            <input id="macro-product-weight-start" type="number" step="0.01" placeholder="Ej. 108" />
+            <input id="macro-product-weight-start" type="number" step="0.01" inputmode="decimal" placeholder="Ej. 108" />
           </label>
           <label class="macro-field">
             <span class="macro-label">Peso final <span id="macro-product-weight-end-unit">(g)</span></span>
-            <input id="macro-product-weight-end" type="number" step="0.01" placeholder="Ej. 82" />
+            <input id="macro-product-weight-end" type="number" step="0.01" inputmode="decimal" placeholder="Ej. 82" />
           </label>
         </div>
 
@@ -592,7 +592,7 @@
  <div class="macro-inline-cost-grid">
             <label class="macro-field">
               <span class="macro-label">Tamaño del paquete</span>
-              <input id="macro-product-package-amount" type="number" step="0.01" min="0" placeholder="Ej. 1" />
+              <input id="macro-product-package-amount" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Ej. 1" />
             </label>
             <label class="macro-field">
               <span class="macro-label">Unidad del paquete</span>
@@ -607,7 +607,7 @@
             </label>
             <label class="macro-field">
               <span class="macro-label">Precio envase (€)</span>
-              <input id="macro-product-price" type="number" step="0.01" min="0" placeholder="Opcional" />
+              <input id="macro-product-price" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Opcional" />
             </label>
           </div>
           
@@ -728,7 +728,7 @@
 <div class="form-grid row-2">
 <label class="field">
 <span class="field-label">Valoración</span>
-<input id="recipe-rating" max="5" min="0" step="0.5" type="number" value="4"/>
+<input id="recipe-rating" max="5" min="0" step="0.5" inputmode="decimal" type="number" value="4"/>
 </label>
 <label class="field">
 <span class="field-label">Última vez cocinada</span>
@@ -758,7 +758,7 @@
 <div class="form-grid row-2">
 <label class="field">
 <span class="field-label">Raciones</span>
-<input id="recipe-servings" min="1" step="1" type="number" value="1"/>
+<input id="recipe-servings" min="1" step="1" inputmode="numeric" type="number" value="1"/>
 </label>
 </div>
 <div class="hint" id="recipe-calc-summary">0 kcal · 0.00 €</div>
@@ -773,7 +773,7 @@
 </div>
 <div class="recipe-ingredient-picker" id="recipe-ingredient-picker">
 <select id="recipe-ingredient-product" class="builder-input"></select>
-<input id="recipe-ingredient-grams" class="builder-input" type="number" min="0" step="1" value="100"/>
+<input id="recipe-ingredient-grams" class="builder-input" type="number" min="0" step="1" inputmode="decimal" value="100"/>
 <button class="btn ghost btn-compact" id="recipe-ingredient-add-product" type="button">Añadir producto</button>
 </div>
 <div class="recipe-ingredients-list" id="recipe-ingredients-list"></div>

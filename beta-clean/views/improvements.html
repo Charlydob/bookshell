@@ -13,6 +13,7 @@
   <div class="improvements__windowTabs" role="tablist" aria-label="Vistas de mejoras">
     <button class="improvements__windowTab is-active" data-window="main" aria-selected="true" type="button">Principal</button>
     <button class="improvements__windowTab" data-window="stats" aria-selected="false" type="button">Estadistica</button>
+    <button class="improvements__windowTab" data-window="performance" aria-selected="false" type="button">Rendimiento</button>
   </div>
 
   <section class="improvements__windowPanel is-active" data-window-panel="main">
@@ -143,6 +144,28 @@
       </div>
 
       <div class="improvements__statsBreakdown" id="improvements-stats-breakdown"></div>
+    </section>
+  </section>
+
+  <section class="improvements__windowPanel" data-window-panel="performance">
+    <section class="glassCard improvements__perfShell">
+      <div class="improvements__sectionHead improvements__perfHead">
+        <div>
+          <p class="improvements__sectionLabel">Auditoria manual</p>
+          <h3 class="improvements__sectionTitle">Calcular rendimiento</h3>
+        </div>
+        <button class="btn primary btn-compact" id="improvements-performance-run-btn" type="button">Calcular rendimiento</button>
+      </div>
+
+      <p class="improvements__perfIntro" id="improvements-performance-intro">
+        Mide la shell, la UI y algunas operaciones internas solo cuando lo pides. No deja observadores activos al terminar.
+      </p>
+
+      <div class="improvements__perfSync" id="improvements-performance-sync"></div>
+      <div class="improvements__perfStatus" id="improvements-performance-status"></div>
+      <div class="improvements__perfSummary" id="improvements-performance-summary"></div>
+      <div class="improvements__perfMetrics" id="improvements-performance-metrics"></div>
+      <div class="improvements__perfFindings" id="improvements-performance-findings"></div>
     </section>
   </section>
 

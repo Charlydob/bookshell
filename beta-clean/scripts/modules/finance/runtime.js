@@ -20,6 +20,8 @@ import { DEVICE_KEY, HOME_PANEL_VIEW_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_
 import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './finance/ui.js';
 import { resolveFinancePath, resolveFinancePathCandidates } from './finance/data.js';
 import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, firebaseSafeKey, TICKET_IMPORT_SAMPLE_V1, resolveTicketMovementCategory } from './finance/import.js';
+import { ensureEcharts } from '../../shared/vendors/echarts.js';
+import { readProcessedJsonCache, writeProcessedJsonCache } from '../../shared/cache/processed-json-cache.js';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
@@ -32,6 +34,7 @@ const financeDerivedCache = {
   recurring: { recurringRef: null, monthMap: new Map() },
   categories: { categoriesKey: '', txRowsRef: null, rows: [] },
   accountModels: { accountsRef: null, legacyEntriesRef: null, btcEurPrice: Number.NaN, rangeMode: '', rows: [] },
+  accountMerge: { accountsRef: null, balanceRef: null, goalsRef: null, model: null },
   totalSeries: { accountsRef: null, rows: [] },
 };
 
@@ -61,8 +64,101 @@ function clearFinanceDerivedCaches() {
   financeDerivedCache.accountModels.btcEurPrice = Number.NaN;
   financeDerivedCache.accountModels.rangeMode = '';
   financeDerivedCache.accountModels.rows = [];
+  financeDerivedCache.accountMerge.accountsRef = null;
+  financeDerivedCache.accountMerge.balanceRef = null;
+  financeDerivedCache.accountMerge.goalsRef = null;
+  financeDerivedCache.accountMerge.model = null;
   financeDerivedCache.totalSeries.accountsRef = null;
   financeDerivedCache.totalSeries.rows = [];
+}
+
+let financeEchartsPromise = null;
+
+function hashString(value = '') {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function ensureFinanceEchartsReady() {
+  if (window.echarts?.init) {
+    return Promise.resolve(window.echarts);
+  }
+  if (!financeEchartsPromise) {
+    financeEchartsPromise = ensureEcharts().finally(() => {
+      financeEchartsPromise = null;
+    });
+  }
+  return financeEchartsPromise;
+}
+
+function buildFoodHistoryCacheKey(history = []) {
+  const signature = history
+    .map((row) => [
+      firebaseSafeKey(row.vendor || 'unknown') || 'unknown',
+      Number(row.ts || 0),
+      Number(row.qty || 0),
+      Number(row.unitPrice || row.price || 0),
+      String(row.unit || 'ud'),
+    ].join('|'))
+    .join('~');
+  return `finance:food-history-chart:v1:${hashString(signature)}`;
+}
+
+function readCachedFoodChartSeries(history = []) {
+  return readProcessedJsonCache(buildFoodHistoryCacheKey(history));
+}
+
+function writeCachedFoodChartSeries(history = [], value) {
+  return writeProcessedJsonCache(buildFoodHistoryCacheKey(history), value, {
+    ttlMs: 12 * 60 * 60 * 1000,
+  });
+}
+
+function buildFinanceStatsCacheKey({ monthKey, statsRange, statsScope, statsGroupBy, mode, includeUnlined, rows = [] }) {
+  const signature = rows
+    .map((row) => [
+      String(row.id || row.key || ''),
+      Number(row.ts || row.timestamp || row.createdAt || row.updatedAt || 0),
+      String(row.type || ''),
+      Number(row.amount || 0),
+      String(row.category || ''),
+      String(row.accountId || ''),
+      String(row.fromAccountId || ''),
+      String(row.toAccountId || ''),
+      String(row.store || ''),
+      String(row.mealType || ''),
+      String(row.foodId || ''),
+    ].join('|'))
+    .join('~');
+  return `finance:balance-donut:v1:${state.financePath}:${monthKey}:${statsRange}:${statsScope}:${statsGroupBy}:${mode}:${includeUnlined ? '1' : '0'}:${hashString(signature)}`;
+}
+
+function serializeFinanceProductMeta(meta = {}) {
+  return Object.fromEntries(
+    Object.entries(meta || {}).map(([label, value]) => [
+      label,
+      {
+        ...value,
+        units: Array.from(value?.units instanceof Set ? value.units : (Array.isArray(value?.units) ? value.units : [])),
+      },
+    ]),
+  );
+}
+
+function hydrateFinanceProductMeta(meta = {}) {
+  return Object.fromEntries(
+    Object.entries(meta || {}).map(([label, value]) => [
+      label,
+      {
+        ...value,
+        units: new Set(Array.isArray(value?.units) ? value.units : []),
+      },
+    ]),
+  );
 }
 
 function nowTs() { return Date.now(); }
@@ -540,6 +636,355 @@ function getCardLast4Duplicates(cardLast4 = '', currentAccountId = '') {
   const normalized = normalizeCardLast4(cardLast4);
   if (!normalized) return [];
   return (state.accounts || []).filter((account) => String(account?.id || '') !== String(currentAccountId || '') && normalizeCardLast4(account?.cardLast4 || '') === normalized);
+}
+
+const ACCOUNT_MERGE_STOPWORDS = new Set([
+  'banco',
+  'bank',
+  'cuenta',
+  'account',
+  'cta',
+  'tarjeta',
+  'card',
+  'visa',
+  'mastercard',
+  'master',
+  'debito',
+  'debit',
+  'credito',
+  'credit',
+  'prepago',
+  'prepaid',
+  'corriente',
+  'checking',
+  'ahorro',
+  'savings',
+  'shared',
+  'compartida',
+  'personal',
+  'main',
+  'principal',
+  'wallet',
+  'monedero',
+  'the',
+  'del',
+  'de',
+  'la',
+  'el',
+  'los',
+  'las',
+  'mi',
+  'my'
+]);
+
+const ACCOUNT_MERGE_TYPE_TOKENS = new Set([
+  'debito',
+  'debit',
+  'credito',
+  'credit',
+  'prepago',
+  'prepaid',
+  'corriente',
+  'checking',
+  'ahorro',
+  'savings',
+  'cash',
+  'efectivo',
+  'wallet',
+  'bitcoin',
+  'btc',
+  'crypto',
+  'cripto',
+  'shared',
+  'compartida'
+]);
+
+function normalizeAccountName(value = '') {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenizeAccountName(value = '') {
+  return normalizeAccountName(value).split(' ').filter(Boolean);
+}
+
+function getAccountEntryMap(account = {}) {
+  if (account?.entries && typeof account.entries === 'object' && !Array.isArray(account.entries)) return account.entries;
+  if (account?.daily && typeof account.daily === 'object' && !Array.isArray(account.daily)) return account.daily;
+  return {};
+}
+
+function getAccountEntryCount(account = {}) {
+  return normalizeDaily(getAccountEntryMap(account)).length;
+}
+
+function getAccountSnapshotCount(account = {}) {
+  return normalizeSnapshots(account?.snapshots || {}).length;
+}
+
+function getAccountSemanticTokens(account = {}) {
+  return tokenizeAccountName(account?.name || '')
+    .filter((token) => token.length > 1 && !ACCOUNT_MERGE_STOPWORDS.has(token));
+}
+
+function getAccountMergeExtraText(account = {}) {
+  return [
+    account?.alias,
+    account?.bank,
+    account?.bankName,
+    account?.entity,
+    account?.type,
+    account?.kind,
+    account?.nickname,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(' ');
+}
+
+function detectAccountTypeHint(account = {}, tokens = []) {
+  if (account?.isBitcoin || tokens.includes('bitcoin') || tokens.includes('btc') || tokens.includes('crypto') || tokens.includes('cripto')) return 'bitcoin';
+  if (tokens.includes('credito') || tokens.includes('credit')) return 'credit';
+  if (tokens.includes('debito') || tokens.includes('debit')) return 'debit';
+  if (tokens.includes('ahorro') || tokens.includes('savings')) return 'savings';
+  if (tokens.includes('corriente') || tokens.includes('checking')) return 'checking';
+  if (tokens.includes('cash') || tokens.includes('efectivo')) return 'cash';
+  if (account?.shared) return 'shared';
+  return '';
+}
+
+function buildAccountMergeUsageMap(accounts = state.accounts, txRows = balanceTxList()) {
+  const usage = {};
+  (accounts || []).forEach((account) => {
+    const id = String(account?.id || '').trim();
+    if (!id) return;
+    usage[id] = {
+      txRefs: 0,
+      recurringRefs: 0,
+      goalRefs: 0,
+      entryCount: getAccountEntryCount(account),
+      snapshotCount: getAccountSnapshotCount(account),
+      legacyCount: Object.keys(normalizeLegacyEntries(state.legacyEntries?.[id] || {})).length,
+    };
+  });
+
+  (txRows || []).forEach((row) => {
+    [row?.accountId, row?.fromAccountId, row?.toAccountId].forEach((accountId) => {
+      const id = String(accountId || '').trim();
+      if (!id || !usage[id]) return;
+      usage[id].txRefs += 1;
+    });
+  });
+
+  Object.values(state.balance?.recurring || {}).forEach((row) => {
+    [row?.accountId, row?.fromAccountId, row?.toAccountId].forEach((accountId) => {
+      const id = String(accountId || '').trim();
+      if (!id || !usage[id]) return;
+      usage[id].recurringRefs += 1;
+    });
+  });
+
+  Object.values(state.goals?.goals || {}).forEach((goal) => {
+    (goal?.accountsIncluded || []).forEach((accountId) => {
+      const id = String(accountId || '').trim();
+      if (!id || !usage[id]) return;
+      usage[id].goalRefs += 1;
+    });
+  });
+
+  return usage;
+}
+
+function buildAccountMergeProfile(account = {}, usage = {}) {
+  const extraText = getAccountMergeExtraText(account);
+  const normalizedName = normalizeAccountName(account?.name || '');
+  const normalizedExtra = normalizeAccountName(extraText);
+  const rawTokens = [...new Set([
+    ...tokenizeAccountName(account?.name || ''),
+    ...tokenizeAccountName(extraText),
+  ])];
+  const semanticTokens = rawTokens.filter((token) => token.length > 1 && !ACCOUNT_MERGE_STOPWORDS.has(token));
+  const nameTokens = semanticTokens.filter((token) => !ACCOUNT_MERGE_TYPE_TOKENS.has(token) && !/^\d+$/.test(token));
+  const baseName = nameTokens.join(' ').trim() || semanticTokens.join(' ').trim() || normalizedName;
+  const cardLast4 = normalizeCardLast4(account?.cardLast4 || '');
+  const typeHint = detectAccountTypeHint(account, rawTokens);
+  const searchText = [
+    normalizedName,
+    normalizedExtra,
+    baseName,
+    nameTokens.join(' '),
+    semanticTokens.join(' '),
+    cardLast4,
+    typeHint,
+    account?.shared ? 'shared compartida' : '',
+    account?.isBitcoin ? 'bitcoin btc crypto cripto' : '',
+  ].filter(Boolean).join(' ');
+  const referenceCount = Number(usage?.txRefs || 0) + Number(usage?.recurringRefs || 0) + Number(usage?.goalRefs || 0);
+  return {
+    id: String(account?.id || '').trim(),
+    normalizedName,
+    semanticTokens,
+    nameTokens,
+    baseName,
+    cardLast4,
+    typeHint,
+    searchText,
+    referenceCount,
+    dataDensity: Number(usage?.entryCount || 0) + Number(usage?.snapshotCount || 0) + Number(usage?.legacyCount || 0),
+    usage,
+  };
+}
+
+function compareTokenSets(left = [], right = []) {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  const common = [...leftSet].filter((token) => rightSet.has(token));
+  const denom = Math.max(leftSet.size, rightSet.size, 1);
+  return {
+    common,
+    ratio: common.length / denom,
+  };
+}
+
+function getAccountMergeSuggestionModel(accounts = state.accounts) {
+  const cache = financeDerivedCache.accountMerge;
+  if (
+    cache.accountsRef === state.accounts &&
+    cache.balanceRef === state.balance &&
+    cache.goalsRef === state.goals?.goals &&
+    cache.model
+  ) {
+    return cache.model;
+  }
+
+  const usageById = buildAccountMergeUsageMap(accounts, balanceTxList());
+  const profilesById = Object.fromEntries((accounts || []).map((account) => {
+    const id = String(account?.id || '').trim();
+    return [id, buildAccountMergeProfile(account, usageById[id] || {})];
+  }));
+
+  const suggestions = [];
+  for (let index = 0; index < (accounts || []).length; index += 1) {
+    for (let compareIndex = index + 1; compareIndex < (accounts || []).length; compareIndex += 1) {
+      const left = accounts[index];
+      const right = accounts[compareIndex];
+      const leftId = String(left?.id || '').trim();
+      const rightId = String(right?.id || '').trim();
+      const leftProfile = profilesById[leftId];
+      const rightProfile = profilesById[rightId];
+      if (!leftProfile || !rightProfile) continue;
+
+      let score = 0;
+      const reasons = [];
+      const sameNormalized = leftProfile.normalizedName && leftProfile.normalizedName === rightProfile.normalizedName;
+      const sameBaseName = leftProfile.baseName && leftProfile.baseName === rightProfile.baseName && leftProfile.baseName.length >= 4;
+      const baseContains = leftProfile.baseName && rightProfile.baseName
+        && leftProfile.baseName !== rightProfile.baseName
+        && (
+          (leftProfile.baseName.length >= 5 && rightProfile.baseName.includes(leftProfile.baseName))
+          || (rightProfile.baseName.length >= 5 && leftProfile.baseName.includes(rightProfile.baseName))
+        );
+      const overlap = compareTokenSets(leftProfile.semanticTokens, rightProfile.semanticTokens);
+      const strongCommonTokens = overlap.common.filter((token) => !ACCOUNT_MERGE_TYPE_TOKENS.has(token) && token.length >= 3);
+      const sameLast4 = leftProfile.cardLast4 && leftProfile.cardLast4 === rightProfile.cardLast4;
+      const sameType = leftProfile.typeHint && leftProfile.typeHint === rightProfile.typeHint;
+      const genericOnly = !sameLast4 && !sameBaseName && !baseContains && strongCommonTokens.length === 0;
+
+      if (sameNormalized) {
+        score += 34;
+        reasons.push('nombre normalizado igual');
+      }
+      if (sameBaseName) {
+        score += 32;
+        reasons.push('nombre base igual');
+      } else if (baseContains) {
+        score += 22;
+        reasons.push('nombre base contenido');
+      }
+      if (sameLast4) {
+        score += 40;
+        reasons.push(`misma tarjeta ••••${leftProfile.cardLast4}`);
+      }
+      if (strongCommonTokens.length >= 2 && overlap.ratio >= 0.5) {
+        score += 18;
+        reasons.push(`tokens comunes: ${strongCommonTokens.slice(0, 2).join(', ')}`);
+      } else if (strongCommonTokens.length >= 1 && overlap.ratio >= 0.34) {
+        score += 10;
+        reasons.push(`token común: ${strongCommonTokens[0]}`);
+      }
+      if (sameType) {
+        score += 6;
+        reasons.push(`tipo parecido: ${leftProfile.typeHint}`);
+      }
+      if (!!left?.isBitcoin !== !!right?.isBitcoin) score -= 18;
+      if (!!left?.shared !== !!right?.shared && !sameLast4) score -= 4;
+      if (genericOnly || score < 40) continue;
+
+      suggestions.push({
+        id: `acc-merge-${hashString(`${leftId}:${rightId}:${score}`)}`,
+        accountIds: [leftId, rightId],
+        score,
+        reasons: [...new Set(reasons)].slice(0, 3),
+      });
+    }
+  }
+
+  suggestions.sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score;
+    const leftNames = left.accountIds.map((id) => String(accounts.find((account) => account.id === id)?.name || id)).join(' ');
+    const rightNames = right.accountIds.map((id) => String(accounts.find((account) => account.id === id)?.name || id)).join(' ');
+    return leftNames.localeCompare(rightNames, 'es', { sensitivity: 'base' });
+  });
+
+  cache.accountsRef = state.accounts;
+  cache.balanceRef = state.balance;
+  cache.goalsRef = state.goals?.goals;
+  cache.model = {
+    usageById,
+    profilesById,
+    suggestions,
+  };
+  return cache.model;
+}
+
+function getPossibleAccountMergeSuggestions(accounts = state.accounts) {
+  return getAccountMergeSuggestionModel(accounts).suggestions;
+}
+
+function scoreAccountAsMergePrimary(account = {}, usage = {}) {
+  const profile = buildAccountMergeProfile(account, usage);
+  const createdAtBonus = Number(account?.createdAt || 0) > 0 ? 1 / Math.max(1, Number(account.createdAt || 1)) : 0;
+  return (
+    profile.referenceCount * 8
+    + profile.dataDensity * 4
+    + (profile.cardLast4 ? 10 : 0)
+    + (profile.baseName.length >= 4 ? 6 : 0)
+    + (profile.typeHint ? 3 : 0)
+    + createdAtBonus
+  );
+}
+
+function choosePreferredAccountMergeDestination(accountIds = [], accountsById = {}, usageById = {}) {
+  const ids = [...new Set((accountIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return '';
+  return ids
+    .slice()
+    .sort((leftId, rightId) => {
+      const left = accountsById[leftId] || {};
+      const right = accountsById[rightId] || {};
+      const leftScore = scoreAccountAsMergePrimary(left, usageById[leftId] || {});
+      const rightScore = scoreAccountAsMergePrimary(right, usageById[rightId] || {});
+      if (rightScore !== leftScore) return rightScore - leftScore;
+      const leftCreatedAt = Number(left?.createdAt || 0);
+      const rightCreatedAt = Number(right?.createdAt || 0);
+      if (leftCreatedAt !== rightCreatedAt) return leftCreatedAt - rightCreatedAt;
+      return String(left?.name || leftId).localeCompare(String(right?.name || rightId), 'es', { sensitivity: 'base' });
+    })[0];
 }
 
 function resolveTicketCardAccountPreview(ticket = null, accounts = []) {
@@ -2097,7 +2542,7 @@ function foodDetailViewModel(food = {}, fallbackName = '') {
     latest,
     latestByVendor,
     latestLine,
-    chartByVendor: foodChartSeriesByVendor(history, 'total'),
+    chartByVendor: readCachedFoodChartSeries(history) || writeCachedFoodChartSeries(history, foodChartSeriesByVendor(history, 'total')),
     vendorAliases,
     tableRows
   };
@@ -2250,9 +2695,17 @@ function renderFoodItemModalForm(editing, presetName, mode = 'edit') {
       </form>`;
 }
 
-function renderFoodHistoryVendorChart() {
+async function renderFoodHistoryVendorChart() {
   const host = document.querySelector('[data-food-history-chart]');
-  if (!host || typeof echarts === 'undefined') return;
+  if (!host) return;
+  if (typeof echarts === 'undefined') {
+    try {
+      await ensureFinanceEchartsReady();
+    } catch (error) {
+      console.warn('[finance] no se pudo cargar ECharts para food history', error);
+      return;
+    }
+  }
   let byVendor = {};
   try { byVendor = JSON.parse(host.dataset.foodHistorySeries || '{}'); } catch (_) { byVendor = {}; }
   const vendorKeys = Object.keys(byVendor || {});
@@ -3372,6 +3825,47 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
   return { breakdown: output, unlinedTotal, productKeyByLabel };
 }
 
+function computeFinanceStatsDonutPayload(rows = [], accountsById = {}, options = {}) {
+  const {
+    monthKey = '',
+    statsRange = 'month',
+    statsScope = 'personal',
+    statsGroupBy = 'category',
+    mode = 'expense',
+    includeUnlined = false,
+  } = options;
+  const cacheKey = buildFinanceStatsCacheKey({
+    monthKey,
+    statsRange,
+    statsScope,
+    statsGroupBy,
+    mode,
+    includeUnlined,
+    rows,
+  });
+  const cached = readProcessedJsonCache(cacheKey);
+  if (cached?.segments && cached?.donutAggregation) {
+    state.balanceStatsProductMeta = hydrateFinanceProductMeta(cached.productMeta || {});
+    return cached;
+  }
+
+  const donutAggregation = aggregateStatsGroup(rows, statsGroupBy, mode, statsScope, accountsById, {
+    includeUnlined: includeUnlined && statsGroupBy === 'product',
+  });
+  const donutMap = donutAggregation.breakdown;
+  const donutTotal = Object.values(donutMap).reduce((sum, value) => sum + Number(value || 0), 0);
+  const payload = {
+    donutAggregation,
+    donutTotal,
+    segments: donutSegments(donutMap, donutTotal, { productKeyByLabel: donutAggregation.productKeyByLabel }),
+    productMeta: serializeFinanceProductMeta(state.balanceStatsProductMeta || {}),
+  };
+  writeProcessedJsonCache(cacheKey, payload, {
+    ttlMs: 20 * 60 * 1000,
+  });
+  return payload;
+}
+
 function donutSegments(mapData = {}, total = 0, options = {}) {
   if (!total) return [];
   const productKeyByLabel = options?.productKeyByLabel || {};
@@ -3498,9 +3992,9 @@ function disposeFinanceStatsDonutChart() {
   financeStatsDonutChart = null;
 }
 
-function renderFinanceStatsDonutChart() {
+async function renderFinanceStatsDonutChart() {
   const host = document.querySelector('[data-finance-stats-donut]');
-  if (!host || typeof echarts === 'undefined') {
+  if (!host) {
     disposeFinanceStatsDonutChart();
     return;
   }
@@ -3509,6 +4003,15 @@ function renderFinanceStatsDonutChart() {
   if (!Array.isArray(rows) || !rows.length) {
     disposeFinanceStatsDonutChart();
     return;
+  }
+  if (typeof echarts === 'undefined') {
+    try {
+      await ensureFinanceEchartsReady();
+    } catch (error) {
+      console.warn('[finance] no se pudo cargar ECharts para balance stats', error);
+      disposeFinanceStatsDonutChart();
+      return;
+    }
   }
   if (!financeStatsDonutChart || financeStatsDonutChart.getDom() !== host) {
     disposeFinanceStatsDonutChart();
@@ -3844,7 +4347,7 @@ function renderFinanceHome(accounts, totalSeries) {
     return `
       <section class="finance-home ${toneClass(totalRange.delta)} finance-home--${homePanelView}">
         ${primaryPanel}
-        <article class="finance__accounts"><div class="finance__sectionHeader"><h2>Cuentas</h2><button class="finance-pill" data-new-account>+ Cuenta</button></div>
+        <article class="finance__accounts"><div class="finance__sectionHeader"><h2>Cuentas</h2><div class="finance-row"><button class="finance-pill finance-pill--mini" data-account-merge-open>Fusionar</button><button class="finance-pill" data-new-account>+ Cuenta</button></div></div>
         <div id="finance-accountsList">${accounts.map((account) => { const editableBalance = account.shared ? account.currentReal : account.current; return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'}</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${editableBalance.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% Â· Mi parte: ${fmtCurrency(account.current)}</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} Â· ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">â‹¯</button></div></article>`; }).join('') || '<p class="finance-empty">Sin cuentas todavÃ­a.</p>'}</div></article>
       </section>`;
   }
@@ -3858,7 +4361,7 @@ function renderFinanceHome(accounts, totalSeries) {
         <button class="finance-pill" data-history>Historial</button>
         <select class="finance-pill" data-compare><option value="month" ${state.compareMode === 'month' ? 'selected' : ''}>Mes vs Mes</option><option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option></select></article>
       <article class="finance__compareRow"><div class="finance-chip ${toneClass(compareCurrent.delta)}">Actual: ${fmtSignedCurrency(compareCurrent.delta)} (${fmtSignedPercent(compareCurrent.deltaPct)})</div><div class="finance-chip ${toneClass(comparePrev.delta)}">Anterior: ${fmtSignedCurrency(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div></article>
-      <article class="finance__accounts"><div class="finance__sectionHeader"><h2>Cuentas</h2><button class="finance-pill" data-new-account>+ Cuenta</button></div>
+      <article class="finance__accounts"><div class="finance__sectionHeader"><h2>Cuentas</h2><div class="finance-row"><button class="finance-pill finance-pill--mini" data-account-merge-open>Fusionar</button><button class="finance-pill" data-new-account>+ Cuenta</button></div></div>
       <div id="finance-accountsList">${accounts.map((account) => { const editableBalance = account.shared ? account.currentReal : account.current; return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'}</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${editableBalance.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${fmtCurrency(account.current)}</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">⋯</button></div></article>`; }).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
     </section>`;
 }
@@ -3956,11 +4459,19 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
     ? txRows.filter((row) => row.monthKey === monthKey)
     : filterTxByRange(txRows, statsRange);
   const rangeStats = buildBalanceStats(rangeRows, accountsById);
-  const donutAggregation = aggregateStatsGroup(rangeRows, statsGroupBy, mode, statsScope, accountsById, { includeUnlined: includeUnlined && statsGroupBy === 'product' });
+  const donutPayload = computeFinanceStatsDonutPayload(rangeRows, accountsById, {
+    monthKey,
+    statsRange,
+    statsScope,
+    statsGroupBy,
+    mode,
+    includeUnlined,
+  });
+  const donutAggregation = donutPayload.donutAggregation;
   const donutMap = donutAggregation.breakdown;
   const unlinedTotal = donutAggregation.unlinedTotal;
-  const donutTotal = Object.values(donutMap).reduce((sum, value) => sum + Number(value || 0), 0);
-  const segments = donutSegments(donutMap, donutTotal, { productKeyByLabel: donutAggregation.productKeyByLabel });
+  const donutTotal = Number(donutPayload.donutTotal || 0);
+  const segments = Array.isArray(donutPayload.segments) ? donutPayload.segments : donutSegments(donutMap, donutTotal, { productKeyByLabel: donutAggregation.productKeyByLabel });
   const selectedSegment = segments.find((segment) => segment._key === state.balanceStatsActiveSegment) || null;
   if (!selectedSegment && state.balanceStatsActiveSegment) state.balanceStatsActiveSegment = null;
   const legendExpanded = state.balanceStatsLegendExpanded !== false;
@@ -4411,6 +4922,489 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
   </section>`;
 }
 
+function getAccountMergeResolvedIds(resolvedGroups = []) {
+  return new Set((resolvedGroups || []).flatMap((group) => {
+    const destinationId = String(group?.destinationId || '').trim();
+    const sourceIds = Array.isArray(group?.sourceIds) ? group.sourceIds.map((id) => String(id || '').trim()).filter(Boolean) : [];
+    return [destinationId, ...sourceIds].filter(Boolean);
+  }));
+}
+
+function normalizeAccountMergeModalState(modal = state.modal, accounts = buildAccountModels()) {
+  const accountsById = Object.fromEntries((accounts || []).map((account) => [String(account?.id || '').trim(), account]));
+  const resolvedGroups = Array.isArray(modal?.resolvedGroups)
+    ? modal.resolvedGroups.map((group) => ({
+      id: String(group?.id || `resolved-${hashString(JSON.stringify(group || {}))}`),
+      destinationId: String(group?.destinationId || '').trim(),
+      destinationName: String(group?.destinationName || '').trim(),
+      sourceIds: Array.isArray(group?.sourceIds) ? group.sourceIds.map((id) => String(id || '').trim()).filter(Boolean) : [],
+      sourceNames: Array.isArray(group?.sourceNames) ? group.sourceNames.map((name) => String(name || '').trim()).filter(Boolean) : [],
+      mergedAt: Number(group?.mergedAt || 0) || nowTs(),
+    })).filter((group) => group.destinationId || group.sourceIds.length)
+    : [];
+  const resolvedIds = getAccountMergeResolvedIds(resolvedGroups);
+  const selectedIds = [...new Set((modal?.selectedIds || []).map((id) => String(id || '').trim()).filter((id) => accountsById[id] && !resolvedIds.has(id)))];
+  const suggestionModel = getAccountMergeSuggestionModel(accounts);
+  let destinationId = String(modal?.destinationId || '').trim();
+  if (!selectedIds.includes(destinationId)) {
+    destinationId = choosePreferredAccountMergeDestination(selectedIds, accountsById, suggestionModel.usageById);
+  }
+  return {
+    ...modal,
+    type: 'account-merge',
+    query: String(modal?.query || ''),
+    showResolved: !!modal?.showResolved,
+    selectedIds,
+    destinationId,
+    merging: !!modal?.merging,
+    resolvedGroups,
+  };
+}
+
+function getAccountMergeSeedIds(seedAccountId = '', accounts = buildAccountModels()) {
+  const seedId = String(seedAccountId || '').trim();
+  if (!seedId) return [];
+  const ids = new Set([seedId]);
+  const seedAccount = (accounts || []).find((account) => String(account?.id || '').trim() === seedId) || null;
+  const sameLast4 = getCardLast4Duplicates(seedAccount?.cardLast4 || '', seedId);
+  sameLast4.forEach((account) => ids.add(String(account?.id || '').trim()));
+  getPossibleAccountMergeSuggestions(accounts)
+    .filter((suggestion) => suggestion.accountIds.includes(seedId))
+    .slice(0, 3)
+    .forEach((suggestion) => suggestion.accountIds.forEach((id) => ids.add(String(id || '').trim())));
+  return [...ids].filter(Boolean);
+}
+
+function openAccountMergeModal(seedAccountId = '') {
+  const accounts = buildAccountModels();
+  const seedIds = getAccountMergeSeedIds(seedAccountId, accounts);
+  state.modal = normalizeAccountMergeModalState({
+    type: 'account-merge',
+    query: '',
+    showResolved: false,
+    selectedIds: seedIds,
+    destinationId: seedIds.includes(String(seedAccountId || '').trim()) ? String(seedAccountId || '').trim() : '',
+    resolvedGroups: [],
+    merging: false,
+  }, accounts);
+  triggerRender();
+}
+
+function updateAccountMergeSelection(accountId, forceSelected = null) {
+  if (state.modal?.type !== 'account-merge') return;
+  const accounts = buildAccountModels();
+  const current = normalizeAccountMergeModalState(state.modal, accounts);
+  const resolvedIds = getAccountMergeResolvedIds(current.resolvedGroups);
+  const safeId = String(accountId || '').trim();
+  if (!safeId || resolvedIds.has(safeId)) return;
+  const nextSelected = new Set(current.selectedIds);
+  const shouldSelect = forceSelected == null ? !nextSelected.has(safeId) : !!forceSelected;
+  if (shouldSelect) nextSelected.add(safeId);
+  else nextSelected.delete(safeId);
+  state.modal = normalizeAccountMergeModalState({
+    ...current,
+    selectedIds: [...nextSelected],
+    destinationId: shouldSelect && !current.destinationId ? safeId : current.destinationId,
+  }, accounts);
+  syncAccountMergeModal(null, accounts);
+}
+
+function setAccountMergeDestination(accountId) {
+  if (state.modal?.type !== 'account-merge') return;
+  const accounts = buildAccountModels();
+  const current = normalizeAccountMergeModalState(state.modal, accounts);
+  const safeId = String(accountId || '').trim();
+  if (!current.selectedIds.includes(safeId)) return;
+  state.modal = normalizeAccountMergeModalState({ ...current, destinationId: safeId }, accounts);
+  syncAccountMergeModal(null, accounts);
+}
+
+function clearAccountMergeSelection() {
+  if (state.modal?.type !== 'account-merge') return;
+  const accounts = buildAccountModels();
+  state.modal = normalizeAccountMergeModalState({ ...state.modal, selectedIds: [], destinationId: '' }, accounts);
+  syncAccountMergeModal(null, accounts);
+}
+
+function applyAccountMergeSuggestion(suggestionId = '') {
+  if (state.modal?.type !== 'account-merge') return;
+  const accounts = buildAccountModels();
+  const current = normalizeAccountMergeModalState(state.modal, accounts);
+  const suggestionModel = getAccountMergeSuggestionModel(accounts);
+  const suggestion = suggestionModel.suggestions.find((item) => item.id === suggestionId);
+  if (!suggestion) return;
+  state.modal = normalizeAccountMergeModalState({
+    ...current,
+    selectedIds: suggestion.accountIds,
+    destinationId: choosePreferredAccountMergeDestination(
+      suggestion.accountIds,
+      Object.fromEntries(accounts.map((account) => [String(account?.id || '').trim(), account])),
+      suggestionModel.usageById
+    ),
+  }, accounts);
+  syncAccountMergeModal(null, accounts);
+}
+
+function buildAccountMergeViewModel(accounts = buildAccountModels()) {
+  const modalState = normalizeAccountMergeModalState(state.modal, accounts);
+  if (state.modal !== modalState) state.modal = modalState;
+  const { usageById, profilesById, suggestions } = getAccountMergeSuggestionModel(accounts);
+  const accountsById = Object.fromEntries((accounts || []).map((account) => [String(account?.id || '').trim(), account]));
+  const query = normalizeAccountName(modalState.query || '');
+  const selectedSet = new Set(modalState.selectedIds);
+  const resolvedIds = getAccountMergeResolvedIds(modalState.resolvedGroups);
+  const suggestionScoreById = {};
+  suggestions.forEach((suggestion) => {
+    suggestion.accountIds.forEach((accountId) => {
+      suggestionScoreById[accountId] = Math.max(Number(suggestionScoreById[accountId] || 0), Number(suggestion.score || 0));
+    });
+  });
+
+  const matchesQuery = (accountId) => {
+    if (!query) return true;
+    const profile = profilesById[accountId];
+    return String(profile?.searchText || '').includes(query);
+  };
+
+  const pendingAccounts = (accounts || [])
+    .filter((account) => modalState.showResolved || !resolvedIds.has(String(account?.id || '').trim()))
+    .filter((account) => matchesQuery(String(account?.id || '').trim()))
+    .sort((left, right) => {
+      const leftId = String(left?.id || '').trim();
+      const rightId = String(right?.id || '').trim();
+      const leftSuggestion = Number(suggestionScoreById[leftId] || 0);
+      const rightSuggestion = Number(suggestionScoreById[rightId] || 0);
+      if (rightSuggestion !== leftSuggestion) return rightSuggestion - leftSuggestion;
+      const leftRefs = Number(usageById[leftId]?.txRefs || 0) + Number(usageById[leftId]?.recurringRefs || 0);
+      const rightRefs = Number(usageById[rightId]?.txRefs || 0) + Number(usageById[rightId]?.recurringRefs || 0);
+      if (rightRefs !== leftRefs) return rightRefs - leftRefs;
+      return String(left?.name || '').localeCompare(String(right?.name || ''), 'es', { sensitivity: 'base' });
+    });
+
+  const selectedAccounts = modalState.selectedIds.map((id) => accountsById[id]).filter(Boolean);
+  const visibleSuggestions = suggestions.filter((suggestion) => {
+    if (!query) return !suggestion.accountIds.every((id) => resolvedIds.has(id));
+    return suggestion.accountIds.some((id) => matchesQuery(id));
+  });
+  const resolvedGroups = modalState.resolvedGroups.slice().sort((left, right) => Number(right?.mergedAt || 0) - Number(left?.mergedAt || 0));
+  const destinationAccount = accountsById[modalState.destinationId] || null;
+  const canMerge = selectedAccounts.length >= 2 && !!destinationAccount && !modalState.merging;
+
+  return {
+    modalState,
+    accountsById,
+    usageById,
+    profilesById,
+    selectedSet,
+    resolvedIds,
+    suggestionScoreById,
+    pendingAccounts,
+    selectedAccounts,
+    visibleSuggestions,
+    resolvedGroups,
+    destinationAccount,
+    canMerge,
+    summaryText: `${pendingAccounts.length} pendientes · ${visibleSuggestions.length} sugerencias · ${resolvedGroups.length} resueltas en esta sesión`,
+  };
+}
+
+function formatAccountMergeType(typeHint = '') {
+  const map = {
+    bitcoin: 'Bitcoin',
+    credit: 'Crédito',
+    debit: 'Débito',
+    savings: 'Ahorro',
+    checking: 'Corriente',
+    cash: 'Efectivo',
+    shared: 'Compartida',
+  };
+  return map[typeHint] || '';
+}
+
+function buildAccountMergeMetaLine(account = {}, profile = {}, usage = {}) {
+  const parts = [];
+  if (profile?.cardLast4) parts.push(`••••${profile.cardLast4}`);
+  const typeLabel = formatAccountMergeType(profile?.typeHint || '');
+  if (typeLabel) parts.push(typeLabel);
+  const refs = Number(usage?.txRefs || 0) + Number(usage?.recurringRefs || 0);
+  if (refs) parts.push(`${refs} refs`);
+  const records = Number(usage?.entryCount || 0) + Number(usage?.snapshotCount || 0) + Number(usage?.legacyCount || 0);
+  if (records) parts.push(`${records} registros`);
+  const current = Number(account?.current ?? account?.currentReal);
+  if (Number.isFinite(current)) parts.push(fmtCurrency(current));
+  return parts.join(' · ');
+}
+
+function renderAccountMergePendingRow(account = {}, vm = {}) {
+  const id = String(account?.id || '').trim();
+  const profile = vm.profilesById?.[id] || {};
+  const usage = vm.usageById?.[id] || {};
+  const isSelected = vm.selectedSet?.has(id);
+  const isResolved = vm.resolvedIds?.has(id);
+  const isDestination = String(vm.destinationAccount?.id || '') === id;
+  const badges = [];
+  if (isDestination) badges.push('<span class="financeAccountMergeBadge financeAccountMergeBadge--primary">principal</span>');
+  if (isSelected && !isDestination) badges.push('<span class="financeAccountMergeBadge financeAccountMergeBadge--selected">seleccionada</span>');
+  if (vm.suggestionScoreById?.[id]) badges.push('<span class="financeAccountMergeBadge financeAccountMergeBadge--suggested">sugerida</span>');
+  if (isResolved) badges.push('<span class="financeAccountMergeBadge financeAccountMergeBadge--resolved">resuelta</span>');
+  return `
+    <article class="financeAccountMergeRow${isSelected ? ' is-selected' : ''}${isResolved ? ' is-resolved' : ''}" data-account-merge-row="${escapeHtml(id)}" data-account-merge-key="pending:${escapeHtml(id)}">
+      <button type="button" class="financeAccountMergeRow__main" data-account-merge-toggle="${escapeHtml(id)}" aria-pressed="${isSelected ? 'true' : 'false'}" ${isResolved ? 'disabled' : ''}>
+        <div class="financeAccountMergeRow__titleLine">
+          <strong>${escapeHtml(account?.name || 'Sin nombre')}</strong>
+          <span class="financeAccountMergeRow__cta">${isSelected ? 'Quitar' : 'Revisar'}</span>
+        </div>
+        <small class="financeAccountMergeRow__meta">${escapeHtml(buildAccountMergeMetaLine(account, profile, usage) || 'Sin metadatos relevantes')}</small>
+        ${badges.length ? `<div class="financeAccountMergeBadgeRow">${badges.join('')}</div>` : ''}
+      </button>
+    </article>
+  `;
+}
+
+function renderAccountMergeSelectionRow(account = {}, vm = {}) {
+  const id = String(account?.id || '').trim();
+  const profile = vm.profilesById?.[id] || {};
+  const usage = vm.usageById?.[id] || {};
+  const isDestination = String(vm.destinationAccount?.id || '') === id;
+  return `
+    <article class="financeAccountMergeSelectionCard${isDestination ? ' is-primary' : ''}" data-account-merge-key="selection:${escapeHtml(id)}">
+      <div class="financeAccountMergeSelectionCard__copy">
+        <strong>${escapeHtml(account?.name || 'Sin nombre')}</strong>
+        <small>${escapeHtml(buildAccountMergeMetaLine(account, profile, usage) || 'Sin metadatos')}</small>
+      </div>
+      <div class="financeAccountMergeBadgeRow">
+        ${isDestination ? '<span class="financeAccountMergeBadge financeAccountMergeBadge--primary">principal</span>' : ''}
+        ${profile?.cardLast4 ? `<span class="financeAccountMergeBadge">••••${escapeHtml(profile.cardLast4)}</span>` : ''}
+      </div>
+      <div class="financeAccountMergeSelectionActions">
+        <button type="button" class="finance-pill finance-pill--mini" data-account-merge-destination="${escapeHtml(id)}" ${isDestination ? 'disabled' : ''}>Principal</button>
+        <button type="button" class="finance-pill finance-pill--mini" data-account-merge-toggle="${escapeHtml(id)}">Quitar</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderAccountMergeSuggestionRow(suggestion = {}, vm = {}) {
+  const accounts = suggestion.accountIds.map((id) => vm.accountsById?.[id]).filter(Boolean);
+  const labels = accounts.map((account) => escapeHtml(account?.name || account?.id || 'Cuenta')).join(' ↔ ');
+  return `
+    <article class="financeAccountMergeSuggestionRow" data-account-merge-key="suggestion:${escapeHtml(suggestion.id || '')}">
+      <div class="financeAccountMergeSuggestionRow__top">
+        <strong>${labels}</strong>
+        <span class="financeAccountMergeBadge">${Number(suggestion.score || 0)} pts</span>
+      </div>
+      <div class="financeAccountMergeBadgeRow">
+        ${(suggestion.reasons || []).map((reason) => `<span class="financeAccountMergeBadge financeAccountMergeBadge--suggested">${escapeHtml(reason)}</span>`).join('')}
+      </div>
+      <div class="financeAccountMergeSelectionActions">
+        <button type="button" class="finance-pill finance-pill--mini" data-account-merge-apply-suggestion="${escapeHtml(suggestion.id)}">Revisar grupo</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderAccountMergeResolvedRow(group = {}) {
+  const title = group.destinationName || group.destinationId || 'Cuenta principal';
+  const sources = (group.sourceNames || []).join(', ') || (group.sourceIds || []).join(', ');
+  const when = Number(group.mergedAt || 0) ? new Date(group.mergedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : '';
+  return `
+    <article class="financeAccountMergeResolvedRow" data-account-merge-key="resolved:${escapeHtml(group.id || '')}">
+      <div class="financeAccountMergeResolvedRow__top">
+        <strong>${escapeHtml(title)}</strong>
+        <span class="financeAccountMergeBadge financeAccountMergeBadge--resolved">fusionada</span>
+      </div>
+      <small>${escapeHtml(sources ? `Absorbió: ${sources}` : 'Grupo resuelto')}</small>
+      <small>${escapeHtml(when ? `Guardado a las ${when}` : '')}</small>
+    </article>
+  `;
+}
+
+function createAccountMergeKeyedNode(html = '') {
+  const template = document.createElement('template');
+  template.innerHTML = String(html || '').trim();
+  return template.content.firstElementChild || document.createElement('div');
+}
+
+function patchAccountMergeSection(container, items = [], emptyHtml = '<p class="finance-empty">Sin datos.</p>') {
+  if (!container) return;
+  const scrollTop = container.scrollTop;
+  if (!items.length) {
+    container.innerHTML = emptyHtml;
+    container.scrollTop = Math.max(0, scrollTop);
+    return;
+  }
+
+  [...container.children].forEach((node) => {
+    if (!node.matches?.('[data-account-merge-key]')) node.remove();
+  });
+
+  const existing = new Map(
+    [...container.children]
+      .map((node) => [String(node.dataset?.accountMergeKey || '').trim(), node])
+      .filter(([key]) => key)
+  );
+
+  items.forEach((item) => {
+    const key = String(item?.key || '').trim();
+    const html = String(item?.html || '').trim();
+    if (!key || !html) return;
+    const currentNode = existing.get(key) || null;
+    let nextNode = currentNode;
+    if (!currentNode) {
+      nextNode = createAccountMergeKeyedNode(html);
+    } else if (currentNode.outerHTML !== html) {
+      nextNode = createAccountMergeKeyedNode(html);
+      currentNode.replaceWith(nextNode);
+    }
+    existing.delete(key);
+    container.appendChild(nextNode);
+  });
+
+  existing.forEach((node) => node.remove());
+  container.scrollTop = Math.max(0, scrollTop);
+}
+
+function renderAccountMergeModalShell() {
+  return `
+    <div id="finance-modal" class="finance-modal finance-modal--account-merge" role="dialog" aria-modal="true" tabindex="-1" data-account-merge-modal>
+      <header class="financeAccountMerge__header">
+        <div class="financeAccountMerge__heading">
+          <h3>Fusionar cuentas</h3>
+          <p class="financeAccountMerge__subtitle" data-account-merge-summary></p>
+        </div>
+        <div class="finance-row">
+          <button type="button" class="finance-pill finance-pill--mini" data-account-merge-clear>Limpiar</button>
+          <button type="button" class="finance-pill" data-close-modal>Cerrar</button>
+        </div>
+      </header>
+      <div class="financeAccountMerge__toolbar">
+        <input class="food-control" type="search" placeholder="Buscar por nombre, tarjeta o tipo" data-account-merge-search />
+        <label class="financeStats__checkbox">
+          <input type="checkbox" data-account-merge-show-resolved />
+          Mostrar resueltas en la lista
+        </label>
+      </div>
+      <div class="financeAccountMerge__layout">
+        <section class="financeAccountMergePanel">
+          <div class="financeAccountMergePanel__head">
+            <div>
+              <h4>Pendientes</h4>
+              <small data-account-merge-pending-count></small>
+            </div>
+          </div>
+          <div class="financeAccountMergeList" data-account-merge-pending-list></div>
+        </section>
+        <section class="financeAccountMergePanel financeAccountMergePanel--selection">
+          <div class="financeAccountMergePanel__head">
+            <div>
+              <h4>Grupo actual</h4>
+              <small data-account-merge-selection-count></small>
+            </div>
+          </div>
+          <div class="financeAccountMergeList financeAccountMergeList--selection" data-account-merge-selection-list></div>
+          <div class="financeAccountMergeActions">
+            <p class="financeAccountMergeActions__copy" data-account-merge-action-copy>Selecciona al menos 2 cuentas para preparar la fusión.</p>
+            <button type="button" class="finance-pill" data-account-merge-confirm disabled>Fusionar seleccionadas</button>
+          </div>
+        </section>
+        <section class="financeAccountMergePanel financeAccountMergePanel--side">
+          <div class="financeAccountMergeSideBlock">
+            <div class="financeAccountMergePanel__head">
+              <div>
+                <h4>Posibles duplicados</h4>
+                <small data-account-merge-suggestions-count></small>
+              </div>
+            </div>
+            <div class="financeAccountMergeList financeAccountMergeList--suggestions" data-account-merge-suggestions-list></div>
+          </div>
+          <div class="financeAccountMergeSideBlock">
+            <div class="financeAccountMergePanel__head">
+              <div>
+                <h4>Resueltas</h4>
+                <small data-account-merge-resolved-count></small>
+              </div>
+            </div>
+            <div class="financeAccountMergeList financeAccountMergeList--resolved" data-account-merge-resolved-list></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  `;
+}
+
+function syncAccountMergeModal(modalRoot = null, accounts = buildAccountModels()) {
+  if (state.modal?.type !== 'account-merge') return;
+  const root = modalRoot || document.querySelector('[data-account-merge-modal]');
+  if (!root) return;
+  const vm = buildAccountMergeViewModel(accounts);
+  const searchInput = root.querySelector('[data-account-merge-search]');
+  const showResolvedInput = root.querySelector('[data-account-merge-show-resolved]');
+  const summary = root.querySelector('[data-account-merge-summary]');
+  const pendingCount = root.querySelector('[data-account-merge-pending-count]');
+  const selectionCount = root.querySelector('[data-account-merge-selection-count]');
+  const suggestionCount = root.querySelector('[data-account-merge-suggestions-count]');
+  const resolvedCount = root.querySelector('[data-account-merge-resolved-count]');
+  const actionCopy = root.querySelector('[data-account-merge-action-copy]');
+  const confirmButton = root.querySelector('[data-account-merge-confirm]');
+
+  if (searchInput && document.activeElement !== searchInput) searchInput.value = vm.modalState.query || '';
+  if (showResolvedInput) showResolvedInput.checked = !!vm.modalState.showResolved;
+  if (summary) summary.textContent = vm.summaryText;
+  if (pendingCount) pendingCount.textContent = `${vm.pendingAccounts.length} cuentas`;
+  if (selectionCount) selectionCount.textContent = `${vm.selectedAccounts.length} seleccionadas`;
+  if (suggestionCount) suggestionCount.textContent = `${vm.visibleSuggestions.length} grupos`;
+  if (resolvedCount) resolvedCount.textContent = `${vm.resolvedGroups.length} grupos`;
+  if (actionCopy) {
+    actionCopy.textContent = vm.destinationAccount
+      ? `Cuenta principal: ${vm.destinationAccount.name}. Se absorberán ${Math.max(0, vm.selectedAccounts.length - 1)} cuentas.`
+      : 'Selecciona el grupo y marca una cuenta principal antes de fusionar.';
+  }
+  if (confirmButton) {
+    confirmButton.disabled = !vm.canMerge;
+    confirmButton.textContent = vm.modalState.merging ? 'Fusionando…' : 'Fusionar seleccionadas';
+  }
+
+  patchAccountMergeSection(
+    root.querySelector('[data-account-merge-pending-list]'),
+    vm.pendingAccounts.map((account) => {
+      const id = String(account?.id || '').trim();
+      return { key: `pending:${id}`, html: renderAccountMergePendingRow(account, vm) };
+    }),
+    '<p class="finance-empty">No quedan cuentas pendientes con este filtro.</p>'
+  );
+  patchAccountMergeSection(
+    root.querySelector('[data-account-merge-selection-list]'),
+    vm.selectedAccounts.map((account) => {
+      const id = String(account?.id || '').trim();
+      return { key: `selection:${id}`, html: renderAccountMergeSelectionRow(account, vm) };
+    }),
+    '<p class="finance-empty">Todavía no hay grupo de fusión.</p>'
+  );
+  patchAccountMergeSection(
+    root.querySelector('[data-account-merge-suggestions-list]'),
+    vm.visibleSuggestions.map((suggestion) => ({
+      key: `suggestion:${String(suggestion?.id || '').trim()}`,
+      html: renderAccountMergeSuggestionRow(suggestion, vm),
+    })),
+    '<p class="finance-empty">No hay sugerencias fiables con las cuentas actuales.</p>'
+  );
+  patchAccountMergeSection(
+    root.querySelector('[data-account-merge-resolved-list]'),
+    vm.resolvedGroups.map((group) => ({
+      key: `resolved:${String(group?.id || '').trim()}`,
+      html: renderAccountMergeResolvedRow(group),
+    })),
+    '<p class="finance-empty">Aún no has resuelto ningún grupo en esta sesión.</p>'
+  );
+}
+
+function renderAccountMergeModal(backdrop, accounts = buildAccountModels()) {
+  if (!backdrop.querySelector('[data-account-merge-modal]')) {
+    backdrop.innerHTML = renderAccountMergeModalShell();
+  }
+  syncAccountMergeModal(backdrop.querySelector('[data-account-merge-modal]'), accounts);
+}
+
 function renderModal({ accounts = null, categories = null, txRows = null } = {}) {
   const backdrop = document.getElementById('finance-modalOverlay');
   if (!backdrop) return;
@@ -4421,6 +5415,10 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
   const resolvedTxRows = txRows || balanceTxList();
   const resolvedCategories = categories || categoriesList(resolvedTxRows);
   backdrop.classList.add('is-open'); backdrop.classList.remove('hidden'); backdrop.setAttribute('aria-hidden', 'false'); document.body.classList.add('finance-modal-open');
+  if (state.modal.type === 'account-merge') {
+    renderAccountMergeModal(backdrop, resolvedAccounts);
+    return;
+  }
   if (state.modal.type === 'account-detail') {
     const account = resolvedAccounts.find((item) => item.id === state.modal.accountId);
     if (!account) { state.modal = { type: null }; triggerRender(); return; }
@@ -5079,7 +6077,7 @@ if (form) {
     ${renderFoodItemModalForm(editing, presetName, mode)}
   </div>`;
 
-  renderFoodHistoryVendorChart();
+  void renderFoodHistoryVendorChart();
   initFoodDetailInteractions();
   return;
 }
@@ -5686,6 +6684,202 @@ async function deleteDay(accountId, day) {
 }
 async function deleteAccount(accountId) { await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}`))); }
 
+function mergeAccountEntryMaps(destinationAccount = {}, sourceAccounts = [], legacyEntries = {}) {
+  const merged = {};
+  const assign = (day, record = {}, priority = 0) => {
+    if (!day) return;
+    const value = Number(record?.value);
+    const ts = Number(record?.ts || parseDayKey(day));
+    if (!Number.isFinite(value) || !Number.isFinite(ts)) return;
+    const current = merged[day];
+    if (!current || ts > current.ts || (ts === current.ts && priority > current.priority)) {
+      merged[day] = { value, ts, source: 'merged', priority };
+    }
+  };
+
+  [destinationAccount, ...(sourceAccounts || [])].forEach((account, index) => {
+    normalizeDaily(getAccountEntryMap(account)).forEach((row) => assign(row.day, row, index === 0 ? 2 : 1));
+    Object.entries(normalizeLegacyEntries(legacyEntries?.[account?.id] || {})).forEach(([day, row]) => assign(day, row, 1));
+  });
+
+  return Object.fromEntries(
+    Object.entries(merged)
+      .sort((left, right) => parseDayKey(left[0]) - parseDayKey(right[0]))
+      .map(([day, row]) => [day, firebaseClean({ value: row.value, ts: row.ts, source: 'merged', updatedAt: nowTs(), dateISO: `${day}T00:00:00.000Z` })])
+  );
+}
+
+function mergeAccountSnapshotsMap(destinationAccount = {}, sourceAccounts = []) {
+  const merged = {};
+  const assign = (day, record = {}, priority = 0) => {
+    if (!day) return;
+    const value = Number(record?.value);
+    const updatedAt = Number(record?.updatedAt || record?.ts || parseDayKey(day));
+    if (!Number.isFinite(value) || !Number.isFinite(updatedAt)) return;
+    const current = merged[day];
+    if (!current || updatedAt > current.updatedAt || (updatedAt === current.updatedAt && priority > current.priority)) {
+      merged[day] = { value, updatedAt, priority };
+    }
+  };
+
+  [destinationAccount, ...(sourceAccounts || [])].forEach((account, index) => {
+    normalizeSnapshots(account?.snapshots || {}).forEach((row) => assign(row.day, row, index === 0 ? 2 : 1));
+  });
+
+  return Object.fromEntries(
+    Object.entries(merged)
+      .sort((left, right) => parseDayKey(left[0]) - parseDayKey(right[0]))
+      .map(([day, row]) => [day, firebaseClean({ value: row.value, updatedAt: row.updatedAt })])
+  );
+}
+
+function rewriteAccountRefsInRow(row = {}, destinationId = '', sourceIds = new Set(), now = nowTs()) {
+  const extras = row?.extras && typeof row.extras === 'object' ? { ...row.extras } : {};
+  let changed = false;
+  const next = { ...row };
+  const directFields = ['accountId', 'fromAccountId', 'toAccountId'];
+
+  directFields.forEach((field) => {
+    const current = String(next?.[field] || extras?.[field] || '').trim();
+    if (!current || !sourceIds.has(current)) return;
+    next[field] = destinationId;
+    extras[field] = destinationId;
+    changed = true;
+  });
+
+  if (!changed) return { changed: false, row };
+  if (Object.keys(extras).length) next.extras = extras;
+  next.updatedAt = now;
+  return { changed: true, row: next };
+}
+
+function rewriteAccountIdList(values = [], destinationId = '', sourceIds = new Set()) {
+  const next = [...new Set((values || []).map((value) => {
+    const id = String(value || '').trim();
+    if (!id) return '';
+    return sourceIds.has(id) ? destinationId : id;
+  }).filter(Boolean))];
+  return next;
+}
+
+async function mergeAccounts(selection = [], destinationId = '') {
+  await ensureFinanceLoaded();
+  const ids = [...new Set((selection || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  const canonicalId = String(destinationId || '').trim();
+  if (ids.length < 2 || !canonicalId || !ids.includes(canonicalId)) return null;
+
+  const accountsById = Object.fromEntries((state.accounts || []).map((account) => [String(account?.id || '').trim(), account]));
+  const destinationAccount = accountsById[canonicalId];
+  if (!destinationAccount) return null;
+  const sourceIds = new Set(ids.filter((id) => id !== canonicalId));
+  if (!sourceIds.size) return null;
+  const sourceAccounts = [...sourceIds].map((id) => accountsById[id]).filter(Boolean);
+  if (sourceAccounts.length !== sourceIds.size) return null;
+
+  const now = nowTs();
+  const mergedEntries = mergeAccountEntryMaps(destinationAccount, sourceAccounts, state.legacyEntries || {});
+  const mergedSnapshots = mergeAccountSnapshotsMap(destinationAccount, sourceAccounts);
+  const mergedCardLast4Candidates = [...new Set([normalizeCardLast4(destinationAccount?.cardLast4 || ''), ...sourceAccounts.map((account) => normalizeCardLast4(account?.cardLast4 || ''))].filter(Boolean))];
+  const mergedCardLast4 = normalizeCardLast4(destinationAccount?.cardLast4 || '') || (mergedCardLast4Candidates.length === 1 ? mergedCardLast4Candidates[0] : '');
+  const canonicalPayload = {
+    ...destinationAccount,
+    cardLast4: mergedCardLast4,
+    entries: mergedEntries,
+    snapshots: mergedSnapshots,
+    createdAt: Math.min(...[destinationAccount, ...sourceAccounts].map((account) => Number(account?.createdAt || now)).filter((value) => Number.isFinite(value) && value > 0)),
+    updatedAt: now,
+  };
+
+  const updatesMap = {
+    [`${state.financePath}/accounts/${canonicalId}`]: canonicalPayload,
+  };
+
+  Object.entries(state.balance.transactions || {}).forEach(([txId, row]) => {
+    const rewritten = rewriteAccountRefsInRow(row, canonicalId, sourceIds, now);
+    if (!rewritten.changed) return;
+    updatesMap[`${state.financePath}/transactions/${txId}`] = rewritten.row;
+  });
+  Object.entries(state.balance.movements || {}).forEach(([monthKey, rows]) => {
+    Object.entries(rows || {}).forEach(([txId, row]) => {
+      const rewritten = rewriteAccountRefsInRow(row, canonicalId, sourceIds, now);
+      if (!rewritten.changed) return;
+      updatesMap[`${state.financePath}/movements/${monthKey}/${txId}`] = rewritten.row;
+    });
+  });
+  Object.entries(state.balance.tx || {}).forEach(([txId, row]) => {
+    const rewritten = rewriteAccountRefsInRow(row, canonicalId, sourceIds, now);
+    if (!rewritten.changed) return;
+    updatesMap[`${state.financePath}/tx/${txId}`] = rewritten.row;
+  });
+  Object.entries(state.balance.recurring || {}).forEach(([txId, row]) => {
+    const rewritten = rewriteAccountRefsInRow(row, canonicalId, sourceIds, now);
+    if (!rewritten.changed) return;
+    updatesMap[`${state.financePath}/recurring/${txId}`] = rewritten.row;
+  });
+  Object.entries(state.goals?.goals || {}).forEach(([goalId, goal]) => {
+    const currentIds = Array.isArray(goal?.accountsIncluded) ? goal.accountsIncluded : [];
+    const nextIds = rewriteAccountIdList(currentIds, canonicalId, sourceIds);
+    if (JSON.stringify(nextIds) === JSON.stringify(currentIds)) return;
+    updatesMap[`${state.financePath}/goals/goals/${goalId}/accountsIncluded`] = nextIds;
+    updatesMap[`${state.financePath}/goals/goals/${goalId}/updatedAt`] = now;
+  });
+
+  if (sourceIds.has(String(state.balance?.defaultAccountId || '').trim())) {
+    updatesMap[`${state.financePath}/balance/defaultAccountId`] = canonicalId;
+  }
+
+  [...sourceIds].forEach((accountId) => {
+    updatesMap[`${state.financePath}/accounts/${accountId}`] = null;
+    updatesMap[`${state.financePath}/accountsEntries/${accountId}`] = null;
+    updatesMap[`${state.financePath}/entries/${accountId}`] = null;
+  });
+
+  try {
+    await update(ref(db), updatesMap);
+  } catch (error) {
+    log('firebase error', error);
+    toast('No se pudo fusionar en Firebase');
+    return null;
+  }
+
+  state.accounts = state.accounts
+    .filter((account) => !sourceIds.has(String(account?.id || '').trim()))
+    .map((account) => (String(account?.id || '').trim() === canonicalId ? canonicalPayload : account));
+
+  const patchLocalRow = (row = {}) => rewriteAccountRefsInRow(row, canonicalId, sourceIds, now).row;
+  state.balance.transactions = Object.fromEntries(Object.entries(state.balance.transactions || {}).map(([txId, row]) => [txId, patchLocalRow(row)]));
+  state.balance.movements = Object.fromEntries(Object.entries(state.balance.movements || {}).map(([monthKey, rows]) => [monthKey, Object.fromEntries(Object.entries(rows || {}).map(([txId, row]) => [txId, patchLocalRow(row)]))]));
+  state.balance.tx = Object.fromEntries(Object.entries(state.balance.tx || {}).map(([txId, row]) => [txId, patchLocalRow(row)]));
+  state.balance.recurring = Object.fromEntries(Object.entries(state.balance.recurring || {}).map(([txId, row]) => [txId, patchLocalRow(row)]));
+  if (!state.goals) state.goals = { goals: {} };
+  state.goals.goals = Object.fromEntries(Object.entries(state.goals?.goals || {}).map(([goalId, goal]) => [goalId, {
+    ...goal,
+    accountsIncluded: rewriteAccountIdList(goal?.accountsIncluded || [], canonicalId, sourceIds),
+  }]));
+  state.legacyEntries = Object.fromEntries(Object.entries(state.legacyEntries || {}).filter(([accountId]) => !sourceIds.has(String(accountId || '').trim())));
+  if (sourceIds.has(String(state.balance?.defaultAccountId || '').trim())) state.balance.defaultAccountId = canonicalId;
+  if (sourceIds.has(String(state.balanceAccountFilter || '').trim())) state.balanceAccountFilter = canonicalId;
+  if (sourceIds.has(String(state.calendarAccountId || '').trim())) state.calendarAccountId = canonicalId;
+  if (sourceIds.has(String(state.lastMovementAccountId || '').trim())) {
+    state.lastMovementAccountId = canonicalId;
+    try { localStorage.setItem('bookshell_finance_lastMovementAccountId', canonicalId); } catch (_) {}
+  }
+  if (sourceIds.has(String(state.balanceFormState?.accountId || '').trim())) state.balanceFormState = { ...state.balanceFormState, accountId: canonicalId };
+  if (sourceIds.has(String(state.balanceFormState?.fromAccountId || '').trim())) state.balanceFormState = { ...state.balanceFormState, fromAccountId: canonicalId };
+  if (sourceIds.has(String(state.balanceFormState?.toAccountId || '').trim())) state.balanceFormState = { ...state.balanceFormState, toAccountId: canonicalId };
+
+  clearFinanceDerivedCaches();
+  scheduleAggregateRebuild();
+
+  return {
+    destinationId: canonicalId,
+    destinationName: String(destinationAccount?.name || canonicalId),
+    sourceIds: [...sourceIds],
+    sourceNames: sourceAccounts.map((account) => String(account?.name || account?.id || '')).filter(Boolean),
+    mergedAt: now,
+  };
+}
+
 
 function captureFinanceUiState() {
   const isProductsView = state.activeView === 'products' || state.modal?.type === 'food-products';
@@ -5774,7 +6968,7 @@ async function render() {
     if (state.activeView === 'balance') {
       await ensureFoodCatalogLoaded();
       host.innerHTML = renderFinanceBalance(accounts, categories, txRows);
-      renderFinanceStatsDonutChart();
+      await renderFinanceStatsDonutChart();
       await maybeRolloverSnapshot();
       if (!Object.keys(state.balance.aggregates || {}).length) scheduleAggregateRebuild();
     } else if (state.activeView === 'products') {
@@ -6317,6 +7511,67 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       triggerRender();
       return;
     }
+    const accountMergeOpen = target.closest('[data-account-merge-open]')?.dataset.accountMergeOpen;
+    if (accountMergeOpen != null) {
+      openAccountMergeModal(accountMergeOpen);
+      return;
+    }
+    const accountMergeToggle = target.closest('[data-account-merge-toggle]')?.dataset.accountMergeToggle;
+    if (accountMergeToggle) {
+      updateAccountMergeSelection(accountMergeToggle);
+      return;
+    }
+    const accountMergeDestination = target.closest('[data-account-merge-destination]')?.dataset.accountMergeDestination;
+    if (accountMergeDestination) {
+      setAccountMergeDestination(accountMergeDestination);
+      return;
+    }
+    if (target.closest('[data-account-merge-clear]')) {
+      clearAccountMergeSelection();
+      return;
+    }
+    const accountMergeSuggestion = target.closest('[data-account-merge-apply-suggestion]')?.dataset.accountMergeApplySuggestion;
+    if (accountMergeSuggestion) {
+      applyAccountMergeSuggestion(accountMergeSuggestion);
+      return;
+    }
+    if (target.closest('[data-account-merge-confirm]')) {
+      const accounts = buildAccountModels();
+      const current = normalizeAccountMergeModalState(state.modal, accounts);
+      const selection = [...current.selectedIds];
+      const destinationId = String(current.destinationId || '').trim();
+      if (current.merging || selection.length < 2 || !destinationId || !selection.includes(destinationId)) return;
+      const destinationAccount = accounts.find((account) => String(account?.id || '').trim() === destinationId) || null;
+      const destinationLabel = destinationAccount?.name || destinationId;
+      if (!window.confirm(`Se fusionaran ${selection.length} cuentas en "${destinationLabel}". ¿Continuar?`)) return;
+
+      state.modal = { ...current, merging: true };
+      syncAccountMergeModal(null, accounts);
+
+      const merged = await mergeAccounts(selection, destinationId);
+      const refreshedAccounts = buildAccountModels();
+      const nextBaseState = normalizeAccountMergeModalState({ ...state.modal, merging: false }, refreshedAccounts);
+      if (!merged) {
+        state.modal = nextBaseState;
+        syncAccountMergeModal(null, refreshedAccounts);
+        return;
+      }
+
+      const resolvedGroup = {
+        id: `resolved-${hashString(`${merged.destinationId}:${merged.sourceIds.join(',')}:${merged.mergedAt}`)}`,
+        ...merged,
+      };
+      state.modal = normalizeAccountMergeModalState({
+        ...nextBaseState,
+        merging: false,
+        selectedIds: [],
+        destinationId: '',
+        resolvedGroups: [resolvedGroup, ...nextBaseState.resolvedGroups],
+      }, refreshedAccounts);
+      toast(selection.length > 2 ? 'Cuentas fusionadas' : 'Fusion completada');
+      triggerRender();
+      return;
+    }
     const ignoreFoodId = target.closest('[data-food-ignore-product]')?.dataset.foodIgnoreProduct;
     if (ignoreFoodId) {
       await safeFirebase(() => set(ref(db, `${state.financePath}/foodCatalog/ignored/${ignoreFoodId}`), true));
@@ -6519,7 +7774,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       const host = document.querySelector('[data-food-history-chart]');
       if (!host) return;
       host.dataset.foodHiddenVendors = Object.keys(JSON.parse(host.dataset.foodHistorySeries || '{}')).filter((vendor) => vendor !== vendorFocus).join(',');
-      renderFoodHistoryVendorChart();
+      void renderFoodHistoryVendorChart();
       return;
     }
     const vendorToggle = target.closest('[data-food-vendor-toggle]')?.dataset.foodVendorToggle;
@@ -6531,7 +7786,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       if (!vendorKey) return;
       if (hidden.has(vendorKey)) hidden.delete(vendorKey); else hidden.add(vendorKey);
       host.dataset.foodHiddenVendors = [...hidden].join(',');
-      renderFoodHistoryVendorChart();
+      void renderFoodHistoryVendorChart();
       return;
     }
     const openFoodEdit = target.closest('[data-food-open-edit]')?.dataset.foodOpenEdit;
@@ -6546,7 +7801,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       if (!host) return;
       host.dataset.foodChartType = chartTypeBtn.dataset.foodChartType || 'line';
       document.querySelectorAll('[data-food-chart-type]').forEach((el) => el.classList.toggle('is-active', el === chartTypeBtn));
-      renderFoodHistoryVendorChart();
+      void renderFoodHistoryVendorChart();
       return;
     }
     const chartRangeBtn = target.closest('[data-food-chart-range]');
@@ -6555,7 +7810,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       if (!host) return;
       host.dataset.foodChartRange = chartRangeBtn.dataset.foodChartRange || 'total';
       document.querySelectorAll('[data-food-chart-range]').forEach((el) => el.classList.toggle('is-active', el === chartRangeBtn));
-      renderFoodHistoryVendorChart();
+      void renderFoodHistoryVendorChart();
       return;
     }
     const scrollToCard = target.closest('[data-food-scroll-to]')?.dataset.foodScrollTo;
@@ -6805,6 +8060,12 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-food-products-food-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyFood: !!event.target.checked }; triggerRender(); }
     if (event.target.matches('[data-food-products-custom-start]')) { state.foodProductsView = { ...state.foodProductsView, customStart: event.target.value }; triggerRender(); }
     if (event.target.matches('[data-food-products-custom-end]')) { state.foodProductsView = { ...state.foodProductsView, customEnd: event.target.value }; triggerRender(); }
+    if (event.target.matches('[data-account-merge-show-resolved]')) {
+      const accounts = buildAccountModels();
+      state.modal = normalizeAccountMergeModalState({ ...state.modal, showResolved: !!event.target.checked }, accounts);
+      syncAccountMergeModal(null, accounts);
+      return;
+    }
     if (event.target.matches('[data-finance-stats-include-unlined]')) { state.balanceStatsIncludeUnlined = !!event.target.checked; state.balanceStatsActiveSegment = null; triggerRender(); }
 
     if (event.target.matches('[data-finance-stats-legend-details]')) {
@@ -6845,6 +8106,13 @@ view.addEventListener('focusout', async (event) => {
       const form = event.target.closest('[data-balance-form]');
       maybeToggleCategoryCreate(form);
       persistBalanceFormState(form);
+      return;
+    }
+
+    if (event.target.matches('[data-account-merge-search]')) {
+      const accounts = buildAccountModels();
+      state.modal = normalizeAccountMergeModalState({ ...state.modal, query: String(event.target.value || '') }, accounts);
+      syncAccountMergeModal(null, accounts);
       return;
     }
 

@@ -2946,3 +2946,289 @@ width: 100%;
 display: contents;
 margin-bottom: 50px;
 }
+
+.financeTab .finance__sectionHeader [data-account-merge-open].finance-pill--mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.financeTab #finance-modal.finance-modal--account-merge {
+  width: min(1100px, calc(100vw - 16px));
+  max-width: 1100px;
+  max-height: min(88vh, 920px);
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+  overflow: hidden;
+}
+
+.financeTab .financeAccountMerge__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.financeTab .financeAccountMerge__heading {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.financeTab .financeAccountMerge__heading h3,
+.financeTab .financeAccountMerge__subtitle,
+.financeTab .financeAccountMergePanel__head h4,
+.financeTab .financeAccountMergePanel__head small,
+.financeTab .financeAccountMergeActions__copy {
+  margin: 0;
+}
+
+.financeTab .financeAccountMerge__subtitle,
+.financeTab .financeAccountMergePanel__head small,
+.financeTab .financeAccountMergeRow__meta,
+.financeTab .financeAccountMergeActions__copy,
+.financeTab .financeAccountMergeResolvedRow small {
+  color: var(--fin-muted);
+}
+
+.financeTab .financeAccountMerge__toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.financeTab .financeAccountMerge__layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(300px, .92fr) minmax(0, .9fr);
+  gap: 12px;
+}
+
+.financeTab .financeAccountMergePanel,
+.financeTab .financeAccountMergeSideBlock {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+}
+
+.financeTab .financeAccountMergePanel {
+  padding: 14px;
+  border-radius: 22px;
+  border: 1px solid rgba(171, 197, 255, .14);
+  background:
+    linear-gradient(180deg, rgba(14, 30, 60, .82), rgba(7, 18, 44, .72)),
+    radial-gradient(circle at top, rgba(115, 191, 255, .08), transparent 56%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+  overflow: hidden;
+}
+
+.financeTab .financeAccountMergePanel--selection {
+  background:
+    linear-gradient(180deg, rgba(15, 36, 68, .92), rgba(8, 18, 44, .84)),
+    radial-gradient(circle at top, rgba(104, 184, 255, .14), transparent 58%);
+}
+
+.financeTab .financeAccountMergePanel--side {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.financeTab .financeAccountMergePanel__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.financeTab .financeAccountMergeList {
+  min-height: 150px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+
+.financeTab .financeAccountMergeList--selection {
+  min-height: 220px;
+}
+
+.financeTab .financeAccountMergeRow,
+.financeTab .financeAccountMergeSelectionCard,
+.financeTab .financeAccountMergeSuggestionRow,
+.financeTab .financeAccountMergeResolvedRow {
+  border: 1px solid rgba(171, 197, 255, .14);
+  border-radius: 18px;
+  background: rgba(6, 16, 38, .54);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
+  transition: border-color .18s ease, background .18s ease, opacity .18s ease, transform .18s ease;
+}
+
+.financeTab .financeAccountMergeRow__main {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.financeTab .financeAccountMergeRow:hover,
+.financeTab .financeAccountMergeSelectionCard:hover,
+.financeTab .financeAccountMergeSuggestionRow:hover {
+  border-color: rgba(147, 206, 255, .28);
+  background: rgba(11, 24, 56, .68);
+}
+
+.financeTab .financeAccountMergeRow__main:disabled {
+  cursor: default;
+}
+
+.financeTab .financeAccountMergeRow.is-selected,
+.financeTab .financeAccountMergeSelectionCard.is-primary {
+  border-color: rgba(126, 208, 255, .46);
+  background: rgba(13, 35, 71, .88);
+  box-shadow:
+    0 12px 28px rgba(0, 0, 0, .18),
+    inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+
+.financeTab .financeAccountMergeRow.is-resolved,
+.financeTab .financeAccountMergeResolvedRow {
+  opacity: .72;
+}
+
+.financeTab .financeAccountMergeRow__titleLine,
+.financeTab .financeAccountMergeSuggestionRow__top,
+.financeTab .financeAccountMergeResolvedRow__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.financeTab .financeAccountMergeRow__titleLine strong,
+.financeTab .financeAccountMergeSuggestionRow__top strong,
+.financeTab .financeAccountMergeSelectionCard__copy strong,
+.financeTab .financeAccountMergeResolvedRow__top strong {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.financeTab .financeAccountMergeRow__cta {
+  flex: 0 0 auto;
+  font-size: .78rem;
+  color: var(--fin-muted);
+}
+
+.financeTab .financeAccountMergeSelectionCard,
+.financeTab .financeAccountMergeSuggestionRow,
+.financeTab .financeAccountMergeResolvedRow {
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.financeTab .financeAccountMergeSelectionCard__copy {
+  display: grid;
+  gap: 6px;
+}
+
+.financeTab .financeAccountMergeBadgeRow,
+.financeTab .financeAccountMergeSelectionActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.financeTab .financeAccountMergeBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(171, 197, 255, .2);
+  background: rgba(255, 255, 255, .05);
+  color: var(--fin-text);
+  font-size: .74rem;
+  white-space: nowrap;
+}
+
+.financeTab .financeAccountMergeBadge--primary {
+  border-color: rgba(129, 214, 255, .44);
+  background: rgba(66, 132, 206, .22);
+}
+
+.financeTab .financeAccountMergeBadge--selected {
+  border-color: rgba(165, 214, 255, .36);
+  background: rgba(91, 131, 189, .2);
+}
+
+.financeTab .financeAccountMergeBadge--suggested {
+  border-color: rgba(255, 209, 128, .38);
+  background: rgba(143, 100, 32, .24);
+}
+
+.financeTab .financeAccountMergeBadge--resolved {
+  border-color: rgba(123, 229, 166, .34);
+  background: rgba(38, 120, 80, .22);
+}
+
+.financeTab .financeAccountMergeActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(171, 197, 255, .12);
+}
+
+.financeTab .financeAccountMergeActions .finance-pill {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 980px) {
+  .financeTab .financeAccountMerge__layout {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, .95fr);
+  }
+
+  .financeTab .financeAccountMergePanel--side {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .financeTab #finance-modal.finance-modal--account-merge {
+    width: calc(100vw - 12px);
+    max-height: calc(100vh - 12px);
+    padding: 14px;
+  }
+
+  .financeTab .financeAccountMerge__header,
+  .financeTab .financeAccountMerge__toolbar,
+  .financeTab .financeAccountMerge__layout,
+  .financeTab .financeAccountMergePanel--side,
+  .financeTab .financeAccountMergeActions {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .financeTab .financeAccountMergeList {
+    max-height: 30vh;
+  }
+
+  .financeTab .financeAccountMergeActions .finance-pill {
+    width: 100%;
+  }
+}

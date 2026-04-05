@@ -1,5 +1,6 @@
 // world-heatmap.js
 import { getCountryEnglishName } from "./countries.js";
+import { ensureEcharts } from "../../shared/vendors/echarts.js";
 
 const WORLD_GEO_URLS = [
   "https://echarts.apache.org/examples/data/asset/geo/world.json",
@@ -107,7 +108,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
     return;
   }
 
-  const echartsLib = window?.echarts;
+  const echartsLib = await ensureEcharts();
   if (!echartsLib) {
     host.innerHTML = `<div class="geo-empty">No se pudo cargar la librería de mapas.</div>`;
     return;

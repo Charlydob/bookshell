@@ -1,14 +1,7 @@
-let runtimeModule = null;
+import { createResizeAwareRuntimeModule } from "../../shared/modules/lifecycle.js";
 
-export async function init() {
-  if (runtimeModule) return;
-  runtimeModule = await import("./runtime.js");
-}
+const lifecycle = createResizeAwareRuntimeModule(() => import("./runtime.js"));
 
-export async function onShow() {
-  try {
-    window.dispatchEvent(new Event("resize"));
-  } catch (_) {}
-}
-
-export function destroy() {}
+export const init = lifecycle.init;
+export const onShow = lifecycle.onShow;
+export const destroy = lifecycle.destroy;

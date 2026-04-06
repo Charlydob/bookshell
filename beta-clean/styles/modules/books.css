@@ -271,14 +271,6 @@
 
 .watchlist-summary::-webkit-details-marker{ display: none; }
 
-.watchlist-header{
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-}
-
-
 .watchlist-subtitle{
   font-size: 13px;
   color: var(--txt-soft);
@@ -328,58 +320,6 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.watch-card{
-  border-radius: 12px;
-  padding: 12px;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.06);
-  display: grid;
-  gap: 8px;
-  cursor: pointer;
-  transition: border-color .15s ease, transform .12s ease;
-}
-.watch-card:hover{
-  border-color: rgba(255,255,255,0.12);
-  transform: translateY(-1px);
-}
-.watch-card-title-row{
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.watch-card-title{
-  font-weight: 700;
-  color: #fff;
-  font-size: 15px;
-}
-.watch-card-badge{
-  padding: 5px 10px;
-  border-radius: 999px;
-  background: rgba(255, 208, 85, 0.15);
-  color: #f8dd85;
-  border: 1px solid rgba(255,208,85,0.35);
-  font-size: 12px;
-  font-weight: 700;
-}
-.watch-card-meta{
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  color: var(--txt-soft);
-  font-size: 13px;
-}
-.watch-card-meta span{
-  padding: 4px 8px;
-  border-radius: 10px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.06);
-}
-.watch-card-actions{
-  display: flex;
-  gap: 8px;
 }
 
 /* Tarjeta libro */
@@ -814,7 +754,7 @@
   overflow: hidden;
 }
 
-.books-finished-summary, .books-watchlist-summary{
+.books-finished-summary{
   list-style: none;
   padding: 10px 12px;
   display: flex;
@@ -843,14 +783,6 @@
 .book-card-finished{
   opacity: .72;
   filter: saturate(.85);
-}
-
-.book-card-finished .progress-ring{
-  background: conic-gradient(#2eea7b calc(var(--p) * 1%), rgba(255,255,255,.12) 0);
-}
-
-.book-card-finished .progress-ring-inner{
-  opacity: .9;
 }
 
 /* --- Compact tweak --- */
@@ -1534,6 +1466,8 @@
   font-size: 13px;
 }
 .geo-map{
+  flex: 1 1 auto;
+  min-width: 0;
   width: 100%;
   height: 320px;
   border-radius: 16px;
@@ -1586,8 +1520,6 @@
   color: var(--txt-soft);
 }
 
-.geo-header{display:flex;}
-.geo-map{flex:1 1 auto; min-width:0; width:100%; height:320px;}
 #book-detail-backdrop{
   padding: 0;
 }
@@ -1624,10 +1556,6 @@ color: white;
 border: 1px solid rgba(255,255,255,0.12);
 background-color: transparent;
 }
-.book-detail-quote-item:last-child{
-  margin-bottom: 0;
-}
-
 .book-title.card-toggle {
   cursor: pointer;
   position: relative;

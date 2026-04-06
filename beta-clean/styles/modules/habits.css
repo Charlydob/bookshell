@@ -375,13 +375,6 @@ body.is-session-detail-open #app {
   display: none;
 }
 
-.quick-counters-title {
-  font-weight: 700;
-  font-size: 14px;
-  margin-bottom: 10px;
-  color: var(--txt);
-}
-
 .quick-counters-grid {
   padding: 0px;
   justify-content: space-between;
@@ -411,10 +404,13 @@ body.is-session-detail-open #app {
   cursor: default;
   transition: transform 0.08s ease, box-shadow 0.16s ease, border-color 0.16s ease;
   padding: 0;
-
+  touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   -ms-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  will-change: transform;
 }
 
 .quick-counter-btn:active {
@@ -443,6 +439,7 @@ body.is-session-detail-open #app {
   opacity: 0.52;
   transform: scale(1.05);
   box-shadow: 0 14px 26px rgba(20, 20, 40, 0.32);
+  cursor: grabbing;
 }
 
 .quick-counter-badge {
@@ -466,26 +463,10 @@ body.is-session-detail-open #app {
   pointer-events: none;
 }
 
-.quick-counter-btn{
-  touch-action: none;           /* evita scroll/gestos raros mientras arrastras */
-  -webkit-tap-highlight-color: transparent;
-  will-change: transform;
-    touch-action: none;
-}
 .quick-counter-ph{
   border-radius: inherit;
-  opacity: .15;
+  opacity: .12;
 }
-.quick-counter-btn.is-dragging{
-  cursor: grabbing;
-}
-.quick-counter-btn{
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-touch-callout: none;
-}
-.quick-counter-ph{ opacity:.12; }
 
 @keyframes quick-counter-pop {
   0% { transform: scale(0.98); }
@@ -1196,44 +1177,6 @@ body.is-session-detail-open #app {
   color: #ffb347;
   font-size: 13px;
   margin-top: 8px;
-}
-
-.habit-fab {
-  position: fixed;
-  right: 16px;
-  bottom: 86px;
-  z-index: 6;
-  border: none;
-  border-radius: var(--radius-pill);
-  padding: 14px 18px;
-  background: var(--accent);
-  color: #fff;
-  font-weight: 700;
-  box-shadow: var(--shadow-soft);
-}
-
-.habit-fab-dock {
-  position: fixed;
-  left: 50%;
-  bottom: 86px;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  z-index: 6;
-}
-
-.habit-fab-dock .habit-fab {
-  position: static;
-  right: auto;
-  bottom: auto;
-}
-
-.habit-fab-add {
-  background: rgba(255,255,255,0.12);
-  color: var(--txt);
-  border: 1px solid rgba(255,255,255,0.2);
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.08);
 }
 
 .habit-records-card .habit-card-head {
@@ -1978,11 +1921,6 @@ body.is-session-detail-open #app {
 }
 
 @media (min-width: 600px) {
-  .habit-fab,
-  .habit-fab-dock {
-    bottom: 100px;
-  }
-
   .habit-session-overlay {
     bottom: 40px;
   }
@@ -3751,17 +3689,6 @@ content: "";
 .habit-schedule-cell.is-bad {
   background: color-mix(in srgb, #ff5a67 18%, rgba(255,255,255,.03));
   border-color: rgba(255, 90, 103, .82);
-}
-.habit-visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
 }
 
 

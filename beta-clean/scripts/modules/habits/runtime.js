@@ -7931,12 +7931,25 @@ function buildHistoryMonthCalendar(anchorDate = new Date(), { onDateChange = nul
   const body = document.createElement("div");
   body.className = "habits-history-section-body habits-history-calendar-body";
 
-  const handleDateChange = () => {
-    const selectedDate = parseDateKey(selectedDateKey) || new Date();
+  const syncCalendarToSelectedDate = (dateKey = selectedDateKey) => {
+    const selectedDate = parseDateKey(dateKey) || new Date();
     historyCalYear = selectedDate.getFullYear();
     historyCalMonth = selectedDate.getMonth();
+  };
+
+  const handleDateChange = (dateKey = selectedDateKey) => {
+    syncCalendarToSelectedDate(dateKey);
     if (typeof onDateChange === "function") {
-      onDateChange(selectedDateKey);
+      onDateChange(dateKey);
+      return;
+    }
+    updateCalendar();
+  };
+
+  const handleCalendarNavigation = (delta) => {
+    shiftHistoryCalendar(delta);
+    if (historyCalView === "week") {
+      handleDateChange();
       return;
     }
     updateCalendar();
@@ -7991,12 +8004,10 @@ function buildHistoryMonthCalendar(anchorDate = new Date(), { onDateChange = nul
   };
 
   prevBtn.addEventListener("click", () => {
-    shiftHistoryCalendar(-1);
-    handleDateChange();
+    handleCalendarNavigation(-1);
   });
   nextBtn.addEventListener("click", () => {
-    shiftHistoryCalendar(1);
-    handleDateChange();
+    handleCalendarNavigation(1);
   });
 
   updateCalendar();

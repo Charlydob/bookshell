@@ -4486,6 +4486,208 @@ function renderFixedExpenseLineChart() {
 }
 console.log('FIXED RECURRING HELPERS OK');
 
+function getBalanceTrendSeries(accountsById = {}, txRows = balanceTxList(), trendMode = 'expense', trendCategory = 'all') {
+  const seriesMap = {};
+  const monthKeys = [];
+  const allMonthsSet = new Set();
+
+  txRows.forEach((tx) => {
+    const monthKey = String(tx.monthKey || '');
+    if (monthKey) allMonthsSet.add(monthKey);
+  });
+
+  const sortedMonths = Array.from(allMonthsSet).sort();
+  monthKeys.push(...sortedMonths);
+
+  if (monthKeys.length === 0) {
+    return { monthKeys: [], series: [], tone: 'is-neutral' };
+  }
+
+  const filteredTx = txRows.filter((tx) => {
+    const txType = normalizeTxType(tx.type);
+    if (trendMode === 'expense' && txType !== 'expense') return false;
+    if (trendMode === 'income' && txType !== 'income') return false;
+    if (trendMode === 'all') return true;
+    if (trendCategory !== 'all' && tx.category !== trendCategory) return false;
+    return true;
+  });
+
+  if (trendCategory === 'all') {
+    const categoryVolume = {};
+    filteredTx.forEach((tx) => {
+      const cat = tx.category || 'sin-categoría';
+      categoryVolume[cat] = (categoryVolume[cat] || 0) + Math.abs(Number(tx.amount || 0));
+    });
+
+    let categoriesToShow = Object.entries(categoryVolume)
+      .sort(([, a], [, b]) => b - a)
+      .map(([cat]) => cat);
+
+    if (categoriesToShow.length > 8) {
+      categoriesToShow = categoriesToShow.slice(0, 7);
+    }
+
+    categoriesToShow.forEach((category) => {
+      const key = category;
+      seriesMap[key] = {
+        key,
+        name: category,
+        emoji: categoryEmojiForName(category),
+        values: {},
+        type: trendMode
+      };
+
+      filteredTx.filter((tx) => (tx.category || 'sin-categoría') === category).forEach((tx) => {
+        const monthKey = String(tx.monthKey || '');
+        if (!monthKey) return;
+        seriesMap[key].values[monthKey] = (seriesMap[key].values[monthKey] || 0) + Number(tx.amount || 0);
+      });
+    });
+  } else {
+    const key = trendCategory;
+    seriesMap[key] = {
+      key,
+      name: trendCategory,
+      emoji: categoryEmojiForName(trendCategory),
+      values: {},
+      type: trendMode
+    };
+
+    filteredTx.forEach((tx) => {
+      const monthKey = String(tx.monthKey || '');
+      if (!monthKey) return;
+      seriesMap[key].values[monthKey] = (seriesMap[key].values[monthKey] || 0) + Number(tx.amount || 0);
+    });
+  }
+
+  const colors = ['#4bf2a8', '#ff708f', '#9db0df', '#ffa500', '#ff69b4', '#00d4ff', '#baff12', '#ff6b6b'];
+  const series = Object.values(seriesMap)
+    .filter((s) => Object.values(s.values).some((v) => v !== 0))
+    .map((item, idx) => {
+      let color = '#ff708f';
+      if (trendMode === 'income') color = '#4bf2a8';
+      else if (trendMode === 'all') color = colors[idx % colors.length];
+      else if (trendCategory === 'all') color = colors[idx % colors.length];
+      return {
+        ...item,
+        color,
+        points: monthKeys.map((monthKey) => ({
+          monthKey,
+          value: Number(item.values[monthKey] || 0)
+        }))
+      };
+    });
+
+  const allValues = series.flatMap((s) => s.points.map((p) => Math.abs(Number(p.value || 0))));
+  const maxValue = allValues.length ? Math.max(...allValues) : 1;
+  const tone = trendMode === 'income' ? 'is-positive' : (trendMode === 'all' ? 'is-neutral' : 'is-negative');
+
+  return { monthKeys, series, tone, maxValue };
+}
+
+function renderBalanceTrendChart(data = { monthKeys: [], series: [], tone: 'is-neutral' }) {
+  if (!data.series.length) {
+    return '<p class="finance-empty">Sin datos.</p>';
+  }
+
+  const width = 280;
+  const height = 100;
+  const pad = 8;
+  const labelHeight = 12;
+  const chartH = height - pad * 2 - labelHeight;
+  const chartW = width - pad * 2;
+
+  const allVals = data.series.flatMap((s) => data.monthKeys.map((m) => Math.abs(Number(s.values?.[m] || 0))));
+  const maxVal = allVals.length ? Math.max(...allVals) : 1;
+  const range = Math.max(1, maxVal);
+
+  const lines = data.series.map((serie) => {
+    const points = data.monthKeys.map((monthKey, idx) => {
+      const pct = data.monthKeys.length > 1 ? idx / (data.monthKeys.length - 1) : 0.5;
+      const x = pad + pct * chartW;
+      const val = Math.abs(Number(serie.values?.[monthKey] || 0));
+      const normalized = Math.max(0, Math.min(1, val / range));
+      const y = pad + chartH - normalized * chartH;
+      return { x, y, idx, monthKey, val };
+    });
+
+    const path = points.map((p, i) => {
+      if (i === 0) return `M${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+      return `L${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+    }).join(' ');
+
+    return { path, color: serie.color, points, name: serie.name };
+  });
+
+  const verticalGuides = data.monthKeys.map((monthKey, idx) => {
+    const pct = data.monthKeys.length > 1 ? idx / (data.monthKeys.length - 1) : 0.5;
+    const x = pad + pct * chartW;
+    return { x, idx, monthKey };
+  });
+
+  const dateStep = Math.max(1, Math.ceil(data.monthKeys.length / 5));
+  const dateLabels = verticalGuides
+    .filter(({ idx }) => idx % dateStep === 0 || idx === data.monthKeys.length - 1)
+    .map(({ x, monthKey }) => {
+      const mm = monthKey.slice(5, 7);
+      const yy = monthKey.slice(2, 4);
+      return { label: `${mm}/${yy}`, x };
+    });
+
+  const tooltipValues = data.series.length === 1 
+    ? data.monthKeys.map((monthKey, idx) => {
+        const pct = data.monthKeys.length > 1 ? idx / (data.monthKeys.length - 1) : 0.5;
+        const x = pad + pct * chartW;
+        const val = Number(data.series[0].values?.[monthKey] || 0);
+        const label = idx % dateStep === 0 || idx === data.monthKeys.length - 1 ? fmtCurrency(val) : '';
+        return { x, label, idx, color: data.series[0].color };
+      })
+    : [];
+
+  const chartGeometry = JSON.stringify({
+    monthKeys: data.monthKeys,
+    seriesData: data.series.map((s) => ({ name: s.name, color: s.color, emoji: s.emoji, values: s.values || {} })),
+    width, height, pad, chartH, chartW
+  });
+
+  return `
+    <div id="fin-trendChart" class="${data.tone}" data-fin-chart-geometry="${escapeHtml(chartGeometry)}" style="--fin-trend-chart-height: 160px; margin-top: 10px; height: var(--fin-trend-chart-height); border-radius: 14px; border: 1px solid rgba(173, 197, 255, 0.15); background: linear-gradient(135deg, rgba(5, 15, 38, 0.5), rgba(7, 22, 54, 0.25)); padding: 10px; position: relative; display: flex; flex-direction: column;">
+      <div style="position: relative; flex: 1; display: flex; flex-direction: column;">
+        <svg viewBox="0 0 ${width} ${height}" style="flex: 1; width: 100%; display: block; user-select: none; cursor: crosshair;">
+          ${verticalGuides.map(({ x }) => `<line x1="${x.toFixed(1)}" y1="${pad.toFixed(1)}" x2="${x.toFixed(1)}" y2="${(pad + chartH).toFixed(1)}" stroke="rgba(255,255,255,0.04)" stroke-width="1"></line>`).join('')}
+          ${lines.map((line) => `<path d="${line.path}" stroke="${line.color}" fill="none" stroke-width="2.5" stroke-linecap="butt" stroke-linejoin="bevel" opacity="0.9" style="filter: drop-shadow(0 0 6px ${line.color.replace(')', ', 0.4)')});"></path>`).join('')}
+          ${dateLabels.map((dl) => `<text x="${dl.x.toFixed(1)}" y="${(height - 1).toFixed(1)}" font-size="10" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-weight="500">${escapeHtml(dl.label)}</text>`).join('')}
+          ${tooltipValues.filter((tv) => tv.label).map((tv) => `<text x="${tv.x.toFixed(1)}" y="${(pad + chartH - 8).toFixed(1)}" font-size="8" text-anchor="middle" fill="${tv.color}" opacity="0.8" font-weight="600">${escapeHtml(tv.label)}</text>`).join('')}
+          <circle cx="0" cy="0" r="0" class="fin-trend-activeMarker" style="fill: none; stroke: rgba(255,255,255,0.5); stroke-width: 2; pointer-events: none; transition: all 0.1s ease;"></circle>
+        </svg>
+        <div data-fin-trend-tooltip style="position: absolute; top: 4px; left: 50%; transform: translateX(-50%); background: rgba(8, 14, 28, 0.9); border: 1px solid rgba(173, 197, 255, 0.3); border-radius: 8px; padding: 6px 10px; font-size: 11px; color: var(--fin-text); pointer-events: none; opacity: 0; transition: opacity 0.1s ease; white-space: nowrap; z-index: 10; backdrop-filter: blur(8px);"></div>
+      </div>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: 11px;">
+        ${data.series.map((serie) => `<span style="display: inline-flex; align-items: center; gap: 4px; color: ${serie.color};"><span style="width: 5px; height: 5px; border-radius: 50%; background: ${serie.color}; display: inline-block; flex-shrink: 0;"></span><span>${escapeHtml(serie.emoji || '')} ${escapeHtml(serie.name)}</span></span>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderBalanceTrendControls(categories = categoriesList(), mode = 'expense', category = 'all') {
+  const modeLabel = mode === 'all' ? 'Ambos' : (mode === 'income' ? 'Ingresos' : 'Gastos');
+  return `
+    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+      <select class="finance-pill" data-balance-trend-mode style="min-width: 90px;">
+        <option value="expense" ${mode === 'expense' ? 'selected' : ''}>Gastos</option>
+        <option value="income" ${mode === 'income' ? 'selected' : ''}>Ingresos</option>
+        <option value="all" ${mode === 'all' ? 'selected' : ''}>Ambos</option>
+      </select>
+      <select class="finance-pill" data-balance-trend-category style="flex: 1; min-width: 120px;">
+        <option value="all" ${category === 'all' ? 'selected' : ''}>Todas las categorías</option>
+        ${categories.map((cat) => `<option value="${escapeHtml(cat)}" ${category === cat ? 'selected' : ''}>${escapeHtml(categoryEmojiForName(cat) || '')} ${escapeHtml(cat)}</option>`).join('')}
+      </select>
+    </div>
+  `;
+}
+
+console.log('BALANCE TREND HELPERS OK');
+
 
 function renderFinanceCalendarPanel(accounts, totalSeries, { withToggle = false } = {}) {
 
@@ -4675,9 +4877,10 @@ const fixedSummaryBlock = `
     <button class="boton-calendario" data-month-shift="-1">&#9664;</button>
     <select class="finance-pill" data-calendar-account><option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select>
     <select class="finance-pill" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>D&iacute;a</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>A&ntilde;o</option></select>
-    <button type="button" class="finance-pill finance-pill--add-fixed" data-open-fixed-expense>+ Fijo</button>
     <button class="boton-calendario" data-month-shift="1">&#9654;</button>
   </div>
+      <button type="button" class="finance-pill finance-pill--add-fixed" data-open-fixed-expense>+ Fijo</button>
+
   ${content}
   ${fixedSummaryBlock}
 </article>`;
@@ -4811,6 +5014,16 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
       return `<button type="button" class="financeTxRow finTxDay__row" data-tx-day-open="${day.dayISO}"><span class="${toneClass(day.net)}">${label}</span><span class="${toneClass(day.net)}">${day.rows.length} movimientos</span><strong class="${toneClass(day.net)}">${fmtSignedCurrency(day.net)}</strong></button>`;
     }).join('') || '<p class="finance-empty">Sin movimientos en este mes.</p>'}</div>${txByDay.length > 10 ? `<div class="finance-row"><button class="finance-pill finance-pill--mini" data-balance-showmore>${state.balanceShowAllTx ? 'Ver menos' : `Ver más (${txByDay.length - 10})`}</button></div>` : ''}
 </details>
+
+  <article class="financeGlassCard">
+    ${(() => {
+      const trendData = getBalanceTrendSeries(accountsById, txRows, state.balanceTrendMode, state.balanceTrendCategory);
+      return `
+        ${renderBalanceTrendControls(categories, state.balanceTrendMode, state.balanceTrendCategory)}
+        ${renderBalanceTrendChart(trendData)}
+      `;
+    })()}
+  </article>
 
   <article class="financeGlassCard financeStats">
     <div class="financeStats__header">
@@ -7287,6 +7500,56 @@ function bindEvents() {
   }, chartEvtOpts);
 
   view.addEventListener('pointermove', (event) => {
+    const trendChart = event.target.closest('#fin-trendChart');
+    if (trendChart) {
+      const svg = trendChart.querySelector('svg');
+      if (!svg) return;
+      
+      const rect = svg.getBoundingClientRect();
+      const relX = event.clientX - rect.left;
+      const pctX = Math.max(0, Math.min(1, relX / rect.width));
+      
+      try {
+        const geometry = JSON.parse(trendChart.dataset.finChartGeometry);
+        const idx = Math.round(pctX * (geometry.monthKeys.length - 1));
+        if (idx < 0 || idx >= geometry.monthKeys.length) return;
+        
+        const monthKey = geometry.monthKeys[idx];
+        const mm = monthKey.slice(5, 7);
+        const yy = monthKey.slice(2, 4);
+        const tooltip = trendChart.querySelector('[data-fin-trend-tooltip]');
+        const marker = trendChart.querySelector('.fin-trend-activeMarker');
+        
+        if (tooltip && marker) {
+          const pctForCoord = idx / Math.max(geometry.monthKeys.length - 1, 1);
+          const xCoord = geometry.pad + pctForCoord * geometry.chartW;
+          
+          let tooltipText = `${mm}/${yy}`;
+          let color = 'rgba(255,255,255,0.6)';
+          
+          if (geometry.seriesData.length === 1) {
+            const serie = geometry.seriesData[0];
+            const val = serie.values[monthKey] || 0;
+            tooltipText = `${serie.emoji || ''} ${mm}/${yy}: ${fmtCurrency(val)}`;
+            color = serie.color;
+          } else if (geometry.seriesData.length > 1) {
+            tooltipText = `${mm}/${yy}`;
+          }
+          
+          tooltip.textContent = tooltipText;
+          tooltip.style.color = color;
+          tooltip.style.opacity = '1';
+          
+          marker.setAttribute('cx', xCoord.toFixed(1));
+          marker.setAttribute('cy', (geometry.pad + geometry.chartH / 2).toFixed(1));
+          marker.setAttribute('r', '6');
+        }
+      } catch (e) {
+        // Silenciar errores de parsing
+      }
+      return;
+    }
+    
     if (!chartPointerActive) return;
     if (chartPointerId != null && event.pointerId !== chartPointerId) return;
     if (!chartPointerEl) return;
@@ -7310,6 +7573,20 @@ function bindEvents() {
 
   view.addEventListener('pointerup', (event) => { endPointer(event); }, chartEvtOpts);
   view.addEventListener('pointercancel', (event) => { endPointer(event); }, chartEvtOpts);
+
+  view.addEventListener('pointerleave', (event) => {
+    const trendChart = event.target.closest('#fin-trendChart');
+    if (trendChart) {
+      const tooltip = trendChart.querySelector('[data-fin-trend-tooltip]');
+      const marker = trendChart.querySelector('.fin-trend-activeMarker');
+      if (tooltip) tooltip.style.opacity = '0';
+      if (marker) {
+        marker.setAttribute('cx', '0');
+        marker.setAttribute('cy', '0');
+        marker.setAttribute('r', '0');
+      }
+    }
+  }, chartEvtOpts);
 
   view.addEventListener('click', async (event) => {
     const target = event.target;
@@ -8248,6 +8525,7 @@ if (fixedExpenseDeleteId && window.confirm('¿Eliminar este gasto fijo?')) {
     const statsMode = target.closest('[data-finance-stats-mode]')?.dataset.financeStatsMode; if (statsMode) { state.balanceStatsMode = statsMode === 'income' ? 'income' : 'expense'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const statsRange = target.closest('[data-finance-stats-range]')?.dataset.financeStatsRange; if (statsRange) { state.balanceStatsRange = statsRange; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const statsScope = target.closest('[data-finance-stats-scope]')?.dataset.financeStatsScope; if (statsScope) { state.balanceStatsScope = statsScope === 'global' ? 'global' : 'personal'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
+
     if (target.closest('[data-finance-stats-view-unlined]')) { state.balanceFilterType = 'expense'; state.balanceFilterCategory = 'all'; state.balanceFilterUnlinedOnly = true; state.balanceShowAllTx = true; triggerRender(); return; }
     if (target.closest('[data-balance-filter-unlined-clear]')) { state.balanceFilterUnlinedOnly = false; triggerRender(); return; }
     const manageDelete = target.closest('[data-finance-manage-delete]')?.dataset.financeManageDelete;
@@ -8339,6 +8617,8 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-balance-type]')) { state.balanceFilterType = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
     if (event.target.matches('[data-balance-category]')) { state.balanceFilterCategory = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
     if (event.target.matches('[data-balance-account]')) { state.balanceAccountFilter = event.target.value; state.balanceShowAllTx = false; triggerRender(); }
+    if (event.target.matches('[data-balance-trend-mode]')) { state.balanceTrendMode = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-balance-trend-category]')) { state.balanceTrendCategory = event.target.value; triggerRender(); }
     if (event.target.matches('[data-finance-stats-group]')) { state.balanceStatsGroupBy = event.target.value; state.balanceStatsActiveSegment = null; triggerRender(); }
     if (event.target.matches('[data-food-products-range]')) { state.foodProductsView = { ...state.foodProductsView, range: event.target.value, rangeValue: '' }; triggerRender(); }
     if (event.target.matches('[data-food-products-vendor]')) { state.foodProductsView = { ...state.foodProductsView, vendor: event.target.value }; triggerRender(); }
@@ -8354,6 +8634,7 @@ view.addEventListener('focusout', async (event) => {
       return;
     }
     if (event.target.matches('[data-finance-stats-include-unlined]')) { state.balanceStatsIncludeUnlined = !!event.target.checked; state.balanceStatsActiveSegment = null; triggerRender(); }
+    if (event.target.matches('.financeBalanceCategoryToggle')) { const categoryKey = event.target.dataset.categoryKey; if (event.target.checked) { state.balanceCategoryTimelineSelected[categoryKey] = true; } else { delete state.balanceCategoryTimelineSelected[categoryKey]; } triggerRender(); }
 
     if (event.target.matches('[data-finance-stats-legend-details]')) {
       state.balanceStatsLegendExpanded = !!event.target.open;

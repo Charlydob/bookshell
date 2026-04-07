@@ -40,6 +40,8 @@ export const state = {
   balanceStatsLegendExpanded: true,
   balanceFilterUnlinedOnly: false,
   balanceAggScope: 'my',
+  balanceTrendMode: 'expense',
+  balanceTrendCategory: 'all',
   balanceAmountAuto: true,
   lastMovementAccountId: localStorage.getItem('bookshell_finance_lastMovementAccountId') || '',
   unsubscribe: null,

@@ -3447,3 +3447,48 @@ margin-bottom: 50px;
 .financeTab #finance-lineChart.is-neutral path,
 .financeTab #finance-balanceTrendChart.is-neutral path { stroke: #9cb4f3; }
 
+/* Phase 1 Timeline CSS removed - using simpler Phase 2 controls */
+
+/* Balance Trend Chart Styles */
+.financeTab #fin-trendChart {
+  --fin-trend-chart-height: 160px;
+}
+
+.financeTab #fin-trendChart.is-positive {
+  border-color: rgba(64, 244, 159, 0.2);
+}
+
+.financeTab #fin-trendChart.is-negative {
+  border-color: rgba(255, 109, 140, 0.2);
+}
+
+.financeTab #fin-trendChart.is-neutral {
+  border-color: rgba(156, 180, 243, 0.2);
+}
+
+.financeTab #fin-trendChart svg {
+  stroke-linecap: butt;
+  stroke-linejoin: bevel;
+}
+
+.financeTab #fin-trendChart path {
+  stroke-width: 2.5;
+}
+
+.financeTab #fin-trendChart [data-fin-trend-tooltip] {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.financeTab #fin-trendChart .fin-trend-activeMarker {
+  stroke-dasharray: 2, 4;
+  animation: fin-trend-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes fin-trend-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.9; }
+}
+

@@ -4251,10 +4251,10 @@ function renderFinanceCalendarPanel(accounts, totalSeries, { withToggle = false 
       ${toggle}
     </div>
     <div class="finance-calendar-controls">
-      <button class="boton-calendario" data-month-shift="-1">&#9664;</button>
+      <button type="button" class="boton-calendario" data-month-shift="-1">&#9664;</button>
       <select class="finance-pill" data-calendar-account><option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select>
       <select class="finance-pill" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>D&iacute;a</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>A&ntilde;o</option></select>
-      <button class="boton-calendario" data-month-shift="1">&#9654;</button>
+      <button type="button" class="boton-calendario" data-month-shift="1">&#9654;</button>
     </div>
     ${content}
   </article>`;

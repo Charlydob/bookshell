@@ -55,4 +55,6 @@ export const state = {
   booted: false,
   firstInitDone: false,
   eventsAbortController: null,
+  calendarFixedView: 'squares',
+calendarMainView: 'fixed',
 };

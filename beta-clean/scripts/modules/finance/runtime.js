@@ -4218,11 +4218,259 @@ function renderFinanceHeroPanel({ total, totalReal, totalRange, chart }, { withT
   </article>`;
 }
 
+
+function isFixedRecurring(row = {}) {
+  if (!row || row.disabled) return false;
+  const schedule = row.schedule || {};
+  if ((schedule.frequency || 'monthly') !== 'monthly') return false;
+  return true;
+}
+
+function getFixedRecurringRows(monthKey = getMonthKeyFromDate()) {
+  const rows = recurringForMonth(monthKey)
+    .filter((row) => isFixedRecurring(row))
+    .map((row) => {
+      const extras = row.extras || {};
+      const emoji = String(
+        extras.fixedEmoji ||
+        extras.emoji ||
+        row.emoji ||
+        ''
+      ).trim();
+
+      const color = String(
+        extras.fixedColor ||
+        extras.color ||
+        row.color ||
+        ''
+      ).trim();
+
+      const name = String(
+        extras.fixedName ||
+        row.note ||
+        row.category ||
+        'Fijo'
+      ).trim();
+
+      return {
+        ...row,
+        fixedName: name,
+        fixedEmoji: emoji || '💸',
+        fixedColor: color || '',
+        fixedAmountAbs: Math.abs(Number(row.amount || 0)),
+        fixedDay: Number(String(row.dateISO || row.date || '').slice(8, 10) || 1),
+      };
+    });
+
+  return rows;
+}
+
+function groupFixedRecurringByDay(monthKey = getMonthKeyFromDate()) {
+  const grouped = {};
+  getFixedRecurringRows(monthKey).forEach((row) => {
+    const dayKey = String(row.dateISO || row.date || '');
+    if (!dayKey) return;
+    if (!grouped[dayKey]) grouped[dayKey] = [];
+    grouped[dayKey].push(row);
+  });
+  return grouped;
+}
+
+function getFixedRecurringSummary(monthKey = getMonthKeyFromDate()) {
+  const rows = getFixedRecurringRows(monthKey);
+  const total = rows.reduce((sum, row) => sum + Math.abs(Number(row.amount || 0)), 0);
+
+  return rows
+    .map((row) => {
+      const amountAbs = Math.abs(Number(row.amount || 0));
+      return {
+        id: String(row.recurringId || row.id || ''),
+        name: row.fixedName || row.category || 'Fijo',
+        emoji: row.fixedEmoji || '💸',
+        color: row.fixedColor || '',
+        amount: amountAbs,
+        type: normalizeTxType(row.type),
+        dateISO: String(row.dateISO || row.date || ''),
+        day: row.fixedDay || 1,
+        category: String(row.category || ''),
+        accountId: String(row.accountId || ''),
+        percentage: total > 0 ? (amountAbs / total) * 100 : 0,
+      };
+    })
+    .sort((a, b) => b.amount - a.amount);
+}
+function getFixedExpenseChartRows(monthKey = getMonthKeyFromDate()) {
+  const rows = getFixedRecurringSummary(monthKey);
+  const total = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+
+  return rows.map((row, index) => ({
+    name: `${row.emoji || '💸'} ${row.name || 'Fijo'}`.trim(),
+    value: Number(row.amount || 0),
+    pct: total > 0 ? (Number(row.amount || 0) / total) * 100 : 0,
+    color: categoryColor(index),
+    _key: String(row.id || firebaseSafeKey(row.name || `fixed-${index}`)),
+    productKey: String(row.id || firebaseSafeKey(row.name || `fixed-${index}`)),
+    midAngle: 0
+  }));
+}
+
+function getFixedExpenseLineSeries(monthBack = 5) {
+  const seriesMap = {};
+  const monthKeys = [];
+
+  for (let i = monthBack; i >= 0; i -= 1) {
+    const monthKey = offsetMonthKey(getMonthKeyFromDate(), -i);
+    monthKeys.push(monthKey);
+
+    getFixedRecurringSummary(monthKey).forEach((row) => {
+      const key = String(row.id || firebaseSafeKey(row.name || 'fixed'));
+      if (!seriesMap[key]) {
+        seriesMap[key] = {
+          key,
+          name: row.name || 'Fijo',
+          emoji: row.emoji || '💸',
+          values: {}
+        };
+      }
+      seriesMap[key].values[monthKey] = Number(row.amount || 0);
+    });
+  }
+
+  return {
+    monthKeys,
+    series: Object.values(seriesMap).map((item) => ({
+      ...item,
+      points: monthKeys.map((monthKey) => ({
+        monthKey,
+        value: Number(item.values[monthKey] || 0)
+      }))
+    }))
+  };
+}
+function defaultFixedExpenseFormState() {
+  const monthKey = offsetMonthKey(getMonthKeyFromDate(), state.calendarMonthOffset || 0);
+  const accounts = buildAccountModels();
+  const defaultAccountId =
+    state.calendarAccountId && state.calendarAccountId !== 'total'
+      ? state.calendarAccountId
+      : (accounts[0]?.id || '');
+
+  return {
+    id: '',
+    name: '',
+    emoji: '💸',
+    amount: '',
+    type: 'expense',
+    category: 'Fijos',
+    accountId: defaultAccountId,
+    dayOfMonth: 1,
+    startDate: `${monthKey}-01`,
+    endDate: '',
+    active: true,
+    autoCreate: true,
+    color: '',
+    note: ''
+  };
+}
+function renderFixedExpenseSquares(monthKey = getMonthKeyFromDate()) {
+  const rows = getFixedRecurringSummary(monthKey);
+  if (!rows.length) return '<p class="finance-empty">Sin gastos fijos este mes.</p>';
+
+  return `
+    <div class="financeFixedSquares">
+      ${rows.map((row) => `
+        <button
+          type="button"
+          class="financeFixedSquare"
+          data-fixed-expense-filter="${escapeHtml(String(row.id || ''))}"
+          title="${escapeHtml(row.name || 'Fijo')} · ${fmtCurrency(row.amount || 0)} · ${Number(row.percentage || 0).toFixed(1)}%"
+        >
+          <span class="financeFixedSquare__emoji">${escapeHtml(row.emoji || '💸')}</span>
+          <strong class="financeFixedSquare__name">${escapeHtml(row.name || 'Fijo')}</strong>
+          <span class="financeFixedSquare__amount">${fmtCurrency(row.amount || 0)}</span>
+          <span class="financeFixedSquare__pct">${Number(row.percentage || 0).toFixed(1)}%</span>
+          <span class="financeFixedSquare__fill" style="width:${Math.max(6, Number(row.percentage || 0))}%"></span>
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+function renderFixedExpenseDonut(monthKey = getMonthKeyFromDate()) {
+  const rows = getFixedExpenseChartRows(monthKey);
+  if (!rows.length) return '<p class="finance-empty">Sin datos para donut.</p>';
+
+  return `
+    <div class="financeFixedDonutWrap" data-fixed-expense-donut-wrap>
+      <div
+        class="financeStats__donut"
+        data-finance-stats-donut='${escapeHtml(JSON.stringify(rows))}'
+        data-finance-stats-donut-wrap
+      ></div>
+    </div>
+  `;
+}
+function renderFixedExpenseLineChart() {
+  const data = getFixedExpenseLineSeries(5);
+  if (!data.series.length) return '<p class="finance-empty">Sin histórico para gráfico.</p>';
+
+  const maxValue = Math.max(
+    1,
+    ...data.series.flatMap((serie) => serie.points.map((point) => Number(point.value || 0)))
+  );
+
+  const width = 100;
+  const height = 44;
+
+  const lines = data.series.map((serie, serieIndex) => {
+    const points = serie.points.map((point, index) => {
+      const x = data.monthKeys.length === 1 ? 0 : (index / (data.monthKeys.length - 1)) * width;
+      const y = height - ((Number(point.value || 0) / maxValue) * height);
+      return `${x},${y}`;
+    }).join(' ');
+
+    return `
+      <g class="financeFixedLineGroup" data-fixed-line-key="${escapeHtml(serie.key)}">
+        <polyline
+          class="financeFixedLine financeFixedLine--${serieIndex % 6}"
+          fill="none"
+          points="${points}"
+        ></polyline>
+      </g>
+    `;
+  }).join('');
+
+  const legend = data.series.map((serie) => `
+    <button type="button" class="financeFixedLegendItem" data-fixed-line-filter="${escapeHtml(serie.key)}">
+      <span>${escapeHtml(serie.emoji || '💸')}</span>
+      <span>${escapeHtml(serie.name || 'Fijo')}</span>
+    </button>
+  `).join('');
+
+  return `
+    <div class="financeFixedLineWrap">
+      <svg class="financeFixedLineChart" viewBox="0 0 100 44" preserveAspectRatio="none">
+        ${lines}
+      </svg>
+      <div class="financeFixedLineMonths">
+        ${data.monthKeys.map((monthKey) => `<span>${escapeHtml(monthKey.slice(5, 7))}/${escapeHtml(monthKey.slice(2, 4))}</span>`).join('')}
+      </div>
+      <div class="financeFixedLegend">${legend}</div>
+    </div>
+  `;
+}
+console.log('FIXED RECURRING HELPERS OK');
+
+
 function renderFinanceCalendarPanel(accounts, totalSeries, { withToggle = false } = {}) {
+
+  
   const weekdayLabels = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
   const dayCalendar = calendarData(accounts, totalSeries);
   const monthCalendar = calendarMonthData(accounts, totalSeries);
   const yearCalendar = calendarYearData(accounts, totalSeries);
+  const fixedByDay = groupFixedRecurringByDay(
+  offsetMonthKey(getMonthKeyFromDate(), state.calendarMonthOffset)
+);
   const modeLabel = state.calendarMode === 'month'
     ? `${monthCalendar.year}`
     : (state.calendarMode === 'year' ? 'A&ntilde;os' : monthLabelByKey(offsetMonthKey(getMonthKeyFromDate(), state.calendarMonthOffset)));
@@ -4302,10 +4550,17 @@ function renderFinanceHome(accounts, totalSeries) {
 }
 
 function renderFinanceCalendar(accounts, totalSeries) {
+  
   const weekdayLabels = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
   const dayCalendar = calendarData(accounts, totalSeries);
   const monthCalendar = calendarMonthData(accounts, totalSeries);
   const yearCalendar = calendarYearData(accounts, totalSeries);
+  const fixedByDay = groupFixedRecurringByDay(
+  offsetMonthKey(getMonthKeyFromDate(), state.calendarMonthOffset)
+);
+const toggle = typeof renderFinanceHomePanelToggle === 'function'
+  ? ''
+  : '';
   const modeLabel = state.calendarMode === 'month'
     ? `${monthCalendar.year}`
     : (state.calendarMode === 'year' ? 'Años' : monthLabelByKey(offsetMonthKey(getMonthKeyFromDate(), state.calendarMonthOffset)));
@@ -4315,6 +4570,23 @@ function renderFinanceCalendar(accounts, totalSeries) {
       const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
       return `<button class="financeCalCell ${tone}" data-calendar-open-month="${point.monthKey}"><strong>${escapeHtml(point.label)}</strong><span>${point.isEmpty ? '—' : fmtSignedCurrency(point.delta)}</span><span>${point.isEmpty ? '—' : fmtSignedPercent(point.deltaPct)}</span></button>`;
     }).join('')}</div>`;
+
+    const fixedSummaryContent =
+  fixedSummaryView === 'donut'
+    ? renderFixedExpenseDonut(selectedMonthKey)
+    : fixedSummaryView === 'line'
+      ? renderFixedExpenseLineChart()
+      : renderFixedExpenseSquares(selectedMonthKey);
+
+const fixedSummaryBlock = `
+  <section class="financeFixedSummary">
+    <div class="financePanelTopbar">
+      <div class="financePanelHeading"><h3>Gastos fijos</h3></div>
+      ${fixedSummaryControls}
+    </div>
+    ${fixedSummaryContent}
+  </section>
+`;
   } else if (state.calendarMode === 'year') {
     content = `<div class="finance-calendar-years">${yearCalendar.map((point) => {
       const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
@@ -4324,20 +4596,65 @@ function renderFinanceCalendar(accounts, totalSeries) {
     content = `<div class="finance-calendar-grid"><div class="finance-calendar-weekdays">${weekdayLabels.map((l) => `<span>${l}</span>`).join('')}</div><div class="finance-calendar-days">${dayCalendar.cells.map((point) => {
       if (!point) return '<div class="financeCalCell financeCalCell--blank"></div>';
       const tone = point.isEmpty ? 'is-neutral' : toneClass(point.delta);
-      return `<button class="financeCalCell ${tone}" data-calendar-day="${point.dayKey}"><strong>${point.dayNumber}</strong><span>${point.isEmpty ? '—' : fmtSignedCurrency(point.delta)}</span><span>${point.isEmpty ? '—' : fmtSignedPercent(point.deltaPct)}</span></button>`;
+      const fixedItems = fixedByDay[point.dayKey] || [];
+const fixedEmojis = fixedItems.length
+  ? `<div class="financeCalFixedRow">${fixedItems.slice(0, 4).map((item) => `
+      <div class="financeCalFixedEmoji" title="${escapeHtml(item.fixedName || item.category || 'Fijo')} · ${fmtCurrency(item.fixedAmountAbs || item.amount || 0)}">
+        ${escapeHtml(item.fixedEmoji || '💸')}
+      </div>
+    `).join('')}${fixedItems.length > 4 ? `<span class="financeCalFixedMore">+${fixedItems.length - 4}</span>` : ''}</div>`
+  : '';
+
+return `<button class="financeCalCell ${tone}" data-calendar-day="${point.dayKey}">
+  <strong>${point.dayNumber}</strong>
+  ${fixedEmojis}
+  <span>${point.isEmpty ? '—' : fmtSignedCurrency(point.delta)}</span>
+  <span>${point.isEmpty ? '—' : fmtSignedPercent(point.deltaPct)}</span>
+</button>`;
     }).join('')}</div></div>`;
   }
-  return `<section class="finance-home"><article class="finance__calendarPreview"><div class="finance__sectionHeader"><h2>Calendario</h2><span class="finance-month-label">${modeLabel}</span></div>
+const selectedMonthKey = offsetMonthKey(getMonthKeyFromDate(), state.calendarMonthOffset);
+const fixedSummaryView = state.calendarFixedView || 'squares';
 
-  <div class="finance-calendar-controls">
-  
-  <button class="boton-calendario" data-month-shift="-1">◀</button>
-
-  <select class="finance-pill" data-calendar-account><option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select><select class="finance-pill" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>Día</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>Año</option></select>
-  
-  <button class="boton-calendario" data-month-shift="1">▶</button>
+const fixedSummaryControls = `
+  <div class="financeFixedSummaryToggle" role="group" aria-label="Cambiar resumen de gastos fijos">
+    <button type="button" class="finance-pill ${fixedSummaryView === 'squares' ? 'is-active' : ''}" data-fixed-summary-view="squares">Cuadrados</button>
+    <button type="button" class="finance-pill ${fixedSummaryView === 'donut' ? 'is-active' : ''}" data-fixed-summary-view="donut">Donut</button>
+    <button type="button" class="finance-pill ${fixedSummaryView === 'line' ? 'is-active' : ''}" data-fixed-summary-view="line">Línea</button>
   </div>
-  ${content}</article></section>`;
+`;
+
+const fixedSummaryContent =
+  fixedSummaryView === 'donut'
+    ? renderFixedExpenseDonut(selectedMonthKey)
+    : fixedSummaryView === 'line'
+      ? renderFixedExpenseLineChart()
+      : renderFixedExpenseSquares(selectedMonthKey);
+
+const fixedSummaryBlock = `
+  <section class="financeFixedSummary">
+    <div class="financePanelTopbar">
+      <div class="financePanelHeading"><h3>Gastos fijos</h3></div>
+      ${fixedSummaryControls}
+    </div>
+    ${fixedSummaryContent}
+  </section>
+`;
+  return `<article class="finance__calendarPreview">
+  <div class="financePanelTopbar">
+    <div class="financePanelHeading"><h2>Calendario</h2><span class="finance-month-label">${modeLabel}</span></div>
+    ${toggle}
+  </div>
+  <div class="finance-calendar-controls">
+    <button class="boton-calendario" data-month-shift="-1">&#9664;</button>
+    <select class="finance-pill" data-calendar-account><option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select>
+    <select class="finance-pill" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>D&iacute;a</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>A&ntilde;o</option></select>
+    <button type="button" class="finance-pill finance-pill--add-fixed" data-open-fixed-expense>+ Fijo</button>
+    <button class="boton-calendario" data-month-shift="1">&#9654;</button>
+  </div>
+  ${content}
+  ${fixedSummaryBlock}
+</article>`;
 }
 
 function renderFinanceBalance(accounts = buildAccountModels(), categories = categoriesList(), txRows = balanceTxList()) {
@@ -5340,6 +5657,96 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
     </div>`;
     return;
   }
+  if (state.modal.type === 'fixed-expense') {
+  const form = state.fixedExpenseFormState || defaultFixedExpenseFormState();
+  const accountOptions = resolvedAccounts
+    .map((a) => `<option value="${a.id}" ${String(form.accountId || '') === String(a.id) ? 'selected' : ''}>${escapeHtml(a.name)}</option>`)
+    .join('');
+
+  backdrop.innerHTML = `
+    <div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1">
+      <header class="fm-modal__header fin-move-header">
+        <div class="finWizardHeader">
+          <h3 class="fm-modal__title fin-move-title">Nuevo gasto fijo</h3>
+        </div>
+        <button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button>
+      </header>
+
+      <form class="finance-entry-form fm-form fin-move-form" data-fixed-expense-form>
+        <div class="finance-form-grid">
+          <label>
+            <span>Emoji</span>
+            <input name="emoji" type="text" maxlength="4" value="${escapeHtml(form.emoji || '💸')}" placeholder="💸" />
+          </label>
+
+          <label>
+            <span>Día del mes</span>
+            <input name="dayOfMonth" type="number" min="1" max="31" value="${escapeHtml(String(form.dayOfMonth || 1))}" />
+          </label>
+
+          <label class="finance-field--full">
+            <span>Nombre</span>
+            <input name="name" type="text" value="${escapeHtml(form.name || '')}" placeholder="Alquiler" />
+          </label>
+
+          <label>
+            <span>Importe</span>
+            <input name="amount" type="number" step="0.01" inputmode="decimal" value="${escapeHtml(String(form.amount || ''))}" placeholder="0" />
+          </label>
+
+          <label>
+            <span>Tipo</span>
+            <select name="type">
+              <option value="expense" ${form.type === 'expense' ? 'selected' : ''}>Gasto</option>
+              <option value="income" ${form.type === 'income' ? 'selected' : ''}>Ingreso</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Categoría</span>
+            <input name="category" type="text" value="${escapeHtml(form.category || 'Fijos')}" placeholder="Fijos" />
+          </label>
+
+          <label>
+            <span>Cuenta</span>
+            <select name="accountId">${accountOptions}</select>
+          </label>
+
+          <label>
+            <span>Inicio</span>
+            <input name="startDate" type="date" value="${escapeHtml(form.startDate || '')}" />
+          </label>
+
+          <label>
+            <span>Fin</span>
+            <input name="endDate" type="date" value="${escapeHtml(form.endDate || '')}" />
+          </label>
+
+          <label class="finance-field--full">
+            <span>Nota</span>
+            <input name="note" type="text" value="${escapeHtml(form.note || '')}" placeholder="Opcional" />
+          </label>
+
+          <label class="finance-check">
+            <input name="active" type="checkbox" ${form.active ? 'checked' : ''} />
+            <span>Activo</span>
+          </label>
+
+          <label class="finance-check">
+            <input name="autoCreate" type="checkbox" ${form.autoCreate ? 'checked' : ''} />
+            <span>Crear movimiento automáticamente</span>
+          </label>
+        </div>
+
+        <div class="finance-row" style="justify-content:flex-end;gap:8px;margin-top:12px;">
+          <button type="button" class="finance-pill" data-close-modal>Cancelar</button>
+          <button type="submit" class="finance-pill finance-pill--primary">Guardar</button>
+        </div>
+      </form>
+    </div>
+  `;
+  return;
+}
   if (state.modal.type === 'tx') {
   const accountsById = Object.fromEntries(resolvedAccounts.map((a) => [a.id, a]));
   const txEdit = state.modal.txId ? resolvedTxRows.find((row) => row.id === state.modal.txId) : null;
@@ -6770,6 +7177,7 @@ async function render() {
     const host = ensureFinanceHost($opt, $req);
     renderFinanceNav();
     if (state.error) { host.innerHTML = `<article class=\"finance-panel\"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`; return; }
+    await renderFinanceStatsDonutChart();
     await ensureBtcEurPrice();
     const accounts = buildAccountModels();
     const totalSeries = buildTotalSeries(accounts);
@@ -7767,6 +8175,12 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
       triggerRender();
       return;
     }
+if (target.closest('[data-open-fixed-expense]')) {
+  state.fixedExpenseFormState = defaultFixedExpenseFormState();
+  state.modal = { type: 'fixed-expense' };
+  triggerRender({ preserveUi: false });
+  return;
+}
     const monthShift = target.closest('[data-month-shift]')?.dataset.monthShift; if (monthShift) {
       const step = Number(monthShift);
       if (state.calendarMode === 'month') state.calendarMonthOffset += (step * 12);
@@ -7817,6 +8231,14 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
     }
     const openGoal = target.closest('[data-open-goal]')?.dataset.openGoal; if (openGoal) { state.modal = { type: 'goal-detail', goalId: openGoal }; triggerRender(); return; }
     const delGoal = target.closest('[data-delete-goal]')?.dataset.deleteGoal; if (delGoal && window.confirm('¿Borrar objetivo?')) { await safeFirebase(() => remove(ref(db, `${state.financePath}/goals/goals/${delGoal}`))); return; }
+ const fixedSummaryView = target.closest('[data-fixed-summary-view]')?.dataset.fixedSummaryView;
+if (fixedSummaryView) {
+  state.calendarFixedView = ['squares', 'donut', 'line'].includes(fixedSummaryView)
+    ? fixedSummaryView
+    : 'squares';
+  triggerRender();
+  return;
+}
   });
 view.addEventListener('focusin', (event) => {
   if (event.target.matches('[data-account-input]')) {
@@ -7905,6 +8327,29 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.closest('[data-food-item-form][data-food-item-mode="detail"]')) {
       updateFoodDetailSaveState(event.target.closest('[data-food-item-form]'));
     }
+    if (event.target.closest('[data-fixed-expense-form]')) {
+  const formEl = event.target.closest('[data-fixed-expense-form]');
+  const fd = new FormData(formEl);
+
+  state.fixedExpenseFormState = {
+    ...(state.fixedExpenseFormState || defaultFixedExpenseFormState()),
+    id: String(fd.get('id') || ''),
+    name: String(fd.get('name') || ''),
+    emoji: String(fd.get('emoji') || '💸').trim() || '💸',
+    amount: String(fd.get('amount') || ''),
+    type: String(fd.get('type') || 'expense') === 'income' ? 'income' : 'expense',
+    category: String(fd.get('category') || 'Fijos'),
+    accountId: String(fd.get('accountId') || ''),
+    dayOfMonth: Math.max(1, Math.min(31, Number(fd.get('dayOfMonth') || 1))),
+    startDate: String(fd.get('startDate') || ''),
+    endDate: String(fd.get('endDate') || ''),
+    active: !!formEl.querySelector('[name="active"]')?.checked,
+    autoCreate: !!formEl.querySelector('[name="autoCreate"]')?.checked,
+    color: String(fd.get('color') || ''),
+    note: String(fd.get('note') || '')
+  };
+  return;
+}
   }, evtOpts);
 
   view.addEventListener('input', async (event) => {
@@ -7957,7 +8402,29 @@ view.addEventListener('focusout', async (event) => {
       };
       return;
     }
+if (event.target.closest('[data-fixed-expense-form]')) {
+  const formEl = event.target.closest('[data-fixed-expense-form]');
+  const fd = new FormData(formEl);
 
+  state.fixedExpenseFormState = {
+    ...(state.fixedExpenseFormState || defaultFixedExpenseFormState()),
+    id: String(fd.get('id') || ''),
+    name: String(fd.get('name') || ''),
+    emoji: String(fd.get('emoji') || '💸').trim() || '💸',
+    amount: String(fd.get('amount') || ''),
+    type: String(fd.get('type') || 'expense') === 'income' ? 'income' : 'expense',
+    category: String(fd.get('category') || 'Fijos'),
+    accountId: String(fd.get('accountId') || ''),
+    dayOfMonth: Math.max(1, Math.min(31, Number(fd.get('dayOfMonth') || 1))),
+    startDate: String(fd.get('startDate') || ''),
+    endDate: String(fd.get('endDate') || ''),
+    active: !!formEl.querySelector('[name="active"]')?.checked,
+    autoCreate: !!formEl.querySelector('[name="autoCreate"]')?.checked,
+    color: String(fd.get('color') || ''),
+    note: String(fd.get('note') || '')
+  };
+  return;
+}
     if (event.target.closest('[data-balance-form]')) {
       persistBalanceFormState(event.target.closest('[data-balance-form]'));
     }
@@ -8019,6 +8486,65 @@ view.addEventListener('focusout', async (event) => {
   });
 
   view.addEventListener('submit', async (event) => {
+if (event.target.matches('[data-fixed-expense-form]')) {
+  event.preventDefault();
+
+  const formState = state.fixedExpenseFormState || defaultFixedExpenseFormState();
+  const amount = parseMoney(String(formState.amount || ''));
+  const dayOfMonth = Math.max(1, Math.min(31, Number(formState.dayOfMonth || 1)));
+
+  if (!String(formState.name || '').trim()) {
+    toast('Pon un nombre');
+    return;
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    toast('Importe inválido');
+    return;
+  }
+  if (!String(formState.accountId || '').trim()) {
+    toast('Selecciona una cuenta');
+    return;
+  }
+
+  const recurringId = String(formState.id || push(ref(db, `${state.financePath}/recurring`)).key);
+  const now = nowTs();
+
+  const payload = {
+    type: formState.type === 'income' ? 'income' : 'expense',
+    amount,
+    accountId: String(formState.accountId || '').trim(),
+    fromAccountId: '',
+    toAccountId: '',
+    category: String(formState.category || 'Fijos').trim() || 'Fijos',
+    note: String(formState.note || '').trim(),
+    disabled: formState.active === false,
+    autoCreate: formState.autoCreate !== false,
+    schedule: {
+      frequency: 'monthly',
+      dayOfMonth,
+      startDate: toIsoDay(String(formState.startDate || '')) || dayKeyFromTs(Date.now()),
+      endDate: toIsoDay(String(formState.endDate || '')) || ''
+    },
+    extras: {
+      fixedEnabled: true,
+      fixedKind: 'fixed-expense',
+      fixedEmoji: String(formState.emoji || '💸').trim() || '💸',
+      fixedName: String(formState.name || '').trim(),
+      fixedColor: String(formState.color || '').trim()
+    },
+    updatedAt: now,
+    createdAt: Number(formState.createdAt || 0) || now
+  };
+
+  await safeFirebase(() => set(ref(db, `${state.financePath}/recurring/${recurringId}`), payload));
+
+  state.fixedExpenseFormState = defaultFixedExpenseFormState();
+  state.modal = { type: null };
+  clearFinanceDerivedCaches();
+  toast('Gasto fijo guardado');
+  triggerRender({ preserveUi: false });
+  return;
+}
     if (event.target.matches('[data-category-editor-form]')) {
       event.preventDefault();
       const formEl = event.target;

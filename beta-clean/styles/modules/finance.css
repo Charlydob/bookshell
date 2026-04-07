@@ -3227,3 +3227,223 @@ margin-bottom: 50px;
     width: 100%;
   }
 }
+.financeCalFixedRow{
+  display:flex;
+  align-items:center;
+  gap:4px;
+  flex-wrap:wrap;
+  min-height:18px;
+  margin:2px 0 4px;
+}
+
+
+
+.financeCalFixedMore{
+  font-size:11px;
+  opacity:.75;
+}
+.finance-pill--add-fixed{
+  white-space:nowrap;
+  font-weight:700;
+}
+
+.finance-form-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:12px;
+}
+
+.finance-field--full{
+  grid-column:1 / -1;
+}
+
+.finance-check{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.financeFixedSummary{
+  margin-top:16px;
+  display:grid;
+  gap:12px;
+}
+
+.financeFixedSummaryToggle{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.financeFixedSquares{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+}
+
+.financeFixedSquare{
+  position:relative;
+  overflow:hidden;
+  display:grid;
+  gap:4px;
+  padding:12px;
+  border-radius:16px;
+  text-align:left;
+}
+
+.financeFixedSquare__emoji{
+  font-size:18px;
+  line-height:1;
+}
+
+.financeFixedSquare__name{
+  font-size:13px;
+}
+
+.financeFixedSquare__amount,
+.financeFixedSquare__pct{
+  font-size:12px;
+  opacity:.82;
+}
+
+.financeFixedSquare__fill{
+  position:absolute;
+  left:0;
+  bottom:0;
+  height:4px;
+  border-radius:999px;
+  background:currentColor;
+  opacity:.35;
+}
+
+.financeFixedDonutWrap{
+  min-height:240px;
+}
+
+.financeFixedLineWrap{
+  display:grid;
+  gap:10px;
+}
+
+.financeFixedLineChart{
+  width:100%;
+  height:220px;
+}
+
+.financeFixedLine{
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  opacity:.9;
+}
+
+.financeFixedLineMonths{
+  display:grid;
+  grid-template-columns:repeat(6,1fr);
+  gap:6px;
+  font-size:11px;
+  opacity:.72;
+}
+
+.financeFixedLegend{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+}
+
+.financeFixedLegendItem{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+}
+.financeCalFixedEmoji{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  font-size:24px;
+  line-height:1;
+}
+.financeTab .financeBalanceTrendCard {
+  display: grid;
+  gap: 10px;
+}
+
+.financeTab .financeBalanceTrendControls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.financeTab .financeBalanceTrendMeta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--fin-muted);
+  font-size: 12px;
+}
+
+.financeTab .financeBalanceTrendChart {
+  margin-top: 2px;
+  min-height: 140px;
+  border-radius: 22px;
+  border: 1px solid rgba(173, 197, 255, 0.2);
+  background: linear-gradient(165deg, rgba(5, 15, 38, 0.72), rgba(7, 22, 54, 0.35));
+  padding: 10px;
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.financeTab .financeBalanceTrendChart svg {
+  width: 100%;
+  height: 120px;
+}
+
+.financeTab .financeBalanceTrendChart path {
+  fill: none;
+  stroke-width: 3;
+}
+
+.financeTab .financeBalanceTrendChart.is-positive path {
+  stroke: #40f49f;
+  filter: drop-shadow(0 0 10px rgba(57, 231, 155, .7));
+}
+
+.financeTab .financeBalanceTrendChart.is-negative path {
+  stroke: #ff6d8c;
+  filter: drop-shadow(0 0 10px rgba(255, 109, 140, .65));
+}
+
+.financeTab .financeBalanceTrendChart.is-neutral path {
+  stroke: #9cb4f3;
+}
+
+.financeTab #finance-lineChart,
+.financeTab #finance-balanceTrendChart {
+  margin-top: 14px;
+  min-height: 140px;
+  border-radius: 22px;
+  border: 1px solid rgba(173, 197, 255, 0.2);
+  background: linear-gradient(165deg, rgba(5, 15, 38, 0.72), rgba(7, 22, 54, 0.35));
+  padding: 10px;
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.financeTab #finance-lineChart svg,
+.financeTab #finance-balanceTrendChart svg { width: 100%; height: 120px; }
+
+.financeTab #finance-lineChart path,
+.financeTab #finance-balanceTrendChart path { fill: none; stroke-width: 3; }
+
+.financeTab #finance-lineChart.is-positive path,
+.financeTab #finance-balanceTrendChart.is-positive path { stroke: #40f49f; filter: drop-shadow(0 0 10px rgba(57, 231, 155, .7)); }
+
+.financeTab #finance-lineChart.is-negative path,
+.financeTab #finance-balanceTrendChart.is-negative path { stroke: #ff6d8c; filter: drop-shadow(0 0 10px rgba(255, 109, 140, .65)); }
+
+.financeTab #finance-lineChart.is-neutral path,
+.financeTab #finance-balanceTrendChart.is-neutral path { stroke: #9cb4f3; }
+

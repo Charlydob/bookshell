@@ -4372,6 +4372,32 @@ function defaultFixedExpenseFormState() {
     note: ''
   };
 }
+
+function fixedExpenseFormStateFromRecurring(recurringId = '', recurringData = {}) {
+  if (!recurringId || !recurringData) return defaultFixedExpenseFormState();
+  
+  const extras = recurringData.extras || {};
+  const schedule = recurringData.schedule || {};
+  const amount = Math.abs(Number(recurringData.amount || 0));
+  
+  return {
+    id: recurringId,
+    name: extras.fixedName || recurringData.note || recurringData.category || '',
+    emoji: extras.fixedEmoji || '💸',
+    amount: amount ? String(amount) : '',
+    type: recurringData.type === 'income' ? 'income' : 'expense',
+    category: recurringData.category || 'Fijos',
+    accountId: recurringData.accountId || '',
+    dayOfMonth: Math.max(1, Math.min(31, Number(schedule.dayOfMonth || 1))),
+    startDate: schedule.startDate || '',
+    endDate: schedule.endDate || '',
+    active: !recurringData.disabled,
+    autoCreate: recurringData.autoCreate !== false,
+    color: extras.fixedColor || '',
+    note: recurringData.note || '',
+    createdAt: recurringData.createdAt || 0
+  };
+}
 function renderFixedExpenseSquares(monthKey = getMonthKeyFromDate()) {
   const rows = getFixedRecurringSummary(monthKey);
   if (!rows.length) return '<p class="finance-empty">Sin gastos fijos este mes.</p>';
@@ -4382,7 +4408,7 @@ function renderFixedExpenseSquares(monthKey = getMonthKeyFromDate()) {
         <button
           type="button"
           class="financeFixedSquare"
-          data-fixed-expense-filter="${escapeHtml(String(row.id || ''))}"
+          data-fixed-expense-edit="${escapeHtml(String(row.id || ''))}"
           title="${escapeHtml(row.name || 'Fijo')} · ${fmtCurrency(row.amount || 0)} · ${Number(row.percentage || 0).toFixed(1)}%"
         >
           <span class="financeFixedSquare__emoji">${escapeHtml(row.emoji || '💸')}</span>
@@ -5659,6 +5685,8 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
   }
   if (state.modal.type === 'fixed-expense') {
   const form = state.fixedExpenseFormState || defaultFixedExpenseFormState();
+  const isEditMode = !!String(form.id || '').trim();
+  const modalTitle = isEditMode ? 'Editar gasto fijo' : 'Nuevo gasto fijo';
   const accountOptions = resolvedAccounts
     .map((a) => `<option value="${a.id}" ${String(form.accountId || '') === String(a.id) ? 'selected' : ''}>${escapeHtml(a.name)}</option>`)
     .join('');
@@ -5667,12 +5695,13 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
     <div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1">
       <header class="fm-modal__header fin-move-header">
         <div class="finWizardHeader">
-          <h3 class="fm-modal__title fin-move-title">Nuevo gasto fijo</h3>
+          <h3 class="fm-modal__title fin-move-title">${escapeHtml(modalTitle)}</h3>
         </div>
         <button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button>
       </header>
 
       <form class="finance-entry-form fm-form fin-move-form" data-fixed-expense-form>
+        <input type="hidden" name="id" value="${escapeHtml(String(form.id || ''))}" />
         <div class="finance-form-grid">
           <label>
             <span>Emoji</span>
@@ -5740,6 +5769,7 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
 
         <div class="finance-row" style="justify-content:flex-end;gap:8px;margin-top:12px;">
           <button type="button" class="finance-pill" data-close-modal>Cancelar</button>
+          ${isEditMode ? `<button type="button" class="finance-pill finance-pill--danger" data-delete-fixed-expense="${escapeHtml(String(form.id || ''))}">🗑️ Eliminar</button>` : ''}
           <button type="submit" class="finance-pill finance-pill--primary">Guardar</button>
         </div>
       </form>
@@ -8181,6 +8211,31 @@ if (target.closest('[data-open-fixed-expense]')) {
   triggerRender({ preserveUi: false });
   return;
 }
+const fixedExpenseEditId = target.closest('[data-fixed-expense-edit]')?.dataset.fixedExpenseEdit;
+if (fixedExpenseEditId) {
+  const recurringId = String(fixedExpenseEditId).trim();
+  const recurringData = state.balance?.recurring?.[recurringId];
+  if (recurringData) {
+    state.fixedExpenseFormState = fixedExpenseFormStateFromRecurring(recurringId, recurringData);
+    state.modal = { type: 'fixed-expense' };
+    triggerRender({ preserveUi: false });
+  }
+  return;
+}
+const fixedExpenseDeleteId = target.closest('[data-delete-fixed-expense]')?.dataset.deleteFixedExpense;
+if (fixedExpenseDeleteId && window.confirm('¿Eliminar este gasto fijo?')) {
+  const recurringId = String(fixedExpenseDeleteId).trim();
+  const path = `${state.financePath}/recurring/${recurringId}`;
+  
+  await safeFirebase(() => remove(ref(db, path)));
+  
+  state.fixedExpenseFormState = defaultFixedExpenseFormState();
+  state.modal = { type: null };
+  clearFinanceDerivedCaches();
+  toast('Gasto fijo eliminado');
+  triggerRender({ preserveUi: false });
+  return;
+}
     const monthShift = target.closest('[data-month-shift]')?.dataset.monthShift; if (monthShift) {
       const step = Number(monthShift);
       if (state.calendarMode === 'month') state.calendarMonthOffset += (step * 12);
@@ -8508,6 +8563,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
 
   const recurringId = String(formState.id || push(ref(db, `${state.financePath}/recurring`)).key);
   const now = nowTs();
+  const isEditMode = !!String(formState.id || '').trim();
 
   const payload = {
     type: formState.type === 'income' ? 'income' : 'expense',
@@ -8533,7 +8589,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       fixedColor: String(formState.color || '').trim()
     },
     updatedAt: now,
-    createdAt: Number(formState.createdAt || 0) || now
+    createdAt: isEditMode ? Number(formState.createdAt || 0) : now
   };
 
   await safeFirebase(() => set(ref(db, `${state.financePath}/recurring/${recurringId}`), payload));
@@ -8541,7 +8597,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
   state.fixedExpenseFormState = defaultFixedExpenseFormState();
   state.modal = { type: null };
   clearFinanceDerivedCaches();
-  toast('Gasto fijo guardado');
+  toast(isEditMode ? 'Gasto fijo actualizado' : 'Gasto fijo guardado');
   triggerRender({ preserveUi: false });
   return;
 }

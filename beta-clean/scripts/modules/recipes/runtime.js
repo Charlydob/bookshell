@@ -318,6 +318,12 @@ if ($viewRecipes) {
   const $macroDateNext = document.getElementById("macro-date-next");
   const $macroSummaryGrid = document.getElementById("macro-summary-grid");
   const $macroMeals = document.getElementById("macro-meals");
+  const $macroComparisonPanel = document.getElementById("macro-products-comparison-panel");
+  const $macroComparisonProductSelect = document.getElementById("macro-comparison-product-select");
+  const $macroComparisonSelectedTags = document.getElementById("macro-comparison-selected-tags");
+  const $macroComparisonChart = document.getElementById("macro-comparison-chart");
+  const $macroComparisonClear = document.getElementById("macro-comparison-clear");
+  const $macroComparisonMetricSelect = document.getElementById("macro-comparison-metric-select");
   const $macroKcalSummary = document.getElementById("macro-kcal-summary");
   const $macroIntegrationOpen = document.getElementById("macro-integration-open");
   const $macroIntegrationModalBackdrop = document.getElementById("macro-integration-modal-backdrop");
@@ -406,6 +412,7 @@ if ($viewRecipes) {
   const $macroProductName = document.getElementById("macro-product-name");
   const $macroProductBrand = document.getElementById("macro-product-brand");
   const $macroProductBarcode = document.getElementById("macro-product-barcode");
+  const $macroProductEmoji = document.getElementById("macro-product-emoji");
   const $macroProductBase = document.getElementById("macro-product-base");
   const $macroProductBaseUnit = document.getElementById("macro-product-base-unit");
   const $macroProductCarbs = document.getElementById("macro-product-carbs");
@@ -1958,6 +1965,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       productId: String(product?.id || "").trim(),
       productName: String(product?.name || "").trim(),
       nameSnapshot: String(product?.name || "").trim(),
+      emoji: String(product?.emoji || "").trim().substring(0, 2),
       grams: convertAmountWithProduct(product, safeAmount, safeUnit, "g") ?? 0,
       amount: safeAmount,
       unit: safeUnit,
@@ -4330,6 +4338,7 @@ $recipeImportBtn?.addEventListener("click", () => {
             productId: String(entry?.productId || entry?.refId || entry?.recipeId || "").trim(),
             productName: String(entry?.productName || entry?.nameSnapshot || "").trim(),
             nameSnapshot: String(entry?.nameSnapshot || "").trim(),
+            emoji: String(entry?.emoji || "").trim().substring(0, 2),
             grams: Math.max(0, Number(entry?.grams) || 0),
             amount: Math.max(0, Number(entry?.amount) || Number(entry?.grams) || 0),
             unit: normalizeUnit(entry?.unit || "g") || "g",
@@ -4401,6 +4410,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       name: String(product.name || "").trim(),
       brand: String(product.brand || "").trim(),
       barcode: String(product.barcode || "").trim(),
+      emoji: String(product.emoji || "").trim().substring(0, 2),
       baseQuantity: normalizedBaseQuantity,
       baseUnit: normalizedBaseUnit,
       servingBaseGrams: normalizedBaseQuantity,
@@ -5160,6 +5170,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         renderMacrosView();
       });
     });
+    renderMacroComparisonChart();
   }
 
   const NUTRI_SCORE_FILTERS = [
@@ -5507,8 +5518,15 @@ $recipeImportBtn?.addEventListener("click", () => {
       cancelRecipeLibraryVisuals();
       clearRecipeLibraryVisuals();
     }
-    if (isMacros) renderMacrosView();
-    if (isStatistics) renderStatisticsView();
+    if (isMacros) {
+      renderMacrosView();
+    }
+    if (isStatistics) {
+      renderStatisticsView();
+      renderMacroComparisonProductSelect();
+      renderMacroComparisonTags();
+      renderMacroComparisonChart();
+    }
     if (isShopping) renderShoppingView();
   }
 
@@ -5647,7 +5665,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       ${isSelectionMode && !isRecipe ? `<button class="macro-entry-select-toggle" data-macro-select-toggle="${meal}:${idx}" type="button" aria-label="Seleccionar ${escapeHtml(entry.nameSnapshot)}">${isSelected ? "✓" : "○"}</button>` : ""}
       <button class="macro-entry-open" data-macro-open="${meal}:${idx}" data-macro-entry-id="${entryId}" type="button" aria-label="Abrir ficha de ${escapeHtml(entry.nameSnapshot)}">
       <div class="contenido-comida-lista">
-      <strong id="nombre-alimento-lista">${escapeHtml(entry.nameSnapshot)}</strong>
+      <strong id="nombre-alimento-lista">${entry.emoji ? `<span class="macro-entry-emoji">${entry.emoji}</span>` : ""} ${escapeHtml(entry.nameSnapshot)}</strong>
       <div class="hint" id="cantidad-comida">${quantityLabel}</div>
       <div class="hint macro-recipe-inline-kpis">C ${roundMacro(entryMacros.carbs)} · P ${roundMacro(entryMacros.protein)} · G ${roundMacro(entryMacros.fat)} · ${entryCost.cost == null ? "Coste n/d" : formatCurrency(entryCost.cost)}</div>
       </div>
@@ -5780,6 +5798,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       name: getInputValueOrCurrent($macroProductName),
       brand: getInputValueOrCurrent($macroProductBrand),
       barcode: getInputValueOrCurrent($macroProductBarcode),
+      emoji: getInputValueOrCurrent($macroProductEmoji) || "",
       financeProductId: hasFinanceSelection ? String($macroProductFinanceSelect?.value || "") : (_macroProductDraft?.financeProductId || ""),
       linkedHabitId: hasHabitSelection ? String($macroProductHabitSelect?.value || "") : (_macroProductDraft?.linkedHabitId || ""),
       packageAmount,
@@ -6175,6 +6194,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     setInputCurrentPlaceholder($macroProductName, product.name || "", "Ej. Arroz a la paella");
     setInputCurrentPlaceholder($macroProductBrand, product.brand || "", "Opcional");
     setInputCurrentPlaceholder($macroProductBarcode, product.barcode || "", "8410...");
+    setInputCurrentPlaceholder($macroProductEmoji, product.emoji || "", "🍎");
     setInputCurrentPlaceholder($macroProductBase, String(Number(product.baseQuantity || product.servingBaseGrams) || 100), "100");
     if ($macroProductBaseUnit) $macroProductBaseUnit.value = normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g";
     setInputCurrentPlaceholder($macroProductCarbs, Number.isFinite(Number(product.macros?.carbs)) ? String(Number(product.macros?.carbs) || 0) : "", "0");
@@ -6701,6 +6721,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       name: String(product.name || "").trim(),
       brand: String(product.brand || "").trim(),
       barcode: String(product.barcode || "").trim(),
+      emoji: String(product.emoji || "").trim().substring(0, 2),
       baseQuantity: Math.max(1, Number(product.baseQuantity || product.servingBaseGrams) || 100),
       baseUnit: normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g",
       servingBaseGrams: Math.max(1, Number(product.baseQuantity || product.servingBaseGrams) || 100),
@@ -9683,6 +9704,355 @@ $recipeImportBtn?.addEventListener("click", () => {
 	      addProductToMeal(_macroProductMeal || macroModalState.meal || "breakfast", saved, amountInBaseUnit);
 	    }
     closeMacroProductModal();
+  }
+
+  // ==== MACRO COMPARISON PANEL ====
+  let macroComparisonSelectedIds = new Set();
+  let macroComparisonChartInstance = null;
+  let macroComparisonCurrentMetric = "macros";
+
+  function abbreviateProductName(name) {
+    const words = String(name || "").split(" ");
+    if (words.length === 1) return name.substring(0, 8);
+    return words.map((w) => w[0]).join("").substring(0, 6);
+  }
+
+  function calculateProductStats(productId, period = "week") {
+    // Obtener rango de fechas basado en período
+    const anchorDate = new Date(`${macroStatsState.anchorDate}T00:00:00`);
+    let startDate = new Date(anchorDate);
+    let endDate = new Date(anchorDate);
+
+    if (period === "day") {
+      startDate = new Date(anchorDate);
+      endDate = new Date(anchorDate);
+    } else if (period === "week") {
+      const dayOfWeek = startDate.getDay();
+      startDate.setDate(startDate.getDate() - dayOfWeek);
+      endDate.setDate(startDate.getDate() + 6);
+    } else if (period === "month") {
+      startDate = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
+      endDate = new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 0);
+    } else if (period === "year") {
+      startDate = new Date(anchorDate.getFullYear(), 0, 1);
+      endDate = new Date(anchorDate.getFullYear(), 11, 31);
+    }
+
+    let count = 0;
+    let totalCost = 0;
+    const entries = [];
+    
+    // Iterar sobre todos los logs en el rango
+    Object.entries(dailyLogsByDate || {}).forEach(([dateStr, log]) => {
+      const logDate = new Date(`${dateStr}T00:00:00`);
+      if (logDate >= startDate && logDate <= endDate) {
+        mealOrder.forEach((meal) => {
+          const mealEntries = log?.meals?.[meal]?.entries || [];
+          mealEntries.forEach((entry) => {
+            // Caso 1: Consumo directo del producto
+            if (entry.refId === productId || entry.productId === productId) {
+              count++;
+              totalCost += entry.computedCost || 0;
+              entries.push(entry);
+            }
+            // Caso 2: Consumo del producto a través de recetas
+            else if (entry.type === "recipe") {
+              const ingredients = getRecipeIngredientsFromEntry(entry) || [];
+              const ingredientMatches = ingredients.filter((ing) => String(ing.productId || "").trim() === productId);
+              
+              if (ingredientMatches.length > 0) {
+                const recipeMacros = getEntryMacrosTotal(entry);
+                const recipeCost = Number(entry.computedCost) || 0;
+                const totalIngredientsCount = ingredients.length;
+                const matchCount = ingredientMatches.length;
+                
+                // Contar consumo: si el producto aparece en la receta, cuenta como 1 consumo
+                count++;
+                
+                // Distribuir coste y macros proporcionalmente
+                const proportionalCost = totalIngredientsCount > 0 ? (recipeCost * matchCount) / totalIngredientsCount : 0;
+                const proportionalMacros = totalIngredientsCount > 0 
+                  ? {
+                      kcal: (recipeMacros.kcal * matchCount) / totalIngredientsCount,
+                      carbs: (recipeMacros.carbs * matchCount) / totalIngredientsCount,
+                      protein: (recipeMacros.protein * matchCount) / totalIngredientsCount,
+                      fat: (recipeMacros.fat * matchCount) / totalIngredientsCount,
+                    }
+                  : { kcal: 0, carbs: 0, protein: 0, fat: 0 };
+                
+                totalCost += proportionalCost;
+                entries.push({
+                  ...entry,
+                  _isProportional: true,
+                  _proportionalMacros: proportionalMacros,
+                });
+              }
+            }
+          });
+        });
+      }
+    });
+
+    const avgCost = count > 0 ? totalCost / count : 0;
+    const totalMacros = entries.reduce(
+      (acc, entry) => {
+        let macros;
+        if (entry._isProportional) {
+          macros = entry._proportionalMacros;
+        } else {
+          macros = getEntryMacrosTotal(entry);
+        }
+        return {
+          kcal: acc.kcal + (Number(macros?.kcal) || 0),
+          carbs: acc.carbs + (Number(macros?.carbs) || 0),
+          protein: acc.protein + (Number(macros?.protein) || 0),
+          fat: acc.fat + (Number(macros?.fat) || 0),
+        };
+      },
+      { kcal: 0, carbs: 0, protein: 0, fat: 0 }
+    );
+    return { count, totalCost, avgCost, totalMacros };
+  }
+
+  function renderMacroComparisonProductSelect() {
+    if (!$macroComparisonProductSelect) return;
+    const products = nutritionProducts.filter((p) => p.name).sort((a, b) => 
+      String(a.name || "").localeCompare(String(b.name || ""))
+    );
+    const alreadySelected = Array.from(macroComparisonSelectedIds);
+    const available = products.filter((p) => !alreadySelected.includes(p.id));
+    
+    $macroComparisonProductSelect.innerHTML = 
+      '<option value="">Seleccionar productos...</option>' +
+      available.map((p) => {
+        const emoji = String(p.emoji || "").substring(0, 2) || "🥘";
+        return `<option value="${p.id}">${emoji} ${escapeHtml(p.name)}</option>`;
+      }).join("");
+  }
+
+  function renderMacroComparisonTags() {
+    if (!$macroComparisonSelectedTags) return;
+    if (!macroComparisonSelectedIds.size) {
+      $macroComparisonSelectedTags.innerHTML = "";
+      return;
+    }
+    const tags = Array.from(macroComparisonSelectedIds)
+      .map((productId) => nutritionProducts.find((p) => p.id === productId))
+      .filter(Boolean)
+      .map((product) => {
+        const emoji = String(product.emoji || "").substring(0, 2) || "🥘";
+        const abbr = abbreviateProductName(product.name);
+        return `
+          <div class="macro-comparison-tag">
+            <span class="macro-comparison-tag-emoji">${emoji}</span>
+            <span class="macro-comparison-tag-name" title="${escapeHtml(product.name)}">${escapeHtml(abbr)}</span>
+            <span class="macro-comparison-tag-remove" data-product-id="${product.id}">✕</span>
+          </div>
+        `;
+      }).join("");
+    $macroComparisonSelectedTags.innerHTML = tags;
+    
+    // Event listeners para remover tags
+    $macroComparisonSelectedTags.querySelectorAll(".macro-comparison-tag-remove").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const productId = e.target.dataset.productId;
+        macroComparisonSelectedIds.delete(productId);
+        $macroComparisonProductSelect.value = "";
+        renderMacroComparisonProductSelect();
+        renderMacroComparisonTags();
+        renderMacroComparisonChart();
+      });
+    });
+  }
+
+  function renderMacroComparisonChart() {
+    if (!$macroComparisonChart || !macroComparisonSelectedIds.size) {
+      if (macroComparisonChartInstance) {
+        macroComparisonChartInstance.dispose();
+        macroComparisonChartInstance = null;
+      }
+      $macroComparisonChart.innerHTML = '<div class="hint" style="text-align:center; padding:40px 20px;">Selecciona productos para comparar</div>';
+      return;
+    }
+
+    const selectedProducts = nutritionProducts.filter((p) => macroComparisonSelectedIds.has(p.id)).filter(Boolean);
+    if (!selectedProducts.length) return;
+
+    // Preparar datos según métrica seleccionada
+    const metric = macroComparisonCurrentMetric;
+    const period = macroStatsState?.period || "week";
+    let series = [];
+    let yAxisName = "";
+
+    if (metric === "macros") {
+      series = [
+        { name: "Carbs (g)", color: "#ff4bd1" },
+        { name: "Protein (g)", color: "#5aa4ff" },
+        { name: "Fat (g)", color: "#ffc247" },
+      ];
+      yAxisName = "g";
+    } else if (metric === "kcal") {
+      series = [{ name: "Calorías", color: "#f5e6a6" }];
+      yAxisName = "kcal";
+    } else if (metric === "consumptions") {
+      series = [{ name: "Veces consumido", color: "#6dd5ed" }];
+      yAxisName = "Consumos";
+    } else if (metric === "total_cost") {
+      series = [{ name: "Gasto total (€)", color: "#a8d8ea" }];
+      yAxisName = "€";
+    } else if (metric === "avg_cost") {
+      series = [{ name: "Costo promedio (€)", color: "#aa96da" }];
+      yAxisName = "€";
+    } else if (["carbs", "protein", "fat"].includes(metric)) {
+      const labels = { carbs: "Carbohidratos (g)", protein: "Proteínas (g)", fat: "Grasas (g)" };
+      const colors_map = { carbs: "#ff4bd1", protein: "#5aa4ff", fat: "#ffc247" };
+      series = [{ name: labels[metric], color: colors_map[metric] }];
+      yAxisName = "g";
+    }
+
+    const chartData = selectedProducts.map((product) => {
+      const emoji = String(product.emoji || "").substring(0, 2) || "🥘";
+      const abbr = abbreviateProductName(product.name);
+      const stats = calculateProductStats(product.id, period);
+      
+      let values = [];
+      if (metric === "macros") {
+        values = [
+          Math.round(stats.totalMacros.carbs),
+          Math.round(stats.totalMacros.protein),
+          Math.round(stats.totalMacros.fat),
+        ];
+      } else if (metric === "kcal") {
+        values = [Math.round(stats.totalMacros.kcal)];
+      } else if (metric === "consumptions") {
+        values = [stats.count];
+      } else if (metric === "total_cost") {
+        values = [Math.round(stats.totalCost * 100) / 100];
+      } else if (metric === "avg_cost") {
+        values = [Math.round(stats.avgCost * 100) / 100];
+      } else if (metric === "carbs") {
+        values = [Math.round(stats.totalMacros.carbs)];
+      } else if (metric === "protein") {
+        values = [Math.round(stats.totalMacros.protein)];
+      } else if (metric === "fat") {
+        values = [Math.round(stats.totalMacros.fat)];
+      }
+
+      return {
+        name: abbr,
+        abbr: abbr,
+        emoji: emoji,
+        productName: product.name,
+        values: values,
+      };
+    });
+
+    // Configurar ECharts - limpiar instancia anterior
+    if (macroComparisonChartInstance) {
+      macroComparisonChartInstance.dispose();
+      macroComparisonChartInstance = null;
+    }
+
+    // Crear serie datos incluyendo emoji y nombre abreviado
+    const seriesData = series.map((s, idx) => {
+      const isFirstSeries = idx === 0;
+      const isSingleSeries = series.length === 1;
+      return {
+        name: s.name,
+        type: "bar",
+        data: chartData.map((d) => d.values[idx] || 0),
+        itemStyle: { color: s.color },
+        stack: metric === "macros" ? "macroStack" : undefined,
+        label: {
+          show: isFirstSeries || isSingleSeries,
+          position: isFirstSeries ? "top" : "inside",
+          formatter: (params) => {
+            if (isFirstSeries) {
+              const dataIdx = params.dataIndex;
+              return chartData[dataIdx]?.emoji || "🥘";
+            }
+            return isSingleSeries ? "{c}" : "";
+          },
+          fontSize: isFirstSeries ? 16 : 11,
+          color: isFirstSeries ? undefined : "#fff",
+        },
+      };
+    });
+
+    const chartOption = {
+      title: { text: "" },
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        formatter: (params) => {
+          if (!Array.isArray(params)) return "";
+          const first = params[0];
+          if (!first) return "";
+          const dataIdx = first.dataIndex;
+          const data = chartData[dataIdx];
+          if (!data) return "";
+          return `<strong>${data.emoji} ${escapeHtml(data.productName)}</strong><br/>` +
+            params.filter(p => p.value !== undefined && p.value !== 0).map((p) => `${p.seriesName}: ${p.value}`).join("<br/>");
+        },
+      },
+      legend: { show: series.length > 1, data: series.map((s) => s.name), bottom: 0 },
+      grid: { left: 50, right: 50, top: 40, bottom: 60, containLabel: true },
+      xAxis: {
+        type: "category",
+        data: chartData.map((d) => d.abbr),
+        axisLabel: {
+          interval: 0,
+          rotate: chartData.length > 3 ? 45 : 0,
+          fontSize: 11,
+        },
+      },
+      yAxis: {
+        type: "value",
+        name: yAxisName,
+        axisLabel: { formatter: "{value}" + (yAxisName === "€" ? "€" : "") },
+      },
+      series: seriesData,
+    };
+
+    if (!macroComparisonChartInstance && window.echarts) {
+      macroComparisonChartInstance = window.echarts.init($macroComparisonChart);
+    }
+    if (macroComparisonChartInstance) {
+      macroComparisonChartInstance.setOption(chartOption);
+    }
+  }
+
+  // Inicializar comparador
+  if ($macroComparisonProductSelect) {
+    renderMacroComparisonProductSelect();
+    
+    $macroComparisonProductSelect.addEventListener("change", () => {
+      const productId = $macroComparisonProductSelect.value;
+      if (productId) {
+        macroComparisonSelectedIds.add(productId);
+        $macroComparisonProductSelect.value = "";
+        renderMacroComparisonProductSelect();
+        renderMacroComparisonTags();
+        renderMacroComparisonChart();
+      }
+    });
+  }
+
+  if ($macroComparisonClear) {
+    $macroComparisonClear.addEventListener("click", () => {
+      macroComparisonSelectedIds.clear();
+      $macroComparisonProductSelect.value = "";
+      renderMacroComparisonProductSelect();
+      renderMacroComparisonTags();
+      renderMacroComparisonChart();
+    });
+  }
+
+  if ($macroComparisonMetricSelect) {
+    $macroComparisonMetricSelect.addEventListener("change", (e) => {
+      macroComparisonCurrentMetric = e.target.value || "macros";
+      renderMacroComparisonChart();
+    });
   }
 
   $macroProductAdd?.addEventListener("click", () => submitMacroProductFromModal());

@@ -223,6 +223,33 @@
       </section>
     </div>
 
+    <section id="macro-products-comparison-panel" class="macro-stats-card">
+      <header class="macro-stats-card-head">
+        <h4>Comparador de productos</h4>
+      </header>
+      <div class="macro-comparison-controls">
+        <select id="macro-comparison-product-select" class="macro-stats-select">
+          <option value="">Seleccionar productos...</option>
+        </select>
+        <button class="btn ghost btn-compact" id="macro-comparison-clear" type="button">Limpiar</button>
+      </div>
+      <div class="macro-comparison-selected-tags" id="macro-comparison-selected-tags"></div>
+      <div class="macro-comparison-metric-selector">
+        <label for="macro-comparison-metric-select">Mostrar:</label>
+        <select id="macro-comparison-metric-select" class="macro-stats-select">
+          <option value="macros">Macros (Carbs/Protein/Fat)</option>
+          <option value="kcal">Calorías totales</option>
+          <option value="consumptions">Número de consumos</option>
+          <option value="total_cost">Gasto total</option>
+          <option value="avg_cost">Costo promedio</option>
+          <option value="carbs">Carbohidratos</option>
+          <option value="protein">Proteínas</option>
+          <option value="fat">Grasas</option>
+        </select>
+      </div>
+      <div class="macro-comparison-chart" id="macro-comparison-chart"></div>
+    </section>
+
     <div class="macro-stats-lists">
       <section class="macro-stats-card">
         <header class="macro-stats-card-head"><h4>Top recetas y platos</h4></header>
@@ -442,6 +469,11 @@
           <label class="macro-field macro-product-barcode-field">
             <span class="macro-label">Código de barras</span>
             <input id="macro-product-barcode" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="8410..." />
+          </label>
+
+          <label class="macro-field">
+            <span class="macro-label">Emoji</span>
+            <input id="macro-product-emoji" type="text" placeholder="🍎" maxlength="2" />
           </label>
         </div>
 

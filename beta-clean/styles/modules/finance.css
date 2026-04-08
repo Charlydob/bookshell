@@ -2719,6 +2719,33 @@ header.food-sheet-header h3{
 .financeTab #finance-modal.fin-move-modal[data-tx-step="food"] .finWizardNext{ display: none; }
 .financeTab #finance-modal.fin-move-modal[data-tx-step="food"] details[data-section="food-extras"]{ display: block; }
 
+.financeTab .finTicketOcr{
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255,255,255,.03);
+  margin-top: 8px;
+}
+.financeTab .finTicketOcr__row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+}
+.financeTab .finTicketOcr__status{ margin: 8px 0 0; }
+.financeTab .finTicketOcr__preview{
+  width: 92px;
+  height: 92px;
+  object-fit: cover;
+  border-radius: 8px;
+  margin-top: 8px;
+  border: 1px solid rgba(255,255,255,.16);
+}
+.financeTab .finTicketOcr__summary{
+  margin-top: 8px;
+  max-height: 180px;
+  overflow: auto;
+}
+
 /* Category editor modal */
 .financeTab #finance-modal[data-category-editor-modal] .finCatForm{
   display: grid;
@@ -3833,5 +3860,4 @@ margin-bottom: 50px;
 /* ============================================ */
 /* END FIXED EXPENSE MODAL STYLES */
 /* ============================================ */
-
 

@@ -601,12 +601,80 @@ function updateScheduleRightSlots() {
   }
 }
 
-function buildWorkDayPayload(minutes, shift) {
+function normalizeDayQuickAddCounts(value) {
+  const source = Array.isArray(value)
+    ? value
+    : (Array.isArray(value?.quickAddCounts) ? value.quickAddCounts : []);
+  const counts = [0, 0];
+  for (let i = 0; i < counts.length; i += 1) {
+    const raw = Number(source[i]);
+    counts[i] = Number.isFinite(raw) && raw > 0 ? Math.round(raw) : 0;
+  }
+  return counts;
+}
+
+function buildWorkDayPayload(minutes, shift, quickAddCounts = null) {
   const payload = { min: Math.max(0, Math.round(Number(minutes) || 0)) };
   payload.totalSec = payload.min * 60;
   const normalizedShift = normalizeShiftValue(shift);
   if (normalizedShift) payload.shift = normalizedShift;
+  const safeQuickAddCounts = normalizeDayQuickAddCounts(quickAddCounts);
+  if (payload.totalSec > 0 && safeQuickAddCounts.some((count) => count > 0)) {
+    payload.quickAddCounts = safeQuickAddCounts;
+  }
   return payload;
+}
+
+function buildHabitTimeDayPayload(totalSec, options = {}) {
+  const sec = Math.max(0, Math.round(Number(totalSec) || 0));
+  const safeQuickAddCounts = sec > 0 ? normalizeDayQuickAddCounts(options?.quickAddCounts) : [0, 0];
+  const hasQuickAddUsage = safeQuickAddCounts.some((count) => count > 0);
+  const safeSessions = Array.isArray(options?.sessions)
+    ? options.sessions
+      .filter((session) => session && Number(session.durationSec) > 0)
+      .map((session) => ({
+        startTs: Number(session.startTs) || undefined,
+        endTs: Number(session.endTs) || undefined,
+        durationSec: Math.max(1, Math.round(Number(session.durationSec) || 0))
+      }))
+    : [];
+
+  if (options?.isWork) {
+    const normalizedShift = normalizeShiftValue(options?.shift);
+    const minutes = Math.max(0, Math.round(sec / 60));
+    if (!(minutes > 0 || normalizedShift)) return null;
+    return buildWorkDayPayload(minutes, normalizedShift, safeQuickAddCounts);
+  }
+
+  if (sec <= 0) return null;
+  if (!safeSessions.length && !hasQuickAddUsage) return sec;
+
+  const payload = { totalSec: sec };
+  if (safeSessions.length) payload.sessions = safeSessions;
+  if (hasQuickAddUsage) payload.quickAddCounts = safeQuickAddCounts;
+  return payload;
+}
+
+function resolveDayQuickAddCounts(rawValue, options = {}, nextTotalSec = getStoredDayTotalSec(rawValue)) {
+  const counts = Array.isArray(options?.quickAddCounts)
+    ? normalizeDayQuickAddCounts(options.quickAddCounts)
+    : normalizeDayQuickAddCounts(rawValue);
+  const quickAddIndex = Number(options?.quickAddIndex);
+  if (Number.isInteger(quickAddIndex) && quickAddIndex >= 0 && quickAddIndex < counts.length) {
+    counts[quickAddIndex] += 1;
+  }
+  return nextTotalSec > 0 ? counts : [0, 0];
+}
+
+function getStoredDayTotalSec(rawValue) {
+  if (typeof rawValue === "number") return Math.max(0, rawValue);
+  if (rawValue && typeof rawValue === "object") {
+    const secRaw = Number(rawValue.totalSec);
+    if (Number.isFinite(secRaw) && secRaw > 0) return Math.max(0, Math.round(secRaw));
+    const minRaw = Number(rawValue.min);
+    if (Number.isFinite(minRaw) && minRaw > 0) return Math.max(0, Math.round(minRaw * 60));
+  }
+  return 0;
 }
 
 function sessionWriteKey(habitId, dateKey) {
@@ -2202,6 +2270,48 @@ function readDayMinutesAndShift(rawValue, isWork = false) {
   return { minutes: 0, shift: null, hasEntry: false };
 }
 
+function getHabitQuickAddButtonMeta(habit, index) {
+  const quickAdds = Array.isArray(habit?.quickAdds) ? habit.quickAdds : [];
+  const qa = quickAdds[index] || null;
+  const minutes = Math.max(0, Math.round(Number(qa?.minutes) || 0));
+  const fallbackLabel = minutes > 0 ? `+${minutes} min` : `Atajo ${index + 1}`;
+  return {
+    index,
+    label: String(qa?.label || fallbackLabel).trim() || fallbackLabel,
+    colorClass: index === 0 ? "primary" : "secondary"
+  };
+}
+
+function getHabitQuickAddUsageForDate(habit, dateKey) {
+  if (!habit?.id || !dateKey) return [];
+  const rawValue = habitSessions?.[habit.id]?.[dateKey];
+  if (getStoredDayTotalSec(rawValue) <= 0) return [];
+  return normalizeDayQuickAddCounts(rawValue)
+    .map((count, index) => ({ ...getHabitQuickAddButtonMeta(habit, index), count }))
+    .filter((item) => item.count > 0);
+}
+
+function getHabitQuickAddUsageForRange(habit, rangeKey) {
+  const { start, end } = getHabitDetailRangeBounds(rangeKey);
+  const totals = [0, 0];
+  let activeDays = 0;
+
+  for (let date = new Date(start); date <= end; date = addDays(date, 1)) {
+    const key = dateKeyLocal(date);
+    const usage = getHabitQuickAddUsageForDate(habit, key);
+    if (!usage.length) continue;
+    activeDays += 1;
+    usage.forEach((item) => {
+      totals[item.index] += item.count;
+    });
+  }
+
+  return {
+    activeDays,
+    items: totals.map((count, index) => ({ ...getHabitQuickAddButtonMeta(habit, index), count }))
+  };
+}
+
 function resolveHabitIdFromToken(token) {
   const raw = String(token || "").trim();
   if (!raw) return null;
@@ -2496,6 +2606,8 @@ function normalizeSessionsStore(raw, persistRemote = false) {
         }
         const shift = normalizeShiftValue(val.shift);
         const min = Number(val.min);
+        const quickAddCounts = normalizeDayQuickAddCounts(val);
+        const hasQuickAddUsage = quickAddCounts.some((count) => count > 0);
 
         // ✅ preservar shift incluso con min=0 (turno M/T sin tiempo)
         if (Number.isFinite(min) && min >= 0) {
@@ -2504,9 +2616,11 @@ function normalizeSessionsStore(raw, persistRemote = false) {
 
           // ✅ Trabajo: SIEMPRE objeto; No-trabajo: objeto solo si hay min>0 o shift
           if (habitIsWork) {
-            totals[habitId][dateKey] = shift ? { min: roundedMin, shift } : { min: roundedMin };
-          } else if (roundedMin > 0 || shift) {
-            totals[habitId][dateKey] = shift ? { min: roundedMin, shift } : { min: roundedMin };
+            totals[habitId][dateKey] = buildWorkDayPayload(roundedMin, shift, quickAddCounts);
+          } else if (roundedMin > 0 || shift || hasQuickAddUsage) {
+            const payload = shift ? { min: roundedMin, shift } : { min: roundedMin };
+            if (roundedMin > 0 && hasQuickAddUsage) payload.quickAddCounts = quickAddCounts;
+            totals[habitId][dateKey] = payload;
           } else {
             changed = true;
           }
@@ -2520,8 +2634,14 @@ function normalizeSessionsStore(raw, persistRemote = false) {
 
           // ✅ Trabajo: objeto; No-trabajo: conserva tu comportamiento (sec si no hay shift)
           totals[habitId][dateKey] = habitIsWork
-            ? (shift ? { min: roundedMin, shift } : { min: roundedMin })
-            : (shift ? { min: roundedMin, shift } : sec);
+            ? buildWorkDayPayload(roundedMin, shift, quickAddCounts)
+            : (shift || hasQuickAddUsage
+              ? {
+                totalSec: sec,
+                ...(shift ? { shift } : {}),
+                ...(hasQuickAddUsage ? { quickAddCounts } : {})
+              }
+              : sec);
 
           // si venía como objeto con totalSec sin min, lo “arreglamos” a min (más estable)
           changed = true;
@@ -2582,6 +2702,7 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
   const nextMinutes = day.minutes + Math.round(addSec / 60);
   const nextSec = Math.max(0, Math.round(nextMinutes * 60));
   const shift = normalizeShiftValue(options?.shift) || day.shift;
+  const nextQuickAddCounts = resolveDayQuickAddCounts(dayRaw, options, nextSec);
 
   const bounds = parseSessionBounds({
     startTs: options?.startTs,
@@ -2591,7 +2712,11 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
   });
 
   if (isWork) {
-    const payload = buildWorkDayPayload(nextMinutes, shift);
+    const payload = buildHabitTimeDayPayload(nextSec, {
+      isWork: true,
+      shift,
+      quickAddCounts: nextQuickAddCounts
+    });
     habitSessions[habitId][dateKey] = payload;
     queuePendingSessionWrite(habitId, dateKey, payload);
     debugHabitsSync("write:add work", { habitId, dateKey, payload, dayRaw });
@@ -2621,8 +2746,8 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
       habitSessionTimelineCoverage[habitId].add(dateKey);
     }
     const payload = prevSessions.length
-      ? { totalSec: nextSec, sessions: prevSessions }
-      : nextSec;
+      ? buildHabitTimeDayPayload(nextSec, { sessions: prevSessions, quickAddCounts: nextQuickAddCounts })
+      : buildHabitTimeDayPayload(nextSec, { quickAddCounts: nextQuickAddCounts });
     habitSessions[habitId][dateKey] = payload;
     queuePendingSessionWrite(habitId, dateKey, payload);
     debugHabitsSync("write:add", { habitId, dateKey, nextSec, dayRaw, hasTimeline: !!prevSessions.length });
@@ -5083,6 +5208,7 @@ function renderHabitDetailHeatmap(habit, rangeKey) {
 
   const grid = document.createElement("div");
   grid.className = "habit-month-grid";
+  const monthQuickAddUsage = [];
   cells.forEach((date) => {
     const cell = document.createElement("button");
     cell.type = "button";
@@ -5097,18 +5223,80 @@ function renderHabitDetailHeatmap(habit, rangeKey) {
     const dayValue = getHabitValueForDate(habit, key);
     const score = getHabitDayScore(habit, key).score;
     const level = scoreToHeatLevel(score);
+    const quickAddUsage = getHabitQuickAddUsageForDate(habit, key);
     cell.classList.add(`heat-level-${level}`);
+    if (quickAddUsage.length) {
+      cell.classList.add("has-quick-add-usage");
+      monthQuickAddUsage.push({ key, items: quickAddUsage });
+    }
     cell.innerHTML = `
       <span class="month-day-num">${date.getDate()}</span>
       <span class="month-day-value">${formatCompactDayValue(habit.goal || "check", dayValue)}</span>
+      <span class="habit-day-quickadd-markers">
+        ${quickAddUsage.map((item) => `
+          <span class="habit-day-quickadd-marker habit-day-quickadd-marker--${item.colorClass}"></span>
+        `).join("")}
+      </span>
     `;
+    const quickAddTitle = quickAddUsage.length
+      ? ` · ${quickAddUsage.map((item) => `${item.label} ×${item.count}`).join(" · ")}`
+      : "";
+    cell.title = `${formatShortDate(key, true)}${dayValue ? ` · ${formatCompactDayValue(habit.goal || "check", dayValue)}` : ""}${quickAddTitle}`;
     cell.addEventListener("click", () => openDayDetailModal(key, habit.id));
     grid.appendChild(cell);
   });
   $habitDetailHeatmap.appendChild(grid);
 
+  if ((habit.goal || "check") === "time" && ((Array.isArray(habit.quickAdds) && habit.quickAdds.length) || monthQuickAddUsage.length)) {
+    const quickAddRangeUsage = getHabitQuickAddUsageForRange(habit, rangeKey);
+    const summary = document.createElement("div");
+    summary.className = "habit-detail-quickadd-summary";
+    const totalClicks = quickAddRangeUsage.items.reduce((acc, item) => acc + item.count, 0);
+    summary.innerHTML = `
+      <div class="habit-detail-quickadd-summary-head">
+        <div class="habit-detail-quickadd-summary-title">Atajos · ${rangeLabelTitle(rangeKey)}</div>
+        <div class="habit-detail-quickadd-summary-meta">${totalClicks ? `${totalClicks} pulsaciones · ${quickAddRangeUsage.activeDays} día${quickAddRangeUsage.activeDays === 1 ? "" : "s"}` : "Sin uso"}</div>
+      </div>
+    `;
+
+    const summaryBody = document.createElement("div");
+    summaryBody.className = "habit-detail-quickadd-summary-body";
+
+    if (!totalClicks) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state small";
+      empty.textContent = `Sin pulsaciones de atajos en ${rangeLabelTitle(rangeKey).toLowerCase()}.`;
+      summaryBody.appendChild(empty);
+    } else {
+      quickAddRangeUsage.items
+        .filter((item) => item.count > 0)
+        .forEach((item) => {
+          const row = document.createElement("div");
+          row.className = "habit-detail-quickadd-row";
+
+          const label = document.createElement("div");
+          label.className = "habit-detail-quickadd-row-label";
+          label.innerHTML = `<span class="habit-day-quickadd-marker habit-day-quickadd-marker--${item.colorClass}"></span><span>${item.label}</span>`;
+
+          const value = document.createElement("div");
+          value.className = "habit-detail-quickadd-row-value";
+          value.textContent = `${item.count} ${item.count === 1 ? "vez" : "veces"}`;
+
+          row.appendChild(label);
+          row.appendChild(value);
+          summaryBody.appendChild(row);
+        });
+    }
+
+    summary.appendChild(summaryBody);
+    $habitDetailHeatmap.appendChild(summary);
+  }
+
   if ($habitDetailHeatmapSub) {
-    $habitDetailHeatmapSub.textContent = "Calendario mensual";
+    const activeQuickAddDays = monthQuickAddUsage.length;
+    $habitDetailHeatmapSub.textContent = activeQuickAddDays
+      ? `Calendario mensual · ${activeQuickAddDays} día${activeQuickAddDays === 1 ? "" : "s"} con atajos`
+      : "Calendario mensual";
   }
 }
 
@@ -8971,9 +9159,9 @@ function appendTimeQuickControls(tools, habit, today) {
           const fixedMinutes = 480;
           debugWorkShift("[WORK] click", { dateKey: today, shift: inferredShift });
           debugHabitsSync("quick shift click", { habitId: habit.id, dateKey: today, shift: inferredShift, fixedMinutes });
-          setHabitTimeSec(habit.id, today, fixedMinutes * 60, { shift: inferredShift });
+          setHabitTimeSec(habit.id, today, fixedMinutes * 60, { shift: inferredShift, quickAddIndex: idx });
         } else {
-          addHabitTimeSec(habit.id, today, m * 60);
+          addHabitTimeSec(habit.id, today, m * 60, { quickAddIndex: idx });
         }
       }
       renderHabitsPreservingTodayUI();
@@ -12534,21 +12722,26 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
   const shiftOpt = (options && options.shift != null)
     ? normalizeShiftValue(options.shift)
     : existing.shift;
+  const nextQuickAddCounts = resolveDayQuickAddCounts(habitSessions[habitId][dateKey], options, sec);
 
   let payloadToWrite = null;
 
   if (isWork) {
-    const minutes = Math.max(0, Math.round(sec / 60));
-    if (minutes > 0 || shiftOpt) {
-      payloadToWrite = buildWorkDayPayload(minutes, shiftOpt);
+    if (sec > 0 || shiftOpt) {
+      payloadToWrite = buildHabitTimeDayPayload(sec, {
+        isWork: true,
+        shift: shiftOpt,
+        quickAddCounts: nextQuickAddCounts
+      });
       habitSessions[habitId][dateKey] = payloadToWrite;
     } else {
       delete habitSessions[habitId][dateKey];
     }
   } else {
-    payloadToWrite = sec > 0 ? sec : null;
+    payloadToWrite = buildHabitTimeDayPayload(sec, { quickAddCounts: nextQuickAddCounts });
     if (sec > 0) habitSessions[habitId][dateKey] = sec;
     else delete habitSessions[habitId][dateKey];
+    if (payloadToWrite != null) habitSessions[habitId][dateKey] = payloadToWrite;
   }
 
   queuePendingSessionWrite(habitId, dateKey, payloadToWrite);

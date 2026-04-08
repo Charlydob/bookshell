@@ -3760,6 +3760,57 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
   return { breakdown: output, unlinedTotal, productKeyByLabel };
 }
 
+async function renderFixedExpenseCharts() {
+  if (typeof echarts === 'undefined') {
+    try {
+      await ensureFinanceEchartsReady();
+    } catch (error) {
+      log('no se pudo cargar ECharts para fixed expense charts', error);
+      return;
+    }
+  }
+
+  const fixedDonutHost = document.querySelector('#financeFixedDonut');
+  if (fixedDonutHost && fixedDonutHost.dataset.financeStatsDonut) {
+    try {
+      let rows = [];
+      try { rows = JSON.parse(fixedDonutHost.dataset.financeStatsDonut || '[]'); } catch (_) { rows = []; }
+      
+      if (Array.isArray(rows) && rows.length > 0) {
+        const chart = echarts.getInstanceByDom(fixedDonutHost) || echarts.init(fixedDonutHost);
+        chart.setOption({
+          animation: false,
+          tooltip: { show: false },
+          series: [{
+            type: 'pie',
+            radius: ['58%', '80%'],
+            avoidLabelOverlap: true,
+            label: { show: false },
+            labelLine: false,
+            emphasis: { disabled: true },
+            itemStyle: {
+              borderColor: 'rgba(8,14,34,.9)',
+              borderWidth: 2
+            },
+            data: rows.map((row) => ({
+              name: row.name,
+              value: Number(row.value || 0),
+              _key: row._key,
+              productKey: row.productKey,
+              pct: Number(row.pct || 0),
+              midAngle: Number(row.midAngle || 0),
+              itemStyle: { color: row.color }
+            }))
+          }]
+        }, { notMerge: true });
+        chart.resize();
+      }
+    } catch (error) {
+      log('error rendering fixed expense donut', error);
+    }
+  }
+}
+
 function computeFinanceStatsDonutPayload(rows = [], accountsById = {}, options = {}) {
   const {
     monthKey = '',
@@ -4402,22 +4453,32 @@ function renderFixedExpenseSquares(monthKey = getMonthKeyFromDate()) {
   const rows = getFixedRecurringSummary(monthKey);
   if (!rows.length) return '<p class="finance-empty">Sin gastos fijos este mes.</p>';
 
+  const total = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+
   return `
-    <div class="financeFixedSquares">
-      ${rows.map((row) => `
-        <button
-          type="button"
-          class="financeFixedSquare"
-          data-fixed-expense-edit="${escapeHtml(String(row.id || ''))}"
-          title="${escapeHtml(row.name || 'Fijo')} · ${fmtCurrency(row.amount || 0)} · ${Number(row.percentage || 0).toFixed(1)}%"
-        >
-          <span class="financeFixedSquare__emoji">${escapeHtml(row.emoji || '💸')}</span>
-          <strong class="financeFixedSquare__name">${escapeHtml(row.name || 'Fijo')}</strong>
-          <span class="financeFixedSquare__amount">${fmtCurrency(row.amount || 0)}</span>
-          <span class="financeFixedSquare__pct">${Number(row.percentage || 0).toFixed(1)}%</span>
-          <span class="financeFixedSquare__fill" style="width:${Math.max(6, Number(row.percentage || 0))}%"></span>
-        </button>
-      `).join('')}
+    <div class="financeFixedSquaresContainer">
+      <div class="financeFixedSquaresGrid">
+        ${rows.map((row, index) => {
+          const percentage = Number(row.percentage || 0);
+          const color = categoryColor(index);
+          const heightPercent = total > 0 ? (Number(row.amount || 0) / total) * 100 : 0;
+          return `
+            <button
+              type="button"
+              class="financeFixedSquareCell"
+              data-fixed-expense-edit="${escapeHtml(String(row.id || ''))}"
+              id="fixed-expense-square-${escapeHtml(String(row.id || ''))}"
+              title="${escapeHtml(row.name || 'Fijo')} · ${fmtCurrency(row.amount || 0)} · ${percentage.toFixed(1)}%"
+              style="--height-pct: ${heightPercent}%; --square-color: ${color}; flex-grow: ${heightPercent}; min-height: ${Math.max(40, heightPercent * 2)}px;"
+            >
+              <span class="financeFixedSquareCell__emoji">${escapeHtml(row.emoji || '💸')}</span>
+              <strong class="financeFixedSquareCell__name">${escapeHtml(row.name || 'Fijo')}</strong>
+              <span class="financeFixedSquareCell__amount">${fmtCurrency(row.amount || 0)}</span>
+              <span class="financeFixedSquareCell__pct">${percentage.toFixed(1)}%</span>
+            </button>
+          `;
+        }).join('')}
+      </div>
     </div>
   `;
 }
@@ -4426,11 +4487,13 @@ function renderFixedExpenseDonut(monthKey = getMonthKeyFromDate()) {
   if (!rows.length) return '<p class="finance-empty">Sin datos para donut.</p>';
 
   return `
-    <div class="financeFixedDonutWrap" data-fixed-expense-donut-wrap>
+    <div class="financeFixedDonutWrap" id="financeFixedDonutContainer">
       <div
         class="financeStats__donut"
+        id="financeFixedDonut"
         data-finance-stats-donut='${escapeHtml(JSON.stringify(rows))}'
         data-finance-stats-donut-wrap
+        style="min-height: 240px; width: 100%;"
       ></div>
     </div>
   `;
@@ -4466,21 +4529,21 @@ function renderFixedExpenseLineChart() {
   }).join('');
 
   const legend = data.series.map((serie) => `
-    <button type="button" class="financeFixedLegendItem" data-fixed-line-filter="${escapeHtml(serie.key)}">
+    <button type="button" class="financeFixedLegendItem" id="fixed-line-legend-${escapeHtml(serie.key)}" data-fixed-line-filter="${escapeHtml(serie.key)}">
       <span>${escapeHtml(serie.emoji || '💸')}</span>
       <span>${escapeHtml(serie.name || 'Fijo')}</span>
     </button>
   `).join('');
 
   return `
-    <div class="financeFixedLineWrap">
-      <svg class="financeFixedLineChart" viewBox="0 0 100 44" preserveAspectRatio="none">
+    <div class="financeFixedLineWrap" id="financeFixedLineChartContainer">
+      <svg class="financeFixedLineChart" id="financeFixedLineChart" viewBox="0 0 100 44" preserveAspectRatio="none">
         ${lines}
       </svg>
       <div class="financeFixedLineMonths">
-        ${data.monthKeys.map((monthKey) => `<span>${escapeHtml(monthKey.slice(5, 7))}/${escapeHtml(monthKey.slice(2, 4))}</span>`).join('')}
+        ${data.monthKeys.map((monthKey, idx) => `<span id="fixed-line-month-${idx}">${escapeHtml(monthKey.slice(5, 7))}/${escapeHtml(monthKey.slice(2, 4))}</span>`).join('')}
       </div>
-      <div class="financeFixedLegend">${legend}</div>
+      <div class="financeFixedLegend" id="financeFixedLineLegend">${legend}</div>
     </div>
   `;
 }
@@ -5903,87 +5966,100 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
   const accountOptions = resolvedAccounts
     .map((a) => `<option value="${a.id}" ${String(form.accountId || '') === String(a.id) ? 'selected' : ''}>${escapeHtml(a.name)}</option>`)
     .join('');
+  
+  const categoryList = categoriesList();
+  const categoryOptions = categoryList
+    .map((c) => `<option value="${escapeHtml(c)}" ${String(form.category || '') === String(c) ? 'selected' : ''}>${escapeHtml(c)}</option>`)
+    .join('');
 
   backdrop.innerHTML = `
-    <div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1">
-      <header class="fm-modal__header fin-move-header">
-        <div class="finWizardHeader">
-          <h3 class="fm-modal__title fin-move-title">${escapeHtml(modalTitle)}</h3>
+    <div id="fixed-expense-modal" class="finance-modal fm-modal fin-move-modal fin-fixed-modal" role="dialog" aria-modal="true" tabindex="-1">
+      <header class="fm-modal__header fin-move-header fin-fixed-header" id="fixed-expense-modal-header">
+        <div class="finWizardHeader fin-fixed-wizard-header">
+          <h3 class="fm-modal__title fin-move-title fin-fixed-title" id="fixed-expense-modal-title">${escapeHtml(modalTitle)}</h3>
         </div>
-        <button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button>
+        <button class="finance-pill fm-modal__close fin-fixed-close" type="button" id="fixed-expense-close-btn" data-close-modal>Cerrar</button>
       </header>
 
-      <form class="finance-entry-form fm-form fin-move-form" data-fixed-expense-form>
-        <input type="hidden" name="id" value="${escapeHtml(String(form.id || ''))}" />
-        <div class="finance-form-grid">
-          <label>
-            <span>Emoji</span>
-            <input name="emoji" type="text" maxlength="4" value="${escapeHtml(form.emoji || '💸')}" placeholder="💸" />
+      <form class="finance-entry-form fm-form fin-move-form fin-fixed-form" id="fixed-expense-edit-form" data-fixed-expense-form>
+        <input type="hidden" name="id" id="fixed-expense-id-input" value="${escapeHtml(String(form.id || ''))}" />
+        <div class="finance-form-grid fin-fixed-grid">
+          <label class="fin-fixed-field fin-fixed-field--emoji" for="fixed-expense-emoji-input">
+            <span class="fin-fixed-label">Emoji</span>
+            <input id="fixed-expense-emoji-input" name="emoji" type="text" maxlength="4" value="${escapeHtml(form.emoji || '💸')}" placeholder="💸" class="fin-fixed-input" />
           </label>
 
-          <label>
-            <span>Día del mes</span>
-            <input name="dayOfMonth" type="number" min="1" max="31" value="${escapeHtml(String(form.dayOfMonth || 1))}" />
+          <label class="fin-fixed-field fin-fixed-field--day" for="fixed-expense-day-input">
+            <span class="fin-fixed-label">Día del mes</span>
+            <input id="fixed-expense-day-input" name="dayOfMonth" type="number" min="1" max="31" value="${escapeHtml(String(form.dayOfMonth || 1))}" class="fin-fixed-input" />
           </label>
 
-          <label class="finance-field--full">
-            <span>Nombre</span>
-            <input name="name" type="text" value="${escapeHtml(form.name || '')}" placeholder="Alquiler" />
+          <label class="fin-fixed-field fin-fixed-field--full fin-fixed-field--name" for="fixed-expense-name-input">
+            <span class="fin-fixed-label">Nombre</span>
+            <input id="fixed-expense-name-input" name="name" type="text" value="${escapeHtml(form.name || '')}" placeholder="Alquiler" class="fin-fixed-input fin-fixed-input--text" />
           </label>
 
-          <label>
-            <span>Importe</span>
-            <input name="amount" type="number" step="0.01" inputmode="decimal" value="${escapeHtml(String(form.amount || ''))}" placeholder="0" />
+          <label class="fin-fixed-field fin-fixed-field--amount" for="fixed-expense-amount-input">
+            <span class="fin-fixed-label">Importe (€)</span>
+            <input id="fixed-expense-amount-input" name="amount" type="number" step="0.01" inputmode="decimal" value="${escapeHtml(String(form.amount || ''))}" placeholder="0.00" class="fin-fixed-input fin-fixed-input--number" />
           </label>
 
-          <label>
-            <span>Tipo</span>
-            <select name="type">
+          <label class="fin-fixed-field fin-fixed-field--type" for="fixed-expense-type-select">
+            <span class="fin-fixed-label">Tipo</span>
+            <select id="fixed-expense-type-select" name="type" class="fin-fixed-select fin-fixed-input">
               <option value="expense" ${form.type === 'expense' ? 'selected' : ''}>Gasto</option>
               <option value="income" ${form.type === 'income' ? 'selected' : ''}>Ingreso</option>
             </select>
           </label>
 
-          <label>
-            <span>Categoría</span>
-            <input name="category" type="text" value="${escapeHtml(form.category || 'Fijos')}" placeholder="Fijos" />
+          <label class="fin-fixed-field fin-fixed-field--category" for="fixed-expense-category-select">
+            <span class="fin-fixed-label">Categoría</span>
+            <select id="fixed-expense-category-select" name="category" class="fin-fixed-select fin-fixed-input" required>
+              <option value="">Selecciona categoría</option>
+              ${categoryOptions}
+              <option value="Fijos" ${String(form.category || '') === 'Fijos' ? 'selected' : ''}>Fijos</option>
+            </select>
           </label>
 
-          <label>
-            <span>Cuenta</span>
-            <select name="accountId">${accountOptions}</select>
+          <label class="fin-fixed-field fin-fixed-field--account" for="fixed-expense-account-select">
+            <span class="fin-fixed-label">Cuenta</span>
+            <select id="fixed-expense-account-select" name="accountId" class="fin-fixed-select fin-fixed-input" required>
+              <option value="">Selecciona cuenta</option>
+              ${accountOptions}
+            </select>
           </label>
 
-          <label>
-            <span>Inicio</span>
-            <input name="startDate" type="date" value="${escapeHtml(form.startDate || '')}" />
+          <label class="fin-fixed-field fin-fixed-field--start-date" for="fixed-expense-start-date-input">
+            <span class="fin-fixed-label">Inicio</span>
+            <input id="fixed-expense-start-date-input" name="startDate" type="date" value="${escapeHtml(form.startDate || '')}" class="fin-fixed-input fin-fixed-input--date" />
           </label>
 
-          <label>
-            <span>Fin</span>
-            <input name="endDate" type="date" value="${escapeHtml(form.endDate || '')}" />
+          <label class="fin-fixed-field fin-fixed-field--end-date" for="fixed-expense-end-date-input">
+            <span class="fin-fixed-label">Fin</span>
+            <input id="fixed-expense-end-date-input" name="endDate" type="date" value="${escapeHtml(form.endDate || '')}" class="fin-fixed-input fin-fixed-input--date" />
           </label>
 
-          <label class="finance-field--full">
-            <span>Nota</span>
-            <input name="note" type="text" value="${escapeHtml(form.note || '')}" placeholder="Opcional" />
+          <label class="fin-fixed-field fin-fixed-field--full fin-fixed-field--note" for="fixed-expense-note-input">
+            <span class="fin-fixed-label">Nota</span>
+            <input id="fixed-expense-note-input" name="note" type="text" value="${escapeHtml(form.note || '')}" placeholder="Opcional" class="fin-fixed-input fin-fixed-input--text" />
           </label>
 
-          <label class="finance-check">
-            <input name="active" type="checkbox" ${form.active ? 'checked' : ''} />
-            <span>Activo</span>
+          <label class="fin-fixed-check fin-fixed-field--checkbox" for="fixed-expense-active-checkbox">
+            <input id="fixed-expense-active-checkbox" name="active" type="checkbox" ${form.active ? 'checked' : ''} class="fin-fixed-checkbox" />
+            <span class="fin-fixed-check-label">Activo</span>
           </label>
 
-          <label class="finance-check">
-            <input name="autoCreate" type="checkbox" ${form.autoCreate ? 'checked' : ''} />
-            <span>Crear movimiento automáticamente</span>
+          <label class="fin-fixed-check fin-fixed-field--checkbox" for="fixed-expense-autocreate-checkbox">
+            <input id="fixed-expense-autocreate-checkbox" name="autoCreate" type="checkbox" ${form.autoCreate ? 'checked' : ''} class="fin-fixed-checkbox" />
+            <span class="fin-fixed-check-label">Crear movimiento automáticamente</span>
           </label>
         </div>
 
-        <div class="finance-row" style="justify-content:flex-end;gap:8px;margin-top:12px;">
-          <button type="button" class="finance-pill" data-close-modal>Cancelar</button>
-          ${isEditMode ? `<button type="button" class="finance-pill finance-pill--danger" data-delete-fixed-expense="${escapeHtml(String(form.id || ''))}">🗑️ Eliminar</button>` : ''}
-          <button type="submit" class="finance-pill finance-pill--primary">Guardar</button>
+        <div class="fin-fixed-actions" style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+          <button type="button" class="finance-pill fin-fixed-action fin-fixed-action--cancel" id="fixed-expense-cancel-btn" data-close-modal>Cancelar</button>
+          ${isEditMode ? `<button type="button" class="finance-pill finance-pill--danger fin-fixed-action fin-fixed-action--delete" id="fixed-expense-delete-btn" data-delete-fixed-expense="${escapeHtml(String(form.id || ''))}">🗑️ Eliminar</button>` : ''}
+          <button type="button" class="finance-pill fin-fixed-action fin-fixed-action--test" id="fixed-expense-test-btn" data-test-fixed-expense>🧪 Prueba</button>
+          <button type="submit" class="finance-pill finance-pill--primary fin-fixed-action fin-fixed-action--submit" id="fixed-expense-submit-btn">Guardar</button>
         </div>
       </form>
     </div>
@@ -7445,6 +7521,7 @@ async function render() {
       else if (state.activeView === 'calendar') host.innerHTML = renderFinanceCalendar(accounts, totalSeries);
       else host.innerHTML = renderFinanceHome(accounts, totalSeries);
     }
+    await renderFixedExpenseCharts();
     renderModal({ accounts, categories, txRows });
     renderToast();
     ensureFinanceAddTxFab();
@@ -8511,6 +8588,58 @@ if (fixedExpenseDeleteId && window.confirm('¿Eliminar este gasto fijo?')) {
   clearFinanceDerivedCaches();
   toast('Gasto fijo eliminado');
   triggerRender({ preserveUi: false });
+  return;
+}
+
+if (target.closest('[data-test-fixed-expense]')) {
+  const formState = state.fixedExpenseFormState || defaultFixedExpenseFormState();
+  const amount = parseMoney(String(formState.amount || ''));
+  const dayOfMonth = Math.max(1, Math.min(31, Number(formState.dayOfMonth || 1)));
+
+  if (!String(formState.name || '').trim()) {
+    toast('Pon un nombre');
+    return;
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    toast('Importe inválido');
+    return;
+  }
+  if (!String(formState.accountId || '').trim()) {
+    toast('Selecciona una cuenta');
+    return;
+  }
+
+  const testTxId = `test-fixed-expense-${Date.now()}`;
+  const today = dayKeyFromTs(Date.now());
+  
+  const testPayload = {
+    id: testTxId,
+    type: formState.type === 'income' ? 'income' : 'expense',
+    amount,
+    accountId: String(formState.accountId || '').trim(),
+    category: String(formState.category || 'Fijos').trim() || 'Fijos',
+    note: `[PRUEBA] ${String(formState.name || '').trim()}`,
+    date: today,
+    dateISO: today,
+    monthKey: today.slice(0, 7),
+    timestamp: Date.now(),
+    _isTestTransaction: true
+  };
+
+  state.balance = state.balance || {};
+  state.balance.transactions = state.balance.transactions || {};
+  state.balance.transactions[testTxId] = testPayload;
+  
+  clearFinanceDerivedCaches();
+  toast(`Prueba registrada: ${String(formState.name || '')} - ${fmtSignedCurrency(formState.type === 'income' ? amount : -amount)}`);
+  triggerRender();
+  
+  setTimeout(() => {
+    delete state.balance.transactions[testTxId];
+    clearFinanceDerivedCaches();
+    toast('Prueba eliminada');
+    triggerRender();
+  }, 5000);
   return;
 }
     const monthShift = target.closest('[data-month-shift]')?.dataset.monthShift; if (monthShift) {

@@ -2278,8 +2278,9 @@ function linkifyNotesHtml(input) {
     if (!$shelfList) return;
     const grouped = sortRecipesForGlobalView(filtered);
     const canRenderFavoritesShelf = Boolean($shelfFavoritesSection && $shelfFavorites);
-    const favorites = canRenderFavoritesShelf ? grouped.favorites : [];
-    const regular = canRenderFavoritesShelf ? grouped.regular : grouped.merged;
+    const shouldUseMergedMainShelf = !canRenderFavoritesShelf || grouped.regular.length === 0;
+    const favorites = shouldUseMergedMainShelf ? [] : grouped.favorites;
+    const regular = shouldUseMergedMainShelf ? grouped.merged : grouped.regular;
 
     const SHELF_SIZE = 9;
     const buildShelfRows = (arr) => {

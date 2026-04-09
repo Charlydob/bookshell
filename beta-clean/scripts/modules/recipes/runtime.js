@@ -1738,18 +1738,41 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return `${roundMacro(n)}${suffix}`;
   }
 
+  function isRecipeCardsOnlyMode() {
+    if (typeof window === "undefined" || typeof window.getComputedStyle !== "function") return false;
+    const toggleHidden = $recipesViewToggle
+      ? window.getComputedStyle($recipesViewToggle).display === "none"
+      : false;
+    const shelfHidden = $shelfList
+      ? window.getComputedStyle($shelfList).display === "none"
+      : false;
+    return toggleHidden && shelfHidden;
+  }
+
+  function resolveRecipeViewMode(mode) {
+    if (isRecipeCardsOnlyMode()) return "cards";
+    return allowedRecipeViews.has(mode) ? mode : "shelf";
+  }
+
   function getRecipeViewModePreference() {
     try {
       const raw = String(localStorage.getItem(RECIPE_VIEW_MODE_STORAGE_KEY) || "").trim();
-      return allowedRecipeViews.has(raw) ? raw : "shelf";
+      return resolveRecipeViewMode(raw);
     } catch (_) {
-      return "shelf";
+      return resolveRecipeViewMode("shelf");
     }
   }
 
   function persistRecipeViewMode(mode) {
     if (!allowedRecipeViews.has(mode)) return;
     try { localStorage.setItem(RECIPE_VIEW_MODE_STORAGE_KEY, mode); } catch (_) {}
+  }
+
+  function syncRecipeViewModeAvailability() {
+    const nextMode = resolveRecipeViewMode(recipesViewMode);
+    if (nextMode === recipesViewMode) return;
+    recipesViewMode = nextMode;
+    persistRecipeViewMode(nextMode);
   }
 
   function renderRecipesViewToggle() {
@@ -2311,6 +2334,7 @@ function linkifyNotesHtml(input) {
   }
 
   function renderRecipeLibraryViews() {
+    syncRecipeViewModeAvailability();
     renderRecipesViewToggle();
     const filtered = getRecipeLibraryFilteredList();
     const showCards = recipesViewMode === "cards";

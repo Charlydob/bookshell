@@ -55,11 +55,11 @@ if ($viewGym) {
     "Other"
   ];
 
-  const $gymMainView = document.getElementById("gym-main-view");
   const $gymSessionView = document.getElementById("gym-session-view");
-  const $gymStatsView = document.getElementById("gym-stats-view");
+  const $gymPanelWorkouts = document.getElementById("gym-panel-workouts");
+  const $gymPanelStatistics = document.getElementById("gym-panel-statistics");
+  const $gymSubtabs = document.querySelectorAll(".gym-subtab");
   const $gymStartWorkout = document.getElementById("gym-start-workout");
-  const $gymOpenStats = document.getElementById("gym-open-stats");
   const $gymHistoryList = document.getElementById("gym-history-list");
   const $gymHistoryEmpty = document.getElementById("gym-history-empty");
   const $gymCalPrev = document.getElementById("gym-cal-prev");
@@ -92,7 +92,7 @@ if ($viewGym) {
   const $gymMetricExercisesProgress = document.getElementById("gym-metric-exercises-progress");
   const $gymMetricExercisesPr = document.getElementById("gym-metric-exercises-pr");
   const $gymWorkoutExercises = document.getElementById("gym-workout-exercises");
-  const $gymStatsBack = document.getElementById("gym-stats-back");
+  const $gymStatsBack = null; // Removed - no longer needed with subtab system
   const $gymStatsKind = document.getElementById("gym-stats-kind");
   const $gymStatsControls = document.getElementById("gym-stats-controls");
   const $gymStatsKpis = document.getElementById("gym-stats-kpis");
@@ -234,16 +234,13 @@ function bindEvents() {
     openTemplateModal();
   });
 
-  $gymOpenStats?.addEventListener("click", () => {
-    openStatsScreen({ kind: gymStatsSelection.kind || "body" });
-  });
+  // Subtabs listener
+  $gymSubtabs.forEach((btn) => btn.addEventListener("click", () => {
+    switchGymPanel(btn.dataset.gymPanel || "workouts");
+  }));
 
   $gymBack.addEventListener("click", () => {
     showScreen("main");
-  });
-
-  $gymStatsBack?.addEventListener("click", () => {
-    showScreen(gymStatsReturnTo);
   });
 
   $gymStatsKind?.addEventListener("change", () => {
@@ -1348,20 +1345,22 @@ function bindEvents() {
   }
 
   function showScreen(name) {
-    $gymMainView.classList.toggle("gym-screen-active", name === "main");
-    $gymSessionView.classList.toggle("gym-screen-active", name === "session");
-    $gymStatsView?.classList.toggle("gym-screen-active", name === "stats");
+    const isSession = name === "session";
+    $gymSessionView.classList.toggle("gym-screen-active", isSession);
+    // Hide panels/hero/subtabs when in session mode
+    $gymPanelWorkouts?.classList.toggle("hidden", isSession);
+    $gymPanelStatistics?.classList.toggle("hidden", isSession);
+    const $hero = document.querySelector(".gym-hero");
+    if ($hero) $hero.classList.toggle("hidden", isSession);
+    const $subtabs = document.querySelector(".gym-subtabs");
+    if ($subtabs) $subtabs.classList.toggle("hidden", isSession);
+    
     currentGymScreen = name;
     persistGymScreen(name);
-    if (name === "session") {
+    if (isSession) {
       startDurationTicker();
     } else {
       stopDurationTicker();
-    }
-    if (name === "stats") {
-      requestAnimationFrame(() => {
-        gymStatsChart?.resize();
-      });
     }
     if (name === "main" && pendingHomeRerender) {
       renderHistory();
@@ -1370,12 +1369,32 @@ function bindEvents() {
     }
   }
 
+  function switchGymPanel(panel = "workouts") {
+    const isWorkouts = panel === "workouts";
+    const isStatistics = panel === "statistics";
+    
+    $gymPanelWorkouts?.classList.toggle("is-active", isWorkouts);
+    $gymPanelStatistics?.classList.toggle("is-active", isStatistics);
+    
+    $gymSubtabs.forEach((btn) => {
+      const active = btn.dataset.gymPanel === panel;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    });
+
+    if (isStatistics) {
+      initGymStatsChart();
+      renderStatsControls();
+      renderStatsChart();
+    }
+  }
+
   function isHomeActive() {
-    return $gymMainView.classList.contains("gym-screen-active");
+    return currentGymScreen === "main";
   }
 
   function isStatsActive() {
-    return Boolean($gymStatsView?.classList.contains("gym-screen-active"));
+    return $gymPanelStatistics?.classList.contains("is-active");
   }
 
   function refreshStatsIfActive({ includeControls = false } = {}) {
@@ -1386,16 +1405,12 @@ function bindEvents() {
     renderStatsChart();
   }
 
-  function openStatsScreen({ kind = "body", exerciseId = "", returnTo } = {}) {
+  function openStatsScreen({ kind = "body", exerciseId = "" } = {}) {
     gymStatsSelection.kind = kind || gymStatsSelection.kind || "body";
     if (exerciseId) {
       gymStatsSelection.exerciseId = exerciseId;
     }
-    gymStatsReturnTo = returnTo || currentGymScreen;
-    showScreen("stats");
-    initGymStatsChart();
-    renderStatsControls();
-    renderStatsChart();
+    switchGymPanel("statistics");
   }
 
   function initGymStatsChart() {

@@ -4477,134 +4477,588 @@ function formatFixedExpenseYearly(value = 0) {
 function formatFixedExpensePct(value = 0) {
   return `${Math.round(Number(value || 0))}%`;
 }
-function getFixedExpenseMosaicConfig(count = 0) {
+function getFixedExpenseTreemapMetrics(count = 0) {
   const viewportWidth = typeof window !== 'undefined' ? Number(window.innerWidth || 0) : 1280;
+  const safeCount = Math.max(1, Number(count || 0));
   if (viewportWidth <= 480) {
-    return { cols: 4, rowHeight: 72, gap: 12, minW: 2, maxW: 4, minH: 2, maxH: 4, targetRows: Math.max(6, Math.ceil(count * 2.1)) };
+    const width = Math.max(320, viewportWidth - 28);
+    const height = Math.min(560, 388 + Math.max(0, safeCount - 6) * 18);
+    return { width, height, gap: 8 };
   }
   if (viewportWidth <= 720) {
-    return { cols: 6, rowHeight: 76, gap: 12, minW: 2, maxW: 4, minH: 2, maxH: 4, targetRows: Math.max(6, Math.ceil(count * 1.55)) };
+    const width = Math.max(360, Math.min(520, viewportWidth - 44));
+    const height = Math.min(620, 430 + Math.max(0, safeCount - 7) * 16);
+    return { width, height, gap: 10 };
   }
   if (viewportWidth <= 1080) {
-    return { cols: 8, rowHeight: 82, gap: 14, minW: 2, maxW: 5, minH: 2, maxH: 4, targetRows: Math.max(5, Math.ceil(count * 1.15)) };
+    return { width: 560, height: Math.min(660, 478 + Math.max(0, safeCount - 8) * 14), gap: 12 };
   }
-  return { cols: 12, rowHeight: 86, gap: 16, minW: 3, maxW: 6, minH: 2, maxH: 5, targetRows: Math.max(4, Math.ceil(count * 0.92)) };
+  return { width: 600, height: Math.min(700, 520 + Math.max(0, safeCount - 9) * 12), gap: 14 };
 }
-function resolveFixedExpenseMosaicSize(spanCols = 2, spanRows = 2) {
-  const area = Math.max(1, spanCols * spanRows);
-  if (area >= 18 || (area >= 14 && spanCols >= spanRows + 1)) return 'large';
-  if (area >= 10) return 'medium';
-  if (area >= 6) return 'small';
+const FIXED_EXPENSE_TREEMAP_MIN_RATIO = 0.55;
+const FIXED_EXPENSE_TREEMAP_MAX_RATIO = 2.2;
+const FIXED_EXPENSE_TREEMAP_RESIDUAL_RATIO = 2.6;
+
+function getFixedExpenseRectAspectRatio(rect = {}) {
+  return Math.max(0.0001, Number(rect.width || 0)) / Math.max(0.0001, Number(rect.height || 0));
+}
+function getFixedExpenseAspectPenalty(width = 1, height = 1) {
+  const ratio = Math.max(0.0001, Number(width || 0)) / Math.max(0.0001, Number(height || 0));
+  const normalized = ratio >= 1 ? ratio : 1 / ratio;
+  const lowerOverflow = ratio < FIXED_EXPENSE_TREEMAP_MIN_RATIO ? (FIXED_EXPENSE_TREEMAP_MIN_RATIO / ratio) - 1 : 0;
+  const upperOverflow = ratio > FIXED_EXPENSE_TREEMAP_MAX_RATIO ? (ratio / FIXED_EXPENSE_TREEMAP_MAX_RATIO) - 1 : 0;
+  return normalized + (lowerOverflow * 14) + (upperOverflow * 14);
+}
+function layoutFixedExpenseTreemapRow(row = [], rect = { x: 0, y: 0, width: 1, height: 1 }, orientation = 'auto') {
+  if (!row.length) return { items: [], remainingRect: rect };
+  const totalArea = row.reduce((sum, item) => sum + Number(item.treemapArea || 0), 0);
+  const horizontal = orientation === 'horizontal'
+    ? true
+    : orientation === 'vertical'
+      ? false
+      : rect.width >= rect.height;
+  const items = [];
+  if (horizontal) {
+    const rowHeight = totalArea / Math.max(rect.width, 0.0001);
+    let x = rect.x;
+    row.forEach((item) => {
+      const width = Number(item.treemapArea || 0) / Math.max(rowHeight, 0.0001);
+      items.push({ ...item, x, y: rect.y, width, height: rowHeight });
+      x += width;
+    });
+    return {
+      items,
+      remainingRect: {
+        x: rect.x,
+        y: rect.y + rowHeight,
+        width: rect.width,
+        height: Math.max(0, rect.height - rowHeight),
+      },
+      orientation: 'horizontal',
+      rowSize: rowHeight,
+    };
+  }
+  const rowWidth = totalArea / Math.max(rect.height, 0.0001);
+  let y = rect.y;
+  row.forEach((item) => {
+    const height = Number(item.treemapArea || 0) / Math.max(rowWidth, 0.0001);
+    items.push({ ...item, x: rect.x, y, width: rowWidth, height });
+    y += height;
+  });
+  return {
+    items,
+    remainingRect: {
+      x: rect.x + rowWidth,
+      y: rect.y,
+      width: Math.max(0, rect.width - rowWidth),
+      height: rect.height,
+    },
+    orientation: 'vertical',
+    rowSize: rowWidth,
+  };
+}
+function evaluateFixedExpenseTreemapRow(row = [], rect = { x: 0, y: 0, width: 1, height: 1 }, orientation = 'horizontal') {
+  const layout = layoutFixedExpenseTreemapRow(row, rect, orientation);
+  const penalties = layout.items.map((item) => getFixedExpenseAspectPenalty(item.width, item.height));
+  const worstPenalty = penalties.length ? Math.max(...penalties) : Number.POSITIVE_INFINITY;
+  const totalPenalty = penalties.reduce((sum, penalty) => sum + penalty, 0);
+  const shortSide = Math.max(1, Math.min(Number(rect.width || 0), Number(rect.height || 0)));
+  const minDesiredStrip = shortSide * 0.2;
+  const thinStripPenalty = layout.rowSize < minDesiredStrip
+    ? ((minDesiredStrip - layout.rowSize) / Math.max(1, minDesiredStrip)) * 8
+    : 0;
+  const crowdedRowPenalty = row.length > 4 ? (row.length - 4) * 0.65 : 0;
+  return {
+    ...layout,
+    worstPenalty,
+    score: (worstPenalty * 4.5) + (totalPenalty * 0.35) + thinStripPenalty + crowdedRowPenalty,
+  };
+}
+function getBestFixedExpenseTreemapRowLayout(row = [], rect = { x: 0, y: 0, width: 1, height: 1 }) {
+  const horizontal = evaluateFixedExpenseTreemapRow(row, rect, 'horizontal');
+  const vertical = evaluateFixedExpenseTreemapRow(row, rect, 'vertical');
+  return horizontal.score <= vertical.score ? horizontal : vertical;
+}
+function shouldUseFixedExpenseBinaryFallback(rect = {}, pendingCount = 0) {
+  const ratio = getFixedExpenseRectAspectRatio(rect);
+  const extremeRatio = Math.max(ratio, 1 / Math.max(ratio, 0.0001));
+  return pendingCount >= 3 && extremeRatio >= FIXED_EXPENSE_TREEMAP_RESIDUAL_RATIO;
+}
+function splitFixedExpenseTreemapItems(items = []) {
+  if (items.length <= 1) return [items.slice(), []];
+  const totalArea = items.reduce((sum, item) => sum + Number(item.treemapArea || 0), 0);
+  let runningArea = 0;
+  let bestIndex = 1;
+  let bestDelta = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < items.length; index += 1) {
+    runningArea += Number(items[index - 1].treemapArea || 0);
+    const delta = Math.abs((totalArea / 2) - runningArea);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      bestIndex = index;
+    }
+  }
+  return [items.slice(0, bestIndex), items.slice(bestIndex)];
+}
+function layoutFixedExpenseBinaryTreemap(items = [], rect = { x: 0, y: 0, width: 1, height: 1 }) {
+  if (!items.length) return [];
+  if (items.length === 1) {
+    return [{ ...items[0], x: rect.x, y: rect.y, width: rect.width, height: rect.height }];
+  }
+  const [first, second] = splitFixedExpenseTreemapItems(items);
+  if (!first.length || !second.length) {
+    return items.map((item, index) => ({
+      ...item,
+      x: rect.x,
+      y: rect.y + ((rect.height / items.length) * index),
+      width: rect.width,
+      height: rect.height / items.length,
+    }));
+  }
+  const firstArea = first.reduce((sum, item) => sum + Number(item.treemapArea || 0), 0);
+  const secondArea = second.reduce((sum, item) => sum + Number(item.treemapArea || 0), 0);
+  const totalArea = Math.max(0.0001, firstArea + secondArea);
+  if (rect.width >= rect.height) {
+    const firstWidth = rect.width * (firstArea / totalArea);
+    return [
+      ...layoutFixedExpenseBinaryTreemap(first, { x: rect.x, y: rect.y, width: firstWidth, height: rect.height }),
+      ...layoutFixedExpenseBinaryTreemap(second, { x: rect.x + firstWidth, y: rect.y, width: Math.max(0, rect.width - firstWidth), height: rect.height }),
+    ];
+  }
+  const firstHeight = rect.height * (firstArea / totalArea);
+  return [
+    ...layoutFixedExpenseBinaryTreemap(first, { x: rect.x, y: rect.y, width: rect.width, height: firstHeight }),
+    ...layoutFixedExpenseBinaryTreemap(second, { x: rect.x, y: rect.y + firstHeight, width: rect.width, height: Math.max(0, rect.height - firstHeight) }),
+  ];
+}
+function resolveFixedExpenseTreemapSize(node = {}, metrics = { width: 1, height: 1 }) {
+  const totalArea = Math.max(1, Number(metrics.width || 1) * Number(metrics.height || 1));
+  const areaRatio = (Math.max(0, Number(node.width || 0)) * Math.max(0, Number(node.height || 0))) / totalArea;
+  const minSide = Math.min(Number(node.width || 0), Number(node.height || 0));
+  if (areaRatio >= 0.16 || (areaRatio >= 0.11 && minSide >= 170)) return 'large';
+  if (areaRatio >= 0.085 || minSide >= 130) return 'medium';
+  if (areaRatio >= 0.045 || minSide >= 92) return 'small';
   return 'tiny';
 }
-function buildFixedExpenseMosaic(rows = [], options = {}) {
-  const config = { ...getFixedExpenseMosaicConfig(rows.length), ...(options || {}) };
-  if (!rows.length) return { ...config, usedRows: 0, items: [] };
+function resolveFixedExpenseLayoutVariant(node = {}, metrics = { width: 1, height: 1 }) {
+  const width = Math.max(1, Number(node.width || 0));
+  const height = Math.max(1, Number(node.height || 0));
+  const aspectRatio = width / height;
+  const totalArea = Math.max(1, Number(metrics.width || 1) * Number(metrics.height || 1));
+  const areaRatio = (width * height) / totalArea;
+  const minSide = Math.min(width, height);
 
-  const normalizedRows = rows.map((row) => ({
-    ...row,
-    visualWeight: Math.pow(Math.max(1, Number(row.amount || 0)), 0.88),
-  }));
-  const totalVisualWeight = normalizedRows.reduce((sum, row) => sum + Number(row.visualWeight || 0), 0);
-  const totalCells = config.cols * config.targetRows;
-  const occupancy = [];
-  const ensureRows = (count) => {
-    while (occupancy.length < count) {
-      occupancy.push(Array.from({ length: config.cols }, () => false));
+  if (areaRatio <= 0.028 || width <= 94 || height <= 66 || minSide <= 58) return 'compact';
+  if (aspectRatio >= 1.95 && height <= 110 && minSide <= 108 && areaRatio <= 0.082) return 'wide';
+  if (aspectRatio <= 0.7 && width <= 110 && minSide <= 106 && areaRatio <= 0.072) return 'tall';
+  if (areaRatio >= 0.072 || minSide >= 112 || height >= 124) return 'large';
+  if (aspectRatio >= 2.2 && height <= 122 && areaRatio <= 0.095) return 'wide';
+  if (aspectRatio <= 0.62 && width <= 118) return 'tall';
+  if (areaRatio <= 0.04 || minSide <= 76) return 'compact';
+  return 'large';
+}
+function clampFixedExpenseVisualValue(value, min, max) {
+  return Math.min(max, Math.max(min, Number(value || 0)));
+}
+function estimateFixedExpenseTextWidth(text = '', fontSize = 14, kind = 'body') {
+  const content = String(text || '');
+  let units = 0;
+  for (const char of content) {
+    if (char === ' ') units += 0.28;
+    else if (/[MW@#%&8]/.test(char)) units += 0.92;
+    else if (/[A-ZÁÉÍÓÚÜÑ]/.test(char)) units += 0.72;
+    else if (/[0-9]/.test(char)) units += kind === 'amount' ? 0.64 : 0.6;
+    else if (/[.,:;|/\\-]/.test(char)) units += 0.34;
+    else if (/[€$£¥+~]/.test(char)) units += 0.62;
+    else units += kind === 'amount' ? 0.58 : 0.54;
+  }
+  return units * Number(fontSize || 14);
+}
+function estimateFixedExpenseWrappedLines(text = '', fontSize = 14, availableWidth = 120, kind = 'body') {
+  const width = Math.max(1, Number(availableWidth || 0));
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return 1;
+  let lines = 1;
+  let lineWidth = 0;
+  for (const word of words) {
+    const wordWidth = estimateFixedExpenseTextWidth(word, fontSize, kind);
+    const spaceWidth = lineWidth > 0 ? estimateFixedExpenseTextWidth(' ', fontSize, kind) : 0;
+    if (lineWidth > 0 && (lineWidth + spaceWidth + wordWidth) <= width) {
+      lineWidth += spaceWidth + wordWidth;
+      continue;
     }
-  };
-  const canPlace = (rowStart, colStart, width, height) => {
-    ensureRows(rowStart + height);
-    for (let rowIndex = rowStart; rowIndex < rowStart + height; rowIndex += 1) {
-      for (let colIndex = colStart; colIndex < colStart + width; colIndex += 1) {
-        if (colIndex >= config.cols || occupancy[rowIndex][colIndex]) return false;
-      }
+    if (wordWidth <= width) {
+      if (lineWidth > 0) lines += 1;
+      lineWidth = wordWidth;
+      continue;
     }
-    return true;
-  };
-  const occupy = (rowStart, colStart, width, height) => {
-    ensureRows(rowStart + height);
-    for (let rowIndex = rowStart; rowIndex < rowStart + height; rowIndex += 1) {
-      for (let colIndex = colStart; colIndex < colStart + width; colIndex += 1) {
-        occupancy[rowIndex][colIndex] = true;
-      }
-    }
-  };
-  const buildCandidates = (targetCells = 4, isPrimary = false) => {
-    const minCells = Math.max(config.minW * config.minH, Math.floor(targetCells * 0.7));
-    const maxCells = Math.max(minCells, Math.ceil(targetCells * 1.45));
-    const idealAspect = isPrimary ? 1.1 : targetCells >= 10 ? 1.2 : 1;
-    const maxAspect = config.cols <= 6 ? 1.8 : 2.15;
-    const candidates = [];
-    for (let width = config.maxW; width >= config.minW; width -= 1) {
-      for (let height = config.minH; height <= config.maxH; height += 1) {
-        const cells = width * height;
-        const aspect = width / Math.max(1, height);
-        if (cells < minCells || cells > maxCells) continue;
-        if (aspect < 0.72 || aspect > maxAspect) continue;
-        const score = Math.abs(cells - targetCells) * 1.1
-          + Math.abs(aspect - idealAspect) * 4.6
-          + (width === config.minW ? 0.8 : 0)
-          + (height === config.maxH ? 0.45 : 0);
-        candidates.push({ width, height, score });
-      }
-    }
-    if (!candidates.length) {
-      candidates.push({ width: config.minW, height: config.minH, score: 0 });
-    }
-    return candidates.sort((a, b) => a.score - b.score || b.width - a.width || a.height - b.height);
-  };
+    const chunks = Math.max(1, Math.ceil(wordWidth / width));
+    if (lineWidth > 0) lines += 1;
+    lines += chunks - 1;
+    lineWidth = wordWidth / chunks;
+  }
+  return lines;
+}
+function truncateFixedExpenseTextToFit(text = '', fontSize = 14, availableWidth = 120, maxLines = 1, kind = 'body') {
+  const source = String(text || '').trim();
+  if (!source) return '';
+  if (estimateFixedExpenseWrappedLines(source, fontSize, availableWidth, kind) <= maxLines) return source;
+  let value = source;
+  while (value.length > 1) {
+    const next = `${value.trimEnd()}...`;
+    if (estimateFixedExpenseWrappedLines(next, fontSize, availableWidth, kind) <= maxLines) return next;
+    value = value.slice(0, -1);
+  }
+  return source.slice(0, 1);
+}
+function fitFixedExpenseTextBlock({
+  text = '',
+  baseFont = 14,
+  minFont = 10,
+  availableWidth = 120,
+  preferredLines = 1,
+  maxLines = 2,
+  baseLineHeight = 1.1,
+  minLineHeight = 0.96,
+  kind = 'body',
+}) {
+  const source = String(text || '').trim();
+  const preferred = Math.max(1, Number(preferredLines || 1));
+  const allowed = Math.max(preferred, Number(maxLines || preferred));
+  const minSize = Math.min(Number(baseFont || 14), Number(minFont || 10));
+  const lineHeightStep = 0.04;
 
-  const items = normalizedRows.map((row, index) => {
-    const rawTargetCells = totalVisualWeight > 0
-      ? (Number(row.visualWeight || 0) / totalVisualWeight) * totalCells
-      : config.minW * config.minH;
-    const targetCells = Math.max(
-      config.minW * config.minH,
-      Math.min(config.maxW * config.maxH, Math.round(rawTargetCells)),
-    );
-    const candidates = buildCandidates(targetCells, index === 0);
-    let placement = null;
-
-    for (let rowIndex = 0; rowIndex < config.targetRows + 24 && !placement; rowIndex += 1) {
-      for (let candidateIndex = 0; candidateIndex < candidates.length && !placement; candidateIndex += 1) {
-        const candidate = candidates[candidateIndex];
-        for (let colIndex = 0; colIndex <= config.cols - candidate.width; colIndex += 1) {
-          if (!canPlace(rowIndex, colIndex, candidate.width, candidate.height)) continue;
-          occupy(rowIndex, colIndex, candidate.width, candidate.height);
-          placement = {
-            ...row,
-            colStart: colIndex + 1,
-            rowStart: rowIndex + 1,
-            spanCols: candidate.width,
-            spanRows: candidate.height,
-            displaySize: resolveFixedExpenseMosaicSize(candidate.width, candidate.height),
+  for (let linesLimit = preferred; linesLimit <= allowed; linesLimit += 1) {
+    for (let fontSize = Math.round(baseFont); fontSize >= Math.round(minSize); fontSize -= 1) {
+      for (let lineHeight = Number(baseLineHeight); lineHeight >= Number(minLineHeight); lineHeight = Number((lineHeight - lineHeightStep).toFixed(2))) {
+        const estimatedLines = estimateFixedExpenseWrappedLines(source, fontSize, availableWidth, kind);
+        if (estimatedLines <= linesLimit) {
+          return {
+            fontSize,
+            lineHeight,
+            linesLimit,
+            truncated: false,
+            text: source,
           };
-          break;
         }
       }
     }
+  }
 
-    if (!placement) {
-      const fallbackRow = occupancy.length;
-      occupy(fallbackRow, 0, config.minW, config.minH);
-      placement = {
-        ...row,
-        colStart: 1,
-        rowStart: fallbackRow + 1,
-        spanCols: config.minW,
-        spanRows: config.minH,
-        displaySize: resolveFixedExpenseMosaicSize(config.minW, config.minH),
-      };
+  const fontSize = Math.round(minSize);
+  const lineHeight = Number(minLineHeight);
+  return {
+    fontSize,
+    lineHeight,
+    linesLimit: allowed,
+    truncated: true,
+    text: truncateFixedExpenseTextToFit(source, fontSize, availableWidth, allowed, kind),
+  };
+}
+function fitFixedExpenseInlineText({
+  text = '',
+  baseFont = 18,
+  minFont = 14,
+  availableWidth = 120,
+  kind = 'amount',
+}) {
+  const source = String(text || '').trim();
+  for (let fontSize = Math.round(baseFont); fontSize >= Math.round(minFont); fontSize -= 1) {
+    if (estimateFixedExpenseTextWidth(source, fontSize, kind) <= availableWidth) {
+      return { fontSize, truncated: false, text: source };
     }
-    return placement;
+  }
+  return { fontSize: Math.round(minFont), truncated: false, text: source };
+}
+function resolveFixedExpenseVisualTokens(node = {}, metrics = { width: 1, height: 1 }) {
+  const boxWidth = Math.max(1, Number(node.width || 0));
+  const boxHeight = Math.max(1, Number(node.height || 0));
+  const boxArea = boxWidth * boxHeight;
+  const aspectRatio = boxWidth / boxHeight;
+  const minSide = Math.min(boxWidth, boxHeight);
+  const layoutArea = Math.max(1, Number(metrics.width || 1) * Number(metrics.height || 1));
+  const areaRatio = boxArea / layoutArea;
+  const layoutVariant = node.layoutVariant || resolveFixedExpenseLayoutVariant(node, metrics);
+
+  let sizeTier = 'md';
+  if (minSide >= 200 || areaRatio >= 0.16) sizeTier = 'xl';
+  else if (minSide >= 158 || areaRatio >= 0.1) sizeTier = 'lg';
+  else if (minSide >= 120 || areaRatio >= 0.06) sizeTier = 'md';
+  else if (minSide >= 92 || areaRatio >= 0.038) sizeTier = 'sm';
+  else sizeTier = 'xs';
+
+  const densityBias = layoutVariant === 'compact'
+    ? 0.84
+    : layoutVariant === 'wide'
+      ? 0.94
+      : layoutVariant === 'tall'
+        ? 0.9
+        : 1;
+  const fontScale = clampFixedExpenseVisualValue((minSide / 132) * densityBias, 0.68, 1.28);
+  const emojiScale = clampFixedExpenseVisualValue((minSide / 120) * (layoutVariant === 'wide' ? 0.9 : 1), 0.72, 1.32);
+  const paddingScale = clampFixedExpenseVisualValue((minSide / 144) * densityBias, 0.72, 1.18);
+
+  let cellPad = Math.round(clampFixedExpenseVisualValue(minSide * 0.115 * paddingScale, 8, 22));
+  let cellGap = Math.round(clampFixedExpenseVisualValue(minSide * 0.072 * densityBias, 4, 14));
+  let bodyGap = Math.round(clampFixedExpenseVisualValue(cellGap * 0.45, 2, 8));
+  const emojiSize = Math.round(clampFixedExpenseVisualValue(minSide * 0.27 * emojiScale, 18, 50));
+  const pctFontBase = Math.round(clampFixedExpenseVisualValue(minSide * 0.09 * densityBias, 9, 14));
+  const pctPadYBase = Math.round(clampFixedExpenseVisualValue(minSide * 0.035, 3, 6));
+  const pctPadXBase = Math.round(clampFixedExpenseVisualValue(minSide * 0.075, 7, 12));
+  const pctMinWidthBase = Math.round(clampFixedExpenseVisualValue(minSide * 0.38, 0, 56));
+  const nameFontBase = Math.round(clampFixedExpenseVisualValue(
+    minSide * (layoutVariant === 'wide' ? 0.09 : layoutVariant === 'compact' ? 0.085 : 0.105) * fontScale,
+    10,
+    24,
+  ));
+  const amountFontBase = Math.round(clampFixedExpenseVisualValue(
+    minSide * (layoutVariant === 'compact' ? 0.135 : layoutVariant === 'tall' ? 0.145 : 0.16) * fontScale,
+    14,
+    36,
+  ));
+  let annualFont = Math.round(clampFixedExpenseVisualValue(minSide * 0.076 * densityBias, 9, 14));
+  const cornerRadius = Math.round(clampFixedExpenseVisualValue(minSide * 0.16, 12, 24));
+  const bodyMaxWidth = `${Math.round(clampFixedExpenseVisualValue(
+    layoutVariant === 'wide' ? 100 : layoutVariant === 'tall' ? 94 : 92,
+    82,
+    100,
+  ))}%`;
+
+  const amountText = fmtCurrency(node.amount || 0);
+  const annualText = formatFixedExpenseYearly(Number(node.amount || 0) * 12);
+  const sourceName = String(node.name || 'Fijo').trim() || 'Fijo';
+
+  const preferredNameLines = layoutVariant === 'wide'
+    ? 1
+    : layoutVariant === 'compact'
+      ? 1
+      : layoutVariant === 'tall'
+        ? 2
+        : 2;
+  const supportedNameLines = layoutVariant === 'compact'
+    ? 1
+    : layoutVariant === 'wide'
+      ? (boxHeight >= 112 ? 2 : 1)
+      : layoutVariant === 'tall'
+        ? 3
+        : 2;
+
+  let showAnnual = !(layoutVariant === 'compact' || sizeTier === 'xs' || boxHeight < 88 || boxWidth < 104);
+  let showPct = !(sizeTier === 'xs' || (layoutVariant === 'compact' && boxWidth < 126) || boxWidth < 84 || boxHeight < 52);
+  const showName = !(sizeTier === 'xs' && boxWidth < 72);
+  const amountEmphasis = sizeTier === 'xl' || sizeTier === 'lg' ? 'high' : sizeTier === 'xs' ? 'compact' : 'balanced';
+  const nameMinFont = layoutVariant === 'compact' ? 9 : 10;
+  const amountMinFont = layoutVariant === 'compact' ? 13 : 14;
+
+  const computeTextWidth = (pctVisible = showPct) => {
+    if (layoutVariant === 'wide' || layoutVariant === 'compact') {
+      return Math.max(42, boxWidth - (cellPad * 2) - emojiSize - (pctVisible ? pctMinWidthBase : 0) - (cellGap * (pctVisible ? 2 : 1)));
+    }
+    return Math.max(48, boxWidth - (cellPad * 2));
+  };
+  const tightenDensity = () => {
+    cellPad = Math.max(7, Math.round(cellPad * 0.9));
+    cellGap = Math.max(4, Math.round(cellGap * 0.88));
+    bodyGap = Math.max(2, Math.round(bodyGap * 0.84));
+    annualFont = Math.max(9, Math.round(annualFont * 0.95));
+  };
+
+  let availableTextWidth = computeTextWidth(showPct);
+  let amountFit = fitFixedExpenseInlineText({
+    text: amountText,
+    baseFont: amountFontBase,
+    minFont: amountMinFont,
+    availableWidth: availableTextWidth,
+    kind: 'amount',
+  });
+  let nameFit = fitFixedExpenseTextBlock({
+    text: sourceName,
+    baseFont: nameFontBase,
+    minFont: nameMinFont,
+    availableWidth: availableTextWidth,
+    preferredLines: preferredNameLines,
+    maxLines: supportedNameLines,
+    baseLineHeight: layoutVariant === 'compact' ? 1.03 : layoutVariant === 'wide' ? 1.06 : 1.1,
+    minLineHeight: 0.94,
+    kind: 'body',
   });
 
-  const usedRows = items.reduce((maxRows, item) => Math.max(maxRows, item.rowStart + item.spanRows - 1), 0);
+  if (nameFit.truncated && showPct && layoutVariant !== 'large') {
+    showPct = false;
+    availableTextWidth = computeTextWidth(false);
+    amountFit = fitFixedExpenseInlineText({
+      text: amountText,
+      baseFont: amountFontBase,
+      minFont: amountMinFont,
+      availableWidth: availableTextWidth,
+      kind: 'amount',
+    });
+    nameFit = fitFixedExpenseTextBlock({
+      text: sourceName,
+      baseFont: nameFontBase,
+      minFont: nameMinFont,
+      availableWidth: availableTextWidth,
+      preferredLines: preferredNameLines,
+      maxLines: supportedNameLines,
+      baseLineHeight: layoutVariant === 'compact' ? 1.03 : layoutVariant === 'wide' ? 1.06 : 1.1,
+      minLineHeight: 0.94,
+      kind: 'body',
+    });
+  }
+
+  if (nameFit.truncated) {
+    tightenDensity();
+    availableTextWidth = computeTextWidth(showPct);
+    amountFit = fitFixedExpenseInlineText({
+      text: amountText,
+      baseFont: amountFit.fontSize,
+      minFont: amountMinFont,
+      availableWidth: availableTextWidth,
+      kind: 'amount',
+    });
+    nameFit = fitFixedExpenseTextBlock({
+      text: sourceName,
+      baseFont: nameFit.fontSize,
+      minFont: nameMinFont,
+      availableWidth: availableTextWidth,
+      preferredLines: preferredNameLines,
+      maxLines: supportedNameLines,
+      baseLineHeight: nameFit.lineHeight,
+      minLineHeight: 0.92,
+      kind: 'body',
+    });
+  }
+
+  if ((nameFit.truncated || amountFit.fontSize <= amountMinFont + 1) && showAnnual && boxHeight < 126) {
+    showAnnual = false;
+  }
+
+  const nameLines = Number(nameFit.linesLimit || preferredNameLines);
+  const nameMaxChars = Math.max(showName ? 6 : 0, String(nameFit.text || sourceName).replace(/\.\.\.$/, '').length);
+  const pctFont = Math.round(clampFixedExpenseVisualValue(showPct ? pctFontBase : pctFontBase * 0.92, 9, 14));
+  const pctPadY = Math.round(clampFixedExpenseVisualValue(pctPadYBase, 3, 6));
+  const pctPadX = Math.round(clampFixedExpenseVisualValue(pctPadXBase, 7, 12));
+  const pctMinWidth = showPct ? pctMinWidthBase : 0;
+
   return {
-    ...config,
-    usedRows,
-    items: items.sort((a, b) => a.rowStart - b.rowStart || a.colStart - b.colStart),
+    boxWidth,
+    boxHeight,
+    boxArea,
+    aspectRatio,
+    sizeTier,
+    fontScale,
+    emojiScale,
+    paddingScale,
+    showAnnual,
+    showName,
+    showPct,
+    nameLines,
+    nameMaxChars,
+    amountEmphasis,
+    nameText: showName ? nameFit.text : '',
+    amountText,
+    annualText,
+    styleVars: {
+      '--cell-pad': `${cellPad}px`,
+      '--cell-gap': `${cellGap}px`,
+      '--cell-gap-inline': `${Math.round(clampFixedExpenseVisualValue(cellGap * 0.78, 4, 12))}px`,
+      '--body-gap': `${bodyGap}px`,
+      '--emoji-size': `${emojiSize}px`,
+      '--emoji-radius': `${Math.round(clampFixedExpenseVisualValue(cornerRadius * 0.58, 10, 16))}px`,
+      '--pct-font': `${pctFont}px`,
+      '--pct-pad-y': `${pctPadY}px`,
+      '--pct-pad-x': `${pctPadX}px`,
+      '--pct-min-width': `${pctMinWidth}px`,
+      '--name-font': `${nameFit.fontSize}px`,
+      '--name-lines': String(nameLines),
+      '--name-line-height': String(nameFit.lineHeight),
+      '--amount-font': `${amountFit.fontSize}px`,
+      '--annual-font': `${annualFont}px`,
+      '--corner-radius': `${cornerRadius}px`,
+      '--body-max-width': bodyMaxWidth,
+    },
+  };
+}
+function buildFixedExpenseTreemap(rows = [], options = {}) {
+  const metrics = { ...getFixedExpenseTreemapMetrics(rows.length), ...(options || {}) };
+  if (!rows.length) return { ...metrics, items: [] };
+
+  const layoutArea = Math.max(1, metrics.width * metrics.height);
+  const normalizedRows = rows.map((row, index) => ({
+    ...row,
+    _treemapOrder: index,
+    _value: Math.max(0, Number(row.amount || 0)),
+  }));
+  const totalValue = normalizedRows.reduce((sum, row) => sum + row._value, 0);
+  const baseArea = totalValue > 0 ? 0 : layoutArea / Math.max(1, normalizedRows.length);
+  const pending = normalizedRows
+    .map((row) => ({
+      ...row,
+      treemapArea: totalValue > 0 ? (row._value / totalValue) * layoutArea : baseArea,
+    }))
+    .sort((a, b) => b.treemapArea - a.treemapArea || a._treemapOrder - b._treemapOrder);
+
+  const frame = { x: 0, y: 0, width: metrics.width, height: metrics.height };
+  const placements = [];
+  let row = [];
+
+  while (pending.length) {
+    if (shouldUseFixedExpenseBinaryFallback(frame, pending.length + row.length)) {
+      const residualItems = row.length ? [...row, ...pending] : pending.slice();
+      placements.push(...layoutFixedExpenseBinaryTreemap(residualItems, frame));
+      pending.length = 0;
+      row = [];
+      break;
+    }
+    const candidate = pending[0];
+    const currentLayout = row.length ? getBestFixedExpenseTreemapRowLayout(row, frame) : null;
+    const nextLayout = getBestFixedExpenseTreemapRowLayout([...row, candidate], frame);
+    if (!row.length || nextLayout.score <= (currentLayout?.score ?? Number.POSITIVE_INFINITY)) {
+      row.push(candidate);
+      pending.shift();
+      continue;
+    }
+    placements.push(...currentLayout.items);
+    frame.x = currentLayout.remainingRect.x;
+    frame.y = currentLayout.remainingRect.y;
+    frame.width = currentLayout.remainingRect.width;
+    frame.height = currentLayout.remainingRect.height;
+    row = [];
+  }
+
+  if (row.length) {
+    const laidOut = getBestFixedExpenseTreemapRowLayout(row, frame);
+    placements.push(...laidOut.items);
+  }
+
+  return {
+    ...metrics,
+    items: placements
+      .map((item) => {
+        const displaySize = resolveFixedExpenseTreemapSize(item, metrics);
+        const layoutVariant = resolveFixedExpenseLayoutVariant(item, metrics);
+        const visualTokens = resolveFixedExpenseVisualTokens({ ...item, layoutVariant }, metrics);
+        return {
+          ...item,
+          displaySize,
+          layoutVariant,
+          boxWidth: visualTokens.boxWidth,
+          boxHeight: visualTokens.boxHeight,
+          boxArea: visualTokens.boxArea,
+          aspectRatio: visualTokens.aspectRatio,
+          sizeTier: visualTokens.sizeTier,
+          fontScale: visualTokens.fontScale,
+          emojiScale: visualTokens.emojiScale,
+          paddingScale: visualTokens.paddingScale,
+          showAnnual: visualTokens.showAnnual,
+          showName: visualTokens.showName,
+          showPct: visualTokens.showPct,
+          nameLines: visualTokens.nameLines,
+          amountEmphasis: visualTokens.amountEmphasis,
+          visualTokens,
+        };
+      })
+      .sort((a, b) => a.y - b.y || a.x - b.x),
   };
 }
 function renderFixedExpenseSquares(monthKey = getMonthKeyFromDate()) {
@@ -4613,44 +5067,58 @@ function renderFixedExpenseSquares(monthKey = getMonthKeyFromDate()) {
 
   const total = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
   const yearlyTotal = total * 12;
-  const mixedRows = shuffleFixedExpenseRows(rows).map((row, index) => ({
+  const mixedRows = rows
+    .slice()
+    .sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'es'))
+    .map((row, index) => ({
     ...row,
     emoji: (String(row.emoji || '').trim() && !/^(?:Ã|ð)/.test(String(row.emoji || '').trim())) ? row.emoji : '💸',
     color: row.color || categoryColor(index),
   }));
-  const mosaic = buildFixedExpenseMosaic(mixedRows);
-  const gridRows = Math.max(4, mosaic.usedRows || mosaic.targetRows || 4);
-  const gridAspect = `${mosaic.cols} / ${Math.max(3, Math.round(gridRows * 0.84))}`;
+  const treemap = buildFixedExpenseTreemap(mixedRows);
+  const gap = Number(treemap.gap || 0);
+  const halfGap = gap / 2;
 
   return `
     <div class="financeFixedSquaresContainer">
-      <div class="financeFixedSquaresGrid" style="--fixed-grid-cols:${mosaic.cols}; --fixed-grid-rows:${gridRows}; --fixed-grid-gap:${mosaic.gap}px; --fixed-grid-aspect:${gridAspect};">
-        ${mosaic.items.map((row) => {
+      <div class="financeFixedSquaresTreemap" style="--fixed-treemap-height:${Math.round(treemap.height)}px; --fixed-treemap-gap:${gap}px;">
+        ${treemap.items.map((row) => {
           const percentage = total > 0 ? (Number(row.amount || 0) / total) * 100 : Number(row.percentage || 0);
           const itemEmoji = /^(?:�|�)/.test(String(row.emoji || '').trim()) ? '??' : (String(row.emoji || '').trim() || '??');
-          const compactName = truncateFixedExpenseLabel(
-            row.name || 'Fijo',
-            row.displaySize === 'tiny' ? 18 : row.displaySize === 'small' ? 24 : 32,
-          );
+          const layoutVariant = row.layoutVariant || 'large';
+          const visualTokens = row.visualTokens || {};
+          const showAnnual = visualTokens.showAnnual !== false;
+          const showName = visualTokens.showName !== false;
+          const showPct = visualTokens.showPct !== false;
+          const compactName = String(visualTokens.nameText || row.name || 'Fijo');
+          const amountText = String(visualTokens.amountText || fmtCurrency(row.amount || 0));
+          const annualText = String(visualTokens.annualText || formatFixedExpenseYearly(Number(row.amount || 0) * 12));
+          const visualVarEntries = Object.entries(visualTokens.styleVars || {}).map(([key, value]) => `${key}:${value}`);
           const cellStyle = [
-            `grid-column:${row.colStart} / span ${row.spanCols}`,
-            `grid-row:${row.rowStart} / span ${row.spanRows}`,
+            `left:calc(${((Number(row.x || 0) / Math.max(1, treemap.width)) * 100).toFixed(4)}% + ${halfGap}px)`,
+            `top:calc(${((Number(row.y || 0) / Math.max(1, treemap.height)) * 100).toFixed(4)}% + ${halfGap}px)`,
+            `width:max(0px, calc(${((Number(row.width || 0) / Math.max(1, treemap.width)) * 100).toFixed(4)}% - ${gap}px))`,
+            `height:max(0px, calc(${((Number(row.height || 0) / Math.max(1, treemap.height)) * 100).toFixed(4)}% - ${gap}px))`,
             `--square-color:${row.color || '#65d8ff'}`,
+            ...visualVarEntries,
           ].join(';');
           return `
             <button
               type="button"
-              class="financeFixedSquareCell is-${row.displaySize}"
+              class="financeFixedSquareCell is-${row.displaySize} is-layout-${layoutVariant}"
               data-fixed-expense-edit="${escapeHtml(String(row.id || ''))}"
+              data-layout-variant="${escapeHtml(layoutVariant)}"
+              data-size-tier="${escapeHtml(String(visualTokens.sizeTier || row.displaySize || 'md'))}"
               id="fixed-expense-square-${escapeHtml(String(row.id || ''))}"
               title="${escapeHtml(row.name || 'Fijo')} - ${fmtCurrency(row.amount || 0)} - ${percentage.toFixed(1)}%"
               style="${cellStyle}"
             >
-              <span class="financeFixedSquareCell__head"><span class="financeFixedSquareCell__emoji">${escapeHtml(itemEmoji)}</span><span class="financeFixedSquareCell__pct">${formatFixedExpensePct(percentage)}</span></span>
+              <span class="financeFixedSquareCell__emoji">${escapeHtml(itemEmoji)}</span>
+              ${showPct ? `<span class="financeFixedSquareCell__pct">${formatFixedExpensePct(percentage)}</span>` : ''}
               <span class="financeFixedSquareCell__body">
-                <strong class="financeFixedSquareCell__name">${escapeHtml(compactName || 'Fijo')}</strong>
-                <span class="financeFixedSquareCell__amount">${fmtCurrency(row.amount || 0)}</span>
-                <span class="financeFixedSquareCell__annual">${escapeHtml(formatFixedExpenseYearly(Number(row.amount || 0) * 12))}</span>
+                ${showName ? `<strong class="financeFixedSquareCell__name">${escapeHtml(compactName || 'Fijo')}</strong>` : ''}
+                <span class="financeFixedSquareCell__amount">${escapeHtml(amountText)}</span>
+                ${showAnnual ? `<span class="financeFixedSquareCell__annual">${escapeHtml(annualText)}</span>` : ''}
               </span>
             </button>
           `;

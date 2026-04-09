@@ -17,6 +17,8 @@ import {
   normalizeCountryInput
 } from "./countries.js";
 
+import { getEcharts } from "../../shared/vendors/echarts.js";
+
 // En beta-clean la vista puede montarse antes de que Auth resuelva la sesion.
 let currentUid = auth.currentUser?.uid ?? null;
 let BOOKS_PATH = null;
@@ -162,10 +164,19 @@ const $booksChartsSection = document.getElementById("books-charts-section");
 const $chartSelector = document.getElementById("books-chart-selector");
 const $chartTitle = document.getElementById("books-chart-title");
 const $chartActive = document.getElementById("chart-active");
+const $booksPageTimeline = document.getElementById("books-pages-timeline");
+const $chartPagesTimeline = document.getElementById("chart-pages-timeline");
 const $appMain = document.querySelector(".app-main");
 const $booksGeoSection = document.getElementById("books-geo-section");
 const $booksWorldMap = document.getElementById("books-world-map");
 const $booksCountryList = document.getElementById("books-country-list");
+
+// Tabs navigation
+const $booksSubtabs = document.getElementById("books-subtabs");
+const $booksSubtabMain = document.getElementById("books-subtab-main");
+const $booksSubtabStats = document.getElementById("books-subtab-stats");
+const $booksPanelMain = document.getElementById("books-panel-main");
+const $booksPanelStats = document.getElementById("books-panel-stats");
 
 
 const $booksShelfSearch = document.getElementById("books-shelf-search");
@@ -262,6 +273,39 @@ function setCalendarShellLoading(isLoading) {
 
 setBooksShellLoading(true);
 setCalendarShellLoading(true);
+
+// Tabs navigation
+function switchBooksTab(panelName) {
+  const tabs = document.querySelectorAll(".books-subtab");
+  const panels = document.querySelectorAll(".books-panel");
+  
+  tabs.forEach((tab) => {
+    const isActive = tab.dataset.booksPanel === panelName;
+    tab.classList.toggle("is-active", isActive);
+    tab.setAttribute("aria-selected", isActive);
+  });
+  
+  panels.forEach((panel) => {
+    const isActive = panel.id === `books-panel-${panelName}`;
+    panel.classList.toggle("is-active", isActive);
+  });
+
+  if (panelName === "stats") {
+    // Dar tiempo a que se renderice el elemento
+    setTimeout(() => {
+      renderPagesTimeline();
+    }, 100);
+  }
+}
+
+if ($booksSubtabs) {
+  $booksSubtabs.addEventListener("click", (e) => {
+    const tab = e.target.closest(".books-subtab");
+    if (!tab) return;
+    const panelName = tab.dataset.booksPanel;
+    if (panelName) switchBooksTab(panelName);
+  });
+}
 
 // Selector rango libros leídos
 if ($statBooksReadRange) {
@@ -698,6 +742,7 @@ function bindDataSources() {
     }
     renderStats();
     renderCalendar();
+    renderPagesTimeline();
   });
 
   onValue(ref(db, LINKS_PATH), (snap) => {
@@ -2241,6 +2286,164 @@ setSpineWidth(spine, title);
   });
 
   return spine;
+}
+
+// === Gráfico lineal: Páginas leídas por día ===
+async function renderPagesTimeline() {
+  const $host = document.getElementById("chart-pages-timeline");
+  const $section = document.getElementById("books-pages-timeline");
+  
+  if (!$host || !$section) return;
+
+  // Obtener datos diarios
+  const totals = computeDailyTotals();
+  
+  // Si no hay datos, ocultar la sección
+  if (!totals || Object.keys(totals).length === 0) {
+    $section.style.display = "none";
+    return;
+  }
+
+  $section.style.display = "block";
+
+  // Preparar datos para el gráfico: últimos 30 días
+  const today = new Date();
+  const dates = [];
+  const values = [];
+  
+  for (let i = 29; i >= 0; i--) {
+    const date = new Date(today);
+    date.setDate(date.getDate() - i);
+    const key = dateKeyLocal(date);
+    const pages = totals[key] || 0;
+    
+    dates.push(key);
+    values.push(Number(pages) || 0);
+  }
+
+  try {
+    const echarts = await getEcharts();
+    
+    // Limpiar instancia anterior si existe
+    if ($host.__echartsInstance) {
+      $host.__echartsInstance.dispose();
+    }
+
+    // Limpiar contenedor
+    $host.innerHTML = "";
+
+    const instance = echarts.init($host, null, { renderer: 'canvas' });
+    $host.__echartsInstance = instance;
+
+    const option = {
+      responsive: true,
+      animation: true,
+      grid: {
+        left: '10%',
+        right: '8%',
+        top: '16%',
+        bottom: '12%',
+        containLabel: true
+      },
+      xAxis: {
+        type: 'category',
+        data: dates,
+        axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } },
+        axisTick: { show: false },
+        axisLabel: {
+          fontSize: 11,
+          color: 'rgba(255,255,255,0.6)',
+          formatter: (value) => {
+            // value es un string formato "YYYY-MM-DD"
+            const parts = value.split('-');
+            if (parts.length === 3) {
+              return `${parts[2]}/${parts[1]}`;
+            }
+            return value;
+          }
+        }
+      },
+      yAxis: {
+        type: 'value',
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } },
+        axisLabel: {
+          fontSize: 11,
+          color: 'rgba(255,255,255,0.6)'
+        }
+      },
+      series: [{
+        data: values,
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 5,
+        itemStyle: {
+          color: '#7f5dff',
+          borderColor: '#fff',
+          borderWidth: 1
+        },
+        lineStyle: {
+          color: '#7f5dff',
+          width: 2.5
+        },
+        areaStyle: {
+          color: 'rgba(127, 93, 255, 0.15)'
+        },
+        emphasis: {
+          itemStyle: {
+            color: '#f1d27b',
+            borderColor: '#fff',
+            borderWidth: 2,
+            shadowBlur: 10,
+            shadowColor: 'rgba(127, 93, 255, 0.5)'
+          },
+          lineStyle: {
+            width: 3,
+            color: '#f1d27b'
+          }
+        },
+        tooltip: {
+          trigger: 'item',
+          backgroundColor: 'rgba(0,0,0,0.8)',
+          borderColor: 'rgba(255,255,255,0.2)',
+          textStyle: { color: '#fff', fontSize: 12 },
+          formatter: (params) => {
+            if (params.componentSubType === 'line') {
+              return `${params.axisValue}<br/>Páginas: <strong>${params.value}</strong>`;
+            }
+            return params.value;
+          }
+        }
+      }],
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: 'rgba(0,0,0,0.8)',
+        borderColor: 'rgba(255,255,255,0.2)',
+        textStyle: { color: '#fff', fontSize: 12 },
+        formatter: (params) => {
+          if (Array.isArray(params) && params.length > 0) {
+            const p = params[0];
+            return `${p.axisValue}<br/>Páginas: <strong>${p.value}</strong>`;
+          }
+          return '';
+        }
+      }
+    };
+
+    instance.setOption(option);
+    
+    // Redimensionar cuando cambie la ventana
+    const handleResize = () => instance.resize();
+    window.addEventListener('resize', handleResize);
+    
+    // Limpiar listener al descartar
+    $host.__resizeListener = handleResize;
+
+  } catch (error) {
+    console.warn("[books] No se pudo renderizar el gráfico de timeline:", error);
+  }
 }
 
 function renderBooks() {

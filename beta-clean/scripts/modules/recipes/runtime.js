@@ -5339,7 +5339,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       const priceLabel = item.effectivePrice == null ? "¿?" : formatCurrency(item.effectivePrice);
       const media = item.image
         ? `<img src="${escapeAttr(buildCloudinaryRecipeImageUrl(item.image, { width: 192, height: 192 }) || item.image)}" alt="${escapeAttr(item.name)}" loading="lazy" decoding="async" fetchpriority="low" width="64" height="64" />`
-        : `<div class="macro-shopping-thumb-placeholder" aria-hidden="true">🍽️</div>`;
+        : `<div class="macro-shopping-thumb-placeholder" aria-hidden="true">${escapeHtml(String(item.product?.emoji || "").trim().substring(0, 2) || "🍽️")}</div>`;
       return `<article class="macro-shopping-product-card" data-shopping-open-product="${escapeAttr(item.id)}" role="button" tabindex="0" aria-label="Abrir ficha de ${escapeAttr(item.name)}">
         <div class="macro-shopping-product-top">
           <div class="macro-shopping-thumb">${media}</div>

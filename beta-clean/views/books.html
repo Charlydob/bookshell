@@ -1,3 +1,11 @@
+<!-- CONTENEDOR TABS: PRINCIPAL Y ESTADÍSTICAS -->
+<div class="books-subtabs" id="books-subtabs" role="tablist" aria-label="Subvistas de libros">
+<button class="books-subtab is-active" id="books-subtab-main" data-books-panel="main" aria-selected="true" type="button">Principal</button>
+<button class="books-subtab" id="books-subtab-stats" data-books-panel="stats" aria-selected="false" type="button">Estadísticas</button>
+</div>
+
+<!-- PANEL 1: PRINCIPAL -->
+<div class="books-panel is-active" id="books-panel-main">
 <!-- STATS + CALENDARIO DE LIBROS (ANTES ESTABA EN view-stats) -->
 <div class="stats-wrapper">
 <div class="stats-cards">
@@ -129,6 +137,11 @@
   </div>
 <div class="books-list-finished" id="books-list-finished"></div>
 </details>
+</div>
+<!-- FIN PANEL 1 -->
+
+<!-- PANEL 2: ESTADÍSTICAS -->
+<div class="books-panel" id="books-panel-stats">
 <section class="geo-section" id="books-geo-section" style="display:none;">
 <div class="geo-card">
 <div class="geo-header">
@@ -161,6 +174,18 @@
 <div class="donut-host" id="chart-active"></div>
 </div>
 </section>
+<!-- GRÁFICO LINEAL: PÁGINAS LEÍDAS POR DÍA -->
+<section class="books-chart-timeline" id="books-pages-timeline" style="display:none;">
+<div class="chart-card">
+<div class="chart-card-header">
+<div class="chart-card-title">Páginas leídas por día</div>
+</div>
+<div class="chart-timeline-host" id="chart-pages-timeline"></div>
+</div>
+</section>
+</div>
+<!-- FIN PANEL 2 -->
+
 <div class="empty-state" id="books-empty">
           Aún no has añadido ningún libro.
         </div>

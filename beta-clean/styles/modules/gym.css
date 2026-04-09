@@ -58,6 +58,7 @@
 }
 
 .gym-hero {
+  margin-top: 40px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -89,7 +90,7 @@
 }
 
 .gym-section-header {
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -200,6 +201,7 @@
   border-radius: 18px;
   border: 1px solid var(--gym-border);
   padding: 12px;
+  margin-top: 10px;
 }
 
 .gym-calendar-header {
@@ -1340,4 +1342,111 @@ button.gym-calendar-day {
 #view-gym {
   padding: 0 !important;
   overflow: hidden !important;
+}
+
+
+#gym-start-workout{
+  margin-top: 10px;
+}
+
+/* ============================================ */
+/* Subtabs and Panels (similar to recipes)     */
+/* ============================================ */
+
+.gym-subtabs {
+  display: flex;
+  gap: 8px;
+  padding: 12px 10px 0;
+  border-bottom: 1px solid var(--gym-border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 -10px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.gym-subtabs.hidden,
+.gym-hero.hidden,
+.gym-panel.hidden {
+  display: none;
+}
+
+.gym-subtab {
+  background: none;
+  border: none;
+  color: var(--txt-soft);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.gym-subtab:hover {
+  color: var(--txt);
+}
+
+.gym-subtab.is-active {
+  color: var(--gym-accent);
+  border-bottom-color: var(--gym-accent);
+}
+
+.gym-panel {
+  display: none;
+  padding: 12px 0;
+  animation: fadeIn 0.2s ease;
+}
+
+.gym-panel.is-active {
+  display: block;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Details/Collapsible styles for history */
+.gym-history-section {
+  display: block;
+}
+
+.gym-history-summary {
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  padding: 12px 4px;
+  user-select: none;
+}
+
+.gym-history-summary::-webkit-details-marker {
+  display: none;
+}
+
+.gym-history-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.gym-history-icon {
+  transition: transform 0.3s ease;
+}
+
+.gym-history-section[open] .gym-history-icon {
+  transform: rotate(180deg);
+}
+
+.gym-history-section:not([open]) .gym-history-list,
+.gym-history-section:not([open]) #gym-history-empty {
+  display: none;
 }

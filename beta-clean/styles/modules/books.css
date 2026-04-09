@@ -13,7 +13,7 @@
 }
 
 #books-charts-section {
-  margin-bottom: 500px;
+  margin-bottom: 10px;
 }
 
 .books-filters {
@@ -468,40 +468,78 @@
 
 .stats-wrapper {
   padding: 6px 4px 8px;
-  margin-top: 40px;
+  margin-top: 10px;
   min-height: 404px;
 }
 
 .stats-cards {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
   gap: 8px;
   margin-bottom: 14px;
   flex-wrap: wrap;
 }
 
 .stat-card {
-  flex: 1;
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  gap: 6px;
+  min-height: 60px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0px 0px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(13, 19, 33, 0.96), rgba(8, 12, 21, 0.98));
+  box-shadow:
+    0 18px 38px rgba(3, 7, 16, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 30px -18px rgba(255, 103, 103, 0.42);
   border-radius: 18px;
-  padding: 8px 10px;
-  background: radial-gradient(circle at top, rgba(127, 93, 255, 0.16), transparent),
-    rgba(9, 11, 20, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  --summary-glow: rgba(255, 103, 103, 0.42);
+  --summary-accent: rgba(255, 134, 134, 0.72);
+}
 
-  display: flex;          /* ← tarjeta en flex */
-  flex-direction: column; /* ← título arriba, número abajo */
+.stat-card::before {
+    content: "";
+    position: absolute;
+    inset: -18% -32% auto -10%;
+    height: 86px;
+    background: radial-gradient(circle, rgba(103, 202, 255, 0.244) 0%, transparent 70%);
+    opacity: 0.95;
+    pointer-events: none;
+}
+
+.stat-card::after {
+    content: "";
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    bottom: 10px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgb(134 152 255 / 72%), transparent);
+    opacity: 0.9;
 }
 
 .stat-label {
-  font-size: 11px;
-  color: var(--txt-soft);
+  font-size: 8px;
+  color: rgb(255, 255, 255);
   text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-top: 4px;
 }
-
+#stat-books-read-range{
+  display: none;
+}
 .stat-value {
-  margin-top: auto;       /* ← alinea todos los valores a la misma altura */
   font-size: 18px;
   font-weight: 600;
   text-align: center;
+  color: #ffffff;
+  margin-bottom: 10px;
+  text-shadow: 0 0 26px rgba(255, 107, 124, 0.32);
 }
 
 
@@ -1758,4 +1796,87 @@ background-color: transparent;
 
 #paginas-hoy{
   display: none;
+}
+
+/* ===== SISTEMA DE TABS: PRINCIPAL Y ESTADÍSTICAS ===== */
+.books-subtabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+.books-subtab {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--txt-soft);
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.books-subtab:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.books-subtab.is-active {
+  background: rgba(245, 230, 166, 0.16);
+  color: #f5e6a6;
+  border-color: rgba(245, 230, 166, 0.45);
+  box-shadow: 0 4px 12px rgba(245, 230, 166, 0.15);
+}
+
+.books-panel {
+  display: none;
+}
+
+.books-panel.is-active {
+  display: block;
+}
+
+/* Ajustar padding de view-books para trabajar con tabs */
+#view-books {
+  padding: 1px 10px;
+  padding-bottom: calc(10px + var(--nav-total-h) + var(--nav-gap, 20px));
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#books-subtabs{
+  margin-top: 50px;
+}
+
+/* Chart timeline styling */
+.books-chart-timeline {
+  margin-top: 12px;
+  margin-bottom: 12px;
+}
+
+.books-chart-timeline .chart-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 340px;
+}
+
+.books-chart-timeline .chart-card-header {
+  flex-shrink: 0;
+}
+
+.chart-timeline-host {
+  width: 100%;
+  min-height: 280px;
+  height: auto;
+  overflow: visible;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 12px;
+  box-sizing: border-box;
+  position: relative;
 }

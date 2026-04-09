@@ -1,16 +1,20 @@
 <div class="gym-wrap scroll">
-  <div class="gym-screen gym-screen-active" id="gym-main-view">
-    <div class="gym-hero">
-      <div>
-        <div class="gym-title">Gym</div>
-        <div class="gym-subtitle"></div>
-      </div>
-      <div class="gym-hero-actions">
-        <button class="gym-btn gym-btn-ghost" id="gym-open-stats" type="button">📊</button>
-        <button class="gym-btn gym-btn-ghost" id="gym-start-session" type="button">▶ Iniciar sesión</button>
-      </div>
+  <div class="gym-hero">
+    <div>
+      <div class="gym-title">Gym</div>
+      <div class="gym-subtitle"></div>
     </div>
+    <div class="gym-hero-actions">
+      <button class="gym-btn gym-btn-ghost" id="gym-start-session" type="button">▶ Iniciar sesión</button>
+    </div>
+  </div>
 
+  <div class="gym-subtabs" role="tablist" aria-label="Subvistas de gym">
+    <button class="gym-subtab is-active" id="gym-subtab-workouts" data-gym-panel="workouts" aria-selected="true" type="button">Entrenamientos</button>
+    <button class="gym-subtab" id="gym-subtab-statistics" data-gym-panel="statistics" aria-selected="false" type="button">Estadísticas</button>
+  </div>
+
+  <div class="gym-panel is-active" id="gym-panel-workouts">
     <div class="gym-section">
       <div class="gym-section-header">
         <div class="gym-section-title">Workouts</div>
@@ -22,6 +26,23 @@
     </div>
 
     <div class="gym-section">
+      <div class="gym-section-header">
+        <div class="gym-section-title">Calendario</div>
+      </div>
+      <div class="gym-calendar">
+        <div class="gym-calendar-header">
+          <button class="icon-btn icon-btn-small" id="gym-cal-prev" type="button">‹</button>
+          <div class="gym-calendar-title" id="gym-cal-label"></div>
+          <button class="icon-btn icon-btn-small" id="gym-cal-next" type="button">›</button>
+        </div>
+        <div class="gym-calendar-grid" id="gym-calendar-grid"></div>
+      </div>
+    </div>
+
+    <div class="gym-section">
+      <div class="gym-section-header">
+        <div class="gym-section-title">Peso y altura</div>
+      </div>
       <div class="gym-card gym-bodyweight-card">
         <label class="gym-field">
           <span>Fecha</span>
@@ -42,83 +63,18 @@
     </div>
 
     <div class="gym-section">
-      <div class="gym-section-header">
-        <div class="gym-section-title">Historial</div>
-      </div>
-      <div class="gym-calendar">
-        <div class="gym-calendar-header">
-          <button class="icon-btn icon-btn-small" id="gym-cal-prev" type="button">‹</button>
-          <div class="gym-calendar-title" id="gym-cal-label"></div>
-          <button class="icon-btn icon-btn-small" id="gym-cal-next" type="button">›</button>
-        </div>
-        <div class="gym-calendar-grid" id="gym-calendar-grid"></div>
-      </div>
-      <div class="gym-history-list" id="gym-history-list"></div>
-      <div class="gym-empty hidden" id="gym-history-empty">Aún no tienes entrenamientos registrados.</div>
+      <details class="gym-history-section">
+        <summary class="gym-history-summary">
+          <span class="gym-history-title">Historial</span>
+          <span class="gym-history-icon" aria-hidden="true">⌄</span>
+        </summary>
+        <div class="gym-history-list" id="gym-history-list"></div>
+        <div class="gym-empty hidden" id="gym-history-empty">Aún no tienes entrenamientos registrados.</div>
+      </details>
     </div>
   </div>
 
-  <div class="gym-screen" id="gym-session-view">
-    <div class="gym-workout-header gym-header">
-      <button class="icon-btn icon-btn-small" id="gym-back" type="button">‹</button>
-      <div class="gym-workout-title">
-        <div class="gym-workout-name-row">
-          <input class="gym-title" id="gym-workout-name" placeholder="Nombre del entrenamiento" type="text" />
-          <button class="gym-emoji-btn" id="gym-workout-emoji" type="button" aria-label="Editar emoji de sesión">🙂</button>
-        </div>
-        <input class="gym-date" id="gym-workout-date" type="date" />
-      </div>
-      <button class="gym-btn gym-btn-primary" id="gym-finish-workout" type="button">Finalizar</button>
-    </div>
-    <div class="gym-metrics">
-      <div class="gym-metric">
-        <div class="gym-metric-label">Duración</div>
-        <div class="gym-metric-value" id="gym-metric-duration">
-          <span class="gym-metric-main" id="gym-metric-duration-main">0m</span>
-          <span class="gym-metric-pr" id="gym-metric-duration-pr" hidden>🏆</span>
-        </div>
-        <div class="gym-metric-sub" id="gym-metric-duration-sub">—</div>
-        <div class="gym-metric-progress" id="gym-metric-duration-progress" aria-hidden="true">
-          <span class="gym-metric-bar" id="gym-metric-duration-bar"></span>
-        </div>
-      </div>
-      <div class="gym-metric">
-        <div class="gym-metric-label">Volumen</div>
-        <div class="gym-metric-value" id="gym-metric-volume">
-          <span class="gym-metric-main" id="gym-metric-volume-main">0 kg</span>
-          <span class="gym-metric-pr" id="gym-metric-volume-pr" hidden>🏆</span>
-        </div>
-        <div class="gym-metric-sub" id="gym-metric-volume-sub">—</div>
-        <div class="gym-metric-progress" id="gym-metric-volume-progress" aria-hidden="true">
-          <span class="gym-metric-bar" id="gym-metric-volume-bar"></span>
-        </div>
-      </div>
-      <div class="gym-metric">
-        <div class="gym-metric-label">Ejercicios</div>
-        <div class="gym-metric-value" id="gym-metric-exercises">
-          <span class="gym-metric-main" id="gym-metric-exercises-main">0/0</span>
-          <span class="gym-metric-pr" id="gym-metric-exercises-pr" hidden>🏆</span>
-        </div>
-        <div class="gym-metric-sub" id="gym-metric-exercises-sub">max: —</div>
-        <div class="gym-metric-progress" id="gym-metric-exercises-progress" aria-hidden="true">
-          <span class="gym-metric-bar" id="gym-metric-exercises-bar"></span>
-        </div>
-      </div>
-    </div>
-    <div class="gym-exercise-list" id="gym-workout-exercises"></div>
-    <div class="gym-workout-actions">
-      <button class="gym-btn gym-btn-ghost" id="gym-discard-workout" type="button">Descartar</button>
-      <button class="gym-btn gym-btn-primary" id="gym-add-exercise" type="button">+ Añadir ejercicios</button>
-    </div>
-  </div>
-
-  <div class="gym-screen" id="gym-stats-view">
-    <div class="gym-workout-header gym-header">
-      <button class="icon-btn icon-btn-small" id="gym-stats-back" type="button">‹</button>
-      <div class="gym-workout-title">
-        <div class="gym-title">Estadísticas</div>
-      </div>
-    </div>
+  <div class="gym-panel" id="gym-panel-statistics">
     <div class="gym-section">
       <div class="gym-section-header">
         <label class="gym-field">
@@ -137,6 +93,60 @@
         <div class="gym-empty hidden" id="gym-stats-empty">No hay datos suficientes para mostrar estadísticas.</div>
       </div>
     </div>
+  </div>
+</div>
+
+<div class="gym-screen" id="gym-session-view">
+  <div class="gym-workout-header gym-header">
+    <button class="icon-btn icon-btn-small" id="gym-back" type="button">‹</button>
+    <div class="gym-workout-title">
+      <div class="gym-workout-name-row">
+        <input class="gym-title" id="gym-workout-name" placeholder="Nombre del entrenamiento" type="text" />
+        <button class="gym-emoji-btn" id="gym-workout-emoji" type="button" aria-label="Editar emoji de sesión">🙂</button>
+      </div>
+      <input class="gym-date" id="gym-workout-date" type="date" />
+    </div>
+    <button class="gym-btn gym-btn-primary" id="gym-finish-workout" type="button">Finalizar</button>
+  </div>
+  <div class="gym-metrics">
+    <div class="gym-metric">
+      <div class="gym-metric-label">Duración</div>
+      <div class="gym-metric-value" id="gym-metric-duration">
+        <span class="gym-metric-main" id="gym-metric-duration-main">0m</span>
+        <span class="gym-metric-pr" id="gym-metric-duration-pr" hidden>🏆</span>
+      </div>
+      <div class="gym-metric-sub" id="gym-metric-duration-sub">—</div>
+      <div class="gym-metric-progress" id="gym-metric-duration-progress" aria-hidden="true">
+        <span class="gym-metric-bar" id="gym-metric-duration-bar"></span>
+      </div>
+    </div>
+    <div class="gym-metric">
+      <div class="gym-metric-label">Volumen</div>
+      <div class="gym-metric-value" id="gym-metric-volume">
+        <span class="gym-metric-main" id="gym-metric-volume-main">0 kg</span>
+        <span class="gym-metric-pr" id="gym-metric-volume-pr" hidden>🏆</span>
+      </div>
+      <div class="gym-metric-sub" id="gym-metric-volume-sub">—</div>
+      <div class="gym-metric-progress" id="gym-metric-volume-progress" aria-hidden="true">
+        <span class="gym-metric-bar" id="gym-metric-volume-bar"></span>
+      </div>
+    </div>
+    <div class="gym-metric">
+      <div class="gym-metric-label">Ejercicios</div>
+      <div class="gym-metric-value" id="gym-metric-exercises">
+        <span class="gym-metric-main" id="gym-metric-exercises-main">0/0</span>
+        <span class="gym-metric-pr" id="gym-metric-exercises-pr" hidden>🏆</span>
+      </div>
+      <div class="gym-metric-sub" id="gym-metric-exercises-sub">max: —</div>
+      <div class="gym-metric-progress" id="gym-metric-exercises-progress" aria-hidden="true">
+        <span class="gym-metric-bar" id="gym-metric-exercises-bar"></span>
+      </div>
+    </div>
+  </div>
+  <div class="gym-exercise-list" id="gym-workout-exercises"></div>
+  <div class="gym-workout-actions">
+    <button class="gym-btn gym-btn-ghost" id="gym-discard-workout" type="button">Descartar</button>
+    <button class="gym-btn gym-btn-primary" id="gym-add-exercise" type="button">+ Añadir ejercicios</button>
   </div>
 </div>
 

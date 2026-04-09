@@ -20,7 +20,6 @@ import { DEVICE_KEY, HOME_PANEL_VIEW_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_
 import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './finance/ui.js';
 import { resolveFinancePath, resolveFinancePathCandidates } from './finance/data.js';
 import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, firebaseSafeKey, TICKET_IMPORT_SAMPLE_V1, resolveTicketMovementCategory } from './finance/import.js';
-import { runTicketOcrPipeline } from './finance/ticket-ocr.js';
 import { ensureEcharts } from '../../shared/vendors/echarts.js';
 import { readProcessedJsonCache, writeProcessedJsonCache } from '../../shared/cache/processed-json-cache.js';
 
@@ -995,47 +994,6 @@ function resolveTicketCardAccountPreview(ticket = null, accounts = []) {
   if (matches.length === 1) return { cardLast4, matches, selected: matches[0], status: 'single' };
   if (matches.length > 1) return { cardLast4, matches, selected: null, status: 'multiple' };
   return { cardLast4, matches: [], selected: null, status: 'zero' };
-}
-function defaultTicketOcrState() {
-  return {
-    status: 'idle',
-    error: '',
-    imageName: '',
-    imagePreviewUrl: '',
-    parsed: null,
-    rawText: '',
-    ocrConfidence: null,
-    processing: false,
-    edited: false,
-  };
-}
-function getTicketOcrState() {
-  return {
-    ...defaultTicketOcrState(),
-    ...(state.modal?.ticketOcr || {}),
-  };
-}
-function setTicketOcrState(patch = {}) {
-  const prev = getTicketOcrState();
-  state.modal = {
-    ...state.modal,
-    ticketOcr: {
-      ...prev,
-      ...patch,
-    },
-  };
-}
-function formatTicketOcrStatus(status = 'idle') {
-  const labels = {
-    idle: 'Selecciona una foto para escanear',
-    'image-selected': 'Imagen lista para analizar',
-    preprocessing: 'Procesando imagen…',
-    'ocr-running': 'Ejecutando OCR…',
-    parsing: 'Parseando ticket…',
-    parsed: 'Ticket detectado',
-    error: 'No se pudo leer el ticket',
-  };
-  return labels[status] || labels.idle;
 }
 function isTicketExtraLike(name = '') {
   const safe = normalizeFoodName(name).toLowerCase();
@@ -4491,35 +4449,222 @@ function fixedExpenseFormStateFromRecurring(recurringId = '', recurringData = {}
     createdAt: recurringData.createdAt || 0
   };
 }
+function shuffleFixedExpenseRows(rows = []) {
+  const sorted = [...rows].sort((a, b) => (
+    Number(b.amount || 0) - Number(a.amount || 0)
+    || String(a.id || '').localeCompare(String(b.id || ''))
+  ));
+  const bucketSize = rows.length >= 10 ? 4 : rows.length >= 6 ? 3 : 2;
+  const mixed = [];
+  for (let index = 0; index < sorted.length; index += bucketSize) {
+    const bucket = sorted.slice(index, index + bucketSize);
+    for (let cursor = bucket.length - 1; cursor > 0; cursor -= 1) {
+      const swapIndex = Math.floor(Math.random() * (cursor + 1));
+      [bucket[cursor], bucket[swapIndex]] = [bucket[swapIndex], bucket[cursor]];
+    }
+    mixed.push(...bucket);
+  }
+  return mixed;
+}
+function truncateFixedExpenseLabel(value = '', maxLength = 20) {
+  const text = String(value || '').trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(1, maxLength - 1)).trimEnd()}...`;
+}
+function formatFixedExpenseYearly(value = 0) {
+  return `~${fmtCurrency(value)}/yr`;
+}
+function formatFixedExpensePct(value = 0) {
+  return `${Math.round(Number(value || 0))}%`;
+}
+function getFixedExpenseMosaicConfig(count = 0) {
+  const viewportWidth = typeof window !== 'undefined' ? Number(window.innerWidth || 0) : 1280;
+  if (viewportWidth <= 480) {
+    return { cols: 4, rowHeight: 72, gap: 12, minW: 2, maxW: 4, minH: 2, maxH: 4, targetRows: Math.max(6, Math.ceil(count * 2.1)) };
+  }
+  if (viewportWidth <= 720) {
+    return { cols: 6, rowHeight: 76, gap: 12, minW: 2, maxW: 4, minH: 2, maxH: 4, targetRows: Math.max(6, Math.ceil(count * 1.55)) };
+  }
+  if (viewportWidth <= 1080) {
+    return { cols: 8, rowHeight: 82, gap: 14, minW: 2, maxW: 5, minH: 2, maxH: 4, targetRows: Math.max(5, Math.ceil(count * 1.15)) };
+  }
+  return { cols: 12, rowHeight: 86, gap: 16, minW: 3, maxW: 6, minH: 2, maxH: 5, targetRows: Math.max(4, Math.ceil(count * 0.92)) };
+}
+function resolveFixedExpenseMosaicSize(spanCols = 2, spanRows = 2) {
+  const area = Math.max(1, spanCols * spanRows);
+  if (area >= 18 || (area >= 14 && spanCols >= spanRows + 1)) return 'large';
+  if (area >= 10) return 'medium';
+  if (area >= 6) return 'small';
+  return 'tiny';
+}
+function buildFixedExpenseMosaic(rows = [], options = {}) {
+  const config = { ...getFixedExpenseMosaicConfig(rows.length), ...(options || {}) };
+  if (!rows.length) return { ...config, usedRows: 0, items: [] };
+
+  const normalizedRows = rows.map((row) => ({
+    ...row,
+    visualWeight: Math.pow(Math.max(1, Number(row.amount || 0)), 0.88),
+  }));
+  const totalVisualWeight = normalizedRows.reduce((sum, row) => sum + Number(row.visualWeight || 0), 0);
+  const totalCells = config.cols * config.targetRows;
+  const occupancy = [];
+  const ensureRows = (count) => {
+    while (occupancy.length < count) {
+      occupancy.push(Array.from({ length: config.cols }, () => false));
+    }
+  };
+  const canPlace = (rowStart, colStart, width, height) => {
+    ensureRows(rowStart + height);
+    for (let rowIndex = rowStart; rowIndex < rowStart + height; rowIndex += 1) {
+      for (let colIndex = colStart; colIndex < colStart + width; colIndex += 1) {
+        if (colIndex >= config.cols || occupancy[rowIndex][colIndex]) return false;
+      }
+    }
+    return true;
+  };
+  const occupy = (rowStart, colStart, width, height) => {
+    ensureRows(rowStart + height);
+    for (let rowIndex = rowStart; rowIndex < rowStart + height; rowIndex += 1) {
+      for (let colIndex = colStart; colIndex < colStart + width; colIndex += 1) {
+        occupancy[rowIndex][colIndex] = true;
+      }
+    }
+  };
+  const buildCandidates = (targetCells = 4, isPrimary = false) => {
+    const minCells = Math.max(config.minW * config.minH, Math.floor(targetCells * 0.7));
+    const maxCells = Math.max(minCells, Math.ceil(targetCells * 1.45));
+    const idealAspect = isPrimary ? 1.1 : targetCells >= 10 ? 1.2 : 1;
+    const maxAspect = config.cols <= 6 ? 1.8 : 2.15;
+    const candidates = [];
+    for (let width = config.maxW; width >= config.minW; width -= 1) {
+      for (let height = config.minH; height <= config.maxH; height += 1) {
+        const cells = width * height;
+        const aspect = width / Math.max(1, height);
+        if (cells < minCells || cells > maxCells) continue;
+        if (aspect < 0.72 || aspect > maxAspect) continue;
+        const score = Math.abs(cells - targetCells) * 1.1
+          + Math.abs(aspect - idealAspect) * 4.6
+          + (width === config.minW ? 0.8 : 0)
+          + (height === config.maxH ? 0.45 : 0);
+        candidates.push({ width, height, score });
+      }
+    }
+    if (!candidates.length) {
+      candidates.push({ width: config.minW, height: config.minH, score: 0 });
+    }
+    return candidates.sort((a, b) => a.score - b.score || b.width - a.width || a.height - b.height);
+  };
+
+  const items = normalizedRows.map((row, index) => {
+    const rawTargetCells = totalVisualWeight > 0
+      ? (Number(row.visualWeight || 0) / totalVisualWeight) * totalCells
+      : config.minW * config.minH;
+    const targetCells = Math.max(
+      config.minW * config.minH,
+      Math.min(config.maxW * config.maxH, Math.round(rawTargetCells)),
+    );
+    const candidates = buildCandidates(targetCells, index === 0);
+    let placement = null;
+
+    for (let rowIndex = 0; rowIndex < config.targetRows + 24 && !placement; rowIndex += 1) {
+      for (let candidateIndex = 0; candidateIndex < candidates.length && !placement; candidateIndex += 1) {
+        const candidate = candidates[candidateIndex];
+        for (let colIndex = 0; colIndex <= config.cols - candidate.width; colIndex += 1) {
+          if (!canPlace(rowIndex, colIndex, candidate.width, candidate.height)) continue;
+          occupy(rowIndex, colIndex, candidate.width, candidate.height);
+          placement = {
+            ...row,
+            colStart: colIndex + 1,
+            rowStart: rowIndex + 1,
+            spanCols: candidate.width,
+            spanRows: candidate.height,
+            displaySize: resolveFixedExpenseMosaicSize(candidate.width, candidate.height),
+          };
+          break;
+        }
+      }
+    }
+
+    if (!placement) {
+      const fallbackRow = occupancy.length;
+      occupy(fallbackRow, 0, config.minW, config.minH);
+      placement = {
+        ...row,
+        colStart: 1,
+        rowStart: fallbackRow + 1,
+        spanCols: config.minW,
+        spanRows: config.minH,
+        displaySize: resolveFixedExpenseMosaicSize(config.minW, config.minH),
+      };
+    }
+    return placement;
+  });
+
+  const usedRows = items.reduce((maxRows, item) => Math.max(maxRows, item.rowStart + item.spanRows - 1), 0);
+  return {
+    ...config,
+    usedRows,
+    items: items.sort((a, b) => a.rowStart - b.rowStart || a.colStart - b.colStart),
+  };
+}
 function renderFixedExpenseSquares(monthKey = getMonthKeyFromDate()) {
   const rows = getFixedRecurringSummary(monthKey);
   if (!rows.length) return '<p class="finance-empty">Sin gastos fijos este mes.</p>';
 
   const total = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const yearlyTotal = total * 12;
+  const mixedRows = shuffleFixedExpenseRows(rows).map((row, index) => ({
+    ...row,
+    emoji: (String(row.emoji || '').trim() && !/^(?:Ã|ð)/.test(String(row.emoji || '').trim())) ? row.emoji : '💸',
+    color: row.color || categoryColor(index),
+  }));
+  const mosaic = buildFixedExpenseMosaic(mixedRows);
+  const gridRows = Math.max(4, mosaic.usedRows || mosaic.targetRows || 4);
+  const gridAspect = `${mosaic.cols} / ${Math.max(3, Math.round(gridRows * 0.84))}`;
 
   return `
     <div class="financeFixedSquaresContainer">
-      <div class="financeFixedSquaresGrid">
-        ${rows.map((row, index) => {
-          const percentage = Number(row.percentage || 0);
-          const color = categoryColor(index);
-          const heightPercent = total > 0 ? (Number(row.amount || 0) / total) * 100 : 0;
+      <div class="financeFixedSquaresGrid" style="--fixed-grid-cols:${mosaic.cols}; --fixed-grid-rows:${gridRows}; --fixed-grid-gap:${mosaic.gap}px; --fixed-grid-aspect:${gridAspect};">
+        ${mosaic.items.map((row) => {
+          const percentage = total > 0 ? (Number(row.amount || 0) / total) * 100 : Number(row.percentage || 0);
+          const itemEmoji = /^(?:�|�)/.test(String(row.emoji || '').trim()) ? '??' : (String(row.emoji || '').trim() || '??');
+          const compactName = truncateFixedExpenseLabel(
+            row.name || 'Fijo',
+            row.displaySize === 'tiny' ? 18 : row.displaySize === 'small' ? 24 : 32,
+          );
+          const cellStyle = [
+            `grid-column:${row.colStart} / span ${row.spanCols}`,
+            `grid-row:${row.rowStart} / span ${row.spanRows}`,
+            `--square-color:${row.color || '#65d8ff'}`,
+          ].join(';');
           return `
             <button
               type="button"
-              class="financeFixedSquareCell"
+              class="financeFixedSquareCell is-${row.displaySize}"
               data-fixed-expense-edit="${escapeHtml(String(row.id || ''))}"
               id="fixed-expense-square-${escapeHtml(String(row.id || ''))}"
-              title="${escapeHtml(row.name || 'Fijo')} · ${fmtCurrency(row.amount || 0)} · ${percentage.toFixed(1)}%"
-              style="--height-pct: ${heightPercent}%; --square-color: ${color}; flex-grow: ${heightPercent}; min-height: ${Math.max(40, heightPercent * 2)}px;"
+              title="${escapeHtml(row.name || 'Fijo')} - ${fmtCurrency(row.amount || 0)} - ${percentage.toFixed(1)}%"
+              style="${cellStyle}"
             >
-              <span class="financeFixedSquareCell__emoji">${escapeHtml(row.emoji || '💸')}</span>
-              <strong class="financeFixedSquareCell__name">${escapeHtml(row.name || 'Fijo')}</strong>
-              <span class="financeFixedSquareCell__amount">${fmtCurrency(row.amount || 0)}</span>
-              <span class="financeFixedSquareCell__pct">${percentage.toFixed(1)}%</span>
+              <span class="financeFixedSquareCell__head"><span class="financeFixedSquareCell__emoji">${escapeHtml(itemEmoji)}</span><span class="financeFixedSquareCell__pct">${formatFixedExpensePct(percentage)}</span></span>
+              <span class="financeFixedSquareCell__body">
+                <strong class="financeFixedSquareCell__name">${escapeHtml(compactName || 'Fijo')}</strong>
+                <span class="financeFixedSquareCell__amount">${fmtCurrency(row.amount || 0)}</span>
+                <span class="financeFixedSquareCell__annual">${escapeHtml(formatFixedExpenseYearly(Number(row.amount || 0) * 12))}</span>
+              </span>
             </button>
           `;
         }).join('')}
+      </div>
+      <div class="financeFixedSquaresSummary">
+        <div class="financeFixedSquaresSummary__block">
+          <span class="financeFixedSquaresSummary__label">TOTAL / MONTH</span>
+          <strong class="financeFixedSquaresSummary__value">${fmtCurrency(total)}</strong>
+        </div>
+        <div class="financeFixedSquaresSummary__block is-yearly">
+          <span class="financeFixedSquaresSummary__label">YEARLY PROJECTION</span>
+          <strong class="financeFixedSquaresSummary__value">${fmtCurrency(yearlyTotal)}</strong>
+        </div>
       </div>
     </div>
   `;
@@ -5336,7 +5481,7 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
   <section class="financeBalanceView">
     <header class="financeViewHeader">
       <h2>Objetivos</h2>
-      <button class="finance-pill" data-open-modal="goal">+ Objetivo</button>
+      <button class="finance-pill" id="boton-objetivo" data-open-modal="goal">+ Objetivo</button>
     </header>
 
     <article class="financeGlassCard">
@@ -6140,7 +6285,6 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
   const defaultPersonalRatioAdvanced = Number.isFinite(Number(txEdit?.personalRatio)) || !!state.balanceFormState.personalRatioAdvanced;
   const accountOptions = resolvedAccounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
   const ticketImportState = state.modal.ticketImport || { raw: '', parsed: null, error: '', warnings: [], open: false };
-  const ticketOcrState = getTicketOcrState();
   const ticketPreview = ticketImportState.parsed?.ok ? ticketImportState.parsed.data : null;
   const ticketPreviewWarnings = [...(ticketImportState.parsed?.warnings || []), ...(ticketImportState.warnings || [])];
   const diagnostic = ticketImportState.diagnostic || ticketImportState.parsed?.diagnostic || null;
@@ -6203,32 +6347,6 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
       <div class="fm-field fm-field--amount">
         <input id="fm-tx-amount" class="fm-control fm-control--amount" required name="amount" type="number" step="0.01" placeholder="Cantidad (€)" value="${escapeHtml(defaultAmount)}" aria-label="Cantidad"/>
         </div>
-      <div class="fm-field finTicketOcr" data-ticket-ocr-block>
-        <input type="file" accept="image/*" data-ticket-ocr-file hidden />
-        <div class="finTicketOcr__row">
-          <button type="button" class="finance-pill finance-pill--mini" data-ticket-ocr-open-camera>Escanear ticket</button>
-          <button type="button" class="finance-pill finance-pill--mini" data-ticket-ocr-open-gallery>Galería</button>
-          <button type="button" class="finance-pill finance-pill--mini" data-ticket-ocr-remove ${ticketOcrState.imagePreviewUrl ? '' : 'disabled'}>Quitar foto</button>
-        </div>
-        <p class="finance-help finTicketOcr__status">${escapeHtml(formatTicketOcrStatus(ticketOcrState.status))}</p>
-        ${ticketOcrState.processing ? '<p class="finance-help">procesando…</p>' : ''}
-        ${ticketOcrState.error ? `<p class="is-negative">${escapeHtml(ticketOcrState.error)} <button type="button" class="finance-pill finance-pill--mini" data-ticket-ocr-retry>Reintentar</button></p>` : ''}
-        ${ticketOcrState.imagePreviewUrl ? `<img class="finTicketOcr__preview" src="${escapeHtml(ticketOcrState.imagePreviewUrl)}" alt="Preview ticket" />` : ''}
-        ${ticketOcrState.parsed ? `
-          <div class="finance-mini-list finTicketOcr__summary">
-            <p><strong>Comercio:</strong> ${escapeHtml(ticketOcrState.parsed.source?.vendor || 'unknown')}</p>
-            <p><strong>Fecha/hora:</strong> ${escapeHtml(ticketOcrState.parsed.purchase?.date || '—')} ${escapeHtml(ticketOcrState.parsed.purchase?.time || '')}</p>
-            <p><strong>Total:</strong> ${fmtCurrency(ticketOcrState.parsed.purchase?.total || 0)}</p>
-            <p><strong>Pago:</strong> ${escapeHtml(ticketOcrState.parsed.purchase?.payment_method || 'unknown')}</p>
-            <p><strong>Últimos 4:</strong> ${escapeHtml(ticketOcrState.parsed.purchase?.card_last4 || '—')}</p>
-            <p><strong>Ítems:</strong> ${Number(ticketOcrState.parsed.items?.length || 0)}</p>
-          </div>
-          <div class="finTicketOcr__row">
-            <button type="button" class="finance-pill finance-pill--mini" data-ticket-ocr-apply>Aplicar ticket</button>
-            <button type="button" class="finance-pill finance-pill--mini" data-ticket-ocr-edit>Editar resultado</button>
-          </div>
-        ` : ''}
-      </div>
       <div class="fm-field fm-field--account" data-tx-account-from hidden>
         <label class="fm-label-cuenta-origen" for="fm-tx-account-from">Cuenta origen</label>
         
@@ -7562,106 +7680,6 @@ function ensureFinanceAddTxFab() {
   return fab;
 }
 
-async function runTicketOcrFromFile(file) {
-  if (!file) return;
-  try {
-    const previewUrl = URL.createObjectURL(file);
-    setTicketOcrState({
-      status: 'image-selected',
-      error: '',
-      imageName: file.name || 'ticket.jpg',
-      imagePreviewUrl: previewUrl,
-      processing: true,
-      parsed: null,
-      rawText: '',
-      ocrConfidence: null,
-    });
-    triggerRender();
-    const result = await runTicketOcrPipeline(file, {
-      onStage: (stage) => {
-        console.log('[finance][ticket-ocr] stage', stage);
-        setTicketOcrState({ status: stage, processing: true, error: '' });
-        triggerRender();
-      },
-    });
-    setTicketOcrState({
-      status: 'parsed',
-      processing: false,
-      parsed: result.ticket,
-      rawText: result.rawText,
-      ocrConfidence: result.ocrConfidence,
-      error: '',
-    });
-    console.log('[finance][ticket-ocr] parsed', {
-      vendor: result.ticket?.source?.vendor,
-      total: result.ticket?.purchase?.total,
-      items: result.ticket?.items?.length || 0,
-      confidence: result.ocrConfidence,
-    });
-    triggerRender();
-  } catch (error) {
-    console.error('[finance][ticket-ocr] failed', error);
-    setTicketOcrState({
-      status: 'error',
-      processing: false,
-      error: `No se pudo analizar el ticket: ${error?.message || 'error desconocido'}`,
-    });
-    triggerRender();
-  }
-}
-
-function applyOcrTicketToBalanceForm(ticket = {}) {
-  const products = Object.values(state.food.itemsById || {});
-  const currentDraft = {
-    amount: Number(state.balanceFormState.amount || 0),
-    note: state.balanceFormState.note || '',
-    dateISO: state.balanceFormState.dateISO || dayKeyFromTs(Date.now()),
-    accountId: state.balanceFormState.accountId || '',
-  };
-  const importResult = applyTicketImport(ticket, currentDraft, products, state.accounts || []);
-  const importedItems = (importResult.updatedDraft.importedItems || []).map((item) => {
-    const qty = Math.max(1, Number(item.qty || 1));
-    const totalPrice = Number(item.totalPrice || item.price || 0);
-    const unitPrice = Number(item.unitPrice || computeUnitPrice(totalPrice, qty));
-    return {
-      foodId: item.productId || (getFoodByName(item.name)?.id || ''),
-      productKey: String(item.productId || firebaseSafeKey(item.name)),
-      name: item.name,
-      qty,
-      unit: String(item.unit || 'ud').trim() || 'ud',
-      unitPrice,
-      amount: totalPrice,
-      totalPrice,
-      price: totalPrice,
-      mealType: '',
-      cuisine: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryApp || ''),
-      place: String(importResult.updatedDraft.importedVendor || 'unknown'),
-      healthy: String(isTicketExtraLike(item.name) ? 'otros' : item.categoryApp || ''),
-    };
-  });
-  const category = String(state.balanceFormState.category || '').trim().toLowerCase() === 'sin categoría' || !String(state.balanceFormState.category || '').trim()
-    ? resolveTicketMovementCategory(ticket)
-    : (state.balanceFormState.category || importResult.updatedDraft.category || 'Sin categoría');
-  state.balanceFormState = {
-    ...state.balanceFormState,
-    type: 'expense',
-    amount: String(importResult.updatedDraft.amount || ticket?.purchase?.total || 0),
-    dateISO: importResult.updatedDraft.dateISO || ticket?.purchase?.date || dayKeyFromTs(Date.now()),
-    note: importResult.updatedDraft.note || [ticket?.source?.vendor || '', `${ticket?.items?.length || 0} ítems`].filter(Boolean).join(' · '),
-    accountId: importResult.updatedDraft.accountId || state.balanceFormState.accountId || '',
-    category,
-    foodPlace: String(importResult.updatedDraft.importedVendor || ticket?.source?.vendor || 'unknown'),
-    importedFoodItems: importedItems,
-    foodExtrasOpen: true,
-    ticketData: ticket,
-    ticketScanMeta: {
-      vendor: String(ticket?.source?.vendor || 'unknown'),
-      parsedAt: nowTs(),
-      ocrConfidence: Number(getTicketOcrState().ocrConfidence || 0),
-    },
-  };
-}
-
 async function render() {
   try {
     const host = ensureFinanceHost($opt, $req);
@@ -7869,58 +7887,6 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
           raw: String(ticketImportRawEl.value || '')
         }
       };
-    }
-    if (target.closest('[data-ticket-ocr-open-camera]') || target.closest('[data-ticket-ocr-open-gallery]')) {
-      const isCamera = !!target.closest('[data-ticket-ocr-open-camera]');
-      const fileInput = document.querySelector('#finance-modal [data-ticket-ocr-file]');
-      if (!fileInput) return;
-      if (isCamera) fileInput.setAttribute('capture', 'environment');
-      else fileInput.removeAttribute('capture');
-      fileInput.click();
-      return;
-    }
-    if (target.closest('[data-ticket-ocr-remove]')) {
-      const prev = getTicketOcrState();
-      if (prev.imagePreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(prev.imagePreviewUrl);
-      setTicketOcrState(defaultTicketOcrState());
-      triggerRender();
-      return;
-    }
-    if (target.closest('[data-ticket-ocr-retry]')) {
-      const fileInput = document.querySelector('#finance-modal [data-ticket-ocr-file]');
-      fileInput?.click();
-      return;
-    }
-    if (target.closest('[data-ticket-ocr-edit]')) {
-      const ocr = getTicketOcrState();
-      if (!ocr.parsed) return;
-      state.modal = {
-        ...state.modal,
-        ticketImport: {
-          ...(state.modal.ticketImport || {}),
-          open: true,
-          raw: JSON.stringify(ocr.parsed, null, 2),
-          error: '',
-        },
-      };
-      triggerRender();
-      return;
-    }
-    if (target.closest('[data-ticket-ocr-apply]')) {
-      const ocr = getTicketOcrState();
-      if (!ocr.parsed) {
-        toast('Primero escanea un ticket válido');
-        return;
-      }
-      if (String(state.balanceFormState.amount || '').trim()) {
-        const ok = window.confirm('Esto sobrescribirá importe/fecha/nota actuales con el ticket. ¿Continuar?');
-        if (!ok) return;
-      }
-      await ensureFoodCatalogLoaded();
-      applyOcrTicketToBalanceForm(ocr.parsed);
-      toast('Ticket aplicado');
-      triggerRender();
-      return;
     }
     if (target.closest('[data-ticket-import-paste]')) {
       try {
@@ -8999,13 +8965,6 @@ view.addEventListener('focusout', async (event) => {
       state.modal = { ...state.modal, importRaw: raw, importPreview: parsed, importError: parsed.validRows.length ? '' : 'CSV inválido o sin filas válidas.' };
       triggerRender();
     }
-    if (event.target.matches('[data-ticket-ocr-file]')) {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      await runTicketOcrFromFile(file);
-      event.target.value = '';
-      return;
-    }
     if (event.target.matches('[data-balance-form] select[name="category"]')) {
       const form = event.target.closest('[data-balance-form]');
       await toggleFoodExtras(form);
@@ -9700,3 +9659,6 @@ function getFinanceListenerCount() {
   if (state.toastTimer) count += 1;
   return count;
 }
+
+
+

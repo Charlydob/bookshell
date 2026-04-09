@@ -3848,8 +3848,7 @@ div#macros-inputs.macro-manual-macro-grid{
   border: 1px solid rgba(255,255,255,0.08);
   overflow: hidden;
 }
-  text-align: center;
-}
+ 
 
 .macro-comp-name {
   font-weight: 600;
@@ -3864,4 +3863,19 @@ div#macros-inputs.macro-manual-macro-grid{
   color: rgba(255,255,255,0.7);
   text-align: center;
   line-height: 1.2;
+}
+
+.stat-card-recipes{
+  border-radius: 14px;
+  padding: 2px 12px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.08);
+  text-align: center;
+
+}
+#macro-date-input, #macro-stats-anchor{
+  width: 100%;
+  max-width: none;
+  background: transparent;
+  border: none;
 }

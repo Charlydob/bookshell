@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-04-05-v4";
+const APP_VERSION = "2026-04-05-v5";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 

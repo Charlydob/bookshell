@@ -1746,7 +1746,6 @@ function renderImprovementStats({ deferCharts = false } = {}) {
             <div class="improvements__statsTypeMeta">
               <span>${type.resolved} resueltos</span>
               <span>${type.criticalOpen} criticos</span>
-              <span>${type.highOpen} altos</span>
             </div>
           </article>
         `;

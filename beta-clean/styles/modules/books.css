@@ -1755,3 +1755,7 @@ background-color: transparent;
 .videosWorkspace__modal .sheet-body {
   padding-top: 6px;
 }
+
+#paginas-hoy{
+  display: none;
+}

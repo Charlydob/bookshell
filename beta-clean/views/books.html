@@ -2,18 +2,18 @@
 <div class="stats-wrapper">
 <div class="stats-cards">
 <div class="stat-card">
-<div class="stat-label">Racha actual</div>
+<div class="stat-label" id="racha-actual">Racha actual</div>
 <div class="stat-value" id="stat-streak-current">0</div>
 </div>
-<div class="stat-card">
+<div class="stat-card" id="mejor-actual">
 <div class="stat-label">Mejor racha</div>
 <div class="stat-value" id="stat-streak-best">0</div>
 </div>
-<div class="stat-card">
+<div class="stat-card" id="paginas-hoy">
 <div class="stat-label">Páginas hoy</div>
 <div class="stat-value" id="stat-today-pages">0</div>
 </div>
-<div class="stat-card">
+<div class="stat-card" id="paginas-totales">
 <div class="stat-label">Páginas totales</div>
 <div class="stat-value" id="stat-pages-total">0</div>
 </div>
@@ -61,7 +61,7 @@
 <div class="books-filters is-collapsed" id="books-filters">
 <div class="books-filters-header" id="books-filters-header">
 <div class="filter-row filter-search-row">
-<label class="field-label" for="books-filter-search">Buscar</label>
+
 <input autocomplete="off" class="filter-search-input" id="books-filter-search" inputmode="search" placeholder="Título, autor, categoría, idioma o siglo" type="search"/>
 </div>
 <button aria-controls="books-filters-body" aria-expanded="false" class="filters-toggle-btn" id="books-filters-toggle" type="button">

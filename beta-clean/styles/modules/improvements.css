@@ -1196,6 +1196,8 @@ body.has-open-modal #improvements-open-editor-btn {
     0 18px 38px rgba(3, 7, 16, 0.24),
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
     0 0 30px -18px var(--summary-glow);
+
+  border-radius: 18px;
 }
 
 .improvements__summaryCard::before {
@@ -1790,4 +1792,20 @@ body.has-open-modal #improvements-open-editor-btn {
 
 .glassCard.improvements__hero {
   display: none;
+}
+
+#improvements-stats-kpis, #improvements-performance-sync{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+#improvements-performance-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+}
+.improvements__perfSummaryBreakdown{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+#improvements-board-tabs{
+  padding: 13px 2px;
 }

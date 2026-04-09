@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-04-05-v5";
+const APP_VERSION = "2026-04-09-v1";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -32,9 +32,13 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/app/nav-root-reset.js",
   "./scripts/app/session-quickstart.js",
   "./scripts/modules/books/index.js",
+  "./scripts/modules/books/runtime.js",
   "./scripts/modules/finance/index.js",
+  "./scripts/modules/finance/runtime.js",
   "./scripts/modules/games/index.js",
+  "./scripts/modules/games/runtime.js",
   "./scripts/modules/gym/index.js",
+  "./scripts/modules/gym/runtime.js",
   "./scripts/modules/habits/index.js",
   "./scripts/modules/habits/runtime.js",
   "./scripts/modules/habits/time-by-habit.js",
@@ -44,6 +48,12 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/modules/improvements/performance-audit.js",
   "./scripts/modules/media/index.js",
   "./scripts/modules/recipes/index.js",
+  "./scripts/modules/recipes/runtime.js",
+  "./scripts/modules/recipes/countries.js",
+  "./scripts/modules/recipes/world-heatmap.js",
+  "./scripts/modules/recipes/finance-data.js",
+  "./scripts/modules/recipes/met-catalog.js",
+  "./scripts/modules/recipes/foodrepo.js",
   "./scripts/modules/videos-hub/index.js",
   "./scripts/modules/world/index.js",
   "./scripts/shared/cache/processed-json-cache.js",

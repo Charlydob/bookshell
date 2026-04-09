@@ -3,6 +3,7 @@ import { readModuleSnapshot } from "../../shared/storage/offline-snapshots.js";
 import { getOfflineQueueSummary } from "../../shared/storage/offline-queue.js";
 
 const PERF_STORE_KEY = "__bookshellPerfMetrics";
+const PERF_HISTORY_KEY = "__bookshellPerfHistory";
 
 // Pesos estables y legibles para el score global.
 const CATEGORY_WEIGHTS = Object.freeze({
@@ -429,4 +430,286 @@ export async function runBookshellPerformanceAudit({
       } catch (_) {}
     }
   }
+}
+
+// ============================================================================
+// HISTORIA DE RENDIMIENTO Y VISUALIZACION
+// ============================================================================
+
+function getPerfHistory() {
+  try {
+    const stored = localStorage.getItem(PERF_HISTORY_KEY);
+    return Array.isArray(JSON.parse(stored)) ? JSON.parse(stored) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function savePerfHistory(entries) {
+  try {
+    localStorage.setItem(PERF_HISTORY_KEY, JSON.stringify(entries || []));
+  } catch (_) {
+    console.warn("[perf-audit] no se pudo guardar historia en localStorage");
+  }
+}
+
+export function saveAuditResult(auditResult = {}) {
+  if (!auditResult || !auditResult.executedAt) return;
+
+  const history = getPerfHistory();
+  const entry = {
+    ts: auditResult.executedAt,
+    date: new Date(auditResult.executedAt).toISOString().slice(0, 10),
+    score: auditResult.overallScore || 0,
+    load: auditResult.categories?.find((c) => c.key === "load")?.score || 0,
+    interaction: auditResult.categories?.find((c) => c.key === "interaction")?.score || 0,
+    render: auditResult.categories?.find((c) => c.key === "render")?.score || 0,
+    data: auditResult.categories?.find((c) => c.key === "data")?.score || 0,
+    stability: auditResult.categories?.find((c) => c.key === "stability")?.score || 0,
+  };
+
+  // Mantener ultimo mes de historia + entrada actual
+  const maxAge = Date.now() - (30 * 24 * 60 * 60 * 1000);
+  const filtered = history.filter((h) => (h.ts || 0) >= maxAge);
+  
+  // Evitar duplicados en el mismo dia
+  const withoutToday = filtered.filter((h) => h.date !== entry.date);
+  const updated = [...withoutToday, entry].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  
+  savePerfHistory(updated);
+  return entry;
+}
+
+export function getPerformanceHistory() {
+  const history = getPerfHistory();
+  return history && history.length > 0 ? history : null;
+}
+
+export async function renderPerformanceHistoryChart(container, history = null) {
+  if (!container) return;
+
+  const data = history || getPerformanceHistory();
+  if (!data || !Array.isArray(data) || data.length === 0) {
+    container.innerHTML = '<div class="improvements__perfEmpty">Aun no hay historico de ejecuciones. Ejecuta una auditoria primero.</div>';
+    return;
+  }
+
+  // Garantizar echarts
+  if (!window.echarts?.init) {
+    container.innerHTML = '<div class="improvements__perfEmpty">ECharts no esta disponible.</div>';
+    return;
+  }
+
+  const ec = window.echarts;
+  let chart = container.dataset.echartsInstance
+    ? ec.getInstanceByDom(container)
+    : null;
+
+  if (!chart) {
+    chart = ec.init(container, null, { renderer: "canvas" });
+    container.dataset.echartsInstance = "1";
+  }
+
+  // Preparar datos para las series (5 ultimas mediciones como limite visual)
+  const maxPoints = Math.min(data.length, 20);
+  const displayData = data.slice(-maxPoints);
+  const dates = displayData.map((d) => {
+    const dateObj = new Date(d.date || d.ts);
+    return dateObj.toLocaleDateString("es-ES", { month: "short", day: "numeric" });
+  });
+
+  const option = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: true,
+    animationDuration: 400,
+    grid: {
+      left: "52px",
+      right: "20px",
+      top: "24px",
+      bottom: "30px",
+      containLabel: false,
+    },
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: "rgba(15, 20, 35, 0.94)",
+      borderColor: "rgba(115, 184, 255, 0.28)",
+      textStyle: {
+        color: "#e3f2ff",
+        fontSize: 12,
+      },
+      axisPointer: {
+        type: "line",
+        lineStyle: {
+          color: "rgba(115, 184, 255, 0.32)",
+          type: "dashed",
+        },
+      },
+      formatter: (params) => {
+        if (!Array.isArray(params) || !params.length) return "";
+        const date = params[0]?.axisValue || "";
+        const lines = params.map((p) => {
+          const marker = `<span style="display:inline-block;margin-right:8px;width:8px;height:8px;border-radius:50%;background:${p.color};"></span>`;
+          return `${marker}${p.seriesName}: <strong>${p.value}</strong>`;
+        });
+        return `<div style="line-height:1.6;">${date}<br/>${lines.join("<br/>")}</div>`;
+      },
+    },
+    xAxis: {
+      type: "category",
+      data: dates,
+      boundaryGap: false,
+      axisLabel: {
+        color: "rgba(197, 211, 236, 0.64)",
+        fontSize: 11,
+        margin: 8,
+      },
+      axisLine: {
+        lineStyle: {
+          color: "rgba(140, 170, 214, 0.12)",
+        },
+      },
+      splitLine: {
+        show: false,
+      },
+    },
+    yAxis: {
+      type: "value",
+      min: 0,
+      max: 100,
+      axisLabel: {
+        color: "rgba(197, 211, 236, 0.64)",
+        fontSize: 11,
+        margin: 8,
+      },
+      axisLine: {
+        lineStyle: {
+          color: "rgba(140, 170, 214, 0.12)",
+        },
+      },
+      splitLine: {
+        lineStyle: {
+          color: "rgba(140, 170, 214, 0.08)",
+          type: "dashed",
+        },
+      },
+    },
+    series: [
+      {
+        name: "Score global",
+        type: "line",
+        data: displayData.map((d) => d.score || 0),
+        smooth: true,
+        lineStyle: {
+          color: "#73b8ff",
+          width: 2,
+        },
+        itemStyle: {
+          borderColor: "#73b8ff",
+          borderWidth: 1,
+        },
+        areaStyle: {
+          color: "rgba(115, 184, 255, 0.1)",
+        },
+        emphasis: {
+          itemStyle: {
+            borderWidth: 2,
+            shadowBlur: 8,
+            shadowColor: "rgba(115, 184, 255, 0.4)",
+          },
+        },
+        symbolSize: 6,
+      },
+      {
+        name: "Carga",
+        type: "line",
+        data: displayData.map((d) => d.load || 0),
+        smooth: true,
+        lineStyle: {
+          color: "#ff89c6",
+          width: 1.5,
+        },
+        itemStyle: {
+          borderColor: "#ff89c6",
+          borderWidth: 0.5,
+        },
+        areaStyle: null,
+        emphasis: {
+          itemStyle: {
+            borderWidth: 1.5,
+          },
+        },
+        symbolSize: 4,
+      },
+      {
+        name: "Render",
+        type: "line",
+        data: displayData.map((d) => d.render || 0),
+        smooth: true,
+        lineStyle: {
+          color: "#7dffb4",
+          width: 1.5,
+        },
+        itemStyle: {
+          borderColor: "#7dffb4",
+          borderWidth: 0.5,
+        },
+        areaStyle: null,
+        emphasis: {
+          itemStyle: {
+            borderWidth: 1.5,
+          },
+        },
+        symbolSize: 4,
+      },
+      {
+        name: "Datos",
+        type: "line",
+        data: displayData.map((d) => d.data || 0),
+        smooth: true,
+        lineStyle: {
+          color: "#ffb05c",
+          width: 1.5,
+        },
+        itemStyle: {
+          borderColor: "#ffb05c",
+          borderWidth: 0.5,
+        },
+        areaStyle: null,
+        emphasis: {
+          itemStyle: {
+            borderWidth: 1.5,
+          },
+        },
+        symbolSize: 4,
+      },
+    ],
+    textStyle: {
+      fontFamily: "system-ui, -apple-system, sans-serif",
+    },
+  };
+
+  chart.setOption(option);
+
+  // Observar cambios de tamaño del contenedor
+  if (typeof ResizeObserver === "function") {
+    // Limpiar observer anterior si existe
+    const prevObserverKey = "__bookshellPerfChartObserver";
+    const existingObserver = container[prevObserverKey];
+    if (existingObserver && typeof existingObserver.disconnect === "function") {
+      try {
+        existingObserver.disconnect();
+      } catch (_) {}
+    }
+
+    const observer = new ResizeObserver(() => {
+      if (chart && typeof chart.resize === "function") {
+        chart.resize();
+      }
+    });
+    observer.observe(container);
+    container[prevObserverKey] = observer;
+  }
+
+  return chart;
 }

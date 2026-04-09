@@ -260,7 +260,7 @@ async function runPerformanceAudit() {
   renderPerformanceWindow();
 
   try {
-    const { runBookshellPerformanceAudit } = await ensureImprovementsPerformanceAuditReady();
+    const { runBookshellPerformanceAudit, saveAuditResult } = await ensureImprovementsPerformanceAuditReady();
     const result = await runBookshellPerformanceAudit({
       auth,
       db,
@@ -279,6 +279,8 @@ async function runPerformanceAudit() {
     state.performance.lastRunAt = Number(result?.executedAt) || Date.now();
     state.performance.status = "done";
     state.performance.statusText = "Auditoria terminada. Puedes recalcular cuando quieras.";
+    // Guardar el resultado en el historico
+    saveAuditResult(result);
   } catch (error) {
     state.performance.status = "error";
     state.performance.statusText = String(error?.message || error || "La auditoria no pudo completarse.");
@@ -2409,6 +2411,7 @@ function renderPerformanceWindow() {
     || !els.performanceSummary
     || !els.performanceMetrics
     || !els.performanceFindings
+    || !els.performanceChart
   ) {
     return;
   }
@@ -2470,6 +2473,10 @@ function renderPerformanceWindow() {
     els.performanceSummary.innerHTML = '<div class="improvements__perfEmpty">Pulsa "Calcular rendimiento" para lanzar una medicion breve y controlada.</div>';
     els.performanceMetrics.innerHTML = '<div class="improvements__perfEmpty">Las submetricas apareceran aqui en cuanto termine la auditoria.</div>';
     els.performanceFindings.innerHTML = '<div class="improvements__perfEmpty">Los hallazgos accionables se mostraran aqui cuando haya resultados.</div>';
+    // Aun asi intentar renderizar el historico si existe
+    requestAnimationFrame(() => {
+      renderPerformanceHistoryChart();
+    });
     return;
   }
 
@@ -2518,6 +2525,25 @@ function renderPerformanceWindow() {
       </article>
     `).join("")
     : '<div class="improvements__perfEmpty">No se han detectado hallazgos relevantes en esta pasada.</div>';
+
+  // Renderizar grafica de historico
+  requestAnimationFrame(() => {
+    renderPerformanceHistoryChart();
+  });
+}
+
+async function renderPerformanceHistoryChart() {
+  if (!els.performanceChart) return;
+
+  try {
+    const { renderPerformanceHistoryChart: renderChart } = await ensureImprovementsPerformanceAuditReady();
+    await renderChart(els.performanceChart);
+  } catch (error) {
+    console.warn("[improvements] no se pudo renderizar la grafica de historico", error);
+    if (els.performanceChart) {
+      els.performanceChart.innerHTML = '<div class="improvements__perfEmpty">La grafica del historico no pudo cargarse.</div>';
+    }
+  }
 }
 
 function renderActiveWindow() {
@@ -3211,6 +3237,7 @@ function cacheElements(root) {
   els.performanceSummary = root.querySelector("#improvements-performance-summary");
   els.performanceMetrics = root.querySelector("#improvements-performance-metrics");
   els.performanceFindings = root.querySelector("#improvements-performance-findings");
+  els.performanceChart = root.querySelector("#improvements-performance-chart");
   els.tabCount = root.querySelector("#improvements-tab-count");
   els.boardTabs = root.querySelector("#improvements-board-tabs");
   els.boardMeta = root.querySelector("#improvements-board-meta");

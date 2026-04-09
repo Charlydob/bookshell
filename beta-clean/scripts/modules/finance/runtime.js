@@ -1888,9 +1888,15 @@ function applyProductsSearchFilter(inputEl) {
   const root = inputEl?.closest('.financeProductsView') || document;
   if (!inputEl || !root) return;
   const queryKey = normalizeProductItemKey(inputEl.value || '');
-  root.querySelectorAll('[data-food-product-row]').forEach((row) => {
-    const haystack = String(row.dataset.foodProductSearch || '');
-    row.style.display = !queryKey || haystack.includes(queryKey) ? '' : 'none';
+  const rows = root.querySelectorAll('[data-food-product-row]');
+  
+  // Usar requestAnimationFrame para mejor performance
+  requestAnimationFrame(() => {
+    rows.forEach((row) => {
+      const haystack = String(row.dataset.foodProductSearch || '');
+      const shouldShow = !queryKey || haystack.includes(queryKey);
+      row.style.display = shouldShow ? '' : 'none';
+    });
   });
 }
 
@@ -1898,9 +1904,52 @@ function applyMergeSearchFilter(inputEl, selector) {
   if (!inputEl) return;
   const queryKey = normalizeProductItemKey(inputEl.value || '');
   const scope = inputEl.closest('#finance-modal') || document;
-  scope.querySelectorAll(selector).forEach((row) => {
-    const haystack = String(row.dataset.foodMergeName || '');
-    row.style.display = !queryKey || haystack.includes(queryKey) ? '' : 'none';
+  const rows = scope.querySelectorAll(selector);
+  
+  requestAnimationFrame(() => {
+    rows.forEach((row) => {
+      const haystack = String(row.dataset.foodMergeName || '');
+      const shouldShow = !queryKey || haystack.includes(queryKey);
+      row.style.display = shouldShow ? '' : 'none';
+    });
+  });
+}
+
+// Funciones de filtrado directo sin repintado completo
+function applyProductsFiltersDirectDom() {
+  const viewEl = document.querySelector('.financeProductsView');
+  if (!viewEl) return;
+  
+  const cfg = state.foodProductsView || {};
+  
+  // Re-construir con los filtros actuales
+  const model = buildProductsViewModel(cfg);
+  const { listVisible } = model;
+  const listContainer = viewEl.querySelector('.finFoodProductsList');
+  
+  if (!listContainer) return;
+  
+  // Actualizar lista sin redibujar todo el modal
+  const listHtml = listVisible.length
+    ? listVisible.map((row) => {
+      const searchParts = [row.canonicalName, ...(Array.isArray(row.aliases) ? row.aliases : [])]
+        .map((part) => normalizeProductItemKey(part))
+        .filter(Boolean)
+        .join(' ');
+      return `<button type="button" class="finFoodProductsRow" data-food-item-detail="${escapeHtml(row.canonicalId)}" data-food-product-row data-food-product-search="${escapeHtml(searchParts)}"><strong>${escapeHtml(row.canonicalName)}</strong><span>${fmtCurrency(row.total)} · ${row.percentOfFood.toFixed(1)}%</span><span>${(cfg.tab || 'top-eur') === 'top-count' ? `${row.count} uds` : `${row.purchases} compras`}</span><span>${row.cheapestVendorKey ? `Más barato en ${escapeHtml(row.cheapestVendorKey)} (${Number(row.cheapestPrice || 0).toFixed(2)} €/ud)` : 'Sin comparativa'}</span><small>${row.lastVendor ? `Último ${Number(row.lastPrice || 0).toFixed(2)} €/ud · ${escapeHtml(row.lastVendor)}` : ''}</small></button>`;
+    }).join('')
+    : '<p class="finance-empty">Sin productos en este rango.</p>';
+  
+  // Aplicar transición suave
+  listContainer.style.opacity = '0';
+  listContainer.style.transition = 'opacity 0.12s ease-out';
+  
+  // Usar requestAnimationFrame para mejor performance
+  requestAnimationFrame(() => {
+    listContainer.innerHTML = listHtml;
+    // Re-trigger layout
+    void listContainer.offsetHeight;
+    listContainer.style.opacity = '1';
   });
 }
 
@@ -5441,7 +5490,7 @@ function renderFinanceCalendarPanel(accounts, totalSeries, { withToggle = false 
   }
   return `<article class="finance__calendarPreview">
     <div class="financePanelTopbar">
-      <div class="financePanelHeading"><h2>Calendario</h2><span class="finance-month-label">${modeLabel}</span></div>
+      <div class="financePanelHeading"><h2>Calendario</h2></div>
       ${toggle}
     </div>
     <div class="finance-calendar-controls">
@@ -5450,6 +5499,7 @@ function renderFinanceCalendarPanel(accounts, totalSeries, { withToggle = false 
       <select class="finance-pill" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>D&iacute;a</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>A&ntilde;o</option></select>
       <button type="button" class="boton-calendario" data-month-shift="1">&#9654;</button>
     </div>
+    <span class="finance-month-label">${modeLabel}</span>
     ${content}
   </article>`;
 }
@@ -5579,7 +5629,7 @@ const fixedSummaryContent =
 
 const fixedSummaryBlock = `
   <section class="financeFixedSummary">
-    <div class="financePanelTopbar">
+    <div class="financePanelTopbar" id="gastos-fijos-control">
       <div class="financePanelHeading"><h3>Gastos fijos</h3></div>
       ${fixedSummaryControls}
     </div>
@@ -5588,7 +5638,7 @@ const fixedSummaryBlock = `
 `;
   return `<article class="finance__calendarPreview">
   <div class="financePanelTopbar">
-    <div class="financePanelHeading"><h2>Calendario</h2><span class="finance-month-label">${modeLabel}</span></div>
+    <div class="financePanelHeading"><h2>Calendario</h2></div>
     ${toggle}
   </div>
   <div class="finance-calendar-controls">
@@ -5598,7 +5648,7 @@ const fixedSummaryBlock = `
     <button class="boton-calendario" data-month-shift="1">&#9654;</button>
   </div>
       <button type="button" class="finance-pill finance-pill--add-fixed" data-open-fixed-expense>+ Fijo</button>
-
+  <span class="finance-month-label">${modeLabel}</span>
   ${content}
   ${fixedSummaryBlock}
 </article>`;
@@ -8723,7 +8773,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     const foodProductsTab = target.closest('[data-food-products-tab]')?.dataset.foodProductsTab;
     if (foodProductsTab) {
       state.foodProductsView = { ...state.foodProductsView, tab: foodProductsTab };
-      triggerRender();
+      applyProductsFiltersDirectDom();
       return;
     }
     if (target.closest('[data-food-merge-open]')) {
@@ -9406,13 +9456,13 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-balance-trend-mode]')) { state.balanceTrendMode = event.target.value; triggerRender(); }
     if (event.target.matches('[data-balance-trend-category]')) { state.balanceTrendCategory = event.target.value; triggerRender(); }
     if (event.target.matches('[data-finance-stats-group]')) { state.balanceStatsGroupBy = event.target.value; state.balanceStatsActiveSegment = null; triggerRender(); }
-    if (event.target.matches('[data-food-products-range]')) { state.foodProductsView = { ...state.foodProductsView, range: event.target.value, rangeValue: '' }; triggerRender(); }
-    if (event.target.matches('[data-food-products-vendor]')) { state.foodProductsView = { ...state.foodProductsView, vendor: event.target.value }; triggerRender(); }
-    if (event.target.matches('[data-food-products-account]')) { state.foodProductsView = { ...state.foodProductsView, account: event.target.value }; triggerRender(); }
-    if (event.target.matches('[data-food-products-items-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyWithItems: !!event.target.checked }; triggerRender(); }
-    if (event.target.matches('[data-food-products-food-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyFood: !!event.target.checked }; triggerRender(); }
-    if (event.target.matches('[data-food-products-custom-start]')) { state.foodProductsView = { ...state.foodProductsView, customStart: event.target.value }; triggerRender(); }
-    if (event.target.matches('[data-food-products-custom-end]')) { state.foodProductsView = { ...state.foodProductsView, customEnd: event.target.value }; triggerRender(); }
+    if (event.target.matches('[data-food-products-range]')) { state.foodProductsView = { ...state.foodProductsView, range: event.target.value, rangeValue: '' }; applyProductsFiltersDirectDom(); }
+    if (event.target.matches('[data-food-products-vendor]')) { state.foodProductsView = { ...state.foodProductsView, vendor: event.target.value }; applyProductsFiltersDirectDom(); }
+    if (event.target.matches('[data-food-products-account]')) { state.foodProductsView = { ...state.foodProductsView, account: event.target.value }; applyProductsFiltersDirectDom(); }
+    if (event.target.matches('[data-food-products-items-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyWithItems: !!event.target.checked }; applyProductsFiltersDirectDom(); }
+    if (event.target.matches('[data-food-products-food-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyFood: !!event.target.checked }; applyProductsFiltersDirectDom(); }
+    if (event.target.matches('[data-food-products-custom-start]')) { state.foodProductsView = { ...state.foodProductsView, customStart: event.target.value }; applyProductsFiltersDirectDom(); }
+    if (event.target.matches('[data-food-products-custom-end]')) { state.foodProductsView = { ...state.foodProductsView, customEnd: event.target.value }; applyProductsFiltersDirectDom(); }
     if (event.target.matches('[data-account-merge-show-resolved]')) {
       const accounts = buildAccountModels();
       state.modal = normalizeAccountMergeModalState({ ...state.modal, showResolved: !!event.target.checked }, accounts);

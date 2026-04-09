@@ -1447,8 +1447,9 @@ font-size: 14px; font-weight: 500; }
 .financeTab .finFoodDetailSection--chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .financeTab .finFoodCardTitleRow { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .financeTab .finFoodMiniTabs { display:flex; gap:6px; flex-wrap:wrap; }
-.financeTab .finFoodMiniTab { border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05); color: inherit; min-height: 28px; padding: 0 10px; border-radius: 999px; font-size: 11px; }
-.financeTab .finFoodMiniTab.is-active { background: rgba(125,190,255,.22); border-color: rgba(125,190,255,.45); }
+.financeTab .finFoodMiniTab { border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05); color: inherit; min-height: 28px; padding: 0 10px; border-radius: 999px; font-size: 11px; cursor: pointer; transition: all 0.2s ease; }
+.financeTab .finFoodMiniTab:hover { background: rgba(255,255,255,.1); }
+.financeTab .finFoodMiniTab.is-active { background: rgba(125,190,255,.35); border-color: rgba(125,190,255,.6); box-shadow: 0 0 12px rgba(125,190,255,.2); font-weight: 600; }
 .financeTab .finFoodDataGrid { display:grid; gap:8px; }
 .financeTab .finFoodPriceTableWrap { overflow:auto; }
 .financeTab .finFoodPriceTable { width:100%; border-collapse:collapse; font-size:12px; }
@@ -1768,6 +1769,7 @@ small.finAgg__totals-small {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.06);
   color: var(--fin-text);
+  transition: all 0.2s ease;
 }
 
 .financeTab .food-sheet-form input,
@@ -1779,12 +1781,20 @@ small.finAgg__totals-small {
 }
 
 .financeTab .food-sheet-form input::placeholder { color: rgba(236, 242, 255, 0.58); }
+.financeTab .food-sheet-form input:hover,
+.financeTab .food-sheet-form select:hover,
+.financeTab .food-control:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.09);
+}
+
 .financeTab .food-sheet-form input:focus,
 .financeTab .food-sheet-form select:focus,
 .financeTab .food-pill:focus,
 .financeTab .food-iconbtn:focus,
 .financeTab .food-mini-btn:focus {
   outline: none;
+  border-color: rgba(170, 140, 255, 0.7);
   box-shadow: 0 0 0 1px rgba(170, 140, 255, 0.5), 0 0 18px rgba(170, 140, 255, 0.22);
 }
 
@@ -1797,6 +1807,13 @@ small.finAgg__totals-small {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.06);
   color: var(--fin-text);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.financeTab .food-mini-btn:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .financeTab .food-sheet-note {
@@ -2378,6 +2395,7 @@ header.food-sheet-header h3{
 .financeTab .finFoodChip--glow{background:linear-gradient(135deg,rgba(122,240,200,.25),rgba(125,189,255,.25));box-shadow:0 0 0.6rem rgba(125,189,255,.35);border-color:rgba(125,189,255,.45)}
 .financeTab .finFoodProductsHead{position:sticky;top:0;z-index:2;background:transparent;backdrop-filter:blur(8px);padding:8px;border-radius:12px;display:grid;gap:6px;max-width:100%;overflow-x:hidden}
 .financeTab .finFoodFilters{display:grid;grid-template-columns:1fr 1fr;gap:6px;align-items:center}
+.financeTab .finFoodFilters [data-food-products-search]{grid-column:1/-1}
 .financeTab .finFoodCustomRange{display:grid;grid-template-columns:1fr 1fr;gap:6px;grid-column:1/-1}
 
 .financeTab .finFoodProductsList{
@@ -2389,12 +2407,20 @@ header.food-sheet-header h3{
   padding:2px 0 0;
   margin-top:0;
   max-width:100%;
-  overflow-x:hidden
+  overflow-x:hidden;
+  scroll-behavior: smooth;
+  opacity: 1;
+  transition: opacity 0.12s ease-out;
 }
 
-.financeTab .finFoodProductsRow{display:grid;gap:2px;border:1px solid rgba(125,189,255,.25);background:rgba(125,189,255,.08);border-radius:10px;padding:8px 9px;min-height:auto;text-align:left;color:inherit;box-shadow:0 0 .5rem rgba(125,189,255,.12)}
+.financeTab .finFoodProductsRow{display:grid;gap:2px;border:1px solid rgba(125,189,255,.25);background:rgba(125,189,255,.08);border-radius:10px;padding:8px 9px;min-height:auto;text-align:left;color:inherit;box-shadow:0 0 .5rem rgba(125,189,255,.12);transition:all 0.2s ease;cursor:pointer}
+.financeTab .finFoodProductsRow:hover{border-color:rgba(125,189,255,.45);background:rgba(125,189,255,.15);box-shadow:0 0 12px rgba(125,189,255,.18)}
+.financeTab .finFoodProductsRow:active{transform:scale(0.98)}
 .financeTab .finFoodProductsRow strong{font-size:13px;line-height:1.2}
 .financeTab .finFoodProductsRow span,.financeTab .finFoodProductsRow small{font-size:8px;opacity:.9;line-height:1.25}
+/* Estilos para productos resueltos/completados */
+.financeTab .finFoodProductsRow.is-resolved{border-color:rgba(122,240,200,.35);background:rgba(122,240,200,.08)}
+.financeTab .finFoodProductsRow.is-resolved:hover{border-color:rgba(122,240,200,.55);background:rgba(122,240,200,.15)}
 .financeTab .finFoodMergeList{display:grid;gap:8px;max-height:46vh;overflow:auto;margin-top:8px}
 .financeTab .finFoodMergeRow{display:flex;gap:8px;align-items:center;padding:8px;border-radius:10px;background:rgba(255,255,255,.05)}
 .financeTab .finFoodMergeHead{display:grid;gap:8px}
@@ -3791,6 +3817,7 @@ margin-bottom: 50px;
   justify-content:center;
   font-size:24px;
   line-height:1;
+  margin-left: 5px;
 }
 .financeTab .financeBalanceTrendCard {
   display: grid;
@@ -4171,13 +4198,11 @@ margin-bottom: 50px;
 
 .financeFixedSquaresContainer{
   display: grid;
-  
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
-.finance__calendarPreview{
-  background: transparent !important;
-  border: 0px !important;
-  box-shadow: none !important;
-}
+
 .financeViewHeader h2{
   display: none;
 }
@@ -4190,4 +4215,31 @@ margin-bottom: 50px;
 .financeFixedSquaresSummary{
   display: grid;
   grid-template-columns: 1fr 1fr;
+}
+
+.finance-pill.finance-pill--add-fixed{
+  background: linear-gradient(180deg, rgba(18, 34, 68, 0.88), rgba(7, 17, 42, 0.82)), radial-gradient(circle at top, rgba(110, 170, 255, 0.12), transparent 58%);
+  display: grid;
+  width: 100%;
+  text-align: center;
+  align-items: center;
+  margin-top: 10px;
+}
+
+#gastos-fijos-control{
+  display: none;
+}
+.financePanelHeading{
+  display: none !important;
+}
+.finance-month-label{
+  display: grid;
+  justify-content: center;
+  justify-self: center;
+  justify-items: center;
+  align-items: center;
+  align-self: center;
+  align-content: center;
+  text-align: center;
+  margin-top: 10px;
 }

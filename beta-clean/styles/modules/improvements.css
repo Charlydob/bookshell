@@ -618,6 +618,10 @@
   min-height: 270px;
 }
 
+.improvements__perfChartCard {
+  margin-top: 12px;
+}
+
 .improvements__statsChartEmpty,
 .improvements__statsPanelEmpty {
   display: grid;

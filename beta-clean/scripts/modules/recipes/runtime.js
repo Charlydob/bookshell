@@ -2277,8 +2277,9 @@ function linkifyNotesHtml(input) {
   function renderRecipeShelf(filtered = getRecipeLibraryFilteredList()) {
     if (!$shelfList) return;
     const grouped = sortRecipesForGlobalView(filtered);
-    const favorites = grouped.favorites;
-    const regular = grouped.regular;
+    const canRenderFavoritesShelf = Boolean($shelfFavoritesSection && $shelfFavorites);
+    const favorites = canRenderFavoritesShelf ? grouped.favorites : [];
+    const regular = canRenderFavoritesShelf ? grouped.regular : grouped.merged;
 
     const SHELF_SIZE = 9;
     const buildShelfRows = (arr) => {
@@ -2296,12 +2297,12 @@ function linkifyNotesHtml(input) {
     $shelfList.innerHTML = "";
     $shelfList.appendChild(buildShelfRows(regular));
 
-    if (favorites.length) {
+    if (canRenderFavoritesShelf && favorites.length) {
       $shelfFavoritesSection.style.display = "block";
       $shelfFavorites.innerHTML = "";
       $shelfFavorites.appendChild(buildShelfRows(favorites));
       if ($shelfFavoritesCount) $shelfFavoritesCount.textContent = String(favorites.length);
-    } else {
+    } else if (canRenderFavoritesShelf) {
       $shelfFavoritesSection.style.display = "none";
       $shelfFavorites.innerHTML = "";
       if ($shelfFavoritesCount) $shelfFavoritesCount.textContent = "0";
@@ -9431,7 +9432,12 @@ $recipeImportBtn?.addEventListener("click", () => {
   $macroAddResults?.addEventListener("click", (e) => {
     const pBtn = e.target.closest("[data-add-product]");
     if (pBtn) {
-      const p = nutritionProducts.find((x) => x.id === pBtn.dataset.addProduct);
+      const wantedId = String(pBtn.dataset.addProduct || "").trim();
+      const p = nutritionProducts.find((x) => String(x?.id || "").trim() === wantedId);
+      if (!p) {
+        if ($macroScanStatus) $macroScanStatus.textContent = "No pude cargar ese producto. Reintenta.";
+        return;
+      }
       closeMacroAddModal();
       openMacroProductModal(p, macroModalState.meal, 100);
       return;

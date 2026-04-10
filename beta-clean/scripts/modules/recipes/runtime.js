@@ -9564,8 +9564,15 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (emojiBtn) {
       const productList = emojiBtn.nextElementSibling;
       if (productList) {
-        productList.classList.toggle("hidden");
-        emojiBtn.dataset.expand = emojiBtn.dataset.expand === "true" ? "false" : "true";
+        const firstProductBtn = productList.querySelector(".emoji-picker-product");
+        if (firstProductBtn) {
+          const wantedId = String(firstProductBtn.dataset.addProduct || "").trim();
+          const p = nutritionProducts.find((x) => String(x?.id || "").trim() === wantedId);
+          if (p) {
+            closeMacroAddModal();
+            openMacroProductModal(p, macroModalState.meal, 100);
+          }
+        }
       }
       return;
     }

@@ -369,6 +369,7 @@ if ($viewRecipes) {
   const $macroAddSearch = document.getElementById("macro-add-search");
   const $macroAddResults = document.getElementById("macro-add-results");
   const $macroAddChips = document.getElementById("macro-add-chips");
+  const $macroAddEmojis = document.getElementById("macro-add-emojis");
   const $macroAddModalScroll = $macroAddModalBackdrop?.querySelector(".modal-scroll.sheet-body");
   const $macroProductPickerResults = document.getElementById("macro-product-picker-results");
   const $macroScanPanel = document.getElementById("macro-scan-panel");
@@ -5758,7 +5759,7 @@ $recipeImportBtn?.addEventListener("click", () => {
   function openMacroAddModal(meal) {
     macroModalState.meal = meal;
     macroModalState.query = "";
-    macroModalState.source = "products";
+    macroModalState.source = "emojis";
     resetMacroManualForm();
     if ($macroAddSearch) $macroAddSearch.value = "";
     document.body.classList.add("has-open-modal");
@@ -6352,15 +6353,32 @@ $recipeImportBtn?.addEventListener("click", () => {
     const queryTokens = tokenizeMacroSearch(macroModalState.query || "");
     const showProducts = macroModalState.source === "products";
     const showRecipes = macroModalState.source === "recipes";
+    const showEmojis = macroModalState.source === "emojis";
     const showScan = macroModalState.source === "scan";
     $macroScanPanel?.classList.toggle("hidden", macroModalState.source !== "scan");
     $macroManualPanel?.classList.toggle("hidden", macroModalState.source !== "manual");
     $macroAddResults.style.display = (showProducts || showRecipes) ? "block" : "none";
     $macroProductPickerResults?.classList.toggle("hidden", !(showProducts || showRecipes));
+    $macroAddEmojis?.classList.toggle("hidden", !showEmojis);
+    
+    // Actualizar placeholder del search
+    if ($macroAddSearch) {
+      if (showEmojis) {
+        $macroAddSearch.placeholder = "Filtrar emojis o productos...";
+      } else if (showProducts) {
+        $macroAddSearch.placeholder = "Buscar producto...";
+      } else if (showRecipes) {
+        $macroAddSearch.placeholder = "Buscar receta...";
+      }
+    }
+    
     if (!showScan) {
       try { stopMacroBarcodeScan(); } catch (_) {}
     } else {
       hideMacroScanAddProduct();
+    }
+    if (showEmojis) {
+      renderMacroEmojiPicker();
     }
     if (showProducts) {
       const list = nutritionProducts
@@ -6448,6 +6466,72 @@ $recipeImportBtn?.addEventListener("click", () => {
       .join("");
     $recipeIngredientProduct.innerHTML = `<option value="">Añadir desde productosâ€¦</option>${options}`;
     if ($recipeIngredientGrams && !$recipeIngredientGrams.value) $recipeIngredientGrams.value = "100";
+  }
+
+  function renderMacroEmojiPicker() {
+    if (!$macroAddEmojis) return;
+    
+    const queryTokens = tokenizeMacroSearch(macroModalState.query || "");
+    
+    // Agrupar productos por emoji y calcular uso total
+    const emojiGroups = {};
+    nutritionProducts.forEach((product) => {
+      // Filtrar por búsqueda si existe
+      if (queryTokens.length) {
+        const haystack = `${product.name} ${product.brand || ""} ${product.barcode || ""}`;
+        const match = getMacroSearchMatchMeta(haystack, queryTokens);
+        if (!match) return;
+      }
+      
+      const emoji = String(product.emoji || "").substring(0, 2) || "🥘";
+      if (!emojiGroups[emoji]) {
+        emojiGroups[emoji] = {
+          emoji,
+          products: [],
+          totalUse: 0,
+          lastUse: 0
+        };
+      }
+      emojiGroups[emoji].products.push(product);
+      
+      const usage = macroUsage.products?.[product.id] || {};
+      const count = clampUsageValue(usage.count, 0);
+      const lastAt = clampUsageValue(usage.lastAt, 0);
+      emojiGroups[emoji].totalUse += count;
+      if (lastAt > emojiGroups[emoji].lastUse) {
+        emojiGroups[emoji].lastUse = lastAt;
+      }
+    });
+    
+    // Ordenar emojis por uso (descendente)
+    const sortedEmojis = Object.values(emojiGroups)
+      .sort((a, b) => {
+        if (a.totalUse !== b.totalUse) return b.totalUse - a.totalUse;
+        if (a.lastUse !== b.lastUse) return b.lastUse - a.lastUse;
+        return 0;
+      });
+    
+    // Renderizar los emojis
+    const emojiButtonsHtml = sortedEmojis
+      .map(group => {
+        const productList = group.products
+          .map(p => `<button class="macro-result emoji-picker-product" data-add-product="${p.id}" type="button"><span>${p.name}</span><span class="hint">${p.brand || ""} · ${p.macros?.kcal || 0} kcal</span></button>`)
+          .join("");
+        return `
+          <div class="macro-emoji-group">
+            <button class="macro-emoji-btn" data-emoji="${group.emoji}" data-expand="false" type="button">
+              <span class="macro-emoji-display">${group.emoji}</span>
+              <span class="macro-emoji-count">${group.products.length}</span>
+            </button>
+            <div class="macro-emoji-products hidden">
+              ${productList}
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+    
+    $macroAddEmojis.innerHTML = emojiButtonsHtml || '<div class="hint">No hay productos.</div>';
   }
 
   function clearMacroSelection(meal = null) {
@@ -9472,6 +9556,28 @@ $recipeImportBtn?.addEventListener("click", () => {
       const r = recipes.find((x) => x.id === rBtn.dataset.addRecipe);
       addRecipeToMeal(macroModalState.meal, r, 1);
       return closeMacroAddModal();
+    }
+  });
+
+  $macroAddEmojis?.addEventListener("click", (e) => {
+    const emojiBtn = e.target.closest(".macro-emoji-btn");
+    if (emojiBtn) {
+      const productList = emojiBtn.nextElementSibling;
+      if (productList) {
+        productList.classList.toggle("hidden");
+        emojiBtn.dataset.expand = emojiBtn.dataset.expand === "true" ? "false" : "true";
+      }
+      return;
+    }
+    
+    const pBtn = e.target.closest("[data-add-product]");
+    if (pBtn) {
+      const wantedId = String(pBtn.dataset.addProduct || "").trim();
+      const p = nutritionProducts.find((x) => String(x?.id || "").trim() === wantedId);
+      if (!p) return;
+      closeMacroAddModal();
+      openMacroProductModal(p, macroModalState.meal, 100);
+      return;
     }
   });
 

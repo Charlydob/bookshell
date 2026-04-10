@@ -3879,3 +3879,129 @@ div#macros-inputs.macro-manual-macro-grid{
   background: transparent;
   border: none;
 }
+
+/* Emoji Picker Styles */
+#macro-add-emojis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+  gap: 0px;
+  padding: 8px 0;
+}
+
+#macro-add-emojis.hidden {
+  display: none;
+}
+
+.macro-emoji-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.macro-emoji-btn {
+  display: grid;
+  grid-template-rows: 20px 10px;
+  align-items: center;
+  align-self: center;
+  text-align: center;
+  align-content: center;
+  justify-content: center;
+  justify-self: center;
+  justify-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 0px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 24px;
+  color: #fff;
+  position: relative;
+}
+
+.macro-emoji-btn:hover {
+  background: rgba(255,255,255,0.12);
+  border-color: rgba(255,255,255,0.2);
+}
+
+.macro-emoji-btn:active {
+  transform: scale(0.95);
+}
+
+.macro-emoji-display {
+  display: inline-block;
+  width: 24px;
+  text-align: center;
+}
+
+.macro-emoji-count {
+  font-size: 11px;
+  background: transparent;
+  padding: 2px 6px;
+  border-radius: 8px;
+  color: rgba(255,255,255,0.8);
+  min-width: 20px;
+  margin-left: 8px;
+  text-align: center;
+}
+
+.macro-emoji-products {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  max-width: 320px;
+}
+
+.macro-emoji-products.hidden {
+  display: none;
+}
+
+.emoji-picker-product {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  text-align: left;
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.emoji-picker-product:hover {
+  background: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.2);
+}
+
+.emoji-picker-product:active {
+  transform: scale(0.98);
+}
+
+.emoji-picker-product span:first-child {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emoji-picker-product .hint {
+  font-size: 10px;
+  color: rgba(255,255,255,0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#macro-add-chips{
+  display: grid;
+  grid-template-columns: 1fr 1fr  1fr 1fr  1fr;
+}

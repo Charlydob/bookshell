@@ -332,14 +332,16 @@
         <input autocomplete="off" class="filter-search-input" id="macro-add-search" placeholder="Buscar producto o receta" type="search" />
       </div>
     <div class="macro-modal-chips" id="macro-add-chips">
-        <button class="macro-chip is-active" data-macro-source="products" type="button">Productos</button>
+        <button class="macro-chip is-active" data-macro-source="emojis" type="button">🥞</button>
+        <button class="macro-chip" data-macro-source="products" type="button">Productos</button>
         <button class="macro-chip" data-macro-source="recipes" type="button">Recetas</button>
         <button class="macro-chip" data-macro-source="scan" type="button">Escanear</button>
-        <button class="macro-chip" data-macro-source="manual" type="button">Crear manual</button>
+        <button class="macro-chip" data-macro-source="manual" type="button">Crear</button>
       </div>
       <div class="macro-product-picker-results" id="macro-product-picker-results">
         <div class="macro-modal-results" id="macro-add-results"></div>
       </div>
+      <div class="macro-modal-emojis hidden" id="macro-add-emojis"></div>
       <div class="macro-modal-scan hidden" id="macro-scan-panel">
         <div class="section-hint">Apunta al código, pulsa “Capturar” y, si no sale, busca manualmente.</div>
         <div class="section-hint" id="macro-scan-placement-hint">Guía: acerca el producto hasta que el código y el número inferior ocupen gran parte del recuadro y se vean nítidos.</div>

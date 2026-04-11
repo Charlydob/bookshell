@@ -3460,6 +3460,18 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
   const macroLinked = nutritionProducts.find((p) => p.id === row.dataset.productId);
   const financeLinked = financeProducts.find((f) => f.id === row.dataset.financeProductId);
 
+  // Generar opciones de selects ordenadas alfabéticamente
+  const sortedMacroProducts = sortByVisibleNameEs(nutritionProducts, (p) => p?.name || "");
+  const sortedFinanceProducts = sortByVisibleNameEs(financeProducts, (f) => f?.name || "");
+  
+  const macroOptions = `<option value=""></option>${sortedMacroProducts
+    .map((p) => `<option value="${escapeHtml(p.id)}" ${p.id === macroLinked?.id ? "selected" : ""}>${escapeHtml(p.name)}</option>`)
+    .join("")}`;
+  
+  const financeOptions = `<option value=""></option>${sortedFinanceProducts
+    .map((f) => `<option value="${escapeHtml(f.id)}" ${f.id === financeLinked?.id ? "selected" : ""}>${escapeHtml(f.name)}</option>`)
+    .join("")}`;
+
   row.innerHTML = `
     <div class="ingredient-main-row">
       <input
@@ -3496,25 +3508,21 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     <div class="ingredient-links-row">
       <label class="ingredient-link-field">
         <span class="ingredient-link-label">Macro</span>
-        <input
-          type="text"
+        <select
           class="builder-input ingredient-link-search ingredient-link-macro"
-          placeholder="Buscar producto…"
-          list="recipe-macro-products-list"
           aria-label="Vincular producto de macros"
-          value="${escapeHtml(macroLinked?.name || "")}"
-        />
+        >
+          ${macroOptions}
+        </select>
       </label>
       <label class="ingredient-link-field">
         <span class="ingredient-link-label">Finanzas</span>
-        <input
-          type="text"
+        <select
           class="builder-input ingredient-link-search ingredient-link-finance"
-          placeholder="Buscar gasto…"
-          list="recipe-finance-products-list"
           aria-label="Vincular producto de finanzas"
-          value="${escapeHtml(financeLinked?.name || "")}"
-        />
+        >
+          ${financeOptions}
+        </select>
       </label>
       <button
         type="button"
@@ -3538,8 +3546,8 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     const chips = [];
     const linkedMacro = nutritionProducts.find((p) => p.id === String(row.dataset.productId || "").trim());
     const linkedFinance = financeProducts.find((f) => f.id === String(row.dataset.financeProductId || "").trim());
-    chips.push(`<span class="ingredient-link-chip${linkedMacro ? " is-linked" : ""}">${linkedMacro ? `Macro: ${escapeHtml(linkedMacro.name || macroInput.value || "vinculado")}` : "Sin macro"}</span>`);
-    chips.push(`<span class="ingredient-link-chip${linkedFinance ? " is-linked" : ""}">${linkedFinance ? `Finanzas: ${escapeHtml(linkedFinance.name || financeInput.value || "vinculado")}` : "Sin finanzas"}</span>`);
+    chips.push(`<span class="ingredient-link-chip${linkedMacro ? " is-linked" : ""}">${linkedMacro ? `Macro: ${escapeHtml(linkedMacro.name || "vinculado")}` : "Sin macro"}</span>`);
+    chips.push(`<span class="ingredient-link-chip${linkedFinance ? " is-linked" : ""}">${linkedFinance ? `Finanzas: ${escapeHtml(linkedFinance.name || "vinculado")}` : "Sin finanzas"}</span>`);
     status.innerHTML = chips.join("");
   };
 
@@ -3553,14 +3561,24 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
   });
 
   macroInput.addEventListener("change", () => {
-    const found = fuzzyMatchByName(macroInput.value || "", nutritionProducts, (p) => p?.name || "");
+    const selectedId = String(macroInput.value || "").trim();
+    const found = nutritionProducts.find((p) => p.id === selectedId);
     row.dataset.productId = found?.id ? String(found.id) : "";
+    
+    // Si el macro tiene un financeProductId, rellenar automáticamente el campo de finanzas
+    if (found?.financeProductId) {
+      const financeId = String(found.financeProductId).trim();
+      row.dataset.financeProductId = financeId;
+      financeInput.value = financeId;
+    }
+    
     updateRecipeCalcSummary();
     renderIngredientLinkState();
   });
 
   financeInput.addEventListener("change", () => {
-    const found = fuzzyMatchByName(financeInput.value || "", financeProducts, (f) => f?.name || "");
+    const selectedId = String(financeInput.value || "").trim();
+    const found = financeProducts.find((f) => f.id === selectedId);
     row.dataset.financeProductId = found?.id ? String(found.id) : "";
     renderIngredientLinkState();
   });

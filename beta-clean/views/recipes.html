@@ -3,7 +3,7 @@
 <div class="recipes-subtabs" role="tablist" aria-label="Subvistas de recetas">
 <button class="recipes-subtab is-active" id="recipes-subtab-library" data-recipes-panel="library" aria-selected="true" type="button">Recetas</button>
 <button class="recipes-subtab" id="recipes-subtab-macros" data-recipes-panel="macros" aria-selected="false" type="button">Macros</button>
-<button class="recipes-subtab" id="recipes-subtab-statistics" data-recipes-panel="statistics" aria-selected="false" type="button">Estadística</button>
+<button class="recipes-subtab" id="recipes-subtab-statistics" data-recipes-panel="statistics" aria-selected="false" type="button">Estadí­stica</button>
 <button class="recipes-subtab" id="recipes-subtab-shopping" data-recipes-panel="shopping" aria-selected="false" type="button">Compra</button>
 </div>
 <div class="recipes-panel is-active" id="recipes-panel-library">
@@ -29,9 +29,8 @@
 </div>
 <div class="recipes-toolbar">
 <button class="btn primary" id="btn-add-recipe">🥞</button>
-<button class="btn ghost btn-compact" id="recipes-start-session" type="button">▶ Iniciar sesión</button>
+<button class="btn ghost btn-compact" id="recipes-start-session" type="button">â–¶ Iniciar sesión</button>
 </div>
-
 <div class="books-filters is-collapsed" id="recipes-filters">
   <div class="books-filters-header" id="recipes-filters-header">
   <div class="filter-row filter-search-row">
@@ -40,13 +39,13 @@
   </div>
   <button aria-controls="recipes-filters-body" aria-expanded="false" class="filters-toggle-btn" id="recipes-filters-toggle" type="button">
   <span class="filters-toggle-text">Mostrar filtros</span>
-  <span aria-hidden="true" class="filters-toggle-icon">⌄</span>
+  <span aria-hidden="true" class="filters-toggle-icon">âŒ„</span>
   </button>
   </div>
   <div class="books-filters-body" id="recipes-filters-body">
   <div class="filter-row">
-  <div class="filter-label">Filtros rápidos</div>
-  <div aria-label="Filtros dinámicos" class="filter-chip-groups" id="recipes-filter-chips"></div>
+  <div class="filter-label">Filtros rí¡pidos</div>
+  <div aria-label="Filtros diní¡micos" class="filter-chip-groups" id="recipes-filter-chips"></div>
   </div>
   <div class="filter-row filter-toggles">
   <label class="toggle-pill">
@@ -62,10 +61,10 @@
 </div>
 <div class="recipes-shelf-wrapper">
 <div class="recipes-shelf-toolbar">
-<label class="field-label shelf-search-label" for="recipes-shelf-search">Buscar en la estantería</label>
+<label class="field-label shelf-search-label" for="recipes-shelf-search">Buscar en la estanterí­a</label>
 <input class="shelf-search-input" id="recipes-shelf-search" placeholder="Nombre, tipo, etiquetas..." type="search"/>
 <div class="recipes-view-toggle" id="recipes-view-toggle" role="tablist" aria-label="Modo de vista de recetas">
-<button class="recipes-view-toggle-btn is-active" data-recipes-view="shelf" role="tab" aria-selected="true" type="button">Estantería</button>
+<button class="recipes-view-toggle-btn is-active" data-recipes-view="shelf" role="tab" aria-selected="true" type="button">Estanterí­a</button>
 <button class="recipes-view-toggle-btn" data-recipes-view="cards" role="tab" aria-selected="false" type="button">Tarjetas</button>
 </div>
 <div class="books-shelf-results" id="recipes-shelf-results"></div>
@@ -78,7 +77,7 @@
 <div class="recipes-list-panel-body" id="recipes-list-preview"></div>
 </section>
 <div class="books-shelf-empty" id="recipes-shelf-empty" style="display:none;">
-              No hay recetas que coincidan con la búsqueda.
+              No hay recetas que coincidan con la bíºsqueda.
             </div>
 <div class="books-list recipes-shelf" id="recipes-list"></div>
 <details class="books-finished" id="recipes-favorites-section" style="display:none;">
@@ -94,12 +93,12 @@
 <div class="geo-header">
 <div>
 <div class="geo-title">Mapa de recetas</div>
-<div class="geo-subtitle">Intensidad según número de platos</div>
+<div class="geo-subtitle">Intensidad segíºn níºmero de platos</div>
 </div>
 </div>
 <div class="geo-map" id="recipes-world-map"></div>
-<details aria-label="Listado de países (recetas)" class="geo-list" id="recipes-country-panel">
-<summary class="geo-list-summary">Países y número de platos</summary>
+<details aria-label="Listado de paí­ses (recetas)" class="geo-list" id="recipes-country-panel">
+<summary class="geo-list-summary">Paí­ses y níºmero de platos</summary>
 <div class="geo-list-body" id="recipes-country-list"></div>
 </details>
 </div>
@@ -117,7 +116,7 @@
 </div>
 </section>
 <div class="empty-state" id="recipes-empty">
-            Aún no has añadido recetas.
+            Aíºn no has aí±adido recetas.
           </div>
 </div>
 </div>
@@ -127,9 +126,9 @@
       <button class="macro-settings-trigger" type="button" id="macro-integration-open" aria-label="Abrir configuración avanzada de macros" title="Configuración avanzada">i</button>
     </div>
     <div class="macro-date-row">
-      <button class="btn ghost btn-compact" type="button" id="macro-date-prev">◀</button>
+      <button class="btn ghost btn-compact" type="button" id="macro-date-prev">â—€</button>
       <input type="date" id="macro-date-input" class="macro-date-input" />
-      <button class="btn ghost btn-compact" type="button" id="macro-date-next">▶</button>
+      <button class="btn ghost btn-compact" type="button" id="macro-date-next">â–¶</button>
     </div>
     <div class="macro-kcal-summary" id="macro-kcal-summary">0 kcal / 0 kcal</div>
     <div class="macro-summary-grid" id="macro-summary-grid"></div>
@@ -142,9 +141,9 @@
     <div class="macro-modal-header">
       <div>
         <h3 class="macro-modal-title" id="macro-integration-modal-title">Configuración avanzada</h3>
-        <p class="macro-modal-subtitle">Ajustes de gasto calórico e integración Gym/Hábitos</p>
+        <p class="macro-modal-subtitle">Ajustes de gasto calórico e integración Gym/Hí¡bitos</p>
       </div>
-      <button class="icon-btn" type="button" id="macro-integration-modal-close" aria-label="Cerrar">✕</button>
+      <button class="icon-btn" type="button" id="macro-integration-modal-close" aria-label="Cerrar">âœ•</button>
     </div>
     <div class="macro-modal-body">
       <div class="macro-integration-settings">
@@ -153,11 +152,11 @@
           <input type="number" id="macro-bodyweight-kg" min="0" step="0.1" inputmode="decimal" placeholder="Opcional" />
         </label>
         <label class="macro-integration-field">
-          <span>Gasto por día trabajado (kcal)</span>
+          <span>Gasto por dí­a trabajado (kcal)</span>
           <input type="number" id="macro-work-kcal" min="0" step="10" inputmode="numeric" value="700" />
         </label>
         <label class="macro-integration-field">
-          <span>Hábitos de trabajo vinculados</span>
+          <span>Hí¡bitos de trabajo vinculados</span>
           <select id="macro-work-habits" multiple></select>
         </label>
       </div>
@@ -167,24 +166,24 @@
 <div class="recipes-panel" id="recipes-panel-statistics">
   <div class="macro-stats-shell">
     <div class="macro-stats-toolbar">
-      <div class="macro-stats-periods" id="macro-stats-periods" role="tablist" aria-label="Periodo de estadística">
-        <button class="macro-stats-period is-active" data-stats-period="day" type="button">Día</button>
+      <div class="macro-stats-periods" id="macro-stats-periods" role="tablist" aria-label="Periodo de estadí­stica">
+        <button class="macro-stats-period is-active" data-stats-period="day" type="button">Dí­a</button>
         <button class="macro-stats-period" data-stats-period="week" type="button">Semana</button>
         <button class="macro-stats-period" data-stats-period="month" type="button">Mes</button>
-        <button class="macro-stats-period" data-stats-period="year" type="button">Año</button>
+        <button class="macro-stats-period" data-stats-period="year" type="button">Aí±o</button>
       </div>
       <div class="macro-stats-controls">
-        <button class="btn ghost btn-compact" type="button" id="macro-stats-prev">◀</button>
+        <button class="btn ghost btn-compact" type="button" id="macro-stats-prev">â—€</button>
         <input type="date" id="macro-stats-anchor" class="macro-date-input" />
-        <button class="btn ghost btn-compact" type="button" id="macro-stats-next">▶</button>
+        <button class="btn ghost btn-compact" type="button" id="macro-stats-next">â–¶</button>
         <select id="macro-stats-main-metric" class="macro-stats-select">
           <option value="macros">Macros (C/P/G)</option>
           <option value="kcal">Kcal</option>
-          <option value="cost">Coste (€)</option>
+          <option value="cost">Coste (â‚¬)</option>
           <option value="burned">Quemadas (kcal)</option>
           <option value="net">Netas (kcal)</option>
           <option value="carbs">Carbohidratos</option>
-          <option value="protein">Proteínas</option>
+          <option value="protein">Proteí­nas</option>
           <option value="fat">Grasas</option>
         </select>
       </div>
@@ -209,7 +208,7 @@
         <div class="macro-stats-donut-grid">
           <div class="macro-stats-donut-box">
             <svg id="macro-stats-donut-main" viewBox="0 0 120 120" class="macro-stats-donut"></svg>
-            <div class="macro-stats-donut-title" id="macro-stats-donut-title">Calorías por macro</div>
+            <div class="macro-stats-donut-title" id="macro-stats-donut-title">Calorí­as por macro</div>
             <div class="macro-stats-donut-legend" id="macro-stats-donut-legend"></div>
           </div>
         </div>
@@ -238,12 +237,12 @@
         <label for="macro-comparison-metric-select">Mostrar:</label>
         <select id="macro-comparison-metric-select" class="macro-stats-select">
           <option value="macros">Macros (Carbs/Protein/Fat)</option>
-          <option value="kcal">Calorías totales</option>
-          <option value="consumptions">Número de consumos</option>
+          <option value="kcal">Calorí­as totales</option>
+          <option value="consumptions">Níºmero de consumos</option>
           <option value="total_cost">Gasto total</option>
           <option value="avg_cost">Costo promedio</option>
           <option value="carbs">Carbohidratos</option>
-          <option value="protein">Proteínas</option>
+          <option value="protein">Proteí­nas</option>
           <option value="fat">Grasas</option>
         </select>
       </div>
@@ -274,14 +273,14 @@
       </header>
       <div class="macro-shopping-list-view" id="macro-shopping-list-view">
         <div class="macro-shopping-search-wrap">
-          <span aria-hidden="true">🔎</span>
-          <input id="macro-shopping-search" type="search" placeholder="Buscar producto por nombre…" autocomplete="off" />
+          <span aria-hidden="true">ðŸ”Ž</span>
+          <input id="macro-shopping-search" type="search" placeholder="Buscar producto por nombreâ€¦" autocomplete="off" />
         </div>
         <div class="macro-shopping-score-filters" id="macro-shopping-score-filters" role="group" aria-label="Filtro Nutri-Score"></div>
         <div class="macro-shopping-results-meta" id="macro-shopping-results-count"></div>
         <div class="macro-shopping-results" id="macro-shopping-results"></div>
         <div class="macro-shopping-empty hidden" id="macro-shopping-empty">
-          <div class="macro-shopping-empty-icon" aria-hidden="true">🧺</div>
+          <div class="macro-shopping-empty-icon" aria-hidden="true">ðŸ§º</div>
           <div class="macro-shopping-empty-title">No encontramos productos</div>
           <p>Prueba con otro nombre o cambia el filtro de Nutri-Score.</p>
         </div>
@@ -290,12 +289,12 @@
         <div class="macro-shopping-compare-pickers">
           <article class="macro-shopping-compare-picker">
             <h5>Producto izquierda</h5>
-            <input id="macro-shopping-compare-left-search" type="search" placeholder="Buscar producto…" autocomplete="off" />
+            <input id="macro-shopping-compare-left-search" type="search" placeholder="Buscar productoâ€¦" autocomplete="off" />
             <div class="macro-shopping-compare-options" id="macro-shopping-compare-left-options"></div>
           </article>
           <article class="macro-shopping-compare-picker">
             <h5>Producto derecha</h5>
-            <input id="macro-shopping-compare-right-search" type="search" placeholder="Buscar producto…" autocomplete="off" />
+            <input id="macro-shopping-compare-right-search" type="search" placeholder="Buscar productoâ€¦" autocomplete="off" />
             <div class="macro-shopping-compare-options" id="macro-shopping-compare-right-options"></div>
           </article>
         </div>
@@ -303,7 +302,7 @@
           <table class="macro-shopping-compare-table">
             <thead>
               <tr>
-                <th>Métrica</th>
+                <th>Mí©trica</th>
                 <th id="macro-shopping-compare-left-title">Producto A</th>
                 <th>Comparación</th>
                 <th id="macro-shopping-compare-right-title">Producto B</th>
@@ -324,8 +323,8 @@
   <div class="modal-comida">
     <div class="modal-handle"></div>
     <div class="modal-header">
-      <div class="modal-title" id="macro-add-modal-title">Añadir alimento</div>
-      <button class="icon-btn" id="macro-add-modal-close" type="button">✕</button>
+      <div class="modal-title" id="macro-add-modal-title">Aí±adir alimento</div>
+      <button class="icon-btn" id="macro-add-modal-close" type="button">âœ•</button>
     </div>
     <div class="modal-scroll sheet-body">
       <div class="macro-modal-search-row">
@@ -343,8 +342,8 @@
       </div>
       <div class="macro-modal-emojis hidden" id="macro-add-emojis"></div>
       <div class="macro-modal-scan hidden" id="macro-scan-panel">
-        <div class="section-hint">Apunta al código, pulsa “Capturar” y, si no sale, busca manualmente.</div>
-        <div class="section-hint" id="macro-scan-placement-hint">Guía: acerca el producto hasta que el código y el número inferior ocupen gran parte del recuadro y se vean nítidos.</div>
+        <div class="section-hint">Apunta al código, pulsa â€œCapturarâ€ y, si no sale, busca manualmente.</div>
+        <div class="section-hint" id="macro-scan-placement-hint">Guí­a: acerca el producto hasta que el código y el níºmero inferior ocupen gran parte del recuadro y se vean ní­tidos.</div>
         <div class="macro-scan-video-wrap">
           <video id="macro-scan-video" class="macro-scan-video" muted playsinline></video>
           <canvas id="macro-scan-frozen" class="macro-scan-frozen hidden" aria-hidden="true"></canvas>
@@ -352,7 +351,7 @@
           <div class="macro-scan-overlay" aria-hidden="true"></div>
         </div>
         <div class="macro-inline-actions">
-          <button class="btn ghost btn-compact" id="macro-scan-engine-html5" type="button">Abrir cámara</button>
+          <button class="btn ghost btn-compact" id="macro-scan-engine-html5" type="button">Abrir cí¡mara</button>
           <button class="btn ghost btn-compact" id="macro-scan-capture" type="button">Capturar</button>
           <button class="btn ghost btn-compact hidden" id="macro-scan-retry" type="button">Reintentar</button>
           <input id="macro-scan-manual" placeholder="Código de barras" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" />
@@ -376,12 +375,12 @@
             <canvas id="macro-scan-ocr-final" width="160" height="90"></canvas>
           </div>
         </div>
-        <button class="btn primary btn-compact hidden" id="macro-scan-add-product" type="button">+ Añadir producto</button>
+        <button class="btn primary btn-compact hidden" id="macro-scan-add-product" type="button">+ Aí±adir producto</button>
       </div>
       <div class="macro-modal-manual hidden" id="macro-manual-panel">
         <div class="macro-manual-builder">
           <section class="macro-manual-hero">
-            <span class="macro-manual-eyebrow">Alta rápida</span>
+            <span class="macro-manual-eyebrow">Alta rí¡pida</span>
             <h4>Crear alimento manualmente</h4>
             <div class="macro-manual-base-pill">
               <span>Base</span>
@@ -416,7 +415,7 @@
               
             </label>
             <label class="macro-manual-metric macro-manual-metric-protein">
-              <span class="macro-manual-metric-label">Proteína</span>
+              <span class="macro-manual-metric-label">Proteí­na</span>
               <input id="macro-manual-protein" type="number" inputmode="decimal" value="0" />
             </label>
             <label class="macro-manual-metric macro-manual-metric-fat">
@@ -429,7 +428,7 @@
             <label class="macro-manual-nutri">
               <span class="macro-manual-label">Nutri-Score</span>
               <div class="macro-nutri-segmented" id="macro-manual-nutri-segmented" role="group" aria-label="Nutri-Score manual">
-                <button type="button" class="macro-nutri-option is-active" data-nutri-value="">—</button>
+                <button type="button" class="macro-nutri-option is-active" data-nutri-value="">â€”</button>
                 <button type="button" class="macro-nutri-option" data-nutri-value="a">A</button>
                 <button type="button" class="macro-nutri-option" data-nutri-value="b">B</button>
                 <button type="button" class="macro-nutri-option" data-nutri-value="c">C</button>
@@ -450,7 +449,7 @@
     <div class="macro-modal-handle"></div>
 
     <div class="macro-product-topbar">
-      <button class="macro-icon-btn macro-product-topbar-btn" id="macro-product-modal-close" type="button" aria-label="Cerrar">✕</button>
+      <button class="macro-icon-btn macro-product-topbar-btn" id="macro-product-modal-close" type="button" aria-label="Cerrar">âœ•</button>
       <h3 class="macro-product-topbar-title" id="macro-product-modal-title">Producto</h3>
       <button class="macro-icon-btn macro-product-topbar-btn" id="macro-product-edit-toggle" type="button">Editar</button>
     </div>
@@ -475,7 +474,7 @@
 
           <label class="macro-field">
             <span class="macro-label">Emoji</span>
-            <input id="macro-product-emoji" type="text" placeholder="🍎" maxlength="2" />
+            <input id="macro-product-emoji" type="text" placeholder="ðŸŽ" maxlength="2" />
           </label>
         </div>
 
@@ -561,7 +560,7 @@
   <label class="macro-field macro-field-span-2 macro-product-nutri-field">
     <span class="macro-label">Nutri-Score</span>
     <div class="macro-nutri-segmented" id="macro-product-nutri-segmented" role="group" aria-label="Nutri-Score manual">
-      <button type="button" class="macro-nutri-option is-active" data-nutri-value="">—</button>
+      <button type="button" class="macro-nutri-option is-active" data-nutri-value="">â€”</button>
       <button type="button" class="macro-nutri-option" data-nutri-value="a">A</button>
       <button type="button" class="macro-nutri-option" data-nutri-value="b">B</button>
       <button type="button" class="macro-nutri-option" data-nutri-value="c">C</button>
@@ -579,7 +578,7 @@
         
         <div class="macro-grid macro-grid-1">
           <label class="macro-field">
-            <span class="macro-label">Cantidad a añadir</span>
+            <span class="macro-label">Cantidad a aí±adir</span>
             <div class="macro-inline-qty">
               <input id="macro-product-grams" type="number" inputmode="decimal" value="100" />
               <select id="macro-product-grams-unit" class="macro-select">
@@ -625,7 +624,7 @@
 
  <div class="macro-inline-cost-grid">
             <label class="macro-field">
-              <span class="macro-label">Tamaño del paquete</span>
+              <span class="macro-label">Tamaí±o del paquete</span>
               <input id="macro-product-package-amount" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Ej. 1" />
             </label>
             <label class="macro-field">
@@ -640,7 +639,7 @@
               </select>
             </label>
             <label class="macro-field">
-              <span class="macro-label">Precio envase (€)</span>
+              <span class="macro-label">Precio envase (â‚¬)</span>
               <input id="macro-product-price" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Opcional" />
             </label>
           </div>
@@ -659,17 +658,17 @@
 
           <div class="macro-link-row">
             <span class="hint" id="macro-product-finance-hint">Sin producto de Finanzas</span>
-            <button class="macro-btn macro-btn-ghost btn-compact" id="macro-product-finance-unlink" type="button">❌</button>
+            <button class="macro-btn macro-btn-ghost btn-compact" id="macro-product-finance-unlink" type="button">âŒ</button>
           </div>
 
           <label class="macro-field">
-            <span class="macro-label">Vincular a hábito</span>
+            <span class="macro-label">Vincular a hí¡bito</span>
             <select id="macro-product-habit-select" class="macro-select"></select>
           </label>
 
           <div class="macro-link-row">
-            <span class="hint" id="macro-product-habit-hint">Sin hábito vinculado</span>
-            <button class="macro-btn macro-btn-ghost btn-compact" id="macro-product-habit-unlink" type="button">❌</button>
+            <span class="hint" id="macro-product-habit-hint">Sin hí¡bito vinculado</span>
+            <button class="macro-btn macro-btn-ghost btn-compact" id="macro-product-habit-unlink" type="button">âŒ</button>
           </div>
 
 
@@ -680,46 +679,35 @@
     <div class="macro-modal-footer">
       <button class="macro-btn macro-btn-ghost" id="macro-product-cancel" type="button">Cancelar</button>
       <button class="macro-btn macro-btn-ghost" id="macro-product-add-more" type="button">+ sumar</button>
-      <button class="macro-btn macro-btn-primary" id="macro-product-add" type="button">Añadir</button>
+      <button class="macro-btn macro-btn-primary" id="macro-product-add" type="button">Aí±adir</button>
     </div>
   </div>
 </div>
 <!-- MODAL RECETA -->
 <div class="modal-backdrop hidden" id="recipe-modal-backdrop">
-<div class="modal">
+<div class="modal recipe-modal" role="dialog" aria-modal="true" aria-labelledby="recipe-modal-title">
 <div class="modal-handle"></div>
 <div class="modal-header">
 <div class="modal-title" id="recipe-modal-title">Nueva receta</div>
-<button class="icon-btn" id="recipe-modal-close">✕</button>
+<button class="icon-btn" id="recipe-modal-close" type="button" aria-label="Cerrar editor de receta">&#x2715;</button>
 </div>
-<form class="modal-form" id="recipe-form">
+<form class="modal-form recipe-form" id="recipe-form">
 <input id="recipe-id" type="hidden"/>
-<div class="modal-scroll sheet-body">
-<div class="sheet-section">
-<div class="sheet-section-title">Datos clave</div>
-<div class="recipe-import">
-<button class="btn ghost btn-compact" id="recipe-import-toggle" type="button">
-    Importar
-  </button>
-<div class="recipe-import-box hidden" id="recipe-import-box">
-<textarea class="builder-textarea recipe-import-text" id="recipe-import-text" placeholder="Pega aquí el bloque RECETA_V1… (desde ChatGPT)" rows="7"></textarea>
-<div class="recipe-import-actions">
-<button class="btn primary btn-compact" id="recipe-import-btn" type="button">Aplicar</button>
-<button class="btn ghost btn-compact" id="recipe-import-clear" type="button">Limpiar</button>
-<div class="recipe-import-status" id="recipe-import-status"></div>
-</div>
-</div>
-</div>
-<label class="field">
+<div class="modal-scroll sheet-body recipe-editor-body">
+<section class="sheet-section recipe-editor-hero-section">
+<div class="recipe-editor-hero">
+<div class="recipe-editor-hero-main">
+<label class="field recipe-field-title">
 <span class="field-label">Nombre del plato</span>
 <input id="recipe-name" required="" type="text"/>
 </label>
-<label class="field">
+<label class="field recipe-field-emoji">
 <span class="field-label">Emoji</span>
 <input id="recipe-emoji" type="text" maxlength="4" placeholder="🍝"/>
 </label>
-<div class="form-grid row-2">
-<label class="field">
+</div>
+<div class="recipe-editor-quick-grid">
+<label class="field recipe-quick-field">
 <span class="field-label">Tipo de comida</span>
 <select id="recipe-meal" required="">
 <option value="desayuno">Desayuno</option>
@@ -728,15 +716,49 @@
 <option value="snack">Snack</option>
 </select>
 </label>
-<label class="field">
-<span class="field-label">Saludable</span>
+<label class="field recipe-quick-field">
+<span class="field-label">Salud</span>
 <select id="recipe-health" required="">
 <option value="sana">Sana</option>
 <option value="equilibrada">Equilibrada</option>
 <option value="insana">Insana</option>
 </select>
 </label>
+<label class="field recipe-quick-field">
+<span class="field-label">Raciones</span>
+<input id="recipe-servings" min="1" step="1" inputmode="numeric" type="number" value="1"/>
+</label>
+<label class="field recipe-quick-field">
+<span class="field-label">Valoración</span>
+<input id="recipe-rating" max="5" min="0" step="0.5" inputmode="decimal" type="number" value="4"/>
+</label>
+<label class="field recipe-quick-field">
+<span class="field-label">Última vez cocinada</span>
+<input id="recipe-last-cooked" type="date"/>
+</label>
+<label class="favorite-toggle recipe-header-toggle">
+<input id="recipe-favorite" type="checkbox"/>
+<span aria-hidden="true" class="favorite-icon">★</span>
+<span>Favorita</span>
+</label>
+<label class="laura-check recipe-header-toggle">
+<input id="recipe-laura" type="checkbox"/>
+<span aria-hidden="true" class="laura-check-mark"></span>
+<span>Check Laura</span>
+</label>
 </div>
+</div>
+</section>
+<div class="recipe-editor-layout">
+<div class="recipe-editor-sidebar">
+<section class="sheet-section recipe-editor-block">
+<div class="recipe-section-head recipe-section-head-stack">
+<div>
+<div class="sheet-section-title">Datos base</div>
+<p class="section-hint">Campos para encontrar la receta rápido y entenderla de un vistazo.</p>
+</div>
+</div>
+<div class="recipe-base-grid">
 <label class="field">
 <span class="field-label">Etiquetas (separadas por coma)</span>
 <input id="recipe-tags" placeholder="rápida, horno, pasta..." type="text"/>
@@ -745,85 +767,95 @@
 <span class="field-label">País / origen</span>
 <input id="recipe-country" list="country-options" placeholder="Italia, Perú, Estados Unidos..." type="text"/>
 </label>
-<div class="field recipe-photo-field">
-  <span class="field-label">Foto</span>
-  <div class="recipe-photo-wrap">
-    <img id="recipe-image-preview" class="recipe-photo-preview" alt="Foto de la receta" />
-    <div class="recipe-photo-actions">
-      <button class="btn ghost btn-compact" id="recipe-image-camera" type="button">📷 Cámara</button>
-      <button class="btn ghost btn-compact" id="recipe-image-gallery" type="button">🖼️ Galería</button>
-      <button class="btn ghost danger btn-compact" id="recipe-image-remove" type="button">Quitar</button>
-    </div>
-    <div class="hint recipe-photo-status" id="recipe-image-status"></div>
-    <input id="recipe-image-file" type="file" accept="image/*" hidden />
-  </div>
 </div>
-
-<div class="form-grid row-2">
-<label class="field">
-<span class="field-label">Valoración</span>
-<input id="recipe-rating" max="5" min="0" step="0.5" inputmode="decimal" type="number" value="4"/>
-</label>
-<label class="field">
-<span class="field-label">Última vez cocinada</span>
-<input id="recipe-last-cooked" type="date"/>
-</label>
+</section>
+<section class="sheet-section recipe-editor-block recipe-photo-card">
+<div class="recipe-section-head recipe-section-head-stack">
+<div>
+<div class="sheet-section-title">Foto</div>
+<p class="section-hint">Mantén una referencia visual de la receta sin salir del editor.</p>
+</div>
+</div>
+<div class="field recipe-photo-field">
+<div class="recipe-photo-wrap">
+<img id="recipe-image-preview" class="recipe-photo-preview" alt="Foto de la receta" />
+<div class="recipe-photo-actions">
+<button class="btn ghost btn-compact" id="recipe-image-camera" type="button">📷 Cámara</button>
+<button class="btn ghost btn-compact" id="recipe-image-gallery" type="button">🖼️ Galería</button>
+<button class="btn ghost danger btn-compact" id="recipe-image-remove" type="button">Quitar</button>
+</div>
+<div class="hint recipe-photo-status" id="recipe-image-status"></div>
+<input id="recipe-image-file" type="file" accept="image/*" hidden />
+</div>
+</div>
+</section>
+<section class="sheet-section recipe-editor-block">
+<div class="recipe-section-head recipe-section-head-stack">
+<div>
+<div class="sheet-section-title">Notas</div>
+<p class="section-hint">Trucos, acompañamientos o recordatorios que quieras tener a mano.</p>
+</div>
 </div>
 <label class="field">
 <span class="field-label">Notas</span>
-<textarea id="recipe-notes" placeholder="Notas rápidas, truco o acompañamiento..." rows="3"></textarea>
+<textarea id="recipe-notes" placeholder="Notas rápidas, truco o acompañamiento..." rows="6"></textarea>
 </label>
-<div class="form-grid row-2">
-<label class="favorite-toggle">
-<input id="recipe-favorite" type="checkbox"/>
-<span aria-hidden="true" class="favorite-icon">★</span>
-<span>Marcar como favorita</span>
-</label>
-<label class="laura-check">
-<input id="recipe-laura" type="checkbox"/>
-<span aria-hidden="true" class="laura-check-mark"></span>
-<span>Aprobación de Laura</span>
-</label>
-</div>
-</div>
-<div class="sheet-section">
-<div class="sheet-section-title">Receta editable</div>
-<p class="section-hint">Organiza ingredientes y pasos para que aparezcan en el recetario a pantalla completa.</p>
-<div class="form-grid row-2">
-<label class="field">
-<span class="field-label">Raciones</span>
-<input id="recipe-servings" min="1" step="1" inputmode="numeric" type="number" value="1"/>
-</label>
-</div>
-<div class="hint" id="recipe-calc-summary">0 kcal · 0.00 €</div>
-<div class="recipe-builder-grid">
-<div class="recipe-builder-column">
-<div class="builder-header">
+</section>
+<section class="sheet-section recipe-editor-block recipe-import-section">
+<div class="recipe-section-head recipe-section-head-compact">
 <div>
-<div class="builder-title">Ingredientes</div>
-<div class="builder-subtitle">Añade tantos como necesites</div>
+<div class="sheet-section-title">Importar</div>
+<p class="section-hint">Pega un bloque y revísalo antes de guardar.</p>
+</div>
+<button class="btn ghost btn-compact" id="recipe-import-toggle" type="button">Importar</button>
+</div>
+<div class="recipe-import-box hidden" id="recipe-import-box">
+<textarea class="builder-textarea recipe-import-text" id="recipe-import-text" placeholder="Pega aquí el bloque RECETA_V1… (desde ChatGPT)" rows="7"></textarea>
+<div class="recipe-import-actions">
+<button class="btn primary btn-compact" id="recipe-import-btn" type="button">Aplicar</button>
+<button class="btn ghost btn-compact" id="recipe-import-clear" type="button">Limpiar</button>
+<div class="recipe-import-status" id="recipe-import-status"></div>
+</div>
+</div>
+</section>
+</div>
+<div class="recipe-editor-main">
+<section class="sheet-section recipe-editor-block recipe-ingredients-card">
+<div class="recipe-section-head">
+<div>
+<div class="sheet-section-title">Ingredientes</div>
+<p class="section-hint">Cantidad, unidad y texto alineados para editar rápido sin pelearte con la lista.</p>
 </div>
 <button class="btn ghost btn-compact" id="recipe-add-ingredient" type="button">+ Ingrediente</button>
+</div>
+<div class="recipe-builder-summary">
+<div class="hint recipe-calc-summary" id="recipe-calc-summary">0 kcal · 0.00 €</div>
 </div>
 <div class="recipe-ingredient-picker" id="recipe-ingredient-picker">
 <select id="recipe-ingredient-product" class="builder-input"></select>
 <input id="recipe-ingredient-grams" class="builder-input" type="number" min="0" step="1" inputmode="decimal" value="100"/>
 <button class="btn ghost btn-compact" id="recipe-ingredient-add-product" type="button">Añadir producto</button>
 </div>
+<div class="recipe-ingredient-columns" aria-hidden="true">
+<span>Cant.</span>
+<span>Unidad</span>
+<span>Ingrediente</span>
+<span>Acción</span>
+</div>
 <div class="recipe-ingredients-list" id="recipe-ingredients-list"></div>
 <datalist id="recipe-macro-products-list"></datalist>
 <datalist id="recipe-finance-products-list"></datalist>
-</div>
-<div class="recipe-builder-column">
-<div class="builder-header">
+</section>
+<section class="sheet-section recipe-editor-block recipe-steps-card">
+<div class="recipe-section-head">
 <div>
-<div class="builder-title">Pasos</div>
-<div class="builder-subtitle">Título y descripción para cada paso</div>
+<div class="sheet-section-title">Pasos</div>
+<p class="section-hint">Cada paso queda claro y editable; la estructura queda lista para reordenar mejor más adelante.</p>
 </div>
 <button class="btn ghost btn-compact" id="recipe-add-step" type="button">+ Paso</button>
 </div>
 <div class="recipe-steps-list" id="recipe-steps-list"></div>
-</div>
+</section>
 </div>
 </div>
 </div>
@@ -837,7 +869,7 @@
 </div>
 <!-- RECETARIO A PANTALLA COMPLETA -->
 <div class="recipe-detail-backdrop hidden" id="recipe-detail-backdrop">
-<article aria-modal="true" class="recipe-detail-card" role="dialog">
+<article aria-modal="true" aria-labelledby="recipe-detail-title" class="recipe-detail-card" role="dialog" tabindex="-1">
 <header class="recipe-detail-header">
 <div class="recipe-detail-top">
 <div class="recipe-detail-headings">
@@ -848,8 +880,8 @@
 </div>
 </div>
 <div class="recipe-detail-actions">
-<button aria-label="Seguimiento" class="icon-btn icon-btn-large recipe-bookmark-btn" id="recipe-detail-bookmark">🔖</button>
-<button aria-label="Cerrar" class="icon-btn icon-btn-large" id="recipe-detail-close">✕</button>
+<button aria-label="Seguimiento" class="icon-btn icon-btn-large recipe-bookmark-btn" id="recipe-detail-bookmark" type="button">&#x1F516;</button>
+<button aria-label="Cerrar" class="icon-btn icon-btn-large" id="recipe-detail-close" type="button">&#x2715;</button>
 </div>
 </div>
 <div class="recipe-detail-hero" id="recipe-detail-hero" style="display:none;">
@@ -857,7 +889,7 @@
 </div>
 <div class="recipe-detail-specs">
 <div class="spec-block">
-<div class="spec-block-title">Datos rápidos</div>
+<div class="spec-block-title">Datos rí¡pidos</div>
 <div class="spec-grid" id="recipe-detail-meta"></div>
 </div>
 <div class="spec-block">
@@ -885,9 +917,9 @@
 </section>
 </div>
 <div class="recipe-detail-actions-bar">
-<button class="btn primary btn-compact" id="recipe-detail-edit">Editar</button>
-<button class="btn ghost danger btn-compact" id="recipe-detail-delete">Eliminar</button>
-<button class="btn ghost" id="recipe-detail-close-bottom">Cerrar</button>
+<button class="btn primary btn-compact" id="recipe-detail-edit" type="button">Editar</button>
+<button class="btn ghost danger btn-compact" id="recipe-detail-delete" type="button">Eliminar</button>
+<button class="btn ghost" id="recipe-detail-close-bottom" type="button">Cerrar</button>
 </div>
 </article>
 </div>

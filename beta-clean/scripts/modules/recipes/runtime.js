@@ -492,6 +492,33 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   let recipes = loadRecipes();
   let detailRecipeId = null;
+  let recipeModalFocusReturnTarget = null;
+  let recipeDetailFocusReturnTarget = null;
+
+  function isRecipeUiOpen(element) {
+    return !!element && !element.classList.contains("hidden");
+  }
+
+  function syncRecipeModalLayerState() {
+    const shouldLockBody = [
+      $modalBackdrop,
+      $recipeDetailBackdrop,
+      $macroAddModalBackdrop,
+      $macroProductModalBackdrop,
+    ].some((element) => isRecipeUiOpen(element));
+    document.body?.classList.toggle("has-open-modal", shouldLockBody);
+  }
+
+  function captureRecipeFocusTarget() {
+    return document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }
+
+  function restoreRecipeFocus(target) {
+    if (!(target instanceof HTMLElement)) return;
+    try {
+      if (document.contains(target)) target.focus({ preventScroll: true });
+    } catch (_) {}
+  }
 
   const filterState = {
     query: "",
@@ -2398,6 +2425,7 @@ function linkifyNotesHtml(input) {
       }
     });
     spine.tabIndex = 0;
+    spine.setAttribute("role", "button");
     return spine;
   }
 
@@ -2430,6 +2458,19 @@ function linkifyNotesHtml(input) {
         fav.textContent = "★";
         titleRow.appendChild(fav);
       }
+      titleRow.tabIndex = 0;
+      titleRow.setAttribute("role", "button");
+      titleRow.setAttribute("aria-label", `Abrir receta ${formatRecipeTitle(recipe)}`);
+      titleRow.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openRecipeDetail(recipe.id);
+      });
+      titleRow.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        event.stopPropagation();
+        openRecipeDetail(recipe.id);
+      });
       header.appendChild(titleRow);
 
       const rating = document.createElement("div");
@@ -3179,13 +3220,18 @@ requestAnimationFrame(() => $recipesWorldMap?.__geoChart?.resize?.());
 
   function openRecipeModal(recipe = null) {
     if (!$modalBackdrop) return;
-    closeRecipeDetail();
+    recipeModalFocusReturnTarget = captureRecipeFocusTarget();
+    if ($recipeDetailBackdrop?.contains(recipeModalFocusReturnTarget)) {
+      recipeModalFocusReturnTarget = recipeDetailFocusReturnTarget;
+    }
+    closeRecipeDetail({ restoreFocus: false });
     // reset import UI
 if ($recipeImportBox) $recipeImportBox.classList.add("hidden");
 if ($recipeImportText) $recipeImportText.value = "";
 if ($recipeImportStatus) $recipeImportStatus.textContent = "";
 
     $modalBackdrop.classList.remove("hidden");
+    syncRecipeModalLayerState();
     $modalBackdrop.focus?.();
 
     // foto
@@ -3235,11 +3281,18 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     updateRecipeEmojiPlaceholder();
     renderRecipeIngredientProductPicker();
     updateRecipeCalcSummary();
+    try { $recipeName?.focus({ preventScroll: true }); } catch (_) {}
   }
 
-  function closeRecipeModal() {
+  function closeRecipeModal(options = {}) {
+    const { restoreFocus = true } = options;
     clearRecipePhotoObjectUrl();
     if ($modalBackdrop) $modalBackdrop.classList.add("hidden");
+    syncRecipeModalLayerState();
+    if (restoreFocus) {
+      restoreRecipeFocus(recipeModalFocusReturnTarget);
+    }
+    recipeModalFocusReturnTarget = null;
   }
 
   function updateRecipe(id, patch) {
@@ -3416,18 +3469,21 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
         min="0"
         step="0.01"
         inputmode="decimal"
+        aria-label="Cantidad"
         value="${item.qty == null || item.qty === "" ? "" : String(item.qty)}"
       />
       <input
         type="text"
         class="builder-input ingredient-unit"
         placeholder="Unidad"
+        aria-label="Unidad"
         value="${escapeHtml(item.unit || "")}"
       />
       <input
         type="text"
         class="builder-input ingredient-label"
         placeholder="Ingrediente"
+        aria-label="Ingrediente"
         value="${escapeHtml(item.label || item.name || item.text || "")}"
       />
       <button
@@ -3438,27 +3494,34 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     </div>
 
     <div class="ingredient-links-row">
-      <input
-        type="select"
-        class="builder-input ingredient-link-search ingredient-link-macro"
-        placeholder="Vincular macro…"
-        list="recipe-macro-products-list"
-        value="${escapeHtml(macroLinked?.name || "")}"
-      />
-      <input
-        type="select"
-        class="builder-input ingredient-link-search ingredient-link-finance"
-        placeholder="Vincular finanzas…"
-        list="recipe-finance-products-list"
-        value="${escapeHtml(financeLinked?.name || "")}"
-      />
-      
-    </div>
-<button
+      <label class="ingredient-link-field">
+        <span class="ingredient-link-label">Macro</span>
+        <input
+          type="text"
+          class="builder-input ingredient-link-search ingredient-link-macro"
+          placeholder="Buscar producto…"
+          list="recipe-macro-products-list"
+          aria-label="Vincular producto de macros"
+          value="${escapeHtml(macroLinked?.name || "")}"
+        />
+      </label>
+      <label class="ingredient-link-field">
+        <span class="ingredient-link-label">Finanzas</span>
+        <input
+          type="text"
+          class="builder-input ingredient-link-search ingredient-link-finance"
+          placeholder="Buscar gasto…"
+          list="recipe-finance-products-list"
+          aria-label="Vincular producto de finanzas"
+          value="${escapeHtml(financeLinked?.name || "")}"
+        />
+      </label>
+      <button
         type="button"
         class="btn ghost btn-compact ingredient-create-product"
       >Crear macro</button>
-    <div class="ingredient-link-status"></div>
+    </div>
+    <div class="ingredient-link-status" aria-live="polite"></div>
   `;
 
   const qty = row.querySelector(".ingredient-qty");
@@ -3473,12 +3536,10 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
 
   const renderIngredientLinkState = () => {
     const chips = [];
-    if (!String(row.dataset.productId || "").trim()) {
-      chips.push('<span class="ingredient-link-chip">Sin macro</span>');
-    }
-    if (!String(row.dataset.financeProductId || "").trim()) {
-      chips.push('<span class="ingredient-link-chip">Sin finanzas</span>');
-    }
+    const linkedMacro = nutritionProducts.find((p) => p.id === String(row.dataset.productId || "").trim());
+    const linkedFinance = financeProducts.find((f) => f.id === String(row.dataset.financeProductId || "").trim());
+    chips.push(`<span class="ingredient-link-chip${linkedMacro ? " is-linked" : ""}">${linkedMacro ? `Macro: ${escapeHtml(linkedMacro.name || macroInput.value || "vinculado")}` : "Sin macro"}</span>`);
+    chips.push(`<span class="ingredient-link-chip${linkedFinance ? " is-linked" : ""}">${linkedFinance ? `Finanzas: ${escapeHtml(linkedFinance.name || financeInput.value || "vinculado")}` : "Sin finanzas"}</span>`);
     status.innerHTML = chips.join("");
   };
 
@@ -3544,32 +3605,47 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     const top = document.createElement("div");
     top.className = "step-row-top";
 
+    const index = document.createElement("span");
+    index.className = "step-row-index";
+    index.setAttribute("aria-hidden", "true");
+
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.className = "builder-check";
     checkbox.checked = !!item.done;
+    checkbox.setAttribute("aria-label", "Paso completado");
 
     const title = document.createElement("input");
     title.type = "text";
     title.placeholder = "Título del paso";
     title.value = item.title || "";
-    title.className = "builder-input";
+    title.className = "builder-input step-title-input";
+    title.setAttribute("aria-label", "Título del paso");
+
+    const grip = document.createElement("span");
+    grip.className = "step-row-grip";
+    grip.textContent = "⋮⋮";
+    grip.setAttribute("aria-hidden", "true");
 
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.className = "icon-btn-eliminar-comida";
+    remove.className = "icon-btn icon-btn-small step-remove";
+    remove.setAttribute("aria-label", "Eliminar paso");
     remove.textContent = "✕";
     remove.addEventListener("click", () => row.remove());
 
-    top.appendChild(checkbox);
+    top.appendChild(index);
+    top.appendChild(grip);
     top.appendChild(title);
+    top.appendChild(checkbox);
     top.appendChild(remove);
 
     const desc = document.createElement("textarea");
-    desc.rows = 2;
+    desc.rows = 3;
     desc.placeholder = "Descripción del paso";
     desc.value = item.description || "";
-    desc.className = "builder-textarea";
+    desc.className = "builder-textarea step-description-input";
+    desc.setAttribute("aria-label", "Descripción del paso");
 
     row.appendChild(top);
     row.appendChild(desc);
@@ -3613,9 +3689,9 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
     return Array.from($recipeStepsList.querySelectorAll(".step-row"))
       .map((row) => ({
         id: row.dataset.id || generateId(),
-        title: row.querySelector("input[type='text']")?.value.trim() || "",
-        description: row.querySelector("textarea")?.value.trim() || "",
-        done: row.querySelector("input[type='checkbox']")?.checked || false,
+        title: row.querySelector(".step-title-input")?.value.trim() || "",
+        description: row.querySelector(".step-description-input")?.value.trim() || "",
+        done: row.querySelector(".builder-check")?.checked || false,
       }))
       .filter((step) => step.title || step.description);
   }
@@ -3623,12 +3699,14 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
   function openRecipeDetail(id) {
     const recipe = recipes.find((r) => r.id === id);
     if (!recipe || !$recipeDetailBackdrop) return;
+    recipeDetailFocusReturnTarget = captureRecipeFocusTarget();
     detailRecipeId = id;
     try { localStorage.setItem("bookshell.lastRecipeId", String(id)); } catch (_) {}
     try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
-    $recipeDetailBackdrop.classList.remove("hidden");
     renderRecipeDetail(id);
-    
+    $recipeDetailBackdrop.classList.remove("hidden");
+    syncRecipeModalLayerState();
+    try { $recipeDetailClose?.focus({ preventScroll: true }); } catch (_) {}
   }
 
   // === API para Dashboard (Inicio) ===
@@ -3882,9 +3960,15 @@ notesRow.innerHTML = `<div class="spec-label">Notas</div><div class="spec-value"
   }
 
 
-  function closeRecipeDetail() {
+  function closeRecipeDetail(options = {}) {
+    const { restoreFocus = true } = options;
     if ($recipeDetailBackdrop) $recipeDetailBackdrop.classList.add("hidden");
     detailRecipeId = null;
+    syncRecipeModalLayerState();
+    if (restoreFocus) {
+      restoreRecipeFocus(recipeDetailFocusReturnTarget);
+    }
+    recipeDetailFocusReturnTarget = null;
   }
 
   function setActiveRecipePanel(target = "ingredients") {
@@ -4160,17 +4244,29 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 });
 
-  $modalClose?.addEventListener("click", closeRecipeModal);
-  $modalCancel?.addEventListener("click", closeRecipeModal);
+  $modalClose?.addEventListener("click", (e) => {
+    try { e.preventDefault(); } catch (_) {}
+    closeRecipeModal();
+  });
+  $modalCancel?.addEventListener("click", (e) => {
+    try { e.preventDefault(); } catch (_) {}
+    closeRecipeModal();
+  });
   $modalBackdrop?.addEventListener("click", (e) => {
     if (e.target === $modalBackdrop) closeRecipeModal();
   });
   $recipeForm?.addEventListener("submit", upsertRecipeFromForm);
   $recipeAddIngredient?.addEventListener("click", () => {
-    $recipeIngredientsList?.appendChild(buildIngredientRow());
+    const row = buildIngredientRow();
+    $recipeIngredientsList?.appendChild(row);
     updateRecipeCalcSummary();
+    try { row.querySelector(".ingredient-label")?.focus({ preventScroll: false }); } catch (_) {}
   });
-  $recipeAddStep?.addEventListener("click", () => $recipeStepsList?.appendChild(buildStepRow()));
+  $recipeAddStep?.addEventListener("click", () => {
+    const row = buildStepRow();
+    $recipeStepsList?.appendChild(row);
+    try { row.querySelector(".step-title-input")?.focus({ preventScroll: false }); } catch (_) {}
+  });
   $recipeIngredientAddProduct?.addEventListener("click", () => {
     const productId = String($recipeIngredientProduct?.value || "").trim();
     if (!productId) return;
@@ -4179,11 +4275,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     const grams = Math.max(0, Number($recipeIngredientGrams?.value) || 0) || 100;
     const label = `${product.name}${product.brand ? ` (${product.brand})` : ""} ${Math.round(grams)}g`;
     const recipeIngredient = buildRecipeIngredientFromProduct(product, { id: generateId(), text: label, label: product.name || label, qty: grams, unit: "g", productId, done: false });
-    $recipeIngredientsList?.appendChild(buildIngredientRow(recipeIngredient));
+    const row = buildIngredientRow(recipeIngredient);
+    $recipeIngredientsList?.appendChild(row);
 
     if ($recipeIngredientProduct) $recipeIngredientProduct.value = "";
     if ($recipeIngredientGrams) $recipeIngredientGrams.value = "100";
     updateRecipeCalcSummary();
+    try { row.querySelector(".ingredient-label")?.focus({ preventScroll: false }); } catch (_) {}
   });
   $recipeServings?.addEventListener("input", updateRecipeCalcSummary);
   $recipeDelete?.addEventListener("click", () => {
@@ -4232,6 +4330,18 @@ $recipeImportBtn?.addEventListener("click", () => {
   $recipeDetailCloseBottom?.addEventListener("click", closeRecipeDetail);
   $recipeDetailBackdrop?.addEventListener("click", (e) => {
     if (e.target === $recipeDetailBackdrop) closeRecipeDetail();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (isRecipeUiOpen($recipeDetailBackdrop)) {
+      try { event.preventDefault(); } catch (_) {}
+      closeRecipeDetail();
+      return;
+    }
+    if (isRecipeUiOpen($modalBackdrop)) {
+      try { event.preventDefault(); } catch (_) {}
+      closeRecipeModal();
+    }
   });
   $recipeDetailEdit?.addEventListener("click", () => {
     if (!detailRecipeId) return;
@@ -5762,8 +5872,8 @@ $recipeImportBtn?.addEventListener("click", () => {
     macroModalState.source = "emojis";
     resetMacroManualForm();
     if ($macroAddSearch) $macroAddSearch.value = "";
-    document.body.classList.add("has-open-modal");
     $macroAddModalBackdrop?.classList.remove("hidden");
+    syncRecipeModalLayerState();
     renderMacroModalResults();
     updateMacroAddModalViewportPadding();
     try { $macroAddSearch?.focus(); } catch (_) {}
@@ -5773,9 +5883,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     try { stopMacroBarcodeScan(); } catch (_) {}
     $macroAddModalBackdrop?.classList.add("hidden");
     resetMacroAddModalViewportPadding();
-    if (!$macroProductModalBackdrop || $macroProductModalBackdrop.classList.contains("hidden")) {
-      document.body.classList.remove("has-open-modal");
-    }
+    syncRecipeModalLayerState();
   }
 
   let _macroProductMeal = "breakfast";
@@ -5797,9 +5905,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function closeMacroProductModal() {
     $macroProductModalBackdrop?.classList.add("hidden");
-    if (!$macroAddModalBackdrop || $macroAddModalBackdrop.classList.contains("hidden")) {
-      document.body.classList.remove("has-open-modal");
-    }
+    syncRecipeModalLayerState();
     _macroProductDraft = null;
     _macroProductRecipeIngredientTarget = null;
     setMacroProductEntryTarget(null);
@@ -6270,11 +6376,11 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroProductPackWeight) $macroProductPackWeight.value = "";
     if ($macroProductPackUnits) $macroProductPackUnits.value = "";
     if ($macroProductPackConsumed) $macroProductPackConsumed.value = "";
-    document.body.classList.add("has-open-modal");
     syncMacroProductUnitSuggestion({ force: shouldDefaultToUnitWeight });
     updateWeightDiffUnitLabels();
 
     $macroProductModalBackdrop.classList.remove("hidden");
+    syncRecipeModalLayerState();
     renderMacroProductSummary();
     try { $macroProductGrams?.focus(); } catch (_) {}
   }
@@ -6503,13 +6609,9 @@ $recipeImportBtn?.addEventListener("click", () => {
       }
     });
     
-    // Ordenar emojis por uso (descendente)
+    // Ordenar emojis por uso total (descendente)
     const sortedEmojis = Object.values(emojiGroups)
-      .sort((a, b) => {
-        if (a.totalUse !== b.totalUse) return b.totalUse - a.totalUse;
-        if (a.lastUse !== b.lastUse) return b.lastUse - a.lastUse;
-        return 0;
-      });
+      .sort((a, b) => b.totalUse - a.totalUse);
     
     // Renderizar los emojis
     const emojiButtonsHtml = sortedEmojis
@@ -6993,7 +7095,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   const MACRO_SCAN_NO_RESULT_LOG_EVERY_MS = 6000;
   const MACRO_SCAN_LAYOUT_LOG_EVERY_MS = 1600;
-  // No bloqueamos lecturas "repetidas" durante segundos: solo una ventana pequeÃ±a para evitar spam por frame.
+  // No bloqueamos lecturas "repetidas" durante segundos: solo una ventana pequeí±a para evitar spam por frame.
   const MACRO_SCAN_REPEAT_BLOCK_MS = 220;
   const MACRO_SCAN_LOOKUP_COOLDOWN_MS = 1800; // obligatorio: anti-duplicados (mismo código ~2s)
   const MACRO_SCAN_LOOKUP_TIMEOUT_MS = 6500;
@@ -7266,7 +7368,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     _macroScanNoResultLastAt[key] = now;
     if (_macroScanRunning && _macroScanEngine === key) setMacroScanStatus("Buscando codigo...");
     // No es un error: es simplemente "sin lectura" en este frame.
-    // Para evitar spam visual, solo lo mostramos en el panel si estÃ¡ activado el debug.
+    // Para evitar spam visual, solo lo mostramos en el panel si estí¡ activado el debug.
     const short = String(detail || "").slice(0, 120);
     if (!MACRO_SCAN_DEBUG) {
       try { console.info("[scanner] sin lectura (frame)", { engine: key }); } catch (_) {}
@@ -8384,9 +8486,9 @@ $recipeImportBtn?.addEventListener("click", () => {
     _macroScanLastAt = now;
     logMacroEvent(["scanner", "decode"], "código detectado", { engine, code: clean }, "info");
     if ($macroScanManual) $macroScanManual.value = clean;
-    setMacroScanStatus(`CÃ³digo detectado: ${clean}`);
+    setMacroScanStatus(`Código detectado: ${clean}`);
 
-    // La detecciÃ³n debe ser rÃ¡pida: hacemos la bÃºsqueda en segundo plano y no detenemos el escÃ¡ner.
+    // La detección debe ser rí¡pida: hacemos la bíºsqueda en segundo plano y no detenemos el escí¡ner.
     try {
       _macroScanLookupQueued = { barcode: clean, options: { fromManual: false, sourceEngine: engine } };
       if (_macroScanLookupTimer) {
@@ -8425,7 +8527,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         _macroScanViewfinderPx = { width: vfW, height: vfH };
 
         // Banda horizontal (retail) para EAN/UPC: muy ancha, poco alta.
-        // Evitamos clamps agresivos para que overlay y regiÃ³n real no diverjan en pantallas grandes/pequeÃ±as.
+        // Evitamos clamps agresivos para que overlay y región real no diverjan en pantallas grandes/pequeí±as.
         const width = Math.max(260, Math.min(Math.round(vfW * 0.92), vfW));
         const height = Math.max(84, Math.min(Math.round(vfH * 0.22), 160));
         const left = Math.max(0, Math.round((vfW - width) / 2));
@@ -8925,7 +9027,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
     logLookup("handleDetectedBarcode", { barcode: clean, fromManual, sourceEngine });
 
-    // Evita repetir la misma bÃºsqueda en bucle mientras apuntas al mismo cÃ³digo.
+    // Evita repetir la misma bíºsqueda en bucle mientras apuntas al mismo código.
     const now = Date.now();
     if (!fromManual && clean === _macroScanLastLookupCode && (now - (_macroScanLastLookupAt || 0)) < MACRO_SCAN_LOOKUP_COOLDOWN_MS) {
       logLookup("ignorado por cooldown", { barcode: clean, cooldownMs: MACRO_SCAN_LOOKUP_COOLDOWN_MS });

@@ -148,7 +148,7 @@ function renderViewUnavailableFallback(root, viewId, message = "") {
     eyebrow,
     message: fallbackDetail,
   }, isOnline ? "warn" : "info");
-  const detail = String(message || "").trim() || "El contenido de esta vista no estÃ¡ disponible sin conexiÃ³n en este dispositivo.";
+  const detail = String(message || "").trim() || "El contenido de esta vista no estí¡ disponible sin conexión en este dispositivo.";
   root.innerHTML = `
     <section class="shell-view-fallback">
       <p class="shell-view-fallback-eyebrow">${escapeHtml(eyebrow)}</p>
@@ -257,7 +257,7 @@ function renderGlobalSyncIndicator(snapshot) {
     text = `${snapshot.totalCount} pendiente${snapshot.totalCount === 1 ? "" : "s"}`;
     tone = snapshot?.rtdbConnected ? "pending" : "offline";
   } else if (!snapshot?.appOnline || !snapshot?.rtdbConnected) {
-    text = "Sin conexiÃ³n";
+    text = "Sin conexión";
     tone = "offline";
   }
 
@@ -622,7 +622,7 @@ async function ensureViewShell(viewId, { highPriority = false } = {}) {
             viewId,
             navigator.onLine
               ? "No se pudo reconstruir esta vista ahora mismo. Puedes seguir usando el resto de la app."
-              : "Esta vista no estÃ¡ cacheada todavÃ­a. Cuando vuelvas a tener red se cargarÃ¡ automÃ¡ticamente.",
+              : "Esta vista no estí¡ cacheada todaví­a. Cuando vuelvas a tener red se cargarí¡ automí¡ticamente.",
           );
           recordViewMetrics(viewId, {
             shellLoadMs: Math.round(performance.now() - shellStartedAt),
@@ -690,7 +690,7 @@ async function ensureViewModule(viewId, { runOnShow = true, highPriority = false
           viewId,
           navigator.onLine
             ? "Esta vista no se pudo inicializar ahora mismo. Si acabas de actualizar la app, recarga para refrescar los modulos en cache."
-            : "La shell estÃ¡ disponible, pero esta vista necesita recursos que aÃºn no se han cacheado.",
+            : "La shell estí¡ disponible, pero esta vista necesita recursos que aíºn no se han cacheado.",
         );
         recordViewMetrics(viewId, {
           moduleReadyAt: Date.now(),

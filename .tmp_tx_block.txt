@@ -5,7 +5,7 @@
   
   `<div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1">
     <header class="fm-modal__header fin-move-header">
-      <h3 class="fm-modal__title fin-move-title">${txEdit ? 'Editar movimiento' : 'AÃ±adir movimiento'}</h3>
+      <h3 class="fm-modal__title fin-move-title">${txEdit ? 'Editar movimiento' : 'Aí±adir movimiento'}</h3>
       
       <button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button>
     </header>
@@ -66,7 +66,7 @@
       <div class="fm-grid fm-grid--meta fin-move-grid fin-move-grid--meta">
 
         <div class="fm-field financeRoi__field">
-          <label class="fm-label" for="fm-tx-linked-habit">Vincular a hÃ¡bito (opcional)</label>
+          <label class="fm-label" for="fm-tx-linked-habit">Vincular a hí¡bito (opcional)</label>
           <select id="fm-tx-linked-habit" class="fm-control fm-control--select" name="linkedHabitId" data-linked-habit-select>
             <option value="">Sin vincular</option>
             ${habitOptions.map((habit) => `<option value="${escapeHtml(habit.id)}" ${defaultLinkedHabitId === habit.id ? 'selected' : ''}>${escapeHtml(habit.name)}</option>`).join('')}
@@ -74,9 +74,9 @@
         </div>
 
         <div class="fm-field financeRoi__field" data-allocation-block ${defaultLinkedHabitId ? '' : 'hidden'}>
-          <label class="fm-label" for="fm-tx-allocation-mode">DistribuciÃ³n</label>
+          <label class="fm-label" for="fm-tx-allocation-mode">Distribución</label>
           <select id="fm-tx-allocation-mode" class="fm-control fm-control--select" name="allocationMode" data-allocation-mode>
-            <option value="point" ${defaultAllocation.mode === 'point' ? 'selected' : ''}>Puntual (solo ese dÃ­a)</option>
+            <option value="point" ${defaultAllocation.mode === 'point' ? 'selected' : ''}>Puntual (solo ese dí­a)</option>
             <option value="month" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'month') ? 'selected' : ''}>Mensual</option>
             <option value="week" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'week') ? 'selected' : ''}>Semanal</option>
             <option value="year" ${(defaultAllocation.mode === 'period' && defaultAllocation.period === 'year') ? 'selected' : ''}>Anual</option>
@@ -93,12 +93,12 @@
         </div>
 
         <div class="fm-field fm-field--category fin-move-field" data-category-block>
-        <label class="fm-label-categoria" for="fm-tx-category">CategorÃ­a</label>
+        <label class="fm-label-categoria" for="fm-tx-category">Categorí­a</label>
 
         <select id="fm-tx-category" class="fm-control fm-control--category fm-control--select fin-move-select" name="category">
         <option value="">Seleccionar</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
         
-        <div class="fin-move-inline"><input class="fm-control fin-move-input" type="text" placeholder="Nueva categorÃ­a" data-category-new />
+        <div class="fin-move-inline"><input class="fm-control fin-move-input" type="text" placeholder="Nueva categorí­a" data-category-new />
         
         <button type="button" class="finance-anadir-categoria" data-category-create>+</button></div></div>
         
@@ -114,13 +114,13 @@
         <div data-personal-ratio-wrap hidden>
           <label class="fm-label" for="fm-tx-personal-ratio-mode">Mi porcentaje</label>
           <select id="fm-tx-personal-ratio-mode" class="fm-control fm-control--select" name="personalRatioMode" data-personal-ratio-mode>
-            <option value="auto" ${defaultPersonalRatioMode === 'auto' ? 'selected' : ''}>AutomÃ¡tico</option>
+            <option value="auto" ${defaultPersonalRatioMode === 'auto' ? 'selected' : ''}>Automí¡tico</option>
             <option value="custom" ${defaultPersonalRatioMode === 'custom' ? 'selected' : ''}>Manual</option>
           </select>
           <div data-personal-ratio-manual-wrap hidden>
             <input class="fm-control" type="range" min="0" max="100" step="1" name="personalRatioPercent" data-personal-ratio-percent value="${escapeHtml(defaultPersonalRatioPercent || '50')}"/>
           </div>
-          <small>Imputado a mÃ­: <strong data-personal-ratio-preview>â€”</strong></small>
+          <small>Imputado a mí­: <strong data-personal-ratio-preview>â€”</strong></small>
         </div>
       </div>
 
@@ -136,14 +136,14 @@
       <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-paste>ðŸ“‹ Pegar</button>
       <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-sample>Pegar ejemplo</button>
       <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-cancel>Cancel</button>
-      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-copy-diagnostic>Copiar diagnÃ³stico</button>
+      <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-copy-diagnostic>Copiar diagnóstico</button>
     </div>
     <textarea name="ticketImportRaw" data-ticket-import-raw rows="10" autocapitalize="off" autocorrect="off" spellcheck="false" style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escapeHtml(ticketImportState.raw || '')}</textarea>
     <p class="finance-help" style="margin:6px 0 0 0;">raw.length=${rawText.length} Â· head=${escapeHtml(rawPreviewHead)}${rawPreviewTail ? ` Â· tail=${escapeHtml(rawPreviewTail)}` : ''}</p>
     ${ticketImportState.error ? `<p class="is-negative">${escapeHtml(ticketImportState.error)}</p>` : ''}
     ${diagnostic ? `
       <div class="finance-mini-list" style="margin-top:8px;max-height:220px;overflow:auto;">
-        <p><strong>DiagnÃ³stico</strong></p>
+        <p><strong>Diagnóstico</strong></p>
         <p>stage: ${escapeHtml(String(diagnostic.stage || 'unknown'))}</p>
         <p>raw.length: ${Number(diagnostic.raw_length || rawText.length)}</p>
         <p>sanitized.length: ${Number(diagnostic.sanitized_length || 0)}</p>
@@ -198,7 +198,7 @@
   <select name="recurringFrequency"><option value="monthly">Mensual</option></select>
 </div>
 <div class="seleccion-programacion">
-  <input type="number" name="recurringDay" min="1" max="31" placeholder="DÃ­a del mes" value="${escapeHtml(txEdit?.schedule?.dayOfMonth || "")}"/>
+  <input type="number" name="recurringDay" min="1" max="31" placeholder="Dí­a del mes" value="${escapeHtml(txEdit?.schedule?.dayOfMonth || "")}"/>
   
   <input type="date" name="recurringStart" value="${escapeHtml(txEdit?.schedule?.startDate || defaultDate)}"/>
   

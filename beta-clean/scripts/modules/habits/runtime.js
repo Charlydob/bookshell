@@ -12661,7 +12661,7 @@ function persistHabitGroup(group) {
     payload: group,
     writeType: "set",
     dedupeKey: `habit-group:${group.id}`,
-  }).then((result) => reportQueuedWriteError("No se pudo guardar grupo de hÃ¡bitos", result));
+  }).then((result) => reportQueuedWriteError("No se pudo guardar grupo de hí¡bitos", result));
 }
 
 function removeHabitGroupRemote(groupId) {
@@ -12675,7 +12675,7 @@ function removeHabitGroupRemote(groupId) {
     payload: null,
     writeType: "set",
     dedupeKey: `habit-group:${groupId}`,
-  }).then((result) => reportQueuedWriteError("No se pudo borrar grupo de hÃ¡bitos", result));
+  }).then((result) => reportQueuedWriteError("No se pudo borrar grupo de hí¡bitos", result));
 }
 
 function persistHabitPrefs() {
@@ -12689,7 +12689,7 @@ function persistHabitPrefs() {
     payload: habitPrefs || {},
     writeType: "set",
     dedupeKey: "habit-prefs",
-  }).then((result) => reportQueuedWriteError("No se pudo guardar preferencias de hÃ¡bitos", result));
+  }).then((result) => reportQueuedWriteError("No se pudo guardar preferencias de hí¡bitos", result));
 }
 
 function saveUI(partial = {}) {
@@ -12705,7 +12705,7 @@ function saveUI(partial = {}) {
     payload: merged.quickCounters || [],
     writeType: "set",
     dedupeKey: "habit-ui-quick-counters",
-  }).then((result) => reportQueuedWriteError("No se pudo guardar UI de hÃ¡bitos", result));
+  }).then((result) => reportQueuedWriteError("No se pudo guardar UI de hí¡bitos", result));
   renderQuickCounters();
 }
 
@@ -12775,7 +12775,7 @@ function persistHabitCheck(habitId, dateKey, value) {
     writeType: "set",
     dedupeKey: `habit-check:${habitId}:${dateKey}`,
     metadata: { habitId, dateKey },
-  }).then((result) => reportQueuedWriteError("No se pudo sincronizar check de hÃ¡bito", result));
+  }).then((result) => reportQueuedWriteError("No se pudo sincronizar check de hí¡bito", result));
 }
 
 function persistHabitCount(habitId, dateKey, value) {
@@ -12804,7 +12804,7 @@ function persistHabit(habit) {
     payload: habit,
     writeType: "set",
     dedupeKey: `habit:${habit.id}`,
-  }).then((result) => reportQueuedWriteError("No se pudo guardar hÃ¡bito en remoto", result));
+  }).then((result) => reportQueuedWriteError("No se pudo guardar hí¡bito en remoto", result));
 }
 
 function removeHabitRemote(habitId) {
@@ -12818,7 +12818,7 @@ function removeHabitRemote(habitId) {
     payload: null,
     writeType: "set",
     dedupeKey: `habit:${habitId}`,
-  }).then((result) => reportQueuedWriteError("No se pudo borrar hÃ¡bito remoto", result));
+  }).then((result) => reportQueuedWriteError("No se pudo borrar hí¡bito remoto", result));
 }
 
 function incrementCounterHabit(habitId) {
@@ -12908,7 +12908,7 @@ async function patchSession(sessionId, patch = {}) {
       saveCache();
       updateSessionUI();
     }
-    console.warn("No se pudo actualizar la sesiÃ³n activa", result?.error);
+    console.warn("No se pudo actualizar la sesión activa", result?.error);
   }
 }
 
@@ -12955,7 +12955,7 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
       updateSessionUI();
       updateCompareLiveInterval();
     }
-    console.warn("No se pudo parar la sesiÃ³n activa", result?.error);
+    console.warn("No se pudo parar la sesión activa", result?.error);
     return;
   }
 
@@ -12980,7 +12980,7 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
     localStorage.setItem(LAST_HABIT_KEY, target);
     pendingSessionDuration = 0;
     invalidateHabitRenderCaches();
-    if (!silent) showHabitToast(`Asignado: ${habits[target]?.name || "hÃ¡bito"} Â· ${Math.round(duration / 60)}m`);
+    if (!silent) showHabitToast(`Asignado: ${habits[target]?.name || "hí¡bito"} Â· ${Math.round(duration / 60)}m`);
     closeSessionModal?.();
     renderHabits();
     return;
@@ -12994,7 +12994,7 @@ async function cancelRunningSession({ requireConfirm = true, sessionId = running
   const session = sessionId ? activeSessions?.[sessionId] : null;
   if (!session) return false;
   if (requireConfirm) {
-    const ok = window.confirm("Â¿Cancelar esta sesiÃ³n activa? Se perderÃ¡ el tiempo en curso y no se registrarÃ¡.");
+    const ok = window.confirm("Â¿Cancelar esta sesión activa? Se perderí¡ el tiempo en curso y no se registrarí¡.");
     if (!ok) return false;
   }
 
@@ -13026,12 +13026,12 @@ async function cancelRunningSession({ requireConfirm = true, sessionId = running
       updateSessionUI();
       updateCompareLiveInterval();
     }
-    console.warn("No se pudo cancelar la sesiÃ³n activa", result?.error);
+    console.warn("No se pudo cancelar la sesión activa", result?.error);
     return false;
   }
 
   scheduleCompareRefresh("session:cancel");
-  showHabitToast("SesiÃ³n cancelada");
+  showHabitToast("Sesión cancelada");
   return true;
 }
 

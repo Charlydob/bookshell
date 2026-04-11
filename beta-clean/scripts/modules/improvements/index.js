@@ -2434,7 +2434,7 @@ function renderPerformanceWindow() {
     : (Number(sync.totalCount) || 0) > 0
       ? `${sync.totalCount} pendiente${sync.totalCount === 1 ? "" : "s"}`
       : (!sync.appOnline || !sync.rtdbConnected)
-        ? "Sin conexiÃ³n"
+        ? "Sin conexión"
         : "Sincronizado";
 
   els.performanceSync.innerHTML = `

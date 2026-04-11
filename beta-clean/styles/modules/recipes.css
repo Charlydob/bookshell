@@ -4047,7 +4047,8 @@ div#macros-inputs.macro-manual-macro-grid{
   background:
     radial-gradient(circle at top left, rgba(249, 194, 93, 0.12), transparent 34%),
     linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
-}
+  height: 100px;
+  }
 
 .recipe-editor-hero {
   display: grid;
@@ -4156,6 +4157,7 @@ div#macros-inputs.macro-manual-macro-grid{
 
 .recipe-base-grid {
   display: grid;
+  grid-template-columns: repeat(2, 1fr );
   gap: 10px;
 }
 
@@ -4505,7 +4507,7 @@ div#macros-inputs.macro-manual-macro-grid{
   }
 
   .ingredient-links-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
   }
 
   .ingredient-create-product {

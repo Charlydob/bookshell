@@ -6570,7 +6570,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         return `<option value="${escapeHtml(p.id)}">${escapeHtml(label)}</option>`;
       })
       .join("");
-    $recipeIngredientProduct.innerHTML = `<option value="">Añadir desde productosâ€¦</option>${options}`;
+    $recipeIngredientProduct.innerHTML = `<option value="">Añadir desde productos</option>${options}`;
     if ($recipeIngredientGrams && !$recipeIngredientGrams.value) $recipeIngredientGrams.value = "100";
   }
 

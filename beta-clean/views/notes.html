@@ -1,0 +1,136 @@
+<div class="notes-view" id="notes-view-root">
+  <section class="notes-screen" id="notes-folders-screen">
+    <header class="notes-header-row">
+      <h2 class="notes-title">Notas</h2>
+      <button class="btn primary notes-create-folder" id="notes-btn-new-folder" type="button">Nueva carpeta</button>
+    </header>
+
+    <div class="notes-search-wrap">
+      <input class="filter-search-input" id="notes-search-folders" type="search" placeholder="Buscar carpetas..." autocomplete="off" />
+    </div>
+
+    <div class="notes-folder-list" id="notes-folder-list"></div>
+  </section>
+
+  <section class="notes-screen hidden" id="notes-folder-screen">
+    <header class="notes-folder-head">
+      <button class="icon-btn icon-btn-large" id="notes-btn-back" type="button">←</button>
+      <div class="notes-folder-head-copy">
+        <h2 id="notes-folder-name">Carpeta</h2>
+        <p id="notes-folder-count">0 notas</p>
+      </div>
+    </header>
+
+    <div class="notes-folder-actions-top">
+      <button class="btn primary" id="notes-btn-new-note" type="button">Nueva nota</button>
+    </div>
+
+    <div class="notes-search-wrap">
+      <input class="filter-search-input" id="notes-search-notes" type="search" placeholder="Buscar notas..." autocomplete="off" />
+    </div>
+
+    <div class="notes-cards-list" id="notes-cards-list"></div>
+    <div class="empty-state hidden" id="notes-empty-folder">Esta carpeta no tiene notas todavía.</div>
+  </section>
+</div>
+
+<div class="modal-backdrop hidden" id="notes-folder-modal-backdrop">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title" id="notes-folder-modal-title">Nueva carpeta</div>
+      <button class="icon-btn" id="notes-folder-modal-close" type="button">✕</button>
+    </div>
+    <form class="modal-form" id="notes-folder-form">
+      <input type="hidden" id="notes-folder-id" />
+      <div class="modal-scroll">
+        <label class="field">
+          <span class="field-label">Nombre</span>
+          <input id="notes-folder-name-input" type="text" required />
+        </label>
+
+        <label class="field">
+          <span class="field-label">Color</span>
+          <input id="notes-folder-color" type="color" value="#00d4ff" />
+        </label>
+
+        <label class="toggle-pill notes-toggle-field">
+          <input id="notes-folder-private" type="checkbox" />
+          <span>Carpeta privada</span>
+        </label>
+
+        <label class="field hidden" id="notes-folder-pin-wrap">
+          <span class="field-label">PIN (4 dígitos)</span>
+          <input id="notes-folder-pin" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" />
+        </label>
+
+        <p class="notes-form-error" id="notes-folder-form-error"></p>
+      </div>
+      <div class="notes-modal-actions">
+        <button class="btn primary" type="submit">Guardar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="notes-note-modal-backdrop">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title" id="notes-note-modal-title">Nueva nota</div>
+      <button class="icon-btn" id="notes-note-modal-close" type="button">✕</button>
+    </div>
+    <form class="modal-form" id="notes-note-form">
+      <input type="hidden" id="notes-note-id" />
+      <input type="hidden" id="notes-note-folder-id" />
+      <div class="modal-scroll">
+        <label class="field">
+          <span class="field-label">Título</span>
+          <input id="notes-note-title" type="text" required />
+        </label>
+
+        <label class="field">
+          <span class="field-label">Contenido</span>
+          <textarea id="notes-note-content" rows="5"></textarea>
+        </label>
+
+        <label class="toggle-pill notes-toggle-field">
+          <input id="notes-note-is-link" type="checkbox" />
+          <span>Es link</span>
+        </label>
+
+        <label class="field hidden" id="notes-note-url-wrap">
+          <span class="field-label">URL</span>
+          <input id="notes-note-url" type="url" placeholder="https://..." />
+        </label>
+
+        <p class="notes-form-error" id="notes-note-form-error"></p>
+      </div>
+      <div class="notes-modal-actions">
+        <button class="btn primary" type="submit">Guardar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="notes-pin-modal-backdrop">
+  <div class="modal notes-pin-modal">
+    <div class="modal-header">
+      <div class="modal-title">Carpeta privada</div>
+      <button class="icon-btn" id="notes-pin-modal-close" type="button">✕</button>
+    </div>
+    <form class="modal-form" id="notes-pin-form">
+      <input type="hidden" id="notes-pin-folder-id" />
+      <div class="modal-body">
+        <label class="field">
+          <span class="field-label">Introduce el PIN</span>
+          <input id="notes-pin-input" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" required />
+        </label>
+        <p class="notes-form-error" id="notes-pin-error"></p>
+      </div>
+      <div class="notes-modal-actions">
+        <button class="btn primary" type="submit">Entrar</button>
+      </div>
+    </form>
+  </div>
+</div>

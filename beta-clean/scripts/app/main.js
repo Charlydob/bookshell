@@ -43,6 +43,7 @@ const NAV_LONG_PRESS_MS = 420;
 const NAV_MENU_MARGIN = 10;
 const NAV_VIEW_META = {
   "view-books": { label: "Libros" },
+  "view-notes": { label: "Notas" },
   "view-videos-hub": { label: "Videos" },
   "view-recipes": { label: "Recetas" },
   "view-habits": { label: "Habitos" },
@@ -408,6 +409,11 @@ const viewModules = {
     cssUrl: "../../styles/modules/books.css",
     htmlUrl: "../../views/books.html",
     moduleLoader: () => import("../modules/books/index.js"),
+  },
+  "view-notes": {
+    cssUrl: "../../styles/modules/notes.css",
+    htmlUrl: "../../views/notes.html",
+    moduleLoader: () => import("../modules/notes/index.js"),
   },
   "view-videos-hub": {
     cssUrl: "../../styles/modules/videos-hub.css",

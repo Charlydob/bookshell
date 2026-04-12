@@ -237,7 +237,7 @@
 
 .notes-item-title {
   margin: 0;
-  font-size: 33px;
+  font-size: 23px;
   line-height: 1.1;
 }
 
@@ -307,11 +307,44 @@ place-items: center;
   background: transparent;
 }
 
+#meta-notas-folder,
 #meta-notas-note{
   display: grid;
   grid-template-columns: 1fr  1fr;
   gap: 10px;
 }
+
+.field-select {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--stroke);
+  padding: 7px 10px;
+  background: rgba(7, 8, 14, 0.9);
+  color: var(--txt);
+  font-size: 14px;
+  outline: none;
+  margin-bottom: 6px;
+}
+
+.field-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(127, 93, 255, 0.4);
+}
+
+.field-select option {
+  background: rgba(10, 11, 18, 0.95);
+  color: var(--txt);
+}
+
 .icon-btn.icon-btn-large{
   background: transparent;
+}
+
+#notes-folder-name{
+  font-size: 28px;
+  font-weight: 600;
+}
+#notes-folder-count{
+  font-size: 16px;
+  color: var(--txt-soft);
 }

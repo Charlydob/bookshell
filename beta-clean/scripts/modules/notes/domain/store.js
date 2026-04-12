@@ -8,6 +8,10 @@ export function createInitialNotesState() {
     unlockedFolderId: "",
     folderQuery: "",
     noteQuery: "",
+    folderCategoryFilter: "",
+    folderTagsFilter: "",
+    noteCategoryFilter: "",
+    noteTagsFilter: "",
     loading: true,
   };
 }
@@ -26,24 +30,56 @@ export function buildFolderStats(folders = [], notes = []) {
   }));
 }
 
-export function filterFolders(folders = [], query = "") {
+export function filterFolders(folders = [], query = "", category = "", tags = "") {
   const safeQuery = String(query || "").trim().toLowerCase();
-  if (!safeQuery) return folders;
-  return folders.filter((folder) => String(folder.name || "").toLowerCase().includes(safeQuery));
+  const safeCategory = String(category || "").trim().toLowerCase();
+  const safeTags = String(tags || "").trim().toLowerCase();
+
+  return folders.filter((folder) => {
+    const folderName = String(folder.name || "").toLowerCase();
+    const folderCategory = String(folder.category || "").toLowerCase();
+    const folderTags = (folder.tags || []).map(t => String(t).toLowerCase());
+
+    // Filtro por nombre
+    if (safeQuery && !folderName.includes(safeQuery)) return false;
+
+    // Filtro por categoría
+    if (safeCategory && folderCategory !== safeCategory) return false;
+
+    // Filtro por tags
+    if (safeTags && !folderTags.includes(safeTags)) return false;
+
+    return true;
+  });
 }
 
-export function filterNotesByFolder(notes = [], folderId = "", query = "") {
+export function filterNotesByFolder(notes = [], folderId = "", query = "", category = "", tags = "") {
   const safeFolderId = String(folderId || "").trim();
   if (!safeFolderId) return [];
 
   const safeQuery = String(query || "").trim().toLowerCase();
+  const safeCategory = String(category || "").trim().toLowerCase();
+  const safeTags = String(tags || "").trim().toLowerCase();
+
   const byFolder = notes.filter((note) => String(note.folderId || "") === safeFolderId);
-  if (!safeQuery) return byFolder;
 
   return byFolder.filter((note) => {
-    const title = String(note.title || "").toLowerCase();
-    const content = String(note.content || "").toLowerCase();
-    const url = String(note.url || "").toLowerCase();
-    return title.includes(safeQuery) || content.includes(safeQuery) || url.includes(safeQuery);
+    // Filtro por nombre/contenido
+    if (safeQuery) {
+      const title = String(note.title || "").toLowerCase();
+      const content = String(note.content || "").toLowerCase();
+      const url = String(note.url || "").toLowerCase();
+      if (!title.includes(safeQuery) && !content.includes(safeQuery) && !url.includes(safeQuery)) {
+        return false;
+      }
+    }
+
+    // Filtro por categoría
+    if (safeCategory && String(note.category || "").toLowerCase() !== safeCategory) return false;
+
+    // Filtro por tags
+    if (safeTags && !(note.tags || []).map(t => String(t).toLowerCase()).includes(safeTags)) return false;
+
+    return true;
   });
 }

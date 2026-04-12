@@ -16,6 +16,9 @@ export function mapFolderFromDb(id, value = {}) {
     createdAt: Number(value?.createdAt || Date.now()),
     isPrivate: Boolean(value?.isPrivate),
     pin: normalizePin(value?.pin),
+    emoji: String(value?.emoji || "📁").trim() || "📁",
+    category: String(value?.category || "").trim(),
+    tags: Array.isArray(value?.tags) ? value.tags.map(t => String(t).trim()).filter(t => t) : [],
   };
 }
 
@@ -27,6 +30,9 @@ export function mapFolderToDb(folder = {}) {
     createdAt: Number(folder?.createdAt || Date.now()),
     isPrivate,
     pin: isPrivate ? normalizePin(folder?.pin) : "",
+    emoji: String(folder?.emoji || "📁").trim() || "📁",
+    category: String(folder?.category || "").trim(),
+    tags: Array.isArray(folder?.tags) ? folder.tags.map(t => String(t).trim()).filter(t => t) : [],
   };
 }
 
@@ -41,6 +47,8 @@ export function mapNoteFromDb(id, value = {}) {
     updatedAt: Number(value?.updatedAt || Date.now()),
     type,
     url: type === "link" ? String(value?.url || "").trim() : "",
+    category: String(value?.category || "").trim(),
+    tags: Array.isArray(value?.tags) ? value.tags.map(t => String(t).trim()).filter(t => t) : [],
   };
 }
 
@@ -54,6 +62,8 @@ export function mapNoteToDb(note = {}) {
     updatedAt: Number(note?.updatedAt || Date.now()),
     type,
     url: type === "link" ? String(note?.url || "").trim() : "",
+    category: String(note?.category || "").trim(),
+    tags: Array.isArray(note?.tags) ? note.tags.map(t => String(t).trim()).filter(t => t) : [],
   };
 }
 

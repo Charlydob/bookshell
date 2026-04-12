@@ -229,6 +229,7 @@ const $bookDetailQuotesCount = document.getElementById("book-detail-quotes-count
 const $bookDetailQuotesBody = document.getElementById("book-detail-quotes-body");
 const $bookDetailQuotesSearch = document.getElementById("book-detail-quotes-search");
 const $bookDetailEdit = document.getElementById("book-detail-edit");
+const $bookDetailDelete = document.getElementById("book-detail-delete");
 
 let bookDetailQuoteSearchTimer = null;
 let bookDetailQuoteSearchValue = "";
@@ -1029,6 +1030,20 @@ if ($bookDetailEdit) {
     const id = bookDetailId;
     closeBookDetail();
     openBookModal(id);
+  });
+}
+if ($bookDetailDelete) {
+  $bookDetailDelete.addEventListener("click", async () => {
+    if (!bookDetailId) return;
+    const bookTitle = books[bookDetailId]?.title || "Libro";
+    const confirmed = confirm(`¿Eliminar "${bookTitle}"?`);
+    if (!confirmed) return;
+    try {
+      await remove(ref(db, `${BOOKS_PATH}/${bookDetailId}`));
+      closeBookDetail();
+    } catch (err) {
+      console.error("Error eliminando libro", err);
+    }
   });
 }
 

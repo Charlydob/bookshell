@@ -48,7 +48,6 @@
 .view-gym .gym-wrap.scroll {
   padding-bottom: calc(18px + var(--nav-h) + env(safe-area-inset-bottom));
 }
-
 .gym-screen {
   display: none;
 }
@@ -1340,6 +1339,7 @@ button.gym-calendar-day {
 
 /* En beta-clean el scroll estructural de gym vive solo en `.gym-wrap.scroll`. */
 #view-gym {
+  margin-bottom: 90px !important;
   padding: 0 !important;
   overflow: hidden !important;
 }
@@ -1450,3 +1450,4 @@ button.gym-calendar-day {
 .gym-history-section:not([open]) #gym-history-empty {
   display: none;
 }
+

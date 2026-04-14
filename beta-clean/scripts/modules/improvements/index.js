@@ -171,6 +171,8 @@ const state = {
     statusText: "La auditoria solo se ejecuta manualmente.",
     result: null,
     lastRunAt: 0,
+    history: [],
+    lastRemoteSignature: "",
   },
   derived: {
     dirty: true,
@@ -260,7 +262,11 @@ async function runPerformanceAudit() {
   renderPerformanceWindow();
 
   try {
-    const { runBookshellPerformanceAudit, saveAuditResult } = await ensureImprovementsPerformanceAuditReady();
+    const {
+      runBookshellPerformanceAudit,
+      saveAuditResult,
+      syncStoredPerformancePayload,
+    } = await ensureImprovementsPerformanceAuditReady();
     const result = await runBookshellPerformanceAudit({
       auth,
       db,
@@ -275,12 +281,19 @@ async function runPerformanceAudit() {
       measureStatsRender: measureImprovementStatsRender,
       measureModalOpen: measureImprovementEditorOpen,
     });
-    state.performance.result = result;
-    state.performance.lastRunAt = Number(result?.executedAt) || Date.now();
+    const persistedPayload = saveAuditResult(result, state.uid);
+    syncStoredPerformancePayload(persistedPayload, state.uid);
+    applyPerformancePayload(persistedPayload);
     state.performance.status = "done";
     state.performance.statusText = "Auditoria terminada. Puedes recalcular cuando quieras.";
-    // Guardar el resultado en el historico
-    saveAuditResult(result);
+    if (state.path) {
+      try {
+        await persistPerformancePayload(persistedPayload);
+      } catch (error) {
+        state.performance.statusText = "Auditoria terminada. El historico local se guardo, pero Firebase no pudo actualizarse ahora mismo.";
+        console.warn("[improvements] no se pudo guardar el historico remoto", error);
+      }
+    }
   } catch (error) {
     state.performance.status = "error";
     state.performance.statusText = String(error?.message || error || "La auditoria no pudo completarse.");
@@ -390,6 +403,99 @@ function cancelScheduledImprovementRender() {
     window.cancelAnimationFrame(state.renderFrame);
   }
   state.renderFrame = 0;
+}
+
+function applyPerformancePayload(payload = {}) {
+  const lastResult = payload?.lastResult && typeof payload.lastResult === "object"
+    ? payload.lastResult
+    : null;
+  const history = Array.isArray(payload?.history) ? payload.history.slice() : [];
+
+  state.performance.history = history;
+
+  if (state.performance.busy) return;
+
+  state.performance.result = lastResult;
+  state.performance.lastRunAt = Number(
+    lastResult?.executedAt
+    || history[history.length - 1]?.ts
+    || 0
+  ) || 0;
+
+  if (!lastResult) {
+    if (state.performance.status !== "error") {
+      state.performance.status = "idle";
+      state.performance.statusText = "La auditoria solo se ejecuta manualmente.";
+    }
+    return;
+  }
+
+  if (state.performance.status !== "error") {
+    state.performance.status = "done";
+    state.performance.statusText = "Ultima auditoria cargada desde Firebase.";
+  }
+}
+
+async function persistPerformancePayload(payload = {}) {
+  if (!state.path) return false;
+
+  const {
+    normalizePerformancePayload,
+    serializePerformancePayload,
+  } = await ensureImprovementsPerformanceAuditReady();
+
+  const normalizedPayload = normalizePerformancePayload(payload);
+  const signature = serializePerformancePayload(normalizedPayload);
+  if (signature === state.performance.lastRemoteSignature) {
+    return true;
+  }
+
+  const history = Array.isArray(normalizedPayload.history) ? normalizedPayload.history : [];
+  const updatedAt = Number(
+    normalizedPayload.lastResult?.executedAt
+    || history[history.length - 1]?.ts
+    || Date.now()
+  ) || Date.now();
+
+  await update(ref(db, state.path), {
+    performance: {
+      lastResult: normalizedPayload.lastResult || null,
+      history,
+      updatedAt,
+    },
+  });
+  state.performance.lastRemoteSignature = signature;
+  return true;
+}
+
+async function syncPerformanceState(rawPerformance = null) {
+  const {
+    getStoredPerformancePayload,
+    mergePerformancePayloads,
+    normalizePerformancePayload,
+    serializePerformancePayload,
+    syncStoredPerformancePayload,
+  } = await ensureImprovementsPerformanceAuditReady();
+
+  const remotePayload = normalizePerformancePayload(rawPerformance || {});
+  const localPayload = getStoredPerformancePayload(state.uid);
+  const mergedPayload = mergePerformancePayloads(remotePayload, localPayload);
+  const remoteSignature = serializePerformancePayload(remotePayload);
+  const mergedSignature = serializePerformancePayload(mergedPayload);
+
+  syncStoredPerformancePayload(mergedPayload, state.uid);
+  applyPerformancePayload(mergedPayload);
+
+  if (remoteSignature === mergedSignature || !state.path) {
+    state.performance.lastRemoteSignature = mergedSignature;
+    return;
+  }
+
+  try {
+    await persistPerformancePayload(mergedPayload);
+  } catch (error) {
+    console.warn("[improvements] performance sync failed", error);
+  }
 }
 
 function createImprovementDerivedState() {
@@ -702,15 +808,17 @@ function ensureImprovementDerivedData() {
   Object.values(state.boards || {}).forEach(addBoard);
 
   const allItems = Object.entries(state.items || {}).map(([id, item]) => ({ id, ...(item || {}) }));
-  const itemsByView = new Map([[DEFAULT_BOARD_ID, allItems]]);
+  const itemsByView = new Map();
   const countsByView = new Map([[DEFAULT_BOARD_ID, { pending: 0, resolved: 0 }]]);
   const globalCounts = { pending: 0, resolved: 0 };
 
   allItems.forEach((item) => {
     if (item?.viewId) addBoard(buildFallbackBoard(item.viewId));
     const viewId = String(item?.viewId || DEFAULT_BOARD_ID).trim() || DEFAULT_BOARD_ID;
-    if (!itemsByView.has(viewId)) itemsByView.set(viewId, []);
-    itemsByView.get(viewId).push(item);
+    if (!isGeneralBoardViewId(viewId)) {
+      if (!itemsByView.has(viewId)) itemsByView.set(viewId, []);
+      itemsByView.get(viewId).push(item);
+    }
 
     if (!countsByView.has(viewId)) countsByView.set(viewId, { pending: 0, resolved: 0 });
     const bucket = countsByView.get(viewId);
@@ -2475,7 +2583,7 @@ function renderPerformanceWindow() {
     els.performanceFindings.innerHTML = '<div class="improvements__perfEmpty">Los hallazgos accionables se mostraran aqui cuando haya resultados.</div>';
     // Aun asi intentar renderizar el historico si existe
     requestAnimationFrame(() => {
-      renderPerformanceHistoryChart();
+      renderPerformanceHistoryChart(state.performance.history);
     });
     return;
   }
@@ -2528,16 +2636,16 @@ function renderPerformanceWindow() {
 
   // Renderizar grafica de historico
   requestAnimationFrame(() => {
-    renderPerformanceHistoryChart();
+    renderPerformanceHistoryChart(state.performance.history);
   });
 }
 
-async function renderPerformanceHistoryChart() {
+async function renderPerformanceHistoryChart(history = null) {
   if (!els.performanceChart) return;
 
   try {
     const { renderPerformanceHistoryChart: renderChart } = await ensureImprovementsPerformanceAuditReady();
-    await renderChart(els.performanceChart);
+    await renderChart(els.performanceChart, history);
   } catch (error) {
     console.warn("[improvements] no se pudo renderizar la grafica de historico", error);
     if (els.performanceChart) {
@@ -2587,6 +2695,13 @@ function openEditorModal({ focus = false } = {}) {
       els.title?.focus();
     });
   }
+}
+
+function openImprovementEditorFromShell({ focus = true } = {}) {
+  state.currentWindow = "main";
+  renderActiveWindow();
+  resetEditor({ viewId: ensureActiveViewId() });
+  openEditorModal({ focus });
 }
 
 function closeEditorModal({ reset = false } = {}) {
@@ -2678,6 +2793,7 @@ function subscribeData() {
 
     invalidateImprovementDerivedData();
     scheduleImprovementRender();
+    void syncPerformanceState(raw.performance);
   });
 
   state.listeners.push(stop);
@@ -2696,6 +2812,12 @@ function setUnauthenticatedState() {
   state.editorOpen = false;
   state.exportOpen = false;
   state.exportText = "";
+  state.performance.result = null;
+  state.performance.history = [];
+  state.performance.lastRunAt = 0;
+  state.performance.status = "idle";
+  state.performance.statusText = "La auditoria solo se ejecuta manualmente.";
+  state.performance.lastRemoteSignature = "";
   invalidateImprovementDerivedData();
   resetEditor({ viewId: state.activeViewId });
   renderAll();
@@ -3298,6 +3420,7 @@ export async function init({ root }) {
 
   handleAuthUser(auth.currentUser || null);
   window.__bookshellImprovements = {
+    openEditorModal: (options = {}) => openImprovementEditorFromShell(options),
     closeEditorModal: (options = {}) => closeEditorModal(options),
   };
   state.initialized = true;

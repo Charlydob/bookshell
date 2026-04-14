@@ -367,6 +367,8 @@ if ($viewRecipes) {
   const $macroAddModalBackdrop = document.getElementById("macro-add-modal-backdrop");
   const $macroAddModalClose = document.getElementById("macro-add-modal-close");
   const $macroAddSearch = document.getElementById("macro-add-search");
+  const $macroAddMealRow = document.getElementById("macro-add-meal-row");
+  const $macroAddMealSelect = document.getElementById("macro-add-meal-select");
   const $macroAddResults = document.getElementById("macro-add-results");
   const $macroAddChips = document.getElementById("macro-add-chips");
   const $macroAddEmojis = document.getElementById("macro-add-emojis");
@@ -552,7 +554,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   let macroTargets = normalizeMacroTargets(defaultMacroTargets);
   let nutritionIntegrationConfig = { ...defaultIntegrationConfig };
   let selectedMacroDate = toISODate(new Date());
-  const macroModalState = { meal: "breakfast", source: "products", query: "" };
+  const macroModalState = { meal: "breakfast", source: "products", query: "", showMealSelection: false };
   const macroStatsState = { period: "week", anchorDate: selectedMacroDate, metric: "macros", donutMode: "kcal-macros" };
   const macroSelectionState = { meal: null, selectedIds: new Set() };
   const shoppingState = {
@@ -3801,6 +3803,7 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       getLastViewedRecipe: __dashGetLastViewedRecipe,
       getRecentRecipeFallback: __dashGetRecentRecipeFallback,
       openRecipeDetail,
+      openGlobalFoodAdd,
     };
   } catch (_) {}
 
@@ -5884,12 +5887,22 @@ $recipeImportBtn?.addEventListener("click", () => {
     setNutriSegmentedValue($macroManualNutriSegmented, "");
   }
 
-  function openMacroAddModal(meal) {
+  function syncMacroAddMealSelectionUi() {
+    const showMealSelection = Boolean(macroModalState.showMealSelection);
+    $macroAddMealRow?.classList.toggle("hidden", !showMealSelection);
+    if ($macroAddMealSelect) {
+      $macroAddMealSelect.value = macroModalState.meal || "breakfast";
+    }
+  }
+
+  function openMacroAddModal(meal, options = {}) {
     macroModalState.meal = meal;
     macroModalState.query = "";
-    macroModalState.source = "emojis";
+    macroModalState.source = String(options.source || "emojis").trim() || "emojis";
+    macroModalState.showMealSelection = Boolean(options.allowMealSelection);
     resetMacroManualForm();
     if ($macroAddSearch) $macroAddSearch.value = "";
+    syncMacroAddMealSelectionUi();
     $macroAddModalBackdrop?.classList.remove("hidden");
     syncRecipeModalLayerState();
     renderMacroModalResults();
@@ -5900,8 +5913,21 @@ $recipeImportBtn?.addEventListener("click", () => {
   function closeMacroAddModal() {
     try { stopMacroBarcodeScan(); } catch (_) {}
     $macroAddModalBackdrop?.classList.add("hidden");
+    macroModalState.showMealSelection = false;
+    syncMacroAddMealSelectionUi();
     resetMacroAddModalViewportPadding();
     syncRecipeModalLayerState();
+  }
+
+  function openGlobalFoodAdd({ meal = "", source = "emojis" } = {}) {
+    switchRecipesPanel("macros");
+    openMacroAddModal(
+      mealOrder.includes(meal) ? meal : (macroModalState.meal || "breakfast"),
+      {
+        allowMealSelection: true,
+        source,
+      }
+    );
   }
 
   let _macroProductMeal = "breakfast";
@@ -9645,6 +9671,10 @@ $recipeImportBtn?.addEventListener("click", () => {
   $macroAddModalBackdrop?.addEventListener("click", (e) => { if (e.target === $macroAddModalBackdrop) closeMacroAddModal(); });
   $macroAddModalBackdrop?.addEventListener("focusin", handleMacroAddModalFocus);
   $macroAddSearch?.addEventListener("input", (e) => { macroModalState.query = e.target.value || ""; renderMacroModalResults(); });
+  $macroAddMealSelect?.addEventListener("change", (e) => {
+    const nextMeal = String(e.target.value || "").trim();
+    macroModalState.meal = mealOrder.includes(nextMeal) ? nextMeal : "breakfast";
+  });
   window.visualViewport?.addEventListener("resize", updateMacroAddModalViewportPadding);
   window.visualViewport?.addEventListener("scroll", updateMacroAddModalViewportPadding);
   $macroAddChips?.addEventListener("click", (e) => {

@@ -1892,6 +1892,44 @@ select.builder-input option {
   background: linear-gradient(180deg, rgba(13,16,28,0.98), rgba(13,16,28,0.9));
 }
 
+#macro-add-modal-backdrop .macro-add-meal-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.04);
+}
+
+#macro-add-modal-backdrop .macro-add-meal-row.hidden {
+  display: none;
+}
+
+#macro-add-modal-backdrop .macro-add-meal-label {
+  font-size: 12px;
+  color: var(--txt-soft);
+  white-space: nowrap;
+}
+
+#macro-add-modal-backdrop .macro-add-meal-select {
+  flex: 1;
+  min-width: 0;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(11,16,28,.9);
+  color: var(--txt);
+  padding: 10px 12px;
+  appearance: none;
+}
+
+#macro-add-modal-backdrop .macro-add-meal-select:focus {
+  outline: none;
+  border-color: rgba(245,230,166,.55);
+  box-shadow: 0 0 0 3px rgba(245,230,166,.12);
+}
+
 #macro-add-modal-backdrop #macro-add-search.filter-search-input {
   width: 80%;
   min-width: 0;

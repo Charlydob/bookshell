@@ -293,7 +293,11 @@ function bindNoteModalEvents() {
   $id("notes-note-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const id = $id("notes-note-id").value;
-    const folderId = $id("notes-note-folder-id").value;
+    const folderId = String(
+      $id("notes-note-folder-select")?.value
+      || $id("notes-note-folder-id")?.value
+      || ""
+    ).trim();
     const title = $id("notes-note-title").value.trim();
     const content = $id("notes-note-content").value.trim();
     const category = $id("notes-note-category").value.trim();
@@ -302,7 +306,12 @@ function bindNoteModalEvents() {
     const isLink = $id("notes-note-is-link").checked;
     const url = $id("notes-note-url").value.trim();
 
-    if (!title || !folderId) return;
+    if (!title) return;
+    if (!folderId) {
+      $id("notes-note-form-error").textContent = "Selecciona una carpeta para guardar la nota.";
+      $id("notes-note-folder-select")?.focus();
+      return;
+    }
     if (isLink && !url) {
       $id("notes-note-form-error").textContent = "Introduce una URL para la nota tipo link.";
       return;
@@ -331,9 +340,22 @@ function bindNoteModalEvents() {
       await createNote(state.rootPath, payload);
     }
 
+    const folder = state.folders.find((row) => row.id === folderId);
     closeModal("notes-note-modal-backdrop");
-    updateFilterOptionsForNotes();
-    renderFolderDetail();
+    if (folderId) {
+      const canOpenFolder = !folder?.isPrivate || state.unlockedFolderId === folderId || state.selectedFolderId === folderId;
+      state.selectedFolderId = canOpenFolder ? folderId : "";
+    }
+    updateFilterOptions();
+    if (state.selectedFolderId) updateFilterOptionsForNotes();
+    renderShell();
+  });
+
+  $id("notes-note-modal-close")?.addEventListener("click", () => closeModal("notes-note-modal-backdrop"));
+  $id("notes-note-modal-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === $id("notes-note-modal-backdrop")) {
+      closeModal("notes-note-modal-backdrop");
+    }
   });
 }
 
@@ -494,9 +516,16 @@ function openFolderModal(folder = null) {
   openModal("notes-folder-modal-backdrop");
 }
 
-function populateNoteCategorySelector() {
-  const folder = state.folders.find((item) => item.id === state.selectedFolderId);
-  if (!folder) return;
+function populateNoteCategorySelector(folderId = state.selectedFolderId) {
+  const folder = state.folders.find((item) => item.id === folderId);
+  const select = $id("notes-note-category-select");
+  if (!folder) {
+    if (select) {
+      select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
+      select.value = "";
+    }
+    return;
+  }
   
   const notesInFolder = state.notes.filter((n) => n.folderId === folder.id);
   const categories = new Set();
@@ -504,7 +533,6 @@ function populateNoteCategorySelector() {
     if (note.category) categories.add(note.category);
   });
   
-  const select = $id("notes-note-category-select");
   if (select) {
     select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
     Array.from(categories).sort().forEach((cat) => {
@@ -516,9 +544,16 @@ function populateNoteCategorySelector() {
   }
 }
 
-function populateNoteTagsSelector() {
-  const folder = state.folders.find((item) => item.id === state.selectedFolderId);
-  if (!folder) return;
+function populateNoteTagsSelector(folderId = state.selectedFolderId) {
+  const folder = state.folders.find((item) => item.id === folderId);
+  const select = $id("notes-note-tags-select");
+  if (!folder) {
+    if (select) {
+      select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
+      select.value = "";
+    }
+    return;
+  }
   
   const notesInFolder = state.notes.filter((n) => n.folderId === folder.id);
   const tags = new Set();
@@ -526,7 +561,6 @@ function populateNoteTagsSelector() {
     if (note.tags) note.tags.forEach(tag => tags.add(tag));
   });
   
-  const select = $id("notes-note-tags-select");
   if (select) {
     select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
     Array.from(tags).sort().forEach((tag) => {
@@ -538,11 +572,44 @@ function populateNoteTagsSelector() {
   }
 }
 
-function openNoteModal(note = null) {
-  populateNoteCategorySelector();
-  populateNoteTagsSelector();
-  
-  const folderId = note?.folderId || state.selectedFolderId;
+function populateNoteFolderSelector(selectedFolderId = "") {
+  const select = $id("notes-note-folder-select");
+  if (!select) return;
+
+  const safeSelectedFolderId = String(selectedFolderId || "").trim();
+  select.innerHTML = '<option value="">Selecciona una carpeta</option>';
+  state.folders.forEach((folder) => {
+    const option = document.createElement("option");
+    option.value = folder.id;
+    option.textContent = folder.isPrivate ? `🔒 ${folder.name}` : folder.name;
+    select.appendChild(option);
+  });
+  select.value = safeSelectedFolderId;
+}
+
+function syncNoteFolderSelection(folderId = "", { allowFolderSelection = false } = {}) {
+  const safeFolderId = String(folderId || "").trim();
+  const wrap = $id("notes-note-folder-wrap");
+  const select = $id("notes-note-folder-select");
+
+  populateNoteFolderSelector(safeFolderId);
+  if (wrap) {
+    wrap.classList.toggle("hidden", !(allowFolderSelection || !safeFolderId));
+  }
+  if (select) {
+    select.disabled = state.folders.length === 0;
+    select.value = safeFolderId;
+  }
+  $id("notes-note-folder-id").value = safeFolderId;
+  populateNoteCategorySelector(safeFolderId);
+  populateNoteTagsSelector(safeFolderId);
+}
+
+function openNoteModal(note = null, options = {}) {
+  const folderId = String(note?.folderId || options.folderId || state.selectedFolderId || "").trim();
+  const allowFolderSelection = Boolean(options.allowFolderSelection) || !folderId;
+  syncNoteFolderSelection(folderId, { allowFolderSelection });
+
   $id("notes-note-id").value = note?.id || "";
   $id("notes-note-folder-id").value = folderId || "";
   $id("notes-note-title").value = note?.title || "";
@@ -559,6 +626,14 @@ function openNoteModal(note = null) {
   openModal("notes-note-modal-backdrop");
 }
 
+function openGlobalNoteModal() {
+  const folderId = String(state.selectedFolderId || "").trim();
+  openNoteModal(null, {
+    folderId,
+    allowFolderSelection: !folderId,
+  });
+}
+
 function bindUiEvents() {
   if (isBound) return;
   isBound = true;
@@ -566,6 +641,13 @@ function bindUiEvents() {
   $id("notes-btn-new-folder")?.addEventListener("click", () => openFolderModal());
   $id("notes-btn-back")?.addEventListener("click", () => closeFolderView());
   $id("notes-btn-new-note")?.addEventListener("click", () => openNoteModal());
+  $id("notes-note-folder-select")?.addEventListener("change", (event) => {
+    const folderId = String(event.target.value || "").trim();
+    $id("notes-note-folder-id").value = folderId;
+    $id("notes-note-form-error").textContent = "";
+    populateNoteCategorySelector(folderId);
+    populateNoteTagsSelector(folderId);
+  });
   
   $id("notes-folder-category-select")?.addEventListener("change", (event) => {
     if (event.target.value) {
@@ -721,6 +803,10 @@ export async function onShow() {
   bindUiEvents();
   bindAuth();
   renderShell();
+  window.__bookshellNotes = {
+    openGlobalNoteModal,
+    openNoteModal: (note = null, options = {}) => openNoteModal(note, options),
+  };
 }
 
 export function destroy() {
@@ -731,4 +817,7 @@ export function destroy() {
   isBound = false;
   state.selectedFolderId = "";
   state.unlockedFolderId = "";
+  if (window.__bookshellNotes) {
+    delete window.__bookshellNotes;
+  }
 }

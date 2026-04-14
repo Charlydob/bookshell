@@ -4,6 +4,8 @@ import { getOfflineQueueSummary } from "../../shared/storage/offline-queue.js";
 
 const PERF_STORE_KEY = "__bookshellPerfMetrics";
 const PERF_HISTORY_KEY = "__bookshellPerfHistory";
+const PERF_LAST_RESULT_KEY = "__bookshellPerfLastResult";
+const PERF_OWNER_KEY = "__bookshellPerfOwner";
 
 // Pesos estables y legibles para el score global.
 const CATEGORY_WEIGHTS = Object.freeze({
@@ -49,6 +51,161 @@ function formatMs(value) {
 function formatKb(value) {
   if (!Number.isFinite(value)) return "--";
   return `${round(value)} KB`;
+}
+
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeAuditResult(result = null) {
+  if (!isRecord(result)) return null;
+
+  const executedAt = Number(
+    result.executedAt
+    || result.ts
+    || result.updatedAt
+    || result.createdAt
+    || 0
+  );
+  if (!executedAt) return null;
+
+  const categories = Array.isArray(result.categories)
+    ? result.categories
+        .filter((category) => isRecord(category))
+        .map((category) => ({
+          ...category,
+          key: String(category.key || "").trim(),
+          label: String(category.label || category.key || "Categoria").trim(),
+          score: Number(category.score ?? 0) || 0,
+          summary: String(category.summary || "").trim(),
+        }))
+    : [];
+
+  const findings = Array.isArray(result.findings)
+    ? result.findings
+        .filter((finding) => isRecord(finding))
+        .map((finding) => ({
+          ...finding,
+          title: String(finding.title || "Observacion").trim(),
+          message: String(finding.message || "").trim(),
+          tone: String(finding.tone || "blue").trim() || "blue",
+        }))
+    : [];
+
+  return {
+    ...result,
+    executedAt,
+    overallScore: Number(result.overallScore ?? result.score ?? 0) || 0,
+    summaryText: String(result.summaryText || result.summary || "").trim(),
+    sampleText: String(result.sampleText || "").trim(),
+    longTaskCount: Number(result.longTaskCount ?? result.metrics?.longTaskCount ?? 0) || 0,
+    longTaskText: String(result.longTaskText || "").trim(),
+    categories,
+    findings,
+    metrics: isRecord(result.metrics) ? { ...result.metrics } : {},
+  };
+}
+
+function normalizeHistoryEntry(entry = null) {
+  if (!isRecord(entry)) return null;
+
+  const ts = Number(entry.ts || entry.executedAt || entry.updatedAt || entry.createdAt || 0);
+  if (!ts) return null;
+
+  const date = String(entry.date || new Date(ts).toISOString().slice(0, 10)).trim();
+  return {
+    ts,
+    date,
+    score: Number(entry.score ?? entry.overallScore ?? 0) || 0,
+    load: Number(entry.load ?? 0) || 0,
+    interaction: Number(entry.interaction ?? 0) || 0,
+    render: Number(entry.render ?? 0) || 0,
+    data: Number(entry.data ?? 0) || 0,
+    stability: Number(entry.stability ?? 0) || 0,
+  };
+}
+
+function collectHistoryEntries(value) {
+  if (Array.isArray(value)) return value;
+  if (isRecord(value)) return Object.values(value);
+  return [];
+}
+
+function createHistoryEntryFromAuditResult(auditResult = {}) {
+  const normalizedResult = normalizeAuditResult(auditResult);
+  if (!normalizedResult) return null;
+
+  return normalizeHistoryEntry({
+    ts: normalizedResult.executedAt,
+    date: new Date(normalizedResult.executedAt).toISOString().slice(0, 10),
+    score: normalizedResult.overallScore || 0,
+    load: normalizedResult.categories?.find((category) => category.key === "load")?.score || 0,
+    interaction: normalizedResult.categories?.find((category) => category.key === "interaction")?.score || 0,
+    render: normalizedResult.categories?.find((category) => category.key === "render")?.score || 0,
+    data: normalizedResult.categories?.find((category) => category.key === "data")?.score || 0,
+    stability: normalizedResult.categories?.find((category) => category.key === "stability")?.score || 0,
+  });
+}
+
+function normalizeHistoryEntries(value) {
+  const seen = new Map();
+
+  collectHistoryEntries(value)
+    .map((entry) => normalizeHistoryEntry(entry))
+    .filter(Boolean)
+    .forEach((entry) => {
+      const key = entry.ts
+        ? `ts:${entry.ts}`
+        : `date:${entry.date}|${entry.score}|${entry.load}|${entry.interaction}|${entry.render}|${entry.data}|${entry.stability}`;
+      seen.set(key, entry);
+    });
+
+  return Array.from(seen.values()).sort((left, right) => (Number(left.ts) || 0) - (Number(right.ts) || 0));
+}
+
+function chooseLatestAuditResult(candidates = []) {
+  return candidates
+    .map((candidate) => normalizeAuditResult(candidate))
+    .filter(Boolean)
+    .sort((left, right) => (Number(right.executedAt) || 0) - (Number(left.executedAt) || 0))[0] || null;
+}
+
+function buildNormalizedPerformancePayload(value = {}) {
+  const raw = isRecord(value) ? value : {};
+  return {
+    lastResult: chooseLatestAuditResult([
+      raw.lastResult,
+      raw.result,
+      raw.latestResult,
+      raw.auditResult,
+    ]),
+    history: normalizeHistoryEntries(
+      raw.history
+      ?? raw.historyByDate
+      ?? raw.entries
+      ?? []
+    ),
+  };
+}
+
+export function normalizePerformancePayload(value = {}) {
+  return buildNormalizedPerformancePayload(value);
+}
+
+export function mergePerformancePayloads(...payloads) {
+  const normalized = payloads.map((payload) => buildNormalizedPerformancePayload(payload));
+  return {
+    lastResult: chooseLatestAuditResult(normalized.map((payload) => payload.lastResult)),
+    history: normalizeHistoryEntries(normalized.flatMap((payload) => payload.history)),
+  };
+}
+
+export function serializePerformancePayload(value = {}) {
+  const payload = buildNormalizedPerformancePayload(value);
+  return JSON.stringify({
+    lastResult: payload.lastResult,
+    history: payload.history,
+  });
 }
 
 function getPerfStore() {
@@ -439,7 +596,7 @@ export async function runBookshellPerformanceAudit({
 function getPerfHistory() {
   try {
     const stored = localStorage.getItem(PERF_HISTORY_KEY);
-    return Array.isArray(JSON.parse(stored)) ? JSON.parse(stored) : [];
+    return normalizeHistoryEntries(JSON.parse(stored));
   } catch (_) {
     return [];
   }
@@ -447,37 +604,97 @@ function getPerfHistory() {
 
 function savePerfHistory(entries) {
   try {
-    localStorage.setItem(PERF_HISTORY_KEY, JSON.stringify(entries || []));
+    localStorage.setItem(PERF_HISTORY_KEY, JSON.stringify(normalizeHistoryEntries(entries)));
   } catch (_) {
     console.warn("[perf-audit] no se pudo guardar historia en localStorage");
   }
 }
 
-export function saveAuditResult(auditResult = {}) {
-  if (!auditResult || !auditResult.executedAt) return;
+function getStoredPerformanceOwner() {
+  try {
+    return String(localStorage.getItem(PERF_OWNER_KEY) || "").trim();
+  } catch (_) {
+    return "";
+  }
+}
 
-  const history = getPerfHistory();
-  const entry = {
-    ts: auditResult.executedAt,
-    date: new Date(auditResult.executedAt).toISOString().slice(0, 10),
-    score: auditResult.overallScore || 0,
-    load: auditResult.categories?.find((c) => c.key === "load")?.score || 0,
-    interaction: auditResult.categories?.find((c) => c.key === "interaction")?.score || 0,
-    render: auditResult.categories?.find((c) => c.key === "render")?.score || 0,
-    data: auditResult.categories?.find((c) => c.key === "data")?.score || 0,
-    stability: auditResult.categories?.find((c) => c.key === "stability")?.score || 0,
-  };
+function saveStoredPerformanceOwner(ownerId = "") {
+  try {
+    const safeOwnerId = String(ownerId || "").trim();
+    if (!safeOwnerId) {
+      localStorage.removeItem(PERF_OWNER_KEY);
+      return "";
+    }
+    localStorage.setItem(PERF_OWNER_KEY, safeOwnerId);
+    return safeOwnerId;
+  } catch (_) {
+    return "";
+  }
+}
 
-  // Mantener ultimo mes de historia + entrada actual
-  const maxAge = Date.now() - (30 * 24 * 60 * 60 * 1000);
-  const filtered = history.filter((h) => (h.ts || 0) >= maxAge);
-  
-  // Evitar duplicados en el mismo dia
-  const withoutToday = filtered.filter((h) => h.date !== entry.date);
-  const updated = [...withoutToday, entry].sort((a, b) => (a.ts || 0) - (b.ts || 0));
-  
-  savePerfHistory(updated);
-  return entry;
+function getStoredAuditResult() {
+  try {
+    return normalizeAuditResult(JSON.parse(localStorage.getItem(PERF_LAST_RESULT_KEY) || "null"));
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveStoredAuditResult(result = null) {
+  try {
+    if (!result) {
+      localStorage.removeItem(PERF_LAST_RESULT_KEY);
+      return null;
+    }
+    const normalizedResult = normalizeAuditResult(result);
+    if (!normalizedResult) return null;
+    localStorage.setItem(PERF_LAST_RESULT_KEY, JSON.stringify(normalizedResult));
+    return normalizedResult;
+  } catch (_) {
+    console.warn("[perf-audit] no se pudo guardar el ultimo resultado en localStorage");
+    return null;
+  }
+}
+
+export function getStoredPerformancePayload(ownerId = "") {
+  const safeOwnerId = String(ownerId || "").trim();
+  const storedOwnerId = getStoredPerformanceOwner();
+  if (safeOwnerId && storedOwnerId && safeOwnerId !== storedOwnerId) {
+    return buildNormalizedPerformancePayload({});
+  }
+  return buildNormalizedPerformancePayload({
+    lastResult: getStoredAuditResult(),
+    history: getPerfHistory(),
+  });
+}
+
+export function syncStoredPerformancePayload(payload = {}, ownerId = "") {
+  const normalized = buildNormalizedPerformancePayload(payload);
+  const safeOwnerId = String(ownerId || "").trim();
+  if (safeOwnerId) {
+    saveStoredPerformanceOwner(safeOwnerId);
+  }
+  savePerfHistory(normalized.history);
+  saveStoredAuditResult(normalized.lastResult);
+  return normalized;
+}
+
+export function saveAuditResult(auditResult = {}, ownerId = "") {
+  const normalizedResult = normalizeAuditResult(auditResult);
+  if (!normalizedResult) {
+    return getStoredPerformancePayload(ownerId);
+  }
+
+  const entry = createHistoryEntryFromAuditResult(normalizedResult);
+  const nextPayload = mergePerformancePayloads(
+    getStoredPerformancePayload(ownerId),
+    {
+      lastResult: normalizedResult,
+      history: entry ? [entry] : [],
+    }
+  );
+  syncStoredPerformancePayload(nextPayload, ownerId);
+  return nextPayload;
 }
 
 export function getPerformanceHistory() {

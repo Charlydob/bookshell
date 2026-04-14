@@ -56,6 +56,84 @@ const NAV_VIEW_META = {
 };
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
+const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
+  { key: "improvements", label: "Fix", viewId: "view-improvements" },
+  { key: "media", label: "Media", viewId: "view-media" },
+  { key: "notes", label: "Nota", viewId: "view-notes" },
+  { key: "videos", label: "Video", viewId: "view-videos-hub" },
+  { key: "gym", label: "Gym", viewId: "view-gym" },
+  { key: "recipes", label: "Comida", viewId: "view-recipes" },
+  { key: "finance", label: "Gasto", viewId: "view-finance" },
+]);
+
+function getGlobalQuickFabIconMarkup(actionKey) {
+  if (actionKey === "improvements") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M14.5 6.5a4.5 4.5 0 0 0 2.8 4.16l-6.14 6.14a2 2 0 1 1-2.83-2.83l6.14-6.14A4.5 4.5 0 0 0 17.5 3l-2.09 2.09-.91-.59-.59-.91L16 1.5a4.48 4.48 0 0 0-1.5 5Z" />
+      </svg>
+    `;
+  }
+
+  if (actionKey === "media") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <rect x="4" y="5" width="16" height="14" rx="2" />
+        <path d="M8 5v14M16 5v14M4 9h4M4 15h4M16 9h4M16 15h4" />
+      </svg>
+    `;
+  }
+
+  if (actionKey === "notes") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M8 4h8l4 4v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" />
+        <path d="M14 4v4h4M9 13h6M9 17h4" />
+      </svg>
+    `;
+  }
+
+  if (actionKey === "videos") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <rect x="4" y="6" width="12" height="12" rx="2" />
+        <path d="m16 10 4-2v8l-4-2M10 10.5l3 1.9-3 1.9Z" />
+      </svg>
+    `;
+  }
+
+  if (actionKey === "gym") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M5 9v6M8 7v10M16 7v10M19 9v6M8 12h8" />
+        <path d="M3 10v4M21 10v4" />
+      </svg>
+    `;
+  }
+
+  if (actionKey === "recipes") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M7 4v7M10 4v7M7 11a3 3 0 0 0 3 3v6M15 4v8a2 2 0 0 0 2 2v6M15 8h2" />
+      </svg>
+    `;
+  }
+
+  if (actionKey === "finance") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5Z" />
+        <path d="M4 9h16M15.5 14h.01M13 14h.01" />
+      </svg>
+    `;
+  }
+
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  `;
+}
 
 function getAppPerfStore() {
   if (!window[APP_PERF_STORE_KEY]) {
@@ -1906,6 +1984,246 @@ async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
   }
 }
 
+function getGlobalQuickFabState() {
+  const state = getShellState();
+  if (!state.globalQuickFab) {
+    state.globalQuickFab = {
+      open: false,
+      bound: false,
+    };
+  }
+  return state.globalQuickFab;
+}
+
+function getGlobalQuickFabRoot() {
+  return document.getElementById("app-global-fab");
+}
+
+function setGlobalQuickFabOpen(isOpen) {
+  const fabState = getGlobalQuickFabState();
+  fabState.open = Boolean(isOpen);
+  const root = getGlobalQuickFabRoot();
+  if (!root) return;
+  root.classList.toggle("is-open", fabState.open);
+  root.setAttribute("data-open", fabState.open ? "1" : "0");
+  const toggle = root.querySelector("[data-global-fab-toggle]");
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", fabState.open ? "true" : "false");
+  }
+}
+
+function closeGlobalQuickFab() {
+  setGlobalQuickFabOpen(false);
+}
+
+function toggleGlobalQuickFab() {
+  if (document.body.classList.contains("has-open-modal")) return;
+  setGlobalQuickFabOpen(!getGlobalQuickFabState().open);
+}
+
+function buildGlobalQuickFabActionsMarkup() {
+  const startAngle = 160;
+  const endAngle = 270;
+  const total = GLOBAL_QUICK_FAB_ACTIONS.length;
+
+  return GLOBAL_QUICK_FAB_ACTIONS.map((action, index) => {
+    const angle = total <= 1
+      ? 250
+      : startAngle + (((endAngle - startAngle) / (total - 1)) * index);
+    const radians = (angle * Math.PI) / 180;
+    const x = Math.round(Math.cos(radians) * 90);
+    const y = Math.round(Math.sin(radians) * 90);
+    return `
+      <button
+        class="app-global-fab__action"
+        type="button"
+        data-global-fab-action="${action.key}"
+        aria-label="${action.label}"
+        title="${action.label}"
+        style="--fab-x:${x}px;--fab-y:${y}px;--fab-index:${index};"
+      >
+        <span class="app-global-fab__actionIcon" aria-hidden="true">${getGlobalQuickFabIconMarkup(action.key)}</span>
+        <span class="app-global-fab__actionLabel">${action.label}</span>
+      </button>
+    `;
+  }).join("");
+}
+
+function ensureGlobalQuickFab() {
+  let root = getGlobalQuickFabRoot();
+  if (root) return root;
+
+  root = document.createElement("div");
+  root.id = "app-global-fab";
+  root.className = "app-global-fab";
+  root.innerHTML = `
+    <button class="app-global-fab__backdrop" type="button" tabindex="-1" aria-hidden="true" data-global-fab-backdrop></button>
+    <div class="app-global-fab__dock" aria-hidden="false">
+      <div class="app-global-fab__cluster">
+        ${buildGlobalQuickFabActionsMarkup()}
+        <button
+          class="app-global-fab__toggle"
+          type="button"
+          aria-label="Abrir accesos rápidos"
+          aria-expanded="false"
+          data-global-fab-toggle
+        >
+          <span class="app-global-fab__togglePlus" aria-hidden="true">＋</span>
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(root);
+  setGlobalQuickFabOpen(false);
+  return root;
+}
+
+function waitForFrames(count = 2) {
+  const total = Math.max(1, Number(count) || 1);
+  return new Promise((resolve) => {
+    let remaining = total;
+    const step = () => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        resolve();
+        return;
+      }
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+async function waitForValue(getter, { attempts = 24, delayMs = 50 } = {}) {
+  for (let index = 0; index < attempts; index += 1) {
+    const value = getter();
+    if (value) return value;
+    await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+  }
+  return null;
+}
+
+async function clickWhenReady(getter) {
+  const element = await waitForValue(getter);
+  if (!(element instanceof HTMLElement)) return false;
+  element.click();
+  return true;
+}
+
+async function openViewAndRunQuickAction(viewId, runner) {
+  await setView(viewId, { highPriority: true });
+  await waitForFrames(2);
+  return runner();
+}
+
+async function runGlobalQuickFabAction(actionKey) {
+  if (actionKey === "improvements") {
+    return openViewAndRunQuickAction("view-improvements", async () => {
+      const openEditor = await waitForValue(() => window.__bookshellImprovements?.openEditorModal || null);
+      if (typeof openEditor === "function") {
+        openEditor({ focus: true });
+        return true;
+      }
+      return clickWhenReady(() => document.getElementById("improvements-open-editor-btn"));
+    });
+  }
+
+  if (actionKey === "media") {
+    return openViewAndRunQuickAction("view-media", () => {
+      return clickWhenReady(() => document.getElementById("media-fab-add"));
+    });
+  }
+
+  if (actionKey === "notes") {
+    return openViewAndRunQuickAction("view-notes", async () => {
+      const openNoteModal = await waitForValue(() => window.__bookshellNotes?.openGlobalNoteModal || null);
+      if (typeof openNoteModal === "function") {
+        openNoteModal();
+        return true;
+      }
+      return false;
+    });
+  }
+
+  if (actionKey === "videos") {
+    return openViewAndRunQuickAction("view-videos-hub", () => {
+      return clickWhenReady(() => document.getElementById("videos-hub-create-btn"));
+    });
+  }
+
+  if (actionKey === "gym") {
+    return openViewAndRunQuickAction("view-gym", () => {
+      return clickWhenReady(() => document.getElementById("gym-start-workout"));
+    });
+  }
+
+  if (actionKey === "recipes") {
+    return openViewAndRunQuickAction("view-recipes", async () => {
+      const openFoodAdd = await waitForValue(() => window.__bookshellRecipes?.openGlobalFoodAdd || null);
+      if (typeof openFoodAdd === "function") {
+        openFoodAdd();
+        return true;
+      }
+      return false;
+    });
+  }
+
+  if (actionKey === "finance") {
+    return openViewAndRunQuickAction("view-finance", () => {
+      return clickWhenReady(() => document.getElementById("anadir-gastos"));
+    });
+  }
+
+  return false;
+}
+
+function bindGlobalQuickFab() {
+  const fabState = getGlobalQuickFabState();
+  if (fabState.bound) return;
+
+  const root = ensureGlobalQuickFab();
+  root.addEventListener("click", (event) => {
+    const toggle = event.target?.closest?.("[data-global-fab-toggle]");
+    if (toggle) {
+      event.preventDefault();
+      toggleGlobalQuickFab();
+      return;
+    }
+
+    const backdrop = event.target?.closest?.("[data-global-fab-backdrop]");
+    if (backdrop) {
+      event.preventDefault();
+      closeGlobalQuickFab();
+      return;
+    }
+
+    const action = event.target?.closest?.("[data-global-fab-action]");
+    if (!action) return;
+
+    event.preventDefault();
+    const actionKey = String(action.dataset.globalFabAction || "").trim();
+    if (!actionKey) return;
+    closeGlobalQuickFab();
+    void runGlobalQuickFabAction(actionKey);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (!getGlobalQuickFabState().open) return;
+    closeGlobalQuickFab();
+  });
+
+  document.addEventListener("click", () => {
+    if (!getGlobalQuickFabState().open) return;
+    if (document.body.classList.contains("has-open-modal")) {
+      closeGlobalQuickFab();
+    }
+  }, true);
+
+  fabState.bound = true;
+}
+
 function bindNav() {
   const state = getShellState();
   if (state.navBound) return;
@@ -2233,6 +2551,7 @@ function bootShell() {
 
   initNavCustomization();
   bindNav();
+  bindGlobalQuickFab();
   bindGlobalSyncIndicator();
   state.booted = true;
 }

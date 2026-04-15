@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-04-09-v2";
+const APP_VERSION = "2026-04-15-v1";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -15,6 +15,7 @@ const LOCAL_PRECACHE_ASSETS = [
   "./styles/modules/habits.css",
   "./styles/modules/improvements.css",
   "./styles/modules/media.css",
+  "./styles/modules/notes.css",
   "./styles/modules/recipes.css",
   "./styles/modules/videos-hub.css",
   "./styles/modules/world.css",
@@ -25,6 +26,7 @@ const LOCAL_PRECACHE_ASSETS = [
   "./views/habits.html",
   "./views/improvements.html",
   "./views/media.html",
+  "./views/notes.html",
   "./views/recipes.html",
   "./views/videos-hub.html",
   "./views/world.html",
@@ -47,6 +49,11 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/modules/improvements/index.js",
   "./scripts/modules/improvements/performance-audit.js",
   "./scripts/modules/media/index.js",
+  "./scripts/modules/notes/index.js",
+  "./scripts/modules/notes/runtime.js",
+  "./scripts/modules/notes/domain/store.js",
+  "./scripts/modules/notes/persist/notes-datasource.js",
+  "./scripts/modules/notes/persist/notes-mapper.js",
   "./scripts/modules/recipes/index.js",
   "./scripts/modules/recipes/runtime.js",
   "./scripts/modules/recipes/countries.js",

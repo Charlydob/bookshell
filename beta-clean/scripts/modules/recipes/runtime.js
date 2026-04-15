@@ -11,6 +11,7 @@ import { auth, db } from "../../shared/firebase/index.js";
 import { resolveFinancePathCandidates } from "./finance-data.js";
 import { FOODREPO_API_BASE, FOODREPO_API_TOKEN } from "./foodrepo.js";
 import { getMetCategoryById } from "./met-catalog.js";
+import { buildConsumptionAnalytics } from "./consumption-analytics.js";
 import {
   ref,
   onValue,
@@ -337,6 +338,13 @@ if ($viewRecipes) {
   const $macroStatsAnchor = document.getElementById("macro-stats-anchor");
   const $macroStatsMainMetric = document.getElementById("macro-stats-main-metric");
   const $macroStatsKpis = document.getElementById("macro-stats-kpis");
+  const $recipesConsumptionSummaryRange = document.getElementById("recipes-consumption-summary-range");
+  const $recipesConsumptionSummary = document.getElementById("recipes-consumption-summary");
+  const $recipesConsumptionDonut = document.getElementById("recipes-consumption-donut");
+  const $recipesConsumptionDonutLegend = document.getElementById("recipes-consumption-donut-legend");
+  const $recipesConsumptionCostDonut = document.getElementById("recipes-consumption-cost-donut");
+  const $recipesConsumptionCostLegend = document.getElementById("recipes-consumption-cost-legend");
+  const $recipesConsumptionTimeline = document.getElementById("recipes-consumption-timeline");
   const $macroStatsMainChart = document.getElementById("macro-stats-main-chart");
   const $macroStatsMainTooltip = document.getElementById("macro-stats-main-tooltip");
   const $macroStatsMainLabel = document.getElementById("macro-stats-main-label");
@@ -345,6 +353,11 @@ if ($viewRecipes) {
   const $macroStatsDonutLegend = document.getElementById("macro-stats-donut-legend");
   const $macroStatsDonutMode = document.getElementById("macro-stats-donut-mode");
   const $macroTargetEditor = document.getElementById("macro-target-editor");
+  const $recipesMemoryGrid = document.getElementById("recipes-memory-grid");
+  const $recipesProductInsightsList = document.getElementById("recipes-product-insights-list");
+  const $recipesRestockSummary = document.getElementById("recipes-restock-summary");
+  const $recipesRestockList = document.getElementById("recipes-restock-list");
+  const $recipesBudgetList = document.getElementById("recipes-budget-list");
   const $macroShoppingMode = document.getElementById("macro-shopping-mode");
   const $macroShoppingListView = document.getElementById("macro-shopping-list-view");
   const $macroShoppingCompareView = document.getElementById("macro-shopping-compare-view");
@@ -544,6 +557,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     fat_pct: 0.41,
   };
   const defaultIntegrationConfig = { linkedWorkHabitIds: [], workCaloriesPerMatchedDay: 700, bodyWeightKg: null };
+  const defaultConsumptionGuidance = { budgetsByProductId: {}, limitsByProductId: {} };
   const mealOrder = ["breakfast", "lunch", "dinner", "snacks"];
   const mealLabels = { breakfast: "Desayuno", lunch: "Almuerzo", dinner: "Cena", snacks: "Snacks" };
   let nutritionProducts = [];
@@ -553,6 +567,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   let dailyLogsByDate = {};
   let macroTargets = normalizeMacroTargets(defaultMacroTargets);
   let nutritionIntegrationConfig = { ...defaultIntegrationConfig };
+  let nutritionConsumptionGuidance = { ...defaultConsumptionGuidance };
   let selectedMacroDate = toISODate(new Date());
   const macroModalState = { meal: "breakfast", source: "products", query: "", showMealSelection: false };
   const macroStatsState = { period: "week", anchorDate: selectedMacroDate, metric: "macros", donutMode: "kcal-macros" };
@@ -580,6 +595,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     net: "#9be27a",
     excess: "#ff6666",
   };
+  const consumptionPalette = ["#79f3b2", "#6fddff", "#f5e6a6", "#ff9bcf", "#b79bff", "#ffa45b"];
   let nutritionSyncMeta = { version: 2, migratedAt: 0, updatedAt: 0 };
   recipesViewMode = getRecipeViewModePreference();
   let nutritionUnsubscribe = null;
@@ -4615,6 +4631,43 @@ $recipeImportBtn?.addEventListener("click", () => {
     };
   }
 
+  function normalizeConsumptionGuidance(raw = {}) {
+    const budgetsSource = raw?.budgetsByProductId && typeof raw.budgetsByProductId === "object"
+      ? raw.budgetsByProductId
+      : {};
+    const limitsSource = raw?.limitsByProductId && typeof raw.limitsByProductId === "object"
+      ? raw.limitsByProductId
+      : {};
+    const budgetsByProductId = Object.entries(budgetsSource).reduce((acc, [productId, value]) => {
+      const id = String(productId || "").trim();
+      const amount = Number(value);
+      if (!id || !(Number.isFinite(amount) && amount > 0)) return acc;
+      acc[id] = Math.round(amount * 100) / 100;
+      return acc;
+    }, {});
+    const limitsByProductId = Object.entries(limitsSource).reduce((acc, [productId, value]) => {
+      const id = String(productId || "").trim();
+      if (!id || !value || typeof value !== "object") return acc;
+      const normalized = {};
+      const maxTimesDay = Number(value.maxTimesDay);
+      const maxTimesWeek = Number(value.maxTimesWeek);
+      const maxTimesMonth = Number(value.maxTimesMonth);
+      const maxAmount = Number(value.maxAmount);
+      const periodUnit = normalizeUnit(value.periodUnit || "");
+      if (Number.isFinite(maxTimesDay) && maxTimesDay > 0) normalized.maxTimesDay = Math.round(maxTimesDay * 100) / 100;
+      if (Number.isFinite(maxTimesWeek) && maxTimesWeek > 0) normalized.maxTimesWeek = Math.round(maxTimesWeek * 100) / 100;
+      if (Number.isFinite(maxTimesMonth) && maxTimesMonth > 0) normalized.maxTimesMonth = Math.round(maxTimesMonth * 100) / 100;
+      if (Number.isFinite(maxAmount) && maxAmount > 0) normalized.maxAmount = Math.round(maxAmount * 100) / 100;
+      if (periodUnit) normalized.periodUnit = periodUnit;
+      if (Object.keys(normalized).length) acc[id] = normalized;
+      return acc;
+    }, {});
+    return {
+      budgetsByProductId,
+      limitsByProductId,
+    };
+  }
+
   function clamp01(value) {
     const n = Number(value);
     if (!Number.isFinite(n)) return 0;
@@ -4711,6 +4764,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       dailyLogsByDate = normalizeDailyLogs(parsed.dailyLogsByDate && typeof parsed.dailyLogsByDate === "object" ? parsed.dailyLogsByDate : {});
       macroTargets = normalizeMacroTargets(parsed.macroTargets || parsed.goals || {});
       nutritionIntegrationConfig = normalizeIntegrationConfig(parsed.integrationConfig || {});
+      nutritionConsumptionGuidance = normalizeConsumptionGuidance(parsed.consumptionGuidance || {});
       nutritionSyncMeta = {
         version: Number(parsed?.syncMeta?.version) || 2,
         migratedAt: Number(parsed?.syncMeta?.migratedAt) || 0,
@@ -4726,6 +4780,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         dailyLogsByDate: normalizeDailyLogs(dailyLogsByDate),
         macroTargets,
         integrationConfig: nutritionIntegrationConfig,
+        consumptionGuidance: nutritionConsumptionGuidance,
         syncMeta: nutritionSyncMeta,
       }));
     } catch (_) {}
@@ -4747,15 +4802,23 @@ $recipeImportBtn?.addEventListener("click", () => {
         const remoteLogs = normalizeDailyLogs(data.dailyLogsByDate && typeof data.dailyLogsByDate === "object" ? data.dailyLogsByDate : {});
         const remoteMacroTargets = normalizeMacroTargets(data.macroTargets || data.goals || {});
         const remoteIntegrationConfig = normalizeIntegrationConfig(data.integrationConfig || {});
+        const remoteConsumptionGuidance = normalizeConsumptionGuidance(data.consumptionGuidance || {});
         nutritionSyncMeta = {
           version: Number(data?.syncMeta?.version) || 2,
           migratedAt: Number(data?.syncMeta?.migratedAt) || nutritionSyncMeta.migratedAt || Date.now(),
           updatedAt: Number(data?.syncMeta?.updatedAt) || Number(data?.updatedAt) || Date.now(),
         };
 
-        const hasRemoteData = remoteProducts.length || Object.keys(remoteLogs).length || Object.keys(data?.macroTargets || data?.goals || {}).length;
+        const hasRemoteData = remoteProducts.length
+          || Object.keys(remoteLogs).length
+          || Object.keys(data?.macroTargets || data?.goals || {}).length
+          || Object.keys(remoteConsumptionGuidance?.budgetsByProductId || {}).length
+          || Object.keys(remoteConsumptionGuidance?.limitsByProductId || {}).length;
         if (!hasRemoteData) {
-          const hasLocalData = nutritionProducts.length || Object.keys(dailyLogsByDate || {}).length;
+          const hasLocalData = nutritionProducts.length
+            || Object.keys(dailyLogsByDate || {}).length
+            || Object.keys(nutritionConsumptionGuidance?.budgetsByProductId || {}).length
+            || Object.keys(nutritionConsumptionGuidance?.limitsByProductId || {}).length;
           if (hasLocalData) {
             persistNutrition();
             return;
@@ -4766,6 +4829,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         dailyLogsByDate = remoteLogs;
         macroTargets = remoteMacroTargets;
         nutritionIntegrationConfig = remoteIntegrationConfig;
+        nutritionConsumptionGuidance = remoteConsumptionGuidance;
         cacheNutrition();
         recalcAllRecipesNutrition();
         refreshUI();
@@ -4788,6 +4852,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       dailyLogsByDate,
       macroTargets,
       integrationConfig: nutritionIntegrationConfig,
+      consumptionGuidance: nutritionConsumptionGuidance,
       syncMeta: nutritionSyncMeta,
       updatedAt: nutritionSyncMeta.updatedAt,
     };
@@ -5051,6 +5116,381 @@ $recipeImportBtn?.addEventListener("click", () => {
     return { dates, daySeries, totals, avg, mealCount, recipeCount, topRecipes, topProducts, maxDay, maxCostDay, maxBurnedDay, mealKcal, totalCost, totalBurned, totalWorkBurned, totalGymBurned, totalMissingPrice };
   }
 
+  // Consumo inteligente: base comun para estadistica/compra y futuras fases
+  // de limites/recomendaciones sin duplicar la lectura del historico.
+  function getConsumptionAnalyticsModel() {
+    return buildConsumptionAnalytics({
+      dailyLogsByDate,
+      nowIsoDate: toISODate(new Date()),
+      products: nutritionProducts.map((product) => {
+        const priceBase = resolveProductPriceBase(product);
+        return {
+          id: product.id,
+          name: product.name,
+          emoji: product.emoji,
+          baseUnit: normalizeUnit(product.baseUnit || product.servingBaseUnit || "g") || "g",
+          baseQuantity: Math.max(1, Number(product.baseQuantity || product.servingBaseGrams) || 100),
+          packageAmount: Number(product.packageAmount) > 0 ? Number(product.packageAmount) : null,
+          packageUnit: normalizeUnit(product.packageUnit || ""),
+          unitWeightQty: Number(product.unitWeightQty) > 0 ? Number(product.unitWeightQty) : null,
+          unitWeightUnit: normalizeUnit(product.unitWeightUnit || ""),
+          effectivePrice: getEffectiveProductPrice(product),
+          priceBaseQty: priceBase?.qty || null,
+          priceBaseUnit: priceBase?.unit || "",
+          budgetTargetMonthly: Number(nutritionConsumptionGuidance?.budgetsByProductId?.[product.id]) > 0
+            ? Number(nutritionConsumptionGuidance.budgetsByProductId[product.id])
+            : null,
+        };
+      }),
+    });
+  }
+
+  function formatShortDateEs(isoDate) {
+    const value = String(isoDate || "").trim();
+    if (!value) return "—";
+    try {
+      const date = new Date(`${value}T00:00:00`);
+      if (Number.isNaN(date.getTime())) return value;
+      return new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short" }).format(date);
+    } catch (_) {
+      return value;
+    }
+  }
+
+  function formatRangeLabelEs(startIso, endIso) {
+    if (!startIso || !endIso) return "Sin historico suficiente";
+    return `${formatShortDateEs(startIso)} -> ${formatShortDateEs(endIso)}`;
+  }
+
+  function getAnalyticsCoverageLabel(analytics) {
+    const tracked = Number(analytics?.totals?.productsTracked) || 0;
+    if (!tracked) return "Sin productos trazables";
+    const qty = Number(analytics?.totals?.quantityCoverageProducts) || 0;
+    const cost = Number(analytics?.totals?.costCoverageProducts) || 0;
+    return `Cantidad ${qty}/${tracked} · Precio ${cost}/${tracked}`;
+  }
+
+  function getAnalyticsWindowRange(analytics) {
+    const productsWithDates = Array.isArray(analytics?.products)
+      ? analytics.products.filter((item) => item.firstUsedDate && item.lastUsedDate)
+      : [];
+    if (!productsWithDates.length) return { start: "", end: "" };
+    const start = productsWithDates.reduce((best, item) => (!best || item.firstUsedDate < best ? item.firstUsedDate : best), "");
+    const end = productsWithDates.reduce((best, item) => (!best || item.lastUsedDate > best ? item.lastUsedDate : best), "");
+    return { start, end };
+  }
+
+  function formatAnalyticsAmount(value, unit) {
+    const qty = Number(value);
+    const safeUnit = normalizeUnit(unit || "");
+    if (!(Number.isFinite(qty) && qty > 0) || !safeUnit) return "—";
+    return formatAmountWithUnit(qty, safeUnit);
+  }
+
+  function formatAnalyticsFrequency(days) {
+    const safe = Number(days);
+    if (!(Number.isFinite(safe) && safe > 0)) return "—";
+    if (safe < 1) return `${formatNumberEs(safe * 24, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} h`;
+    return `${formatNumberEs(safe, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} d`;
+  }
+
+  function formatBudgetInputValue(value) {
+    const safe = Number(value);
+    if (!(Number.isFinite(safe) && safe > 0)) return "";
+    return String(Math.round(safe * 100) / 100);
+  }
+
+  function getRestockBadgeText(productAnalytics) {
+    if (!productAnalytics) return "Sin prevision";
+    if (productAnalytics.daysUntilRestock == null) return "Sin prevision";
+    if (productAnalytics.daysUntilRestock < 0) return `Reponer ya (${Math.abs(Math.round(productAnalytics.daysUntilRestock))} d)`;
+    if (productAnalytics.daysUntilRestock <= 7) return `Pronto (${Math.round(productAnalytics.daysUntilRestock)} d)`;
+    return `Previsto ${formatShortDateEs(productAnalytics.forecastDate)}`;
+  }
+
+  function getRestockBadgeClass(productAnalytics) {
+    const urgency = String(productAnalytics?.restockUrgency || "");
+    if (urgency === "overdue") return "is-danger";
+    if (urgency === "soon") return "is-warning";
+    return "";
+  }
+
+  function getDominantMealLabel(productAnalytics) {
+    const meal = String(productAnalytics?.dominantMeal || "").trim();
+    return mealLabels[meal] || "—";
+  }
+
+  function assignConsumptionChartColors(items = []) {
+    return items.map((item, index) => ({
+      ...item,
+      color: consumptionPalette[index % consumptionPalette.length],
+    }));
+  }
+
+  function buildConsumptionLegendRows(items = [], valueFormatter, valueKey) {
+    const total = items.reduce((acc, item) => acc + (Number(item?.[valueKey]) || 0), 0);
+    return items.map((item) => {
+      const rawValue = Number(item?.[valueKey]) || 0;
+      const pct = total > 0 ? (rawValue / total) * 100 : 0;
+      const label = `${String(item?.emoji || "").trim().substring(0, 2) || ""} ${item?.name || "Producto"}`.trim();
+      const attrs = item?.id && item.id !== "other" ? ` data-consumption-open-product="${escapeAttr(item.id)}"` : "";
+      return `<button class="macro-stats-donut-row" type="button"${attrs}>
+        <i style="background:${item.color}"></i>
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(valueFormatter(rawValue))}</strong>
+        <em>${roundMacro(pct)}%</em>
+      </button>`;
+    }).join("");
+  }
+
+  function renderConsumptionOverview(analytics) {
+    const { start, end } = getAnalyticsWindowRange(analytics);
+    if ($recipesConsumptionSummaryRange) $recipesConsumptionSummaryRange.textContent = formatRangeLabelEs(start, end);
+
+    if (!(Number(analytics?.totals?.productsTracked) > 0)) {
+      if ($recipesConsumptionSummary) $recipesConsumptionSummary.innerHTML = '<div class="hint">Registra productos o recetas para generar memoria de consumo.</div>';
+      if ($recipesConsumptionTimeline) $recipesConsumptionTimeline.innerHTML = '<div class="hint">Todavia no hay evolucion mensual que mostrar.</div>';
+      if ($recipesConsumptionDonutLegend) $recipesConsumptionDonutLegend.innerHTML = '<div class="hint">Sin reparto de consumo.</div>';
+      if ($recipesConsumptionCostLegend) $recipesConsumptionCostLegend.innerHTML = '<div class="hint">Sin reparto de gasto.</div>';
+      renderSimpleDonut($recipesConsumptionDonut, [], { subtitle: "consumos" });
+      renderSimpleDonut($recipesConsumptionCostDonut, [], { subtitle: "gasto" });
+      return;
+    }
+
+    if ($recipesConsumptionSummary) {
+      $recipesConsumptionSummary.innerHTML = `
+        <article class="recipes-consumption-stat">
+          <span>Productos trazados</span>
+          <strong>${analytics.totals.productsTracked}</strong>
+          <small>${getAnalyticsCoverageLabel(analytics)}</small>
+        </article>
+        <article class="recipes-consumption-stat">
+          <span>Consumos registrados</span>
+          <strong>${formatNumberEs(analytics.totals.totalOccurrences, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</strong>
+          <small>Historico acumulado en productos usados</small>
+        </article>
+        <article class="recipes-consumption-stat">
+          <span>Gasto estimado / mes</span>
+          <strong>${formatCurrency(analytics.totals.avgMonthlyCost || 0)}</strong>
+          <small>Segun precio disponible y frecuencia reciente</small>
+        </article>
+        <article class="recipes-consumption-stat">
+          <span>Reposiciones cerca</span>
+          <strong>${analytics.totals.soonToRestock}</strong>
+          <small>Alertas suaves a 14 dias vista</small>
+        </article>
+      `;
+    }
+
+    const consumptionSegments = assignConsumptionChartColors(analytics.charts?.consumptionShare || []);
+    const consumptionDonutSegments = consumptionSegments.map((item) => ({
+      label: item.name,
+      value: Number(item.totalOccurrences) || 0,
+      color: item.color,
+    }));
+    renderSimpleDonut($recipesConsumptionDonut, consumptionDonutSegments, {
+      valueFormatter: (value) => formatNumberEs(value, { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
+      subtitle: "consumos",
+    });
+    if ($recipesConsumptionDonutLegend) {
+      $recipesConsumptionDonutLegend.innerHTML = consumptionSegments.length
+        ? buildConsumptionLegendRows(consumptionSegments, (value) => formatNumberEs(value, { minimumFractionDigits: 0, maximumFractionDigits: 0 }), "totalOccurrences")
+        : '<div class="hint">Sin reparto de consumo.</div>';
+    }
+
+    const costSegments = assignConsumptionChartColors(analytics.charts?.costShare || []);
+    const costDonutSegments = costSegments.map((item) => ({
+      label: item.name,
+      value: Number(item.totalCost) || 0,
+      color: item.color,
+    }));
+    renderSimpleDonut($recipesConsumptionCostDonut, costDonutSegments, {
+      valueFormatter: (value) => formatNumberEs(value, { minimumFractionDigits: 0, maximumFractionDigits: 1 }),
+      subtitle: "EUR",
+    });
+    if ($recipesConsumptionCostLegend) {
+      $recipesConsumptionCostLegend.innerHTML = costSegments.length
+        ? buildConsumptionLegendRows(costSegments, (value) => formatCurrency(value), "totalCost")
+        : '<div class="hint">Sin reparto de gasto.</div>';
+    }
+
+    if ($recipesConsumptionTimeline) {
+      const timeline = Array.isArray(analytics?.charts?.monthlyTimeline) ? analytics.charts.monthlyTimeline : [];
+      const maxCount = Math.max(1, ...timeline.map((item) => Number(item?.count) || 0));
+      const maxCost = Math.max(1, ...timeline.map((item) => Number(item?.cost) || 0));
+      $recipesConsumptionTimeline.innerHTML = timeline.length
+        ? timeline.map((item) => {
+          const countWidth = Math.max(4, ((Number(item?.count) || 0) / maxCount) * 100);
+          const costWidth = Math.max(4, ((Number(item?.cost) || 0) / maxCost) * 100);
+          return `<div class="recipes-timeline-row">
+            <div class="recipes-timeline-label">${escapeHtml(item.label || "Mes")}</div>
+            <div class="recipes-timeline-bars">
+              <div class="recipes-timeline-track recipes-timeline-track-consumption"><i style="width:${countWidth}%"></i></div>
+              <div class="recipes-timeline-track recipes-timeline-track-cost"><i style="width:${costWidth}%"></i></div>
+            </div>
+            <div class="recipes-timeline-values">
+              <strong>${formatNumberEs(item.count || 0, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</strong>
+              <span>${formatCurrency(item.cost || 0)}</span>
+            </div>
+          </div>`;
+        }).join("")
+        : '<div class="hint">Todavia no hay evolucion mensual que mostrar.</div>';
+    }
+  }
+
+  function renderConsumptionMemoryPanel(analytics) {
+    if (!$recipesMemoryGrid) return;
+    const panels = [
+      {
+        title: "Mas consumidos",
+        items: analytics?.memoryPanels?.mostConsumed || [],
+        summary: (item) => `${formatNumberEs(item.totalOccurrences, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} usos · ${formatAnalyticsAmount(item.avgMonthlyQuantity, item.quantityUnit)}/mes`,
+      },
+      {
+        title: "Mayor gasto",
+        items: analytics?.memoryPanels?.highestCost || [],
+        summary: (item) => `${formatCurrency(item.totalCost || 0)} total · ${formatCurrency(item.avgMonthlyCost || 0)}/mes`,
+      },
+      {
+        title: "Duran menos",
+        items: analytics?.memoryPanels?.shortestDuration || [],
+        summary: (item) => `${formatAnalyticsFrequency(item.packageDurationDays)} por paquete · ${getRestockBadgeText(item)}`,
+      },
+      {
+        title: "Reposicion frecuente",
+        items: analytics?.memoryPanels?.frequentRestock || [],
+        summary: (item) => `Cada ${formatAnalyticsFrequency(item.replenishmentDays)} · ${getRestockBadgeText(item)}`,
+      },
+      {
+        title: "Uso irregular",
+        items: analytics?.memoryPanels?.irregular || [],
+        summary: (item) => `Variacion ${formatNumberEs((Number(item.irregularityScore) || 0) * 100, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}% · ${formatAnalyticsFrequency(item.avgGapDays)}`,
+      },
+      {
+        title: "Casi no se usan",
+        items: analytics?.memoryPanels?.lowUsage || [],
+        summary: (item) => `${item.recent30Occurrences || 0} usos ultimos 30 d · hace ${formatAnalyticsFrequency(item.daysSinceLastUse)}`,
+      },
+    ];
+
+    $recipesMemoryGrid.innerHTML = panels.map((panel) => `
+      <article class="recipes-memory-block">
+        <div class="recipes-memory-block-title">${escapeHtml(panel.title)}</div>
+        <div class="recipes-memory-block-list">
+          ${panel.items.length ? panel.items.map((item) => `<button class="recipes-memory-row" type="button" data-consumption-open-product="${escapeAttr(item.id)}">
+            <strong>${escapeHtml(`${String(item.emoji || "").trim().substring(0, 2) || "•"} ${item.name || "Producto"}`.trim())}</strong>
+            <span>${escapeHtml(panel.summary(item))}</span>
+          </button>`).join("") : '<div class="hint">Sin datos suficientes.</div>'}
+        </div>
+      </article>
+    `).join("");
+  }
+
+  function renderConsumptionProductInsights(analytics) {
+    if (!$recipesProductInsightsList) return;
+    const items = Array.isArray(analytics?.featuredProducts) ? analytics.featuredProducts : [];
+    $recipesProductInsightsList.innerHTML = items.length
+      ? items.map((item) => `
+        <article class="recipes-product-insight" data-consumption-open-product="${escapeAttr(item.id)}" role="button" tabindex="0" aria-label="Abrir producto ${escapeAttr(item.name || "Producto")}">
+          <div class="recipes-product-insight-head">
+            <div>
+              <div class="recipes-product-insight-title">${escapeHtml(`${String(item.emoji || "").trim().substring(0, 2) || "•"} ${item.name || "Producto"}`.trim())}</div>
+              <div class="recipes-product-insight-subtitle">${escapeHtml(`${formatNumberEs(item.totalOccurrences, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} usos · ${getDominantMealLabel(item)} · pico ${item.weekdayPeakLabel || "—"}`)}</div>
+            </div>
+            <span class="recipes-product-badge ${getRestockBadgeClass(item)}">${escapeHtml(getRestockBadgeText(item))}</span>
+          </div>
+          <div class="recipes-product-insight-pills">
+            <span class="recipes-product-pill">Media ${escapeHtml(formatAnalyticsAmount(item.avgQuantityPerOccurrence, item.quantityUnit))}</span>
+            <span class="recipes-product-pill">Dia ${escapeHtml(formatAnalyticsAmount(item.avgDailyQuantity, item.quantityUnit))}</span>
+            <span class="recipes-product-pill">Semana ${escapeHtml(formatAnalyticsAmount(item.avgWeeklyQuantity, item.quantityUnit))}</span>
+            <span class="recipes-product-pill">Mes ${escapeHtml(formatAnalyticsAmount(item.avgMonthlyQuantity, item.quantityUnit))}</span>
+            <span class="recipes-product-pill">Frecuencia ${escapeHtml(formatAnalyticsFrequency(item.avgGapDays))}</span>
+            <span class="recipes-product-pill">Gasto ${escapeHtml(formatCurrency(item.avgMonthlyCost || 0))}/mes</span>
+            <span class="recipes-product-pill">Pico anual ${escapeHtml(item.monthPeakLabel || "—")}</span>
+            <span class="recipes-product-pill">Ultimo uso ${escapeHtml(formatShortDateEs(item.lastUsedDate))}</span>
+          </div>
+          <div class="recipes-product-insight-copy">
+            ${escapeHtml(`Gasto total ${formatCurrency(item.totalCost || 0)} · reposicion media ${formatAnalyticsFrequency(item.replenishmentDays)} · compra sugerida ${item.suggestedMonthlyPurchaseUnits ? `${formatNumberEs(item.suggestedMonthlyPurchaseUnits, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} packs/mes` : "segun frecuencia"}`)}
+          </div>
+        </article>
+      `).join("")
+      : '<div class="hint">Aun no hay suficiente historico por producto para mostrar detalle.</div>';
+  }
+
+  function renderConsumptionPlanning(analytics) {
+    if ($recipesRestockSummary) {
+      $recipesRestockSummary.innerHTML = `
+        <article class="recipes-consumption-stat">
+          <span>Gasto historico / mes</span>
+          <strong>${formatCurrency(analytics?.totals?.avgMonthlyCost || 0)}</strong>
+          <small>Base sugerida para presupuesto</small>
+        </article>
+        <article class="recipes-consumption-stat">
+          <span>Productos por reponer</span>
+          <strong>${Number(analytics?.restockSoon?.length) || 0}</strong>
+          <small>Mirando los proximos 14 dias</small>
+        </article>
+        <article class="recipes-consumption-stat">
+          <span>Cobertura</span>
+          <strong>${Number(analytics?.totals?.productsTracked) || 0}</strong>
+          <small>${getAnalyticsCoverageLabel(analytics)}</small>
+        </article>
+      `;
+    }
+
+    if ($recipesRestockList) {
+      const rows = Array.isArray(analytics?.restockSoon) ? analytics.restockSoon : [];
+      $recipesRestockList.innerHTML = rows.length
+        ? rows.map((item) => `<button class="recipes-restock-row" type="button" data-consumption-open-product="${escapeAttr(item.id)}">
+          <div>
+            <strong>${escapeHtml(`${String(item.emoji || "").trim().substring(0, 2) || "•"} ${item.name || "Producto"}`.trim())}</strong>
+            <span>${escapeHtml(`Cada ${formatAnalyticsFrequency(item.replenishmentDays)} · ${item.suggestedMonthlyPurchaseUnits ? `${formatNumberEs(item.suggestedMonthlyPurchaseUnits, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} packs/mes` : formatAnalyticsAmount(item.avgMonthlyQuantity, item.quantityUnit)}`)}</span>
+          </div>
+          <em class="${getRestockBadgeClass(item)}">${escapeHtml(getRestockBadgeText(item))}</em>
+        </button>`).join("")
+        : '<div class="hint">No detecto reposiciones cercanas con el historico disponible.</div>';
+    }
+
+    if ($recipesBudgetList) {
+      const rows = Array.isArray(analytics?.budgetCandidates) ? analytics.budgetCandidates : [];
+      $recipesBudgetList.innerHTML = rows.length
+        ? rows.map((item) => {
+          const suggestedBudget = Number(item.suggestedBudgetMonthly) || 0;
+          const customBudget = Number(item.budgetTargetMonthly) || 0;
+          return `<div class="recipes-budget-row">
+            <div class="recipes-budget-copy">
+              <button class="recipes-budget-open" type="button" data-consumption-open-product="${escapeAttr(item.id)}">
+                <strong>${escapeHtml(`${String(item.emoji || "").trim().substring(0, 2) || "•"} ${item.name || "Producto"}`.trim())}</strong>
+                <span>${escapeHtml(`Historico ${formatCurrency(suggestedBudget)} / mes${customBudget ? ` · objetivo manual ${formatCurrency(customBudget)}` : ""}`)}</span>
+              </button>
+            </div>
+            <label class="recipes-budget-input">
+              <span>Objetivo</span>
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                inputmode="decimal"
+                placeholder="${escapeAttr(formatBudgetInputValue(suggestedBudget))}"
+                value="${escapeAttr(formatBudgetInputValue(customBudget))}"
+                data-consumption-budget-target="${escapeAttr(item.id)}"
+                aria-label="Objetivo mensual de ${escapeAttr(item.name || "producto")}"
+              />
+            </label>
+          </div>`;
+        }).join("")
+        : '<div class="hint">Cuando haya gasto estimado por producto, aparecera aqui el presupuesto sugerido.</div>';
+    }
+  }
+
+  function renderConsumptionPanels() {
+    const analytics = getConsumptionAnalyticsModel();
+    renderConsumptionOverview(analytics);
+    renderConsumptionMemoryPanel(analytics);
+    renderConsumptionProductInsights(analytics);
+    return analytics;
+  }
+
   function renderSimpleDonut(host, segments = [], options = {}) {
     if (!host) return;
     const total = segments.reduce((acc, s) => acc + Math.max(0, Number(s.value) || 0), 0);
@@ -5104,6 +5544,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       <div class="macro-stats-kpi-primary-wrap">${primaryKpis.map(([k, v, cls]) => `<article class="macro-stats-kpi ${cls || ""}"><div class="macro-stats-kpi-label">${k}</div><div class="macro-stats-kpi-value">${v}</div></article>`).join("")}</div>
       <div class="macro-stats-kpi-chips">${secondaryKpis.map(([k, v]) => `<article class="macro-stats-kpi-chip"><span>${k}</span><strong>${v}</strong></article>`).join("")}</div>
     `;
+    renderConsumptionPanels();
 
     if ($macroStatsMainChart) {
       const w = 760, h = 260, pad = { l: 20, r: 20, t: 18, b: 18 };
@@ -5633,6 +6074,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function renderShoppingView() {
     if (!$recipesPanelShopping) return;
+    const analytics = getConsumptionAnalyticsModel();
     if (shoppingState.compare.leftProductId && !nutritionProducts.some((p) => String(p.id || "") === shoppingState.compare.leftProductId)) shoppingState.compare.leftProductId = "";
     if (shoppingState.compare.rightProductId && !nutritionProducts.some((p) => String(p.id || "") === shoppingState.compare.rightProductId)) shoppingState.compare.rightProductId = "";
     const isCompare = shoppingState.mode === "compare";
@@ -5645,6 +6087,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       const active = btn.dataset.shoppingMode === shoppingState.mode;
       btn.classList.toggle("is-active", active);
     });
+    renderConsumptionPlanning(analytics);
     renderShoppingScoreFilters();
     renderShoppingProductCards();
     renderShoppingCompareOptions("left");
@@ -9339,11 +9782,36 @@ $recipeImportBtn?.addEventListener("click", () => {
     shoppingState.nutriFilter = btn.dataset.shoppingScoreFilter || "all";
     renderShoppingView();
   });
-  const openShoppingProductCard = (productId) => {
+  function openShoppingProductCard(productId) {
     const product = nutritionProducts.find((p) => String(p.id || "") === String(productId || ""));
     if (!product) return;
     openMacroProductModal(product, "breakfast", 100, null, {});
-  };
+  }
+
+  function maybeOpenConsumptionProductFromTarget(target) {
+    const trigger = target?.closest?.("[data-consumption-open-product]");
+    if (!trigger) return false;
+    openShoppingProductCard(trigger.dataset.consumptionOpenProduct || "");
+    return true;
+  }
+
+  function setConsumptionBudgetTarget(productId, rawValue) {
+    const id = String(productId || "").trim();
+    if (!id) return;
+    const parsed = Number(String(rawValue ?? "").replace(",", "."));
+    const budgetsByProductId = {
+      ...(nutritionConsumptionGuidance?.budgetsByProductId || {}),
+    };
+    if (Number.isFinite(parsed) && parsed > 0) budgetsByProductId[id] = Math.round(parsed * 100) / 100;
+    else delete budgetsByProductId[id];
+    nutritionConsumptionGuidance = normalizeConsumptionGuidance({
+      ...(nutritionConsumptionGuidance || {}),
+      budgetsByProductId,
+    });
+    persistNutrition();
+    if ($recipesPanelStatistics?.classList.contains("is-active")) renderStatisticsView();
+  }
+
   $macroShoppingResults?.addEventListener("click", (e) => {
     if (e.target.closest(".macro-shopping-pill-scroller")) return;
     const card = e.target.closest("[data-shopping-open-product]");
@@ -9356,6 +9824,31 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (!card) return;
     e.preventDefault();
     openShoppingProductCard(card.dataset.shoppingOpenProduct || "");
+  });
+  [
+    $recipesConsumptionDonutLegend,
+    $recipesConsumptionCostLegend,
+    $recipesMemoryGrid,
+    $recipesRestockList,
+    $recipesBudgetList,
+  ].forEach((host) => {
+    host?.addEventListener("click", (e) => {
+      if (e.target.closest?.("[data-consumption-budget-target]")) return;
+      maybeOpenConsumptionProductFromTarget(e.target);
+    });
+  });
+  $recipesProductInsightsList?.addEventListener("click", (e) => {
+    maybeOpenConsumptionProductFromTarget(e.target);
+  });
+  $recipesProductInsightsList?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const opened = maybeOpenConsumptionProductFromTarget(e.target);
+    if (opened) e.preventDefault();
+  });
+  $recipesBudgetList?.addEventListener("change", (e) => {
+    const input = e.target.closest("[data-consumption-budget-target]");
+    if (!input) return;
+    setConsumptionBudgetTarget(input.dataset.consumptionBudgetTarget || "", input.value);
   });
   $macroShoppingCompareLeftSearch?.addEventListener("input", (e) => {
     shoppingState.compare.leftQuery = String(e.target.value || "");

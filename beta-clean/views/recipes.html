@@ -191,6 +191,32 @@
 
     <div class="macro-stats-grid" id="macro-stats-kpis"></div>
 
+    <section class="macro-stats-card recipes-consumption-card">
+      <header class="macro-stats-card-head">
+        <div>
+          <h4>Memoria de consumo</h4>
+          <span class="hint" id="recipes-consumption-summary-range">Sin histórico suficiente</span>
+        </div>
+      </header>
+      <div class="recipes-consumption-summary" id="recipes-consumption-summary"></div>
+      <div class="recipes-consumption-chart-grid">
+        <article class="recipes-consumption-mini-card">
+          <div class="chart-card-title">Peso del consumo</div>
+          <svg id="recipes-consumption-donut" viewBox="0 0 120 120" class="macro-stats-donut"></svg>
+          <div class="macro-stats-donut-legend" id="recipes-consumption-donut-legend"></div>
+        </article>
+        <article class="recipes-consumption-mini-card">
+          <div class="chart-card-title">Peso del gasto</div>
+          <svg id="recipes-consumption-cost-donut" viewBox="0 0 120 120" class="macro-stats-donut"></svg>
+          <div class="macro-stats-donut-legend" id="recipes-consumption-cost-legend"></div>
+        </article>
+        <article class="recipes-consumption-mini-card recipes-consumption-timeline-card">
+          <div class="chart-card-title">Evolución mensual</div>
+          <div class="recipes-consumption-timeline" id="recipes-consumption-timeline"></div>
+        </article>
+      </div>
+    </section>
+
     <div class="macro-stats-panels">
       <section class="macro-stats-card macro-stats-main-chart-card">
         <header class="macro-stats-card-head">
@@ -259,10 +285,49 @@
         <div id="macro-stats-top-products" class="macro-stats-list"></div>
       </section>
     </div>
+
+    <section class="macro-stats-card recipes-memory-card">
+      <header class="macro-stats-card-head">
+        <div>
+          <h4>Productos memorizados</h4>
+          <span class="hint">Resumen para compra, reposición y gasto</span>
+        </div>
+      </header>
+      <div class="recipes-memory-grid" id="recipes-memory-grid"></div>
+    </section>
+
+    <section class="macro-stats-card recipes-product-insights-card">
+      <header class="macro-stats-card-head">
+        <div>
+          <h4>Analítica por producto</h4>
+          <span class="hint">Detalle compacto de frecuencia, cantidades, gasto y reposición</span>
+        </div>
+      </header>
+      <div class="recipes-product-insights-list" id="recipes-product-insights-list"></div>
+    </section>
   </div>
 </div>
 <div class="recipes-panel" id="recipes-panel-shopping">
   <div class="macro-stats-shell">
+    <section class="macro-stats-card recipes-restock-card">
+      <header class="macro-stats-card-head">
+        <div>
+          <h4>Reposición y presupuesto</h4>
+          <span class="hint">Estimaciones orientativas basadas en histórico y precio disponible</span>
+        </div>
+      </header>
+      <div class="recipes-restock-summary" id="recipes-restock-summary"></div>
+      <div class="recipes-restock-grid">
+        <article class="recipes-restock-panel">
+          <div class="recipes-restock-panel-title">Pronto a reponer</div>
+          <div class="recipes-restock-list" id="recipes-restock-list"></div>
+        </article>
+        <article class="recipes-restock-panel">
+          <div class="recipes-restock-panel-title">Presupuesto sugerido</div>
+          <div class="recipes-budget-list" id="recipes-budget-list"></div>
+        </article>
+      </div>
+    </section>
     <section class="macro-stats-card macro-shopping-shell">
       <header class="macro-stats-card-head">
         <h4>Compra inteligente</h4>

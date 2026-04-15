@@ -20,6 +20,14 @@ let unbindAuth = null;
 let unbindData = null;
 let isBound = false;
 
+function emitNotesData(reason = "") {
+  try {
+    window.dispatchEvent(new CustomEvent("bookshell:data", { detail: { source: "notes", reason } }));
+    return;
+  } catch (_) {}
+  try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+}
+
 function $id(id) {
   return document.getElementById(id);
 }
@@ -780,6 +788,7 @@ function subscribeData(uid) {
         state.unlockedFolderId = "";
       }
       renderShell();
+      emitNotesData("remote:notes");
     },
     (error) => {
       console.warn("[notes] error de carga", error);
@@ -806,6 +815,10 @@ export async function onShow() {
   window.__bookshellNotes = {
     openGlobalNoteModal,
     openNoteModal: (note = null, options = {}) => openNoteModal(note, options),
+    getAchievementsSnapshot: () => ({
+      folders: Object.fromEntries((state.folders || []).map((folder) => [folder.id, folder])),
+      notes: Object.fromEntries((state.notes || []).map((note) => [note.id, note])),
+    }),
   };
 }
 

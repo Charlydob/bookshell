@@ -17,6 +17,10 @@ import {
   notifySyncUserChanged,
   subscribeSyncState,
 } from "../shared/services/sync-manager.js?v=2026-04-05-v5";
+import {
+  initAchievementsService,
+  trackAchievementViewVisit,
+} from "../shared/services/achievements/index.js";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -2008,6 +2012,7 @@ async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
   state.currentViewId = viewId;
   window.localStorage.setItem(LAST_VIEW_KEY, viewId);
   scheduleLikelyVendorWarmup(viewId);
+  trackAchievementViewVisit(viewId);
 
   if (pushHash) {
     const nextHash = `#${viewId}`;
@@ -2689,6 +2694,7 @@ void initSyncManager({
   db,
   getUserId: () => auth.currentUser?.uid || "",
 });
+initAchievementsService();
 bindSyncIndicatorToggles();
 bindAuthGate();
 bindViewportHeightVar();

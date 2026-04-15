@@ -28,6 +28,14 @@ if ($viewRecipes) {
   const RECIPES_NODE_KEY = "recipes";
   let currentUid = null;
 
+  function emitRecipesData(reason = "") {
+    try {
+      window.dispatchEvent(new CustomEvent("bookshell:data", { detail: { source: "recipes", reason } }));
+      return;
+    } catch (_) {}
+    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+  }
+
   const MEAL_TYPES = ["desayuno", "comida", "cena", "snack"];
   const HEALTH_TYPES = ["sana", "equilibrada", "insana"];
   const palette = ["#f4d35e", "#9ad5ff", "#ff89c6", "#7dffb4", "#c8a4ff"];
@@ -762,6 +770,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
           cacheRecipes();
           refreshUI();
           if (detailRecipeId) renderRecipeDetail(detailRecipeId);
+          emitRecipesData("remote:recipes");
         },
         (err) => {
           console.warn("No se pudo escuchar recetas remotas", err);
@@ -3820,10 +3829,21 @@ if ($recipeImportStatus) $recipeImportStatus.textContent = "";
       getRecentRecipeFallback: __dashGetRecentRecipeFallback,
       openRecipeDetail,
       openGlobalFoodAdd,
+      getAchievementsSnapshot: () => ({
+        recipes: serializeRecipesMap(recipes),
+        nutrition: {
+          products: nutritionProducts,
+          dailyLogsByDate,
+          macroTargets,
+          integrationConfig: nutritionIntegrationConfig,
+          consumptionGuidance: nutritionConsumptionGuidance,
+          syncMeta: nutritionSyncMeta,
+        },
+      }),
     };
   } catch (_) {}
 
-  try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+  emitRecipesData("dashboard:ready");
 
 
   function renderRecipeDetail(id) {
@@ -4834,6 +4854,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         recalcAllRecipesNutrition();
         refreshUI();
         if ($modalBackdrop && !$modalBackdrop.classList.contains("hidden")) renderRecipeIngredientProductPicker();
+        emitRecipesData("remote:nutrition");
       }, (err) => {
         console.warn("No se pudo escuchar nutrición remota", err);
       });

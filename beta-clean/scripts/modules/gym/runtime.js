@@ -4482,6 +4482,12 @@ function bindEvents() {
         getWorkoutsByDate: () => ({ ...(workoutsByDate || {}) }),
         getBodyWeightKgForDate,
         getLatestBodyWeightKg: () => getBodyWeightKgForDate(dateKeyLocal(new Date())),
+        getAchievementsSnapshot: () => ({
+          exercises,
+          workoutsByDate,
+          bodyweightByDate,
+          cardioByDate,
+        }),
       };
     } catch (_) {}
   }

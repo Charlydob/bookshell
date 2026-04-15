@@ -35,6 +35,14 @@ const state = {
 
 const els = {};
 
+function emitVideosHubData(reason = "") {
+  try {
+    window.dispatchEvent(new CustomEvent("bookshell:data", { detail: { source: "videos", reason } }));
+    return;
+  } catch (_) {}
+  try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+}
+
 function getTodayKey() {
   const now = new Date();
   const y = now.getFullYear();
@@ -628,6 +636,7 @@ function subscribeData() {
       state.selectedVideoId = first?.[0] || "";
     }
     renderAll();
+    emitVideosHubData("remote:videos");
   });
 
   state.listeners.push(stop);
@@ -693,6 +702,9 @@ export async function init({ root }) {
   handleAuthUser(auth.currentUser || null);
   renderAll();
   state.initialized = true;
+  window.__bookshellVideosHub = {
+    getAchievementsSnapshot: () => ({ ...(state.videos || {}) }),
+  };
 }
 
 export async function onShow() {

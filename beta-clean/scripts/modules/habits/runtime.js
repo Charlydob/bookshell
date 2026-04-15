@@ -164,6 +164,14 @@ let runningSession = null; // Sesión principal (derivada de activeSessions)
 let activeSessions = {};
 let selectedSessionId = null;
 let sessionInterval = null;
+
+function emitHabitsData(reason = "") {
+  try {
+    window.dispatchEvent(new CustomEvent("bookshell:data", { detail: { source: "habits", reason } }));
+    return;
+  } catch (_) {}
+  try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+}
 let sessionDetailOpen = false;
 let sessionLastRankKey = "";
 let sessionLastRankPosition = null;
@@ -12584,7 +12592,7 @@ function listenRemoteLegacy() {
     markHistoryDataChanged("remote:checks");
     saveCache();
     rerender();
-    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+    emitHabitsData("remote:checks");
   });
 
   bindRemote(HABIT_COUNTS_PATH, (snap) => {
@@ -12593,7 +12601,7 @@ function listenRemoteLegacy() {
     markHistoryDataChanged("remote:counts");
     saveCache();
     rerender();
-    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+    emitHabitsData("remote:counts");
   });
 
   bindRemote(HABIT_ACTIVE_SESSIONS_PATH, (snap) => {
@@ -12602,6 +12610,7 @@ function listenRemoteLegacy() {
     updateSessionUI();
     updateCompareLiveInterval();
     rerenderIfActiveTab(["today", "schedule", "history"]);
+    emitHabitsData("remote:active-sessions");
   });
   bindRemote(HABIT_SESSIONS_PATH, (snap) => {
     const raw = snap.val() || {};
@@ -12624,7 +12633,7 @@ function listenRemoteLegacy() {
     markHistoryDataChanged("remote:sessions");
     saveCache();
     rerender();
-    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+    emitHabitsData("remote:sessions");
   });
 
   remoteBound = true;
@@ -13102,7 +13111,7 @@ function listenRemote() {
     markHistoryDataChanged("remote:checks");
     saveCache();
     rerender();
-    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+    emitHabitsData("remote:checks");
   });
 
   bindRemote(HABIT_COUNTS_PATH, (snap) => {
@@ -13111,7 +13120,7 @@ function listenRemote() {
     markHistoryDataChanged("remote:counts");
     saveCache();
     rerender();
-    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+    emitHabitsData("remote:counts");
   });
 
   bindRemote(HABIT_ACTIVE_SESSIONS_PATH, (snap) => {
@@ -13121,6 +13130,7 @@ function listenRemote() {
     updateSessionUI();
     updateCompareLiveInterval();
     rerenderIfActiveTab(["today", "schedule", "history"]);
+    emitHabitsData("remote:active-sessions");
   });
 
   bindRemote(HABIT_SESSIONS_PATH, (snap) => {
@@ -13144,7 +13154,7 @@ function listenRemote() {
     markHistoryDataChanged("remote:sessions");
     saveCache();
     rerender();
-    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+    emitHabitsData("remote:sessions");
   });
 
   remoteBound = true;
@@ -13394,7 +13404,14 @@ window.__bookshellHabits = {
     return isHabitCompletedOnDate(habits[id], key);
   },
   rangeLabel,
-  debugComputeTimeByHabit
+  debugComputeTimeByHabit,
+  getAchievementsSnapshot: () => ({
+    habits,
+    habitChecks,
+    habitCounts,
+    habitSessions,
+    activeSessions,
+  }),
 };
 async function initHabits() {
   if (!currentUid) return;

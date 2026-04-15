@@ -75,6 +75,14 @@ let readingLog = {}; // { "YYYY-MM-DD": { bookId: pages } }
 let links = {};
 let bookDetailId = null;
 
+function emitBookshellBooksData(reason = "") {
+  try {
+    window.dispatchEvent(new CustomEvent("bookshell:data", { detail: { source: "books", reason } }));
+    return;
+  } catch (_) {}
+  try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+}
+
 // Categorías (género): opciones
 const DEFAULT_GENRES = [
   "Novela","Ensayo","Fantasía","Ciencia ficción","Terror",
@@ -731,7 +739,7 @@ function bindDataSources() {
       setBooksShellLoading(false);
     }
     renderBooks();
-    try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+    emitBookshellBooksData("remote:books");
   });
 
   // Escucha log lectura
@@ -744,6 +752,7 @@ function bindDataSources() {
     renderStats();
     renderCalendar();
     renderPagesTimeline();
+    emitBookshellBooksData("remote:reading-log");
   });
 
   onValue(ref(db, LINKS_PATH), (snap) => {
@@ -3408,5 +3417,10 @@ window.buildReadingSpine = buildReadingSpine;
 window.__bookshellBooks = {
   getRecentBook,
   openBookModal,
-  updateBookProgress
+  updateBookProgress,
+  getAchievementsSnapshot: () => ({
+    books,
+    readingLog,
+    links,
+  }),
 };

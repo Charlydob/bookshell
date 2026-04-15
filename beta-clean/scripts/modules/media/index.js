@@ -38,6 +38,14 @@ const PERSON_CACHE_TTL = 1000 * 60 * 60 * 24 * 7;
 let items = [];
 let filtered = [];
 
+function emitMediaData(reason = "") {
+  try {
+    window.dispatchEvent(new CustomEvent("bookshell:data", { detail: { source: "media", reason } }));
+    return;
+  } catch (_) {}
+  try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+}
+
 let donutChart = null;
 let mapChart = null;
 
@@ -674,7 +682,7 @@ function saveCache() {
 
 function save() {
   saveCache();
-  try { window.dispatchEvent(new Event("bookshell:data")); } catch (_) {}
+  emitMediaData("local:media");
 }
 
 function loadFilterPrefs() {
@@ -757,6 +765,7 @@ function bindFirebaseOnce() {
 
       saveCache();
       refresh();
+      emitMediaData("remote:media");
     });
   } catch (e) {
     console.warn("[media] firebase bind failed", e);
@@ -4885,6 +4894,11 @@ function init() {
 
   initViewDefaults();
   refresh();
+  try {
+    window.__bookshellMedia = {
+      getAchievementsSnapshot: () => Object.fromEntries((items || []).map((item) => [item.id, item])),
+    };
+  } catch (_) {}
 
   log("init ok", items.length);
 }

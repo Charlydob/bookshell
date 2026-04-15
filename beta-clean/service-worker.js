@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-04-15-v1";
+const APP_VERSION = "2026-04-15-v2";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -8,6 +8,7 @@ const LOCAL_PRECACHE_ASSETS = [
   "./manifest.webmanifest",
   "./styles/core/base.css",
   "./styles/core/shell.css",
+  "./styles/core/achievements.css",
   "./styles/modules/books.css",
   "./styles/modules/finance.css",
   "./styles/modules/games.css",
@@ -37,6 +38,7 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/modules/books/runtime.js",
   "./scripts/modules/finance/index.js",
   "./scripts/modules/finance/runtime.js",
+  "./scripts/modules/finance/finance/data.js",
   "./scripts/modules/games/index.js",
   "./scripts/modules/games/runtime.js",
   "./scripts/modules/gym/index.js",
@@ -72,6 +74,9 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/shared/firebase/index.js",
   "./scripts/shared/firebase/offline-rtdb.js",
   "./scripts/shared/services/sync-manager.js",
+  "./scripts/shared/services/achievements/index.js",
+  "./scripts/shared/services/achievements/catalog.js",
+  "./scripts/shared/services/achievements/metrics.js",
   "./scripts/shared/storage/offline-db.js",
   "./scripts/shared/storage/offline-queue.js",
   "./scripts/shared/storage/offline-snapshots.js",

@@ -3197,6 +3197,27 @@ function chartModelForRange(series, mode) {
 
 const FINANCE_TOTALS_CACHE_KEY = 'bookshell:finance:totals:v1';
 
+function emitFinanceData(reason = '') {
+  try {
+    window.dispatchEvent(new CustomEvent('bookshell:data', { detail: { source: 'finance', reason } }));
+    return;
+  } catch (_) {}
+  try { window.dispatchEvent(new Event('bookshell:data')); } catch (_) {}
+}
+
+function syncFinanceAchievementsApi() {
+  try {
+    window.__bookshellFinance = {
+      getAchievementsSnapshot: () => ({
+        accounts: Object.fromEntries((state.accounts || []).map((account) => [account.id, account])),
+        transactions: state.balance?.transactions || {},
+        budgets: state.balance?.budgets || {},
+        goals: state.goals || { goals: {} },
+      }),
+    };
+  } catch (_) {}
+}
+
 function publishFinanceTotals(accounts = []) {
   const myTotal = accounts.reduce((sum, account) => sum + Number(account.current || 0), 0);
   const totalReal = accounts.reduce((sum, account) => sum + Number(account.currentReal || 0), 0);
@@ -7759,6 +7780,7 @@ function applyRemoteData(val = {}, replace = false) {
     lastSeenMonthKey: root.balance?.lastSeenMonthKey || (replace ? '' : state.balance.lastSeenMonthKey)
   };
   state.goals = { goals: root.goals?.goals || (replace ? {} : state.goals.goals) };
+  syncFinanceAchievementsApi();
   financeDebug('sample tx', balanceTxList().slice(0, 5));
 }
 
@@ -7880,6 +7902,7 @@ function subscribe() {
     const val = snap.val();
     if (!val && state.hydratedFromRemote) {
       triggerRender();
+      emitFinanceData('remote:empty');
       return;
     }
     if (state.financePath === resolveFinancePath()) financeRootsCache.newRoot = val || {};
@@ -7888,6 +7911,7 @@ function subscribe() {
     applyRemoteData(mergedRoot, true);
     state.hydratedFromRemote = true;
     triggerRender();
+    emitFinanceData('remote:finance');
   }, (error) => { state.error = String(error?.message || error); triggerRender(); });
 
   if (financeNeedsLegacyAccountsMerge) {
@@ -7899,6 +7923,7 @@ function subscribe() {
       applyRemoteData(mergedRoot, true);
       state.hydratedFromRemote = true;
       triggerRender();
+      emitFinanceData('remote:finance-legacy');
     }, (error) => { state.error = String(error?.message || error); triggerRender(); });
   }
 }
@@ -10177,6 +10202,5 @@ function getFinanceListenerCount() {
   if (state.toastTimer) count += 1;
   return count;
 }
-
 
 

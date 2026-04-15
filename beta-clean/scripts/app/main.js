@@ -810,7 +810,34 @@ async function ensureViewModule(viewId, { runOnShow = true, highPriority = false
         stack: String(error?.stack || ""),
         onShowMs: Math.round(performance.now() - onShowStartedAt),
       }, "error");
-      throw error;
+      if (!moduleState.onShowRetryInFlight) {
+        moduleState.onShowRetryInFlight = true;
+        moduleState.initialized = false;
+        try {
+          root.innerHTML = "";
+          logViewInit(viewId, "module:onShow:retry", {
+            reason: "onShow failed; forcing module reinit",
+          }, "warn");
+          const retriedModule = await ensureViewModule(viewId, {
+            runOnShow: true,
+            highPriority: true,
+          });
+          return retriedModule || null;
+        } catch (retryError) {
+          logViewInit(viewId, "module:onShow:retry:error", {
+            message: String(retryError?.message || retryError || ""),
+            stack: String(retryError?.stack || ""),
+          }, "error");
+        } finally {
+          moduleState.onShowRetryInFlight = false;
+        }
+      }
+      renderViewUnavailableFallback(
+        root,
+        viewId,
+        "Esta vista encontró un error al mostrarse. Se aplicó una recuperación automática y puedes cambiar de pestaña sin reiniciar la app.",
+      );
+      return null;
     }
   }
 
@@ -1962,10 +1989,20 @@ async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
 
   syncViews(viewId);
   syncNav(viewId);
-  await ensureViewModule(viewId, { highPriority });
+  let readyModule = null;
+  try {
+    readyModule = await ensureViewModule(viewId, { highPriority });
+  } catch (error) {
+    logViewInit(viewId, "setView:error", {
+      message: String(error?.message || error || ""),
+      stack: String(error?.stack || ""),
+    }, "error");
+    console.warn(`[shell] fallo setView(${viewId})`, error);
+  }
   recordViewMetrics(viewId, {
     lastShowMs: Math.round(performance.now() - viewSwitchStartedAt),
     lastShownAt: Date.now(),
+    viewReady: Boolean(readyModule),
   });
 
   state.currentViewId = viewId;

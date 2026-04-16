@@ -1,24 +1,37 @@
 import { onUserChange } from "../../shared/firebase/index.js";
 import {
+  buildFolderOptions,
   buildFolderStats,
   createInitialNotesState,
   filterFolders,
   filterNotesByFolder,
+  getChildFolders,
+  getFolderPath,
+  isFolderParentAllowed,
 } from "./domain/store.js";
 import {
   createFolder,
   createNote,
+  createNoteId,
   deleteFolder,
   deleteNote,
   subscribeNotesRoot,
   updateFolder,
   updateNote,
 } from "./persist/notes-datasource.js";
+import {
+  deleteNoteImageAsset,
+  downscaleNoteImageFile,
+  uploadNoteImageAsset,
+} from "./persist/notes-storage.js";
 
 const state = createInitialNotesState();
 let unbindAuth = null;
 let unbindData = null;
 let isBound = false;
+let notePhotoObjectUrl = null;
+let notePhotoRemove = false;
+let noteSaveInFlight = false;
 
 function emitNotesData(reason = "") {
   try {
@@ -52,18 +65,6 @@ function tint(color, alpha = 0.18) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-function formatDate(ts) {
-  try {
-    return new Date(Number(ts || Date.now())).toLocaleDateString("es-ES", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
-  } catch (_) {
-    return "";
-  }
-}
-
 function openModal(backdropId) {
   const el = $id(backdropId);
   if (!el) return;
@@ -80,24 +81,110 @@ function closeModal(backdropId) {
   }
 }
 
-function renderFolders() {
-  const list = $id("notes-folder-list");
+function pluralize(value, singular, plural) {
+  return `${value} ${value === 1 ? singular : plural}`;
+}
+
+function getCurrentFolder() {
+  return state.folders.find((folder) => folder.id === state.selectedFolderId) || null;
+}
+
+function buildNoteImageRenderUrl(note) {
+  const url = String(note?.imageUrl || "").trim();
+  const version = Number(note?.imageUpdatedAt || 0);
+  if (!url) return "";
+  if (!version) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(version)}`;
+}
+
+function notePreview(note) {
+  return note.content || "";
+}
+
+function normalizeExternalUrl(rawUrl = "") {
+  try {
+    const value = String(rawUrl || "").trim();
+    if (!value) return "";
+    const url = new URL(value.startsWith("http") ? value : `https://${value}`);
+    return url.toString();
+  } catch (_) {
+    return "";
+  }
+}
+
+function urlHost(rawUrl = "") {
+  try {
+    const url = new URL(normalizeExternalUrl(rawUrl));
+    return url.hostname;
+  } catch (_) {
+    return String(rawUrl || "").trim();
+  }
+}
+
+function openExternalUrl(rawUrl = "") {
+  const href = normalizeExternalUrl(rawUrl);
+  if (!href) return false;
+
+  const popup = window.open(href, "_blank", "noopener,noreferrer");
+  if (popup) {
+    try { popup.opener = null; } catch (_) {}
+    return true;
+  }
+
+  try {
+    const link = document.createElement("a");
+    link.href = href;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer external";
+    link.referrerPolicy = "no-referrer";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function clearNoteFilters() {
+  state.noteQuery = "";
+  state.noteCategoryFilter = "";
+  state.noteTagsFilter = "";
+  if ($id("notes-search-notes")) $id("notes-search-notes").value = "";
+  if ($id("notes-filter-note-category")) $id("notes-filter-note-category").value = "";
+  if ($id("notes-filter-note-tags")) $id("notes-filter-note-tags").value = "";
+}
+
+function setCurrentFolder(folderId = "") {
+  const safeFolderId = String(folderId || "").trim();
+  if (state.selectedFolderId !== safeFolderId) {
+    clearNoteFilters();
+  }
+  state.selectedFolderId = safeFolderId;
+}
+
+function requireUnlockedFolder(folder) {
+  if (!folder?.isPrivate) return true;
+  return state.unlockedFolderIds.has(folder.id);
+}
+
+function formatFolderMeta(folder) {
+  const parts = [];
+  if (Number(folder?.childFoldersCount || 0) > 0) {
+    parts.push(pluralize(Number(folder.childFoldersCount || 0), "carpeta", "carpetas"));
+  }
+  parts.push(pluralize(Number(folder?.notesCount || 0), "nota", "notas"));
+  return parts.join(" · ");
+}
+
+function renderFolderCards(list, folders = [], { emptyText = "No hay carpetas todavía." } = {}) {
   if (!list) return;
-
-  const foldersWithStats = buildFolderStats(state.folders, state.notes);
-  const filtered = filterFolders(
-    foldersWithStats,
-    state.folderQuery,
-    state.folderCategoryFilter,
-    state.folderTagsFilter
-  );
-
-  if (!filtered.length) {
-    list.innerHTML = '<div class="empty-state">No hay carpetas todavía.</div>';
+  if (!folders.length) {
+    list.innerHTML = `<div class="empty-state">${escapeHtml(emptyText)}</div>`;
     return;
   }
 
-  list.innerHTML = filtered.map((folder) => {
+  list.innerHTML = folders.map((folder) => {
     const subtitleClass = folder.isPrivate ? "notes-folder-meta is-private-blur" : "notes-folder-meta";
     const emoji = folder.emoji || "📁";
     return `
@@ -107,7 +194,7 @@ function renderFolders() {
           <span class="notes-folder-icon">${escapeHtml(emoji)}</span>
           <span class="notes-folder-content">
             <strong class="notes-folder-title">${escapeHtml(folder.name)}</strong>
-            <span class="${subtitleClass}">${folder.notesCount} notas</span>
+            <span class="${subtitleClass}">${escapeHtml(formatFolderMeta(folder))}</span>
           </span>
         </button>
         <span class="notes-folder-actions">
@@ -119,69 +206,142 @@ function renderFolders() {
   }).join("");
 }
 
-function notePreview(note) {
-  return note.content || "";
+function renderRootFolders() {
+  const list = $id("notes-folder-list");
+  if (!list) return;
+
+  const foldersWithStats = buildFolderStats(state.folders, state.notes);
+  const rootFolders = getChildFolders(foldersWithStats, "");
+  const filtered = filterFolders(
+    rootFolders,
+    state.folderQuery,
+    state.folderCategoryFilter,
+    state.folderTagsFilter,
+  );
+
+  const emptyText = state.folders.length
+    ? "No hay carpetas en este nivel con esos filtros."
+    : "No hay carpetas todavía.";
+
+  renderFolderCards(list, filtered, { emptyText });
 }
 
-function urlHost(rawUrl = "") {
-  try {
-    const value = String(rawUrl || "").trim();
-    if (!value) return "";
-    const url = new URL(value.startsWith("http") ? value : `https://${value}`);
-    return url.hostname;
-  } catch (_) {
-    return String(rawUrl || "").trim();
-  }
+function renderFolderBreadcrumbs(path = []) {
+  const breadcrumbs = $id("notes-folder-breadcrumbs");
+  if (!breadcrumbs) return;
+
+  const items = [
+    '<button class="notes-breadcrumb-btn" type="button" data-act="breadcrumb-root">Raíz</button>',
+  ];
+
+  path.forEach((folder, index) => {
+    const isCurrent = index === path.length - 1;
+    items.push('<span class="notes-breadcrumb-sep">/</span>');
+    if (isCurrent) {
+      items.push(`<span class="notes-breadcrumb-current">${escapeHtml(folder.name)}</span>`);
+      return;
+    }
+    items.push(`
+      <button class="notes-breadcrumb-btn" type="button" data-act="open-breadcrumb" data-folder-id="${escapeHtml(folder.id)}">
+        ${escapeHtml(folder.name)}
+      </button>
+    `);
+  });
+
+  breadcrumbs.innerHTML = items.join("");
+}
+
+function renderNoteCards(list, notes = []) {
+  if (!list) return;
+
+  list.innerHTML = notes.map((note) => {
+    const preview = notePreview(note);
+    const imageUrl = buildNoteImageRenderUrl(note);
+    const externalUrl = normalizeExternalUrl(note.url);
+    const linkMarkup = note.type === "link"
+      ? (externalUrl
+        ? `
+          <a
+            class="notes-item-link notes-item-link-anchor"
+            href="${escapeHtml(externalUrl)}"
+            target="_blank"
+            rel="noopener noreferrer external"
+            referrerpolicy="no-referrer"
+            data-act="open-note-link"
+            data-note-url="${escapeHtml(note.url || "")}"
+          >${escapeHtml(urlHost(note.url) || note.url || "")} ↗</a>
+        `
+        : `<p class="notes-item-link">${escapeHtml(urlHost(note.url) || note.url || "")}</p>`)
+      : "";
+    const mediaMarkup = imageUrl
+      ? `
+        <div class="notes-item-media is-image">
+          <img class="notes-item-image" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(note.title || "Nota")}" loading="lazy" decoding="async" />
+        </div>
+      `
+      : `
+        <div class="notes-item-media is-placeholder">
+          <span class="notes-item-icon">${note.type === "link" ? "🔗" : "🗒️"}</span>
+        </div>
+      `;
+
+    return `
+      <article class="notes-item-card">
+        ${mediaMarkup}
+        <div class="notes-item-content">
+          <h4 class="notes-item-title">${escapeHtml(note.title || "Sin título")}</h4>
+          ${preview ? `<p class="notes-item-preview">${escapeHtml(preview)}</p>` : ""}
+          ${linkMarkup}
+        </div>
+        <div class="notes-item-actions">
+          <button class="icon-btn icon-btn-large" type="button" data-act="edit-note" data-note-id="${escapeHtml(note.id)}">✏️</button>
+          <button class="icon-btn icon-btn-large" type="button" data-act="delete-note" data-note-id="${escapeHtml(note.id)}">🗑️</button>
+        </div>
+      </article>
+    `;
+  }).join("");
 }
 
 function renderFolderDetail() {
   const panel = $id("notes-folder-screen");
+  const subfolderBlock = $id("notes-subfolder-block");
+  const subfolderList = $id("notes-subfolder-list");
   const empty = $id("notes-empty-folder");
-  const list = $id("notes-cards-list");
-  if (!panel || !list || !empty) return;
+  const notesList = $id("notes-cards-list");
+  const notesLabel = $id("notes-notes-section-label");
+  if (!panel || !subfolderBlock || !subfolderList || !empty || !notesList || !notesLabel) return;
 
-  const folder = state.folders.find((item) => item.id === state.selectedFolderId);
+  const foldersWithStats = buildFolderStats(state.folders, state.notes);
+  const folder = foldersWithStats.find((item) => item.id === state.selectedFolderId);
   if (!folder) {
     panel.classList.add("hidden");
     return;
   }
 
-  panel.classList.remove("hidden");
-  $id("notes-folder-name").textContent = folder.name;
-
-  const rows = filterNotesByFolder(
+  const childFolders = getChildFolders(foldersWithStats, folder.id);
+  const notes = filterNotesByFolder(
     state.notes,
     folder.id,
     state.noteQuery,
     state.noteCategoryFilter,
-    state.noteTagsFilter
+    state.noteTagsFilter,
   );
-  $id("notes-folder-count").textContent = `${rows.length} notas`;
 
-  if (!rows.length) {
-    list.innerHTML = "";
-    empty.classList.remove("hidden");
-    return;
-  }
+  panel.classList.remove("hidden");
+  $id("notes-folder-name").textContent = folder.name;
+  $id("notes-folder-count").textContent = [
+    pluralize(childFolders.length, "subcarpeta", "subcarpetas"),
+    pluralize(notes.length, "nota", "notas"),
+  ].join(" · ");
+  renderFolderBreadcrumbs(getFolderPath(foldersWithStats, folder.id));
 
-  empty.classList.add("hidden");
-  list.innerHTML = rows.map((note) => {
-    const preview = notePreview(note);
-    return `
-    <article class="notes-item-card">
-      <div class="notes-item-icon">${note.type === "link" ? "🔗" : "🗒️"}</div>
-      <div class="notes-item-content">
-        <h4 class="notes-item-title">${escapeHtml(note.title || "Sin título")}</h4>
-        ${preview ? `<p class="notes-item-preview">${escapeHtml(preview)}</p>` : ""}
-        ${note.type === "link" ? `<p class="notes-item-link">${escapeHtml(urlHost(note.url) || note.url || "")}</p>` : ""}
-      </div>
-      <div class="notes-item-actions">
-        <button class="icon-btn icon-btn-large" type="button" data-act="edit-note" data-note-id="${escapeHtml(note.id)}">✏️</button>
-        <button class="icon-btn icon-btn-large" type="button" data-act="delete-note" data-note-id="${escapeHtml(note.id)}">🗑️</button>
-      </div>
-    </article>
-  `;
-  }).join("");
+  subfolderBlock.classList.toggle("hidden", childFolders.length === 0);
+  renderFolderCards(subfolderList, childFolders, { emptyText: "No hay subcarpetas." });
+
+  notesLabel.classList.toggle("hidden", notes.length === 0);
+  renderNoteCards(notesList, notes);
+
+  empty.classList.toggle("hidden", childFolders.length > 0 || notes.length > 0);
 }
 
 function renderShell() {
@@ -193,18 +353,14 @@ function renderShell() {
   listScreen.classList.toggle("hidden", inFolder);
   detailScreen.classList.toggle("hidden", !inFolder);
 
-  if (!inFolder) {
-    updateFilterOptions();
-  } else {
+  if (inFolder) {
     updateFilterOptionsForNotes();
+  } else {
+    updateFilterOptions();
   }
-  renderFolders();
-  renderFolderDetail();
-}
 
-function requireUnlockedFolder(folder) {
-  if (!folder?.isPrivate) return true;
-  return state.unlockedFolderId === folder.id;
+  renderRootFolders();
+  renderFolderDetail();
 }
 
 function openFolder(folderId) {
@@ -219,253 +375,24 @@ function openFolder(folderId) {
     return;
   }
 
-  state.selectedFolderId = folder.id;
-  state.noteQuery = "";
-  $id("notes-search-notes").value = "";
+  setCurrentFolder(folder.id);
+  renderShell();
+}
+
+function goUpFolder() {
+  const currentFolder = getCurrentFolder();
+  if (!currentFolder) {
+    setCurrentFolder("");
+    renderShell();
+    return;
+  }
+  setCurrentFolder(currentFolder.parentId || "");
   renderShell();
 }
 
 function closeFolderView() {
-  state.selectedFolderId = "";
-  state.unlockedFolderId = "";
-  state.noteQuery = "";
-  state.noteCategoryFilter = "";
-  state.noteTagsFilter = "";
+  setCurrentFolder("");
   renderShell();
-}
-
-function bindFolderModalEvents() {
-  const privateInput = $id("notes-folder-private");
-  privateInput?.addEventListener("change", () => {
-    const enabled = Boolean(privateInput.checked);
-    $id("notes-folder-pin-wrap")?.classList.toggle("hidden", !enabled);
-    if (!enabled) {
-      $id("notes-folder-pin").value = "";
-    }
-  });
-
-  $id("notes-folder-form")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const id = $id("notes-folder-id").value;
-    const name = $id("notes-folder-name-input").value.trim();
-    const color = $id("notes-folder-color").value;
-    const emoji = $id("notes-folder-emoji").value.trim() || "📁";
-    const category = $id("notes-folder-category").value.trim();
-    const tagsInput = $id("notes-folder-tags").value.trim();
-    const tags = tagsInput ? tagsInput.split(",").map(t => t.trim()).filter(t => t) : [];
-    const isPrivate = $id("notes-folder-private").checked;
-    const pin = String($id("notes-folder-pin").value || "").replace(/\D+/g, "").slice(0, 4);
-
-    if (!name) return;
-    if (isPrivate && pin.length !== 4) {
-      $id("notes-folder-form-error").textContent = "El PIN debe tener 4 dígitos.";
-      return;
-    }
-
-    const payload = {
-      name,
-      color,
-      emoji,
-      category,
-      tags,
-      createdAt: Date.now(),
-      isPrivate,
-      pin,
-    };
-
-    if (id) {
-      const current = state.folders.find((row) => row.id === id);
-      await updateFolder(state.rootPath, id, {
-        ...current,
-        ...payload,
-        createdAt: current?.createdAt || payload.createdAt,
-      });
-    } else {
-      await createFolder(state.rootPath, payload);
-    }
-
-    closeModal("notes-folder-modal-backdrop");
-    updateFilterOptions();
-    renderShell();
-  });
-
-  $id("notes-folder-modal-close")?.addEventListener("click", () => closeModal("notes-folder-modal-backdrop"));
-}
-
-function bindNoteModalEvents() {
-  const isLinkInput = $id("notes-note-is-link");
-  isLinkInput?.addEventListener("change", () => {
-    $id("notes-note-url-wrap")?.classList.toggle("hidden", !isLinkInput.checked);
-  });
-
-  $id("notes-note-form")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const id = $id("notes-note-id").value;
-    const folderId = String(
-      $id("notes-note-folder-select")?.value
-      || $id("notes-note-folder-id")?.value
-      || ""
-    ).trim();
-    const title = $id("notes-note-title").value.trim();
-    const content = $id("notes-note-content").value.trim();
-    const category = $id("notes-note-category").value.trim();
-    const tagsInput = $id("notes-note-tags").value.trim();
-    const tags = tagsInput ? tagsInput.split(",").map(t => t.trim()).filter(t => t) : [];
-    const isLink = $id("notes-note-is-link").checked;
-    const url = $id("notes-note-url").value.trim();
-
-    if (!title) return;
-    if (!folderId) {
-      $id("notes-note-form-error").textContent = "Selecciona una carpeta para guardar la nota.";
-      $id("notes-note-folder-select")?.focus();
-      return;
-    }
-    if (isLink && !url) {
-      $id("notes-note-form-error").textContent = "Introduce una URL para la nota tipo link.";
-      return;
-    }
-
-    const payload = {
-      folderId,
-      title,
-      content,
-      category,
-      tags,
-      type: isLink ? "link" : "note",
-      url,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-
-    if (id) {
-      const current = state.notes.find((row) => row.id === id);
-      await updateNote(state.rootPath, id, {
-        ...current,
-        ...payload,
-        createdAt: current?.createdAt || payload.createdAt,
-      });
-    } else {
-      await createNote(state.rootPath, payload);
-    }
-
-    const folder = state.folders.find((row) => row.id === folderId);
-    closeModal("notes-note-modal-backdrop");
-    if (folderId) {
-      const canOpenFolder = !folder?.isPrivate || state.unlockedFolderId === folderId || state.selectedFolderId === folderId;
-      state.selectedFolderId = canOpenFolder ? folderId : "";
-    }
-    updateFilterOptions();
-    if (state.selectedFolderId) updateFilterOptionsForNotes();
-    renderShell();
-  });
-
-  $id("notes-note-modal-close")?.addEventListener("click", () => closeModal("notes-note-modal-backdrop"));
-  $id("notes-note-modal-backdrop")?.addEventListener("click", (event) => {
-    if (event.target === $id("notes-note-modal-backdrop")) {
-      closeModal("notes-note-modal-backdrop");
-    }
-  });
-}
-
-function updateFilterOptionsForNotes() {
-  const folder = state.folders.find((item) => item.id === state.selectedFolderId);
-  if (!folder) return;
-
-  const notesInFolder = state.notes.filter((note) => note.folderId === folder.id);
-  const categories = new Set();
-  const tags = new Set();
-
-  notesInFolder.forEach((note) => {
-    if (note.category) categories.add(note.category);
-    if (note.tags) note.tags.forEach(tag => tags.add(tag));
-  });
-
-  // Actualizar categorías
-  const categorySelect = $id("notes-filter-note-category");
-  if (categorySelect) {
-    const currentValue = categorySelect.value;
-    categorySelect.innerHTML = '<option value="">Categoría: Todas</option>';
-    Array.from(categories).sort().forEach((cat) => {
-      const option = document.createElement("option");
-      option.value = cat;
-      option.textContent = `Categoría: ${cat}`;
-      categorySelect.appendChild(option);
-    });
-    categorySelect.value = currentValue;
-  }
-
-  // Actualizar tags
-  const tagsSelect = $id("notes-filter-note-tags");
-  if (tagsSelect) {
-    const currentValue = tagsSelect.value;
-    tagsSelect.innerHTML = '<option value="">Tags: Todos</option>';
-    Array.from(tags).sort().forEach((tag) => {
-      const option = document.createElement("option");
-      option.value = tag;
-      option.textContent = `Tag: ${tag}`;
-      tagsSelect.appendChild(option);
-    });
-    tagsSelect.value = currentValue;
-  }
-}
-
-function bindPinModalEvents() {
-  $id("notes-pin-form")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const folderId = $id("notes-pin-folder-id").value;
-    const pin = String($id("notes-pin-input").value || "").replace(/\D+/g, "").slice(0, 4);
-    const folder = state.folders.find((row) => row.id === folderId);
-    if (!folder) return;
-
-    if (pin && pin === folder.pin) {
-      state.unlockedFolderId = folder.id;
-      closeModal("notes-pin-modal-backdrop");
-      openFolder(folder.id);
-      return;
-    }
-
-    $id("notes-pin-error").textContent = "PIN incorrecto.";
-  });
-
-  $id("notes-pin-modal-close")?.addEventListener("click", () => closeModal("notes-pin-modal-backdrop"));
-}
-
-function updateFilterOptions() {
-  const categories = new Set();
-  const tags = new Set();
-
-  state.folders.forEach((folder) => {
-    if (folder.category) categories.add(folder.category);
-    if (folder.tags) folder.tags.forEach(tag => tags.add(tag));
-  });
-
-  // Actualizar categorías
-  const categorySelect = $id("notes-filter-category");
-  if (categorySelect) {
-    const currentValue = categorySelect.value;
-    categorySelect.innerHTML = '<option value="">Categoría: Todas</option>';
-    Array.from(categories).sort().forEach((cat) => {
-      const option = document.createElement("option");
-      option.value = cat;
-      option.textContent = `Categoría: ${cat}`;
-      categorySelect.appendChild(option);
-    });
-    categorySelect.value = currentValue;
-  }
-
-  // Actualizar tags
-  const tagsSelect = $id("notes-filter-tags");
-  if (tagsSelect) {
-    const currentValue = tagsSelect.value;
-    tagsSelect.innerHTML = '<option value="">Tags: Todos</option>';
-    Array.from(tags).sort().forEach((tag) => {
-      const option = document.createElement("option");
-      option.value = tag;
-      option.textContent = `Tag: ${tag}`;
-      tagsSelect.appendChild(option);
-    });
-    tagsSelect.value = currentValue;
-  }
 }
 
 function populateFolderCategorySelector() {
@@ -473,44 +400,68 @@ function populateFolderCategorySelector() {
   state.folders.forEach((folder) => {
     if (folder.category) categories.add(folder.category);
   });
-  
+
   const select = $id("notes-folder-category-select");
-  if (select) {
-    select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
-    Array.from(categories).sort().forEach((cat) => {
-      const option = document.createElement("option");
-      option.value = cat;
-      option.textContent = cat;
-      select.appendChild(option);
-    });
-  }
+  if (!select) return;
+
+  select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
+  Array.from(categories).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((category) => {
+    const option = document.createElement("option");
+    option.value = category;
+    option.textContent = category;
+    select.appendChild(option);
+  });
 }
 
 function populateFolderTagsSelector() {
   const tags = new Set();
   state.folders.forEach((folder) => {
-    if (folder.tags) folder.tags.forEach(tag => tags.add(tag));
+    if (folder.tags) folder.tags.forEach((tag) => tags.add(tag));
   });
-  
+
   const select = $id("notes-folder-tags-select");
-  if (select) {
-    select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
-    Array.from(tags).sort().forEach((tag) => {
-      const option = document.createElement("option");
-      option.value = tag;
-      option.textContent = tag;
-      select.appendChild(option);
-    });
-  }
+  if (!select) return;
+
+  select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
+  Array.from(tags).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((tag) => {
+    const option = document.createElement("option");
+    option.value = tag;
+    option.textContent = tag;
+    select.appendChild(option);
+  });
 }
 
-function openFolderModal(folder = null) {
+function populateFolderParentSelector(selectedParentId = "", { excludeId = "" } = {}) {
+  const select = $id("notes-folder-parent-select");
+  if (!select) return;
+
+  const options = buildFolderOptions(state.folders, {
+    excludeId,
+    excludeDescendantsOf: excludeId,
+  });
+
+  select.innerHTML = '<option value="">Raíz</option>';
+  options.forEach(({ id, label, folder }) => {
+    const option = document.createElement("option");
+    option.value = id;
+    option.textContent = folder?.isPrivate ? `🔒 ${label}` : label;
+    select.appendChild(option);
+  });
+
+  select.value = String(selectedParentId || "").trim();
+}
+
+function openFolderModal(folder = null, options = {}) {
+  const selectedParentId = String(folder?.parentId || options.parentId || "").trim();
+
   populateFolderCategorySelector();
   populateFolderTagsSelector();
-  
+  populateFolderParentSelector(selectedParentId, { excludeId: folder?.id || "" });
+
   $id("notes-folder-id").value = folder?.id || "";
   $id("notes-folder-name-input").value = folder?.name || "";
   $id("notes-folder-emoji").value = folder?.emoji || "📁";
+  $id("notes-folder-parent-select").value = selectedParentId;
   $id("notes-folder-category").value = folder?.category || "";
   $id("notes-folder-category-select").value = folder?.category || "";
   $id("notes-folder-tags").value = (folder?.tags || []).join(", ");
@@ -520,64 +471,144 @@ function openFolderModal(folder = null) {
   $id("notes-folder-pin").value = folder?.pin || "";
   $id("notes-folder-pin-wrap")?.classList.toggle("hidden", !folder?.isPrivate);
   $id("notes-folder-form-error").textContent = "";
-  $id("notes-folder-modal-title").textContent = folder ? "Editar carpeta" : "Nueva carpeta";
+  $id("notes-folder-modal-title").textContent = folder
+    ? "Editar carpeta"
+    : (selectedParentId ? "Nueva subcarpeta" : "Nueva carpeta");
   openModal("notes-folder-modal-backdrop");
+}
+
+function updateFilterOptions() {
+  const categories = new Set();
+  const tags = new Set();
+
+  state.folders.forEach((folder) => {
+    if (folder.category) categories.add(folder.category);
+    if (folder.tags) folder.tags.forEach((tag) => tags.add(tag));
+  });
+
+  const categorySelect = $id("notes-filter-category");
+  if (categorySelect) {
+    const currentValue = categorySelect.value;
+    categorySelect.innerHTML = '<option value="">Categoría: Todas</option>';
+    Array.from(categories).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((category) => {
+      const option = document.createElement("option");
+      option.value = category;
+      option.textContent = `Categoría: ${category}`;
+      categorySelect.appendChild(option);
+    });
+    categorySelect.value = currentValue;
+  }
+
+  const tagsSelect = $id("notes-filter-tags");
+  if (tagsSelect) {
+    const currentValue = tagsSelect.value;
+    tagsSelect.innerHTML = '<option value="">Tags: Todos</option>';
+    Array.from(tags).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((tag) => {
+      const option = document.createElement("option");
+      option.value = tag;
+      option.textContent = `Tag: ${tag}`;
+      tagsSelect.appendChild(option);
+    });
+    tagsSelect.value = currentValue;
+  }
+}
+
+function updateFilterOptionsForNotes() {
+  const folder = getCurrentFolder();
+
+  const categorySelect = $id("notes-filter-note-category");
+  const tagsSelect = $id("notes-filter-note-tags");
+
+  if (!folder) {
+    if (categorySelect) categorySelect.innerHTML = '<option value="">Categoría: Todas</option>';
+    if (tagsSelect) tagsSelect.innerHTML = '<option value="">Tags: Todos</option>';
+    return;
+  }
+
+  const notesInFolder = state.notes.filter((note) => note.folderId === folder.id);
+  const categories = new Set();
+  const tags = new Set();
+
+  notesInFolder.forEach((note) => {
+    if (note.category) categories.add(note.category);
+    if (note.tags) note.tags.forEach((tag) => tags.add(tag));
+  });
+
+  if (categorySelect) {
+    const currentValue = categorySelect.value;
+    categorySelect.innerHTML = '<option value="">Categoría: Todas</option>';
+    Array.from(categories).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((category) => {
+      const option = document.createElement("option");
+      option.value = category;
+      option.textContent = `Categoría: ${category}`;
+      categorySelect.appendChild(option);
+    });
+    categorySelect.value = currentValue;
+  }
+
+  if (tagsSelect) {
+    const currentValue = tagsSelect.value;
+    tagsSelect.innerHTML = '<option value="">Tags: Todos</option>';
+    Array.from(tags).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((tag) => {
+      const option = document.createElement("option");
+      option.value = tag;
+      option.textContent = `Tag: ${tag}`;
+      tagsSelect.appendChild(option);
+    });
+    tagsSelect.value = currentValue;
+  }
 }
 
 function populateNoteCategorySelector(folderId = state.selectedFolderId) {
   const folder = state.folders.find((item) => item.id === folderId);
   const select = $id("notes-note-category-select");
+  if (!select) return;
+
   if (!folder) {
-    if (select) {
-      select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
-      select.value = "";
-    }
+    select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
+    select.value = "";
     return;
   }
-  
-  const notesInFolder = state.notes.filter((n) => n.folderId === folder.id);
+
+  const notesInFolder = state.notes.filter((note) => note.folderId === folder.id);
   const categories = new Set();
   notesInFolder.forEach((note) => {
     if (note.category) categories.add(note.category);
   });
-  
-  if (select) {
-    select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
-    Array.from(categories).sort().forEach((cat) => {
-      const option = document.createElement("option");
-      option.value = cat;
-      option.textContent = cat;
-      select.appendChild(option);
-    });
-  }
+
+  select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
+  Array.from(categories).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((category) => {
+    const option = document.createElement("option");
+    option.value = category;
+    option.textContent = category;
+    select.appendChild(option);
+  });
 }
 
 function populateNoteTagsSelector(folderId = state.selectedFolderId) {
   const folder = state.folders.find((item) => item.id === folderId);
   const select = $id("notes-note-tags-select");
+  if (!select) return;
+
   if (!folder) {
-    if (select) {
-      select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
-      select.value = "";
-    }
+    select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
+    select.value = "";
     return;
   }
-  
-  const notesInFolder = state.notes.filter((n) => n.folderId === folder.id);
+
+  const notesInFolder = state.notes.filter((note) => note.folderId === folder.id);
   const tags = new Set();
   notesInFolder.forEach((note) => {
-    if (note.tags) note.tags.forEach(tag => tags.add(tag));
+    if (note.tags) note.tags.forEach((tag) => tags.add(tag));
   });
-  
-  if (select) {
-    select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
-    Array.from(tags).sort().forEach((tag) => {
-      const option = document.createElement("option");
-      option.value = tag;
-      option.textContent = tag;
-      select.appendChild(option);
-    });
-  }
+
+  select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
+  Array.from(tags).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((tag) => {
+    const option = document.createElement("option");
+    option.value = tag;
+    option.textContent = tag;
+    select.appendChild(option);
+  });
 }
 
 function populateNoteFolderSelector(selectedFolderId = "") {
@@ -585,11 +616,12 @@ function populateNoteFolderSelector(selectedFolderId = "") {
   if (!select) return;
 
   const safeSelectedFolderId = String(selectedFolderId || "").trim();
+  const options = buildFolderOptions(state.folders);
   select.innerHTML = '<option value="">Selecciona una carpeta</option>';
-  state.folders.forEach((folder) => {
+  options.forEach(({ id, label, folder }) => {
     const option = document.createElement("option");
-    option.value = folder.id;
-    option.textContent = folder.isPrivate ? `🔒 ${folder.name}` : folder.name;
+    option.value = id;
+    option.textContent = folder?.isPrivate ? `🔒 ${label}` : label;
     select.appendChild(option);
   });
   select.value = safeSelectedFolderId;
@@ -613,10 +645,68 @@ function syncNoteFolderSelection(folderId = "", { allowFolderSelection = false }
   populateNoteTagsSelector(safeFolderId);
 }
 
+function setNotePhotoStatus(message = "", tone = "") {
+  const status = $id("notes-note-image-status");
+  if (!status) return;
+  status.textContent = message || "";
+  if (tone) status.dataset.tone = tone;
+  else delete status.dataset.tone;
+}
+
+function setNotePhotoPreview(src = "") {
+  const image = $id("notes-note-image-preview");
+  const placeholder = $id("notes-note-image-placeholder");
+  if (!image || !placeholder) return;
+
+  if (!src) {
+    image.classList.add("hidden");
+    image.removeAttribute("src");
+    placeholder.classList.remove("hidden");
+    return;
+  }
+
+  image.src = src;
+  image.classList.remove("hidden");
+  placeholder.classList.add("hidden");
+}
+
+function clearNotePhotoObjectUrl() {
+  if (!notePhotoObjectUrl) return;
+  try {
+    URL.revokeObjectURL(notePhotoObjectUrl);
+  } catch (_) {}
+  notePhotoObjectUrl = null;
+}
+
+function openNoteImagePicker(mode = "gallery") {
+  const input = $id("notes-note-image-file");
+  if (!input) return;
+  input.value = "";
+  if (mode === "camera") input.setAttribute("capture", "environment");
+  else input.removeAttribute("capture");
+  input.click();
+}
+
+function closeNoteModal() {
+  clearNotePhotoObjectUrl();
+  notePhotoRemove = false;
+  if ($id("notes-note-image-file")) $id("notes-note-image-file").value = "";
+  setNotePhotoStatus("");
+  closeModal("notes-note-modal-backdrop");
+}
+
 function openNoteModal(note = null, options = {}) {
   const folderId = String(note?.folderId || options.folderId || state.selectedFolderId || "").trim();
-  const allowFolderSelection = Boolean(options.allowFolderSelection) || !folderId;
+  const allowFolderSelection = Boolean(options.allowFolderSelection)
+    || !folderId
+    || (!note && getChildFolders(state.folders, folderId).length > 0);
   syncNoteFolderSelection(folderId, { allowFolderSelection });
+
+  notePhotoRemove = false;
+  clearNotePhotoObjectUrl();
+  if ($id("notes-note-image-file")) $id("notes-note-image-file").value = "";
+  setNotePhotoPreview(buildNoteImageRenderUrl(note));
+  setNotePhotoStatus("");
 
   $id("notes-note-id").value = note?.id || "";
   $id("notes-note-folder-id").value = folderId || "";
@@ -642,12 +732,325 @@ function openGlobalNoteModal() {
   });
 }
 
+async function handleFolderDelete(folder) {
+  const hasSubfolders = state.folders.some((item) => item.parentId === folder.id);
+  const hasNotes = state.notes.some((item) => item.folderId === folder.id);
+  if (hasSubfolders || hasNotes) {
+    window.alert("Solo puedes borrar carpetas vacías. Mueve o elimina antes sus subcarpetas y notas.");
+    return;
+  }
+
+  if (!window.confirm(`¿Borrar carpeta "${folder.name}"?`)) return;
+  try {
+    await deleteFolder(state.rootPath, folder.id, state.folders, state.notes);
+  } catch (error) {
+    console.warn("[notes] no se pudo borrar la carpeta", error);
+    window.alert("No se ha podido borrar la carpeta.");
+  }
+}
+
+async function handleNoteDelete(note) {
+  if (!window.confirm(`¿Borrar nota "${note.title || "sin título"}"?`)) return;
+
+  try {
+    await deleteNote(state.rootPath, note.id);
+  } catch (error) {
+    console.warn("[notes] no se pudo borrar la nota", error);
+    window.alert("No se ha podido borrar la nota.");
+    return;
+  }
+
+  if (note.imageUrl || note.imagePath) {
+    try {
+      await deleteNoteImageAsset(state.uid, note.id, note.imagePath);
+    } catch (error) {
+      console.warn("[notes] la nota se borró, pero no se pudo limpiar la imagen", error);
+    }
+  }
+}
+
+function bindFolderModalEvents() {
+  const privateInput = $id("notes-folder-private");
+  privateInput?.addEventListener("change", () => {
+    const enabled = Boolean(privateInput.checked);
+    $id("notes-folder-pin-wrap")?.classList.toggle("hidden", !enabled);
+    if (!enabled) {
+      $id("notes-folder-pin").value = "";
+    }
+  });
+
+  $id("notes-folder-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const id = $id("notes-folder-id").value;
+    const name = $id("notes-folder-name-input").value.trim();
+    const color = $id("notes-folder-color").value;
+    const emoji = $id("notes-folder-emoji").value.trim() || "📁";
+    const parentId = String($id("notes-folder-parent-select")?.value || "").trim();
+    const category = $id("notes-folder-category").value.trim();
+    const tagsInput = $id("notes-folder-tags").value.trim();
+    const tags = tagsInput ? tagsInput.split(",").map((tag) => tag.trim()).filter(Boolean) : [];
+    const isPrivate = $id("notes-folder-private").checked;
+    const pin = String($id("notes-folder-pin").value || "").replace(/\D+/g, "").slice(0, 4);
+    const errorField = $id("notes-folder-form-error");
+
+    errorField.textContent = "";
+    if (!state.rootPath || !state.uid) {
+      errorField.textContent = "Espera un momento a que se cargue tu espacio de notas.";
+      return;
+    }
+    if (!name) return;
+    if (!isFolderParentAllowed(state.folders, id, parentId)) {
+      errorField.textContent = "Selecciona una carpeta padre válida.";
+      return;
+    }
+    if (isPrivate && pin.length !== 4) {
+      errorField.textContent = "El PIN debe tener 4 dígitos.";
+      return;
+    }
+
+    const payload = {
+      name,
+      color,
+      emoji,
+      parentId,
+      category,
+      tags,
+      createdAt: Date.now(),
+      isPrivate,
+      pin,
+    };
+
+    try {
+      if (id) {
+        const current = state.folders.find((row) => row.id === id);
+        await updateFolder(state.rootPath, id, {
+          ...current,
+          ...payload,
+          createdAt: current?.createdAt || payload.createdAt,
+        });
+      } else {
+        await createFolder(state.rootPath, payload);
+      }
+      closeModal("notes-folder-modal-backdrop");
+      renderShell();
+    } catch (error) {
+      console.warn("[notes] no se pudo guardar la carpeta", error);
+      errorField.textContent = "No se ha podido guardar la carpeta.";
+    }
+  });
+
+  $id("notes-folder-modal-close")?.addEventListener("click", () => closeModal("notes-folder-modal-backdrop"));
+  $id("notes-folder-modal-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === $id("notes-folder-modal-backdrop")) {
+      closeModal("notes-folder-modal-backdrop");
+    }
+  });
+}
+
+function bindNoteModalEvents() {
+  const isLinkInput = $id("notes-note-is-link");
+  const imageInput = $id("notes-note-image-file");
+
+  isLinkInput?.addEventListener("change", () => {
+    $id("notes-note-url-wrap")?.classList.toggle("hidden", !isLinkInput.checked);
+  });
+
+  $id("notes-note-image-camera")?.addEventListener("click", () => openNoteImagePicker("camera"));
+  $id("notes-note-image-gallery")?.addEventListener("click", () => openNoteImagePicker("gallery"));
+  $id("notes-note-image-remove")?.addEventListener("click", () => {
+    notePhotoRemove = true;
+    if (imageInput) imageInput.value = "";
+    clearNotePhotoObjectUrl();
+    setNotePhotoPreview("");
+    setNotePhotoStatus("La foto se quitará al guardar.", "warning");
+    $id("notes-note-form-error").textContent = "";
+  });
+
+  imageInput?.addEventListener("change", (event) => {
+    const file = event.target?.files?.[0] || null;
+    if (!file) return;
+    notePhotoRemove = false;
+    clearNotePhotoObjectUrl();
+    notePhotoObjectUrl = URL.createObjectURL(file);
+    setNotePhotoPreview(notePhotoObjectUrl);
+    setNotePhotoStatus("Foto lista para guardarse.");
+    $id("notes-note-form-error").textContent = "";
+  });
+
+  $id("notes-note-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (noteSaveInFlight) return;
+
+    const id = String($id("notes-note-id").value || "").trim();
+    const folderId = String(
+      $id("notes-note-folder-select")?.value
+      || $id("notes-note-folder-id")?.value
+      || "",
+    ).trim();
+    const title = $id("notes-note-title").value.trim();
+    const content = $id("notes-note-content").value.trim();
+    const category = $id("notes-note-category").value.trim();
+    const tagsInput = $id("notes-note-tags").value.trim();
+    const tags = tagsInput ? tagsInput.split(",").map((tag) => tag.trim()).filter(Boolean) : [];
+    const isLink = $id("notes-note-is-link").checked;
+    const url = $id("notes-note-url").value.trim();
+    const errorField = $id("notes-note-form-error");
+    const submitButton = $id("notes-note-form")?.querySelector?.("button[type='submit']");
+    const previousSubmitText = submitButton?.textContent || "Guardar";
+    const current = state.notes.find((row) => row.id === id) || null;
+    let noteId = id;
+    const selectedFile = imageInput?.files?.[0] || null;
+    let uploadedImagePath = "";
+
+    errorField.textContent = "";
+
+    if (!state.rootPath || !state.uid) {
+      errorField.textContent = "Espera un momento a que se cargue tu espacio de notas.";
+      return;
+    }
+    if (!title) return;
+    if (!folderId) {
+      errorField.textContent = "Selecciona una carpeta para guardar la nota.";
+      $id("notes-note-folder-select")?.focus();
+      return;
+    }
+    if (isLink && !url) {
+      errorField.textContent = "Introduce una URL para la nota tipo link.";
+      return;
+    }
+    noteId = noteId || createNoteId(state.rootPath);
+
+    const payload = {
+      folderId,
+      title,
+      content,
+      category,
+      tags,
+      type: isLink ? "link" : "note",
+      url,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      imageUrl: current?.imageUrl || "",
+      imagePath: current?.imagePath || "",
+      imageUpdatedAt: Number(current?.imageUpdatedAt || 0),
+    };
+
+    noteSaveInFlight = true;
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = selectedFile ? "Subiendo foto…" : "Guardando…";
+    }
+
+    try {
+      if (notePhotoRemove && (current?.imageUrl || current?.imagePath)) {
+        setNotePhotoStatus("Quitando foto…");
+        try {
+          await deleteNoteImageAsset(state.uid, noteId, current?.imagePath);
+        } catch (error) {
+          console.warn("[notes] no se pudo borrar el archivo remoto de la nota", error);
+        }
+        payload.imageUrl = "";
+        payload.imagePath = "";
+        payload.imageUpdatedAt = 0;
+        setNotePhotoStatus("Foto quitada.");
+      }
+
+      if (selectedFile) {
+        setNotePhotoStatus("Preparando foto…");
+        const optimizedFile = await downscaleNoteImageFile(selectedFile);
+        setNotePhotoStatus("Subiendo foto…");
+        const upload = await uploadNoteImageAsset(state.uid, noteId, optimizedFile);
+        uploadedImagePath = upload.path;
+        payload.imageUrl = upload.url;
+        payload.imagePath = upload.path;
+        payload.imageUpdatedAt = Date.now();
+        setNotePhotoStatus("Foto subida.");
+      }
+
+      if (id) {
+        await updateNote(state.rootPath, id, {
+          ...current,
+          ...payload,
+          createdAt: current?.createdAt || payload.createdAt,
+        });
+      } else {
+        await createNote(state.rootPath, payload, noteId);
+      }
+
+      const folder = state.folders.find((row) => row.id === folderId);
+      closeNoteModal();
+      if (folderId) {
+        const canOpenFolder = !folder?.isPrivate || requireUnlockedFolder(folder) || state.selectedFolderId === folderId;
+        setCurrentFolder(canOpenFolder ? folderId : "");
+      }
+      renderShell();
+    } catch (error) {
+      console.warn("[notes] no se pudo guardar la nota", error);
+      errorField.textContent = selectedFile
+        ? "No se ha podido subir la imagen o guardar la nota."
+        : "No se ha podido guardar la nota.";
+      setNotePhotoStatus("Ha fallado la subida de la foto.", "error");
+      if (!id && uploadedImagePath) {
+        try {
+          await deleteNoteImageAsset(state.uid, noteId, uploadedImagePath);
+        } catch (_) {}
+      }
+    } finally {
+      noteSaveInFlight = false;
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = previousSubmitText;
+      }
+    }
+  });
+
+  $id("notes-note-modal-close")?.addEventListener("click", closeNoteModal);
+  $id("notes-note-modal-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === $id("notes-note-modal-backdrop")) {
+      closeNoteModal();
+    }
+  });
+}
+
+function bindPinModalEvents() {
+  $id("notes-pin-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const folderId = $id("notes-pin-folder-id").value;
+    const pin = String($id("notes-pin-input").value || "").replace(/\D+/g, "").slice(0, 4);
+    const folder = state.folders.find((row) => row.id === folderId);
+    if (!folder) return;
+
+    if (pin && pin === folder.pin) {
+      state.unlockedFolderIds.add(folder.id);
+      closeModal("notes-pin-modal-backdrop");
+      openFolder(folder.id);
+      return;
+    }
+
+    $id("notes-pin-error").textContent = "PIN incorrecto.";
+  });
+
+  $id("notes-pin-modal-close")?.addEventListener("click", () => closeModal("notes-pin-modal-backdrop"));
+  $id("notes-pin-modal-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === $id("notes-pin-modal-backdrop")) {
+      closeModal("notes-pin-modal-backdrop");
+    }
+  });
+}
+
 function bindUiEvents() {
   if (isBound) return;
   isBound = true;
 
   $id("notes-btn-new-folder")?.addEventListener("click", () => openFolderModal());
-  $id("notes-btn-back")?.addEventListener("click", () => closeFolderView());
+  $id("notes-btn-new-subfolder")?.addEventListener("click", () => openFolderModal(null, {
+    parentId: state.selectedFolderId,
+  }));
+  $id("notes-btn-back")?.addEventListener("click", () => {
+    if (state.selectedFolderId) goUpFolder();
+    else closeFolderView();
+  });
   $id("notes-btn-new-note")?.addEventListener("click", () => openNoteModal());
   $id("notes-note-folder-select")?.addEventListener("change", (event) => {
     const folderId = String(event.target.value || "").trim();
@@ -656,52 +1059,50 @@ function bindUiEvents() {
     populateNoteCategorySelector(folderId);
     populateNoteTagsSelector(folderId);
   });
-  
+
   $id("notes-folder-category-select")?.addEventListener("change", (event) => {
     if (event.target.value) {
       $id("notes-folder-category").value = event.target.value;
     }
   });
-  
+
   $id("notes-folder-tags-select")?.addEventListener("change", (event) => {
     if (event.target.value) {
       const current = $id("notes-folder-tags").value.trim();
       const newTag = event.target.value;
-      const updated = current ? `${current}, ${newTag}` : newTag;
-      $id("notes-folder-tags").value = updated;
+      $id("notes-folder-tags").value = current ? `${current}, ${newTag}` : newTag;
       event.target.value = "";
     }
   });
-  
+
   $id("notes-note-category-select")?.addEventListener("change", (event) => {
     if (event.target.value) {
       $id("notes-note-category").value = event.target.value;
     }
   });
-  
+
   $id("notes-note-tags-select")?.addEventListener("change", (event) => {
     if (event.target.value) {
       const current = $id("notes-note-tags").value.trim();
       const newTag = event.target.value;
-      const updated = current ? `${current}, ${newTag}` : newTag;
-      $id("notes-note-tags").value = updated;
+      $id("notes-note-tags").value = current ? `${current}, ${newTag}` : newTag;
       event.target.value = "";
     }
   });
 
   $id("notes-search-folders")?.addEventListener("input", (event) => {
     state.folderQuery = event.target.value || "";
-    renderFolders();
+    renderRootFolders();
   });
 
   $id("notes-filter-category")?.addEventListener("change", (event) => {
     state.folderCategoryFilter = event.target.value || "";
-    renderFolders();
+    renderRootFolders();
   });
 
   $id("notes-filter-tags")?.addEventListener("change", (event) => {
     state.folderTagsFilter = event.target.value || "";
-    renderFolders();
+    renderRootFolders();
   });
 
   $id("notes-search-notes")?.addEventListener("input", (event) => {
@@ -719,9 +1120,10 @@ function bindUiEvents() {
     renderFolderDetail();
   });
 
-  $id("notes-folder-list")?.addEventListener("click", async (event) => {
+  const handleFolderAction = async (event) => {
     const target = event.target.closest("[data-act]");
     if (!target) return;
+
     const action = target.dataset.act;
     const folderId = target.dataset.folderId;
     const folder = state.folders.find((row) => row.id === folderId);
@@ -736,15 +1138,39 @@ function bindUiEvents() {
       return;
     }
     if (action === "delete-folder") {
-      if (!window.confirm(`¿Borrar carpeta "${folder.name}" y sus notas?`)) return;
-      await deleteFolder(state.rootPath, folder.id, state.notes);
+      await handleFolderDelete(folder);
+    }
+  };
+
+  $id("notes-folder-list")?.addEventListener("click", handleFolderAction);
+  $id("notes-subfolder-list")?.addEventListener("click", handleFolderAction);
+
+  $id("notes-folder-breadcrumbs")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act]");
+    if (!target) return;
+
+    if (target.dataset.act === "breadcrumb-root") {
+      closeFolderView();
+      return;
+    }
+
+    if (target.dataset.act === "open-breadcrumb") {
+      openFolder(String(target.dataset.folderId || "").trim());
     }
   });
 
   $id("notes-cards-list")?.addEventListener("click", async (event) => {
     const target = event.target.closest("[data-act]");
     if (!target) return;
+
     const action = target.dataset.act;
+    if (action === "open-note-link") {
+      event.preventDefault();
+      event.stopPropagation();
+      openExternalUrl(String(target.dataset.noteUrl || ""));
+      return;
+    }
+
     const noteId = target.dataset.noteId;
     const note = state.notes.find((row) => row.id === noteId);
     if (!note) return;
@@ -754,8 +1180,7 @@ function bindUiEvents() {
       return;
     }
     if (action === "delete-note") {
-      if (!window.confirm(`¿Borrar nota "${note.title || "sin título"}"?`)) return;
-      await deleteNote(state.rootPath, note.id);
+      await handleNoteDelete(note);
     }
   });
 
@@ -771,7 +1196,8 @@ function subscribeData(uid) {
     state.rootPath = "";
     state.folders = [];
     state.notes = [];
-    state.selectedFolderId = "";
+    setCurrentFolder("");
+    state.unlockedFolderIds = new Set();
     renderShell();
     return;
   }
@@ -783,10 +1209,14 @@ function subscribeData(uid) {
       state.rootPath = safeRootPath;
       state.folders = payload.folders;
       state.notes = payload.notes;
+      state.unlockedFolderIds = new Set(
+        Array.from(state.unlockedFolderIds).filter((folderId) => state.folders.some((folder) => folder.id === folderId)),
+      );
+
       if (state.selectedFolderId && !state.folders.some((folder) => folder.id === state.selectedFolderId)) {
-        state.selectedFolderId = "";
-        state.unlockedFolderId = "";
+        setCurrentFolder("");
       }
+
       renderShell();
       emitNotesData("remote:notes");
     },
@@ -828,8 +1258,11 @@ export function destroy() {
   unbindAuth?.();
   unbindAuth = null;
   isBound = false;
-  state.selectedFolderId = "";
-  state.unlockedFolderId = "";
+  setCurrentFolder("");
+  state.unlockedFolderIds = new Set();
+  clearNotePhotoObjectUrl();
+  notePhotoRemove = false;
+  noteSaveInFlight = false;
   if (window.__bookshellNotes) {
     delete window.__bookshellNotes;
   }

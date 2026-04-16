@@ -51,33 +51,39 @@ export async function updateFolder(rootPath, folderId, payload = {}) {
   });
 }
 
-export async function deleteFolder(rootPath, folderId, notes = []) {
+export async function deleteFolder(rootPath, folderId, folders = [], notes = []) {
   const safeFolderId = String(folderId || "").trim();
   if (!safeFolderId) return;
-  const patch = {
-    [`${rootPath}/folders/${safeFolderId}`]: null,
-  };
 
-  for (const note of notes) {
-    if (String(note.folderId || "") !== safeFolderId) continue;
-    patch[`${rootPath}/notes/${note.id}`] = null;
+  const hasSubfolders = folders.some((folder) => String(folder?.parentId || "") === safeFolderId);
+  const hasNotes = notes.some((note) => String(note?.folderId || "") === safeFolderId);
+  if (hasSubfolders || hasNotes) {
+    throw new Error("Solo se pueden borrar carpetas vacías.");
   }
 
-  await update(ref(db), patch);
+  await remove(ref(db, `${rootPath}/folders/${safeFolderId}`));
 }
 
-export async function createNote(rootPath, payload = {}) {
+export function createNoteId(rootPath) {
   const notesRef = ref(db, `${rootPath}/notes`);
-  const nextRef = push(notesRef);
+  return push(notesRef).key;
+}
+
+export async function createNote(rootPath, payload = {}, noteId = "") {
+  const notesRef = ref(db, `${rootPath}/notes`);
+  const safeNoteId = String(noteId || push(notesRef).key || "").trim();
+  if (!safeNoteId) throw new Error("No se pudo crear el identificador de la nota.");
+
   const now = Date.now();
   await update(ref(db), {
-    [`${rootPath}/notes/${nextRef.key}`]: mapNoteToDb({
+    [`${rootPath}/notes/${safeNoteId}`]: mapNoteToDb({
       ...payload,
       createdAt: now,
       updatedAt: now,
     }),
   });
-  return nextRef.key;
+
+  return safeNoteId;
 }
 
 export async function updateNote(rootPath, noteId, payload = {}) {

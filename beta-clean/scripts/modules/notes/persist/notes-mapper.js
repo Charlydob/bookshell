@@ -8,17 +8,35 @@ function normalizePin(value = "") {
   return raw.length === 4 ? raw : "";
 }
 
+function normalizeParentId(value = "") {
+  return String(value || "").trim();
+}
+
+function normalizeImageUrl(value = "") {
+  return String(value || "").trim();
+}
+
+function normalizeImagePath(value = "") {
+  return String(value || "").trim();
+}
+
+function normalizeImageTimestamp(value = 0) {
+  const numeric = Number(value || 0);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+}
+
 export function mapFolderFromDb(id, value = {}) {
   return {
     id: String(id || ""),
     name: String(value?.name || "Sin nombre").trim() || "Sin nombre",
     color: normalizeColor(value?.color),
     createdAt: Number(value?.createdAt || Date.now()),
+    parentId: normalizeParentId(value?.parentId),
     isPrivate: Boolean(value?.isPrivate),
     pin: normalizePin(value?.pin),
     emoji: String(value?.emoji || "📁").trim() || "📁",
     category: String(value?.category || "").trim(),
-    tags: Array.isArray(value?.tags) ? value.tags.map(t => String(t).trim()).filter(t => t) : [],
+    tags: Array.isArray(value?.tags) ? value.tags.map((tag) => String(tag).trim()).filter(Boolean) : [],
   };
 }
 
@@ -28,11 +46,12 @@ export function mapFolderToDb(folder = {}) {
     name: String(folder?.name || "").trim(),
     color: normalizeColor(folder?.color),
     createdAt: Number(folder?.createdAt || Date.now()),
+    parentId: normalizeParentId(folder?.parentId),
     isPrivate,
     pin: isPrivate ? normalizePin(folder?.pin) : "",
     emoji: String(folder?.emoji || "📁").trim() || "📁",
     category: String(folder?.category || "").trim(),
-    tags: Array.isArray(folder?.tags) ? folder.tags.map(t => String(t).trim()).filter(t => t) : [],
+    tags: Array.isArray(folder?.tags) ? folder.tags.map((tag) => String(tag).trim()).filter(Boolean) : [],
   };
 }
 
@@ -48,7 +67,10 @@ export function mapNoteFromDb(id, value = {}) {
     type,
     url: type === "link" ? String(value?.url || "").trim() : "",
     category: String(value?.category || "").trim(),
-    tags: Array.isArray(value?.tags) ? value.tags.map(t => String(t).trim()).filter(t => t) : [],
+    tags: Array.isArray(value?.tags) ? value.tags.map((tag) => String(tag).trim()).filter(Boolean) : [],
+    imageUrl: normalizeImageUrl(value?.imageUrl),
+    imagePath: normalizeImagePath(value?.imagePath),
+    imageUpdatedAt: normalizeImageTimestamp(value?.imageUpdatedAt),
   };
 }
 
@@ -63,7 +85,10 @@ export function mapNoteToDb(note = {}) {
     type,
     url: type === "link" ? String(note?.url || "").trim() : "",
     category: String(note?.category || "").trim(),
-    tags: Array.isArray(note?.tags) ? note.tags.map(t => String(t).trim()).filter(t => t) : [],
+    tags: Array.isArray(note?.tags) ? note.tags.map((tag) => String(tag).trim()).filter(Boolean) : [],
+    imageUrl: normalizeImageUrl(note?.imageUrl),
+    imagePath: normalizeImagePath(note?.imagePath),
+    imageUpdatedAt: normalizeImageTimestamp(note?.imageUpdatedAt),
   };
 }
 

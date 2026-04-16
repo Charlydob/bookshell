@@ -370,10 +370,33 @@ function getAchievementsContext() {
   return buildAchievementsContext(moduleMetrics, getUsageData());
 }
 
+function formatAchievementValue(stateItem, value) {
+  const numeric = Number(value);
+  const safeValue = Number.isFinite(numeric) ? numeric : 0;
+  if (typeof stateItem?.formatValue === "function") {
+    try {
+      return stateItem.formatValue(safeValue);
+    } catch (_) {}
+  }
+
+  const hasFraction = Math.abs(safeValue % 1) > 0.0001;
+  return safeValue.toLocaleString("es-ES", {
+    minimumFractionDigits: hasFraction && safeValue < 10 ? 1 : 0,
+    maximumFractionDigits: hasFraction ? 2 : 0,
+  });
+}
+
+function formatAchievementScope(stateItem) {
+  if (stateItem?.scopeLabel) {
+    return `${stateItem.moduleMeta.label} · ${stateItem.scopeLabel}`;
+  }
+  return stateItem?.moduleMeta?.label || "General";
+}
+
 function computeAchievementStates() {
   const context = getAchievementsContext();
   const unlockedMap = state.remoteData?.unlocked || {};
-  return getAchievementCatalog().map((achievement) => {
+  return getAchievementCatalog(context).map((achievement) => {
     let currentValue = 0;
     try {
       currentValue = Math.max(0, Number(achievement.getCurrentValue(context) || 0));
@@ -458,11 +481,14 @@ function groupStatesByModule(states = []) {
 function formatRemainingLabel(stateItem) {
   const unit = stateItem.unitLabel || "pasos";
   const safeRemaining = Math.max(0, Number(stateItem.remaining || 0));
+  if (typeof stateItem?.formatValue === "function") {
+    return `Te faltan ${formatAchievementValue(stateItem, safeRemaining)} para desbloquear ${stateItem.title}.`;
+  }
   if (safeRemaining === 1) {
     const singular = unit.replace(/s$/, "") || unit;
-    return `Te falta 1 ${singular} para desbloquear ${stateItem.title}.`;
+    return `Te falta ${formatAchievementValue(stateItem, 1)} ${singular} para desbloquear ${stateItem.title}.`;
   }
-  return `Te faltan ${safeRemaining} ${unit} para desbloquear ${stateItem.title}.`;
+  return `Te faltan ${formatAchievementValue(stateItem, safeRemaining)} ${unit} para desbloquear ${stateItem.title}.`;
 }
 
 function renderProgressBar(progressRatio = 0) {
@@ -479,7 +505,7 @@ function renderAchievementCard(stateItem, { compact = false } = {}) {
   const description = stateItem.hiddenLocked ? "Sigue usando la app para descubrirlo." : stateItem.description;
   const progressText = stateItem.completed
     ? `Desbloqueado · ${formatDate(stateItem.unlockedAt)}`
-    : `${stateItem.currentValue}/${stateItem.targetValue}`;
+    : `${formatAchievementValue(stateItem, stateItem.currentValue)}/${formatAchievementValue(stateItem, stateItem.targetValue)}`;
   return `
     <article class="app-achievement-card${compact ? " is-compact" : ""}" data-achievement-state="${stateItem.state}">
       <div class="app-achievement-card__head">
@@ -491,7 +517,7 @@ function renderAchievementCard(stateItem, { compact = false } = {}) {
       </div>
       ${stateItem.completed ? "" : renderProgressBar(stateItem.progressRatio)}
       <div class="app-achievement-card__meta">
-        <span>${escapeHtml(stateItem.moduleMeta.label)}</span>
+        <span>${escapeHtml(formatAchievementScope(stateItem))}</span>
         <span>${escapeHtml(progressText)}</span>
       </div>
     </article>
@@ -518,15 +544,34 @@ function renderGroupedSection(title, states = [], { showDates = false } = {}) {
       const meta = getAchievementModuleMeta(moduleKey);
       const sorted = [...moduleStates].sort((a, b) => {
         if (showDates && b.unlockedAt !== a.unlockedAt) return b.unlockedAt - a.unlockedAt;
+        const groupDiff = String(a.groupLabel || "").localeCompare(String(b.groupLabel || ""), "es");
+        if (groupDiff) return groupDiff;
         if (b.progressRatio !== a.progressRatio) return b.progressRatio - a.progressRatio;
         return a.targetValue - b.targetValue;
       });
+      const subgroupMap = sorted.reduce((acc, stateItem) => {
+        const subgroupKey = String(stateItem.groupKey || "__default");
+        if (!acc[subgroupKey]) {
+          acc[subgroupKey] = {
+            label: String(stateItem.groupLabel || "").trim(),
+            items: [],
+          };
+        }
+        acc[subgroupKey].items.push(stateItem);
+        return acc;
+      }, {});
+      const subgroupEntries = Object.values(subgroupMap);
       return `
         <div class="app-achievements-group">
           <div class="app-achievements-group__title">${escapeHtml(`${meta.emoji} ${meta.label}`)}</div>
-          <div class="app-achievements-grid">
-            ${sorted.map((stateItem) => renderAchievementCard(stateItem, { compact: true })).join("")}
-          </div>
+          ${subgroupEntries.map((subgroup) => `
+            <div class="app-achievements-subgroup">
+              ${subgroup.label ? `<div class="app-achievements-subgroup__title">${escapeHtml(subgroup.label)}</div>` : ""}
+              <div class="app-achievements-grid">
+                ${subgroup.items.map((stateItem) => renderAchievementCard(stateItem, { compact: true })).join("")}
+              </div>
+            </div>
+          `).join("")}
         </div>
       `;
     })
@@ -875,7 +920,13 @@ export function initAchievementsService() {
     openCenter: openAchievementsCenter,
     closeCenter: closeAchievementsCenter,
     getStates: () => computeAchievementStates(),
+    getContext: () => getAchievementsContext(),
+    ensureModuleMetrics: (moduleKey, options) => ensureModuleMetrics(moduleKey, options),
   };
+}
+
+export function getAchievementsContextSnapshot() {
+  return getAchievementsContext();
 }
 
 export function trackAchievementViewVisit(viewId = "") {

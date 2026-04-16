@@ -206,6 +206,7 @@ function getModuleMetricDefaults(key = "") {
         allHabitsDays: 0,
         allHabitsStreakCurrent: 0,
         allHabitsStreakBest: 0,
+        habitEntities: {},
       };
     case "finance":
       return {
@@ -465,8 +466,29 @@ function isHabitSystem(habit = {}) {
   return Boolean(habit?.system);
 }
 
+function isHabitTrackable(habit = {}) {
+  return Boolean(habit) && !isHabitSystem(habit);
+}
+
 function isHabitActive(habit = {}) {
-  return habit && !habit.archived && !isHabitSystem(habit);
+  return Boolean(habit) && !habit.archived && !isHabitSystem(habit);
+}
+
+function getHabitGoalType(habit = {}) {
+  const goal = String(habit?.goal || "check").trim().toLowerCase();
+  if (goal === "time" || goal === "count") return goal;
+  return "check";
+}
+
+function getHabitSessionTotalSeconds(value) {
+  if (typeof value === "number") return Math.max(0, Math.round(value));
+  if (!value || typeof value !== "object") return 0;
+  const totalSec = Math.max(0, Math.round(toNumber(value.totalSec)));
+  if (totalSec > 0) return totalSec;
+  const minutes = Math.max(0, toNumber(value.min));
+  if (minutes > 0) return Math.round(minutes * 60);
+  const durationSec = Math.max(0, Math.round(toNumber(value.durationSec)));
+  return durationSec;
 }
 
 function collectHabitActivityDays(snapshot = {}) {
@@ -474,25 +496,64 @@ function collectHabitActivityDays(snapshot = {}) {
   const habitChecks = snapshot?.habitChecks && typeof snapshot.habitChecks === "object" ? snapshot.habitChecks : {};
   const habitCounts = snapshot?.habitCounts && typeof snapshot.habitCounts === "object" ? snapshot.habitCounts : {};
   const habitSessions = snapshot?.habitSessions && typeof snapshot.habitSessions === "object" ? snapshot.habitSessions : {};
-  const activeHabits = Object.entries(habits || {})
-    .filter(([, habit]) => isHabitActive(habit))
-    .map(([habitId]) => habitId);
+  const trackableHabits = Object.entries(habits || {})
+    .filter(([, habit]) => isHabitTrackable(habit))
+    .map(([habitId, habit]) => ({ habitId, habit }));
+  const activeHabits = trackableHabits
+    .filter(({ habit }) => isHabitActive(habit))
+    .map(({ habitId }) => habitId);
 
   const activityByHabit = new Map();
-  activeHabits.forEach((habitId) => {
+  const habitEntities = {};
+
+  trackableHabits.forEach(({ habitId }) => {
     activityByHabit.set(habitId, new Set());
   });
 
-  activeHabits.forEach((habitId) => {
+  trackableHabits.forEach(({ habitId, habit }) => {
+    const days = activityByHabit.get(habitId) || new Set();
+    let totalCount = 0;
+    let totalSeconds = 0;
+
     Object.entries(habitChecks?.[habitId] || {}).forEach(([dateKey, value]) => {
-      if (value) activityByHabit.get(habitId)?.add(dateKey);
+      if (value) days.add(dateKey);
     });
     Object.entries(habitCounts?.[habitId] || {}).forEach(([dateKey, value]) => {
-      if (toNumber(value) > 0) activityByHabit.get(habitId)?.add(dateKey);
+      const numeric = Math.max(0, toNumber(value));
+      if (numeric > 0) {
+        totalCount += numeric;
+        days.add(dateKey);
+      }
     });
     Object.entries(habitSessions?.[habitId] || {}).forEach(([dateKey, value]) => {
-      if (toNumber(value) > 0 || countObjectKeys(value) > 0) activityByHabit.get(habitId)?.add(dateKey);
+      const totalSec = getHabitSessionTotalSeconds(value);
+      if (totalSec > 0 || countObjectKeys(value) > 0) {
+        if (totalSec > 0) totalSeconds += totalSec;
+        days.add(dateKey);
+      }
     });
+
+    const orderedDays = Array.from(days).sort();
+    const streak = buildStreakStats(orderedDays);
+    const hasData = orderedDays.length > 0 || totalCount > 0 || totalSeconds > 0;
+    if (!habit.archived || hasData) {
+      habitEntities[habitId] = {
+        id: habitId,
+        name: String(habit?.name || "").trim() || "Hábito",
+        label: String(habit?.name || "").trim() || "Hábito",
+        emoji: String(habit?.emoji || "").trim() || "🏷️",
+        archived: Boolean(habit?.archived),
+        goalType: getHabitGoalType(habit),
+        completedDays: orderedDays.length,
+        trackingDays: orderedDays.length,
+        streakCurrent: streak.current,
+        streakBest: streak.best,
+        totalCount: Math.round(totalCount),
+        totalSeconds,
+        totalHours: Number((totalSeconds / 3600).toFixed(4)),
+        hasData,
+      };
+    }
   });
 
   const allDays = new Set();
@@ -518,6 +579,7 @@ function collectHabitActivityDays(snapshot = {}) {
     allDays: orderedActiveDays,
     bestStreak,
     allHabitsDays,
+    habitEntities,
   };
 }
 
@@ -536,7 +598,8 @@ export function deriveHabitsMetrics(snapshot = {}) {
     allHabitsDays: activity.allHabitsDays.length,
     allHabitsStreakCurrent: allHabitsStreak.current,
     allHabitsStreakBest: allHabitsStreak.best,
-    hasData: activity.activeHabitsCount > 0 || activity.totalCompletions > 0,
+    habitEntities: activity.habitEntities,
+    hasData: activity.activeHabitsCount > 0 || activity.totalCompletions > 0 || countObjectKeys(activity.habitEntities) > 0,
     activityScore: activity.totalCompletions,
     milestoneCount: activity.totalCompletions,
   });

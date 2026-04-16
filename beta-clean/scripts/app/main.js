@@ -21,6 +21,7 @@ import {
   initAchievementsService,
   trackAchievementViewVisit,
 } from "../shared/services/achievements/index.js";
+import { initGeneralCenterService } from "../shared/services/general-center/index.js";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -2695,6 +2696,7 @@ void initSyncManager({
   getUserId: () => auth.currentUser?.uid || "",
 });
 initAchievementsService();
+initGeneralCenterService();
 bindSyncIndicatorToggles();
 bindAuthGate();
 bindViewportHeightVar();

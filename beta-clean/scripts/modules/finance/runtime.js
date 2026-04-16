@@ -469,6 +469,94 @@ function normalizeTxRow(raw = {}, id = '') {
     monthKey
   };
 }
+function normalizeBalanceRowRecord(id, row = {}, source = 'transactions', fallbackPath = '', fallbackMonthKey = '') {
+  const normalized = normalizeTxRow(row, id);
+  const dateISO = String(normalized?.dateISO || '');
+  const date = String(normalized?.date || isoToDay(dateISO || normalized?.date || '') || '');
+  const monthKey = String(normalized?.monthKey || date.slice(0, 7) || fallbackMonthKey || '');
+  const parsedTs = new Date(date || dateISO || 0).getTime();
+  if (FINANCE_DEBUG && !Number.isFinite(parsedTs) && (date || dateISO)) {
+    console.log('[BALANCE] invalid date row', { source, id, date, dateISO, monthKey });
+  }
+  return {
+    id,
+    ...row,
+    ...normalized,
+    __src: source,
+    __path: row?.__path || fallbackPath,
+    accountId: String(row?.accountId || ''),
+    fromAccountId: String(row?.fromAccountId ?? row?.extras?.fromAccountId ?? ''),
+    toAccountId: String(row?.toAccountId ?? row?.extras?.toAccountId ?? ''),
+    note: String(row?.note ?? row?.extras?.note ?? ''),
+    date,
+    dateISO,
+    monthKey,
+    category: String(row?.category || ''),
+    linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
+    personalRatio: (row?.personalRatio !== null && row?.personalRatio !== undefined && String(row.personalRatio).trim() !== '' && Number.isFinite(Number(row.personalRatio)))
+      ? clamp01(row.personalRatio, 1)
+      : null,
+    allocation: normalizeTxAllocation(row?.allocation || {}, String(date || isoToDay(dateISO || '') || '')),
+    createdAt: Number(row?.createdAt || 0),
+    updatedAt: Number(row?.updatedAt || 0),
+    extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(normalized?.amount || 0))
+  };
+}
+function collectBalanceRows(balance = {}, financePath = state.financePath) {
+  const fromNew = Object.entries(balance?.transactions || {}).map(([id, row]) => normalizeBalanceRowRecord(id, row, 'transactions', `${financePath}/transactions/${id}`));
+
+  const fromLegacy = [];
+  Object.entries(balance?.movements || {}).forEach(([monthKey, rows]) => {
+    Object.entries(rows || {}).forEach(([id, row]) => {
+      fromLegacy.push(normalizeBalanceRowRecord(id, row, 'movements', `${financePath}/movements/${monthKey}/${id}`, monthKey));
+    });
+  });
+
+  const legacyTx = Object.entries(balance?.tx || {}).map(([id, row]) => normalizeBalanceRowRecord(id, row, 'tx', `${financePath}/tx/${id}`));
+  const newIds = new Set(fromNew.map((row) => String(row.id)));
+  const legacyRows = [...fromLegacy, ...legacyTx].filter((row) => !fromNew.length || !newIds.has(String(row.id)));
+  const dedup = new Map();
+  [...fromNew, ...legacyRows].forEach((row) => {
+    const uniqueKey = row.__path || `${row.__src}:${row.id}`;
+    if (!dedup.has(uniqueKey)) dedup.set(uniqueKey, row);
+  });
+  return [...dedup.values()]
+    .filter((row) => Number.isFinite(row.amount) && row.monthKey)
+    .sort((a, b) => (txSortTs(b) - txSortTs(a)) || (Number(b.createdAt || 0) - Number(a.createdAt || 0)));
+}
+function collectBalanceRowsFromRoot(root = {}, financePath = state.financePath) {
+  return collectBalanceRows({
+    tx: root.balance?.tx || root.tx || {},
+    movements: root.movements || root.balance?.movements || root.balance?.movement || {},
+    transactions: root.transactions || root.balance?.transactions || root.balance?.tx2 || {}
+  }, financePath);
+}
+async function loadFinanceRoot() {
+  const snap = await safeFirebase(() => get(ref(db, `${state.financePath}`)));
+  return snap?.val() || {};
+}
+function syncLocalAccountsFromRoot(root = {}) {
+  if (!root?.accounts || typeof root.accounts !== 'object') return;
+  state.accounts = Object.values(root.accounts).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+}
+function pruneLocalLegacyTxRows(txId) {
+  const safeId = String(txId || '').trim();
+  if (!safeId) return;
+  state.balance = state.balance || {};
+  state.balance.movements = Object.fromEntries(
+    Object.entries(state.balance.movements || {})
+      .map(([monthKey, rows]) => [monthKey, Object.fromEntries(Object.entries(rows || {}).filter(([id]) => String(id) !== safeId))])
+      .filter(([, rows]) => Object.keys(rows || {}).length)
+  );
+  if (state.balance.tx?.[safeId]) delete state.balance.tx[safeId];
+}
+function removeLocalTxEverywhere(txId) {
+  const safeId = String(txId || '').trim();
+  if (!safeId) return;
+  state.balance = state.balance || {};
+  if (state.balance.transactions?.[safeId]) delete state.balance.transactions[safeId];
+  pruneLocalLegacyTxRows(safeId);
+}
 function isFoodCategory(category = '') {
   const normalized = String(category || '').trim().toLowerCase();
   return normalized === 'comida' || normalized === 'food';
@@ -2924,14 +3012,13 @@ function normalizeSnapshots(snapshots = {}) {
 function movementRowsByAccount(accountId) {
   return balanceTxList().filter((row) => row.accountId === accountId);
 }
-async function recomputeAccountEntries(accountId, fromDay) {
+async function recomputeAccountEntries(accountId, fromDay, rootOverride = null) {
   if (!accountId) return;
-  const snap = await safeFirebase(() => get(ref(db, `${state.financePath}`)));
-  const root = snap?.val() || {};
+  const root = rootOverride && typeof rootOverride === 'object' ? rootOverride : await loadFinanceRoot();
   const account = root.accounts?.[accountId] || state.accounts.find((item) => item.id === accountId);
   if (!account) return;
   const snapshots = normalizeSnapshots(account.snapshots || {});
-  const txRows = balanceTxList().filter((row) => (
+  const txRows = collectBalanceRowsFromRoot(root, state.financePath).filter((row) => (
     row.accountId === accountId || row.fromAccountId === accountId || row.toAccountId === accountId
   ));
   const movements = txRows.sort((a, b) => txSortTs(a) - txSortTs(b));
@@ -2944,7 +3031,7 @@ async function recomputeAccountEntries(accountId, fromDay) {
   if (!allDays.length) return;
   const normalizedFromDay = toIsoDay(fromDay || '') || fromDay;
   const startDay = normalizedFromDay || allDays[0];
-  console.debug('[FINANCE] recompute account entries', { accountId, startDay, txCount: movements.length });
+  financeDebug('recompute account entries', { accountId, startDay, txCount: movements.length });
 
   const dayEvents = {};
   movements.forEach((row) => {
@@ -3418,64 +3505,9 @@ function balanceTxList() {
   if (cache.balanceRef === state.balance && cache.financePath === state.financePath) {
     return cache.rows;
   }
-  const normalizeBalanceRow = (id, row = {}, source = 'transactions', fallbackPath = '', fallbackMonthKey = '') => {
-    const normalized = normalizeTxRow(row, id);
-    const dateISO = String(normalized?.dateISO || '');
-    const date = String(normalized?.date || isoToDay(dateISO || normalized?.date || '') || '');
-    const monthKey = String(normalized?.monthKey || date.slice(0, 7) || fallbackMonthKey || '');
-    const parsedTs = new Date(date || dateISO || 0).getTime();
-    if (FINANCE_DEBUG && !Number.isFinite(parsedTs) && (date || dateISO)) {
-      console.log('[BALANCE] invalid date row', { source, id, date, dateISO, monthKey });
-    }
-    return {
-      id,
-      ...row,
-      ...normalized,
-      __src: source,
-      __path: row?.__path || fallbackPath,
-      accountId: String(row?.accountId || ''),
-      fromAccountId: String(row?.fromAccountId ?? row?.extras?.fromAccountId ?? ''),
-toAccountId: String(row?.toAccountId ?? row?.extras?.toAccountId ?? ''),
-note: String(row?.note ?? row?.extras?.note ?? ''),
-      date,
-      dateISO,
-      monthKey,
-      category: String(row?.category || ''),
-      linkedHabitId: String(row?.linkedHabitId || '').trim() || null,
-      personalRatio: (row?.personalRatio !== null && row?.personalRatio !== undefined && String(row.personalRatio).trim() !== '' && Number.isFinite(Number(row.personalRatio)))
-  ? clamp01(row.personalRatio, 1)
-  : null,
-      allocation: normalizeTxAllocation(row?.allocation || {}, String(date || isoToDay(dateISO || '') || '')),
-      createdAt: Number(row?.createdAt || 0),
-      updatedAt: Number(row?.updatedAt || 0),
-      extras: normalizeFoodExtras(row?.extras || row?.food || {}, Number(normalized?.amount || 0))
-    };
-  };
-
-  const fromNew = Object.entries(state.balance.transactions || {}).map(([id, row]) => normalizeBalanceRow(id, row, 'transactions', `${state.financePath}/transactions/${id}`));
-
-  const fromLegacy = [];
-  Object.entries(state.balance.movements || {}).forEach(([monthKey, rows]) => {
-    Object.entries(rows || {}).forEach(([id, row]) => {
-      fromLegacy.push(normalizeBalanceRow(id, row, 'movements', `${state.financePath}/movements/${monthKey}/${id}`, monthKey));
-    });
-  });
-
-  const legacyTx = Object.entries(state.balance.tx || {}).map(([id, row]) => normalizeBalanceRow(id, row, 'tx', `${state.financePath}/tx/${id}`));
-  const newIds = new Set(fromNew.map((row) => String(row.id)));
-  const legacyRows = [...fromLegacy, ...legacyTx].filter((row) => !fromNew.length || !newIds.has(String(row.id)));
-  const rows = [...fromNew, ...legacyRows];
-  const dedup = new Map();
-  rows.forEach((row) => {
-    const uniqueKey = row.__path || `${row.__src}:${row.id}`;
-    if (!dedup.has(uniqueKey)) dedup.set(uniqueKey, row);
-  });
-
   cache.balanceRef = state.balance;
   cache.financePath = state.financePath;
-  cache.rows = [...dedup.values()]
-    .filter((row) => Number.isFinite(row.amount) && row.monthKey)
-    .sort((a, b) => (txSortTs(b) - txSortTs(a)) || (Number(b.createdAt || 0) - Number(a.createdAt || 0)));
+  cache.rows = collectBalanceRows(state.balance, state.financePath);
   return cache.rows;
 }
 function getSelectedBalanceMonthKey() {
@@ -5988,13 +6020,12 @@ return `<div class="financeBudgetRow">
   <div class="financeTxList" style="max-height:220px;overflow-y:auto;">${monthNetList.map((row) => `<div class="financeTxRow-balance-por-mes"><span>${row.month}</span><strong class="${toneClass(row.netOperative)}">Op ${fmtSignedCurrency(row.netOperative)}</strong><strong class="${toneClass(row.netWealth)}">Pat ${fmtSignedCurrency(row.netWealth)}</strong><strong class="${toneClass(row.accountsDeltaReal)}">ΔC ${fmtSignedCurrency(row.accountsDeltaReal)}</strong></div>`).join('') || '<p class="finance-empty">Sin meses con movimientos.</p>'}</div></article></section>`;
 }
 
-function renderFinanceGoals(accounts = buildAccountModels()) {
+function renderFinanceGoalsLegacy(accounts = buildAccountModels()) {
   const goals = Object.entries(state.goals.goals || {})
     .map(([id, row]) => ({ id, ...row }))
     .sort((a, b) => Number(a?.dueDateISO ? new Date(a.dueDateISO).getTime() : 0) - Number(b?.dueDateISO ? new Date(b.dueDateISO).getTime() : 0));
 
-  // saldo actual por cuenta (usa tu modelo ya calculado en pantalla)
-  const accountsById = Object.fromEntries(accounts.map(a => [a.id, a]));
+  const accountsById = Object.fromEntries(accounts.map((account) => [account.id, account]));
 
   const totalObjective = goals.reduce((sum, goal) => sum + Number(goal.targetAmount || 0), 0);
   const contributingAccounts = new Set();
@@ -6017,26 +6048,32 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
   });
 
   return `
-  <section class="financeBalanceView">
-    <header class="financeViewHeader">
-      <h2>Objetivos</h2>
+  <section class="financeBalanceView financeGoalsView">
+    <header class="financeViewHeader financeGoalsView__header">
+      <div class="financeGoalsView__title">
+        <h2>Objetivos</h2>
+        <p>Metas de ahorro seguidas por cuenta y fecha.</p>
+      </div>
       <button class="finance-pill" id="boton-objetivo" data-open-modal="goal">+ Objetivo</button>
     </header>
 
-    <article class="financeGlassCard">
-      <div class="financeSummaryGrid">
-        <div class="valoracion-mes"><small>Total objetivo</small><strong>${fmtCurrency(totalObjective)}</strong></div>
-        <div class="valoracion-mes"><small>Total ahorrado</small><strong class="${toneClass(totalPool)}">${fmtCurrency(totalPool)}</strong></div>
+    <article class="financeGlassCard financeGoalsCard financeGoalsCard--summary">
+      <div class="financeSummaryGrid financeGoalsSummaryGrid">
+        <div class="valoracion-mes financeGoalsSummaryStat"><small>Total objetivo</small><strong>${fmtCurrency(totalObjective)}</strong></div>
+        <div class="valoracion-mes financeGoalsSummaryStat"><small>Total ahorrado</small><strong class="${toneClass(totalPool)}">${fmtCurrency(totalPool)}</strong></div>
       </div>
-      <div class="media-mensual">
-        <small>Progreso global</small>
-        <strong class="${toneClass(globalPct - 100)}">${globalPct.toFixed(2)}%</strong>
+      <div class="media-mensual financeGoalsProgressHead">
+        <div>
+          <small>Progreso global</small>
+          <strong class="${toneClass(globalPct - 100)}">${globalPct.toFixed(2)}%</strong>
+        </div>
+        <small>${contributingAccounts.size} ${contributingAccounts.size === 1 ? 'cuenta' : 'cuentas'} aportando</small>
       </div>
-      <div class="financeProgress"><div class="financeProgress__bar" style="width:${Math.max(0, Math.min(100, globalPct)).toFixed(2)}%"></div></div>
+      <div class="financeProgress financeProgress--goal"><div class="financeProgress__bar" style="width:${Math.max(0, Math.min(100, globalPct)).toFixed(2)}%"></div></div>
     </article>
 
-    <article class="financeGlassCard">
-      <div class="financeBudgetList">
+    <article class="financeGlassCard financeGoalsCard">
+      <div class="financeBudgetList financeGoalsList">
         ${
           goals.length
             ? goals.map(goal => {
@@ -6046,25 +6083,29 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
                 const pct = target > 0 ? Math.max(0, Math.min(100, (assigned / target) * 100)) : 0;
                 const remaining = Math.max(0, target - assigned);
                 const complete = remaining <= 0.000001 && target > 0;
+                const dueLabel = goal.dueDateISO ? new Date(goal.dueDateISO).toLocaleDateString('es-ES') : 'sin fecha';
 
                 return `
-                  <div class="financeBudgetRow">
-                    <div class="finance-row">
-                      <strong>${escapeHtml(goal.title || 'Objetivo')}</strong>
-                      <div class="finance-row">
+                  <div class="financeBudgetRow financeGoalCard ${complete ? 'is-complete' : ''}">
+                    <div class="financeGoalCard__header">
+                      <div class="financeGoalCard__titleBlock">
+                        <strong>${escapeHtml(goal.title || 'Objetivo')}</strong>
+                        <small>Vence ${dueLabel}</small>
+                      </div>
+                      <div class="financeGoalCard__actions">
                         <button class="finance-pill finance-pill--mini" data-open-goal="${goal.id}">✏️</button>
                         <button class="finance-pill finance-pill--mini" data-delete-goal="${goal.id}">❌</button>
                       </div>
                     </div>
 
-                    <small>
+                    <div class="financeGoalCard__meta">
                       ${fmtCurrency(target)} ·
                       asignado ${fmtCurrency(assigned)} (${pct.toFixed(0)}%) ·
                       restante ${fmtCurrency(remaining)} ·
                       vence ${goal.dueDateISO ? new Date(goal.dueDateISO).toLocaleDateString('es-ES') : 'sin fecha'} ·
                       ${includedIds.length} cuentas ·
                       ${complete ? 'completo' : 'pendiente'}
-                    </small>
+                    </div>
 
                     <div class="financeProgress">
                       <div class="financeProgress__bar" style="width:${pct.toFixed(2)}%"></div>
@@ -6077,6 +6118,230 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
       </div>
     </article>
   </section>`;
+}
+
+function renderFinanceGoals(accounts = buildAccountModels()) {
+  const goals = Object.entries(state.goals.goals || {})
+    .map(([id, row]) => ({ id, ...row }))
+    .sort((a, b) => Number(a?.dueDateISO ? new Date(a.dueDateISO).getTime() : 0) - Number(b?.dueDateISO ? new Date(b.dueDateISO).getTime() : 0));
+
+  const accountsById = Object.fromEntries(accounts.map((account) => [account.id, account]));
+  const totalObjective = goals.reduce((sum, goal) => sum + Number(goal.targetAmount || 0), 0);
+  const contributingAccounts = new Set();
+  goals.forEach((goal) => (goal.accountsIncluded || []).forEach((id) => contributingAccounts.add(id)));
+  const totalPool = [...contributingAccounts].reduce((sum, id) => sum + Number(accountsById[id]?.current || 0), 0);
+  const assignedGlobal = Math.min(totalObjective, totalPool);
+  const pendingGlobal = Math.max(0, totalObjective - assignedGlobal);
+  const availableGlobal = Math.max(0, totalPool - assignedGlobal);
+  const globalPct = totalObjective > 0 ? Math.max(0, Math.min(100, (totalPool / totalObjective) * 100)) : 0;
+  const donutPct = Math.max(0, Math.min(100, globalPct));
+  const heroNote = totalObjective <= 0
+    ? 'Crea un objetivo para empezar a seguir tu ahorro.'
+    : pendingGlobal > 0
+      ? `Faltan ${fmtCurrency(pendingGlobal)} para cubrir todos los objetivos con las cuentas vinculadas.`
+      : availableGlobal > 0
+        ? `Ya cubres los objetivos y te quedan ${fmtCurrency(availableGlobal)} disponibles.`
+        : 'Ahora mismo las cuentas vinculadas cubren exactamente el total de objetivos.';
+  const sortedGoals = goals.slice().sort((a, b) => {
+    const aDue = a?.dueDateISO ? new Date(a.dueDateISO).getTime() : Number.MAX_SAFE_INTEGER;
+    const bDue = b?.dueDateISO ? new Date(b.dueDateISO).getTime() : Number.MAX_SAFE_INTEGER;
+    if (aDue !== bDue) return aDue - bDue;
+    return Number(a.targetAmount || 0) - Number(b.targetAmount || 0);
+  });
+  const allocationByGoal = {};
+  let remainingPool = totalPool;
+  sortedGoals.forEach((goal) => {
+    const target = Math.max(0, Number(goal.targetAmount || 0));
+    const assigned = Math.max(0, Math.min(target, remainingPool));
+    allocationByGoal[goal.id] = assigned;
+    remainingPool -= assigned;
+  });
+
+  return `
+  <section class="financeBalanceView financeGoalsView">
+    <header class="financeViewHeader financeGoalsView__header">
+      <div class="financeGoalsView__title">
+        <h2>Objetivos</h2>
+        <p>Metas de ahorro seguidas por cuenta y fecha.</p>
+      </div>
+      <button class="finance-pill" id="boton-objetivo" data-open-modal="goal">+ Objetivo</button>
+    </header>
+
+    <article class="financeGlassCard financeGoalsCard financeGoalsHero ${pendingGlobal <= 0 && totalObjective > 0 ? 'is-complete' : ''}">
+      <div class="financeGoalsHero__top">
+        <div>
+          <small>Resumen global</small>
+          <h3>Ahorro vinculado a objetivos</h3>
+        </div>
+        <span>${goals.length} ${goals.length === 1 ? 'objetivo activo' : 'objetivos activos'}</span>
+      </div>
+
+      <div class="financeGoalsHero__body">
+        <div class="financeGoalsDonutWrap">
+          <div class="financeGoalsDonut ${pendingGlobal <= 0 && totalObjective > 0 ? 'is-complete' : ''}" style="--goal-progress:${donutPct.toFixed(2)};">
+            <div class="financeGoalsDonut__inner">
+              <small>Global</small>
+              <strong>${donutPct.toFixed(0)}%</strong>
+              <span>${fmtCurrency(assignedGlobal)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="financeGoalsHero__stats">
+          <div class="financeGoalsHero__metric">
+            <small>Total objetivo</small>
+            <strong>${fmtCurrency(totalObjective)}</strong>
+          </div>
+          <div class="financeGoalsHero__metric">
+            <small>Total ahorrado</small>
+            <strong class="${toneClass(totalPool)}">${fmtCurrency(totalPool)}</strong>
+          </div>
+          <div class="financeGoalsHero__metric">
+            <small>Disponible</small>
+            <strong class="${toneClass(availableGlobal)}">${fmtCurrency(availableGlobal)}</strong>
+          </div>
+          <div class="financeGoalsHero__metric">
+            <small>Cuentas aportando</small>
+            <strong>${contributingAccounts.size}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div class="media-mensual financeGoalsProgressHead">
+        <div>
+          <small>Progreso global</small>
+          <strong class="${toneClass(globalPct - 100)}">${globalPct.toFixed(2)}%</strong>
+        </div>
+        <small>${heroNote}</small>
+      </div>
+      <div class="financeProgress financeProgress--goal financeGoalsHero__progress">
+        <div class="financeProgress__bar" style="width:${donutPct.toFixed(2)}%"></div>
+      </div>
+    </article>
+
+    <article class="financeGlassCard financeGoalsCard">
+      <div class="financeBudgetList financeGoalsList">
+        ${goals.length
+          ? goals.map((goal) => {
+              const target = Number(goal.targetAmount || 0);
+              const includedIds = goal.accountsIncluded || [];
+              const assigned = Number(allocationByGoal[goal.id] || 0);
+              const pct = target > 0 ? Math.max(0, Math.min(100, (assigned / target) * 100)) : 0;
+              const remaining = Math.max(0, target - assigned);
+              const complete = remaining <= 0.000001 && target > 0;
+              const dueLabel = goal.dueDateISO ? new Date(goal.dueDateISO).toLocaleDateString('es-ES') : 'sin fecha';
+              const accountNames = includedIds.map((id) => String(accountsById[id]?.name || '').trim()).filter(Boolean);
+              const accountsPreview = accountNames.length
+                ? `${accountNames.slice(0, 2).join(' · ')}${accountNames.length > 2 ? ` +${accountNames.length - 2}` : ''}`
+                : 'Sin cuentas vinculadas';
+
+              return `
+                <div class="financeBudgetRow financeGoalCard ${complete ? 'is-complete' : ''}">
+                  <div class="financeGoalCard__header">
+                    <div class="financeGoalCard__titleBlock">
+                      <strong>${escapeHtml(goal.title || 'Objetivo')}</strong>
+                      <small>Vence ${dueLabel}</small>
+                    </div>
+                    <div class="financeGoalCard__actions">
+                      <button class="finance-pill finance-pill--mini" data-open-goal="${goal.id}">✏️</button>
+                      <button class="finance-pill finance-pill--mini" data-delete-goal="${goal.id}">❌</button>
+                    </div>
+                  </div>
+
+                  <div class="financeGoalCard__subline">
+                    <span>${accountsPreview}</span>
+                    <span>${complete ? 'Completo' : 'Pendiente'}</span>
+                  </div>
+
+                  <div class="financeGoalCard__amounts">
+                    <div>
+                      <small>Objetivo</small>
+                      <strong>${fmtCurrency(target)}</strong>
+                    </div>
+                    <div>
+                      <small>Ahorrado</small>
+                      <strong>${fmtCurrency(assigned)}</strong>
+                    </div>
+                    <div>
+                      <small>Faltan</small>
+                      <strong>${fmtCurrency(remaining)}</strong>
+                    </div>
+                  </div>
+
+                  <div class="financeProgress financeProgress--goal">
+                    <div class="financeProgress__bar" style="width:${pct.toFixed(2)}%"></div>
+                  </div>
+
+                  <div class="financeGoalCard__footer">
+                    <span>${pct.toFixed(0)}% completado</span>
+                    <span>${includedIds.length} ${includedIds.length === 1 ? 'cuenta' : 'cuentas'}</span>
+                  </div>
+                </div>
+              `;
+            }).join('')
+          : `<p class="finance-empty financeGoalsEmpty">Sin objetivos todavía.</p>`}
+      </div>
+    </article>
+  </section>`;
+}
+
+function renderGoalEditorModal(goal = null, resolvedAccounts = []) {
+  const safeGoal = goal && typeof goal === 'object' ? goal : null;
+  const isEdit = Boolean(safeGoal?.id);
+  const selected = new Set(Array.isArray(safeGoal?.accountsIncluded) ? safeGoal.accountsIncluded : []);
+  const targetAmount = Number.isFinite(Number(safeGoal?.targetAmount)) ? String(Number(safeGoal.targetAmount)) : '';
+  const dueDate = toIsoDay(String(safeGoal?.dueDateISO || ''));
+  const accountsOptions = resolvedAccounts.map((account) => `
+    <label class="financeGoalAccountOption">
+      <input type="checkbox" name="accountsIncluded" value="${escapeHtml(account.id)}" ${selected.has(account.id) ? 'checked' : ''}/>
+      <span>${escapeHtml(account.name)}</span>
+    </label>
+  `).join('');
+  const summaryBlock = isEdit ? `
+      <div class="financeGoalDetailCard">
+        <div class="financeGoalDetailCard__stat">
+          <small>Meta actual</small>
+          <strong>${fmtCurrency(Number(safeGoal?.targetAmount || 0))}</strong>
+        </div>
+        <div class="financeGoalDetailCard__stat">
+          <small>Vence</small>
+          <strong>${dueDate ? new Date(safeGoal.dueDateISO).toLocaleDateString('es-ES') : 'Sin fecha'}</strong>
+        </div>
+      </div>
+  ` : '';
+
+  return `<div id="finance-modal" class="finance-modal finance-modal--goal" role="dialog" aria-modal="true" tabindex="-1">
+    <header class="financeGoalModal__header">
+      <div>
+        <h3>${isEdit ? 'Editar objetivo' : 'Nuevo objetivo'}</h3>
+        <p>${isEdit ? 'Actualiza importe, fecha y cuentas sin salir del flujo actual.' : 'Define una meta y las cuentas que quieres usar para seguirla.'}</p>
+      </div>
+      <button class="finance-pill" data-close-modal>Cerrar</button>
+    </header>
+    ${summaryBlock}
+    <form class="finance-goal-form financeGoalForm" data-goal-form>
+      ${isEdit ? `<input type="hidden" name="goalId" value="${escapeHtml(safeGoal.id)}" />` : ''}
+      <label class="financeGoalForm__field">
+        <span>Título</span>
+        <input name="title" required placeholder="Ej. Fondo de viaje" value="${escapeHtml(safeGoal?.title || '')}" />
+      </label>
+      <div class="financeGoalForm__grid">
+        <label class="financeGoalForm__field">
+          <span>Cantidad objetivo</span>
+          <input name="targetAmount" required type="number" step="0.01" min="0" inputmode="decimal" placeholder="0,00" value="${escapeHtml(targetAmount)}" />
+        </label>
+        <label class="financeGoalForm__field">
+          <span>Fecha límite</span>
+          <input name="dueDateISO" required type="date" value="${escapeHtml(dueDate)}" />
+        </label>
+      </div>
+      <fieldset class="financeGoalForm__accounts">
+        <legend>Cuentas incluidas</legend>
+        <div class="financeGoalAccountsList">${accountsOptions || '<p class="finance-empty">No hay cuentas.</p>'}</div>
+      </fieldset>
+      <button class="finance-pill financeGoalForm__submit" type="submit">${isEdit ? 'Guardar cambios' : 'Guardar'}</button>
+    </form>
+  </div>`;
 }
 
 function getAccountMergeResolvedIds(resolvedGroups = []) {
@@ -7209,12 +7474,22 @@ if (form) {
     return;
   }
   if (state.modal.type === 'goal') {
+    backdrop.innerHTML = renderGoalEditorModal(null, resolvedAccounts);
+    return;
+  }
+  if (state.modal.type === 'goal-detail') {
+    const goal = state.goals.goals?.[state.modal.goalId];
+    if (!goal) { state.modal = { type: null }; triggerRender(); return; }
+    backdrop.innerHTML = renderGoalEditorModal({ id: state.modal.goalId, ...goal }, resolvedAccounts);
+    return;
+  }
+  if (state.modal.type === 'goal-legacy') {
     const accountsOptions = resolvedAccounts.map((a) => `<label><input type="checkbox" name="accountsIncluded" value="${a.id}" /> ${escapeHtml(a.name)}</label>`).join('');
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Nuevo objetivo</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
     <form class="finance-goal-form" data-goal-form><input name="title" required placeholder="Título" /><input name="targetAmount" required type="number" step="0.01" placeholder="Cantidad objetivo"/><input name="dueDateISO" required type="date" /><fieldset><legend>Cuentas incluidas</legend>${accountsOptions || '<p class="finance-empty">No hay cuentas.</p>'}</fieldset><button class="finance-pill" type="submit">Guardar</button></form></div>`;
     return;
   }
-  if (state.modal.type === 'goal-detail') {
+  if (state.modal.type === 'goal-detail-legacy') {
     const goal = state.goals.goals?.[state.modal.goalId]; if (!goal) { state.modal = { type: null }; triggerRender(); return; }
     const selected = new Set(goal.accountsIncluded || []);
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${escapeHtml(goal.title)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
@@ -9226,10 +9501,15 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
 
   await safeFirebase(() => remove(ref(db, path)));
 
+  const freshRoot = await loadFinanceRoot();
   const touched = [existing.accountId, existing.fromAccountId, existing.toAccountId].filter(Boolean);
   for (const accountId of [...new Set(touched)]) {
-    await recomputeAccountEntries(accountId, existing.date || isoToDay(existing.dateISO || ''));
+    await recomputeAccountEntries(accountId, existing.date || isoToDay(existing.dateISO || ''), freshRoot);
   }
+  const refreshedRoot = await loadFinanceRoot();
+  removeLocalTxEverywhere(txDelete);
+  syncLocalAccountsFromRoot(refreshedRoot);
+  clearFinanceDerivedCaches();
 
   toast('Movimiento eliminado');
   scheduleAggregateRebuild();
@@ -9424,7 +9704,7 @@ if (target.closest('[data-test-fixed-expense]')) {
       return;
     }
     const openGoal = target.closest('[data-open-goal]')?.dataset.openGoal; if (openGoal) { state.modal = { type: 'goal-detail', goalId: openGoal }; triggerRender(); return; }
-    const delGoal = target.closest('[data-delete-goal]')?.dataset.deleteGoal; if (delGoal && window.confirm('¿Borrar objetivo?')) { await safeFirebase(() => remove(ref(db, `${state.financePath}/goals/goals/${delGoal}`))); return; }
+    const delGoal = target.closest('[data-delete-goal]')?.dataset.deleteGoal; if (delGoal && window.confirm('¿Borrar objetivo?')) { await safeFirebase(() => remove(ref(db, `${state.financePath}/goals/goals/${delGoal}`))); if (state.goals?.goals?.[delGoal]) { const nextGoals = { ...(state.goals.goals || {}) }; delete nextGoals[delGoal]; state.goals = { goals: nextGoals }; } if (state.modal?.goalId === delGoal) state.modal = { type: null }; toast('Objetivo eliminado'); triggerRender(); return; }
  const fixedSummaryView = target.closest('[data-fixed-summary-view]')?.dataset.fixedSummaryView;
 if (fixedSummaryView) {
   state.calendarFixedView = ['squares', 'donut', 'line'].includes(fixedSummaryView)
@@ -9983,11 +10263,19 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         updatedAt: nowTs(),
         createdAt: Number(prev?.createdAt || 0) || nowTs()
       };
-      console.log('[FINANCE][BALANCE] save transaction', `${state.financePath}/transactions/${saveId}`);
+      const canonicalTxPath = `${state.financePath}/transactions/${saveId}`;
+      const legacySourcePath = txId && prev?.__path && prev.__path !== canonicalTxPath ? String(prev.__path) : '';
+      console.log('[FINANCE][BALANCE] save transaction', canonicalTxPath);
       if (window?.BOOKSHELL_DEV || window?.localStorage?.getItem('bookshell_debug_expense_payload') === '1') {
         console.log('[FINANCE][DEBUG] expense payload', payload);
       }
-      await safeFirebase(() => set(ref(db, `${state.financePath}/transactions/${saveId}`), payload));
+      if (legacySourcePath) {
+        financeDebug('migrating edited legacy transaction', { txId: saveId, from: legacySourcePath, to: canonicalTxPath });
+      }
+      await safeFirebase(() => update(ref(db), {
+        [canonicalTxPath]: payload,
+        ...(legacySourcePath ? { [legacySourcePath]: null } : {})
+      }));
       if (type !== 'transfer') {
         await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
       }
@@ -10042,7 +10330,17 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       }
       const touched = new Set([payload.accountId, payload.fromAccountId, payload.toAccountId, prev?.accountId, prev?.fromAccountId, prev?.toAccountId].filter(Boolean));
       const recomputeStart = [dateISO, prev?.date, isoToDay(prev?.dateISO || '')].filter(Boolean).sort()[0] || dateISO;
-      await Promise.all(Array.from(touched).map((account) => recomputeAccountEntries(account, recomputeStart)));
+      const freshRoot = await loadFinanceRoot();
+      await Promise.all(Array.from(touched).map((account) => recomputeAccountEntries(account, recomputeStart, freshRoot)));
+      const refreshedRoot = await loadFinanceRoot();
+      state.balance = state.balance || {};
+      state.balance.transactions = {
+        ...(state.balance.transactions || {}),
+        [saveId]: payload
+      };
+      pruneLocalLegacyTxRows(saveId);
+      syncLocalAccountsFromRoot(refreshedRoot);
+      clearFinanceDerivedCaches();
       scheduleAggregateRebuild();
       localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId || fromAccountId || '');
       state.lastMovementAccountId = accountId || fromAccountId || '';
@@ -10064,14 +10362,52 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       state.modal = { type: null }; toast('Presupuesto guardado'); triggerRender(); return;
     }
     if (event.target.matches('[data-goal-form]')) {
-      event.preventDefault(); const form = new FormData(event.target); const goalId = push(ref(db, `${state.financePath}/goals/goals`)).key;
-      const payload = { title: String(form.get('title') || '').trim(), targetAmount: Number(form.get('targetAmount') || 0), dueDateISO: `${form.get('dueDateISO')}T00:00:00.000Z`, accountsIncluded: form.getAll('accountsIncluded'), createdAt: nowTs(), updatedAt: nowTs() };
-      await safeFirebase(() => set(ref(db, `${state.financePath}/goals/goals/${goalId}`), payload)); state.modal = { type: null }; toast('Objetivo creado'); triggerRender(); return;
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const existingGoalId = String(form.get('goalId') || '').trim();
+      const existingGoal = existingGoalId ? (state.goals.goals?.[existingGoalId] || null) : null;
+      const goalId = existingGoalId || push(ref(db, `${state.financePath}/goals/goals`)).key;
+      const title = String(form.get('title') || '').trim();
+      const targetAmount = parseMoney(String(form.get('targetAmount') || ''));
+      const dueDate = toIsoDay(String(form.get('dueDateISO') || ''));
+      const accountsIncluded = [...new Set(form.getAll('accountsIncluded').map((value) => String(value || '').trim()).filter(Boolean))];
+      if (!title || !dueDate || !Number.isFinite(targetAmount) || targetAmount < 0) {
+        toast('Datos de objetivo inválidos');
+        return;
+      }
+      const payload = {
+        ...(existingGoal && typeof existingGoal === 'object' ? existingGoal : {}),
+        title,
+        targetAmount,
+        dueDateISO: `${dueDate}T00:00:00.000Z`,
+        accountsIncluded,
+        createdAt: Number(existingGoal?.createdAt || 0) || nowTs(),
+        updatedAt: nowTs()
+      };
+      await safeFirebase(() => set(ref(db, `${state.financePath}/goals/goals/${goalId}`), payload));
+      state.goals = {
+        goals: {
+          ...(state.goals?.goals || {}),
+          [goalId]: payload
+        }
+      };
+      state.modal = { type: null };
+      toast(existingGoalId ? 'Objetivo actualizado' : 'Objetivo creado');
+      triggerRender();
+      return;
     }
     const goalAccountsId = event.target.dataset.goalAccountsForm;
     if (goalAccountsId) {
       event.preventDefault(); const ids = [...event.target.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value);
       await safeFirebase(() => update(ref(db, `${state.financePath}/goals/goals/${goalAccountsId}`), { accountsIncluded: ids, updatedAt: nowTs() }));
+      if (state.goals?.goals?.[goalAccountsId]) {
+        state.goals = {
+          goals: {
+            ...(state.goals?.goals || {}),
+            [goalAccountsId]: { ...state.goals.goals[goalAccountsId], accountsIncluded: ids, updatedAt: nowTs() }
+          }
+        };
+      }
       state.modal = { type: null }; triggerRender();
     }
   }, evtOpts);

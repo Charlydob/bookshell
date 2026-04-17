@@ -1,5 +1,6 @@
 import { onUserChange } from "../../shared/firebase/index.js";
 import {
+  buildFolderInsights,
   buildFolderOptions,
   buildFolderStats,
   createInitialNotesState,
@@ -33,6 +34,19 @@ import {
   parseTagList,
 } from "./domain/tag-utils.js";
 
+const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("es-ES", {
+  day: "numeric",
+  month: "short",
+});
+const LONG_DATE_FORMATTER = new Intl.DateTimeFormat("es-ES", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+const NUMBER_FORMATTER = new Intl.NumberFormat("es-ES");
+const COMPACT_NUMBER_FORMATTER = new Intl.NumberFormat("es-ES", {
+  maximumFractionDigits: 1,
+});
 const state = createInitialNotesState();
 let unbindAuth = null;
 let unbindData = null;
@@ -43,6 +57,290 @@ let noteSaveInFlight = false;
 let noteTagImageDrafts = new Map();
 let activeNoteTagImageKey = "";
 let noteSelectedTagImageKey = "";
+let activeNotesStatsSection = "ratings";
+
+function normalizeNotesStatsSection(section = "") {
+  const safeSection = String(section || "").trim();
+  return ["ratings", "tags", "notes"].includes(safeSection) ? safeSection : "ratings";
+}
+
+function buildStatsSectionSwitch(active = "ratings") {
+  const safeActive = normalizeNotesStatsSection(active);
+  const tabs = [
+    { key: "ratings", label: "Ratings" },
+    { key: "tags", label: "Tags" },
+    { key: "notes", label: "Notas" },
+  ];
+
+  return `
+    <div class="notes-stats-section-switch" role="tablist" aria-label="Secciones de estadisticas">
+      ${tabs.map((tab) => `
+        <button
+          class="notes-stats-section-tab${safeActive === tab.key ? " is-active" : ""}"
+          type="button"
+          role="tab"
+          aria-selected="${safeActive === tab.key ? "true" : "false"}"
+          data-act="set-notes-stats-section"
+          data-stats-section="${tab.key}"
+        >${tab.label}</button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function buildStatsVerticalRatingChart(items = [], emptyText = "Sin datos todavia.") {
+  const sourceRows = Array.isArray(items) ? items : [];
+  const countByValue = new Map(
+    sourceRows.map((row) => [Number(row?.value), Number(row?.count || 0)]),
+  );
+  const chartItems = Array.from({ length: 11 }, (_, value) => ({
+    value,
+    count: Math.max(0, Number(countByValue.get(value) || 0)),
+  }));
+  const maxCount = chartItems.reduce((max, row) => Math.max(max, row.count), 0);
+
+  if (!maxCount) {
+    return `<div class="notes-stats-empty-copy">${escapeHtml(emptyText)}</div>`;
+  }
+
+  return `
+    <div class="notes-stats-rating-chart" role="img" aria-label="Distribucion de ratings de 0 a 10">
+      <div class="notes-stats-rating-chart-plot">
+        ${chartItems.map((item) => {
+          const rawHeight = maxCount ? (item.count / maxCount) * 100 : 0;
+          const height = item.count > 0 ? Math.max(rawHeight, 10) : 0;
+          const title = `${item.value}/10 · ${formatNumber(item.count)} notas`;
+
+          return `
+            <div class="notes-stats-rating-col">
+              <span class="notes-stats-rating-count">${escapeHtml(formatNumber(item.count))}</span>
+              <div class="notes-stats-rating-bar-wrap">
+                <span
+                  class="notes-stats-rating-bar${item.count > 0 ? "" : " is-empty"}"
+                  style="height:${height.toFixed(1)}%;"
+                  title="${escapeHtml(title)}"
+                ></span>
+              </div>
+              <span class="notes-stats-rating-x">${escapeHtml(String(item.value))}</span>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function buildRatingsStatsMarkup(insights, averageRatingLabel) {
+  return `
+    <div class="notes-stats-card-head">
+      <h3 class="notes-stats-card-title">Ratings</h3>
+      <p class="notes-stats-card-copy">Distribucion y notas destacadas de la carpeta.</p>
+    </div>
+    ${buildStatsMetricChips([
+      { label: "Media", value: averageRatingLabel },
+      { label: "Con rating", value: formatNumber(insights?.ratedNotesCount || 0) },
+      { label: "Sin rating", value: formatNumber(insights?.unratedNotesCount || 0) },
+      { label: "Mejor nota", value: insights?.maxRating === null ? "—" : formatRatingValue(insights.maxRating) },
+    ])}
+    <div class="notes-stats-block">
+      <div class="notes-stats-block-head"><strong>Distribucion</strong></div>
+      ${buildStatsVerticalRatingChart(
+        insights?.ratingDistribution || [],
+        "Aun no hay notas valoradas en esta carpeta."
+      )}
+    </div>
+    <div class="notes-stats-split">
+      <div class="notes-stats-block">
+        <div class="notes-stats-block-head"><strong>Top rating</strong></div>
+        ${buildStatsNoteList(
+          insights?.bestRatedNotes || [],
+          (note) => `${formatRatingValue(note.rating)} · ${formatCompactDate(note.updatedAt || note.createdAt)} · ${formatNumber(note.tagsCount || 0)} tags`,
+          "Todavia no hay notas valoradas.",
+        )}
+      </div>
+      <div class="notes-stats-block">
+        <div class="notes-stats-block-head"><strong>Rating mas bajo</strong></div>
+        ${buildStatsNoteList(
+          insights?.worstRatedNotes || [],
+          (note) => `${formatRatingValue(note.rating)} · ${formatCompactDate(note.updatedAt || note.createdAt)} · ${formatNumber(note.tagsCount || 0)} tags`,
+          "No hay suficiente variedad para mostrar una peor nota.",
+        )}
+      </div>
+    </div>
+  `;
+}
+
+function buildTagsStatsMarkup(insights) {
+  const topRatedTags = (insights?.topRatedTags || []).map((row) => ({
+    ...row,
+    percentageOfAverage: (Number(row?.averageRating || 0) / 10) * 100,
+  }));
+
+  return `
+    <div class="notes-stats-card-head">
+      <h3 class="notes-stats-card-title">Tags</h3>
+      <p class="notes-stats-card-copy">Uso real de etiquetas y relacion con notas valoradas.</p>
+    </div>
+    ${buildStatsMetricChips([
+      { label: "Con tags", value: formatPercentage(insights?.tagsCoverage || 0) },
+      { label: "Media tags", value: formatCompactNumber(insights?.tagsPerNoteAverage || 0) },
+      { label: "Sin tags", value: formatNumber(insights?.notesWithoutTagsCount || 0) },
+    ])}
+    <div class="notes-stats-block">
+      <div class="notes-stats-block-head"><strong>Ranking de tags</strong></div>
+      ${buildStatsBarList((insights?.topTags || []).slice(0, 8), {
+        labelFormatter: (row) => row.label || "",
+        valueFormatter: (row) => `${formatNumber(row.count)} · ${formatPercentage(row.percentage || 0)}`,
+        emptyText: "Esta carpeta aun no tiene tags usados en notas.",
+      })}
+    </div>
+    <div class="notes-stats-block">
+      <div class="notes-stats-block-head"><strong>Tags mejor valorados</strong></div>
+      ${buildStatsBarList(topRatedTags, {
+        labelFormatter: (row) => row.label || "",
+        valueFormatter: (row) => `${formatCompactNumber(row.averageRating || 0)}/10 · ${formatNumber(row.count || 0)} notas`,
+        percentageKey: "percentageOfAverage",
+        emptyText: "Necesitas al menos dos notas valoradas por tag para compararlos.",
+      })}
+    </div>
+  `;
+}
+
+function buildNotesStatsMarkup(insights) {
+  const monthlyActivity = insights?.activityByMonth || [];
+
+  return `
+    <div class="notes-stats-card-head">
+      <h3 class="notes-stats-card-title">Notas</h3>
+      <p class="notes-stats-card-copy">Actividad reciente, longitud y densidad de contenido.</p>
+    </div>
+    ${buildStatsMetricChips([
+      { label: "Creadas 7d", value: formatNumber(insights?.createdRecently7d || 0) },
+      { label: "Editadas 30d", value: formatNumber(insights?.editedRecently30d || 0) },
+      { label: "Caracteres", value: formatNumber(insights?.totalCharacters || 0) },
+      { label: "Media car.", value: formatCompactNumber(insights?.averageCharacters || 0) },
+    ])}
+    <div class="notes-stats-block">
+      <div class="notes-stats-block-head"><strong>Evolucion mensual</strong></div>
+      ${buildStatsBarList(monthlyActivity, {
+        labelFormatter: (row) => row.label || "",
+        valueFormatter: (row) => `${formatNumber(row.count || 0)} notas`,
+        emptyText: "Aun no hay suficientes fechas de creacion para mostrar evolucion.",
+      })}
+    </div>
+    <div class="notes-stats-split">
+      <div class="notes-stats-block">
+        <div class="notes-stats-block-head"><strong>Con mas tags</strong></div>
+        ${buildStatsNoteList(
+          insights?.notesWithMostTags || [],
+          (note) => `${formatNumber(note.tagsCount || 0)} tags · ${formatCompactDate(note.updatedAt || note.createdAt)}`,
+          "Todavia no hay notas etiquetadas.",
+        )}
+      </div>
+      <div class="notes-stats-block">
+        <div class="notes-stats-block-head"><strong>Ultimas ediciones</strong></div>
+        ${buildStatsNoteList(
+          insights?.recentlyUpdatedNotes || [],
+          (note) => `${formatLongDate(note.updatedAt)} · ${formatNumber(note.tagsCount || 0)} tags`,
+          "Todavia no hay ediciones recientes.",
+        )}
+      </div>
+    </div>
+    <div class="notes-stats-split">
+      <div class="notes-stats-block">
+        <div class="notes-stats-block-head"><strong>Mas larga</strong></div>
+        ${buildStatsNoteList(
+          insights?.longestNote ? [insights.longestNote] : [],
+          (note) => `${formatNumber(note.characters || 0)} car. · ${formatNumber(note.words || 0)} palabras`,
+          "Sin contenido suficiente para comparar longitud.",
+        )}
+      </div>
+      <div class="notes-stats-block">
+        <div class="notes-stats-block-head"><strong>Mas corta</strong></div>
+        ${buildStatsNoteList(
+          insights?.shortestNote ? [insights.shortestNote] : [],
+          (note) => `${formatNumber(note.characters || 0)} car. · ${formatNumber(note.words || 0)} palabras`,
+          "Sin contenido suficiente para comparar longitud.",
+        )}
+      </div>
+    </div>
+  `;
+}
+
+function buildActiveStatsCardMarkup(insights, averageRatingLabel, activeSection = "ratings") {
+  const safeActive = normalizeNotesStatsSection(activeSection);
+  let sectionMarkup = "";
+
+  if (safeActive === "tags") {
+    sectionMarkup = buildTagsStatsMarkup(insights);
+  } else if (safeActive === "notes") {
+    sectionMarkup = buildNotesStatsMarkup(insights);
+  } else {
+    sectionMarkup = buildRatingsStatsMarkup(insights, averageRatingLabel);
+  }
+
+  return `
+    <article class="notes-stats-card notes-stats-card--single" data-stats-section="${safeActive}">
+      ${buildStatsSectionSwitch(safeActive)}
+      ${sectionMarkup}
+    </article>
+  `;
+}
+
+function renderFolderStatsSectionView(folder, insights, childFolders = []) {
+  const kpiWrap = $id("notes-stats-kpis");
+  const grid = $id("notes-stats-grid");
+  const empty = $id("notes-empty-stats");
+  if (!kpiWrap || !grid || !empty) return;
+
+  const totalNotes = Number(insights?.totalNotes || 0);
+  const averageRatingLabel = insights?.averageRating === null
+    ? "â€”"
+    : `${formatCompactNumber(insights.averageRating)}/10`;
+
+  kpiWrap.innerHTML = buildStatsKpiCards([
+    {
+      label: "Notas",
+      value: formatNumber(totalNotes),
+      meta: childFolders.length ? `${formatNumber(childFolders.length)} subcarpetas` : "En esta carpeta",
+    },
+    {
+      label: "Media",
+      value: averageRatingLabel,
+      meta: insights?.ratedNotesCount ? `${formatNumber(insights.ratedNotesCount)} valoradas` : "Sin ratings",
+    },
+    {
+      label: "Valoradas",
+      value: formatPercentage(insights?.ratedShare || 0),
+      meta: `${formatNumber(insights?.unratedNotesCount || 0)} sin rating`,
+    },
+    {
+      label: "Tags unicos",
+      value: formatNumber(insights?.uniqueTagsCount || 0),
+      meta: `${formatNumber(insights?.totalTagAssignments || 0)} usos`,
+    },
+    {
+      label: "Palabras",
+      value: formatNumber(insights?.totalWords || 0),
+      meta: `${formatCompactNumber(insights?.averageWords || 0)} de media`,
+    },
+    {
+      label: "Creadas 30d",
+      value: formatNumber(insights?.createdRecently30d || 0),
+      meta: `${formatNumber(insights?.editedRecently30d || 0)} editadas`,
+    },
+  ]);
+
+  empty.classList.toggle("hidden", totalNotes > 0);
+  grid.classList.toggle("hidden", totalNotes === 0);
+  if (!totalNotes) {
+    grid.innerHTML = "";
+    return;
+  }
+
+  activeNotesStatsSection = normalizeNotesStatsSection(activeNotesStatsSection);
+  grid.innerHTML = buildActiveStatsCardMarkup(insights, averageRatingLabel, activeNotesStatsSection);
+}
 
 function emitNotesData(reason = "") {
   try {
@@ -94,6 +392,93 @@ function closeModal(backdropId) {
 
 function pluralize(value, singular, plural) {
   return `${value} ${value === 1 ? singular : plural}`;
+}
+
+function normalizeNoteRatingValue(value = null) {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.max(0, Math.min(10, Math.round(numeric)));
+}
+
+function formatNumber(value = 0) {
+  return NUMBER_FORMATTER.format(Number(value || 0));
+}
+
+function formatDecimal(value = 0, digits = 1) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return "0";
+  return numeric.toLocaleString("es-ES", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+function formatCompactNumber(value = 0) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return "0";
+  return COMPACT_NUMBER_FORMATTER.format(numeric);
+}
+
+function formatPercentage(value = 0) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return "0%";
+  return `${Math.round(numeric)}%`;
+}
+
+function formatCompactDate(timestamp = 0) {
+  const safe = Number(timestamp || 0);
+  if (!Number.isFinite(safe) || safe <= 0) return "Sin fecha";
+  return SHORT_DATE_FORMATTER.format(safe);
+}
+
+function formatLongDate(timestamp = 0) {
+  const safe = Number(timestamp || 0);
+  if (!Number.isFinite(safe) || safe <= 0) return "Sin fecha";
+  return LONG_DATE_FORMATTER.format(safe);
+}
+
+function formatRatingValue(rating = null) {
+  const safe = normalizeNoteRatingValue(rating);
+  return safe === null ? "Sin rating" : `${safe}/10`;
+}
+
+function buildRatingBadgeMarkup(rating = null) {
+  const safe = normalizeNoteRatingValue(rating);
+  if (safe === null) return "";
+  return `
+    <span class="notes-rating-badge" title="Rating ${safe}/10">
+      <span class="notes-rating-badge-star" aria-hidden="true">★</span>
+      <span class="notes-rating-badge-value">${safe}</span>
+      <span class="notes-rating-badge-scale">/10</span>
+    </span>
+  `;
+}
+
+function buildRatingPreviewMarkup(rating = null) {
+  const safe = normalizeNoteRatingValue(rating);
+  if (safe === null) {
+    return '<span class="notes-rating-preview-copy">Sin rating</span>';
+  }
+
+  const stars = Array.from({ length: 10 }, (_, index) => (
+    `<span class="notes-rating-preview-star${index < safe ? " is-active" : ""}">★</span>`
+  )).join("");
+
+  return `
+    <span class="notes-rating-preview-stars" aria-hidden="true">${stars}</span>
+    <span class="notes-rating-preview-copy">${safe}/10</span>
+  `;
+}
+
+function updateNoteRatingPreview() {
+  const preview = $id("notes-note-rating-preview");
+  const select = $id("notes-note-rating");
+  if (!preview || !select) return;
+
+  const rating = normalizeNoteRatingValue(select.value);
+  preview.classList.toggle("is-empty", rating === null);
+  preview.innerHTML = buildRatingPreviewMarkup(rating);
 }
 
 function getCurrentFolder() {
@@ -515,6 +900,8 @@ function setCurrentFolder(folderId = "") {
   const safeFolderId = String(folderId || "").trim();
   if (state.selectedFolderId !== safeFolderId) {
     clearNoteFilters();
+    state.folderView = "main";
+    activeNotesStatsSection = "ratings";
   }
   state.selectedFolderId = safeFolderId;
 }
@@ -607,6 +994,304 @@ function renderFolderBreadcrumbs(path = []) {
   breadcrumbs.innerHTML = items.join("");
 }
 
+function renderFolderViewSwitch() {
+  const mainButton = $id("notes-folder-view-main-btn");
+  const statsButton = $id("notes-folder-view-stats-btn");
+  const isStatsView = state.folderView === "stats";
+
+  if (mainButton) {
+    mainButton.classList.toggle("is-active", !isStatsView);
+    mainButton.setAttribute("aria-pressed", String(!isStatsView));
+  }
+
+  if (statsButton) {
+    statsButton.classList.toggle("is-active", isStatsView);
+    statsButton.setAttribute("aria-pressed", String(isStatsView));
+  }
+}
+
+function buildStatsKpiCards(items = []) {
+  return items.map((item) => `
+    <article class="notes-stats-kpi">
+      <span class="notes-stats-kpi-label">${escapeHtml(item.label || "")}</span>
+      <strong class="notes-stats-kpi-value">${escapeHtml(item.value || "0")}</strong>
+      <span class="notes-stats-kpi-meta">${escapeHtml(item.meta || "")}</span>
+    </article>
+  `).join("");
+}
+
+function buildStatsMetricChips(items = []) {
+  const filtered = items.filter((item) => item?.label && item?.value !== undefined && item?.value !== null);
+  if (!filtered.length) return "";
+
+  return `
+    <div class="notes-stats-metrics">
+      ${filtered.map((item) => `
+        <div class="notes-stats-metric">
+          <span class="notes-stats-metric-label">${escapeHtml(item.label)}</span>
+          <strong class="notes-stats-metric-value">${escapeHtml(String(item.value))}</strong>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function buildStatsBarList(items = [], {
+  labelFormatter = (item) => item?.label || "",
+  valueFormatter = (item) => formatNumber(item?.count || 0),
+  percentageKey = "percentage",
+  emptyText = "Sin datos todavia.",
+} = {}) {
+  if (!items.length) {
+    return `<div class="notes-stats-empty-copy">${escapeHtml(emptyText)}</div>`;
+  }
+
+  return `
+    <div class="notes-stats-bars">
+      ${items.map((item) => {
+        const fill = Math.max(0, Math.min(100, Number(item?.[percentageKey] || 0)));
+        return `
+          <div class="notes-stats-bar-row">
+            <div class="notes-stats-bar-head">
+              <strong class="notes-stats-bar-label">${escapeHtml(labelFormatter(item))}</strong>
+              <span class="notes-stats-bar-value">${escapeHtml(valueFormatter(item))}</span>
+            </div>
+            <div class="notes-stats-bar-track">
+              <span class="notes-stats-bar-fill" style="width:${fill.toFixed(1)}%"></span>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function buildStatsNoteList(items = [], metaBuilder = () => "", emptyText = "Sin datos todavia.") {
+  if (!items.length) {
+    return `<div class="notes-stats-empty-copy">${escapeHtml(emptyText)}</div>`;
+  }
+
+  return `
+    <div class="notes-stats-list">
+      ${items.map((item) => {
+        const meta = metaBuilder(item);
+        return `
+          <article class="notes-stats-list-item">
+            <strong class="notes-stats-list-title">${escapeHtml(item?.title || "Sin titulo")}</strong>
+            ${meta ? `<span class="notes-stats-list-meta">${escapeHtml(meta)}</span>` : ""}
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderFolderStatsView(folder, insights, childFolders = []) {
+  const kpiWrap = $id("notes-stats-kpis");
+  const grid = $id("notes-stats-grid");
+  const empty = $id("notes-empty-stats");
+  if (!kpiWrap || !grid || !empty) return;
+
+  const totalNotes = Number(insights?.totalNotes || 0);
+  const averageRatingLabel = insights?.averageRating === null
+    ? "—"
+    : `${formatCompactNumber(insights.averageRating)}/10`;
+
+  kpiWrap.innerHTML = buildStatsKpiCards([
+    {
+      label: "Notas",
+      value: formatNumber(totalNotes),
+      meta: childFolders.length ? `${formatNumber(childFolders.length)} subcarpetas` : "En esta carpeta",
+    },
+    {
+      label: "Media",
+      value: averageRatingLabel,
+      meta: insights?.ratedNotesCount ? `${formatNumber(insights.ratedNotesCount)} valoradas` : "Sin ratings",
+    },
+    {
+      label: "Valoradas",
+      value: formatPercentage(insights?.ratedShare || 0),
+      meta: `${formatNumber(insights?.unratedNotesCount || 0)} sin rating`,
+    },
+    {
+      label: "Tags unicos",
+      value: formatNumber(insights?.uniqueTagsCount || 0),
+      meta: `${formatNumber(insights?.totalTagAssignments || 0)} usos`,
+    },
+    {
+      label: "Palabras",
+      value: formatNumber(insights?.totalWords || 0),
+      meta: `${formatCompactNumber(insights?.averageWords || 0)} de media`,
+    },
+    {
+      label: "Creadas 30d",
+      value: formatNumber(insights?.createdRecently30d || 0),
+      meta: `${formatNumber(insights?.editedRecently30d || 0)} editadas`,
+    },
+  ]);
+
+  empty.classList.toggle("hidden", totalNotes > 0);
+  grid.classList.toggle("hidden", totalNotes === 0);
+  if (!totalNotes) {
+    grid.innerHTML = "";
+    return;
+  }
+
+  const ratingDistribution = (insights?.ratingDistribution || []).filter((row) => Number(row?.count || 0) > 0);
+  const topRatedTags = (insights?.topRatedTags || []).map((row) => ({
+    ...row,
+    percentageOfAverage: (Number(row?.averageRating || 0) / 10) * 100,
+  }));
+  const monthlyActivity = insights?.activityByMonth || [];
+
+  grid.innerHTML = `
+    <article class="notes-stats-card">
+      <div class="notes-stats-card-head">
+        <h3 class="notes-stats-card-title">Ratings</h3>
+        <p class="notes-stats-card-copy">Distribucion y notas destacadas de la carpeta.</p>
+      </div>
+      ${buildStatsMetricChips([
+        { label: "Media", value: averageRatingLabel },
+        { label: "Con rating", value: formatNumber(insights?.ratedNotesCount || 0) },
+        { label: "Sin rating", value: formatNumber(insights?.unratedNotesCount || 0) },
+        { label: "Mejor nota", value: insights?.maxRating === null ? "—" : formatRatingValue(insights.maxRating) },
+      ])}
+      <div class="notes-stats-block">
+        <div class="notes-stats-block-head">
+          <strong>Distribucion</strong>
+        </div>
+        ${buildStatsBarList(ratingDistribution, {
+          labelFormatter: (row) => `${row.value}/10`,
+          valueFormatter: (row) => `${formatNumber(row.count)} notas`,
+          emptyText: "Aun no hay notas valoradas en esta carpeta.",
+        })}
+      </div>
+      <div class="notes-stats-split">
+        <div class="notes-stats-block">
+          <div class="notes-stats-block-head">
+            <strong>Top rating</strong>
+          </div>
+          ${buildStatsNoteList(
+            insights?.bestRatedNotes || [],
+            (note) => `${formatRatingValue(note.rating)} · ${formatCompactDate(note.updatedAt || note.createdAt)} · ${formatNumber(note.tagsCount || 0)} tags`,
+            "Todavia no hay notas valoradas.",
+          )}
+        </div>
+        <div class="notes-stats-block">
+          <div class="notes-stats-block-head">
+            <strong>Rating mas bajo</strong>
+          </div>
+          ${buildStatsNoteList(
+            insights?.worstRatedNotes || [],
+            (note) => `${formatRatingValue(note.rating)} · ${formatCompactDate(note.updatedAt || note.createdAt)} · ${formatNumber(note.tagsCount || 0)} tags`,
+            "No hay suficiente variedad para mostrar una peor nota.",
+          )}
+        </div>
+      </div>
+    </article>
+
+    <article class="notes-stats-card">
+      <div class="notes-stats-card-head">
+        <h3 class="notes-stats-card-title">Tags</h3>
+        <p class="notes-stats-card-copy">Uso real de etiquetas y relacion con notas valoradas.</p>
+      </div>
+      ${buildStatsMetricChips([
+        { label: "Con tags", value: formatPercentage(insights?.tagsCoverage || 0) },
+        { label: "Media tags", value: formatCompactNumber(insights?.tagsPerNoteAverage || 0) },
+        { label: "Sin tags", value: formatNumber(insights?.notesWithoutTagsCount || 0) },
+      ])}
+      <div class="notes-stats-block">
+        <div class="notes-stats-block-head">
+          <strong>Ranking de tags</strong>
+        </div>
+        ${buildStatsBarList((insights?.topTags || []).slice(0, 6), {
+          labelFormatter: (row) => row.label || "",
+          valueFormatter: (row) => `${formatNumber(row.count)} · ${formatPercentage(row.percentage || 0)}`,
+          emptyText: "Esta carpeta aun no tiene tags usados en notas.",
+        })}
+      </div>
+      <div class="notes-stats-block">
+        <div class="notes-stats-block-head">
+          <strong>Tags mejor valorados</strong>
+        </div>
+        ${buildStatsBarList(topRatedTags, {
+          labelFormatter: (row) => row.label || "",
+          valueFormatter: (row) => `${formatCompactNumber(row.averageRating || 0)}/10 · ${formatNumber(row.count || 0)} notas`,
+          percentageKey: "percentageOfAverage",
+          emptyText: "Necesitas al menos dos notas valoradas por tag para compararlos.",
+        })}
+      </div>
+    </article>
+
+    <article class="notes-stats-card">
+      <div class="notes-stats-card-head">
+        <h3 class="notes-stats-card-title">Notas</h3>
+        <p class="notes-stats-card-copy">Actividad reciente, longitud y densidad de contenido.</p>
+      </div>
+      ${buildStatsMetricChips([
+        { label: "Creadas 7d", value: formatNumber(insights?.createdRecently7d || 0) },
+        { label: "Editadas 30d", value: formatNumber(insights?.editedRecently30d || 0) },
+        { label: "Caracteres", value: formatNumber(insights?.totalCharacters || 0) },
+        { label: "Media car.", value: formatCompactNumber(insights?.averageCharacters || 0) },
+      ])}
+      <div class="notes-stats-block">
+        <div class="notes-stats-block-head">
+          <strong>Evolucion mensual</strong>
+        </div>
+        ${buildStatsBarList(monthlyActivity, {
+          labelFormatter: (row) => row.label || "",
+          valueFormatter: (row) => `${formatNumber(row.count || 0)} notas`,
+          emptyText: "Aun no hay suficientes fechas de creacion para mostrar evolucion.",
+        })}
+      </div>
+      <div class="notes-stats-split">
+        <div class="notes-stats-block">
+          <div class="notes-stats-block-head">
+            <strong>Con mas tags</strong>
+          </div>
+          ${buildStatsNoteList(
+            insights?.notesWithMostTags || [],
+            (note) => `${formatNumber(note.tagsCount || 0)} tags · ${formatCompactDate(note.updatedAt || note.createdAt)}`,
+            "Todavia no hay notas etiquetadas.",
+          )}
+        </div>
+        <div class="notes-stats-block">
+          <div class="notes-stats-block-head">
+            <strong>Ultimas ediciones</strong>
+          </div>
+          ${buildStatsNoteList(
+            insights?.recentlyUpdatedNotes || [],
+            (note) => `${formatLongDate(note.updatedAt)} · ${formatNumber(note.tagsCount || 0)} tags`,
+            "Todavia no hay ediciones recientes.",
+          )}
+        </div>
+      </div>
+      <div class="notes-stats-split">
+        <div class="notes-stats-block">
+          <div class="notes-stats-block-head">
+            <strong>Mas larga</strong>
+          </div>
+          ${buildStatsNoteList(
+            insights?.longestNote ? [insights.longestNote] : [],
+            (note) => `${formatNumber(note.characters || 0)} car. · ${formatNumber(note.words || 0)} palabras`,
+            "Sin contenido suficiente para comparar longitud.",
+          )}
+        </div>
+        <div class="notes-stats-block">
+          <div class="notes-stats-block-head">
+            <strong>Mas corta</strong>
+          </div>
+          ${buildStatsNoteList(
+            insights?.shortestNote ? [insights.shortestNote] : [],
+            (note) => `${formatNumber(note.characters || 0)} car. · ${formatNumber(note.words || 0)} palabras`,
+            "Sin contenido suficiente para comparar longitud.",
+          )}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
 function renderNoteCards(list, notes = []) {
   if (!list) return;
 
@@ -644,12 +1329,16 @@ function renderNoteCards(list, notes = []) {
 
     const cardClass = noteImageUrl ? "notes-item-card has-note-image" : "notes-item-card";
     const cardStyle = buildNoteCardStyleAttribute(note);
+    const ratingMarkup = buildRatingBadgeMarkup(note?.rating);
 
     return `
       <article class="${cardClass}"${cardStyle}>
         ${mediaMarkup}
         <div class="notes-item-content">
+          <div class="notes-item-head">
           <h4 class="notes-item-title">${escapeHtml(note.title || "Sin título")}</h4>
+            ${ratingMarkup}
+          </div>
           ${preview ? `<p class="notes-item-preview">${escapeHtml(preview)}</p>` : ""}
           ${linkMarkup}
         </div>
@@ -664,12 +1353,14 @@ function renderNoteCards(list, notes = []) {
 
 function renderFolderDetail() {
   const panel = $id("notes-folder-screen");
+  const mainView = $id("notes-folder-main-view");
+  const statsView = $id("notes-folder-stats-view");
   const subfolderBlock = $id("notes-subfolder-block");
   const subfolderList = $id("notes-subfolder-list");
   const empty = $id("notes-empty-folder");
   const notesList = $id("notes-cards-list");
   const notesLabel = $id("notes-notes-section-label");
-  if (!panel || !subfolderBlock || !subfolderList || !empty || !notesList || !notesLabel) return;
+  if (!panel || !mainView || !statsView || !subfolderBlock || !subfolderList || !empty || !notesList || !notesLabel) return;
 
   const foldersWithStats = buildFolderStats(state.folders, state.notes);
   const folder = foldersWithStats.find((item) => item.id === state.selectedFolderId);
@@ -679,29 +1370,37 @@ function renderFolderDetail() {
   }
 
   const childFolders = getChildFolders(foldersWithStats, folder.id);
-  const notes = filterNotesByFolder(
+  const allNotes = filterNotesByFolder(state.notes, folder.id);
+  const visibleNotes = filterNotesByFolder(
     state.notes,
     folder.id,
     state.noteQuery,
     state.noteCategoryFilter,
     state.noteTagsFilter,
   );
+  const insights = buildFolderInsights(state.notes, folder.id);
+  const hasFilteredNotes = visibleNotes.length !== allNotes.length;
 
   panel.classList.remove("hidden");
   $id("notes-folder-name").textContent = folder.name;
   $id("notes-folder-count").textContent = [
     pluralize(childFolders.length, "subcarpeta", "subcarpetas"),
-    pluralize(notes.length, "nota", "notas"),
-  ].join(" · ");
+    pluralize(allNotes.length, "nota", "notas"),
+    hasFilteredNotes ? `${pluralize(visibleNotes.length, "resultado", "resultados")} visibles` : "",
+  ].filter(Boolean).join(" · ");
   renderFolderBreadcrumbs(getFolderPath(foldersWithStats, folder.id));
+  renderFolderViewSwitch();
 
   subfolderBlock.classList.toggle("hidden", childFolders.length === 0);
   renderFolderCards(subfolderList, childFolders, { emptyText: "No hay subcarpetas." });
 
-  notesLabel.classList.toggle("hidden", notes.length === 0);
-  renderNoteCards(notesList, notes);
+  notesLabel.classList.toggle("hidden", visibleNotes.length === 0);
+  renderNoteCards(notesList, visibleNotes);
+  renderFolderStatsSectionView(folder, insights, childFolders);
 
-  empty.classList.toggle("hidden", childFolders.length > 0 || notes.length > 0);
+  empty.classList.toggle("hidden", childFolders.length > 0 || visibleNotes.length > 0);
+  mainView.classList.toggle("hidden", state.folderView !== "main");
+  statsView.classList.toggle("hidden", state.folderView !== "stats");
 }
 
 function renderShell() {
@@ -1082,11 +1781,13 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-category-select").value = note?.category || "";
   $id("notes-note-tags").value = (note?.tags || []).join(", ");
   $id("notes-note-tags-select").value = "";
+  $id("notes-note-rating").value = note?.rating === null || note?.rating === undefined ? "" : String(note.rating);
   $id("notes-note-is-link").checked = note?.type === "link";
   $id("notes-note-url").value = note?.url || "";
   $id("notes-note-url-wrap")?.classList.toggle("hidden", note?.type !== "link");
   $id("notes-note-form-error").textContent = "";
   $id("notes-note-modal-title").textContent = note ? "Editar nota" : "Nueva nota";
+  updateNoteRatingPreview();
   renderNoteTagImageEditor();
   openModal("notes-note-modal-backdrop");
 }
@@ -1220,6 +1921,7 @@ function bindNoteModalEvents() {
   const imageInput = $id("notes-note-image-file");
   const tagImageInput = $id("notes-note-tag-image-file");
   const tagsTextInput = $id("notes-note-tags");
+  const ratingSelect = $id("notes-note-rating");
 
   isLinkInput?.addEventListener("change", () => {
     $id("notes-note-url-wrap")?.classList.toggle("hidden", !isLinkInput.checked);
@@ -1271,6 +1973,17 @@ function bindNoteModalEvents() {
     $id("notes-note-form-error").textContent = "";
   });
 
+  ratingSelect?.addEventListener("change", () => {
+    updateNoteRatingPreview();
+    $id("notes-note-form-error").textContent = "";
+  });
+
+  $id("notes-note-rating-clear")?.addEventListener("click", () => {
+    if (ratingSelect) ratingSelect.value = "";
+    updateNoteRatingPreview();
+    $id("notes-note-form-error").textContent = "";
+  });
+
   $id("notes-note-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (noteSaveInFlight) return;
@@ -1286,6 +1999,7 @@ function bindNoteModalEvents() {
     const category = $id("notes-note-category").value.trim();
     const tagsInput = $id("notes-note-tags").value.trim();
     const tags = parseTagList(tagsInput);
+    const rating = normalizeNoteRatingValue(ratingSelect?.value);
     const isLink = $id("notes-note-is-link").checked;
     const url = $id("notes-note-url").value.trim();
     const errorField = $id("notes-note-form-error");
@@ -1321,6 +2035,7 @@ function bindNoteModalEvents() {
       content,
       category,
       tags,
+      rating,
       type: isLink ? "link" : "note",
       url,
       createdAt: Date.now(),
@@ -1475,6 +2190,21 @@ function bindUiEvents() {
     else closeFolderView();
   });
   $id("notes-btn-new-note")?.addEventListener("click", () => openNoteModal());
+  $id("notes-folder-view-switch")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act='set-folder-view']");
+    if (!target) return;
+    const nextView = String(target.dataset.folderView || "").trim();
+    state.folderView = nextView === "stats" ? "stats" : "main";
+    renderFolderDetail();
+  });
+  $id("notes-folder-stats-view")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act='set-notes-stats-section']");
+    if (!target) return;
+    const nextSection = normalizeNotesStatsSection(target.dataset.statsSection || "");
+    if (nextSection === activeNotesStatsSection) return;
+    activeNotesStatsSection = nextSection;
+    renderFolderDetail();
+  });
   $id("notes-note-folder-select")?.addEventListener("change", (event) => {
     const folderId = String(event.target.value || "").trim();
     $id("notes-note-folder-id").value = folderId;
@@ -1621,6 +2351,7 @@ function subscribeData(uid) {
     state.folders = [];
     state.notes = [];
     state.tagDefinitions = {};
+    state.folderView = "main";
     setCurrentFolder("");
     state.unlockedFolderIds = new Set();
     clearNoteTagImageDrafts();
@@ -1687,6 +2418,7 @@ export function destroy() {
   unbindAuth?.();
   unbindAuth = null;
   isBound = false;
+  state.folderView = "main";
   setCurrentFolder("");
   state.unlockedFolderIds = new Set();
   clearNotePhotoObjectUrl();

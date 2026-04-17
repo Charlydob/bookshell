@@ -32,11 +32,17 @@
 
     <div class="notes-folder-breadcrumbs" id="notes-folder-breadcrumbs"></div>
 
+    <div class="notes-folder-view-switch" id="notes-folder-view-switch" role="tablist" aria-label="Vista de carpeta">
+      <button class="notes-folder-view-tab is-active" id="notes-folder-view-main-btn" type="button" data-act="set-folder-view" data-folder-view="main" aria-pressed="true">Main</button>
+      <button class="notes-folder-view-tab" id="notes-folder-view-stats-btn" type="button" data-act="set-folder-view" data-folder-view="stats" aria-pressed="false">Stats</button>
+    </div>
+
     <div class="notes-folder-actions-top">
       <button class="btn primary" id="notes-btn-new-note" type="button">Nueva nota</button>
       <button class="btn ghost" id="notes-btn-new-subfolder" type="button">Nueva subcarpeta</button>
     </div>
 
+    <div class="notes-folder-view-panel" id="notes-folder-main-view">
     <section class="notes-subfolder-block hidden" id="notes-subfolder-block">
       <div class="notes-section-label">Subcarpetas</div>
       <div class="notes-folder-list notes-folder-list-nested" id="notes-subfolder-list"></div>
@@ -58,6 +64,13 @@
     <div class="notes-section-label hidden" id="notes-notes-section-label">Notas</div>
     <div class="notes-cards-list" id="notes-cards-list"></div>
     <div class="empty-state hidden" id="notes-empty-folder">Esta carpeta está vacía.</div>
+    </div>
+
+    <section class="notes-folder-view-panel notes-stats-view hidden" id="notes-folder-stats-view" aria-live="polite">
+      <div class="notes-stats-kpis" id="notes-stats-kpis"></div>
+      <div class="notes-stats-grid" id="notes-stats-grid"></div>
+      <div class="empty-state hidden" id="notes-empty-stats">Todavia no hay notas suficientes para generar estadisticas utiles.</div>
+    </section>
   </section>
 </div>
 
@@ -183,6 +196,28 @@
             <input id="notes-note-image-file" type="file" accept="image/*" hidden />
           </div>
         </div>
+
+        <label class="field notes-rating-field">
+          <span class="field-label">Rating</span>
+          <div class="notes-rating-input-row">
+            <select id="notes-note-rating" class="field-select notes-rating-select">
+              <option value="">Sin rating</option>
+              <option value="0">0 / 10</option>
+              <option value="1">1 / 10</option>
+              <option value="2">2 / 10</option>
+              <option value="3">3 / 10</option>
+              <option value="4">4 / 10</option>
+              <option value="5">5 / 10</option>
+              <option value="6">6 / 10</option>
+              <option value="7">7 / 10</option>
+              <option value="8">8 / 10</option>
+              <option value="9">9 / 10</option>
+              <option value="10">10 / 10</option>
+            </select>
+            <button class="btn ghost btn-compact notes-rating-clear" id="notes-note-rating-clear" type="button">Quitar</button>
+          </div>
+          <div class="notes-rating-preview is-empty" id="notes-note-rating-preview">Sin rating</div>
+        </label>
 
         <div id="meta-notas-note">
           <label class="field">

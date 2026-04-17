@@ -1,11 +1,29 @@
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MONTH_FORMATTER = new Intl.DateTimeFormat("es-ES", {
+  month: "short",
+  year: "2-digit",
+});
+const folderInsightsCache = new WeakMap();
+
 function normalizeId(value = "") {
   return String(value || "").trim();
+}
+
+function normalizeNoteRating(value = null) {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.max(0, Math.min(10, Math.round(numeric)));
+}
+
+function compareText(a = "", b = "") {
+  return String(a || "").localeCompare(String(b || ""), "es", { sensitivity: "base" });
 }
 
 function compareFolders(a, b) {
   const diff = Number(a?.createdAt || 0) - Number(b?.createdAt || 0);
   if (diff !== 0) return diff;
-  return String(a?.name || "").localeCompare(String(b?.name || ""), "es", { sensitivity: "base" });
+  return compareText(a?.name, b?.name);
 }
 
 function createFolderMap(folders = []) {
@@ -42,6 +60,319 @@ function buildChildrenMap(folders = [], folderMap = createFolderMap(folders)) {
   return childrenMap;
 }
 
+function buildNoteText(note = {}) {
+  const parts = [
+    String(note?.title || "").trim(),
+    String(note?.content || "").trim(),
+  ];
+
+  if (note?.type === "link") {
+    parts.push(String(note?.url || "").trim());
+  }
+
+  return parts.filter(Boolean).join(" ").trim();
+}
+
+function buildWordCount(text = "") {
+  if (!text) return 0;
+  return String(text)
+    .split(/\s+/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .length;
+}
+
+function buildMonthKey(timestamp = 0) {
+  const safe = Number(timestamp || 0);
+  if (!Number.isFinite(safe) || safe <= 0) return "";
+  const date = new Date(safe);
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+function buildMonthLabel(key = "") {
+  const [yearRaw, monthRaw] = String(key || "").split("-");
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return String(key || "");
+  }
+  return MONTH_FORMATTER.format(new Date(year, month - 1, 1));
+}
+
+function percentage(part = 0, total = 0) {
+  const safePart = Number(part || 0);
+  const safeTotal = Number(total || 0);
+  if (!Number.isFinite(safePart) || !Number.isFinite(safeTotal) || safeTotal <= 0) return 0;
+  return (safePart / safeTotal) * 100;
+}
+
+function compareRecentCreated(a, b) {
+  const createdDiff = Number(b?.createdAt || 0) - Number(a?.createdAt || 0);
+  if (createdDiff !== 0) return createdDiff;
+  const updatedDiff = Number(b?.updatedAt || 0) - Number(a?.updatedAt || 0);
+  if (updatedDiff !== 0) return updatedDiff;
+  return compareText(a?.title, b?.title);
+}
+
+function compareRecentUpdated(a, b) {
+  const updatedDiff = Number(b?.updatedAt || 0) - Number(a?.updatedAt || 0);
+  if (updatedDiff !== 0) return updatedDiff;
+  const createdDiff = Number(b?.createdAt || 0) - Number(a?.createdAt || 0);
+  if (createdDiff !== 0) return createdDiff;
+  return compareText(a?.title, b?.title);
+}
+
+function compareBestRated(a, b) {
+  const ratingDiff = Number(b?.rating ?? -1) - Number(a?.rating ?? -1);
+  if (ratingDiff !== 0) return ratingDiff;
+  return compareRecentUpdated(a, b);
+}
+
+function compareWorstRated(a, b) {
+  const ratingDiff = Number(a?.rating ?? 11) - Number(b?.rating ?? 11);
+  if (ratingDiff !== 0) return ratingDiff;
+  return compareRecentUpdated(a, b);
+}
+
+function compareTagUsage(a, b) {
+  const countDiff = Number(b?.count || 0) - Number(a?.count || 0);
+  if (countDiff !== 0) return countDiff;
+  return compareText(a?.label, b?.label);
+}
+
+function compareMostTags(a, b) {
+  const tagDiff = Number(b?.tagsCount || 0) - Number(a?.tagsCount || 0);
+  if (tagDiff !== 0) return tagDiff;
+  return compareRecentUpdated(a, b);
+}
+
+function compareLongest(a, b) {
+  const lengthDiff = Number(b?.characters || 0) - Number(a?.characters || 0);
+  if (lengthDiff !== 0) return lengthDiff;
+  return compareRecentUpdated(a, b);
+}
+
+function compareShortest(a, b) {
+  const lengthDiff = Number(a?.characters || 0) - Number(b?.characters || 0);
+  if (lengthDiff !== 0) return lengthDiff;
+  return compareRecentUpdated(a, b);
+}
+
+function buildNoteInsight(note = {}) {
+  const text = buildNoteText(note);
+  const tags = Array.isArray(note?.tags)
+    ? note.tags.map((tag) => String(tag).trim()).filter(Boolean)
+    : [];
+
+  return {
+    ...note,
+    title: String(note?.title || "").trim(),
+    tags,
+    tagsCount: tags.length,
+    rating: normalizeNoteRating(note?.rating),
+    createdAt: Number(note?.createdAt || 0),
+    updatedAt: Number(note?.updatedAt || note?.createdAt || 0),
+    words: buildWordCount(text),
+    characters: text.length,
+  };
+}
+
+function createEmptyFolderInsights(folderId = "") {
+  return {
+    folderId: normalizeId(folderId),
+    totalNotes: 0,
+    ratedNotesCount: 0,
+    unratedNotesCount: 0,
+    ratedShare: 0,
+    averageRating: null,
+    maxRating: null,
+    minRating: null,
+    ratingDistribution: Array.from({ length: 11 }, (_, index) => ({
+      value: 10 - index,
+      count: 0,
+      percentage: 0,
+    })),
+    bestRatedNotes: [],
+    worstRatedNotes: [],
+    topRatedTags: [],
+    uniqueTagsCount: 0,
+    topTags: [],
+    totalTagAssignments: 0,
+    notesWithTagsCount: 0,
+    notesWithoutTagsCount: 0,
+    tagsPerNoteAverage: 0,
+    tagsCoverage: 0,
+    createdRecently7d: 0,
+    createdRecently30d: 0,
+    editedRecently30d: 0,
+    recentlyCreatedNotes: [],
+    recentlyUpdatedNotes: [],
+    totalWords: 0,
+    totalCharacters: 0,
+    averageWords: 0,
+    averageCharacters: 0,
+    notesWithMostTags: [],
+    longestNote: null,
+    shortestNote: null,
+    activityByMonth: [],
+  };
+}
+
+function computeFolderInsights(notes = [], folderId = "") {
+  const safeFolderId = normalizeId(folderId);
+  const empty = createEmptyFolderInsights(safeFolderId);
+  if (!safeFolderId) return empty;
+
+  const folderNotes = notes
+    .filter((note) => normalizeId(note?.folderId) === safeFolderId)
+    .map((note) => buildNoteInsight(note));
+
+  if (!folderNotes.length) return empty;
+
+  const totalNotes = folderNotes.length;
+  const now = Date.now();
+  const ratedNotes = folderNotes.filter((note) => note.rating !== null);
+  const ratedNotesCount = ratedNotes.length;
+  const unratedNotesCount = totalNotes - ratedNotesCount;
+  const ratingSum = ratedNotes.reduce((sum, note) => sum + Number(note.rating || 0), 0);
+  const averageRating = ratedNotesCount ? ratingSum / ratedNotesCount : null;
+  const maxRating = ratedNotesCount ? Math.max(...ratedNotes.map((note) => Number(note.rating || 0))) : null;
+  const minRating = ratedNotesCount ? Math.min(...ratedNotes.map((note) => Number(note.rating || 0))) : null;
+
+  const ratingCountByValue = new Map(Array.from({ length: 11 }, (_, value) => [value, 0]));
+  ratedNotes.forEach((note) => {
+    const key = Number(note.rating);
+    ratingCountByValue.set(key, (ratingCountByValue.get(key) || 0) + 1);
+  });
+
+  const ratingDistribution = Array.from({ length: 11 }, (_, index) => {
+    const value = 10 - index;
+    const count = ratingCountByValue.get(value) || 0;
+    return {
+      value,
+      count,
+      percentage: percentage(count, ratedNotesCount),
+    };
+  });
+
+  const tagUsage = new Map();
+  const ratedTagUsage = new Map();
+  let totalTagAssignments = 0;
+
+  folderNotes.forEach((note) => {
+    totalTagAssignments += Number(note.tagsCount || 0);
+
+    note.tags.forEach((label) => {
+      const tagRow = tagUsage.get(label) || { label, count: 0 };
+      tagRow.count += 1;
+      tagUsage.set(label, tagRow);
+
+      if (note.rating === null) return;
+      const ratedRow = ratedTagUsage.get(label) || { label, count: 0, ratingTotal: 0 };
+      ratedRow.count += 1;
+      ratedRow.ratingTotal += Number(note.rating || 0);
+      ratedTagUsage.set(label, ratedRow);
+    });
+  });
+
+  const notesWithTagsCount = folderNotes.filter((note) => Number(note.tagsCount || 0) > 0).length;
+  const monthlyCounts = new Map();
+
+  folderNotes.forEach((note) => {
+    const monthKey = buildMonthKey(note.createdAt);
+    if (!monthKey) return;
+    monthlyCounts.set(monthKey, (monthlyCounts.get(monthKey) || 0) + 1);
+  });
+
+  const activityByMonthBase = Array.from(monthlyCounts.entries())
+    .sort(([a], [b]) => compareText(a, b))
+    .slice(-6)
+    .map(([key, count]) => ({
+      key,
+      label: buildMonthLabel(key),
+      count,
+    }));
+  const maxMonthCount = activityByMonthBase.reduce((max, row) => Math.max(max, Number(row?.count || 0)), 0);
+
+  return {
+    folderId: safeFolderId,
+    totalNotes,
+    ratedNotesCount,
+    unratedNotesCount,
+    ratedShare: percentage(ratedNotesCount, totalNotes),
+    averageRating,
+    maxRating,
+    minRating,
+    ratingDistribution,
+    bestRatedNotes: ratedNotes
+      .filter((note) => note.rating === maxRating)
+      .sort(compareBestRated)
+      .slice(0, 3),
+    worstRatedNotes: minRating === null || maxRating === null || minRating === maxRating
+      ? []
+      : ratedNotes
+        .filter((note) => note.rating === minRating)
+        .sort(compareWorstRated)
+        .slice(0, 3),
+    topRatedTags: Array.from(ratedTagUsage.values())
+      .filter((row) => Number(row?.count || 0) >= 2)
+      .map((row) => ({
+        label: row.label,
+        count: row.count,
+        averageRating: row.ratingTotal / row.count,
+      }))
+      .sort((a, b) => {
+        const averageDiff = Number(b?.averageRating || 0) - Number(a?.averageRating || 0);
+        if (averageDiff !== 0) return averageDiff;
+        return compareTagUsage(a, b);
+      })
+      .slice(0, 5),
+    uniqueTagsCount: tagUsage.size,
+    topTags: Array.from(tagUsage.values())
+      .map((row) => ({
+        label: row.label,
+        count: row.count,
+        percentage: percentage(row.count, totalNotes),
+      }))
+      .sort(compareTagUsage)
+      .slice(0, 8),
+    totalTagAssignments,
+    notesWithTagsCount,
+    notesWithoutTagsCount: totalNotes - notesWithTagsCount,
+    tagsPerNoteAverage: totalNotes ? totalTagAssignments / totalNotes : 0,
+    tagsCoverage: percentage(notesWithTagsCount, totalNotes),
+    createdRecently7d: folderNotes.filter((note) => note.createdAt > 0 && (now - note.createdAt) <= (7 * DAY_MS)).length,
+    createdRecently30d: folderNotes.filter((note) => note.createdAt > 0 && (now - note.createdAt) <= (30 * DAY_MS)).length,
+    editedRecently30d: folderNotes.filter((note) => (
+      note.updatedAt > note.createdAt
+      && note.updatedAt > 0
+      && (now - note.updatedAt) <= (30 * DAY_MS)
+    )).length,
+    recentlyCreatedNotes: [...folderNotes].sort(compareRecentCreated).slice(0, 3),
+    recentlyUpdatedNotes: [...folderNotes].sort(compareRecentUpdated).slice(0, 3),
+    totalWords: folderNotes.reduce((sum, note) => sum + Number(note.words || 0), 0),
+    totalCharacters: folderNotes.reduce((sum, note) => sum + Number(note.characters || 0), 0),
+    averageWords: totalNotes
+      ? folderNotes.reduce((sum, note) => sum + Number(note.words || 0), 0) / totalNotes
+      : 0,
+    averageCharacters: totalNotes
+      ? folderNotes.reduce((sum, note) => sum + Number(note.characters || 0), 0) / totalNotes
+      : 0,
+    notesWithMostTags: [...folderNotes]
+      .filter((note) => Number(note.tagsCount || 0) > 0)
+      .sort(compareMostTags)
+      .slice(0, 3),
+    longestNote: [...folderNotes].sort(compareLongest)[0] || null,
+    shortestNote: [...folderNotes].sort(compareShortest)[0] || null,
+    activityByMonth: activityByMonthBase.map((row) => ({
+      ...row,
+      percentage: percentage(row.count, maxMonthCount),
+    })),
+  };
+}
+
 export function createInitialNotesState() {
   return {
     uid: "",
@@ -57,6 +388,7 @@ export function createInitialNotesState() {
     folderTagsFilter: "",
     noteCategoryFilter: "",
     noteTagsFilter: "",
+    folderView: "main",
     loading: true,
   };
 }
@@ -86,6 +418,29 @@ export function buildFolderStats(folders = [], notes = []) {
       notesCount: noteCountByFolder.get(folder.id) || 0,
       childFoldersCount: childCountByFolder.get(folder.id) || 0,
     }));
+}
+
+export function buildFolderInsights(notes = [], folderId = "") {
+  const safeFolderId = normalizeId(folderId);
+  if (!safeFolderId) return createEmptyFolderInsights("");
+
+  if (!Array.isArray(notes)) {
+    return computeFolderInsights([], safeFolderId);
+  }
+
+  let cacheByFolder = folderInsightsCache.get(notes);
+  if (!cacheByFolder) {
+    cacheByFolder = new Map();
+    folderInsightsCache.set(notes, cacheByFolder);
+  }
+
+  if (cacheByFolder.has(safeFolderId)) {
+    return cacheByFolder.get(safeFolderId);
+  }
+
+  const insights = computeFolderInsights(notes, safeFolderId);
+  cacheByFolder.set(safeFolderId, insights);
+  return insights;
 }
 
 export function getChildFolders(folders = [], parentId = "") {

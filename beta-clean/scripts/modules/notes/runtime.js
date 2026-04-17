@@ -42,6 +42,7 @@ let notePhotoRemove = false;
 let noteSaveInFlight = false;
 let noteTagImageDrafts = new Map();
 let activeNoteTagImageKey = "";
+let noteSelectedTagImageKey = "";
 
 function emitNotesData(reason = "") {
   try {
@@ -153,19 +154,62 @@ function getTagDefinitionForLabel(label = "") {
   return state.tagDefinitions?.[key] || null;
 }
 
+function buildNoteTagImageOptions(tags = []) {
+  return (Array.isArray(tags) ? tags : []).map((rawTag) => {
+    const label = normalizeTagLabel(rawTag);
+    const key = buildTagDefinitionKey(label);
+    const draft = noteTagImageDrafts.get(key);
+    const tagDefinition = state.tagDefinitions?.[key] || draft?.persisted || null;
+    const previewUrl = getNoteTagDraftPreviewUrl(draft, tagDefinition);
+    return {
+      key,
+      label,
+      draft,
+      tagDefinition,
+      previewUrl,
+      hasImage: Boolean(previewUrl),
+    };
+  }).filter((entry) => entry.key && entry.label);
+}
+
+function ensureNoteSelectedTagImageKey(tags = [], preferredKey = "") {
+  const options = buildNoteTagImageOptions(tags);
+  const requestedKey = buildTagDefinitionKey(preferredKey);
+
+  if (requestedKey) {
+    const requested = options.find((entry) => entry.key === requestedKey);
+    if (requested?.hasImage) {
+      noteSelectedTagImageKey = requested.key;
+      return noteSelectedTagImageKey;
+    }
+  }
+
+  if (noteSelectedTagImageKey) {
+    const current = options.find((entry) => entry.key === noteSelectedTagImageKey);
+    if (current?.hasImage) return noteSelectedTagImageKey;
+  }
+
+  const fallback = options.find((entry) => entry.hasImage);
+  noteSelectedTagImageKey = fallback?.key || "";
+  return noteSelectedTagImageKey;
+}
+
 function resolveNoteTagPreview(note) {
   const tags = Array.isArray(note?.tags) ? note.tags : [];
-  for (const rawTag of tags) {
+  const preferredKey = buildTagDefinitionKey(note?.tagImageKey);
+  const options = tags.map((rawTag) => {
     const label = normalizeTagLabel(rawTag);
     const definition = getTagDefinitionForLabel(label);
     const imageUrl = buildTagDefinitionImageRenderUrl(definition);
-    if (!imageUrl) continue;
     return {
       key: buildTagDefinitionKey(label),
       label: definition?.label || label,
       imageUrl,
     };
-  }
+  }).filter((entry) => entry.key && entry.imageUrl);
+
+  const selected = options.find((entry) => entry.key === preferredKey) || options[0];
+  if (selected) return selected;
   return null;
 }
 
@@ -181,6 +225,7 @@ function clearNoteTagImageDrafts() {
   noteTagImageDrafts.forEach((draft) => revokeNoteTagDraftPreview(draft));
   noteTagImageDrafts = new Map();
   activeNoteTagImageKey = "";
+  noteSelectedTagImageKey = "";
 }
 
 function getCurrentNoteModalTags() {
@@ -239,6 +284,7 @@ function renderNoteTagImageEditor() {
 
   const tags = getCurrentNoteModalTags();
   syncNoteTagImageDrafts(tags);
+  ensureNoteSelectedTagImageKey(tags);
 
   panel.classList.toggle("is-empty", tags.length === 0);
   empty.classList.toggle("hidden", tags.length > 0);
@@ -248,25 +294,35 @@ function renderNoteTagImageEditor() {
     return;
   }
 
-  list.innerHTML = tags.map((rawTag) => {
-    const label = normalizeTagLabel(rawTag);
-    const key = buildTagDefinitionKey(label);
-    const draft = noteTagImageDrafts.get(key);
-    const tagDefinition = state.tagDefinitions?.[key] || draft?.persisted || null;
-    const previewUrl = getNoteTagDraftPreviewUrl(draft, tagDefinition);
-    const hasImage = Boolean(previewUrl);
+  const selectedKey = noteSelectedTagImageKey;
+
+  list.innerHTML = buildNoteTagImageOptions(tags).map(({ key, label, draft, previewUrl, hasImage }) => {
+    const isSelected = hasImage && key === selectedKey;
     const subtitle = draft?.previewUrl
       ? "Nueva imagen lista para guardarse."
       : draft?.remove
         ? "La imagen se quitara al guardar."
-        : hasImage
-          ? "Imagen activa para este tag."
+        : isSelected
+          ? "Esta es la imagen elegida para la nota."
+          : hasImage
+            ? "Disponible para usar en esta nota."
           : "Sin imagen asociada.";
     const secondaryLabel = draft?.remove ? "Restaurar" : "Quitar";
     const secondaryDisabled = !draft?.remove && !hasImage;
 
     return `
       <div class="notes-tag-media-row" data-tag-key="${escapeHtml(key)}">
+        <label class="notes-tag-media-selector${isSelected ? " is-selected" : ""}${hasImage ? "" : " is-disabled"}">
+          <input
+            class="notes-tag-media-selector-input"
+            type="checkbox"
+            data-act="select-note-tag-image"
+            data-tag-key="${escapeHtml(key)}"
+            ${isSelected ? "checked" : ""}
+            ${hasImage ? "" : "disabled"}
+          />
+          <span class="notes-tag-media-selector-box" aria-hidden="true"></span>
+        </label>
         <div class="notes-tag-media-thumb${hasImage ? " is-image" : ""}">
           ${hasImage
             ? `<img class="notes-tag-media-image" src="${escapeHtml(previewUrl)}" alt="${escapeHtml(`Tag ${label}`)}" loading="lazy" decoding="async" />`
@@ -302,6 +358,12 @@ function openNoteTagImagePicker(tagKey = "") {
   input.click();
 }
 
+function setNoteSelectedTagImageKey(tagKey = "") {
+  noteSelectedTagImageKey = buildTagDefinitionKey(tagKey);
+  ensureNoteSelectedTagImageKey(getCurrentNoteModalTags(), noteSelectedTagImageKey);
+  renderNoteTagImageEditor();
+}
+
 function toggleNoteTagImageDraft(tagKey = "") {
   const safeTagKey = buildTagDefinitionKey(tagKey);
   const draft = noteTagImageDrafts.get(safeTagKey);
@@ -317,6 +379,7 @@ function toggleNoteTagImageDraft(tagKey = "") {
   revokeNoteTagDraftPreview(draft);
   draft.file = null;
   draft.remove = Boolean(persistedImageUrl);
+  ensureNoteSelectedTagImageKey(getCurrentNoteModalTags());
   renderNoteTagImageEditor();
 }
 
@@ -1005,6 +1068,7 @@ function openNoteModal(note = null, options = {}) {
   notePhotoRemove = false;
   clearNotePhotoObjectUrl();
   clearNoteTagImageDrafts();
+  noteSelectedTagImageKey = buildTagDefinitionKey(note?.tagImageKey);
   if ($id("notes-note-image-file")) $id("notes-note-image-file").value = "";
   if ($id("notes-note-tag-image-file")) $id("notes-note-tag-image-file").value = "";
   setNotePhotoPreview(buildNoteImageRenderUrl(note));
@@ -1202,6 +1266,7 @@ function bindNoteModalEvents() {
   });
 
   tagsTextInput?.addEventListener("input", () => {
+    ensureNoteSelectedTagImageKey(getCurrentNoteModalTags());
     renderNoteTagImageEditor();
     $id("notes-note-form-error").textContent = "";
   });
@@ -1263,7 +1328,11 @@ function bindNoteModalEvents() {
       imageUrl: current?.imageUrl || "",
       imagePath: current?.imagePath || "",
       imageUpdatedAt: Number(current?.imageUpdatedAt || 0),
+      tagImageKey: "",
     };
+
+    ensureNoteSelectedTagImageKey(tags, current?.tagImageKey);
+    payload.tagImageKey = noteSelectedTagImageKey || "";
 
     noteSaveInFlight = true;
     if (submitButton) {
@@ -1347,6 +1416,12 @@ function bindNoteModalEvents() {
 
     if (action === "pick-note-tag-image") {
       openNoteTagImagePicker(tagKey);
+      return;
+    }
+
+    if (action === "select-note-tag-image") {
+      event.preventDefault();
+      setNoteSelectedTagImageKey(tagKey);
       return;
     }
 

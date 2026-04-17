@@ -27,6 +27,10 @@ function normalizeImageTimestamp(value = 0) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
 }
 
+function normalizeNoteTagImageKey(value = "") {
+  return buildTagDefinitionKey(value);
+}
+
 function normalizeTagDefinitionLabel(value = "", fallback = "") {
   return normalizeTagLabel(value) || normalizeTagLabel(fallback);
 }
@@ -81,6 +85,7 @@ export function mapNoteFromDb(id, value = {}) {
     imageUrl: normalizeImageUrl(value?.imageUrl),
     imagePath: normalizeImagePath(value?.imagePath),
     imageUpdatedAt: normalizeImageTimestamp(value?.imageUpdatedAt),
+    tagImageKey: normalizeNoteTagImageKey(value?.tagImageKey),
   };
 }
 
@@ -99,6 +104,7 @@ export function mapNoteToDb(note = {}) {
     imageUrl: normalizeImageUrl(note?.imageUrl),
     imagePath: normalizeImagePath(note?.imagePath),
     imageUpdatedAt: normalizeImageTimestamp(note?.imageUpdatedAt),
+    tagImageKey: normalizeNoteTagImageKey(note?.tagImageKey),
   };
 }
 

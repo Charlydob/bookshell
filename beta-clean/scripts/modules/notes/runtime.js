@@ -338,7 +338,7 @@ async function persistNoteTagDefinitions(tags = []) {
     if (draft?.remove) {
       if (currentHasImage) {
         try {
-          await deleteNoteTagImageAsset(state.uid, key, current?.imagePath);
+          await deleteNoteTagImageAsset(state.uid, key, current?.imagePath, current?.imageUrl);
         } catch (error) {
           console.warn("[notes] no se pudo borrar la imagen remota del tag", error);
         }
@@ -358,7 +358,7 @@ async function persistNoteTagDefinitions(tags = []) {
     } else if (draft?.file instanceof File) {
       if (currentHasImage) {
         try {
-          await deleteNoteTagImageAsset(state.uid, key, current?.imagePath);
+          await deleteNoteTagImageAsset(state.uid, key, current?.imagePath, current?.imageUrl);
         } catch (error) {
           console.warn("[notes] no se pudo limpiar la imagen anterior del tag", error);
         }
@@ -1065,7 +1065,7 @@ async function handleNoteDelete(note) {
 
   if (note.imageUrl || note.imagePath) {
     try {
-      await deleteNoteImageAsset(state.uid, note.id, note.imagePath);
+      await deleteNoteImageAsset(state.uid, note.id, note.imagePath, note.imageUrl);
     } catch (error) {
       console.warn("[notes] la nota se borró, pero no se pudo limpiar la imagen", error);
     }
@@ -1275,7 +1275,7 @@ function bindNoteModalEvents() {
       if (notePhotoRemove && (current?.imageUrl || current?.imagePath)) {
         setNotePhotoStatus("Quitando foto…");
         try {
-          await deleteNoteImageAsset(state.uid, noteId, current?.imagePath);
+          await deleteNoteImageAsset(state.uid, noteId, current?.imagePath, current?.imageUrl);
         } catch (error) {
           console.warn("[notes] no se pudo borrar el archivo remoto de la nota", error);
         }
@@ -1324,7 +1324,7 @@ function bindNoteModalEvents() {
       if (selectedFile) setNotePhotoStatus("Ha fallado la subida de la foto.", "error");
       if (!id && uploadedImagePath) {
         try {
-          await deleteNoteImageAsset(state.uid, noteId, uploadedImagePath);
+          await deleteNoteImageAsset(state.uid, noteId, uploadedImagePath, payload.imageUrl);
         } catch (_) {}
       }
     } finally {

@@ -20,6 +20,19 @@ function isRemoteUrl(value = "") {
   return /^https?:\/\//i.test(String(value || "").trim());
 }
 
+function isLocalDevHost() {
+  const hostname = String(window?.location?.hostname || "").trim().toLowerCase();
+  return hostname === "127.0.0.1" || hostname === "localhost";
+}
+
+function isCloudinaryUrl(value = "") {
+  return /(^https?:\/\/)?(?:res|api)\.cloudinary\.com\//i.test(String(value || "").trim());
+}
+
+function isLegacyFirebaseStoragePath(value = "") {
+  return /^notes\/[^/]+\/(?:images|tags)\/[^/]+\/cover$/i.test(String(value || "").trim());
+}
+
 async function uploadImageToCloudinary(file) {
   const fn =
     typeof window !== "undefined" && typeof window.subirImagenACloudinary === "function"
@@ -121,9 +134,8 @@ export async function uploadNoteImageAsset(uid, noteId, file) {
   if (!safeUid || !safeNoteId) throw new Error("No se pudo identificar al usuario o la nota.");
   if (!(file instanceof File)) throw new Error("No se ha seleccionado ninguna imagen valida.");
 
-  const path = buildNoteImageStoragePath(safeUid, safeNoteId);
   const url = await uploadImageToCloudinary(file);
-  return { path, url };
+  return { path: url, url };
 }
 
 export async function uploadNoteTagImageAsset(uid, tagKey, file) {
@@ -132,18 +144,22 @@ export async function uploadNoteTagImageAsset(uid, tagKey, file) {
   if (!safeUid || !safeTagKey) throw new Error("No se pudo identificar el tag de la nota.");
   if (!(file instanceof File)) throw new Error("No se ha seleccionado ninguna imagen valida.");
 
-  const path = buildTagImageStoragePath(safeUid, safeTagKey);
   const url = await uploadImageToCloudinary(file);
-  return { path, url };
+  return { path: url, url };
 }
 
-export async function deleteNoteImageAsset(uid, noteId, path = "") {
+export async function deleteNoteImageAsset(uid, noteId, path = "", imageUrl = "") {
   const safeUid = normalizeId(uid);
   const safeNoteId = normalizeId(noteId);
   if (!safeUid || !safeNoteId) return false;
 
-  const safePath = normalizeId(path) || buildNoteImageStoragePath(safeUid, safeNoteId);
+  const normalizedPath = normalizeId(path);
+  const safeImageUrl = String(imageUrl || "").trim();
+  if (!normalizedPath && isCloudinaryUrl(safeImageUrl)) return false;
+  const safePath = normalizedPath || buildNoteImageStoragePath(safeUid, safeNoteId);
   if (isRemoteUrl(safePath)) return false;
+  if (isLegacyFirebaseStoragePath(safePath) && isCloudinaryUrl(safeImageUrl)) return false;
+  if (isLocalDevHost()) return false;
 
   const { storage, storageRef, deleteObject } = await loadFirebaseDeleteApi();
 
@@ -152,17 +168,23 @@ export async function deleteNoteImageAsset(uid, noteId, path = "") {
     return true;
   } catch (error) {
     if (String(error?.code || "") === "storage/object-not-found") return false;
+    if (/Failed to fetch|NetworkError|ERR_FAILED|CORS/i.test(String(error?.message || ""))) return false;
     throw error;
   }
 }
 
-export async function deleteNoteTagImageAsset(uid, tagKey, path = "") {
+export async function deleteNoteTagImageAsset(uid, tagKey, path = "", imageUrl = "") {
   const safeUid = normalizeId(uid);
   const safeTagKey = normalizeId(tagKey);
   if (!safeUid || !safeTagKey) return false;
 
-  const safePath = normalizeId(path) || buildTagImageStoragePath(safeUid, safeTagKey);
+  const normalizedPath = normalizeId(path);
+  const safeImageUrl = String(imageUrl || "").trim();
+  if (!normalizedPath && isCloudinaryUrl(safeImageUrl)) return false;
+  const safePath = normalizedPath || buildTagImageStoragePath(safeUid, safeTagKey);
   if (isRemoteUrl(safePath)) return false;
+  if (isLegacyFirebaseStoragePath(safePath) && isCloudinaryUrl(safeImageUrl)) return false;
+  if (isLocalDevHost()) return false;
 
   const { storage, storageRef, deleteObject } = await loadFirebaseDeleteApi();
 
@@ -171,6 +193,7 @@ export async function deleteNoteTagImageAsset(uid, tagKey, path = "") {
     return true;
   } catch (error) {
     if (String(error?.code || "") === "storage/object-not-found") return false;
+    if (/Failed to fetch|NetworkError|ERR_FAILED|CORS/i.test(String(error?.message || ""))) return false;
     throw error;
   }
 }

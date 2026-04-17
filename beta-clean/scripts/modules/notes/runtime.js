@@ -9,6 +9,7 @@ import {
   getChildFolders,
   getFolderPath,
   isFolderParentAllowed,
+  sortNotes,
 } from "./domain/store.js";
 import {
   createFolder,
@@ -16,6 +17,7 @@ import {
   createNoteId,
   deleteFolder,
   deleteNote,
+  incrementNoteVisits,
   subscribeNotesRoot,
   upsertTagDefinition,
   updateFolder,
@@ -62,6 +64,11 @@ let activeNotesStatsSection = "ratings";
 function normalizeNotesStatsSection(section = "") {
   const safeSection = String(section || "").trim();
   return ["ratings", "tags", "notes"].includes(safeSection) ? safeSection : "ratings";
+}
+
+function normalizeNoteSortOption(sort = "") {
+  const safeSort = String(sort || "").trim();
+  return ["updated", "rating", "visits"].includes(safeSort) ? safeSort : "updated";
 }
 
 function buildStatsSectionSwitch(active = "ratings") {
@@ -208,16 +215,32 @@ function buildTagsStatsMarkup(insights) {
 
 function buildNotesStatsMarkup(insights) {
   const monthlyActivity = insights?.activityByMonth || [];
+  const topVisitedNotes = (insights?.topVisitedNotes || []).map((note, index, list) => ({
+    ...note,
+    percentageOfTopVisits: Number(list?.[0]?.visitsCount || 0)
+      ? (Number(note?.visitsCount || 0) / Number(list[0].visitsCount || 0)) * 100
+      : 0,
+  }));
+  const latestVisitedAt = Number(insights?.recentlyVisitedNotes?.[0]?.lastVisitedAt || 0);
+  const mostVisitedLabel = insights?.mostVisitedNote
+    ? formatNumber(insights.mostVisitedNote.visitsCount || 0)
+    : "—";
+  const visitedLinksLabel = Number(insights?.linksCount || 0)
+    ? `${formatNumber(insights?.visitedNotesCount || 0)}/${formatNumber(insights?.linksCount || 0)}`
+    : "0/0";
 
   return `
     <div class="notes-stats-card-head">
       <h3 class="notes-stats-card-title">Notas</h3>
-      <p class="notes-stats-card-copy">Actividad reciente, longitud y densidad de contenido.</p>
+      <p class="notes-stats-card-copy">Actividad reciente, longitud, densidad y visitas de la carpeta.</p>
     </div>
     ${buildStatsMetricChips([
+      { label: "Visitas", value: formatNumber(insights?.totalVisits || 0) },
+      { label: "Links vistos", value: visitedLinksLabel },
+      { label: "Mas visto", value: mostVisitedLabel },
+      { label: "Ult. visita", value: latestVisitedAt ? formatCompactDate(latestVisitedAt) : "—" },
       { label: "Creadas 7d", value: formatNumber(insights?.createdRecently7d || 0) },
       { label: "Editadas 30d", value: formatNumber(insights?.editedRecently30d || 0) },
-      { label: "Caracteres", value: formatNumber(insights?.totalCharacters || 0) },
       { label: "Media car.", value: formatCompactNumber(insights?.averageCharacters || 0) },
     ])}
     <div class="notes-stats-block">
@@ -227,6 +250,25 @@ function buildNotesStatsMarkup(insights) {
         valueFormatter: (row) => `${formatNumber(row.count || 0)} notas`,
         emptyText: "Aun no hay suficientes fechas de creacion para mostrar evolucion.",
       })}
+    </div>
+    <div class="notes-stats-split">
+      <div class="notes-stats-block">
+        <div class="notes-stats-block-head"><strong>Ranking mas vistas</strong></div>
+        ${buildStatsBarList(topVisitedNotes, {
+          labelFormatter: (note) => note?.title || "Sin titulo",
+          valueFormatter: (note) => `${formatNumber(note?.visitsCount || 0)} visitas · ${formatCompactDate(note?.lastVisitedAt || 0)}`,
+          percentageKey: "percentageOfTopVisits",
+          emptyText: "Todavia no hay links con visitas registradas.",
+        })}
+      </div>
+      <div class="notes-stats-block">
+        <div class="notes-stats-block-head"><strong>Ultimas visitas</strong></div>
+        ${buildStatsNoteList(
+          insights?.recentlyVisitedNotes || [],
+          (note) => `${formatLongDate(note.lastVisitedAt || 0)} · ${formatNumber(note.visitsCount || 0)} visitas`,
+          "Aun no hay aperturas recientes de links.",
+        )}
+      </div>
     </div>
     <div class="notes-stats-split">
       <div class="notes-stats-block">
@@ -295,7 +337,7 @@ function renderFolderStatsSectionView(folder, insights, childFolders = []) {
 
   const totalNotes = Number(insights?.totalNotes || 0);
   const averageRatingLabel = insights?.averageRating === null
-    ? "â€”"
+    ? "—"
     : `${formatCompactNumber(insights.averageRating)}/10`;
 
   kpiWrap.innerHTML = buildStatsKpiCards([
@@ -305,24 +347,30 @@ function renderFolderStatsSectionView(folder, insights, childFolders = []) {
       meta: childFolders.length ? `${formatNumber(childFolders.length)} subcarpetas` : "En esta carpeta",
     },
     {
+      label: "Visitas",
+      value: formatNumber(insights?.totalVisits || 0),
+      meta: insights?.mostVisitedNote
+        ? `${formatNumber(insights?.mostVisitedNote?.visitsCount || 0)} en la mas vista`
+        : "Sin aperturas",
+    },
+    {
+      label: "Links vistos",
+      value: Number(insights?.linksCount || 0)
+        ? `${formatNumber(insights?.visitedNotesCount || 0)}/${formatNumber(insights?.linksCount || 0)}`
+        : "0/0",
+      meta: Number(insights?.linksCount || 0)
+        ? `${formatPercentage(insights?.visitedLinksShare || 0)} con visitas`
+        : "Sin notas link",
+    },
+    {
       label: "Media",
       value: averageRatingLabel,
       meta: insights?.ratedNotesCount ? `${formatNumber(insights.ratedNotesCount)} valoradas` : "Sin ratings",
     },
     {
-      label: "Valoradas",
-      value: formatPercentage(insights?.ratedShare || 0),
-      meta: `${formatNumber(insights?.unratedNotesCount || 0)} sin rating`,
-    },
-    {
       label: "Tags unicos",
       value: formatNumber(insights?.uniqueTagsCount || 0),
       meta: `${formatNumber(insights?.totalTagAssignments || 0)} usos`,
-    },
-    {
-      label: "Palabras",
-      value: formatNumber(insights?.totalWords || 0),
-      meta: `${formatCompactNumber(insights?.averageWords || 0)} de media`,
     },
     {
       label: "Creadas 30d",
@@ -443,6 +491,12 @@ function formatRatingValue(rating = null) {
   return safe === null ? "Sin rating" : `${safe}/10`;
 }
 
+function normalizeNoteVisitsCount(value = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  return Math.max(0, Math.round(numeric));
+}
+
 function buildRatingBadgeMarkup(rating = null) {
   const safe = normalizeNoteRatingValue(rating);
   if (safe === null) return "";
@@ -451,6 +505,23 @@ function buildRatingBadgeMarkup(rating = null) {
       <span class="notes-rating-badge-star" aria-hidden="true">★</span>
       <span class="notes-rating-badge-value">${safe}</span>
       <span class="notes-rating-badge-scale">/10</span>
+    </span>
+  `;
+}
+
+function buildVisitsBadgeMarkup(note = {}) {
+  if (note?.type !== "link") return "";
+
+  const visitsCount = normalizeNoteVisitsCount(note?.visitsCount);
+  const lastVisitedAt = Number(note?.lastVisitedAt || 0);
+  const title = lastVisitedAt > 0
+    ? `${formatNumber(visitsCount)} visitas · ultima ${formatLongDate(lastVisitedAt)}`
+    : `${formatNumber(visitsCount)} visitas`;
+
+  return `
+    <span class="notes-visits-badge" title="${escapeHtml(title)}">
+      <span class="notes-visits-badge-icon" aria-hidden="true">👁</span>
+      <span class="notes-visits-badge-value">${escapeHtml(formatNumber(visitsCount))}</span>
     </span>
   `;
 }
@@ -887,6 +958,14 @@ function openExternalUrl(rawUrl = "") {
   }
 }
 
+function registerNoteVisit(note = null) {
+  if (!note || note.type !== "link" || !state.rootPath) return;
+
+  incrementNoteVisits(state.rootPath, note.id).catch((error) => {
+    console.warn("[notes] no se pudo registrar la visita", error);
+  });
+}
+
 function clearNoteFilters() {
   state.noteQuery = "";
   state.noteCategoryFilter = "";
@@ -1310,6 +1389,7 @@ function renderNoteCards(list, notes = []) {
             rel="noopener noreferrer external"
             referrerpolicy="no-referrer"
             data-act="open-note-link"
+            data-note-id="${escapeHtml(note.id)}"
             data-note-url="${escapeHtml(note.url || "")}"
           >${escapeHtml(urlHost(note.url) || note.url || "")} ↗</a>
         `
@@ -1330,14 +1410,16 @@ function renderNoteCards(list, notes = []) {
     const cardClass = noteImageUrl ? "notes-item-card has-note-image" : "notes-item-card";
     const cardStyle = buildNoteCardStyleAttribute(note);
     const ratingMarkup = buildRatingBadgeMarkup(note?.rating);
+    const visitsMarkup = buildVisitsBadgeMarkup(note);
+    const metaMarkup = [ratingMarkup, visitsMarkup].filter(Boolean).join("");
 
     return `
       <article class="${cardClass}"${cardStyle}>
         ${mediaMarkup}
         <div class="notes-item-content">
           <div class="notes-item-head">
-          <h4 class="notes-item-title">${escapeHtml(note.title || "Sin título")}</h4>
-            ${ratingMarkup}
+            <h4 class="notes-item-title">${escapeHtml(note.title || "Sin título")}</h4>
+            ${metaMarkup ? `<div class="notes-item-meta">${metaMarkup}</div>` : ""}
           </div>
           ${preview ? `<p class="notes-item-preview">${escapeHtml(preview)}</p>` : ""}
           ${linkMarkup}
@@ -1371,15 +1453,16 @@ function renderFolderDetail() {
 
   const childFolders = getChildFolders(foldersWithStats, folder.id);
   const allNotes = filterNotesByFolder(state.notes, folder.id);
-  const visibleNotes = filterNotesByFolder(
+  const visibleNotes = sortNotes(filterNotesByFolder(
     state.notes,
     folder.id,
     state.noteQuery,
     state.noteCategoryFilter,
     state.noteTagsFilter,
-  );
+  ), state.noteSort);
   const insights = buildFolderInsights(state.notes, folder.id);
   const hasFilteredNotes = visibleNotes.length !== allNotes.length;
+  const sortSelect = $id("notes-filter-note-sort");
 
   panel.classList.remove("hidden");
   $id("notes-folder-name").textContent = folder.name;
@@ -1390,6 +1473,7 @@ function renderFolderDetail() {
   ].filter(Boolean).join(" · ");
   renderFolderBreadcrumbs(getFolderPath(foldersWithStats, folder.id));
   renderFolderViewSwitch();
+  if (sortSelect) sortSelect.value = normalizeNoteSortOption(state.noteSort);
 
   subfolderBlock.classList.toggle("hidden", childFolders.length === 0);
   renderFolderCards(subfolderList, childFolders, { emptyText: "No hay subcarpetas." });
@@ -2274,6 +2358,11 @@ function bindUiEvents() {
     renderFolderDetail();
   });
 
+  $id("notes-filter-note-sort")?.addEventListener("change", (event) => {
+    state.noteSort = normalizeNoteSortOption(event.target.value || "");
+    renderFolderDetail();
+  });
+
   const handleFolderAction = async (event) => {
     const target = event.target.closest("[data-act]");
     if (!target) return;
@@ -2321,7 +2410,12 @@ function bindUiEvents() {
     if (action === "open-note-link") {
       event.preventDefault();
       event.stopPropagation();
-      openExternalUrl(String(target.dataset.noteUrl || ""));
+      const noteId = String(target.dataset.noteId || "").trim();
+      const note = state.notes.find((row) => row.id === noteId) || null;
+      const opened = openExternalUrl(String(target.dataset.noteUrl || note?.url || ""));
+      if (opened) {
+        registerNoteVisit(note);
+      }
       return;
     }
 

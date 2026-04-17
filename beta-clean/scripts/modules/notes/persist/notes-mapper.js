@@ -38,6 +38,17 @@ function normalizeNoteRating(value = null) {
   return Math.max(0, Math.min(10, Math.round(numeric)));
 }
 
+function normalizeNoteVisitsCount(value = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  return Math.max(0, Math.round(numeric));
+}
+
+function normalizeNoteVisitTimestamp(value = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+}
+
 function normalizeTagDefinitionLabel(value = "", fallback = "") {
   return normalizeTagLabel(value) || normalizeTagLabel(fallback);
 }
@@ -94,6 +105,8 @@ export function mapNoteFromDb(id, value = {}) {
     imageUpdatedAt: normalizeImageTimestamp(value?.imageUpdatedAt),
     tagImageKey: normalizeNoteTagImageKey(value?.tagImageKey),
     rating: normalizeNoteRating(value?.rating),
+    visitsCount: normalizeNoteVisitsCount(value?.visitsCount),
+    lastVisitedAt: normalizeNoteVisitTimestamp(value?.lastVisitedAt),
   };
 }
 
@@ -114,6 +127,8 @@ export function mapNoteToDb(note = {}) {
     imageUpdatedAt: normalizeImageTimestamp(note?.imageUpdatedAt),
     tagImageKey: normalizeNoteTagImageKey(note?.tagImageKey),
     rating: normalizeNoteRating(note?.rating),
+    visitsCount: normalizeNoteVisitsCount(note?.visitsCount),
+    lastVisitedAt: normalizeNoteVisitTimestamp(note?.lastVisitedAt),
   };
 }
 

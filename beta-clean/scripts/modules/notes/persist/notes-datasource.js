@@ -4,6 +4,7 @@ import {
   push,
   ref,
   remove,
+  runTransaction,
   update,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { buildTagDefinitionKey } from "../domain/tag-utils.js";
@@ -102,6 +103,30 @@ export async function deleteNote(rootPath, noteId) {
   const safeNoteId = String(noteId || "").trim();
   if (!safeNoteId) return;
   await remove(ref(db, `${rootPath}/notes/${safeNoteId}`));
+}
+
+export async function incrementNoteVisits(rootPath, noteId) {
+  const safeNoteId = String(noteId || "").trim();
+  if (!safeNoteId) return false;
+
+  const noteRef = ref(db, `${rootPath}/notes/${safeNoteId}`);
+  const now = Date.now();
+  const result = await runTransaction(noteRef, (current) => {
+    if (!current || current?.type !== "link") return current;
+
+    const currentVisits = Number(current?.visitsCount || 0);
+    const visitsCount = Number.isFinite(currentVisits) && currentVisits > 0
+      ? Math.max(0, Math.round(currentVisits))
+      : 0;
+
+    return {
+      ...current,
+      visitsCount: visitsCount + 1,
+      lastVisitedAt: now,
+    };
+  });
+
+  return Boolean(result?.committed);
 }
 
 export async function upsertTagDefinition(rootPath, tagKey, payload = {}) {

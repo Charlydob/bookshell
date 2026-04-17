@@ -16,6 +16,17 @@ function normalizeNoteRating(value = null) {
   return Math.max(0, Math.min(10, Math.round(numeric)));
 }
 
+function normalizeNoteVisitsCount(value = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  return Math.max(0, Math.round(numeric));
+}
+
+function normalizeVisitTimestamp(value = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+}
+
 function compareText(a = "", b = "") {
   return String(a || "").localeCompare(String(b || ""), "es", { sensitivity: "base" });
 }
@@ -136,6 +147,18 @@ function compareWorstRated(a, b) {
   return compareRecentUpdated(a, b);
 }
 
+function compareMostVisited(a, b) {
+  const visitsDiff = normalizeNoteVisitsCount(b?.visitsCount) - normalizeNoteVisitsCount(a?.visitsCount);
+  if (visitsDiff !== 0) return visitsDiff;
+  return compareRecentUpdated(a, b);
+}
+
+function compareRecentVisited(a, b) {
+  const visitedDiff = normalizeVisitTimestamp(b?.lastVisitedAt) - normalizeVisitTimestamp(a?.lastVisitedAt);
+  if (visitedDiff !== 0) return visitedDiff;
+  return compareMostVisited(a, b);
+}
+
 function compareTagUsage(a, b) {
   const countDiff = Number(b?.count || 0) - Number(a?.count || 0);
   if (countDiff !== 0) return countDiff;
@@ -169,9 +192,12 @@ function buildNoteInsight(note = {}) {
   return {
     ...note,
     title: String(note?.title || "").trim(),
+    type: note?.type === "link" ? "link" : "note",
     tags,
     tagsCount: tags.length,
     rating: normalizeNoteRating(note?.rating),
+    visitsCount: normalizeNoteVisitsCount(note?.visitsCount),
+    lastVisitedAt: normalizeVisitTimestamp(note?.lastVisitedAt),
     createdAt: Number(note?.createdAt || 0),
     updatedAt: Number(note?.updatedAt || note?.createdAt || 0),
     words: buildWordCount(text),
@@ -213,6 +239,14 @@ function createEmptyFolderInsights(folderId = "") {
     totalCharacters: 0,
     averageWords: 0,
     averageCharacters: 0,
+    linksCount: 0,
+    visitedNotesCount: 0,
+    unvisitedLinkNotesCount: 0,
+    visitedLinksShare: 0,
+    totalVisits: 0,
+    mostVisitedNote: null,
+    topVisitedNotes: [],
+    recentlyVisitedNotes: [],
     notesWithMostTags: [],
     longestNote: null,
     shortestNote: null,
@@ -234,12 +268,17 @@ function computeFolderInsights(notes = [], folderId = "") {
   const totalNotes = folderNotes.length;
   const now = Date.now();
   const ratedNotes = folderNotes.filter((note) => note.rating !== null);
+  const linkNotes = folderNotes.filter((note) => note.type === "link");
+  const visitedNotes = linkNotes.filter((note) => normalizeNoteVisitsCount(note.visitsCount) > 0);
   const ratedNotesCount = ratedNotes.length;
   const unratedNotesCount = totalNotes - ratedNotesCount;
   const ratingSum = ratedNotes.reduce((sum, note) => sum + Number(note.rating || 0), 0);
   const averageRating = ratedNotesCount ? ratingSum / ratedNotesCount : null;
   const maxRating = ratedNotesCount ? Math.max(...ratedNotes.map((note) => Number(note.rating || 0))) : null;
   const minRating = ratedNotesCount ? Math.min(...ratedNotes.map((note) => Number(note.rating || 0))) : null;
+  const totalVisits = linkNotes.reduce((sum, note) => sum + normalizeNoteVisitsCount(note.visitsCount), 0);
+  const topVisitedNotes = [...visitedNotes].sort(compareMostVisited).slice(0, 5);
+  const mostVisitedNote = topVisitedNotes[0] || null;
 
   const ratingCountByValue = new Map(Array.from({ length: 11 }, (_, value) => [value, 0]));
   ratedNotes.forEach((note) => {
@@ -360,6 +399,14 @@ function computeFolderInsights(notes = [], folderId = "") {
     averageCharacters: totalNotes
       ? folderNotes.reduce((sum, note) => sum + Number(note.characters || 0), 0) / totalNotes
       : 0,
+    linksCount: linkNotes.length,
+    visitedNotesCount: visitedNotes.length,
+    unvisitedLinkNotesCount: Math.max(0, linkNotes.length - visitedNotes.length),
+    visitedLinksShare: percentage(visitedNotes.length, linkNotes.length),
+    totalVisits,
+    mostVisitedNote,
+    topVisitedNotes,
+    recentlyVisitedNotes: [...visitedNotes].sort(compareRecentVisited).slice(0, 5),
     notesWithMostTags: [...folderNotes]
       .filter((note) => Number(note.tagsCount || 0) > 0)
       .sort(compareMostTags)
@@ -388,6 +435,7 @@ export function createInitialNotesState() {
     folderTagsFilter: "",
     noteCategoryFilter: "",
     noteTagsFilter: "",
+    noteSort: "updated",
     folderView: "main",
     loading: true,
   };
@@ -604,4 +652,19 @@ export function filterNotesByFolder(notes = [], folderId = "", query = "", categ
 
     return true;
   });
+}
+
+export function sortNotes(notes = [], sortBy = "updated") {
+  const safeSort = String(sortBy || "").trim();
+  const list = Array.isArray(notes) ? [...notes] : [];
+
+  if (safeSort === "rating") {
+    return list.sort(compareBestRated);
+  }
+
+  if (safeSort === "visits") {
+    return list.sort(compareMostVisited);
+  }
+
+  return list.sort(compareRecentUpdated);
 }

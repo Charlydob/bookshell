@@ -16,14 +16,22 @@ import {
   deleteFolder,
   deleteNote,
   subscribeNotesRoot,
+  upsertTagDefinition,
   updateFolder,
   updateNote,
 } from "./persist/notes-datasource.js";
 import {
   deleteNoteImageAsset,
+  deleteNoteTagImageAsset,
   downscaleNoteImageFile,
   uploadNoteImageAsset,
+  uploadNoteTagImageAsset,
 } from "./persist/notes-storage.js";
+import {
+  buildTagDefinitionKey,
+  normalizeTagLabel,
+  parseTagList,
+} from "./domain/tag-utils.js";
 
 const state = createInitialNotesState();
 let unbindAuth = null;
@@ -32,6 +40,8 @@ let isBound = false;
 let notePhotoObjectUrl = null;
 let notePhotoRemove = false;
 let noteSaveInFlight = false;
+let noteTagImageDrafts = new Map();
+let activeNoteTagImageKey = "";
 
 function emitNotesData(reason = "") {
   try {
@@ -95,6 +105,289 @@ function buildNoteImageRenderUrl(note) {
   if (!url) return "";
   if (!version) return url;
   return `${url}${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(version)}`;
+}
+
+function buildTagDefinitionImageRenderUrl(tagDefinition) {
+  const url = String(tagDefinition?.imageUrl || "").trim();
+  const version = Number(tagDefinition?.imageUpdatedAt || 0);
+  if (!url) return "";
+  if (!version) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(version)}`;
+}
+
+function escapeCssUrl(value = "") {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, "")
+    .replace(/\n/g, "");
+}
+
+function buildNoteCardStyleAttribute(note) {
+  const imageUrl = buildNoteImageRenderUrl(note);
+  if (!imageUrl) return "";
+  const cssValue = `url("${escapeCssUrl(imageUrl)}")`;
+  return ` style="--notes-card-bg-image:${escapeHtml(cssValue)};"`;
+}
+
+function listTagDefinitions() {
+  return Object.values(state.tagDefinitions || {});
+}
+
+function collectTagLabels(...groups) {
+  const labels = new Map();
+
+  groups.flat().forEach((value) => {
+    const label = normalizeTagLabel(value);
+    const key = buildTagDefinitionKey(label);
+    if (!label || !key || labels.has(key)) return;
+    labels.set(key, label);
+  });
+
+  return Array.from(labels.values()).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+}
+
+function getTagDefinitionForLabel(label = "") {
+  const key = buildTagDefinitionKey(label);
+  if (!key) return null;
+  return state.tagDefinitions?.[key] || null;
+}
+
+function resolveNoteTagPreview(note) {
+  const tags = Array.isArray(note?.tags) ? note.tags : [];
+  for (const rawTag of tags) {
+    const label = normalizeTagLabel(rawTag);
+    const definition = getTagDefinitionForLabel(label);
+    const imageUrl = buildTagDefinitionImageRenderUrl(definition);
+    if (!imageUrl) continue;
+    return {
+      key: buildTagDefinitionKey(label),
+      label: definition?.label || label,
+      imageUrl,
+    };
+  }
+  return null;
+}
+
+function revokeNoteTagDraftPreview(draft) {
+  if (!draft?.previewUrl) return;
+  try {
+    URL.revokeObjectURL(draft.previewUrl);
+  } catch (_) {}
+  draft.previewUrl = "";
+}
+
+function clearNoteTagImageDrafts() {
+  noteTagImageDrafts.forEach((draft) => revokeNoteTagDraftPreview(draft));
+  noteTagImageDrafts = new Map();
+  activeNoteTagImageKey = "";
+}
+
+function getCurrentNoteModalTags() {
+  return parseTagList($id("notes-note-tags")?.value || "");
+}
+
+function syncNoteTagImageDrafts(tags = []) {
+  const validKeys = new Set();
+
+  tags.forEach((rawTag) => {
+    const label = normalizeTagLabel(rawTag);
+    const key = buildTagDefinitionKey(label);
+    if (!label || !key) return;
+
+    validKeys.add(key);
+    const existingDraft = noteTagImageDrafts.get(key);
+    const persistedDefinition = state.tagDefinitions?.[key] || existingDraft?.persisted || null;
+
+    if (existingDraft) {
+      existingDraft.label = label;
+      if (persistedDefinition && !existingDraft.persisted) {
+        existingDraft.persisted = { ...persistedDefinition };
+      }
+      return;
+    }
+
+    noteTagImageDrafts.set(key, {
+      key,
+      label,
+      file: null,
+      previewUrl: "",
+      remove: false,
+      persisted: persistedDefinition ? { ...persistedDefinition } : null,
+    });
+  });
+
+  Array.from(noteTagImageDrafts.entries()).forEach(([key, draft]) => {
+    if (validKeys.has(key)) return;
+    revokeNoteTagDraftPreview(draft);
+    noteTagImageDrafts.delete(key);
+  });
+}
+
+function getNoteTagDraftPreviewUrl(draft, tagDefinition = null) {
+  if (!draft) return "";
+  if (draft.previewUrl) return draft.previewUrl;
+  if (draft.remove) return "";
+  return buildTagDefinitionImageRenderUrl(tagDefinition || draft.persisted || null);
+}
+
+function renderNoteTagImageEditor() {
+  const panel = $id("notes-note-tag-images");
+  const list = $id("notes-note-tag-images-list");
+  const empty = $id("notes-note-tag-images-empty");
+  if (!panel || !list || !empty) return;
+
+  const tags = getCurrentNoteModalTags();
+  syncNoteTagImageDrafts(tags);
+
+  panel.classList.toggle("is-empty", tags.length === 0);
+  empty.classList.toggle("hidden", tags.length > 0);
+
+  if (!tags.length) {
+    list.innerHTML = "";
+    return;
+  }
+
+  list.innerHTML = tags.map((rawTag) => {
+    const label = normalizeTagLabel(rawTag);
+    const key = buildTagDefinitionKey(label);
+    const draft = noteTagImageDrafts.get(key);
+    const tagDefinition = state.tagDefinitions?.[key] || draft?.persisted || null;
+    const previewUrl = getNoteTagDraftPreviewUrl(draft, tagDefinition);
+    const hasImage = Boolean(previewUrl);
+    const subtitle = draft?.previewUrl
+      ? "Nueva imagen lista para guardarse."
+      : draft?.remove
+        ? "La imagen se quitara al guardar."
+        : hasImage
+          ? "Imagen activa para este tag."
+          : "Sin imagen asociada.";
+    const secondaryLabel = draft?.remove ? "Restaurar" : "Quitar";
+    const secondaryDisabled = !draft?.remove && !hasImage;
+
+    return `
+      <div class="notes-tag-media-row" data-tag-key="${escapeHtml(key)}">
+        <div class="notes-tag-media-thumb${hasImage ? " is-image" : ""}">
+          ${hasImage
+            ? `<img class="notes-tag-media-image" src="${escapeHtml(previewUrl)}" alt="${escapeHtml(`Tag ${label}`)}" loading="lazy" decoding="async" />`
+            : `<span class="notes-tag-media-empty-mark">#</span>`}
+        </div>
+        <div class="notes-tag-media-copy">
+          <strong class="notes-tag-media-title">${escapeHtml(label)}</strong>
+          <span class="notes-tag-media-meta">${escapeHtml(subtitle)}</span>
+        </div>
+        <div class="notes-tag-media-actions">
+          <button class="btn ghost btn-compact" type="button" data-act="pick-note-tag-image" data-tag-key="${escapeHtml(key)}">
+            ${hasImage && !draft?.remove ? "Cambiar" : "Imagen"}
+          </button>
+          <button
+            class="btn ghost ${draft?.remove ? "" : "danger "}btn-compact"
+            type="button"
+            data-act="toggle-note-tag-image"
+            data-tag-key="${escapeHtml(key)}"
+            ${secondaryDisabled ? "disabled" : ""}
+          >${secondaryLabel}</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function openNoteTagImagePicker(tagKey = "") {
+  const input = $id("notes-note-tag-image-file");
+  const safeTagKey = buildTagDefinitionKey(tagKey);
+  if (!input || !safeTagKey) return;
+  activeNoteTagImageKey = safeTagKey;
+  input.value = "";
+  input.click();
+}
+
+function toggleNoteTagImageDraft(tagKey = "") {
+  const safeTagKey = buildTagDefinitionKey(tagKey);
+  const draft = noteTagImageDrafts.get(safeTagKey);
+  if (!draft) return;
+
+  if (draft.remove) {
+    draft.remove = false;
+    renderNoteTagImageEditor();
+    return;
+  }
+
+  const persistedImageUrl = buildTagDefinitionImageRenderUrl(state.tagDefinitions?.[safeTagKey] || draft.persisted || null);
+  revokeNoteTagDraftPreview(draft);
+  draft.file = null;
+  draft.remove = Boolean(persistedImageUrl);
+  renderNoteTagImageEditor();
+}
+
+async function persistNoteTagDefinitions(tags = []) {
+  const orderedTags = Array.isArray(tags) ? tags : [];
+  const processed = new Set();
+
+  for (const rawTag of orderedTags) {
+    const label = normalizeTagLabel(rawTag);
+    const key = buildTagDefinitionKey(label);
+    if (!label || !key || processed.has(key)) continue;
+    processed.add(key);
+
+    const draft = noteTagImageDrafts.get(key) || null;
+    const current = state.tagDefinitions?.[key] || draft?.persisted || null;
+    const currentHasImage = Boolean(buildTagDefinitionImageRenderUrl(current));
+    let nextPayload = null;
+
+    if (draft?.remove) {
+      if (currentHasImage) {
+        try {
+          await deleteNoteTagImageAsset(state.uid, key, current?.imagePath);
+        } catch (error) {
+          console.warn("[notes] no se pudo borrar la imagen remota del tag", error);
+        }
+      }
+
+      if (currentHasImage || current) {
+        nextPayload = {
+          ...current,
+          key,
+          label,
+          imageUrl: "",
+          imagePath: "",
+          imageUpdatedAt: 0,
+          createdAt: Number(current?.createdAt || Date.now()),
+        };
+      }
+    } else if (draft?.file instanceof File) {
+      if (currentHasImage) {
+        try {
+          await deleteNoteTagImageAsset(state.uid, key, current?.imagePath);
+        } catch (error) {
+          console.warn("[notes] no se pudo limpiar la imagen anterior del tag", error);
+        }
+      }
+
+      const optimizedFile = await downscaleNoteImageFile(draft.file);
+      const upload = await uploadNoteTagImageAsset(state.uid, key, optimizedFile);
+      nextPayload = {
+        ...current,
+        key,
+        label,
+        imageUrl: upload.url,
+        imagePath: upload.path,
+        imageUpdatedAt: Date.now(),
+        createdAt: Number(current?.createdAt || Date.now()),
+      };
+    } else if (current && String(current.label || "") !== label) {
+      nextPayload = {
+        ...current,
+        key,
+        label,
+        createdAt: Number(current?.createdAt || Date.now()),
+      };
+    }
+
+    if (nextPayload) {
+      await upsertTagDefinition(state.rootPath, key, nextPayload);
+    }
+  }
 }
 
 function notePreview(note) {
@@ -256,7 +549,8 @@ function renderNoteCards(list, notes = []) {
 
   list.innerHTML = notes.map((note) => {
     const preview = notePreview(note);
-    const imageUrl = buildNoteImageRenderUrl(note);
+    const noteImageUrl = buildNoteImageRenderUrl(note);
+    const tagPreview = resolveNoteTagPreview(note);
     const externalUrl = normalizeExternalUrl(note.url);
     const linkMarkup = note.type === "link"
       ? (externalUrl
@@ -273,10 +567,10 @@ function renderNoteCards(list, notes = []) {
         `
         : `<p class="notes-item-link">${escapeHtml(urlHost(note.url) || note.url || "")}</p>`)
       : "";
-    const mediaMarkup = imageUrl
+    const mediaMarkup = tagPreview?.imageUrl
       ? `
         <div class="notes-item-media is-image">
-          <img class="notes-item-image" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(note.title || "Nota")}" loading="lazy" decoding="async" />
+          <img class="notes-item-tag-image" src="${escapeHtml(tagPreview.imageUrl)}" alt="${escapeHtml(`Tag ${tagPreview.label || "nota"}`)}" loading="lazy" decoding="async" />
         </div>
       `
       : `
@@ -285,8 +579,11 @@ function renderNoteCards(list, notes = []) {
         </div>
       `;
 
+    const cardClass = noteImageUrl ? "notes-item-card has-note-image" : "notes-item-card";
+    const cardStyle = buildNoteCardStyleAttribute(note);
+
     return `
-      <article class="notes-item-card">
+      <article class="${cardClass}"${cardStyle}>
         ${mediaMarkup}
         <div class="notes-item-content">
           <h4 class="notes-item-title">${escapeHtml(note.title || "Sin título")}</h4>
@@ -423,7 +720,7 @@ function populateFolderTagsSelector() {
   if (!select) return;
 
   select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
-  Array.from(tags).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((tag) => {
+  collectTagLabels(Array.from(tags), listTagDefinitions().map((tagDefinition) => tagDefinition.label)).forEach((tag) => {
     const option = document.createElement("option");
     option.value = tag;
     option.textContent = tag;
@@ -603,7 +900,7 @@ function populateNoteTagsSelector(folderId = state.selectedFolderId) {
   });
 
   select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
-  Array.from(tags).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((tag) => {
+  collectTagLabels(Array.from(tags), listTagDefinitions().map((tagDefinition) => tagDefinition.label)).forEach((tag) => {
     const option = document.createElement("option");
     option.value = tag;
     option.textContent = tag;
@@ -643,6 +940,7 @@ function syncNoteFolderSelection(folderId = "", { allowFolderSelection = false }
   $id("notes-note-folder-id").value = safeFolderId;
   populateNoteCategorySelector(safeFolderId);
   populateNoteTagsSelector(safeFolderId);
+  renderNoteTagImageEditor();
 }
 
 function setNotePhotoStatus(message = "", tone = "") {
@@ -689,8 +987,10 @@ function openNoteImagePicker(mode = "gallery") {
 
 function closeNoteModal() {
   clearNotePhotoObjectUrl();
+  clearNoteTagImageDrafts();
   notePhotoRemove = false;
   if ($id("notes-note-image-file")) $id("notes-note-image-file").value = "";
+  if ($id("notes-note-tag-image-file")) $id("notes-note-tag-image-file").value = "";
   setNotePhotoStatus("");
   closeModal("notes-note-modal-backdrop");
 }
@@ -704,7 +1004,9 @@ function openNoteModal(note = null, options = {}) {
 
   notePhotoRemove = false;
   clearNotePhotoObjectUrl();
+  clearNoteTagImageDrafts();
   if ($id("notes-note-image-file")) $id("notes-note-image-file").value = "";
+  if ($id("notes-note-tag-image-file")) $id("notes-note-tag-image-file").value = "";
   setNotePhotoPreview(buildNoteImageRenderUrl(note));
   setNotePhotoStatus("");
 
@@ -721,6 +1023,7 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-url-wrap")?.classList.toggle("hidden", note?.type !== "link");
   $id("notes-note-form-error").textContent = "";
   $id("notes-note-modal-title").textContent = note ? "Editar nota" : "Nueva nota";
+  renderNoteTagImageEditor();
   openModal("notes-note-modal-backdrop");
 }
 
@@ -789,7 +1092,7 @@ function bindFolderModalEvents() {
     const parentId = String($id("notes-folder-parent-select")?.value || "").trim();
     const category = $id("notes-folder-category").value.trim();
     const tagsInput = $id("notes-folder-tags").value.trim();
-    const tags = tagsInput ? tagsInput.split(",").map((tag) => tag.trim()).filter(Boolean) : [];
+    const tags = parseTagList(tagsInput);
     const isPrivate = $id("notes-folder-private").checked;
     const pin = String($id("notes-folder-pin").value || "").replace(/\D+/g, "").slice(0, 4);
     const errorField = $id("notes-folder-form-error");
@@ -851,6 +1154,8 @@ function bindFolderModalEvents() {
 function bindNoteModalEvents() {
   const isLinkInput = $id("notes-note-is-link");
   const imageInput = $id("notes-note-image-file");
+  const tagImageInput = $id("notes-note-tag-image-file");
+  const tagsTextInput = $id("notes-note-tags");
 
   isLinkInput?.addEventListener("change", () => {
     $id("notes-note-url-wrap")?.classList.toggle("hidden", !isLinkInput.checked);
@@ -878,6 +1183,29 @@ function bindNoteModalEvents() {
     $id("notes-note-form-error").textContent = "";
   });
 
+  tagImageInput?.addEventListener("change", (event) => {
+    const file = event.target?.files?.[0] || null;
+    const safeTagKey = buildTagDefinitionKey(activeNoteTagImageKey);
+    activeNoteTagImageKey = "";
+    if (!file || !safeTagKey) return;
+
+    syncNoteTagImageDrafts(getCurrentNoteModalTags());
+    const draft = noteTagImageDrafts.get(safeTagKey);
+    if (!draft) return;
+
+    revokeNoteTagDraftPreview(draft);
+    draft.file = file;
+    draft.previewUrl = URL.createObjectURL(file);
+    draft.remove = false;
+    renderNoteTagImageEditor();
+    $id("notes-note-form-error").textContent = "";
+  });
+
+  tagsTextInput?.addEventListener("input", () => {
+    renderNoteTagImageEditor();
+    $id("notes-note-form-error").textContent = "";
+  });
+
   $id("notes-note-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (noteSaveInFlight) return;
@@ -892,7 +1220,7 @@ function bindNoteModalEvents() {
     const content = $id("notes-note-content").value.trim();
     const category = $id("notes-note-category").value.trim();
     const tagsInput = $id("notes-note-tags").value.trim();
-    const tags = tagsInput ? tagsInput.split(",").map((tag) => tag.trim()).filter(Boolean) : [];
+    const tags = parseTagList(tagsInput);
     const isLink = $id("notes-note-is-link").checked;
     const url = $id("notes-note-url").value.trim();
     const errorField = $id("notes-note-form-error");
@@ -901,6 +1229,7 @@ function bindNoteModalEvents() {
     const current = state.notes.find((row) => row.id === id) || null;
     let noteId = id;
     const selectedFile = imageInput?.files?.[0] || null;
+    const hasTagImageChanges = Array.from(noteTagImageDrafts.values()).some((draft) => draft?.file instanceof File || draft?.remove);
     let uploadedImagePath = "";
 
     errorField.textContent = "";
@@ -968,6 +1297,8 @@ function bindNoteModalEvents() {
         setNotePhotoStatus("Foto subida.");
       }
 
+      await persistNoteTagDefinitions(tags);
+
       if (id) {
         await updateNote(state.rootPath, id, {
           ...current,
@@ -987,10 +1318,10 @@ function bindNoteModalEvents() {
       renderShell();
     } catch (error) {
       console.warn("[notes] no se pudo guardar la nota", error);
-      errorField.textContent = selectedFile
-        ? "No se ha podido subir la imagen o guardar la nota."
+      errorField.textContent = (selectedFile || hasTagImageChanges)
+        ? "No se ha podido subir alguna imagen o guardar la nota."
         : "No se ha podido guardar la nota.";
-      setNotePhotoStatus("Ha fallado la subida de la foto.", "error");
+      if (selectedFile) setNotePhotoStatus("Ha fallado la subida de la foto.", "error");
       if (!id && uploadedImagePath) {
         try {
           await deleteNoteImageAsset(state.uid, noteId, uploadedImagePath);
@@ -1006,6 +1337,23 @@ function bindNoteModalEvents() {
   });
 
   $id("notes-note-modal-close")?.addEventListener("click", closeNoteModal);
+  $id("notes-note-tag-images-list")?.addEventListener("click", (event) => {
+    const actionTarget = event.target.closest("[data-act][data-tag-key]");
+    if (!actionTarget) return;
+
+    const action = String(actionTarget.dataset.act || "");
+    const tagKey = String(actionTarget.dataset.tagKey || "");
+    if (!tagKey) return;
+
+    if (action === "pick-note-tag-image") {
+      openNoteTagImagePicker(tagKey);
+      return;
+    }
+
+    if (action === "toggle-note-tag-image") {
+      toggleNoteTagImageDraft(tagKey);
+    }
+  });
   $id("notes-note-modal-backdrop")?.addEventListener("click", (event) => {
     if (event.target === $id("notes-note-modal-backdrop")) {
       closeNoteModal();
@@ -1070,7 +1418,7 @@ function bindUiEvents() {
     if (event.target.value) {
       const current = $id("notes-folder-tags").value.trim();
       const newTag = event.target.value;
-      $id("notes-folder-tags").value = current ? `${current}, ${newTag}` : newTag;
+      $id("notes-folder-tags").value = parseTagList(current ? `${current}, ${newTag}` : newTag).join(", ");
       event.target.value = "";
     }
   });
@@ -1085,8 +1433,9 @@ function bindUiEvents() {
     if (event.target.value) {
       const current = $id("notes-note-tags").value.trim();
       const newTag = event.target.value;
-      $id("notes-note-tags").value = current ? `${current}, ${newTag}` : newTag;
+      $id("notes-note-tags").value = parseTagList(current ? `${current}, ${newTag}` : newTag).join(", ");
       event.target.value = "";
+      renderNoteTagImageEditor();
     }
   });
 
@@ -1196,8 +1545,10 @@ function subscribeData(uid) {
     state.rootPath = "";
     state.folders = [];
     state.notes = [];
+    state.tagDefinitions = {};
     setCurrentFolder("");
     state.unlockedFolderIds = new Set();
+    clearNoteTagImageDrafts();
     renderShell();
     return;
   }
@@ -1209,6 +1560,7 @@ function subscribeData(uid) {
       state.rootPath = safeRootPath;
       state.folders = payload.folders;
       state.notes = payload.notes;
+      state.tagDefinitions = payload.tagDefinitions || {};
       state.unlockedFolderIds = new Set(
         Array.from(state.unlockedFolderIds).filter((folderId) => state.folders.some((folder) => folder.id === folderId)),
       );
@@ -1218,6 +1570,7 @@ function subscribeData(uid) {
       }
 
       renderShell();
+      renderNoteTagImageEditor();
       emitNotesData("remote:notes");
     },
     (error) => {
@@ -1248,6 +1601,7 @@ export async function onShow() {
     getAchievementsSnapshot: () => ({
       folders: Object.fromEntries((state.folders || []).map((folder) => [folder.id, folder])),
       notes: Object.fromEntries((state.notes || []).map((note) => [note.id, note])),
+      tagDefinitions: Object.fromEntries(listTagDefinitions().map((tagDefinition) => [tagDefinition.key, tagDefinition])),
     }),
   };
 }
@@ -1261,6 +1615,7 @@ export function destroy() {
   setCurrentFolder("");
   state.unlockedFolderIds = new Set();
   clearNotePhotoObjectUrl();
+  clearNoteTagImageDrafts();
   notePhotoRemove = false;
   noteSaveInFlight = false;
   if (window.__bookshellNotes) {

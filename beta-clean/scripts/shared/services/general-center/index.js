@@ -77,10 +77,10 @@ const state = {
   ui: {
     centerOpen: false,
     missionFilter: "active",
-    todoFilter: "pending",
+    composerOpen: false,
+    composerMode: "automatic",
     missionDraft: null,
-    todoDraft: null,
-    editingTodoId: "",
+    editingMissionId: "",
   },
 };
 
@@ -326,15 +326,6 @@ function buildDefaultMissionDraft() {
     metricKey: "habits_completed",
     category: "general",
     entityId: "",
-  };
-}
-
-function buildDefaultTodoDraft() {
-  return {
-    title: "",
-    category: "",
-    dueDate: "",
-    priority: "medium",
   };
 }
 
@@ -1009,14 +1000,6 @@ function syncDraftsFromDom() {
   }
 }
 
-function getSortedTodos() {
-  return Object.values(state.data.todos || {})
-    .sort((a, b) => {
-      if (a.order !== b.order) return a.order - b.order;
-      return a.createdAt - b.createdAt;
-    });
-}
-
 function getDerivedMissionState(mission) {
   if (!mission) return null;
   if (mission.status === MISSION_STATUS.ARCHIVED || mission.archivedAt) {
@@ -1083,23 +1066,12 @@ function getVisibleMissions() {
     });
 }
 
-function getVisibleTodos() {
-  return getSortedTodos().filter((todo) => {
-    if (state.ui.todoFilter === "all") return true;
-    if (state.ui.todoFilter === "completed") return todo.completed;
-    return !todo.completed;
-  });
-}
-
 function buildSummary() {
   const missions = Object.values(state.data.missions || {}).map((mission) => getDerivedMissionState(mission)).filter(Boolean);
-  const todos = Object.values(state.data.todos || {});
   return {
     activeMissionCount: missions.filter((mission) => mission.displayStatus === MISSION_STATUS.ACTIVE).length,
     completedMissionCount: missions.filter((mission) => mission.displayStatus === MISSION_STATUS.COMPLETED).length,
     archivedMissionCount: missions.filter((mission) => mission.displayStatus === MISSION_STATUS.ARCHIVED).length,
-    pendingTodoCount: todos.filter((todo) => !todo.completed).length,
-    completedTodoCount: todos.filter((todo) => todo.completed).length,
   };
 }
 
@@ -1107,8 +1079,14 @@ function ensureGeneralButton() {
   let button = document.getElementById(GENERAL_BTN_ID);
   if (button) return button;
 
-  const wrap = document.querySelector(".app-sync-indicator-wrap");
-  if (!wrap) return null;
+  const indicator = document.querySelector(".app-sync-indicator");
+  if (!indicator) return null;
+  let actions = indicator.querySelector(".app-sync-indicator__actions");
+  if (!actions) {
+    actions = document.createElement("span");
+    actions.className = "app-sync-indicator__actions";
+    indicator.append(actions);
+  }
 
   button = document.createElement("button");
   button.id = GENERAL_BTN_ID;
@@ -1122,8 +1100,9 @@ function ensureGeneralButton() {
     <span class="app-general-btn__count" data-general-count>0</span>
   `;
 
-  wrap.prepend(button);
-  button.addEventListener("click", () => {
+  actions.appendChild(button);
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
     if (state.ui.centerOpen) closeGeneralCenter();
     else openGeneralCenter();
   });
@@ -1273,27 +1252,20 @@ function renderMissionComposer() {
   const safeTarget = String(draft.target || definition?.targetDefault || 1);
 
   return `
-    <section class="sheet-section app-general-section">
-      <div class="app-general-section__head">
-        <div>
-          <div class="sheet-section-title">Misiones</div>
-          <p class="app-general-section__subtitle">Retos manuales y automáticos, sin mezclarlos con los logros.</p>
-        </div>
-      </div>
-
-      <form class="app-general-composer" data-general-mission-form>
-        <div class="app-general-composer__grid">
-          <label class="field">
-            <span>Origen</span>
-            <select name="mission-origin">
+    <section class="sheet-section app-general-composer-section" id="app-general-composer-wrapper">
+      <form class="app-general-composer" data-general-mission-form id="app-general-mission-form">
+        <div class="app-general-composer__group">
+          <label class="field field--compact" id="app-general-field-origin">
+            <span>Tipo</span>
+            <select name="mission-origin" id="app-general-input-origin">
               <option value="automatic"${draft.origin === "automatic" ? " selected" : ""}>Automática</option>
               <option value="manual"${draft.origin === "manual" ? " selected" : ""}>Manual</option>
             </select>
           </label>
 
-          <label class="field">
-            <span>Periodicidad</span>
-            <select name="mission-periodicity">
+          <label class="field field--compact" id="app-general-field-periodicity">
+            <span>Periodo</span>
+            <select name="mission-periodicity" id="app-general-input-periodicity">
               ${PERIODICITY_OPTIONS
                 .filter((option) => draft.origin === "manual" || !definition || definition.periods.includes(option.key))
                 .map((option) => `<option value="${escapeHtml(option.key)}"${option.key === draft.periodicity ? " selected" : ""}>${escapeHtml(option.label)}</option>`)
@@ -1303,10 +1275,10 @@ function renderMissionComposer() {
         </div>
 
         ${draft.origin === "automatic" ? `
-          <div class="app-general-composer__grid">
-            <label class="field">
+          <div class="app-general-composer__group">
+            <label class="field field--compact" id="app-general-field-metric">
               <span>Métrica</span>
-              <select name="mission-metric">
+              <select name="mission-metric" id="app-general-input-metric">
                 ${metricOptions.map((option) => `
                   <option value="${escapeHtml(option.key)}"${option.key === draft.metricKey ? " selected" : ""}>${escapeHtml(option.label)}</option>
                 `).join("")}
@@ -1314,83 +1286,82 @@ function renderMissionComposer() {
             </label>
 
             ${definition?.requiresEntity ? `
-              <label class="field">
+              <label class="field field--compact" id="app-general-field-entity">
                 <span>Hábito</span>
-                <select name="mission-entity">
+                <select name="mission-entity" id="app-general-input-entity">
                   <option value="">Selecciona</option>
                   ${entityOptions.map((option) => `
                     <option value="${escapeHtml(option.id)}"${option.id === draft.entityId ? " selected" : ""}>${escapeHtml(option.label)}</option>
                   `).join("")}
                 </select>
               </label>
-            ` : `
-              <label class="field">
-                <span>Categoría</span>
-                <input type="text" value="${escapeHtml(getMissionCategoryLabel(definition?.category || "general"))}" disabled />
-              </label>
-            `}
+            ` : ""}
           </div>
         ` : `
-          <div class="app-general-composer__grid">
-            <label class="field">
-              <span>Categoría</span>
-              <select name="mission-category">
-                ${MISSION_CATEGORY_OPTIONS.map((option) => `
-                  <option value="${escapeHtml(option.key)}"${option.key === draft.category ? " selected" : ""}>${escapeHtml(option.label)}</option>
-                `).join("")}
-              </select>
-            </label>
-
-            <label class="field">
-              <span>Objetivo</span>
-              <input name="mission-target" type="number" min="1" step="1" value="${escapeHtml(safeTarget)}" />
-            </label>
-          </div>
+          <label class="field field--compact" id="app-general-field-category">
+            <span>Categoría</span>
+            <select name="mission-category" id="app-general-input-category">
+              ${MISSION_CATEGORY_OPTIONS.map((option) => `
+                <option value="${escapeHtml(option.key)}"${option.key === draft.category ? " selected" : ""}>${escapeHtml(option.label)}</option>
+              `).join("")}
+            </select>
+          </label>
         `}
 
-        ${draft.origin === "automatic" ? `
-          <label class="field">
-            <span>Objetivo</span>
-            <input name="mission-target" type="number" min="1" step="1" value="${escapeHtml(safeTarget)}" />
+        <div class="app-general-composer__group">
+          <label class="field" id="app-general-field-title">
+            <span>Título</span>
+            <input
+              name="mission-title"
+              type="text"
+              id="app-general-input-title"
+              maxlength="120"
+              value="${escapeHtml(draft.title || "")}"
+              placeholder="${escapeHtml(draft.origin === "automatic" ? buildAutomaticMissionTitle(draft) : "Ej: Cerrar backlog")}"
+            />
           </label>
-        ` : ""}
 
-        <label class="field">
-          <span>Título</span>
-          <input
-            name="mission-title"
-            type="text"
-            maxlength="120"
-            value="${escapeHtml(draft.title || "")}"
-            placeholder="${escapeHtml(draft.origin === "automatic" ? buildAutomaticMissionTitle(draft) : "Ejemplo: cerrar backlog de la semana")}"
-          />
-        </label>
+          <label class="field" id="app-general-field-target">
+            <span>Objetivo</span>
+            <input 
+              name="mission-target" 
+              type="number" 
+              id="app-general-input-target"
+              min="1" 
+              step="1" 
+              value="${escapeHtml(safeTarget)}" 
+            />
+          </label>
+        </div>
 
-        <label class="field">
-          <span>Descripción opcional</span>
-          <textarea name="mission-description" rows="2" maxlength="220" placeholder="Añade contexto si te ayuda a entender la misión.">${escapeHtml(draft.description || "")}</textarea>
+        <label class="field" id="app-general-field-description">
+          <span>Descripción (opcional)</span>
+          <textarea 
+            name="mission-description" 
+            id="app-general-input-description"
+            rows="2" 
+            maxlength="220" 
+            placeholder="Contexto adicional..."
+          >${escapeHtml(draft.description || "")}</textarea>
         </label>
 
         <div class="app-general-composer__actions">
-          <button class="btn primary btn-compact" type="submit">Guardar misión</button>
-          <button class="btn ghost btn-compact" type="button" data-general-mission-reset>Limpiar</button>
+          <button class="btn primary btn-compact" type="submit" id="app-general-btn-submit">Guardar</button>
+          <button class="btn neutral btn-compact" type="button" data-general-mission-reset id="app-general-btn-reset">Limpiar</button>
         </div>
       </form>
-
-      <div class="app-general-toolbar">
-        ${renderFilterGroup(MISSION_FILTERS, state.ui.missionFilter, "general-mission-filter")}
-      </div>
     </section>
   `;
 }
 
 function renderMissionCard(mission) {
-  const originLabel = mission.origin === "automatic" ? "Automática" : "Manual";
+  const isTask = mission.category === "todo";
+  const originLabel = mission.origin === "automatic" ? "Auto" : "Manual";
   const categoryLabel = getMissionCategoryLabel(mission.category || getAutoMissionDefinition(mission.metricKey)?.category || "general");
   const statusLabel = mission.displayStatus === MISSION_STATUS.ACTIVE
     ? "Activa"
     : mission.displayStatus === MISSION_STATUS.COMPLETED
-      ? "Completada"
+      ? "Hecha"
       : "Archivada";
   const targetLabel = mission.metricKey === "habit_hours"
     ? formatHours(mission.target)
@@ -1399,46 +1370,51 @@ function renderMissionCard(mission) {
     ? formatHours(mission.progress)
     : formatNumber(mission.progress, { maxFractionDigits: 0 });
 
+  const cardId = `app-general-mission-${escapeHtml(mission.id)}`;
+
   return `
-    <article class="app-general-mission-card" data-state="${escapeHtml(mission.displayStatus)}">
-      <div class="app-general-mission-card__head">
-        <div>
-          <div class="app-general-mission-card__eyebrow">${escapeHtml(`${originLabel} · ${categoryLabel} · ${getMissionPeriodLabel(mission.periodicity)}`)}</div>
+    <article class="app-general-mission-card${isTask ? " app-general-mission-card--task" : ""}" data-state="${escapeHtml(mission.displayStatus)}" id="${cardId}">
+      <div class="app-general-mission-card__main">
+        <div class="app-general-mission-card__info">
           <strong>${escapeHtml(mission.title || buildAutomaticMissionTitle(mission))}</strong>
-          ${mission.description ? `<p>${escapeHtml(mission.description)}</p>` : ""}
+                <div class="app-general-mission-card__actions">
+
+                  <div class="controles-mision">
+                    ${mission.displayStatus !== MISSION_STATUS.ARCHIVED ? `
+                      <button class="app-mission-action" type="button" data-general-mission-edit="${escapeHtml(mission.id)}" title="Editar">✏️</button>
+                    ` : ""}
+                    ${mission.displayStatus !== MISSION_STATUS.ARCHIVED ? `
+                      <button class="app-mission-action app-mission-action--delete" type="button" data-general-mission-archive="${escapeHtml(mission.id)}" title="Guardar">✓</button>
+                    ` : ""}
+                    ${mission.displayStatus === MISSION_STATUS.ARCHIVED ? `
+                      <button class="app-mission-action app-mission-action--delete" type="button" data-general-mission-delete="${escapeHtml(mission.id)}" title="Borrar">✕</button>
+                    ` : `
+                      <button class="app-mission-action app-mission-action--delete" type="button" data-general-mission-archive="${escapeHtml(mission.id)}" title="Archivar">✕</button>
+                    `}
+                  </div>
+
+                  <div class="mas-menos">
+                    ${mission.origin === "manual" && mission.displayStatus !== MISSION_STATUS.ARCHIVED ? `
+                      <button class="app-mission-action" type="button" data-general-mission-minus="${escapeHtml(mission.id)}" title="–1">–</button>
+                      <button class="app-mission-action" type="button" data-general-mission-plus="${escapeHtml(mission.id)}" title="+1">+</button>
+                    ` : ""}
+                  </div>
+
+                  
+
+                </div>
+          <small>${escapeHtml(isTask ? categoryLabel : `${categoryLabel}`)}</small>
         </div>
-        <span class="app-general-pill">${escapeHtml(statusLabel)}</span>
+        
+        <div class="app-general-mission-card__progress">
+          <span class="app-general-mission-card__counter">${progressLabel}/${targetLabel}</span>
+          <div class="app-achievements-progress app-achievements-progress--compact">
+            <i style="width:${Math.max(0, Math.min(100, mission.progressPct))}%"></i>
+          </div>
+        </div>
       </div>
 
-      <div class="app-general-mission-card__progress">
-        <span>${escapeHtml(`${progressLabel} / ${targetLabel}`)}</span>
-        <strong>${mission.progressPct}%</strong>
-      </div>
-      <div class="app-achievements-progress" aria-hidden="true">
-        <i style="width:${Math.max(0, Math.min(100, mission.progressPct))}%"></i>
-      </div>
 
-      <div class="app-general-mission-card__meta">
-        <span>Creada ${escapeHtml(formatDate(mission.createdAt))}</span>
-        <span>${escapeHtml(mission.displayStatus === MISSION_STATUS.COMPLETED ? `Completada ${formatDate(mission.completedAt || Date.now())}` : "En curso")}</span>
-      </div>
-
-      <div class="app-general-mission-card__actions">
-        ${mission.origin === "manual" && mission.displayStatus !== MISSION_STATUS.ARCHIVED ? `
-          <button class="btn ghost btn-compact" type="button" data-general-mission-minus="${escapeHtml(mission.id)}">-1</button>
-          <button class="btn ghost btn-compact" type="button" data-general-mission-plus="${escapeHtml(mission.id)}">+1</button>
-        ` : ""}
-        ${mission.origin === "manual" && mission.displayStatus === MISSION_STATUS.ACTIVE
-          ? `<button class="btn primary btn-compact" type="button" data-general-mission-complete="${escapeHtml(mission.id)}">Completar</button>`
-          : mission.origin === "manual" && mission.displayStatus === MISSION_STATUS.COMPLETED
-            ? `<button class="btn ghost btn-compact" type="button" data-general-mission-reopen="${escapeHtml(mission.id)}">Reabrir</button>`
-            : mission.displayStatus === MISSION_STATUS.ARCHIVED
-              ? `<button class="btn ghost btn-compact" type="button" data-general-mission-unarchive="${escapeHtml(mission.id)}">Recuperar</button>`
-              : ""}
-        ${mission.displayStatus === MISSION_STATUS.ARCHIVED
-          ? `<button class="btn ghost btn-compact" type="button" data-general-mission-delete="${escapeHtml(mission.id)}">Borrar</button>`
-          : `<button class="btn ghost btn-compact" type="button" data-general-mission-archive="${escapeHtml(mission.id)}">Archivar</button>`}
-      </div>
     </article>
   `;
 }
@@ -1447,117 +1423,16 @@ function renderMissionsList() {
   const missions = getVisibleMissions();
   if (!missions.length) {
     return `
-      <section class="sheet-section app-general-section">
+      <section class="sheet-section app-general-section" id="lista-misiones">
         <p class="app-general-empty">No hay misiones en esta vista todavía.</p>
       </section>
     `;
   }
 
   return `
-    <section class="sheet-section app-general-section">
+    <section class="sheet-section app-general-section" id="lista-misiones">
       <div class="app-general-list">
         ${missions.map((mission) => renderMissionCard(mission)).join("")}
-      </div>
-    </section>
-  `;
-}
-
-function renderTodoComposer() {
-  const draft = state.ui.todoDraft || buildDefaultTodoDraft();
-  const isEditing = Boolean(state.ui.editingTodoId);
-  return `
-    <section class="sheet-section app-general-section">
-      <div class="app-general-section__head">
-        <div>
-          <div class="sheet-section-title">To do</div>
-          <p class="app-general-section__subtitle">Tareas rápidas integradas con la misma persistencia de la app.</p>
-        </div>
-      </div>
-
-      <form class="app-general-composer" data-general-todo-form>
-        <label class="field">
-          <span>Título</span>
-          <input name="todo-title" type="text" maxlength="140" value="${escapeHtml(draft.title || "")}" placeholder="Ejemplo: revisar compras de la semana" />
-        </label>
-
-        <div class="app-general-composer__grid">
-          <label class="field">
-            <span>Categoría o lista</span>
-            <input name="todo-category" type="text" maxlength="80" value="${escapeHtml(draft.category || "")}" placeholder="General, trabajo, casa..." />
-          </label>
-
-          <label class="field">
-            <span>Prioridad</span>
-            <select name="todo-priority">
-              ${PRIORITY_OPTIONS.map((option) => `
-                <option value="${escapeHtml(option.key)}"${option.key === draft.priority ? " selected" : ""}>${escapeHtml(option.label)}</option>
-              `).join("")}
-            </select>
-          </label>
-        </div>
-
-        <label class="field">
-          <span>Fecha objetivo</span>
-          <input name="todo-due-date" type="date" value="${escapeHtml(draft.dueDate || "")}" />
-        </label>
-
-        <div class="app-general-composer__actions">
-          <button class="btn primary btn-compact" type="submit">${isEditing ? "Guardar tarea" : "Añadir tarea"}</button>
-          <button class="btn ghost btn-compact" type="button" data-general-todo-reset>${isEditing ? "Cancelar" : "Limpiar"}</button>
-        </div>
-      </form>
-
-      <div class="app-general-toolbar">
-        ${renderFilterGroup(TODO_FILTERS, state.ui.todoFilter, "general-todo-filter")}
-      </div>
-    </section>
-  `;
-}
-
-function renderTodoMeta(todo) {
-  const parts = [];
-  if (todo.category) parts.push(todo.category);
-  if (todo.dueDate) parts.push(`Objetivo ${formatShortDate(todo.dueDate)}`);
-  parts.push(`Prioridad ${todo.priority === "high" ? "alta" : todo.priority === "low" ? "baja" : "media"}`);
-  return parts.join(" · ");
-}
-
-function renderTodoRow(todo) {
-  return `
-    <article class="app-general-todo-row${todo.completed ? " is-completed" : ""}" data-state="${todo.completed ? "completed" : "pending"}">
-      <button class="app-general-todo-row__toggle" type="button" data-general-todo-toggle="${escapeHtml(todo.id)}" aria-pressed="${todo.completed ? "true" : "false"}">
-        ${todo.completed ? "✓" : ""}
-      </button>
-
-      <div class="app-general-todo-row__copy">
-        <strong>${escapeHtml(todo.title)}</strong>
-        <span>${escapeHtml(renderTodoMeta(todo))}</span>
-      </div>
-
-      <div class="app-general-todo-row__actions">
-        <button class="btn ghost btn-compact" type="button" data-general-todo-edit="${escapeHtml(todo.id)}">Editar</button>
-        <button class="btn ghost btn-compact" type="button" data-general-todo-move-up="${escapeHtml(todo.id)}">↑</button>
-        <button class="btn ghost btn-compact" type="button" data-general-todo-move-down="${escapeHtml(todo.id)}">↓</button>
-        <button class="btn ghost btn-compact" type="button" data-general-todo-delete="${escapeHtml(todo.id)}">Borrar</button>
-      </div>
-    </article>
-  `;
-}
-
-function renderTodosList() {
-  const todos = getVisibleTodos();
-  if (!todos.length) {
-    return `
-      <section class="sheet-section app-general-section">
-        <p class="app-general-empty">No hay tareas para este filtro.</p>
-      </section>
-    `;
-  }
-
-  return `
-    <section class="sheet-section app-general-section">
-      <div class="app-general-list">
-        ${todos.map((todo) => renderTodoRow(todo)).join("")}
       </div>
     </section>
   `;
@@ -1567,13 +1442,16 @@ function renderGeneralButton() {
   const button = ensureGeneralButton();
   if (!button) return;
   const summary = buildSummary();
+  const indicator = document.getElementById("app-sync-indicator");
   const count = button.querySelector("[data-general-count]");
-  const total = summary.activeMissionCount + summary.pendingTodoCount;
-  if (count) count.textContent = String(total);
+  if (count) count.textContent = String(summary.activeMissionCount);
   button.classList.toggle("hidden", !state.uid);
+  if (indicator) {
+    indicator.dataset.missionState = summary.activeMissionCount > 0 ? "pending" : "clear";
+  }
   button.setAttribute(
     "aria-label",
-    `Abrir centro general. ${summary.activeMissionCount} misiones activas y ${summary.pendingTodoCount} tareas pendientes.`,
+    `Abrir centro general. ${summary.activeMissionCount} misiones activas.`,
   );
 }
 
@@ -1586,32 +1464,33 @@ function renderGeneralCenter() {
 
   syncDraftsFromDom();
   const summary = buildSummary();
+  
   body.innerHTML = `
-    <section class="sheet-section app-general-summary">
+    <section class="sheet-section app-general-summary" id="app-general-summary">
       <div class="app-general-summary__stats">
-        <article class="app-general-stat">
-          <small>Misiones activas</small>
+        <button class="app-general-stat${state.ui.missionFilter === "active" ? " is-active" : ""}" id="app-general-stat-active" data-general-mission-filter="active" type="button">
+          <small>Activas</small>
           <strong>${summary.activeMissionCount}</strong>
-        </article>
-        <article class="app-general-stat">
-          <small>Misiones completadas</small>
+        </button>
+        <button class="app-general-stat${state.ui.missionFilter === "completed" ? " is-active" : ""}" id="app-general-stat-completed" data-general-mission-filter="completed" type="button">
+          <small>Completadas</small>
           <strong>${summary.completedMissionCount}</strong>
-        </article>
-        <article class="app-general-stat">
-          <small>Tareas pendientes</small>
-          <strong>${summary.pendingTodoCount}</strong>
-        </article>
-        <article class="app-general-stat">
-          <small>Tareas hechas</small>
-          <strong>${summary.completedTodoCount}</strong>
-        </article>
+        </button>
+        <button class="app-general-stat${state.ui.missionFilter === "archived" ? " is-active" : ""}" id="app-general-stat-archived" data-general-mission-filter="archived" type="button">
+          <small>Archivadas</small>
+          <strong>${summary.archivedMissionCount}</strong>
+        </button>
       </div>
     </section>
 
-    ${renderMissionComposer()}
+    <div class="app-general-toolbar" id="app-general-toolbar-main">
+      <button class="app-general-btn-add" type="button" id="app-general-btn-add-composer" data-toggle-composer>
+        ${state.ui.composerOpen ? "Cerrar" : "✎ Nueva"}
+      </button>
+    </div>
+
+    ${state.ui.composerOpen ? renderMissionComposer() : ""}
     ${renderMissionsList()}
-    ${renderTodoComposer()}
-    ${renderTodosList()}
   `;
 
   renderGeneralButton();
@@ -1619,16 +1498,31 @@ function renderGeneralCenter() {
 
 function resetMissionDraft() {
   state.ui.missionDraft = buildDefaultMissionDraft();
+  state.ui.editingMissionId = "";
+  state.ui.composerOpen = false;
   renderGeneralCenter();
 }
 
-function resetTodoDraft() {
-  state.ui.todoDraft = buildDefaultTodoDraft();
-  state.ui.editingTodoId = "";
+function editMission(missionId = "") {
+  const mission = state.data.missions[String(missionId || "").trim()];
+  if (!mission) return;
+  state.ui.editingMissionId = mission.id;
+  state.ui.missionDraft = {
+    origin: mission.origin,
+    title: mission.title,
+    description: mission.description,
+    target: String(mission.target),
+    periodicity: mission.periodicity,
+    metricKey: mission.metricKey,
+    category: mission.category,
+    entityId: mission.entityId,
+  };
+  state.ui.composerOpen = true;
   renderGeneralCenter();
 }
 
 async function handleMissionSubmit(form) {
+  const isEditing = Boolean(state.ui.editingMissionId);
   const origin = form.querySelector("[name=\"mission-origin\"]")?.value === "manual" ? "manual" : "automatic";
   const titleInput = String(form.querySelector("[name=\"mission-title\"]")?.value || "").trim();
   const description = String(form.querySelector("[name=\"mission-description\"]")?.value || "").trim();
@@ -1653,9 +1547,11 @@ async function handleMissionSubmit(form) {
     ? (getHabitsForMetric(metricKey).find((option) => option.id === entityId)?.name || "")
     : "";
 
-  const missionId = createEntityId(getMissionsRoot());
-  let baselineValue = 0;
-  if (origin === "automatic" && periodicity === "once" && metricKey !== "todo_pending_zero") {
+  const missionId = isEditing ? state.ui.editingMissionId : createEntityId(getMissionsRoot());
+  const existingMission = state.data.missions[missionId];
+  let baselineValue = existingMission?.baselineValue || 0;
+  
+  if (!isEditing && origin === "automatic" && periodicity === "once" && metricKey !== "todo_pending_zero") {
     baselineValue = await resolveAutomaticMissionAbsoluteValue({
       metricKey,
       periodicity,
@@ -1679,9 +1575,9 @@ async function handleMissionSubmit(form) {
     description,
     category,
     target,
-    progress: 0,
-    status: MISSION_STATUS.ACTIVE,
-    createdAt: Date.now(),
+    progress: isEditing ? Math.max(0, existingMission?.progress || 0) : 0,
+    status: isEditing ? existingMission?.status : MISSION_STATUS.ACTIVE,
+    createdAt: isEditing ? existingMission?.createdAt : Date.now(),
     updatedAt: Date.now(),
     periodicity,
     origin,
@@ -1689,7 +1585,7 @@ async function handleMissionSubmit(form) {
     entityId,
     entityName,
     baselineValue,
-    order: Object.keys(state.data.missions || {}).length,
+    order: isEditing ? existingMission?.order : Object.keys(state.data.missions || {}).length,
   }, missionId);
 
   upsertLocalMission(mission);
@@ -1699,103 +1595,6 @@ async function handleMissionSubmit(form) {
   } catch (error) {
     console.warn("[general] no se pudo guardar la misión", error);
   }
-}
-
-async function handleTodoSubmit(form) {
-  const draft = {
-    title: String(form.querySelector("[name=\"todo-title\"]")?.value || "").trim(),
-    category: String(form.querySelector("[name=\"todo-category\"]")?.value || "").trim(),
-    dueDate: String(form.querySelector("[name=\"todo-due-date\"]")?.value || "").trim(),
-    priority: form.querySelector("[name=\"todo-priority\"]")?.value || "medium",
-  };
-  if (!draft.title) return;
-
-  const existingId = state.ui.editingTodoId;
-  const previous = existingId ? state.data.todos[existingId] : null;
-  const todoId = existingId || createEntityId(getTodosRoot());
-  const todo = normalizeTodo({
-    ...previous,
-    id: todoId,
-    title: draft.title,
-    category: draft.category,
-    dueDate: draft.dueDate,
-    priority: draft.priority,
-    updatedAt: Date.now(),
-    createdAt: previous?.createdAt || Date.now(),
-    completed: previous?.completed || false,
-    completedAt: previous?.completedAt || 0,
-    order: previous?.order ?? Object.keys(state.data.todos || {}).length,
-  }, todoId, previous?.order ?? Object.keys(state.data.todos || {}).length);
-
-  upsertLocalTodo(todo);
-  resetTodoDraft();
-  try {
-    await persistTodo(todo);
-  } catch (error) {
-    console.warn("[general] no se pudo guardar la tarea", error);
-  }
-}
-
-async function toggleTodo(todoId = "") {
-  const todo = state.data.todos[String(todoId || "").trim()];
-  if (!todo) return;
-  const nextTodo = normalizeTodo({
-    ...todo,
-    completed: !todo.completed,
-    completedAt: !todo.completed ? Date.now() : 0,
-    updatedAt: Date.now(),
-  }, todo.id, todo.order);
-  upsertLocalTodo(nextTodo);
-  try {
-    await persistTodo(nextTodo);
-  } catch (error) {
-    console.warn("[general] no se pudo actualizar la tarea", error);
-  }
-}
-
-async function editTodo(todoId = "") {
-  const todo = state.data.todos[String(todoId || "").trim()];
-  if (!todo) return;
-  state.ui.editingTodoId = todo.id;
-  state.ui.todoDraft = {
-    title: todo.title,
-    category: todo.category || "",
-    dueDate: todo.dueDate || "",
-    priority: todo.priority || "medium",
-  };
-  renderGeneralCenter();
-}
-
-async function moveTodo(todoId = "", direction = 0) {
-  const sorted = getSortedTodos();
-  const index = sorted.findIndex((todo) => todo.id === todoId);
-  if (index < 0) return;
-  const nextIndex = index + direction;
-  if (nextIndex < 0 || nextIndex >= sorted.length) return;
-
-  const nextSorted = [...sorted];
-  const [current] = nextSorted.splice(index, 1);
-  nextSorted.splice(nextIndex, 0, current);
-
-  const changed = [];
-  nextSorted.forEach((todo, order) => {
-    if (todo.order === order) return;
-    const nextTodo = normalizeTodo({
-      ...todo,
-      order,
-      updatedAt: Date.now(),
-    }, todo.id, order);
-    changed.push(nextTodo);
-    upsertLocalTodo(nextTodo);
-  });
-
-  await Promise.all(changed.map(async (todo) => {
-    try {
-      await persistTodo(todo);
-    } catch (error) {
-      console.warn("[general] no se pudo reordenar la tarea", error);
-    }
-  }));
 }
 
 async function archiveMission(missionId = "", archived = true) {
@@ -1864,24 +1663,12 @@ async function deleteMission(missionId = "") {
   }
 }
 
-async function deleteTodo(todoId = "") {
-  removeLocalTodo(todoId);
-  try {
-    await deleteTodoRemote(todoId);
-  } catch (error) {
-    console.warn("[general] no se pudo borrar la tarea", error);
-  }
-}
-
 function handleRemoteSnapshot(payload = {}) {
   const overlaid = state.generalRoot
     ? applyQueuedWritesToPath(state.generalRoot, payload || {}, { uid: state.uid }) || {}
     : (payload || {});
   state.data = normalizeGeneralPayload(overlaid);
   state.remoteHydrated = true;
-  if (state.ui.editingTodoId && !state.data.todos[state.ui.editingTodoId]) {
-    resetTodoDraft();
-  }
   scheduleOfflineSnapshotPersist();
   renderGeneralButton();
   renderGeneralCenter();
@@ -1928,14 +1715,10 @@ function bindDataEvents() {
       void handleMissionSubmit(event.target);
       return;
     }
-    if (event.target.matches("[data-general-todo-form]")) {
-      event.preventDefault();
-      void handleTodoSubmit(event.target);
-    }
   });
 
   document.addEventListener("input", (event) => {
-    if (event.target?.closest?.("[data-general-mission-form]") || event.target?.closest?.("[data-general-todo-form]")) {
+    if (event.target?.closest?.("[data-general-mission-form]")) {
       syncDraftsFromDom();
     }
   });
@@ -1979,16 +1762,18 @@ function bindDataEvents() {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
 
-    const missionFilter = target.closest("[data-general-mission-filter]");
-    if (missionFilter) {
-      state.ui.missionFilter = missionFilter.getAttribute("data-general-mission-filter") || "active";
+    if (target.closest("[data-toggle-composer]")) {
+      state.ui.composerOpen = !state.ui.composerOpen;
+      if (!state.ui.composerOpen) {
+        resetMissionDraft();
+      }
       renderGeneralCenter();
       return;
     }
 
-    const todoFilter = target.closest("[data-general-todo-filter]");
-    if (todoFilter) {
-      state.ui.todoFilter = todoFilter.getAttribute("data-general-todo-filter") || "pending";
+    const missionFilter = target.closest("[data-general-mission-filter]");
+    if (missionFilter) {
+      state.ui.missionFilter = missionFilter.getAttribute("data-general-mission-filter") || "active";
       renderGeneralCenter();
       return;
     }
@@ -1998,8 +1783,9 @@ function bindDataEvents() {
       return;
     }
 
-    if (target.closest("[data-general-todo-reset]")) {
-      resetTodoDraft();
+    const missionEdit = target.closest("[data-general-mission-edit]");
+    if (missionEdit) {
+      void editMission(missionEdit.getAttribute("data-general-mission-edit"));
       return;
     }
 
@@ -2015,27 +1801,9 @@ function bindDataEvents() {
       return;
     }
 
-    const missionComplete = target.closest("[data-general-mission-complete]");
-    if (missionComplete) {
-      void setMissionCompletion(missionComplete.getAttribute("data-general-mission-complete"), true);
-      return;
-    }
-
-    const missionReopen = target.closest("[data-general-mission-reopen]");
-    if (missionReopen) {
-      void setMissionCompletion(missionReopen.getAttribute("data-general-mission-reopen"), false);
-      return;
-    }
-
     const missionArchive = target.closest("[data-general-mission-archive]");
     if (missionArchive) {
       void archiveMission(missionArchive.getAttribute("data-general-mission-archive"), true);
-      return;
-    }
-
-    const missionUnarchive = target.closest("[data-general-mission-unarchive]");
-    if (missionUnarchive) {
-      void archiveMission(missionUnarchive.getAttribute("data-general-mission-unarchive"), false);
       return;
     }
 
@@ -2043,35 +1811,6 @@ function bindDataEvents() {
     if (missionDelete) {
       void deleteMission(missionDelete.getAttribute("data-general-mission-delete"));
       return;
-    }
-
-    const todoToggle = target.closest("[data-general-todo-toggle]");
-    if (todoToggle) {
-      void toggleTodo(todoToggle.getAttribute("data-general-todo-toggle"));
-      return;
-    }
-
-    const todoEdit = target.closest("[data-general-todo-edit]");
-    if (todoEdit) {
-      void editTodo(todoEdit.getAttribute("data-general-todo-edit"));
-      return;
-    }
-
-    const todoDelete = target.closest("[data-general-todo-delete]");
-    if (todoDelete) {
-      void deleteTodo(todoDelete.getAttribute("data-general-todo-delete"));
-      return;
-    }
-
-    const todoMoveUp = target.closest("[data-general-todo-move-up]");
-    if (todoMoveUp) {
-      void moveTodo(todoMoveUp.getAttribute("data-general-todo-move-up"), -1);
-      return;
-    }
-
-    const todoMoveDown = target.closest("[data-general-todo-move-down]");
-    if (todoMoveDown) {
-      void moveTodo(todoMoveDown.getAttribute("data-general-todo-move-down"), 1);
     }
   });
 
@@ -2089,8 +1828,7 @@ function resetStateForLogout() {
   state.moduleSnapshots = {};
   state.autoMissionState = {};
   state.ui.missionDraft = buildDefaultMissionDraft();
-  state.ui.todoDraft = buildDefaultTodoDraft();
-  state.ui.editingTodoId = "";
+  state.ui.composerOpen = false;
   closeGeneralCenter();
   renderGeneralButton();
   renderGeneralCenter();
@@ -2106,8 +1844,7 @@ async function handleAuthUser(user) {
 
   state.uid = nextUid;
   state.ui.missionDraft = buildDefaultMissionDraft();
-  state.ui.todoDraft = buildDefaultTodoDraft();
-  state.ui.editingTodoId = "";
+  state.ui.composerOpen = false;
 
   await hydrateGeneralFromOfflineSnapshot(nextUid);
   ensureGeneralButton();
@@ -2122,7 +1859,6 @@ export function initGeneralCenterService() {
   if (state.initialized) return;
   state.initialized = true;
   state.ui.missionDraft = buildDefaultMissionDraft();
-  state.ui.todoDraft = buildDefaultTodoDraft();
   ensureGeneralButton();
   ensureGeneralModal();
   bindDataEvents();

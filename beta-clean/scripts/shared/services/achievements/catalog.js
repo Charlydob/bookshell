@@ -1,15 +1,17 @@
 import { MODULE_META } from "./metrics.js";
 
-const SCALE_EXTENDED = [1, 5, 10, 25, 50, 100, 250, 500, 1000];
-const SCALE_TRACKING_DAYS = [3, 7, 14, 30, 100, 365];
-const SCALE_STREAK_DAYS = [3, 7, 14, 30, 100, 365];
-const SCALE_HABIT_DAYS = [7, 30, 100, 365];
-const SCALE_HABIT_COUNTS = [10, 50, 100, 500, 1000];
-const SCALE_HABIT_HOURS = [10, 25, 50, 100, 250, 500, 1000];
-const SCALE_PAGES = [100, 500, 1000, 2500, 5000, 10000, 25000, 50000];
-const SCALE_VOLUME = [1000, 5000, 10000, 25000, 50000, 100000];
+const MEDAL_TIERS = Object.freeze([
+  { key: "none", label: "Sin medalla", shortLabel: "Sin", icon: "○" },
+  { key: "bronze", label: "Bronce", shortLabel: "Bronce", icon: "🥉" },
+  { key: "silver", label: "Plata", shortLabel: "Plata", icon: "🥈" },
+  { key: "gold", label: "Oro", shortLabel: "Oro", icon: "🥇" },
+  { key: "platinum", label: "Platino", shortLabel: "Platino", icon: "⬡" },
+  { key: "emerald", label: "Esmeralda", shortLabel: "Esmeralda", icon: "✦" },
+  { key: "ruby", label: "Rubí", shortLabel: "Rubí", icon: "◆" },
+  { key: "obsidian", label: "Obsidiana", shortLabel: "Obsidiana", icon: "⬣" },
+]);
 
-function sanitizeAchievementKeyPart(value = "") {
+function sanitizeKeyPart(value = "") {
   return String(value || "")
     .trim()
     .replace(/[.#$/\[\]]+/g, "-")
@@ -19,567 +21,588 @@ function sanitizeAchievementKeyPart(value = "") {
     .toLowerCase();
 }
 
-function normalizeThresholds(thresholds = []) {
-  return Array.from(
-    new Set(
-      (Array.isArray(thresholds) ? thresholds : [])
-        .map((value) => Number(value))
-        .filter((value) => Number.isFinite(value) && value > 0),
-    ),
-  ).sort((a, b) => a - b);
+function toNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
 }
 
-function createThresholdAchievements({
-  familyId,
-  module,
-  icon,
-  title,
-  description,
-  criterion,
-  thresholds = [],
-  hidden = false,
-  getCurrentValue,
-  unitLabel = "",
-  groupKey = "",
-  groupLabel = "",
-  entityId = "",
-  entityLabel = "",
-  valueFormatter = null,
-}) {
-  const safeThresholds = normalizeThresholds(thresholds);
-  return safeThresholds.map((targetValue, index) => ({
-    id: `${familyId}_${targetValue}`,
-    familyId,
-    module,
-    icon,
-    hidden,
-    title: typeof title === "function" ? title(targetValue, index) : String(title || "").trim(),
-    description: typeof description === "function" ? description(targetValue, index) : String(description || "").trim(),
-    criterion: typeof criterion === "function" ? criterion(targetValue, index) : String(criterion || "").trim(),
-    targetValue: Number(targetValue) || 0,
-    tierIndex: index,
-    thresholds: [...safeThresholds],
-    getCurrentValue,
-    unitLabel,
-    groupKey: String(groupKey || "").trim(),
-    groupLabel: String(groupLabel || "").trim(),
-    entityId: String(entityId || "").trim(),
-    entityLabel: String(entityLabel || "").trim(),
-    scopeLabel: String(entityLabel || groupLabel || "").trim(),
-    formatValue: typeof valueFormatter === "function" ? valueFormatter : null,
-  }));
+function clampPositive(value) {
+  return Math.max(0, toNumber(value));
 }
 
-function formatHoursValue(value) {
-  const numeric = Math.max(0, Number(value) || 0);
+function formatInteger(value) {
+  return clampPositive(value).toLocaleString("es-ES", {
+    maximumFractionDigits: 0,
+  });
+}
+
+function formatHours(value) {
+  const numeric = clampPositive(value);
+  const hasFraction = Math.abs(numeric % 1) > 0.001;
   return `${numeric.toLocaleString("es-ES", {
-    minimumFractionDigits: numeric > 0 && numeric < 10 ? 1 : 0,
-    maximumFractionDigits: numeric > 0 && numeric < 10 ? 2 : 1,
+    minimumFractionDigits: hasFraction && numeric < 10 ? 1 : 0,
+    maximumFractionDigits: hasFraction ? 2 : 1,
   })} h`;
 }
 
-function getHabitEntityMetrics(context = {}, habitId = "") {
-  const safeId = String(habitId || "").trim();
-  if (!safeId) return null;
-  return context?.modules?.habits?.habitEntities?.[safeId] || null;
+function formatKg(value) {
+  return `${formatInteger(value)} kg`;
 }
 
-function createHabitEntityAchievements({ context = {}, habitId = "" } = {}) {
-  const entity = getHabitEntityMetrics(context, habitId);
-  if (!entity) return [];
+function formatWords(value) {
+  return formatInteger(value);
+}
 
-  const habitName = String(entity.name || entity.label || "Hábito").trim() || "Hábito";
-  const habitIcon = String(entity.emoji || "").trim() || (entity.goalType === "time" ? "⏱️" : entity.goalType === "count" ? "🔢" : "✅");
-  const familyRoot = `habit_${sanitizeAchievementKeyPart(habitId)}`;
-  const baseConfig = {
-    module: "habits",
-    groupKey: `habit:${sanitizeAchievementKeyPart(habitId)}`,
-    groupLabel: habitName,
-    entityId: habitId,
-    entityLabel: habitName,
+function createMetricDefinition({
+  id,
+  module,
+  title,
+  icon,
+  metricLabel,
+  description,
+  getValue,
+  formatValue = formatInteger,
+  tiers = [],
+  extend = null,
+  entityId = "",
+  entityLabel = "",
+  entityType = "metric",
+  priority = 100,
+}) {
+  return {
+    id: String(id || "").trim(),
+    module: String(module || "general").trim(),
+    title: String(title || "").trim(),
+    icon: String(icon || "🏆").trim() || "🏆",
+    metricLabel: String(metricLabel || "").trim(),
+    description: String(description || "").trim(),
+    getValue,
+    formatValue,
+    tiers: Array.from(
+      new Set(
+        (Array.isArray(tiers) ? tiers : [])
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value > 0),
+      ),
+    ).sort((a, b) => a - b),
+    extend: extend || { mode: "multiply", factor: 2, roundTo: 1 },
+    entityId: String(entityId || "").trim(),
+    entityLabel: String(entityLabel || title || "").trim(),
+    entityType: String(entityType || "metric").trim(),
+    priority: Number.isFinite(Number(priority)) ? Number(priority) : 100,
   };
+}
 
-  const shared = [
-    ...createThresholdAchievements({
-      familyId: `${familyRoot}_days`,
-      icon: habitIcon,
-      title: (target) => `${habitName} ${target} días`,
-      description: (target) => `Completa "${habitName}" durante ${target} días.`,
-      criterion: (target) => `Días con "${habitName}": ${target}`,
-      thresholds: SCALE_HABIT_DAYS,
-      getCurrentValue: (ctx) => getHabitEntityMetrics(ctx, habitId)?.completedDays || 0,
-      unitLabel: "días",
-      ...baseConfig,
+function getModuleMeta(moduleKey = "") {
+  return MODULE_META[moduleKey] || MODULE_META.general;
+}
+
+function extendThreshold(previous = 0, strategy = {}) {
+  const mode = String(strategy?.mode || "multiply").trim().toLowerCase();
+  if (mode === "linear") {
+    const step = Math.max(1, toNumber(strategy?.step || 1));
+    return previous + step;
+  }
+
+  if (mode === "stepped") {
+    const steps = Array.isArray(strategy?.steps) ? strategy.steps : [];
+    const index = Math.max(0, toNumber(strategy?.index || 0));
+    const step = Math.max(1, toNumber(steps[index] || steps[steps.length - 1] || 1));
+    strategy.index = index + 1;
+    return previous + step;
+  }
+
+  const factor = Math.max(1.05, toNumber(strategy?.factor || 2));
+  const roundTo = Math.max(1, toNumber(strategy?.roundTo || 1));
+  return Math.ceil((previous * factor) / roundTo) * roundTo;
+}
+
+function buildDynamicThresholds(definition, currentValue = 0, persistedLevelIndex = 0) {
+  const base = Array.isArray(definition?.tiers) ? [...definition.tiers] : [];
+  if (!base.length) return [];
+
+  const targetLevel = Math.max(0, Number(persistedLevelIndex || 0)) + 2;
+  const thresholds = [...base];
+  const strategy = definition?.extend ? { ...definition.extend } : { mode: "multiply", factor: 2, roundTo: 1 };
+
+  while (
+    thresholds.length < targetLevel
+    || clampPositive(currentValue) >= thresholds[thresholds.length - 1]
+  ) {
+    const previous = thresholds[thresholds.length - 1] || 1;
+    const next = extendThreshold(previous, strategy);
+    if (next <= previous) {
+      thresholds.push(previous + 1);
+    } else {
+      thresholds.push(next);
+    }
+  }
+
+  return thresholds;
+}
+
+function buildStaticDefinitions(context = {}) {
+  const modules = context?.modules || {};
+  const general = context?.general || {};
+
+  return [
+    createMetricDefinition({
+      id: "general_sessions",
+      module: "general",
+      title: "Sesiones abiertas",
+      icon: "👋",
+      metricLabel: "sesiones",
+      description: "Uso global acumulado de la app.",
+      getValue: () => general.sessions || 0,
+      tiers: [3, 10, 25, 60],
+      extend: { mode: "multiply", factor: 1.8, roundTo: 5 },
+      priority: 20,
     }),
-    ...createThresholdAchievements({
-      familyId: `${familyRoot}_streak`,
+    createMetricDefinition({
+      id: "general_days",
+      module: "general",
+      title: "Días de uso",
+      icon: "🗓",
+      metricLabel: "días",
+      description: "Constancia total en días distintos.",
+      getValue: () => general.activeDays || 0,
+      tiers: [3, 7, 14, 30, 60, 120],
+      extend: { mode: "multiply", factor: 1.7, roundTo: 5 },
+      priority: 10,
+    }),
+    createMetricDefinition({
+      id: "general_modules",
+      module: "general",
+      title: "Módulos activos",
+      icon: "🧩",
+      metricLabel: "módulos",
+      description: "Variedad real de uso dentro de Bookshell.",
+      getValue: () => general.modulesWithData || 0,
+      tiers: [2, 4, 6, 8],
+      extend: { mode: "linear", step: 1 },
+      priority: 30,
+    }),
+    createMetricDefinition({
+      id: "general_actions",
+      module: "general",
+      title: "Acciones registradas",
+      icon: "⚡",
+      metricLabel: "acciones",
+      description: "Actividad total combinada entre módulos.",
+      getValue: () => general.combinedActions || 0,
+      tiers: [10, 50, 150, 400],
+      extend: { mode: "multiply", factor: 1.8, roundTo: 25 },
+      priority: 40,
+    }),
+
+    createMetricDefinition({
+      id: "books_finished",
+      module: "books",
+      title: "Libros terminados",
+      icon: "📚",
+      metricLabel: "libros",
+      description: "La progresión principal de lectura.",
+      getValue: () => modules.books?.finishedBooks || 0,
+      tiers: [1, 3, 8, 15, 30, 50, 75, 100],
+      extend: { mode: "multiply", factor: 1.5, roundTo: 5 },
+      priority: 5,
+    }),
+    createMetricDefinition({
+      id: "books_pages",
+      module: "books",
+      title: "Páginas leídas",
+      icon: "📖",
+      metricLabel: "páginas",
+      description: "Volumen acumulado de lectura.",
+      getValue: () => modules.books?.pagesRead || 0,
+      tiers: [250, 1000, 2500, 5000, 10000, 20000],
+      extend: { mode: "multiply", factor: 1.8, roundTo: 500 },
+      priority: 15,
+    }),
+    createMetricDefinition({
+      id: "books_streak",
+      module: "books",
+      title: "Racha lectora",
       icon: "🔥",
-      title: (target) => `Racha ${target} · ${habitName}`,
-      description: (target) => `Mantén "${habitName}" ${target} días seguidos.`,
-      criterion: (target) => `Racha en "${habitName}": ${target} días`,
-      thresholds: SCALE_HABIT_DAYS,
-      getCurrentValue: (ctx) => {
-        const metrics = getHabitEntityMetrics(ctx, habitId);
-        return Math.max(metrics?.streakCurrent || 0, metrics?.streakBest || 0);
-      },
-      unitLabel: "días",
-      ...baseConfig,
+      metricLabel: "días",
+      description: "Mejor racha de lectura.",
+      getValue: () => Math.max(modules.books?.readingStreakCurrent || 0, modules.books?.readingStreakBest || 0),
+      tiers: [3, 7, 14, 30, 60, 100],
+      extend: { mode: "multiply", factor: 1.7, roundTo: 5 },
+      priority: 25,
+    }),
+    createMetricDefinition({
+      id: "books_genres",
+      module: "books",
+      title: "Géneros explorados",
+      icon: "🧠",
+      metricLabel: "géneros",
+      description: "Variedad lectora real.",
+      getValue: () => modules.books?.distinctGenres || 0,
+      tiers: [2, 4, 6, 10, 15, 20],
+      extend: { mode: "linear", step: 5 },
+      priority: 35,
+    }),
+
+    createMetricDefinition({
+      id: "recipes_saved",
+      module: "recipes",
+      title: "Recetas guardadas",
+      icon: "🍳",
+      metricLabel: "recetas",
+      description: "Tamaño de tu recetario.",
+      getValue: () => modules.recipes?.totalRecipes || 0,
+      tiers: [3, 10, 25, 50, 100],
+      extend: { mode: "multiply", factor: 1.7, roundTo: 5 },
+      priority: 10,
+    }),
+    createMetricDefinition({
+      id: "recipes_cooked",
+      module: "recipes",
+      title: "Preparaciones hechas",
+      icon: "🥘",
+      metricLabel: "preparaciones",
+      description: "Veces que realmente cocinaste.",
+      getValue: () => modules.recipes?.totalRecipeCooks || 0,
+      tiers: [3, 10, 25, 60, 120],
+      extend: { mode: "multiply", factor: 1.7, roundTo: 5 },
+      priority: 5,
+    }),
+    createMetricDefinition({
+      id: "recipes_logs",
+      module: "recipes",
+      title: "Días con registros",
+      icon: "🗒",
+      metricLabel: "días",
+      description: "Seguimiento real de comida.",
+      getValue: () => modules.recipes?.foodLogDays || 0,
+      tiers: [3, 7, 14, 30, 60, 120],
+      extend: { mode: "multiply", factor: 1.7, roundTo: 5 },
+      priority: 15,
+    }),
+
+    createMetricDefinition({
+      id: "gym_workouts",
+      module: "gym",
+      title: "Entrenamientos",
+      icon: "🏋️",
+      metricLabel: "sesiones",
+      description: "Volumen total de entrenos.",
+      getValue: () => modules.gym?.totalWorkouts || 0,
+      tiers: [5, 15, 35, 75, 150],
+      extend: { mode: "multiply", factor: 1.75, roundTo: 5 },
+      priority: 5,
+    }),
+    createMetricDefinition({
+      id: "gym_days",
+      module: "gym",
+      title: "Días activos",
+      icon: "📆",
+      metricLabel: "días",
+      description: "Constancia global en gym.",
+      getValue: () => modules.gym?.totalActiveDays || 0,
+      tiers: [3, 10, 25, 50, 100, 180],
+      extend: { mode: "multiply", factor: 1.6, roundTo: 5 },
+      priority: 15,
+    }),
+    createMetricDefinition({
+      id: "gym_volume",
+      module: "gym",
+      title: "Volumen movido",
+      icon: "🏋",
+      metricLabel: "kg",
+      description: "Carga total acumulada.",
+      getValue: () => modules.gym?.totalVolume || 0,
+      formatValue: formatKg,
+      tiers: [1000, 5000, 15000, 40000, 100000],
+      extend: { mode: "multiply", factor: 1.9, roundTo: 1000 },
+      priority: 25,
+    }),
+
+    createMetricDefinition({
+      id: "habits_active",
+      module: "habits",
+      title: "Hábitos activos",
+      icon: "✅",
+      metricLabel: "hábitos",
+      description: "Cantidad de hábitos vivos con seguimiento.",
+      getValue: () => modules.habits?.activeHabitsCount || 0,
+      tiers: [1, 3, 5, 8, 12],
+      extend: { mode: "linear", step: 2 },
+      priority: 30,
+    }),
+    createMetricDefinition({
+      id: "habits_tracking",
+      module: "habits",
+      title: "Días con seguimiento",
+      icon: "📈",
+      metricLabel: "días",
+      description: "Presencia acumulada del módulo de hábitos.",
+      getValue: () => modules.habits?.trackingDays || 0,
+      tiers: [3, 10, 25, 50, 100, 180],
+      extend: { mode: "multiply", factor: 1.6, roundTo: 5 },
+      priority: 20,
+    }),
+    createMetricDefinition({
+      id: "habits_best_streak",
+      module: "habits",
+      title: "Mejor racha",
+      icon: "🔥",
+      metricLabel: "días",
+      description: "La mejor racha lograda en cualquier hábito.",
+      getValue: () => modules.habits?.bestHabitStreak || 0,
+      tiers: [3, 7, 14, 30, 60, 100],
+      extend: { mode: "multiply", factor: 1.7, roundTo: 5 },
+      priority: 25,
+    }),
+
+    createMetricDefinition({
+      id: "finance_transactions",
+      module: "finance",
+      title: "Movimientos",
+      icon: "💳",
+      metricLabel: "movimientos",
+      description: "Registros financieros acumulados.",
+      getValue: () => modules.finance?.transactionCount || 0,
+      tiers: [10, 50, 150, 400, 1000],
+      extend: { mode: "multiply", factor: 1.8, roundTo: 25 },
+      priority: 5,
+    }),
+    createMetricDefinition({
+      id: "finance_days",
+      module: "finance",
+      title: "Días de seguimiento",
+      icon: "🗓",
+      metricLabel: "días",
+      description: "Constancia al registrar finanzas.",
+      getValue: () => modules.finance?.trackingDays || 0,
+      tiers: [3, 10, 25, 50, 100, 180],
+      extend: { mode: "multiply", factor: 1.6, roundTo: 5 },
+      priority: 15,
+    }),
+    createMetricDefinition({
+      id: "finance_budgets",
+      module: "finance",
+      title: "Presupuestos",
+      icon: "🎯",
+      metricLabel: "presupuestos",
+      description: "Estructura financiera creada.",
+      getValue: () => modules.finance?.budgetCount || 0,
+      tiers: [1, 3, 6, 12, 24],
+      extend: { mode: "multiply", factor: 1.6, roundTo: 1 },
+      priority: 25,
+    }),
+    createMetricDefinition({
+      id: "finance_goals",
+      module: "finance",
+      title: "Objetivos financieros",
+      icon: "🏁",
+      metricLabel: "objetivos",
+      description: "Metas definidas dentro del módulo.",
+      getValue: () => modules.finance?.goalCount || 0,
+      tiers: [1, 3, 5, 10, 20],
+      extend: { mode: "linear", step: 5 },
+      priority: 35,
+    }),
+
+    createMetricDefinition({
+      id: "notes_items",
+      module: "notes",
+      title: "Notas creadas",
+      icon: "📝",
+      metricLabel: "notas",
+      description: "Volumen total de notas.",
+      getValue: () => modules.notes?.noteCount || 0,
+      tiers: [3, 10, 25, 60, 150],
+      extend: { mode: "multiply", factor: 1.8, roundTo: 5 },
+      priority: 5,
+    }),
+    createMetricDefinition({
+      id: "notes_folders",
+      module: "notes",
+      title: "Carpetas creadas",
+      icon: "📁",
+      metricLabel: "carpetas",
+      description: "Organización acumulada.",
+      getValue: () => modules.notes?.folderCount || 0,
+      tiers: [1, 3, 5, 10, 20],
+      extend: { mode: "linear", step: 5 },
+      priority: 15,
+    }),
+    createMetricDefinition({
+      id: "notes_days",
+      module: "notes",
+      title: "Días activos",
+      icon: "📆",
+      metricLabel: "días",
+      description: "Constancia en notas.",
+      getValue: () => modules.notes?.activeDays || 0,
+      tiers: [3, 10, 25, 50, 100],
+      extend: { mode: "multiply", factor: 1.6, roundTo: 5 },
+      priority: 25,
+    }),
+
+    createMetricDefinition({
+      id: "videos_projects",
+      module: "videos",
+      title: "Proyectos de vídeo",
+      icon: "🎬",
+      metricLabel: "proyectos",
+      description: "Volumen total de piezas abiertas.",
+      getValue: () => modules.videos?.videoCount || 0,
+      tiers: [1, 3, 8, 20, 40],
+      extend: { mode: "multiply", factor: 1.7, roundTo: 1 },
+      priority: 15,
+    }),
+    createMetricDefinition({
+      id: "videos_published",
+      module: "videos",
+      title: "Vídeos publicados",
+      icon: "🚀",
+      metricLabel: "publicados",
+      description: "Output real publicado.",
+      getValue: () => modules.videos?.publishedCount || 0,
+      tiers: [1, 3, 8, 20, 40, 80],
+      extend: { mode: "multiply", factor: 1.7, roundTo: 1 },
+      priority: 5,
+    }),
+    createMetricDefinition({
+      id: "videos_words",
+      module: "videos",
+      title: "Palabras escritas",
+      icon: "⌨️",
+      metricLabel: "palabras",
+      description: "Producción de guión acumulada.",
+      getValue: () => modules.videos?.totalWords || 0,
+      formatValue: formatWords,
+      tiers: [1000, 5000, 15000, 40000, 100000],
+      extend: { mode: "multiply", factor: 1.9, roundTo: 1000 },
+      priority: 25,
+    }),
+
+    createMetricDefinition({
+      id: "media_watched",
+      module: "media",
+      title: "Títulos vistos",
+      icon: "🎞",
+      metricLabel: "títulos",
+      description: "Escala alta para consumo audiovisual.",
+      getValue: () => modules.media?.mediaCount || 0,
+      tiers: [10, 30, 75, 150, 300, 500, 800, 1200],
+      extend: { mode: "multiply", factor: 1.45, roundTo: 25 },
+      priority: 5,
+    }),
+    createMetricDefinition({
+      id: "media_rewatch",
+      module: "media",
+      title: "Rewatch",
+      icon: "🔁",
+      metricLabel: "rewatches",
+      description: "Títulos revisitados más de una vez.",
+      getValue: () => modules.media?.rewatchCount || 0,
+      tiers: [1, 5, 15, 35, 75, 150],
+      extend: { mode: "multiply", factor: 1.6, roundTo: 5 },
+      priority: 15,
+    }),
+    createMetricDefinition({
+      id: "media_days",
+      module: "media",
+      title: "Días con actividad",
+      icon: "📺",
+      metricLabel: "días",
+      description: "Constancia de visionado.",
+      getValue: () => modules.media?.watchDays || 0,
+      tiers: [3, 10, 25, 50, 100, 180],
+      extend: { mode: "multiply", factor: 1.6, roundTo: 5 },
+      priority: 25,
     }),
   ];
+}
 
-  if (entity.goalType === "time") {
-    return [
-      ...shared,
-      ...createThresholdAchievements({
-        familyId: `${familyRoot}_hours`,
-        icon: "⏱️",
-        title: (target) => `${habitName} ${target}h`,
-        description: (target) => `Acumula ${target} horas en "${habitName}".`,
-        criterion: (target) => `Horas en "${habitName}": ${target}`,
-        thresholds: SCALE_HABIT_HOURS,
-        getCurrentValue: (ctx) => getHabitEntityMetrics(ctx, habitId)?.totalHours || 0,
-        unitLabel: "horas",
-        valueFormatter: formatHoursValue,
-        ...baseConfig,
-      }),
-    ];
+function getHabitMetricConfig(entity = {}) {
+  const goalType = String(entity?.goalType || "check").trim().toLowerCase();
+  if (goalType === "time") {
+    return {
+      suffix: "time",
+      metricLabel: "horas",
+      description: "Horas acumuladas en este hábito.",
+      formatValue: formatHours,
+      getValue: () => clampPositive(entity.totalHours || 0),
+      tiers: [5, 15, 40, 100, 250, 500],
+      extend: { mode: "multiply", factor: 1.8, roundTo: 5 },
+    };
   }
 
-  if (entity.goalType === "count") {
-    return [
-      ...shared,
-      ...createThresholdAchievements({
-        familyId: `${familyRoot}_count`,
-        icon: "🔢",
-        title: (target) => `${habitName} ×${target}`,
-        description: (target) => `Registra ${target} repeticiones en "${habitName}".`,
-        criterion: (target) => `Conteo en "${habitName}": ${target}`,
-        thresholds: SCALE_HABIT_COUNTS,
-        getCurrentValue: (ctx) => getHabitEntityMetrics(ctx, habitId)?.totalCount || 0,
-        unitLabel: "repeticiones",
-        ...baseConfig,
-      }),
-    ];
+  if (goalType === "count") {
+    return {
+      suffix: "count",
+      metricLabel: "veces",
+      description: "Repeticiones acumuladas en este hábito.",
+      formatValue: formatInteger,
+      getValue: () => clampPositive(entity.totalCount || 0),
+      tiers: [10, 50, 150, 400, 800, 1500],
+      extend: { mode: "multiply", factor: 1.7, roundTo: 10 },
+    };
   }
 
-  return shared;
+  return {
+    suffix: "days",
+    metricLabel: "días",
+    description: "Días completados en este hábito.",
+    formatValue: formatInteger,
+    getValue: () => clampPositive(entity.completedDays || 0),
+    tiers: [3, 7, 14, 30, 60, 120],
+    extend: { mode: "multiply", factor: 1.7, roundTo: 5 },
+  };
 }
 
-const BASE_CATALOG = [
-  ...createThresholdAchievements({
-    familyId: "books_finished",
-    module: "books",
-    icon: "📚",
-    title: (target) => `Lector ${target}`,
-    description: (target) => `Termina ${target} libro${target === 1 ? "" : "s"}.`,
-    criterion: (target) => `Libros terminados: ${target}`,
-    thresholds: [1, 5, 10, 25, 50, 100, 250],
-    getCurrentValue: (ctx) => ctx.modules.books.finishedBooks,
-    unitLabel: "libros",
-  }),
-  ...createThresholdAchievements({
-    familyId: "books_pages",
-    module: "books",
-    icon: "📖",
-    title: (target) => `Páginas ${target}`,
-    description: (target) => `Acumula ${target} páginas registradas.`,
-    criterion: (target) => `Páginas leídas: ${target}`,
-    thresholds: SCALE_PAGES,
-    getCurrentValue: (ctx) => ctx.modules.books.pagesRead,
-    unitLabel: "páginas",
-  }),
-  ...createThresholdAchievements({
-    familyId: "books_streak",
-    module: "books",
-    icon: "🔥",
-    title: (target) => `Racha lectora ${target}`,
-    description: (target) => `Lee ${target} días seguidos.`,
-    criterion: (target) => `Racha de lectura: ${target} días`,
-    thresholds: SCALE_STREAK_DAYS,
-    getCurrentValue: (ctx) => Math.max(ctx.modules.books.readingStreakCurrent, ctx.modules.books.readingStreakBest),
-    unitLabel: "días",
-  }),
-  ...createThresholdAchievements({
-    familyId: "books_genres",
-    module: "books",
-    icon: "🧭",
-    title: (target) => `Explorador ${target}`,
-    description: (target) => `Completa ${target} géneros distintos.`,
-    criterion: (target) => `Géneros terminados: ${target}`,
-    thresholds: [3, 5, 8, 12, 20],
-    getCurrentValue: (ctx) => ctx.modules.books.distinctGenres,
-    unitLabel: "géneros",
-  }),
-
-  ...createThresholdAchievements({
-    familyId: "recipes_created",
-    module: "recipes",
-    icon: "🍽️",
-    title: (target) => `Recetario ${target}`,
-    description: (target) => `Guarda ${target} receta${target === 1 ? "" : "s"}.`,
-    criterion: (target) => `Recetas creadas: ${target}`,
-    thresholds: [1, 5, 10, 25, 50, 100],
-    getCurrentValue: (ctx) => ctx.modules.recipes.totalRecipes,
-    unitLabel: "recetas",
-  }),
-  ...createThresholdAchievements({
-    familyId: "recipes_logs",
-    module: "recipes",
-    icon: "🥗",
-    title: (target) => `Diario de cocina ${target}`,
-    description: (target) => `Registra comida ${target} días.`,
-    criterion: (target) => `Días con registros: ${target}`,
-    thresholds: SCALE_TRACKING_DAYS,
-    getCurrentValue: (ctx) => ctx.modules.recipes.foodLogDays,
-    unitLabel: "días",
-  }),
-  ...createThresholdAchievements({
-    familyId: "recipes_consumptions",
-    module: "recipes",
-    icon: "🍴",
-    title: (target) => `Buen apetito ${target}`,
-    description: (target) => `Suma ${target} consumos registrados.`,
-    criterion: (target) => `Consumos registrados: ${target}`,
-    thresholds: [10, 25, 50, 100, 250, 500, 1000],
-    getCurrentValue: (ctx) => ctx.modules.recipes.totalConsumptions,
-    unitLabel: "registros",
-  }),
-  ...createThresholdAchievements({
-    familyId: "recipes_cooks",
-    module: "recipes",
-    icon: "👨‍🍳",
-    title: (target) => `Fogón ${target}`,
-    description: (target) => `Cocina o marca ${target} preparaciones.`,
-    criterion: (target) => `Cocciones registradas: ${target}`,
-    thresholds: [3, 10, 25, 50, 100, 250],
-    getCurrentValue: (ctx) => ctx.modules.recipes.totalRecipeCooks,
-    unitLabel: "preparaciones",
-  }),
-  ...createThresholdAchievements({
-    familyId: "recipes_rice",
-    module: "recipes",
-    icon: "🍚",
-    hidden: true,
-    title: (target) => (target >= 25 ? "Culto al arroz" : "Fan del arroz"),
-    description: (target) => `Registra ${target} consumos relacionados con arroz.`,
-    criterion: (target) => `Consumos de arroz: ${target}`,
-    thresholds: [5, 10, 25],
-    getCurrentValue: (ctx) => ctx.modules.recipes.keywordCounts.rice,
-    unitLabel: "registros",
-  }),
-  ...createThresholdAchievements({
-    familyId: "recipes_coffee",
-    module: "recipes",
-    icon: "☕",
-    hidden: true,
-    title: (target) => (target >= 30 ? "Café Club" : "Pausa café"),
-    description: (target) => `Registra ${target} cafés o bebidas afines.`,
-    criterion: (target) => `Consumos de café: ${target}`,
-    thresholds: [5, 15, 30],
-    getCurrentValue: (ctx) => ctx.modules.recipes.keywordCounts.coffee,
-    unitLabel: "registros",
-  }),
-
-  ...createThresholdAchievements({
-    familyId: "gym_workouts",
-    module: "gym",
-    icon: "🏋️",
-    title: (target) => `Constancia ${target}`,
-    description: (target) => `Completa ${target} entrenamiento${target === 1 ? "" : "s"}.`,
-    criterion: (target) => `Entrenamientos: ${target}`,
-    thresholds: SCALE_EXTENDED,
-    getCurrentValue: (ctx) => ctx.modules.gym.totalWorkouts,
-    unitLabel: "entrenamientos",
-  }),
-  ...createThresholdAchievements({
-    familyId: "gym_days",
-    module: "gym",
-    icon: "📅",
-    title: (target) => `Semana activa ${target}`,
-    description: (target) => `Suma ${target} días de actividad gym/cardio.`,
-    criterion: (target) => `Días activos de gym: ${target}`,
-    thresholds: SCALE_TRACKING_DAYS,
-    getCurrentValue: (ctx) => ctx.modules.gym.totalActiveDays,
-    unitLabel: "días",
-  }),
-  ...createThresholdAchievements({
-    familyId: "gym_streak",
-    module: "gym",
-    icon: "🔥",
-    title: (target) => `Racha gym ${target}`,
-    description: (target) => `Mantén ${target} días seguidos de entrenamiento.`,
-    criterion: (target) => `Racha gym: ${target} días`,
-    thresholds: SCALE_STREAK_DAYS,
-    getCurrentValue: (ctx) => Math.max(ctx.modules.gym.activeStreakCurrent, ctx.modules.gym.activeStreakBest),
-    unitLabel: "días",
-  }),
-  ...createThresholdAchievements({
-    familyId: "gym_volume",
-    module: "gym",
-    icon: "💪",
-    title: (target) => `Volumen ${target}`,
-    description: (target) => `Acumula ${target} kg de volumen estimado.`,
-    criterion: (target) => `Volumen acumulado: ${target} kg`,
-    thresholds: SCALE_VOLUME,
-    getCurrentValue: (ctx) => ctx.modules.gym.totalVolume,
-    unitLabel: "kg",
-  }),
-
-  ...createThresholdAchievements({
-    familyId: "habits_completions",
-    module: "habits",
-    icon: "✅",
-    title: (target) => `Hábitos ${target}`,
-    description: (target) => `Suma ${target} completados de hábitos.`,
-    criterion: (target) => `Completados de hábitos: ${target}`,
-    thresholds: SCALE_EXTENDED,
-    getCurrentValue: (ctx) => ctx.modules.habits.totalCompletions,
-    unitLabel: "completados",
-  }),
-  ...createThresholdAchievements({
-    familyId: "habits_streak",
-    module: "habits",
-    icon: "🔥",
-    title: (target) => `Ritual ${target}`,
-    description: (target) => `Alcanza una racha de ${target} días en un hábito.`,
-    criterion: (target) => `Mejor racha de hábito: ${target} días`,
-    thresholds: SCALE_STREAK_DAYS,
-    getCurrentValue: (ctx) => ctx.modules.habits.bestHabitStreak,
-    unitLabel: "días",
-  }),
-  ...createThresholdAchievements({
-    familyId: "habits_all",
-    module: "habits",
-    icon: "🌞",
-    title: (target) => `Día perfecto ${target}`,
-    description: (target) => `Completa todos los hábitos activos ${target} veces.`,
-    criterion: (target) => `Días con todos los hábitos hechos: ${target}`,
-    thresholds: [1, 5, 10, 25, 50, 100, 250],
-    getCurrentValue: (ctx) => ctx.modules.habits.allHabitsDays,
-    unitLabel: "días",
-  }),
-  ...createThresholdAchievements({
-    familyId: "habits_tracking",
-    module: "habits",
-    icon: "📈",
-    title: (target) => `Seguimiento ${target}`,
-    description: (target) => `Registra hábitos durante ${target} días.`,
-    criterion: (target) => `Días con actividad de hábitos: ${target}`,
-    thresholds: SCALE_TRACKING_DAYS,
-    getCurrentValue: (ctx) => ctx.modules.habits.trackingDays,
-    unitLabel: "días",
-  }),
-
-  ...createThresholdAchievements({
-    familyId: "finance_transactions",
-    module: "finance",
-    icon: "💳",
-    title: (target) => `Control ${target}`,
-    description: (target) => `Registra ${target} movimiento${target === 1 ? "" : "s"}.`,
-    criterion: (target) => `Movimientos registrados: ${target}`,
-    thresholds: SCALE_EXTENDED,
-    getCurrentValue: (ctx) => ctx.modules.finance.transactionCount,
-    unitLabel: "movimientos",
-  }),
-  ...createThresholdAchievements({
-    familyId: "finance_days",
-    module: "finance",
-    icon: "🗓️",
-    title: (target) => `Seguimiento ${target}`,
-    description: (target) => `Mantén finanzas registradas ${target} días.`,
-    criterion: (target) => `Días con seguimiento financiero: ${target}`,
-    thresholds: SCALE_TRACKING_DAYS,
-    getCurrentValue: (ctx) => ctx.modules.finance.trackingDays,
-    unitLabel: "días",
-  }),
-  ...createThresholdAchievements({
-    familyId: "finance_budgets",
-    module: "finance",
-    icon: "🎯",
-    title: (target) => `Presupuesto ${target}`,
-    description: (target) => `Crea ${target} presupuesto${target === 1 ? "" : "s"}.`,
-    criterion: (target) => `Presupuestos: ${target}`,
-    thresholds: [1, 3, 6, 12, 24],
-    getCurrentValue: (ctx) => ctx.modules.finance.budgetCount,
-    unitLabel: "presupuestos",
-  }),
-  ...createThresholdAchievements({
-    familyId: "finance_goals",
-    module: "finance",
-    icon: "🏁",
-    title: (target) => `Objetivos ${target}`,
-    description: (target) => `Define ${target} objetivo${target === 1 ? "" : "s"} financiero${target === 1 ? "" : "s"}.`,
-    criterion: (target) => `Objetivos financieros: ${target}`,
-    thresholds: [1, 3, 5, 10],
-    getCurrentValue: (ctx) => ctx.modules.finance.goalCount,
-    unitLabel: "objetivos",
-  }),
-
-  ...createThresholdAchievements({
-    familyId: "notes_items",
-    module: "notes",
-    icon: "📝",
-    title: (target) => `Archivista ${target}`,
-    description: (target) => `Crea ${target} nota${target === 1 ? "" : "s"}.`,
-    criterion: (target) => `Notas creadas: ${target}`,
-    thresholds: [1, 5, 10, 25, 50, 100, 250],
-    getCurrentValue: (ctx) => ctx.modules.notes.noteCount,
-    unitLabel: "notas",
-  }),
-  ...createThresholdAchievements({
-    familyId: "notes_folders",
-    module: "notes",
-    icon: "📁",
-    title: (target) => `Orden mental ${target}`,
-    description: (target) => `Organiza ${target} carpeta${target === 1 ? "" : "s"}.`,
-    criterion: (target) => `Carpetas creadas: ${target}`,
-    thresholds: [1, 3, 5, 10, 25],
-    getCurrentValue: (ctx) => ctx.modules.notes.folderCount,
-    unitLabel: "carpetas",
-  }),
-
-  ...createThresholdAchievements({
-    familyId: "videos_items",
-    module: "videos",
-    icon: "🎬",
-    title: (target) => `Creador ${target}`,
-    description: (target) => `Abre ${target} proyecto${target === 1 ? "" : "s"} de vídeo.`,
-    criterion: (target) => `Proyectos de vídeo: ${target}`,
-    thresholds: [1, 3, 5, 10, 25, 50],
-    getCurrentValue: (ctx) => ctx.modules.videos.videoCount,
-    unitLabel: "vídeos",
-  }),
-  ...createThresholdAchievements({
-    familyId: "videos_words",
-    module: "videos",
-    icon: "⌨️",
-    title: (target) => `Guion ${target}`,
-    description: (target) => `Escribe ${target} palabras en tus vídeos.`,
-    criterion: (target) => `Palabras escritas: ${target}`,
-    thresholds: [500, 1000, 5000, 10000, 25000, 50000],
-    getCurrentValue: (ctx) => ctx.modules.videos.totalWords,
-    unitLabel: "palabras",
-  }),
-  ...createThresholdAchievements({
-    familyId: "videos_published",
-    module: "videos",
-    icon: "🚀",
-    title: (target) => `Publicado ${target}`,
-    description: (target) => `Marca ${target} vídeo${target === 1 ? "" : "s"} como publicado${target === 1 ? "" : "s"}.`,
-    criterion: (target) => `Vídeos publicados: ${target}`,
-    thresholds: [1, 3, 5, 10, 25, 50],
-    getCurrentValue: (ctx) => ctx.modules.videos.publishedCount,
-    unitLabel: "publicados",
-  }),
-
-  ...createThresholdAchievements({
-    familyId: "media_items",
-    module: "media",
-    icon: "🎞️",
-    title: (target) => `Pantalla ${target}`,
-    description: (target) => `Añade ${target} título${target === 1 ? "" : "s"} a media.`,
-    criterion: (target) => `Entradas de media: ${target}`,
-    thresholds: [1, 5, 10, 25, 50, 100, 250, 500],
-    getCurrentValue: (ctx) => ctx.modules.media.mediaCount,
-    unitLabel: "entradas",
-  }),
-  ...createThresholdAchievements({
-    familyId: "media_days",
-    module: "media",
-    icon: "📺",
-    title: (target) => `Sesión ${target}`,
-    description: (target) => `Registra media en ${target} días distintos.`,
-    criterion: (target) => `Días con actividad en media: ${target}`,
-    thresholds: SCALE_TRACKING_DAYS,
-    getCurrentValue: (ctx) => ctx.modules.media.watchDays,
-    unitLabel: "días",
-  }),
-
-  ...createThresholdAchievements({
-    familyId: "general_sessions",
-    module: "general",
-    icon: "👋",
-    title: (target) => `Vuelta ${target}`,
-    description: (target) => `Entra ${target} veces en la app.`,
-    criterion: (target) => `Sesiones abiertas: ${target}`,
-    thresholds: SCALE_EXTENDED,
-    getCurrentValue: (ctx) => ctx.general.sessions,
-    unitLabel: "sesiones",
-  }),
-  ...createThresholdAchievements({
-    familyId: "general_days",
-    module: "general",
-    icon: "🗓️",
-    title: (target) => `Presencia ${target}`,
-    description: (target) => `Usa la app durante ${target} días.`,
-    criterion: (target) => `Días de uso: ${target}`,
-    thresholds: SCALE_TRACKING_DAYS,
-    getCurrentValue: (ctx) => ctx.general.activeDays,
-    unitLabel: "días",
-  }),
-  ...createThresholdAchievements({
-    familyId: "general_modules",
-    module: "general",
-    icon: "🧩",
-    title: (target) => `Multitarea ${target}`,
-    description: (target) => `Activa ${target} módulos distintos.`,
-    criterion: (target) => `Módulos con actividad: ${target}`,
-    thresholds: [3, 5, 7, 9],
-    getCurrentValue: (ctx) => ctx.general.modulesWithData,
-    unitLabel: "módulos",
-  }),
-  ...createThresholdAchievements({
-    familyId: "general_actions",
-    module: "general",
-    icon: "⚡",
-    title: (target) => `Impulso ${target}`,
-    description: (target) => `Acumula ${target} acciones globales entre módulos.`,
-    criterion: (target) => `Acciones globales: ${target}`,
-    thresholds: [10, 25, 50, 100, 250, 500, 1000],
-    getCurrentValue: (ctx) => ctx.general.combinedActions,
-    unitLabel: "acciones",
-  }),
-];
-
-let cachedCatalogKey = "";
-let cachedCatalog = BASE_CATALOG;
-
-function buildDynamicCatalogKey(context = {}) {
-  const habitEntities = context?.modules?.habits?.habitEntities || {};
-  const parts = Object.values(habitEntities)
-    .filter((entity) => entity && (!entity.archived || entity.hasData))
-    .sort((a, b) => String(a.name || a.id || "").localeCompare(String(b.name || b.id || ""), "es"))
-    .map((entity) => [
-      sanitizeAchievementKeyPart(entity.id),
-      sanitizeAchievementKeyPart(entity.name || ""),
-      sanitizeAchievementKeyPart(entity.goalType || "check"),
-      entity.archived ? "1" : "0",
-      entity.hasData ? "1" : "0",
-    ].join(":"));
-  return parts.join("|");
+function buildHabitDefinitions(context = {}) {
+  const entities = context?.modules?.habits?.habitEntities || {};
+  return Object.values(entities)
+    .filter((entity) => entity && entity.id && entity.hasData)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es"))
+    .map((entity, index) => {
+      const metric = getHabitMetricConfig(entity);
+      const name = String(entity?.name || entity?.label || "Hábito").trim() || "Hábito";
+      return createMetricDefinition({
+        id: `habit_${sanitizeKeyPart(entity.id)}_${metric.suffix}`,
+        module: "habits",
+        title: name,
+        icon: String(entity?.emoji || "").trim() || "✅",
+        metricLabel: metric.metricLabel,
+        description: metric.description,
+        getValue: metric.getValue,
+        formatValue: metric.formatValue,
+        tiers: metric.tiers,
+        extend: metric.extend,
+        entityId: String(entity.id || "").trim(),
+        entityLabel: name,
+        entityType: "habit",
+        priority: 100 + index,
+      });
+    });
 }
 
-function buildDynamicCatalog(context = {}) {
-  const habitEntities = context?.modules?.habits?.habitEntities || {};
-  return Object.values(habitEntities)
-    .filter((entity) => entity && entity.id && (!entity.archived || entity.hasData))
-    .sort((a, b) => String(a.name || a.id || "").localeCompare(String(b.name || b.id || ""), "es"))
-    .flatMap((entity) => createHabitEntityAchievements({ context, habitId: entity.id }));
-}
-
-export function getAchievementCatalog(context = null) {
-  const cacheKey = buildDynamicCatalogKey(context || {});
-  if (!cacheKey) return BASE_CATALOG;
-  if (cacheKey === cachedCatalogKey) return cachedCatalog;
-  cachedCatalogKey = cacheKey;
-  cachedCatalog = [...BASE_CATALOG, ...buildDynamicCatalog(context || {})];
-  return cachedCatalog;
-}
-
-export function getAchievementById(achievementId = "", context = null) {
-  return getAchievementCatalog(context).find((achievement) => achievement.id === achievementId) || null;
+export function getAchievementMedalTiers() {
+  return MEDAL_TIERS;
 }
 
 export function getAchievementModuleMeta(moduleKey = "") {
-  return MODULE_META[moduleKey] || MODULE_META.general;
+  return getModuleMeta(moduleKey);
+}
+
+export function buildAchievementDefinitions(context = {}, persistedPanels = {}) {
+  const definitions = [
+    ...buildStaticDefinitions(context),
+    ...buildHabitDefinitions(context),
+  ];
+
+  return definitions.map((definition) => {
+    const persistedLevelIndex = Math.max(0, toNumber(persistedPanels?.[definition.id]?.levelIndex || 0));
+    const currentValue = clampPositive(definition.getValue?.(context) || 0);
+    return {
+      ...definition,
+      thresholds: buildDynamicThresholds(definition, currentValue, persistedLevelIndex),
+    };
+  });
 }

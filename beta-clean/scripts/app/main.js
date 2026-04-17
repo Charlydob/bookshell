@@ -278,6 +278,18 @@ function ensureSyncIndicatorTextNode(indicator) {
   return textNode;
 }
 
+function ensureSyncIndicatorActionsNode(indicator) {
+  if (!(indicator instanceof HTMLElement)) return null;
+
+  let actionsNode = indicator.querySelector(".app-sync-indicator__actions");
+  if (actionsNode) return actionsNode;
+
+  actionsNode = document.createElement("span");
+  actionsNode.className = "app-sync-indicator__actions";
+  indicator.append(actionsNode);
+  return actionsNode;
+}
+
 function setSyncIndicatorExpanded(indicator, isOpen) {
   if (!(indicator instanceof HTMLElement)) return;
   indicator.classList.toggle("is-open", isOpen);
@@ -288,6 +300,7 @@ function prepareSyncIndicator(indicator) {
   if (!(indicator instanceof HTMLElement)) return null;
 
   const textNode = ensureSyncIndicatorTextNode(indicator);
+  ensureSyncIndicatorActionsNode(indicator);
   if (!indicator.hasAttribute("aria-label")) {
     indicator.setAttribute("aria-label", "Estado de sincronización");
   }
@@ -630,9 +643,22 @@ function loadStyleOnce(href, { highPriority = false } = {}) {
     return loadedStyles.get(absoluteUrl);
   }
 
-  const existing = document.querySelector(`link[rel="stylesheet"][href="${absoluteUrl}"]`);
+  const existing = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+    .find((node) => node.href === absoluteUrl);
   if (existing) {
     const resolved = Promise.resolve(existing);
+    loadedStyles.set(absoluteUrl, resolved);
+    return resolved;
+  }
+
+  const preloaded = Array.from(document.querySelectorAll('link[rel="preload"][as="style"]'))
+    .find((node) => node.href === absoluteUrl);
+  if (preloaded) {
+    preloaded.rel = "stylesheet";
+    if (highPriority && "fetchPriority" in preloaded) {
+      preloaded.fetchPriority = "high";
+    }
+    const resolved = Promise.resolve(preloaded);
     loadedStyles.set(absoluteUrl, resolved);
     return resolved;
   }

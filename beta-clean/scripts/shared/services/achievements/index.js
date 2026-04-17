@@ -1,26 +1,14 @@
 import { auth, db, onUserChange } from "../../firebase/index.js";
-import {
-  get,
-  onValue,
-  ref,
-  runTransaction,
-  update,
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { get, onValue, ref, runTransaction, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { resolveFinancePathCandidates } from "../../../modules/finance/finance/data.js";
-import { getAchievementCatalog, getAchievementModuleMeta } from "./catalog.js";
-import {
-  MODULE_META,
-  buildAchievementsContext,
-  computeModuleMetrics,
-  getModuleKeys,
-  mergeFinanceSnapshot,
-} from "./metrics.js";
+import { buildAchievementsModel, createPanelPersistenceRecord } from "./model.js";
+import { MODULE_META, buildAchievementsContext, computeModuleMetrics, getModuleKeys, mergeFinanceSnapshot } from "./metrics.js";
 
 const ACHIEVEMENTS_ROOT_SEGMENT = "meta/achievements";
-const ACHIEVEMENT_SEEN_PREFIX = "bookshell:achievements:seen:v1:";
 const MODULE_CACHE_MAX_AGE_MS = 90 * 1000;
 const EVALUATE_DEBOUNCE_MS = 220;
 const WARM_FETCH_DELAY_MS = 650;
+const ACTIVE_MODULE_STORAGE_KEY = "bookshell:achievements:active-module:v1";
 
 const state = {
   initialized: false,
@@ -31,57 +19,50 @@ const state = {
   evaluateTimer: 0,
   warmTimer: 0,
   boundDataEvents: false,
-  seenUnlockIds: new Set(),
-  pendingUnlockIds: new Set(),
   moduleSnapshots: {},
   achievementsRoot: "",
-  remoteData: {
-    unlocked: {},
-    usage: {},
-  },
+  remoteData: { panels: {}, usage: {} },
+  pendingPanelUpdates: new Map(),
+  toasts: [],
   ui: {
     centerOpen: false,
-    activeModuleFilter: "all",
+    activeModule: readActiveModule(),
   },
-  toasts: [],
 };
+
+function readActiveModule() {
+  try {
+    return String(localStorage.getItem(ACTIVE_MODULE_STORAGE_KEY) || "general").trim() || "general";
+  } catch (_) {
+    return "general";
+  }
+}
+
+function persistActiveModule(moduleKey = "") {
+  try {
+    localStorage.setItem(ACTIVE_MODULE_STORAGE_KEY, String(moduleKey || "general"));
+  } catch (_) {}
+}
 
 function getAchievementsRoot(uid = state.uid) {
   return uid ? `v2/users/${uid}/${ACHIEVEMENTS_ROOT_SEGMENT}` : "";
 }
 
-function getSeenUnlockStorageKey(uid = state.uid) {
-  return `${ACHIEVEMENT_SEEN_PREFIX}${uid || "anonymous"}`;
-}
-
 function escapeHtml(value) {
-  return String(value || "").replace(/[&<>"']/g, (char) => {
-    switch (char) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return char;
-    }
-  });
+  return String(value || "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  })[char] || char);
 }
 
 function formatDate(ts) {
   const numeric = Number(ts);
   if (!Number.isFinite(numeric) || numeric <= 0) return "—";
   try {
-    return new Date(numeric).toLocaleDateString("es-ES", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
+    return new Date(numeric).toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" });
   } catch (_) {
     return "—";
   }
@@ -89,52 +70,26 @@ function formatDate(ts) {
 
 function getLocalDayKey() {
   const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function getViewIdToModuleMap() {
-  return Object.values(MODULE_META).reduce((acc, meta) => {
-    if (meta.viewId) acc[meta.viewId] = meta.key;
-    return acc;
-  }, {});
-}
-
-const VIEW_ID_TO_MODULE = getViewIdToModuleMap();
-
-function readSeenUnlockIds(uid = state.uid) {
-  if (!uid) return new Set();
-  try {
-    const raw = localStorage.getItem(getSeenUnlockStorageKey(uid));
-    const parsed = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(parsed) ? parsed.map((value) => String(value || "").trim()).filter(Boolean) : []);
-  } catch (_) {
-    return new Set();
-  }
-}
-
-function persistSeenUnlockIds() {
-  if (!state.uid) return;
-  try {
-    localStorage.setItem(getSeenUnlockStorageKey(state.uid), JSON.stringify(Array.from(state.seenUnlockIds)));
-  } catch (_) {}
-}
-
-function markUnlockAsSeen(achievementId = "") {
-  const safeId = String(achievementId || "").trim();
-  if (!safeId) return;
-  state.seenUnlockIds.add(safeId);
-  persistSeenUnlockIds();
-}
+const VIEW_ID_TO_MODULE = Object.values(MODULE_META).reduce((acc, meta) => {
+  if (meta.viewId) acc[meta.viewId] = meta.key;
+  return acc;
+}, {});
 
 function ensureTopBarButton() {
   let button = document.getElementById("app-achievements-btn");
   if (button) return button;
 
-  const wrap = document.querySelector(".app-sync-indicator-wrap");
-  if (!wrap) return null;
+  const indicator = document.querySelector(".app-sync-indicator");
+  if (!indicator) return null;
+  let actions = indicator.querySelector(".app-sync-indicator__actions");
+  if (!actions) {
+    actions = document.createElement("span");
+    actions.className = "app-sync-indicator__actions";
+    indicator.append(actions);
+  }
 
   button = document.createElement("button");
   button.id = "app-achievements-btn";
@@ -147,11 +102,10 @@ function ensureTopBarButton() {
     <span class="app-achievements-btn__text">Logros</span>
     <span class="app-achievements-btn__count" data-achievements-count>0</span>
   `;
-
-  wrap.prepend(button);
-  button.addEventListener("click", () => {
-    if (state.ui.centerOpen) closeAchievementsCenter();
-    else openAchievementsCenter();
+  actions.append(button);
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    state.ui.centerOpen ? closeAchievementsCenter() : openAchievementsCenter();
   });
   return button;
 }
@@ -164,19 +118,18 @@ function ensureToastStack() {
   stack.className = "app-achievements-toast-stack";
   stack.setAttribute("aria-live", "polite");
   stack.setAttribute("aria-atomic", "false");
-  document.body.appendChild(stack);
   stack.addEventListener("click", (event) => {
     const closeButton = event.target?.closest?.("[data-achievement-toast-close]");
     if (!closeButton) return;
     dismissToast(closeButton.dataset.achievementToastClose || "");
   });
+  document.body.append(stack);
   return stack;
 }
 
 function ensureAchievementsModal() {
   let backdrop = document.getElementById("app-achievements-backdrop");
   if (backdrop) return backdrop;
-
   backdrop = document.createElement("div");
   backdrop.id = "app-achievements-backdrop";
   backdrop.className = "modal-backdrop app-achievements-backdrop hidden";
@@ -193,29 +146,30 @@ function ensureAchievementsModal() {
       <div class="modal-body app-achievements-modal__body" id="app-achievements-body"></div>
     </section>
   `;
-
-  document.body.appendChild(backdrop);
   backdrop.addEventListener("click", (event) => {
     if (event.target === backdrop || event.target?.closest?.("[data-achievements-close]")) {
       closeAchievementsCenter();
     }
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && state.ui.centerOpen) {
-      closeAchievementsCenter();
-    }
+    if (event.key === "Escape" && state.ui.centerOpen) closeAchievementsCenter();
   });
+  document.body.append(backdrop);
   return backdrop;
 }
 
 function getVisibleModalCount() {
-  return document.querySelectorAll(
-    ".modal-backdrop:not(.hidden), .nav-manage-backdrop:not(.hidden), .nav-compose-backdrop:not(.hidden)",
-  ).length;
+  return document.querySelectorAll(".modal-backdrop:not(.hidden), .nav-manage-backdrop:not(.hidden), .nav-compose-backdrop:not(.hidden)").length;
 }
 
 function syncBodyModalLock() {
   document.body.classList.toggle("has-open-modal", getVisibleModalCount() > 0);
+}
+
+function setActiveModule(moduleKey = "", { rerender = true } = {}) {
+  state.ui.activeModule = String(moduleKey || "general").trim() || "general";
+  persistActiveModule(state.ui.activeModule);
+  if (rerender) renderAchievementsCenter();
 }
 
 function openAchievementsCenter() {
@@ -241,46 +195,35 @@ function closeAchievementsCenter() {
 
 function getModuleLiveSnapshot(moduleKey = "") {
   switch (moduleKey) {
-    case "books":
-      return window.__bookshellBooks?.getAchievementsSnapshot?.() || null;
-    case "recipes":
-      return window.__bookshellRecipes?.getAchievementsSnapshot?.() || null;
-    case "gym":
-      return window.__bookshellGym?.getAchievementsSnapshot?.() || null;
-    case "habits":
-      return window.__bookshellHabits?.getAchievementsSnapshot?.() || null;
-    case "finance":
-      return window.__bookshellFinance?.getAchievementsSnapshot?.() || null;
-    case "notes":
-      return window.__bookshellNotes?.getAchievementsSnapshot?.() || null;
-    case "videos":
-      return window.__bookshellVideosHub?.getAchievementsSnapshot?.() || null;
-    case "media":
-      return window.__bookshellMedia?.getAchievementsSnapshot?.() || null;
-    default:
-      return null;
+    case "books": return window.__bookshellBooks?.getAchievementsSnapshot?.() || null;
+    case "recipes": return window.__bookshellRecipes?.getAchievementsSnapshot?.() || null;
+    case "gym": return window.__bookshellGym?.getAchievementsSnapshot?.() || null;
+    case "habits": return window.__bookshellHabits?.getAchievementsSnapshot?.() || null;
+    case "finance": return window.__bookshellFinance?.getAchievementsSnapshot?.() || null;
+    case "notes": return window.__bookshellNotes?.getAchievementsSnapshot?.() || null;
+    case "videos": return window.__bookshellVideosHub?.getAchievementsSnapshot?.() || null;
+    case "media": return window.__bookshellMedia?.getAchievementsSnapshot?.() || null;
+    default: return null;
   }
 }
 
 async function fetchRemoteModuleSnapshot(moduleKey = "") {
   if (!state.uid) return null;
   switch (moduleKey) {
-    case "books": {
-      const snapshot = await get(ref(db, `v2/users/${state.uid}/books`));
-      return snapshot.val() || {};
-    }
-    case "recipes": {
-      const snapshot = await get(ref(db, `v2/users/${state.uid}/recipes`));
-      return snapshot.val() || {};
-    }
-    case "gym": {
-      const snapshot = await get(ref(db, `v2/users/${state.uid}/gym/gym`));
-      return snapshot.val() || {};
-    }
-    case "habits": {
-      const snapshot = await get(ref(db, `v2/users/${state.uid}/habits`));
-      return snapshot.val() || {};
-    }
+    case "books":
+      return (await get(ref(db, `v2/users/${state.uid}/books`))).val() || {};
+    case "recipes":
+      return (await get(ref(db, `v2/users/${state.uid}/recipes`))).val() || {};
+    case "gym":
+      return (await get(ref(db, `v2/users/${state.uid}/gym/gym`))).val() || {};
+    case "habits":
+      return (await get(ref(db, `v2/users/${state.uid}/habits`))).val() || {};
+    case "notes":
+      return (await get(ref(db, `v2/users/${state.uid}/notes`))).val() || {};
+    case "videos":
+      return (await get(ref(db, `v2/users/${state.uid}/videosHub/videos`))).val() || {};
+    case "media":
+      return (await get(ref(db, `v2/users/${state.uid}/movies/media`))).val() || {};
     case "finance": {
       const [primaryPath, legacyPath] = resolveFinancePathCandidates(state.uid);
       const [primarySnap, legacySnap] = await Promise.all([
@@ -288,18 +231,6 @@ async function fetchRemoteModuleSnapshot(moduleKey = "") {
         primaryPath === legacyPath ? Promise.resolve({ val: () => ({}) }) : get(ref(db, legacyPath)),
       ]);
       return mergeFinanceSnapshot(primarySnap.val() || {}, legacySnap.val() || {});
-    }
-    case "notes": {
-      const snapshot = await get(ref(db, `v2/users/${state.uid}/notes`));
-      return snapshot.val() || {};
-    }
-    case "videos": {
-      const snapshot = await get(ref(db, `v2/users/${state.uid}/videosHub/videos`));
-      return snapshot.val() || {};
-    }
-    case "media": {
-      const snapshot = await get(ref(db, `v2/users/${state.uid}/movies/media`));
-      return snapshot.val() || {};
     }
     default:
       return null;
@@ -310,33 +241,23 @@ function writeModuleMetrics(moduleKey = "", snapshot, source = "live") {
   const safeModule = String(moduleKey || "").trim();
   if (!safeModule) return null;
   const metrics = computeModuleMetrics(safeModule, snapshot || {});
-  state.moduleSnapshots[safeModule] = {
-    source,
-    updatedAt: Date.now(),
-    metrics,
-  };
+  state.moduleSnapshots[safeModule] = { source, updatedAt: Date.now(), metrics };
   return metrics;
 }
 
 async function ensureModuleMetrics(moduleKey = "", { forceRemote = false } = {}) {
   const safeModule = String(moduleKey || "").trim();
   if (!safeModule || safeModule === "general") return null;
-
   const cached = state.moduleSnapshots[safeModule];
   if (!forceRemote && cached && (Date.now() - Number(cached.updatedAt || 0)) < MODULE_CACHE_MAX_AGE_MS) {
     return cached.metrics;
   }
-
   if (!forceRemote) {
     const liveSnapshot = getModuleLiveSnapshot(safeModule);
-    if (liveSnapshot) {
-      return writeModuleMetrics(safeModule, liveSnapshot, "live");
-    }
+    if (liveSnapshot) return writeModuleMetrics(safeModule, liveSnapshot, "live");
   }
-
   try {
-    const remoteSnapshot = await fetchRemoteModuleSnapshot(safeModule);
-    return writeModuleMetrics(safeModule, remoteSnapshot, "remote");
+    return writeModuleMetrics(safeModule, await fetchRemoteModuleSnapshot(safeModule), "remote");
   } catch (error) {
     console.warn(`[achievements] no se pudo cargar ${safeModule}`, error);
     return cached?.metrics || null;
@@ -353,13 +274,7 @@ async function warmAllModuleMetrics() {
 
 function scheduleWarmModuleMetrics() {
   window.clearTimeout(state.warmTimer);
-  state.warmTimer = window.setTimeout(() => {
-    void warmAllModuleMetrics();
-  }, WARM_FETCH_DELAY_MS);
-}
-
-function getUsageData() {
-  return state.remoteData?.usage || {};
+  state.warmTimer = window.setTimeout(() => void warmAllModuleMetrics(), WARM_FETCH_DELAY_MS);
 }
 
 function getAchievementsContext() {
@@ -367,230 +282,193 @@ function getAchievementsContext() {
   getModuleKeys().forEach((moduleKey) => {
     moduleMetrics[moduleKey] = state.moduleSnapshots[moduleKey]?.metrics || null;
   });
-  return buildAchievementsContext(moduleMetrics, getUsageData());
+  return buildAchievementsContext(moduleMetrics, state.remoteData.usage || {});
 }
 
-function formatAchievementValue(stateItem, value) {
-  const numeric = Number(value);
-  const safeValue = Number.isFinite(numeric) ? numeric : 0;
-  if (typeof stateItem?.formatValue === "function") {
-    try {
-      return stateItem.formatValue(safeValue);
-    } catch (_) {}
-  }
-
-  const hasFraction = Math.abs(safeValue % 1) > 0.0001;
-  return safeValue.toLocaleString("es-ES", {
-    minimumFractionDigits: hasFraction && safeValue < 10 ? 1 : 0,
-    maximumFractionDigits: hasFraction ? 2 : 0,
+function getAchievementsModel() {
+  return buildAchievementsModel({
+    context: getAchievementsContext(),
+    persistedPanels: state.remoteData.panels || {},
   });
 }
 
-function formatAchievementScope(stateItem) {
-  if (stateItem?.scopeLabel) {
-    return `${stateItem.moduleMeta.label} · ${stateItem.scopeLabel}`;
+function resolveActiveGroup(model) {
+  if (!model.groups.length) return null;
+  if (model.groupsByModule[state.ui.activeModule]) return model.groupsByModule[state.ui.activeModule];
+  const fallback = model.groups[0] || null;
+  if (fallback) {
+    state.ui.activeModule = fallback.module;
+    persistActiveModule(fallback.module);
   }
-  return stateItem?.moduleMeta?.label || "General";
+  return fallback;
 }
 
-function computeAchievementStates() {
-  const context = getAchievementsContext();
-  const unlockedMap = state.remoteData?.unlocked || {};
-  return getAchievementCatalog(context).map((achievement) => {
-    let currentValue = 0;
-    try {
-      currentValue = Math.max(0, Number(achievement.getCurrentValue(context) || 0));
-    } catch (error) {
-      console.warn(`[achievements] fallo al evaluar ${achievement.id}`, error);
-      currentValue = 0;
-    }
-    const targetValue = Math.max(1, Number(achievement.targetValue || 1));
-    const unlockedRecord = unlockedMap?.[achievement.id] || null;
-    const unlocked = Boolean(unlockedRecord);
-    const satisfied = currentValue >= targetValue;
-    const completed = unlocked || satisfied;
-    const progressRatio = completed ? 1 : Math.max(0, Math.min(1, currentValue / targetValue));
-    const hiddenLocked = Boolean(achievement.hidden && !completed);
-    return {
-      ...achievement,
-      moduleMeta: getAchievementModuleMeta(achievement.module),
-      currentValue,
-      targetValue,
-      unlockedAt: Number(unlockedRecord?.unlockedAt || 0) || 0,
-      unlocked,
-      satisfied,
-      state: completed ? "completed" : (currentValue > 0 ? "in_progress" : "blocked"),
-      completed,
-      hiddenLocked,
-      progressRatio,
-      remaining: Math.max(0, targetValue - currentValue),
-    };
-  });
-}
-
-function buildSummary(states = []) {
-  const visibleStates = states.filter((stateItem) => !stateItem.hiddenLocked);
-  const completed = visibleStates.filter((stateItem) => stateItem.completed);
-  return {
-    completedCount: completed.length,
-    availableCount: visibleStates.length,
-    completionPct: visibleStates.length ? Math.round((completed.length / visibleStates.length) * 100) : 0,
-  };
-}
-
-function getClosestAchievements(states = [], limit = 6) {
-  const sorted = states
-    .filter((stateItem) => !stateItem.completed && !stateItem.hiddenLocked && stateItem.currentValue > 0)
-    .sort((a, b) => {
-      const ratioDiff = b.progressRatio - a.progressRatio;
-      if (Math.abs(ratioDiff) > 0.0001) return ratioDiff;
-      if (a.remaining !== b.remaining) return a.remaining - b.remaining;
-      return a.targetValue - b.targetValue;
-    });
-
-  const picked = [];
-  const seenModules = new Set();
-
-  sorted.forEach((stateItem) => {
-    if (picked.length >= limit) return;
-    if (seenModules.has(stateItem.module)) return;
-    seenModules.add(stateItem.module);
-    picked.push(stateItem);
-  });
-
-  if (picked.length < limit) {
-    sorted.forEach((stateItem) => {
-      if (picked.length >= limit) return;
-      if (picked.some((entry) => entry.id === stateItem.id)) return;
-      picked.push(stateItem);
-    });
-  }
-
-  return picked.slice(0, limit);
-}
-
-function groupStatesByModule(states = []) {
-  return states.reduce((acc, stateItem) => {
-    const key = stateItem.module;
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(stateItem);
-    return acc;
-  }, {});
-}
-
-function formatRemainingLabel(stateItem) {
-  const unit = stateItem.unitLabel || "pasos";
-  const safeRemaining = Math.max(0, Number(stateItem.remaining || 0));
-  if (typeof stateItem?.formatValue === "function") {
-    return `Te faltan ${formatAchievementValue(stateItem, safeRemaining)} para desbloquear ${stateItem.title}.`;
-  }
-  if (safeRemaining === 1) {
-    const singular = unit.replace(/s$/, "") || unit;
-    return `Te falta ${formatAchievementValue(stateItem, 1)} ${singular} para desbloquear ${stateItem.title}.`;
-  }
-  return `Te faltan ${formatAchievementValue(stateItem, safeRemaining)} ${unit} para desbloquear ${stateItem.title}.`;
-}
-
-function renderProgressBar(progressRatio = 0) {
+function renderProgressBar(progressRatio = 0, compact = false) {
   const pct = Math.max(0, Math.min(100, Math.round(progressRatio * 100)));
   return `
-    <div class="app-achievements-progress" aria-hidden="true">
+    <div class="app-achievements-progress${compact ? " app-achievements-progress--compact" : ""}" aria-hidden="true">
       <i style="width:${pct}%"></i>
     </div>
   `;
 }
 
-function renderAchievementCard(stateItem, { compact = false } = {}) {
-  const title = stateItem.hiddenLocked ? "Logro oculto" : stateItem.title;
-  const description = stateItem.hiddenLocked ? "Sigue usando la app para descubrirlo." : stateItem.description;
-  const progressText = stateItem.completed
-    ? `Desbloqueado · ${formatDate(stateItem.unlockedAt)}`
-    : `${formatAchievementValue(stateItem, stateItem.currentValue)}/${formatAchievementValue(stateItem, stateItem.targetValue)}`;
+function renderModuleTabs(model, activeGroup) {
   return `
-    <article class="app-achievement-card${compact ? " is-compact" : ""}" data-achievement-state="${stateItem.state}">
-      <div class="app-achievement-card__head">
-        <div class="app-achievement-card__icon" aria-hidden="true">${escapeHtml(stateItem.hiddenLocked ? "✨" : stateItem.icon)}</div>
-        <div class="app-achievement-card__copy">
-          <strong>${escapeHtml(title)}</strong>
-          <span>${escapeHtml(description)}</span>
+    <div class="app-achievements-tabs" role="tablist" aria-label="Módulos de logros">
+      ${model.groups.map((group) => `
+        <button
+          type="button"
+          class="app-achievements-tab${group.module === activeGroup?.module ? " is-active" : ""}"
+          role="tab"
+          aria-selected="${group.module === activeGroup?.module ? "true" : "false"}"
+          data-achievement-module-tab="${escapeHtml(group.module)}"
+          title="${escapeHtml(group.meta.label)}"
+        >
+          <span class="app-achievements-tab__icon" aria-hidden="true">${escapeHtml(group.meta.emoji)}</span>
+          <span class="app-achievements-tab__label">${escapeHtml(group.meta.label)}</span>
+          <span class="app-achievements-tab__count">${group.counts.unlocked}/${group.counts.total}</span>
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderTierRail(panel) {
+  return `
+    <div class="app-achievement-card__tiers" aria-label="Tiers visibles">
+      ${panel.visibleTiers.map((tier) => `
+        <span class="app-achievement-tier" data-state="${escapeHtml(tier.state)}">
+          <strong>${escapeHtml(tier.tier.icon)}</strong>
+          <small>${escapeHtml(tier.label)}</small>
+        </span>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderAchievementCard(panel) {
+  const progressLabel = panel.nextTier
+    ? `${panel.formattedCurrentValue} / ${panel.formattedNextThreshold}`
+    : `${panel.formattedCurrentValue} · máximo actual`;
+  const subtitle = panel.nextTier
+    ? `Siguiente rango: ${panel.nextTier.label}`
+    : `Último ascenso: ${formatDate(panel.unlockedAt)}`;
+
+  return `
+    <article class="app-achievement-card" data-tone="${escapeHtml(panel.tone)}">
+      <header class="app-achievement-card__head">
+        <div class="app-achievement-card__identity">
+          <span class="app-achievement-card__icon" aria-hidden="true">${escapeHtml(panel.icon)}</span>
+          <div class="app-achievement-card__copy">
+            <strong>${escapeHtml(panel.title)}</strong>
+            <span>${escapeHtml(panel.description)}</span>
+          </div>
+        </div>
+        <div class="app-achievement-card__medal" data-medal-tone="${escapeHtml(panel.currentTier.key)}">
+          <span aria-hidden="true">${escapeHtml(panel.currentTier.icon)}</span>
+          <b>${escapeHtml(panel.currentTier.shortLabel)}</b>
+        </div>
+      </header>
+
+      <div class="app-achievement-card__stats">
+        <div class="app-achievement-card__metric">
+          <strong>${escapeHtml(panel.formattedCurrentValue)}</strong>
+          <span>${escapeHtml(panel.metricLabel)}</span>
+        </div>
+        <div class="app-achievement-card__next">
+          <strong>${escapeHtml(panel.nextTier ? panel.formattedRemainingToNext : "Completado")}</strong>
+          <span>${escapeHtml(panel.nextTier ? "para el siguiente" : "tier activo")}</span>
         </div>
       </div>
-      ${stateItem.completed ? "" : renderProgressBar(stateItem.progressRatio)}
+
+      ${panel.nextTier
+        ? renderProgressBar(panel.progressToNext)
+        : '<div class="app-achievement-card__maxed">La progresión seguirá extendiéndose cuando superes el rango visible.</div>'}
+
       <div class="app-achievement-card__meta">
-        <span>${escapeHtml(formatAchievementScope(stateItem))}</span>
-        <span>${escapeHtml(progressText)}</span>
+        <span>${escapeHtml(progressLabel)}</span>
+        <span>${escapeHtml(subtitle)}</span>
       </div>
+
+      ${renderTierRail(panel)}
     </article>
   `;
 }
 
-function renderGroupedSection(title, states = [], { showDates = false } = {}) {
-  if (!states.length) {
-    return `
-      <section class="sheet-section">
-        <div class="sheet-section-title">${escapeHtml(title)}</div>
-        <p class="app-achievements-empty">Todavía no hay elementos en esta sección.</p>
-      </section>
-    `;
-  }
-
-  const groups = groupStatesByModule(states);
-  const body = Object.entries(groups)
-    .sort((a, b) => {
-      const order = ["general", ...getModuleKeys()];
-      return order.indexOf(a[0]) - order.indexOf(b[0]);
-    })
-    .map(([moduleKey, moduleStates]) => {
-      const meta = getAchievementModuleMeta(moduleKey);
-      const sorted = [...moduleStates].sort((a, b) => {
-        if (showDates && b.unlockedAt !== a.unlockedAt) return b.unlockedAt - a.unlockedAt;
-        const groupDiff = String(a.groupLabel || "").localeCompare(String(b.groupLabel || ""), "es");
-        if (groupDiff) return groupDiff;
-        if (b.progressRatio !== a.progressRatio) return b.progressRatio - a.progressRatio;
-        return a.targetValue - b.targetValue;
-      });
-      const subgroupMap = sorted.reduce((acc, stateItem) => {
-        const subgroupKey = String(stateItem.groupKey || "__default");
-        if (!acc[subgroupKey]) {
-          acc[subgroupKey] = {
-            label: String(stateItem.groupLabel || "").trim(),
-            items: [],
-          };
-        }
-        acc[subgroupKey].items.push(stateItem);
-        return acc;
-      }, {});
-      const subgroupEntries = Object.values(subgroupMap);
-      return `
-        <div class="app-achievements-group">
-          <div class="app-achievements-group__title">${escapeHtml(`${meta.emoji} ${meta.label}`)}</div>
-          ${subgroupEntries.map((subgroup) => `
-            <div class="app-achievements-subgroup">
-              ${subgroup.label ? `<div class="app-achievements-subgroup__title">${escapeHtml(subgroup.label)}</div>` : ""}
-              <div class="app-achievements-grid">
-                ${subgroup.items.map((stateItem) => renderAchievementCard(stateItem, { compact: true })).join("")}
-              </div>
-            </div>
-          `).join("")}
-        </div>
-      `;
-    })
-    .join("");
-
+function renderFocusPanel(group) {
+  if (!group?.focusPanel) return "";
+  const panel = group.focusPanel;
   return `
-    <section class="sheet-section">
-      <div class="sheet-section-title">${escapeHtml(title)}</div>
-      ${body}
+    <section class="sheet-section app-achievements-moduleHero" data-tone="${escapeHtml(panel.tone)}">
+      <div class="app-achievements-moduleHero__top">
+        <div>
+          <div class="app-achievements-moduleHero__eyebrow">${escapeHtml(`${group.meta.emoji} ${group.meta.label}`)}</div>
+          <h3 class="app-achievements-moduleHero__title">${escapeHtml(panel.title)}</h3>
+          <p class="app-achievements-moduleHero__copy">${escapeHtml(panel.description)}</p>
+        </div>
+        <div class="app-achievements-moduleHero__badge" data-medal-tone="${escapeHtml(panel.currentTier.key)}">
+          <span aria-hidden="true">${escapeHtml(panel.currentTier.icon)}</span>
+          <strong>${escapeHtml(panel.currentTier.label)}</strong>
+        </div>
+      </div>
+
+      <div class="app-achievements-moduleHero__stats">
+        <article class="app-achievements-stat"><small>Paneles</small><strong>${group.counts.total}</strong></article>
+        <article class="app-achievements-stat"><small>Con medalla</small><strong>${group.counts.unlocked}</strong></article>
+        <article class="app-achievements-stat"><small>Cerca</small><strong>${group.counts.near}</strong></article>
+      </div>
+
+      ${renderProgressBar(group.completionRatio)}
     </section>
   `;
+}
+
+function renderNearbyStrip(group) {
+  if (!group?.nearbyPanels?.length) return "";
+  return `
+    <section class="sheet-section">
+      <div class="sheet-section-title">Más cerca en ${escapeHtml(group.meta.label)}</div>
+      <div class="app-achievements-nearby">
+        ${group.nearbyPanels.map((panel) => `
+          <article class="app-achievements-nearby__item" data-tone="${escapeHtml(panel.tone)}">
+            <div class="app-achievements-nearby__top">
+              <span>${escapeHtml(panel.title)}</span>
+              <strong>${Math.round(panel.progressToNext * 100)}%</strong>
+            </div>
+            ${renderProgressBar(panel.progressToNext, true)}
+            <p>${escapeHtml(panel.nextTier ? `Faltan ${panel.formattedRemainingToNext} para ${panel.nextTier.label.toLowerCase()}.` : "Rango visible completado.")}</p>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderEmptyState() {
+  return `
+    <section class="sheet-section">
+      <div class="sheet-section-title">Logros</div>
+      <p class="app-achievements-empty">Todavía no hay suficiente actividad para generar progreso en logros.</p>
+    </section>
+  `;
+}
+
+function bindAchievementsInteractions() {
+  const body = document.getElementById("app-achievements-body");
+  if (!body) return;
+  body.querySelectorAll("[data-achievement-module-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      setActiveModule(button.dataset.achievementModuleTab || "general");
+    });
+  });
 }
 
 function renderAchievementsButton() {
   const button = ensureTopBarButton();
   if (!button) return;
-  const summary = buildSummary(computeAchievementStates());
+  const summary = getAchievementsModel().summary;
   const count = button.querySelector("[data-achievements-count]");
-  if (count) count.textContent = `${summary.completedCount}/${summary.availableCount}`;
+  if (count) count.textContent = summary.totalPanels ? `${summary.unlockedPanels}/${summary.totalPanels}` : "0";
   button.classList.toggle("hidden", !state.uid);
 }
 
@@ -601,62 +479,49 @@ function renderAchievementsCenter() {
     return;
   }
 
-  const states = computeAchievementStates();
-  const summary = buildSummary(states);
-  const closest = getClosestAchievements(states, 6);
-  const inProgress = states.filter((stateItem) => !stateItem.completed && !stateItem.hiddenLocked && stateItem.currentValue > 0);
-  const completed = states.filter((stateItem) => stateItem.completed);
-
-  body.innerHTML = `
-    <section class="sheet-section app-achievements-summary">
-      <div class="app-achievements-summary__stats">
-        <article class="app-achievements-stat">
-          <small>Logrados</small>
-          <strong>${summary.completedCount}</strong>
-        </article>
-        <article class="app-achievements-stat">
-          <small>Disponibles</small>
-          <strong>${summary.availableCount}</strong>
-        </article>
-        <article class="app-achievements-stat">
-          <small>Progreso</small>
-          <strong>${summary.completionPct}%</strong>
-        </article>
+  const model = getAchievementsModel();
+  const activeGroup = resolveActiveGroup(model);
+  body.innerHTML = !model.groups.length ? renderEmptyState() : `
+    <section class="sheet-section app-achievements-shell">
+      <div class="app-achievements-shell__summary">
+        <div>
+          <div class="app-achievements-shell__eyebrow">Centro compacto</div>
+          <h3 class="app-achievements-shell__title">Logros por módulo y por entidad</h3>
+          <p class="app-achievements-shell__copy">Solo se muestra el módulo activo. Cada pieza resume rango, progreso y siguiente tier sin muros de tarjetas.</p>
+        </div>
+        <div class="app-achievements-shell__totals">
+          <strong>${model.summary.unlockedPanels}</strong>
+          <span>con medalla</span>
+        </div>
       </div>
-      ${renderProgressBar(summary.completionPct / 100)}
+      <div class="app-achievements-shell__stats">
+        <article class="app-achievements-stat"><small>Paneles</small><strong>${model.summary.totalPanels}</strong></article>
+        <article class="app-achievements-stat"><small>Máximo</small><strong>${model.summary.maxedPanels}</strong></article>
+        <article class="app-achievements-stat"><small>Cerca</small><strong>${model.summary.nearPanels}</strong></article>
+      </div>
     </section>
+
+    ${renderModuleTabs(model, activeGroup)}
+    ${renderFocusPanel(activeGroup)}
+    ${renderNearbyStrip(activeGroup)}
 
     <section class="sheet-section">
-      <div class="sheet-section-title">Casi lo consigues</div>
-      <div class="app-achievements-nearby">
-        ${closest.length
-          ? closest.map((stateItem) => `
-            <article class="app-achievements-nearby__item">
-              <div class="app-achievements-nearby__top">
-                <span>${escapeHtml(`${stateItem.moduleMeta.emoji} ${stateItem.title}`)}</span>
-                <strong>${Math.round(stateItem.progressRatio * 100)}%</strong>
-              </div>
-              ${renderProgressBar(stateItem.progressRatio)}
-              <p>${escapeHtml(formatRemainingLabel(stateItem))}</p>
-            </article>
-          `).join("")
-          : '<p class="app-achievements-empty">Todavía no hay logros cercanos con progreso real.</p>'}
+      <div class="sheet-section-title">${escapeHtml(activeGroup?.meta?.label || "Módulo activo")}</div>
+      <div class="app-achievements-panelGrid">
+        ${(activeGroup?.panels || []).map(renderAchievementCard).join("")}
       </div>
     </section>
-
-    ${renderGroupedSection("En progreso", inProgress)}
-    ${renderGroupedSection("Desbloqueados", completed, { showDates: true })}
   `;
 
+  bindAchievementsInteractions();
   renderAchievementsButton();
 }
 
-// Cola visual compacta: evita repetir notificaciones y permite encadenar varios desbloqueos.
 function renderToasts() {
   const stack = ensureToastStack();
   if (!stack) return;
   stack.innerHTML = state.toasts.map((toast) => `
-    <article class="app-achievement-toast" data-achievement-toast-id="${escapeHtml(toast.id)}">
+    <article class="app-achievement-toast" data-achievement-toast-id="${escapeHtml(toast.id)}" data-tone="${escapeHtml(toast.tone || "earned")}">
       <div class="app-achievement-toast__icon" aria-hidden="true">${escapeHtml(toast.icon || "🏆")}</div>
       <div class="app-achievement-toast__copy">
         <strong>${escapeHtml(toast.title || "Logro desbloqueado")}</strong>
@@ -673,33 +538,39 @@ function dismissToast(toastId = "") {
   renderToasts();
 }
 
-function enqueueToast(achievementState) {
-  if (!achievementState) return;
-  const toastId = `${achievementState.id}-${Date.now()}`;
+function enqueueToast(panel) {
+  if (!panel) return;
+  const toastId = `${panel.id}-${Date.now()}`;
   state.toasts = [...state.toasts, {
     id: toastId,
-    icon: achievementState.icon,
-    title: `Logro desbloqueado: ${achievementState.title}`,
-    description: achievementState.description,
+    icon: panel.currentTier?.icon || panel.icon || "🏆",
+    tone: panel.tone,
+    title: `Medalla ${panel.currentTier?.label || "nueva"} · ${panel.title}`,
+    description: panel.nextTier ? `Ahora vas a por ${panel.nextTier.label}.` : "Has superado el rango visible de este panel.",
   }].slice(-3);
   renderToasts();
   window.setTimeout(() => dismissToast(toastId), 4200);
 }
 
-function queueUnlockNotifications(unlockIds = []) {
-  const states = computeAchievementStates();
-  unlockIds.forEach((achievementId) => {
-    const stateItem = states.find((entry) => entry.id === achievementId);
-    if (!stateItem || stateItem.hiddenLocked) return;
-    markUnlockAsSeen(achievementId);
-    enqueueToast(stateItem);
+function queuePanelNotifications(panelIds = []) {
+  const model = getAchievementsModel();
+  panelIds.forEach((panelId) => {
+    const panel = model.panelsById?.[panelId];
+    if (panel) enqueueToast(panel);
   });
   renderAchievementsButton();
 }
 
+function cleanupPendingPanelUpdates(nextPanels = {}) {
+  Array.from(state.pendingPanelUpdates.entries()).forEach(([panelId, pending]) => {
+    const remoteLevelIndex = Math.max(0, Number(nextPanels?.[panelId]?.levelIndex || 0));
+    if (remoteLevelIndex >= pending.targetLevelIndex) state.pendingPanelUpdates.delete(panelId);
+  });
+}
+
 function updateRemoteState(payload = {}) {
   state.remoteData = {
-    unlocked: payload?.unlocked && typeof payload.unlocked === "object" ? payload.unlocked : {},
+    panels: payload?.panels && typeof payload.panels === "object" ? payload.panels : {},
     usage: payload?.usage && typeof payload.usage === "object" ? payload.usage : {},
   };
   renderAchievementsButton();
@@ -707,19 +578,37 @@ function updateRemoteState(payload = {}) {
 }
 
 function handleRemoteSnapshot(payload = {}) {
-  const nextUnlocked = payload?.unlocked && typeof payload.unlocked === "object" ? payload.unlocked : {};
+  const nextPanels = payload?.panels && typeof payload.panels === "object" ? payload.panels : {};
   if (!state.remoteHydrated) {
     updateRemoteState(payload);
-    Object.keys(nextUnlocked).forEach((achievementId) => markUnlockAsSeen(achievementId));
     state.remoteHydrated = true;
     scheduleEvaluation(getModuleKeys());
     return;
   }
 
-  const previousUnlocked = state.remoteData?.unlocked || {};
+  const previousPanels = state.remoteData?.panels || {};
   updateRemoteState(payload);
-  const newUnlockIds = Object.keys(nextUnlocked).filter((achievementId) => !previousUnlocked?.[achievementId] && !state.seenUnlockIds.has(achievementId));
-  if (newUnlockIds.length) queueUnlockNotifications(newUnlockIds);
+
+  const upgradedPanelIds = Object.keys(nextPanels).filter((panelId) => {
+    const nextLevelIndex = Math.max(0, Number(nextPanels?.[panelId]?.levelIndex || 0));
+    const previousLevelIndex = Math.max(0, Number(previousPanels?.[panelId]?.levelIndex || 0));
+    return nextLevelIndex > previousLevelIndex;
+  });
+
+  const toastPanelIds = [];
+  upgradedPanelIds.forEach((panelId) => {
+    const pending = state.pendingPanelUpdates.get(panelId);
+    const nextLevelIndex = Math.max(0, Number(nextPanels?.[panelId]?.levelIndex || 0));
+    if (pending) {
+      if (pending.shouldToast && nextLevelIndex >= pending.shouldToastLevelIndex) toastPanelIds.push(panelId);
+      if (nextLevelIndex >= pending.targetLevelIndex) state.pendingPanelUpdates.delete(panelId);
+      return;
+    }
+    toastPanelIds.push(panelId);
+  });
+
+  cleanupPendingPanelUpdates(nextPanels);
+  if (toastPanelIds.length) queuePanelNotifications(toastPanelIds);
 }
 
 function stopRemoteListener() {
@@ -768,19 +657,16 @@ async function registerSessionUsage(uid = "") {
   });
 }
 
-async function persistNewUnlocks(unlockRecords = {}) {
-  const entries = Object.entries(unlockRecords || {});
+async function persistPanelUnlocks(patchRecords = {}) {
+  const entries = Object.entries(patchRecords || {});
   if (!entries.length || !state.achievementsRoot) return;
-  const patch = {
-    lastEvaluatedAt: Date.now(),
-  };
-  entries.forEach(([achievementId, record]) => {
-    patch[`unlocked/${achievementId}`] = record;
+  const patch = { lastEvaluatedAt: Date.now() };
+  entries.forEach(([panelId, record]) => {
+    patch[`panels/${panelId}`] = record;
   });
   await update(ref(db, state.achievementsRoot), patch);
 }
 
-// Motor central: evalúa el catálogo con métricas derivadas y guarda solo los desbloqueos nuevos.
 async function evaluateAchievements({ moduleKeys = [], forceFetch = false } = {}) {
   if (!state.uid || !state.remoteHydrated) return;
   const targets = moduleKeys.length ? Array.from(new Set(moduleKeys)) : getModuleKeys();
@@ -788,38 +674,31 @@ async function evaluateAchievements({ moduleKeys = [], forceFetch = false } = {}
     await Promise.all(targets.map((moduleKey) => ensureModuleMetrics(moduleKey, { forceRemote: true })));
   }
 
-  const states = computeAchievementStates();
-  const unlockedMap = state.remoteData?.unlocked || {};
-  const pending = {};
-  states.forEach((stateItem) => {
-    if (stateItem.unlocked) return;
-    if (state.pendingUnlockIds.has(stateItem.id)) return;
-    if (!stateItem.satisfied) return;
-    pending[stateItem.id] = {
-      achievementId: stateItem.id,
-      module: stateItem.module,
-      unlockedAt: Date.now(),
-      currentValue: stateItem.currentValue,
-      targetValue: stateItem.targetValue,
-      title: stateItem.title,
-    };
+  const model = getAchievementsModel();
+  const pendingRecords = {};
+  model.panels.forEach((panel) => {
+    if (panel.pendingLevelIndex <= panel.storedRemoteLevelIndex) return;
+    const pending = state.pendingPanelUpdates.get(panel.id);
+    if (pending && pending.targetLevelIndex >= panel.pendingLevelIndex) return;
+    pendingRecords[panel.id] = createPanelPersistenceRecord(panel);
+    state.pendingPanelUpdates.set(panel.id, {
+      targetLevelIndex: panel.pendingLevelIndex,
+      shouldToast: panel.shouldToastLevelIndex > panel.storedRemoteLevelIndex,
+      shouldToastLevelIndex: panel.shouldToastLevelIndex,
+    });
   });
 
-  const newUnlockIds = Object.keys(pending).filter((achievementId) => !unlockedMap?.[achievementId]);
-  if (!newUnlockIds.length) {
+  if (!Object.keys(pendingRecords).length) {
     renderAchievementsButton();
     renderAchievementsCenter();
     return;
   }
 
-  newUnlockIds.forEach((achievementId) => state.pendingUnlockIds.add(achievementId));
   try {
-    await persistNewUnlocks(pending);
-    queueUnlockNotifications(newUnlockIds);
+    await persistPanelUnlocks(pendingRecords);
   } catch (error) {
-    console.warn("[achievements] no se pudieron guardar los desbloqueos", error);
-  } finally {
-    newUnlockIds.forEach((achievementId) => state.pendingUnlockIds.delete(achievementId));
+    Object.keys(pendingRecords).forEach((panelId) => state.pendingPanelUpdates.delete(panelId));
+    console.warn("[achievements] no se pudieron guardar los paneles", error);
   }
 }
 
@@ -833,7 +712,6 @@ function scheduleEvaluation(moduleKeys = [], { forceFetch = false } = {}) {
 function inferModuleKeysFromEvent(event) {
   const detailSource = String(event?.detail?.source || "").trim();
   if (detailSource && MODULE_META[detailSource]) return [detailSource];
-
   const currentViewId = String(window.__bookshellCurrentViewId || document.documentElement.dataset.currentViewId || "").trim();
   if (currentViewId && VIEW_ID_TO_MODULE[currentViewId]) return [VIEW_ID_TO_MODULE[currentViewId]];
   return [];
@@ -849,16 +727,12 @@ function handleBookshellDataEvent(event) {
   let requiresRemoteRefresh = false;
   moduleKeys.forEach((moduleKey) => {
     const liveSnapshot = getModuleLiveSnapshot(moduleKey);
-    if (liveSnapshot) {
-      writeModuleMetrics(moduleKey, liveSnapshot, "live");
-    } else {
-      requiresRemoteRefresh = true;
-    }
+    if (liveSnapshot) writeModuleMetrics(moduleKey, liveSnapshot, "live");
+    else requiresRemoteRefresh = true;
   });
 
   renderAchievementsButton();
   renderAchievementsCenter();
-  // Los módulos disparan `bookshell:data`; aquí lo convertimos en una re-evaluación ligera por módulo.
   scheduleEvaluation(moduleKeys, { forceFetch: requiresRemoteRefresh });
 }
 
@@ -870,9 +744,8 @@ function resetStateForLogout() {
   state.achievementsRoot = "";
   state.remoteHydrated = false;
   state.moduleSnapshots = {};
-  state.remoteData = { unlocked: {}, usage: {} };
-  state.seenUnlockIds = new Set();
-  state.pendingUnlockIds = new Set();
+  state.remoteData = { panels: {}, usage: {} };
+  state.pendingPanelUpdates.clear();
   state.toasts = [];
   closeAchievementsCenter();
   renderToasts();
@@ -888,7 +761,6 @@ function handleAuthUser(user) {
   if (state.uid === nextUid) return;
 
   state.uid = nextUid;
-  state.seenUnlockIds = readSeenUnlockIds(nextUid);
   bindRemoteListener(nextUid);
   ensureTopBarButton();
   ensureAchievementsModal();
@@ -912,14 +784,12 @@ export function initAchievementsService() {
   ensureAchievementsModal();
   ensureToastStack();
   bindDataEvents();
-  state.authUnsub = onUserChange((user) => {
-    handleAuthUser(user || auth.currentUser || null);
-  });
+  state.authUnsub = onUserChange((user) => handleAuthUser(user || auth.currentUser || null));
   handleAuthUser(auth.currentUser || null);
   window.__bookshellAchievements = {
     openCenter: openAchievementsCenter,
     closeCenter: closeAchievementsCenter,
-    getStates: () => computeAchievementStates(),
+    getModel: () => getAchievementsModel(),
     getContext: () => getAchievementsContext(),
     ensureModuleMetrics: (moduleKey, options) => ensureModuleMetrics(moduleKey, options),
   };
@@ -933,10 +803,10 @@ export function trackAchievementViewVisit(viewId = "") {
   const moduleKey = VIEW_ID_TO_MODULE[String(viewId || "").trim()];
   if (!moduleKey || !state.uid) return;
   const liveSnapshot = getModuleLiveSnapshot(moduleKey);
-  if (liveSnapshot) {
-    writeModuleMetrics(moduleKey, liveSnapshot, "live");
-    scheduleEvaluation([moduleKey]);
-    renderAchievementsButton();
-    renderAchievementsCenter();
-  }
+  if (!liveSnapshot) return;
+  writeModuleMetrics(moduleKey, liveSnapshot, "live");
+  if (!state.ui.activeModule || state.ui.activeModule === "general") setActiveModule(moduleKey, { rerender: false });
+  scheduleEvaluation([moduleKey]);
+  renderAchievementsButton();
+  renderAchievementsCenter();
 }

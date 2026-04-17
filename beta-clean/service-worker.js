@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-04-16-v1";
+const APP_VERSION = "2026-04-17-achievements-v1";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -77,6 +77,7 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/shared/services/sync-manager.js",
   "./scripts/shared/services/achievements/index.js",
   "./scripts/shared/services/achievements/catalog.js",
+  "./scripts/shared/services/achievements/model.js",
   "./scripts/shared/services/achievements/metrics.js",
   "./scripts/shared/services/general-center/index.js",
   "./scripts/shared/storage/offline-db.js",

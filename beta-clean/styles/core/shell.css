@@ -50,18 +50,19 @@
 
 .app-sync-indicator {
   --sync-accent: rgba(180, 198, 226, 0.32);
+  --mission-ring: rgba(255, 210, 102, 0.86);
   min-height: 32px;
   min-width: 32px;
-  max-width: min(260px, 72vw);
-  padding: 6px 12px;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 6px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
+  gap: 0;
   background: rgba(7, 12, 22, 0);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 12px 28px rgba(2, 6, 15, 0.24);
-  backdrop-filter: blur(14px);
+  border: 1px solid transparent;
+  box-shadow: none;
   color: #ecf3ff;
   font-size: 10px;
   font-weight: 700;
@@ -94,7 +95,9 @@
   height: 8px;
   border-radius: 50%;
   background: var(--sync-accent);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--sync-accent) 24%, transparent);
+  box-shadow:
+    0 0 0 3px var(--mission-ring),
+    0 0 0 6px color-mix(in srgb, var(--sync-accent) 20%, transparent);
   flex: 0 0 8px;
 }
 
@@ -113,11 +116,54 @@
     transform 220ms ease;
 }
 
+.app-sync-indicator .app-sync-indicator__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 0;
+  margin-left: 0;
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(-4px);
+  transition:
+    max-width 220ms ease,
+    margin-left 220ms ease,
+    opacity 160ms ease,
+    transform 220ms ease;
+}
+
 .app-sync-indicator.is-open .sync-text {
   max-width: min(190px, 52vw);
   margin-left: 8px;
   opacity: 1;
   transform: translateX(0);
+}
+
+.app-sync-indicator.is-open {
+  justify-content: flex-start;
+  gap: 0;
+  padding: 6px 12px;
+  background: transparent;
+}
+
+.app-sync-indicator.is-open .app-sync-indicator__actions {
+  max-width: min(240px, 58vw);
+  margin-left: 8px;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.app-sync-indicator[data-mission-state="pending"] {
+  --mission-ring: rgba(255, 98, 122, 0.92);
+}
+
+.app-sync-indicator[data-mission-state="clear"] {
+  --mission-ring: rgba(255, 210, 102, 0.86);
 }
 
 .app-sync-indicator[data-state="synced"] {
@@ -972,4 +1018,10 @@ body.has-open-modal .nav-selection-panel {
   .nav-selection-actions .btn {
     flex: 1 1 100%;
   }
+}
+
+#app-sync-indicator{
+  background-color: transparent;
+  padding: none;
+  border: 0px;
 }

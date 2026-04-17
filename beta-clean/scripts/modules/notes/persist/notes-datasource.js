@@ -6,7 +6,8 @@ import {
   remove,
   update,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-import { mapFolderToDb, mapNoteToDb, mapSnapshotToDomain } from "./notes-mapper.js";
+import { buildTagDefinitionKey } from "../domain/tag-utils.js";
+import { mapFolderToDb, mapNoteToDb, mapSnapshotToDomain, mapTagDefinitionToDb } from "./notes-mapper.js";
 
 function resolveRootPath(uidParam = "") {
   const uid = String(uidParam || auth.currentUser?.uid || "").trim();
@@ -101,4 +102,20 @@ export async function deleteNote(rootPath, noteId) {
   const safeNoteId = String(noteId || "").trim();
   if (!safeNoteId) return;
   await remove(ref(db, `${rootPath}/notes/${safeNoteId}`));
+}
+
+export async function upsertTagDefinition(rootPath, tagKey, payload = {}) {
+  const safeTagKey = buildTagDefinitionKey(tagKey || payload?.key || payload?.label);
+  if (!safeTagKey) throw new Error("No se pudo resolver el identificador del tag.");
+
+  await update(ref(db), {
+    [`${rootPath}/tagDefinitions/${safeTagKey}`]: mapTagDefinitionToDb({
+      ...payload,
+      key: safeTagKey,
+      createdAt: Number(payload?.createdAt || Date.now()),
+      updatedAt: Date.now(),
+    }),
+  });
+
+  return safeTagKey;
 }

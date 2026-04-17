@@ -48,6 +48,7 @@ export function createInitialNotesState() {
     rootPath: "",
     folders: [],
     notes: [],
+    tagDefinitions: {},
     selectedFolderId: "",
     unlockedFolderIds: new Set(),
     folderQuery: "",

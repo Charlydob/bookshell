@@ -1,7 +1,3 @@
-import { getStorageService } from "../../../shared/firebase/index.js";
-
-let storageApiPromise = null;
-
 function normalizeId(value = "") {
   return String(value || "").trim();
 }
@@ -13,21 +9,50 @@ function buildNoteImageStoragePath(uid = "", noteId = "") {
   return `notes/${safeUid}/images/${safeNoteId}/cover`;
 }
 
-async function loadStorageApi() {
-  if (!storageApiPromise) {
-    storageApiPromise = Promise.all([
-      getStorageService(),
-      import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js"),
-    ]).then(([storage, storageApi]) => ({
-      storage,
-      storageRef: storageApi.ref,
-      uploadBytes: storageApi.uploadBytes,
-      getDownloadURL: storageApi.getDownloadURL,
-      deleteObject: storageApi.deleteObject,
-    }));
-  }
+function buildTagImageStoragePath(uid = "", tagKey = "") {
+  const safeUid = normalizeId(uid);
+  const safeTagKey = normalizeId(tagKey);
+  if (!safeUid || !safeTagKey) throw new Error("No se pudo resolver la ruta de la imagen del tag.");
+  return `notes/${safeUid}/tags/${safeTagKey}/cover`;
+}
 
-  return storageApiPromise;
+function isRemoteUrl(value = "") {
+  return /^https?:\/\//i.test(String(value || "").trim());
+}
+
+async function uploadImageToCloudinary(file) {
+  const fn =
+    typeof window !== "undefined" && typeof window.subirImagenACloudinary === "function"
+      ? window.subirImagenACloudinary
+      : async (nextFile) => {
+          const formData = new FormData();
+          formData.append("file", nextFile);
+          formData.append("upload_preset", "publico");
+          const response = await fetch("https://api.cloudinary.com/v1_1/dgdavibcx/image/upload", {
+            method: "POST",
+            body: formData,
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !String(payload?.secure_url || "").trim()) {
+            throw new Error(payload?.error?.message || "No se pudo subir la imagen a Cloudinary.");
+          }
+          return String(payload.secure_url).trim();
+        };
+
+  return fn(file);
+}
+
+async function loadFirebaseDeleteApi() {
+  const [{ getStorageService }, storageApi] = await Promise.all([
+    import("../../../shared/firebase/index.js"),
+    import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js"),
+  ]);
+  const storage = await getStorageService();
+  return {
+    storage,
+    storageRef: storageApi.ref,
+    deleteObject: storageApi.deleteObject,
+  };
 }
 
 export async function downscaleNoteImageFile(file, { maxEdge = 1600, quality = 0.84 } = {}) {
@@ -94,18 +119,21 @@ export async function uploadNoteImageAsset(uid, noteId, file) {
   const safeUid = normalizeId(uid);
   const safeNoteId = normalizeId(noteId);
   if (!safeUid || !safeNoteId) throw new Error("No se pudo identificar al usuario o la nota.");
-  if (!(file instanceof File)) throw new Error("No se ha seleccionado ninguna imagen válida.");
+  if (!(file instanceof File)) throw new Error("No se ha seleccionado ninguna imagen valida.");
 
-  const { storage, storageRef, uploadBytes, getDownloadURL } = await loadStorageApi();
   const path = buildNoteImageStoragePath(safeUid, safeNoteId);
-  const imageRef = storageRef(storage, path);
+  const url = await uploadImageToCloudinary(file);
+  return { path, url };
+}
 
-  await uploadBytes(imageRef, file, {
-    contentType: file.type || "image/jpeg",
-    cacheControl: "public,max-age=3600",
-  });
+export async function uploadNoteTagImageAsset(uid, tagKey, file) {
+  const safeUid = normalizeId(uid);
+  const safeTagKey = normalizeId(tagKey);
+  if (!safeUid || !safeTagKey) throw new Error("No se pudo identificar el tag de la nota.");
+  if (!(file instanceof File)) throw new Error("No se ha seleccionado ninguna imagen valida.");
 
-  const url = await getDownloadURL(imageRef);
+  const path = buildTagImageStoragePath(safeUid, safeTagKey);
+  const url = await uploadImageToCloudinary(file);
   return { path, url };
 }
 
@@ -115,7 +143,28 @@ export async function deleteNoteImageAsset(uid, noteId, path = "") {
   if (!safeUid || !safeNoteId) return false;
 
   const safePath = normalizeId(path) || buildNoteImageStoragePath(safeUid, safeNoteId);
-  const { storage, storageRef, deleteObject } = await loadStorageApi();
+  if (isRemoteUrl(safePath)) return false;
+
+  const { storage, storageRef, deleteObject } = await loadFirebaseDeleteApi();
+
+  try {
+    await deleteObject(storageRef(storage, safePath));
+    return true;
+  } catch (error) {
+    if (String(error?.code || "") === "storage/object-not-found") return false;
+    throw error;
+  }
+}
+
+export async function deleteNoteTagImageAsset(uid, tagKey, path = "") {
+  const safeUid = normalizeId(uid);
+  const safeTagKey = normalizeId(tagKey);
+  if (!safeUid || !safeTagKey) return false;
+
+  const safePath = normalizeId(path) || buildTagImageStoragePath(safeUid, safeTagKey);
+  if (isRemoteUrl(safePath)) return false;
+
+  const { storage, storageRef, deleteObject } = await loadFirebaseDeleteApi();
 
   try {
     await deleteObject(storageRef(storage, safePath));

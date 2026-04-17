@@ -134,7 +134,7 @@
 </div>
 
 <div class="modal-backdrop hidden" id="notes-note-modal-backdrop">
-  <div class="modal">
+  <div class="modal" id="editar-nota-modal">
     <div class="modal-handle"></div>
     <div class="modal-header">
       <div class="modal-title" id="notes-note-modal-title">Nueva nota</div>
@@ -152,17 +152,23 @@
         </label>
 
         <label class="field">
-          <span class="field-label">Título</span>
           <input id="notes-note-title" type="text" required />
         </label>
 
         <label class="field">
-          <span class="field-label">Contenido</span>
           <textarea id="notes-note-content" rows="5"></textarea>
+        </label>
+        <label class="toggle-pill notes-toggle-field">
+          <input id="notes-note-is-link" type="checkbox" />
+          <span>Es link</span>
+        </label>
+
+        <label class="field hidden" id="notes-note-url-wrap">
+          <span class="field-label">URL</span>
+          <input id="notes-note-url" type="url" placeholder="https://..." />
         </label>
 
         <div class="field notes-photo-field">
-          <span class="field-label">Foto</span>
           <div class="notes-photo-wrap">
             <div class="notes-photo-preview-wrap">
               <img id="notes-note-image-preview" class="notes-photo-preview hidden" alt="Foto de la nota" />
@@ -188,7 +194,7 @@
           </label>
 
           <label class="field">
-            <span class="field-label">Tags (separados por comas)</span>
+            <span class="field-label">Tags</span>
             <select id="notes-note-tags-select" class="field-select">
               <option value="">-- Seleccionar o escribir --</option>
             </select>
@@ -196,15 +202,16 @@
           </label>
         </div>
 
-        <label class="toggle-pill notes-toggle-field">
-          <input id="notes-note-is-link" type="checkbox" />
-          <span>Es link</span>
-        </label>
+        <div class="notes-tag-media-panel" id="notes-note-tag-images">
+          <div class="notes-tag-media-header">
+            <span class="field-label">Imagenes de tags</span>
+            <span class="notes-tag-media-hint">La mini preview usa el primer tag con imagen y se comparte por nombre.</span>
+          </div>
+          <div class="notes-tag-media-empty" id="notes-note-tag-images-empty">Anade tags para asociarles una imagen opcional.</div>
+          <div class="notes-tag-media-list" id="notes-note-tag-images-list"></div>
+          <input id="notes-note-tag-image-file" type="file" accept="image/*" hidden />
+        </div>
 
-        <label class="field hidden" id="notes-note-url-wrap">
-          <span class="field-label">URL</span>
-          <input id="notes-note-url" type="url" placeholder="https://..." />
-        </label>
 
         <p class="notes-form-error" id="notes-note-form-error"></p>
       </div>

@@ -1234,3 +1234,12 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   color: rgba(244, 248, 255, 0.96);
   text-align: center;
 }
+#notes-note-rating{
+  height: 10px;
+  min-height: 40px;
+  max-height: 30px;
+}
+.notes-rating-input-row{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}

@@ -1208,8 +1208,8 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
 .notes-stats-rating-chart-plot {
   display: grid;
   grid-template-columns: repeat(11, minmax(0, 1fr));
-  gap: 10px;
-  min-width: 420px;
+  gap: 0px;
+  min-width: 320px;
   align-items: end;
   min-height: 220px;
 }

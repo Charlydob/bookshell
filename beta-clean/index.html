@@ -15,7 +15,7 @@
   <link href="./styles/core/shell.css" rel="stylesheet" />
   <link href="./styles/core/achievements.css" rel="stylesheet" />
   <link href="./styles/core/general-center.css" rel="stylesheet" />
-  <link href="./styles/modules/books.css" rel="preload" as="style" fetchpriority="high" />
+  <link href="./styles/modules/home.css" rel="preload" as="style" fetchpriority="high" />
   <link href="./manifest.webmanifest" rel="manifest" />
   <link href="./icons/favicon-32.png" rel="icon" sizes="32x32" type="image/png" />
   <link href="./icons/favicon-16.png" rel="icon" sizes="16x16" type="image/png" />
@@ -209,7 +209,9 @@
     </button>
   </div>
 
-  <section class="view view-active" id="view-books" aria-hidden="false" data-module-view="books"></section>
+  <section class="view view-active" id="view-home" aria-hidden="false" data-module-view="home"></section>
+
+  <section class="view" id="view-books" aria-hidden="true" data-module-view="books"></section>
 
   <section class="view" id="view-notes" aria-hidden="true" data-module-view="notes"></section>
 
@@ -232,17 +234,18 @@
   <section class="view view-gym" id="view-gym" aria-hidden="true" data-module-view="gym"></section>
 
   <nav class="bottom-nav" aria-label="Navegacion principal">
-    <button class="nav-btn nav-btn-active" data-view="view-books" aria-current="page" type="button">📖</button>
+    <button class="nav-btn nav-btn-active" data-view="view-home" title="Home diario" aria-label="Home diario" aria-current="page" type="button">✅</button>
+    <button class="nav-btn" data-view="view-books" title="Libros" aria-label="Libros" type="button">H</button>
     <button class="nav-btn" data-view="view-notes" title="Notas" aria-label="Notas" type="button">🗒️</button>
-    <button class="nav-btn" data-view="view-videos-hub" title="Videos Hub" aria-label="Videos Hub" type="button">🎬</button>
-    <button class="nav-btn" data-view="view-recipes" type="button">🍳</button>
-    <button class="nav-btn" data-view="view-habits" type="button">✅</button>
+    <button class="nav-btn" data-view="view-videos-hub" title="Videos" aria-label="Videos" type="button">🎬</button>
+    <button class="nav-btn" data-view="view-recipes" title="Recetas" aria-label="Recetas" type="button">🍳</button>
+    <button class="nav-btn" data-view="view-habits" title="Habitos" aria-label="Habitos" type="button">✅</button>
     <button class="nav-btn" data-view="view-games" title="Juegos" aria-label="Juegos" type="button">🎮</button>
-    <button class="nav-btn" data-view="view-media" type="button">🎞️</button>
-    <button class="nav-btn" data-view="view-world" type="button">🌍</button>
-    <button class="nav-btn" data-view="view-finance" title="Cuentas" aria-label="Cuentas" type="button">$</button>
-    <button class="nav-btn" data-view="view-improvements" title="Mejoras" aria-label="Mejoras" type="button">🔧</button>
-    <button class="nav-btn" data-view="view-gym" type="button">🏋️</button>
+    <button class="nav-btn" data-view="view-media" title="Media" aria-label="Media" type="button">🎵</button>
+    <button class="nav-btn" data-view="view-world" title="Mundo" aria-label="Mundo" type="button">🌍</button>
+    <button class="nav-btn" data-view="view-finance" title="Cuentas" aria-label="Cuentas" type="button">💲</button>
+    <button class="nav-btn" data-view="view-improvements" title="Mejoras" aria-label="Mejoras" type="button">🔩</button>
+    <button class="nav-btn" data-view="view-gym" title="Gym" aria-label="Gym" type="button">💪</button>
   </nav>
 
   <datalist id="country-options"></datalist>

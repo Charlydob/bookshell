@@ -131,6 +131,7 @@ const STATS_COLORS = {
   resolvedFlow: "#5fdaab",
   critical: "#ff6b7c",
 };
+const RECENT_TIMELINE_WINDOW_DAYS = 30;
 
 const state = {
   initialized: false,
@@ -355,13 +356,22 @@ function formatShortDate(ts) {
   });
 }
 
-function formatMonthLabel(monthKey) {
-  const [year, month] = String(monthKey || "").split("-");
-  const date = new Date(Number(year), Math.max(0, Number(month) - 1), 1);
+function formatTimelineDayLabel(dayKey) {
+  const date = dayStartFromKey(dayKey);
   if (Number.isNaN(date.getTime())) return "--";
   return date.toLocaleDateString("es-ES", {
+    day: "numeric",
     month: "short",
-    year: "2-digit",
+  });
+}
+
+function formatTimelineDayFullLabel(dayKey) {
+  const date = dayStartFromKey(dayKey);
+  if (Number.isNaN(date.getTime())) return "--";
+  return date.toLocaleDateString("es-ES", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
   });
 }
 
@@ -542,24 +552,28 @@ function describeAgeDays(days) {
   return `${safeDays} dias`;
 }
 
-function monthKeyFromTimestamp(ts) {
+function dayKeyFromTimestamp(ts) {
   const safeTs = Number(ts) || 0;
   if (!safeTs) return "";
   const date = new Date(safeTs);
   if (Number.isNaN(date.getTime())) return "";
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
-function monthStartFromKey(monthKey) {
-  const [year, month] = String(monthKey || "").split("-");
-  return new Date(Number(year), Math.max(0, Number(month) - 1), 1);
+function dayStartFromKey(dayKey) {
+  const [year, month, day] = String(dayKey || "").split("-");
+  return new Date(Number(year), Math.max(0, Number(month) - 1), Math.max(1, Number(day) || 1));
 }
 
-function shiftMonthKey(monthKey, offset = 0) {
-  const date = monthStartFromKey(monthKey);
+function shiftDayKey(dayKey, offset = 0) {
+  const date = dayStartFromKey(dayKey);
   if (Number.isNaN(date.getTime())) return "";
-  date.setMonth(date.getMonth() + Number(offset || 0));
-  return monthKeyFromTimestamp(date.getTime());
+  date.setDate(date.getDate() + Number(offset || 0));
+  return dayKeyFromTimestamp(date.getTime());
 }
 
 function isStatsViewVisible() {
@@ -1133,42 +1147,40 @@ function filterItemsByActiveTypes(items = []) {
 }
 
 function buildImprovementTimeline(items = []) {
-  const eventMonthKeys = items
+  const eventDayKeys = items
     .flatMap((item) => [
-      monthKeyFromTimestamp(item?.createdAt),
-      monthKeyFromTimestamp(item?.resolvedAt),
+      dayKeyFromTimestamp(item?.createdAt),
+      dayKeyFromTimestamp(item?.resolvedAt),
     ])
     .filter(Boolean);
 
-  if (!eventMonthKeys.length) return [];
+  if (!eventDayKeys.length) return [];
 
-  const sortedEventKeys = Array.from(new Set(eventMonthKeys)).sort();
+  const sortedEventKeys = Array.from(new Set(eventDayKeys)).sort();
   const firstKey = sortedEventKeys[0];
-  const lastKey = monthKeyFromTimestamp(Date.now()) || sortedEventKeys[sortedEventKeys.length - 1];
-  const monthKeys = [];
+  const lastKey = dayKeyFromTimestamp(Date.now()) || sortedEventKeys[sortedEventKeys.length - 1];
+  const dayKeys = [];
 
   let cursor = firstKey;
   while (cursor) {
-    monthKeys.push(cursor);
-    if (cursor === lastKey || monthKeys.length > 72) break;
-    cursor = shiftMonthKey(cursor, 1);
+    dayKeys.push(cursor);
+    if (cursor === lastKey || dayKeys.length > 10000) break;
+    cursor = shiftDayKey(cursor, 1);
   }
 
-  const visibleKeys = monthKeys.slice(-8);
-  if (!visibleKeys.length) return [];
-
   const seriesMap = new Map(
-    visibleKeys.map((key) => [key, {
+    dayKeys.map((key) => [key, {
       key,
-      label: formatMonthLabel(key),
+      label: formatTimelineDayLabel(key),
+      fullLabel: formatTimelineDayFullLabel(key),
       created: 0,
       resolved: 0,
     }])
   );
 
   items.forEach((item) => {
-    const createdKey = monthKeyFromTimestamp(item?.createdAt);
-    const resolvedKey = monthKeyFromTimestamp(item?.resolvedAt);
+    const createdKey = dayKeyFromTimestamp(item?.createdAt);
+    const resolvedKey = dayKeyFromTimestamp(item?.resolvedAt);
     if (seriesMap.has(createdKey)) {
       seriesMap.get(createdKey).created += 1;
     }
@@ -1177,7 +1189,7 @@ function buildImprovementTimeline(items = []) {
     }
   });
 
-  const firstVisibleDate = monthStartFromKey(visibleKeys[0]);
+  const firstVisibleDate = dayStartFromKey(dayKeys[0]);
   const firstVisibleTs = Number(firstVisibleDate?.getTime?.()) || 0;
   let backlog = items.reduce((acc, item) => {
     const createdAt = Number(item?.createdAt) || 0;
@@ -1188,10 +1200,12 @@ function buildImprovementTimeline(items = []) {
     return acc;
   }, 0);
 
-  return visibleKeys.map((key) => {
+  // Rellena dias sin movimiento para mantener una serie historica continua.
+  return dayKeys.map((key) => {
     const point = seriesMap.get(key) || {
       key,
-      label: formatMonthLabel(key),
+      label: formatTimelineDayLabel(key),
+      fullLabel: formatTimelineDayFullLabel(key),
       created: 0,
       resolved: 0,
     };
@@ -1310,7 +1324,8 @@ function buildImprovementStats() {
   const topType = types.find((type) => type.pending > 0) || types[0] || null;
 
   const timeline = buildImprovementTimeline(items);
-  const recentTimeline = timeline.slice(-3);
+  const recentWindowSize = Math.min(RECENT_TIMELINE_WINDOW_DAYS, timeline.length);
+  const recentTimeline = recentWindowSize ? timeline.slice(-recentWindowSize) : [];
   const recentCreated = recentTimeline.reduce((acc, point) => acc + (Number(point.created) || 0), 0);
   const recentResolved = recentTimeline.reduce((acc, point) => acc + (Number(point.resolved) || 0), 0);
 
@@ -1328,6 +1343,7 @@ function buildImprovementStats() {
     oldestPendingItem: [...pendingItems].sort((a, b) => b.ageDays - a.ageDays)[0] || null,
     activeCategory,
     timeline,
+    recentWindowSize,
     recentCreated,
     recentResolved,
   };
@@ -1687,6 +1703,22 @@ function renderImprovementStatsCharts(stats) {
       tooltip: {
         ...tooltipStyle,
         trigger: "axis",
+        formatter(params = []) {
+          const seriesEntries = Array.isArray(params) ? params : [];
+          const dataIndex = Number(seriesEntries[0]?.dataIndex);
+          const point = Number.isFinite(dataIndex) ? stats.timeline[dataIndex] : null;
+          const title = escapeHtml(point?.fullLabel || point?.key || "");
+          const rows = seriesEntries.map((entry) => {
+            const value = Number(entry?.value) || 0;
+            return `
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                <span>${entry?.marker || ""}${escapeHtml(entry?.seriesName || "")}</span>
+                <strong style="color:#f7fbff;">${value}</strong>
+              </div>
+            `;
+          }).join("");
+          return `<div><strong style="display:block;margin-bottom:6px;">${title}</strong>${rows}</div>`;
+        },
       },
       legend: {
         top: 0,
@@ -1706,7 +1738,7 @@ function renderImprovementStatsCharts(stats) {
       xAxis: {
         type: "category",
         boundaryGap: false,
-        data: stats.timeline.map((point) => point.label),
+        data: stats.timeline.map((point) => point.key),
         axisLine: {
           lineStyle: {
             color: "rgba(255,255,255,0.08)",
@@ -1715,6 +1747,10 @@ function renderImprovementStatsCharts(stats) {
         axisLabel: {
           color: "rgba(216, 230, 252, 0.64)",
           fontSize: 10,
+          hideOverlap: true,
+          formatter(value) {
+            return formatTimelineDayLabel(value);
+          },
         },
       },
       yAxis: {
@@ -1777,6 +1813,51 @@ function renderImprovementStatsCharts(stats) {
   resizeImprovementStatsCharts();
 }
 
+function renderImprovementTimelineTable(stats) {
+  if (!els.statsTimeline) return;
+
+  if (!stats?.timeline?.length) {
+    els.statsTimeline.innerHTML = '<div class="improvements__statsPanelEmpty">Sin historial diario suficiente.</div>';
+    return;
+  }
+
+  const rows = [...stats.timeline]
+    .reverse()
+    .map((point) => {
+      return `
+        <tr>
+          <th scope="row">${escapeHtml(point.fullLabel || point.key)}</th>
+          <td>${Number(point.created) || 0}</td>
+          <td>${Number(point.resolved) || 0}</td>
+          <td>${Number(point.backlog) || 0}</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  els.statsTimeline.innerHTML = `
+    <div class="improvements__statsTimelineShell">
+      <div class="improvements__statsTimelineHead">
+        <p class="improvements__sectionLabel">Detalle diario</p>
+        <span class="improvements__statsTimelineHint">${stats.timeline.length} ${stats.timeline.length === 1 ? "dia" : "dias"} en la serie historica</span>
+      </div>
+      <div class="improvements__statsTimelineScroller">
+        <table class="improvements__statsTimelineTable">
+          <thead>
+            <tr>
+              <th scope="col">Fecha</th>
+              <th scope="col">Entran</th>
+              <th scope="col">Se cierran</th>
+              <th scope="col">Backlog</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
 function renderImprovementStats({ deferCharts = false } = {}) {
   if (
     !els.statsSubtitle
@@ -1797,6 +1878,9 @@ function renderImprovementStats({ deferCharts = false } = {}) {
     els.statsInsights.innerHTML = '<div class="improvements__statsPanelEmpty">Sin sesion no se calcula la carga por categoria ni el ritmo de cierre.</div>';
     els.statsTypes.innerHTML = '<div class="improvements__statsPanelEmpty">Sin sesion no se puede repartir la carga por tipo de fix.</div>';
     els.statsBreakdown.innerHTML = '<div class="improvements__statsPanelEmpty">Los rankings por categoria se mostraran aqui cuando haya datos.</div>';
+    if (els.statsTimeline) {
+      els.statsTimeline.innerHTML = '<div class="improvements__statsPanelEmpty">Sin sesion activa.</div>';
+    }
     renderImprovementStatsChartEmpty(els.statsDonut, "donut", "Sin sesion activa.");
     renderImprovementStatsChartEmpty(els.statsBar, "bar", "Sin sesion activa.");
     renderImprovementStatsChartEmpty(els.statsLine, "line", "Sin sesion activa.");
@@ -1810,6 +1894,9 @@ function renderImprovementStats({ deferCharts = false } = {}) {
     els.statsInsights.innerHTML = '<div class="improvements__statsPanelEmpty">Tambien apareceran la categoria mas cargada y el fix mas bloqueado.</div>';
     els.statsTypes.innerHTML = '<div class="improvements__statsPanelEmpty">Al clasificar fixes por tipo veras aqui su reparto.</div>';
     els.statsBreakdown.innerHTML = '<div class="improvements__statsPanelEmpty">El desglose por categoria se llenara automaticamente.</div>';
+    if (els.statsTimeline) {
+      els.statsTimeline.innerHTML = '<div class="improvements__statsPanelEmpty">Todavia no hay actividad diaria suficiente.</div>';
+    }
     renderImprovementStatsChartEmpty(els.statsDonut, "donut", "Todavia no hay datos.");
     renderImprovementStatsChartEmpty(els.statsBar, "bar", "Todavia no hay categorias con fixes.");
     renderImprovementStatsChartEmpty(els.statsLine, "line", "Todavia no hay actividad suficiente.");
@@ -1865,7 +1952,9 @@ function renderImprovementStats({ deferCharts = false } = {}) {
   const hotCategory = stats.topCategory;
   const topPendingItem = stats.topPendingItem;
   const trendImproving = stats.recentResolved >= stats.recentCreated;
-  const recentPeriodLabel = stats.timeline.length <= 1 ? "este mes" : "los ultimos 3 meses";
+  const recentPeriodLabel = stats.recentWindowSize <= 1
+    ? "este dia"
+    : `los ultimos ${stats.recentWindowSize} dias`;
   const oldestPendingText = stats.oldestPendingItem
     ? `El abierto mas veterano lleva ${describeAgeDays(stats.oldestPendingItem.ageDays)}.`
     : "No queda deuda historica abierta.";
@@ -1950,6 +2039,8 @@ function renderImprovementStats({ deferCharts = false } = {}) {
       </article>
     `;
   }).join("");
+
+  renderImprovementTimelineTable(stats);
 
   if (!isStatsViewVisible()) return;
   if (deferCharts) {
@@ -3352,6 +3443,7 @@ function cacheElements(root) {
   els.statsDonut = root.querySelector("#improvements-stats-donut");
   els.statsBar = root.querySelector("#improvements-stats-bar");
   els.statsLine = root.querySelector("#improvements-stats-line");
+  els.statsTimeline = root.querySelector("#improvements-stats-timeline");
   els.statsBreakdown = root.querySelector("#improvements-stats-breakdown");
   els.performanceRunBtn = root.querySelector("#improvements-performance-run-btn");
   els.performanceSync = root.querySelector("#improvements-performance-sync");

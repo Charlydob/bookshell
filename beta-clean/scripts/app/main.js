@@ -24,9 +24,13 @@ import {
 import { initGeneralCenterService } from "../shared/services/general-center/index.js";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
+const LAST_NON_HOME_VIEW_KEY = "bookshell:lastNonHomeView:v1";
+const VIEW_HISTORY_KEY = "bookshell:viewHistory:v1";
+const VIEW_HISTORY_LIMIT = 8;
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
-const NAV_LAYOUT_VERSION = 2;
-const DEFAULT_VIEW_ID = "view-books";
+const NAV_LAYOUT_VERSION = 3;
+const HOME_VIEW_ID = "view-home";
+const DEFAULT_VIEW_ID = HOME_VIEW_ID;
 const HABITS_VIEW_ID = "view-habits";
 const SHELL_STATE_KEY = "__bookshellCleanShellState";
 const APP_BOOT_TS = performance.now();
@@ -47,21 +51,58 @@ const NAV_GROUP_EMOJI_FALLBACK = "🗂️";
 const NAV_LONG_PRESS_MS = 420;
 const NAV_MENU_MARGIN = 10;
 const NAV_VIEW_META = {
-  "view-books": { label: "Libros" },
-  "view-notes": { label: "Notas" },
-  "view-videos-hub": { label: "Videos" },
-  "view-recipes": { label: "Recetas" },
-  "view-habits": { label: "Habitos" },
-  "view-games": { label: "Juegos" },
-  "view-media": { label: "Media" },
-  "view-world": { label: "Mundo" },
-  "view-finance": { label: "Cuentas" },
-  "view-improvements": { label: "Mejoras" },
-  "view-gym": { label: "Gym" },
+  "view-home": { label: "Home diario", shortLabel: "Diario", glyph: "H" },
+  "view-books": { label: "Libros", shortLabel: "Libros", glyph: "B" },
+  "view-notes": { label: "Notas", shortLabel: "Notas", glyph: "N" },
+  "view-videos-hub": { label: "Videos", shortLabel: "Videos", glyph: "V" },
+  "view-recipes": { label: "Recetas", shortLabel: "Comida", glyph: "R" },
+  "view-habits": { label: "Habitos", shortLabel: "Hoy", glyph: "T" },
+  "view-games": { label: "Juegos", shortLabel: "Juegos", glyph: "J" },
+  "view-media": { label: "Media", shortLabel: "Media", glyph: "M" },
+  "view-world": { label: "Mundo", shortLabel: "Mundo", glyph: "W" },
+  "view-finance": { label: "Cuentas", shortLabel: "Gastos", glyph: "$" },
+  "view-improvements": { label: "Mejoras", shortLabel: "Fix", glyph: "+" },
+  "view-gym": { label: "Gym", shortLabel: "Gym", glyph: "G" },
 };
+const LEGACY_DEFAULT_NAV_ORDER = Object.freeze([
+  "view-books",
+  "view-notes",
+  "view-videos-hub",
+  "view-recipes",
+  "view-habits",
+  "view-games",
+  "view-media",
+  "view-world",
+  "view-finance",
+  "view-improvements",
+  "view-gym",
+]);
+const RECOMMENDED_NAV_ORDER = Object.freeze([
+  HOME_VIEW_ID,
+  HABITS_VIEW_ID,
+  "view-books",
+  "view-notes",
+  "group-media",
+  "group-more",
+]);
+const RECOMMENDED_NAV_GROUPS = Object.freeze({
+  "group-media": {
+    id: "group-media",
+    label: "Media",
+    emoji: "M",
+    items: ["view-videos-hub", "view-media", "view-games", "view-world"],
+  },
+  "group-more": {
+    id: "group-more",
+    label: "Mas",
+    emoji: "+",
+    items: ["view-recipes", "view-finance", "view-improvements", "view-gym"],
+  },
+});
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
 const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
+  { key: "books", label: "Leer", viewId: "view-books" },
   { key: "improvements", label: "Fix", viewId: "view-improvements" },
   { key: "media", label: "Media", viewId: "view-media" },
   { key: "notes", label: "Nota", viewId: "view-notes" },
@@ -72,6 +113,16 @@ const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
 ]);
 
 function getGlobalQuickFabIconMarkup(actionKey) {
+  if (actionKey === "books") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M6 5.5A2.5 2.5 0 0 1 8.5 3H18v17h-9.5A2.5 2.5 0 0 0 6 22Z" />
+        <path d="M6 5.5V22" />
+        <path d="M9.5 7.5H15" />
+      </svg>
+    `;
+  }
+
   if (actionKey === "improvements") {
     return `
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -397,6 +448,13 @@ function bindGlobalSyncIndicator() {
   if (state.syncIndicatorUnsubscribe) return;
   logNetworkDebug("sync:subscribe:start");
   state.syncIndicatorUnsubscribe = subscribeSyncState((snapshot) => {
+    state.lastSyncSnapshot = snapshot || null;
+    window.__bookshellLastSyncSnapshot = state.lastSyncSnapshot;
+    try {
+      window.dispatchEvent(new CustomEvent("bookshell:sync-state", {
+        detail: state.lastSyncSnapshot,
+      }));
+    } catch (_) {}
     logNetworkDebug("sync:state", {
       connected: Boolean(snapshot?.connected),
       syncing: Boolean(snapshot?.syncing),
@@ -501,6 +559,11 @@ async function registerAppServiceWorker() {
 }
 
 const viewModules = {
+  "view-home": {
+    cssUrl: "../../styles/modules/home.css",
+    htmlUrl: "../../views/home.html",
+    moduleLoader: () => import("../modules/home/index.js"),
+  },
   "view-books": {
     cssUrl: "../../styles/modules/books.css",
     htmlUrl: "../../views/books.html",
@@ -598,6 +661,73 @@ function getViewModuleState(viewId) {
 
 function getCurrentViewId() {
   return String(window.__bookshellCurrentViewId || document.documentElement.dataset.currentViewId || "").trim();
+}
+
+function readStoredViewHistory() {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(VIEW_HISTORY_KEY) || "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((entry) => ({
+        viewId: String(entry?.viewId || "").trim(),
+        at: Number(entry?.at) || 0,
+      }))
+      .filter((entry) => isValidView(entry.viewId));
+  } catch (_) {
+    return [];
+  }
+}
+
+function writeStoredViewHistory(entries) {
+  try {
+    window.localStorage.setItem(VIEW_HISTORY_KEY, JSON.stringify(entries));
+  } catch (_) {}
+}
+
+function getRecentViewHistory({ excludeHome = true } = {}) {
+  const entries = readStoredViewHistory();
+  return entries.filter((entry) => !excludeHome || entry.viewId !== HOME_VIEW_ID);
+}
+
+function getLastNonHomeViewHistoryEntry() {
+  const historyEntry = getRecentViewHistory({ excludeHome: true })[0];
+  if (historyEntry) return historyEntry;
+
+  const storedViewId = String(window.localStorage.getItem(LAST_NON_HOME_VIEW_KEY) || "").trim();
+  if (!isValidView(storedViewId) || storedViewId === HOME_VIEW_ID) return null;
+  return {
+    viewId: storedViewId,
+    at: 0,
+  };
+}
+
+function recordViewHistory(viewId) {
+  const safeViewId = String(viewId || "").trim();
+  if (!isValidView(safeViewId)) return [];
+
+  const nextHistory = [
+    { viewId: safeViewId, at: Date.now() },
+    ...readStoredViewHistory().filter((entry) => entry.viewId !== safeViewId),
+  ].slice(0, VIEW_HISTORY_LIMIT);
+
+  writeStoredViewHistory(nextHistory);
+
+  if (safeViewId !== HOME_VIEW_ID) {
+    try {
+      window.localStorage.setItem(LAST_NON_HOME_VIEW_KEY, safeViewId);
+    } catch (_) {}
+  }
+
+  try {
+    window.dispatchEvent(new CustomEvent("bookshell:view-history-changed", {
+      detail: {
+        viewId: safeViewId,
+        history: nextHistory,
+      },
+    }));
+  } catch (_) {}
+
+  return nextHistory;
 }
 
 async function getNavRootResetApi() {
@@ -883,9 +1013,6 @@ function getInitialView() {
   const hashViewId = (window.location.hash || "").replace(/^#/, "");
   if (isValidView(hashViewId)) return hashViewId;
 
-  const storedViewId = window.localStorage.getItem(LAST_VIEW_KEY);
-  if (isValidView(storedViewId)) return storedViewId;
-
   return DEFAULT_VIEW_ID;
 }
 
@@ -968,11 +1095,13 @@ function getNavButtonRegistry() {
 
       const meta = NAV_VIEW_META[viewId] || {};
       const label = String(button.getAttribute("aria-label") || button.title || meta.label || viewId).trim();
-      const glyph = String(button.textContent || meta.glyph || label.slice(0, 1) || NAV_GROUP_EMOJI_FALLBACK).trim();
+      const shortLabel = String(meta.shortLabel || label).trim();
+      const glyph = String(meta.glyph || button.textContent || label.slice(0, 1) || NAV_GROUP_EMOJI_FALLBACK).trim();
 
       return {
         viewId,
         label,
+        shortLabel,
         glyph: glyph || label.slice(0, 1) || NAV_GROUP_EMOJI_FALLBACK,
       };
     })
@@ -991,19 +1120,89 @@ function getNavButtonMeta(viewId) {
   return state.navButtonMetaById?.[viewId] || null;
 }
 
-function getDefaultNavLayout() {
+function cloneRecommendedNavGroups() {
+  return Object.fromEntries(
+    Object.entries(RECOMMENDED_NAV_GROUPS).map(([groupId, group]) => [
+      groupId,
+      {
+        id: group.id,
+        label: group.label,
+        emoji: group.emoji,
+        items: [...group.items],
+      },
+    ]),
+  );
+}
+
+function buildRecommendedNavLayout() {
   return {
-    order: getNavButtonRegistry().map(({ viewId }) => viewId),
-    groups: {},
+    version: NAV_LAYOUT_VERSION,
+    order: [...RECOMMENDED_NAV_ORDER],
+    groups: cloneRecommendedNavGroups(),
   };
 }
 
+function getRawGroupCount(rawLayout = null) {
+  if (!rawLayout || typeof rawLayout !== "object") return 0;
+  if (Array.isArray(rawLayout.groups)) return rawLayout.groups.length;
+  if (rawLayout.groups && typeof rawLayout.groups === "object") {
+    return Object.keys(rawLayout.groups).length;
+  }
+  return 0;
+}
+
+function isLegacyDefaultTopLevelLayout(rawLayout = null) {
+  const rawOrder = Array.isArray(rawLayout?.order)
+    ? rawLayout.order.map((token) => String(token || "").trim()).filter(Boolean)
+    : [];
+  if (rawOrder.length !== LEGACY_DEFAULT_NAV_ORDER.length) return false;
+  return LEGACY_DEFAULT_NAV_ORDER.every((viewId, index) => rawOrder[index] === viewId);
+}
+
+function insertHomeIntoLegacyLayout(rawLayout = null) {
+  if (!rawLayout || typeof rawLayout !== "object") {
+    return buildRecommendedNavLayout();
+  }
+
+  const rawOrder = Array.isArray(rawLayout.order) ? rawLayout.order : [];
+  return {
+    ...rawLayout,
+    version: NAV_LAYOUT_VERSION,
+    order: [
+      HOME_VIEW_ID,
+      ...rawOrder.filter((token) => String(token || "").trim() && String(token || "").trim() !== HOME_VIEW_ID),
+    ],
+  };
+}
+
+function migrateLegacyNavLayout(rawLayout = null, defaultLayout = buildRecommendedNavLayout()) {
+  if (!rawLayout || typeof rawLayout !== "object") {
+    return defaultLayout;
+  }
+
+  const version = Number(rawLayout.version) || 0;
+  if (version >= NAV_LAYOUT_VERSION) {
+    return rawLayout;
+  }
+
+  if (!getRawGroupCount(rawLayout) && isLegacyDefaultTopLevelLayout(rawLayout)) {
+    return defaultLayout;
+  }
+
+  return insertHomeIntoLegacyLayout(rawLayout);
+}
+
+function getDefaultNavLayout() {
+  return buildRecommendedNavLayout();
+}
+
 function normalizeNavLayout(rawLayout = null) {
-  const defaultLayout = getDefaultNavLayout();
-  const validViewIds = new Set(defaultLayout.order);
+  const defaultLayout = buildRecommendedNavLayout();
+  const layoutSource = migrateLegacyNavLayout(rawLayout, defaultLayout);
+  const validViewIds = new Set(getNavButtonRegistry().map(({ viewId }) => viewId));
   const normalizedGroups = {};
   const groupedViewIds = new Set();
-  const rawGroupsSource = rawLayout && typeof rawLayout === "object" ? rawLayout.groups : null;
+  const rawGroupsSource = layoutSource && typeof layoutSource === "object" ? layoutSource.groups : null;
   const rawGroupEntries = Array.isArray(rawGroupsSource)
     ? rawGroupsSource.map((group, index) => [group?.id || `group-${index + 1}`, group])
     : Object.entries(rawGroupsSource || {});
@@ -1041,7 +1240,7 @@ function normalizeNavLayout(rawLayout = null) {
 
   const order = [];
   const seenTokens = new Set();
-  const rawOrder = Array.isArray(rawLayout?.order) ? rawLayout.order : defaultLayout.order;
+  const rawOrder = Array.isArray(layoutSource?.order) ? layoutSource.order : defaultLayout.order;
 
   rawOrder.forEach((token) => {
     const entryId = String(token || "").trim();
@@ -1517,7 +1716,16 @@ function createNavViewButton(viewId, { grouped = false } = {}) {
   button.setAttribute("aria-label", meta.label);
 
   if (!grouped) {
-    button.textContent = meta.glyph;
+    const icon = document.createElement("span");
+    icon.className = "nav-btn-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = meta.glyph;
+
+    const label = document.createElement("span");
+    label.className = "nav-btn-label";
+    label.textContent = meta.shortLabel || meta.label;
+
+    button.append(icon, label);
     return button;
   }
 
@@ -1945,7 +2153,6 @@ function initNavCustomization() {
   ensureNavSelectionPanel();
   ensureNavGroupMenuPortal();
   ensureNavComposeBackdrop();
-  window.__bookshellNavigateToView = (viewId, options = {}) => setView(viewId, options);
   renderBottomNav();
 }
 
@@ -1962,10 +2169,14 @@ function syncNav(viewId) {
   });
 
   const layout = ensureNavLayout();
+  document.querySelectorAll(".bottom-nav .nav-group").forEach((groupEl) => {
+    groupEl.classList.remove("nav-group-active");
+  });
   document.querySelectorAll(".bottom-nav [data-nav-group-toggle]").forEach((button) => {
     const groupId = button.dataset.navGroupToggle;
     const isActive = Boolean(groupId && layout.groups[groupId]?.items.includes(viewId));
     button.classList.toggle("nav-btn-active", isActive);
+    button.closest(".nav-group")?.classList.toggle("nav-group-active", isActive);
   });
 
   applyNavGroupOpenState();
@@ -2006,6 +2217,8 @@ async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
     syncNav(viewId);
     syncViews(viewId);
     await ensureViewModule(viewId, { highPriority });
+    recordViewHistory(viewId);
+    window.localStorage.setItem(LAST_VIEW_KEY, viewId);
     recordViewMetrics(viewId, {
       lastShowMs: Math.round(performance.now() - viewSwitchStartedAt),
       lastShownAt: Date.now(),
@@ -2038,6 +2251,7 @@ async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
 
   state.currentViewId = viewId;
   window.localStorage.setItem(LAST_VIEW_KEY, viewId);
+  recordViewHistory(viewId);
   scheduleLikelyVendorWarmup(viewId);
   trackAchievementViewVisit(viewId);
 
@@ -2187,6 +2401,13 @@ async function openViewAndRunQuickAction(viewId, runner) {
 }
 
 async function runGlobalQuickFabAction(actionKey) {
+  if (actionKey === "books") {
+    await ensureSessionQuickstartReady();
+    return openViewAndRunQuickAction("view-books", () => {
+      return clickWhenReady(() => document.getElementById("books-start-session"));
+    });
+  }
+
   if (actionKey === "improvements") {
     return openViewAndRunQuickAction("view-improvements", async () => {
       const openEditor = await waitForValue(() => window.__bookshellImprovements?.openEditorModal || null);
@@ -2625,6 +2846,37 @@ function bootShell() {
   state.booted = true;
 }
 
+function exposeShellApis() {
+  window.__bookshellNavigateToView = (viewId, options = {}) => setView(viewId, options);
+  window.__bookshellOpenViewRoot = async (viewId, options = {}) => {
+    await setView(viewId, {
+      pushHash: options.pushHash !== false,
+      highPriority: options.highPriority !== false,
+    });
+    if (options.resetToRoot === false) return;
+    await maybeResetTabToRoot(viewId);
+  };
+  window.__bookshellGetViewMeta = (viewId) => getNavButtonMeta(viewId) || NAV_VIEW_META[viewId] || null;
+  window.__bookshellGetRecentViews = (options = {}) => {
+    const limit = Math.max(1, Math.min(12, Number(options.limit) || VIEW_HISTORY_LIMIT));
+    return getRecentViewHistory({
+      excludeHome: options.excludeHome !== false,
+    }).slice(0, limit);
+  };
+  window.__bookshellGetLastNonHomeView = () => getLastNonHomeViewHistoryEntry();
+  window.__bookshellGetGlobalQuickFabActions = () => GLOBAL_QUICK_FAB_ACTIONS.map((action) => ({
+    ...action,
+    viewMeta: getNavButtonMeta(action.viewId) || NAV_VIEW_META[action.viewId] || null,
+  }));
+  window.__bookshellRunGlobalQuickFabAction = (actionKey) => runGlobalQuickFabAction(actionKey);
+  window.__bookshellOpenGlobalQuickFab = () => {
+    bindGlobalQuickFab();
+    ensureGlobalQuickFab();
+    setGlobalQuickFabOpen(true);
+  };
+  window.__bookshellGetSyncSnapshot = () => getShellState().lastSyncSnapshot || null;
+}
+
 function schedulePostBootTask(task, delayMs = 0) {
   requestAnimationFrame(() => {
     window.setTimeout(() => {
@@ -2724,6 +2976,7 @@ void initSyncManager({
 initAchievementsService();
 initGeneralCenterService();
 bindSyncIndicatorToggles();
+exposeShellApis();
 bindAuthGate();
 bindViewportHeightVar();
 bindNetworkDebug();

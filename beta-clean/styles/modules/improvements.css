@@ -618,6 +618,85 @@
   min-height: 270px;
 }
 
+.improvements__statsTimeline {
+  display: grid;
+  gap: 10px;
+}
+
+.improvements__statsTimelineShell {
+  display: grid;
+  gap: 10px;
+}
+
+.improvements__statsTimelineHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.improvements__statsTimelineHint {
+  color: rgba(197, 211, 236, 0.68);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.improvements__statsTimelineScroller {
+  overflow: auto;
+  max-height: 320px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.improvements__statsTimelineTable {
+  width: 100%;
+  min-width: 340px;
+  border-collapse: collapse;
+}
+
+.improvements__statsTimelineTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 16, 29, 0.98);
+  color: rgba(193, 209, 235, 0.74);
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.improvements__statsTimelineTable tbody tr:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.improvements__statsTimelineTable tbody th,
+.improvements__statsTimelineTable tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+}
+
+.improvements__statsTimelineTable tbody th {
+  color: #eef5ff;
+  font-weight: 600;
+  text-align: left;
+}
+
+.improvements__statsTimelineTable tbody td {
+  color: rgba(221, 230, 247, 0.84);
+  text-align: right;
+}
+
+.improvements__statsTimelineTable tbody tr:last-child th,
+.improvements__statsTimelineTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
 .improvements__perfChartCard {
   margin-top: 12px;
 }
@@ -1781,7 +1860,8 @@ body.has-open-modal #improvements-open-editor-btn {
 
   .improvements__statsHead,
   .improvements__statsChartHead,
-  .improvements__statsBreakdownTop {
+  .improvements__statsBreakdownTop,
+  .improvements__statsTimelineHead {
     display: grid;
   }
 

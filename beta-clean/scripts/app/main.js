@@ -24,13 +24,9 @@ import {
 import { initGeneralCenterService } from "../shared/services/general-center/index.js";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
-const LAST_NON_HOME_VIEW_KEY = "bookshell:lastNonHomeView:v1";
-const VIEW_HISTORY_KEY = "bookshell:viewHistory:v1";
-const VIEW_HISTORY_LIMIT = 8;
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
-const NAV_LAYOUT_VERSION = 3;
-const HOME_VIEW_ID = "view-home";
-const DEFAULT_VIEW_ID = HOME_VIEW_ID;
+const NAV_LAYOUT_VERSION = 4;
+const DEFAULT_VIEW_ID = "view-books";
 const HABITS_VIEW_ID = "view-habits";
 const SHELL_STATE_KEY = "__bookshellCleanShellState";
 const APP_BOOT_TS = performance.now();
@@ -51,18 +47,17 @@ const NAV_GROUP_EMOJI_FALLBACK = "🗂️";
 const NAV_LONG_PRESS_MS = 420;
 const NAV_MENU_MARGIN = 10;
 const NAV_VIEW_META = {
-  "view-home": { label: "Home diario", shortLabel: "Diario", glyph: "H" },
-  "view-books": { label: "Libros", shortLabel: "Libros", glyph: "B" },
-  "view-notes": { label: "Notas", shortLabel: "Notas", glyph: "N" },
-  "view-videos-hub": { label: "Videos", shortLabel: "Videos", glyph: "V" },
-  "view-recipes": { label: "Recetas", shortLabel: "Comida", glyph: "R" },
-  "view-habits": { label: "Habitos", shortLabel: "Hoy", glyph: "T" },
-  "view-games": { label: "Juegos", shortLabel: "Juegos", glyph: "J" },
-  "view-media": { label: "Media", shortLabel: "Media", glyph: "M" },
-  "view-world": { label: "Mundo", shortLabel: "Mundo", glyph: "W" },
-  "view-finance": { label: "Cuentas", shortLabel: "Gastos", glyph: "$" },
-  "view-improvements": { label: "Mejoras", shortLabel: "Fix", glyph: "+" },
-  "view-gym": { label: "Gym", shortLabel: "Gym", glyph: "G" },
+  "view-books": { label: "Libros", shortLabel: "Libros" },
+  "view-notes": { label: "Notas", shortLabel: "Notas" },
+  "view-videos-hub": { label: "Videos", shortLabel: "Videos" },
+  "view-recipes": { label: "Recetas", shortLabel: "Comida" },
+  "view-habits": { label: "Habitos", shortLabel: "Hoy" },
+  "view-games": { label: "Juegos", shortLabel: "Juegos" },
+  "view-media": { label: "Media", shortLabel: "Media" },
+  "view-world": { label: "Mundo", shortLabel: "Mundo" },
+  "view-finance": { label: "Cuentas", shortLabel: "Gastos" },
+  "view-improvements": { label: "Mejoras", shortLabel: "Fix" },
+  "view-gym": { label: "Gym", shortLabel: "Gym" },
 };
 const LEGACY_DEFAULT_NAV_ORDER = Object.freeze([
   "view-books",
@@ -78,7 +73,6 @@ const LEGACY_DEFAULT_NAV_ORDER = Object.freeze([
   "view-gym",
 ]);
 const RECOMMENDED_NAV_ORDER = Object.freeze([
-  HOME_VIEW_ID,
   HABITS_VIEW_ID,
   "view-books",
   "view-notes",
@@ -559,11 +553,6 @@ async function registerAppServiceWorker() {
 }
 
 const viewModules = {
-  "view-home": {
-    cssUrl: "../../styles/modules/home.css",
-    htmlUrl: "../../views/home.html",
-    moduleLoader: () => import("../modules/home/index.js"),
-  },
   "view-books": {
     cssUrl: "../../styles/modules/books.css",
     htmlUrl: "../../views/books.html",
@@ -661,73 +650,6 @@ function getViewModuleState(viewId) {
 
 function getCurrentViewId() {
   return String(window.__bookshellCurrentViewId || document.documentElement.dataset.currentViewId || "").trim();
-}
-
-function readStoredViewHistory() {
-  try {
-    const raw = JSON.parse(window.localStorage.getItem(VIEW_HISTORY_KEY) || "[]");
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .map((entry) => ({
-        viewId: String(entry?.viewId || "").trim(),
-        at: Number(entry?.at) || 0,
-      }))
-      .filter((entry) => isValidView(entry.viewId));
-  } catch (_) {
-    return [];
-  }
-}
-
-function writeStoredViewHistory(entries) {
-  try {
-    window.localStorage.setItem(VIEW_HISTORY_KEY, JSON.stringify(entries));
-  } catch (_) {}
-}
-
-function getRecentViewHistory({ excludeHome = true } = {}) {
-  const entries = readStoredViewHistory();
-  return entries.filter((entry) => !excludeHome || entry.viewId !== HOME_VIEW_ID);
-}
-
-function getLastNonHomeViewHistoryEntry() {
-  const historyEntry = getRecentViewHistory({ excludeHome: true })[0];
-  if (historyEntry) return historyEntry;
-
-  const storedViewId = String(window.localStorage.getItem(LAST_NON_HOME_VIEW_KEY) || "").trim();
-  if (!isValidView(storedViewId) || storedViewId === HOME_VIEW_ID) return null;
-  return {
-    viewId: storedViewId,
-    at: 0,
-  };
-}
-
-function recordViewHistory(viewId) {
-  const safeViewId = String(viewId || "").trim();
-  if (!isValidView(safeViewId)) return [];
-
-  const nextHistory = [
-    { viewId: safeViewId, at: Date.now() },
-    ...readStoredViewHistory().filter((entry) => entry.viewId !== safeViewId),
-  ].slice(0, VIEW_HISTORY_LIMIT);
-
-  writeStoredViewHistory(nextHistory);
-
-  if (safeViewId !== HOME_VIEW_ID) {
-    try {
-      window.localStorage.setItem(LAST_NON_HOME_VIEW_KEY, safeViewId);
-    } catch (_) {}
-  }
-
-  try {
-    window.dispatchEvent(new CustomEvent("bookshell:view-history-changed", {
-      detail: {
-        viewId: safeViewId,
-        history: nextHistory,
-      },
-    }));
-  } catch (_) {}
-
-  return nextHistory;
 }
 
 async function getNavRootResetApi() {
@@ -1013,6 +935,9 @@ function getInitialView() {
   const hashViewId = (window.location.hash || "").replace(/^#/, "");
   if (isValidView(hashViewId)) return hashViewId;
 
+  const storedViewId = window.localStorage.getItem(LAST_VIEW_KEY);
+  if (isValidView(storedViewId)) return storedViewId;
+
   return DEFAULT_VIEW_ID;
 }
 
@@ -1096,7 +1021,7 @@ function getNavButtonRegistry() {
       const meta = NAV_VIEW_META[viewId] || {};
       const label = String(button.getAttribute("aria-label") || button.title || meta.label || viewId).trim();
       const shortLabel = String(meta.shortLabel || label).trim();
-      const glyph = String(meta.glyph || button.textContent || label.slice(0, 1) || NAV_GROUP_EMOJI_FALLBACK).trim();
+      const glyph = String(button.textContent || meta.glyph || label.slice(0, 1) || NAV_GROUP_EMOJI_FALLBACK).trim();
 
       return {
         viewId,
@@ -1159,19 +1084,28 @@ function isLegacyDefaultTopLevelLayout(rawLayout = null) {
   return LEGACY_DEFAULT_NAV_ORDER.every((viewId, index) => rawOrder[index] === viewId);
 }
 
-function insertHomeIntoLegacyLayout(rawLayout = null) {
+function removeHomeFromLegacyLayout(rawLayout = null) {
   if (!rawLayout || typeof rawLayout !== "object") {
     return buildRecommendedNavLayout();
   }
 
   const rawOrder = Array.isArray(rawLayout.order) ? rawLayout.order : [];
+  const rawGroups = rawLayout.groups && typeof rawLayout.groups === "object" ? rawLayout.groups : {};
   return {
     ...rawLayout,
     version: NAV_LAYOUT_VERSION,
-    order: [
-      HOME_VIEW_ID,
-      ...rawOrder.filter((token) => String(token || "").trim() && String(token || "").trim() !== HOME_VIEW_ID),
-    ],
+    order: rawOrder.filter((token) => String(token || "").trim() && String(token || "").trim() !== "view-home"),
+    groups: Object.fromEntries(
+      Object.entries(rawGroups).map(([groupId, group]) => [
+        groupId,
+        {
+          ...(group || {}),
+          items: Array.isArray(group?.items)
+            ? group.items.filter((item) => String(item || "").trim() !== "view-home")
+            : [],
+        },
+      ]),
+    ),
   };
 }
 
@@ -1189,7 +1123,7 @@ function migrateLegacyNavLayout(rawLayout = null, defaultLayout = buildRecommend
     return defaultLayout;
   }
 
-  return insertHomeIntoLegacyLayout(rawLayout);
+  return removeHomeFromLegacyLayout(rawLayout);
 }
 
 function getDefaultNavLayout() {
@@ -2217,7 +2151,6 @@ async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
     syncNav(viewId);
     syncViews(viewId);
     await ensureViewModule(viewId, { highPriority });
-    recordViewHistory(viewId);
     window.localStorage.setItem(LAST_VIEW_KEY, viewId);
     recordViewMetrics(viewId, {
       lastShowMs: Math.round(performance.now() - viewSwitchStartedAt),
@@ -2251,7 +2184,6 @@ async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
 
   state.currentViewId = viewId;
   window.localStorage.setItem(LAST_VIEW_KEY, viewId);
-  recordViewHistory(viewId);
   scheduleLikelyVendorWarmup(viewId);
   trackAchievementViewVisit(viewId);
 
@@ -2857,13 +2789,6 @@ function exposeShellApis() {
     await maybeResetTabToRoot(viewId);
   };
   window.__bookshellGetViewMeta = (viewId) => getNavButtonMeta(viewId) || NAV_VIEW_META[viewId] || null;
-  window.__bookshellGetRecentViews = (options = {}) => {
-    const limit = Math.max(1, Math.min(12, Number(options.limit) || VIEW_HISTORY_LIMIT));
-    return getRecentViewHistory({
-      excludeHome: options.excludeHome !== false,
-    }).slice(0, limit);
-  };
-  window.__bookshellGetLastNonHomeView = () => getLastNonHomeViewHistoryEntry();
   window.__bookshellGetGlobalQuickFabActions = () => GLOBAL_QUICK_FAB_ACTIONS.map((action) => ({
     ...action,
     viewMeta: getNavButtonMeta(action.viewId) || NAV_VIEW_META[action.viewId] || null,

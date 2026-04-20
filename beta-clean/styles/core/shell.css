@@ -1089,9 +1089,10 @@ body.has-open-modal .nav-selection-panel {
   width: 18px;
   min-width: 18px;
   text-align: center;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 15px;
+  font-weight: 500;
   line-height: 1;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", system-ui, sans-serif;
 }
 
 .bottom-nav .nav-btn-label,

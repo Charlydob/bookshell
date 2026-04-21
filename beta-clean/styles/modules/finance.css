@@ -4980,13 +4980,70 @@ margin-bottom: 50px;
   flex-wrap: wrap;
 }
 
+.financeTab .productsWorkbench__groupAside{
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.financeTab .productsWorkbench__carouselControls{
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .financeTab .productsWorkbench__catalogGrid{
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  align-items: stretch;
   gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 2px;
+  padding: 2px 2px 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.financeTab .productsWorkbench__catalogGrid::-webkit-scrollbar{
+  height: 8px;
+}
+
+.financeTab .productsWorkbench__catalogGrid::-webkit-scrollbar-thumb{
+  border-radius: 999px;
+  background: rgba(150, 184, 243, 0.24);
+}
+
+.financeTab .productsWorkbench__catalogSearch{
+  flex: 0 0 clamp(190px, 26vw, 260px);
+  min-height: 100%;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(150, 184, 243, 0.16);
+  background: rgba(255, 255, 255, 0.045);
+  scroll-snap-align: start;
+}
+
+.financeTab .productsWorkbench__catalogSearch span{
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: rgba(220, 231, 255, 0.62);
+}
+
+.financeTab .productsWorkbench__catalogEmpty{
+  flex: 0 0 clamp(210px, 32vw, 280px);
+  scroll-snap-align: start;
 }
 
 .financeTab .productsWorkbench__productCard{
+  flex: 0 0 clamp(220px, 32vw, 280px);
+  min-width: 0;
+  scroll-snap-align: start;
   display: grid;
   gap: 10px;
   padding: 14px;
@@ -5868,8 +5925,14 @@ margin-bottom: 50px;
 }
 
 .financeTab .productsWorkbench__catalogGrid{
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 7px;
+  padding-bottom: 8px;
+}
+
+.financeTab .productsWorkbench__catalogSearch,
+.financeTab .productsWorkbench__productCard,
+.financeTab .productsWorkbench__catalogEmpty{
+  flex-basis: clamp(205px, 42vw, 250px);
 }
 
 .financeTab .productsWorkbench__group{

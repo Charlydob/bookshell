@@ -2819,20 +2819,31 @@ function renderProductsCatalogGroups(model) {
   }
   const selectedSet = new Set(model.selectedIds || []);
   return model.groups.map((group) => `
-    <section class="productsWorkbench__group">
+    <section class="productsWorkbench__group" data-products-catalog-group="${escapeHtml(group.key)}">
       <header class="productsWorkbench__groupHead">
         <div>
           <strong>${escapeHtml(group.label)}</strong>
           <small>${group.rows.length} productos · ${fmtCurrency(group.totalSpend)} historicos</small>
         </div>
-        <div class="productsWorkbench__groupMeta">
-          <span>${group.dueCount} por reponer</span>
-          <span>${fmtCurrency(group.projectedSpend)} / mes</span>
+        <div class="productsWorkbench__groupAside">
+          <div class="productsWorkbench__groupMeta">
+            <span data-products-catalog-visible>${group.rows.length} visibles</span>
+            <span>${group.dueCount} por reponer</span>
+            <span>${fmtCurrency(group.projectedSpend)} / mes</span>
+          </div>
+          <div class="productsWorkbench__carouselControls" aria-label="Mover carrusel ${escapeHtml(group.label)}">
+            <button type="button" class="productsWorkbench__miniAction" data-products-carousel-scroll="-1" aria-label="Ver productos anteriores">&lsaquo;</button>
+            <button type="button" class="productsWorkbench__miniAction" data-products-carousel-scroll="1" aria-label="Ver productos siguientes">&rsaquo;</button>
+          </div>
         </div>
       </header>
-      <div class="productsWorkbench__catalogGrid">
+      <div class="productsWorkbench__catalogGrid" data-products-catalog-track>
+        <label class="productsWorkbench__catalogSearch">
+          <span>Buscar en ${escapeHtml(group.label)}</span>
+          <input class="food-control" type="search" data-products-catalog-search placeholder="filtrar este carrusel..." />
+        </label>
         ${group.rows.map((row) => `
-          <article class="productsWorkbench__productCard ${model.selectedProductId === row.canonicalId ? 'is-selected' : ''} is-${escapeHtml(row.dueTone)} ${!row.active ? 'is-inactive' : ''}" data-products-select-product="${escapeHtml(row.canonicalId)}">
+          <article class="productsWorkbench__productCard ${model.selectedProductId === row.canonicalId ? 'is-selected' : ''} is-${escapeHtml(row.dueTone)} ${!row.active ? 'is-inactive' : ''}" data-products-select-product="${escapeHtml(row.canonicalId)}" data-products-catalog-card data-products-search="${escapeHtml(row.searchIndex || '')}">
             <div class="productsWorkbench__productTop">
               <label class="productsWorkbench__check">
                 <input type="checkbox" data-products-toggle-select="${escapeHtml(row.canonicalId)}" ${selectedSet.has(row.canonicalId) ? 'checked' : ''} />
@@ -2861,9 +2872,37 @@ function renderProductsCatalogGroups(model) {
             </div>
           </article>
         `).join('')}
+        <div class="productsWorkbench__emptyMini productsWorkbench__catalogEmpty" hidden>No hay productos en este tipo para esa busqueda.</div>
       </div>
     </section>
   `).join('');
+}
+
+function applyProductsCatalogGroupSearch(inputEl) {
+  const groupEl = inputEl?.closest?.('[data-products-catalog-group]');
+  if (!groupEl) return;
+  const queryKey = normalizeProductItemKey(inputEl.value || '');
+  const cards = Array.from(groupEl.querySelectorAll('[data-products-catalog-card]'));
+  let visibleCount = 0;
+  cards.forEach((card) => {
+    const matches = !queryKey || String(card.dataset.productsSearch || '').includes(queryKey);
+    card.hidden = !matches;
+    if (matches) visibleCount += 1;
+  });
+  const counter = groupEl.querySelector('[data-products-catalog-visible]');
+  if (counter) counter.textContent = `${visibleCount} visibles`;
+  const emptyEl = groupEl.querySelector('.productsWorkbench__catalogEmpty');
+  if (emptyEl) emptyEl.hidden = visibleCount > 0;
+}
+
+function scrollProductsCatalogCarousel(buttonEl) {
+  const groupEl = buttonEl?.closest?.('[data-products-catalog-group]');
+  const track = groupEl?.querySelector?.('[data-products-catalog-track]');
+  if (!track) return;
+  const direction = Number(buttonEl.dataset.productsCarouselScroll || 1) < 0 ? -1 : 1;
+  const visibleCards = Array.from(track.querySelectorAll('[data-products-catalog-card]:not([hidden])'));
+  const cardWidth = visibleCards[0]?.getBoundingClientRect?.().width || track.clientWidth * 0.72;
+  track.scrollBy({ left: direction * Math.max(cardWidth + 12, track.clientWidth * 0.72), behavior: 'smooth' });
 }
 
 function renderProductsCatalogPanel(model) {
@@ -11083,6 +11122,11 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       triggerRender();
       return;
     }
+    const carouselScrollBtn = target.closest('[data-products-carousel-scroll]');
+    if (carouselScrollBtn) {
+      scrollProductsCatalogCarousel(carouselScrollBtn);
+      return;
+    }
     const toggleProductSelection = target.closest('[data-products-toggle-select]')?.dataset.productsToggleSelect;
     if (toggleProductSelection) {
       const current = new Set(Array.isArray(state.foodProductsView?.selectedIds) ? state.foodProductsView.selectedIds : []);
@@ -11924,6 +11968,10 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-card-last4-input]')) {
       const cleaned = String(event.target.value || '').replace(/\D/g, '').slice(0, 4);
       if (event.target.value !== cleaned) event.target.value = cleaned;
+    }
+    if (event.target.matches('[data-products-catalog-search]')) {
+      applyProductsCatalogGroupSearch(event.target);
+      return;
     }
     if (event.target.matches('[data-products-filter="productsQuery"]')) {
       state.foodProductsView = {

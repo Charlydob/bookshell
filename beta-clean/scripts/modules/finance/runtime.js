@@ -1115,6 +1115,74 @@ function financeDebug(...parts) {
   if (!FINANCE_DEBUG) return;
   console.log('[FINANCE][DEBUG]', ...parts);
 }
+
+function normalizeProductText(value = '') {
+  return String(value || '').trim();
+}
+
+function normalizeProductNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeProductPositiveNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
+}
+
+function normalizeProductUnit(value = '') {
+  return normalizeProductText(value).toLowerCase() || 'ud';
+}
+
+function normalizeProductTags(value = []) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || '').split(',');
+  return [...new Set(source.map((entry) => normalizeFoodName(entry)).filter(Boolean))];
+}
+
+function normalizeProductBoolean(value, fallback = true) {
+  if (value === null || value === undefined || value === '') return fallback;
+  return !(value === false || value === 'false' || value === 0 || value === '0');
+}
+
+function normalizeProductDateValue(value = '') {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  const iso = toIsoDay(String(value || ''));
+  if (!iso) return 0;
+  return parseDayKey(iso);
+}
+
+function createFinanceProductId(name = '', existingMap = {}) {
+  const seed = firebaseSafeKeyLoose(normalizeFoodName(name || '').replace(/\s+/g, '-'));
+  const base = `prd-${seed || 'item'}`;
+  if (!existingMap?.[base]) return base;
+  let index = 2;
+  while (existingMap?.[`${base}-${index}`]) index += 1;
+  return `${base}-${index}`;
+}
+
+function normalizeFinanceProductMeta(payload = {}, previous = {}) {
+  return {
+    productType: normalizeFoodName(payload?.productType || payload?.mealType || previous?.productType || previous?.mealType || ''),
+    productCategory: normalizeFoodName(payload?.productCategory || payload?.subtype || previous?.productCategory || previous?.subtype || ''),
+    preferredStore: normalizeFoodName(payload?.preferredStore || payload?.place || previous?.preferredStore || previous?.place || ''),
+    brand: normalizeProductText(payload?.brand || previous?.brand || ''),
+    format: normalizeProductText(payload?.format || payload?.size || previous?.format || previous?.size || ''),
+    usualPrice: normalizeProductPositiveNumber(payload?.usualPrice, normalizeProductPositiveNumber(previous?.usualPrice, 0)),
+    estimatedPrice: normalizeProductPositiveNumber(payload?.estimatedPrice, normalizeProductPositiveNumber(previous?.estimatedPrice, 0)),
+    lastPrice: normalizeProductPositiveNumber(payload?.lastPrice, normalizeProductPositiveNumber(previous?.lastPrice, 0)),
+    usualQty: normalizeProductPositiveNumber(payload?.usualQty, normalizeProductPositiveNumber(previous?.usualQty, 1)),
+    unit: normalizeProductUnit(payload?.unit || previous?.unit || 'ud'),
+    lastPurchaseAt: normalizeProductDateValue(payload?.lastPurchaseAt || previous?.lastPurchaseAt || 0),
+    purchaseFrequencyDays: normalizeProductPositiveNumber(payload?.purchaseFrequencyDays, normalizeProductPositiveNumber(previous?.purchaseFrequencyDays, 0)),
+    estimatedDurationDays: normalizeProductPositiveNumber(payload?.estimatedDurationDays, normalizeProductPositiveNumber(previous?.estimatedDurationDays, 0)),
+    notes: normalizeProductText(payload?.notes || previous?.notes || ''),
+    active: normalizeProductBoolean(payload?.active, normalizeProductBoolean(previous?.active, true)),
+    tags: normalizeProductTags(payload?.tags ?? previous?.tags ?? []),
+  };
+}
+
 function normalizeFoodEntityMap(map = {}) {
   const out = {};
   const nameToId = {};
@@ -1136,6 +1204,7 @@ function normalizeFoodEntityMap(map = {}) {
       healthy: normalizeFoodName(payload?.healthy || payload?.cuisine || ''),
       place: normalizeFoodName(payload?.place || payload?.foodPlace || ''),
       defaultPrice: Number(payload?.defaultPrice || 0),
+      ...normalizeFinanceProductMeta(payload, payload),
       priceHistory: normalizeFoodPriceHistory(payload?.priceHistory || {}),
       countUsed: Number(payload?.countUsed || payload?.count || 0),
       createdAt: Number(payload?.createdAt || 0) || nowTs(),
@@ -1848,146 +1917,6 @@ function aggregateProducts(lines = [], purchaseCount = 0) {
   return { products, totalFood, purchaseCount, itemsCount: lines.length, topVendor: topVendor ? { key: topVendor[0], total: topVendor[1] } : null };
 }
 
-function buildProductsViewModel(cfg = {}) {
-  const effectiveCfg = {
-    ...cfg,
-    range: ['day', 'week', 'month', 'year', 'total', 'custom'].includes(String(cfg.range || '')) ? String(cfg.range) : 'month',
-    rangeValue: String(cfg.rangeValue || ''),
-    scope: cfg.scope === 'global' ? 'global' : 'personal'
-  };
-  const accountsById = Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
-  const rangeData = getProductRowsForRange(effectiveCfg.range, effectiveCfg.rangeValue, effectiveCfg);
-  const { rows: rangeRows, start, end, rangeValue } = rangeData;
-  effectiveCfg.rangeValue = rangeValue;
-  const scopedAmountByTx = {};
-  rangeRows.forEach((row) => {
-    if (normalizeTxType(row?.type) !== 'expense') return;
-    const scopedAmount = effectiveCfg.scope === 'global' ? Math.abs(Number(row.amount || 0)) : Math.abs(personalDeltaForTx(row, accountsById));
-    if (!scopedAmount) return;
-    scopedAmountByTx[row.id] = scopedAmount;
-  });
-  const lines = getProductItemRows(rangeRows, {
-    amountByTxId: scopedAmountByTx,
-    productsById: state.food.itemsById || {},
-    vendor: effectiveCfg.vendor || 'all',
-    account: effectiveCfg.account || 'all',
-    onlyFood: !!effectiveCfg.onlyFood
-  });
-  const purchaseCount = new Set(lines.map((line) => line.txId)).size;
-  const detailAgg = aggregateProducts(lines, purchaseCount);
-  const totalFood = Number(detailAgg.totalFood || 0);
-  const productRows = detailAgg.products.map((detail) => ({
-    canonicalId: detail.canonicalId,
-    canonicalName: detail.canonicalName,
-    total: Number(detail.total || 0),
-    percentOfFood: totalFood > 0 ? ((Number(detail.total || 0) / totalFood) * 100) : 0,
-    count: Number(detail.count || 0),
-    purchases: Number(detail.purchases || 0),
-    cheapestVendorKey: detail.cheapestVendorKey || '',
-    cheapestPrice: detail.cheapestPrice ?? null,
-    lastVendor: detail.lastVendor || '',
-    lastPrice: detail.lastPrice ?? null,
-    aliases: Array.isArray(detail.aliases) ? detail.aliases : []
-  }));
-  console.log('[Productos][Stats] reconstrucción canónica', { products: productRows.length, lines: lines.length, purchaseCount, totalFood });
-  const productsQuery = normalizeFoodName(effectiveCfg.productsQuery || '');
-  const productsQueryKey = normalizeProductItemKey(productsQuery);
-  const queryFilteredRows = productsQuery
-    ? productRows.filter((row) => {
-      const nameKey = normalizeProductItemKey(row.canonicalName || '');
-      if (nameKey.includes(productsQueryKey)) return true;
-      return Array.isArray(row.aliases)
-        && row.aliases.some((alias) => normalizeProductItemKey(alias).includes(productsQueryKey));
-    })
-    : productRows;
-  const sortedRows = queryFilteredRows.slice().sort((a, b) => {
-    if ((effectiveCfg.tab || 'top-eur') === 'top-count') return b.count - a.count || b.total - a.total;
-    return b.total - a.total || b.count - a.count;
-  });
-  const listVisible = effectiveCfg.onlyWithItems ? sortedRows.filter((row) => row.count > 0) : sortedRows;
-  if (DEBUG_FINANCE_PRODUCTS) {
-    console.log('[Productos] range', { start, end, rangeValue }, 'itemsLines', lines.length);
-  }
-  return {
-    cfg: effectiveCfg,
-    lines,
-    rangeRows,
-    legendRows: [],
-    listVisible,
-    totalFood,
-    purchaseCount: detailAgg.purchaseCount,
-    itemsCount: lines.length,
-    topVendor: detailAgg.topVendor
-  };
-}
-
-function renderProductsView(isModal = false) {
-  const model = buildProductsViewModel(state.foodProductsView || {});
-  const { cfg, lines, listVisible, totalFood, purchaseCount, itemsCount, topVendor } = model;
-  const rangeOptions = [['day', 'Día'], ['week', 'Semana'], ['month', 'Mes'], ['year', 'Año'], ['total', 'Total'], ['custom', 'Custom']];
-  const vendorOptions = ['all', ...new Set(lines.map((line) => line.vendorKey))].sort((a, b) => a.localeCompare(b, 'es'));
-  const accountOptions = ['all', ...new Set(balanceTxList().filter((row) => normalizeTxType(row?.type) === 'expense').map((row) => String(row.accountId || '')).filter(Boolean))];
-  const totalAverage = purchaseCount > 0 ? totalFood / purchaseCount : 0;
-  const listHtml = listVisible.length
-    ? listVisible.map((row) => {
-      const searchParts = [row.canonicalName, ...(Array.isArray(row.aliases) ? row.aliases : [])]
-        .map((part) => normalizeProductItemKey(part))
-        .filter(Boolean)
-        .join(' ');
-      return `<button type="button" class="finFoodProductsRow" data-food-item-detail="${escapeHtml(row.canonicalId)}" data-food-product-row data-food-product-search="${escapeHtml(searchParts)}"><strong>${escapeHtml(row.canonicalName)}</strong><span>${fmtCurrency(row.total)} · ${row.percentOfFood.toFixed(1)}%</span><span>${(cfg.tab || 'top-eur') === 'top-count' ? `${row.count} uds` : `${row.purchases} compras`}</span><span>${row.cheapestVendorKey ? `Más barato en ${escapeHtml(row.cheapestVendorKey)} (${Number(row.cheapestPrice || 0).toFixed(2)} €/ud)` : 'Sin comparativa'}</span><small>${row.lastVendor ? `Último ${Number(row.lastPrice || 0).toFixed(2)} €/ud · ${escapeHtml(row.lastVendor)}` : ''}</small></button>`;
-    }).join('')
-    : '<p class="finance-empty">Sin productos en este rango.</p>';
-  const content = `<div class="financeProductsView"><section class="finFoodProductsHead">
-      <div class="finFoodFilters">
-        <select class="food-control" data-food-products-range>${rangeOptions.map(([key, label]) => `<option value="${key}" ${cfg.range === key ? 'selected' : ''}>${label}</option>`).join('')}</select>
-        <select class="food-control" data-food-products-vendor>${vendorOptions.map((vendor) => `<option value="${escapeHtml(vendor)}" ${cfg.vendor === vendor ? 'selected' : ''}>${escapeHtml(vendor === 'all' ? 'Todos vendors' : vendor)}</option>`).join('')}</select>
-        <input class="food-control" type="search" placeholder="Buscar producto" value="${escapeHtml(cfg.productsQuery || '')}" data-food-products-search />
-        <select class="food-control" data-food-products-account>${accountOptions.map((id) => `<option value="${escapeHtml(id)}" ${cfg.account === id ? 'selected' : ''}>${escapeHtml(id === 'all' ? 'Todas cuentas' : (state.accounts.find((acc) => acc.id === id)?.name || id))}</option>`).join('')}</select>
-        <label class="financeStats__checkbox"><input type="checkbox" data-food-products-items-only ${cfg.onlyWithItems ? 'checked' : ''}> solo con items</label>
-        <label class="financeStats__checkbox"><input type="checkbox" data-food-products-food-only ${cfg.onlyFood ? 'checked' : ''}> Solo comida</label>
-        ${cfg.range === 'custom' ? `<div class="finFoodCustomRange"><input type="date" class="food-control" data-food-products-custom-start value="${escapeHtml(cfg.customStart || '')}" /><input type="date" class="food-control" data-food-products-custom-end value="${escapeHtml(cfg.customEnd || '')}" /></div>` : ''}
-      </div>
-      <div class="finFoodChipRow">
-        <span class="finFoodChip finFoodChip--glow">Total items: ${fmtCurrency(totalFood)}</span>
-        <span class="finFoodChip">Compras: ${purchaseCount}</span>
-        <span class="finFoodChip">Items: ${itemsCount}</span>
-        <span class="finFoodChip">Media compra: ${fmtCurrency(totalAverage)}</span>
-        <span class="finFoodChip">Top vendor: ${topVendor ? `${escapeHtml(topVendor.key)} (${fmtCurrency(topVendor.total)})` : '—'}</span>
-      </div>
-      <div class="finFoodMiniTabs"><button type="button" class="finFoodMiniTab ${(cfg.tab || 'top-eur') === 'top-eur' ? 'is-active' : ''}" data-food-products-tab="top-eur">Top €</button><button type="button" class="finFoodMiniTab ${(cfg.tab || 'top-eur') === 'top-count' ? 'is-active' : ''}" data-food-products-tab="top-count">Top #</button><button type="button" class="finFoodMiniTab" data-food-merge-open="">Fusionar</button></div>
-    </section>
-    <section class="finFoodProductsScroll" data-finance-products-scroll><section class="finFoodProductsList">${listHtml}</section></section></div>`;
-  if (isModal) {
-    return `<div id="finance-modal" class="finance-modal food-sheet-modal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>Food / Productos</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header>${content}</div>`;
-  }
-  return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Productos</h2></header>${content}</section>`;
-}
-
-
-function renderFoodProductsModal() {
-  return renderProductsView(true);
-}
-
-function renderFinanceProducts() {
-  return renderProductsView(false);
-}
-
-function applyProductsSearchFilter(inputEl) {
-  const root = inputEl?.closest('.financeProductsView') || document;
-  if (!inputEl || !root) return;
-  const queryKey = normalizeProductItemKey(inputEl.value || '');
-  const rows = root.querySelectorAll('[data-food-product-row]');
-  
-  // Usar requestAnimationFrame para mejor performance
-  requestAnimationFrame(() => {
-    rows.forEach((row) => {
-      const haystack = String(row.dataset.foodProductSearch || '');
-      const shouldShow = !queryKey || haystack.includes(queryKey);
-      row.style.display = shouldShow ? '' : 'none';
-    });
-  });
-}
-
 function applyMergeSearchFilter(inputEl, selector) {
   if (!inputEl) return;
   const queryKey = normalizeProductItemKey(inputEl.value || '');
@@ -2003,42 +1932,2008 @@ function applyMergeSearchFilter(inputEl, selector) {
   });
 }
 
-// Funciones de filtrado directo sin repintado completo
-function applyProductsFiltersDirectDom() {
-  const viewEl = document.querySelector('.financeProductsView');
-  if (!viewEl) return;
-  
-  const cfg = state.foodProductsView || {};
-  
-  // Re-construir con los filtros actuales
-  const model = buildProductsViewModel(cfg);
-  const { listVisible } = model;
-  const listContainer = viewEl.querySelector('.finFoodProductsList');
-  
-  if (!listContainer) return;
-  
-  // Actualizar lista sin redibujar todo el modal
-  const listHtml = listVisible.length
-    ? listVisible.map((row) => {
-      const searchParts = [row.canonicalName, ...(Array.isArray(row.aliases) ? row.aliases : [])]
-        .map((part) => normalizeProductItemKey(part))
-        .filter(Boolean)
-        .join(' ');
-      return `<button type="button" class="finFoodProductsRow" data-food-item-detail="${escapeHtml(row.canonicalId)}" data-food-product-row data-food-product-search="${escapeHtml(searchParts)}"><strong>${escapeHtml(row.canonicalName)}</strong><span>${fmtCurrency(row.total)} · ${row.percentOfFood.toFixed(1)}%</span><span>${(cfg.tab || 'top-eur') === 'top-count' ? `${row.count} uds` : `${row.purchases} compras`}</span><span>${row.cheapestVendorKey ? `Más barato en ${escapeHtml(row.cheapestVendorKey)} (${Number(row.cheapestPrice || 0).toFixed(2)} €/ud)` : 'Sin comparativa'}</span><small>${row.lastVendor ? `Último ${Number(row.lastPrice || 0).toFixed(2)} €/ud · ${escapeHtml(row.lastVendor)}` : ''}</small></button>`;
-    }).join('')
-    : '<p class="finance-empty">Sin productos en este rango.</p>';
-  
-  // Aplicar transición suave
-  listContainer.style.opacity = '0';
-  listContainer.style.transition = 'opacity 0.12s ease-out';
-  
-  // Usar requestAnimationFrame para mejor performance
-  requestAnimationFrame(() => {
-    listContainer.innerHTML = listHtml;
-    // Re-trigger layout
-    void listContainer.offsetHeight;
-    listContainer.style.opacity = '1';
+function productsHubPath(path = '') {
+  return `${state.financePath}/shoppingHub${path ? `/${path}` : ''}`;
+}
+
+function cloneProductsLineMap(lines = {}) {
+  return Object.fromEntries(
+    Object.entries(lines || {}).map(([lineId, line]) => [
+      lineId,
+      { ...(line || {}) },
+    ]),
+  );
+}
+
+function cloneProductsListRecord(list = {}) {
+  return {
+    ...(list || {}),
+    lines: cloneProductsLineMap(list?.lines || {}),
+  };
+}
+
+function createEmptyProductsList(seed = {}, { temporary = false } = {}) {
+  const now = nowTs();
+  const fallbackStore = normalizeFoodName(seed?.store || state.productsHub?.settings?.defaultStore || '');
+  const fallbackAccountId = String(seed?.accountId || state.productsHub?.settings?.defaultAccountId || '').trim();
+  const fallbackPaymentMethod = String(seed?.paymentMethod || state.productsHub?.settings?.defaultPaymentMethod || 'Tarjeta').trim() || 'Tarjeta';
+  return normalizeProductsHubList(
+    temporary ? '__draft__' : String(seed?.id || createFinanceRecordId('list')).trim(),
+    {
+      name: seed?.name || 'Lista activa',
+      status: 'draft',
+      store: fallbackStore,
+      accountId: fallbackAccountId,
+      paymentMethod: fallbackPaymentMethod,
+      plannedFor: toIsoDay(String(seed?.plannedFor || '')) || dayKeyFromTs(now),
+      notes: seed?.notes || '',
+      sourceTicketId: seed?.sourceTicketId || '',
+      lines: seed?.lines || {},
+      createdAt: Number(seed?.createdAt || 0) || now,
+      updatedAt: Number(seed?.updatedAt || 0) || now,
+    },
+  );
+}
+
+function resolveActiveProductsList() {
+  const activeId = String(state.productsHub?.settings?.activeListId || '').trim();
+  if (activeId && state.productsHub?.lists?.[activeId]) {
+    return cloneProductsListRecord(state.productsHub.lists[activeId]);
+  }
+  if (state.productsHub?.lists?.__draft__) {
+    return cloneProductsListRecord(state.productsHub.lists.__draft__);
+  }
+  return createEmptyProductsList({}, { temporary: true });
+}
+
+function syncProductsDraftListLocal(list = null) {
+  if (!list) return null;
+  if (String(list.id || '') === '__draft__') {
+    state.productsHub = {
+      ...(state.productsHub || normalizeProductsHub()),
+      lists: {
+        ...(state.productsHub?.lists || {}),
+        __draft__: cloneProductsListRecord(list),
+      },
+    };
+    return list;
+  }
+  const nextLists = { ...(state.productsHub?.lists || {}) };
+  delete nextLists.__draft__;
+  nextLists[list.id] = cloneProductsListRecord(list);
+  state.productsHub = {
+    ...(state.productsHub || normalizeProductsHub()),
+    settings: {
+      ...(state.productsHub?.settings || {}),
+      activeListId: String(list.id || ''),
+    },
+    lists: nextLists,
+  };
+  return list;
+}
+
+function resolveProductsCatalogPrice(row = {}) {
+  return normalizeProductPositiveNumber(
+    row.currentUnitPrice,
+    normalizeProductPositiveNumber(
+      row.estimatedPrice,
+      normalizeProductPositiveNumber(
+        row.usualPrice,
+        normalizeProductPositiveNumber(row.lastPrice, 0),
+      ),
+    ),
+  );
+}
+
+function formatProductsShortDate(ts = 0) {
+  if (!ts) return '--';
+  try {
+    return new Date(Number(ts)).toLocaleDateString('es-ES', {
+      day: '2-digit',
+      month: 'short',
+      year: '2-digit',
+    });
+  } catch (_) {
+    return '--';
+  }
+}
+
+function formatProductsDays(days = null) {
+  if (!Number.isFinite(days)) return 'Sin base';
+  if (days === 0) return 'Hoy';
+  if (days === 1) return '1 dia';
+  if (days === -1) return 'Ayer';
+  return `${Math.abs(Math.round(days))} dias${days < 0 ? ' tarde' : ''}`;
+}
+
+function resolveProductsDueTone(daysRemaining = null, isActive = true) {
+  if (!isActive) return 'inactive';
+  if (!Number.isFinite(daysRemaining)) return 'unknown';
+  if (daysRemaining <= 0) return 'critical';
+  if (daysRemaining <= 5) return 'soon';
+  return 'stable';
+}
+
+function resolveProductsDueLabel(daysRemaining = null, tone = 'unknown') {
+  if (tone === 'inactive') return 'Inactivo';
+  if (tone === 'critical') return `Comprar ya · ${formatProductsDays(daysRemaining)}`;
+  if (tone === 'soon') return `Reponer pronto · ${formatProductsDays(daysRemaining)}`;
+  if (!Number.isFinite(daysRemaining)) return 'Sin frecuencia';
+  return `Cobertura ${formatProductsDays(daysRemaining)}`;
+}
+
+function buildProductsSparklinePath(history = []) {
+  const points = (Array.isArray(history) ? history : [])
+    .slice()
+    .sort((a, b) => Number(a.ts || 0) - Number(b.ts || 0))
+    .slice(-10);
+  if (points.length < 2) return '';
+  const values = points.map((point) => Number(point.unitPrice || point.price || 0)).filter((value) => Number.isFinite(value) && value >= 0);
+  if (!values.length) return '';
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = Math.max(0.01, max - min);
+  return points.map((point, index) => {
+    const value = Number(point.unitPrice || point.price || 0);
+    const x = points.length === 1 ? 0 : (index / (points.length - 1)) * 100;
+    const y = 26 - (((value - min) / range) * 22);
+    return `${index === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(' ');
+}
+
+function buildProductsCatalogLine(line = {}) {
+  const canonicalId = resolveMergeCanonicalId(
+    resolveCanonicalForLine(line)
+    || line.productId
+    || line.foodId
+    || line.productKey
+    || `pseudo_${normalizeAliasKey(line.canonicalName || line.nameRaw || 'sin-datos')}`,
+  );
+  const existing = state.food.itemsById?.[canonicalId] || resolveFoodItemByAnyKey(canonicalId) || null;
+  return {
+    ...line,
+    canonicalId,
+    canonicalName: normalizeFoodName(existing?.displayName || existing?.name || line.canonicalName || line.nameRaw || canonicalId.replace(/^pseudo_/, '')) || 'Producto',
+    scopedTotal: Number(line.scopedAmount || line.totalPrice || 0),
+  };
+}
+
+function resolveProductsPriceBand(price = 0) {
+  if (!Number.isFinite(price) || price <= 0) return 'none';
+  if (price < 3) return 'budget';
+  if (price < 8) return 'standard';
+  return 'premium';
+}
+
+function resolveProductsCadenceBand(days = 0) {
+  if (!Number.isFinite(days) || days <= 0) return 'unknown';
+  if (days <= 7) return 'weekly';
+  if (days <= 21) return 'biweekly';
+  if (days <= 45) return 'monthly';
+  return 'slow';
+}
+
+function resolveProductsGroupMeta(row = {}, groupBy = 'type') {
+  if (groupBy === 'store') {
+    const store = row.preferredStore || row.bestStoreKey || row.lastStore || '';
+    return { key: store || 'sin-tienda', label: store || 'Sin tienda' };
+  }
+  if (groupBy === 'date') {
+    if (!row.lastPurchaseAt) return { key: 'sin-historico', label: 'Sin historico' };
+    const date = new Date(Number(row.lastPurchaseAt || 0));
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    return {
+      key,
+      label: new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(date),
+    };
+  }
+  if (groupBy === 'status') {
+    if (!row.active) return { key: 'inactive', label: 'Inactivos' };
+    if (row.dueTone === 'critical') return { key: 'critical', label: 'Comprar ya' };
+    if (row.dueTone === 'soon') return { key: 'soon', label: 'Reposicion proxima' };
+    if (!row.purchaseCount) return { key: 'untracked', label: 'Sin historico' };
+    return { key: 'stable', label: 'Controlados' };
+  }
+  const type = row.productType || row.mealType || '';
+  return { key: type || 'sin-tipo', label: type || 'Sin tipo' };
+}
+
+function buildProductsRangeLabel(cfg = {}) {
+  const safeRange = String(cfg.range || 'month');
+  if (safeRange === 'total') return 'Historico total';
+  if (safeRange === 'custom') {
+    const from = cfg.customStart || '...';
+    const to = cfg.customEnd || '...';
+    return `${from} - ${to}`;
+  }
+  if (safeRange === 'month') {
+    return monthLabelByKey(String(cfg.rangeValue || getMonthKeyFromDate()));
+  }
+  if (safeRange === 'year') return String(cfg.rangeValue || new Date().getFullYear());
+  return String(cfg.rangeValue || dayKeyFromTs(nowTs()));
+}
+
+function buildProductsViewModel(cfg = {}) {
+  const allowedRanges = ['day', 'week', 'month', 'year', 'total', 'custom'];
+  const allowedGroups = ['type', 'store', 'date', 'status'];
+  const allowedSorts = ['forecast', 'name', 'price', 'last-purchase', 'duration', 'consumption', 'spend'];
+  const allowedStatus = ['all', 'active', 'inactive', 'due'];
+  const nextCfg = {
+    ...(state.foodProductsView || {}),
+    ...(cfg || {}),
+    range: allowedRanges.includes(String(cfg?.range || state.foodProductsView?.range || 'month')) ? String(cfg?.range || state.foodProductsView?.range || 'month') : 'month',
+    groupBy: allowedGroups.includes(String(cfg?.groupBy || state.foodProductsView?.groupBy || 'type')) ? String(cfg?.groupBy || state.foodProductsView?.groupBy || 'type') : 'type',
+    sortBy: allowedSorts.includes(String(cfg?.sortBy || state.foodProductsView?.sortBy || 'forecast')) ? String(cfg?.sortBy || state.foodProductsView?.sortBy || 'forecast') : 'forecast',
+    status: allowedStatus.includes(String(cfg?.status || state.foodProductsView?.status || 'active')) ? String(cfg?.status || state.foodProductsView?.status || 'active') : 'active',
+    scope: String(cfg?.scope || state.foodProductsView?.scope || 'personal') === 'global' ? 'global' : 'personal',
+    vendor: String(cfg?.vendor || state.foodProductsView?.vendor || 'all'),
+    account: String(cfg?.account || state.foodProductsView?.account || 'all'),
+    productsQuery: String(cfg?.productsQuery || state.foodProductsView?.productsQuery || ''),
+    productType: String(cfg?.productType || state.foodProductsView?.productType || 'all'),
+    category: String(cfg?.category || state.foodProductsView?.category || 'all'),
+    store: String(cfg?.store || state.foodProductsView?.store || 'all'),
+    priceBand: String(cfg?.priceBand || state.foodProductsView?.priceBand || 'all'),
+    frequencyBand: String(cfg?.frequencyBand || state.foodProductsView?.frequencyBand || 'all'),
+    durationBand: String(cfg?.durationBand || state.foodProductsView?.durationBand || 'all'),
+    historyRange: String(cfg?.historyRange || state.foodProductsView?.historyRange || '90d'),
+    selectedProductId: String(cfg?.selectedProductId || state.foodProductsView?.selectedProductId || ''),
+    selectedIds: [...new Set(Array.isArray(cfg?.selectedIds || state.foodProductsView?.selectedIds) ? (cfg?.selectedIds || state.foodProductsView?.selectedIds) : [])],
+  };
+
+  const accountsById = Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
+  const buildAmountByTx = (rows = []) => rows.reduce((acc, row) => {
+    if (normalizeTxType(row?.type) !== 'expense') return acc;
+    const scopedAmount = nextCfg.scope === 'global'
+      ? Math.abs(Number(row?.amount || 0))
+      : Math.abs(personalDeltaForTx(row, accountsById));
+    if (scopedAmount > 0) acc[row.id] = scopedAmount;
+    return acc;
+  }, {});
+
+  const rangeData = getProductRowsForRange(nextCfg.range, String(nextCfg.rangeValue || ''), nextCfg);
+  nextCfg.rangeValue = String(rangeData.rangeValue || '');
+  const allRows = balanceTxList();
+  const monthData = getProductRowsForRange('month', getMonthKeyFromDate(), nextCfg);
+  const lineOptions = {
+    productsById: state.food.itemsById || {},
+    vendor: nextCfg.vendor,
+    account: nextCfg.account,
+    onlyFood: !!nextCfg.onlyFood,
+  };
+  const allLines = getProductItemRows(allRows, { amountByTxId: buildAmountByTx(allRows), ...lineOptions }).map(buildProductsCatalogLine);
+  const rangeLines = getProductItemRows(rangeData.rows, { amountByTxId: buildAmountByTx(rangeData.rows), ...lineOptions }).map(buildProductsCatalogLine);
+  const monthLines = getProductItemRows(monthData.rows, { amountByTxId: buildAmountByTx(monthData.rows), ...lineOptions }).map(buildProductsCatalogLine);
+
+  const aggregates = {};
+  const ensureAggregate = (canonicalId, seed = {}) => {
+    const safeId = String(canonicalId || '').trim();
+    if (!safeId) return null;
+    if (aggregates[safeId]) return aggregates[safeId];
+    const product = state.food.itemsById?.[safeId] || resolveFoodItemByAnyKey(safeId) || {};
+    const meta = normalizeFinanceProductMeta(product, product);
+    const preferredStore = meta.preferredStore || normalizeFoodName(product?.place || seed?.vendorKey || '');
+    const initialName = normalizeFoodName(product?.displayName || product?.name || seed?.canonicalName || seed?.nameRaw || safeId.replace(/^pseudo_/, '')) || 'Producto';
+    aggregates[safeId] = {
+      canonicalId: safeId,
+      canonicalName: initialName,
+      displayName: initialName,
+      aliasList: [...new Set(Array.isArray(product?.aliases) ? product.aliases : [])],
+      productType: meta.productType || normalizeFoodName(product?.mealType || ''),
+      productCategory: meta.productCategory || '',
+      preferredStore,
+      brand: normalizeProductText(product?.brand || ''),
+      format: normalizeProductText(product?.format || ''),
+      usualPrice: normalizeProductPositiveNumber(product?.usualPrice, normalizeProductPositiveNumber(product?.defaultPrice, 0)),
+      estimatedPrice: normalizeProductPositiveNumber(product?.estimatedPrice, normalizeProductPositiveNumber(product?.usualPrice, normalizeProductPositiveNumber(product?.defaultPrice, 0))),
+      lastPrice: normalizeProductPositiveNumber(product?.lastPrice, 0),
+      usualQty: normalizeProductPositiveNumber(product?.usualQty, 1),
+      unit: normalizeProductUnit(product?.unit || 'ud'),
+      lastPurchaseAt: normalizeProductNumber(product?.lastPurchaseAt, 0),
+      purchaseFrequencyDays: normalizeProductPositiveNumber(product?.purchaseFrequencyDays, 0),
+      estimatedDurationDays: normalizeProductPositiveNumber(product?.estimatedDurationDays, 0),
+      notes: normalizeProductText(product?.notes || ''),
+      active: normalizeProductBoolean(product?.active, !product?.hiddenMerged),
+      tags: normalizeProductTags(product?.tags || []),
+      countUsed: Number(product?.countUsed || 0),
+      hiddenMerged: Boolean(product?.hiddenMerged),
+      totalSpend: 0,
+      visibleSpend: 0,
+      monthSpend: 0,
+      totalQty: 0,
+      visibleQty: 0,
+      monthQty: 0,
+      lastStore: '',
+      bestStoreKey: '',
+      bestStorePrice: 0,
+      currentUnitPrice: 0,
+      weightedAvgPrice: 0,
+      projectedMonthlySpend: 0,
+      predictedLineCost: 0,
+      dueTone: 'unknown',
+      dueLabel: 'Sin frecuencia',
+      purchaseCount: 0,
+      visiblePurchaseCount: 0,
+      monthPurchaseCount: 0,
+      daysSinceLastPurchase: null,
+      daysRemaining: null,
+      searchIndex: '',
+      vendorRows: [],
+      history: [],
+      recentHistory: [],
+      sparklinePath: '',
+      _vendorMap: {},
+      _history: [],
+      _purchaseDateSet: new Set(),
+      _purchaseTs: [],
+      _visibleDateSet: new Set(),
+      _monthDateSet: new Set(),
+    };
+    return aggregates[safeId];
+  };
+
+  Object.entries(state.food.itemsById || {}).forEach(([id, product]) => {
+    if (product?.hiddenMerged) return;
+    ensureAggregate(resolveMergeCanonicalId(id), product);
   });
+
+  const applyLineToAggregate = (line, bucket = 'all') => {
+    const row = ensureAggregate(line.canonicalId, line);
+    if (!row) return;
+    const scopedTotal = Number(line.scopedTotal || line.scopedAmount || line.totalPrice || 0);
+    const qty = Math.max(1, Number(line.qty || 1));
+    if (bucket === 'all') {
+      row.totalSpend += scopedTotal;
+      row.totalQty += qty;
+      row._history.push({
+        txId: line.txId,
+        ts: Number(line.ts || 0),
+        date: line.date,
+        vendorKey: line.vendorKey,
+        qty,
+        unit: line.unit,
+        unitPrice: Number(line.unitPrice || 0),
+        totalPrice: scopedTotal,
+      });
+      if (line.date) {
+        row._purchaseDateSet.add(line.date);
+        row._purchaseTs.push(parseDayKey(line.date));
+      }
+      const vendor = row._vendorMap[line.vendorKey] || {
+        vendorKey: line.vendorKey,
+        spend: 0,
+        qty: 0,
+        prices: [],
+        purchaseDates: new Set(),
+        lastTs: 0,
+        lastPrice: 0,
+      };
+      vendor.spend += scopedTotal;
+      vendor.qty += qty;
+      vendor.prices.push(Number(line.unitPrice || 0));
+      if (line.date) vendor.purchaseDates.add(line.date);
+      if (Number(line.ts || 0) >= Number(vendor.lastTs || 0)) {
+        vendor.lastTs = Number(line.ts || 0);
+        vendor.lastPrice = Number(line.unitPrice || 0);
+      }
+      row._vendorMap[line.vendorKey] = vendor;
+      if (Number(line.ts || 0) >= Number(row.lastPurchaseAt || 0)) {
+        row.lastPurchaseAt = Number(line.ts || 0);
+        row.lastStore = line.vendorKey;
+        row.lastPrice = Number(line.unitPrice || line.totalPrice || row.lastPrice || 0);
+      }
+    }
+    if (bucket === 'visible') {
+      row.visibleSpend += scopedTotal;
+      row.visibleQty += qty;
+      if (line.date) row._visibleDateSet.add(line.date);
+    }
+    if (bucket === 'month') {
+      row.monthSpend += scopedTotal;
+      row.monthQty += qty;
+      if (line.date) row._monthDateSet.add(line.date);
+    }
+  };
+
+  allLines.forEach((line) => applyLineToAggregate(line, 'all'));
+  rangeLines.forEach((line) => applyLineToAggregate(line, 'visible'));
+  monthLines.forEach((line) => applyLineToAggregate(line, 'month'));
+
+  const rangeTotalSpend = rangeLines.reduce((sum, line) => sum + Number(line.scopedTotal || 0), 0);
+  const monthTotalSpend = monthLines.reduce((sum, line) => sum + Number(line.scopedTotal || 0), 0);
+  const activeList = resolveActiveProductsList();
+  const activeListProductIds = new Set(Object.values(activeList.lines || {}).map((line) => String(line.productId || '').trim()).filter(Boolean));
+
+  const catalogRows = Object.values(aggregates)
+    .filter((row) => !row.hiddenMerged)
+    .map((row) => {
+      const purchaseTs = [...new Set(row._purchaseTs.filter((ts) => Number.isFinite(ts) && ts > 0))].sort((a, b) => a - b);
+      const intervals = purchaseTs.slice(1).map((ts, index) => Math.max(1, Math.round((ts - purchaseTs[index]) / 86400000)));
+      const observedFrequencyDays = intervals.length
+        ? Math.round(intervals.reduce((sum, value) => sum + value, 0) / intervals.length)
+        : 0;
+      const effectiveDurationDays = normalizeProductPositiveNumber(row.estimatedDurationDays, normalizeProductPositiveNumber(row.purchaseFrequencyDays, observedFrequencyDays));
+      const daysSinceLastPurchase = row.lastPurchaseAt
+        ? Math.max(0, Math.round((nowTs() - Number(row.lastPurchaseAt || 0)) / 86400000))
+        : null;
+      const daysRemaining = Number.isFinite(daysSinceLastPurchase) && effectiveDurationDays > 0
+        ? Math.round(effectiveDurationDays - daysSinceLastPurchase)
+        : null;
+      const weightedAvgPrice = row.totalQty > 0
+        ? row._history.reduce((sum, item) => sum + (Number(item.unitPrice || 0) * Math.max(1, Number(item.qty || 1))), 0) / row.totalQty
+        : 0;
+      const currentUnitPrice = normalizeProductPositiveNumber(row.lastPrice, normalizeProductPositiveNumber(row.estimatedPrice, normalizeProductPositiveNumber(row.usualPrice, weightedAvgPrice)));
+      const recurringQty = normalizeProductPositiveNumber(row.usualQty, 1);
+      const predictedLineCost = currentUnitPrice * recurringQty;
+      const projectedMonthlySpend = effectiveDurationDays > 0
+        ? (30 / effectiveDurationDays) * predictedLineCost
+        : row.monthSpend;
+      const vendorRows = Object.values(row._vendorMap)
+        .map((vendor) => ({
+          vendorKey: vendor.vendorKey,
+          spend: vendor.spend,
+          qty: vendor.qty,
+          avgPrice: vendor.qty > 0
+            ? vendor.prices.reduce((sum, value) => sum + Number(value || 0), 0) / Math.max(1, vendor.prices.length)
+            : 0,
+          lastPrice: Number(vendor.lastPrice || 0),
+          purchaseCount: vendor.purchaseDates.size,
+          lastTs: Number(vendor.lastTs || 0),
+        }))
+        .sort((a, b) => Number(a.avgPrice || Infinity) - Number(b.avgPrice || Infinity));
+      const bestStore = vendorRows[0] || null;
+      const searchIndex = normalizeProductItemKey([
+        row.canonicalId,
+        row.canonicalName,
+        row.productType,
+        row.productCategory,
+        row.preferredStore,
+        row.brand,
+        row.format,
+        row.notes,
+        ...(Array.isArray(row.tags) ? row.tags : []),
+        ...(Array.isArray(row.aliasList) ? row.aliasList : []),
+      ].filter(Boolean).join(' '));
+      const dueTone = resolveProductsDueTone(daysRemaining, row.active);
+      const nextForecastDate = effectiveDurationDays > 0 && row.lastPurchaseAt
+        ? dayKeyFromTs(Number(row.lastPurchaseAt || 0) + (effectiveDurationDays * 86400000))
+        : '';
+      return {
+        ...row,
+        currentUnitPrice,
+        weightedAvgPrice,
+        purchaseCount: row._purchaseDateSet.size,
+        visiblePurchaseCount: row._visibleDateSet.size,
+        monthPurchaseCount: row._monthDateSet.size,
+        observedFrequencyDays,
+        estimatedDurationDays: effectiveDurationDays,
+        daysSinceLastPurchase,
+        daysRemaining,
+        dueTone,
+        dueLabel: resolveProductsDueLabel(daysRemaining, dueTone),
+        predictedLineCost,
+        projectedMonthlySpend,
+        priceBand: resolveProductsPriceBand(currentUnitPrice),
+        frequencyBand: resolveProductsCadenceBand(normalizeProductPositiveNumber(row.purchaseFrequencyDays, observedFrequencyDays)),
+        durationBand: resolveProductsCadenceBand(effectiveDurationDays),
+        bestStoreKey: bestStore?.vendorKey || '',
+        bestStorePrice: Number(bestStore?.avgPrice || 0),
+        vendorRows,
+        history: row._history.slice().sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0)),
+        recentHistory: row._history.slice().sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0)).slice(0, 5),
+        sparklinePath: buildProductsSparklinePath(row._history),
+        searchIndex,
+        nextForecastDate,
+        inActiveList: activeListProductIds.has(row.canonicalId),
+      };
+    })
+    .filter((row) => {
+      if (nextCfg.status === 'active' && !row.active) return false;
+      if (nextCfg.status === 'inactive' && row.active) return false;
+      if (nextCfg.status === 'due' && !['critical', 'soon'].includes(row.dueTone)) return false;
+      if (nextCfg.productType !== 'all' && row.productType !== nextCfg.productType) return false;
+      if (nextCfg.category !== 'all' && row.productCategory !== nextCfg.category) return false;
+      if (nextCfg.store !== 'all' && (row.preferredStore || row.bestStoreKey || row.lastStore || '') !== nextCfg.store) return false;
+      if (nextCfg.priceBand !== 'all' && row.priceBand !== nextCfg.priceBand) return false;
+      if (nextCfg.frequencyBand !== 'all' && row.frequencyBand !== nextCfg.frequencyBand) return false;
+      if (nextCfg.durationBand !== 'all' && row.durationBand !== nextCfg.durationBand) return false;
+      if (nextCfg.onlyWithItems && row.visiblePurchaseCount <= 0) return false;
+      const queryKey = normalizeProductItemKey(nextCfg.productsQuery || '');
+      if (queryKey && !String(row.searchIndex || '').includes(queryKey)) return false;
+      return true;
+    });
+
+  const sorters = {
+    forecast: (a, b) => {
+      const toneWeight = { critical: 4, soon: 3, stable: 2, unknown: 1, inactive: 0 };
+      return (toneWeight[b.dueTone] || 0) - (toneWeight[a.dueTone] || 0)
+        || Number(a.daysRemaining ?? Infinity) - Number(b.daysRemaining ?? Infinity)
+        || Number(b.projectedMonthlySpend || 0) - Number(a.projectedMonthlySpend || 0);
+    },
+    name: (a, b) => String(a.canonicalName || '').localeCompare(String(b.canonicalName || ''), 'es', { sensitivity: 'base' }),
+    price: (a, b) => Number(b.currentUnitPrice || 0) - Number(a.currentUnitPrice || 0),
+    'last-purchase': (a, b) => Number(b.lastPurchaseAt || 0) - Number(a.lastPurchaseAt || 0),
+    duration: (a, b) => Number(a.estimatedDurationDays || Infinity) - Number(b.estimatedDurationDays || Infinity),
+    consumption: (a, b) => Number(b.totalQty || 0) - Number(a.totalQty || 0),
+    spend: (a, b) => Number(b.totalSpend || 0) - Number(a.totalSpend || 0),
+  };
+
+  const filteredRows = catalogRows.slice().sort(sorters[nextCfg.sortBy] || sorters.forecast);
+  const groupedMap = filteredRows.reduce((acc, row) => {
+    const group = resolveProductsGroupMeta(row, nextCfg.groupBy);
+    if (!acc[group.key]) {
+      acc[group.key] = {
+        key: group.key,
+        label: group.label,
+        rows: [],
+      };
+    }
+    acc[group.key].rows.push(row);
+    return acc;
+  }, {});
+  const groups = Object.values(groupedMap)
+    .map((group) => ({
+      ...group,
+      totalSpend: group.rows.reduce((sum, row) => sum + Number(row.totalSpend || 0), 0),
+      projectedSpend: group.rows.reduce((sum, row) => sum + Number(row.projectedMonthlySpend || 0), 0),
+      dueCount: group.rows.filter((row) => ['critical', 'soon'].includes(row.dueTone)).length,
+    }))
+    .sort((a, b) => String(a.label || '').localeCompare(String(b.label || ''), 'es', { sensitivity: 'base' }));
+
+  const catalogById = Object.fromEntries(catalogRows.map((row) => [row.canonicalId, row]));
+  const selectedIds = nextCfg.selectedIds.filter((id) => Boolean(catalogById[id]));
+  let selectedProductId = nextCfg.selectedProductId;
+  if (!selectedProductId || !catalogById[selectedProductId]) {
+    selectedProductId = filteredRows[0]?.canonicalId || catalogRows[0]?.canonicalId || '';
+  }
+  const selectedProduct = selectedProductId ? catalogById[selectedProductId] || null : null;
+  const listLines = Object.values(activeList.lines || {})
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
+    .map((line) => {
+      const linkedProduct = catalogById[line.productId] || state.food.itemsById?.[line.productId] || null;
+      const estimatedPrice = normalizeProductPositiveNumber(
+        line.estimatedPrice,
+        normalizeProductPositiveNumber(linkedProduct?.estimatedPrice, resolveProductsCatalogPrice(linkedProduct || {})),
+      );
+      const actualPrice = normalizeProductPositiveNumber(line.actualPrice, estimatedPrice);
+      return {
+        ...line,
+        name: normalizeFoodName(line.name || linkedProduct?.canonicalName || linkedProduct?.displayName || linkedProduct?.name || line.productId || 'Producto'),
+        unit: normalizeProductUnit(line.unit || linkedProduct?.unit || 'ud'),
+        estimatedPrice,
+        actualPrice,
+        estimatedSubtotal: Math.max(1, Number(line.qty || 1)) * estimatedPrice,
+        actualSubtotal: Math.max(1, Number(line.qty || 1)) * actualPrice,
+        linkedProduct,
+      };
+    });
+
+  const activeListEstimatedTotal = listLines.reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0);
+  const activeListActualTotal = listLines.reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0);
+  const dueSuggestions = catalogRows
+    .filter((row) => row.active && !activeListProductIds.has(row.canonicalId))
+    .sort(sorters.forecast)
+    .slice(0, 6);
+  const recentTickets = Object.values(state.productsHub?.tickets || {})
+    .map((ticket) => ({
+      ...ticket,
+      actualTotal: normalizeProductPositiveNumber(ticket.actualTotal, Object.values(ticket.lines || {}).reduce((sum, line) => sum + (Math.max(1, Number(line.qty || 1)) * normalizeProductPositiveNumber(line.actualPrice || line.estimatedPrice, 0)), 0)),
+      lineCount: Object.keys(ticket.lines || {}).length,
+    }))
+    .sort((a, b) => parseDayKey(String(b.dateISO || '')) - parseDayKey(String(a.dateISO || '')))
+    .slice(0, 8);
+  const reusableLists = Object.values(state.productsHub?.lists || {})
+    .filter((list) => list.id !== activeList.id && list.id !== '__draft__' && Object.keys(list.lines || {}).length)
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+    .slice(0, 6);
+  const dueSuggestedSpend = dueSuggestions.reduce((sum, row) => sum + Number(row.predictedLineCost || 0), 0);
+  const monthlyTarget = normalizeProductPositiveNumber(state.productsHub?.settings?.monthlyTarget, 0);
+  const nowDate = new Date();
+  const daysInMonth = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 0).getDate();
+  const dayOfMonth = Math.max(1, nowDate.getDate());
+  const projectedMonthSpend = dayOfMonth > 0 ? (monthTotalSpend / dayOfMonth) * daysInMonth : monthTotalSpend;
+  const budgetRemaining = monthlyTarget - monthTotalSpend;
+  const budgetAfterSuggestions = monthlyTarget - monthTotalSpend - dueSuggestedSpend;
+
+  return {
+    cfg: nextCfg,
+    products: catalogRows,
+    listVisible: filteredRows,
+    groups,
+    selectedIds,
+    selectedProductId,
+    selectedProduct,
+    catalogById,
+    activeList,
+    listLines,
+    activeListEstimatedTotal,
+    activeListActualTotal,
+    dueSuggestions,
+    recentTickets,
+    reusableLists,
+    monthlyTarget,
+    monthTotalSpend,
+    projectedMonthSpend,
+    budgetRemaining,
+    budgetAfterSuggestions,
+    dueSuggestedSpend,
+    rangeTotalSpend,
+    rangeLabel: buildProductsRangeLabel(nextCfg),
+    vendorOptions: ['all', ...new Set(allLines.map((line) => line.vendorKey).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
+    accountOptions: ['all', ...new Set(balanceTxList().filter((row) => normalizeTxType(row?.type) === 'expense').map((row) => String(row.accountId || '')).filter(Boolean))],
+    typeOptions: ['all', ...new Set(catalogRows.map((row) => row.productType).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
+    categoryOptions: ['all', ...new Set(catalogRows.map((row) => row.productCategory).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
+    storeOptions: ['all', ...new Set(catalogRows.map((row) => row.preferredStore || row.bestStoreKey || row.lastStore).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
+    totalCatalogSpend: catalogRows.reduce((sum, row) => sum + Number(row.totalSpend || 0), 0),
+    totalProjectedSpend: catalogRows.reduce((sum, row) => sum + Number(row.projectedMonthlySpend || 0), 0),
+    activeCount: catalogRows.filter((row) => row.active).length,
+    dueCount: catalogRows.filter((row) => ['critical', 'soon'].includes(row.dueTone)).length,
+    filteredCount: filteredRows.length,
+    catalogCount: catalogRows.length,
+    purchaseCount: rangeLines.length ? new Set(rangeLines.map((line) => line.txId)).size : 0,
+    itemsCount: rangeLines.length,
+    topVendor: (() => {
+      const vendorSpend = rangeLines.reduce((acc, line) => {
+        acc[line.vendorKey] = (acc[line.vendorKey] || 0) + Number(line.scopedTotal || 0);
+        return acc;
+      }, {});
+      const top = Object.entries(vendorSpend).sort((a, b) => b[1] - a[1])[0] || null;
+      return top ? { key: top[0], total: top[1] } : null;
+    })(),
+    lines: rangeLines,
+  };
+}
+
+function renderProductsSummaryCards(model) {
+  const trendTone = model.monthlyTarget > 0 && model.projectedMonthSpend > model.monthlyTarget ? 'is-danger' : 'is-calm';
+  return `
+    <section class="productsWorkbench__hero">
+      <div class="productsWorkbench__heroText">
+        <p class="productsWorkbench__eyebrow">Centro de compras y consumo</p>
+        <h2>Catalogo, lista, ticket y gasto en un flujo unico</h2>
+        <p>Rango activo: <strong>${escapeHtml(model.rangeLabel)}</strong>. Gestiona productos, prepara compras, confirma tickets y mide frecuencia real sin salir de la vista.</p>
+      </div>
+      <details class="productsWorkbench__settingsCard productsWorkbench__collapse">
+        <summary class="productsWorkbench__settingsSummary">
+          <span>Ajustes base</span>
+          <strong>${model.monthlyTarget > 0 ? fmtCurrency(model.monthlyTarget) : 'Sin objetivo'}</strong>
+        </summary>
+        <div class="productsWorkbench__settingsGrid">
+          <label class="productsWorkbench__field">
+            <span>Objetivo mensual</span>
+            <input class="food-control" type="number" step="0.01" min="0" value="${Number(model.monthlyTarget || 0) || ''}" data-products-setting="monthlyTarget" />
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Cuenta por defecto</span>
+            <select class="food-control" data-products-setting="defaultAccountId">
+              <option value="">Seleccionar</option>
+              ${(state.accounts || []).map((account) => `<option value="${escapeHtml(account.id)}" ${state.productsHub?.settings?.defaultAccountId === account.id ? 'selected' : ''}>${escapeHtml(account.name || account.id)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Supermercado base</span>
+            <input class="food-control" type="text" value="${escapeHtml(state.productsHub?.settings?.defaultStore || '')}" data-products-setting="defaultStore" placeholder="mercadona" />
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Pago base</span>
+            <input class="food-control" type="text" value="${escapeHtml(state.productsHub?.settings?.defaultPaymentMethod || 'Tarjeta')}" data-products-setting="defaultPaymentMethod" placeholder="Tarjeta" />
+          </label>
+          <button type="button" class="food-history-btn productsWorkbench__settingsSave" data-products-save-settings>Guardar ajustes</button>
+        </div>
+      </details>
+      <div class="productsWorkbench__statsGrid">
+        <article class="productsWorkbench__statCard">
+          <span>Catalogados</span>
+          <strong>${model.catalogCount}</strong>
+          <small>${model.activeCount} activos · ${model.filteredCount} visibles</small>
+        </article>
+        <article class="productsWorkbench__statCard">
+          <span>Compra en rango</span>
+          <strong>${fmtCurrency(model.rangeTotalSpend)}</strong>
+          <small>${model.purchaseCount} tickets · ${model.itemsCount} lineas</small>
+        </article>
+        <article class="productsWorkbench__statCard">
+          <span>Mes real</span>
+          <strong>${fmtCurrency(model.monthTotalSpend)}</strong>
+          <small>${model.monthlyTarget > 0 ? `Objetivo ${fmtCurrency(model.monthlyTarget)}` : 'Sin objetivo mensual'}</small>
+        </article>
+        <article class="productsWorkbench__statCard ${trendTone}">
+          <span>Proyeccion</span>
+          <strong>${fmtCurrency(model.projectedMonthSpend)}</strong>
+          <small>${model.monthlyTarget > 0 ? `${fmtCurrency(model.budgetRemaining)} restantes hoy` : 'Basado en ritmo diario'}</small>
+        </article>
+        <article class="productsWorkbench__statCard is-warning">
+          <span>Reposicion sugerida</span>
+          <strong>${model.dueCount}</strong>
+          <small>${fmtCurrency(model.dueSuggestedSpend)} potenciales</small>
+        </article>
+        <article class="productsWorkbench__statCard">
+          <span>Vendor dominante</span>
+          <strong>${model.topVendor ? escapeHtml(model.topVendor.key) : '—'}</strong>
+          <small>${model.topVendor ? fmtCurrency(model.topVendor.total) : 'Sin historico visible'}</small>
+        </article>
+      </div>
+    </section>
+  `;
+}
+
+function renderProductsFilters(model) {
+  const { cfg } = model;
+  const rangeOptions = [
+    ['day', 'Dia'],
+    ['week', 'Semana'],
+    ['month', 'Mes'],
+    ['year', 'Ano'],
+    ['total', 'Total'],
+    ['custom', 'Personal'],
+  ];
+  const groupOptions = [
+    ['type', 'Tipo'],
+    ['store', 'Tienda'],
+    ['date', 'Fecha'],
+    ['status', 'Estado'],
+  ];
+  const sortOptions = [
+    ['forecast', 'Reposicion'],
+    ['name', 'Nombre'],
+    ['price', 'Precio'],
+    ['last-purchase', 'Ultima compra'],
+    ['duration', 'Duracion'],
+    ['consumption', 'Consumo'],
+    ['spend', 'Gasto acumulado'],
+  ];
+  return `
+    <details class="productsWorkbench__toolbar productsWorkbench__collapse">
+      <summary class="productsWorkbench__panelHead productsWorkbench__collapseSummary">
+        <div>
+          <h3>Buscador y filtros</h3>
+          <p>${escapeHtml(model.rangeLabel)} · ${model.filteredCount} visibles · orden ${escapeHtml(cfg.sortBy || 'forecast')}</p>
+        </div>
+      </summary>
+      <div class="productsWorkbench__toolbarMain">
+        <label class="productsWorkbench__field productsWorkbench__field--search">
+          <span>Buscar</span>
+          <input class="food-control" type="search" value="${escapeHtml(cfg.productsQuery || '')}" data-products-filter="productsQuery" placeholder="nombre, marca, tag, id..." />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Rango</span>
+          <select class="food-control" data-products-filter="range">
+            ${rangeOptions.map(([value, label]) => `<option value="${value}" ${cfg.range === value ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Agrupar</span>
+          <select class="food-control" data-products-filter="groupBy">
+            ${groupOptions.map(([value, label]) => `<option value="${value}" ${cfg.groupBy === value ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Ordenar</span>
+          <select class="food-control" data-products-filter="sortBy">
+            ${sortOptions.map(([value, label]) => `<option value="${value}" ${cfg.sortBy === value ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Scope</span>
+          <select class="food-control" data-products-filter="scope">
+            <option value="personal" ${cfg.scope === 'personal' ? 'selected' : ''}>Mi parte</option>
+            <option value="global" ${cfg.scope === 'global' ? 'selected' : ''}>Global</option>
+          </select>
+        </label>
+      </div>
+      <details class="productsWorkbench__moreFilters">
+        <summary>Mas filtros</summary>
+        <div class="productsWorkbench__toolbarCompact">
+          <label class="productsWorkbench__field">
+            <span>Tipo</span>
+            <select class="food-control" data-products-filter="productType">
+              ${model.typeOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.productType === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todos' : value)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Categoria</span>
+            <select class="food-control" data-products-filter="category">
+              ${model.categoryOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.category === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todas' : value)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Tienda</span>
+            <select class="food-control" data-products-filter="store">
+              ${model.storeOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.store === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todas' : value)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Vendor visible</span>
+            <select class="food-control" data-products-filter="vendor">
+              ${model.vendorOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.vendor === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todos' : value)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Cuenta</span>
+            <select class="food-control" data-products-filter="account">
+              ${model.accountOptions.map((id) => `<option value="${escapeHtml(id)}" ${cfg.account === id ? 'selected' : ''}>${escapeHtml(id === 'all' ? 'Todas' : (state.accounts.find((account) => account.id === id)?.name || id))}</option>`).join('')}
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Estado</span>
+            <select class="food-control" data-products-filter="status">
+              <option value="active" ${cfg.status === 'active' ? 'selected' : ''}>Activos</option>
+              <option value="all" ${cfg.status === 'all' ? 'selected' : ''}>Todos</option>
+              <option value="due" ${cfg.status === 'due' ? 'selected' : ''}>Por reponer</option>
+              <option value="inactive" ${cfg.status === 'inactive' ? 'selected' : ''}>Inactivos</option>
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Precio</span>
+            <select class="food-control" data-products-filter="priceBand">
+              <option value="all" ${cfg.priceBand === 'all' ? 'selected' : ''}>Todo</option>
+              <option value="budget" ${cfg.priceBand === 'budget' ? 'selected' : ''}>Budget</option>
+              <option value="standard" ${cfg.priceBand === 'standard' ? 'selected' : ''}>Medio</option>
+              <option value="premium" ${cfg.priceBand === 'premium' ? 'selected' : ''}>Premium</option>
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Frecuencia</span>
+            <select class="food-control" data-products-filter="frequencyBand">
+              <option value="all" ${cfg.frequencyBand === 'all' ? 'selected' : ''}>Todas</option>
+              <option value="weekly" ${cfg.frequencyBand === 'weekly' ? 'selected' : ''}>Semanal</option>
+              <option value="biweekly" ${cfg.frequencyBand === 'biweekly' ? 'selected' : ''}>Quincenal</option>
+              <option value="monthly" ${cfg.frequencyBand === 'monthly' ? 'selected' : ''}>Mensual</option>
+              <option value="slow" ${cfg.frequencyBand === 'slow' ? 'selected' : ''}>Lenta</option>
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Duracion</span>
+            <select class="food-control" data-products-filter="durationBand">
+              <option value="all" ${cfg.durationBand === 'all' ? 'selected' : ''}>Todas</option>
+              <option value="weekly" ${cfg.durationBand === 'weekly' ? 'selected' : ''}>Corta</option>
+              <option value="biweekly" ${cfg.durationBand === 'biweekly' ? 'selected' : ''}>Media</option>
+              <option value="monthly" ${cfg.durationBand === 'monthly' ? 'selected' : ''}>Larga</option>
+              <option value="slow" ${cfg.durationBand === 'slow' ? 'selected' : ''}>Muy larga</option>
+            </select>
+          </label>
+          <label class="productsWorkbench__toggle">
+            <input type="checkbox" ${cfg.onlyWithItems ? 'checked' : ''} data-products-filter="onlyWithItems" />
+            <span>Solo con actividad en rango</span>
+          </label>
+          ${cfg.range === 'custom' ? `
+            <div class="productsWorkbench__rangeDates">
+              <label class="productsWorkbench__field">
+                <span>Desde</span>
+                <input class="food-control" type="date" value="${escapeHtml(cfg.customStart || '')}" data-products-filter="customStart" />
+              </label>
+              <label class="productsWorkbench__field">
+                <span>Hasta</span>
+                <input class="food-control" type="date" value="${escapeHtml(cfg.customEnd || '')}" data-products-filter="customEnd" />
+              </label>
+            </div>
+          ` : ''}
+        </div>
+      </details>
+    </details>
+  `;
+}
+
+function renderProductsCatalogGroups(model) {
+  if (!model.groups.length) {
+    return '<div class="productsWorkbench__empty">No hay productos para este filtro.</div>';
+  }
+  const selectedSet = new Set(model.selectedIds || []);
+  return model.groups.map((group) => `
+    <section class="productsWorkbench__group">
+      <header class="productsWorkbench__groupHead">
+        <div>
+          <strong>${escapeHtml(group.label)}</strong>
+          <small>${group.rows.length} productos · ${fmtCurrency(group.totalSpend)} historicos</small>
+        </div>
+        <div class="productsWorkbench__groupMeta">
+          <span>${group.dueCount} por reponer</span>
+          <span>${fmtCurrency(group.projectedSpend)} / mes</span>
+        </div>
+      </header>
+      <div class="productsWorkbench__catalogGrid">
+        ${group.rows.map((row) => `
+          <article class="productsWorkbench__productCard ${model.selectedProductId === row.canonicalId ? 'is-selected' : ''} is-${escapeHtml(row.dueTone)} ${!row.active ? 'is-inactive' : ''}" data-products-select-product="${escapeHtml(row.canonicalId)}">
+            <div class="productsWorkbench__productTop">
+              <label class="productsWorkbench__check">
+                <input type="checkbox" data-products-toggle-select="${escapeHtml(row.canonicalId)}" ${selectedSet.has(row.canonicalId) ? 'checked' : ''} />
+                <span></span>
+              </label>
+              <div class="productsWorkbench__productHeading">
+                <strong>${escapeHtml(row.canonicalName)}</strong>
+                <small>${escapeHtml(row.brand || row.productType || 'Sin clasificar')}</small>
+              </div>
+              <button type="button" class="productsWorkbench__miniAction" data-products-add-to-list="${escapeHtml(row.canonicalId)}" aria-label="Anadir ${escapeHtml(row.canonicalName)} a la lista">+</button>
+            </div>
+            <div class="productsWorkbench__productMeta">
+              <span class="productsWorkbench__badge">${escapeHtml(row.productCategory || row.format || 'Sin categoria')}</span>
+              <span class="productsWorkbench__badge">${escapeHtml(row.preferredStore || row.bestStoreKey || 'Sin tienda')}</span>
+              <span class="productsWorkbench__badge">${row.active ? 'Activo' : 'Inactivo'}</span>
+            </div>
+            <div class="productsWorkbench__productMetrics">
+              <div><span>Ultimo</span><strong>${fmtCurrency(row.currentUnitPrice || 0)}</strong></div>
+              <div><span>Freq</span><strong>${row.purchaseFrequencyDays ? `${row.purchaseFrequencyDays}d` : `${row.purchaseCount}x`}</strong></div>
+              <div><span>Ult. compra</span><strong>${row.lastPurchaseAt ? escapeHtml(formatProductsShortDate(row.lastPurchaseAt)) : 'Sin dato'}</strong></div>
+              <div><span>Duracion</span><strong>${row.estimatedDurationDays ? `${row.estimatedDurationDays}d` : '—'}</strong></div>
+            </div>
+            <div class="productsWorkbench__productFooter">
+              <span class="productsWorkbench__status productsWorkbench__status--${escapeHtml(row.dueTone)}">${escapeHtml(row.dueLabel)}</span>
+              <small>${escapeHtml(row.canonicalId)}</small>
+            </div>
+          </article>
+        `).join('')}
+      </div>
+    </section>
+  `).join('');
+}
+
+function renderProductsCatalogPanel(model) {
+  return `
+    <details class="productsWorkbench__panel productsWorkbench__panel--catalog productsWorkbench__collapse">
+      <summary class="productsWorkbench__panelHead productsWorkbench__collapseSummary">
+        <div>
+          <h3>Catalogo operativo</h3>
+          <p>${model.filteredCount} visibles · ${model.dueCount} por reponer</p>
+        </div>
+        <div class="productsWorkbench__panelActions">
+          <button type="button" class="food-history-btn" data-products-new-product>Nuevo producto</button>
+          <button type="button" class="food-history-btn" data-food-merge-open ${model.selectedIds.length >= 1 ? `data-food-merge-open="${escapeHtml(model.selectedIds[0])}"` : ''}>Fusionar</button>
+        </div>
+      </summary>
+      <div class="productsWorkbench__collapseBody">
+        ${renderProductsCatalogGroups(model)}
+      </div>
+    </details>
+  `;
+}
+
+function renderProductsEditorPanel(model) {
+  const selected = model.selectedProduct;
+  const ticketQuickActionDisabled = !selected ? 'disabled' : '';
+  const values = selected || {
+    canonicalId: '',
+    canonicalName: '',
+    productType: '',
+    productCategory: '',
+    preferredStore: state.productsHub?.settings?.defaultStore || '',
+    brand: '',
+    format: '',
+    usualPrice: 0,
+    estimatedPrice: 0,
+    lastPrice: 0,
+    usualQty: 1,
+    unit: 'ud',
+    lastPurchaseAt: 0,
+    purchaseFrequencyDays: 0,
+    estimatedDurationDays: 0,
+    notes: '',
+    active: true,
+    tags: [],
+    vendorRows: [],
+    recentHistory: [],
+    sparklinePath: '',
+  };
+  const selectionTitle = selected ? selected.canonicalName : 'Nuevo producto';
+  return `
+    <details class="productsWorkbench__panel productsWorkbench__panel--editor productsWorkbench__collapse">
+      <summary class="productsWorkbench__panelHead productsWorkbench__collapseSummary">
+        <div>
+          <h3>Editor de producto</h3>
+          <p>${escapeHtml(selectionTitle)} · ${selected ? 'ficha conectada con historico real' : 'crea una referencia reusable para listas y tickets'}</p>
+        </div>
+        <div class="productsWorkbench__panelActions">
+          <button type="button" class="food-history-btn" data-products-add-to-list="${escapeHtml(values.canonicalId || '')}" ${ticketQuickActionDisabled}>A lista</button>
+          <button type="button" class="food-history-btn" data-food-item-detail="${escapeHtml(values.canonicalId || '')}" ${ticketQuickActionDisabled}>Ficha completa</button>
+        </div>
+      </summary>
+      <div class="productsWorkbench__collapseBody">
+      <form class="productsWorkbench__editorForm" data-products-editor-form>
+        <input type="hidden" name="productId" value="${escapeHtml(values.canonicalId || '')}" />
+        <label class="productsWorkbench__field">
+          <span>ID</span>
+          <input class="food-control" type="text" value="${escapeHtml(values.canonicalId || 'Se generara al guardar')}" readonly />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Nombre</span>
+          <input class="food-control" type="text" name="name" value="${escapeHtml(values.canonicalName || '')}" placeholder="Leche semidesnatada" required />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Tipo</span>
+          <input class="food-control" type="text" name="productType" value="${escapeHtml(values.productType || '')}" placeholder="Despensa" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Categoria</span>
+          <input class="food-control" type="text" name="productCategory" value="${escapeHtml(values.productCategory || '')}" placeholder="Lacteos" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Supermercado habitual</span>
+          <input class="food-control" type="text" name="preferredStore" value="${escapeHtml(values.preferredStore || '')}" placeholder="mercadona" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Marca</span>
+          <input class="food-control" type="text" name="brand" value="${escapeHtml(values.brand || '')}" placeholder="Hacendado" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Formato / tamano</span>
+          <input class="food-control" type="text" name="format" value="${escapeHtml(values.format || '')}" placeholder="1L brick" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Cantidad habitual</span>
+          <input class="food-control" type="number" min="1" step="0.01" name="usualQty" value="${Number(values.usualQty || 1)}" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Unidad</span>
+          <input class="food-control" type="text" name="unit" value="${escapeHtml(values.unit || 'ud')}" placeholder="ud, kg, l..." />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Precio habitual</span>
+          <input class="food-control" type="number" min="0" step="0.01" name="usualPrice" value="${Number(values.usualPrice || 0) || ''}" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Precio estimado</span>
+          <input class="food-control" type="number" min="0" step="0.01" name="estimatedPrice" value="${Number(values.estimatedPrice || 0) || ''}" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Precio ultimo</span>
+          <input class="food-control" type="number" min="0" step="0.01" name="lastPrice" value="${Number(values.lastPrice || 0) || ''}" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Ultima compra</span>
+          <input class="food-control" type="date" name="lastPurchaseAt" value="${values.lastPurchaseAt ? escapeHtml(dayKeyFromTs(values.lastPurchaseAt)) : ''}" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Frecuencia</span>
+          <input class="food-control" type="number" min="0" step="1" name="purchaseFrequencyDays" value="${Number(values.purchaseFrequencyDays || 0) || ''}" placeholder="dias" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Duracion estimada</span>
+          <input class="food-control" type="number" min="0" step="1" name="estimatedDurationDays" value="${Number(values.estimatedDurationDays || 0) || ''}" placeholder="dias" />
+        </label>
+        <label class="productsWorkbench__field productsWorkbench__field--wide">
+          <span>Etiquetas</span>
+          <input class="food-control" type="text" name="tags" value="${escapeHtml((values.tags || []).join(', '))}" placeholder="desayuno, esencial, oferta" />
+        </label>
+        <label class="productsWorkbench__field productsWorkbench__field--wide">
+          <span>Notas</span>
+          <textarea class="food-control productsWorkbench__textarea" name="notes" placeholder="Formato ideal, marca preferida, rango de precio...">${escapeHtml(values.notes || '')}</textarea>
+        </label>
+        <label class="productsWorkbench__toggle productsWorkbench__toggle--inline">
+          <input type="checkbox" name="active" ${values.active !== false ? 'checked' : ''} />
+          <span>Producto activo</span>
+        </label>
+        <div class="productsWorkbench__editorActions">
+          <button class="food-history-btn" type="submit">Guardar producto</button>
+          <button type="button" class="food-history-btn" data-products-new-product>Limpiar editor</button>
+        </div>
+      </form>
+      <div class="productsWorkbench__editorInsights">
+        <div class="productsWorkbench__sparklineCard">
+          <div>
+            <strong>Evolucion de precio</strong>
+            <small>${values.vendorRows?.length ? `${values.vendorRows.length} tiendas detectadas` : 'Sin serie suficiente'}</small>
+          </div>
+          <svg viewBox="0 0 100 28" preserveAspectRatio="none">
+            ${values.sparklinePath ? `<path d="${values.sparklinePath}" />` : ''}
+          </svg>
+        </div>
+        <div class="productsWorkbench__vendorList">
+          ${(values.vendorRows || []).slice(0, 4).map((vendor) => `
+            <div class="productsWorkbench__vendorRow">
+              <span>${escapeHtml(vendor.vendorKey || 'unknown')}</span>
+              <strong>${fmtCurrency(vendor.avgPrice || 0)}</strong>
+              <small>${vendor.purchaseCount} compras · ultimo ${escapeHtml(formatProductsShortDate(vendor.lastTs))}</small>
+            </div>
+          `).join('') || '<div class="productsWorkbench__emptyMini">Sin comparativa por tienda todavia.</div>'}
+        </div>
+        <div class="productsWorkbench__historyList">
+          ${(values.recentHistory || []).map((entry) => `
+            <div class="productsWorkbench__historyRow">
+              <span>${escapeHtml(formatProductsShortDate(entry.ts))}</span>
+              <span>${escapeHtml(entry.vendorKey || 'unknown')}</span>
+              <strong>${fmtCurrency(entry.totalPrice || 0)}</strong>
+            </div>
+          `).join('') || '<div class="productsWorkbench__emptyMini">Sin compras reales registradas.</div>'}
+        </div>
+      </div>
+      <form class="productsWorkbench__batchForm" data-products-batch-form>
+        <header>
+          <strong>Edicion en bloque</strong>
+          <small>${model.selectedIds.length} seleccionados</small>
+        </header>
+        <label class="productsWorkbench__field">
+          <span>Tipo comun</span>
+          <input class="food-control" type="text" name="productType" placeholder="solo si quieres reasignar" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Categoria comun</span>
+          <input class="food-control" type="text" name="productCategory" placeholder="limpieza, lacteos..." />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Tienda comun</span>
+          <input class="food-control" type="text" name="preferredStore" placeholder="mercadona" />
+        </label>
+        <label class="productsWorkbench__field productsWorkbench__field--wide">
+          <span>Etiquetas a anadir</span>
+          <input class="food-control" type="text" name="tags" placeholder="stock, promo" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Estado</span>
+          <select class="food-control" name="activeState">
+            <option value="keep">Mantener</option>
+            <option value="active">Activar</option>
+            <option value="inactive">Desactivar</option>
+          </select>
+        </label>
+        <div class="productsWorkbench__editorActions">
+          <button class="food-history-btn" type="submit" ${model.selectedIds.length ? '' : 'disabled'}>Aplicar seleccion</button>
+          <button type="button" class="food-history-btn" data-products-add-selected-list ${model.selectedIds.length ? '' : 'disabled'}>Enviar a lista</button>
+        </div>
+      </form>
+      </div>
+    </details>
+  `;
+}
+
+function renderProductsListPanel(model) {
+  const activeList = model.activeList;
+  return `
+    <section class="productsWorkbench__panel productsWorkbench__panel--shopping">
+      <header class="productsWorkbench__panelHead">
+        <div>
+          <h3>Lista y ticket</h3>
+          <p>Prevision, ticket editable y conversion directa a gasto real.</p>
+        </div>
+        <div class="productsWorkbench__panelActions">
+          <button type="button" class="food-history-btn" data-products-save-list>Guardar lista</button>
+          <button type="button" class="food-history-btn" data-products-clear-list ${model.listLines.length ? '' : 'disabled'}>Vaciar</button>
+        </div>
+      </header>
+      <form class="productsWorkbench__listForm" data-products-list-form data-products-list-id="${escapeHtml(activeList.id || '__draft__')}">
+        <div class="productsWorkbench__listMeta">
+          <label class="productsWorkbench__field">
+            <span>Lista</span>
+            <input class="food-control" type="text" name="listName" value="${escapeHtml(activeList.name || 'Lista activa')}" />
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Supermercado</span>
+            <input class="food-control" type="text" name="store" value="${escapeHtml(activeList.store || state.productsHub?.settings?.defaultStore || '')}" />
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Fecha</span>
+            <input class="food-control" type="date" name="plannedFor" value="${escapeHtml(activeList.plannedFor || dayKeyFromTs(nowTs()))}" />
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Cuenta</span>
+            <select class="food-control" name="accountId">
+              <option value="">Seleccionar</option>
+              ${(state.accounts || []).map((account) => `<option value="${escapeHtml(account.id)}" ${activeList.accountId === account.id ? 'selected' : ''}>${escapeHtml(account.name || account.id)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Pago</span>
+            <input class="food-control" type="text" name="paymentMethod" value="${escapeHtml(activeList.paymentMethod || state.productsHub?.settings?.defaultPaymentMethod || 'Tarjeta')}" />
+          </label>
+          <label class="productsWorkbench__field productsWorkbench__field--wide">
+            <span>Notas</span>
+            <input class="food-control" type="text" name="notes" value="${escapeHtml(activeList.notes || '')}" placeholder="Compra semanal, reposicion despensa..." />
+          </label>
+        </div>
+        <div class="productsWorkbench__suggestions">
+          ${model.dueSuggestions.map((row) => `
+            <button type="button" class="productsWorkbench__suggestion" data-products-add-to-list="${escapeHtml(row.canonicalId)}">
+              <strong>${escapeHtml(row.canonicalName)}</strong>
+              <small>${escapeHtml(row.dueLabel)} · ${fmtCurrency(row.predictedLineCost || 0)}</small>
+            </button>
+          `).join('') || '<div class="productsWorkbench__emptyMini">No hay reposiciones urgentes fuera de la lista.</div>'}
+        </div>
+        <div class="productsWorkbench__lineList">
+          ${model.listLines.map((line, index) => `
+            <div class="productsWorkbench__lineRow" data-products-line-row="${escapeHtml(line.id)}">
+              <div class="productsWorkbench__lineMain">
+                <strong>${escapeHtml(line.name || 'Producto')}</strong>
+                <small>${escapeHtml(line.linkedProduct?.brand || line.store || line.linkedProduct?.preferredStore || 'Sin referencia')}</small>
+              </div>
+              <label class="productsWorkbench__lineField">
+                <span>Cant.</span>
+                <input class="food-control" type="number" min="1" step="0.01" value="${Number(line.qty || 1)}" data-products-line-qty="${escapeHtml(line.id)}" />
+              </label>
+              <label class="productsWorkbench__lineField">
+                <span>Prev.</span>
+                <input class="food-control" type="number" min="0" step="0.01" value="${Number(line.estimatedPrice || 0) || ''}" data-products-line-estimate="${escapeHtml(line.id)}" />
+              </label>
+              <label class="productsWorkbench__lineField">
+                <span>Real</span>
+                <input class="food-control" type="number" min="0" step="0.01" value="${Number(line.actualPrice || 0) || ''}" data-products-line-actual="${escapeHtml(line.id)}" />
+              </label>
+              <div class="productsWorkbench__lineTotals">
+                <span data-products-line-est-total="${escapeHtml(line.id)}">${fmtCurrency(line.estimatedSubtotal || 0)}</span>
+                <strong data-products-line-act-total="${escapeHtml(line.id)}">${fmtCurrency(line.actualSubtotal || 0)}</strong>
+              </div>
+              <button type="button" class="productsWorkbench__miniAction" data-products-remove-line="${escapeHtml(line.id)}" aria-label="Eliminar linea ${index + 1}">×</button>
+            </div>
+          `).join('') || '<div class="productsWorkbench__empty">La lista esta vacia. Anade productos desde el catalogo o desde las sugerencias.</div>'}
+        </div>
+        <div class="productsWorkbench__totals">
+          <div><span>Previsto</span><strong data-products-list-total>${fmtCurrency(model.activeListEstimatedTotal || 0)}</strong></div>
+          <div><span>Ticket real</span><strong data-products-ticket-total>${fmtCurrency(model.activeListActualTotal || 0)}</strong></div>
+        </div>
+      </form>
+      <div class="productsWorkbench__receipt">
+        <header>
+          <strong data-products-receipt-store>${escapeHtml(activeList.store || state.productsHub?.settings?.defaultStore || 'Supermercado')}</strong>
+          <small>${escapeHtml(activeList.plannedFor || dayKeyFromTs(nowTs()))}</small>
+        </header>
+        <div class="productsWorkbench__receiptLines">
+          ${model.listLines.map((line) => `
+            <div class="productsWorkbench__receiptRow">
+              <span class="productsWorkbench__receiptQty" data-products-receipt-qty="${escapeHtml(line.id)}">${Number(line.qty || 1)}x</span>
+              <span class="productsWorkbench__receiptName">${escapeHtml(line.name || 'Producto')}</span>
+              <span class="productsWorkbench__receiptUnit" data-products-receipt-unit="${escapeHtml(line.id)}">${fmtCurrency(line.actualPrice || 0)}</span>
+              <strong class="productsWorkbench__receiptTotal" data-products-receipt-total="${escapeHtml(line.id)}">${fmtCurrency(line.actualSubtotal || 0)}</strong>
+            </div>
+          `).join('') || '<div class="productsWorkbench__emptyMini">El ticket aparecera cuando anadas lineas a la compra.</div>'}
+        </div>
+        <footer>
+          <div class="productsWorkbench__receiptDivider"></div>
+          <div class="productsWorkbench__receiptTotalRow">
+            <span>Total</span>
+            <strong data-products-ticket-total-footer>${fmtCurrency(model.activeListActualTotal || 0)}</strong>
+          </div>
+          <small data-products-receipt-payment>${escapeHtml(activeList.accountId ? `${state.accounts.find((account) => account.id === activeList.accountId)?.name || activeList.accountId} · ${activeList.paymentMethod || 'Tarjeta'}` : (activeList.paymentMethod || 'Tarjeta'))}</small>
+        </footer>
+      </div>
+      <div class="productsWorkbench__panelActions productsWorkbench__panelActions--footer">
+        <button type="button" class="food-history-btn" data-products-confirm-ticket ${model.listLines.length ? '' : 'disabled'}>Confirmar compra</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderProductsHistoryPanel(model) {
+  return `
+    <section class="productsWorkbench__footerGrid">
+      <section class="productsWorkbench__panel">
+        <header class="productsWorkbench__panelHead">
+          <div>
+            <h3>Prevision y recompra</h3>
+            <p>Sugerencias construidas con frecuencia observada, precio actual y objetivo mensual.</p>
+          </div>
+        </header>
+        <div class="productsWorkbench__forecastStrip">
+          <article>
+            <span>Ritmo proyectado</span>
+            <strong>${fmtCurrency(model.projectedMonthSpend || 0)}</strong>
+            <small>${model.monthlyTarget > 0 ? `vs objetivo ${fmtCurrency(model.monthlyTarget)}` : 'Sin techo mensual definido'}</small>
+          </article>
+          <article>
+            <span>Margen restante</span>
+            <strong>${fmtCurrency(model.budgetRemaining || 0)}</strong>
+            <small>${model.monthlyTarget > 0 ? 'Antes de sugerencias' : 'Configura objetivo para medir desvio'}</small>
+          </article>
+          <article>
+            <span>Si compras lo urgente</span>
+            <strong>${fmtCurrency(model.budgetAfterSuggestions || 0)}</strong>
+            <small>${fmtCurrency(model.dueSuggestedSpend || 0)} comprometidos</small>
+          </article>
+        </div>
+        <div class="productsWorkbench__forecastList">
+          ${model.dueSuggestions.map((row) => `
+            <article class="productsWorkbench__forecastRow is-${escapeHtml(row.dueTone)}">
+              <div>
+                <strong>${escapeHtml(row.canonicalName)}</strong>
+                <small>${escapeHtml(row.productType || row.productCategory || 'Sin clasificar')} · ${escapeHtml(row.preferredStore || row.bestStoreKey || 'Sin tienda')}</small>
+              </div>
+              <div>
+                <span>${escapeHtml(row.dueLabel)}</span>
+                <strong>${fmtCurrency(row.predictedLineCost || 0)}</strong>
+              </div>
+            </article>
+          `).join('') || '<div class="productsWorkbench__empty">No hay productos con reposicion urgente.</div>'}
+        </div>
+      </section>
+      <section class="productsWorkbench__panel">
+        <header class="productsWorkbench__panelHead">
+          <div>
+            <h3>Historial confirmado</h3>
+            <p>Tickets guardados por fecha para reutilizar, comparar y auditar gasto real.</p>
+          </div>
+        </header>
+        <div class="productsWorkbench__historyCards">
+          ${model.recentTickets.map((ticket) => `
+            <article class="productsWorkbench__ticketCard">
+              <div class="productsWorkbench__ticketHead">
+                <strong>${escapeHtml(ticket.store || 'Supermercado')}</strong>
+                <small>${escapeHtml(ticket.dateISO || '')}</small>
+              </div>
+              <div class="productsWorkbench__ticketMeta">
+                <span>${ticket.lineCount} lineas</span>
+                <span>${escapeHtml(ticket.paymentMethod || 'Tarjeta')}</span>
+                <span>${escapeHtml(ticket.accountId ? (state.accounts.find((account) => account.id === ticket.accountId)?.name || ticket.accountId) : 'Sin cuenta')}</span>
+              </div>
+              <div class="productsWorkbench__ticketTotals">
+                <small>Previsto ${fmtCurrency(ticket.estimatedTotal || 0)}</small>
+                <strong>${fmtCurrency(ticket.actualTotal || 0)}</strong>
+              </div>
+              <button type="button" class="food-history-btn" data-products-reuse-ticket="${escapeHtml(ticket.id)}">Reutilizar como lista</button>
+            </article>
+          `).join('') || '<div class="productsWorkbench__empty">Todavia no hay tickets confirmados desde esta vista.</div>'}
+        </div>
+        ${model.reusableLists.length ? `
+          <div class="productsWorkbench__reuseLists">
+            <strong>Listas reutilizables</strong>
+            ${model.reusableLists.map((list) => `
+              <button type="button" class="productsWorkbench__reuseListBtn" data-products-reuse-list="${escapeHtml(list.id)}">
+                <span>${escapeHtml(list.name || 'Lista')}</span>
+                <small>${Object.keys(list.lines || {}).length} items · ${escapeHtml(list.store || 'Sin tienda')}</small>
+              </button>
+            `).join('')}
+          </div>
+        ` : ''}
+      </section>
+    </section>
+  `;
+}
+
+function renderProductsView(isModal = false) {
+  const model = buildProductsViewModel(state.foodProductsView || {});
+  const content = `
+    <div class="financeProductsView productsWorkbench">
+      ${renderProductsListPanel(model)}
+      ${renderProductsSummaryCards(model)}
+      ${renderProductsFilters(model)}
+      <div class="productsWorkbench__mainGrid">
+        ${renderProductsCatalogPanel(model)}
+        <div class="productsWorkbench__sideStack">
+          ${renderProductsEditorPanel(model)}
+        </div>
+      </div>
+      <details class="productsWorkbench__panel productsWorkbench__collapse">
+        <summary class="productsWorkbench__panelHead productsWorkbench__collapseSummary">
+          <div>
+            <h3>Analisis e historial</h3>
+            <p>${model.dueSuggestions.length} sugerencias · ${model.recentTickets.length} tickets confirmados</p>
+          </div>
+        </summary>
+        <div class="productsWorkbench__collapseBody">
+          ${renderProductsHistoryPanel(model)}
+        </div>
+      </details>
+    </div>
+  `;
+  if (isModal) {
+    return `<div id="finance-modal" class="finance-modal food-sheet-modal productsWorkbenchModal" role="dialog" aria-modal="true" tabindex="-1"><header class="food-sheet-header"><h3>Centro de productos</h3><button class="food-sheet-close" data-close-modal aria-label="Cerrar">✕</button></header>${content}</div>`;
+  }
+  return `<section class="financeBalanceView financeBalanceView--products">${content}</section>`;
+}
+
+function renderFoodProductsModal() {
+  return renderProductsView(true);
+}
+
+function renderFinanceProducts() {
+  return renderProductsView(false);
+}
+
+function applyProductsSearchFilter(inputEl) {
+  state.foodProductsView = {
+    ...(state.foodProductsView || {}),
+    productsQuery: String(inputEl?.value || ''),
+  };
+  triggerRender();
+}
+
+function applyProductsFiltersDirectDom() {
+  triggerRender();
+}
+
+function readProductsListDraftFromDom(root = document) {
+  const formEl = root?.querySelector?.('[data-products-list-form]');
+  const baseList = resolveActiveProductsList();
+  if (!formEl) return baseList;
+  const nextList = cloneProductsListRecord(baseList);
+  nextList.id = String(formEl.dataset.productsListId || nextList.id || '__draft__').trim() || '__draft__';
+  nextList.name = normalizeProductText(formEl.querySelector('[name="listName"]')?.value || nextList.name || 'Lista activa') || 'Lista activa';
+  nextList.store = normalizeFoodName(formEl.querySelector('[name="store"]')?.value || nextList.store || '');
+  nextList.plannedFor = toIsoDay(String(formEl.querySelector('[name="plannedFor"]')?.value || nextList.plannedFor || '')) || dayKeyFromTs(nowTs());
+  nextList.accountId = String(formEl.querySelector('[name="accountId"]')?.value || nextList.accountId || '').trim();
+  nextList.paymentMethod = normalizeProductText(formEl.querySelector('[name="paymentMethod"]')?.value || nextList.paymentMethod || 'Tarjeta') || 'Tarjeta';
+  nextList.notes = normalizeProductText(formEl.querySelector('[name="notes"]')?.value || nextList.notes || '');
+  nextList.updatedAt = nowTs();
+  const lineEntries = Array.from(formEl.querySelectorAll('[data-products-line-row]')).map((rowEl, index) => {
+    const lineId = String(rowEl.dataset.productsLineRow || '').trim() || createFinanceRecordId('line');
+    return [lineId, {
+      id: lineId,
+      productId: String(baseList.lines?.[lineId]?.productId || '').trim(),
+      name: normalizeFoodName(baseList.lines?.[lineId]?.name || rowEl.querySelector('.productsWorkbench__lineMain strong')?.textContent || ''),
+      qty: Number(rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || baseList.lines?.[lineId]?.qty || 1),
+      unit: normalizeProductUnit(baseList.lines?.[lineId]?.unit || 'ud'),
+      estimatedPrice: Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || baseList.lines?.[lineId]?.estimatedPrice || 0),
+      actualPrice: Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || baseList.lines?.[lineId]?.actualPrice || 0),
+      store: normalizeFoodName(baseList.lines?.[lineId]?.store || nextList.store || ''),
+      checked: true,
+      note: normalizeProductText(baseList.lines?.[lineId]?.note || ''),
+      sortOrder: index,
+      createdAt: Number(baseList.lines?.[lineId]?.createdAt || nowTs()),
+      updatedAt: nowTs(),
+    }];
+  });
+  nextList.lines = normalizeProductsHubLineMap(Object.fromEntries(lineEntries));
+  return nextList;
+}
+
+function syncProductsTicketComposerDom(root = document) {
+  const formEl = root?.querySelector?.('[data-products-list-form]');
+  if (!formEl) return;
+  let estimatedTotal = 0;
+  let actualTotal = 0;
+  formEl.querySelectorAll('[data-products-line-row]').forEach((rowEl) => {
+    const lineId = String(rowEl.dataset.productsLineRow || '').trim();
+    if (!lineId) return;
+    const qty = Math.max(1, Number(rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || 1));
+    const estimatedPrice = Math.max(0, Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || 0));
+    const actualPrice = Math.max(0, Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || estimatedPrice));
+    const estimatedSubtotal = qty * estimatedPrice;
+    const actualSubtotal = qty * actualPrice;
+    estimatedTotal += estimatedSubtotal;
+    actualTotal += actualSubtotal;
+    const estimatedNode = root.querySelector(`[data-products-line-est-total="${lineId}"]`);
+    const actualNode = root.querySelector(`[data-products-line-act-total="${lineId}"]`);
+    const receiptQty = root.querySelector(`[data-products-receipt-qty="${lineId}"]`);
+    const receiptUnit = root.querySelector(`[data-products-receipt-unit="${lineId}"]`);
+    const receiptTotal = root.querySelector(`[data-products-receipt-total="${lineId}"]`);
+    if (estimatedNode) estimatedNode.textContent = fmtCurrency(estimatedSubtotal);
+    if (actualNode) actualNode.textContent = fmtCurrency(actualSubtotal);
+    if (receiptQty) receiptQty.textContent = `${qty}x`;
+    if (receiptUnit) receiptUnit.textContent = fmtCurrency(actualPrice);
+    if (receiptTotal) receiptTotal.textContent = fmtCurrency(actualSubtotal);
+  });
+  const storeValue = String(formEl.querySelector('[name="store"]')?.value || 'Supermercado').trim() || 'Supermercado';
+  const paymentValue = String(formEl.querySelector('[name="paymentMethod"]')?.value || 'Tarjeta').trim() || 'Tarjeta';
+  const accountId = String(formEl.querySelector('[name="accountId"]')?.value || '').trim();
+  const accountName = accountId ? (state.accounts.find((account) => account.id === accountId)?.name || accountId) : '';
+  const receiptStore = root.querySelector('[data-products-receipt-store]');
+  const receiptPayment = root.querySelector('[data-products-receipt-payment]');
+  const listTotal = root.querySelector('[data-products-list-total]');
+  const ticketTotal = root.querySelector('[data-products-ticket-total]');
+  const ticketTotalFooter = root.querySelector('[data-products-ticket-total-footer]');
+  if (receiptStore) receiptStore.textContent = storeValue;
+  if (receiptPayment) receiptPayment.textContent = accountName ? `${accountName} · ${paymentValue}` : paymentValue;
+  if (listTotal) listTotal.textContent = fmtCurrency(estimatedTotal);
+  if (ticketTotal) ticketTotal.textContent = fmtCurrency(actualTotal);
+  if (ticketTotalFooter) ticketTotalFooter.textContent = fmtCurrency(actualTotal);
+}
+
+async function persistProductsHubSettings(patch = {}) {
+  const nextSettings = {
+    ...(state.productsHub?.settings || {}),
+    monthlyTarget: normalizeProductPositiveNumber(patch.monthlyTarget ?? state.productsHub?.settings?.monthlyTarget, 0),
+    defaultAccountId: String(patch.defaultAccountId ?? state.productsHub?.settings?.defaultAccountId ?? '').trim(),
+    defaultStore: normalizeFoodName(patch.defaultStore ?? state.productsHub?.settings?.defaultStore ?? ''),
+    defaultPaymentMethod: normalizeProductText(patch.defaultPaymentMethod ?? state.productsHub?.settings?.defaultPaymentMethod ?? 'Tarjeta') || 'Tarjeta',
+    activeListId: String(patch.activeListId ?? state.productsHub?.settings?.activeListId ?? '').trim(),
+  };
+  state.productsHub = {
+    ...(state.productsHub || normalizeProductsHub()),
+    settings: nextSettings,
+  };
+  await safeFirebase(() => update(ref(db, productsHubPath('settings')), nextSettings));
+  return nextSettings;
+}
+
+async function persistProductsListRecord(list = {}, { activate = false } = {}) {
+  const normalized = normalizeProductsHubList(String(list?.id || ''), list);
+  if (normalized.id === '__draft__') {
+    syncProductsDraftListLocal(normalized);
+    return normalized;
+  }
+  const updatesMap = {
+    [productsHubPath(`lists/${normalized.id}`)]: normalized,
+  };
+  const nextSettings = {
+    ...(state.productsHub?.settings || {}),
+  };
+  if (activate) {
+    nextSettings.activeListId = normalized.id;
+    updatesMap[productsHubPath('settings/activeListId')] = normalized.id;
+  }
+  const nextLists = { ...(state.productsHub?.lists || {}) };
+  delete nextLists.__draft__;
+  nextLists[normalized.id] = normalized;
+  state.productsHub = {
+    ...(state.productsHub || normalizeProductsHub()),
+    settings: nextSettings,
+    lists: nextLists,
+  };
+  await safeFirebase(() => update(ref(db), updatesMap));
+  return normalized;
+}
+
+async function ensurePersistedActiveProductsList(seed = null) {
+  const draft = normalizeProductsHubList(
+    String(seed?.id || resolveActiveProductsList().id || '__draft__'),
+    seed || resolveActiveProductsList(),
+  );
+  if (draft.id !== '__draft__') {
+    return persistProductsListRecord(draft, { activate: true });
+  }
+  const persisted = createEmptyProductsList({
+    ...draft,
+    id: createFinanceRecordId('list'),
+    createdAt: draft.createdAt || nowTs(),
+    updatedAt: nowTs(),
+  });
+  return persistProductsListRecord(persisted, { activate: true });
+}
+
+function resolveProductsCatalogSnapshot(productId = '') {
+  const safeId = String(productId || '').trim();
+  if (!safeId) return null;
+  const model = buildProductsViewModel(state.foodProductsView || {});
+  return model.catalogById?.[safeId] || state.food.itemsById?.[safeId] || resolveFoodItemByAnyKey(safeId) || null;
+}
+
+function upsertProductLineIntoList(list = {}, productSnapshot = null) {
+  const product = productSnapshot || {};
+  const productId = String(product?.canonicalId || product?.id || '').trim();
+  if (!productId) return cloneProductsListRecord(list);
+  const nextList = cloneProductsListRecord(list);
+  const existingEntry = Object.entries(nextList.lines || {}).find(([, line]) => String(line?.productId || '').trim() === productId);
+  const price = resolveProductsCatalogPrice(product);
+  if (existingEntry) {
+    const [lineId, line] = existingEntry;
+    nextList.lines[lineId] = {
+      ...line,
+      qty: Math.max(1, Number(line?.qty || 1)) + Math.max(1, Number(product?.usualQty || 1)),
+      estimatedPrice: normalizeProductPositiveNumber(line?.estimatedPrice, price || 0),
+      actualPrice: normalizeProductPositiveNumber(line?.actualPrice, normalizeProductPositiveNumber(line?.estimatedPrice, price || 0)),
+      updatedAt: nowTs(),
+    };
+    nextList.updatedAt = nowTs();
+    return nextList;
+  }
+  const lineId = createFinanceRecordId('line');
+  nextList.lines[lineId] = {
+    id: lineId,
+    productId,
+    name: normalizeFoodName(product?.canonicalName || product?.displayName || product?.name || productId),
+    qty: Math.max(1, Number(product?.usualQty || 1)),
+    unit: normalizeProductUnit(product?.unit || 'ud'),
+    estimatedPrice: price || 0,
+    actualPrice: price || 0,
+    store: normalizeFoodName(product?.preferredStore || product?.place || nextList.store || ''),
+    checked: true,
+    note: '',
+    sortOrder: Object.keys(nextList.lines || {}).length,
+    createdAt: nowTs(),
+    updatedAt: nowTs(),
+  };
+  nextList.updatedAt = nowTs();
+  return nextList;
+}
+
+async function addProductToActiveProductsList(productId = '') {
+  const product = resolveProductsCatalogSnapshot(productId);
+  if (!product) return;
+  const syncedDraft = readProductsListDraftFromDom();
+  syncProductsDraftListLocal(syncedDraft);
+  const persistedBase = await ensurePersistedActiveProductsList(syncedDraft);
+  const nextList = upsertProductLineIntoList(persistedBase, product);
+  await persistProductsListRecord(nextList, { activate: true });
+  toast('Producto anadido a la lista');
+  triggerRender();
+}
+
+async function addSelectedProductsToActiveList() {
+  const ids = Array.isArray(state.foodProductsView?.selectedIds) ? state.foodProductsView.selectedIds : [];
+  if (!ids.length) return;
+  const syncedDraft = readProductsListDraftFromDom();
+  syncProductsDraftListLocal(syncedDraft);
+  let nextList = await ensurePersistedActiveProductsList(syncedDraft);
+  ids.forEach((productId) => {
+    nextList = upsertProductLineIntoList(nextList, resolveProductsCatalogSnapshot(productId));
+  });
+  await persistProductsListRecord(nextList, { activate: true });
+  toast(`${ids.length} productos enviados a la lista`);
+  triggerRender();
+}
+
+async function saveActiveProductsListFromDom() {
+  const draft = readProductsListDraftFromDom();
+  if (!draft) return null;
+  const persisted = await ensurePersistedActiveProductsList(draft);
+  toast('Lista guardada');
+  triggerRender();
+  return persisted;
+}
+
+async function removeProductsLineFromActiveList(lineId = '') {
+  const draft = readProductsListDraftFromDom();
+  if (!draft?.lines?.[lineId]) return;
+  delete draft.lines[lineId];
+  draft.updatedAt = nowTs();
+  if (draft.id === '__draft__') {
+    syncProductsDraftListLocal(draft);
+  } else {
+    await persistProductsListRecord(draft, { activate: true });
+  }
+  triggerRender();
+}
+
+async function clearProductsActiveList() {
+  const draft = readProductsListDraftFromDom();
+  if (!draft) return;
+  const nextList = createEmptyProductsList({
+    ...draft,
+    id: draft.id,
+    name: draft.name || 'Lista activa',
+    store: draft.store,
+    accountId: draft.accountId,
+    paymentMethod: draft.paymentMethod,
+    plannedFor: dayKeyFromTs(nowTs()),
+  }, { temporary: draft.id === '__draft__' });
+  if (nextList.id === '__draft__') {
+    syncProductsDraftListLocal(nextList);
+  } else {
+    await persistProductsListRecord(nextList, { activate: true });
+  }
+  triggerRender();
+}
+
+async function persistProductsEditorForm(formEl) {
+  if (!formEl) return;
+  const form = new FormData(formEl);
+  const productId = String(form.get('productId') || '').trim();
+  const name = normalizeFoodName(String(form.get('name') || ''));
+  if (!name) {
+    toast('Nombre obligatorio');
+    return;
+  }
+  const preferredStore = normalizeFoodName(String(form.get('preferredStore') || ''));
+  const productType = normalizeFoodName(String(form.get('productType') || ''));
+  const previous = productId ? (state.food.itemsById?.[productId] || null) : null;
+  const payload = {
+    id: productId,
+    name,
+    displayName: name,
+    aliases: Array.isArray(previous?.aliases) ? previous.aliases : [],
+    vendorAliases: previous?.vendorAliases && typeof previous.vendorAliases === 'object' ? previous.vendorAliases : {},
+    mealType: productType,
+    cuisine: previous?.cuisine || '',
+    healthy: previous?.healthy || previous?.cuisine || '',
+    place: preferredStore,
+    productType,
+    productCategory: normalizeFoodName(String(form.get('productCategory') || '')),
+    preferredStore,
+    brand: String(form.get('brand') || ''),
+    format: String(form.get('format') || ''),
+    usualPrice: Number(form.get('usualPrice') || 0),
+    estimatedPrice: Number(form.get('estimatedPrice') || 0),
+    lastPrice: Number(form.get('lastPrice') || 0),
+    usualQty: Number(form.get('usualQty') || 1),
+    unit: String(form.get('unit') || 'ud'),
+    lastPurchaseAt: String(form.get('lastPurchaseAt') || ''),
+    purchaseFrequencyDays: Number(form.get('purchaseFrequencyDays') || 0),
+    estimatedDurationDays: Number(form.get('estimatedDurationDays') || 0),
+    notes: String(form.get('notes') || ''),
+    active: form.get('active') === 'on',
+    tags: String(form.get('tags') || '').split(',').map((tag) => normalizeFoodName(tag)).filter(Boolean),
+    defaultPrice: Number(form.get('estimatedPrice') || form.get('usualPrice') || form.get('lastPrice') || previous?.defaultPrice || 0),
+  };
+  const savedId = await upsertFoodItem(payload, false);
+  if (productType) await upsertFoodOption('typeOfMeal', productType, false);
+  if (preferredStore) await upsertFoodOption('place', preferredStore, false);
+  state.foodProductsView = {
+    ...(state.foodProductsView || {}),
+    selectedProductId: savedId,
+  };
+  toast(productId ? 'Producto actualizado' : 'Producto creado');
+  triggerRender();
+}
+
+async function applyProductsBatchForm(formEl) {
+  const ids = Array.isArray(state.foodProductsView?.selectedIds) ? state.foodProductsView.selectedIds : [];
+  if (!ids.length) return;
+  const form = new FormData(formEl);
+  const patch = {
+    productType: normalizeFoodName(String(form.get('productType') || '')),
+    productCategory: normalizeFoodName(String(form.get('productCategory') || '')),
+    preferredStore: normalizeFoodName(String(form.get('preferredStore') || '')),
+    tags: String(form.get('tags') || '').split(',').map((tag) => normalizeFoodName(tag)).filter(Boolean),
+    activeState: String(form.get('activeState') || 'keep'),
+  };
+  for (const productId of ids) {
+    const previous = state.food.itemsById?.[productId];
+    if (!previous) continue;
+    const nextTags = patch.tags.length
+      ? [...new Set([...(Array.isArray(previous.tags) ? previous.tags : []), ...patch.tags])]
+      : (Array.isArray(previous.tags) ? previous.tags : []);
+    await upsertFoodItem({
+      ...previous,
+      id: productId,
+      name: previous.name,
+      displayName: previous.displayName || previous.name,
+      productType: patch.productType || previous.productType || previous.mealType,
+      productCategory: patch.productCategory || previous.productCategory,
+      preferredStore: patch.preferredStore || previous.preferredStore || previous.place,
+      place: patch.preferredStore || previous.preferredStore || previous.place,
+      mealType: patch.productType || previous.productType || previous.mealType,
+      tags: nextTags,
+      active: patch.activeState === 'keep' ? previous.active !== false : patch.activeState === 'active',
+    }, false);
+  }
+  toast(`Aplicado a ${ids.length} productos`);
+  triggerRender();
+}
+
+async function reuseProductsTicketAsActiveList(ticketId = '') {
+  const ticket = state.productsHub?.tickets?.[ticketId];
+  if (!ticket) return;
+  const nextList = createEmptyProductsList({
+    name: `Lista ${ticket.store || 'reutilizada'}`,
+    store: ticket.store,
+    accountId: ticket.accountId,
+    paymentMethod: ticket.paymentMethod,
+    plannedFor: dayKeyFromTs(nowTs()),
+    notes: ticket.note || '',
+    sourceTicketId: ticket.id,
+    lines: Object.fromEntries(Object.values(ticket.lines || {}).map((line, index) => {
+      const lineId = createFinanceRecordId('line');
+      return [lineId, {
+        id: lineId,
+        productId: String(line.productId || '').trim(),
+        name: normalizeFoodName(line.name || ''),
+        qty: Math.max(1, Number(line.qty || 1)),
+        unit: normalizeProductUnit(line.unit || 'ud'),
+        estimatedPrice: normalizeProductPositiveNumber(line.actualPrice || line.estimatedPrice, 0),
+        actualPrice: normalizeProductPositiveNumber(line.actualPrice || line.estimatedPrice, 0),
+        store: normalizeFoodName(line.store || ticket.store || ''),
+        checked: true,
+        note: normalizeProductText(line.note || ''),
+        sortOrder: index,
+        createdAt: nowTs(),
+        updatedAt: nowTs(),
+      }];
+    })),
+  });
+  await persistProductsListRecord(nextList, { activate: true });
+  toast('Ticket reutilizado como lista');
+  triggerRender();
+}
+
+async function reuseProductsListAsActiveList(listId = '') {
+  const list = state.productsHub?.lists?.[listId];
+  if (!list) return;
+  const nextList = createEmptyProductsList({
+    name: `${list.name || 'Lista'} copia`,
+    store: list.store,
+    accountId: list.accountId,
+    paymentMethod: list.paymentMethod,
+    plannedFor: dayKeyFromTs(nowTs()),
+    notes: list.notes || '',
+    sourceTicketId: list.sourceTicketId || '',
+    lines: Object.fromEntries(Object.values(list.lines || {}).map((line, index) => {
+      const lineId = createFinanceRecordId('line');
+      return [lineId, {
+        ...line,
+        id: lineId,
+        sortOrder: index,
+        createdAt: nowTs(),
+        updatedAt: nowTs(),
+      }];
+    })),
+  });
+  await persistProductsListRecord(nextList, { activate: true });
+  toast('Lista duplicada como compra activa');
+  triggerRender();
+}
+
+async function saveProductsPurchaseTransaction(list = {}) {
+  const lines = Object.values(list.lines || {}).map((line) => ({
+    ...line,
+    qty: Math.max(1, Number(line.qty || 1)),
+    estimatedPrice: normalizeProductPositiveNumber(line.estimatedPrice, 0),
+    actualPrice: normalizeProductPositiveNumber(line.actualPrice, normalizeProductPositiveNumber(line.estimatedPrice, 0)),
+  })).filter((line) => line.name);
+  if (!lines.length) {
+    toast('La lista no tiene lineas');
+    return null;
+  }
+  const accountId = String(list.accountId || state.productsHub?.settings?.defaultAccountId || state.balance?.defaultAccountId || '').trim();
+  if (!accountId) {
+    toast('Selecciona una cuenta antes de confirmar');
+    return null;
+  }
+  const dateISO = toIsoDay(String(list.plannedFor || '')) || dayKeyFromTs(nowTs());
+  const category = 'Compra';
+  const note = normalizeProductText(list.notes || `Compra ${list.store || ''}`) || 'Compra';
+  const totalAmount = lines.reduce((sum, line) => sum + (Number(line.actualPrice || 0) * Math.max(1, Number(line.qty || 1))), 0);
+  if (!(totalAmount > 0)) {
+    toast('El ticket debe tener importe real');
+    return null;
+  }
+
+  const normalizedLines = [];
+  await ensureFoodCatalogLoaded();
+  for (const line of lines) {
+    const productSnapshot = resolveProductsCatalogSnapshot(line.productId);
+    const savedFoodId = await upsertFoodItem({
+      id: String(line.productId || productSnapshot?.canonicalId || productSnapshot?.id || '').trim(),
+      name: normalizeFoodName(line.name || productSnapshot?.canonicalName || productSnapshot?.displayName || productSnapshot?.name || ''),
+      displayName: normalizeFoodName(line.name || productSnapshot?.canonicalName || productSnapshot?.displayName || productSnapshot?.name || ''),
+      aliases: Array.isArray(productSnapshot?.aliasList || productSnapshot?.aliases) ? (productSnapshot?.aliasList || productSnapshot?.aliases) : [],
+      vendorAliases: productSnapshot?.vendorAliases && typeof productSnapshot.vendorAliases === 'object' ? productSnapshot.vendorAliases : {},
+      mealType: normalizeFoodName(productSnapshot?.productType || productSnapshot?.mealType || ''),
+      cuisine: normalizeFoodName(productSnapshot?.cuisine || ''),
+      healthy: normalizeFoodName(productSnapshot?.healthy || productSnapshot?.cuisine || ''),
+      place: normalizeFoodName(line.store || list.store || productSnapshot?.preferredStore || productSnapshot?.place || ''),
+      productType: normalizeFoodName(productSnapshot?.productType || productSnapshot?.mealType || ''),
+      productCategory: normalizeFoodName(productSnapshot?.productCategory || ''),
+      preferredStore: normalizeFoodName(line.store || list.store || productSnapshot?.preferredStore || productSnapshot?.place || ''),
+      brand: String(productSnapshot?.brand || ''),
+      format: String(productSnapshot?.format || ''),
+      usualPrice: Number(productSnapshot?.usualPrice || line.actualPrice || line.estimatedPrice || 0),
+      estimatedPrice: Number(line.estimatedPrice || productSnapshot?.estimatedPrice || line.actualPrice || 0),
+      lastPrice: Number(line.actualPrice || productSnapshot?.lastPrice || 0),
+      usualQty: Number(productSnapshot?.usualQty || line.qty || 1),
+      unit: String(line.unit || productSnapshot?.unit || 'ud'),
+      lastPurchaseAt: dateISO,
+      purchaseFrequencyDays: Number(productSnapshot?.purchaseFrequencyDays || 0),
+      estimatedDurationDays: Number(productSnapshot?.estimatedDurationDays || 0),
+      notes: String(productSnapshot?.notes || ''),
+      active: productSnapshot?.active !== false,
+      tags: Array.isArray(productSnapshot?.tags) ? productSnapshot.tags : [],
+      defaultPrice: Number(line.actualPrice || line.estimatedPrice || productSnapshot?.estimatedPrice || productSnapshot?.defaultPrice || 0),
+    }, true, {
+      lastCategory: category,
+      lastAccountId: accountId,
+      lastNote: note,
+      lastPrice: Number(line.actualPrice || line.estimatedPrice || 0),
+      lastPurchaseAt: parseDayKey(dateISO),
+      unit: String(line.unit || productSnapshot?.unit || 'ud'),
+    });
+    const itemPayload = {
+      foodId: savedFoodId,
+      productKey: String(savedFoodId || firebaseSafeKey(line.name || '')).trim(),
+      name: normalizeFoodName(line.name || productSnapshot?.canonicalName || productSnapshot?.displayName || productSnapshot?.name || ''),
+      qty: Math.max(1, Number(line.qty || 1)),
+      unit: normalizeProductUnit(line.unit || productSnapshot?.unit || 'ud'),
+      unitPrice: Number(line.actualPrice || line.estimatedPrice || 0),
+      amount: Number(line.actualPrice || line.estimatedPrice || 0) * Math.max(1, Number(line.qty || 1)),
+      totalPrice: Number(line.actualPrice || line.estimatedPrice || 0) * Math.max(1, Number(line.qty || 1)),
+      price: Number(line.actualPrice || line.estimatedPrice || 0) * Math.max(1, Number(line.qty || 1)),
+      mealType: normalizeFoodName(productSnapshot?.productType || productSnapshot?.mealType || ''),
+      cuisine: normalizeFoodName(productSnapshot?.cuisine || ''),
+      place: normalizeFoodName(line.store || list.store || productSnapshot?.preferredStore || productSnapshot?.place || ''),
+      healthy: normalizeFoodName(productSnapshot?.healthy || productSnapshot?.cuisine || ''),
+    };
+    normalizedLines.push(itemPayload);
+    if (itemPayload.mealType) await upsertFoodOption('typeOfMeal', itemPayload.mealType, true);
+    if (itemPayload.place) await upsertFoodOption('place', itemPayload.place, true);
+    await recordFoodPricePoint(savedFoodId, Number(itemPayload.unitPrice || 0), 'expense', {
+      ts: parseDayKey(dateISO) || nowTs(),
+      date: dateISO,
+      vendor: itemPayload.place || list.store || 'unknown',
+      unitPrice: Number(itemPayload.unitPrice || 0),
+      qty: Math.max(1, Number(itemPayload.qty || 1)),
+      unit: String(itemPayload.unit || 'ud'),
+      totalPrice: Number(itemPayload.totalPrice || 0),
+      linePrice: Number(itemPayload.totalPrice || 0),
+    });
+  }
+
+  const saveId = push(ref(db, `${state.financePath}/transactions`)).key;
+  const extras = {
+    items: normalizedLines,
+    filters: {
+      mealType: '',
+      cuisine: '',
+      place: normalizeFoodName(list.store || ''),
+      healthy: '',
+    },
+    ticketData: {
+      schema: 'SHOPPING_TICKET_V1',
+      source: { vendor: normalizeFoodName(list.store || 'unknown') || 'unknown' },
+      paymentMethod: list.paymentMethod || 'Tarjeta',
+      estimatedTotal: lines.reduce((sum, line) => sum + (Number(line.estimatedPrice || 0) * Math.max(1, Number(line.qty || 1))), 0),
+      actualTotal: totalAmount,
+    },
+  };
+  const payload = {
+    type: 'expense',
+    amount: totalAmount,
+    date: dateISO,
+    monthKey: dateISO.slice(0, 7),
+    accountId,
+    fromAccountId: '',
+    toAccountId: '',
+    category,
+    note,
+    allocation: normalizeTxAllocation({ mode: 'point', period: 'day', anchorDate: dateISO }, dateISO),
+    extras,
+    updatedAt: nowTs(),
+    createdAt: nowTs(),
+  };
+  await safeFirebase(() => update(ref(db), {
+    [`${state.financePath}/transactions/${saveId}`]: payload,
+    [`${state.financePath}/catalog/categories/${category}`]: { name: category, lastUsedAt: nowTs() },
+  }));
+
+  const freshRoot = await loadFinanceRoot();
+  await recomputeAccountEntries(accountId, dateISO, freshRoot);
+  const refreshedRoot = await loadFinanceRoot();
+  state.balance = state.balance || {};
+  state.balance.transactions = {
+    ...(state.balance.transactions || {}),
+    [saveId]: payload,
+  };
+  syncLocalAccountsFromRoot(refreshedRoot);
+  clearFinanceDerivedCaches();
+  scheduleAggregateRebuild();
+  localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId);
+  state.lastMovementAccountId = accountId;
+  return { txId: saveId, total: totalAmount, payload };
+}
+
+async function confirmProductsTicketFromDom() {
+  const draft = readProductsListDraftFromDom();
+  if (!draft || !Object.keys(draft.lines || {}).length) {
+    toast('No hay lineas para confirmar');
+    return;
+  }
+  const persistedList = await ensurePersistedActiveProductsList(draft);
+  const txResult = await saveProductsPurchaseTransaction(persistedList);
+  if (!txResult) return;
+  const ticketId = createFinanceRecordId('ticket');
+  const estimatedTotal = Object.values(persistedList.lines || {}).reduce((sum, line) => sum + (Math.max(1, Number(line.qty || 1)) * normalizeProductPositiveNumber(line.estimatedPrice, 0)), 0);
+  const ticketRecord = normalizeProductsHubTicket(ticketId, {
+    listId: persistedList.id,
+    txId: txResult.txId,
+    store: persistedList.store,
+    accountId: persistedList.accountId,
+    paymentMethod: persistedList.paymentMethod,
+    note: persistedList.notes,
+    dateISO: persistedList.plannedFor,
+    estimatedTotal,
+    actualTotal: txResult.total,
+    lines: persistedList.lines,
+    createdAt: nowTs(),
+    updatedAt: nowTs(),
+  });
+  const convertedList = {
+    ...persistedList,
+    status: 'converted',
+    sourceTicketId: ticketId,
+    updatedAt: nowTs(),
+  };
+  const nextActiveList = createEmptyProductsList({
+    name: 'Lista activa',
+    store: persistedList.store,
+    accountId: persistedList.accountId,
+    paymentMethod: persistedList.paymentMethod,
+  });
+  state.productsHub = {
+    ...(state.productsHub || normalizeProductsHub()),
+    settings: {
+      ...(state.productsHub?.settings || {}),
+      activeListId: nextActiveList.id,
+    },
+    lists: {
+      ...Object.fromEntries(Object.entries(state.productsHub?.lists || {}).filter(([id]) => id !== '__draft__')),
+      [convertedList.id]: convertedList,
+      [nextActiveList.id]: nextActiveList,
+    },
+    tickets: {
+      ...(state.productsHub?.tickets || {}),
+      [ticketRecord.id]: ticketRecord,
+    },
+  };
+  await safeFirebase(() => update(ref(db), {
+    [productsHubPath(`tickets/${ticketRecord.id}`)]: ticketRecord,
+    [productsHubPath(`lists/${convertedList.id}`)]: convertedList,
+    [productsHubPath(`lists/${nextActiveList.id}`)]: nextActiveList,
+    [productsHubPath('settings/activeListId')]: nextActiveList.id,
+  }));
+  toast('Compra confirmada y gasto registrado');
+  triggerRender();
 }
 
 function firebaseSafeKeyLoose(s) {
@@ -2060,6 +3955,98 @@ function firebaseClean(obj) {
     out[k] = v === null ? null : v;
   }
   return out;
+}
+
+function createFinanceRecordId(prefix = 'item') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function normalizeProductsHubLineMap(lines = {}) {
+  const sourceEntries = Array.isArray(lines)
+    ? lines.map((line, index) => [String(line?.id || `line-${index}`), line])
+    : Object.entries(lines || {});
+  return sourceEntries.reduce((acc, [lineId, line]) => {
+    const safeId = String(lineId || line?.id || createFinanceRecordId('line')).trim();
+    const payload = line && typeof line === 'object' ? line : {};
+    const name = normalizeFoodName(payload?.name || payload?.productName || '');
+    acc[safeId] = {
+      id: safeId,
+      productId: String(payload?.productId || payload?.foodId || '').trim(),
+      name: name || normalizeFoodName(payload?.productId || safeId),
+      qty: Math.max(1, Number(payload?.qty || 1)),
+      unit: normalizeProductUnit(payload?.unit || 'ud'),
+      estimatedPrice: normalizeProductPositiveNumber(payload?.estimatedPrice ?? payload?.plannedPrice ?? payload?.unitPrice ?? payload?.price, 0),
+      actualPrice: normalizeProductPositiveNumber(payload?.actualPrice ?? payload?.finalPrice ?? payload?.estimatedPrice ?? payload?.unitPrice ?? payload?.price, 0),
+      store: normalizeFoodName(payload?.store || payload?.place || ''),
+      checked: payload?.checked !== false,
+      note: normalizeProductText(payload?.note || ''),
+      sortOrder: normalizeProductNumber(payload?.sortOrder, 0),
+      createdAt: normalizeProductNumber(payload?.createdAt, nowTs()),
+      updatedAt: normalizeProductNumber(payload?.updatedAt, nowTs()),
+    };
+    return acc;
+  }, {});
+}
+
+function normalizeProductsHubList(id = '', payload = {}) {
+  const safeId = String(id || payload?.id || createFinanceRecordId('list')).trim();
+  return {
+    id: safeId,
+    name: normalizeProductText(payload?.name || 'Lista activa') || 'Lista activa',
+    status: ['draft', 'converted', 'archived'].includes(String(payload?.status || '')) ? String(payload.status) : 'draft',
+    store: normalizeFoodName(payload?.store || ''),
+    accountId: normalizeProductText(payload?.accountId || ''),
+    paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
+    plannedFor: toIsoDay(String(payload?.plannedFor || '')) || dayKeyFromTs(nowTs()),
+    notes: normalizeProductText(payload?.notes || ''),
+    sourceTicketId: normalizeProductText(payload?.sourceTicketId || ''),
+    lines: normalizeProductsHubLineMap(payload?.lines || {}),
+    createdAt: normalizeProductNumber(payload?.createdAt, nowTs()),
+    updatedAt: normalizeProductNumber(payload?.updatedAt, nowTs()),
+  };
+}
+
+function normalizeProductsHubTicket(id = '', payload = {}) {
+  const safeId = String(id || payload?.id || createFinanceRecordId('ticket')).trim();
+  return {
+    id: safeId,
+    listId: normalizeProductText(payload?.listId || ''),
+    txId: normalizeProductText(payload?.txId || ''),
+    store: normalizeFoodName(payload?.store || ''),
+    accountId: normalizeProductText(payload?.accountId || ''),
+    paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
+    note: normalizeProductText(payload?.note || ''),
+    dateISO: toIsoDay(String(payload?.dateISO || payload?.date || '')) || dayKeyFromTs(nowTs()),
+    estimatedTotal: normalizeProductPositiveNumber(payload?.estimatedTotal, 0),
+    actualTotal: normalizeProductPositiveNumber(payload?.actualTotal, 0),
+    lines: normalizeProductsHubLineMap(payload?.lines || {}),
+    createdAt: normalizeProductNumber(payload?.createdAt, nowTs()),
+    updatedAt: normalizeProductNumber(payload?.updatedAt, nowTs()),
+  };
+}
+
+function normalizeProductsHub(rawHub = {}) {
+  const raw = rawHub && typeof rawHub === 'object' ? rawHub : {};
+  const lists = Object.entries(raw?.lists || {}).reduce((acc, [id, payload]) => {
+    acc[id] = normalizeProductsHubList(id, payload);
+    return acc;
+  }, {});
+  const tickets = Object.entries(raw?.tickets || {}).reduce((acc, [id, payload]) => {
+    acc[id] = normalizeProductsHubTicket(id, payload);
+    return acc;
+  }, {});
+  const settings = {
+    monthlyTarget: normalizeProductPositiveNumber(raw?.settings?.monthlyTarget, 0),
+    defaultAccountId: normalizeProductText(raw?.settings?.defaultAccountId || ''),
+    defaultStore: normalizeFoodName(raw?.settings?.defaultStore || ''),
+    defaultPaymentMethod: normalizeProductText(raw?.settings?.defaultPaymentMethod || 'Tarjeta') || 'Tarjeta',
+    activeListId: normalizeProductText(raw?.settings?.activeListId || ''),
+  };
+  return {
+    settings,
+    lists,
+    tickets,
+  };
 }
 
 async function mergeFoodProducts(selection = [], destinationId = '') {
@@ -2112,10 +4099,10 @@ async function mergeFoodProducts(selection = [], destinationId = '') {
       });
   });
 
-  const preRebuild = buildProductsViewModel(state.foodProductsCfg || {});
+  const preRebuild = buildProductsViewModel(state.foodProductsView || {});
   const preProducts = preRebuild?.products || [];
-  const preTargetTotal = Number(preProducts.find((row) => row.canonicalId === canonicalId)?.total || 0);
-  const preSourceTotal = preProducts.filter((row) => sourceIds.includes(row.canonicalId)).reduce((sum, row) => sum + Number(row.total || 0), 0);
+  const preTargetTotal = Number(preProducts.find((row) => row.canonicalId === canonicalId)?.totalSpend || preProducts.find((row) => row.canonicalId === canonicalId)?.total || 0);
+  const preSourceTotal = preProducts.filter((row) => sourceIds.includes(row.canonicalId)).reduce((sum, row) => sum + Number(row.totalSpend || row.total || 0), 0);
   console.log('[mergeFoodProducts] source totals before merge', { preTargetTotal, preSourceTotal });
 
   for (const item of [{ id: canonicalId, ...canonicalItem }, ...sourceItems]) {
@@ -2264,10 +4251,10 @@ async function mergeFoodProducts(selection = [], destinationId = '') {
   });
   clearFinanceDerivedCaches();
 
-  const rebuild = buildProductsViewModel(state.foodProductsCfg || {});
+  const rebuild = buildProductsViewModel(state.foodProductsView || {});
   const visibleCanonicalIds = (rebuild?.products || []).map((row) => row.canonicalId);
   const canonicalStats = (rebuild?.products || []).find((row) => row.canonicalId === canonicalId) || null;
-  const postTargetTotal = Number(canonicalStats?.total || 0);
+  const postTargetTotal = Number(canonicalStats?.totalSpend || canonicalStats?.total || 0);
   const targetAliasesFlat = Object.values(canonicalPayload.aliasesByStore || {}).flatMap((list) => Array.isArray(list) ? list : []);
   const expectedAliasNames = sourceItems.map((item) => normalizeFoodName(item.displayName || item.name || item.id)).filter(Boolean);
   const aliasesVerified = expectedAliasNames.every((name) => targetAliasesFlat.includes(name));
@@ -2425,8 +4412,19 @@ async function upsertFoodItem(value, incrementCount = false, patch = {}) {
   const name = normalizeFoodName(payloadInput.name || '');
   if (!name) return '';
   const existingId = payloadInput.id || state.food.nameToId?.[name.toLowerCase()] || '';
-  const foodId = existingId || (window.crypto?.randomUUID?.() || `food-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`);
+  const foodId = existingId || createFinanceProductId(name, state.food.itemsById || {});
   const prevEntity = state.food.itemsById?.[foodId] || getFoodByName(name) || {};
+  const normalizedMeta = normalizeFinanceProductMeta({
+    ...prevEntity,
+    ...payloadInput,
+    unit: payloadInput.unit ?? patch.unit ?? prevEntity.unit,
+    lastPrice: payloadInput.lastPrice ?? patch.lastPrice ?? prevEntity.lastPrice ?? payloadInput.defaultPrice,
+    lastPurchaseAt: payloadInput.lastPurchaseAt ?? patch.lastPurchaseAt ?? prevEntity.lastPurchaseAt,
+  }, prevEntity);
+  const defaultPrice = normalizeProductPositiveNumber(
+    payloadInput.defaultPrice ?? normalizedMeta.estimatedPrice ?? normalizedMeta.usualPrice ?? patch.lastPrice ?? prevEntity.defaultPrice ?? 0,
+    0,
+  );
   const payload = {
     id: foodId,
     idKey: firebaseSafeKey(name),
@@ -2439,7 +4437,8 @@ async function upsertFoodItem(value, incrementCount = false, patch = {}) {
     cuisine: normalizeFoodName(payloadInput.cuisine ?? patch.lastExtras?.cuisine ?? prevEntity.cuisine ?? ''),
     healthy: normalizeFoodName(payloadInput.healthy ?? patch.lastExtras?.healthy ?? prevEntity.healthy ?? ''),
     place: normalizeFoodName(payloadInput.place ?? patch.lastExtras?.place ?? prevEntity.place ?? ''),
-    defaultPrice: Number(payloadInput.defaultPrice ?? patch.lastPrice ?? prevEntity.defaultPrice ?? 0),
+    defaultPrice,
+    ...normalizedMeta,
     priceHistory: prevEntity.priceHistory || {},
     countUsed: Number(prevEntity.countUsed || 0) + (incrementCount ? 1 : 0),
     createdAt: Number(prevEntity.createdAt || 0) || nowTs(),
@@ -8055,6 +10054,7 @@ function applyRemoteData(val = {}, replace = false) {
     lastSeenMonthKey: root.balance?.lastSeenMonthKey || (replace ? '' : state.balance.lastSeenMonthKey)
   };
   state.goals = { goals: root.goals?.goals || (replace ? {} : state.goals.goals) };
+  state.productsHub = normalizeProductsHub(root.shoppingHub || (replace ? {} : state.productsHub));
   syncFinanceAchievementsApi();
   financeDebug('sample tx', balanceTxList().slice(0, 5));
 }
@@ -8084,6 +10084,7 @@ function mergeFinanceRoots(newRoot = {}, legacyRoot = {}) {
     snapshots: pick('snapshots', true),
     catalog: pick('catalog', true),
     foodItems: pick('foodItems', true),
+    shoppingHub: pick('shoppingHub', true),
     goals: pick('goals', true),
     accountsEntries: pick('accountsEntries', true),
     entries: pick('entries', true)
@@ -9070,6 +11071,84 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       triggerRender();
       return;
     }
+    const saveProductsSettingsBtn = target.closest('[data-products-save-settings]');
+    if (saveProductsSettingsBtn) {
+      await persistProductsHubSettings({
+        monthlyTarget: document.querySelector('[data-products-setting="monthlyTarget"]')?.value || 0,
+        defaultAccountId: document.querySelector('[data-products-setting="defaultAccountId"]')?.value || '',
+        defaultStore: document.querySelector('[data-products-setting="defaultStore"]')?.value || '',
+        defaultPaymentMethod: document.querySelector('[data-products-setting="defaultPaymentMethod"]')?.value || 'Tarjeta',
+      });
+      toast('Ajustes de compra guardados');
+      triggerRender();
+      return;
+    }
+    const toggleProductSelection = target.closest('[data-products-toggle-select]')?.dataset.productsToggleSelect;
+    if (toggleProductSelection) {
+      const current = new Set(Array.isArray(state.foodProductsView?.selectedIds) ? state.foodProductsView.selectedIds : []);
+      if (target.matches('input[type="checkbox"]') ? target.checked : !current.has(toggleProductSelection)) current.add(toggleProductSelection);
+      else current.delete(toggleProductSelection);
+      state.foodProductsView = {
+        ...(state.foodProductsView || {}),
+        selectedIds: [...current],
+      };
+      triggerRender();
+      return;
+    }
+    const addToListId = target.closest('[data-products-add-to-list]')?.dataset.productsAddToList;
+    if (addToListId) {
+      await addProductToActiveProductsList(addToListId);
+      return;
+    }
+    const selectProductId = target.closest('[data-products-select-product]')?.dataset.productsSelectProduct;
+    if (selectProductId) {
+      state.foodProductsView = {
+        ...(state.foodProductsView || {}),
+        selectedProductId: String(selectProductId || '').trim(),
+      };
+      triggerRender();
+      return;
+    }
+    if (target.closest('[data-products-add-selected-list]')) {
+      await addSelectedProductsToActiveList();
+      return;
+    }
+    const removeLineId = target.closest('[data-products-remove-line]')?.dataset.productsRemoveLine;
+    if (removeLineId) {
+      await removeProductsLineFromActiveList(removeLineId);
+      return;
+    }
+    if (target.closest('[data-products-save-list]')) {
+      await saveActiveProductsListFromDom();
+      return;
+    }
+    if (target.closest('[data-products-clear-list]')) {
+      if (!window.confirm('Vas a vaciar la lista activa. ¿Continuar?')) return;
+      await clearProductsActiveList();
+      return;
+    }
+    if (target.closest('[data-products-confirm-ticket]')) {
+      await confirmProductsTicketFromDom();
+      return;
+    }
+    const reuseTicketId = target.closest('[data-products-reuse-ticket]')?.dataset.productsReuseTicket;
+    if (reuseTicketId) {
+      await reuseProductsTicketAsActiveList(reuseTicketId);
+      return;
+    }
+    const reuseListId = target.closest('[data-products-reuse-list]')?.dataset.productsReuseList;
+    if (reuseListId) {
+      await reuseProductsListAsActiveList(reuseListId);
+      return;
+    }
+    if (target.closest('[data-products-new-product]')) {
+      state.foodProductsView = {
+        ...(state.foodProductsView || {}),
+        selectedProductId: '',
+      };
+      triggerRender();
+      return;
+    }
     const foodProductsTab = target.closest('[data-food-products-tab]')?.dataset.foodProductsTab;
     if (foodProductsTab) {
       state.foodProductsView = { ...state.foodProductsView, tab: foodProductsTab };
@@ -9761,6 +11840,18 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-balance-trend-mode]')) { state.balanceTrendMode = event.target.value; triggerRender(); }
     if (event.target.matches('[data-balance-trend-category]')) { state.balanceTrendCategory = event.target.value; triggerRender(); }
     if (event.target.matches('[data-finance-stats-group]')) { state.balanceStatsGroupBy = event.target.value; state.balanceStatsActiveSegment = null; triggerRender(); }
+    if (event.target.matches('[data-products-filter]')) {
+      const filterKey = String(event.target.dataset.productsFilter || '').trim();
+      const nextValue = event.target.type === 'checkbox' ? !!event.target.checked : event.target.value;
+      const nextViewState = {
+        ...(state.foodProductsView || {}),
+        [filterKey]: nextValue,
+      };
+      if (filterKey === 'range') nextViewState.rangeValue = '';
+      state.foodProductsView = nextViewState;
+      triggerRender();
+      return;
+    }
     if (event.target.matches('[data-food-products-range]')) { state.foodProductsView = { ...state.foodProductsView, range: event.target.value, rangeValue: '' }; applyProductsFiltersDirectDom(); }
     if (event.target.matches('[data-food-products-vendor]')) { state.foodProductsView = { ...state.foodProductsView, vendor: event.target.value }; applyProductsFiltersDirectDom(); }
     if (event.target.matches('[data-food-products-account]')) { state.foodProductsView = { ...state.foodProductsView, account: event.target.value }; applyProductsFiltersDirectDom(); }
@@ -9833,6 +11924,19 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-card-last4-input]')) {
       const cleaned = String(event.target.value || '').replace(/\D/g, '').slice(0, 4);
       if (event.target.value !== cleaned) event.target.value = cleaned;
+    }
+    if (event.target.matches('[data-products-filter="productsQuery"]')) {
+      state.foodProductsView = {
+        ...(state.foodProductsView || {}),
+        productsQuery: String(event.target.value || ''),
+      };
+      triggerRender();
+      return;
+    }
+    if (event.target.closest('[data-products-list-form]')) {
+      syncProductsTicketComposerDom(view);
+      syncProductsDraftListLocal(readProductsListDraftFromDom(view));
+      return;
     }
     if (event.target.matches('[data-balance-form] [data-category-new]')) {
       const form = event.target.closest('[data-balance-form]');
@@ -9963,6 +12067,16 @@ if (event.target.closest('[data-fixed-expense-form]')) {
   });
 
   view.addEventListener('submit', async (event) => {
+if (event.target.matches('[data-products-editor-form]')) {
+  event.preventDefault();
+  await persistProductsEditorForm(event.target);
+  return;
+}
+if (event.target.matches('[data-products-batch-form]')) {
+  event.preventDefault();
+  await applyProductsBatchForm(event.target);
+  return;
+}
 if (event.target.matches('[data-fixed-expense-form]')) {
   event.preventDefault();
 

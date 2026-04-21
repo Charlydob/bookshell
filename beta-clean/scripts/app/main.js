@@ -231,6 +231,15 @@ function buildViewInitDebug(viewId, extra = {}) {
   };
 }
 
+function describeViewInitError(error) {
+  return {
+    errorName: String(error?.name || ""),
+    message: String(error?.message || error || ""),
+    stack: String(error?.stack || ""),
+    cause: error?.cause ? String(error.cause?.message || error.cause || "") : "",
+  };
+}
+
 function logViewInit(viewId, phase, extra = {}, level = "info") {
   const payload = buildViewInitDebug(viewId, { phase, ...extra });
   const state = getShellState();
@@ -241,7 +250,11 @@ function logViewInit(viewId, phase, extra = {}, level = "info") {
   window.__bookshellViewInitLog = state.viewInitLog;
 
   const logger = typeof console[level] === "function" ? console[level] : console.log;
-  logger.call(console, `[view:init] ${viewId} ${phase}`, payload);
+  if (typeof logger === "function") {
+    logger.call(console, `[view:init] ${viewId} ${phase}`, payload);
+  } else {
+    console.log(`[view:init] ${viewId} ${phase}`, payload);
+  }
 }
 
 function logNetworkDebug(phase, extra = {}, level = "info") {
@@ -782,6 +795,8 @@ async function ensureViewShell(viewId, { highPriority = false } = {}) {
             shellLoadMs: Math.round(performance.now() - shellStartedAt),
           });
         } catch (error) {
+          const errorDebug = describeViewInitError(error);
+          logViewInit(viewId, "shell:error", errorDebug, "error");
           moduleState.htmlLoaded = false;
           moduleState.shellFailed = true;
           renderViewUnavailableFallback(
@@ -795,12 +810,8 @@ async function ensureViewShell(viewId, { highPriority = false } = {}) {
             shellLoadMs: Math.round(performance.now() - shellStartedAt),
             shellReadyAt: Date.now(),
             shellOfflineFallback: true,
-            lastError: String(error?.message || error || ""),
+            lastError: errorDebug.message,
           });
-          logViewInit(viewId, "shell:error", {
-            message: String(error?.message || error || ""),
-            stack: String(error?.stack || ""),
-          }, "error");
         }
         releaseBootSplashForShell(root);
       } else if (config.cssUrl) {
@@ -850,6 +861,12 @@ async function ensureViewModule(viewId, { runOnShow = true, highPriority = false
         }
         return moduleState.module;
       } catch (error) {
+        const errorDebug = describeViewInitError(error);
+        logViewInit(viewId, "module:error", {
+          stage: "import/init",
+          ...errorDebug,
+        }, "error");
+        console.error(`[shell] no se pudo inicializar ${viewId}`, error);
         moduleState.module = null;
         moduleState.initialized = false;
         renderViewUnavailableFallback(
@@ -862,13 +879,8 @@ async function ensureViewModule(viewId, { runOnShow = true, highPriority = false
         recordViewMetrics(viewId, {
           moduleReadyAt: Date.now(),
           moduleOfflineFallback: true,
-          lastError: String(error?.message || error || ""),
+          lastError: errorDebug.message,
         });
-        logViewInit(viewId, "module:error", {
-          message: String(error?.message || error || ""),
-          stack: String(error?.stack || ""),
-        }, "error");
-        console.warn(`[shell] no se pudo inicializar ${viewId}`, error);
         return null;
       }
     })().finally(() => {
@@ -889,8 +901,7 @@ async function ensureViewModule(viewId, { runOnShow = true, highPriority = false
       });
     } catch (error) {
       logViewInit(viewId, "module:onShow:error", {
-        message: String(error?.message || error || ""),
-        stack: String(error?.stack || ""),
+        ...describeViewInitError(error),
         onShowMs: Math.round(performance.now() - onShowStartedAt),
       }, "error");
       if (!moduleState.onShowRetryInFlight) {
@@ -908,8 +919,7 @@ async function ensureViewModule(viewId, { runOnShow = true, highPriority = false
           return retriedModule || null;
         } catch (retryError) {
           logViewInit(viewId, "module:onShow:retry:error", {
-            message: String(retryError?.message || retryError || ""),
-            stack: String(retryError?.stack || ""),
+            ...describeViewInitError(retryError),
           }, "error");
         } finally {
           moduleState.onShowRetryInFlight = false;
@@ -2150,11 +2160,21 @@ async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
   if (state.currentViewId === viewId) {
     syncNav(viewId);
     syncViews(viewId);
-    await ensureViewModule(viewId, { highPriority });
+    let readyModule = null;
+    try {
+      readyModule = await ensureViewModule(viewId, { highPriority });
+    } catch (error) {
+      logViewInit(viewId, "setView:error", {
+        stage: "same-view",
+        ...describeViewInitError(error),
+      }, "error");
+      console.error(`[shell] fallo setView(${viewId})`, error);
+    }
     window.localStorage.setItem(LAST_VIEW_KEY, viewId);
     recordViewMetrics(viewId, {
       lastShowMs: Math.round(performance.now() - viewSwitchStartedAt),
       lastShownAt: Date.now(),
+      viewReady: Boolean(readyModule),
     });
     return;
   }
@@ -2171,10 +2191,9 @@ async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
     readyModule = await ensureViewModule(viewId, { highPriority });
   } catch (error) {
     logViewInit(viewId, "setView:error", {
-      message: String(error?.message || error || ""),
-      stack: String(error?.stack || ""),
+      ...describeViewInitError(error),
     }, "error");
-    console.warn(`[shell] fallo setView(${viewId})`, error);
+    console.error(`[shell] fallo setView(${viewId})`, error);
   }
   recordViewMetrics(viewId, {
     lastShowMs: Math.round(performance.now() - viewSwitchStartedAt),

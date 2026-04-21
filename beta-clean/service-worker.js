@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-04-17-achievements-v1";
+const APP_VERSION = "2026-04-21-products-layout-v1";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 

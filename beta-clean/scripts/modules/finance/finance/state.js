@@ -54,7 +54,7 @@ export const state = {
     vendor: 'all',
     account: 'all',
     onlyWithItems: false,
-    tab: 'catalog',
+    tab: 'list',
     customStart: '',
     customEnd: '',
     productsQuery: '',
@@ -70,6 +70,8 @@ export const state = {
     durationBand: 'all',
     selectedProductId: '',
     selectedIds: [],
+    expandedIds: [],
+    listQuery: '',
     historyRange: '90d',
   },
   productsHub: {

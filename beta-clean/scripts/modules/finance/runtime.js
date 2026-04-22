@@ -2158,9 +2158,12 @@ function buildProductsViewModel(cfg = {}) {
   const allowedGroups = ['type', 'store', 'date', 'status'];
   const allowedSorts = ['forecast', 'name', 'price', 'last-purchase', 'duration', 'consumption', 'spend'];
   const allowedStatus = ['all', 'active', 'inactive', 'due'];
+  const allowedTabs = ['list', 'catalog'];
+  const rawTab = String(cfg?.tab || state.foodProductsView?.tab || 'list');
   const nextCfg = {
     ...(state.foodProductsView || {}),
     ...(cfg || {}),
+    tab: allowedTabs.includes(rawTab) ? rawTab : 'list',
     range: allowedRanges.includes(String(cfg?.range || state.foodProductsView?.range || 'month')) ? String(cfg?.range || state.foodProductsView?.range || 'month') : 'month',
     groupBy: allowedGroups.includes(String(cfg?.groupBy || state.foodProductsView?.groupBy || 'type')) ? String(cfg?.groupBy || state.foodProductsView?.groupBy || 'type') : 'type',
     sortBy: allowedSorts.includes(String(cfg?.sortBy || state.foodProductsView?.sortBy || 'forecast')) ? String(cfg?.sortBy || state.foodProductsView?.sortBy || 'forecast') : 'forecast',
@@ -2178,6 +2181,8 @@ function buildProductsViewModel(cfg = {}) {
     historyRange: String(cfg?.historyRange || state.foodProductsView?.historyRange || '90d'),
     selectedProductId: String(cfg?.selectedProductId || state.foodProductsView?.selectedProductId || ''),
     selectedIds: [...new Set(Array.isArray(cfg?.selectedIds || state.foodProductsView?.selectedIds) ? (cfg?.selectedIds || state.foodProductsView?.selectedIds) : [])],
+    expandedIds: [...new Set(Array.isArray(cfg?.expandedIds || state.foodProductsView?.expandedIds) ? (cfg?.expandedIds || state.foodProductsView?.expandedIds) : [])],
+    listQuery: String(cfg?.listQuery || state.foodProductsView?.listQuery || ''),
   };
 
   const accountsById = Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
@@ -2343,7 +2348,7 @@ function buildProductsViewModel(cfg = {}) {
   const activeList = resolveActiveProductsList();
   const activeListProductIds = new Set(Object.values(activeList.lines || {}).map((line) => String(line.productId || '').trim()).filter(Boolean));
 
-  const catalogRows = Object.values(aggregates)
+  const allCatalogRows = Object.values(aggregates)
     .filter((row) => !row.hiddenMerged)
     .map((row) => {
       const purchaseTs = [...new Set(row._purchaseTs.filter((ts) => Number.isFinite(ts) && ts > 0))].sort((a, b) => a - b);
@@ -2425,7 +2430,8 @@ function buildProductsViewModel(cfg = {}) {
         nextForecastDate,
         inActiveList: activeListProductIds.has(row.canonicalId),
       };
-    })
+    });
+  const catalogRows = allCatalogRows
     .filter((row) => {
       if (nextCfg.status === 'active' && !row.active) return false;
       if (nextCfg.status === 'inactive' && row.active) return false;
@@ -2458,6 +2464,10 @@ function buildProductsViewModel(cfg = {}) {
   };
 
   const filteredRows = catalogRows.slice().sort(sorters[nextCfg.sortBy] || sorters.forecast);
+  const quickRows = allCatalogRows
+    .filter((row) => row.active !== false)
+    .slice()
+    .sort(sorters.forecast);
   const groupedMap = filteredRows.reduce((acc, row) => {
     const group = resolveProductsGroupMeta(row, nextCfg.groupBy);
     if (!acc[group.key]) {
@@ -2479,13 +2489,16 @@ function buildProductsViewModel(cfg = {}) {
     }))
     .sort((a, b) => String(a.label || '').localeCompare(String(b.label || ''), 'es', { sensitivity: 'base' }));
 
-  const catalogById = Object.fromEntries(catalogRows.map((row) => [row.canonicalId, row]));
+  const catalogById = Object.fromEntries(allCatalogRows.map((row) => [row.canonicalId, row]));
   const selectedIds = nextCfg.selectedIds.filter((id) => Boolean(catalogById[id]));
   let selectedProductId = nextCfg.selectedProductId;
-  if (!selectedProductId || !catalogById[selectedProductId]) {
-    selectedProductId = filteredRows[0]?.canonicalId || catalogRows[0]?.canonicalId || '';
+  const wantsNewProduct = selectedProductId === '__new__';
+  if (wantsNewProduct) {
+    selectedProductId = '';
+  } else if (!selectedProductId || !catalogById[selectedProductId]) {
+    selectedProductId = filteredRows[0]?.canonicalId || catalogRows[0]?.canonicalId || allCatalogRows[0]?.canonicalId || '';
   }
-  const selectedProduct = selectedProductId ? catalogById[selectedProductId] || null : null;
+  const selectedProduct = wantsNewProduct ? null : (selectedProductId ? catalogById[selectedProductId] || null : null);
   const listLines = Object.values(activeList.lines || {})
     .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
     .map((line) => {
@@ -2509,7 +2522,7 @@ function buildProductsViewModel(cfg = {}) {
 
   const activeListEstimatedTotal = listLines.reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0);
   const activeListActualTotal = listLines.reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0);
-  const dueSuggestions = catalogRows
+  const dueSuggestions = allCatalogRows
     .filter((row) => row.active && !activeListProductIds.has(row.canonicalId))
     .sort(sorters.forecast)
     .slice(0, 6);
@@ -2536,8 +2549,9 @@ function buildProductsViewModel(cfg = {}) {
 
   return {
     cfg: nextCfg,
-    products: catalogRows,
+    products: allCatalogRows,
     listVisible: filteredRows,
+    quickRows,
     groups,
     selectedIds,
     selectedProductId,
@@ -2560,15 +2574,15 @@ function buildProductsViewModel(cfg = {}) {
     rangeLabel: buildProductsRangeLabel(nextCfg),
     vendorOptions: ['all', ...new Set(allLines.map((line) => line.vendorKey).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
     accountOptions: ['all', ...new Set(balanceTxList().filter((row) => normalizeTxType(row?.type) === 'expense').map((row) => String(row.accountId || '')).filter(Boolean))],
-    typeOptions: ['all', ...new Set(catalogRows.map((row) => row.productType).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
-    categoryOptions: ['all', ...new Set(catalogRows.map((row) => row.productCategory).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
-    storeOptions: ['all', ...new Set(catalogRows.map((row) => row.preferredStore || row.bestStoreKey || row.lastStore).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
-    totalCatalogSpend: catalogRows.reduce((sum, row) => sum + Number(row.totalSpend || 0), 0),
-    totalProjectedSpend: catalogRows.reduce((sum, row) => sum + Number(row.projectedMonthlySpend || 0), 0),
-    activeCount: catalogRows.filter((row) => row.active).length,
-    dueCount: catalogRows.filter((row) => ['critical', 'soon'].includes(row.dueTone)).length,
+    typeOptions: ['all', ...new Set(allCatalogRows.map((row) => row.productType).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
+    categoryOptions: ['all', ...new Set(allCatalogRows.map((row) => row.productCategory).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
+    storeOptions: ['all', ...new Set(allCatalogRows.map((row) => row.preferredStore || row.bestStoreKey || row.lastStore).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
+    totalCatalogSpend: allCatalogRows.reduce((sum, row) => sum + Number(row.totalSpend || 0), 0),
+    totalProjectedSpend: allCatalogRows.reduce((sum, row) => sum + Number(row.projectedMonthlySpend || 0), 0),
+    activeCount: allCatalogRows.filter((row) => row.active).length,
+    dueCount: allCatalogRows.filter((row) => ['critical', 'soon'].includes(row.dueTone)).length,
     filteredCount: filteredRows.length,
-    catalogCount: catalogRows.length,
+    catalogCount: allCatalogRows.length,
     purchaseCount: rangeLines.length ? new Set(rangeLines.map((line) => line.txId)).size : 0,
     itemsCount: rangeLines.length,
     topVendor: (() => {
@@ -2617,8 +2631,9 @@ function renderProductsSummaryCards(model) {
             <span>Pago base</span>
             <input class="food-control" type="text" value="${escapeHtml(state.productsHub?.settings?.defaultPaymentMethod || 'Tarjeta')}" data-products-setting="defaultPaymentMethod" placeholder="Tarjeta" />
           </label>
-          <button type="button" class="food-history-btn productsWorkbench__settingsSave" data-products-save-settings>Guardar ajustes</button>
+          
         </div>
+        <button type="button" class="food-history-btn productsWorkbench__settingsSave" data-products-save-settings>Guardar ajustes</button>
       </details>
       <div class="productsWorkbench__statsGrid">
         <article class="productsWorkbench__statCard">
@@ -2813,11 +2828,108 @@ function renderProductsFilters(model) {
   `;
 }
 
+function productsWorkbenchDomId(prefix = 'product', value = '') {
+  return `${prefix}-${hashString(String(value || ''))}`;
+}
+
+function renderProductsSubviewSwitch(model) {
+  const activeTab = model?.cfg?.tab === 'catalog' ? 'catalog' : 'list';
+  const tabRows = [
+    ['list', 'Lista y ticket', `${model.listLines.length} items`, 'Preparar compra'],
+    ['catalog', 'Catalogo operativo', `${model.filteredCount}/${model.catalogCount}`, 'Gestionar productos'],
+  ];
+  return `
+    <nav class="productsWorkbench__viewSwitch" aria-label="Vista de productos">
+      ${tabRows.map(([value, label, meta, hint]) => `
+        <button
+          type="button"
+          class="productsWorkbench__viewSwitchBtn ${activeTab === value ? 'is-active' : ''}"
+          data-products-tab="${value}"
+          aria-pressed="${activeTab === value ? 'true' : 'false'}">
+          <span>${escapeHtml(label)}</span>
+          <small>${escapeHtml(meta)} · ${escapeHtml(hint)}</small>
+        </button>
+      `).join('')}
+    </nav>
+  `;
+}
+
+function renderProductsQuickPicker(model) {
+  const activeProductLines = new Map(
+    (model.listLines || [])
+      .map((line) => [String(line.productId || '').trim(), line])
+      .filter(([id]) => id),
+  );
+  const rows = (model.quickRows || []).slice(0, 180);
+  return `
+    <section class="productsWorkbench__quickPicker" data-products-quick-picker>
+      <div class="productsWorkbench__quickHead">
+        
+        <input
+          class="food-control productsWorkbench__quickSearch"
+          id= "buscador-ticket"
+          type="search"
+          value="${escapeHtml(model.cfg?.listQuery || '')}"
+          placeholder="Buscar producto para anadir..."
+          autocomplete="off"
+          data-products-quick-search />
+          <div id="seleccion-rapida">
+          <strong>Seleccion rapida</strong>
+          <small><span data-products-quick-count>${rows.length}</span> productos disponibles</small>
+        </div>
+      </div>
+      <div class="productsWorkbench__quickList" data-products-quick-results>
+        ${rows.map((row) => {
+          const line = activeProductLines.get(row.canonicalId) || null;
+          return `
+            <article class="productsWorkbench__quickRow ${line ? 'is-in-list' : ''}" data-products-quick-row data-products-search="${escapeHtml(row.searchIndex || '')}">
+              <div class="productsWorkbench__quickMain">
+                <strong>${escapeHtml(row.canonicalName)}</strong>
+                <small>${escapeHtml(row.productCategory || row.productType || row.preferredStore || 'Sin clasificar')} · ${fmtCurrency(row.predictedLineCost || row.currentUnitPrice || 0)}</small>
+              </div>
+              <span class="productsWorkbench__quickState">${line ? 'En lista' : escapeHtml(row.dueTone === 'critical' ? 'Urgente' : row.dueTone === 'soon' ? 'Pronto' : 'Catalogo')}</span>
+              ${line ? `
+                <div class="productsWorkbench__quickQty" aria-label="Cantidad en lista">
+                  <button type="button" class="productsWorkbench__miniAction" data-products-line-step="${escapeHtml(line.id)}" data-products-line-step-delta="-1">-</button>
+                  <input class="food-control" type="number" min="1" step="0.01" value="${Number(line.qty || 1)}" data-products-quick-line-qty="${escapeHtml(line.id)}" />
+                  <button type="button" class="productsWorkbench__miniAction" data-products-line-step="${escapeHtml(line.id)}" data-products-line-step-delta="1">+</button>
+                </div>
+              ` : `
+                <button type="button" class="productsWorkbench__miniAction productsWorkbench__miniAction--primary" data-products-add-to-list="${escapeHtml(row.canonicalId)}" aria-label="Anadir ${escapeHtml(row.canonicalName)}">+</button>
+              `}
+            </article>
+          `;
+        }).join('') || '<div class="productsWorkbench__emptyMini">Aun no hay productos catalogados.</div>'}
+        <div class="productsWorkbench__emptyMini productsWorkbench__quickEmpty" hidden>No hay productos para esa busqueda.</div>
+      </div>
+    </section>
+  `;
+}
+
+function renderProductsBulkBar(model) {
+  return `
+    <div class="productsWorkbench__bulkBar" data-products-bulk-bar>
+      <div>
+        <strong data-products-selected-count>${model.selectedIds.length} seleccionados</strong>
+        <small>Seleccion multiple y acciones en bloque</small>
+      </div>
+      <div class="productsWorkbench__bulkActions">
+        <button type="button" class="food-history-btn" data-products-select-visible>Seleccionar visibles</button>
+        <button type="button" class="food-history-btn" data-products-add-selected-list ${model.selectedIds.length ? '' : 'disabled'}>A lista</button>
+        <button type="button" class="food-history-btn" data-products-batch-active="active" ${model.selectedIds.length ? '' : 'disabled'}>Activar</button>
+        <button type="button" class="food-history-btn" data-products-batch-active="inactive" ${model.selectedIds.length ? '' : 'disabled'}>Desactivar</button>
+        <button type="button" class="food-history-btn" data-products-clear-selection ${model.selectedIds.length ? '' : 'disabled'}>Limpiar</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderProductsCatalogGroups(model) {
   if (!model.groups.length) {
     return '<div class="productsWorkbench__empty">No hay productos para este filtro.</div>';
   }
   const selectedSet = new Set(model.selectedIds || []);
+  const expandedSet = new Set(model.cfg?.expandedIds || []);
   return model.groups.map((group) => `
     <section class="productsWorkbench__group" data-products-catalog-group="${escapeHtml(group.key)}">
       <header class="productsWorkbench__groupHead">
@@ -2831,10 +2943,6 @@ function renderProductsCatalogGroups(model) {
             <span>${group.dueCount} por reponer</span>
             <span>${fmtCurrency(group.projectedSpend)} / mes</span>
           </div>
-          <div class="productsWorkbench__carouselControls" aria-label="Mover carrusel ${escapeHtml(group.label)}">
-            <button type="button" class="productsWorkbench__miniAction" data-products-carousel-scroll="-1" aria-label="Ver productos anteriores">&lsaquo;</button>
-            <button type="button" class="productsWorkbench__miniAction" data-products-carousel-scroll="1" aria-label="Ver productos siguientes">&rsaquo;</button>
-          </div>
         </div>
       </header>
       <div class="productsWorkbench__catalogGrid" data-products-catalog-track>
@@ -2842,36 +2950,59 @@ function renderProductsCatalogGroups(model) {
           <span>Buscar en ${escapeHtml(group.label)}</span>
           <input class="food-control" type="search" data-products-catalog-search placeholder="filtrar este carrusel..." />
         </label>
-        ${group.rows.map((row) => `
-          <article class="productsWorkbench__productCard ${model.selectedProductId === row.canonicalId ? 'is-selected' : ''} is-${escapeHtml(row.dueTone)} ${!row.active ? 'is-inactive' : ''}" data-products-select-product="${escapeHtml(row.canonicalId)}" data-products-catalog-card data-products-search="${escapeHtml(row.searchIndex || '')}">
+        <div class="productsWorkbench__catalogRows">
+        ${group.rows.map((row) => {
+          const isExpanded = expandedSet.has(row.canonicalId);
+          const selectedClass = model.selectedProductId === row.canonicalId ? 'is-selected' : '';
+          return `
+          <article
+            class="productsWorkbench__productCard ${selectedClass} ${isExpanded ? 'is-expanded' : ''} is-${escapeHtml(row.dueTone)} ${!row.active ? 'is-inactive' : ''} ${row.inActiveList ? 'is-in-list' : ''}"
+            id="${escapeHtml(productsWorkbenchDomId('product-card', row.canonicalId))}"
+            data-products-catalog-card
+            data-products-id="${escapeHtml(row.canonicalId)}"
+            data-products-search="${escapeHtml(row.searchIndex || '')}">
             <div class="productsWorkbench__productTop">
               <label class="productsWorkbench__check">
                 <input type="checkbox" data-products-toggle-select="${escapeHtml(row.canonicalId)}" ${selectedSet.has(row.canonicalId) ? 'checked' : ''} />
                 <span></span>
               </label>
-              <div class="productsWorkbench__productHeading">
+              <button type="button" class="productsWorkbench__productHeading" data-products-select-product="${escapeHtml(row.canonicalId)}">
                 <strong>${escapeHtml(row.canonicalName)}</strong>
                 <small>${escapeHtml(row.brand || row.productType || 'Sin clasificar')}</small>
-              </div>
+              </button>
+              <span class="productsWorkbench__status productsWorkbench__status--${escapeHtml(row.dueTone)}">${escapeHtml(row.inActiveList ? 'En lista' : row.dueLabel)}</span>
               <button type="button" class="productsWorkbench__miniAction" data-products-add-to-list="${escapeHtml(row.canonicalId)}" aria-label="Anadir ${escapeHtml(row.canonicalName)} a la lista">+</button>
+              <button type="button" class="productsWorkbench__miniAction" data-products-expand-product="${escapeHtml(row.canonicalId)}" aria-expanded="${isExpanded ? 'true' : 'false'}" aria-label="Ver detalle de ${escapeHtml(row.canonicalName)}">${isExpanded ? '-' : '+'}</button>
             </div>
             <div class="productsWorkbench__productMeta">
               <span class="productsWorkbench__badge">${escapeHtml(row.productCategory || row.format || 'Sin categoria')}</span>
               <span class="productsWorkbench__badge">${escapeHtml(row.preferredStore || row.bestStoreKey || 'Sin tienda')}</span>
-              <span class="productsWorkbench__badge">${row.active ? 'Activo' : 'Inactivo'}</span>
+              <span class="productsWorkbench__badge">${fmtCurrency(row.currentUnitPrice || 0)}</span>
+              <span class="productsWorkbench__badge">${row.estimatedDurationDays ? `${row.estimatedDurationDays}d` : 'Sin duracion'}</span>
             </div>
+            <div class="productsWorkbench__productDrawer" ${isExpanded ? '' : 'hidden'}>
             <div class="productsWorkbench__productMetrics">
               <div><span>Ultimo</span><strong>${fmtCurrency(row.currentUnitPrice || 0)}</strong></div>
               <div><span>Freq</span><strong>${row.purchaseFrequencyDays ? `${row.purchaseFrequencyDays}d` : `${row.purchaseCount}x`}</strong></div>
               <div><span>Ult. compra</span><strong>${row.lastPurchaseAt ? escapeHtml(formatProductsShortDate(row.lastPurchaseAt)) : 'Sin dato'}</strong></div>
               <div><span>Duracion</span><strong>${row.estimatedDurationDays ? `${row.estimatedDurationDays}d` : '—'}</strong></div>
             </div>
+            <form class="productsWorkbench__quickEdit" data-products-quick-edit-form data-products-id="${escapeHtml(row.canonicalId)}">
+              <input class="food-control" type="number" min="0" step="0.01" name="estimatedPrice" value="${Number(row.estimatedPrice || row.currentUnitPrice || 0) || ''}" placeholder="Precio" />
+              <input class="food-control" type="number" min="1" step="0.01" name="usualQty" value="${Number(row.usualQty || 1)}" placeholder="Cant." />
+              <input class="food-control" type="number" min="0" step="1" name="estimatedDurationDays" value="${Number(row.estimatedDurationDays || 0) || ''}" placeholder="Dias" />
+              <input class="food-control" type="text" name="preferredStore" value="${escapeHtml(row.preferredStore || '')}" placeholder="Tienda" />
+              <button class="food-history-btn" type="submit">Guardar</button>
+            </form>
             <div class="productsWorkbench__productFooter">
-              <span class="productsWorkbench__status productsWorkbench__status--${escapeHtml(row.dueTone)}">${escapeHtml(row.dueLabel)}</span>
               <small>${escapeHtml(row.canonicalId)}</small>
+              <button type="button" class="food-history-btn" data-food-item-detail="${escapeHtml(row.canonicalId)}">Ficha completa</button>
+            </div>
             </div>
           </article>
-        `).join('')}
+        `;
+        }).join('')}
+        </div>
         <div class="productsWorkbench__emptyMini productsWorkbench__catalogEmpty" hidden>No hay productos en este tipo para esa busqueda.</div>
       </div>
     </section>
@@ -2907,21 +3038,22 @@ function scrollProductsCatalogCarousel(buttonEl) {
 
 function renderProductsCatalogPanel(model) {
   return `
-    <details class="productsWorkbench__panel productsWorkbench__panel--catalog productsWorkbench__collapse">
-      <summary class="productsWorkbench__panelHead productsWorkbench__collapseSummary">
+    <section class="productsWorkbench__panel productsWorkbench__panel--catalog" data-products-catalog-panel>
+      <header class="productsWorkbench__panelHead">
         <div>
           <h3>Catalogo operativo</h3>
           <p>${model.filteredCount} visibles · ${model.dueCount} por reponer</p>
         </div>
         <div class="productsWorkbench__panelActions">
           <button type="button" class="food-history-btn" data-products-new-product>Nuevo producto</button>
-          <button type="button" class="food-history-btn" data-food-merge-open ${model.selectedIds.length >= 1 ? `data-food-merge-open="${escapeHtml(model.selectedIds[0])}"` : ''}>Fusionar</button>
+          <button type="button" class="food-history-btn" data-food-merge-open="${escapeHtml(model.selectedIds[0] || '')}" ${model.selectedIds.length >= 1 ? '' : 'disabled'}>Fusionar</button>
         </div>
-      </summary>
+      </header>
+      ${renderProductsBulkBar(model)}
       <div class="productsWorkbench__collapseBody">
         ${renderProductsCatalogGroups(model)}
       </div>
-    </details>
+    </section>
   `;
 }
 
@@ -2953,8 +3085,8 @@ function renderProductsEditorPanel(model) {
   };
   const selectionTitle = selected ? selected.canonicalName : 'Nuevo producto';
   return `
-    <details class="productsWorkbench__panel productsWorkbench__panel--editor productsWorkbench__collapse">
-      <summary class="productsWorkbench__panelHead productsWorkbench__collapseSummary">
+    <section class="productsWorkbench__panel productsWorkbench__panel--editor" data-products-editor-panel>
+      <header class="productsWorkbench__panelHead">
         <div>
           <h3>Editor de producto</h3>
           <p>${escapeHtml(selectionTitle)} · ${selected ? 'ficha conectada con historico real' : 'crea una referencia reusable para listas y tickets'}</p>
@@ -2963,7 +3095,7 @@ function renderProductsEditorPanel(model) {
           <button type="button" class="food-history-btn" data-products-add-to-list="${escapeHtml(values.canonicalId || '')}" ${ticketQuickActionDisabled}>A lista</button>
           <button type="button" class="food-history-btn" data-food-item-detail="${escapeHtml(values.canonicalId || '')}" ${ticketQuickActionDisabled}>Ficha completa</button>
         </div>
-      </summary>
+      </header>
       <div class="productsWorkbench__collapseBody">
       <form class="productsWorkbench__editorForm" data-products-editor-form>
         <input type="hidden" name="productId" value="${escapeHtml(values.canonicalId || '')}" />
@@ -3108,14 +3240,14 @@ function renderProductsEditorPanel(model) {
         </div>
       </form>
       </div>
-    </details>
+    </section>
   `;
 }
 
 function renderProductsListPanel(model) {
   const activeList = model.activeList;
   return `
-    <section class="productsWorkbench__panel productsWorkbench__panel--shopping">
+    <section class="productsWorkbench__panel productsWorkbench__panel--shopping" data-products-shopping-panel>
       <header class="productsWorkbench__panelHead">
         <div>
           <h3>Lista y ticket</h3>
@@ -3151,11 +3283,9 @@ function renderProductsListPanel(model) {
             <span>Pago</span>
             <input class="food-control" type="text" name="paymentMethod" value="${escapeHtml(activeList.paymentMethod || state.productsHub?.settings?.defaultPaymentMethod || 'Tarjeta')}" />
           </label>
-          <label class="productsWorkbench__field productsWorkbench__field--wide">
-            <span>Notas</span>
-            <input class="food-control" type="text" name="notes" value="${escapeHtml(activeList.notes || '')}" placeholder="Compra semanal, reposicion despensa..." />
-          </label>
+          
         </div>
+        ${renderProductsQuickPicker(model)}
         <div class="productsWorkbench__suggestions">
           ${model.dueSuggestions.map((row) => `
             <button type="button" class="productsWorkbench__suggestion" data-products-add-to-list="${escapeHtml(row.canonicalId)}">
@@ -3166,7 +3296,10 @@ function renderProductsListPanel(model) {
         </div>
         <div class="productsWorkbench__lineList">
           ${model.listLines.map((line, index) => `
-            <div class="productsWorkbench__lineRow" data-products-line-row="${escapeHtml(line.id)}">
+            <div class="productsWorkbench__lineRow ${line.checked === false ? 'is-unchecked' : 'is-checked'}" data-products-line-row="${escapeHtml(line.id)}">
+              <label class="productsWorkbench__lineCheck" aria-label="Marcar ${escapeHtml(line.name || 'Producto')}">
+                <input type="checkbox" data-products-line-checked="${escapeHtml(line.id)}" ${line.checked === false ? '' : 'checked'} />
+              </label>
               <div class="productsWorkbench__lineMain">
                 <strong>${escapeHtml(line.name || 'Producto')}</strong>
                 <small>${escapeHtml(line.linkedProduct?.brand || line.store || line.linkedProduct?.preferredStore || 'Sin referencia')}</small>
@@ -3312,11 +3445,9 @@ function renderProductsHistoryPanel(model) {
   `;
 }
 
-function renderProductsView(isModal = false) {
-  const model = buildProductsViewModel(state.foodProductsView || {});
-  const content = `
-    <div class="financeProductsView productsWorkbench">
-      ${renderProductsListPanel(model)}
+function renderProductsCatalogSubview(model) {
+  return `
+    <div class="productsWorkbench__catalogSubview" data-products-catalog-subview>
       ${renderProductsSummaryCards(model)}
       ${renderProductsFilters(model)}
       <div class="productsWorkbench__mainGrid">
@@ -3325,7 +3456,40 @@ function renderProductsView(isModal = false) {
           ${renderProductsEditorPanel(model)}
         </div>
       </div>
-      <details class="productsWorkbench__panel productsWorkbench__collapse">
+      <details class="productsWorkbench__panel productsWorkbench__collapse" id="products-history-panel">
+        <summary class="productsWorkbench__panelHead productsWorkbench__collapseSummary">
+          <div>
+            <h3>Analisis e historial</h3>
+            <p>${model.dueSuggestions.length} sugerencias Â· ${model.recentTickets.length} tickets confirmados</p>
+          </div>
+        </summary>
+        <div class="productsWorkbench__collapseBody">
+          ${renderProductsHistoryPanel(model)}
+        </div>
+      </details>
+    </div>
+  `;
+}
+
+function renderProductsView(isModal = false) {
+  const model = buildProductsViewModel(state.foodProductsView || {});
+  const activeTab = model.cfg.tab === 'catalog' ? 'catalog' : 'list';
+  const content = `
+    <div class="financeProductsView productsWorkbench" data-products-workbench data-products-active-tab="${escapeHtml(activeTab)}">
+      ${renderProductsSubviewSwitch(model)}
+      <div class="productsWorkbench__subview" data-products-subview="list" ${activeTab === 'list' ? '' : 'hidden'}>
+      ${renderProductsListPanel(model)}
+      </div>
+      <div class="productsWorkbench__subview" data-products-subview="catalog" ${activeTab === 'catalog' ? '' : 'hidden'}>
+      ${renderProductsSummaryCards(model)}
+      ${renderProductsFilters(model)}
+      <div class="productsWorkbench__mainGrid">
+        ${renderProductsCatalogPanel(model)}
+        <div class="productsWorkbench__sideStack">
+          ${renderProductsEditorPanel(model)}
+        </div>
+      </div>
+      <details class="productsWorkbench__panel productsWorkbench__collapse" id="products-history-panel">
         <summary class="productsWorkbench__panelHead productsWorkbench__collapseSummary">
           <div>
             <h3>Analisis e historial</h3>
@@ -3336,6 +3500,7 @@ function renderProductsView(isModal = false) {
           ${renderProductsHistoryPanel(model)}
         </div>
       </details>
+      </div>
     </div>
   `;
   if (isModal) {
@@ -3357,11 +3522,249 @@ function applyProductsSearchFilter(inputEl) {
     ...(state.foodProductsView || {}),
     productsQuery: String(inputEl?.value || ''),
   };
-  triggerRender();
+  applyProductsCatalogGlobalSearch(inputEl);
 }
 
 function applyProductsFiltersDirectDom() {
-  triggerRender();
+  patchProductsCatalogSubview();
+}
+
+function createProductsNode(html = '') {
+  const template = document.createElement('template');
+  template.innerHTML = String(html || '').trim();
+  return template.content.firstElementChild || document.createElement('div');
+}
+
+function getProductsWorkbenchRoot(root = document) {
+  return root?.querySelector?.('[data-products-workbench]') || document.querySelector('[data-products-workbench]');
+}
+
+function buildCurrentProductsModel() {
+  return buildProductsViewModel(state.foodProductsView || {});
+}
+
+function patchProductsShoppingPanel(model = null) {
+  const root = getProductsWorkbenchRoot();
+  const current = root?.querySelector?.('[data-products-shopping-panel]');
+  if (!current) return false;
+  const nextModel = model || buildCurrentProductsModel();
+  const next = createProductsNode(renderProductsListPanel(nextModel));
+  current.replaceWith(next);
+  const quickSearch = next.querySelector('[data-products-quick-search]');
+  if (quickSearch) applyProductsQuickSearch(quickSearch);
+  return true;
+}
+
+function patchProductsEditorPanel(model = null) {
+  const root = getProductsWorkbenchRoot();
+  const current = root?.querySelector?.('[data-products-editor-panel]');
+  if (!current) return false;
+  const nextModel = model || buildCurrentProductsModel();
+  current.replaceWith(createProductsNode(renderProductsEditorPanel(nextModel)));
+  updateProductsCatalogSelectedDom(nextModel.selectedProductId);
+  return true;
+}
+
+function patchProductsCatalogSubview(model = null) {
+  const root = getProductsWorkbenchRoot();
+  const subview = root?.querySelector?.('[data-products-subview="catalog"]');
+  if (!subview) {
+    triggerRender();
+    return false;
+  }
+  const nextModel = model || buildCurrentProductsModel();
+  subview.innerHTML = `
+    ${renderProductsSummaryCards(nextModel)}
+    ${renderProductsFilters(nextModel)}
+    <div class="productsWorkbench__mainGrid">
+      ${renderProductsCatalogPanel(nextModel)}
+      <div class="productsWorkbench__sideStack">
+        ${renderProductsEditorPanel(nextModel)}
+      </div>
+    </div>
+    <details class="productsWorkbench__panel productsWorkbench__collapse" id="products-history-panel">
+      <summary class="productsWorkbench__panelHead productsWorkbench__collapseSummary">
+        <div>
+          <h3>Analisis e historial</h3>
+          <p>${nextModel.dueSuggestions.length} sugerencias · ${nextModel.recentTickets.length} tickets confirmados</p>
+        </div>
+      </summary>
+      <div class="productsWorkbench__collapseBody">
+        ${renderProductsHistoryPanel(nextModel)}
+      </div>
+    </details>
+  `;
+  return true;
+}
+
+function patchProductsWorkbench(model = null) {
+  const root = getProductsWorkbenchRoot();
+  if (!root) return false;
+  const nextModel = model || buildCurrentProductsModel();
+  const switchEl = root.querySelector('.productsWorkbench__viewSwitch');
+  if (switchEl) switchEl.replaceWith(createProductsNode(renderProductsSubviewSwitch(nextModel)));
+  patchProductsShoppingPanel(nextModel);
+  patchProductsCatalogSubview(nextModel);
+  switchProductsSubview(nextModel.cfg.tab);
+  return true;
+}
+
+function switchProductsSubview(tab = 'list') {
+  const nextTab = tab === 'catalog' ? 'catalog' : 'list';
+  state.foodProductsView = { ...(state.foodProductsView || {}), tab: nextTab };
+  const root = getProductsWorkbenchRoot();
+  if (!root) {
+    triggerRender();
+    return;
+  }
+  root.dataset.productsActiveTab = nextTab;
+  root.querySelectorAll('[data-products-tab]').forEach((button) => {
+    const active = button.dataset.productsTab === nextTab;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  root.querySelectorAll('[data-products-subview]').forEach((subview) => {
+    subview.hidden = subview.dataset.productsSubview !== nextTab;
+  });
+}
+
+function applyProductsQuickSearch(inputEl) {
+  const root = inputEl?.closest?.('[data-products-quick-picker]');
+  if (!root) return;
+  const query = String(inputEl.value || '');
+  state.foodProductsView = { ...(state.foodProductsView || {}), listQuery: query };
+  const queryKey = normalizeProductItemKey(query);
+  const rows = Array.from(root.querySelectorAll('[data-products-quick-row]'));
+  let visibleCount = 0;
+  rows.forEach((row) => {
+    const matches = !queryKey || String(row.dataset.productsSearch || '').includes(queryKey);
+    row.hidden = !matches;
+    if (matches) visibleCount += 1;
+  });
+  const count = root.querySelector('[data-products-quick-count]');
+  if (count) count.textContent = String(visibleCount);
+  const empty = root.querySelector('.productsWorkbench__quickEmpty');
+  if (empty) empty.hidden = visibleCount > 0;
+}
+
+function applyProductsCatalogGlobalSearch(inputEl) {
+  const root = getProductsWorkbenchRoot();
+  if (!root) return;
+  const query = String(inputEl?.value || '');
+  state.foodProductsView = { ...(state.foodProductsView || {}), productsQuery: query };
+  const queryKey = normalizeProductItemKey(query);
+  root.querySelectorAll('[data-products-catalog-group]').forEach((groupEl) => {
+    let visibleCount = 0;
+    groupEl.querySelectorAll('[data-products-catalog-card]').forEach((card) => {
+      const matches = !queryKey || String(card.dataset.productsSearch || '').includes(queryKey);
+      card.hidden = !matches;
+      if (matches) visibleCount += 1;
+    });
+    const counter = groupEl.querySelector('[data-products-catalog-visible]');
+    if (counter) counter.textContent = `${visibleCount} visibles`;
+    const emptyEl = groupEl.querySelector('.productsWorkbench__catalogEmpty');
+    if (emptyEl) emptyEl.hidden = visibleCount > 0;
+  });
+}
+
+function updateProductsCatalogSelectedDom(productId = '') {
+  const root = getProductsWorkbenchRoot();
+  if (!root) return;
+  const safeId = String(productId || '').trim();
+  root.querySelectorAll('[data-products-catalog-card]').forEach((card) => {
+    card.classList.toggle('is-selected', String(card.dataset.productsId || '') === safeId);
+  });
+}
+
+function syncProductsBulkBarDom() {
+  const root = getProductsWorkbenchRoot();
+  if (!root) return;
+  const selectedIds = Array.isArray(state.foodProductsView?.selectedIds) ? state.foodProductsView.selectedIds : [];
+  const selectedSet = new Set(selectedIds);
+  root.querySelectorAll('[data-products-toggle-select]').forEach((input) => {
+    input.checked = selectedSet.has(String(input.dataset.productsToggleSelect || '').trim());
+    input.closest('[data-products-catalog-card]')?.classList.toggle('is-multi-selected', input.checked);
+  });
+  root.querySelectorAll('[data-products-selected-count]').forEach((node) => {
+    node.textContent = `${selectedIds.length} seleccionados`;
+  });
+  root.querySelectorAll('[data-products-add-selected-list], [data-products-batch-active], [data-products-clear-selection]').forEach((button) => {
+    button.disabled = selectedIds.length === 0;
+  });
+  root.querySelectorAll('[data-food-merge-open]').forEach((button) => {
+    button.dataset.foodMergeOpen = selectedIds[0] || '';
+    button.disabled = selectedIds.length === 0;
+  });
+}
+
+function setProductsSelectedIds(ids = []) {
+  state.foodProductsView = {
+    ...(state.foodProductsView || {}),
+    selectedIds: [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))],
+  };
+  syncProductsBulkBarDom();
+}
+
+function toggleProductsSelection(productId = '', checked = null) {
+  const safeId = String(productId || '').trim();
+  if (!safeId) return;
+  const selected = new Set(Array.isArray(state.foodProductsView?.selectedIds) ? state.foodProductsView.selectedIds : []);
+  const shouldSelect = checked == null ? !selected.has(safeId) : Boolean(checked);
+  if (shouldSelect) selected.add(safeId);
+  else selected.delete(safeId);
+  setProductsSelectedIds([...selected]);
+}
+
+function selectVisibleProductsFromDom() {
+  const root = getProductsWorkbenchRoot();
+  const current = new Set(Array.isArray(state.foodProductsView?.selectedIds) ? state.foodProductsView.selectedIds : []);
+  root?.querySelectorAll?.('[data-products-catalog-card]:not([hidden])')?.forEach((card) => {
+    const id = String(card.dataset.productsId || '').trim();
+    if (id) current.add(id);
+  });
+  setProductsSelectedIds([...current]);
+}
+
+function toggleProductsCardExpanded(productId = '') {
+  const safeId = String(productId || '').trim();
+  if (!safeId) return;
+  const expanded = new Set(Array.isArray(state.foodProductsView?.expandedIds) ? state.foodProductsView.expandedIds : []);
+  const isOpen = !expanded.has(safeId);
+  if (isOpen) expanded.add(safeId);
+  else expanded.delete(safeId);
+  state.foodProductsView = { ...(state.foodProductsView || {}), expandedIds: [...expanded] };
+  const card = document.getElementById(productsWorkbenchDomId('product-card', safeId));
+  if (!card) return;
+  card.classList.toggle('is-expanded', isOpen);
+  const drawer = card.querySelector('.productsWorkbench__productDrawer');
+  if (drawer) drawer.hidden = !isOpen;
+  const button = card.querySelector('[data-products-expand-product]');
+  if (button) {
+    button.textContent = isOpen ? '-' : '+';
+    button.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  }
+}
+
+function syncQuickLineQtyToList(inputEl) {
+  const lineId = String(inputEl?.dataset?.productsQuickLineQty || '').trim();
+  if (!lineId) return;
+  const listInput = document.querySelector(`[data-products-line-qty="${lineId}"]`);
+  if (listInput) listInput.value = inputEl.value;
+  syncProductsTicketComposerDom(document);
+  syncProductsDraftListLocal(readProductsListDraftFromDom(document));
+}
+
+function adjustProductsLineQtyFromDom(lineId = '', delta = 0) {
+  const safeId = String(lineId || '').trim();
+  if (!safeId) return;
+  const listInput = document.querySelector(`[data-products-line-qty="${safeId}"]`);
+  const quickInput = document.querySelector(`[data-products-quick-line-qty="${safeId}"]`);
+  const current = Number(listInput?.value || quickInput?.value || 1);
+  const next = Math.max(1, current + Number(delta || 0));
+  if (listInput) listInput.value = String(next);
+  if (quickInput) quickInput.value = String(next);
+  syncProductsTicketComposerDom(document);
+  syncProductsDraftListLocal(readProductsListDraftFromDom(document));
 }
 
 function readProductsListDraftFromDom(root = document) {
@@ -3388,7 +3791,7 @@ function readProductsListDraftFromDom(root = document) {
       estimatedPrice: Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || baseList.lines?.[lineId]?.estimatedPrice || 0),
       actualPrice: Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || baseList.lines?.[lineId]?.actualPrice || 0),
       store: normalizeFoodName(baseList.lines?.[lineId]?.store || nextList.store || ''),
-      checked: true,
+      checked: rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false,
       note: normalizeProductText(baseList.lines?.[lineId]?.note || ''),
       sortOrder: index,
       createdAt: Number(baseList.lines?.[lineId]?.createdAt || nowTs()),
@@ -3410,20 +3813,25 @@ function syncProductsTicketComposerDom(root = document) {
     const qty = Math.max(1, Number(rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || 1));
     const estimatedPrice = Math.max(0, Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || 0));
     const actualPrice = Math.max(0, Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || estimatedPrice));
+    const isChecked = rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false;
     const estimatedSubtotal = qty * estimatedPrice;
     const actualSubtotal = qty * actualPrice;
     estimatedTotal += estimatedSubtotal;
     actualTotal += actualSubtotal;
+    rowEl.classList.toggle('is-unchecked', !isChecked);
+    rowEl.classList.toggle('is-checked', isChecked);
     const estimatedNode = root.querySelector(`[data-products-line-est-total="${lineId}"]`);
     const actualNode = root.querySelector(`[data-products-line-act-total="${lineId}"]`);
     const receiptQty = root.querySelector(`[data-products-receipt-qty="${lineId}"]`);
     const receiptUnit = root.querySelector(`[data-products-receipt-unit="${lineId}"]`);
     const receiptTotal = root.querySelector(`[data-products-receipt-total="${lineId}"]`);
+    const quickQty = root.querySelector(`[data-products-quick-line-qty="${lineId}"]`);
     if (estimatedNode) estimatedNode.textContent = fmtCurrency(estimatedSubtotal);
     if (actualNode) actualNode.textContent = fmtCurrency(actualSubtotal);
     if (receiptQty) receiptQty.textContent = `${qty}x`;
     if (receiptUnit) receiptUnit.textContent = fmtCurrency(actualPrice);
     if (receiptTotal) receiptTotal.textContent = fmtCurrency(actualSubtotal);
+    if (quickQty && document.activeElement !== quickQty) quickQty.value = String(qty);
   });
   const storeValue = String(formEl.querySelector('[name="store"]')?.value || 'Supermercado').trim() || 'Supermercado';
   const paymentValue = String(formEl.querySelector('[name="paymentMethod"]')?.value || 'Tarjeta').trim() || 'Tarjeta';
@@ -3558,7 +3966,9 @@ async function addProductToActiveProductsList(productId = '') {
   const nextList = upsertProductLineIntoList(persistedBase, product);
   await persistProductsListRecord(nextList, { activate: true });
   toast('Producto anadido a la lista');
-  triggerRender();
+  const model = buildCurrentProductsModel();
+  patchProductsShoppingPanel(model);
+  patchProductsCatalogSubview(model);
 }
 
 async function addSelectedProductsToActiveList() {
@@ -3572,7 +3982,9 @@ async function addSelectedProductsToActiveList() {
   });
   await persistProductsListRecord(nextList, { activate: true });
   toast(`${ids.length} productos enviados a la lista`);
-  triggerRender();
+  const model = buildCurrentProductsModel();
+  patchProductsShoppingPanel(model);
+  patchProductsCatalogSubview(model);
 }
 
 async function saveActiveProductsListFromDom() {
@@ -3580,7 +3992,7 @@ async function saveActiveProductsListFromDom() {
   if (!draft) return null;
   const persisted = await ensurePersistedActiveProductsList(draft);
   toast('Lista guardada');
-  triggerRender();
+  patchProductsShoppingPanel(buildCurrentProductsModel());
   return persisted;
 }
 
@@ -3594,7 +4006,9 @@ async function removeProductsLineFromActiveList(lineId = '') {
   } else {
     await persistProductsListRecord(draft, { activate: true });
   }
-  triggerRender();
+  const model = buildCurrentProductsModel();
+  patchProductsShoppingPanel(model);
+  patchProductsCatalogSubview(model);
 }
 
 async function clearProductsActiveList() {
@@ -3614,7 +4028,9 @@ async function clearProductsActiveList() {
   } else {
     await persistProductsListRecord(nextList, { activate: true });
   }
-  triggerRender();
+  const model = buildCurrentProductsModel();
+  patchProductsShoppingPanel(model);
+  patchProductsCatalogSubview(model);
 }
 
 async function persistProductsEditorForm(formEl) {
@@ -3665,7 +4081,9 @@ async function persistProductsEditorForm(formEl) {
     selectedProductId: savedId,
   };
   toast(productId ? 'Producto actualizado' : 'Producto creado');
-  triggerRender();
+  const model = buildCurrentProductsModel();
+  patchProductsCatalogSubview(model);
+  patchProductsShoppingPanel(model);
 }
 
 async function applyProductsBatchForm(formEl) {
@@ -3700,7 +4118,54 @@ async function applyProductsBatchForm(formEl) {
     }, false);
   }
   toast(`Aplicado a ${ids.length} productos`);
-  triggerRender();
+  const model = buildCurrentProductsModel();
+  patchProductsCatalogSubview(model);
+  patchProductsShoppingPanel(model);
+}
+
+async function applyProductsSelectedActiveState(activeState = 'active') {
+  const ids = Array.isArray(state.foodProductsView?.selectedIds) ? state.foodProductsView.selectedIds : [];
+  if (!ids.length) return;
+  const makeActive = activeState !== 'inactive';
+  for (const productId of ids) {
+    const previous = state.food.itemsById?.[productId];
+    if (!previous) continue;
+    await upsertFoodItem({
+      ...previous,
+      id: productId,
+      name: previous.name,
+      displayName: previous.displayName || previous.name,
+      active: makeActive,
+    }, false);
+  }
+  toast(makeActive ? 'Productos activados' : 'Productos desactivados');
+  const model = buildCurrentProductsModel();
+  patchProductsCatalogSubview(model);
+  patchProductsShoppingPanel(model);
+}
+
+async function persistProductsQuickEditForm(formEl) {
+  if (!formEl) return;
+  const productId = String(formEl.dataset.productsId || '').trim();
+  const previous = state.food.itemsById?.[productId] || resolveProductsCatalogSnapshot(productId);
+  if (!productId || !previous) return;
+  const form = new FormData(formEl);
+  const preferredStore = normalizeFoodName(String(form.get('preferredStore') || previous.preferredStore || previous.place || ''));
+  await upsertFoodItem({
+    ...previous,
+    id: productId,
+    name: previous.name || previous.canonicalName || previous.displayName || productId,
+    displayName: previous.displayName || previous.canonicalName || previous.name || productId,
+    estimatedPrice: Number(form.get('estimatedPrice') || previous.estimatedPrice || previous.currentUnitPrice || 0),
+    usualQty: Number(form.get('usualQty') || previous.usualQty || 1),
+    estimatedDurationDays: Number(form.get('estimatedDurationDays') || previous.estimatedDurationDays || 0),
+    preferredStore,
+    place: preferredStore || previous.place || '',
+  }, false);
+  toast('Producto actualizado');
+  const model = buildCurrentProductsModel();
+  patchProductsCatalogSubview(model);
+  patchProductsShoppingPanel(model);
 }
 
 async function reuseProductsTicketAsActiveList(ticketId = '') {
@@ -3735,7 +4200,10 @@ async function reuseProductsTicketAsActiveList(ticketId = '') {
   });
   await persistProductsListRecord(nextList, { activate: true });
   toast('Ticket reutilizado como lista');
-  triggerRender();
+  switchProductsSubview('list');
+  const model = buildCurrentProductsModel();
+  patchProductsShoppingPanel(model);
+  patchProductsCatalogSubview(model);
 }
 
 async function reuseProductsListAsActiveList(listId = '') {
@@ -3762,7 +4230,10 @@ async function reuseProductsListAsActiveList(listId = '') {
   });
   await persistProductsListRecord(nextList, { activate: true });
   toast('Lista duplicada como compra activa');
-  triggerRender();
+  switchProductsSubview('list');
+  const model = buildCurrentProductsModel();
+  patchProductsShoppingPanel(model);
+  patchProductsCatalogSubview(model);
 }
 
 async function saveProductsPurchaseTransaction(list = {}) {
@@ -10225,6 +10696,11 @@ function subscribe() {
     const mergedRoot = mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
     applyRemoteData(mergedRoot, true);
     state.hydratedFromRemote = true;
+    if (state.activeView === 'products' && patchProductsWorkbench()) {
+      renderToast();
+      emitFinanceData('remote:finance');
+      return;
+    }
     triggerRender();
     emitFinanceData('remote:finance');
   }, (error) => { state.error = String(error?.message || error); triggerRender(); });
@@ -10237,6 +10713,11 @@ function subscribe() {
       const mergedRoot = mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
       applyRemoteData(mergedRoot, true);
       state.hydratedFromRemote = true;
+      if (state.activeView === 'products' && patchProductsWorkbench()) {
+        renderToast();
+        emitFinanceData('remote:finance-legacy');
+        return;
+      }
       triggerRender();
       emitFinanceData('remote:finance-legacy');
     }, (error) => { state.error = String(error?.message || error); triggerRender(); });
@@ -11107,7 +11588,13 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     }
     if (target.closest('[data-food-open-products]')) {
       state.activeView = 'products';
+      state.foodProductsView = { ...(state.foodProductsView || {}), tab: 'list' };
       triggerRender();
+      return;
+    }
+    const productsTab = target.closest('[data-products-tab]')?.dataset.productsTab;
+    if (productsTab) {
+      switchProductsSubview(productsTab);
       return;
     }
     const saveProductsSettingsBtn = target.closest('[data-products-save-settings]');
@@ -11129,14 +11616,30 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     }
     const toggleProductSelection = target.closest('[data-products-toggle-select]')?.dataset.productsToggleSelect;
     if (toggleProductSelection) {
-      const current = new Set(Array.isArray(state.foodProductsView?.selectedIds) ? state.foodProductsView.selectedIds : []);
-      if (target.matches('input[type="checkbox"]') ? target.checked : !current.has(toggleProductSelection)) current.add(toggleProductSelection);
-      else current.delete(toggleProductSelection);
-      state.foodProductsView = {
-        ...(state.foodProductsView || {}),
-        selectedIds: [...current],
-      };
-      triggerRender();
+      toggleProductsSelection(toggleProductSelection, target.matches('input[type="checkbox"]') ? target.checked : null);
+      return;
+    }
+    const expandProductId = target.closest('[data-products-expand-product]')?.dataset.productsExpandProduct;
+    if (expandProductId) {
+      toggleProductsCardExpanded(expandProductId);
+      return;
+    }
+    const lineStepBtn = target.closest('[data-products-line-step]');
+    if (lineStepBtn) {
+      adjustProductsLineQtyFromDom(lineStepBtn.dataset.productsLineStep, Number(lineStepBtn.dataset.productsLineStepDelta || 0));
+      return;
+    }
+    if (target.closest('[data-products-select-visible]')) {
+      selectVisibleProductsFromDom();
+      return;
+    }
+    if (target.closest('[data-products-clear-selection]')) {
+      setProductsSelectedIds([]);
+      return;
+    }
+    const batchActiveState = target.closest('[data-products-batch-active]')?.dataset.productsBatchActive;
+    if (batchActiveState) {
+      await applyProductsSelectedActiveState(batchActiveState);
       return;
     }
     const addToListId = target.closest('[data-products-add-to-list]')?.dataset.productsAddToList;
@@ -11150,7 +11653,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
         ...(state.foodProductsView || {}),
         selectedProductId: String(selectProductId || '').trim(),
       };
-      triggerRender();
+      patchProductsEditorPanel(buildCurrentProductsModel());
       return;
     }
     if (target.closest('[data-products-add-selected-list]')) {
@@ -11188,9 +11691,9 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     if (target.closest('[data-products-new-product]')) {
       state.foodProductsView = {
         ...(state.foodProductsView || {}),
-        selectedProductId: '',
+        selectedProductId: '__new__',
       };
-      triggerRender();
+      patchProductsEditorPanel(buildCurrentProductsModel());
       return;
     }
     const foodProductsTab = target.closest('[data-food-products-tab]')?.dataset.foodProductsTab;
@@ -11668,7 +12171,7 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
       }
       return;
     }
-    const nextView = target.closest('[data-finance-view]')?.dataset.financeView; if (nextView) { state.activeView = nextView; triggerRender(); return; }
+    const nextView = target.closest('[data-finance-view]')?.dataset.financeView; if (nextView) { state.activeView = nextView; if (nextView === 'products') state.foodProductsView = { ...(state.foodProductsView || {}), tab: 'list' }; triggerRender(); return; }
     if (target.closest('[data-close-modal]') || target.id === 'finance-modalOverlay') { state.modal = { type: null }; triggerRender(); return; }
     if (target.closest('[data-history]')) { state.modal = { type: 'history' }; triggerRender(); return; }
     if (target.closest('[data-new-account]')) { state.modal = { type: 'new-account' }; triggerRender(); return; }
@@ -11868,6 +12371,10 @@ view.addEventListener('focusout', async (event) => {
   }
 });
   view.addEventListener('keydown', async (event) => {
+    if (event.key === 'Enter' && event.target.matches('[data-products-quick-search], [data-products-catalog-search], [data-products-filter="productsQuery"]')) {
+      event.preventDefault();
+      return;
+    }
     if (!event.target.matches('[data-account-input]')) return;
     if (event.key !== 'Enter') return;
     event.preventDefault();
@@ -11887,13 +12394,17 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-products-filter]')) {
       const filterKey = String(event.target.dataset.productsFilter || '').trim();
       const nextValue = event.target.type === 'checkbox' ? !!event.target.checked : event.target.value;
+      if (filterKey === 'productsQuery') {
+        applyProductsCatalogGlobalSearch(event.target);
+        return;
+      }
       const nextViewState = {
         ...(state.foodProductsView || {}),
         [filterKey]: nextValue,
       };
       if (filterKey === 'range') nextViewState.rangeValue = '';
       state.foodProductsView = nextViewState;
-      triggerRender();
+      patchProductsCatalogSubview();
       return;
     }
     if (event.target.matches('[data-food-products-range]')) { state.foodProductsView = { ...state.foodProductsView, range: event.target.value, rangeValue: '' }; applyProductsFiltersDirectDom(); }
@@ -11973,12 +12484,16 @@ view.addEventListener('focusout', async (event) => {
       applyProductsCatalogGroupSearch(event.target);
       return;
     }
+    if (event.target.matches('[data-products-quick-search]')) {
+      applyProductsQuickSearch(event.target);
+      return;
+    }
+    if (event.target.matches('[data-products-quick-line-qty]')) {
+      syncQuickLineQtyToList(event.target);
+      return;
+    }
     if (event.target.matches('[data-products-filter="productsQuery"]')) {
-      state.foodProductsView = {
-        ...(state.foodProductsView || {}),
-        productsQuery: String(event.target.value || ''),
-      };
-      triggerRender();
+      applyProductsCatalogGlobalSearch(event.target);
       return;
     }
     if (event.target.closest('[data-products-list-form]')) {
@@ -12123,6 +12638,11 @@ if (event.target.matches('[data-products-editor-form]')) {
 if (event.target.matches('[data-products-batch-form]')) {
   event.preventDefault();
   await applyProductsBatchForm(event.target);
+  return;
+}
+if (event.target.matches('[data-products-quick-edit-form]')) {
+  event.preventDefault();
+  await persistProductsQuickEditForm(event.target);
   return;
 }
 if (event.target.matches('[data-fixed-expense-form]')) {

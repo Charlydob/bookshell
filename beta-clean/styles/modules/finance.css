@@ -6418,6 +6418,16 @@ margin-bottom: 50px;
   background: rgba(127, 216, 189, .16);
 }
 
+.financeTab .productsWorkbench__miniAction--details{
+  width: auto;
+  min-width: 68px;
+  padding: 0 9px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .financeTab .productsWorkbench__lineRow{
   grid-template-columns: auto minmax(116px, 1fr) repeat(3, minmax(58px, .34fr)) minmax(58px, auto) auto;
   align-items: center;
@@ -6520,6 +6530,10 @@ margin-bottom: 50px;
   gap: 7px;
   padding-top: 7px;
   border-top: 1px solid rgba(150, 184, 243, .12);
+}
+
+.financeTab .productsWorkbench__productDrawer[hidden]{
+  display: none;
 }
 
 .financeTab .productsWorkbench__quickEdit{

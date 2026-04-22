@@ -3107,7 +3107,7 @@ function renderProductsCatalogGroups(model) {
               </button>
               <span class="productsWorkbench__status productsWorkbench__status--${escapeHtml(row.dueTone)}">${escapeHtml(row.inActiveList ? 'En lista' : row.dueLabel)}</span>
               <button type="button" class="productsWorkbench__miniAction" data-products-add-to-list="${escapeHtml(row.canonicalId)}" aria-label="Anadir ${escapeHtml(row.canonicalName)} a la lista">+</button>
-              <button type="button" class="productsWorkbench__miniAction" data-products-expand-product="${escapeHtml(row.canonicalId)}" aria-expanded="${isExpanded ? 'true' : 'false'}" aria-label="Ver detalle de ${escapeHtml(row.canonicalName)}">${isExpanded ? '-' : '+'}</button>
+              <button type="button" class="productsWorkbench__miniAction productsWorkbench__miniAction--details" data-products-expand-product="${escapeHtml(row.canonicalId)}" aria-expanded="${isExpanded ? 'true' : 'false'}" aria-label="Ver detalles de ${escapeHtml(row.canonicalName)}">${isExpanded ? 'Ocultar' : 'Detalles'}</button>
             </div>
             <div class="productsWorkbench__productMeta">
               <span class="productsWorkbench__badge">${escapeHtml(row.productCategory || row.format || 'Sin categoria')}</span>
@@ -3888,7 +3888,7 @@ function toggleProductsCardExpanded(productId = '') {
   if (drawer) drawer.hidden = !isOpen;
   const button = card.querySelector('[data-products-expand-product]');
   if (button) {
-    button.textContent = isOpen ? '-' : '+';
+    button.textContent = isOpen ? 'Ocultar' : 'Detalles';
     button.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
   }
 }

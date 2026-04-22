@@ -2978,62 +2978,6 @@ function renderProductsSubviewSwitch(model) {
   `;
 }
 
-function renderProductsQuickPicker(model) {
-  const activeProductLines = new Map(
-    (model.listLines || [])
-      .map((line) => [String(line.productId || '').trim(), line])
-      .filter(([id]) => id),
-  );
-  const rows = (model.quickRows || []).slice(0, 180);
-  const quickQuery = String(model.cfg?.listQuery || '').trim();
-  return `
-    <section class="productsWorkbench__quickPicker" data-products-quick-picker>
-      <div class="productsWorkbench__quickHead">
-        
-        <input
-          class="food-control productsWorkbench__quickSearch"
-          id= "buscador-ticket"
-          type="search"
-          value="${escapeHtml(model.cfg?.listQuery || '')}"
-          placeholder="Buscar producto para anadir..."
-          autocomplete="off"
-          data-products-quick-search />
-          <div id="seleccion-rapida">
-          <strong>Seleccion rapida</strong>
-          <small><span data-products-quick-count>${rows.length}</span> productos disponibles</small>
-        </div>
-      </div>
-      <div class="productsWorkbench__quickList" data-products-quick-results>
-        ${rows.map((row) => {
-          const line = activeProductLines.get(row.canonicalId) || null;
-          return `
-            <article class="productsWorkbench__quickRow ${line ? 'is-in-list' : ''}" data-products-quick-row data-products-search="${escapeHtml(row.searchIndex || '')}">
-              <div class="productsWorkbench__quickMain">
-                <strong>${escapeHtml(row.canonicalName)}</strong>
-                <small>${escapeHtml(row.productCategory || row.productType || row.preferredStore || 'Sin clasificar')} · ${fmtCurrency(row.predictedLineCost || row.currentUnitPrice || 0)}</small>
-              </div>
-              <span class="productsWorkbench__quickState">${line ? 'En lista' : escapeHtml(row.dueTone === 'critical' ? 'Urgente' : row.dueTone === 'soon' ? 'Pronto' : 'Catalogo')}</span>
-              ${line ? `
-                <div class="productsWorkbench__quickQty" aria-label="Cantidad en lista">
-                  <button type="button" class="productsWorkbench__miniAction" data-products-line-step="${escapeHtml(line.id)}" data-products-line-step-delta="-1">-</button>
-                  <input class="food-control" type="number" min="1" step="0.01" value="${Number(line.qty || 1)}" data-products-quick-line-qty="${escapeHtml(line.id)}" />
-                  <button type="button" class="productsWorkbench__miniAction" data-products-line-step="${escapeHtml(line.id)}" data-products-line-step-delta="1">+</button>
-                </div>
-              ` : `
-                <button type="button" class="productsWorkbench__miniAction productsWorkbench__miniAction--primary" data-products-add-to-list="${escapeHtml(row.canonicalId)}" aria-label="Anadir ${escapeHtml(row.canonicalName)}">+</button>
-              `}
-            </article>
-          `;
-        }).join('') || (quickQuery
-          ? `<div class="productsWorkbench__emptyMini">No existe "${escapeHtml(quickQuery)}".</div>
-             <button type="button" class="food-history-btn productsWorkbench__createFromSearch" data-products-create-from-search="${escapeHtml(quickQuery)}">Crear y anadir "${escapeHtml(quickQuery)}"</button>`
-          : '<div class="productsWorkbench__emptyMini">Aun no hay productos catalogados.</div>')}
-        <div class="productsWorkbench__emptyMini productsWorkbench__quickEmpty" hidden>No hay productos para esa busqueda.</div>
-      </div>
-    </section>
-  `;
-}
-
 function buildProductsStoreChoices(model = null) {
   const activeList = model?.activeList || resolveActiveProductsList();
   return [
@@ -3064,6 +3008,17 @@ function renderProductsStoreSelect(model = null) {
       ${options}
     </select>
     <input class="food-control productsWorkbench__newStoreInput" type="text" data-products-new-store-input placeholder="Nuevo supermercado" hidden />
+  `;
+}
+
+function renderProductsAccountSelect(model = null) {
+  const activeList = model?.activeList || resolveActiveProductsList();
+  const current = String(model?.activeTicket?.accountId || activeList.accountId || '').trim();
+  return `
+    <select class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--payment" name="accountId" data-products-receipt-payment aria-label="Cuenta">
+      <option value="">Sin cuenta</option>
+      ${(state.accounts || []).map((account) => `<option value="${escapeHtml(account.id)}" ${current === account.id ? 'selected' : ''}>${escapeHtml(account.name || account.id)}</option>`).join('')}
+    </select>
   `;
 }
 
@@ -3539,7 +3494,6 @@ function renderProductsEditorPanel(model) {
 
 function renderProductsListPanel(model) {
   const activeList = model.activeList;
-  const activeTicket = model.activeTicket || {};
   return `
     <section class="productsWorkbench__panel productsWorkbench__panel--shopping" data-products-shopping-panel>
       <header class="productsWorkbench__panelHead">
@@ -3553,41 +3507,6 @@ function renderProductsListPanel(model) {
         </div>
       </header>
       <form class="productsWorkbench__listForm" data-products-list-form data-products-list-id="${escapeHtml(activeList.id || '__draft__')}" data-products-active-ticket-id="${escapeHtml(model.activeTicketId || activeList.activeTicketId || activeList.primaryTicketId || 'ticket-1')}">
-        <div class="productsWorkbench__listMeta">
-          <label class="productsWorkbench__field">
-            <span>Lista</span>
-            <input class="food-control" type="text" name="listName" value="${escapeHtml(activeList.name || 'Lista activa')}" />
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Supermercado</span>
-            ${renderProductsStoreSelect(model)}
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Fecha</span>
-            <input class="food-control" type="date" name="plannedFor" value="${escapeHtml(activeTicket.plannedFor || activeList.plannedFor || dayKeyFromTs(nowTs()))}" />
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Cuenta</span>
-            <select class="food-control" name="accountId">
-              <option value="">Seleccionar</option>
-              ${(state.accounts || []).map((account) => `<option value="${escapeHtml(account.id)}" ${(activeTicket.accountId || activeList.accountId) === account.id ? 'selected' : ''}>${escapeHtml(account.name || account.id)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Pago</span>
-            <input class="food-control" type="text" name="paymentMethod" value="${escapeHtml(activeTicket.paymentMethod || activeList.paymentMethod || state.productsHub?.settings?.defaultPaymentMethod || 'Tarjeta')}" />
-          </label>
-          
-        </div>
-        ${renderProductsQuickPicker(model)}
-        <div class="productsWorkbench__suggestions">
-          ${model.dueSuggestions.map((row) => `
-            <button type="button" class="productsWorkbench__suggestion" data-products-add-to-list="${escapeHtml(row.canonicalId)}">
-              <strong>${escapeHtml(row.canonicalName)}</strong>
-              <small>${escapeHtml(row.dueLabel)} · ${fmtCurrency(row.predictedLineCost || 0)}</small>
-            </button>
-          `).join('') || '<div class="productsWorkbench__emptyMini">No hay reposiciones urgentes fuera de la lista.</div>'}
-        </div>
         <div class="productsWorkbench__lineList productsWorkbench__lineList--backing" aria-hidden="true">
           ${model.allListLines.map((line, index) => `
             <div class="productsWorkbench__lineRow ${line.checked === false ? 'is-unchecked' : 'is-checked'}" data-products-line-row="${escapeHtml(line.id)}">
@@ -3621,10 +3540,6 @@ function renderProductsListPanel(model) {
             </div>
           `).join('')}
         </div>
-        <div class="productsWorkbench__totals">
-          <div><span>Previsto</span><strong data-products-list-total>${fmtCurrency(model.activeListEstimatedTotal || 0)}</strong></div>
-          <div><span>Ticket real</span><strong data-products-ticket-total>${fmtCurrency(model.activeListActualTotal || 0)}</strong></div>
-        </div>
       </form>
     </section>
   `;
@@ -3633,27 +3548,41 @@ function renderProductsListPanel(model) {
 function renderProductsTicketHero(model) {
   const activeList = model.activeList;
   const selectedCount = Object.keys(state.foodProductsView?.receiptSelections?.[activeList.id] || {}).length;
+  const plannedFor = model.activeTicket?.plannedFor || activeList.plannedFor || dayKeyFromTs(nowTs());
+  const receiptEstimatedTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0);
+  const receiptActualTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0);
+  const receiptDiff = receiptActualTotal - receiptEstimatedTotal;
+  const diffLabel = `${receiptDiff > 0.005 ? '+' : receiptDiff < -0.005 ? '-' : ''}${fmtCurrency(Math.abs(receiptDiff))}`;
+  const diffTone = receiptDiff > 0.005 ? 'expensive' : receiptDiff < -0.005 ? 'cheap' : 'even';
   return `
       <section class="productsWorkbench__ticketHero" data-products-ticket-hero>
-      <div class="productsWorkbench__ticketSwitches">
-        ${model.tickets.map((ticket, index) => `
-          <button type="button" class="food-history-btn ${ticket.id === model.activeTicketId ? 'is-active' : ''}" data-products-switch-ticket="${escapeHtml(ticket.id)}">
-            ${escapeHtml(ticket.label || `Ticket ${index + 1}`)} · ${ticket.lineCount}
-          </button>
-        `).join('')}
-      </div>
-      <div class="productsWorkbench__panelActions productsWorkbench__panelActions--inlineReceipt productsWorkbench__panelActions--ticketCrud">
-        <button type="button" class="food-history-btn" data-products-create-empty-ticket>Nuevo ticket</button>
-        <button type="button" class="food-history-btn" data-products-delete-ticket="${escapeHtml(model.activeTicketId || '')}" ${model.tickets.length > 1 ? '' : 'disabled'}>Eliminar ticket</button>
+      ${renderProductsSubviewSwitch(model)}
+      <div class="productsWorkbench__ticketBar">
+        <div class="productsWorkbench__ticketSwitches" aria-label="Tickets">
+          ${model.tickets.map((ticket, index) => `
+            <button type="button" class="food-history-btn ${ticket.id === model.activeTicketId ? 'is-active' : ''}" data-products-switch-ticket="${escapeHtml(ticket.id)}">
+              ${escapeHtml(ticket.label || `Ticket ${index + 1}`)} · ${ticket.lineCount}
+            </button>
+          `).join('')}
+        </div>
+        <span class="productsWorkbench__ticketBarDivider" aria-hidden="true">|</span>
+        <div class="productsWorkbench__panelActions productsWorkbench__panelActions--inlineReceipt productsWorkbench__panelActions--ticketCrud">
+          <button type="button" class="food-history-btn" data-products-create-empty-ticket>Nuevo ticket</button>
+          <button type="button" class="food-history-btn" data-products-delete-ticket="${escapeHtml(model.activeTicketId || '')}" ${model.tickets.length > 1 ? '' : 'disabled'}>Eliminar ticket</button>
+        </div>
       </div>
       <div class="productsWorkbench__receipt" data-products-receipt>
         <header>
-          <strong data-products-receipt-store>${escapeHtml(model.activeTicket?.store || activeList.store || state.productsHub?.settings?.defaultStore || 'Supermercado')}</strong>
-          <small>${escapeHtml(model.activeTicket?.plannedFor || activeList.plannedFor || dayKeyFromTs(nowTs()))}</small>
+          <div class="productsWorkbench__receiptMetaGroup">
+            ${renderProductsStoreSelect(model)
+              .replace('class="food-control"', 'class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--store"')
+              .replace('data-products-store-select', 'data-products-store-select data-products-receipt-store')}
+          </div>
+          <div class="productsWorkbench__panelActions productsWorkbench__panelActions--inlineReceipt productsWorkbench__panelActions--receiptHeader" ${selectedCount ? '' : 'hidden'} data-products-receipt-move-actions>
+            <button type="button" class="food-history-btn" data-products-move-selected-ticket>Nuevo ticket (${selectedCount})</button>
+          </div>
+          <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--date" type="date" name="plannedFor" value="${escapeHtml(plannedFor)}" data-products-receipt-date aria-label="Fecha del ticket" />
         </header>
-        <div class="productsWorkbench__panelActions productsWorkbench__panelActions--inlineReceipt" ${selectedCount ? '' : 'hidden'} data-products-receipt-move-actions>
-          <button type="button" class="food-history-btn" data-products-move-selected-ticket>Mover a nuevo ticket (${selectedCount})</button>
-        </div>
         <div class="productsWorkbench__receiptLines">
           ${model.listLines.map((line) => renderProductsReceiptLineRow(line, model)).join('')}
           ${renderProductsReceiptEmptyRow(model)}
@@ -3662,9 +3591,17 @@ function renderProductsTicketHero(model) {
           <div class="productsWorkbench__receiptDivider"></div>
           <div class="productsWorkbench__receiptTotalRow">
             <span>Total</span>
-            <strong data-products-ticket-total-footer>${fmtCurrency(model.activeTicket?.actualTotal || 0)}</strong>
+            <strong data-products-ticket-total-footer>${fmtCurrency(receiptActualTotal)}</strong>
           </div>
-          <small data-products-receipt-payment>${escapeHtml(model.activeTicket?.accountId ? `${state.accounts.find((account) => account.id === model.activeTicket.accountId)?.name || model.activeTicket.accountId} · ${model.activeTicket.paymentMethod || 'Tarjeta'}` : (model.activeTicket?.paymentMethod || 'Tarjeta'))}</small>
+          <div class="productsWorkbench__receiptTotalRow productsWorkbench__receiptTotalRow--muted">
+            <span>Previsto</span>
+            <strong data-products-list-total>${fmtCurrency(receiptEstimatedTotal)}</strong>
+          </div>
+          <div class="productsWorkbench__receiptTotalRow productsWorkbench__receiptTotalRow--diff is-${diffTone}" data-products-ticket-diff-row>
+            <span>Diferencia</span>
+            <strong data-products-ticket-diff>${diffLabel}</strong>
+          </div>
+          ${renderProductsAccountSelect(model)}
         </footer>
       </div>
       <div class="productsWorkbench__panelActions productsWorkbench__panelActions--footer">
@@ -3791,7 +3728,6 @@ function renderProductsView(isModal = false) {
   const content = `
     <div class="financeProductsView productsWorkbench" data-products-workbench data-products-active-tab="${escapeHtml(activeTab)}">
       ${renderProductsTicketHero(model)}
-      ${renderProductsSubviewSwitch(model)}
       <div class="productsWorkbench__subview" data-products-subview="list" ${activeTab === 'list' ? '' : 'hidden'}>
       ${renderProductsListPanel(model)}
       </div>
@@ -4281,15 +4217,16 @@ function readProductsListDraftFromDom(root = document) {
   const formEl = root?.querySelector?.('[data-products-list-form]');
   const baseList = resolveActiveProductsList();
   if (!formEl) return baseList;
+  const scope = formEl.closest('[data-products-workbench]') || root;
   const nextList = cloneProductsListRecord(baseList);
   nextList.id = String(formEl.dataset.productsListId || nextList.id || '__draft__').trim() || '__draft__';
   nextList.name = normalizeProductText(formEl.querySelector('[name="listName"]')?.value || nextList.name || 'Lista activa') || 'Lista activa';
-  const storeSelect = formEl.querySelector('[name="store"]');
-  const newStoreValue = formEl.querySelector('[data-products-new-store-input]')?.value || '';
+  const storeSelect = scope.querySelector('[name="store"]');
+  const newStoreValue = scope.querySelector('[data-products-new-store-input]')?.value || '';
   nextList.store = normalizeFoodName((storeSelect?.value === '__new__' ? newStoreValue : storeSelect?.value) || nextList.store || '');
-  nextList.plannedFor = toIsoDay(String(formEl.querySelector('[name="plannedFor"]')?.value || nextList.plannedFor || '')) || dayKeyFromTs(nowTs());
-  nextList.accountId = String(formEl.querySelector('[name="accountId"]')?.value || nextList.accountId || '').trim();
-  nextList.paymentMethod = normalizeProductText(formEl.querySelector('[name="paymentMethod"]')?.value || nextList.paymentMethod || 'Tarjeta') || 'Tarjeta';
+  nextList.plannedFor = toIsoDay(String(scope.querySelector('[name="plannedFor"]')?.value || nextList.plannedFor || '')) || dayKeyFromTs(nowTs());
+  nextList.accountId = String(scope.querySelector('[name="accountId"]')?.value || nextList.accountId || '').trim();
+  nextList.paymentMethod = normalizeProductText(scope.querySelector('[name="paymentMethod"]')?.value || nextList.paymentMethod || 'Tarjeta') || 'Tarjeta';
   nextList.notes = normalizeProductText(formEl.querySelector('[name="notes"]')?.value || nextList.notes || '');
   const activeTicketId = String(formEl.dataset.productsActiveTicketId || nextList.activeTicketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   nextList.activeTicketId = activeTicketId;
@@ -4334,9 +4271,11 @@ function readProductsListDraftFromDom(root = document) {
 function syncProductsTicketComposerDom(root = document) {
   const formEl = root?.querySelector?.('[data-products-list-form]');
   if (!formEl) return;
+  const scope = formEl.closest('[data-products-workbench]') || root;
   const activeTicketId = String(formEl.dataset.productsActiveTicketId || '').trim();
   let estimatedTotal = 0;
   let actualTotal = 0;
+  let activeTicketEstimatedTotal = 0;
   let activeTicketTotal = 0;
   formEl.querySelectorAll('[data-products-line-row]').forEach((rowEl) => {
     const lineId = String(rowEl.dataset.productsLineRow || '').trim();
@@ -4351,7 +4290,10 @@ function syncProductsTicketComposerDom(root = document) {
     const rowTicketId = String(rowEl.querySelector(`[data-products-line-ticket-id="${lineId}"]`)?.value || '').trim();
     estimatedTotal += estimatedSubtotal;
     actualTotal += actualSubtotal;
-    if (rowTicketId && rowTicketId === activeTicketId) activeTicketTotal += actualSubtotal;
+    if (rowTicketId && rowTicketId === activeTicketId) {
+      activeTicketEstimatedTotal += estimatedSubtotal;
+      activeTicketTotal += actualSubtotal;
+    }
     rowEl.classList.toggle('is-unchecked', !isChecked);
     rowEl.classList.toggle('is-checked', isChecked);
     const estimatedNode = root.querySelector(`[data-products-line-est-total="${lineId}"]`);
@@ -4371,21 +4313,31 @@ function syncProductsTicketComposerDom(root = document) {
   const addUnit = root.querySelector('[data-products-receipt-add-unit]');
   const addTotal = root.querySelector('[data-products-receipt-add-total]');
   if (addTotal) addTotal.textContent = fmtCurrency(Math.max(0, Number(addQty?.value || 1)) * Math.max(0, Number(addUnit?.value || 0)));
-  const storeSelect = formEl.querySelector('[name="store"]');
-  const storeValue = String((storeSelect?.value === '__new__' ? formEl.querySelector('[data-products-new-store-input]')?.value : storeSelect?.value) || 'Supermercado').trim() || 'Supermercado';
-  const paymentValue = String(formEl.querySelector('[name="paymentMethod"]')?.value || 'Tarjeta').trim() || 'Tarjeta';
-  const accountId = String(formEl.querySelector('[name="accountId"]')?.value || '').trim();
-  const accountName = accountId ? (state.accounts.find((account) => account.id === accountId)?.name || accountId) : '';
-  const receiptStore = root.querySelector('[data-products-receipt-store]');
-  const receiptPayment = root.querySelector('[data-products-receipt-payment]');
-  const listTotal = root.querySelector('[data-products-list-total]');
-  const ticketTotal = root.querySelector('[data-products-ticket-total]');
-  const ticketTotalFooter = root.querySelector('[data-products-ticket-total-footer]');
-  if (receiptStore) receiptStore.textContent = storeValue;
-  if (receiptPayment) receiptPayment.textContent = accountName ? `${accountName} · ${paymentValue}` : paymentValue;
-  if (listTotal) listTotal.textContent = fmtCurrency(estimatedTotal);
+  const storeSelect = scope.querySelector('[name="store"]');
+  const storeValue = String((storeSelect?.value === '__new__' ? scope.querySelector('[data-products-new-store-input]')?.value : storeSelect?.value) || 'Supermercado').trim() || 'Supermercado';
+  const accountSelect = scope.querySelector('[name="accountId"]');
+  const accountId = String(accountSelect?.value || '').trim();
+  const receiptStore = scope.querySelector('[data-products-receipt-store]');
+  const receiptPayment = scope.querySelector('[data-products-receipt-payment]');
+  const receiptDate = scope.querySelector('[data-products-receipt-date]');
+  const listTotal = scope.querySelector('[data-products-list-total]');
+  const ticketTotal = scope.querySelector('[data-products-ticket-total]');
+  const ticketTotalFooter = scope.querySelector('[data-products-ticket-total-footer]');
+  const ticketDiff = scope.querySelector('[data-products-ticket-diff]');
+  const ticketDiffRow = scope.querySelector('[data-products-ticket-diff-row]');
+  if (receiptStore && document.activeElement !== receiptStore && storeValue && receiptStore.value !== storeValue) receiptStore.value = storeValue;
+  if (receiptPayment && document.activeElement !== receiptPayment && receiptPayment.value !== accountId) receiptPayment.value = accountId;
+  if (receiptDate && document.activeElement !== receiptDate && !receiptDate.value) receiptDate.value = dayKeyFromTs(nowTs());
+  if (listTotal) listTotal.textContent = fmtCurrency(activeTicketEstimatedTotal);
   if (ticketTotal) ticketTotal.textContent = fmtCurrency(actualTotal);
   if (ticketTotalFooter) ticketTotalFooter.textContent = fmtCurrency(activeTicketTotal);
+  if (ticketDiffRow) {
+    const diff = activeTicketTotal - activeTicketEstimatedTotal;
+    if (ticketDiff) ticketDiff.textContent = `${diff > 0.005 ? '+' : diff < -0.005 ? '-' : ''}${fmtCurrency(Math.abs(diff))}`;
+    ticketDiffRow.classList.toggle('is-expensive', diff > 0.005);
+    ticketDiffRow.classList.toggle('is-cheap', diff < -0.005);
+    ticketDiffRow.classList.toggle('is-even', Math.abs(diff) <= 0.005);
+  }
   const selectedCount = Object.keys(state.foodProductsView?.receiptSelections?.[formEl.dataset.productsListId] || {}).length;
   const selectedMap = state.foodProductsView?.receiptSelections?.[formEl.dataset.productsListId] || {};
   root.querySelectorAll('[data-products-receipt-row]').forEach((receiptRow) => {
@@ -13200,6 +13152,11 @@ view.addEventListener('focusout', async (event) => {
       toggleReceiptLineSelection(event.target.dataset.productsReceiptSelect, event.target.checked);
       return;
     }
+    if (event.target.matches('[data-products-store-select], [data-products-receipt-date], [data-products-receipt-payment]')) {
+      syncProductsTicketComposerDom(view);
+      syncProductsDraftListLocal(readProductsListDraftFromDom(view));
+      return;
+    }
     if (event.target.matches('[data-account-merge-show-resolved]')) {
       const accounts = buildAccountModels();
       state.modal = normalizeAccountMergeModalState({ ...state.modal, showResolved: !!event.target.checked }, accounts);
@@ -13275,7 +13232,7 @@ view.addEventListener('focusout', async (event) => {
       return;
     }
     if (event.target.matches('[data-products-store-select]')) {
-      const newStoreInput = event.target.closest('.productsWorkbench__field')?.querySelector('[data-products-new-store-input]');
+      const newStoreInput = event.target.closest('.productsWorkbench__field, .productsWorkbench__receiptMetaGroup')?.querySelector('[data-products-new-store-input]');
       if (event.target.value === '__new__') {
         if (newStoreInput) {
           newStoreInput.hidden = false;
@@ -13320,7 +13277,7 @@ view.addEventListener('focusout', async (event) => {
     }
     if (event.target.matches('[data-products-new-store-input]')) {
       const value = normalizeFoodName(event.target.value || '');
-      const select = event.target.closest('.productsWorkbench__field')?.querySelector('[data-products-store-select]');
+      const select = event.target.closest('.productsWorkbench__field, .productsWorkbench__receiptMetaGroup')?.querySelector('[data-products-store-select]');
       if (select) {
         let option = Array.from(select.options).find((opt) => opt.value.toLowerCase() === value.toLowerCase());
         if (!option && value) {
@@ -13329,6 +13286,11 @@ view.addEventListener('focusout', async (event) => {
         }
         if (value) select.value = value;
       }
+      syncProductsTicketComposerDom(view);
+      syncProductsDraftListLocal(readProductsListDraftFromDom(view));
+      return;
+    }
+    if (event.target.matches('[data-products-receipt-date], [data-products-receipt-payment]')) {
       syncProductsTicketComposerDom(view);
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
       return;

@@ -2183,6 +2183,11 @@ function buildProductsViewModel(cfg = {}) {
     selectedIds: [...new Set(Array.isArray(cfg?.selectedIds || state.foodProductsView?.selectedIds) ? (cfg?.selectedIds || state.foodProductsView?.selectedIds) : [])],
     expandedIds: [...new Set(Array.isArray(cfg?.expandedIds || state.foodProductsView?.expandedIds) ? (cfg?.expandedIds || state.foodProductsView?.expandedIds) : [])],
     listQuery: String(cfg?.listQuery || state.foodProductsView?.listQuery || ''),
+    catalogSearchByGroup: (cfg?.catalogSearchByGroup && typeof cfg.catalogSearchByGroup === 'object')
+      ? cfg.catalogSearchByGroup
+      : ((state.foodProductsView?.catalogSearchByGroup && typeof state.foodProductsView.catalogSearchByGroup === 'object')
+        ? state.foodProductsView.catalogSearchByGroup
+        : {}),
   };
 
   const accountsById = Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
@@ -2484,11 +2489,27 @@ function buildProductsViewModel(cfg = {}) {
   }, {});
   const groups = Object.values(groupedMap)
     .map((group) => ({
-      ...group,
-      totalSpend: group.rows.reduce((sum, row) => sum + Number(row.totalSpend || 0), 0),
-      projectedSpend: group.rows.reduce((sum, row) => sum + Number(row.projectedMonthlySpend || 0), 0),
-      dueCount: group.rows.filter((row) => ['critical', 'soon'].includes(row.dueTone)).length,
+      key: group.key,
+      label: group.label,
+      allRows: group.rows,
     }))
+    .map((group) => {
+      const searchQuery = String(nextCfg.catalogSearchByGroup?.[group.key] || '');
+      const searchKey = normalizeProductItemKey(searchQuery);
+      const visibleRows = searchKey
+        ? group.allRows.filter((row) => String(row.searchIndex || '').includes(searchKey))
+        : group.allRows;
+      return {
+        ...group,
+        searchQuery,
+        rows: visibleRows,
+        totalCount: group.allRows.length,
+        visibleCount: visibleRows.length,
+        totalSpend: group.allRows.reduce((sum, row) => sum + Number(row.totalSpend || 0), 0),
+        projectedSpend: group.allRows.reduce((sum, row) => sum + Number(row.projectedMonthlySpend || 0), 0),
+        dueCount: group.allRows.filter((row) => ['critical', 'soon'].includes(row.dueTone)).length,
+      };
+    })
     .sort((a, b) => String(a.label || '').localeCompare(String(b.label || ''), 'es', { sensitivity: 'base' }));
 
   const catalogById = Object.fromEntries(allCatalogRows.map((row) => [row.canonicalId, row]));
@@ -3042,39 +3063,79 @@ function renderProductsReceiptEmptyRow(model) {
 }
 
 function renderProductsBulkBar(model) {
+  const selectedCount = model.selectedIds.length;
   return `
     <div class="productsWorkbench__bulkBar" data-products-bulk-bar>
       <div>
-        <strong data-products-selected-count>${model.selectedIds.length} seleccionados</strong>
+        <strong data-products-selected-count>${selectedCount} seleccionados</strong>
         <small>Seleccion multiple y acciones en bloque</small>
       </div>
       <div class="productsWorkbench__bulkActions">
         <button type="button" class="food-history-btn" data-products-select-visible>Seleccionar visibles</button>
-        <button type="button" class="food-history-btn" data-products-add-selected-list ${model.selectedIds.length ? '' : 'disabled'}>A lista</button>
-        <button type="button" class="food-history-btn" data-products-batch-active="active" ${model.selectedIds.length ? '' : 'disabled'}>Activar</button>
-        <button type="button" class="food-history-btn" data-products-batch-active="inactive" ${model.selectedIds.length ? '' : 'disabled'}>Desactivar</button>
-        <button type="button" class="food-history-btn" data-products-clear-selection ${model.selectedIds.length ? '' : 'disabled'}>Limpiar</button>
+        <button type="button" class="food-history-btn" data-products-add-selected-list ${selectedCount ? '' : 'disabled'}>A lista</button>
+        <button type="button" class="food-history-btn" data-products-batch-active="active" ${selectedCount ? '' : 'disabled'}>Activar</button>
+        <button type="button" class="food-history-btn" data-products-batch-active="inactive" ${selectedCount ? '' : 'disabled'}>Desactivar</button>
+        <button type="button" class="food-history-btn" data-products-clear-selection ${selectedCount ? '' : 'disabled'}>Deseleccionar todo</button>
       </div>
     </div>
   `;
 }
 
-function renderProductsCatalogGroups(model) {
-  if (!model.groups.length) {
-    return '<div class="productsWorkbench__empty">No hay productos para este filtro.</div>';
-  }
+function renderProductsBatchToolbar(model) {
+  const selectedCount = model.selectedIds.length;
+  return `
+    <form class="productsWorkbench__batchForm productsWorkbench__batchForm--toolbar" data-products-batch-form data-products-batch-toolbar ${selectedCount ? '' : 'hidden'}>
+      <header>
+        <strong>Edicion en bloque</strong>
+        <small><span data-products-selected-count>${selectedCount} seleccionados</span></small>
+      </header>
+      <label class="productsWorkbench__field">
+        <span>Tipo</span>
+        <input class="food-control" type="text" name="productType" placeholder="Nuevo tipo comun" />
+      </label>
+      <label class="productsWorkbench__field">
+        <span>Categoria</span>
+        <input class="food-control" type="text" name="productCategory" placeholder="Nueva categoria comun" />
+      </label>
+      <label class="productsWorkbench__field">
+        <span>Tienda</span>
+        <input class="food-control" type="text" name="preferredStore" placeholder="Tienda comun" />
+      </label>
+      <label class="productsWorkbench__field">
+        <span>Tags</span>
+        <input class="food-control" type="text" name="tags" placeholder="stock, promo" />
+      </label>
+      <label class="productsWorkbench__field">
+        <span>Estado</span>
+        <select class="food-control" name="activeState">
+          <option value="keep">Mantener</option>
+          <option value="active">Activar</option>
+          <option value="inactive">Desactivar</option>
+        </select>
+      </label>
+      <div class="productsWorkbench__editorActions">
+        <button class="food-history-btn" type="submit" ${selectedCount ? '' : 'disabled'}>Aplicar seleccion</button>
+        <button type="button" class="food-history-btn" data-products-add-selected-list ${selectedCount ? '' : 'disabled'}>Enviar a lista</button>
+        <button type="button" class="food-history-btn" data-products-clear-selection ${selectedCount ? '' : 'disabled'}>Deseleccionar todo</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderProductsCatalogGroup(group, model) {
   const selectedSet = new Set(model.selectedIds || []);
   const expandedSet = new Set(model.cfg?.expandedIds || []);
-  return model.groups.map((group) => `
-    <section class="productsWorkbench__group" data-products-catalog-group="${escapeHtml(group.key)}">
+  const safeGroupKey = escapeHtml(group.key);
+  return `
+    <section class="productsWorkbench__group" data-products-catalog-group="${safeGroupKey}">
       <header class="productsWorkbench__groupHead">
         <div>
           <strong>${escapeHtml(group.label)}</strong>
-          <small>${group.rows.length} productos · ${fmtCurrency(group.totalSpend)} historicos</small>
+          <small>${group.totalCount} productos · ${fmtCurrency(group.totalSpend)} historicos</small>
         </div>
         <div class="productsWorkbench__groupAside">
           <div class="productsWorkbench__groupMeta">
-            <span data-products-catalog-visible>${group.rows.length} visibles</span>
+            <span data-products-catalog-visible>${group.visibleCount} visibles</span>
             <span>${group.dueCount} por reponer</span>
             <span>${fmtCurrency(group.projectedSpend)} / mes</span>
           </div>
@@ -3083,7 +3144,7 @@ function renderProductsCatalogGroups(model) {
       <div class="productsWorkbench__catalogGrid" data-products-catalog-track>
         <label class="productsWorkbench__catalogSearch">
           <span>Buscar en ${escapeHtml(group.label)}</span>
-          <input class="food-control" type="search" data-products-catalog-search placeholder="filtrar este carrusel..." />
+          <input class="food-control" type="search" data-products-catalog-search data-products-catalog-group-key="${safeGroupKey}" value="${escapeHtml(group.searchQuery || '')}" placeholder="filtrar este carrusel..." />
         </label>
         <div class="productsWorkbench__catalogRows">
         ${group.rows.map((row) => {
@@ -3138,27 +3199,49 @@ function renderProductsCatalogGroups(model) {
         `;
         }).join('')}
         </div>
-        <div class="productsWorkbench__emptyMini productsWorkbench__catalogEmpty" hidden>No hay productos en este tipo para esa busqueda.</div>
+        <div class="productsWorkbench__emptyMini productsWorkbench__catalogEmpty" ${group.visibleCount ? 'hidden' : ''}>No hay productos en este tipo para esa busqueda.</div>
       </div>
     </section>
-  `).join('');
+  `;
+}
+
+function renderProductsCatalogGroups(model) {
+  if (!model.groups.some((group) => group.totalCount > 0)) {
+    return '<div class="productsWorkbench__empty">No hay productos para este filtro.</div>';
+  }
+  return model.groups.map((group) => renderProductsCatalogGroup(group, model)).join('');
 }
 
 function applyProductsCatalogGroupSearch(inputEl) {
   const groupEl = inputEl?.closest?.('[data-products-catalog-group]');
-  if (!groupEl) return;
-  const queryKey = normalizeProductItemKey(inputEl.value || '');
-  const cards = Array.from(groupEl.querySelectorAll('[data-products-catalog-card]'));
-  let visibleCount = 0;
-  cards.forEach((card) => {
-    const matches = !queryKey || String(card.dataset.productsSearch || '').includes(queryKey);
-    card.hidden = !matches;
-    if (matches) visibleCount += 1;
-  });
-  const counter = groupEl.querySelector('[data-products-catalog-visible]');
-  if (counter) counter.textContent = `${visibleCount} visibles`;
-  const emptyEl = groupEl.querySelector('.productsWorkbench__catalogEmpty');
-  if (emptyEl) emptyEl.hidden = visibleCount > 0;
+  const groupKey = String(inputEl?.dataset?.productsCatalogGroupKey || groupEl?.dataset?.productsCatalogGroup || '').trim();
+  if (!groupEl || !groupKey) return;
+  const query = String(inputEl.value || '');
+  const selectionStart = inputEl.selectionStart ?? query.length;
+  const selectionEnd = inputEl.selectionEnd ?? query.length;
+  const nextGroupSearch = {
+    ...((state.foodProductsView && state.foodProductsView.catalogSearchByGroup && typeof state.foodProductsView.catalogSearchByGroup === 'object')
+      ? state.foodProductsView.catalogSearchByGroup
+      : {}),
+    [groupKey]: query,
+  };
+  state.foodProductsView = {
+    ...(state.foodProductsView || {}),
+    catalogSearchByGroup: nextGroupSearch,
+  };
+  const model = buildCurrentProductsModel();
+  const groupModel = (model.groups || []).find((group) => group.key === groupKey);
+  const nextGroupNode = createProductsNode(groupModel
+    ? renderProductsCatalogGroup(groupModel, model)
+    : '<section class="productsWorkbench__group"></section>');
+  groupEl.replaceWith(nextGroupNode);
+  const nextInput = nextGroupNode.querySelector('[data-products-catalog-search]');
+  if (nextInput) {
+    nextInput.focus();
+    try {
+      nextInput.setSelectionRange(selectionStart, selectionEnd);
+    } catch (_) {}
+  }
 }
 
 function scrollProductsCatalogCarousel(buttonEl) {
@@ -3185,6 +3268,7 @@ function renderProductsCatalogPanel(model) {
         </div>
       </header>
       ${renderProductsBulkBar(model)}
+      ${renderProductsBatchToolbar(model)}
       <div class="productsWorkbench__collapseBody">
         ${renderProductsCatalogGroups(model)}
       </div>
@@ -3340,40 +3424,6 @@ function renderProductsEditorPanel(model) {
           `).join('') || '<div class="productsWorkbench__emptyMini">Sin compras reales registradas.</div>'}
         </div>
       </div>
-      <form class="productsWorkbench__batchForm" data-products-batch-form>
-        <header>
-          <strong>Edicion en bloque</strong>
-          <small>${model.selectedIds.length} seleccionados</small>
-        </header>
-        <label class="productsWorkbench__field">
-          <span>Tipo comun</span>
-          <input class="food-control" type="text" name="productType" placeholder="solo si quieres reasignar" />
-        </label>
-        <label class="productsWorkbench__field">
-          <span>Categoria comun</span>
-          <input class="food-control" type="text" name="productCategory" placeholder="limpieza, lacteos..." />
-        </label>
-        <label class="productsWorkbench__field">
-          <span>Tienda comun</span>
-          <input class="food-control" type="text" name="preferredStore" placeholder="mercadona" />
-        </label>
-        <label class="productsWorkbench__field productsWorkbench__field--wide">
-          <span>Etiquetas a anadir</span>
-          <input class="food-control" type="text" name="tags" placeholder="stock, promo" />
-        </label>
-        <label class="productsWorkbench__field">
-          <span>Estado</span>
-          <select class="food-control" name="activeState">
-            <option value="keep">Mantener</option>
-            <option value="active">Activar</option>
-            <option value="inactive">Desactivar</option>
-          </select>
-        </label>
-        <div class="productsWorkbench__editorActions">
-          <button class="food-history-btn" type="submit" ${model.selectedIds.length ? '' : 'disabled'}>Aplicar seleccion</button>
-          <button type="button" class="food-history-btn" data-products-add-selected-list ${model.selectedIds.length ? '' : 'disabled'}>Enviar a lista</button>
-        </div>
-      </form>
       </div>
     </section>
   `;
@@ -3466,6 +3516,14 @@ function renderProductsListPanel(model) {
           <div><span>Ticket real</span><strong data-products-ticket-total>${fmtCurrency(model.activeListActualTotal || 0)}</strong></div>
         </div>
       </form>
+    </section>
+  `;
+}
+
+function renderProductsTicketHero(model) {
+  const activeList = model.activeList;
+  return `
+      <section class="productsWorkbench__ticketHero" data-products-ticket-hero>
       <div class="productsWorkbench__receipt" data-products-receipt>
         <header>
           <strong data-products-receipt-store>${escapeHtml(activeList.store || state.productsHub?.settings?.defaultStore || 'Supermercado')}</strong>
@@ -3487,7 +3545,7 @@ function renderProductsListPanel(model) {
       <div class="productsWorkbench__panelActions productsWorkbench__panelActions--footer">
         <button type="button" class="food-history-btn" data-products-confirm-ticket ${model.listLines.length ? '' : 'disabled'}>Confirmar compra</button>
       </div>
-    </section>
+      </section>
   `;
 }
 
@@ -3607,6 +3665,7 @@ function renderProductsView(isModal = false) {
   const activeTab = model.cfg.tab === 'catalog' ? 'catalog' : 'list';
   const content = `
     <div class="financeProductsView productsWorkbench" data-products-workbench data-products-active-tab="${escapeHtml(activeTab)}">
+      ${renderProductsTicketHero(model)}
       ${renderProductsSubviewSwitch(model)}
       <div class="productsWorkbench__subview" data-products-subview="list" ${activeTab === 'list' ? '' : 'hidden'}>
       ${renderProductsListPanel(model)}
@@ -3679,6 +3738,7 @@ function patchProductsShoppingPanel(model = null) {
   const current = root?.querySelector?.('[data-products-shopping-panel]');
   if (!current) return false;
   const nextModel = model || buildCurrentProductsModel();
+  patchProductsTicketHero(nextModel);
   const next = createProductsNode(renderProductsListPanel(nextModel));
   current.replaceWith(next);
   const quickSearch = next.querySelector('[data-products-quick-search]');
@@ -3693,6 +3753,15 @@ function patchProductsEditorPanel(model = null) {
   const nextModel = model || buildCurrentProductsModel();
   current.replaceWith(createProductsNode(renderProductsEditorPanel(nextModel)));
   updateProductsCatalogSelectedDom(nextModel.selectedProductId);
+  return true;
+}
+
+function patchProductsTicketHero(model = null) {
+  const root = getProductsWorkbenchRoot();
+  const current = root?.querySelector?.('[data-products-ticket-hero]');
+  if (!current) return false;
+  const nextModel = model || buildCurrentProductsModel();
+  current.replaceWith(createProductsNode(renderProductsTicketHero(nextModel)));
   return true;
 }
 
@@ -3839,6 +3908,9 @@ function syncProductsBulkBarDom() {
   root.querySelectorAll('[data-products-add-selected-list], [data-products-batch-active], [data-products-clear-selection]').forEach((button) => {
     button.disabled = selectedIds.length === 0;
   });
+  root.querySelectorAll('[data-products-batch-toolbar]').forEach((formEl) => {
+    formEl.hidden = selectedIds.length === 0;
+  });
   root.querySelectorAll('[data-food-merge-open]').forEach((button) => {
     button.dataset.foodMergeOpen = selectedIds[0] || '';
     button.disabled = selectedIds.length === 0;
@@ -3851,6 +3923,10 @@ function setProductsSelectedIds(ids = []) {
     selectedIds: [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))],
   };
   syncProductsBulkBarDom();
+}
+
+function clearProductsSelection() {
+  setProductsSelectedIds([]);
 }
 
 function toggleProductsSelection(productId = '', checked = null) {
@@ -11957,7 +12033,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       return;
     }
     if (target.closest('[data-products-clear-selection]')) {
-      setProductsSelectedIds([]);
+      clearProductsSelection();
       return;
     }
     const batchActiveState = target.closest('[data-products-batch-active]')?.dataset.productsBatchActive;
@@ -13639,5 +13715,3 @@ function getFinanceListenerCount() {
   if (state.toastTimer) count += 1;
   return count;
 }
-
-

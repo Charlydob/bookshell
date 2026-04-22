@@ -1949,7 +1949,66 @@ function cloneProductsListRecord(list = {}) {
   return {
     ...(list || {}),
     lines: cloneProductsLineMap(list?.lines || {}),
+    tickets: Object.fromEntries(
+      Object.entries(list?.tickets || {}).map(([ticketId, ticket]) => [ticketId, { ...(ticket || {}) }]),
+    ),
   };
+}
+
+function normalizeProductsListTicketMeta(ticketId = '', payload = {}) {
+  const safeId = String(ticketId || payload?.id || createFinanceRecordId('lticket')).trim();
+  return {
+    id: safeId,
+    label: normalizeProductText(payload?.label || ''),
+    store: normalizeFoodName(payload?.store || ''),
+    accountId: normalizeProductText(payload?.accountId || ''),
+    paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
+    plannedFor: toIsoDay(String(payload?.plannedFor || '')) || dayKeyFromTs(nowTs()),
+    notes: normalizeProductText(payload?.notes || ''),
+    sortOrder: normalizeProductNumber(payload?.sortOrder, 0),
+    createdAt: normalizeProductNumber(payload?.createdAt, nowTs()),
+    updatedAt: normalizeProductNumber(payload?.updatedAt, nowTs()),
+  };
+}
+
+function ensureProductsListTickets(list = {}) {
+  const nextList = cloneProductsListRecord(list);
+  const primaryTicketId = String(nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+  const baseMeta = normalizeProductsListTicketMeta(primaryTicketId, {
+    label: 'Sin asignar',
+    store: nextList.store,
+    accountId: nextList.accountId,
+    paymentMethod: nextList.paymentMethod,
+    plannedFor: nextList.plannedFor,
+    notes: nextList.notes,
+    sortOrder: 0,
+    createdAt: nextList.createdAt,
+    updatedAt: nextList.updatedAt,
+  });
+  const ticketMap = Object.entries(nextList.tickets || {}).reduce((acc, [ticketId, payload]) => {
+    const normalized = normalizeProductsListTicketMeta(ticketId, payload);
+    acc[normalized.id] = normalized;
+    return acc;
+  }, {});
+  if (!ticketMap[primaryTicketId]) ticketMap[primaryTicketId] = baseMeta;
+  const lineEntries = Object.entries(nextList.lines || {});
+  const usedTicketIds = new Set();
+  lineEntries.forEach(([lineId, line]) => {
+    const currentTicketId = String(line?.ticketId || '').trim();
+    const safeTicketId = currentTicketId && ticketMap[currentTicketId] ? currentTicketId : primaryTicketId;
+    if (!ticketMap[safeTicketId]) ticketMap[safeTicketId] = baseMeta;
+    usedTicketIds.add(safeTicketId);
+    nextList.lines[lineId] = { ...(line || {}), ticketId: safeTicketId };
+  });
+  if (!lineEntries.length) usedTicketIds.add(primaryTicketId);
+  Object.keys(ticketMap).forEach((ticketId) => {
+    if (!usedTicketIds.has(ticketId) && ticketId !== primaryTicketId) delete ticketMap[ticketId];
+  });
+  nextList.primaryTicketId = primaryTicketId;
+  const activeTicketCandidate = String(nextList.activeTicketId || '').trim();
+  nextList.activeTicketId = ticketMap[activeTicketCandidate] ? activeTicketCandidate : (ticketMap[primaryTicketId] ? primaryTicketId : Object.keys(ticketMap)[0] || primaryTicketId);
+  nextList.tickets = ticketMap;
+  return nextList;
 }
 
 function createEmptyProductsList(seed = {}, { temporary = false } = {}) {
@@ -1957,7 +2016,7 @@ function createEmptyProductsList(seed = {}, { temporary = false } = {}) {
   const fallbackStore = normalizeFoodName(seed?.store || state.productsHub?.settings?.defaultStore || '');
   const fallbackAccountId = String(seed?.accountId || state.productsHub?.settings?.defaultAccountId || '').trim();
   const fallbackPaymentMethod = String(seed?.paymentMethod || state.productsHub?.settings?.defaultPaymentMethod || 'Tarjeta').trim() || 'Tarjeta';
-  return normalizeProductsHubList(
+  const list = normalizeProductsHubList(
     temporary ? '__draft__' : String(seed?.id || createFinanceRecordId('list')).trim(),
     {
       name: seed?.name || 'Lista activa',
@@ -1973,15 +2032,16 @@ function createEmptyProductsList(seed = {}, { temporary = false } = {}) {
       updatedAt: Number(seed?.updatedAt || 0) || now,
     },
   );
+  return ensureProductsListTickets(list);
 }
 
 function resolveActiveProductsList() {
   const activeId = String(state.productsHub?.settings?.activeListId || '').trim();
   if (activeId && state.productsHub?.lists?.[activeId]) {
-    return cloneProductsListRecord(state.productsHub.lists[activeId]);
+    return ensureProductsListTickets(cloneProductsListRecord(state.productsHub.lists[activeId]));
   }
   if (state.productsHub?.lists?.__draft__) {
-    return cloneProductsListRecord(state.productsHub.lists.__draft__);
+    return ensureProductsListTickets(cloneProductsListRecord(state.productsHub.lists.__draft__));
   }
   return createEmptyProductsList({}, { temporary: true });
 }
@@ -2522,7 +2582,7 @@ function buildProductsViewModel(cfg = {}) {
     selectedProductId = filteredRows[0]?.canonicalId || catalogRows[0]?.canonicalId || allCatalogRows[0]?.canonicalId || '';
   }
   const selectedProduct = wantsNewProduct ? null : (selectedProductId ? catalogById[selectedProductId] || null : null);
-  const listLines = Object.values(activeList.lines || {})
+  const allListLines = Object.values(activeList.lines || {})
     .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
     .map((line) => {
       const linkedProduct = catalogById[line.productId] || state.food.itemsById?.[line.productId] || null;
@@ -2542,9 +2602,33 @@ function buildProductsViewModel(cfg = {}) {
         linkedProduct,
       };
     });
+  const ticketsById = Object.entries(activeList.tickets || {}).reduce((acc, [ticketId, ticketMeta]) => {
+    acc[ticketId] = { ...ticketMeta, id: ticketId, lines: [] };
+    return acc;
+  }, {});
+  const primaryTicketId = String(activeList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+  if (!ticketsById[primaryTicketId]) ticketsById[primaryTicketId] = normalizeProductsListTicketMeta(primaryTicketId, { label: 'Sin asignar' });
+  allListLines.forEach((line) => {
+    const ticketId = String(line.ticketId || primaryTicketId).trim() || primaryTicketId;
+    if (!ticketsById[ticketId]) ticketsById[ticketId] = normalizeProductsListTicketMeta(ticketId, { label: `Ticket ${Object.keys(ticketsById).length + 1}` });
+    ticketsById[ticketId].lines.push(line);
+  });
+  const tickets = Object.values(ticketsById)
+    .map((ticket, index) => ({
+      ...ticket,
+      label: ticket.label || (index === 0 ? 'Sin asignar' : `Ticket ${index + 1}`),
+      sortOrder: Number(ticket.sortOrder || index),
+      estimatedTotal: (ticket.lines || []).reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0),
+      actualTotal: (ticket.lines || []).reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0),
+      lineCount: (ticket.lines || []).length,
+    }))
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+  const activeTicketId = ticketsById[activeList.activeTicketId] ? activeList.activeTicketId : (tickets[0]?.id || primaryTicketId);
+  const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) || tickets[0] || { id: primaryTicketId, lines: [], estimatedTotal: 0, actualTotal: 0, lineCount: 0 };
+  const listLines = activeTicket.lines || [];
 
-  const activeListEstimatedTotal = listLines.reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0);
-  const activeListActualTotal = listLines.reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0);
+  const activeListEstimatedTotal = allListLines.reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0);
+  const activeListActualTotal = allListLines.reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0);
   const dueSuggestions = allCatalogRows
     .filter((row) => row.active && !activeListProductIds.has(row.canonicalId))
     .sort(sorters.forecast)
@@ -2581,6 +2665,10 @@ function buildProductsViewModel(cfg = {}) {
     selectedProduct,
     catalogById,
     activeList,
+    activeTicket,
+    activeTicketId,
+    tickets,
+    allListLines,
     listLines,
     activeListEstimatedTotal,
     activeListActualTotal,
@@ -2949,7 +3037,7 @@ function buildProductsStoreChoices(model = null) {
 
 function renderProductsStoreSelect(model = null) {
   const activeList = model?.activeList || resolveActiveProductsList();
-  const current = normalizeFoodName(activeList.store || state.productsHub?.settings?.defaultStore || '');
+  const current = normalizeFoodName(model?.activeTicket?.store || activeList.store || state.productsHub?.settings?.defaultStore || '');
   const choices = buildProductsStoreChoices(model);
   const hasCurrent = !current || choices.some((value) => value.toLowerCase() === current.toLowerCase());
   const options = [
@@ -3006,8 +3094,14 @@ function renderProductsReceiptSuggestionList(model = null, query = '', lineId = 
 
 function renderProductsReceiptLineRow(line, model) {
   const lineId = String(line.id || '').trim();
+  const listId = String(model?.activeList?.id || '__draft__');
+  const selection = state.foodProductsView?.receiptSelections?.[listId] || {};
+  const isSelected = !!selection[lineId];
   return `
     <div class="productsWorkbench__receiptRow" data-products-receipt-row="${escapeHtml(lineId)}">
+      <label class="productsWorkbench__receiptSelectWrap" aria-label="Seleccionar ${escapeHtml(line.name || 'producto')}">
+        <input type="checkbox" class="productsWorkbench__receiptSelect" data-products-receipt-select="${escapeHtml(lineId)}" ${isSelected ? 'checked' : ''} />
+      </label>
       <input
         class="productsWorkbench__receiptQty food-control"
         type="number"
@@ -3431,6 +3525,7 @@ function renderProductsEditorPanel(model) {
 
 function renderProductsListPanel(model) {
   const activeList = model.activeList;
+  const activeTicket = model.activeTicket || {};
   return `
     <section class="productsWorkbench__panel productsWorkbench__panel--shopping" data-products-shopping-panel>
       <header class="productsWorkbench__panelHead">
@@ -3440,10 +3535,10 @@ function renderProductsListPanel(model) {
         </div>
         <div class="productsWorkbench__panelActions">
           <button type="button" class="food-history-btn" data-products-save-list>Guardar lista</button>
-          <button type="button" class="food-history-btn" data-products-clear-list ${model.listLines.length ? '' : 'disabled'}>Vaciar</button>
+          <button type="button" class="food-history-btn" data-products-clear-list ${model.allListLines.length ? '' : 'disabled'}>Vaciar</button>
         </div>
       </header>
-      <form class="productsWorkbench__listForm" data-products-list-form data-products-list-id="${escapeHtml(activeList.id || '__draft__')}">
+      <form class="productsWorkbench__listForm" data-products-list-form data-products-list-id="${escapeHtml(activeList.id || '__draft__')}" data-products-active-ticket-id="${escapeHtml(model.activeTicketId || activeList.activeTicketId || activeList.primaryTicketId || 'ticket-1')}">
         <div class="productsWorkbench__listMeta">
           <label class="productsWorkbench__field">
             <span>Lista</span>
@@ -3455,18 +3550,18 @@ function renderProductsListPanel(model) {
           </label>
           <label class="productsWorkbench__field">
             <span>Fecha</span>
-            <input class="food-control" type="date" name="plannedFor" value="${escapeHtml(activeList.plannedFor || dayKeyFromTs(nowTs()))}" />
+            <input class="food-control" type="date" name="plannedFor" value="${escapeHtml(activeTicket.plannedFor || activeList.plannedFor || dayKeyFromTs(nowTs()))}" />
           </label>
           <label class="productsWorkbench__field">
             <span>Cuenta</span>
             <select class="food-control" name="accountId">
               <option value="">Seleccionar</option>
-              ${(state.accounts || []).map((account) => `<option value="${escapeHtml(account.id)}" ${activeList.accountId === account.id ? 'selected' : ''}>${escapeHtml(account.name || account.id)}</option>`).join('')}
+              ${(state.accounts || []).map((account) => `<option value="${escapeHtml(account.id)}" ${(activeTicket.accountId || activeList.accountId) === account.id ? 'selected' : ''}>${escapeHtml(account.name || account.id)}</option>`).join('')}
             </select>
           </label>
           <label class="productsWorkbench__field">
             <span>Pago</span>
-            <input class="food-control" type="text" name="paymentMethod" value="${escapeHtml(activeList.paymentMethod || state.productsHub?.settings?.defaultPaymentMethod || 'Tarjeta')}" />
+            <input class="food-control" type="text" name="paymentMethod" value="${escapeHtml(activeTicket.paymentMethod || activeList.paymentMethod || state.productsHub?.settings?.defaultPaymentMethod || 'Tarjeta')}" />
           </label>
           
         </div>
@@ -3480,10 +3575,11 @@ function renderProductsListPanel(model) {
           `).join('') || '<div class="productsWorkbench__emptyMini">No hay reposiciones urgentes fuera de la lista.</div>'}
         </div>
         <div class="productsWorkbench__lineList productsWorkbench__lineList--backing" aria-hidden="true">
-          ${model.listLines.map((line, index) => `
+          ${model.allListLines.map((line, index) => `
             <div class="productsWorkbench__lineRow ${line.checked === false ? 'is-unchecked' : 'is-checked'}" data-products-line-row="${escapeHtml(line.id)}">
               <input type="hidden" value="${escapeHtml(line.productId || '')}" data-products-line-product-id="${escapeHtml(line.id)}" />
               <input type="hidden" value="${escapeHtml(line.unit || 'ud')}" data-products-line-unit="${escapeHtml(line.id)}" />
+              <input type="hidden" value="${escapeHtml(line.ticketId || activeList.primaryTicketId || 'ticket-1')}" data-products-line-ticket-id="${escapeHtml(line.id)}" />
               <label class="productsWorkbench__lineCheck" aria-label="Marcar ${escapeHtml(line.name || 'Producto')}">
                 <input type="checkbox" data-products-line-checked="${escapeHtml(line.id)}" ${line.checked === false ? '' : 'checked'} />
               </label>
@@ -3522,13 +3618,24 @@ function renderProductsListPanel(model) {
 
 function renderProductsTicketHero(model) {
   const activeList = model.activeList;
+  const selectedCount = Object.keys(state.foodProductsView?.receiptSelections?.[activeList.id] || {}).length;
   return `
       <section class="productsWorkbench__ticketHero" data-products-ticket-hero>
+      <div class="productsWorkbench__ticketSwitches">
+        ${model.tickets.map((ticket, index) => `
+          <button type="button" class="food-history-btn ${ticket.id === model.activeTicketId ? 'is-active' : ''}" data-products-switch-ticket="${escapeHtml(ticket.id)}">
+            ${escapeHtml(ticket.label || `Ticket ${index + 1}`)} · ${ticket.lineCount}
+          </button>
+        `).join('')}
+      </div>
       <div class="productsWorkbench__receipt" data-products-receipt>
         <header>
-          <strong data-products-receipt-store>${escapeHtml(activeList.store || state.productsHub?.settings?.defaultStore || 'Supermercado')}</strong>
-          <small>${escapeHtml(activeList.plannedFor || dayKeyFromTs(nowTs()))}</small>
+          <strong data-products-receipt-store>${escapeHtml(model.activeTicket?.store || activeList.store || state.productsHub?.settings?.defaultStore || 'Supermercado')}</strong>
+          <small>${escapeHtml(model.activeTicket?.plannedFor || activeList.plannedFor || dayKeyFromTs(nowTs()))}</small>
         </header>
+        <div class="productsWorkbench__panelActions productsWorkbench__panelActions--inlineReceipt" ${selectedCount ? '' : 'hidden'} data-products-receipt-move-actions>
+          <button type="button" class="food-history-btn" data-products-move-selected-ticket>Mover a nuevo ticket (${selectedCount})</button>
+        </div>
         <div class="productsWorkbench__receiptLines">
           ${model.listLines.map((line) => renderProductsReceiptLineRow(line, model)).join('')}
           ${renderProductsReceiptEmptyRow(model)}
@@ -3537,9 +3644,9 @@ function renderProductsTicketHero(model) {
           <div class="productsWorkbench__receiptDivider"></div>
           <div class="productsWorkbench__receiptTotalRow">
             <span>Total</span>
-            <strong data-products-ticket-total-footer>${fmtCurrency(model.activeListActualTotal || 0)}</strong>
+            <strong data-products-ticket-total-footer>${fmtCurrency(model.activeTicket?.actualTotal || 0)}</strong>
           </div>
-          <small data-products-receipt-payment>${escapeHtml(activeList.accountId ? `${state.accounts.find((account) => account.id === activeList.accountId)?.name || activeList.accountId} · ${activeList.paymentMethod || 'Tarjeta'}` : (activeList.paymentMethod || 'Tarjeta'))}</small>
+          <small data-products-receipt-payment>${escapeHtml(model.activeTicket?.accountId ? `${state.accounts.find((account) => account.id === model.activeTicket.accountId)?.name || model.activeTicket.accountId} · ${model.activeTicket.paymentMethod || 'Tarjeta'}` : (model.activeTicket?.paymentMethod || 'Tarjeta'))}</small>
         </footer>
       </div>
       <div class="productsWorkbench__panelActions productsWorkbench__panelActions--footer">
@@ -3993,6 +4100,72 @@ function adjustProductsLineQtyFromDom(lineId = '', delta = 0) {
   syncProductsDraftListLocal(readProductsListDraftFromDom(document));
 }
 
+function getReceiptSelectionMap(listId = '') {
+  const safeListId = String(listId || resolveActiveProductsList().id || '__draft__').trim() || '__draft__';
+  return state.foodProductsView?.receiptSelections?.[safeListId] || {};
+}
+
+function setReceiptSelectionMap(listId = '', nextMap = {}) {
+  const safeListId = String(listId || resolveActiveProductsList().id || '__draft__').trim() || '__draft__';
+  state.foodProductsView = {
+    ...(state.foodProductsView || {}),
+    receiptSelections: {
+      ...(state.foodProductsView?.receiptSelections || {}),
+      [safeListId]: { ...(nextMap || {}) },
+    },
+  };
+}
+
+function toggleReceiptLineSelection(lineId = '', checked = null) {
+  const safeLineId = String(lineId || '').trim();
+  if (!safeLineId) return;
+  const listId = String(resolveActiveProductsList().id || '__draft__');
+  const next = { ...getReceiptSelectionMap(listId) };
+  const nextChecked = checked == null ? !next[safeLineId] : !!checked;
+  if (nextChecked) next[safeLineId] = true;
+  else delete next[safeLineId];
+  setReceiptSelectionMap(listId, next);
+  syncProductsTicketComposerDom(document);
+}
+
+async function switchProductsActiveTicket(ticketId = '') {
+  const safeTicketId = String(ticketId || '').trim();
+  if (!safeTicketId) return;
+  const draft = ensureProductsListTickets(readProductsListDraftFromDom(document));
+  if (!draft.tickets?.[safeTicketId]) return;
+  draft.activeTicketId = safeTicketId;
+  syncProductsDraftListLocal(draft);
+  triggerRender();
+}
+
+async function moveSelectedReceiptLinesToNewTicket() {
+  const draft = ensureProductsListTickets(readProductsListDraftFromDom(document));
+  const listId = String(draft.id || '__draft__');
+  const selectedIds = Object.keys(getReceiptSelectionMap(listId) || {}).filter((lineId) => draft.lines?.[lineId]);
+  if (!selectedIds.length) return;
+  const nextTicketIndex = Object.keys(draft.tickets || {}).length + 1;
+  const nextTicketId = createFinanceRecordId('ticketlist');
+  const baseTicket = draft.tickets?.[draft.activeTicketId] || draft.tickets?.[draft.primaryTicketId] || {};
+  draft.tickets[nextTicketId] = normalizeProductsListTicketMeta(nextTicketId, {
+    ...baseTicket,
+    label: `Ticket ${nextTicketIndex}`,
+    sortOrder: nextTicketIndex - 1,
+    createdAt: nowTs(),
+    updatedAt: nowTs(),
+  });
+  selectedIds.forEach((lineId) => {
+    if (!draft.lines[lineId]) return;
+    draft.lines[lineId] = { ...(draft.lines[lineId] || {}), ticketId: nextTicketId, updatedAt: nowTs() };
+    const ticketField = document.querySelector(`[data-products-line-ticket-id="${lineId}"]`);
+    if (ticketField) ticketField.value = nextTicketId;
+  });
+  draft.activeTicketId = nextTicketId;
+  syncProductsDraftListLocal(draft);
+  setReceiptSelectionMap(listId, {});
+  toast(selectedIds.length > 1 ? 'Lineas movidas a un nuevo ticket' : 'Linea movida a un nuevo ticket');
+  triggerRender();
+}
+
 function productsDomValue(root = document, selectors = [], fallback = '') {
   for (const selector of selectors) {
     const el = root?.querySelector?.(selector);
@@ -4035,6 +4208,18 @@ function readProductsListDraftFromDom(root = document) {
   nextList.accountId = String(formEl.querySelector('[name="accountId"]')?.value || nextList.accountId || '').trim();
   nextList.paymentMethod = normalizeProductText(formEl.querySelector('[name="paymentMethod"]')?.value || nextList.paymentMethod || 'Tarjeta') || 'Tarjeta';
   nextList.notes = normalizeProductText(formEl.querySelector('[name="notes"]')?.value || nextList.notes || '');
+  const activeTicketId = String(formEl.dataset.productsActiveTicketId || nextList.activeTicketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+  nextList.activeTicketId = activeTicketId;
+  nextList.tickets = { ...(nextList.tickets || {}) };
+  nextList.tickets[activeTicketId] = normalizeProductsListTicketMeta(activeTicketId, {
+    ...(nextList.tickets?.[activeTicketId] || {}),
+    store: nextList.store,
+    plannedFor: nextList.plannedFor,
+    accountId: nextList.accountId,
+    paymentMethod: nextList.paymentMethod,
+    notes: nextList.notes,
+    updatedAt: nowTs(),
+  });
   nextList.updatedAt = nowTs();
   const lineEntries = Array.from(formEl.querySelectorAll('[data-products-line-row]')).map((rowEl, index) => {
     const lineId = String(rowEl.dataset.productsLineRow || '').trim() || createFinanceRecordId('line');
@@ -4052,6 +4237,7 @@ function readProductsListDraftFromDom(root = document) {
       actualPrice: Number(receiptUnit || rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || baseList.lines?.[lineId]?.actualPrice || 0),
       store: normalizeFoodName(baseList.lines?.[lineId]?.store || nextList.store || ''),
       checked: rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false,
+      ticketId: String(baseList.lines?.[lineId]?.ticketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1',
       note: normalizeProductText(baseList.lines?.[lineId]?.note || ''),
       sortOrder: index,
       createdAt: Number(baseList.lines?.[lineId]?.createdAt || nowTs()),
@@ -4059,14 +4245,16 @@ function readProductsListDraftFromDom(root = document) {
     }];
   });
   nextList.lines = normalizeProductsHubLineMap(Object.fromEntries(lineEntries));
-  return nextList;
+  return ensureProductsListTickets(nextList);
 }
 
 function syncProductsTicketComposerDom(root = document) {
   const formEl = root?.querySelector?.('[data-products-list-form]');
   if (!formEl) return;
+  const activeTicketId = String(formEl.dataset.productsActiveTicketId || '').trim();
   let estimatedTotal = 0;
   let actualTotal = 0;
+  let activeTicketTotal = 0;
   formEl.querySelectorAll('[data-products-line-row]').forEach((rowEl) => {
     const lineId = String(rowEl.dataset.productsLineRow || '').trim();
     if (!lineId) return;
@@ -4077,8 +4265,10 @@ function syncProductsTicketComposerDom(root = document) {
     const isChecked = rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false;
     const estimatedSubtotal = qty * estimatedPrice;
     const actualSubtotal = qty * actualPrice;
+    const rowTicketId = String(rowEl.querySelector(`[data-products-line-ticket-id="${lineId}"]`)?.value || '').trim();
     estimatedTotal += estimatedSubtotal;
     actualTotal += actualSubtotal;
+    if (rowTicketId && rowTicketId === activeTicketId) activeTicketTotal += actualSubtotal;
     rowEl.classList.toggle('is-unchecked', !isChecked);
     rowEl.classList.toggle('is-checked', isChecked);
     const estimatedNode = root.querySelector(`[data-products-line-est-total="${lineId}"]`);
@@ -4112,7 +4302,12 @@ function syncProductsTicketComposerDom(root = document) {
   if (receiptPayment) receiptPayment.textContent = accountName ? `${accountName} · ${paymentValue}` : paymentValue;
   if (listTotal) listTotal.textContent = fmtCurrency(estimatedTotal);
   if (ticketTotal) ticketTotal.textContent = fmtCurrency(actualTotal);
-  if (ticketTotalFooter) ticketTotalFooter.textContent = fmtCurrency(actualTotal);
+  if (ticketTotalFooter) ticketTotalFooter.textContent = fmtCurrency(activeTicketTotal);
+  const selectedCount = Object.keys(state.foodProductsView?.receiptSelections?.[formEl.dataset.productsListId] || {}).length;
+  const moveActions = root.querySelector('[data-products-receipt-move-actions]');
+  const moveBtn = moveActions?.querySelector?.('[data-products-move-selected-ticket]');
+  if (moveActions) moveActions.hidden = !selectedCount;
+  if (moveBtn) moveBtn.textContent = `Mover a nuevo ticket (${selectedCount})`;
 }
 
 async function persistProductsHubSettings(patch = {}) {
@@ -4188,8 +4383,12 @@ function upsertProductLineIntoList(list = {}, productSnapshot = null) {
   const product = productSnapshot || {};
   const productId = String(product?.canonicalId || product?.id || '').trim();
   if (!productId) return cloneProductsListRecord(list);
-  const nextList = cloneProductsListRecord(list);
-  const existingEntry = Object.entries(nextList.lines || {}).find(([, line]) => String(line?.productId || '').trim() === productId);
+  const nextList = ensureProductsListTickets(cloneProductsListRecord(list));
+  const activeTicketId = String(nextList.activeTicketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+  const existingEntry = Object.entries(nextList.lines || {}).find(([, line]) => (
+    String(line?.productId || '').trim() === productId
+    && String(line?.ticketId || nextList.primaryTicketId || '').trim() === activeTicketId
+  ));
   const price = resolveProductsCatalogPrice(product);
   if (existingEntry) {
     const [lineId, line] = existingEntry;
@@ -4213,14 +4412,15 @@ function upsertProductLineIntoList(list = {}, productSnapshot = null) {
     estimatedPrice: price || 0,
     actualPrice: price || 0,
     store: normalizeFoodName(product?.preferredStore || product?.place || nextList.store || ''),
-    checked: true,
-    note: '',
+      checked: true,
+      ticketId: activeTicketId,
+      note: '',
     sortOrder: Object.keys(nextList.lines || {}).length,
     createdAt: nowTs(),
     updatedAt: nowTs(),
   };
   nextList.updatedAt = nowTs();
-  return nextList;
+  return ensureProductsListTickets(nextList);
 }
 
 async function addProductToActiveProductsList(productId = '') {
@@ -4244,8 +4444,10 @@ async function addProductToActiveProductsListFromReceipt(productId = '') {
   syncProductsDraftListLocal(syncedDraft);
   const persistedBase = await ensurePersistedActiveProductsList(syncedDraft);
   let nextList = upsertProductLineIntoList(persistedBase, product);
+  const activeTicketId = String(nextList.activeTicketId || nextList.primaryTicketId || 'ticket-1').trim();
   const addedLine = Object.values(nextList.lines || {})
     .filter((line) => String(line.productId || '').trim() === String(product.canonicalId || product.id || '').trim())
+    .filter((line) => String(line.ticketId || '').trim() === activeTicketId)
     .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))[0];
   const addQty = Number(document.querySelector('[data-products-receipt-add-qty]')?.value || 1);
   const addUnit = Number(document.querySelector('[data-products-receipt-add-unit]')?.value || 0);
@@ -4782,53 +4984,73 @@ async function saveProductsPurchaseTransaction(list = {}) {
 }
 
 async function confirmProductsTicketFromDom() {
-  const draft = readProductsListDraftFromDom();
-  if (!draft || !Object.keys(draft.lines || {}).length) {
+  const draft = ensureProductsListTickets(readProductsListDraftFromDom());
+  const activeTicketId = String(draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+  const activeTicketMeta = draft.tickets?.[activeTicketId] || {};
+  const activeTicketLines = Object.fromEntries(
+    Object.entries(draft.lines || {}).filter(([, line]) => String(line?.ticketId || draft.primaryTicketId || '').trim() === activeTicketId),
+  );
+  if (!draft || !Object.keys(activeTicketLines || {}).length) {
     toast('No hay lineas para confirmar');
     return;
   }
-  if (draft.store) await upsertFoodOption('place', draft.store, true);
+  if (activeTicketMeta.store || draft.store) await upsertFoodOption('place', activeTicketMeta.store || draft.store, true);
   const persistedList = await ensurePersistedActiveProductsList(draft);
-  const txResult = await saveProductsPurchaseTransaction(persistedList);
+  const ticketPayload = normalizeProductsHubList(persistedList.id, {
+    ...persistedList,
+    store: activeTicketMeta.store || persistedList.store,
+    accountId: activeTicketMeta.accountId || persistedList.accountId,
+    paymentMethod: activeTicketMeta.paymentMethod || persistedList.paymentMethod,
+    plannedFor: activeTicketMeta.plannedFor || persistedList.plannedFor,
+    notes: activeTicketMeta.notes || persistedList.notes,
+    lines: activeTicketLines,
+  });
+  const txResult = await saveProductsPurchaseTransaction(ticketPayload);
   if (!txResult) return;
   const ticketId = createFinanceRecordId('ticket');
-  const estimatedTotal = Object.values(persistedList.lines || {}).reduce((sum, line) => sum + (Math.max(1, Number(line.qty || 1)) * normalizeProductPositiveNumber(line.estimatedPrice, 0)), 0);
+  const estimatedTotal = Object.values(activeTicketLines || {}).reduce((sum, line) => sum + (Math.max(1, Number(line.qty || 1)) * normalizeProductPositiveNumber(line.estimatedPrice, 0)), 0);
   const ticketRecord = normalizeProductsHubTicket(ticketId, {
     listId: persistedList.id,
     txId: txResult.txId,
-    store: persistedList.store,
-    accountId: persistedList.accountId,
-    paymentMethod: persistedList.paymentMethod,
-    note: persistedList.notes,
-    dateISO: persistedList.plannedFor,
+    store: ticketPayload.store,
+    accountId: ticketPayload.accountId,
+    paymentMethod: ticketPayload.paymentMethod,
+    note: ticketPayload.notes,
+    dateISO: ticketPayload.plannedFor,
     estimatedTotal,
     actualTotal: txResult.total,
-    lines: persistedList.lines,
+    lines: activeTicketLines,
     createdAt: nowTs(),
     updatedAt: nowTs(),
   });
-  const convertedList = {
+  const remainingLines = Object.fromEntries(
+    Object.entries(persistedList.lines || {}).filter(([, line]) => String(line?.ticketId || persistedList.primaryTicketId || '').trim() !== activeTicketId),
+  );
+  const convertedList = ensureProductsListTickets({
     ...persistedList,
-    status: 'converted',
-    sourceTicketId: ticketId,
+    lines: remainingLines,
+    status: Object.keys(remainingLines).length ? 'draft' : 'converted',
+    sourceTicketId: Object.keys(remainingLines).length ? persistedList.sourceTicketId : ticketId,
+    activeTicketId: persistedList.primaryTicketId,
     updatedAt: nowTs(),
-  };
+  });
   const nextActiveList = createEmptyProductsList({
     name: 'Lista activa',
-    store: persistedList.store,
-    accountId: persistedList.accountId,
-    paymentMethod: persistedList.paymentMethod,
+    store: ticketPayload.store,
+    accountId: ticketPayload.accountId,
+    paymentMethod: ticketPayload.paymentMethod,
   });
+  const shouldRotateList = !Object.keys(remainingLines).length;
   state.productsHub = {
     ...(state.productsHub || normalizeProductsHub()),
     settings: {
       ...(state.productsHub?.settings || {}),
-      activeListId: nextActiveList.id,
+      activeListId: shouldRotateList ? nextActiveList.id : convertedList.id,
     },
     lists: {
       ...Object.fromEntries(Object.entries(state.productsHub?.lists || {}).filter(([id]) => id !== '__draft__')),
       [convertedList.id]: convertedList,
-      [nextActiveList.id]: nextActiveList,
+      ...(shouldRotateList ? { [nextActiveList.id]: nextActiveList } : {}),
     },
     tickets: {
       ...(state.productsHub?.tickets || {}),
@@ -4838,9 +5060,10 @@ async function confirmProductsTicketFromDom() {
   await safeFirebase(() => update(ref(db), {
     [productsHubPath(`tickets/${ticketRecord.id}`)]: ticketRecord,
     [productsHubPath(`lists/${convertedList.id}`)]: convertedList,
-    [productsHubPath(`lists/${nextActiveList.id}`)]: nextActiveList,
-    [productsHubPath('settings/activeListId')]: nextActiveList.id,
+    ...(shouldRotateList ? { [productsHubPath(`lists/${nextActiveList.id}`)]: nextActiveList } : {}),
+    [productsHubPath('settings/activeListId')]: shouldRotateList ? nextActiveList.id : convertedList.id,
   }));
+  setReceiptSelectionMap(convertedList.id, {});
   toast('Compra confirmada y gasto registrado');
   triggerRender();
 }
@@ -4888,6 +5111,7 @@ function normalizeProductsHubLineMap(lines = {}) {
       actualPrice: normalizeProductPositiveNumber(payload?.actualPrice ?? payload?.finalPrice ?? payload?.estimatedPrice ?? payload?.unitPrice ?? payload?.price, 0),
       store: normalizeFoodName(payload?.store || payload?.place || ''),
       checked: payload?.checked !== false,
+      ticketId: String(payload?.ticketId || '').trim(),
       note: normalizeProductText(payload?.note || ''),
       sortOrder: normalizeProductNumber(payload?.sortOrder, 0),
       createdAt: normalizeProductNumber(payload?.createdAt, nowTs()),
@@ -4899,7 +5123,7 @@ function normalizeProductsHubLineMap(lines = {}) {
 
 function normalizeProductsHubList(id = '', payload = {}) {
   const safeId = String(id || payload?.id || createFinanceRecordId('list')).trim();
-  return {
+  const normalized = {
     id: safeId,
     name: normalizeProductText(payload?.name || 'Lista activa') || 'Lista activa',
     status: ['draft', 'converted', 'archived'].includes(String(payload?.status || '')) ? String(payload.status) : 'draft',
@@ -4910,9 +5134,17 @@ function normalizeProductsHubList(id = '', payload = {}) {
     notes: normalizeProductText(payload?.notes || ''),
     sourceTicketId: normalizeProductText(payload?.sourceTicketId || ''),
     lines: normalizeProductsHubLineMap(payload?.lines || {}),
+    primaryTicketId: normalizeProductText(payload?.primaryTicketId || 'ticket-1') || 'ticket-1',
+    activeTicketId: normalizeProductText(payload?.activeTicketId || payload?.primaryTicketId || 'ticket-1') || 'ticket-1',
+    tickets: Object.entries(payload?.tickets || {}).reduce((acc, [ticketId, ticketPayload]) => {
+      const normalizedTicket = normalizeProductsListTicketMeta(ticketId, ticketPayload);
+      acc[normalizedTicket.id] = normalizedTicket;
+      return acc;
+    }, {}),
     createdAt: normalizeProductNumber(payload?.createdAt, nowTs()),
     updatedAt: normalizeProductNumber(payload?.updatedAt, nowTs()),
   };
+  return ensureProductsListTickets(normalized);
 }
 
 function normalizeProductsHubTicket(id = '', payload = {}) {
@@ -12078,6 +12310,15 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       await removeProductsLineFromActiveList(removeLineId);
       return;
     }
+    const switchTicketId = target.closest('[data-products-switch-ticket]')?.dataset.productsSwitchTicket;
+    if (switchTicketId) {
+      await switchProductsActiveTicket(switchTicketId);
+      return;
+    }
+    if (target.closest('[data-products-move-selected-ticket]')) {
+      await moveSelectedReceiptLinesToNewTicket();
+      return;
+    }
     if (target.closest('[data-products-save-list]')) {
       await saveActiveProductsListFromDom();
       return;
@@ -12854,6 +13095,10 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-food-products-food-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyFood: !!event.target.checked }; applyProductsFiltersDirectDom(); }
     if (event.target.matches('[data-food-products-custom-start]')) { state.foodProductsView = { ...state.foodProductsView, customStart: event.target.value }; applyProductsFiltersDirectDom(); }
     if (event.target.matches('[data-food-products-custom-end]')) { state.foodProductsView = { ...state.foodProductsView, customEnd: event.target.value }; applyProductsFiltersDirectDom(); }
+    if (event.target.matches('[data-products-receipt-select]')) {
+      toggleReceiptLineSelection(event.target.dataset.productsReceiptSelect, event.target.checked);
+      return;
+    }
     if (event.target.matches('[data-account-merge-show-resolved]')) {
       const accounts = buildAccountModels();
       state.modal = normalizeAccountMergeModalState({ ...state.modal, showResolved: !!event.target.checked }, accounts);

@@ -5429,8 +5429,8 @@ margin-bottom: 50px;
 
 .financeTab .productsWorkbench__receiptRow{
   display: grid;
-  grid-template-columns: minmax(42px, .36fr) minmax(0, 1.7fr) minmax(62px, .62fr) minmax(74px, .7fr) 28px;
-  gap: 8px;
+  grid-template-columns: 18px minmax(42px, .34fr) minmax(0, 1.7fr) minmax(62px, .62fr) minmax(74px, .7fr) 28px;
+  gap: 6px;
   align-items: center;
   min-height: 28px;
   font-size: 12px;
@@ -5466,6 +5466,18 @@ margin-bottom: 50px;
   border-color: rgba(37, 83, 111, .36);
   background: rgba(255, 255, 255, .46);
   box-shadow: 0 0 0 3px rgba(64, 122, 148, .12);
+}
+
+.financeTab .productsWorkbench__receiptSelectWrap{
+  display: grid;
+  place-items: center;
+  margin: 0;
+}
+
+.financeTab .productsWorkbench__receiptSelect{
+  width: 14px;
+  height: 14px;
+  margin: 0;
 }
 
 .financeTab .productsWorkbench__receiptQty{
@@ -5516,6 +5528,26 @@ margin-bottom: 50px;
 .financeTab .productsWorkbench__receiptRemove:hover{
   background: rgba(186, 60, 74, .13);
   color: #8f2430;
+}
+
+.financeTab .productsWorkbench__ticketSwitches{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.financeTab .productsWorkbench__ticketSwitches .food-history-btn{
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
+.financeTab .productsWorkbench__ticketSwitches .food-history-btn.is-active{
+  box-shadow: inset 0 0 0 1px rgba(37, 83, 111, .35);
+}
+
+.financeTab .productsWorkbench__panelActions--inlineReceipt{
+  margin: 4px 0 8px;
 }
 
 .financeTab .productsWorkbench__receiptAddHint{
@@ -6645,7 +6677,7 @@ margin-bottom: 50px;
   }
 
   .financeTab .productsWorkbench__receiptRow{
-        grid-template-columns: 34px minmax(0, 1fr) 41px 50px 28px;
+    grid-template-columns: 16px 32px minmax(0, 1fr) 41px 50px 28px;
     gap: 5px;
     padding: 0px;
   }

@@ -2001,14 +2001,27 @@ function ensureProductsListTickets(list = {}) {
     nextList.lines[lineId] = { ...(line || {}), ticketId: safeTicketId };
   });
   if (!lineEntries.length) usedTicketIds.add(primaryTicketId);
-  Object.keys(ticketMap).forEach((ticketId) => {
-    if (!usedTicketIds.has(ticketId) && ticketId !== primaryTicketId) delete ticketMap[ticketId];
-  });
+  if (!Object.keys(ticketMap).length) ticketMap[primaryTicketId] = baseMeta;
   nextList.primaryTicketId = primaryTicketId;
   const activeTicketCandidate = String(nextList.activeTicketId || '').trim();
   nextList.activeTicketId = ticketMap[activeTicketCandidate] ? activeTicketCandidate : (ticketMap[primaryTicketId] ? primaryTicketId : Object.keys(ticketMap)[0] || primaryTicketId);
   nextList.tickets = ticketMap;
   return nextList;
+}
+
+function buildNextTicketLabel(list = {}) {
+  const taken = new Set(
+    Object.values(list?.tickets || {})
+      .map((ticket) => normalizeProductText(ticket?.label || '').toLowerCase())
+      .filter(Boolean),
+  );
+  let index = Math.max(1, Object.keys(list?.tickets || {}).length + 1);
+  let label = `Ticket ${index}`;
+  while (taken.has(label.toLowerCase())) {
+    index += 1;
+    label = `Ticket ${index}`;
+  }
+  return label;
 }
 
 function createEmptyProductsList(seed = {}, { temporary = false } = {}) {
@@ -3098,7 +3111,7 @@ function renderProductsReceiptLineRow(line, model) {
   const selection = state.foodProductsView?.receiptSelections?.[listId] || {};
   const isSelected = !!selection[lineId];
   return `
-    <div class="productsWorkbench__receiptRow" data-products-receipt-row="${escapeHtml(lineId)}">
+    <div class="productsWorkbench__receiptRow ${isSelected ? 'is-selected' : ''}" data-products-receipt-row="${escapeHtml(lineId)}">
       <label class="productsWorkbench__receiptSelectWrap" aria-label="Seleccionar ${escapeHtml(line.name || 'producto')}">
         <input type="checkbox" class="productsWorkbench__receiptSelect" data-products-receipt-select="${escapeHtml(lineId)}" ${isSelected ? 'checked' : ''} />
       </label>
@@ -3142,6 +3155,7 @@ function renderProductsReceiptLineRow(line, model) {
 function renderProductsReceiptEmptyRow(model) {
   return `
     <div class="productsWorkbench__receiptRow productsWorkbench__receiptRow--add" data-products-receipt-add-row>
+      <span class="productsWorkbench__receiptSelectWrap productsWorkbench__receiptSelectWrap--placeholder" aria-hidden="true"></span>
       <input class="productsWorkbench__receiptQty food-control" type="number" min="1" step="0.01" inputmode="decimal" value="1" aria-label="Cantidad nueva" data-products-receipt-add-qty />
       <div class="productsWorkbench__receiptNameWrap">
         <input class="productsWorkbench__receiptName food-control" id="recipename" type="search" autocomplete="off" placeholder="Escribir producto..." aria-label="Anadir producto" data-products-receipt-add-name />
@@ -3151,7 +3165,7 @@ function renderProductsReceiptEmptyRow(model) {
       </div>
       <input class="productsWorkbench__receiptUnit food-control" type="number" min="0" step="0.01" inputmode="decimal" placeholder="precio/u" aria-label="Precio unitario nuevo" data-products-receipt-add-unit />
       <strong class="productsWorkbench__receiptTotal" data-products-receipt-add-total>${fmtCurrency(0)}</strong>
-      <span class="productsWorkbench__receiptAddHint">+</span>
+      <button type="button" class="productsWorkbench__receiptAddHint" data-products-receipt-add-line aria-label="Añadir línea">+</button>
     </div>
   `;
 }
@@ -3627,6 +3641,10 @@ function renderProductsTicketHero(model) {
             ${escapeHtml(ticket.label || `Ticket ${index + 1}`)} · ${ticket.lineCount}
           </button>
         `).join('')}
+      </div>
+      <div class="productsWorkbench__panelActions productsWorkbench__panelActions--inlineReceipt productsWorkbench__panelActions--ticketCrud">
+        <button type="button" class="food-history-btn" data-products-create-empty-ticket>Nuevo ticket</button>
+        <button type="button" class="food-history-btn" data-products-delete-ticket="${escapeHtml(model.activeTicketId || '')}" ${model.tickets.length > 1 ? '' : 'disabled'}>Eliminar ticket</button>
       </div>
       <div class="productsWorkbench__receipt" data-products-receipt>
         <header>
@@ -4125,6 +4143,8 @@ function toggleReceiptLineSelection(lineId = '', checked = null) {
   if (nextChecked) next[safeLineId] = true;
   else delete next[safeLineId];
   setReceiptSelectionMap(listId, next);
+  const row = document.querySelector(`[data-products-receipt-row="${safeLineId}"]`);
+  if (row) row.classList.toggle('is-selected', nextChecked);
   syncProductsTicketComposerDom(document);
 }
 
@@ -4143,12 +4163,12 @@ async function moveSelectedReceiptLinesToNewTicket() {
   const listId = String(draft.id || '__draft__');
   const selectedIds = Object.keys(getReceiptSelectionMap(listId) || {}).filter((lineId) => draft.lines?.[lineId]);
   if (!selectedIds.length) return;
-  const nextTicketIndex = Object.keys(draft.tickets || {}).length + 1;
   const nextTicketId = createFinanceRecordId('ticketlist');
   const baseTicket = draft.tickets?.[draft.activeTicketId] || draft.tickets?.[draft.primaryTicketId] || {};
+  const nextTicketIndex = Object.keys(draft.tickets || {}).length + 1;
   draft.tickets[nextTicketId] = normalizeProductsListTicketMeta(nextTicketId, {
     ...baseTicket,
-    label: `Ticket ${nextTicketIndex}`,
+    label: buildNextTicketLabel(draft),
     sortOrder: nextTicketIndex - 1,
     createdAt: nowTs(),
     updatedAt: nowTs(),
@@ -4163,6 +4183,69 @@ async function moveSelectedReceiptLinesToNewTicket() {
   syncProductsDraftListLocal(draft);
   setReceiptSelectionMap(listId, {});
   toast(selectedIds.length > 1 ? 'Lineas movidas a un nuevo ticket' : 'Linea movida a un nuevo ticket');
+  triggerRender();
+}
+
+async function createEmptyProductsTicket() {
+  const draft = ensureProductsListTickets(readProductsListDraftFromDom(document));
+  const nextTicketId = createFinanceRecordId('ticketlist');
+  const baseTicket = draft.tickets?.[draft.activeTicketId] || draft.tickets?.[draft.primaryTicketId] || {};
+  const nextSortOrder = Object.keys(draft.tickets || {}).length;
+  draft.tickets[nextTicketId] = normalizeProductsListTicketMeta(nextTicketId, {
+    ...baseTicket,
+    label: buildNextTicketLabel(draft),
+    sortOrder: nextSortOrder,
+    createdAt: nowTs(),
+    updatedAt: nowTs(),
+  });
+  draft.activeTicketId = nextTicketId;
+  draft.updatedAt = nowTs();
+  syncProductsDraftListLocal(draft);
+  toast('Ticket vacío creado');
+  triggerRender();
+}
+
+async function deleteProductsTicket(ticketId = '') {
+  const safeTicketId = String(ticketId || '').trim();
+  if (!safeTicketId) return;
+  const draft = ensureProductsListTickets(readProductsListDraftFromDom(document));
+  if (!draft.tickets?.[safeTicketId]) return;
+  const ticketIds = Object.keys(draft.tickets || {});
+  if (ticketIds.length <= 1) {
+    toast('Debe quedar al menos un ticket');
+    return;
+  }
+  const lineIds = Object.entries(draft.lines || {})
+    .filter(([, line]) => String(line?.ticketId || '').trim() === safeTicketId)
+    .map(([lineId]) => lineId);
+  const hasLines = lineIds.length > 0;
+  const confirmMessage = hasLines
+    ? `Este ticket tiene ${lineIds.length} ${lineIds.length === 1 ? 'línea' : 'líneas'}. Se moverán a "${draft.tickets?.[draft.primaryTicketId]?.label || 'Sin asignar'}". ¿Eliminar ticket?`
+    : '¿Eliminar ticket vacío?';
+  if (!window.confirm(confirmMessage)) return;
+  if (hasLines) {
+    const fallbackTicketId = draft.primaryTicketId && draft.primaryTicketId !== safeTicketId
+      ? draft.primaryTicketId
+      : ticketIds.find((id) => id !== safeTicketId) || draft.primaryTicketId;
+    lineIds.forEach((lineId) => {
+      draft.lines[lineId] = {
+        ...(draft.lines[lineId] || {}),
+        ticketId: fallbackTicketId,
+        updatedAt: nowTs(),
+      };
+    });
+  }
+  delete draft.tickets[safeTicketId];
+  const nextTicketIds = Object.keys(draft.tickets || {});
+  if (!nextTicketIds.includes(draft.primaryTicketId)) draft.primaryTicketId = nextTicketIds[0] || 'ticket-1';
+  if (!nextTicketIds.includes(draft.activeTicketId)) draft.activeTicketId = nextTicketIds[0] || draft.primaryTicketId;
+  draft.updatedAt = nowTs();
+  syncProductsDraftListLocal(ensureProductsListTickets(draft));
+  const listId = String(draft.id || '__draft__');
+  const selection = { ...getReceiptSelectionMap(listId) };
+  lineIds.forEach((lineId) => { delete selection[lineId]; });
+  setReceiptSelectionMap(listId, selection);
+  toast('Ticket eliminado');
   triggerRender();
 }
 
@@ -4304,6 +4387,11 @@ function syncProductsTicketComposerDom(root = document) {
   if (ticketTotal) ticketTotal.textContent = fmtCurrency(actualTotal);
   if (ticketTotalFooter) ticketTotalFooter.textContent = fmtCurrency(activeTicketTotal);
   const selectedCount = Object.keys(state.foodProductsView?.receiptSelections?.[formEl.dataset.productsListId] || {}).length;
+  const selectedMap = state.foodProductsView?.receiptSelections?.[formEl.dataset.productsListId] || {};
+  root.querySelectorAll('[data-products-receipt-row]').forEach((receiptRow) => {
+    const lineId = String(receiptRow.dataset.productsReceiptRow || '').trim();
+    receiptRow.classList.toggle('is-selected', !!selectedMap[lineId]);
+  });
   const moveActions = root.querySelector('[data-products-receipt-move-actions]');
   const moveBtn = moveActions?.querySelector?.('[data-products-move-selected-ticket]');
   if (moveActions) moveActions.hidden = !selectedCount;
@@ -12317,6 +12405,19 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     }
     if (target.closest('[data-products-move-selected-ticket]')) {
       await moveSelectedReceiptLinesToNewTicket();
+      return;
+    }
+    if (target.closest('[data-products-create-empty-ticket]')) {
+      await createEmptyProductsTicket();
+      return;
+    }
+    const deleteTicketId = target.closest('[data-products-delete-ticket]')?.dataset.productsDeleteTicket;
+    if (deleteTicketId) {
+      await deleteProductsTicket(deleteTicketId);
+      return;
+    }
+    if (target.closest('[data-products-receipt-add-line]')) {
+      await createProductFromReceiptRow();
       return;
     }
     if (target.closest('[data-products-save-list]')) {

@@ -2464,8 +2464,10 @@ function buildProductsViewModel(cfg = {}) {
   };
 
   const filteredRows = catalogRows.slice().sort(sorters[nextCfg.sortBy] || sorters.forecast);
+  const listQueryKey = normalizeProductItemKey(nextCfg.listQuery || '');
   const quickRows = allCatalogRows
     .filter((row) => row.active !== false)
+    .filter((row) => !listQueryKey || String(row.searchIndex || '').includes(listQueryKey))
     .slice()
     .sort(sorters.forecast);
   const groupedMap = filteredRows.reduce((acc, row) => {
@@ -2861,6 +2863,7 @@ function renderProductsQuickPicker(model) {
       .filter(([id]) => id),
   );
   const rows = (model.quickRows || []).slice(0, 180);
+  const quickQuery = String(model.cfg?.listQuery || '').trim();
   return `
     <section class="productsWorkbench__quickPicker" data-products-quick-picker>
       <div class="productsWorkbench__quickHead">
@@ -2899,10 +2902,142 @@ function renderProductsQuickPicker(model) {
               `}
             </article>
           `;
-        }).join('') || '<div class="productsWorkbench__emptyMini">Aun no hay productos catalogados.</div>'}
+        }).join('') || (quickQuery
+          ? `<div class="productsWorkbench__emptyMini">No existe "${escapeHtml(quickQuery)}".</div>
+             <button type="button" class="food-history-btn productsWorkbench__createFromSearch" data-products-create-from-search="${escapeHtml(quickQuery)}">Crear y anadir "${escapeHtml(quickQuery)}"</button>`
+          : '<div class="productsWorkbench__emptyMini">Aun no hay productos catalogados.</div>')}
         <div class="productsWorkbench__emptyMini productsWorkbench__quickEmpty" hidden>No hay productos para esa busqueda.</div>
       </div>
     </section>
+  `;
+}
+
+function buildProductsStoreChoices(model = null) {
+  const activeList = model?.activeList || resolveActiveProductsList();
+  return [
+    activeList.store,
+    state.productsHub?.settings?.defaultStore,
+    ...(Array.isArray(model?.storeOptions) ? model.storeOptions.filter((value) => value !== 'all') : []),
+    ...foodOptionList('place'),
+  ]
+    .map((value) => normalizeFoodName(value || ''))
+    .filter(Boolean)
+    .filter((value, index, arr) => arr.findIndex((item) => item.toLowerCase() === value.toLowerCase()) === index)
+    .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+}
+
+function renderProductsStoreSelect(model = null) {
+  const activeList = model?.activeList || resolveActiveProductsList();
+  const current = normalizeFoodName(activeList.store || state.productsHub?.settings?.defaultStore || '');
+  const choices = buildProductsStoreChoices(model);
+  const hasCurrent = !current || choices.some((value) => value.toLowerCase() === current.toLowerCase());
+  const options = [
+    '<option value="">Seleccionar</option>',
+    ...(!hasCurrent ? [`<option value="${escapeHtml(current)}" selected>${escapeHtml(current)}</option>`] : []),
+    ...choices.map((value) => `<option value="${escapeHtml(value)}" ${current && value.toLowerCase() === current.toLowerCase() ? 'selected' : ''}>${escapeHtml(value)}</option>`),
+    '<option value="__new__">+ Nuevo supermercado</option>',
+  ].join('');
+  return `
+    <select class="food-control" name="store" data-products-store-select>
+      ${options}
+    </select>
+    <input class="food-control productsWorkbench__newStoreInput" type="text" data-products-new-store-input placeholder="Nuevo supermercado" hidden />
+  `;
+}
+
+function buildProductsReceiptSuggestions(model = null, query = '', { limit = 7, excludeList = true } = {}) {
+  const activeProductIds = new Set((model?.listLines || []).map((line) => String(line.productId || '').trim()).filter(Boolean));
+  const queryKey = normalizeProductItemKey(query || '');
+  return (model?.products || [])
+    .map((row) => {
+      const nameKey = normalizeProductItemKey(row.canonicalName || row.displayName || row.name || '');
+      const searchKey = String(row.searchIndex || `${nameKey} ${normalizeProductItemKey(row.brand || '')} ${normalizeProductItemKey(row.productCategory || '')}`);
+      if (queryKey && !searchKey.includes(queryKey)) return null;
+      if (excludeList && activeProductIds.has(String(row.canonicalId || '').trim())) return null;
+      const starts = queryKey && nameKey.startsWith(queryKey) ? 10000 : 0;
+      const contains = queryKey ? Math.max(0, 7000 - Math.max(0, nameKey.indexOf(queryKey)) * 30) : 0;
+      const usage = Number(row.purchaseCount || 0) * 85;
+      const recent = Number(row.lastPurchaseAt || 0) / 100000000000;
+      return { ...row, _receiptScore: starts + contains + usage + recent };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Number(b._receiptScore || 0) - Number(a._receiptScore || 0) || String(a.canonicalName || '').localeCompare(String(b.canonicalName || ''), 'es', { sensitivity: 'base' }))
+    .slice(0, limit);
+}
+
+function renderProductsReceiptSuggestionList(model = null, query = '', lineId = '') {
+  const rows = buildProductsReceiptSuggestions(model, query, { excludeList: !lineId });
+  const safeLineId = String(lineId || '').trim();
+  if (!rows.length) {
+    return `<div class="productsWorkbench__receiptSuggestEmpty">${query ? `Sin coincidencias para "${escapeHtml(query)}"` : 'Empieza a escribir para buscar'}</div>`;
+  }
+  return rows.map((row) => `
+    <button
+      type="button"
+      class="productsWorkbench__receiptSuggestion"
+      data-products-receipt-pick="${escapeHtml(row.canonicalId)}"
+      ${safeLineId ? `data-products-receipt-pick-line="${escapeHtml(safeLineId)}"` : ''}>
+      <strong>${escapeHtml(row.canonicalName || 'Producto')}</strong>
+      <small>${escapeHtml(row.productCategory || row.productType || row.preferredStore || row.bestStoreKey || 'Catalogo')} · ${fmtCurrency(resolveProductsCatalogPrice(row))}</small>
+    </button>
+  `).join('');
+}
+
+function renderProductsReceiptLineRow(line, model) {
+  const lineId = String(line.id || '').trim();
+  return `
+    <div class="productsWorkbench__receiptRow" data-products-receipt-row="${escapeHtml(lineId)}">
+      <input
+        class="productsWorkbench__receiptQty food-control"
+        type="number"
+        min="0.01"
+        step="0.01"
+        inputmode="decimal"
+        value="${Number(line.qty || 1)}"
+        aria-label="Cantidad de ${escapeHtml(line.name || 'producto')}"
+        data-products-receipt-qty="${escapeHtml(lineId)}" />
+      <div class="productsWorkbench__receiptNameWrap">
+        <input
+          class="productsWorkbench__receiptName food-control"
+          id="recipename"
+          type="search"
+          value="${escapeHtml(line.name || 'Producto')}"
+          autocomplete="off"
+          aria-label="Producto"
+          data-products-receipt-name="${escapeHtml(lineId)}" />
+        <div class="productsWorkbench__receiptSuggest" data-products-receipt-suggest="${escapeHtml(lineId)}" hidden>
+          ${renderProductsReceiptSuggestionList(model, line.name || '', lineId)}
+        </div>
+      </div>
+      <input
+        class="productsWorkbench__receiptUnit food-control"
+        type="number"
+        min="0"
+        step="0.01"
+        inputmode="decimal"
+        value="${Number(line.actualPrice || 0) || ''}"
+        aria-label="Precio unitario de ${escapeHtml(line.name || 'producto')}"
+        data-products-receipt-unit="${escapeHtml(lineId)}" />
+      <strong class="productsWorkbench__receiptTotal" data-products-receipt-total="${escapeHtml(lineId)}">${fmtCurrency(line.actualSubtotal || 0)}</strong>
+      <button type="button" class="productsWorkbench__receiptRemove" data-products-remove-line="${escapeHtml(lineId)}" aria-label="Eliminar ${escapeHtml(line.name || 'linea')}">×</button>
+    </div>
+  `;
+}
+
+function renderProductsReceiptEmptyRow(model) {
+  return `
+    <div class="productsWorkbench__receiptRow productsWorkbench__receiptRow--add" data-products-receipt-add-row>
+      <input class="productsWorkbench__receiptQty food-control" type="number" min="1" step="0.01" inputmode="decimal" value="1" aria-label="Cantidad nueva" data-products-receipt-add-qty />
+      <div class="productsWorkbench__receiptNameWrap">
+        <input class="productsWorkbench__receiptName food-control" id="recipename" type="search" autocomplete="off" placeholder="Escribir producto..." aria-label="Anadir producto" data-products-receipt-add-name />
+        <div class="productsWorkbench__receiptSuggest" data-products-receipt-add-suggest hidden>
+          ${renderProductsReceiptSuggestionList(model, '')}
+        </div>
+      </div>
+      <input class="productsWorkbench__receiptUnit food-control" type="number" min="0" step="0.01" inputmode="decimal" placeholder="precio/u" aria-label="Precio unitario nuevo" data-products-receipt-add-unit />
+      <strong class="productsWorkbench__receiptTotal" data-products-receipt-add-total>${fmtCurrency(0)}</strong>
+      <span class="productsWorkbench__receiptAddHint">+</span>
+    </div>
   `;
 }
 
@@ -3266,7 +3401,7 @@ function renderProductsListPanel(model) {
           </label>
           <label class="productsWorkbench__field">
             <span>Supermercado</span>
-            <input class="food-control" type="text" name="store" value="${escapeHtml(activeList.store || state.productsHub?.settings?.defaultStore || '')}" />
+            ${renderProductsStoreSelect(model)}
           </label>
           <label class="productsWorkbench__field">
             <span>Fecha</span>
@@ -3294,9 +3429,11 @@ function renderProductsListPanel(model) {
             </button>
           `).join('') || '<div class="productsWorkbench__emptyMini">No hay reposiciones urgentes fuera de la lista.</div>'}
         </div>
-        <div class="productsWorkbench__lineList">
+        <div class="productsWorkbench__lineList productsWorkbench__lineList--backing" aria-hidden="true">
           ${model.listLines.map((line, index) => `
             <div class="productsWorkbench__lineRow ${line.checked === false ? 'is-unchecked' : 'is-checked'}" data-products-line-row="${escapeHtml(line.id)}">
+              <input type="hidden" value="${escapeHtml(line.productId || '')}" data-products-line-product-id="${escapeHtml(line.id)}" />
+              <input type="hidden" value="${escapeHtml(line.unit || 'ud')}" data-products-line-unit="${escapeHtml(line.id)}" />
               <label class="productsWorkbench__lineCheck" aria-label="Marcar ${escapeHtml(line.name || 'Producto')}">
                 <input type="checkbox" data-products-line-checked="${escapeHtml(line.id)}" ${line.checked === false ? '' : 'checked'} />
               </label>
@@ -3322,27 +3459,21 @@ function renderProductsListPanel(model) {
               </div>
               <button type="button" class="productsWorkbench__miniAction" data-products-remove-line="${escapeHtml(line.id)}" aria-label="Eliminar linea ${index + 1}">×</button>
             </div>
-          `).join('') || '<div class="productsWorkbench__empty">La lista esta vacia. Anade productos desde el catalogo o desde las sugerencias.</div>'}
+          `).join('')}
         </div>
         <div class="productsWorkbench__totals">
           <div><span>Previsto</span><strong data-products-list-total>${fmtCurrency(model.activeListEstimatedTotal || 0)}</strong></div>
           <div><span>Ticket real</span><strong data-products-ticket-total>${fmtCurrency(model.activeListActualTotal || 0)}</strong></div>
         </div>
       </form>
-      <div class="productsWorkbench__receipt">
+      <div class="productsWorkbench__receipt" data-products-receipt>
         <header>
           <strong data-products-receipt-store>${escapeHtml(activeList.store || state.productsHub?.settings?.defaultStore || 'Supermercado')}</strong>
           <small>${escapeHtml(activeList.plannedFor || dayKeyFromTs(nowTs()))}</small>
         </header>
         <div class="productsWorkbench__receiptLines">
-          ${model.listLines.map((line) => `
-            <div class="productsWorkbench__receiptRow">
-              <span class="productsWorkbench__receiptQty" data-products-receipt-qty="${escapeHtml(line.id)}">${Number(line.qty || 1)}x</span>
-              <span class="productsWorkbench__receiptName">${escapeHtml(line.name || 'Producto')}</span>
-              <span class="productsWorkbench__receiptUnit" data-products-receipt-unit="${escapeHtml(line.id)}">${fmtCurrency(line.actualPrice || 0)}</span>
-              <strong class="productsWorkbench__receiptTotal" data-products-receipt-total="${escapeHtml(line.id)}">${fmtCurrency(line.actualSubtotal || 0)}</strong>
-            </div>
-          `).join('') || '<div class="productsWorkbench__emptyMini">El ticket aparecera cuando anadas lineas a la compra.</div>'}
+          ${model.listLines.map((line) => renderProductsReceiptLineRow(line, model)).join('')}
+          ${renderProductsReceiptEmptyRow(model)}
         </div>
         <footer>
           <div class="productsWorkbench__receiptDivider"></div>
@@ -3647,6 +3778,23 @@ function applyProductsQuickSearch(inputEl) {
   if (empty) empty.hidden = visibleCount > 0;
 }
 
+function updateProductsQuickSearch(inputEl) {
+  if (!inputEl) return;
+  const query = String(inputEl.value || '');
+  state.foodProductsView = { ...(state.foodProductsView || {}), listQuery: query };
+  const selectionStart = inputEl.selectionStart ?? query.length;
+  const selectionEnd = inputEl.selectionEnd ?? query.length;
+  syncProductsDraftListLocal(readProductsListDraftFromDom());
+  patchProductsShoppingPanel(buildCurrentProductsModel());
+  const nextInput = document.querySelector('[data-products-quick-search]');
+  if (nextInput) {
+    nextInput.focus();
+    try {
+      nextInput.setSelectionRange(selectionStart, selectionEnd);
+    } catch (_) {}
+  }
+}
+
 function applyProductsCatalogGlobalSearch(inputEl) {
   const root = getProductsWorkbenchRoot();
   if (!root) return;
@@ -3758,13 +3906,43 @@ function adjustProductsLineQtyFromDom(lineId = '', delta = 0) {
   const safeId = String(lineId || '').trim();
   if (!safeId) return;
   const listInput = document.querySelector(`[data-products-line-qty="${safeId}"]`);
+  const receiptInput = document.querySelector(`[data-products-receipt-qty="${safeId}"]`);
   const quickInput = document.querySelector(`[data-products-quick-line-qty="${safeId}"]`);
-  const current = Number(listInput?.value || quickInput?.value || 1);
+  const current = Number(receiptInput?.value || listInput?.value || quickInput?.value || 1);
   const next = Math.max(1, current + Number(delta || 0));
   if (listInput) listInput.value = String(next);
+  if (receiptInput) receiptInput.value = String(next);
   if (quickInput) quickInput.value = String(next);
   syncProductsTicketComposerDom(document);
   syncProductsDraftListLocal(readProductsListDraftFromDom(document));
+}
+
+function productsDomValue(root = document, selectors = [], fallback = '') {
+  for (const selector of selectors) {
+    const el = root?.querySelector?.(selector);
+    if (el) return el.value ?? el.textContent ?? fallback;
+  }
+  return fallback;
+}
+
+function syncProductsReceiptLineToBacking(root = document, lineId = '') {
+  const safeId = String(lineId || '').trim();
+  if (!safeId) return;
+  const rowEl = root?.querySelector?.(`[data-products-line-row="${safeId}"]`);
+  if (!rowEl) return;
+  const receiptQty = root.querySelector(`[data-products-receipt-qty="${safeId}"]`);
+  const receiptName = root.querySelector(`[data-products-receipt-name="${safeId}"]`);
+  const receiptUnit = root.querySelector(`[data-products-receipt-unit="${safeId}"]`);
+  const qtyInput = rowEl.querySelector(`[data-products-line-qty="${safeId}"]`);
+  const actualInput = rowEl.querySelector(`[data-products-line-actual="${safeId}"]`);
+  const estimateInput = rowEl.querySelector(`[data-products-line-estimate="${safeId}"]`);
+  const nameNode = rowEl.querySelector('.productsWorkbench__lineMain strong');
+  const unitHidden = rowEl.querySelector(`[data-products-line-unit="${safeId}"]`);
+  if (receiptQty && qtyInput && document.activeElement !== qtyInput) qtyInput.value = String(receiptQty.value || 1);
+  if (receiptUnit && actualInput && document.activeElement !== actualInput) actualInput.value = String(receiptUnit.value || 0);
+  if (receiptUnit && estimateInput && !(Number(estimateInput.value) > 0)) estimateInput.value = String(receiptUnit.value || 0);
+  if (receiptName && nameNode) nameNode.textContent = normalizeFoodName(receiptName.value || nameNode.textContent || 'Producto') || 'Producto';
+  if (unitHidden && !unitHidden.value) unitHidden.value = 'ud';
 }
 
 function readProductsListDraftFromDom(root = document) {
@@ -3774,7 +3952,9 @@ function readProductsListDraftFromDom(root = document) {
   const nextList = cloneProductsListRecord(baseList);
   nextList.id = String(formEl.dataset.productsListId || nextList.id || '__draft__').trim() || '__draft__';
   nextList.name = normalizeProductText(formEl.querySelector('[name="listName"]')?.value || nextList.name || 'Lista activa') || 'Lista activa';
-  nextList.store = normalizeFoodName(formEl.querySelector('[name="store"]')?.value || nextList.store || '');
+  const storeSelect = formEl.querySelector('[name="store"]');
+  const newStoreValue = formEl.querySelector('[data-products-new-store-input]')?.value || '';
+  nextList.store = normalizeFoodName((storeSelect?.value === '__new__' ? newStoreValue : storeSelect?.value) || nextList.store || '');
   nextList.plannedFor = toIsoDay(String(formEl.querySelector('[name="plannedFor"]')?.value || nextList.plannedFor || '')) || dayKeyFromTs(nowTs());
   nextList.accountId = String(formEl.querySelector('[name="accountId"]')?.value || nextList.accountId || '').trim();
   nextList.paymentMethod = normalizeProductText(formEl.querySelector('[name="paymentMethod"]')?.value || nextList.paymentMethod || 'Tarjeta') || 'Tarjeta';
@@ -3782,14 +3962,18 @@ function readProductsListDraftFromDom(root = document) {
   nextList.updatedAt = nowTs();
   const lineEntries = Array.from(formEl.querySelectorAll('[data-products-line-row]')).map((rowEl, index) => {
     const lineId = String(rowEl.dataset.productsLineRow || '').trim() || createFinanceRecordId('line');
+    syncProductsReceiptLineToBacking(root, lineId);
+    const receiptName = productsDomValue(root, [`[data-products-receipt-name="${lineId}"]`], '');
+    const receiptQty = productsDomValue(root, [`[data-products-receipt-qty="${lineId}"]`], '');
+    const receiptUnit = productsDomValue(root, [`[data-products-receipt-unit="${lineId}"]`], '');
     return [lineId, {
       id: lineId,
-      productId: String(baseList.lines?.[lineId]?.productId || '').trim(),
-      name: normalizeFoodName(baseList.lines?.[lineId]?.name || rowEl.querySelector('.productsWorkbench__lineMain strong')?.textContent || ''),
-      qty: Number(rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || baseList.lines?.[lineId]?.qty || 1),
-      unit: normalizeProductUnit(baseList.lines?.[lineId]?.unit || 'ud'),
+      productId: String(rowEl.querySelector(`[data-products-line-product-id="${lineId}"]`)?.value || baseList.lines?.[lineId]?.productId || '').trim(),
+      name: normalizeFoodName(receiptName || baseList.lines?.[lineId]?.name || rowEl.querySelector('.productsWorkbench__lineMain strong')?.textContent || ''),
+      qty: Number(receiptQty || rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || baseList.lines?.[lineId]?.qty || 1),
+      unit: normalizeProductUnit(rowEl.querySelector(`[data-products-line-unit="${lineId}"]`)?.value || baseList.lines?.[lineId]?.unit || 'ud'),
       estimatedPrice: Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || baseList.lines?.[lineId]?.estimatedPrice || 0),
-      actualPrice: Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || baseList.lines?.[lineId]?.actualPrice || 0),
+      actualPrice: Number(receiptUnit || rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || baseList.lines?.[lineId]?.actualPrice || 0),
       store: normalizeFoodName(baseList.lines?.[lineId]?.store || nextList.store || ''),
       checked: rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false,
       note: normalizeProductText(baseList.lines?.[lineId]?.note || ''),
@@ -3810,9 +3994,10 @@ function syncProductsTicketComposerDom(root = document) {
   formEl.querySelectorAll('[data-products-line-row]').forEach((rowEl) => {
     const lineId = String(rowEl.dataset.productsLineRow || '').trim();
     if (!lineId) return;
-    const qty = Math.max(1, Number(rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || 1));
+    syncProductsReceiptLineToBacking(root, lineId);
+    const qty = Math.max(0.01, Number(productsDomValue(root, [`[data-products-receipt-qty="${lineId}"]`, `[data-products-line-qty="${lineId}"]`], 1)));
     const estimatedPrice = Math.max(0, Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || 0));
-    const actualPrice = Math.max(0, Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || estimatedPrice));
+    const actualPrice = Math.max(0, Number(productsDomValue(root, [`[data-products-receipt-unit="${lineId}"]`, `[data-products-line-actual="${lineId}"]`], estimatedPrice)));
     const isChecked = rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false;
     const estimatedSubtotal = qty * estimatedPrice;
     const actualSubtotal = qty * actualPrice;
@@ -3828,12 +4013,17 @@ function syncProductsTicketComposerDom(root = document) {
     const quickQty = root.querySelector(`[data-products-quick-line-qty="${lineId}"]`);
     if (estimatedNode) estimatedNode.textContent = fmtCurrency(estimatedSubtotal);
     if (actualNode) actualNode.textContent = fmtCurrency(actualSubtotal);
-    if (receiptQty) receiptQty.textContent = `${qty}x`;
-    if (receiptUnit) receiptUnit.textContent = fmtCurrency(actualPrice);
+    if (receiptQty && document.activeElement !== receiptQty) receiptQty.value = String(qty);
+    if (receiptUnit && document.activeElement !== receiptUnit) receiptUnit.value = actualPrice ? String(actualPrice) : '';
     if (receiptTotal) receiptTotal.textContent = fmtCurrency(actualSubtotal);
     if (quickQty && document.activeElement !== quickQty) quickQty.value = String(qty);
   });
-  const storeValue = String(formEl.querySelector('[name="store"]')?.value || 'Supermercado').trim() || 'Supermercado';
+  const addQty = root.querySelector('[data-products-receipt-add-qty]');
+  const addUnit = root.querySelector('[data-products-receipt-add-unit]');
+  const addTotal = root.querySelector('[data-products-receipt-add-total]');
+  if (addTotal) addTotal.textContent = fmtCurrency(Math.max(0, Number(addQty?.value || 1)) * Math.max(0, Number(addUnit?.value || 0)));
+  const storeSelect = formEl.querySelector('[name="store"]');
+  const storeValue = String((storeSelect?.value === '__new__' ? formEl.querySelector('[data-products-new-store-input]')?.value : storeSelect?.value) || 'Supermercado').trim() || 'Supermercado';
   const paymentValue = String(formEl.querySelector('[name="paymentMethod"]')?.value || 'Tarjeta').trim() || 'Tarjeta';
   const accountId = String(formEl.querySelector('[name="accountId"]')?.value || '').trim();
   const accountName = accountId ? (state.accounts.find((account) => account.id === accountId)?.name || accountId) : '';
@@ -3971,6 +4161,137 @@ async function addProductToActiveProductsList(productId = '') {
   patchProductsCatalogSubview(model);
 }
 
+async function addProductToActiveProductsListFromReceipt(productId = '') {
+  const product = resolveProductsCatalogSnapshot(productId);
+  if (!product) return;
+  const syncedDraft = readProductsListDraftFromDom();
+  syncProductsDraftListLocal(syncedDraft);
+  const persistedBase = await ensurePersistedActiveProductsList(syncedDraft);
+  let nextList = upsertProductLineIntoList(persistedBase, product);
+  const addedLine = Object.values(nextList.lines || {})
+    .filter((line) => String(line.productId || '').trim() === String(product.canonicalId || product.id || '').trim())
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))[0];
+  const addQty = Number(document.querySelector('[data-products-receipt-add-qty]')?.value || 1);
+  const addUnit = Number(document.querySelector('[data-products-receipt-add-unit]')?.value || 0);
+  if (addedLine?.id) {
+    nextList.lines[addedLine.id] = {
+      ...nextList.lines[addedLine.id],
+      qty: Math.max(0.01, addQty || nextList.lines[addedLine.id].qty || 1),
+      actualPrice: Math.max(0, addUnit || nextList.lines[addedLine.id].actualPrice || nextList.lines[addedLine.id].estimatedPrice || 0),
+      estimatedPrice: Math.max(0, nextList.lines[addedLine.id].estimatedPrice || addUnit || 0),
+      updatedAt: nowTs(),
+    };
+  }
+  await persistProductsListRecord(nextList, { activate: true });
+  const model = buildCurrentProductsModel();
+  patchProductsShoppingPanel(model);
+  patchProductsCatalogSubview(model);
+  requestAnimationFrame(() => document.querySelector('[data-products-receipt-add-name]')?.focus());
+}
+
+async function changeProductsReceiptLineProduct(lineId = '', productId = '') {
+  const safeLineId = String(lineId || '').trim();
+  const product = resolveProductsCatalogSnapshot(productId);
+  if (!safeLineId || !product) return;
+  const draft = readProductsListDraftFromDom();
+  const line = draft?.lines?.[safeLineId];
+  if (!line) return;
+  const price = resolveProductsCatalogPrice(product);
+  draft.lines[safeLineId] = {
+    ...line,
+    productId: String(product.canonicalId || product.id || '').trim(),
+    name: normalizeFoodName(product.canonicalName || product.displayName || product.name || line.name),
+    unit: normalizeProductUnit(product.unit || line.unit || 'ud'),
+    estimatedPrice: normalizeProductPositiveNumber(line.estimatedPrice, price || 0),
+    actualPrice: normalizeProductPositiveNumber(price, normalizeProductPositiveNumber(line.actualPrice, line.estimatedPrice || 0)),
+    store: normalizeFoodName(product.preferredStore || product.place || draft.store || line.store || ''),
+    updatedAt: nowTs(),
+  };
+  if (draft.id === '__draft__') syncProductsDraftListLocal(draft);
+  else await persistProductsListRecord(draft, { activate: true });
+  const model = buildCurrentProductsModel();
+  patchProductsShoppingPanel(model);
+  patchProductsCatalogSubview(model);
+  requestAnimationFrame(() => document.querySelector(`[data-products-receipt-unit="${safeLineId}"]`)?.focus());
+}
+
+function updateProductsReceiptSuggestions(inputEl) {
+  const root = getProductsWorkbenchRoot();
+  if (!root || !inputEl) return;
+  const lineId = inputEl.dataset.productsReceiptName || '';
+  const suggest = lineId
+    ? root.querySelector(`[data-products-receipt-suggest="${lineId}"]`)
+    : root.querySelector('[data-products-receipt-add-suggest]');
+  if (!suggest) return;
+  const query = String(inputEl.value || '');
+  suggest.innerHTML = renderProductsReceiptSuggestionList(buildCurrentProductsModel(), query, lineId);
+  suggest.hidden = false;
+}
+
+function closeProductsReceiptSuggestions(root = document, exceptEl = null) {
+  root?.querySelectorAll?.('[data-products-receipt-suggest], [data-products-receipt-add-suggest]')?.forEach((suggest) => {
+    if (exceptEl && (suggest === exceptEl || suggest.contains(exceptEl))) return;
+    suggest.hidden = true;
+  });
+}
+
+function closeProductsReceiptSuggestionsSoon(root = document, relatedTarget = null) {
+  window.setTimeout(() => {
+    if (relatedTarget?.closest?.('[data-products-receipt-suggest], [data-products-receipt-add-suggest]')) return;
+    const active = document.activeElement;
+    if (active?.matches?.('[data-products-receipt-add-name], [data-products-receipt-name]')) return;
+    closeProductsReceiptSuggestions(root);
+  }, 0);
+}
+
+async function createProductFromReceiptRow() {
+  const nameInput = document.querySelector('[data-products-receipt-add-name]');
+  const name = normalizeFoodName(nameInput?.value || '');
+  if (!name) return;
+  const storeSelect = document.querySelector('[data-products-store-select]');
+  const defaultStore = normalizeFoodName((storeSelect?.value === '__new__' ? document.querySelector('[data-products-new-store-input]')?.value : storeSelect?.value) || state.productsHub?.settings?.defaultStore || '');
+  const unitPrice = Math.max(0, Number(document.querySelector('[data-products-receipt-add-unit]')?.value || 0));
+  const savedId = await upsertFoodItem({
+    name,
+    displayName: name,
+    place: defaultStore,
+    preferredStore: defaultStore,
+    estimatedPrice: unitPrice,
+    usualPrice: unitPrice,
+    defaultPrice: unitPrice,
+    unit: 'ud',
+    usualQty: 1,
+    active: true,
+  }, false);
+  if (!savedId) return;
+  await addProductToActiveProductsListFromReceipt(savedId);
+}
+
+async function createProductFromQuickSearch(query = '') {
+  const name = normalizeFoodName(query);
+  if (!name) {
+    toast('Escribe un nombre de producto');
+    return;
+  }
+  const defaultStore = normalizeFoodName(state.productsHub?.settings?.defaultStore || '');
+  const savedId = await upsertFoodItem({
+    name,
+    displayName: name,
+    place: defaultStore,
+    preferredStore: defaultStore,
+    unit: 'ud',
+    usualQty: 1,
+    active: true,
+  }, false);
+  if (!savedId) return;
+  state.foodProductsView = {
+    ...(state.foodProductsView || {}),
+    selectedProductId: savedId,
+    listQuery: '',
+  };
+  await addProductToActiveProductsList(savedId);
+}
+
 async function addSelectedProductsToActiveList() {
   const ids = Array.isArray(state.foodProductsView?.selectedIds) ? state.foodProductsView.selectedIds : [];
   if (!ids.length) return;
@@ -3990,6 +4311,7 @@ async function addSelectedProductsToActiveList() {
 async function saveActiveProductsListFromDom() {
   const draft = readProductsListDraftFromDom();
   if (!draft) return null;
+  if (draft.store) await upsertFoodOption('place', draft.store, true);
   const persisted = await ensurePersistedActiveProductsList(draft);
   toast('Lista guardada');
   patchProductsShoppingPanel(buildCurrentProductsModel());
@@ -4389,6 +4711,7 @@ async function confirmProductsTicketFromDom() {
     toast('No hay lineas para confirmar');
     return;
   }
+  if (draft.store) await upsertFoodOption('place', draft.store, true);
   const persistedList = await ensurePersistedActiveProductsList(draft);
   const txResult = await saveProductsPurchaseTransaction(persistedList);
   if (!txResult) return;
@@ -11647,6 +11970,20 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       await addProductToActiveProductsList(addToListId);
       return;
     }
+    const receiptPick = target.closest('[data-products-receipt-pick]');
+    if (receiptPick) {
+      const productId = receiptPick.dataset.productsReceiptPick;
+      const lineId = String(receiptPick.dataset.productsReceiptPickLine || '').trim();
+      closeProductsReceiptSuggestions(view);
+      if (lineId) await changeProductsReceiptLineProduct(lineId, productId);
+      else await addProductToActiveProductsListFromReceipt(productId);
+      return;
+    }
+    const createFromSearch = target.closest('[data-products-create-from-search]')?.dataset.productsCreateFromSearch;
+    if (createFromSearch) {
+      await createProductFromQuickSearch(createFromSearch);
+      return;
+    }
     const selectProductId = target.closest('[data-products-select-product]')?.dataset.productsSelectProduct;
     if (selectProductId) {
       state.foodProductsView = {
@@ -11835,6 +12172,9 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     if (state.balanceStatsActiveSegment && state.activeView === 'balance' && !target.closest('.financeStats')) {
       state.balanceStatsActiveSegment = null;
       triggerRender();
+    }
+    if (!target.closest('[data-products-receipt-suggest], [data-products-receipt-add-suggest], [data-products-receipt-name], [data-products-receipt-add-name]')) {
+      closeProductsReceiptSuggestions(view);
     }
     const aliasRemoveIndex = target.closest('[data-food-alias-remove]')?.dataset.foodAliasRemove;
     const aliasAddBtn = target.closest('[data-food-alias-add]');
@@ -12363,14 +12703,38 @@ view.addEventListener('focusout', async (event) => {
       return;
     }
     const saved = await saveSnapshot(accountId, dayKeyFromTs(Date.now()), nextNum);
-    if (saved) {
+  if (saved) {
       event.target.value = String(nextNum.toFixed(2));
       event.target.dataset.prev = event.target.value;
       triggerRender();
     }
   }
+  if (event.target.matches('[data-products-receipt-add-name], [data-products-receipt-name]')) {
+    closeProductsReceiptSuggestionsSoon(view, event.relatedTarget);
+  }
 });
   view.addEventListener('keydown', async (event) => {
+    if (event.key === 'Escape' && event.target.matches('[data-products-receipt-add-name], [data-products-receipt-name]')) {
+      event.preventDefault();
+      closeProductsReceiptSuggestions(view);
+      event.target.blur();
+      return;
+    }
+    if (event.key === 'Enter' && event.target.matches('[data-products-receipt-add-name]')) {
+      event.preventDefault();
+      const first = document.querySelector('[data-products-receipt-add-suggest] [data-products-receipt-pick]');
+      if (first) await addProductToActiveProductsListFromReceipt(first.dataset.productsReceiptPick);
+      else await createProductFromReceiptRow();
+      return;
+    }
+    if (event.key === 'Enter' && event.target.matches('[data-products-receipt-name]')) {
+      event.preventDefault();
+      const lineId = String(event.target.dataset.productsReceiptName || '').trim();
+      const first = document.querySelector(`[data-products-receipt-suggest="${lineId}"] [data-products-receipt-pick]`);
+      if (first) await changeProductsReceiptLineProduct(lineId, first.dataset.productsReceiptPick);
+      else event.target.blur();
+      return;
+    }
     if (event.key === 'Enter' && event.target.matches('[data-products-quick-search], [data-products-catalog-search], [data-products-filter="productsQuery"]')) {
       event.preventDefault();
       return;
@@ -12485,11 +12849,66 @@ view.addEventListener('focusout', async (event) => {
       return;
     }
     if (event.target.matches('[data-products-quick-search]')) {
-      applyProductsQuickSearch(event.target);
+      updateProductsQuickSearch(event.target);
+      return;
+    }
+    if (event.target.matches('[data-products-store-select]')) {
+      const newStoreInput = event.target.closest('.productsWorkbench__field')?.querySelector('[data-products-new-store-input]');
+      if (event.target.value === '__new__') {
+        if (newStoreInput) {
+          newStoreInput.hidden = false;
+          newStoreInput.focus();
+        }
+        return;
+      }
+      if (newStoreInput) {
+        newStoreInput.hidden = true;
+        newStoreInput.value = '';
+      }
+      syncProductsTicketComposerDom(view);
+      syncProductsDraftListLocal(readProductsListDraftFromDom(view));
       return;
     }
     if (event.target.matches('[data-products-quick-line-qty]')) {
       syncQuickLineQtyToList(event.target);
+      return;
+    }
+    if (event.target.matches('[data-products-receipt-add-name], [data-products-receipt-name]')) {
+      closeProductsReceiptSuggestions(view, event.target.closest('.productsWorkbench__receiptNameWrap')?.querySelector('.productsWorkbench__receiptSuggest'));
+      updateProductsReceiptSuggestions(event.target);
+      if (event.target.matches('[data-products-receipt-name]')) {
+        const lineId = String(event.target.dataset.productsReceiptName || '').trim();
+        const productIdInput = view.querySelector(`[data-products-line-product-id="${lineId}"]`);
+        if (productIdInput) productIdInput.value = '';
+        syncProductsReceiptLineToBacking(view, event.target.dataset.productsReceiptName);
+        syncProductsTicketComposerDom(view);
+        syncProductsDraftListLocal(readProductsListDraftFromDom(view));
+      }
+      return;
+    }
+    if (event.target.matches('[data-products-receipt-add-qty], [data-products-receipt-add-unit]')) {
+      syncProductsTicketComposerDom(view);
+      return;
+    }
+    if (event.target.matches('[data-products-receipt-qty], [data-products-receipt-unit]')) {
+      syncProductsReceiptLineToBacking(view, event.target.dataset.productsReceiptQty || event.target.dataset.productsReceiptUnit);
+      syncProductsTicketComposerDom(view);
+      syncProductsDraftListLocal(readProductsListDraftFromDom(view));
+      return;
+    }
+    if (event.target.matches('[data-products-new-store-input]')) {
+      const value = normalizeFoodName(event.target.value || '');
+      const select = event.target.closest('.productsWorkbench__field')?.querySelector('[data-products-store-select]');
+      if (select) {
+        let option = Array.from(select.options).find((opt) => opt.value.toLowerCase() === value.toLowerCase());
+        if (!option && value) {
+          option = new Option(value, value, true, true);
+          select.add(option, select.options[Math.max(0, select.options.length - 1)] || null);
+        }
+        if (value) select.value = value;
+      }
+      syncProductsTicketComposerDom(view);
+      syncProductsDraftListLocal(readProductsListDraftFromDom(view));
       return;
     }
     if (event.target.matches('[data-products-filter="productsQuery"]')) {

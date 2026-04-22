@@ -5963,7 +5963,7 @@ margin-bottom: 50px;
 }
 
 .financeTab .productsWorkbench__panel--shopping{
-  grid-template-columns: minmax(0, 1.35fr) minmax(240px, .65fr);
+  grid-template-columns: 1fr;
   align-items: start;
 }
 
@@ -6308,6 +6308,15 @@ margin-bottom: 50px;
   gap: 10px;
 }
 
+.financeTab .productsWorkbench__ticketHero{
+  display: grid;
+  gap: 8px;
+}
+
+.financeTab .productsWorkbench__ticketHero .productsWorkbench__panelActions--footer{
+  justify-content: flex-end;
+}
+
 .financeTab .productsWorkbench__subview[hidden]{
   display: none;
 }
@@ -6459,6 +6468,25 @@ margin-bottom: 50px;
   background: rgba(127, 216, 189, .07);
 }
 
+.financeTab .productsWorkbench__batchForm--toolbar{
+  position: sticky;
+  top: 8px;
+  z-index: 4;
+  padding: 10px;
+  border: 1px solid rgba(143, 184, 255, .2);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(12, 25, 40, .94), rgba(8, 18, 31, .92));
+  box-shadow: 0 10px 18px rgba(0, 0, 0, .18);
+}
+
+.financeTab .productsWorkbench__batchForm--toolbar[hidden]{
+  display: none;
+}
+
+.financeTab .productsWorkbench__batchForm--toolbar .productsWorkbench__editorActions{
+  justify-content: flex-end;
+}
+
 .financeTab .productsWorkbench__bulkActions{
   display: flex;
   flex-wrap: wrap;
@@ -6561,6 +6589,11 @@ margin-bottom: 50px;
   .financeTab .productsWorkbench__bulkBar{
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .financeTab .productsWorkbench__batchForm--toolbar{
+    position: static;
+    box-shadow: none;
   }
 
   .financeTab .productsWorkbench__bulkActions{

@@ -5544,6 +5544,41 @@ margin-bottom: 50px;
   width: 14px;
   height: 14px;
   margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1.2px solid rgba(32, 38, 47, .34);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .96);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease;
+}
+
+.financeTab .productsWorkbench__receiptSelect::after{
+  content: '';
+  width: 3px;
+  height: 6px;
+  border: solid rgba(21, 46, 68, .96);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) scale(.92);
+  opacity: 0;
+  transition: opacity .16s ease;
+}
+
+.financeTab .productsWorkbench__receiptSelect:checked{
+  border-color: rgba(37, 83, 111, .74);
+  background: rgba(89, 146, 174, .2);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .56);
+}
+
+.financeTab .productsWorkbench__receiptSelect:checked::after{
+  opacity: 1;
+}
+
+.financeTab .productsWorkbench__receiptSelect:focus-visible{
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(64, 122, 148, .18);
 }
 
 .financeTab .productsWorkbench__receiptQty{
@@ -6518,7 +6553,42 @@ margin-bottom: 50px;
 .financeTab .productsWorkbench__lineCheck input{
   width: 17px;
   height: 17px;
-  accent-color: var(--products-action);
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1.4px solid rgba(32, 38, 47, .36);
+  border-radius: 4px;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease;
+}
+
+.financeTab .productsWorkbench__lineCheck input::after{
+  content: '';
+  width: 4px;
+  height: 8px;
+  border: solid rgba(21, 46, 68, .96);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) scale(.92);
+  opacity: 0;
+  transition: opacity .16s ease;
+}
+
+.financeTab .productsWorkbench__lineCheck input:checked{
+  border-color: rgba(37, 83, 111, .72);
+  background: rgba(89, 146, 174, .18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .58);
+}
+
+.financeTab .productsWorkbench__lineCheck input:checked::after{
+  opacity: 1;
+}
+
+.financeTab .productsWorkbench__lineCheck input:focus-visible{
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(64, 122, 148, .18);
 }
 
 .financeTab .productsWorkbench__lineRow.is-unchecked{

@@ -2024,6 +2024,29 @@ function buildNextTicketLabel(list = {}) {
   return label;
 }
 
+function resolveProductsTicketBaseLabel(ticket = {}, fallback = 'Sin asignar') {
+  return normalizeFoodName(ticket?.store || '') || fallback;
+}
+
+function buildProductsTicketDisplayLabelMap(tickets = [], fallback = 'Sin asignar') {
+  const totals = new Map();
+  tickets.forEach((ticket) => {
+    const baseLabel = resolveProductsTicketBaseLabel(ticket, fallback);
+    const key = normalizeProductItemKey(baseLabel) || baseLabel.toLowerCase();
+    totals.set(key, Number(totals.get(key) || 0) + 1);
+  });
+  const seen = new Map();
+  return tickets.reduce((acc, ticket) => {
+    const baseLabel = resolveProductsTicketBaseLabel(ticket, fallback);
+    const key = normalizeProductItemKey(baseLabel) || baseLabel.toLowerCase();
+    const nextIndex = Number(seen.get(key) || 0) + 1;
+    seen.set(key, nextIndex);
+    const repeated = Number(totals.get(key) || 0) > 1;
+    acc[String(ticket?.id || '').trim()] = repeated && nextIndex > 1 ? `${baseLabel} ${nextIndex}` : baseLabel;
+    return acc;
+  }, {});
+}
+
 function createEmptyProductsList(seed = {}, { temporary = false } = {}) {
   const now = nowTs();
   const fallbackStore = normalizeFoodName(seed?.store || state.productsHub?.settings?.defaultStore || '');
@@ -2636,8 +2659,13 @@ function buildProductsViewModel(cfg = {}) {
       lineCount: (ticket.lines || []).length,
     }))
     .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+  const ticketDisplayLabels = buildProductsTicketDisplayLabelMap(tickets, 'Sin asignar');
+  const ticketsWithDisplay = tickets.map((ticket) => ({
+    ...ticket,
+    displayLabel: ticketDisplayLabels[ticket.id] || resolveProductsTicketBaseLabel(ticket, 'Sin asignar'),
+  }));
   const activeTicketId = ticketsById[activeList.activeTicketId] ? activeList.activeTicketId : (tickets[0]?.id || primaryTicketId);
-  const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) || tickets[0] || { id: primaryTicketId, lines: [], estimatedTotal: 0, actualTotal: 0, lineCount: 0 };
+  const activeTicket = ticketsWithDisplay.find((ticket) => ticket.id === activeTicketId) || ticketsWithDisplay[0] || { id: primaryTicketId, lines: [], estimatedTotal: 0, actualTotal: 0, lineCount: 0, displayLabel: 'Sin asignar' };
   const listLines = activeTicket.lines || [];
 
   const activeListEstimatedTotal = allListLines.reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0);
@@ -2680,7 +2708,7 @@ function buildProductsViewModel(cfg = {}) {
     activeList,
     activeTicket,
     activeTicketId,
-    tickets,
+    tickets: ticketsWithDisplay,
     allListLines,
     listLines,
     activeListEstimatedTotal,
@@ -3561,7 +3589,7 @@ function renderProductsTicketHero(model) {
         <div class="productsWorkbench__ticketSwitches" aria-label="Tickets">
           ${model.tickets.map((ticket, index) => `
             <button type="button" class="food-history-btn ${ticket.id === model.activeTicketId ? 'is-active' : ''}" data-products-switch-ticket="${escapeHtml(ticket.id)}">
-              ${escapeHtml(ticket.label || `Ticket ${index + 1}`)} · ${ticket.lineCount}
+              ${escapeHtml(ticket.displayLabel || ticket.label || `Ticket ${index + 1}`)} · ${ticket.lineCount}
             </button>
           `).join('')}
         </div>
@@ -4155,8 +4183,12 @@ async function deleteProductsTicket(ticketId = '') {
     .filter(([, line]) => String(line?.ticketId || '').trim() === safeTicketId)
     .map(([lineId]) => lineId);
   const hasLines = lineIds.length > 0;
+  const draftTicketDisplayLabels = buildProductsTicketDisplayLabelMap(
+    Object.entries(draft.tickets || {}).map(([id, meta]) => ({ ...(meta || {}), id })),
+    'Sin asignar',
+  );
   const confirmMessage = hasLines
-    ? `Este ticket tiene ${lineIds.length} ${lineIds.length === 1 ? 'línea' : 'líneas'}. Se moverán a "${draft.tickets?.[draft.primaryTicketId]?.label || 'Sin asignar'}". ¿Eliminar ticket?`
+    ? `Este ticket tiene ${lineIds.length} ${lineIds.length === 1 ? 'línea' : 'líneas'}. Se moverán a "${draftTicketDisplayLabels[draft.primaryTicketId] || 'Sin asignar'}". ¿Eliminar ticket?`
     : '¿Eliminar ticket vacío?';
   if (!window.confirm(confirmMessage)) return;
   if (hasLines) {

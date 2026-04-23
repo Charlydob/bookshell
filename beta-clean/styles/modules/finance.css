@@ -6509,6 +6509,131 @@ margin-bottom: 50px;
   justify-content: flex-end;
 }
 
+.financeTab .productsWorkbench__ticketRegistry{
+  border: 1px solid rgba(150, 184, 243, .18);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .03);
+  padding: 8px;
+}
+
+.financeTab .productsWorkbench__ticketRegistry > summary{
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.financeTab .productsWorkbench__ticketRegistry > summary::-webkit-details-marker{
+  display: none;
+}
+
+.financeTab .productsWorkbench__ticketRegistryList{
+  display: grid;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.financeTab .productsWorkbench__ticketRegistryItem{
+  border: 1px solid rgba(143, 184, 255, .18);
+  border-radius: 12px;
+  padding: 8px;
+  background: rgba(6, 15, 31, .82);
+}
+
+.financeTab .productsWorkbench__ticketRegistryItem > summary{
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.financeTab .productsWorkbench__ticketRegistryItem > summary::-webkit-details-marker{
+  display: none;
+}
+
+.financeTab .productsWorkbench__ticketRegistryDetail{
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.financeTab .productsWorkbench__ticketRegistryMeta{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--products-muted);
+}
+
+.financeTab .productsWorkbench__ticketRegistryDetail img{
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.financeTab .productsWorkbench__ticketRegistryLines{
+  display: grid;
+  gap: 6px;
+}
+
+.financeTab .productsWorkbench__ticketRegistryLine{
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.financeTab .productsWorkbench__catalogWorkspace{
+  border: 1px solid rgba(150, 184, 243, .2);
+  border-radius: 14px;
+  padding: 8px;
+  background: rgba(7, 15, 29, .84);
+}
+
+.financeTab .productsWorkbench__catalogWorkspace > summary{
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.financeTab .productsWorkbench__catalogWorkspace > summary::-webkit-details-marker{
+  display: none;
+}
+
+.financeTab .productsWorkbench__catalogTabs{
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  overflow-x: auto;
+}
+
+.financeTab .productsWorkbench__catalogSlides{
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-top: 8px;
+}
+
+.financeTab .productsWorkbench__catalogSlide{
+  flex: 0 0 100%;
+  min-width: 0;
+  scroll-snap-align: start;
+  display: none;
+}
+
+.financeTab .productsWorkbench__catalogSlide.is-active{
+  display: block;
+}
+
 .financeTab .productsWorkbench__subview[hidden]{
   display: none;
 }
@@ -6633,13 +6758,17 @@ margin-bottom: 50px;
 }
 
 .financeTab .productsWorkbench__catalogGrid{
-  display: grid;
+  display: flex;
+  align-items: stretch;
   gap: 7px;
-  overflow: visible;
-  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  padding: 0 0 8px;
 }
 
 .financeTab .productsWorkbench__catalogSearch{
+  flex: 0 0 min(78vw, 240px);
   min-height: auto;
   padding: 8px;
   border-radius: 11px;
@@ -6651,8 +6780,8 @@ margin-bottom: 50px;
 }
 
 .financeTab .productsWorkbench__productCard{
-  width: 100%;
-  flex: none;
+  width: auto;
+  flex: 0 0 min(82vw, 250px);
   gap: 6px;
   padding: 8px;
   border-radius: 11px;

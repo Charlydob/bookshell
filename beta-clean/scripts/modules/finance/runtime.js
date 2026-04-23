@@ -3651,19 +3651,25 @@ function renderProductsTicketHero(model) {
 }
 
 function renderProductsTicketRegistry(model) {
-  return `
-    <details class="productsWorkbench__ticketRegistry" data-products-ticket-registry>
-      <summary>
-        <span>Registro de tickets</span>
-        <small>${model.recentTickets.length} guardados</small>
-      </summary>
-      <div class="productsWorkbench__ticketRegistryList">
-        ${model.recentTickets.map((ticket) => {
+  const groupedTickets = model.recentTickets.reduce((acc, ticket) => {
+    const ticketDateTs = Number(ticket.confirmedAt || 0) || parseDayKey(ticket.dateISO || '');
+    const dayKey = dayKeyFromTs(ticketDateTs || nowTs());
+    if (!acc[dayKey]) acc[dayKey] = [];
+    acc[dayKey].push({ ...ticket, _ticketDateTs: ticketDateTs });
+    return acc;
+  }, {});
+  const groupedRows = Object.entries(groupedTickets)
+    .sort(([dayA], [dayB]) => parseDayKey(dayB) - parseDayKey(dayA))
+    .map(([dayKey, tickets]) => {
+      const dayLabel = formatProductsShortDate(parseDayKey(dayKey));
+      const ticketRows = tickets
+        .slice()
+        .sort((a, b) => Number(b._ticketDateTs || 0) - Number(a._ticketDateTs || 0))
+        .map((ticket) => {
           const accountNameValue = ticket.accountId
             ? (state.accounts.find((account) => account.id === ticket.accountId)?.name || ticket.accountId)
             : 'Sin cuenta';
-          const ticketDateTs = Number(ticket.confirmedAt || 0) || parseDayKey(ticket.dateISO || '');
-          const ticketDate = formatProductsShortDate(ticketDateTs);
+          const ticketDate = formatProductsShortDate(ticket._ticketDateTs || parseDayKey(ticket.dateISO || ''));
           const ticketStatus = ticket.txId ? 'Contabilizado' : 'Sin asiento';
           const ticketBlockedDeletion = Boolean(String(ticket.txId || '').trim());
           const ticketDeleteHint = ticketBlockedDeletion
@@ -3709,7 +3715,24 @@ function renderProductsTicketRegistry(model) {
               </div>
             </details>
           `;
-        }).join('') || '<div class="productsWorkbench__empty">Todavía no hay tickets confirmados desde esta vista.</div>'}
+        })
+        .join('');
+      return `
+        <section class="productsWorkbench__ticketRegistryGroup" data-products-ticket-group="${escapeHtml(dayKey)}">
+          <h4>${escapeHtml(dayLabel)}</h4>
+          ${ticketRows}
+        </section>
+      `;
+    })
+    .join('');
+  return `
+    <details class="productsWorkbench__ticketRegistry" data-products-ticket-registry>
+      <summary>
+        <span>Registro de tickets</span>
+        <small>${model.recentTickets.length} guardados</small>
+      </summary>
+      <div class="productsWorkbench__ticketRegistryList">
+        ${groupedRows || '<div class="productsWorkbench__empty">Todavía no hay tickets confirmados desde esta vista.</div>'}
       </div>
     </details>
   `;
@@ -4209,10 +4232,6 @@ async function deleteProductsTicket(ticketId = '') {
   const draft = ensureProductsListTickets(readProductsListDraftFromDom(document));
   if (!draft.tickets?.[safeTicketId]) return;
   const ticketIds = Object.keys(draft.tickets || {});
-  if (ticketIds.length <= 1) {
-    toast('Debe quedar al menos un ticket');
-    return;
-  }
   const lineIds = Object.entries(draft.lines || {})
     .filter(([, line]) => String(line?.ticketId || '').trim() === safeTicketId)
     .map(([lineId]) => lineId);
@@ -4225,7 +4244,7 @@ async function deleteProductsTicket(ticketId = '') {
     ? `Este ticket tiene ${lineIds.length} ${lineIds.length === 1 ? 'línea' : 'líneas'}. Se moverán a "${draftTicketDisplayLabels[draft.primaryTicketId] || 'Sin asignar'}". ¿Eliminar ticket?`
     : '¿Eliminar ticket vacío?';
   if (!window.confirm(confirmMessage)) return;
-  if (hasLines) {
+  if (hasLines && ticketIds.length > 1) {
     const fallbackTicketId = draft.primaryTicketId && draft.primaryTicketId !== safeTicketId
       ? draft.primaryTicketId
       : ticketIds.find((id) => id !== safeTicketId) || draft.primaryTicketId;
@@ -4238,9 +4257,29 @@ async function deleteProductsTicket(ticketId = '') {
     });
   }
   delete draft.tickets[safeTicketId];
+  if (ticketIds.length <= 1) {
+    draft.lines = {};
+  }
   const nextTicketIds = Object.keys(draft.tickets || {});
-  if (!nextTicketIds.includes(draft.primaryTicketId)) draft.primaryTicketId = nextTicketIds[0] || 'ticket-1';
-  if (!nextTicketIds.includes(draft.activeTicketId)) draft.activeTicketId = nextTicketIds[0] || draft.primaryTicketId;
+  if (!nextTicketIds.length) {
+    const replacementId = 'ticket-1';
+    draft.primaryTicketId = replacementId;
+    draft.activeTicketId = replacementId;
+    draft.tickets[replacementId] = normalizeProductsListTicketMeta(replacementId, {
+      label: 'Sin asignar',
+      store: draft.store,
+      accountId: draft.accountId,
+      paymentMethod: draft.paymentMethod,
+      plannedFor: draft.plannedFor,
+      notes: draft.notes,
+      sortOrder: 0,
+      createdAt: nowTs(),
+      updatedAt: nowTs(),
+    });
+  } else {
+    if (!nextTicketIds.includes(draft.primaryTicketId)) draft.primaryTicketId = nextTicketIds[0] || 'ticket-1';
+    if (!nextTicketIds.includes(draft.activeTicketId)) draft.activeTicketId = nextTicketIds[0] || draft.primaryTicketId;
+  }
   draft.updatedAt = nowTs();
   syncProductsDraftListLocal(ensureProductsListTickets(draft));
   const listId = String(draft.id || '__draft__');
@@ -4393,6 +4432,7 @@ function readProductsListDraftFromDom(root = document) {
   nextList.updatedAt = nowTs();
   const lineEntries = Array.from(formEl.querySelectorAll('[data-products-line-row]')).map((rowEl, index) => {
     const lineId = String(rowEl.dataset.productsLineRow || '').trim() || createFinanceRecordId('line');
+    const lineTicketId = String(rowEl.querySelector(`[data-products-line-ticket-id="${lineId}"]`)?.value || baseList.lines?.[lineId]?.ticketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
     syncProductsReceiptLineToBacking(root, lineId);
     const receiptName = productsDomValue(root, [`[data-products-receipt-name="${lineId}"]`], '');
     const receiptQty = productsDomValue(root, [`[data-products-receipt-qty="${lineId}"]`], '');
@@ -4407,7 +4447,7 @@ function readProductsListDraftFromDom(root = document) {
       actualPrice: Number(receiptUnit || rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || baseList.lines?.[lineId]?.actualPrice || 0),
       store: normalizeFoodName(baseList.lines?.[lineId]?.store || nextList.store || ''),
       checked: rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false,
-      ticketId: String(baseList.lines?.[lineId]?.ticketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1',
+      ticketId: lineTicketId,
       note: normalizeProductText(baseList.lines?.[lineId]?.note || ''),
       sortOrder: index,
       createdAt: Number(baseList.lines?.[lineId]?.createdAt || nowTs()),
@@ -5257,13 +5297,17 @@ async function confirmProductsTicketFromDom() {
       ];
     }),
   );
+  const remainingTicketIds = Object.keys(nextTicketsMeta).filter((ticketMetaId) => ticketMetaId !== activeTicketId);
+  const nextActiveTicketId = remainingTicketIds.find((ticketMetaId) => (
+    Object.values(remainingLines).some((line) => String(line?.ticketId || '').trim() === ticketMetaId)
+  )) || remainingTicketIds[0] || persistedList.primaryTicketId;
   const convertedList = ensureProductsListTickets({
     ...persistedList,
     lines: remainingLines,
     tickets: nextTicketsMeta,
     status: Object.keys(remainingLines).length ? 'draft' : 'converted',
     sourceTicketId: Object.keys(remainingLines).length ? persistedList.sourceTicketId : ticketId,
-    activeTicketId: persistedList.primaryTicketId,
+    activeTicketId: nextActiveTicketId,
     updatedAt: nowTs(),
   });
   const nextActiveList = createEmptyProductsList({

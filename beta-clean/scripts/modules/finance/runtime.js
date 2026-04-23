@@ -1965,6 +1965,9 @@ function normalizeProductsListTicketMeta(ticketId = '', payload = {}) {
     paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
     plannedFor: toIsoDay(String(payload?.plannedFor || '')) || dayKeyFromTs(nowTs()),
     notes: normalizeProductText(payload?.notes || ''),
+    confirmedAt: normalizeProductNumber(payload?.confirmedAt, 0),
+    accountedTxId: normalizeProductText(payload?.accountedTxId || ''),
+    confirmedTicketId: normalizeProductText(payload?.confirmedTicketId || ''),
     sortOrder: normalizeProductNumber(payload?.sortOrder, 0),
     createdAt: normalizeProductNumber(payload?.createdAt, nowTs()),
     updatedAt: normalizeProductNumber(payload?.updatedAt, nowTs()),
@@ -2255,6 +2258,7 @@ function buildProductsViewModel(cfg = {}) {
   const allowedSorts = ['forecast', 'name', 'price', 'last-purchase', 'duration', 'consumption', 'spend'];
   const allowedStatus = ['all', 'active', 'inactive', 'due'];
   const allowedTabs = ['list', 'catalog'];
+  const allowedCatalogPanels = ['catalog', 'editor', 'insights'];
   const rawTab = String(cfg?.tab || state.foodProductsView?.tab || 'list');
   const nextCfg = {
     ...(state.foodProductsView || {}),
@@ -2279,6 +2283,10 @@ function buildProductsViewModel(cfg = {}) {
     selectedIds: [...new Set(Array.isArray(cfg?.selectedIds || state.foodProductsView?.selectedIds) ? (cfg?.selectedIds || state.foodProductsView?.selectedIds) : [])],
     expandedIds: [...new Set(Array.isArray(cfg?.expandedIds || state.foodProductsView?.expandedIds) ? (cfg?.expandedIds || state.foodProductsView?.expandedIds) : [])],
     listQuery: String(cfg?.listQuery || state.foodProductsView?.listQuery || ''),
+    catalogPanel: allowedCatalogPanels.includes(String(cfg?.catalogPanel || state.foodProductsView?.catalogPanel || 'catalog'))
+      ? String(cfg?.catalogPanel || state.foodProductsView?.catalogPanel || 'catalog')
+      : 'catalog',
+    catalogCollapsed: Boolean(cfg?.catalogCollapsed ?? state.foodProductsView?.catalogCollapsed ?? true),
     catalogSearchByGroup: (cfg?.catalogSearchByGroup && typeof cfg.catalogSearchByGroup === 'object')
       ? cfg.catalogSearchByGroup
       : ((state.foodProductsView?.catalogSearchByGroup && typeof state.foodProductsView.catalogSearchByGroup === 'object')
@@ -3635,7 +3643,58 @@ function renderProductsTicketHero(model) {
       <div class="productsWorkbench__panelActions productsWorkbench__panelActions--footer">
         <button type="button" class="food-history-btn" data-products-confirm-ticket ${model.listLines.length ? '' : 'disabled'}>Confirmar compra</button>
       </div>
+      ${renderProductsTicketRegistry(model)}
       </section>
+  `;
+}
+
+function renderProductsTicketRegistry(model) {
+  return `
+    <details class="productsWorkbench__ticketRegistry" data-products-ticket-registry>
+      <summary>
+        <span>Registro de tickets</span>
+        <small>${model.recentTickets.length} guardados</small>
+      </summary>
+      <div class="productsWorkbench__ticketRegistryList">
+        ${model.recentTickets.map((ticket) => {
+          const accountNameValue = ticket.accountId
+            ? (state.accounts.find((account) => account.id === ticket.accountId)?.name || ticket.accountId)
+            : 'Sin cuenta';
+          const ticketDate = formatProductsShortDate(parseDayKey(ticket.dateISO || ''));
+          const ticketStatus = ticket.txId ? 'Contabilizado' : 'Sin asiento';
+          const imageUrl = String(ticket.imageUrl || ticket.receiptImageUrl || ticket.image || '').trim();
+          return `
+            <details class="productsWorkbench__ticketRegistryItem" data-products-ticket-history-item="${escapeHtml(ticket.id)}">
+              <summary>
+                <span>${escapeHtml(ticketDate)} · ${escapeHtml(ticket.store || 'Supermercado')} · ${fmtCurrency(ticket.actualTotal || 0)}</span>
+                <small>${ticket.lineCount} líneas · ${escapeHtml(ticketStatus)}</small>
+              </summary>
+              <div class="productsWorkbench__ticketRegistryDetail">
+                <div class="productsWorkbench__ticketRegistryMeta">
+                  <span>${escapeHtml(accountNameValue)}</span>
+                  <span>${escapeHtml(ticket.paymentMethod || 'Tarjeta')}</span>
+                  ${ticket.note ? `<span>${escapeHtml(ticket.note)}</span>` : ''}
+                </div>
+                ${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="Imagen de ticket ${escapeHtml(ticket.store || ticket.id)}" loading="lazy" />` : ''}
+                <div class="productsWorkbench__ticketRegistryLines">
+                  ${Object.values(ticket.lines || {}).map((line) => `
+                    <div class="productsWorkbench__ticketRegistryLine">
+                      <span>${Math.max(1, Number(line.qty || 1))} × ${escapeHtml(line.name || 'Producto')}</span>
+                      <strong>${fmtCurrency(Math.max(1, Number(line.qty || 1)) * Number(line.actualPrice || line.estimatedPrice || 0))}</strong>
+                    </div>
+                  `).join('') || '<div class="productsWorkbench__emptyMini">Ticket sin líneas.</div>'}
+                </div>
+                <div class="productsWorkbench__ticketTotals">
+                  <small>Previsto ${fmtCurrency(ticket.estimatedTotal || 0)}</small>
+                  <strong>${fmtCurrency(ticket.actualTotal || 0)}</strong>
+                </div>
+                <button type="button" class="food-history-btn" data-products-reuse-ticket="${escapeHtml(ticket.id)}">Reutilizar como lista</button>
+              </div>
+            </details>
+          `;
+        }).join('') || '<div class="productsWorkbench__empty">Todavía no hay tickets confirmados desde esta vista.</div>'}
+      </div>
+    </details>
   `;
 }
 
@@ -3681,36 +3740,15 @@ function renderProductsHistoryPanel(model) {
           `).join('') || '<div class="productsWorkbench__empty">No hay productos con reposicion urgente.</div>'}
         </div>
       </section>
-      <section class="productsWorkbench__panel">
-        <header class="productsWorkbench__panelHead">
-          <div>
-            <h3>Historial confirmado</h3>
-            <p>Tickets guardados por fecha para reutilizar, comparar y auditar gasto real.</p>
-          </div>
-        </header>
-        <div class="productsWorkbench__historyCards">
-          ${model.recentTickets.map((ticket) => `
-            <article class="productsWorkbench__ticketCard">
-              <div class="productsWorkbench__ticketHead">
-                <strong>${escapeHtml(ticket.store || 'Supermercado')}</strong>
-                <small>${escapeHtml(ticket.dateISO || '')}</small>
-              </div>
-              <div class="productsWorkbench__ticketMeta">
-                <span>${ticket.lineCount} lineas</span>
-                <span>${escapeHtml(ticket.paymentMethod || 'Tarjeta')}</span>
-                <span>${escapeHtml(ticket.accountId ? (state.accounts.find((account) => account.id === ticket.accountId)?.name || ticket.accountId) : 'Sin cuenta')}</span>
-              </div>
-              <div class="productsWorkbench__ticketTotals">
-                <small>Previsto ${fmtCurrency(ticket.estimatedTotal || 0)}</small>
-                <strong>${fmtCurrency(ticket.actualTotal || 0)}</strong>
-              </div>
-              <button type="button" class="food-history-btn" data-products-reuse-ticket="${escapeHtml(ticket.id)}">Reutilizar como lista</button>
-            </article>
-          `).join('') || '<div class="productsWorkbench__empty">Todavia no hay tickets confirmados desde esta vista.</div>'}
-        </div>
-        ${model.reusableLists.length ? `
+      ${model.reusableLists.length ? `
+        <section class="productsWorkbench__panel">
+          <header class="productsWorkbench__panelHead">
+            <div>
+              <h3>Listas reutilizables</h3>
+              <p>Acceso rápido para rearmar una compra sin rehacer el ticket.</p>
+            </div>
+          </header>
           <div class="productsWorkbench__reuseLists">
-            <strong>Listas reutilizables</strong>
             ${model.reusableLists.map((list) => `
               <button type="button" class="productsWorkbench__reuseListBtn" data-products-reuse-list="${escapeHtml(list.id)}">
                 <span>${escapeHtml(list.name || 'Lista')}</span>
@@ -3718,9 +3756,42 @@ function renderProductsHistoryPanel(model) {
               </button>
             `).join('')}
           </div>
-        ` : ''}
-      </section>
+        </section>
+      ` : ''}
     </section>
+  `;
+}
+
+function renderProductsCatalogWorkspace(model) {
+  const isCollapsed = model.cfg?.catalogCollapsed !== false;
+  const activePanel = model.cfg?.catalogPanel || 'catalog';
+  return `
+    <details class="productsWorkbench__catalogWorkspace" data-products-catalog-workspace ${isCollapsed ? '' : 'open'}>
+      <summary>
+        <strong>Catálogo operativo</strong>
+        <small>${model.filteredCount}/${model.catalogCount} productos</small>
+      </summary>
+      <div class="productsWorkbench__catalogTabs" role="tablist" aria-label="Paneles del catálogo">
+        ${[
+          ['catalog', 'Catálogo'],
+          ['editor', 'Editor'],
+          ['insights', 'Análisis'],
+        ].map(([key, label]) => `
+          <button type="button" class="food-history-btn ${activePanel === key ? 'is-active' : ''}" data-products-catalog-panel-tab="${key}" role="tab" aria-selected="${activePanel === key ? 'true' : 'false'}">${label}</button>
+        `).join('')}
+      </div>
+      <div class="productsWorkbench__catalogSlides" data-products-catalog-slides>
+        <section class="productsWorkbench__catalogSlide ${activePanel === 'catalog' ? 'is-active' : ''}" data-products-catalog-panel-view="catalog">
+          ${renderProductsCatalogPanel(model)}
+        </section>
+        <section class="productsWorkbench__catalogSlide ${activePanel === 'editor' ? 'is-active' : ''}" data-products-catalog-panel-view="editor">
+          ${renderProductsEditorPanel(model)}
+        </section>
+        <section class="productsWorkbench__catalogSlide ${activePanel === 'insights' ? 'is-active' : ''}" data-products-catalog-panel-view="insights">
+          ${renderProductsHistoryPanel(model)}
+        </section>
+      </div>
+    </details>
   `;
 }
 
@@ -3729,23 +3800,7 @@ function renderProductsCatalogSubview(model) {
     <div class="productsWorkbench__catalogSubview" data-products-catalog-subview>
       ${renderProductsSummaryCards(model)}
       ${renderProductsFilters(model)}
-      <div class="productsWorkbench__mainGrid">
-        ${renderProductsCatalogPanel(model)}
-        <div class="productsWorkbench__sideStack">
-          ${renderProductsEditorPanel(model)}
-        </div>
-      </div>
-      <details class="productsWorkbench__panel productsWorkbench__collapse" id="products-history-panel">
-        <summary class="productsWorkbench__panelHead productsWorkbench__collapseSummary">
-          <div>
-            <h3>Analisis e historial</h3>
-            <p>${model.dueSuggestions.length} sugerencias Â· ${model.recentTickets.length} tickets confirmados</p>
-          </div>
-        </summary>
-        <div class="productsWorkbench__collapseBody">
-          ${renderProductsHistoryPanel(model)}
-        </div>
-      </details>
+      ${renderProductsCatalogWorkspace(model)}
     </div>
   `;
 }
@@ -3760,25 +3815,7 @@ function renderProductsView(isModal = false) {
       ${renderProductsListPanel(model)}
       </div>
       <div class="productsWorkbench__subview" data-products-subview="catalog" ${activeTab === 'catalog' ? '' : 'hidden'}>
-      ${renderProductsSummaryCards(model)}
-      ${renderProductsFilters(model)}
-      <div class="productsWorkbench__mainGrid">
-        ${renderProductsCatalogPanel(model)}
-        <div class="productsWorkbench__sideStack">
-          ${renderProductsEditorPanel(model)}
-        </div>
-      </div>
-      <details class="productsWorkbench__panel productsWorkbench__collapse" id="products-history-panel">
-        <summary class="productsWorkbench__panelHead productsWorkbench__collapseSummary">
-          <div>
-            <h3>Analisis e historial</h3>
-            <p>${model.dueSuggestions.length} sugerencias · ${model.recentTickets.length} tickets confirmados</p>
-          </div>
-        </summary>
-        <div class="productsWorkbench__collapseBody">
-          ${renderProductsHistoryPanel(model)}
-        </div>
-      </details>
+      ${renderProductsCatalogSubview(model)}
       </div>
     </div>
   `;
@@ -3862,27 +3899,7 @@ function patchProductsCatalogSubview(model = null) {
     return false;
   }
   const nextModel = model || buildCurrentProductsModel();
-  subview.innerHTML = `
-    ${renderProductsSummaryCards(nextModel)}
-    ${renderProductsFilters(nextModel)}
-    <div class="productsWorkbench__mainGrid">
-      ${renderProductsCatalogPanel(nextModel)}
-      <div class="productsWorkbench__sideStack">
-        ${renderProductsEditorPanel(nextModel)}
-      </div>
-    </div>
-    <details class="productsWorkbench__panel productsWorkbench__collapse" id="products-history-panel">
-      <summary class="productsWorkbench__panelHead productsWorkbench__collapseSummary">
-        <div>
-          <h3>Analisis e historial</h3>
-          <p>${nextModel.dueSuggestions.length} sugerencias · ${nextModel.recentTickets.length} tickets confirmados</p>
-        </div>
-      </summary>
-      <div class="productsWorkbench__collapseBody">
-        ${renderProductsHistoryPanel(nextModel)}
-      </div>
-    </details>
-  `;
+  subview.innerHTML = renderProductsCatalogSubview(nextModel);
   return true;
 }
 
@@ -4926,7 +4943,11 @@ async function saveProductsPurchaseTransaction(list = {}) {
   }
   const dateISO = toIsoDay(String(list.plannedFor || '')) || dayKeyFromTs(nowTs());
   const category = 'Compra';
-  const note = normalizeProductText(list.notes || `Compra ${list.store || ''}`) || 'Compra';
+  const ticketReference = normalizeProductText(list.ticketRef || list.ticketLabel || '');
+  const note = normalizeProductText(
+    list.notes
+    || `Compra ${list.store || ''}${ticketReference ? ` · ${ticketReference}` : ''}`,
+  ) || 'Compra';
   const totalAmount = lines.reduce((sum, line) => sum + (Number(line.actualPrice || 0) * Math.max(1, Number(line.qty || 1))), 0);
   if (!(totalAmount > 0)) {
     toast('El ticket debe tener importe real');
@@ -5014,6 +5035,8 @@ async function saveProductsPurchaseTransaction(list = {}) {
     ticketData: {
       schema: 'SHOPPING_TICKET_V1',
       source: { vendor: normalizeFoodName(list.store || 'unknown') || 'unknown' },
+      ticketId: String(list.ticketId || ''),
+      ticketRef: ticketReference,
       paymentMethod: list.paymentMethod || 'Tarjeta',
       estimatedTotal: lines.reduce((sum, line) => sum + (Number(line.estimatedPrice || 0) * Math.max(1, Number(line.qty || 1))), 0),
       actualTotal: totalAmount,
@@ -5066,8 +5089,17 @@ async function confirmProductsTicketFromDom() {
     toast('No hay lineas para confirmar');
     return;
   }
+  if (activeTicketMeta.accountedTxId) {
+    toast('Este ticket ya está contabilizado');
+    return;
+  }
   if (activeTicketMeta.store || draft.store) await upsertFoodOption('place', activeTicketMeta.store || draft.store, true);
   const persistedList = await ensurePersistedActiveProductsList(draft);
+  const persistedTicketMeta = persistedList.tickets?.[activeTicketId] || {};
+  if (persistedTicketMeta.accountedTxId) {
+    toast('Este ticket ya fue contabilizado');
+    return;
+  }
   const ticketPayload = normalizeProductsHubList(persistedList.id, {
     ...persistedList,
     store: activeTicketMeta.store || persistedList.store,
@@ -5075,6 +5107,9 @@ async function confirmProductsTicketFromDom() {
     paymentMethod: activeTicketMeta.paymentMethod || persistedList.paymentMethod,
     plannedFor: activeTicketMeta.plannedFor || persistedList.plannedFor,
     notes: activeTicketMeta.notes || persistedList.notes,
+    ticketId: activeTicketId,
+    ticketLabel: activeTicketMeta.label || '',
+    ticketRef: activeTicketMeta.label ? `ticket ${activeTicketMeta.label}` : `ticket ${activeTicketId}`,
     lines: activeTicketLines,
   });
   const txResult = await saveProductsPurchaseTransaction(ticketPayload);
@@ -5098,9 +5133,25 @@ async function confirmProductsTicketFromDom() {
   const remainingLines = Object.fromEntries(
     Object.entries(persistedList.lines || {}).filter(([, line]) => String(line?.ticketId || persistedList.primaryTicketId || '').trim() !== activeTicketId),
   );
+  const nextTicketsMeta = Object.fromEntries(
+    Object.entries(persistedList.tickets || {}).map(([ticketMetaId, ticketMeta]) => {
+      if (ticketMetaId !== activeTicketId) return [ticketMetaId, ticketMeta];
+      return [
+        ticketMetaId,
+        normalizeProductsListTicketMeta(ticketMetaId, {
+          ...ticketMeta,
+          confirmedAt: nowTs(),
+          accountedTxId: txResult.txId,
+          confirmedTicketId: ticketId,
+          updatedAt: nowTs(),
+        }),
+      ];
+    }),
+  );
   const convertedList = ensureProductsListTickets({
     ...persistedList,
     lines: remainingLines,
+    tickets: nextTicketsMeta,
     status: Object.keys(remainingLines).length ? 'draft' : 'converted',
     sourceTicketId: Object.keys(remainingLines).length ? persistedList.sourceTicketId : ticketId,
     activeTicketId: persistedList.primaryTicketId,
@@ -5204,6 +5255,9 @@ function normalizeProductsHubList(id = '', payload = {}) {
     paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
     plannedFor: toIsoDay(String(payload?.plannedFor || '')) || dayKeyFromTs(nowTs()),
     notes: normalizeProductText(payload?.notes || ''),
+    ticketId: normalizeProductText(payload?.ticketId || ''),
+    ticketLabel: normalizeProductText(payload?.ticketLabel || ''),
+    ticketRef: normalizeProductText(payload?.ticketRef || ''),
     sourceTicketId: normalizeProductText(payload?.sourceTicketId || ''),
     lines: normalizeProductsHubLineMap(payload?.lines || {}),
     primaryTicketId: normalizeProductText(payload?.primaryTicketId || 'ticket-1') || 'ticket-1',
@@ -12417,6 +12471,16 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       await confirmProductsTicketFromDom();
       return;
     }
+    const catalogPanelTab = target.closest('[data-products-catalog-panel-tab]')?.dataset.productsCatalogPanelTab;
+    if (catalogPanelTab) {
+      state.foodProductsView = {
+        ...(state.foodProductsView || {}),
+        tab: 'catalog',
+        catalogPanel: catalogPanelTab,
+      };
+      patchProductsCatalogSubview(buildCurrentProductsModel());
+      return;
+    }
     const reuseTicketId = target.closest('[data-products-reuse-ticket]')?.dataset.productsReuseTicket;
     if (reuseTicketId) {
       await reuseProductsTicketAsActiveList(reuseTicketId);
@@ -13433,6 +13497,12 @@ if (event.target.closest('[data-fixed-expense-form]')) {
     }
     if (event.target.matches('[data-balance-tx-details]')) {
       state.balanceTxDetailsOpen = !!event.target.open;
+    }
+    if (event.target.matches('[data-products-catalog-workspace]')) {
+      state.foodProductsView = {
+        ...(state.foodProductsView || {}),
+        catalogCollapsed: !event.target.open,
+      };
     }
   });
 

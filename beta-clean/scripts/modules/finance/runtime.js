@@ -2687,8 +2687,9 @@ function buildProductsViewModel(cfg = {}) {
       ...ticket,
       actualTotal: normalizeProductPositiveNumber(ticket.actualTotal, Object.values(ticket.lines || {}).reduce((sum, line) => sum + (Math.max(1, Number(line.qty || 1)) * normalizeProductPositiveNumber(line.actualPrice || line.estimatedPrice, 0)), 0)),
       lineCount: Object.keys(ticket.lines || {}).length,
+      confirmedAt: normalizeProductNumber(ticket.confirmedAt, parseDayKey(String(ticket.dateISO || ''))),
     }))
-    .sort((a, b) => parseDayKey(String(b.dateISO || '')) - parseDayKey(String(a.dateISO || '')))
+    .sort((a, b) => Number(b.confirmedAt || 0) - Number(a.confirmedAt || 0))
     .slice(0, 8);
   const reusableLists = Object.values(state.productsHub?.lists || {})
     .filter((list) => list.id !== activeList.id && list.id !== '__draft__' && Object.keys(list.lines || {}).length)
@@ -3641,6 +3642,7 @@ function renderProductsTicketHero(model) {
         </footer>
       </div>
       <div class="productsWorkbench__panelActions productsWorkbench__panelActions--footer">
+        <button type="button" class="food-history-btn" data-products-export-ticket ${model.listLines.length ? '' : 'disabled'}>Exportar</button>
         <button type="button" class="food-history-btn" data-products-confirm-ticket ${model.listLines.length ? '' : 'disabled'}>Confirmar compra</button>
       </div>
       ${renderProductsTicketRegistry(model)}
@@ -3660,8 +3662,13 @@ function renderProductsTicketRegistry(model) {
           const accountNameValue = ticket.accountId
             ? (state.accounts.find((account) => account.id === ticket.accountId)?.name || ticket.accountId)
             : 'Sin cuenta';
-          const ticketDate = formatProductsShortDate(parseDayKey(ticket.dateISO || ''));
+          const ticketDateTs = Number(ticket.confirmedAt || 0) || parseDayKey(ticket.dateISO || '');
+          const ticketDate = formatProductsShortDate(ticketDateTs);
           const ticketStatus = ticket.txId ? 'Contabilizado' : 'Sin asiento';
+          const ticketBlockedDeletion = Boolean(String(ticket.txId || '').trim());
+          const ticketDeleteHint = ticketBlockedDeletion
+            ? 'No se puede borrar: tiene movimiento contabilizado'
+            : 'Eliminar ticket del registro';
           const imageUrl = String(ticket.imageUrl || ticket.receiptImageUrl || ticket.image || '').trim();
           return `
             <details class="productsWorkbench__ticketRegistryItem" data-products-ticket-history-item="${escapeHtml(ticket.id)}">
@@ -3688,7 +3695,17 @@ function renderProductsTicketRegistry(model) {
                   <small>Previsto ${fmtCurrency(ticket.estimatedTotal || 0)}</small>
                   <strong>${fmtCurrency(ticket.actualTotal || 0)}</strong>
                 </div>
-                <button type="button" class="food-history-btn" data-products-reuse-ticket="${escapeHtml(ticket.id)}">Reutilizar como lista</button>
+                <div class="productsWorkbench__ticketRegistryActions">
+                  <button type="button" class="food-history-btn" data-products-reuse-ticket="${escapeHtml(ticket.id)}">Reutilizar como lista</button>
+                  <button
+                    type="button"
+                    class="food-history-btn"
+                    data-products-delete-history-ticket="${escapeHtml(ticket.id)}"
+                    aria-label="${escapeHtml(ticketDeleteHint)}"
+                    title="${escapeHtml(ticketDeleteHint)}"
+                    ${ticketBlockedDeletion ? 'disabled' : ''}
+                  >Eliminar</button>
+                </div>
               </div>
             </details>
           `;
@@ -4231,6 +4248,90 @@ async function deleteProductsTicket(ticketId = '') {
   lineIds.forEach((lineId) => { delete selection[lineId]; });
   setReceiptSelectionMap(listId, selection);
   toast('Ticket eliminado');
+  triggerRender();
+}
+
+async function exportActiveProductsTicketNamesFromDom() {
+  const draft = ensureProductsListTickets(readProductsListDraftFromDom(document));
+  const activeTicketId = String(draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+  const ticketLines = Object.values(draft.lines || {})
+    .filter((line) => String(line?.ticketId || draft.primaryTicketId || '').trim() === activeTicketId)
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+  const names = ticketLines
+    .map((line) => normalizeFoodName(line?.name || ''))
+    .filter((name) => !!String(name || '').trim());
+  if (!names.length) {
+    toast('El ticket activo no tiene productos para exportar');
+    return;
+  }
+  const exportText = names.join('\n');
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: 'Lista de ticket',
+        text: exportText,
+      });
+      toast('Lista compartida');
+      return;
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+    }
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(exportText);
+      toast('Lista copiada al portapapeles');
+      return;
+    }
+  } catch (error) {
+    // fallback below
+  }
+  window.prompt('Copia la lista del ticket:', exportText);
+}
+
+async function deleteProductsHistoryTicket(ticketId = '') {
+  const safeTicketId = String(ticketId || '').trim();
+  if (!safeTicketId) return;
+  const ticket = state.productsHub?.tickets?.[safeTicketId];
+  if (!ticket) return;
+  if (String(ticket.txId || '').trim()) {
+    toast('No se puede borrar un ticket ya contabilizado');
+    return;
+  }
+  if (!window.confirm('¿Eliminar este ticket del registro?')) return;
+  const nextTickets = { ...(state.productsHub?.tickets || {}) };
+  delete nextTickets[safeTicketId];
+  const nextLists = Object.entries(state.productsHub?.lists || {}).reduce((acc, [listId, list]) => {
+    const nextListTickets = Object.entries(list?.tickets || {}).reduce((ticketAcc, [metaId, meta]) => {
+      if (String(meta?.confirmedTicketId || '').trim() !== safeTicketId) {
+        ticketAcc[metaId] = meta;
+        return ticketAcc;
+      }
+      ticketAcc[metaId] = normalizeProductsListTicketMeta(metaId, {
+        ...meta,
+        confirmedAt: 0,
+        confirmedTicketId: '',
+        accountedTxId: '',
+        updatedAt: nowTs(),
+      });
+      return ticketAcc;
+    }, {});
+    acc[listId] = { ...(list || {}), tickets: nextListTickets };
+    return acc;
+  }, {});
+  state.productsHub = {
+    ...(state.productsHub || normalizeProductsHub()),
+    tickets: nextTickets,
+    lists: nextLists,
+  };
+  const updatesMap = {
+    [productsHubPath(`tickets/${safeTicketId}`)]: null,
+  };
+  Object.entries(nextLists).forEach(([listId, list]) => {
+    updatesMap[productsHubPath(`lists/${listId}`)] = list;
+  });
+  await safeFirebase(() => update(ref(db), updatesMap));
+  toast('Ticket eliminado del registro');
   triggerRender();
 }
 
@@ -4941,7 +5042,9 @@ async function saveProductsPurchaseTransaction(list = {}) {
     toast('Selecciona una cuenta antes de confirmar');
     return null;
   }
-  const dateISO = toIsoDay(String(list.plannedFor || '')) || dayKeyFromTs(nowTs());
+  const confirmedAt = Number(list.confirmedAt || list.registeredAt || 0);
+  const confirmedDateISO = confirmedAt > 0 ? dayKeyFromTs(confirmedAt) : '';
+  const dateISO = toIsoDay(String(list.confirmedDateISO || confirmedDateISO || list.plannedFor || '')) || dayKeyFromTs(nowTs());
   const category = 'Compra';
   const ticketReference = normalizeProductText(list.ticketRef || list.ticketLabel || '');
   const note = normalizeProductText(
@@ -5037,6 +5140,7 @@ async function saveProductsPurchaseTransaction(list = {}) {
       source: { vendor: normalizeFoodName(list.store || 'unknown') || 'unknown' },
       ticketId: String(list.ticketId || ''),
       ticketRef: ticketReference,
+      confirmedAt: confirmedAt || nowTs(),
       paymentMethod: list.paymentMethod || 'Tarjeta',
       estimatedTotal: lines.reduce((sum, line) => sum + (Number(line.estimatedPrice || 0) * Math.max(1, Number(line.qty || 1))), 0),
       actualTotal: totalAmount,
@@ -5100,12 +5204,16 @@ async function confirmProductsTicketFromDom() {
     toast('Este ticket ya fue contabilizado');
     return;
   }
+  const confirmedAtTs = nowTs();
+  const confirmedDateISO = dayKeyFromTs(confirmedAtTs);
   const ticketPayload = normalizeProductsHubList(persistedList.id, {
     ...persistedList,
     store: activeTicketMeta.store || persistedList.store,
     accountId: activeTicketMeta.accountId || persistedList.accountId,
     paymentMethod: activeTicketMeta.paymentMethod || persistedList.paymentMethod,
     plannedFor: activeTicketMeta.plannedFor || persistedList.plannedFor,
+    confirmedAt: confirmedAtTs,
+    confirmedDateISO,
     notes: activeTicketMeta.notes || persistedList.notes,
     ticketId: activeTicketId,
     ticketLabel: activeTicketMeta.label || '',
@@ -5123,12 +5231,13 @@ async function confirmProductsTicketFromDom() {
     accountId: ticketPayload.accountId,
     paymentMethod: ticketPayload.paymentMethod,
     note: ticketPayload.notes,
-    dateISO: ticketPayload.plannedFor,
+    dateISO: confirmedDateISO,
+    confirmedAt: confirmedAtTs,
     estimatedTotal,
     actualTotal: txResult.total,
     lines: activeTicketLines,
-    createdAt: nowTs(),
-    updatedAt: nowTs(),
+    createdAt: confirmedAtTs,
+    updatedAt: confirmedAtTs,
   });
   const remainingLines = Object.fromEntries(
     Object.entries(persistedList.lines || {}).filter(([, line]) => String(line?.ticketId || persistedList.primaryTicketId || '').trim() !== activeTicketId),
@@ -5140,10 +5249,10 @@ async function confirmProductsTicketFromDom() {
         ticketMetaId,
         normalizeProductsListTicketMeta(ticketMetaId, {
           ...ticketMeta,
-          confirmedAt: nowTs(),
+          confirmedAt: confirmedAtTs,
           accountedTxId: txResult.txId,
           confirmedTicketId: ticketId,
-          updatedAt: nowTs(),
+          updatedAt: confirmedAtTs,
         }),
       ];
     }),
@@ -5275,6 +5384,7 @@ function normalizeProductsHubList(id = '', payload = {}) {
 
 function normalizeProductsHubTicket(id = '', payload = {}) {
   const safeId = String(id || payload?.id || createFinanceRecordId('ticket')).trim();
+  const normalizedConfirmedAt = normalizeProductNumber(payload?.confirmedAt, normalizeProductNumber(payload?.registeredAt, 0));
   return {
     id: safeId,
     listId: normalizeProductText(payload?.listId || ''),
@@ -5284,6 +5394,7 @@ function normalizeProductsHubTicket(id = '', payload = {}) {
     paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
     note: normalizeProductText(payload?.note || ''),
     dateISO: toIsoDay(String(payload?.dateISO || payload?.date || '')) || dayKeyFromTs(nowTs()),
+    confirmedAt: normalizedConfirmedAt,
     estimatedTotal: normalizeProductPositiveNumber(payload?.estimatedTotal, 0),
     actualTotal: normalizeProductPositiveNumber(payload?.actualTotal, 0),
     lines: normalizeProductsHubLineMap(payload?.lines || {}),
@@ -12467,6 +12578,10 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       await clearProductsActiveList();
       return;
     }
+    if (target.closest('[data-products-export-ticket]')) {
+      await exportActiveProductsTicketNamesFromDom();
+      return;
+    }
     if (target.closest('[data-products-confirm-ticket]')) {
       await confirmProductsTicketFromDom();
       return;
@@ -12484,6 +12599,11 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     const reuseTicketId = target.closest('[data-products-reuse-ticket]')?.dataset.productsReuseTicket;
     if (reuseTicketId) {
       await reuseProductsTicketAsActiveList(reuseTicketId);
+      return;
+    }
+    const deleteHistoryTicketId = target.closest('[data-products-delete-history-ticket]')?.dataset.productsDeleteHistoryTicket;
+    if (deleteHistoryTicketId) {
+      await deleteProductsHistoryTicket(deleteHistoryTicketId);
       return;
     }
     const reuseListId = target.closest('[data-products-reuse-list]')?.dataset.productsReuseList;

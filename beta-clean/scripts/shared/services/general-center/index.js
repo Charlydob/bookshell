@@ -1097,7 +1097,6 @@ function ensureGeneralButton() {
   button.innerHTML = `
     <span class="app-general-btn__icon" aria-hidden="true">✦</span>
     <span class="app-general-btn__text">General</span>
-    <span class="app-general-btn__count" data-general-count>0</span>
   `;
 
   actions.appendChild(button);

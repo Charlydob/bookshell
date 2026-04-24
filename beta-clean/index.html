@@ -11,6 +11,29 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Bookshell" />
+  <script>
+    (function () {
+      var defaultTheme = "dark-opal";
+      var validThemes = {
+        "dark-opal": true,
+        "light-clean": true,
+        "midnight-blue": true,
+        "forest": true,
+        "sand": true
+      };
+      var nextTheme = defaultTheme;
+
+      try {
+        var storedTheme = String(window.localStorage.getItem("bookshell:theme:v1") || "").trim();
+        if (validThemes[storedTheme]) {
+          nextTheme = storedTheme;
+        }
+      } catch (e) {}
+
+      document.documentElement.dataset.theme = nextTheme;
+    })();
+  </script>
+  <link href="./styles/core/themes.css" rel="stylesheet" />
   <link href="./styles/core/base.css" rel="stylesheet" />
   <link href="./styles/core/shell.css" rel="stylesheet" />
   <link href="./styles/core/achievements.css" rel="stylesheet" />
@@ -58,10 +81,10 @@
       display: block;
       min-height: min(52vh, 420px);
       border-radius: 24px;
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--app-border);
       background:
-        radial-gradient(circle at top left, rgba(255,255,255,0.04), transparent 44%),
-        linear-gradient(180deg, rgba(12, 14, 22, 0.92), rgba(7, 8, 14, 0.9));
+        radial-gradient(circle at top left, color-mix(in srgb, var(--app-text) 6%, transparent), transparent 44%),
+        var(--app-panel-gradient);
     }
 
   </style> 
@@ -80,23 +103,25 @@
   </script>
 
   <style id="boot-splash-style">
-    body.boot-loading { overflow: hidden; background: #05060a; }
+    body.boot-loading { overflow: hidden; background: var(--app-bg); }
     #boot-splash {
       position: fixed; inset: 0; z-index: 1000000;
       display: grid; place-items: center;
       padding: max(env(safe-area-inset-top), 20px) 20px max(env(safe-area-inset-bottom), 20px);
-      background: radial-gradient(1200px 600px at 50% -20%, rgba(89, 163, 255, .16), transparent 68%), #05060a;
-      color: #e8edf9;
+      background:
+        radial-gradient(1200px 600px at 50% -20%, color-mix(in srgb, var(--app-info) 22%, transparent), transparent 68%),
+        var(--app-bg-gradient);
+      color: var(--app-text);
       font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       transition: opacity .28s ease, visibility .28s ease;
     }
     #boot-splash.boot-splash-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
     .boot-splash-card { width: min(360px, 92vw); display: grid; gap: 12px; }
     .boot-splash-title { font-size: 17px; font-weight: 700; letter-spacing: .01em; }
-    .boot-splash-status { font-size: 13px; opacity: .88; min-height: 1.4em; }
-    .boot-splash-progress { height: 4px; border-radius: 999px; background: rgba(255,255,255,.14); overflow: hidden; }
-    .boot-splash-progress > i { display: block; height: 100%; width: 20%; border-radius: inherit; background: linear-gradient(90deg, #8ab8ff, #5b90ff); transform-origin: 0 50%; transform: scaleX(.08); transition: transform .32s ease; }
-    .boot-splash-note { font-size: 12px; color: #ffcd7a; opacity: 0; transition: opacity .2s ease; min-height: 1.3em; }
+    .boot-splash-status { font-size: 13px; color: var(--app-text-secondary); opacity: .92; min-height: 1.4em; }
+    .boot-splash-progress { height: 4px; border-radius: 999px; background: var(--app-progress-bg); overflow: hidden; }
+    .boot-splash-progress > i { display: block; height: 100%; width: 20%; border-radius: inherit; background: var(--app-progress-fill); transform-origin: 0 50%; transform: scaleX(.08); transition: transform .32s ease; }
+    .boot-splash-note { font-size: 12px; color: var(--app-date-text); opacity: 0; transition: opacity .2s ease; min-height: 1.3em; }
     #boot-splash[data-slow='1'] .boot-splash-note { opacity: .95; }
   </style>
 

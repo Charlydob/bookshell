@@ -868,7 +868,7 @@
   line-height: 1;
   text-transform: uppercase;
   color: #fff;
-  z-index: 120;
+  z-index: 110;
   cursor: pointer;
   pointer-events: auto;
   -webkit-tap-highlight-color: transparent;

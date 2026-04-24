@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-04-21-products-layout-v1";
+const APP_VERSION = "2026-04-24-global-themes-v1";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -6,6 +6,7 @@ const LOCAL_PRECACHE_ASSETS = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
+  "./styles/core/themes.css",
   "./styles/core/base.css",
   "./styles/core/shell.css",
   "./styles/core/achievements.css",
@@ -80,6 +81,7 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/shared/services/achievements/model.js",
   "./scripts/shared/services/achievements/metrics.js",
   "./scripts/shared/services/general-center/index.js",
+  "./scripts/shared/services/theme/index.js",
   "./scripts/shared/storage/offline-db.js",
   "./scripts/shared/storage/offline-queue.js",
   "./scripts/shared/storage/offline-snapshots.js",

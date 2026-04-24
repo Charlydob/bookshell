@@ -1,0 +1,305 @@
+:root,
+:root[data-theme="dark-opal"] {
+  color-scheme: dark;
+  --app-theme-color: #05060a;
+  --app-bg: #05060a;
+  --app-bg-elevated: #0e1116;
+  --app-bg-deep: #0b0d12;
+  --app-surface: rgba(10, 11, 18, 0.92);
+  --app-surface-soft: rgba(255, 255, 255, 0.03);
+  --app-surface-strong: rgba(18, 25, 39, 0.96);
+  --app-surface-elevated: rgba(8, 12, 22, 0.88);
+  --app-border: rgba(255, 255, 255, 0.1);
+  --app-border-soft: rgba(255, 255, 255, 0.06);
+  --app-border-strong: rgba(255, 255, 255, 0.16);
+  --app-border-dashed: rgba(255, 255, 255, 0.22);
+  --app-text: #f5f7ff;
+  --app-text-secondary: #deebff;
+  --app-text-muted: #a5afc7;
+  --app-text-inverse: #07101d;
+  --app-accent: #8665ff;
+  --app-accent-strong: #b6a5ff;
+  --app-accent-soft: rgba(134, 101, 255, 0.22);
+  --app-accent-contrast: #f8f7ff;
+  --app-success: #6fe0ab;
+  --app-warning: #ffb45a;
+  --app-danger: #ff6f83;
+  --app-info: #73b8ff;
+  --app-overlay: rgba(0, 0, 0, 0.45);
+  --app-menu-bg: rgba(6, 10, 19, 0.94);
+  --app-menu-shadow: 0 18px 50px rgba(0, 0, 0, 0.48);
+  --app-nav-text: rgba(223, 233, 247, 0.78);
+  --app-nav-active-text: #07101d;
+  --app-shadow-soft: 0 18px 40px rgba(0, 0, 0, 0.65);
+  --app-shadow-modal: 0 18px 60px rgba(0, 0, 0, 0.55);
+  --app-shadow-card: 0 18px 40px rgba(2, 6, 15, 0.22);
+  --app-shadow-chip: 0 12px 28px rgba(2, 6, 15, 0.22);
+}
+
+/* Light Clean: neutral light workspace */
+:root[data-theme="light-clean"] {
+  color-scheme: light;
+  --app-theme-color: #eef3fb;
+  --app-bg: #eef3fb;
+  --app-bg-elevated: #f7f9fd;
+  --app-bg-deep: #dde6f2;
+  --app-surface: rgba(255, 255, 255, 0.94);
+  --app-surface-soft: rgba(244, 247, 252, 0.92);
+  --app-surface-strong: rgba(250, 252, 255, 0.98);
+  --app-surface-elevated: rgba(239, 244, 250, 0.92);
+  --app-border: rgba(47, 69, 104, 0.14);
+  --app-border-soft: rgba(47, 69, 104, 0.08);
+  --app-border-strong: rgba(47, 69, 104, 0.22);
+  --app-border-dashed: rgba(47, 69, 104, 0.28);
+  --app-text: #182235;
+  --app-text-secondary: #334260;
+  --app-text-muted: #607089;
+  --app-text-inverse: #ffffff;
+  --app-accent: #2f6dff;
+  --app-accent-strong: #79a3ff;
+  --app-accent-soft: rgba(47, 109, 255, 0.14);
+  --app-accent-contrast: #ffffff;
+  --app-success: #2f9d6d;
+  --app-warning: #d28d25;
+  --app-danger: #d25c6f;
+  --app-info: #317ed9;
+  --app-overlay: rgba(96, 111, 137, 0.24);
+  --app-menu-bg: rgba(255, 255, 255, 0.96);
+  --app-menu-shadow: 0 18px 42px rgba(52, 72, 104, 0.16);
+  --app-nav-text: rgba(56, 74, 105, 0.84);
+  --app-nav-active-text: #15305d;
+  --app-shadow-soft: 0 18px 40px rgba(88, 108, 136, 0.18);
+  --app-shadow-modal: 0 18px 52px rgba(66, 83, 109, 0.2);
+  --app-shadow-card: 0 16px 32px rgba(82, 100, 126, 0.14);
+  --app-shadow-chip: 0 10px 24px rgba(88, 108, 136, 0.12);
+}
+
+/* Midnight Blue: colder dark palette */
+:root[data-theme="midnight-blue"] {
+  color-scheme: dark;
+  --app-theme-color: #05101c;
+  --app-bg: #05101c;
+  --app-bg-elevated: #0a1828;
+  --app-bg-deep: #07121e;
+  --app-surface: rgba(8, 20, 34, 0.94);
+  --app-surface-soft: rgba(163, 203, 255, 0.06);
+  --app-surface-strong: rgba(13, 27, 44, 0.98);
+  --app-surface-elevated: rgba(10, 22, 37, 0.9);
+  --app-border: rgba(153, 196, 255, 0.14);
+  --app-border-soft: rgba(153, 196, 255, 0.08);
+  --app-border-strong: rgba(153, 196, 255, 0.2);
+  --app-border-dashed: rgba(191, 217, 255, 0.24);
+  --app-text: #eef6ff;
+  --app-text-secondary: #dcebff;
+  --app-text-muted: #90aac8;
+  --app-text-inverse: #05101c;
+  --app-accent: #5ea2ff;
+  --app-accent-strong: #9bc8ff;
+  --app-accent-soft: rgba(94, 162, 255, 0.22);
+  --app-accent-contrast: #06111d;
+  --app-success: #65d4b3;
+  --app-warning: #ffbc72;
+  --app-danger: #ff748f;
+  --app-info: #8ac7ff;
+  --app-overlay: rgba(2, 8, 16, 0.56);
+  --app-menu-bg: rgba(7, 18, 31, 0.96);
+  --app-menu-shadow: 0 20px 54px rgba(0, 0, 0, 0.5);
+  --app-nav-text: rgba(218, 232, 250, 0.8);
+  --app-nav-active-text: #081322;
+  --app-shadow-soft: 0 18px 40px rgba(0, 0, 0, 0.54);
+  --app-shadow-modal: 0 18px 58px rgba(0, 0, 0, 0.58);
+  --app-shadow-card: 0 18px 40px rgba(0, 0, 0, 0.34);
+  --app-shadow-chip: 0 12px 28px rgba(0, 0, 0, 0.28);
+}
+
+/* Forest: soft dark green */
+:root[data-theme="forest"] {
+  color-scheme: dark;
+  --app-theme-color: #08120d;
+  --app-bg: #08120d;
+  --app-bg-elevated: #0f1c16;
+  --app-bg-deep: #0b1611;
+  --app-surface: rgba(10, 22, 17, 0.94);
+  --app-surface-soft: rgba(199, 255, 220, 0.045);
+  --app-surface-strong: rgba(16, 31, 23, 0.98);
+  --app-surface-elevated: rgba(11, 24, 18, 0.9);
+  --app-border: rgba(151, 208, 175, 0.14);
+  --app-border-soft: rgba(151, 208, 175, 0.08);
+  --app-border-strong: rgba(151, 208, 175, 0.2);
+  --app-border-dashed: rgba(197, 233, 209, 0.24);
+  --app-text: #eff8f2;
+  --app-text-secondary: #dceee0;
+  --app-text-muted: #97b3a0;
+  --app-text-inverse: #07120c;
+  --app-accent: #60b786;
+  --app-accent-strong: #a5e6c1;
+  --app-accent-soft: rgba(96, 183, 134, 0.22);
+  --app-accent-contrast: #07110c;
+  --app-success: #79deaa;
+  --app-warning: #e0b366;
+  --app-danger: #ff7d8e;
+  --app-info: #74bee7;
+  --app-overlay: rgba(2, 8, 5, 0.54);
+  --app-menu-bg: rgba(8, 18, 14, 0.96);
+  --app-menu-shadow: 0 20px 52px rgba(0, 0, 0, 0.48);
+  --app-nav-text: rgba(225, 237, 230, 0.78);
+  --app-nav-active-text: #08140e;
+  --app-shadow-soft: 0 18px 40px rgba(0, 0, 0, 0.56);
+  --app-shadow-modal: 0 18px 58px rgba(0, 0, 0, 0.56);
+  --app-shadow-card: 0 18px 38px rgba(0, 0, 0, 0.32);
+  --app-shadow-chip: 0 12px 28px rgba(0, 0, 0, 0.26);
+}
+
+/* Sand: warm light palette */
+:root[data-theme="sand"] {
+  color-scheme: light;
+  --app-theme-color: #f4ebda;
+  --app-bg: #f4ebda;
+  --app-bg-elevated: #fbf5ea;
+  --app-bg-deep: #eadcc4;
+  --app-surface: rgba(255, 250, 242, 0.95);
+  --app-surface-soft: rgba(251, 245, 236, 0.92);
+  --app-surface-strong: rgba(255, 252, 246, 0.98);
+  --app-surface-elevated: rgba(243, 233, 215, 0.92);
+  --app-border: rgba(115, 86, 52, 0.14);
+  --app-border-soft: rgba(115, 86, 52, 0.08);
+  --app-border-strong: rgba(115, 86, 52, 0.22);
+  --app-border-dashed: rgba(115, 86, 52, 0.28);
+  --app-text: #312417;
+  --app-text-secondary: #5d4834;
+  --app-text-muted: #7c6a57;
+  --app-text-inverse: #fffaf2;
+  --app-accent: #c17a39;
+  --app-accent-strong: #dfb07b;
+  --app-accent-soft: rgba(193, 122, 57, 0.16);
+  --app-accent-contrast: #fffaf2;
+  --app-success: #4f8c63;
+  --app-warning: #c17a39;
+  --app-danger: #c95f58;
+  --app-info: #5f89bb;
+  --app-overlay: rgba(93, 72, 52, 0.22);
+  --app-menu-bg: rgba(255, 251, 245, 0.97);
+  --app-menu-shadow: 0 18px 42px rgba(99, 77, 54, 0.16);
+  --app-nav-text: rgba(79, 61, 43, 0.82);
+  --app-nav-active-text: #2b1e11;
+  --app-shadow-soft: 0 18px 40px rgba(111, 87, 60, 0.16);
+  --app-shadow-modal: 0 18px 52px rgba(111, 87, 60, 0.18);
+  --app-shadow-card: 0 16px 32px rgba(111, 87, 60, 0.12);
+  --app-shadow-chip: 0 10px 24px rgba(111, 87, 60, 0.12);
+}
+
+:root {
+  --app-success-soft: color-mix(in srgb, var(--app-success) 18%, transparent);
+  --app-warning-soft: color-mix(in srgb, var(--app-warning) 18%, transparent);
+  --app-danger-soft: color-mix(in srgb, var(--app-danger) 18%, transparent);
+  --app-info-soft: color-mix(in srgb, var(--app-info) 18%, transparent);
+
+  --app-focus-ring: color-mix(in srgb, var(--app-accent) 58%, white);
+  --app-bg-gradient:
+    radial-gradient(circle at top, color-mix(in srgb, var(--app-accent) 18%, transparent), transparent 54%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--app-bg-elevated) 94%, transparent),
+      var(--app-bg) 58%,
+      var(--app-bg-deep)
+    );
+  --app-panel-gradient:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--app-warning) 14%, transparent), transparent 38%),
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--app-surface) 97%, var(--app-bg-elevated) 3%),
+      color-mix(in srgb, var(--app-surface) 90%, var(--app-bg-deep) 10%)
+    );
+  --app-accent-gradient:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--app-accent-strong) 82%, white 18%),
+      var(--app-accent)
+    );
+  --app-danger-gradient:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--app-danger) 78%, white 22%),
+      color-mix(in srgb, var(--app-danger) 88%, black 12%)
+    );
+
+  --app-button-bg: color-mix(in srgb, var(--app-surface-strong) 86%, transparent);
+  --app-button-border: var(--app-border);
+  --app-button-text: var(--app-text);
+  --app-button-primary-bg: var(--app-accent-gradient);
+  --app-button-primary-border: color-mix(in srgb, var(--app-accent) 28%, white 12%);
+  --app-button-primary-text: var(--app-accent-contrast);
+  --app-button-primary-shadow: 0 10px 25px color-mix(in srgb, var(--app-accent) 34%, transparent);
+  --app-button-danger-bg: var(--app-danger-gradient);
+  --app-button-danger-border: color-mix(in srgb, var(--app-danger) 28%, white 10%);
+  --app-button-danger-text: var(--app-text-inverse);
+  --app-button-danger-shadow: 0 10px 24px color-mix(in srgb, var(--app-danger) 32%, transparent);
+
+  --app-input-bg: color-mix(in srgb, var(--app-surface-elevated) 92%, var(--app-bg-deep) 8%);
+  --app-input-border: var(--app-border);
+  --app-input-focus: var(--app-accent);
+  --app-input-focus-ring: color-mix(in srgb, var(--app-accent) 34%, transparent);
+  --app-input-placeholder: color-mix(in srgb, var(--app-text-muted) 82%, transparent);
+
+  --app-chip-bg: color-mix(in srgb, var(--app-surface-soft) 96%, transparent);
+  --app-chip-border: var(--app-border-soft);
+  --app-chip-text: var(--app-text-secondary);
+  --app-chip-accent-bg: color-mix(in srgb, var(--app-accent) 14%, transparent);
+  --app-chip-accent-text: color-mix(in srgb, var(--app-accent) 78%, white 22%);
+
+  --app-date-bg: var(--app-warning-soft);
+  --app-date-text: color-mix(in srgb, var(--app-warning) 62%, white 38%);
+  --app-calendar-accent: var(--app-warning);
+  --app-calendar-soft: color-mix(in srgb, var(--app-warning) 12%, transparent);
+
+  --app-nav-bg:
+    radial-gradient(circle at top, color-mix(in srgb, var(--app-info) 18%, transparent), transparent 58%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--app-surface-elevated) 92%, transparent),
+      color-mix(in srgb, var(--app-bg-deep) 94%, transparent)
+    );
+  --app-nav-border: var(--app-border);
+  --app-nav-shadow:
+    0 22px 46px color-mix(in srgb, black 44%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
+  --app-nav-active-bg:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, white 82%, var(--app-accent) 18%),
+      color-mix(in srgb, white 72%, var(--app-info) 28%)
+    );
+
+  --app-highlight-gold: color-mix(in srgb, var(--app-warning) 70%, white 30%);
+  --app-highlight-gold-soft: color-mix(in srgb, var(--app-warning) 14%, transparent);
+  --app-highlight-blue: color-mix(in srgb, var(--app-info) 72%, white 28%);
+  --app-highlight-blue-soft: color-mix(in srgb, var(--app-info) 14%, transparent);
+  --app-progress-bg: color-mix(in srgb, var(--app-surface-soft) 96%, transparent);
+  --app-progress-fill:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--app-warning) 84%, white 16%),
+      color-mix(in srgb, var(--app-info) 88%, white 12%)
+    );
+
+  /* Legacy aliases so module CSS keeps working while we migrate. */
+  --bg-1: var(--app-bg-elevated);
+  --bg-2: var(--app-bg-deep);
+  --glass: var(--app-surface-soft);
+  --glass-2: var(--app-surface-strong);
+  --stroke: var(--app-border);
+  --txt: var(--app-text);
+  --txt-soft: var(--app-text-muted);
+  --accent: var(--app-accent);
+  --accent-soft: var(--app-accent-soft);
+  --danger: var(--app-danger);
+  --success: var(--app-success);
+  --warning: var(--app-warning);
+  --info: var(--app-info);
+  --shadow-soft: var(--app-shadow-soft);
+
+  --work-morning: color-mix(in srgb, var(--app-warning) 86%, transparent);
+  --work-evening: color-mix(in srgb, var(--app-danger) 84%, transparent);
+  --work-free: color-mix(in srgb, var(--app-success) 86%, transparent);
+  --work-unknown: color-mix(in srgb, var(--app-text-muted) 55%, transparent);
+}

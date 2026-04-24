@@ -22,6 +22,7 @@ import {
   trackAchievementViewVisit,
 } from "../shared/services/achievements/index.js";
 import { initGeneralCenterService } from "../shared/services/general-center/index.js";
+import { initThemeService } from "../shared/services/theme/index.js";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -1437,9 +1438,8 @@ function renderNavSelectionPanel() {
         <span>${escapeHtml(getNavSelectionSummaryText())}</span>
       </div>
       <div class="nav-selection-actions">
-        <button class="btn ghost btn-compact" data-nav-selection-cancel type="button">Cancelar</button>
-        <button class="btn ghost danger btn-compact" data-nav-selection-ungroup type="button"${canUngroup ? "" : " disabled"}>Desagrupar</button>
-        <button class="btn primary btn-compact" data-nav-selection-group type="button"${canGroup ? "" : " disabled"}>Agrupar</button>
+        <button class="btn-cancelar-creacion-grupo" data-nav-selection-cancel type="button">Cancelar</button>
+        <button class="btn-agrupar-creacion-grupo" data-nav-selection-group type="button"${canGroup ? "" : " disabled"}>Agrupar</button>
       </div>
       <div class="hint nav-selection-count">${selectedTokens.length} seleccion${selectedTokens.length === 1 ? "" : "es"}</div>
     </div>
@@ -1533,18 +1533,16 @@ function openNavComposeModal() {
         <button class="icon-btn icon-btn-small" data-nav-compose-close type="button" aria-label="Cerrar">x</button>
       </div>
       <form class="modal-form nav-compose-form" data-nav-compose-form>
-        <div class="modal-body nav-compose-body">
-          <section class="sheet-section">
+        <div class="modal-body nav-compose-body" id="modal-crear-grupo-navegacion">
+          <section class="sheet-section" id="paneles-crear-grupo-navegacion">
             <div class="sheet-section-title">Pestañas seleccionadas</div>
             <p class="nav-compose-summary">${escapeHtml(selectedLabels)}</p>
           </section>
-          <section class="sheet-section">
-            <label class="field">
-              <span>Nombre del grupo</span>
+          <section class="sheet-section" id="meta-crear-grupo-navegacion">
+            <label class="field" id="nombre-crear-grupo-navegacion">
               <input name="nav-group-label" maxlength="18" placeholder="Grupo principal" type="text" value="${escapeHtml(getNextNavGroupLabel())}" />
             </label>
-            <label class="field">
-              <span>Emoji del grupo</span>
+            <label class="field" id="emoji-crear-grupo-navegacion">
               <input name="nav-group-emoji" maxlength="8" placeholder="🗂️" type="text" value="${escapeHtml(NAV_GROUP_EMOJI_FALLBACK)}" />
             </label>
           </section>
@@ -2917,6 +2915,7 @@ void initSyncManager({
   db,
   getUserId: () => auth.currentUser?.uid || "",
 });
+initThemeService();
 initAchievementsService();
 initGeneralCenterService();
 bindSyncIndicatorToggles();

@@ -3,14 +3,14 @@
   min-width: 34px;
   max-width: min(190px, 56vw);
   padding: 6px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--app-border);
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: linear-gradient(135deg, rgba(21, 29, 48, 0.92), rgba(10, 14, 24, 0.88));
-  color: #edf4ff;
-  box-shadow: 0 14px 34px rgba(2, 6, 15, 0.28);
+  background: var(--app-surface-strong);
+  color: var(--app-text-secondary);
+  box-shadow: var(--app-shadow-chip);
   backdrop-filter: blur(16px);
   cursor: pointer;
   font: inherit;
@@ -22,14 +22,14 @@
 }
 
 .app-achievements-btn:hover {
-  border-color: rgba(224, 189, 95, 0.34);
+  border-color: var(--app-border-strong);
   transform: translateY(-1px);
 }
 
 .app-achievements-btn:focus-visible,
 .app-achievements-tab:focus-visible,
 .app-achievements-modal__close:focus-visible {
-  outline: 2px solid rgba(255, 214, 122, 0.72);
+  outline: 2px solid var(--app-focus-ring);
   outline-offset: 3px;
 }
 
@@ -55,8 +55,8 @@
   min-width: 38px;
   padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(255, 214, 122, 0.12);
-  color: #fff5d4;
+  background: var(--app-chip-accent-bg);
+  color: var(--app-chip-accent-text);
   text-align: center;
 }
 
@@ -75,7 +75,7 @@
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: rgba(202, 214, 234, 0.72);
+  color: var(--app-text-muted);
 }
 
 .app-achievements-modal__header {
@@ -87,8 +87,8 @@
   min-height: 36px;
   border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #eef5ff;
+  background: var(--app-chip-bg);
+  color: var(--app-text-secondary);
   cursor: pointer;
 }
 
@@ -100,10 +100,8 @@
 
 .app-achievements-shell,
 .app-achievements-moduleHero {
-  border: 1px solid rgba(255, 214, 122, 0.12);
-  background:
-    radial-gradient(circle at top right, rgba(255, 214, 122, 0.14), transparent 34%),
-    linear-gradient(160deg, rgba(15, 20, 34, 0.92), rgba(10, 14, 24, 0.9));
+  border: 1px solid var(--app-border);
+  background: var(--app-panel-gradient);
 }
 
 .app-achievements-shell__summary,
@@ -121,7 +119,7 @@
 .app-achievements-shell__title,
 .app-achievements-moduleHero__title {
   margin: 4px 0 6px;
-  color: #f8fbff;
+  color: var(--app-text);
   font-size: 20px;
   line-height: 1.15;
 }
@@ -132,7 +130,7 @@
 .app-achievement-card__copy span,
 .app-achievements-empty {
   margin: 0;
-  color: rgba(220, 231, 246, 0.84);
+  color: var(--app-text-secondary);
   line-height: 1.45;
 }
 
@@ -141,8 +139,8 @@
   min-width: 110px;
   padding: 12px 14px;
   border-radius: 18px;
-  border: 1px solid rgba(255, 214, 122, 0.16);
-  background: rgba(255, 214, 122, 0.08);
+  border: 1px solid var(--app-warning-soft);
+  background: var(--app-warning-soft);
   display: grid;
   gap: 4px;
   text-align: right;
@@ -152,7 +150,7 @@
 .app-achievements-stat strong,
 .app-achievement-card__metric strong,
 .app-achievement-card__next strong {
-  color: #f6fbff;
+  color: var(--app-text);
   font-size: 22px;
   line-height: 1;
 }
@@ -177,8 +175,8 @@
 .app-achievements-nearby__item,
 .app-achievement-card {
   border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.032);
+  border: 1px solid var(--app-border-soft);
+  background: var(--app-surface-soft);
 }
 
 .app-achievements-stat {
@@ -201,9 +199,9 @@
   min-width: 0;
   padding: 10px 12px;
   border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-  color: #eef5ff;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-soft);
+  color: var(--app-text-secondary);
   display: grid;
   justify-items: center;
   gap: 6px;
@@ -214,8 +212,8 @@
 
 .app-achievements-tab:hover,
 .app-achievements-tab.is-active {
-  border-color: rgba(255, 214, 122, 0.26);
-  background: rgba(255, 214, 122, 0.08);
+  border-color: var(--app-warning-soft);
+  background: var(--app-warning-soft);
 }
 
 .app-achievements-tab.is-active {
@@ -254,16 +252,16 @@
 
 .app-achievement-card[data-tone="near"],
 .app-achievements-nearby__item[data-tone="near"] {
-  border-color: rgba(255, 214, 122, 0.28);
-  box-shadow: inset 0 0 0 1px rgba(255, 214, 122, 0.06);
+  border-color: var(--app-warning);
+  box-shadow: inset 0 0 0 1px var(--app-warning-soft);
 }
 
 .app-achievement-card[data-tone="earned"],
 .app-achievement-card[data-tone="maxed"] {
-  border-color: rgba(215, 178, 90, 0.22);
+  border-color: var(--app-warning-soft);
   background:
-    radial-gradient(circle at top right, rgba(255, 214, 122, 0.12), transparent 35%),
-    rgba(255, 255, 255, 0.038);
+    radial-gradient(circle at top right, var(--app-warning-soft), transparent 35%),
+    var(--app-surface-soft);
 }
 
 .app-achievement-card__identity {
@@ -278,7 +276,7 @@
   border-radius: 14px;
   display: grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--app-chip-bg);
   font-size: 18px;
   flex: 0 0 auto;
 }
@@ -290,19 +288,19 @@
 }
 
 .app-achievement-card__copy strong {
-  color: #f7fbff;
+  color: var(--app-text);
   font-size: 14px;
 }
 
 .app-achievement-card__medal,
 .app-achievements-moduleHero__badge {
-  color: #fff4ca;
+  color: var(--app-date-text);
 }
 
 .app-achievement-card__medal {
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(255, 214, 122, 0.08);
+  background: var(--app-warning-soft);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -318,22 +316,22 @@
   flex: 1 1 0;
   padding: 10px 12px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--app-chip-bg);
   display: grid;
   gap: 4px;
 }
 
 .app-achievement-card__meta {
   align-items: center;
-  color: rgba(206, 220, 243, 0.78);
+  color: var(--app-text-muted);
   gap: 8px;
 }
 
 .app-achievement-card__maxed {
   padding: 10px 12px;
   border-radius: 14px;
-  background: rgba(255, 214, 122, 0.08);
-  color: #fff4ca;
+  background: var(--app-warning-soft);
+  color: var(--app-date-text);
   font-size: 12px;
 }
 
@@ -346,7 +344,7 @@
 .app-achievement-tier {
   padding: 8px 6px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--app-chip-bg);
   display: grid;
   gap: 2px;
   justify-items: center;
@@ -354,13 +352,13 @@
 }
 
 .app-achievement-tier[data-state="completed"] {
-  background: rgba(255, 214, 122, 0.14);
-  color: #fff3cb;
+  background: var(--app-warning-soft);
+  color: var(--app-date-text);
 }
 
 .app-achievement-tier[data-state="next"] {
-  background: rgba(116, 189, 255, 0.14);
-  color: #dff2ff;
+  background: var(--app-info-soft);
+  color: var(--app-highlight-blue);
 }
 
 .app-achievement-tier strong {
@@ -376,7 +374,7 @@
   height: 10px;
   border-radius: 999px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--app-progress-bg);
 }
 
 .app-achievements-progress--compact {
@@ -387,7 +385,7 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, rgba(255, 214, 122, 0.96), rgba(116, 189, 255, 0.96));
+  background: var(--app-progress-fill);
 }
 
 .app-achievement-toast-stack {
@@ -403,9 +401,9 @@
   width: min(320px, calc(100vw - 32px));
   padding: 12px;
   border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: linear-gradient(145deg, rgba(16, 22, 36, 0.96), rgba(10, 14, 24, 0.94));
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-strong);
+  box-shadow: var(--app-shadow-card);
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 10px;
@@ -413,17 +411,17 @@
 
 .app-achievement-toast__icon,
 .app-achievement-toast__close {
-  color: #fff4ca;
+  color: var(--app-date-text);
 }
 
 .app-achievement-toast__copy strong {
-  color: #f6fbff;
+  color: var(--app-text);
   font-size: 13px;
 }
 
 .app-achievement-toast__copy p {
   margin: 4px 0 0;
-  color: rgba(220, 231, 246, 0.82);
+  color: var(--app-text-secondary);
   font-size: 12px;
   line-height: 1.4;
 }

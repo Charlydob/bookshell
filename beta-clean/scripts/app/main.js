@@ -1530,7 +1530,7 @@ function openNavComposeModal() {
     <div class="modal nav-compose-modal" role="dialog" aria-modal="true" aria-labelledby="nav-compose-title">
       <div class="modal-header">
         <div class="modal-title" id="nav-compose-title">Crear grupo</div>
-        <button class="icon-btn icon-btn-small" data-nav-compose-close type="button" aria-label="Cerrar">x</button>
+        <button class="btn-x icon-btn-small" data-nav-compose-close type="button" aria-label="Cerrar">x</button>
       </div>
       <form class="modal-form nav-compose-form" data-nav-compose-form>
         <div class="modal-body nav-compose-body" id="modal-crear-grupo-navegacion">
@@ -1938,7 +1938,7 @@ function renderNavManager() {
     <div class="modal nav-manage-modal" role="dialog" aria-modal="true" aria-labelledby="nav-manage-title">
       <div class="modal-header">
         <div class="modal-title" id="nav-manage-title">Agrupar navegacion</div>
-        <button class="icon-btn icon-btn-small" data-nav-manager-close type="button" aria-label="Cerrar">x</button>
+        <button class="btn-x icon-btn-small" data-nav-manager-close type="button" aria-label="Cerrar">x</button>
       </div>
       <form class="modal-form nav-manage-form" data-nav-manager-form>
         <div class="modal-body nav-manage-body">
@@ -2300,7 +2300,7 @@ function ensureGlobalQuickFab() {
           aria-expanded="false"
           data-global-fab-toggle
         >
-          <span class="app-global-fab__togglePlus" aria-hidden="true">＋</span>
+          <span class="app-global-fab__togglePlus" aria-hidden="true">🌎</span>
         </button>
       </div>
     </div>

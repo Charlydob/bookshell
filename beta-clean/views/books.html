@@ -8,25 +8,25 @@
 <div class="books-panel is-active" id="books-panel-main">
 <!-- STATS + CALENDARIO DE LIBROS (ANTES ESTABA EN view-stats) -->
 <div class="stats-wrapper">
-<div class="stats-cards">
-<div class="stat-card">
-<div class="stat-label" id="racha-actual">Racha actual</div>
-<div class="stat-value" id="stat-streak-current">0</div>
+<div class="stats-kpis">
+<div class="stat-kpi">
+<div class="kpi-label" id="racha-actual">Racha actual</div>
+<div class="kpi-value" id="stat-streak-current">0</div>
 </div>
-<div class="stat-card" id="mejor-actual">
-<div class="stat-label">Mejor racha</div>
-<div class="stat-value" id="stat-streak-best">0</div>
+<div class="stat-kpi" id="mejor-actual">
+<div class="kpi-label">Mejor racha</div>
+<div class="kpi-value" id="stat-streak-best">0</div>
 </div>
-<div class="stat-card" id="paginas-hoy">
-<div class="stat-label">Páginas hoy</div>
-<div class="stat-value" id="stat-today-pages">0</div>
+<div class="stat-kpi" id="paginas-hoy">
+<div class="kpi-label">Páginas hoy</div>
+<div class="kpi-value" id="stat-today-pages">0</div>
 </div>
-<div class="stat-card" id="paginas-totales">
-<div class="stat-label">Páginas totales</div>
-<div class="stat-value" id="stat-pages-total">0</div>
+<div class="stat-kpi" id="paginas-totales">
+<div class="kpi-label">Páginas totales</div>
+<div class="kpi-value" id="stat-pages-total">0</div>
 </div>
-<div class="stat-card stat-card-clickable" id="stat-books-read-card">
-<div class="stat-label stat-label-row">
+<div class="stat-kpi stat-card-clickable" id="stat-books-read-card">
+<div class="kpi-label stat-label-row">
 <span>Libros leídos</span>
 <select aria-label="Rango libros leídos" class="stat-range-select" id="stat-books-read-range">
 <option selected="" value="total">Total</option>
@@ -35,15 +35,15 @@
 <option value="week">Semana</option>
 </select>
 </div>
-<div class="stat-value" id="stat-books-read">0</div>
+<div class="kpi-value" id="stat-books-read">0</div>
 </div>
 </div>
 <div class="calendar-section">
 <div class="calendar-header">
 <div class="calendar-nav">
-<button class="icon-btn" id="cal-prev">&lt;</button>
+<button class="btn-flecha" id="cal-prev">&lt;</button>
 <div class="cal-label" id="cal-label"></div>
-<button class="icon-btn" id="cal-next">&gt;</button>
+<button class="btn-flecha" id="cal-next">&gt;</button>
 </div>
 <select aria-label="Vista del calendario" class="calendar-view-select" id="cal-view-mode">
 <option selected="" value="month">Mes</option>
@@ -62,11 +62,9 @@
 </div>
 </div>
 <!-- TOOLBAR + LISTA LIBROS -->
-<div class="books-toolbar">
-<button class="btn primary" id="btn-add-book">+ Añadir libro</button>
-</div>
+
 <input autocomplete="off" class="filter-search-input" id="books-filter-search" inputmode="search" placeholder="Título, autor, categoría, idioma o siglo" type="search"/>
-    <div aria-label="Filtros din�micos" class="books-filter-select-grid" id="books-filter-selects"></div>
+    <div aria-label="Filtros din�micos" class="select-grid books-filter-select-grid" id="books-filter-selects"></div>
 
 
 <details class="books-watchlist" id="books-watchlist" style="display:none;">
@@ -93,8 +91,13 @@
 <div class="empty-state" id="books-filter-empty" style="display:none;">
           No hay libros que coincidan con los filtros.
         </div>
+
+        <div class="books-toolbar">
+<button class="btn primary" id="btn-add-book">+ Añadir libro</button>
+</div>
 <details class="books-finished" id="books-finished-section" style="display:none;">
 <summary class="books-finished-summary">
+  
 <span>Terminados</span>
 <span class="books-finished-count" id="books-finished-count">0</span>
 </summary>
@@ -161,7 +164,7 @@
 <div class="modal-handle"></div>
 <div class="modal-header">
 <div class="modal-title" id="book-modal-title">Nuevo libro</div>
-<button class="icon-btn" id="book-modal-close">✕</button>
+<button class="btn-x" id="book-modal-close">✕</button>
 </div>
 <form class="modal-form" id="book-form">
 <input id="book-id" type="hidden"/>

@@ -51,10 +51,10 @@
   --app-border-soft: rgba(47, 69, 104, 0.08);
   --app-border-strong: rgba(47, 69, 104, 0.22);
   --app-border-dashed: rgba(47, 69, 104, 0.28);
-  --app-text: #182235;
+  --app-text: #2c497e;
   --app-text-secondary: #334260;
-  --app-text-muted: #607089;
-  --app-text-inverse: #ffffff;
+  --app-text-muted: #3f66a4;
+  --app-text-inverse: #cb4646;
   --app-accent: #2f6dff;
   --app-accent-strong: #79a3ff;
   --app-accent-soft: rgba(47, 109, 255, 0.14);
@@ -66,7 +66,7 @@
   --app-overlay: rgba(96, 111, 137, 0.24);
   --app-menu-bg: rgba(255, 255, 255, 0.96);
   --app-menu-shadow: 0 18px 42px rgba(52, 72, 104, 0.16);
-  --app-nav-text: rgba(56, 74, 105, 0.84);
+  --app-nav-text: rgba(50, 92, 164, 0.84);
   --app-nav-active-text: #15305d;
   --app-shadow-soft: 0 18px 40px rgba(88, 108, 136, 0.18);
   --app-shadow-modal: 0 18px 52px rgba(66, 83, 109, 0.2);

@@ -1319,7 +1319,7 @@ async function openGroupBasesModal(groupId, modeId = null) {
     <div class="modal-handle"></div>
     <div class="modal-header">
       <div class="modal-title">Bases · ${modeLabel}</div>
-      <button class="icon-btn" type="button" data-close>✕</button>
+      <button class="btn-x " type="button" data-close>✕</button>
     </div>
     <div class="modal-scroll sheet-body">
       ${sandboxGroup ? `<details class="base-section" open><summary>Bases sandbox</summary><div class="base-modal-grid">

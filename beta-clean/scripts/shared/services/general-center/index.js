@@ -1123,7 +1123,7 @@ function ensureGeneralModal() {
           <div class="app-general-modal__eyebrow">General</div>
           <div class="modal-title" id="app-general-title">Misiones y tareas</div>
         </div>
-        <button class="app-general-modal__close" type="button" aria-label="Cerrar general" data-general-close>✕</button>
+        <button class="btn-x app-general-modal__close" type="button" aria-label="Cerrar general" data-general-close>✕</button>
       </header>
       <div class="modal-body app-general-modal__body" id="${GENERAL_BODY_ID}"></div>
     </section>

@@ -45,7 +45,7 @@
 /* Filtros */
 .media-filters{ display:flex; flex-direction:column; gap:10px; }
 .media-filter-row{ display:flex; gap:10px; align-items:center; }
-.media-filter-row .filter-search-input{ flex:1; min-width: 180px; }
+.media-filter-row { flex:1; min-width: 180px; }
 
 .media-type-pills{ display:flex; gap:8px; flex-wrap:wrap; }
 .media-pill{

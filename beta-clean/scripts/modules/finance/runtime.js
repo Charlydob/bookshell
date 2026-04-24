@@ -2687,10 +2687,9 @@ function buildProductsViewModel(cfg = {}) {
       ...ticket,
       actualTotal: normalizeProductPositiveNumber(ticket.actualTotal, Object.values(ticket.lines || {}).reduce((sum, line) => sum + (Math.max(1, Number(line.qty || 1)) * normalizeProductPositiveNumber(line.actualPrice || line.estimatedPrice, 0)), 0)),
       lineCount: Object.keys(ticket.lines || {}).length,
-      confirmedAt: normalizeProductNumber(ticket.confirmedAt, parseDayKey(String(ticket.dateISO || ''))),
+      confirmedAt: normalizeProductNumber(ticket.confirmedAt, normalizeProductNumber(ticket.updatedAt, parseDayKey(String(ticket.dateISO || '')))),
     }))
-    .sort((a, b) => Number(b.confirmedAt || 0) - Number(a.confirmedAt || 0))
-    .slice(0, 8);
+    .sort((a, b) => Number(b.confirmedAt || 0) - Number(a.confirmedAt || 0));
   const reusableLists = Object.values(state.productsHub?.lists || {})
     .filter((list) => list.id !== activeList.id && list.id !== '__draft__' && Object.keys(list.lines || {}).length)
     .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
@@ -3605,7 +3604,7 @@ function renderProductsTicketHero(model) {
         <span class="productsWorkbench__ticketBarDivider" aria-hidden="true">|</span>
         <div class="productsWorkbench__panelActions productsWorkbench__panelActions--inlineReceipt productsWorkbench__panelActions--ticketCrud">
           <button type="button" class="food-history-btn" data-products-create-empty-ticket>Nuevo ticket</button>
-          <button type="button" class="food-history-btn" data-products-delete-ticket="${escapeHtml(model.activeTicketId || '')}" ${model.tickets.length > 1 ? '' : 'disabled'}>Eliminar ticket</button>
+          <button type="button" class="food-history-btn" data-products-delete-ticket="${escapeHtml(model.activeTicketId || '')}">Eliminar ticket</button>
         </div>
       </div>
       <div class="productsWorkbench__receipt" data-products-receipt>
@@ -4181,7 +4180,7 @@ async function switchProductsActiveTicket(ticketId = '') {
 
 async function moveSelectedReceiptLinesToNewTicket() {
   const draft = ensureProductsListTickets(readProductsListDraftFromDom(document));
-  const listId = String(draft.id || '__draft__');
+  const listId = String(normalizedDraft.id || '__draft__');
   const selectedIds = Object.keys(getReceiptSelectionMap(listId) || {}).filter((lineId) => draft.lines?.[lineId]);
   if (!selectedIds.length) return;
   const nextTicketId = createFinanceRecordId('ticketlist');
@@ -4281,8 +4280,13 @@ async function deleteProductsTicket(ticketId = '') {
     if (!nextTicketIds.includes(draft.activeTicketId)) draft.activeTicketId = nextTicketIds[0] || draft.primaryTicketId;
   }
   draft.updatedAt = nowTs();
-  syncProductsDraftListLocal(ensureProductsListTickets(draft));
-  const listId = String(draft.id || '__draft__');
+  const normalizedDraft = ensureProductsListTickets(draft);
+  if (normalizedDraft.id === '__draft__') {
+    syncProductsDraftListLocal(normalizedDraft);
+  } else {
+    await persistProductsListRecord(normalizedDraft, { activate: true });
+  }
+  const listId = String(normalizedDraft.id || '__draft__');
   const selection = { ...getReceiptSelectionMap(listId) };
   lineIds.forEach((lineId) => { delete selection[lineId]; });
   setReceiptSelectionMap(listId, selection);
@@ -4593,9 +4597,8 @@ async function ensurePersistedActiveProductsList(seed = null) {
   if (draft.id !== '__draft__') {
     return persistProductsListRecord(draft, { activate: true });
   }
-  const persisted = createEmptyProductsList({
+  const persisted = normalizeProductsHubList(createFinanceRecordId('list'), {
     ...draft,
-    id: createFinanceRecordId('list'),
     createdAt: draft.createdAt || nowTs(),
     updatedAt: nowTs(),
   });
@@ -5201,10 +5204,17 @@ async function saveProductsPurchaseTransaction(list = {}) {
     updatedAt: nowTs(),
     createdAt: nowTs(),
   };
-  await safeFirebase(() => update(ref(db), {
-    [`${state.financePath}/transactions/${saveId}`]: payload,
-    [`${state.financePath}/catalog/categories/${category}`]: { name: category, lastUsedAt: nowTs() },
-  }));
+  const txPersisted = await safeFirebase(async () => {
+    await update(ref(db), {
+      [`${state.financePath}/transactions/${saveId}`]: payload,
+      [`${state.financePath}/catalog/categories/${category}`]: { name: category, lastUsedAt: nowTs() },
+    });
+    return true;
+  }, false);
+  if (!txPersisted) {
+    toast('No se pudo registrar el gasto en finanzas');
+    return null;
+  }
 
   const freshRoot = await loadFinanceRoot();
   await recomputeAccountEntries(accountId, dateISO, freshRoot);

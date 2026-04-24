@@ -1,10 +1,10 @@
 <div class="recipes-wrapper">
 
-<div class="recipes-subtabs" role="tablist" aria-label="Subvistas de recetas">
-<button class="recipes-subtab is-active" id="recipes-subtab-library" data-recipes-panel="library" aria-selected="true" type="button">Recetas</button>
-<button class="recipes-subtab" id="recipes-subtab-macros" data-recipes-panel="macros" aria-selected="false" type="button">Macros</button>
-<button class="recipes-subtab" id="recipes-subtab-statistics" data-recipes-panel="statistics" aria-selected="false" type="button">Estadí­stica</button>
-<button class="recipes-subtab" id="recipes-subtab-shopping" data-recipes-panel="shopping" aria-selected="false" type="button">Compra</button>
+<div class="recipes-subtabs app-tabs" role="tablist" aria-label="Subvistas de recetas">
+<button class="recipes-subtab app-tab is-active" id="recipes-subtab-library" data-recipes-panel="library" aria-selected="true" type="button">Recetas</button>
+<button class="recipes-subtab app-tab" id="recipes-subtab-macros" data-recipes-panel="macros" aria-selected="false" type="button">Macros</button>
+<button class="recipes-subtab app-tab" id="recipes-subtab-statistics" data-recipes-panel="statistics" aria-selected="false" type="button">Estadí­stica</button>
+<button class="recipes-subtab app-tab" id="recipes-subtab-shopping" data-recipes-panel="shopping" aria-selected="false" type="button">Compra</button>
 </div>
 <div class="recipes-panel is-active" id="recipes-panel-library">
   <div class="recipes-top">
@@ -28,14 +28,14 @@
     </div>
 </div>
 <div class="recipes-toolbar">
-<button class="btn primary" id="btn-add-recipe">🥞</button>
-<button class="btn ghost btn-compact" id="recipes-start-session" type="button">→ Iniciar sesión</button>
+<button class="btn app-btn app-btn--primary primary" id="btn-add-recipe">🥞</button>
+<button class="btn app-btn app-btn--ghost app-btn--compact ghost btn-compact" id="recipes-start-session" type="button">→ Iniciar sesión</button>
 </div>
 <div class="books-filters is-collapsed" id="recipes-filters">
   <div class="books-filters-header" id="recipes-filters-header">
   <div class="filter-row filter-search-row">
   <label class="field-label" id="label-buscador"for="recipes-filter-search">Buscar</label>
-  <input autocomplete="off" class="filter-search-input" id="recipes-filter-search" inputmode="search" placeholder="Nombre del plato, etiquetas o tipo de comida" type="search"/>
+  <input autocomplete="off" class="filter-search-input app-search app-input" id="recipes-filter-search" inputmode="search" placeholder="Nombre del plato, etiquetas o tipo de comida" type="search"/>
   </div>
   <button aria-controls="recipes-filters-body" aria-expanded="false" class="filters-toggle-btn" id="recipes-filters-toggle" type="button">
   <span class="filters-toggle-text">Mostrar filtros</span>
@@ -62,10 +62,10 @@
 <div class="recipes-shelf-wrapper">
 <div class="recipes-shelf-toolbar">
 <label class="field-label shelf-search-label" for="recipes-shelf-search">Buscar en la estanterí­a</label>
-<input class="shelf-search-input" id="recipes-shelf-search" placeholder="Nombre, tipo, etiquetas..." type="search"/>
-<div class="recipes-view-toggle" id="recipes-view-toggle" role="tablist" aria-label="Modo de vista de recetas">
-<button class="recipes-view-toggle-btn is-active" data-recipes-view="shelf" role="tab" aria-selected="true" type="button">Estanterí­a</button>
-<button class="recipes-view-toggle-btn" data-recipes-view="cards" role="tab" aria-selected="false" type="button">Tarjetas</button>
+<input class="shelf-search-input app-search app-input" id="recipes-shelf-search" placeholder="Nombre, tipo, etiquetas..." type="search"/>
+<div class="recipes-view-toggle app-segmented" id="recipes-view-toggle" role="tablist" aria-label="Modo de vista de recetas">
+<button class="recipes-view-toggle-btn app-segmented__item app-chip is-active" data-recipes-view="shelf" role="tab" aria-selected="true" type="button">Estanterí­a</button>
+<button class="recipes-view-toggle-btn app-segmented__item app-chip" data-recipes-view="cards" role="tab" aria-selected="false" type="button">Tarjetas</button>
 </div>
 <div class="books-shelf-results" id="recipes-shelf-results"></div>
 </div>
@@ -76,7 +76,7 @@
 </div>
 <div class="recipes-list-panel-body" id="recipes-list-preview"></div>
 </section>
-<div class="books-shelf-empty" id="recipes-shelf-empty" style="display:none;">
+<div class="books-shelf-empty app-empty-state" id="recipes-shelf-empty" style="display:none;">
               No hay recetas que coincidan con la bíºsqueda.
             </div>
 <div class="books-list recipes-shelf" id="recipes-list"></div>
@@ -115,7 +115,7 @@
 </div>
 </div>
 </section>
-<div class="empty-state" id="recipes-empty">
+<div class="empty-state app-empty-state" id="recipes-empty">
             Aíºn no has aí±adido recetas.
           </div>
 </div>
@@ -135,17 +135,17 @@
   </div>
   <div class="macro-meals" id="macro-meals"></div>
 </div>
-<div class="modal-backdrop hidden" id="macro-integration-modal-backdrop">
-  <div class="macro-modal macro-integration-modal" role="dialog" aria-modal="true" aria-labelledby="macro-integration-modal-title">
+<div class="modal-backdrop app-modal__overlay hidden" id="macro-integration-modal-backdrop">
+  <div class="macro-modal macro-integration-modal app-modal__panel" role="dialog" aria-modal="true" aria-labelledby="macro-integration-modal-title">
     <div class="macro-modal-handle"></div>
-    <div class="macro-modal-header">
+    <div class="macro-modal-header app-modal__header">
       <div>
-        <h3 class="macro-modal-title" id="macro-integration-modal-title">Configuración avanzada</h3>
+        <h3 class="macro-modal-title app-modal__title" id="macro-integration-modal-title">Configuración avanzada</h3>
         <p class="macro-modal-subtitle">Ajustes de gasto calórico e integración Gym/Hí¡bitos</p>
       </div>
-      <button class="icon-btn" type="button" id="macro-integration-modal-close" aria-label="Cerrar">❌</button>
+      <button class="icon-btn app-btn app-btn--icon app-modal__close" type="button" id="macro-integration-modal-close" aria-label="Cerrar">❌</button>
     </div>
-    <div class="macro-modal-body">
+    <div class="macro-modal-body app-modal__body">
       <div class="macro-integration-settings">
         <label class="macro-integration-field">
           <span>Peso corporal (kg)</span>

@@ -3,15 +3,15 @@
   <div class="habits-title"></div>
   </header>
 <div class="habit-quick-actions habit-quick-actions-bar">
-<button class="btn ghost btn-compact habit-quick-btn" id="habit-add-time">+ Añadir tiempo</button>
-<button class="btn ghost btn-compact habit-quick-btn" id="habit-fab-add">+ Añadir hábito</button>
-<button class="btn ghost btn-compact habit-quick-btn" id="habit-session-toggle">▶︎ Empezar sesión</button>
+<button class="btn app-btn app-btn--ghost app-btn--compact ghost btn-compact habit-quick-btn" id="habit-add-time">+ Añadir tiempo</button>
+<button class="btn app-btn app-btn--ghost app-btn--compact ghost btn-compact habit-quick-btn" id="habit-fab-add">+ Añadir hábito</button>
+<button class="btn app-btn app-btn--ghost app-btn--compact ghost btn-compact habit-quick-btn" id="habit-session-toggle">▶︎ Empezar sesión</button>
 </div>
-<div aria-label="Vistas de hábitos" class="habits-subtabs" role="tablist">
-<button aria-selected="true" class="habit-subtab is-active" data-tab="today" role="tab">Hoy</button>
-<button aria-selected="false" class="habit-subtab" data-tab="history" role="tab">Historial</button>
-<button aria-selected="false" class="habit-subtab" data-tab="schedule" role="tab">Horario</button>
-<button aria-selected="false" class="habit-subtab" data-tab="reports" role="tab">Reportes</button>
+<div aria-label="Vistas de hábitos" class="habits-subtabs app-tabs" role="tablist">
+<button aria-selected="true" class="habit-subtab app-tab is-active" data-tab="today" role="tab">Hoy</button>
+<button aria-selected="false" class="habit-subtab app-tab" data-tab="history" role="tab">Historial</button>
+<button aria-selected="false" class="habit-subtab app-tab" data-tab="schedule" role="tab">Horario</button>
+<button aria-selected="false" class="habit-subtab app-tab" data-tab="reports" role="tab">Reportes</button>
 </div>
 <div class="habits-views">
 <div class="habits-panel is-active" data-panel="today">
@@ -19,9 +19,9 @@
 <div class="habit-today-month-calendar" id="habit-today-month-calendar" data-search-ignore="true"></div>
 
 <div class="habit-quick-toggle" data-search-ignore="true">
-  <div class="habit-quick-tabs" role="tablist" aria-label="Accesos rápidos de hábitos">
-    <button class="habit-quick-tab-btn is-active" id="habit-quick-tab-sessions" data-habit-quick-tab="sessions" role="tab" aria-selected="true" type="button">Sesiones</button>
-    <button class="habit-quick-tab-btn" id="habit-quick-tab-counters" data-habit-quick-tab="counters" role="tab" aria-selected="false" type="button">Contadores</button>
+  <div class="habit-quick-tabs app-segmented" role="tablist" aria-label="Accesos rápidos de hábitos">
+    <button class="habit-quick-tab-btn app-segmented__item app-chip is-active" id="habit-quick-tab-sessions" data-habit-quick-tab="sessions" role="tab" aria-selected="true" type="button">Sesiones</button>
+    <button class="habit-quick-tab-btn app-segmented__item app-chip" id="habit-quick-tab-counters" data-habit-quick-tab="counters" role="tab" aria-selected="false" type="button">Contadores</button>
   </div>
 
 <details class="habit-accordion habit-quick-sessions" id="habit-quick-sessions" data-search-ignore="true" data-habit-quick-panel="sessions" open>
@@ -61,7 +61,7 @@
 
     <div class="habit-today-search" id="habit-today-search">
     <span class="habit-search-icon" aria-hidden="true">🔍</span>
-    <input autocomplete="off" class="habit-search-input" id="habit-today-search-input" inputmode="search" placeholder="Buscar hábito…" type="search"/>
+    <input autocomplete="off" class="habit-search-input app-search app-input" id="habit-today-search-input" inputmode="search" placeholder="Buscar hábito…" type="search"/>
     <button class="habit-search-clear" id="habit-today-search-clear" type="button" aria-label="Limpiar búsqueda">✕</button>
     </div>
     <div class="habit-search-empty" id="habit-today-search-empty" style="display:none;">
@@ -215,39 +215,39 @@
 <div class="habit-card-title">Exportación</div>
 <button class="game-menu-btn" id="habits-export-btn" type="button">Exportar CSV</button>
 </div>
-<div class="habit-kpi-grid">
-<div class="habit-kpi-card">
-<div class="habit-kpi-label" id="habit-kpi-today-label">Hechos hoy</div>
-<div class="habit-kpi-value" id="habit-kpi-today">0</div>
+<div class="habit-kpi-grid app-kpi-grid">
+<div class="habit-kpi-card app-kpi-card">
+<div class="habit-kpi-label app-kpi-card__label" id="habit-kpi-today-label">Hechos hoy</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-kpi-today">0</div>
 </div>
-<div class="habit-kpi-card">
-<div class="habit-kpi-label">Horas totales</div>
-<div class="habit-kpi-value" id="habit-kpi-total-hours">0h</div>
-<div class="habit-kpi-sub" id="habit-kpi-total-hours-range">—</div>
+<div class="habit-kpi-card app-kpi-card">
+<div class="habit-kpi-label app-kpi-card__label">Horas totales</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-kpi-total-hours">0h</div>
+<div class="habit-kpi-sub app-kpi-card__meta" id="habit-kpi-total-hours-range">—</div>
 </div>
-<div class="habit-kpi-card">
-<div class="habit-kpi-label" id="habit-kpi-active-days-label">Días contabilizados total</div>
-<div class="habit-kpi-value" id="habit-kpi-active-days-total">0</div>
+<div class="habit-kpi-card app-kpi-card">
+<div class="habit-kpi-label app-kpi-card__label" id="habit-kpi-active-days-label">Días contabilizados total</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-kpi-active-days-total">0</div>
 </div>
-<div class="habit-kpi-card">
-<div class="habit-kpi-label" id="habit-kpi-streak-label">Racha total</div>
-<div class="habit-kpi-value" id="habit-kpi-streak-total">0</div>
-<div class="habit-kpi-sub" id="habit-kpi-streak-total-sub">—</div>
+<div class="habit-kpi-card app-kpi-card">
+<div class="habit-kpi-label app-kpi-card__label" id="habit-kpi-streak-label">Racha total</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-kpi-streak-total">0</div>
+<div class="habit-kpi-sub app-kpi-card__meta" id="habit-kpi-streak-total-sub">—</div>
 </div>
 </div>
 <div class="habit-kpi-grid habit-pin-grid">
 <div class="habit-kpi-card habit-pin-card">
-<div class="habit-kpi-label">Seguimiento · Contador</div>
-<div class="habit-kpi-value" id="habit-pin-count-today">—</div>
-<div class="habit-kpi-sub" id="habit-pin-count-range">—</div>
+<div class="habit-kpi-label app-kpi-card__label">Seguimiento · Contador</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-pin-count-today">—</div>
+<div class="habit-kpi-sub app-kpi-card__meta" id="habit-pin-count-range">—</div>
 <label class="habit-pin-select">
 <select aria-label="Elegir contador para pin 1" id="habit-pin-count-select"></select>
 </label>
 </div>
 <div class="habit-kpi-card habit-pin-card">
-<div class="habit-kpi-label">Seguimiento · Tiempo</div>
-<div class="habit-kpi-value" id="habit-pin-time-today">—</div>
-<div class="habit-kpi-sub" id="habit-pin-time-range">—</div>
+<div class="habit-kpi-label app-kpi-card__label">Seguimiento · Tiempo</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-pin-time-today">—</div>
+<div class="habit-kpi-sub app-kpi-card__meta" id="habit-pin-time-range">—</div>
 <label class="habit-pin-select">
 <select aria-label="Elegir hábito de tiempo para pin 2" id="habit-pin-time-select"></select>
 </label>
@@ -262,20 +262,20 @@
 </div>
 <div class="habit-records-grid">
 <div class="habit-record-card habit-record-card-mañanas">
-<div class="habit-kpi-label">Mañanas</div>
-<div class="habit-kpi-value" id="habit-shifts-morning">0</div>
+<div class="habit-kpi-label app-kpi-card__label">Mañanas</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-shifts-morning">0</div>
 </div>
 <div class="habit-record-card habit-record-card-tardes">
-<div class="habit-kpi-label">Tardes</div>
-<div class="habit-kpi-value" id="habit-shifts-evening">0</div>
+<div class="habit-kpi-label app-kpi-card__label">Tardes</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-shifts-evening">0</div>
 </div>
 <div class="habit-record-card habit-record-card-libres">
-<div class="habit-kpi-label">Días libres</div>
-<div class="habit-kpi-value" id="habit-shifts-free">0</div>
+<div class="habit-kpi-label app-kpi-card__label">Días libres</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-shifts-free">0</div>
 </div>
 <div class="habit-record-card habit-record-card-desconocidos">
-<div class="habit-kpi-label">Desconocido</div>
-<div class="habit-kpi-value" id="habit-shifts-unknown">0</div>
+<div class="habit-kpi-label app-kpi-card__label">Desconocido</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-shifts-unknown">0</div>
 </div>
 </div>
 </div>
@@ -294,21 +294,21 @@
 </div>
 <div class="habit-records-grid">
 <div class="habit-record-card">
-<div class="habit-kpi-label">Racha actual (total)</div>
-<div class="habit-kpi-value" id="habit-records-current-streak">0</div>
+<div class="habit-kpi-label app-kpi-card__label">Racha actual (total)</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-records-current-streak">0</div>
 </div>
 <div class="habit-record-card">
-<div class="habit-kpi-label">Mejor racha (rango)</div>
-<div class="habit-kpi-value" id="habit-records-best-streak">0</div>
+<div class="habit-kpi-label app-kpi-card__label">Mejor racha (rango)</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-records-best-streak">0</div>
 </div>
 <div class="habit-record-card">
-<div class="habit-kpi-label">Completados</div>
-<div class="habit-kpi-value" id="habit-records-completed">0</div>
-<div class="habit-kpi-sub" id="habit-records-completed-sub">—</div>
+<div class="habit-kpi-label app-kpi-card__label">Completados</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-records-completed">0</div>
+<div class="habit-kpi-sub app-kpi-card__meta" id="habit-records-completed-sub">—</div>
 </div>
 <div class="habit-record-card">
-<div class="habit-kpi-label">% éxito</div>
-<div class="habit-kpi-value" id="habit-records-success">0%</div>
+<div class="habit-kpi-label app-kpi-card__label">% éxito</div>
+<div class="habit-kpi-value app-kpi-card__value" id="habit-records-success">0%</div>
 </div>
 </div>
 </div>

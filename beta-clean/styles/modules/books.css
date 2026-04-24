@@ -182,29 +182,7 @@
   height: 18px;
 }
 
-.books-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-bottom: 6px;
-  min-height: 260px;
-}
 
-.books-list[data-loading="1"] {
-  position: relative;
-}
-
-.books-list[data-loading="1"]::before {
-  content: "";
-  display: block;
-  min-height: 260px;
-  border-radius: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background:
-    linear-gradient(180deg, rgba(20, 17, 29, 0.92), rgba(8, 10, 18, 0.95)),
-    linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.07), rgba(255,255,255,0.03));
-  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.42);
-}
 
 .books-watchlist{
   margin: 10px 4px 2px;
@@ -809,14 +787,6 @@
   font-size: 12px;
 }
 
-.books-list-finished{
-  padding: 10px 24px 12px;
-  padding-right: 28px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  overflow-x: hidden;
-}
 
 .book-card-finished{
   opacity: .72;
@@ -1880,3 +1850,40 @@ background-color: transparent;
   box-sizing: border-box;
   position: relative;
 }
+
+
+/* CONSERVAR */
+
+/* VISTA LIBROS */
+.books-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 0px;
+  min-height: 200px;
+}
+
+.books-list[data-loading="1"] {
+  position: relative;
+}
+
+.books-list[data-loading="1"]::before {
+  content: "";
+  display: block;
+  min-height: 260px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(20, 17, 29, 0.92), rgba(8, 10, 18, 0.95)),
+    linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.07), rgba(255,255,255,0.03));
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.42);
+}
+.books-list-finished{
+  padding: 10px 24px 12px;
+  padding-right: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-x: hidden;
+}
+/* CONSERVAR */

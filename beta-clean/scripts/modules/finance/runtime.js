@@ -2252,11 +2252,47 @@ function buildProductsRangeLabel(cfg = {}) {
   return String(cfg.rangeValue || dayKeyFromTs(nowTs()));
 }
 
+function averageProductsGapDays(timestamps = []) {
+  const ordered = [...new Set((Array.isArray(timestamps) ? timestamps : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0))]
+    .sort((a, b) => a - b);
+  if (ordered.length < 2) return 0;
+  const gaps = ordered.slice(1).map((ts, index) => Math.max(1, Math.round((ts - ordered[index]) / 86400000)));
+  return gaps.length ? Math.round(gaps.reduce((sum, value) => sum + value, 0) / gaps.length) : 0;
+}
+
+function averageProductsDurationDays(timestamps = []) {
+  const ordered = [...new Set((Array.isArray(timestamps) ? timestamps : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0))]
+    .sort((a, b) => a - b);
+  if (ordered.length < 2) return 0;
+  const durations = ordered.slice(1).map((ts, index) => {
+    const gapDays = Math.max(1, Math.round((ts - ordered[index]) / 86400000));
+    return Math.max(1, gapDays - 1);
+  });
+  return durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0;
+}
+
+function matchesProductsReplenishmentWindow(windowKey = 'all', row = {}) {
+  const safeKey = String(windowKey || 'all');
+  if (safeKey === 'all') return true;
+  const daysRemaining = Number(row?.daysRemaining);
+  if (!Number.isFinite(daysRemaining)) return safeKey === 'unknown';
+  if (safeKey === 'critical') return daysRemaining <= 0;
+  if (safeKey === 'next3') return daysRemaining > 0 && daysRemaining <= 3;
+  if (safeKey === 'next7') return daysRemaining > 3 && daysRemaining <= 7;
+  if (safeKey === 'later') return daysRemaining > 7;
+  return true;
+}
+
 function buildProductsViewModel(cfg = {}) {
   const allowedRanges = ['day', 'week', 'month', 'year', 'total', 'custom'];
   const allowedGroups = ['type', 'store', 'date', 'status'];
   const allowedSorts = ['forecast', 'name', 'price', 'last-purchase', 'duration', 'consumption', 'spend'];
   const allowedStatus = ['all', 'active', 'inactive', 'due'];
+  const allowedReplenishmentWindows = ['all', 'critical', 'next3', 'next7', 'later', 'unknown'];
   const allowedTabs = ['list', 'catalog'];
   const allowedCatalogPanels = ['catalog', 'editor', 'insights'];
   const rawTab = String(cfg?.tab || state.foodProductsView?.tab || 'list');
@@ -2278,6 +2314,9 @@ function buildProductsViewModel(cfg = {}) {
     priceBand: String(cfg?.priceBand || state.foodProductsView?.priceBand || 'all'),
     frequencyBand: String(cfg?.frequencyBand || state.foodProductsView?.frequencyBand || 'all'),
     durationBand: String(cfg?.durationBand || state.foodProductsView?.durationBand || 'all'),
+    replenishmentWindow: allowedReplenishmentWindows.includes(String(cfg?.replenishmentWindow || state.foodProductsView?.replenishmentWindow || 'all'))
+      ? String(cfg?.replenishmentWindow || state.foodProductsView?.replenishmentWindow || 'all')
+      : 'all',
     historyRange: String(cfg?.historyRange || state.foodProductsView?.historyRange || '90d'),
     selectedProductId: String(cfg?.selectedProductId || state.foodProductsView?.selectedProductId || ''),
     selectedIds: [...new Set(Array.isArray(cfg?.selectedIds || state.foodProductsView?.selectedIds) ? (cfg?.selectedIds || state.foodProductsView?.selectedIds) : [])],
@@ -2461,11 +2500,19 @@ function buildProductsViewModel(cfg = {}) {
     .filter((row) => !row.hiddenMerged)
     .map((row) => {
       const purchaseTs = [...new Set(row._purchaseTs.filter((ts) => Number.isFinite(ts) && ts > 0))].sort((a, b) => a - b);
-      const intervals = purchaseTs.slice(1).map((ts, index) => Math.max(1, Math.round((ts - purchaseTs[index]) / 86400000)));
-      const observedFrequencyDays = intervals.length
-        ? Math.round(intervals.reduce((sum, value) => sum + value, 0) / intervals.length)
-        : 0;
-      const effectiveDurationDays = normalizeProductPositiveNumber(row.estimatedDurationDays, normalizeProductPositiveNumber(row.purchaseFrequencyDays, observedFrequencyDays));
+      const observedFrequencyDays = averageProductsGapDays(purchaseTs);
+      const observedDurationDays = averageProductsDurationDays(purchaseTs);
+      const replenishmentCycleDays = normalizeProductPositiveNumber(
+        observedFrequencyDays,
+        normalizeProductPositiveNumber(row.purchaseFrequencyDays, 0),
+      );
+      const effectiveDurationDays = normalizeProductPositiveNumber(
+        observedDurationDays,
+        normalizeProductPositiveNumber(
+          row.estimatedDurationDays,
+          normalizeProductPositiveNumber(replenishmentCycleDays > 0 ? replenishmentCycleDays - 1 : 0, 0),
+        ),
+      );
       const daysSinceLastPurchase = row.lastPurchaseAt
         ? Math.max(0, Math.round((nowTs() - Number(row.lastPurchaseAt || 0)) / 86400000))
         : null;
@@ -2478,8 +2525,8 @@ function buildProductsViewModel(cfg = {}) {
       const currentUnitPrice = normalizeProductPositiveNumber(row.lastPrice, normalizeProductPositiveNumber(row.estimatedPrice, normalizeProductPositiveNumber(row.usualPrice, weightedAvgPrice)));
       const recurringQty = normalizeProductPositiveNumber(row.usualQty, 1);
       const predictedLineCost = currentUnitPrice * recurringQty;
-      const projectedMonthlySpend = effectiveDurationDays > 0
-        ? (30 / effectiveDurationDays) * predictedLineCost
+      const projectedMonthlySpend = replenishmentCycleDays > 0
+        ? (30 / replenishmentCycleDays) * predictedLineCost
         : row.monthSpend;
       const vendorRows = Object.values(row._vendorMap)
         .map((vendor) => ({
@@ -2508,8 +2555,8 @@ function buildProductsViewModel(cfg = {}) {
         ...(Array.isArray(row.aliasList) ? row.aliasList : []),
       ].filter(Boolean).join(' '));
       const dueTone = resolveProductsDueTone(daysRemaining, row.active);
-      const nextForecastDate = effectiveDurationDays > 0 && row.lastPurchaseAt
-        ? dayKeyFromTs(Number(row.lastPurchaseAt || 0) + (effectiveDurationDays * 86400000))
+      const nextForecastDate = replenishmentCycleDays > 0 && row.lastPurchaseAt
+        ? dayKeyFromTs(Number(row.lastPurchaseAt || 0) + (replenishmentCycleDays * 86400000))
         : '';
       return {
         ...row,
@@ -2519,7 +2566,9 @@ function buildProductsViewModel(cfg = {}) {
         visiblePurchaseCount: row._visibleDateSet.size,
         monthPurchaseCount: row._monthDateSet.size,
         observedFrequencyDays,
+        observedDurationDays,
         estimatedDurationDays: effectiveDurationDays,
+        replenishmentCycleDays,
         daysSinceLastPurchase,
         daysRemaining,
         dueTone,
@@ -2527,7 +2576,7 @@ function buildProductsViewModel(cfg = {}) {
         predictedLineCost,
         projectedMonthlySpend,
         priceBand: resolveProductsPriceBand(currentUnitPrice),
-        frequencyBand: resolveProductsCadenceBand(normalizeProductPositiveNumber(row.purchaseFrequencyDays, observedFrequencyDays)),
+        frequencyBand: resolveProductsCadenceBand(replenishmentCycleDays),
         durationBand: resolveProductsCadenceBand(effectiveDurationDays),
         bestStoreKey: bestStore?.vendorKey || '',
         bestStorePrice: Number(bestStore?.avgPrice || 0),
@@ -2551,6 +2600,7 @@ function buildProductsViewModel(cfg = {}) {
       if (nextCfg.priceBand !== 'all' && row.priceBand !== nextCfg.priceBand) return false;
       if (nextCfg.frequencyBand !== 'all' && row.frequencyBand !== nextCfg.frequencyBand) return false;
       if (nextCfg.durationBand !== 'all' && row.durationBand !== nextCfg.durationBand) return false;
+      if (!matchesProductsReplenishmentWindow(nextCfg.replenishmentWindow, row)) return false;
       if (nextCfg.onlyWithItems && row.visiblePurchaseCount <= 0) return false;
       const queryKey = normalizeProductItemKey(nextCfg.productsQuery || '');
       if (queryKey && !String(row.searchIndex || '').includes(queryKey)) return false;
@@ -2573,6 +2623,8 @@ function buildProductsViewModel(cfg = {}) {
   };
 
   const filteredRows = catalogRows.slice().sort(sorters[nextCfg.sortBy] || sorters.forecast);
+  const filteredVisibleSpend = filteredRows.reduce((sum, row) => sum + Number(row.visibleSpend || 0), 0);
+  const filteredVisibleQty = filteredRows.reduce((sum, row) => sum + Number(row.visibleQty || 0), 0);
   const listQueryKey = normalizeProductItemKey(nextCfg.listQuery || '');
   const quickRows = allCatalogRows
     .filter((row) => row.active !== false)
@@ -2743,6 +2795,8 @@ function buildProductsViewModel(cfg = {}) {
     dueCount: allCatalogRows.filter((row) => ['critical', 'soon'].includes(row.dueTone)).length,
     filteredCount: filteredRows.length,
     catalogCount: allCatalogRows.length,
+    filteredVisibleSpend,
+    filteredVisibleQty,
     purchaseCount: rangeLines.length ? new Set(rangeLines.map((line) => line.txId)).size : 0,
     itemsCount: rangeLines.length,
     topVendor: (() => {

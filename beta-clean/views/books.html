@@ -64,13 +64,14 @@
 <!-- TOOLBAR + LISTA LIBROS -->
 <div class="books-toolbar">
 <button class="btn primary" id="btn-add-book">+ Añadir libro</button>
-<button class="btn ghost btn-compact" id="books-start-session" type="button">▶ Iniciar sesión</button>
 </div>
+<input autocomplete="off" class="filter-search-input" id="books-filter-search" inputmode="search" placeholder="Título, autor, categoría, idioma o siglo" type="search"/>
+
 <div class="books-filters is-collapsed" id="books-filters">
 <div class="books-filters-header" id="books-filters-header">
+  
 <div class="filter-row filter-search-row">
 
-<input autocomplete="off" class="filter-search-input" id="books-filter-search" inputmode="search" placeholder="Título, autor, categoría, idioma o siglo" type="search"/>
 </div>
 <button aria-controls="books-filters-body" aria-expanded="false" class="filters-toggle-btn" id="books-filters-toggle" type="button">
 <span class="filters-toggle-text">Mostrar filtros</span>
@@ -127,11 +128,7 @@
 <span>Terminados</span>
 <span class="books-finished-count" id="books-finished-count">0</span>
 </summary>
-<div class="books-shelf-toolbar">
-<label class="field-label shelf-search-label" for="books-shelf-search">Buscar en la estantería</label>
-<input class="shelf-search-input" id="books-shelf-search" placeholder="Título, autor, idioma, categoría..." type="search"/>
-<div class="books-shelf-results" id="books-shelf-results"></div>
-</div>
+
 <div class="books-shelf-empty" id="books-shelf-empty" style="display:none;">
     No hay libros que coincidan con la búsqueda.
   </div>

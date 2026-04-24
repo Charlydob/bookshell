@@ -66,39 +66,9 @@
 <button class="btn primary" id="btn-add-book">+ Añadir libro</button>
 </div>
 <input autocomplete="off" class="filter-search-input" id="books-filter-search" inputmode="search" placeholder="Título, autor, categoría, idioma o siglo" type="search"/>
+    <div aria-label="Filtros din�micos" class="books-filter-select-grid" id="books-filter-selects"></div>
 
-<div class="books-filters is-collapsed" id="books-filters">
-<div class="books-filters-header" id="books-filters-header">
-  
-<div class="filter-row filter-search-row">
 
-</div>
-<button aria-controls="books-filters-body" aria-expanded="false" class="filters-toggle-btn" id="books-filters-toggle" type="button">
-<span class="filters-toggle-text">Mostrar filtros</span>
-<span aria-hidden="true" class="filters-toggle-icon">⌄</span>
-</button>
-</div>
-<div class="books-filters-body" id="books-filters-body">
-
-  <div class="filter-row">
-
-    <div class="filter-label">Filtros rápidos</div> 
-    <div aria-label="Filtros dinámicos" class="filter-chip-groups" id="books-filter-chips"></div>
-
-  </div>
-
-<div class="filter-row filter-toggles">
-  <label class="toggle-pill">
-  <input id="books-filter-pending" type="checkbox"/>
-  <span>Solo pendientes</span>
-</label>
-<label class="toggle-pill">
-<input id="books-filter-finished" type="checkbox"/>
-<span>Solo terminados</span>
-</label>
-</div>
-</div>
-</div>
 <details class="books-watchlist" id="books-watchlist" style="display:none;">
 <summary class="watchlist-summary">
 <div>
@@ -365,3 +335,5 @@
 </div>
 </div>
 </div>
+
+

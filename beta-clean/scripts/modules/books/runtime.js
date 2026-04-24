@@ -192,9 +192,8 @@ const $booksShelfResults = document.getElementById("books-shelf-results");
 const $booksShelfEmpty = document.getElementById("books-shelf-empty");
 const $booksFilterSearch = document.getElementById("books-filter-search");
 const $booksFilters = document.getElementById("books-filters");
-const $booksFiltersToggle = document.getElementById("books-filters-toggle");
 const $booksFiltersBody = document.getElementById("books-filters-body");
-const $booksFiltersHeader = document.getElementById("books-filters-header");
+const $booksFilterSelects = document.getElementById("books-filter-selects");
 const $booksFilterChips = document.getElementById("books-filter-chips");
 const $booksFilterPending = document.getElementById("books-filter-pending");
 const $booksFilterFinished = document.getElementById("books-filter-finished");
@@ -449,42 +448,8 @@ if ($booksFilterSearch) {
   $booksFilterSearch.addEventListener("input", handleInput);
 }
 
-if ($booksFilters) {
-  const setFiltersCollapsed = (collapsed) => {
-    if (!$booksFilters) return;
-    if (collapsed) {
-      $booksFilters.classList.add("is-collapsed");
-    } else {
-      $booksFilters.classList.remove("is-collapsed");
-    }
-    if ($booksFiltersBody) {
-      $booksFiltersBody.hidden = collapsed;
-    }
-    if ($booksFiltersToggle) {
-      $booksFiltersToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
-      const text = $booksFiltersToggle.querySelector(".filters-toggle-text");
-      if (text) text.textContent = collapsed ? "Mostrar filtros" : "Ocultar filtros";
-    }
-  };
-
-  const toggleFilters = () => setFiltersCollapsed(!$booksFilters.classList.contains("is-collapsed"));
-
-  if ($booksFiltersToggle) {
-    $booksFiltersToggle.addEventListener("click", (e) => {
-      e.stopPropagation();
-      toggleFilters();
-    });
-  }
-  if ($booksFiltersHeader) {
-    $booksFiltersHeader.addEventListener("click", (e) => {
-      if (e.target.closest("input") || e.target.closest("button")) return;
-      toggleFilters();
-    });
-  }
-  if ($booksFilterSearch) {
-    $booksFilterSearch.addEventListener("focus", () => setFiltersCollapsed(false));
-  }
-  setFiltersCollapsed(true);
+if ($booksFiltersBody) {
+  $booksFiltersBody.hidden = false;
 }
 
 if ($booksFilterPending) {
@@ -592,6 +557,117 @@ function buildFilterOptionsFromBooks() {
     centuries: centuryOptions,
     languages: languageOptions
   };
+}
+
+function buildFilterStateWithout(keyToSkip) {
+  return {
+    ...filterState,
+    genres: keyToSkip === "genres" ? new Set() : new Set(filterState.genres),
+    authors: keyToSkip === "authors" ? new Set() : new Set(filterState.authors),
+    languages: keyToSkip === "languages" ? new Set() : new Set(filterState.languages),
+    centuries: keyToSkip === "centuries" ? new Set() : new Set(filterState.centuries)
+  };
+}
+
+function buildDynamicSelectOptions(filterKey) {
+  const scopedIds = applyFilters(books, filterState.query || "", buildFilterStateWithout(filterKey));
+  const scopedBooks = {};
+  scopedIds.forEach((id) => {
+    scopedBooks[id] = books[id];
+  });
+  const scopedValues = (getter) => {
+    const map = new Map();
+    Object.values(scopedBooks).forEach((book) => {
+      const label = normalizeLabel(getter(book));
+      if (!label) return;
+      const key = label.toLowerCase();
+      if (!map.has(key)) map.set(key, label);
+    });
+    return Array.from(map.values());
+  };
+  const scopedGenres = mergeOptionsWithActive(
+    [...(genreOptions || []), ...scopedValues((b) => b?.genre)],
+    new Set()
+  ).map((o) => o.label);
+  const optionsFromScoped = {
+    genres: mergeOptionsWithActive(
+      scopedGenres,
+      filterState.genres
+    ),
+    authors: mergeOptionsWithActive(
+      sortLabels(scopedValues((b) => b?.author)),
+      filterState.authors
+    ),
+    centuries: mergeOptionsWithActive(
+      scopedValues((b) => yearToCenturyLabel(b?.year)),
+      filterState.centuries,
+      (a, b) => a.localeCompare(b, "es", { sensitivity: "base" })
+    ),
+    languages: mergeOptionsWithActive(
+      sortLabels(scopedValues((b) => b?.language)),
+      filterState.languages
+    )
+  };
+
+  if (filterKey === "genres") return optionsFromScoped.genres;
+  if (filterKey === "authors") return optionsFromScoped.authors;
+  if (filterKey === "centuries") return optionsFromScoped.centuries;
+  return optionsFromScoped.languages;
+}
+
+function renderFilterSelects() {
+  if (!$booksFilterSelects) return;
+
+  const groups = [
+    { key: "genres", title: "Categoria", placeholder: "Categoría" },
+    { key: "authors", title: "Autor", placeholder: "Autor" },
+    { key: "centuries", title: "Siglo", placeholder: "Siglo" },
+    { key: "languages", title: "Idioma", placeholder: "Idioma" }
+  ];
+
+  const frag = document.createDocumentFragment();
+
+  groups.forEach((group) => {
+    const field = document.createElement("label");
+    field.className = "books-filter-select-field";
+
+    const label = document.createElement("span");
+    label.className = "books-filter-select-label";
+    label.textContent = group.title;
+
+    const select = document.createElement("select");
+    select.className = "books-filter-select";
+    select.setAttribute("aria-label", `Filtrar por ${group.title.toLowerCase()}`);
+
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = group.placeholder;
+    select.appendChild(emptyOption);
+
+    buildDynamicSelectOptions(group.key).forEach(({ key, label: optionLabel }) => {
+      const option = document.createElement("option");
+      option.value = key;
+      option.textContent = optionLabel;
+      select.appendChild(option);
+    });
+
+    const currentValue = Array.from(filterState[group.key] || [])[0] || "";
+    select.value = currentValue;
+
+    select.addEventListener("change", (e) => {
+      const value = String(e.target.value || "").trim();
+      filterState[group.key] = value ? new Set([value]) : new Set();
+      renderFilterSelects();
+      renderBooks();
+    });
+
+    field.appendChild(label);
+    field.appendChild(select);
+    frag.appendChild(field);
+  });
+
+  $booksFilterSelects.innerHTML = "";
+  $booksFilterSelects.appendChild(frag);
 }
 
 function renderFilterChips() {
@@ -728,6 +804,7 @@ function bindDataSources() {
       genreOptions = [...DEFAULT_GENRES];
     }
     populateGenreSelect();
+    renderFilterSelects();
     renderFilterChips();
   });
 
@@ -2474,6 +2551,7 @@ function renderBooks() {
   const idsAll = Object.keys(books || {});
   const hasFinishedUI = !!($booksFinishedSection && $booksListFinished);
   const searchQuery = (filterState.query || "").trim().toLowerCase();
+  renderFilterSelects();
   renderFilterChips();
 
   const finishedIdsAll = [];

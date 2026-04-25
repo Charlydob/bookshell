@@ -328,6 +328,10 @@ body.is-session-detail-open #app {
   box-shadow: 0 0 16px rgba(127,93,255,.28);
 }
 
+#habit-quick-tab-work-schedules {
+  border-color: rgba(83, 235, 255, .28);
+}
+
 .habit-quick-toggle .habit-quick-sessions,
 .habit-quick-toggle .quick-counters-wrap {
   margin-top: 0;
@@ -3582,6 +3586,95 @@ display: grid;
   font-size: 12px;
   color: var(--txt-soft);
   padding: 6px 2px;
+}
+
+.habit-work-schedule-band {
+  padding: 10px;
+}
+
+.habit-work-schedule-week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.habit-work-schedule-week-cell {
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 10px;
+  padding: 6px;
+  background: rgba(255,255,255,.03);
+  display: grid;
+  gap: 2px;
+}
+
+.habit-work-schedule-week-day { font-size: 11px; color: var(--txt-soft); }
+.habit-work-schedule-week-shift { font-size: 12px; font-weight: 700; }
+.habit-work-schedule-week-time { font-size: 10px; color: var(--txt-soft); line-height: 1.2; min-height: 24px; }
+.habit-work-schedule-week-hours { font-size: 11px; font-weight: 600; }
+
+.habit-work-schedule-month-list {
+  display: grid;
+  gap: 4px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.habit-work-schedule-month-item {
+  display: grid;
+  grid-template-columns: 34px 26px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  background: rgba(255,255,255,.03);
+  font-size: 11px;
+}
+
+.habit-work-schedule-modal .modal-scroll {
+  max-height: min(72vh, 560px);
+}
+
+.habit-work-schedule-rows {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.habit-work-schedule-row {
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 12px;
+  padding: 8px;
+  background: rgba(255,255,255,.03);
+  display: grid;
+  gap: 8px;
+}
+
+.habit-work-schedule-times {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.habit-work-schedule-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.habit-work-schedule-day {
+  border: 1px solid rgba(255,255,255,.16);
+  background: transparent;
+  color: var(--txt-soft);
+  border-radius: 999px;
+  font-size: 11px;
+  min-width: 24px;
+  height: 24px;
+}
+
+.habit-work-schedule-day.is-active {
+  color: #fff;
+  border-color: rgba(127,93,255,.65);
+  background: rgba(127,93,255,.25);
 }
 
 .habits-history-budget-summary {

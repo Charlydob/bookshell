@@ -3277,35 +3277,32 @@ function renderProductsBatchToolbar(model) {
 
 function renderProductsCatalogGroup(group, model) {
   const selectedSet = new Set(model.selectedIds || []);
-  const expandedSet = new Set(model.cfg?.expandedIds || []);
   const safeGroupKey = escapeHtml(group.key);
+  const carouselId = escapeHtml(productsWorkbenchDomId('financeProductsCategoryCarousel', group.key));
+  const shouldOpenByDefault = false;
   return `
-    <section class="productsWorkbench__group" data-products-catalog-group="${safeGroupKey}">
-      <header class="productsWorkbench__groupHead">
-        <div>
+    <details class="productsWorkbench__group" data-products-catalog-group="${safeGroupKey}" ${shouldOpenByDefault ? 'open' : ''}>
+      <summary class="productsWorkbench__groupHead">
+        <div class="productsWorkbench__groupTitle">
           <strong>${escapeHtml(group.label)}</strong>
-          <small>${group.totalCount} productos · ${fmtCurrency(group.totalSpend)} historicos</small>
+          <small>${group.totalCount} productos</small>
         </div>
         <div class="productsWorkbench__groupAside">
           <div class="productsWorkbench__groupMeta">
             <span data-products-catalog-visible>${group.visibleCount} visibles</span>
             <span>${group.dueCount} por reponer</span>
-            <span>${fmtCurrency(group.projectedSpend)} / mes</span>
           </div>
+          <span class="productsWorkbench__groupChevron" aria-hidden="true">⌄</span>
         </div>
-      </header>
-      <div class="productsWorkbench__catalogGrid" data-products-catalog-track>
-        <label class="productsWorkbench__catalogSearch">
-          <span>Buscar en ${escapeHtml(group.label)}</span>
-          <input class="food-control" type="search" data-products-catalog-search data-products-catalog-group-key="${safeGroupKey}" value="${escapeHtml(group.searchQuery || '')}" placeholder="filtrar este carrusel..." />
-        </label>
-        <div class="productsWorkbench__catalogRows">
+      </summary>
+      <div class="productsWorkbench__catalogGrid" id="${carouselId}" data-products-catalog-track>
         ${group.rows.map((row) => {
-          const isExpanded = expandedSet.has(row.canonicalId);
           const selectedClass = model.selectedProductId === row.canonicalId ? 'is-selected' : '';
+          const dueText = row.inActiveList ? 'En lista' : row.dueLabel;
+          const metaText = [row.preferredStore || row.bestStoreKey || '', Number(row.currentUnitPrice || 0) > 0 ? fmtCurrency(row.currentUnitPrice || 0) : ''].filter(Boolean).join(' · ');
           return `
           <article
-            class="productsWorkbench__productCard ${selectedClass} ${isExpanded ? 'is-expanded' : ''} is-${escapeHtml(row.dueTone)} ${!row.active ? 'is-inactive' : ''} ${row.inActiveList ? 'is-in-list' : ''}"
+            class="productsWorkbench__productCard ${selectedClass} is-${escapeHtml(row.dueTone)} ${!row.active ? 'is-inactive' : ''} ${row.inActiveList ? 'is-in-list' : ''}"
             id="${escapeHtml(productsWorkbenchDomId('product-card', row.canonicalId))}"
             data-products-catalog-card
             data-products-id="${escapeHtml(row.canonicalId)}"
@@ -3317,52 +3314,25 @@ function renderProductsCatalogGroup(group, model) {
               </label>
               <button type="button" class="productsWorkbench__productHeading" data-products-select-product="${escapeHtml(row.canonicalId)}">
                 <strong>${escapeHtml(row.canonicalName)}</strong>
-                <small>${escapeHtml(row.brand || row.productType || 'Sin clasificar')}</small>
+                <small class="productsWorkbench__status productsWorkbench__status--${escapeHtml(row.dueTone)}">${escapeHtml(dueText)}</small>
               </button>
-              <span class="productsWorkbench__status productsWorkbench__status--${escapeHtml(row.dueTone)}">${escapeHtml(row.inActiveList ? 'En lista' : row.dueLabel)}</span>
               <button type="button" class="productsWorkbench__miniAction" data-products-add-to-list="${escapeHtml(row.canonicalId)}" aria-label="Anadir ${escapeHtml(row.canonicalName)} a la lista">+</button>
-              <button type="button" class="productsWorkbench__miniAction productsWorkbench__miniAction--details" data-products-expand-product="${escapeHtml(row.canonicalId)}" aria-expanded="${isExpanded ? 'true' : 'false'}" aria-label="Ver detalles de ${escapeHtml(row.canonicalName)}">${isExpanded ? 'Ocultar' : 'Detalles'}</button>
             </div>
-            <div class="productsWorkbench__productMeta">
-              <span class="productsWorkbench__badge">${escapeHtml(row.productCategory || row.format || 'Sin categoria')}</span>
-              <span class="productsWorkbench__badge">${escapeHtml(row.preferredStore || row.bestStoreKey || 'Sin tienda')}</span>
-              <span class="productsWorkbench__badge">${fmtCurrency(row.currentUnitPrice || 0)}</span>
-              <span class="productsWorkbench__badge">${row.estimatedDurationDays ? `${row.estimatedDurationDays}d` : 'Sin duracion'}</span>
-            </div>
-            <div class="productsWorkbench__productDrawer" ${isExpanded ? '' : 'hidden'}>
-            <div class="productsWorkbench__productMetrics">
-              <div><span>Ultimo</span><strong>${fmtCurrency(row.currentUnitPrice || 0)}</strong></div>
-              <div><span>Freq</span><strong>${row.purchaseFrequencyDays ? `${row.purchaseFrequencyDays}d` : `${row.purchaseCount}x`}</strong></div>
-              <div><span>Ult. compra</span><strong>${row.lastPurchaseAt ? escapeHtml(formatProductsShortDate(row.lastPurchaseAt)) : 'Sin dato'}</strong></div>
-              <div><span>Duracion</span><strong>${row.estimatedDurationDays ? `${row.estimatedDurationDays}d` : '—'}</strong></div>
-            </div>
-            <form class="productsWorkbench__quickEdit" data-products-quick-edit-form data-products-id="${escapeHtml(row.canonicalId)}">
-              <input class="food-control" type="number" min="0" step="0.01" name="estimatedPrice" value="${Number(row.estimatedPrice || row.currentUnitPrice || 0) || ''}" placeholder="Precio" />
-              <input class="food-control" type="number" min="1" step="0.01" name="usualQty" value="${Number(row.usualQty || 1)}" placeholder="Cant." />
-              <input class="food-control" type="number" min="0" step="1" name="estimatedDurationDays" value="${Number(row.estimatedDurationDays || 0) || ''}" placeholder="Dias" />
-              <input class="food-control" type="text" name="preferredStore" value="${escapeHtml(row.preferredStore || '')}" placeholder="Tienda" />
-              <button class="food-history-btn" type="submit">Guardar</button>
-            </form>
-            <div class="productsWorkbench__productFooter">
-              <small>${escapeHtml(row.canonicalId)}</small>
-              <button type="button" class="food-history-btn" data-food-item-detail="${escapeHtml(row.canonicalId)}">Ficha completa</button>
-            </div>
-            </div>
+            ${metaText ? `<div class="productsWorkbench__productMeta"><span class="productsWorkbench__badge">${escapeHtml(metaText)}</span></div>` : ''}
           </article>
         `;
         }).join('')}
-        </div>
         <div class="productsWorkbench__emptyMini productsWorkbench__catalogEmpty" ${group.visibleCount ? 'hidden' : ''}>No hay productos en este tipo para esa busqueda.</div>
       </div>
-    </section>
+    </details>
   `;
 }
 
 function renderProductsCatalogGroups(model) {
   if (!model.groups.some((group) => group.totalCount > 0)) {
-    return '<div class="productsWorkbench__empty">No hay productos para este filtro.</div>';
+    return '<div id="financeProductsCatalogGroups" class="productsWorkbench__catalogGroups"><div class="productsWorkbench__empty">No hay productos para este filtro.</div></div>';
   }
-  return model.groups.map((group) => renderProductsCatalogGroup(group, model)).join('');
+  return `<div id="financeProductsCatalogGroups" class="productsWorkbench__catalogGroups">${model.groups.map((group) => renderProductsCatalogGroup(group, model)).join('')}</div>`;
 }
 
 function applyProductsCatalogGroupSearch(inputEl) {
@@ -3409,7 +3379,7 @@ function scrollProductsCatalogCarousel(buttonEl) {
 
 function renderProductsCatalogPanel(model) {
   return `
-    <section class="productsWorkbench__panel productsWorkbench__panel--catalog" data-products-catalog-panel>
+    <section class="productsWorkbench__panel productsWorkbench__panel--catalog" data-products-catalog-panel id="financeProductsCatalogView">
       <header class="productsWorkbench__panelHead">
         <div>
           <h3>Catalogo operativo</h3>
@@ -11029,7 +10999,9 @@ if (form) {
   }
   if (state.modal.type === 'new-account') {
     backdrop.innerHTML = 
-    `<div id="finance-modal" class="finance-modal finance-modal--new-account" role="dialog" aria-modal="true" tabindex="-1"><header>
+    `<div id="finance-modal" class="finance-modal finance-modal--new-account" role="dialog" aria-modal="true" tabindex="-1">
+    <section id="financeAccountCreateModal">
+    <header class="financeAccountCreateModal__header">
     <h3>Nueva cuenta</h3>
     <button class="finance-pill finance-pill--mini" type="button" data-close-modal>Cerrar</button></header>
     <form class="finance-entry-form" id="modal-cuenta-nueva" data-new-account-form>
@@ -11052,7 +11024,7 @@ if (form) {
       </label>
       <small class="financeAccountForm__hint">BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(0)}</small>
       <div class="financeAccountForm__actions"><button class="finance-pill" type="submit">Crear</button></div>
-    </form></div>`;
+    </form></section></div>`;
     return;
   }
   if (state.modal.type === 'food-products') {
@@ -12643,7 +12615,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
         ...(state.foodProductsView || {}),
         selectedProductId: String(selectProductId || '').trim(),
       };
-      patchProductsEditorPanel(buildCurrentProductsModel());
+      await openProductDetail(selectProductId);
       return;
     }
     if (target.closest('[data-products-add-selected-list]')) {

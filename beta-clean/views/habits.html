@@ -22,6 +22,7 @@
   <div class="habit-quick-tabs app-segmented" role="tablist" aria-label="Accesos rápidos de hábitos">
     <button class="habit-quick-tab-btn app-segmented__item app-chip is-active" id="habit-quick-tab-sessions" data-habit-quick-tab="sessions" role="tab" aria-selected="true" type="button">Sesiones</button>
     <button class="habit-quick-tab-btn app-segmented__item app-chip" id="habit-quick-tab-counters" data-habit-quick-tab="counters" role="tab" aria-selected="false" type="button">Contadores</button>
+    <button class="habit-quick-tab-btn app-segmented__item app-chip" id="habit-quick-tab-work-schedules" type="button">Horarios</button>
   </div>
 
 <details class="habit-accordion habit-quick-sessions" id="habit-quick-sessions" data-search-ignore="true" data-habit-quick-panel="sessions" open>
@@ -881,6 +882,34 @@
 <button class="btn primary" type="submit">Guardar</button>
 </div>
 </form>
+</div>
+</div>
+
+<!-- MODAL HORARIOS DE TRABAJO -->
+<div class="modal-backdrop hidden" id="habit-work-schedule-modal">
+<div class="modal habit-modal habit-work-schedule-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title">Horarios de trabajo</div>
+<button class="icon-btn" id="habit-work-schedule-close" type="button">✕</button>
+</div>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<label class="field">
+<span class="field-label">Semana (lunes)</span>
+<input id="habit-work-schedule-week" type="date"/>
+</label>
+</div>
+<div class="sheet-section">
+<div class="sheet-section-title">Tramos</div>
+<div class="habit-work-schedule-rows" id="habit-work-schedule-rows"></div>
+<button class="btn ghost btn-compact" id="habit-work-schedule-add-row" type="button">+ Añadir fila</button>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-work-schedule-cancel" type="button">Cancelar</button>
+<button class="btn primary" id="habit-work-schedule-save" type="button">Guardar horarios</button>
+</div>
 </div>
 </div>
 

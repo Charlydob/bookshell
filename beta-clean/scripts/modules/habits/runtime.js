@@ -37,6 +37,7 @@ let HABITS_SCHEDULE_PATH = null;
 let HABITS_SCHEDULE_DAY_CREDITS_PATH = null;
 let HABIT_UI_PATH = null;
 let HABIT_UI_QUICK_COUNTERS_PATH = null;
+let HABIT_WORK_SCHEDULES_PATH = null;
 let remoteBound = false;
 let habitsRuntimeReady = false;
 let habitsRuntimeInitializing = false;
@@ -111,6 +112,7 @@ function setUserPaths(uid) {
   HABITS_SCHEDULE_DAY_CREDITS_PATH = `${HABITS_SCHEDULE_PATH}/dayCredits`;
   HABIT_UI_PATH = `${HABITS_PATH}/ui`;
   HABIT_UI_QUICK_COUNTERS_PATH = `${HABIT_UI_PATH}/quickCounters`;
+  HABIT_WORK_SCHEDULES_PATH = `${HABITS_ROOT}/workSchedules`;
 }
 
 // Storage keys
@@ -158,6 +160,7 @@ let habitCounts = {}; // { habitId: { dateKey: number } }
 let habitGroups = {}; // { groupId: { id, name, createdAt } }
 let habitPrefs = { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
 let habitUI = { quickCounters: [] };
+let habitWorkSchedules = {}; // { weekStart: { weekStart, rows, resolvedDays, updatedAt } }
 let habitQuickPanel = "sessions";
 let activeTab = "today";
 let runningSession = null; // Sesión principal (derivada de activeSessions)
@@ -2232,6 +2235,38 @@ function parseDateKey(key) {
   return new Date(y, m - 1, d);
 }
 
+const WORK_SCHEDULE_DOWS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const WORK_SCHEDULE_DOW_LABELS = { mon: "L", tue: "M", wed: "X", thu: "J", fri: "V", sat: "S", sun: "D" };
+
+function normalizeWorkRow(row = {}) {
+  const days = Array.isArray(row.days)
+    ? row.days.filter((day) => WORK_SCHEDULE_DOWS.includes(day))
+    : [];
+  return {
+    id: row.id || `row-${Math.random().toString(36).slice(2, 10)}`,
+    start: typeof row.start === "string" && row.start ? row.start : "07:00",
+    end: typeof row.end === "string" && row.end ? row.end : "15:00",
+    days
+  };
+}
+
+function normalizeWorkScheduleWeek(raw = {}, key = "") {
+  const weekStart = typeof raw.weekStart === "string" && raw.weekStart ? raw.weekStart : key;
+  const rows = Array.isArray(raw.rows) ? raw.rows.map(normalizeWorkRow) : [];
+  const resolvedDays = raw?.resolvedDays && typeof raw.resolvedDays === "object" ? raw.resolvedDays : {};
+  return { weekStart, rows, resolvedDays, updatedAt: Number(raw.updatedAt || Date.now()) };
+}
+
+function normalizeWorkSchedulesStore(raw = {}) {
+  const out = {};
+  if (!raw || typeof raw !== "object") return out;
+  Object.entries(raw).forEach(([weekStart, weekData]) => {
+    if (!weekStart) return;
+    out[weekStart] = normalizeWorkScheduleWeek(weekData || {}, weekStart);
+  });
+  return out;
+}
+
 
 function foldKey(s) {
   return String(s || "")
@@ -2924,6 +2959,106 @@ function showHabitToast(text) {
   }, 2300);
 }
 
+function timeToMinutes(value = "") {
+  const [h, m] = String(value || "").split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return 0;
+  return Math.max(0, h * 60 + m);
+}
+
+function minutesToHourLabel(minutes = 0) {
+  const hours = Math.max(0, Number(minutes) || 0) / 60;
+  const rounded = Math.round(hours * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}h`;
+}
+
+function buildResolvedWorkDays(weekStart, rows = []) {
+  const startDate = parseDateKey(weekStart) || startOfWeek(new Date());
+  const resolved = {};
+  rows.forEach((row) => {
+    const startMin = timeToMinutes(row.start);
+    const endMin = timeToMinutes(row.end);
+    if (endMin <= startMin) return;
+    const shift = startMin < 14 * 60 ? "M" : "T";
+    const workedMinutes = endMin - startMin;
+    row.days.forEach((dayKey) => {
+      const dayIdx = WORK_SCHEDULE_DOWS.indexOf(dayKey);
+      if (dayIdx < 0) return;
+      const dateKey = dateKeyLocal(addDays(startDate, dayIdx));
+      const existing = resolved[dateKey] || {
+        start: row.start,
+        end: row.end,
+        shift,
+        hours: 0,
+        slots: []
+      };
+      existing.start = existing.start || row.start;
+      existing.end = row.end;
+      existing.shift = existing.shift || shift;
+      existing.hours = Math.round((Number(existing.hours || 0) + workedMinutes / 60) * 10) / 10;
+      existing.slots = Array.isArray(existing.slots) ? existing.slots : [];
+      existing.slots.push({ start: row.start, end: row.end });
+      resolved[dateKey] = existing;
+    });
+  });
+  return resolved;
+}
+
+function upsertWorkScheduleWeek(weekStart, rows = []) {
+  const resolvedDays = buildResolvedWorkDays(weekStart, rows);
+  const payload = {
+    weekStart,
+    rows: rows.map(normalizeWorkRow),
+    resolvedDays,
+    updatedAt: Date.now()
+  };
+  habitWorkSchedules = {
+    ...habitWorkSchedules,
+    [weekStart]: payload
+  };
+  saveCache();
+  return payload;
+}
+
+function persistWorkScheduleWeek(payload) {
+  if (!payload?.weekStart || !HABIT_WORK_SCHEDULES_PATH) return;
+  void writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "workSchedule",
+    actionType: "save-week-schedule",
+    firebasePath: `${HABIT_WORK_SCHEDULES_PATH}/${payload.weekStart}`,
+    payload,
+    writeType: "set",
+    dedupeKey: `work-schedule:${payload.weekStart}`,
+    metadata: { weekStart: payload.weekStart },
+  }).then((result) => reportQueuedWriteError("No se pudo guardar horario semanal", result));
+}
+
+function applyWorkScheduleToWorkHabit(payload) {
+  const workHabit = activeHabits().find((habit) => isWorkHabit(habit));
+  if (!workHabit) {
+    console.info("[habits] No se encontró hábito 'Trabajo'; conectar applyWorkScheduleToWorkHabit con el store de trabajo.");
+    return;
+  }
+  const resolved = payload?.resolvedDays || {};
+  Object.entries(resolved).forEach(([dateKey, dayInfo]) => {
+    const minutes = Math.max(0, Math.round(Number(dayInfo?.hours || 0) * 60));
+    const shift = normalizeShiftValue(dayInfo?.shift);
+    setHabitTimeSec(workHabit.id, dateKey, minutes * 60, { shift });
+  });
+}
+
+function getWorkScheduleForWeek(weekStart) {
+  return normalizeWorkScheduleWeek(habitWorkSchedules?.[weekStart] || { weekStart }, weekStart);
+}
+
+function getResolvedWorkScheduleForDate(dateKey) {
+  const date = parseDateKey(dateKey);
+  if (!date) return null;
+  const weekStart = dateKeyLocal(startOfWeek(date));
+  return habitWorkSchedules?.[weekStart]?.resolvedDays?.[dateKey] || null;
+}
+
 
 function readCache() {
   try {
@@ -2946,6 +3081,7 @@ function buildHabitsCachePayload() {
     habitGroups,
     habitPrefs,
     habitUI,
+    habitWorkSchedules,
     scheduleState,
     activeSessions,
   };
@@ -2963,6 +3099,7 @@ function applyHabitsCachePayload(raw = {}, { persistNormalized = false } = {}) {
   habitDurationMode = ["auto", "min", "h", "d"].includes(habitPrefs.analyticsUnit) ? habitPrefs.analyticsUnit : "auto";
   analyticsTimeUnitMode = habitDurationMode;
   habitUI = normalizeHabitUI(parsed.habitUI || {});
+  habitWorkSchedules = normalizeWorkSchedulesStore(parsed.habitWorkSchedules || {});
   scheduleState = normalizeHabitSchedule(parsed.scheduleState || parsed.habitSchedule || createDefaultHabitSchedule());
   activeSessions = normalizeActiveSessionsStore(parsed.activeSessions || {});
   syncPrimaryRunningSession();
@@ -4169,6 +4306,7 @@ const $habitTodaySearchEmpty = document.getElementById("habit-today-search-empty
 const $habitTodaySearchReset = document.getElementById("habit-today-search-reset");
 const $habitQuickSessionsTab = document.getElementById("habit-quick-tab-sessions");
 const $habitQuickCountersTab = document.getElementById("habit-quick-tab-counters");
+const $habitQuickWorkSchedulesTab = document.getElementById("habit-quick-tab-work-schedules");
 const $habitQuickSessionsWrap = document.getElementById("habit-quick-sessions");
 const $habitQuickSessionsMeta = document.getElementById("habit-quick-sessions-meta");
 const $habitQuickSessionsPreview = document.getElementById("habit-quick-sessions-preview");
@@ -4447,6 +4585,14 @@ const $habitScheduleSummaryClose = document.getElementById("habit-schedule-summa
 const $habitScheduleSummaryCancel = document.getElementById("habit-schedule-summary-cancel");
 const $habitManualClose = document.getElementById("habit-manual-close");
 const $habitManualCancel = document.getElementById("habit-manual-cancel");
+const $habitWorkScheduleModal = document.getElementById("habit-work-schedule-modal");
+const $habitWorkScheduleClose = document.getElementById("habit-work-schedule-close");
+const $habitWorkScheduleCancel = document.getElementById("habit-work-schedule-cancel");
+const $habitWorkScheduleWeek = document.getElementById("habit-work-schedule-week");
+const $habitWorkScheduleRows = document.getElementById("habit-work-schedule-rows");
+const $habitWorkScheduleAddRow = document.getElementById("habit-work-schedule-add-row");
+const $habitWorkScheduleSave = document.getElementById("habit-work-schedule-save");
+let workScheduleEditor = { weekStart: dateKeyLocal(startOfWeek(new Date())), rows: [] };
 
 const DEFAULT_TIME_INPUT_VALUE = "00:00";
 
@@ -4467,6 +4613,7 @@ function syncHabitModalOpenState() {
     $habitModal,
     $habitSessionModal,
     $habitManualModal,
+    $habitWorkScheduleModal,
     $habitEntryModal,
     $habitDayDetailModal,
     $habitScheduleSummaryModal,
@@ -8224,6 +8371,49 @@ function renderTodayMonthCalendar(anchorDate = new Date()) {
   }));
 }
 
+function buildWorkScheduleWeekBand(weekStartKey) {
+  const section = document.createElement("section");
+  section.className = "habits-history-section habit-work-schedule-band";
+  section.innerHTML = `<div class="habits-history-section-header"><div class="habits-history-section-title">Horarios · Semana</div><div class="habits-history-list-meta">${weekStartKey}</div></div>`;
+  const grid = document.createElement("div");
+  grid.className = "habit-work-schedule-week-grid";
+  const weekStart = parseDateKey(weekStartKey) || startOfWeek(new Date());
+  WORK_SCHEDULE_DOWS.forEach((dow, idx) => {
+    const dateKey = dateKeyLocal(addDays(weekStart, idx));
+    const day = getResolvedWorkScheduleForDate(dateKey);
+    const cell = document.createElement("article");
+    cell.className = "habit-work-schedule-week-cell";
+    cell.innerHTML = `
+      <div class="habit-work-schedule-week-day">${WORK_SCHEDULE_DOW_LABELS[dow]}</div>
+      <div class="habit-work-schedule-week-shift">${day?.shift || "Libre"}</div>
+      <div class="habit-work-schedule-week-time">${day?.slots?.map((slot) => `${slot.start}–${slot.end}`).join(" · ") || ""}</div>
+      <div class="habit-work-schedule-week-hours">${day ? minutesToHourLabel((Number(day.hours) || 0) * 60) : ""}</div>
+    `;
+    grid.appendChild(cell);
+  });
+  section.appendChild(grid);
+  return section;
+}
+
+function buildWorkScheduleMonthBand(year, month) {
+  const section = document.createElement("section");
+  section.className = "habits-history-section habit-work-schedule-band";
+  section.innerHTML = `<div class="habits-history-section-header"><div class="habits-history-section-title">Horarios · Mes</div></div>`;
+  const list = document.createElement("div");
+  list.className = "habit-work-schedule-month-list";
+  const end = new Date(year, month + 1, 0);
+  for (let day = 1; day <= end.getDate(); day += 1) {
+    const dateKey = dateKeyLocal(new Date(year, month, day));
+    const info = getResolvedWorkScheduleForDate(dateKey);
+    const row = document.createElement("div");
+    row.className = "habit-work-schedule-month-item";
+    row.innerHTML = `<span>${String(day).padStart(2, "0")}</span><span>${info?.shift || ""}</span><span>${info?.slots?.map((slot) => `${slot.start}–${slot.end}`).join(" · ") || ""}</span><span>${info ? minutesToHourLabel((Number(info.hours) || 0) * 60) : ""}</span>`;
+    list.appendChild(row);
+  }
+  section.appendChild(list);
+  return section;
+}
+
 function renderHistory() {
   $habitHistoryList.innerHTML = "";
 
@@ -8257,6 +8447,14 @@ function renderHistory() {
   historyHeader.appendChild(controls);
   historyHeader.appendChild(rangeLabel);
   $habitHistoryList.appendChild(historyHeader);
+
+  if (habitHistoryRange === "week") {
+    const weekStartKey = dateKeyLocal(startOfWeek(parseDateKey(selectedDateKey) || new Date()));
+    $habitHistoryList.appendChild(buildWorkScheduleWeekBand(weekStartKey));
+  } else if (habitHistoryRange === "month") {
+    const anchor = parseDateKey(selectedDateKey) || new Date();
+    $habitHistoryList.appendChild(buildWorkScheduleMonthBand(anchor.getFullYear(), anchor.getMonth()));
+  }
 
   const { start, end } = getHistoryRangeBounds(habitHistoryRange);
   const hasHabits = habitsList.length > 0;
@@ -11459,6 +11657,60 @@ function renderSessionList() {
     });
 }
 
+function renderWorkScheduleRowsEditor() {
+  if (!$habitWorkScheduleRows) return;
+  $habitWorkScheduleRows.innerHTML = "";
+  workScheduleEditor.rows.forEach((row) => {
+    const item = document.createElement("div");
+    item.className = "habit-work-schedule-row";
+    const dayChips = WORK_SCHEDULE_DOWS.map((day) => `
+      <button type="button" class="habit-work-schedule-day ${row.days.includes(day) ? "is-active" : ""}" data-row="${row.id}" data-day="${day}">${WORK_SCHEDULE_DOW_LABELS[day]}</button>
+    `).join("");
+    item.innerHTML = `
+      <div class="habit-work-schedule-times">
+        <input type="time" data-row="${row.id}" data-field="start" value="${row.start}"/>
+        <input type="time" data-row="${row.id}" data-field="end" value="${row.end}"/>
+      </div>
+      <div class="habit-work-schedule-days">${dayChips}</div>
+      <button type="button" class="btn ghost btn-compact danger" data-row-remove="${row.id}">Eliminar</button>
+    `;
+    $habitWorkScheduleRows.appendChild(item);
+  });
+}
+
+function openWorkScheduleModal() {
+  if (!$habitWorkScheduleModal) return;
+  const monday = dateKeyLocal(startOfWeek(parseDateKey(selectedDateKey) || new Date()));
+  const weekStart = $habitWorkScheduleWeek?.value || monday;
+  const currentWeek = getWorkScheduleForWeek(weekStart);
+  workScheduleEditor = {
+    weekStart,
+    rows: currentWeek.rows.length ? currentWeek.rows.map(normalizeWorkRow) : [normalizeWorkRow({ days: ["mon", "tue", "wed", "thu", "fri"] })]
+  };
+  if ($habitWorkScheduleWeek) $habitWorkScheduleWeek.value = weekStart;
+  renderWorkScheduleRowsEditor();
+  $habitWorkScheduleModal.classList.remove("hidden");
+  syncHabitModalOpenState();
+}
+
+function closeWorkScheduleModal() {
+  $habitWorkScheduleModal?.classList.add("hidden");
+  syncHabitModalOpenState();
+}
+
+function handleWorkScheduleSave() {
+  const weekStart = dateKeyLocal(startOfWeek(parseDateKey($habitWorkScheduleWeek?.value) || new Date()));
+  const rows = workScheduleEditor.rows
+    .map(normalizeWorkRow)
+    .filter((row) => row.days.length && timeToMinutes(row.end) > timeToMinutes(row.start));
+  const payload = upsertWorkScheduleWeek(weekStart, rows);
+  persistWorkScheduleWeek(payload);
+  applyWorkScheduleToWorkHabit(payload);
+  closeWorkScheduleModal();
+  if (activeTab === "history") renderHistory();
+  showHabitToast("Horarios guardados");
+}
+
 
 function assignSession(habitId) {
   if (!habitId || !pendingSessionDuration) {
@@ -12414,6 +12666,53 @@ function bindEvents() {
   syncHabitQuickPanelUI();
   $habitQuickSessionsTab?.addEventListener("click", () => setHabitQuickPanel("sessions"));
   $habitQuickCountersTab?.addEventListener("click", () => setHabitQuickPanel("counters"));
+  $habitQuickWorkSchedulesTab?.addEventListener("click", openWorkScheduleModal);
+
+  $habitWorkScheduleClose?.addEventListener("click", closeWorkScheduleModal);
+  $habitWorkScheduleCancel?.addEventListener("click", closeWorkScheduleModal);
+  $habitWorkScheduleModal?.addEventListener("click", (event) => {
+    if (event.target === $habitWorkScheduleModal) closeWorkScheduleModal();
+  });
+  $habitWorkScheduleWeek?.addEventListener("change", () => {
+    const weekStart = dateKeyLocal(startOfWeek(parseDateKey($habitWorkScheduleWeek.value) || new Date()));
+    const week = getWorkScheduleForWeek(weekStart);
+    workScheduleEditor.weekStart = weekStart;
+    workScheduleEditor.rows = week.rows.length ? week.rows.map(normalizeWorkRow) : [normalizeWorkRow({ days: ["mon", "tue", "wed", "thu", "fri"] })];
+    $habitWorkScheduleWeek.value = weekStart;
+    renderWorkScheduleRowsEditor();
+  });
+  $habitWorkScheduleAddRow?.addEventListener("click", () => {
+    workScheduleEditor.rows.push(normalizeWorkRow({}));
+    renderWorkScheduleRowsEditor();
+  });
+  $habitWorkScheduleRows?.addEventListener("click", (event) => {
+    const dayBtn = event.target?.closest?.("[data-day]");
+    if (dayBtn) {
+      const row = workScheduleEditor.rows.find((item) => item.id === dayBtn.dataset.row);
+      if (!row) return;
+      const day = dayBtn.dataset.day;
+      if (!WORK_SCHEDULE_DOWS.includes(day)) return;
+      if (row.days.includes(day)) row.days = row.days.filter((item) => item !== day);
+      else row.days = [...row.days, day];
+      renderWorkScheduleRowsEditor();
+      return;
+    }
+    const removeBtn = event.target?.closest?.("[data-row-remove]");
+    if (removeBtn) {
+      workScheduleEditor.rows = workScheduleEditor.rows.filter((row) => row.id !== removeBtn.dataset.rowRemove);
+      renderWorkScheduleRowsEditor();
+    }
+  });
+  $habitWorkScheduleRows?.addEventListener("input", (event) => {
+    const input = event.target?.closest?.("input[data-row][data-field]");
+    if (!input) return;
+    const row = workScheduleEditor.rows.find((item) => item.id === input.dataset.row);
+    if (!row) return;
+    if (input.dataset.field === "start" || input.dataset.field === "end") {
+      row[input.dataset.field] = input.value || row[input.dataset.field];
+    }
+  });
+  $habitWorkScheduleSave?.addEventListener("click", handleWorkScheduleSave);
 
   $habitQuickSessionsAdd?.addEventListener("click", () => {
     const habitId = $habitQuickSessionsSelect?.value || "";
@@ -12574,6 +12873,12 @@ function listenRemoteLegacy() {
     habitUI = normalizeHabitUI({ ...habitUI, quickCounters: snap.val() || [] });
     saveCache();
     rerenderIfActiveTab(["today"]);
+  });
+
+  bindRemote(HABIT_WORK_SCHEDULES_PATH, (snap) => {
+    habitWorkSchedules = normalizeWorkSchedulesStore(snap.val() || {});
+    saveCache();
+    rerenderIfActiveTab(["history"]);
   });
 
   bindRemote(HABITS_SCHEDULE_PATH, (snap) => {
@@ -13093,6 +13398,13 @@ function listenRemote() {
     habitUI = normalizeHabitUI({ ...habitUI, quickCounters: quickCounters || [] });
     saveCache();
     rerenderIfActiveTab(["today"]);
+  });
+
+  bindRemote(HABIT_WORK_SCHEDULES_PATH, (snap) => {
+    const raw = applyQueuedHabitRemoteValue(HABIT_WORK_SCHEDULES_PATH, snap.val() || {}) || {};
+    habitWorkSchedules = normalizeWorkSchedulesStore(raw);
+    saveCache();
+    rerenderIfActiveTab(["history"]);
   });
 
   bindRemote(HABITS_SCHEDULE_PATH, (snap) => {

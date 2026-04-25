@@ -2840,12 +2840,12 @@ function renderProductsSummaryCards(model) {
   return `
     <section class="productsWorkbench__hero" id="financeProductsTopPanel">
       <div class="productsWorkbench__heroText" id="financeProductsTopPanelSearch">
-        <label class="productsWorkbench__field productsWorkbench__field--search">
-          <span>Buscar</span>
+        <label class="productsWorkbench__field productsWorkbench__field--search finance-products-search">
+          <span>Buscar productos</span>
           <input class="food-control" type="search" value="${escapeHtml(cfg.productsQuery || '')}" data-products-filter="productsQuery" placeholder="nombre, marca, tag, id..." />
         </label>
       </div>
-      <div class="productsWorkbench__toolbarMain" id="financeProductsTopPanelFilters">
+      <div class="productsWorkbench__toolbarMain finance-products-filter-main" id="financeProductsTopPanelFilters">
         <label class="productsWorkbench__field">
           <span>Rango</span>
           <select class="food-control" data-products-filter="range">
@@ -2872,72 +2872,96 @@ function renderProductsSummaryCards(model) {
           </select>
         </label>
       </div>
-      <details class="productsWorkbench__settingsCard productsWorkbench__collapse" id="financeProductsTopPanelSettings">
+      <details class="productsWorkbench__settingsCard productsWorkbench__collapse finance-products-filter-section" id="financeProductsTopPanelSettings">
         <summary class="productsWorkbench__settingsSummary">
-          <span>Mas filtros</span>
-          <strong>${model.monthlyTarget > 0 ? fmtCurrency(model.monthlyTarget) : 'Sin objetivo'}</strong>
+          <span>Más filtros</span>
+          <span class="productsWorkbench__groupChevron" aria-hidden="true">›</span>
         </summary>
-        <div class="productsWorkbench__settingsGrid">
+        <div class="productsWorkbench__settingsGrid finance-products-filter-section">
+          <div class="finance-products-filter-row">
+            <label class="productsWorkbench__field">
+              <span>Objetivo mensual</span>
+              <input class="food-control" type="number" step="0.01" min="0" value="${Number(model.monthlyTarget || 0) || ''}" data-products-setting="monthlyTarget" />
+            </label>
+            <label class="productsWorkbench__field">
+              <span>Cuenta por defecto</span>
+              <select class="food-control" data-products-setting="defaultAccountId">
+                <option value="">Seleccionar</option>
+                ${(state.accounts || []).map((account) => `<option value="${escapeHtml(account.id)}" ${state.productsHub?.settings?.defaultAccountId === account.id ? 'selected' : ''}>${escapeHtml(account.name || account.id)}</option>`).join('')}
+              </select>
+            </label>
+            <label class="productsWorkbench__field">
+              <span>Supermercado base</span>
+              <input class="food-control" type="text" value="${escapeHtml(state.productsHub?.settings?.defaultStore || '')}" data-products-setting="defaultStore" placeholder="mercadona" />
+            </label>
+            <label class="productsWorkbench__field">
+              <span>Pago base</span>
+              <input class="food-control" type="text" value="${escapeHtml(state.productsHub?.settings?.defaultPaymentMethod || 'Tarjeta')}" data-products-setting="defaultPaymentMethod" placeholder="Tarjeta" />
+            </label>
+          </div>
+          <div class="finance-products-filter-row">
+            <label class="productsWorkbench__field">
+              <span>Rango</span>
+              <select class="food-control" data-products-filter="range">
+                ${rangeOptions.map(([value, label]) => `<option value="${value}" ${cfg.range === value ? 'selected' : ''}>${label}</option>`).join('')}
+              </select>
+            </label>
+            <label class="productsWorkbench__field">
+              <span>Tipo</span>
+              <select class="food-control" data-products-filter="productType">
+                ${model.typeOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.productType === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todos' : value)}</option>`).join('')}
+              </select>
+            </label>
+            <label class="productsWorkbench__field">
+              <span>Categoría</span>
+              <select class="food-control" data-products-filter="category">
+                ${model.categoryOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.category === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todas' : value)}</option>`).join('')}
+              </select>
+            </label>
+            <label class="productsWorkbench__toggle">
+              <input type="checkbox" ${cfg.onlyWithItems ? 'checked' : ''} data-products-filter="onlyWithItems" />
+              <span>Solo actividad</span>
+            </label>
+          </div>
+          <div class="finance-products-filter-row">
+            <label class="productsWorkbench__field">
+              <span>Tienda</span>
+              <select class="food-control" data-products-filter="store">
+                ${model.storeOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.store === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todas' : value)}</option>`).join('')}
+              </select>
+            </label>
+            <label class="productsWorkbench__field">
+              <span>Vendedor</span>
+              <select class="food-control" data-products-filter="vendor">
+                ${model.vendorOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.vendor === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todos' : value)}</option>`).join('')}
+              </select>
+            </label>
+            <label class="productsWorkbench__field">
+              <span>Cuenta</span>
+              <select class="food-control" data-products-filter="account">
+                ${model.accountOptions.map((id) => `<option value="${escapeHtml(id)}" ${cfg.account === id ? 'selected' : ''}>${escapeHtml(id === 'all' ? 'Todas' : (state.accounts.find((account) => account.id === id)?.name || id))}</option>`).join('')}
+              </select>
+            </label>
+            <label class="productsWorkbench__field">
+              <span>Estado</span>
+              <select class="food-control" data-products-filter="status">
+                <option value="active" ${cfg.status === 'active' ? 'selected' : ''}>Activos</option>
+                <option value="all" ${cfg.status === 'all' ? 'selected' : ''}>Todos</option>
+                <option value="due" ${cfg.status === 'due' ? 'selected' : ''}>Por reponer</option>
+                <option value="inactive" ${cfg.status === 'inactive' ? 'selected' : ''}>Inactivos</option>
+              </select>
+            </label>
+          </div>
           <label class="productsWorkbench__field">
-            <span>Objetivo mensual</span>
-            <input class="food-control" type="number" step="0.01" min="0" value="${Number(model.monthlyTarget || 0) || ''}" data-products-setting="monthlyTarget" />
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Cuenta por defecto</span>
-            <select class="food-control" data-products-setting="defaultAccountId">
-              <option value="">Seleccionar</option>
-              ${(state.accounts || []).map((account) => `<option value="${escapeHtml(account.id)}" ${state.productsHub?.settings?.defaultAccountId === account.id ? 'selected' : ''}>${escapeHtml(account.name || account.id)}</option>`).join('')}
+            <span>Agrupar</span>
+            <select class="food-control" data-products-filter="groupBy">
+              ${groupOptions.map(([value, label]) => `<option value="${value}" ${cfg.groupBy === value ? 'selected' : ''}>${label}</option>`).join('')}
             </select>
           </label>
           <label class="productsWorkbench__field">
-            <span>Supermercado base</span>
-            <input class="food-control" type="text" value="${escapeHtml(state.productsHub?.settings?.defaultStore || '')}" data-products-setting="defaultStore" placeholder="mercadona" />
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Pago base</span>
-            <input class="food-control" type="text" value="${escapeHtml(state.productsHub?.settings?.defaultPaymentMethod || 'Tarjeta')}" data-products-setting="defaultPaymentMethod" placeholder="Tarjeta" />
-          </label>
-          <label class="productsWorkbench__toggle">
-            <input type="checkbox" ${cfg.onlyWithItems ? 'checked' : ''} data-products-filter="onlyWithItems" />
-            <span>Solo con actividad en rango</span>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Tipo</span>
-            <select class="food-control" data-products-filter="productType">
-              ${model.typeOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.productType === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todos' : value)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Categoria</span>
-            <select class="food-control" data-products-filter="category">
-              ${model.categoryOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.category === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todas' : value)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Tienda</span>
-            <select class="food-control" data-products-filter="store">
-              ${model.storeOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.store === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todas' : value)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Vendor</span>
-            <select class="food-control" data-products-filter="vendor">
-              ${model.vendorOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.vendor === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todos' : value)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Cuenta</span>
-            <select class="food-control" data-products-filter="account">
-              ${model.accountOptions.map((id) => `<option value="${escapeHtml(id)}" ${cfg.account === id ? 'selected' : ''}>${escapeHtml(id === 'all' ? 'Todas' : (state.accounts.find((account) => account.id === id)?.name || id))}</option>`).join('')}
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Estado</span>
-            <select class="food-control" data-products-filter="status">
-              <option value="active" ${cfg.status === 'active' ? 'selected' : ''}>Activos</option>
-              <option value="all" ${cfg.status === 'all' ? 'selected' : ''}>Todos</option>
-              <option value="due" ${cfg.status === 'due' ? 'selected' : ''}>Por reponer</option>
-              <option value="inactive" ${cfg.status === 'inactive' ? 'selected' : ''}>Inactivos</option>
+            <span>Ordenar</span>
+            <select class="food-control" data-products-filter="sortBy">
+              ${sortOptions.map(([value, label]) => `<option value="${value}" ${cfg.sortBy === value ? 'selected' : ''}>${label}</option>`).join('')}
             </select>
           </label>
           ${cfg.range === 'custom' ? `
@@ -3243,10 +3267,10 @@ function renderProductsCatalogGroup(group, model) {
             <span data-products-catalog-visible>${group.visibleCount} visibles</span>
             <span>${group.dueCount} por reponer</span>
           </div>
-          <span class="productsWorkbench__groupChevron" aria-hidden="true">⌄</span>
+          <span class="productsWorkbench__groupChevron" aria-hidden="true">›</span>
         </div>
       </summary>
-      <div class="productsWorkbench__catalogGrid" id="${carouselId}" data-products-catalog-track>
+      <div class="productsWorkbench__catalogGrid finance-products-carousel" id="${carouselId}" data-products-catalog-track>
         ${group.rows.map((row) => {
           const selectedClass = model.selectedProductId === row.canonicalId ? 'is-selected' : '';
           const dueText = row.inActiveList ? 'En lista' : row.dueLabel;
@@ -10956,35 +10980,39 @@ if (form) {
     <header class="financeAccountCreateModal__header">
     <h3>Nueva cuenta</h3>
     <button class="finance-pill finance-pill--mini" type="button" data-close-modal aria-label="Cerrar">✕</button></header>
-    <form class="finance-entry-form" id="modal-cuenta-nueva" data-new-account-form>
+    <form id="financeAccountCreateForm" class="finance-account-create-form finance-entry-form" data-new-account-form>
+      <div class="finance-account-create-grid">
       <label class="financeAccountForm__field">
-        <span class="financeAccountForm__label">Nombre de cuenta</span>
+        <span class="financeAccountForm__label">Nombre</span>
         <input type="text" name="name" data-account-name-input placeholder="Nombre de la cuenta" required />
       </label>
       <label class="financeAccountForm__field">
-        <span class="financeAccountForm__label">Últimos 4 dígitos tarjeta</span>
-        <input type="text" name="cardLast4" data-card-last4-input inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="1234" />
+        <span class="financeAccountForm__label">Tarjeta</span>
+        <input type="text" name="cardLast4" data-card-last4-input inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="Últimos 4" />
       </label>
       <label class="financeAccountForm__field">
         <span class="financeAccountForm__label">Valor inicial</span>
         <input type="number" name="initialValue" step="0.01" inputmode="decimal" value="0" placeholder="0.00" />
       </label>
-      <div class="financeAccountForm__toggles" role="group" aria-label="Opciones de cuenta">
+      </div>
+      <div class="financeAccountForm__toggles finance-account-create-flags" role="group" aria-label="Opciones de cuenta">
         <label class="financeAccountForm__toggle"><input type="checkbox" name="shared" /> <span>Compartida</span></label>
         <label class="financeAccountForm__toggle"><input type="checkbox" name="isBitcoin" /> <span>Cuenta Bitcoin</span></label>
       </div>
-      <div class="financeAccountForm__conditional" data-account-shared-fields hidden>
+      <div class="financeAccountForm__conditional finance-account-create-shared" data-account-shared-fields hidden>
         <label class="financeAccountForm__field">
           <span class="financeAccountForm__label">Porcentaje compartido</span>
-          <input type="number" name="sharedRatio" min="0" max="100" step="1" value="50" />
+          <select name="sharedRatio">
+            <option value="50">50%</option>
+          </select>
         </label>
       </div>
-      <div class="financeAccountForm__conditional" data-account-btc-fields hidden>
+      <div class="financeAccountForm__conditional finance-account-create-btc" data-account-btc-fields hidden>
         <label class="financeAccountForm__field">
           <span class="financeAccountForm__label">BTC unidades</span>
           <input type="number" name="btcUnits" step="0.00000001" min="0" value="0" placeholder="BTC unidades" />
         </label>
-        <small class="financeAccountForm__hint" data-account-btc-hint>BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(0)}</small>
+        <p class="financeAccountForm__hint" data-account-btc-hint>BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(0)}</p>
       </div>
       <div class="financeAccountForm__actions"><button class="finance-pill" type="submit">Crear</button></div>
     </form></section></div>`;
@@ -11657,7 +11685,7 @@ function syncNewAccountFormUI(formEl) {
   if (sharedBlock) sharedBlock.hidden = !isShared;
   if (bitcoinBlock) bitcoinBlock.hidden = !isBitcoin;
 
-  const ratioInput = formEl.querySelector('input[name="sharedRatio"]');
+  const ratioInput = formEl.querySelector('[name="sharedRatio"]');
   if (ratioInput && !isShared) ratioInput.value = '50';
 
   const btcUnits = Number(formEl.querySelector('input[name="btcUnits"]')?.value || 0);

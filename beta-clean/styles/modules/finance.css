@@ -7412,3 +7412,278 @@ margin-bottom: 50px;
     flex-basis: min(84vw, 250px);
   }
 }
+
+/* ===== Layout hardening · Nueva cuenta + Productos (alcance limitado a esta vista) ===== */
+.financeTab #finance-modal.finance-modal--new-account{
+  width: min(92vw, 460px);
+  max-width: min(92vw, 460px);
+  overflow-x: hidden;
+}
+
+.financeTab #financeAccountCreateModal{
+  width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.financeTab #financeAccountCreateForm,
+.financeTab #financeAccountCreateForm *{
+  box-sizing: border-box;
+}
+
+.financeTab #financeAccountCreateForm{
+  width: 100%;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.financeTab #financeAccountCreateForm label{
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.financeTab #financeAccountCreateForm label span{
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.financeTab #financeAccountCreateForm input,
+.financeTab #financeAccountCreateForm select{
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+}
+
+.financeTab #financeAccountCreateForm .finance-account-create-grid{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.financeTab #financeAccountCreateForm .finance-account-create-flags{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.financeTab #financeAccountCreateForm .finance-account-create-flags label{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid rgba(150, 184, 243, .22);
+  border-radius: 12px;
+  background: rgba(17, 29, 46, .35);
+}
+
+.financeTab #financeAccountCreateForm .finance-account-create-flags input[type="checkbox"]{
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.financeTab #financeAccountCreateForm .finance-account-create-shared,
+.financeTab #financeAccountCreateForm .finance-account-create-btc{
+  display: grid;
+  gap: 10px;
+}
+
+.financeTab #financeAccountCreateForm .financeAccountForm__hint{
+  margin: 0;
+  font-size: 12px;
+  color: rgba(220, 235, 255, .8);
+}
+
+.financeTab #financeAccountCreateForm .financeAccountForm__actions .finance-pill{
+  width: 100%;
+  min-height: 44px;
+}
+
+.financeTab #financeProductsTopPanel{
+  padding: 10px;
+  gap: 10px;
+  border-radius: 14px;
+  border-left: 0;
+  border-right: 0;
+  border-top: 1px solid rgba(150, 184, 243, .2);
+  border-bottom: 1px solid rgba(150, 184, 243, .18);
+  background: rgba(7, 16, 34, .82);
+  box-shadow: none;
+}
+
+.financeTab #financeProductsTopPanel .productsWorkbench__heroText,
+.financeTab #financeProductsTopPanel .productsWorkbench__settingsCard{
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 0;
+}
+
+.financeTab #financeProductsTopPanel .finance-products-search{
+  width: 100%;
+}
+
+.financeTab #financeProductsTopPanel .finance-products-search input{
+  min-height: 44px;
+}
+
+.financeTab #financeProductsTopPanel .finance-products-filter-main{
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.financeTab #financeProductsTopPanel .finance-products-filter-section{
+  display: grid;
+  gap: 10px;
+}
+
+.financeTab #financeProductsTopPanel .finance-products-filter-row{
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.financeTab #financeProductsTopPanel .productsWorkbench__settingsSummary{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 38px;
+  padding: 0;
+}
+
+.financeTab #financeProductsTopPanel .productsWorkbench__settingsSummary::after{
+  display: none;
+}
+
+.financeTab #financeProductsTopPanel .productsWorkbench__settingsCard .productsWorkbench__groupChevron{
+  display: inline-flex;
+  transition: transform .18s ease;
+}
+
+.financeTab #financeProductsTopPanel .productsWorkbench__settingsCard[open] .productsWorkbench__groupChevron{
+  transform: rotate(90deg);
+}
+
+.financeTab #financeProductsTopPanel .productsWorkbench__settingsSave{
+  width: 100%;
+}
+
+.financeTab #financeProductsTopPanel .productsWorkbench__statsGrid{
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.financeTab #financeProductsTopPanel .productsWorkbench__statCard{
+  padding: 8px;
+  min-height: auto;
+}
+
+.financeTab #financeProductsCatalogView .productsWorkbench__panelHead p{
+  margin: 0;
+}
+
+.financeTab #financeProductsCatalogGroups .productsWorkbench__group{
+  border-radius: 10px;
+  border: 1px solid rgba(144, 175, 226, .12);
+  background: rgba(9, 19, 32, .32);
+}
+
+.financeTab #financeProductsCatalogGroups .productsWorkbench__groupHead{
+  min-height: 44px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.financeTab #financeProductsCatalogGroups .productsWorkbench__groupTitle,
+.financeTab #financeProductsCatalogGroups .productsWorkbench__groupAside{
+  min-width: 0;
+}
+
+.financeTab #financeProductsCatalogGroups .productsWorkbench__groupTitle strong,
+.financeTab #financeProductsCatalogGroups .productsWorkbench__groupTitle small,
+.financeTab #financeProductsCatalogGroups .productsWorkbench__groupMeta span{
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.financeTab #financeProductsCatalogGroups .productsWorkbench__groupAside{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.financeTab #financeProductsCatalogGroups .productsWorkbench__groupMeta{
+  display: inline-flex;
+  gap: 6px;
+}
+
+.financeTab #financeProductsCatalogGroups .productsWorkbench__groupChevron{
+  transform: rotate(0deg);
+}
+
+.financeTab #financeProductsCatalogGroups .productsWorkbench__group[open] .productsWorkbench__groupChevron{
+  transform: rotate(90deg);
+}
+
+.financeTab #financeProductsCatalogGroups .finance-products-carousel{
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(2, auto);
+  grid-auto-columns: minmax(180px, 220px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  gap: 10px;
+  padding: 2px 10px 10px;
+}
+
+.financeTab #financeProductsCatalogGroups .productsWorkbench__productCard{
+  width: 100%;
+  min-height: 78px;
+  padding: 8px;
+  gap: 6px;
+}
+
+.financeTab #financeProductsCatalogGroups .productsWorkbench__productTop{
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.financeTab #financeProductsCatalogGroups .productsWorkbench__miniAction{
+  width: 24px;
+  min-height: 24px;
+  padding: 0;
+}
+
+.financeTab #financeProductsCatalogGroups .productsWorkbench__badge{
+  font-size: 11px;
+}
+
+.financeTab .financeProductsView,
+.financeTab #financeProductsTopPanel,
+.financeTab #financeProductsCatalogView,
+.financeTab #financeProductsCatalogGroups{
+  overflow-x: hidden;
+}
+
+@media (max-width: 760px){
+  .financeTab #financeProductsTopPanel .finance-products-filter-main,
+  .financeTab #financeProductsTopPanel .finance-products-filter-row{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px){
+  .financeTab #financeAccountCreateForm .finance-account-create-grid{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

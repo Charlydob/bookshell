@@ -10406,20 +10406,25 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
       <form class="finance-entry-form fm-form fin-move-form fin-fixed-form" id="fixed-expense-edit-form" data-fixed-expense-form>
         <input type="hidden" name="id" id="fixed-expense-id-input" value="${escapeHtml(String(form.id || ''))}" />
         <div class="finance-form-grid fin-fixed-grid">
-          <label class="fin-fixed-field fin-fixed-field--emoji" for="fixed-expense-emoji-input">
-            <span class="fin-fixed-label">Emoji</span>
-            <input id="fixed-expense-emoji-input" name="emoji" type="text" maxlength="4" value="${escapeHtml(form.emoji || '💸')}" placeholder="💸" class="fin-fixed-input" />
-          </label>
 
-          <label class="fin-fixed-field fin-fixed-field--day" for="fixed-expense-day-input">
-            <span class="fin-fixed-label">Día del mes</span>
-            <input id="fixed-expense-day-input" name="dayOfMonth" type="number" min="1" max="31" value="${escapeHtml(String(form.dayOfMonth || 1))}" class="fin-fixed-input" />
-          </label>
+        <div id="meta-gasto-fijo">
+            <label class="fin-fixed-field fin-fixed-field--emoji" for="fixed-expense-emoji-input">
+              <span class="fin-fixed-label">Emoji</span>
+              <input id="fixed-expense-emoji-input" name="emoji" type="text" maxlength="4" value="${escapeHtml(form.emoji || '💸')}" placeholder="💸" class="fin-fixed-input" />
+            </label>
 
-          <label class="fin-fixed-field fin-fixed-field--full fin-fixed-field--name" for="fixed-expense-name-input">
-            <span class="fin-fixed-label">Nombre</span>
-            <input id="fixed-expense-name-input" name="name" type="text" value="${escapeHtml(form.name || '')}" placeholder="Alquiler" class="fin-fixed-input fin-fixed-input--text" />
-          </label>
+            <label class="fin-fixed-field fin-fixed-field--day" for="fixed-expense-day-input">
+              <span class="fin-fixed-label">Día del mes</span>
+              <input id="fixed-expense-day-input" name="dayOfMonth" type="number" min="1" max="31" value="${escapeHtml(String(form.dayOfMonth || 1))}" class="fin-fixed-input" />
+            </label>
+
+            <label class="fin-fixed-field fin-fixed-field--full fin-fixed-field--name" for="fixed-expense-name-input">
+              <span class="fin-fixed-label">Nombre</span>
+              <input id="fixed-expense-name-input" name="name" type="text" value="${escapeHtml(form.name || '')}" placeholder="Alquiler" class="fin-fixed-input fin-fixed-input--text" />
+            </label>
+        </div>
+
+        <div id="meta-2-gasto-fijo">
 
           <label class="fin-fixed-field fin-fixed-field--amount" for="fixed-expense-amount-input">
             <span class="fin-fixed-label">Importe (€)</span>
@@ -10433,24 +10438,32 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
               <option value="income" ${form.type === 'income' ? 'selected' : ''}>Ingreso</option>
             </select>
           </label>
+</div>
+        <div id="meta-4-gasto-fijo">
 
-          <label class="fin-fixed-field fin-fixed-field--category" for="fixed-expense-category-select">
-            <span class="fin-fixed-label">Categoría</span>
-            <select id="fixed-expense-category-select" name="category" class="fin-fixed-select fin-fixed-input" required>
-              <option value="">Selecciona categoría</option>
-              ${categoryOptions}
-              <option value="Fijos" ${String(form.category || '') === 'Fijos' ? 'selected' : ''}>Fijos</option>
-            </select>
-          </label>
+                <div id="categoria-gasto-fijo">
+                      <label class="fin-fixed-field fin-fixed-field--category" for="fixed-expense-category-select">
+                        <span class="fin-fixed-label">Categoría</span>
+                        <select id="fixed-expense-category-select" name="category" class="fin-fixed-select fin-fixed-input" required>
+                          <option value="">Selecciona categoría</option>
+                          ${categoryOptions}
+                          <option value="Fijos" ${String(form.category || '') === 'Fijos' ? 'selected' : ''}>Fijos</option>
+                        </select>
+                      </label>
+                </div>
 
-          <label class="fin-fixed-field fin-fixed-field--account" for="fixed-expense-account-select">
-            <span class="fin-fixed-label">Cuenta</span>
-            <select id="fixed-expense-account-select" name="accountId" class="fin-fixed-select fin-fixed-input" required>
-              <option value="">Selecciona cuenta</option>
-              ${accountOptions}
-            </select>
-          </label>
+            <div id="cuenta-gasto-fijo">
+                      <label class="fin-fixed-field fin-fixed-field--account" for="fixed-expense-account-select">
+                        <span class="fin-fixed-label">Cuenta</span>
+                        <select id="fixed-expense-account-select" name="accountId" class="fin-fixed-select fin-fixed-input" required>
+                          <option value="">Selecciona cuenta</option>
+                          ${accountOptions}
+                        </select>
+                      </label>
+            </div>
+        </div>
 
+        <div id="meta-3-gasto-fijo">
           <label class="fin-fixed-field fin-fixed-field--start-date" for="fixed-expense-start-date-input">
             <span class="fin-fixed-label">Inicio</span>
             <input id="fixed-expense-start-date-input" name="startDate" type="date" value="${escapeHtml(form.startDate || '')}" class="fin-fixed-input fin-fixed-input--date" />
@@ -10465,6 +10478,8 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
             <span class="fin-fixed-label">Nota</span>
             <input id="fixed-expense-note-input" name="note" type="text" value="${escapeHtml(form.note || '')}" placeholder="Opcional" class="fin-fixed-input fin-fixed-input--text" />
           </label>
+        </div>
+
 
           <label class="fin-fixed-check fin-fixed-field--checkbox" for="fixed-expense-active-checkbox">
             <input id="fixed-expense-active-checkbox" name="active" type="checkbox" ${form.active ? 'checked' : ''} class="fin-fixed-checkbox" />
@@ -10475,14 +10490,15 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
             <input id="fixed-expense-autocreate-checkbox" name="autoCreate" type="checkbox" ${form.autoCreate ? 'checked' : ''} class="fin-fixed-checkbox" />
             <span class="fin-fixed-check-label">Crear movimiento automáticamente</span>
           </label>
-        </div>
-
-        <div class="fin-fixed-actions" style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+          <div class="fin-fixed-actions" style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
           <button type="button" class="finance-pill fin-fixed-action fin-fixed-action--cancel" id="fixed-expense-cancel-btn" data-close-modal>Cancelar</button>
           ${isEditMode ? `<button type="button" class="finance-pill finance-pill--danger fin-fixed-action fin-fixed-action--delete" id="fixed-expense-delete-btn" data-delete-fixed-expense="${escapeHtml(String(form.id || ''))}">🗑️ Eliminar</button>` : ''}
           <button type="button" class="finance-pill fin-fixed-action fin-fixed-action--test" id="fixed-expense-test-btn" data-test-fixed-expense>🧪 Prueba</button>
           <button type="submit" class="finance-pill finance-pill--primary fin-fixed-action fin-fixed-action--submit" id="fixed-expense-submit-btn">Guardar</button>
         </div>
+        </div>
+
+        
       </form>
     </div>
   `;
@@ -10876,7 +10892,7 @@ if (form) {
   if (state.modal.type === 'calendar-day-edit') {
     const day = String(state.modal.day || '').trim();
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar saldos · ${escapeHtml(day)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
-      <form data-calendar-day-form="${escapeHtml(day)}">${resolvedAccounts.map((account) => `<label>${escapeHtml(account.name)}<input name="acc_${account.id}" type="number" step="0.01" value="${accountValueForDay(account, day)}" /></label>`).join('') || '<p class="finance-empty">No hay cuentas.</p>'}<button class="finance-pill" type="submit">Guardar</button></form></div>`;
+      <form id="vista-detalle-dia" data-calendar-day-form="${escapeHtml(day)}">${resolvedAccounts.map((account) => `<label>${escapeHtml(account.name)}<input name="acc_${account.id}" type="number" step="0.01" value="${accountValueForDay(account, day)}" /></label>`).join('') || '<p class="finance-empty">No hay cuentas.</p>'}<button class="finance-pill" type="submit">Guardar</button></form></div>`;
     return;
   }
   if (state.modal.type === 'budget') {

@@ -4000,49 +4000,6 @@ margin-bottom: 50px;
   grid-column: span 1;
 }
 
-.fin-fixed-field--full {
-  grid-column: 1 / -1;
-}
-
-.fin-fixed-field--emoji {
-  grid-column: span 1;
-  max-width: 120px;
-}
-
-.fin-fixed-field--day {
-  grid-column: span 1;
-  max-width: 140px;
-}
-
-.fin-fixed-field--name,
-.fin-fixed-field--note {
-  grid-column: 1 / -1;
-}
-
-.fin-fixed-field--amount {
-  grid-column: 1;
-}
-
-.fin-fixed-field--type {
-  grid-column: 2;
-}
-
-.fin-fixed-field--category {
-  grid-column: 1 / -1;
-}
-
-.fin-fixed-field--account {
-  grid-column: 1 / -1;
-}
-
-.fin-fixed-field--start-date {
-  grid-column: 1;
-}
-
-.fin-fixed-field--end-date {
-  grid-column: 2;
-}
-
 .fin-fixed-label {
   font-size: 12px;
   font-weight: 600;
@@ -7674,7 +7631,7 @@ margin-bottom: 50px;
 .financeTab #financeProductsCatalogGroups{
   overflow-x: hidden;
 }
-
+/* #region MANTENER */
 #financeAccountCreateForm{
   display: grid;
   gap: 14px;
@@ -7684,3 +7641,99 @@ margin-bottom: 50px;
 #fusionar-cuentas{
   display: none;
 }
+/* #region Modal añadir movimiento */
+#fm-tx-type{
+  display: none;
+}
+#fm-tx-account{
+  justify-items: start;
+  width: 90%;
+  padding: 6px;
+  font-size: 16px;
+}
+/* #endregion Modal añadir movimiento */
+
+/* #region Modal Gasto Fijo */
+.fin-fixed-grid{
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1fr;
+}
+
+#meta-gasto-fijo {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  width: 90%;
+  border-bottom: 1px solid rgba(150, 184, 243, .22);
+  border-top: 1px solid rgba(150, 184, 243, .22);
+  border-radius: 12px;
+  justify-self: center;
+  justify-content: center;
+}
+#meta-3-gasto-fijo{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  justify-items: start;
+}
+#meta-2-gasto-fijo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  justify-self: center;
+  text-align: center;
+  text-align-last: center;
+}
+
+
+#meta-4-gasto-fijo{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 90%;
+  justify-self: center;
+  justify-content: center;
+  border-bottom: 1px solid rgba(150, 184, 243, .22);
+  border-top: 1px solid rgba(150, 184, 243, .22);
+  border-radius: 12px;
+}
+#fixed-expense-type-select{
+  width: 170%;
+  background: transparent;
+  border: 0px;
+  
+}
+.fin-fixed-field--note{
+  display: none;
+}
+#fixed-expense-modal-header{
+  background: transparent;
+}
+
+.fin-fixed-select.fin-fixed-input{
+  width: 80%;
+  justify-self: start;
+}
+
+.financeTab .finance-entry-form input {
+  background: transparent;
+  border: none;
+}
+
+#fixed-expense-category-select, #fixed-expense-account-select{
+  width: 100%;
+  background: transparent;
+  border: 0px red solid;
+  text-align: center;
+  text-align-last: center;
+}
+
+#vista-detalle-dia{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+label {
+  display: grid;
+  font-size: 12px;
+}
+/* #endregion Modal Gasto Fijo */
+
+/* #endregion MANTENER */

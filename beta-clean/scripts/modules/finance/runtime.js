@@ -2813,16 +2813,68 @@ function buildProductsViewModel(cfg = {}) {
 
 function renderProductsSummaryCards(model) {
   const trendTone = model.monthlyTarget > 0 && model.projectedMonthSpend > model.monthlyTarget ? 'is-danger' : 'is-calm';
+  const { cfg } = model;
+  const rangeOptions = [
+    ['day', 'Dia'],
+    ['week', 'Semana'],
+    ['month', 'Mes'],
+    ['year', 'Ano'],
+    ['total', 'Total'],
+    ['custom', 'Personal'],
+  ];
+  const groupOptions = [
+    ['type', 'Tipo'],
+    ['store', 'Tienda'],
+    ['date', 'Fecha'],
+    ['status', 'Estado'],
+  ];
+  const sortOptions = [
+    ['forecast', 'Reposicion'],
+    ['name', 'Nombre'],
+    ['price', 'Precio'],
+    ['last-purchase', 'Ultima compra'],
+    ['duration', 'Duracion'],
+    ['consumption', 'Consumo'],
+    ['spend', 'Gasto acumulado'],
+  ];
   return `
-    <section class="productsWorkbench__hero">
-      <div class="productsWorkbench__heroText">
-        <p class="productsWorkbench__eyebrow">Centro de compras y consumo</p>
-        <h2>Catalogo, lista, ticket y gasto en un flujo unico</h2>
-        <p>Rango activo: <strong>${escapeHtml(model.rangeLabel)}</strong>. Gestiona productos, prepara compras, confirma tickets y mide frecuencia real sin salir de la vista.</p>
+    <section class="productsWorkbench__hero" id="financeProductsTopPanel">
+      <div class="productsWorkbench__heroText" id="financeProductsTopPanelSearch">
+        <label class="productsWorkbench__field productsWorkbench__field--search">
+          <span>Buscar</span>
+          <input class="food-control" type="search" value="${escapeHtml(cfg.productsQuery || '')}" data-products-filter="productsQuery" placeholder="nombre, marca, tag, id..." />
+        </label>
       </div>
-      <details class="productsWorkbench__settingsCard productsWorkbench__collapse">
+      <div class="productsWorkbench__toolbarMain" id="financeProductsTopPanelFilters">
+        <label class="productsWorkbench__field">
+          <span>Rango</span>
+          <select class="food-control" data-products-filter="range">
+            ${rangeOptions.map(([value, label]) => `<option value="${value}" ${cfg.range === value ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Agrupar</span>
+          <select class="food-control" data-products-filter="groupBy">
+            ${groupOptions.map(([value, label]) => `<option value="${value}" ${cfg.groupBy === value ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Ordenar</span>
+          <select class="food-control" data-products-filter="sortBy">
+            ${sortOptions.map(([value, label]) => `<option value="${value}" ${cfg.sortBy === value ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Scope</span>
+          <select class="food-control" data-products-filter="scope">
+            <option value="personal" ${cfg.scope === 'personal' ? 'selected' : ''}>Mi parte</option>
+            <option value="global" ${cfg.scope === 'global' ? 'selected' : ''}>Global</option>
+          </select>
+        </label>
+      </div>
+      <details class="productsWorkbench__settingsCard productsWorkbench__collapse" id="financeProductsTopPanelSettings">
         <summary class="productsWorkbench__settingsSummary">
-          <span>Ajustes base</span>
+          <span>Mas filtros</span>
           <strong>${model.monthlyTarget > 0 ? fmtCurrency(model.monthlyTarget) : 'Sin objetivo'}</strong>
         </summary>
         <div class="productsWorkbench__settingsGrid">
@@ -2845,7 +2897,59 @@ function renderProductsSummaryCards(model) {
             <span>Pago base</span>
             <input class="food-control" type="text" value="${escapeHtml(state.productsHub?.settings?.defaultPaymentMethod || 'Tarjeta')}" data-products-setting="defaultPaymentMethod" placeholder="Tarjeta" />
           </label>
-          
+          <label class="productsWorkbench__toggle">
+            <input type="checkbox" ${cfg.onlyWithItems ? 'checked' : ''} data-products-filter="onlyWithItems" />
+            <span>Solo con actividad en rango</span>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Tipo</span>
+            <select class="food-control" data-products-filter="productType">
+              ${model.typeOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.productType === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todos' : value)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Categoria</span>
+            <select class="food-control" data-products-filter="category">
+              ${model.categoryOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.category === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todas' : value)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Tienda</span>
+            <select class="food-control" data-products-filter="store">
+              ${model.storeOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.store === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todas' : value)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Vendor</span>
+            <select class="food-control" data-products-filter="vendor">
+              ${model.vendorOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.vendor === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todos' : value)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Cuenta</span>
+            <select class="food-control" data-products-filter="account">
+              ${model.accountOptions.map((id) => `<option value="${escapeHtml(id)}" ${cfg.account === id ? 'selected' : ''}>${escapeHtml(id === 'all' ? 'Todas' : (state.accounts.find((account) => account.id === id)?.name || id))}</option>`).join('')}
+            </select>
+          </label>
+          <label class="productsWorkbench__field">
+            <span>Estado</span>
+            <select class="food-control" data-products-filter="status">
+              <option value="active" ${cfg.status === 'active' ? 'selected' : ''}>Activos</option>
+              <option value="all" ${cfg.status === 'all' ? 'selected' : ''}>Todos</option>
+              <option value="due" ${cfg.status === 'due' ? 'selected' : ''}>Por reponer</option>
+              <option value="inactive" ${cfg.status === 'inactive' ? 'selected' : ''}>Inactivos</option>
+            </select>
+          </label>
+          ${cfg.range === 'custom' ? `
+            <label class="productsWorkbench__field">
+              <span>Desde</span>
+              <input class="food-control" type="date" value="${escapeHtml(cfg.customStart || '')}" data-products-filter="customStart" />
+            </label>
+            <label class="productsWorkbench__field">
+              <span>Hasta</span>
+              <input class="food-control" type="date" value="${escapeHtml(cfg.customEnd || '')}" data-products-filter="customEnd" />
+            </label>
+          ` : ''}
         </div>
         <button type="button" class="food-history-btn productsWorkbench__settingsSave" data-products-save-settings>Guardar ajustes</button>
       </details>
@@ -2886,160 +2990,7 @@ function renderProductsSummaryCards(model) {
 }
 
 function renderProductsFilters(model) {
-  const { cfg } = model;
-  const rangeOptions = [
-    ['day', 'Dia'],
-    ['week', 'Semana'],
-    ['month', 'Mes'],
-    ['year', 'Ano'],
-    ['total', 'Total'],
-    ['custom', 'Personal'],
-  ];
-  const groupOptions = [
-    ['type', 'Tipo'],
-    ['store', 'Tienda'],
-    ['date', 'Fecha'],
-    ['status', 'Estado'],
-  ];
-  const sortOptions = [
-    ['forecast', 'Reposicion'],
-    ['name', 'Nombre'],
-    ['price', 'Precio'],
-    ['last-purchase', 'Ultima compra'],
-    ['duration', 'Duracion'],
-    ['consumption', 'Consumo'],
-    ['spend', 'Gasto acumulado'],
-  ];
-  return `
-    <details class="productsWorkbench__toolbar productsWorkbench__collapse">
-      <summary class="productsWorkbench__panelHead productsWorkbench__collapseSummary">
-        <div>
-          <h3>Buscador y filtros</h3>
-          <p>${escapeHtml(model.rangeLabel)} · ${model.filteredCount} visibles · orden ${escapeHtml(cfg.sortBy || 'forecast')}</p>
-        </div>
-      </summary>
-      <div class="productsWorkbench__toolbarMain">
-        <label class="productsWorkbench__field productsWorkbench__field--search">
-          <span>Buscar</span>
-          <input class="food-control" type="search" value="${escapeHtml(cfg.productsQuery || '')}" data-products-filter="productsQuery" placeholder="nombre, marca, tag, id..." />
-        </label>
-        <label class="productsWorkbench__field">
-          <span>Rango</span>
-          <select class="food-control" data-products-filter="range">
-            ${rangeOptions.map(([value, label]) => `<option value="${value}" ${cfg.range === value ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
-        </label>
-        <label class="productsWorkbench__field">
-          <span>Agrupar</span>
-          <select class="food-control" data-products-filter="groupBy">
-            ${groupOptions.map(([value, label]) => `<option value="${value}" ${cfg.groupBy === value ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
-        </label>
-        <label class="productsWorkbench__field">
-          <span>Ordenar</span>
-          <select class="food-control" data-products-filter="sortBy">
-            ${sortOptions.map(([value, label]) => `<option value="${value}" ${cfg.sortBy === value ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
-        </label>
-        <label class="productsWorkbench__field">
-          <span>Scope</span>
-          <select class="food-control" data-products-filter="scope">
-            <option value="personal" ${cfg.scope === 'personal' ? 'selected' : ''}>Mi parte</option>
-            <option value="global" ${cfg.scope === 'global' ? 'selected' : ''}>Global</option>
-          </select>
-        </label>
-      </div>
-      <details class="productsWorkbench__moreFilters">
-        <summary>Mas filtros</summary>
-        <div class="productsWorkbench__toolbarCompact">
-          <label class="productsWorkbench__field">
-            <span>Tipo</span>
-            <select class="food-control" data-products-filter="productType">
-              ${model.typeOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.productType === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todos' : value)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Categoria</span>
-            <select class="food-control" data-products-filter="category">
-              ${model.categoryOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.category === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todas' : value)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Tienda</span>
-            <select class="food-control" data-products-filter="store">
-              ${model.storeOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.store === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todas' : value)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Vendor visible</span>
-            <select class="food-control" data-products-filter="vendor">
-              ${model.vendorOptions.map((value) => `<option value="${escapeHtml(value)}" ${cfg.vendor === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'Todos' : value)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Cuenta</span>
-            <select class="food-control" data-products-filter="account">
-              ${model.accountOptions.map((id) => `<option value="${escapeHtml(id)}" ${cfg.account === id ? 'selected' : ''}>${escapeHtml(id === 'all' ? 'Todas' : (state.accounts.find((account) => account.id === id)?.name || id))}</option>`).join('')}
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Estado</span>
-            <select class="food-control" data-products-filter="status">
-              <option value="active" ${cfg.status === 'active' ? 'selected' : ''}>Activos</option>
-              <option value="all" ${cfg.status === 'all' ? 'selected' : ''}>Todos</option>
-              <option value="due" ${cfg.status === 'due' ? 'selected' : ''}>Por reponer</option>
-              <option value="inactive" ${cfg.status === 'inactive' ? 'selected' : ''}>Inactivos</option>
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Precio</span>
-            <select class="food-control" data-products-filter="priceBand">
-              <option value="all" ${cfg.priceBand === 'all' ? 'selected' : ''}>Todo</option>
-              <option value="budget" ${cfg.priceBand === 'budget' ? 'selected' : ''}>Budget</option>
-              <option value="standard" ${cfg.priceBand === 'standard' ? 'selected' : ''}>Medio</option>
-              <option value="premium" ${cfg.priceBand === 'premium' ? 'selected' : ''}>Premium</option>
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Frecuencia</span>
-            <select class="food-control" data-products-filter="frequencyBand">
-              <option value="all" ${cfg.frequencyBand === 'all' ? 'selected' : ''}>Todas</option>
-              <option value="weekly" ${cfg.frequencyBand === 'weekly' ? 'selected' : ''}>Semanal</option>
-              <option value="biweekly" ${cfg.frequencyBand === 'biweekly' ? 'selected' : ''}>Quincenal</option>
-              <option value="monthly" ${cfg.frequencyBand === 'monthly' ? 'selected' : ''}>Mensual</option>
-              <option value="slow" ${cfg.frequencyBand === 'slow' ? 'selected' : ''}>Lenta</option>
-            </select>
-          </label>
-          <label class="productsWorkbench__field">
-            <span>Duracion</span>
-            <select class="food-control" data-products-filter="durationBand">
-              <option value="all" ${cfg.durationBand === 'all' ? 'selected' : ''}>Todas</option>
-              <option value="weekly" ${cfg.durationBand === 'weekly' ? 'selected' : ''}>Corta</option>
-              <option value="biweekly" ${cfg.durationBand === 'biweekly' ? 'selected' : ''}>Media</option>
-              <option value="monthly" ${cfg.durationBand === 'monthly' ? 'selected' : ''}>Larga</option>
-              <option value="slow" ${cfg.durationBand === 'slow' ? 'selected' : ''}>Muy larga</option>
-            </select>
-          </label>
-          <label class="productsWorkbench__toggle">
-            <input type="checkbox" ${cfg.onlyWithItems ? 'checked' : ''} data-products-filter="onlyWithItems" />
-            <span>Solo con actividad en rango</span>
-          </label>
-          ${cfg.range === 'custom' ? `
-            <div class="productsWorkbench__rangeDates">
-              <label class="productsWorkbench__field">
-                <span>Desde</span>
-                <input class="food-control" type="date" value="${escapeHtml(cfg.customStart || '')}" data-products-filter="customStart" />
-              </label>
-              <label class="productsWorkbench__field">
-                <span>Hasta</span>
-                <input class="food-control" type="date" value="${escapeHtml(cfg.customEnd || '')}" data-products-filter="customEnd" />
-              </label>
-            </div>
-          ` : ''}
-        </div>
-      </details>
-    </details>
-  `;
+  return '';
 }
 
 function productsWorkbenchDomId(prefix = 'product', value = '') {
@@ -3305,6 +3256,7 @@ function renderProductsCatalogGroup(group, model) {
             class="productsWorkbench__productCard ${selectedClass} is-${escapeHtml(row.dueTone)} ${!row.active ? 'is-inactive' : ''} ${row.inActiveList ? 'is-in-list' : ''}"
             id="${escapeHtml(productsWorkbenchDomId('product-card', row.canonicalId))}"
             data-products-catalog-card
+            data-products-open-product="${escapeHtml(row.canonicalId)}"
             data-products-id="${escapeHtml(row.canonicalId)}"
             data-products-search="${escapeHtml(row.searchIndex || '')}">
             <div class="productsWorkbench__productTop">
@@ -10998,33 +10950,45 @@ if (form) {
     return;
   }
   if (state.modal.type === 'new-account') {
-    backdrop.innerHTML = 
+    backdrop.innerHTML =
     `<div id="finance-modal" class="finance-modal finance-modal--new-account" role="dialog" aria-modal="true" tabindex="-1">
     <section id="financeAccountCreateModal">
     <header class="financeAccountCreateModal__header">
     <h3>Nueva cuenta</h3>
-    <button class="finance-pill finance-pill--mini" type="button" data-close-modal>Cerrar</button></header>
+    <button class="finance-pill finance-pill--mini" type="button" data-close-modal aria-label="Cerrar">✕</button></header>
     <form class="finance-entry-form" id="modal-cuenta-nueva" data-new-account-form>
       <label class="financeAccountForm__field">
-        <span class="financeAccountForm__label">Nombre</span>
+        <span class="financeAccountForm__label">Nombre de cuenta</span>
         <input type="text" name="name" data-account-name-input placeholder="Nombre de la cuenta" required />
       </label>
-      <div class="financeAccountForm__toggles" role="group" aria-label="Opciones de cuenta">
-        <label class="financeAccountForm__toggle"><input type="checkbox" name="shared" /> <span>🫂 Compartida</span></label>
-        <label class="financeAccountForm__toggle"><input type="checkbox" name="isBitcoin" /> <span>Cuenta Bitcoin</span></label>
-      </div>
-      <input type="hidden" name="sharedRatio" value="0.5" />
       <label class="financeAccountForm__field">
-        <span class="financeAccountForm__label">BTC unidades</span>
-        <input type="number" name="btcUnits" step="0.00000001" min="0" value="0" placeholder="BTC unidades" />
-      </label>
-      <label class="financeAccountForm__field">
-        <span class="financeAccountForm__label">Tarjeta (últimos 4)</span>
+        <span class="financeAccountForm__label">Últimos 4 dígitos tarjeta</span>
         <input type="text" name="cardLast4" data-card-last4-input inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="1234" />
       </label>
-      <small class="financeAccountForm__hint">BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(0)}</small>
+      <label class="financeAccountForm__field">
+        <span class="financeAccountForm__label">Valor inicial</span>
+        <input type="number" name="initialValue" step="0.01" inputmode="decimal" value="0" placeholder="0.00" />
+      </label>
+      <div class="financeAccountForm__toggles" role="group" aria-label="Opciones de cuenta">
+        <label class="financeAccountForm__toggle"><input type="checkbox" name="shared" /> <span>Compartida</span></label>
+        <label class="financeAccountForm__toggle"><input type="checkbox" name="isBitcoin" /> <span>Cuenta Bitcoin</span></label>
+      </div>
+      <div class="financeAccountForm__conditional" data-account-shared-fields hidden>
+        <label class="financeAccountForm__field">
+          <span class="financeAccountForm__label">Porcentaje compartido</span>
+          <input type="number" name="sharedRatio" min="0" max="100" step="1" value="50" />
+        </label>
+      </div>
+      <div class="financeAccountForm__conditional" data-account-btc-fields hidden>
+        <label class="financeAccountForm__field">
+          <span class="financeAccountForm__label">BTC unidades</span>
+          <input type="number" name="btcUnits" step="0.00000001" min="0" value="0" placeholder="BTC unidades" />
+        </label>
+        <small class="financeAccountForm__hint" data-account-btc-hint>BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(0)}</small>
+      </div>
       <div class="financeAccountForm__actions"><button class="finance-pill" type="submit">Crear</button></div>
     </form></section></div>`;
+    queueMicrotask(() => syncNewAccountFormUI(document.querySelector('[data-new-account-form]')));
     return;
   }
   if (state.modal.type === 'food-products') {
@@ -11672,10 +11636,35 @@ function subscribe() {
   }
 }
 
-async function addAccount({ name, shared = false, sharedRatio = 0.5, isBitcoin = false, btcUnits = 0, cardLast4 = '' }) {
+async function addAccount({ name, shared = false, sharedRatio = 0.5, isBitcoin = false, btcUnits = 0, cardLast4 = '', initialValue = 0 }) {
   const id = push(ref(db, `${state.financePath}/accounts`)).key;
   const ratio = shared ? clampRatio(sharedRatio, 0.5) : 1;
   await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), { id, name, shared, sharedRatio: ratio, isBitcoin: Boolean(isBitcoin), btcUnits: Number(btcUnits || 0), cardLast4: normalizeCardLast4(cardLast4), createdAt: nowTs(), updatedAt: nowTs(), entries: {}, snapshots: {} }));
+  const parsedInitial = parseEuroNumber(initialValue);
+  if (Number.isFinite(parsedInitial)) {
+    const day = dayKeyFromTs(Date.now());
+    await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}/snapshots/${day}`), { value: parsedInitial, updatedAt: nowTs() }));
+    await recomputeAccountEntries(id, day);
+  }
+}
+
+function syncNewAccountFormUI(formEl) {
+  if (!formEl) return;
+  const isShared = !!formEl.querySelector('input[name="shared"]')?.checked;
+  const isBitcoin = !!formEl.querySelector('input[name="isBitcoin"]')?.checked;
+  const sharedBlock = formEl.querySelector('[data-account-shared-fields]');
+  const bitcoinBlock = formEl.querySelector('[data-account-btc-fields]');
+  if (sharedBlock) sharedBlock.hidden = !isShared;
+  if (bitcoinBlock) bitcoinBlock.hidden = !isBitcoin;
+
+  const ratioInput = formEl.querySelector('input[name="sharedRatio"]');
+  if (ratioInput && !isShared) ratioInput.value = '50';
+
+  const btcUnits = Number(formEl.querySelector('input[name="btcUnits"]')?.value || 0);
+  const btcHint = formEl.querySelector('[data-account-btc-hint]');
+  if (btcHint) {
+    btcHint.textContent = `BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(Number.isFinite(btcUnits) ? btcUnits * Number(state.btcEurPrice || 0) : 0)}`;
+  }
 }
 async function updateAccountMeta(accountId, payload = {}) {
   const shared = Boolean(payload.shared);
@@ -12618,6 +12607,15 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       await openProductDetail(selectProductId);
       return;
     }
+    const openProductCardId = target.closest('[data-products-open-product]')?.dataset.productsOpenProduct;
+    if (openProductCardId && !target.closest('[data-products-add-to-list], [data-products-toggle-select], .productsWorkbench__check, .productsWorkbench__miniAction, .productsWorkbench__productHeading')) {
+      state.foodProductsView = {
+        ...(state.foodProductsView || {}),
+        selectedProductId: String(openProductCardId || '').trim(),
+      };
+      await openProductDetail(openProductCardId);
+      return;
+    }
     if (target.closest('[data-products-add-selected-list]')) {
       await addSelectedProductsToActiveList();
       return;
@@ -13478,6 +13476,10 @@ view.addEventListener('focusout', async (event) => {
       await toggleFoodExtras(form);
       maybeToggleCategoryCreate(form);
     }
+    if (event.target.matches('[data-new-account-form] input[name="shared"], [data-new-account-form] input[name="isBitcoin"]')) {
+      syncNewAccountFormUI(event.target.closest('[data-new-account-form]'));
+      return;
+    }
     if (event.target.matches('[data-tx-type]')) {
       syncTxTypeFields(event.target.closest('[data-balance-form]'));
     }
@@ -13518,6 +13520,9 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-card-last4-input]')) {
       const cleaned = String(event.target.value || '').replace(/\D/g, '').slice(0, 4);
       if (event.target.value !== cleaned) event.target.value = cleaned;
+    }
+    if (event.target.matches('[data-new-account-form] input[name="btcUnits"], [data-new-account-form] input[name="sharedRatio"]')) {
+      syncNewAccountFormUI(event.target.closest('[data-new-account-form]'));
     }
     if (event.target.matches('[data-products-catalog-search]')) {
       applyProductsCatalogGroupSearch(event.target);
@@ -13877,7 +13882,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       return;
     }
     if (event.target.matches('[data-new-account-form]')) {
-      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 0.5); const isBitcoin = form.get('isBitcoin') === 'on'; const btcUnits = Number(form.get('btcUnits') || 0); const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); if (name) { const duplicates = getCardLast4Duplicates(cardLast4); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); await addAccount({ name, shared, sharedRatio, isBitcoin, btcUnits, cardLast4 }); } state.modal = { type: null }; triggerRender(); return;
+      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 50) / 100; const isBitcoin = form.get('isBitcoin') === 'on'; const btcUnits = Number(form.get('btcUnits') || 0); const initialValue = Number(form.get('initialValue') || 0); const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); if (name) { const duplicates = getCardLast4Duplicates(cardLast4); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); await addAccount({ name, shared, sharedRatio, isBitcoin, btcUnits, cardLast4, initialValue }); } state.modal = { type: null }; triggerRender(); return;
     }
     if (event.target.matches('[data-calendar-day-form]')) {
       event.preventDefault();

@@ -2259,7 +2259,13 @@ function normalizeWorkScheduleWeek(raw = {}, key = "") {
   const weekStart = typeof raw.weekStart === "string" && raw.weekStart ? raw.weekStart : key;
   const rows = Array.isArray(raw.rows) ? raw.rows.map(normalizeWorkRow) : [];
   const resolvedDays = raw?.resolvedDays && typeof raw.resolvedDays === "object" ? raw.resolvedDays : {};
-  return { weekStart, rows, resolvedDays, updatedAt: Number(raw.updatedAt || Date.now()) };
+  return {
+    weekStart,
+    rows,
+    resolvedDays,
+    updatedAt: Number(raw.updatedAt || Date.now()),
+    createdAt: Number(raw.createdAt || raw.updatedAt || Date.now())
+  };
 }
 
 function normalizeWorkSchedulesStore(raw = {}) {
@@ -2984,6 +2990,13 @@ function getWorkScheduleVisualState(dayInfo = null) {
   return { status: "Libre", className: "is-work-free", shift: null };
 }
 
+function dowFromDateKey(dateKey) {
+  const date = parseDateKey(dateKey);
+  if (!date) return null;
+  const idx = (date.getDay() + 6) % 7;
+  return WORK_SCHEDULE_DOWS[idx] || null;
+}
+
 function buildResolvedWorkDays(weekStart, rows = []) {
   const startDate = parseDateKey(weekStart) || startOfWeek(new Date());
   const resolved = {};
@@ -2991,7 +3004,7 @@ function buildResolvedWorkDays(weekStart, rows = []) {
     const startMin = timeToMinutes(row.start);
     const endMin = timeToMinutes(row.end);
     if (endMin <= startMin) return;
-    const shift = startMin < 14 * 60 ? "M" : "T";
+    const shift = (startMin >= 14 * 60 || endMin >= 20 * 60) ? "T" : "M";
     const breakMinutes = row?.hasHalfHourBreak || Number(row?.breakMinutes) === 30 ? 30 : 0;
     const workedMinutes = Math.max(0, endMin - startMin - breakMinutes);
     row.days.forEach((dayKey) => {
@@ -3028,11 +3041,13 @@ function buildResolvedWorkDays(weekStart, rows = []) {
 
 function upsertWorkScheduleWeek(weekStart, rows = []) {
   const resolvedDays = buildResolvedWorkDays(weekStart, rows);
+  const previous = normalizeWorkScheduleWeek(habitWorkSchedules?.[weekStart] || { weekStart }, weekStart);
   const payload = {
     weekStart,
     rows: rows.map(normalizeWorkRow),
     resolvedDays,
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    createdAt: Number(previous?.createdAt || Date.now())
   };
   habitWorkSchedules = {
     ...habitWorkSchedules,
@@ -3051,7 +3066,7 @@ function persistWorkScheduleWeek(payload) {
     actionType: "save-week-schedule",
     firebasePath: `${HABIT_WORK_SCHEDULES_PATH}/${payload.weekStart}`,
     payload,
-    writeType: "set",
+    writeType: "update",
     dedupeKey: `work-schedule:${payload.weekStart}`,
     metadata: { weekStart: payload.weekStart },
   }).then((result) => reportQueuedWriteError("No se pudo guardar horario semanal", result));
@@ -8405,7 +8420,8 @@ function buildWorkScheduleWeekBand(weekStartKey) {
     const dateKey = dateKeyLocal(addDays(weekStart, idx));
     const day = getResolvedWorkScheduleForDate(dateKey);
     const state = getWorkScheduleVisualState(day);
-    const cell = document.createElement("article");
+    const cell = document.createElement("button");
+    cell.type = "button";
     cell.className = `habit-work-schedule-week-cell ${state.className}`;
     cell.innerHTML = `
       <div class="habit-work-schedule-week-day">${WORK_SCHEDULE_DOW_LABELS[dow]}</div>
@@ -8413,6 +8429,10 @@ function buildWorkScheduleWeekBand(weekStartKey) {
       <div class="habit-work-schedule-week-time">${day?.slots?.map((slot) => `${slot.start}–${slot.end}`).join(" · ") || ""}</div>
       <div class="habit-work-schedule-week-hours">${day ? minutesToHourLabel((Number(day.hours) || 0) * 60) : ""}</div>
     `;
+    cell.addEventListener("click", () => {
+      selectedDateKey = dateKey;
+      openWorkScheduleModal({ weekStart: weekStartKey, focusDateKey: dateKey });
+    });
     grid.appendChild(cell);
   });
   section.appendChild(grid);
@@ -8487,21 +8507,22 @@ function renderHistory() {
 
   const insights = document.createElement("div");
   insights.className = "habits-history-insights";
-  insights.appendChild(buildHistoryMonthCalendar(getHistoryWeekAnchorDate(), {
+  const historyCalendarSection = buildHistoryMonthCalendar(getHistoryWeekAnchorDate(), {
     onDateChange: () => {
       renderHistory();
     }
-  }));
-  $habitHistoryList.appendChild(insights);
+  });
+  insights.appendChild(historyCalendarSection);
   if (shouldRenderWorkScheduleBand) {
     if (habitHistoryRange === "week") {
       const weekStartKey = dateKeyLocal(startOfWeek(parseDateKey(selectedDateKey) || new Date()));
-      $habitHistoryList.appendChild(buildWorkScheduleWeekBand(weekStartKey));
+      insights.appendChild(buildWorkScheduleWeekBand(weekStartKey));
     } else {
       const anchor = parseDateKey(selectedDateKey) || new Date();
-      $habitHistoryList.appendChild(buildWorkScheduleMonthBand(anchor.getFullYear(), anchor.getMonth()));
+      insights.appendChild(buildWorkScheduleMonthBand(anchor.getFullYear(), anchor.getMonth()));
     }
   }
+  $habitHistoryList.appendChild(insights);
   if (!hasData) {
     return;
   }
@@ -11712,14 +11733,24 @@ function renderWorkScheduleRowsEditor() {
   });
 }
 
-function openWorkScheduleModal() {
+function openWorkScheduleModal(options = {}) {
   if (!$habitWorkScheduleModal) return;
   const monday = dateKeyLocal(startOfWeek(parseDateKey(selectedDateKey) || new Date()));
-  const weekStart = $habitWorkScheduleWeek?.value || monday;
+  const requestedWeekStart = typeof options?.weekStart === "string" && options.weekStart
+    ? dateKeyLocal(startOfWeek(parseDateKey(options.weekStart) || new Date()))
+    : "";
+  const weekStart = requestedWeekStart || $habitWorkScheduleWeek?.value || monday;
   const currentWeek = getWorkScheduleForWeek(weekStart);
+  const focusDow = dowFromDateKey(options?.focusDateKey);
+  const nextRows = currentWeek.rows.length
+    ? currentWeek.rows.map(normalizeWorkRow)
+    : [normalizeWorkRow({ days: ["mon", "tue", "wed", "thu", "fri"] })];
+  if (focusDow && !nextRows.some((row) => row.days.includes(focusDow))) {
+    nextRows.unshift(normalizeWorkRow({ days: [focusDow] }));
+  }
   workScheduleEditor = {
     weekStart,
-    rows: currentWeek.rows.length ? currentWeek.rows.map(normalizeWorkRow) : [normalizeWorkRow({ days: ["mon", "tue", "wed", "thu", "fri"] })]
+    rows: nextRows
   };
   if ($habitWorkScheduleWeek) $habitWorkScheduleWeek.value = weekStart;
   renderWorkScheduleRowsEditor();
@@ -11738,6 +11769,7 @@ function handleWorkScheduleSave() {
     .map(normalizeWorkRow)
     .filter((row) => row.days.length && timeToMinutes(row.end) > timeToMinutes(row.start));
   const payload = upsertWorkScheduleWeek(weekStart, rows);
+  selectedDateKey = weekStart;
   persistWorkScheduleWeek(payload);
   applyWorkScheduleToWorkHabit(payload);
   closeWorkScheduleModal();
@@ -12710,6 +12742,7 @@ function bindEvents() {
   $habitWorkScheduleWeek?.addEventListener("change", () => {
     const weekStart = dateKeyLocal(startOfWeek(parseDateKey($habitWorkScheduleWeek.value) || new Date()));
     const week = getWorkScheduleForWeek(weekStart);
+    selectedDateKey = weekStart;
     workScheduleEditor.weekStart = weekStart;
     workScheduleEditor.rows = week.rows.length ? week.rows.map(normalizeWorkRow) : [normalizeWorkRow({ days: ["mon", "tue", "wed", "thu", "fri"] })];
     $habitWorkScheduleWeek.value = weekStart;

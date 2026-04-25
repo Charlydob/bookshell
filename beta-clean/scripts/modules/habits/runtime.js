@@ -2242,11 +2242,16 @@ function normalizeWorkRow(row = {}) {
   const days = Array.isArray(row.days)
     ? row.days.filter((day) => WORK_SCHEDULE_DOWS.includes(day))
     : [];
+  const breakMinutesRaw = Number(row.breakMinutes);
+  const hasHalfHourBreak = row.hasHalfHourBreak === true || breakMinutesRaw === 30;
+  const breakMinutes = hasHalfHourBreak ? 30 : 0;
   return {
     id: row.id || `row-${Math.random().toString(36).slice(2, 10)}`,
     start: typeof row.start === "string" && row.start ? row.start : "07:00",
     end: typeof row.end === "string" && row.end ? row.end : "15:00",
-    days
+    days,
+    breakMinutes,
+    hasHalfHourBreak
   };
 }
 
@@ -2971,6 +2976,14 @@ function minutesToHourLabel(minutes = 0) {
   return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}h`;
 }
 
+function getWorkScheduleVisualState(dayInfo = null) {
+  if (!dayInfo) return { status: "Libre", className: "is-work-free", shift: null };
+  const shift = normalizeShiftValue(dayInfo.shift);
+  if (shift === "M") return { status: "M", className: "is-work-morning", shift };
+  if (shift === "T") return { status: "T", className: "is-work-evening", shift };
+  return { status: "Libre", className: "is-work-free", shift: null };
+}
+
 function buildResolvedWorkDays(weekStart, rows = []) {
   const startDate = parseDateKey(weekStart) || startOfWeek(new Date());
   const resolved = {};
@@ -2979,7 +2992,8 @@ function buildResolvedWorkDays(weekStart, rows = []) {
     const endMin = timeToMinutes(row.end);
     if (endMin <= startMin) return;
     const shift = startMin < 14 * 60 ? "M" : "T";
-    const workedMinutes = endMin - startMin;
+    const breakMinutes = row?.hasHalfHourBreak || Number(row?.breakMinutes) === 30 ? 30 : 0;
+    const workedMinutes = Math.max(0, endMin - startMin - breakMinutes);
     row.days.forEach((dayKey) => {
       const dayIdx = WORK_SCHEDULE_DOWS.indexOf(dayKey);
       if (dayIdx < 0) return;
@@ -2989,14 +3003,23 @@ function buildResolvedWorkDays(weekStart, rows = []) {
         end: row.end,
         shift,
         hours: 0,
+        breakMinutes: 0,
+        hasHalfHourBreak: false,
         slots: []
       };
       existing.start = existing.start || row.start;
       existing.end = row.end;
       existing.shift = existing.shift || shift;
       existing.hours = Math.round((Number(existing.hours || 0) + workedMinutes / 60) * 10) / 10;
+      existing.breakMinutes = Math.max(0, Number(existing.breakMinutes || 0) + breakMinutes);
+      existing.hasHalfHourBreak = existing.hasHalfHourBreak || breakMinutes === 30;
       existing.slots = Array.isArray(existing.slots) ? existing.slots : [];
-      existing.slots.push({ start: row.start, end: row.end });
+      existing.slots.push({
+        start: row.start,
+        end: row.end,
+        breakMinutes,
+        hasHalfHourBreak: breakMinutes === 30
+      });
       resolved[dateKey] = existing;
     });
   });
@@ -8381,11 +8404,12 @@ function buildWorkScheduleWeekBand(weekStartKey) {
   WORK_SCHEDULE_DOWS.forEach((dow, idx) => {
     const dateKey = dateKeyLocal(addDays(weekStart, idx));
     const day = getResolvedWorkScheduleForDate(dateKey);
+    const state = getWorkScheduleVisualState(day);
     const cell = document.createElement("article");
-    cell.className = "habit-work-schedule-week-cell";
+    cell.className = `habit-work-schedule-week-cell ${state.className}`;
     cell.innerHTML = `
       <div class="habit-work-schedule-week-day">${WORK_SCHEDULE_DOW_LABELS[dow]}</div>
-      <div class="habit-work-schedule-week-shift">${day?.shift || "Libre"}</div>
+      <div class="habit-work-schedule-week-shift">${state.status}</div>
       <div class="habit-work-schedule-week-time">${day?.slots?.map((slot) => `${slot.start}–${slot.end}`).join(" · ") || ""}</div>
       <div class="habit-work-schedule-week-hours">${day ? minutesToHourLabel((Number(day.hours) || 0) * 60) : ""}</div>
     `;
@@ -8405,9 +8429,10 @@ function buildWorkScheduleMonthBand(year, month) {
   for (let day = 1; day <= end.getDate(); day += 1) {
     const dateKey = dateKeyLocal(new Date(year, month, day));
     const info = getResolvedWorkScheduleForDate(dateKey);
+    const state = getWorkScheduleVisualState(info);
     const row = document.createElement("div");
-    row.className = "habit-work-schedule-month-item";
-    row.innerHTML = `<span>${String(day).padStart(2, "0")}</span><span>${info?.shift || ""}</span><span>${info?.slots?.map((slot) => `${slot.start}–${slot.end}`).join(" · ") || ""}</span><span>${info ? minutesToHourLabel((Number(info.hours) || 0) * 60) : ""}</span>`;
+    row.className = `habit-work-schedule-month-item ${state.className}`;
+    row.innerHTML = `<span>${String(day).padStart(2, "0")}</span><span>${state.status}</span><span>${info?.slots?.map((slot) => `${slot.start}–${slot.end}`).join(" · ") || ""}</span><span>${info ? minutesToHourLabel((Number(info.hours) || 0) * 60) : ""}</span>`;
     list.appendChild(row);
   }
   section.appendChild(list);
@@ -8448,13 +8473,7 @@ function renderHistory() {
   historyHeader.appendChild(rangeLabel);
   $habitHistoryList.appendChild(historyHeader);
 
-  if (habitHistoryRange === "week") {
-    const weekStartKey = dateKeyLocal(startOfWeek(parseDateKey(selectedDateKey) || new Date()));
-    $habitHistoryList.appendChild(buildWorkScheduleWeekBand(weekStartKey));
-  } else if (habitHistoryRange === "month") {
-    const anchor = parseDateKey(selectedDateKey) || new Date();
-    $habitHistoryList.appendChild(buildWorkScheduleMonthBand(anchor.getFullYear(), anchor.getMonth()));
-  }
+  const shouldRenderWorkScheduleBand = habitHistoryRange === "week" || habitHistoryRange === "month";
 
   const { start, end } = getHistoryRangeBounds(habitHistoryRange);
   const hasHabits = habitsList.length > 0;
@@ -8468,9 +8487,22 @@ function renderHistory() {
 
   const insights = document.createElement("div");
   insights.className = "habits-history-insights";
-  insights.appendChild(buildHistoryMonthCalendar(getHistoryWeekAnchorDate()));
+  insights.appendChild(buildHistoryMonthCalendar(getHistoryWeekAnchorDate(), {
+    onDateChange: () => {
+      renderHistory();
+    }
+  }));
+  $habitHistoryList.appendChild(insights);
+  if (shouldRenderWorkScheduleBand) {
+    if (habitHistoryRange === "week") {
+      const weekStartKey = dateKeyLocal(startOfWeek(parseDateKey(selectedDateKey) || new Date()));
+      $habitHistoryList.appendChild(buildWorkScheduleWeekBand(weekStartKey));
+    } else {
+      const anchor = parseDateKey(selectedDateKey) || new Date();
+      $habitHistoryList.appendChild(buildWorkScheduleMonthBand(anchor.getFullYear(), anchor.getMonth()));
+    }
+  }
   if (!hasData) {
-    $habitHistoryList.appendChild(insights);
     return;
   }
 
@@ -8765,8 +8797,6 @@ function renderHistory() {
 
   const statsSection = renderHistoryStatsCard(habitsList);
   insights.appendChild(statsSection);
-
-  $habitHistoryList.appendChild(insights);
 }
 
 function ensureHabitLineTooltip() {
@@ -11671,6 +11701,10 @@ function renderWorkScheduleRowsEditor() {
         <input type="time" data-row="${row.id}" data-field="start" value="${row.start}"/>
         <input type="time" data-row="${row.id}" data-field="end" value="${row.end}"/>
       </div>
+      <label class="habit-work-schedule-break">
+        <input type="checkbox" data-row="${row.id}" data-field="half-break" ${row.hasHalfHourBreak ? "checked" : ""}/>
+        <span>30 min descanso</span>
+      </label>
       <div class="habit-work-schedule-days">${dayChips}</div>
       <button type="button" class="btn ghost btn-compact danger" data-row-remove="${row.id}">Eliminar</button>
     `;
@@ -12710,6 +12744,12 @@ function bindEvents() {
     if (!row) return;
     if (input.dataset.field === "start" || input.dataset.field === "end") {
       row[input.dataset.field] = input.value || row[input.dataset.field];
+      return;
+    }
+    if (input.dataset.field === "half-break") {
+      const enabled = !!input.checked;
+      row.hasHalfHourBreak = enabled;
+      row.breakMinutes = enabled ? 30 : 0;
     }
   });
   $habitWorkScheduleSave?.addEventListener("click", handleWorkScheduleSave);

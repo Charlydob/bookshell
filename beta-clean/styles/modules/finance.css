@@ -7675,15 +7675,12 @@ margin-bottom: 50px;
   overflow-x: hidden;
 }
 
-@media (max-width: 760px){
-  .financeTab #financeProductsTopPanel .finance-products-filter-main,
-  .financeTab #financeProductsTopPanel .finance-products-filter-row{
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+#financeAccountCreateForm{
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1fr;
 }
 
-@media (max-width: 560px){
-  .financeTab #financeAccountCreateForm .finance-account-create-grid{
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+#fusionar-cuentas{
+  display: none;
 }

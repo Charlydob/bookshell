@@ -7736,4 +7736,54 @@ label {
 }
 /* #endregion Modal Gasto Fijo */
 
+/* #region Modal editar cuenta */
+#grid-modal-edicion-cuenta{
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1fr;
+}
+
+#checkboxs-edicion-cuenta{
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+#btc-input{
+  display: grid;
+  grid-template-columns: 1fr 60px;
+  border: 1px solid rgba(150, 184, 243, .22);
+  border-radius: 12px;
+}
+
+/* Oculta el checkbox visual */
+input[type="checkbox"]{
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* El texto será clicable */
+label{
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Estado normal */
+label span{
+  color: #fff;
+  transition: .2s;
+}
+
+/* Estado marcado */
+input[type="checkbox"]:checked + span{
+  color: white;
+  font-weight: 800;
+  background: rgba(218, 28, 28, 0.573);
+  padding: 4px 8px;
+  border-radius: 9px;
+  text-align: center;
+  align-self: start;
+}
+/* #endregion Modal editar cuenta */
 /* #endregion MANTENER */

@@ -10976,16 +10976,36 @@ if (form) {
     const account = accounts.find((item) => item.id === state.modal.accountId);
     if (!account) { state.modal = { type: null }; triggerRender(); return; }
     const duplicateCardAccounts = getCardLast4Duplicates(account.cardLast4, account.id);
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><form class="finance-entry-form" data-edit-account-form="${account.id}"><input type="text" name="name" value="${escapeHtml(account.name)}" required /><label>
-    <input type="checkbox" name="shared" ${account.shared ? 'checked' : ''} /> Cuenta compartida</label>
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Editar cuenta</h3><button class="finance-pill" data-close-modal>Cerrar</button></header>
+    
+    <form id="grid-modal-edicion-cuenta" class="finance-entry-form" data-edit-account-form="${account.id}">
+    
+    <input type="text" name="name" value="${escapeHtml(account.name)}" required />
+    
+    <div id="checkboxs-edicion-cuenta">
+    <label>
+    <input type="checkbox" name="shared" ${account.shared ? 'checked' : ''} /> <span>Cuenta compartida</span>
+    </label>
+
     <select name="sharedRatio"><option value="0.5" ${(account.sharedRatio === 0.5) ? 'selected' : ''}>50%</option></select>
-    <label><input type="checkbox" name="isBitcoin" ${account.isBitcoin ? 'checked' : ''} /> Cuenta Bitcoin</label>
+    
+    <div id="btc-input">
+    <label><input type="checkbox" name="isBitcoin" ${account.isBitcoin ? 'checked' : ''} /><span> Cuenta Bitcoin</span></label>
     <input type="number" name="btcUnits" step="0.00000001" min="0" value="${Number(account.btcUnits || 0)}" placeholder="BTC unidades" />
+
+    </div>
+    </div>
+
+    
     <label>Tarjeta (últimos 4)
     <input type="text" name="cardLast4" data-card-last4-input inputmode="numeric" maxlength="4" pattern="\\d{4}" value="${escapeHtml(normalizeCardLast4(account.cardLast4 || ''))}" placeholder="1234" />
     </label>
+
     ${duplicateCardAccounts.length ? '<small class="is-negative">⚠ last4 duplicado: el import no podrá decidir.</small>' : ''}
-    <small>BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(Number(account.btcUnits || 0) * Number(state.btcEurPrice || 0))}</small>
+    
+    
+    
+    <small id="valor-btc">BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(Number(account.btcUnits || 0) * Number(state.btcEurPrice || 0))}</small>
     <button class="finance-pill" type="submit">Guardar</button></form></div>`;
     return;
   }

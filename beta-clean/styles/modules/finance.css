@@ -7795,4 +7795,13 @@ input[type="checkbox"]:checked + span{
   align-self: start;
 }
 /* #endregion Modal editar cuenta */
+
+
+/* #region kpis catalogo */
+  .financeTab #financeProductsTopPanel .productsWorkbench__statsGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+  }
+/* #endregion kpis catalogo */
 /* #endregion MANTENER */

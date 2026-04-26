@@ -2328,6 +2328,11 @@ function buildProductsViewModel(cfg = {}) {
       ? String(cfg?.catalogPanel || state.foodProductsView?.catalogPanel || 'catalog')
       : 'catalog',
     catalogCollapsed: Boolean(cfg?.catalogCollapsed ?? state.foodProductsView?.catalogCollapsed ?? true),
+    catalogGroupsOpen: (cfg?.catalogGroupsOpen && typeof cfg.catalogGroupsOpen === 'object')
+      ? cfg.catalogGroupsOpen
+      : ((state.foodProductsView?.catalogGroupsOpen && typeof state.foodProductsView.catalogGroupsOpen === 'object')
+        ? state.foodProductsView.catalogGroupsOpen
+        : {}),
     catalogSearchByGroup: (cfg?.catalogSearchByGroup && typeof cfg.catalogSearchByGroup === 'object')
       ? cfg.catalogSearchByGroup
       : ((state.foodProductsView?.catalogSearchByGroup && typeof state.foodProductsView.catalogSearchByGroup === 'object')
@@ -2841,6 +2846,38 @@ function renderProductsSummaryCards(model) {
   ];
   return `
     <section class="productsWorkbench__hero" id="financeProductsTopPanel">
+     <div class="productsWorkbench__statsGrid">
+        <article class="productsWorkbench__statCard">
+          <span>Catalogados</span>
+          <strong>${model.catalogCount}</strong>
+          <small>${model.activeCount} activos · ${model.filteredCount} visibles</small>
+        </article>
+        <article class="productsWorkbench__statCard">
+          <span>Compra en rango</span>
+          <strong>${fmtCurrency(model.rangeTotalSpend)}</strong>
+          <small>${model.purchaseCount} tickets · ${model.itemsCount} lineas</small>
+        </article>
+        <article class="productsWorkbench__statCard">
+          <span>Mes real</span>
+          <strong>${fmtCurrency(model.monthTotalSpend)}</strong>
+          <small>${model.monthlyTarget > 0 ? `Objetivo ${fmtCurrency(model.monthlyTarget)}` : 'Sin objetivo mensual'}</small>
+        </article>
+        <article class="productsWorkbench__statCard ${trendTone}">
+          <span>Proyeccion</span>
+          <strong>${fmtCurrency(model.projectedMonthSpend)}</strong>
+          <small>${model.monthlyTarget > 0 ? `${fmtCurrency(model.budgetRemaining)} restantes hoy` : 'Basado en ritmo diario'}</small>
+        </article>
+        <article class="productsWorkbench__statCard is-warning">
+          <span>Reposicion sugerida</span>
+          <strong>${model.dueCount}</strong>
+          <small>${fmtCurrency(model.dueSuggestedSpend)} potenciales</small>
+        </article>
+        <article class="productsWorkbench__statCard">
+          <span>Vendor dominante</span>
+          <strong>${model.topVendor ? escapeHtml(model.topVendor.key) : '—'}</strong>
+          <small>${model.topVendor ? fmtCurrency(model.topVendor.total) : 'Sin historico visible'}</small>
+        </article>
+      </div>
       <div class="productsWorkbench__heroText" id="financeProductsTopPanelSearch">
         <label class="productsWorkbench__field productsWorkbench__field--search finance-products-search">
           <span>Buscar productos</span>
@@ -2979,38 +3016,7 @@ function renderProductsSummaryCards(model) {
         </div>
         <button type="button" class="food-history-btn productsWorkbench__settingsSave" data-products-save-settings>Guardar ajustes</button>
       </details>
-      <div class="productsWorkbench__statsGrid">
-        <article class="productsWorkbench__statCard">
-          <span>Catalogados</span>
-          <strong>${model.catalogCount}</strong>
-          <small>${model.activeCount} activos · ${model.filteredCount} visibles</small>
-        </article>
-        <article class="productsWorkbench__statCard">
-          <span>Compra en rango</span>
-          <strong>${fmtCurrency(model.rangeTotalSpend)}</strong>
-          <small>${model.purchaseCount} tickets · ${model.itemsCount} lineas</small>
-        </article>
-        <article class="productsWorkbench__statCard">
-          <span>Mes real</span>
-          <strong>${fmtCurrency(model.monthTotalSpend)}</strong>
-          <small>${model.monthlyTarget > 0 ? `Objetivo ${fmtCurrency(model.monthlyTarget)}` : 'Sin objetivo mensual'}</small>
-        </article>
-        <article class="productsWorkbench__statCard ${trendTone}">
-          <span>Proyeccion</span>
-          <strong>${fmtCurrency(model.projectedMonthSpend)}</strong>
-          <small>${model.monthlyTarget > 0 ? `${fmtCurrency(model.budgetRemaining)} restantes hoy` : 'Basado en ritmo diario'}</small>
-        </article>
-        <article class="productsWorkbench__statCard is-warning">
-          <span>Reposicion sugerida</span>
-          <strong>${model.dueCount}</strong>
-          <small>${fmtCurrency(model.dueSuggestedSpend)} potenciales</small>
-        </article>
-        <article class="productsWorkbench__statCard">
-          <span>Vendor dominante</span>
-          <strong>${model.topVendor ? escapeHtml(model.topVendor.key) : '—'}</strong>
-          <small>${model.topVendor ? fmtCurrency(model.topVendor.total) : 'Sin historico visible'}</small>
-        </article>
-      </div>
+     
     </section>
   `;
 }
@@ -3256,7 +3262,7 @@ function renderProductsCatalogGroup(group, model) {
   const selectedSet = new Set(model.selectedIds || []);
   const safeGroupKey = escapeHtml(group.key);
   const carouselId = escapeHtml(productsWorkbenchDomId('financeProductsCategoryCarousel', group.key));
-  const shouldOpenByDefault = false;
+  const shouldOpenByDefault = Boolean(model.cfg?.catalogGroupsOpen?.[group.key]);
   return `
     <details class="productsWorkbench__group" data-products-catalog-group="${safeGroupKey}" ${shouldOpenByDefault ? 'open' : ''}>
       <summary class="productsWorkbench__groupHead">
@@ -3900,6 +3906,37 @@ function buildCurrentProductsModel() {
   return buildProductsViewModel(state.foodProductsView || {});
 }
 
+function captureProductsCatalogOpenState(root = null) {
+  const host = root || getProductsWorkbenchRoot();
+  const workspace = host?.querySelector?.('[data-products-catalog-workspace]');
+  const groupOpenState = {};
+  host?.querySelectorAll?.('[data-products-catalog-group]').forEach((groupEl) => {
+    const key = String(groupEl?.dataset?.productsCatalogGroup || '').trim();
+    if (key) groupOpenState[key] = !!groupEl.open;
+  });
+  return {
+    catalogCollapsed: workspace ? !workspace.open : undefined,
+    catalogGroupsOpen: groupOpenState,
+  };
+}
+
+function mergeProductsCatalogOpenState(snapshot = {}) {
+  const nextView = { ...(state.foodProductsView || {}) };
+  if (typeof snapshot.catalogCollapsed === 'boolean') {
+    nextView.catalogCollapsed = snapshot.catalogCollapsed;
+  }
+  if (snapshot.catalogGroupsOpen && typeof snapshot.catalogGroupsOpen === 'object') {
+    nextView.catalogGroupsOpen = {
+      ...((state.foodProductsView?.catalogGroupsOpen && typeof state.foodProductsView.catalogGroupsOpen === 'object')
+        ? state.foodProductsView.catalogGroupsOpen
+        : {}),
+      ...snapshot.catalogGroupsOpen,
+    };
+  }
+  state.foodProductsView = nextView;
+  return nextView;
+}
+
 function patchProductsShoppingPanel(model = null) {
   const root = getProductsWorkbenchRoot();
   const current = root?.querySelector?.('[data-products-shopping-panel]');
@@ -3939,6 +3976,8 @@ function patchProductsCatalogSubview(model = null) {
     triggerRender();
     return false;
   }
+  const openState = captureProductsCatalogOpenState(root);
+  mergeProductsCatalogOpenState(openState);
   const nextModel = model || buildCurrentProductsModel();
   subview.innerHTML = renderProductsCatalogSubview(nextModel);
   return true;
@@ -13768,6 +13807,19 @@ if (event.target.closest('[data-fixed-expense-form]')) {
       state.foodProductsView = {
         ...(state.foodProductsView || {}),
         catalogCollapsed: !event.target.open,
+      };
+    }
+    if (event.target.matches('[data-products-catalog-group]')) {
+      const groupKey = String(event.target.dataset.productsCatalogGroup || '').trim();
+      if (!groupKey) return;
+      state.foodProductsView = {
+        ...(state.foodProductsView || {}),
+        catalogGroupsOpen: {
+          ...((state.foodProductsView?.catalogGroupsOpen && typeof state.foodProductsView.catalogGroupsOpen === 'object')
+            ? state.foodProductsView.catalogGroupsOpen
+            : {}),
+          [groupKey]: !!event.target.open,
+        },
       };
     }
   });

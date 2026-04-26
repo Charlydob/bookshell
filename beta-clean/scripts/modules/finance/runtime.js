@@ -29,6 +29,7 @@ let financeNeedsLegacyAccountsMerge = false;
 let financeRenderPromise = null;
 let financeRenderQueued = false;
 let financePendingPreserveUi = true;
+const FINANCE_GOALS_SORT_MODE_KEY = 'financeGoalsSortMode';
 const financeDerivedCache = {
   txList: { balanceRef: null, financePath: '', rows: [] },
   recurring: { recurringRef: null, monthMap: new Map() },
@@ -71,6 +72,27 @@ function clearFinanceDerivedCaches() {
   financeDerivedCache.totalSeries.accountsRef = null;
   financeDerivedCache.totalSeries.rows = [];
 }
+
+function normalizeFinanceGoalsSortMode(value = '') {
+  return value === 'incomplete-first' ? 'incomplete-first' : 'due-date';
+}
+
+function readFinanceGoalsSortMode() {
+  try {
+    return normalizeFinanceGoalsSortMode(localStorage.getItem(FINANCE_GOALS_SORT_MODE_KEY) || '');
+  } catch (_) {
+    return 'due-date';
+  }
+}
+
+function setFinanceGoalsSortMode(nextMode = 'due-date') {
+  state.financeGoalsSortMode = normalizeFinanceGoalsSortMode(nextMode);
+  try {
+    localStorage.setItem(FINANCE_GOALS_SORT_MODE_KEY, state.financeGoalsSortMode);
+  } catch (_) {}
+}
+
+state.financeGoalsSortMode = normalizeFinanceGoalsSortMode(state.financeGoalsSortMode || readFinanceGoalsSortMode());
 
 let financeEchartsPromise = null;
 
@@ -252,6 +274,19 @@ function pctDelta(curr = 0, prev = 0) {
   const p = Number(prev || 0);
   if (!Number.isFinite(p) || p === 0) return null;
   return ((c - p) / Math.abs(p)) * 100;
+}
+function financeGoalDueTs(goal = null) {
+  const raw = String(goal?.dueDateISO || '').trim();
+  if (!raw) return Number.MAX_SAFE_INTEGER;
+  const ts = new Date(raw).getTime();
+  return Number.isFinite(ts) ? ts : Number.MAX_SAFE_INTEGER;
+}
+function compareFinanceGoalsByDueDate(a = null, b = null) {
+  const dueDiff = financeGoalDueTs(a) - financeGoalDueTs(b);
+  if (dueDiff !== 0) return dueDiff;
+  const targetDiff = Number(a?.targetAmount || 0) - Number(b?.targetAmount || 0);
+  if (targetDiff !== 0) return targetDiff;
+  return String(a?.title || '').localeCompare(String(b?.title || ''), 'es', { sensitivity: 'base' });
 }
 function toIsoDay(value = '') {
   const raw = String(value || '').trim();
@@ -9737,9 +9772,10 @@ function renderFinanceGoalsLegacy(accounts = buildAccountModels()) {
 }
 
 function renderFinanceGoals(accounts = buildAccountModels()) {
+  const sortMode = normalizeFinanceGoalsSortMode(state.financeGoalsSortMode || readFinanceGoalsSortMode());
+  state.financeGoalsSortMode = sortMode;
   const goals = Object.entries(state.goals.goals || {})
-    .map(([id, row]) => ({ id, ...row }))
-    .sort((a, b) => Number(a?.dueDateISO ? new Date(a.dueDateISO).getTime() : 0) - Number(b?.dueDateISO ? new Date(b.dueDateISO).getTime() : 0));
+    .map(([id, row]) => ({ id, ...row }));
 
   const accountsById = Object.fromEntries(accounts.map((account) => [account.id, account]));
   const totalObjective = goals.reduce((sum, goal) => sum + Number(goal.targetAmount || 0), 0);
@@ -9758,20 +9794,49 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
       : availableGlobal > 0
         ? `Ya cubres los objetivos y te quedan ${fmtCurrency(availableGlobal)} disponibles.`
         : 'Ahora mismo las cuentas vinculadas cubren exactamente el total de objetivos.';
-  const sortedGoals = goals.slice().sort((a, b) => {
-    const aDue = a?.dueDateISO ? new Date(a.dueDateISO).getTime() : Number.MAX_SAFE_INTEGER;
-    const bDue = b?.dueDateISO ? new Date(b.dueDateISO).getTime() : Number.MAX_SAFE_INTEGER;
-    if (aDue !== bDue) return aDue - bDue;
-    return Number(a.targetAmount || 0) - Number(b.targetAmount || 0);
-  });
+  const allocationOrderGoals = goals.slice().sort(compareFinanceGoalsByDueDate);
   const allocationByGoal = {};
   let remainingPool = totalPool;
-  sortedGoals.forEach((goal) => {
+  allocationOrderGoals.forEach((goal) => {
     const target = Math.max(0, Number(goal.targetAmount || 0));
     const assigned = Math.max(0, Math.min(target, remainingPool));
     allocationByGoal[goal.id] = assigned;
     remainingPool -= assigned;
   });
+  const displayGoals = goals
+    .map((goal) => {
+      const target = Number(goal.targetAmount || 0);
+      const includedIds = goal.accountsIncluded || [];
+      const assigned = Number(allocationByGoal[goal.id] || 0);
+      const pct = target > 0 ? Math.max(0, Math.min(100, (assigned / target) * 100)) : 0;
+      const remaining = Math.max(0, target - assigned);
+      const complete = remaining <= 0.000001 && target > 0;
+      const dueLabel = goal.dueDateISO ? new Date(goal.dueDateISO).toLocaleDateString('es-ES') : 'sin fecha';
+      const dueSummaryLabel = goal.dueDateISO ? `Vence ${dueLabel}` : 'Sin fecha';
+      const accountNames = includedIds.map((id) => String(accountsById[id]?.name || '').trim()).filter(Boolean);
+      const accountsPreview = accountNames.length
+        ? `${accountNames.slice(0, 2).join(' · ')}${accountNames.length > 2 ? ` +${accountNames.length - 2}` : ''}`
+        : 'Sin cuentas vinculadas';
+
+      return {
+        goal,
+        target,
+        includedIds,
+        assigned,
+        pct,
+        remaining,
+        complete,
+        dueLabel,
+        dueSummaryLabel,
+        accountsPreview,
+      };
+    })
+    .sort((a, b) => {
+      if (sortMode === 'incomplete-first' && a.complete !== b.complete) {
+        return Number(a.complete) - Number(b.complete);
+      }
+      return compareFinanceGoalsByDueDate(a.goal, b.goal);
+    });
 
   return `
   <section class="financeBalanceView financeGoalsView">
@@ -9780,7 +9845,16 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
         <h2>Objetivos</h2>
         <p>Metas de ahorro seguidas por cuenta y fecha.</p>
       </div>
-      <button class="finance-pill" id="boton-objetivo" data-open-modal="goal">+ Objetivo</button>
+      <div class="financeGoalsView__controls">
+        <label class="financeGoalsSort">
+          <span>Ordenar</span>
+          <select class="financeGoalsSort__select" data-finance-goals-sort>
+            <option value="due-date" ${sortMode === 'due-date' ? 'selected' : ''}>Vencimiento</option>
+            <option value="incomplete-first" ${sortMode === 'incomplete-first' ? 'selected' : ''}>Incompletos primero</option>
+          </select>
+        </label>
+        <button class="finance-pill" id="boton-objetivo" data-open-modal="goal">+ Objetivo</button>
+      </div>
     </header>
 
     <article class="financeGlassCard financeGoalsCard financeGoalsHero ${pendingGlobal <= 0 && totalObjective > 0 ? 'is-complete' : ''}">
@@ -9837,62 +9911,61 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
 
     <article class="financeGlassCard financeGoalsCard">
       <div class="financeBudgetList financeGoalsList">
-        ${goals.length
-          ? goals.map((goal) => {
-              const target = Number(goal.targetAmount || 0);
-              const includedIds = goal.accountsIncluded || [];
-              const assigned = Number(allocationByGoal[goal.id] || 0);
-              const pct = target > 0 ? Math.max(0, Math.min(100, (assigned / target) * 100)) : 0;
-              const remaining = Math.max(0, target - assigned);
-              const complete = remaining <= 0.000001 && target > 0;
-              const dueLabel = goal.dueDateISO ? new Date(goal.dueDateISO).toLocaleDateString('es-ES') : 'sin fecha';
-              const accountNames = includedIds.map((id) => String(accountsById[id]?.name || '').trim()).filter(Boolean);
-              const accountsPreview = accountNames.length
-                ? `${accountNames.slice(0, 2).join(' · ')}${accountNames.length > 2 ? ` +${accountNames.length - 2}` : ''}`
-                : 'Sin cuentas vinculadas';
-
+        ${displayGoals.length
+          ? displayGoals.map(({ goal, target, includedIds, assigned, pct, remaining, complete, dueLabel, dueSummaryLabel, accountsPreview }) => {
               return `
-                <div class="financeBudgetRow financeGoalCard ${complete ? 'is-complete' : ''}">
-                  <div class="financeGoalCard__header">
-                    <div class="financeGoalCard__titleBlock">
-                      <strong>${escapeHtml(goal.title || 'Objetivo')}</strong>
-                      <small>Vence ${dueLabel}</small>
-                    </div>
-                    <div class="financeGoalCard__actions">
-                      <button class="finance-pill finance-pill--mini" data-open-goal="${goal.id}">✏️</button>
-                      <button class="finance-pill finance-pill--mini" data-delete-goal="${goal.id}">❌</button>
-                    </div>
-                  </div>
+                <details class="financeBudgetRow financeGoalCard ${complete ? 'is-complete' : ''}">
+                  <summary class="financeGoalCard__collapsed">
+                    <span class="financeGoalCard__collapsedMain">
+                      <span class="financeGoalCard__collapsedTitle">${escapeHtml(goal.title || 'Objetivo')}</span>
+                      <span class="financeGoalCard__collapsedMeta">${escapeHtml(dueSummaryLabel)}</span>
+                    </span>
+                    <span class="financeGoalCard__collapsedMoney">${fmtCurrency(assigned)} / ${fmtCurrency(target)}</span>
+                    <span class="financeGoalCard__collapsedPct">${pct.toFixed(0)}%</span>
+                  </summary>
 
-                  <div class="financeGoalCard__subline">
-                    <span>${accountsPreview}</span>
-                    <span>${complete ? 'Completo' : 'Pendiente'}</span>
-                  </div>
-
-                  <div class="financeGoalCard__amounts">
-                    <div class="kpi-panel-ahorro" id="objetivos-kpi-objetivo">
-                      <small>Objetivo</small>
-                      <strong>${fmtCurrency(target)}</strong>
+                  <div class="financeGoalCard__expanded">
+                    <div class="financeGoalCard__header">
+                      <div class="financeGoalCard__titleBlock">
+                        <strong>${escapeHtml(goal.title || 'Objetivo')}</strong>
+                        <small>Vence ${dueLabel}</small>
+                      </div>
+                      <div class="financeGoalCard__actions">
+                        <button class="finance-pill finance-pill--mini" data-open-goal="${goal.id}">✏️</button>
+                        <button class="finance-pill finance-pill--mini" data-delete-goal="${goal.id}">❌</button>
+                      </div>
                     </div>
-                    <div class="kpi-panel-ahorro" id="objetivos-kpi-ahorrado">
-                      <small>Ahorrado</small>
-                      <strong>${fmtCurrency(assigned)}</strong>
-                    </div>
-                    <div class="kpi-panel-ahorro" id="objetivos-kpi-faltan">
-                      <small>Faltan</small>
-                      <strong>${fmtCurrency(remaining)}</strong>
-                    </div>
-                  </div>
 
-                  <div class="financeProgress financeProgress--goal">
-                    <div class="financeProgress__bar" style="width:${pct.toFixed(2)}%"></div>
-                  </div>
+                    <div class="financeGoalCard__subline">
+                      <span>${accountsPreview}</span>
+                      <span>${complete ? 'Completo' : 'Pendiente'}</span>
+                    </div>
 
-                  <div class="financeGoalCard__footer">
-                    <span>${pct.toFixed(0)}% completado</span>
-                    <span>${includedIds.length} ${includedIds.length === 1 ? 'cuenta' : 'cuentas'}</span>
+                    <div class="financeGoalCard__amounts">
+                      <div class="kpi-panel-ahorro" id="objetivos-kpi-objetivo">
+                        <small>Objetivo</small>
+                        <strong>${fmtCurrency(target)}</strong>
+                      </div>
+                      <div class="kpi-panel-ahorro" id="objetivos-kpi-ahorrado">
+                        <small>Ahorrado</small>
+                        <strong>${fmtCurrency(assigned)}</strong>
+                      </div>
+                      <div class="kpi-panel-ahorro" id="objetivos-kpi-faltan">
+                        <small>Faltan</small>
+                        <strong>${fmtCurrency(remaining)}</strong>
+                      </div>
+                    </div>
+
+                    <div class="financeProgress financeProgress--goal">
+                      <div class="financeProgress__bar" style="width:${pct.toFixed(2)}%"></div>
+                    </div>
+
+                    <div class="financeGoalCard__footer">
+                      <span>${pct.toFixed(0)}% completado</span>
+                      <span>${includedIds.length} ${includedIds.length === 1 ? 'cuenta' : 'cuentas'}</span>
+                    </div>
                   </div>
-                </div>
+                </details>
               `;
             }).join('')
           : `<p class="finance-empty financeGoalsEmpty">Sin objetivos todavía.</p>`}
@@ -13695,6 +13768,7 @@ view.addEventListener('focusout', async (event) => {
   view.addEventListener('change', async (event) => {
     if (event.target.matches('[data-range]')) { state.rangeMode = event.target.value; triggerRender(); }
     if (event.target.matches('[data-compare]')) { state.compareMode = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-finance-goals-sort]')) { setFinanceGoalsSortMode(event.target.value); triggerRender(); return; }
     if (event.target.matches('[data-calendar-account]')) { state.calendarAccountId = event.target.value; triggerRender(); }
     if (event.target.matches('[data-calendar-mode]')) { state.calendarMode = event.target.value; triggerRender(); }
     if (event.target.matches('[data-balance-type]')) { state.balanceFilterType = event.target.value; state.balanceShowAllTx = false; triggerRender(); }

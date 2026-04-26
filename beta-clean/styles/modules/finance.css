@@ -5048,8 +5048,53 @@ margin-bottom: 50px;
   align-items: center;
 }
 
-.financeTab .productsWorkbench__check input{
-  accent-color: var(--products-teal);
+.financeTab .productsWorkbench__checkInput{
+  appearance: none;
+  -webkit-appearance: none;
+  inline-size: 18px;
+  block-size: 18px;
+  margin: 0;
+  border-radius: 6px;
+  border: 1px solid rgba(121, 186, 255, 0.48);
+  background: rgba(8, 18, 31, 0.82);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.financeTab .productsWorkbench__checkInput::after{
+  content: "";
+  inline-size: 9px;
+  block-size: 9px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0);
+  transform: scale(.35);
+  transition: transform .16s ease, background-color .16s ease;
+}
+
+.financeTab .productsWorkbench__checkInput:checked{
+  border-color: rgba(93, 215, 182, 0.72);
+  background: rgba(93, 215, 182, 0.16);
+}
+
+.financeTab .productsWorkbench__checkInput:checked::after{
+  background: #95f7db;
+  transform: scale(1);
+}
+
+.financeTab .productsWorkbench__checkInput:focus-visible{
+  outline: 2px solid rgba(147, 210, 255, 0.72);
+  outline-offset: 2px;
+}
+
+.financeTab .productsWorkbench__checkMark{
+  display: none;
+}
+
+.financeTab .productsWorkbench__cardActions{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .financeTab .productsWorkbench__productHeading{
@@ -5075,6 +5120,12 @@ margin-bottom: 50px;
   background: rgba(121, 186, 255, 0.12);
   color: var(--products-text);
   cursor: pointer;
+}
+
+.financeTab .productsWorkbench__miniAction--danger{
+  border-color: rgba(255, 107, 129, 0.38);
+  background: rgba(255, 107, 129, 0.16);
+  color: #ffe5ec;
 }
 
 .financeTab .productsWorkbench__productMeta{
@@ -7796,6 +7847,7 @@ input[type="checkbox"]:checked + span{
 }
 /* #endregion Modal editar cuenta */
 
+/* #region catalogo */
 
 /* #region kpis catalogo */
   .financeTab #financeProductsTopPanel .productsWorkbench__statsGrid {
@@ -7804,4 +7856,16 @@ input[type="checkbox"]:checked + span{
     gap: 8px;
   }
 /* #endregion kpis catalogo */
+
+/* #region tarjeta producto */
+  .financeTab .productsWorkbench__check {
+    display: grid;
+    border: 1px solid white ;
+    border-radius: 6px;
+    width: 18px;
+    height: 18px;
+  }
+  
+/* #endregion tarjeta producto */
+/* #endregion catalogo */
 /* #endregion MANTENER */

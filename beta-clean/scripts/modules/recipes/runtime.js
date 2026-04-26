@@ -7603,7 +7603,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   const MACRO_SCAN_NO_RESULT_LOG_EVERY_MS = 6000;
   const MACRO_SCAN_LAYOUT_LOG_EVERY_MS = 1600;
-  // No bloqueamos lecturas "repetidas" durante segundos: solo una ventana pequeí±a para evitar spam por frame.
+  // No bloqueamos lecturas "repetidas" durante segundos: solo una ventana pequeña para evitar spam por frame.
   const MACRO_SCAN_REPEAT_BLOCK_MS = 220;
   const MACRO_SCAN_LOOKUP_COOLDOWN_MS = 1800; // obligatorio: anti-duplicados (mismo código ~2s)
   const MACRO_SCAN_LOOKUP_TIMEOUT_MS = 6500;
@@ -9035,7 +9035,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         _macroScanViewfinderPx = { width: vfW, height: vfH };
 
         // Banda horizontal (retail) para EAN/UPC: muy ancha, poco alta.
-        // Evitamos clamps agresivos para que overlay y región real no diverjan en pantallas grandes/pequeí±as.
+        // Evitamos clamps agresivos para que overlay y región real no diverjan en pantallas grandes/pequeñas.
         const width = Math.max(260, Math.min(Math.round(vfW * 0.92), vfW));
         const height = Math.max(84, Math.min(Math.round(vfH * 0.22), 160));
         const left = Math.max(0, Math.round((vfW - width) / 2));

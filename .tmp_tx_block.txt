@@ -5,7 +5,7 @@
   
   `<div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1">
     <header class="fm-modal__header fin-move-header">
-      <h3 class="fm-modal__title fin-move-title">${txEdit ? 'Editar movimiento' : 'Aí±adir movimiento'}</h3>
+      <h3 class="fm-modal__title fin-move-title">${txEdit ? 'Editar movimiento' : 'Añadir movimiento'}</h3>
       
       <button class="finance-pill fm-modal__close" type="button" data-close-modal>Cerrar</button>
     </header>

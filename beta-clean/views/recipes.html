@@ -116,7 +116,7 @@
 </div>
 </section>
 <div class="empty-state app-empty-state" id="recipes-empty">
-            Aíºn no has aí±adido recetas.
+            Aíºn no has añadido recetas.
           </div>
 </div>
 </div>
@@ -170,7 +170,7 @@
         <button class="macro-stats-period is-active" data-stats-period="day" type="button">Dí­a</button>
         <button class="macro-stats-period" data-stats-period="week" type="button">Semana</button>
         <button class="macro-stats-period" data-stats-period="month" type="button">Mes</button>
-        <button class="macro-stats-period" data-stats-period="year" type="button">Aí±o</button>
+        <button class="macro-stats-period" data-stats-period="year" type="button">Año</button>
       </div>
       <div class="macro-stats-controls">
         <button class="btn ghost btn-compact" type="button" id="macro-stats-prev">←</button>
@@ -179,7 +179,7 @@
         <select id="macro-stats-main-metric" class="macro-stats-select">
           <option value="macros">Macros (C/P/G)</option>
           <option value="kcal">Kcal</option>
-          <option value="cost">Coste (â‚¬)</option>
+          <option value="cost">Coste €</option>
           <option value="burned">Quemadas (kcal)</option>
           <option value="net">Netas (kcal)</option>
           <option value="carbs">Carbohidratos</option>
@@ -338,7 +338,7 @@
       </header>
       <div class="macro-shopping-list-view" id="macro-shopping-list-view">
         <div class="macro-shopping-search-wrap">
-          <span aria-hidden="true">ðŸ”Ž</span>
+          <span aria-hidden="true">🔎</span>
           <input id="macro-shopping-search" type="search" placeholder="Buscar producto por nombreâ€¦" autocomplete="off" />
         </div>
         <div class="macro-shopping-score-filters" id="macro-shopping-score-filters" role="group" aria-label="Filtro Nutri-Score"></div>
@@ -388,7 +388,7 @@
   <div class="modal-comida">
     <div class="modal-handle"></div>
     <div class="modal-header">
-      <div class="modal-title" id="macro-add-modal-title">Aí±adir alimento</div>
+      <div class="modal-title" id="macro-add-modal-title">Añadir alimento</div>
       <button class="icon-btn" id="macro-add-modal-close" type="button">❌</button>
     </div>
     <div class="modal-scroll sheet-body">
@@ -449,7 +449,7 @@
             <canvas id="macro-scan-ocr-final" width="160" height="90"></canvas>
           </div>
         </div>
-        <button class="btn primary btn-compact hidden" id="macro-scan-add-product" type="button">+ Aí±adir producto</button>
+        <button class="btn primary btn-compact hidden" id="macro-scan-add-product" type="button">+ Añadir producto</button>
       </div>
       <div class="macro-modal-manual hidden" id="macro-manual-panel">
         <div class="macro-manual-builder">
@@ -502,7 +502,7 @@
             <label class="macro-manual-nutri">
               <span class="macro-manual-label">Nutri-Score</span>
               <div class="macro-nutri-segmented" id="macro-manual-nutri-segmented" role="group" aria-label="Nutri-Score manual">
-                <button type="button" class="macro-nutri-option is-active" data-nutri-value="">â€”</button>
+                <button type="button" class="macro-nutri-option is-active" data-nutri-value="">-</button>
                 <button type="button" class="macro-nutri-option" data-nutri-value="a">A</button>
                 <button type="button" class="macro-nutri-option" data-nutri-value="b">B</button>
                 <button type="button" class="macro-nutri-option" data-nutri-value="c">C</button>
@@ -634,7 +634,7 @@
   <label class="macro-field macro-field-span-2 macro-product-nutri-field">
     <span class="macro-label">Nutri-Score</span>
     <div class="macro-nutri-segmented" id="macro-product-nutri-segmented" role="group" aria-label="Nutri-Score manual">
-      <button type="button" class="macro-nutri-option is-active" data-nutri-value="">â€”</button>
+      <button type="button" class="macro-nutri-option is-active" data-nutri-value="">-</button>
       <button type="button" class="macro-nutri-option" data-nutri-value="a">A</button>
       <button type="button" class="macro-nutri-option" data-nutri-value="b">B</button>
       <button type="button" class="macro-nutri-option" data-nutri-value="c">C</button>
@@ -652,7 +652,7 @@
         
         <div class="macro-grid macro-grid-1">
           <label class="macro-field">
-            <span class="macro-label">Cantidad a aí±adir</span>
+            <span class="macro-label">Cantidad a añadir</span>
             <div class="macro-inline-qty">
               <input id="macro-product-grams" type="number" inputmode="decimal" value="100" />
               <select id="macro-product-grams-unit" class="macro-select">
@@ -698,7 +698,7 @@
 
  <div class="macro-inline-cost-grid">
             <label class="macro-field">
-              <span class="macro-label">Tamaí±o del paquete</span>
+              <span class="macro-label">Tamaño del paquete</span>
               <input id="macro-product-package-amount" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Ej. 1" />
             </label>
             <label class="macro-field">
@@ -713,7 +713,7 @@
               </select>
             </label>
             <label class="macro-field">
-              <span class="macro-label">Precio envase (â‚¬)</span>
+              <span class="macro-label">Precio envase €</span>
               <input id="macro-product-price" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Opcional" />
             </label>
           </div>
@@ -726,23 +726,23 @@
 
           <label class="macro-field">
             <span class="macro-label">Vincular producto de Finanzas</span>
-            <select id="macro-product-finance-select" class="macro-select"></select>
+            <select id="macro-product-finance-select" ></select>
           </label>
 
 
           <div class="macro-link-row">
             <span class="hint" id="macro-product-finance-hint">Sin producto de Finanzas</span>
-            <button class="macro-btn macro-btn-ghost btn-compact" id="macro-product-finance-unlink" type="button">âŒ</button>
+            <button class="macro-btn macro-btn-ghost btn-compact" id="macro-product-finance-unlink" type="button">❌</button>
           </div>
 
           <label class="macro-field">
-            <span class="macro-label">Vincular a hí¡bito</span>
-            <select id="macro-product-habit-select" class="macro-select"></select>
+            <span class="macro-label">Vincular a hábito</span>
+            <select id="macro-product-habit-select" ></select>
           </label>
 
           <div class="macro-link-row">
             <span class="hint" id="macro-product-habit-hint">Sin hí¡bito vinculado</span>
-            <button class="macro-btn macro-btn-ghost btn-compact" id="macro-product-habit-unlink" type="button">âŒ</button>
+            <button class="macro-btn macro-btn-ghost btn-compact" id="macro-product-habit-unlink" type="button">❌</button>
           </div>
 
 
@@ -753,7 +753,7 @@
     <div class="macro-modal-footer">
       <button class="macro-btn macro-btn-ghost" id="macro-product-cancel" type="button">Cancelar</button>
       <button class="macro-btn macro-btn-ghost" id="macro-product-add-more" type="button">+ sumar</button>
-      <button class="macro-btn macro-btn-primary" id="macro-product-add" type="button">Aí±adir</button>
+      <button class="macro-btn macro-btn-primary" id="macro-product-add" type="button">Añadir</button>
     </div>
   </div>
 </div>

@@ -4875,3 +4875,50 @@ div#macros-inputs.macro-manual-macro-grid{
     grid-template-columns: 1fr 1fr;
   }
 }
+
+
+/* #region MANTENER */
+
+/* #region modal producto */
+#macro-product-grams {
+  width: 80%;
+  color: var(--txt-soft);
+}
+.macro-inline-qty{
+  width: 120px;
+  display: grid;
+  grid-template-columns: 1fr 10px;
+  ;
+}
+#macro-product-name{
+  margin-left: 10%;
+}
+#macro-product-modal-backdrop .macro-product-kpis{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+#macro-product-modal-backdrop .macro-product-hero-card {
+  
+  min-height: 220px;
+}
+/* selector vincular finanzas */
+#macro-product-finance-select, #macro-product-habit-select{
+  min-width: 90px;
+  text-align: center;
+  text-justify: center;
+  justify-self: center;
+  justify-items: center;
+  justify-content: center;
+  width: 65px;
+  padding: 8px 10px;
+  border: 0px red solid;
+}
+
+.macro-modal-footer{
+  grid-template-columns: 1fr 1fr 1fr;
+}
+/* #endregion modal producto */
+/* #endregion MANTENER */
+
+

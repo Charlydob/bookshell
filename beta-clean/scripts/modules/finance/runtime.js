@@ -2505,6 +2505,7 @@ function buildProductsViewModel(cfg = {}) {
 
   const allCatalogRows = Object.values(aggregates)
     .filter((row) => !row.hiddenMerged)
+    .filter((row) => !state.foodCatalog.ignored?.[row.canonicalId])
     .map((row) => {
       const purchaseTs = [...new Set(row._purchaseTs.filter((ts) => Number.isFinite(ts) && ts > 0))].sort((a, b) => a - b);
       const observedFrequencyDays = averageProductsGapDays(purchaseTs);
@@ -3292,15 +3293,18 @@ function renderProductsCatalogGroup(group, model) {
             data-products-id="${escapeHtml(row.canonicalId)}"
             data-products-search="${escapeHtml(row.searchIndex || '')}">
             <div class="productsWorkbench__productTop">
-              <label class="productsWorkbench__check">
-                <input type="checkbox" data-products-toggle-select="${escapeHtml(row.canonicalId)}" ${selectedSet.has(row.canonicalId) ? 'checked' : ''} />
-                <span></span>
+              <label class="productsWorkbench__check" aria-label="Seleccionar ${escapeHtml(row.canonicalName)}">
+                <input class="productsWorkbench__checkInput" type="checkbox" data-products-toggle-select="${escapeHtml(row.canonicalId)}" ${selectedSet.has(row.canonicalId) ? 'checked' : ''} />
+                <i class="productsWorkbench__checkMark" aria-hidden="true"></i>
               </label>
               <button type="button" class="productsWorkbench__productHeading" data-products-select-product="${escapeHtml(row.canonicalId)}">
                 <strong>${escapeHtml(row.canonicalName)}</strong>
                 <small class="productsWorkbench__status productsWorkbench__status--${escapeHtml(row.dueTone)}">${escapeHtml(dueText)}</small>
               </button>
-              <button type="button" class="productsWorkbench__miniAction" data-products-add-to-list="${escapeHtml(row.canonicalId)}" aria-label="Anadir ${escapeHtml(row.canonicalName)} a la lista">+</button>
+              <div class="productsWorkbench__cardActions">
+                <button type="button" class="productsWorkbench__miniAction" data-products-add-to-list="${escapeHtml(row.canonicalId)}" aria-label="Anadir ${escapeHtml(row.canonicalName)} a la lista">+</button>
+                <button type="button" class="productsWorkbench__miniAction productsWorkbench__miniAction--danger" data-products-delete-product="${escapeHtml(row.canonicalId)}" aria-label="Eliminar ${escapeHtml(row.canonicalName)} del catalogo">×</button>
+              </div>
             </div>
             ${metaText ? `<div class="productsWorkbench__productMeta"><span class="productsWorkbench__badge">${escapeHtml(metaText)}</span></div>` : ''}
           </article>
@@ -3324,6 +3328,7 @@ function applyProductsCatalogGroupSearch(inputEl) {
   const groupKey = String(inputEl?.dataset?.productsCatalogGroupKey || groupEl?.dataset?.productsCatalogGroup || '').trim();
   if (!groupEl || !groupKey) return;
   const query = String(inputEl.value || '');
+  const groupWasOpen = !!groupEl.open;
   const selectionStart = inputEl.selectionStart ?? query.length;
   const selectionEnd = inputEl.selectionEnd ?? query.length;
   const nextGroupSearch = {
@@ -3334,6 +3339,12 @@ function applyProductsCatalogGroupSearch(inputEl) {
   };
   state.foodProductsView = {
     ...(state.foodProductsView || {}),
+    catalogGroupsOpen: {
+      ...((state.foodProductsView?.catalogGroupsOpen && typeof state.foodProductsView.catalogGroupsOpen === 'object')
+        ? state.foodProductsView.catalogGroupsOpen
+        : {}),
+      [groupKey]: groupWasOpen,
+    },
     catalogSearchByGroup: nextGroupSearch,
   };
   const model = buildCurrentProductsModel();
@@ -3341,6 +3352,7 @@ function applyProductsCatalogGroupSearch(inputEl) {
   const nextGroupNode = createProductsNode(groupModel
     ? renderProductsCatalogGroup(groupModel, model)
     : '<section class="productsWorkbench__group"></section>');
+  if (groupWasOpen && 'open' in nextGroupNode) nextGroupNode.open = true;
   groupEl.replaceWith(nextGroupNode);
   const nextInput = nextGroupNode.querySelector('[data-products-catalog-search]');
   if (nextInput) {
@@ -3371,7 +3383,7 @@ function renderProductsCatalogPanel(model) {
         </div>
         <div class="productsWorkbench__panelActions">
           <button type="button" class="food-history-btn" data-products-new-product>Nuevo producto</button>
-          <button type="button" class="food-history-btn" data-food-merge-open="${escapeHtml(model.selectedIds[0] || '')}" ${model.selectedIds.length >= 1 ? '' : 'disabled'}>Fusionar</button>
+          <button type="button" class="food-history-btn" data-food-merge-open="${escapeHtml(model.selectedIds[0] || '')}" ${model.selectedIds.length >= 2 ? '' : 'disabled'}>Fusionar</button>
         </div>
       </header>
       ${renderProductsBulkBar(model)}
@@ -3386,6 +3398,8 @@ function renderProductsCatalogPanel(model) {
 function renderProductsEditorPanel(model) {
   const selected = model.selectedProduct;
   const ticketQuickActionDisabled = !selected ? 'disabled' : '';
+  const detailEntity = selected ? resolveFoodItemByAnyKey(selected.canonicalId || selected.id || '') : null;
+  const detailActionDisabled = !selected || !detailEntity ? 'disabled' : '';
   const values = selected || {
     canonicalId: '',
     canonicalName: '',
@@ -3419,7 +3433,7 @@ function renderProductsEditorPanel(model) {
         </div>
         <div class="productsWorkbench__panelActions">
           <button type="button" class="food-history-btn" data-products-add-to-list="${escapeHtml(values.canonicalId || '')}" ${ticketQuickActionDisabled}>A lista</button>
-          <button type="button" class="food-history-btn" data-food-item-detail="${escapeHtml(values.canonicalId || '')}" ${ticketQuickActionDisabled}>Ficha completa</button>
+          <button type="button" class="food-history-btn" data-food-item-detail="${escapeHtml(detailEntity?.id || values.canonicalId || '')}" ${detailActionDisabled}>Ficha completa</button>
         </div>
       </header>
       <div class="productsWorkbench__collapseBody">
@@ -3977,8 +3991,11 @@ function patchProductsCatalogSubview(model = null) {
     return false;
   }
   const openState = captureProductsCatalogOpenState(root);
-  mergeProductsCatalogOpenState(openState);
-  const nextModel = model || buildCurrentProductsModel();
+  const nextView = mergeProductsCatalogOpenState(openState);
+  const nextModel = buildProductsViewModel({
+    ...((model?.cfg && typeof model.cfg === 'object') ? model.cfg : {}),
+    ...(nextView || {}),
+  });
   subview.innerHTML = renderProductsCatalogSubview(nextModel);
   return true;
 }
@@ -4074,6 +4091,19 @@ function updateProductsCatalogSelectedDom(productId = '') {
   });
 }
 
+function selectProductsCatalogProduct(productId = '', options = {}) {
+  const safeId = String(productId || '').trim();
+  if (!safeId) return;
+  const switchToEditor = options?.switchToEditor !== false;
+  state.foodProductsView = {
+    ...(state.foodProductsView || {}),
+    tab: 'catalog',
+    selectedProductId: safeId,
+    ...(switchToEditor ? { catalogPanel: 'editor' } : {}),
+  };
+  patchProductsCatalogSubview(buildCurrentProductsModel());
+}
+
 function syncProductsBulkBarDom() {
   const root = getProductsWorkbenchRoot();
   if (!root) return;
@@ -4094,7 +4124,7 @@ function syncProductsBulkBarDom() {
   });
   root.querySelectorAll('[data-food-merge-open]').forEach((button) => {
     button.dataset.foodMergeOpen = selectedIds[0] || '';
-    button.disabled = selectedIds.length === 0;
+    button.disabled = selectedIds.length < 2;
   });
 }
 
@@ -4118,6 +4148,42 @@ function toggleProductsSelection(productId = '', checked = null) {
   if (shouldSelect) selected.add(safeId);
   else selected.delete(safeId);
   setProductsSelectedIds([...selected]);
+}
+
+async function removeProductsCatalogItem(productId = '') {
+  const safeId = String(productId || '').trim();
+  if (!safeId) return false;
+  const snapshot = resolveProductsCatalogSnapshot(safeId);
+  const backingItem = state.food.itemsById?.[safeId] || resolveFoodItemByAnyKey(safeId) || null;
+  state.foodCatalog.ignored = state.foodCatalog.ignored && typeof state.foodCatalog.ignored === 'object' ? state.foodCatalog.ignored : {};
+  const now = nowTs();
+  const updatesMap = {
+    [`${state.financePath}/foodCatalog/ignored/${safeId}`]: true,
+  };
+  if (backingItem?.id) {
+    updatesMap[`${state.financePath}/foodItems/${backingItem.id}/active`] = false;
+    updatesMap[`${state.financePath}/foodItems/${backingItem.id}/updatedAt`] = now;
+  }
+  await safeFirebase(() => update(ref(db), updatesMap));
+  state.foodCatalog.ignored[safeId] = true;
+  if (backingItem?.id && state.food.itemsById?.[backingItem.id]) {
+    state.food.itemsById[backingItem.id] = {
+      ...state.food.itemsById[backingItem.id],
+      active: false,
+      updatedAt: now,
+    };
+  }
+  state.foodProductsView = {
+    ...(state.foodProductsView || {}),
+    selectedIds: (Array.isArray(state.foodProductsView?.selectedIds) ? state.foodProductsView.selectedIds : []).filter((id) => String(id || '').trim() !== safeId),
+    selectedProductId: String(state.foodProductsView?.selectedProductId || '').trim() === safeId ? '' : String(state.foodProductsView?.selectedProductId || '').trim(),
+  };
+  clearFinanceDerivedCaches();
+  const nextModel = buildCurrentProductsModel();
+  patchProductsCatalogSubview(nextModel);
+  patchProductsShoppingPanel(nextModel);
+  toast(`Producto eliminado del catalogo: ${snapshot?.canonicalName || backingItem?.displayName || backingItem?.name || safeId}`);
+  return true;
 }
 
 function selectVisibleProductsFromDom() {
@@ -7461,9 +7527,16 @@ async function openProductDetail(productKey = '') {
   if (!safeKey) return;
   await ensureFoodCatalogLoaded();
   const item = resolveFoodItemByAnyKey(safeKey);
-  state.modal = item
-    ? { type: 'food-item', foodId: item.id, mode: 'detail', source: 'stats-legend' }
-    : { type: 'food-item', foodId: safeKey, mode: 'detail', source: 'stats-legend' };
+  if (item) {
+    state.modal = { type: 'food-item', foodId: item.id, mode: 'detail', source: 'stats-legend' };
+  } else {
+    const snapshot = resolveProductsCatalogSnapshot(safeKey);
+    if (!snapshot?.canonicalName) {
+      toast('Ese producto aun no tiene ficha propia');
+      return;
+    }
+    state.modal = { type: 'food-item', foodName: snapshot.canonicalName, source: 'stats-legend-create' };
+  }
   triggerRender();
 }
 
@@ -12651,11 +12724,6 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       scrollProductsCatalogCarousel(carouselScrollBtn);
       return;
     }
-    const toggleProductSelection = target.closest('[data-products-toggle-select]')?.dataset.productsToggleSelect;
-    if (toggleProductSelection) {
-      toggleProductsSelection(toggleProductSelection, target.matches('input[type="checkbox"]') ? target.checked : null);
-      return;
-    }
     const expandProductId = target.closest('[data-products-expand-product]')?.dataset.productsExpandProduct;
     if (expandProductId) {
       toggleProductsCardExpanded(expandProductId);
@@ -12684,6 +12752,13 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       await addProductToActiveProductsList(addToListId);
       return;
     }
+    const deleteProductId = target.closest('[data-products-delete-product]')?.dataset.productsDeleteProduct;
+    if (deleteProductId) {
+      const productLabel = resolveProductsCatalogSnapshot(deleteProductId)?.canonicalName || deleteProductId;
+      if (!window.confirm(`Vas a eliminar "${productLabel}" del catalogo. El historico de compras no se borra. ¿Continuar?`)) return;
+      await removeProductsCatalogItem(deleteProductId);
+      return;
+    }
     const receiptPick = target.closest('[data-products-receipt-pick]');
     if (receiptPick) {
       const productId = receiptPick.dataset.productsReceiptPick;
@@ -12700,20 +12775,12 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     }
     const selectProductId = target.closest('[data-products-select-product]')?.dataset.productsSelectProduct;
     if (selectProductId) {
-      state.foodProductsView = {
-        ...(state.foodProductsView || {}),
-        selectedProductId: String(selectProductId || '').trim(),
-      };
-      await openProductDetail(selectProductId);
+      selectProductsCatalogProduct(selectProductId);
       return;
     }
     const openProductCardId = target.closest('[data-products-open-product]')?.dataset.productsOpenProduct;
     if (openProductCardId && !target.closest('[data-products-add-to-list], [data-products-toggle-select], .productsWorkbench__check, .productsWorkbench__miniAction, .productsWorkbench__productHeading')) {
-      state.foodProductsView = {
-        ...(state.foodProductsView || {}),
-        selectedProductId: String(openProductCardId || '').trim(),
-      };
-      await openProductDetail(openProductCardId);
+      selectProductsCatalogProduct(openProductCardId);
       return;
     }
     if (target.closest('[data-products-add-selected-list]')) {
@@ -12805,7 +12872,12 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     }
     if (target.closest('[data-food-merge-open]')) {
       const seed = String(target.closest('[data-food-merge-open]')?.dataset.foodMergeOpen || '').trim();
-      state.modal = { type: 'food-merge', selected: seed ? [seed] : [], destinationId: seed || '', search: '', destinationSearch: '', hideResolved: true };
+      const selectedIds = [...new Set((Array.isArray(state.foodProductsView?.selectedIds) ? state.foodProductsView.selectedIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
+      const selected = selectedIds.length >= 2 ? selectedIds : (seed ? [seed] : []);
+      const preferredDestination = selected.includes(String(state.foodProductsView?.selectedProductId || '').trim())
+        ? String(state.foodProductsView?.selectedProductId || '').trim()
+        : String(selected[0] || seed || '').trim();
+      state.modal = { type: 'food-merge', selected, destinationId: preferredDestination, search: '', destinationSearch: '', hideResolved: true };
       triggerRender();
       return;
     }
@@ -12920,7 +12992,17 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     }
     const foodDetailId = target.closest('[data-food-item-detail]')?.dataset.foodItemDetail;
     if (foodDetailId) {
-      state.modal = { type: 'food-item', foodId: foodDetailId, mode: 'detail', source: 'stats-list-detail' };
+      const item = resolveFoodItemByAnyKey(foodDetailId);
+      if (item) {
+        state.modal = { type: 'food-item', foodId: item.id, mode: 'detail', source: 'stats-list-detail' };
+      } else {
+        const snapshot = resolveProductsCatalogSnapshot(foodDetailId);
+        if (!snapshot?.canonicalName) {
+          toast('Ese producto aun no tiene ficha propia');
+          return;
+        }
+        state.modal = { type: 'food-item', foodName: snapshot.canonicalName, source: 'stats-list-detail-create' };
+      }
       triggerRender();
       return;
     }
@@ -12929,7 +13011,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       const found = getFoodByName(foodDetailName);
       state.modal = found
         ? { type: 'food-item', foodId: found.id, mode: 'detail', source: 'stats-list-detail-name' }
-        : { type: 'food-item', foodName: foodDetailName, mode: 'detail', source: 'stats-list-detail-name' };
+        : { type: 'food-item', foodName: foodDetailName, source: 'stats-list-detail-name-create' };
       triggerRender();
       return;
     }
@@ -13519,6 +13601,10 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-balance-trend-mode]')) { state.balanceTrendMode = event.target.value; triggerRender(); }
     if (event.target.matches('[data-balance-trend-category]')) { state.balanceTrendCategory = event.target.value; triggerRender(); }
     if (event.target.matches('[data-finance-stats-group]')) { state.balanceStatsGroupBy = event.target.value; state.balanceStatsActiveSegment = null; triggerRender(); }
+    if (event.target.matches('[data-products-toggle-select]')) {
+      toggleProductsSelection(event.target.dataset.productsToggleSelect, event.target.checked);
+      return;
+    }
     if (event.target.matches('[data-products-filter]')) {
       const filterKey = String(event.target.dataset.productsFilter || '').trim();
       const nextValue = event.target.type === 'checkbox' ? !!event.target.checked : event.target.value;

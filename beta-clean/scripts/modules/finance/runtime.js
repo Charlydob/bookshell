@@ -566,6 +566,8 @@ function normalizeFoodName(value = '') {
 }
 function normalizeFoodCompareKey(value = '') {
   return normalizeFoodName(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/^[\s\-_,.;:¡!¿?()\[\]{}"'`]+|[\s\-_,.;:¡!¿?()\[\]{}"'`]+$/g, '');
 }
@@ -4010,23 +4012,18 @@ function updateProductsQuickSearch(inputEl) {
 }
 
 function applyProductsCatalogGlobalSearch(inputEl) {
-  const root = getProductsWorkbenchRoot();
-  if (!root) return;
   const query = String(inputEl?.value || '');
   state.foodProductsView = { ...(state.foodProductsView || {}), productsQuery: query };
-  const queryKey = normalizeProductItemKey(query);
-  root.querySelectorAll('[data-products-catalog-group]').forEach((groupEl) => {
-    let visibleCount = 0;
-    groupEl.querySelectorAll('[data-products-catalog-card]').forEach((card) => {
-      const matches = !queryKey || String(card.dataset.productsSearch || '').includes(queryKey);
-      card.hidden = !matches;
-      if (matches) visibleCount += 1;
-    });
-    const counter = groupEl.querySelector('[data-products-catalog-visible]');
-    if (counter) counter.textContent = `${visibleCount} visibles`;
-    const emptyEl = groupEl.querySelector('.productsWorkbench__catalogEmpty');
-    if (emptyEl) emptyEl.hidden = visibleCount > 0;
-  });
+  const selectionStart = inputEl?.selectionStart ?? query.length;
+  const selectionEnd = inputEl?.selectionEnd ?? query.length;
+  patchProductsCatalogSubview(buildCurrentProductsModel());
+  const nextInput = document.querySelector('[data-products-filter="productsQuery"]');
+  if (nextInput) {
+    nextInput.focus();
+    try {
+      nextInput.setSelectionRange(selectionStart, selectionEnd);
+    } catch (_) {}
+  }
 }
 
 function updateProductsCatalogSelectedDom(productId = '') {
@@ -14265,6 +14262,16 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         };
       }
       state.modal = { type: null }; triggerRender();
+    }
+  }, evtOpts);
+
+  view.addEventListener('search', (event) => {
+    if (event.target.matches('[data-products-filter="productsQuery"]')) {
+      applyProductsCatalogGlobalSearch(event.target);
+      return;
+    }
+    if (event.target.matches('[data-products-catalog-search]')) {
+      applyProductsCatalogGroupSearch(event.target);
     }
   }, evtOpts);
 

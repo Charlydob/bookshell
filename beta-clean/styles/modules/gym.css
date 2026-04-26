@@ -1455,3 +1455,16 @@ button.gym-calendar-day {
   -webkit-text-stroke: 1px rgb(0, 0, 0);
 }
 
+
+/* #region MANTENER */
+
+/* #region Estadisticas */
+/* #endregion KPIs estadisticas */
+  #gym-stats-kpis{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+/* #endregion  */
+/* #endregion Estadisticas */
+
+/* #endregion MANTENER */

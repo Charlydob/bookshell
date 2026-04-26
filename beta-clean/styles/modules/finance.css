@@ -5024,6 +5024,12 @@ margin-bottom: 50px;
   box-shadow: 0 0 0 1px rgba(100, 211, 189, 0.2), 0 18px 34px rgba(0, 0, 0, 0.24);
 }
 
+.financeTab .productsWorkbench__productCard.is-multi-selected{
+  border-color: rgba(129, 220, 255, 0.44);
+  box-shadow: 0 0 0 1px rgba(129, 220, 255, 0.18), 0 16px 28px rgba(0, 0, 0, 0.22);
+  background: linear-gradient(180deg, rgba(18, 36, 58, 0.84), rgba(9, 20, 35, 0.92));
+}
+
 .financeTab .productsWorkbench__productCard.is-critical{
   border-color: rgba(255, 123, 136, 0.42);
 }
@@ -5044,25 +5050,37 @@ margin-bottom: 50px;
 }
 
 .financeTab .productsWorkbench__check{
+  position: relative;
+  inline-size: 18px;
+  block-size: 18px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
 }
 
 .financeTab .productsWorkbench__checkInput{
-  appearance: none;
-  -webkit-appearance: none;
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.financeTab .productsWorkbench__checkVisual{
   inline-size: 18px;
   block-size: 18px;
-  margin: 0;
   border-radius: 6px;
   border: 1px solid rgba(121, 186, 255, 0.48);
   background: rgba(8, 18, 31, 0.82);
   display: grid;
   place-items: center;
-  cursor: pointer;
+  pointer-events: none;
+  transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease;
 }
 
-.financeTab .productsWorkbench__checkInput::after{
+.financeTab .productsWorkbench__checkVisual::after{
   content: "";
   inline-size: 9px;
   block-size: 9px;
@@ -5072,23 +5090,20 @@ margin-bottom: 50px;
   transition: transform .16s ease, background-color .16s ease;
 }
 
-.financeTab .productsWorkbench__checkInput:checked{
+.financeTab .productsWorkbench__checkInput:checked + .productsWorkbench__checkVisual{
   border-color: rgba(93, 215, 182, 0.72);
   background: rgba(93, 215, 182, 0.16);
+  box-shadow: 0 0 0 1px rgba(93, 215, 182, 0.14);
 }
 
-.financeTab .productsWorkbench__checkInput:checked::after{
+.financeTab .productsWorkbench__checkInput:checked + .productsWorkbench__checkVisual::after{
   background: #95f7db;
   transform: scale(1);
 }
 
-.financeTab .productsWorkbench__checkInput:focus-visible{
+.financeTab .productsWorkbench__checkInput:focus-visible + .productsWorkbench__checkVisual{
   outline: 2px solid rgba(147, 210, 255, 0.72);
   outline-offset: 2px;
-}
-
-.financeTab .productsWorkbench__checkMark{
-  display: none;
 }
 
 .financeTab .productsWorkbench__cardActions{
@@ -6917,6 +6932,12 @@ margin-bottom: 50px;
   background: rgba(127, 216, 189, .07);
 }
 
+.financeTab .productsWorkbench__bulkBar--selected{
+  border-color: rgba(129, 220, 255, .24);
+  background: linear-gradient(180deg, rgba(30, 58, 86, .46), rgba(9, 20, 35, .88));
+  box-shadow: 0 12px 22px rgba(0, 0, 0, .16);
+}
+
 .financeTab .productsWorkbench__batchForm--toolbar{
   position: sticky;
   top: 8px;
@@ -6934,6 +6955,15 @@ margin-bottom: 50px;
 
 .financeTab .productsWorkbench__batchForm--toolbar .productsWorkbench__editorActions{
   justify-content: flex-end;
+}
+
+.financeTab .productsWorkbench__batchForm--modal{
+  position: static;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .financeTab .productsWorkbench__bulkActions{
@@ -7859,13 +7889,32 @@ input[type="checkbox"]:checked + span{
 
 /* #region tarjeta producto */
   .financeTab .productsWorkbench__check {
-    display: grid;
-    border: 1px solid white ;
-    border-radius: 6px;
-    width: 18px;
-    height: 18px;
+    border: 0;
   }
   
 /* #endregion tarjeta producto */
 /* #endregion catalogo */
+
+/* #region Objetivos */
+/* #region paneles objetivos */
+
+.financeTab .financeGoalCard {
+ width: 350px;
+ min-width: 100px;
+  }
+/* cantidades */
+.financeTab .financeGoalsHero__body, .financeTab .financeGoalsHero__stats, .financeTab .financeGoalCard__amounts {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  }
+.financeTab .financeGoalsView .financeGlassCard {
+background: transparent;
+border: 0px;
+}
+/* #endregion */
+  
+
+
+/* #endregion */
+
 /* #endregion MANTENER */

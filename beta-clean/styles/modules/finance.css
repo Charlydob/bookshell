@@ -7896,10 +7896,25 @@ input[type="checkbox"]:checked + span{
 /* #endregion catalogo */
 
 /* #region Objetivos */
+
+/* #region objetivos main */
+
+   #objetivos-resumen-top {
+    display: grid;
+    grid-template-columns: 1fr ;
+  }
+#objetivos-resumen-stats{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+/* #endregion */
+
 /* #region paneles objetivos */
 
 .financeTab .financeGoalCard {
- width: 350px;
+  justify-content: center;
+ width: 380px;
  min-width: 100px;
   }
 /* cantidades */
@@ -7910,6 +7925,47 @@ input[type="checkbox"]:checked + span{
 .financeTab .financeGoalsView .financeGlassCard {
 background: transparent;
 border: 0px;
+}
+
+.financeTab .financeGoalCard__header{
+  display: grid;
+grid-template-columns: 1fr auto;
+}
+.financeTab .financeGoalCard__subline{
+  display: grid;
+  grid-template-columns: 1fr auto;
+}
+
+#objetivos-kpi-objetivo{
+  background: transparent;
+  color: yellow;
+  border: 0px solid yellow;
+  border-top: 1px solid yellow  ;
+  border-bottom: 1px solid yellow;
+  border-radius: 12px 0 0 12px;
+}
+#objetivos-kpi-faltan{
+  background: transparent;
+  color: red;
+  border: 0px solid red;
+  border-top: 1px solid red  ;
+  border-bottom: 1px solid red;
+  border-radius: 0px 12px  12px 0;
+}
+#objetivos-kpi-ahorrado{
+  background:transparent;
+  color: green;
+  border: 0px solid green;
+  border-top: 1px solid green  ;
+  border-bottom: 1px solid green;
+  border-radius: 0px;
+}
+
+.financeTab .financeGoalCard__amounts{
+  gap: 0px;
+}
+.kpi-panel-ahorro{
+  
 }
 /* #endregion */
   

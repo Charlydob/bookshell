@@ -9784,7 +9784,7 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
     </header>
 
     <article class="financeGlassCard financeGoalsCard financeGoalsHero ${pendingGlobal <= 0 && totalObjective > 0 ? 'is-complete' : ''}">
-      <div class="financeGoalsHero__top">
+      <div class="financeGoalsHero__top" >
         <div>
           <small>Resumen global</small>
           <h3>Ahorro vinculado a objetivos</h3>
@@ -9792,7 +9792,7 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
         <span>${goals.length} ${goals.length === 1 ? 'objetivo activo' : 'objetivos activos'}</span>
       </div>
 
-      <div class="financeGoalsHero__body">
+      <div class="financeGoalsHero__body" id="objetivos-resumen-top" >
         <div class="financeGoalsDonutWrap">
           <div class="financeGoalsDonut ${pendingGlobal <= 0 && totalObjective > 0 ? 'is-complete' : ''}" style="--goal-progress:${donutPct.toFixed(2)};">
             <div class="financeGoalsDonut__inner">
@@ -9803,7 +9803,7 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
           </div>
         </div>
 
-        <div class="financeGoalsHero__stats">
+        <div class="financeGoalsHero__stats" id="objetivos-resumen-stats" >
           <div class="financeGoalsHero__metric">
             <small>Total objetivo</small>
             <strong>${fmtCurrency(totalObjective)}</strong>
@@ -9823,7 +9823,7 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
         </div>
       </div>
 
-      <div class="media-mensual financeGoalsProgressHead">
+      <div class="progreso-global-objetivo">
         <div>
           <small>Progreso global</small>
           <strong class="${toneClass(globalPct - 100)}">${globalPct.toFixed(2)}%</strong>
@@ -9870,15 +9870,15 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
                   </div>
 
                   <div class="financeGoalCard__amounts">
-                    <div>
+                    <div class="kpi-panel-ahorro" id="objetivos-kpi-objetivo">
                       <small>Objetivo</small>
                       <strong>${fmtCurrency(target)}</strong>
                     </div>
-                    <div>
+                    <div class="kpi-panel-ahorro" id="objetivos-kpi-ahorrado">
                       <small>Ahorrado</small>
                       <strong>${fmtCurrency(assigned)}</strong>
                     </div>
-                    <div>
+                    <div class="kpi-panel-ahorro" id="objetivos-kpi-faltan">
                       <small>Faltan</small>
                       <strong>${fmtCurrency(remaining)}</strong>
                     </div>

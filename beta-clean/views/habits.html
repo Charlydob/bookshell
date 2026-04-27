@@ -24,7 +24,11 @@
     <button class="habit-quick-tab-btn app-segmented__item app-chip" id="habit-quick-tab-counters" data-habit-quick-tab="counters" role="tab" aria-selected="false" type="button">Contadores</button>
     <button class="habit-quick-tab-btn app-segmented__item app-chip" id="habit-quick-tab-work-schedules" type="button">Horarios</button>
   </div>
-
+    <div class="habit-today-search" id="habit-today-search">
+    <span class="habit-search-icon" aria-hidden="true">🔍</span>
+    <input autocomplete="off" class="habit-search-input app-search app-input" id="habit-today-search-input" inputmode="search" placeholder="Buscar hábito…" type="search"/>
+    <button class="habit-search-clear" id="habit-today-search-clear" type="button" aria-label="Limpiar búsqueda">✕</button>
+    </div>
 <details class="habit-accordion habit-quick-sessions" id="habit-quick-sessions" data-search-ignore="true" data-habit-quick-panel="sessions" open>
   <summary>
     <div class="habit-accordion-title">Sesiones rápidas</div>
@@ -60,11 +64,7 @@
 </div>
 </div>
 
-    <div class="habit-today-search" id="habit-today-search">
-    <span class="habit-search-icon" aria-hidden="true">🔍</span>
-    <input autocomplete="off" class="habit-search-input app-search app-input" id="habit-today-search-input" inputmode="search" placeholder="Buscar hábito…" type="search"/>
-    <button class="habit-search-clear" id="habit-today-search-clear" type="button" aria-label="Limpiar búsqueda">✕</button>
-    </div>
+
     <div class="habit-search-empty" id="habit-today-search-empty" style="display:none;">
       <div class="habit-search-empty-text">No hay hábitos que coincidan</div>
       <button class="btn ghost btn-compact" id="habit-today-search-reset" type="button">Limpiar</button>
@@ -237,7 +237,7 @@
 </div>
 </div>
 <div class="habit-kpi-grid habit-pin-grid">
-<div class="habit-kpi-card habit-pin-card">
+<div class="habit-kpi-card habit-pin-card" id="kpi-pin">
 <div class="habit-kpi-label app-kpi-card__label">Seguimiento · Contador</div>
 <div class="habit-kpi-value app-kpi-card__value" id="habit-pin-count-today">—</div>
 <div class="habit-kpi-sub app-kpi-card__meta" id="habit-pin-count-range">—</div>
@@ -245,7 +245,7 @@
 <select aria-label="Elegir contador para pin 1" id="habit-pin-count-select"></select>
 </label>
 </div>
-<div class="habit-kpi-card habit-pin-card">
+<div class="habit-kpi-card habit-pin-card" id="kpi-pin">
 <div class="habit-kpi-label app-kpi-card__label">Seguimiento · Tiempo</div>
 <div class="habit-kpi-value app-kpi-card__value" id="habit-pin-time-today">—</div>
 <div class="habit-kpi-sub app-kpi-card__meta" id="habit-pin-time-range">—</div>
@@ -909,6 +909,46 @@
 <div class="modal-footer sheet-footer">
 <button class="btn ghost" id="habit-work-schedule-cancel" type="button">Cancelar</button>
 <button class="btn primary" id="habit-work-schedule-save" type="button">Guardar horarios</button>
+</div>
+</div>
+</div>
+
+<!-- MODAL HORARIO DIARIO -->
+<div class="modal-backdrop hidden" id="habit-work-schedule-day-modal">
+<div class="modal habit-modal habit-work-schedule-day-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div class="modal-title">Horario del día</div>
+<button class="icon-btn" id="habit-work-schedule-day-close" type="button">✕</button>
+</div>
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="sheet-section-title" id="habit-work-schedule-day-date">—</div>
+<div class="habit-work-schedule-day-fields">
+<label class="field">
+<span class="field-label">Hora inicio</span>
+<input id="habit-work-schedule-day-start" type="time"/>
+</label>
+<label class="field">
+<span class="field-label">Hora fin</span>
+<input id="habit-work-schedule-day-end" type="time"/>
+</label>
+</div>
+</div>
+<div class="sheet-section habit-work-schedule-day-options">
+<label class="habit-work-schedule-break">
+<input id="habit-work-schedule-day-break" type="checkbox"/>
+<span>30 min descanso</span>
+</label>
+<label class="habit-work-schedule-free">
+<input id="habit-work-schedule-day-free" type="checkbox"/>
+<span>Día libre</span>
+</label>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="habit-work-schedule-day-cancel" type="button">Cancelar</button>
+<button class="btn primary" id="habit-work-schedule-day-save" type="button">Guardar día</button>
 </div>
 </div>
 </div>

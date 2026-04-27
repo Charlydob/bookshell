@@ -30,53 +30,40 @@
     <section class="notes-root-section hidden" id="notes-root-section-reminders">
       <header class="notes-header-row">
         <h2 class="notes-title">Recordatorios</h2>
-        <button class="btn primary notes-create-folder" id="notes-btn-new-reminder" type="button">Nuevo recordatorio</button>
+        <button class="btn primary notes-reminder-create-btn" id="notes-btn-new-reminder" type="button">+ Nuevo recordatorio</button>
       </header>
 
-      <div class="notes-filters-row">
-        <select class="notes-filter-select" id="notes-reminders-filter">
-          <option value="all">Todos</option>
-          <option value="upcoming">Próximos</option>
-          <option value="today">Hoy</option>
-          <option value="birthday">Cumpleaños</option>
-          <option value="overdue">Vencidos</option>
-        </select>
-        <select class="notes-filter-select" id="notes-reminders-filter-type">
-          <option value="all">Tipo: Todos</option>
-          <option value="normal">Normal</option>
-          <option value="cumpleaños">Cumpleaños</option>
-          <option value="tarea">Tarea</option>
-          <option value="evento">Evento</option>
-          <option value="trámite">Trámite</option>
-          <option value="checklist">Checklist</option>
-          <option value="personalizado">Personalizado</option>
-        </select>
-        <select class="notes-filter-select" id="notes-reminders-filter-category">
-          <option value="all">Categoría: Todas</option>
-        </select>
-        <select class="notes-filter-select" id="notes-reminders-filter-status">
-          <option value="all">Estado: Todos</option>
-          <option value="pendiente">Pendiente</option>
-          <option value="completado">Completado</option>
-          <option value="vencido">Vencido</option>
-        </select>
-        <select class="notes-filter-select" id="notes-reminders-filter-range">
-          <option value="all">Rango: Todos</option>
-          <option value="today">Hoy</option>
-          <option value="7d">Próximos 7 días</option>
-          <option value="30d">Próximos 30 días</option>
-          <option value="overdue">Vencidos</option>
-        </select>
-        <select class="notes-filter-select" id="notes-reminders-group-by">
-          <option value="none">Sin agrupar</option>
-          <option value="category">Agrupar: categoría</option>
-          <option value="type">Agrupar: tipo</option>
-          <option value="date">Agrupar: fecha</option>
-          <option value="status">Agrupar: estado</option>
-        </select>
-        <button class="btn ghost btn-compact" id="notes-reminders-save-defaults" type="button">Guardar vista por defecto</button>
-        <button class="btn ghost btn-compact" id="notes-reminder-category-create" type="button">+ Categoría</button>
-        <button class="btn ghost btn-compact" id="notes-reminder-category-delete" type="button">- Categoría</button>
+      <div class="notes-reminders-toolbar" id="notes-reminders-toolbar">
+        <div class="notes-reminders-toolbar-controls">
+          <button class="notes-reminders-toolbar-btn" id="notes-reminders-show-btn" type="button" data-act="toggle-reminders-panel" data-panel="show">
+            Mostrar
+          </button>
+          <button class="notes-reminders-toolbar-btn" id="notes-reminders-group-btn" type="button" data-act="toggle-reminders-panel" data-panel="group">
+            Agrupar
+          </button>
+        </div>
+        <div class="notes-reminders-filter-panel hidden" id="notes-reminders-show-panel">
+          <div class="notes-reminders-filter-block">
+            <div class="notes-reminders-filter-title">Tipo</div>
+            <div class="notes-reminders-check-grid" id="notes-reminders-filter-types"></div>
+          </div>
+          <div class="notes-reminders-filter-block">
+            <div class="notes-reminders-filter-title">Categorías</div>
+            <div class="notes-reminders-check-grid" id="notes-reminders-filter-categories"></div>
+          </div>
+          <div class="notes-reminders-filter-block">
+            <div class="notes-reminders-filter-title">Estado</div>
+            <div class="notes-reminders-check-grid" id="notes-reminders-filter-statuses"></div>
+          </div>
+          <div class="notes-reminders-filter-block">
+            <div class="notes-reminders-filter-title">Rango</div>
+            <div class="notes-reminders-check-grid notes-reminders-range-grid" id="notes-reminders-filter-ranges"></div>
+          </div>
+        </div>
+        <div class="notes-reminders-filter-panel hidden" id="notes-reminders-group-panel">
+          <div class="notes-reminders-check-grid notes-reminders-group-grid" id="notes-reminders-group-options"></div>
+        </div>
+        <div class="notes-reminders-active-filters" id="notes-reminders-active-filters"></div>
       </div>
 
       <div class="notes-reminder-list" id="notes-reminders-list"></div>
@@ -154,19 +141,21 @@
     <form class="modal-form" id="notes-reminder-form">
       <input type="hidden" id="notes-reminder-id" />
       <div class="modal-scroll">
-        <label class="field">
-          <span class="field-label">Título</span>
-          <input id="notes-reminder-title" type="text" required />
-        </label>
-        <label class="field">
-          <span class="field-label">Descripción (opcional)</span>
-          <textarea id="notes-reminder-description" rows="3"></textarea>
-        </label>
-        <div id="notes-reminder-grid-meta">
+        <div class="notes-reminder-modal-row notes-reminder-row-title">
           <label class="field">
             <span class="field-label">Emoji</span>
             <input id="notes-reminder-emoji" type="text" maxlength="2" placeholder="⏰" value="⏰" />
           </label>
+          <label class="field">
+            <span class="field-label">Título</span>
+            <input id="notes-reminder-title" type="text" required />
+          </label>
+        </div>
+        <label class="field notes-reminder-row-description">
+          <span class="field-label">Descripción (opcional)</span>
+          <textarea id="notes-reminder-description" rows="3"></textarea>
+        </label>
+        <div class="notes-reminder-modal-row notes-reminder-row-two">
           <label class="field">
             <span class="field-label">Tipo</span>
             <select id="notes-reminder-type" class="field-select">
@@ -180,9 +169,17 @@
             </select>
           </label>
           <label class="field">
-            <span class="field-label">Categorías</span>
-            <select id="notes-reminder-categories" class="field-select" multiple></select>
+            <span class="field-label">Categoría</span>
+            <div class="notes-reminder-category-row">
+              <select id="notes-reminder-categories" class="field-select"></select>
+              <div class="notes-reminder-category-create">
+                <input id="notes-reminder-category-new" type="text" placeholder="Nueva categoría..." />
+                <button class="notes-icon-action" id="notes-reminder-category-create" type="button">+</button>
+              </div>
+            </div>
           </label>
+        </div>
+        <div class="notes-reminder-modal-row notes-reminder-row-two">
           <label class="field">
             <span class="field-label">Fecha objetivo</span>
             <input id="notes-reminder-date" type="date" required />
@@ -192,16 +189,8 @@
             <input id="notes-reminder-time" type="time" />
           </label>
         </div>
-        <div class="notes-reminder-alert-builder hidden" id="notes-reminder-checklist-wrap">
-          <div class="field-label">Checklist</div>
-          <div class="notes-reminder-alert-inputs">
-            <input id="notes-reminder-checklist-new" type="text" placeholder="Nuevo checkpoint" />
-            <button class="btn ghost btn-compact" id="notes-reminder-checklist-add" type="button">Añadir</button>
-          </div>
-          <div id="notes-reminder-checklist-list"></div>
-        </div>
-
-        <div class="notes-reminder-alert-builder">
+        <div class="notes-reminder-modal-row notes-reminder-row-alerts">
+          <div class="notes-reminder-alert-builder">
           <div class="field-label">Avisos previos</div>
           <div class="notes-reminder-alert-inputs">
             <input id="notes-reminder-alert-amount" type="number" min="1" placeholder="Cantidad" />
@@ -210,12 +199,13 @@
               <option value="hours">Horas</option>
               <option value="days">Días</option>
             </select>
-            <button class="btn ghost btn-compact" id="notes-reminder-alert-add" type="button">Añadir aviso</button>
+            <button class="notes-icon-action" id="notes-reminder-alert-add" type="button">+</button>
           </div>
           <div class="notes-reminder-alert-list" id="notes-reminder-alert-list"></div>
         </div>
-
-        <label class="toggle-pill notes-toggle-field">
+        </div>
+        <div class="notes-reminder-modal-row notes-reminder-row-birthday">
+          <label class="toggle-pill notes-toggle-field">
           <input id="notes-reminder-is-birthday" type="checkbox" />
           <span>Es cumpleaños</span>
         </label>
@@ -223,6 +213,15 @@
           <input id="notes-reminder-repeat-yearly" type="checkbox" />
           <span>Repetir cada año</span>
         </label>
+        </div>
+        <div class="notes-reminder-alert-builder hidden" id="notes-reminder-checklist-wrap">
+          <div class="field-label">Checklist</div>
+          <div class="notes-reminder-alert-inputs notes-reminder-checklist-add-row">
+            <input id="notes-reminder-checklist-new" type="text" placeholder="Nuevo checkpoint..." />
+            <button class="notes-icon-action" id="notes-reminder-checklist-add" type="button">+</button>
+          </div>
+          <div id="notes-reminder-checklist-list"></div>
+        </div>
         <p class="notes-form-error" id="notes-reminder-form-error"></p>
       </div>
       <div class="notes-modal-actions">

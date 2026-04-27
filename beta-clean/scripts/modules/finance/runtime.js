@@ -3677,6 +3677,8 @@ function renderProductsTicketHero(model) {
   return `
       <section class="productsWorkbench__ticketHero" data-products-ticket-hero>
       ${renderProductsSubviewSwitch(model)}
+
+    <div id="seccion-ticket">
       <div class="productsWorkbench__ticketBar">
         <div class="productsWorkbench__ticketSwitches" aria-label="Tickets">
           ${model.tickets.map((ticket, index) => `
@@ -3685,6 +3687,7 @@ function renderProductsTicketHero(model) {
             </button>
           `).join('')}
         </div>
+
         <span class="productsWorkbench__ticketBarDivider" aria-hidden="true">|</span>
         <div class="productsWorkbench__panelActions productsWorkbench__panelActions--inlineReceipt productsWorkbench__panelActions--ticketCrud">
           <button type="button" class="food-history-btn" data-products-create-empty-ticket>Nuevo ticket</button>
@@ -3727,6 +3730,8 @@ function renderProductsTicketHero(model) {
       <div class="productsWorkbench__panelActions productsWorkbench__panelActions--footer">
         <button type="button" class="food-history-btn" data-products-export-ticket ${model.listLines.length ? '' : 'disabled'}>Exportar</button>
         <button type="button" class="food-history-btn" data-products-confirm-ticket ${model.listLines.length ? '' : 'disabled'}>Confirmar compra</button>
+      </div>
+
       </div>
       ${renderProductsTicketRegistry(model)}
       </section>
@@ -9123,7 +9128,7 @@ function renderBalanceTrendChart(data = { monthKeys: [], series: [], tone: 'is-n
 
   return `
     <div id="fin-trendChart" class="${data.tone}" data-fin-chart-geometry="${escapeHtml(chartGeometry)}" style="--fin-trend-chart-height: 160px; margin-top: 10px; height: var(--fin-trend-chart-height); border-radius: 14px; border: 1px solid rgba(173, 197, 255, 0.15); background: linear-gradient(135deg, rgba(5, 15, 38, 0.5), rgba(7, 22, 54, 0.25)); padding: 10px; position: relative; display: flex; flex-direction: column;">
-      <div style="position: relative; flex: 1; display: flex; flex-direction: column;">
+      <div class="grafica-balance-gastos" >
         <svg viewBox="0 0 ${width} ${height}" style="flex: 1; width: 100%; display: block; user-select: none; cursor: crosshair;">
           ${verticalGuides.map(({ x }) => `<line x1="${x.toFixed(1)}" y1="${pad.toFixed(1)}" x2="${x.toFixed(1)}" y2="${(pad + chartH).toFixed(1)}" stroke="rgba(255,255,255,0.04)" stroke-width="1"></line>`).join('')}
           ${lines.map((line) => `<path d="${line.path}" stroke="${line.color}" fill="none" stroke-width="2.5" stroke-linecap="butt" stroke-linejoin="bevel" opacity="0.9" style="filter: drop-shadow(0 0 6px ${line.color.replace(')', ', 0.4)')});"></path>`).join('')}
@@ -9143,13 +9148,13 @@ function renderBalanceTrendChart(data = { monthKeys: [], series: [], tone: 'is-n
 function renderBalanceTrendControls(categories = categoriesList(), mode = 'expense', category = 'all') {
   const modeLabel = mode === 'all' ? 'Ambos' : (mode === 'income' ? 'Ingresos' : 'Gastos');
   return `
-    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-      <select class="finance-pill" data-balance-trend-mode style="min-width: 90px;">
+    <div class="selectores-grafica-balance" >
+      <select class="finance-pill-grafica" data-balance-trend-mode style="min-width: 90px;">
         <option value="expense" ${mode === 'expense' ? 'selected' : ''}>Gastos</option>
         <option value="income" ${mode === 'income' ? 'selected' : ''}>Ingresos</option>
         <option value="all" ${mode === 'all' ? 'selected' : ''}>Ambos</option>
       </select>
-      <select class="finance-pill" data-balance-trend-category style="flex: 1; min-width: 120px;">
+      <select class="finance-pill-grafica" data-balance-trend-category style="flex: 1; min-width: 120px;">
         <option value="all" ${category === 'all' ? 'selected' : ''}>Todas las categorías</option>
         ${categories.map((cat) => `<option value="${escapeHtml(cat)}" ${category === cat ? 'selected' : ''}>${escapeHtml(categoryEmojiForName(cat) || '')} ${escapeHtml(cat)}</option>`).join('')}
       </select>
@@ -9197,13 +9202,21 @@ function renderFinanceCalendarPanel(accounts, totalSeries, { withToggle = false 
       <div class="financePanelHeading"><h2>Calendario</h2></div>
       ${toggle}
     </div>
-    <div class="finance-calendar-controls">
-      <button type="button" class="boton-calendario" data-month-shift="-1">&#9664;</button>
-      <select class="finance-pill" data-calendar-account><option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select>
-      <select class="finance-pill" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>D&iacute;a</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>A&ntilde;o</option></select>
-      <button type="button" class="boton-calendario" data-month-shift="1">&#9654;</button>
+    <div class="finance-calendar-controls" id="selectores-calendario">
+     
+      <select class="finance-pill" id="selector-cuenta-calendario" data-calendar-account>
+      
+      <option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select>
+
+      <select class="finance-pill" id="selector-rango-calendario" data-calendar-mode>
+      <option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>D&iacute;a</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>A&ntilde;o</option></select>
     </div>
+    
+    <div id="nav-mes-calendario">
+       <button type="button" class="boton-calendario" data-month-shift="-1">&#9664;</button>
     <span class="finance-month-label">${modeLabel}</span>
+          <button type="button" class="boton-calendario" data-month-shift="1">&#9654;</button>
+    </div>
     ${content}
   </article>`;
 }
@@ -9230,7 +9243,7 @@ function renderFinanceHome(accounts, totalSeries) {
     return `
       <section class="finance-home ${toneClass(totalRange.delta)} finance-home--${homePanelView}">
         ${primaryPanel}
-        <article class="finance__accounts"><div class="finance__sectionHeader"><h2></h2><div class="finance-row"><button class="finance-pill finance-pill--mini" data-account-merge-open>Fusionar</button><button class="finance-pill" data-new-account>+ Cuenta</button></div></div>
+        <article class="finance__accounts"><div class="finance__sectionHeader"><h2></h2><div class="finance-row"><button class="finance-pill" data-new-account>+ Cuenta</button></div></div>
         <div id="finance-accountsList">${accounts.map((account) => { const editableBalance = account.shared ? account.currentReal : account.current; return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'}</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${editableBalance.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${fmtCurrency(account.current)}</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">⋯</button></div></article>`; }).join('') || '<p class="finance-empty">Sin cuentas todaví­a.</p>'}</div></article>
       </section>`;
   }
@@ -9239,7 +9252,8 @@ function renderFinanceHome(accounts, totalSeries) {
       <article class="finance__hero"><div class="financePanelTopbar"><div class="financePanelHeading"><p class="finance__eyebrow">TOTAL</p></div>${renderFinanceHomePanelToggle('hero')}</div><h2 id="finance-totalValue">${fmtCurrency(total)}</h2>
         <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedCurrency(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
         <p>Saldo real: <strong>${fmtCurrency(totalReal)}</strong> · Mi parte: <strong>${fmtCurrency(total)}</strong></p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div></article>
-      <article class="finance__controls">
+      
+        <article class="finance__controls" id="controles-ventana-main-finanzas">
         <select class="finance-pill" data-range><option value="total" ${state.rangeMode === 'total' ? 'selected' : ''}>Total</option><option value="month" ${state.rangeMode === 'month' ? 'selected' : ''}>Mes</option><option value="week" ${state.rangeMode === 'week' ? 'selected' : ''}>Semana</option><option value="year" ${state.rangeMode === 'year' ? 'selected' : ''}>Año</option></select>
         <button class="finance-pill" data-history>Historial</button>
         <select class="finance-pill" data-compare><option value="month" ${state.compareMode === 'month' ? 'selected' : ''}>Mes vs Mes</option><option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option></select></article>
@@ -9345,14 +9359,19 @@ const fixedSummaryBlock = `
     <div class="financePanelHeading"><h2>Calendario</h2></div>
     ${toggle}
   </div>
-  <div class="finance-calendar-controls">
-    <button class="boton-calendario" data-month-shift="-1">&#9664;</button>
-    <select class="finance-pill" data-calendar-account><option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select>
-    <select class="finance-pill" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>D&iacute;a</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>A&ntilde;o</option></select>
-    <button class="boton-calendario" data-month-shift="1">&#9654;</button>
+  <div class="finance-calendar-controls" id="selectores-calendario">
+    
+    <select class="finance-pill" id="selector-cuenta-calendario" data-calendar-account><option value="total" ${state.calendarAccountId === 'total' ? 'selected' : ''}>Total</option>${accounts.map((a) => `<option value="${a.id}" ${state.calendarAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select>
+
+    <select class="finance-pill" id="selector-rango-calendario" data-calendar-mode><option value="day" ${state.calendarMode === 'day' ? 'selected' : ''}>D&iacute;a</option><option value="month" ${state.calendarMode === 'month' ? 'selected' : ''}>Mes</option><option value="year" ${state.calendarMode === 'year' ? 'selected' : ''}>A&ntilde;o</option></select>
   </div>
       <button type="button" class="finance-pill finance-pill--add-fixed" data-open-fixed-expense>+ Fijo</button>
+
+  <div id="nav-mes-calendario">
+    <button class="boton-calendario" data-month-shift="-1">&#9664;</button>
   <span class="finance-month-label">${modeLabel}</span>
+    <button class="boton-calendario" data-month-shift="1">&#9654;</button>
+    </div>
   ${content}
   ${fixedSummaryBlock}
 </article>`;
@@ -9701,10 +9720,6 @@ function renderFinanceGoalsLegacy(accounts = buildAccountModels()) {
   return `
   <section class="financeBalanceView financeGoalsView">
     <header class="financeViewHeader financeGoalsView__header">
-      <div class="financeGoalsView__title">
-        <h2>Objetivos</h2>
-        <p>Metas de ahorro seguidas por cuenta y fecha.</p>
-      </div>
       <button  id="boton-objetivo" data-open-modal="goal">+ Objetivo</button>
     </header>
 
@@ -9841,10 +9856,6 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
   return `
   <section class="financeBalanceView financeGoalsView">
     <header class="financeViewHeader financeGoalsView__header">
-      <div class="financeGoalsView__title">
-        <h2>Objetivos</h2>
-        <p>Metas de ahorro seguidas por cuenta y fecha.</p>
-      </div>
       <div class="financeGoalsView__controls">
         <button class="finance-pill" id="boton-objetivo" data-open-modal="goal">+ Objetivo</button>
       </div>

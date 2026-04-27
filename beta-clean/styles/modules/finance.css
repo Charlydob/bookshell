@@ -1159,10 +1159,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{ opacity:.7; }
   transition:.2s ease;
 }
 
-.finance-pill:hover{
-  transform:translateY(-1px);
-  box-shadow:0 6px 18px rgba(124,92,255,.4);
-}
+
 #finance-modalOverlay{
   position:fixed;
   inset:0;
@@ -7832,6 +7829,63 @@ label {
   font-size: 12px;
 }
 /* #endregion Modal Gasto Fijo */
+/* #region Main Page */
+  /* calendario dashboard */
+  #selectores-calendario{
+    display: grid;
+    gap: 0px;
+    grid-template-columns: 1fr 1fr;
+    justify-items: center;
+  }
+  #selector-cuenta-calendario{
+    background: transparent;
+    border-bottom: 1px solid rgb(170 138 219 / 78%);
+    border-top: 1px solid rgb(170 138 219 / 78%);
+    border-left: 1px solid rgb(170 138 219 / 78%);
+    border-radius: 12px 0 0 12px;
+    border-right: 0px;
+    width: 100%;
+    text-align-last: center;
+  }
+
+  #selector-rango-calendario{
+    background: transparent;
+    border-bottom: 1px solid rgb(170 138 219 / 78%);
+    border-top: 1px solid rgb(170 138 219 / 78%);
+    border-right: 1px solid rgb(170 138 219 / 78%);
+    border-radius: 0 12px 12px 0;
+    border-left: 0px;
+    width: 100%;
+    text-align-last: center;
+  }
+  #nav-mes-calendario{
+    display: grid;
+    gap: 10px;
+    grid-template-columns: 1fr 1fr 1fr;
+    text-align: center;
+  }
+  #controles-ventana-main-finanzas{
+    display: grid;
+    gap: 10px;
+    grid-template-columns: 1fr 1fr 1fr;
+    justify-items: center;
+    border-bottom: 1px solid rgb(170 138 219 / 78%);
+    border-top: 1px solid rgb(170 138 219 / 78%);
+    border-radius: 12px;
+  }
+
+  #controles-ventana-main-finanzas select, #controles-ventana-main-finanzas button{
+    width: 100%;
+    background: transparent;
+    border: 0px;
+    padding: 6px;
+    font-size: 16px;
+    text-align: center;
+    text-align-last: center;
+  }
+  .financeCalCell {
+    border-radius: 10px !important;
+  }
 
 /* #region Modal editar cuenta */
 #grid-modal-edicion-cuenta{
@@ -7884,6 +7938,101 @@ input[type="checkbox"]:checked + span{
 }
 /* #endregion Modal editar cuenta */
 
+
+/* #endregion */
+
+/* #region BALANCE */
+
+/* dashboard */
+
+  .financeTab .finAgg__scopeToggle {
+    display: grid;
+    gap: 0px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-items: center;
+    border-bottom: 1px solid rgba(150, 184, 243, .22);
+    border-top: 1px solid rgba(150, 184, 243, .22);
+    border-radius: 12px;
+  }
+  .financeTab .finance-pill {
+    border: 0;
+    background: transparent;
+    width: 100%;
+  }
+  .dash-balance, .dash-balance-patrimonio, .finance-pill-transacciones{
+    border: 0;
+    background: transparent;
+  }
+  .dash-balance-patrimonio{
+    border-bottom: 1px solid rgba(150, 184, 243, .22);
+  }
+
+  /* panel transacciones */
+  .finance-row-transacciones{
+    border-bottom: 1px solid rgba(150, 184, 243, .22);
+    border-top: 1px solid rgba(150, 184, 243, .22);
+    border-radius: 12px;
+    text-align-last: center;
+  }
+  .financeAccordion__summary{
+    justify-content: center;
+    text-align-last: center;
+  }
+
+  /* panel grafica */
+  .selectores-grafica-balance{
+    display: grid;
+    gap: 0px;
+    grid-template-columns: 100px 1fr;
+    justify-items: center;
+    border-bottom: 1px solid rgba(150, 184, 243, .22);
+    border-top: 1px solid rgba(150, 184, 243, .22);
+    border-radius: 12px;
+  }
+  .finance-pill-grafica{
+    padding: 6px;
+    text-align-last: center;
+    justify-self: center;
+    width: 100%;
+    border: red 0px solid;
+  }
+  #fin-trendChart{
+    height: 600px;
+    min-height: 190px;
+  }
+
+  /* panel estadisticas */
+  .financeTab .financeStats__scope {
+    display: grid;
+    gap: 0px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    justify-items: center;
+    border-bottom: 1px solid rgba(150, 184, 243, .22);
+    border-top: 1px solid rgba(150, 184, 243, .22);
+    border-radius: 12px;
+  }
+  .financeTab .financeStats__rangeBar{
+    display: grid;
+    gap: 0px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    justify-items: center;
+    border-bottom: 1px solid rgba(150, 184, 243, .22);
+    border-top: 1px solid rgba(150, 184, 243, .22);
+    border-radius: 12px;
+  }
+  .financeStats__scopeBtn, .financeStats__modeBtn, .financeStats__rangeBtn   {
+    border: 0 !important;
+    background: transparent !important;
+    width: 100%;
+    text-align: center !important;
+  }
+  .financeStats__scopeBtn--active, .financeStats__modeBtn--active, .financeStats__rangeBtn--active{
+    background: rgba(95, 165, 255, .25) !important;
+    color: white !important;
+    border: 1px solid rgba(125, 190, 255, .55) !important;
+    text-align: center;
+  }
+/* #endregion */
 /* #region catalogo */
 
 /* #region kpis catalogo */
@@ -7988,7 +8137,6 @@ grid-template-columns: 1fr auto;
 }
 /* #endregion */
   
-
 /* #region Modal Añadir objetivo */
 
   #modal-objetivo{

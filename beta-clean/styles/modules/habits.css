@@ -4888,6 +4888,40 @@ align-items: center;
 
 /* #region MANTENER */
 
+  .habits-subtabs.app-tabs{
+    
+    border-top: 1px solid rgba(255,255,255,0.12);
+    border-bottom: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px 12px 12px 12px;
+    box-shadow: black;
+  }
+  .habit-subtab.app-tab{
+    border: none;
+    background: none;
+  }
+  .habit-subtab.app-tab.is-active{
+    border: 1px rgb(255, 225, 0) solid !important;
+    border-radius: 6px;
+    color: yellow
+  }
+/* #region MODAL */
+/* modal añadir tiempo */
+.modal.habit-modal{
+  border-radius: 10px;
+  background-color: rgba(67, 32, 67, 0.209);
+}
+/* modal añadir habito */
+
+
+/* modal vista detalle habito */
+button#habit-detail-edit, #habit-detail-close{
+  border: none;
+  background-color: none !important;
+  background: none ;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+/* #endregion */
 /* #region MAIN */
 
 /* buscador */
@@ -4944,7 +4978,12 @@ align-items: center;
     border: 1px solid rgba(var(--hclr-rgb, 127, 93, 255), 0.7);
     background: rgba(var(--hclr-rgb, 127, 93, 255), 0.04);
   }
-
+  .habit-quick-actions.habit-quick-actions-bar{
+    margin-top: 10px;
+  }
+  .btn.app-btn.app-btn--ghost.app-btn--compact.ghost.btn-compact.habit-quick-btn{
+    border-radius: 10px;
+  }
 /* #endregion */
 
 /* #region HISTORIAL */
@@ -5012,6 +5051,13 @@ align-items: center;
 }
 #kpi-pin{
   border: 1px rgb(163, 162, 162) solid;
+}
+
+#habits-export-btn{
+  background: none;
+  border: 1px rgba(177, 177, 177, 0.3) solid;
+  border-radius: 4px;
+  padding: 4px;
 }
 /* #endregion */
 

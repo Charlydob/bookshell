@@ -7818,6 +7818,41 @@ margin-bottom: 50px;
   padding: 6px;
   font-size: 16px;
 }
+
+summary.fm-details__summary  {
+  padding: 10px;
+  border: 0px red solid;
+  border-radius: 1px !important;
+}
+summary.fm-details__body {
+  padding: 10px;
+  border: 0px red solid;
+  border-radius: 1px !important;
+}
+.fm-details.finWizardAdvanced{
+  border: 0px red solid;
+  background: none;
+  padding: 0px;
+}
+.fm-details__body{
+  display: grid;
+}
+.financeTab .finance-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+  border-top: 1px grey solid;
+  border-bottom: 1px grey solid;
+  border-radius: 12px 12px;
+  margin-bottom: 10px;
+  margin-top: 10px;
+}
+
+textarea {
+  background: black;
+  color: white;
+  border-radius: 8px;
+  border: 1px violet solid;
+}
 /* #endregion Modal añadir movimiento */
 
 /* #region Modal Gasto Fijo */
@@ -7920,7 +7955,6 @@ label {
     width: 100%;
     text-align-last: center;
   }
-
   #selector-rango-calendario{
     background: transparent;
     border-bottom: 1px solid rgb(170 138 219 / 78%);
@@ -7946,7 +7980,6 @@ label {
     border-top: 1px solid rgb(170 138 219 / 78%);
     border-radius: 12px;
   }
-
   #controles-ventana-main-finanzas select, #controles-ventana-main-finanzas button{
     width: 100%;
     background: transparent;
@@ -7959,7 +7992,13 @@ label {
   .financeCalCell {
     border-radius: 10px !important;
   }
-
+  .financeTab .productsWorkbench__receipt{
+  display:block;
+  backdrop-filter: blur(153px);
+  box-shadow: 0 8px 30px 12px rgba(0,0,0,.18);
+  background: white;
+  border: 1px #80808087 solid;
+}
 /* #region Modal editar cuenta */
 #grid-modal-edicion-cuenta{
   display: grid;

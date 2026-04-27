@@ -17,7 +17,6 @@ import {
   createNoteId,
   createReminder,
   deleteReminder,
-  deleteReminderCategory,
   deleteFolder,
   deleteNote,
   incrementNoteVisits,
@@ -72,6 +71,10 @@ let reminderDraftCategories = [];
 let reminderDraftChecklistItems = {};
 let reminderCheckTimer = null;
 const reminderExpandedChecklist = new Set();
+const REMINDER_TYPES = ["normal", "cumpleaños", "tarea", "evento", "trámite", "checklist", "personalizado"];
+const REMINDER_STATUSES = ["pendiente", "completado", "vencido"];
+const REMINDER_RANGES = ["all", "today", "7d", "30d", "overdue"];
+const REMINDER_GROUP_BY = ["none", "category", "type", "date", "status"];
 
 function normalizeNotesStatsSection(section = "") {
   const safeSection = String(section || "").trim();
@@ -87,14 +90,33 @@ function normalizeRootSection(section = "") {
   return String(section || "").trim() === "reminders" ? "reminders" : "notes";
 }
 
-function normalizeReminderFilter(filter = "") {
-  const safe = String(filter || "").trim();
-  return ["all", "upcoming", "today", "birthday", "overdue"].includes(safe) ? safe : "all";
-}
-
 function normalizeReminderGroupBy(value = "") {
   const safe = String(value || "").trim();
-  return ["none", "category", "type", "date", "status"].includes(safe) ? safe : "none";
+  return REMINDER_GROUP_BY.includes(safe) ? safe : "none";
+}
+
+function normalizeReminderType(value = "") {
+  const safe = String(value || "").trim();
+  return REMINDER_TYPES.includes(safe) ? safe : "normal";
+}
+
+function normalizeReminderRange(value = "") {
+  const safe = String(value || "").trim();
+  return REMINDER_RANGES.includes(safe) ? safe : "all";
+}
+
+function normalizeReminderStatus(value = "") {
+  const safe = String(value || "").trim();
+  return REMINDER_STATUSES.includes(safe) ? safe : "pendiente";
+}
+
+function normalizeReminderMultiSelection(items = [], allowed = []) {
+  const source = Array.isArray(items) ? items : [];
+  const filtered = source
+    .map((item) => String(item || "").trim())
+    .filter((item, index, list) => item && list.indexOf(item) === index);
+  if (!allowed.length) return filtered;
+  return filtered.filter((item) => allowed.includes(item));
 }
 
 function buildStatsSectionSwitch(active = "ratings") {
@@ -1569,21 +1591,16 @@ function getFilteredReminders() {
   const endToday = startToday.getTime() + (24 * 60 * 60 * 1000);
   const day7 = startToday.getTime() + (7 * 24 * 60 * 60 * 1000);
   const day30 = startToday.getTime() + (30 * 24 * 60 * 60 * 1000);
-  const quickFilter = normalizeReminderFilter(state.reminderFilter);
-  const typeFilter = String(state.reminderFilters?.type || "all");
-  const categoryFilter = String(state.reminderFilters?.category || "all");
-  const statusFilter = String(state.reminderFilters?.status || "all");
-  const rangeFilter = String(state.reminderFilters?.range || "all");
+  const visibleTypes = normalizeReminderMultiSelection(state.reminderFilters?.types, REMINDER_TYPES);
+  const visibleCategories = normalizeReminderMultiSelection(state.reminderFilters?.categories);
+  const visibleStatuses = normalizeReminderMultiSelection(state.reminderFilters?.statuses, REMINDER_STATUSES);
+  const rangeFilter = normalizeReminderRange(state.reminderFilters?.range || "all");
   const filtered = all.filter((reminder) => {
     const computedStatus = getReminderComputedStatus(reminder);
     const targetAt = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
-    if (quickFilter === "upcoming" && computedStatus !== "pendiente") return false;
-    if (quickFilter === "today" && !(targetAt >= startToday.getTime() && targetAt < endToday)) return false;
-    if (quickFilter === "birthday" && reminder?.type !== "cumpleaños") return false;
-    if (quickFilter === "overdue" && computedStatus !== "vencido") return false;
-    if (typeFilter !== "all" && reminder?.type !== typeFilter) return false;
-    if (categoryFilter !== "all" && !(reminder?.categories || []).includes(categoryFilter)) return false;
-    if (statusFilter !== "all" && computedStatus !== statusFilter) return false;
+    if (visibleTypes.length && !visibleTypes.includes(reminder?.type || "normal")) return false;
+    if (visibleCategories.length && !visibleCategories.some((category) => (reminder?.categories || []).includes(category))) return false;
+    if (visibleStatuses.length && !visibleStatuses.includes(computedStatus)) return false;
     if (rangeFilter === "today" && !(targetAt >= startToday.getTime() && targetAt < endToday)) return false;
     if (rangeFilter === "7d" && !(targetAt >= startToday.getTime() && targetAt <= day7)) return false;
     if (rangeFilter === "30d" && !(targetAt >= startToday.getTime() && targetAt <= day30)) return false;
@@ -1607,40 +1624,41 @@ function renderReminderCardsToMarkup(reminders = []) {
     const checklist = getReminderChecklistSummary(reminder);
     const isChecklist = reminder?.type === "checklist";
     const isExpanded = reminderExpandedChecklist.has(reminder.id);
-    const visibleItems = isChecklist && isExpanded ? checklist.items : checklist.items.slice(0, 5);
+    const visibleItems = isChecklist && isExpanded ? checklist.items : [];
     const progress = checklist.total ? Math.round((checklist.done / checklist.total) * 100) : 0;
     return `
       <article class="notes-reminder-item is-${escapeHtml(computedStatus)}">
         <div class="notes-reminder-main">
-          <div class="notes-reminder-title-row">
+          <button class="notes-reminder-title-row ${isChecklist ? "is-checklist-toggle" : ""}" ${isChecklist ? `data-act="toggle-checklist-expand" data-reminder-id="${escapeHtml(reminder.id)}"` : ""}>
             <span class="notes-reminder-emoji">${escapeHtml(reminder?.emoji || "⏰")}</span>
             <strong class="notes-reminder-title">${escapeHtml(reminder?.title || "Sin título")}</strong>
-          </div>
+            ${isChecklist ? `<span class="notes-reminder-expand-hint">${isExpanded ? "▾" : "▸"}</span>` : ""}
+          </button>
           <div class="notes-reminder-meta">${escapeHtml(dateLabel)} · ${escapeHtml(reminder?.type || "normal")} · ${escapeHtml(computedStatus)}</div>
           ${categories.length ? `<div class="notes-reminder-categories">${categories.map((category) => `<span class="notes-reminder-chip">${escapeHtml(category)}</span>`).join("")}</div>` : ""}
           <div class="notes-reminder-countdown">${escapeHtml(isBirthday ? birthdayLead : countdown)}</div>
           ${isChecklist ? `
             <div class="notes-reminder-checklist-progress">${checklist.done}/${checklist.total} completados</div>
             <div class="notes-reminder-progress"><span style="width:${progress}%;"></span></div>
-            <div class="notes-reminder-checklist-items">
+            <div class="notes-reminder-checklist-items ${isExpanded ? "" : "hidden"}">
               ${visibleItems.map((item) => `
                 <label class="notes-reminder-check-item ${item.done ? "is-done" : ""}">
                   <input type="checkbox" data-act="toggle-checklist-item" data-reminder-id="${escapeHtml(reminder.id)}" data-item-id="${escapeHtml(item.id)}" ${item.done ? "checked" : ""} />
                   <span>${escapeHtml(item.text)}</span>
+                  <button class="notes-icon-action notes-checklist-delete-inline" type="button" data-act="delete-checklist-item" data-reminder-id="${escapeHtml(reminder.id)}" data-item-id="${escapeHtml(item.id)}">×</button>
                 </label>
               `).join("")}
-              ${checklist.total > 5 ? `<button class="btn ghost btn-compact" type="button" data-act="toggle-checklist-expand" data-reminder-id="${escapeHtml(reminder.id)}">${isExpanded ? "Ver menos" : "Ver más"}</button>` : ""}
               <div class="notes-reminder-inline-add">
                 <input type="text" placeholder="Nuevo checkpoint..." data-checklist-input="${escapeHtml(reminder.id)}" />
-                <button class="btn ghost btn-compact" type="button" data-act="add-checklist-item" data-reminder-id="${escapeHtml(reminder.id)}">+</button>
+                <button class="notes-icon-action" type="button" data-act="add-checklist-item" data-reminder-id="${escapeHtml(reminder.id)}">+</button>
               </div>
             </div>
           ` : ""}
         </div>
-        <div class="notes-item-actions">
-          <button class="icon-btn icon-btn-large" type="button" data-act="edit-reminder" data-reminder-id="${escapeHtml(reminder.id)}">✏️</button>
-          <button class="icon-btn icon-btn-large" type="button" data-act="complete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">✅</button>
-          <button class="icon-btn icon-btn-large" type="button" data-act="delete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">🗑️</button>
+        <div class="notes-item-actions notes-reminder-actions">
+          <button class="notes-icon-action" type="button" data-act="edit-reminder" data-reminder-id="${escapeHtml(reminder.id)}">✏️</button>
+          <button class="notes-icon-action" type="button" data-act="complete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">✅</button>
+          <button class="notes-icon-action" type="button" data-act="delete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">🗑️</button>
         </div>
       </article>
     `;
@@ -1667,29 +1685,125 @@ function buildGroupedReminders(reminders = []) {
   return Array.from(groups.entries()).map(([label, items]) => ({ label, items }));
 }
 
+function buildReminderFilterCheckMarkup({ name, value, label, checked = false }) {
+  return `
+    <label class="notes-reminders-check-item">
+      <input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(value)}" ${checked ? "checked" : ""} />
+      <span>${escapeHtml(label)}</span>
+    </label>
+  `;
+}
+
+function buildReminderSingleChoiceMarkup({ name, value, label, checked = false }) {
+  return `
+    <label class="notes-reminders-check-item">
+      <input type="radio" name="${escapeHtml(name)}" value="${escapeHtml(value)}" ${checked ? "checked" : ""} />
+      <span>${escapeHtml(label)}</span>
+    </label>
+  `;
+}
+
+function renderReminderFilterControls() {
+  const typesWrap = $id("notes-reminders-filter-types");
+  const categoriesWrap = $id("notes-reminders-filter-categories");
+  const statusesWrap = $id("notes-reminders-filter-statuses");
+  const rangesWrap = $id("notes-reminders-filter-ranges");
+  const groupWrap = $id("notes-reminders-group-options");
+  const summaryWrap = $id("notes-reminders-active-filters");
+  if (!typesWrap || !categoriesWrap || !statusesWrap || !rangesWrap || !groupWrap || !summaryWrap) return;
+
+  const labelsByType = {
+    normal: "normal",
+    cumpleaños: "cumpleaños",
+    tarea: "tarea",
+    evento: "evento",
+    trámite: "trámite",
+    checklist: "checklist",
+    personalizado: "personalizado",
+  };
+  const labelsByStatus = { pendiente: "pendiente", completado: "completado", vencido: "vencido" };
+  const labelsByRange = {
+    all: "todos",
+    today: "hoy",
+    "7d": "próximos 7 días",
+    "30d": "próximos 30 días",
+    overdue: "vencidos",
+  };
+  const labelsByGroup = {
+    none: "sin agrupar",
+    category: "por categoría",
+    type: "por tipo",
+    date: "por fecha",
+    status: "por estado",
+  };
+  const selectedTypes = new Set(normalizeReminderMultiSelection(state.reminderFilters?.types, REMINDER_TYPES));
+  const selectedStatuses = new Set(normalizeReminderMultiSelection(state.reminderFilters?.statuses, REMINDER_STATUSES));
+  const selectedCategories = new Set(normalizeReminderMultiSelection(state.reminderFilters?.categories));
+  const selectedRange = normalizeReminderRange(state.reminderFilters?.range || "all");
+  const selectedGroup = normalizeReminderGroupBy(state.reminderGroupBy);
+
+  typesWrap.innerHTML = REMINDER_TYPES.map((type) => buildReminderFilterCheckMarkup({
+    name: "reminder-visible-types",
+    value: type,
+    label: labelsByType[type] || type,
+    checked: selectedTypes.has(type),
+  })).join("");
+  statusesWrap.innerHTML = REMINDER_STATUSES.map((status) => buildReminderFilterCheckMarkup({
+    name: "reminder-visible-statuses",
+    value: status,
+    label: labelsByStatus[status] || status,
+    checked: selectedStatuses.has(status),
+  })).join("");
+  categoriesWrap.innerHTML = (state.reminderCategories || []).length
+    ? (state.reminderCategories || []).map((category) => buildReminderFilterCheckMarkup({
+      name: "reminder-visible-categories",
+      value: category.name,
+      label: category.name,
+      checked: selectedCategories.has(category.name),
+    })).join("")
+    : '<div class="notes-reminder-alert-empty">Sin categorías creadas.</div>';
+  rangesWrap.innerHTML = REMINDER_RANGES.map((range) => buildReminderSingleChoiceMarkup({
+    name: "reminder-visible-range",
+    value: range,
+    label: labelsByRange[range] || range,
+    checked: selectedRange === range,
+  })).join("");
+  groupWrap.innerHTML = REMINDER_GROUP_BY.map((group) => buildReminderSingleChoiceMarkup({
+    name: "reminder-group-by",
+    value: group,
+    label: labelsByGroup[group] || group,
+    checked: selectedGroup === group,
+  })).join("");
+
+  const chips = [];
+  if (selectedTypes.size) chips.push(`${selectedTypes.size} tipo(s)`);
+  if (selectedCategories.size) chips.push(`${selectedCategories.size} categoría(s)`);
+  if (selectedStatuses.size) chips.push(`${selectedStatuses.size} estado(s)`);
+  if (selectedRange !== "all") chips.push(labelsByRange[selectedRange]);
+  if (selectedGroup !== "none") chips.push(labelsByGroup[selectedGroup]);
+  summaryWrap.innerHTML = chips.map((chip) => `<span class="notes-reminder-chip">${escapeHtml(chip)}</span>`).join("");
+}
+
+async function persistReminderPreferences() {
+  if (!state.rootPath) return;
+  const preferences = {
+    visibleTypes: normalizeReminderMultiSelection(state.reminderFilters?.types, REMINDER_TYPES),
+    visibleCategories: normalizeReminderMultiSelection(state.reminderFilters?.categories),
+    visibleStatuses: normalizeReminderMultiSelection(state.reminderFilters?.statuses, REMINDER_STATUSES),
+    range: normalizeReminderRange(state.reminderFilters?.range || "all"),
+    groupBy: normalizeReminderGroupBy(state.reminderGroupBy),
+  };
+  state.reminderPreferences = preferences;
+  await updateReminderPreferences(state.rootPath, preferences);
+}
+
 function renderRemindersPanel() {
   const list = $id("notes-reminders-list");
   const historyList = $id("notes-reminders-history-list");
   const empty = $id("notes-empty-reminders");
   const toggle = $id("notes-reminders-toggle-history");
-  const filterSelect = $id("notes-reminders-filter");
-  const typeSelect = $id("notes-reminders-filter-type");
-  const categorySelect = $id("notes-reminders-filter-category");
-  const statusSelect = $id("notes-reminders-filter-status");
-  const rangeSelect = $id("notes-reminders-filter-range");
-  const groupSelect = $id("notes-reminders-group-by");
   if (!list || !historyList || !empty || !toggle) return;
-  if (filterSelect) filterSelect.value = normalizeReminderFilter(state.reminderFilter);
-  if (typeSelect) typeSelect.value = state.reminderFilters?.type || "all";
-  if (statusSelect) statusSelect.value = state.reminderFilters?.status || "all";
-  if (rangeSelect) rangeSelect.value = state.reminderFilters?.range || "all";
-  if (groupSelect) groupSelect.value = normalizeReminderGroupBy(state.reminderGroupBy);
-  if (categorySelect) {
-    const current = state.reminderFilters?.category || "all";
-    categorySelect.innerHTML = '<option value="all">Categoría: Todas</option>'
-      + (state.reminderCategories || []).map((item) => `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`).join("");
-    categorySelect.value = current;
-  }
+  renderReminderFilterControls();
   const filtered = getFilteredReminders();
   const active = filtered.filter((item) => getReminderComputedStatus(item) === "pendiente");
   const history = filtered.filter((item) => getReminderComputedStatus(item) !== "pendiente");
@@ -2147,8 +2261,9 @@ function renderReminderAlertDrafts() {
 function renderReminderCategoryDrafts() {
   const select = $id("notes-reminder-categories");
   if (!select) return;
-  select.innerHTML = (state.reminderCategories || []).map((category) => `
-    <option value="${escapeHtml(category.name)}" ${reminderDraftCategories.includes(category.name) ? "selected" : ""}>
+  const selected = reminderDraftCategories?.[0] || "";
+  select.innerHTML = `<option value="">Sin categoría</option>` + (state.reminderCategories || []).map((category) => `
+    <option value="${escapeHtml(category.name)}" ${selected === category.name ? "selected" : ""}>
       ${escapeHtml(`${category.emoji || ""} ${category.name}`.trim())}
     </option>
   `).join("");
@@ -2166,14 +2281,14 @@ function renderReminderChecklistDrafts() {
     <div class="notes-reminder-checklist-draft-item">
       <input type="checkbox" ${item.done ? "checked" : ""} data-act="toggle-draft-checklist-item" data-item-id="${escapeHtml(item.id)}" />
       <input type="text" value="${escapeHtml(item.text)}" data-act="edit-draft-checklist-item" data-item-id="${escapeHtml(item.id)}" />
-      <button class="btn ghost btn-compact" type="button" data-act="delete-draft-checklist-item" data-item-id="${escapeHtml(item.id)}">✕</button>
+      <button class="notes-icon-action" type="button" data-act="delete-draft-checklist-item" data-item-id="${escapeHtml(item.id)}">×</button>
     </div>
   `).join("");
 }
 
 function openReminderModal(reminder = null) {
   reminderDraftAlerts = Array.isArray(reminder?.remindBefore) ? [...reminder.remindBefore] : [];
-  reminderDraftCategories = Array.isArray(reminder?.categories) ? [...reminder.categories] : [];
+  reminderDraftCategories = Array.isArray(reminder?.categories) ? [String(reminder.categories[0] || "").trim()].filter(Boolean) : [];
   reminderDraftChecklistItems = { ...(reminder?.checklistItems || {}) };
   $id("notes-reminder-id").value = reminder?.id || "";
   $id("notes-reminder-title").value = reminder?.title || "";
@@ -2186,6 +2301,7 @@ function openReminderModal(reminder = null) {
   $id("notes-reminder-repeat-yearly").checked = reminder?.repeat === "yearly";
   $id("notes-reminder-delete")?.classList.toggle("hidden", !reminder);
   $id("notes-reminder-modal-title").textContent = reminder ? "Editar recordatorio" : "Nuevo recordatorio";
+  if ($id("notes-reminder-category-new")) $id("notes-reminder-category-new").value = "";
   renderReminderAlertDrafts();
   renderReminderCategoryDrafts();
   renderReminderChecklistDrafts();
@@ -2657,41 +2773,48 @@ function bindUiEvents() {
     renderShell();
     runReminderChecks();
   });
-  $id("notes-reminders-filter")?.addEventListener("change", (event) => {
-    state.reminderFilter = normalizeReminderFilter(event.target.value || "");
-    renderRemindersPanel();
+  $id("notes-reminders-toolbar")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act='toggle-reminders-panel']");
+    if (!target) return;
+    const panel = String(target.dataset.panel || "");
+    const showPanel = $id("notes-reminders-show-panel");
+    const groupPanel = $id("notes-reminders-group-panel");
+    if (!showPanel || !groupPanel) return;
+    const nextShowHidden = panel === "show" ? !showPanel.classList.contains("hidden") : true;
+    const nextGroupHidden = panel === "group" ? !groupPanel.classList.contains("hidden") : true;
+    showPanel.classList.toggle("hidden", nextShowHidden);
+    groupPanel.classList.toggle("hidden", nextGroupHidden);
   });
-  $id("notes-reminders-filter-type")?.addEventListener("change", (event) => {
-    state.reminderFilters.type = String(event.target.value || "all");
+  $id("notes-reminders-show-panel")?.addEventListener("change", async (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    if (input.name === "reminder-visible-types") {
+      const selected = Array.from(document.querySelectorAll("input[name='reminder-visible-types']:checked"))
+        .map((item) => item.value);
+      state.reminderFilters.types = normalizeReminderMultiSelection(selected, REMINDER_TYPES);
+    }
+    if (input.name === "reminder-visible-categories") {
+      const selected = Array.from(document.querySelectorAll("input[name='reminder-visible-categories']:checked"))
+        .map((item) => item.value);
+      state.reminderFilters.categories = normalizeReminderMultiSelection(selected);
+    }
+    if (input.name === "reminder-visible-statuses") {
+      const selected = Array.from(document.querySelectorAll("input[name='reminder-visible-statuses']:checked"))
+        .map((item) => item.value);
+      state.reminderFilters.statuses = normalizeReminderMultiSelection(selected, REMINDER_STATUSES);
+    }
+    if (input.name === "reminder-visible-range") {
+      state.reminderFilters.range = normalizeReminderRange(input.value || "all");
+    }
     renderRemindersPanel();
+    try { await persistReminderPreferences(); } catch (_) {}
   });
-  $id("notes-reminders-filter-category")?.addEventListener("change", (event) => {
-    state.reminderFilters.category = String(event.target.value || "all");
+  $id("notes-reminders-group-panel")?.addEventListener("change", async (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || input.name !== "reminder-group-by") return;
+    state.reminderGroupBy = normalizeReminderGroupBy(input.value || "none");
     renderRemindersPanel();
-  });
-  $id("notes-reminders-filter-status")?.addEventListener("change", (event) => {
-    state.reminderFilters.status = String(event.target.value || "all");
-    renderRemindersPanel();
-  });
-  $id("notes-reminders-filter-range")?.addEventListener("change", (event) => {
-    state.reminderFilters.range = String(event.target.value || "all");
-    renderRemindersPanel();
-  });
-  $id("notes-reminders-group-by")?.addEventListener("change", (event) => {
-    state.reminderGroupBy = normalizeReminderGroupBy(event.target.value || "none");
-    renderRemindersPanel();
-  });
-  $id("notes-reminders-save-defaults")?.addEventListener("click", async () => {
-    if (!state.rootPath) return;
-    const preferences = {
-      visibleTypes: state.reminderFilters.type === "all" ? [] : [state.reminderFilters.type],
-      visibleCategories: state.reminderFilters.category === "all" ? [] : [state.reminderFilters.category],
-      visibleStatus: state.reminderFilters.status || "all",
-      visibleRange: state.reminderFilters.range || "all",
-      grouping: state.reminderGroupBy || "none",
-    };
-    state.reminderPreferences = preferences;
-    await updateReminderPreferences(state.rootPath, preferences);
+    try { await persistReminderPreferences(); } catch (_) {}
   });
   $id("notes-reminders-toggle-history")?.addEventListener("click", () => {
     state.reminderCollapsedHistory = !state.reminderCollapsedHistory;
@@ -2906,6 +3029,21 @@ function bindUiEvents() {
       if (input) input.value = "";
       return;
     }
+    if (target.dataset.act === "delete-checklist-item") {
+      const itemId = String(target.dataset.itemId || "").trim();
+      if (!itemId) return;
+      const updatedItems = { ...(reminder.checklistItems || {}) };
+      delete updatedItems[itemId];
+      const rows = Object.values(updatedItems);
+      const allDone = rows.length > 0 && rows.every((row) => row.done);
+      await updateReminder(state.rootPath, reminder.id, {
+        ...reminder,
+        checklistItems: updatedItems,
+        status: allDone ? "completado" : "pendiente",
+        completedAt: allDone ? Date.now() : 0,
+      });
+      return;
+    }
     if (target.dataset.act === "delete-reminder") {
       if (window.confirm(`¿Eliminar recordatorio "${reminder.title}"?`)) {
         await deleteReminder(state.rootPath, reminder.id);
@@ -2940,19 +3078,24 @@ function bindUiEvents() {
     renderReminderAlertDrafts();
   });
   $id("notes-reminder-categories")?.addEventListener("change", (event) => {
-    reminderDraftCategories = Array.from(event.target.selectedOptions || []).map((option) => option.value).filter(Boolean);
+    const selected = String(event.target.value || "").trim();
+    reminderDraftCategories = selected ? [selected] : [];
   });
   $id("notes-reminder-category-create")?.addEventListener("click", async () => {
-    const name = String(window.prompt("Nombre de categoría"))?.trim();
+    const name = String($id("notes-reminder-category-new")?.value || "").trim();
     if (!name || !state.rootPath) return;
-    const categoryId = `cat_${name.toLowerCase().replace(/\s+/g, "_").replace(/[^\w-]/g, "")}`;
+    const existing = (state.reminderCategories || []).find((row) => row.name.localeCompare(name, "es", { sensitivity: "base" }) === 0);
+    if (existing) {
+      reminderDraftCategories = [existing.name];
+      if ($id("notes-reminder-category-new")) $id("notes-reminder-category-new").value = "";
+      renderReminderCategoryDrafts();
+      return;
+    }
+    const categoryId = `cat_${name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "_").replace(/[^\w-]/g, "")}`;
     await upsertReminderCategory(state.rootPath, categoryId, { id: categoryId, name, createdAt: Date.now() });
-  });
-  $id("notes-reminder-category-delete")?.addEventListener("click", async () => {
-    const selected = String($id("notes-reminders-filter-category")?.value || "").trim();
-    const category = (state.reminderCategories || []).find((row) => row.name === selected);
-    if (!category || !state.rootPath) return;
-    await deleteReminderCategory(state.rootPath, category.id);
+    reminderDraftCategories = [name];
+    if ($id("notes-reminder-category-new")) $id("notes-reminder-category-new").value = "";
+    renderReminderCategoryDrafts();
   });
   $id("notes-reminder-is-birthday")?.addEventListener("change", (event) => {
     if (event.target.checked) {
@@ -3099,11 +3242,18 @@ function subscribeData(uid) {
       state.reminderCategories = payload.reminderCategories || [];
       state.reminderPreferences = payload.reminderPreferences || {};
       if (state.reminderPreferences && !state._reminderPrefsApplied) {
-        state.reminderGroupBy = normalizeReminderGroupBy(state.reminderPreferences.grouping || "none");
-        state.reminderFilters.type = state.reminderPreferences.visibleTypes?.[0] || "all";
-        state.reminderFilters.category = state.reminderPreferences.visibleCategories?.[0] || "all";
-        state.reminderFilters.status = state.reminderPreferences.visibleStatus || "all";
-        state.reminderFilters.range = state.reminderPreferences.visibleRange || "all";
+        state.reminderGroupBy = normalizeReminderGroupBy(
+          state.reminderPreferences.groupBy || state.reminderPreferences.grouping || "none",
+        );
+        state.reminderFilters.types = normalizeReminderMultiSelection(state.reminderPreferences.visibleTypes, REMINDER_TYPES);
+        state.reminderFilters.categories = normalizeReminderMultiSelection(state.reminderPreferences.visibleCategories);
+        state.reminderFilters.statuses = normalizeReminderMultiSelection(
+          state.reminderPreferences.visibleStatuses || (state.reminderPreferences.visibleStatus ? [state.reminderPreferences.visibleStatus] : []),
+          REMINDER_STATUSES,
+        );
+        state.reminderFilters.range = normalizeReminderRange(
+          state.reminderPreferences.range || state.reminderPreferences.visibleRange || "all",
+        );
         state._reminderPrefsApplied = true;
       }
       state.tagDefinitions = payload.tagDefinitions || {};
@@ -3161,7 +3311,8 @@ export function destroy() {
   unbindAuth = null;
   isBound = false;
   state.rootSection = "notes";
-  state.reminderFilter = "all";
+  state.reminderFilters = { types: [], categories: [], statuses: [], range: "all" };
+  state.reminderGroupBy = "none";
   state.reminderCollapsedHistory = true;
   state.folderView = "main";
   state._reminderPrefsApplied = false;

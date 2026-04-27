@@ -59,8 +59,8 @@ function normalizeTagDefinitionKey(value = "", fallback = "") {
 
 function normalizeReminderType(value = "") {
   const safe = String(value || "").trim().toLowerCase();
-  return ["normal", "cumpleaños", "cumpleanos", "tarea", "evento", "personalizado"].includes(safe)
-    ? (safe === "cumpleanos" ? "cumpleaños" : safe)
+  return ["normal", "cumpleaños", "cumpleanos", "tarea", "evento", "trámite", "tramite", "checklist", "personalizado"].includes(safe)
+    ? (safe === "cumpleanos" ? "cumpleaños" : (safe === "tramite" ? "trámite" : safe))
     : "normal";
 }
 
@@ -99,6 +99,30 @@ function normalizeReminderAlerts(value = []) {
 function normalizeReminderDismissedAlerts(value = []) {
   if (!Array.isArray(value)) return [];
   return value.map((item) => String(item || "").trim()).filter(Boolean);
+}
+
+function normalizeReminderCategories(value = []) {
+  if (Array.isArray(value)) return value.map((item) => String(item || "").trim()).filter(Boolean);
+  const one = String(value || "").trim();
+  return one ? [one] : [];
+}
+
+function normalizeReminderChecklistItems(value = {}) {
+  const entries = Object.entries(value || {});
+  return entries.reduce((acc, [id, item]) => {
+    const safeId = String(item?.id || id || "").trim();
+    const text = String(item?.text || "").trim();
+    if (!safeId || !text) return acc;
+    acc[safeId] = {
+      id: safeId,
+      text,
+      done: Boolean(item?.done),
+      createdAt: Number(item?.createdAt || Date.now()),
+      completedAt: Number(item?.completedAt || 0),
+      order: Number.isFinite(Number(item?.order)) ? Number(item.order) : Date.now(),
+    };
+    return acc;
+  }, {});
 }
 
 export function mapFolderFromDb(id, value = {}) {
@@ -224,6 +248,8 @@ export function mapReminderFromDb(id, value = {}) {
     remindBefore: normalizeReminderAlerts(value?.remindBefore),
     repeat,
     isBirthday,
+    categories: normalizeReminderCategories(value?.categories),
+    checklistItems: normalizeReminderChecklistItems(value?.checklistItems),
     createdAt: Number(value?.createdAt || Date.now()),
     updatedAt: Number(value?.updatedAt || value?.createdAt || Date.now()),
     completedAt: Number(value?.completedAt || 0),
@@ -246,6 +272,8 @@ export function mapReminderToDb(reminder = {}) {
     remindBefore: normalizeReminderAlerts(reminder?.remindBefore),
     repeat,
     isBirthday,
+    categories: normalizeReminderCategories(reminder?.categories),
+    checklistItems: normalizeReminderChecklistItems(reminder?.checklistItems),
     createdAt: Number(reminder?.createdAt || Date.now()),
     updatedAt: Number(reminder?.updatedAt || reminder?.createdAt || Date.now()),
     completedAt: Number(reminder?.completedAt || 0),
@@ -258,6 +286,7 @@ export function mapSnapshotToDomain(value = {}) {
   const noteEntries = Object.entries(value?.notes || {});
   const tagDefinitionEntries = Object.entries(value?.tagDefinitions || {});
   const reminderEntries = Object.entries(value?.reminders || {});
+  const reminderCategoryEntries = Object.entries(value?.reminderCategories || {});
 
   const tagDefinitions = tagDefinitionEntries
     .map(([id, row]) => mapTagDefinitionFromDb(id, row))
@@ -276,6 +305,15 @@ export function mapSnapshotToDomain(value = {}) {
       const bAt = Date.parse(`${b.targetDate || ""}T${b.targetTime || "23:59"}:00`);
       return aAt - bAt;
     }),
+    reminderCategories: reminderCategoryEntries.map(([id, row]) => ({
+      id: String(row?.id || id || "").trim(),
+      name: String(row?.name || "").trim(),
+      emoji: String(row?.emoji || "").trim(),
+      color: String(row?.color || "").trim(),
+      createdAt: Number(row?.createdAt || Date.now()),
+      updatedAt: Number(row?.updatedAt || row?.createdAt || Date.now()),
+    })).filter((row) => row.id && row.name),
+    reminderPreferences: value?.reminderPreferences || {},
     tagDefinitions,
   };
 }

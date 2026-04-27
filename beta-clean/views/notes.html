@@ -41,6 +41,42 @@
           <option value="birthday">Cumpleaños</option>
           <option value="overdue">Vencidos</option>
         </select>
+        <select class="notes-filter-select" id="notes-reminders-filter-type">
+          <option value="all">Tipo: Todos</option>
+          <option value="normal">Normal</option>
+          <option value="cumpleaños">Cumpleaños</option>
+          <option value="tarea">Tarea</option>
+          <option value="evento">Evento</option>
+          <option value="trámite">Trámite</option>
+          <option value="checklist">Checklist</option>
+          <option value="personalizado">Personalizado</option>
+        </select>
+        <select class="notes-filter-select" id="notes-reminders-filter-category">
+          <option value="all">Categoría: Todas</option>
+        </select>
+        <select class="notes-filter-select" id="notes-reminders-filter-status">
+          <option value="all">Estado: Todos</option>
+          <option value="pendiente">Pendiente</option>
+          <option value="completado">Completado</option>
+          <option value="vencido">Vencido</option>
+        </select>
+        <select class="notes-filter-select" id="notes-reminders-filter-range">
+          <option value="all">Rango: Todos</option>
+          <option value="today">Hoy</option>
+          <option value="7d">Próximos 7 días</option>
+          <option value="30d">Próximos 30 días</option>
+          <option value="overdue">Vencidos</option>
+        </select>
+        <select class="notes-filter-select" id="notes-reminders-group-by">
+          <option value="none">Sin agrupar</option>
+          <option value="category">Agrupar: categoría</option>
+          <option value="type">Agrupar: tipo</option>
+          <option value="date">Agrupar: fecha</option>
+          <option value="status">Agrupar: estado</option>
+        </select>
+        <button class="btn ghost btn-compact" id="notes-reminders-save-defaults" type="button">Guardar vista por defecto</button>
+        <button class="btn ghost btn-compact" id="notes-reminder-category-create" type="button">+ Categoría</button>
+        <button class="btn ghost btn-compact" id="notes-reminder-category-delete" type="button">- Categoría</button>
       </div>
 
       <div class="notes-reminder-list" id="notes-reminders-list"></div>
@@ -138,8 +174,14 @@
               <option value="cumpleaños">Cumpleaños</option>
               <option value="tarea">Tarea</option>
               <option value="evento">Evento</option>
+              <option value="trámite">Trámite</option>
+              <option value="checklist">Checklist</option>
               <option value="personalizado">Personalizado</option>
             </select>
+          </label>
+          <label class="field">
+            <span class="field-label">Categorías</span>
+            <select id="notes-reminder-categories" class="field-select" multiple></select>
           </label>
           <label class="field">
             <span class="field-label">Fecha objetivo</span>
@@ -149,6 +191,14 @@
             <span class="field-label">Hora objetivo (opcional)</span>
             <input id="notes-reminder-time" type="time" />
           </label>
+        </div>
+        <div class="notes-reminder-alert-builder hidden" id="notes-reminder-checklist-wrap">
+          <div class="field-label">Checklist</div>
+          <div class="notes-reminder-alert-inputs">
+            <input id="notes-reminder-checklist-new" type="text" placeholder="Nuevo checkpoint" />
+            <button class="btn ghost btn-compact" id="notes-reminder-checklist-add" type="button">Añadir</button>
+          </div>
+          <div id="notes-reminder-checklist-list"></div>
         </div>
 
         <div class="notes-reminder-alert-builder">

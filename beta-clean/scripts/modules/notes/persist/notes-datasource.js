@@ -8,7 +8,13 @@ import {
   update,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { buildTagDefinitionKey } from "../domain/tag-utils.js";
-import { mapFolderToDb, mapNoteToDb, mapSnapshotToDomain, mapTagDefinitionToDb } from "./notes-mapper.js";
+import {
+  mapFolderToDb,
+  mapNoteToDb,
+  mapReminderToDb,
+  mapSnapshotToDomain,
+  mapTagDefinitionToDb,
+} from "./notes-mapper.js";
 
 function resolveRootPath(uidParam = "") {
   const uid = String(uidParam || auth.currentUser?.uid || "").trim();
@@ -103,6 +109,36 @@ export async function deleteNote(rootPath, noteId) {
   const safeNoteId = String(noteId || "").trim();
   if (!safeNoteId) return;
   await remove(ref(db, `${rootPath}/notes/${safeNoteId}`));
+}
+
+export async function createReminder(rootPath, payload = {}) {
+  const remindersRef = ref(db, `${rootPath}/reminders`);
+  const nextRef = push(remindersRef);
+  await update(ref(db), {
+    [`${rootPath}/reminders/${nextRef.key}`]: mapReminderToDb({
+      ...payload,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }),
+  });
+  return nextRef.key;
+}
+
+export async function updateReminder(rootPath, reminderId, payload = {}) {
+  const safeReminderId = String(reminderId || "").trim();
+  if (!safeReminderId) return;
+  await update(ref(db), {
+    [`${rootPath}/reminders/${safeReminderId}`]: mapReminderToDb({
+      ...payload,
+      updatedAt: Date.now(),
+    }),
+  });
+}
+
+export async function deleteReminder(rootPath, reminderId) {
+  const safeReminderId = String(reminderId || "").trim();
+  if (!safeReminderId) return;
+  await remove(ref(db, `${rootPath}/reminders/${safeReminderId}`));
 }
 
 export async function incrementNoteVisits(rootPath, noteId) {

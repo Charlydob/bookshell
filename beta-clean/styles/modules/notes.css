@@ -1279,3 +1279,152 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   display: grid;
   grid-template-columns: 1fr 1fr;
 }
+
+.notes-root-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(8, 12, 20, 0.78);
+}
+
+.notes-root-tab {
+  border: 0;
+  min-height: 38px;
+  border-radius: 12px;
+  background: transparent;
+  color: rgba(232,238,246,0.72);
+  font-weight: 700;
+}
+
+.notes-root-tab.is-active {
+  color: #07111b;
+  background: linear-gradient(180deg, rgba(173,222,255,0.98), rgba(123,198,255,0.94));
+}
+
+.notes-reminder-list {
+  display: grid;
+  gap: 8px;
+}
+
+.notes-reminder-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(10, 15, 24, 0.88);
+}
+
+.notes-reminder-item.is-vencido {
+  border-color: rgba(255, 160, 160, 0.38);
+}
+
+.notes-reminder-item.is-completado {
+  opacity: 0.74;
+}
+
+.notes-reminder-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.notes-reminder-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notes-reminder-title {
+  font-size: 14px;
+}
+
+.notes-reminder-meta {
+  font-size: 11px;
+  color: var(--txt-soft);
+}
+
+.notes-reminder-countdown {
+  font-size: 12px;
+  color: #c9e7ff;
+}
+
+#notes-reminder-grid-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.notes-reminder-alert-builder {
+  display: grid;
+  gap: 8px;
+}
+
+.notes-reminder-alert-inputs {
+  display: grid;
+  grid-template-columns: 100px 1fr auto;
+  gap: 8px;
+}
+
+.notes-reminder-alert-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.notes-reminder-alert-chip {
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.04);
+  color: var(--txt);
+  padding: 4px 8px;
+}
+
+.notes-reminder-alert-empty {
+  font-size: 12px;
+  color: var(--txt-soft);
+}
+
+.notes-toast-stack {
+  position: fixed;
+  right: 12px;
+  bottom: calc(var(--nav-total-h) + 20px);
+  display: grid;
+  gap: 8px;
+  z-index: 50;
+}
+
+.notes-reminder-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: min(340px, 88vw);
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(131, 196, 255, 0.3);
+  background: rgba(9, 15, 25, 0.95);
+}
+
+.notes-reminder-toast p {
+  margin: 0;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  #notes-reminder-grid-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .notes-reminder-alert-inputs {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .notes-reminder-alert-inputs .btn {
+    grid-column: 1 / -1;
+  }
+}

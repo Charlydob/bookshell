@@ -426,6 +426,7 @@ export function createInitialNotesState() {
     rootPath: "",
     folders: [],
     notes: [],
+    reminders: [],
     tagDefinitions: {},
     selectedFolderId: "",
     unlockedFolderIds: new Set(),
@@ -436,6 +437,9 @@ export function createInitialNotesState() {
     noteCategoryFilter: "",
     noteTagsFilter: "",
     noteSort: "updated",
+    rootSection: "notes",
+    reminderFilter: "all",
+    reminderCollapsedHistory: true,
     folderView: "main",
     loading: true,
   };

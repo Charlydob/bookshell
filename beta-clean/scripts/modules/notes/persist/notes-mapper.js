@@ -57,6 +57,50 @@ function normalizeTagDefinitionKey(value = "", fallback = "") {
   return buildTagDefinitionKey(value) || buildTagDefinitionKey(fallback);
 }
 
+function normalizeReminderType(value = "") {
+  const safe = String(value || "").trim().toLowerCase();
+  return ["normal", "cumpleaños", "cumpleanos", "tarea", "evento", "personalizado"].includes(safe)
+    ? (safe === "cumpleanos" ? "cumpleaños" : safe)
+    : "normal";
+}
+
+function normalizeReminderStatus(value = "") {
+  const safe = String(value || "").trim().toLowerCase();
+  return ["pendiente", "completado", "vencido"].includes(safe) ? safe : "pendiente";
+}
+
+function normalizeReminderDate(value = "") {
+  const safe = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(safe) ? safe : "";
+}
+
+function normalizeReminderTime(value = "") {
+  const safe = String(value || "").trim();
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(safe) ? safe : "";
+}
+
+function normalizeReminderRepeat(value = "") {
+  return String(value || "").trim() === "yearly" ? "yearly" : "none";
+}
+
+function normalizeReminderAlerts(value = []) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((row) => {
+      const amount = Math.max(0, Math.round(Number(row?.amount || 0)));
+      const unitRaw = String(row?.unit || "").trim().toLowerCase();
+      const unit = ["minutes", "hours", "days"].includes(unitRaw) ? unitRaw : "";
+      if (!amount || !unit) return null;
+      return { amount, unit };
+    })
+    .filter(Boolean);
+}
+
+function normalizeReminderDismissedAlerts(value = []) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || "").trim()).filter(Boolean);
+}
+
 export function mapFolderFromDb(id, value = {}) {
   return {
     id: String(id || ""),
@@ -163,10 +207,57 @@ export function mapTagDefinitionToDb(tagDefinition = {}) {
   };
 }
 
+export function mapReminderFromDb(id, value = {}) {
+  const type = normalizeReminderType(value?.type);
+  const isBirthday = type === "cumpleaños" || Boolean(value?.isBirthday);
+  const repeat = normalizeReminderRepeat(value?.repeat || (isBirthday ? "yearly" : "none"));
+
+  return {
+    id: String(id || ""),
+    title: String(value?.title || "").trim(),
+    description: String(value?.description || "").trim(),
+    emoji: String(value?.emoji || "⏰").trim() || "⏰",
+    type: isBirthday ? "cumpleaños" : type,
+    status: normalizeReminderStatus(value?.status),
+    targetDate: normalizeReminderDate(value?.targetDate),
+    targetTime: normalizeReminderTime(value?.targetTime),
+    remindBefore: normalizeReminderAlerts(value?.remindBefore),
+    repeat,
+    isBirthday,
+    createdAt: Number(value?.createdAt || Date.now()),
+    updatedAt: Number(value?.updatedAt || value?.createdAt || Date.now()),
+    completedAt: Number(value?.completedAt || 0),
+    dismissedAlerts: normalizeReminderDismissedAlerts(value?.dismissedAlerts),
+  };
+}
+
+export function mapReminderToDb(reminder = {}) {
+  const type = normalizeReminderType(reminder?.type);
+  const isBirthday = type === "cumpleaños" || Boolean(reminder?.isBirthday);
+  const repeat = normalizeReminderRepeat(reminder?.repeat || (isBirthday ? "yearly" : "none"));
+  return {
+    title: String(reminder?.title || "").trim(),
+    description: String(reminder?.description || "").trim(),
+    emoji: String(reminder?.emoji || "⏰").trim() || "⏰",
+    type: isBirthday ? "cumpleaños" : type,
+    status: normalizeReminderStatus(reminder?.status),
+    targetDate: normalizeReminderDate(reminder?.targetDate),
+    targetTime: normalizeReminderTime(reminder?.targetTime),
+    remindBefore: normalizeReminderAlerts(reminder?.remindBefore),
+    repeat,
+    isBirthday,
+    createdAt: Number(reminder?.createdAt || Date.now()),
+    updatedAt: Number(reminder?.updatedAt || reminder?.createdAt || Date.now()),
+    completedAt: Number(reminder?.completedAt || 0),
+    dismissedAlerts: normalizeReminderDismissedAlerts(reminder?.dismissedAlerts),
+  };
+}
+
 export function mapSnapshotToDomain(value = {}) {
   const folderEntries = Object.entries(value?.folders || {});
   const noteEntries = Object.entries(value?.notes || {});
   const tagDefinitionEntries = Object.entries(value?.tagDefinitions || {});
+  const reminderEntries = Object.entries(value?.reminders || {});
 
   const tagDefinitions = tagDefinitionEntries
     .map(([id, row]) => mapTagDefinitionFromDb(id, row))
@@ -180,6 +271,11 @@ export function mapSnapshotToDomain(value = {}) {
   return {
     folders: folderEntries.map(([id, row]) => mapFolderFromDb(id, row)).sort((a, b) => a.createdAt - b.createdAt),
     notes: noteEntries.map(([id, row]) => mapNoteFromDb(id, row)).sort((a, b) => b.updatedAt - a.updatedAt),
+    reminders: reminderEntries.map(([id, row]) => mapReminderFromDb(id, row)).sort((a, b) => {
+      const aAt = Date.parse(`${a.targetDate || ""}T${a.targetTime || "23:59"}:00`);
+      const bAt = Date.parse(`${b.targetDate || ""}T${b.targetTime || "23:59"}:00`);
+      return aAt - bAt;
+    }),
     tagDefinitions,
   };
 }

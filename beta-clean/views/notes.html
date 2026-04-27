@@ -1,5 +1,11 @@
 <div class="notes-view" id="notes-view-root">
   <section class="notes-screen" id="notes-folders-screen">
+    <div class="notes-root-switch" id="notes-root-switch" role="tablist" aria-label="Secciones de notas">
+      <button class="notes-root-tab is-active" type="button" data-act="set-root-section" data-root-section="notes" aria-pressed="true">Notas</button>
+      <button class="notes-root-tab" type="button" data-act="set-root-section" data-root-section="reminders" aria-pressed="false">Recordatorios</button>
+    </div>
+
+    <section class="notes-root-section" id="notes-root-section-notes">
     <header class="notes-header-row">
       <h2 class="notes-title">Notas</h2>
       <button class="btn primary notes-create-folder" id="notes-btn-new-folder" type="button">Nueva carpeta</button>
@@ -19,6 +25,29 @@
     </div>
 
     <div class="notes-folder-list" id="notes-folder-list"></div>
+    </section>
+
+    <section class="notes-root-section hidden" id="notes-root-section-reminders">
+      <header class="notes-header-row">
+        <h2 class="notes-title">Recordatorios</h2>
+        <button class="btn primary notes-create-folder" id="notes-btn-new-reminder" type="button">Nuevo recordatorio</button>
+      </header>
+
+      <div class="notes-filters-row">
+        <select class="notes-filter-select" id="notes-reminders-filter">
+          <option value="all">Todos</option>
+          <option value="upcoming">Próximos</option>
+          <option value="today">Hoy</option>
+          <option value="birthday">Cumpleaños</option>
+          <option value="overdue">Vencidos</option>
+        </select>
+      </div>
+
+      <div class="notes-reminder-list" id="notes-reminders-list"></div>
+      <button class="btn ghost btn-compact" id="notes-reminders-toggle-history" type="button">Mostrar completados y vencidos</button>
+      <div class="notes-reminder-list hidden" id="notes-reminders-history-list"></div>
+      <div class="empty-state hidden" id="notes-empty-reminders">No hay recordatorios todavía.</div>
+    </section>
   </section>
 
   <section class="notes-screen hidden" id="notes-folder-screen">
@@ -78,6 +107,83 @@
     </section>
   </section>
 </div>
+
+<div class="modal-backdrop hidden" id="notes-reminder-modal-backdrop">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title" id="notes-reminder-modal-title">Nuevo recordatorio</div>
+      <button class="icon-btn" id="notes-reminder-modal-close" type="button">✕</button>
+    </div>
+    <form class="modal-form" id="notes-reminder-form">
+      <input type="hidden" id="notes-reminder-id" />
+      <div class="modal-scroll">
+        <label class="field">
+          <span class="field-label">Título</span>
+          <input id="notes-reminder-title" type="text" required />
+        </label>
+        <label class="field">
+          <span class="field-label">Descripción (opcional)</span>
+          <textarea id="notes-reminder-description" rows="3"></textarea>
+        </label>
+        <div id="notes-reminder-grid-meta">
+          <label class="field">
+            <span class="field-label">Emoji</span>
+            <input id="notes-reminder-emoji" type="text" maxlength="2" placeholder="⏰" value="⏰" />
+          </label>
+          <label class="field">
+            <span class="field-label">Tipo</span>
+            <select id="notes-reminder-type" class="field-select">
+              <option value="normal">Normal</option>
+              <option value="cumpleaños">Cumpleaños</option>
+              <option value="tarea">Tarea</option>
+              <option value="evento">Evento</option>
+              <option value="personalizado">Personalizado</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">Fecha objetivo</span>
+            <input id="notes-reminder-date" type="date" required />
+          </label>
+          <label class="field">
+            <span class="field-label">Hora objetivo (opcional)</span>
+            <input id="notes-reminder-time" type="time" />
+          </label>
+        </div>
+
+        <div class="notes-reminder-alert-builder">
+          <div class="field-label">Avisos previos</div>
+          <div class="notes-reminder-alert-inputs">
+            <input id="notes-reminder-alert-amount" type="number" min="1" placeholder="Cantidad" />
+            <select id="notes-reminder-alert-unit" class="field-select">
+              <option value="minutes">Minutos</option>
+              <option value="hours">Horas</option>
+              <option value="days">Días</option>
+            </select>
+            <button class="btn ghost btn-compact" id="notes-reminder-alert-add" type="button">Añadir aviso</button>
+          </div>
+          <div class="notes-reminder-alert-list" id="notes-reminder-alert-list"></div>
+        </div>
+
+        <label class="toggle-pill notes-toggle-field">
+          <input id="notes-reminder-is-birthday" type="checkbox" />
+          <span>Es cumpleaños</span>
+        </label>
+        <label class="toggle-pill notes-toggle-field">
+          <input id="notes-reminder-repeat-yearly" type="checkbox" />
+          <span>Repetir cada año</span>
+        </label>
+        <p class="notes-form-error" id="notes-reminder-form-error"></p>
+      </div>
+      <div class="notes-modal-actions">
+        <button class="btn ghost danger hidden" id="notes-reminder-delete" type="button">Eliminar</button>
+        <button class="btn primary" type="submit">Guardar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="notes-toast-stack" id="notes-reminder-toast-stack" aria-live="polite"></div>
 
 <div class="modal-backdrop hidden" id="notes-folder-modal-backdrop">
   <div class="modal">

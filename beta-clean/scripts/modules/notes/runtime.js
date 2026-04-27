@@ -15,6 +15,8 @@ import {
   createFolder,
   createNote,
   createNoteId,
+  createReminder,
+  deleteReminder,
   deleteFolder,
   deleteNote,
   incrementNoteVisits,
@@ -22,6 +24,7 @@ import {
   upsertTagDefinition,
   updateFolder,
   updateNote,
+  updateReminder,
 } from "./persist/notes-datasource.js";
 import {
   deleteNoteImageAsset,
@@ -60,6 +63,8 @@ let noteTagImageDrafts = new Map();
 let activeNoteTagImageKey = "";
 let noteSelectedTagImageKey = "";
 let activeNotesStatsSection = "ratings";
+let reminderDraftAlerts = [];
+let reminderCheckTimer = null;
 
 function normalizeNotesStatsSection(section = "") {
   const safeSection = String(section || "").trim();
@@ -69,6 +74,15 @@ function normalizeNotesStatsSection(section = "") {
 function normalizeNoteSortOption(sort = "") {
   const safeSort = String(sort || "").trim();
   return ["updated", "rating", "visits"].includes(safeSort) ? safeSort : "updated";
+}
+
+function normalizeRootSection(section = "") {
+  return String(section || "").trim() === "reminders" ? "reminders" : "notes";
+}
+
+function normalizeReminderFilter(filter = "") {
+  const safe = String(filter || "").trim();
+  return ["all", "upcoming", "today", "birthday", "overdue"].includes(safe) ? safe : "all";
 }
 
 function buildStatsSectionSwitch(active = "ratings") {
@@ -1487,16 +1501,137 @@ function renderFolderDetail() {
   statsView.classList.toggle("hidden", state.folderView !== "stats");
 }
 
+function getReminderTargetTimestamp(reminder, { annualizeBirthdays = false } = {}) {
+  const safeDate = String(reminder?.targetDate || "").trim();
+  if (!safeDate) return 0;
+  const safeTime = String(reminder?.targetTime || "").trim() || "23:59";
+  let date = new Date(`${safeDate}T${safeTime}:00`);
+  if (!Number.isFinite(date.getTime())) return 0;
+  if (annualizeBirthdays && reminder?.repeat === "yearly") {
+    const now = new Date();
+    date.setFullYear(now.getFullYear());
+    if (date.getTime() < now.getTime()) date.setFullYear(now.getFullYear() + 1);
+  }
+  return date.getTime();
+}
+
+function buildReminderCountdown(reminder) {
+  const targetAt = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
+  if (!targetAt) return "Sin fecha";
+  const diffMs = targetAt - Date.now();
+  const absMs = Math.abs(diffMs);
+  const minutes = Math.floor(absMs / (60 * 1000));
+  const hours = Math.floor(absMs / (60 * 60 * 1000));
+  const days = Math.floor(absMs / (24 * 60 * 60 * 1000));
+  if (Math.abs(diffMs) < 60 * 1000) return "Es hoy";
+  if (diffMs > 0) {
+    if (days >= 1) return `Faltan ${days} día${days === 1 ? "" : "s"}`;
+    if (hours >= 1) return `Faltan ${hours} hora${hours === 1 ? "" : "s"}`;
+    return `Faltan ${Math.max(1, minutes)} minuto${minutes === 1 ? "" : "s"}`;
+  }
+  if (days >= 1) return `Venció hace ${days} día${days === 1 ? "" : "s"}`;
+  if (hours >= 1) return `Venció hace ${hours} hora${hours === 1 ? "" : "s"}`;
+  return `Venció hace ${Math.max(1, minutes)} minuto${minutes === 1 ? "" : "s"}`;
+}
+
+function getReminderComputedStatus(reminder) {
+  if (reminder?.status === "completado") return "completado";
+  const targetAt = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
+  if (!targetAt) return "pendiente";
+  return targetAt < Date.now() ? "vencido" : "pendiente";
+}
+
+function getFilteredReminders() {
+  const all = Array.isArray(state.reminders) ? state.reminders : [];
+  const startToday = new Date();
+  startToday.setHours(0, 0, 0, 0);
+  const endToday = startToday.getTime() + (24 * 60 * 60 * 1000);
+  const filter = normalizeReminderFilter(state.reminderFilter);
+  const filtered = all.filter((reminder) => {
+    const computedStatus = getReminderComputedStatus(reminder);
+    const targetAt = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
+    if (filter === "upcoming") return computedStatus === "pendiente";
+    if (filter === "today") return targetAt >= startToday.getTime() && targetAt < endToday;
+    if (filter === "birthday") return reminder?.type === "cumpleaños";
+    if (filter === "overdue") return computedStatus === "vencido";
+    return true;
+  });
+  return filtered.sort((a, b) => getReminderTargetTimestamp(a, { annualizeBirthdays: true }) - getReminderTargetTimestamp(b, { annualizeBirthdays: true }));
+}
+
+function renderReminderCards(list, reminders = []) {
+  if (!list) return;
+  list.innerHTML = reminders.map((reminder) => {
+    const computedStatus = getReminderComputedStatus(reminder);
+    const targetAt = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
+    const dateLabel = targetAt ? formatLongDate(targetAt) : "Sin fecha";
+    const countdown = buildReminderCountdown(reminder);
+    const isBirthday = reminder?.type === "cumpleaños";
+    const birthdayLead = isBirthday
+      ? `🎂 ${countdown === "Es hoy" ? `Hoy es el cumpleaños de ${reminder.title || "alguien"}` : `${countdown.replace("Faltan", "Quedan")} para el cumpleaños de ${reminder.title || "alguien"}`}`
+      : countdown;
+    return `
+      <article class="notes-reminder-item is-${escapeHtml(computedStatus)}">
+        <div class="notes-reminder-main">
+          <div class="notes-reminder-title-row">
+            <span class="notes-reminder-emoji">${escapeHtml(reminder?.emoji || "⏰")}</span>
+            <strong class="notes-reminder-title">${escapeHtml(reminder?.title || "Sin título")}</strong>
+          </div>
+          <div class="notes-reminder-meta">${escapeHtml(dateLabel)} · ${escapeHtml(reminder?.type || "normal")} · ${escapeHtml(computedStatus)}</div>
+          <div class="notes-reminder-countdown">${escapeHtml(isBirthday ? birthdayLead : countdown)}</div>
+        </div>
+        <div class="notes-item-actions">
+          <button class="icon-btn icon-btn-large" type="button" data-act="edit-reminder" data-reminder-id="${escapeHtml(reminder.id)}">✏️</button>
+          <button class="icon-btn icon-btn-large" type="button" data-act="complete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">✅</button>
+          <button class="icon-btn icon-btn-large" type="button" data-act="delete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">🗑️</button>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function renderRemindersPanel() {
+  const list = $id("notes-reminders-list");
+  const historyList = $id("notes-reminders-history-list");
+  const empty = $id("notes-empty-reminders");
+  const toggle = $id("notes-reminders-toggle-history");
+  const filterSelect = $id("notes-reminders-filter");
+  if (!list || !historyList || !empty || !toggle) return;
+  if (filterSelect) filterSelect.value = normalizeReminderFilter(state.reminderFilter);
+  const filtered = getFilteredReminders();
+  const active = filtered.filter((item) => getReminderComputedStatus(item) === "pendiente");
+  const history = filtered.filter((item) => getReminderComputedStatus(item) !== "pendiente");
+  renderReminderCards(list, active);
+  renderReminderCards(historyList, history);
+  historyList.classList.toggle("hidden", state.reminderCollapsedHistory);
+  toggle.textContent = state.reminderCollapsedHistory
+    ? `Mostrar completados y vencidos (${history.length})`
+    : `Ocultar completados y vencidos (${history.length})`;
+  empty.classList.toggle("hidden", active.length > 0 || history.length > 0);
+}
+
+function renderRootSectionSwitch() {
+  const isReminders = normalizeRootSection(state.rootSection) === "reminders";
+  $id("notes-root-section-notes")?.classList.toggle("hidden", isReminders);
+  $id("notes-root-section-reminders")?.classList.toggle("hidden", !isReminders);
+  document.querySelectorAll("#notes-root-switch [data-root-section]").forEach((button) => {
+    const active = String(button.dataset.rootSection || "") === (isReminders ? "reminders" : "notes");
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+}
+
 function renderShell() {
   const listScreen = $id("notes-folders-screen");
   const detailScreen = $id("notes-folder-screen");
   if (!listScreen || !detailScreen) return;
 
-  const inFolder = Boolean(state.selectedFolderId);
+  const inFolder = Boolean(state.selectedFolderId) && normalizeRootSection(state.rootSection) === "notes";
   listScreen.classList.toggle("hidden", inFolder);
   detailScreen.classList.toggle("hidden", !inFolder);
+  renderRootSectionSwitch();
 
-  if (inFolder) {
+  if (inFolder && normalizeRootSection(state.rootSection) === "notes") {
     updateFilterOptionsForNotes();
   } else {
     updateFilterOptions();
@@ -1504,11 +1639,13 @@ function renderShell() {
 
   renderRootFolders();
   renderFolderDetail();
+  renderRemindersPanel();
 }
 
 function openFolder(folderId) {
   const folder = state.folders.find((item) => item.id === folderId);
   if (!folder) return;
+  state.rootSection = "notes";
 
   if (!requireUnlockedFolder(folder)) {
     $id("notes-pin-folder-id").value = folder.id;
@@ -1882,6 +2019,107 @@ function openGlobalNoteModal() {
     folderId,
     allowFolderSelection: !folderId,
   });
+}
+
+function closeReminderModal() {
+  reminderDraftAlerts = [];
+  $id("notes-reminder-form-error").textContent = "";
+  closeModal("notes-reminder-modal-backdrop");
+}
+
+function renderReminderAlertDrafts() {
+  const list = $id("notes-reminder-alert-list");
+  if (!list) return;
+  if (!reminderDraftAlerts.length) {
+    list.innerHTML = '<div class="notes-reminder-alert-empty">Sin avisos configurados.</div>';
+    return;
+  }
+  list.innerHTML = reminderDraftAlerts.map((alert, index) => `
+    <button class="notes-reminder-alert-chip" type="button" data-act="remove-reminder-alert" data-alert-index="${index}">
+      ${escapeHtml(`${alert.amount} ${alert.unit}`)} ✕
+    </button>
+  `).join("");
+}
+
+function openReminderModal(reminder = null) {
+  reminderDraftAlerts = Array.isArray(reminder?.remindBefore) ? [...reminder.remindBefore] : [];
+  $id("notes-reminder-id").value = reminder?.id || "";
+  $id("notes-reminder-title").value = reminder?.title || "";
+  $id("notes-reminder-description").value = reminder?.description || "";
+  $id("notes-reminder-emoji").value = reminder?.emoji || "⏰";
+  $id("notes-reminder-type").value = reminder?.type || "normal";
+  $id("notes-reminder-date").value = reminder?.targetDate || "";
+  $id("notes-reminder-time").value = reminder?.targetTime || "";
+  $id("notes-reminder-is-birthday").checked = reminder?.type === "cumpleaños";
+  $id("notes-reminder-repeat-yearly").checked = reminder?.repeat === "yearly";
+  $id("notes-reminder-delete")?.classList.toggle("hidden", !reminder);
+  $id("notes-reminder-modal-title").textContent = reminder ? "Editar recordatorio" : "Nuevo recordatorio";
+  renderReminderAlertDrafts();
+  openModal("notes-reminder-modal-backdrop");
+}
+
+function reminderAlertToMs(alert) {
+  const amount = Number(alert?.amount || 0);
+  if (!amount) return 0;
+  if (alert?.unit === "days") return amount * 24 * 60 * 60 * 1000;
+  if (alert?.unit === "hours") return amount * 60 * 60 * 1000;
+  if (alert?.unit === "minutes") return amount * 60 * 1000;
+  return 0;
+}
+
+function appendReminderToast(message, reminderId, key) {
+  const stack = $id("notes-reminder-toast-stack");
+  if (!stack) return;
+  const toast = document.createElement("article");
+  toast.className = "notes-reminder-toast";
+  toast.innerHTML = `
+    <p>${escapeHtml(message)}</p>
+    <button type="button" class="icon-btn" data-act="close-reminder-toast">✕</button>
+  `;
+  toast.querySelector("[data-act='close-reminder-toast']")?.addEventListener("click", () => {
+    toast.remove();
+  });
+  stack.appendChild(toast);
+  window.setTimeout(() => toast.remove(), 8000);
+  const reminder = state.reminders.find((row) => row.id === reminderId);
+  if (reminder && state.rootPath) {
+    const dismissedAlerts = Array.isArray(reminder.dismissedAlerts) ? [...reminder.dismissedAlerts] : [];
+    if (!dismissedAlerts.includes(key)) dismissedAlerts.push(key);
+    updateReminder(state.rootPath, reminderId, { ...reminder, dismissedAlerts }).catch(() => {});
+  }
+}
+
+function runReminderChecks() {
+  const now = Date.now();
+  for (const reminder of state.reminders || []) {
+    if (getReminderComputedStatus(reminder) !== "pendiente") continue;
+    const targetAt = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
+    if (!targetAt) continue;
+    const dismissedAlerts = new Set(Array.isArray(reminder.dismissedAlerts) ? reminder.dismissedAlerts : []);
+    for (const alert of reminder.remindBefore || []) {
+      const beforeMs = reminderAlertToMs(alert);
+      const triggerAt = targetAt - beforeMs;
+      const key = `${reminder.id}:${alert.amount}:${alert.unit}:${targetAt}`;
+      if (dismissedAlerts.has(key)) continue;
+      if (now >= triggerAt && now <= triggerAt + 75 * 1000) {
+        const label = alert.unit === "days" ? "días" : alert.unit === "hours" ? "horas" : "minutos";
+        const prefix = reminder.type === "cumpleaños" ? "🎂" : "⏰";
+        appendReminderToast(`${prefix} Quedan ${alert.amount} ${label} para ${reminder.title || "tu recordatorio"}`, reminder.id, key);
+      }
+    }
+  }
+}
+
+function startReminderChecker() {
+  if (reminderCheckTimer) return;
+  runReminderChecks();
+  reminderCheckTimer = window.setInterval(runReminderChecks, 45 * 1000);
+}
+
+function stopReminderChecker() {
+  if (!reminderCheckTimer) return;
+  window.clearInterval(reminderCheckTimer);
+  reminderCheckTimer = null;
 }
 
 async function handleFolderDelete(folder) {
@@ -2274,6 +2512,23 @@ function bindUiEvents() {
     else closeFolderView();
   });
   $id("notes-btn-new-note")?.addEventListener("click", () => openNoteModal());
+  $id("notes-btn-new-reminder")?.addEventListener("click", () => openReminderModal());
+  $id("notes-root-switch")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act='set-root-section']");
+    if (!target) return;
+    state.rootSection = normalizeRootSection(target.dataset.rootSection || "");
+    if (state.rootSection !== "notes") setCurrentFolder("");
+    renderShell();
+    runReminderChecks();
+  });
+  $id("notes-reminders-filter")?.addEventListener("change", (event) => {
+    state.reminderFilter = normalizeReminderFilter(event.target.value || "");
+    renderRemindersPanel();
+  });
+  $id("notes-reminders-toggle-history")?.addEventListener("click", () => {
+    state.reminderCollapsedHistory = !state.reminderCollapsedHistory;
+    renderRemindersPanel();
+  });
   $id("notes-folder-view-switch")?.addEventListener("click", (event) => {
     const target = event.target.closest("[data-act='set-folder-view']");
     if (!target) return;
@@ -2432,6 +2687,123 @@ function bindUiEvents() {
     }
   });
 
+  $id("notes-reminders-list")?.addEventListener("click", async (event) => {
+    const target = event.target.closest("[data-act][data-reminder-id]");
+    if (!target) return;
+    const reminder = state.reminders.find((row) => row.id === String(target.dataset.reminderId || "").trim());
+    if (!reminder) return;
+    if (target.dataset.act === "edit-reminder") {
+      openReminderModal(reminder);
+      return;
+    }
+    if (target.dataset.act === "complete-reminder") {
+      await updateReminder(state.rootPath, reminder.id, { ...reminder, status: "completado", completedAt: Date.now() });
+      return;
+    }
+    if (target.dataset.act === "delete-reminder") {
+      if (window.confirm(`¿Eliminar recordatorio "${reminder.title}"?`)) {
+        await deleteReminder(state.rootPath, reminder.id);
+      }
+    }
+  });
+  $id("notes-reminders-history-list")?.addEventListener("click", async (event) => {
+    const target = event.target.closest("[data-act][data-reminder-id]");
+    if (!target) return;
+    const reminder = state.reminders.find((row) => row.id === String(target.dataset.reminderId || "").trim());
+    if (!reminder) return;
+    if (target.dataset.act === "edit-reminder") openReminderModal(reminder);
+    if (target.dataset.act === "delete-reminder" && window.confirm(`¿Eliminar recordatorio "${reminder.title}"?`)) {
+      await deleteReminder(state.rootPath, reminder.id);
+    }
+  });
+
+  $id("notes-reminder-alert-add")?.addEventListener("click", () => {
+    const amount = Math.max(1, Math.round(Number($id("notes-reminder-alert-amount")?.value || 0)));
+    const unit = String($id("notes-reminder-alert-unit")?.value || "");
+    if (!amount || !["minutes", "hours", "days"].includes(unit)) return;
+    reminderDraftAlerts.push({ amount, unit });
+    $id("notes-reminder-alert-amount").value = "";
+    renderReminderAlertDrafts();
+  });
+  $id("notes-reminder-alert-list")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act='remove-reminder-alert']");
+    if (!target) return;
+    const index = Number(target.dataset.alertIndex || -1);
+    if (index < 0) return;
+    reminderDraftAlerts.splice(index, 1);
+    renderReminderAlertDrafts();
+  });
+  $id("notes-reminder-is-birthday")?.addEventListener("change", (event) => {
+    if (event.target.checked) {
+      $id("notes-reminder-type").value = "cumpleaños";
+      $id("notes-reminder-repeat-yearly").checked = true;
+    }
+  });
+  $id("notes-reminder-type")?.addEventListener("change", (event) => {
+    if (event.target.value === "cumpleaños") {
+      $id("notes-reminder-is-birthday").checked = true;
+      $id("notes-reminder-repeat-yearly").checked = true;
+    }
+  });
+  $id("notes-reminder-delete")?.addEventListener("click", async () => {
+    const reminderId = String($id("notes-reminder-id").value || "").trim();
+    if (!reminderId) return;
+    if (!window.confirm("¿Eliminar este recordatorio?")) return;
+    await deleteReminder(state.rootPath, reminderId);
+    closeReminderModal();
+  });
+  $id("notes-reminder-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const id = String($id("notes-reminder-id").value || "").trim();
+    const title = String($id("notes-reminder-title").value || "").trim();
+    const description = String($id("notes-reminder-description").value || "").trim();
+    const emoji = String($id("notes-reminder-emoji").value || "⏰").trim() || "⏰";
+    const type = String($id("notes-reminder-type").value || "normal");
+    const targetDate = String($id("notes-reminder-date").value || "").trim();
+    const targetTime = String($id("notes-reminder-time").value || "").trim();
+    const isBirthday = Boolean($id("notes-reminder-is-birthday").checked) || type === "cumpleaños";
+    const repeat = $id("notes-reminder-repeat-yearly").checked ? "yearly" : "none";
+    const errorField = $id("notes-reminder-form-error");
+    errorField.textContent = "";
+    if (!state.rootPath || !state.uid) {
+      errorField.textContent = "Espera a que cargue tu espacio de notas.";
+      return;
+    }
+    if (!title || !targetDate) {
+      errorField.textContent = "Título y fecha son obligatorios.";
+      return;
+    }
+    const current = state.reminders.find((row) => row.id === id);
+    const payload = {
+      title,
+      description,
+      emoji,
+      type: isBirthday ? "cumpleaños" : type,
+      targetDate,
+      targetTime,
+      status: current?.status === "completado" ? "completado" : "pendiente",
+      remindBefore: reminderDraftAlerts,
+      repeat: isBirthday ? "yearly" : repeat,
+      createdAt: current?.createdAt || Date.now(),
+      updatedAt: Date.now(),
+      completedAt: current?.completedAt || 0,
+      dismissedAlerts: current?.dismissedAlerts || [],
+    };
+    try {
+      if (id) await updateReminder(state.rootPath, id, payload);
+      else await createReminder(state.rootPath, payload);
+      closeReminderModal();
+      runReminderChecks();
+    } catch (error) {
+      console.warn("[notes] no se pudo guardar el recordatorio", error);
+      errorField.textContent = "No se ha podido guardar el recordatorio.";
+    }
+  });
+  $id("notes-reminder-modal-close")?.addEventListener("click", closeReminderModal);
+  $id("notes-reminder-modal-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === $id("notes-reminder-modal-backdrop")) closeReminderModal();
+  });
+
   bindFolderModalEvents();
   bindNoteModalEvents();
   bindPinModalEvents();
@@ -2444,6 +2816,7 @@ function subscribeData(uid) {
     state.rootPath = "";
     state.folders = [];
     state.notes = [];
+    state.reminders = [];
     state.tagDefinitions = {};
     state.folderView = "main";
     setCurrentFolder("");
@@ -2460,6 +2833,7 @@ function subscribeData(uid) {
       state.rootPath = safeRootPath;
       state.folders = payload.folders;
       state.notes = payload.notes;
+      state.reminders = payload.reminders || [];
       state.tagDefinitions = payload.tagDefinitions || {};
       state.unlockedFolderIds = new Set(
         Array.from(state.unlockedFolderIds).filter((folderId) => state.folders.some((folder) => folder.id === folderId)),
@@ -2471,6 +2845,7 @@ function subscribeData(uid) {
 
       renderShell();
       renderNoteTagImageEditor();
+      runReminderChecks();
       emitNotesData("remote:notes");
     },
     (error) => {
@@ -2494,6 +2869,7 @@ function bindAuth() {
 export async function onShow() {
   bindUiEvents();
   bindAuth();
+  startReminderChecker();
   renderShell();
   window.__bookshellNotes = {
     openGlobalNoteModal,
@@ -2512,6 +2888,9 @@ export function destroy() {
   unbindAuth?.();
   unbindAuth = null;
   isBound = false;
+  state.rootSection = "notes";
+  state.reminderFilter = "all";
+  state.reminderCollapsedHistory = true;
   state.folderView = "main";
   setCurrentFolder("");
   state.unlockedFolderIds = new Set();
@@ -2519,6 +2898,8 @@ export function destroy() {
   clearNoteTagImageDrafts();
   notePhotoRemove = false;
   noteSaveInFlight = false;
+  reminderDraftAlerts = [];
+  stopReminderChecker();
   if (window.__bookshellNotes) {
     delete window.__bookshellNotes;
   }

@@ -13367,7 +13367,7 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
     localStorage.setItem(LAST_HABIT_KEY, target);
     pendingSessionDuration = 0;
     invalidateHabitRenderCaches();
-    if (!silent) showHabitToast(`Asignado: ${habits[target]?.name || "hí¡bito"} Â· ${Math.round(duration / 60)}m`);
+    if (!silent) showHabitToast(`Asignado: ${habits[target]?.name || "hí¡bito"} · ${Math.round(duration / 60)}m`);
     closeSessionModal?.();
     renderHabits();
     return;

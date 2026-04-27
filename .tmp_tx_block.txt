@@ -139,7 +139,7 @@
       <button type="button" class="finance-pill finance-pill--mini" data-ticket-import-copy-diagnostic>Copiar diagnóstico</button>
     </div>
     <textarea name="ticketImportRaw" data-ticket-import-raw rows="10" autocapitalize="off" autocorrect="off" spellcheck="false" style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escapeHtml(ticketImportState.raw || '')}</textarea>
-    <p class="finance-help" style="margin:6px 0 0 0;">raw.length=${rawText.length} Â· head=${escapeHtml(rawPreviewHead)}${rawPreviewTail ? ` Â· tail=${escapeHtml(rawPreviewTail)}` : ''}</p>
+    <p class="finance-help" style="margin:6px 0 0 0;">raw.length=${rawText.length} · head=${escapeHtml(rawPreviewHead)}${rawPreviewTail ? ` · tail=${escapeHtml(rawPreviewTail)}` : ''}</p>
     ${ticketImportState.error ? `<p class="is-negative">${escapeHtml(ticketImportState.error)}</p>` : ''}
     ${diagnostic ? `
       <div class="finance-mini-list" style="margin-top:8px;max-height:220px;overflow:auto;">
@@ -149,7 +149,7 @@
         <p>sanitized.length: ${Number(diagnostic.sanitized_length || 0)}</p>
         <p>sanitize.changes: ${(diagnostic.sanitize_changes || []).map((it) => escapeHtml(String(it))).join(', ') || 'none'}</p>
         ${Number.isFinite(Number(diagnostic.computed_total)) || Number.isFinite(Number(diagnostic.purchase_total))
-          ? `<p>computed_total: ${fmtCurrency(diagnostic.computed_total || 0)} Â· purchase.total: ${fmtCurrency(diagnostic.purchase_total || 0)}</p>`
+          ? `<p>computed_total: ${fmtCurrency(diagnostic.computed_total || 0)} · purchase.total: ${fmtCurrency(diagnostic.purchase_total || 0)}</p>`
           : ''}
         ${(diagnostic.validate_errors || []).map((entry) => `<p class="is-negative">â€¢ ${escapeHtml(String(entry.path || 'root'))}: ${escapeHtml(String(entry.message || entry.code || 'error'))}</p>`).join('')}
         ${diagnostic.parse_error?.snippet ? `<p>snippet: ${escapeHtml(String(diagnostic.parse_error.snippet || ''))}</p>` : ''}

@@ -1,4 +1,4 @@
-let get;
+﻿let get;
 let onValue;
 let auth;
 let onUserChange;
@@ -8016,8 +8016,8 @@ function renderFinanceHeroPanel({ total, totalReal, totalRange, chart }, { withT
       ${toggle}
     </div>
     <h2 id="finance-totalValue">${fmtCurrency(total)}</h2>
-    <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedCurrency(totalRange.delta)} Â· ${fmtSignedPercent(totalRange.deltaPct)}</p>
-    <p>Saldo real: <strong>${fmtCurrency(totalReal)}</strong> Â· Mi parte: <strong>${fmtCurrency(total)}</strong></p>
+    <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedCurrency(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
+    <p>Saldo real: <strong>${fmtCurrency(totalReal)}</strong> · Mi parte: <strong>${fmtCurrency(total)}</strong></p>
     <div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div>
   </article>`;
 }
@@ -9231,7 +9231,7 @@ function renderFinanceHome(accounts, totalSeries) {
       <section class="finance-home ${toneClass(totalRange.delta)} finance-home--${homePanelView}">
         ${primaryPanel}
         <article class="finance__accounts"><div class="finance__sectionHeader"><h2></h2><div class="finance-row"><button class="finance-pill finance-pill--mini" data-account-merge-open>Fusionar</button><button class="finance-pill" data-new-account>+ Cuenta</button></div></div>
-        <div id="finance-accountsList">${accounts.map((account) => { const editableBalance = account.shared ? account.currentReal : account.current; return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'}</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${editableBalance.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% Â· Mi parte: ${fmtCurrency(account.current)}</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} Â· ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">â‹¯</button></div></article>`; }).join('') || '<p class="finance-empty">Sin cuentas todaví­a.</p>'}</div></article>
+        <div id="finance-accountsList">${accounts.map((account) => { const editableBalance = account.shared ? account.currentReal : account.current; return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'}</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${editableBalance.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${fmtCurrency(account.current)}</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">⋯</button></div></article>`; }).join('') || '<p class="finance-empty">Sin cuentas todaví­a.</p>'}</div></article>
       </section>`;
   }
   return `
@@ -9245,7 +9245,7 @@ function renderFinanceHome(accounts, totalSeries) {
         <select class="finance-pill" data-compare><option value="month" ${state.compareMode === 'month' ? 'selected' : ''}>Mes vs Mes</option><option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option></select></article>
       <article class="finance__compareRow"><div class="finance-chip ${toneClass(compareCurrent.delta)}">Actual: ${fmtSignedCurrency(compareCurrent.delta)} (${fmtSignedPercent(compareCurrent.deltaPct)})</div><div class="finance-chip ${toneClass(comparePrev.delta)}">Anterior: ${fmtSignedCurrency(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div></article>
       <article class="finance__accounts"><div class="finance__sectionHeader"><h2></h2><div class="finance-row"><button class="finance-pill finance-pill--mini" id="fusionar-cuentas" data-account-merge-open>Fusionar</button><button class="finance-pill" data-new-account>+ Cuenta</button></div></div>
-      <div id="finance-accountsList">${accounts.map((account) => { const editableBalance = account.shared ? account.currentReal : account.current; return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'}</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${editableBalance.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${fmtCurrency(account.current)}</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">⋯</button></div></article>`; }).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
+      <div id="finance-accountsList">${accounts.map((account) => { const editableBalance = account.shared ? account.currentReal : account.current; return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'}</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${editableBalance.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${fmtCurrency(account.current)}</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">🗑️</button></div></article>`; }).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
     </section>`;
 }
 
@@ -9705,7 +9705,7 @@ function renderFinanceGoalsLegacy(accounts = buildAccountModels()) {
         <h2>Objetivos</h2>
         <p>Metas de ahorro seguidas por cuenta y fecha.</p>
       </div>
-      <button class="finance-pill" id="boton-objetivo" data-open-modal="goal">+ Objetivo</button>
+      <button  id="boton-objetivo" data-open-modal="goal">+ Objetivo</button>
     </header>
 
     <article class="financeGlassCard financeGoalsCard financeGoalsCard--summary">
@@ -9846,13 +9846,6 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
         <p>Metas de ahorro seguidas por cuenta y fecha.</p>
       </div>
       <div class="financeGoalsView__controls">
-        <label class="financeGoalsSort">
-          <span>Ordenar</span>
-          <select class="financeGoalsSort__select" data-finance-goals-sort>
-            <option value="due-date" ${sortMode === 'due-date' ? 'selected' : ''}>Vencimiento</option>
-            <option value="incomplete-first" ${sortMode === 'incomplete-first' ? 'selected' : ''}>Incompletos primero</option>
-          </select>
-        </label>
         <button class="finance-pill" id="boton-objetivo" data-open-modal="goal">+ Objetivo</button>
       </div>
     </header>
@@ -9908,7 +9901,12 @@ function renderFinanceGoals(accounts = buildAccountModels()) {
         <div class="financeProgress__bar" style="width:${donutPct.toFixed(2)}%"></div>
       </div>
     </article>
-
+<label class="financeGoalsSort">
+          <select class="financeGoalsSort__select" data-finance-goals-sort>
+            <option value="due-date" ${sortMode === 'due-date' ? 'selected' : ''}>Vencimiento</option>
+            <option value="incomplete-first" ${sortMode === 'incomplete-first' ? 'selected' : ''}>Incompletos primero</option>
+          </select>
+        </label>
     <article class="financeGlassCard financeGoalsCard">
       <div class="financeBudgetList financeGoalsList">
         ${displayGoals.length
@@ -10008,27 +10006,26 @@ function renderGoalEditorModal(goal = null, resolvedAccounts = []) {
       <button class="finance-pill" data-close-modal>Cerrar</button>
     </header>
     ${summaryBlock}
-    <form class="finance-goal-form financeGoalForm" data-goal-form>
+    <form class="finance-goal-form financeGoalForm" id="modal-objetivo" data-goal-form>
       ${isEdit ? `<input type="hidden" name="goalId" value="${escapeHtml(safeGoal.id)}" />` : ''}
-      <label class="financeGoalForm__field">
-        <span>Título</span>
-        <input name="title" required placeholder="Ej. Fondo de viaje" value="${escapeHtml(safeGoal?.title || '')}" />
+      <label class="financeGoalForm__field"  id="titulo-del-objetivo">
+        <input name="title" required placeholder="Nombre del objetivo" value="${escapeHtml(safeGoal?.title || '')}" />
       </label>
-      <div class="financeGoalForm__grid">
-        <label class="financeGoalForm__field">
+      <div class="financeGoalForm__grid" id="cantidad-fecha-del-objetivo">
+        <label class="financeGoalForm__field" id="cantidad-del-objetivo">
           <span>Cantidad objetivo</span>
           <input name="targetAmount" required type="number" step="0.01" min="0" inputmode="decimal" placeholder="0,00" value="${escapeHtml(targetAmount)}" />
         </label>
-        <label class="financeGoalForm__field">
+        <label class="financeGoalForm__field" id="fecha-del-objetivo">
           <span>Fecha límite</span>
           <input name="dueDateISO" required type="date" value="${escapeHtml(dueDate)}" />
         </label>
       </div>
-      <fieldset class="financeGoalForm__accounts">
+      <fieldset class="financeGoalForm__accounts" id="cuentas-del-objetivo">
         <legend>Cuentas incluidas</legend>
         <div class="financeGoalAccountsList">${accountsOptions || '<p class="finance-empty">No hay cuentas.</p>'}</div>
       </fieldset>
-      <button class="finance-pill financeGoalForm__submit" type="submit">${isEdit ? 'Guardar cambios' : 'Guardar'}</button>
+      <button class="finance-pill financeGoalForm__submit" id="btn-guardar-objetivo" type="submit">${isEdit ? 'Guardar cambios' : 'Guardar'}</button>
     </form>
   </div>`;
 }

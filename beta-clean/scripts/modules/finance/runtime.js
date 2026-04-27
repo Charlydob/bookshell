@@ -195,7 +195,10 @@ function monthDiffFromNow(monthKey) {
 function offsetMonthKey(monthKey, offset) { const d = parseMonthKey(monthKey); d.setMonth(d.getMonth() + offset); return getMonthKeyFromDate(d); }
 function monthLabelByKey(monthKey) { return new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(parseMonthKey(monthKey)); }
 function capitalizeFirst(value = '') { return value ? value.charAt(0).toUpperCase() + value.slice(1) : ''; }
-function normalizeHomePanelView(value = '') { return value === 'calendar' ? 'calendar' : 'hero'; }
+function normalizeHomePanelView(value = '') {
+  if (value === 'calendar' || value === 'tickets') return value;
+  return 'hero';
+}
 function setHomePanelView(nextView = 'hero') {
   state.homePanelView = normalizeHomePanelView(nextView);
   try { localStorage.setItem(HOME_PANEL_VIEW_KEY, state.homePanelView); } catch (_) {}
@@ -423,6 +426,37 @@ function parseEuroNumber(value) {
 function parseMoney(value = '') {
   const parsed = parseEuroNumber(value);
   return Number.isFinite(parsed) ? parsed : Number(value);
+}
+function formatEditableEuro(value = 0) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return '';
+  return num.toLocaleString('es-ES', {
+    minimumFractionDigits: Math.abs(num % 1) > 0.000001 ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
+}
+function parseProductsReceiptMoney(value, fallback = NaN, { blankAsNaN = false } = {}) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return blankAsNaN ? NaN : fallback;
+  const parsed = parseEuroNumber(raw);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback;
+}
+function resolveProductsReceiptDiffMeta(diff = 0) {
+  const safeDiff = Number(diff || 0);
+  const tone = safeDiff > 0.005 ? 'expensive' : safeDiff < -0.005 ? 'cheap' : 'even';
+  const sign = safeDiff > 0.005 ? '+' : safeDiff < -0.005 ? '-' : '';
+  return {
+    tone,
+    label: `${sign}${fmtCurrency(Math.abs(safeDiff))}`,
+  };
+}
+function syncProductsMoneyFieldDisplay(fieldEl, value) {
+  if (!fieldEl) return;
+  const safeValue = Math.max(0, Number(value || 0));
+  if (!Number.isFinite(safeValue)) return;
+  fieldEl.dataset.moneyLastValid = String(safeValue.toFixed(2));
+  fieldEl.dataset.value = String(safeValue.toFixed(2));
+  if (document.activeElement !== fieldEl) fieldEl.value = fmtCurrency(safeValue);
 }
 function clampRatio(value, fallback = 1) {
   const ratio = Number(value);
@@ -3174,6 +3208,7 @@ function renderProductsReceiptLineRow(line, model) {
   const listId = String(model?.activeList?.id || '__draft__');
   const selection = state.foodProductsView?.receiptSelections?.[listId] || {};
   const isSelected = !!selection[lineId];
+  const lineDiffMeta = resolveProductsReceiptDiffMeta(Number(line.actualSubtotal || 0) - Number(line.estimatedSubtotal || 0));
   return `
     <div class="productsWorkbench__receiptRow ${isSelected ? 'is-selected' : ''}" data-products-receipt-row="${escapeHtml(lineId)}">
       <label class="productsWorkbench__receiptSelectWrap" aria-label="Seleccionar ${escapeHtml(line.name || 'producto')}">
@@ -3191,7 +3226,6 @@ function renderProductsReceiptLineRow(line, model) {
       <div class="productsWorkbench__receiptNameWrap">
         <input
           class="productsWorkbench__receiptName food-control"
-          id="recipename"
           type="search"
           value="${escapeHtml(line.name || 'Producto')}"
           autocomplete="off"
@@ -3203,14 +3237,23 @@ function renderProductsReceiptLineRow(line, model) {
       </div>
       <input
         class="productsWorkbench__receiptUnit food-control"
-        type="number"
-        min="0"
-        step="0.01"
+        type="text"
         inputmode="decimal"
-        value="${Number(line.actualPrice || 0) || ''}"
-        aria-label="Precio unitario de ${escapeHtml(line.name || 'producto')}"
+        value="${escapeHtml(fmtCurrency(line.estimatedSubtotal || 0))}"
+        aria-label="Precio previsto de ${escapeHtml(line.name || 'producto')}"
+        data-money-last-valid="${escapeHtml(String(Number(line.estimatedSubtotal || 0).toFixed(2)))}"
         data-products-receipt-unit="${escapeHtml(lineId)}" />
-      <strong class="productsWorkbench__receiptTotal" data-products-receipt-total="${escapeHtml(lineId)}">${fmtCurrency(line.actualSubtotal || 0)}</strong>
+      <div class="productsWorkbench__receiptTotalStack">
+        <input
+          class="productsWorkbench__receiptTotal food-control"
+          type="text"
+          inputmode="decimal"
+          value="${escapeHtml(fmtCurrency(line.actualSubtotal || 0))}"
+          aria-label="Precio real de ${escapeHtml(line.name || 'producto')}"
+          data-money-last-valid="${escapeHtml(String(Number(line.actualSubtotal || 0).toFixed(2)))}"
+          data-products-receipt-total="${escapeHtml(lineId)}" />
+        <small class="productsWorkbench__receiptLineDiff is-${lineDiffMeta.tone}" data-products-receipt-diff="${escapeHtml(lineId)}">${lineDiffMeta.label}</small>
+      </div>
       <button type="button" class="productsWorkbench__receiptRemove" data-products-remove-line="${escapeHtml(lineId)}" aria-label="Eliminar ${escapeHtml(line.name || 'linea')}">×</button>
     </div>
   `;
@@ -3222,7 +3265,7 @@ function renderProductsReceiptEmptyRow(model) {
       <span class="productsWorkbench__receiptSelectWrap productsWorkbench__receiptSelectWrap--placeholder" aria-hidden="true"></span>
       <input class="productsWorkbench__receiptQty food-control" type="number" min="1" step="0.01" inputmode="decimal" value="1" aria-label="Cantidad nueva" data-products-receipt-add-qty />
       <div class="productsWorkbench__receiptNameWrap">
-        <input class="productsWorkbench__receiptName food-control" id="recipename" type="search" autocomplete="off" placeholder="Escribir producto..." aria-label="Anadir producto" data-products-receipt-add-name />
+        <input class="productsWorkbench__receiptName food-control" type="search" autocomplete="off" placeholder="Escribir producto..." aria-label="Anadir producto" data-products-receipt-add-name />
         <div class="productsWorkbench__receiptSuggest" data-products-receipt-add-suggest hidden>
           ${renderProductsReceiptSuggestionList(model, '')}
         </div>
@@ -3665,23 +3708,26 @@ function renderProductsListPanel(model) {
   `;
 }
 
-function renderProductsTicketHero(model) {
+function renderProductsTicketHero(model, options = {}) {
+  const showSubviewSwitch = options.showSubviewSwitch !== false;
+  const showRegistry = options.showRegistry !== false;
+  const containerId = String(options.containerId || (options.embedded ? 'finance-ticket-preview' : 'seccion-ticket')).trim() || 'seccion-ticket';
+  const ticketRows = Array.isArray(options.tickets) ? options.tickets : (Array.isArray(model.tickets) ? model.tickets : []);
+  const emptyNotice = options.emptyNotice ? `<p class="productsWorkbench__receiptEmptyNotice">${escapeHtml(options.emptyNotice)}</p>` : '';
   const activeList = model.activeList;
   const selectedCount = Object.keys(state.foodProductsView?.receiptSelections?.[activeList.id] || {}).length;
   const plannedFor = model.activeTicket?.plannedFor || activeList.plannedFor || dayKeyFromTs(nowTs());
   const receiptEstimatedTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0);
   const receiptActualTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0);
-  const receiptDiff = receiptActualTotal - receiptEstimatedTotal;
-  const diffLabel = `${receiptDiff > 0.005 ? '+' : receiptDiff < -0.005 ? '-' : ''}${fmtCurrency(Math.abs(receiptDiff))}`;
-  const diffTone = receiptDiff > 0.005 ? 'expensive' : receiptDiff < -0.005 ? 'cheap' : 'even';
+  const diffMeta = resolveProductsReceiptDiffMeta(receiptActualTotal - receiptEstimatedTotal);
   return `
       <section class="productsWorkbench__ticketHero" data-products-ticket-hero>
-      ${renderProductsSubviewSwitch(model)}
+      ${showSubviewSwitch ? renderProductsSubviewSwitch(model) : ''}
 
-    <div id="seccion-ticket">
+    <div id="${escapeHtml(containerId)}">
       <div class="productsWorkbench__ticketBar">
         <div class="productsWorkbench__ticketSwitches" aria-label="Tickets">
-          ${model.tickets.map((ticket, index) => `
+          ${ticketRows.map((ticket, index) => `
             <button type="button" class="food-history-btn ${ticket.id === model.activeTicketId ? 'is-active' : ''}" data-products-switch-ticket="${escapeHtml(ticket.id)}">
               ${escapeHtml(ticket.displayLabel || ticket.label || `Ticket ${index + 1}`)} · ${ticket.lineCount}
             </button>
@@ -3694,6 +3740,7 @@ function renderProductsTicketHero(model) {
           <button type="button" class="food-history-btn" data-products-delete-ticket="${escapeHtml(model.activeTicketId || '')}">Eliminar ticket</button>
         </div>
       </div>
+      ${emptyNotice}
       <div class="productsWorkbench__receipt" data-products-receipt>
         <header>
           <div class="productsWorkbench__receiptMetaGroup">
@@ -3720,9 +3767,9 @@ function renderProductsTicketHero(model) {
             <span>Previsto</span>
             <strong data-products-list-total>${fmtCurrency(receiptEstimatedTotal)}</strong>
           </div>
-          <div class="productsWorkbench__receiptTotalRow productsWorkbench__receiptTotalRow--diff is-${diffTone}" data-products-ticket-diff-row>
+          <div class="productsWorkbench__receiptTotalRow productsWorkbench__receiptTotalRow--diff is-${diffMeta.tone}" data-products-ticket-diff-row>
             <span>Diferencia</span>
-            <strong data-products-ticket-diff>${diffLabel}</strong>
+            <strong data-products-ticket-diff>${diffMeta.label}</strong>
           </div>
           ${renderProductsAccountSelect(model)}
         </footer>
@@ -3733,7 +3780,7 @@ function renderProductsTicketHero(model) {
       </div>
 
       </div>
-      ${renderProductsTicketRegistry(model)}
+      ${showRegistry ? renderProductsTicketRegistry(model) : ''}
       </section>
   `;
 }
@@ -3824,6 +3871,38 @@ function renderProductsTicketRegistry(model) {
       </div>
     </details>
   `;
+}
+
+function renderFinanceTicketPreview() {
+  const model = buildCurrentProductsModel();
+  const orderedTickets = [...(model.tickets || [])].sort((a, b) => (
+    Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0)
+  ) || (
+    Number(a.sortOrder || 0) - Number(b.sortOrder || 0)
+  ));
+  const emptyNotice = !model.listLines.length ? 'Sin tickets pendientes' : '';
+  return `<article class="finance__calendarPreview finance__calendarPreview--tickets">
+    <div class="financePanelTopbar">
+      <div class="financePanelHeading"><h2>Tickets</h2></div>
+      ${renderFinanceHomePanelToggle('tickets')}
+    </div>
+    <div class="financeTicketPreview">
+      <div class="financeProductsView productsWorkbench productsWorkbench--homePreview" data-products-workbench data-products-home-preview="true" data-products-active-tab="list">
+        ${renderProductsTicketHero({ ...model, tickets: orderedTickets }, {
+          embedded: true,
+          containerId: 'finance-ticket-preview',
+          showSubviewSwitch: false,
+          showRegistry: true,
+          tickets: orderedTickets,
+          emptyNotice,
+        })}
+        <div class="productsWorkbench__homeBacking" hidden>
+          ${renderProductsListPanel(model)}
+        </div>
+        <div class="productsWorkbench__subview" data-products-subview="catalog" hidden></div>
+      </div>
+    </div>
+  </article>`;
 }
 
 function renderProductsHistoryPanel(model) {
@@ -4579,14 +4658,23 @@ function syncProductsReceiptLineToBacking(root = document, lineId = '') {
   const receiptQty = root.querySelector(`[data-products-receipt-qty="${safeId}"]`);
   const receiptName = root.querySelector(`[data-products-receipt-name="${safeId}"]`);
   const receiptUnit = root.querySelector(`[data-products-receipt-unit="${safeId}"]`);
+  const receiptTotal = root.querySelector(`[data-products-receipt-total="${safeId}"]`);
   const qtyInput = rowEl.querySelector(`[data-products-line-qty="${safeId}"]`);
   const actualInput = rowEl.querySelector(`[data-products-line-actual="${safeId}"]`);
   const estimateInput = rowEl.querySelector(`[data-products-line-estimate="${safeId}"]`);
   const nameNode = rowEl.querySelector('.productsWorkbench__lineMain strong');
   const unitHidden = rowEl.querySelector(`[data-products-line-unit="${safeId}"]`);
-  if (receiptQty && qtyInput && document.activeElement !== qtyInput) qtyInput.value = String(receiptQty.value || 1);
-  if (receiptUnit && actualInput && document.activeElement !== actualInput) actualInput.value = String(receiptUnit.value || 0);
-  if (receiptUnit && estimateInput && !(Number(estimateInput.value) > 0)) estimateInput.value = String(receiptUnit.value || 0);
+  const baseLine = resolveActiveProductsList()?.lines?.[safeId] || {};
+  const qty = Math.max(0.01, Number(productsDomValue(root, [`[data-products-receipt-qty="${safeId}"]`, `[data-products-line-qty="${safeId}"]`], baseLine.qty || 1) || baseLine.qty || 1));
+  const estimatedSubtotalFallback = Math.max(0, normalizeProductPositiveNumber(baseLine.estimatedPrice, 0) * qty);
+  const actualSubtotalFallback = Math.max(0, normalizeProductPositiveNumber(baseLine.actualPrice, baseLine.estimatedPrice || 0) * qty);
+  const estimatedSubtotal = parseProductsReceiptMoney(receiptUnit?.value, estimatedSubtotalFallback);
+  const actualSubtotal = parseProductsReceiptMoney(receiptTotal?.value, actualSubtotalFallback);
+  const estimatedPrice = qty > 0 ? estimatedSubtotal / qty : 0;
+  const actualPrice = qty > 0 ? actualSubtotal / qty : 0;
+  if (receiptQty && qtyInput && document.activeElement !== qtyInput) qtyInput.value = String(qty);
+  if (actualInput && document.activeElement !== actualInput) actualInput.value = actualPrice ? String(Number(actualPrice.toFixed(6))) : '';
+  if (estimateInput && document.activeElement !== estimateInput) estimateInput.value = estimatedPrice ? String(Number(estimatedPrice.toFixed(6))) : '';
   if (receiptName && nameNode) nameNode.textContent = normalizeFoodName(receiptName.value || nameNode.textContent || 'Producto') || 'Producto';
   if (unitHidden && !unitHidden.value) unitHidden.value = 'ud';
 }
@@ -4621,19 +4709,23 @@ function readProductsListDraftFromDom(root = document) {
   nextList.updatedAt = nowTs();
   const lineEntries = Array.from(formEl.querySelectorAll('[data-products-line-row]')).map((rowEl, index) => {
     const lineId = String(rowEl.dataset.productsLineRow || '').trim() || createFinanceRecordId('line');
+    const baseLine = baseList.lines?.[lineId] || {};
     const lineTicketId = String(rowEl.querySelector(`[data-products-line-ticket-id="${lineId}"]`)?.value || baseList.lines?.[lineId]?.ticketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
     syncProductsReceiptLineToBacking(root, lineId);
     const receiptName = productsDomValue(root, [`[data-products-receipt-name="${lineId}"]`], '');
-    const receiptQty = productsDomValue(root, [`[data-products-receipt-qty="${lineId}"]`], '');
-    const receiptUnit = productsDomValue(root, [`[data-products-receipt-unit="${lineId}"]`], '');
+    const qty = Math.max(0.01, Number(productsDomValue(root, [`[data-products-receipt-qty="${lineId}"]`], rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || baseLine.qty || 1) || rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || baseLine.qty || 1));
+    const estimatedSubtotalFallback = Math.max(0, normalizeProductPositiveNumber(baseLine.estimatedPrice, Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || 0)) * qty);
+    const actualSubtotalFallback = Math.max(0, normalizeProductPositiveNumber(baseLine.actualPrice, Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || baseLine.estimatedPrice || 0)) * qty);
+    const estimatedSubtotal = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-unit="${lineId}"]`], estimatedSubtotalFallback), estimatedSubtotalFallback);
+    const actualSubtotal = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-total="${lineId}"]`], actualSubtotalFallback), actualSubtotalFallback);
     return [lineId, {
       id: lineId,
       productId: String(rowEl.querySelector(`[data-products-line-product-id="${lineId}"]`)?.value || baseList.lines?.[lineId]?.productId || '').trim(),
       name: normalizeFoodName(receiptName || baseList.lines?.[lineId]?.name || rowEl.querySelector('.productsWorkbench__lineMain strong')?.textContent || ''),
-      qty: Number(receiptQty || rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || baseList.lines?.[lineId]?.qty || 1),
+      qty,
       unit: normalizeProductUnit(rowEl.querySelector(`[data-products-line-unit="${lineId}"]`)?.value || baseList.lines?.[lineId]?.unit || 'ud'),
-      estimatedPrice: Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || baseList.lines?.[lineId]?.estimatedPrice || 0),
-      actualPrice: Number(receiptUnit || rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || baseList.lines?.[lineId]?.actualPrice || 0),
+      estimatedPrice: qty > 0 ? estimatedSubtotal / qty : 0,
+      actualPrice: qty > 0 ? actualSubtotal / qty : 0,
       store: normalizeFoodName(baseList.lines?.[lineId]?.store || nextList.store || ''),
       checked: rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false,
       ticketId: lineTicketId,
@@ -4661,11 +4753,13 @@ function syncProductsTicketComposerDom(root = document) {
     if (!lineId) return;
     syncProductsReceiptLineToBacking(root, lineId);
     const qty = Math.max(0.01, Number(productsDomValue(root, [`[data-products-receipt-qty="${lineId}"]`, `[data-products-line-qty="${lineId}"]`], 1)));
-    const estimatedPrice = Math.max(0, Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || 0));
-    const actualPrice = Math.max(0, Number(productsDomValue(root, [`[data-products-receipt-unit="${lineId}"]`, `[data-products-line-actual="${lineId}"]`], estimatedPrice)));
+    const estimatedPriceFallback = Math.max(0, Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || 0));
+    const actualPriceFallback = Math.max(0, Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || estimatedPriceFallback));
+    const estimatedSubtotalParsed = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-unit="${lineId}"]`], ''), NaN, { blankAsNaN: true });
+    const actualSubtotalParsed = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-total="${lineId}"]`], ''), NaN, { blankAsNaN: true });
     const isChecked = rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false;
-    const estimatedSubtotal = qty * estimatedPrice;
-    const actualSubtotal = qty * actualPrice;
+    const estimatedSubtotal = Number.isFinite(estimatedSubtotalParsed) ? estimatedSubtotalParsed : (qty * estimatedPriceFallback);
+    const actualSubtotal = Number.isFinite(actualSubtotalParsed) ? actualSubtotalParsed : (qty * actualPriceFallback);
     const rowTicketId = String(rowEl.querySelector(`[data-products-line-ticket-id="${lineId}"]`)?.value || '').trim();
     estimatedTotal += estimatedSubtotal;
     actualTotal += actualSubtotal;
@@ -4680,12 +4774,20 @@ function syncProductsTicketComposerDom(root = document) {
     const receiptQty = root.querySelector(`[data-products-receipt-qty="${lineId}"]`);
     const receiptUnit = root.querySelector(`[data-products-receipt-unit="${lineId}"]`);
     const receiptTotal = root.querySelector(`[data-products-receipt-total="${lineId}"]`);
+    const receiptDiff = root.querySelector(`[data-products-receipt-diff="${lineId}"]`);
     const quickQty = root.querySelector(`[data-products-quick-line-qty="${lineId}"]`);
+    const lineDiffMeta = resolveProductsReceiptDiffMeta(actualSubtotal - estimatedSubtotal);
     if (estimatedNode) estimatedNode.textContent = fmtCurrency(estimatedSubtotal);
     if (actualNode) actualNode.textContent = fmtCurrency(actualSubtotal);
     if (receiptQty && document.activeElement !== receiptQty) receiptQty.value = String(qty);
-    if (receiptUnit && document.activeElement !== receiptUnit) receiptUnit.value = actualPrice ? String(actualPrice) : '';
-    if (receiptTotal) receiptTotal.textContent = fmtCurrency(actualSubtotal);
+    syncProductsMoneyFieldDisplay(receiptUnit, estimatedSubtotal);
+    syncProductsMoneyFieldDisplay(receiptTotal, actualSubtotal);
+    if (receiptDiff) {
+      receiptDiff.textContent = lineDiffMeta.label;
+      receiptDiff.classList.toggle('is-expensive', lineDiffMeta.tone === 'expensive');
+      receiptDiff.classList.toggle('is-cheap', lineDiffMeta.tone === 'cheap');
+      receiptDiff.classList.toggle('is-even', lineDiffMeta.tone === 'even');
+    }
     if (quickQty && document.activeElement !== quickQty) quickQty.value = String(qty);
   });
   const addQty = root.querySelector('[data-products-receipt-add-qty]');
@@ -4711,11 +4813,11 @@ function syncProductsTicketComposerDom(root = document) {
   if (ticketTotal) ticketTotal.textContent = fmtCurrency(actualTotal);
   if (ticketTotalFooter) ticketTotalFooter.textContent = fmtCurrency(activeTicketTotal);
   if (ticketDiffRow) {
-    const diff = activeTicketTotal - activeTicketEstimatedTotal;
-    if (ticketDiff) ticketDiff.textContent = `${diff > 0.005 ? '+' : diff < -0.005 ? '-' : ''}${fmtCurrency(Math.abs(diff))}`;
-    ticketDiffRow.classList.toggle('is-expensive', diff > 0.005);
-    ticketDiffRow.classList.toggle('is-cheap', diff < -0.005);
-    ticketDiffRow.classList.toggle('is-even', Math.abs(diff) <= 0.005);
+    const diffMeta = resolveProductsReceiptDiffMeta(activeTicketTotal - activeTicketEstimatedTotal);
+    if (ticketDiff) ticketDiff.textContent = diffMeta.label;
+    ticketDiffRow.classList.toggle('is-expensive', diffMeta.tone === 'expensive');
+    ticketDiffRow.classList.toggle('is-cheap', diffMeta.tone === 'cheap');
+    ticketDiffRow.classList.toggle('is-even', diffMeta.tone === 'even');
   }
   const selectedCount = Object.keys(state.foodProductsView?.receiptSelections?.[formEl.dataset.productsListId] || {}).length;
   const selectedMap = state.foodProductsView?.receiptSelections?.[formEl.dataset.productsListId] || {};
@@ -8010,6 +8112,7 @@ function renderFinanceHomePanelToggle(activeView = 'hero') {
   return `<div class="financePanelToggle" role="group" aria-label="Cambiar vista del panel principal">
     <button type="button" class="financePanelToggle__btn ${currentView === 'hero' ? 'is-active' : ''}" data-home-panel-view="hero" aria-pressed="${currentView === 'hero' ? 'true' : 'false'}" title="Resumen">&#129297;</button>
     <button type="button" class="financePanelToggle__btn ${currentView === 'calendar' ? 'is-active' : ''}" data-home-panel-view="calendar" aria-pressed="${currentView === 'calendar' ? 'true' : 'false'}" title="Calendario">&#128197;</button>
+    <button type="button" class="financePanelToggle__btn ${currentView === 'tickets' ? 'is-active' : ''}" data-home-panel-view="tickets" aria-pressed="${currentView === 'tickets' ? 'true' : 'false'}" title="Tickets">&#129534;</button>
   </div>`;
 }
 
@@ -9238,8 +9341,10 @@ function renderFinanceHome(accounts, totalSeries) {
   const comparePrev = computeDeltaWithinBounds(totalSeries, previousBounds);
   const primaryPanel = homePanelView === 'calendar'
     ? renderFinanceCalendarPanel(accounts, totalSeries, { withToggle: true })
-    : renderFinanceHeroPanel({ total, totalReal, totalRange, chart }, { withToggle: true });
-  if (homePanelView === 'calendar') {
+    : homePanelView === 'tickets'
+      ? renderFinanceTicketPreview()
+      : renderFinanceHeroPanel({ total, totalReal, totalRange, chart }, { withToggle: true });
+  if (homePanelView === 'calendar' || homePanelView === 'tickets') {
     return `
       <section class="finance-home ${toneClass(totalRange.delta)} finance-home--${homePanelView}">
         ${primaryPanel}
@@ -13713,6 +13818,12 @@ view.addEventListener('focusin', (event) => {
   if (event.target.matches('[data-account-input]')) {
     event.target.dataset.prev = event.target.value;
     event.target.value = '';
+    return;
+  }
+  if (event.target.matches('[data-products-receipt-unit], [data-products-receipt-total]')) {
+    const fallback = parseProductsReceiptMoney(event.target.dataset.moneyLastValid, 0);
+    const nextValue = parseProductsReceiptMoney(event.target.value, fallback);
+    event.target.value = formatEditableEuro(nextValue);
   }
 }, evtOpts);
 
@@ -13736,6 +13847,20 @@ view.addEventListener('focusout', async (event) => {
       event.target.value = String(nextNum.toFixed(2));
       event.target.dataset.prev = event.target.value;
       triggerRender();
+    }
+  }
+  if (event.target.matches('[data-products-receipt-unit], [data-products-receipt-total]')) {
+    const fallback = parseProductsReceiptMoney(event.target.dataset.moneyLastValid, 0);
+    const nextValue = parseProductsReceiptMoney(event.target.value, fallback, { blankAsNaN: true });
+    const finalValue = Number.isFinite(nextValue) ? nextValue : fallback;
+    syncProductsMoneyFieldDisplay(event.target, finalValue);
+    const lineId = String(event.target.dataset.productsReceiptUnit || event.target.dataset.productsReceiptTotal || '').trim();
+    if (lineId) {
+      syncProductsReceiptLineToBacking(view, lineId);
+      syncProductsTicketComposerDom(view);
+      syncProductsDraftListLocal(readProductsListDraftFromDom(view));
+    } else {
+      syncProductsTicketComposerDom(view);
     }
   }
   if (event.target.matches('[data-products-receipt-add-name], [data-products-receipt-name]')) {
@@ -13762,6 +13887,11 @@ view.addEventListener('focusout', async (event) => {
       const first = document.querySelector(`[data-products-receipt-suggest="${lineId}"] [data-products-receipt-pick]`);
       if (first) await changeProductsReceiptLineProduct(lineId, first.dataset.productsReceiptPick);
       else event.target.blur();
+      return;
+    }
+    if (event.key === 'Enter' && event.target.matches('[data-products-receipt-unit], [data-products-receipt-total]')) {
+      event.preventDefault();
+      event.target.blur();
       return;
     }
     if (event.key === 'Enter' && event.target.matches('[data-products-quick-search], [data-products-catalog-search], [data-products-filter="productsQuery"]')) {
@@ -13940,8 +14070,8 @@ view.addEventListener('focusout', async (event) => {
       syncProductsTicketComposerDom(view);
       return;
     }
-    if (event.target.matches('[data-products-receipt-qty], [data-products-receipt-unit]')) {
-      syncProductsReceiptLineToBacking(view, event.target.dataset.productsReceiptQty || event.target.dataset.productsReceiptUnit);
+    if (event.target.matches('[data-products-receipt-qty], [data-products-receipt-unit], [data-products-receipt-total]')) {
+      syncProductsReceiptLineToBacking(view, event.target.dataset.productsReceiptQty || event.target.dataset.productsReceiptUnit || event.target.dataset.productsReceiptTotal);
       syncProductsTicketComposerDom(view);
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
       return;

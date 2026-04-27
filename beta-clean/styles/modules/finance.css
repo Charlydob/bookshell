@@ -61,10 +61,23 @@
   margin: 0;
 }
 
+.financeTab .finance__calendarPreview--tickets{
+  overflow: visible;
+}
+
+.financeTab .financeTicketPreview{
+  margin-top: 10px;
+}
+
+.financeTab .productsWorkbench--homePreview{
+  display: grid;
+  gap: 10px;
+}
+
 .financeTab .financePanelToggle {
   margin-left: auto;
   display: inline-grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border: 1px solid rgba(171, 197, 255, .22);
@@ -5629,10 +5642,64 @@ margin-bottom: 50px;
   text-align: right;
 }
 
+.financeTab .productsWorkbench__receiptTotalStack{
+  min-width: 0;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+}
+
 .financeTab .productsWorkbench__receiptTotal{
   text-align: right;
   white-space: nowrap;
   font-size: 12px;
+  font-weight: 800;
+}
+
+.financeTab input.productsWorkbench__receiptUnit,
+.financeTab input.productsWorkbench__receiptTotal{
+  padding-inline: 4px;
+}
+
+.financeTab input.productsWorkbench__receiptTotal{
+  min-height: 28px;
+  border-color: transparent;
+  background: rgba(255, 255, 255, .02);
+  box-shadow: none;
+}
+
+.financeTab input.productsWorkbench__receiptTotal:hover{
+  background: rgba(32, 38, 47, .045);
+}
+
+.financeTab input.productsWorkbench__receiptTotal:focus{
+  background: rgba(255, 255, 255, .52);
+}
+
+.financeTab .productsWorkbench__receiptLineDiff{
+  min-height: 11px;
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+  color: rgba(32, 38, 47, .58);
+}
+
+.financeTab .productsWorkbench__receiptLineDiff.is-expensive{
+  color: #9b2836;
+}
+
+.financeTab .productsWorkbench__receiptLineDiff.is-cheap{
+  color: #26704f;
+}
+
+.financeTab .productsWorkbench__receiptLineDiff.is-even{
+  color: rgba(32, 38, 47, .58);
+}
+
+.financeTab .productsWorkbench__receiptEmptyNotice{
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: rgba(220, 231, 255, .78);
 }
 
 .financeTab .productsWorkbench__receiptRemove,
@@ -7129,7 +7196,7 @@ margin-bottom: 50px;
   }
 
   .financeTab .productsWorkbench__receiptRow{
-    grid-template-columns: 16px 32px minmax(0, 1fr) 41px 50px 28px;
+    grid-template-columns: 16px 32px minmax(0, 1fr) 48px 62px 28px;
     gap: 5px;
     padding: 0px;
   }
@@ -7142,6 +7209,10 @@ margin-bottom: 50px;
     min-height: 24px;
     padding-inline: 4px;
     font-size: 11px;
+  }
+
+  .financeTab .productsWorkbench__receiptLineDiff{
+    font-size: 9px;
   }
 
   .financeTab .productsWorkbench__receiptSuggest{
@@ -7188,14 +7259,16 @@ margin-bottom: 50px;
   gap: 8px;
   margin-bottom: 10px;
 }
-#recipename{
+.financeTab .productsWorkbench__receiptName{
   width: 100px;
   min-width:100%;
   justify-items: start;
 }
 
 
-.productsWorkbench__receiptQty .food-control, #recipename, .productsWorkbench__receiptUnit .food-control{
+.financeTab .productsWorkbench__receiptQty,
+.financeTab .productsWorkbench__receiptName,
+.financeTab .productsWorkbench__receiptUnit{
   padding: 0px;
   height: 20px;
 }

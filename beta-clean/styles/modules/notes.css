@@ -1353,6 +1353,15 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   font-size: 12px;
   color: #c9e7ff;
 }
+.notes-reminder-categories{display:flex;flex-wrap:wrap;gap:6px}
+.notes-reminder-chip{font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(140,200,255,.16);border:1px solid rgba(140,200,255,.3)}
+.notes-reminder-progress{height:4px;background:rgba(255,255,255,.08);border-radius:999px;overflow:hidden}
+.notes-reminder-progress span{display:block;height:100%;background:linear-gradient(90deg,#63d6ff,#9ff1b0)}
+.notes-reminder-checklist-items{display:grid;gap:6px}
+.notes-reminder-check-item{display:flex;align-items:center;gap:8px;font-size:12px}
+.notes-reminder-check-item.is-done span{text-decoration:line-through;opacity:.6}
+.notes-reminder-inline-add{display:grid;grid-template-columns:1fr auto;gap:6px}
+.notes-reminder-checklist-progress{font-size:11px;color:var(--txt-soft)}
 
 #notes-reminder-grid-meta {
   display: grid;
@@ -1370,6 +1379,7 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   grid-template-columns: 100px 1fr auto;
   gap: 8px;
 }
+.notes-reminder-checklist-draft-item{display:grid;grid-template-columns:auto 1fr auto;gap:6px;align-items:center}
 
 .notes-reminder-alert-list {
   display: flex;

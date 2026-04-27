@@ -141,6 +141,43 @@ export async function deleteReminder(rootPath, reminderId) {
   await remove(ref(db, `${rootPath}/reminders/${safeReminderId}`));
 }
 
+export async function upsertReminderCategory(rootPath, categoryId, payload = {}) {
+  const safeId = String(categoryId || "").trim();
+  if (!safeId) return;
+  await update(ref(db), {
+    [`${rootPath}/reminderCategories/${safeId}`]: {
+      id: safeId,
+      name: String(payload?.name || "").trim(),
+      emoji: String(payload?.emoji || "").trim(),
+      color: String(payload?.color || "").trim(),
+      createdAt: Number(payload?.createdAt || Date.now()),
+      updatedAt: Date.now(),
+    },
+  });
+}
+
+export async function deleteReminderCategory(rootPath, categoryId) {
+  const safeId = String(categoryId || "").trim();
+  if (!safeId) return;
+  await remove(ref(db, `${rootPath}/reminderCategories/${safeId}`));
+}
+
+export async function updateReminderPreferences(rootPath, payload = {}) {
+  await update(ref(db), {
+    [`${rootPath}/reminderPreferences`]: payload || {},
+  });
+}
+
+export async function patchReminderChecklistItem(rootPath, reminderId, itemId, payload = {}) {
+  const safeReminderId = String(reminderId || "").trim();
+  const safeItemId = String(itemId || "").trim();
+  if (!safeReminderId || !safeItemId) return;
+  await update(ref(db), {
+    [`${rootPath}/reminders/${safeReminderId}/checklistItems/${safeItemId}`]: payload,
+    [`${rootPath}/reminders/${safeReminderId}/updatedAt`]: Date.now(),
+  });
+}
+
 export async function incrementNoteVisits(rootPath, noteId) {
   const safeNoteId = String(noteId || "").trim();
   if (!safeNoteId) return false;

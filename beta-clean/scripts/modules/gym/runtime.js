@@ -2886,6 +2886,7 @@ function bindEvents() {
                 <span class="gym-pace-readonly" data-field="pace">${paceLabel}</span>
               `
             : isUnilateralReps ? unilateralInputs : `${repsInput}${kgInput}`;
+          const setCheckboxId = `gym-set-checkbox-${workout.id}-${exerciseId}-${index}`;
           return `
   <div class="gym-set-swipe" data-set-index="${index}">
     <div class="gym-set-swipe-under">
@@ -2899,7 +2900,9 @@ function bindEvents() {
       ${isCardio ? "" : `<span class="gym-set-previous">${prevText}</span>`}
       ${setInputs}
       <div class="gym-set-check${isUnilateralReps ? " is-unilateral" : ""}">
-        <input class="gym-checkbox" data-field="done" type="checkbox" ${set.done ? "checked" : ""}/>
+        <label class="gym-set-checkboxWrap" for="${setCheckboxId}" data-gym-set-checkbox>
+          <input id="${setCheckboxId}" class="gym-checkbox gym-set-checkbox" data-field="done" type="checkbox" ${set.done ? "checked" : ""}/>
+        </label>
         <span class="gym-set-pr-icon" aria-hidden="true">🏆</span>
       </div>
     </div>

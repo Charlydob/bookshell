@@ -701,6 +701,35 @@
   color: var(--gym-success);
 }
 
+.gymTab .gym-set-checkboxWrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 34px;
+}
+
+.gymTab .gym-set-checkboxWrap input.gym-set-checkbox {
+  appearance: auto !important;
+  -webkit-appearance: checkbox !important;
+  display: inline-block !important;
+  width: 22px;
+  height: 22px;
+  opacity: 1 !important;
+  visibility: visible !important;
+  position: static !important;
+  pointer-events: auto !important;
+  margin: 0;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  accent-color: var(--app-accent, #f5a623);
+}
+
+.gymTab .gym-set-checkboxWrap input.gym-set-checkbox:disabled {
+  opacity: 0.45 !important;
+}
+
 .gym-workout-actions {
   display: flex;
   gap: 10px;

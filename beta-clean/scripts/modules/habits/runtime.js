@@ -1835,10 +1835,15 @@ function renderSchedule(reason = "manual") {
       <div class="habit-schedule-total-sub">Sin asignar ${formatMinutes(stats.remaining24hMinEq)}${includeLimits24h ? " · incluye límites" : " · sin límites"}</div>
     </section>
     <section class="habits-history-section habit-schedule-controls">
-      <button class="btn ghost btn-compact" type="button" data-role="schedule-score-toggle">${scheduleScoreMode === "credits" ? "Aprovechado" : "Plan"}</button>
-      <button class="btn ghost btn-compact" type="button" data-role="schedule-open-editor">Editar plantillas</button>
-      <button class="btn ghost btn-compact" type="button" data-role="schedule-view-toggle" aria-pressed="${scheduleViewMode === "time" ? "true" : "false"}">% / tiempo</button>
-      <button class="btn ghost btn-compact" type="button" data-role="schedule-close-day">Cerrar día</button>
+
+      <button class="btn-habits-horario" type="button" data-role="schedule-score-toggle">${scheduleScoreMode === "credits" ? "Aprovechado" : "Plan"}</button>
+
+      <button class="btn-habits-horario" type="button" data-role="schedule-open-editor">Editar plantillas</button>
+
+      <button class="btn-habits-horario" type="button" data-role="schedule-view-toggle" aria-pressed="${scheduleViewMode === "time" ? "true" : "false"}">% / tiempo</button>
+
+      <button class="btn-habits-horario" type="button" data-role="schedule-close-day">Cerrar día</button>
+
     </section>
     <section class="habits-history-section habit-schedule-config ${scheduleConfigOpen ? "" : "is-hidden"}">
       <div class="habits-history-section-header">
@@ -13513,7 +13518,7 @@ function persistHabitGroup(group) {
     payload: group,
     writeType: "set",
     dedupeKey: `habit-group:${group.id}`,
-  }).then((result) => reportQueuedWriteError("No se pudo guardar grupo de hí¡bitos", result));
+  }).then((result) => reportQueuedWriteError("No se pudo guardar grupo de hábitos", result));
 }
 
 function removeHabitGroupRemote(groupId) {
@@ -13527,7 +13532,7 @@ function removeHabitGroupRemote(groupId) {
     payload: null,
     writeType: "set",
     dedupeKey: `habit-group:${groupId}`,
-  }).then((result) => reportQueuedWriteError("No se pudo borrar grupo de hí¡bitos", result));
+  }).then((result) => reportQueuedWriteError("No se pudo borrar grupo de hábitos", result));
 }
 
 function persistHabitPrefs() {
@@ -13541,7 +13546,7 @@ function persistHabitPrefs() {
     payload: habitPrefs || {},
     writeType: "set",
     dedupeKey: "habit-prefs",
-  }).then((result) => reportQueuedWriteError("No se pudo guardar preferencias de hí¡bitos", result));
+  }).then((result) => reportQueuedWriteError("No se pudo guardar preferencias de hábitos", result));
 }
 
 function saveUI(partial = {}) {
@@ -13557,7 +13562,7 @@ function saveUI(partial = {}) {
     payload: merged.quickCounters || [],
     writeType: "set",
     dedupeKey: "habit-ui-quick-counters",
-  }).then((result) => reportQueuedWriteError("No se pudo guardar UI de hí¡bitos", result));
+  }).then((result) => reportQueuedWriteError("No se pudo guardar UI de hábitos", result));
   renderQuickCounters();
 }
 
@@ -13627,7 +13632,7 @@ function persistHabitCheck(habitId, dateKey, value) {
     writeType: "set",
     dedupeKey: `habit-check:${habitId}:${dateKey}`,
     metadata: { habitId, dateKey },
-  }).then((result) => reportQueuedWriteError("No se pudo sincronizar check de hí¡bito", result));
+  }).then((result) => reportQueuedWriteError("No se pudo sincronizar check de hábito", result));
 }
 
 function persistHabitCount(habitId, dateKey, value) {
@@ -13656,7 +13661,7 @@ function persistHabit(habit) {
     payload: habit,
     writeType: "set",
     dedupeKey: `habit:${habit.id}`,
-  }).then((result) => reportQueuedWriteError("No se pudo guardar hí¡bito en remoto", result));
+  }).then((result) => reportQueuedWriteError("No se pudo guardar hábito en remoto", result));
 }
 
 function removeHabitRemote(habitId) {
@@ -13670,7 +13675,7 @@ function removeHabitRemote(habitId) {
     payload: null,
     writeType: "set",
     dedupeKey: `habit:${habitId}`,
-  }).then((result) => reportQueuedWriteError("No se pudo borrar hí¡bito remoto", result));
+  }).then((result) => reportQueuedWriteError("No se pudo borrar hábito remoto", result));
 }
 
 function incrementCounterHabit(habitId) {
@@ -13832,7 +13837,7 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
     localStorage.setItem(LAST_HABIT_KEY, target);
     pendingSessionDuration = 0;
     invalidateHabitRenderCaches();
-    if (!silent) showHabitToast(`Asignado: ${habits[target]?.name || "hí¡bito"} · ${Math.round(duration / 60)}m`);
+    if (!silent) showHabitToast(`Asignado: ${habits[target]?.name || "hábito"} · ${Math.round(duration / 60)}m`);
     closeSessionModal?.();
     renderHabits();
     return;
@@ -13846,7 +13851,7 @@ async function cancelRunningSession({ requireConfirm = true, sessionId = running
   const session = sessionId ? activeSessions?.[sessionId] : null;
   if (!session) return false;
   if (requireConfirm) {
-    const ok = window.confirm("Â¿Cancelar esta sesión activa? Se perderí¡ el tiempo en curso y no se registrarí¡.");
+    const ok = window.confirm("Â¿Cancelar esta sesión activa? Se perderá el tiempo en curso y no se registrará.");
     if (!ok) return false;
   }
 

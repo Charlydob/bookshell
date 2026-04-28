@@ -292,7 +292,7 @@ function renderViewUnavailableFallback(root, viewId, message = "") {
     eyebrow,
     message: fallbackDetail,
   }, isOnline ? "warn" : "info");
-  const detail = String(message || "").trim() || "El contenido de esta vista no estí¡ disponible sin conexión en este dispositivo.";
+  const detail = String(message || "").trim() || "El contenido de esta vista no está disponible sin conexión en este dispositivo.";
   root.innerHTML = `
     <section class="shell-view-fallback">
       <p class="shell-view-fallback-eyebrow">${escapeHtml(eyebrow)}</p>
@@ -806,7 +806,7 @@ async function ensureViewShell(viewId, { highPriority = false } = {}) {
             viewId,
             navigator.onLine
               ? "No se pudo reconstruir esta vista ahora mismo. Puedes seguir usando el resto de la app."
-              : "Esta vista no estí¡ cacheada todaví­a. Cuando vuelvas a tener red se cargarí¡ automí¡ticamente.",
+              : "Esta vista no está cacheada todaví­a. Cuando vuelvas a tener red se cargará automáticamente.",
           );
           recordViewMetrics(viewId, {
             shellLoadMs: Math.round(performance.now() - shellStartedAt),
@@ -876,7 +876,7 @@ async function ensureViewModule(viewId, { runOnShow = true, highPriority = false
           viewId,
           navigator.onLine
             ? "Esta vista no se pudo inicializar ahora mismo. Si acabas de actualizar la app, recarga para refrescar los modulos en cache."
-            : "La shell estí¡ disponible, pero esta vista necesita recursos que aíºn no se han cacheado.",
+            : "La shell está disponible, pero esta vista necesita recursos que aíºn no se han cacheado.",
         );
         recordViewMetrics(viewId, {
           moduleReadyAt: Date.now(),

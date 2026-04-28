@@ -9660,7 +9660,7 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
 
   return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2></header>
   <article class="financeGlassCard">
-  <div class="finance-row">
+  <div class="finance-row-balance">
   <button class="boton-calendario" data-balance-month="-1">◀</button>
   <strong>${monthLabelByKey(monthKey)}</strong>
   <button class="boton-calendario" data-balance-month="1">▶</button></div>

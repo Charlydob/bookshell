@@ -44,8 +44,8 @@
   </div>
   <div class="books-filters-body" id="recipes-filters-body">
   <div class="filter-row">
-  <div class="filter-label">Filtros rí¡pidos</div>
-  <div aria-label="Filtros diní¡micos" class="filter-chip-groups" id="recipes-filter-chips"></div>
+  <div class="filter-label">Filtros rápidos</div>
+  <div aria-label="Filtros dinámicos" class="filter-chip-groups" id="recipes-filter-chips"></div>
   </div>
   <div class="filter-row filter-toggles">
   <label class="toggle-pill">
@@ -141,7 +141,7 @@
     <div class="macro-modal-header app-modal__header">
       <div>
         <h3 class="macro-modal-title app-modal__title" id="macro-integration-modal-title">Configuración avanzada</h3>
-        <p class="macro-modal-subtitle">Ajustes de gasto calórico e integración Gym/Hí¡bitos</p>
+        <p class="macro-modal-subtitle">Ajustes de gasto calórico e integración Gym/Hábitos</p>
       </div>
       <button class="icon-btn app-btn app-btn--icon app-modal__close" type="button" id="macro-integration-modal-close" aria-label="Cerrar">❌</button>
     </div>
@@ -156,7 +156,7 @@
           <input type="number" id="macro-work-kcal" min="0" step="10" inputmode="numeric" value="700" />
         </label>
         <label class="macro-integration-field">
-          <span>Hí¡bitos de trabajo vinculados</span>
+          <span>Hábitos de trabajo vinculados</span>
           <select id="macro-work-habits" multiple></select>
         </label>
       </div>
@@ -191,7 +191,15 @@
 
     <div class="macro-stats-grid" id="macro-stats-kpis"></div>
 
-    <section class="macro-stats-card recipes-consumption-card">
+    <div class="recipes-stats-section-switch" id="recipes-stats-section-switch" role="tablist" aria-label="Secciones de estadisticas">
+      <button class="recipes-stats-section-tab is-active" type="button" data-recipes-stats-view="overview" aria-selected="true">Resumen</button>
+      <button class="recipes-stats-section-tab" type="button" data-recipes-stats-view="trends" aria-selected="false">Tendencias</button>
+      <button class="recipes-stats-section-tab" type="button" data-recipes-stats-view="products" aria-selected="false">Productos</button>
+    </div>
+
+    <div class="recipes-stats-views">
+      <section class="recipes-stats-view is-active" data-recipes-stats-panel="overview">
+        <section class="macro-stats-card recipes-consumption-card">
       <header class="macro-stats-card-head">
         <div>
           <h4>Memoria de consumo</h4>
@@ -215,9 +223,22 @@
           <div class="recipes-consumption-timeline" id="recipes-consumption-timeline"></div>
         </article>
       </div>
-    </section>
+        </section>
 
-    <div class="macro-stats-panels">
+        <div class="macro-stats-lists">
+          <section class="macro-stats-card">
+            <header class="macro-stats-card-head"><h4>Top recetas y platos</h4></header>
+            <div id="macro-stats-top-recipes" class="macro-stats-list"></div>
+          </section>
+          <section class="macro-stats-card">
+            <header class="macro-stats-card-head"><h4>Top productos</h4></header>
+            <div id="macro-stats-top-products" class="macro-stats-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="recipes-stats-view" data-recipes-stats-panel="trends" hidden>
+        <div class="macro-stats-panels">
       <section class="macro-stats-card macro-stats-main-chart-card">
         <header class="macro-stats-card-head">
           <h4>Evolución nutricional</h4>
@@ -240,15 +261,12 @@
         </div>
       </section>
 
-      <section class="macro-stats-card macro-stats-targets-card">
-        <header class="macro-stats-card-head">
-          <h4>Objetivo de reparto de macros</h4>
-        </header>
-        <div class="macro-target-editor" id="macro-target-editor"></div>
-      </section>
-    </div>
+        </div>
 
-    <section id="macro-products-comparison-panel" class="macro-stats-card">
+      </section>
+
+      <section class="recipes-stats-view" data-recipes-stats-panel="products" hidden>
+        <section id="macro-products-comparison-panel" class="macro-stats-card">
       <header class="macro-stats-card-head">
         <h4>Comparador de productos</h4>
       </header>
@@ -273,20 +291,9 @@
         </select>
       </div>
       <div class="macro-comparison-chart" id="macro-comparison-chart"></div>
-    </section>
+        </section>
 
-    <div class="macro-stats-lists">
-      <section class="macro-stats-card">
-        <header class="macro-stats-card-head"><h4>Top recetas y platos</h4></header>
-        <div id="macro-stats-top-recipes" class="macro-stats-list"></div>
-      </section>
-      <section class="macro-stats-card">
-        <header class="macro-stats-card-head"><h4>Top productos</h4></header>
-        <div id="macro-stats-top-products" class="macro-stats-list"></div>
-      </section>
-    </div>
-
-    <section class="macro-stats-card recipes-memory-card">
+        <section class="macro-stats-card recipes-memory-card">
       <header class="macro-stats-card-head">
         <div>
           <h4>Productos memorizados</h4>
@@ -294,9 +301,9 @@
         </div>
       </header>
       <div class="recipes-memory-grid" id="recipes-memory-grid"></div>
-    </section>
+        </section>
 
-    <section class="macro-stats-card recipes-product-insights-card">
+        <section class="macro-stats-card recipes-product-insights-card">
       <header class="macro-stats-card-head">
         <div>
           <h4>Analítica por producto</h4>
@@ -304,7 +311,9 @@
         </div>
       </header>
       <div class="recipes-product-insights-list" id="recipes-product-insights-list"></div>
-    </section>
+        </section>
+      </section>
+    </div>
   </div>
 </div>
 <div class="recipes-panel" id="recipes-panel-shopping">
@@ -344,6 +353,9 @@
         <div class="macro-shopping-score-filters" id="macro-shopping-score-filters" role="group" aria-label="Filtro Nutri-Score"></div>
         <div class="macro-shopping-results-meta" id="macro-shopping-results-count"></div>
         <div class="macro-shopping-results" id="macro-shopping-results"></div>
+        <div class="macro-shopping-results-actions hidden" id="macro-shopping-results-actions">
+          <button class="macro-shopping-results-more" id="macro-shopping-results-more" type="button">Ver más</button>
+        </div>
         <div class="macro-shopping-empty hidden" id="macro-shopping-empty">
           <div class="macro-shopping-empty-icon" aria-hidden="true">ðŸ§º</div>
           <div class="macro-shopping-empty-title">No encontramos productos</div>
@@ -425,7 +437,7 @@
           <div class="macro-scan-overlay" aria-hidden="true"></div>
         </div>
         <div class="macro-inline-actions">
-          <button class="btn ghost btn-compact" id="macro-scan-engine-html5" type="button">Abrir cí¡mara</button>
+          <button class="btn ghost btn-compact" id="macro-scan-engine-html5" type="button">Abrir cámara</button>
           <button class="btn ghost btn-compact" id="macro-scan-capture" type="button">Capturar</button>
           <button class="btn ghost btn-compact hidden" id="macro-scan-retry" type="button">Reintentar</button>
           <input id="macro-scan-manual" placeholder="Código de barras" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" />
@@ -454,7 +466,7 @@
       <div class="macro-modal-manual hidden" id="macro-manual-panel">
         <div class="macro-manual-builder">
           <section class="macro-manual-hero">
-            <span class="macro-manual-eyebrow">Alta rí¡pida</span>
+            <span class="macro-manual-eyebrow">Alta rápida</span>
             <h4>Crear alimento manualmente</h4>
             <div class="macro-manual-base-pill">
               <span>Base</span>
@@ -466,15 +478,15 @@
           <div class="macro-manual-grid" id="meta-inputs">
             <label class="macro-manual-field">
               <span class="macro-manual-label">Nombre</span>
-              <input id="macro-manual-name" type="text" placeholder="Ej. Yogur natural proteico" />
+              <input id="macro-manual-name" type="text" placeholder="Nombre" />
             </label>
             <label class="macro-manual-field">
               <span class="macro-manual-label">Marca</span>
-              <input id="macro-manual-brand" type="text" placeholder="Opcional" />
+              <input id="macro-manual-brand" type="text" placeholder="Marca" />
             </label>
             <label class="macro-manual-field">
               <span class="macro-manual-label">Código de barras</span>
-              <input id="macro-manual-barcode" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Opcional" />
+              <input id="macro-manual-barcode" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Cod. Barras" />
             </label>
           </div>
 
@@ -533,17 +545,17 @@
         <div class="macro-grid macro-grid-2">
           <label class="macro-field macro-field-span-2">
             <span class="macro-label">Nombre</span>
-            <textarea id="macro-product-name" rows="2" placeholder="Ej. Arroz a la paella"></textarea>
+            <textarea id="macro-product-name" rows="2" placeholder="Nombre"></textarea>
           </label>
 
           <label class="macro-field">
             <span class="macro-label">Marca</span>
-            <input id="macro-product-brand" type="text" placeholder="Opcional" />
+            <input id="macro-product-brand" type="text" placeholder="Marca" />
           </label>
 
           <label class="macro-field macro-product-barcode-field">
             <span class="macro-label">Código de barras</span>
-            <input id="macro-product-barcode" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="8410..." />
+            <input id="macro-product-barcode" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Cod. Barras" />
           </label>
 
           <label class="macro-field">
@@ -741,7 +753,7 @@
           </label>
 
           <div class="macro-link-row">
-            <span class="hint" id="macro-product-habit-hint">Sin hí¡bito vinculado</span>
+            <span class="hint" id="macro-product-habit-hint">Sin hábito vinculado</span>
             <button class="macro-btn macro-btn-ghost btn-compact" id="macro-product-habit-unlink" type="button">❌</button>
           </div>
 
@@ -963,7 +975,7 @@
 </div>
 <div class="recipe-detail-specs">
 <div class="spec-block">
-<div class="spec-block-title">Datos rí¡pidos</div>
+<div class="spec-block-title">Datos rápidos</div>
 <div class="spec-grid" id="recipe-detail-meta"></div>
 </div>
 <div class="spec-block">

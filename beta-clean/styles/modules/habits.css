@@ -4984,10 +4984,35 @@ button#habit-detail-edit, #habit-detail-close{
   .btn.app-btn.app-btn--ghost.app-btn--compact.ghost.btn-compact.habit-quick-btn{
     border-radius: 10px;
   }
+
+  .btn-habits {
+    min-width: 80px;
+    justify-self: center;
+    background: none;
+    border: 1px grey solid;
+    min-height: 10px;
+    margin-top: 5px;
+    padding: 10px;
+    color: white;
+    font-size: 11px;
+    border-radius: 8px;
+}
 /* #endregion */
 
 /* #region HISTORIAL */
 
+.btn-habits-horario {
+  min-width: 80px;
+    justify-self: center;
+    background: none;
+    border: 0px rgba(128, 128, 128, 0.333) solid;
+    min-height: 10px;
+    margin-top: 5px;
+    padding: 10px;
+    color: white;
+    font-size: 11px;
+    border-radius: 8px;
+}
   /* panel horario */
   .habit-work-schedule-summary{
     display: grid;

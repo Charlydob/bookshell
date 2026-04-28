@@ -361,6 +361,8 @@ if ($viewRecipes) {
   const $macroStatsDonutLegend = document.getElementById("macro-stats-donut-legend");
   const $macroStatsDonutMode = document.getElementById("macro-stats-donut-mode");
   const $macroTargetEditor = document.getElementById("macro-target-editor");
+  const $recipesStatsSectionTabs = document.querySelectorAll("[data-recipes-stats-view]");
+  const $recipesStatsViews = document.querySelectorAll("[data-recipes-stats-panel]");
   const $recipesMemoryGrid = document.getElementById("recipes-memory-grid");
   const $recipesProductInsightsList = document.getElementById("recipes-product-insights-list");
   const $recipesRestockSummary = document.getElementById("recipes-restock-summary");
@@ -373,6 +375,8 @@ if ($viewRecipes) {
   const $macroShoppingScoreFilters = document.getElementById("macro-shopping-score-filters");
   const $macroShoppingResultsCount = document.getElementById("macro-shopping-results-count");
   const $macroShoppingResults = document.getElementById("macro-shopping-results");
+  const $macroShoppingResultsActions = document.getElementById("macro-shopping-results-actions");
+  const $macroShoppingResultsMore = document.getElementById("macro-shopping-results-more");
   const $macroShoppingEmpty = document.getElementById("macro-shopping-empty");
   const $macroShoppingCompareLeftSearch = document.getElementById("macro-shopping-compare-left-search");
   const $macroShoppingCompareRightSearch = document.getElementById("macro-shopping-compare-right-search");
@@ -579,11 +583,13 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   let selectedMacroDate = toISODate(new Date());
   const macroModalState = { meal: "breakfast", source: "products", query: "", showMealSelection: false };
   const macroStatsState = { period: "week", anchorDate: selectedMacroDate, metric: "macros", donutMode: "kcal-macros" };
+  let recipesStatsView = "overview";
   const macroSelectionState = { meal: null, selectedIds: new Set() };
   const shoppingState = {
     mode: "list",
     query: "",
     nutriFilter: "all",
+    visibleCount: 12,
     compare: {
       leftQuery: "",
       rightQuery: "",
@@ -5550,8 +5556,8 @@ $recipeImportBtn?.addEventListener("click", () => {
     const primaryKpis = [
       ["Gasto total", formatCurrency(summary.totalCost), "primary"],
       ["Media €/día", formatCurrency(summary.avg.cost), "primary"],
-      ["Día de mayor gasto", summary.maxCostDay.date ? `${summary.maxCostDay.date} · ${formatCurrency(summary.maxCostDay.cost)}` : "—", "primary"],
-      ["Elementos sin precio", `${summary.totalMissingPrice}`, "primary"],
+      ["Mayor gasto", summary.maxCostDay.date ? `${formatCurrency(summary.maxCostDay.cost)}` : "—", "primary"],
+      ["Sin precio", `${summary.totalMissingPrice}`, "primary"],
     ];
     const secondaryKpis = [
       ["Kcal ingeridas", `${roundMacro(summary.totals.kcal)} kcal`],
@@ -5731,7 +5737,6 @@ $recipeImportBtn?.addEventListener("click", () => {
       }).join("");
     }
 
-    renderMacroTargetEditor();
 
     const row = (item) => `<div class="macro-stats-row"><strong class="macro-stats-row-name">${escapeHtml(item.name)}</strong><span class="macro-stats-row-summary">${item.count} ${item.count === 1 ? "vez" : "veces"} · ${getDisplayAmountForStats(item)} · ${roundMacro(item.macros?.kcal)} kcal · C ${roundMacro(item.macros?.carbs)} · P ${roundMacro(item.macros?.protein)} · G ${roundMacro(item.macros?.fat)}</span></div>`;
     if ($macroStatsTopRecipes) $macroStatsTopRecipes.innerHTML = summary.topRecipes.map(row).join("") || '<div class="hint">Sin recetas en el periodo.</div>';
@@ -5946,13 +5951,17 @@ $recipeImportBtn?.addEventListener("click", () => {
   function renderShoppingProductCards() {
     if (!$macroShoppingResults) return;
     const list = getFilteredShoppingProducts();
+    const visibleCount = Math.min(list.length, Math.max(12, Number(shoppingState.visibleCount) || 12));
+    const visibleList = list.slice(0, visibleCount);
     if ($macroShoppingResultsCount) {
       $macroShoppingResultsCount.textContent = list.length
-        ? `${list.length} producto${list.length === 1 ? "" : "s"}`
+        ? visibleCount < list.length
+          ? `${visibleCount} de ${list.length} productos`
+          : `${list.length} producto${list.length === 1 ? "" : "s"}`
         : "0 productos";
     }
     if ($macroShoppingEmpty) $macroShoppingEmpty.classList.toggle("hidden", list.length > 0);
-    $macroShoppingResults.innerHTML = list.map((item) => {
+    $macroShoppingResults.innerHTML = visibleList.map((item) => {
       const m = item.macrosPer100;
       const unitLabel = m?.unitLabel || "100 g";
       const healthLabel = getNutriHealthLabel(item.nutriScore);
@@ -5986,6 +5995,17 @@ $recipeImportBtn?.addEventListener("click", () => {
         <div class="macro-shopping-per-note">Valores por ${escapeHtml(unitLabel)}</div>
       </article>`;
     }).join("");
+    $macroShoppingResultsActions?.classList.toggle("hidden", visibleCount >= list.length);
+    if ($macroShoppingResultsMore) {
+      const remaining = Math.max(0, list.length - visibleCount);
+      $macroShoppingResultsMore.textContent = remaining > 0
+        ? `Ver ${Math.min(12, remaining)} más`
+        : "Ver más";
+    }
+  }
+
+  function resetShoppingVisibleCount() {
+    shoppingState.visibleCount = 12;
   }
 
   function getShoppingCompareCandidates(query = "") {
@@ -6116,6 +6136,23 @@ $recipeImportBtn?.addEventListener("click", () => {
     renderShoppingCompareTable();
   }
 
+  function setRecipesStatsView(nextView = "overview") {
+    recipesStatsView = nextView;
+    $recipesStatsSectionTabs?.forEach((btn) => {
+      const active = btn.dataset.recipesStatsView === nextView;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    $recipesStatsViews?.forEach((panel) => {
+      const active = panel.dataset.recipesStatsPanel === nextView;
+      panel.classList.toggle("is-active", active);
+      panel.hidden = !active;
+    });
+    if (nextView === "products") {
+      renderMacroComparisonChart();
+    }
+  }
+
   function switchRecipesPanel(panel = "library") {
     const isLibrary = panel === "library";
     const isMacros = panel === "macros";
@@ -6144,6 +6181,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       renderMacrosView();
     }
     if (isStatistics) {
+      setRecipesStatsView(recipesStatsView);
       renderStatisticsView();
       renderMacroComparisonProductSelect();
       renderMacroComparisonTags();
@@ -7876,7 +7914,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     _macroScanNoResultLastAt[key] = now;
     if (_macroScanRunning && _macroScanEngine === key) setMacroScanStatus("Buscando codigo...");
     // No es un error: es simplemente "sin lectura" en este frame.
-    // Para evitar spam visual, solo lo mostramos en el panel si estí¡ activado el debug.
+    // Para evitar spam visual, solo lo mostramos en el panel si está activado el debug.
     const short = String(detail || "").slice(0, 120);
     if (!MACRO_SCAN_DEBUG) {
       try { console.info("[scanner] sin lectura (frame)", { engine: key }); } catch (_) {}
@@ -8996,7 +9034,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     if ($macroScanManual) $macroScanManual.value = clean;
     setMacroScanStatus(`Código detectado: ${clean}`);
 
-    // La detección debe ser rí¡pida: hacemos la bíºsqueda en segundo plano y no detenemos el escí¡ner.
+    // La detección debe ser rápida: hacemos la bíºsqueda en segundo plano y no detenemos el escáner.
     try {
       _macroScanLookupQueued = { barcode: clean, options: { fromManual: false, sourceEngine: engine } };
       if (_macroScanLookupTimer) {
@@ -9787,21 +9825,31 @@ $recipeImportBtn?.addEventListener("click", () => {
   enableClearOnPointerForInputs();
 
   $recipesSubtabs.forEach((btn) => btn.addEventListener("click", () => switchRecipesPanel(btn.dataset.recipesPanel || "library")));
+  $recipesStatsSectionTabs.forEach((btn) => btn.addEventListener("click", () => {
+    setRecipesStatsView(btn.dataset.recipesStatsView || "overview");
+  }));
   $macroShoppingMode?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-shopping-mode]");
     if (!btn) return;
     shoppingState.mode = btn.dataset.shoppingMode === "compare" ? "compare" : "list";
+    resetShoppingVisibleCount();
     renderShoppingView();
   });
   $macroShoppingSearch?.addEventListener("input", (e) => {
     shoppingState.query = String(e.target.value || "");
+    resetShoppingVisibleCount();
     renderShoppingView();
   });
   $macroShoppingScoreFilters?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-shopping-score-filter]");
     if (!btn) return;
     shoppingState.nutriFilter = btn.dataset.shoppingScoreFilter || "all";
+    resetShoppingVisibleCount();
     renderShoppingView();
+  });
+  $macroShoppingResultsMore?.addEventListener("click", () => {
+    shoppingState.visibleCount = (Number(shoppingState.visibleCount) || 12) + 12;
+    renderShoppingProductCards();
   });
   function openShoppingProductCard(productId) {
     const product = nutritionProducts.find((p) => String(p.id || "") === String(productId || ""));

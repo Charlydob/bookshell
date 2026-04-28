@@ -96,6 +96,7 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
 });
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
+const NOTES_MODULE_VERSION = "2026-04-28-v1";
 const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "books", label: "Leer", viewId: "view-books" },
   { key: "improvements", label: "Fix", viewId: "view-improvements" },
@@ -573,9 +574,9 @@ const viewModules = {
     moduleLoader: () => import("../modules/books/index.js"),
   },
   "view-notes": {
-    cssUrl: "../../styles/modules/notes.css",
-    htmlUrl: "../../views/notes.html",
-    moduleLoader: () => import("../modules/notes/index.js"),
+    cssUrl: `../../styles/modules/notes.css?v=${NOTES_MODULE_VERSION}`,
+    htmlUrl: `../../views/notes.html?v=${NOTES_MODULE_VERSION}`,
+    moduleLoader: () => import(`../modules/notes/index.js?v=${NOTES_MODULE_VERSION}`),
   },
   "view-videos-hub": {
     cssUrl: "../../styles/modules/videos-hub.css",

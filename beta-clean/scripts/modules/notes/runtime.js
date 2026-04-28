@@ -10,7 +10,7 @@ import {
   getFolderPath,
   isFolderParentAllowed,
   sortNotes,
-} from "./domain/store.js";
+} from "./domain/store.js?v=2026-04-28-v1";
 import {
   createFolder,
   createNote,
@@ -28,19 +28,19 @@ import {
   updateFolder,
   updateNote,
   updateReminder,
-} from "./persist/notes-datasource.js";
+} from "./persist/notes-datasource.js?v=2026-04-28-v1";
 import {
   deleteNoteImageAsset,
   deleteNoteTagImageAsset,
   downscaleNoteImageFile,
   uploadNoteImageAsset,
   uploadNoteTagImageAsset,
-} from "./persist/notes-storage.js";
+} from "./persist/notes-storage.js?v=2026-04-28-v1";
 import {
   buildTagDefinitionKey,
   normalizeTagLabel,
   parseTagList,
-} from "./domain/tag-utils.js";
+} from "./domain/tag-utils.js?v=2026-04-28-v1";
 
 const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("es-ES", {
   day: "numeric",
@@ -71,10 +71,12 @@ let reminderDraftCategories = [];
 let reminderDraftChecklistItems = {};
 let reminderCheckTimer = null;
 const reminderExpandedChecklist = new Set();
+const expandedSnippetNotes = new Set();
 const REMINDER_TYPES = ["normal", "cumpleaños", "tarea", "evento", "trámite", "checklist", "personalizado"];
 const REMINDER_STATUSES = ["pendiente", "completado", "vencido"];
 const REMINDER_RANGES = ["all", "today", "7d", "30d", "overdue"];
 const REMINDER_GROUP_BY = ["none", "category", "type", "date", "status"];
+const SNIPPET_PREVIEW_PLACEHOLDER = '<div class="demo-target">Demo</div>';
 
 function normalizeNotesStatsSection(section = "") {
   const safeSection = String(section || "").trim();
@@ -497,6 +499,15 @@ function normalizeNoteRatingValue(value = null) {
   return Math.max(0, Math.min(10, Math.round(numeric)));
 }
 
+function normalizeNoteKind(value = "") {
+  return String(value || "").trim().toLowerCase() === "code" ? "code" : "text";
+}
+
+function normalizeCodeLanguage(value = "") {
+  const safe = String(value || "").trim().toLowerCase();
+  return ["css", "html", "js", "general"].includes(safe) ? safe : "general";
+}
+
 function formatNumber(value = 0) {
   return NUMBER_FORMATTER.format(Number(value || 0));
 }
@@ -598,6 +609,32 @@ function updateNoteRatingPreview() {
   const rating = normalizeNoteRatingValue(select.value);
   preview.classList.toggle("is-empty", rating === null);
   preview.innerHTML = buildRatingPreviewMarkup(rating);
+}
+
+function updateNoteLinkDependentFields(isLink) {
+  $id("notes-note-url-wrap")?.classList.toggle("hidden", !isLink);
+  $id("notes-note-photo-wrap")?.classList.toggle("hidden", !isLink);
+  $id("notes-note-rating-preview")?.classList.toggle("hidden", !isLink);
+  $id("notes-note-tag-images")?.classList.toggle("hidden", !isLink);
+  $id("meta-notas-note")?.classList.toggle("hidden", !isLink);
+  document.querySelector(".notes-rating-field")?.classList.toggle("hidden", !isLink);
+}
+
+function updateNoteEditorMode(nextKind = "text") {
+  const noteKind = normalizeNoteKind(nextKind);
+  const isCode = noteKind === "code";
+  const isLink = !isCode && Boolean($id("notes-note-is-link")?.checked);
+
+  if ($id("notes-note-kind")) $id("notes-note-kind").value = noteKind;
+  $id("notes-note-content-wrap")?.classList.toggle("hidden", isCode);
+  $id("notes-note-code-wrap")?.classList.toggle("hidden", !isCode);
+  $id("notes-note-link-toggle-wrap")?.classList.toggle("hidden", isCode);
+
+  if (isCode && $id("notes-note-is-link")) {
+    $id("notes-note-is-link").checked = false;
+  }
+
+  updateNoteLinkDependentFields(isLink);
 }
 
 function getCurrentFolder() {
@@ -958,7 +995,290 @@ async function persistNoteTagDefinitions(tags = []) {
 }
 
 function notePreview(note) {
+  if (normalizeNoteKind(note?.noteKind) === "code") {
+    const source = String(note?.code || "").trim();
+    if (!source) return "";
+    return source
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(" ")
+      .slice(0, 160);
+  }
   return note.content || "";
+}
+
+function buildNoteKindIcon(note = {}) {
+  if (normalizeNoteKind(note?.noteKind) === "code") return "</>";
+  return note.type === "link" ? "🔗" : "🗒️";
+}
+
+function buildCodeLanguageBadgeLabel(value = "") {
+  const language = normalizeCodeLanguage(value);
+  if (language === "css") return "CSS";
+  if (language === "html") return "HTML";
+  if (language === "js") return "JS";
+  return "CODIGO";
+}
+
+function escapeSnippetStyleText(value = "") {
+  return String(value || "").replace(/<\/style/gi, "<\\/style");
+}
+
+function resolveSnippetPreviewHtmlValue(value = "", language = "general") {
+  const safe = String(value || "").trim();
+  return safe || (normalizeCodeLanguage(language) ? SNIPPET_PREVIEW_PLACEHOLDER : "");
+}
+
+function buildSnippetPreviewCss(code = "", language = "general") {
+  if (normalizeCodeLanguage(language) !== "css") return "";
+  const safeCode = escapeSnippetStyleText(String(code || "").trim());
+  if (!safeCode) return "";
+  if (/[{}]/.test(safeCode)) return safeCode;
+  return `.demo-target {\n${safeCode}\n}`;
+}
+
+function escapeAttributeSelector(value = "") {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(String(value || ""));
+  }
+  return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function buildSnippetPreviewSrcdoc(note = {}, overrides = {}) {
+  if (normalizeNoteKind(note?.noteKind) !== "code") return "";
+
+  const language = normalizeCodeLanguage(overrides?.codeLanguage ?? note?.codeLanguage);
+  const code = String(overrides?.code ?? note?.code ?? "").trim();
+  const previewId = String(note?.id || overrides?.id || "snippet-preview").trim() || "snippet-preview";
+  const cssRules = buildSnippetPreviewCss(code, language);
+  const previewMarkup = normalizeCodeLanguage(language) === "css"
+    ? SNIPPET_PREVIEW_PLACEHOLDER
+    : '<div class="demo-target">Preview no disponible para este lenguaje.</div>';
+
+  return `
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: transparent;
+      color: #eff6ff;
+      font: 14px/1.4 ui-sans-serif, system-ui, sans-serif;
+    }
+    .preview-wrap {
+      padding: 12px;
+    }
+    .demo-target {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.06);
+      color: inherit;
+      padding: 12px 14px;
+    }
+    ${cssRules}
+  </style>
+</head>
+<body>
+  <div class="preview-wrap" data-snippet-preview-id="${escapeHtml(previewId)}">
+    ${previewMarkup}
+  </div>
+</body>
+</html>`.trim();
+}
+
+function buildSnippetPreviewMarkup(note = {}) {
+  const noteId = String(note?.id || "").trim();
+  if (!noteId) return "";
+
+  return `
+    <div class="notes-snippet-preview-shell" data-snippet-preview-id="${escapeHtml(noteId)}">
+      <iframe
+        class="notes-snippet-preview-frame"
+        sandbox
+        loading="lazy"
+        referrerpolicy="no-referrer"
+        data-snippet-preview-frame="${escapeHtml(noteId)}"
+        title="${escapeHtml(`Preview de ${note.title || "snippet"}`)}"
+      ></iframe>
+    </div>
+  `;
+}
+
+function buildSnippetMarkup(note = {}) {
+  if (normalizeNoteKind(note?.noteKind) !== "code") return "";
+
+  const code = String(note?.code || "").trim();
+  const languageLabel = buildCodeLanguageBadgeLabel(note?.codeLanguage);
+  const isExpanded = expandedSnippetNotes.has(note.id);
+  if (!code) return "";
+
+  return `
+    <div class="notes-snippet-block${isExpanded ? " is-expanded" : " is-collapsed"}">
+      <div class="notes-snippet-tools">
+        <span class="notes-snippet-language">${escapeHtml(languageLabel)}</span>
+        <button class="btn ghost btn-compact notes-snippet-toggle" type="button" data-act="toggle-note-snippet" data-note-id="${escapeHtml(note.id)}">${isExpanded ? "Plegar" : "Mostrar codigo"}</button>
+      </div>
+      <div class="notes-snippet-body${isExpanded ? "" : " hidden"}" data-snippet-body="${escapeHtml(note.id)}">
+        <textarea class="notes-snippet-code" data-snippet-editor="${escapeHtml(note.id)}" spellcheck="false">${escapeHtml(code)}</textarea>
+        <div class="notes-snippet-actions">
+          <button class="btn ghost btn-compact notes-snippet-copy" type="button" data-act="copy-note-code" data-note-id="${escapeHtml(note.id)}">Copiar codigo</button>
+          <button class="btn primary btn-compact notes-snippet-save" type="button" data-act="save-note-code" data-note-id="${escapeHtml(note.id)}">Guardar codigo</button>
+        </div>
+        ${buildSnippetPreviewMarkup(note)}
+      </div>
+    </div>
+  `;
+}
+
+function findSnippetPreviewFrame(noteId = "", root = document) {
+  const safeNoteId = String(noteId || "").trim();
+  if (!safeNoteId || !root?.querySelector) return null;
+  return root.querySelector(`[data-snippet-preview-frame="${escapeAttributeSelector(safeNoteId)}"]`);
+}
+
+function syncSnippetPreviewFrame(note = {}, overrides = {}, root = document) {
+  const safeNoteId = String(note?.id || overrides?.id || "").trim();
+  const css = String(overrides?.code ?? note?.code ?? "");
+  const frame = findSnippetPreviewFrame(safeNoteId, root);
+  const srcdoc = buildSnippetPreviewSrcdoc(note, overrides);
+
+  console.debug("[notes][snippet] css recibido", {
+    noteId: safeNoteId,
+    css,
+  });
+  console.debug("[notes][snippet] elemento preview encontrado", {
+    noteId: safeNoteId,
+    found: Boolean(frame),
+    usesIframe: true,
+  });
+
+  if (!frame || !srcdoc) return false;
+
+  frame.srcdoc = srcdoc;
+  console.debug("[notes][snippet] iframe srcdoc", {
+    noteId: safeNoteId,
+    srcdoc,
+  });
+  console.debug("[notes][snippet] render de preview completado", {
+    noteId: safeNoteId,
+  });
+  return true;
+}
+
+function syncSnippetPreviewFrames(root, notes = []) {
+  const source = Array.isArray(notes) ? notes : [];
+  source
+    .filter((note) => normalizeNoteKind(note?.noteKind) === "code")
+    .forEach((note) => {
+      syncSnippetPreviewFrame(note, {}, root);
+    });
+}
+
+async function copyTextToClipboard(text = "") {
+  const safeText = String(text || "");
+  if (!safeText) return false;
+
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(safeText);
+      return true;
+    }
+  } catch (_) {}
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = safeText;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    return copied;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function handleCopyNoteCode(note, trigger) {
+  const card = trigger?.closest?.("[data-note-id], .notes-item-card");
+  const editor = card?.querySelector?.(`[data-snippet-editor="${note?.id || ""}"]`);
+  const copied = await copyTextToClipboard(editor ? editor.value : (note?.code || ""));
+  if (!trigger) return;
+
+  const previous = trigger.textContent || "Copiar codigo";
+  trigger.textContent = copied ? "Copiado" : "No se pudo copiar";
+  trigger.disabled = true;
+  window.setTimeout(() => {
+    trigger.textContent = previous;
+    trigger.disabled = false;
+  }, 1400);
+}
+
+async function handleSaveNoteCode(note, trigger) {
+  const safeNoteId = String(note?.id || "").trim();
+  const editor = document.querySelector(`[data-snippet-editor="${safeNoteId}"]`);
+  const rawCode = String(editor?.value || "");
+  const nextCode = rawCode.trim();
+  if (!safeNoteId || !state.rootPath || !nextCode) {
+    if (trigger) {
+      trigger.textContent = "Codigo vacio";
+      trigger.disabled = true;
+      window.setTimeout(() => {
+        trigger.textContent = "Guardar codigo";
+        trigger.disabled = false;
+      }, 1400);
+    }
+    return;
+  }
+
+  const previousLabel = trigger?.textContent || "Guardar codigo";
+  if (trigger) {
+    trigger.textContent = "Guardando...";
+    trigger.disabled = true;
+  }
+
+  try {
+    await updateNote(state.rootPath, safeNoteId, {
+      ...note,
+      code: rawCode,
+      noteKind: "code",
+      previewHtml: resolveSnippetPreviewHtmlValue(note?.previewHtml, note?.codeLanguage),
+    });
+    note.code = rawCode;
+    note.previewHtml = resolveSnippetPreviewHtmlValue(note?.previewHtml, note?.codeLanguage);
+    expandedSnippetNotes.add(safeNoteId);
+    renderFolderDetail();
+  } catch (error) {
+    console.warn("[notes] no se pudo guardar el codigo inline", error);
+    if (trigger) {
+      trigger.textContent = "No se pudo";
+      window.setTimeout(() => {
+        trigger.textContent = previousLabel;
+        trigger.disabled = false;
+      }, 1600);
+    }
+    return;
+  }
+
+  if (trigger) {
+    trigger.textContent = "Guardado";
+    window.setTimeout(() => {
+      trigger.textContent = previousLabel;
+      trigger.disabled = false;
+    }, 1400);
+  }
 }
 
 function normalizeExternalUrl(rawUrl = "") {
@@ -1426,7 +1746,8 @@ function renderNoteCards(list, notes = []) {
 
   list.innerHTML = notes.map((note) => {
     const preview = notePreview(note);
-    const noteImageUrl = buildNoteImageRenderUrl(note);
+    const isCodeNote = normalizeNoteKind(note?.noteKind) === "code";
+    const noteImageUrl = isCodeNote ? "" : buildNoteImageRenderUrl(note);
     const tagPreview = resolveNoteTagPreview(note);
     const externalUrl = normalizeExternalUrl(note.url);
     const linkMarkup = note.type === "link"
@@ -1453,7 +1774,7 @@ function renderNoteCards(list, notes = []) {
       `
       : `
         <div class="notes-item-media is-placeholder">
-          <span class="notes-item-icon">${note.type === "link" ? "🔗" : "🗒️"}</span>
+          <span class="notes-item-icon">${escapeHtml(buildNoteKindIcon(note))}</span>
         </div>
       `;
 
@@ -1461,7 +1782,11 @@ function renderNoteCards(list, notes = []) {
     const cardStyle = buildNoteCardStyleAttribute(note);
     const ratingMarkup = buildRatingBadgeMarkup(note?.rating);
     const visitsMarkup = buildVisitsBadgeMarkup(note);
-    const metaMarkup = [ratingMarkup, visitsMarkup].filter(Boolean).join("");
+    const codeKindMarkup = isCodeNote
+      ? `<span class="notes-item-kind-badge">${escapeHtml(buildCodeLanguageBadgeLabel(note?.codeLanguage))}</span>`
+      : "";
+    const metaMarkup = [codeKindMarkup, ratingMarkup, visitsMarkup].filter(Boolean).join("");
+    const snippetMarkup = buildSnippetMarkup(note);
 
     return `
       <article class="${cardClass}"${cardStyle}>
@@ -1472,7 +1797,7 @@ function renderNoteCards(list, notes = []) {
             ${metaMarkup ? `<div class="notes-item-meta">${metaMarkup}</div>` : ""}
           </div>
           ${preview ? `<p class="notes-item-preview">${escapeHtml(preview)}</p>` : ""}
-          ${linkMarkup}
+          ${isCodeNote ? snippetMarkup : linkMarkup}
         </div>
         <div class="notes-item-actions">
           <button class="icon-btn icon-btn-large" type="button" data-act="edit-note" data-note-id="${escapeHtml(note.id)}">✏️</button>
@@ -1481,6 +1806,8 @@ function renderNoteCards(list, notes = []) {
       </article>
     `;
   }).join("");
+
+  syncSnippetPreviewFrames(list, notes);
 }
 
 function renderFolderDetail() {
@@ -2212,6 +2539,10 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-folder-id").value = folderId || "";
   $id("notes-note-title").value = note?.title || "";
   $id("notes-note-content").value = note?.content || "";
+  $id("notes-note-kind").value = normalizeNoteKind(note?.noteKind);
+  $id("notes-note-code").value = note?.code || "";
+  $id("notes-note-code-language").value = normalizeCodeLanguage(note?.codeLanguage);
+  $id("notes-note-preview-html").value = note?.previewHtml || "";
   $id("notes-note-category").value = note?.category || "";
   $id("notes-note-category-select").value = note?.category || "";
   $id("notes-note-tags").value = (note?.tags || []).join(", ");
@@ -2219,7 +2550,7 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-rating").value = note?.rating === null || note?.rating === undefined ? "" : String(note.rating);
   $id("notes-note-is-link").checked = note?.type === "link";
   $id("notes-note-url").value = note?.url || "";
-  $id("notes-note-url-wrap")?.classList.toggle("hidden", note?.type !== "link");
+  updateNoteEditorMode(note?.noteKind);
   $id("notes-note-form-error").textContent = "";
   $id("notes-note-modal-title").textContent = note ? "Editar nota" : "Nueva nota";
   updateNoteRatingPreview();
@@ -2496,9 +2827,15 @@ function bindNoteModalEvents() {
   const tagImageInput = $id("notes-note-tag-image-file");
   const tagsTextInput = $id("notes-note-tags");
   const ratingSelect = $id("notes-note-rating");
+  const noteKindSelect = $id("notes-note-kind");
 
   isLinkInput?.addEventListener("change", () => {
-    $id("notes-note-url-wrap")?.classList.toggle("hidden", !isLinkInput.checked);
+    updateNoteLinkDependentFields(isLinkInput.checked);
+  });
+
+  noteKindSelect?.addEventListener("change", (event) => {
+    updateNoteEditorMode(event.target?.value);
+    $id("notes-note-form-error").textContent = "";
   });
 
   $id("notes-note-image-camera")?.addEventListener("click", () => openNoteImagePicker("camera"));
@@ -2569,12 +2906,16 @@ function bindNoteModalEvents() {
       || "",
     ).trim();
     const title = $id("notes-note-title").value.trim();
+    const noteKind = normalizeNoteKind($id("notes-note-kind")?.value);
     const content = $id("notes-note-content").value.trim();
+    const code = $id("notes-note-code").value.trim();
+    const codeLanguage = normalizeCodeLanguage($id("notes-note-code-language")?.value);
+    const previewHtml = $id("notes-note-preview-html").value.trim();
     const category = $id("notes-note-category").value.trim();
     const tagsInput = $id("notes-note-tags").value.trim();
     const tags = parseTagList(tagsInput);
     const rating = normalizeNoteRatingValue(ratingSelect?.value);
-    const isLink = $id("notes-note-is-link").checked;
+    const isLink = noteKind !== "code" && $id("notes-note-is-link").checked;
     const url = $id("notes-note-url").value.trim();
     const errorField = $id("notes-note-form-error");
     const submitButton = $id("notes-note-form")?.querySelector?.("button[type='submit']");
@@ -2597,6 +2938,11 @@ function bindNoteModalEvents() {
       $id("notes-note-folder-select")?.focus();
       return;
     }
+    if (noteKind === "code" && !code) {
+      errorField.textContent = "Pega codigo para guardar el snippet.";
+      $id("notes-note-code")?.focus();
+      return;
+    }
     if (isLink && !url) {
       errorField.textContent = "Introduce una URL para la nota tipo link.";
       return;
@@ -2606,12 +2952,16 @@ function bindNoteModalEvents() {
     const payload = {
       folderId,
       title,
-      content,
+      content: noteKind === "code" ? "" : content,
+      code: noteKind === "code" ? code : "",
+      noteKind,
+      codeLanguage: noteKind === "code" ? codeLanguage : "general",
+      previewHtml: noteKind === "code" ? resolveSnippetPreviewHtmlValue(previewHtml, codeLanguage) : "",
       category,
       tags,
       rating,
-      type: isLink ? "link" : "note",
-      url,
+      type: noteKind === "code" ? "note" : (isLink ? "link" : "note"),
+      url: noteKind === "code" ? "" : url,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       imageUrl: current?.imageUrl || "",
@@ -2969,6 +3319,29 @@ function bindUiEvents() {
     const note = state.notes.find((row) => row.id === noteId);
     if (!note) return;
 
+    if (action === "toggle-note-snippet") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (expandedSnippetNotes.has(note.id)) expandedSnippetNotes.delete(note.id);
+      else expandedSnippetNotes.add(note.id);
+      renderFolderDetail();
+      return;
+    }
+
+    if (action === "copy-note-code") {
+      event.preventDefault();
+      event.stopPropagation();
+      await handleCopyNoteCode(note, target);
+      return;
+    }
+
+    if (action === "save-note-code") {
+      event.preventDefault();
+      event.stopPropagation();
+      await handleSaveNoteCode(note, target);
+      return;
+    }
+
     if (action === "edit-note") {
       openNoteModal(note);
       return;
@@ -2976,6 +3349,19 @@ function bindUiEvents() {
     if (action === "delete-note") {
       await handleNoteDelete(note);
     }
+  });
+
+  $id("notes-cards-list")?.addEventListener("input", (event) => {
+    const editor = event.target?.closest?.("[data-snippet-editor]");
+    if (!editor) return;
+
+    const noteId = String(editor.dataset.snippetEditor || "").trim();
+    const note = state.notes.find((row) => row.id === noteId);
+    if (!note) return;
+
+    syncSnippetPreviewFrame(note, {
+      code: editor.value,
+    }, $id("notes-cards-list"));
   });
 
   $id("notes-reminders-list")?.addEventListener("click", async (event) => {

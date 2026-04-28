@@ -4878,6 +4878,7 @@ div#macros-inputs.macro-manual-macro-grid{
 
 
 /* #region MANTENER */
+/* #region MODALES */
 
 /* #region modal producto */
 #macro-product-grams {
@@ -4919,6 +4920,32 @@ div#macros-inputs.macro-manual-macro-grid{
   grid-template-columns: 1fr 1fr 1fr;
 }
 /* #endregion modal producto */
+
+
+/* #endregion */
+
+/* #region VENTANA RECETAS */
+
+  /* KPIS */
+  .stats-cards.recipes-stats-cards {
+    border-top: 1px grey solid;
+    border-bottom: 1px grey solid;
+    border-radius: 12px 12px 12px 12px; 
+    padding: 6px 0;
+  }
+  #stat-card-receta, #stat-card-products, #stat-card-cost, #stat-card-kcal {
+    background: none;
+    border: none;
+  }
+
+  .stat-label{
+    font-size: 14px !important;
+    color: black !important;
+    -webkit-text-stroke: 1px yellow;
+  }
+
+/* #endregion */
+
 /* #endregion MANTENER */
 
 

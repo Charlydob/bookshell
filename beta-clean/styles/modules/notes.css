@@ -464,6 +464,94 @@
   text-shadow: 0 1px 10px rgba(0, 0, 0, 0.36);
 }
 
+.notes-item-kind-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(117, 255, 190, 0.12);
+  border: 1px solid rgba(117, 255, 190, 0.24);
+  color: #b9ffd7;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.notes-snippet-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.notes-snippet-body {
+  display: grid;
+  gap: 10px;
+}
+
+.notes-snippet-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.notes-snippet-language {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(191, 247, 218, 0.82);
+}
+
+.notes-snippet-copy {
+  min-height: 32px;
+}
+
+.notes-snippet-toggle,
+.notes-snippet-save {
+  min-height: 32px;
+}
+
+.notes-snippet-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.notes-snippet-code {
+  display: block;
+  width: 100%;
+  min-height: 152px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(5, 8, 14, 0.74);
+  color: #ebf5ff;
+  font: 12px/1.55 "Cascadia Code", "Fira Code", Consolas, monospace;
+  white-space: pre;
+  overflow: auto;
+  resize: vertical;
+}
+
+.notes-snippet-preview-shell {
+  overflow: hidden;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(7, 11, 18, 0.72);
+}
+
+.notes-snippet-preview-frame {
+  display: block;
+  width: 100%;
+  min-height: 156px;
+  border: 0;
+  background: transparent;
+}
+
 .notes-rating-badge {
   display: inline-flex;
   align-items: center;
@@ -546,6 +634,25 @@
 
 .notes-toggle-field {
   margin-top: 14px;
+}
+
+.notes-code-textarea,
+.notes-code-preview-input {
+  width: 100%;
+  min-height: 0;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(8, 11, 18, 0.92);
+  color: var(--txt);
+  padding: 12px 14px;
+  resize: vertical;
+}
+
+.notes-code-textarea,
+.notes-code-preview-input,
+.notes-code-textarea::placeholder,
+.notes-code-preview-input::placeholder {
+  font: 13px/1.6 "Cascadia Code", "Fira Code", Consolas, monospace;
 }
 
 .notes-form-error {

@@ -75,6 +75,8 @@ function buildNoteText(note = {}) {
   const parts = [
     String(note?.title || "").trim(),
     String(note?.content || "").trim(),
+    String(note?.code || "").trim(),
+    String(note?.previewHtml || "").trim(),
   ];
 
   if (note?.type === "link") {
@@ -455,6 +457,7 @@ export function createInitialNotesState() {
 
 export function buildFolderStats(folders = [], notes = []) {
   const folderMap = createFolderMap(folders);
+  const childrenMap = buildChildrenMap(folders, folderMap);
   const noteCountByFolder = new Map();
   const childCountByFolder = new Map();
 
@@ -470,12 +473,28 @@ export function buildFolderStats(folders = [], notes = []) {
     childCountByFolder.set(parentId, (childCountByFolder.get(parentId) || 0) + 1);
   }
 
+  function countNotesDeep(folderId = "", visitedFolderIds = new Set()) {
+    const safeFolderId = normalizeId(folderId);
+    if (!safeFolderId || visitedFolderIds.has(safeFolderId)) return 0;
+
+    const nextVisited = new Set(visitedFolderIds);
+    nextVisited.add(safeFolderId);
+
+    const directNotesCount = Number(noteCountByFolder.get(safeFolderId) || 0);
+    const childFolders = childrenMap.get(safeFolderId) || [];
+
+    return childFolders.reduce(
+      (total, childFolder) => total + countNotesDeep(childFolder?.id, nextVisited),
+      directNotesCount,
+    );
+  }
+
   return [...folders]
     .sort(compareFolders)
     .map((folder) => ({
       ...folder,
       parentId: getSafeParentId(folder, folderMap),
-      notesCount: noteCountByFolder.get(folder.id) || 0,
+      notesCount: countNotesDeep(folder.id),
       childFoldersCount: childCountByFolder.get(folder.id) || 0,
     }));
 }

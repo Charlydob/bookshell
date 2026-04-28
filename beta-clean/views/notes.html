@@ -329,9 +329,40 @@
         </label>
 
         <label class="field">
+          <span class="field-label">Tipo de nota</span>
+          <select id="notes-note-kind" class="field-select">
+            <option value="text">Texto</option>
+            <option value="code">Codigo</option>
+          </select>
+        </label>
+
+        <label class="field" id="notes-note-content-wrap">
           <textarea id="notes-note-content" rows="5"></textarea>
         </label>
-        <label class="toggle-pill notes-toggle-field">
+
+        <div class="hidden" id="notes-note-code-wrap">
+          <label class="field">
+            <span class="field-label">Lenguaje</span>
+            <select id="notes-note-code-language" class="field-select">
+              <option value="general">General</option>
+              <option value="css">CSS</option>
+              <option value="html">HTML</option>
+              <option value="js">JS</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span class="field-label">Codigo</span>
+            <textarea id="notes-note-code" class="notes-code-textarea" rows="8" spellcheck="false"></textarea>
+          </label>
+
+          <label class="field">
+            <span class="field-label">HTML de preview (opcional)</span>
+            <textarea id="notes-note-preview-html" class="notes-code-preview-input" rows="4" spellcheck="false" placeholder="<button class=&quot;demo-target&quot;>Demo</button>"></textarea>
+          </label>
+        </div>
+
+        <label class="toggle-pill notes-toggle-field" id="notes-note-link-toggle-wrap">
           <input id="notes-note-is-link" type="checkbox" />
           <span>Es link</span>
         </label>
@@ -342,7 +373,7 @@
         </label>
 
         <div class="field notes-photo-field">
-          <div class="notes-photo-wrap">
+          <div class="notes-photo-wrap" id="notes-note-photo-wrap">
             <div class="notes-photo-preview-wrap">
               <img id="notes-note-image-preview" class="notes-photo-preview hidden" alt="Foto de la nota" />
               <div class="notes-photo-placeholder" id="notes-note-image-placeholder">🖼️</div>

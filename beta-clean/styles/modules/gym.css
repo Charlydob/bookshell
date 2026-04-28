@@ -1486,14 +1486,41 @@ button.gym-calendar-day {
 
 
 /* #region MANTENER */
+/* #region MAIN PAGE */
 
+/* #region panel historial */
+
+.gym-history-card {
+  background: linear-gradient(135deg, #f7b4416c, #f7b441b5);
+  border: 2px black solid;
+  border-radius: 11px;
+    box-shadow: 0 1px 24px rgba(0, 0, 0, 0.668);
+}
+
+#panel-historial{
+  border: none;
+  background: none;
+}
+.gym-history-section{
+  border: none;
+  background: none;
+}
+.gym-history-group.gym-card {
+  border-radius: 10px;
+}
+/* #endregion */
+
+
+
+/* #endregion */
 /* #region Estadisticas */
-/* #endregion KPIs estadisticas */
+/*  #region KPIs estadisticas */
   #gym-stats-kpis{
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   }
 /* #endregion  */
 /* #endregion Estadisticas */
+
 
 /* #endregion MANTENER */

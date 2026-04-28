@@ -1,4 +1,4 @@
-import { buildTagDefinitionKey, normalizeTagLabel } from "../domain/tag-utils.js";
+import { buildTagDefinitionKey, normalizeTagLabel } from "../domain/tag-utils.js?v=2026-04-28-v1";
 
 function normalizeColor(value = "") {
   const safe = String(value || "").trim();
@@ -47,6 +47,15 @@ function normalizeNoteVisitsCount(value = 0) {
 function normalizeNoteVisitTimestamp(value = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+}
+
+function normalizeNoteKind(value = "") {
+  return String(value || "").trim().toLowerCase() === "code" ? "code" : "text";
+}
+
+function normalizeCodeLanguage(value = "") {
+  const safe = String(value || "").trim().toLowerCase();
+  return ["css", "html", "js", "general"].includes(safe) ? safe : "general";
 }
 
 function normalizeTagDefinitionLabel(value = "", fallback = "") {
@@ -157,11 +166,16 @@ export function mapFolderToDb(folder = {}) {
 
 export function mapNoteFromDb(id, value = {}) {
   const type = value?.type === "link" ? "link" : "note";
+  const noteKind = normalizeNoteKind(value?.noteKind);
   return {
     id: String(id || ""),
     folderId: String(value?.folderId || ""),
     title: String(value?.title || "").trim(),
     content: String(value?.content || "").trim(),
+    code: String(value?.code || "").trim(),
+    noteKind,
+    codeLanguage: normalizeCodeLanguage(value?.codeLanguage),
+    previewHtml: String(value?.previewHtml || "").trim(),
     createdAt: Number(value?.createdAt || Date.now()),
     updatedAt: Number(value?.updatedAt || Date.now()),
     type,
@@ -180,10 +194,15 @@ export function mapNoteFromDb(id, value = {}) {
 
 export function mapNoteToDb(note = {}) {
   const type = note?.type === "link" ? "link" : "note";
+  const noteKind = normalizeNoteKind(note?.noteKind);
   return {
     folderId: String(note?.folderId || ""),
     title: String(note?.title || "").trim(),
-    content: String(note?.content || "").trim(),
+    content: noteKind === "code" ? "" : String(note?.content || "").trim(),
+    code: noteKind === "code" ? String(note?.code || "").trim() : "",
+    noteKind,
+    codeLanguage: noteKind === "code" ? normalizeCodeLanguage(note?.codeLanguage) : "general",
+    previewHtml: noteKind === "code" ? String(note?.previewHtml || "").trim() : "",
     createdAt: Number(note?.createdAt || Date.now()),
     updatedAt: Number(note?.updatedAt || Date.now()),
     type,

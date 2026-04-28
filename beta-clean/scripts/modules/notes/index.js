@@ -1,10 +1,11 @@
 let runtimeModule = null;
 let runtimePromise = null;
+const NOTES_RUNTIME_VERSION = "2026-04-28-v1";
 
 async function ensureRuntime() {
   if (runtimeModule) return runtimeModule;
   if (!runtimePromise) {
-    runtimePromise = import("./runtime.js")
+    runtimePromise = import(`./runtime.js?v=${NOTES_RUNTIME_VERSION}`)
       .then((mod) => {
         runtimeModule = mod;
         return mod;

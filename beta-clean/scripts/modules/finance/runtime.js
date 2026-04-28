@@ -30,6 +30,7 @@ let financeRenderPromise = null;
 let financeRenderQueued = false;
 let financePendingPreserveUi = true;
 const FINANCE_GOALS_SORT_MODE_KEY = 'financeGoalsSortMode';
+const PRODUCTS_DRAFT_LOCAL_KEY = 'bookshell_finance_products_draft_v1';
 const financeDerivedCache = {
   txList: { balanceRef: null, financePath: '', rows: [] },
   recurring: { recurringRef: null, monthMap: new Map() },
@@ -457,6 +458,45 @@ function syncProductsMoneyFieldDisplay(fieldEl, value) {
   fieldEl.dataset.moneyLastValid = String(safeValue.toFixed(2));
   fieldEl.dataset.value = String(safeValue.toFixed(2));
   if (document.activeElement !== fieldEl) fieldEl.value = fmtCurrency(safeValue);
+}
+
+function normalizeReceiptLine(rawLine = {}, fallback = {}) {
+  const base = {
+    ...fallback,
+    ...(rawLine || {}),
+  };
+  const qty = Math.max(0.01, Number(base.qty || 1));
+  const estimatedPrice = normalizeProductPositiveNumber(base.estimatedPrice, 0);
+  const actualPrice = normalizeProductPositiveNumber(base.actualPrice, estimatedPrice);
+  return {
+    ...base,
+    qty,
+    estimatedPrice,
+    actualPrice,
+  };
+}
+
+function calculateLineTotals(line = {}) {
+  const normalized = normalizeReceiptLine(line);
+  const estimatedSubtotal = normalized.qty * normalized.estimatedPrice;
+  const actualSubtotal = normalized.qty * normalized.actualPrice;
+  const diffSubtotal = actualSubtotal - estimatedSubtotal;
+  return {
+    ...normalized,
+    estimatedSubtotal,
+    actualSubtotal,
+    diffSubtotal,
+  };
+}
+
+function calculateReceiptTotals(lines = []) {
+  return (Array.isArray(lines) ? lines : []).reduce((acc, line) => {
+    const totals = calculateLineTotals(line);
+    acc.estimatedTotal += Number(totals.estimatedSubtotal || 0);
+    acc.actualTotal += Number(totals.actualSubtotal || 0);
+    acc.diffTotal += Number(totals.diffSubtotal || 0);
+    return acc;
+  }, { estimatedTotal: 0, actualTotal: 0, diffTotal: 0 });
 }
 function clampRatio(value, fallback = 1) {
   const ratio = Number(value);
@@ -2145,6 +2185,28 @@ function createEmptyProductsList(seed = {}, { temporary = false } = {}) {
   return ensureProductsListTickets(list);
 }
 
+function readLocalProductsDraft() {
+  try {
+    const raw = localStorage.getItem(PRODUCTS_DRAFT_LOCAL_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return normalizeProductsHubList('__draft__', { ...parsed, id: '__draft__' });
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeLocalProductsDraft(list = null) {
+  try {
+    if (!list || String(list.id || '') !== '__draft__') {
+      localStorage.removeItem(PRODUCTS_DRAFT_LOCAL_KEY);
+      return;
+    }
+    localStorage.setItem(PRODUCTS_DRAFT_LOCAL_KEY, JSON.stringify(list));
+  } catch (_) {}
+}
+
 function resolveActiveProductsList() {
   const activeId = String(state.productsHub?.settings?.activeListId || '').trim();
   if (activeId && state.productsHub?.lists?.[activeId]) {
@@ -2153,12 +2215,15 @@ function resolveActiveProductsList() {
   if (state.productsHub?.lists?.__draft__) {
     return ensureProductsListTickets(cloneProductsListRecord(state.productsHub.lists.__draft__));
   }
+  const localDraft = readLocalProductsDraft();
+  if (localDraft) return ensureProductsListTickets(cloneProductsListRecord(localDraft));
   return createEmptyProductsList({}, { temporary: true });
 }
 
 function syncProductsDraftListLocal(list = null) {
   if (!list) return null;
   if (String(list.id || '') === '__draft__') {
+    writeLocalProductsDraft(list);
     state.productsHub = {
       ...(state.productsHub || normalizeProductsHub()),
       lists: {
@@ -2170,6 +2235,7 @@ function syncProductsDraftListLocal(list = null) {
   }
   const nextLists = { ...(state.productsHub?.lists || {}) };
   delete nextLists.__draft__;
+  writeLocalProductsDraft(null);
   nextLists[list.id] = cloneProductsListRecord(list);
   state.productsHub = {
     ...(state.productsHub || normalizeProductsHub()),
@@ -2764,14 +2830,15 @@ function buildProductsViewModel(cfg = {}) {
         normalizeProductPositiveNumber(linkedProduct?.estimatedPrice, resolveProductsCatalogPrice(linkedProduct || {})),
       );
       const actualPrice = normalizeProductPositiveNumber(line.actualPrice, estimatedPrice);
+      const computedLine = calculateLineTotals({ ...line, estimatedPrice, actualPrice });
       return {
         ...line,
         name: normalizeFoodName(line.name || linkedProduct?.canonicalName || linkedProduct?.displayName || linkedProduct?.name || line.productId || 'Producto'),
         unit: normalizeProductUnit(line.unit || linkedProduct?.unit || 'ud'),
         estimatedPrice,
         actualPrice,
-        estimatedSubtotal: Math.max(1, Number(line.qty || 1)) * estimatedPrice,
-        actualSubtotal: Math.max(1, Number(line.qty || 1)) * actualPrice,
+        estimatedSubtotal: computedLine.estimatedSubtotal,
+        actualSubtotal: computedLine.actualSubtotal,
         linkedProduct,
       };
     });
@@ -2814,7 +2881,7 @@ function buildProductsViewModel(cfg = {}) {
   const recentTickets = Object.values(state.productsHub?.tickets || {})
     .map((ticket) => ({
       ...ticket,
-      actualTotal: normalizeProductPositiveNumber(ticket.actualTotal, Object.values(ticket.lines || {}).reduce((sum, line) => sum + (Math.max(1, Number(line.qty || 1)) * normalizeProductPositiveNumber(line.actualPrice || line.estimatedPrice, 0)), 0)),
+      actualTotal: normalizeProductPositiveNumber(ticket.actualTotal, Object.values(ticket.lines || {}).reduce((sum, line) => sum + (Math.max(0.01, Number(line.qty || 1)) * normalizeProductPositiveNumber(line.actualPrice || line.estimatedPrice, 0)), 0)),
       lineCount: Object.keys(ticket.lines || {}).length,
       confirmedAt: normalizeProductNumber(ticket.confirmedAt, normalizeProductNumber(ticket.updatedAt, parseDayKey(String(ticket.dateISO || '')))),
     }))
@@ -3208,7 +3275,8 @@ function renderProductsReceiptLineRow(line, model) {
   const listId = String(model?.activeList?.id || '__draft__');
   const selection = state.foodProductsView?.receiptSelections?.[listId] || {};
   const isSelected = !!selection[lineId];
-  const lineDiffMeta = resolveProductsReceiptDiffMeta(Number(line.actualSubtotal || 0) - Number(line.estimatedSubtotal || 0));
+  const normalized = calculateLineTotals(line);
+  const lineDiffMeta = resolveProductsReceiptDiffMeta(normalized.diffSubtotal);
   return `
     <div class="productsWorkbench__receiptRow ${isSelected ? 'is-selected' : ''}" data-products-receipt-row="${escapeHtml(lineId)}">
       <label class="productsWorkbench__receiptSelectWrap" aria-label="Seleccionar ${escapeHtml(line.name || 'producto')}">
@@ -3220,7 +3288,7 @@ function renderProductsReceiptLineRow(line, model) {
         min="0.01"
         step="0.01"
         inputmode="decimal"
-        value="${Number(line.qty || 1)}"
+        value="${Number(normalized.qty || 1)}"
         aria-label="Cantidad de ${escapeHtml(line.name || 'producto')}"
         data-products-receipt-qty="${escapeHtml(lineId)}" />
       <div class="productsWorkbench__receiptNameWrap">
@@ -3239,18 +3307,18 @@ function renderProductsReceiptLineRow(line, model) {
         class="productsWorkbench__receiptUnit food-control"
         type="text"
         inputmode="decimal"
-        value="${escapeHtml(fmtCurrency(line.estimatedSubtotal || 0))}"
+        value="${escapeHtml(fmtCurrency(normalized.estimatedPrice || 0))}"
         aria-label="Precio previsto de ${escapeHtml(line.name || 'producto')}"
-        data-money-last-valid="${escapeHtml(String(Number(line.estimatedSubtotal || 0).toFixed(2)))}"
+        data-money-last-valid="${escapeHtml(String(Number(normalized.estimatedPrice || 0).toFixed(2)))}"
         data-products-receipt-unit="${escapeHtml(lineId)}" />
       <div class="productsWorkbench__receiptTotalStack">
         <input
           class="productsWorkbench__receiptTotal food-control"
           type="text"
           inputmode="decimal"
-          value="${escapeHtml(fmtCurrency(line.actualSubtotal || 0))}"
+          value="${escapeHtml(fmtCurrency(normalized.actualPrice || 0))}"
           aria-label="Precio real de ${escapeHtml(line.name || 'producto')}"
-          data-money-last-valid="${escapeHtml(String(Number(line.actualSubtotal || 0).toFixed(2)))}"
+          data-money-last-valid="${escapeHtml(String(Number(normalized.actualPrice || 0).toFixed(2)))}"
           data-products-receipt-total="${escapeHtml(lineId)}" />
         <small class="productsWorkbench__receiptLineDiff is-${lineDiffMeta.tone}" data-products-receipt-diff="${escapeHtml(lineId)}">${lineDiffMeta.label}</small>
       </div>
@@ -3827,8 +3895,8 @@ function renderProductsTicketRegistry(model) {
                 <div class="productsWorkbench__ticketRegistryLines">
                   ${Object.values(ticket.lines || {}).map((line) => `
                     <div class="productsWorkbench__ticketRegistryLine">
-                      <span>${Math.max(1, Number(line.qty || 1))} × ${escapeHtml(line.name || 'Producto')}</span>
-                      <strong>${fmtCurrency(Math.max(1, Number(line.qty || 1)) * Number(line.actualPrice || line.estimatedPrice || 0))}</strong>
+                      <span>${Math.max(0.01, Number(line.qty || 1))} × ${escapeHtml(line.name || 'Producto')}</span>
+                      <strong>${fmtCurrency(Math.max(0.01, Number(line.qty || 1)) * Number(line.actualPrice || line.estimatedPrice || 0))}</strong>
                     </div>
                   `).join('') || '<div class="productsWorkbench__emptyMini">Ticket sin líneas.</div>'}
                 </div>
@@ -4666,12 +4734,8 @@ function syncProductsReceiptLineToBacking(root = document, lineId = '') {
   const unitHidden = rowEl.querySelector(`[data-products-line-unit="${safeId}"]`);
   const baseLine = resolveActiveProductsList()?.lines?.[safeId] || {};
   const qty = Math.max(0.01, Number(productsDomValue(root, [`[data-products-receipt-qty="${safeId}"]`, `[data-products-line-qty="${safeId}"]`], baseLine.qty || 1) || baseLine.qty || 1));
-  const estimatedSubtotalFallback = Math.max(0, normalizeProductPositiveNumber(baseLine.estimatedPrice, 0) * qty);
-  const actualSubtotalFallback = Math.max(0, normalizeProductPositiveNumber(baseLine.actualPrice, baseLine.estimatedPrice || 0) * qty);
-  const estimatedSubtotal = parseProductsReceiptMoney(receiptUnit?.value, estimatedSubtotalFallback);
-  const actualSubtotal = parseProductsReceiptMoney(receiptTotal?.value, actualSubtotalFallback);
-  const estimatedPrice = qty > 0 ? estimatedSubtotal / qty : 0;
-  const actualPrice = qty > 0 ? actualSubtotal / qty : 0;
+  const estimatedPrice = parseProductsReceiptMoney(receiptUnit?.value, normalizeProductPositiveNumber(baseLine.estimatedPrice, 0));
+  const actualPrice = parseProductsReceiptMoney(receiptTotal?.value, normalizeProductPositiveNumber(baseLine.actualPrice, baseLine.estimatedPrice || 0));
   if (receiptQty && qtyInput && document.activeElement !== qtyInput) qtyInput.value = String(qty);
   if (actualInput && document.activeElement !== actualInput) actualInput.value = actualPrice ? String(Number(actualPrice.toFixed(6))) : '';
   if (estimateInput && document.activeElement !== estimateInput) estimateInput.value = estimatedPrice ? String(Number(estimatedPrice.toFixed(6))) : '';
@@ -4714,18 +4778,18 @@ function readProductsListDraftFromDom(root = document) {
     syncProductsReceiptLineToBacking(root, lineId);
     const receiptName = productsDomValue(root, [`[data-products-receipt-name="${lineId}"]`], '');
     const qty = Math.max(0.01, Number(productsDomValue(root, [`[data-products-receipt-qty="${lineId}"]`], rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || baseLine.qty || 1) || rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || baseLine.qty || 1));
-    const estimatedSubtotalFallback = Math.max(0, normalizeProductPositiveNumber(baseLine.estimatedPrice, Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || 0)) * qty);
-    const actualSubtotalFallback = Math.max(0, normalizeProductPositiveNumber(baseLine.actualPrice, Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || baseLine.estimatedPrice || 0)) * qty);
-    const estimatedSubtotal = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-unit="${lineId}"]`], estimatedSubtotalFallback), estimatedSubtotalFallback);
-    const actualSubtotal = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-total="${lineId}"]`], actualSubtotalFallback), actualSubtotalFallback);
+    const estimatedPriceFallback = Math.max(0, normalizeProductPositiveNumber(baseLine.estimatedPrice, Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || 0)));
+    const actualPriceFallback = Math.max(0, normalizeProductPositiveNumber(baseLine.actualPrice, Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || baseLine.estimatedPrice || 0)));
+    const estimatedPrice = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-unit="${lineId}"]`], estimatedPriceFallback), estimatedPriceFallback);
+    const actualPrice = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-total="${lineId}"]`], actualPriceFallback), actualPriceFallback);
     return [lineId, {
       id: lineId,
       productId: String(rowEl.querySelector(`[data-products-line-product-id="${lineId}"]`)?.value || baseList.lines?.[lineId]?.productId || '').trim(),
       name: normalizeFoodName(receiptName || baseList.lines?.[lineId]?.name || rowEl.querySelector('.productsWorkbench__lineMain strong')?.textContent || ''),
       qty,
       unit: normalizeProductUnit(rowEl.querySelector(`[data-products-line-unit="${lineId}"]`)?.value || baseList.lines?.[lineId]?.unit || 'ud'),
-      estimatedPrice: qty > 0 ? estimatedSubtotal / qty : 0,
-      actualPrice: qty > 0 ? actualSubtotal / qty : 0,
+      estimatedPrice,
+      actualPrice,
       store: normalizeFoodName(baseList.lines?.[lineId]?.store || nextList.store || ''),
       checked: rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false,
       ticketId: lineTicketId,
@@ -4744,10 +4808,8 @@ function syncProductsTicketComposerDom(root = document) {
   if (!formEl) return;
   const scope = formEl.closest('[data-products-workbench]') || root;
   const activeTicketId = String(formEl.dataset.productsActiveTicketId || '').trim();
-  let estimatedTotal = 0;
-  let actualTotal = 0;
-  let activeTicketEstimatedTotal = 0;
-  let activeTicketTotal = 0;
+  const lineTotals = [];
+  const activeTicketLineTotals = [];
   formEl.querySelectorAll('[data-products-line-row]').forEach((rowEl) => {
     const lineId = String(rowEl.dataset.productsLineRow || '').trim();
     if (!lineId) return;
@@ -4755,18 +4817,19 @@ function syncProductsTicketComposerDom(root = document) {
     const qty = Math.max(0.01, Number(productsDomValue(root, [`[data-products-receipt-qty="${lineId}"]`, `[data-products-line-qty="${lineId}"]`], 1)));
     const estimatedPriceFallback = Math.max(0, Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || 0));
     const actualPriceFallback = Math.max(0, Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || estimatedPriceFallback));
-    const estimatedSubtotalParsed = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-unit="${lineId}"]`], ''), NaN, { blankAsNaN: true });
-    const actualSubtotalParsed = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-total="${lineId}"]`], ''), NaN, { blankAsNaN: true });
+    const estimatedPriceParsed = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-unit="${lineId}"]`], ''), NaN, { blankAsNaN: true });
+    const actualPriceParsed = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-total="${lineId}"]`], ''), NaN, { blankAsNaN: true });
     const isChecked = rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false;
-    const estimatedSubtotal = Number.isFinite(estimatedSubtotalParsed) ? estimatedSubtotalParsed : (qty * estimatedPriceFallback);
-    const actualSubtotal = Number.isFinite(actualSubtotalParsed) ? actualSubtotalParsed : (qty * actualPriceFallback);
+    const estimatedPrice = Number.isFinite(estimatedPriceParsed) ? estimatedPriceParsed : estimatedPriceFallback;
+    const actualPrice = Number.isFinite(actualPriceParsed) ? actualPriceParsed : actualPriceFallback;
+    const computedLine = calculateLineTotals({ qty, estimatedPrice, actualPrice });
+    const estimatedSubtotal = computedLine.estimatedSubtotal;
+    const actualSubtotal = computedLine.actualSubtotal;
     const rowTicketId = String(rowEl.querySelector(`[data-products-line-ticket-id="${lineId}"]`)?.value || '').trim();
-    estimatedTotal += estimatedSubtotal;
-    actualTotal += actualSubtotal;
     if (rowTicketId && rowTicketId === activeTicketId) {
-      activeTicketEstimatedTotal += estimatedSubtotal;
-      activeTicketTotal += actualSubtotal;
+      activeTicketLineTotals.push(computedLine);
     }
+    lineTotals.push(computedLine);
     rowEl.classList.toggle('is-unchecked', !isChecked);
     rowEl.classList.toggle('is-checked', isChecked);
     const estimatedNode = root.querySelector(`[data-products-line-est-total="${lineId}"]`);
@@ -4780,8 +4843,8 @@ function syncProductsTicketComposerDom(root = document) {
     if (estimatedNode) estimatedNode.textContent = fmtCurrency(estimatedSubtotal);
     if (actualNode) actualNode.textContent = fmtCurrency(actualSubtotal);
     if (receiptQty && document.activeElement !== receiptQty) receiptQty.value = String(qty);
-    syncProductsMoneyFieldDisplay(receiptUnit, estimatedSubtotal);
-    syncProductsMoneyFieldDisplay(receiptTotal, actualSubtotal);
+    syncProductsMoneyFieldDisplay(receiptUnit, estimatedPrice);
+    syncProductsMoneyFieldDisplay(receiptTotal, actualPrice);
     if (receiptDiff) {
       receiptDiff.textContent = lineDiffMeta.label;
       receiptDiff.classList.toggle('is-expensive', lineDiffMeta.tone === 'expensive');
@@ -4790,6 +4853,8 @@ function syncProductsTicketComposerDom(root = document) {
     }
     if (quickQty && document.activeElement !== quickQty) quickQty.value = String(qty);
   });
+  const receiptTotals = calculateReceiptTotals(lineTotals);
+  const activeTicketTotals = calculateReceiptTotals(activeTicketLineTotals);
   const addQty = root.querySelector('[data-products-receipt-add-qty]');
   const addUnit = root.querySelector('[data-products-receipt-add-unit]');
   const addTotal = root.querySelector('[data-products-receipt-add-total]');
@@ -4809,11 +4874,11 @@ function syncProductsTicketComposerDom(root = document) {
   if (receiptStore && document.activeElement !== receiptStore && storeValue && receiptStore.value !== storeValue) receiptStore.value = storeValue;
   if (receiptPayment && document.activeElement !== receiptPayment && receiptPayment.value !== accountId) receiptPayment.value = accountId;
   if (receiptDate && document.activeElement !== receiptDate && !receiptDate.value) receiptDate.value = dayKeyFromTs(nowTs());
-  if (listTotal) listTotal.textContent = fmtCurrency(activeTicketEstimatedTotal);
-  if (ticketTotal) ticketTotal.textContent = fmtCurrency(actualTotal);
-  if (ticketTotalFooter) ticketTotalFooter.textContent = fmtCurrency(activeTicketTotal);
+  if (listTotal) listTotal.textContent = fmtCurrency(activeTicketTotals.estimatedTotal);
+  if (ticketTotal) ticketTotal.textContent = fmtCurrency(receiptTotals.actualTotal);
+  if (ticketTotalFooter) ticketTotalFooter.textContent = fmtCurrency(activeTicketTotals.actualTotal);
   if (ticketDiffRow) {
-    const diffMeta = resolveProductsReceiptDiffMeta(activeTicketTotal - activeTicketEstimatedTotal);
+    const diffMeta = resolveProductsReceiptDiffMeta(activeTicketTotals.diffTotal);
     if (ticketDiff) ticketDiff.textContent = diffMeta.label;
     ticketDiffRow.classList.toggle('is-expensive', diffMeta.tone === 'expensive');
     ticketDiffRow.classList.toggle('is-cheap', diffMeta.tone === 'cheap');
@@ -4829,6 +4894,34 @@ function syncProductsTicketComposerDom(root = document) {
   const moveBtn = moveActions?.querySelector?.('[data-products-move-selected-ticket]');
   if (moveActions) moveActions.hidden = !selectedCount;
   if (moveBtn) moveBtn.textContent = `Mover a nuevo ticket (${selectedCount})`;
+}
+
+async function updateReceiptLine(ticketId = '', lineId = '', patch = {}, options = {}) {
+  const safeLineId = String(lineId || '').trim();
+  if (!safeLineId) return null;
+  const root = options.root || document;
+  const draft = ensureProductsListTickets(readProductsListDraftFromDom(root));
+  const currentLine = draft.lines?.[safeLineId];
+  if (!currentLine) return null;
+  const targetTicketId = String(ticketId || currentLine.ticketId || draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+  const nextLine = calculateLineTotals(normalizeReceiptLine({ ...currentLine, ...patch, ticketId: targetTicketId }, currentLine));
+  draft.lines[safeLineId] = {
+    ...currentLine,
+    ...nextLine,
+    ticketId: targetTicketId,
+    updatedAt: nowTs(),
+  };
+  draft.updatedAt = nowTs();
+  const normalizedDraft = ensureProductsListTickets(draft);
+  if (normalizedDraft.id === '__draft__') {
+    syncProductsDraftListLocal(normalizedDraft);
+  } else if (options.persist !== false) {
+    await persistProductsListRecord(normalizedDraft, { activate: true });
+  } else {
+    syncProductsDraftListLocal(normalizedDraft);
+  }
+  syncProductsTicketComposerDom(root);
+  return normalizedDraft.lines[safeLineId];
 }
 
 async function persistProductsHubSettings(patch = {}) {
@@ -4854,6 +4947,7 @@ async function persistProductsListRecord(list = {}, { activate = false } = {}) {
     syncProductsDraftListLocal(normalized);
     return normalized;
   }
+  writeLocalProductsDraft(null);
   const updatesMap = {
     [productsHubPath(`lists/${normalized.id}`)]: normalized,
   };
@@ -5338,7 +5432,7 @@ async function reuseProductsTicketAsActiveList(ticketId = '') {
         id: lineId,
         productId: String(line.productId || '').trim(),
         name: normalizeFoodName(line.name || ''),
-        qty: Math.max(1, Number(line.qty || 1)),
+        qty: Math.max(0.01, Number(line.qty || 1)),
         unit: normalizeProductUnit(line.unit || 'ud'),
         estimatedPrice: normalizeProductPositiveNumber(line.actualPrice || line.estimatedPrice, 0),
         actualPrice: normalizeProductPositiveNumber(line.actualPrice || line.estimatedPrice, 0),
@@ -5392,7 +5486,7 @@ async function reuseProductsListAsActiveList(listId = '') {
 async function saveProductsPurchaseTransaction(list = {}) {
   const lines = Object.values(list.lines || {}).map((line) => ({
     ...line,
-    qty: Math.max(1, Number(line.qty || 1)),
+    qty: Math.max(0.01, Number(line.qty || 1)),
     estimatedPrice: normalizeProductPositiveNumber(line.estimatedPrice, 0),
     actualPrice: normalizeProductPositiveNumber(line.actualPrice, normalizeProductPositiveNumber(line.estimatedPrice, 0)),
   })).filter((line) => line.name);
@@ -5414,7 +5508,7 @@ async function saveProductsPurchaseTransaction(list = {}) {
     list.notes
     || `Compra ${list.store || ''}${ticketReference ? ` · ${ticketReference}` : ''}`,
   ) || 'Compra';
-  const totalAmount = lines.reduce((sum, line) => sum + (Number(line.actualPrice || 0) * Math.max(1, Number(line.qty || 1))), 0);
+  const totalAmount = lines.reduce((sum, line) => sum + (Number(line.actualPrice || 0) * Math.max(0.01, Number(line.qty || 1))), 0);
   if (!(totalAmount > 0)) {
     toast('El ticket debe tener importe real');
     return null;
@@ -5711,7 +5805,7 @@ function normalizeProductsHubLineMap(lines = {}) {
       id: safeId,
       productId: String(payload?.productId || payload?.foodId || '').trim(),
       name: name || normalizeFoodName(payload?.productId || safeId),
-      qty: Math.max(1, Number(payload?.qty || 1)),
+      qty: Math.max(0.01, Number(payload?.qty || 1)),
       unit: normalizeProductUnit(payload?.unit || 'ud'),
       estimatedPrice: normalizeProductPositiveNumber(payload?.estimatedPrice ?? payload?.plannedPrice ?? payload?.unitPrice ?? payload?.price, 0),
       actualPrice: normalizeProductPositiveNumber(payload?.actualPrice ?? payload?.finalPrice ?? payload?.estimatedPrice ?? payload?.unitPrice ?? payload?.price, 0),
@@ -13824,6 +13918,14 @@ view.addEventListener('focusin', (event) => {
     const fallback = parseProductsReceiptMoney(event.target.dataset.moneyLastValid, 0);
     const nextValue = parseProductsReceiptMoney(event.target.value, fallback);
     event.target.value = formatEditableEuro(nextValue);
+    event.target.select?.();
+    return;
+  }
+  if (event.target.matches('[data-products-receipt-qty], [data-products-receipt-add-qty]')) {
+    const raw = String(event.target.value || '').trim();
+    if (!raw || raw === '1' || raw === '1.00' || raw === '1,00') {
+      event.target.select?.();
+    }
   }
 }, evtOpts);
 
@@ -13856,9 +13958,10 @@ view.addEventListener('focusout', async (event) => {
     syncProductsMoneyFieldDisplay(event.target, finalValue);
     const lineId = String(event.target.dataset.productsReceiptUnit || event.target.dataset.productsReceiptTotal || '').trim();
     if (lineId) {
-      syncProductsReceiptLineToBacking(view, lineId);
-      syncProductsTicketComposerDom(view);
-      syncProductsDraftListLocal(readProductsListDraftFromDom(view));
+      const patch = event.target.matches('[data-products-receipt-unit]')
+        ? { estimatedPrice: finalValue }
+        : { actualPrice: finalValue };
+      await updateReceiptLine('', lineId, patch, { root: view, persist: true });
     } else {
       syncProductsTicketComposerDom(view);
     }
@@ -14060,9 +14163,7 @@ view.addEventListener('focusout', async (event) => {
         const lineId = String(event.target.dataset.productsReceiptName || '').trim();
         const productIdInput = view.querySelector(`[data-products-line-product-id="${lineId}"]`);
         if (productIdInput) productIdInput.value = '';
-        syncProductsReceiptLineToBacking(view, event.target.dataset.productsReceiptName);
-        syncProductsTicketComposerDom(view);
-        syncProductsDraftListLocal(readProductsListDraftFromDom(view));
+        await updateReceiptLine('', lineId, { name: normalizeFoodName(event.target.value || '') }, { root: view, persist: true });
       }
       return;
     }
@@ -14071,9 +14172,12 @@ view.addEventListener('focusout', async (event) => {
       return;
     }
     if (event.target.matches('[data-products-receipt-qty], [data-products-receipt-unit], [data-products-receipt-total]')) {
-      syncProductsReceiptLineToBacking(view, event.target.dataset.productsReceiptQty || event.target.dataset.productsReceiptUnit || event.target.dataset.productsReceiptTotal);
-      syncProductsTicketComposerDom(view);
-      syncProductsDraftListLocal(readProductsListDraftFromDom(view));
+      const lineId = String(event.target.dataset.productsReceiptQty || event.target.dataset.productsReceiptUnit || event.target.dataset.productsReceiptTotal || '').trim();
+      const patch = {};
+      if (event.target.matches('[data-products-receipt-qty]')) patch.qty = Math.max(0.01, Number(event.target.value || 1));
+      if (event.target.matches('[data-products-receipt-unit]')) patch.estimatedPrice = parseProductsReceiptMoney(event.target.value, 0);
+      if (event.target.matches('[data-products-receipt-total]')) patch.actualPrice = parseProductsReceiptMoney(event.target.value, 0);
+      await updateReceiptLine('', lineId, patch, { root: view, persist: true });
       return;
     }
     if (event.target.matches('[data-products-new-store-input]')) {

@@ -351,10 +351,23 @@
             </select>
           </label>
 
-          <label class="field">
+          <div class="field">
             <span class="field-label">Codigo</span>
-            <textarea id="notes-note-code" class="notes-code-textarea" rows="8" spellcheck="false"></textarea>
-          </label>
+            <div class="notes-snippet-editor-shell notes-snippet-editor-shell--modal" id="notes-note-code-editor-shell">
+              <div class="notes-snippet-editor-stage" id="notes-note-code-stage">
+                <div class="notes-snippet-editor-backdrop" id="notes-note-code-backdrop" aria-hidden="true">
+                  <pre class="notes-snippet-code-overlay" id="notes-note-code-overlay"></pre>
+                </div>
+                <textarea id="notes-note-code" class="notes-code-textarea notes-snippet-code notes-snippet-code-input" rows="8" spellcheck="false"></textarea>
+                <div class="notes-snippet-inline-swatches" id="notes-note-code-swatches"></div>
+              </div>
+              <div class="notes-snippet-editor-footer">
+                <div class="notes-snippet-editor-summary hidden" id="notes-note-code-summary" aria-live="polite"></div>
+                <div class="notes-snippet-editor-suggestions hidden" id="notes-note-code-suggestions"></div>
+              </div>
+              <input class="notes-snippet-color-input" id="notes-note-code-color-input" type="color" tabindex="-1" aria-hidden="true" />
+            </div>
+          </div>
 
           <label class="field">
             <span class="field-label">HTML de preview (opcional)</span>

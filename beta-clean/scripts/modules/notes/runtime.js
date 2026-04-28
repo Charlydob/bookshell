@@ -10,7 +10,7 @@ import {
   getFolderPath,
   isFolderParentAllowed,
   sortNotes,
-} from "./domain/store.js?v=2026-04-28-v1";
+} from "./domain/store.js?v=2026-04-28-v2";
 import {
   createFolder,
   createNote,
@@ -28,19 +28,19 @@ import {
   updateFolder,
   updateNote,
   updateReminder,
-} from "./persist/notes-datasource.js?v=2026-04-28-v1";
+} from "./persist/notes-datasource.js?v=2026-04-28-v2";
 import {
   deleteNoteImageAsset,
   deleteNoteTagImageAsset,
   downscaleNoteImageFile,
   uploadNoteImageAsset,
   uploadNoteTagImageAsset,
-} from "./persist/notes-storage.js?v=2026-04-28-v1";
+} from "./persist/notes-storage.js?v=2026-04-28-v2";
 import {
   buildTagDefinitionKey,
   normalizeTagLabel,
   parseTagList,
-} from "./domain/tag-utils.js?v=2026-04-28-v1";
+} from "./domain/tag-utils.js?v=2026-04-28-v2";
 
 const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("es-ES", {
   day: "numeric",
@@ -77,6 +77,49 @@ const REMINDER_STATUSES = ["pendiente", "completado", "vencido"];
 const REMINDER_RANGES = ["all", "today", "7d", "30d", "overdue"];
 const REMINDER_GROUP_BY = ["none", "category", "type", "date", "status"];
 const SNIPPET_PREVIEW_PLACEHOLDER = '<div class="demo-target">Demo</div>';
+const CSS_PROPERTY_SUGGESTIONS = Object.freeze([
+  "background",
+  "background-color",
+  "border",
+  "border-top",
+  "border-bottom",
+  "border-left",
+  "border-right",
+  "border-radius",
+  "box-shadow",
+  "color",
+  "display",
+  "grid-template-columns",
+  "gap",
+  "margin",
+  "margin-top",
+  "margin-bottom",
+  "padding",
+  "padding-top",
+  "padding-bottom",
+  "width",
+  "height",
+  "min-width",
+  "max-width",
+  "font-size",
+  "font-weight",
+  "line-height",
+  "text-align",
+  "align-items",
+  "justify-content",
+  "position",
+  "top",
+  "right",
+  "bottom",
+  "left",
+  "z-index",
+  "opacity",
+  "transform",
+  "transition",
+  "backdrop-filter",
+]);
+const SNIPPET_SUGGESTION_LIMIT = 8;
+const SNIPPET_COLOR_LIMIT = 10;
 
 function normalizeNotesStatsSection(section = "") {
   const safeSection = String(section || "").trim();
@@ -635,6 +678,7 @@ function updateNoteEditorMode(nextKind = "text") {
   }
 
   updateNoteLinkDependentFields(isLink);
+  syncNoteModalCodeAssist();
 }
 
 function getCurrentFolder() {
@@ -995,17 +1039,7 @@ async function persistNoteTagDefinitions(tags = []) {
 }
 
 function notePreview(note) {
-  if (normalizeNoteKind(note?.noteKind) === "code") {
-    const source = String(note?.code || "").trim();
-    if (!source) return "";
-    return source
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .slice(0, 2)
-      .join(" ")
-      .slice(0, 160);
-  }
+  if (normalizeNoteKind(note?.noteKind) === "code") return "";
   return note.content || "";
 }
 
@@ -1099,9 +1133,18 @@ function buildSnippetPreviewSrcdoc(note = {}, overrides = {}) {
 function buildSnippetPreviewMarkup(note = {}) {
   const noteId = String(note?.id || "").trim();
   if (!noteId) return "";
+  const isExpanded = expandedSnippetNotes.has(noteId);
 
   return `
-    <div class="notes-snippet-preview-shell" data-snippet-preview-id="${escapeHtml(noteId)}">
+    <div
+      class="notes-snippet-preview-shell"
+      data-snippet-preview-id="${escapeHtml(noteId)}"
+      data-act="toggle-note-snippet"
+      data-note-id="${escapeHtml(noteId)}"
+      role="button"
+      tabindex="0"
+      aria-expanded="${isExpanded ? "true" : "false"}"
+    >
       <iframe
         class="notes-snippet-preview-frame"
         sandbox
@@ -1114,27 +1157,48 @@ function buildSnippetPreviewMarkup(note = {}) {
   `;
 }
 
+function buildSnippetEditorMarkup(note = {}) {
+  const noteId = String(note?.id || "").trim();
+  const code = String(note?.code || "");
+  if (!noteId) return "";
+
+  return `
+    <div class="notes-snippet-editor-shell" data-snippet-editor-shell="${escapeHtml(noteId)}">
+      <div class="notes-snippet-editor-stage" data-snippet-editor-stage="${escapeHtml(noteId)}">
+        <div class="notes-snippet-editor-backdrop" data-snippet-editor-backdrop="${escapeHtml(noteId)}" aria-hidden="true">
+          <pre class="notes-snippet-code-overlay" data-snippet-editor-overlay="${escapeHtml(noteId)}"></pre>
+        </div>
+        <textarea class="notes-snippet-code notes-snippet-code-input" data-snippet-editor="${escapeHtml(noteId)}" spellcheck="false">${escapeHtml(code)}</textarea>
+        <div class="notes-snippet-inline-swatches" data-snippet-editor-swatches="${escapeHtml(noteId)}"></div>
+      </div>
+      <div class="notes-snippet-editor-footer">
+        <div class="notes-snippet-editor-summary hidden" data-snippet-editor-summary="${escapeHtml(noteId)}" aria-live="polite"></div>
+        <div class="notes-snippet-editor-suggestions hidden" data-snippet-suggestions="${escapeHtml(noteId)}"></div>
+      </div>
+      <input class="notes-snippet-color-input" data-snippet-color-input="${escapeHtml(noteId)}" type="color" tabindex="-1" aria-hidden="true" />
+    </div>
+  `;
+}
+
 function buildSnippetMarkup(note = {}) {
   if (normalizeNoteKind(note?.noteKind) !== "code") return "";
 
   const code = String(note?.code || "").trim();
-  const languageLabel = buildCodeLanguageBadgeLabel(note?.codeLanguage);
   const isExpanded = expandedSnippetNotes.has(note.id);
   if (!code) return "";
 
   return `
-    <div class="notes-snippet-block${isExpanded ? " is-expanded" : " is-collapsed"}">
-      <div class="notes-snippet-tools">
-        <span class="notes-snippet-language">${escapeHtml(languageLabel)}</span>
-        <button class="btn ghost btn-compact notes-snippet-toggle" type="button" data-act="toggle-note-snippet" data-note-id="${escapeHtml(note.id)}">${isExpanded ? "Plegar" : "Mostrar codigo"}</button>
+    <div class="notes-snippet-block${isExpanded ? " is-expanded" : " is-collapsed"}" data-snippet-block-note-id="${escapeHtml(note.id)}">
+      ${buildSnippetPreviewMarkup(note)}
+      <div class="notes-snippet-actions">
+        <button class="btn ghost btn-compact notes-snippet-copy" type="button" data-act="copy-note-code" data-note-id="${escapeHtml(note.id)}">Copiar codigo</button>
+        <button class="btn ghost btn-compact notes-snippet-toggle" type="button" data-act="toggle-note-snippet" data-note-id="${escapeHtml(note.id)}">${isExpanded ? "Ocultar codigo" : "Ver codigo"}</button>
       </div>
       <div class="notes-snippet-body${isExpanded ? "" : " hidden"}" data-snippet-body="${escapeHtml(note.id)}">
-        <textarea class="notes-snippet-code" data-snippet-editor="${escapeHtml(note.id)}" spellcheck="false">${escapeHtml(code)}</textarea>
-        <div class="notes-snippet-actions">
-          <button class="btn ghost btn-compact notes-snippet-copy" type="button" data-act="copy-note-code" data-note-id="${escapeHtml(note.id)}">Copiar codigo</button>
+        ${buildSnippetEditorMarkup(note)}
+        <div class="notes-snippet-body-actions">
           <button class="btn primary btn-compact notes-snippet-save" type="button" data-act="save-note-code" data-note-id="${escapeHtml(note.id)}">Guardar codigo</button>
         </div>
-        ${buildSnippetPreviewMarkup(note)}
       </div>
     </div>
   `;
@@ -1144,6 +1208,733 @@ function findSnippetPreviewFrame(noteId = "", root = document) {
   const safeNoteId = String(noteId || "").trim();
   if (!safeNoteId || !root?.querySelector) return null;
   return root.querySelector(`[data-snippet-preview-frame="${escapeAttributeSelector(safeNoteId)}"]`);
+}
+
+function findSnippetEditor(noteId = "", root = document) {
+  const safeNoteId = String(noteId || "").trim();
+  if (!safeNoteId || !root?.querySelector) return null;
+  return root.querySelector(`[data-snippet-editor="${escapeAttributeSelector(safeNoteId)}"]`);
+}
+
+function findSnippetEditorStage(noteId = "", root = document) {
+  const safeNoteId = String(noteId || "").trim();
+  if (!safeNoteId || !root?.querySelector) return null;
+  return root.querySelector(`[data-snippet-editor-stage="${escapeAttributeSelector(safeNoteId)}"]`);
+}
+
+function findSnippetEditorBackdrop(noteId = "", root = document) {
+  const safeNoteId = String(noteId || "").trim();
+  if (!safeNoteId || !root?.querySelector) return null;
+  return root.querySelector(`[data-snippet-editor-backdrop="${escapeAttributeSelector(safeNoteId)}"]`);
+}
+
+function findSnippetEditorOverlay(noteId = "", root = document) {
+  const safeNoteId = String(noteId || "").trim();
+  if (!safeNoteId || !root?.querySelector) return null;
+  return root.querySelector(`[data-snippet-editor-overlay="${escapeAttributeSelector(safeNoteId)}"]`);
+}
+
+function findSnippetEditorSwatches(noteId = "", root = document) {
+  const safeNoteId = String(noteId || "").trim();
+  if (!safeNoteId || !root?.querySelector) return null;
+  return root.querySelector(`[data-snippet-editor-swatches="${escapeAttributeSelector(safeNoteId)}"]`);
+}
+
+function findSnippetSuggestionsHost(noteId = "", root = document) {
+  const safeNoteId = String(noteId || "").trim();
+  if (!safeNoteId || !root?.querySelector) return null;
+  return root.querySelector(`[data-snippet-suggestions="${escapeAttributeSelector(safeNoteId)}"]`);
+}
+
+function findSnippetSummaryHost(noteId = "", root = document) {
+  const safeNoteId = String(noteId || "").trim();
+  if (!safeNoteId || !root?.querySelector) return null;
+  return root.querySelector(`[data-snippet-editor-summary="${escapeAttributeSelector(safeNoteId)}"]`);
+}
+
+function findSnippetColorInput(noteId = "", root = document) {
+  const safeNoteId = String(noteId || "").trim();
+  if (!safeNoteId || !root?.querySelector) return null;
+  return root.querySelector(`[data-snippet-color-input="${escapeAttributeSelector(safeNoteId)}"]`);
+}
+
+function computeLineNumberFromIndex(text = "", index = 0) {
+  const safeText = String(text || "");
+  const safeIndex = Math.max(0, Math.min(Number(index || 0), safeText.length));
+  return safeText.slice(0, safeIndex).split(/\r?\n/).length;
+}
+
+function getCssSuggestionPrefix(code = "", cursor = 0) {
+  const safeCode = String(code || "");
+  const safeCursor = Math.max(0, Math.min(Number(cursor || 0), safeCode.length));
+  const beforeCursor = safeCode.slice(0, safeCursor);
+  const match = beforeCursor.match(/([a-z-]{1,})$/i);
+  if (!match) {
+    return {
+      prefix: "",
+      start: safeCursor,
+      end: safeCursor,
+    };
+  }
+
+  return {
+    prefix: String(match[1] || "").toLowerCase(),
+    start: safeCursor - String(match[1] || "").length,
+    end: safeCursor,
+  };
+}
+
+function getCssPropertySuggestions(code = "", cursor = 0) {
+  const { prefix } = getCssSuggestionPrefix(code, cursor);
+  if (prefix.length < 2) return [];
+  return CSS_PROPERTY_SUGGESTIONS
+    .filter((property) => property.startsWith(prefix))
+    .slice(0, SNIPPET_SUGGESTION_LIMIT);
+}
+
+function detectSnippetColorMatches(code = "") {
+  const safeCode = String(code || "");
+  const pattern = /#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b|\b(?:rgb|rgba|hsl|hsla|oklch)\([^)]*\)/gi;
+  const matches = [];
+  let match = null;
+
+  while ((match = pattern.exec(safeCode))) {
+    matches.push({
+      value: String(match[0] || ""),
+      start: match.index,
+      end: match.index + String(match[0] || "").length,
+    });
+    if (matches.length >= SNIPPET_COLOR_LIMIT) break;
+  }
+
+  return matches;
+}
+
+function resolveCssColorToHex(value = "") {
+  const safeValue = String(value || "").trim();
+  if (!safeValue || typeof document === "undefined" || typeof window === "undefined") return null;
+
+  const shortHex = /^#([0-9a-f]{3,4})$/i.exec(safeValue);
+  if (shortHex) {
+    const chars = shortHex[1].slice(0, 3).split("");
+    return `#${chars.map((char) => `${char}${char}`).join("")}`.toLowerCase();
+  }
+
+  const longHex = /^#([0-9a-f]{6}|[0-9a-f]{8})$/i.exec(safeValue);
+  if (longHex) {
+    return `#${longHex[1].slice(0, 6)}`.toLowerCase();
+  }
+
+  const probe = document.createElement("span");
+  probe.style.color = "";
+  probe.style.color = safeValue;
+  if (!probe.style.color) return null;
+  probe.hidden = true;
+  document.body.appendChild(probe);
+  const computed = window.getComputedStyle(probe).color;
+  probe.remove();
+  const rgbMatch = computed.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!rgbMatch) return null;
+  return `#${rgbMatch.slice(1, 4).map((chunk) => Number(chunk).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function pushCssIssue(issues, code, type, start, end, message) {
+  const safeCode = String(code || "");
+  const maxLength = safeCode.length;
+  const safeStart = Math.max(0, Math.min(Number(start || 0), maxLength));
+  const desiredEnd = Number.isFinite(Number(end)) ? Number(end) : (safeStart + 1);
+  const safeEnd = Math.max(safeStart + (maxLength > safeStart ? 1 : 0), Math.min(desiredEnd, maxLength));
+  const issue = {
+    type,
+    start: safeStart,
+    end: safeEnd,
+    line: computeLineNumberFromIndex(safeCode, safeStart),
+    message,
+  };
+
+  const exists = issues.some((row) => (
+    row?.type === issue.type
+    && Number(row?.start) === issue.start
+    && Number(row?.end) === issue.end
+    && String(row?.message || "") === issue.message
+  ));
+  if (!exists) issues.push(issue);
+}
+
+function findTopLevelColonIndex(text = "") {
+  const safeText = String(text || "");
+  let parenDepth = 0;
+
+  for (let index = 0; index < safeText.length; index += 1) {
+    const char = safeText[index];
+    if (char === "(") {
+      parenDepth += 1;
+      continue;
+    }
+    if (char === ")") {
+      parenDepth = Math.max(0, parenDepth - 1);
+      continue;
+    }
+    if (char === ":" && parenDepth === 0) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function findNestedCssPropertyStart(value = "") {
+  const safeValue = String(value || "");
+  let parenDepth = 0;
+
+  for (let index = 0; index < safeValue.length; index += 1) {
+    const char = safeValue[index];
+    if (char === "(") {
+      parenDepth += 1;
+      continue;
+    }
+    if (char === ")") {
+      parenDepth = Math.max(0, parenDepth - 1);
+      continue;
+    }
+    if (char !== "\n" || parenDepth !== 0) continue;
+
+    let cursor = index + 1;
+    while (cursor < safeValue.length && /[ \t]/.test(safeValue[cursor])) {
+      cursor += 1;
+    }
+
+    const match = safeValue.slice(cursor).match(/^([a-z-][a-z0-9-]*)\s*:/i);
+    if (match) {
+      return {
+        offset: cursor,
+        property: String(match[1] || ""),
+      };
+    }
+  }
+
+  return null;
+}
+
+function validateCssDeclaration(code = "", declaration = "", absoluteStart = 0, issues = [], { requireSemicolonAtClosure = false } = {}) {
+  const rawDeclaration = String(declaration || "");
+  const trimmedDeclaration = rawDeclaration.trim();
+  if (!trimmedDeclaration) return;
+  if (!trimmedDeclaration.replace(/\/\*[\s\S]*?\*\//g, "").trim()) return;
+
+  const leadingPadding = rawDeclaration.indexOf(trimmedDeclaration);
+  const declarationStart = absoluteStart + Math.max(leadingPadding, 0);
+  const normalizedDeclaration = trimmedDeclaration.replace(/;+\s*$/, "");
+  const colonIndex = findTopLevelColonIndex(normalizedDeclaration);
+
+  if (colonIndex < 0) {
+    const tokenMatch = normalizedDeclaration.match(/^([^\s:;{}]+)/);
+    const tokenText = String(tokenMatch?.[1] || normalizedDeclaration || "css");
+    const tokenOffset = tokenMatch ? normalizedDeclaration.indexOf(tokenText) : 0;
+    pushCssIssue(
+      issues,
+      code,
+      "warning",
+      declarationStart + tokenOffset,
+      declarationStart + tokenOffset + tokenText.length,
+      "Propiedad sin ':'.",
+    );
+    return;
+  }
+
+  const propertyChunk = normalizedDeclaration.slice(0, colonIndex);
+  const propertyName = propertyChunk.trim();
+  if (!propertyName) {
+    pushCssIssue(
+      issues,
+      code,
+      "warning",
+      declarationStart + colonIndex,
+      declarationStart + colonIndex + 1,
+      "Propiedad sin nombre.",
+    );
+    return;
+  }
+
+  const nestedProperty = findNestedCssPropertyStart(normalizedDeclaration.slice(colonIndex + 1));
+  if (nestedProperty) {
+    const nestedStart = declarationStart + colonIndex + 1 + nestedProperty.offset;
+    pushCssIssue(
+      issues,
+      code,
+      "warning",
+      nestedStart,
+      nestedStart + nestedProperty.property.length,
+      "Falta ';' antes de esta propiedad.",
+    );
+  }
+
+  if (!/;\s*$/.test(trimmedDeclaration) && requireSemicolonAtClosure) {
+    const endOffset = Math.max(0, normalizedDeclaration.length - 1);
+    pushCssIssue(
+      issues,
+      code,
+      "warning",
+      declarationStart + endOffset,
+      declarationStart + normalizedDeclaration.length,
+      "Falta ';' al cerrar la declaracion.",
+    );
+  }
+}
+
+function parseCssDeclarationSeries(code = "", source = "", absoluteStart = 0, issues = [], { requireSemicolonAtClosure = false } = {}) {
+  const safeSource = String(source || "");
+  let chunkStart = 0;
+  let parenDepth = 0;
+
+  for (let index = 0; index < safeSource.length; index += 1) {
+    const char = safeSource[index];
+    if (char === "(") {
+      parenDepth += 1;
+      continue;
+    }
+    if (char === ")") {
+      parenDepth = Math.max(0, parenDepth - 1);
+      continue;
+    }
+    if (char !== ";" || parenDepth !== 0) continue;
+
+    validateCssDeclaration(
+      code,
+      safeSource.slice(chunkStart, index + 1),
+      absoluteStart + chunkStart,
+      issues,
+      { requireSemicolonAtClosure: false },
+    );
+    chunkStart = index + 1;
+  }
+
+  validateCssDeclaration(
+    code,
+    safeSource.slice(chunkStart),
+    absoluteStart + chunkStart,
+    issues,
+    { requireSemicolonAtClosure },
+  );
+}
+
+function collectCssValidationIssues(code = "") {
+  const safeCode = String(code || "");
+  const issues = [];
+  if (!safeCode.trim()) return issues;
+
+  const braceStack = [];
+  const parenStack = [];
+
+  for (let index = 0; index < safeCode.length; index += 1) {
+    const char = safeCode[index];
+    if (char === "{") {
+      braceStack.push(index);
+    }
+    if (char === "}") {
+      if (braceStack.length) {
+        braceStack.pop();
+      } else {
+        pushCssIssue(issues, safeCode, "error", index, index + 1, "Llave de cierre sin apertura.");
+      }
+    }
+    if (char === "(") {
+      parenStack.push(index);
+    }
+    if (char === ")") {
+      if (parenStack.length) {
+        parenStack.pop();
+      } else {
+        pushCssIssue(issues, safeCode, "error", index, index + 1, "Parentesis de cierre sin apertura.");
+      }
+    }
+  }
+
+  braceStack.forEach((start) => {
+    pushCssIssue(issues, safeCode, "error", start, start + 1, "Llave sin cierre.");
+  });
+
+  parenStack.forEach((start) => {
+    pushCssIssue(issues, safeCode, "error", start, start + 1, "Parentesis sin cierre.");
+  });
+
+  if (!safeCode.includes("{")) {
+    parseCssDeclarationSeries(safeCode, safeCode, 0, issues, { requireSemicolonAtClosure: false });
+    return issues.slice(0, 8);
+  }
+
+  let blockDepth = 0;
+  let currentBlock = null;
+  let foundTopLevelBlock = false;
+  let segmentStart = 0;
+
+  for (let index = 0; index < safeCode.length; index += 1) {
+    const char = safeCode[index];
+    if (char === "{") {
+      if (blockDepth === 0) {
+        currentBlock = {
+          selectorStart: segmentStart,
+          selectorEnd: index,
+          bodyStart: index + 1,
+        };
+        foundTopLevelBlock = true;
+      }
+      blockDepth += 1;
+      continue;
+    }
+
+    if (char !== "}") continue;
+    if (blockDepth > 0) blockDepth -= 1;
+    if (blockDepth !== 0 || !currentBlock) continue;
+
+    const selector = safeCode.slice(currentBlock.selectorStart, currentBlock.selectorEnd).trim();
+    if (!selector) {
+      pushCssIssue(
+        issues,
+        safeCode,
+        "warning",
+        currentBlock.selectorEnd,
+        currentBlock.selectorEnd + 1,
+        "Bloque sin selector.",
+      );
+    }
+
+    parseCssDeclarationSeries(
+      safeCode,
+      safeCode.slice(currentBlock.bodyStart, index),
+      currentBlock.bodyStart,
+      issues,
+      { requireSemicolonAtClosure: true },
+    );
+    currentBlock = null;
+    segmentStart = index + 1;
+  }
+
+  if (!foundTopLevelBlock) {
+    parseCssDeclarationSeries(safeCode, safeCode, 0, issues, { requireSemicolonAtClosure: false });
+  }
+
+  return issues.slice(0, 8);
+}
+
+function buildSnippetOverlayMarkup(code = "", issues = [], colors = []) {
+  const safeCode = String(code || "");
+  if (!safeCode) return " ";
+
+  const boundaries = new Set([0, safeCode.length]);
+  issues.forEach((issue) => {
+    boundaries.add(Number(issue?.start || 0));
+    boundaries.add(Number(issue?.end || 0));
+  });
+  colors.forEach((color) => {
+    boundaries.add(Number(color?.start || 0));
+    boundaries.add(Number(color?.end || 0));
+  });
+
+  const points = Array.from(boundaries)
+    .filter((value) => Number.isFinite(value) && value >= 0 && value <= safeCode.length)
+    .sort((a, b) => a - b);
+
+  let markup = "";
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index];
+    const end = points[index + 1];
+    if (end <= start) continue;
+
+    const tokenText = safeCode.slice(start, end);
+    const relatedColor = colors.find((color) => start >= color.start && end <= color.end) || null;
+    const relatedIssues = issues.filter((issue) => start >= issue.start && end <= issue.end);
+    const hasError = relatedIssues.some((issue) => issue.type === "error");
+    const hasWarning = !hasError && relatedIssues.some((issue) => issue.type === "warning");
+    const classes = [];
+
+    if (relatedColor) {
+      classes.push("snippet-code-token", "snippet-code-token--color");
+    }
+    if (hasError) {
+      if (!classes.includes("snippet-code-token")) classes.push("snippet-code-token");
+      classes.push("snippet-code-token--error");
+    } else if (hasWarning) {
+      if (!classes.includes("snippet-code-token")) classes.push("snippet-code-token");
+      classes.push("snippet-code-token--warning");
+    }
+
+    if (!classes.length) {
+      markup += escapeHtml(tokenText);
+      continue;
+    }
+
+    const attrs = relatedColor ? ` data-color-token-index="${Number(relatedColor.index || 0)}"` : "";
+    markup += `<span class="${classes.join(" ")}"${attrs}>${escapeHtml(tokenText)}</span>`;
+  }
+
+  if (safeCode.endsWith("\n")) {
+    markup += " ";
+  }
+
+  return markup;
+}
+
+function syncSnippetEditorBackdrop(editor, backdrop) {
+  if (!editor || !backdrop) return;
+  backdrop.scrollTop = editor.scrollTop;
+  backdrop.scrollLeft = editor.scrollLeft;
+}
+
+function renderSnippetEditorSummary(host, issues = []) {
+  if (!host) return;
+
+  const errors = issues.filter((issue) => issue?.type === "error").length;
+  const warnings = issues.filter((issue) => issue?.type === "warning").length;
+  if (!errors && !warnings) {
+    host.textContent = "";
+    host.classList.add("hidden");
+    host.classList.remove("has-errors", "has-warnings");
+    return;
+  }
+
+  host.textContent = [
+    errors ? `${errors} error${errors === 1 ? "" : "es"}` : "",
+    warnings ? `${warnings} aviso${warnings === 1 ? "" : "s"}` : "",
+  ].filter(Boolean).join(" · ");
+  host.classList.remove("hidden");
+  host.classList.toggle("has-errors", errors > 0);
+  host.classList.toggle("has-warnings", errors === 0 && warnings > 0);
+}
+
+function renderSnippetSuggestionsHost(host, suggestions = [], action = "", noteId = "") {
+  if (!host || !action) return;
+  if (!suggestions.length) {
+    host.innerHTML = "";
+    host.classList.add("hidden");
+    return;
+  }
+
+  host.classList.remove("hidden");
+  host.innerHTML = suggestions.map((property) => `
+    <button
+      class="notes-snippet-suggestion-chip"
+      type="button"
+      data-act="${escapeHtml(action)}"
+      ${noteId ? `data-note-id="${escapeHtml(noteId)}"` : ""}
+      data-property="${escapeHtml(property)}"
+    >${escapeHtml(property)}</button>
+  `).join("");
+}
+
+function renderSnippetInlineSwatches({
+  stage = null,
+  overlay = null,
+  swatchLayer = null,
+  colors = [],
+  action = "",
+  noteId = "",
+} = {}) {
+  if (!swatchLayer) return;
+  swatchLayer.innerHTML = "";
+  swatchLayer.classList.toggle("hidden", !colors.length);
+
+  if (!stage || !overlay || !colors.length || !action || stage.offsetParent === null) return;
+
+  const stageRect = stage.getBoundingClientRect();
+  colors.forEach((color) => {
+    const spans = Array.from(overlay.querySelectorAll(`[data-color-token-index="${Number(color.index || 0)}"]`));
+    const rect = spans.flatMap((span) => Array.from(span.getClientRects()))[0] || spans[0]?.getBoundingClientRect?.();
+    if (!rect) return;
+
+    const top = Math.max(4, Math.min(rect.top - stageRect.top + ((rect.height - 28) / 2), stage.clientHeight - 32));
+    const left = Math.max(6, Math.min(rect.right - stageRect.left + 6, stage.clientWidth - 34));
+    const hex = resolveCssColorToHex(color.value) || "#ffffff";
+
+    swatchLayer.insertAdjacentHTML("beforeend", `
+      <button
+        class="notes-snippet-inline-swatch-button"
+        type="button"
+        data-act="${escapeHtml(action)}"
+        ${noteId ? `data-note-id="${escapeHtml(noteId)}"` : ""}
+        data-color-index="${Number(color.index || 0)}"
+        title="${escapeHtml(color.value)}"
+        aria-label="${escapeHtml(`Editar color ${color.value}`)}"
+        style="top:${top}px;left:${left}px;"
+      >
+        <span class="snippet-color-swatch" style="background:${escapeHtml(hex)};"></span>
+      </button>
+    `);
+  });
+}
+
+function renderSnippetEditorState({
+  editor = null,
+  stage = null,
+  backdrop = null,
+  overlay = null,
+  swatchLayer = null,
+  suggestionsHost = null,
+  summaryHost = null,
+  colorInput = null,
+  language = "general",
+  suggestionAction = "",
+  colorAction = "",
+  noteId = "",
+} = {}) {
+  if (!editor || !overlay || !backdrop) {
+    return {
+      issues: [],
+      colors: [],
+    };
+  }
+
+  const code = String(editor.value || "");
+  const isCssMode = normalizeCodeLanguage(language) === "css";
+  const issues = isCssMode ? collectCssValidationIssues(code) : [];
+  const colors = isCssMode
+    ? detectSnippetColorMatches(code).map((color, index) => ({ ...color, index }))
+    : [];
+  const suggestions = isCssMode ? getCssPropertySuggestions(code, Number(editor.selectionStart || 0)) : [];
+
+  overlay.innerHTML = buildSnippetOverlayMarkup(code, issues, colors);
+  syncSnippetEditorBackdrop(editor, backdrop);
+  editor.classList.toggle("is-invalid", issues.some((issue) => issue.type === "error"));
+
+  renderSnippetEditorSummary(summaryHost, issues);
+  renderSnippetSuggestionsHost(suggestionsHost, suggestions, suggestionAction, noteId);
+  renderSnippetInlineSwatches({
+    stage,
+    overlay,
+    swatchLayer,
+    colors,
+    action: colorAction,
+    noteId,
+  });
+
+  if (colorInput && colors.length) {
+    colorInput.value = resolveCssColorToHex(colors[0]?.value || "") || "#ffffff";
+  }
+
+  return { issues, colors };
+}
+
+function insertSnippetSuggestionIntoEditor(editor, property = "") {
+  const suggestion = String(property || "").trim();
+  if (!editor || !suggestion) return false;
+
+  const prefixInfo = getCssSuggestionPrefix(editor.value, editor.selectionStart || 0);
+  const replacement = `${suggestion}: `;
+  editor.value = `${editor.value.slice(0, prefixInfo.start)}${replacement}${editor.value.slice(editor.selectionEnd || prefixInfo.end)}`;
+  const nextCursor = prefixInfo.start + replacement.length;
+  editor.focus();
+  editor.setSelectionRange(nextCursor, nextCursor);
+  return true;
+}
+
+function insertSnippetSuggestion(note = {}, property = "", root = document) {
+  const safeNoteId = String(note?.id || "").trim();
+  const editor = findSnippetEditor(safeNoteId, root);
+  if (!insertSnippetSuggestionIntoEditor(editor, property)) return;
+  syncSnippetCardState(note, root);
+}
+
+function replaceSnippetColorInEditor(editor, colorIndex = -1, nextColor = "#ffffff") {
+  if (!editor) return false;
+
+  const colors = detectSnippetColorMatches(editor.value);
+  const target = colors[Number(colorIndex)];
+  if (!target) return false;
+
+  const replacement = String(nextColor || "").trim() || "#ffffff";
+  editor.value = `${editor.value.slice(0, target.start)}${replacement}${editor.value.slice(target.end)}`;
+  const nextCursor = target.start + replacement.length;
+  editor.focus();
+  editor.setSelectionRange(nextCursor, nextCursor);
+  return true;
+}
+
+function replaceSnippetColor(note = {}, colorIndex = -1, nextColor = "#ffffff", root = document) {
+  const safeNoteId = String(note?.id || "").trim();
+  const editor = findSnippetEditor(safeNoteId, root);
+  if (!replaceSnippetColorInEditor(editor, colorIndex, nextColor)) return;
+  syncSnippetCardState(note, root);
+}
+
+function syncSnippetCardState(note = {}, root = document) {
+  const safeNoteId = String(note?.id || "").trim();
+  if (!safeNoteId) return false;
+
+  const editor = findSnippetEditor(safeNoteId, root);
+  renderSnippetEditorState({
+    editor,
+    stage: findSnippetEditorStage(safeNoteId, root),
+    backdrop: findSnippetEditorBackdrop(safeNoteId, root),
+    overlay: findSnippetEditorOverlay(safeNoteId, root),
+    swatchLayer: findSnippetEditorSwatches(safeNoteId, root),
+    suggestionsHost: findSnippetSuggestionsHost(safeNoteId, root),
+    summaryHost: findSnippetSummaryHost(safeNoteId, root),
+    colorInput: findSnippetColorInput(safeNoteId, root),
+    language: note?.codeLanguage,
+    suggestionAction: "insert-snippet-suggestion",
+    colorAction: "pick-snippet-color",
+    noteId: safeNoteId,
+  });
+
+  syncSnippetPreviewFrame(note, {
+    code: String(editor?.value ?? note?.code ?? ""),
+  }, root);
+  return true;
+}
+
+function clearNoteModalCodeAssist() {
+  const editor = $id("notes-note-code");
+  const overlay = $id("notes-note-code-overlay");
+  const swatches = $id("notes-note-code-swatches");
+  const suggestions = $id("notes-note-code-suggestions");
+  const summary = $id("notes-note-code-summary");
+
+  if (editor) editor.classList.remove("is-invalid");
+  if (overlay) overlay.innerHTML = buildSnippetOverlayMarkup(String(editor?.value || ""), [], []);
+  if (swatches) swatches.innerHTML = "";
+  if (suggestions) {
+    suggestions.innerHTML = "";
+    suggestions.classList.add("hidden");
+  }
+  if (summary) {
+    summary.textContent = "";
+    summary.classList.add("hidden");
+    summary.classList.remove("has-errors", "has-warnings");
+  }
+}
+
+function syncNoteModalCodeAssist() {
+  const kind = normalizeNoteKind($id("notes-note-kind")?.value);
+  const language = normalizeCodeLanguage($id("notes-note-code-language")?.value);
+  const editor = $id("notes-note-code");
+  const stage = $id("notes-note-code-stage");
+  const backdrop = $id("notes-note-code-backdrop");
+  const overlay = $id("notes-note-code-overlay");
+  const swatches = $id("notes-note-code-swatches");
+  const suggestions = $id("notes-note-code-suggestions");
+  const summary = $id("notes-note-code-summary");
+  const colorInput = $id("notes-note-code-color-input");
+  const isCodeMode = kind === "code";
+
+  if (!editor || !stage || !backdrop || !overlay) return;
+  if (!isCodeMode) {
+    clearNoteModalCodeAssist();
+    return;
+  }
+
+  renderSnippetEditorState({
+    editor,
+    stage,
+    backdrop,
+    overlay,
+    swatchLayer: swatches,
+    suggestionsHost: suggestions,
+    summaryHost: summary,
+    colorInput,
+    language,
+    suggestionAction: "insert-modal-snippet-suggestion",
+    colorAction: "pick-modal-snippet-color",
+  });
 }
 
 function syncSnippetPreviewFrame(note = {}, overrides = {}, root = document) {
@@ -1180,7 +1971,7 @@ function syncSnippetPreviewFrames(root, notes = []) {
   source
     .filter((note) => normalizeNoteKind(note?.noteKind) === "code")
     .forEach((note) => {
-      syncSnippetPreviewFrame(note, {}, root);
+      syncSnippetCardState(note, root);
     });
 }
 
@@ -1766,19 +2557,25 @@ function renderNoteCards(list, notes = []) {
         `
         : `<p class="notes-item-link">${escapeHtml(urlHost(note.url) || note.url || "")}</p>`)
       : "";
-    const mediaMarkup = tagPreview?.imageUrl
-      ? `
-        <div class="notes-item-media is-image">
-          <img class="notes-item-tag-image" src="${escapeHtml(tagPreview.imageUrl)}" alt="${escapeHtml(`Tag ${tagPreview.label || "nota"}`)}" loading="lazy" decoding="async" />
-        </div>
-      `
-      : `
-        <div class="notes-item-media is-placeholder">
-          <span class="notes-item-icon">${escapeHtml(buildNoteKindIcon(note))}</span>
-        </div>
-      `;
+    const mediaMarkup = isCodeNote
+      ? ""
+      : (tagPreview?.imageUrl
+        ? `
+          <div class="notes-item-media is-image">
+            <img class="notes-item-tag-image" src="${escapeHtml(tagPreview.imageUrl)}" alt="${escapeHtml(`Tag ${tagPreview.label || "nota"}`)}" loading="lazy" decoding="async" />
+          </div>
+        `
+        : `
+          <div class="notes-item-media is-placeholder">
+            <span class="notes-item-icon">${escapeHtml(buildNoteKindIcon(note))}</span>
+          </div>
+        `);
 
-    const cardClass = noteImageUrl ? "notes-item-card has-note-image" : "notes-item-card";
+    const cardClass = [
+      "notes-item-card",
+      noteImageUrl ? "has-note-image" : "",
+      isCodeNote ? "is-code-note" : "",
+    ].filter(Boolean).join(" ");
     const cardStyle = buildNoteCardStyleAttribute(note);
     const ratingMarkup = buildRatingBadgeMarkup(note?.rating);
     const visitsMarkup = buildVisitsBadgeMarkup(note);
@@ -1787,16 +2584,21 @@ function renderNoteCards(list, notes = []) {
       : "";
     const metaMarkup = [codeKindMarkup, ratingMarkup, visitsMarkup].filter(Boolean).join("");
     const snippetMarkup = buildSnippetMarkup(note);
+    const isExpanded = expandedSnippetNotes.has(note.id);
+    const headClass = isCodeNote ? "notes-item-head is-snippet-toggle" : "notes-item-head";
+    const headAttrs = isCodeNote
+      ? ` data-act="toggle-note-snippet" data-note-id="${escapeHtml(note.id)}" role="button" tabindex="0" aria-expanded="${isExpanded ? "true" : "false"}"`
+      : "";
 
     return `
-      <article class="${cardClass}"${cardStyle}>
+      <article class="${cardClass}" data-note-id="${escapeHtml(note.id)}"${cardStyle}>
         ${mediaMarkup}
         <div class="notes-item-content">
-          <div class="notes-item-head">
+          <div class="${headClass}"${headAttrs}>
             <h4 class="notes-item-title">${escapeHtml(note.title || "Sin título")}</h4>
             ${metaMarkup ? `<div class="notes-item-meta">${metaMarkup}</div>` : ""}
           </div>
-          ${preview ? `<p class="notes-item-preview">${escapeHtml(preview)}</p>` : ""}
+          ${preview && !isCodeNote ? `<p class="notes-item-preview">${escapeHtml(preview)}</p>` : ""}
           ${isCodeNote ? snippetMarkup : linkMarkup}
         </div>
         <div class="notes-item-actions">
@@ -2556,6 +3358,7 @@ function openNoteModal(note = null, options = {}) {
   updateNoteRatingPreview();
   renderNoteTagImageEditor();
   openModal("notes-note-modal-backdrop");
+  syncNoteModalCodeAssist();
 }
 
 function openGlobalNoteModal() {
@@ -2828,6 +3631,10 @@ function bindNoteModalEvents() {
   const tagsTextInput = $id("notes-note-tags");
   const ratingSelect = $id("notes-note-rating");
   const noteKindSelect = $id("notes-note-kind");
+  const codeLanguageSelect = $id("notes-note-code-language");
+  const codeEditor = $id("notes-note-code");
+  const codeShell = $id("notes-note-code-editor-shell");
+  const codeColorInput = $id("notes-note-code-color-input");
 
   isLinkInput?.addEventListener("change", () => {
     updateNoteLinkDependentFields(isLinkInput.checked);
@@ -2836,6 +3643,58 @@ function bindNoteModalEvents() {
   noteKindSelect?.addEventListener("change", (event) => {
     updateNoteEditorMode(event.target?.value);
     $id("notes-note-form-error").textContent = "";
+  });
+
+  codeLanguageSelect?.addEventListener("change", () => {
+    syncNoteModalCodeAssist();
+    $id("notes-note-form-error").textContent = "";
+  });
+
+  codeEditor?.addEventListener("input", () => {
+    syncNoteModalCodeAssist();
+    $id("notes-note-form-error").textContent = "";
+  });
+
+  codeEditor?.addEventListener("keyup", () => {
+    syncNoteModalCodeAssist();
+  });
+
+  codeEditor?.addEventListener("click", () => {
+    syncNoteModalCodeAssist();
+  });
+
+  codeEditor?.addEventListener("scroll", () => {
+    syncNoteModalCodeAssist();
+  });
+
+  codeShell?.addEventListener("click", (event) => {
+    const target = event.target?.closest?.("[data-act]");
+    if (!target || !codeEditor) return;
+
+    if (target.dataset.act === "insert-modal-snippet-suggestion") {
+      event.preventDefault();
+      insertSnippetSuggestionIntoEditor(codeEditor, String(target.dataset.property || "").trim());
+      syncNoteModalCodeAssist();
+      return;
+    }
+
+    if (target.dataset.act === "pick-modal-snippet-color") {
+      event.preventDefault();
+      const colors = detectSnippetColorMatches(codeEditor.value);
+      const colorIndex = Number(target.dataset.colorIndex || -1);
+      const selected = colors[colorIndex];
+      if (!codeColorInput || !selected) return;
+      codeColorInput.dataset.colorIndex = String(colorIndex);
+      codeColorInput.value = resolveCssColorToHex(selected.value) || "#ffffff";
+      if (typeof codeColorInput.showPicker === "function") codeColorInput.showPicker();
+      else codeColorInput.click();
+    }
+  });
+
+  codeColorInput?.addEventListener("change", () => {
+    if (!codeEditor) return;
+    if (!replaceSnippetColorInEditor(codeEditor, Number(codeColorInput.dataset.colorIndex || -1), codeColorInput.value)) return;
+    syncNoteModalCodeAssist();
   });
 
   $id("notes-note-image-camera")?.addEventListener("click", () => openNoteImagePicker("camera"));
@@ -3335,6 +4194,29 @@ function bindUiEvents() {
       return;
     }
 
+    if (action === "insert-snippet-suggestion") {
+      event.preventDefault();
+      event.stopPropagation();
+      insertSnippetSuggestion(note, String(target.dataset.property || "").trim(), $id("notes-cards-list"));
+      return;
+    }
+
+    if (action === "pick-snippet-color") {
+      event.preventDefault();
+      event.stopPropagation();
+      const input = findSnippetColorInput(note.id, $id("notes-cards-list"));
+      const editor = findSnippetEditor(note.id, $id("notes-cards-list"));
+      const colors = detectSnippetColorMatches(String(editor?.value ?? note?.code ?? ""));
+      const colorIndex = Number(target.dataset.colorIndex || -1);
+      const selected = colors[colorIndex];
+      if (!input || !selected) return;
+      input.dataset.colorIndex = String(colorIndex);
+      input.value = resolveCssColorToHex(selected.value) || "#ffffff";
+      if (typeof input.showPicker === "function") input.showPicker();
+      else input.click();
+      return;
+    }
+
     if (action === "save-note-code") {
       event.preventDefault();
       event.stopPropagation();
@@ -3351,6 +4233,14 @@ function bindUiEvents() {
     }
   });
 
+  $id("notes-cards-list")?.addEventListener("keydown", (event) => {
+    const toggleTarget = event.target?.closest?.('[data-act="toggle-note-snippet"]');
+    if (!toggleTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggleTarget.click();
+  });
+
   $id("notes-cards-list")?.addEventListener("input", (event) => {
     const editor = event.target?.closest?.("[data-snippet-editor]");
     if (!editor) return;
@@ -3359,9 +4249,43 @@ function bindUiEvents() {
     const note = state.notes.find((row) => row.id === noteId);
     if (!note) return;
 
-    syncSnippetPreviewFrame(note, {
-      code: editor.value,
-    }, $id("notes-cards-list"));
+    syncSnippetCardState(note, $id("notes-cards-list"));
+  });
+
+  $id("notes-cards-list")?.addEventListener("keyup", (event) => {
+    const editor = event.target?.closest?.("[data-snippet-editor]");
+    if (!editor) return;
+    const noteId = String(editor.dataset.snippetEditor || "").trim();
+    const note = state.notes.find((row) => row.id === noteId);
+    if (!note) return;
+    syncSnippetCardState(note, $id("notes-cards-list"));
+  });
+
+  $id("notes-cards-list")?.addEventListener("click", (event) => {
+    const editor = event.target?.closest?.("[data-snippet-editor]");
+    if (!editor) return;
+    const noteId = String(editor.dataset.snippetEditor || "").trim();
+    const note = state.notes.find((row) => row.id === noteId);
+    if (!note) return;
+    syncSnippetCardState(note, $id("notes-cards-list"));
+  });
+
+  $id("notes-cards-list")?.addEventListener("scroll", (event) => {
+    const editor = event.target?.closest?.("[data-snippet-editor]");
+    if (!editor) return;
+    const noteId = String(editor.dataset.snippetEditor || "").trim();
+    const note = state.notes.find((row) => row.id === noteId);
+    if (!note) return;
+    syncSnippetCardState(note, $id("notes-cards-list"));
+  }, true);
+
+  $id("notes-cards-list")?.addEventListener("change", (event) => {
+    const input = event.target?.closest?.("[data-snippet-color-input]");
+    if (!input) return;
+    const noteId = String(input.dataset.snippetColorInput || "").trim();
+    const note = state.notes.find((row) => row.id === noteId);
+    if (!note) return;
+    replaceSnippetColor(note, Number(input.dataset.colorIndex || -1), input.value, $id("notes-cards-list"));
   });
 
   $id("notes-reminders-list")?.addEventListener("click", async (event) => {

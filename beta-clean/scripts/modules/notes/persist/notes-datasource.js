@@ -7,14 +7,14 @@ import {
   runTransaction,
   update,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-import { buildTagDefinitionKey } from "../domain/tag-utils.js?v=2026-04-28-v1";
+import { buildTagDefinitionKey } from "../domain/tag-utils.js?v=2026-04-28-v2";
 import {
   mapFolderToDb,
   mapNoteToDb,
   mapReminderToDb,
   mapSnapshotToDomain,
   mapTagDefinitionToDb,
-} from "./notes-mapper.js?v=2026-04-28-v1";
+} from "./notes-mapper.js?v=2026-04-28-v2";
 
 function resolveRootPath(uidParam = "") {
   const uid = String(uidParam || auth.currentUser?.uid || "").trim();

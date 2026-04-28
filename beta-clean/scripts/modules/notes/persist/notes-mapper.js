@@ -1,4 +1,4 @@
-import { buildTagDefinitionKey, normalizeTagLabel } from "../domain/tag-utils.js?v=2026-04-28-v1";
+import { buildTagDefinitionKey, normalizeTagLabel } from "../domain/tag-utils.js?v=2026-04-28-v2";
 
 function normalizeColor(value = "") {
   const safe = String(value || "").trim();

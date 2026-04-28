@@ -1558,3 +1558,97 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
     grid-column: 1 / -1;
   }
 }
+
+
+/* #region MANTENER */
+
+/* #region RECORDATORIOS */
+
+/* #region MODAL CREACION RECORDATORIO */
+  .modal{
+    border-radius: 10px;
+  }
+  .btn.primary, #notes-reminder-delete{
+    border-radius: 8px;
+    margin-right: 5px;
+  }
+  .notes-modal-actions{
+    justify-content: center;
+  }
+  #notes-reminder-modal-close{
+    background: transparent;
+  }
+  .notes-reminder-modal-row.notes-reminder-row-title {
+    display: grid;
+    grid-template-columns: 40px 1fr;
+  }
+  .field {
+    width: 100%;
+  }
+
+  #notes-reminder-emoji{
+    border: none;
+    background: none;
+  }
+
+  .notes-reminder-modal-row.notes-reminder-row-two {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .notes-reminder-category-row{
+    display: grid;
+    grid-template-columns: 1fr 1fr ;
+    margin-bottom: 10px;
+  }
+
+  .notes-reminder-category-create{
+    display: grid;
+    grid-template-columns: 1fr 20px;
+  }
+  .notes-reminder-modal-row.notes-reminder-row-two {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  #notes-reminder-alert-amount, #notes-reminder-checklist-new{
+    background: black;
+    border-radius: 10px;
+    border: 1px white solid;
+    text-align-last: center;
+    padding: 6px;
+  }
+
+  .notes-reminder-modal-row.notes-reminder-row-birthday {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .notes-reminder-checklist-draft-item input {
+    background: black;
+    
+    border-radius: 3px;
+    border: 1px white solid;
+    text-align-last: start;
+    padding: 6px;
+    margin-bottom: 5px;
+  }
+/* #endregion */
+
+/* #region CHECKLIST */
+
+  .notes-reminder-checklist-items{
+    display: grid;
+    width: 100%;
+  }
+  .notes-reminder-check-item {
+    justify-content: start;
+    display: grid;
+    width: 100%;
+  }
+
+/* #endregion */
+
+/* #endregion */
+
+/* #endregion */

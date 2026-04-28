@@ -11355,13 +11355,13 @@ if (form) {
     
     <div id="checkboxs-edicion-cuenta">
     <label>
-    <input type="checkbox" name="shared" ${account.shared ? 'checked' : ''} /> <span>Cuenta compartida</span>
+    <input class="app-toggle__input" type="checkbox" name="shared" ${account.shared ? 'checked' : ''} /> <span>Cuenta compartida</span>
     </label>
 
     <select name="sharedRatio"><option value="0.5" ${(account.sharedRatio === 0.5) ? 'selected' : ''}>50%</option></select>
     
     <div id="btc-input">
-    <label><input type="checkbox" name="isBitcoin" ${account.isBitcoin ? 'checked' : ''} /><span> Cuenta Bitcoin</span></label>
+    <label><input class="app-toggle__input" type="checkbox" name="isBitcoin" ${account.isBitcoin ? 'checked' : ''} /><span> Cuenta Bitcoin</span></label>
     <input type="number" name="btcUnits" step="0.00000001" min="0" value="${Number(account.btcUnits || 0)}" placeholder="BTC unidades" />
 
     </div>

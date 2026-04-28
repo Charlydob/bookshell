@@ -8019,27 +8019,27 @@ label {
   border-radius: 12px;
 }
 
-/* Oculta el checkbox visual */
-input[type="checkbox"]{
+/* Oculta el checkbox visual solo en este bloque de toggles custom */
+#grid-modal-edicion-cuenta input.app-toggle__input{
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
 
 /* El texto será clicable */
-label{
+#grid-modal-edicion-cuenta label{
   cursor: pointer;
   user-select: none;
 }
 
 /* Estado normal */
-label span{
+#grid-modal-edicion-cuenta label span{
   color: #fff;
   transition: .2s;
 }
 
 /* Estado marcado */
-input[type="checkbox"]:checked + span{
+#grid-modal-edicion-cuenta input.app-toggle__input:checked + span{
   color: white;
   font-weight: 800;
   background: rgba(218, 28, 28, 0.573);

@@ -4925,6 +4925,51 @@ async function updateReceiptLine(ticketId = '', lineId = '', patch = {}, options
 }
 
 const receiptLineCommitTimers = new Map();
+const receiptEditSession = {
+  active: false,
+  lineId: null,
+  field: null,
+  startedAt: 0,
+};
+
+function resolveReceiptEditField(target) {
+  if (!(target instanceof Element)) return '';
+  if (target.matches('[data-products-receipt-qty], [data-products-receipt-add-qty]')) return 'qty';
+  if (target.matches('[data-products-receipt-unit], [data-products-receipt-add-unit]')) return 'unit';
+  if (target.matches('[data-products-receipt-total]')) return 'total';
+  if (target.matches('[data-products-receipt-name], [data-products-receipt-add-name]')) return 'name';
+  return '';
+}
+
+function isActiveTicketInput(target = document.activeElement) {
+  if (!(target instanceof Element)) return false;
+  return target.matches(
+    '[data-products-receipt-qty], [data-products-receipt-unit], [data-products-receipt-total], [data-products-receipt-name], [data-products-receipt-add-qty], [data-products-receipt-add-unit], [data-products-receipt-add-name]'
+  );
+}
+
+function beginReceiptEditSession(target) {
+  if (!isActiveTicketInput(target)) return;
+  const lineId = String(
+    target?.dataset?.productsReceiptQty
+      || target?.dataset?.productsReceiptUnit
+      || target?.dataset?.productsReceiptTotal
+      || target?.dataset?.productsReceiptName
+      || ''
+  ).trim() || null;
+  receiptEditSession.active = true;
+  receiptEditSession.lineId = lineId;
+  receiptEditSession.field = resolveReceiptEditField(target) || null;
+  receiptEditSession.startedAt = nowTs();
+}
+
+function endReceiptEditSession(target) {
+  if (target && isActiveTicketInput(document.activeElement)) return;
+  receiptEditSession.active = false;
+  receiptEditSession.lineId = null;
+  receiptEditSession.field = null;
+  receiptEditSession.startedAt = 0;
+}
 
 function scheduleReceiptLineCommit(lineId = '', patch = {}, { root = document, delayMs = 260 } = {}) {
   const safeLineId = String(lineId || '').trim();
@@ -12470,6 +12515,9 @@ function restoreFinanceUiState(snapshot) {
 }
 
 function triggerRender(options = {}) {
+  if (!options.force && (receiptEditSession.active || isActiveTicketInput(document.activeElement))) {
+    return Promise.resolve(null);
+  }
   financePendingPreserveUi = financePendingPreserveUi && options.preserveUi !== false;
   if (financeRenderPromise) {
     financeRenderQueued = true;
@@ -13938,6 +13986,9 @@ if (fixedSummaryView) {
 }
   });
 view.addEventListener('focusin', (event) => {
+  if (isActiveTicketInput(event.target)) {
+    beginReceiptEditSession(event.target);
+  }
   if (event.target.matches('[data-account-input]')) {
     event.target.dataset.prev = event.target.value;
     event.target.value = '';
@@ -14006,6 +14057,9 @@ view.addEventListener('focusout', async (event) => {
   }
   if (event.target.matches('[data-products-receipt-add-name], [data-products-receipt-name]')) {
     closeProductsReceiptSuggestionsSoon(view, event.relatedTarget);
+  }
+  if (isActiveTicketInput(event.target)) {
+    window.setTimeout(() => endReceiptEditSession(event.target), 0);
   }
 });
   view.addEventListener('keydown', async (event) => {

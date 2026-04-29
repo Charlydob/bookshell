@@ -534,10 +534,6 @@
   font-size: 13px;
   font-weight: 600;
 }
-.media-autocomplete-meta{
-  font-size: 11px;
-  opacity:.7;
-}
 .media-autocomplete-actions{
   display:flex;
   gap: 8px;

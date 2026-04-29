@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-04-24-global-themes-v1";
+const APP_VERSION = "2026-04-29-css-cleanup-v1";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -7,10 +7,8 @@ const LOCAL_PRECACHE_ASSETS = [
   "./index.html",
   "./manifest.webmanifest",
   "./styles/core/themes.css",
-  "./styles/core/base.css",
   "./styles/core/shell.css",
   "./styles/core/achievements.css",
-  "./styles/core/general-center.css",
   "./styles/modules/books.css",
   "./styles/modules/finance.css",
   "./styles/modules/games.css",

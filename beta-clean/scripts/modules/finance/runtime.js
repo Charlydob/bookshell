@@ -19,7 +19,7 @@ async function ensureFinanceLoaded() {
 import { DEVICE_KEY, HOME_PANEL_VIEW_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
 import { resolveFinanceRoot, ensureFinanceHost, showFinanceBootError } from './finance/ui.js';
 import { resolveFinancePath, resolveFinancePathCandidates } from './finance/data.js';
-import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, firebaseSafeKey, TICKET_IMPORT_SAMPLE_V1, resolveTicketMovementCategory } from './finance/import.js';
+import { parseTicketImport, applyTicketImport, mapTicketCategoryToApp, firebaseSafeKey, TICKET_IMPORT_SAMPLE_V1, resolveTicketMovementCategory } from './finance/import.js';
 import { ensureEcharts } from '../../shared/vendors/echarts.js';
 import { readProcessedJsonCache, writeProcessedJsonCache } from '../../shared/cache/processed-json-cache.js';
 
@@ -44,7 +44,6 @@ function log(...parts) {
   if (!FINANCE_DEBUG) return;
   console.log('[finance]', ...parts);
 }
-function warnMissing(id) { console.warn(`[finance] missing DOM node ${id}`); }
 function $req(sel, ctx = document) {
   const el = ctx.querySelector(sel);
   if (!el) throw new Error(`[finance] Missing element: ${sel}`);
@@ -329,41 +328,6 @@ function localStartOfDayTs(day = '') {
   return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0).getTime();
 }
 
-function rangeBoundsForMode(mode = 'month') {
-  if (mode === 'month') {
-    const key = getSelectedBalanceMonthKey();
-    const [year, month] = String(key).split('-').map(Number);
-    const start = new Date(year, (month || 1) - 1, 1, 0, 0, 0, 0).getTime();
-    const end = new Date(year, (month || 1), 1, 0, 0, 0, 0).getTime();
-    return { start, end };
-  }
-  if (mode === 'total') {
-    const rows = balanceTxList();
-    if (!rows.length) {
-      const now = Date.now();
-      return { start: now, end: now + 86400000 };
-    }
-    const dates = rows
-      .map((row) => localStartOfDayTs(row?.date || isoToDay(row?.dateISO || '')))
-      .filter((ts) => Number.isFinite(ts) && ts > 0);
-    const start = Math.min(...dates);
-    const end = Math.max(...dates) + 86400000;
-    return { start, end };
-  }
-  const start = rangeStartByMode(mode);
-  if (!Number.isFinite(start)) {
-    const now = Date.now();
-    return { start: now, end: now + 86400000 };
-  }
-  if (mode === 'day') return { start, end: start + 86400000 };
-  if (mode === 'week') return { start, end: start + (7 * 86400000) };
-  if (mode === 'year') {
-    const d = new Date(start);
-    return { start, end: new Date(d.getFullYear() + 1, 0, 1, 0, 0, 0, 0).getTime() };
-  }
-  return { start, end: Date.now() + 1 };
-}
-
 function isoWeekStartTs(anchorIso = '') {
   const date = new Date(`${anchorIso}T00:00:00`);
   if (Number.isNaN(date.getTime())) return 0;
@@ -373,42 +337,6 @@ function isoWeekStartTs(anchorIso = '') {
   return date.getTime();
 }
 
-function allocationWindowBounds(allocation = {}, fallbackDate = '') {
-  const normalized = normalizeTxAllocation(allocation, fallbackDate);
-  const anchorDay = normalized.anchorDate;
-  if (normalized.mode !== 'period') {
-    const start = localStartOfDayTs(anchorDay);
-    return { start, end: start + 86400000 };
-  }
-  if (normalized.period === 'week') {
-    const start = isoWeekStartTs(anchorDay);
-    return { start, end: start + (7 * 86400000) };
-  }
-  if (normalized.period === 'month') {
-    const [y, m] = anchorDay.split('-').map(Number);
-    const start = new Date(y, (m || 1) - 1, 1, 0, 0, 0, 0).getTime();
-    return { start, end: new Date(y, (m || 1), 1, 0, 0, 0, 0).getTime() };
-  }
-  if (normalized.period === 'year') {
-    const [y] = anchorDay.split('-').map(Number);
-    const start = new Date(y, 0, 1, 0, 0, 0, 0).getTime();
-    return { start, end: new Date(y + 1, 0, 1, 0, 0, 0, 0).getTime() };
-  }
-  if (normalized.period === 'custom') {
-    const start = localStartOfDayTs(normalized.customStart || anchorDay);
-    const end = localStartOfDayTs(normalized.customEnd || normalized.customStart || anchorDay) + 86400000;
-    return { start: Math.min(start, end - 86400000), end: Math.max(end, start + 86400000) };
-  }
-  const start = localStartOfDayTs(anchorDay);
-  return { start, end: start + 86400000 };
-}
-
-function overlapDays(windowBounds = {}, rangeBounds = {}) {
-  const start = Math.max(Number(windowBounds.start || 0), Number(rangeBounds.start || 0));
-  const end = Math.min(Number(windowBounds.end || 0), Number(rangeBounds.end || 0));
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
-  return (end - start) / 86400000;
-}
 function parseEuroNumber(value) {
   const raw = String(value ?? '').trim();
   if (!raw) return NaN;
@@ -514,9 +442,6 @@ function isShared(account = {}) {
 function getRatio(account = {}) {
   return isShared(account) ? clampRatio(account?.sharedRatio, 0.5) : 1;
 }
-function shareAmount(account = {}, amount = 0) {
-  return Number(amount || 0) * getRatio(account);
-}
 function normalizeAccountShare(account = {}) {
   const shared = isShared(account);
   const sharedRatio = getRatio(account);
@@ -546,7 +471,6 @@ if (safeType === 'income') {
   if (safeType === 'transfer') return 0;
   return 0;
 }
-function movementSign(type) { return type === 'income' ? 1 : -1; }
 function txSortTs(row) {
   return new Date(row?.date || row?.dateISO || 0).getTime() || 0;
 }
@@ -688,13 +612,6 @@ function normalizeProductItemLabel(value = '') {
 function normalizeProductItemKey(value = '') {
   return normalizeFoodCompareKey(value);
 }
-function ticketCategoryToTxCategory(category = '') {
-  const safe = String(category || '').trim().toLowerCase();
-  if (!safe || safe === 'otros' || safe === 'hogar' || safe === 'higiene' || safe === 'mascotas') return 'Otros';
-  return 'Comida';
-}
-
-
 function resolveProductIdentity(item = {}, productsById = {}) {
   const explicitId = String(item?.foodId || item?.productId || '').trim();
   if (explicitId && productsById[explicitId]) return explicitId;
@@ -924,11 +841,6 @@ function getAccountEntryCount(account = {}) {
 
 function getAccountSnapshotCount(account = {}) {
   return normalizeSnapshots(account?.snapshots || {}).length;
-}
-
-function getAccountSemanticTokens(account = {}) {
-  return tokenizeAccountName(account?.name || '')
-    .filter((token) => token.length > 1 && !ACCOUNT_MERGE_STOPWORDS.has(token));
 }
 
 function getAccountMergeExtraText(account = {}) {
@@ -1786,8 +1698,6 @@ async function ensureFoodMetaCatalogLoaded(force = false) {
   await loadFoodMetaCatalog(force);
 }
 
-const DEBUG_FINANCE_PRODUCTS = FINANCE_DEBUG;
-
 function parseProductsRangeValue(rangeType = 'month', rangeValue = '') {
   const safeType = ['day', 'week', 'month', 'year', 'total', 'custom'].includes(String(rangeType || '')) ? String(rangeType) : 'month';
   const rawValue = String(rangeValue || '').trim();
@@ -1861,75 +1771,6 @@ function getProductRowsForRange(rangeType = 'month', rangeValue = '', filters = 
   return { rows, start, end, range, rangeValue: safeValue };
 }
 
-function resolveProductsRangeRows(filters = {}) {
-  const range = ['day', 'week', 'month', 'year', 'total', 'custom'].includes(String(filters.range || ''))
-    ? String(filters.range)
-    : 'month';
-  const rangeValue = String(filters.rangeValue || '');
-  return getProductRowsForRange(range, rangeValue, filters);
-}
-
-function buildFoodLines(rows = [], filters = {}) {
-  const vendorFilter = String(filters.vendor || 'all');
-  const accountFilter = String(filters.account || 'all');
-  const foodOnly = !!filters.onlyFood;
-  const lines = [];
-  let purchaseCount = 0;
-  rows.forEach((row) => {
-    if (normalizeTxType(row?.type) !== 'expense') return;
-    const ts = txTs(row);
-    if (!Number.isFinite(ts) || ts <= 0) return;
-    if (accountFilter !== 'all' && String(row?.accountId || '') !== accountFilter) return;
-    purchaseCount += 1;
-    const items = foodItemsFromTx(row).filter((item) => normalizeFoodName(item?.name || ''));
-    if (!items.length) return;
-    const txVendor = firebaseSafeKey(normalizeFoodName(row?.extras?.filters?.place || row?.extras?.place || 'unknown')) || 'unknown';
-    const txAmount = Math.abs(Number(row?.amount || 0));
-    let valid = items.map((item) => {
-      const totalPrice = Math.abs(Number(item?.totalPrice ?? item?.amount ?? item?.price ?? 0));
-      const qty = Math.max(1, Number(item?.qty || 1));
-      const unit = String(item?.unit || 'ud').trim() || 'ud';
-      const unitPrice = Number(item?.unitPrice || computeUnitPrice(totalPrice, qty));
-      const vendorKey = firebaseSafeKey(normalizeFoodName(item?.place || txVendor || 'unknown')) || 'unknown';
-      return {
-        txId: row.id,
-        accountId: String(row?.accountId || ''),
-        ts,
-        date: dayKeyFromTs(ts),
-        vendorKey,
-        nameRaw: normalizeFoodName(item?.name || ''),
-        foodId: String(item?.foodId || ''),
-        productKey: String(item?.productKey || ''),
-        itemCategory: String(item?.category || item?.category_app || row?.category || ''),
-        qty,
-        unit,
-        totalPrice,
-        unitPrice: Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : totalPrice,
-      };
-    });
-    const hasDirectLinePrices = valid.some((line) => line.totalPrice > 0);
-    if (!hasDirectLinePrices && txAmount > 0 && valid.length) {
-      const totalQty = valid.reduce((sum, line) => sum + Math.max(1, Number(line.qty || 1)), 0) || valid.length;
-      valid = valid.map((line) => {
-        const weight = Math.max(1, Number(line.qty || 1)) / totalQty;
-        const fallbackTotal = txAmount * weight;
-        return {
-          ...line,
-          totalPrice: fallbackTotal,
-          unitPrice: computeUnitPrice(fallbackTotal, line.qty)
-        };
-      });
-    }
-    valid = valid.filter((line) => line.totalPrice > 0);
-    valid.forEach((line) => {
-      if (vendorFilter !== 'all' && line.vendorKey !== vendorFilter) return;
-      if (foodOnly && !isFoodCategory(line.itemCategory || '')) return;
-      lines.push(line);
-    });
-  });
-  return { lines, purchaseCount };
-}
-
 function resolveMergeCanonicalId(rawId = '') {
   const safeId = String(rawId || '').trim();
   if (!safeId) return '';
@@ -1967,65 +1808,6 @@ function resolveCanonicalForLine(line = {}) {
   const resolvedFood = resolveFoodItemByAnyKey(line.nameRaw || line.productKey || '');
   if (resolvedFood?.id) return resolveMergeCanonicalId(String(resolvedFood.id));
   return `pseudo_${aliasKey || normalizeAliasKey('sin-datos')}`;
-}
-
-function aggregateProducts(lines = [], purchaseCount = 0) {
-  const acc = {};
-  const totalFood = lines.reduce((sum, line) => sum + Number(line.totalPrice || 0), 0);
-  lines.forEach((line) => {
-    const canonicalId = resolveCanonicalForLine(line);
-    const canonicalMeta = state.foodCatalog.canonicals?.[canonicalId] || state.food.itemsById?.[canonicalId] || {};
-    const canonicalName = normalizeFoodName(canonicalMeta?.name || canonicalMeta?.displayName || line.nameRaw || canonicalId.replace(/^pseudo_/, '')) || 'Sin datos';
-    if (!acc[canonicalId]) {
-      acc[canonicalId] = { canonicalId, canonicalName, total: 0, count: 0, purchases: new Set(), vendors: {}, lastTs: 0, lastPrice: null, lastVendor: '', aliases: new Set() };
-    }
-    const row = acc[canonicalId];
-    row.total += Number(line.totalPrice || 0);
-    row.count += Math.max(1, Number(line.qty || 1));
-    row.purchases.add(line.txId);
-    row.aliases.add(line.nameRaw);
-    if (line.ts >= row.lastTs) {
-      row.lastTs = line.ts;
-      row.lastPrice = line.unitPrice || line.totalPrice;
-      row.lastVendor = line.vendorKey;
-    }
-    if (!row.vendors[line.vendorKey]) row.vendors[line.vendorKey] = { aliasSet: new Set(), prices: [], count: 0, lastTs: 0, lastPrice: null, unit: line.unit || 'ud' };
-    const vendor = row.vendors[line.vendorKey];
-    vendor.aliasSet.add(line.nameRaw);
-    vendor.prices.push(line.unitPrice || line.totalPrice);
-    vendor.count += 1;
-    if (line.ts >= vendor.lastTs) {
-      vendor.lastTs = line.ts;
-      vendor.lastPrice = line.unitPrice || line.totalPrice;
-      vendor.unit = line.unit || vendor.unit || 'ud';
-    }
-  });
-  const products = Object.values(acc).map((row) => {
-    const vendorRows = Object.entries(row.vendors).map(([vendorKey, meta]) => {
-      const avg = meta.prices.length ? (meta.prices.reduce((sum, p) => sum + Number(p || 0), 0) / meta.prices.length) : null;
-      const minPrice = meta.prices.length ? Math.min(...meta.prices) : null;
-      return { vendorKey, aliasText: [...meta.aliasSet].join(', '), count: meta.count, lastPrice: meta.lastPrice, avgPrice: avg, minPrice, unit: meta.unit || 'ud', lastTs: meta.lastTs };
-    }).sort((a, b) => (a.avgPrice ?? Infinity) - (b.avgPrice ?? Infinity));
-    const cheapest = vendorRows.find((v) => Number.isFinite(v.avgPrice));
-    const pricy = vendorRows.slice().reverse().find((v) => Number.isFinite(v.avgPrice));
-    return {
-      ...row,
-      purchases: row.purchases.size,
-      aliases: [...row.aliases],
-      percentOfFood: totalFood > 0 ? (row.total / totalFood) * 100 : 0,
-      vendorRows,
-      cheapestVendorKey: cheapest?.vendorKey || '',
-      cheapestPrice: cheapest?.avgPrice ?? null,
-      pricyVendorKey: pricy?.vendorKey || '',
-      pricyPrice: pricy?.avgPrice ?? null
-    };
-  }).filter((row) => !state.foodCatalog.ignored?.[row.canonicalId]);
-  const topVendorByEur = lines.reduce((accVendor, line) => {
-    accVendor[line.vendorKey] = (accVendor[line.vendorKey] || 0) + Number(line.totalPrice || 0);
-    return accVendor;
-  }, {});
-  const topVendor = Object.entries(topVendorByEur).sort((a, b) => b[1] - a[1])[0] || null;
-  return { products, totalFood, purchaseCount, itemsCount: lines.length, topVendor: topVendor ? { key: topVendor[0], total: topVendor[1] } : null };
 }
 
 function applyMergeSearchFilter(inputEl, selector) {
@@ -6928,9 +6710,6 @@ function normalizeSnapshots(snapshots = {}) {
   return Object.entries(snapshots || {}).map(([day, row]) => ({ day, value: Number(row?.value), updatedAt: Number(row?.updatedAt || 0) }))
     .filter((row) => row.day && Number.isFinite(row.value)).sort((a, b) => parseDayKey(a.day) - parseDayKey(b.day));
 }
-function movementRowsByAccount(accountId) {
-  return balanceTxList().filter((row) => row.accountId === accountId);
-}
 async function recomputeAccountEntries(accountId, fromDay, rootOverride = null) {
   if (!accountId) return;
   const root = rootOverride && typeof rootOverride === 'object' ? rootOverride : await loadFinanceRoot();
@@ -7521,13 +7300,6 @@ async function rebuildAggregates() {
   if (Object.keys(updates).length) await safeFirebase(() => update(ref(db), updates));
 }
 
-function metricValue(row, scope = 'my', metric = 'netOperative') {
-  const suffix = scope === 'total' ? 'Total' : 'My';
-  const key = `${metric}${suffix}`;
-  return Number(row?.[key] || 0);
-}
-
-
 function openBalanceDrilldown(txType) {
   if (txType !== 'income' && txType !== 'expense') return;
   state.modal = {
@@ -7699,27 +7471,6 @@ function getHoursByHabitId(range = 'month', explicitBounds = null) {
     console.warn('[finance] getHoursByHabitId failed', err);
     return {};
   }
-}
-
-function amountAllocatedToRange(row = {}, rangeBounds = {}) {
-  const amount = Number(row?.amount || 0);
-  if (!Number.isFinite(amount) || amount <= 0) return 0;
-  const fallbackDate = String(row?.date || isoToDay(row?.dateISO || '') || '');
-  const allocation = normalizeTxAllocation(row?.allocation || {}, fallbackDate);
-  const txDayTs = localStartOfDayTs(fallbackDate || allocation.anchorDate);
-  if (allocation.mode === 'point') {
-    return txDayTs >= rangeBounds.start && txDayTs < rangeBounds.end ? amount : 0;
-  }
-  const windowBounds = allocationWindowBounds(allocation, fallbackDate);
-  const windowDays = overlapDays(windowBounds, windowBounds);
-  if (!windowDays) return 0;
-  const overlap = overlapDays(windowBounds, rangeBounds);
-  if (!overlap) return 0;
-  return amount * (overlap / windowDays);
-}
-
-function computeTransactionAmountInRange(row = {}, viewedRange = {}) {
-  return amountAllocatedToRange(row, viewedRange);
 }
 
 function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense', scope = 'personal', accountsById = {}, options = {}) {
@@ -8477,28 +8228,6 @@ function fixedExpenseFormStateFromRecurring(recurringId = '', recurringData = {}
     note: recurringData.note || '',
     createdAt: recurringData.createdAt || 0
   };
-}
-function shuffleFixedExpenseRows(rows = []) {
-  const sorted = [...rows].sort((a, b) => (
-    Number(b.amount || 0) - Number(a.amount || 0)
-    || String(a.id || '').localeCompare(String(b.id || ''))
-  ));
-  const bucketSize = rows.length >= 10 ? 4 : rows.length >= 6 ? 3 : 2;
-  const mixed = [];
-  for (let index = 0; index < sorted.length; index += bucketSize) {
-    const bucket = sorted.slice(index, index + bucketSize);
-    for (let cursor = bucket.length - 1; cursor > 0; cursor -= 1) {
-      const swapIndex = Math.floor(Math.random() * (cursor + 1));
-      [bucket[cursor], bucket[swapIndex]] = [bucket[swapIndex], bucket[cursor]];
-    }
-    mixed.push(...bucket);
-  }
-  return mixed;
-}
-function truncateFixedExpenseLabel(value = '', maxLength = 20) {
-  const text = String(value || '').trim();
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, Math.max(1, maxLength - 1)).trimEnd()}...`;
 }
 function formatFixedExpenseYearly(value = 0) {
   return `~${fmtCurrency(value)}/yr`;
@@ -9961,102 +9690,6 @@ return `<div class="financeBudgetRow">
   </div>
 
   <div class="financeTxList" style="max-height:220px;overflow-y:auto;">${monthNetList.map((row) => `<div class="financeTxRow-balance-por-mes"><span>${row.month}</span><strong class="${toneClass(row.netOperative)}">Op ${fmtSignedCurrency(row.netOperative)}</strong><strong class="${toneClass(row.netWealth)}">Pat ${fmtSignedCurrency(row.netWealth)}</strong><strong class="${toneClass(row.accountsDeltaReal)}">ΔC ${fmtSignedCurrency(row.accountsDeltaReal)}</strong></div>`).join('') || '<p class="finance-empty">Sin meses con movimientos.</p>'}</div></article></section>`;
-}
-
-function renderFinanceGoalsLegacy(accounts = buildAccountModels()) {
-  const goals = Object.entries(state.goals.goals || {})
-    .map(([id, row]) => ({ id, ...row }))
-    .sort((a, b) => Number(a?.dueDateISO ? new Date(a.dueDateISO).getTime() : 0) - Number(b?.dueDateISO ? new Date(b.dueDateISO).getTime() : 0));
-
-  const accountsById = Object.fromEntries(accounts.map((account) => [account.id, account]));
-
-  const totalObjective = goals.reduce((sum, goal) => sum + Number(goal.targetAmount || 0), 0);
-  const contributingAccounts = new Set();
-  goals.forEach((goal) => (goal.accountsIncluded || []).forEach((id) => contributingAccounts.add(id)));
-  const totalPool = [...contributingAccounts].reduce((sum, id) => sum + Number(accountsById[id]?.current || 0), 0);
-  const globalPct = totalObjective > 0 ? Math.max(0, Math.min(100, (totalPool / totalObjective) * 100)) : 0;
-  const sortedGoals = goals.slice().sort((a, b) => {
-    const aDue = a?.dueDateISO ? new Date(a.dueDateISO).getTime() : Number.MAX_SAFE_INTEGER;
-    const bDue = b?.dueDateISO ? new Date(b.dueDateISO).getTime() : Number.MAX_SAFE_INTEGER;
-    if (aDue !== bDue) return aDue - bDue;
-    return Number(a.targetAmount || 0) - Number(b.targetAmount || 0);
-  });
-  const allocationByGoal = {};
-  let remainingPool = totalPool;
-  sortedGoals.forEach((goal) => {
-    const target = Math.max(0, Number(goal.targetAmount || 0));
-    const assigned = Math.max(0, Math.min(target, remainingPool));
-    allocationByGoal[goal.id] = assigned;
-    remainingPool -= assigned;
-  });
-
-  return `
-  <section class="financeBalanceView financeGoalsView">
-    <header class="financeViewHeader financeGoalsView__header">
-      <button  id="boton-objetivo" data-open-modal="goal">+ Objetivo</button>
-    </header>
-
-    <article class="financeGlassCard financeGoalsCard financeGoalsCard--summary">
-      <div class="financeSummaryGrid financeGoalsSummaryGrid">
-        <div class="valoracion-mes financeGoalsSummaryStat"><small>Total objetivo</small><strong>${fmtCurrency(totalObjective)}</strong></div>
-        <div class="valoracion-mes financeGoalsSummaryStat"><small>Total ahorrado</small><strong class="${toneClass(totalPool)}">${fmtCurrency(totalPool)}</strong></div>
-      </div>
-      <div class="media-mensual financeGoalsProgressHead">
-        <div>
-          <small>Progreso global</small>
-          <strong class="${toneClass(globalPct - 100)}">${globalPct.toFixed(2)}%</strong>
-        </div>
-        <small>${contributingAccounts.size} ${contributingAccounts.size === 1 ? 'cuenta' : 'cuentas'} aportando</small>
-      </div>
-      <div class="financeProgress financeProgress--goal"><div class="financeProgress__bar" style="width:${Math.max(0, Math.min(100, globalPct)).toFixed(2)}%"></div></div>
-    </article>
-
-    <article class="financeGlassCard financeGoalsCard">
-      <div class="financeBudgetList financeGoalsList">
-        ${
-          goals.length
-            ? goals.map(goal => {
-                const target = Number(goal.targetAmount || 0);
-                const includedIds = goal.accountsIncluded || [];
-                const assigned = Number(allocationByGoal[goal.id] || 0);
-                const pct = target > 0 ? Math.max(0, Math.min(100, (assigned / target) * 100)) : 0;
-                const remaining = Math.max(0, target - assigned);
-                const complete = remaining <= 0.000001 && target > 0;
-                const dueLabel = goal.dueDateISO ? new Date(goal.dueDateISO).toLocaleDateString('es-ES') : 'sin fecha';
-
-                return `
-                  <div class="financeBudgetRow financeGoalCard ${complete ? 'is-complete' : ''}">
-                    <div class="financeGoalCard__header">
-                      <div class="financeGoalCard__titleBlock">
-                        <strong>${escapeHtml(goal.title || 'Objetivo')}</strong>
-                        <small>Vence ${dueLabel}</small>
-                      </div>
-                      <div class="financeGoalCard__actions">
-                        <button class="finance-pill finance-pill--mini" data-open-goal="${goal.id}">✏️</button>
-                        <button class="finance-pill finance-pill--mini" data-delete-goal="${goal.id}">❌</button>
-                      </div>
-                    </div>
-
-                    <div class="financeGoalCard__meta">
-                      ${fmtCurrency(target)} ·
-                      asignado ${fmtCurrency(assigned)} (${pct.toFixed(0)}%) ·
-                      restante ${fmtCurrency(remaining)} ·
-                      vence ${goal.dueDateISO ? new Date(goal.dueDateISO).toLocaleDateString('es-ES') : 'sin fecha'} ·
-                      ${includedIds.length} cuentas ·
-                      ${complete ? 'completo' : 'pendiente'}
-                    </div>
-
-                    <div class="financeProgress">
-                      <div class="financeProgress__bar" style="width:${pct.toFixed(2)}%"></div>
-                    </div>
-                  </div>
-                `;
-              }).join('')
-            : `<p class="finance-empty">Sin objetivos todavía.</p>`
-        }
-      </div>
-    </article>
-  </section>`;
 }
 
 function renderFinanceGoals(accounts = buildAccountModels()) {
@@ -11670,17 +11303,6 @@ function getFoodFormRefs(form) {
   };
 }
 
-function clearFoodFormState(form) {
-  const refs = getFoodFormRefs(form);
-  if (refs.mealType) refs.mealType.value = '';
-  if (refs.cuisine) refs.cuisine.value = '';
-  if (refs.place) refs.place.value = '';
-  if (refs.itemSearch) refs.itemSearch.value = '';
-  if (refs.itemValue) refs.itemValue.value = '';
-  if (refs.foodId) refs.foodId.value = '';
-  if (refs.itemResults) refs.itemResults.innerHTML = '';
-}
-
 function keepFoodExtrasOpen(form) {
   const details = form?.querySelector('[data-section="food-extras"]');
   if (!details || details.hidden) return;
@@ -12014,18 +11636,6 @@ function renderToast() {
   el.textContent = state.toast; el.classList.remove('hidden');
 }
 function toast(message) { state.toast = message; renderToast(); clearTimeout(state.toastTimer); state.toastTimer = setTimeout(() => { state.toast = ''; renderToast(); }, 1800); }
-
-async function migrateLegacy(entriesMap = {}, accounts = []) {
-  const updatesMap = {}; let writes = 0;
-  accounts.forEach((account) => {
-    const legacyByDay = normalizeLegacyEntries(entriesMap[account.id] || {});
-    Object.entries(legacyByDay).forEach(([day, record]) => {
-      const current = account.daily?.[day];
-      if (!current || Number(current.ts || 0) < Number(record.ts)) { updatesMap[`${state.financePath}/accounts/${account.id}/entries/${day}`] = { value: record.value, ts: record.ts, source: 'legacy', updatedAt: nowTs(), dateISO: `${day}T00:00:00.000Z` }; writes += 1; }
-    });
-  });
-  if (writes) await safeFirebase(() => update(ref(db), updatesMap));
-}
 
 async function ensurePersonalRatioMigrationV1() {
   const migrationPath = `${state.financePath}/meta/migrations/personalRatioV1`;
@@ -14979,14 +14589,6 @@ async function boot() {
   subscribe();
   await render();
 }
-
-function bootFinance() {
-  boot().catch((e) => {
-    console.error('[finance] boot crashed', e);
-    showFinanceBootError($opt, e);
-  });
-}
-
 
 export async function init() {
   const financeStart = performance.now();

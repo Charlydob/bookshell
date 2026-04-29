@@ -12,7 +12,6 @@ import {
   markOfflineOperationFailed,
   markOfflineOperationSynced,
   markOfflineOperationSyncing,
-  OFFLINE_OPERATION_STATUS,
   pruneSyncedOfflineOperations,
   reviveInterruptedOfflineOperations,
 } from "../storage/offline-queue.js";

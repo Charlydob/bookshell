@@ -585,106 +585,6 @@
   background: linear-gradient(120deg, #f4d35e, #ffb347);
 }
 
-.recipes-donut-legend {
-  display: grid;
-  gap: 6px;
-  margin-top: 10px;
-}
-
-.recipes-donut-legend-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--txt-soft);
-}
-
-.recipes-donut-color {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-}
-
-.recipes-donut {
-  width: 100%;
-  aspect-ratio: 1.25 / 1;
-  max-width: 420px;
-  margin: 0 auto;
-  position: relative;
-  display: grid;
-  place-items: center;
-}
-
-.recipes-donut-ring {
-  width: 100%;
-  height: 100%;
-  border-radius: 50%;
-  background: conic-gradient(var(--accent), rgba(255,255,255,0.1));
-  position: relative;
-  box-shadow: inset 0 0 0 10px rgba(0, 0, 0, 0.35);
-}
-
-.recipes-donut-hole {
-  position: absolute;
-  width: 52%;
-  height: 52%;
-  border-radius: 50%;
-  background: radial-gradient(circle at top, rgba(255,255,255,0.08), rgba(10, 12, 20, 0.95));
-  display: grid;
-  place-items: center;
-  text-align: center;
-  padding: 10px;
-  border: 1px solid rgba(255,255,255,0.08);
-  box-shadow: 0 10px 30px rgba(0,0,0,0.45);
-}
-
-.recipes-donut-hole strong {
-  font-size: 16px;
-  display: block;
-}
-
-.recipes-donut-hole span {
-  font-size: 12px;
-  color: var(--txt-soft);
-}
-
-.recipe-donut-slice {
-  opacity: 0.95;
-  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.32));
-}
-
-.recipe-builder-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 12px;
-}
-
-.recipe-builder-column {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  padding: 10px 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.builder-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.builder-title {
-  font-weight: 700;
-}
-
-.builder-subtitle {
-  font-size: 12px;
-  color: var(--txt-soft);
-}
-
 .builder-row {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -1064,13 +964,6 @@ select.builder-input option {
     grid-template-columns: 1fr;
   }
 }
-.recipe-import{
-  display:flex;
-  flex-direction:column;
-  gap:8px;
-  margin:10px 0 6px;
-}
-
 .recipe-import-box{
   border:1px solid rgba(255,255,255,0.10);
   background: rgba(255,255,255,0.03);
@@ -1259,7 +1152,6 @@ select.builder-input option {
   justify-content:center;
 }
 .macro-summary-group-macros{
-  min-width: none;
   max-width: 320px;
   justify-self: center;
   justify-content: center;
@@ -1268,16 +1160,6 @@ select.builder-input option {
 .macro-summary-group-kcal{
   display: flex;
   margin-top: 6px;
-}
-.macro-goal-input{
-  width: 40px;
-  padding: 4px 8px;
-  border-radius: 10px;
-  border: 0px solid rgba(255,255,255,.14);
-  background: transparent;
-  color: var(--txt);
-  margin: 0;
-  justify-content: end;
 }
 .macro-goal-input-stats{
   width: 50px;
@@ -1443,10 +1325,6 @@ select.builder-input option {
   --stat-a: rgba(63, 255, 149, 0.192);
   --stat-b: rgba(12, 168, 93, 0.233);
 }
-#stat-card-laura{
-  --stat-a: rgba(0, 169, 178, 0.24);
-  --stat-b: rgba(0, 92, 128, 0.185);
-}
 #stat-card-products{
   --stat-a: rgba(135, 84, 255, 0.24);
   --stat-b: rgba(51, 0, 128, 0.212);
@@ -1599,11 +1477,6 @@ select.builder-input option {
   margin-top: 6px;
 }
 
-.macro-product-add-row{
-  display:grid;
-  gap:8px;
-  margin-top: 10px;
-}
 #macro-product-summary{
   opacity: .9;
 }
@@ -1936,12 +1809,6 @@ select.builder-input option {
   max-width: none;
 }
 
-.version-switch-link{
-  border: 0px;
-  background: transparent;
-  padding: 0;
-  font-size: 18px;
-}
 .macro-product-picker-results {
   flex: 1 1 auto;
   min-height: 0;
@@ -4143,21 +4010,6 @@ div#macros-inputs.macro-manual-macro-grid{
 }
  
 
-.macro-comp-name {
-  font-weight: 600;
-  font-size: 12px;
-  text-align: center;
-  word-break: break-word;
-  color: #fff;
-}
-
-.macro-comp-macros {
-  font-size: 10px;
-  color: rgba(255,255,255,0.7);
-  text-align: center;
-  line-height: 1.2;
-}
-
 .stat-card-recipes{
   border-radius: 14px;
   padding: 2px 12px;
@@ -5006,5 +4858,3 @@ div#macros-inputs.macro-manual-macro-grid{
     
 /* #endregion */
 /* #endregion MANTENER */
-
-

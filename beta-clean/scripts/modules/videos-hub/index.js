@@ -132,7 +132,7 @@ function setUnauthenticatedState() {
   if (els.chartDonut) els.chartDonut.innerHTML = "";
   if (els.videoCompare) els.videoCompare.innerHTML = "";
 
-  [els.title, els.status, els.category, els.target, els.date, els.script, els.deleteBtn].forEach((el) => {
+  [els.title, els.status, els.category, els.target, els.date, els.script, els.notes, els.deleteBtn].forEach((el) => {
     if (el) el.disabled = true;
   });
 }
@@ -205,7 +205,7 @@ function renderDetail() {
   const video = getActiveVideo();
   const disabled = !video;
 
-  [els.title, els.status, els.category, els.target, els.date, els.script, els.deleteBtn].forEach((el) => {
+  [els.title, els.status, els.category, els.target, els.date, els.script, els.notes, els.deleteBtn].forEach((el) => {
     if (el) el.disabled = disabled;
   });
 
@@ -216,6 +216,7 @@ function renderDetail() {
     if (els.target) els.target.value = "";
     if (els.date) els.date.value = "";
     if (els.script) els.script.value = "";
+    if (els.notes) els.notes.value = "";
     if (els.wordCount) els.wordCount.textContent = "0 palabras";
     if (els.metrics) {
       els.metrics.innerHTML = '<div class="videosHub__metric"><small>Sin vídeo activo</small><strong>Crea o selecciona uno</strong></div>';
@@ -229,6 +230,7 @@ function renderDetail() {
   if (document.activeElement !== els.target) els.target.value = Number(video.targetWords) > 0 ? String(video.targetWords) : "";
   if (document.activeElement !== els.date) els.date.value = toDateInputValue(video.createdAt);
   if (document.activeElement !== els.script) els.script.value = video.script || "";
+  if (document.activeElement !== els.notes) els.notes.value = video.notes || "";
 
   const todayWords = Number(video?.dailyWordHistory?.[getTodayKey()] || 0);
   const words = Number(video.wordCount) || 0;
@@ -466,6 +468,7 @@ function scheduleScriptSave() {
     const prevToday = Number(video?.dailyWordHistory?.[today] || 0);
     const patch = {
       script,
+      notes: els.notes?.value || "",
       wordCount: newWords,
       updatedAt: Date.now(),
       [`dailyWordHistory/${today}`]: prevToday + delta,
@@ -601,6 +604,9 @@ function bindEvents() {
     if (els.wordCount) els.wordCount.textContent = `${fmtNumber(words)} palabras`;
     scheduleScriptSave();
   });
+  els.notes?.addEventListener("input", () => {
+    scheduleScriptSave();
+  });
 
   els.statsRange?.addEventListener("change", () => {
     state.statsFilters.range = Number(els.statsRange.value) || 30;
@@ -658,6 +664,7 @@ function cacheElements(root) {
   els.target = root.querySelector("#videos-hub-target");
   els.date = root.querySelector("#videos-hub-date");
   els.script = root.querySelector("#videos-hub-script");
+  els.notes = root.querySelector("#videos-hub-notes");
   els.wordCount = root.querySelector("#videos-hub-word-count");
   els.autosave = root.querySelector("#videos-hub-autosave");
   els.metrics = root.querySelector("#videos-hub-metrics");

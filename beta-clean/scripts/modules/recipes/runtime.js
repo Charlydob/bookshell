@@ -7310,11 +7310,18 @@ $recipeImportBtn?.addEventListener("click", () => {
     const summary = { habits: [], financeCost: 0, productsResolved: 0, productsTotal: ingredients.length };
     ingredients.forEach((ing) => {
       const linked = nutritionProducts.find((p) => p.id === ing?.productId);
-      if (!linked) return;
+      const ingredientLinkedHabitId = String(ing?.linkedHabitId || "").trim();
+      if (!linked) {
+        if (ingredientLinkedHabitId) summary.habits.push({ habitId: ingredientLinkedHabitId, amount: safeServings });
+        return;
+      }
       summary.productsResolved += 1;
       const productFx = buildProductSideEffects(linked, safeServings);
       summary.financeCost += Number(productFx.financeCost) || 0;
       productFx.habits.forEach((h) => summary.habits.push({ ...h }));
+      if (!productFx.habits.length && ingredientLinkedHabitId) {
+        summary.habits.push({ habitId: ingredientLinkedHabitId, amount: safeServings });
+      }
     });
     return summary;
   }
@@ -7534,10 +7541,16 @@ $recipeImportBtn?.addEventListener("click", () => {
     const safeDate = String(dateKey || "").trim();
     const safeDelta = Number(delta) || 0;
     if (!safeHabitId || !safeDate || !safeDelta) return;
+    console.info("[habit-link] source", "recipes/macros");
+    console.info("[habit-link] habitId", safeHabitId);
+    console.info("[habit-link] action", "adjustHabitCountForDate", { dateKey: safeDate, delta: safeDelta });
     habitSyncQueue = habitSyncQueue.then(async () => {
       try {
         await window.__bookshellHabits?.adjustHabitCountForDate?.(safeHabitId, safeDate, safeDelta);
-      } catch (_) {}
+        console.info("[habit-link] result", "ok");
+      } catch (error) {
+        console.info("[habit-link] result", "error", error);
+      }
     });
     return habitSyncQueue;
   }

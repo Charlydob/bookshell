@@ -51,6 +51,11 @@ const LONG_DATE_FORMATTER = new Intl.DateTimeFormat("es-ES", {
   month: "short",
   year: "numeric",
 });
+const TIME_FORMATTER = new Intl.DateTimeFormat("es-ES", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 const NUMBER_FORMATTER = new Intl.NumberFormat("es-ES");
 const COMPACT_NUMBER_FORMATTER = new Intl.NumberFormat("es-ES", {
   maximumFractionDigits: 1,
@@ -586,6 +591,17 @@ function formatLongDate(timestamp = 0) {
   const safe = Number(timestamp || 0);
   if (!Number.isFinite(safe) || safe <= 0) return "Sin fecha";
   return LONG_DATE_FORMATTER.format(safe);
+}
+
+function formatReminderDateTime(reminder) {
+  const safeDate = String(reminder?.targetDate || "").trim();
+  if (!safeDate) return "Sin fecha";
+  const safeTime = String(reminder?.targetTime || "").trim();
+  const parsed = new Date(`${safeDate}T${safeTime || "23:59"}:00`);
+  if (!Number.isFinite(parsed.getTime())) return "Sin fecha";
+  const dateLabel = formatLongDate(parsed.getTime());
+  if (!safeTime) return dateLabel;
+  return `${dateLabel} · ${TIME_FORMATTER.format(parsed)}`;
 }
 
 function formatRatingValue(rating = null) {
@@ -2743,7 +2759,7 @@ function renderReminderCardsToMarkup(reminders = []) {
   return reminders.map((reminder) => {
     const computedStatus = getReminderComputedStatus(reminder);
     const targetAt = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
-    const dateLabel = targetAt ? formatLongDate(targetAt) : "Sin fecha";
+    const dateLabel = formatReminderDateTime(reminder);
     const countdown = buildReminderCountdown(reminder);
     const isBirthday = reminder?.type === "cumpleaños";
     const birthdayLead = isBirthday

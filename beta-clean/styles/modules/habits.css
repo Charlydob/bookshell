@@ -3674,6 +3674,11 @@ display: grid;
   gap: 8px;
 }
 
+.habit-work-schedule-time-input {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .habit-work-schedule-days {
   display: flex;
   flex-wrap: wrap;
@@ -4921,6 +4926,27 @@ button#habit-detail-edit, #habit-detail-close{
   backdrop-filter: none;
   box-shadow: none;
 }
+
+/* #region modal añadir horario */
+
+  .habit-work-schedule-time-input {
+    background: none;
+    border: 1px grey solid;
+    border-radius: 12px;
+    width: 100%;
+  }
+  #habit-work-schedule-week{
+    width: 90%;
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .modal-footer.sheet-footer {
+    background: none;
+    backdrop-filter: none;
+  }
+
+
+/* #endregion */
 /* #endregion */
 /* #region MAIN */
 

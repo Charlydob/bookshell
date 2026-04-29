@@ -66,9 +66,28 @@
         <div class="notes-reminders-active-filters" id="notes-reminders-active-filters"></div>
       </div>
 
-      <div class="notes-reminder-list" id="notes-reminders-list"></div>
-      <button class="btn ghost btn-compact" id="notes-reminders-toggle-history" type="button">Mostrar completados y vencidos</button>
-      <div class="notes-reminder-list hidden" id="notes-reminders-history-list"></div>
+      <div class="notes-reminders-view-switch" id="notes-reminders-view-switch" role="tablist" aria-label="Vista de recordatorios">
+        <button class="notes-reminders-view-tab is-active" type="button" data-act="set-reminders-view" data-reminders-view="list" aria-pressed="true">Lista</button>
+        <button class="notes-reminders-view-tab" type="button" data-act="set-reminders-view" data-reminders-view="calendar" aria-pressed="false">Calendario</button>
+      </div>
+
+      <section class="notes-reminders-calendar-view hidden" id="notes-reminders-calendar-view" aria-live="polite">
+        <div class="notes-reminders-calendar" id="notes-reminders-calendar-shell">
+          <div class="notes-reminders-calendar__header">
+            <button class="notes-reminders-calendar__nav" id="notes-reminders-calendar-prev" type="button" data-act="shift-reminders-calendar" data-month-shift="-1" aria-label="Mes anterior">&#9664;</button>
+            <div class="notes-reminders-calendar__title" id="notes-reminders-calendar-title">Calendario</div>
+            <button class="notes-reminders-calendar__nav" id="notes-reminders-calendar-next" type="button" data-act="shift-reminders-calendar" data-month-shift="1" aria-label="Mes siguiente">&#9654;</button>
+          </div>
+          <div class="notes-reminders-calendar__grid" id="notes-reminders-calendar-grid"></div>
+        </div>
+        <div class="notes-reminders-calendar-panel" id="notes-reminders-calendar-panel"></div>
+      </section>
+
+      <section class="notes-reminders-list-view" id="notes-reminders-list-view">
+        <div class="notes-reminder-list" id="notes-reminders-list"></div>
+        <button class="btn ghost btn-compact" id="notes-reminders-toggle-history" type="button">Mostrar completados y vencidos</button>
+        <div class="notes-reminder-list hidden" id="notes-reminders-history-list"></div>
+      </section>
       <div class="empty-state hidden" id="notes-empty-reminders">No hay recordatorios todavía.</div>
     </section>
   </section>
@@ -188,6 +207,13 @@
             <span class="field-label">Hora objetivo (opcional)</span>
             <input id="notes-reminder-time" type="time" />
           </label>
+        </div>
+        <div class="notes-reminder-modal-row notes-reminder-row-color">
+          <div class="field">
+            <span class="field-label">Color</span>
+            <input id="notes-reminder-color" type="hidden" value="#63d6ff" />
+            <div class="notes-reminder-color-palette" id="notes-reminder-color-palette" role="radiogroup" aria-label="Color del recordatorio"></div>
+          </div>
         </div>
         <div class="notes-reminder-modal-row notes-reminder-row-alerts">
           <div class="notes-reminder-alert-builder">

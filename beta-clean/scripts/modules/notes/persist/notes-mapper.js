@@ -1,5 +1,7 @@
 import { buildTagDefinitionKey, normalizeTagLabel } from "../domain/tag-utils.js?v=2026-04-28-v2";
 
+const DEFAULT_REMINDER_COLOR = "#63d6ff";
+
 function normalizeColor(value = "") {
   const safe = String(value || "").trim();
   return /^#[0-9a-fA-F]{6}$/.test(safe) ? safe : "#00d4ff";
@@ -90,6 +92,11 @@ function normalizeReminderTime(value = "") {
 
 function normalizeReminderRepeat(value = "") {
   return String(value || "").trim() === "yearly" ? "yearly" : "none";
+}
+
+function normalizeReminderColor(value = "") {
+  const safe = String(value || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(safe) ? safe : DEFAULT_REMINDER_COLOR;
 }
 
 function normalizeReminderAlerts(value = []) {
@@ -264,6 +271,7 @@ export function mapReminderFromDb(id, value = {}) {
     status: normalizeReminderStatus(value?.status),
     targetDate: normalizeReminderDate(value?.targetDate),
     targetTime: normalizeReminderTime(value?.targetTime),
+    color: normalizeReminderColor(value?.color),
     remindBefore: normalizeReminderAlerts(value?.remindBefore),
     repeat,
     isBirthday,
@@ -288,6 +296,7 @@ export function mapReminderToDb(reminder = {}) {
     status: normalizeReminderStatus(reminder?.status),
     targetDate: normalizeReminderDate(reminder?.targetDate),
     targetTime: normalizeReminderTime(reminder?.targetTime),
+    color: normalizeReminderColor(reminder?.color),
     remindBefore: normalizeReminderAlerts(reminder?.remindBefore),
     repeat,
     isBirthday,

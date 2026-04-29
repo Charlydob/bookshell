@@ -450,6 +450,10 @@ export function createInitialNotesState() {
     },
     reminderGroupBy: "none",
     reminderCollapsedHistory: true,
+    reminderView: "list",
+    reminderCalendarMonthKey: "",
+    reminderCalendarSelectedDate: "",
+    reminderCalendarFocusedReminderId: "",
     folderView: "main",
     loading: true,
   };

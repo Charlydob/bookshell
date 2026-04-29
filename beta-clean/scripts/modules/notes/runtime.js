@@ -56,11 +56,35 @@ const TIME_FORMATTER = new Intl.DateTimeFormat("es-ES", {
   minute: "2-digit",
   hour12: false,
 });
+const REMINDER_MONTH_FORMATTER = new Intl.DateTimeFormat("es-ES", {
+  month: "long",
+  year: "numeric",
+});
 const NUMBER_FORMATTER = new Intl.NumberFormat("es-ES");
 const COMPACT_NUMBER_FORMATTER = new Intl.NumberFormat("es-ES", {
   maximumFractionDigits: 1,
 });
-const state = createInitialNotesState();
+const REMINDER_WEEKDAY_LABELS = ["L", "M", "X", "J", "V", "S", "D"];
+const REMINDER_COLOR_PALETTE = Object.freeze([
+  "#63d6ff",
+  "#7d8bff",
+  "#a57dff",
+  "#ff8abf",
+  "#ff8f70",
+  "#ffc857",
+  "#7fdc8a",
+  "#63d2c6",
+]);
+const DEFAULT_REMINDER_COLOR = REMINDER_COLOR_PALETTE[0];
+const REMINDER_VIEW_STORAGE_KEY = "bookshell-notes-reminders-view:v1";
+const REMINDER_CALENDAR_MAX_DOTS = 3;
+const state = {
+  ...createInitialNotesState(),
+  reminderView: loadReminderViewPreference(),
+  reminderCalendarMonthKey: getCurrentMonthKey(),
+  reminderCalendarSelectedDate: getTodayDateKey(),
+  reminderCalendarFocusedReminderId: "",
+};
 let unbindAuth = null;
 let unbindData = null;
 let isBound = false;
@@ -167,6 +191,117 @@ function normalizeReminderMultiSelection(items = [], allowed = []) {
     .filter((item, index, list) => item && list.indexOf(item) === index);
   if (!allowed.length) return filtered;
   return filtered.filter((item) => allowed.includes(item));
+}
+
+function normalizeReminderView(value = "") {
+  return String(value || "").trim() === "calendar" ? "calendar" : "list";
+}
+
+function loadReminderViewPreference() {
+  try {
+    return normalizeReminderView(window.localStorage?.getItem(REMINDER_VIEW_STORAGE_KEY) || "list");
+  } catch (_) {
+    return "list";
+  }
+}
+
+function saveReminderViewPreference(value = "") {
+  try {
+    window.localStorage?.setItem(REMINDER_VIEW_STORAGE_KEY, normalizeReminderView(value));
+  } catch (_) {}
+}
+
+function normalizeReminderColor(value = "") {
+  const safe = String(value || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(safe) ? safe : DEFAULT_REMINDER_COLOR;
+}
+
+function padCalendarNumber(value = 0) {
+  return String(Math.max(0, Number(value) || 0)).padStart(2, "0");
+}
+
+function getDateKeyFromParts(year = 0, monthIndex = 0, day = 1) {
+  return `${String(year).padStart(4, "0")}-${padCalendarNumber(monthIndex + 1)}-${padCalendarNumber(day)}`;
+}
+
+function getDateKeyFromDate(date = new Date()) {
+  if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return "";
+  return getDateKeyFromParts(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function getTodayDateKey() {
+  return getDateKeyFromDate(new Date());
+}
+
+function getMonthKeyFromDate(date = new Date()) {
+  if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return "";
+  return `${String(date.getFullYear()).padStart(4, "0")}-${padCalendarNumber(date.getMonth() + 1)}`;
+}
+
+function getCurrentMonthKey() {
+  return getMonthKeyFromDate(new Date());
+}
+
+function parseDateKey(dateKey = "") {
+  const safe = String(dateKey || "").trim();
+  const match = safe.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!year || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { year, monthIndex: month - 1, day };
+}
+
+function parseMonthKey(monthKey = "") {
+  const safe = String(monthKey || "").trim();
+  const match = safe.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!year || month < 1 || month > 12) return null;
+  return { year, monthIndex: month - 1 };
+}
+
+function getMonthKeyFromDateKey(dateKey = "") {
+  const parsed = parseDateKey(dateKey);
+  if (!parsed) return getCurrentMonthKey();
+  return `${String(parsed.year).padStart(4, "0")}-${padCalendarNumber(parsed.monthIndex + 1)}`;
+}
+
+function daysInMonth(year = 0, monthIndex = 0) {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+function clampDayForMonth(year = 0, monthIndex = 0, day = 1) {
+  return Math.min(Math.max(1, Number(day) || 1), daysInMonth(year, monthIndex));
+}
+
+function addMonthsToMonthKey(monthKey = "", delta = 0) {
+  const parsed = parseMonthKey(monthKey) || parseMonthKey(getCurrentMonthKey());
+  const date = new Date(parsed.year, parsed.monthIndex + Number(delta || 0), 1);
+  return getMonthKeyFromDate(date);
+}
+
+function getDateFromDateKey(dateKey = "") {
+  const parsed = parseDateKey(dateKey);
+  if (!parsed) return null;
+  return new Date(parsed.year, parsed.monthIndex, parsed.day);
+}
+
+function isTodayDateKey(dateKey = "") {
+  return String(dateKey || "").trim() === getTodayDateKey();
+}
+
+function capitalizeText(value = "") {
+  const safe = String(value || "");
+  return safe ? safe.charAt(0).toUpperCase() + safe.slice(1) : "";
+}
+
+function formatReminderCalendarTitle(monthKey = "") {
+  const parsed = parseMonthKey(monthKey) || parseMonthKey(getCurrentMonthKey());
+  const date = new Date(parsed.year, parsed.monthIndex, 1);
+  return capitalizeText(REMINDER_MONTH_FORMATTER.format(date));
 }
 
 function buildStatsSectionSwitch(active = "ratings") {
@@ -2682,18 +2817,46 @@ function renderFolderDetail() {
   statsView.classList.toggle("hidden", state.folderView !== "stats");
 }
 
-function getReminderTargetTimestamp(reminder, { annualizeBirthdays = false } = {}) {
-  const safeDate = String(reminder?.targetDate || "").trim();
+function getReminderOccurrenceDateParts(reminder, yearOverride = null) {
+  const parsed = parseDateKey(reminder?.targetDate || "");
+  if (!parsed) return null;
+  const overrideYear = Number(yearOverride);
+  const year = Number.isFinite(overrideYear) && overrideYear > 0
+    ? Math.round(overrideYear)
+    : parsed.year;
+  return {
+    year,
+    monthIndex: parsed.monthIndex,
+    day: clampDayForMonth(year, parsed.monthIndex, parsed.day),
+  };
+}
+
+function getReminderOccurrenceDateKey(reminder, yearOverride = null) {
+  const parts = getReminderOccurrenceDateParts(reminder, yearOverride);
+  if (!parts) return "";
+  return getDateKeyFromParts(parts.year, parts.monthIndex, parts.day);
+}
+
+function getReminderOccurrenceTimestamp(reminder, { yearOverride = null } = {}) {
+  const safeDate = getReminderOccurrenceDateKey(reminder, yearOverride);
   if (!safeDate) return 0;
   const safeTime = String(reminder?.targetTime || "").trim() || "23:59";
-  let date = new Date(`${safeDate}T${safeTime}:00`);
-  if (!Number.isFinite(date.getTime())) return 0;
-  if (annualizeBirthdays && reminder?.repeat === "yearly") {
-    const now = new Date();
-    date.setFullYear(now.getFullYear());
-    if (date.getTime() < now.getTime()) date.setFullYear(now.getFullYear() + 1);
+  const date = new Date(`${safeDate}T${safeTime}:00`);
+  return Number.isFinite(date.getTime()) ? date.getTime() : 0;
+}
+
+function getReminderTargetTimestamp(reminder, { annualizeBirthdays = false } = {}) {
+  if (!(annualizeBirthdays && reminder?.repeat === "yearly")) {
+    return getReminderOccurrenceTimestamp(reminder);
   }
-  return date.getTime();
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  let targetAt = getReminderOccurrenceTimestamp(reminder, { yearOverride: currentYear });
+  if (!targetAt) return 0;
+  if (targetAt < now.getTime()) {
+    targetAt = getReminderOccurrenceTimestamp(reminder, { yearOverride: currentYear + 1 });
+  }
+  return targetAt;
 }
 
 function buildReminderCountdown(reminder) {
@@ -2729,6 +2892,123 @@ function getReminderChecklistSummary(reminder) {
   return { items, total, done };
 }
 
+function buildReminderAccentStyle(reminder) {
+  const color = normalizeReminderColor(reminder?.color);
+  return `--notes-reminder-accent:${color};--notes-reminder-accent-soft:${tint(color, 0.18)};--notes-reminder-accent-strong:${tint(color, 0.32)};`;
+}
+
+function buildReminderCalendarCells(monthKey = "") {
+  const parsedMonth = parseMonthKey(monthKey) || parseMonthKey(getCurrentMonthKey());
+  const firstOfMonth = new Date(parsedMonth.year, parsedMonth.monthIndex, 1);
+  const startOffset = (firstOfMonth.getDay() + 6) % 7;
+  const startDate = new Date(parsedMonth.year, parsedMonth.monthIndex, 1 - startOffset);
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(startDate);
+    date.setDate(startDate.getDate() + index);
+    const dateKey = getDateKeyFromDate(date);
+    return {
+      date,
+      dateKey,
+      monthKey: getMonthKeyFromDate(date),
+      dayNumber: date.getDate(),
+      isCurrentMonth: date.getMonth() === parsedMonth.monthIndex,
+      isToday: isTodayDateKey(dateKey),
+    };
+  });
+}
+
+function buildReminderCalendarMap(reminders = [], cells = []) {
+  const map = new Map();
+  const dateKeys = cells.map((cell) => cell.dateKey).filter(Boolean);
+  const dateKeySet = new Set(dateKeys);
+  const visibleYears = Array.from(new Set(cells.map((cell) => cell.date.getFullYear())));
+
+  dateKeys.forEach((dateKey) => map.set(dateKey, []));
+
+  reminders.forEach((reminder) => {
+    const years = reminder?.repeat === "yearly"
+      ? visibleYears
+      : [parseDateKey(reminder?.targetDate || "")?.year].filter(Boolean);
+
+    years.forEach((year) => {
+      const occurrenceKey = getReminderOccurrenceDateKey(reminder, reminder?.repeat === "yearly" ? year : null);
+      if (!occurrenceKey || !dateKeySet.has(occurrenceKey)) return;
+      map.set(occurrenceKey, [...(map.get(occurrenceKey) || []), reminder]);
+    });
+  });
+
+  for (const [dateKey, items] of map.entries()) {
+    const targetYear = parseDateKey(dateKey)?.year || null;
+    items.sort((a, b) => (
+      getReminderOccurrenceTimestamp(a, { yearOverride: a?.repeat === "yearly" ? targetYear : null })
+      - getReminderOccurrenceTimestamp(b, { yearOverride: b?.repeat === "yearly" ? targetYear : null })
+    ));
+  }
+
+  return map;
+}
+
+function findFirstReminderDateKeyInMonth(reminders = [], monthKey = "") {
+  const parsedMonth = parseMonthKey(monthKey);
+  if (!parsedMonth) return "";
+  const candidates = reminders
+    .map((reminder) => getReminderOccurrenceDateKey(reminder, reminder?.repeat === "yearly" ? parsedMonth.year : null))
+    .filter((dateKey) => dateKey && getMonthKeyFromDateKey(dateKey) === monthKey)
+    .sort();
+  return candidates[0] || "";
+}
+
+function ensureReminderCalendarSelection(reminders = []) {
+  const safeMonthKey = parseMonthKey(state.reminderCalendarMonthKey)
+    ? state.reminderCalendarMonthKey
+    : getCurrentMonthKey();
+  state.reminderCalendarMonthKey = safeMonthKey;
+
+  const currentSelected = parseDateKey(state.reminderCalendarSelectedDate || "");
+  if (currentSelected && getMonthKeyFromDateKey(state.reminderCalendarSelectedDate) === safeMonthKey) {
+    return;
+  }
+
+  const todayKey = getTodayDateKey();
+  if (getMonthKeyFromDateKey(todayKey) === safeMonthKey) {
+    state.reminderCalendarSelectedDate = todayKey;
+    return;
+  }
+
+  const firstReminderDate = findFirstReminderDateKeyInMonth(reminders, safeMonthKey);
+  if (firstReminderDate) {
+    state.reminderCalendarSelectedDate = firstReminderDate;
+    return;
+  }
+
+  const parsedMonth = parseMonthKey(safeMonthKey);
+  state.reminderCalendarSelectedDate = getDateKeyFromParts(parsedMonth.year, parsedMonth.monthIndex, 1);
+}
+
+function setReminderCalendarSelectedDate(dateKey = "", {
+  syncMonth = true,
+  focusedReminderId = "",
+} = {}) {
+  const safeDateKey = parseDateKey(dateKey) ? String(dateKey) : getTodayDateKey();
+  state.reminderCalendarSelectedDate = safeDateKey;
+  if (syncMonth) {
+    state.reminderCalendarMonthKey = getMonthKeyFromDateKey(safeDateKey);
+  }
+  state.reminderCalendarFocusedReminderId = String(focusedReminderId || "").trim();
+}
+
+function shiftReminderCalendarMonth(delta = 0, reminders = []) {
+  const nextMonthKey = addMonthsToMonthKey(state.reminderCalendarMonthKey, delta);
+  const selected = parseDateKey(state.reminderCalendarSelectedDate || "");
+  const nextMonth = parseMonthKey(nextMonthKey);
+  const nextDay = clampDayForMonth(nextMonth.year, nextMonth.monthIndex, selected?.day || 1);
+  state.reminderCalendarMonthKey = nextMonthKey;
+  state.reminderCalendarSelectedDate = getDateKeyFromParts(nextMonth.year, nextMonth.monthIndex, nextDay);
+  state.reminderCalendarFocusedReminderId = "";
+  ensureReminderCalendarSelection(reminders);
+}
+
 function getFilteredReminders() {
   const all = Array.isArray(state.reminders) ? state.reminders : [];
   const startToday = new Date();
@@ -2758,7 +3038,6 @@ function getFilteredReminders() {
 function renderReminderCardsToMarkup(reminders = []) {
   return reminders.map((reminder) => {
     const computedStatus = getReminderComputedStatus(reminder);
-    const targetAt = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
     const dateLabel = formatReminderDateTime(reminder);
     const countdown = buildReminderCountdown(reminder);
     const isBirthday = reminder?.type === "cumpleaños";
@@ -2771,8 +3050,9 @@ function renderReminderCardsToMarkup(reminders = []) {
     const isExpanded = reminderExpandedChecklist.has(reminder.id);
     const visibleItems = isChecklist && isExpanded ? checklist.items : [];
     const progress = checklist.total ? Math.round((checklist.done / checklist.total) * 100) : 0;
+    const accentStyle = buildReminderAccentStyle(reminder);
     return `
-      <article class="notes-reminder-item is-${escapeHtml(computedStatus)}">
+      <article class="notes-reminder-item is-${escapeHtml(computedStatus)}" data-reminder-id="${escapeHtml(reminder.id)}" style="${escapeHtml(accentStyle)}">
         <div class="notes-reminder-main">
           <button class="notes-reminder-title-row ${isChecklist ? "is-checklist-toggle" : ""}" ${isChecklist ? `data-act="toggle-checklist-expand" data-reminder-id="${escapeHtml(reminder.id)}"` : ""}>
             <span class="notes-reminder-emoji">${escapeHtml(reminder?.emoji || "⏰")}</span>
@@ -2813,6 +3093,161 @@ function renderReminderCardsToMarkup(reminders = []) {
 function renderReminderCards(list, reminders = []) {
   if (!list) return;
   list.innerHTML = renderReminderCardsToMarkup(reminders);
+}
+
+function buildReminderDayTimeLabel(reminder, dateKey = "") {
+  const safeTime = String(reminder?.targetTime || "").trim();
+  if (!safeTime) return "Todo el dia";
+  const parsed = new Date(`${dateKey || reminder?.targetDate || ""}T${safeTime}:00`);
+  if (!Number.isFinite(parsed.getTime())) return safeTime;
+  return TIME_FORMATTER.format(parsed);
+}
+
+function buildReminderCalendarPanelMarkup(dateKey = "", reminders = []) {
+  const date = getDateFromDateKey(dateKey);
+  const dateLabel = date ? formatLongDate(date.getTime()) : "Sin fecha";
+  const safeReminders = Array.isArray(reminders) ? reminders : [];
+  return `
+    <section class="notes-reminders-calendar-panel__section">
+      <div class="notes-reminders-calendar-panel__head">
+        <strong>${escapeHtml(dateLabel)}</strong>
+        <span>${escapeHtml(pluralize(safeReminders.length, "recordatorio", "recordatorios"))}</span>
+      </div>
+      ${safeReminders.length ? `
+        <div class="notes-reminders-calendar-panel__list">
+          ${safeReminders.map((reminder) => {
+            const computedStatus = getReminderComputedStatus(reminder);
+            const accentStyle = buildReminderAccentStyle(reminder);
+            const categories = Array.isArray(reminder?.categories) ? reminder.categories : [];
+            const timeLabel = buildReminderDayTimeLabel(reminder, dateKey);
+            return `
+              <article class="notes-reminders-calendar-panel__item is-${escapeHtml(computedStatus)}" style="${escapeHtml(accentStyle)}">
+                <button
+                  class="notes-reminders-calendar-panel__itemMain"
+                  type="button"
+                  data-act="edit-reminder"
+                  data-reminder-id="${escapeHtml(reminder.id)}"
+                  data-calendar-reminder-item="true"
+                >
+                  <span class="notes-reminders-calendar-panel__itemEmoji">${escapeHtml(reminder?.emoji || "â°")}</span>
+                  <span class="notes-reminders-calendar-panel__itemCopy">
+                    <strong>${escapeHtml(reminder?.title || "Sin tÃ­tulo")}</strong>
+                    <span>${escapeHtml(`${timeLabel} Â· ${computedStatus}`)}</span>
+                  </span>
+                </button>
+                <div class="notes-reminders-calendar-panel__itemActions">
+                  <button class="notes-icon-action" type="button" data-act="complete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">âœ…</button>
+                  <button class="notes-icon-action" type="button" data-act="delete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">ðŸ—‘ï¸</button>
+                </div>
+                ${categories.length ? `
+                  <div class="notes-reminders-calendar-panel__itemTags">
+                    ${categories.map((category) => `<span class="notes-reminder-chip">${escapeHtml(category)}</span>`).join("")}
+                  </div>
+                ` : ""}
+              </article>
+            `;
+          }).join("")}
+        </div>
+      ` : `
+        <div class="notes-reminder-alert-empty">No hay recordatorios para este dia.</div>
+      `}
+    </section>
+  `;
+}
+
+function renderReminderCalendarView(reminders = []) {
+  const title = $id("notes-reminders-calendar-title");
+  const grid = $id("notes-reminders-calendar-grid");
+  const panel = $id("notes-reminders-calendar-panel");
+  if (!title || !grid || !panel) return;
+
+  ensureReminderCalendarSelection(reminders);
+  const cells = buildReminderCalendarCells(state.reminderCalendarMonthKey);
+  const remindersByDate = buildReminderCalendarMap(reminders, cells);
+  const selectedDateKey = parseDateKey(state.reminderCalendarSelectedDate)
+    ? state.reminderCalendarSelectedDate
+    : cells[0]?.dateKey || getTodayDateKey();
+  const selectedItems = remindersByDate.get(selectedDateKey) || [];
+
+  title.textContent = formatReminderCalendarTitle(state.reminderCalendarMonthKey);
+  grid.innerHTML = `
+    ${REMINDER_WEEKDAY_LABELS.map((label) => `<div class="notes-reminders-calendar__weekday">${escapeHtml(label)}</div>`).join("")}
+    ${cells.map((cell) => {
+      const dayItems = remindersByDate.get(cell.dateKey) || [];
+      const visibleDots = dayItems.slice(0, REMINDER_CALENDAR_MAX_DOTS);
+      const extraCount = Math.max(0, dayItems.length - REMINDER_CALENDAR_MAX_DOTS);
+      const classes = [
+        "notes-reminders-calendar__day",
+        cell.isCurrentMonth ? "" : "is-outside-month",
+        cell.isToday ? "is-today" : "",
+        cell.dateKey === selectedDateKey ? "is-selected" : "",
+        dayItems.length ? "has-reminders" : "",
+      ].filter(Boolean).join(" ");
+
+      return `
+        <div class="${classes}" data-date-key="${escapeHtml(cell.dateKey)}">
+          <button class="notes-reminders-calendar__dayButton" type="button" data-act="select-reminder-calendar-day" data-date-key="${escapeHtml(cell.dateKey)}" aria-pressed="${cell.dateKey === selectedDateKey ? "true" : "false"}">
+            <span class="notes-reminders-calendar__dayNumber">${escapeHtml(String(cell.dayNumber))}</span>
+          </button>
+          <div class="notes-reminders-calendar__dots">
+            ${visibleDots.map((reminder) => `
+              <button
+                class="notes-reminders-calendar__dot"
+                type="button"
+                title="${escapeHtml(reminder?.title || "Recordatorio")}"
+                aria-label="${escapeHtml(reminder?.title || "Recordatorio")}"
+                data-act="focus-reminder-calendar-item"
+                data-date-key="${escapeHtml(cell.dateKey)}"
+                data-reminder-id="${escapeHtml(reminder.id)}"
+                style="background:${escapeHtml(normalizeReminderColor(reminder?.color))};"
+              ></button>
+            `).join("")}
+            ${extraCount ? `
+              <button class="notes-reminders-calendar__more" type="button" data-act="select-reminder-calendar-day" data-date-key="${escapeHtml(cell.dateKey)}">+${extraCount}</button>
+            ` : ""}
+          </div>
+        </div>
+      `;
+    }).join("")}
+  `;
+
+  panel.innerHTML = buildReminderCalendarPanelMarkup(selectedDateKey, selectedItems);
+
+  const focusReminderId = String(state.reminderCalendarFocusedReminderId || "").trim();
+  if (focusReminderId) {
+    window.requestAnimationFrame(() => {
+      const target = panel.querySelector(`[data-calendar-reminder-item][data-reminder-id="${focusReminderId}"]`);
+      if (target instanceof HTMLElement) {
+        target.focus({ preventScroll: false });
+        target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      } else {
+        const reminder = state.reminders.find((row) => row.id === focusReminderId);
+        if (reminder) openReminderModal(reminder);
+      }
+      state.reminderCalendarFocusedReminderId = "";
+    });
+  }
+}
+
+function renderReminderViewSwitch() {
+  const isCalendar = normalizeReminderView(state.reminderView) === "calendar";
+  $id("notes-reminders-list-view")?.classList.toggle("hidden", isCalendar);
+  $id("notes-reminders-calendar-view")?.classList.toggle("hidden", !isCalendar);
+  if (isCalendar) {
+    $id("notes-reminders-group-panel")?.classList.add("hidden");
+  }
+
+  document.querySelectorAll("#notes-reminders-view-switch [data-reminders-view]").forEach((button) => {
+    const active = String(button.dataset.remindersView || "") === (isCalendar ? "calendar" : "list");
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+
+  const groupButton = $id("notes-reminders-group-btn");
+  if (groupButton) {
+    groupButton.disabled = isCalendar;
+    groupButton.classList.toggle("is-disabled", isCalendar);
+  }
 }
 
 function buildGroupedReminders(reminders = []) {
@@ -2949,7 +3384,10 @@ function renderRemindersPanel() {
   const toggle = $id("notes-reminders-toggle-history");
   if (!list || !historyList || !empty || !toggle) return;
   renderReminderFilterControls();
+  renderReminderViewSwitch();
   const filtered = getFilteredReminders();
+  ensureReminderCalendarSelection(filtered);
+  renderReminderCalendarView(filtered);
   const active = filtered.filter((item) => getReminderComputedStatus(item) === "pendiente");
   const history = filtered.filter((item) => getReminderComputedStatus(item) !== "pendiente");
   const activeGroups = buildGroupedReminders(active);
@@ -3419,6 +3857,26 @@ function renderReminderCategoryDrafts() {
   `).join("");
 }
 
+function renderReminderColorPalette(selectedColor = DEFAULT_REMINDER_COLOR) {
+  const palette = $id("notes-reminder-color-palette");
+  const input = $id("notes-reminder-color");
+  if (!palette || !input) return;
+  const safeColor = normalizeReminderColor(selectedColor || input.value || DEFAULT_REMINDER_COLOR);
+  input.value = safeColor;
+  palette.innerHTML = REMINDER_COLOR_PALETTE.map((color, index) => `
+    <button
+      class="notes-reminder-color-swatch${safeColor === color ? " is-selected" : ""}"
+      type="button"
+      role="radio"
+      aria-checked="${safeColor === color ? "true" : "false"}"
+      aria-label="Color ${index + 1}"
+      data-act="set-reminder-color"
+      data-color="${color}"
+      style="--notes-reminder-swatch:${color};"
+    ></button>
+  `).join("");
+}
+
 function renderReminderChecklistDrafts() {
   const list = $id("notes-reminder-checklist-list");
   if (!list) return;
@@ -3447,6 +3905,7 @@ function openReminderModal(reminder = null) {
   $id("notes-reminder-type").value = reminder?.type || "normal";
   $id("notes-reminder-date").value = reminder?.targetDate || "";
   $id("notes-reminder-time").value = reminder?.targetTime || "";
+  $id("notes-reminder-color").value = normalizeReminderColor(reminder?.color);
   $id("notes-reminder-is-birthday").checked = reminder?.type === "cumpleaños";
   $id("notes-reminder-repeat-yearly").checked = reminder?.repeat === "yearly";
   $id("notes-reminder-delete")?.classList.toggle("hidden", !reminder);
@@ -3454,9 +3913,29 @@ function openReminderModal(reminder = null) {
   if ($id("notes-reminder-category-new")) $id("notes-reminder-category-new").value = "";
   renderReminderAlertDrafts();
   renderReminderCategoryDrafts();
+  renderReminderColorPalette(reminder?.color);
   renderReminderChecklistDrafts();
   $id("notes-reminder-checklist-wrap")?.classList.toggle("hidden", (reminder?.type || "normal") !== "checklist");
   openModal("notes-reminder-modal-backdrop");
+}
+
+async function handleReminderPrimaryAction(action = "", reminder = null) {
+  if (!reminder) return false;
+  if (action === "edit-reminder") {
+    openReminderModal(reminder);
+    return true;
+  }
+  if (action === "complete-reminder") {
+    await updateReminder(state.rootPath, reminder.id, { ...reminder, status: "completado", completedAt: Date.now() });
+    return true;
+  }
+  if (action === "delete-reminder") {
+    if (window.confirm(`Â¿Eliminar recordatorio "${reminder.title}"?`)) {
+      await deleteReminder(state.rootPath, reminder.id);
+    }
+    return true;
+  }
+  return false;
 }
 
 function reminderAlertToMs(alert) {
@@ -4010,6 +4489,41 @@ function bindUiEvents() {
     showPanel.classList.toggle("hidden", nextShowHidden);
     groupPanel.classList.toggle("hidden", nextGroupHidden);
   });
+  $id("notes-reminders-view-switch")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act='set-reminders-view']");
+    if (!target) return;
+    const nextView = normalizeReminderView(target.dataset.remindersView || "list");
+    if (nextView === state.reminderView) return;
+    state.reminderView = nextView;
+    saveReminderViewPreference(nextView);
+    if (nextView === "calendar") ensureReminderCalendarSelection(getFilteredReminders());
+    renderRemindersPanel();
+  });
+  $id("notes-reminders-calendar-view")?.addEventListener("click", async (event) => {
+    const target = event.target.closest("[data-act]");
+    if (!target) return;
+    const action = String(target.dataset.act || "").trim();
+    if (action === "shift-reminders-calendar") {
+      shiftReminderCalendarMonth(Number(target.dataset.monthShift || 0), getFilteredReminders());
+      renderRemindersPanel();
+      return;
+    }
+    if (action === "select-reminder-calendar-day") {
+      setReminderCalendarSelectedDate(target.dataset.dateKey || "", { syncMonth: true });
+      renderRemindersPanel();
+      return;
+    }
+    if (action === "focus-reminder-calendar-item") {
+      setReminderCalendarSelectedDate(target.dataset.dateKey || "", {
+        syncMonth: true,
+        focusedReminderId: target.dataset.reminderId || "",
+      });
+      renderRemindersPanel();
+      return;
+    }
+    const reminder = state.reminders.find((row) => row.id === String(target.dataset.reminderId || "").trim());
+    if (await handleReminderPrimaryAction(action, reminder)) return;
+  });
   $id("notes-reminders-show-panel")?.addEventListener("change", async (event) => {
     const input = event.target;
     if (!(input instanceof HTMLInputElement)) return;
@@ -4309,14 +4823,7 @@ function bindUiEvents() {
     if (!target) return;
     const reminder = state.reminders.find((row) => row.id === String(target.dataset.reminderId || "").trim());
     if (!reminder) return;
-    if (target.dataset.act === "edit-reminder") {
-      openReminderModal(reminder);
-      return;
-    }
-    if (target.dataset.act === "complete-reminder") {
-      await updateReminder(state.rootPath, reminder.id, { ...reminder, status: "completado", completedAt: Date.now() });
-      return;
-    }
+    if (await handleReminderPrimaryAction(target.dataset.act, reminder)) return;
     if (target.dataset.act === "toggle-checklist-expand") {
       if (reminderExpandedChecklist.has(reminder.id)) reminderExpandedChecklist.delete(reminder.id);
       else reminderExpandedChecklist.add(reminder.id);
@@ -4381,7 +4888,7 @@ function bindUiEvents() {
     if (!target) return;
     const reminder = state.reminders.find((row) => row.id === String(target.dataset.reminderId || "").trim());
     if (!reminder) return;
-    if (target.dataset.act === "edit-reminder") openReminderModal(reminder);
+    if (await handleReminderPrimaryAction(target.dataset.act, reminder)) return;
     if (target.dataset.act === "delete-reminder" && window.confirm(`¿Eliminar recordatorio "${reminder.title}"?`)) {
       await deleteReminder(state.rootPath, reminder.id);
     }
@@ -4406,6 +4913,13 @@ function bindUiEvents() {
   $id("notes-reminder-categories")?.addEventListener("change", (event) => {
     const selected = String(event.target.value || "").trim();
     reminderDraftCategories = selected ? [selected] : [];
+  });
+  $id("notes-reminder-color-palette")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act='set-reminder-color'][data-color]");
+    if (!target) return;
+    const color = normalizeReminderColor(target.dataset.color || DEFAULT_REMINDER_COLOR);
+    if ($id("notes-reminder-color")) $id("notes-reminder-color").value = color;
+    renderReminderColorPalette(color);
   });
   $id("notes-reminder-category-create")?.addEventListener("click", async () => {
     const name = String($id("notes-reminder-category-new")?.value || "").trim();
@@ -4485,6 +4999,7 @@ function bindUiEvents() {
     const type = String($id("notes-reminder-type").value || "normal");
     const targetDate = String($id("notes-reminder-date").value || "").trim();
     const targetTime = String($id("notes-reminder-time").value || "").trim();
+    const color = normalizeReminderColor($id("notes-reminder-color")?.value || DEFAULT_REMINDER_COLOR);
     const isBirthday = Boolean($id("notes-reminder-is-birthday").checked) || type === "cumpleaños";
     const repeat = $id("notes-reminder-repeat-yearly").checked ? "yearly" : "none";
     const errorField = $id("notes-reminder-form-error");
@@ -4508,6 +5023,7 @@ function bindUiEvents() {
       type: isBirthday ? "cumpleaños" : type,
       targetDate,
       targetTime,
+      color,
       status: checklistAllDone ? "completado" : (current?.status === "completado" ? "completado" : "pendiente"),
       categories: reminderDraftCategories,
       remindBefore: reminderDraftAlerts,
@@ -4640,6 +5156,10 @@ export function destroy() {
   state.reminderFilters = { types: [], categories: [], statuses: [], range: "all" };
   state.reminderGroupBy = "none";
   state.reminderCollapsedHistory = true;
+  state.reminderView = loadReminderViewPreference();
+  state.reminderCalendarMonthKey = getCurrentMonthKey();
+  state.reminderCalendarSelectedDate = getTodayDateKey();
+  state.reminderCalendarFocusedReminderId = "";
   state.folderView = "main";
   state._reminderPrefsApplied = false;
   setCurrentFolder("");
@@ -4649,6 +5169,8 @@ export function destroy() {
   notePhotoRemove = false;
   noteSaveInFlight = false;
   reminderDraftAlerts = [];
+  reminderDraftCategories = [];
+  reminderDraftChecklistItems = {};
   stopReminderChecker();
   if (window.__bookshellNotes) {
     delete window.__bookshellNotes;

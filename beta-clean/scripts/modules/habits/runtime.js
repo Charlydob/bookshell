@@ -2261,8 +2261,8 @@ function normalizeWorkRow(row = {}) {
   const breakMinutes = hasHalfHourBreak ? 30 : 0;
   return {
     id: row.id || `row-${Math.random().toString(36).slice(2, 10)}`,
-    start: typeof row.start === "string" && row.start ? row.start : "07:00",
-    end: typeof row.end === "string" && row.end ? row.end : "15:00",
+    start: normalizeWorkScheduleTimeValue(row.start, "07:00"),
+    end: normalizeWorkScheduleTimeValue(row.end, "15:00"),
     days,
     breakMinutes,
     hasHalfHourBreak
@@ -2985,9 +2985,64 @@ function showHabitToast(text) {
 }
 
 function timeToMinutes(value = "") {
-  const [h, m] = String(value || "").split(":").map(Number);
+  const normalized = normalizeWorkScheduleTimeValue(value);
+  if (!normalized) return 0;
+  const [h, m] = normalized.split(":").map(Number);
   if (!Number.isFinite(h) || !Number.isFinite(m)) return 0;
   return Math.max(0, h * 60 + m);
+}
+
+const WORK_SCHEDULE_AFTERNOON_START_MINUTES = 12 * 60;
+const WORK_SCHEDULE_LATE_END_MINUTES = 22 * 60;
+
+function normalizeWorkScheduleTimeValue(value = "", fallback = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+
+  const colonMatch = raw.match(/^(\d{1,2})(?::(\d{1,2}))?$/);
+  let hours = 0;
+  let minutes = 0;
+
+  if (colonMatch) {
+    hours = Number(colonMatch[1]);
+    minutes = colonMatch[2] == null || colonMatch[2] === "" ? 0 : Number(colonMatch[2]);
+  } else {
+    const digits = raw.replace(/\D+/g, "");
+    if (!digits) return fallback;
+    if (digits.length <= 2) {
+      hours = Number(digits);
+      minutes = 0;
+    } else if (digits.length === 3) {
+      hours = Number(digits.slice(0, 1));
+      minutes = Number(digits.slice(1));
+    } else {
+      hours = Number(digits.slice(0, 2));
+      minutes = Number(digits.slice(2, 4));
+    }
+  }
+
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return fallback;
+  }
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function sanitizeWorkScheduleTimeTyping(value = "") {
+  const raw = String(value || "").replace(/[^\d:]/g, "");
+  const colonIdx = raw.indexOf(":");
+  if (colonIdx < 0) return raw.slice(0, 4);
+  const hours = raw.slice(0, colonIdx).replace(/:/g, "").slice(0, 2);
+  const minutes = raw.slice(colonIdx + 1).replace(/:/g, "").slice(0, 2);
+  return minutes ? `${hours}:${minutes}` : `${hours}:`;
+}
+
+function inferWorkScheduleDayStatusFromTimes(start = "", end = "") {
+  const startMin = timeToMinutes(start);
+  const endMin = timeToMinutes(end);
+  if (startMin > WORK_SCHEDULE_AFTERNOON_START_MINUTES) return "afternoon";
+  if (startMin >= WORK_SCHEDULE_AFTERNOON_START_MINUTES && endMin >= WORK_SCHEDULE_LATE_END_MINUTES) return "afternoon";
+  return "morning";
 }
 
 function minutesToHourLabel(minutes = 0) {
@@ -3021,8 +3076,8 @@ function normalizeWorkScheduleDayStatus(value = null) {
 }
 
 function normalizeWorkScheduleSlot(slot = {}) {
-  const start = typeof slot?.start === "string" ? slot.start : "";
-  const end = typeof slot?.end === "string" ? slot.end : "";
+  const start = normalizeWorkScheduleTimeValue(slot?.start);
+  const end = normalizeWorkScheduleTimeValue(slot?.end);
   const startMin = timeToMinutes(start);
   const endMin = timeToMinutes(end);
   if (!start || !end || endMin <= startMin) return null;
@@ -3074,8 +3129,8 @@ function getWorkScheduleDayInfo(daySchedule = null) {
     || (Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.round(hoursRaw * 60) : fallbackMinutes);
   const primarySlot = slots[0] || null;
   const lastSlot = slots[slots.length - 1] || primarySlot;
-  const start = primarySlot?.start || (typeof raw?.start === "string" ? raw.start : "");
-  const end = lastSlot?.end || (typeof raw?.end === "string" ? raw.end : "");
+  const start = primarySlot?.start || normalizeWorkScheduleTimeValue(raw?.start);
+  const end = lastSlot?.end || normalizeWorkScheduleTimeValue(raw?.end);
   const explicitFree = raw && (
     raw.isFree === true
     || raw.free === true
@@ -3092,7 +3147,9 @@ function getWorkScheduleDayInfo(daySchedule = null) {
 
   const shiftStatus = normalizeWorkScheduleDayStatus(raw?.shift) || normalizeWorkScheduleDayStatus(raw?.label);
   if (workedMinutes > 0 || slots.length || shiftStatus === "morning" || shiftStatus === "afternoon") {
-    const inferredStatus = shiftStatus || (((primarySlot?.startMin ?? timeToMinutes(start)) >= 14 * 60) ? "afternoon" : "morning");
+    const inferredStatus = (start || end)
+      ? inferWorkScheduleDayStatusFromTimes(start, end)
+      : (shiftStatus || "morning");
     return createWorkScheduleDayInfo(inferredStatus, {
       start,
       end,
@@ -3197,7 +3254,7 @@ function buildResolvedWorkDays(weekStart, rows = []) {
     const startMin = timeToMinutes(row.start);
     const endMin = timeToMinutes(row.end);
     if (endMin <= startMin) return;
-    const shift = startMin >= 14 * 60 ? "T" : "M";
+    const shift = inferWorkScheduleDayStatusFromTimes(row.start, row.end) === "afternoon" ? "T" : "M";
     const breakMinutes = row?.hasHalfHourBreak || Number(row?.breakMinutes) === 30 ? 30 : 0;
     const workedMinutes = Math.max(0, endMin - startMin - breakMinutes);
     row.days.forEach((dayKey) => {
@@ -12067,8 +12124,8 @@ function renderWorkScheduleRowsEditor() {
     `).join("");
     item.innerHTML = `
       <div class="habit-work-schedule-times">
-        <input type="time" data-row="${row.id}" data-field="start" value="${row.start}"/>
-        <input type="time" data-row="${row.id}" data-field="end" value="${row.end}"/>
+        <input class="habit-work-schedule-time-input" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="5" placeholder="07:00" aria-label="Hora inicio" data-row="${row.id}" data-field="start" value="${row.start}"/>
+        <input class="habit-work-schedule-time-input" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="5" placeholder="15:00" aria-label="Hora fin" data-row="${row.id}" data-field="end" value="${row.end}"/>
       </div>
       <label class="habit-work-schedule-break">
         <input type="checkbox" data-row="${row.id}" data-field="half-break" ${row.hasHalfHourBreak ? "checked" : ""}/>
@@ -12208,6 +12265,17 @@ function saveWorkScheduleDayEdit() {
 
 function handleWorkScheduleSave() {
   const weekStart = dateKeyLocal(startOfWeek(parseDateKey($habitWorkScheduleWeek?.value) || new Date()));
+  const normalizedRows = workScheduleEditor.rows.map((row) => ({
+    ...row,
+    start: normalizeWorkScheduleTimeValue(row.start),
+    end: normalizeWorkScheduleTimeValue(row.end)
+  }));
+  const hasInvalidTime = normalizedRows.some((row) => row.days.length && (!row.start || !row.end));
+  if (hasInvalidTime) {
+    showHabitToast("Escribe las horas en formato HH:MM");
+    return;
+  }
+  workScheduleEditor.rows = normalizedRows;
   saveWorkScheduleWeekRows(weekStart, workScheduleEditor.rows);
   selectedDateKey = weekStart;
   closeWorkScheduleModal();
@@ -13214,7 +13282,9 @@ function bindEvents() {
     const row = workScheduleEditor.rows.find((item) => item.id === input.dataset.row);
     if (!row) return;
     if (input.dataset.field === "start" || input.dataset.field === "end") {
-      row[input.dataset.field] = input.value || row[input.dataset.field];
+      const nextValue = sanitizeWorkScheduleTimeTyping(input.value);
+      if (input.value !== nextValue) input.value = nextValue;
+      row[input.dataset.field] = nextValue;
       return;
     }
     if (input.dataset.field === "half-break") {
@@ -13222,6 +13292,16 @@ function bindEvents() {
       row.hasHalfHourBreak = enabled;
       row.breakMinutes = enabled ? 30 : 0;
     }
+  });
+  $habitWorkScheduleRows?.addEventListener("change", (event) => {
+    const input = event.target?.closest?.("input[data-row][data-field]");
+    if (!input || (input.dataset.field !== "start" && input.dataset.field !== "end")) return;
+    const row = workScheduleEditor.rows.find((item) => item.id === input.dataset.row);
+    if (!row) return;
+    const normalized = normalizeWorkScheduleTimeValue(input.value);
+    if (!normalized) return;
+    row[input.dataset.field] = normalized;
+    input.value = normalized;
   });
   $habitWorkScheduleSave?.addEventListener("click", handleWorkScheduleSave);
   $habitWorkScheduleDayClose?.addEventListener("click", closeWorkScheduleDayModal);

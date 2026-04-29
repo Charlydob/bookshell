@@ -6589,6 +6589,21 @@ margin-bottom: 50px;
   gap: 10px;
 }
 
+/* #region mobile viewport/bottom-nav fix */
+.financeTab .productsWorkbench__subview[data-products-subview="list"],
+.financeTab .productsWorkbench__subview[data-products-subview="catalog"]{
+  padding-bottom: calc(var(--nav-total-h) + env(safe-area-inset-bottom, 0px) + 12px);
+}
+
+.financeTab .productsWorkbench__panel--shopping{
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+}
+
+.financeTab .productsWorkbench__catalogWorkspace{
+  margin-bottom: calc(var(--nav-gap, 18px) * .5);
+}
+/* #endregion */
+
 .financeTab .productsWorkbench__ticketHero{
   display: grid;
   gap: 8px;

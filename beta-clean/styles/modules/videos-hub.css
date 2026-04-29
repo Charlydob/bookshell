@@ -2,6 +2,16 @@
   padding: max(env(safe-area-inset-top), 8px) 8px calc(80px + env(safe-area-inset-bottom));
 }
 
+/* #region mobile viewport/bottom-nav fix */
+#view-videos-hub {
+  padding-bottom: calc(var(--nav-total-h) + var(--nav-gap, 18px) + env(safe-area-inset-bottom, 0px));
+}
+
+.videosHub__panel[data-hub-panel="list"] {
+  padding-bottom: calc(var(--nav-total-h) + env(safe-area-inset-bottom, 0px) + 10px);
+}
+/* #endregion */
+
 .videosHub {
   color: #eaf0ff;
   display: grid;
@@ -411,5 +421,4 @@
 
 /* #endregion */
 /* #endregion */
-
 

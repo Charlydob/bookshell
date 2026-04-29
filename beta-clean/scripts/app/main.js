@@ -350,6 +350,42 @@ function ensureSyncIndicatorActionsNode(indicator) {
   return actionsNode;
 }
 
+async function hardResetApp() {
+  const ok = window.confirm("Esto recargará la app y limpiará caché de archivos. No borra tus datos.");
+  if (!ok) return;
+  console.info("[hard-reset] starting");
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((reg) => reg.unregister()));
+      console.info("[hard-reset] service workers unregistered", regs.length);
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      const appKeys = keys.filter((key) => /bookshell|bookshelf|pwa|static|assets|vite|app/i.test(key));
+      await Promise.all(appKeys.map((key) => caches.delete(key)));
+      console.info("[hard-reset] caches deleted", appKeys);
+    }
+  } catch (error) {
+    console.warn("[hard-reset] partial failure", error);
+  }
+  const cleanPath = `${location.origin}${location.pathname}`;
+  location.replace(`${cleanPath}?hardReset=${Date.now()}`);
+}
+
+function ensureHardResetSyncAction(indicator) {
+  const actionsNode = ensureSyncIndicatorActionsNode(indicator);
+  if (!(actionsNode instanceof HTMLElement)) return;
+  if (actionsNode.querySelector("[data-hard-reset-app]")) return;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "app-theme-switcher__trigger";
+  button.dataset.hardResetApp = "true";
+  button.setAttribute("aria-label", "Hard reset y recarga de app");
+  button.textContent = "⚡ Hard reset / Recargar app";
+  actionsNode.append(button);
+}
+
 function setSyncIndicatorExpanded(indicator, isOpen) {
   if (!(indicator instanceof HTMLElement)) return;
   indicator.classList.toggle("is-open", isOpen);
@@ -361,6 +397,7 @@ function prepareSyncIndicator(indicator) {
 
   const textNode = ensureSyncIndicatorTextNode(indicator);
   ensureSyncIndicatorActionsNode(indicator);
+  ensureHardResetSyncAction(indicator);
   if (!indicator.hasAttribute("aria-label")) {
     indicator.setAttribute("aria-label", "Estado de sincronización");
   }
@@ -436,6 +473,13 @@ function bindSyncIndicatorToggles() {
   });
 
   document.addEventListener("click", (event) => {
+    const hardResetButton = event.target?.closest?.("[data-hard-reset-app]");
+    if (hardResetButton instanceof HTMLElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      hardResetApp();
+      return;
+    }
     const indicator = event.target?.closest?.(".app-sync-indicator");
     if (!(indicator instanceof HTMLElement)) return;
     toggleSyncIndicator(indicator);

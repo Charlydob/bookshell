@@ -4924,6 +4924,35 @@ async function updateReceiptLine(ticketId = '', lineId = '', patch = {}, options
   return normalizedDraft.lines[safeLineId];
 }
 
+const receiptLineCommitTimers = new Map();
+
+function scheduleReceiptLineCommit(lineId = '', patch = {}, { root = document, delayMs = 260 } = {}) {
+  const safeLineId = String(lineId || '').trim();
+  if (!safeLineId) return;
+  if (receiptLineCommitTimers.has(safeLineId)) {
+    window.clearTimeout(receiptLineCommitTimers.get(safeLineId));
+  }
+  const timerId = window.setTimeout(async () => {
+    receiptLineCommitTimers.delete(safeLineId);
+    try {
+      await updateReceiptLine('', safeLineId, patch, { root, persist: true });
+    } catch (error) {
+      console.warn('[finance][receipt] commit failed', { safeLineId, patch, error });
+    }
+  }, Math.max(120, Number(delayMs) || 260));
+  receiptLineCommitTimers.set(safeLineId, timerId);
+}
+
+async function commitReceiptLineEdit(lineId = '', patch = {}, { root = document } = {}) {
+  const safeLineId = String(lineId || '').trim();
+  if (!safeLineId) return;
+  if (receiptLineCommitTimers.has(safeLineId)) {
+    window.clearTimeout(receiptLineCommitTimers.get(safeLineId));
+    receiptLineCommitTimers.delete(safeLineId);
+  }
+  await updateReceiptLine('', safeLineId, patch, { root, persist: true });
+}
+
 async function persistProductsHubSettings(patch = {}) {
   const nextSettings = {
     ...(state.productsHub?.settings || {}),
@@ -13961,7 +13990,16 @@ view.addEventListener('focusout', async (event) => {
       const patch = event.target.matches('[data-products-receipt-unit]')
         ? { estimatedPrice: finalValue }
         : { actualPrice: finalValue };
-      await updateReceiptLine('', lineId, patch, { root: view, persist: true });
+      await commitReceiptLineEdit(lineId, patch, { root: view });
+    } else {
+      syncProductsTicketComposerDom(view);
+    }
+  }
+  if (event.target.matches('[data-products-receipt-qty]')) {
+    const lineId = String(event.target.dataset.productsReceiptQty || '').trim();
+    if (lineId) {
+      const qtyValue = Math.max(0.01, Number(event.target.value || 1));
+      await commitReceiptLineEdit(lineId, { qty: qtyValue }, { root: view });
     } else {
       syncProductsTicketComposerDom(view);
     }
@@ -13993,6 +14031,11 @@ view.addEventListener('focusout', async (event) => {
       return;
     }
     if (event.key === 'Enter' && event.target.matches('[data-products-receipt-unit], [data-products-receipt-total]')) {
+      event.preventDefault();
+      event.target.blur();
+      return;
+    }
+    if (event.key === 'Enter' && event.target.matches('[data-products-receipt-qty]')) {
       event.preventDefault();
       event.target.blur();
       return;
@@ -14177,7 +14220,8 @@ view.addEventListener('focusout', async (event) => {
       if (event.target.matches('[data-products-receipt-qty]')) patch.qty = Math.max(0.01, Number(event.target.value || 1));
       if (event.target.matches('[data-products-receipt-unit]')) patch.estimatedPrice = parseProductsReceiptMoney(event.target.value, 0);
       if (event.target.matches('[data-products-receipt-total]')) patch.actualPrice = parseProductsReceiptMoney(event.target.value, 0);
-      await updateReceiptLine('', lineId, patch, { root: view, persist: true });
+      await updateReceiptLine('', lineId, patch, { root: view, persist: false });
+      scheduleReceiptLineCommit(lineId, patch, { root: view });
       return;
     }
     if (event.target.matches('[data-products-new-store-input]')) {

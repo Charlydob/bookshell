@@ -2074,7 +2074,7 @@ function renderBoardTabs() {
 
   els.boardTabs.innerHTML = markup
     .replace(/âŒ›/g, "P")
-    .replace(/âœ…/g, "R");
+    .replace(/✅/g, "R");
 
   els.boardTabs.innerHTML = els.boardTabs.innerHTML.replace(
     /(\d+)\s+[^<]+?\/\s+(\d+)\s+[^<]+?(?=<\/span>)/g,

@@ -3132,12 +3132,12 @@ function buildReminderCalendarPanelMarkup(dateKey = "", reminders = []) {
                   <span class="notes-reminders-calendar-panel__itemEmoji">${escapeHtml(reminder?.emoji || "â°")}</span>
                   <span class="notes-reminders-calendar-panel__itemCopy">
                     <strong>${escapeHtml(reminder?.title || "Sin tÃ­tulo")}</strong>
-                    <span>${escapeHtml(`${timeLabel} Â· ${computedStatus}`)}</span>
+                    <span>${escapeHtml(`${timeLabel} · ${computedStatus}`)}</span>
                   </span>
                 </button>
                 <div class="notes-reminders-calendar-panel__itemActions">
-                  <button class="notes-icon-action" type="button" data-act="complete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">âœ…</button>
-                  <button class="notes-icon-action" type="button" data-act="delete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">ðŸ—‘ï¸</button>
+                  <button class="notes-icon-action" type="button" data-act="complete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">✅</button>
+                  <button class="notes-icon-action" type="button" data-act="delete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">🗑️</button>
                 </div>
                 ${categories.length ? `
                   <div class="notes-reminders-calendar-panel__itemTags">
@@ -3230,23 +3230,12 @@ function renderReminderCalendarView(reminders = []) {
 }
 
 function renderReminderViewSwitch() {
-  const isCalendar = normalizeReminderView(state.reminderView) === "calendar";
-  $id("notes-reminders-list-view")?.classList.toggle("hidden", isCalendar);
-  $id("notes-reminders-calendar-view")?.classList.toggle("hidden", !isCalendar);
-  if (isCalendar) {
-    $id("notes-reminders-group-panel")?.classList.add("hidden");
-  }
-
-  document.querySelectorAll("#notes-reminders-view-switch [data-reminders-view]").forEach((button) => {
-    const active = String(button.dataset.remindersView || "") === (isCalendar ? "calendar" : "list");
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
-
+  $id("notes-reminders-list-view")?.classList.remove("hidden");
+  $id("notes-reminders-calendar-view")?.classList.remove("hidden");
   const groupButton = $id("notes-reminders-group-btn");
   if (groupButton) {
-    groupButton.disabled = isCalendar;
-    groupButton.classList.toggle("is-disabled", isCalendar);
+    groupButton.disabled = false;
+    groupButton.classList.remove("is-disabled");
   }
 }
 
@@ -4488,16 +4477,6 @@ function bindUiEvents() {
     const nextGroupHidden = panel === "group" ? !groupPanel.classList.contains("hidden") : true;
     showPanel.classList.toggle("hidden", nextShowHidden);
     groupPanel.classList.toggle("hidden", nextGroupHidden);
-  });
-  $id("notes-reminders-view-switch")?.addEventListener("click", (event) => {
-    const target = event.target.closest("[data-act='set-reminders-view']");
-    if (!target) return;
-    const nextView = normalizeReminderView(target.dataset.remindersView || "list");
-    if (nextView === state.reminderView) return;
-    state.reminderView = nextView;
-    saveReminderViewPreference(nextView);
-    if (nextView === "calendar") ensureReminderCalendarSelection(getFilteredReminders());
-    renderRemindersPanel();
   });
   $id("notes-reminders-calendar-view")?.addEventListener("click", async (event) => {
     const target = event.target.closest("[data-act]");

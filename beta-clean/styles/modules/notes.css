@@ -2008,32 +2008,6 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   cursor: not-allowed;
 }
 
-.notes-reminders-view-switch {
-  display: inline-grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  padding: 4px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(8, 12, 20, 0.82);
-}
-
-.notes-reminders-view-tab {
-  border: 0;
-  border-radius: 12px;
-  background: transparent;
-  color: var(--txt-soft);
-  cursor: pointer;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.notes-reminders-view-tab.is-active {
-  background: linear-gradient(180deg, rgba(173, 222, 255, 0.98), rgba(123, 198, 255, 0.94));
-  color: #07111b;
-}
-
 .notes-reminders-list-view,
 .notes-reminders-calendar-view {
   display: grid;
@@ -2118,8 +2092,8 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
 }
 
 .notes-reminders-calendar {
-  border-radius: 20px;
-  padding: 10px 8px 12px;
+  border-radius: 18px;
+  padding: 8px 7px 10px;
   background: rgba(9, 11, 20, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
@@ -2128,13 +2102,13 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .notes-reminders-calendar__title {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .notes-reminders-calendar__nav {
@@ -2143,33 +2117,33 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   background: rgba(7, 12, 20, 0.88);
   color: var(--txt);
   cursor: pointer;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   padding: 0;
 }
 
 .notes-reminders-calendar__grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 6px;
+  gap: 4px;
 }
 
 .notes-reminders-calendar__weekday {
   text-align: center;
-  font-size: 11px;
+  font-size: 10px;
   color: rgba(255, 255, 255, 0.55);
-  padding-bottom: 2px;
+  padding-bottom: 1px;
 }
 
 .notes-reminders-calendar__day {
-  min-height: 72px;
-  padding: 6px 5px 7px;
+  min-height: 54px;
+  padding: 4px 4px 5px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(10, 15, 24, 0.72);
   display: grid;
   align-content: start;
-  gap: 6px;
+  gap: 4px;
 }
 
 .notes-reminders-calendar__day.is-outside-month {
@@ -2199,7 +2173,7 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
 
 .notes-reminders-calendar__dayNumber {
   display: inline-block;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -2207,8 +2181,8 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  min-height: 12px;
+  gap: 3px;
+  min-height: 10px;
 }
 
 .notes-reminders-calendar__dot,
@@ -2218,8 +2192,8 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
 }
 
 .notes-reminders-calendar__dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
   cursor: pointer;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
@@ -2230,9 +2204,9 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   background: rgba(255, 255, 255, 0.08);
   color: var(--txt-soft);
   cursor: pointer;
-  padding: 1px 6px;
+  padding: 0 5px;
   font-size: 10px;
-  line-height: 1.5;
+  line-height: 1.35;
 }
 
 .notes-reminders-calendar-panel {
@@ -2347,13 +2321,9 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .notes-reminders-view-switch {
-    width: 100%;
-  }
-
   .notes-reminders-calendar__day {
-    min-height: 64px;
-    padding: 6px 4px;
+    min-height: 48px;
+    padding: 4px 3px;
   }
 
   .notes-reminders-calendar-panel__head {

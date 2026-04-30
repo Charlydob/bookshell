@@ -23,6 +23,7 @@ import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategory
 import { ensureEcharts } from '../../shared/vendors/echarts.js';
 import { readProcessedJsonCache, writeProcessedJsonCache } from '../../shared/cache/processed-json-cache.js';
 import { normalizeCatalogName, upsertPublicCatalogItem } from '../../shared/services/public-catalog.js';
+import { logFirebaseRead, registerViewListener } from '../../shared/firebase/read-debug.js';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
@@ -12189,6 +12190,8 @@ function chooseFinancePath(newPath, legacyPath, newRoot = {}, legacyRoot = {}) {
 
 async function probeFinanceRoots() {
   const [newPath, legacyPath] = resolveFinancePathCandidates();
+  logFirebaseRead({ path: newPath, mode: "get", reason: "probe-finance-root", viewId: "view-finance" });
+  logFirebaseRead({ path: legacyPath, mode: "get", reason: "probe-finance-legacy-root", viewId: "view-finance" });
   const [newSnap, legacySnap] = await Promise.all([
     safeFirebase(() => get(ref(db, newPath))),
     safeFirebase(() => get(ref(db, legacyPath)))
@@ -12259,7 +12262,8 @@ function subscribe() {
     unsubscribeLegacyFinance = null;
   }
   financeDebug('subscribe firebase', state.financePath);
-  state.unsubscribe = onValue(ref(db, state.financePath), (snap) => {
+  logFirebaseRead({ path: state.financePath, mode: "onValue", reason: "finance-live-sync", viewId: "view-finance" });
+  state.unsubscribe = registerViewListener("view-finance", onValue(ref(db, state.financePath), (snap) => {
     const val = snap.val();
     if (!val && state.hydratedFromRemote) {
       triggerRender();
@@ -12278,12 +12282,13 @@ function subscribe() {
     }
     triggerRender();
     emitFinanceData('remote:finance');
-  }, (error) => { state.error = String(error?.message || error); triggerRender(); });
+  }, (error) => { state.error = String(error?.message || error); triggerRender(); }), { path: state.financePath, mode: "onValue" });
 
   if (financeNeedsLegacyAccountsMerge) {
     const legacyPath = resolveFinancePathCandidates()[1];
     financeDebug('subscribe firebase legacy merge', legacyPath);
-    unsubscribeLegacyFinance = onValue(ref(db, legacyPath), (snap) => {
+    logFirebaseRead({ path: legacyPath, mode: "onValue", reason: "finance-legacy-merge", viewId: "view-finance" });
+    unsubscribeLegacyFinance = registerViewListener("view-finance", onValue(ref(db, legacyPath), (snap) => {
       financeRootsCache.legacyRoot = snap.val() || {};
       const mergedRoot = mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
       applyRemoteData(mergedRoot, true);
@@ -12295,7 +12300,7 @@ function subscribe() {
       }
       triggerRender();
       emitFinanceData('remote:finance-legacy');
-    }, (error) => { state.error = String(error?.message || error); triggerRender(); });
+    }, (error) => { state.error = String(error?.message || error); triggerRender(); }), { path: state.financePath, mode: "onValue" });
   }
 }
 

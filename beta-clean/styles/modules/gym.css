@@ -102,6 +102,11 @@
 
 
 
+.gym-placeholder {
+  color:white;
+  font-size: 14px;
+}
+
 .gym-btn {
   border: none;
   border-radius: 18px;
@@ -627,6 +632,10 @@
 .gym-bw-toggle input {
   display: none;
 }
+#gym-open-stats{
+  padding: 4px;
+  border: none;
+}
 .gym-unilateral-pill {
   display: inline-flex;
   align-items: center;
@@ -885,6 +894,18 @@
   font-size: 12px;
 }
 
+.gym-create {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--gym-border);
+}
+
+.gym-create-title {
+  font-weight: 600;
+}
+
 .gym-field {
   display: flex;
   flex-direction: row;
@@ -1050,6 +1071,14 @@
 }
 .gym-set-swipe-front.is-unilateral {
   gap: 0;
+}
+/* 4) La celda de KG (input + BW) también flexible */
+.gym-kg-cell{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 10px; /* input + BW */
+  gap: 2px;
+  align-items: center;
+  max-width: 150px;
 }
 .gym-input[data-field="kg"]{ max-width: 150px; }
 #gym-finish-workout {

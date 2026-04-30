@@ -501,6 +501,10 @@ bottom: 19px;
     align-items: flex-start;
     flex-direction: column;
   }
+  .games-stats-mid,
+  .games-stats-right {
+    text-align: left;
+  }
 }
 
 #games-empty { margin-top: 18px; }
@@ -734,6 +738,7 @@ max-height: 740px;
   align-items: center;
 }
 .game-mini-input-rr{
+  min-width: none;
   max-width: 180px;
 }
 .btn-verde,
@@ -769,6 +774,16 @@ max-height: 740px;
   box-shadow: 0 0 0 2px rgba(255,42,74,.22);
   transform: translateY(-1px);
 }
+.game-mini-input-k, .game-mini-input-a, .game-mini-input-rmas, .game-mini-input-rmenos, .game-mini-input-rf, .game-mini-input-d{
+   width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.06);
+  color: inherit;
+  padding: 8px;
+  box-shadow: inset 0 0 0 1px rgba(126, 211, 255, .08);
+}
+
 .game-card-sandbox {
   max-height: none;
   border: 1px solid rgba(120,255,190,.26);
@@ -780,11 +795,16 @@ max-height: 740px;
 .sandbox-chip { font-size:.62rem; border:1px solid rgba(255,255,255,.2); border-radius:999px; padding:2px 8px; opacity:.9; }
 .sandbox-kpi-row { display:flex; align-items:baseline; gap:8px; margin-top:8px; }
 .sandbox-kpi-label { font-size:.72rem; opacity:.78; }
+.sandbox-days-display { border:0; background:none; color:inherit; padding:0; font-size:1.5rem; font-weight:800; cursor:pointer; }
 .sandbox-subline { font-size:.72rem; opacity:.72; margin-top:4px; }
 .sandbox-inline-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+.sandbox-days-editor { display:flex; gap:8px; margin-top:8px; }
+.sandbox-days-editor input { width:92px; }
 .sandbox-world-list { display:grid; gap:8px; margin-top:8px; }
 .sandbox-world-card { text-align:left; border:1px solid rgba(255,255,255,.18); border-radius:11px; background:rgba(255,255,255,.04); color:inherit; padding:8px; }
 .sandbox-world-card.is-active { border-color: rgba(120,255,190,.75); }
+.sandbox-world-edit-grid { display:grid; grid-template-columns: repeat(3, minmax(120px,1fr)); gap:8px; margin-bottom:8px; }
+.sandbox-world-edit-grid label { display:grid; gap:4px; font-size:.75rem; }
 .sandbox-note-inputs { 
   display:grid; 
   grid-template-columns: repeat(auto-fit, minmax(40px,1fr)); 
@@ -792,6 +812,7 @@ max-height: 740px;
   margin-top:10px; 
 }
 .sandbox-note-list { display:grid; gap:6px; margin-top:8px; }
+.sandbox-note-item { border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:6px 8px; font-size:.74rem; opacity:.85; }
 
 /* mini modal hijo por encima del detalle */
 .game-mini-modal-overlay.is-child-modal{ z-index: 99999; }
@@ -851,6 +872,7 @@ max-height: 740px;
   justify-content:space-between;
   margin-top:6px;
   flex-direction: row;
+  min-width: none;
   max-width: 380px;
 }
 .note-row-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}

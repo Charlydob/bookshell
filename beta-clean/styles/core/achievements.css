@@ -388,6 +388,15 @@
   background: var(--app-progress-fill);
 }
 
+.app-achievement-toast-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 160;
+  display: grid;
+  gap: 10px;
+}
+
 .app-achievement-toast {
   width: min(320px, calc(100vw - 32px));
   padding: 12px;
@@ -445,6 +454,11 @@
 
   .app-achievements-panelGrid {
     grid-template-columns: 1fr;
+  }
+
+  .app-achievement-toast-stack {
+    right: 12px;
+    left: 12px;
   }
 
   .app-achievement-toast {

@@ -1,3 +1,7 @@
+export function parseImportRaw(value = '') {
+  return String(value || '').trim();
+}
+
 export const TICKET_IMPORT_SAMPLE_V1 = `{
   "schema": "TICKET_V1",
   "source": {

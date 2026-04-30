@@ -12,6 +12,7 @@ import { resolveFinancePathCandidates } from "./finance-data.js";
 import { FOODREPO_API_BASE, FOODREPO_API_TOKEN } from "./foodrepo.js";
 import { getMetCategoryById } from "./met-catalog.js";
 import { buildConsumptionAnalytics } from "./consumption-analytics.js";
+import { normalizeCatalogName, upsertPublicCatalogItem, clonePublicItemToUserCatalog, findPublicCatalogMatches } from "../../shared/services/public-catalog.js";
 import {
   ref,
   onValue,
@@ -4852,6 +4853,18 @@ $recipeImportBtn?.addEventListener("click", () => {
         }
 
         nutritionProducts = remoteProducts;
+        get(ref(db, "v2/public/catalog/foodItems")).then((publicSnap) => {
+          const publicRows = publicSnap?.val() || {};
+          const dedup = new Map((nutritionProducts || []).map((p) => [String(p.normalizedName || normalizeCatalogName(p.name || "") || p.id), p]));
+          Object.values(publicRows).forEach((row) => {
+            const key = String(row?.barcode || "").trim() || String(row?.normalizedName || normalizeCatalogName(row?.name || "")).trim();
+            if (!key || dedup.has(key)) return;
+            dedup.set(key, { ...row, source: "public" });
+          });
+          nutritionProducts = Array.from(dedup.values()).filter((p) => p?.name);
+          cacheNutrition();
+          refreshUI();
+        }).catch(() => {});
         dailyLogsByDate = remoteLogs;
         macroTargets = remoteMacroTargets;
         nutritionIntegrationConfig = remoteIntegrationConfig;
@@ -5975,6 +5988,7 @@ $recipeImportBtn?.addEventListener("click", () => {
           <div class="macro-shopping-product-head">
             <div class="macro-shopping-product-title">${escapeHtml(item.name)}</div>
             <div class="macro-shopping-product-brand">${escapeHtml(item.brand || "Origen no disponible")}</div>
+            <div class="macro-shopping-product-brand"><small>${item.product?.source === "public" ? "Público" : (item.product?.source === "copied" ? "Copiado" : "Privado")}</small></div>
             <div class="macro-shopping-product-score">
               ${buildNutriScoreBadge(item.nutriScore)}
               <span class="macro-shopping-health-pill">${escapeHtml(healthLabel)}</span>
@@ -7481,9 +7495,11 @@ $recipeImportBtn?.addEventListener("click", () => {
         unitWeightUnit = "";
       }
     }
+    const normalizedName = normalizeCatalogName(product.name || "");
     const normalized = {
       id: product.id || generateId(),
       name: String(product.name || "").trim(),
+      normalizedName,
       brand: String(product.brand || "").trim(),
       barcode: String(product.barcode || "").trim(),
       emoji: String(product.emoji || "").trim().substring(0, 2),
@@ -7515,6 +7531,10 @@ $recipeImportBtn?.addEventListener("click", () => {
     persistNutrition();
     recalcAllRecipesNutrition();
     refreshUI();
+    if (currentUid) {
+      upsertPublicCatalogItem("v2/public/catalog/foodItems", normalized, currentUid)
+        .catch((err) => console.info("[recipes/public-catalog] upsert falló", err));
+    }
     return normalized;
   }
 
@@ -7523,6 +7543,17 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (!clean) return null;
     const local = nutritionProducts.find((p) => p.barcode && p.barcode === clean);
     if (local) return local;
+    try {
+      const [match] = await findPublicCatalogMatches("v2/public/catalog/foodItems", { barcode: clean }, 1);
+      if (match) {
+        const cloned = clonePublicItemToUserCatalog(match, { id: generateId() });
+        nutritionProducts.unshift(cloned);
+        persistNutrition();
+        return cloned;
+      }
+    } catch (err) {
+      console.info("[recipes/public-catalog] lookup público falló", err);
+    }
     return null;
   }
 

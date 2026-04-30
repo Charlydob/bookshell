@@ -1,6 +1,7 @@
 import { db, auth } from "../../shared/firebase/index.js";
 import { MET_CATALOG } from "./met-catalog.js";
 import { ensureEcharts } from "../../shared/vendors/echarts.js";
+import { upsertPublicCatalogItem } from "../../shared/services/public-catalog.js";
 
 import {
   ref,
@@ -322,12 +323,14 @@ function bindEvents() {
       const path = `${basePath}/exercises/${exerciseId}`;
       exercises[exerciseId] = { ...(exercises[exerciseId] || {}), id: exerciseId, ...payload };
       writeGymUpdate(path, payload);
+      upsertPublicCatalogItem("v2/public/catalog/gymExercises", { id: exerciseId, ...payload, category: muscleGroups[0] || "Other" }, uid).catch(() => {});
       editingExerciseId = null;
     } else {
       const newRef = push(exercisesRef);
       const exercise = { id: newRef.key, createdAt: now, ...payload };
       exercises[newRef.key] = exercise;
       writeGymSet(`${basePath}/exercises/${newRef.key}`, exercise);
+      upsertPublicCatalogItem("v2/public/catalog/gymExercises", { ...exercise, category: muscleGroups[0] || "Other" }, uid).catch(() => {});
     }
 
     $gymCreateName.value = "";

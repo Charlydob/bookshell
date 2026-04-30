@@ -24,6 +24,7 @@ import {
 import { initGeneralCenterService } from "../shared/services/general-center/index.js";
 import { initThemeService } from "../shared/services/theme/index.js";
 import { registerPublicCatalogMigrationDebugApi } from "../shared/services/public-catalog-migration.js";
+import { exposeFirebaseReadDebug, logFirebaseRead } from "../shared/firebase/read-debug.js";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -44,6 +45,7 @@ const ECHARTS_LIKELY_VIEW_IDS = new Set([
 const loadedStyles = new Map();
 let navRootResetApiPromise = null;
 let sessionQuickstartPromise = null;
+exposeFirebaseReadDebug();
 const NAV_DEFAULT_GROUP_LABEL = "Grupo";
 const NAV_GROUP_EMOJI_FALLBACK = "🗂️";
 const NAV_LONG_PRESS_MS = 420;
@@ -1299,6 +1301,7 @@ async function primeNavLayoutForUser(uid) {
 
   let remoteLayout = null;
   try {
+    logFirebaseRead({ path: getNavLayoutDbPath(uid), mode: "get", reason: "load-nav-layout", viewId: "shell" });
     const snap = await get(ref(db, getNavLayoutDbPath(uid)));
     remoteLayout = snap.val();
   } catch (error) {
@@ -1347,6 +1350,7 @@ function startNavLayoutSync(uid) {
   stopNavLayoutSync();
   state.navLayoutSyncUid = uid;
 
+  logFirebaseRead({ path: getNavLayoutDbPath(uid), mode: "onValue", reason: "watch-nav-layout", viewId: "shell" });
   state.navLayoutUnsubscribe = onValue(ref(db, getNavLayoutDbPath(uid)), (snap) => {
     const remoteLayout = snap.val();
     state.navLayoutRemoteReady = true;

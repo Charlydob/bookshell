@@ -22,6 +22,7 @@ import { resolveFinancePath, resolveFinancePathCandidates } from './finance/data
 import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategoryToApp, firebaseSafeKey, TICKET_IMPORT_SAMPLE_V1, resolveTicketMovementCategory } from './finance/import.js';
 import { ensureEcharts } from '../../shared/vendors/echarts.js';
 import { readProcessedJsonCache, writeProcessedJsonCache } from '../../shared/cache/processed-json-cache.js';
+import { normalizeCatalogName, upsertPublicCatalogItem } from '../../shared/services/public-catalog.js';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
@@ -31,6 +32,7 @@ let financeRenderQueued = false;
 let financePendingPreserveUi = true;
 const FINANCE_GOALS_SORT_MODE_KEY = 'financeGoalsSortMode';
 const PRODUCTS_DRAFT_LOCAL_KEY = 'bookshell_finance_products_draft_v1';
+const GLOBAL_PRODUCTS_PATH = 'v2/public/catalog/foodItems';
 const financeDerivedCache = {
   txList: { balanceRef: null, financePath: '', rows: [] },
   recurring: { recurringRef: null, monthMap: new Map() },
@@ -1738,6 +1740,45 @@ async function loadFoodCatalog(force = false) {
         if (normalizedEntities.out[id].name) normalizedEntities.nameToId[normalizedEntities.out[id].name.toLowerCase()] = id;
       });
       financeDebug('migrated legacy foodItems into entities', { count: Object.keys(normalizedEntities.out).length });
+    }
+    try {
+      const publicSnap = await safeFirebase(() => get(ref(db, GLOBAL_PRODUCTS_PATH)));
+      const publicRows = publicSnap?.val() || {};
+      Object.entries(publicRows).forEach(([publicId, row]) => {
+        const normalizedName = normalizeFoodName(row?.name || '');
+        if (!normalizedName) return;
+        const barcode = String(row?.barcode || '').trim();
+        const brand = String(row?.brand || '').trim();
+        const category = String(row?.category || '').trim();
+        const existingId = normalizedEntities.nameToId[normalizedName.toLowerCase()];
+        const fallbackId = existingId || `pub-${firebaseSafeKey(publicId || normalizedName)}`;
+        const current = normalizedEntities.out[fallbackId] || {};
+        normalizedEntities.out[fallbackId] = {
+          ...current,
+          id: fallbackId,
+          publicProductId: String(publicId || '').trim(),
+          name: normalizedName,
+          displayName: String(row?.name || normalizedName).trim() || normalizedName,
+          normalizedName: normalizeCatalogName(row?.name || normalizedName),
+          brand,
+          category,
+          barcode,
+          mealType: normalizeFoodName(current.mealType || ''),
+          cuisine: normalizeFoodName(current.cuisine || ''),
+          healthy: normalizeFoodName(current.healthy || ''),
+          place: normalizeFoodName(current.place || ''),
+          defaultPrice: Number(current.defaultPrice || row?.defaultPrice || 0),
+          baseUnit: String(row?.baseUnit || current.baseUnit || '').trim(),
+          macros: row?.macros && typeof row.macros === 'object' ? row.macros : (current.macros || {}),
+          source: current.source || 'public',
+          countUsed: Number(current.countUsed || 0),
+          createdAt: Number(current.createdAt || row?.createdAt || 0) || nowTs(),
+          updatedAt: Number(current.updatedAt || row?.updatedAt || 0) || nowTs(),
+        };
+        normalizedEntities.nameToId[normalizedName.toLowerCase()] = fallbackId;
+      });
+    } catch (error) {
+      financeDebug('public catalog load failed', { message: error?.message || String(error || '') });
     }
     state.food.itemsById = normalizedEntities.out;
     state.food.nameToId = normalizedEntities.nameToId;
@@ -6384,6 +6425,19 @@ async function upsertFoodItem(value, incrementCount = false, patch = {}) {
   };
   state.food.items[legacyKey] = legacyPayload;
   await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/foodItems/${legacyKey}`), legacyPayload));
+  if (auth?.currentUser?.uid) {
+    const globalItem = {
+      name: payload.displayName || payload.name,
+      normalizedName: normalizeCatalogName(payload.displayName || payload.name || ''),
+      brand: String(payload.brand || '').trim(),
+      barcode: String(payload.barcode || '').trim(),
+      category: String(payload.cuisine || payload.category || '').trim(),
+      baseUnit: String(payload.unit || payload.baseUnit || '').trim(),
+      macros: payload.macros && typeof payload.macros === 'object' ? payload.macros : undefined,
+      defaultPrice,
+    };
+    await upsertPublicCatalogItem(GLOBAL_PRODUCTS_PATH, globalItem, auth.currentUser.uid);
+  }
   return foodId;
 }
 

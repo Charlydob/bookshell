@@ -403,6 +403,7 @@ function prepareSyncIndicator(indicator) {
   const textNode = ensureSyncIndicatorTextNode(indicator);
   ensureSyncIndicatorActionsNode(indicator);
   ensureHardResetSyncAction(indicator);
+  ensureReminderNotificationsButton(indicator);
   if (!indicator.hasAttribute("aria-label")) {
     indicator.setAttribute("aria-label", "Estado de sincronización");
   }
@@ -466,6 +467,39 @@ function renderGlobalSyncIndicator(snapshot) {
   textNode.textContent = indicatorText;
   indicator.setAttribute("aria-label", `Estado de sincronización: ${indicatorText}`);
   indicator.classList.remove("hidden");
+  updateReminderBadge(indicator);
+}
+
+function ensureReminderNotificationsButton(indicator) {
+  const actionsNode = ensureSyncIndicatorActionsNode(indicator);
+  if (!(actionsNode instanceof HTMLElement)) return null;
+  let button = actionsNode.querySelector("#app-reminder-notifications-btn");
+  if (button) return button;
+  button = document.createElement("button");
+  button.id = "app-reminder-notifications-btn";
+  button.className = "app-theme-switcher__trigger";
+  button.type = "button";
+  button.textContent = "🔔 Notificaciones";
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    window.__bookshellNotes?.openReminderNotificationsPanel?.();
+  });
+  actionsNode.append(button);
+  return button;
+}
+
+function updateReminderBadge(indicator) {
+  if (!(indicator instanceof HTMLElement)) return;
+  let badge = indicator.querySelector(".app-sync-indicator__badge");
+  if (!badge) {
+    badge = document.createElement("span");
+    badge.className = "app-sync-indicator__badge hidden";
+    indicator.append(badge);
+  }
+  const pending = Number(window.__bookshellReminderPendingToday || 0);
+  badge.textContent = String(pending);
+  badge.classList.toggle("hidden", pending <= 0);
 }
 
 function bindSyncIndicatorToggles() {
@@ -2987,5 +3021,10 @@ bindAuthGate();
 bindViewportHeightVar();
 bindNetworkDebug();
 bindGlobalSyncIndicator();
+window.addEventListener("bookshell:reminder-notifications", (event) => {
+  window.__bookshellReminderPendingToday = Number(event?.detail?.pendingTodayCount || 0);
+  renderGlobalSyncIndicator(getShellState().lastSyncSnapshot || null);
+});
 scheduleIdleTask(() => registerAppServiceWorker(), { delayMs: 600, timeout: 3000 });
 window.__bookshellEnsureHabitsApi = ensureHabitsApiReady;
+schedulePostBootTask(() => preloadViewModule("view-notes"), 1200);

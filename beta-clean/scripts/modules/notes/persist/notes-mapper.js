@@ -281,6 +281,7 @@ export function mapReminderFromDb(id, value = {}) {
     updatedAt: Number(value?.updatedAt || value?.createdAt || Date.now()),
     completedAt: Number(value?.completedAt || 0),
     dismissedAlerts: normalizeReminderDismissedAlerts(value?.dismissedAlerts),
+    notifiedAt: Number(value?.notifiedAt || 0),
   };
 }
 
@@ -306,6 +307,7 @@ export function mapReminderToDb(reminder = {}) {
     updatedAt: Number(reminder?.updatedAt || reminder?.createdAt || Date.now()),
     completedAt: Number(reminder?.completedAt || 0),
     dismissedAlerts: normalizeReminderDismissedAlerts(reminder?.dismissedAlerts),
+    notifiedAt: Number(reminder?.notifiedAt || 0),
   };
 }
 

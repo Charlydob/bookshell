@@ -8201,12 +8201,41 @@ label {
     background: rgba(37,255, 111, .2);
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .56);
 }
-.financeTab .productsWorkbench__receiptRow{
-  width: 355px;
-  padding: 0 10px ;
+
+
+.financeTab .productsWorkbench__receiptLines {
+  width: 10%;
+  min-width: 100%;
 }
 
+.productsWorkbench__receiptRow.productsWorkbench__receiptRow--add, .financeTab .productsWorkbench__receiptRow{
+  width: 100%;
+  min-width: 100%;
+}
 
+.financeTab .productsWorkbench__receiptSelect, .productsWorkbench__receiptSelectWrap{
+  display: grid;
+  width: 10px;
+  text-align-last: center ;
+  align-items: center;
+  align-content: center;
+
+}
+
+.financeTab .productsWorkbench__receiptRemove {
+  background: none;
+  color: white;
+}
+
+.financeTab .productsWorkbench .food-control {
+  display: grid;
+  justify-items: center;
+  justify-content: center;
+  justify-self: center;
+  align-items: center;
+  align-self: center;
+  background: none;
+}
 /* #endregion */
 
 /* #region registro de tickets */
@@ -8216,6 +8245,8 @@ label {
   background:  none;
 
 }
+
+
 
 /* #endregion */
 /* #endregion catalogo */

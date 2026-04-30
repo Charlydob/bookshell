@@ -2,11 +2,7 @@
 import { getCountryEnglishName } from "./countries.js";
 import { ensureEcharts } from "../../shared/vendors/echarts.js";
 
-const WORLD_GEO_URLS = [
-  "https://echarts.apache.org/examples/data/asset/geo/world.json",
-  "https://cdn.jsdelivr.net/npm/echarts@5/map/json/world.json",
-  "https://cdn.jsdelivr.net/npm/echarts@3.6.0/map/json/world.json",
-];
+const LOCAL_WORLD_GEO_URL = new URL("../../../assets/geo/world.json", import.meta.url);
 
 let worldGeoPromise = null;
 
@@ -19,15 +15,8 @@ async function fetchJson(url) {
 function loadWorldGeoJson() {
   if (worldGeoPromise) return worldGeoPromise;
 
-  worldGeoPromise = (async () => {
-    for (const url of WORLD_GEO_URLS) {
-      try {
-        return await fetchJson(url);
-      } catch (_) {}
-    }
-    throw new Error("No se pudo cargar ningún GeoJSON del mundo");
-  })().catch((err) => {
-    console.warn("No se pudo cargar el GeoJSON del mundo", err);
+  worldGeoPromise = fetchJson(LOCAL_WORLD_GEO_URL).catch((err) => {
+    console.warn("No se pudo cargar el GeoJSON local del mundo", err);
     worldGeoPromise = null;
     return null;
   });
@@ -351,3 +340,4 @@ export function renderCountryList(container, stats = [], noun = "elemento") {
     container.appendChild(row);
   });
 }
+

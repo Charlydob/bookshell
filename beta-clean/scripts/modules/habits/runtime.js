@@ -10,7 +10,12 @@ import {
   update,
   get,
   runTransaction,
-  push
+  push,
+  query,
+  orderByKey,
+  startAt,
+  endAt,
+  limitToLast
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 import { computeTimeByHabitDataset, debugComputeTimeByHabit, resolveFirstRecordTs } from "./time-by-habit.js";
@@ -21,6 +26,7 @@ import { canWriteDirectly } from "../../shared/services/sync-manager.js?v=2026-0
 import { applyQueuedWritesToPath } from "../../shared/storage/offline-queue.js?v=2026-04-05-v5";
 import { readModuleSnapshot, writeModuleSnapshot } from "../../shared/storage/offline-snapshots.js?v=2026-04-05-v5";
 import { createOfflinePushId, writeRtdbWithOfflineQueue } from "../../shared/firebase/offline-rtdb.js?v=2026-04-05-v5";
+import { logFirebaseBytesRisk, logFirebaseRead, registerViewListener } from "../../shared/firebase/read-debug.js";
 
 let currentUid = auth.currentUser?.uid ?? null;
 let BASE = null;
@@ -286,6 +292,11 @@ let habitRenderPreserveToday = false;
 let habitRenderPreservePanel = false;
 let reportsRenderHandle = null;
 let remoteUnsubscribers = [];
+let habitSessionLiveUnsubscribers = [];
+let habitSessionLiveSlices = new Map();
+let habitSessionSyncVersion = 0;
+let habitSessionSyncMode = "none";
+let habitSessionSyncKey = "";
 let habitsResizeHandler = null;
 let habitsViewVisible = document.getElementById("view-habits")?.classList.contains("view-active") ?? true;
 let habitSnapshotPersistTimer = null;
@@ -1752,6 +1763,7 @@ function shouldSkipScheduleRender(reason = "unknown") {
 }
 
 function renderSchedule(reason = "manual") {
+  void syncHabitSessionsForCurrentView({ reason: `render:schedule:${reason}` });
   if (!$habitScheduleView) return;
   if (activeTab !== "schedule") {
     updateScheduleLiveInterval();
@@ -3030,11 +3042,46 @@ function normalizeWorkScheduleTimeValue(value = "", fallback = "") {
 
 function sanitizeWorkScheduleTimeTyping(value = "") {
   const raw = String(value || "").replace(/[^\d:]/g, "");
+  if (!raw) return "";
+
   const colonIdx = raw.indexOf(":");
-  if (colonIdx < 0) return raw.slice(0, 4);
+  if (colonIdx < 0) {
+    const digits = raw.slice(0, 4);
+    if (digits.length <= 2) return digits;
+    return `${digits.slice(0, 2)}:${digits.slice(2)}`;
+  }
+
   const hours = raw.slice(0, colonIdx).replace(/:/g, "").slice(0, 2);
   const minutes = raw.slice(colonIdx + 1).replace(/:/g, "").slice(0, 2);
-  return minutes ? `${hours}:${minutes}` : `${hours}:`;
+  return `${hours}${hours.length >= 2 || minutes ? ":" : ""}${minutes}`;
+}
+
+function ensureWorkScheduleTimeInputValue(input) {
+  if (!input) return DEFAULT_TIME_INPUT_VALUE;
+  const nextValue = sanitizeWorkScheduleTimeTyping(input.value) || DEFAULT_TIME_INPUT_VALUE;
+  if (input.value !== nextValue) input.value = nextValue;
+  return nextValue;
+}
+
+function selectWorkScheduleTimeSegment(input, segment = "hours") {
+  if (!input?.setSelectionRange) return;
+  const nextValue = ensureWorkScheduleTimeInputValue(input);
+  if (!nextValue.includes(":")) input.value = normalizeWorkScheduleTimeValue(nextValue, DEFAULT_TIME_INPUT_VALUE);
+  const isMinutes = segment === "minutes";
+  input.setSelectionRange(isMinutes ? 3 : 0, isMinutes ? 5 : 2);
+}
+
+function getWorkScheduleTimeSegmentFromCaret(input, fallbackClientX = null) {
+  if (!input) return "hours";
+  const caret = Number.isInteger(input.selectionStart) ? input.selectionStart : 0;
+  if (caret <= 2) return "hours";
+  if (caret >= 3) return "minutes";
+  if (typeof fallbackClientX === "number") {
+    const rect = input.getBoundingClientRect();
+    const relativeX = fallbackClientX - rect.left;
+    return relativeX > rect.width / 2 ? "minutes" : "hours";
+  }
+  return "hours";
 }
 
 function inferWorkScheduleDayStatusFromTimes(start = "", end = "") {
@@ -6141,6 +6188,7 @@ function renderHabitDetailSchedulePanel(habit) {
 }
 
 function renderHabitDetail(habitId, rangeKey = habitDetailRange) {
+  void syncHabitSessionsForCurrentView({ reason: `render:detail:${rangeKey}` });
   const habit = habits[habitId];
   if (!habit || habit.archived) return;
   habitDetailRange = rangeKey;
@@ -6539,6 +6587,7 @@ function applyTodaySearch(value) {
 }
 
 function renderToday() {
+  void syncHabitSessionsForCurrentView({ reason: "render:today" });
   if (!parseDateKey(selectedDateKey)) {
     selectedDateKey = todayKey();
   }
@@ -8863,6 +8912,7 @@ function buildWorkScheduleSummaryBand(rangeKey) {
 }
 
 function renderHistory() {
+  void syncHabitSessionsForCurrentView({ reason: `render:history:${habitHistoryRange}` });
   $habitHistoryList.innerHTML = "";
 
   const habitsList = activeHabits();
@@ -9297,6 +9347,9 @@ function renderHabitLineSelector() {
 }
 
 function renderLineChart() {
+  if (activeTab === "reports") {
+    void syncHabitSessionsForCurrentView({ reason: `render:reports-line:${habitLineRange}` });
+  }
   if (!$habitLineChart) return;
   if ($habitEvoRange) $habitEvoRange.value = habitLineRange;
   renderHabitLineSelector();
@@ -9883,6 +9936,9 @@ function appendTimeQuickControls(tools, habit, today) {
 }
 
 function renderGlobalHeatmap() {
+  if (activeTab === "reports") {
+    void syncHabitSessionsForCurrentView({ reason: `render:reports-heatmap:${heatmapYear}` });
+  }
   if (!$habitGlobalHeatmap) return;
   $habitGlobalHeatmap.innerHTML = "";
   const cells = buildYearCells(heatmapYear);
@@ -10755,6 +10811,9 @@ function buildDonutOuterRuns(habitData, catName, groupColorByKey = new Map()) {
 
 
 function renderDonut() {
+  if (activeTab === "reports") {
+    void syncHabitSessionsForCurrentView({ reason: `render:reports-donut:${habitDonutRange}` });
+  }
   if (!$habitDonut) return;
   const entries = buildTimeEntries(habitDonutRange);
   const isGrouped = habitDonutGroupMode.kind === "cat" && habitDonutGroupMode.cat;
@@ -11469,6 +11528,9 @@ function renderWorkShiftReport() {
 }
 
 function renderRecordsCard() {
+  if (activeTab === "reports") {
+    void syncHabitSessionsForCurrentView({ reason: `render:reports-records:${habitRecordsRange}` });
+  }
   if (!$habitRecordsCurrentStreak) return;
   const stats = computeSuccessStatsForRange(habitRecordsRange);
   const bestStreak = computeTotalStreakInRange(stats.start, stats.end).best;
@@ -11607,6 +11669,7 @@ function scheduleReportsRender() {
 }
 
 function renderReportsPanel() {
+  void syncHabitSessionsForCurrentView({ reason: "render:reports" });
   renderKPIs();
   renderPins();
   renderRecordsCard();
@@ -13259,6 +13322,12 @@ function bindEvents() {
     renderWorkScheduleRowsEditor();
   });
   $habitWorkScheduleRows?.addEventListener("click", (event) => {
+    const timeInput = event.target?.closest?.(".habit-work-schedule-time-input");
+    if (timeInput) {
+      const segment = getWorkScheduleTimeSegmentFromCaret(timeInput, event.clientX);
+      window.requestAnimationFrame(() => selectWorkScheduleTimeSegment(timeInput, segment));
+      return;
+    }
     const dayBtn = event.target?.closest?.("[data-day]");
     if (dayBtn) {
       const row = workScheduleEditor.rows.find((item) => item.id === dayBtn.dataset.row);
@@ -13275,6 +13344,16 @@ function bindEvents() {
       workScheduleEditor.rows = workScheduleEditor.rows.filter((row) => row.id !== removeBtn.dataset.rowRemove);
       renderWorkScheduleRowsEditor();
     }
+  });
+  $habitWorkScheduleRows?.addEventListener("focusin", (event) => {
+    const input = event.target?.closest?.(".habit-work-schedule-time-input");
+    if (!input) return;
+    ensureWorkScheduleTimeInputValue(input);
+    const row = workScheduleEditor.rows.find((item) => item.id === input.dataset.row);
+    if (row && (input.dataset.field === "start" || input.dataset.field === "end")) {
+      row[input.dataset.field] = input.value;
+    }
+    window.requestAnimationFrame(() => selectWorkScheduleTimeSegment(input, "hours"));
   });
   $habitWorkScheduleRows?.addEventListener("input", (event) => {
     const input = event.target?.closest?.("input[data-row][data-field]");
@@ -13446,6 +13525,268 @@ function bindEvents() {
   });
 }
 
+function getHabitSessionTargetHabitIds() {
+  return activeHabitsWithSystem()
+    .map((habit) => String(habit?.id || "").trim())
+    .filter(Boolean)
+    .sort();
+}
+
+function getHabitSessionTailBounds(days = 45) {
+  const end = endOfDay(new Date());
+  const span = Math.max(1, Number(days) || 45);
+  const start = addDays(end, -(span - 1));
+  return { start, end, limit: span };
+}
+
+function buildHabitSessionRangeSpec(mode, start, end, extra = {}) {
+  const safeStart = start instanceof Date && !Number.isNaN(start.getTime())
+    ? new Date(start.getFullYear(), start.getMonth(), start.getDate())
+    : new Date();
+  const safeEnd = end instanceof Date && !Number.isNaN(end.getTime())
+    ? endOfDay(end)
+    : endOfDay(new Date());
+  const normalizedStart = safeStart <= safeEnd ? safeStart : new Date(safeEnd.getFullYear(), safeEnd.getMonth(), safeEnd.getDate());
+  const startKey = dateKeyLocal(normalizedStart);
+  const endKey = dateKeyLocal(safeEnd);
+  return {
+    mode,
+    start: normalizedStart,
+    end: safeEnd,
+    startKey,
+    endKey,
+    ...extra,
+  };
+}
+
+function buildHabitReportsSessionSpec() {
+  const windows = [];
+  const fullReasons = new Set();
+  const pushWindow = (rangeLabel, bounds) => {
+    if (!bounds?.start || !bounds?.end) return;
+    windows.push({ rangeLabel, ...buildHabitSessionRangeSpec("range-get", bounds.start, bounds.end) });
+  };
+
+  if (habitDonutRange === "total") fullReasons.add("reports-donut-total");
+  else pushWindow(`donut:${habitDonutRange}`, getRangeBounds(habitDonutRange));
+
+  if (habitRecordsRange === "total") fullReasons.add("reports-records-total");
+  else pushWindow(`records:${habitRecordsRange}`, getRangeBounds(habitRecordsRange));
+
+  if (habitLineRange === "total") fullReasons.add("reports-line-total");
+  else pushWindow(`line:${habitLineRange}`, getLineRangeBounds(habitLineRange));
+
+  pushWindow(`heatmap:${heatmapYear}`, {
+    start: new Date(heatmapYear, 0, 1),
+    end: new Date(heatmapYear, 11, 31, 23, 59, 59, 999),
+  });
+
+  if (fullReasons.size) {
+    return {
+      mode: "full-get",
+      reasonLabel: Array.from(fullReasons).join(","),
+      startKey: "",
+      endKey: "",
+    };
+  }
+
+  if (!windows.length) {
+    const tail = getHabitSessionTailBounds(45);
+    return buildHabitSessionRangeSpec("range-get", tail.start, tail.end, {
+      reasonLabel: "reports-fallback-tail",
+    });
+  }
+
+  const start = windows.reduce((min, entry) => (entry.start < min ? entry.start : min), windows[0].start);
+  const end = windows.reduce((max, entry) => (entry.end > max ? entry.end : max), windows[0].end);
+  return buildHabitSessionRangeSpec("range-get", start, end, {
+    reasonLabel: windows.map((entry) => entry.rangeLabel).join(","),
+  });
+}
+
+function buildHabitSessionSyncSpec() {
+  if (!currentUid || !isHabitsViewVisible()) {
+    return { mode: "none", key: "none", bounded: true, reasonLabel: "view-hidden", habitIds: [] };
+  }
+
+  const habitIds = getHabitSessionTargetHabitIds();
+  if (!habitIds.length) {
+    return { mode: "empty", key: "empty", bounded: true, reasonLabel: "no-habits", habitIds };
+  }
+
+  let spec;
+  if (activeTab === "history") {
+    const bounds = getHistoryRangeBounds(habitHistoryRange);
+    spec = buildHabitSessionRangeSpec(habitHistoryRange === "total" ? "full-get" : "range-get", bounds.start, bounds.end, {
+      reasonLabel: `history:${habitHistoryRange}`,
+    });
+  } else if (activeTab === "reports") {
+    spec = buildHabitReportsSessionSpec();
+  } else {
+    const bounds = getHabitSessionTailBounds(activeTab === "schedule" ? 60 : 45);
+    spec = buildHabitSessionRangeSpec("live-tail", bounds.start, bounds.end, {
+      limit: bounds.limit,
+      reasonLabel: `${activeTab}:tail-${bounds.limit}d`,
+    });
+  }
+
+  const bounded = spec.mode !== "full-get";
+  const detailKey = spec.mode === "full-get"
+    ? spec.reasonLabel
+    : `${spec.startKey}:${spec.endKey}:${spec.limit || 0}`;
+  return {
+    ...spec,
+    habitIds,
+    bounded,
+    key: `${activeTab}:${spec.mode}:${detailKey}:${habitIds.join(",")}`,
+  };
+}
+
+function stopHabitSessionLiveSync() {
+  habitSessionLiveUnsubscribers.forEach((unsubscribe) => {
+    try {
+      unsubscribe();
+    } catch (_) {}
+  });
+  habitSessionLiveUnsubscribers = [];
+  habitSessionLiveSlices = new Map();
+}
+
+function applyHabitSessionSyncSnapshot(rawByHabit, reason = "remote:sessions", spec = null) {
+  const nextRaw = rawByHabit && typeof rawByHabit === "object" ? rawByHabit : {};
+  applyPendingSessionWrites(nextRaw);
+  const norm = normalizeSessionsStore(nextRaw, true);
+  habitSessions = norm.normalized;
+  habitSessionTimeline = norm.timeline || {};
+  habitSessionTimelineCoverage = norm.coverage || {};
+  debugHabitsSync("habitSessions sync applied", {
+    reason,
+    mode: spec?.mode || "",
+    key: spec?.key || "",
+    startKey: spec?.startKey || "",
+    endKey: spec?.endKey || "",
+  });
+  invalidateDominantCache();
+  markHistoryDataChanged(reason, spec ? {
+    mode: spec.mode,
+    key: spec.key,
+    startKey: spec.startKey || "",
+    endKey: spec.endKey || "",
+  } : null);
+  saveCache();
+  requestActiveTabRender({ preserveUI: true });
+  emitHabitsData("remote:sessions");
+}
+
+async function syncHabitSessionsForCurrentView({ force = false, reason = "unknown" } = {}) {
+  const spec = buildHabitSessionSyncSpec();
+  if (!force && spec.mode === habitSessionSyncMode && spec.key === habitSessionSyncKey) {
+    return;
+  }
+
+  habitSessionSyncVersion += 1;
+  const syncVersion = habitSessionSyncVersion;
+  habitSessionSyncMode = spec.mode;
+  habitSessionSyncKey = spec.key;
+
+  if (spec.mode !== "live-tail") {
+    stopHabitSessionLiveSync();
+  }
+
+  if (spec.mode === "none" || spec.mode === "empty") {
+    applyHabitSessionSyncSnapshot({}, `remote:sessions:${reason}`, spec);
+    return;
+  }
+
+  if (spec.mode === "live-tail") {
+    stopHabitSessionLiveSync();
+    const nextSlices = new Map();
+    spec.habitIds.forEach((habitId) => {
+      const path = `${HABIT_SESSIONS_PATH}/${habitId}`;
+      const sessionsQuery = query(
+        ref(db, path),
+        orderByKey(),
+        startAt(spec.startKey),
+        limitToLast(spec.limit || 45)
+      );
+      logFirebaseRead({
+        path,
+        mode: "onValue",
+        reason: `habits-session-sync:${spec.reasonLabel}`,
+        viewId: "view-habits",
+        bounded: true,
+        querySummary: `orderByKey,startAt(${spec.startKey}),limitToLast(${spec.limit || 45})`,
+      });
+      const unsubscribe = registerViewListener("view-habits", onValue(
+        sessionsQuery,
+        (snap) => {
+          if (syncVersion !== habitSessionSyncVersion) return;
+          nextSlices.set(habitId, snap.val() || {});
+          const nextRaw = {};
+          nextSlices.forEach((value, key) => {
+            if (value && typeof value === "object" && Object.keys(value).length) {
+              nextRaw[key] = value;
+            }
+          });
+          habitSessionLiveSlices = nextSlices;
+          applyHabitSessionSyncSnapshot(nextRaw, `remote:sessions:${spec.reasonLabel}`, spec);
+        },
+        (error) => {
+          console.warn("No se pudo escuchar sesiones de hábitos", { habitId, error });
+        }
+      ), {
+        key: `habit-sessions:${habitId}`,
+        path,
+        mode: "onValue",
+        reason: `habits-session-sync:${spec.reasonLabel}`,
+        bounded: true,
+        querySummary: `orderByKey,startAt(${spec.startKey}),limitToLast(${spec.limit || 45})`,
+      });
+      if (typeof unsubscribe === "function") {
+        habitSessionLiveUnsubscribers.push(unsubscribe);
+      }
+    });
+    return;
+  }
+
+  const nextRaw = {};
+  const useFullHistory = spec.mode === "full-get";
+  if (useFullHistory) {
+    logFirebaseBytesRisk({
+      path: HABIT_SESSIONS_PATH,
+      reason: `habits-session-sync:${spec.reasonLabel || reason}`,
+      viewId: "view-habits",
+      estimatedCount: spec.habitIds.length,
+    });
+  }
+
+  await Promise.all(spec.habitIds.map(async (habitId) => {
+    const path = `${HABIT_SESSIONS_PATH}/${habitId}`;
+    const requestRef = useFullHistory
+      ? ref(db, path)
+      : query(ref(db, path), orderByKey(), startAt(spec.startKey), endAt(spec.endKey));
+    logFirebaseRead({
+      path,
+      mode: "get",
+      reason: `habits-session-sync:${spec.reasonLabel}`,
+      viewId: "view-habits",
+      bounded: !useFullHistory,
+      querySummary: useFullHistory
+        ? "full-history-per-habit"
+        : `orderByKey,startAt(${spec.startKey}),endAt(${spec.endKey})`,
+    });
+    const snap = await get(requestRef);
+    if (syncVersion !== habitSessionSyncVersion) return;
+    const value = snap?.val() || {};
+    if (value && typeof value === "object" && Object.keys(value).length) {
+      nextRaw[habitId] = value;
+    }
+  }));
+
+  if (syncVersion !== habitSessionSyncVersion) return;
+  applyHabitSessionSyncSnapshot(nextRaw, `remote:sessions:${spec.reasonLabel || reason}`, spec);
+}
+
 // Firebase listeners
 
 function listenRemoteLegacy() {
@@ -13456,7 +13797,13 @@ function listenRemoteLegacy() {
     if (tabs.includes(activeTab)) rerender();
   };
   const bindRemote = (path, handler) => {
-    const unsubscribe = onValue(ref(db, path), handler);
+    logFirebaseRead({ path, mode: "onValue", reason: "habits-live-sync", viewId: "view-habits" });
+    const unsubscribe = registerViewListener("view-habits", onValue(ref(db, path), handler), {
+      key: path,
+      path,
+      mode: "onValue",
+      reason: "habits-live-sync",
+    });
     if (typeof unsubscribe === "function") {
       remoteUnsubscribers.push(unsubscribe);
     }
@@ -13474,6 +13821,7 @@ function listenRemoteLegacy() {
       } catch (_) {}
     }
     saveCache();
+    void syncHabitSessionsForCurrentView({ force: true, reason: "remote:habits-legacy" });
     rerender();
   });
 
@@ -13540,34 +13888,16 @@ function listenRemoteLegacy() {
     rerenderIfActiveTab(["today", "schedule", "history"]);
     emitHabitsData("remote:active-sessions");
   });
-  bindRemote(HABIT_SESSIONS_PATH, (snap) => {
-    const raw = snap.val() || {};
-    debugHabitsSync("onValue:habitSessions raw", raw);
-    const work = activeHabits().find((h) => isWorkHabit(h));
-    if (work) {
-      debugWorkShift("[WORK] onValue workShifts", null);
-      debugWorkShift("[WORK] onValue habitSessions(work)", {
-        dateKey: selectedDateKey,
-        value: raw?.[work.id]?.[selectedDateKey] ?? null
-      });
-    }
-    applyPendingSessionWrites(raw);
-    const norm = normalizeSessionsStore(raw, true);
-    habitSessions = norm.normalized;
-    habitSessionTimeline = norm.timeline || {};
-    habitSessionTimelineCoverage = norm.coverage || {};
-    debugHabitsSync("onValue:habitSessions normalized", habitSessions);
-    invalidateDominantCache();
-    markHistoryDataChanged("remote:sessions");
-    saveCache();
-    rerender();
-    emitHabitsData("remote:sessions");
-  });
 
   remoteBound = true;
+  void syncHabitSessionsForCurrentView({ force: true, reason: "listen-remote-legacy" });
 }
 
 function unlistenRemote() {
+  habitSessionSyncVersion += 1;
+  stopHabitSessionLiveSync();
+  habitSessionSyncMode = "none";
+  habitSessionSyncKey = "";
   remoteUnsubscribers.forEach((unsubscribe) => {
     try {
       unsubscribe();
@@ -13980,7 +14310,13 @@ function listenRemote() {
     if (tabs.includes(activeTab)) rerender();
   };
   const bindRemote = (path, handler) => {
-    const unsubscribe = onValue(ref(db, path), handler);
+    logFirebaseRead({ path, mode: "onValue", reason: "habits-live-sync", viewId: "view-habits" });
+    const unsubscribe = registerViewListener("view-habits", onValue(ref(db, path), handler), {
+      key: path,
+      path,
+      mode: "onValue",
+      reason: "habits-live-sync",
+    });
     if (typeof unsubscribe === "function") {
       remoteUnsubscribers.push(unsubscribe);
     }
@@ -13998,6 +14334,7 @@ function listenRemote() {
       } catch (_) {}
     }
     saveCache();
+    void syncHabitSessionsForCurrentView({ force: true, reason: "remote:habits" });
     rerender();
   });
 
@@ -14068,31 +14405,8 @@ function listenRemote() {
     emitHabitsData("remote:active-sessions");
   });
 
-  bindRemote(HABIT_SESSIONS_PATH, (snap) => {
-    const raw = applyQueuedHabitRemoteValue(HABIT_SESSIONS_PATH, snap.val() || {}) || {};
-    debugHabitsSync("onValue:habitSessions raw", raw);
-    const work = activeHabits().find((h) => isWorkHabit(h));
-    if (work) {
-      debugWorkShift("[WORK] onValue workShifts", null);
-      debugWorkShift("[WORK] onValue habitSessions(work)", {
-        dateKey: selectedDateKey,
-        value: raw?.[work.id]?.[selectedDateKey] ?? null
-      });
-    }
-    applyPendingSessionWrites(raw);
-    const norm = normalizeSessionsStore(raw, true);
-    habitSessions = norm.normalized;
-    habitSessionTimeline = norm.timeline || {};
-    habitSessionTimelineCoverage = norm.coverage || {};
-    debugHabitsSync("onValue:habitSessions normalized", habitSessions);
-    invalidateDominantCache();
-    markHistoryDataChanged("remote:sessions");
-    saveCache();
-    rerender();
-    emitHabitsData("remote:sessions");
-  });
-
   remoteBound = true;
+  void syncHabitSessionsForCurrentView({ force: true, reason: "listen-remote" });
 }
 
 async function initHabitsLegacy() {
@@ -14171,6 +14485,7 @@ function goHabitSubtab(tab) {
   const allowed = new Set(["today", "history", "schedule", "reports"]);
   activeTab = allowed.has(tab) ? tab : "today";
   if (activeTab !== "reports") hideHabitLineTooltip();
+  void syncHabitSessionsForCurrentView({ force: true, reason: `tab:${activeTab}` });
   renderHabits();
 }
 

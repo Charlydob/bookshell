@@ -60,6 +60,10 @@ export async function onShow() {
   } catch (_) {}
 }
 
+export function onHide() {
+  runtimeModule?.onHide?.();
+}
+
 export function destroy() {
   runtimeModule?.destroy?.();
 }

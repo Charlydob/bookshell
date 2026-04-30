@@ -10,6 +10,7 @@ import {
   remove,
   runTransaction
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { logFirebaseRead, registerViewListener } from "../../shared/firebase/read-debug.js";
 
 import {
   ensureCountryDatalist,
@@ -30,6 +31,8 @@ let storageApiPromise = null;
 let worldHeatmapModulePromise = null;
 let booksSnapshotHydrated = false;
 let readingLogSnapshotHydrated = false;
+let booksViewVisible = document.getElementById("view-books")?.classList.contains("view-active") ?? false;
+const dataUnsubscribers = [];
 
 function loadStorageApi() {
   if (!storageApiPromise) {
@@ -796,7 +799,8 @@ function bindDataSources() {
   if (dataBindingsReady || !BOOKS_PATH || !READING_LOG_PATH || !LINKS_PATH || !META_GENRES_PATH) return;
 
   // Carga categorías desde Firebase (si existen)
-  onValue(ref(db, META_GENRES_PATH), (snap) => {
+  logFirebaseRead({ path: META_GENRES_PATH, mode: "onValue", reason: "books-meta-genres", viewId: "view-books" });
+  dataUnsubscribers.push(registerViewListener("view-books", onValue(ref(db, META_GENRES_PATH), (snap) => {
     const arr = parseGenresValue(snap.val());
     if (arr) {
       genreOptions = sortLabels(arr);
@@ -806,10 +810,16 @@ function bindDataSources() {
     populateGenreSelect();
     renderFilterSelects();
     renderFilterChips();
-  });
+  }), {
+    key: "books-meta-genres",
+    path: META_GENRES_PATH,
+    mode: "onValue",
+    reason: "books-meta-genres",
+  }));
 
   // === Escucha Firebase libros ===
-  onValue(ref(db, BOOKS_PATH), (snap) => {
+  logFirebaseRead({ path: BOOKS_PATH, mode: "onValue", reason: "books-root", viewId: "view-books" });
+  dataUnsubscribers.push(registerViewListener("view-books", onValue(ref(db, BOOKS_PATH), (snap) => {
     books = snap.val() || {};
     if (!booksSnapshotHydrated) {
       booksSnapshotHydrated = true;
@@ -817,10 +827,16 @@ function bindDataSources() {
     }
     renderBooks();
     emitBookshellBooksData("remote:books");
-  });
+  }), {
+    key: "books-root",
+    path: BOOKS_PATH,
+    mode: "onValue",
+    reason: "books-root",
+  }));
 
   // Escucha log lectura
-  onValue(ref(db, READING_LOG_PATH), (snap) => {
+  logFirebaseRead({ path: READING_LOG_PATH, mode: "onValue", reason: "books-reading-log", viewId: "view-books" });
+  dataUnsubscribers.push(registerViewListener("view-books", onValue(ref(db, READING_LOG_PATH), (snap) => {
     readingLog = snap.val() || {};
     if (!readingLogSnapshotHydrated) {
       readingLogSnapshotHydrated = true;
@@ -830,14 +846,33 @@ function bindDataSources() {
     renderCalendar();
     renderPagesTimeline();
     emitBookshellBooksData("remote:reading-log");
-  });
+  }), {
+    key: "books-reading-log",
+    path: READING_LOG_PATH,
+    mode: "onValue",
+    reason: "books-reading-log",
+  }));
 
-  onValue(ref(db, LINKS_PATH), (snap) => {
+  logFirebaseRead({ path: LINKS_PATH, mode: "onValue", reason: "books-links", viewId: "view-books" });
+  dataUnsubscribers.push(registerViewListener("view-books", onValue(ref(db, LINKS_PATH), (snap) => {
     links = snap.val() || {};
     if (bookDetailId && books?.[bookDetailId]) renderBookDetailQuotes(bookDetailId, books[bookDetailId]);
-  });
+  }), {
+    key: "books-links",
+    path: LINKS_PATH,
+    mode: "onValue",
+    reason: "books-links",
+  }));
 
   dataBindingsReady = true;
+}
+
+function unbindDataSources() {
+  dataBindingsReady = false;
+  while (dataUnsubscribers.length) {
+    const stop = dataUnsubscribers.pop();
+    try { stop?.(); } catch (_) {}
+  }
 }
 
 // === ISBN autofill ===
@@ -1377,16 +1412,22 @@ $bookForm.addEventListener("submit", async (e) => {
 });
 
 setUserPaths(currentUid);
-bindDataSources();
+if (booksViewVisible) bindDataSources();
 
 onUserChange((user) => {
   const nextUid = user?.uid ?? null;
-  if (!nextUid || dataBindingsReady) {
-    if (nextUid) setUserPaths(nextUid);
+  if (!nextUid) {
+    unbindDataSources();
+    setUserPaths(nextUid);
     return;
   }
 
-  setUserPaths(nextUid);
+  if (nextUid !== currentUid) {
+    unbindDataSources();
+    setUserPaths(nextUid);
+  }
+
+  if (dataBindingsReady || !booksViewVisible) return;
   bindDataSources();
 });
 
@@ -1404,10 +1445,21 @@ function rerenderBooksViewOnShow() {
 }
 
 export function onShow() {
+  booksViewVisible = true;
+  if (!dataBindingsReady) bindDataSources();
   rerenderBooksViewOnShow();
   requestAnimationFrame(() => {
     rerenderBooksViewOnShow();
   });
+}
+
+export function onHide() {
+  booksViewVisible = false;
+  unbindDataSources();
+}
+
+export function destroy() {
+  onHide();
 }
 
 // === Render libros ===

@@ -31,9 +31,27 @@ let financeNeedsLegacyAccountsMerge = false;
 let financeRenderPromise = null;
 let financeRenderQueued = false;
 let financePendingPreserveUi = true;
+let financeRemoteApplyTimer = 0;
 const FINANCE_GOALS_SORT_MODE_KEY = 'financeGoalsSortMode';
 const PRODUCTS_DRAFT_LOCAL_KEY = 'bookshell_finance_products_draft_v1';
 const GLOBAL_PRODUCTS_PATH = 'v2/public/catalog/foodItems';
+const FINANCE_CORE_BRANCHES = Object.freeze([
+  { key: 'accounts', path: 'accounts', fallback: {} },
+  { key: 'transactions', path: 'transactions', fallback: {} },
+  { key: 'tx', path: 'tx', fallback: {} },
+  { key: 'movements', path: 'movements', fallback: {} },
+  { key: 'budgets', path: 'budgets', fallback: {} },
+  { key: 'recurring', path: 'recurring', fallback: {} },
+  { key: 'goals', path: 'goals', fallback: {} },
+  { key: 'shoppingHub', path: 'shoppingHub', fallback: {} },
+  { key: 'accountsEntries', path: 'accountsEntries', fallback: {} },
+  { key: 'entries', path: 'entries', fallback: {} },
+  { key: 'aggregates', path: 'aggregates', fallback: {} },
+  { key: 'categories', path: 'catalog/categories', fallback: {} },
+  { key: 'snapshots', path: 'balance/snapshots', fallback: {} },
+  { key: 'defaultAccountId', path: 'balance/defaultAccountId', fallback: '' },
+  { key: 'lastSeenMonthKey', path: 'balance/lastSeenMonthKey', fallback: '' },
+]);
 const financeDerivedCache = {
   txList: { balanceRef: null, financePath: '', rows: [] },
   recurring: { recurringRef: null, monthMap: new Map() },
@@ -42,6 +60,33 @@ const financeDerivedCache = {
   accountMerge: { accountsRef: null, balanceRef: null, goalsRef: null, model: null },
   totalSeries: { accountsRef: null, rows: [] },
 };
+
+function cloneFinanceBranchFallback(value) {
+  if (Array.isArray(value)) return [...value];
+  if (value && typeof value === 'object') return { ...value };
+  return value;
+}
+
+function setNestedValue(target, path, value) {
+  const segments = String(path || '').split('/').filter(Boolean);
+  if (!segments.length) return target;
+  let cursor = target;
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    const segment = segments[index];
+    if (!cursor[segment] || typeof cursor[segment] !== 'object') {
+      cursor[segment] = {};
+    }
+    cursor = cursor[segment];
+  }
+  cursor[segments[segments.length - 1]] = value;
+  return target;
+}
+
+function applyFinanceBranchValue(targetRoot = {}, branch, rawValue) {
+  const nextValue = rawValue == null ? cloneFinanceBranchFallback(branch.fallback) : rawValue;
+  setNestedValue(targetRoot, branch.path, nextValue);
+  return targetRoot;
+}
 
 function log(...parts) {
   if (!FINANCE_DEBUG) return;
@@ -644,8 +689,10 @@ function collectBalanceRowsFromRoot(root = {}, financePath = state.financePath) 
   }, financePath);
 }
 async function loadFinanceRoot() {
-  const snap = await safeFirebase(() => get(ref(db, `${state.financePath}`)));
-  return snap?.val() || {};
+  return loadFinanceRootByBranches(state.financePath, {
+    reason: 'finance-core-root-load',
+    viewId: 'view-finance',
+  });
 }
 function syncLocalAccountsFromRoot(root = {}) {
   if (!root?.accounts || typeof root.accounts !== 'object') return;
@@ -3364,7 +3411,7 @@ function renderProductsReceiptLineRow(line, model) {
           data-products-receipt-total="${escapeHtml(lineId)}" />
         <small class="productsWorkbench__receiptLineDiff is-${lineDiffMeta.tone}" data-products-receipt-diff="${escapeHtml(lineId)}">${lineDiffMeta.label}</small>
       </div>
-      <button type="button" class="productsWorkbench__receiptRemove" data-products-remove-line="${escapeHtml(lineId)}" aria-label="Eliminar ${escapeHtml(line.name || 'linea')}">×</button>
+      <button type="button" class="productsWorkbench__receiptRemove" data-products-remove-line="${escapeHtml(lineId)}" aria-label="Eliminar ${escapeHtml(line.name || 'linea')}">❌</button>
     </div>
   `;
 }
@@ -12188,16 +12235,61 @@ function chooseFinancePath(newPath, legacyPath, newRoot = {}, legacyRoot = {}) {
   return newPath;
 }
 
+async function readFinancePresence(path, { viewId = 'view-finance', reason = 'probe-finance-presence' } = {}) {
+  if (!path) {
+    return { hasTransactions: false, hasAccounts: false };
+  }
+  const transactionsPath = `${path}/transactions`;
+  const accountsPath = `${path}/accounts`;
+  logFirebaseRead({ path: transactionsPath, mode: 'get', reason: `${reason}:transactions`, viewId });
+  logFirebaseRead({ path: accountsPath, mode: 'get', reason: `${reason}:accounts`, viewId });
+  const [transactionsSnap, accountsSnap] = await Promise.all([
+    safeFirebase(() => get(ref(db, transactionsPath))),
+    safeFirebase(() => get(ref(db, accountsPath))),
+  ]);
+  return {
+    hasTransactions: Boolean(transactionsSnap?.exists?.()),
+    hasAccounts: Boolean(accountsSnap?.exists?.()),
+  };
+}
+
+async function loadFinanceRootByBranches(rootPath, { reason = 'finance-core-root', viewId = 'view-finance' } = {}) {
+  if (!rootPath) return {};
+  const root = {};
+  await Promise.all(FINANCE_CORE_BRANCHES.map(async (branch) => {
+    const branchPath = `${rootPath}/${branch.path}`;
+    logFirebaseRead({ path: branchPath, mode: 'get', reason: `${reason}:${branch.key}`, viewId });
+    const snap = await safeFirebase(() => get(ref(db, branchPath)));
+    applyFinanceBranchValue(root, branch, snap?.val());
+  }));
+  return root;
+}
+
 async function probeFinanceRoots() {
   const [newPath, legacyPath] = resolveFinancePathCandidates();
-  logFirebaseRead({ path: newPath, mode: "get", reason: "probe-finance-root", viewId: "view-finance" });
-  logFirebaseRead({ path: legacyPath, mode: "get", reason: "probe-finance-legacy-root", viewId: "view-finance" });
-  const [newSnap, legacySnap] = await Promise.all([
-    safeFirebase(() => get(ref(db, newPath))),
-    safeFirebase(() => get(ref(db, legacyPath)))
+  const [newPresence, legacyPresence] = await Promise.all([
+    readFinancePresence(newPath, { reason: 'probe-finance-root', viewId: 'view-finance' }),
+    readFinancePresence(legacyPath, { reason: 'probe-finance-legacy-root', viewId: 'view-finance' }),
   ]);
-  const newRoot = newSnap?.val() || {};
-  const legacyRoot = legacySnap?.val() || {};
+  const newRootStub = {
+    transactions: newPresence.hasTransactions ? { __present: true } : {},
+    accounts: newPresence.hasAccounts ? { __present: true } : {},
+  };
+  const legacyRootStub = {
+    transactions: legacyPresence.hasTransactions ? { __present: true } : {},
+    accounts: legacyPresence.hasAccounts ? { __present: true } : {},
+  };
+  const preferredPath = chooseFinancePath(newPath, legacyPath, newRootStub, legacyRootStub);
+  const shouldLoadNewRoot = preferredPath === newPath || (!newPresence.hasAccounts && legacyPresence.hasAccounts);
+  const shouldLoadLegacyRoot = preferredPath === legacyPath || (!newPresence.hasAccounts && legacyPresence.hasAccounts);
+  const [newRoot, legacyRoot] = await Promise.all([
+    shouldLoadNewRoot
+      ? loadFinanceRootByBranches(newPath, { reason: 'load-finance-new-root', viewId: 'view-finance' })
+      : Promise.resolve({}),
+    shouldLoadLegacyRoot
+      ? loadFinanceRootByBranches(legacyPath, { reason: 'load-finance-legacy-root', viewId: 'view-finance' })
+      : Promise.resolve({}),
+  ]);
   const chosenPath = chooseFinancePath(newPath, legacyPath, newRoot, legacyRoot);
   return { newPath, legacyPath, newRoot, legacyRoot, chosenPath };
 }
@@ -12221,6 +12313,7 @@ async function detectFinancePath(basePath) {
 
   for (const root of candidates) {
     try {
+      logFirebaseRead({ path: `${root}/transactions`, mode: 'get', reason: 'detect-finance-path:transactions', viewId: 'view-finance' });
       const snap = await get(ref(db, `${root}/transactions`));
       if (snap?.exists()) return root;
     } catch (error) {
@@ -12230,6 +12323,7 @@ async function detectFinancePath(basePath) {
 
   for (const root of candidates) {
     try {
+      logFirebaseRead({ path: `${root}/accounts`, mode: 'get', reason: 'detect-finance-path:accounts', viewId: 'view-finance' });
       const snap = await get(ref(db, `${root}/accounts`));
       if (snap?.exists()) return root;
     } catch {
@@ -12255,52 +12349,70 @@ async function loadDataOnce() {
   log('loaded accounts:', state.accounts.length);
 }
 
+function applyMergedFinanceRemote(reason = 'finance-live-sync') {
+  financeRemoteApplyTimer = 0;
+  const mergedRoot = mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
+  applyRemoteData(mergedRoot, true);
+  state.hydratedFromRemote = true;
+  if (state.activeView === 'products' && patchProductsWorkbench()) {
+    renderToast();
+    emitFinanceData(reason);
+    return;
+  }
+  triggerRender();
+  emitFinanceData(reason);
+}
+
+function queueMergedFinanceRemoteApply(reason = 'finance-live-sync') {
+  if (financeRemoteApplyTimer) return;
+  financeRemoteApplyTimer = window.setTimeout(() => applyMergedFinanceRemote(reason), 0);
+}
+
+function subscribeFinanceRootBranches(rootPath, targetKey, labelSuffix = 'primary') {
+  const unsubs = [];
+  FINANCE_CORE_BRANCHES.forEach((branch) => {
+    const branchPath = `${rootPath}/${branch.path}`;
+    financeDebug('subscribe firebase branch', branchPath);
+    logFirebaseRead({ path: branchPath, mode: 'onValue', reason: `finance-live-sync:${labelSuffix}:${branch.key}`, viewId: 'view-finance' });
+    const stop = registerViewListener('view-finance', onValue(ref(db, branchPath), (snap) => {
+      applyFinanceBranchValue(financeRootsCache[targetKey], branch, snap.val());
+      queueMergedFinanceRemoteApply(`remote:finance:${labelSuffix}:${branch.key}`);
+    }, (error) => {
+      state.error = String(error?.message || error);
+      triggerRender();
+    }), {
+      key: `${targetKey}:${branch.key}`,
+      path: branchPath,
+      mode: 'onValue',
+      reason: `finance-live-sync:${labelSuffix}:${branch.key}`,
+    });
+    if (typeof stop === 'function') unsubs.push(stop);
+  });
+  return () => {
+    unsubs.splice(0).forEach((stop) => {
+      try { stop(); } catch (_) {}
+    });
+  };
+}
+
 function subscribe() {
   if (state.unsubscribe) state.unsubscribe();
   if (unsubscribeLegacyFinance) {
     unsubscribeLegacyFinance();
     unsubscribeLegacyFinance = null;
   }
-  financeDebug('subscribe firebase', state.financePath);
-  logFirebaseRead({ path: state.financePath, mode: "onValue", reason: "finance-live-sync", viewId: "view-finance" });
-  state.unsubscribe = registerViewListener("view-finance", onValue(ref(db, state.financePath), (snap) => {
-    const val = snap.val();
-    if (!val && state.hydratedFromRemote) {
-      triggerRender();
-      emitFinanceData('remote:empty');
-      return;
-    }
-    if (state.financePath === resolveFinancePath()) financeRootsCache.newRoot = val || {};
-    else financeRootsCache.legacyRoot = val || {};
-    const mergedRoot = mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
-    applyRemoteData(mergedRoot, true);
-    state.hydratedFromRemote = true;
-    if (state.activeView === 'products' && patchProductsWorkbench()) {
-      renderToast();
-      emitFinanceData('remote:finance');
-      return;
-    }
-    triggerRender();
-    emitFinanceData('remote:finance');
-  }, (error) => { state.error = String(error?.message || error); triggerRender(); }), { path: state.financePath, mode: "onValue" });
+  if (financeRemoteApplyTimer) {
+    clearTimeout(financeRemoteApplyTimer);
+    financeRemoteApplyTimer = 0;
+  }
+
+  const primaryTarget = state.financePath === resolveFinancePath() ? 'newRoot' : 'legacyRoot';
+  state.unsubscribe = subscribeFinanceRootBranches(state.financePath, primaryTarget, 'primary');
 
   if (financeNeedsLegacyAccountsMerge) {
     const legacyPath = resolveFinancePathCandidates()[1];
     financeDebug('subscribe firebase legacy merge', legacyPath);
-    logFirebaseRead({ path: legacyPath, mode: "onValue", reason: "finance-legacy-merge", viewId: "view-finance" });
-    unsubscribeLegacyFinance = registerViewListener("view-finance", onValue(ref(db, legacyPath), (snap) => {
-      financeRootsCache.legacyRoot = snap.val() || {};
-      const mergedRoot = mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
-      applyRemoteData(mergedRoot, true);
-      state.hydratedFromRemote = true;
-      if (state.activeView === 'products' && patchProductsWorkbench()) {
-        renderToast();
-        emitFinanceData('remote:finance-legacy');
-        return;
-      }
-      triggerRender();
-      emitFinanceData('remote:finance-legacy');
-    }, (error) => { state.error = String(error?.message || error); triggerRender(); }), { path: state.financePath, mode: "onValue" });
+    unsubscribeLegacyFinance = subscribeFinanceRootBranches(legacyPath, 'legacyRoot', 'legacy');
   }
 }
 
@@ -15090,6 +15202,10 @@ export function destroy() {
   if (state.toastTimer) {
     clearTimeout(state.toastTimer);
     state.toastTimer = null;
+  }
+  if (financeRemoteApplyTimer) {
+    clearTimeout(financeRemoteApplyTimer);
+    financeRemoteApplyTimer = 0;
   }
   if (state.eventsAbortController) {
     state.eventsAbortController.abort();

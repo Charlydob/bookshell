@@ -13,6 +13,7 @@ import { FOODREPO_API_BASE, FOODREPO_API_TOKEN } from "./foodrepo.js";
 import { getMetCategoryById } from "./met-catalog.js";
 import { buildConsumptionAnalytics } from "./consumption-analytics.js";
 import { normalizeCatalogName, upsertPublicCatalogItem, clonePublicItemToUserCatalog, findPublicCatalogMatches } from "../../shared/services/public-catalog.js";
+import { logFirebaseRead, readWithCache, registerViewListener } from "../../shared/firebase/read-debug.js";
 import {
   ref,
   onValue,
@@ -22,12 +23,33 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
+const recipesRuntimeApi = {
+  onShow: () => {},
+  onHide: () => {},
+};
+
+export function onShow() {
+  return recipesRuntimeApi.onShow();
+}
+
+export function onHide() {
+  return recipesRuntimeApi.onHide();
+}
+
 const $viewRecipes = document.getElementById("view-recipes");
 if ($viewRecipes) {
   const STORAGE_KEY_LEGACY = "bookshell.recipes.v1";
   const STORAGE_KEY_PREFIX = "bookshell.recipes.v2";
   const RECIPES_NODE_KEY = "recipes";
+  const RECIPES_ITEMS_NODE_KEY = "items";
   let currentUid = null;
+  let recipesViewVisible = $viewRecipes.classList.contains("view-active");
+  let recipesActivePanel = "library";
+  let recipesRemoteAuthUnsubscribe = null;
+  let recipesRemoteUnsubscribe = null;
+  let recipesRemoteBootstrapped = false;
+  let nutritionAuthUnsubscribe = null;
+  const PUBLIC_CATALOG_CACHE_TTL_MS = 15 * 60 * 1000;
 
   function emitRecipesData(reason = "") {
     try {
@@ -282,6 +304,8 @@ if ($viewRecipes) {
   const $recipesGeoSection = document.getElementById("recipes-geo-section");
   const $recipesWorldMap = document.getElementById("recipes-world-map");
   const $recipesCountryList = document.getElementById("recipes-country-list");
+  let recipeGeoObserver = null;
+  let recipeGeoVisible = false;
 
   const $calPrev = document.getElementById("recipe-cal-prev");
   const $calNext = document.getElementById("recipe-cal-next");
@@ -614,6 +638,17 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   let nutritionSyncMeta = { version: 2, migratedAt: 0, updatedAt: 0 };
   recipesViewMode = getRecipeViewModePreference();
   let nutritionUnsubscribe = null;
+  function loadPublicFoodCatalogCached() {
+    return readWithCache({
+      key: "recipes:public-food-catalog",
+      ttlMs: PUBLIC_CATALOG_CACHE_TTL_MS,
+      loader: async () => {
+        logFirebaseRead({ path: "v2/public/catalog/foodItems", mode: "get", reason: "recipes-public-food-catalog", viewId: "view-recipes" });
+        const publicSnap = await get(ref(db, "v2/public/catalog/foodItems"));
+        return publicSnap?.val() || {};
+      },
+    });
+  }
   const MACRO_USAGE_KEY_PREFIX = "bookshell.macro.usage.v1";
   const getMacroUsageKey = (uid = currentUid) => uid ? `${MACRO_USAGE_KEY_PREFIX}.${uid}` : MACRO_USAGE_KEY_PREFIX;
   const clampUsageValue = (value, fallback = 0) => {
@@ -682,6 +717,11 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return uid ? `v2/users/${uid}/${RECIPES_NODE_KEY}` : null;
   }
 
+  function recipesItemsPath(uid = currentUid) {
+    const root = recipesRootPath(uid);
+    return root ? `${root}/${RECIPES_ITEMS_NODE_KEY}` : null;
+  }
+
   function getStorageKey(uid = currentUid) {
     return uid ? `${STORAGE_KEY_PREFIX}.${uid}` : STORAGE_KEY_LEGACY;
   }
@@ -715,6 +755,44 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     }, {});
   }
 
+  async function ensureRecipesItemsReady(uid = currentUid) {
+    const itemsRoot = recipesItemsPath(uid);
+    const legacyRoot = recipesRootPath(uid);
+    if (!itemsRoot || !legacyRoot) return itemsRoot;
+
+    logFirebaseRead({
+      path: itemsRoot,
+      mode: "get",
+      reason: "recipes-items-bootstrap",
+      viewId: "view-recipes",
+      bounded: true,
+    });
+    const itemsSnap = await get(ref(db, itemsRoot));
+    const itemsData = itemsSnap?.val();
+    if (itemsData && typeof itemsData === "object" && (Object.keys(itemsData).length > 0 || itemsData._init != null)) {
+      return itemsRoot;
+    }
+
+    logFirebaseRead({
+      path: legacyRoot,
+      mode: "get",
+      reason: "recipes-legacy-migration-check",
+      viewId: "view-recipes",
+    });
+    const legacySnap = await get(ref(db, legacyRoot));
+    const legacyData = legacySnap?.val() || null;
+    const legacyList = extractRemoteRecipes(legacyData);
+    const initFlag = legacyData && typeof legacyData === "object" && Object.prototype.hasOwnProperty.call(legacyData, "_init")
+      ? legacyData._init
+      : true;
+    const seedRecipes = legacyList.length ? legacyList : recipes;
+    await set(ref(db, itemsRoot), {
+      _init: initFlag,
+      ...serializeRecipesMap(seedRecipes),
+    });
+    return itemsRoot;
+  }
+
   function extractRemoteRecipes(data) {
     if (!data || typeof data !== "object") return [];
     return Object.entries(data)
@@ -725,7 +803,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   function persistRecipe(id, data) {
     if (!id || !data) return;
-    const root = recipesRootPath();
+    const root = recipesItemsPath();
     try {
       if (root) set(ref(db, `${root}/${id}`), normalizeRecipeFields(data));
     } catch (err) {
@@ -736,7 +814,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
 
   function removeRecipeRemote(id) {
     if (!id) return;
-    const root = recipesRootPath();
+    const root = recipesItemsPath();
     try {
       if (root) remove(ref(db, `${root}/${id}`));
     } catch (err) {
@@ -746,33 +824,19 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   }
 
   function listenRemoteRecipes() {
-    let unsubscribe = null;
-    let bootstrapped = false;
+    if (recipesRemoteAuthUnsubscribe) return;
 
     const attach = (uid) => {
-      const root = recipesRootPath(uid);
+      const root = recipesItemsPath(uid);
       if (!root) return;
 
-      unsubscribe = onValue(
+      logFirebaseRead({ path: root, mode: "onValue", reason: "recipes-live-sync", viewId: "view-recipes" });
+      recipesRemoteUnsubscribe = registerViewListener("view-recipes", onValue(
         ref(db, root),
         (snapshot) => {
           const data = snapshot.val() || null;
           const remoteList = extractRemoteRecipes(data);
-          const hasRemoteRecipes = remoteList.length > 0;
-
-          if (!hasRemoteRecipes && !bootstrapped) {
-            bootstrapped = true;
-            if (recipes.length) {
-              const initFlag =
-                data && typeof data === "object" && Object.prototype.hasOwnProperty.call(data, "_init")
-                  ? data._init
-                  : true;
-              set(ref(db, root), { _init: initFlag, ...serializeRecipesMap(recipes) });
-            }
-            return;
-          }
-
-          bootstrapped = true;
+          recipesRemoteBootstrapped = true;
           recipes = remoteList;
           cacheRecipes();
           refreshUI();
@@ -782,22 +846,27 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
         (err) => {
           console.warn("No se pudo escuchar recetas remotas", err);
         }
-      );
+      ), {
+        key: "recipes-root",
+        path: root,
+        mode: "onValue",
+        reason: "recipes-live-sync",
+      });
     };
 
-    onAuthStateChanged(auth, (user) => {
+    recipesRemoteAuthUnsubscribe = onAuthStateChanged(auth, async (user) => {
       const nextUid = user?.uid || null;
-      if (nextUid === currentUid) return;
+      if (nextUid === currentUid && recipesRemoteUnsubscribe) return;
 
       currentUid = nextUid;
       macroUsage = loadMacroUsage();
-      bootstrapped = false;
+      recipesRemoteBootstrapped = false;
       financeProductsLoaded = false;
       financeProducts = [];
 
-      if (typeof unsubscribe === "function") {
-        try { unsubscribe(); } catch (_) {}
-        unsubscribe = null;
+      if (typeof recipesRemoteUnsubscribe === "function") {
+        try { recipesRemoteUnsubscribe(); } catch (_) {}
+        recipesRemoteUnsubscribe = null;
       }
 
       if (!currentUid) return;
@@ -817,8 +886,26 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
         }
       } catch (_) {}
 
+      try {
+        await ensureRecipesItemsReady(currentUid);
+      } catch (error) {
+        console.warn("No se pudo preparar la colección remota de recetas", error);
+      }
+
       attach(currentUid);
     });
+  }
+
+  function stopRemoteRecipes() {
+    if (typeof recipesRemoteUnsubscribe === "function") {
+      try { recipesRemoteUnsubscribe(); } catch (_) {}
+      recipesRemoteUnsubscribe = null;
+    }
+    if (typeof recipesRemoteAuthUnsubscribe === "function") {
+      try { recipesRemoteAuthUnsubscribe(); } catch (_) {}
+      recipesRemoteAuthUnsubscribe = null;
+    }
+    recipesRemoteBootstrapped = false;
   }
 
 
@@ -2629,6 +2716,8 @@ notes.innerHTML = `<strong>Notas</strong><br>${linkifyNotesHtml(recipe.notes)}`;
   }
 
   function clearRecipeLibraryVisuals() {
+    disconnectRecipeGeoObserver();
+    recipeGeoVisible = false;
     if ($chartMeal) {
       if (typeof $chartMeal.__recipeDonutCleanup === "function") $chartMeal.__recipeDonutCleanup();
       delete $chartMeal.__recipeDonutCleanup;
@@ -2646,6 +2735,54 @@ notes.innerHTML = `<strong>Notas</strong><br>${linkifyNotesHtml(recipe.notes)}`;
       $recipesWorldMap.innerHTML = "";
     }
     if ($calGrid) $calGrid.innerHTML = "";
+  }
+
+  function disconnectRecipeGeoObserver() {
+    if (!recipeGeoObserver) return;
+    try {
+      recipeGeoObserver.disconnect();
+    } catch (_) {}
+    recipeGeoObserver = null;
+  }
+
+  function isRecipeGeoSectionVisible() {
+    if (!$recipesGeoSection || !$recipesPanelLibrary?.classList.contains("is-active") || !recipesViewVisible) return false;
+    const rect = $recipesGeoSection.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || document.documentElement?.clientHeight || 0;
+    return rect.height > 0 && rect.bottom > 0 && rect.top < viewportHeight * 0.98;
+  }
+
+  function ensureRecipeGeoObserver() {
+    if (recipeGeoObserver || !$recipesGeoSection || typeof IntersectionObserver !== "function") return;
+    recipeGeoObserver = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting || entry.intersectionRatio > 0.12)) return;
+      recipeGeoVisible = true;
+      disconnectRecipeGeoObserver();
+      renderRecipeGeo();
+    }, {
+      threshold: [0.12, 0.35],
+    });
+    recipeGeoObserver.observe($recipesGeoSection);
+  }
+
+  function queueRecipeGeoRender() {
+    if (!$recipesGeoSection) return false;
+    const stats = buildRecipeCountryStats();
+    $recipesGeoSection.style.display = "block";
+    if (!recipeGeoVisible && !isRecipeGeoSectionVisible()) {
+      ensureRecipeGeoObserver();
+      if ($recipesWorldMap && !$recipesWorldMap.innerHTML) {
+        $recipesWorldMap.innerHTML = `<div class="geo-empty">${stats.length ? "Desplázate hasta el mapa para cargarlo." : "Añade el país de cada receta"}</div>`;
+      }
+      if ($recipesCountryList) {
+        renderCountryList($recipesCountryList, stats, "plato");
+      }
+      return false;
+    }
+    recipeGeoVisible = true;
+    disconnectRecipeGeoObserver();
+    renderRecipeGeo();
+    return true;
   }
 
   function cancelRecipeLibraryVisuals() {
@@ -3085,19 +3222,17 @@ notes.innerHTML = `<strong>Notas</strong><br>${linkifyNotesHtml(recipe.notes)}`;
   function renderRecipeGeo() {
     if (!$recipesGeoSection) return;
     const stats = buildRecipeCountryStats();
-      $recipesGeoSection.style.display = "block";
+    $recipesGeoSection.style.display = "block";
     if (!stats.length) {
       if ($recipesCountryList) $recipesCountryList.innerHTML = "";
       if ($recipesWorldMap) {
-        // mostramos mapa aunque no haya países, con mensaje de ayuda
         renderCountryHeatmap($recipesWorldMap, [], { emptyLabel: "Añade el país de cada receta" });
       }
       requestAnimationFrame(() => $recipesWorldMap?.__geoChart?.resize?.());
       return;
     }
-requestAnimationFrame(() => $recipesWorldMap?.__geoChart?.resize?.());
 
-    
+    requestAnimationFrame(() => $recipesWorldMap?.__geoChart?.resize?.());
     const mapData = stats
       .filter((s) => s.code)
       .map((s) => ({
@@ -3111,7 +3246,7 @@ requestAnimationFrame(() => $recipesWorldMap?.__geoChart?.resize?.());
   }
 
   function renderCharts() {
-    renderRecipeGeo();
+    queueRecipeGeoRender();
     const mealEntries = MEAL_TYPES.map((m) => ({
       label: m,
       value: recipes.filter((r) => r.meal === m).length,
@@ -4814,7 +4949,8 @@ $recipeImportBtn?.addEventListener("click", () => {
   }
 
   function listenNutritionRemote() {
-    onAuthStateChanged(auth, (user) => {
+    if (nutritionAuthUnsubscribe) return;
+    nutritionAuthUnsubscribe = onAuthStateChanged(auth, (user) => {
       const uid = user?.uid;
       if (nutritionUnsubscribe) {
         try { nutritionUnsubscribe(); } catch (_) {}
@@ -4823,7 +4959,8 @@ $recipeImportBtn?.addEventListener("click", () => {
       if (!uid) return;
       const root = nutritionRootPath(uid);
       if (!root) return;
-      nutritionUnsubscribe = onValue(ref(db, root), (snap) => {
+      logFirebaseRead({ path: root, mode: "onValue", reason: "recipes-nutrition-sync", viewId: "view-recipes" });
+      nutritionUnsubscribe = registerViewListener("view-recipes", onValue(ref(db, root), (snap) => {
         const data = snap.val() || {};
         const remoteProducts = Array.isArray(data.products) ? data.products.map(normalizeNutritionProductEntry).filter((p) => p.name) : [];
         const remoteLogs = normalizeDailyLogs(data.dailyLogsByDate && typeof data.dailyLogsByDate === "object" ? data.dailyLogsByDate : {});
@@ -4853,8 +4990,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         }
 
         nutritionProducts = remoteProducts;
-        get(ref(db, "v2/public/catalog/foodItems")).then((publicSnap) => {
-          const publicRows = publicSnap?.val() || {};
+        loadPublicFoodCatalogCached().then((publicRows) => {
           const dedup = new Map((nutritionProducts || []).map((p) => [String(p.normalizedName || normalizeCatalogName(p.name || "") || p.id), p]));
           Object.values(publicRows).forEach((row) => {
             const key = String(row?.barcode || "").trim() || String(row?.normalizedName || normalizeCatalogName(row?.name || "")).trim();
@@ -4876,8 +5012,43 @@ $recipeImportBtn?.addEventListener("click", () => {
         emitRecipesData("remote:nutrition");
       }, (err) => {
         console.warn("No se pudo escuchar nutrición remota", err);
+      }), {
+        key: "recipes-nutrition",
+        path: root,
+        mode: "onValue",
+        reason: "recipes-nutrition-sync",
       });
     });
+  }
+
+  function stopNutritionRemote() {
+    if (nutritionUnsubscribe) {
+      try { nutritionUnsubscribe(); } catch (_) {}
+      nutritionUnsubscribe = null;
+    }
+    if (typeof nutritionAuthUnsubscribe === "function") {
+      try { nutritionAuthUnsubscribe(); } catch (_) {}
+      nutritionAuthUnsubscribe = null;
+    }
+  }
+
+  function shouldListenNutritionRemote(panel = recipesActivePanel) {
+    return panel === "macros" || panel === "statistics" || panel === "shopping";
+  }
+
+  function syncRecipesRemoteLifecycle({ refreshUi = false } = {}) {
+    if (!recipesViewVisible) {
+      stopNutritionRemote();
+      stopRemoteRecipes();
+      return;
+    }
+    listenRemoteRecipes();
+    if (shouldListenNutritionRemote()) {
+      listenNutritionRemote();
+    } else {
+      stopNutritionRemote();
+    }
+    if (refreshUi) refreshUI();
   }
 
   function persistNutrition() {
@@ -6172,6 +6343,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     const isMacros = panel === "macros";
     const isStatistics = panel === "statistics";
     const isShopping = panel === "shopping";
+    recipesActivePanel = panel;
     renderChips();
     $recipesPanelLibrary?.classList.toggle("is-active", isLibrary);
     $recipesPanelMacros?.classList.toggle("is-active", isMacros);
@@ -6202,6 +6374,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       renderMacroComparisonChart();
     }
     if (isShopping) renderShoppingView();
+    syncRecipesRemoteLifecycle();
   }
 
   function renderMacrosView() {
@@ -11085,9 +11258,27 @@ $recipeImportBtn?.addEventListener("click", () => {
   macroStatsState.anchorDate = selectedMacroDate;
   recalcAllRecipesNutrition();
   renderChips();
-  listenRemoteRecipes();
-  listenNutritionRemote();
+  if (recipesViewVisible) {
+    syncRecipesRemoteLifecycle();
+  }
   switchRecipesPanel("library");
+
+  recipesRuntimeApi.onShow = () => {
+    recipesViewVisible = true;
+    syncRecipesRemoteLifecycle({ refreshUi: true });
+    if (recipesActivePanel === "library") {
+      scheduleRecipeLibraryVisuals();
+    }
+  };
+
+  recipesRuntimeApi.onHide = () => {
+    recipesViewVisible = false;
+    cancelRecipeLibraryVisuals();
+    clearRecipeLibraryVisuals();
+    disconnectRecipeGeoObserver();
+    stopNutritionRemote();
+    stopRemoteRecipes();
+  };
 }
 function parseRecipeV1(raw){
   const lines = String(raw || "").replace(/\r/g, "").split("\n");

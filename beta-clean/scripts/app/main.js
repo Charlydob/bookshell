@@ -24,7 +24,7 @@ import {
 import { initGeneralCenterService } from "../shared/services/general-center/index.js";
 import { initThemeService } from "../shared/services/theme/index.js";
 import { registerPublicCatalogMigrationDebugApi } from "../shared/services/public-catalog-migration.js";
-import { exposeFirebaseReadDebug, logFirebaseRead } from "../shared/firebase/read-debug.js";
+import { cleanupViewListeners, exposeFirebaseReadDebug, logFirebaseRead, registerViewListener } from "../shared/firebase/read-debug.js";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -1351,7 +1351,7 @@ function startNavLayoutSync(uid) {
   state.navLayoutSyncUid = uid;
 
   logFirebaseRead({ path: getNavLayoutDbPath(uid), mode: "onValue", reason: "watch-nav-layout", viewId: "shell" });
-  state.navLayoutUnsubscribe = onValue(ref(db, getNavLayoutDbPath(uid)), (snap) => {
+  state.navLayoutUnsubscribe = registerViewListener("shell", onValue(ref(db, getNavLayoutDbPath(uid)), (snap) => {
     const remoteLayout = snap.val();
     state.navLayoutRemoteReady = true;
 
@@ -1372,6 +1372,11 @@ function startNavLayoutSync(uid) {
     }
   }, (error) => {
     console.warn("[shell] no se pudo escuchar navLayout remoto", error);
+  }), {
+    key: "nav-layout",
+    path: getNavLayoutDbPath(uid),
+    mode: "onValue",
+    reason: "watch-nav-layout",
   });
 }
 
@@ -2232,6 +2237,7 @@ async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
   const previousViewId = state.currentViewId;
   if (previousViewId) {
     await callViewHook(previousViewId, "onHide");
+    cleanupViewListeners(previousViewId);
   }
 
   syncViews(viewId);
@@ -2770,10 +2776,13 @@ function ensureLoginUI() {
 
 async function ensureUserSchema(uid) {
   const root = `v2/users/${uid}`;
-  const snap = await get(ref(db, root));
+  const schemaPath = `${root}/meta/schemaVersion`;
+  logFirebaseRead({ path: schemaPath, mode: "get", reason: "ensure-user-schema:meta", viewId: "shell" });
+  const snap = await get(ref(db, schemaPath));
   if (snap.exists()) return;
 
   const now = Date.now();
+  logFirebaseRead({ path: root, mode: "get", reason: "ensure-user-schema:seed-root", viewId: "shell" });
   await update(ref(db, root), {
     meta: { schemaVersion: 2, createdAt: now },
     books: { _init: true },
@@ -2892,9 +2901,11 @@ function bindAuthGate() {
       void notifySyncUserChanged();
       if (state.currentViewId) {
         await callViewHook(state.currentViewId, "onHide");
+        cleanupViewListeners(state.currentViewId);
         state.currentViewId = null;
         syncCurrentViewState("");
       }
+      cleanupViewListeners("shell");
       stopNavLayoutSync();
       closeNavComposeModal();
       closeNavGroups();

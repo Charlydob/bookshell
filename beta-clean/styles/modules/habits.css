@@ -4910,15 +4910,16 @@ align-items: center;
     color: yellow
   }
 /* #region MODAL */
-/* modal añadir tiempo */
+/* #region modal añadir tiempo */
 .modal.habit-modal{
   border-radius: 10px;
   background-color: rgba(67, 32, 67, 0.209);
 }
-/* modal añadir habito */
+/* #endregion añadir tiempo */
+/* #region modal añadir habito */
 
-
-/* modal vista detalle habito */
+/* #endregion añadir habito */
+/* #region modal vista detalle habito */
 button#habit-detail-edit, #habit-detail-close{
   border: none;
   background-color: none !important;
@@ -4926,7 +4927,7 @@ button#habit-detail-edit, #habit-detail-close{
   backdrop-filter: none;
   box-shadow: none;
 }
-
+/* #endregion vista detalle habito */
 /* #region modal añadir horario */
 
   .habit-work-schedule-time-input {
@@ -4934,6 +4935,8 @@ button#habit-detail-edit, #habit-detail-close{
     border: 1px grey solid;
     border-radius: 12px;
     width: 100%;
+    font-size: 18px;
+    padding: 10px 1px;
   }
   #habit-work-schedule-week{
     width: 90%;
@@ -4945,12 +4948,34 @@ button#habit-detail-edit, #habit-detail-close{
     backdrop-filter: none;
   }
 
+  #habit-work-schedule-add-row {
+    border-radius: 10px;
+    display: grid;
+    justify-items: center;
+  }
+
 
 /* #endregion */
+/* #region sesion view */
+
+  #habit-session-detail-pause, #habit-session-detail-cancel, #habit-session-detail-minus, #habit-session-detail-plus, #habit-session-detail-stop {
+    background: none;
+    border: none;
+    backdrop-filter: none;
+    box-shadow: none;
+    color: white;
+  }
+
+  #habit-session-stop{
+    color: white;
+  }
+/* #endregion sesion view */
+
+
 /* #endregion */
 /* #region MAIN */
 
-/* buscador */
+/* #region buscador */
 
 #habit-today-search{
   padding: 0px;
@@ -4967,9 +4992,10 @@ button#habit-detail-edit, #habit-detail-close{
   justify-content: center;
   width: 100%;
 }
-  /* PANEL DIAS */
+/* #endregion buscador */
+/* #region PANEL DIAS */
 
-  /* DIAS EN FUNCION DE MAÑANA LIBRE O TARDE */
+  /* #region DIAS EN FUNCION DE MAÑANA LIBRE O TARDE */
   .habit-week-day.is-work-morning .day-number {
   background: rgb(208, 208, 0);
 }
@@ -5023,6 +5049,23 @@ button#habit-detail-edit, #habit-detail-close{
     font-size: 11px;
     border-radius: 8px;
 }
+/*  #endregion DIAS EN FUNCION DE MAÑANA LIBRE O TARDE  */
+/* #endregion  panel dias */
+/* #region Sesiones rapidas */
+
+  #habit-quick-sessions-add{
+    border: none;
+    backdrop-filter: none;
+    box-shadow: none;
+  }
+  .habit-quick-pill-remove{
+    border: none;
+    background: none;
+    backdrop-filter: none;
+    box-shadow: none;
+  }
+
+/* #endregion Sesiones rapidas */
 /* #endregion */
 
 /* #region HISTORIAL */

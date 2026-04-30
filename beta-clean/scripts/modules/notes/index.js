@@ -27,6 +27,10 @@ export async function onShow() {
   await mod.onShow?.();
 }
 
-export function destroy() {
+export function onHide() {
   runtimeModule?.destroy?.();
+}
+
+export function destroy() {
+  onHide();
 }

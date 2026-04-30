@@ -99,6 +99,9 @@ let reminderDraftAlerts = [];
 let reminderDraftCategories = [];
 let reminderDraftChecklistItems = {};
 let reminderCheckTimer = null;
+let reminderToastQueue = [];
+let reminderToastActive = null;
+let reminderNotificationsOpen = false;
 const reminderExpandedChecklist = new Set();
 const expandedSnippetNotes = new Set();
 const REMINDER_TYPES = ["normal", "cumpleaños", "tarea", "evento", "trámite", "checklist", "personalizado"];
@@ -3937,25 +3940,83 @@ function reminderAlertToMs(alert) {
 }
 
 function appendReminderToast(message, reminderId, key) {
-  const stack = $id("notes-reminder-toast-stack");
-  if (!stack) return;
-  const toast = document.createElement("article");
-  toast.className = "notes-reminder-toast";
-  toast.innerHTML = `
-    <p>${escapeHtml(message)}</p>
-    <button type="button" class="icon-btn" data-act="close-reminder-toast">✕</button>
-  `;
-  toast.querySelector("[data-act='close-reminder-toast']")?.addEventListener("click", () => {
-    toast.remove();
-  });
-  stack.appendChild(toast);
-  window.setTimeout(() => toast.remove(), 8000);
+  enqueueReminderToast({ message, reminderId, key });
   const reminder = state.reminders.find((row) => row.id === reminderId);
   if (reminder && state.rootPath) {
-    const dismissedAlerts = Array.isArray(reminder.dismissedAlerts) ? [...reminder.dismissedAlerts] : [];
-    if (!dismissedAlerts.includes(key)) dismissedAlerts.push(key);
-    updateReminder(state.rootPath, reminderId, { ...reminder, dismissedAlerts }).catch(() => {});
+    updateReminder(state.rootPath, reminderId, { ...reminder, notifiedAt: Date.now() }).catch(() => {});
+    emitReminderNotificationsUpdated();
   }
+}
+
+function emitReminderNotificationsUpdated() {
+  try {
+    window.dispatchEvent(new CustomEvent("bookshell:reminder-notifications", {
+      detail: { pendingTodayCount: getReminderNotificationItems().filter((item) => item.status !== "hecho").length },
+    }));
+  } catch (_) {}
+}
+
+function enqueueReminderToast(payload = {}) {
+  reminderToastQueue.push(payload);
+  if (!reminderToastActive) showNextReminderToast();
+}
+
+function showNextReminderToast() {
+  if (reminderToastActive || !reminderToastQueue.length) return;
+  const stack = $id("notes-reminder-toast-stack");
+  if (!stack) return;
+  const payload = reminderToastQueue.shift();
+  reminderToastActive = payload;
+  const toast = document.createElement("article");
+  toast.className = "notes-reminder-toast reminder-toast";
+  toast.dataset.reminderId = payload.reminderId || "";
+  toast.innerHTML = `<p>${escapeHtml(payload.message || "Recordatorio")}</p>`;
+  stack.innerHTML = "";
+  stack.appendChild(toast);
+  const closeNow = () => {
+    if (!toast.isConnected) return;
+    toast.remove();
+    reminderToastActive = null;
+    showNextReminderToast();
+  };
+  window.setTimeout(closeNow, 2600);
+  if (navigator.vibrate) navigator.vibrate(50);
+  toast.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    const reminderId = String(payload.reminderId || "").trim();
+    await navigateToReminder(reminderId);
+    closeNow();
+  });
+  window.setTimeout(() => {
+    document.addEventListener("click", (event) => {
+      if (!toast.contains(event.target)) closeNow();
+    }, { once: true });
+  }, 0);
+}
+
+async function navigateToReminder(reminderId = "") {
+  const safeId = String(reminderId || "").trim();
+  if (window.__bookshellOpenViewRoot) {
+    await window.__bookshellOpenViewRoot("view-notes", { pushHash: true });
+  }
+  state.rootSection = "reminders";
+  state.reminderCalendarFocusedReminderId = safeId;
+  renderShell();
+}
+
+function getReminderNotificationItems() {
+  const today = getTodayDateKey();
+  return (state.reminders || [])
+    .filter((reminder) => {
+      const reminderDay = getReminderOccurrenceDateKey(reminder, reminder?.repeat === "yearly" ? new Date().getFullYear() : null);
+      return reminderDay === today;
+    })
+    .map((reminder) => ({
+      id: reminder.id,
+      title: reminder.title || "Sin título",
+      targetTime: reminder.targetTime || "",
+      status: reminder.status === "completado" ? "hecho" : (getReminderComputedStatus(reminder) === "vencido" ? "vencido" : "pendiente"),
+    }));
 }
 
 function runReminderChecks() {
@@ -3969,7 +4030,7 @@ function runReminderChecks() {
       const beforeMs = reminderAlertToMs(alert);
       const triggerAt = targetAt - beforeMs;
       const key = `${reminder.id}:${alert.amount}:${alert.unit}:${targetAt}`;
-      if (dismissedAlerts.has(key)) continue;
+      if (dismissedAlerts.has(key) || Number(reminder?.notifiedAt || 0) > 0) continue;
       if (now >= triggerAt && now <= triggerAt + 75 * 1000) {
         const label = alert.unit === "days" ? "días" : alert.unit === "hours" ? "horas" : "minutos";
         const prefix = reminder.type === "cumpleaños" ? "🎂" : (reminder.type === "checklist" ? "🧾" : "⏰");
@@ -3977,7 +4038,12 @@ function runReminderChecks() {
         appendReminderToast(`${prefix} Quedan ${alert.amount} ${label} para ${noun}: ${reminder.title || "sin título"}`, reminder.id, key);
       }
     }
+    const dueKey = `${reminder.id}:due:${targetAt}`;
+    if (!Number(reminder?.notifiedAt || 0) && now >= targetAt) {
+      appendReminderToast(`⏰ Es la hora de: ${reminder.title || "sin título"}`, reminder.id, dueKey);
+    }
   }
+  emitReminderNotificationsUpdated();
 }
 
 function startReminderChecker() {
@@ -5012,6 +5078,7 @@ function bindUiEvents() {
       updatedAt: Date.now(),
       completedAt: checklistAllDone ? Date.now() : (current?.completedAt || 0),
       dismissedAlerts: current?.dismissedAlerts || [],
+      notifiedAt: 0,
     };
     try {
       if (id) await updateReminder(state.rootPath, id, payload);
@@ -5122,6 +5189,38 @@ export async function onShow() {
       notes: Object.fromEntries((state.notes || []).map((note) => [note.id, note])),
       tagDefinitions: Object.fromEntries(listTagDefinitions().map((tagDefinition) => [tagDefinition.key, tagDefinition])),
     }),
+    getReminderNotifications: () => getReminderNotificationItems(),
+    openReminderNotificationsPanel: () => {
+      reminderNotificationsOpen = !reminderNotificationsOpen;
+      const panelId = "notifications-panel";
+      let panel = document.getElementById(panelId);
+      if (!panel) {
+        panel = document.createElement("div");
+        panel.id = panelId;
+        panel.className = "modal-backdrop";
+        document.body.appendChild(panel);
+      }
+      if (!reminderNotificationsOpen) {
+        panel.classList.add("hidden");
+        return;
+      }
+      const items = getReminderNotificationItems();
+      panel.classList.remove("hidden");
+      panel.innerHTML = `<section class="modal"><header class="modal-header"><div class="modal-title">Notificaciones</div><button class="icon-btn" data-close-notifications>✕</button></header><div class="modal-body">${items.map((item) => `<button class="btn ghost" data-open-reminder-notification="${escapeHtml(item.id)}">${escapeHtml(item.title)} ${item.targetTime ? `· ${escapeHtml(item.targetTime)}` : ""} · ${escapeHtml(item.status)}</button>`).join("") || "<p>Sin notificaciones para hoy.</p>"}</div></section>`;
+      panel.addEventListener("click", async (event) => {
+        if (event.target === panel || event.target.closest("[data-close-notifications]")) {
+          reminderNotificationsOpen = false;
+          panel.classList.add("hidden");
+          return;
+        }
+        const button = event.target.closest("[data-open-reminder-notification]");
+        if (button) {
+          await navigateToReminder(button.dataset.openReminderNotification || "");
+          reminderNotificationsOpen = false;
+          panel.classList.add("hidden");
+        }
+      });
+    },
   };
 }
 

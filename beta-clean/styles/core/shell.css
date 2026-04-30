@@ -43,7 +43,7 @@
   /* #endregion */
 
   /* #region Circulo Sync */
-    .app-sync-indicator {
+.app-sync-indicator {
     --sync-accent: var(--app-info);
     --mission-ring: color-mix(in srgb, var(--app-warning) 84%, transparent);
     min-height: 32px;
@@ -381,6 +381,22 @@
     transform 180ms ease,
     opacity 160ms ease,
     max-width 180ms ease;
+}
+.app-sync-indicator__badge{
+  position:absolute;
+  top:-4px;
+  right:-4px;
+  min-width:16px;
+  height:16px;
+  border-radius:999px;
+  background:#ff3b30;
+  color:#fff;
+  font-size:10px;
+  line-height:16px;
+  text-align:center;
+  font-weight:700;
+  padding:0 4px;
+  box-shadow:0 2px 8px rgba(0,0,0,.35);
 }
 
 .bottom-nav .nav-btn.nav-btn-active,

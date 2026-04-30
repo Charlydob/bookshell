@@ -1867,11 +1867,12 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
 
 .notes-toast-stack {
   position: fixed;
-  right: 12px;
-  bottom: calc(var(--nav-total-h) + 20px);
+  left: 50%;
+  top: 20px;
+  transform: translateX(-50%);
   display: grid;
   gap: 8px;
-  z-index: 50;
+  z-index: 1200;
 }
 
 .notes-reminder-toast {
@@ -1882,12 +1883,20 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   padding: 10px 12px;
   border-radius: 14px;
   border: 1px solid rgba(131, 196, 255, 0.3);
-  background: rgba(9, 15, 25, 0.95);
+  background: rgba(9, 15, 25, 0.72);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 30px rgba(0,0,0,.35);
+  animation: reminderToastIn .26s ease;
 }
 
 .notes-reminder-toast p {
   margin: 0;
   font-size: 12px;
+}
+
+@keyframes reminderToastIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @media (max-width: 720px) {

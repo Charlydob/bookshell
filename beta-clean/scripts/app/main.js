@@ -1182,6 +1182,10 @@ function migrateLegacyNavLayout(rawLayout = null, defaultLayout = buildRecommend
   return removeHomeFromLegacyLayout(rawLayout);
 }
 
+function getDefaultNavLayout() {
+  return buildRecommendedNavLayout();
+}
+
 function normalizeNavLayout(rawLayout = null) {
   const defaultLayout = buildRecommendedNavLayout();
   const layoutSource = migrateLegacyNavLayout(rawLayout, defaultLayout);
@@ -1901,7 +1905,6 @@ function getNextNavGroupLabel() {
   return `${NAV_DEFAULT_GROUP_LABEL} ${getOrderedNavGroups().length + 1}`;
 }
 
-// TODO CLEANUP: nav manager modal looks unreachable after the long-press selection flow; keep until manual UX audit confirms removal.
 function updateNavManagerSelectionState() {
   const backdrop = getShellState().navManagerBackdrop;
   if (!backdrop || backdrop.classList.contains("hidden")) return;

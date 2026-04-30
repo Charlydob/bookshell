@@ -505,6 +505,14 @@
   gap: 10px;
 }
 
+.notes-snippet-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .notes-snippet-copy,
 .notes-snippet-toggle,
 .notes-snippet-save,
@@ -672,6 +680,11 @@
   box-shadow: inset 0 -2px 0 rgba(255, 205, 122, 0.5);
 }
 
+.notes-snippet-assist {
+  display: grid;
+  gap: 8px;
+}
+
 .notes-snippet-suggestion-chip {
   border: 1px solid rgba(131, 196, 255, 0.18);
   border-radius: 999px;
@@ -680,6 +693,54 @@
   padding: 0 12px;
   font-size: 12px;
   font-weight: 700;
+}
+
+.notes-snippet-color-chip {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(11, 18, 28, 0.84);
+  color: #e9f3ff;
+  min-height: 32px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.notes-snippet-color-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  flex: 0 0 14px;
+}
+
+.notes-snippet-color-label {
+  font: 11px/1.2 "Cascadia Code", "Fira Code", Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notes-snippet-validation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: #ffd3d3;
+  font-size: 12px;
+}
+
+.notes-snippet-validation.is-error .notes-snippet-validation-item {
+  border-color: rgba(255, 122, 122, 0.32);
+  background: rgba(82, 22, 22, 0.34);
+}
+
+.notes-snippet-validation-item {
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 205, 122, 0.2);
+  background: rgba(62, 46, 19, 0.34);
 }
 
 .notes-snippet-color-input {

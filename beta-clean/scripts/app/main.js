@@ -23,6 +23,7 @@ import {
 } from "../shared/services/achievements/index.js";
 import { initGeneralCenterService } from "../shared/services/general-center/index.js";
 import { initThemeService } from "../shared/services/theme/index.js";
+import { registerPublicCatalogMigrationDebugApi } from "../shared/services/public-catalog-migration.js";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -107,6 +108,8 @@ const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "recipes", label: "Comida", viewId: "view-recipes" },
   { key: "finance", label: "Gasto", viewId: "view-finance" },
 ]);
+
+registerPublicCatalogMigrationDebugApi();
 
 function getGlobalQuickFabIconMarkup(actionKey) {
   if (actionKey === "books") {

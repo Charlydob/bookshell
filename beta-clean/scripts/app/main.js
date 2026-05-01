@@ -110,14 +110,6 @@ const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "recipes", label: "Comida", viewId: "view-recipes" },
   { key: "finance", label: "Gasto", viewId: "view-finance" },
 ]);
-const BOOT_FAILSAFE_TIMEOUT_MS = 5500;
-
-function bootTrace(step, message, extra = {}) {
-  const stamp = new Date().toISOString();
-  const payload = { ts: stamp, ...extra };
-  console.info(`[boot:${step}] ${message}`, payload);
-  return payload;
-}
 
 registerPublicCatalogMigrationDebugApi();
 
@@ -2731,36 +2723,6 @@ function finishBootSplash() {
   } catch (_) {}
 }
 
-function showBootWarning(message, detail = "") {
-  const state = getShellState();
-  const id = "boot-warning-banner";
-  let node = document.getElementById(id);
-  if (!node) {
-    node = document.createElement("div");
-    node.id = id;
-    node.style.cssText = "position:fixed;left:12px;right:12px;top:12px;z-index:1000001;padding:10px 12px;border-radius:12px;background:#402018;color:#fff;border:1px solid rgba(255,180,140,.45);font-size:12px;line-height:1.35;box-shadow:0 12px 34px rgba(0,0,0,.3);";
-    document.body.appendChild(node);
-  }
-  node.innerHTML = `<strong>⚠️ Arranque en modo seguro</strong><div>${message}${detail ? ` · ${detail}` : ""}</div>`;
-  state.bootWarningVisible = true;
-}
-
-function startBootFailsafeTimer() {
-  const state = getShellState();
-  window.clearTimeout(state.bootFailsafeTimer || 0);
-  state.bootFailsafeTimer = window.setTimeout(() => {
-    if (state.bootSplashReleased) return;
-    bootTrace("10", "hide splash", { mode: "failsafe-timeout", timeoutMs: BOOT_FAILSAFE_TIMEOUT_MS });
-    try {
-      bootShell();
-    } catch (error) {
-      console.warn("[boot] failsafe shell render error", error);
-    }
-    showBootWarning("Bookshell cargó sin esperar todos los servicios.", "Revisa consola para diagnóstico");
-    finishBootSplash();
-  }, BOOT_FAILSAFE_TIMEOUT_MS);
-}
-
 function releaseBootSplashForShell(root) {
   const state = getShellState();
   if (state.bootSplashReleased) return;
@@ -2962,74 +2924,13 @@ function schedulePostBootTask(task, delayMs = 0) {
   });
 }
 
-
-
-function withTimeout(promise, timeoutMs = 4000, label = "operation") {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timer = window.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      reject(new Error(`${label} timeout after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    Promise.resolve(promise)
-      .then((value) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timer);
-        resolve(value);
-      })
-      .catch((error) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timer);
-        reject(error);
-      });
-  });
-}
-
-function startBootBackgroundServices(user, viewId) {
-  console.info("[boot] background services start", { uid: user?.uid || "", viewId });
-
-  schedulePostBootTask(async () => {
-    if (auth.currentUser?.uid !== user.uid) return;
-    try {
-      await withTimeout(ensureSessionQuickstartReady(), 5000, "initReminderScheduler");
-      console.info("[boot] reminders scheduler ready");
-    } catch (error) {
-      console.error("[boot] reminders scheduler error", error);
-    }
-  }, 0);
-
-  schedulePostBootTask(async () => {
-    if (auth.currentUser?.uid !== user.uid) return;
-    try {
-      const tasks = [];
-      if (window.__bookshellRecipes?.loadPublicProducts) {
-        tasks.push(withTimeout(window.__bookshellRecipes.loadPublicProducts(), 4500, "loadPublicProducts"));
-      }
-      if (window.__bookshellGym?.loadPublicExercises) {
-        tasks.push(withTimeout(window.__bookshellGym.loadPublicExercises(), 4500, "loadPublicExercises"));
-      }
-      await Promise.allSettled(tasks);
-      console.info("[boot] public catalogs ready");
-    } catch (error) {
-      console.warn("[boot] public catalogs error", error);
-    }
-  }, 150);
-}
-
 function bindAuthGate() {
   const state = getShellState();
   if (state.authBound) return;
 
   setBootPhase("Inicializando…", 12);
 
-  bootTrace("04", "auth gate start");
   onUserChange(async (user) => {
-    bootTrace("05", "auth ready", { uid: user?.uid || "" });
-    console.info("[boot] auth ready", { uid: user?.uid || "" });
     if (!user) {
       void notifySyncUserChanged();
       if (state.currentViewId) {
@@ -3045,7 +2946,6 @@ function bindAuthGate() {
       if (isNavSelectionMode()) exitNavSelectionMode();
       setBootPhase("Conectando…", 32);
       ensureLoginUI();
-      bootTrace("10", "hide splash", { reason: "no-user" });
       finishBootSplash();
       return;
     }
@@ -3070,24 +2970,11 @@ function bindAuthGate() {
     setBootPhase("Cargando datos…", 62);
 
     const viewId = getInitialView();
-    bootTrace("08", "initial view start", { viewId });
-    console.info("[boot] initial view render start", { viewId });
     try {
-      bootTrace("06", "shell render start", { viewId });
-      bootShell();
-      bootTrace("07", "shell render ready", { viewId });
-      await withTimeout(setView(viewId, { pushHash: true, highPriority: true }), 4500, "setView");
+      await setView(viewId, { pushHash: true, highPriority: true });
       setBootPhase("Preparando interfaz…", 78);
-      bootTrace("09", "initial view ready", { viewId });
-      console.info("[boot] initial view render ready", { viewId });
-    } catch (error) {
-      console.error("[boot] initial view render error", error);
-      showBootWarning("La vista inicial falló; Bookshell sigue usable.", String(error?.message || error || ""));
     } finally {
-      requestAnimationFrame(() => {
-        bootTrace("10", "hide splash", { reason: "auth-flow-finally" });
-        finishBootSplash();
-      });
+      requestAnimationFrame(() => finishBootSplash());
     }
 
     schedulePostBootTask(() => {
@@ -3095,7 +2982,10 @@ function bindAuthGate() {
       bootShell();
     }, 0);
 
-    startBootBackgroundServices(user, viewId);
+    schedulePostBootTask(() => {
+      if (auth.currentUser?.uid !== user.uid) return;
+      return ensureSessionQuickstartReady();
+    }, 0);
 
     schedulePostBootTask(async () => {
       if (auth.currentUser?.uid !== user.uid) return;
@@ -3117,11 +3007,6 @@ function bindAuthGate() {
   state.authBound = true;
 }
 
-bootTrace("01", "main loaded");
-bootTrace("02", "firebase init start");
-bootTrace("03", "firebase init ready", { hasAuth: Boolean(auth), hasDb: Boolean(db) });
-console.info("[boot] shell start");
-startBootFailsafeTimer();
 warmInitialViewShell();
 void initSyncManager({
   db,

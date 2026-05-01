@@ -3,9 +3,9 @@ import { get, ref, set, push } from "https://www.gstatic.com/firebasejs/10.12.0/
 import { normalizeCatalogName } from "./public-catalog.js";
 
 const PUBLIC_PATHS = {
-  foodItems: "v2/public/products",
-  financeProducts: "v2/public/products",
-  gymExercises: "v2/public/exercises",
+  foodItems: "v2/public/catalog/foodItems",
+  financeProducts: "v2/public/catalog/financeProducts",
+  gymExercises: "v2/public/catalog/gymExercises",
 };
 
 const PRIVATE_KEYS = new Set(["ticketId", "accountId", "movementId", "userId", "priceHistory", "purchaseDate", "lastPurchaseAt", "preferredStore", "privateNotes", "notes", "recipeId", "workoutId", "ticket", "tickets"]);

@@ -3957,25 +3957,13 @@ function emitReminderNotificationsUpdated() {
 }
 
 function enqueueReminderToast(payload = {}) {
-  console.info("[reminderScheduler] enqueue toast", payload?.reminderId || payload?.title || "unknown");
   reminderToastQueue.push(payload);
-  if (!reminderToastActive) processToastQueue();
+  if (!reminderToastActive) showNextReminderToast();
 }
 
-function ensureReminderToastRoot() {
-  let root = document.getElementById("reminder-toast-root");
-  if (!root) {
-    root = document.createElement("div");
-    root.id = "reminder-toast-root";
-    document.body.appendChild(root);
-  }
-  return root;
-}
-
-function processToastQueue() {
+function showNextReminderToast() {
   if (reminderToastActive || !reminderToastQueue.length) return;
-  const root = ensureReminderToastRoot();
-  const stack = root || $id("notes-reminder-toast-stack");
+  const stack = $id("notes-reminder-toast-stack");
   if (!stack) return;
   const payload = reminderToastQueue.shift();
   reminderToastActive = payload;
@@ -3985,14 +3973,11 @@ function processToastQueue() {
   toast.innerHTML = `<p>${escapeHtml(payload.message || "Recordatorio")}</p>`;
   stack.innerHTML = "";
   stack.appendChild(toast);
-  requestAnimationFrame(() => toast.classList.add("is-visible"));
-  console.info("[reminderToast] show", payload?.reminderId || payload?.title || "unknown");
   const closeNow = () => {
     if (!toast.isConnected) return;
-    toast.classList.remove("is-visible");
     toast.remove();
     reminderToastActive = null;
-    window.setTimeout(processToastQueue, 2500);
+    showNextReminderToast();
   };
   window.setTimeout(closeNow, 2600);
   if (navigator.vibrate) navigator.vibrate(50);
@@ -4054,26 +4039,11 @@ function runReminderChecks() {
       }
     }
     const dueKey = `${reminder.id}:due:${targetAt}`;
-    const isDue = now >= targetAt;
-    if (!Number(reminder?.notifiedAt || 0) && isDue) {
-      console.info("[reminderScheduler] due reminder found", reminder.id);
+    if (!Number(reminder?.notifiedAt || 0) && now >= targetAt) {
       appendReminderToast(`⏰ Es la hora de: ${reminder.title || "sin título"}`, reminder.id, dueKey);
     }
   }
   emitReminderNotificationsUpdated();
-}
-
-function enqueuePendingDueRemindersOnBoot() {
-  const now = Date.now();
-  for (const reminder of state.reminders || []) {
-    const targetAt = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
-    if (!targetAt) continue;
-    const isDue = now >= targetAt;
-    if (!Number(reminder?.notifiedAt || 0) && isDue) {
-      console.info("[reminderScheduler] due reminder found", reminder.id);
-      appendReminderToast(`⏰ Es la hora de: ${reminder.title || "sin título"}`, reminder.id, `${reminder.id}:boot:${targetAt}`);
-    }
-  }
 }
 
 function startReminderChecker() {
@@ -4554,13 +4524,6 @@ function bindUiEvents() {
   });
   $id("notes-btn-new-note")?.addEventListener("click", () => openNoteModal());
   $id("notes-btn-new-reminder")?.addEventListener("click", () => openReminderModal());
-  $id("notes-btn-test-reminder-toast")?.addEventListener("click", () => {
-    enqueueReminderToast({
-      title: "Test",
-      message: "Esto es una notificación de prueba",
-      reminderId: "dev-test",
-    });
-  });
   $id("notes-root-switch")?.addEventListener("click", (event) => {
     const target = event.target.closest("[data-act='set-root-section']");
     if (!target) return;
@@ -5192,7 +5155,6 @@ function subscribeData(uid) {
 
       renderShell();
       renderNoteTagImageEditor();
-      enqueuePendingDueRemindersOnBoot();
       runReminderChecks();
       emitNotesData("remote:notes");
     },

@@ -2924,6 +2924,64 @@ function schedulePostBootTask(task, delayMs = 0) {
   });
 }
 
+
+
+function withTimeout(promise, timeoutMs = 4000, label = "operation") {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`${label} timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    Promise.resolve(promise)
+      .then((value) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
+function startBootBackgroundServices(user, viewId) {
+  console.info("[boot] background services start", { uid: user?.uid || "", viewId });
+
+  schedulePostBootTask(async () => {
+    if (auth.currentUser?.uid !== user.uid) return;
+    try {
+      await withTimeout(ensureSessionQuickstartReady(), 5000, "initReminderScheduler");
+      console.info("[boot] reminders scheduler ready");
+    } catch (error) {
+      console.error("[boot] reminders scheduler error", error);
+    }
+  }, 0);
+
+  schedulePostBootTask(async () => {
+    if (auth.currentUser?.uid !== user.uid) return;
+    try {
+      const tasks = [];
+      if (window.__bookshellRecipes?.loadPublicProducts) {
+        tasks.push(withTimeout(window.__bookshellRecipes.loadPublicProducts(), 4500, "loadPublicProducts"));
+      }
+      if (window.__bookshellGym?.loadPublicExercises) {
+        tasks.push(withTimeout(window.__bookshellGym.loadPublicExercises(), 4500, "loadPublicExercises"));
+      }
+      await Promise.allSettled(tasks);
+      console.info("[boot] public catalogs ready");
+    } catch (error) {
+      console.warn("[boot] public catalogs error", error);
+    }
+  }, 150);
+}
+
 function bindAuthGate() {
   const state = getShellState();
   if (state.authBound) return;
@@ -2931,6 +2989,7 @@ function bindAuthGate() {
   setBootPhase("Inicializando…", 12);
 
   onUserChange(async (user) => {
+    console.info("[boot] auth ready", { uid: user?.uid || "" });
     if (!user) {
       void notifySyncUserChanged();
       if (state.currentViewId) {
@@ -2970,9 +3029,13 @@ function bindAuthGate() {
     setBootPhase("Cargando datos…", 62);
 
     const viewId = getInitialView();
+    console.info("[boot] initial view render start", { viewId });
     try {
-      await setView(viewId, { pushHash: true, highPriority: true });
+      await withTimeout(setView(viewId, { pushHash: true, highPriority: true }), 4500, "setView");
       setBootPhase("Preparando interfaz…", 78);
+      console.info("[boot] initial view render ready", { viewId });
+    } catch (error) {
+      console.error("[boot] initial view render error", error);
     } finally {
       requestAnimationFrame(() => finishBootSplash());
     }
@@ -2982,10 +3045,7 @@ function bindAuthGate() {
       bootShell();
     }, 0);
 
-    schedulePostBootTask(() => {
-      if (auth.currentUser?.uid !== user.uid) return;
-      return ensureSessionQuickstartReady();
-    }, 0);
+    startBootBackgroundServices(user, viewId);
 
     schedulePostBootTask(async () => {
       if (auth.currentUser?.uid !== user.uid) return;
@@ -3007,6 +3067,7 @@ function bindAuthGate() {
   state.authBound = true;
 }
 
+console.info("[boot] shell start");
 warmInitialViewShell();
 void initSyncManager({
   db,

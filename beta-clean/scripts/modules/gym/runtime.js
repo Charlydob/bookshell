@@ -323,14 +323,14 @@ function bindEvents() {
       const path = `${basePath}/exercises/${exerciseId}`;
       exercises[exerciseId] = { ...(exercises[exerciseId] || {}), id: exerciseId, ...payload };
       writeGymUpdate(path, payload);
-      upsertPublicCatalogItem("v2/public/exercises", { id: exerciseId, ...payload, category: muscleGroups[0] || "Other" }, uid).catch(() => {});
+      upsertPublicCatalogItem("v2/public/catalog/gymExercises", { id: exerciseId, ...payload, category: muscleGroups[0] || "Other" }, uid).catch(() => {});
       editingExerciseId = null;
     } else {
       const newRef = push(exercisesRef);
       const exercise = { id: newRef.key, createdAt: now, ...payload };
       exercises[newRef.key] = exercise;
       writeGymSet(`${basePath}/exercises/${newRef.key}`, exercise);
-      upsertPublicCatalogItem("v2/public/exercises", { ...exercise, category: muscleGroups[0] || "Other" }, uid).catch(() => {});
+      upsertPublicCatalogItem("v2/public/catalog/gymExercises", { ...exercise, category: muscleGroups[0] || "Other" }, uid).catch(() => {});
     }
 
     $gymCreateName.value = "";

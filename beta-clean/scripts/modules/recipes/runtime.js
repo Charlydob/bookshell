@@ -643,8 +643,8 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       key: "recipes:public-food-catalog",
       ttlMs: PUBLIC_CATALOG_CACHE_TTL_MS,
       loader: async () => {
-        logFirebaseRead({ path: "v2/public/products", mode: "get", reason: "recipes-public-food-catalog", viewId: "view-recipes" });
-        const publicSnap = await get(ref(db, "v2/public/products"));
+        logFirebaseRead({ path: "v2/public/catalog/foodItems", mode: "get", reason: "recipes-public-food-catalog", viewId: "view-recipes" });
+        const publicSnap = await get(ref(db, "v2/public/catalog/foodItems"));
         return publicSnap?.val() || {};
       },
     });
@@ -7705,7 +7705,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     recalcAllRecipesNutrition();
     refreshUI();
     if (currentUid) {
-      upsertPublicCatalogItem("v2/public/products", normalized, currentUid)
+      upsertPublicCatalogItem("v2/public/catalog/foodItems", normalized, currentUid)
         .catch((err) => console.info("[recipes/public-catalog] upsert falló", err));
     }
     return normalized;
@@ -7717,7 +7717,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     const local = nutritionProducts.find((p) => p.barcode && p.barcode === clean);
     if (local) return local;
     try {
-      const [match] = await findPublicCatalogMatches("v2/public/products", { barcode: clean }, 1);
+      const [match] = await findPublicCatalogMatches("v2/public/catalog/foodItems", { barcode: clean }, 1);
       if (match) {
         const cloned = clonePublicItemToUserCatalog(match, { id: generateId() });
         nutritionProducts.unshift(cloned);

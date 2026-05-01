@@ -1,6 +1,9 @@
 import {
   auth,
   db,
+  firebasePaths,
+  getCurrentUserDataKey,
+  getUserDataKey,
   onUserChange,
   signInWithEmail,
   signOutCurrentUser,
@@ -1067,12 +1070,12 @@ function writeStoredNavLayout(layout) {
   } catch (_) {}
 }
 
-function getNavLayoutDbPath(uid) {
-  return `v2/users/${uid}/meta/ui/navLayout`;
+function getNavLayoutDbPath(userKey) {
+  return firebasePaths.navLayout(userKey);
 }
 
-function getCurrentNavUserId() {
-  return auth.currentUser?.uid || null;
+function getCurrentNavUserKey() {
+  return getCurrentUserDataKey() || null;
 }
 
 function serializeNavLayout(layout) {
@@ -1326,17 +1329,17 @@ function persistNavLayout() {
   syncNav(state.currentViewId || getInitialView());
 }
 
-async function primeNavLayoutForUser(uid) {
+async function primeNavLayoutForUser(userKey) {
   const state = getShellState();
-  if (!uid) {
+  if (!userKey) {
     state.navLayout = normalizeNavLayout(readStoredNavLayout());
     return state.navLayout;
   }
 
   let remoteLayout = null;
   try {
-    logFirebaseRead({ path: getNavLayoutDbPath(uid), mode: "get", reason: "load-nav-layout", viewId: "shell" });
-    const snap = await get(ref(db, getNavLayoutDbPath(uid)));
+    logFirebaseRead({ path: getNavLayoutDbPath(userKey), mode: "get", reason: "load-nav-layout", viewId: "shell" });
+    const snap = await get(ref(db, getNavLayoutDbPath(userKey)));
     remoteLayout = snap.val();
   } catch (error) {
     console.warn("[shell] no se pudo leer navLayout remoto", error);
@@ -1370,22 +1373,22 @@ function stopNavLayoutSync() {
   state.navLayoutSeededFromLocal = false;
 }
 
-function startNavLayoutSync(uid) {
+function startNavLayoutSync(userKey) {
   const state = getShellState();
-  if (!uid) {
+  if (!userKey) {
     stopNavLayoutSync();
     return;
   }
 
-  if (state.navLayoutSyncUid === uid && typeof state.navLayoutUnsubscribe === "function") {
+  if (state.navLayoutSyncUid === userKey && typeof state.navLayoutUnsubscribe === "function") {
     return;
   }
 
   stopNavLayoutSync();
-  state.navLayoutSyncUid = uid;
+  state.navLayoutSyncUid = userKey;
 
-  logFirebaseRead({ path: getNavLayoutDbPath(uid), mode: "onValue", reason: "watch-nav-layout", viewId: "shell" });
-  state.navLayoutUnsubscribe = registerViewListener("shell", onValue(ref(db, getNavLayoutDbPath(uid)), (snap) => {
+  logFirebaseRead({ path: getNavLayoutDbPath(userKey), mode: "onValue", reason: "watch-nav-layout", viewId: "shell" });
+  state.navLayoutUnsubscribe = registerViewListener("shell", onValue(ref(db, getNavLayoutDbPath(userKey)), (snap) => {
     const remoteLayout = snap.val();
     state.navLayoutRemoteReady = true;
 
@@ -1408,7 +1411,7 @@ function startNavLayoutSync(uid) {
     console.warn("[shell] no se pudo escuchar navLayout remoto", error);
   }), {
     key: "nav-layout",
-    path: getNavLayoutDbPath(uid),
+    path: getNavLayoutDbPath(userKey),
     mode: "onValue",
     reason: "watch-nav-layout",
   });
@@ -1416,12 +1419,12 @@ function startNavLayoutSync(uid) {
 
 async function syncNavLayoutToRemote({ useStoredFallback = false } = {}) {
   const state = getShellState();
-  const uid = getCurrentNavUserId();
-  if (!uid) return;
+  const userKey = getCurrentNavUserKey();
+  if (!userKey) return;
 
   const layout = normalizeNavLayout(useStoredFallback ? (readStoredNavLayout() || state.navLayout) : state.navLayout);
   try {
-    await update(ref(db, getNavLayoutDbPath(uid)), {
+    await update(ref(db, getNavLayoutDbPath(userKey)), {
       version: NAV_LAYOUT_VERSION,
       updatedAt: Date.now(),
       order: layout.order,
@@ -2808,9 +2811,9 @@ function ensureLoginUI() {
   };
 }
 
-async function ensureUserSchema(uid) {
-  const root = `v2/users/${uid}`;
-  const schemaPath = `${root}/meta/schemaVersion`;
+async function ensureUserSchema(userKey) {
+  const root = firebasePaths.userRoot(userKey);
+  const schemaPath = firebasePaths.userMetaSchemaVersion(userKey);
   logFirebaseRead({ path: schemaPath, mode: "get", reason: "ensure-user-schema:meta", viewId: "shell" });
   const snap = await get(ref(db, schemaPath));
   if (snap.exists()) return;
@@ -2835,14 +2838,14 @@ async function ensureUserSchema(uid) {
   });
 }
 
-function getActiveHabitSessionsPath(uid) {
-  return `v2/users/${uid}/habits/habits/activeSessions`;
+function getActiveHabitSessionsPath(userKey) {
+  return firebasePaths.activeHabitSessions(userKey);
 }
 
-async function hasRemoteActiveHabitSession(uid) {
-  if (!uid) return false;
+async function hasRemoteActiveHabitSession(userKey) {
+  if (!userKey) return false;
   try {
-    const snap = await get(ref(db, getActiveHabitSessionsPath(uid)));
+    const snap = await get(ref(db, getActiveHabitSessionsPath(userKey)));
     const raw = snap.val();
     return !!(raw && typeof raw === "object" && Object.keys(raw).length);
   } catch (error) {
@@ -2954,17 +2957,18 @@ function bindAuthGate() {
 
     void notifySyncUserChanged();
     document.getElementById("loginBox")?.remove();
+    const userKey = getUserDataKey(user);
 
-    void ensureUserSchema(user.uid).catch((error) => {
+    void ensureUserSchema(userKey).catch((error) => {
       console.warn("[schema] seed failed", error);
     });
 
-    void primeNavLayoutForUser(user.uid)
+    void primeNavLayoutForUser(userKey)
       .catch((error) => {
         console.warn("[shell] no se pudo preparar navLayout inicial", error);
       })
       .finally(() => {
-        startNavLayoutSync(user.uid);
+        startNavLayoutSync(userKey);
       });
 
     setBootPhase("Cargando datos…", 62);
@@ -2990,7 +2994,7 @@ function bindAuthGate() {
     schedulePostBootTask(async () => {
       if (auth.currentUser?.uid !== user.uid) return;
       if (viewId === HABITS_VIEW_ID) return;
-      const hasActiveSession = await hasRemoteActiveHabitSession(user.uid);
+      const hasActiveSession = await hasRemoteActiveHabitSession(userKey);
       if (!hasActiveSession) return;
       await preloadViewModule(HABITS_VIEW_ID);
     }, 180);

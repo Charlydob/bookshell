@@ -24,6 +24,7 @@ import { ensureEcharts } from '../../shared/vendors/echarts.js';
 import { readProcessedJsonCache, writeProcessedJsonCache } from '../../shared/cache/processed-json-cache.js';
 import { normalizeCatalogName, upsertPublicCatalogItem } from '../../shared/services/public-catalog.js';
 import { logFirebaseRead, registerViewListener } from '../../shared/firebase/read-debug.js';
+import { PUBLIC_PATHS } from '../../shared/firebase/index.js';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
@@ -34,7 +35,7 @@ let financePendingPreserveUi = true;
 let financeRemoteApplyTimer = 0;
 const FINANCE_GOALS_SORT_MODE_KEY = 'financeGoalsSortMode';
 const PRODUCTS_DRAFT_LOCAL_KEY = 'bookshell_finance_products_draft_v1';
-const GLOBAL_PRODUCTS_PATH = 'v2/public/catalog/foodItems';
+const GLOBAL_PRODUCTS_PATH = PUBLIC_PATHS.foodItems;
 const FINANCE_CORE_BRANCHES = Object.freeze([
   { key: 'accounts', path: 'accounts', fallback: {} },
   { key: 'transactions', path: 'transactions', fallback: {} },
@@ -5952,6 +5953,18 @@ function firebaseClean(obj) {
   return out;
 }
 
+function clonePlain(value) {
+  if (value == null) return value;
+  try {
+    if (typeof structuredClone === 'function') return structuredClone(value);
+  } catch (_) {}
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_) {
+    return value;
+  }
+}
+
 function createFinanceRecordId(prefix = 'item') {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
@@ -6354,9 +6367,11 @@ function groupTxByDay(txList = [], accountsById = {}, scope = 'personal') {
     if (!day) return;
     if (!grouped[day]) grouped[day] = { dayISO: day, rows: [], totalIncome: 0, totalExpense: 0, net: 0 };
     const amount = Number.isFinite(row.amount) ? row.amount : 0;
-    const impact = scope === 'global'
+    const impact = row.recurringVirtual
+      ? 0
+      : (scope === 'global'
       ? (row.type === 'income' ? amount : (row.type === 'expense' ? -amount : 0))
-      : personalDeltaForTx(row, accountsById);
+      : personalDeltaForTx(row, accountsById));
     grouped[day].rows.push(row);
     if (impact >= 0) grouped[day].totalIncome += impact;
     else grouped[day].totalExpense += Math.abs(impact);
@@ -6366,40 +6381,90 @@ function groupTxByDay(txList = [], accountsById = {}, scope = 'personal') {
 }
 
 function recurringForMonth(monthKey = getSelectedBalanceMonthKey()) {
-  const cache = financeDerivedCache.recurring;
-  if (cache.recurringRef !== state.balance.recurring) {
-    cache.recurringRef = state.balance.recurring;
-    cache.monthMap.clear();
-  }
-  if (cache.monthMap.has(monthKey)) {
-    return cache.monthMap.get(monthKey);
-  }
-  const [year, month] = monthKey.split('-').map(Number);
-  const rows = [];
-  Object.entries(state.balance.recurring || {}).forEach(([id, rec]) => {
-    if (!rec || rec.disabled) return;
-    const schedule = rec.schedule || {};
-    const frequency = schedule.frequency || 'monthly';
-    if (frequency !== 'monthly') return;
-    const day = Math.max(1, Math.min(31, Number(schedule.dayOfMonth || 1)));
-    const daysInMonth = new Date(year, month, 0).getDate();
-    const safeDay = Math.min(day, daysInMonth);
-    const dateISO = `${monthKey}-${String(safeDay).padStart(2, '0')}`;
-    if (schedule.startDate && dateISO < String(schedule.startDate)) return;
-    if (schedule.endDate && dateISO > String(schedule.endDate)) return;
-    rows.push(normalizeTxRow({
-      id: `rec-${id}-${monthKey}`,
-      recurringId: id,
-      recurringVirtual: true,
-      ...rec,
-      date: dateISO,
-      dateISO,
-      monthKey,
-      personalRatio: Number.isFinite(Number(rec?.personalRatio)) ? clamp01(rec.personalRatio, 1) : null
-    }, `rec-${id}-${monthKey}`));
+  return recurringResolvedForMonth(monthKey, balanceTxList(), { includeFuture: true });
+}
+
+function buildRecurringInstancePayload(recurringId = '', recurringData = {}, monthKey = getMonthKeyFromDate(), { now = nowTs(), autoCreated = true } = {}) {
+  const safeRecurringId = String(recurringId || '').trim();
+  const scheduledDateISO = resolveRecurringScheduledDateISO(recurringData, monthKey);
+  const type = normalizeTxType(recurringData?.type || 'expense');
+  return {
+    type,
+    amount: Number(recurringData?.amount || 0),
+    date: scheduledDateISO,
+    dateISO: scheduledDateISO,
+    monthKey: normalizeRecurringMonthKey(scheduledDateISO),
+    recurringId: safeRecurringId,
+    recurringMonthKey: normalizeRecurringMonthKey(scheduledDateISO),
+    recurringDueDateISO: scheduledDateISO,
+    recurringAutoCreated: !!autoCreated,
+    accountId: type === 'transfer' ? '' : String(recurringData?.accountId || '').trim(),
+    fromAccountId: type === 'transfer' ? String(recurringData?.fromAccountId || '').trim() : '',
+    toAccountId: type === 'transfer' ? String(recurringData?.toAccountId || '').trim() : '',
+    category: type === 'transfer' ? 'transfer' : (String(recurringData?.category || '').trim() || 'Sin categoría'),
+    note: String(recurringData?.note || '').trim(),
+    ...(Number.isFinite(Number(recurringData?.personalRatio)) ? { personalRatio: clamp01(recurringData.personalRatio, 1) } : {}),
+    linkedHabitId: String(recurringData?.linkedHabitId || '').trim() || null,
+    allocation: normalizeTxAllocation(recurringData?.allocation || {}, scheduledDateISO),
+    extras: mergeRecurringTemplateExtras(recurringData?.extras, null),
+    updatedAt: now,
+    createdAt: now,
+  };
+}
+
+async function ensureRecurringCurrentMonthInstances() {
+  const currentMonthKey = getMonthKeyFromDate();
+  const todayKey = dayKeyFromTs(Date.now());
+  const txRows = balanceTxList();
+  const updatesMap = {};
+  const localPayloads = {};
+  const touchedAccounts = new Set();
+  let recomputeStart = todayKey;
+
+  Object.entries(state.balance.recurring || {}).forEach(([recurringId, recurringData]) => {
+    if (!recurringData || recurringData.disabled || recurringData.autoCreate === false) return;
+    const schedule = recurringData.schedule || {};
+    if ((schedule.frequency || 'monthly') !== 'monthly') return;
+    const scheduledDateISO = resolveRecurringScheduledDateISO(recurringData, currentMonthKey);
+    if (!scheduledDateISO || scheduledDateISO > todayKey) return;
+    if (schedule.startDate && scheduledDateISO < String(schedule.startDate)) return;
+    if (schedule.endDate && scheduledDateISO > String(schedule.endDate)) return;
+    if (findRecurringInstanceTx(recurringId, currentMonthKey, txRows, recurringData)) return;
+    const nextId = push(ref(db, `${state.financePath}/transactions`)).key;
+    const payload = buildRecurringInstancePayload(recurringId, recurringData, currentMonthKey, { autoCreated: true });
+    updatesMap[`${state.financePath}/transactions/${nextId}`] = payload;
+    localPayloads[nextId] = payload;
+    [payload.accountId, payload.fromAccountId, payload.toAccountId].filter(Boolean).forEach((accountId) => touchedAccounts.add(accountId));
+    if (scheduledDateISO < recomputeStart) recomputeStart = scheduledDateISO;
   });
-  cache.monthMap.set(monthKey, rows);
-  return rows;
+
+  if (!Object.keys(updatesMap).length) return [];
+
+  try {
+    await update(ref(db), updatesMap);
+  } catch (error) {
+    log('no se pudieron materializar recurrentes del mes', error);
+    return [];
+  }
+
+  state.balance = state.balance || {};
+  state.balance.transactions = {
+    ...(state.balance.transactions || {}),
+    ...localPayloads,
+  };
+  clearFinanceDerivedCaches();
+
+  try {
+    const freshRoot = await loadFinanceRoot();
+    await Promise.all(Array.from(touchedAccounts).map((accountId) => recomputeAccountEntries(accountId, recomputeStart, freshRoot)));
+    const refreshedRoot = await loadFinanceRoot();
+    syncLocalAccountsFromRoot(refreshedRoot);
+  } catch (error) {
+    log('no se pudieron recomputar cuentas tras materializar recurrentes', error);
+  }
+
+  scheduleAggregateRebuild();
+  return Object.keys(localPayloads);
 }
 
 async function upsertFoodOption(kind, value, incrementCount = false) {
@@ -7534,9 +7599,147 @@ function balanceTxList() {
 function getSelectedBalanceMonthKey() {
   return offsetMonthKey(getMonthKeyFromDate(), state.balanceMonthOffset);
 }
+function normalizeRecurringMonthKey(value = '') {
+  return String(value || '').trim().slice(0, 7);
+}
+function compareMonthKeys(left = '', right = '') {
+  return normalizeRecurringMonthKey(left).localeCompare(normalizeRecurringMonthKey(right));
+}
+function resolveRecurringScheduledDateISO(recurringData = {}, monthKey = getSelectedBalanceMonthKey()) {
+  const safeMonthKey = normalizeRecurringMonthKey(monthKey);
+  if (!safeMonthKey) return '';
+  const [year, month] = safeMonthKey.split('-').map(Number);
+  if (!year || !month) return '';
+  const schedule = recurringData?.schedule || {};
+  const rawDay = Number(
+    schedule.dayOfMonth
+    ?? schedule.dueDay
+    ?? schedule.paymentDay
+    ?? schedule.scheduledDay
+    ?? 1
+  );
+  const dayOfMonth = Math.max(1, Math.min(31, rawDay || 1));
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const safeDay = Math.min(dayOfMonth, daysInMonth);
+  return `${safeMonthKey}-${String(safeDay).padStart(2, '0')}`;
+}
+function recurringInstanceMonthKey(row = {}) {
+  return normalizeRecurringMonthKey(row?.recurringMonthKey || row?.monthKey || row?.date || row?.dateISO || '');
+}
+function mergeRecurringTemplateExtras(templateExtras = null, instanceExtras = null) {
+  const base = templateExtras && typeof templateExtras === 'object' ? clonePlain(templateExtras) : {};
+  const patch = instanceExtras && typeof instanceExtras === 'object' ? clonePlain(instanceExtras) : {};
+  if (!Object.keys(base).length && !Object.keys(patch).length) return null;
+  return {
+    ...base,
+    ...patch,
+    filters: {
+      ...(base.filters || {}),
+      ...(patch.filters || {}),
+    },
+  };
+}
+function recurringMatchesFallbackTx(row = {}, recurringData = {}, monthKey = '', scheduledDateISO = '') {
+  const txDateISO = toIsoDay(String(row?.date || row?.dateISO || '')) || '';
+  const txMonthKey = normalizeRecurringMonthKey(row?.monthKey || txDateISO);
+  if (!txMonthKey || txMonthKey !== normalizeRecurringMonthKey(monthKey)) return false;
+  if (normalizeTxType(row?.type) !== normalizeTxType(recurringData?.type)) return false;
+  const sameCategory = String(row?.category || '').trim().toLowerCase() === String(recurringData?.category || '').trim().toLowerCase();
+  if (!sameCategory) return false;
+  const sameAccount = String(row?.accountId || '') === String(recurringData?.accountId || '')
+    && String(row?.fromAccountId || '') === String(recurringData?.fromAccountId || '')
+    && String(row?.toAccountId || '') === String(recurringData?.toAccountId || '');
+  if (!sameAccount) return false;
+  const rowNoteKey = normalizeFoodCompareKey(row?.note || '');
+  const recurringNoteKey = normalizeFoodCompareKey(recurringData?.note || '');
+  if (rowNoteKey && recurringNoteKey && rowNoteKey !== recurringNoteKey) return false;
+  if (scheduledDateISO && txDateISO && txDateISO !== scheduledDateISO) return false;
+  return true;
+}
+function findRecurringInstanceTx(recurringId = '', monthKey = '', txRows = balanceTxList(), recurringData = null) {
+  const safeRecurringId = String(recurringId || '').trim();
+  const safeMonthKey = normalizeRecurringMonthKey(monthKey);
+  if (!safeRecurringId || !safeMonthKey) return null;
+  const rows = Array.isArray(txRows) ? txRows : balanceTxList();
+  const explicitMatch = rows.find((row) => (
+    String(row?.recurringId || '').trim() === safeRecurringId
+    && recurringInstanceMonthKey(row) === safeMonthKey
+  ));
+  if (explicitMatch) return explicitMatch;
+  if (!recurringData) return null;
+  const scheduledDateISO = resolveRecurringScheduledDateISO(recurringData, safeMonthKey);
+  return rows.find((row) => recurringMatchesFallbackTx(row, recurringData, safeMonthKey, scheduledDateISO)) || null;
+}
+function recurringStatusForMonth(monthKey = '', scheduledDateISO = '') {
+  const currentMonthKey = getMonthKeyFromDate();
+  const todayKey = dayKeyFromTs(Date.now());
+  const monthCompare = compareMonthKeys(monthKey, currentMonthKey);
+  if (monthCompare < 0) return 'pending';
+  if (monthCompare > 0) return 'upcoming';
+  if (!scheduledDateISO) return 'pending';
+  if (scheduledDateISO > todayKey) return 'upcoming';
+  if (scheduledDateISO === todayKey) return 'due';
+  return 'pending';
+}
+function buildRecurringVirtualRow(recurringId = '', recurringData = {}, monthKey = '', scheduledDateISO = '', recurringStatus = 'upcoming') {
+  return normalizeTxRow({
+    id: `rec-${recurringId}-${monthKey}`,
+    recurringId,
+    recurringMonthKey: monthKey,
+    recurringVirtual: true,
+    recurringStatus,
+    recurringDueDateISO: scheduledDateISO,
+    ...recurringData,
+    extras: mergeRecurringTemplateExtras(recurringData?.extras, null),
+    date: scheduledDateISO,
+    dateISO: scheduledDateISO,
+    monthKey,
+    personalRatio: Number.isFinite(Number(recurringData?.personalRatio)) ? clamp01(recurringData.personalRatio, 1) : null
+  }, `rec-${recurringId}-${monthKey}`);
+}
+function recurringResolvedForMonth(monthKey = getSelectedBalanceMonthKey(), txRows = balanceTxList(), { includeFuture = true } = {}) {
+  const safeMonthKey = normalizeRecurringMonthKey(monthKey) || getSelectedBalanceMonthKey();
+  const rows = [];
+  Object.entries(state.balance.recurring || {}).forEach(([id, recurringData]) => {
+    if (!recurringData || recurringData.disabled) return;
+    const schedule = recurringData.schedule || {};
+    const frequency = schedule.frequency || 'monthly';
+    if (frequency !== 'monthly') return;
+    const scheduledDateISO = resolveRecurringScheduledDateISO(recurringData, safeMonthKey);
+    if (!scheduledDateISO) return;
+    if (schedule.startDate && scheduledDateISO < String(schedule.startDate)) return;
+    if (schedule.endDate && scheduledDateISO > String(schedule.endDate)) return;
+    const instance = findRecurringInstanceTx(id, safeMonthKey, txRows, recurringData);
+    if (instance) {
+      rows.push(normalizeTxRow({
+        ...recurringData,
+        ...instance,
+        recurringId: id,
+        recurringMonthKey: recurringInstanceMonthKey(instance) || safeMonthKey,
+        recurringVirtual: false,
+        recurringStatus: 'materialized',
+        recurringDueDateISO: scheduledDateISO,
+        schedule: recurringData.schedule || instance.schedule || {},
+        autoCreate: recurringData.autoCreate !== false,
+        extras: mergeRecurringTemplateExtras(recurringData.extras, instance.extras),
+      }, instance.id));
+      return;
+    }
+    const status = recurringStatusForMonth(safeMonthKey, scheduledDateISO);
+    if (!includeFuture && status === 'upcoming') return;
+    rows.push(buildRecurringVirtualRow(id, recurringData, safeMonthKey, scheduledDateISO, status));
+  });
+  return rows.sort((left, right) => (
+    txSortTs(right) - txSortTs(left)
+    || String(right?.id || '').localeCompare(String(left?.id || ''))
+  ));
+}
+function recurringVirtualForMonth(monthKey = getSelectedBalanceMonthKey(), txRows = balanceTxList(), { includeFuture = true } = {}) {
+  return recurringResolvedForMonth(monthKey, txRows, { includeFuture }).filter((row) => row.recurringVirtual);
+}
 function summaryForMonth(monthKey, accountsById = {}, txRows = balanceTxList()) {
   const resolvedAccountsById = Object.keys(accountsById || {}).length ? accountsById : Object.fromEntries((state.accounts || []).map((account) => [account.id, account]));
-  const rows = [...txRows.filter((tx) => tx.monthKey === monthKey), ...recurringForMonth(monthKey)];
+  const rows = txRows.filter((tx) => tx.monthKey === monthKey);
   const income = rows.filter((tx) => tx.type === 'income').reduce((s, tx) => s + (Number(tx.amount || 0) * personalRatioForTx(tx, resolvedAccountsById)), 0);
   const expense = rows.filter((tx) => tx.type === 'expense').reduce((s, tx) => s + (Number(tx.amount || 0) * personalRatioForTx(tx, resolvedAccountsById)), 0);
   const transferImpact = 0;
@@ -7641,6 +7844,149 @@ function openBalanceDrilldown(txType) {
     importError: ''
   };
   triggerRender();
+}
+
+function getMovementFormMeta() {
+  if (!state.balanceFormMeta || typeof state.balanceFormMeta !== 'object') {
+    state.balanceFormMeta = { saving: false, mode: 'create' };
+  }
+  return state.balanceFormMeta;
+}
+
+function movementDefaultAccountId() {
+  return String(state.balance?.defaultAccountId || '').trim();
+}
+
+function getEmptyMovementForm(overrides = {}) {
+  const defaultDate = toIsoDay(String(overrides.dateISO || '')) || dayKeyFromTs(Date.now());
+  const defaultAccountId = String(overrides.accountId ?? movementDefaultAccountId() ?? '').trim();
+  return {
+    type: 'expense',
+    amount: '',
+    dateISO: defaultDate,
+    accountId: defaultAccountId,
+    fromAccountId: '',
+    toAccountId: '',
+    category: '',
+    note: '',
+    linkedHabitId: '',
+    allocationMode: 'point',
+    allocationPeriod: 'day',
+    allocationAnchorDate: defaultDate,
+    allocationCustomStart: '',
+    allocationCustomEnd: '',
+    personalRatioMode: 'auto',
+    personalRatioPercent: '',
+    personalRatioAdvanced: false,
+    foodMealType: '',
+    foodCuisine: '',
+    foodPlace: '',
+    foodItem: '',
+    foodId: '',
+    foodExtrasOpen: false,
+    foodResultsScrollTop: 0,
+    importedFoodItems: [],
+    ticketData: null,
+    ticketScanMeta: null,
+    recurringId: '',
+    recurringMonthKey: defaultDate.slice(0, 7),
+    recurringDueDateISO: '',
+    recurringEnabled: false,
+    txWizardStep: 'base',
+    ...overrides,
+  };
+}
+
+function resetMovementForm(overrides = {}) {
+  state.balanceAmountAuto = true;
+  state.balanceFormState = getEmptyMovementForm(overrides);
+  const meta = getMovementFormMeta();
+  meta.saving = false;
+  meta.mode = String(overrides?.mode || 'create');
+}
+
+function movementDraftFromRecurring(recurringId = '', recurringData = {}, monthKey = getSelectedBalanceMonthKey()) {
+  const scheduledDateISO = resolveRecurringScheduledDateISO(recurringData, monthKey) || `${normalizeRecurringMonthKey(monthKey) || getMonthKeyFromDate()}-01`;
+  const foodExtras = normalizeFoodExtras(recurringData.extras || recurringData.food || {}, Number(recurringData.amount || 0));
+  const allocation = normalizeTxAllocation(recurringData.allocation || {}, scheduledDateISO);
+  return getEmptyMovementForm({
+    type: normalizeTxType(recurringData.type || 'expense'),
+    amount: Number.isFinite(Number(recurringData.amount)) ? String(Math.abs(Number(recurringData.amount || 0))) : '',
+    dateISO: scheduledDateISO,
+    accountId: String(recurringData.accountId || '').trim(),
+    fromAccountId: String(recurringData.fromAccountId || '').trim(),
+    toAccountId: String(recurringData.toAccountId || '').trim(),
+    category: String(recurringData.category || '').trim(),
+    note: String(recurringData.note || '').trim(),
+    linkedHabitId: String(recurringData.linkedHabitId || '').trim(),
+    allocationMode: allocation.mode === 'period' ? allocation.period : 'point',
+    allocationPeriod: allocation.mode === 'period' ? allocation.period : 'day',
+    allocationAnchorDate: allocation.anchorDate || scheduledDateISO,
+    allocationCustomStart: allocation.customStart || '',
+    allocationCustomEnd: allocation.customEnd || '',
+    personalRatioMode: Number.isFinite(Number(recurringData.personalRatio)) ? 'custom' : 'auto',
+    personalRatioPercent: Number.isFinite(Number(recurringData.personalRatio)) ? String(Math.round(clamp01(recurringData.personalRatio, 1) * 100)) : '',
+    personalRatioAdvanced: Number.isFinite(Number(recurringData.personalRatio)),
+    foodMealType: foodExtras?.filters?.mealType || '',
+    foodCuisine: foodExtras?.filters?.cuisine || '',
+    foodPlace: foodExtras?.filters?.place || '',
+    foodItem: foodExtras?.items?.[0]?.name || '',
+    foodId: foodExtras?.items?.[0]?.foodId || '',
+    importedFoodItems: foodExtras?.items || [],
+    foodExtrasOpen: !!foodExtras?.items?.length,
+    recurringId: String(recurringId || '').trim(),
+    recurringMonthKey: scheduledDateISO.slice(0, 7),
+    recurringDueDateISO: scheduledDateISO,
+    recurringEnabled: false,
+    txWizardStep: 'base',
+  });
+}
+
+function openCreateMovementModal(overrides = {}) {
+  resetMovementForm({ ...overrides, mode: 'create' });
+  state.modal = { type: 'tx', txType: state.balanceFormState.type || 'expense' };
+  return triggerRender({ preserveUi: false, force: true });
+}
+
+function openEditMovementModal(movement = null) {
+  const row = movement || null;
+  resetMovementForm({
+    recurringId: String(row?.recurringId || '').trim(),
+    recurringMonthKey: recurringInstanceMonthKey(row) || normalizeRecurringMonthKey(row?.monthKey || row?.date || row?.dateISO || '') || getMonthKeyFromDate(),
+    recurringDueDateISO: String(row?.recurringDueDateISO || '').trim(),
+    recurringEnabled: false,
+    mode: 'edit',
+  });
+  state.modal = { type: 'tx', txId: String(row?.id || '').trim() };
+  return triggerRender({ preserveUi: false, force: true });
+}
+
+function openRecurringMovementModal(recurringId = '', monthKey = getSelectedBalanceMonthKey()) {
+  const safeRecurringId = String(recurringId || '').trim();
+  if (!safeRecurringId) return Promise.resolve(null);
+  const recurringData = state.balance?.recurring?.[safeRecurringId];
+  if (!recurringData) return Promise.resolve(null);
+  const existing = findRecurringInstanceTx(safeRecurringId, monthKey, balanceTxList(), recurringData);
+  if (existing) return openEditMovementModal(existing);
+  return openCreateMovementModal(movementDraftFromRecurring(safeRecurringId, recurringData, monthKey));
+}
+
+function closeMovementModal() {
+  resetMovementForm();
+  state.modal = { type: null };
+  return triggerRender({ preserveUi: false, force: true });
+}
+
+function setMovementFormBusy(formEl = null, busy = false) {
+  const meta = getMovementFormMeta();
+  meta.saving = !!busy;
+  if (!formEl?.querySelectorAll) return;
+  formEl.dataset.saving = busy ? '1' : '0';
+  formEl.querySelectorAll('button[type="submit"]').forEach((button) => {
+    button.disabled = !!busy;
+    const idleLabel = String(button.dataset.submitLabel || button.textContent || '').trim();
+    button.textContent = busy ? 'Guardando…' : idleLabel;
+  });
 }
 
 function buildDrilldownRows(txType, monthKey) {
@@ -9763,8 +10109,10 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
     financeDebug('balance month rows', { monthKey, monthCount });
   }
   const accountsById = Object.fromEntries(accounts.map((account) => [account.id, account]));
-  const allMonthTx = [...txRows.filter((row) => row.monthKey === monthKey), ...recurringForMonth(monthKey)];
-  const tx = allMonthTx
+  const monthActualTx = txRows.filter((row) => row.monthKey === monthKey);
+  const monthPendingRecurringTx = recurringVirtualForMonth(monthKey, txRows, { includeFuture: false });
+  const allMonthDisplayTx = [...monthActualTx, ...monthPendingRecurringTx];
+  const tx = allMonthDisplayTx
     .filter((row) => state.balanceFilterType === 'all' || row.type === state.balanceFilterType)
     .filter((row) => state.balanceFilterCategory === 'all' || row.category === state.balanceFilterCategory)
     .filter((row) => {
@@ -9778,14 +10126,14 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
     });
   const monthSummary = summaryForMonth(monthKey, accountsById, txRows);
   const prevSummary = summaryForMonth(offsetMonthKey(monthKey, -1), accountsById, txRows);
-  const monthAgg = calcAggForBucket(allMonthTx, accountsById);
-  financeDebug('balance aggregate', { monthKey, rows: allMonthTx.length, monthAgg });
+  const monthAgg = calcAggForBucket(monthActualTx, accountsById);
+  financeDebug('balance aggregate', { monthKey, rows: monthActualTx.length, monthAgg });
   const monthAccountsDeltaReal = calcAccountsDeltaForBucket('month', monthKey, state.accounts);
   const prevMonthKey = offsetMonthKey(monthKey, -1);
-  const prevMonthRows = [...txRows.filter((row) => row.monthKey === prevMonthKey), ...recurringForMonth(prevMonthKey)];
+  const prevMonthRows = txRows.filter((row) => row.monthKey === prevMonthKey);
   const prevMonthAgg = calcAggForBucket(prevMonthRows, accountsById);
   const prevMonthAccountsDeltaReal = calcAccountsDeltaForBucket('month', prevMonthKey, state.accounts);
-  const statsMonth = buildBalanceStats(allMonthTx, accountsById);
+  const statsMonth = buildBalanceStats(monthActualTx, accountsById);
   const spentByCategory = statsMonth.spentByCategoryPersonal;
   const totalSpent = statsMonth.totalSpentPersonal;
   const budgetItems = getBudgetItems(monthKey);
@@ -11148,11 +11496,11 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
   if (state.modal.type === 'tx') {
   const accountsById = Object.fromEntries(resolvedAccounts.map((a) => [a.id, a]));
   const txEdit = state.modal.txId ? resolvedTxRows.find((row) => row.id === state.modal.txId) : null;
-  const defaultAccountId = txEdit?.accountId || state.balanceFormState.accountId || state.lastMovementAccountId || state.balance.defaultAccountId || resolvedAccounts[0]?.id || '';
+  const defaultAccountId = txEdit?.accountId || state.balanceFormState.accountId || state.balance.defaultAccountId || '';
   const defaultType = txEdit?.type || state.balanceFormState.type || 'expense';
   const defaultCategory = txEdit?.category || state.balanceFormState.category || '';
   const defaultDate = txEdit?.date || isoToDay(txEdit?.dateISO || '') || state.balanceFormState.dateISO || dayKeyFromTs(Date.now());
-  const defaultAmount = txEdit?.amount || state.balanceFormState.amount || '';
+  const defaultAmount = txEdit ? String(txEdit?.amount ?? '') : (state.balanceFormState.amount || '');
   const defaultNote = txEdit?.note || state.balanceFormState.note || '';
   const defaultLinkedHabitId = (txEdit?.linkedHabitId || state.balanceFormState.linkedHabitId || '').trim();
   const defaultAllocation = normalizeTxAllocation(txEdit?.allocation || {
@@ -11170,11 +11518,29 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
   const defaultFoodPlace = state.balanceFormState.foodPlace || '';
   const defaultFoodExtrasOpen = !!state.balanceFormState.foodExtrasOpen;
   const defaultFoodResultsScrollTop = Number(state.balanceFormState.foodResultsScrollTop || 0);
-  const defaultFrom = txEdit?.fromAccountId || state.balanceFormState.fromAccountId || defaultAccountId;
-  const defaultTo = txEdit?.toAccountId || state.balanceFormState.toAccountId || resolvedAccounts[1]?.id || resolvedAccounts[0]?.id || '';
+  const defaultFrom = txEdit?.fromAccountId || state.balanceFormState.fromAccountId || defaultAccountId || '';
+  const defaultTo = txEdit?.toAccountId || state.balanceFormState.toAccountId || '';
   const defaultPersonalRatioMode = Number.isFinite(Number(txEdit?.personalRatio)) ? 'custom' : (state.balanceFormState.personalRatioMode || 'auto');
   const defaultPersonalRatioPercent = Number.isFinite(Number(txEdit?.personalRatio)) ? String(Math.round(clamp01(txEdit.personalRatio, 1) * 100)) : (state.balanceFormState.personalRatioPercent || '');
   const defaultPersonalRatioAdvanced = Number.isFinite(Number(txEdit?.personalRatio)) || !!state.balanceFormState.personalRatioAdvanced;
+  const linkedRecurringId = String(state.balanceFormState.recurringId || txEdit?.recurringId || '').trim();
+  const recurringTemplate = linkedRecurringId ? (state.balance?.recurring?.[linkedRecurringId] || null) : null;
+  const recurringSchedule = recurringTemplate?.schedule || txEdit?.schedule || {};
+  const isRecurringInstanceEdit = !!(txEdit && linkedRecurringId);
+  const defaultRecurringEnabled = !!state.balanceFormState.recurringEnabled;
+  const defaultRecurringDay = Math.max(1, Math.min(31, Number(
+    state.balanceFormState.recurringDay
+    || recurringSchedule.dayOfMonth
+    || recurringSchedule.dueDay
+    || recurringSchedule.paymentDay
+    || recurringSchedule.scheduledDay
+    || String(defaultDate).slice(8, 10)
+    || 1
+  )));
+  const defaultRecurringStart = state.balanceFormState.recurringStart || recurringSchedule.startDate || defaultDate;
+  const defaultRecurringEnd = state.balanceFormState.recurringEnd || recurringSchedule.endDate || '';
+  const recurringToggleLabel = isRecurringInstanceEdit ? 'Actualizar recurrente' : 'Activar';
+  const isMovementSaving = !!getMovementFormMeta().saving;
   const accountOptions = resolvedAccounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
   const ticketImportState = state.modal.ticketImport || { raw: '', parsed: null, error: '', warnings: [], open: false };
   const ticketPreview = ticketImportState.parsed?.ok ? ticketImportState.parsed.data : null;
@@ -11204,6 +11570,9 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
 
     <form class="finance-entry-form finance-tx-form fm-form fin-move-form" data-balance-form>
       <input type="hidden" name="txId" value="${escapeHtml(txEdit?.id || '')}" />
+      <input type="hidden" name="recurringId" value="${escapeHtml(linkedRecurringId)}" />
+      <input type="hidden" name="recurringMonthKey" value="${escapeHtml(state.balanceFormState.recurringMonthKey || txEdit?.recurringMonthKey || defaultDate.slice(0, 7))}" />
+      <input type="hidden" name="recurringDueDateISO" value="${escapeHtml(state.balanceFormState.recurringDueDateISO || txEdit?.recurringDueDateISO || '')}" />
 
       <div class="fm-grid fm-grid--top fin-move-grid">
 
@@ -11392,16 +11761,16 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
   
   <div class="fm-details__body finFixed__fields">
 <div class="boton-activar-programacion">
-  <label><input type="checkbox" name="isRecurring" ${txEdit?.recurringId ? "checked" : ""}/> Activar</label>
+  <label><input type="checkbox" name="isRecurring" ${defaultRecurringEnabled ? "checked" : ""}/> ${recurringToggleLabel}</label>
   
   <select name="recurringFrequency"><option value="monthly">Mensual</option></select>
 </div>
 <div class="seleccion-programacion">
-  <input type="number" name="recurringDay" min="1" max="31" placeholder="Día del mes" value="${escapeHtml(txEdit?.schedule?.dayOfMonth || "")}"/>
+  <input type="number" name="recurringDay" min="1" max="31" placeholder="Día del mes" value="${escapeHtml(String(defaultRecurringDay || ""))}"/>
   
-  <input type="date" name="recurringStart" value="${escapeHtml(txEdit?.schedule?.startDate || defaultDate)}"/>
+  <input type="date" name="recurringStart" value="${escapeHtml(defaultRecurringStart)}"/>
   
-  <input type="date" name="recurringEnd" value="${escapeHtml(txEdit?.schedule?.endDate || "")}"/>
+  <input type="date" name="recurringEnd" value="${escapeHtml(defaultRecurringEnd)}"/>
 </div>
 
   </div>
@@ -11409,7 +11778,7 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
 </details>
       <div class="fm-actions fin-move-footer finWizardFooter">
         <button class="finance-pill finWizardNext" type="button" data-tx-step-next>Continuar</button>
-        <button class="finance-pill fm-action fm-action--submit finWizardSubmit" type="submit">${txEdit ? 'Guardar cambios' : 'Añadir movimiento'}</button>
+        <button class="finance-pill fm-action fm-action--submit finWizardSubmit" type="submit" data-submit-label="${escapeHtml(txEdit ? 'Guardar cambios' : 'Añadir movimiento')}" ${isMovementSaving ? 'disabled' : ''}>${isMovementSaving ? 'Guardando…' : (txEdit ? 'Guardar cambios' : 'Añadir movimiento')}</button>
       </div>
     </form>
   </div>`;
@@ -11509,14 +11878,23 @@ if (form) {
   if (state.modal.type === 'tx-day') {
     const day = String(state.modal.day || '');
     const monthKey = String(day).slice(0, 7);
-    const rows = [...resolvedTxRows.filter((row) => isoToDay(row.date || row.dateISO || '') === day), ...recurringForMonth(monthKey).filter((row) => row.date === day)].sort((a, b) => txSortTs(b) - txSortTs(a));
+    const rows = [
+      ...resolvedTxRows.filter((row) => isoToDay(row.date || row.dateISO || '') === day),
+      ...recurringVirtualForMonth(monthKey, resolvedTxRows, { includeFuture: true }).filter((row) => row.date === day)
+    ].sort((a, b) => txSortTs(b) - txSortTs(a));
     const accountName = (id) => escapeHtml(resolvedAccounts.find((a) => a.id === id)?.name || 'Sin cuenta');
     const ratioAccountsById = Object.fromEntries(resolvedAccounts.map((a) => [a.id, a]));
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Movimientos del día ${escapeHtml(day)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><div class="financeTxList">${rows.map((row) => {
       const accountText = row.type === 'transfer' ? `${accountName(row.fromAccountId)} → ${accountName(row.toAccountId)}` : accountName(row.accountId);
       const ratioMy = personalRatioForTx(row, ratioAccountsById);
       const ratioBadge = row.type === 'transfer' ? '' : `<small> · Imputado a mí: ${Math.round(ratioMy * 100)}%</small>`;
-      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${ratioBadge}${row.recurringVirtual ? '<small> · recurrente</small>' : ''}</span><strong class="${toneClass(personalDeltaForTx(row, ratioAccountsById))}">${fmtCurrency(row.amount)}</strong><span class="finance-row">${row.recurringVirtual ? '' : `<button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button>`}</span></div>`;
+      const recurringBadge = row.recurringVirtual
+        ? `<small> · recurrente ${row.recurringStatus === 'upcoming' ? 'programado' : (row.recurringStatus === 'due' ? 'vence hoy' : 'pendiente')}</small>`
+        : '';
+      const actionButtons = row.recurringVirtual
+        ? `<button class="finance-pill finance-pill--mini" data-recurring-instance-open="${escapeHtml(String(row.recurringId || ''))}" data-recurring-month="${escapeHtml(String(row.monthKey || monthKey))}">✏️</button>`
+        : `<button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button>`;
+      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${ratioBadge}${recurringBadge}</span><strong class="${toneClass(personalDeltaForTx(row, ratioAccountsById))}">${fmtCurrency(row.amount)}</strong><span class="finance-row">${actionButtons}</span></div>`;
     }).join('') || '<p class="finance-empty">Sin movimientos.</p>'}</div></div>`;
     return;
   }
@@ -12094,6 +12472,13 @@ function persistBalanceFormState(form) {
     foodPlace: String(fd.get('foodPlace') || ''),
     foodItem: String(fd.get('foodItem') || ''),
     foodId: String(fd.get('foodId') || ''),
+    recurringId: String(fd.get('recurringId') || ''),
+    recurringMonthKey: String(fd.get('recurringMonthKey') || ''),
+    recurringDueDateISO: String(fd.get('recurringDueDateISO') || ''),
+    recurringEnabled: fd.get('isRecurring') === 'on',
+    recurringDay: String(fd.get('recurringDay') || ''),
+    recurringStart: String(fd.get('recurringStart') || ''),
+    recurringEnd: String(fd.get('recurringEnd') || ''),
     foodExtrasOpen: !!form.querySelector('[data-section="food-extras"]')?.open,
     foodResultsScrollTop: Number(form.querySelector('[data-food-item-results]')?.scrollTop || 0)
   };
@@ -12746,6 +13131,7 @@ async function render() {
     if (state.error) { host.innerHTML = `<article class=\"finance-panel\"><h3>Error cargando finanzas</h3><p>${state.error}</p></article>`; return; }
     await renderFinanceStatsDonutChart();
     await ensureBtcEurPrice();
+    await ensureRecurringCurrentMonthInstances();
     const accounts = buildAccountModels();
     const totalSeries = buildTotalSeries(accounts);
     const txRows = balanceTxList();
@@ -13928,9 +14314,17 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     }
     const txEdit = target.closest('[data-tx-edit]')?.dataset.txEdit;
     if (txEdit) {
-      state.balanceFormState = { ...state.balanceFormState, txWizardStep: 'base' };
-      state.modal = { type: 'tx', txId: txEdit };
-      triggerRender();
+      const currentRow = balanceTxList().find((row) => row.id === txEdit) || null;
+      if (!currentRow) return;
+      openEditMovementModal(currentRow);
+      return;
+    }
+    const recurringInstanceOpen = target.closest('[data-recurring-instance-open]')?.dataset.recurringInstanceOpen;
+    if (recurringInstanceOpen) {
+      const recurringMonth = target.closest('[data-recurring-month]')?.dataset.recurringMonth
+        || target.dataset.recurringMonth
+        || getSelectedBalanceMonthKey();
+      openRecurringMovementModal(recurringInstanceOpen, recurringMonth);
       return;
     }
 const txDelete = target.closest('[data-tx-delete]')?.dataset.txDelete;
@@ -13988,7 +14382,16 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
       return;
     }
     const nextView = target.closest('[data-finance-view]')?.dataset.financeView; if (nextView) { state.activeView = nextView; if (nextView === 'products') state.foodProductsView = { ...(state.foodProductsView || {}), tab: 'list' }; triggerRender(); return; }
-    if (target.closest('[data-close-modal]') || target.id === 'finance-modalOverlay') { state.modal = { type: null }; triggerRender(); return; }
+    if (target.closest('[data-close-modal]') || target.id === 'finance-modalOverlay') {
+      if (state.modal?.type === 'tx') {
+        if (getMovementFormMeta().saving) return;
+        closeMovementModal();
+        return;
+      }
+      state.modal = { type: null };
+      triggerRender();
+      return;
+    }
     if (target.closest('[data-history]')) { state.modal = { type: 'history' }; triggerRender(); return; }
     if (target.closest('[data-new-account]')) { state.modal = { type: 'new-account' }; triggerRender(); return; }
     const openAccount = target.closest('[data-open-detail]')?.dataset.openDetail; if (openAccount && !target.closest('[data-account-input]') && !target.closest('[data-account-save]') && !target.closest('[data-delete-account]')) { openAccountDetail(openAccount); return; }
@@ -14132,15 +14535,16 @@ if (target.closest('[data-test-fixed-expense]')) {
     const drilldownAdd = target.closest('[data-drilldown-add]')?.dataset.drilldownAdd;
     if (drilldownAdd && state.modal.type === 'balance-drilldown') {
       const monthKey = offsetMonthKey(getMonthKeyFromDate(), Number(state.modal.monthOffset || 0));
-      state.balanceFormState = { ...state.balanceFormState, type: drilldownAdd, dateISO: `${monthKey}-01`, txWizardStep: 'base' };
-      state.modal = { type: 'tx', txType: drilldownAdd };
-      triggerRender();
+      openCreateMovementModal({ type: drilldownAdd, dateISO: `${monthKey}-01` });
       return;
     }
     if (target.closest('[data-balance-showmore]')) { state.balanceShowAllTx = !state.balanceShowAllTx; triggerRender(); return; }
     const openModal = target.closest('[data-open-modal]')?.dataset.openModal;
     if (openModal) {
-      if (openModal === 'tx') state.balanceFormState = { ...state.balanceFormState, txWizardStep: 'base' };
+      if (openModal === 'tx') {
+        openCreateMovementModal();
+        return;
+      }
       state.modal = { type: openModal, budgetId: null };
       triggerRender();
       return;
@@ -14692,7 +15096,13 @@ if (event.target.matches('[data-fixed-expense-form]')) {
     createdAt: isEditMode ? Number(formState.createdAt || 0) : now
   };
 
-  await safeFirebase(() => set(ref(db, `${state.financePath}/recurring/${recurringId}`), payload));
+  try {
+    await set(ref(db, `${state.financePath}/recurring/${recurringId}`), payload);
+  } catch (error) {
+    log('firebase error on fixed expense save', error);
+    toast('No se pudo guardar el gasto fijo');
+    return;
+  }
 
   state.fixedExpenseFormState = defaultFixedExpenseFormState();
   state.modal = { type: null };
@@ -14824,7 +15234,10 @@ if (event.target.matches('[data-fixed-expense-form]')) {
     }
     if (event.target.matches('[data-balance-form]')) {
       event.preventDefault();
-      const form = new FormData(event.target);
+      const formEl = event.target;
+      persistBalanceFormState(formEl);
+      if (getMovementFormMeta().saving) return;
+      const form = new FormData(formEl);
       const txId = String(form.get('txId') || '').trim();
       const type = normalizeTxType(String(form.get('type') || 'expense'));
       const amount = parseMoney(String(form.get('amount') || ''));
@@ -14861,12 +15274,11 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         customStart: allocationCustomStart,
         customEnd: allocationCustomEnd
       } : { mode: 'point', period: 'day', anchorDate: dateISO }, dateISO);
-      if (!Number.isFinite(amount) || amount <= 0) { 
-          console.warn('[FINANCE][BALANCE] invalid amount', form.get('amount'), amount);
-
-        toast('Cantidad inválida'); 
-        
-        return; }
+      if (!Number.isFinite(amount) || amount <= 0) {
+        console.warn('[FINANCE][BALANCE] invalid amount', form.get('amount'), amount);
+        toast('Cantidad inválida');
+        return;
+      }
       if ((type === 'income' || type === 'expense') && !accountId) { toast('Selecciona una cuenta'); return; }
       if (type === 'transfer' && (!fromAccountId || !toAccountId || fromAccountId === toAccountId)) { toast('Transferencia inválida'); return; }
       const mealType = normalizeFoodName(String(form.get('foodMealType') || ''));
@@ -14899,6 +15311,20 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       }).filter((row) => row.name) : [];
       const ticketDataFromDraft = state.balanceFormState?.ticketData;
       const ticketScanMetaFromDraft = state.balanceFormState?.ticketScanMeta;
+      const requestedRecurringTemplateUpdate = form.get('isRecurring') === 'on';
+      const recurringFrequency = String(form.get('recurringFrequency') || 'monthly');
+      const recurringDay = Number(form.get('recurringDay') || 1);
+      const recurringStart = toIsoDay(String(form.get('recurringStart') || dateISO)) || dateISO;
+      const recurringEndRaw = toIsoDay(String(form.get('recurringEnd') || ''));
+      const recurringMonthKey = dateISO.slice(0, 7);
+      let prev = txId ? balanceTxList().find((row) => row.id === txId) : null;
+      let effectiveRecurringId = String(form.get('recurringId') || prev?.recurringId || '').trim();
+      if (requestedRecurringTemplateUpdate && !effectiveRecurringId) {
+        effectiveRecurringId = push(ref(db, `${state.financePath}/recurring`)).key;
+      }
+      const linkedRecurringTemplate = effectiveRecurringId
+        ? (state.balance?.recurring?.[effectiveRecurringId] || null)
+        : null;
       let extras = isFoodCategory(category)
         ? { items: foodItems.length ? foodItems : (item ? [{ foodId: foodIdFromForm || '', productKey: firebaseSafeKey(item), name: item, qty: 1, unit: 'ud', unitPrice: amount, amount, totalPrice: amount, price: amount, mealType, cuisine, place, healthy: cuisine }] : []), filters: { mealType: mealType || '', cuisine: cuisine || '', place: place || '', healthy: cuisine || '' } }
         : undefined;
@@ -14912,18 +15338,25 @@ if (event.target.matches('[data-fixed-expense-form]')) {
           },
         };
       }
-      const saveId = txId || push(ref(db, `${state.financePath}/transactions`)).key;
-      const prev = txId ? balanceTxList().find((row) => row.id === txId) : null;
-      const isRecurring = form.get('isRecurring') === 'on';
-      const recurringFrequency = String(form.get('recurringFrequency') || 'monthly');
-      const recurringDay = Number(form.get('recurringDay') || 1);
-      const recurringStart = toIsoDay(String(form.get('recurringStart') || dateISO)) || dateISO;
-      const recurringEndRaw = toIsoDay(String(form.get('recurringEnd') || ''));
+      if (effectiveRecurringId) {
+        extras = mergeRecurringTemplateExtras(linkedRecurringTemplate?.extras, extras);
+      }
 
       const nextPersonalRatio = (type === 'transfer' || personalRatioMode !== 'custom')
         ? null
         : clamp01(personalRatioPercent / 100, 1);
 
+      if (!txId && effectiveRecurringId) {
+        const duplicate = findRecurringInstanceTx(effectiveRecurringId, recurringMonthKey, balanceTxList(), linkedRecurringTemplate);
+        if (duplicate) prev = duplicate;
+      }
+      const saveId = txId || prev?.id || push(ref(db, `${state.financePath}/transactions`)).key;
+      const writeTs = nowTs();
+      const scheduledRecurringDateISO = effectiveRecurringId
+        ? (toIsoDay(String(form.get('recurringDueDateISO') || ''))
+          || resolveRecurringScheduledDateISO(linkedRecurringTemplate || { schedule: { dayOfMonth: recurringDay } }, recurringMonthKey)
+          || dateISO)
+        : '';
       const payload = {
         type,
         amount,
@@ -14937,12 +15370,17 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         ...(Number.isFinite(nextPersonalRatio) ? { personalRatio: nextPersonalRatio } : {}),
         linkedHabitId,
         allocation,
+        ...(effectiveRecurringId ? {
+          recurringId: effectiveRecurringId,
+          recurringMonthKey,
+          recurringDueDateISO: scheduledRecurringDateISO,
+        } : {}),
         extras: extras || null,
-        updatedAt: nowTs(),
-        createdAt: Number(prev?.createdAt || 0) || nowTs()
+        updatedAt: writeTs,
+        createdAt: Number(prev?.createdAt || 0) || writeTs
       };
       const canonicalTxPath = `${state.financePath}/transactions/${saveId}`;
-      const legacySourcePath = txId && prev?.__path && prev.__path !== canonicalTxPath ? String(prev.__path) : '';
+      const legacySourcePath = prev?.__path && prev.__path !== canonicalTxPath ? String(prev.__path) : '';
       console.log('[FINANCE][BALANCE] save transaction', canonicalTxPath);
       if (window?.BOOKSHELL_DEV || window?.localStorage?.getItem('bookshell_debug_expense_payload') === '1') {
         console.log('[FINANCE][DEBUG] expense payload', payload);
@@ -14950,16 +15388,9 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       if (legacySourcePath) {
         financeDebug('migrating edited legacy transaction', { txId: saveId, from: legacySourcePath, to: canonicalTxPath });
       }
-      await safeFirebase(() => update(ref(db), {
-        [canonicalTxPath]: payload,
-        ...(legacySourcePath ? { [legacySourcePath]: null } : {})
-      }));
-      if (type !== 'transfer') {
-        await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
-      }
-      if (isRecurring) {
-        const recId = prev?.recurringId || push(ref(db, `${state.financePath}/recurring`)).key;
-        await safeFirebase(() => set(ref(db, `${state.financePath}/recurring/${recId}`), {
+      const recurringPayload = requestedRecurringTemplateUpdate && effectiveRecurringId
+        ? {
+          ...(linkedRecurringTemplate && typeof linkedRecurringTemplate === 'object' ? linkedRecurringTemplate : {}),
           type,
           amount,
           accountId: type === 'transfer' ? '' : accountId,
@@ -14970,62 +15401,97 @@ if (event.target.matches('[data-fixed-expense-form]')) {
           ...(Number.isFinite(nextPersonalRatio) ? { personalRatio: nextPersonalRatio } : {}),
           linkedHabitId,
           allocation,
-          extras: extras || null,
+          extras: mergeRecurringTemplateExtras(linkedRecurringTemplate?.extras, extras) || null,
           schedule: { frequency: recurringFrequency, dayOfMonth: recurringDay, startDate: recurringStart, endDate: recurringEndRaw || '' },
-          updatedAt: nowTs(),
-          createdAt: Number(prev?.createdAt || 0) || nowTs()
-        }));
+          disabled: linkedRecurringTemplate?.disabled === true,
+          autoCreate: linkedRecurringTemplate?.autoCreate !== false,
+          updatedAt: writeTs,
+          createdAt: Number(linkedRecurringTemplate?.createdAt || 0) || writeTs
+        }
+        : null;
+      const rootUpdates = {
+        [canonicalTxPath]: payload,
+        ...(legacySourcePath ? { [legacySourcePath]: null } : {}),
+        ...(type !== 'transfer' ? { [`${state.financePath}/catalog/categories/${category}`]: { name: category, lastUsedAt: writeTs } } : {}),
+        ...(recurringPayload && effectiveRecurringId ? { [`${state.financePath}/recurring/${effectiveRecurringId}`]: recurringPayload } : {})
+      };
+      setMovementFormBusy(formEl, true);
+      try {
+        await update(ref(db), rootUpdates);
+      } catch (error) {
+        log('firebase error on movement save', error);
+        toast('No se pudo guardar el movimiento');
+        setMovementFormBusy(formEl, false);
+        return;
       }
       if (extras?.items?.length) {
-        await ensureFoodCatalogLoaded();
-        for (const foodItem of extras.items) {
-          const savedFoodId = await upsertFoodItem({
-            id: foodItem.foodId || '',
-            name: foodItem.name,
-            mealType: foodItem.mealType || mealType,
-            cuisine: foodItem.cuisine || cuisine,
-            healthy: foodItem.healthy || foodItem.cuisine || cuisine,
-            place: foodItem.place || place,
-            defaultPrice: Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount)
-          }, true, { lastCategory: category, lastAccountId: accountId, lastNote: note });
-          foodItem.foodId = savedFoodId;
-          await recordFoodPricePoint(savedFoodId, Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount), 'expense', {
-            ts: dateISO ? parseDayKey(dateISO) : nowTs(),
-            date: dateISO || dayKeyFromTs(nowTs()),
-            vendor: foodItem.place || place || 'unknown',
-            unitPrice: Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount),
-            qty: Math.max(1, Number(foodItem.qty || 1)),
-            unit: String(foodItem.unit || 'ud').trim() || 'ud',
-            totalPrice: Number(foodItem.totalPrice || foodItem.amount || foodItem.price || amount),
-            linePrice: Number(foodItem.totalPrice || foodItem.amount || foodItem.price || amount),
-            expenseId: saveId
-          });
-          financeDebug('transaction food usage saved', { txId: saveId, foodId: savedFoodId, name: foodItem.name });
-          if (foodItem.mealType || mealType) await upsertFoodOption('typeOfMeal', foodItem.mealType || mealType, true);
-          if (foodItem.cuisine || cuisine) await upsertFoodOption('cuisine', foodItem.cuisine || cuisine, true);
-          if (foodItem.place || place) await upsertFoodOption('place', foodItem.place || place, true);
+        try {
+          await ensureFoodCatalogLoaded();
+          for (const foodItem of extras.items) {
+            const savedFoodId = await upsertFoodItem({
+              id: foodItem.foodId || '',
+              name: foodItem.name,
+              mealType: foodItem.mealType || mealType,
+              cuisine: foodItem.cuisine || cuisine,
+              healthy: foodItem.healthy || foodItem.cuisine || cuisine,
+              place: foodItem.place || place,
+              defaultPrice: Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount)
+            }, true, { lastCategory: category, lastAccountId: accountId, lastNote: note });
+            foodItem.foodId = savedFoodId;
+            await recordFoodPricePoint(savedFoodId, Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount), 'expense', {
+              ts: dateISO ? parseDayKey(dateISO) : nowTs(),
+              date: dateISO || dayKeyFromTs(nowTs()),
+              vendor: foodItem.place || place || 'unknown',
+              unitPrice: Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount),
+              qty: Math.max(1, Number(foodItem.qty || 1)),
+              unit: String(foodItem.unit || 'ud').trim() || 'ud',
+              totalPrice: Number(foodItem.totalPrice || foodItem.amount || foodItem.price || amount),
+              linePrice: Number(foodItem.totalPrice || foodItem.amount || foodItem.price || amount),
+              expenseId: saveId
+            });
+            financeDebug('transaction food usage saved', { txId: saveId, foodId: savedFoodId, name: foodItem.name });
+            if (foodItem.mealType || mealType) await upsertFoodOption('typeOfMeal', foodItem.mealType || mealType, true);
+            if (foodItem.cuisine || cuisine) await upsertFoodOption('cuisine', foodItem.cuisine || cuisine, true);
+            if (foodItem.place || place) await upsertFoodOption('place', foodItem.place || place, true);
+          }
+        } catch (error) {
+          log('no se pudo sincronizar el catálogo de comida tras guardar el movimiento', error);
         }
       }
       const touched = new Set([payload.accountId, payload.fromAccountId, payload.toAccountId, prev?.accountId, prev?.fromAccountId, prev?.toAccountId].filter(Boolean));
       const recomputeStart = [dateISO, prev?.date, isoToDay(prev?.dateISO || '')].filter(Boolean).sort()[0] || dateISO;
-      const freshRoot = await loadFinanceRoot();
-      await Promise.all(Array.from(touched).map((account) => recomputeAccountEntries(account, recomputeStart, freshRoot)));
-      const refreshedRoot = await loadFinanceRoot();
+      try {
+        const freshRoot = await loadFinanceRoot();
+        await Promise.all(Array.from(touched).map((account) => recomputeAccountEntries(account, recomputeStart, freshRoot)));
+        const refreshedRoot = await loadFinanceRoot();
+        syncLocalAccountsFromRoot(refreshedRoot);
+      } catch (error) {
+        log('no se pudieron recomputar cuentas tras guardar movimiento', error);
+      }
       state.balance = state.balance || {};
       state.balance.transactions = {
         ...(state.balance.transactions || {}),
         [saveId]: payload
       };
+      if (recurringPayload && effectiveRecurringId) {
+        state.balance.recurring = {
+          ...(state.balance.recurring || {}),
+          [effectiveRecurringId]: recurringPayload
+        };
+      }
+      if (type !== 'transfer') {
+        state.balance.categories = {
+          ...(state.balance.categories || {}),
+          [category]: { name: category, lastUsedAt: writeTs }
+        };
+      }
       pruneLocalLegacyTxRows(saveId);
-      syncLocalAccountsFromRoot(refreshedRoot);
       clearFinanceDerivedCaches();
       scheduleAggregateRebuild();
-      localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId || fromAccountId || '');
+      try { localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId || fromAccountId || ''); } catch (_) {}
       state.lastMovementAccountId = accountId || fromAccountId || '';
-      state.balanceFormState = {};
-      state.modal = { type: null };
-      toast(txId ? 'Movimiento actualizado' : 'Movimiento guardado');
-      triggerRender();
+      toast((txId || prev?.id) ? 'Movimiento actualizado' : 'Movimiento guardado');
+      closeMovementModal();
       return;
     }
     if (event.target.matches('[data-budget-form]')) {

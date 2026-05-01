@@ -1,4 +1,4 @@
-import { auth, db, onUserChange } from "../../firebase/index.js";
+import { auth, db, firebasePaths, getUserDataKey, onUserChange } from "../../firebase/index.js";
 import {
   get,
   onValue,
@@ -329,8 +329,16 @@ function buildDefaultMissionDraft() {
   };
 }
 
+function resolveGeneralUserKey(value = state.uid) {
+  const explicitUserKey = String(value || "").trim();
+  const currentUid = String(auth.currentUser?.uid || "").trim();
+  if (explicitUserKey && explicitUserKey !== currentUid) return explicitUserKey;
+  return getUserDataKey(auth.currentUser) || explicitUserKey;
+}
+
 function getGeneralRoot(uid = state.uid) {
-  return uid ? `v2/users/${uid}/${GENERAL_ROOT_SEGMENT}` : "";
+  const userKey = resolveGeneralUserKey(uid);
+  return userKey ? firebasePaths.generalCenterRoot(userKey) : "";
 }
 
 function getMissionsRoot() {
@@ -589,18 +597,19 @@ function getLiveModuleSnapshot(moduleKey = "") {
 }
 
 async function fetchRemoteModuleSnapshot(moduleKey = "") {
-  if (!state.uid) return null;
+  const userKey = resolveGeneralUserKey();
+  if (!userKey) return null;
   switch (moduleKey) {
     case "habits": {
-      const snapshot = await get(ref(db, `v2/users/${state.uid}/habits`));
+      const snapshot = await get(ref(db, firebasePaths.habitsRoot(userKey)));
       return snapshot.val() || {};
     }
     case "recipes": {
-      const snapshot = await get(ref(db, `v2/users/${state.uid}/recipes`));
+      const snapshot = await get(ref(db, firebasePaths.recipesRoot(userKey)));
       return snapshot.val() || {};
     }
     case "finance": {
-      const [primaryPath, legacyPath] = resolveFinancePathCandidates(state.uid);
+      const [primaryPath, legacyPath] = resolveFinancePathCandidates(userKey);
       const [primarySnap, legacySnap] = await Promise.all([
         get(ref(db, primaryPath)),
         primaryPath === legacyPath ? Promise.resolve({ val: () => ({}) }) : get(ref(db, legacyPath)),
@@ -619,7 +628,7 @@ async function fetchRemoteModuleSnapshot(moduleKey = "") {
       };
     }
     case "videos": {
-      const snapshot = await get(ref(db, `v2/users/${state.uid}/videosHub/videos`));
+      const snapshot = await get(ref(db, firebasePaths.videosHubVideos(userKey)));
       return snapshot.val() || {};
     }
     default:

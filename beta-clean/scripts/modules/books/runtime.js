@@ -1,5 +1,5 @@
 // books.js
-import { db, auth, onUserChange, getStorageService } from "../../shared/firebase/index.js";
+import { db, auth, onUserChange, getStorageService, firebasePaths, getUserDataKey } from "../../shared/firebase/index.js";
 
 import {
   ref,
@@ -66,10 +66,11 @@ function setUserPaths(uid) {
     return;
   }
 
-  BOOKS_PATH = `v2/users/${currentUid}/books/books`;
-  READING_LOG_PATH = `v2/users/${currentUid}/books/readingLog`;
-  LINKS_PATH = `v2/users/${currentUid}/books/links`;
-  META_GENRES_PATH = `v2/users/${currentUid}/books/meta/genres`;
+  const userKey = getUserDataKey(auth.currentUser) || currentUid;
+  BOOKS_PATH = firebasePaths.booksLibrary(userKey);
+  READING_LOG_PATH = firebasePaths.booksReadingLog(userKey);
+  LINKS_PATH = firebasePaths.booksLinks(userKey);
+  META_GENRES_PATH = firebasePaths.booksMetaGenres(userKey);
 }
 
 // === Estado en memoria ===

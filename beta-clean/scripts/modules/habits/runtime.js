@@ -1,7 +1,7 @@
 // habits.js
 // Nueva pestaña de hábitos con check-ins, sesiones cronometradas y reportes
 
-import { db, auth, onUserChange } from "../../shared/firebase/index.js";
+import { db, auth, onUserChange, firebasePaths, getUserDataKey } from "../../shared/firebase/index.js";
 
 import {
   ref,
@@ -104,21 +104,22 @@ function setUserPaths(uid) {
   currentUid = uid || null;
   if (!currentUid) return;
 
-  BASE = `v2/users/${currentUid}`;
-  HABITS_ROOT = `${BASE}/habits`;
-  HABITS_PATH = `${HABITS_ROOT}/habits`;
-  HABIT_ACTIVE_SESSIONS_PATH = `${HABITS_PATH}/activeSessions`;
-  HABIT_CHECKS_PATH = `${HABITS_ROOT}/habitChecks`;
-  HABIT_SESSIONS_PATH = `${HABITS_ROOT}/habitSessions`;
-  HABIT_COUNTS_PATH = `${HABITS_ROOT}/habitCounts`;
-  HABIT_GROUPS_PATH = `${HABITS_ROOT}/habitGroups`;
-  HABIT_PREFS_PATH = `${HABITS_ROOT}/habitPrefs`;
-  HABIT_COMPARE_SETTINGS_PATH = `${HABITS_ROOT}/habitsCompareSettings`;
-  HABITS_SCHEDULE_PATH = `${HABITS_ROOT}/habitsSchedule`;
-  HABITS_SCHEDULE_DAY_CREDITS_PATH = `${HABITS_SCHEDULE_PATH}/dayCredits`;
-  HABIT_UI_PATH = `${HABITS_PATH}/ui`;
-  HABIT_UI_QUICK_COUNTERS_PATH = `${HABIT_UI_PATH}/quickCounters`;
-  HABIT_WORK_SCHEDULES_PATH = `${HABITS_ROOT}/workSchedules`;
+  const userKey = getUserDataKey(auth.currentUser) || currentUid;
+  BASE = firebasePaths.userRoot(userKey);
+  HABITS_ROOT = firebasePaths.habitsRoot(userKey);
+  HABITS_PATH = firebasePaths.habits(userKey);
+  HABIT_ACTIVE_SESSIONS_PATH = firebasePaths.activeHabitSessions(userKey);
+  HABIT_CHECKS_PATH = firebasePaths.habitChecks(userKey);
+  HABIT_SESSIONS_PATH = firebasePaths.habitSessions(userKey);
+  HABIT_COUNTS_PATH = firebasePaths.habitCounts(userKey);
+  HABIT_GROUPS_PATH = firebasePaths.habitGroups(userKey);
+  HABIT_PREFS_PATH = firebasePaths.habitPrefs(userKey);
+  HABIT_COMPARE_SETTINGS_PATH = firebasePaths.habitsCompareSettings(userKey);
+  HABITS_SCHEDULE_PATH = firebasePaths.habitsSchedule(userKey);
+  HABITS_SCHEDULE_DAY_CREDITS_PATH = firebasePaths.habitsScheduleDayCredits(userKey);
+  HABIT_UI_PATH = firebasePaths.habitUi(userKey);
+  HABIT_UI_QUICK_COUNTERS_PATH = firebasePaths.habitUiQuickCounters(userKey);
+  HABIT_WORK_SCHEDULES_PATH = firebasePaths.habitWorkSchedules(userKey);
 }
 
 // Storage keys

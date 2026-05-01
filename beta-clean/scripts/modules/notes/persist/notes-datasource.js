@@ -1,4 +1,4 @@
-import { auth, db } from "../../../shared/firebase/index.js";
+import { auth, db, firebasePaths, getUserDataKey } from "../../../shared/firebase/index.js";
 import {
   onValue,
   push,
@@ -18,9 +18,13 @@ import {
 } from "./notes-mapper.js?v=2026-04-28-v2";
 
 function resolveRootPath(uidParam = "") {
-  const uid = String(uidParam || auth.currentUser?.uid || "").trim();
-  if (!uid) throw new Error("UID no disponible para notas");
-  return `v2/users/${uid}/notes`;
+  const explicitUserKey = String(uidParam || "").trim();
+  const currentUid = String(auth.currentUser?.uid || "").trim();
+  const userKey = explicitUserKey
+    ? (explicitUserKey === currentUid ? getUserDataKey(auth.currentUser) : explicitUserKey)
+    : getUserDataKey(auth.currentUser);
+  if (!userKey) throw new Error("Clave de usuario no disponible para notas");
+  return firebasePaths.notes(userKey);
 }
 
 export function subscribeNotesRoot(uid, onData, onError) {

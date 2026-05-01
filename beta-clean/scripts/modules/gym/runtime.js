@@ -1,4 +1,4 @@
-import { db, auth } from "../../shared/firebase/index.js";
+import { db, auth, PUBLIC_PATHS, firebasePaths, getUserDataKey } from "../../shared/firebase/index.js";
 import { MET_CATALOG } from "./met-catalog.js";
 import { ensureEcharts } from "../../shared/vendors/echarts.js";
 import { upsertPublicCatalogItem } from "../../shared/services/public-catalog.js";
@@ -13,7 +13,8 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 const uid = auth.currentUser?.uid;
-if (!uid) throw new Error("[gym] No hay usuario autenticado");
+const userKey = getUserDataKey(auth.currentUser);
+if (!uid || !userKey) throw new Error("[gym] No hay usuario autenticado");
 
 const $viewGym = document.getElementById("view-gym");
 if ($viewGym) {
@@ -162,7 +163,7 @@ if ($viewGym) {
   const $gymCardioSummary = document.getElementById("gym-cardio-summary");
   const $gymCardioProgress = document.getElementById("gym-cardio-progress");
 
-const basePath = `v2/users/${uid}/gym/gym`;
+const basePath = firebasePaths.gymRoot(userKey);
 
   const exercisesRef = ref(db, `${basePath}/exercises`);
   const templatesRef = ref(db, `${basePath}/templates`);
@@ -323,14 +324,14 @@ function bindEvents() {
       const path = `${basePath}/exercises/${exerciseId}`;
       exercises[exerciseId] = { ...(exercises[exerciseId] || {}), id: exerciseId, ...payload };
       writeGymUpdate(path, payload);
-      upsertPublicCatalogItem("v2/public/catalog/gymExercises", { id: exerciseId, ...payload, category: muscleGroups[0] || "Other" }, uid).catch(() => {});
+      upsertPublicCatalogItem(PUBLIC_PATHS.gymExercises, { id: exerciseId, ...payload, category: muscleGroups[0] || "Other" }, uid).catch(() => {});
       editingExerciseId = null;
     } else {
       const newRef = push(exercisesRef);
       const exercise = { id: newRef.key, createdAt: now, ...payload };
       exercises[newRef.key] = exercise;
       writeGymSet(`${basePath}/exercises/${newRef.key}`, exercise);
-      upsertPublicCatalogItem("v2/public/catalog/gymExercises", { ...exercise, category: muscleGroups[0] || "Other" }, uid).catch(() => {});
+      upsertPublicCatalogItem(PUBLIC_PATHS.gymExercises, { ...exercise, category: muscleGroups[0] || "Other" }, uid).catch(() => {});
     }
 
     $gymCreateName.value = "";

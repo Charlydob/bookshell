@@ -1,4 +1,5 @@
 import { get, ref } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { auth, firebasePaths, getUserDataKey } from "../../shared/firebase/index.js";
 import { readModuleSnapshot } from "../../shared/storage/offline-snapshots.js";
 import { getOfflineQueueSummary } from "../../shared/storage/offline-queue.js";
 
@@ -333,7 +334,10 @@ async function measureRemoteRead(db, uid) {
 
   try {
     const startedAt = performance.now();
-    await get(ref(db, `v2/users/${uid}/meta/ui/navLayout`));
+    const userKey = String(uid || "").trim() === String(auth.currentUser?.uid || "").trim()
+      ? getUserDataKey(auth.currentUser)
+      : String(uid || "").trim();
+    await get(ref(db, firebasePaths.navLayout(userKey)));
     return {
       latencyMs: round(performance.now() - startedAt),
       available: true,

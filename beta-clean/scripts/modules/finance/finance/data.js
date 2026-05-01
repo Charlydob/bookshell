@@ -1,11 +1,15 @@
-import { auth } from "../../../shared/firebase/index.js";
+import { auth, firebasePaths, getUserDataKey } from "../../../shared/firebase/index.js";
 
-export function resolveFinancePathCandidates(uidParam) {
-  const uid = uidParam || auth.currentUser?.uid;
-  if (!uid) throw new Error("UID no disponible");
+export function resolveFinancePathCandidates(userKeyParam) {
+  const explicitUserKey = String(userKeyParam || "").trim();
+  const currentUid = String(auth.currentUser?.uid || "").trim();
+  const userKey = explicitUserKey
+    ? (explicitUserKey === currentUid ? getUserDataKey(auth.currentUser) : explicitUserKey)
+    : getUserDataKey(auth.currentUser);
+  if (!userKey) throw new Error("Clave de usuario no disponible");
   return [
-    `v2/users/${uid}/finance/finance`,
-    `v2/users/${uid}/finance`
+    firebasePaths.financeRoot(userKey),
+    firebasePaths.legacyFinanceRoot(userKey),
   ];
 }
 

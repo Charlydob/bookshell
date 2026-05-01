@@ -5,12 +5,12 @@
 // - Modal: añadir (checkbox) + modal editar (JS)
 // - Sync: localStorage + Firebase RTDB (merge anti-pisotón)
 
-import { db, auth } from "../../shared/firebase/index.js";
+import { db, auth, firebasePaths, getCurrentUserDataKey } from "../../shared/firebase/index.js";
 import { ref, onValue, runTransaction, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { ensureEcharts } from "../../shared/vendors/echarts.js";
 import { TMDB_API_KEY, TMDB_READ_TOKEN } from "./tmdb.js";
 
-const MEDIA_PATH = (userId) => `v2/users/${userId}/movies/media`;
+const MEDIA_PATH = (userKey) => firebasePaths.media(userKey);
 let moduleInitialized = false;
 let mediaEchartsPromise = null;
 
@@ -660,9 +660,9 @@ async function tmdbFetchDetails(id, type) {
 
 /* ------------------------- Cache + Firebase merge ------------------------- */
 function firebasePath(id = "") {
-  const userId = auth?.currentUser?.uid || "";
-  if (!userId) return "";
-  const mediaBasePath = MEDIA_PATH(userId);
+  const userKey = getCurrentUserDataKey() || "";
+  if (!userKey) return "";
+  const mediaBasePath = MEDIA_PATH(userKey);
   return id ? `${mediaBasePath}/${id}` : mediaBasePath;
 }
 

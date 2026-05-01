@@ -1,4 +1,4 @@
-import { auth, db, onUserChange } from "../../shared/firebase/index.js";
+import { auth, db, onUserChange, firebasePaths, getUserDataKey } from "../../shared/firebase/index.js";
 import {
   onValue,
   push,
@@ -690,7 +690,7 @@ function handleAuthUser(user) {
   }
 
   state.uid = user.uid;
-  state.path = `v2/users/${user.uid}/videosHub`;
+  state.path = firebasePaths.videosHub(getUserDataKey(user));
   subscribeData();
 }
 

@@ -1,12 +1,7 @@
 import { db } from "../firebase/index.js";
 import { get, ref, set, push } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { PUBLIC_PATHS, firebasePaths } from "../firebase/rtdb-paths.js";
 import { normalizeCatalogName } from "./public-catalog.js";
-
-const PUBLIC_PATHS = {
-  foodItems: "v2/public/catalog/foodItems",
-  financeProducts: "v2/public/catalog/financeProducts",
-  gymExercises: "v2/public/catalog/gymExercises",
-};
 
 const PRIVATE_KEYS = new Set(["ticketId", "accountId", "movementId", "userId", "priceHistory", "purchaseDate", "lastPurchaseAt", "preferredStore", "privateNotes", "notes", "recipeId", "workoutId", "ticket", "tickets"]);
 
@@ -59,7 +54,7 @@ async function upsertByDedupe(catalogPath, item, seenMap) {
 export async function migrateUserCatalogsToPublicCatalog() {
   const stats = { usersRead: 0, foodFound: 0, financeFound: 0, gymFound: 0, migrated: 0, duplicatesSkipped: 0, errors: 0, paths: [] };
   const [usersSnap, publicFoodSnap, publicFinanceSnap, publicGymSnap] = await Promise.all([
-    get(ref(db, "v2/users")),
+    get(ref(db, firebasePaths.usersRoot())),
     get(ref(db, PUBLIC_PATHS.foodItems)),
     get(ref(db, PUBLIC_PATHS.financeProducts)),
     get(ref(db, PUBLIC_PATHS.gymExercises)),

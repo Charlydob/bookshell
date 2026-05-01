@@ -1,14 +1,14 @@
 import { renderCountryHeatmap } from "./world-heatmap.js";
 import { getCountryEnglishName, getCountryOptions, normalizeCountryInput } from "./countries.js";
-import { auth, db } from "../../shared/firebase/index.js";
+import { auth, db, firebasePaths, getCurrentUserDataKey } from "../../shared/firebase/index.js";
 import { ref, get, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { ensureEcharts } from "../../shared/vendors/echarts.js";
 import { logFirebaseRead, registerViewListener } from "../../shared/firebase/read-debug.js";
 
 const LS_VISITS = "world_visits_v1";
 const LS_WATCH = "world_watchlist_v1";
-const WORLD_PATH = (uid) => `v2/users/${uid}/world`;
-const LEGACY_WORLD_PATHS = (uid) => [`v2/users/${uid}/trips`];
+const WORLD_PATH = (userKey) => firebasePaths.world(userKey);
+const LEGACY_WORLD_PATHS = (userKey) => [firebasePaths.legacyWorldTrips(userKey)];
 const SUBDIV_GEOJSON_BASE = "https://raw.githubusercontent.com/codeforgermany/click_that_hood/main/public/data/";
 
 const worldState = {
@@ -19,7 +19,7 @@ const worldState = {
   firebaseRef: null,
   remoteWriteTimer: 0,
   hasResolvedFirstRemoteSnapshot: false,
-  firebaseUid: null,
+  firebaseUserKey: null,
   editId: null,
   countrySubdivCache: new Map(),
   nestedSubdivCache: new Map(),
@@ -34,7 +34,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const parseJson = (k, f) => { try { return JSON.parse(localStorage.getItem(k) || "") ?? f; } catch { return f; } };
 const saveJson = (k, v) => localStorage.setItem(k, JSON.stringify(v));
-const uid = () => auth.currentUser?.uid || worldState.firebaseUid;
+const userKey = () => getCurrentUserDataKey() || worldState.firebaseUserKey;
 const statusLabel = (s) => ({ visited: "Visitado", lived: "Vivido", wishlist: "Wishlist", other: "Otro" })[s] || "Visitado";
 const statusPriority = { lived: 4, visited: 3, wishlist: 2, other: 1 };
 const cleanGeo = (v) => String(v || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
@@ -245,16 +245,16 @@ export async function init() {
   setWindow(worldState.currentWindow);
 
   function persistLocal() { saveJson(LS_VISITS, state.visits); saveJson(LS_WATCH, state.watch); }
-  async function persistRemoteNow() { if (!uid() || !worldState.firebaseRef) return; try { await update(worldState.firebaseRef, worldPatchPayload(state)); } catch (e) { console.warn("[world] remote save failed", e); } }
+  async function persistRemoteNow() { if (!userKey() || !worldState.firebaseRef) return; try { await update(worldState.firebaseRef, worldPatchPayload(state)); } catch (e) { console.warn("[world] remote save failed", e); } }
   function scheduleRemote() { clearTimeout(worldState.remoteWriteTimer); worldState.remoteWriteTimer = setTimeout(() => persistRemoteNow(), 260); }
   function persist() { persistLocal(); scheduleRemote(); }
 
   async function initFirebaseSync() {
-    if (!uid()) return;
-    worldState.firebaseUid = uid();
-    worldState.firebaseRef = ref(db, WORLD_PATH(uid()));
-    const legacy = await readLegacyWorldPayload(uid());
-    logFirebaseRead({ path: WORLD_PATH(uid()), mode: "onValue", reason: "world-live-sync", viewId: "view-world" });
+    if (!userKey()) return;
+    worldState.firebaseUserKey = userKey();
+    worldState.firebaseRef = ref(db, WORLD_PATH(userKey()));
+    const legacy = await readLegacyWorldPayload(userKey());
+    logFirebaseRead({ path: WORLD_PATH(userKey()), mode: "onValue", reason: "world-live-sync", viewId: "view-world" });
     worldState.firebaseUnsub = registerViewListener("view-world", onValue(worldState.firebaseRef, (snap) => {
       const remote = snap.exists() ? normalizeWorldPayload(snap.val()) : { visits: [], watch: {}, customPins: [], areaVisits: [], timelineEntries: [] };
       if (!worldState.hasResolvedFirstRemoteSnapshot) {
@@ -276,7 +276,7 @@ export async function init() {
       persistLocal(); renderAll();
     }), {
       key: "world-root",
-      path: WORLD_PATH(uid()),
+      path: WORLD_PATH(userKey()),
       mode: "onValue",
       reason: "world-live-sync",
     });

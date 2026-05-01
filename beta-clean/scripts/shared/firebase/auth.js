@@ -5,6 +5,8 @@ import {
   signOut,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { auth } from "./app.js";
+import { getUserDataKey } from "./rtdb-paths.js";
+import { ensureUserDataRootReady } from "./user-data.js";
 
 export function signUpWithEmail(email, password) {
   return createUserWithEmailAndPassword(auth, email, password);
@@ -19,7 +21,14 @@ export function signOutCurrentUser() {
 }
 
 export function onUserChange(callback) {
-  return onAuthStateChanged(auth, callback);
+  return onAuthStateChanged(auth, async (user) => {
+    if (user) {
+      try {
+        await ensureUserDataRootReady(user);
+      } catch (_) {}
+    }
+    return callback(user);
+  });
 }
 
 export function getCurrentUser() {
@@ -28,4 +37,12 @@ export function getCurrentUser() {
 
 export function getCurrentUserId() {
   return auth.currentUser?.uid ?? null;
+}
+
+export function getCurrentUserDataKey() {
+  return getUserDataKey(auth.currentUser);
+}
+
+export function ensureCurrentUserDataRootReady() {
+  return ensureUserDataRootReady(auth.currentUser);
 }

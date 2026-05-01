@@ -1,4 +1,4 @@
-import { db, auth, onUserChange } from "../../shared/firebase/index.js";
+import { db, auth, onUserChange, firebasePaths, getUserDataKey } from "../../shared/firebase/index.js";
 
 import { ref, onValue, set, update, push, remove, runTransaction, get } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { getRangeBounds, dateFromKey } from "./range-helpers.js";
@@ -73,7 +73,8 @@ function setUserPaths(uid) {
   currentUid = uid || null;
   if (!currentUid) return;
 
-  BASE = `v2/users/${currentUid}`;
+  const userKey = getUserDataKey(auth.currentUser) || currentUid;
+  BASE = firebasePaths.userRoot(userKey);
   GAMES_BASE = `${BASE}/games`;
   GAMES_GROUPS_PATH = `${GAMES_BASE}/gameGroups`;
   GAMES_MODES_PATH = `${GAMES_BASE}/games/modes`;
@@ -84,8 +85,8 @@ function setUserPaths(uid) {
   GAMES_SANDBOX_WORLD_NOTES_PATH = `${GAMES_BASE}/games/sandboxWorldNotes`;
   AGG_RANK_DAY_PATH = `${GAMES_BASE}/gameAggRankDay`;
   AGG_RANK_TOTAL_PATH = `${GAMES_BASE}/gameAggRankTotal`;
-  HABITS_PATH = `${BASE}/habits/habits`;
-  HABIT_SESSIONS_PATH = `${BASE}/habits/habitSessions`;
+  HABITS_PATH = firebasePaths.habits(userKey);
+  HABIT_SESSIONS_PATH = firebasePaths.habitSessions(userKey);
 }
 
 const CACHE_KEY = "bookshell-games-cache:v2";

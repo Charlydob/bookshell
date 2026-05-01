@@ -7,7 +7,7 @@ import {
   normalizeCountryInput
 } from "./countries.js";
 import { renderCountryHeatmap, renderCountryList } from "./world-heatmap.js";
-import { auth, db } from "../../shared/firebase/index.js";
+import { PUBLIC_PATHS, auth, db, firebasePaths, getUserDataKey, onUserChange } from "../../shared/firebase/index.js";
 import { resolveFinancePathCandidates } from "./finance-data.js";
 import { FOODREPO_API_BASE, FOODREPO_API_TOKEN } from "./foodrepo.js";
 import { getMetCategoryById } from "./met-catalog.js";
@@ -21,7 +21,6 @@ import {
   set,
   remove
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const recipesRuntimeApi = {
   onShow: () => {},
@@ -643,8 +642,8 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       key: "recipes:public-food-catalog",
       ttlMs: PUBLIC_CATALOG_CACHE_TTL_MS,
       loader: async () => {
-        logFirebaseRead({ path: "v2/public/catalog/foodItems", mode: "get", reason: "recipes-public-food-catalog", viewId: "view-recipes" });
-        const publicSnap = await get(ref(db, "v2/public/catalog/foodItems"));
+        logFirebaseRead({ path: PUBLIC_PATHS.foodItems, mode: "get", reason: "recipes-public-food-catalog", viewId: "view-recipes" });
+        const publicSnap = await get(ref(db, PUBLIC_PATHS.foodItems));
         return publicSnap?.val() || {};
       },
     });
@@ -713,8 +712,16 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
   let _recipePhotoObjectUrl = null;
 
 
+  function resolveRecipesUserKey(uid = currentUid) {
+    const explicitUserKey = String(uid || "").trim();
+    const currentAuthUid = String(auth.currentUser?.uid || "").trim();
+    if (explicitUserKey && explicitUserKey !== currentAuthUid) return explicitUserKey;
+    return getUserDataKey(auth.currentUser) || explicitUserKey;
+  }
+
   function recipesRootPath(uid = currentUid) {
-    return uid ? `v2/users/${uid}/${RECIPES_NODE_KEY}` : null;
+    const userKey = resolveRecipesUserKey(uid);
+    return userKey ? firebasePaths.recipesRoot(userKey) : null;
   }
 
   function recipesItemsPath(uid = currentUid) {
@@ -854,7 +861,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       });
     };
 
-    recipesRemoteAuthUnsubscribe = onAuthStateChanged(auth, async (user) => {
+    recipesRemoteAuthUnsubscribe = onUserChange(async (user) => {
       const nextUid = user?.uid || null;
       if (nextUid === currentUid && recipesRemoteUnsubscribe) return;
 
@@ -4950,7 +4957,7 @@ $recipeImportBtn?.addEventListener("click", () => {
 
   function listenNutritionRemote() {
     if (nutritionAuthUnsubscribe) return;
-    nutritionAuthUnsubscribe = onAuthStateChanged(auth, (user) => {
+    nutritionAuthUnsubscribe = onUserChange((user) => {
       const uid = user?.uid;
       if (nutritionUnsubscribe) {
         try { nutritionUnsubscribe(); } catch (_) {}
@@ -7702,13 +7709,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     if (i >= 0) nutritionProducts[i] = { ...nutritionProducts[i], ...normalized };
     else nutritionProducts.unshift(normalized);
     persistNutrition();
-    recalcAllRecipesNutrition();
-    refreshUI();
-    if (currentUid) {
-      upsertPublicCatalogItem("v2/public/catalog/foodItems", normalized, currentUid)
-        .catch((err) => console.info("[recipes/public-catalog] upsert falló", err));
-    }
-    return normalized;
+      recalcAllRecipesNutrition();
+      refreshUI();
+      if (currentUid) {
+        upsertPublicCatalogItem(PUBLIC_PATHS.foodItems, normalized, currentUid)
+          .catch((err) => console.info("[recipes/public-catalog] upsert falló", err));
+      }
+      return normalized;
   }
 
   async function lookupProductByBarcode(barcode) {
@@ -7717,7 +7724,7 @@ $recipeImportBtn?.addEventListener("click", () => {
     const local = nutritionProducts.find((p) => p.barcode && p.barcode === clean);
     if (local) return local;
     try {
-      const [match] = await findPublicCatalogMatches("v2/public/catalog/foodItems", { barcode: clean }, 1);
+      const [match] = await findPublicCatalogMatches(PUBLIC_PATHS.foodItems, { barcode: clean }, 1);
       if (match) {
         const cloned = clonePublicItemToUserCatalog(match, { id: generateId() });
         nutritionProducts.unshift(cloned);

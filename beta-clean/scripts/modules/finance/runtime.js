@@ -34,7 +34,7 @@ let financePendingPreserveUi = true;
 let financeRemoteApplyTimer = 0;
 const FINANCE_GOALS_SORT_MODE_KEY = 'financeGoalsSortMode';
 const PRODUCTS_DRAFT_LOCAL_KEY = 'bookshell_finance_products_draft_v1';
-const GLOBAL_PRODUCTS_PATH = 'v2/public/catalog/foodItems';
+const GLOBAL_PRODUCTS_PATH = 'v2/public/products';
 const FINANCE_CORE_BRANCHES = Object.freeze([
   { key: 'accounts', path: 'accounts', fallback: {} },
   { key: 'transactions', path: 'transactions', fallback: {} },

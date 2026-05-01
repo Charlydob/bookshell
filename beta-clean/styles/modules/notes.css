@@ -1667,6 +1667,7 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   padding-inline: 18px;
   font-size: 15px;
 }
+.notes-reminder-test-btn { margin: 8px auto 0; width: min(320px, 92%); }
 
 .notes-reminders-toolbar {
   display: grid;
@@ -1865,6 +1866,7 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   color: var(--txt-soft);
 }
 
+#reminder-toast-root,
 .notes-toast-stack {
   position: fixed;
   left: 50%;
@@ -1872,7 +1874,8 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   transform: translateX(-50%);
   display: grid;
   gap: 8px;
-  z-index: 1200;
+  z-index: 100000;
+  pointer-events: auto;
 }
 
 .notes-reminder-toast {
@@ -1886,7 +1889,14 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   background: rgba(9, 15, 25, 0.72);
   backdrop-filter: blur(10px);
   box-shadow: 0 12px 30px rgba(0,0,0,.35);
-  animation: reminderToastIn .26s ease;
+  opacity: 0;
+  transform: translateY(-12px);
+  transition: opacity .22s ease, transform .22s ease;
+}
+
+.notes-reminder-toast.is-visible {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .notes-reminder-toast p {

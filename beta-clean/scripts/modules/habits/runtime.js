@@ -6,6 +6,9 @@ import { db, auth, onUserChange, firebasePaths, getUserDataKey } from "../../sha
 import {
   ref,
   onValue,
+  onChildAdded,
+  onChildChanged,
+  onChildRemoved,
   set,
   update,
   get,
@@ -45,9 +48,23 @@ let HABIT_UI_PATH = null;
 let HABIT_UI_QUICK_COUNTERS_PATH = null;
 let HABIT_WORK_SCHEDULES_PATH = null;
 let remoteBound = false;
+let remoteBoundUid = "";
 let habitsRuntimeReady = false;
 let habitsRuntimeInitializing = false;
 let habitsEchartsPromise = null;
+let habitsEventsBound = false;
+
+function logHabitsData(event, detail = {}) {
+  const payload = {
+    uid: currentUid || "",
+    visible: !!habitsViewVisible,
+    remoteBound,
+    remoteBoundUid,
+    at: new Date().toISOString(),
+    ...detail,
+  };
+  console.info(`[habits:data] ${event}`, payload);
+}
 
 function logHabitsInitStep(step, extra = {}, level = "info") {
   const payload = {
@@ -102,7 +119,24 @@ function ensureHabitsEchartsReady() {
 
 function setUserPaths(uid) {
   currentUid = uid || null;
-  if (!currentUid) return;
+  if (!currentUid) {
+    BASE = null;
+    HABITS_ROOT = null;
+    HABITS_PATH = null;
+    HABIT_ACTIVE_SESSIONS_PATH = null;
+    HABIT_CHECKS_PATH = null;
+    HABIT_SESSIONS_PATH = null;
+    HABIT_COUNTS_PATH = null;
+    HABIT_GROUPS_PATH = null;
+    HABIT_PREFS_PATH = null;
+    HABIT_COMPARE_SETTINGS_PATH = null;
+    HABITS_SCHEDULE_PATH = null;
+    HABITS_SCHEDULE_DAY_CREDITS_PATH = null;
+    HABIT_UI_PATH = null;
+    HABIT_UI_QUICK_COUNTERS_PATH = null;
+    HABIT_WORK_SCHEDULES_PATH = null;
+    return;
+  }
 
   const userKey = getUserDataKey(auth.currentUser) || currentUid;
   BASE = firebasePaths.userRoot(userKey);
@@ -1764,7 +1798,6 @@ function shouldSkipScheduleRender(reason = "unknown") {
 }
 
 function renderSchedule(reason = "manual") {
-  void syncHabitSessionsForCurrentView({ reason: `render:schedule:${reason}` });
   if (!$habitScheduleView) return;
   if (activeTab !== "schedule") {
     updateScheduleLiveInterval();
@@ -3528,20 +3561,38 @@ function persistHabitScheduleLocal() {
   saveCache();
 }
 
-async function loadScheduleFromRemote() {
-  try {
-    console.warn("SCHEDULE UPDATE", "firebase:get:init");
-    const snap = await get(ref(db, HABITS_SCHEDULE_PATH));
-    const raw = snap.val();
-    scheduleState = raw && typeof raw === "object"
-      ? normalizeHabitSchedule(raw)
-      : createDefaultHabitSchedule();
-    saveCache();
-  } catch (err) {
-    console.warn("No se pudo leer horario remoto", err);
-    scheduleState = normalizeHabitSchedule(scheduleState || createDefaultHabitSchedule());
-  }
+async function loadScheduleFromRemoteDeprecated() {
+  logHabitsData("boot:schedule-deprecated-skip", { path: HABITS_SCHEDULE_PATH });
+  scheduleState = normalizeHabitSchedule(scheduleState || createDefaultHabitSchedule());
+  return false;
 }
+
+function bootReadHabitsCache() {
+  let hasCache = false;
+  try {
+    hasCache = !!localStorage.getItem(STORAGE_KEY);
+  } catch (_) {
+    hasCache = false;
+  }
+  readCache();
+  logHabitsData(hasCache ? "boot:cache-hit" : "boot:cache-miss", { source: "localStorage" });
+  return hasCache;
+}
+
+async function bootHydrateHabitsOfflineSnapshot() {
+  const hydrated = await hydrateHabitsFromOfflineSnapshot();
+  if (hydrated) {
+    logHabitsData("boot:cache-hit", { source: "offline-snapshot" });
+  }
+  return hydrated;
+}
+
+async function prepareHabitsScheduleBootState() {
+  logHabitsData("boot:schedule-deferred", { path: HABITS_SCHEDULE_PATH });
+  scheduleState = normalizeHabitSchedule(scheduleState || createDefaultHabitSchedule());
+  return false;
+}
+
 function loadSessionSelection() {
   try {
     selectedSessionId = localStorage.getItem(SESSION_SELECTED_KEY) || null;
@@ -5034,6 +5085,12 @@ function toggleDay(habitId, dateKey) {
   } else {
     habitChecks[habitId][dateKey] = true;
   }
+  logHabitsData("action:update-local", {
+    type: "habit-check",
+    habitId,
+    dateKey,
+    value: !!habitChecks[habitId][dateKey],
+  });
   saveCache();
   persistHabitCheck(habitId, dateKey, !!habitChecks[habitId][dateKey]);
   invalidateDominantCache(dateKey);
@@ -5071,6 +5128,12 @@ function setHabitCount(habitId, dateKey, value) {
   if (!habitCounts[habitId]) habitCounts[habitId] = {};
   if (safe > 0) habitCounts[habitId][dateKey] = safe;
   else delete habitCounts[habitId][dateKey];
+  logHabitsData("action:update-local", {
+    type: "habit-count",
+    habitId,
+    dateKey,
+    value: safe,
+  });
 
   // Si el contador tiene "minutos por vez", lo volcamos a tiempo total del día
   const per = Math.round(Number(habit.countUnitMinutes) || 0);
@@ -6189,7 +6252,6 @@ function renderHabitDetailSchedulePanel(habit) {
 }
 
 function renderHabitDetail(habitId, rangeKey = habitDetailRange) {
-  void syncHabitSessionsForCurrentView({ reason: `render:detail:${rangeKey}` });
   const habit = habits[habitId];
   if (!habit || habit.archived) return;
   habitDetailRange = rangeKey;
@@ -6588,7 +6650,6 @@ function applyTodaySearch(value) {
 }
 
 function renderToday() {
-  void syncHabitSessionsForCurrentView({ reason: "render:today" });
   if (!parseDateKey(selectedDateKey)) {
     selectedDateKey = todayKey();
   }
@@ -8913,7 +8974,6 @@ function buildWorkScheduleSummaryBand(rangeKey) {
 }
 
 function renderHistory() {
-  void syncHabitSessionsForCurrentView({ reason: `render:history:${habitHistoryRange}` });
   $habitHistoryList.innerHTML = "";
 
   const habitsList = activeHabits();
@@ -8936,6 +8996,7 @@ function renderHistory() {
     btn.addEventListener("click", () => {
       habitHistoryRange = range.key;
       saveHistoryRange();
+      void syncHabitSessionsForCurrentView({ force: true, reason: `history-range:${range.key}` });
       renderHistory();
     });
     controls.appendChild(btn);
@@ -9348,9 +9409,6 @@ function renderHabitLineSelector() {
 }
 
 function renderLineChart() {
-  if (activeTab === "reports") {
-    void syncHabitSessionsForCurrentView({ reason: `render:reports-line:${habitLineRange}` });
-  }
   if (!$habitLineChart) return;
   if ($habitEvoRange) $habitEvoRange.value = habitLineRange;
   renderHabitLineSelector();
@@ -9937,9 +9995,6 @@ function appendTimeQuickControls(tools, habit, today) {
 }
 
 function renderGlobalHeatmap() {
-  if (activeTab === "reports") {
-    void syncHabitSessionsForCurrentView({ reason: `render:reports-heatmap:${heatmapYear}` });
-  }
   if (!$habitGlobalHeatmap) return;
   $habitGlobalHeatmap.innerHTML = "";
   const cells = buildYearCells(heatmapYear);
@@ -9974,6 +10029,9 @@ function updateHeatmapYearControls() {
 function changeHeatmapYear(delta) {
   heatmapYear = heatmapYear + delta;
   saveHeatmapYear();
+  if (activeTab === "reports") {
+    void syncHabitSessionsForCurrentView({ force: true, reason: `reports-heatmap:${heatmapYear}` });
+  }
   renderGlobalHeatmap();
   renderHistory();
   renderLineChart();
@@ -10812,9 +10870,6 @@ function buildDonutOuterRuns(habitData, catName, groupColorByKey = new Map()) {
 
 
 function renderDonut() {
-  if (activeTab === "reports") {
-    void syncHabitSessionsForCurrentView({ reason: `render:reports-donut:${habitDonutRange}` });
-  }
   if (!$habitDonut) return;
   const entries = buildTimeEntries(habitDonutRange);
   const isGrouped = habitDonutGroupMode.kind === "cat" && habitDonutGroupMode.cat;
@@ -11529,9 +11584,6 @@ function renderWorkShiftReport() {
 }
 
 function renderRecordsCard() {
-  if (activeTab === "reports") {
-    void syncHabitSessionsForCurrentView({ reason: `render:reports-records:${habitRecordsRange}` });
-  }
   if (!$habitRecordsCurrentStreak) return;
   const stats = computeSuccessStatsForRange(habitRecordsRange);
   const bestStreak = computeTotalStreakInRange(stats.start, stats.end).best;
@@ -11670,7 +11722,6 @@ function scheduleReportsRender() {
 }
 
 function renderReportsPanel() {
-  void syncHabitSessionsForCurrentView({ reason: "render:reports" });
   renderKPIs();
   renderPins();
   renderRecordsCard();
@@ -12912,6 +12963,8 @@ async function onHabitsExportClick() {
 
 
 function bindEvents() {
+  if (habitsEventsBound) return;
+  habitsEventsBound = true;
   $habitExportBtn?.addEventListener("click", onHabitsExportClick);
   $tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -13481,6 +13534,9 @@ function bindEvents() {
       $habitRangeButtons.forEach((b) => b.classList.remove("is-active"));
       btn.classList.add("is-active");
       habitDonutRange = btn.dataset.range || "day";
+      if (activeTab === "reports") {
+        void syncHabitSessionsForCurrentView({ force: true, reason: `reports-donut:${habitDonutRange}` });
+      }
       renderDonut();
       renderKPIs();
       renderPins();
@@ -13513,6 +13569,9 @@ function bindEvents() {
 
   $habitEvoRange?.addEventListener("change", (e) => {
     habitLineRange = e.target.value || "7d";
+    if (activeTab === "reports") {
+      void syncHabitSessionsForCurrentView({ force: true, reason: `reports-line:${habitLineRange}` });
+    }
     renderLineChart();
   });
 
@@ -13521,6 +13580,9 @@ function bindEvents() {
       $habitRecordsRangeButtons.forEach((b) => b.classList.remove("is-active"));
       btn.classList.add("is-active");
       habitRecordsRange = btn.dataset.range || "month";
+      if (activeTab === "reports") {
+        void syncHabitSessionsForCurrentView({ force: true, reason: `reports-records:${habitRecordsRange}` });
+      }
       renderRecordsCard();
     });
   });
@@ -13531,6 +13593,88 @@ function getHabitSessionTargetHabitIds() {
     .map((habit) => String(habit?.id || "").trim())
     .filter(Boolean)
     .sort();
+}
+
+function getHabitSessionTargetHabitIdsFromStore(store = {}) {
+  return Object.values(store || {})
+    .filter((habit) => habit && typeof habit === "object" && !habit.archived)
+    .map((habit) => String(habit.id || "").trim())
+    .filter(Boolean)
+    .concat(UNKNOWN_HABIT_ID)
+    .filter((value, index, list) => list.indexOf(value) === index)
+    .sort();
+}
+
+function didHabitSessionTargetIdsChange(previousStore = {}, nextStore = {}) {
+  const previousIds = getHabitSessionTargetHabitIdsFromStore(previousStore);
+  const nextIds = getHabitSessionTargetHabitIdsFromStore(nextStore);
+  if (previousIds.length !== nextIds.length) return true;
+  for (let index = 0; index < previousIds.length; index += 1) {
+    if (previousIds[index] !== nextIds[index]) return true;
+  }
+  return false;
+}
+
+function buildHabitChildPath(basePath, childKey) {
+  return `${String(basePath || "").replace(/\/+$/g, "")}/${String(childKey || "").trim()}`;
+}
+
+function bindRemoteValueListener(path, handler, { key, reason = "habits-live-sync", bounded = false, querySummary = "" } = {}) {
+  logHabitsData("listen:start", { path, key: key || path, mode: "onValue" });
+  logFirebaseRead({ path, mode: "onValue", reason, viewId: "view-habits", bounded, querySummary });
+  const unsubscribe = registerViewListener("view-habits", onValue(ref(db, path), handler), {
+    key: key || path,
+    path,
+    mode: "onValue",
+    reason,
+    bounded,
+    querySummary,
+  });
+  if (typeof unsubscribe === "function") {
+    remoteUnsubscribers.push(() => {
+      logHabitsData("listen:stop", { path, key: key || path, mode: "onValue" });
+      unsubscribe();
+    });
+  }
+}
+
+function bindRemoteChildListeners(path, {
+  keyPrefix,
+  reason = "habits-live-sync",
+  onUpsert,
+  onRemove,
+  bounded = false,
+  querySummary = "",
+} = {}) {
+  const attach = (mode, subscribe) => {
+    const listenerKey = `${keyPrefix}:${mode}`;
+    logHabitsData("listen:start", { path, key: listenerKey, mode });
+    logFirebaseRead({ path, mode, reason, viewId: "view-habits", bounded, querySummary });
+    const unsubscribe = registerViewListener("view-habits", subscribe(), {
+      key: listenerKey,
+      path,
+      mode,
+      reason,
+      bounded,
+      querySummary,
+    });
+    if (typeof unsubscribe === "function") {
+      remoteUnsubscribers.push(() => {
+        logHabitsData("listen:stop", { path, key: listenerKey, mode });
+        unsubscribe();
+      });
+    }
+  };
+
+  attach("onChildAdded", () => onChildAdded(ref(db, path), (snap) => {
+    onUpsert?.(snap.key || "", snap.val(), "child_added");
+  }));
+  attach("onChildChanged", () => onChildChanged(ref(db, path), (snap) => {
+    onUpsert?.(snap.key || "", snap.val(), "child_changed");
+  }));
+  attach("onChildRemoved", () => onChildRemoved(ref(db, path), (snap) => {
+    onRemove?.(snap.key || "", snap.val(), "child_removed");
+  }));
 }
 
 function getHabitSessionTailBounds(days = 45) {
@@ -13682,6 +13826,12 @@ function applyHabitSessionSyncSnapshot(rawByHabit, reason = "remote:sessions", s
 async function syncHabitSessionsForCurrentView({ force = false, reason = "unknown" } = {}) {
   const spec = buildHabitSessionSyncSpec();
   if (!force && spec.mode === habitSessionSyncMode && spec.key === habitSessionSyncKey) {
+    logHabitsData("listen:skip-already-active", {
+      path: HABIT_SESSIONS_PATH,
+      reason,
+      mode: spec.mode,
+      key: spec.key,
+    });
     return;
   }
 
@@ -13699,6 +13849,15 @@ async function syncHabitSessionsForCurrentView({ force = false, reason = "unknow
     return;
   }
 
+  if (spec.mode === "full-get") {
+    logHabitsData("forbidden-full-reload", {
+      reason,
+      path: HABIT_SESSIONS_PATH,
+      mode: spec.mode,
+      key: spec.key,
+    });
+  }
+
   if (spec.mode === "live-tail") {
     stopHabitSessionLiveSync();
     const nextSlices = new Map();
@@ -13710,6 +13869,12 @@ async function syncHabitSessionsForCurrentView({ force = false, reason = "unknow
         startAt(spec.startKey),
         limitToLast(spec.limit || 45)
       );
+      logHabitsData("listen:start", {
+        path,
+        key: `habit-sessions:${habitId}`,
+        mode: "onValue",
+        querySummary: `orderByKey,startAt(${spec.startKey}),limitToLast(${spec.limit || 45})`,
+      });
       logFirebaseRead({
         path,
         mode: "onValue",
@@ -13744,7 +13909,14 @@ async function syncHabitSessionsForCurrentView({ force = false, reason = "unknow
         querySummary: `orderByKey,startAt(${spec.startKey}),limitToLast(${spec.limit || 45})`,
       });
       if (typeof unsubscribe === "function") {
-        habitSessionLiveUnsubscribers.push(unsubscribe);
+        habitSessionLiveUnsubscribers.push(() => {
+          logHabitsData("listen:stop", {
+            path,
+            key: `habit-sessions:${habitId}`,
+            mode: "onValue",
+          });
+          unsubscribe();
+        });
       }
     });
     return;
@@ -13895,6 +14067,7 @@ function listenRemoteLegacy() {
 }
 
 function unlistenRemote() {
+  if (!remoteBound && !remoteUnsubscribers.length) return;
   habitSessionSyncVersion += 1;
   stopHabitSessionLiveSync();
   habitSessionSyncMode = "none";
@@ -13905,7 +14078,9 @@ function unlistenRemote() {
     } catch (_) {}
   });
   remoteUnsubscribers = [];
+  logHabitsData("listen:detached", { uid: remoteBoundUid || currentUid || "" });
   remoteBound = false;
+  remoteBoundUid = "";
 }
 
 function applyQueuedHabitRemoteValue(basePath, value) {
@@ -14013,7 +14188,17 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
   }
 
   queuePendingSessionWrite(habitId, dateKey, payloadToWrite);
+  logHabitsData("action:update-local", {
+    type: "habit-session",
+    habitId,
+    dateKey,
+    totalSec: sec,
+  });
   saveCache();
+  logHabitsData("write", {
+    path: `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`,
+    type: "habit-session",
+  });
   void writeRtdbWithOfflineQueue({
     uid: currentUid,
     module: "habits",
@@ -14033,6 +14218,10 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
 
 function persistHabitCheck(habitId, dateKey, value) {
   if (!habitId || !dateKey) return;
+  logHabitsData("write", {
+    path: `${HABIT_CHECKS_PATH}/${habitId}/${dateKey}`,
+    type: "habit-check",
+  });
   void writeRtdbWithOfflineQueue({
     uid: currentUid,
     module: "habits",
@@ -14048,6 +14237,10 @@ function persistHabitCheck(habitId, dateKey, value) {
 
 function persistHabitCount(habitId, dateKey, value) {
   if (!habitId || !dateKey) return;
+  logHabitsData("write", {
+    path: `${HABIT_COUNTS_PATH}/${habitId}/${dateKey}`,
+    type: "habit-count",
+  });
   void writeRtdbWithOfflineQueue({
     uid: currentUid,
     module: "habits",
@@ -14063,6 +14256,11 @@ function persistHabitCount(habitId, dateKey, value) {
 
 function persistHabit(habit) {
   if (!habit?.id) return;
+  logHabitsData("write", {
+    path: `${HABITS_PATH}/${habit.id}`,
+    type: "habit",
+    habitId: habit.id,
+  });
   void writeRtdbWithOfflineQueue({
     uid: currentUid,
     module: "habits",
@@ -14117,12 +14315,22 @@ async function startSession(habitId = null, meta = null) {
   };
 
   upsertActiveSessionLocal(sessionId, payload);
+  logHabitsData("action:update-local", {
+    type: "active-session:start",
+    sessionId,
+    targetHabitId: targetHabitId || "",
+  });
   saveCache();
   persistSessionSelection(sessionId);
   updateSessionUI();
   updateCompareLiveInterval();
   scheduleCompareRefresh("session:start", { targetHabitId: targetHabitId || null });
 
+  logHabitsData("write", {
+    path: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
+    type: "active-session:start",
+    sessionId,
+  });
   const result = await writeRtdbWithOfflineQueue({
     uid: currentUid,
     module: "habits",
@@ -14154,10 +14362,20 @@ async function patchSession(sessionId, patch = {}) {
 
   if (previous) {
     upsertActiveSessionLocal(sessionId, { ...previous, ...nextPatch });
+    logHabitsData("action:update-local", {
+      type: "active-session:patch",
+      sessionId,
+      patchKeys: Object.keys(nextPatch),
+    });
     saveCache();
     updateSessionUI();
   }
 
+  logHabitsData("write", {
+    path: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
+    type: "active-session:patch",
+    sessionId,
+  });
   const result = await writeRtdbWithOfflineQueue({
     uid: currentUid,
     module: "habits",
@@ -14303,7 +14521,7 @@ async function cancelRunningSession({ requireConfirm = true, sessionId = running
   return true;
 }
 
-function listenRemote() {
+function listenRemoteDeprecated() {
   if (remoteBound) return;
   const rerender = () => requestActiveTabRender({ preserveUI: true });
   const rerenderIfActiveTab = (tabs = []) => {
@@ -14410,6 +14628,224 @@ function listenRemote() {
   void syncHabitSessionsForCurrentView({ force: true, reason: "listen-remote" });
 }
 
+function attachHabitsListeners() {
+  if (!currentUid) return;
+  if (remoteBound && remoteBoundUid === currentUid) {
+    logHabitsData("listen:skip-already-active", { uid: currentUid || "" });
+    return;
+  }
+  if (remoteBound && remoteBoundUid && remoteBoundUid !== currentUid) {
+    unlistenRemote();
+  }
+
+  const rerender = () => requestActiveTabRender({ preserveUI: true });
+  const rerenderIfActiveTab = (tabs = []) => {
+    if (!isHabitsViewVisible()) return;
+    if (tabs.includes(activeTab)) rerender();
+  };
+  const applyQueuedChildValue = (basePath, childKey, rawValue) => {
+    return applyQueuedHabitRemoteValue(buildHabitChildPath(basePath, childKey), rawValue);
+  };
+
+  bindRemoteChildListeners(HABITS_PATH, {
+    keyPrefix: "habits-root",
+    onUpsert: (habitId, rawValue, eventType) => {
+      const previousHabits = habits;
+      const nextHabits = { ...(habits || {}) };
+      const resolved = applyQueuedChildValue(HABITS_PATH, habitId, rawValue);
+      if (resolved && typeof resolved === "object") nextHabits[habitId] = resolved;
+      else delete nextHabits[habitId];
+      habits = normalizeHabitsStore(nextHabits);
+      invalidateDominantCache();
+      markHistoryDataChanged("remote:habits", { eventType, habitId });
+      ensureUnknownHabit(true);
+      if (_pendingShortcutCmd) {
+        try {
+          const ok = executeShortcutCmd(_pendingShortcutCmd, { silent: true });
+          if (ok) _pendingShortcutCmd = null;
+        } catch (_) {}
+      }
+      saveCache();
+      if (didHabitSessionTargetIdsChange(previousHabits, habits)) {
+        void syncHabitSessionsForCurrentView({ force: true, reason: `remote:habits:${eventType}` });
+      }
+      rerender();
+    },
+    onRemove: (habitId, _rawValue, eventType) => {
+      const previousHabits = habits;
+      const nextHabits = { ...(habits || {}) };
+      const resolved = applyQueuedChildValue(HABITS_PATH, habitId, null);
+      if (resolved && typeof resolved === "object") nextHabits[habitId] = resolved;
+      else delete nextHabits[habitId];
+      habits = normalizeHabitsStore(nextHabits);
+      invalidateDominantCache();
+      markHistoryDataChanged("remote:habits", { eventType, habitId });
+      ensureUnknownHabit(true);
+      saveCache();
+      if (didHabitSessionTargetIdsChange(previousHabits, habits)) {
+        void syncHabitSessionsForCurrentView({ force: true, reason: `remote:habits:${eventType}` });
+      }
+      rerender();
+    },
+  });
+
+  bindRemoteChildListeners(HABIT_GROUPS_PATH, {
+    keyPrefix: "habit-groups",
+    onUpsert: (groupId, rawValue) => {
+      const next = { ...(habitGroups || {}) };
+      const resolved = applyQueuedChildValue(HABIT_GROUPS_PATH, groupId, rawValue);
+      if (resolved && typeof resolved === "object") next[groupId] = resolved;
+      else delete next[groupId];
+      habitGroups = next;
+      saveCache();
+      rerender();
+    },
+    onRemove: (groupId) => {
+      const next = { ...(habitGroups || {}) };
+      const resolved = applyQueuedChildValue(HABIT_GROUPS_PATH, groupId, null);
+      if (resolved && typeof resolved === "object") next[groupId] = resolved;
+      else delete next[groupId];
+      habitGroups = next;
+      saveCache();
+      rerender();
+    },
+  });
+
+  bindRemoteValueListener(HABIT_PREFS_PATH, (snap) => {
+    habitPrefs = applyQueuedHabitRemoteValue(HABIT_PREFS_PATH, snap.val() || {}) || { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
+    if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
+    habitDurationMode = ["auto", "min", "h", "d"].includes(habitPrefs.analyticsUnit) ? habitPrefs.analyticsUnit : "auto";
+    analyticsTimeUnitMode = habitDurationMode;
+    saveCache();
+    rerenderIfActiveTab(["today", "reports"]);
+  }, {
+    key: HABIT_PREFS_PATH,
+  });
+
+  bindRemoteValueListener(HABIT_UI_QUICK_COUNTERS_PATH, (snap) => {
+    const quickCounters = applyQueuedHabitRemoteValue(HABIT_UI_QUICK_COUNTERS_PATH, snap.val() || []);
+    habitUI = normalizeHabitUI({ ...habitUI, quickCounters: quickCounters || [] });
+    saveCache();
+    rerenderIfActiveTab(["today"]);
+  }, {
+    key: HABIT_UI_QUICK_COUNTERS_PATH,
+  });
+
+  bindRemoteValueListener(HABIT_WORK_SCHEDULES_PATH, (snap) => {
+    const raw = applyQueuedHabitRemoteValue(HABIT_WORK_SCHEDULES_PATH, snap.val() || {}) || {};
+    habitWorkSchedules = normalizeWorkSchedulesStore(raw);
+    saveCache();
+    rerenderIfActiveTab(["history"]);
+  }, {
+    key: HABIT_WORK_SCHEDULES_PATH,
+  });
+
+  bindRemoteValueListener(HABITS_SCHEDULE_PATH, (snap) => {
+    console.warn("SCHEDULE UPDATE", "firebase:onValue");
+    const raw = applyQueuedHabitRemoteValue(HABITS_SCHEDULE_PATH, snap.val());
+    scheduleState = raw && typeof raw === "object"
+      ? normalizeHabitSchedule(raw)
+      : createDefaultHabitSchedule();
+    saveCache();
+    rerenderIfActiveTab(["schedule"]);
+  }, {
+    key: HABITS_SCHEDULE_PATH,
+  });
+
+  bindRemoteChildListeners(HABIT_CHECKS_PATH, {
+    keyPrefix: "habit-checks",
+    onUpsert: (habitId, rawValue) => {
+      const next = { ...(habitChecks || {}) };
+      const resolved = applyQueuedChildValue(HABIT_CHECKS_PATH, habitId, rawValue || {});
+      if (resolved && typeof resolved === "object" && Object.keys(resolved).length) next[habitId] = resolved;
+      else delete next[habitId];
+      habitChecks = next;
+      invalidateDominantCache();
+      markHistoryDataChanged("remote:checks", { habitId });
+      saveCache();
+      rerender();
+      emitHabitsData("remote:checks");
+    },
+    onRemove: (habitId) => {
+      const next = { ...(habitChecks || {}) };
+      const resolved = applyQueuedChildValue(HABIT_CHECKS_PATH, habitId, null);
+      if (resolved && typeof resolved === "object" && Object.keys(resolved).length) next[habitId] = resolved;
+      else delete next[habitId];
+      habitChecks = next;
+      invalidateDominantCache();
+      markHistoryDataChanged("remote:checks", { habitId, removed: true });
+      saveCache();
+      rerender();
+      emitHabitsData("remote:checks");
+    },
+  });
+
+  bindRemoteChildListeners(HABIT_COUNTS_PATH, {
+    keyPrefix: "habit-counts",
+    onUpsert: (habitId, rawValue) => {
+      const next = { ...(habitCounts || {}) };
+      const resolved = applyQueuedChildValue(HABIT_COUNTS_PATH, habitId, rawValue || {});
+      if (resolved && typeof resolved === "object" && Object.keys(resolved).length) next[habitId] = resolved;
+      else delete next[habitId];
+      habitCounts = next;
+      invalidateDominantCache();
+      markHistoryDataChanged("remote:counts", { habitId });
+      saveCache();
+      rerender();
+      emitHabitsData("remote:counts");
+    },
+    onRemove: (habitId) => {
+      const next = { ...(habitCounts || {}) };
+      const resolved = applyQueuedChildValue(HABIT_COUNTS_PATH, habitId, null);
+      if (resolved && typeof resolved === "object" && Object.keys(resolved).length) next[habitId] = resolved;
+      else delete next[habitId];
+      habitCounts = next;
+      invalidateDominantCache();
+      markHistoryDataChanged("remote:counts", { habitId, removed: true });
+      saveCache();
+      rerender();
+      emitHabitsData("remote:counts");
+    },
+  });
+
+  bindRemoteChildListeners(HABIT_ACTIVE_SESSIONS_PATH, {
+    keyPrefix: "habit-active-sessions",
+    onUpsert: (sessionId, rawValue) => {
+      const next = { ...(activeSessions || {}) };
+      const resolved = applyQueuedChildValue(HABIT_ACTIVE_SESSIONS_PATH, sessionId, rawValue || {});
+      const session = normalizeRunningSession({ ...(resolved || {}), sessionId });
+      if (session) next[sessionId] = session;
+      else delete next[sessionId];
+      activeSessions = next;
+      syncPrimaryRunningSession();
+      saveCache();
+      updateSessionUI();
+      updateCompareLiveInterval();
+      rerenderIfActiveTab(["today", "schedule", "history"]);
+      emitHabitsData("remote:active-sessions");
+    },
+    onRemove: (sessionId) => {
+      const next = { ...(activeSessions || {}) };
+      const resolved = applyQueuedChildValue(HABIT_ACTIVE_SESSIONS_PATH, sessionId, null);
+      const session = normalizeRunningSession({ ...(resolved || {}), sessionId });
+      if (session) next[sessionId] = session;
+      else delete next[sessionId];
+      activeSessions = next;
+      syncPrimaryRunningSession();
+      saveCache();
+      updateSessionUI();
+      updateCompareLiveInterval();
+      rerenderIfActiveTab(["today", "schedule", "history"]);
+      emitHabitsData("remote:active-sessions");
+    },
+  });
+
+  remoteBound = true;
+  remoteBoundUid = currentUid || "";
+  logHabitsData("listen:ready", { uid: remoteBoundUid });
+  void syncHabitSessionsForCurrentView({ force: true, reason: "listen-remote" });
+}
+
 async function initHabitsLegacy() {
   if (!currentUid) return;
   if (habitsRuntimeReady || habitsRuntimeInitializing) return;
@@ -14417,11 +14853,10 @@ async function initHabitsLegacy() {
   habitsRuntimeInitializing = true;
   const startedAt = performance.now();
   logHabitsInitStep("init:start");
+  logHabitsData("boot:start", { uid: currentUid || "" });
   try {
-    await traceHabitsInitStep("readCache", () => {
-      readCache();
-    });
-    await traceHabitsInitStep("hydrateOfflineSnapshot", () => hydrateHabitsFromOfflineSnapshot());
+    await traceHabitsInitStep("readCache", () => bootReadHabitsCache());
+    await traceHabitsInitStep("hydrateOfflineSnapshot", () => bootHydrateHabitsOfflineSnapshot());
     await traceHabitsInitStep("loadSessionSelection", () => {
       loadSessionSelection();
     });
@@ -14446,9 +14881,9 @@ async function initHabitsLegacy() {
     await traceHabitsInitStep("bindEvents", () => {
       bindEvents();
     });
-    await traceHabitsInitStep("loadScheduleFromRemote", () => loadScheduleFromRemote());
-    await traceHabitsInitStep("listenRemote", () => {
-      listenRemote();
+    await traceHabitsInitStep("prepareScheduleBootState", () => prepareHabitsScheduleBootState());
+    await traceHabitsInitStep("attachHabitsListeners", () => {
+      attachHabitsListeners();
     });
     await traceHabitsInitStep("renderHabits", () => {
       renderHabits();
@@ -14671,11 +15106,10 @@ async function initHabits() {
   habitsRuntimeInitializing = true;
   const startedAt = performance.now();
   logHabitsInitStep("init:start");
+  logHabitsData("boot:start", { uid: currentUid || "" });
   try {
-    await traceHabitsInitStep("readCache", () => {
-      readCache();
-    });
-    await traceHabitsInitStep("hydrateOfflineSnapshot", () => hydrateHabitsFromOfflineSnapshot());
+    await traceHabitsInitStep("readCache", () => bootReadHabitsCache());
+    await traceHabitsInitStep("hydrateOfflineSnapshot", () => bootHydrateHabitsOfflineSnapshot());
     await traceHabitsInitStep("loadSessionSelection", () => {
       loadSessionSelection();
     });
@@ -14700,9 +15134,9 @@ async function initHabits() {
     await traceHabitsInitStep("bindEvents", () => {
       bindEvents();
     });
-    await traceHabitsInitStep("loadScheduleFromRemote", () => loadScheduleFromRemote());
-    await traceHabitsInitStep("listenRemote", () => {
-      listenRemote();
+    await traceHabitsInitStep("prepareScheduleBootState", () => prepareHabitsScheduleBootState());
+    await traceHabitsInitStep("attachHabitsListeners", () => {
+      attachHabitsListeners();
     });
     await traceHabitsInitStep("renderHabits", () => {
       renderHabits();
@@ -14759,7 +15193,10 @@ export async function onShow() {
     return;
   }
   ensureSessionOverlayInBody();
-  if (currentUid && !remoteBound) listenRemote();
+  if (currentUid) {
+    attachHabitsListeners();
+    void syncHabitSessionsForCurrentView({ force: true, reason: "view:onShow" });
+  }
   maybeAutoCloseScheduleDay();
   if (!scheduleAutoCloseInterval) {
     scheduleAutoCloseInterval = window.setInterval(maybeAutoCloseScheduleDay, 600000);
@@ -14807,9 +15244,25 @@ if (habitsViewVisible) initHabits();
 
 onUserChange((user) => {
   const nextUid = user?.uid ?? null;
-  if (!nextUid || habitsRuntimeReady || habitsRuntimeInitializing) return;
+  if (!nextUid) {
+    if (remoteBound) unlistenRemote();
+    return;
+  }
+  if (nextUid === currentUid && (habitsRuntimeReady || habitsRuntimeInitializing)) return;
+  const changedUser = nextUid !== currentUid;
+  if (changedUser && remoteBound) {
+    unlistenRemote();
+  }
   setUserPaths(nextUid);
-  if (habitsViewVisible) initHabits();
+  if (!habitsRuntimeReady && !habitsRuntimeInitializing) {
+    if (habitsViewVisible) initHabits();
+    return;
+  }
+  if (habitsViewVisible) {
+    attachHabitsListeners();
+    void syncHabitSessionsForCurrentView({ force: true, reason: "auth:user-change" });
+    requestActiveTabRender({ preserveUI: true });
+  }
 });
 
 // TODO REMOVE: parse smoke check

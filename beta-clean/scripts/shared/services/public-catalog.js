@@ -46,14 +46,16 @@ export async function upsertPublicCatalogItem(catalogPath, item = {}, uid = "") 
   const barcode = String(item?.barcode || "").trim();
   const brand = normalizeCatalogName(item?.brand || "");
   const category = normalizeCatalogName(item?.category || "");
+  const baseUnit = normalizeCatalogName(item?.baseUnit || item?.unit || "");
   const now = Date.now();
   const matches = await findPublicCatalogMatches(catalogPath, item, 25);
   const found = matches.find((m) => {
     const mBarcode = String(m?.barcode || "").trim();
     if (barcode && mBarcode) return barcode === mBarcode;
-    return normalizeCatalogName(m?.normalizedName || m?.name || "") === normalizedName
-      && normalizeCatalogName(m?.brand || "") === brand
-      && normalizeCatalogName(m?.category || "") === category;
+    const sameName = normalizeCatalogName(m?.normalizedName || m?.name || "") === normalizedName;
+    if (catalogPath.includes("/exercises")) return sameName;
+    return sameName
+      && normalizeCatalogName(m?.baseUnit || m?.unit || "") === baseUnit;
   });
   const sanitized = {
     name: String(item?.name || "").trim(),
@@ -92,3 +94,4 @@ export function clonePublicItemToUserCatalog(item = {}, extras = {}) {
     updatedAt: Date.now(),
   };
 }
+  const baseUnit = normalizeCatalogName(item?.baseUnit || item?.unit || "");

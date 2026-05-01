@@ -5,7 +5,7 @@ import {
   signOut,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { auth } from "./app.js";
-import { getUserDataKey } from "./rtdb-paths.js";
+import { getAuthUid, getEmailKey, getUserDataRootKey } from "./rtdb-paths.js";
 import { ensureUserDataRootReady } from "./user-data.js";
 
 export function signUpWithEmail(email, password) {
@@ -39,8 +39,20 @@ export function getCurrentUserId() {
   return auth.currentUser?.uid ?? null;
 }
 
+export function getCurrentUserAuthUid() {
+  return getAuthUid(auth.currentUser);
+}
+
+export function getCurrentUserEmailKey() {
+  return getEmailKey(auth.currentUser);
+}
+
 export function getCurrentUserDataKey() {
-  return getUserDataKey(auth.currentUser);
+  return getUserDataRootKey(auth.currentUser);
+}
+
+export function getCurrentUserDataRootKey() {
+  return getUserDataRootKey(auth.currentUser);
 }
 
 export function ensureCurrentUserDataRootReady() {

@@ -1,5 +1,6 @@
 const APP_DATA_VERSION = "v2";
 const USERS_SEGMENT = "users";
+const USER_INDEX_SEGMENT = "userIndex";
 const PUBLIC_SEGMENT = "public";
 const CATALOG_SEGMENT = "catalog";
 const RTDB_FORBIDDEN_KEY_RE = /[.#$/\[\]]/g;
@@ -31,32 +32,51 @@ export function sanitizeRtdbKeyPart(value = "") {
   return normalizeUserKeySeed(value);
 }
 
-export function getUserDataKey(user = null) {
+export function getAuthUid(user = null) {
+  if (typeof user === "object" && user) {
+    return String(user.uid || "").trim();
+  }
+  if (typeof user !== "string") return "";
+  const rawString = String(user || "").trim();
+  return rawString.includes("@") ? "" : rawString;
+}
+
+export function getEmailKey(user = null) {
   const rawEmail = typeof user === "object" && user
     ? String(user.email || "").trim()
     : "";
   const rawString = typeof user === "string" ? String(user || "").trim() : "";
-  const rawUid = typeof user === "object" && user
-    ? String(user.uid || "").trim()
-    : "";
+  const seed = rawEmail || (rawString.includes("@") ? rawString : "");
+  return seed ? normalizeUserKeySeed(seed) : "";
+}
 
-  const preferredSeed = rawEmail || rawString;
-  const emailKey = preferredSeed ? normalizeUserKeySeed(preferredSeed) : "";
-  if (emailKey) return emailKey;
-  if (rawUid) return rawUid;
-  return rawString || "";
+// Compatibility alias: private RTDB routes should use the auth uid.
+export function getUserDataRootKey(user = null) {
+  const authUid = getAuthUid(user);
+  if (authUid) return authUid;
+  return getEmailKey(user);
+}
+
+export function getUserDataKey(user = null) {
+  return getUserDataRootKey(user);
 }
 
 export function buildUserDataContext(user = null) {
-  const uid = typeof user === "object" && user
-    ? String(user.uid || "").trim()
-    : "";
-  const userKey = getUserDataKey(user);
+  const authUid = getAuthUid(user);
+  const emailKey = getEmailKey(user);
+  const userDataRootKey = getUserDataRootKey(user);
+  const privateUserRoot = userDataRootKey ? userRoot(userDataRootKey) : "";
+  const emailAliasRoot = emailKey ? userRoot(emailKey) : "";
   return {
-    uid,
-    userKey,
-    userRoot: userKey ? userRoot(userKey) : "",
-    legacyUserRoot: uid ? legacyUserRoot(uid) : "",
+    uid: authUid,
+    authUid,
+    emailKey,
+    userKey: emailKey || authUid,
+    userDataRootKey,
+    userRootKey: userDataRootKey,
+    privateUserRoot,
+    userRoot: privateUserRoot,
+    legacyUserRoot: emailAliasRoot && emailAliasRoot !== privateUserRoot ? emailAliasRoot : "",
   };
 }
 
@@ -64,13 +84,26 @@ export function usersRoot() {
   return joinPath(APP_DATA_VERSION, USERS_SEGMENT);
 }
 
-// User root and shared meta live under v2/users/{userKey}.
-export function userRoot(userKey = "") {
-  return joinPath(usersRoot(), String(userKey || "").trim());
+export function userIndexRoot() {
+  return joinPath(APP_DATA_VERSION, USER_INDEX_SEGMENT);
 }
 
-export function legacyUserRoot(uid = "") {
-  return joinPath(usersRoot(), String(uid || "").trim());
+export function userIndex(emailKey = "") {
+  return joinPath(userIndexRoot(), String(emailKey || "").trim());
+}
+
+export function userAlias(emailKey = "") {
+  return userIndex(emailKey);
+}
+
+// Private user data lives under v2/users/{authUid}.
+export function userRoot(authUid = "") {
+  return joinPath(usersRoot(), String(authUid || "").trim());
+}
+
+// Experimental/legacy alias root used during the email-key rollout.
+export function legacyUserRoot(emailKey = "") {
+  return joinPath(usersRoot(), String(emailKey || "").trim());
 }
 
 export function userMeta(userKey = "") {
@@ -79,6 +112,26 @@ export function userMeta(userKey = "") {
 
 export function userMetaSchemaVersion(userKey = "") {
   return joinPath(userMeta(userKey), "schemaVersion");
+}
+
+export function userMetaAuthUid(userKey = "") {
+  return joinPath(userMeta(userKey), "authUid");
+}
+
+export function userMetaEmail(userKey = "") {
+  return joinPath(userMeta(userKey), "email");
+}
+
+export function userMetaEmailKey(userKey = "") {
+  return joinPath(userMeta(userKey), "userKey");
+}
+
+export function userMetaDataRootKey(userKey = "") {
+  return joinPath(userMeta(userKey), "dataRootKey");
+}
+
+export function userMetaLastLoginAt(userKey = "") {
+  return joinPath(userMeta(userKey), "lastLoginAt");
 }
 
 export function navLayout(userKey = "") {
@@ -335,10 +388,18 @@ export const PUBLIC_PATHS = Object.freeze({
 
 export const firebasePaths = Object.freeze({
   usersRoot,
+  userIndexRoot,
+  userIndex,
+  userAlias,
   userRoot,
   legacyUserRoot,
   userMeta,
   userMetaSchemaVersion,
+  userMetaAuthUid,
+  userMetaEmail,
+  userMetaEmailKey,
+  userMetaDataRootKey,
+  userMetaLastLoginAt,
   navLayout,
   achievementsRoot,
   generalCenterRoot,

@@ -329,16 +329,16 @@ function buildDefaultMissionDraft() {
   };
 }
 
-function resolveGeneralUserKey(value = state.uid) {
-  const explicitUserKey = String(value || "").trim();
+function resolveGeneralAuthUid(value = state.uid) {
+  const explicitAuthUid = String(value || "").trim();
   const currentUid = String(auth.currentUser?.uid || "").trim();
-  if (explicitUserKey && explicitUserKey !== currentUid) return explicitUserKey;
-  return getUserDataKey(auth.currentUser) || explicitUserKey;
+  if (explicitAuthUid && explicitAuthUid !== currentUid) return explicitAuthUid;
+  return getUserDataKey(auth.currentUser) || explicitAuthUid;
 }
 
 function getGeneralRoot(uid = state.uid) {
-  const userKey = resolveGeneralUserKey(uid);
-  return userKey ? firebasePaths.generalCenterRoot(userKey) : "";
+  const authUid = resolveGeneralAuthUid(uid);
+  return authUid ? firebasePaths.generalCenterRoot(authUid) : "";
 }
 
 function getMissionsRoot() {
@@ -597,19 +597,19 @@ function getLiveModuleSnapshot(moduleKey = "") {
 }
 
 async function fetchRemoteModuleSnapshot(moduleKey = "") {
-  const userKey = resolveGeneralUserKey();
-  if (!userKey) return null;
+  const authUid = resolveGeneralAuthUid();
+  if (!authUid) return null;
   switch (moduleKey) {
     case "habits": {
-      const snapshot = await get(ref(db, firebasePaths.habitsRoot(userKey)));
+      const snapshot = await get(ref(db, firebasePaths.habitsRoot(authUid)));
       return snapshot.val() || {};
     }
     case "recipes": {
-      const snapshot = await get(ref(db, firebasePaths.recipesRoot(userKey)));
+      const snapshot = await get(ref(db, firebasePaths.recipesRoot(authUid)));
       return snapshot.val() || {};
     }
     case "finance": {
-      const [primaryPath, legacyPath] = resolveFinancePathCandidates(userKey);
+      const [primaryPath, legacyPath] = resolveFinancePathCandidates(authUid);
       const [primarySnap, legacySnap] = await Promise.all([
         get(ref(db, primaryPath)),
         primaryPath === legacyPath ? Promise.resolve({ val: () => ({}) }) : get(ref(db, legacyPath)),
@@ -628,7 +628,7 @@ async function fetchRemoteModuleSnapshot(moduleKey = "") {
       };
     }
     case "videos": {
-      const snapshot = await get(ref(db, firebasePaths.videosHubVideos(userKey)));
+      const snapshot = await get(ref(db, firebasePaths.videosHubVideos(authUid)));
       return snapshot.val() || {};
     }
     default:

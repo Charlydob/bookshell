@@ -2,8 +2,8 @@ import {
   auth,
   db,
   firebasePaths,
-  getCurrentUserDataKey,
-  getUserDataKey,
+  getCurrentUserDataRootKey,
+  getUserDataRootKey,
   onUserChange,
   signInWithEmail,
   signOutCurrentUser,
@@ -1070,12 +1070,12 @@ function writeStoredNavLayout(layout) {
   } catch (_) {}
 }
 
-function getNavLayoutDbPath(userKey) {
-  return firebasePaths.navLayout(userKey);
+function getNavLayoutDbPath(authUid) {
+  return firebasePaths.navLayout(authUid);
 }
 
-function getCurrentNavUserKey() {
-  return getCurrentUserDataKey() || null;
+function getCurrentNavUserRootKey() {
+  return getCurrentUserDataRootKey() || null;
 }
 
 function serializeNavLayout(layout) {
@@ -1329,17 +1329,17 @@ function persistNavLayout() {
   syncNav(state.currentViewId || getInitialView());
 }
 
-async function primeNavLayoutForUser(userKey) {
+async function primeNavLayoutForUser(authUid) {
   const state = getShellState();
-  if (!userKey) {
+  if (!authUid) {
     state.navLayout = normalizeNavLayout(readStoredNavLayout());
     return state.navLayout;
   }
 
   let remoteLayout = null;
   try {
-    logFirebaseRead({ path: getNavLayoutDbPath(userKey), mode: "get", reason: "load-nav-layout", viewId: "shell" });
-    const snap = await get(ref(db, getNavLayoutDbPath(userKey)));
+    logFirebaseRead({ path: getNavLayoutDbPath(authUid), mode: "get", reason: "load-nav-layout", viewId: "shell" });
+    const snap = await get(ref(db, getNavLayoutDbPath(authUid)));
     remoteLayout = snap.val();
   } catch (error) {
     console.warn("[shell] no se pudo leer navLayout remoto", error);
@@ -1373,22 +1373,22 @@ function stopNavLayoutSync() {
   state.navLayoutSeededFromLocal = false;
 }
 
-function startNavLayoutSync(userKey) {
+function startNavLayoutSync(authUid) {
   const state = getShellState();
-  if (!userKey) {
+  if (!authUid) {
     stopNavLayoutSync();
     return;
   }
 
-  if (state.navLayoutSyncUid === userKey && typeof state.navLayoutUnsubscribe === "function") {
+  if (state.navLayoutSyncUid === authUid && typeof state.navLayoutUnsubscribe === "function") {
     return;
   }
 
   stopNavLayoutSync();
-  state.navLayoutSyncUid = userKey;
+  state.navLayoutSyncUid = authUid;
 
-  logFirebaseRead({ path: getNavLayoutDbPath(userKey), mode: "onValue", reason: "watch-nav-layout", viewId: "shell" });
-  state.navLayoutUnsubscribe = registerViewListener("shell", onValue(ref(db, getNavLayoutDbPath(userKey)), (snap) => {
+  logFirebaseRead({ path: getNavLayoutDbPath(authUid), mode: "onValue", reason: "watch-nav-layout", viewId: "shell" });
+  state.navLayoutUnsubscribe = registerViewListener("shell", onValue(ref(db, getNavLayoutDbPath(authUid)), (snap) => {
     const remoteLayout = snap.val();
     state.navLayoutRemoteReady = true;
 
@@ -1411,7 +1411,7 @@ function startNavLayoutSync(userKey) {
     console.warn("[shell] no se pudo escuchar navLayout remoto", error);
   }), {
     key: "nav-layout",
-    path: getNavLayoutDbPath(userKey),
+    path: getNavLayoutDbPath(authUid),
     mode: "onValue",
     reason: "watch-nav-layout",
   });
@@ -1419,12 +1419,12 @@ function startNavLayoutSync(userKey) {
 
 async function syncNavLayoutToRemote({ useStoredFallback = false } = {}) {
   const state = getShellState();
-  const userKey = getCurrentNavUserKey();
-  if (!userKey) return;
+  const authUid = getCurrentNavUserRootKey();
+  if (!authUid) return;
 
   const layout = normalizeNavLayout(useStoredFallback ? (readStoredNavLayout() || state.navLayout) : state.navLayout);
   try {
-    await update(ref(db, getNavLayoutDbPath(userKey)), {
+    await update(ref(db, getNavLayoutDbPath(authUid)), {
       version: NAV_LAYOUT_VERSION,
       updatedAt: Date.now(),
       order: layout.order,
@@ -2811,9 +2811,9 @@ function ensureLoginUI() {
   };
 }
 
-async function ensureUserSchema(userKey) {
-  const root = firebasePaths.userRoot(userKey);
-  const schemaPath = firebasePaths.userMetaSchemaVersion(userKey);
+async function ensureUserSchema(authUid) {
+  const root = firebasePaths.userRoot(authUid);
+  const schemaPath = firebasePaths.userMetaSchemaVersion(authUid);
   logFirebaseRead({ path: schemaPath, mode: "get", reason: "ensure-user-schema:meta", viewId: "shell" });
   const snap = await get(ref(db, schemaPath));
   if (snap.exists()) return;
@@ -2838,14 +2838,14 @@ async function ensureUserSchema(userKey) {
   });
 }
 
-function getActiveHabitSessionsPath(userKey) {
-  return firebasePaths.activeHabitSessions(userKey);
+function getActiveHabitSessionsPath(authUid) {
+  return firebasePaths.activeHabitSessions(authUid);
 }
 
-async function hasRemoteActiveHabitSession(userKey) {
-  if (!userKey) return false;
+async function hasRemoteActiveHabitSession(authUid) {
+  if (!authUid) return false;
   try {
-    const snap = await get(ref(db, getActiveHabitSessionsPath(userKey)));
+    const snap = await get(ref(db, getActiveHabitSessionsPath(authUid)));
     const raw = snap.val();
     return !!(raw && typeof raw === "object" && Object.keys(raw).length);
   } catch (error) {
@@ -2957,18 +2957,18 @@ function bindAuthGate() {
 
     void notifySyncUserChanged();
     document.getElementById("loginBox")?.remove();
-    const userKey = getUserDataKey(user);
+    const authUid = getUserDataRootKey(user);
 
-    void ensureUserSchema(userKey).catch((error) => {
+    void ensureUserSchema(authUid).catch((error) => {
       console.warn("[schema] seed failed", error);
     });
 
-    void primeNavLayoutForUser(userKey)
+    void primeNavLayoutForUser(authUid)
       .catch((error) => {
         console.warn("[shell] no se pudo preparar navLayout inicial", error);
       })
       .finally(() => {
-        startNavLayoutSync(userKey);
+        startNavLayoutSync(authUid);
       });
 
     setBootPhase("Cargando datos…", 62);
@@ -2994,7 +2994,7 @@ function bindAuthGate() {
     schedulePostBootTask(async () => {
       if (auth.currentUser?.uid !== user.uid) return;
       if (viewId === HABITS_VIEW_ID) return;
-      const hasActiveSession = await hasRemoteActiveHabitSession(userKey);
+      const hasActiveSession = await hasRemoteActiveHabitSession(authUid);
       if (!hasActiveSession) return;
       await preloadViewModule(HABITS_VIEW_ID);
     }, 180);

@@ -18,13 +18,13 @@ import {
 } from "./notes-mapper.js?v=2026-04-28-v2";
 
 function resolveRootPath(uidParam = "") {
-  const explicitUserKey = String(uidParam || "").trim();
+  const explicitAuthUid = String(uidParam || "").trim();
   const currentUid = String(auth.currentUser?.uid || "").trim();
-  const userKey = explicitUserKey
-    ? (explicitUserKey === currentUid ? getUserDataKey(auth.currentUser) : explicitUserKey)
+  const authUid = explicitAuthUid
+    ? (explicitAuthUid === currentUid ? getUserDataKey(auth.currentUser) : explicitAuthUid)
     : getUserDataKey(auth.currentUser);
-  if (!userKey) throw new Error("Clave de usuario no disponible para notas");
-  return firebasePaths.notes(userKey);
+  if (!authUid) throw new Error("UID de auth no disponible para notas");
+  return firebasePaths.notes(authUid);
 }
 
 export function subscribeNotesRoot(uid, onData, onError) {

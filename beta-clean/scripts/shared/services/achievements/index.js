@@ -44,16 +44,16 @@ function persistActiveModule(moduleKey = "") {
   } catch (_) {}
 }
 
-function resolveAchievementsUserKey(value = state.uid) {
-  const explicitUserKey = String(value || "").trim();
+function resolveAchievementsAuthUid(value = state.uid) {
+  const explicitAuthUid = String(value || "").trim();
   const currentUid = String(auth.currentUser?.uid || "").trim();
-  if (explicitUserKey && explicitUserKey !== currentUid) return explicitUserKey;
-  return getUserDataKey(auth.currentUser) || explicitUserKey;
+  if (explicitAuthUid && explicitAuthUid !== currentUid) return explicitAuthUid;
+  return getUserDataKey(auth.currentUser) || explicitAuthUid;
 }
 
 function getAchievementsRoot(uid = state.uid) {
-  const userKey = resolveAchievementsUserKey(uid);
-  return userKey ? firebasePaths.achievementsRoot(userKey) : "";
+  const authUid = resolveAchievementsAuthUid(uid);
+  return authUid ? firebasePaths.achievementsRoot(authUid) : "";
 }
 
 function escapeHtml(value) {
@@ -216,25 +216,25 @@ function getModuleLiveSnapshot(moduleKey = "") {
 }
 
 async function fetchRemoteModuleSnapshot(moduleKey = "") {
-  const userKey = resolveAchievementsUserKey();
-  if (!userKey) return null;
+  const authUid = resolveAchievementsAuthUid();
+  if (!authUid) return null;
   switch (moduleKey) {
     case "books":
-      return (await get(ref(db, firebasePaths.booksRoot(userKey)))).val() || {};
+      return (await get(ref(db, firebasePaths.booksRoot(authUid)))).val() || {};
     case "recipes":
-      return (await get(ref(db, firebasePaths.recipesRoot(userKey)))).val() || {};
+      return (await get(ref(db, firebasePaths.recipesRoot(authUid)))).val() || {};
     case "gym":
-      return (await get(ref(db, firebasePaths.gymRoot(userKey)))).val() || {};
+      return (await get(ref(db, firebasePaths.gymRoot(authUid)))).val() || {};
     case "habits":
-      return (await get(ref(db, firebasePaths.habitsRoot(userKey)))).val() || {};
+      return (await get(ref(db, firebasePaths.habitsRoot(authUid)))).val() || {};
     case "notes":
-      return (await get(ref(db, firebasePaths.notes(userKey)))).val() || {};
+      return (await get(ref(db, firebasePaths.notes(authUid)))).val() || {};
     case "videos":
-      return (await get(ref(db, firebasePaths.videosHubVideos(userKey)))).val() || {};
+      return (await get(ref(db, firebasePaths.videosHubVideos(authUid)))).val() || {};
     case "media":
-      return (await get(ref(db, firebasePaths.media(userKey)))).val() || {};
+      return (await get(ref(db, firebasePaths.media(authUid)))).val() || {};
     case "finance": {
-      const [primaryPath, legacyPath] = resolveFinancePathCandidates(userKey);
+      const [primaryPath, legacyPath] = resolveFinancePathCandidates(authUid);
       const [primarySnap, legacySnap] = await Promise.all([
         get(ref(db, primaryPath)),
         primaryPath === legacyPath ? Promise.resolve({ val: () => ({}) }) : get(ref(db, legacyPath)),

@@ -6,10 +6,10 @@ export function getDbRef(path) {
   return ref(db, path);
 }
 
-export function getUserRootDbPath(userKey) {
-  return userRoot(userKey);
+export function getUserRootDbPath(authUid) {
+  return userRoot(authUid);
 }
 
-export function getUserRootDbRef(userKey) {
-  return getDbRef(getUserRootDbPath(userKey));
+export function getUserRootDbRef(authUid) {
+  return getDbRef(getUserRootDbPath(authUid));
 }

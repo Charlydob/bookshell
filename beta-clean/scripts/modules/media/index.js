@@ -5,12 +5,12 @@
 // - Modal: añadir (checkbox) + modal editar (JS)
 // - Sync: localStorage + Firebase RTDB (merge anti-pisotón)
 
-import { db, auth, firebasePaths, getCurrentUserDataKey } from "../../shared/firebase/index.js";
+import { db, auth, firebasePaths, getCurrentUserDataRootKey } from "../../shared/firebase/index.js";
 import { ref, onValue, runTransaction, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { ensureEcharts } from "../../shared/vendors/echarts.js";
 import { TMDB_API_KEY, TMDB_READ_TOKEN } from "./tmdb.js";
 
-const MEDIA_PATH = (userKey) => firebasePaths.media(userKey);
+const MEDIA_PATH = (authUid) => firebasePaths.media(authUid);
 let moduleInitialized = false;
 let mediaEchartsPromise = null;
 
@@ -660,9 +660,9 @@ async function tmdbFetchDetails(id, type) {
 
 /* ------------------------- Cache + Firebase merge ------------------------- */
 function firebasePath(id = "") {
-  const userKey = getCurrentUserDataKey() || "";
-  if (!userKey) return "";
-  const mediaBasePath = MEDIA_PATH(userKey);
+  const authUid = getCurrentUserDataRootKey() || "";
+  if (!authUid) return "";
+  const mediaBasePath = MEDIA_PATH(authUid);
   return id ? `${mediaBasePath}/${id}` : mediaBasePath;
 }
 

@@ -3,7 +3,7 @@ import { getCountryEnglishName, getCountryOptions, normalizeCountryInput } from 
 import { auth, db, firebasePaths, getCurrentUserDataRootKey } from "../../shared/firebase/index.js";
 import { ref, get, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { ensureEcharts } from "../../shared/vendors/echarts.js";
-import { logFirebaseRead, registerViewListener } from "../../shared/firebase/read-debug.js";
+import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 
 const LS_VISITS = "world_visits_v1";
 const LS_WATCH = "world_watchlist_v1";
@@ -254,8 +254,7 @@ export async function init() {
     worldState.firebaseAuthUid = authUid();
     worldState.firebaseRef = ref(db, WORLD_PATH(authUid()));
     const legacy = await readLegacyWorldPayload(authUid());
-    logFirebaseRead({ path: WORLD_PATH(authUid()), mode: "onValue", reason: "world-live-sync", viewId: "view-world" });
-    worldState.firebaseUnsub = registerViewListener("view-world", onValue(worldState.firebaseRef, (snap) => {
+    worldState.firebaseUnsub = trackedOnValue(worldState.firebaseRef, (snap) => {
       const remote = snap.exists() ? normalizeWorldPayload(snap.val()) : { visits: [], watch: {}, customPins: [], areaVisits: [], timelineEntries: [] };
       if (!worldState.hasResolvedFirstRemoteSnapshot) {
         worldState.hasResolvedFirstRemoteSnapshot = true;
@@ -274,12 +273,14 @@ export async function init() {
       state.areaVisits = mergeById(state.areaVisits, remote.areaVisits);
       state.timelineEntries = mergeById(state.timelineEntries, remote.timelineEntries);
       persistLocal(); renderAll();
-    }), {
+    }, {
       key: "world-root",
       path: WORLD_PATH(authUid()),
+      module: "world",
       mode: "onValue",
       reason: "world-live-sync",
-    });
+      viewId: "view-world",
+    }, onValue);
   }
 
   const allRecords = () => mergeById(state.visits, state.areaVisits);

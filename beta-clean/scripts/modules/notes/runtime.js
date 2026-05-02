@@ -3077,7 +3077,7 @@ function renderReminderCardsToMarkup(reminders = []) {
                 </label>
               `).join("")}
               <div class="notes-reminder-inline-add">
-                <input type="text" placeholder="Nuevo checkpoint..." data-checklist-input="${escapeHtml(reminder.id)}" />
+                <input type="text" id="notes-reminder-checklist-new"   placeholder="Nuevo checkpoint..." data-checklist-input="${escapeHtml(reminder.id)}" />
                 <button class="notes-icon-action" type="button" data-act="add-checklist-item" data-reminder-id="${escapeHtml(reminder.id)}">+</button>
               </div>
             </div>
@@ -5206,7 +5206,7 @@ export async function onShow() {
       }
       const items = getReminderNotificationItems();
       panel.classList.remove("hidden");
-      panel.innerHTML = `<section class="modal"><header class="modal-header"><div class="modal-title">Notificaciones</div><button class="icon-btn" data-close-notifications>✕</button></header><div class="modal-body">${items.map((item) => `<button class="btn ghost" data-open-reminder-notification="${escapeHtml(item.id)}">${escapeHtml(item.title)} ${item.targetTime ? `· ${escapeHtml(item.targetTime)}` : ""} · ${escapeHtml(item.status)}</button>`).join("") || "<p>Sin notificaciones para hoy.</p>"}</div></section>`;
+      panel.innerHTML = `<section class="modal"><header class="modal-header"><div class="modal-title">Notificaciones</div><button class="icon-btn" data-close-notifications>✕</button></header><div class="modal-body" id="lista-de-notificaciones" >${items.map((item) => `<button class="btn ghost" id="notificaciones"  data-open-reminder-notification="${escapeHtml(item.id)}">${escapeHtml(item.title)} ${item.targetTime ? `· ${escapeHtml(item.targetTime)}` : ""} · ${escapeHtml(item.status)}</button>`).join("") || "<p>Sin notificaciones para hoy.</p>"}</div></section>`;
       panel.addEventListener("click", async (event) => {
         if (event.target === panel || event.target.closest("[data-close-notifications]")) {
           reminderNotificationsOpen = false;

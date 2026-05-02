@@ -86,8 +86,9 @@
   min-width: 36px;
   min-height: 36px;
   border: 0;
+  font-size: 18px;
   border-radius: 999px;
-  background: var(--app-chip-bg);
+  background: none;
   color: var(--app-text-secondary);
   cursor: pointer;
 }
@@ -432,36 +433,10 @@
   cursor: pointer;
 }
 
-@media (max-width: 720px) {
-  .app-achievements-modal {
-    width: min(100%, 100vw);
-  }
+#app-achievements-btn, #app-general-btn, #app-reminder-notifications-btn, #app-sync-settings-btn, #app-sync-metrics-btn {
+  background: none;
+}
 
-  .app-achievements-shell__summary,
-  .app-achievements-moduleHero__top,
-  .app-achievement-card__head,
-  .app-achievement-card__stats,
-  .app-achievement-card__meta,
-  .app-achievements-nearby__top {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .app-achievements-shell__stats,
-  .app-achievements-moduleHero__stats {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .app-achievements-panelGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .app-achievement-toast-stack {
-    right: 12px;
-    left: 12px;
-  }
-
-  .app-achievement-toast {
-    width: auto;
-  }
+#app-sync-indicator{
+  margin-top: 10px;
 }

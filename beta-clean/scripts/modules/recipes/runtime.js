@@ -13,7 +13,7 @@ import { FOODREPO_API_BASE, FOODREPO_API_TOKEN } from "./foodrepo.js";
 import { getMetCategoryById } from "./met-catalog.js";
 import { buildConsumptionAnalytics } from "./consumption-analytics.js";
 import { normalizeCatalogName, upsertPublicCatalogItem, clonePublicItemToUserCatalog, findPublicCatalogMatches } from "../../shared/services/public-catalog.js";
-import { logFirebaseRead, readWithCache, registerViewListener } from "../../shared/firebase/read-debug.js";
+import { readWithCache, trackedGet, trackedOnValue } from "../../shared/firebase/read-debug.js";
 import {
   ref,
   onValue,
@@ -642,8 +642,12 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       key: "recipes:public-food-catalog",
       ttlMs: PUBLIC_CATALOG_CACHE_TTL_MS,
       loader: async () => {
-        logFirebaseRead({ path: PUBLIC_PATHS.foodItems, mode: "get", reason: "recipes-public-food-catalog", viewId: "view-recipes" });
-        const publicSnap = await get(ref(db, PUBLIC_PATHS.foodItems));
+        const publicSnap = await trackedGet(ref(db, PUBLIC_PATHS.foodItems), {
+          path: PUBLIC_PATHS.foodItems,
+          module: "recipes",
+          reason: "recipes-public-food-catalog",
+          viewId: "view-recipes",
+        }, get);
         return publicSnap?.val() || {};
       },
     });
@@ -767,26 +771,24 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     const legacyRoot = recipesRootPath(uid);
     if (!itemsRoot || !legacyRoot) return itemsRoot;
 
-    logFirebaseRead({
+    const itemsSnap = await trackedGet(ref(db, itemsRoot), {
       path: itemsRoot,
-      mode: "get",
+      module: "recipes",
       reason: "recipes-items-bootstrap",
       viewId: "view-recipes",
       bounded: true,
-    });
-    const itemsSnap = await get(ref(db, itemsRoot));
+    }, get);
     const itemsData = itemsSnap?.val();
     if (itemsData && typeof itemsData === "object" && (Object.keys(itemsData).length > 0 || itemsData._init != null)) {
       return itemsRoot;
     }
 
-    logFirebaseRead({
+    const legacySnap = await trackedGet(ref(db, legacyRoot), {
       path: legacyRoot,
-      mode: "get",
+      module: "recipes",
       reason: "recipes-legacy-migration-check",
       viewId: "view-recipes",
-    });
-    const legacySnap = await get(ref(db, legacyRoot));
+    }, get);
     const legacyData = legacySnap?.val() || null;
     const legacyList = extractRemoteRecipes(legacyData);
     const initFlag = legacyData && typeof legacyData === "object" && Object.prototype.hasOwnProperty.call(legacyData, "_init")
@@ -837,8 +839,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
       const root = recipesItemsPath(uid);
       if (!root) return;
 
-      logFirebaseRead({ path: root, mode: "onValue", reason: "recipes-live-sync", viewId: "view-recipes" });
-      recipesRemoteUnsubscribe = registerViewListener("view-recipes", onValue(
+      recipesRemoteUnsubscribe = trackedOnValue(
         ref(db, root),
         (snapshot) => {
           const data = snapshot.val() || null;
@@ -850,15 +851,17 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
           if (detailRecipeId) renderRecipeDetail(detailRecipeId);
           emitRecipesData("remote:recipes");
         },
-        (err) => {
-          console.warn("No se pudo escuchar recetas remotas", err);
-        }
-      ), {
+        {
         key: "recipes-root",
         path: root,
+        module: "recipes",
         mode: "onValue",
         reason: "recipes-live-sync",
-      });
+        viewId: "view-recipes",
+        onError: (err) => {
+          console.warn("No se pudo escuchar recetas remotas", err);
+        },
+      }, onValue);
     };
 
     recipesRemoteAuthUnsubscribe = onUserChange(async (user) => {
@@ -4966,8 +4969,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       if (!uid) return;
       const root = nutritionRootPath(uid);
       if (!root) return;
-      logFirebaseRead({ path: root, mode: "onValue", reason: "recipes-nutrition-sync", viewId: "view-recipes" });
-      nutritionUnsubscribe = registerViewListener("view-recipes", onValue(ref(db, root), (snap) => {
+      nutritionUnsubscribe = trackedOnValue(ref(db, root), (snap) => {
         const data = snap.val() || {};
         const remoteProducts = Array.isArray(data.products) ? data.products.map(normalizeNutritionProductEntry).filter((p) => p.name) : [];
         const remoteLogs = normalizeDailyLogs(data.dailyLogsByDate && typeof data.dailyLogsByDate === "object" ? data.dailyLogsByDate : {});
@@ -5017,14 +5019,17 @@ $recipeImportBtn?.addEventListener("click", () => {
         refreshUI();
         if ($modalBackdrop && !$modalBackdrop.classList.contains("hidden")) renderRecipeIngredientProductPicker();
         emitRecipesData("remote:nutrition");
-      }, (err) => {
-        console.warn("No se pudo escuchar nutrición remota", err);
-      }), {
+      }, {
         key: "recipes-nutrition",
         path: root,
+        module: "recipes",
         mode: "onValue",
         reason: "recipes-nutrition-sync",
-      });
+        viewId: "view-recipes",
+        onError: (err) => {
+          console.warn("No se pudo escuchar nutrición remota", err);
+        },
+      }, onValue);
     });
   }
 

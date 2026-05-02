@@ -25,9 +25,9 @@ import {
   trackAchievementViewVisit,
 } from "../shared/services/achievements/index.js";
 import { initGeneralCenterService } from "../shared/services/general-center/index.js";
-import { initThemeService } from "../shared/services/theme/index.js";
+import { applyTheme, getAvailableThemes, getCurrentTheme, initThemeService } from "../shared/services/theme/index.js";
 import { registerPublicCatalogMigrationDebugApi } from "../shared/services/public-catalog-migration.js";
-import { cleanupViewListeners, exposeFirebaseReadDebug, logFirebaseRead, registerViewListener } from "../shared/firebase/read-debug.js";
+import { cleanupViewListeners, clearFirebaseMetrics, exposeFirebaseReadDebug, getFirebaseMetricsSnapshot, logFirebaseRead, registerViewListener } from "../shared/firebase/read-debug.js";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -358,9 +358,38 @@ function ensureSyncIndicatorActionsNode(indicator) {
   return actionsNode;
 }
 
+function logPwaEvent(event, detail = {}) {
+  console.info(`[pwa] ${event}`, {
+    at: new Date().toISOString(),
+    ...detail,
+  });
+}
+
+function logSettingsEvent(event, detail = {}) {
+  console.info(`[settings] ${event}`, {
+    at: new Date().toISOString(),
+    ...detail,
+  });
+}
+
+function getVisibleShellModalCount() {
+  return document.querySelectorAll(".modal-backdrop:not(.hidden), .nav-manage-backdrop:not(.hidden), .nav-compose-backdrop:not(.hidden)").length;
+}
+
+function syncShellModalLock() {
+  document.body.classList.toggle("has-open-modal", getVisibleShellModalCount() > 0);
+}
+
+function hideLegacyThemeControl() {
+  document.getElementById("app-theme-switcher")?.remove();
+  document.getElementById("app-theme-panel")?.remove();
+  document.getElementById("app-theme-panel-backdrop")?.remove();
+}
+
 async function hardResetApp() {
   const ok = window.confirm("Esto recargará la app y limpiará caché de archivos. No borra tus datos.");
   if (!ok) return;
+  logSettingsEvent("hard-reset:start");
   console.info("[hard-reset] starting");
   try {
     if ("serviceWorker" in navigator) {
@@ -373,11 +402,17 @@ async function hardResetApp() {
       const appKeys = keys.filter((key) => /bookshell|bookshelf|pwa|static|assets|vite|app/i.test(key));
       await Promise.all(appKeys.map((key) => caches.delete(key)));
       console.info("[hard-reset] caches deleted", appKeys);
+      logSettingsEvent("hard-reset:cache-cleared", {
+        caches: appKeys,
+      });
     }
   } catch (error) {
     console.warn("[hard-reset] partial failure", error);
   }
   const cleanPath = `${location.origin}${location.pathname}`;
+  logSettingsEvent("hard-reset:reload", {
+    cleanPath,
+  });
   location.replace(`${cleanPath}?hardReset=${Date.now()}`);
 }
 
@@ -394,6 +429,440 @@ function ensureHardResetSyncAction(indicator) {
   actionsNode.append(button);
 }
 
+const SYNC_METRIC_MODULE_ORDER = Object.freeze([
+  { key: "finance", label: "Finanzas" },
+  { key: "habits", label: "Habitos" },
+  { key: "recipes", label: "Recetas" },
+  { key: "gym", label: "Gym" },
+  { key: "world", label: "Mundo" },
+  { key: "books", label: "Libros" },
+  { key: "games", label: "Juegos" },
+  { key: "notes", label: "Notas/Recordatorios" },
+  { key: "videos-hub", label: "Videos" },
+  { key: "media", label: "Media" },
+  { key: "improvements", label: "Mejoras" },
+  { key: "shell", label: "Shell" },
+]);
+
+function formatMetricBytes(bytes = 0) {
+  const safe = Math.max(0, Number(bytes) || 0);
+  if (safe >= 1024 * 1024) return `${(safe / (1024 * 1024)).toFixed(2)} MB`;
+  if (safe >= 1024) return `${(safe / 1024).toFixed(1)} KB`;
+  return `${safe} B`;
+}
+
+function formatMetricRelativeTime(ts = 0) {
+  const safeTs = Number(ts || 0);
+  if (!safeTs) return "Nunca";
+  const diffMs = Math.max(0, Date.now() - safeTs);
+  if (diffMs < 60 * 1000) return "Hace <1 min";
+  if (diffMs < 60 * 60 * 1000) return `Hace ${Math.round(diffMs / (60 * 1000))} min`;
+  if (diffMs < 24 * 60 * 60 * 1000) return `Hace ${Math.round(diffMs / (60 * 60 * 1000))} h`;
+  return `Hace ${Math.round(diffMs / (24 * 60 * 60 * 1000))} d`;
+}
+
+function ensureSyncIconAction(actionsNode, {
+  id,
+  icon,
+  title,
+  ariaLabel,
+  datasetKey,
+  onClick,
+} = {}) {
+  if (!(actionsNode instanceof HTMLElement) || !id) return null;
+  let button = actionsNode.querySelector(`#${id}`);
+  if (button) return button;
+  button = document.createElement("button");
+  button.id = id;
+  button.type = "button";
+  button.className = "app-sync-menu__button";
+  button.textContent = icon || "•";
+  button.title = title || ariaLabel || "";
+  button.setAttribute("aria-label", ariaLabel || title || "");
+  if (datasetKey) button.dataset[datasetKey] = "true";
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onClick?.(event);
+  });
+  actionsNode.append(button);
+  return button;
+}
+
+function closeSyncIndicatorMenu() {
+  const indicator = document.getElementById("app-sync-indicator");
+  setSyncIndicatorExpanded(indicator, false);
+}
+
+function normalizeSyncIndicatorShortcuts(indicator) {
+  if (!(indicator instanceof HTMLElement)) return;
+  hideLegacyThemeControl();
+  indicator.querySelector("[data-hard-reset-app]")?.remove();
+
+  const achievementsBtn = indicator.querySelector("#app-achievements-btn");
+  if (achievementsBtn instanceof HTMLElement) {
+    achievementsBtn.setAttribute("title", "Logros");
+    achievementsBtn.setAttribute("aria-label", "Abrir logros");
+  }
+
+  const generalBtn = indicator.querySelector("#app-general-btn");
+  if (generalBtn instanceof HTMLElement) {
+    generalBtn.setAttribute("title", "Misiones");
+    generalBtn.setAttribute("aria-label", "Abrir misiones");
+    const text = generalBtn.querySelector(".app-general-btn__text");
+    if (text) text.textContent = "Misiones";
+  }
+}
+
+function orderSyncIndicatorActions(indicator) {
+  const actionsNode = ensureSyncIndicatorActionsNode(indicator);
+  if (!(actionsNode instanceof HTMLElement)) return;
+  [
+    "#app-achievements-btn",
+    "#app-general-btn",
+    "#app-reminder-notifications-btn",
+    "#app-sync-settings-btn",
+    "#app-sync-metrics-btn",
+  ].forEach((selector) => {
+    const node = actionsNode.querySelector(selector);
+    if (node) actionsNode.append(node);
+  });
+}
+
+function closeSettingsModal() {
+  const backdrop = document.getElementById("app-settings-backdrop");
+  if (!backdrop) return;
+  backdrop.classList.add("hidden");
+  backdrop.setAttribute("aria-hidden", "true");
+  syncShellModalLock();
+}
+
+async function renderSettingsModal() {
+  const body = document.getElementById("app-settings-body");
+  if (!(body instanceof HTMLElement)) return;
+
+  let storageEstimate = null;
+  try {
+    storageEstimate = await navigator.storage?.estimate?.();
+  } catch (_) {}
+
+  const themeButtons = getAvailableThemes().map((theme) => `
+    <button
+      type="button"
+      class="app-settings-themeBtn ${getCurrentTheme() === theme.id ? "is-active" : ""}"
+      data-settings-theme="${theme.id}"
+      aria-pressed="${getCurrentTheme() === theme.id ? "true" : "false"}"
+    >${theme.label}</button>
+  `).join("");
+
+  body.innerHTML = `
+    <section class="app-settings-section">
+      <div class="app-settings-section__eyebrow">Tema y apariencia</div>
+      <h3>Tema activo: ${getCurrentTheme()}</h3>
+      <div class="app-settings-themeGrid">${themeButtons}</div>
+    </section>
+    <section class="app-settings-section">
+      <div class="app-settings-section__eyebrow">Notificaciones</div>
+      <div class="app-settings-section__actions">
+        <button type="button" class="app-settings-actionBtn" data-settings-open-notifications>Abrir panel de notificaciones</button>
+      </div>
+    </section>
+    <section class="app-settings-section">
+      <div class="app-settings-section__eyebrow">Cache local</div>
+      <div class="app-settings-kpis">
+        <div class="app-settings-kpi">
+          <small>Ultima vista</small>
+          <strong>${window.localStorage.getItem(LAST_VIEW_KEY) || DEFAULT_VIEW_ID}</strong>
+        </div>
+        <div class="app-settings-kpi">
+          <small>Uso navegador</small>
+          <strong>${storageEstimate?.usage ? formatMetricBytes(storageEstimate.usage) : "No disponible"}</strong>
+        </div>
+      </div>
+    </section>
+    <section class="app-settings-section">
+      <div class="app-settings-section__eyebrow">Limpieza fuerte</div>
+      <p>El hard reset limpia caches del service worker y fuerza una recarga limpia. No borra tus datos de Firebase.</p>
+      <div class="app-settings-section__actions">
+        <button type="button" class="app-settings-dangerBtn" data-settings-hard-reset>Hard reset</button>
+      </div>
+    </section>
+  `;
+}
+
+function ensureSettingsModal() {
+  let backdrop = document.getElementById("app-settings-backdrop");
+  if (backdrop) return backdrop;
+  backdrop = document.createElement("div");
+  backdrop.id = "app-settings-backdrop";
+  backdrop.className = "modal-backdrop app-settings-backdrop hidden";
+  backdrop.setAttribute("aria-hidden", "true");
+  backdrop.innerHTML = `
+    <section class="modal app-settings-modal" role="dialog" aria-modal="true" aria-labelledby="app-settings-title">
+      <header class="modal-header app-settings-modal__header">
+        <div>
+          <div class="app-settings-modal__eyebrow">Global</div>
+          <div class="modal-title" id="app-settings-title">Ajustes</div>
+        </div>
+        <button class="btn-x" type="button" aria-label="Cerrar ajustes" data-settings-close>✕</button>
+      </header>
+      <div class="modal-body app-settings-modal__body" id="app-settings-body"></div>
+    </section>
+  `;
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop || event.target?.closest?.("[data-settings-close]")) {
+      closeSettingsModal();
+    }
+  });
+  backdrop.addEventListener("click", (event) => {
+    const themeButton = event.target?.closest?.("[data-settings-theme]");
+    if (themeButton) {
+      applyTheme(themeButton.dataset.settingsTheme || "");
+      void renderSettingsModal();
+      return;
+    }
+    if (event.target?.closest?.("[data-settings-open-notifications]")) {
+      window.__bookshellNotes?.openReminderNotificationsPanel?.();
+      return;
+    }
+    if (event.target?.closest?.("[data-settings-hard-reset]")) {
+      hardResetApp();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !backdrop.classList.contains("hidden")) {
+      closeSettingsModal();
+    }
+  });
+  document.body.append(backdrop);
+  return backdrop;
+}
+
+function openSettingsModal() {
+  const backdrop = ensureSettingsModal();
+  if (!backdrop) return;
+  logSettingsEvent("open");
+  closeMetricsModal();
+  closeSyncIndicatorMenu();
+  backdrop.classList.remove("hidden");
+  backdrop.setAttribute("aria-hidden", "false");
+  syncShellModalLock();
+  void renderSettingsModal();
+}
+
+function getMetricsPanelState() {
+  const state = getShellState();
+  if (!state.metricsPanelState) {
+    state.metricsPanelState = {
+      rangeKey: "10m",
+    };
+  }
+  return state.metricsPanelState;
+}
+
+function buildModuleMetricCards(snapshot) {
+  const moduleMap = new Map((snapshot?.modules || []).map((module) => [module.module, module]));
+  return SYNC_METRIC_MODULE_ORDER.map((entry) => {
+    const module = moduleMap.get(entry.key) || {
+      module: entry.key,
+      label: entry.label,
+      getCount: 0,
+      listenerStarts: 0,
+      listenerEvents: 0,
+      bytesReceived: 0,
+      cacheBytes: 0,
+      activeListeners: 0,
+      duplicateListeners: 0,
+      riskyReads: 0,
+      lastReadAt: 0,
+      paths: [],
+    };
+    return {
+      ...module,
+      label: module.label || entry.label,
+    };
+  });
+}
+
+async function renderMetricsModal() {
+  const body = document.getElementById("app-metrics-body");
+  if (!(body instanceof HTMLElement)) return;
+
+  const metricsState = getMetricsPanelState();
+  const snapshot = getFirebaseMetricsSnapshot(metricsState.rangeKey);
+  let storageEstimate = null;
+  try {
+    storageEstimate = await navigator.storage?.estimate?.();
+  } catch (_) {}
+
+  const modules = buildModuleMetricCards(snapshot);
+  const rangeButtons = [
+    ["1m", "1m"],
+    ["10m", "10m"],
+    ["1h", "1h"],
+    ["24h", "24h"],
+    ["1w", "1 sem"],
+    ["1mo", "1 mes"],
+    ["since-start", "Inicio"],
+  ].map(([key, label]) => `
+    <button
+      type="button"
+      class="app-metrics-rangeBtn ${metricsState.rangeKey === key ? "is-active" : ""}"
+      data-metrics-range="${key}"
+      aria-pressed="${metricsState.rangeKey === key ? "true" : "false"}"
+    >${label}</button>
+  `).join("");
+
+  const alertsMarkup = snapshot.alerts?.length
+    ? snapshot.alerts.map((alert) => `
+      <li>
+        <strong>${alert.module || "modulo"}</strong>
+        <span>${alert.message}</span>
+      </li>
+    `).join("")
+    : '<li><strong>OK</strong><span>No se detectaron alertas en este rango.</span></li>';
+
+  const moduleMarkup = modules.map((module) => `
+    <details class="app-metrics-module">
+      <summary>
+        <span>${module.label}</span>
+        <span>${formatMetricBytes(module.bytesReceived)} · ${module.activeListeners} listeners</span>
+      </summary>
+      <div class="app-metrics-module__grid">
+        <div><small>get()</small><strong>${module.getCount}</strong></div>
+        <div><small>Listeners activos</small><strong>${module.activeListeners}</strong></div>
+        <div><small>Eventos</small><strong>${module.listenerEvents}</strong></div>
+        <div><small>Cache local</small><strong>${formatMetricBytes(module.cacheBytes)}</strong></div>
+        <div><small>Duplicados</small><strong>${module.duplicateListeners}</strong></div>
+        <div><small>Ultima lectura</small><strong>${formatMetricRelativeTime(module.lastReadAt)}</strong></div>
+      </div>
+      <div class="app-metrics-pathList">
+        ${(module.paths || []).slice(0, 5).map((pathRow) => `
+          <article>
+            <code>${pathRow.path}</code>
+            <small>${pathRow.readCount} eventos · ${formatMetricBytes(pathRow.bytes)}${pathRow.risks?.length ? ` · riesgo: ${pathRow.risks.join(", ")}` : ""}</small>
+          </article>
+        `).join("") || '<article><small>Sin lecturas registradas todavia.</small></article>'}
+      </div>
+    </details>
+  `).join("");
+
+  body.innerHTML = `
+    <section class="app-metrics-section">
+      <div class="app-metrics-section__top">
+        <div class="app-metrics-section__eyebrow">Rango</div>
+        <div class="app-metrics-rangeRow">${rangeButtons}</div>
+      </div>
+      <div class="app-metrics-kpis">
+        <div class="app-metrics-kpi"><small>Bytes Firebase</small><strong>${formatMetricBytes(snapshot.totals.bytesReceived)}</strong></div>
+        <div class="app-metrics-kpi"><small>get()</small><strong>${snapshot.totals.getCount}</strong></div>
+        <div class="app-metrics-kpi"><small>Listeners activos</small><strong>${snapshot.totals.activeListeners}</strong></div>
+        <div class="app-metrics-kpi"><small>Eventos listener</small><strong>${snapshot.totals.listenerEvents}</strong></div>
+        <div class="app-metrics-kpi"><small>Cache local</small><strong>${formatMetricBytes(snapshot.totals.cacheBytes)}</strong></div>
+        <div class="app-metrics-kpi"><small>Uso navegador</small><strong>${storageEstimate?.usage ? formatMetricBytes(storageEstimate.usage) : "No disponible"}</strong></div>
+      </div>
+    </section>
+    <section class="app-metrics-section">
+      <div class="app-metrics-section__top">
+        <div class="app-metrics-section__eyebrow">Alertas</div>
+        <button type="button" class="app-settings-actionBtn" data-metrics-clear>Limpiar metricas</button>
+      </div>
+      <ul class="app-metrics-alerts">${alertsMarkup}</ul>
+    </section>
+    <section class="app-metrics-section">
+      <div class="app-metrics-section__eyebrow">Por pestaña</div>
+      <div class="app-metrics-moduleList">${moduleMarkup}</div>
+    </section>
+  `;
+}
+
+function closeMetricsModal() {
+  const backdrop = document.getElementById("app-metrics-backdrop");
+  if (!backdrop) return;
+  backdrop.classList.add("hidden");
+  backdrop.setAttribute("aria-hidden", "true");
+  syncShellModalLock();
+}
+
+function ensureMetricsModal() {
+  let backdrop = document.getElementById("app-metrics-backdrop");
+  if (backdrop) return backdrop;
+  backdrop = document.createElement("div");
+  backdrop.id = "app-metrics-backdrop";
+  backdrop.className = "modal-backdrop app-metrics-backdrop hidden";
+  backdrop.setAttribute("aria-hidden", "true");
+  backdrop.innerHTML = `
+    <section class="modal app-metrics-modal" role="dialog" aria-modal="true" aria-labelledby="app-metrics-title">
+      <header class="modal-header app-metrics-modal__header">
+        <div>
+          <div class="app-metrics-modal__eyebrow">Firebase y almacenamiento</div>
+          <div class="modal-title" id="app-metrics-title">Metricas</div>
+        </div>
+        <button class="btn-x" type="button" aria-label="Cerrar metricas" data-metrics-close>✕</button>
+      </header>
+      <div class="modal-body app-metrics-modal__body" id="app-metrics-body"></div>
+    </section>
+  `;
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop || event.target?.closest?.("[data-metrics-close]")) {
+      closeMetricsModal();
+      return;
+    }
+    const rangeButton = event.target?.closest?.("[data-metrics-range]");
+    if (rangeButton) {
+      getMetricsPanelState().rangeKey = rangeButton.dataset.metricsRange || "10m";
+      void renderMetricsModal();
+      return;
+    }
+    if (event.target?.closest?.("[data-metrics-clear]")) {
+      clearFirebaseMetrics();
+      void renderMetricsModal();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !backdrop.classList.contains("hidden")) {
+      closeMetricsModal();
+    }
+  });
+  document.body.append(backdrop);
+  return backdrop;
+}
+
+function openMetricsModal() {
+  const backdrop = ensureMetricsModal();
+  if (!backdrop) return;
+  closeSettingsModal();
+  closeSyncIndicatorMenu();
+  backdrop.classList.remove("hidden");
+  backdrop.setAttribute("aria-hidden", "false");
+  syncShellModalLock();
+  void renderMetricsModal();
+}
+
+function ensureSettingsSyncAction(indicator) {
+  const actionsNode = ensureSyncIndicatorActionsNode(indicator);
+  return ensureSyncIconAction(actionsNode, {
+    id: "app-sync-settings-btn",
+    icon: "⚙",
+    title: "Ajustes",
+    ariaLabel: "Abrir ajustes",
+    datasetKey: "syncSettingsBtn",
+    onClick: () => openSettingsModal(),
+  });
+}
+
+function ensureMetricsSyncAction(indicator) {
+  const actionsNode = ensureSyncIndicatorActionsNode(indicator);
+  return ensureSyncIconAction(actionsNode, {
+    id: "app-sync-metrics-btn",
+    icon: "📊",
+    title: "Metricas",
+    ariaLabel: "Abrir metricas",
+    datasetKey: "syncMetricsBtn",
+    onClick: () => openMetricsModal(),
+  });
+}
+
 function setSyncIndicatorExpanded(indicator, isOpen) {
   if (!(indicator instanceof HTMLElement)) return;
   indicator.classList.toggle("is-open", isOpen);
@@ -405,8 +874,13 @@ function prepareSyncIndicator(indicator) {
 
   const textNode = ensureSyncIndicatorTextNode(indicator);
   ensureSyncIndicatorActionsNode(indicator);
-  ensureHardResetSyncAction(indicator);
+  hideLegacyThemeControl();
+  indicator.querySelector("[data-hard-reset-app]")?.remove();
   ensureReminderNotificationsButton(indicator);
+  ensureSettingsSyncAction(indicator);
+  ensureMetricsSyncAction(indicator);
+  normalizeSyncIndicatorShortcuts(indicator);
+  orderSyncIndicatorActions(indicator);
   if (!indicator.hasAttribute("aria-label")) {
     indicator.setAttribute("aria-label", "Estado de sincronización");
   }
@@ -477,12 +951,20 @@ function ensureReminderNotificationsButton(indicator) {
   const actionsNode = ensureSyncIndicatorActionsNode(indicator);
   if (!(actionsNode instanceof HTMLElement)) return null;
   let button = actionsNode.querySelector("#app-reminder-notifications-btn");
-  if (button) return button;
+  if (button) {
+    button.className = "app-sync-menu__button";
+    button.textContent = "🔔";
+    button.title = "Notificaciones";
+    button.setAttribute("aria-label", "Abrir notificaciones");
+    return button;
+  }
   button = document.createElement("button");
   button.id = "app-reminder-notifications-btn";
-  button.className = "app-theme-switcher__trigger";
+  button.className = "app-sync-menu__button";
   button.type = "button";
-  button.textContent = "🔔 Notificaciones";
+  button.textContent = "🔔";
+  button.title = "Notificaciones";
+  button.setAttribute("aria-label", "Abrir notificaciones");
   button.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -723,6 +1205,13 @@ function getShellState() {
   }
 
   return window[SHELL_STATE_KEY];
+}
+
+function logRestoreLastViewOnce(viewId) {
+  const state = getShellState();
+  if (!viewId || state.lastRestoredViewId === viewId) return;
+  state.lastRestoredViewId = viewId;
+  logPwaEvent("restore:last-view", { viewId });
 }
 
 function getViews() {
@@ -1034,7 +1523,10 @@ function getInitialView() {
   if (isValidView(hashViewId)) return hashViewId;
 
   const storedViewId = window.localStorage.getItem(LAST_VIEW_KEY);
-  if (isValidView(storedViewId)) return storedViewId;
+  if (isValidView(storedViewId)) {
+    logRestoreLastViewOnce(storedViewId);
+    return storedViewId;
+  }
 
   return DEFAULT_VIEW_ID;
 }
@@ -2915,6 +3407,8 @@ function exposeShellApis() {
     setGlobalQuickFabOpen(true);
   };
   window.__bookshellGetSyncSnapshot = () => getShellState().lastSyncSnapshot || null;
+  window.__bookshellOpenSettings = () => openSettingsModal();
+  window.__bookshellOpenMetrics = () => openMetricsModal();
 }
 
 function schedulePostBootTask(task, delayMs = 0) {
@@ -3017,6 +3511,7 @@ void initSyncManager({
   getUserId: () => auth.currentUser?.uid || "",
 });
 initThemeService();
+hideLegacyThemeControl();
 initAchievementsService();
 initGeneralCenterService();
 bindSyncIndicatorToggles();
@@ -3024,6 +3519,16 @@ exposeShellApis();
 bindAuthGate();
 bindViewportHeightVar();
 bindNetworkDebug();
+logPwaEvent("cold-start", {
+  visibility: document.visibilityState,
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    logPwaEvent("resume", {
+      viewId: getCurrentViewId() || getInitialView(),
+    });
+  }
+});
 bindGlobalSyncIndicator();
 window.addEventListener("bookshell:reminder-notifications", (event) => {
   window.__bookshellReminderPendingToday = Number(event?.detail?.pendingTodayCount || 0);

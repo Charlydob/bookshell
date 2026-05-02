@@ -23,8 +23,9 @@ import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategory
 import { ensureEcharts } from '../../shared/vendors/echarts.js';
 import { readProcessedJsonCache, writeProcessedJsonCache } from '../../shared/cache/processed-json-cache.js';
 import { normalizeCatalogName, upsertPublicCatalogItem } from '../../shared/services/public-catalog.js';
-import { logFirebaseRead, registerViewListener } from '../../shared/firebase/read-debug.js';
+import { logFirebaseRead, registerViewListener, trackedGet, trackedOnValue } from '../../shared/firebase/read-debug.js';
 import { PUBLIC_PATHS } from '../../shared/firebase/index.js';
+import { readModuleSnapshot, writeModuleSnapshot } from '../../shared/storage/offline-snapshots.js';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
@@ -35,6 +36,8 @@ let financePendingPreserveUi = true;
 let financeRemoteApplyTimer = 0;
 const FINANCE_GOALS_SORT_MODE_KEY = 'financeGoalsSortMode';
 const PRODUCTS_DRAFT_LOCAL_KEY = 'bookshell_finance_products_draft_v1';
+const FINANCE_OFFLINE_SNAPSHOT_MODULE = 'finance';
+const FINANCE_OFFLINE_SNAPSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const GLOBAL_PRODUCTS_PATH = PUBLIC_PATHS.foodItems;
 const FINANCE_CORE_BRANCHES = Object.freeze([
   { key: 'accounts', path: 'accounts', fallback: {} },
@@ -145,6 +148,42 @@ function setFinanceGoalsSortMode(nextMode = 'due-date') {
 state.financeGoalsSortMode = normalizeFinanceGoalsSortMode(state.financeGoalsSortMode || readFinanceGoalsSortMode());
 
 let financeEchartsPromise = null;
+let financeSnapshotSaveTimer = 0;
+
+function financeReceiptLog(event, detail = {}) {
+  try {
+    console.info(`[finance:receipt] ${event}`, {
+      at: new Date().toISOString(),
+      ...detail,
+    });
+  } catch (_) {
+    console.info(`[finance:receipt] ${event}`);
+  }
+}
+
+function financeCacheLog(event, detail = {}) {
+  try {
+    console.info(`[cache] ${event}`, {
+      at: new Date().toISOString(),
+      module: 'finance',
+      ...detail,
+    });
+  } catch (_) {
+    console.info(`[cache] ${event}`);
+  }
+}
+
+function estimateFinanceBytes(value = null) {
+  try {
+    const payload = typeof value === 'string' ? value : JSON.stringify(value ?? null);
+    if (typeof TextEncoder === 'function') {
+      return new TextEncoder().encode(payload).length;
+    }
+    return payload.length;
+  } catch (_) {
+    return 0;
+  }
+}
 
 function hashString(value = '') {
   let hash = 2166136261;
@@ -3934,7 +3973,13 @@ function renderProductsTicketHero(model, options = {}) {
       </div>
       <div class="productsWorkbench__panelActions productsWorkbench__panelActions--footer">
         <button type="button" class="food-history-btn" data-products-export-ticket ${model.listLines.length ? '' : 'disabled'}>Exportar</button>
-        <button type="button" class="food-history-btn" data-products-confirm-ticket ${model.listLines.length ? '' : 'disabled'}>Confirmar compra</button>
+        <button
+          type="button"
+          class="food-history-btn"
+          data-products-confirm-ticket
+          data-busy="${state.productsReceiptBusy ? '1' : '0'}"
+          ${model.listLines.length && !state.productsReceiptBusy ? '' : 'disabled'}
+        >${state.productsReceiptBusy ? 'Confirmando...' : 'Confirmar compra'}</button>
       </div>
 
       </div>
@@ -5647,7 +5692,67 @@ async function reuseProductsListAsActiveList(listId = '') {
   patchProductsCatalogSubview(model);
 }
 
-async function saveProductsPurchaseTransaction(list = {}) {
+function setProductsReceiptBusy(isBusy) {
+  const nextBusy = Boolean(isBusy);
+  if (state.productsReceiptBusy === nextBusy) return;
+  state.productsReceiptBusy = nextBusy;
+  if (state.activeView === 'products') {
+    patchProductsShoppingPanel(buildCurrentProductsModel());
+  }
+}
+
+function validateProductsTicketForConfirm(list = {}, activeTicketId = '', activeTicketMeta = {}) {
+  const normalizedLines = Object.values(list.lines || {})
+    .map((line) => ({
+      ...line,
+      name: normalizeFoodName(line?.name || ''),
+      qty: Math.max(0.01, Number(line?.qty || 1)),
+      estimatedPrice: normalizeProductPositiveNumber(line?.estimatedPrice, 0),
+      actualPrice: normalizeProductPositiveNumber(line?.actualPrice, normalizeProductPositiveNumber(line?.estimatedPrice, 0)),
+    }))
+    .filter((line) => line.name);
+  if (!normalizedLines.length) {
+    return { ok: false, reason: 'empty-lines', message: 'No hay lineas para confirmar' };
+  }
+
+  const total = normalizedLines.reduce((sum, line) => sum + (Number(line.actualPrice || 0) * Math.max(0.01, Number(line.qty || 1))), 0);
+  if (!(total > 0)) {
+    return { ok: false, reason: 'invalid-total', message: 'El ticket debe tener total > 0' };
+  }
+
+  const accountId = String(
+    activeTicketMeta.accountId
+    || list.accountId
+    || state.productsHub?.settings?.defaultAccountId
+    || state.balance?.defaultAccountId
+    || '',
+  ).trim();
+  if (!accountId) {
+    return { ok: false, reason: 'missing-account', message: 'Selecciona una cuenta antes de confirmar' };
+  }
+
+  const store = normalizeFoodName(
+    activeTicketMeta.store
+    || list.store
+    || state.productsHub?.settings?.defaultStore
+    || '',
+  );
+  if (!store) {
+    return { ok: false, reason: 'missing-store', message: 'Selecciona un supermercado antes de confirmar' };
+  }
+
+  return {
+    ok: true,
+    total,
+    accountId,
+    store,
+    lineCount: normalizedLines.length,
+    activeTicketId: String(activeTicketId || '').trim() || 'ticket-1',
+    lines: normalizedLines,
+  };
+}
+
+async function saveProductsPurchaseTransaction(list = {}, options = {}) {
   const lines = Object.values(list.lines || {}).map((line) => ({
     ...line,
     qty: Math.max(0.01, Number(line.qty || 1)),
@@ -5655,13 +5760,11 @@ async function saveProductsPurchaseTransaction(list = {}) {
     actualPrice: normalizeProductPositiveNumber(line.actualPrice, normalizeProductPositiveNumber(line.estimatedPrice, 0)),
   })).filter((line) => line.name);
   if (!lines.length) {
-    toast('La lista no tiene lineas');
-    return null;
+    throw new Error('receipt-empty-lines');
   }
   const accountId = String(list.accountId || state.productsHub?.settings?.defaultAccountId || state.balance?.defaultAccountId || '').trim();
   if (!accountId) {
-    toast('Selecciona una cuenta antes de confirmar');
-    return null;
+    throw new Error('receipt-missing-account');
   }
   const confirmedAt = Number(list.confirmedAt || list.registeredAt || 0);
   const confirmedDateISO = confirmedAt > 0 ? dayKeyFromTs(confirmedAt) : '';
@@ -5674,8 +5777,7 @@ async function saveProductsPurchaseTransaction(list = {}) {
   ) || 'Compra';
   const totalAmount = lines.reduce((sum, line) => sum + (Number(line.actualPrice || 0) * Math.max(0.01, Number(line.qty || 1))), 0);
   if (!(totalAmount > 0)) {
-    toast('El ticket debe tener importe real');
-    return null;
+    throw new Error('receipt-invalid-total');
   }
 
   const normalizedLines = [];
@@ -5731,6 +5833,11 @@ async function saveProductsPurchaseTransaction(list = {}) {
       cuisine: normalizeFoodName(productSnapshot?.cuisine || ''),
       place: normalizeFoodName(line.store || list.store || productSnapshot?.preferredStore || productSnapshot?.place || ''),
       healthy: normalizeFoodName(productSnapshot?.healthy || productSnapshot?.cuisine || ''),
+      snapshot: {
+        productId: String(line.productId || savedFoodId || '').trim(),
+        store: normalizeFoodName(line.store || list.store || ''),
+        category: normalizeFoodName(productSnapshot?.productCategory || ''),
+      },
     };
     normalizedLines.push(itemPayload);
     if (itemPayload.mealType) await upsertFoodOption('typeOfMeal', itemPayload.mealType, true);
@@ -5747,7 +5854,10 @@ async function saveProductsPurchaseTransaction(list = {}) {
     });
   }
 
-  const saveId = push(ref(db, `${state.financePath}/transactions`)).key;
+  const saveId = String(options.txId || push(ref(db, `${state.financePath}/transactions`)).key || '').trim();
+  if (!saveId) {
+    throw new Error('receipt-missing-movement-id');
+  }
   const extras = {
     items: normalizedLines,
     filters: {
@@ -5782,154 +5892,234 @@ async function saveProductsPurchaseTransaction(list = {}) {
     updatedAt: nowTs(),
     createdAt: nowTs(),
   };
-  const txPersisted = await safeFirebase(async () => {
-    await update(ref(db), {
-      [`${state.financePath}/transactions/${saveId}`]: payload,
-      [`${state.financePath}/catalog/categories/${category}`]: { name: category, lastUsedAt: nowTs() },
+  const updatesMap = {
+    [`${state.financePath}/transactions/${saveId}`]: payload,
+    [`${state.financePath}/catalog/categories/${category}`]: { name: category, lastUsedAt: nowTs() },
+    ...Object.fromEntries(Object.entries(options.extraUpdates || {}).filter(([path]) => String(path || '').trim())),
+  };
+  financeReceiptLog('confirm:payload', {
+    movementId: saveId,
+    accountId,
+    total: totalAmount,
+    lineCount: lines.length,
+    store: normalizeFoodName(list.store || ''),
+    paymentMethod: list.paymentMethod || 'Tarjeta',
+  });
+  financeReceiptLog('confirm:write:start', {
+    path: `${state.financePath}/transactions/${saveId}`,
+    movementId: saveId,
+  });
+  try {
+    await update(ref(db), updatesMap);
+    financeReceiptLog('confirm:write:success', {
+      movementId: saveId,
+      path: `${state.financePath}/transactions/${saveId}`,
     });
-    return true;
-  }, false);
-  if (!txPersisted) {
-    toast('No se pudo registrar el gasto en finanzas');
-    return null;
+  } catch (error) {
+    financeReceiptLog('confirm:error', {
+      stage: 'write',
+      movementId: saveId,
+      path: `${state.financePath}/transactions/${saveId}`,
+      message: error?.message || String(error || ''),
+    });
+    throw error;
   }
 
-  const freshRoot = await loadFinanceRoot();
-  await recomputeAccountEntries(accountId, dateISO, freshRoot);
-  const refreshedRoot = await loadFinanceRoot();
-  state.balance = state.balance || {};
-  state.balance.transactions = {
-    ...(state.balance.transactions || {}),
-    [saveId]: payload,
-  };
-  syncLocalAccountsFromRoot(refreshedRoot);
-  clearFinanceDerivedCaches();
-  scheduleAggregateRebuild();
   localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId);
   state.lastMovementAccountId = accountId;
-  return { txId: saveId, total: totalAmount, payload };
+  return { txId: saveId, total: totalAmount, payload, accountId, dateISO };
 }
 
 async function confirmProductsTicketFromDom() {
-  const draft = ensureProductsListTickets(readProductsListDraftFromDom());
-  const activeTicketId = String(draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
-  const activeTicketMeta = draft.tickets?.[activeTicketId] || {};
-  const activeTicketLines = Object.fromEntries(
-    Object.entries(draft.lines || {}).filter(([, line]) => String(line?.ticketId || draft.primaryTicketId || '').trim() === activeTicketId),
-  );
-  if (!draft || !Object.keys(activeTicketLines || {}).length) {
-    toast('No hay lineas para confirmar');
+  if (state.productsReceiptBusy) {
+    financeReceiptLog('confirm:click', { blocked: true, reason: 'busy' });
     return;
   }
-  if (activeTicketMeta.accountedTxId) {
-    toast('Este ticket ya está contabilizado');
-    return;
+  financeReceiptLog('confirm:click');
+  setProductsReceiptBusy(true);
+  try {
+    const draft = ensureProductsListTickets(readProductsListDraftFromDom());
+    const activeTicketId = String(draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+    const activeTicketMeta = draft.tickets?.[activeTicketId] || {};
+    const activeTicketLines = Object.fromEntries(
+      Object.entries(draft.lines || {}).filter(([, line]) => String(line?.ticketId || draft.primaryTicketId || '').trim() === activeTicketId),
+    );
+    if (!draft || !Object.keys(activeTicketLines || {}).length) {
+      financeReceiptLog('confirm:validation-error', { reason: 'empty-lines' });
+      toast('No hay lineas para confirmar');
+      return;
+    }
+    if (activeTicketMeta.accountedTxId) {
+      financeReceiptLog('confirm:validation-error', { reason: 'already-accounted', txId: activeTicketMeta.accountedTxId });
+      toast('Este ticket ya está contabilizado');
+      return;
+    }
+    if (activeTicketMeta.store || draft.store) await upsertFoodOption('place', activeTicketMeta.store || draft.store, true);
+
+    const persistedList = await ensurePersistedActiveProductsList(draft);
+    const persistedTicketMeta = persistedList.tickets?.[activeTicketId] || {};
+    if (persistedTicketMeta.accountedTxId) {
+      financeReceiptLog('confirm:validation-error', { reason: 'already-accounted-persisted', txId: persistedTicketMeta.accountedTxId });
+      toast('Este ticket ya fue contabilizado');
+      return;
+    }
+
+    const confirmedAtTs = nowTs();
+    const confirmedDateISO = dayKeyFromTs(confirmedAtTs);
+    const ticketPayload = normalizeProductsHubList(persistedList.id, {
+      ...persistedList,
+      store: activeTicketMeta.store || persistedList.store,
+      accountId: activeTicketMeta.accountId || persistedList.accountId,
+      paymentMethod: activeTicketMeta.paymentMethod || persistedList.paymentMethod,
+      plannedFor: activeTicketMeta.plannedFor || persistedList.plannedFor,
+      confirmedAt: confirmedAtTs,
+      confirmedDateISO,
+      notes: activeTicketMeta.notes || persistedList.notes,
+      ticketId: activeTicketId,
+      ticketLabel: activeTicketMeta.label || '',
+      ticketRef: activeTicketMeta.label ? `ticket ${activeTicketMeta.label}` : `ticket ${activeTicketId}`,
+      lines: activeTicketLines,
+    });
+
+    const validation = validateProductsTicketForConfirm(ticketPayload, activeTicketId, activeTicketMeta);
+    if (!validation.ok) {
+      financeReceiptLog('confirm:validation-error', {
+        reason: validation.reason,
+        ticketId: activeTicketId,
+      });
+      toast(validation.message || 'No se puede confirmar el ticket');
+      return;
+    }
+
+    financeReceiptLog('confirm:start', {
+      ticketId: activeTicketId,
+      lineCount: validation.lineCount,
+      total: validation.total,
+      accountId: validation.accountId,
+      store: validation.store,
+    });
+
+    const movementId = String(push(ref(db, `${state.financePath}/transactions`)).key || createFinanceRecordId('tx')).trim();
+    const ticketId = createFinanceRecordId('ticket');
+    const estimatedTotal = Object.values(activeTicketLines || {}).reduce((sum, line) => sum + (Math.max(1, Number(line.qty || 1)) * normalizeProductPositiveNumber(line.estimatedPrice, 0)), 0);
+    const remainingLines = Object.fromEntries(
+      Object.entries(persistedList.lines || {}).filter(([, line]) => String(line?.ticketId || persistedList.primaryTicketId || '').trim() !== activeTicketId),
+    );
+    const nextTicketsMeta = Object.fromEntries(
+      Object.entries(persistedList.tickets || {}).map(([ticketMetaId, ticketMeta]) => {
+        if (ticketMetaId !== activeTicketId) return [ticketMetaId, ticketMeta];
+        return [
+          ticketMetaId,
+          normalizeProductsListTicketMeta(ticketMetaId, {
+            ...ticketMeta,
+            confirmedAt: confirmedAtTs,
+            accountedTxId: movementId,
+            confirmedTicketId: ticketId,
+            updatedAt: confirmedAtTs,
+          }),
+        ];
+      }),
+    );
+    const remainingTicketIds = Object.keys(nextTicketsMeta).filter((ticketMetaId) => ticketMetaId !== activeTicketId);
+    const nextActiveTicketId = remainingTicketIds.find((ticketMetaId) => (
+      Object.values(remainingLines).some((line) => String(line?.ticketId || '').trim() === ticketMetaId)
+    )) || remainingTicketIds[0] || persistedList.primaryTicketId;
+    const convertedList = ensureProductsListTickets({
+      ...persistedList,
+      lines: remainingLines,
+      tickets: nextTicketsMeta,
+      status: Object.keys(remainingLines).length ? 'draft' : 'converted',
+      sourceTicketId: Object.keys(remainingLines).length ? persistedList.sourceTicketId : ticketId,
+      activeTicketId: nextActiveTicketId,
+      updatedAt: nowTs(),
+    });
+    const nextActiveList = createEmptyProductsList({
+      name: 'Lista activa',
+      store: validation.store,
+      accountId: validation.accountId,
+      paymentMethod: ticketPayload.paymentMethod,
+    });
+    const shouldRotateList = !Object.keys(remainingLines).length;
+    const ticketRecord = normalizeProductsHubTicket(ticketId, {
+      listId: persistedList.id,
+      txId: movementId,
+      store: validation.store,
+      accountId: validation.accountId,
+      paymentMethod: ticketPayload.paymentMethod,
+      note: ticketPayload.notes,
+      dateISO: confirmedDateISO,
+      confirmedAt: confirmedAtTs,
+      estimatedTotal,
+      actualTotal: validation.total,
+      lines: activeTicketLines,
+      createdAt: confirmedAtTs,
+      updatedAt: confirmedAtTs,
+    });
+    const shoppingHubUpdates = {
+      [productsHubPath(`tickets/${ticketRecord.id}`)]: ticketRecord,
+      [productsHubPath(`lists/${convertedList.id}`)]: convertedList,
+      ...(shouldRotateList ? { [productsHubPath(`lists/${nextActiveList.id}`)]: nextActiveList } : {}),
+      [productsHubPath('settings/activeListId')]: shouldRotateList ? nextActiveList.id : convertedList.id,
+    };
+
+    const txResult = await saveProductsPurchaseTransaction({
+      ...ticketPayload,
+      accountId: validation.accountId,
+      store: validation.store,
+    }, {
+      txId: movementId,
+      extraUpdates: shoppingHubUpdates,
+    });
+
+    const primaryCacheKey = getPrimaryFinanceCacheKey();
+    patchFinanceCacheRoot(primaryCacheKey, `transactions/${txResult.txId}`, txResult.payload);
+    patchFinanceCacheRoot(primaryCacheKey, 'catalog/categories/Compra', { name: 'Compra', lastUsedAt: nowTs() });
+    Object.entries(shoppingHubUpdates).forEach(([fullPath, value]) => {
+      const safePath = String(fullPath || '');
+      const prefix = `${state.financePath}/shoppingHub/`;
+      if (!safePath.startsWith(prefix)) return;
+      patchFinanceCacheRoot(primaryCacheKey, `shoppingHub/${safePath.slice(prefix.length)}`, value);
+    });
+
+    const mergedRoot = buildMergedFinanceSnapshotRoot();
+    const accountEntriesUpdates = buildFinanceAccountEntriesUpdates(mergedRoot, validation.accountId, confirmedDateISO);
+    const accountCacheKey = resolveFinanceAccountCacheKey(validation.accountId);
+    if (!financeRootsCache[accountCacheKey] || typeof financeRootsCache[accountCacheKey] !== 'object') {
+      financeRootsCache[accountCacheKey] = {};
+    }
+    applyFinanceAbsoluteUpdatesToRoot(financeRootsCache[accountCacheKey], accountEntriesUpdates);
+    if (Object.keys(accountEntriesUpdates).length) {
+      try {
+        await update(ref(db), accountEntriesUpdates);
+      } catch (error) {
+        console.warn('[finance] no se pudo persistir la recomputacion puntual de cuenta', error);
+      }
+    }
+
+    financeReceiptLog('confirm:clear:start', {
+      ticketId: activeTicketId,
+      nextActiveListId: shouldRotateList ? nextActiveList.id : convertedList.id,
+      rotated: shouldRotateList,
+    });
+    applyPatchedFinanceCaches('receipt-confirm');
+    scheduleAggregateRebuild();
+    financeReceiptLog('confirm:clear:success', {
+      ticketId: activeTicketId,
+      nextActiveListId: shouldRotateList ? nextActiveList.id : convertedList.id,
+    });
+
+    setReceiptSelectionMap(shouldRotateList ? nextActiveList.id : convertedList.id, {});
+    toast('Compra confirmada y gasto registrado');
+  } catch (error) {
+    const message = error?.message || String(error || '');
+    financeReceiptLog('confirm:error', {
+      stage: 'confirm',
+      message,
+    });
+    toast(message && !/^receipt-/.test(message) ? message : 'No se pudo confirmar la compra');
+  } finally {
+    setProductsReceiptBusy(false);
   }
-  if (activeTicketMeta.store || draft.store) await upsertFoodOption('place', activeTicketMeta.store || draft.store, true);
-  const persistedList = await ensurePersistedActiveProductsList(draft);
-  const persistedTicketMeta = persistedList.tickets?.[activeTicketId] || {};
-  if (persistedTicketMeta.accountedTxId) {
-    toast('Este ticket ya fue contabilizado');
-    return;
-  }
-  const confirmedAtTs = nowTs();
-  const confirmedDateISO = dayKeyFromTs(confirmedAtTs);
-  const ticketPayload = normalizeProductsHubList(persistedList.id, {
-    ...persistedList,
-    store: activeTicketMeta.store || persistedList.store,
-    accountId: activeTicketMeta.accountId || persistedList.accountId,
-    paymentMethod: activeTicketMeta.paymentMethod || persistedList.paymentMethod,
-    plannedFor: activeTicketMeta.plannedFor || persistedList.plannedFor,
-    confirmedAt: confirmedAtTs,
-    confirmedDateISO,
-    notes: activeTicketMeta.notes || persistedList.notes,
-    ticketId: activeTicketId,
-    ticketLabel: activeTicketMeta.label || '',
-    ticketRef: activeTicketMeta.label ? `ticket ${activeTicketMeta.label}` : `ticket ${activeTicketId}`,
-    lines: activeTicketLines,
-  });
-  const txResult = await saveProductsPurchaseTransaction(ticketPayload);
-  if (!txResult) return;
-  const ticketId = createFinanceRecordId('ticket');
-  const estimatedTotal = Object.values(activeTicketLines || {}).reduce((sum, line) => sum + (Math.max(1, Number(line.qty || 1)) * normalizeProductPositiveNumber(line.estimatedPrice, 0)), 0);
-  const ticketRecord = normalizeProductsHubTicket(ticketId, {
-    listId: persistedList.id,
-    txId: txResult.txId,
-    store: ticketPayload.store,
-    accountId: ticketPayload.accountId,
-    paymentMethod: ticketPayload.paymentMethod,
-    note: ticketPayload.notes,
-    dateISO: confirmedDateISO,
-    confirmedAt: confirmedAtTs,
-    estimatedTotal,
-    actualTotal: txResult.total,
-    lines: activeTicketLines,
-    createdAt: confirmedAtTs,
-    updatedAt: confirmedAtTs,
-  });
-  const remainingLines = Object.fromEntries(
-    Object.entries(persistedList.lines || {}).filter(([, line]) => String(line?.ticketId || persistedList.primaryTicketId || '').trim() !== activeTicketId),
-  );
-  const nextTicketsMeta = Object.fromEntries(
-    Object.entries(persistedList.tickets || {}).map(([ticketMetaId, ticketMeta]) => {
-      if (ticketMetaId !== activeTicketId) return [ticketMetaId, ticketMeta];
-      return [
-        ticketMetaId,
-        normalizeProductsListTicketMeta(ticketMetaId, {
-          ...ticketMeta,
-          confirmedAt: confirmedAtTs,
-          accountedTxId: txResult.txId,
-          confirmedTicketId: ticketId,
-          updatedAt: confirmedAtTs,
-        }),
-      ];
-    }),
-  );
-  const remainingTicketIds = Object.keys(nextTicketsMeta).filter((ticketMetaId) => ticketMetaId !== activeTicketId);
-  const nextActiveTicketId = remainingTicketIds.find((ticketMetaId) => (
-    Object.values(remainingLines).some((line) => String(line?.ticketId || '').trim() === ticketMetaId)
-  )) || remainingTicketIds[0] || persistedList.primaryTicketId;
-  const convertedList = ensureProductsListTickets({
-    ...persistedList,
-    lines: remainingLines,
-    tickets: nextTicketsMeta,
-    status: Object.keys(remainingLines).length ? 'draft' : 'converted',
-    sourceTicketId: Object.keys(remainingLines).length ? persistedList.sourceTicketId : ticketId,
-    activeTicketId: nextActiveTicketId,
-    updatedAt: nowTs(),
-  });
-  const nextActiveList = createEmptyProductsList({
-    name: 'Lista activa',
-    store: ticketPayload.store,
-    accountId: ticketPayload.accountId,
-    paymentMethod: ticketPayload.paymentMethod,
-  });
-  const shouldRotateList = !Object.keys(remainingLines).length;
-  state.productsHub = {
-    ...(state.productsHub || normalizeProductsHub()),
-    settings: {
-      ...(state.productsHub?.settings || {}),
-      activeListId: shouldRotateList ? nextActiveList.id : convertedList.id,
-    },
-    lists: {
-      ...Object.fromEntries(Object.entries(state.productsHub?.lists || {}).filter(([id]) => id !== '__draft__')),
-      [convertedList.id]: convertedList,
-      ...(shouldRotateList ? { [nextActiveList.id]: nextActiveList } : {}),
-    },
-    tickets: {
-      ...(state.productsHub?.tickets || {}),
-      [ticketRecord.id]: ticketRecord,
-    },
-  };
-  await safeFirebase(() => update(ref(db), {
-    [productsHubPath(`tickets/${ticketRecord.id}`)]: ticketRecord,
-    [productsHubPath(`lists/${convertedList.id}`)]: convertedList,
-    ...(shouldRotateList ? { [productsHubPath(`lists/${nextActiveList.id}`)]: nextActiveList } : {}),
-    [productsHubPath('settings/activeListId')]: shouldRotateList ? nextActiveList.id : convertedList.id,
-  }));
-  setReceiptSelectionMap(convertedList.id, {});
-  toast('Compra confirmada y gasto registrado');
-  triggerRender();
 }
 
 function firebaseSafeKeyLoose(s) {
@@ -7098,11 +7288,10 @@ function normalizeSnapshots(snapshots = {}) {
 function movementRowsByAccount(accountId) {
   return balanceTxList().filter((row) => row.accountId === accountId);
 }
-async function recomputeAccountEntries(accountId, fromDay, rootOverride = null) {
-  if (!accountId) return;
-  const root = rootOverride && typeof rootOverride === 'object' ? rootOverride : await loadFinanceRoot();
+function buildFinanceAccountEntriesUpdates(root = {}, accountId = '', fromDay = '') {
+  if (!accountId) return {};
   const account = root.accounts?.[accountId] || state.accounts.find((item) => item.id === accountId);
-  if (!account) return;
+  if (!account) return {};
   const snapshots = normalizeSnapshots(account.snapshots || {});
   const txRows = collectBalanceRowsFromRoot(root, state.financePath).filter((row) => (
     row.accountId === accountId || row.fromAccountId === accountId || row.toAccountId === accountId
@@ -7114,7 +7303,7 @@ async function recomputeAccountEntries(accountId, fromDay, rootOverride = null) 
   ].filter(Boolean));
   if (fromDay) daySet.add(fromDay);
   const allDays = [...daySet].sort();
-  if (!allDays.length) return;
+  if (!allDays.length) return {};
   const normalizedFromDay = toIsoDay(fromDay || '') || fromDay;
   const startDay = normalizedFromDay || allDays[0];
   financeDebug('recompute account entries', { accountId, startDay, txCount: movements.length });
@@ -7176,6 +7365,14 @@ async function recomputeAccountEntries(accountId, fromDay, rootOverride = null) 
     };
   });
   updatesMap[`${state.financePath}/accounts/${accountId}/updatedAt`] = nowTs();
+  return updatesMap;
+}
+
+async function recomputeAccountEntries(accountId, fromDay, rootOverride = null) {
+  if (!accountId) return;
+  const root = rootOverride && typeof rootOverride === 'object' ? rootOverride : await loadFinanceRoot();
+  const updatesMap = buildFinanceAccountEntriesUpdates(root, accountId, fromDay);
+  if (!Object.keys(updatesMap).length) return;
   await safeFirebase(() => update(ref(db), updatesMap));
 }
 function normalizeLegacyEntries(entriesMap = {}) {
@@ -11396,7 +11593,7 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
         <input type="hidden" name="id" id="fixed-expense-id-input" value="${escapeHtml(String(form.id || ''))}" />
         <div class="finance-form-grid fin-fixed-grid">
 
-        <div id="meta-gasto-fijo">
+        <div class="filas-nuevo-gasto-fijo" id="meta-gasto-fijo">
             <label class="fin-fixed-field fin-fixed-field--emoji" for="fixed-expense-emoji-input">
               <span class="fin-fixed-label">Emoji</span>
               <input id="fixed-expense-emoji-input" name="emoji" type="text" maxlength="4" value="${escapeHtml(form.emoji || '💸')}" placeholder="💸" class="fin-fixed-input" />
@@ -11413,7 +11610,7 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
             </label>
         </div>
 
-        <div id="meta-2-gasto-fijo">
+        <div class="filas-nuevo-gasto-fijo" id="meta-2-gasto-fijo">
 
           <label class="fin-fixed-field fin-fixed-field--amount" for="fixed-expense-amount-input">
             <span class="fin-fixed-label">Importe (€)</span>
@@ -11428,7 +11625,7 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
             </select>
           </label>
 </div>
-        <div id="meta-4-gasto-fijo">
+        <div class="filas-nuevo-gasto-fijo" id="meta-4-gasto-fijo">
 
                 <div id="categoria-gasto-fijo">
                       <label class="fin-fixed-field fin-fixed-field--category" for="fixed-expense-category-select">
@@ -11452,7 +11649,7 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
             </div>
         </div>
 
-        <div id="meta-3-gasto-fijo">
+        <div class="filas-nuevo-gasto-fijo" id="meta-3-gasto-fijo">
           <label class="fin-fixed-field fin-fixed-field--start-date" for="fixed-expense-start-date-input">
             <span class="fin-fixed-label">Inicio</span>
             <input id="fixed-expense-start-date-input" name="startDate" type="date" value="${escapeHtml(form.startDate || '')}" class="fin-fixed-input fin-fixed-input--date" />
@@ -11469,7 +11666,7 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
           </label>
         </div>
 
-
+        <div class="checks" >
           <label class="fin-fixed-check fin-fixed-field--checkbox" for="fixed-expense-active-checkbox">
             <input id="fixed-expense-active-checkbox" name="active" type="checkbox" ${form.active ? 'checked' : ''} class="fin-fixed-checkbox" />
             <span class="fin-fixed-check-label">Activo</span>
@@ -11479,7 +11676,9 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
             <input id="fixed-expense-autocreate-checkbox" name="autoCreate" type="checkbox" ${form.autoCreate ? 'checked' : ''} class="fin-fixed-checkbox" />
             <span class="fin-fixed-check-label">Crear movimiento automáticamente</span>
           </label>
-          <div class="fin-fixed-actions" style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+
+          </div>
+          <div class="fin-fixed-actions">
           <button type="button" class="finance-pill fin-fixed-action fin-fixed-action--cancel" id="fixed-expense-cancel-btn" data-close-modal>Cancelar</button>
           ${isEditMode ? `<button type="button" class="finance-pill finance-pill--danger fin-fixed-action fin-fixed-action--delete" id="fixed-expense-delete-btn" data-delete-fixed-expense="${escapeHtml(String(form.id || ''))}">🗑️ Eliminar</button>` : ''}
           <button type="button" class="finance-pill fin-fixed-action fin-fixed-action--test" id="fixed-expense-test-btn" data-test-fixed-expense>🧪 Prueba</button>
@@ -11884,7 +12083,17 @@ if (form) {
     ].sort((a, b) => txSortTs(b) - txSortTs(a));
     const accountName = (id) => escapeHtml(resolvedAccounts.find((a) => a.id === id)?.name || 'Sin cuenta');
     const ratioAccountsById = Object.fromEntries(resolvedAccounts.map((a) => [a.id, a]));
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Movimientos del día ${escapeHtml(day)}</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><div class="financeTxList">${rows.map((row) => {
+    backdrop.innerHTML = 
+    
+    
+    `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1">
+    
+    <header>
+    <h3>Movimientos del día ${escapeHtml(day)}</h3>
+    
+    <button class="finance-pill" data-close-modal>❌</button></header>
+    
+    <div class="financeTxList">${rows.map((row) => {
       const accountText = row.type === 'transfer' ? `${accountName(row.fromAccountId)} → ${accountName(row.toAccountId)}` : accountName(row.accountId);
       const ratioMy = personalRatioForTx(row, ratioAccountsById);
       const ratioBadge = row.type === 'transfer' ? '' : `<small> · Imputado a mí: ${Math.round(ratioMy * 100)}%</small>`;
@@ -11894,7 +12103,7 @@ if (form) {
       const actionButtons = row.recurringVirtual
         ? `<button class="finance-pill finance-pill--mini" data-recurring-instance-open="${escapeHtml(String(row.recurringId || ''))}" data-recurring-month="${escapeHtml(String(row.monthKey || monthKey))}">✏️</button>`
         : `<button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button>`;
-      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${ratioBadge}${recurringBadge}</span><strong class="${toneClass(personalDeltaForTx(row, ratioAccountsById))}">${fmtCurrency(row.amount)}</strong><span class="finance-row">${actionButtons}</span></div>`;
+      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${ratioBadge}${recurringBadge}</span><strong class="${toneClass(personalDeltaForTx(row, ratioAccountsById))}">${fmtCurrency(row.amount)}</strong><span class="finance-row" id="filas-movimiento" >${actionButtons}</span></div>`;
     }).join('') || '<p class="finance-empty">Sin movimientos.</p>'}</div></div>`;
     return;
   }
@@ -12034,7 +12243,7 @@ if (form) {
     <section id="financeAccountCreateModal">
     <header class="financeAccountCreateModal__header">
     <h3>Nueva cuenta</h3>
-    <button class="finance-pill finance-pill--mini" type="button" data-close-modal aria-label="Cerrar">✕</button></header>
+    <button class="finance-pill finance-pill--mini" id="btn-x-moda-nueva-cuenta" type="button" data-close-modal aria-label="Cerrar">✕</button></header>
     <form id="financeAccountCreateForm" class="finance-account-create-form finance-entry-form" data-new-account-form>
       <div class="finance-account-create-grid">
       <label class="financeAccountForm__field">
@@ -12063,7 +12272,7 @@ if (form) {
         </label>
       </div>
       <div class="financeAccountForm__conditional finance-account-create-btc" data-account-btc-fields hidden>
-        <label class="financeAccountForm__field">
+        <label class="financeAccountForm__field" id="btc-zona-de-input" >
           <span class="financeAccountForm__label">BTC unidades</span>
           <input type="number" name="btcUnits" step="0.00000001" min="0" value="0" placeholder="BTC unidades" />
         </label>
@@ -12582,6 +12791,113 @@ function hasData(value) {
   return Array.isArray(value) ? value.length > 0 : Object.keys(value).length > 0;
 }
 
+function getFinanceSnapshotUid() {
+  return String(auth?.currentUser?.uid || '').trim();
+}
+
+function buildMergedFinanceSnapshotRoot() {
+  return mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
+}
+
+function scheduleFinanceSnapshotSave(reason = 'runtime-update') {
+  if (financeSnapshotSaveTimer) {
+    clearTimeout(financeSnapshotSaveTimer);
+  }
+  financeSnapshotSaveTimer = window.setTimeout(async () => {
+    financeSnapshotSaveTimer = 0;
+    const uid = getFinanceSnapshotUid();
+    if (!uid) return;
+    const root = buildMergedFinanceSnapshotRoot();
+    if (!hasData(root?.accounts) && !hasData(root?.transactions) && !hasData(root?.shoppingHub)) return;
+    const bytes = estimateFinanceBytes(root);
+    financeCacheLog('save', { bytes, reason });
+    try {
+      await writeModuleSnapshot({
+        moduleName: FINANCE_OFFLINE_SNAPSHOT_MODULE,
+        uid,
+        data: root,
+        updatedAt: nowTs(),
+        metadata: {
+          financePath: state.financePath,
+          reason,
+          bytes,
+        },
+      });
+    } catch (error) {
+      console.warn('[finance] no se pudo guardar snapshot offline', error);
+    }
+  }, 460);
+}
+
+async function hydrateFinanceOfflineSnapshot() {
+  const uid = getFinanceSnapshotUid();
+  if (!uid) return false;
+  try {
+    const snapshot = await readModuleSnapshot({
+      moduleName: FINANCE_OFFLINE_SNAPSHOT_MODULE,
+      uid,
+    });
+    if (!snapshot?.data) {
+      financeCacheLog('miss', { reason: 'boot' });
+      return false;
+    }
+    const ageMs = Math.max(0, Date.now() - Number(snapshot.updatedAt || 0));
+    const bytes = estimateFinanceBytes(snapshot.data);
+    if (ageMs > FINANCE_OFFLINE_SNAPSHOT_MAX_AGE_MS) {
+      financeCacheLog('stale', { bytes, ageMs });
+    }
+    applyRemoteData(snapshot.data, true);
+    financeCacheLog('hydrate', { bytes, ageMs });
+    state.hydratedFromRemote = false;
+    return true;
+  } catch (error) {
+    console.warn('[finance] no se pudo hidratar snapshot offline', error);
+    financeCacheLog('miss', { reason: 'read-error' });
+    return false;
+  }
+}
+
+function getPrimaryFinanceCacheKey() {
+  return state.financePath === resolveFinancePath() ? 'newRoot' : 'legacyRoot';
+}
+
+function resolveFinanceAccountCacheKey(accountId = '') {
+  const safeAccountId = String(accountId || '').trim();
+  if (safeAccountId && financeRootsCache.newRoot?.accounts?.[safeAccountId]) return 'newRoot';
+  if (safeAccountId && financeRootsCache.legacyRoot?.accounts?.[safeAccountId]) return 'legacyRoot';
+  return getPrimaryFinanceCacheKey();
+}
+
+function patchFinanceCacheRoot(cacheKey, relativePath, value) {
+  const safeCacheKey = cacheKey === 'legacyRoot' ? 'legacyRoot' : 'newRoot';
+  if (!financeRootsCache[safeCacheKey] || typeof financeRootsCache[safeCacheKey] !== 'object') {
+    financeRootsCache[safeCacheKey] = {};
+  }
+  setNestedValue(financeRootsCache[safeCacheKey], relativePath, value);
+  return financeRootsCache[safeCacheKey];
+}
+
+function applyFinanceAbsoluteUpdatesToRoot(root = {}, updatesMap = {}, rootPath = state.financePath) {
+  const safeRootPath = String(rootPath || '').trim().replace(/\/+$/g, '');
+  if (!safeRootPath) return root;
+  const prefix = `${safeRootPath}/`;
+  Object.entries(updatesMap || {}).forEach(([fullPath, value]) => {
+    if (!String(fullPath || '').startsWith(prefix)) return;
+    const relativePath = String(fullPath).slice(prefix.length);
+    setNestedValue(root, relativePath, value);
+  });
+  return root;
+}
+
+function applyPatchedFinanceCaches(reason = 'local-patch') {
+  if (financeRemoteApplyTimer) {
+    clearTimeout(financeRemoteApplyTimer);
+    financeRemoteApplyTimer = 0;
+  }
+  applyMergedFinanceRemote(reason);
+  scheduleFinanceSnapshotSave(reason);
+}
+
 function mergeFinanceRoots(newRoot = {}, legacyRoot = {}) {
   const rootNew = newRoot && typeof newRoot === 'object' ? newRoot : {};
   const rootLegacy = legacyRoot && typeof legacyRoot === 'object' ? legacyRoot : {};
@@ -12626,11 +12942,19 @@ async function readFinancePresence(path, { viewId = 'view-finance', reason = 'pr
   }
   const transactionsPath = `${path}/transactions`;
   const accountsPath = `${path}/accounts`;
-  logFirebaseRead({ path: transactionsPath, mode: 'get', reason: `${reason}:transactions`, viewId });
-  logFirebaseRead({ path: accountsPath, mode: 'get', reason: `${reason}:accounts`, viewId });
   const [transactionsSnap, accountsSnap] = await Promise.all([
-    safeFirebase(() => get(ref(db, transactionsPath))),
-    safeFirebase(() => get(ref(db, accountsPath))),
+    safeFirebase(() => trackedGet(ref(db, transactionsPath), {
+      path: transactionsPath,
+      module: 'finance',
+      reason: `${reason}:transactions`,
+      viewId,
+    }, get)),
+    safeFirebase(() => trackedGet(ref(db, accountsPath), {
+      path: accountsPath,
+      module: 'finance',
+      reason: `${reason}:accounts`,
+      viewId,
+    }, get)),
   ]);
   return {
     hasTransactions: Boolean(transactionsSnap?.exists?.()),
@@ -12643,8 +12967,12 @@ async function loadFinanceRootByBranches(rootPath, { reason = 'finance-core-root
   const root = {};
   await Promise.all(FINANCE_CORE_BRANCHES.map(async (branch) => {
     const branchPath = `${rootPath}/${branch.path}`;
-    logFirebaseRead({ path: branchPath, mode: 'get', reason: `${reason}:${branch.key}`, viewId });
-    const snap = await safeFirebase(() => get(ref(db, branchPath)));
+    const snap = await safeFirebase(() => trackedGet(ref(db, branchPath), {
+      path: branchPath,
+      module: 'finance',
+      reason: `${reason}:${branch.key}`,
+      viewId,
+    }, get));
     applyFinanceBranchValue(root, branch, snap?.val());
   }));
   return root;
@@ -12698,8 +13026,12 @@ async function detectFinancePath(basePath) {
 
   for (const root of candidates) {
     try {
-      logFirebaseRead({ path: `${root}/transactions`, mode: 'get', reason: 'detect-finance-path:transactions', viewId: 'view-finance' });
-      const snap = await get(ref(db, `${root}/transactions`));
+      const snap = await trackedGet(ref(db, `${root}/transactions`), {
+        path: `${root}/transactions`,
+        module: 'finance',
+        reason: 'detect-finance-path:transactions',
+        viewId: 'view-finance',
+      }, get);
       if (snap?.exists()) return root;
     } catch (error) {
       console.warn('[FINANCE] detectFinancePath probe failed', root, error?.message || error);
@@ -12708,8 +13040,12 @@ async function detectFinancePath(basePath) {
 
   for (const root of candidates) {
     try {
-      logFirebaseRead({ path: `${root}/accounts`, mode: 'get', reason: 'detect-finance-path:accounts', viewId: 'view-finance' });
-      const snap = await get(ref(db, `${root}/accounts`));
+      const snap = await trackedGet(ref(db, `${root}/accounts`), {
+        path: `${root}/accounts`,
+        module: 'finance',
+        reason: 'detect-finance-path:accounts',
+        viewId: 'view-finance',
+      }, get);
       if (snap?.exists()) return root;
     } catch {
       // noop
@@ -12731,6 +13067,7 @@ async function loadDataOnce() {
     transactions: Object.keys((mergedRoot.transactions || {})).length
   });
   state.hydratedFromRemote = true;
+  scheduleFinanceSnapshotSave('remote-load');
   log('loaded accounts:', state.accounts.length);
 }
 
@@ -12739,6 +13076,7 @@ function applyMergedFinanceRemote(reason = 'finance-live-sync') {
   const mergedRoot = mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
   applyRemoteData(mergedRoot, true);
   state.hydratedFromRemote = true;
+  scheduleFinanceSnapshotSave(reason);
   if (state.activeView === 'products' && patchProductsWorkbench()) {
     renderToast();
     emitFinanceData(reason);
@@ -12758,19 +13096,21 @@ function subscribeFinanceRootBranches(rootPath, targetKey, labelSuffix = 'primar
   FINANCE_CORE_BRANCHES.forEach((branch) => {
     const branchPath = `${rootPath}/${branch.path}`;
     financeDebug('subscribe firebase branch', branchPath);
-    logFirebaseRead({ path: branchPath, mode: 'onValue', reason: `finance-live-sync:${labelSuffix}:${branch.key}`, viewId: 'view-finance' });
-    const stop = registerViewListener('view-finance', onValue(ref(db, branchPath), (snap) => {
+    const stop = trackedOnValue(ref(db, branchPath), (snap) => {
       applyFinanceBranchValue(financeRootsCache[targetKey], branch, snap.val());
       queueMergedFinanceRemoteApply(`remote:finance:${labelSuffix}:${branch.key}`);
-    }, (error) => {
-      state.error = String(error?.message || error);
-      triggerRender();
-    }), {
+    }, {
       key: `${targetKey}:${branch.key}`,
       path: branchPath,
+      module: 'finance',
       mode: 'onValue',
       reason: `finance-live-sync:${labelSuffix}:${branch.key}`,
-    });
+      viewId: 'view-finance',
+      onError: (error) => {
+        state.error = String(error?.message || error);
+        triggerRender();
+      },
+    }, onValue);
     if (typeof stop === 'function') unsubs.push(stop);
   });
   return () => {
@@ -15604,6 +15944,10 @@ async function boot() {
   });
   state.deviceId = getDeviceId();
   console.log('[finance] deviceId', state.deviceId);
+  await hydrateFinanceOfflineSnapshot();
+  if (hasData(state.balance?.transactions) || hasData(state.accounts) || hasData(state.productsHub?.lists)) {
+    await render();
+  }
   const pathProbe = await probeFinanceRoots();
   financeRootsCache = { newRoot: pathProbe.newRoot, legacyRoot: pathProbe.legacyRoot };
   const rawPath = resolveFinancePath();
@@ -15672,6 +16016,10 @@ export function destroy() {
   if (financeRemoteApplyTimer) {
     clearTimeout(financeRemoteApplyTimer);
     financeRemoteApplyTimer = 0;
+  }
+  if (financeSnapshotSaveTimer) {
+    clearTimeout(financeSnapshotSaveTimer);
+    financeSnapshotSaveTimer = 0;
   }
   if (state.eventsAbortController) {
     state.eventsAbortController.abort();

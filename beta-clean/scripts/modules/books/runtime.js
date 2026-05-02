@@ -10,7 +10,7 @@ import {
   remove,
   runTransaction
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-import { logFirebaseRead, registerViewListener } from "../../shared/firebase/read-debug.js";
+import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 
 import {
   ensureCountryDatalist,
@@ -800,8 +800,7 @@ function bindDataSources() {
   if (dataBindingsReady || !BOOKS_PATH || !READING_LOG_PATH || !LINKS_PATH || !META_GENRES_PATH) return;
 
   // Carga categorías desde Firebase (si existen)
-  logFirebaseRead({ path: META_GENRES_PATH, mode: "onValue", reason: "books-meta-genres", viewId: "view-books" });
-  dataUnsubscribers.push(registerViewListener("view-books", onValue(ref(db, META_GENRES_PATH), (snap) => {
+  dataUnsubscribers.push(trackedOnValue(ref(db, META_GENRES_PATH), (snap) => {
     const arr = parseGenresValue(snap.val());
     if (arr) {
       genreOptions = sortLabels(arr);
@@ -811,16 +810,17 @@ function bindDataSources() {
     populateGenreSelect();
     renderFilterSelects();
     renderFilterChips();
-  }), {
+  }, {
     key: "books-meta-genres",
     path: META_GENRES_PATH,
+    module: "books",
     mode: "onValue",
     reason: "books-meta-genres",
-  }));
+    viewId: "view-books",
+  }, onValue));
 
   // === Escucha Firebase libros ===
-  logFirebaseRead({ path: BOOKS_PATH, mode: "onValue", reason: "books-root", viewId: "view-books" });
-  dataUnsubscribers.push(registerViewListener("view-books", onValue(ref(db, BOOKS_PATH), (snap) => {
+  dataUnsubscribers.push(trackedOnValue(ref(db, BOOKS_PATH), (snap) => {
     books = snap.val() || {};
     if (!booksSnapshotHydrated) {
       booksSnapshotHydrated = true;
@@ -828,16 +828,17 @@ function bindDataSources() {
     }
     renderBooks();
     emitBookshellBooksData("remote:books");
-  }), {
+  }, {
     key: "books-root",
     path: BOOKS_PATH,
+    module: "books",
     mode: "onValue",
     reason: "books-root",
-  }));
+    viewId: "view-books",
+  }, onValue));
 
   // Escucha log lectura
-  logFirebaseRead({ path: READING_LOG_PATH, mode: "onValue", reason: "books-reading-log", viewId: "view-books" });
-  dataUnsubscribers.push(registerViewListener("view-books", onValue(ref(db, READING_LOG_PATH), (snap) => {
+  dataUnsubscribers.push(trackedOnValue(ref(db, READING_LOG_PATH), (snap) => {
     readingLog = snap.val() || {};
     if (!readingLogSnapshotHydrated) {
       readingLogSnapshotHydrated = true;
@@ -847,23 +848,26 @@ function bindDataSources() {
     renderCalendar();
     renderPagesTimeline();
     emitBookshellBooksData("remote:reading-log");
-  }), {
+  }, {
     key: "books-reading-log",
     path: READING_LOG_PATH,
+    module: "books",
     mode: "onValue",
     reason: "books-reading-log",
-  }));
+    viewId: "view-books",
+  }, onValue));
 
-  logFirebaseRead({ path: LINKS_PATH, mode: "onValue", reason: "books-links", viewId: "view-books" });
-  dataUnsubscribers.push(registerViewListener("view-books", onValue(ref(db, LINKS_PATH), (snap) => {
+  dataUnsubscribers.push(trackedOnValue(ref(db, LINKS_PATH), (snap) => {
     links = snap.val() || {};
     if (bookDetailId && books?.[bookDetailId]) renderBookDetailQuotes(bookDetailId, books[bookDetailId]);
-  }), {
+  }, {
     key: "books-links",
     path: LINKS_PATH,
+    module: "books",
     mode: "onValue",
     reason: "books-links",
-  }));
+    viewId: "view-books",
+  }, onValue));
 
   dataBindingsReady = true;
 }

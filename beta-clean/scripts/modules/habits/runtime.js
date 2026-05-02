@@ -29,7 +29,7 @@ import { canWriteDirectly } from "../../shared/services/sync-manager.js?v=2026-0
 import { applyQueuedWritesToPath } from "../../shared/storage/offline-queue.js?v=2026-04-05-v5";
 import { readModuleSnapshot, writeModuleSnapshot } from "../../shared/storage/offline-snapshots.js?v=2026-04-05-v5";
 import { createOfflinePushId, writeRtdbWithOfflineQueue } from "../../shared/firebase/offline-rtdb.js?v=2026-04-05-v5";
-import { logFirebaseBytesRisk, logFirebaseRead, registerViewListener } from "../../shared/firebase/read-debug.js";
+import { logFirebaseBytesRisk, logFirebaseRead, registerViewListener, trackFirebasePayload, trackedGet, trackedOnValue } from "../../shared/firebase/read-debug.js";
 
 let currentUid = auth.currentUser?.uid ?? null;
 let BASE = null;
@@ -84,6 +84,38 @@ function logHabitsInitStep(step, extra = {}, level = "info") {
   window.__bookshellHabitsInitLog.push(payload);
   const logger = typeof console[level] === "function" ? console[level] : console.log;
   logger.call(console, `[habits:init] ${step}`, payload);
+}
+
+function logHabitsSession(event, detail = {}) {
+  try {
+    console.info(`[habits:session] ${event}`, {
+      uid: currentUid || "",
+      at: new Date().toISOString(),
+      ...detail,
+    });
+  } catch (_) {
+    console.info(`[habits:session] ${event}`);
+  }
+}
+
+function logHabitsCache(event, detail = {}) {
+  try {
+    console.info(`[cache] ${event}`, {
+      module: "habits",
+      at: new Date().toISOString(),
+      ...detail,
+    });
+  } catch (_) {
+    console.info(`[cache] ${event}`);
+  }
+}
+
+function estimateHabitsCacheBytes(value) {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value ?? null)).length;
+  } catch (_) {
+    return 0;
+  }
 }
 
 async function traceHabitsInitStep(step, action) {
@@ -208,6 +240,17 @@ let runningSession = null; // Sesión principal (derivada de activeSessions)
 let activeSessions = {};
 let selectedSessionId = null;
 let sessionInterval = null;
+let sessionStopGuardUntil = 0;
+let sessionStopGuardReason = "";
+
+function armSessionStopGuard(reason = "stop-flow", ttlMs = 1200) {
+  sessionStopGuardReason = String(reason || "stop-flow").trim() || "stop-flow";
+  sessionStopGuardUntil = Date.now() + Math.max(250, Number(ttlMs) || 1200);
+}
+
+function isSessionStopGuardActive() {
+  return Date.now() < Number(sessionStopGuardUntil || 0);
+}
 
 function emitHabitsData(reason = "") {
   try {
@@ -3508,10 +3551,14 @@ function schedulePersistHabitOfflineSnapshot() {
   }
   habitSnapshotPersistTimer = window.setTimeout(() => {
     habitSnapshotPersistTimer = null;
+    const payload = buildHabitsCachePayload();
+    logHabitsCache("save", {
+      bytes: estimateHabitsCacheBytes(payload),
+    });
     void writeModuleSnapshot({
       moduleName: "habits",
       uid: currentUid,
-      data: buildHabitsCachePayload(),
+      data: payload,
       updatedAt: Date.now(),
       metadata: {
         activeSessionCount: Object.keys(activeSessions || {}).length,
@@ -3526,11 +3573,25 @@ async function hydrateHabitsFromOfflineSnapshot() {
   if (!currentUid) return false;
   try {
     const snapshot = await readModuleSnapshot({ moduleName: "habits", uid: currentUid });
-    if (!snapshot?.data) return false;
+    if (!snapshot?.data) {
+      logHabitsCache("miss", {
+        reason: "boot",
+      });
+      return false;
+    }
+    const ageMs = Math.max(0, Date.now() - Number(snapshot.updatedAt || 0));
+    const bytes = estimateHabitsCacheBytes(snapshot.data);
     applyHabitsCachePayload(snapshot.data);
+    logHabitsCache("hydrate", {
+      bytes,
+      ageMs,
+    });
     return true;
   } catch (error) {
     console.warn("[habits] no se pudo rehidratar snapshot offline", error);
+    logHabitsCache("miss", {
+      reason: "read-error",
+    });
     return false;
   }
 }
@@ -11885,6 +11946,12 @@ async function stopSessionLegacy(assignHabitId = null, silent = false, sessionId
 
   const session = sessionId ? activeSessions?.[sessionId] : null;
   if (!session) return;
+  armSessionStopGuard("stop-flow");
+  logHabitsSession("stop", {
+    sessionId,
+    habitId: session?.habitId || session?.targetHabitId || "",
+    assignHabitId: typeof assignHabitId === "string" ? assignHabitId : "",
+  });
 
   const endTs = Date.now();
   const duration = Math.max(1, Math.round(getRunningElapsedMs(session, endTs) / 1000));
@@ -11928,6 +11995,11 @@ async function stopSessionLegacy(assignHabitId = null, silent = false, sessionId
     const savedPayload = { targetHabitId: target, startTs, endTs, durationSec: duration, splitByDay: splitSummary };
     console.warn("[STOP] saved session", savedPayload);
     console.log("[HABIT] session stop", { startTs, endTs, splitByDay: splitSummary });
+    logHabitsSession("stop:success", {
+      sessionId,
+      habitId: target,
+      durationSec: duration,
+    });
     localStorage.setItem(LAST_HABIT_KEY, target);
     pendingSessionDuration = 0;
     invalidateHabitRenderCaches();
@@ -11938,6 +12010,12 @@ async function stopSessionLegacy(assignHabitId = null, silent = false, sessionId
   }
 
   pendingSessionDuration = duration;
+  logHabitsSession("stop:success", {
+    sessionId,
+    habitId: "",
+    durationSec: duration,
+    requiresAssignment: true,
+  });
   openSessionModal();
 }
 
@@ -13279,14 +13357,27 @@ function bindEvents() {
       startSession();
     }
   });
+  const stopSessionButtonEvent = (event, explicitSessionId = null) => {
+    event.preventDefault();
+    event.stopPropagation();
+    stopSession(null, false, explicitSessionId || undefined);
+  };
   $habitOverlayPill?.addEventListener("click", (event) => {
     if (!runningSession) return;
     if (event.target?.closest?.("#habit-session-stop")) return;
     openSessionDetailOverlay();
     updateSessionUI();
   });
-  $habitOverlayStop.addEventListener("click", stopSession);
-  $habitSessionDetailStop?.addEventListener("click", stopSession);
+  $habitOverlayStop.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  $habitSessionDetailStop?.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  $habitOverlayStop.addEventListener("click", (event) => stopSessionButtonEvent(event));
+  $habitSessionDetailStop?.addEventListener("click", (event) => stopSessionButtonEvent(event));
   // VOXEL: botón para cancelar la sesión activa sin registrarla.
   $habitSessionDetailCancel?.addEventListener("click", () => cancelRunningSession({ requireConfirm: true }));
   $habitSessionDetailClose?.addEventListener("click", closeSessionDetailOverlay);
@@ -13303,7 +13394,7 @@ function bindEvents() {
     }
     const stopBtn = event.target?.closest?.("[data-session-stop]");
     if (stopBtn) {
-      stopSession(null, false, stopBtn.getAttribute("data-session-stop"));
+      stopSessionButtonEvent(event, stopBtn.getAttribute("data-session-stop"));
       return;
     }
     const cancelBtn = event.target?.closest?.("[data-session-cancel]");
@@ -13621,15 +13712,16 @@ function buildHabitChildPath(basePath, childKey) {
 
 function bindRemoteValueListener(path, handler, { key, reason = "habits-live-sync", bounded = false, querySummary = "" } = {}) {
   logHabitsData("listen:start", { path, key: key || path, mode: "onValue" });
-  logFirebaseRead({ path, mode: "onValue", reason, viewId: "view-habits", bounded, querySummary });
-  const unsubscribe = registerViewListener("view-habits", onValue(ref(db, path), handler), {
+  const unsubscribe = trackedOnValue(ref(db, path), handler, {
     key: key || path,
     path,
+    module: "habits",
     mode: "onValue",
     reason,
+    viewId: "view-habits",
     bounded,
     querySummary,
-  });
+  }, onValue);
   if (typeof unsubscribe === "function") {
     remoteUnsubscribers.push(() => {
       logHabitsData("listen:stop", { path, key: key || path, mode: "onValue" });
@@ -13646,6 +13738,11 @@ function bindRemoteChildListeners(path, {
   bounded = false,
   querySummary = "",
 } = {}) {
+  const eventCounters = {
+    onChildAdded: 0,
+    onChildChanged: 0,
+    onChildRemoved: 0,
+  };
   const attach = (mode, subscribe) => {
     const listenerKey = `${keyPrefix}:${mode}`;
     logHabitsData("listen:start", { path, key: listenerKey, mode });
@@ -13653,6 +13750,7 @@ function bindRemoteChildListeners(path, {
     const unsubscribe = registerViewListener("view-habits", subscribe(), {
       key: listenerKey,
       path,
+      module: "habits",
       mode,
       reason,
       bounded,
@@ -13667,12 +13765,57 @@ function bindRemoteChildListeners(path, {
   };
 
   attach("onChildAdded", () => onChildAdded(ref(db, path), (snap) => {
+    eventCounters.onChildAdded += 1;
+    trackFirebasePayload({
+      path,
+      module: "habits",
+      reason,
+      viewId: "view-habits",
+      source: "onChildAdded",
+      value: snap.val(),
+      key: `${keyPrefix}:onChildAdded`,
+      eventIndex: eventCounters.onChildAdded,
+      initial: eventCounters.onChildAdded === 1,
+      bounded,
+      querySummary,
+      mode: "onChildAdded",
+    });
     onUpsert?.(snap.key || "", snap.val(), "child_added");
   }));
   attach("onChildChanged", () => onChildChanged(ref(db, path), (snap) => {
+    eventCounters.onChildChanged += 1;
+    trackFirebasePayload({
+      path,
+      module: "habits",
+      reason,
+      viewId: "view-habits",
+      source: "onChildChanged",
+      value: snap.val(),
+      key: `${keyPrefix}:onChildChanged`,
+      eventIndex: eventCounters.onChildChanged,
+      initial: false,
+      bounded,
+      querySummary,
+      mode: "onChildChanged",
+    });
     onUpsert?.(snap.key || "", snap.val(), "child_changed");
   }));
   attach("onChildRemoved", () => onChildRemoved(ref(db, path), (snap) => {
+    eventCounters.onChildRemoved += 1;
+    trackFirebasePayload({
+      path,
+      module: "habits",
+      reason,
+      viewId: "view-habits",
+      source: "onChildRemoved",
+      value: snap.val(),
+      key: `${keyPrefix}:onChildRemoved`,
+      eventIndex: eventCounters.onChildRemoved,
+      initial: false,
+      bounded,
+      querySummary,
+      mode: "onChildRemoved",
+    });
     onRemove?.(snap.key || "", snap.val(), "child_removed");
   }));
 }
@@ -13875,15 +14018,7 @@ async function syncHabitSessionsForCurrentView({ force = false, reason = "unknow
         mode: "onValue",
         querySummary: `orderByKey,startAt(${spec.startKey}),limitToLast(${spec.limit || 45})`,
       });
-      logFirebaseRead({
-        path,
-        mode: "onValue",
-        reason: `habits-session-sync:${spec.reasonLabel}`,
-        viewId: "view-habits",
-        bounded: true,
-        querySummary: `orderByKey,startAt(${spec.startKey}),limitToLast(${spec.limit || 45})`,
-      });
-      const unsubscribe = registerViewListener("view-habits", onValue(
+      const unsubscribe = trackedOnValue(
         sessionsQuery,
         (snap) => {
           if (syncVersion !== habitSessionSyncVersion) return;
@@ -13897,17 +14032,20 @@ async function syncHabitSessionsForCurrentView({ force = false, reason = "unknow
           habitSessionLiveSlices = nextSlices;
           applyHabitSessionSyncSnapshot(nextRaw, `remote:sessions:${spec.reasonLabel}`, spec);
         },
-        (error) => {
-          console.warn("No se pudo escuchar sesiones de hábitos", { habitId, error });
-        }
-      ), {
+        {
         key: `habit-sessions:${habitId}`,
         path,
+        module: "habits",
         mode: "onValue",
         reason: `habits-session-sync:${spec.reasonLabel}`,
+        viewId: "view-habits",
         bounded: true,
         querySummary: `orderByKey,startAt(${spec.startKey}),limitToLast(${spec.limit || 45})`,
-      });
+        onError: (error) => {
+          console.warn("No se pudo escuchar sesiones de hábitos", { habitId, error });
+        },
+      },
+      onValue);
       if (typeof unsubscribe === "function") {
         habitSessionLiveUnsubscribers.push(() => {
           logHabitsData("listen:stop", {
@@ -13938,17 +14076,16 @@ async function syncHabitSessionsForCurrentView({ force = false, reason = "unknow
     const requestRef = useFullHistory
       ? ref(db, path)
       : query(ref(db, path), orderByKey(), startAt(spec.startKey), endAt(spec.endKey));
-    logFirebaseRead({
+    const snap = await trackedGet(requestRef, {
       path,
-      mode: "get",
+      module: "habits",
       reason: `habits-session-sync:${spec.reasonLabel}`,
       viewId: "view-habits",
       bounded: !useFullHistory,
       querySummary: useFullHistory
         ? "full-history-per-habit"
         : `orderByKey,startAt(${spec.startKey}),endAt(${spec.endKey})`,
-    });
-    const snap = await get(requestRef);
+    }, get);
     if (syncVersion !== habitSessionSyncVersion) return;
     const value = snap?.val() || {};
     if (value && typeof value === "object" && Object.keys(value).length) {
@@ -14295,9 +14432,21 @@ function incrementCounterHabit(habitId) {
 
 async function startSession(habitId = null, meta = null) {
   if (!currentUid || !HABIT_ACTIVE_SESSIONS_PATH) return null;
+  const requestedHabitId = typeof habitId === "string" ? String(habitId || "").trim() : "";
   const targetHabitId = (typeof habitId === "string" && habits?.[habitId] && !habits[habitId]?.archived)
     ? habitId
     : null;
+  if (!targetHabitId && isSessionStopGuardActive()) {
+    logHabitsSession("generic-create blocked", {
+      reason: sessionStopGuardReason || "stop-flow",
+      requestedHabitId,
+    });
+    logHabitsSession("unexpected-autostart blocked", {
+      reason: sessionStopGuardReason || "stop-flow",
+      requestedHabitId,
+    });
+    return null;
+  }
   const now = Date.now();
   const sessionId = createOfflinePushId(HABIT_ACTIVE_SESSIONS_PATH) || `session-${now.toString(36)}`;
   const payload = {
@@ -14313,6 +14462,11 @@ async function startSession(habitId = null, meta = null) {
     deviceId: currentUid,
     meta: meta && typeof meta === "object" ? { ...meta } : null
   };
+  logHabitsSession("start", {
+    sessionId,
+    habitId: targetHabitId || "",
+    requestedHabitId,
+  });
 
   upsertActiveSessionLocal(sessionId, payload);
   logHabitsData("action:update-local", {
@@ -14406,6 +14560,12 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
 
   const session = sessionId ? activeSessions?.[sessionId] : null;
   if (!session) return;
+  armSessionStopGuard("stop-flow");
+  logHabitsSession("stop", {
+    sessionId,
+    habitId: session?.habitId || session?.targetHabitId || "",
+    assignHabitId: typeof assignHabitId === "string" ? assignHabitId : "",
+  });
 
   const endTs = Date.now();
   const duration = Math.max(1, Math.round(getRunningElapsedMs(session, endTs) / 1000));
@@ -14442,10 +14602,20 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
       updateCompareLiveInterval();
     }
     console.warn("No se pudo parar la sesión activa", result?.error);
+    logHabitsSession("stop:error", {
+      sessionId,
+      message: result?.error?.message || String(result?.error || ""),
+    });
     return;
   }
 
   scheduleCompareRefresh("session:stop", { dateKey, durationSec: duration });
+  logHabitsSession("stop:success", {
+    sessionId,
+    habitId: target || "",
+    durationSec: duration,
+    requiresAssignment: !(target && habits?.[target] && !habits[target]?.archived),
+  });
 
   if (target && habits?.[target] && !habits[target]?.archived) {
     const splitByDay = splitSessionByDay(startTs, endTs);
@@ -14473,6 +14643,12 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
   }
 
   pendingSessionDuration = duration;
+  logHabitsSession("stop:success", {
+    sessionId,
+    habitId: "",
+    durationSec: duration,
+    requiresAssignment: true,
+  });
   openSessionModal();
 }
 

@@ -2,6 +2,7 @@ import { db, auth, PUBLIC_PATHS, firebasePaths, getUserDataKey } from "../../sha
 import { MET_CATALOG } from "./met-catalog.js";
 import { ensureEcharts } from "../../shared/vendors/echarts.js";
 import { upsertPublicCatalogItem } from "../../shared/services/public-catalog.js";
+import { registerCacheMetric, trackedOnValue } from "../../shared/firebase/read-debug.js";
 
 import {
   ref,
@@ -816,7 +817,7 @@ function bindEvents() {
 }
 
   function subscribeData() {
-    onValue(exercisesRef, (snap) => {
+    trackedOnValue(exercisesRef, (snap) => {
       exercises = snap.val() || {};
       renderExerciseList();
       renderWorkoutEditor();
@@ -824,15 +825,29 @@ function bindEvents() {
       persistGymCache();
       refreshExerciseDetailIfOpen();
       emitBookshellData("remote:exercises");
-    });
+    }, {
+      key: "gym-exercises",
+      path: `${basePath}/exercises`,
+      module: "gym",
+      mode: "onValue",
+      reason: "gym-live-exercises",
+      viewId: "view-gym",
+    }, onValue);
 
-    onValue(templatesRef, (snap) => {
+    trackedOnValue(templatesRef, (snap) => {
       templates = snap.val() || {};
       renderTemplates();
       persistGymCache();
-    });
+    }, {
+      key: "gym-templates",
+      path: `${basePath}/templates`,
+      module: "gym",
+      mode: "onValue",
+      reason: "gym-live-templates",
+      viewId: "view-gym",
+    }, onValue);
 
-    onValue(workoutsRef, (snap) => {
+    trackedOnValue(workoutsRef, (snap) => {
       workoutsByDate = snap.val() || {};
       markWorkoutTypeStatsDirty();
       syncCurrentWorkout();
@@ -850,18 +865,32 @@ function bindEvents() {
       refreshStatsIfActive({ includeControls: gymStatsSelection.kind === "exercise" });
       persistGymCache();
       emitBookshellData("remote:workouts");
-    });
+    }, {
+      key: "gym-workouts",
+      path: `${basePath}/workouts`,
+      module: "gym",
+      mode: "onValue",
+      reason: "gym-live-workouts",
+      viewId: "view-gym",
+    }, onValue);
 
-    onValue(bodyweightRef, (snap) => {
+    trackedOnValue(bodyweightRef, (snap) => {
       bodyweightByDate = snap.val() || {};
       renderBodyweightForm();
       renderWorkoutEditor();
       refreshStatsIfActive();
       persistGymCache();
       emitBookshellData("remote:bodyweight");
-    });
+    }, {
+      key: "gym-bodyweight",
+      path: `${basePath}/body`,
+      module: "gym",
+      mode: "onValue",
+      reason: "gym-live-bodyweight",
+      viewId: "view-gym",
+    }, onValue);
 
-    onValue(cardioRef, (snap) => {
+    trackedOnValue(cardioRef, (snap) => {
       cardioByDate = snap.val() || {};
       renderCardioList();
       if (cardioDraft && !cardioRunning) {
@@ -870,7 +899,14 @@ function bindEvents() {
       refreshStatsIfActive({ includeControls: gymStatsSelection.kind === "cardio" });
       persistGymCache();
       emitBookshellData("remote:cardio");
-    });
+    }, {
+      key: "gym-cardio",
+      path: `${basePath}/cardio`,
+      module: "gym",
+      mode: "onValue",
+      reason: "gym-live-cardio",
+      viewId: "view-gym",
+    }, onValue);
   }
 
   function emitBookshellData(reason = "") {
@@ -921,7 +957,15 @@ function bindEvents() {
       ts: Date.now()
     };
     try {
-      localStorage.setItem(GYM_CACHE_KEY, JSON.stringify(payload));
+      const serialized = JSON.stringify(payload);
+      localStorage.setItem(GYM_CACHE_KEY, serialized);
+      registerCacheMetric({
+        module: "gym",
+        key: GYM_CACHE_KEY,
+        bytes: typeof TextEncoder === "function" ? new TextEncoder().encode(serialized).length : serialized.length,
+        storage: "localStorage",
+        reason: "cache-save",
+      });
     } catch (_) {}
   }
 

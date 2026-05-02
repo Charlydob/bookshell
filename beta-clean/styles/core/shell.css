@@ -22,9 +22,10 @@
     z-index: 140;
     }
     .app-sync-indicator .app-sync-indicator__actions {
-      display: grid;
-      grid-template-columns: 1.8fr 0.5fr 0.5fr;
-      gap: 4px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
       min-width: 0;
       max-width: 0;
       margin-left: 0;
@@ -46,7 +47,8 @@
 .app-sync-indicator {
     --sync-accent: var(--app-info);
     --mission-ring: color-mix(in srgb, var(--app-warning) 84%, transparent);
-    min-height: 32px;
+    min-height: 12px;
+    height: 22px;
     min-width: 32px;
     max-width: min(420px, calc(100vw - 24px));
     padding: 6px;
@@ -74,17 +76,21 @@
       box-shadow 180ms ease,
       background-color 180ms ease;
     }
-    .app-sync-indicator::before {
-      content: "";
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--sync-accent);
-      box-shadow:
-        0 0 0 3px var(--mission-ring),
-        0 0 0 6px color-mix(in srgb, var(--sync-accent) 20%, transparent);
-      flex: 0 0 8px;
-    }
+.app-sync-indicator::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sync-accent);
+  box-shadow:
+    0 0 0 3px var(--mission-ring),
+    0 0 0 6px color-mix(in srgb, var(--sync-accent) 20%, transparent);
+  flex: 0 0 8px;
+}
+
+#app-sync-indicator{
+
+}
   /* #endregion Circulo Sync */
 
   /* #region Text Sync */
@@ -115,21 +121,49 @@
     display: none;
     } 
     .app-sync-indicator.is-open .app-sync-indicator__actions {
-    max-width: min(360px, 76vw);
+    max-width: min(340px, 76vw);
     margin-left: 8px;
     opacity: 1;
     visibility: visible;
     pointer-events: auto;
     transform: translateX(0);
     }
-    /* #region boton logros y misiones*/
-    #app-achievements-btn, #app-general-btn {
-      background-color: transparent;
-      border: 0px;
-      backdrop-filter: none;
-      box-shadow: none;
+    .app-sync-menu__button,
+    #app-achievements-btn,
+    #app-general-btn {
+      min-width: 34px;
+      min-height: 34px;
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      border-radius: 999px;
+      border: 1px solid var(--app-border);
+      background: var(--app-surface-strong);
+      box-shadow: var(--app-shadow-chip);
+      color: var(--app-text-secondary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(16px);
     }
-    /* #endregion boton logros y misiones*/
+    .app-sync-menu__button {
+      cursor: pointer;
+      font: inherit;
+      font-size: 16px;
+      line-height: 1;
+    }
+    .app-sync-menu__button:hover,
+    #app-achievements-btn:hover,
+    #app-general-btn:hover {
+      border-color: var(--app-border-strong);
+      transform: translateY(-1px);
+    }
+    .app-sync-menu__button:focus-visible,
+    #app-achievements-btn:focus-visible,
+    #app-general-btn:focus-visible {
+      outline: 2px solid var(--app-focus-ring);
+      outline-offset: 3px;
+    }
   /* #endregion Botones Sync */
 
   /* #region Coloreado condicional */
@@ -386,13 +420,13 @@
   position:absolute;
   top:-4px;
   right:-4px;
-  min-width:16px;
-  height:16px;
+  min-width:12px;
+  height:13px;
   border-radius:999px;
   background:#ff3b30;
   color:#fff;
-  font-size:10px;
-  line-height:16px;
+  font-size:8px;
+  line-height:12px;
   text-align:center;
   font-weight:700;
   padding:0 4px;
@@ -1730,6 +1764,260 @@ input[type="search"] {
 /* #endregion Botón general */
 
 
+/* #region Settings + Metrics */
+
+.app-settings-backdrop,
+.app-metrics-backdrop {
+  z-index: 146;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: clamp(18px, 4vw, 34px) 14px;
+  overflow-y: auto;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--app-surface) 48%, transparent) 0%, color-mix(in srgb, black 26%, transparent) 100%);
+}
+
+.app-settings-modal,
+.app-metrics-modal {
+  width: min(920px, 100%);
+  max-height: calc(100vh - 28px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.app-settings-modal__header,
+.app-metrics-modal__header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--app-border);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--app-surface-elevated) 94%, white 6%) 0%, var(--app-surface-elevated) 100%);
+}
+
+.app-settings-modal__eyebrow,
+.app-metrics-modal__eyebrow,
+.app-settings-section__eyebrow,
+.app-metrics-section__eyebrow {
+  margin: 0 0 6px;
+  color: var(--app-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app-settings-modal__body,
+.app-metrics-modal__body {
+  display: grid;
+  gap: 16px;
+  padding: 18px 20px 22px;
+  overflow: auto;
+}
+
+.app-settings-section,
+.app-metrics-section {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-soft);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 36%, transparent);
+}
+
+.app-settings-section h3,
+.app-metrics-section h3,
+.app-settings-section p,
+.app-metrics-section p {
+  margin: 0;
+}
+
+.app-settings-themeGrid,
+.app-settings-section__actions,
+.app-metrics-rangeRow,
+.app-metrics-section__top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app-settings-themeGrid,
+.app-settings-section__actions,
+.app-metrics-rangeRow {
+  justify-content: flex-start;
+}
+
+.app-settings-themeBtn,
+.app-settings-actionBtn,
+.app-settings-dangerBtn,
+.app-metrics-rangeBtn {
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-strong);
+  color: var(--app-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+
+.app-settings-themeBtn:hover,
+.app-settings-actionBtn:hover,
+.app-settings-dangerBtn:hover,
+.app-metrics-rangeBtn:hover {
+  border-color: var(--app-border-strong);
+  transform: translateY(-1px);
+}
+
+.app-settings-themeBtn.is-active,
+.app-metrics-rangeBtn.is-active {
+  border-color: color-mix(in srgb, var(--app-info) 76%, white 24%);
+  background: color-mix(in srgb, var(--app-info-soft) 76%, white 24%);
+  color: var(--app-text);
+}
+
+.app-settings-dangerBtn {
+  border-color: color-mix(in srgb, var(--app-danger) 36%, var(--app-border));
+  background: color-mix(in srgb, var(--app-danger-soft) 76%, white 24%);
+  color: color-mix(in srgb, var(--app-danger) 72%, var(--app-text));
+}
+
+.app-settings-kpis,
+.app-metrics-kpis,
+.app-metrics-module__grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.app-settings-kpi,
+.app-metrics-kpi,
+.app-metrics-module__grid > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-strong);
+}
+
+.app-settings-kpi small,
+.app-metrics-kpi small,
+.app-metrics-module__grid small {
+  color: var(--app-text-muted);
+}
+
+.app-settings-kpi strong,
+.app-metrics-kpi strong,
+.app-metrics-module__grid strong {
+  color: var(--app-text);
+  font-size: 15px;
+}
+
+.app-metrics-alerts,
+.app-metrics-moduleList,
+.app-metrics-pathList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+}
+
+.app-metrics-alerts {
+  list-style: none;
+}
+
+.app-metrics-alerts li,
+.app-metrics-pathList article {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-strong);
+}
+
+.app-metrics-alerts strong,
+.app-metrics-pathList code,
+.app-metrics-module summary span:last-child {
+  color: var(--app-text);
+}
+
+.app-metrics-alerts span,
+.app-metrics-pathList small {
+  color: var(--app-text-secondary);
+}
+
+.app-metrics-module {
+  border-radius: 18px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-strong);
+  overflow: hidden;
+}
+
+.app-metrics-module summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.app-metrics-module summary::-webkit-details-marker {
+  display: none;
+}
+
+.app-metrics-module[open] summary {
+  border-bottom: 1px solid var(--app-border);
+}
+
+.app-metrics-module__grid,
+.app-metrics-pathList {
+  padding: 14px 16px 16px;
+}
+
+@media (max-width: 640px) {
+  .app-settings-backdrop,
+  .app-metrics-backdrop {
+    padding: 10px;
+  }
+
+  .app-settings-modal,
+  .app-metrics-modal {
+    width: 100%;
+    max-height: calc(100vh - 20px);
+  }
+
+  .app-settings-modal__header,
+  .app-metrics-modal__header,
+  .app-settings-modal__body,
+  .app-metrics-modal__body {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .app-metrics-module summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+/* #endregion Settings + Metrics */
+
 /* #region Icon buttons */
 
 .icon-btn {
@@ -2561,3 +2849,43 @@ input[type="search"] {
 
 /* #endregion SELECTS, INPUTS, BOTONES, FECHAS */
 /* #endregion MANTENER */
+
+/* #region logros */
+
+  .modal.app-achievements-modal, .app-settings-modal, .app-metrics-modal {
+    min-width: 93%;
+    width: 20px;
+  }
+  
+/* #endregion logros */
+
+/* #region metricas */
+
+  .app-metrics-kpis{
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+  .app-metrics-moduleList{
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+
+  }
+
+/* #endregion metricas */
+/* #region modal notificaciones */
+
+#lista-de-notificaciones{
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+#notificaciones{
+  border-radius: 6px;
+  margin-top: 6px;
+  box-shadow: none;
+  
+}
+#notes-reminder-checklist-new {
+
+}
+/* #endregion modal notificaciones */

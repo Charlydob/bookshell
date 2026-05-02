@@ -7,7 +7,7 @@ import {
   runTransaction,
   update,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-import { logFirebaseRead, registerViewListener } from "../../../shared/firebase/read-debug.js";
+import { trackedOnValue } from "../../../shared/firebase/read-debug.js";
 import { buildTagDefinitionKey } from "../domain/tag-utils.js?v=2026-04-28-v2";
 import {
   mapFolderToDb,
@@ -29,20 +29,22 @@ function resolveRootPath(uidParam = "") {
 
 export function subscribeNotesRoot(uid, onData, onError) {
   const rootPath = resolveRootPath(uid);
-  logFirebaseRead({ path: rootPath, mode: "onValue", reason: "notes-root-sync", viewId: "view-notes" });
-  const unsubscribe = registerViewListener("view-notes", onValue(
+  const unsubscribe = trackedOnValue(
     ref(db, rootPath),
     (snapshot) => {
       const value = snapshot.val() || {};
       onData?.(mapSnapshotToDomain(value), rootPath);
     },
-    (error) => onError?.(error),
-  ), {
+    {
     key: "notes-root",
     path: rootPath,
+    module: "notes",
     mode: "onValue",
     reason: "notes-root-sync",
-  });
+    viewId: "view-notes",
+    onError: (error) => onError?.(error),
+  },
+    onValue);
 
   return {
     rootPath,

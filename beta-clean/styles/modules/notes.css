@@ -2324,27 +2324,29 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   flex-wrap: wrap;
   gap: 6px;
 }
+/* #region recordatorios */
 
-@media (max-width: 720px) {
-  .notes-reminder-color-palette {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
+/* #region boton crear reci */
 
-  .notes-reminders-calendar__day {
-    min-height: 48px;
-    padding: 4px 3px;
-  }
-
-  .notes-reminders-calendar-panel__head {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .notes-reminders-calendar-panel__item {
-    grid-template-columns: 1fr;
-  }
-
-  .notes-reminders-calendar-panel__itemActions {
-    justify-self: end;
-  }
+.notes-header-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  width: 95% ;
+  margin-bottom: 10px;
+  justify-self: center !important;
+  font-weight: 700;
 }
+
+/* #endregion boton crear reci */
+
+
+#notes-reminders-toolbar{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: 10px;
+}
+.notes-reminder-chip{
+  display: none;
+}
+/* #endregion recordatorios */
+

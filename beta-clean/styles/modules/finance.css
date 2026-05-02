@@ -1868,14 +1868,7 @@ small.finAgg__totals-small {
   font-size: 13px;
 }
 
-.financeTab .food-history-btn {
-  border: 1px solid rgba(255, 255, 255, .12);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, .08);
-  color: var(--fin-text);
-  min-height: 34px;
-  padding: 0 12px;
-}
+
 
 .financeTab .food-list {
   max-height: 260px;
@@ -5769,26 +5762,7 @@ margin-bottom: 50px;
   line-height: 1;
 }
 
-@media (max-width: 520px){
-  .financeTab .productsWorkbench__ticketBar{
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, auto);
-    align-items: center;
-    gap: 6px;
-    overflow: visible;
-  }
 
-  .financeTab .productsWorkbench__ticketSwitches{
-    min-width: 0;
-    max-width: 100%;
-    padding-bottom: 4px;
-  }
-
-  .financeTab .productsWorkbench__panelActions--ticketCrud .food-history-btn{
-    padding-inline: 7px;
-    font-size: 10px;
-  }
-}
 
 .financeTab .productsWorkbench__panelActions--inlineReceipt{
   margin: 4px 0 8px;
@@ -7144,128 +7118,7 @@ margin-bottom: 50px;
   grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
 }
 
-@media (max-width: 760px){
-  .financeTab .productsWorkbench__panel--shopping{
-    grid-template-columns: 1fr;
-  }
 
-  .financeTab .productsWorkbench__quickHead,
-  .financeTab .productsWorkbench__bulkBar{
-    grid-template-columns: 1fr;
-    display: grid;
-  }
-
-  .financeTab .productsWorkbench__batchForm--toolbar{
-    position: static;
-    box-shadow: none;
-  }
-
-  .financeTab .productsWorkbench__bulkActions{
-    justify-content: stretch;
-  }
-
-  .financeTab .productsWorkbench__bulkActions .food-history-btn{
-    flex: 1 1 auto;
-  }
-
-  .financeTab .productsWorkbench__quickEdit{
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .financeTab .productsWorkbench__quickEdit .food-history-btn{
-    grid-column: 1 / -1;
-  }
-}
-
-@media (max-width: 520px){
-  .financeTab .productsWorkbench__viewSwitchBtn{
-    min-height: 40px;
-    padding: 6px;
-  }
-
-  .financeTab .productsWorkbench__viewSwitchBtn span{
-    font-size: 11px;
-  }
-
-  .financeTab .productsWorkbench__viewSwitchBtn small{
-    font-size: 9px;
-  }
-
-  .financeTab .productsWorkbench__quickRow{
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .financeTab .productsWorkbench__quickState{
-    display: none;
-  }
-
-  .financeTab .productsWorkbench__quickQty{
-    grid-column: 1 / -1;
-    justify-self: start;
-  }
-
-  .financeTab .productsWorkbench__lineRow{
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .financeTab .productsWorkbench__receiptRow{
-    grid-template-columns: 16px 32px minmax(0, 1fr) 48px 62px 28px;
-    gap: 5px;
-    padding: 0px;
-  }
-
-  .financeTab .productsWorkbench__receipt{
-    padding: 10px;
-  }
-
-  .financeTab .productsWorkbench__receiptRow .food-control{
-    min-height: 24px;
-    padding-inline: 4px;
-    font-size: 11px;
-  }
-
-  .financeTab .productsWorkbench__receiptLineDiff{
-    font-size: 9px;
-  }
-
-  .financeTab .productsWorkbench__receiptSuggest{
-    right: 0;
-  }
-
-  .financeTab .productsWorkbench__lineField{
-    grid-column: span 1;
-  }
-
-  .financeTab .productsWorkbench__lineTotals{
-    grid-column: 2 / -1;
-    justify-items: start;
-  }
-
-  .financeTab .productsWorkbench__productTop{
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-  }
-
-  .financeTab .productsWorkbench__productTop > .productsWorkbench__status{
-    grid-column: 2 / -1;
-    justify-self: start;
-  }
-
-  .financeTab .productsWorkbench__productMeta{
-    flex-wrap: wrap;
-  }
-}
-
-@media (max-width: 390px){
-  .financeTab .productsWorkbench__toolbarMain,
-  .financeTab .productsWorkbench__editorForm,
-  .financeTab .productsWorkbench__batchForm{
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .financeTab .productsWorkbench__field--wide{
-    grid-column: 1 / -1;
-  }
-}
 .financeTab .productsWorkbench__settingsGrid{
   display: grid;
   grid-template-columns: 1fr 1fr 1fr 1fr;
@@ -7821,6 +7674,11 @@ margin-bottom: 50px;
 #fusionar-cuentas{
   display: none;
 }
+
+.financeTab .finance-modal header {
+  display: grid;
+  grid-template-columns: 1fr 40px;
+}
 /* #region Modal añadir movimiento */
 #fm-tx-type{
   display: none;
@@ -7867,47 +7725,124 @@ textarea {
   border: 1px violet solid;
 }
 /* #endregion Modal añadir movimiento */
+/* #region modal nueva cuenta */
 
+#btn-x-moda-nueva-cuenta {
+  border: 0px red solid;
+  width: 40px;
+  font-size: 18px;
+}
+
+#btc-zona-de-input{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  text-align-last: center;
+}
+
+/* #endregion modal nueva cuenta */
 /* #region Modal Gasto Fijo */
-.fin-fixed-grid{
+.finance-form-grid .fin-fixed-grid{
   display: grid;
   gap: 14px;
   grid-template-columns: 1fr;
+  width: 10px;
+  min-width: 10px;
+}
+.fin-fixed-actions {
+    display: grid;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--fin-stroke);
+    grid-template-columns: 1fr 1fr 1fr;
+}
+.fin-fixed-check {
+    display: grid;
+    align-items: center;
+    gap: 8px;
+    width: 40%;
+    min-width: 80%;
+    padding: 8px 0;
+    grid-template-columns: 1fr 250px;
+}
+.filas-nuevo-gasto-fijo{
+  width: 100px !important;
 }
 
-#meta-gasto-fijo {
+.fin-fixed-grid{
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+#meta-gasto-fijo {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr 1fr !important;
   width: 90%;
   border-bottom: 1px solid rgba(150, 184, 243, .22);
   border-top: 1px solid rgba(150, 184, 243, .22);
   border-radius: 12px;
   justify-self: center;
   justify-content: center;
+  min-width: 90%;
+}
+.fin-fixed-field .fin-fixed-field--emoji {
+    width: 20px;
+    min-width: 20px;
+}
+.fin-fixed-field .fin-fixed-field--full .fin-fixed-field--name {
+  width: 20px;
+    min-width: 20px;
+}
+#fixed-expense-emoji-input{
+  width: 40px;
+    min-width: 40px;
+}
+
+#fixed-expense-name-input{
+  width: 60px;
+    min-width: 90px;
 }
 #meta-3-gasto-fijo{
   display: grid;
   grid-template-columns: 1fr 1fr;
   justify-items: start;
+  
+  width: 90%;
+  min-width: 90%;
 }
 #meta-2-gasto-fijo {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 150px;
   justify-self: center;
   text-align: center;
   text-align-last: center;
+  justify-content: center;
+  justify-items: center;
+  border: 0px red solid
 }
-
+#fixed-expense-type-select{
+  text-align-last: start;
+}
+.checks{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
 
 #meta-4-gasto-fijo{
   display: grid;
   grid-template-columns: 1fr 1fr;
   width: 90%;
+  min-width: 90%;
   justify-self: center;
   justify-content: center;
   border-bottom: 1px solid rgba(150, 184, 243, .22);
   border-top: 1px solid rgba(150, 184, 243, .22);
   border-radius: 12px;
+
 }
 #fixed-expense-type-select{
   width: 170%;
@@ -7920,6 +7855,8 @@ textarea {
 }
 #fixed-expense-modal-header{
   background: transparent;
+  display: grid;
+  grid-template-columns: 1fr 70px;
 }
 
 .fin-fixed-select.fin-fixed-input{
@@ -8107,6 +8044,20 @@ label {
     text-align-last: center;
   }
 
+#filas-movimiento{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.financeTab .financeTxRow {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.finance-row-transacciones {
+  border: none;
+  margin: 0;
+  align-self: center;
+}
   /* panel grafica */
   .selectores-grafica-balance{
     display: grid;
@@ -8180,6 +8131,15 @@ label {
 
 /* #region recibo */
 
+.financeTab .food-history-btn {
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .08);
+  color: var(--fin-text);
+  min-height: 34px;
+  padding: 0 12px;
+  margin-top: 6px;
+}
 
 .financeTab .productsWorkbench__receiptSelect {
     width: 0px;

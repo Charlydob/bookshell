@@ -269,28 +269,87 @@ function buildRepeatedPathAlerts(samples = []) {
   const grouped = new Map()
   samples.forEach((sample) => {
     if (!sample?.path) return
-    if (!["read-request", "read-result", "listener-start", "listener-event"].includes(sample.type)) return
-    const key = `${sample.module}|${sample.path}|${sample.source || sample.mode || ""}`
+    const isRepeatedGet = sample.type === "read-request" && sample.source === "get"
+    const isRepeatedListenerStart = sample.type === "listener-start"
+    const isRepeatedWrite = sample.type === "write"
+    if (!isRepeatedGet && !isRepeatedListenerStart && !isRepeatedWrite) return
+    const key = `${sample.module}|${sample.path}|${sample.type}|${sample.source || sample.mode || ""}|${sample.reason || ""}|${sample.querySummary || ""}`
     const current = grouped.get(key) || {
       module: sample.module,
       path: sample.path,
       source: sample.source || sample.mode || "",
+      type: sample.type,
+      reason: sample.reason || "",
+      querySummary: sample.querySummary || "",
       count: 0,
       bytes: 0,
+      firstAt: 0,
       lastAt: 0,
     }
     current.count += 1
     current.bytes += Math.max(0, Number(sample.bytes || 0))
+    current.firstAt = current.firstAt ? Math.min(current.firstAt, Number(sample.ts || 0)) : Number(sample.ts || 0)
     current.lastAt = Math.max(current.lastAt, Number(sample.ts || 0))
     grouped.set(key, current)
   })
   return Array.from(grouped.values())
-    .filter((item) => (item.source === "get" && item.count >= 5) || ((item.source === "onValue" || item.source === "onChildAdded" || item.source === "onChildChanged" || item.source === "onChildRemoved") && item.count >= 10))
+    .filter((item) => {
+      if (item.type === "read-request" && item.source === "get") return item.count >= 5
+      if (item.type === "listener-start") return item.count >= 2
+      if (item.type === "write") return item.count >= 8
+      return false
+    })
     .sort((left, right) => {
       if (right.count !== left.count) return right.count - left.count
       return right.bytes - left.bytes
     })
     .slice(0, 18)
+}
+
+function getLogicalListenerGroupKey(entry = {}) {
+  const safeModule = resolveModuleKey({ module: entry.module, viewId: entry.viewId, path: entry.path })
+  const safePath = String(entry.path || "").trim()
+  if (safePath) return `${safeModule}|${safePath}`
+  return `${normalizeViewId(entry.viewId)}|${String(entry.key || entry.listenerKey || entry.mode || entry.startedAt || "").trim()}`
+}
+
+function buildLogicalActiveListeners() {
+  const grouped = new Map()
+  state.activeListeners.forEach((entry) => {
+    const groupKey = getLogicalListenerGroupKey(entry)
+    const current = grouped.get(groupKey) || {
+      viewId: normalizeViewId(entry.viewId),
+      module: resolveModuleKey({ module: entry.module, viewId: entry.viewId, path: entry.path }),
+      path: String(entry.path || "").trim(),
+      key: String(entry.key || "").trim(),
+      reason: String(entry.reason || "").trim(),
+      mode: String(entry.mode || "onValue").trim(),
+      startedAt: entry.startedAt || "",
+      startedAtTs: Number(entry.startedAtTs || 0),
+      events: 0,
+      bytesReceived: 0,
+      lastEventAt: 0,
+      childModes: new Set(),
+    }
+    current.events += Math.max(0, Number(entry.events || 0))
+    current.bytesReceived += Math.max(0, Number(entry.bytesReceived || 0))
+    current.lastEventAt = Math.max(current.lastEventAt, Number(entry.lastEventAt || 0))
+    current.startedAtTs = current.startedAtTs
+      ? Math.min(current.startedAtTs, Number(entry.startedAtTs || 0))
+      : Number(entry.startedAtTs || 0)
+    current.startedAt = current.startedAt || entry.startedAt || ""
+    current.childModes.add(String(entry.mode || "onValue").trim())
+    if (!current.key && entry.key) current.key = String(entry.key || "").trim()
+    if (!current.reason && entry.reason) current.reason = String(entry.reason || "").trim()
+    grouped.set(groupKey, current)
+  })
+  return Array.from(grouped.values()).map((entry) => ({
+    ...entry,
+    mode: entry.childModes.size > 1
+      ? Array.from(entry.childModes.values()).join(",")
+      : (Array.from(entry.childModes.values())[0] || entry.mode || "onValue"),
+    childModes: Array.from(entry.childModes.values()),
+  }))
 }
 
 function getMetricRangeSince(rangeKey = "since-start") {
@@ -355,13 +414,31 @@ function buildModuleMetricsSummary(samples = [], rangeKey = "since-start") {
       const pathRow = row.paths.get(sample.path) || {
         path: sample.path,
         readCount: 0,
+        getCount: 0,
+        listenerStarts: 0,
+        listenerEvents: 0,
+        writeCount: 0,
         bytes: 0,
+        firstAt: 0,
         lastAt: 0,
         sources: new Set(),
+        reasons: new Set(),
         risks: new Set(),
       }
-      if (sample.type === "read-request" || sample.type === "read-result" || sample.type === "listener-start" || sample.type === "listener-event") {
+      if (sample.type === "read-request" || sample.type === "read-result" || sample.type === "listener-start" || sample.type === "listener-event" || sample.type === "write") {
         pathRow.readCount += 1
+      }
+      if (sample.type === "read-request" && sample.source === "get") {
+        pathRow.getCount += 1
+      }
+      if (sample.type === "listener-start") {
+        pathRow.listenerStarts += 1
+      }
+      if (sample.type === "listener-event") {
+        pathRow.listenerEvents += 1
+      }
+      if (sample.type === "write") {
+        pathRow.writeCount += 1
       }
       if (sample.type === "read-result" || sample.type === "listener-event") {
         pathRow.bytes += Math.max(0, Number(sample.bytes || 0))
@@ -369,7 +446,9 @@ function buildModuleMetricsSummary(samples = [], rangeKey = "since-start") {
       if (sample.type === "risk" && sample.reason) {
         pathRow.risks.add(sample.reason)
       }
+      if (sample.reason) pathRow.reasons.add(sample.reason)
       if (sample.source) pathRow.sources.add(sample.source)
+      pathRow.firstAt = pathRow.firstAt ? Math.min(pathRow.firstAt, Number(sample.ts || 0)) : Number(sample.ts || 0)
       pathRow.lastAt = Math.max(pathRow.lastAt, Number(sample.ts || 0))
       row.paths.set(sample.path, pathRow)
     }
@@ -382,7 +461,7 @@ function buildModuleMetricsSummary(samples = [], rangeKey = "since-start") {
       row.duplicateListeners += 1
     })
 
-  state.activeListeners.forEach((entry) => {
+  buildLogicalActiveListeners().forEach((entry) => {
     const row = ensureModule(entry.module)
     row.activeListeners += 1
   })
@@ -394,9 +473,15 @@ function buildModuleMetricsSummary(samples = [], rangeKey = "since-start") {
         .map((pathRow) => ({
           path: pathRow.path,
           readCount: pathRow.readCount,
+          getCount: pathRow.getCount,
+          listenerStarts: pathRow.listenerStarts,
+          listenerEvents: pathRow.listenerEvents,
+          writeCount: pathRow.writeCount,
           bytes: pathRow.bytes,
+          firstAt: pathRow.firstAt,
           lastAt: pathRow.lastAt,
           sources: Array.from(pathRow.sources.values()),
+          reasons: Array.from(pathRow.reasons.values()),
           risks: Array.from(pathRow.risks.values()),
         }))
         .sort((left, right) => {
@@ -455,8 +540,30 @@ export function logFirebaseBytesRisk({ path = "", reason = "", viewId = "global"
     module: resolvedModule,
     estimatedCount,
   })
-  console.warn("[firebase:bytes-risk]", item)
+  console.warn(`[firebase:risk] module=${resolvedModule} path=${path} reason=${reason || "unspecified"}`, item)
   console.warn(`[metrics] risk path=${path} reason=${reason}`)
+}
+
+export function logFirebaseWrite({
+  path = "",
+  reason = "",
+  viewId = "global",
+  module = "",
+  key = "",
+  extra = null,
+} = {}) {
+  const resolvedModule = resolveModuleKey({ module, viewId, path })
+  appendMetricSample({
+    type: "write",
+    source: "write",
+    path,
+    reason,
+    viewId,
+    module: resolvedModule,
+    key,
+    extra: extra && typeof extra === "object" ? { ...extra } : null,
+  })
+  console.info(`[firebase:write] module=${resolvedModule} path=${path} reason=${reason || "write"}`)
 }
 
 export function logFirebaseRead({
@@ -500,12 +607,11 @@ export function logFirebaseRead({
   if (riskReason) {
     logFirebaseBytesRisk({ path, reason: reason || riskReason, viewId, module: resolvedModule, estimatedCount })
   }
-  const tag = mode === "get"
-    ? "[firebase:get]"
-    : mode === "onValue"
-      ? "[firebase:listen:attach]"
-      : "[firebase:read]"
-  console.debug(tag, item)
+  if (mode === "get") {
+    console.debug(`[firebase:get] module=${resolvedModule} path=${path} reason=${reason || "get"}`, item)
+    return
+  }
+  console.debug(`[firebase:listener] requested module=${resolvedModule} path=${path} mode=${mode} reason=${reason || "listen"}`, item)
 }
 
 function detachListenerId(id, { invoke = true, stopReason = "" } = {}) {
@@ -541,7 +647,7 @@ function detachListenerId(id, { invoke = true, stopReason = "" } = {}) {
       events: Number(entry.events || 0),
     },
   })
-  console.debug("[firebase:listen:stop]", {
+  console.debug(`[firebase:listener] stop module=${entry.module || "unknown"} path=${entry.path || ""} mode=${entry.mode || "onValue"} reason=${stopReason || entry.reason || ""}`, {
     at: nowIso(),
     viewId: entry.viewId,
     path: entry.path || "",
@@ -555,17 +661,28 @@ export function registerViewListener(viewId, unsubscribe, meta = {}) {
   if (typeof unsubscribe !== "function") return unsubscribe
   const safeViewId = normalizeViewId(viewId)
   const key = String(meta.key || "").trim()
-  const listenerKey = key ? `${safeViewId}:${key}` : ""
   const resolvedModule = resolveModuleKey({ module: meta.module, viewId: safeViewId, path: meta.path })
+  const fallbackKey = key || (meta.path ? `${resolvedModule}::${String(meta.path || "").trim()}::${String(meta.mode || "onValue").trim()}` : "")
+  const listenerKey = fallbackKey ? `${safeViewId}:${fallbackKey}` : ""
   const existingId = listenerKey ? state.listenerKeys.get(listenerKey) : ""
   if (existingId) {
-    recordDuplicateListener({
-      module: resolvedModule,
-      viewId: safeViewId,
-      path: meta.path,
-      key,
-      reason: meta.reason,
-    })
+    const existingEntry = state.activeListeners.get(existingId)
+    const samePath = String(existingEntry?.path || "").trim() === String(meta.path || "").trim()
+    const sameMode = String(existingEntry?.mode || "").trim() === String(meta.mode || "").trim()
+    if (samePath && sameMode) {
+      recordDuplicateListener({
+        module: resolvedModule,
+        viewId: safeViewId,
+        path: meta.path,
+        key: fallbackKey,
+        reason: meta.reason,
+      })
+      try { unsubscribe() } catch (_) {}
+      console.warn(`[firebase:listener] skip-duplicate module=${resolvedModule} path=${String(meta.path || "").trim()} mode=${String(meta.mode || "onValue").trim()} reason=${String(meta.reason || "").trim() || "listen"}`)
+      return () => {
+        detachListenerId(existingId, { invoke: true, stopReason: "manual" })
+      }
+    }
     detachListenerId(existingId, { invoke: true, stopReason: "replaced" })
   }
 
@@ -575,7 +692,7 @@ export function registerViewListener(viewId, unsubscribe, meta = {}) {
     unsubscribe,
     ...meta,
     module: resolvedModule,
-    key,
+    key: fallbackKey,
     listenerKey,
     startedAt: nowIso(),
     startedAtTs: nowTs(),
@@ -597,11 +714,11 @@ export function registerViewListener(viewId, unsubscribe, meta = {}) {
         estimatedCount: meta.estimatedCount ?? null,
       })
     }
-    console.debug("[firebase:listen:start]", {
+    console.debug(`[firebase:listener] start module=${resolvedModule} path=${meta.path} mode=${meta.mode || "onValue"} reason=${meta.reason || ""}`, {
       at: nowIso(),
       viewId: safeViewId,
       path: meta.path,
-      key,
+      key: fallbackKey,
       mode: meta.mode || "onValue",
       reason: meta.reason || "",
     })
@@ -809,12 +926,30 @@ export function getFirebaseMetricsSnapshot(rangeKey = "since-start") {
         kind: "listener-duplicate",
         module: item.module,
         path: item.path,
+        type: "listener:start",
+        count: 1,
+        firstAt: Number(item.ts || 0),
+        lastAt: Number(item.ts || 0),
+        reason: item.reason || "",
         message: `Listener duplicado en ${item.path}`,
       })),
     ...buildRepeatedPathAlerts(samples).map((item) => ({
-      kind: item.source === "get" ? "repeated-get" : "repeated-listener",
+      kind: item.type === "read-request"
+        ? "repeated-get"
+        : item.type === "listener-start"
+          ? "repeated-listener-start"
+          : "repeated-write",
       module: item.module,
       path: item.path,
+      type: item.type === "read-request"
+        ? "get"
+        : item.type === "listener-start"
+          ? "listener:start"
+          : "write",
+      reason: item.reason || "",
+      querySummary: item.querySummary || "",
+      firstAt: item.firstAt,
+      lastAt: item.lastAt,
       message: `${item.path} se repitio ${item.count} veces`,
       count: item.count,
       bytes: item.bytes,
@@ -835,7 +970,7 @@ export function getFirebaseMetricsSnapshot(rangeKey = "since-start") {
       const itemTs = Number(item?.ts || 0) || Date.parse(item?.at || "") || 0
       return itemTs >= getMetricRangeSince(rangeKey)
     }),
-    activeListeners: [...state.activeListeners.values()].map((entry) => ({
+    activeListeners: buildLogicalActiveListeners().map((entry) => ({
       viewId: entry.viewId,
       module: entry.module,
       path: entry.path || "",

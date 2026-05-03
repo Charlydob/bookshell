@@ -1,24 +1,16 @@
 // habits.js
 // Nueva pestaña de hábitos con check-ins, sesiones cronometradas y reportes
 
-import { db, auth, onUserChange, firebasePaths, getUserDataKey } from "../../shared/firebase/index.js";
+import { db, auth, onUserChange } from "../../shared/firebase/index.js";
 
 import {
   ref,
   onValue,
-  onChildAdded,
-  onChildChanged,
-  onChildRemoved,
   set,
   update,
   get,
   runTransaction,
-  push,
-  query,
-  orderByKey,
-  startAt,
-  endAt,
-  limitToLast
+  push
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 import { computeTimeByHabitDataset, debugComputeTimeByHabit, resolveFirstRecordTs } from "./time-by-habit.js";
@@ -29,7 +21,6 @@ import { canWriteDirectly } from "../../shared/services/sync-manager.js?v=2026-0
 import { applyQueuedWritesToPath } from "../../shared/storage/offline-queue.js?v=2026-04-05-v5";
 import { readModuleSnapshot, writeModuleSnapshot } from "../../shared/storage/offline-snapshots.js?v=2026-04-05-v5";
 import { createOfflinePushId, writeRtdbWithOfflineQueue } from "../../shared/firebase/offline-rtdb.js?v=2026-04-05-v5";
-import { logFirebaseBytesRisk, logFirebaseRead, registerViewListener, trackFirebasePayload, trackedGet, trackedOnValue } from "../../shared/firebase/read-debug.js";
 
 let currentUid = auth.currentUser?.uid ?? null;
 let BASE = null;
@@ -48,23 +39,9 @@ let HABIT_UI_PATH = null;
 let HABIT_UI_QUICK_COUNTERS_PATH = null;
 let HABIT_WORK_SCHEDULES_PATH = null;
 let remoteBound = false;
-let remoteBoundUid = "";
 let habitsRuntimeReady = false;
 let habitsRuntimeInitializing = false;
 let habitsEchartsPromise = null;
-let habitsEventsBound = false;
-
-function logHabitsData(event, detail = {}) {
-  const payload = {
-    uid: currentUid || "",
-    visible: !!habitsViewVisible,
-    remoteBound,
-    remoteBoundUid,
-    at: new Date().toISOString(),
-    ...detail,
-  };
-  console.info(`[habits:data] ${event}`, payload);
-}
 
 function logHabitsInitStep(step, extra = {}, level = "info") {
   const payload = {
@@ -84,38 +61,6 @@ function logHabitsInitStep(step, extra = {}, level = "info") {
   window.__bookshellHabitsInitLog.push(payload);
   const logger = typeof console[level] === "function" ? console[level] : console.log;
   logger.call(console, `[habits:init] ${step}`, payload);
-}
-
-function logHabitsSession(event, detail = {}) {
-  try {
-    console.info(`[habits:session] ${event}`, {
-      uid: currentUid || "",
-      at: new Date().toISOString(),
-      ...detail,
-    });
-  } catch (_) {
-    console.info(`[habits:session] ${event}`);
-  }
-}
-
-function logHabitsCache(event, detail = {}) {
-  try {
-    console.info(`[cache] ${event}`, {
-      module: "habits",
-      at: new Date().toISOString(),
-      ...detail,
-    });
-  } catch (_) {
-    console.info(`[cache] ${event}`);
-  }
-}
-
-function estimateHabitsCacheBytes(value) {
-  try {
-    return new TextEncoder().encode(JSON.stringify(value ?? null)).length;
-  } catch (_) {
-    return 0;
-  }
 }
 
 async function traceHabitsInitStep(step, action) {
@@ -151,41 +96,23 @@ function ensureHabitsEchartsReady() {
 
 function setUserPaths(uid) {
   currentUid = uid || null;
-  if (!currentUid) {
-    BASE = null;
-    HABITS_ROOT = null;
-    HABITS_PATH = null;
-    HABIT_ACTIVE_SESSIONS_PATH = null;
-    HABIT_CHECKS_PATH = null;
-    HABIT_SESSIONS_PATH = null;
-    HABIT_COUNTS_PATH = null;
-    HABIT_GROUPS_PATH = null;
-    HABIT_PREFS_PATH = null;
-    HABIT_COMPARE_SETTINGS_PATH = null;
-    HABITS_SCHEDULE_PATH = null;
-    HABITS_SCHEDULE_DAY_CREDITS_PATH = null;
-    HABIT_UI_PATH = null;
-    HABIT_UI_QUICK_COUNTERS_PATH = null;
-    HABIT_WORK_SCHEDULES_PATH = null;
-    return;
-  }
+  if (!currentUid) return;
 
-  const userKey = getUserDataKey(auth.currentUser) || currentUid;
-  BASE = firebasePaths.userRoot(userKey);
-  HABITS_ROOT = firebasePaths.habitsRoot(userKey);
-  HABITS_PATH = firebasePaths.habits(userKey);
-  HABIT_ACTIVE_SESSIONS_PATH = firebasePaths.activeHabitSessions(userKey);
-  HABIT_CHECKS_PATH = firebasePaths.habitChecks(userKey);
-  HABIT_SESSIONS_PATH = firebasePaths.habitSessions(userKey);
-  HABIT_COUNTS_PATH = firebasePaths.habitCounts(userKey);
-  HABIT_GROUPS_PATH = firebasePaths.habitGroups(userKey);
-  HABIT_PREFS_PATH = firebasePaths.habitPrefs(userKey);
-  HABIT_COMPARE_SETTINGS_PATH = firebasePaths.habitsCompareSettings(userKey);
-  HABITS_SCHEDULE_PATH = firebasePaths.habitsSchedule(userKey);
-  HABITS_SCHEDULE_DAY_CREDITS_PATH = firebasePaths.habitsScheduleDayCredits(userKey);
-  HABIT_UI_PATH = firebasePaths.habitUi(userKey);
-  HABIT_UI_QUICK_COUNTERS_PATH = firebasePaths.habitUiQuickCounters(userKey);
-  HABIT_WORK_SCHEDULES_PATH = firebasePaths.habitWorkSchedules(userKey);
+  BASE = `v2/users/${currentUid}`;
+  HABITS_ROOT = `${BASE}/habits`;
+  HABITS_PATH = `${HABITS_ROOT}/habits`;
+  HABIT_ACTIVE_SESSIONS_PATH = `${HABITS_PATH}/activeSessions`;
+  HABIT_CHECKS_PATH = `${HABITS_ROOT}/habitChecks`;
+  HABIT_SESSIONS_PATH = `${HABITS_ROOT}/habitSessions`;
+  HABIT_COUNTS_PATH = `${HABITS_ROOT}/habitCounts`;
+  HABIT_GROUPS_PATH = `${HABITS_ROOT}/habitGroups`;
+  HABIT_PREFS_PATH = `${HABITS_ROOT}/habitPrefs`;
+  HABIT_COMPARE_SETTINGS_PATH = `${HABITS_ROOT}/habitsCompareSettings`;
+  HABITS_SCHEDULE_PATH = `${HABITS_ROOT}/habitsSchedule`;
+  HABITS_SCHEDULE_DAY_CREDITS_PATH = `${HABITS_SCHEDULE_PATH}/dayCredits`;
+  HABIT_UI_PATH = `${HABITS_PATH}/ui`;
+  HABIT_UI_QUICK_COUNTERS_PATH = `${HABIT_UI_PATH}/quickCounters`;
+  HABIT_WORK_SCHEDULES_PATH = `${HABITS_ROOT}/workSchedules`;
 }
 
 // Storage keys
@@ -240,17 +167,6 @@ let runningSession = null; // Sesión principal (derivada de activeSessions)
 let activeSessions = {};
 let selectedSessionId = null;
 let sessionInterval = null;
-let sessionStopGuardUntil = 0;
-let sessionStopGuardReason = "";
-
-function armSessionStopGuard(reason = "stop-flow", ttlMs = 1200) {
-  sessionStopGuardReason = String(reason || "stop-flow").trim() || "stop-flow";
-  sessionStopGuardUntil = Date.now() + Math.max(250, Number(ttlMs) || 1200);
-}
-
-function isSessionStopGuardActive() {
-  return Date.now() < Number(sessionStopGuardUntil || 0);
-}
 
 function emitHabitsData(reason = "") {
   try {
@@ -370,11 +286,6 @@ let habitRenderPreserveToday = false;
 let habitRenderPreservePanel = false;
 let reportsRenderHandle = null;
 let remoteUnsubscribers = [];
-let habitSessionLiveUnsubscribers = [];
-let habitSessionLiveSlices = new Map();
-let habitSessionSyncVersion = 0;
-let habitSessionSyncMode = "none";
-let habitSessionSyncKey = "";
 let habitsResizeHandler = null;
 let habitsViewVisible = document.getElementById("view-habits")?.classList.contains("view-active") ?? true;
 let habitSnapshotPersistTimer = null;
@@ -3119,46 +3030,11 @@ function normalizeWorkScheduleTimeValue(value = "", fallback = "") {
 
 function sanitizeWorkScheduleTimeTyping(value = "") {
   const raw = String(value || "").replace(/[^\d:]/g, "");
-  if (!raw) return "";
-
   const colonIdx = raw.indexOf(":");
-  if (colonIdx < 0) {
-    const digits = raw.slice(0, 4);
-    if (digits.length <= 2) return digits;
-    return `${digits.slice(0, 2)}:${digits.slice(2)}`;
-  }
-
+  if (colonIdx < 0) return raw.slice(0, 4);
   const hours = raw.slice(0, colonIdx).replace(/:/g, "").slice(0, 2);
   const minutes = raw.slice(colonIdx + 1).replace(/:/g, "").slice(0, 2);
-  return `${hours}${hours.length >= 2 || minutes ? ":" : ""}${minutes}`;
-}
-
-function ensureWorkScheduleTimeInputValue(input) {
-  if (!input) return DEFAULT_TIME_INPUT_VALUE;
-  const nextValue = sanitizeWorkScheduleTimeTyping(input.value) || DEFAULT_TIME_INPUT_VALUE;
-  if (input.value !== nextValue) input.value = nextValue;
-  return nextValue;
-}
-
-function selectWorkScheduleTimeSegment(input, segment = "hours") {
-  if (!input?.setSelectionRange) return;
-  const nextValue = ensureWorkScheduleTimeInputValue(input);
-  if (!nextValue.includes(":")) input.value = normalizeWorkScheduleTimeValue(nextValue, DEFAULT_TIME_INPUT_VALUE);
-  const isMinutes = segment === "minutes";
-  input.setSelectionRange(isMinutes ? 3 : 0, isMinutes ? 5 : 2);
-}
-
-function getWorkScheduleTimeSegmentFromCaret(input, fallbackClientX = null) {
-  if (!input) return "hours";
-  const caret = Number.isInteger(input.selectionStart) ? input.selectionStart : 0;
-  if (caret <= 2) return "hours";
-  if (caret >= 3) return "minutes";
-  if (typeof fallbackClientX === "number") {
-    const rect = input.getBoundingClientRect();
-    const relativeX = fallbackClientX - rect.left;
-    return relativeX > rect.width / 2 ? "minutes" : "hours";
-  }
-  return "hours";
+  return minutes ? `${hours}:${minutes}` : `${hours}:`;
 }
 
 function inferWorkScheduleDayStatusFromTimes(start = "", end = "") {
@@ -3551,14 +3427,10 @@ function schedulePersistHabitOfflineSnapshot() {
   }
   habitSnapshotPersistTimer = window.setTimeout(() => {
     habitSnapshotPersistTimer = null;
-    const payload = buildHabitsCachePayload();
-    logHabitsCache("save", {
-      bytes: estimateHabitsCacheBytes(payload),
-    });
     void writeModuleSnapshot({
       moduleName: "habits",
       uid: currentUid,
-      data: payload,
+      data: buildHabitsCachePayload(),
       updatedAt: Date.now(),
       metadata: {
         activeSessionCount: Object.keys(activeSessions || {}).length,
@@ -3573,25 +3445,11 @@ async function hydrateHabitsFromOfflineSnapshot() {
   if (!currentUid) return false;
   try {
     const snapshot = await readModuleSnapshot({ moduleName: "habits", uid: currentUid });
-    if (!snapshot?.data) {
-      logHabitsCache("miss", {
-        reason: "boot",
-      });
-      return false;
-    }
-    const ageMs = Math.max(0, Date.now() - Number(snapshot.updatedAt || 0));
-    const bytes = estimateHabitsCacheBytes(snapshot.data);
+    if (!snapshot?.data) return false;
     applyHabitsCachePayload(snapshot.data);
-    logHabitsCache("hydrate", {
-      bytes,
-      ageMs,
-    });
     return true;
   } catch (error) {
     console.warn("[habits] no se pudo rehidratar snapshot offline", error);
-    logHabitsCache("miss", {
-      reason: "read-error",
-    });
     return false;
   }
 }
@@ -3622,38 +3480,20 @@ function persistHabitScheduleLocal() {
   saveCache();
 }
 
-async function loadScheduleFromRemoteDeprecated() {
-  logHabitsData("boot:schedule-deprecated-skip", { path: HABITS_SCHEDULE_PATH });
-  scheduleState = normalizeHabitSchedule(scheduleState || createDefaultHabitSchedule());
-  return false;
-}
-
-function bootReadHabitsCache() {
-  let hasCache = false;
+async function loadScheduleFromRemote() {
   try {
-    hasCache = !!localStorage.getItem(STORAGE_KEY);
-  } catch (_) {
-    hasCache = false;
+    console.warn("SCHEDULE UPDATE", "firebase:get:init");
+    const snap = await get(ref(db, HABITS_SCHEDULE_PATH));
+    const raw = snap.val();
+    scheduleState = raw && typeof raw === "object"
+      ? normalizeHabitSchedule(raw)
+      : createDefaultHabitSchedule();
+    saveCache();
+  } catch (err) {
+    console.warn("No se pudo leer horario remoto", err);
+    scheduleState = normalizeHabitSchedule(scheduleState || createDefaultHabitSchedule());
   }
-  readCache();
-  logHabitsData(hasCache ? "boot:cache-hit" : "boot:cache-miss", { source: "localStorage" });
-  return hasCache;
 }
-
-async function bootHydrateHabitsOfflineSnapshot() {
-  const hydrated = await hydrateHabitsFromOfflineSnapshot();
-  if (hydrated) {
-    logHabitsData("boot:cache-hit", { source: "offline-snapshot" });
-  }
-  return hydrated;
-}
-
-async function prepareHabitsScheduleBootState() {
-  logHabitsData("boot:schedule-deferred", { path: HABITS_SCHEDULE_PATH });
-  scheduleState = normalizeHabitSchedule(scheduleState || createDefaultHabitSchedule());
-  return false;
-}
-
 function loadSessionSelection() {
   try {
     selectedSessionId = localStorage.getItem(SESSION_SELECTED_KEY) || null;
@@ -5146,12 +4986,6 @@ function toggleDay(habitId, dateKey) {
   } else {
     habitChecks[habitId][dateKey] = true;
   }
-  logHabitsData("action:update-local", {
-    type: "habit-check",
-    habitId,
-    dateKey,
-    value: !!habitChecks[habitId][dateKey],
-  });
   saveCache();
   persistHabitCheck(habitId, dateKey, !!habitChecks[habitId][dateKey]);
   invalidateDominantCache(dateKey);
@@ -5189,12 +5023,6 @@ function setHabitCount(habitId, dateKey, value) {
   if (!habitCounts[habitId]) habitCounts[habitId] = {};
   if (safe > 0) habitCounts[habitId][dateKey] = safe;
   else delete habitCounts[habitId][dateKey];
-  logHabitsData("action:update-local", {
-    type: "habit-count",
-    habitId,
-    dateKey,
-    value: safe,
-  });
 
   // Si el contador tiene "minutos por vez", lo volcamos a tiempo total del día
   const per = Math.round(Number(habit.countUnitMinutes) || 0);
@@ -9057,7 +8885,6 @@ function renderHistory() {
     btn.addEventListener("click", () => {
       habitHistoryRange = range.key;
       saveHistoryRange();
-      void syncHabitSessionsForCurrentView({ force: true, reason: `history-range:${range.key}` });
       renderHistory();
     });
     controls.appendChild(btn);
@@ -10090,9 +9917,6 @@ function updateHeatmapYearControls() {
 function changeHeatmapYear(delta) {
   heatmapYear = heatmapYear + delta;
   saveHeatmapYear();
-  if (activeTab === "reports") {
-    void syncHabitSessionsForCurrentView({ force: true, reason: `reports-heatmap:${heatmapYear}` });
-  }
   renderGlobalHeatmap();
   renderHistory();
   renderLineChart();
@@ -11946,12 +11770,6 @@ async function stopSessionLegacy(assignHabitId = null, silent = false, sessionId
 
   const session = sessionId ? activeSessions?.[sessionId] : null;
   if (!session) return;
-  armSessionStopGuard("stop-flow");
-  logHabitsSession("stop", {
-    sessionId,
-    habitId: session?.habitId || session?.targetHabitId || "",
-    assignHabitId: typeof assignHabitId === "string" ? assignHabitId : "",
-  });
 
   const endTs = Date.now();
   const duration = Math.max(1, Math.round(getRunningElapsedMs(session, endTs) / 1000));
@@ -11995,11 +11813,6 @@ async function stopSessionLegacy(assignHabitId = null, silent = false, sessionId
     const savedPayload = { targetHabitId: target, startTs, endTs, durationSec: duration, splitByDay: splitSummary };
     console.warn("[STOP] saved session", savedPayload);
     console.log("[HABIT] session stop", { startTs, endTs, splitByDay: splitSummary });
-    logHabitsSession("stop:success", {
-      sessionId,
-      habitId: target,
-      durationSec: duration,
-    });
     localStorage.setItem(LAST_HABIT_KEY, target);
     pendingSessionDuration = 0;
     invalidateHabitRenderCaches();
@@ -12010,12 +11823,6 @@ async function stopSessionLegacy(assignHabitId = null, silent = false, sessionId
   }
 
   pendingSessionDuration = duration;
-  logHabitsSession("stop:success", {
-    sessionId,
-    habitId: "",
-    durationSec: duration,
-    requiresAssignment: true,
-  });
   openSessionModal();
 }
 
@@ -13041,8 +12848,6 @@ async function onHabitsExportClick() {
 
 
 function bindEvents() {
-  if (habitsEventsBound) return;
-  habitsEventsBound = true;
   $habitExportBtn?.addEventListener("click", onHabitsExportClick);
   $tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -13357,27 +13162,14 @@ function bindEvents() {
       startSession();
     }
   });
-  const stopSessionButtonEvent = (event, explicitSessionId = null) => {
-    event.preventDefault();
-    event.stopPropagation();
-    stopSession(null, false, explicitSessionId || undefined);
-  };
   $habitOverlayPill?.addEventListener("click", (event) => {
     if (!runningSession) return;
     if (event.target?.closest?.("#habit-session-stop")) return;
     openSessionDetailOverlay();
     updateSessionUI();
   });
-  $habitOverlayStop.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-  });
-  $habitSessionDetailStop?.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-  });
-  $habitOverlayStop.addEventListener("click", (event) => stopSessionButtonEvent(event));
-  $habitSessionDetailStop?.addEventListener("click", (event) => stopSessionButtonEvent(event));
+  $habitOverlayStop.addEventListener("click", stopSession);
+  $habitSessionDetailStop?.addEventListener("click", stopSession);
   // VOXEL: botón para cancelar la sesión activa sin registrarla.
   $habitSessionDetailCancel?.addEventListener("click", () => cancelRunningSession({ requireConfirm: true }));
   $habitSessionDetailClose?.addEventListener("click", closeSessionDetailOverlay);
@@ -13394,7 +13186,7 @@ function bindEvents() {
     }
     const stopBtn = event.target?.closest?.("[data-session-stop]");
     if (stopBtn) {
-      stopSessionButtonEvent(event, stopBtn.getAttribute("data-session-stop"));
+      stopSession(null, false, stopBtn.getAttribute("data-session-stop"));
       return;
     }
     const cancelBtn = event.target?.closest?.("[data-session-cancel]");
@@ -13467,12 +13259,6 @@ function bindEvents() {
     renderWorkScheduleRowsEditor();
   });
   $habitWorkScheduleRows?.addEventListener("click", (event) => {
-    const timeInput = event.target?.closest?.(".habit-work-schedule-time-input");
-    if (timeInput) {
-      const segment = getWorkScheduleTimeSegmentFromCaret(timeInput, event.clientX);
-      window.requestAnimationFrame(() => selectWorkScheduleTimeSegment(timeInput, segment));
-      return;
-    }
     const dayBtn = event.target?.closest?.("[data-day]");
     if (dayBtn) {
       const row = workScheduleEditor.rows.find((item) => item.id === dayBtn.dataset.row);
@@ -13489,16 +13275,6 @@ function bindEvents() {
       workScheduleEditor.rows = workScheduleEditor.rows.filter((row) => row.id !== removeBtn.dataset.rowRemove);
       renderWorkScheduleRowsEditor();
     }
-  });
-  $habitWorkScheduleRows?.addEventListener("focusin", (event) => {
-    const input = event.target?.closest?.(".habit-work-schedule-time-input");
-    if (!input) return;
-    ensureWorkScheduleTimeInputValue(input);
-    const row = workScheduleEditor.rows.find((item) => item.id === input.dataset.row);
-    if (row && (input.dataset.field === "start" || input.dataset.field === "end")) {
-      row[input.dataset.field] = input.value;
-    }
-    window.requestAnimationFrame(() => selectWorkScheduleTimeSegment(input, "hours"));
   });
   $habitWorkScheduleRows?.addEventListener("input", (event) => {
     const input = event.target?.closest?.("input[data-row][data-field]");
@@ -13625,9 +13401,6 @@ function bindEvents() {
       $habitRangeButtons.forEach((b) => b.classList.remove("is-active"));
       btn.classList.add("is-active");
       habitDonutRange = btn.dataset.range || "day";
-      if (activeTab === "reports") {
-        void syncHabitSessionsForCurrentView({ force: true, reason: `reports-donut:${habitDonutRange}` });
-      }
       renderDonut();
       renderKPIs();
       renderPins();
@@ -13660,9 +13433,6 @@ function bindEvents() {
 
   $habitEvoRange?.addEventListener("change", (e) => {
     habitLineRange = e.target.value || "7d";
-    if (activeTab === "reports") {
-      void syncHabitSessionsForCurrentView({ force: true, reason: `reports-line:${habitLineRange}` });
-    }
     renderLineChart();
   });
 
@@ -13671,430 +13441,9 @@ function bindEvents() {
       $habitRecordsRangeButtons.forEach((b) => b.classList.remove("is-active"));
       btn.classList.add("is-active");
       habitRecordsRange = btn.dataset.range || "month";
-      if (activeTab === "reports") {
-        void syncHabitSessionsForCurrentView({ force: true, reason: `reports-records:${habitRecordsRange}` });
-      }
       renderRecordsCard();
     });
   });
-}
-
-function getHabitSessionTargetHabitIds() {
-  return activeHabitsWithSystem()
-    .map((habit) => String(habit?.id || "").trim())
-    .filter(Boolean)
-    .sort();
-}
-
-function getHabitSessionTargetHabitIdsFromStore(store = {}) {
-  return Object.values(store || {})
-    .filter((habit) => habit && typeof habit === "object" && !habit.archived)
-    .map((habit) => String(habit.id || "").trim())
-    .filter(Boolean)
-    .concat(UNKNOWN_HABIT_ID)
-    .filter((value, index, list) => list.indexOf(value) === index)
-    .sort();
-}
-
-function didHabitSessionTargetIdsChange(previousStore = {}, nextStore = {}) {
-  const previousIds = getHabitSessionTargetHabitIdsFromStore(previousStore);
-  const nextIds = getHabitSessionTargetHabitIdsFromStore(nextStore);
-  if (previousIds.length !== nextIds.length) return true;
-  for (let index = 0; index < previousIds.length; index += 1) {
-    if (previousIds[index] !== nextIds[index]) return true;
-  }
-  return false;
-}
-
-function buildHabitChildPath(basePath, childKey) {
-  return `${String(basePath || "").replace(/\/+$/g, "")}/${String(childKey || "").trim()}`;
-}
-
-function bindRemoteValueListener(path, handler, { key, reason = "habits-live-sync", bounded = false, querySummary = "" } = {}) {
-  logHabitsData("listen:start", { path, key: key || path, mode: "onValue" });
-  const unsubscribe = trackedOnValue(ref(db, path), handler, {
-    key: key || path,
-    path,
-    module: "habits",
-    mode: "onValue",
-    reason,
-    viewId: "view-habits",
-    bounded,
-    querySummary,
-  }, onValue);
-  if (typeof unsubscribe === "function") {
-    remoteUnsubscribers.push(() => {
-      logHabitsData("listen:stop", { path, key: key || path, mode: "onValue" });
-      unsubscribe();
-    });
-  }
-}
-
-function bindRemoteChildListeners(path, {
-  keyPrefix,
-  reason = "habits-live-sync",
-  onUpsert,
-  onRemove,
-  bounded = false,
-  querySummary = "",
-} = {}) {
-  const eventCounters = {
-    onChildAdded: 0,
-    onChildChanged: 0,
-    onChildRemoved: 0,
-  };
-  const attach = (mode, subscribe) => {
-    const listenerKey = `${keyPrefix}:${mode}`;
-    logHabitsData("listen:start", { path, key: listenerKey, mode });
-    logFirebaseRead({ path, mode, reason, viewId: "view-habits", bounded, querySummary });
-    const unsubscribe = registerViewListener("view-habits", subscribe(), {
-      key: listenerKey,
-      path,
-      module: "habits",
-      mode,
-      reason,
-      bounded,
-      querySummary,
-    });
-    if (typeof unsubscribe === "function") {
-      remoteUnsubscribers.push(() => {
-        logHabitsData("listen:stop", { path, key: listenerKey, mode });
-        unsubscribe();
-      });
-    }
-  };
-
-  attach("onChildAdded", () => onChildAdded(ref(db, path), (snap) => {
-    eventCounters.onChildAdded += 1;
-    trackFirebasePayload({
-      path,
-      module: "habits",
-      reason,
-      viewId: "view-habits",
-      source: "onChildAdded",
-      value: snap.val(),
-      key: `${keyPrefix}:onChildAdded`,
-      eventIndex: eventCounters.onChildAdded,
-      initial: eventCounters.onChildAdded === 1,
-      bounded,
-      querySummary,
-      mode: "onChildAdded",
-    });
-    onUpsert?.(snap.key || "", snap.val(), "child_added");
-  }));
-  attach("onChildChanged", () => onChildChanged(ref(db, path), (snap) => {
-    eventCounters.onChildChanged += 1;
-    trackFirebasePayload({
-      path,
-      module: "habits",
-      reason,
-      viewId: "view-habits",
-      source: "onChildChanged",
-      value: snap.val(),
-      key: `${keyPrefix}:onChildChanged`,
-      eventIndex: eventCounters.onChildChanged,
-      initial: false,
-      bounded,
-      querySummary,
-      mode: "onChildChanged",
-    });
-    onUpsert?.(snap.key || "", snap.val(), "child_changed");
-  }));
-  attach("onChildRemoved", () => onChildRemoved(ref(db, path), (snap) => {
-    eventCounters.onChildRemoved += 1;
-    trackFirebasePayload({
-      path,
-      module: "habits",
-      reason,
-      viewId: "view-habits",
-      source: "onChildRemoved",
-      value: snap.val(),
-      key: `${keyPrefix}:onChildRemoved`,
-      eventIndex: eventCounters.onChildRemoved,
-      initial: false,
-      bounded,
-      querySummary,
-      mode: "onChildRemoved",
-    });
-    onRemove?.(snap.key || "", snap.val(), "child_removed");
-  }));
-}
-
-function getHabitSessionTailBounds(days = 45) {
-  const end = endOfDay(new Date());
-  const span = Math.max(1, Number(days) || 45);
-  const start = addDays(end, -(span - 1));
-  return { start, end, limit: span };
-}
-
-function buildHabitSessionRangeSpec(mode, start, end, extra = {}) {
-  const safeStart = start instanceof Date && !Number.isNaN(start.getTime())
-    ? new Date(start.getFullYear(), start.getMonth(), start.getDate())
-    : new Date();
-  const safeEnd = end instanceof Date && !Number.isNaN(end.getTime())
-    ? endOfDay(end)
-    : endOfDay(new Date());
-  const normalizedStart = safeStart <= safeEnd ? safeStart : new Date(safeEnd.getFullYear(), safeEnd.getMonth(), safeEnd.getDate());
-  const startKey = dateKeyLocal(normalizedStart);
-  const endKey = dateKeyLocal(safeEnd);
-  return {
-    mode,
-    start: normalizedStart,
-    end: safeEnd,
-    startKey,
-    endKey,
-    ...extra,
-  };
-}
-
-function buildHabitReportsSessionSpec() {
-  const windows = [];
-  const fullReasons = new Set();
-  const pushWindow = (rangeLabel, bounds) => {
-    if (!bounds?.start || !bounds?.end) return;
-    windows.push({ rangeLabel, ...buildHabitSessionRangeSpec("range-get", bounds.start, bounds.end) });
-  };
-
-  if (habitDonutRange === "total") fullReasons.add("reports-donut-total");
-  else pushWindow(`donut:${habitDonutRange}`, getRangeBounds(habitDonutRange));
-
-  if (habitRecordsRange === "total") fullReasons.add("reports-records-total");
-  else pushWindow(`records:${habitRecordsRange}`, getRangeBounds(habitRecordsRange));
-
-  if (habitLineRange === "total") fullReasons.add("reports-line-total");
-  else pushWindow(`line:${habitLineRange}`, getLineRangeBounds(habitLineRange));
-
-  pushWindow(`heatmap:${heatmapYear}`, {
-    start: new Date(heatmapYear, 0, 1),
-    end: new Date(heatmapYear, 11, 31, 23, 59, 59, 999),
-  });
-
-  if (fullReasons.size) {
-    return {
-      mode: "full-get",
-      reasonLabel: Array.from(fullReasons).join(","),
-      startKey: "",
-      endKey: "",
-    };
-  }
-
-  if (!windows.length) {
-    const tail = getHabitSessionTailBounds(45);
-    return buildHabitSessionRangeSpec("range-get", tail.start, tail.end, {
-      reasonLabel: "reports-fallback-tail",
-    });
-  }
-
-  const start = windows.reduce((min, entry) => (entry.start < min ? entry.start : min), windows[0].start);
-  const end = windows.reduce((max, entry) => (entry.end > max ? entry.end : max), windows[0].end);
-  return buildHabitSessionRangeSpec("range-get", start, end, {
-    reasonLabel: windows.map((entry) => entry.rangeLabel).join(","),
-  });
-}
-
-function buildHabitSessionSyncSpec() {
-  if (!currentUid || !isHabitsViewVisible()) {
-    return { mode: "none", key: "none", bounded: true, reasonLabel: "view-hidden", habitIds: [] };
-  }
-
-  const habitIds = getHabitSessionTargetHabitIds();
-  if (!habitIds.length) {
-    return { mode: "empty", key: "empty", bounded: true, reasonLabel: "no-habits", habitIds };
-  }
-
-  let spec;
-  if (activeTab === "history") {
-    const bounds = getHistoryRangeBounds(habitHistoryRange);
-    spec = buildHabitSessionRangeSpec(habitHistoryRange === "total" ? "full-get" : "range-get", bounds.start, bounds.end, {
-      reasonLabel: `history:${habitHistoryRange}`,
-    });
-  } else if (activeTab === "reports") {
-    spec = buildHabitReportsSessionSpec();
-  } else {
-    const bounds = getHabitSessionTailBounds(activeTab === "schedule" ? 60 : 45);
-    spec = buildHabitSessionRangeSpec("live-tail", bounds.start, bounds.end, {
-      limit: bounds.limit,
-      reasonLabel: `${activeTab}:tail-${bounds.limit}d`,
-    });
-  }
-
-  const bounded = spec.mode !== "full-get";
-  const detailKey = spec.mode === "full-get"
-    ? spec.reasonLabel
-    : `${spec.startKey}:${spec.endKey}:${spec.limit || 0}`;
-  return {
-    ...spec,
-    habitIds,
-    bounded,
-    key: `${activeTab}:${spec.mode}:${detailKey}:${habitIds.join(",")}`,
-  };
-}
-
-function stopHabitSessionLiveSync() {
-  habitSessionLiveUnsubscribers.forEach((unsubscribe) => {
-    try {
-      unsubscribe();
-    } catch (_) {}
-  });
-  habitSessionLiveUnsubscribers = [];
-  habitSessionLiveSlices = new Map();
-}
-
-function applyHabitSessionSyncSnapshot(rawByHabit, reason = "remote:sessions", spec = null) {
-  const nextRaw = rawByHabit && typeof rawByHabit === "object" ? rawByHabit : {};
-  applyPendingSessionWrites(nextRaw);
-  const norm = normalizeSessionsStore(nextRaw, true);
-  habitSessions = norm.normalized;
-  habitSessionTimeline = norm.timeline || {};
-  habitSessionTimelineCoverage = norm.coverage || {};
-  debugHabitsSync("habitSessions sync applied", {
-    reason,
-    mode: spec?.mode || "",
-    key: spec?.key || "",
-    startKey: spec?.startKey || "",
-    endKey: spec?.endKey || "",
-  });
-  invalidateDominantCache();
-  markHistoryDataChanged(reason, spec ? {
-    mode: spec.mode,
-    key: spec.key,
-    startKey: spec.startKey || "",
-    endKey: spec.endKey || "",
-  } : null);
-  saveCache();
-  requestActiveTabRender({ preserveUI: true });
-  emitHabitsData("remote:sessions");
-}
-
-async function syncHabitSessionsForCurrentView({ force = false, reason = "unknown" } = {}) {
-  const spec = buildHabitSessionSyncSpec();
-  if (!force && spec.mode === habitSessionSyncMode && spec.key === habitSessionSyncKey) {
-    logHabitsData("listen:skip-already-active", {
-      path: HABIT_SESSIONS_PATH,
-      reason,
-      mode: spec.mode,
-      key: spec.key,
-    });
-    return;
-  }
-
-  habitSessionSyncVersion += 1;
-  const syncVersion = habitSessionSyncVersion;
-  habitSessionSyncMode = spec.mode;
-  habitSessionSyncKey = spec.key;
-
-  if (spec.mode !== "live-tail") {
-    stopHabitSessionLiveSync();
-  }
-
-  if (spec.mode === "none" || spec.mode === "empty") {
-    applyHabitSessionSyncSnapshot({}, `remote:sessions:${reason}`, spec);
-    return;
-  }
-
-  if (spec.mode === "full-get") {
-    logHabitsData("forbidden-full-reload", {
-      reason,
-      path: HABIT_SESSIONS_PATH,
-      mode: spec.mode,
-      key: spec.key,
-    });
-  }
-
-  if (spec.mode === "live-tail") {
-    stopHabitSessionLiveSync();
-    const nextSlices = new Map();
-    spec.habitIds.forEach((habitId) => {
-      const path = `${HABIT_SESSIONS_PATH}/${habitId}`;
-      const sessionsQuery = query(
-        ref(db, path),
-        orderByKey(),
-        startAt(spec.startKey),
-        limitToLast(spec.limit || 45)
-      );
-      logHabitsData("listen:start", {
-        path,
-        key: `habit-sessions:${habitId}`,
-        mode: "onValue",
-        querySummary: `orderByKey,startAt(${spec.startKey}),limitToLast(${spec.limit || 45})`,
-      });
-      const unsubscribe = trackedOnValue(
-        sessionsQuery,
-        (snap) => {
-          if (syncVersion !== habitSessionSyncVersion) return;
-          nextSlices.set(habitId, snap.val() || {});
-          const nextRaw = {};
-          nextSlices.forEach((value, key) => {
-            if (value && typeof value === "object" && Object.keys(value).length) {
-              nextRaw[key] = value;
-            }
-          });
-          habitSessionLiveSlices = nextSlices;
-          applyHabitSessionSyncSnapshot(nextRaw, `remote:sessions:${spec.reasonLabel}`, spec);
-        },
-        {
-        key: `habit-sessions:${habitId}`,
-        path,
-        module: "habits",
-        mode: "onValue",
-        reason: `habits-session-sync:${spec.reasonLabel}`,
-        viewId: "view-habits",
-        bounded: true,
-        querySummary: `orderByKey,startAt(${spec.startKey}),limitToLast(${spec.limit || 45})`,
-        onError: (error) => {
-          console.warn("No se pudo escuchar sesiones de hábitos", { habitId, error });
-        },
-      },
-      onValue);
-      if (typeof unsubscribe === "function") {
-        habitSessionLiveUnsubscribers.push(() => {
-          logHabitsData("listen:stop", {
-            path,
-            key: `habit-sessions:${habitId}`,
-            mode: "onValue",
-          });
-          unsubscribe();
-        });
-      }
-    });
-    return;
-  }
-
-  const nextRaw = {};
-  const useFullHistory = spec.mode === "full-get";
-  if (useFullHistory) {
-    logFirebaseBytesRisk({
-      path: HABIT_SESSIONS_PATH,
-      reason: `habits-session-sync:${spec.reasonLabel || reason}`,
-      viewId: "view-habits",
-      estimatedCount: spec.habitIds.length,
-    });
-  }
-
-  await Promise.all(spec.habitIds.map(async (habitId) => {
-    const path = `${HABIT_SESSIONS_PATH}/${habitId}`;
-    const requestRef = useFullHistory
-      ? ref(db, path)
-      : query(ref(db, path), orderByKey(), startAt(spec.startKey), endAt(spec.endKey));
-    const snap = await trackedGet(requestRef, {
-      path,
-      module: "habits",
-      reason: `habits-session-sync:${spec.reasonLabel}`,
-      viewId: "view-habits",
-      bounded: !useFullHistory,
-      querySummary: useFullHistory
-        ? "full-history-per-habit"
-        : `orderByKey,startAt(${spec.startKey}),endAt(${spec.endKey})`,
-    }, get);
-    if (syncVersion !== habitSessionSyncVersion) return;
-    const value = snap?.val() || {};
-    if (value && typeof value === "object" && Object.keys(value).length) {
-      nextRaw[habitId] = value;
-    }
-  }));
-
-  if (syncVersion !== habitSessionSyncVersion) return;
-  applyHabitSessionSyncSnapshot(nextRaw, `remote:sessions:${spec.reasonLabel || reason}`, spec);
 }
 
 // Firebase listeners
@@ -14107,13 +13456,7 @@ function listenRemoteLegacy() {
     if (tabs.includes(activeTab)) rerender();
   };
   const bindRemote = (path, handler) => {
-    logFirebaseRead({ path, mode: "onValue", reason: "habits-live-sync", viewId: "view-habits" });
-    const unsubscribe = registerViewListener("view-habits", onValue(ref(db, path), handler), {
-      key: path,
-      path,
-      mode: "onValue",
-      reason: "habits-live-sync",
-    });
+    const unsubscribe = onValue(ref(db, path), handler);
     if (typeof unsubscribe === "function") {
       remoteUnsubscribers.push(unsubscribe);
     }
@@ -14131,7 +13474,6 @@ function listenRemoteLegacy() {
       } catch (_) {}
     }
     saveCache();
-    void syncHabitSessionsForCurrentView({ force: true, reason: "remote:habits-legacy" });
     rerender();
   });
 
@@ -14198,26 +13540,41 @@ function listenRemoteLegacy() {
     rerenderIfActiveTab(["today", "schedule", "history"]);
     emitHabitsData("remote:active-sessions");
   });
+  bindRemote(HABIT_SESSIONS_PATH, (snap) => {
+    const raw = snap.val() || {};
+    debugHabitsSync("onValue:habitSessions raw", raw);
+    const work = activeHabits().find((h) => isWorkHabit(h));
+    if (work) {
+      debugWorkShift("[WORK] onValue workShifts", null);
+      debugWorkShift("[WORK] onValue habitSessions(work)", {
+        dateKey: selectedDateKey,
+        value: raw?.[work.id]?.[selectedDateKey] ?? null
+      });
+    }
+    applyPendingSessionWrites(raw);
+    const norm = normalizeSessionsStore(raw, true);
+    habitSessions = norm.normalized;
+    habitSessionTimeline = norm.timeline || {};
+    habitSessionTimelineCoverage = norm.coverage || {};
+    debugHabitsSync("onValue:habitSessions normalized", habitSessions);
+    invalidateDominantCache();
+    markHistoryDataChanged("remote:sessions");
+    saveCache();
+    rerender();
+    emitHabitsData("remote:sessions");
+  });
 
   remoteBound = true;
-  void syncHabitSessionsForCurrentView({ force: true, reason: "listen-remote-legacy" });
 }
 
 function unlistenRemote() {
-  if (!remoteBound && !remoteUnsubscribers.length) return;
-  habitSessionSyncVersion += 1;
-  stopHabitSessionLiveSync();
-  habitSessionSyncMode = "none";
-  habitSessionSyncKey = "";
   remoteUnsubscribers.forEach((unsubscribe) => {
     try {
       unsubscribe();
     } catch (_) {}
   });
   remoteUnsubscribers = [];
-  logHabitsData("listen:detached", { uid: remoteBoundUid || currentUid || "" });
   remoteBound = false;
-  remoteBoundUid = "";
 }
 
 function applyQueuedHabitRemoteValue(basePath, value) {
@@ -14325,17 +13682,7 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
   }
 
   queuePendingSessionWrite(habitId, dateKey, payloadToWrite);
-  logHabitsData("action:update-local", {
-    type: "habit-session",
-    habitId,
-    dateKey,
-    totalSec: sec,
-  });
   saveCache();
-  logHabitsData("write", {
-    path: `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`,
-    type: "habit-session",
-  });
   void writeRtdbWithOfflineQueue({
     uid: currentUid,
     module: "habits",
@@ -14355,10 +13702,6 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
 
 function persistHabitCheck(habitId, dateKey, value) {
   if (!habitId || !dateKey) return;
-  logHabitsData("write", {
-    path: `${HABIT_CHECKS_PATH}/${habitId}/${dateKey}`,
-    type: "habit-check",
-  });
   void writeRtdbWithOfflineQueue({
     uid: currentUid,
     module: "habits",
@@ -14374,10 +13717,6 @@ function persistHabitCheck(habitId, dateKey, value) {
 
 function persistHabitCount(habitId, dateKey, value) {
   if (!habitId || !dateKey) return;
-  logHabitsData("write", {
-    path: `${HABIT_COUNTS_PATH}/${habitId}/${dateKey}`,
-    type: "habit-count",
-  });
   void writeRtdbWithOfflineQueue({
     uid: currentUid,
     module: "habits",
@@ -14393,11 +13732,6 @@ function persistHabitCount(habitId, dateKey, value) {
 
 function persistHabit(habit) {
   if (!habit?.id) return;
-  logHabitsData("write", {
-    path: `${HABITS_PATH}/${habit.id}`,
-    type: "habit",
-    habitId: habit.id,
-  });
   void writeRtdbWithOfflineQueue({
     uid: currentUid,
     module: "habits",
@@ -14432,21 +13766,9 @@ function incrementCounterHabit(habitId) {
 
 async function startSession(habitId = null, meta = null) {
   if (!currentUid || !HABIT_ACTIVE_SESSIONS_PATH) return null;
-  const requestedHabitId = typeof habitId === "string" ? String(habitId || "").trim() : "";
   const targetHabitId = (typeof habitId === "string" && habits?.[habitId] && !habits[habitId]?.archived)
     ? habitId
     : null;
-  if (!targetHabitId && isSessionStopGuardActive()) {
-    logHabitsSession("generic-create blocked", {
-      reason: sessionStopGuardReason || "stop-flow",
-      requestedHabitId,
-    });
-    logHabitsSession("unexpected-autostart blocked", {
-      reason: sessionStopGuardReason || "stop-flow",
-      requestedHabitId,
-    });
-    return null;
-  }
   const now = Date.now();
   const sessionId = createOfflinePushId(HABIT_ACTIVE_SESSIONS_PATH) || `session-${now.toString(36)}`;
   const payload = {
@@ -14462,29 +13784,14 @@ async function startSession(habitId = null, meta = null) {
     deviceId: currentUid,
     meta: meta && typeof meta === "object" ? { ...meta } : null
   };
-  logHabitsSession("start", {
-    sessionId,
-    habitId: targetHabitId || "",
-    requestedHabitId,
-  });
 
   upsertActiveSessionLocal(sessionId, payload);
-  logHabitsData("action:update-local", {
-    type: "active-session:start",
-    sessionId,
-    targetHabitId: targetHabitId || "",
-  });
   saveCache();
   persistSessionSelection(sessionId);
   updateSessionUI();
   updateCompareLiveInterval();
   scheduleCompareRefresh("session:start", { targetHabitId: targetHabitId || null });
 
-  logHabitsData("write", {
-    path: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
-    type: "active-session:start",
-    sessionId,
-  });
   const result = await writeRtdbWithOfflineQueue({
     uid: currentUid,
     module: "habits",
@@ -14516,20 +13823,10 @@ async function patchSession(sessionId, patch = {}) {
 
   if (previous) {
     upsertActiveSessionLocal(sessionId, { ...previous, ...nextPatch });
-    logHabitsData("action:update-local", {
-      type: "active-session:patch",
-      sessionId,
-      patchKeys: Object.keys(nextPatch),
-    });
     saveCache();
     updateSessionUI();
   }
 
-  logHabitsData("write", {
-    path: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
-    type: "active-session:patch",
-    sessionId,
-  });
   const result = await writeRtdbWithOfflineQueue({
     uid: currentUid,
     module: "habits",
@@ -14560,12 +13857,6 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
 
   const session = sessionId ? activeSessions?.[sessionId] : null;
   if (!session) return;
-  armSessionStopGuard("stop-flow");
-  logHabitsSession("stop", {
-    sessionId,
-    habitId: session?.habitId || session?.targetHabitId || "",
-    assignHabitId: typeof assignHabitId === "string" ? assignHabitId : "",
-  });
 
   const endTs = Date.now();
   const duration = Math.max(1, Math.round(getRunningElapsedMs(session, endTs) / 1000));
@@ -14602,20 +13893,10 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
       updateCompareLiveInterval();
     }
     console.warn("No se pudo parar la sesión activa", result?.error);
-    logHabitsSession("stop:error", {
-      sessionId,
-      message: result?.error?.message || String(result?.error || ""),
-    });
     return;
   }
 
   scheduleCompareRefresh("session:stop", { dateKey, durationSec: duration });
-  logHabitsSession("stop:success", {
-    sessionId,
-    habitId: target || "",
-    durationSec: duration,
-    requiresAssignment: !(target && habits?.[target] && !habits[target]?.archived),
-  });
 
   if (target && habits?.[target] && !habits[target]?.archived) {
     const splitByDay = splitSessionByDay(startTs, endTs);
@@ -14643,12 +13924,6 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
   }
 
   pendingSessionDuration = duration;
-  logHabitsSession("stop:success", {
-    sessionId,
-    habitId: "",
-    durationSec: duration,
-    requiresAssignment: true,
-  });
   openSessionModal();
 }
 
@@ -14697,7 +13972,7 @@ async function cancelRunningSession({ requireConfirm = true, sessionId = running
   return true;
 }
 
-function listenRemoteDeprecated() {
+function listenRemote() {
   if (remoteBound) return;
   const rerender = () => requestActiveTabRender({ preserveUI: true });
   const rerenderIfActiveTab = (tabs = []) => {
@@ -14705,13 +13980,7 @@ function listenRemoteDeprecated() {
     if (tabs.includes(activeTab)) rerender();
   };
   const bindRemote = (path, handler) => {
-    logFirebaseRead({ path, mode: "onValue", reason: "habits-live-sync", viewId: "view-habits" });
-    const unsubscribe = registerViewListener("view-habits", onValue(ref(db, path), handler), {
-      key: path,
-      path,
-      mode: "onValue",
-      reason: "habits-live-sync",
-    });
+    const unsubscribe = onValue(ref(db, path), handler);
     if (typeof unsubscribe === "function") {
       remoteUnsubscribers.push(unsubscribe);
     }
@@ -14729,7 +13998,6 @@ function listenRemoteDeprecated() {
       } catch (_) {}
     }
     saveCache();
-    void syncHabitSessionsForCurrentView({ force: true, reason: "remote:habits" });
     rerender();
   });
 
@@ -14800,226 +14068,31 @@ function listenRemoteDeprecated() {
     emitHabitsData("remote:active-sessions");
   });
 
-  remoteBound = true;
-  void syncHabitSessionsForCurrentView({ force: true, reason: "listen-remote" });
-}
-
-function attachHabitsListeners() {
-  if (!currentUid) return;
-  if (remoteBound && remoteBoundUid === currentUid) {
-    logHabitsData("listen:skip-already-active", { uid: currentUid || "" });
-    return;
-  }
-  if (remoteBound && remoteBoundUid && remoteBoundUid !== currentUid) {
-    unlistenRemote();
-  }
-
-  const rerender = () => requestActiveTabRender({ preserveUI: true });
-  const rerenderIfActiveTab = (tabs = []) => {
-    if (!isHabitsViewVisible()) return;
-    if (tabs.includes(activeTab)) rerender();
-  };
-  const applyQueuedChildValue = (basePath, childKey, rawValue) => {
-    return applyQueuedHabitRemoteValue(buildHabitChildPath(basePath, childKey), rawValue);
-  };
-
-  bindRemoteChildListeners(HABITS_PATH, {
-    keyPrefix: "habits-root",
-    onUpsert: (habitId, rawValue, eventType) => {
-      const previousHabits = habits;
-      const nextHabits = { ...(habits || {}) };
-      const resolved = applyQueuedChildValue(HABITS_PATH, habitId, rawValue);
-      if (resolved && typeof resolved === "object") nextHabits[habitId] = resolved;
-      else delete nextHabits[habitId];
-      habits = normalizeHabitsStore(nextHabits);
-      invalidateDominantCache();
-      markHistoryDataChanged("remote:habits", { eventType, habitId });
-      ensureUnknownHabit(true);
-      if (_pendingShortcutCmd) {
-        try {
-          const ok = executeShortcutCmd(_pendingShortcutCmd, { silent: true });
-          if (ok) _pendingShortcutCmd = null;
-        } catch (_) {}
-      }
-      saveCache();
-      if (didHabitSessionTargetIdsChange(previousHabits, habits)) {
-        void syncHabitSessionsForCurrentView({ force: true, reason: `remote:habits:${eventType}` });
-      }
-      rerender();
-    },
-    onRemove: (habitId, _rawValue, eventType) => {
-      const previousHabits = habits;
-      const nextHabits = { ...(habits || {}) };
-      const resolved = applyQueuedChildValue(HABITS_PATH, habitId, null);
-      if (resolved && typeof resolved === "object") nextHabits[habitId] = resolved;
-      else delete nextHabits[habitId];
-      habits = normalizeHabitsStore(nextHabits);
-      invalidateDominantCache();
-      markHistoryDataChanged("remote:habits", { eventType, habitId });
-      ensureUnknownHabit(true);
-      saveCache();
-      if (didHabitSessionTargetIdsChange(previousHabits, habits)) {
-        void syncHabitSessionsForCurrentView({ force: true, reason: `remote:habits:${eventType}` });
-      }
-      rerender();
-    },
-  });
-
-  bindRemoteChildListeners(HABIT_GROUPS_PATH, {
-    keyPrefix: "habit-groups",
-    onUpsert: (groupId, rawValue) => {
-      const next = { ...(habitGroups || {}) };
-      const resolved = applyQueuedChildValue(HABIT_GROUPS_PATH, groupId, rawValue);
-      if (resolved && typeof resolved === "object") next[groupId] = resolved;
-      else delete next[groupId];
-      habitGroups = next;
-      saveCache();
-      rerender();
-    },
-    onRemove: (groupId) => {
-      const next = { ...(habitGroups || {}) };
-      const resolved = applyQueuedChildValue(HABIT_GROUPS_PATH, groupId, null);
-      if (resolved && typeof resolved === "object") next[groupId] = resolved;
-      else delete next[groupId];
-      habitGroups = next;
-      saveCache();
-      rerender();
-    },
-  });
-
-  bindRemoteValueListener(HABIT_PREFS_PATH, (snap) => {
-    habitPrefs = applyQueuedHabitRemoteValue(HABIT_PREFS_PATH, snap.val() || {}) || { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
-    if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
-    habitDurationMode = ["auto", "min", "h", "d"].includes(habitPrefs.analyticsUnit) ? habitPrefs.analyticsUnit : "auto";
-    analyticsTimeUnitMode = habitDurationMode;
+  bindRemote(HABIT_SESSIONS_PATH, (snap) => {
+    const raw = applyQueuedHabitRemoteValue(HABIT_SESSIONS_PATH, snap.val() || {}) || {};
+    debugHabitsSync("onValue:habitSessions raw", raw);
+    const work = activeHabits().find((h) => isWorkHabit(h));
+    if (work) {
+      debugWorkShift("[WORK] onValue workShifts", null);
+      debugWorkShift("[WORK] onValue habitSessions(work)", {
+        dateKey: selectedDateKey,
+        value: raw?.[work.id]?.[selectedDateKey] ?? null
+      });
+    }
+    applyPendingSessionWrites(raw);
+    const norm = normalizeSessionsStore(raw, true);
+    habitSessions = norm.normalized;
+    habitSessionTimeline = norm.timeline || {};
+    habitSessionTimelineCoverage = norm.coverage || {};
+    debugHabitsSync("onValue:habitSessions normalized", habitSessions);
+    invalidateDominantCache();
+    markHistoryDataChanged("remote:sessions");
     saveCache();
-    rerenderIfActiveTab(["today", "reports"]);
-  }, {
-    key: HABIT_PREFS_PATH,
-  });
-
-  bindRemoteValueListener(HABIT_UI_QUICK_COUNTERS_PATH, (snap) => {
-    const quickCounters = applyQueuedHabitRemoteValue(HABIT_UI_QUICK_COUNTERS_PATH, snap.val() || []);
-    habitUI = normalizeHabitUI({ ...habitUI, quickCounters: quickCounters || [] });
-    saveCache();
-    rerenderIfActiveTab(["today"]);
-  }, {
-    key: HABIT_UI_QUICK_COUNTERS_PATH,
-  });
-
-  bindRemoteValueListener(HABIT_WORK_SCHEDULES_PATH, (snap) => {
-    const raw = applyQueuedHabitRemoteValue(HABIT_WORK_SCHEDULES_PATH, snap.val() || {}) || {};
-    habitWorkSchedules = normalizeWorkSchedulesStore(raw);
-    saveCache();
-    rerenderIfActiveTab(["history"]);
-  }, {
-    key: HABIT_WORK_SCHEDULES_PATH,
-  });
-
-  bindRemoteValueListener(HABITS_SCHEDULE_PATH, (snap) => {
-    console.warn("SCHEDULE UPDATE", "firebase:onValue");
-    const raw = applyQueuedHabitRemoteValue(HABITS_SCHEDULE_PATH, snap.val());
-    scheduleState = raw && typeof raw === "object"
-      ? normalizeHabitSchedule(raw)
-      : createDefaultHabitSchedule();
-    saveCache();
-    rerenderIfActiveTab(["schedule"]);
-  }, {
-    key: HABITS_SCHEDULE_PATH,
-  });
-
-  bindRemoteChildListeners(HABIT_CHECKS_PATH, {
-    keyPrefix: "habit-checks",
-    onUpsert: (habitId, rawValue) => {
-      const next = { ...(habitChecks || {}) };
-      const resolved = applyQueuedChildValue(HABIT_CHECKS_PATH, habitId, rawValue || {});
-      if (resolved && typeof resolved === "object" && Object.keys(resolved).length) next[habitId] = resolved;
-      else delete next[habitId];
-      habitChecks = next;
-      invalidateDominantCache();
-      markHistoryDataChanged("remote:checks", { habitId });
-      saveCache();
-      rerender();
-      emitHabitsData("remote:checks");
-    },
-    onRemove: (habitId) => {
-      const next = { ...(habitChecks || {}) };
-      const resolved = applyQueuedChildValue(HABIT_CHECKS_PATH, habitId, null);
-      if (resolved && typeof resolved === "object" && Object.keys(resolved).length) next[habitId] = resolved;
-      else delete next[habitId];
-      habitChecks = next;
-      invalidateDominantCache();
-      markHistoryDataChanged("remote:checks", { habitId, removed: true });
-      saveCache();
-      rerender();
-      emitHabitsData("remote:checks");
-    },
-  });
-
-  bindRemoteChildListeners(HABIT_COUNTS_PATH, {
-    keyPrefix: "habit-counts",
-    onUpsert: (habitId, rawValue) => {
-      const next = { ...(habitCounts || {}) };
-      const resolved = applyQueuedChildValue(HABIT_COUNTS_PATH, habitId, rawValue || {});
-      if (resolved && typeof resolved === "object" && Object.keys(resolved).length) next[habitId] = resolved;
-      else delete next[habitId];
-      habitCounts = next;
-      invalidateDominantCache();
-      markHistoryDataChanged("remote:counts", { habitId });
-      saveCache();
-      rerender();
-      emitHabitsData("remote:counts");
-    },
-    onRemove: (habitId) => {
-      const next = { ...(habitCounts || {}) };
-      const resolved = applyQueuedChildValue(HABIT_COUNTS_PATH, habitId, null);
-      if (resolved && typeof resolved === "object" && Object.keys(resolved).length) next[habitId] = resolved;
-      else delete next[habitId];
-      habitCounts = next;
-      invalidateDominantCache();
-      markHistoryDataChanged("remote:counts", { habitId, removed: true });
-      saveCache();
-      rerender();
-      emitHabitsData("remote:counts");
-    },
-  });
-
-  bindRemoteChildListeners(HABIT_ACTIVE_SESSIONS_PATH, {
-    keyPrefix: "habit-active-sessions",
-    onUpsert: (sessionId, rawValue) => {
-      const next = { ...(activeSessions || {}) };
-      const resolved = applyQueuedChildValue(HABIT_ACTIVE_SESSIONS_PATH, sessionId, rawValue || {});
-      const session = normalizeRunningSession({ ...(resolved || {}), sessionId });
-      if (session) next[sessionId] = session;
-      else delete next[sessionId];
-      activeSessions = next;
-      syncPrimaryRunningSession();
-      saveCache();
-      updateSessionUI();
-      updateCompareLiveInterval();
-      rerenderIfActiveTab(["today", "schedule", "history"]);
-      emitHabitsData("remote:active-sessions");
-    },
-    onRemove: (sessionId) => {
-      const next = { ...(activeSessions || {}) };
-      const resolved = applyQueuedChildValue(HABIT_ACTIVE_SESSIONS_PATH, sessionId, null);
-      const session = normalizeRunningSession({ ...(resolved || {}), sessionId });
-      if (session) next[sessionId] = session;
-      else delete next[sessionId];
-      activeSessions = next;
-      syncPrimaryRunningSession();
-      saveCache();
-      updateSessionUI();
-      updateCompareLiveInterval();
-      rerenderIfActiveTab(["today", "schedule", "history"]);
-      emitHabitsData("remote:active-sessions");
-    },
+    rerender();
+    emitHabitsData("remote:sessions");
   });
 
   remoteBound = true;
-  remoteBoundUid = currentUid || "";
-  logHabitsData("listen:ready", { uid: remoteBoundUid });
-  void syncHabitSessionsForCurrentView({ force: true, reason: "listen-remote" });
 }
 
 async function initHabitsLegacy() {
@@ -15029,10 +14102,11 @@ async function initHabitsLegacy() {
   habitsRuntimeInitializing = true;
   const startedAt = performance.now();
   logHabitsInitStep("init:start");
-  logHabitsData("boot:start", { uid: currentUid || "" });
   try {
-    await traceHabitsInitStep("readCache", () => bootReadHabitsCache());
-    await traceHabitsInitStep("hydrateOfflineSnapshot", () => bootHydrateHabitsOfflineSnapshot());
+    await traceHabitsInitStep("readCache", () => {
+      readCache();
+    });
+    await traceHabitsInitStep("hydrateOfflineSnapshot", () => hydrateHabitsFromOfflineSnapshot());
     await traceHabitsInitStep("loadSessionSelection", () => {
       loadSessionSelection();
     });
@@ -15057,9 +14131,9 @@ async function initHabitsLegacy() {
     await traceHabitsInitStep("bindEvents", () => {
       bindEvents();
     });
-    await traceHabitsInitStep("prepareScheduleBootState", () => prepareHabitsScheduleBootState());
-    await traceHabitsInitStep("attachHabitsListeners", () => {
-      attachHabitsListeners();
+    await traceHabitsInitStep("loadScheduleFromRemote", () => loadScheduleFromRemote());
+    await traceHabitsInitStep("listenRemote", () => {
+      listenRemote();
     });
     await traceHabitsInitStep("renderHabits", () => {
       renderHabits();
@@ -15097,7 +14171,6 @@ function goHabitSubtab(tab) {
   const allowed = new Set(["today", "history", "schedule", "reports"]);
   activeTab = allowed.has(tab) ? tab : "today";
   if (activeTab !== "reports") hideHabitLineTooltip();
-  void syncHabitSessionsForCurrentView({ force: true, reason: `tab:${activeTab}` });
   renderHabits();
 }
 
@@ -15282,10 +14355,11 @@ async function initHabits() {
   habitsRuntimeInitializing = true;
   const startedAt = performance.now();
   logHabitsInitStep("init:start");
-  logHabitsData("boot:start", { uid: currentUid || "" });
   try {
-    await traceHabitsInitStep("readCache", () => bootReadHabitsCache());
-    await traceHabitsInitStep("hydrateOfflineSnapshot", () => bootHydrateHabitsOfflineSnapshot());
+    await traceHabitsInitStep("readCache", () => {
+      readCache();
+    });
+    await traceHabitsInitStep("hydrateOfflineSnapshot", () => hydrateHabitsFromOfflineSnapshot());
     await traceHabitsInitStep("loadSessionSelection", () => {
       loadSessionSelection();
     });
@@ -15310,9 +14384,9 @@ async function initHabits() {
     await traceHabitsInitStep("bindEvents", () => {
       bindEvents();
     });
-    await traceHabitsInitStep("prepareScheduleBootState", () => prepareHabitsScheduleBootState());
-    await traceHabitsInitStep("attachHabitsListeners", () => {
-      attachHabitsListeners();
+    await traceHabitsInitStep("loadScheduleFromRemote", () => loadScheduleFromRemote());
+    await traceHabitsInitStep("listenRemote", () => {
+      listenRemote();
     });
     await traceHabitsInitStep("renderHabits", () => {
       renderHabits();
@@ -15369,10 +14443,7 @@ export async function onShow() {
     return;
   }
   ensureSessionOverlayInBody();
-  if (currentUid) {
-    attachHabitsListeners();
-    void syncHabitSessionsForCurrentView({ force: true, reason: "view:onShow" });
-  }
+  if (currentUid && !remoteBound) listenRemote();
   maybeAutoCloseScheduleDay();
   if (!scheduleAutoCloseInterval) {
     scheduleAutoCloseInterval = window.setInterval(maybeAutoCloseScheduleDay, 600000);
@@ -15420,25 +14491,9 @@ if (habitsViewVisible) initHabits();
 
 onUserChange((user) => {
   const nextUid = user?.uid ?? null;
-  if (!nextUid) {
-    if (remoteBound) unlistenRemote();
-    return;
-  }
-  if (nextUid === currentUid && (habitsRuntimeReady || habitsRuntimeInitializing)) return;
-  const changedUser = nextUid !== currentUid;
-  if (changedUser && remoteBound) {
-    unlistenRemote();
-  }
+  if (!nextUid || habitsRuntimeReady || habitsRuntimeInitializing) return;
   setUserPaths(nextUid);
-  if (!habitsRuntimeReady && !habitsRuntimeInitializing) {
-    if (habitsViewVisible) initHabits();
-    return;
-  }
-  if (habitsViewVisible) {
-    attachHabitsListeners();
-    void syncHabitSessionsForCurrentView({ force: true, reason: "auth:user-change" });
-    requestActiveTabRender({ preserveUI: true });
-  }
+  if (habitsViewVisible) initHabits();
 });
 
 // TODO REMOVE: parse smoke check

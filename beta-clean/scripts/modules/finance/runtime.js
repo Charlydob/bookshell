@@ -23,7 +23,7 @@ import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategory
 import { ensureEcharts } from '../../shared/vendors/echarts.js';
 import { readProcessedJsonCache, writeProcessedJsonCache } from '../../shared/cache/processed-json-cache.js';
 import { normalizeCatalogName, upsertPublicCatalogItem } from '../../shared/services/public-catalog.js';
-import { logFirebaseRead, registerViewListener, trackedGet, trackedOnValue } from '../../shared/firebase/read-debug.js';
+import { logFirebaseRead, logFirebaseWrite, registerViewListener, trackedGet, trackedOnValue } from '../../shared/firebase/read-debug.js';
 import { PUBLIC_PATHS } from '../../shared/firebase/index.js';
 import { readModuleSnapshot, writeModuleSnapshot } from '../../shared/storage/offline-snapshots.js';
 
@@ -55,6 +55,13 @@ const FINANCE_CORE_BRANCHES = Object.freeze([
   { key: 'snapshots', path: 'balance/snapshots', fallback: {} },
   { key: 'defaultAccountId', path: 'balance/defaultAccountId', fallback: '' },
   { key: 'lastSeenMonthKey', path: 'balance/lastSeenMonthKey', fallback: '' },
+]);
+const FINANCE_LEGACY_MERGE_BRANCH_KEYS = new Set([
+  'accounts',
+  'accountsEntries',
+  'entries',
+  'snapshots',
+  'defaultAccountId',
 ]);
 const financeDerivedCache = {
   txList: { balanceRef: null, financePath: '', rows: [] },
@@ -727,12 +734,6 @@ function collectBalanceRowsFromRoot(root = {}, financePath = state.financePath) 
     movements: root.movements || root.balance?.movements || root.balance?.movement || {},
     transactions: root.transactions || root.balance?.transactions || root.balance?.tx2 || {}
   }, financePath);
-}
-async function loadFinanceRoot() {
-  return loadFinanceRootByBranches(state.financePath, {
-    reason: 'finance-core-root-load',
-    viewId: 'view-finance',
-  });
 }
 function syncLocalAccountsFromRoot(root = {}) {
   if (!root?.accounts || typeof root.accounts !== 'object') return;
@@ -4009,10 +4010,10 @@ function renderProductsTicketRegistry(model) {
             : 'Sin cuenta';
           const ticketDate = formatProductsShortDate(ticket._ticketDateTs || parseDayKey(ticket.dateISO || ''));
           const ticketStatus = ticket.txId ? 'Contabilizado' : 'Sin asiento';
-          const ticketBlockedDeletion = Boolean(String(ticket.txId || '').trim());
-          const ticketDeleteHint = ticketBlockedDeletion
-            ? 'No se puede borrar: tiene movimiento contabilizado'
-            : 'Eliminar ticket del registro';
+          const ticketBlockedDeletion = false;
+const ticketDeleteHint = ticket.txId
+  ? 'Eliminar ticket y su movimiento contabilizado'
+  : 'Eliminar ticket del registro';
           const imageUrl = String(ticket.imageUrl || ticket.receiptImageUrl || ticket.image || '').trim();
           return `
             <details class="productsWorkbench__ticketRegistryItem" data-products-ticket-history-item="${escapeHtml(ticket.id)}">
@@ -4042,13 +4043,13 @@ function renderProductsTicketRegistry(model) {
                 <div class="productsWorkbench__ticketRegistryActions">
                   <button type="button" class="food-history-btn" data-products-reuse-ticket="${escapeHtml(ticket.id)}">Reutilizar como lista</button>
                   <button
-                    type="button"
-                    class="food-history-btn"
-                    data-products-delete-history-ticket="${escapeHtml(ticket.id)}"
-                    aria-label="${escapeHtml(ticketDeleteHint)}"
-                    title="${escapeHtml(ticketDeleteHint)}"
-                    ${ticketBlockedDeletion ? 'disabled' : ''}
-                  >Eliminar</button>
+  type="button"
+  class="food-history-btn"
+  data-products-delete-history-ticket="${escapeHtml(ticket.id)}"
+  aria-label="${escapeHtml(ticketDeleteHint)}"
+  title="${escapeHtml(ticketDeleteHint)}"
+${ticketBlockedDeletion ? 'disabled' : ''}
+>Eliminar</button>
                 </div>
               </div>
             </details>
@@ -4802,21 +4803,30 @@ async function exportActiveProductsTicketNamesFromDom() {
 async function deleteProductsHistoryTicket(ticketId = '') {
   const safeTicketId = String(ticketId || '').trim();
   if (!safeTicketId) return;
+
   const ticket = state.productsHub?.tickets?.[safeTicketId];
-  if (!ticket) return;
-  if (String(ticket.txId || '').trim()) {
-    toast('No se puede borrar un ticket ya contabilizado');
+  if (!ticket) {
+    console.warn('[deleteProductsHistoryTicket] ticket no encontrado:', safeTicketId);
     return;
   }
-  if (!window.confirm('¿Eliminar este ticket del registro?')) return;
+
+  const txId = String(ticket.txId || ticket.accountedTxId || '').trim();
+  const msg = txId
+    ? '¿Eliminar este ticket y también su movimiento en balance?'
+    : '¿Eliminar este ticket del registro?';
+
+  if (!window.confirm(msg)) return;
+
   const nextTickets = { ...(state.productsHub?.tickets || {}) };
   delete nextTickets[safeTicketId];
+
   const nextLists = Object.entries(state.productsHub?.lists || {}).reduce((acc, [listId, list]) => {
     const nextListTickets = Object.entries(list?.tickets || {}).reduce((ticketAcc, [metaId, meta]) => {
       if (String(meta?.confirmedTicketId || '').trim() !== safeTicketId) {
         ticketAcc[metaId] = meta;
         return ticketAcc;
       }
+
       ticketAcc[metaId] = normalizeProductsListTicketMeta(metaId, {
         ...meta,
         confirmedAt: 0,
@@ -4824,27 +4834,54 @@ async function deleteProductsHistoryTicket(ticketId = '') {
         accountedTxId: '',
         updatedAt: nowTs(),
       });
+
       return ticketAcc;
     }, {});
+
     acc[listId] = { ...(list || {}), tickets: nextListTickets };
     return acc;
   }, {});
+
+  const updatesMap = {
+    [productsHubPath(`tickets/${safeTicketId}`)]: null,
+  };
+
+  Object.entries(nextLists).forEach(([listId, list]) => {
+    updatesMap[productsHubPath(`lists/${listId}`)] = list;
+  });
+
+  if (txId) {
+    updatesMap[`${state.financePath}/transactions/${txId}`] = null;
+  }
+
+  await safeFirebase(() => update(ref(db), updatesMap));
+
   state.productsHub = {
     ...(state.productsHub || normalizeProductsHub()),
     tickets: nextTickets,
     lists: nextLists,
   };
-  const updatesMap = {
-    [productsHubPath(`tickets/${safeTicketId}`)]: null,
-  };
-  Object.entries(nextLists).forEach(([listId, list]) => {
-    updatesMap[productsHubPath(`lists/${listId}`)] = list;
-  });
-  await safeFirebase(() => update(ref(db), updatesMap));
-  toast('Ticket eliminado del registro');
+
+  if (txId) {
+    removeLocalTxEverywhere(txId);
+
+    const primaryCacheKey = getPrimaryFinanceCacheKey?.();
+    if (primaryCacheKey && typeof patchFinanceCacheRoot === 'function') {
+      patchFinanceCacheRoot(primaryCacheKey, `transactions/${txId}`, null);
+      patchFinanceCacheRoot(primaryCacheKey, `shoppingHub/tickets/${safeTicketId}`, null);
+    }
+
+    if (ticket.accountId && typeof persistRecomputedFinanceAccountEntries === 'function') {
+      await persistRecomputedFinanceAccountEntries([ticket.accountId], ticket.dateISO || dayKeyFromTs(nowTs()), 'receipt-delete');
+    }
+
+    if (typeof applyPatchedFinanceCaches === 'function') applyPatchedFinanceCaches('receipt-delete');
+    if (typeof scheduleAggregateRebuild === 'function') scheduleAggregateRebuild();
+  }
+
+  toast(txId ? 'Ticket y movimiento eliminados' : 'Ticket eliminado del registro');
   triggerRender();
 }
-
 function productsDomValue(root = document, selectors = [], fallback = '') {
   for (const selector of selectors) {
     const el = root?.querySelector?.(selector);
@@ -5752,6 +5789,120 @@ function validateProductsTicketForConfirm(list = {}, activeTicketId = '', active
   };
 }
 
+function buildReceiptMovementLines(lines = [], list = {}, category = 'Compra') {
+  return (Array.isArray(lines) ? lines : []).map((line) => {
+    const productSnapshot = resolveProductsCatalogSnapshot(line.productId);
+    const name = normalizeFoodName(line.name || productSnapshot?.canonicalName || productSnapshot?.displayName || productSnapshot?.name || '');
+    const qty = Math.max(1, Number(line.qty || 1));
+    const unitPrice = Number(line.actualPrice || line.estimatedPrice || 0);
+    const total = unitPrice * qty;
+    const store = normalizeFoodName(line.store || list.store || productSnapshot?.preferredStore || productSnapshot?.place || '');
+    const productId = String(line.productId || productSnapshot?.canonicalId || productSnapshot?.id || '').trim();
+    return {
+      foodId: productId,
+      productId,
+      productKey: String(productId || firebaseSafeKey(name || 'producto')).trim(),
+      name,
+      quantity: qty,
+      qty,
+      unit: normalizeProductUnit(line.unit || productSnapshot?.unit || 'ud'),
+      unitPrice,
+      amount: total,
+      total,
+      totalPrice: total,
+      price: total,
+      category: normalizeFoodName(productSnapshot?.productCategory || category) || category,
+      mealType: normalizeFoodName(productSnapshot?.productType || productSnapshot?.mealType || ''),
+      cuisine: normalizeFoodName(productSnapshot?.cuisine || ''),
+      place: store,
+      store,
+      supermarket: store,
+      healthy: normalizeFoodName(productSnapshot?.healthy || productSnapshot?.cuisine || ''),
+      snapshot: {
+        productId,
+        store,
+        category: normalizeFoodName(productSnapshot?.productCategory || ''),
+      },
+    };
+  }).filter((item) => item.name);
+}
+
+async function syncReceiptCatalogAfterWrite(items = [], {
+  movementId = '',
+  accountId = '',
+  dateISO = '',
+  note = '',
+  category = 'Compra',
+  store = '',
+} = {}) {
+  const normalizedItems = Array.isArray(items) ? items.filter((item) => item?.name) : [];
+  if (!normalizedItems.length) return;
+  financeReceiptLog('catalog-sync:start', {
+    movementId,
+    lineCount: normalizedItems.length,
+  });
+  try {
+    await ensureFoodCatalogLoaded();
+    for (const item of normalizedItems) {
+      try {
+        const savedFoodId = await upsertFoodItem({
+          id: item.foodId || item.productId || '',
+          name: item.name,
+          displayName: item.name,
+          mealType: item.mealType || '',
+          cuisine: item.cuisine || '',
+          healthy: item.healthy || item.cuisine || '',
+          place: item.place || store || '',
+          productType: item.mealType || '',
+          productCategory: item.category || '',
+          preferredStore: item.place || store || '',
+          defaultPrice: Number(item.unitPrice || 0),
+          lastPrice: Number(item.unitPrice || 0),
+          unit: item.unit || 'ud',
+          lastPurchaseAt: dateISO,
+        }, true, {
+          lastCategory: category,
+          lastAccountId: accountId,
+          lastNote: note,
+          lastPrice: Number(item.unitPrice || 0),
+          lastPurchaseAt: parseDayKey(dateISO),
+          unit: item.unit || 'ud',
+        });
+        item.foodId = savedFoodId;
+        item.productId = savedFoodId || item.productId;
+        if (item.mealType) await upsertFoodOption('typeOfMeal', item.mealType, true);
+        if (item.place) await upsertFoodOption('place', item.place, true);
+        await recordFoodPricePoint(savedFoodId, Number(item.unitPrice || 0), 'expense', {
+          ts: parseDayKey(dateISO) || nowTs(),
+          date: dateISO,
+          vendor: item.place || store || 'unknown',
+          unitPrice: Number(item.unitPrice || 0),
+          qty: Math.max(1, Number(item.qty || 1)),
+          unit: String(item.unit || 'ud'),
+          totalPrice: Number(item.totalPrice || item.total || 0),
+          linePrice: Number(item.totalPrice || item.total || 0),
+          expenseId: movementId,
+        });
+      } catch (error) {
+        financeReceiptLog('catalog-sync:item-error', {
+          movementId,
+          item: item.name,
+          message: error?.message || String(error || ''),
+        });
+      }
+    }
+    financeReceiptLog('catalog-sync:success', {
+      movementId,
+      lineCount: normalizedItems.length,
+    });
+  } catch (error) {
+    financeReceiptLog('catalog-sync:error', {
+      movementId,
+      message: error?.message || String(error || ''),
+    });
+  }
+}
+
 async function saveProductsPurchaseTransaction(list = {}, options = {}) {
   const lines = Object.values(list.lines || {}).map((line) => ({
     ...line,
@@ -5780,96 +5931,34 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     throw new Error('receipt-invalid-total');
   }
 
-  const normalizedLines = [];
-  await ensureFoodCatalogLoaded();
-  for (const line of lines) {
-    const productSnapshot = resolveProductsCatalogSnapshot(line.productId);
-    const savedFoodId = await upsertFoodItem({
-      id: String(line.productId || productSnapshot?.canonicalId || productSnapshot?.id || '').trim(),
-      name: normalizeFoodName(line.name || productSnapshot?.canonicalName || productSnapshot?.displayName || productSnapshot?.name || ''),
-      displayName: normalizeFoodName(line.name || productSnapshot?.canonicalName || productSnapshot?.displayName || productSnapshot?.name || ''),
-      aliases: Array.isArray(productSnapshot?.aliasList || productSnapshot?.aliases) ? (productSnapshot?.aliasList || productSnapshot?.aliases) : [],
-      vendorAliases: productSnapshot?.vendorAliases && typeof productSnapshot.vendorAliases === 'object' ? productSnapshot.vendorAliases : {},
-      mealType: normalizeFoodName(productSnapshot?.productType || productSnapshot?.mealType || ''),
-      cuisine: normalizeFoodName(productSnapshot?.cuisine || ''),
-      healthy: normalizeFoodName(productSnapshot?.healthy || productSnapshot?.cuisine || ''),
-      place: normalizeFoodName(line.store || list.store || productSnapshot?.preferredStore || productSnapshot?.place || ''),
-      productType: normalizeFoodName(productSnapshot?.productType || productSnapshot?.mealType || ''),
-      productCategory: normalizeFoodName(productSnapshot?.productCategory || ''),
-      preferredStore: normalizeFoodName(line.store || list.store || productSnapshot?.preferredStore || productSnapshot?.place || ''),
-      brand: String(productSnapshot?.brand || ''),
-      format: String(productSnapshot?.format || ''),
-      usualPrice: Number(productSnapshot?.usualPrice || line.actualPrice || line.estimatedPrice || 0),
-      estimatedPrice: Number(line.estimatedPrice || productSnapshot?.estimatedPrice || line.actualPrice || 0),
-      lastPrice: Number(line.actualPrice || productSnapshot?.lastPrice || 0),
-      usualQty: Number(productSnapshot?.usualQty || line.qty || 1),
-      unit: String(line.unit || productSnapshot?.unit || 'ud'),
-      lastPurchaseAt: dateISO,
-      purchaseFrequencyDays: Number(productSnapshot?.purchaseFrequencyDays || 0),
-      estimatedDurationDays: Number(productSnapshot?.estimatedDurationDays || 0),
-      notes: String(productSnapshot?.notes || ''),
-      active: productSnapshot?.active !== false,
-      tags: Array.isArray(productSnapshot?.tags) ? productSnapshot.tags : [],
-      defaultPrice: Number(line.actualPrice || line.estimatedPrice || productSnapshot?.estimatedPrice || productSnapshot?.defaultPrice || 0),
-    }, true, {
-      lastCategory: category,
-      lastAccountId: accountId,
-      lastNote: note,
-      lastPrice: Number(line.actualPrice || line.estimatedPrice || 0),
-      lastPurchaseAt: parseDayKey(dateISO),
-      unit: String(line.unit || productSnapshot?.unit || 'ud'),
-    });
-    const itemPayload = {
-      foodId: savedFoodId,
-      productKey: String(savedFoodId || firebaseSafeKey(line.name || '')).trim(),
-      name: normalizeFoodName(line.name || productSnapshot?.canonicalName || productSnapshot?.displayName || productSnapshot?.name || ''),
-      qty: Math.max(1, Number(line.qty || 1)),
-      unit: normalizeProductUnit(line.unit || productSnapshot?.unit || 'ud'),
-      unitPrice: Number(line.actualPrice || line.estimatedPrice || 0),
-      amount: Number(line.actualPrice || line.estimatedPrice || 0) * Math.max(1, Number(line.qty || 1)),
-      totalPrice: Number(line.actualPrice || line.estimatedPrice || 0) * Math.max(1, Number(line.qty || 1)),
-      price: Number(line.actualPrice || line.estimatedPrice || 0) * Math.max(1, Number(line.qty || 1)),
-      mealType: normalizeFoodName(productSnapshot?.productType || productSnapshot?.mealType || ''),
-      cuisine: normalizeFoodName(productSnapshot?.cuisine || ''),
-      place: normalizeFoodName(line.store || list.store || productSnapshot?.preferredStore || productSnapshot?.place || ''),
-      healthy: normalizeFoodName(productSnapshot?.healthy || productSnapshot?.cuisine || ''),
-      snapshot: {
-        productId: String(line.productId || savedFoodId || '').trim(),
-        store: normalizeFoodName(line.store || list.store || ''),
-        category: normalizeFoodName(productSnapshot?.productCategory || ''),
-      },
+  const normalizedLines = buildReceiptMovementLines(lines, list, category).map((item) => {
+    const fallbackProductId = String(item.productId || item.foodId || item.productKey || firebaseSafeKeyLoose(item.name || 'producto')).trim();
+    return {
+      ...item,
+      foodId: String(item.foodId || fallbackProductId).trim(),
+      productId: fallbackProductId,
+      productKey: String(item.productKey || fallbackProductId).trim(),
     };
-    normalizedLines.push(itemPayload);
-    if (itemPayload.mealType) await upsertFoodOption('typeOfMeal', itemPayload.mealType, true);
-    if (itemPayload.place) await upsertFoodOption('place', itemPayload.place, true);
-    await recordFoodPricePoint(savedFoodId, Number(itemPayload.unitPrice || 0), 'expense', {
-      ts: parseDayKey(dateISO) || nowTs(),
-      date: dateISO,
-      vendor: itemPayload.place || list.store || 'unknown',
-      unitPrice: Number(itemPayload.unitPrice || 0),
-      qty: Math.max(1, Number(itemPayload.qty || 1)),
-      unit: String(itemPayload.unit || 'ud'),
-      totalPrice: Number(itemPayload.totalPrice || 0),
-      linePrice: Number(itemPayload.totalPrice || 0),
-    });
-  }
+  });
 
   const saveId = String(options.txId || push(ref(db, `${state.financePath}/transactions`)).key || '').trim();
   if (!saveId) {
     throw new Error('receipt-missing-movement-id');
   }
+  const receiptId = String(options.receiptId || list.receiptId || list.ticketId || '').trim();
+  const store = normalizeFoodName(list.store || '');
   const extras = {
     items: normalizedLines,
     filters: {
       mealType: '',
       cuisine: '',
-      place: normalizeFoodName(list.store || ''),
+      place: store,
       healthy: '',
     },
     ticketData: {
       schema: 'SHOPPING_TICKET_V1',
-      source: { vendor: normalizeFoodName(list.store || 'unknown') || 'unknown' },
-      ticketId: String(list.ticketId || ''),
+      source: { vendor: store || 'unknown' },
+      ticketId: receiptId,
       ticketRef: ticketReference,
       confirmedAt: confirmedAt || nowTs(),
       paymentMethod: list.paymentMethod || 'Tarjeta',
@@ -5878,6 +5967,7 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     },
   };
   const payload = {
+    id: saveId,
     type: 'expense',
     amount: totalAmount,
     date: dateISO,
@@ -5887,7 +5977,12 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     toAccountId: '',
     category,
     note,
+    source: 'receipt/shoppingHub',
+    receiptId,
+    store,
+    supermarket: store,
     allocation: normalizeTxAllocation({ mode: 'point', period: 'day', anchorDate: dateISO }, dateISO),
+    items: normalizedLines,
     extras,
     updatedAt: nowTs(),
     createdAt: nowTs(),
@@ -5897,21 +5992,29 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     [`${state.financePath}/catalog/categories/${category}`]: { name: category, lastUsedAt: nowTs() },
     ...Object.fromEntries(Object.entries(options.extraUpdates || {}).filter(([path]) => String(path || '').trim())),
   };
-  financeReceiptLog('confirm:payload', {
+  financeReceiptLog('payload', {
     movementId: saveId,
     accountId,
     total: totalAmount,
     lineCount: lines.length,
-    store: normalizeFoodName(list.store || ''),
+    store,
     paymentMethod: list.paymentMethod || 'Tarjeta',
+    movement: payload,
   });
-  financeReceiptLog('confirm:write:start', {
+  financeReceiptLog('write:start', {
     path: `${state.financePath}/transactions/${saveId}`,
     movementId: saveId,
   });
+  logFirebaseWrite({
+    module: 'finance',
+    path: `${state.financePath}/transactions/${saveId}`,
+    reason: 'receipt-confirm',
+    viewId: 'view-finance',
+    key: saveId,
+  });
   try {
     await update(ref(db), updatesMap);
-    financeReceiptLog('confirm:write:success', {
+    financeReceiptLog('write:success', {
       movementId: saveId,
       path: `${state.financePath}/transactions/${saveId}`,
     });
@@ -5925,6 +6028,15 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     throw error;
   }
 
+  await syncReceiptCatalogAfterWrite(normalizedLines, {
+    movementId: saveId,
+    accountId,
+    dateISO,
+    note,
+    category,
+    store,
+  });
+
   localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId);
   state.lastMovementAccountId = accountId;
   return { txId: saveId, total: totalAmount, payload, accountId, dateISO };
@@ -5932,10 +6044,10 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
 
 async function confirmProductsTicketFromDom() {
   if (state.productsReceiptBusy) {
-    financeReceiptLog('confirm:click', { blocked: true, reason: 'busy' });
+    financeReceiptLog('food-history-btn:click', { blocked: true, reason: 'busy' });
     return;
   }
-  financeReceiptLog('confirm:click');
+  financeReceiptLog('food-history-btn:click');
   setProductsReceiptBusy(true);
   try {
     const draft = ensureProductsListTickets(readProductsListDraftFromDom());
@@ -5945,21 +6057,19 @@ async function confirmProductsTicketFromDom() {
       Object.entries(draft.lines || {}).filter(([, line]) => String(line?.ticketId || draft.primaryTicketId || '').trim() === activeTicketId),
     );
     if (!draft || !Object.keys(activeTicketLines || {}).length) {
-      financeReceiptLog('confirm:validation-error', { reason: 'empty-lines' });
+      financeReceiptLog('validation:error', { reason: 'empty-lines' });
       toast('No hay lineas para confirmar');
       return;
     }
     if (activeTicketMeta.accountedTxId) {
-      financeReceiptLog('confirm:validation-error', { reason: 'already-accounted', txId: activeTicketMeta.accountedTxId });
+      financeReceiptLog('validation:error', { reason: 'already-accounted', txId: activeTicketMeta.accountedTxId });
       toast('Este ticket ya está contabilizado');
       return;
     }
-    if (activeTicketMeta.store || draft.store) await upsertFoodOption('place', activeTicketMeta.store || draft.store, true);
-
     const persistedList = await ensurePersistedActiveProductsList(draft);
     const persistedTicketMeta = persistedList.tickets?.[activeTicketId] || {};
     if (persistedTicketMeta.accountedTxId) {
-      financeReceiptLog('confirm:validation-error', { reason: 'already-accounted-persisted', txId: persistedTicketMeta.accountedTxId });
+      financeReceiptLog('validation:error', { reason: 'already-accounted-persisted', txId: persistedTicketMeta.accountedTxId });
       toast('Este ticket ya fue contabilizado');
       return;
     }
@@ -5983,7 +6093,7 @@ async function confirmProductsTicketFromDom() {
 
     const validation = validateProductsTicketForConfirm(ticketPayload, activeTicketId, activeTicketMeta);
     if (!validation.ok) {
-      financeReceiptLog('confirm:validation-error', {
+      financeReceiptLog('validation:error', {
         reason: validation.reason,
         ticketId: activeTicketId,
       });
@@ -6068,6 +6178,7 @@ async function confirmProductsTicketFromDom() {
       store: validation.store,
     }, {
       txId: movementId,
+      receiptId: ticketId,
       extraUpdates: shoppingHubUpdates,
     });
 
@@ -6081,20 +6192,12 @@ async function confirmProductsTicketFromDom() {
       patchFinanceCacheRoot(primaryCacheKey, `shoppingHub/${safePath.slice(prefix.length)}`, value);
     });
 
-    const mergedRoot = buildMergedFinanceSnapshotRoot();
-    const accountEntriesUpdates = buildFinanceAccountEntriesUpdates(mergedRoot, validation.accountId, confirmedDateISO);
-    const accountCacheKey = resolveFinanceAccountCacheKey(validation.accountId);
-    if (!financeRootsCache[accountCacheKey] || typeof financeRootsCache[accountCacheKey] !== 'object') {
-      financeRootsCache[accountCacheKey] = {};
-    }
-    applyFinanceAbsoluteUpdatesToRoot(financeRootsCache[accountCacheKey], accountEntriesUpdates);
-    if (Object.keys(accountEntriesUpdates).length) {
-      try {
-        await update(ref(db), accountEntriesUpdates);
-      } catch (error) {
-        console.warn('[finance] no se pudo persistir la recomputacion puntual de cuenta', error);
-      }
-    }
+    await persistRecomputedFinanceAccountEntries([validation.accountId], confirmedDateISO, 'receipt-confirm');
+    financeReceiptLog('local-update:success', {
+      movementId: txResult.txId,
+      ticketId: activeTicketId,
+      accountId: validation.accountId,
+    });
 
     financeReceiptLog('confirm:clear:start', {
       ticketId: activeTicketId,
@@ -6103,7 +6206,7 @@ async function confirmProductsTicketFromDom() {
     });
     applyPatchedFinanceCaches('receipt-confirm');
     scheduleAggregateRebuild();
-    financeReceiptLog('confirm:clear:success', {
+    financeReceiptLog('clear:success', {
       ticketId: activeTicketId,
       nextActiveListId: shouldRotateList ? nextActiveList.id : convertedList.id,
     });
@@ -6644,14 +6747,7 @@ async function ensureRecurringCurrentMonthInstances() {
   };
   clearFinanceDerivedCaches();
 
-  try {
-    const freshRoot = await loadFinanceRoot();
-    await Promise.all(Array.from(touchedAccounts).map((accountId) => recomputeAccountEntries(accountId, recomputeStart, freshRoot)));
-    const refreshedRoot = await loadFinanceRoot();
-    syncLocalAccountsFromRoot(refreshedRoot);
-  } catch (error) {
-    log('no se pudieron recomputar cuentas tras materializar recurrentes', error);
-  }
+  await persistRecomputedFinanceAccountEntries(Array.from(touchedAccounts), recomputeStart, 'recurring-materialize');
 
   scheduleAggregateRebuild();
   return Object.keys(localPayloads);
@@ -7370,7 +7466,7 @@ function buildFinanceAccountEntriesUpdates(root = {}, accountId = '', fromDay = 
 
 async function recomputeAccountEntries(accountId, fromDay, rootOverride = null) {
   if (!accountId) return;
-  const root = rootOverride && typeof rootOverride === 'object' ? rootOverride : await loadFinanceRoot();
+  const root = rootOverride && typeof rootOverride === 'object' ? rootOverride : buildMergedFinanceSnapshotRoot();
   const updatesMap = buildFinanceAccountEntriesUpdates(root, accountId, fromDay);
   if (!Object.keys(updatesMap).length) return;
   await safeFirebase(() => update(ref(db), updatesMap));
@@ -12799,6 +12895,37 @@ function buildMergedFinanceSnapshotRoot() {
   return mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
 }
 
+async function persistRecomputedFinanceAccountEntries(accountIds = [], fromDay = '', reason = 'finance-account-recompute') {
+  const uniqueAccountIds = [...new Set((Array.isArray(accountIds) ? accountIds : [accountIds]).map((value) => String(value || '').trim()).filter(Boolean))];
+  if (!uniqueAccountIds.length) return {};
+  const root = buildMergedFinanceSnapshotRoot();
+  const updatesMap = {};
+  uniqueAccountIds.forEach((accountId) => {
+    Object.assign(updatesMap, buildFinanceAccountEntriesUpdates(root, accountId, fromDay));
+  });
+  if (!Object.keys(updatesMap).length) return {};
+  applyFinanceAbsoluteUpdatesToCaches(updatesMap);
+  syncLocalAccountsFromRoot(buildMergedFinanceSnapshotRoot());
+  clearFinanceDerivedCaches();
+  logFirebaseWrite({
+    module: 'finance',
+    path: `${state.financePath}/accounts`,
+    reason,
+    viewId: 'view-finance',
+    extra: {
+      accountIds: uniqueAccountIds,
+      fromDay,
+      updates: Object.keys(updatesMap).length,
+    },
+  });
+  try {
+    await safeFirebase(() => update(ref(db), updatesMap));
+  } catch (error) {
+    console.warn('[finance] no se pudo persistir la recomputacion puntual de cuenta', error);
+  }
+  return updatesMap;
+}
+
 function scheduleFinanceSnapshotSave(reason = 'runtime-update') {
   if (financeSnapshotSaveTimer) {
     clearTimeout(financeSnapshotSaveTimer);
@@ -12887,6 +13014,18 @@ function applyFinanceAbsoluteUpdatesToRoot(root = {}, updatesMap = {}, rootPath 
     setNestedValue(root, relativePath, value);
   });
   return root;
+}
+
+function applyFinanceAbsoluteUpdatesToCaches(updatesMap = {}) {
+  const [newPath, legacyPath] = resolveFinancePathCandidates();
+  if (!financeRootsCache.newRoot || typeof financeRootsCache.newRoot !== 'object') {
+    financeRootsCache.newRoot = {};
+  }
+  if (!financeRootsCache.legacyRoot || typeof financeRootsCache.legacyRoot !== 'object') {
+    financeRootsCache.legacyRoot = {};
+  }
+  applyFinanceAbsoluteUpdatesToRoot(financeRootsCache.newRoot, updatesMap, newPath);
+  applyFinanceAbsoluteUpdatesToRoot(financeRootsCache.legacyRoot, updatesMap, legacyPath);
 }
 
 function applyPatchedFinanceCaches(reason = 'local-patch') {
@@ -13007,54 +13146,6 @@ async function probeFinanceRoots() {
   return { newPath, legacyPath, newRoot, legacyRoot, chosenPath };
 }
 
-async function detectFinancePath(basePath) {
-  const candidates = [];
-  const add = (path) => {
-    if (path && !candidates.includes(path)) candidates.push(path);
-  };
-
-  add(basePath);
-  if (/\/finance\/?$/.test(basePath) && !/\/finance\/finance\/?$/.test(basePath)) {
-    add(basePath.replace(/\/finance\/?$/, '/finance/finance'));
-  }
-  if (/\/finance\/finance\/?$/.test(basePath)) {
-    add(basePath.replace(/\/finance\/finance\/?$/, '/finance'));
-  }
-  if (!/\/finance\/finance\/?$/.test(basePath)) {
-    add(basePath.replace(/\/$/, '') + '/finance');
-  }
-
-  for (const root of candidates) {
-    try {
-      const snap = await trackedGet(ref(db, `${root}/transactions`), {
-        path: `${root}/transactions`,
-        module: 'finance',
-        reason: 'detect-finance-path:transactions',
-        viewId: 'view-finance',
-      }, get);
-      if (snap?.exists()) return root;
-    } catch (error) {
-      console.warn('[FINANCE] detectFinancePath probe failed', root, error?.message || error);
-    }
-  }
-
-  for (const root of candidates) {
-    try {
-      const snap = await trackedGet(ref(db, `${root}/accounts`), {
-        path: `${root}/accounts`,
-        module: 'finance',
-        reason: 'detect-finance-path:accounts',
-        viewId: 'view-finance',
-      }, get);
-      if (snap?.exists()) return root;
-    } catch {
-      // noop
-    }
-  }
-
-  return basePath;
-}
-
 async function loadDataOnce() {
   const { newRoot, legacyRoot } = financeRootsCache;
   const mergedRoot = mergeFinanceRoots(newRoot, legacyRoot);
@@ -13091,9 +13182,9 @@ function queueMergedFinanceRemoteApply(reason = 'finance-live-sync') {
   financeRemoteApplyTimer = window.setTimeout(() => applyMergedFinanceRemote(reason), 0);
 }
 
-function subscribeFinanceRootBranches(rootPath, targetKey, labelSuffix = 'primary') {
+function subscribeFinanceRootBranches(rootPath, targetKey, labelSuffix = 'primary', branches = FINANCE_CORE_BRANCHES) {
   const unsubs = [];
-  FINANCE_CORE_BRANCHES.forEach((branch) => {
+  (Array.isArray(branches) ? branches : FINANCE_CORE_BRANCHES).forEach((branch) => {
     const branchPath = `${rootPath}/${branch.path}`;
     financeDebug('subscribe firebase branch', branchPath);
     const stop = trackedOnValue(ref(db, branchPath), (snap) => {
@@ -13136,8 +13227,14 @@ function subscribe() {
 
   if (financeNeedsLegacyAccountsMerge) {
     const legacyPath = resolveFinancePathCandidates()[1];
-    financeDebug('subscribe firebase legacy merge', legacyPath);
-    unsubscribeLegacyFinance = subscribeFinanceRootBranches(legacyPath, 'legacyRoot', 'legacy');
+    if (legacyPath && legacyPath !== state.financePath) {
+      const legacyMergeBranches = FINANCE_CORE_BRANCHES.filter((branch) => FINANCE_LEGACY_MERGE_BRANCH_KEYS.has(branch.key));
+      financeDebug('subscribe firebase legacy merge', {
+        legacyPath,
+        branchKeys: legacyMergeBranches.map((branch) => branch.key),
+      });
+      unsubscribeLegacyFinance = subscribeFinanceRootBranches(legacyPath, 'legacyRoot', 'legacy', legacyMergeBranches);
+    }
   }
 }
 
@@ -14677,14 +14774,9 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
 
   await safeFirebase(() => remove(ref(db, path)));
 
-  const freshRoot = await loadFinanceRoot();
   const touched = [existing.accountId, existing.fromAccountId, existing.toAccountId].filter(Boolean);
-  for (const accountId of [...new Set(touched)]) {
-    await recomputeAccountEntries(accountId, existing.date || isoToDay(existing.dateISO || ''), freshRoot);
-  }
-  const refreshedRoot = await loadFinanceRoot();
+  await persistRecomputedFinanceAccountEntries([...new Set(touched)], existing.date || isoToDay(existing.dateISO || ''), 'delete-transaction');
   removeLocalTxEverywhere(txDelete);
-  syncLocalAccountsFromRoot(refreshedRoot);
   clearFinanceDerivedCaches();
 
   toast('Movimiento eliminado');
@@ -15800,14 +15892,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       }
       const touched = new Set([payload.accountId, payload.fromAccountId, payload.toAccountId, prev?.accountId, prev?.fromAccountId, prev?.toAccountId].filter(Boolean));
       const recomputeStart = [dateISO, prev?.date, isoToDay(prev?.dateISO || '')].filter(Boolean).sort()[0] || dateISO;
-      try {
-        const freshRoot = await loadFinanceRoot();
-        await Promise.all(Array.from(touched).map((account) => recomputeAccountEntries(account, recomputeStart, freshRoot)));
-        const refreshedRoot = await loadFinanceRoot();
-        syncLocalAccountsFromRoot(refreshedRoot);
-      } catch (error) {
-        log('no se pudieron recomputar cuentas tras guardar movimiento', error);
-      }
+      await persistRecomputedFinanceAccountEntries(Array.from(touched), recomputeStart, 'save-transaction');
       state.balance = state.balance || {};
       state.balance.transactions = {
         ...(state.balance.transactions || {}),
@@ -15950,9 +16035,13 @@ async function boot() {
   }
   const pathProbe = await probeFinanceRoots();
   financeRootsCache = { newRoot: pathProbe.newRoot, legacyRoot: pathProbe.legacyRoot };
-  const rawPath = resolveFinancePath();
-  state.financePath = await detectFinancePath(rawPath);
-  console.log('[FINANCE] financePath resolved', { rawPath, financePath: state.financePath });
+  state.financePath = pathProbe.chosenPath || pathProbe.newPath || resolveFinancePath();
+  console.log('[FINANCE] financePath resolved', {
+    newPath: pathProbe.newPath,
+    legacyPath: pathProbe.legacyPath,
+    financePath: state.financePath,
+    source: 'probeFinanceRoots',
+  });
   log('init ok', { financePath: state.financePath });
   bindEvents();
   await loadDataOnce();
@@ -16044,3 +16133,6 @@ function getFinanceListenerCount() {
   if (state.toastTimer) count += 1;
   return count;
 }
+document.addEventListener('click', (event) => {
+  console.log('🟡 CLICK GLOBAL:', event.target);
+}, true);

@@ -461,6 +461,22 @@ function formatMetricRelativeTime(ts = 0) {
   return `Hace ${Math.round(diffMs / (24 * 60 * 60 * 1000))} d`;
 }
 
+function formatMetricAbsoluteTime(ts = 0) {
+  const safeTs = Number(ts || 0);
+  if (!safeTs) return "—";
+  try {
+    return new Date(safeTs).toLocaleString("es-ES", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch (_) {
+    return "—";
+  }
+}
+
 function ensureSyncIconAction(actionsNode, {
   id,
   icon,
@@ -716,8 +732,12 @@ async function renderMetricsModal() {
   const alertsMarkup = snapshot.alerts?.length
     ? snapshot.alerts.map((alert) => `
       <li>
-        <strong>${alert.module || "modulo"}</strong>
+        <strong>${alert.module || "modulo"} · ${alert.type || alert.kind || "alerta"}</strong>
         <span>${alert.message}</span>
+        <small>${alert.count ? `${alert.count} repeticiones` : "1 evento"} · primera: ${formatMetricAbsoluteTime(alert.firstAt)} · ultima: ${formatMetricAbsoluteTime(alert.lastAt)}</small>
+        ${alert.reason ? `<small>reason: ${alert.reason}</small>` : ""}
+        ${alert.querySummary ? `<small>query: ${alert.querySummary}</small>` : ""}
+        <code>${alert.path || ""}</code>
       </li>
     `).join("")
     : '<li><strong>OK</strong><span>No se detectaron alertas en este rango.</span></li>';
@@ -740,6 +760,9 @@ async function renderMetricsModal() {
         ${(module.paths || []).slice(0, 5).map((pathRow) => `
           <article>
             <code>${pathRow.path}</code>
+            <small>get: ${pathRow.getCount || 0} · listener:start: ${pathRow.listenerStarts || 0} · listener:event: ${pathRow.listenerEvents || 0} · write: ${pathRow.writeCount || 0}</small>
+            <small>primera: ${formatMetricAbsoluteTime(pathRow.firstAt)} · ultima: ${formatMetricAbsoluteTime(pathRow.lastAt)}</small>
+            ${(pathRow.reasons || []).length ? `<small>reason: ${pathRow.reasons.join(", ")}</small>` : ""}
             <small>${pathRow.readCount} eventos · ${formatMetricBytes(pathRow.bytes)}${pathRow.risks?.length ? ` · riesgo: ${pathRow.risks.join(", ")}` : ""}</small>
           </article>
         `).join("") || '<article><small>Sin lecturas registradas todavia.</small></article>'}
